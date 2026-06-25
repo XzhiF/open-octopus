@@ -95,7 +95,7 @@ function createRegistry(org?: string): RoleRegistry {
   // Org-level agents
   const homeDir = process.env.HOME || ""
   if (org) {
-    const orgPath = join(homeDir, ".octopus", org, "agents")
+    const orgPath = join(homeDir, ".octopus", "orgs", org, "agents")
     if (existsSync(orgPath)) paths.push(orgPath)
   }
 

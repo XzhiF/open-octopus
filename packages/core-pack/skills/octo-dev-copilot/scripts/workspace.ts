@@ -71,7 +71,7 @@ interface ConfigData {
 }
 
 function getPaths(org: string): { workspaceRoot: string; reposIndex: string } {
-  const base = path.join(os.homedir(), ".octopus", org);
+  const base = path.join(os.homedir(), ".octopus", "orgs", org);
   return {
     workspaceRoot: path.join(base, "workspaces"),
     reposIndex: path.join(base, "repos", "index.md"),
@@ -403,7 +403,7 @@ function initCodeDevCopilotRules(wsDir: string, org: string): void {
     // 1. Project-level: current project's .octopus/code-dev-copilot-rules/
     path.join(process.cwd(), ".octopus", "code-dev-copilot-rules"),
     // 2. Org-level: ~/.octopus/{org}/code-dev-copilot-rules/
-    path.join(os.homedir(), ".octopus", org, "code-dev-copilot-rules"),
+    path.join(os.homedir(), ".octopus", "orgs", org, "code-dev-copilot-rules"),
   ];
   for (const srcDir of sources) {
     if (!fs.existsSync(srcDir)) continue;

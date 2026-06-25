@@ -44,9 +44,9 @@ async function agentDelete(path: string, org?: string): Promise<{ ok: boolean; s
 function resolveOrg(options: { org?: string }): string | undefined {
   if (options.org) return options.org
   if (process.env.OCTOPUS_ORG) return process.env.OCTOPUS_ORG
-  // Auto-detect org from cwd path: ~/.octopus/{org}/...
+  // Auto-detect org from cwd path: ~/.octopus/orgs/{org}/...
   const cwd = process.cwd()
-  const match = cwd.match(/\.octopus\/([^/]+)/)
+  const match = cwd.match(/\.octopus\/orgs\/([^/]+)/)
   if (match) return match[1]
   return undefined
 }

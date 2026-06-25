@@ -212,7 +212,7 @@ export class SetupRunner {
       const displayName = orgDisplayName || orgName
       writeFileSync(
         configPath,
-        `name: ${displayName}\nprefix: ${orgPrefix}\ndescription: ${orgDescription}\nplatform: gitlab\ngroups:\n  - ${orgName}\nclone_base: ~/.octopus/${orgName}/repos/projects\n`,
+        `name: ${displayName}\nprefix: ${orgPrefix}\ndescription: ${orgDescription}\nplatform: gitlab\ngroups:\n  - ${orgName}\nclone_base: ~/.octopus/orgs/${orgName}/repos/projects\n`,
         "utf-8",
       )
       this.report.newFiles.push(rel)
@@ -340,7 +340,7 @@ export class SetupRunner {
       const prefix = `${this.org}-`
       writeFileSync(
         configPath,
-        `name: ${this.org}\nprefix: ${prefix}\ndescription: ${this.org} projects\nplatform: gitlab\ngroups:\n  - ${this.org}\nclone_base: ~/.octopus/${this.org}/repos/projects\n`,
+        `name: ${this.org}\nprefix: ${prefix}\ndescription: ${this.org} projects\nplatform: gitlab\ngroups:\n  - ${this.org}\nclone_base: ~/.octopus/orgs/${this.org}/repos/projects\n`,
         "utf-8",
       )
       this.report.newFiles.push(rel)

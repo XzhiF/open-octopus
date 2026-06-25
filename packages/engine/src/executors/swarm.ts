@@ -283,7 +283,7 @@ export class SwarmExecutor implements NodeExecutor {
     const claudeAgents = join(this.cwd, ".claude/agents")
     if (existsSync(claudeAgents)) paths.push(claudeAgents)
 
-    // Org-level agents: ~/.octopus/{org}/agents/
+    // Shared agents: ~/.octopus/agents/ (not org-scoped)
     const home = process.env.HOME || process.env.USERPROFILE || ""
     if (home) {
       const orgAgents = join(home, ".octopus/agents")
