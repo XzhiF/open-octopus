@@ -577,12 +577,19 @@ nodes:
           聚焦：工期是否合理？有无隐藏复杂度？技术债风险？
           每个阶段是否有明确的完成标准？
     host:
+      role: host-agent
       prompt: |
         综合两方意见，输出最终实现计划:
         1. 交付物类型判断
         2. 阶段划分 + 任务清单
         3. 风险清单
         4. 每阶段完成标准
+
+        最后，必须输出以下 assessment JSON 块用于共识检测：
+        ```json
+        {"assessment": {"consensus_score": 0.0到1.0, "should_continue": true或false}}
+        ```
+        consensus_score 越高表示两方越接近共识。should_continue 为 false 表示已达成共识。
       model: opus
     outputs:
       synthesis: "$vars.plan_synthesis"

@@ -438,11 +438,18 @@ nodes:
           质疑方向：这是用户明确提出的吗？还是你以为用户需要？
           用户没有这个功能会怎样？这个功能是否可以用更简单的方式满足？
     host:
+      role: host-agent
       prompt: |
         综合两方意见，输出最终范围分类表。对每个争议项做出采纳/拒绝决定并说明理由。
         输出格式：
         | 类别 | ID | 描述 | 依据 | 争议裁决 |
         确保 IN-SCOPE 项都有明确的 idea 原文依据。
+
+        最后，必须输出以下 assessment JSON 块用于共识检测：
+        ```json
+        {"assessment": {"consensus_score": 0.0到1.0, "should_continue": true或false}}
+        ```
+        consensus_score 越高表示两方越接近共识。should_continue 为 false 表示已达成共识无需继续辩论。
       model: opus
     outputs:
       synthesis: "$vars.scope_synthesis"
@@ -595,11 +602,18 @@ nodes:
           从产品价值角度审查需求文档。
           聚焦：P0/P1 分类是否合理？需求是否与 scope 一致？
     host:
+      role: host-agent
       prompt: |
         综合三方意见，输出:
         1. 采纳的挑战及对应修改（附修改后文档片段）
         2. 拒绝的挑战及理由
         3. 需要更新到 01-discovery.md 和 01-requirements.md 的具体修改
+
+        最后，必须输出以下 assessment JSON 块用于共识检测：
+        ```json
+        {"assessment": {"consensus_score": 0.0到1.0, "should_continue": true或false}}
+        ```
+        consensus_score 越高表示三方越接近共识。should_continue 为 false 表示已达成共识。
       model: opus
     outputs:
       synthesis: "$vars.refine_synthesis"
@@ -679,12 +693,19 @@ nodes:
           从实现可行性角度评估技术方案。
           聚焦：实现复杂度、工期风险、依赖链、技术债。
     host:
+      role: host-agent
       prompt: |
         综合三方意见，输出最终技术方案:
         1. 架构决策及理由（含采纳/拒绝的挑战）
         2. 数据模型 + API 设计
         3. 技术选型及替代方案
         4. 实现风险清单
+
+        最后，必须输出以下 assessment JSON 块用于共识检测：
+        ```json
+        {"assessment": {"consensus_score": 0.0到1.0, "should_continue": true或false}}
+        ```
+        consensus_score 越高表示三方越接近共识。should_continue 为 false 表示已达成共识。
       model: opus
     outputs:
       synthesis: "$vars.design_synthesis"
