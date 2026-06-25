@@ -1,0 +1,152 @@
+import { Hono } from "hono"
+import { WorkspaceService } from "../services/workspace"
+import { WorkspaceDAO, OrgDAO } from "../db/dao"
+import { orgExists } from "../services/org"
+import { parseManifest } from "@octopus/shared"
+import { readFileSync, existsSync, readdirSync } from "fs"
+import { join } from "path"
+import os from "os"
+
+export function createWorkspaceRoutes(workspaceService: WorkspaceService, orgDAO: OrgDAO, workspaceDAO: WorkspaceDAO): Hono {
+  const workspaceRoutes = new Hono()
+
+  workspaceRoutes.get("/", (c) => {
+    const workspaces = workspaceService.list()
+    const resolved = workspaces.map(w => ({ ...w, path: w.path.replace(/^~/, os.homedir()) }))
+    return c.json(resolved)
+  })
+
+  workspaceRoutes.get("/repos", (c) => {
+    const org = c.req.query("org") || "xzf"
+    const manifestPath = join(os.homedir(), ".octopus", "orgs", org, "repos", "manifest.md")
+    if (!existsSync(manifestPath)) {
+      return c.json({ error: `manifest.md not found for org '${org}'` }, 404)
+    }
+    const content = readFileSync(manifestPath, "utf-8")
+    const groups = parseManifest(content)
+    return c.json({ groups, org })
+  })
+
+  workspaceRoutes.post("/", async (c) => {
+    const body = await c.req.json<{ name: string; org: string; description?: string; path?: string; repos?: string[]; branch?: string }>()
+    if (!orgExists(orgDAO, body.org)) {
+      return c.json({ error: `Org '${body.org}' not found` }, 400)
+    }
+    const workoutPath = body.path || `~/.octopus/orgs/${body.org}/workspaces/${body.name}`
+    const workspace = workspaceService.create({
+      name: body.name,
+      org: body.org,
+      description: body.description,
+      path: workoutPath,
+      repos: body.repos,
+      branch: body.branch,
+    })
+
+    // Check worktree status - if repos were specified but all failed, return error
+    if (body.repos && body.repos.length > 0 && workspace.worktreeStatus) {
+      const { created, failed } = workspace.worktreeStatus
+      if (created === 0 && failed.length > 0) {
+        // Delete the workspace since no worktrees were created
+        await workspaceService.delete(workspace.id)
+        return c.json({
+          error: `Failed to create any worktrees. All ${failed.length} repos failed:`,
+          details: failed
+        }, 500)
+      }
+    }
+
+    const { worktreeStatus, ...workspaceData } = workspace
+    return c.json({
+      ...workspaceData,
+      path: workspaceData.path.replace(/^~/, os.homedir()),
+      worktreeStatus
+    }, 201)
+  })
+
+  workspaceRoutes.get("/importable", (c) => {
+    const org = c.req.query("org") || "xzf"
+    const workspacesDir = join(os.homedir(), ".octopus", "orgs", org, "workspaces")
+    if (!existsSync(workspacesDir)) return c.json({ workspaces: [] })
+
+    const allDbWorkspaces = workspaceService.list(org)
+    const dbPaths = new Set(allDbWorkspaces.map(w => w.path))
+
+    const importable: { name: string; path: string; repoCount: number; branch: string | null }[] = []
+    try {
+      for (const entry of readdirSync(workspacesDir, { withFileTypes: true })) {
+        if (!entry.isDirectory()) continue
+        const configPath = join(workspacesDir, entry.name, "config.json")
+        if (!existsSync(configPath)) continue
+        const wsPath = `~/.octopus/orgs/${org}/workspaces/${entry.name}`
+        if (dbPaths.has(wsPath)) continue
+
+        try {
+          const config = JSON.parse(readFileSync(configPath, "utf-8"))
+          importable.push({
+            name: entry.name,
+            path: wsPath,
+            repoCount: (config.repos || []).length,
+            branch: config.branch || null,
+          })
+        } catch { /* skip broken config.json */ }
+      }
+    } catch { /* directory read error */ }
+
+    return c.json({ workspaces: importable, org })
+  })
+
+  workspaceRoutes.post("/import", async (c) => {
+    const body = await c.req.json<{ name: string; org: string }>()
+    const wsPath = `~/.octopus/orgs/${body.org}/workspaces/${body.name}`
+    const resolvedPath = wsPath.replace(/^~/, os.homedir())
+    const configPath = join(resolvedPath, "config.json")
+
+    if (!existsSync(configPath)) {
+      return c.json({ error: "config.json not found for this workspace" }, 404)
+    }
+
+    const existing = workspaceDAO.findByPath(wsPath)
+    if (existing) {
+      return c.json({ error: "workspace already imported", id: existing.id }, 409)
+    }
+
+    try {
+      const config = JSON.parse(readFileSync(configPath, "utf-8"))
+      const workspace = workspaceService.create({
+        name: body.name,
+        org: body.org,
+        description: config.description,
+        path: wsPath,
+        repos: (config.repos || []).map((r: any) => `${r.group}/${r.name}`),
+      })
+      return c.json(workspace, 201)
+    } catch (e: any) {
+      return c.json({ error: `Failed to import: ${e.message}` }, 500)
+    }
+  })
+
+  workspaceRoutes.get("/:id", (c) => {
+    const id = c.req.param("id")
+    const workspace = workspaceService.getById(id)
+    if (!workspace) return c.json({ error: "not found" }, 404)
+    return c.json({ ...workspace, path: workspace.path.replace(/^~/, os.homedir()) })
+  })
+
+  workspaceRoutes.put("/:id", async (c) => {
+    const id = c.req.param("id")
+    const body = await c.req.json<{ name?: string; org?: string }>()
+    const workspace = workspaceService.update(id, body)
+    if (!workspace) return c.json({ error: "not found" }, 404)
+    return c.json(workspace)
+  })
+
+  workspaceRoutes.delete("/:id", async (c) => {
+    const id = c.req.param("id")
+    await workspaceService.delete(id)
+    return c.json({ ok: true })
+  })
+
+  return workspaceRoutes
+}
+
+export default createWorkspaceRoutes

@@ -1,0 +1,227 @@
+import type { Node, Edge } from "@xyflow/react"
+import dagre from "@dagrejs/dagre"
+
+interface WorkflowNode {
+  id: string
+  type: string
+  depends_on?: string[]
+  cases?: Array<{ when: string; then: string }>
+  command?: string
+  script?: string
+  prompt?: string
+  description?: string
+  risk_level?: string
+  iterations?: number
+  loop_body?: Array<Record<string, unknown>>
+  [key: string]: unknown
+}
+
+interface WorkflowDefinition {
+  name?: string
+  nodes?: WorkflowNode[]
+  [key: string]: unknown
+}
+
+const VALID_NODE_TYPES = new Set(["bash", "python", "agent", "condition", "approval", "loop", "swarm"])
+
+// Node dimensions for dagre layout
+function getNodeDimensions(node: WorkflowNode): { width: number; height: number } {
+  switch (node.type) {
+    case "condition": return { width: 280, height: 160 }
+    case "loop": return { width: 280, height: 160 }
+    case "agent": return { width: 280, height: 140 }
+    case "approval": return { width: 280, height: 140 }
+    case "swarm": return { width: 280, height: 160 }
+    default: return { width: 280, height: 130 }
+  }
+}
+
+/**
+ * Compute rank per node (longest path from any root).
+ * Used to detect skip edges — edges that span more than one rank.
+ */
+function computeRanks(workflowNodes: WorkflowNode[]): Record<string, number> {
+  const rank: Record<string, number> = {}
+  const inDegree = new Map<string, number>()
+  const adjList = new Map<string, string[]>()
+  for (const n of workflowNodes) {
+    inDegree.set(n.id, n.depends_on?.length ?? 0)
+    adjList.set(n.id, [])
+  }
+  for (const n of workflowNodes) {
+    for (const parentId of n.depends_on ?? []) {
+      adjList.get(parentId)?.push(n.id)
+    }
+  }
+
+  const queue: string[] = []
+  for (const [id, deg] of inDegree) {
+    if (deg === 0) {
+      rank[id] = 0
+      queue.push(id)
+    }
+  }
+
+  while (queue.length > 0) {
+    const id = queue.shift()!
+    for (const childId of adjList.get(id) ?? []) {
+      rank[childId] = Math.max(rank[childId] ?? 0, rank[id] + 1)
+      inDegree.set(childId, inDegree.get(childId)! - 1)
+      if (inDegree.get(childId) === 0) queue.push(childId)
+    }
+  }
+
+  return rank
+}
+
+/**
+ * Use dagre for DAG layout — minimizes edge crossings automatically.
+ * After dagre computes positions, skip-edge intermediate nodes are offset right
+ * so long-range edges don't pass through node bodies.
+ */
+function dagreLayout(
+  workflowNodes: WorkflowNode[],
+  edges: Edge[]
+): Record<string, { x: number; y: number }> {
+  const g = new dagre.graphlib.Graph()
+  g.setGraph({
+    rankdir: "TB",
+    nodesep: 100,
+    ranksep: 70,
+    edgesep: 40,
+  })
+  g.setDefaultEdgeLabel(() => ({}))
+
+  for (const node of workflowNodes) {
+    const dim = getNodeDimensions(node)
+    g.setNode(node.id, dim)
+  }
+
+  for (const edge of edges) {
+    g.setEdge(edge.source, edge.target)
+  }
+
+  dagre.layout(g)
+
+  // Build rank map from dagre positions
+  const nodeRank = new Map<string, number>()
+  for (const node of workflowNodes) {
+    const pos = g.node(node.id)
+    if (pos) nodeRank.set(node.id, pos.rank)
+  }
+
+  // Collect positions — convert dagre center to top-left
+  const positions = new Map<string, { x: number; y: number; rank: number }>()
+  for (const node of workflowNodes) {
+    const pos = g.node(node.id)
+    const dim = getNodeDimensions(node)
+    if (pos) {
+      positions.set(node.id, {
+        x: pos.x - dim.width / 2,
+        y: pos.y - dim.height / 2,
+        rank: pos.rank,
+      })
+    }
+  }
+
+  // Detect skip edges and offset intermediate nodes right
+  for (const edge of edges) {
+    const srcRank = nodeRank.get(edge.source)
+    const tgtRank = nodeRank.get(edge.target)
+    if (srcRank === undefined || tgtRank === undefined) continue
+    if (tgtRank - srcRank <= 1) continue
+
+    for (const [id, data] of positions) {
+      if (data.rank > srcRank && data.rank < tgtRank) {
+        data.x += 150
+      }
+    }
+  }
+
+  // Normalize: use first node's position as anchor (don't collapse all to x=0)
+  const firstNode = workflowNodes[0]
+  const anchorX = positions.get(firstNode.id)?.x ?? 0
+  const anchorY = Math.min(...Array.from(positions.values()).map(p => p.y))
+
+  const result: Record<string, { x: number; y: number }> = {}
+  for (const [id, data] of positions) {
+    result[id] = {
+      x: data.x - anchorX + 50,
+      y: data.y - anchorY + 50,
+    }
+  }
+
+  return result
+}
+
+export function yamlToFlowData(parsed: WorkflowDefinition): { nodes: Node[]; edges: Edge[] } | null {
+  if (!parsed || !parsed.nodes || !Array.isArray(parsed.nodes)) return null
+  if (parsed.nodes.length === 0) return null
+
+  const workflowNodes = parsed.nodes as WorkflowNode[]
+  if (!workflowNodes.every((n) => VALID_NODE_TYPES.has(n.type))) return null
+
+  const edges: Edge[] = []
+
+  for (const node of workflowNodes) {
+    if (node.depends_on && Array.isArray(node.depends_on)) {
+      for (const parentId of node.depends_on) {
+        edges.push({
+          id: `e-${parentId}-${node.id}`,
+          source: parentId,
+          target: node.id,
+          type: "smoothstep",
+        })
+      }
+    }
+
+    if (node.type === "condition" && node.cases) {
+      for (const caseItem of node.cases) {
+        const existing = edges.find(
+          (e) => e.source === node.id && e.target === caseItem.then
+        )
+        if (!existing) {
+          edges.push({
+            id: `e-${node.id}-${caseItem.then}-case`,
+            source: node.id,
+            target: caseItem.then,
+            type: "condition",
+            data: { label: caseItem.when },
+          })
+        }
+      }
+    }
+  }
+
+  const positions = dagreLayout(workflowNodes, edges)
+
+  const nodes: Node[] = workflowNodes.map((node) => ({
+    id: node.id,
+    type: node.type,
+    position: positions[node.id] || { x: 0, y: 0 },
+    data: {
+      id: node.id,
+      type: node.type,
+      name: node.description || node.id,
+      command: node.command,
+      script: node.script,
+      prompt: node.prompt,
+      risk_level: node.risk_level,
+      iterations: node.iterations,
+      loop_body: node.loop_body,
+      cases: node.cases,
+      // Swarm-specific fields from YAML
+      ...(node.type === "swarm" ? {
+        mode: (node as Record<string, unknown>).mode,
+        topic: (node as Record<string, unknown>).topic,
+        expertCount: Array.isArray((node as Record<string, unknown>).experts)
+          ? ((node as Record<string, unknown>).experts as unknown[]).length
+          : ((node as Record<string, unknown>).max_experts as number) ?? 0,
+        consensusScore: null,
+        status: "pending",
+      } : {}),
+    },
+  }))
+
+  return { nodes, edges }
+}

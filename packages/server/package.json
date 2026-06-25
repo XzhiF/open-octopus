@@ -1,0 +1,44 @@
+{
+  "name": "@octopus/server",
+  "version": "1.0.0",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "predev": "node ../../scripts/kill-port.mjs 3001",
+    "dev": "node dist/index.js",
+    "start": "node dist/index.js",
+    "build": "tsup src/index.ts --format esm,cjs --dts",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@hono/node-server": "^2.0.2",
+    "@octopus/core-pack": "workspace:*",
+    "@octopus/engine": "workspace:*",
+    "@octopus/providers": "workspace:*",
+    "@octopus/shared": "workspace:*",
+    "better-sqlite3": "^12.0",
+    "chokidar": "^5.0.0",
+    "cron-parser": "^4.9.0",
+    "cronstrue": "^2.59.0",
+    "hono": "^4.0",
+    "js-yaml": "^4.1.1",
+    "lib0": "^0.2.117",
+    "node-cron": "^3.0.3",
+    "ws": "^8.20.1",
+    "y-protocols": "^1.0.7",
+    "yjs": "^13.6.30",
+    "zod": "^3.24"
+  },
+  "devDependencies": {
+    "@types/js-yaml": "^4.0.9",
+    "@types/node": "^22",
+    "@types/ws": "^8.18.1",
+    "typescript": "5.7.3"
+  }
+}

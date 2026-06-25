@@ -1,0 +1,1762 @@
+# yaml-language-server: $schema=./doc/workflow-schema.json
+apiVersion: octopus/v1
+kind: Workflow
+name: prd-forge
+description: >
+  PRD Forge — 将 Idea 锻造为完整 PRD 的对抗式多智能体工作流。
+  7 阶段 + 4 次对抗审查：Setup → Clarify → Discover → Define → Design → Completeness Review → Output。
+  借鉴 gstack 多角色团队和 ClawTeam 群体智能理念，确保 PRD 完整性覆盖 15 个维度。
+  角色团队：产品经理 + UX 架构师 + 软件架构师 + 魔鬼代言人 + 可行性审查者 + 架构探索者。
+
+model: opus[1m]
+engine: claude
+execution_mode: serial
+timeout: 86400
+
+inputs:
+  idea:
+    description: "产品 Idea 描述（自然语言，越详细越好）"
+    required: true
+  output_format:
+    description: "输出格式：markdown（默认）或 pdf"
+    required: false
+    default: "markdown"
+  enable_adversarial:
+    description: "开启对抗审查（魔鬼代言人质疑每个阶段）"
+    required: false
+    default: "true"
+  completeness_threshold:
+    description: "完整性审查允许的最大缺失维度数（超过则打回）"
+    required: false
+    default: "3"
+  scope_mode:
+    description: |
+      范围控制模式。
+      - strict（默认）：强制 LOCKED_SCOPE，只把用户明确提出的功能视为需求，举例/参考/通用补全（auth、日志、监控等）一律 OUT-OF-SCOPE。
+      - creative：允许 LLM 在 idea 基础上发散补全相关功能，标记为 EXTENSION-CANDIDATE，最终以"扩展项"身份写入 PRD。
+    required: false
+    default: "strict"
+
+variables:
+  # ── 文档目录 ──
+  output_root: "./docs/prd-forge"
+  output_dir: ""
+  prd_index: ""
+  prd_name: ""
+  display_name: "PRD Forge"
+  conclusion: ""
+  discovery_file: ""
+  requirements_file: ""
+  solution_file: ""
+  completeness_file: ""
+  final_prd_file: ""
+  challenge_discover_file: ""
+  challenge_define_file: ""
+  challenge_design_file: ""
+  completeness_score: "0"
+  completeness_missing: ""
+  # ── 分层文档（v2 拆分） ──
+  acceptance_cases_file: ""
+  ui_file: ""
+  ux_file: ""
+  acceptance_cases_count: "0"
+  ui_pages_count: "0"
+
+  # ── Clarify 阶段 ──
+  project_type: ""
+  design_focus: ""
+  key_decisions: ""
+  user_emphasis: ""
+  clarify_file: ""
+
+  # ── Locked Scope 阶段 ──
+  scope_file: ""
+  in_scope_count: "0"
+  out_of_scope_count: "0"
+  example_only_count: "0"
+  extension_candidate_count: "0"
+
+auto_answers:
+  - pattern: ".*"
+    answer: "proceed"
+
+# ── Notify 子系统配置 ──
+providers:
+  hermes-cli:
+    type: hermes
+    timeout: 30
+    min_severity: info
+
+channels:
+  default:
+    provider: hermes-cli
+    target: "telegram:xzf_hermes"
+
+hooks:
+  # ① 工作流失败 — 节点执行错误导致终止
+  on_workflow_failure:
+    - id: notify-failure
+      type: notify
+      channel: default
+      template:
+        severity: error
+        title: "❌ $vars.display_name — 工作流失败"
+        body: "📝 Idea: $inputs.idea\n🔴 失败节点: ${hook.failed_node_id | default:unknown}\n⏱️ 已运行: ${hook.total_duration_ms | duration}\n\n💡 错误: ${hook.error | default:Unknown error}"
+
+  # ② 工作流完成（无论成功/失败）
+  on_complete:
+    - id: notify-complete
+      type: notify
+      channel: default
+      template:
+        severity: info
+        title: "🏁 $vars.display_name — 工作流完成"
+        body: "状态: $hook.final_status\n✅ 完成: $hook.completed_count / ⏭️ 跳过: $hook.skipped_count / ❌ 失败: $hook.failed_count / 📊 总计: $hook.total_count\n⏱️ 总耗时: ${hook.total_duration_ms | duration}"
+
+  # ③ 节点级通知 — 每个业务阶段完成后自动通知
+  on_node_success:
+    # ── Setup 完成 ──
+    - id: notify-setup
+      type: notify
+      nodes: [setup]
+      channel: default
+      template:
+        severity: info
+        title: "🔨 $vars.display_name 启动"
+        body: "📝 Idea: $inputs.idea\n📂 输出: $vars.output_dir\n😈 对抗审查: $inputs.enable_adversarial"
+
+    # ── Clarify 完成 ──
+    - id: notify-clarify
+      type: notify
+      nodes: [clarify]
+      channel: default
+      template:
+        severity: info
+        title: "🧭 $vars.display_name — Clarify 完成"
+        body: "📂 项目类型: $vars.project_type\n🎯 设计重点: $vars.design_focus\n🔑 关键决策: $vars.key_decisions\n\n💡 核心洞察: $vars.conclusion"
+
+    # ── Refine Discover 完成（合并后）──
+    - id: notify-refine-discover
+      type: notify
+      nodes: [refine-discover]
+      channel: default
+      condition: '$inputs.enable_adversarial == "true"'
+      template:
+        severity: info
+        title: "😈🔄 $vars.display_name — Refine Discover 完成"
+        body: "🔥 $vars.challenge_discover_count 条质疑已审查与裁决\n📄 需求文档已更新\n\n💡 裁决结论: $vars.conclusion"
+
+    # ── Discover 完成 ──
+    - id: notify-discover
+      type: notify
+      nodes: [discover]
+      channel: default
+      template:
+        severity: info
+        title: "🔍 $vars.display_name — Discover 完成{{#if challenge_discover_count}} | 😈 $vars.challenge_discover_count 条质疑已审查{{/if}}"
+        body: "📄 需求文档: $vars.discovery_file\n\n💡 发现结论: $vars.conclusion"
+
+    # ── Refine Define 完成（合并后）──
+    - id: notify-refine-define
+      type: notify
+      nodes: [refine-define]
+      channel: default
+      condition: '$inputs.enable_adversarial == "true"'
+      template:
+        severity: info
+        title: "😈🔄 $vars.display_name — Refine Define 完成"
+        body: "🔥 $vars.challenge_define_count 条遗漏已审查与裁决\n📄 需求文档已补充\n\n💡 裁决结论: $vars.conclusion"
+
+    # ── Define 完成 ──
+    - id: notify-define
+      type: notify
+      nodes: [define]
+      channel: default
+      template:
+        severity: info
+        title: "📋 $vars.display_name — Define 完成{{#if challenge_define_count}} | 😈 $vars.challenge_define_count 条遗漏已审查{{/if}}"
+        body: "👤 画像: $vars.personas_count | 📖 故事: $vars.user_stories_count\n📄 需求文档: $vars.requirements_file\n\n💡 定义结论: $vars.conclusion"
+
+    # ── Challenge Design 完成 ──
+    - id: notify-challenge-design
+      type: notify
+      nodes: [challenge-design]
+      channel: default
+      condition: '$inputs.enable_adversarial == "true"'
+      template:
+        severity: info
+        title: "😈🔭 $vars.display_name — Challenge Design 完成"
+        body: "🔥 $vars.challenge_design_count 条质疑+机会\n\n💡 综合结论: $vars.conclusion"
+
+    # ── Synthesis Design 完成 ──
+    - id: notify-synthesis-design
+      type: notify
+      nodes: [synthesis-design]
+      channel: default
+      condition: '$inputs.enable_adversarial == "true"'
+      template:
+        severity: info
+        title: "🔄 $vars.display_name — Synthesis Design 完成"
+        body: "📄 技术方案已补充\n\n💡 补充结论: $vars.conclusion"
+
+    # ── Design 完成 ──
+    - id: notify-design
+      type: notify
+      nodes: [design]
+      channel: default
+      template:
+        severity: info
+        title: "🏗️ $vars.display_name — Design 完成{{#if challenge_design_count}} | 😈 $vars.challenge_design_count 条遗漏已审查{{/if}}"
+        body: "📊 实体: $vars.entities_count | 🔌 API: $vars.api_count\n📄 技术方案: $vars.solution_file\n\n💡 设计结论: $vars.conclusion"
+
+    # ── Completeness Review 通过 ──
+    - id: notify-completeness-pass
+      type: notify
+      nodes: [completeness-pass]
+      channel: default
+      template:
+        severity: info
+        title: "✅ $vars.display_name — 完整性审查通过"
+        body: "📊 覆盖: $vars.completeness_score\n📝 缺失: ${vars.completeness_missing | default:无}\n\n💡 审查结论: $vars.conclusion"
+
+    # ── Output 完成 (PRD 生成) ──
+    - id: notify-output
+      type: notify
+      nodes: [output]
+      channel: default
+      template:
+        severity: info
+        title: "✅ $vars.display_name — PRD 生成完成！"
+        body: "📝 名称: $vars.prd_name\n📊 完整性: $vars.completeness_score\n📄 PRD: $vars.final_prd_file\n📝 字数: $vars.prd_word_count\n\n💡 总结: $vars.conclusion"
+
+nodes:
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 0: Setup — 环境准备 + 输出目录初始化
+  # ═══════════════════════════════════════════════════════════════
+  - id: setup
+    type: agent
+    timeout: 600
+    prompt: |
+      你正在执行 PRD Forge 工作流的环境准备阶段。
+
+      ## 你的任务
+
+      ### 1. 安装 superpowers-zh 技能
+      ```bash
+      npx superpowers-zh@latest --tool claude --force 2>&1 | head -5
+      ```
+
+      ### 2. 安装 agency-agents-zh 代理
+      ```bash
+      AGENTS_TARGET="$(pwd)/.claude/agents"
+      mkdir -p "$AGENTS_TARGET"
+
+      NEED_CLONE=false
+      for agent in engineering-software-architect product-manager design-ux-architect design-ui-designer; do
+        if [ ! -f "$AGENTS_TARGET/$agent.md" ]; then
+          NEED_CLONE=true
+          break
+        fi
+      done
+
+      if [ "$NEED_CLONE" = "true" ]; then
+        echo "Cloning agency-agents-zh..."
+        DEPS_DIR="$(pwd)/dependencies"
+        mkdir -p "$DEPS_DIR"
+
+        if [ ! -d "$DEPS_DIR/agency-agents-zh" ]; then
+          git clone --depth 1 https://github.com/jnMetaCode/agency-agents-zh.git "$DEPS_DIR/agency-agents-zh" 2>&1
+        fi
+
+        REPO="$DEPS_DIR/agency-agents-zh"
+
+        echo "Installing selected agents..."
+        for f in product-manager; do
+          [ -f "$REPO/product/$f.md" ] && cp "$REPO/product/$f.md" "$AGENTS_TARGET/"
+        done
+
+        for f in design-ux-architect design-ui-designer; do
+          [ -f "$REPO/design/$f.md" ] && cp "$REPO/design/$f.md" "$AGENTS_TARGET/"
+        done
+
+        for f in engineering-software-architect; do
+          [ -f "$REPO/engineering/$f.md" ] && cp "$REPO/engineering/$f.md" "$AGENTS_TARGET/"
+        done
+
+        INSTALLED=$(ls "$AGENTS_TARGET"/engineering-*.md "$AGENTS_TARGET"/product-*.md "$AGENTS_TARGET"/design-*.md 2>/dev/null | wc -l)
+        echo "Installed $INSTALLED agency agents to $AGENTS_TARGET"
+      else
+        echo "All agency agents already installed, skipping clone"
+      fi
+      ```
+
+      ### 3. 安装 devil-advocate + architecture-explorer（core-pack 内置）
+      ```bash
+      AGENTS_TARGET="$(pwd)/.claude/agents"
+      COREPACK_AGENTS=""
+      for d in \
+        "$(pwd)/.octopus/core-pack/agents" \
+        "$(pwd)/packages/core-pack/agents" \
+        "$(pwd)/../core-pack/agents"; do
+        if [ -f "$d/devil-advocate.md" ]; then
+          COREPACK_AGENTS="$d"
+          break
+        fi
+      done
+      if [ -n "$COREPACK_AGENTS" ]; then
+        cp "$COREPACK_AGENTS/devil-advocate.md" "$AGENTS_TARGET/"
+        echo "Installed devil-advocate.md from $COREPACK_AGENTS"
+        [ -f "$COREPACK_AGENTS/architecture-explorer.md" ] && cp "$COREPACK_AGENTS/architecture-explorer.md" "$AGENTS_TARGET/" && echo "Installed architecture-explorer.md from $COREPACK_AGENTS"
+      fi
+      ```
+
+      ### 4. 计算输出目录（自然序号，当前工作空间内）
+      ```bash
+      # 输出目录在当前工作空间（或 CLI 运行目录）内
+      OUTPUT_ROOT="./docs/prd-forge"
+      mkdir -p "$OUTPUT_ROOT"
+
+      # 找到最大序号 + 1
+      MAX_INDEX=0
+      for dir in "$OUTPUT_ROOT"/prd-*/; do
+        if [ -d "$dir" ]; then
+          # 提取序号
+          INDEX=$(basename "$dir" | sed 's/prd-0*//' | sed 's/^$/0/')
+          if [ "$INDEX" -gt "$MAX_INDEX" ] 2>/dev/null; then
+            MAX_INDEX=$INDEX
+          fi
+        fi
+      done
+
+      NEW_INDEX=$((MAX_INDEX + 1))
+      PRD_INDEX=$(printf "%03d" $NEW_INDEX)
+      OUTPUT_DIR="$OUTPUT_ROOT/prd-$PRD_INDEX"
+      mkdir -p "$OUTPUT_DIR"
+
+      # 获取绝对路径用于输出
+      OUTPUT_DIR_ABS="$(cd "$OUTPUT_DIR" && pwd)"
+
+      echo "Output directory: $OUTPUT_DIR_ABS"
+      ```
+
+      ### 5. 生成 PRD 名称
+      根据 $inputs.idea 生成一个简短的 PRD 名称（英文，kebab-case，最多 5 个单词）。
+
+      ## 输出要求
+
+      在回复末尾直接输出纯 JSON 行（不要用代码块包裹）:
+      {"vars_update":{"output_dir":"$vars.output_dir","output_dir_abs":"$(cd $vars.output_dir && pwd)","prd_index":"<序号>","prd_name":"<简短名称>","display_name":"PRD Forge #<序号> · <简短名称>"}}
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 0.5: Clarify — Idea 理解与上下文分析
+  # ═══════════════════════════════════════════════════════════════
+  - id: clarify
+    type: agent
+    depends_on: [setup]
+    timeout: 1200
+    prompt: |
+      你是一位经验丰富的技术产品分析师，正在深入理解用户的 idea。
+
+      ## 用户 Idea
+      $inputs.idea
+
+      ## 输出目录
+      $vars.output_dir
+
+      ## 你的任务
+
+      对 idea 进行深度分析，为后续所有阶段提供精确的上下文指引。这不是需求发现，而是**理解用户真正在说什么**。
+
+      ### 1. 项目类型识别 ⭐ 最重要
+
+      判断这个项目属于哪种类型（影响后续所有阶段的输出模板和重点）：
+
+      | 类型 | 特征 | 后续重点 |
+      |------|------|----------|
+      | **product**（产品型） | 面向终端用户、需要 UI/UX、有商业模式 | 用户画像、故事、API、GTM |
+      | **infrastructure**（基础设施型） | 内部工具、配置改造、架构重构、开发者体验 | 接口设计、配置语法、迁移策略、向后兼容 |
+      | **hybrid**（混合型） | 兼具产品和基础设施特征 | 两者兼顾 |
+
+      判断依据：
+      - idea 中提到"用户"、"客户"、"界面"、"产品" → 偏向 product
+      - idea 中提到"重构"、"配置"、"接口"、"机制"、"抽象"、"优化结构" → 偏向 infrastructure
+      - 不确定时，标注为 hybrid
+
+      ### 2. 关键设计决策点提取
+
+      从 idea 中提取用户明确提到或暗示的设计决策：
+      - 用户提到的权衡（"A 还是 B"）
+      - 用户明确排除的方案（"不考虑 X"）
+      - 用户提到的约束条件（"暂时不考虑 Y"）
+      - 用户偏好的方向（"希望 Z"）
+
+      ### 3. 用户核心价值推断
+
+      推断用户最看重的东西（这必须在最终 PRD 中深入展开）：
+      - 用户反复强调的关键词是什么？
+      - 用户说的"好的设计"具体指什么？
+      - 用户期望的深度和创造性在哪里？
+
+      ### 4. Idea 中的技术线索
+
+      提取 idea 中提到的技术概念、现有系统、参考模式：
+      - 提到了哪些现有组件/系统？
+      - 类比了什么模式？（"像 hook 机制"）
+      - 有什么技术约束或偏好？
+
+      ## 输出要求
+
+      将分析结果保存到 `$vars.output_dir/00-clarify.md`
+
+      完成后输出:
+      直接输出纯 JSON 行（不要用代码块包裹）:
+      {"vars_update":{"clarify_file":"$vars.output_dir/00-clarify.md","project_type":"<product/infrastructure/hybrid>","design_focus":"<设计重点，逗号分隔>","key_decisions":"<关键决策点，逗号分隔>","user_emphasis":"<用户核心价值，逗号分隔>","conclusion":"<2-3句话: 这个idea的本质是什么>"}}
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 0.7: Locked Scope — 范围锁定（决定什么算需求、什么算举例）
+  # ═══════════════════════════════════════════════════════════════
+  - id: locked-scope
+    type: agent
+    depends_on: [clarify]
+    timeout: 1200
+    prompt: |
+      你是范围分析师。本节点决定后续 PRD 的"什么是需求、什么是举例"。
+      此分类是后续 discover/define/design 节点的硬约束，违反由下游 completeness-fix 循环修订。
+
+      ## 输入
+      - 原始 Idea: $inputs.idea
+      - 上下文分析: $vars.clarify_file（必读，理解项目类型与用户核心价值）
+      - 范围模式: $inputs.scope_mode
+
+      ## 分类规则
+
+      ### strict 模式（默认）
+      1. **IN-SCOPE**：仅提取用户明确用功能动词表达的需求（"实现 X"、"需要 Y"、"支持 Z"、"设计 W"）。
+      2. **EXAMPLE-ONLY**：所有 idea 中以"例如"、"比如"、"类似"、"参考"、"e.g."、"such as" 开头的内容（仅作说明，不是需求）。
+      3. **OUT-OF-SCOPE**：用户没提但 LLM 觉得"应该加"的通用功能（认证、日志、监控、告警、限流、CDN、CI/CD 等）——这些都不能进 PRD。
+      4. EXTENSION-CANDIDATE 在 strict 模式下不允许产出。
+
+      ### creative 模式
+      1. **IN-SCOPE**：同 strict 的提取规则。
+      2. **EXAMPLE-ONLY**：同 strict。
+      3. **OUT-OF-SCOPE**：用户明确排除的、与 idea 主题无关的、属于通用基础设施的功能。
+      4. **EXTENSION-CANDIDATE**：LLM 推断"会让产品更完整"的功能。每项必须写：推断依据 + 如不加会造成什么残缺。
+
+      ## 输出文件
+
+      保存到 `$vars.output_dir/02-scope.md`：
+
+      ```markdown
+      # Scope Lock
+
+      模式: <strict / creative>
+      Idea 来源: <文件路径或内联描述>
+
+      ## 范围分类
+
+      | 类别 | ID | 描述 | 依据（idea 引用 / 推断理由） |
+      |------|----|----- |------------------------------|
+      | IN-SCOPE | S-001 | <功能描述> | <idea 第几段 / 第几行> |
+      | EXAMPLE-ONLY | E-001 | <举例说明> | <仅作为说明> |
+      | OUT-OF-SCOPE | X-001 | <用户认证> | <用户未提及；不属于本次范围> |
+      | EXTENSION-CANDIDATE | C-001 | <扩展功能> | <推断依据 + 残缺影响> （仅 creative 模式）|
+
+      ## 红线（后续节点必须遵守）
+      ⛔ OUT-OF-SCOPE 项不得进入 02-requirements.md / 03-solution.md
+      ⛔ EXAMPLE-ONLY 不得作为独立 Story 展开
+      ✅ IN-SCOPE 必须 100% 写入需求文档
+      ✅ EXTENSION-CANDIDATE（creative）写入需求文档时必须明确标注"扩展项"
+      ```
+
+      ## 输出
+      直接输出纯 JSON 行（不要用代码块包裹）:
+      {"vars_update":{"scope_file":"$vars.output_dir/02-scope.md","in_scope_count":"<数量>","out_of_scope_count":"<数量>","example_only_count":"<数量>","extension_candidate_count":"<数量>","conclusion":"<scope_mode> 模式：IN-SCOPE N 项 / OUT-OF-SCOPE M 项 / EXAMPLE-ONLY K 项 / EXTENSION-CANDIDATE J 项"}}
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 1: Discover — 需求发现
+  # ═══════════════════════════════════════════════════════════════
+  - id: discover
+    type: agent
+    depends_on: [locked-scope]
+    timeout: 3600
+    prompt: |
+      你是资深产品经理，正在进行需求发现阶段。
+
+      ## 用户 Idea
+      $inputs.idea
+
+      ## 范围契约（必读，硬约束）
+      $vars.scope_file
+      ⛔ 不写 OUT-OF-SCOPE 项进入需求发现文档
+      ⛔ 不把 EXAMPLE-ONLY 当成独立需求展开
+      ✅ creative 模式可以把 EXTENSION-CANDIDATE 写入（但需明确标注"扩展项"）
+      违反时下游 completeness-review 会触发 completeness-fix 循环修订。
+
+      ## Idea 上下文分析
+      $vars.clarify_file
+
+      ## 项目类型
+      $vars.project_type（$vars.design_focus）
+
+      ## 用户强调的核心价值
+      $vars.user_emphasis
+
+      ## 输出目录
+      $vars.output_dir
+
+      ## 你的任务
+
+      深入分析用户的 idea，输出一份需求发现文档。必须覆盖以下维度：
+
+      ### 1. 问题陈述
+      - 用一段话说清楚解决什么问题
+      - 谁有这个痛点？频率如何？
+      - 不解决的代价是什么？
+
+      ### 2. 问题证据
+      - 用户痛点（假设性证据或已知数据）
+      - 市场信号（竞品、趋势）
+      - 类似解决方案的分析
+
+      ### 3. 目标用户群体
+      - 粗略画像（职业、场景、技术水平）
+      - 预估用户规模
+
+      ### 4. 机会假设
+      - 为什么现在是做这件事的好时机？
+      - 核心差异化是什么？
+
+      ### 5. 不做这件事的代价
+      - 用户会继续用什么替代方案？
+      - 市场机会窗口有多大？
+
+      ## 规则
+      - 无人值守模式，直接执行
+      - 中文输出
+      - 不要跳到解决方案，专注于问题本身
+      - **先读取 $vars.clarify_file**，理解项目类型和用户强调的核心价值
+      - 如果项目类型是 infrastructure，重点关注技术债务、架构约束、迁移成本
+      - 如果项目类型是 product，重点关注用户痛点、市场信号、竞品分析
+      - **用户强调的核心价值**（$vars.user_emphasis）必须在发现文档中有对应分析
+
+      ## 输出
+
+      将文档保存到 `$vars.output_dir/01-discovery.md`
+
+      完成后输出:
+      直接输出纯 JSON 行（不要用代码块包裹）:
+      {"vars_update":{"discovery_file":"$vars.output_dir/01-discovery.md","conclusion":"<2-3句话总结发现的问题>"}}
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 1.5: Challenge Discover — 对抗审查（需求发现）
+  # ═══════════════════════════════════════════════════════════════
+  - id: refine-discover
+    type: agent
+    depends_on: [discover]
+    timeout: 3600
+    execute_when: '$inputs.enable_adversarial == "true"'
+    agents:
+      devil-advocate:
+        description: "魔鬼代言人 — 质疑需求假设、识别遗漏、挑战盲点。默认立场：NEEDS MORE EVIDENCE。"
+        agent_file: ".claude/agents/devil-advocate.md"
+        prompt: |
+          ## 本次挑战目标
+          读取需求发现文档 $vars.discovery_file，对其中的每一个假设进行质疑。
+
+          ## 审查清单（聚焦遗漏）
+          - 🔴 CRITICAL: 问题是否真实存在？还是凭空想象？
+          - 🔴 CRITICAL: 目标用户是否具体？还是"所有人"？
+          - 🟡 RISK: 是否遗漏了关键利益相关者？
+          - 🟡 RISK: 市场时机是否合理？
+          - 🔵 QUESTION: 是否有更根本的问题被忽略？
+
+          ## 输出方式（必须直接 Write，不要返回正文）
+          使用 Write 工具将审查结果写入 $vars.output_dir/01-discovery.challenges.md，格式：
+
+          # 需求发现 — 对抗审查报告
+
+          ## 摘要
+          <2-3 句话总结关键质疑>
+
+          ## 质疑清单（共 N 条）
+
+          ### #1 [🔴 CRITICAL] <一句话标题>
+          - **质疑什么**: ...
+          - **为什么有问题**: ...
+          - **可接受证据**: ...
+
+          （按 CRITICAL → RISK → QUESTION 顺序排列）
+
+          Write 完成后只需返回 1 行确认: "已写入 N 条质疑到 <path>"
+        model: opus[1m]
+        tools: ["Read", "Grep", "Write"]
+    prompt: |
+      你是需求审查的双角色协调者：先收集质疑，再独立裁决。
+
+      ## ⚠️ 阶段切换原则（必读）
+      - **Phase A（收集）**: 委派 devil-advocate 子代理产出独立的质疑文件，子代理直接 Write 到磁盘
+      - **Phase B（裁决）**: 你切换为"独立修订者"角色，对每条质疑给出明确决策——不可因"刚才已经讨论过"而默认接受；拒绝是可选项，不是失败
+
+      ## 工作流
+
+      ### Phase A: 收集质疑
+      委派 devil-advocate: "审查需求发现文档 $vars.discovery_file，使用 Write 工具将质疑直接落盘到 $vars.output_dir/01-discovery.challenges.md"
+
+      ### Phase B: 独立裁决与修订
+      1. 读取 $vars.discovery_file（原文档）
+      2. 读取 $vars.output_dir/01-discovery.challenges.md（质疑清单）
+      3. 对每条质疑独立判断:
+         - 🔴 CRITICAL: 必须采纳并修订原文档；如拒绝必须写明充分理由
+         - 🟡 RISK: 评估后采纳或拒绝（附理由）
+         - 🔵 QUESTION: 酌情采纳
+      4. 在 $vars.discovery_file 末尾追加 "## 对抗审查回应" section，按 "质疑 #N → 采纳/拒绝/补充信息 → 处理方式" 逐条记录
+      5. 对采纳的 CRITICAL/RISK 质疑，在原文档对应章节做实际修订
+      6. 保存更新后的 $vars.discovery_file
+
+      ## 规则
+      - 无人值守模式
+      - 中文输出
+      - **角色切换纪律**：你既是收集方又是裁决方，必须保持独立判断
+
+      ## 输出
+      直接输出纯 JSON 行（不要用代码块包裹）:
+      {"vars_update":{"challenge_discover_file":"$vars.output_dir/01-discovery.challenges.md","challenge_discover_count":"<质疑数量>","conclusion":"<2-3句话: 采纳几条/拒绝几条/关键修改>"}}
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 2: Define — 需求定义 ⭐ 关键完整性阶段
+  # ═══════════════════════════════════════════════════════════════
+  - id: define
+    type: agent
+    depends_on: [discover]
+    timeout: 7200
+    prompt: |
+      你是资深产品经理 + UX 架构师团队，正在进行需求定义阶段。
+
+      ## 范围契约（必读，硬约束）
+      $vars.scope_file
+      ⛔ 不把 OUT-OF-SCOPE 项写成 User Story
+      ⛔ 不把 EXAMPLE-ONLY 当成独立 Story 展开
+      ✅ creative 模式的 EXTENSION-CANDIDATE 可写入但必须标记为"扩展项"
+      违反时下游 completeness-review 会触发 completeness-fix 循环修订。
+
+      ## 上一阶段输出
+      需求发现文档: $vars.discovery_file
+      请先读取该文件。
+
+      ## 输出目录
+      $vars.output_dir
+
+      ## 你的任务
+
+      基于需求发现，输出完整的需求定义文档。**必须覆盖以下所有维度**：
+
+      ### 1. 用户画像（Personas）⭐ 必须具体
+      每个画像必须包含：
+      - 名字（虚构但具体，如"小明，28岁"）
+      - 职业和背景
+      - 使用场景（什么时候用？为什么用？）
+      - 核心痛点
+      - 期望目标
+      - 技术水平
+
+      至少定义 2-3 个主要画像。
+
+      ### 2. 用户故事（User Stories）⭐ 必须可验证
+      每个核心功能至少 3 个用户故事，格式：
+      ```
+      **Story**: 作为 [画像]，我想要 [操作]，以便 [结果]。
+
+      **验收标准**（Given/When/Then）:
+      - Given [前置条件]
+      - When [用户操作]
+      - Then [预期结果]
+      - And [额外验证]
+      ```
+
+      **⚠️ UI 操作完整性（当故事涉及用户界面时强制要求）**:
+      如果用户故事的 When 涉及 UI 操作（如"在页面上配置"、"通过界面查看"、"点击按钮"），
+      验收标准**必须额外包含**：
+      - **UI 入口**: 用户从哪个页面/菜单进入此功能？导航路径是什么？
+      - **操作步骤**: 具体的 UI 操作序列（点击什么 → 填写什么 → 提交什么）
+      - **页面状态**: 操作前的页面状态、操作中的加载/反馈、操作后的结果展示
+      - **错误反馈**: 操作失败时用户看到什么？如何引导用户修正？
+
+      示例：
+      ```
+      **Story**: 作为运维人员，我想要通过 Web UI 创建定时调度任务，以便自动执行工作流。
+
+      **验收标准**:
+      - Given 用户已登录且拥有调度管理权限
+      - When 用户导航到 "调度管理" 页面，点击 "新建调度" 按钮
+      - Then 弹出调度配置表单（名称、Cron 表达式、目标工作流、通知渠道）
+      - And 用户填写完成后点击 "保存"，系统验证 Cron 表达式合法性
+      - And 保存成功后，调度列表刷新显示新任务，状态为 "已启用"
+      - And 如果 Cron 表达式无效，表单高亮错误字段并显示提示信息
+
+      **UI 入口**: 侧边栏 → 调度管理 → 新建调度按钮
+      **页面状态**: 空列表引导态 → 表单填写态 → 提交加载态 → 成功/失败反馈
+      ```
+
+      ### 3. 功能界面声明 ⭐ 当涉及 UI 时必须包含
+      声明本 PRD 是否涉及用户界面：
+
+      | 声明项 | 值 |
+      |--------|---|
+      | **是否有用户界面** | 是/否 |
+      | **界面类型** | Web UI / CLI / API-only / 混合 |
+      | **核心页面清单** | （如果有 UI，列出所有涉及的页面） |
+
+      如果 **有用户界面**，必须定义：
+      - 每个页面的用途和核心功能
+      - 页面间的导航关系（从哪来、到哪去）
+      - 每个页面必须覆盖的状态（空态/加载态/成功态/错误态/部分数据态）
+
+      如果 **无用户界面**（纯 API/CLI/后台服务），标注"不适用"并说明用户如何与功能交互（CLI 命令、API 调用示例）。
+
+      ### 4. Non-Goals（不做的事）⭐ 必须明确
+      明确列出 V1 不做的事，并说明原因：
+      - 功能 X — 原因：复杂度过高/用户量太小/依赖未就绪
+
+      ### 5. 用户旅程地图 ⭐ 必须完整
+      从发现 → 注册 → 核心流程 → 留存的完整路径：
+      - 每个阶段的**页面/界面**（用户在哪个页面？看到什么？）
+      - 每个阶段的**用户操作**（点击什么？填写什么？）
+      - 每个阶段的痛点/机会
+      - 关键转化点
+      - **如果涉及 UI**: 标注每步对应的页面名称和核心交互元素
+
+      ### 6. 边界情况 ⭐ 必须覆盖
+      - 空状态（第一次使用，无数据）— **UI 如何展示？引导文案是什么？**
+      - 错误状态（网络错误、权限不足）— **用户看到什么错误信息？如何重试？**
+      - 极端数据（超大数据量、超长文本）— **UI 如何截断/分页/虚拟化？**
+      - 并发场景（多人同时操作）— **冲突时 UI 如何提示？**
+
+      ### 7. 功能优先级（按来源分类）
+
+      #### 必需（Required）— P0，100% 实现，高质量标准
+      - 用户输入的所有功能 → **自动归为必需，不可降级**
+      - Agent 识别的关键依赖（如 DB 迁移、认证中间件等用户未提但不做就跑不起来的）
+      - **质量标准**：核心逻辑、安全、稳定性必须反复验证；测试需覆盖边界、并发、异常、安全场景
+
+      #### 增强（Enhancement）— P1，同样 100% 实现，质量标准允许简化
+      - Agent 主动建议的、对用户体验有明显提升的功能
+      - 用户明确要求的增强型功能也可归为 P1
+      - **质量标准**：必须实现且测试通过，但允许简化设计——例如安全验证可用基础方案而非企业级，UI 交互可用基本实现而非精细打磨
+      - ⛔ P1 不是"可选"或"未来实现"——既然列入 PRD，就必须 100% 交付
+
+      #### 不做（Won't Have）
+      - 明确排除的功能
+
+      ⛔ **规则：所有列入 PRD 的功能（P0 和 P1）都必须 100% 实现和测试。
+      P0/P1 是质量分级，不是排除机制。P0 要求深度测试，P1 要求基本功能验证通过。**
+
+      ## 规则
+      - 无人值守模式
+      - 中文输出
+      - **完整性优先**：宁可多写也不要遗漏
+
+      ## 输出
+
+      将文档保存到 `$vars.output_dir/02-requirements.md`
+
+      完成后输出:
+      直接输出纯 JSON 行（不要用代码块包裹）:
+      {"vars_update":{"requirements_file":"$vars.output_dir/02-requirements.md","user_stories_count":"<用户故事数量>","personas_count":"<画像数量>","conclusion":"<2-3句话总结>"}}
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 2.5: Challenge Define — 对抗审查（需求定义）⭐ 关键
+  # ═══════════════════════════════════════════════════════════════
+  - id: refine-define
+    type: agent
+    depends_on: [define]
+    timeout: 5400
+    execute_when: '$inputs.enable_adversarial == "true"'
+    agents:
+      devil-advocate:
+        description: "魔鬼代言人 — 审查需求完整性，找出遗漏。默认立场：INCOMPLETE。"
+        agent_file: ".claude/agents/devil-advocate.md"
+        prompt: |
+          ## 本次挑战目标
+          读取需求定义文档 $vars.requirements_file，进行完整性审查。
+
+          ## 完整性审查清单
+          - 🔴 CRITICAL: 用户画像是否具体到可以识别真人？（不是"用户"这种泛称）
+          - 🔴 CRITICAL: 用户故事是否覆盖所有核心功能？
+          - 🔴 CRITICAL: 验收标准是否可自动化测试？
+          - 🔴 CRITICAL: 涉及 UI 操作的用户故事是否包含完整的 UI 操作步骤？（入口→操作→反馈→结果）
+          - 🔴 CRITICAL: 是否包含"功能界面声明"？（有 UI 的项目必须列出核心页面清单和状态设计）
+          - 🟡 RISK: 是否遗漏了关键边界情况（空状态/错误/并发）的 UI 表现？
+          - 🟡 RISK: Non-Goals 是否合理？是否有"必须做但被延后"的功能？
+          - 🟡 RISK: 用户旅程地图是否标注了每步对应的页面和交互元素？
+          - 🔵 IMPROVEMENT: 用户旅程是否有断点？
+
+          ## 输出方式（必须直接 Write，不要返回正文）
+          使用 Write 工具将审查结果写入 $vars.output_dir/02-requirements.challenges.md，格式：
+
+          # 需求定义 — 完整性审查报告
+
+          ## 摘要
+          <2-3 句话总结关键遗漏>
+
+          ## 遗漏清单（共 N 条）
+
+          ### #1 [🔴 CRITICAL] <维度> — <一句话标题>
+          - **遗漏什么**: ...
+          - **为什么重要**: ...
+          - **如何补充**: ...
+
+          （按 CRITICAL → RISK → IMPROVEMENT 顺序排列）
+
+          Write 完成后只需返回 1 行确认: "已写入 N 条遗漏到 <path>"
+        model: opus[1m]
+        tools: ["Read", "Grep", "Write"]
+    prompt: |
+      你是需求审查的双角色协调者：先收集遗漏，再独立裁决与补充。
+
+      ## ⚠️ 阶段切换原则（必读）
+      - **Phase A（收集）**: 委派 devil-advocate 子代理产出独立的遗漏清单，子代理直接 Write 到磁盘
+      - **Phase B（裁决与补充）**: 你切换为"独立修订者"角色，对每条遗漏给出明确决策
+
+      ## 工作流
+
+      ### Phase A: 收集遗漏
+      委派 devil-advocate: "审查需求定义文档 $vars.requirements_file 的完整性，使用 Write 工具将遗漏直接落盘到 $vars.output_dir/02-requirements.challenges.md"
+
+      ### Phase B: 独立裁决与补充
+      1. 读取 $vars.requirements_file（原文档）
+      2. 读取 $vars.output_dir/02-requirements.challenges.md（遗漏清单）
+      3. 对每条遗漏独立判断:
+         - 🔴 CRITICAL: 必须补充到文档；如拒绝必须写明充分理由（CRITICAL 也可被合理拒绝）
+         - 🟡 RISK: 评估后补充或记录拒绝理由
+         - 🔵 IMPROVEMENT: 酌情采纳
+      4. 在 $vars.requirements_file 末尾追加 "## 完整性审查回应" section，按 "遗漏 #N → 采纳/拒绝 → 补充位置/理由" 逐条记录
+      5. 对采纳的遗漏，**直接修订对应章节**（用户画像、用户故事、UI 声明等）
+      6. 保存更新后的 $vars.requirements_file
+
+      ## 规则
+      - 优先补充遗漏内容
+      - 保持无人值守模式
+      - **角色切换纪律**：你既是收集方又是裁决方，必须保持独立判断
+
+      ## 输出
+      直接输出纯 JSON 行（不要用代码块包裹）:
+      {"vars_update":{"challenge_define_file":"$vars.output_dir/02-requirements.challenges.md","challenge_define_count":"<遗漏数量>","conclusion":"<2-3句话: 补充了什么/拒绝了什么>"}}
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 2.8: Acceptance Cases — 抽象验收用例（BDD 左移）⭐ 新增
+  # ═══════════════════════════════════════════════════════════════
+  - id: acceptance-cases
+    type: agent
+    # 依赖 refine-define 而非 define：refine-define 会就地补充 requirements_file（采纳遗漏），
+    # acceptance-cases 必须读取补充后的版本才能生成完整用例；
+    # refine-define 在 enable_adversarial=false 时被跳过，引擎将其视为已完成，不阻塞下游。
+    depends_on: [refine-define]
+    timeout: 3600
+    prompt: |
+      你是验收测试架构师，正在为 PRD 生成抽象验收用例（不绑定实现细节）。
+
+      ## 设计哲学
+      这是 BDD/ATDD 测试左移环节：从 User Stories 的 Given/When/Then 抽取可验证用例。
+      产出物是"逻辑用例"（描述 Story 应当满足什么），不是"可执行测试脚本"。
+      可执行用例由下游 prd-impl 工作流的 e2e-case-bind 节点绑定到具体 API/selector/工作流。
+
+      ## 输入
+      - 需求定义: $vars.requirements_file（重点读取 User Stories 章节）
+      - Idea 上下文: $vars.clarify_file（理解项目类型）
+      - 项目类型: $vars.project_type
+
+      ## 你的任务
+
+      ### 1. 用例提取规则
+      逐一遍历 02-requirements.md 的 User Stories，每个 Story 至少生成 1 条 P0 用例。
+      验收标准 Given/When/Then 中的每个 "And" 可作为额外断言。
+
+      ### 2. 用例字段（必填）
+      | 字段 | 说明 |
+      |------|------|
+      | case_id | TC-001 起递增，全局唯一 |
+      | story_id | 关联的 User Story 编号（来自 02-requirements.md） |
+      | priority | P0(必需) / P1(增强) |
+      | source | user(用户输入) / agent(Agent 建议) |
+      | scenario | 一句话描述用例场景 |
+      | given | 抽象前置条件（用户角色 + 系统状态） |
+      | when | 抽象操作（行为意图，不写具体路径/selector） |
+      | then | 断言意图（业务结果，不写具体响应字段） |
+      | evidence_type | 期望证据类型: api_response / ui_state / file_content / cli_output / workflow_execution |
+      | binding_hints | 给 prd-impl 的绑定提示（可选）："涉及 POST /xxx"、"页面: Dashboard"等 |
+
+      ### 3. 优先级映射
+      - 必需（Required）→ P0
+      - 增强（Enhancement）→ P1
+      - P0/P1 是质量分级，不是排除机制——两者都必须 100% 实现和测试
+      - P0 用例 source: user（用户输入的功能）或 agent（关键依赖）
+      - P1 用例 source: user（用户要求的增强）或 agent（Agent 建议的增强）
+
+      ### 4. 质量标准差异（指导下游测试严格度）
+      - **P0 用例**：需覆盖正常路径 + 边界 + 异常 + 并发 + 安全场景，测试必须深入全面
+      - **P1 用例**：验证基本功能通过即可，允许简化测试（如安全验证只测基础拦截，不测绕过攻击）
+      - 在用例的 Binding Hints 中可标注 `[P0-深度]` 或 `[P1-基础]` 供下游参考
+
+      ### 5. 项目类型适配
+      - **product**: 每个 UI Story 必须含 `evidence_type: ui_state` 用例
+      - **infrastructure**: 偏向 `cli_output` / `file_content` / `workflow_execution`
+      - **hybrid**: 两者兼顾
+
+      ### 6. 边界与异常用例
+      除核心路径外，至少为 30% 的 Story 补充：
+      - 空态/错误态/并发场景
+      - 验证失败 / 权限不足 / 资源不存在
+
+      ## 输出格式
+
+      保存到 `$vars.output_dir/06-acceptance-cases.md`，结构：
+
+      ```markdown
+      # Acceptance Cases (BDD)
+
+      ## 概览
+      - 总数: N
+      - P0: X | P1: Y
+      - 覆盖 Story: M
+
+      ## TC-001: <scenario>
+      - **Story**: STORY-X
+      - **Priority**: P0
+      - **Given**: ...
+      - **When**: ...
+      - **Then**: ...
+      - **Evidence**: api_response
+      - **Binding Hints**: 涉及 POST /api/xxx
+
+      ## TC-002: ...
+      ```
+
+      ## 规则
+      - 中文输出
+      - 不要写实现细节（HTTP 路径、CSS selector、文件名等具体信息可放在 binding_hints）
+      - 每条用例独立，不依赖其他用例的执行结果
+      - 优先级遵循来源分类（必需=P0，增强=P1），不可自行降级用户功能
+      - ⛔ P0 和 P1 都必须 100% 实现和测试，P1 不是"可选"——质量分级不等于排除
+
+      完成后输出:
+      直接输出纯 JSON 行（不要用代码块包裹）:
+      {"vars_update":{"acceptance_cases_file":"$vars.output_dir/06-acceptance-cases.md","acceptance_cases_count":"<总数>","acceptance_p0_count":"<P0数>","conclusion":"<2-3句话总结>"}}
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 3: Design — 方案设计 ⭐ 关键完整性阶段
+  # ═══════════════════════════════════════════════════════════════
+  - id: design
+    type: agent
+    depends_on: [define]
+    timeout: 7200
+    prompt: |
+      你是资深软件架构师，正在进行方案设计阶段。
+
+      ## 范围契约（必读，硬约束）
+      $vars.scope_file
+      ⛔ 不为 OUT-OF-SCOPE 项设计架构、API 或数据模型
+      ⛔ 不把 EXAMPLE-ONLY 当成独立模块设计
+      ✅ creative 模式的 EXTENSION-CANDIDATE 可设计但必须标记为"扩展项"
+      违反时下游 completeness-review 会触发 completeness-fix 循环修订。
+
+      ## 项目类型
+      $vars.project_type
+
+      ## 用户强调的核心价值
+      $vars.user_emphasis
+
+      ## 设计重点
+      $vars.design_focus
+
+      ## 上一阶段输出
+      需求定义文档: $vars.requirements_file
+      请先读取该文件，理解所有用户故事和边界情况。
+
+      ## Idea 上下文分析
+      $vars.clarify_file
+      请先读取该文件，理解项目类型和用户核心诉求。
+
+      ## 输出目录
+      $vars.output_dir
+
+      ## 你的任务
+
+      基于需求定义，输出完整的技术方案文档。
+
+      **⚠️ 根据项目类型选择对应的模板：**
+
+      ---
+
+      ### 如果 project_type 是 "infrastructure"（基础设施型），使用以下模板：
+
+      ### 1. 方案概述
+      - 核心改造思路（一段话说清解决什么问题、核心策略、关键技术决策）
+      - 改造的驱动力和背景
+
+      ### 2. 系统架构 ⭐ 必须有对比图
+      - 改造前 vs 改造后的架构对比（ASCII 图）
+      - 组件职责变化
+      - 数据流 / 执行流变化图
+
+      ### 3. 接口与配置设计 ⭐ 核心章节
+      这是基础设施型项目最重要的章节，必须**深入且详细**：
+      - 新增/变更的配置语法：给出完整的配置格式说明 + 多个示例
+      - 新增/变更的接口定义：函数签名、参数、返回值、错误处理
+      - 向后兼容策略：新旧版本如何共存
+      - 扩展性设计：未来如何扩展而不破坏现有用法
+
+      ### 4. 迁移策略 ⭐ 核心章节
+      - 渐进式迁移路径（分阶段，每阶段可独立验证）
+      - 新旧机制共存方案（如何避免功能重复/冲突）
+      - 回滚策略（每阶段的回滚方式和成本）
+      - 验证清单（如何确认迁移成功）
+
+      ### 5. 技术选型 + ADR
+      每个选型决策必须有理由和替代方案分析
+
+      ### 6. 安全设计（按项目实际，无认证需求可简化）
+      ### 7. 性能设计（按项目实际，无性能瓶颈可简化）
+
+      ### 8. 错误处理 ⭐ 必须完整
+      - 异常场景列表
+      - 降级策略
+      - 用户友好的错误信息
+
+      ### 9. 依赖清单
+      ### 10. 风险评估
+
+      ---
+
+      ### 如果 project_type 是 "product"（产品型），使用以下模板：
+
+      ### 1. 方案概述
+      ### 2. 系统架构 ⭐ 必须有图（模块划分、组件关系、数据流向）
+      ### 3. UI/UX 设计 ⭐⭐ 产品型核心章节
+      **3.1 页面清单与导航结构**
+      - 列出所有页面/视图，标注用途和核心功能
+      - 页面间导航关系图（侧边栏/顶部导航/面包屑/路由结构）
+      - 每个页面的 URL 路由设计
+
+      **3.2 核心页面设计**
+      对每个核心页面，必须定义：
+      - **布局**: 页面区域划分（头部/侧边栏/主内容区/操作区）
+      - **核心组件**: 使用什么组件？（表格/表单/卡片/图表/模态框）
+      - **数据展示**: 展示哪些字段？排序/筛选/分页如何设计？
+      - **操作入口**: 用户可以执行哪些操作？按钮位置和触发方式
+
+      **3.3 交互流程设计**
+      对每个核心用户操作，定义完整的交互序列：
+      ```
+      操作: 创建调度任务
+      1. 用户点击 "新建" 按钮
+      2. 弹出模态框/跳转新页面
+      3. 表单展示：名称(input)、Cron(input+校验提示)、工作流(select)、通知(select)
+      4. 用户填写 → 实时校验 Cron 表达式
+      5. 点击 "保存" → loading 状态
+      6. 成功: toast 提示 + 列表刷新 | 失败: 表单错误高亮 + 错误信息
+      ```
+
+      **3.4 状态设计**
+      每个页面必须覆盖 5 种状态的 UI 设计：
+      | 状态 | UI 表现 |
+      |------|---------|
+      | 空态 | 引导文案 + 主操作按钮（如"暂无数据，点击创建"） |
+      | 加载态 | 骨架屏/spinner，禁用操作按钮 |
+      | 成功态 | 正常数据展示 + 操作可用 |
+      | 错误态 | 错误信息 + 重试按钮 + 联系客服入口 |
+      | 部分数据 | 分页/虚拟滚动 + 加载更多 |
+
+      **3.5 响应式与无障碍**
+      - 断点设计：移动端(< 768px) / 平板(768-1024px) / 桌面(> 1024px)
+      - 移动端适配策略：折叠菜单、堆叠布局、触摸友好尺寸
+      - 无障碍：键盘导航、焦点管理、ARIA 标签、色彩对比度
+
+      ### 4. 数据模型 ⭐ 必须详细（实体+字段+类型+关系图）
+      ### 5. API 设计 ⭐ 架构级描述（不写工程细节）
+      这一节为 **架构设计评审者**提供，必须包含：
+      - **API 清单**：每个端点一句话描述用途 + 关联的 Story ID（如 STORY-3, STORY-7）
+      - **数据流向图**：哪些 API 串联用户操作（ASCII / mermaid）
+      - **资源边界**： API 如何拆分（资源型 vs RPC型、公开 vs 内部）
+      - ❗ **不要写**：精确 HTTP 状态码、错误码穷举、类型定义、请求/响应体完整字段 —
+        这些由下游 prd-impl 的 contract 节点展开（避免重复 & 为未来迭代留弹性）
+      ### 6. 技术选型 + ADR
+      ### 7. 安全设计 ⭐（认证/授权/加密）
+      ### 8. 性能设计 ⭐（延迟目标/并发/缓存）
+      ### 9. 错误处理
+      ### 10. 依赖清单
+      ### 11. 风险评估
+
+      ---
+
+      ### 如果 project_type 是 "hybrid"（混合型），合并两个模板：
+      - 产品型维度中适用的部分
+      - 基础设施型维度中适用的部分
+      - 自行判断哪些维度是核心
+
+      ---
+
+      ## 规则
+      - 无人值守模式
+      - 中文输出
+      - **深度优先于广度**：核心章节必须深入透彻，非核心章节可以简化
+      - **用户强调的价值**（$vars.user_emphasis）对应的章节必须是最详细的
+      - 每个用户故事都应有对应的技术方案覆盖
+      - 如果某个维度对本项目不适用，明确标注"不适用"并说明原因，不要硬凑
+
+      ## 输出
+
+      将文档保存到 `$vars.output_dir/03-solution.md`
+
+      完成后输出:
+      直接输出纯 JSON 行（不要用代码块包裹）:
+      {"vars_update":{"solution_file":"$vars.output_dir/03-solution.md","entities_count":"<实体/配置项数量>","api_count":"<API/接口数量>","conclusion":"<2-3句话总结>"}}
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 3.5: Challenge Design — 对抗审查（方案设计）
+  # ═══════════════════════════════════════════════════════════════
+  - id: challenge-design
+    type: agent
+    depends_on: [design]
+    timeout: 1800
+    execute_when: '$inputs.enable_adversarial == "true"'
+    agents:
+      devil-advocate:
+        description: "魔鬼代言人 — 审查技术方案完整性。默认立场：INCOMPLETE。"
+        agent_file: ".claude/agents/devil-advocate.md"
+        prompt: |
+          ## 本次挑战目标
+          读取技术方案文档 $vars.solution_file 和需求文档 $vars.requirements_file，进行交叉完整性审查。
+
+          ## 项目类型: $vars.project_type
+
+          ## 审查清单（根据项目类型侧重不同维度）
+
+          **通用维度：**
+          - 🔴 CRITICAL: 技术方案是否覆盖所有用户故事？
+          - 🔴 CRITICAL: 是否有单点故障或安全风险？
+          - 🟡 RISK: 技术方案是否过度设计或不足设计？
+
+          **infrastructure 型额外维度：**
+          - 🔴 CRITICAL: 配置语法是否完备（所有场景都能表达）？
+          - 🔴 CRITICAL: 向后兼容策略是否可行？
+          - 🟡 RISK: 迁移路径是否可逐步验证？
+          - 🟡 RISK: 新旧机制共存是否有冲突风险？
+
+          **product 型额外维度：**
+          - 🔴 CRITICAL: 数据模型是否覆盖所有实体？
+          - 🔴 CRITICAL: API 是否覆盖所有交互？
+          - 🟡 RISK: 是否遗漏了认证/授权设计？
+
+          ## 输出方式（必须直接 Write，不要返回正文）
+          使用 Write 工具将审查结果写入 $vars.output_dir/03-solution.challenges.devil.md，格式：
+
+          # 技术方案 — 魔鬼代言人报告
+
+          ## 摘要
+          <2-3 句话总结主要风险与缺失>
+
+          ## 质疑清单（共 N 条）
+          ### #1 [🔴 CRITICAL] <维度> — <一句话标题>
+          - **遗漏什么**: ...
+          - **为什么重要**: ...
+          - **如何补充**: ...
+
+          （按 CRITICAL → RISK → IMPROVEMENT 顺序排列）
+
+          Write 完成后只需返回 1 行确认: "已写入 N 条质疑到 03-solution.challenges.devil.md"
+        model: opus[1m]
+        tools: ["Read", "Grep", "Write"]
+      feasibility-reviewer:
+        description: "可行性审查者 — 审查技术可行性和工作量。"
+        agent_file: ".claude/agents/engineering-software-architect.md"
+        prompt: |
+          ## 本次审查目标
+          审查技术方案 $vars.solution_file：
+          1. 技术选型是否成熟稳定？
+          2. 工作量估算是否合理？
+          3. 是否有单点故障风险？
+          4. 是否有过度设计的部分？
+
+          ## 输出方式（必须直接 Write，不要返回正文）
+          使用 Write 工具将审查结果写入 $vars.output_dir/03-solution.challenges.feasibility.md，格式：
+
+          # 技术方案 — 可行性审查报告
+
+          ## 摘要
+          <2-3 句话总结可行性结论>
+
+          ## 问题清单（按 CRITICAL/RISK/IMPROVEMENT 分级）
+          ### #1 [CRITICAL] <一句话标题>
+          - **问题**: ...
+          - **影响**: ...
+          - **修正建议**: ...
+
+          Write 完成后只需返回 1 行确认。
+        model: opus[1m]
+        tools: ["Read", "Grep", "Write"]
+      architecture-explorer:
+        description: "架构探索者 — 在约束条件下寻找更深、更有创造力的设计方案。默认立场：这个方案还可以更深入。"
+        agent_file: ".claude/agents/architecture-explorer.md"
+        prompt: |
+          ## 本次探索目标
+          读取技术方案文档 $vars.solution_file、需求文档 $vars.requirements_file、和 idea 分析 $vars.clarify_file。
+
+          ## 项目类型: $vars.project_type
+          ## 用户强调的核心价值: $vars.user_emphasis
+
+          ## 你的任务
+          当前方案已经是一个合理的解法。你的工作是找到让它从"能用"变为"出色"的机会。
+
+          探索方向：
+          1. 有没有被忽视的更优设计路径？
+          2. 用户强调的核心价值（$vars.user_emphasis）在方案中是否被充分展开？
+          3. 有没有创造性的解法，在约束条件下做得更好？
+          4. 类似的问题在业界有哪些优雅的设计可以参考？
+
+          ## 输出方式（必须直接 Write，不要返回正文）
+          使用 Write 工具将探索结果写入 $vars.output_dir/03-solution.challenges.architect.md，格式：
+
+          # 技术方案 — 架构探索报告
+
+          ## 摘要
+          <2-3 句话总结主要机会与深化方向>
+
+          ## 机会清单（共 N 条，按 OPPORTUNITY / DEEPEN / CREATIVE 分级）
+          ### #1 [🟢 OPPORTUNITY] <一句话标题>
+          - **机会**: ...
+          - **价值**: ...
+          - **如何纳入方案**: ...
+
+          ### #2 [🔵 DEEPEN] <一句话标题>
+          - **当前方案位置**: ...
+          - **深化方向**: ...
+          - **新增 section/subsection 建议**: ...
+
+          ### #3 [💡 CREATIVE] <一句话标题>
+          - **创意**: ...
+          - **可行性评估**: ...
+          - **采纳建议**: 替代方案 / 未来演进 / 不采纳
+
+          Write 完成后只需返回 1 行确认。
+        model: opus[1m]
+        tools: ["Read", "Grep", "Write"]
+    prompt: |
+      你是对抗审查协调者。**三个子代理各自直接 Write 自己的报告文件**，你只负责并行委派 + 生成索引。
+
+      ## 工作流
+      1. 并行委派三个子代理（子代理会自己 Write 报告文件）：
+         - devil-advocate: 完整性审查 → 03-solution.challenges.devil.md
+         - feasibility-reviewer: 可行性审查 → 03-solution.challenges.feasibility.md
+         - architecture-explorer: 设计探索 → 03-solution.challenges.architect.md
+      2. 三个文件就位后，**不要重新编辑或合并三份内容**（避免冗余 token），只生成一个轻量索引文件 $vars.output_dir/03-solution.challenges.index.md：
+
+         # 03-solution 对抗审查索引
+
+         ## 报告清单
+         - 魔鬼代言人报告: 03-solution.challenges.devil.md — <从该文件 ## 摘要 section 复制 1-2 行>
+         - 可行性审查报告: 03-solution.challenges.feasibility.md — <从该文件 ## 摘要 section 复制 1-2 行>
+         - 架构探索报告: 03-solution.challenges.architect.md — <从该文件 ## 摘要 section 复制 1-2 行>
+
+         ## 总数
+         质疑+机会总数: N
+
+      ## 输出
+      直接输出纯 JSON 行（不要用代码块包裹）:
+      {"vars_update":{"challenge_design_file":"$vars.output_dir/03-solution.challenges.index.md","challenge_design_count":"<质疑+机会总数>","conclusion":"<2-3句话总结: 主要风险 + 主要机会>"}}
+
+  - id: synthesis-design
+    type: agent
+    depends_on: [challenge-design]
+    timeout: 3600
+    execute_when: '$inputs.enable_adversarial == "true"'
+    prompt: |
+      你是技术方案综合者（**独立裁决角色**）。
+
+      ## ⚠️ 角色独立性
+      challenge-design 收集了三份独立审查报告。你与它分离，须独立判断——
+      不要因"已经审查过"而默认接受所有 CRITICAL；CRITICAL 也可以被合理拒绝。
+
+      ## 输入（三份独立报告 + 索引）
+      - 技术方案: $vars.solution_file
+      - 索引文件: $vars.challenge_design_file（即 03-solution.challenges.index.md）
+      - 魔鬼代言人报告: $vars.output_dir/03-solution.challenges.devil.md
+      - 可行性审查报告: $vars.output_dir/03-solution.challenges.feasibility.md
+      - 架构探索报告: $vars.output_dir/03-solution.challenges.architect.md
+      - Idea 分析: $vars.clarify_file
+      - 用户核心价值: $vars.user_emphasis
+
+      ## 你的任务
+
+      按报告类型应用不同规则：
+
+      ### 报告 1：魔鬼代言人（风险与缺失）
+      1. 对 🔴 CRITICAL: 原则上必须补充到技术方案；如拒绝须在文档中明写理由
+      2. 对 🟡 RISK: 评估后补充或记录拒绝理由
+      3. 对 🔵 IMPROVEMENT: 酌情采纳
+
+      ### 报告 2：可行性审查（技术可行性）
+      1. 对 CRITICAL: 必须修正方案
+      2. 对 RISK/IMPROVEMENT: 评估后采纳
+
+      ### 报告 3：架构探索者（机会与深化方向）⭐ 重要
+      1. 对 🟢 OPPORTUNITY: 评估后纳入方案，如与用户核心价值相关则**必须**纳入
+      2. 对 🔵 DEEPEN: 选**至少 2 个**方向深入展开——这是提升方案深度的关键
+      3. 对 💡 CREATIVE: 评估可行性，可行的纳入"替代方案"或"未来演进"章节
+
+      ### 关键原则
+      - **用户强调的核心价值**（$vars.user_emphasis）对应的深化建议必须优先采纳
+      - devil-advocate 和 architecture-explorer 如有冲突，给出你的判断并写进文档
+      - 不要因"保守"而放弃创造性建议——评估可行性后，可行的应该加入
+      - 深入展开 ≠ 简单提及，需要在技术方案中新增详细的 section 或 subsection
+      - 在 $vars.solution_file 末尾追加 "## 对抗审查回应" section，按报告分组逐条记录采纳/拒绝决策
+
+      ## 规则
+      - 保持无人值守模式
+      - 保存更新后的文档到原路径 $vars.solution_file
+
+      完成后输出:
+      直接输出纯 JSON 行（不要用代码块包裹）:
+      {"vars_update":{"conclusion":"<2-3句话: 补充了什么>"}}
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 3.8: UI Design — 独立 UI 规范（条件触发）⭐ 新增
+  # ═══════════════════════════════════════════════════════════════
+  - id: ui-design
+    type: agent
+    # 依赖 synthesis-design 而非 design：synthesis-design 会就地深化 solution_file
+    # （新增 architecture-explorer 的 OPPORTUNITY/DEEPEN 章节），ui-design 需消费深化后的方案；
+    # synthesis-design 在 enable_adversarial=false 时被跳过，引擎将其视为已完成，不阻塞下游。
+    depends_on: [synthesis-design]
+    timeout: 3600
+    execute_when: '$vars.project_type != "infrastructure"'
+    agents:
+      ui-designer:
+        description: "UI 设计师 — 设计 tokens 、组件库、布局规范"
+        agent_file: ".claude/agents/design-ui-designer.md"
+        model: opus[1m]
+        tools: ["Read", "Write", "Grep", "Glob"]
+    prompt: |
+      你是 UI 规范协调者，委派 ui-designer 子代理产出独立 UI 规范文档。
+
+      ## 设计哲学
+      ui.md 是 UI 表现层规范（静态），与 ux.md 交互流程规范（动态）互补。
+      产出物供下游 prd-impl 的 frontend 节点直接消费。
+
+      ## 输入
+      - 需求定义: $vars.requirements_file（重点读页面清单与状态）
+      - 技术方案: $vars.solution_file（重点读架构章节）
+      - Idea 分析: $vars.clarify_file
+
+      ## 必需覆盖的章节
+
+      ### 1. 页面全谱
+      | 页面ID | 名称 | 路由 | 用途 | 主要组件 | 项目 Story 关联 |
+
+      ### 2. 设计 Tokens
+      - **色彩**: primary / secondary / accent / semantic (success/warn/error/info) / neutral 色阶
+      - **字体**: 字号梯度 (xs/sm/base/lg/xl/2xl/...)、行高、字重
+      - **间距**: 4/8/12/16/24/32/48 等梯度、圆角、阴影
+      - **断点**: 移动 / 平板 / 桌面
+
+      ### 3. 组件清单
+      按 页面使用 / 原子 / 分子 分层：
+      - 表单类（Input / Select / Textarea / DatePicker）
+      - 反馈类（Toast / Modal / Loading / EmptyState / ErrorBoundary）
+      - 导航类（Sidebar / TopBar / Breadcrumb / Tabs）
+      - 数据展示类（Table / Card / List / Chart）
+      每个组件标注 P0/P1 优先级。
+
+      ### 4. 布局规范
+      - 栅格系统（1-12 列 / 4-8-12 列）
+      - 容器宽度与边距
+      - 页面布局模板：仪表盘型 / 列表型 / 详情型 / 表单型
+
+      ### 5. 响应式与无障碍
+      - 移动端适配策略（堆叠/折叠/抽屉化）
+      - 键盘导航顺序
+      - ARIA 标签与色彩对比度安全阈值
+
+      ### 6. 实现提示
+      - 推荐的组件库或设计语言（供参考，不是硬性要求）
+      - 现有项目中的可复用资产（如果能从代码仓调查到）
+
+      ## 输出
+
+      保存到 `$vars.output_dir/07-ui.md`。
+
+      完成后输出:
+      直接输出纯 JSON 行（不要用代码块包裹）:
+      {"vars_update":{"ui_file":"$vars.output_dir/07-ui.md","ui_pages_count":"<页面数>","conclusion":"<2-3句话总结>"}}
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 3.9: UX Flow — 独立 UX 交互流程（条件触发）⭐ 新增
+  # ═══════════════════════════════════════════════════════════════
+  - id: ux-flow
+    type: agent
+    # 依赖 ui-design：ux-flow 必须读取 $vars.ui_file，并绑定 ui.md 的页面ID；
+    # 通过 ui-design 间接依赖 synthesis-design，确保读到对抗深化后的 solution_file。
+    depends_on: [ui-design]
+    timeout: 3600
+    execute_when: '$vars.project_type != "infrastructure"'
+    prompt: |
+      你是 UX 架构师，产出独立的交互流程规范文档。
+
+      ## 设计哲学
+      ux.md 描述动态交互：页面状态机、关键交互序列、状态转换。
+      与 ui.md 互补（ui.md = 静态表现，ux.md = 动态行为）。
+
+      ## 输入
+      - 需求定义: $vars.requirements_file（重点读 User Stories 与边界场景）
+      - UI 规范: $vars.ui_file（必读，确保交互流程与页面存在一致）
+      - Idea 分析: $vars.clarify_file
+
+      ## 必需覆盖的章节
+
+      ### 1. 用户旅程地图
+      从入口 → 核心流程 → 留存 的完整路径，每段标注：
+      - 所在页面（绑定 ui.md 页面ID）
+      - 用户意图与动作
+      - 关键转化点与失败出口
+
+      ### 2. 页面状态机（核心页面逐个展开）
+      每个页面定义 5 种状态及转换：
+      | 状态 | 触发条件 | UI 表现 | 可转换状态 |
+      |------|----------|---------|--------------|
+      | 空态 | 首次访问/无数据 | 引导文案+主操作按钮 | 加载态 |
+      | 加载态 | API 请求中 | 骨架屏/spinner | 成功/错误 |
+      | 成功态 | 返回有数据 | 正常列表 | 部分数据/错误 |
+      | 错误态 | 网络/权限 | 错误提示+重试 | 加载态 |
+      | 部分数据 | 分页/虚拟滚 | 加载更多 | 成功态 |
+
+      ### 3. 核心交互序列
+      对每个 P0 User Story，定义完整交互序列：
+      ```
+      操作: <名称>
+      1. 入口: 从哪个页面/入口进入
+      2. 触发: 点击什么元素
+      3. 表单/输入: 字段、校验、即时反馈
+      4. 提交: loading、防重复提交
+      5. 反馈: 成功提示 / 错误高亮
+      6. 后续: 跳转 / 刷新 / 保留
+      ```
+
+      ### 4. 错误与恢复路径
+      - 表单验证失败 → UI 提示位置 + 修复路径
+      - API 错误分类（4xx vs 5xx vs 网络）不同 UI 表现
+      - 临界状态（token 过期、权限变动）的引导
+
+      ### 5. 实时/异步反馈
+      - 乐观更新场景
+      - 轮询/SSE/WebSocket 状态指示
+      - 请求取消与连接中断恢复
+
+      ### 6. 跳越与快捷路径
+      - 快捷键与命令调用台
+      - 深链接（deeplink）支持与参数预填充
+
+      ## 输出
+
+      保存到 `$vars.output_dir/08-ux.md`。
+
+      完成后输出:
+      直接输出纯 JSON 行（不要用代码块包裹）:
+      {"vars_update":{"ux_file":"$vars.output_dir/08-ux.md","conclusion":"<2-3句话总结>"}}
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 5: Completeness Review — 完整性终审 ⭐ 关键阶段
+  # ═══════════════════════════════════════════════════════════════
+  - id: completeness-review
+    type: agent
+    depends_on: [acceptance-cases, ui-design, ux-flow]
+    timeout: 3600
+    agents:
+      devil-advocate:
+        description: "魔鬼代言人 — 最终完整性审查。默认立场：INCOMPLETE。"
+        agent_file: ".claude/agents/devil-advocate.md"
+        prompt: |
+          ## 本次终审目标
+          对照完整性维度清单，逐项检查所有文档。
+
+          ## 完整性维度清单（15 个维度）
+          1. 问题定义 — 问题陈述清晰、有证据支撑
+          2. 目标用户 — 画像具体（名字、场景、痛点）
+          3. 用户故事 — Given/When/Then 格式、可验证
+          4. 功能范围 — 明确 MVP 边界、Non-Goals
+          5. 技术接口 — 数据模型/配置语法/接口定义（按项目类型侧重）
+          6. API/配置设计 — 架构级描述是否清晰（API 清单 + 数据流，不要求完整请求响应体）
+          7. 项目类型适配 — 文档结构和重点是否匹配项目类型（infrastructure 侧重配置+迁移，product 侧重用户+API）
+          8. **UI 规范完整性** — ⭐ 当 project_type != infrastructure 时为 CRITICAL:
+             - 07-ui.md 是否存在且覆盖页面全谱？
+             - 设计 Tokens（色彩/字体/间距/断点）是否完整？
+             - 组件清单是否覆盖表单/反馈/导航/数据展示四大类别？
+             - 响应式与无障碍是否明确？
+             - 表单错误提示位置、验证反馈是否详细？
+          9. **UX 交互完整性** — ⭐ 当 project_type != infrastructure 时为 CRITICAL:
+             - 08-ux.md 是否包含用户旅程地图？
+             - 每个核心页面是否定义 5 种状态（空/加载/成功/错误/部分数据）？
+             - 每个 P0 Story 是否有完整交互序列（入口→触发→反馈→后续）？
+             - 错误与恢复路径是否完备？
+             - **如果 project_type=product 但 ui_file/ux_file 为空 → ❌ 严重缺失**
+          10. **验收用例完整性** — ⭐ 06-acceptance-cases.md 质量门
+              - 每个 P0 User Story 至少对应 1 条 P0 用例？
+              - 边界/错误/并发场景覆盖达到 30%？
+              - evidence_type 与项目类型匹配（product 含 ui_state，infrastructure 以 cli_output/file_content 为主）？
+              - **用例总数 < User Story 数 → ❌ 严重缺失**
+          11. 安全 — 认证、授权、数据保护（按项目实际调整）
+          12. 性能 — 延迟目标、并发、容量（按项目实际调整）
+          13. 错误处理 — 异常场景、降级策略
+          14. 用户核心价值覆盖 — $vars.user_emphasis 中列出的核心价值是否在 PRD 中有深入展开
+          15. **文档跨引用一致性** — 03-solution 里提到的 API 是否都能在 06-acceptance-cases 里找到验收点？07-ui 里的页面是否都在 08-ux 里有状态机？
+          16. **范围契约一致性（scope_leakage_check）** — ⭐ 与 02-scope.md 对照：
+              - 02-requirements.md / 03-solution.md / 06-acceptance-cases.md / 07-ui.md / 08-ux.md 中是否引入了 OUT-OF-SCOPE 项？
+              - 是否把 EXAMPLE-ONLY 当成独立 Story / 模块展开？
+              - creative 模式下 EXTENSION-CANDIDATE 是否被明确标注为"扩展项"？
+              - **任一文档引入了 OUT-OF-SCOPE 项 → 维度判定 ❌ 严重缺失**（后续 completeness-fix 必须删除越界 Story / 模块，而不是重新写）。
+
+          ## 项目类型: $vars.project_type
+
+          ## 审查方法
+          1. 读取所有文档：
+             - $vars.discovery_file
+             - $vars.requirements_file
+             - $vars.solution_file
+             - $vars.clarify_file
+             - $vars.acceptance_cases_file
+             - $vars.ui_file（可能为空，infrastructure 项目）
+             - $vars.ux_file（可能为空，infrastructure 项目）
+             - $vars.scope_file（范围契约，用于维度 16 的 scope_leakage_check）
+          2. 对每个维度判断：✅ 覆盖 / ❌ 缺失 / ⚠️ 部分覆盖
+          3. 对 ❌ 和 ⚠️ 的维度，说明缺失什么、如何补充
+          4. **维度 5-9 根据项目类型调整评估标准**：
+             - infrastructure（无 UI）: 维度 8-9 标注"不适用"，重点看配置语法完备性、迁移策略
+             - infrastructure（有管理 UI）: 维度 8-9 必须覆盖管理界面的页面设计和操作闭环
+             - product: 维度 8-9 为 CRITICAL，必须完整覆盖所有页面的 UI/UX 设计和用户操作闭环
+             - hybrid: 两者兼顾
+
+          输出格式：
+          | 维度 | 状态 | 位置 | 备注 |
+          |------|------|------|------|
+          | 问题定义 | ✅/❌/⚠️ | 文件名 | 缺失说明 |
+        model: opus[1m]
+        tools: ["Read", "Grep"]
+    prompt: |
+      你是完整性终审协调者。委派 devil-advocate 进行最终完整性审查。
+
+      ## 输入文档
+      - 需求发现: $vars.discovery_file
+      - 需求定义: $vars.requirements_file
+      - 技术方案: $vars.solution_file
+      - 验收用例: $vars.acceptance_cases_file
+      - UI 规范: $vars.ui_file（可能为空）
+      - UX 交互: $vars.ux_file（可能为空）
+
+      ## 工作流
+      1. 委派 devil-advocate 进行 15 维度完整性审查
+      2. 将审查结果保存到 $vars.output_dir/05-completeness-review.md
+      3. 统计覆盖情况
+
+      ## 判定规则
+      - 全部 ✅: 通过，进入最终输出
+      - ❌ 数量 <= $inputs.completeness_threshold: 通过，但记录缺失项
+      - ❌ 数量 > $inputs.completeness_threshold: 不通过，需要补充
+
+      ## 输出
+      直接输出纯 JSON 行（不要用代码块包裹）:
+      {"vars_update":{"completeness_file":"$vars.output_dir/05-completeness-review.md","completeness_score":"<覆盖维度数>/16","completeness_missing":"<缺失维度列表，含 scope_leakage_check 维度状态>","scope_leakage_count":"<实际越界 Story / 模块数量；0 表示无越界>","completeness_passed":"<true/false>","conclusion":"<2-3句话总结，必须包含范围契约一致性结论>"}}
+
+  - id: completeness-gate
+    type: condition
+    depends_on: [completeness-review]
+    cases:
+      - when: '$vars.completeness_passed == "true"'
+        then: completeness-pass
+      - when: default
+        then: completeness-fix
+
+  - id: completeness-fix
+    type: agent
+    depends_on: [completeness-gate]
+    timeout: 3600
+    prompt: |
+      完整性审查未通过，需要补充缺失内容。
+
+      ## 审查结果
+      - 覆盖: $vars.completeness_score
+      - 缺失维度: $vars.completeness_missing
+      - 审查详情: $vars.completeness_file
+
+      ## 你的任务
+      1. 读取审查详情，理解每个缺失维度需要什么
+      2. 补充到对应的文档中：
+       - 问题/用户相关 → 更新 $vars.requirements_file
+       - 技术相关 → 更新 $vars.solution_file
+      3. **维度 16 (scope_leakage_check) 特殊处理**：
+         - 读取 $vars.scope_file 的 OUT-OF-SCOPE 列表
+         - 在 02-requirements.md / 03-solution.md / 06-acceptance-cases.md / 07-ui.md / 08-ux.md 中**删除**对应到 OUT-OF-SCOPE 的 Story / 模块 / 用例 / 页面
+         - 不要试图为越界项重新写 Story 或调整边界——直接删除
+         - creative 模式下未标注"扩展项"的 EXTENSION-CANDIDATE 必须补上标注
+      4. 更新 $vars.completeness_file，标记已补充的维度
+
+      ## 规则
+      - 只补充缺失的部分
+      - 保持与现有内容的一致性
+
+      完成后输出:
+      直接输出纯 JSON 行（不要用代码块包裹）:
+      {"vars_update":{"completeness_passed":"true","conclusion":"<2-3句话: 补充了什么>"}}
+
+  - id: completeness-pass
+    type: condition
+    depends_on: [completeness-gate]
+    cases:
+      - when: default
+        then: output
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 6: Output — 最终 PRD 输出
+  # ═══════════════════════════════════════════════════════════════
+  - id: output
+    type: agent
+    depends_on: [completeness-pass]
+    timeout: 3600
+    prompt: |
+      你是资深产品经理，正在撰写最终 PRD 文档。
+
+      ## ⚠️ 重要：这不是文档拼接任务
+
+      你的工作是基于一手材料，以专业产品经理的视角，**重新撰写**一份连贯、有洞察力的 PRD。
+      不要简单地把各文档的章节搬过来拼接。你需要：
+      - 理解每个文档的核心论点
+      - 找到它们之间的逻辑关系
+      - 用一条贯穿全文的叙事线把它们编织成一个整体
+      - 对矛盾和冲突给出你的判断，而不是都列出来让读者自己选
+
+      ## 输入材料（全部读取）
+      - Idea 分析: $vars.clarify_file（项目类型 + 用户核心价值）
+      - 需求发现: $vars.discovery_file
+      - 需求定义: $vars.requirements_file
+      - 技术方案: $vars.solution_file
+      - 验收用例: $vars.acceptance_cases_file
+      - UI 规范: $vars.ui_file（product/hybrid 项目）
+      - UX 交互: $vars.ux_file（product/hybrid 项目）
+      - 完整性审查: $vars.completeness_file
+      - 对抗审查: $vars.challenge_discover_file、$vars.challenge_define_file、$vars.challenge_design_file
+
+      ## 项目上下文
+      - 项目类型: $vars.project_type
+      - 用户核心价值: $vars.user_emphasis
+      - 设计重点: $vars.design_focus
+
+      ## 输出目录
+      $vars.output_dir
+
+      ## 撰写原则
+
+      ### 1. 以叙事线贯穿
+      从问题到方案到计划，形成一条逻辑链：
+      "我们面对什么问题 → 谁有这个问题 → 为什么现有方案不够 → 我们的方案是什么 → 为什么这样设计 → 如何落地"
+
+      ### 2. 用户强调的点必须深入展开
+      - 读取 $vars.user_emphasis 中列出的核心价值
+      - 这些部分必须是 PRD 中论述最详细、设计最具体的章节
+      - 不要一句话带过——给出配置示例、接口定义、使用场景
+
+      ### 3. 对抗审查中的矛盾要解决
+      - devil-advocate 说"过度设计"、architecture-explorer 说"还可以更深入"——这类矛盾你必须给出判断
+      - 写清楚你的判断和理由，不要两边都列出来然后跳过
+
+      ### 4. 项目类型适配
+      **infrastructure 型 PRD 重点章节：**
+      - 配置语法设计（完整格式 + 多个示例）
+      - 接口/扩展点设计
+      - 迁移策略（分阶段、可验证、可回滚）
+      - 向后兼容
+
+      **product 型 PRD 重点章节：**
+      - 用户画像与故事
+      - API 设计
+      - 数据模型
+      - GTM
+
+      **不要硬套不适合的章节。** 如果某个标准章节对本项目无意义，可以简化或省略。
+
+      ### 5. 质量优先于覆盖
+      - 宁可 5 个章节写得深入透彻，不要 9 个章节都是概述
+      - 每个章节问自己：读完这个章节，实现者知道该做什么吗？
+      - 技术细节该给代码示例就给代码示例，该给配置示例就给配置示例
+
+      ### 6. 发布计划（本节点直接生成，非读取上游）
+      基于技术方案和项目类型，直接在 PRD 的发布计划章节中生成完整内容，必须覆盖：
+
+      **发布阶段**（根据项目类型选择模板）：
+      - infrastructure 型：PoC 验证 → 试点迁移 → 全量迁移 → 稳定运行（每阶段标注目标、通过标准、时间）
+      - product 型：Internal Alpha → Closed Beta → Public Beta → GA（每阶段标注目标、通过标准、时间）
+
+      **成功指标**（必须有具体数字，根据项目类型选择相关指标）：
+      - infrastructure 型：迁移完成率、配置简化度（节点数/行数减少）、成功率、回滚时间
+      - product 型：DAU、留存率、错误率、NPS
+
+      **GTM/沟通简报**：目标受众、核心价值主张（一句话）、沟通方式
+
+      **回滚方案**：触发条件、回滚步骤、沟通方案
+
+      **时间线和里程碑**：关键节点和依赖、关键路径、风险缓冲
+
+      ## PRD 结构（灵活调整，不必严格遵循）
+
+      ```
+      # PRD: $vars.prd_name
+
+      ## 执行摘要
+      {一段话：问题、方案、预期成果、关键决策}
+
+      ## 1. 问题陈述
+      {问题是什么、谁有这个痛点、证据、不解决的代价}
+
+      ## 2. 目标与成功指标
+      {可量化的目标表}
+
+      ## 3. Non-Goals
+      {明确不做的事 + 原因}
+
+      ## 4. 用户画像与故事
+      {画像 + Given/When/Then 验收标准}
+
+      ## 5. 技术方案
+      {核心方案，根据项目类型侧重不同维度}
+
+      ## 6. 技术考量
+      {选型、安全、性能、错误处理、风险}
+
+      ## 7. 发布计划
+      {发布阶段 + 成功指标 + GTM 沟通简报 + 回滚方案 + 时间线和里程碑}
+
+      ## 8. 附录
+      {对抗审查摘要、参考文档、未来演进}
+      ```
+
+      ## 规则
+      - 中文输出
+      - 章节编号连续
+      - 对抗审查记录放附录，不要混入正文
+      - 如果某个章节内容较少，可以合并到相邻章节
+
+      ## 输出
+
+      将最终 PRD 保存到 `$vars.output_dir/PRD-FINAL.md`
+
+      完成后输出:
+      直接输出纯 JSON 行（不要用代码块包裹）:
+      {"vars_update":{"final_prd_file":"$vars.output_dir/PRD-FINAL.md","prd_word_count":"<字数>","conclusion":"<2-3句话总结>"}}
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 7: Done — 输出完成信息
+  # ═══════════════════════════════════════════════════════════════
+  - id: done
+    type: bash
+    depends_on: [output]
+    timeout: 10
+    bash: |
+      echo "=== PRD Forge 完成 ==="
+      echo "输出目录: $vars.output_dir"
+      echo "最终 PRD: $vars.final_prd_file"

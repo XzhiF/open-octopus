@@ -1,0 +1,609 @@
+# yaml-language-server: $schema=./doc/workflow-schema.json
+apiVersion: octopus/v1
+kind: Workflow
+name: basic-impl-flow
+description: >
+  Hermes 实现流程 —— 从已有设计规格开始，跳过需求分析，直接进入实现。
+  5+2 阶段：Setup → Plan(可选) → Implement → Review → E2E → Ship。
+  每个阶段完成后通过 notify 子系统实时推送到群聊。
+  E2E 阶段可选（默认开启），agent 自主规划测试、发现问题直接修复、重新验证，测试通过后才提交 PR。
+  需求全部一次性规划实现，不分阶段交付。
+
+model: "opus[1m]"
+engine: claude
+execution_mode: serial
+timeout: 86400
+
+inputs:
+  spec_file:
+    description: "设计规格文档路径（绝对路径或相对路径，相对路径从工作空间根目录开始）"
+    required: true
+  plan_file:
+    description: "实现计划文档路径（绝对路径或相对路径，相对路径从工作空间根目录开始）。留空则由 AI 自动生成"
+    required: false
+    default: ""
+  base_branch:
+    description: "PR 目标分支"
+    required: false
+    default: "main"
+  run_e2e:
+    description: "是否运行 E2E 端到端测试验收（设为 false 可跳过）"
+    required: false
+    default: "true"
+
+variables:
+  pkg_manager: "pnpm"
+  notify_target: "telegram:xzf_hermes"
+  e2e_passed: "true"
+  e2e_summary: ""
+  e2e_failure_details: ""
+  workspace_rules: |
+    ## 工作空间规范
+    - 当前 cwd 是 octopus 聚合工作空间，不是单个 git 仓库
+    - 项目在 ./projects/ 目录下，每个是独立的 git worktree
+    - git 命令（log/status/commit/push/PR）必须在具体项目目录内执行，不能在 workspace 根目录执行
+    - 需要创建 PR 时，每个有变更的项目都要单独创建 PR
+    - **所有项目级命令必须在对应项目目录内执行**：
+      - 构建/测试/启动/安装依赖等命令（pnpm build, pnpm dev, pnpm test, npm run, mvn, go run 等）必须 cd 到 ./projects/{项目名}/ 再执行
+      - 禁止在 workspace 根目录执行 pnpm dev / pnpm build 等项目命令
+      - 根据需求和上下文判断应该在哪个项目目录执行命令，工作空间内可能有多个项目
+      - 示例: `cd projects/xzf-octopus && pnpm dev`
+    - superpowers 文档必须保存在 workspace 根目录（cwd）的 docs/superpowers/ 下，不能保存在 projects/ 下的项目目录里
+
+auto_answers:
+  - pattern: ".*"
+    answer: "proceed"
+
+# ── Notify 子系统配置 ──
+providers:
+  hermes-cli:
+    type: hermes
+    timeout: 30
+    min_severity: info
+
+channels:
+  default:
+    provider: hermes-cli
+    target: "telegram:xzf_hermes"
+
+hooks:
+  on_node_success:
+    - id: notify-setup
+      type: notify
+      nodes: [setup]
+      channel: default
+      template:
+        severity: info
+        title: "🚀 $vars.display_name 启动"
+        body: "📂 项目: $vars.projects\n🌿 分支: $vars.branch → $inputs.base_branch\n📦 包管理: $vars.pkg_manager\n📄 规格文档: $vars.spec_file\n📋 计划文档: ${plan_file | default:(将自动生成)}"
+
+    - id: notify-plan
+      type: notify
+      nodes: [plan]
+      channel: default
+      template:
+        severity: info
+        title: "📋 $vars.display_name — Plan 完成"
+        body: "📂 项目: $vars.projects | 🌿 $vars.branch\n📄 计划文档: $vars.plan_file\n\n💡 *计划概要*:\n$vars.conclusion"
+
+    - id: notify-implement
+      type: notify
+      nodes: [implement]
+      channel: default
+      template:
+        severity: info
+        title: "⚙️ $vars.display_name — Implement 完成"
+        body: "📂 项目: $vars.projects | 🌿 $vars.branch\n\n💡 *实现概要*:\n$vars.conclusion"
+
+    - id: notify-review
+      type: notify
+      nodes: [review]
+      channel: default
+      template:
+        severity: info
+        title: "🔍 $vars.display_name — Review 完成"
+        body: "📂 项目: $vars.projects | 🌿 $vars.branch\n\n💡 *审查结论*:\n$vars.conclusion"
+
+    - id: notify-e2e-start
+      type: notify
+      nodes: [review]
+      channel: default
+      condition: '$inputs.run_e2e == "true"'
+      template:
+        severity: info
+        title: "🧪 $vars.display_name — 开始 E2E 测试"
+        body: "📂 项目: $vars.projects | 🌿 $vars.branch\n🎯 Agent 自主规划测试 → 发现问题直接修复 → 重新验证"
+
+    - id: notify-e2e-pass
+      type: notify
+      nodes: [e2e-test]
+      channel: default
+      condition: '$vars.e2e_passed == "true"'
+      template:
+        severity: info
+        title: "✅ $vars.display_name — E2E 测试通过"
+        body: "📂 项目: $vars.projects | 🌿 $vars.branch\n📝 $vars.e2e_summary"
+
+    - id: notify-e2e-skipped
+      type: notify
+      nodes: [e2e-gate]
+      channel: default
+      condition: '$vars.e2e_passed == "true" && $inputs.run_e2e != "true"'
+      template:
+        severity: info
+        title: "✅ $vars.display_name — E2E 测试通过（E2E 测试已跳过）"
+        body: "📂 项目: $vars.projects | 🌿 $vars.branch\n📝 $vars.e2e_summary"
+
+    - id: notify-e2e-fail
+      type: notify
+      nodes: [e2e-test]
+      channel: default
+      condition: '$vars.e2e_passed != "true"'
+      template:
+        severity: error
+        title: "❌ $vars.display_name — E2E 测试失败"
+        body: "📂 项目: $vars.projects | 🌿 $vars.branch\n⚠️ 3 轮修复后仍未通过\n📝 $vars.e2e_summary\n🔍 失败详情: $vars.e2e_failure_details"
+
+    - id: notify-ship
+      type: notify
+      nodes: [ship]
+      channel: default
+      template:
+        severity: info
+        title: "✅ $vars.display_name — Ship 完成"
+        body: "📂 项目: $vars.projects | 🌿 $vars.branch → $inputs.base_branch\n🔗 PR: ${pr_url | default:none}\n📝 ${ship_summary | default:none}"
+
+  on_node_failure:
+    - id: notify-e2e-terminate
+      type: notify
+      nodes: [notify-e2e-fail]
+      channel: default
+      template:
+        severity: error
+        title: "🚫 $vars.display_name — E2E 测试未通过，工作流终止"
+        body: "📂 项目: $vars.projects | 🌿 $vars.branch\n⚠️ 3 轮修复后 E2E 测试仍未通过，不提交 PR\n📝 $vars.e2e_summary"
+
+nodes:
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 0: Setup — 环境检测 + 文件校验 + 变量初始化
+  # ═══════════════════════════════════════════════════════════════
+  - id: setup
+    type: agent
+    timeout: 600
+    prompt: |
+      你正在执行 Hermes 实现流程的环境检测阶段。
+
+      $vars.workspace_rules
+
+      ## 输入
+      - 规格文档路径: $inputs.spec_file
+      - 计划文档路径: $inputs.plan_file（可选）
+      - 目标分支: $inputs.base_branch
+
+      ## 你的任务
+
+      ### 1. 安装 superpowers-zh 技能（必须首先执行）
+      ```bash
+      echo "Installing superpowers-zh skills..."
+      npx superpowers-zh@latest --tool claude --force 2>&1 | head -5
+      ```
+
+      ### 2. 验证规格文档（必须）
+      验证 `$inputs.spec_file` 是否存在:
+      - 如果是相对路径，从当前工作目录解析
+      - 如果文件不存在，报告错误并停止
+
+      ### 3. 验证计划文档（可选）
+      如果 `$inputs.plan_file` 非空，验证该文件是否存在:
+      - 如果是相对路径，从当前工作目录解析
+      - 如果文件不存在，报告错误并停止
+      - 如果为空，留空（后续由 Plan 节点自动生成）
+
+      ### 4. 遍历项目
+      遍历 `./projects/` 目录，找出所有 git 项目:
+      ```bash
+      PROJECTS=""
+      if [ -d projects ]; then
+        for dir in projects/*/; do
+          if [ -d "$dir/.git" ] || [ -f "$dir/.git" ]; then
+            name=$(basename "$dir")
+            if [ -z "$PROJECTS" ]; then
+              PROJECTS="$name"
+            else
+              PROJECTS="$PROJECTS, $name"
+            fi
+          fi
+        done
+      fi
+      ```
+
+      ### 5. 检测包管理器
+      查看第一个项目的 lock 文件，确定 package manager:
+      - 有 `pnpm-lock.yaml` → `pnpm`
+      - 有 `yarn-lock.yaml` → `yarn`
+      - 有 `package.json` 但无 lock 文件 → `npm`
+      - 其他 → `npm`
+
+      ### 6. 检测当前分支
+      获取第一个项目的当前 git 分支:
+      ```bash
+      GIT_BRANCH=$(git -C "projects/$FIRST_PROJECT" rev-parse --abbrev-ref HEAD 2>/dev/null)
+      ```
+      如果检测失败或为 HEAD，使用 `$inputs.base_branch` 作为默认值。
+
+      ## 输出要求
+
+      在回复末尾输出 JSON（必须是最后一行）:
+      ```json
+      {"vars_update":{
+        "projects":"<项目目录名，逗号分隔>",
+        "pkg_manager":"<包管理器>",
+        "branch":"<当前分支>",
+        "spec_file":"<规格文档绝对路径>",
+        "plan_file":"<计划文档绝对路径或空字符串>",
+        "display_name":"<步骤7计算的值>"
+      }}
+      ```
+
+      ### 7. 计算 display_name（必须非空）
+      display_name 用于所有通知消息中标识当前执行，**绝对不能为空**:
+      - 执行名称: `$vars.execution_name`
+      - 工作流名称: `$vars.workflow_name`
+      - 优先使用执行名称，如果为空则使用工作流名称，如果都为空则使用 "Hermes Implement Flow"
+      - 示例输出: `"display_name":"实现用户认证"` 或 `"display_name":"basic-impl-flow"`
+
+      ## 规则
+      - 无人值守模式，直接执行
+      - **必须首先安装 superpowers-zh，这是前置条件**
+      - **spec_file 必须存在，否则停止**
+      - **display_name 必须非空**
+      - JSON 输出前不要有多余的 ```json 标记，直接输出 JSON 行
+      - 确保 JSON 中的特殊字符（引号、换行）已正确转义
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 1: Plan — 生成或验证实现计划
+  # ═══════════════════════════════════════════════════════════════
+  - id: plan
+    type: agent
+    depends_on: [setup]
+    timeout: 86400
+    skills:
+      - writing-plans
+    outputs:
+      plan_file: $vars.plan_file
+    prompt: |
+      你正在执行 Hermes 无人值守实现流程的计划阶段。
+
+      $vars.workspace_rules
+
+      ## 输入文档
+
+      设计规格文档: $vars.spec_file
+      实现计划文档: $vars.plan_file
+
+      请先读取设计规格文档。
+
+      ## 当前环境
+
+      - 工作目录: $(pwd)
+      - 当前分支: $vars.branch
+
+      ## 你的任务
+
+      如果实现计划文档已提供（$vars.plan_file 非空），请：
+      1. 读取并验证该计划文档是否完整合理
+      2. 输出确认信息
+
+      如果实现计划文档未提供（$vars.plan_file 为空），请：
+      1. 使用 writing-plans 技能基于设计规格文档生成详细的实现计划
+
+      ## 核心原则：一次性全部实现
+
+      - 需求来了就全部规划、一次性实现，不要分阶段（Phase 1 / Phase 2 / Phase 3）
+      - 计划范围要覆盖设计规格中的完整功能，不做 MVP / 最小可用版 / 渐进式交付
+      - 如果规格涉及 UI + API + 数据层 + 测试，全部在本次计划中覆盖
+      - 可以在计划中拆分任务步骤（task breakdown），但所有步骤都属于同一次交付
+
+      ## 规则
+      - 这是无人值守模式，直接生成或确认最终计划
+
+      完成后在回复末尾依次输出：
+      ---PLAN_COMPLETE---
+      {"vars_update":{"display_name":"$vars.display_name","plan_file":"<计划文档完整路径>","conclusion":"<2-3句话总结：计划包含几个步骤、主要改动范围、预计复杂度>"}}
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 2: Implement — 子智能体驱动实现
+  # ═══════════════════════════════════════════════════════════════
+  - id: implement
+    type: agent
+    depends_on: [plan]
+    timeout: 86400
+    skills:
+      - subagent-driven-development
+    prompt: |
+      使用 subagent-driven-development 执行实现计划。
+
+      $vars.workspace_rules
+
+      ## 输入文档
+
+      设计规格文档: $vars.spec_file
+      实现计划文档: $vars.plan_file
+      请先读取这两个文件，理解设计规格和实现步骤后再开始执行。
+
+      ## 当前环境
+      - 工作目录: $(pwd)
+      - 当前分支: $vars.branch
+
+      ## 你的任务
+      1. 读取设计规格文档和实现计划
+      2. 使用 subagent-driven-development 方法按计划执行所有任务
+
+      ## 关键规则
+      - 这是无人值守模式，所有选择使用最佳判断
+
+      完成后在回复末尾依次输出：
+      ---IMPLEMENT_COMPLETE---
+      {"vars_update":{"display_name":"$vars.display_name","conclusion":"<2-3句话总结：实际改了哪些文件、新增/修改了多少行代码、主要实现了什么功能>"}}
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 3: Review — 最终代码审查
+  # ═══════════════════════════════════════════════════════════════
+  - id: review
+    type: agent
+    depends_on: [implement]
+    timeout: 86400
+    skills:
+      - requesting-code-review
+    prompt: |
+      使用 requesting-code-review 技能审查当前实现。如有问题直接修复。
+
+      $vars.workspace_rules
+
+      实现计划文档: $vars.plan_file
+      工作目录: $(pwd)
+      当前分支: $vars.branch
+
+      无人值守模式，不要询问确认。审查发现的问题直接修复，不做无关改动。
+
+      完成后在回复末尾依次输出：
+      ---REVIEW_COMPLETE---
+      {"vars_update":{"display_name":"$vars.display_name","conclusion":"<2-3句话总结：发现多少问题、修复了多少、剩余问题严重程度（无/低/中/高）>"}}
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 4: E2E — 端到端测试验收（可选，默认开启）
+  # ═══════════════════════════════════════════════════════════════
+  - id: e2e-test
+    type: agent
+    model: sonnet
+    depends_on: [review]
+    timeout: 7200
+    execute_when: '$inputs.run_e2e == "true"'
+    skills:
+      - octo-browser-vision
+      - octo-browser-debug
+      - octo-e2e-assurance
+    agents:
+      vision-analyzer:
+        description: "视觉分析子代理。当需要分析截图或图片内容时，必须委派此子代理，禁止父代理直接处理图片。"
+        prompt: |
+          你是一个视觉分析专家。你的唯一职责是分析图片并返回文本结果。
+
+          工作流程：
+          1. 接收图片路径和分析问题
+          2. 读取图片文件
+          3. 详细分析图片内容
+          4. 用简洁的文本回答问题
+
+          规则：
+          - 只返回文本结果
+          - 不要返回图片数据或 base64 编码
+          - 如果图片不存在，报告错误
+        model: sonnet
+        tools: ["Bash", "Read"]
+    prompt: |
+      你正在执行 Hermes 实现流程的 E2E 端到端测试阶段。
+      你的职责是：测试 → 发现问题 → 修复代码 → 重新测试，循环直到全部通过。
+
+      $vars.workspace_rules
+
+      ## 环境信息
+      - 项目列表: $vars.projects
+      - 当前分支: $vars.branch
+      - 工作目录: $(pwd)
+
+      ## 设计规格（测试验收的依据）
+
+      设计规格文档: $vars.spec_file
+      请先读取该文件，理解设计规格后再规划测试。
+
+      ## 你的工作循环
+
+      按以下循环执行，最多 3 轮：
+
+      ### 1. 环境准备（仅首次）
+
+      **检测项目类型：**
+      遍历 `$vars.projects` 中的项目目录，根据文件特征判断技术栈和启动方式：
+      - `package.json` + lock 文件 → 对应包管理器的 dev 命令（pnpm/yarn/npm）
+      - `pom.xml` / `build.gradle` → `./mvnw spring-boot:run` / `./gradlew bootRun`
+      - `manage.py` → `python manage.py runserver 0.0.0.0:<port>`
+      - `go.mod` → `go run ./cmd/...` 或 `make run`
+      - `docker-compose.yml` → `docker compose up`
+      - 其他 → 查看 README 或入口文件推断
+
+      **按需启动：**
+      - 根据设计规格判断需要哪些服务（API Server、Web UI、数据库等），只启动测试所需的
+      - 在后台启动（`&`），不阻塞后续步骤
+      - 从启动日志中捕获实际端口号（框架通常会打印 `Listening on :XXXX`）
+      - 如果日志中无法获取，用 `lsof -i -P -n | grep LISTEN` 查找新启动的进程端口
+      - 记住实际端口，后续所有操作使用实际端口而非假设端口
+
+      **等待就绪：**
+      - 轮询健康检查端点直到返回 200（常见：`/health`、`/api/health`、`/actuator/health`、根路径 `/`）
+      - 超时 120s 仍未就绪则记录失败原因并跳过 E2E
+
+      ### 2. 需求分析 → 测试规划
+      根据设计规格文档，分析需要验收的功能点：
+      - 要测试什么功能？
+      - 涉及哪些页面和 API？
+      - 预期的用户流程是什么？
+      - 关键的验证点是什么？
+
+      然后自主规划测试步骤（不需要人确认）。
+
+      ### 3. 执行 E2E 测试
+      按计划执行测试，使用：
+      - **浏览器操作**: `agent-browser --session e2e open/snapshot/click/fill/screenshot`
+      - **视觉分析（必须委派 vision-analyzer 子代理）**:
+        - 截图后，委派 vision-analyzer 子代理分析截图内容
+        - 示例：「委派 vision-analyzer 分析 /tmp/screenshot.png，判断页面是否正常加载」
+        - 备选：`python <skill-dir>/scripts/vision_analyze.py <screenshot>`
+        - 优先用 snapshot（Accessibility Tree）验证，不需要视觉
+        - 需要视觉分析时，先委派子代理，失败再用 Python 脚本
+      - **API 验证**: `curl -s http://localhost:<实际端口>/api/...`（使用环境准备阶段捕获的端口）
+      - **控制台检查**: `agent-browser --session e2e errors`
+      - **兜底调试**: 遇到错误或尝试 2-3 次仍无法定位问题时，直接用 hermes 帮忙：
+        - `hermes chat -q "浏览器控制台报错: <错误信息>，帮我分析原因"`
+        - `hermes chat -q "看截图 /tmp/xxx.png，页面上有什么异常？"`
+        - `hermes chat -q "对比 /tmp/before.png 和 /tmp/after.png，有什么变化？"`
+
+      每个验证点都要有具体证据（截图路径、API 响应、DOM 文本）。
+
+      ### 4. 发现失败 → 直接修复
+      如果测试发现 bug：
+      - 定位问题代码并修复
+      - 修复后等待开发服务器热更新（或手动重启）
+      - 不要跳过失败的测试，要修复代码让测试通过
+
+      ### 5. 重新验证
+      修复后重新执行完整的 E2E 测试（从头到尾，不止失败的部分）。
+      全部通过则结束循环，仍有失败则回到步骤 4（最多 3 轮）。
+
+      ### 6. 清理
+      - 关闭浏览器: `agent-browser --session e2e close`
+      - 终止本次启动的开发服务进程（`kill` 或 `pkill` 对应的后台进程）
+
+      ## 输出要求
+
+      循环结束后，在回复末尾输出 JSON（必须是最后一行）:
+
+      全部通过时:
+      ```json
+      {"vars_update":{
+        "display_name":"$vars.display_name",
+        "e2e_passed":"true",
+        "e2e_summary":"<测试摘要：测了什么、多少断言全部通过、修复了几轮>",
+        "conclusion":"<2-3句话总结>"
+      }}
+      ```
+
+      3 轮后仍有失败时:
+      ```json
+      {"vars_update":{
+        "display_name":"$vars.display_name",
+        "e2e_passed":"false",
+        "e2e_summary":"<测试摘要>",
+        "e2e_failure_details":"<剩余失败详情：哪些断言失败、截图路径、错误信息>",
+        "conclusion":"<2-3句话总结>"
+      }}
+      ```
+
+      ## 规则
+      - 无人值守模式，直接执行
+      - 根据设计规格自主决定测试步骤，不要等待确认
+      - 优先使用 snapshot（Accessibility Tree）验证，减少截图视觉分析
+      - **禁止自己尝试理解/处理图片** — 必须委派 vision-analyzer 子代理处理图片，父代理的 session 上下文不能包含图片数据，否则会污染上下文导致后续 400 错误
+      - 每个断言必须有具体证据
+      - 发现问题直接修复代码，不要调整测试来绕过
+      - 修复后必须重新跑完整测试（不是只跑失败的部分）
+      - 测试完成后必须关闭浏览器和终止开发服务进程
+
+  - id: e2e-gate
+    type: condition
+    depends_on: [e2e-test]
+    cases:
+      - when: '$vars.e2e_passed == "true"'
+        then: ship
+      - when: default
+        then: notify-e2e-fail
+
+  - id: notify-e2e-fail
+    type: bash
+    timeout: 30
+    bash: |
+      echo "=== E2E 测试未通过，工作流以失败状态退出 ==="
+      printf '{"vars_update":{"__status":"failed"}}\n'
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 5: Ship — 推送 + 创建 PR + 捕获 PR URL
+  # ═══════════════════════════════════════════════════════════════
+  - id: ship
+    type: agent
+    depends_on: [e2e-gate]
+    timeout: 86400
+    outputs:
+      pr_url: $vars.pr_url
+    prompt: |
+      代码审查已通过，进入最终阶段：提交、推送并创建 Pull Request。
+
+      $vars.workspace_rules
+
+      ## 环境信息
+
+      - 当前分支: $vars.branch
+      - 基础分支: $inputs.base_branch
+      - 工作目录: $(pwd)
+
+      ## 你的任务
+
+      ### 步骤 1：遍历 projects/ 下所有有变更的项目
+
+      对于 projects/ 下每一个有 .git 目录的项目，依次执行以下操作：
+
+      ### 步骤 2：检查并提交未保存的更改
+
+      ```bash
+      cd <项目目录>
+      git status --short
+      ```
+
+      如果有未提交的更改：
+      ```bash
+      git add -A
+      git commit -m "fix: review fixes from basic-impl-flow"
+      ```
+
+      ### 步骤 3：查看提交历史
+
+      ```bash
+      git log $inputs.base_branch..HEAD --oneline
+      ```
+
+      ### 步骤 4：推送分支
+
+      ```bash
+      git push -u origin HEAD
+      ```
+
+      如果 push 失败，查看错误信息并处理。
+
+      ### 步骤 5：创建 PR
+
+      ```bash
+      PR_URL=$(gh pr create \
+        --base "$inputs.base_branch" \
+        --title "<基于提交历史生成的 PR 标题>" \
+        --body "<基于提交历史生成的中文 PR 描述，包含摘要、实现说明、测试情况>" \
+        2>&1)
+      echo "$PR_URL"
+      ```
+
+      ## 关键规则
+
+      - 无人值守模式，直接执行
+      - gh pr create 失败时重试最多 2 次
+
+      完成后在回复末尾依次输出：
+      ---SHIP_COMPLETE---
+      {"vars_update":{"display_name":"$vars.display_name","pr_url":"<实际的 PR URL，如有多个用逗号分隔>","ship_summary":"<简要总结>"}}

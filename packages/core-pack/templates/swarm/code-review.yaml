@@ -1,0 +1,29 @@
+# Swarm Template: Code Review
+# Multi-expert code review using review mode
+#
+# $template_params: topic, project_path
+
+apiVersion: octopus/v1
+kind: Workflow
+name: "Code Review — {{topic}}"
+description: "Multi-expert code review for {{topic}}"
+
+nodes:
+  - id: review
+    type: swarm
+    topic: "Review the following code changes: {{topic}}"
+    mode: review
+    output_format: structured
+    experts:
+      - role: security-engineer
+        perspective: "Focus on security vulnerabilities, injection risks, and authentication issues"
+        prompt: "Review the code changes for security issues."
+      - role: code-reviewer
+        perspective: "Focus on code quality, readability, and best practices"
+        prompt: "Review the code changes for quality and maintainability."
+      - role: performance-engineer
+        perspective: "Focus on performance implications, memory usage, and scalability"
+        prompt: "Review the code changes for performance concerns."
+    outputs:
+      review_result: "$vars.review_synthesis"
+      security_issues: "$vars.review_experts"

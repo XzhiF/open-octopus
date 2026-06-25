@@ -1,0 +1,56 @@
+{
+  "name": "octopus-monorepo",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Loop Engineering platform — AI workflow orchestration, multi-project isolation, and agent/skill asset management",
+  "author": "XzhiF",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/XzhiF/octopus.git"
+  },
+  "homepage": "https://github.com/XzhiF/octopus#readme",
+  "bugs": {
+    "url": "https://github.com/XzhiF/octopus/issues"
+  },
+  "keywords": [
+    "ai-workflow",
+    "workflow-engine",
+    "multi-agent",
+    "claude-code",
+    "loop-engineering"
+  ],
+  "scripts": {
+    "build": "pnpm -r run build",
+    "build:shared": "pnpm --filter @octopus/shared build",
+    "build:engine": "pnpm --filter @octopus/engine build",
+    "build:server": "pnpm --filter @octopus/server build",
+    "build:cli": "pnpm --filter octopus build",
+    "build:web": "pnpm --filter @octopus/web-app build",
+    "dev": "node scripts/dev.mjs",
+    "prod": "node scripts/prod.mjs",
+    "port": "node scripts/branch-port.mjs",
+    "dev:server": "pnpm --filter @octopus/server dev",
+    "dev:web": "pnpm --filter @octopus/web-app dev",
+    "start:server": "pnpm --filter @octopus/server start",
+    "start:web": "pnpm --filter @octopus/web-app start",
+    "kill:server": "node scripts/kill-port.mjs 3001",
+    "kill:web": "node scripts/kill-port.mjs 3000",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "pnpm -r run lint"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.60.0",
+    "playwright": "^1.60.0",
+    "tsup": "^8.0",
+    "typescript": "^5.7",
+    "vitest": "^3.0"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild",
+      "better-sqlite3"
+    ]
+  }
+}

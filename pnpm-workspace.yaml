@@ -1,0 +1,13 @@
+packages:
+  - packages/shared
+  - packages/cli
+  - packages/engine
+  - packages/server
+  - packages/web-app
+  - packages/core-pack
+  - packages/providers
+allowBuilds:
+  better-sqlite3: true
+  esbuild: true
+  sharp: true
+  unrs-resolver: true

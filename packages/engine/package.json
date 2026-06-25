@@ -1,0 +1,23 @@
+{
+  "name": "@octopus/engine",
+  "version": "1.0.0",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsup src/index.ts --format esm,cjs --dts",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@octopus/providers": "workspace:*",
+    "@octopus/shared": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0"
+  }
+}

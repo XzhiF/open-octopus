@@ -1,0 +1,390 @@
+@import 'tailwindcss';
+@import 'tw-animate-css';
+
+@custom-variant dark (&:is(.dark *));
+
+:root {
+  --background: oklch(1 0 0);
+  --foreground: oklch(0.145 0 0);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.145 0 0);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.145 0 0);
+  --primary: oklch(0.205 0 0);
+  --primary-foreground: oklch(0.985 0 0);
+  --secondary: oklch(0.97 0 0);
+  --secondary-foreground: oklch(0.205 0 0);
+  --muted: oklch(0.97 0 0);
+  --muted-foreground: oklch(0.45 0 0);
+  --accent: oklch(0.97 0 0);
+  --accent-foreground: oklch(0.205 0 0);
+  --destructive: oklch(0.577 0.245 27.325);
+  --destructive-foreground: oklch(0.985 0 0);
+  --border: oklch(0.922 0 0);
+  --input: oklch(0.922 0 0);
+  --ring: oklch(0.708 0 0);
+  --chart-1: oklch(0.646 0.222 41.116);
+  --chart-2: oklch(0.6 0.118 184.704);
+  --chart-3: oklch(0.398 0.07 227.392);
+  --chart-4: oklch(0.828 0.189 84.429);
+  --chart-5: oklch(0.769 0.188 70.08);
+  --radius: 0.625rem;
+  --sidebar: oklch(0.985 0 0);
+  --sidebar-foreground: oklch(0.145 0 0);
+  --sidebar-primary: oklch(0.205 0 0);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.97 0 0);
+  --sidebar-accent-foreground: oklch(0.205 0 0);
+  --sidebar-border: oklch(0.922 0 0);
+  --sidebar-ring: oklch(0.708 0 0);
+
+  /* ── Scheduler semantic colors ── */
+  --scheduler-success: oklch(72% 0.19 155);
+  --scheduler-warn: oklch(80% 0.16 75);
+  --scheduler-error: oklch(63% 0.22 25);
+  --scheduler-info: oklch(70% 0.15 230);
+  --scheduler-paused: oklch(65% 0 0);
+
+  /* Scheduler primary (blue accent for scheduler module) */
+  --scheduler-primary: oklch(62% 0.21 250);
+  --scheduler-primary-hover: oklch(55% 0.22 250);
+  --scheduler-primary-active: oklch(48% 0.22 250);
+  --scheduler-primary-light: oklch(97% 0.01 250);
+
+  /* Scheduler accent (purple for Agent type) */
+  --scheduler-accent: oklch(62% 0.22 310);
+  --scheduler-accent-hover: oklch(55% 0.23 310);
+  --scheduler-accent-light: oklch(97% 0.03 310);
+
+  /* ── Agent semantic colors ── */
+  --agent-primary: oklch(0.55 0.18 260);
+  --agent-primary-hover: oklch(0.48 0.20 260);
+  --agent-primary-active: oklch(0.42 0.21 260);
+  --agent-primary-light: oklch(0.96 0.02 260);
+  --agent-primary-foreground: oklch(0.985 0 0);
+
+  --agent-accent: oklch(0.58 0.20 305);
+  --agent-accent-hover: oklch(0.52 0.22 305);
+  --agent-accent-light: oklch(0.96 0.03 305);
+
+  --agent-success: oklch(0.65 0.17 155);
+  --agent-success-light: oklch(0.96 0.03 155);
+  --agent-success-foreground: oklch(0.20 0.05 155);
+
+  --agent-warn: oklch(0.75 0.14 80);
+  --agent-warn-light: oklch(0.97 0.04 80);
+  --agent-warn-foreground: oklch(0.30 0.08 80);
+
+  --agent-error: oklch(0.58 0.20 25);
+  --agent-error-light: oklch(0.96 0.03 25);
+  --agent-error-foreground: oklch(0.25 0.08 25);
+
+  --agent-info: oklch(0.62 0.13 240);
+  --agent-info-light: oklch(0.96 0.02 240);
+  --agent-info-foreground: oklch(0.25 0.05 240);
+
+  --agent-surface: oklch(0.985 0 0);
+  --agent-surface-raised: oklch(1 0 0);
+  --agent-surface-inset: oklch(0.96 0 0);
+  --agent-divider: oklch(0.90 0 0);
+
+  /* ── Swarm module tokens ── */
+  --swarm-primary: oklch(0.72 0.15 195);
+  --swarm-primary-hover: oklch(0.65 0.17 195);
+  --swarm-primary-active: oklch(0.58 0.18 195);
+  --swarm-primary-light: oklch(0.97 0.02 195);
+  --swarm-primary-muted: oklch(0.92 0.04 195);
+
+  --swarm-mode-review: oklch(0.70 0.14 155);
+  --swarm-mode-debate: oklch(0.68 0.18 260);
+  --swarm-mode-dispatch: oklch(0.75 0.16 55);
+  --swarm-mode-swarm: oklch(0.72 0.15 195);
+
+  --swarm-expert-running: oklch(0.78 0.13 55);
+  --swarm-expert-completed: oklch(0.72 0.19 155);
+  --swarm-expert-failed: oklch(0.63 0.22 25);
+  --swarm-expert-skipped: oklch(0.65 0 0);
+  --swarm-expert-budget-exceeded: oklch(0.75 0.16 75);
+
+  --swarm-consensus-line: oklch(0.65 0.22 260);
+  --swarm-consensus-area: oklch(0.65 0.22 260 / 0.15);
+  --swarm-threshold-line: oklch(0.63 0.22 25);
+  --swarm-consensus-dot: oklch(0.72 0.19 155);
+
+  --swarm-budget-warning: oklch(0.80 0.16 75);
+  --swarm-timeout-warning: oklch(0.75 0.16 55);
+  --swarm-context-overflow: oklch(0.63 0.22 25);
+
+  /* ── Animation tokens ── */
+  --duration-fast: 150ms;
+  --duration-normal: 250ms;
+  --duration-slow: 400ms;
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+
+  /* ── Spacing tokens ── */
+  --space-section: clamp(4rem, 3rem + 5vw, 10rem);
+}
+
+.dark {
+  --background: oklch(0.145 0 0);
+  --foreground: oklch(0.985 0 0);
+  --card: oklch(0.145 0 0);
+  --card-foreground: oklch(0.985 0 0);
+  --popover: oklch(0.145 0 0);
+  --popover-foreground: oklch(0.985 0 0);
+  --primary: oklch(0.985 0 0);
+  --primary-foreground: oklch(0.205 0 0);
+  --secondary: oklch(0.269 0 0);
+  --secondary-foreground: oklch(0.985 0 0);
+  --muted: oklch(0.269 0 0);
+  --muted-foreground: oklch(0.708 0 0);
+  --accent: oklch(0.269 0 0);
+  --accent-foreground: oklch(0.985 0 0);
+  --destructive: oklch(0.396 0.141 25.723);
+  --destructive-foreground: oklch(0.985 0 0);
+  --border: oklch(0.269 0 0);
+  --input: oklch(0.269 0 0);
+  --ring: oklch(0.439 0 0);
+  --chart-1: oklch(0.488 0.243 264.376);
+  --chart-2: oklch(0.696 0.17 162.48);
+  --chart-3: oklch(0.769 0.188 70.08);
+  --chart-4: oklch(0.627 0.265 303.9);
+  --chart-5: oklch(0.645 0.246 16.439);
+  --sidebar: oklch(0.205 0 0);
+  --sidebar-foreground: oklch(0.985 0 0);
+  --sidebar-primary: oklch(0.488 0.243 264.376);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.269 0 0);
+  --sidebar-accent-foreground: oklch(0.985 0 0);
+  --sidebar-border: oklch(0.269 0 0);
+  --sidebar-ring: oklch(0.439 0 0);
+
+  /* ── Scheduler semantic colors (dark) ── */
+  --scheduler-success: oklch(65% 0.17 155);
+  --scheduler-warn: oklch(75% 0.14 75);
+  --scheduler-error: oklch(58% 0.20 25);
+  --scheduler-info: oklch(65% 0.13 230);
+  --scheduler-paused: oklch(55% 0 0);
+
+  /* Scheduler primary (dark) */
+  --scheduler-primary: oklch(68% 0.19 250);
+  --scheduler-primary-hover: oklch(72% 0.17 250);
+  --scheduler-primary-active: oklch(75% 0.15 250);
+  --scheduler-primary-light: oklch(25% 0.03 250);
+
+  /* Scheduler accent (dark) */
+  --scheduler-accent: oklch(68% 0.20 310);
+  --scheduler-accent-hover: oklch(72% 0.18 310);
+  --scheduler-accent-light: oklch(25% 0.04 310);
+
+  /* ── Agent semantic colors (dark) ── */
+  --agent-primary: oklch(0.65 0.16 260);
+  --agent-primary-hover: oklch(0.70 0.14 260);
+  --agent-primary-active: oklch(0.75 0.12 260);
+  --agent-primary-light: oklch(0.22 0.04 260);
+
+  --agent-accent: oklch(0.68 0.18 305);
+  --agent-accent-hover: oklch(0.72 0.16 305);
+  --agent-accent-light: oklch(0.24 0.04 305);
+
+  --agent-success: oklch(0.60 0.15 155);
+  --agent-success-light: oklch(0.22 0.04 155);
+  --agent-success-foreground: oklch(0.92 0.03 155);
+
+  --agent-warn: oklch(0.72 0.12 80);
+  --agent-warn-light: oklch(0.25 0.04 80);
+  --agent-warn-foreground: oklch(0.92 0.03 80);
+
+  --agent-error: oklch(0.55 0.18 25);
+  --agent-error-light: oklch(0.22 0.04 25);
+  --agent-error-foreground: oklch(0.92 0.03 25);
+
+  --agent-info: oklch(0.58 0.11 240);
+  --agent-info-light: oklch(0.22 0.03 240);
+  --agent-info-foreground: oklch(0.92 0.03 240);
+
+  --agent-surface: oklch(0.16 0 0);
+  --agent-surface-raised: oklch(0.20 0 0);
+  --agent-surface-inset: oklch(0.13 0 0);
+  --agent-divider: oklch(0.28 0 0);
+
+  /* ── Swarm module tokens (dark) ── */
+  --swarm-primary: oklch(0.78 0.13 195);
+  --swarm-primary-hover: oklch(0.82 0.11 195);
+  --swarm-primary-active: oklch(0.85 0.10 195);
+  --swarm-primary-light: oklch(0.22 0.03 195);
+  --swarm-primary-muted: oklch(0.28 0.04 195);
+
+  --swarm-mode-review: oklch(0.65 0.12 155);
+  --swarm-mode-debate: oklch(0.72 0.16 260);
+  --swarm-mode-dispatch: oklch(0.78 0.14 55);
+  --swarm-mode-swarm: oklch(0.78 0.13 195);
+
+  --swarm-expert-running: oklch(0.82 0.11 55);
+  --swarm-expert-completed: oklch(0.65 0.17 155);
+  --swarm-expert-failed: oklch(0.58 0.20 25);
+  --swarm-expert-skipped: oklch(0.55 0 0);
+  --swarm-expert-budget-exceeded: oklch(0.78 0.14 75);
+
+  --swarm-consensus-line: oklch(0.72 0.16 260);
+  --swarm-consensus-area: oklch(0.72 0.16 260 / 0.15);
+  --swarm-threshold-line: oklch(0.58 0.20 25);
+  --swarm-consensus-dot: oklch(0.65 0.17 155);
+
+  --swarm-budget-warning: oklch(0.75 0.14 75);
+  --swarm-timeout-warning: oklch(0.70 0.14 55);
+  --swarm-context-overflow: oklch(0.58 0.20 25);
+}
+
+@theme inline {
+  --font-sans: 'Geist', 'Geist Fallback';
+  --font-mono: 'Geist Mono', 'Geist Mono Fallback';
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+
+  /* ── Scheduler colors ── */
+  --color-scheduler-success: var(--scheduler-success);
+  --color-scheduler-warn: var(--scheduler-warn);
+  --color-scheduler-error: var(--scheduler-error);
+  --color-scheduler-info: var(--scheduler-info);
+  --color-scheduler-paused: var(--scheduler-paused);
+  --color-scheduler-primary: var(--scheduler-primary);
+  --color-scheduler-primary-hover: var(--scheduler-primary-hover);
+  --color-scheduler-primary-active: var(--scheduler-primary-active);
+  --color-scheduler-primary-light: var(--scheduler-primary-light);
+  --color-scheduler-accent: var(--scheduler-accent);
+  --color-scheduler-accent-hover: var(--scheduler-accent-hover);
+  --color-scheduler-accent-light: var(--scheduler-accent-light);
+
+  /* ── Agent colors ── */
+  --color-agent-primary: var(--agent-primary);
+  --color-agent-primary-hover: var(--agent-primary-hover);
+  --color-agent-primary-active: var(--agent-primary-active);
+  --color-agent-primary-light: var(--agent-primary-light);
+  --color-agent-primary-foreground: var(--agent-primary-foreground);
+  --color-agent-accent: var(--agent-accent);
+  --color-agent-accent-hover: var(--agent-accent-hover);
+  --color-agent-accent-light: var(--agent-accent-light);
+  --color-agent-success: var(--agent-success);
+  --color-agent-success-light: var(--agent-success-light);
+  --color-agent-success-foreground: var(--agent-success-foreground);
+  --color-agent-warn: var(--agent-warn);
+  --color-agent-warn-light: var(--agent-warn-light);
+  --color-agent-warn-foreground: var(--agent-warn-foreground);
+  --color-agent-error: var(--agent-error);
+  --color-agent-error-light: var(--agent-error-light);
+  --color-agent-error-foreground: var(--agent-error-foreground);
+  --color-agent-info: var(--agent-info);
+  --color-agent-info-light: var(--agent-info-light);
+  --color-agent-info-foreground: var(--agent-info-foreground);
+  --color-agent-surface: var(--agent-surface);
+  --color-agent-surface-raised: var(--agent-surface-raised);
+  --color-agent-surface-inset: var(--agent-surface-inset);
+  --color-agent-divider: var(--agent-divider);
+
+  /* ── Swarm colors ── */
+  --color-swarm-primary: var(--swarm-primary);
+  --color-swarm-primary-hover: var(--swarm-primary-hover);
+  --color-swarm-primary-active: var(--swarm-primary-active);
+  --color-swarm-primary-light: var(--swarm-primary-light);
+  --color-swarm-primary-muted: var(--swarm-primary-muted);
+
+  --color-swarm-mode-review: var(--swarm-mode-review);
+  --color-swarm-mode-debate: var(--swarm-mode-debate);
+  --color-swarm-mode-dispatch: var(--swarm-mode-dispatch);
+  --color-swarm-mode-swarm: var(--swarm-mode-swarm);
+
+  --color-swarm-expert-running: var(--swarm-expert-running);
+  --color-swarm-expert-completed: var(--swarm-expert-completed);
+  --color-swarm-expert-failed: var(--swarm-expert-failed);
+  --color-swarm-expert-skipped: var(--swarm-expert-skipped);
+  --color-swarm-expert-budget-exceeded: var(--swarm-expert-budget-exceeded);
+
+  --color-swarm-consensus-line: var(--swarm-consensus-line);
+  --color-swarm-consensus-area: var(--swarm-consensus-area);
+  --color-swarm-threshold-line: var(--swarm-threshold-line);
+  --color-swarm-consensus-dot: var(--swarm-consensus-dot);
+
+  --color-swarm-budget-warning: var(--swarm-budget-warning);
+  --color-swarm-timeout-warning: var(--swarm-timeout-warning);
+  --color-swarm-context-overflow: var(--swarm-context-overflow);
+
+  /* ── Swarm animations ── */
+  --animate-swarm-pulse: swarm-pulse 2s ease-in-out infinite;
+  --animate-swarm-fade-in: swarm-fade-in 300ms ease-out;
+  --animate-swarm-slide-up: swarm-slide-up 250ms var(--ease-out);
+}
+
+@keyframes shimmer {
+  0% { background-position: -200px 0; }
+  100% { background-position: calc(200px + 100%) 0; }
+}
+
+@keyframes swarm-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 oklch(0.72 0.15 195 / 0.4); }
+  50% { box-shadow: 0 0 0 8px oklch(0.72 0.15 195 / 0); }
+}
+
+@keyframes swarm-fade-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes swarm-slide-up {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

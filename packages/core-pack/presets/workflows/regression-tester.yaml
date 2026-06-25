@@ -1,0 +1,996 @@
+# yaml-language-server: $schema=./doc/workflow-schema.json
+apiVersion: octopus/v1
+kind: Workflow
+name: regression-tester
+description: >
+  系统回归测试工作流。在隔离工作空间中真实运行 Octopus，支持全链路或选择性模块回归，
+  与上次基线对比，发现新 BUG 自动写入 bug-report 目录。
+
+model: opus[1m]
+engine: claude
+execution_mode: auto
+max_concurrent: 4
+timeout: 28800
+
+inputs:
+  modules:
+    description: >
+      回归测试的模块范围。"all" 表示全部 7 个包（shared, providers, cli, engine, server, web-app, core-pack）。
+      也可指定逗号分隔的模块列表，如 "engine,server,web-app"。
+    required: false
+    default: "all"
+  include_e2e:
+    description: "是否包含 web-app 的 E2E 浏览器截图测试（Playwright）"
+    required: false
+    default: "true"
+  baseline:
+    description: >
+      基线对比来源。"latest" 使用 ~/.octopus/regression-baseline/latest.json。
+      也可指定具体文件名（不含路径），如 "2024-01-15-baseline.json"。
+    required: false
+    default: "latest"
+  max_token_budget:
+    description: "Token 预算上限（所有 agent 节点累计）。超出后停止剩余测试并输出已完成结果。"
+    required: false
+    default: "500000"
+  notify_target:
+    description: "Hermes 通知目标（telegram/chat_id 格式）"
+    required: false
+    default: "telegram:xzf_hermes"
+  keep_on_failure:
+    description: "测试失败时保留环境（进程 + 临时文件 + worktree）供手动检查"
+    required: false
+    default: "true"
+
+variables:
+  conclusion: ""
+  regression_result: ""
+  modules_tested: ""
+  pass_count: "0"
+  fail_count: "0"
+  new_bugs_found: "0"
+  baseline_ref: ""
+  newly_failed: ""
+  recovered: ""
+  token_usage: "0"
+  scan_start_time: ""
+  scan_duration_ms: "0"
+  display_name: "Regression Tester"
+  notify_target: "telegram:xzf_hermes"
+  workspace_id: ""
+  server_port: ""
+  web_port: ""
+  server_pid: ""
+
+auto_answers:
+  - pattern: ".*"
+    answer: "proceed"
+
+# ── Notify 子系统配置 ──
+providers:
+  hermes-cli:
+    type: hermes
+    timeout: 30
+    min_severity: info
+
+channels:
+  default:
+    provider: hermes-cli
+    target: "telegram:xzf_hermes"
+
+hooks:
+  # 1) Workflow failure -- node execution error caused termination
+  on_workflow_failure:
+    - id: notify-failure
+      type: bash
+      timeout: 30
+      bash: |
+        octopus notify --ignore-failure --severity error \
+          --title "❌ ${vars.display_name | default:Regression Tester} — 工作流失败" \
+          --body "📊 PASS: ${vars.pass_count | default:0} | FAIL: ${vars.fail_count | default:0}
+        🆕 新发现 BUG: ${vars.new_bugs_found | default:0}
+        🔴 失败节点: ${hook.failed_node_id | default:unknown}
+        ⏱️ 已运行: ${hook.total_duration_ms | duration}
+
+        💡 错误: ${hook.error | default:Unknown error}"
+
+  # 2) Workflow complete (success or failure)
+  on_complete:
+    - id: notify-complete
+      type: bash
+      timeout: 30
+      bash: |
+        if [ "$vars.fail_count" != "0" ]; then RESULT_ICON="⚠️"; else RESULT_ICON="✅"; fi
+        DURATION_S=$(( ${vars.scan_duration_ms:-0} / 1000 ))
+        DURATION_MIN=$(( DURATION_S / 60 ))
+        DURATION_SEC=$(( DURATION_S % 60 ))
+        octopus notify --ignore-failure \
+          --title "${RESULT_ICON} ${vars.display_name | default:Regression Tester} — 回归测试完成" \
+          --body "📦 模块: ${vars.modules_tested | default:none}
+        📊 PASS: ${vars.pass_count | default:0} | FAIL: ${vars.fail_count | default:0}
+        🆕 新发现 BUG: ${vars.new_bugs_found | default:0}
+        🔻 新增失败: ${vars.newly_failed | default:none}
+        🔺 已恢复: ${vars.recovered | default:none}
+        📈 基线: ${vars.baseline_ref | default:none}
+        ⏱️ 耗时: ${DURATION_MIN}m ${DURATION_SEC}s
+
+        💡 *结论*:
+        ${vars.conclusion | default:No conclusion available}"
+
+nodes:
+  # =================================================================
+  # Node 1: setup-env -- dependency check, parse scope, build, start
+  # =================================================================
+  - id: setup-env
+    type: agent
+    timeout: 900
+    context: new
+    skills: [verification-before-completion, using-git-worktrees]
+    agents:
+      workspace-manager:
+        description: "Worktree management -- verify octopus project worktree, build, start isolated server"
+        prompt: |
+          ## Worktree Management Task
+
+          Manage the octopus project worktree for regression testing.
+
+          ### Step 1: Verify octopus worktree exists
+          ```bash
+          ls projects/ | grep -i octopus
+          cat config.json | jq '.repos[] | select(.name == "octopus") | .worktree_path'
+          ```
+          If the octopus project directory does not exist or is not a valid git worktree, report error and stop.
+
+          ### Step 2: Check git status
+          ```bash
+          cd <worktree_path>
+          git status
+          git log --oneline -3
+          ```
+          Report the current branch and latest commit.
+
+          ### Step 3: Build the project
+          ```bash
+          cd <worktree_path>
+          pnpm install 2>&1 | tail -5
+          pnpm build 2>&1 | tail -20
+          ```
+          If build fails, diagnose the error and attempt fix (max 2 retries).
+
+          ### Step 4: Start isolated server
+          ```bash
+          cd <worktree_path>
+          pnpm dev > "${TEMP:-/tmp}/regression-dev.log" 2>&1 &
+          DEV_PID=$!
+          echo "pnpm dev PID: $DEV_PID"
+          ```
+
+          ### Step 5: Get actual ports from logs
+          ```bash
+          sleep 10
+          grep -oP 'server=\K[0-9]+' "${TEMP:-/tmp}/regression-dev.log" || grep 'server:' "${TEMP:-/tmp}/regression-dev.log"
+          grep -oP 'web:\s+\K[0-9]+' "${TEMP:-/tmp}/regression-dev.log" || grep 'web:' "${TEMP:-/tmp}/regression-dev.log"
+          ```
+
+          ### Step 6: Health check
+          ```bash
+          curl -s http://localhost:<server_port>/api/health  # must return 200
+          curl -s -o /dev/null -w "%{http_code}" http://localhost:<web_port>/  # must return 200
+          ```
+
+          ## Output
+          Output pure JSON line (no code block wrapping):
+          {"vars_update":{"server_port":"<port>","web_port":"<port>","server_pid":"<PID>","build_ok":"true"}}
+        model: sonnet
+        tools: [Bash, Read, Grep, Glob]
+    prompt: |
+      You are the Regression Tester setup agent. Complete environment preparation in strict order.
+
+      ## Step 0: Install Testing Agents (must run first)
+      ```bash
+      AGENTS_TARGET="$(pwd)/.claude/agents"
+      mkdir -p "$AGENTS_TARGET"
+      COREPACK_AGENTS=""
+      for d in "$(pwd)/packages/core-pack/agents" "$(pwd)/.octopus/core-pack/agents" "$(pwd)/../core-pack/agents"; do
+        if [ -d "$d" ]; then COREPACK_AGENTS="$d"; break; fi
+      done
+      if [ -n "$COREPACK_AGENTS" ]; then
+        for f in testing-engineering-software-architect testing-evidence-collector testing-reality-checker; do
+          [ -f "$COREPACK_AGENTS/$f.md" ] && cp "$COREPACK_AGENTS/$f.md" "$AGENTS_TARGET/"
+        done
+        echo "Installed testing agents from $COREPACK_AGENTS"
+      else
+        echo "WARN: core-pack/agents not found"
+      fi
+      ```
+
+      ## Step 1: Check Dependencies
+      Verify that required tools are available:
+      ```bash
+      which pnpm && pnpm --version
+      which node && node --version
+      which git && git --version
+      which curl && curl --version | head -1
+      ```
+      If `include_e2e` is "true", also verify:
+      ```bash
+      which npx && npx playwright --version 2>/dev/null || echo "Playwright not found"
+      ```
+      Any critical dependency missing -> report error and stop.
+
+      ## Step 2: Parse Regression Scope
+      Analyze `$inputs.modules` to determine which packages to test:
+
+      **If modules = "all"**, test all 7 packages:
+      - shared (@octopus/shared)
+      - providers (@octopus/providers)
+      - cli (octopus)
+      - engine (@octopus/engine)
+      - server (@octopus/server)
+      - web-app (@octopus/web-app)
+      - core-pack (@octopus/core-pack)
+
+      **If modules = specific comma-separated list** (e.g., "engine,server"), test only those modules.
+
+      **Dependency analysis** -- after parsing the module list, analyze the dependency graph and suggest expansion:
+      ```
+      Dependency graph (downstream depends on upstream):
+        shared      <- (no deps, root package)
+        providers   <- shared
+        engine      <- shared, providers
+        cli         <- shared, engine, core-pack
+        server      <- shared, engine, core-pack, providers
+        web-app     <- shared (type refs)
+        core-pack   <- (no deps, pure data)
+      ```
+      For each requested module, check if its upstream dependencies are included.
+      If not, output a suggestion like:
+      "Module 'engine' depends on 'shared' and 'providers'. Consider adding them for full regression coverage."
+      Do NOT auto-expand -- only suggest. The final test scope is what `$inputs.modules` specifies.
+
+      Record the final module list in `$vars.modules_tested`.
+
+      ## Step 3: Create Workspace / Verify Octopus Project
+      From the current workspace root:
+      1. Read `config.json` to find the octopus project's `worktree_path`
+      2. Verify the worktree directory exists and is a valid git repository:
+         ```bash
+         cd <worktree_path> && git status && git log --oneline -1
+         ```
+      3. Record the worktree path for use by subsequent nodes.
+
+      ## Step 4: Build
+      Enter the octopus project directory and build all packages:
+      ```bash
+      cd <worktree_path>
+      pnpm install 2>&1 | tail -10
+      pnpm build 2>&1 | tail -30
+      ```
+      If build fails:
+      - Read the error output carefully
+      - Identify the failing package and error type
+      - Attempt to fix (max 2 retries)
+      - If still failing after 2 retries, report error and stop.
+
+      ## Step 5: Start Isolated Server
+      ```bash
+      cd <worktree_path>
+      pnpm dev > "${TEMP:-/tmp}/regression-dev.log" 2>&1 &
+      DEV_PID=$!
+      echo "pnpm dev PID: $DEV_PID"
+      ```
+
+      ## Step 6: Health Check (CRITICAL)
+      Wait for startup, then get actual ports from logs:
+      ```bash
+      sleep 10
+
+      # Extract ports from log
+      SERVER_PORT=$(grep -oP 'server=\K[0-9]+' "${TEMP:-/tmp}/regression-dev.log" | head -1)
+      WEB_PORT=$(grep -oP 'web:\s*\K[0-9]+' "${TEMP:-/tmp}/regression-dev.log" | head -1)
+
+      # If grep patterns don't match, try alternative formats
+      [ -z "$SERVER_PORT" ] && SERVER_PORT=$(grep -i 'server' "${TEMP:-/tmp}/regression-dev.log" | grep -oP '\d{4}' | head -1)
+      [ -z "$WEB_PORT" ] && WEB_PORT=$(grep -i 'web' "${TEMP:-/tmp}/regression-dev.log" | grep -oP '\d{4}' | head -1)
+
+      echo "Server port: $SERVER_PORT"
+      echo "Web port: $WEB_PORT"
+
+      # Verify health
+      curl -sf http://localhost:$SERVER_PORT/api/health && echo "Server healthy"
+      curl -sf -o /dev/null -w "%{http_code}" http://localhost:$WEB_PORT/ && echo "Web accessible"
+      ```
+      Both HTTP checks MUST return 200. If not, wait 5 more seconds and retry (max 3 retries).
+      If still failing, check `${TEMP:-/tmp}/regression-dev.log` for errors and report.
+
+      ## Step 7: Record Start Time
+      ```bash
+      START_TIME=$(date +%s%3N 2>/dev/null || python3 -c "import time; print(int(time.time()*1000))")
+      echo "scan_start_time: $START_TIME"
+      ```
+
+      ## Step 8: Calculate display_name (must be non-empty)
+      Priority: $vars.execution_name > $vars.workflow_name > "Regression Tester"
+
+      ## Step 9: Notify Start
+      Send notification via Bash:
+      ```bash
+      octopus notify --ignore-failure \
+        --title "🔄 $vars.display_name — 回归测试开始" \
+        --body "📦 模块: $inputs.modules
+      🔍 E2E: $inputs.include_e2e
+      📊 基线: $inputs.baseline
+      🖥️ Server: http://localhost:<server_port>
+      💰 Token 预算: $inputs.max_token_budget"
+      ```
+
+      ## Output
+      At the end of your reply, output a pure JSON line (no code block wrapping):
+      {"vars_update":{"server_port":"<port>","web_port":"<port>","server_pid":"<PID>","modules_tested":"<comma-separated list>","baseline_ref":"$inputs.baseline","display_name":"<non-empty name>","workspace_id":"<id>","scan_start_time":"<ms timestamp>","notify_target":"$inputs.notify_target"}}
+
+      ## Constraints
+      - Do NOT kill any protected ports (3000, 3001, 3098, 3099)
+      - pnpm build must succeed before proceeding to start server
+      - Health check must return HTTP 200 for both server and web ports
+      - Ports must be actually captured and verified from logs, never guessed
+      - Use `${TEMP:-/tmp}` for all temporary files
+      - Record scan_start_time as millisecond timestamp
+
+      ## Planning
+      tools: [Bash, Read, Grep, Glob]
+      verify: true
+
+  # =================================================================
+  # Node 2: regression-orchestrator -- 6-step regression execution
+  # =================================================================
+  - id: regression-orchestrator
+    type: agent
+    depends_on: [setup-env]
+    timeout: 21600
+    skills: [verification-before-completion, systematic-debugging]
+    agents:
+      evidence-collector:
+        description: "Evidence collector -- ensure each test item has real execution evidence (logs, exit codes, duration)"
+        agent_file: ".claude/agents/testing-evidence-collector.md"
+        prompt: |
+          ## Evidence Collection Task
+
+          Collect execution evidence for every test item in the regression run.
+
+          For each module's test suite:
+          1. Run the actual test command and capture full stdout/stderr
+          2. Record exit code (0 = pass, non-zero = fail)
+          3. Record duration in milliseconds
+          4. Extract individual test case results from output (test name + pass/fail + duration)
+          5. Flag suspicious patterns:
+             - Duration < 100ms for a test suite = suspicious (may not have actually run)
+             - Zero output lines = suspicious
+             - Exit code 0 but individual test failures in output = inconsistent
+
+          For server API tests, capture:
+          - HTTP status code
+          - Response body (first 500 chars)
+          - Response time
+
+          For web-app E2E tests, capture:
+          - Screenshot file path
+          - Page load time
+          - Console errors (if any)
+
+          ## Output
+          Output a JSON evidence array:
+          {"evidence":[{"module":"<name>","test_name":"<name>","command":"<cmd>","exit_code":0,"duration_ms":1234,"has_real_output":true,"output_snippet":"<first 200 chars>","individual_results":[{"name":"<test>","status":"pass|fail","duration_ms":100}]}]}
+        model: sonnet
+        tools: [Bash, Read, Grep]
+
+      reality-checker:
+        description: "Reality checker -- verify tests actually ran, anti-fake-run validation"
+        agent_file: ".claude/agents/testing-reality-checker.md"
+        prompt: |
+          ## Reality Check Task
+
+          Verify that regression tests actually executed rather than being simulated, skipped, or hallucinated.
+
+          Default judgment: NEEDS WORK
+          Only judge as PASSED when there is overwhelming evidence of real execution.
+
+          Auto-fail triggers (any one triggers automatic FAILED):
+          - Test suite duration < 100ms (too fast to have run real tests)
+          - Zero output lines from test command
+          - All tests "pass" but no individual test names visible in output
+          - Evidence shows exit code 0 but no test runner output (e.g., no "Tests: X passed" line)
+          - Agent claims results without actually running pnpm test or curl commands
+
+          Verification checklist:
+          1. Each pnpm test --filter <pkg> command was actually invoked (check bash history / output)
+          2. Test output contains real test runner formatting (Vitest/Jest output patterns)
+          3. Exit codes match the claimed pass/fail status
+          4. Duration is plausible for the number of tests claimed
+          5. For API tests: actual HTTP responses with real status codes and bodies
+          6. For E2E tests: actual screenshot files exist on disk
+
+          ## Output
+          Output judgment per module:
+          {"judgments":[{"module":"<name>","verdict":"PASSED|NEEDS_WORK|FAILED","reason":"<explanation>","evidence_strength":"strong|weak|none"}]}
+        model: opus[1m]
+        tools: [Bash, Read, Grep]
+
+      vision-analyzer:
+        description: "UI regression analyzer -- screenshot comparison for web-app visual regression"
+        agent_file: ".claude/agents/vision-analyzer.md"
+        prompt: |
+          ## UI Regression Analysis Task
+
+          Analyze screenshots from web-app E2E tests for visual regression.
+
+          For each page tested:
+          1. Take a screenshot using Playwright at standard breakpoints (320, 768, 1024, 1440)
+          2. Check for visual anomalies:
+             - Layout breakage (overlapping elements, broken grid)
+             - Missing elements (buttons, text, images not rendered)
+             - Rendering errors (blank areas, broken fonts, placeholder text)
+             - Console errors visible in browser
+             - Responsive design failures at each breakpoint
+          3. Compare with baseline screenshots if available at ~/.octopus/regression-baseline/screenshots/
+          4. Score each page: PASS (no issues) / WARN (minor issues) / FAIL (major regression)
+
+          If no baseline screenshots exist, only check for obvious rendering issues.
+
+          ## Output
+          Output structured analysis per page:
+          {"visual_results":[{"page":"<url>","breakpoint":1024,"verdict":"PASS|WARN|FAIL","issues":["<description>"],"screenshot_path":"<path>","has_baseline":true,"baseline_diff":"<description>"}]}
+        model: haiku
+        tools: [Bash, Read]
+
+      report-generator:
+        description: "Report generator -- generate regression report + BUG reports + update baseline + update index"
+        prompt: |
+          ## Report Generation Task
+
+          Generate comprehensive regression test output artifacts.
+
+          ### Task 1: Main Regression Report
+          Create a regression report Markdown file at:
+          `~/.octopus/regression-reports/YYYY-MM-DD-HHmmss-regression-report.md`
+
+          Contents:
+          ```markdown
+          # Regression Test Report
+
+          - Date: YYYY-MM-DD HH:mm:ss
+          - Modules Tested: <comma-separated list>
+          - Include E2E: <true/false>
+          - Baseline: <baseline reference>
+          - Duration: <Xm Ys>
+          - Token Usage: <total tokens>
+
+          ## Summary
+          | Metric | Value |
+          |--------|-------|
+          | Total Tests | N |
+          | Passed | N |
+          | Failed | N |
+          | New Bugs | N |
+          | Newly Failed | N |
+          | Recovered | N |
+          | Persistent Failures | N |
+
+          ## Module Results
+
+          ### <module-name>
+          | Test | Status | Duration | Notes |
+          |------|--------|----------|-------|
+          | <test-name> | PASS/FAIL | Xms | <details> |
+
+          ## Baseline Comparison
+          - Newly Failed (was PASS, now FAIL): <list>
+          - Recovered (was FAIL, now PASS): <list>
+          - Persistent Failures: <list>
+
+          ## New Bugs
+          - <bug-id>: <module> - <title> (file: <path>)
+
+          ## Conclusion
+          <2-3 sentence summary>
+          ```
+
+          ### Task 2: New BUG Reports
+          For each newly failed test item confirmed as a real bug (not infrastructure/env issue):
+
+          Create file at: `~/.octopus/bug-report/YYYY-MM-DD/NNN-[回归]-<module>-<short-description>.md`
+
+          Where NNN is a sequential number starting from 001, determined by existing files in the directory.
+
+          BUG report format:
+          ```markdown
+          ---
+          fingerprint: "<sha256-of-module:test-name>"
+          module: <module-name>
+          test_name: <test-name>
+          discovery_source: regression_test
+          discovered_at: <ISO timestamp>
+          severity: <critical|high|medium|low>
+          status: open
+          ---
+
+          # [回归] <Module> - <Short Description>
+
+          ## Symptom
+          <What the test expected vs what actually happened>
+
+          ## Test Command
+          `<exact command that was run>`
+
+          ## Error Output
+          ```
+          <relevant error output, max 50 lines>
+          ```
+
+          ## Context
+          - Module: <module>
+          - Baseline Status: PASS (in previous baseline)
+          - Current Status: FAIL
+          - Duration: <ms>
+
+          ## Possible Root Cause
+          <Analysis of likely cause based on error pattern>
+          ```
+
+          ### Task 3: Update Baseline
+          Write/update `~/.octopus/regression-baseline/latest.json`:
+          ```json
+          {
+            "updated_at": "<ISO timestamp>",
+            "modules": ["<list>"],
+            "results": {
+              "<module>:<test-name>": {
+                "status": "PASS|FAIL",
+                "duration_ms": 1234,
+                "last_checked": "<ISO timestamp>",
+                "consecutive_failures": 0
+              }
+            },
+            "summary": {
+              "total": 0,
+              "passed": 0,
+              "failed": 0
+            }
+          }
+          ```
+          If the directory or file doesn't exist, create it. If it exists, merge current results into it.
+          IMPORTANT: Only update baseline after all testing is complete. Do NOT update mid-run.
+
+          ### Task 4: Update index.json
+          Write/update `~/.octopus/bug-report/index.json`:
+          ```json
+          {
+            "last_updated": "<ISO timestamp>",
+            "total_bugs": 0,
+            "bugs": [
+              {
+                "id": "NNN",
+                "fingerprint": "<sha256>",
+                "module": "<module>",
+                "title": "<title>",
+                "file": "<relative path>",
+                "status": "open",
+                "discovered_at": "<ISO timestamp>",
+                "discovery_source": "regression_test"
+              }
+            ]
+          }
+          ```
+          If index.json already exists, append new bugs (deduplicate by fingerprint).
+
+          ## Output
+          Output pure JSON line (no code block wrapping):
+          {"vars_update":{"regression_result":"<PASS|FAIL>","pass_count":"<N>","fail_count":"<N>","new_bugs_found":"<N>","newly_failed":"<comma-separated>","recovered":"<comma-separated>","conclusion":"<2-3 sentences>","token_usage":"<total>"}}
+        model: sonnet
+        tools: [Bash, Read, Write, Grep, Glob]
+    prompt: |
+      You are the Regression Orchestrator. Execute regression tests for each module in strict sequence,
+      collect real evidence, compare with baseline, and generate BUG reports for newly discovered failures.
+
+      ## Environment
+      - Server: http://localhost:$vars.server_port
+      - Web: http://localhost:$vars.web_port
+      - Modules to test: $vars.modules_tested
+      - Include E2E: $inputs.include_e2e
+      - Baseline: $inputs.baseline
+      - Max token budget: $inputs.max_token_budget
+
+      ## Sub-agents (invoke via Agent tool)
+      - **evidence-collector**: Collects execution evidence (logs, exit codes, duration) for each test
+      - **reality-checker**: Validates that tests actually ran (anti-fake-run, default NEEDS WORK)
+      - **vision-analyzer**: Analyzes web-app screenshots for UI regression (only when include_e2e=true)
+      - **report-generator**: Generates final regression report + BUG reports + updates baseline + updates index.json
+
+      ## STRICT Execution Rules
+      1. NEVER simulate or hallucinate test results. Every result MUST come from real command execution.
+      2. Use evidence-collector for EVERY test execution to maintain evidence chain.
+      3. Use reality-checker after each module's tests to confirm genuine execution.
+      4. Only update baseline AFTER all modules are tested and all bugs are filed.
+      5. Each notification type must be sent at most once.
+      6. Track token usage cumulatively. If approaching $inputs.max_token_budget, stop remaining tests and report partial results.
+      7. Every Bash command MUST complete within 120 seconds. Never use sleep > 120s.
+      8. If a sub-agent call fails, retry once with simplified prompt. If still fails, proceed without it and note the gap.
+
+      ## Step 1: Determine Test Scope
+      Parse `$vars.modules_tested` to get the list of modules.
+
+      If "all" or the full list of 7 modules:
+      - shared, providers, cli, engine, server, web-app, core-pack
+
+      If a subset:
+      - Parse the comma-separated list
+      - For each requested module, analyze its upstream dependencies from this graph:
+        ```
+        shared      <- (no deps)
+        providers   <- shared
+        engine      <- shared, providers
+        cli         <- shared, engine, core-pack
+        server      <- shared, engine, core-pack, providers
+        web-app     <- shared (type refs only)
+        core-pack   <- (no deps)
+        ```
+      - Suggest expansion: "Module X depends on Y and Z. Consider including them for full coverage."
+      - Do NOT auto-expand. Respect the user's module selection.
+      - Log the final scope.
+
+      ## Step 2: Generate Test Plan Per Module
+      For each module in scope, define specific test items:
+
+      ### shared (@octopus/shared)
+      - Zod schema validation tests: verify all Zod schemas parse valid data and reject invalid data
+      - VarPool tests: read, write, expression evaluation, variable interpolation
+      - Config parsing tests: load and validate configuration files
+      - Manifest tests: manifest generation and validation
+      - Repo-ops tests: repository operations (scan, index, clone helpers)
+      Command: `cd <worktree_path> && pnpm test --filter @octopus/shared 2>&1`
+
+      ### providers (@octopus/providers)
+      - Claude SDK integration: verify provider initialization and basic request construction
+      - Error handling: retry logic, timeout behavior, rate limit handling
+      - Model routing: verify model selection logic maps task types to correct models
+      - Token counting: verify token estimation accuracy
+      - Streaming: verify streaming response handling
+      Command: `cd <worktree_path> && pnpm test --filter @octopus/providers 2>&1`
+
+      ### cli (octopus)
+      - `octopus version`: verify outputs correct version string matching package.json
+      - `octopus init`: verify directory initialization with correct structure
+      - `octopus setup`: verify org-level setup creates expected files
+      - `octopus workflow`: verify workflow subcommands (run, validate, list)
+      - `octopus workspace`: verify workspace subcommands (list, create, get, delete)
+      - Verify exit codes: 0 for success, non-zero for expected failures
+      - Verify output format: JSON output mode, table output mode
+      Command: `cd <worktree_path> && pnpm test --filter octopus 2>&1`
+
+      ### engine (@octopus/engine)
+      - BashExecutor: command execution, stdout capture, exit code propagation, timeout
+      - PythonExecutor: script execution, stdout capture, error propagation
+      - AgentExecutor: sub-agent invocation, prompt construction, response parsing, tool use
+      - ConditionExecutor: case evaluation, default branch, variable interpolation in conditions
+      - ApprovalExecutor: approval flow, auto_answers bypass
+      - LoopExecutor: iteration, break conditions, $iteration variable
+      - Variable pool ($vars): read/write operations, expression evaluation, scope
+      - depends_on: dependency chain execution order, parallel detection, failure propagation
+      - Timeout handling: per-node timeout enforcement, graceful termination
+      Command: `cd <worktree_path> && pnpm test --filter @octopus/engine 2>&1`
+
+      ### server (@octopus/server)
+      - Health endpoint: GET /api/health returns 200 with status body
+      - Workspaces CRUD: POST/GET/DELETE /api/workspaces (create, read, delete lifecycle)
+      - Workflows CRUD: GET/POST /api/workspaces/:id/workflows (list, upload, validate)
+      - Executions: GET/POST /api/workspaces/:id/executions (list, create, start, get detail)
+      - SSE: Server-Sent Events connection, event streaming, reconnection
+      - Error responses: 404 for missing resources, 400 for invalid input, 500 for internal errors
+      Commands:
+      ```bash
+      curl -sf http://localhost:$vars.server_port/api/health
+      curl -sf http://localhost:$vars.server_port/api/workspaces | jq length
+      curl -sf -X POST http://localhost:$vars.server_port/api/workspaces -H 'Content-Type: application/json' -d '{"name":"regression-test"}'
+      ```
+      Also run: `cd <worktree_path> && pnpm test --filter @octopus/server 2>&1`
+
+      ### web-app (@octopus/web-app)
+      - Home page (/): loads without errors, key elements visible
+      - Dashboard page: workspace list renders, navigation works
+      - Key UI elements: sidebar, header, main content area render correctly
+      - If include_e2e is "true":
+        - Run Playwright to take screenshots at breakpoints 320, 768, 1024, 1440
+        - Use vision-analyzer sub-agent to analyze screenshots for visual regression
+        - Check for console errors on each page load
+        - Verify responsive layout at each breakpoint
+      Commands:
+      ```bash
+      curl -sf http://localhost:$vars.web_port/ | head -20
+      curl -sf http://localhost:$vars.web_port/ -o /dev/null -w "%{http_code}"
+      cd <worktree_path> && pnpm test --filter @octopus/web-app 2>&1
+      ```
+
+      ### core-pack (@octopus/core-pack)
+      - Preset workflow YAML validation: every .yaml in presets/workflows/ must parse as valid YAML
+        and contain required fields (apiVersion, kind, name, nodes)
+      - Skills file existence: every directory in presets/skills/ contains a SKILL.md
+      - Agents file existence: every .md in presets/agents/ has valid YAML frontmatter
+      - MCP config validation: every .yaml in presets/*/mcp/ parses correctly
+      Commands:
+      ```bash
+      cd <worktree_path>
+      # Validate all preset workflow YAMLs
+      for f in packages/core-pack/presets/workflows/*.yaml; do
+        node -e "const yaml=require('yaml'); yaml.parse(require('fs').readFileSync('$f','utf-8')); console.log('VALID: $f')" 2>&1
+      done
+      # Check skills
+      find packages/core-pack/presets -name "SKILL.md" | wc -l
+      # Check agents
+      find packages/core-pack/presets -name "*.md" -path "*/agents/*" | wc -l
+      ```
+
+      ## Step 3: Execute Regression Per Module
+      For each module in the test plan:
+
+      1. **Run tests**: Execute the test command for the module
+         ```bash
+         cd <worktree_path>
+         pnpm test --filter <package-name> 2>&1 | tee "${TEMP:-/tmp}/regression-<module>.log"
+         TEST_EXIT=$?
+         echo "Exit code: $TEST_EXIT"
+         ```
+
+      2. **For server module**: Additionally run API endpoint tests via curl
+         ```bash
+         # Health
+         curl -sf http://localhost:$vars.server_port/api/health && echo "PASS: health" || echo "FAIL: health"
+         # Workspaces list
+         curl -sf http://localhost:$vars.server_port/api/workspaces && echo "PASS: workspaces" || echo "FAIL: workspaces"
+         # Create + delete workspace
+         WS_ID=$(curl -sf -X POST http://localhost:$vars.server_port/api/workspaces \
+           -H 'Content-Type: application/json' -d '{"name":"regression-probe"}' | jq -r .id)
+         curl -sf -X DELETE http://localhost:$vars.server_port/api/workspaces/$WS_ID && echo "PASS: cleanup" || echo "FAIL: cleanup"
+         ```
+
+      3. **For web-app with include_e2e=true**: Run Playwright and delegate to vision-analyzer
+         ```bash
+         cd <worktree_path>/packages/web-app
+         npx playwright test --reporter=json 2>&1 || true
+         ```
+         Then delegate to **vision-analyzer** sub-agent with screenshot paths.
+
+      4. **Record results** for each module:
+         - status: PASS (exit code 0, all tests passed) or FAIL (exit code non-zero or test failures)
+         - duration_ms: wall clock time of test execution
+         - evidence: invoke **evidence-collector** sub-agent to collect and structure the output
+
+      5. **Reality check**: After each module, invoke **reality-checker** sub-agent to verify the evidence
+         is genuine (not simulated, not empty, not suspiciously fast).
+
+      6. **Track token usage**: After each module, add the estimated token usage.
+         If cumulative tokens approach $inputs.max_token_budget (80% threshold), stop remaining modules
+         and note which modules were skipped.
+
+      ## Step 4: Baseline Comparison
+      Read the baseline file and compare with current results:
+
+      ```bash
+      BASELINE_DIR="$HOME/.octopus/regression-baseline"
+      BASELINE_FILE="$BASELINE_DIR/${inputs.baseline}.json"
+      [ "$inputs.baseline" = "latest" ] && BASELINE_FILE="$BASELINE_DIR/latest.json"
+
+      if [ -f "$BASELINE_FILE" ]; then
+        echo "Baseline found: $BASELINE_FILE"
+        cat "$BASELINE_FILE" | jq '.results | keys | length'
+      else
+        echo "No baseline found. Current results will become the initial baseline."
+      fi
+      ```
+
+      For each test item, compare current status with baseline:
+      - Was PASS, now FAIL -> **newly_failed** (new regression!)
+      - Was FAIL, now PASS -> **recovered**
+      - Was FAIL, still FAIL -> **persistent_failure**
+      - Was PASS, still PASS -> **stable**
+      - Not in baseline -> **new_test**
+
+      Track counts:
+      - newly_failed: list of test identities that regressed
+      - recovered: list of test identities that are now fixed
+      - persistent: list of test identities that remain failing
+
+      ## Step 5: New BUG Reports
+      For each item in **newly_failed** that reality-checker confirmed as a genuine failure:
+
+      1. Delegate to **report-generator** sub-agent with:
+         - The full list of test results (module, test_name, status, duration, evidence)
+         - The baseline comparison data (newly_failed, recovered, persistent)
+         - The module list and configuration
+
+      2. The report-generator will:
+         - Create `~/.octopus/regression-reports/YYYY-MM-DD-HHmmss-regression-report.md`
+         - Create individual BUG reports in `~/.octopus/bug-report/YYYY-MM-DD/NNN-[回归]-<module>-<desc>.md`
+         - Each BUG report includes: fingerprint (sha256), discovery_source: regression_test, evidence
+         - Update `~/.octopus/bug-report/index.json` with new entries (deduplicate by fingerprint)
+         - Update `~/.octopus/regression-baseline/latest.json` with current results
+
+      3. If no newly_failed items, skip BUG report generation but still generate the main regression report.
+
+      4. For each confirmed new BUG, send individual notification:
+         ```bash
+         octopus notify --ignore-failure --severity warn \
+           --title "🆕 $vars.display_name — 回归测试发现新 BUG" \
+           --body "📦 模块: {module}
+         🔴 测试: {test_name}
+         📝 描述: {short_description}
+         📁 报告: {bug_report_path}"
+         ```
+
+      ## Step 6: Output Regression Report
+      1. Delegate to **report-generator** sub-agent for final report generation and baseline update.
+
+      2. Calculate duration:
+         ```bash
+         END_TIME=$(date +%s%3N 2>/dev/null || python3 -c "import time; print(int(time.time()*1000))")
+         DURATION_MS=$((END_TIME - ${vars.scan_start_time:-0}))
+         echo "Duration: ${DURATION_MS}ms"
+         ```
+
+      3. Send completion notification:
+         ```bash
+         octopus notify --ignore-failure \
+           --title "✅ $vars.display_name — 回归测试完成" \
+           --body "📦 模块: $vars.modules_tested
+      📊 PASS: <pass_count> | FAIL: <fail_count>
+      🆕 新 BUG: <new_bugs_found>
+      📈 新增失败: <newly_failed list or 'none'>
+      🔄 恢复通过: <recovered list or 'none'>
+      ⏱️ 耗时: <Xm Ys>
+      💰 Token: <total>"
+         ```
+
+      ## Output
+      At the end of your reply, output a pure JSON line (no code block wrapping):
+      {"vars_update":{"regression_result":"<PASS|FAIL>","pass_count":"<N>","fail_count":"<N>","new_bugs_found":"<N>","newly_failed":"<comma-separated or empty>","recovered":"<comma-separated or empty>","conclusion":"<2-3 sentence summary>","token_usage":"<cumulative tokens>","scan_duration_ms":"<ms>"}}
+
+  # =================================================================
+  # Node 3: cleanup -- kill processes, clean ports, remove worktree
+  # =================================================================
+  - id: cleanup
+    type: agent
+    depends_on: [regression-orchestrator]
+    timeout: 300
+    context: new
+    agents:
+      workspace-manager:
+        description: "Worktree manager -- kill server processes, clean ports, remove worktree, clean temp files"
+        prompt: |
+          ## Cleanup Task
+
+          Clean up the regression testing environment.
+
+          ### Step 1: Kill server process
+          ```bash
+          PID="<server_pid>"
+          if [ -n "$PID" ]; then
+            if command -v taskkill &>/dev/null; then
+              taskkill /PID "$PID" /T /F 2>/dev/null || echo "Process $PID already terminated"
+            else
+              kill "$PID" 2>/dev/null || echo "Process $PID already terminated"
+            fi
+          fi
+          ```
+
+          ### Step 2: Clean ports
+          Verify the server and web ports are no longer in use:
+          ```bash
+          # Check if ports are still bound
+          if command -v netstat &>/dev/null; then
+            netstat -ano 2>/dev/null | grep -E ":<server_port>|:<web_port>" || echo "Ports are free"
+          elif command -v ss &>/dev/null; then
+            ss -tlnp 2>/dev/null | grep -E ":<server_port>|:<web_port>" || echo "Ports are free"
+          fi
+          ```
+          If ports are still occupied, find and kill the remaining processes.
+          NEVER kill protected ports (3000, 3001, 3098, 3099).
+
+          ### Step 3: Remove worktree (if applicable)
+          If a temporary worktree was created for regression testing:
+          ```bash
+          # Check if any test-specific worktrees exist
+          git -C <octopus_main_repo> worktree list
+          # Remove if found (only regression-specific worktrees)
+          ```
+
+          ### Step 4: Clean temporary files
+          ```bash
+          TEMP_DIR="${TEMP:-/tmp}"
+          # Clean regression log files
+          rm -f "$TEMP_DIR"/regression-*.log
+          # Clean lock files
+          rm -f "$TEMP_DIR"/regression-*.lock
+          # Clean any stale PID files
+          rm -f "$TEMP_DIR"/regression-*.pid
+          echo "Temporary files cleaned from $TEMP_DIR"
+          ```
+
+          ### Step 5: Verify cleanup
+          ```bash
+          # Verify process is dead
+          [ -n "$PID" ] && ! kill -0 "$PID" 2>/dev/null && echo "Process confirmed dead"
+          # Verify ports are free
+          echo "Cleanup verification complete"
+          ```
+
+          ## Output
+          Output pure JSON line:
+          {"vars_update":{"cleanup_status":"complete","server_pid":""}}
+        model: sonnet
+        tools: [Bash, Read, Grep]
+    prompt: |
+      You are the cleanup agent. Clean up the regression testing environment after test completion.
+
+      ## Decision: Respect keep_on_failure
+
+      First, check whether cleanup should proceed:
+
+      ```bash
+      echo "Regression result: $vars.regression_result"
+      echo "Fail count: $vars.fail_count"
+      echo "Keep on failure: $inputs.keep_on_failure"
+      ```
+
+      **If $inputs.keep_on_failure is "true" AND $vars.fail_count > 0:**
+      - Do NOT kill the server process
+      - Do NOT clean ports
+      - Do NOT remove worktree
+      - Do NOT clean temp files
+      - Output a message: "Keeping environment for manual inspection (keep_on_failure=true, fail_count=$vars.fail_count)"
+      - Send notification:
+        ```bash
+        octopus notify --ignore-failure \
+          --title "🔧 $vars.display_name — 环境保留" \
+          --body "⚠️ 失败数: $vars.fail_count
+        🖥️ Server: http://localhost:$vars.server_port
+        🌐 Web: http://localhost:$vars.web_port
+        📌 PID: $vars.server_pid
+        💡 环境已保留供手动调试"
+        ```
+      - Output: `{"vars_update":{"cleanup_status":"preserved_for_debug"}}`
+      - STOP here. Do not proceed to cleanup steps.
+
+      **Otherwise (tests passed OR keep_on_failure is "false"):**
+      Proceed with full cleanup by delegating to the **workspace-manager** sub-agent:
+
+      1. Delegate to workspace-manager with these details:
+         - server_pid: $vars.server_pid
+         - server_port: $vars.server_port
+         - web_port: $vars.web_port
+         - Protected ports: 3000, 3001, 3098, 3099 (NEVER kill these)
+
+      2. The workspace-manager will:
+         - Kill the server process (PID: $vars.server_pid)
+         - Verify ports $vars.server_port and $vars.web_port are free
+         - Remove any regression-specific worktree
+         - Clean ${TEMP:-/tmp}/regression-*.log files
+         - Clean ${TEMP:-/tmp}/regression-*.lock files
+         - Verify cleanup is complete
+
+      3. Calculate total scan duration:
+         ```bash
+         END_TIME=$(date +%s%3N 2>/dev/null || python3 -c "import time; print(int(time.time()*1000))")
+         DURATION_MS=$((END_TIME - ${vars.scan_start_time:-0}))
+         DURATION_S=$((DURATION_MS / 1000))
+         echo "Total duration: ${DURATION_S}s (${DURATION_MS}ms)"
+         ```
+
+      4. Final verification:
+         ```bash
+         # Confirm process is dead
+         ! kill -0 "$vars.server_pid" 2>/dev/null && echo "Server process terminated"
+         # Confirm no regression temp files remain
+         ls "${TEMP:-/tmp}"/regression-* 2>/dev/null || echo "No regression temp files"
+         ```
+
+      ## Output
+      At the end of your reply, output a pure JSON line (no code block wrapping):
+      {"vars_update":{"cleanup_status":"<complete|preserved_for_debug>","scan_duration_ms":"<total ms>","server_pid":""}}

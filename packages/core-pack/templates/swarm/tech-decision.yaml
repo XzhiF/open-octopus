@@ -1,0 +1,31 @@
+# Swarm Template: Tech Decision
+# Multi-expert debate for technology selection
+#
+# $template_params: topic
+
+apiVersion: octopus/v1
+kind: Workflow
+name: "Tech Decision — {{topic}}"
+description: "Expert debate on technology choice for {{topic}}"
+
+nodes:
+  - id: decision
+    type: swarm
+    topic: "{{topic}}"
+    mode: debate
+    rounds: 3
+    consensus_threshold: 0.75
+    output_format: full
+    experts:
+      - role: backend-architect
+        perspective: "Evaluate from backend scalability, maintainability, and infrastructure perspective"
+        prompt: "Analyze this technology decision from a backend architecture standpoint."
+      - role: frontend-developer
+        perspective: "Evaluate from developer experience, ecosystem, and frontend integration perspective"
+        prompt: "Analyze this technology decision from a frontend/developer experience standpoint."
+      - role: devops-engineer
+        perspective: "Evaluate from deployment, CI/CD, monitoring, and operational complexity perspective"
+        prompt: "Analyze this technology decision from a DevOps/operations standpoint."
+    outputs:
+      decision: "$vars.decision_synthesis"
+      consensus: "$vars.decision_consensus_score"

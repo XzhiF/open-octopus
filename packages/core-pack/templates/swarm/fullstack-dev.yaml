@@ -1,0 +1,45 @@
+# Swarm Template: Full-Stack Development
+# Multi-expert dispatch for implementing features with dependencies
+#
+# $template_params: topic, project_path
+
+apiVersion: octopus/v1
+kind: Workflow
+name: "Full-Stack Dev — {{topic}}"
+description: "Multi-expert development for {{topic}}"
+
+nodes:
+  - id: implement
+    type: swarm
+    topic: "Implement the following feature: {{topic}}"
+    mode: dispatch
+    failure_policy: fail_fast
+    experts:
+      - role: backend-architect
+        task: "Design and implement the backend API endpoints and data models"
+        prompt: "Implement the backend for this feature."
+        tools:
+          - Read
+          - Write
+          - Edit
+          - Bash
+          - Grep
+      - role: frontend-developer
+        task: "Implement the frontend UI components and integration"
+        prompt: "Implement the frontend for this feature."
+        depends_on:
+          - backend-architect
+        tools:
+          - Read
+          - Write
+          - Edit
+          - Grep
+      - role: code-reviewer
+        task: "Review all changes for quality and correctness"
+        prompt: "Review all code changes from this implementation."
+        depends_on:
+          - backend-architect
+          - frontend-developer
+    outputs:
+      implementation: "$vars.implement_synthesis"
+      files_changed: "$vars.implement_experts"

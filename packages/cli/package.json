@@ -1,0 +1,52 @@
+{
+  "name": "octopus",
+  "version": "1.0.0",
+  "description": "Loop Engineering platform — AI workflow orchestration, multi-project isolation, and agent/skill asset management",
+  "author": "XzhiF",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/XzhiF/octopus.git"
+  },
+  "homepage": "https://github.com/XzhiF/octopus#readme",
+  "bugs": {
+    "url": "https://github.com/XzhiF/octopus/issues"
+  },
+  "keywords": [
+    "ai-workflow",
+    "workflow-engine",
+    "multi-agent",
+    "claude-code",
+    "loop-engineering",
+    "swarm",
+    "git-worktree"
+  ],
+  "bin": {
+    "octopus": "dist/index.js"
+  },
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsup src/index.ts --format esm,cjs --dts && node scripts/copy-core-pack.mjs",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@octopus/engine": "workspace:*",
+    "@octopus/shared": "workspace:*",
+    "@octopus/providers": "workspace:*",
+    "chalk": "^5.4",
+    "commander": "^13.0",
+    "js-yaml": "^4.1",
+    "inquirer": "^12.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.19",
+    "@types/js-yaml": "^4.0.9"
+  }
+}

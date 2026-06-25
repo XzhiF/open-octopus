@@ -1,0 +1,4 @@
+# MCP 注册表 — 本地测试环境 (local)
+# 手动填充实际 MCP server 条目
+
+mcp_servers: []

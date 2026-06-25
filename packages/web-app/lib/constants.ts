@@ -1,0 +1,1 @@
+export const LEADERBOARD_MAX_VISIBLE_MODELS = 3

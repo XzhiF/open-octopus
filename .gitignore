@@ -1,0 +1,63 @@
+# Skill Search cache
+.claude/skills/my-skill-helper/scripts/skill_search/cache/
+.claude/settings.local.json
+.claude/worktrees/
+# Archon runtime artifacts — NEVER commit
+.archon/state/
+.archon/.env
+
+# docs
+docs/superpowers/
+
+# Git worktrees
+.worktrees/
+
+# idea
+.idea/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.python-version
+
+# web-app (Next.js)
+prototype/web-app/node_modules/
+prototype/web-app/.next/
+prototype/web-app/.next/standalone/
+prototype/web-app/out/
+prototype/web-app/build/
+prototype/web-app/dist/
+prototype/web-app/.env*
+prototype/web-app/.vercel/
+prototype/web-app/*.tsbuildinfo
+prototype/web-app/next-env.d.ts
+prototype/web-app/npm-debug.log*
+
+# web-app (Next.js)
+packages/web-app/node_modules/
+packages/web-app/.next/
+packages/web-app/.next/standalone/
+packages/web-app/out/
+packages/web-app/build/
+packages/web-app/dist/
+packages/web-app/.env*
+packages/web-app/.vercel/
+packages/web-app/*.tsbuildinfo
+packages/web-app/next-env.d.ts
+packages/web-app/npm-debug.log*
+
+# Node.js / pnpm monorepo
+node_modules/
+dist/
+.pnpm-store/
+*.tsbuildinfo
+.turbo/
+.next/.worktrees/
+
+# Temporary / local-only artifacts — NEVER commit
+tmp/
+
+
+# Playwright test artifacts
+test-results/

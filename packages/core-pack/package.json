@@ -1,0 +1,19 @@
+{
+  "name": "@octopus/core-pack",
+  "version": "1.0.0",
+  "description": "Octopus core data resources (skills, agents, scripts, templates, presets)",
+  "private": true,
+  "main": "index.js",
+  "files": [
+    "skills/",
+    "agents/",
+    "scripts/",
+    "templates/",
+    "presets/",
+    "config/",
+    "index.js"
+  ],
+  "scripts": {
+    "build": "tsup skills/octo-dev-copilot/scripts/workspace.ts --format cjs --out-dir skills/octo-dev-copilot/scripts --target node18 --no-dts --clean false"
+  }
+}

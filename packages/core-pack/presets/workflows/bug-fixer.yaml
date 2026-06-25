@@ -1,0 +1,1005 @@
+# yaml-language-server: $schema=./doc/workflow-schema.json
+apiVersion: octopus/v1
+kind: Workflow
+name: bug-fixer
+description: >
+  BUG 修复闭环工作流。支持 Batch 模式（指定 BUG 报告文件批量修复）和 Freeform 模式（输入问题描述自主判断→复现→修复→验证）。
+  对 P0-P1 BUG 启用对抗审查，修复后 E2E 验证闭环，提交 PR。非 BUG 问题输出分析报告。
+
+model: opus[1m]
+engine: claude
+execution_mode: auto
+max_concurrent: 2
+timeout: 28800
+
+inputs:
+  bug_reports:
+    description: >
+      BUG 报告文件路径（逗号分隔），Batch 模式下自动解析每个文件的 severity/fingerprint/package。
+      支持 .md / .json / .yaml 格式。留空时进入 Freeform 模式。
+    required: false
+    default: ""
+  description:
+    description: >
+      Freeform 模式的问题描述（自然语言）。当 bug_reports 为空时，根据此描述自主判断是否为 BUG，
+      若是则进入复现→修复→验证流程，若不是则生成分析报告。
+    required: false
+    default: ""
+  max_fix_rounds:
+    description: "单个 BUG 最大修复轮数（含根因分析+对抗审查+实现+E2E+回归+提交）。达到上限标记 wontfix。"
+    required: false
+    default: "5"
+  enable_adversarial:
+    description: "启用对抗审查（devil-advocate）。P0-P1 BUG 强制 3 轮对抗，P2 仅 1 轮，P3-P4 跳过。"
+    required: false
+    default: "true"
+  max_token_budget:
+    description: "单次修复的 token 上限（对抗审查 + 修复 + 验证的累计 token）。超出时强制退出当前轮次。"
+    required: false
+    default: "500000"
+  notify_target:
+    description: "Hermes 通知目标（格式: telegram:channel 或 discord:webhook_url）"
+    required: false
+    default: "telegram:xzf_hermes"
+  keep_on_failure:
+    description: "修复失败时保留 worktree 和环境供手动检查"
+    required: false
+    default: "true"
+
+variables:
+  conclusion: ""
+  fix_report_dir: ""
+  fixed_count: "0"
+  failed_count: "0"
+  pr_url: ""
+  token_usage: "0"
+  display_name: "BUG Fixer"
+  notify_target: "telegram:xzf_hermes"
+  scan_start_time: ""
+  scan_duration_ms: "0"
+  current_bug: ""
+  fix_round: "0"
+  adversarial_round: "0"
+  adversarial_converged: "false"
+  new_bugs_from_fix: "0"
+  workspace_id: ""
+  server_port: ""
+  web_port: ""
+  server_pid: ""
+  fix_mode: ""
+  not_a_bug_count: "0"
+
+auto_answers:
+  - pattern: ".*"
+    answer: "proceed"
+
+# ── Notify 子系统配置 ──
+providers:
+  hermes-cli:
+    type: hermes
+    timeout: 30
+    min_severity: info
+
+channels:
+  default:
+    provider: hermes-cli
+    target: "telegram:xzf_hermes"
+
+hooks:
+  on_workflow_failure:
+    - id: notify-failure
+      type: bash
+      timeout: 30
+      bash: |
+        octopus notify --ignore-failure --severity error \
+          --title "❌ ${vars.display_name | default:BUG Fixer} — 工作流失败" \
+          --body "📋 模式: ${vars.fix_mode | default:unknown}
+        ✅ 已修复: ${vars.fixed_count | default:0} | ❌ 失败: ${vars.failed_count | default:0} | 📝 非BUG: ${vars.not_a_bug_count | default:0}
+        🔴 失败节点: ${hook.failed_node_id | default:unknown}
+        ⏱️ 已运行: ${hook.total_duration_ms | duration}
+
+        💡 *错误信息*:
+        ${hook.error | default:Unknown error}"
+
+  on_complete:
+    - id: notify-complete
+      type: bash
+      timeout: 30
+      bash: |
+        if [ "$vars.failed_count" != "0" ]; then STATUS_ICON="⚠️"; else STATUS_ICON="✅"; fi
+        PR_INFO=""
+        [ -n "$vars.pr_url" ] && PR_INFO="🔗 PR: $vars.pr_url"
+        octopus notify --ignore-failure \
+          --title "${STATUS_ICON} ${vars.display_name | default:BUG Fixer} — 修复完成" \
+          --body "📋 模式: ${vars.fix_mode | default:unknown}
+        ✅ 已修复: ${vars.fixed_count | default:0} | ❌ 失败: ${vars.failed_count | default:0} | 📝 非BUG: ${vars.not_a_bug_count | default:0}
+        ${PR_INFO}
+
+        💡 *结论*:
+        ${vars.conclusion | default:无}"
+
+nodes:
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 0: Setup — 环境检测 + 模式判断 + 构建 + 启动服务
+  # ═══════════════════════════════════════════════════════════════
+  - id: setup-env
+    type: agent
+    timeout: 900
+    context: new
+    skills: [verification-before-completion, using-git-worktrees]
+    agents:
+      workspace-manager:
+        description: "工作空间管理员 — worktree 创建与管理、端口分配、进程生命周期控制"
+        prompt: |
+          ## 工作空间管理任务
+
+          ### Step 1: 环境校验
+          1. 确认当前目录是工作空间根目录（有 CLAUDE.md 和 config.json）
+          2. 遍历 ./projects/ 找到所有 git worktree 项目
+          3. 读取 config.json 获取项目列表和主仓库路径
+          4. 检测每个项目的包管理器（pnpm-lock.yaml → pnpm, yarn.lock → yarn, 否则 npm）
+          **门控**: 无有效项目 → 报错停止
+
+          ### Step 2: Worktree 检查
+          对每个项目验证 git worktree 状态:
+          ```bash
+          cd projects/<name>
+          git status
+          git log --oneline -1
+          git worktree list
+          ```
+          如果有未提交的变更，先 stash 或 commit。
+
+          ### Step 3: 端口分配
+          为 server 和 web-app 分配可用端口（避开 3000-3100 范围中已占用的）:
+          ```bash
+          # 检测可用端口
+          for port in $(seq 3100 3200); do
+            if ! ss -tlnp 2>/dev/null | grep -q ":$port " && \
+               ! netstat -an 2>/dev/null | grep -q ":$port "; then
+              echo "AVAILABLE: $port"
+            fi
+          done
+          ```
+
+          ### Step 4: 进程清理
+          杀死可能残留的旧进程（不杀 3000-3099 保护端口）:
+          ```bash
+          # 查找并清理旧 server/web 进程
+          lsof -ti :<server_port> 2>/dev/null | xargs kill -9 2>/dev/null || true
+          lsof -ti :<web_port> 2>/dev/null | xargs kill -9 2>/dev/null || true
+          ```
+
+          ## 输出
+          直接输出纯 JSON 行:
+          {"vars_update":{"projects":"<项目列表,逗号分隔>","pkg_manager":"<包管理器>","server_port":"<端口>","web_port":"<端口>"}}
+        model: sonnet
+        tools: [Bash, Read, Grep, Glob]
+    prompt: |
+      你是 BUG 修复工作流的环境准备阶段。
+
+      ## 输入
+      - bug_reports: `$inputs.bug_reports`
+      - description: `$inputs.description`
+      - keep_on_failure: `$inputs.keep_on_failure`
+
+      ## 你的任务
+
+      ### 0. 安装测试代理（必须首先执行）
+      ```bash
+      AGENTS_TARGET="$(pwd)/.claude/agents"
+      mkdir -p "$AGENTS_TARGET"
+      COREPACK_AGENTS=""
+      for d in "$(pwd)/packages/core-pack/agents" "$(pwd)/.octopus/core-pack/agents" "$(pwd)/../core-pack/agents"; do
+        if [ -d "$d" ]; then COREPACK_AGENTS="$d"; break; fi
+      done
+      if [ -n "$COREPACK_AGENTS" ]; then
+        for f in testing-engineering-software-architect testing-evidence-collector testing-reality-checker; do
+          [ -f "$COREPACK_AGENTS/$f.md" ] && cp "$COREPACK_AGENTS/$f.md" "$AGENTS_TARGET/"
+        done
+        echo "Installed testing agents from $COREPACK_AGENTS"
+      else
+        echo "WARN: core-pack/agents not found"
+      fi
+      ```
+
+      ### 1. 依赖检查
+      ```bash
+      # 确认关键工具可用
+      which pnpm || which npm || which yarn
+      which gh
+      which git
+      which curl
+      ```
+
+      ### 2. 确定修复模式
+      - 如果 `$inputs.bug_reports` 非空 → **Batch 模式**: 解析逗号分隔的报告路径
+      - 如果 `$inputs.bug_reports` 为空且 `$inputs.description` 非空 → **Freeform 模式**
+      - 两者都为空 → 报错退出
+
+      ### 3. 委派 workspace-manager 创建工作空间
+      `Agent(subagent_type="workspace-manager", prompt="校验环境、检查 worktree、分配端口、清理旧进程")`
+      获取 server_port、web_port、projects 列表。
+
+      ### 4. 构建项目
+      对每个项目:
+      ```bash
+      cd projects/<name>
+      pnpm install 2>&1 | tail -3
+      pnpm build 2>&1 | tail -5
+      ```
+      构建失败 → 分析错误，尝试修复后重试（最多 2 轮）。
+
+      ### 5. 启动服务
+      ```bash
+      TMPDIR="${TEMP:-/tmp}"
+      cd projects/<主项目>
+      pnpm dev > "$TMPDIR/bug-fixer-dev.log" 2>&1 &
+      DEV_PID=$!
+      echo "Server PID: $DEV_PID"
+      ```
+
+      ### 6. 健康检查
+      ```bash
+      # 等待启动（最多 120 秒）
+      for i in $(seq 1 24); do
+        sleep 5
+        if curl -sf http://localhost:<server_port>/api/health > /dev/null 2>&1; then
+          echo "Server healthy on port <server_port>"
+          break
+        fi
+        echo "Waiting... ($i/24)"
+      done
+
+      # 验证 web-app
+      curl -sf -o /dev/null -w "%{http_code}" http://localhost:<web_port>/ || echo "Web app not ready"
+      ```
+      **必须两个端口都验证通过才算成功！**
+
+      ### 7. 记录开始时间
+      ```bash
+      START_TIME=$(date +%s)
+      echo "Scan start time: $START_TIME"
+      ```
+
+      ### 8. 发送启动通知
+      ```bash
+      octopus notify --ignore-failure \
+        --title "🔧 $vars.display_name 启动" \
+        --body "📋 模式: <batch/freeform>
+      📂 项目: <项目列表>
+      🖥️ Server: http://localhost:<server_port>
+      🌐 Web: http://localhost:<web_port>
+      📦 构建: OK"
+      ```
+
+      ## 输出
+      在回复末尾直接输出纯 JSON 行:
+      {"vars_update":{"fix_mode":"<batch/freeform>","server_port":"<端口>","web_port":"<端口>","server_pid":"<PID>","scan_start_time":"<epoch秒>","display_name":"BUG Fixer","notify_target":"$inputs.notify_target","conclusion":"环境准备完成"}}
+
+      ## 规则
+      - 无人值守模式
+      - 使用 `${TEMP:-/tmp}` 作为临时目录
+      - 绝不能杀 3000-3099 端口
+      - 必须验证健康检查返回 200 才算启动成功
+      - 报告的端口必须是实际验证过的端口
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 1: Fix Orchestrator — 修复编排核心（诊断→对抗→修复→验证→回归→提交）
+  # ═══════════════════════════════════════════════════════════════
+  - id: fix-orchestrator
+    type: agent
+    timeout: 21600
+    depends_on: [setup-env]
+    context: new
+    skills: [systematic-debugging, test-driven-development]
+    agents:
+      workspace-manager:
+        description: "工作空间状态管理员 — 维护 worktree 状态、管理临时文件、跟踪修复进度"
+        prompt: |
+          ## 工作空间状态管理
+
+          你的职责是在修复循环中维护工作空间的一致性状态。
+
+          ### 能力
+          - 检查当前 worktree 的 git status 和 diff
+          - 在修复轮次间执行 git stash / git reset --hard（仅在确认安全时）
+          - 跟踪修复过程中的文件变更列表
+          - 管理 ${TEMP:-/tmp} 下的临时 BUG 报告文件和索引文件
+
+          ### 输出
+          直接输出纯 JSON 行:
+          {"vars_update":{"<key>":"<value>"}}
+        model: sonnet
+        tools: [Bash, Read, Write, Grep, Glob]
+
+      diagnostician:
+        description: "根因分析专家 — 5 Whys 深度诊断、影响面评估、修复方案设计"
+        agent_file: ".claude/agents/testing-engineering-software-architect.md"
+        prompt: |
+          ## 根因诊断任务
+
+          你是 BUG 根因分析专家。使用 5 Whys 方法追溯根因，设计修复方案。
+
+          ### 分析框架
+          1. **现象描述**: 精确复现 BUG 的可观测行为
+          2. **5 Whys 追溯**:
+             - Why 1: 直接原因是什么？
+             - Why 2: 为什么会有这个直接原因？
+             - Why 3: 更深层的系统性原因？
+             - Why 4: 流程/架构层面为什么允许这个问题存在？
+             - Why 5: 根本原因（通常是流程缺失、架构缺陷或测试覆盖不足）
+          3. **影响面评估**:
+             - 受影响的用户/功能/数据
+             - 爆炸半径（如果根因不修复，类似问题还会出现几次？）
+          4. **修复方案设计**:
+             - 最小修复（只修 BUG 本身，不改架构）
+             - 根因修复（修复底层原因，防止复发）
+             - 推荐方案及理由
+          5. **修复风险评估**:
+             - 修复可能引入的回归风险
+             - 需要额外测试覆盖的场景
+
+          ### 输出格式
+          ```json
+          {
+            "bug_id": "<BUG 标识>",
+            "root_cause": "<根因描述>",
+            "five_whys": ["why1", "why2", "why3", "why4", "why5"],
+            "impact": "<影响面>",
+            "fix_plan": "<修复方案>",
+            "fix_type": "<minimal/root_cause>",
+            "regression_risk": "<low/medium/high>",
+            "test_scenarios": ["<需要测试的场景>"]
+          }
+          ```
+        model: opus[1m]
+        maxTurns: 30
+        effort: high
+        tools: [Bash, Read, Grep, Glob]
+
+      devil-advocate:
+        description: "魔鬼代言人 — 对抗审查修复方案，挑战假设，识别修复盲点和回归风险"
+        agent_file: ".claude/agents/devil-advocate.md"
+        prompt: |
+          ## 修复方案对抗审查
+
+          你是修复方案的对抗审查者。你的目标是找出修复方案中的弱点、盲区和潜在回归。
+
+          ### 审查框架
+          1. **修复完整性**: 修复是否真正解决了根因？还是只处理了表象？
+          2. **副作用分析**: 修复是否可能影响其他功能？列出所有可能被影响的模块。
+          3. **边界条件**: 修复在极端情况下是否仍然有效？（空值、并发、大数据量、超时）
+          4. **替代方案**: 有没有更简单/更安全的修复方式？
+          5. **测试覆盖**: 修复后需要哪些额外测试？现有测试能否覆盖？
+          6. **回滚方案**: 如果修复引入新问题，如何快速回滚？
+
+          ### 退出条件（满足任一即停止审查）
+          1. **收敛**: 本轮无新的 CRITICAL/HIGH 发现
+          2. **轮次上限**: 达到最大对抗轮次（P0-P1: 3轮, P2: 1轮）
+          3. **超时**: 对抗审查累计超过 45 分钟
+          4. **Token 上限**: 对抗审查累计 token 超过 60K
+          5. **对比报告**: 已生成修复前后对比报告
+          6. **建设性约束**: 所有剩余发现都是 IMPROVEMENT 级别，无阻塞项
+
+          ### 输出格式
+          ```markdown
+          # 修复方案对抗报告 (Round N)
+
+          ## 摘要
+          **判定**: ACCEPTED / NEEDS REVISION
+          **发现**: 🔴 X / 🟡 Y / 🔵 Z
+
+          ## 挑战清单
+          ### 🔴-N: [标题]
+          - **问题**: ...
+          - **影响**: ...
+          - **说服我**: ...
+
+          ### 🟡-N: [标题]
+          ...
+
+          ## 修复前后对比
+          | 维度 | 修复前 | 修复后 | 评估 |
+          |------|--------|--------|------|
+
+          ## 建设性约束
+          [必须遵守的修复约束清单]
+          ```
+        model: opus[1m]
+        maxTurns: 20
+        effort: high
+        tools: [Read, Grep, Glob]
+
+      evidence-collector:
+        description: "证据收集者 — E2E 验证证据链、复现步骤记录、修复前后对比"
+        agent_file: ".claude/agents/testing-evidence-collector.md"
+        prompt: |
+          ## E2E 验证证据收集
+
+          收集 BUG 修复的完整证据链，确保每个修复结论都有铁证支撑。
+
+          ### 收集清单
+          1. **复现证据**: 修复前的复现步骤 + 截图/日志 + 复现概率
+          2. **修复证据**: 修改了哪些文件、哪些行、diff 摘要
+          3. **验证证据**: 修复后按相同步骤操作，确认 BUG 不再复现
+          4. **回归证据**: 相关功能未被破坏的测试结果
+          5. **环境信息**: OS、浏览器版本、Node 版本、服务端口
+
+          ### 间歇性 BUG 特殊处理
+          对于间歇性 BUG，必须至少运行 3 次验证，记录每次结果:
+          ```
+          Run 1: PASS/FAIL (duration, conditions)
+          Run 2: PASS/FAIL (duration, conditions)
+          Run 3: PASS/FAIL (duration, conditions)
+          ```
+
+          ### 输出格式
+          ```json
+          {
+            "bug_id": "<BUG 标识>",
+            "reproduction": {
+              "steps": ["step1", "step2"],
+              "evidence": "<日志/截图路径>",
+              "probability": "always/intermittent/rare"
+            },
+            "fix_evidence": {
+              "files_changed": ["file1", "file2"],
+              "diff_summary": "<摘要>"
+            },
+            "verification": {
+              "runs": [{"run": 1, "result": "PASS", "duration_ms": 100}],
+              "confidence": "high/medium/low"
+            },
+            "regression": {
+              "tests_run": 42,
+              "tests_passed": 42,
+              "tests_failed": 0
+            }
+          }
+          ```
+        model: sonnet
+        maxTurns: 15
+        tools: [Bash, Read, Grep, Glob]
+
+      reality-checker:
+        description: "现实检验者 — 最终验证关卡。默认为 NOT FIXED，要求压倒性证据才确认修复成功"
+        agent_file: ".claude/agents/testing-reality-checker.md"
+        prompt: |
+          ## 修复验证现实检查
+
+          你是 BUG 修复的最终验证关卡。默认为 NOT FIXED，只有在压倒性证据下才确认 FIXED。
+
+          ### 自动失败触发
+          - evidence-collector 声称"已修复"但无复现前后对比
+          - 只有 1 次验证运行（间歇性 BUG 至少需要 3 次）
+          - 回归测试 0 个通过（可能根本没跑测试）
+          - "修复完成"但 git diff 为空（没有实际代码变更）
+          - 修复后引入了新的测试失败
+
+          ### 验证清单
+          1. 修复前的复现证据是否充分？（有步骤、有日志、有截图）
+          2. 修复方案是否解决了根因？（不是只处理表象）
+          3. 修复后的验证是否按相同步骤操作？
+          4. 回归测试是否覆盖了受影响的功能？
+          5. 修复是否引入了新问题？
+          6. 代码变更是否合理？（不过度修改、不引入无关变更）
+
+          ### 输出格式
+          ```json
+          {
+            "bug_id": "<BUG 标识>",
+            "verdict": "FIXED / NOT FIXED / PARTIALLY FIXED",
+            "confidence": "high / medium / low",
+            "evidence_score": "<0-100>",
+            "issues_remaining": ["<仍存在的问题>"],
+            "recommendation": "<建议下一步>"
+          }
+          ```
+        model: opus[1m]
+        maxTurns: 10
+        effort: high
+        tools: [Bash, Read, Grep]
+
+      report-generator:
+        description: "报告生成器 — 生成修复报告、非BUG分析报告、更新索引文件"
+        prompt: |
+          ## 报告生成任务
+
+          根据修复结果生成结构化报告文件。
+
+          ### 修复报告模板 (FIX-{bug_id}.md)
+          ```markdown
+          # BUG 修复报告: {title}
+
+          ## 基本信息
+          - **BUG ID**: {bug_id}
+          - **关联 BUG 报告**: {bug_report_ref}
+          - **fix_attempt_count**: {fix_attempt_count}
+          - **严重程度**: {severity}
+          - **所属包**: {package}
+          - **修复轮次**: {fix_round}
+          - **修复类型**: {minimal/root_cause}
+          - **置信度**: {confidence}
+
+          ## 根因分析
+          {root_cause_analysis}
+
+          ## 修复方案
+          {fix_plan}
+
+          ## 代码变更
+          ```diff
+          {diff_summary}
+          ```
+
+          ## E2E 验证
+          - 复现概率: {reproduction_probability}
+          - 验证次数: {verification_runs}
+          - 置信度: {confidence}
+
+          ## 回归测试
+          - 测试数: {tests_run}
+          - 通过: {tests_passed}
+          - 失败: {tests_failed}
+
+          ## 对抗审查
+          - 轮次: {adversarial_rounds}
+          - 收敛: {converged}
+          - 关键挑战: {key_challenges}
+
+          ## 反假跑验证
+          - evidence_score: {score}
+          - verdict: {verdict}
+          ```
+
+          ### 非BUG报告模板 (NNN-not-a-bug-{description}.md)
+          ```markdown
+          # 分析报告: 非 BUG 问题
+
+          ## 标题
+          {title}
+
+          ## 问题描述
+          {description}
+
+          ## 分析结论
+          经诊断，此问题不属于 BUG，原因如下:
+
+          ## 为什么不是 BUG
+          {why_not_bug}
+
+          ## 建议
+          {suggestions}
+
+          ## 分析证据
+          {evidence}
+          ```
+
+          ### 索引文件 (index.json)
+          位于 `~/.octopus/bug-fix/YYYY-MM-DD/index.json`:
+          ```json
+          {
+            "date": "YYYY-MM-DD",
+            "mode": "batch/freeform",
+            "total": 10,
+            "fixed": 7,
+            "failed": 2,
+            "not_a_bug": 1,
+            "reports": [
+              {"id": "BUG-001", "status": "fixed", "report": "FIX-001.md"},
+              {"id": "NNN-001", "status": "not_a_bug", "report": "NNN-001-not-a-bug-xxx.md"}
+            ]
+          }
+          ```
+
+          ### 输出
+          直接输出纯 JSON 行:
+          {"vars_update":{"fix_report_dir":"<报告目录路径>","conclusion":"<摘要>"}}
+        model: sonnet
+        maxTurns: 10
+        tools: [Bash, Read, Write, Grep, Glob]
+
+      shipper:
+        description: "提交推送员 — git commit + push + gh pr create，处理多项目 PR"
+        prompt: |
+          ## Ship 任务
+
+          将修复代码提交、推送并创建 Pull Request。
+
+          ### 步骤 1: 检查变更
+          ```bash
+          cd projects/<name>
+          git status --porcelain
+          git diff --stat
+          ```
+          没有变更 → 跳过此项目。
+
+          ### 步骤 2: 提交
+          ```bash
+          git add -A
+          git commit -m "fix: resolve {bug_id} - {title}
+
+          Root cause: {root_cause_summary}
+          Fix type: {fix_type}
+          Confidence: {confidence}
+          Fix rounds: {fix_round}"
+          ```
+
+          ### 步骤 3: 推送
+          ```bash
+          git push -u origin HEAD
+          ```
+          失败时 pull --rebase 后重试（最多 2 次）。
+
+          ### 步骤 4: 创建 PR
+          ```bash
+          # 检查是否已有 PR
+          EXISTING=$(gh pr list --head "$(git rev-parse --abbrev-ref HEAD)" --json url -q '.[0].url' 2>/dev/null)
+          if [ -n "$EXISTING" ]; then
+            echo "PR already exists: $EXISTING"
+            PR_URL="$EXISTING"
+          else
+            PR_URL=$(gh pr create \
+              --base "main" \
+              --title "fix: {bug_id} - {title}" \
+              --body "$(cat <<'BODY'
+          ## BUG 修复
+
+          **BUG ID**: {bug_id}
+          **严重程度**: {severity}
+          **修复类型**: {fix_type}
+          **置信度**: {confidence}
+
+          ## 根因
+          {root_cause}
+
+          ## 修复方案
+          {fix_plan}
+
+          ## 测试
+          - E2E 验证: {e2e_result}
+          - 回归测试: {regression_result}
+          - 对抗审查: {adversarial_result}
+
+          ## 修复轮次
+          {fix_round} / {max_fix_rounds}
+          BODY
+          )" 2>&1)
+          fi
+          echo "$PR_URL"
+          ```
+
+          ### 规则
+          - 无人值守模式
+          - 每个有变更的项目独立创建 PR
+          - gh pr create 失败时重试最多 2 次
+          - 如果已有 PR，获取已有 PR URL 而非重复创建
+
+          ### 输出
+          直接输出纯 JSON 行:
+          {"vars_update":{"pr_url":"<PR URL 或多个URL逗号分隔>","conclusion":"<ship 摘要>"}}
+        model: sonnet
+        maxTurns: 15
+        tools: [Bash, Read, Grep, Glob]
+
+    prompt: |
+      你是 BUG 修复 Orchestrator。你的职责是编排完整的 BUG 修复闭环：
+      诊断 → 对抗审查 → 实现修复 → E2E 验证 → 回归检查 → 生成报告 → 提交 PR。
+
+      ## 环境
+      - Server: http://localhost:$vars.server_port
+      - Web: http://localhost:$vars.web_port
+      - 修复模式: $vars.fix_mode
+      - 最大修复轮数: $inputs.max_fix_rounds
+      - 对抗审查: $inputs.enable_adversarial
+      - Token 上限: $inputs.max_token_budget
+
+      ## 你有 7 个子代理（通过 Agent 工具调用）
+      - **workspace-manager**: 工作空间状态管理、worktree 操作
+      - **diagnostician**: 5 Whys 根因分析 + 修复方案设计
+      - **devil-advocate**: 修复方案对抗审查（6 个退出条件）
+      - **evidence-collector**: E2E 验证证据链收集
+      - **reality-checker**: 最终修复验证（默认 NOT FIXED）
+      - **report-generator**: 生成修复报告 / 非BUG报告 / 更新索引
+      - **shipper**: git commit + push + gh pr create
+
+      调用方式: `Agent(subagent_type="<name>", prompt="<task>")`
+
+      ## ⛔ 强制规则
+      1. 禁止跳过任何修复步骤
+      2. 所有结论必须有证据支撑
+      3. reality-checker 默认 NOT FIXED
+      4. P0-P1 BUG 必须经过对抗审查
+      5. 每个 BUG 独立修复，不合并变更
+      6. 修复过程中发现新 BUG 要创建报告（discovery_source: fix_regression）
+
+      ## ⛔ 反重复规则
+      1. **禁止使用 TodoWrite、Write 创建计划文件** — 你在执行，不是规划
+      2. **每个 BUG 的修复流程线性执行一次**，完成一步不回头
+      3. **Hermes 通知每种类型只发一次**
+
+      ## 修复流程
+
+      ### Step 0: 模式判断与 BUG 列表构建
+
+      #### Batch 模式 (fix_mode == "batch")
+      1. 解析 `$inputs.bug_reports`（逗号分隔的文件路径）
+      2. 对每个报告文件:
+         - 读取内容，提取: severity（P0-P4）、fingerprint（唯一标识）、package（所属包）、title、description
+         - 如果文件是 JSON: 直接解析字段
+         - 如果文件是 Markdown: 从标题和元数据提取
+         - 如果文件是 YAML: 直接解析字段
+      3. 按 severity 排序: P0 > P1 > P2 > P3 > P4
+      4. 构建 BUG 列表
+
+      #### Freeform 模式 (fix_mode == "freeform")
+      1. 委派 **diagnostician** 分析 `$inputs.description`:
+         `Agent(subagent_type="diagnostician", prompt="分析以下问题描述，判断是否为 BUG。如果不是 BUG，说明原因并给出建议。如果是 BUG，给出初步根因分析和严重程度评估。问题描述: $inputs.description")`
+      2. 如果 diagnostician 判定 **不是 BUG**:
+         - 委派 **report-generator** 生成非BUG报告:
+           `Agent(subagent_type="report-generator", prompt="生成非BUG分析报告到 ~/.octopus/bug-fix/YYYY-MM-DD/NNN-not-a-bug-{description}.md。标题: {title}。分析: {analysis}。为什么不是BUG: {why_not_bug}。建议: {suggestions}")`
+         - not_a_bug_count++
+         - 跳过修复流程，直接进入清理
+      3. 如果是 BUG → 加入 BUG 列表，进入修复循环
+
+      ### Step 1: 修复循环（对每个 BUG，最多 max_fix_rounds 轮）
+
+      对 BUG 列表中的每个 BUG:
+
+      #### Round 1: 根因分析
+      1. 设置 current_bug = 当前 BUG 信息
+      2. 委派 **diagnostician**:
+         `Agent(subagent_type="diagnostician", prompt="对 BUG {bug_id} 进行 5 Whys 根因分析。BUG 描述: {description}。所属包: {package}。项目目录: projects/{name}。Server: http://localhost:$vars.server_port")`
+      3. 记录根因分析结果: root_cause, five_whys, fix_plan, regression_risk
+      4. **发送 Hermes 通知**: 🔍 根因分析完成 + 根因摘要
+
+      #### Round 2: 对抗审查（条件执行）
+      判断对抗轮次:
+      - P0-P1 且 enable_adversarial == "true" → 最多 3 轮
+      - P2 且 enable_adversarial == "true" → 1 轮
+      - P3-P4 或 enable_adversarial == "false" → 跳过
+
+      对抗审查循环:
+      ```
+      adversarial_round = 0
+      adversarial_converged = false
+      while adversarial_round < max_adversarial_rounds AND NOT adversarial_converged:
+        adversarial_round++
+        委派 devil-advocate 审查修复方案
+        检查退出条件:
+          1. 无新 CRITICAL/HIGH → converged = true
+          2. 达到最大轮次 → 退出
+          3. 累计 > 45 分钟 → 退出
+          4. 累计 token > 60K → 退出
+          5. 已生成对比报告 → converged = true
+          6. 仅剩 IMPROVEMENT → converged = true
+        如果 NEEDS REVISION → 更新修复方案 → 继续下一轮
+        如果 ACCEPTED → converged = true → 退出
+      ```
+      **对抗审查未收敛处理**: 如果退出时 adversarial_converged == false:
+      - 委派 report-generator 生成对比报告 `.md` 到 `~/.octopus/bug-fix/YYYY-MM-DD/`
+      - 对比报告内容: diagnostician 最终方案 vs devil-advocate 质疑要点、分歧点列表、人类裁决建议
+      - 采用 diagnostician 最终方案继续修复（但报告中标注"未收敛，需人类审查"）
+      - `octopus notify` 通知: "⚠️ 对抗审查未收敛，已生成对比报告，采用诊断师方案继续"
+
+      **发送 Hermes 通知**: 😈 对抗审查完成 + 轮次 + 判定
+
+      #### Round 3: 实现修复
+      1. 根据修复方案直接修改代码（Edit/Write）
+      2. 构建验证:
+         ```bash
+         cd projects/<name>
+         pnpm build 2>&1 | tail -10
+         ```
+         构建失败 → 修复构建错误 → 重试
+      3. 单元测试:
+         ```bash
+         pnpm test 2>&1 | tail -20
+         ```
+         测试失败 → 分析 → 修复 → 重试（计入 fix_round）
+      4. **发送 Hermes 通知**: 🔧 修复实现完成 + 变更文件列表
+
+      #### Round 4: E2E 验证
+      1. 复现原始 BUG 步骤（按报告中的复现步骤操作）
+      2. 委派 **evidence-collector**:
+         `Agent(subagent_type="evidence-collector", prompt="收集 BUG {bug_id} 的修复验证证据。复现步骤: {steps}。Server: http://localhost:$vars.server_port。Web: http://localhost:$vars.web_port")`
+      3. 委派 **reality-checker**:
+         `Agent(subagent_type="reality-checker", prompt="验证 BUG {bug_id} 是否真正修复。证据: {evidence_collector_output}。修复方案: {fix_plan}。Server: http://localhost:$vars.server_port")`
+      4. 判定结果:
+         - FIXED + high confidence → 进入 Round 5
+         - NOT FIXED → 分析原因 → 回到 Round 1（fix_round++）
+         - PARTIALLY FIXED → 分析剩余问题 → 回到 Round 3 补充修复
+      5. 间歇性 BUG: 至少运行 3 次验证
+      6. **发送 Hermes 通知**: ✅/❌ E2E 验证结果 + 置信度
+
+      #### Round 5: 回归检查
+      1. 运行受影响包的完整测试:
+         ```bash
+         cd projects/<name>
+         pnpm test --filter <package> 2>&1 | tail -30
+         ```
+      2. 如果发现新的测试失败:
+         - 判断是否与本次修复相关
+         - 如果是 → 创建新 BUG 报告（discovery_source: fix_regression）
+         - new_bugs_from_fix++
+         - 将新 BUG 加入待修复列表
+      3. **发送 Hermes 通知**: 🔄 回归检查结果
+
+      #### Round 6: 生成报告 + 提交
+      1. 委派 **report-generator**:
+         `Agent(subagent_type="report-generator", prompt="生成 BUG {bug_id} 的修复报告。根因: {root_cause}。修复方案: {fix_plan}。E2E 验证: {verification_result}。对抗审查: {adversarial_result}。报告目录: ~/.octopus/bug-fix/YYYY-MM-DD/")`
+      2. 更新源 BUG 报告状态为 "fixed"（如果源报告可写）
+      3. 委派 **shipper**:
+         `Agent(subagent_type="shipper", prompt="将 projects/{name} 中的修复提交并创建 PR。BUG: {bug_id}。标题: {title}。根因: {root_cause_summary}。修复轮次: {fix_round}")`
+      4. fixed_count++
+      5. **发送 Hermes 通知**: 📦 修复报告 + PR URL
+
+      ### Step 2: 死循环保护
+
+      以下任一条件触发时，停止当前 BUG 的修复循环:
+      1. **fix_round >= max_fix_rounds**: 标记 BUG 为 "wontfix"，failed_count++，继续下一个 BUG
+      2. **收敛检测**: 连续 2 轮修复后新发现的 BUG 数 ≤ 1 → 认为已收敛，停止循环
+      3. **总超时**: 从 scan_start_time 算起超过 8 小时 → 停止所有修复
+      4. **fix_attempt_count > 3**: 同一个 BUG 修复尝试超过 3 次仍未通过 E2E → 标记 wontfix
+
+      死循环退出时:
+      - 记录 failed_count 和原因
+      - 生成部分修复报告（如果有部分进展）
+      - **发送 Hermes 通知**: ⚠️ BUG {bug_id} 标记为 wontfix + 原因
+
+      ### Step 3: 最终汇总
+
+      所有 BUG 处理完毕后:
+      1. 委派 **report-generator** 生成/更新 index.json
+      2. 计算总 token_usage
+      3. 设置 conclusion = 最终总结
+      4. **发送 Hermes 通知**: 📊 修复汇总（fixed/failed/not_a_bug）
+
+      ## 输出
+      在回复末尾直接输出纯 JSON 行:
+      {"vars_update":{"fixed_count":"<数量>","failed_count":"<数量>","not_a_bug_count":"<数量>","new_bugs_from_fix":"<数量>","fix_report_dir":"<报告目录>","pr_url":"<PR URL>","token_usage":"<累计token>","conclusion":"<2-3句话总结>"}}
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 2: Cleanup — 杀进程 + 清端口 + 移除 worktree + 清理临时文件
+  # ═══════════════════════════════════════════════════════════════
+  - id: cleanup
+    type: agent
+    timeout: 300
+    context: new
+    depends_on: [fix-orchestrator]
+    agents:
+      workspace-manager:
+        description: "工作空间清理员 — 安全清理进程、端口、worktree 和临时文件"
+        prompt: |
+          ## 清理任务
+
+          ### Step 1: 杀进程
+          ```bash
+          # 杀 server 进程
+          if [ -n "$vars.server_pid" ]; then
+            if command -v taskkill &>/dev/null; then
+              taskkill /PID "$vars.server_pid" /T /F 2>/dev/null || true
+            else
+              kill "$vars.server_pid" 2>/dev/null || true
+              # 等待进程退出
+              for i in $(seq 1 10); do
+                if ! kill -0 "$vars.server_pid" 2>/dev/null; then
+                  echo "Process killed"
+                  break
+                fi
+                sleep 1
+              done
+              # 如果还没死，SIGKILL
+              kill -9 "$vars.server_pid" 2>/dev/null || true
+            fi
+          fi
+          ```
+
+          ### Step 2: 清理端口
+          ```bash
+          # 确认端口已释放
+          for port in $vars.server_port $vars.web_port; do
+            if ss -tlnp 2>/dev/null | grep -q ":$port " || netstat -an 2>/dev/null | grep -q ":$port "; then
+              PID=$(lsof -ti :$port 2>/dev/null)
+              [ -n "$PID" ] && kill -9 $PID 2>/dev/null || true
+              echo "Port $port cleaned"
+            else
+              echo "Port $port already free"
+            fi
+          done
+          ```
+
+          ### Step 3: Worktree 处理
+          ```bash
+          # 如果有未提交的变更且 keep_on_failure == true → 保留
+          # 否则清理 worktree
+          for dir in projects/*/; do
+            cd "$dir"
+            if [ -n "$(git status --porcelain)" ]; then
+              if [ "$inputs.keep_on_failure" = "true" ] && [ "$vars.failed_count" != "0" ]; then
+                echo "Preserving $dir (has uncommitted changes, keep_on_failure=true)"
+              else
+                git checkout -- . 2>/dev/null || true
+                git clean -fd 2>/dev/null || true
+                echo "Cleaned $dir"
+              fi
+            fi
+            cd -
+          done
+          ```
+
+          ### Step 4: 清理临时文件
+          ```bash
+          TMPDIR="${TEMP:-/tmp}"
+          rm -f "$TMPDIR/bug-fixer-dev.log" 2>/dev/null || true
+          rm -f "$TMPDIR/bug-fixer-"*.log 2>/dev/null || true
+
+          # 清理 .lock 文件
+          find projects/ -name "*.lock" -newer "$TMPDIR/bug-fixer-dev.log" -delete 2>/dev/null || true
+          ```
+
+          ### Step 5: 计算执行时长
+          ```bash
+          END_TIME=$(date +%s)
+          START_TIME="${vars.scan_start_time:-$END_TIME}"
+          DURATION=$((END_TIME - START_TIME))
+          HOURS=$((DURATION / 3600))
+          MINUTES=$(( (DURATION % 3600) / 60 ))
+          SECONDS=$((DURATION % 60))
+          echo "Total duration: ${HOURS}h ${MINUTES}m ${SECONDS}s (${DURATION}s)"
+          ```
+
+          ## 规则
+          - 绝不能杀 3000-3099 端口
+          - keep_on_failure == true 且有失败 → 保留 worktree
+          - keep_on_failure == false → 清理所有 worktree
+
+          ## 输出
+          直接输出纯 JSON 行:
+          {"vars_update":{"cleanup_done":"true","duration_seconds":"<秒数>","conclusion":"$vars.conclusion"}}
+        model: sonnet
+        tools: [Bash, Read, Grep, Glob]
+    prompt: |
+      你是 BUG 修复工作流的清理阶段。
+
+      ## 环境
+      - Server PID: $vars.server_pid
+      - Server Port: $vars.server_port
+      - Web Port: $vars.web_port
+      - keep_on_failure: $inputs.keep_on_failure
+      - failed_count: $vars.failed_count
+      - scan_start_time: $vars.scan_start_time
+
+      ## 你的任务
+
+      1. 委派 **workspace-manager** 执行完整清理:
+         `Agent(subagent_type="workspace-manager", prompt="执行清理: 杀进程 PID=$vars.server_pid，清理端口 $vars.server_port 和 $vars.web_port，处理 worktree（keep_on_failure=$inputs.keep_on_failure, failed_count=$vars.failed_count），清理 ${TEMP:-/tmp} 临时文件，计算从 $vars.scan_start_time 到现在的执行时长")`
+
+      2. 验证清理结果:
+         ```bash
+         # 确认进程已死
+         kill -0 $vars.server_pid 2>/dev/null && echo "WARN: process still alive" || echo "Process gone"
+
+         # 确认端口已释放
+         ss -tlnp 2>/dev/null | grep -E ":($vars.server_port|$vars.web_port) " && echo "WARN: ports still in use" || echo "Ports free"
+         ```
+
+      3. 输出最终摘要:
+         ```bash
+         echo "=== BUG Fixer 最终报告 ==="
+         echo "Mode:           $vars.fix_mode"
+         echo "Fixed:          $vars.fixed_count"
+         echo "Failed:         $vars.failed_count"
+         echo "Not a BUG:      $vars.not_a_bug_count"
+         echo "New from fix:   $vars.new_bugs_from_fix"
+         echo "PR URL:         $vars.pr_url"
+         echo "Token usage:    $vars.token_usage"
+         echo "Report dir:     $vars.fix_report_dir"
+         echo "Conclusion:     $vars.conclusion"
+         echo "=========================="
+         ```
+
+      ## 输出
+      在回复末尾直接输出纯 JSON 行:
+      {"vars_update":{"cleanup_done":"true","conclusion":"$vars.conclusion"}}

@@ -1,0 +1,767 @@
+# yaml-language-server: $schema=./doc/workflow-schema.json
+apiVersion: octopus/v1
+kind: Workflow
+name: prd-refine
+description: >
+  PRD Refine — 在已有 PRD Forge 产出目录上施加用户驱动的调整。
+  每次运行 = 一次 revision：影响分析 → （可选）方案规划 → 应用修改 → 交叉一致性检查 → 快照 + 历史索引。
+  产物以 revisions/rev-NNN/ 为序号目录保存（before/after/diffs/SUMMARY），原文档就地更新并追加 Revision 标记，
+  REVISIONS.md 以追加方式维护累计变更索引。角色团队：产品经理 + UX 架构师 + UI 设计师 + 软件架构师。
+
+model: opus[1m]
+engine: claude
+execution_mode: serial
+timeout: 86400
+
+inputs:
+  prd_dir:
+    description: "已有 PRD Forge 产出目录路径（必须包含 02-requirements.md / 03-solution.md / PRD-FINAL.md 等）"
+    required: true
+  refine_prompt:
+    description: "本次修正意图的自然语言描述（越具体越好）"
+    required: true
+  target_scope:
+    description: "聚焦范围：auto / requirements / solution / ui-ux / acceptance / final"
+    required: false
+    default: "auto"
+  force_plan:
+    description: "强制生成 refine-plan，即使被判为 trivial（true/false）"
+    required: false
+    default: "false"
+
+variables:
+  display_name: "PRD Refine"
+  revision_index: ""
+  revision_dir: ""
+  revision_dir_abs: ""
+  prd_dir_abs: ""
+  prd_name: ""
+  project_type: ""
+  existing_summary: ""
+  affected_docs_hint: ""
+
+  # ── 影响分析 ──
+  change_class: ""
+  affected_files_csv: ""
+  impact_file: ""
+  risk_notes: ""
+
+  # ── 规划 ──
+  plan_file: ""
+  plan_generated: "false"
+
+  # ── 应用修改 ──
+  modified_files_csv: ""
+  modified_count: "0"
+
+  # ── 交叉检查 ──
+  cross_check_file: ""
+  cross_check_passed: "false"
+  cross_check_issues: "0"
+
+  # ── 快照与历史 ──
+  summary_file: ""
+  history_file: ""
+  diff_count: "0"
+
+  # ── 通用 ──
+  conclusion: ""
+  failed_reason: ""
+
+auto_answers:
+  - pattern: ".*"
+    answer: "proceed"
+
+# ── Notify 子系统配置 ──
+providers:
+  hermes-cli:
+    type: hermes
+    timeout: 30
+    min_severity: info
+
+channels:
+  default:
+    provider: hermes-cli
+    target: "telegram:xzf_hermes"
+
+hooks:
+  # ① 工作流失败
+  on_workflow_failure:
+    - id: notify-failure
+      type: notify
+      channel: default
+      template:
+        severity: error
+        title: "❌ $vars.display_name — 工作流失败"
+        body: "📂 PRD: $inputs.prd_dir\n📝 Prompt: $inputs.refine_prompt\n🔴 失败节点: ${hook.failed_node_id | default:unknown}\n⏱️ 已运行: ${hook.total_duration_ms | duration}\n\n💡 原因: ${vars.failed_reason | default:${hook.error | default:未提供}}"
+
+  # ② 工作流完成
+  on_complete:
+    - id: notify-complete
+      type: notify
+      channel: default
+      template:
+        severity: info
+        title: "🏁 $vars.display_name — 工作流完成"
+        body: "状态: $hook.final_status\n✅ 完成: $hook.completed_count / ⏭️ 跳过: $hook.skipped_count / ❌ 失败: $hook.failed_count / 📊 总计: $hook.total_count\n⏱️ 总耗时: ${hook.total_duration_ms | duration}"
+
+  # ③ 节点级通知
+  on_node_success:
+    - id: notify-setup
+      type: notify
+      nodes: [setup]
+      channel: default
+      template:
+        severity: info
+        title: "🔧 $vars.display_name 启动"
+        body: "📂 PRD: $vars.prd_dir_abs\n🆕 Revision: rev-$vars.revision_index\n📁 输出: $vars.revision_dir_abs\n📝 Prompt: $inputs.refine_prompt"
+
+    - id: notify-impact
+      type: notify
+      nodes: [impact-analysis]
+      channel: default
+      template:
+        severity: info
+        title: "🔍 $vars.display_name — 影响分析完成"
+        body: "🏷️ 类别: $vars.change_class\n📄 影响文件: $vars.affected_files_csv\n\n💡 结论: $vars.conclusion"
+
+    - id: notify-plan
+      type: notify
+      nodes: [refine-plan]
+      channel: default
+      template:
+        severity: info
+        title: "📐 $vars.display_name — 修订方案完成"
+        body: "📄 计划: $vars.plan_file\n\n💡 摘要: $vars.conclusion"
+
+    - id: notify-apply
+      type: notify
+      nodes: [apply-changes]
+      channel: default
+      template:
+        severity: info
+        title: "✏️ $vars.display_name — 修订应用完成"
+        body: "📊 已修改: $vars.modified_count 个文件\n📄 列表: $vars.modified_files_csv\n\n💡 摘要: $vars.conclusion"
+
+    - id: notify-crosscheck
+      type: notify
+      nodes: [cross-check]
+      channel: default
+      template:
+        severity: info
+        title: "🔗 $vars.display_name — 交叉一致性检查完成"
+        body: "✅ 通过: $vars.cross_check_passed | ⚠️ 问题数: $vars.cross_check_issues\n📄 报告: $vars.cross_check_file\n\n💡 结论: $vars.conclusion"
+
+    - id: notify-snapshot
+      type: notify
+      nodes: [snapshot]
+      channel: default
+      template:
+        severity: info
+        title: "📦 $vars.display_name — Revision 快照完成"
+        body: "🆔 rev-$vars.revision_index\n📁 $vars.revision_dir_abs\n📄 SUMMARY: $vars.summary_file\n🔢 diff: $vars.diff_count 个\n\n💡 总结: $vars.conclusion"
+
+    - id: notify-history
+      type: notify
+      nodes: [history]
+      channel: default
+      template:
+        severity: info
+        title: "📜 $vars.display_name — 变更索引已更新"
+        body: "📄 索引: $vars.history_file\n🆔 本次: rev-$vars.revision_index ($vars.change_class)\n\n💡 结论: $vars.conclusion"
+
+nodes:
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 0: Setup — 角色安装 + 序号目录创建（防重复）
+  # ═══════════════════════════════════════════════════════════════
+  - id: setup
+    type: agent
+    timeout: 600
+    prompt: |
+      你正在执行 PRD Refine 工作流的环境准备阶段。
+
+      ## 你的任务
+
+      ### 1. 校验输入 PRD 目录
+      ```bash
+      PRD_DIR="$inputs.prd_dir"
+      if [ ! -d "$PRD_DIR" ]; then
+        echo "ERROR: prd_dir 不存在: $PRD_DIR" >&2
+        exit 1
+      fi
+
+      # 至少需要存在以下任一文档才视为合法的 PRD Forge 产出
+      FOUND=0
+      for f in 02-requirements.md 03-solution.md PRD-FINAL.md; do
+        [ -f "$PRD_DIR/$f" ] && FOUND=$((FOUND + 1))
+      done
+      if [ "$FOUND" -eq 0 ]; then
+        echo "ERROR: prd_dir 中找不到 02-requirements.md / 03-solution.md / PRD-FINAL.md，疑似不是 PRD Forge 产出目录" >&2
+        exit 1
+      fi
+
+      PRD_DIR_ABS="$(cd "$PRD_DIR" && pwd)"
+      echo "PRD_DIR_ABS=$PRD_DIR_ABS"
+      ```
+
+      ### 2. 安装 agency-agents-zh 角色（缺失时才克隆）
+      ```bash
+      AGENTS_TARGET="$(pwd)/.claude/agents"
+      mkdir -p "$AGENTS_TARGET"
+
+      NEED_CLONE=false
+      for agent in product-manager design-ux-architect design-ui-designer engineering-software-architect; do
+        if [ ! -f "$AGENTS_TARGET/$agent.md" ]; then
+          NEED_CLONE=true
+          break
+        fi
+      done
+
+      if [ "$NEED_CLONE" = "true" ]; then
+        DEPS_DIR="$(pwd)/dependencies"
+        mkdir -p "$DEPS_DIR"
+        if [ ! -d "$DEPS_DIR/agency-agents-zh" ]; then
+          git clone --depth 1 https://github.com/jnMetaCode/agency-agents-zh.git "$DEPS_DIR/agency-agents-zh" 2>&1
+        fi
+        REPO="$DEPS_DIR/agency-agents-zh"
+
+        for f in product-manager; do
+          [ -f "$REPO/product/$f.md" ] && cp "$REPO/product/$f.md" "$AGENTS_TARGET/"
+        done
+        for f in design-ux-architect design-ui-designer; do
+          [ -f "$REPO/design/$f.md" ] && cp "$REPO/design/$f.md" "$AGENTS_TARGET/"
+        done
+        for f in engineering-software-architect; do
+          [ -f "$REPO/engineering/$f.md" ] && cp "$REPO/engineering/$f.md" "$AGENTS_TARGET/"
+        done
+
+        INSTALLED=$(ls "$AGENTS_TARGET"/product-*.md "$AGENTS_TARGET"/design-*.md "$AGENTS_TARGET"/engineering-*.md 2>/dev/null | wc -l)
+        echo "Installed $INSTALLED agency agents to $AGENTS_TARGET"
+      else
+        echo "All required agents already installed, skipping clone"
+      fi
+      ```
+
+      ### 3. 计算 revision 序号并创建目录（原子防并发）
+      ```bash
+      set -e
+      REV_ROOT="$PRD_DIR_ABS/revisions"
+      mkdir -p "$REV_ROOT"
+
+      MAX_INDEX=0
+      for dir in "$REV_ROOT"/rev-*/; do
+        if [ -d "$dir" ]; then
+          INDEX=$(basename "$dir" | sed 's/rev-0*//' | sed 's/^$/0/')
+          if [ "$INDEX" -gt "$MAX_INDEX" ] 2>/dev/null; then
+            MAX_INDEX=$INDEX
+          fi
+        fi
+      done
+
+      NEW_INDEX=$((MAX_INDEX + 1))
+      REV_INDEX=$(printf "%03d" $NEW_INDEX)
+      REV_DIR="$REV_ROOT/rev-$REV_INDEX"
+
+      # 原子创建：若并发竞争已有同名目录，mkdir 会失败 → 立即报错避免重复写入
+      if ! mkdir "$REV_DIR" 2>/dev/null; then
+        echo "ERROR: revision 目录已存在或并发冲突: $REV_DIR" >&2
+        exit 1
+      fi
+      mkdir -p "$REV_DIR/before" "$REV_DIR/after" "$REV_DIR/diffs"
+
+      REV_DIR_ABS="$(cd "$REV_DIR" && pwd)"
+      echo "REV_INDEX=$REV_INDEX"
+      echo "REV_DIR=$REV_DIR"
+      echo "REV_DIR_ABS=$REV_DIR_ABS"
+      ```
+
+      ### 4. 推断 PRD 名称
+      读取 `$PRD_DIR_ABS/PRD-FINAL.md` 第一行 `# PRD: <名称>` 提取名称；如不存在，则使用目录 basename 作为名称。
+
+      ## 输出要求
+
+      在回复末尾直接输出纯 JSON 行（不要用代码块包裹），其中各字段为本节点实际计算出的值：
+      {"vars_update":{"prd_dir_abs":"<PRD_DIR_ABS>","revision_index":"<REV_INDEX>","revision_dir":"<REV_DIR>","revision_dir_abs":"<REV_DIR_ABS>","prd_name":"<推断的 PRD 名称>","display_name":"PRD Refine #<REV_INDEX> · <prd_name>"}}
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 1: Load Context — 读取既有 PRD 全部资产
+  # ═══════════════════════════════════════════════════════════════
+  - id: load-context
+    type: agent
+    depends_on: [setup]
+    timeout: 1800
+    agents:
+      product-manager:
+        description: "产品经理 — 通览既有 PRD 资产并提炼上下文"
+        agent_file: ".claude/agents/product-manager.md"
+        model: opus[1m]
+        tools: ["Read", "Grep", "Glob"]
+    prompt: |
+      你是 PRD Refine 的上下文协调者。委派 product-manager 子代理通览既有 PRD 资产并提炼上下文摘要。
+
+      ## 输入
+      - PRD 目录: $vars.prd_dir_abs
+      - 本次修订意图: $inputs.refine_prompt
+      - 聚焦范围（用户提示）: $inputs.target_scope
+
+      ## 工作流
+
+      ### 委派 product-manager
+      委派任务："读取以下 PRD 资产（存在则读，不存在跳过）并产出结构化上下文摘要：
+      - $vars.prd_dir_abs/00-clarify.md
+      - $vars.prd_dir_abs/01-discovery.md
+      - $vars.prd_dir_abs/02-requirements.md
+      - $vars.prd_dir_abs/03-solution.md
+      - $vars.prd_dir_abs/05-completeness-review.md
+      - $vars.prd_dir_abs/06-acceptance-cases.md
+      - $vars.prd_dir_abs/07-ui.md
+      - $vars.prd_dir_abs/08-ux.md
+      - $vars.prd_dir_abs/PRD-FINAL.md
+      - $vars.prd_dir_abs/REVISIONS.md（历次修订索引，可能不存在）
+
+      产出要点：
+      1. project_type（product / infrastructure / hybrid，从 00-clarify.md 读取，若不存在则推断）
+      2. existing_summary（3-5 句话概述当前 PRD 的核心问题、方案、关键决策）
+      3. affected_docs_hint（基于 refine_prompt + target_scope 给出可能受影响文档名清单，逗号分隔）
+      4. 历史修订摘要（若 REVISIONS.md 存在，列出最近 3 条 revision 的简要内容）
+
+      返回纯文本结构化摘要即可，不需要 Write 文件。"
+
+      ## 输出
+      根据子代理返回的摘要，直接输出纯 JSON 行（不要用代码块包裹）:
+      {"vars_update":{"project_type":"<product/infrastructure/hybrid>","existing_summary":"<3-5句话>","affected_docs_hint":"<候选文件列表，逗号分隔>","conclusion":"<2-3句话: 当前 PRD 概览>"}}
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 2: Impact Analysis — 修订意图分类与受影响文件识别
+  # ═══════════════════════════════════════════════════════════════
+  - id: impact-analysis
+    type: agent
+    depends_on: [load-context]
+    timeout: 2400
+    prompt: |
+      你是产品经理 + 软件架构师双重身份，正在分析本次修订意图的影响范围。
+
+      ## 输入
+      - PRD 目录: $vars.prd_dir_abs
+      - 上下文摘要: $vars.existing_summary
+      - 项目类型: $vars.project_type
+      - 候选影响文件: $vars.affected_docs_hint
+      - 用户聚焦范围: $inputs.target_scope
+      - 本次修订意图（必读全文）: $inputs.refine_prompt
+
+      ## 你的任务
+
+      ### 1. 修订类别判定（change_class）
+      - **trivial**：仅涉及单文件单章节、文字修订、错别字、补充示例、添加/删除一两行；不影响其它文档假设
+      - **structural**：跨文档影响、方案/架构决策反转、新增/移除模块、API/数据模型变更、用户故事或验收用例增删、UI/UX 流程改动
+
+      判定原则：拿不准就归 structural。
+
+      ### 2. 受影响文件清单（affected_files）
+      明确列出本次必须改写的文件（仅限以下白名单，逗号分隔，不含路径）：
+      `00-clarify.md, 01-discovery.md, 02-requirements.md, 03-solution.md, 06-acceptance-cases.md, 07-ui.md, 08-ux.md, PRD-FINAL.md`
+
+      ### 3. 风险与连带影响（risk_notes）
+      用 1-3 个要点列出：
+      - 哪些隐含决策会被波及？
+      - 是否需要重新审视成功指标 / Non-Goals / 验收标准？
+      - 是否会破坏既有 Acceptance Cases？
+
+      ## 输出文件
+
+      使用 Write 工具将分析结果写入 `$vars.revision_dir/00-impact.md`，结构：
+
+      ```markdown
+      # Revision $vars.revision_index — 影响分析
+
+      ## 修订意图（用户原文）
+      > $inputs.refine_prompt
+
+      ## 用户聚焦范围
+      $inputs.target_scope
+
+      ## 修订类别
+      `<trivial | structural>` — <一句话理由>
+
+      ## 受影响文件
+      - <file1.md>: <为什么>
+      - <file2.md>: <为什么>
+
+      ## 风险与连带影响
+      - ...
+
+      ## 结论
+      <2-3 句总结>
+      ```
+
+      ## 输出 JSON
+      直接输出纯 JSON 行（不要用代码块包裹）:
+      {"vars_update":{"impact_file":"$vars.revision_dir/00-impact.md","change_class":"<trivial|structural>","affected_files_csv":"<逗号分隔文件名>","risk_notes":"<1-3 句>","conclusion":"<2-3句话>"}}
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 3: Refine Plan — 仅 structural 或 force_plan 时生成方案文档
+  # （通过 execute_when 自动门控；trivial 修订直接跳到 apply-changes）
+  # ═══════════════════════════════════════════════════════════════
+  - id: refine-plan
+    type: agent
+    depends_on: [impact-analysis]
+    execute_when: '$vars.change_class == "structural" || $inputs.force_plan == "true"'
+    timeout: 3600
+    agents:
+      engineering-software-architect:
+        description: "软件架构师 — 产出修订方案与 ripple checklist"
+        agent_file: ".claude/agents/engineering-software-architect.md"
+        model: opus[1m]
+        tools: ["Read", "Grep", "Glob", "Write"]
+    prompt: |
+      你是修订方案协调者。委派 engineering-software-architect 子代理产出 structural 修订的详细方案。
+
+      ## 输入
+      - 影响分析: $vars.impact_file
+      - 受影响文件: $vars.affected_files_csv
+      - 修订意图: $inputs.refine_prompt
+      - 项目类型: $vars.project_type
+      - 上下文摘要: $vars.existing_summary
+
+      ## 委派任务
+      委派 engineering-software-architect："读取 $vars.impact_file 与所有受影响的 PRD 文件（位于 $vars.prd_dir_abs/），
+      产出修订方案文档，使用 Write 工具写入 $vars.revision_dir/01-refine-plan.md，结构如下：
+
+      # Revision $vars.revision_index — 修订方案
+
+      ## 1. 变更动机
+      <为什么要这样改、与原 PRD 决策的差异>
+
+      ## 2. 决策增量（ADR 风格）
+      ### ADR-R$vars.revision_index-1: <决策标题>
+      - **原决策**: ...（引用原 PRD 章节）
+      - **新决策**: ...
+      - **理由**: ...
+      - **影响**: ...
+
+      ## 3. 各文件 before → after 草图
+      对每个受影响文件给出：
+      ### <文件名>
+      - **改动章节**: ...
+      - **before（要点）**: ...
+      - **after（要点）**: ...
+      - **新增/删除/修改的关键内容**: ...
+
+      ## 4. Ripple Checklist（连带必改项）
+      - [ ] 02 的 Story 改动 → 06 验收用例必须同步增删
+      - [ ] 03 的 API/数据模型改动 → 06/08 必须同步
+      - [ ] UI/UX 改动 → 02 的 UI 操作步骤必须同步
+      - [ ] 任何方案改动 → PRD-FINAL.md 对应章节必须重新撰写
+
+      ## 5. 风险与回退
+      - 主要风险
+      - 若发现冲突如何回退（用 before/ 快照）
+
+      Write 完成后只需返回 1 行确认: '已写入修订方案到 <path>'。"
+
+      ## 输出
+      直接输出纯 JSON 行（不要用代码块包裹）:
+      {"vars_update":{"plan_file":"$vars.revision_dir/01-refine-plan.md","plan_generated":"true","conclusion":"<2-3句话: 关键决策增量>"}}
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 4: Apply Changes — 应用修订（先快照、再就地修改、再写 after）
+  # ═══════════════════════════════════════════════════════════════
+  - id: apply-changes
+    type: agent
+    depends_on: [refine-plan]
+    timeout: 7200
+    agents:
+      product-manager:
+        description: "产品经理 — 修订需求/最终 PRD"
+        agent_file: ".claude/agents/product-manager.md"
+        model: opus[1m]
+        tools: ["Read", "Grep", "Glob", "Write", "Edit"]
+      design-ux-architect:
+        description: "UX 架构师 — 修订 UX 流程与状态机"
+        agent_file: ".claude/agents/design-ux-architect.md"
+        model: opus[1m]
+        tools: ["Read", "Grep", "Glob", "Write", "Edit"]
+      design-ui-designer:
+        description: "UI 设计师 — 修订 UI 规范与组件清单"
+        agent_file: ".claude/agents/design-ui-designer.md"
+        model: opus[1m]
+        tools: ["Read", "Grep", "Glob", "Write", "Edit"]
+      engineering-software-architect:
+        description: "软件架构师 — 修订技术方案/数据模型/API"
+        agent_file: ".claude/agents/engineering-software-architect.md"
+        model: opus[1m]
+        tools: ["Read", "Grep", "Glob", "Write", "Edit"]
+    prompt: |
+      你是修订执行协调者。按文件类型路由到对应子代理执行修改。**严格遵守 before/after 快照纪律。**
+
+      ## ⚠️ 强制步骤（每个受影响文件都必须按序执行）
+
+      对 $vars.affected_files_csv 中的每一个文件 F：
+
+      1. **先快照原文件**（绝对不可跳过）:
+         ```bash
+         cp "$vars.prd_dir_abs/F" "$vars.revision_dir/before/F"
+         ```
+         若原文件不存在（白板新增），仍需创建 `$vars.revision_dir/before/F` 空占位文件。
+
+      2. **委派对应子代理修改原文件就地**（修改 `$vars.prd_dir_abs/F`，不要写到 revisions/ 下）:
+         - 02-requirements.md / PRD-FINAL.md / 00-clarify.md / 01-discovery.md → product-manager
+         - 03-solution.md → engineering-software-architect
+         - 06-acceptance-cases.md → engineering-software-architect（与 product-manager 协作判断 P0/P1）
+         - 07-ui.md → design-ui-designer
+         - 08-ux.md → design-ux-architect
+
+         子代理任务模板：
+         "读取 $vars.impact_file（与 $vars.plan_file 若存在），按其指引修改 $vars.prd_dir_abs/F。
+         规则：
+         - 仅改动影响范围内章节，不要进行无关重写
+         - 在文件末尾追加（或更新已存在的） `## Revision History` section 中加入一条：
+           `### Revision $vars.revision_index — <date>` + 1-2 句话说明本次改动 + refine_prompt 摘要
+         - 中文输出
+         使用 Edit/Write 工具完成修改后，返回 1 行确认: '已更新 F'。"
+
+      3. **写 after 快照**:
+         ```bash
+         cp "$vars.prd_dir_abs/F" "$vars.revision_dir/after/F"
+         ```
+
+      ## 整体规则
+      - 文件路由若无匹配（如 PRD-FINAL.md），由 product-manager 兜底
+      - 涉及 PRD-FINAL.md 时，仅重写其中受影响的 section，不要全文重写
+      - 若 plan_file 存在（structural），严格遵循 plan_file 中的"各文件 before → after 草图"和 Ripple Checklist
+      - 若 plan_file 不存在（trivial），仅按 impact 文件指引做最小化修改
+
+      ## 输出 JSON
+      统计实际成功修改的文件，输出纯 JSON 行（不要用代码块包裹）:
+      {"vars_update":{"modified_files_csv":"<实际修改的文件名，逗号分隔>","modified_count":"<数量>","conclusion":"<2-3句话: 应用了什么修订>"}}
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 5: Cross-Check — 文档间一致性检查
+  # ═══════════════════════════════════════════════════════════════
+  - id: cross-check
+    type: agent
+    depends_on: [apply-changes]
+    timeout: 2400
+    agents:
+      product-manager:
+        description: "产品经理 — 跨文档一致性审查"
+        agent_file: ".claude/agents/product-manager.md"
+        model: opus[1m]
+        tools: ["Read", "Grep", "Glob", "Write"]
+    prompt: |
+      你是交叉一致性检查协调者。委派 product-manager 子代理对修订后文档做轻量一致性扫描。
+
+      ## 委派任务
+      委派 product-manager："读取 $vars.prd_dir_abs/ 下修订后的 PRD 文档，按以下检查项给出 ✅/⚠️/❌ 判定，
+      并使用 Write 工具将结果写入 $vars.revision_dir/02-cross-check.md：
+
+      ## 检查项（逐项独立判定）
+
+      1. **Story ↔ Acceptance Case 对应**
+         - 02-requirements.md 中每个 P0/P1 user story 是否在 06-acceptance-cases.md 找到对应的 case_id？
+         - 06 中的每个 case 是否有合法的 story_id 反向引用？
+
+      2. **API/数据模型 ↔ UX 流程**
+         - 03-solution.md 中提到的 API 是否在 08-ux.md 的核心交互序列里被使用？
+         - 数据实体是否在相关页面状态机里有对应展示？
+
+      3. **页面 ↔ UX 状态机**
+         - 07-ui.md 的"页面全谱"页面 ID 是否都在 08-ux.md 中定义了 5 种状态？
+         - 08-ux.md 引用的页面是否都存在于 07-ui.md？
+
+      4. **PRD-FINAL ↔ 子文档同步**
+         - PRD-FINAL.md 涉及本次修订的章节是否反映了 02/03/07/08 的最新内容？
+         - 是否还残留与已修订内容矛盾的旧表述？
+
+      5. **本次修订内部自洽**
+         - 各受影响文件中的 `## Revision History` 是否都登记了 Revision $vars.revision_index？
+         - 影响分析中列出的连带影响是否都被处理？
+
+      ## 输出文件结构
+
+      # Revision $vars.revision_index — 交叉一致性检查
+
+      ## 摘要
+      <2-3 句话: 通过/警告/严重数量>
+
+      ## 检查矩阵
+      | # | 检查项 | 状态 | 说明 |
+      |---|--------|------|------|
+      | 1 | Story ↔ Acceptance Case | ✅/⚠️/❌ | ... |
+
+      ## 严重问题（❌）
+      （若无可写"无"）
+
+      ## 建议（⚠️）
+
+      Write 完成后只需返回 1 行确认。"
+
+      ## 判定规则（汇总到协调者）
+      - 严重问题数（❌）= cross_check_issues
+      - cross_check_passed = "true" 仅当 ❌ 数 == 0
+      - 若 ❌ > 0：将 failed_reason 设为"交叉一致性检查发现 N 处严重问题，详见 $vars.revision_dir/02-cross-check.md（可在下次 refine 中处理）"，但本节点不主动失败工作流（只标记 conclusion）
+
+      ## 输出 JSON
+      直接输出纯 JSON 行（不要用代码块包裹）:
+      {"vars_update":{"cross_check_file":"$vars.revision_dir/02-cross-check.md","cross_check_passed":"<true|false>","cross_check_issues":"<严重问题数>","conclusion":"<2-3句话>"}}
+
+ # ═══════════════════════════════════════════════════════════════
+  # Phase 6: Snapshot — 生成 diff 与 SUMMARY（agent 节点为第一公民）
+  # ═══════════════════════════════════════════════════════════════
+  - id: snapshot
+    type: agent
+    depends_on: [cross-check]
+    timeout: 1200
+    prompt: |
+      你正在生成本次 Revision 的快照产物：每个文件的 unified diff + 一份 SUMMARY.md。
+
+      ## 输入
+      - Revision 目录: $vars.revision_dir_abs
+      - 修改前目录: $vars.revision_dir_abs/before
+      - 修改后目录: $vars.revision_dir_abs/after
+      - 输出 diff 目录: $vars.revision_dir_abs/diffs
+
+      ## 你的任务
+
+      ### 1. 生成 unified diff
+      使用 Bash 工具执行：
+      ```bash
+      set -e
+      REV_DIR="$vars.revision_dir_abs"
+      BEFORE_DIR="$REV_DIR/before"
+      AFTER_DIR="$REV_DIR/after"
+      DIFFS_DIR="$REV_DIR/diffs"
+      mkdir -p "$DIFFS_DIR"
+
+      DIFF_COUNT=0
+      if [ -d "$BEFORE_DIR" ]; then
+        for f in "$BEFORE_DIR"/*; do
+          [ -f "$f" ] || continue
+          name="$(basename "$f")"
+          after_f="$AFTER_DIR/$name"
+          out="$DIFFS_DIR/${name%.md}.diff"
+          if [ -f "$after_f" ]; then
+            diff -u "$f" "$after_f" > "$out" || true
+          else
+            echo "# after snapshot missing for $name" > "$out"
+          fi
+          DIFF_COUNT=$((DIFF_COUNT + 1))
+        done
+      fi
+      echo "DIFF_COUNT=$DIFF_COUNT"
+      date '+%Y-%m-%d %H:%M:%S'
+      ```
+      记录返回的 DIFF_COUNT 和当前时间戳。
+
+      ### 2. 撰写 SUMMARY.md
+      读取 $vars.impact_file 与（若存在）$vars.plan_file 与 $vars.cross_check_file，提炼核心要点。
+      然后使用 Write 工具将以下结构化内容写入 `$vars.revision_dir_abs/SUMMARY.md`：
+
+      ```markdown
+      # Revision $vars.revision_index — 摘要
+
+      - **时间**: <步骤 1 的时间戳>
+      - **类别**: $vars.change_class
+      - **是否生成方案**: $vars.plan_generated
+      - **受影响文件**: $vars.affected_files_csv
+      - **实际修改文件**: $vars.modified_files_csv（共 $vars.modified_count 个）
+      - **交叉一致性**: passed=$vars.cross_check_passed, issues=$vars.cross_check_issues
+      - **diff 数量**: <DIFF_COUNT>
+
+      ## 用户修订意图
+
+      > $inputs.refine_prompt
+
+      ## 核心要点（由 agent 提炼，非简单拷贝）
+      - 影响分析关键结论（1-2 行）
+      - （若有方案）方案中最重要的决策增量（1-2 行）
+      - 实际修改的语义概述（1-2 行，不要罗列文件名，要说"做了什么"）
+      - 交叉一致性的主要发现（1-2 行）
+
+      ## 关键文件
+      - 影响分析: [00-impact.md](./00-impact.md)
+      - 修订方案: [01-refine-plan.md](./01-refine-plan.md)（仅 structural）
+      - 一致性检查: [02-cross-check.md](./02-cross-check.md)
+      - before/ — 修改前快照
+      - after/ — 修改后快照
+      - diffs/ — 各文件 unified diff
+      ```
+
+      规则：
+      - 中文输出
+      - 摘要中的"核心要点"必须是 agent 提炼，不允许只是机械列表
+      - 若 plan_generated == "false"，删除"修订方案"那一行
+
+      ## 输出 JSON
+      直接输出纯 JSON 行（不要用代码块包裹）:
+      {"vars_update":{"summary_file":"$vars.revision_dir/SUMMARY.md","diff_count":"<DIFF_COUNT>","conclusion":"<2-3句话: 本次 revision 的本质改动是什么>"}}
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 7: History — 追加 REVISIONS.md 索引（agent 节点为第一公民）
+  # ═══════════════════════════════════════════════════════════════
+  - id: history
+    type: agent
+    depends_on: [snapshot]
+    timeout: 600
+    prompt: |
+      你负责把本次 Revision 登记到累计变更索引 `$vars.prd_dir_abs/REVISIONS.md`。
+
+      ## 你的任务
+
+      ### 1. 读取或初始化 REVISIONS.md
+      使用 Read 工具尝试读取 `$vars.prd_dir_abs/REVISIONS.md`：
+      - 如果不存在 → 你需要新建，包含表头
+      - 如果存在 → 你只需在表格末尾追加一行（**严禁覆盖既有内容**）
+
+      索引文件格式（首次新建时使用）：
+      ```markdown
+      # PRD Revisions — 累计变更索引
+
+      PRD 目录: `<prd_dir_abs>`
+
+      | Rev | Date | Class | Prompt (excerpt) | Affected | Plan | CrossCheck | Summary |
+      |-----|------|-------|------------------|----------|------|------------|---------|
+      ```
+
+      ### 2. 准备本次行数据
+      - **Rev**: $vars.revision_index
+      - **Date**: 当前日期（YYYY-MM-DD）
+      - **Class**: $vars.change_class
+      - **Prompt (excerpt)**: 取 $inputs.refine_prompt 的前 80 个字符，单行（换行替换为空格），表格分隔符 `|` 转义为 `\|`
+      - **Affected**: $vars.affected_files_csv，去掉 `.md` 后缀缩短显示
+      - **Plan**: 若 $vars.plan_generated == "true" 则 `yes`，否则 `no`
+      - **CrossCheck**: 若 $vars.cross_check_passed == "true" 则 `pass`，否则 `fail`
+      - **Summary**: `[rev-<index>](./revisions/rev-<index>/SUMMARY.md)`
+
+      ### 3. 写入文件
+      使用 Write/Edit 工具更新 `$vars.prd_dir_abs/REVISIONS.md`：
+      - 首次创建：写入完整表头 + 本行
+      - 已存在：在文件末尾追加本行（保留所有历史行）
+
+      **追加纪律**：在 Edit 之前必须先读取文件，确认行数后只在末尾追加；任何对历史行的删改都是 bug。
+
+      ### 4. 自检
+      Edit 后再 Read 一次，确认：
+      - 表头存在且唯一
+      - 历史行未丢失
+      - 本行已出现且字段顺序正确
+
+      ## 输出 JSON
+      直接输出纯 JSON 行（不要用代码块包裹）:
+      {"vars_update":{"history_file":"$vars.prd_dir_abs/REVISIONS.md","conclusion":"<2-3句话: 索引已更新到第几条>"}}
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 8: Done — 完成提示
+  # ═══════════════════════════════════════════════════════════════
+  - id: done
+    type: bash
+    depends_on: [history]
+    timeout: 10
+    bash: |
+      echo "=== PRD Refine 完成 ==="
+      echo "Revision: rev-$vars.revision_index"
+      echo "目录: $vars.revision_dir_abs"
+      echo "索引: $vars.prd_dir_abs/REVISIONS.md"
+      echo "类别: $vars.change_class"
+      echo "实际修改: $vars.modified_count 个文件"
+      echo "摘要: $vars.summary_file"

@@ -1,0 +1,85 @@
+// packages/server/src/services/execution/EnginePool.ts
+import type { WorkflowEngine } from "@octopus/engine"
+
+export interface EngineInstance {
+  engine: WorkflowEngine
+  abortController: AbortController
+  approvalTimer?: ReturnType<typeof setTimeout>
+}
+
+export class EnginePool {
+  private pool = new Map<string, EngineInstance>()
+
+  get(id: string): EngineInstance | undefined {
+    return this.pool.get(id)
+  }
+
+  set(id: string, instance: EngineInstance): void {
+    this.pool.set(id, instance)
+  }
+
+  /** Alias for set() — backward compat with execution.ts code */
+  create(id: string, engine: WorkflowEngine, abortController: AbortController): void {
+    this.pool.set(id, { engine, abortController })
+  }
+
+  /** Alias for delete() — backward compat with execution.ts code */
+  remove(id: string): void {
+    const inst = this.pool.get(id)
+    if (inst?.approvalTimer) {
+      clearTimeout(inst.approvalTimer)
+    }
+    this.pool.delete(id)
+  }
+
+  delete(id: string): boolean {
+    const inst = this.pool.get(id)
+    if (inst?.approvalTimer) {
+      clearTimeout(inst.approvalTimer)
+    }
+    return this.pool.delete(id)
+  }
+
+  /** Cancel execution: abort controller + clear timers + remove from pool */
+  cancel(id: string): boolean {
+    const inst = this.pool.get(id)
+    if (!inst) return false
+    if (inst.approvalTimer) {
+      clearTimeout(inst.approvalTimer)
+      inst.approvalTimer = undefined
+    }
+    inst.abortController.abort()
+    this.pool.delete(id)
+    return true
+  }
+
+  has(id: string): boolean {
+    return this.pool.has(id)
+  }
+
+  clear(): void {
+    for (const inst of this.pool.values()) {
+      if (inst.approvalTimer) clearTimeout(inst.approvalTimer)
+    }
+    this.pool.clear()
+  }
+
+  setApprovalTimer(id: string, timer: ReturnType<typeof setTimeout>): void {
+    const inst = this.pool.get(id)
+    if (inst) {
+      inst.approvalTimer = timer
+    }
+  }
+
+  clearApprovalTimer(id: string): void {
+    const inst = this.pool.get(id)
+    if (inst?.approvalTimer) {
+      clearTimeout(inst.approvalTimer)
+      inst.approvalTimer = undefined
+    }
+  }
+
+  getAll(): Map<string, EngineInstance> {
+    return new Map(this.pool)
+  }
+}
