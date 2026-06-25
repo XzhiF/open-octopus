@@ -612,7 +612,7 @@ END;
 -- =============================================================================
 
 -- Default org (idempotent via UNIQUE constraint on name)
-INSERT OR IGNORE INTO orgs (name, path, created_at) VALUES ('xzf', '~/.octopus/xzf', datetime('now'));
+INSERT OR IGNORE INTO orgs (name, path, created_at) VALUES ('xzf', '~/.octopus/orgs/xzf', datetime('now'));
 
 -- Scheduler state singleton (idempotent via PRIMARY KEY)
 INSERT INTO scheduler_state (id, schema_version, missed_alert_pending)

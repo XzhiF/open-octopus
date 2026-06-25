@@ -97,7 +97,7 @@ export function syncOrgsFromFilesystemWithDao(dao: OrgDAO, baseDir?: string): nu
     }
 
     const orgPath = `~/.octopus/orgs/${entry.name}`
-    const result = dao.insert({ name: entry.name, path: orgPath, created_at: now })
+    const result = dao.upsert({ name: entry.name, path: orgPath, created_at: now })
     if (result.changes > 0) inserted++
   }
 

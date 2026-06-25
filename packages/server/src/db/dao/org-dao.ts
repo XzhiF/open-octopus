@@ -31,4 +31,10 @@ export class OrgDAO extends BaseDAO {
       "INSERT OR IGNORE INTO orgs (name, path, created_at) VALUES (?, ?, ?)"
     ).run(row.name, row.path, row.created_at)
   }
+
+  upsert(row: Omit<OrgRow, "id">): Database.RunResult {
+    return this.stmt(
+      "INSERT INTO orgs (name, path, created_at) VALUES (?, ?, ?) ON CONFLICT(name) DO UPDATE SET path = excluded.path"
+    ).run(row.name, row.path, row.created_at)
+  }
 }
