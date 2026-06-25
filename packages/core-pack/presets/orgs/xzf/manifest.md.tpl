@@ -5,8 +5,9 @@
 
 ## {org}
 
-- octopus git@github.com:XzhiF/octopus.git [main] {cli, tool}
+- octopus git@github.com:XzhiF/open-octopus.git [main] {cli, tool}
 - octopus-demo-service-admin git@github.com:XzhiF/octopus-demo-service-admin.git [main]
 - octopus-demo-api-admin git@github.com:XzhiF/octopus-demo-api-admin.git [main]
 - octopus-demo-service-user git@github.com:XzhiF/octopus-demo-service-user.git [main]
 - octopus-demo-web-admin git@github.com:XzhiF/octopus-demo-web-admin.git [main]
+- octopus-demo-java-common git@github.com:XzhiF/octopus-demo-java-common.git [main]
