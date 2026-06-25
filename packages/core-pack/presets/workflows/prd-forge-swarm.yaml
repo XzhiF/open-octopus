@@ -1,0 +1,837 @@
+# yaml-language-server: $schema=./doc/workflow-schema.json
+apiVersion: octopus/v1
+kind: Workflow
+name: prd-forge-swarm
+description: >
+  PRD Forge Swarm — 将 Idea 锻造为完整 PRD 的多智能体协作工作流。
+  使用 Swarm debate/dispatch 模式替代手工编排的对抗审查链。
+  核心改造：scope-lock(debate) + adversarial-refine(debate) + design(debate) + ui-ux(dispatch)。
+  节点数从 17 减少到 13，对抗审查从 6 节点链变为 3 个 debate 节点。
+
+model: opus[1m]
+engine: claude
+execution_mode: serial
+timeout: 86400
+
+inputs:
+  idea:
+    description: "产品 Idea 描述（自然语言，越详细越好）"
+    required: true
+  output_format:
+    description: "输出格式：markdown（默认）或 pdf"
+    required: false
+    default: "markdown"
+  enable_adversarial:
+    description: "开启对抗审查（魔鬼代言人质疑每个阶段）"
+    required: false
+    default: "true"
+  completeness_threshold:
+    description: "完整性审查允许的最大缺失维度数（超过则打回）"
+    required: false
+    default: "3"
+  scope_mode:
+    description: |
+      范围控制模式。
+      - strict（默认）：强制 LOCKED_SCOPE，只把用户明确提出的功能视为需求，举例/参考/通用补全（auth、日志、监控等）一律 OUT-OF-SCOPE。
+      - creative：允许 LLM 在 idea 基础上发散补全相关功能，标记为 EXTENSION-CANDIDATE，最终以"扩展项"身份写入 PRD。
+    required: false
+    default: "strict"
+
+variables:
+  # ── 文档目录 ──
+  output_root: "./docs/prd-forge"
+  output_dir: ""
+  prd_index: ""
+  prd_name: ""
+  display_name: "PRD Forge Swarm"
+  conclusion: ""
+  discovery_file: ""
+  requirements_file: ""
+  solution_file: ""
+  completeness_file: ""
+  final_prd_file: ""
+  completeness_score: "0"
+  completeness_missing: ""
+  # ── 分层文档（v2 拆分） ──
+  acceptance_cases_file: ""
+  ui_file: ""
+  ux_file: ""
+  acceptance_cases_count: "0"
+  ui_pages_count: "0"
+
+  # ── Clarify 阶段 ──
+  project_type: ""
+  design_focus: ""
+  key_decisions: ""
+  user_emphasis: ""
+  clarify_file: ""
+
+  # ── Locked Scope 阶段 ──
+  scope_file: ""
+  in_scope_count: "0"
+  out_of_scope_count: "0"
+  example_only_count: "0"
+  extension_candidate_count: "0"
+
+  # ── Swarm 新增 ──
+  scope_synthesis: ""
+  scope_consensus: "0"
+  refine_synthesis: ""
+  refine_consensus: "0"
+  refine_rounds: "0"
+  design_synthesis: ""
+  design_consensus: "0"
+  ui_ux_synthesis: ""
+  ui_ux_breakdown: ""
+  personas_count: "0"
+  user_stories_count: "0"
+  entities_count: "0"
+  api_count: "0"
+  prd_word_count: "0"
+
+auto_answers:
+  - pattern: ".*"
+    answer: "proceed"
+
+# ── Notify 子系统配置 ──
+providers:
+  hermes-cli:
+    type: hermes
+    timeout: 30
+    min_severity: info
+
+channels:
+  default:
+    provider: hermes-cli
+    target: "telegram:xzf_hermes"
+
+hooks:
+  # ① 工作流失败 — 节点执行错误导致终止
+  on_workflow_failure:
+    - id: notify-failure
+      type: notify
+      channel: default
+      template:
+        severity: error
+        title: "❌ $vars.display_name — 工作流失败"
+        body: "📝 Idea: $inputs.idea\n🔴 失败节点: ${hook.failed_node_id | default:unknown}\n⏱️ 已运行: ${hook.total_duration_ms | duration}\n\n💡 错误: ${hook.error | default:Unknown error}"
+
+  # ② 工作流完成（无论成功/失败）
+  on_complete:
+    - id: notify-complete
+      type: notify
+      channel: default
+      template:
+        severity: info
+        title: "🏁 $vars.display_name — 工作流完成"
+        body: "状态: $hook.final_status\n✅ 完成: $hook.completed_count / ⏭️ 跳过: $hook.skipped_count / ❌ 失败: $hook.failed_count / 📊 总计: $hook.total_count\n⏱️ 总耗时: ${hook.total_duration_ms | duration}"
+
+  # ③ 节点级通知 — 每个业务阶段完成后自动通知
+  on_node_success:
+    # ── Setup 完成 ──
+    - id: notify-setup
+      type: notify
+      nodes: [setup]
+      channel: default
+      template:
+        severity: info
+        title: "🔨 $vars.display_name 启动"
+        body: "📝 Idea: $inputs.idea\n📂 输出: $vars.output_dir\n😈 对抗审查: $inputs.enable_adversarial"
+
+    # ── Clarify 完成 ──
+    - id: notify-clarify
+      type: notify
+      nodes: [clarify]
+      channel: default
+      template:
+        severity: info
+        title: "🧭 $vars.display_name — Clarify 完成"
+        body: "📂 项目类型: $vars.project_type\n🎯 设计重点: $vars.design_focus\n🔑 关键决策: $vars.key_decisions\n\n💡 核心洞察: $vars.conclusion"
+
+    # ── Scope Lock 完成 ──
+    - id: notify-scope-lock
+      type: notify
+      nodes: [scope-lock-format]
+      channel: default
+      template:
+        severity: info
+        title: "🔒 $vars.display_name — Scope Lock 完成"
+        body: "🤝 共识: $vars.scope_consensus\n✅ IN-SCOPE: $vars.in_scope_count | ❌ OUT-OF-SCOPE: $vars.out_of_scope_count\n\n💡 结论: $vars.conclusion"
+
+    # ── Discover+Define 完成 ──
+    - id: notify-discover-define
+      type: notify
+      nodes: [discover-define]
+      channel: default
+      template:
+        severity: info
+        title: "📋 $vars.display_name — Discover+Define 完成"
+        body: "👤 画像: $vars.personas_count | 📖 故事: $vars.user_stories_count\n\n💡 结论: $vars.conclusion"
+
+    # ── Adversarial Refine 完成 ──
+    - id: notify-adversarial-refine
+      type: notify
+      nodes: [adversarial-refine-format]
+      channel: default
+      condition: '$inputs.enable_adversarial == "true"'
+      template:
+        severity: info
+        title: "😈 $vars.display_name — Adversarial Refine 完成"
+        body: "🤝 共识: $vars.refine_consensus | 🔄 轮数: $vars.refine_rounds\n\n💡 结论: $vars.conclusion"
+
+    # ── Design 完成 ──
+    - id: notify-design
+      type: notify
+      nodes: [design-format]
+      channel: default
+      template:
+        severity: info
+        title: "🏗️ $vars.display_name — Design 完成"
+        body: "🤝 共识: $vars.design_consensus\n📊 实体: $vars.entities_count | 🔌 API: $vars.api_count\n\n💡 结论: $vars.conclusion"
+
+    # ── UI/UX 完成 ──
+    - id: notify-ui-ux
+      type: notify
+      nodes: [ui-ux-format]
+      channel: default
+      template:
+        severity: info
+        title: "🎨 $vars.display_name — UI/UX 完成"
+        body: "📄 UI: $vars.ui_file\n📄 UX: $vars.ux_file\n\n💡 结论: $vars.conclusion"
+
+    # ── PRD 生成完成 ──
+    - id: notify-completeness
+      type: notify
+      nodes: [completeness-output]
+      channel: default
+      template:
+        severity: info
+        title: "✅ $vars.display_name — PRD 生成完成！"
+        body: "📝 名称: $vars.prd_name\n📊 完整性: $vars.completeness_score\n📄 PRD: $vars.final_prd_file\n📝 字数: $vars.prd_word_count\n\n💡 总结: $vars.conclusion"
+
+nodes:
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 0: Setup — 环境准备 + 输出目录初始化
+  # ═══════════════════════════════════════════════════════════════
+  - id: setup
+    type: agent
+    timeout: 600
+    prompt: |
+      你正在执行 PRD Forge Swarm 工作流的环境准备阶段。
+
+      ## 你的任务
+
+      ### 1. 安装 superpowers-zh 技能
+      ```bash
+      npx superpowers-zh@latest --tool claude --force 2>&1 | head -5
+      ```
+
+      ### 2. 安装 agency-agents-zh 代理
+      ```bash
+      AGENTS_TARGET="$(pwd)/.claude/agents"
+      mkdir -p "$AGENTS_TARGET"
+
+      NEED_CLONE=false
+      for agent in engineering-software-architect product-manager design-ux-architect design-ui-designer; do
+        if [ ! -f "$AGENTS_TARGET/$agent.md" ]; then
+          NEED_CLONE=true
+          break
+        fi
+      done
+
+      if [ "$NEED_CLONE" = "true" ]; then
+        echo "Cloning agency-agents-zh..."
+        DEPS_DIR="$(pwd)/dependencies"
+        mkdir -p "$DEPS_DIR"
+
+        if [ ! -d "$DEPS_DIR/agency-agents-zh" ]; then
+          git clone --depth 1 https://github.com/jnMetaCode/agency-agents-zh.git "$DEPS_DIR/agency-agents-zh" 2>&1
+        fi
+
+        REPO="$DEPS_DIR/agency-agents-zh"
+
+        echo "Installing selected agents..."
+        for f in product-manager; do
+          [ -f "$REPO/product/$f.md" ] && cp "$REPO/product/$f.md" "$AGENTS_TARGET/"
+        done
+
+        for f in design-ux-architect design-ui-designer; do
+          [ -f "$REPO/design/$f.md" ] && cp "$REPO/design/$f.md" "$AGENTS_TARGET/"
+        done
+
+        for f in engineering-software-architect; do
+          [ -f "$REPO/engineering/$f.md" ] && cp "$REPO/engineering/$f.md" "$AGENTS_TARGET/"
+        done
+
+        INSTALLED=$(ls "$AGENTS_TARGET"/engineering-*.md "$AGENTS_TARGET"/product-*.md "$AGENTS_TARGET"/design-*.md 2>/dev/null | wc -l)
+        echo "Installed $INSTALLED agency agents to $AGENTS_TARGET"
+      else
+        echo "All agency agents already installed, skipping clone"
+      fi
+      ```
+
+      ### 3. 安装 devil-advocate + architecture-explorer（core-pack 内置）
+      ```bash
+      AGENTS_TARGET="$(pwd)/.claude/agents"
+      COREPACK_AGENTS=""
+      for d in \
+        "$(pwd)/.octopus/core-pack/agents" \
+        "$(pwd)/packages/core-pack/agents" \
+        "$(pwd)/../core-pack/agents"; do
+        if [ -f "$d/devil-advocate.md" ]; then
+          COREPACK_AGENTS="$d"
+          break
+        fi
+      done
+      if [ -n "$COREPACK_AGENTS" ]; then
+        cp "$COREPACK_AGENTS/devil-advocate.md" "$AGENTS_TARGET/"
+        echo "Installed devil-advocate.md from $COREPACK_AGENTS"
+        [ -f "$COREPACK_AGENTS/architecture-explorer.md" ] && cp "$COREPACK_AGENTS/architecture-explorer.md" "$AGENTS_TARGET/" && echo "Installed architecture-explorer.md from $COREPACK_AGENTS"
+      fi
+      ```
+
+      ### 4. 计算输出目录（自然序号，当前工作空间内）
+      ```bash
+      # 输出目录在当前工作空间（或 CLI 运行目录）内
+      OUTPUT_ROOT="./docs/prd-forge"
+      mkdir -p "$OUTPUT_ROOT"
+
+      # 找到最大序号 + 1
+      MAX_INDEX=0
+      for dir in "$OUTPUT_ROOT"/prd-*/; do
+        if [ -d "$dir" ]; then
+          # 提取序号
+          INDEX=$(basename "$dir" | sed 's/prd-0*//' | sed 's/^$/0/')
+          if [ "$INDEX" -gt "$MAX_INDEX" ] 2>/dev/null; then
+            MAX_INDEX=$INDEX
+          fi
+        fi
+      done
+
+      NEW_INDEX=$((MAX_INDEX + 1))
+      PRD_INDEX=$(printf "%03d" $NEW_INDEX)
+      OUTPUT_DIR="$OUTPUT_ROOT/prd-$PRD_INDEX"
+      mkdir -p "$OUTPUT_DIR"
+
+      # 获取绝对路径用于输出
+      OUTPUT_DIR_ABS="$(cd "$OUTPUT_DIR" && pwd)"
+
+      echo "Output directory: $OUTPUT_DIR_ABS"
+      ```
+
+      ### 5. 生成 PRD 名称
+      根据 $inputs.idea 生成一个简短的 PRD 名称（英文，kebab-case，最多 5 个单词）。
+
+      ## 输出要求
+
+      在回复末尾直接输出纯 JSON 行（不要用代码块包裹）:
+      {"vars_update":{"output_dir":"$vars.output_dir","output_dir_abs":"$(cd $vars.output_dir && pwd)","prd_index":"<序号>","prd_name":"<简短名称>","display_name":"PRD Forge Swarm #<序号> · <简短名称>"}}
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 0.5: Clarify — Idea 理解与上下文分析
+  # ═══════════════════════════════════════════════════════════════
+  - id: clarify
+    type: agent
+    depends_on: [setup]
+    timeout: 1200
+    prompt: |
+      你是一位经验丰富的技术产品分析师，正在深入理解用户的 idea。
+
+      ## 用户 Idea
+      $inputs.idea
+
+      ## 输出目录
+      $vars.output_dir
+
+      ## 你的任务
+
+      对 idea 进行深度分析，为后续所有阶段提供精确的上下文指引。这不是需求发现，而是**理解用户真正在说什么**。
+
+      ### 1. 项目类型识别 ⭐ 最重要
+
+      判断这个项目属于哪种类型（影响后续所有阶段的输出模板和重点）：
+
+      | 类型 | 特征 | 后续重点 |
+      |------|------|----------|
+      | **product**（产品型） | 面向终端用户、需要 UI/UX、有商业模式 | 用户画像、故事、API、GTM |
+      | **infrastructure**（基础设施型） | 内部工具、配置改造、架构重构、开发者体验 | 接口设计、配置语法、迁移策略、向后兼容 |
+      | **hybrid**（混合型） | 兼具产品和基础设施特征 | 两者兼顾 |
+
+      判断依据：
+      - idea 中提到"用户"、"客户"、"界面"、"产品" → 偏向 product
+      - idea 中提到"重构"、"配置"、"接口"、"机制"、"抽象"、"优化结构" → 偏向 infrastructure
+      - 不确定时，标注为 hybrid
+
+      ### 2. 关键设计决策点提取
+
+      从 idea 中提取用户明确提到或暗示的设计决策：
+      - 用户提到的权衡（"A 还是 B"）
+      - 用户明确排除的方案（"不考虑 X"）
+      - 用户提到的约束条件（"暂时不考虑 Y"）
+      - 用户偏好的方向（"希望 Z"）
+
+      ### 3. 用户核心价值推断
+
+      推断用户最看重的东西（这必须在最终 PRD 中深入展开）：
+      - 用户反复强调的关键词是什么？
+      - 用户说的"好的设计"具体指什么？
+      - 用户期望的深度和创造性在哪里？
+
+      ### 4. Idea 中的技术线索
+
+      提取 idea 中提到的技术概念、现有系统、参考模式：
+      - 提到了哪些现有组件/系统？
+      - 类比了什么模式？（"像 hook 机制"）
+      - 有什么技术约束或偏好？
+
+      ## 输出要求
+
+      将分析结果保存到 `$vars.output_dir/00-clarify.md`
+
+      完成后输出:
+      直接输出纯 JSON 行（不要用代码块包裹）:
+      {"vars_update":{"clarify_file":"$vars.output_dir/00-clarify.md","project_type":"<product/infrastructure/hybrid>","design_focus":"<设计重点，逗号分隔>","key_decisions":"<关键决策点，逗号分隔>","user_emphasis":"<用户核心价值，逗号分隔>","conclusion":"<2-3句话: 这个idea的本质是什么>"}}
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 1: Scope Lock — 范围锁定（Swarm Debate）
+  # ═══════════════════════════════════════════════════════════════
+  - id: scope-lock
+    type: swarm
+    depends_on: [clarify]
+    mode: debate
+    rounds: 2
+    consensus_threshold: 0.8
+    timeout: 1800
+    output_format: full
+    topic: |
+      将以下想法锁定范围，分为 IN-SCOPE / EXAMPLE-ONLY / OUT-OF-SCOPE:
+
+      原始 Idea: $inputs.idea
+      上下文分析（已读文件）: $vars.clarify_file
+      范围模式: $inputs.scope_mode
+
+      要求输出格式：
+      ## IN-SCOPE
+      - [IS-001] <功能描述>（依据: <idea 原文引用>）
+
+      ## EXAMPLE-ONLY
+      - [EX-001] <举例描述>（说明对象: <IS-xxx>）
+
+      ## OUT-OF-SCOPE
+      - [OOS-001] <排除描述>（理由: <一句话理由>）
+
+      strict 模式下不允许产出 EXTENSION-CANDIDATE。
+      creative 模式下允许 EXTENSION-CANDIDATE，每项必须写推断依据 + 不加的残缺影响。
+    experts:
+      - role: product-manager
+        agent_file: ".claude/agents/product-manager.md"
+        perspective: "务实 PM，保护核心范围，砍掉蔓延。仅保留用户明确提出的功能需求。"
+        prompt: |
+          你是产品经理，负责锁定 PRD 范围。你的立场是保护核心、砍掉蔓延。
+          读取 $vars.clarify_file 理解项目类型和用户核心价值。
+          严格按照 $inputs.scope_mode 模式的规则分类。
+      - role: devil-advocate
+        agent_file: ".claude/agents/devil-advocate.md"
+        perspective: "挑战每个 IN-SCOPE 项的必要性，质疑是否真正是用户需求还是 LLM 脑补。"
+        prompt: |
+          你是魔鬼代言人。你的任务是质疑每个被归入 IN-SCOPE 的项目。
+          质疑方向：这是用户明确提出的吗？还是你以为用户需要？
+          用户没有这个功能会怎样？这个功能是否可以用更简单的方式满足？
+    host:
+      prompt: |
+        综合两方意见，输出最终范围分类表。对每个争议项做出采纳/拒绝决定并说明理由。
+        输出格式：
+        | 类别 | ID | 描述 | 依据 | 争议裁决 |
+        确保 IN-SCOPE 项都有明确的 idea 原文依据。
+      model: opus
+    outputs:
+      synthesis: "$vars.scope_synthesis"
+      consensus_score: "$vars.scope_consensus"
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 1.1: Scope Lock Format — 格式化范围文件
+  # ═══════════════════════════════════════════════════════════════
+  - id: scope-lock-format
+    type: agent
+    depends_on: [scope-lock]
+    timeout: 600
+    prompt: |
+      将 Swarm debate 的综合报告格式化为范围文件。
+
+      ## 输入
+      - 综合报告: $vars.scope_synthesis
+      - 共识分数: $vars.scope_consensus
+      - 输出目录: $vars.output_dir
+
+      ## 任务
+      1. 读取 $vars.scope_synthesis 中的综合报告
+      2. 解析出 IN-SCOPE / EXAMPLE-ONLY / OUT-OF-SCOPE 分类表
+      3. 写入 $vars.output_dir/02-scope.md，格式：
+
+      # Scope Lock (Swarm Debate)
+      共识分数: <consensus_score>
+      模式: <scope_mode>
+
+      ## 范围分类
+      | 类别 | ID | 描述 | 依据 | 争议裁决 |
+      |------|----|------|------|---------|
+      ...
+
+      ## 红线
+      ⛔ OUT-OF-SCOPE 项不得进入需求文档
+      ⛔ EXAMPLE-ONLY 不得作为独立 Story 展开
+      ✅ IN-SCOPE 必须 100% 写入需求文档
+
+      4. 统计各类别数量
+
+      ## 输出
+      直接输出纯 JSON 行（不要用代码块包裹）:
+      {"vars_update":{"scope_file":"$vars.output_dir/02-scope.md","in_scope_count":"<N>","out_of_scope_count":"<N>","example_only_count":"<N>","extension_candidate_count":"<N>","conclusion":"scope consensus=$vars.scope_consensus, IN <N> / OUT <M>"}}
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 2: Discover+Define — 需求发现与定义（合并节点）
+  # ═══════════════════════════════════════════════════════════════
+  - id: discover-define
+    type: agent
+    depends_on: [scope-lock-format]
+    timeout: 2400
+    prompt: |
+      你是资深产品经理，正在合并完成需求发现和需求定义两个阶段。
+
+      ## 输入
+      - Idea: $inputs.idea
+      - Scope: $vars.scope_file（硬约束）
+      - Clarify: $vars.clarify_file
+      - 项目类型: $vars.project_type
+      - 用户核心价值: $vars.user_emphasis
+      - 输出目录: $vars.output_dir
+
+      ## 任务 A：需求发现（01-discovery.md）
+      覆盖：
+      1. 问题陈述 — 用一段话说清楚解决什么问题
+      2. 问题证据 — 用户痛点、市场信号、类似解决方案
+      3. 目标用户群体 — 粗略画像、预估规模
+      4. 机会假设 — 为什么现在？核心差异化？
+      5. 不做这件事的代价
+
+      ## 任务 B：需求定义（01-requirements.md）
+      覆盖：
+      1. 用户画像（2-3 个，含职业、场景、技术水平）
+      2. 用户故事（每个 IN-SCOPE 项至少 1 个，Given/When/Then 格式）
+      3. 验收标准（嵌入每个 user story）
+      4. UI 声明（如项目类型非 infrastructure）
+
+      ## 硬约束
+      ⛔ OUT-OF-SCOPE 项不得出现在需求文档中
+      ⛔ EXAMPLE-ONLY 不得作为独立 Story 展开
+      ✅ 所有 IN-SCOPE 项必须有对应 user story
+
+      ## 规则
+      - 无人值守模式，直接执行
+      - 中文输出
+      - 先读取 $vars.clarify_file 理解项目类型
+      - infrastructure 项目重点关注技术债务、架构约束
+      - product 项目重点关注用户痛点、市场信号
+
+      ## 输出
+      保存 01-discovery.md 和 01-requirements.md 到 $vars.output_dir/
+
+      直接输出纯 JSON 行（不要用代码块包裹）:
+      {"vars_update":{"discovery_file":"$vars.output_dir/01-discovery.md","requirements_file":"$vars.output_dir/01-requirements.md","personas_count":"<数量>","user_stories_count":"<数量>","conclusion":"<2-3句话总结>"}}
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 2.5: Adversarial Refine — 对抗审查（Swarm Debate, 3 专家）
+  # ═══════════════════════════════════════════════════════════════
+  - id: adversarial-refine
+    type: swarm
+    depends_on: [discover-define]
+    mode: debate
+    rounds: 3
+    consensus_threshold: 0.75
+    timeout: 3600
+    execute_when: '$inputs.enable_adversarial == "true"'
+    output_format: full
+    topic: |
+      审查发现和需求文档的完整性:
+      - Discovery: $vars.discovery_file
+      - Requirements: $vars.requirements_file
+      - Scope: $vars.scope_file
+      项目类型: $vars.project_type
+
+      审查维度:
+      1. 假设质疑：每个需求是否基于未验证的假设？
+      2. 遗漏需求：是否有 IN-SCOPE 项缺少对应 user story？
+      3. 技术可行性：是否有实现复杂度或依赖风险被忽略？
+      4. 用户价值：P0/P1 分类是否合理？
+
+      输出要求:
+      - 每条质疑标注 🔴 CRITICAL / 🟡 RISK / 🔵 QUESTION
+      - 提出具体修改建议
+    experts:
+      - role: devil-advocate
+        agent_file: ".claude/agents/devil-advocate.md"
+        perspective: "质疑假设、识别遗漏需求、挑战用户故事覆盖率"
+        prompt: |
+          审查 $vars.discovery_file 和 $vars.requirements_file。
+          聚焦：假设是否真实？用户故事是否覆盖所有 IN-SCOPE？
+          用 🔴/🟡/🔵 标注每条质疑。
+      - role: feasibility-reviewer
+        agent_file: ".claude/agents/engineering-software-architect.md"
+        perspective: "技术可行性、实现复杂度、依赖风险"
+        prompt: |
+          从技术可行性角度审查需求文档。
+          聚焦：实现复杂度是否被低估？有无隐藏依赖？技术风险点？
+      - role: product-manager
+        agent_file: ".claude/agents/product-manager.md"
+        perspective: "用户价值优先级、P0/P1 分类合理性、scope 一致性"
+        prompt: |
+          从产品价值角度审查需求文档。
+          聚焦：P0/P1 分类是否合理？需求是否与 scope 一致？
+    host:
+      prompt: |
+        综合三方意见，输出:
+        1. 采纳的挑战及对应修改（附修改后文档片段）
+        2. 拒绝的挑战及理由
+        3. 需要更新到 01-discovery.md 和 01-requirements.md 的具体修改
+      model: opus
+    outputs:
+      synthesis: "$vars.refine_synthesis"
+      consensus_score: "$vars.refine_consensus"
+      rounds_used: "$vars.refine_rounds"
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 2.6: Adversarial Refine Format — 应用对抗审查结果
+  # ═══════════════════════════════════════════════════════════════
+  - id: adversarial-refine-format
+    type: agent
+    depends_on: [adversarial-refine]
+    execute_when: '$inputs.enable_adversarial == "true"'
+    timeout: 600
+    prompt: |
+      将对抗审查的 Swarm debate 综合报告应用到需求文档。
+
+      ## 输入
+      - 综合报告: $vars.refine_synthesis
+      - 原文档: $vars.discovery_file, $vars.requirements_file
+
+      ## 任务
+      1. 读取 $vars.refine_synthesis
+      2. 提取"采纳的挑战"对应的修改内容
+      3. 将修改应用到 $vars.discovery_file 和 $vars.requirements_file（读取、修改、覆盖写入）
+      4. 在每个文档末尾追加 "## 对抗审查回应（Swarm Debate）" section
+
+      ## 输出
+      直接输出纯 JSON 行（不要用代码块包裹）:
+      {"vars_update":{"conclusion":"adversarial refine consensus=$vars.refine_consensus, rounds=$vars.refine_rounds"}}
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 3: Design — 技术方案设计（Swarm Debate, 3 专家）
+  # ═══════════════════════════════════════════════════════════════
+  - id: design
+    type: swarm
+    depends_on: [adversarial-refine-format, discover-define]
+    mode: debate
+    rounds: 3
+    consensus_threshold: 0.7
+    timeout: 3600
+    output_format: full
+    topic: |
+      基于已锁定的需求和范围，设计技术方案:
+      - Scope: $vars.scope_file
+      - Requirements: $vars.requirements_file
+      - Discovery: $vars.discovery_file
+      项目类型: $vars.project_type
+
+      按项目类型适配输出模板:
+      - product: 数据模型 + API + 前端组件 + 路由
+      - infrastructure: 接口设计 + 配置 schema + 迁移策略
+      - hybrid: 两者结合
+
+      输出要求:
+      1. 架构决策及理由
+      2. 数据模型（实体 + 关系）
+      3. API 设计（端点 + 请求/响应）
+      4. 技术选型及替代方案比较
+    experts:
+      - role: software-architect
+        agent_file: ".claude/agents/engineering-software-architect.md"
+        perspective: "系统架构、数据模型、API 设计、技术选型"
+        prompt: |
+          你是软件架构师。基于需求文档设计技术方案。
+          重点：架构选型、数据模型、API 设计、技术栈选择。
+      - role: devil-advocate
+        agent_file: ".claude/agents/devil-advocate.md"
+        perspective: "质疑架构选型、识别过度设计、挑战技术假设"
+        prompt: |
+          你是魔鬼代言人。质疑架构师的每个选型。
+          聚焦：是否过度设计？有没有更简单的方案？技术假设是否成立？
+      - role: feasibility-reviewer
+        agent_file: ".claude/agents/engineering-software-architect.md"
+        perspective: "实现复杂度评估、工期风险、依赖分析"
+        prompt: |
+          从实现可行性角度评估技术方案。
+          聚焦：实现复杂度、工期风险、依赖链、技术债。
+    host:
+      prompt: |
+        综合三方意见，输出最终技术方案:
+        1. 架构决策及理由（含采纳/拒绝的挑战）
+        2. 数据模型 + API 设计
+        3. 技术选型及替代方案
+        4. 实现风险清单
+      model: opus
+    outputs:
+      synthesis: "$vars.design_synthesis"
+      consensus_score: "$vars.design_consensus"
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 3.1: Design Format — 格式化技术方案
+  # ═══════════════════════════════════════════════════════════════
+  - id: design-format
+    type: agent
+    depends_on: [design]
+    timeout: 600
+    prompt: |
+      将技术方案 debate 的综合报告格式化为方案文件。
+
+      ## 输入
+      - 综合报告: $vars.design_synthesis
+      - 输出目录: $vars.output_dir
+
+      ## 任务
+      1. 读取 $vars.design_synthesis
+      2. 格式化为完整技术方案文档
+      3. 写入 $vars.output_dir/03-solution.md
+      4. 统计实体数和 API 数
+
+      ## 输出
+      直接输出纯 JSON 行（不要用代码块包裹）:
+      {"vars_update":{"solution_file":"$vars.output_dir/03-solution.md","entities_count":"<N>","api_count":"<N>","conclusion":"design consensus=$vars.design_consensus"}}
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 4: UI/UX — Swarm Dispatch（UI 设计师 + UX 架构师）
+  # ═══════════════════════════════════════════════════════════════
+  - id: ui-ux
+    type: swarm
+    depends_on: [design-format]
+    mode: dispatch
+    timeout: 2400
+    execute_when: '$vars.project_type != "infrastructure"'
+    failure_policy: continue_partial
+    topic: |
+      基于技术方案设计 UI 和 UX:
+      - Solution: $vars.solution_file
+      - Requirements: $vars.requirements_file
+      - Scope: $vars.scope_file
+    experts:
+      - role: ui-designer
+        agent_file: ".claude/agents/design-ui-designer.md"
+        task: "设计 token、组件库、布局规范"
+        prompt: |
+          你是 UI 设计师。基于技术方案和需求设计 UI 规范。
+          输出：设计 token（颜色、字体、间距）、组件库、页面布局。
+      - role: ux-designer
+        agent_file: ".claude/agents/design-ux-architect.md"
+        task: "用户旅程图、页面状态机、交互序列"
+        depends_on: [ui-designer]
+        prompt: |
+          你是 UX 架构师。基于 UI 设计规范和需求设计用户体验。
+          读取 ui-designer 的输出作为设计基础。
+          输出：用户旅程图、页面状态机、交互序列。
+    outputs:
+      synthesis: "$vars.ui_ux_synthesis"
+      task_breakdown: "$vars.ui_ux_breakdown"
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 4.1: UI/UX Format — 拆分 UI/UX 文件
+  # ═══════════════════════════════════════════════════════════════
+  - id: ui-ux-format
+    type: agent
+    depends_on: [ui-ux]
+    execute_when: '$vars.project_type != "infrastructure"'
+    timeout: 600
+    prompt: |
+      将 UI/UX dispatch 的综合报告拆分为两个文件。
+
+      ## 输入
+      - 综合报告: $vars.ui_ux_synthesis
+      - 输出目录: $vars.output_dir
+
+      ## 任务
+      1. 读取 $vars.ui_ux_synthesis
+      2. 提取 UI 部分写入 $vars.output_dir/04-ui-design.md
+      3. 提取 UX 部分写入 $vars.output_dir/05-ux-flow.md
+
+      ## 输出
+      直接输出纯 JSON 行（不要用代码块包裹）:
+      {"vars_update":{"ui_file":"$vars.output_dir/04-ui-design.md","ux_file":"$vars.output_dir/05-ux-flow.md","ui_pages_count":"<N>","conclusion":"UI/UX dispatch complete"}}
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 5: Completeness Output — 完整性审查 + 最终 PRD 生成（合并节点）
+  # ═══════════════════════════════════════════════════════════════
+  - id: completeness-output
+    type: agent
+    depends_on: [ui-ux-format, design-format]
+    execute_when: '$vars.solution_file != ""'
+    timeout: 3600
+    prompt: |
+      你是 PRD 完整性审查者和最终输出者。
+
+      ## 输入
+      - 所有文档: $vars.discovery_file, $vars.requirements_file, $vars.solution_file, $vars.scope_file
+      - UI（如有）: $vars.ui_file
+      - UX（如有）: $vars.ux_file
+      - 项目类型: $vars.project_type
+      - PRD 名称: $vars.prd_name
+      - 输出目录: $vars.output_dir
+
+      ## Phase 1：15 维度完整性检查
+      检查维度：问题陈述、目标用户、用户画像、用户故事、验收标准、数据模型、
+      API 设计、技术方案、安全考虑、性能考虑、错误处理、发布计划、
+      回滚方案、成功指标、Non-Goals。
+
+      对每个维度评分：✅ 完整 / ⚠️ 部分 / ❌ 缺失
+
+      ## Phase 2：自修复（最多 3 轮）
+      如果有缺失维度（❌），直接补充到对应文档中，然后重新检查。
+      最多修复 3 轮。
+
+      ## Phase 3：生成最终 PRD
+      综合所有文档为 PRD-FINAL.md。
+
+      PRD 结构（灵活调整）：
+      # PRD: $vars.prd_name
+      ## 执行摘要
+      ## 1. 问题陈述
+      ## 2. 目标与成功指标
+      ## 3. Non-Goals
+      ## 4. 用户画像与故事
+      ## 5. 技术方案
+      ## 6. 技术考量
+      ## 7. 发布计划
+      ## 8. 附录
+
+      ## 规则
+      - 中文输出
+      - 章节编号连续
+      - 质量优先于覆盖：宁可 5 个章节深入透彻，不要 9 个章节都是概述
+      - infrastructure 型重点：配置语法设计、接口设计、迁移策略
+      - product 型重点：用户画像与故事、API 设计、数据模型
+
+      ## 输出
+      保存 completeness-check.md 和 PRD-FINAL.md 到 $vars.output_dir/
+
+      直接输出纯 JSON 行（不要用代码块包裹）:
+      {"vars_update":{"completeness_file":"$vars.output_dir/completeness-check.md","completeness_score":"<0-15>/15","final_prd_file":"$vars.output_dir/PRD-FINAL.md","prd_word_count":"<字数>","conclusion":"<2-3句话总结>"}}
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 6: Done — 输出完成信息
+  # ═══════════════════════════════════════════════════════════════
+  - id: done
+    type: bash
+    depends_on: [completeness-output]
+    timeout: 10
+    bash: |
+      echo "=== PRD Forge Swarm 完成 ==="
+      echo "输出目录: $vars.output_dir"
+      echo "最终 PRD: $vars.final_prd_file"
+      echo "完整性: $vars.completeness_score"
