@@ -521,6 +521,13 @@ nodes:
       3. 验收标准（嵌入每个 user story）
       4. UI 声明（如项目类型非 infrastructure）
 
+      ## 任务 C：验收用例（acceptance-cases.md）
+      从 user stories 的 Given/When/Then 提取结构化验收用例，写入独立文件：
+      - 每个 user story 至少 1 个 P0 验收用例
+      - 关键 story 补充 P1 增强用例
+      - 格式：`| TC-ID | Story | P0/P1 | Given | When | Then |`
+      此文件供下游 prd-impl 的 E2E 测试绑定使用。
+
       ## 硬约束
       ⛔ OUT-OF-SCOPE 项不得出现在需求文档中
       ⛔ EXAMPLE-ONLY 不得作为独立 Story 展开
@@ -534,10 +541,10 @@ nodes:
       - product 项目重点关注用户痛点、市场信号
 
       ## 输出
-      保存 01-discovery.md 和 01-requirements.md 到 $vars.output_dir/
+      保存 01-discovery.md、01-requirements.md 和 acceptance-cases.md 到 $vars.output_dir/
 
       直接输出纯 JSON 行（不要用代码块包裹）:
-      {"vars_update":{"discovery_file":"$vars.output_dir/01-discovery.md","requirements_file":"$vars.output_dir/01-requirements.md","personas_count":"<数量>","user_stories_count":"<数量>","conclusion":"<2-3句话总结>"}}
+      {"vars_update":{"discovery_file":"$vars.output_dir/01-discovery.md","requirements_file":"$vars.output_dir/01-requirements.md","acceptance_cases_file":"$vars.output_dir/acceptance-cases.md","personas_count":"<数量>","user_stories_count":"<数量>","acceptance_cases_count":"<用例数量>","conclusion":"<2-3句话总结>"}}
 
   # ═══════════════════════════════════════════════════════════════
   # Phase 2.5: Adversarial Refine — 对抗审查（Swarm Debate, 3 专家）
