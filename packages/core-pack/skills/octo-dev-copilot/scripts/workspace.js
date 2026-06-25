@@ -46,7 +46,7 @@ var DOC = `workspace.ts \u2014 octopus \u591A\u4ED3\u5E93\u5DE5\u4F5C\u7A7A\u95F
   2. OCTOPUS_ORG \u73AF\u5883\u53D8\u91CF
   3. ~/.octopus/config.json \u4E2D default_org \u5B57\u6BB5`;
 function getPaths(org) {
-  const base = path.join(os.homedir(), ".octopus", org);
+  const base = path.join(os.homedir(), ".octopus", "orgs", org);
   return {
     workspaceRoot: path.join(base, "workspaces"),
     reposIndex: path.join(base, "repos", "index.md")
@@ -319,7 +319,7 @@ function initCodeDevCopilotRules(wsDir, org) {
     // 1. Project-level: current project's .octopus/code-dev-copilot-rules/
     path.join(process.cwd(), ".octopus", "code-dev-copilot-rules"),
     // 2. Org-level: ~/.octopus/{org}/code-dev-copilot-rules/
-    path.join(os.homedir(), ".octopus", org, "code-dev-copilot-rules")
+    path.join(os.homedir(), ".octopus", "orgs", org, "code-dev-copilot-rules")
   ];
   for (const srcDir of sources) {
     if (!fs.existsSync(srcDir)) continue;

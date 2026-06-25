@@ -3,6 +3,7 @@ import { cors } from "hono/cors"
 import { logger } from "hono/logger"
 import { bodyLimit } from "hono/body-limit"
 import http from "http"
+import os from "os"
 import { createYjsWebSocketServer, setYjsWorkspaceDAO } from "./routes/yjs-ws"
 import { initDb, getDb, getDbPath } from "./db/connection"
 import { applySchema } from "./db/schema"
@@ -169,21 +170,26 @@ if (!process.env.VITEST && daos) {
 
 const app = new Hono()
 
-// CORS: restrict to trusted origins when credentials are enabled.
-// Allow all origins in development (no OCTOPUS_FRONTEND_URL set) for DX.
-const TRUSTED_ORIGINS = new Set(
-  [
-    process.env.OCTOPUS_FRONTEND_URL,
-    "http://localhost:3000",
-    "http://localhost:3098",
-  ].filter(Boolean) as string[]
+// CORS: allow localhost, env-configured origins, and any local network IP.
+const LOCAL_IPS = new Set(
+  Object.values(os.networkInterfaces())
+    .flat()
+    .filter((i): i is os.NetworkInterfaceInfo => i != null)
+    .map((i) => i.address)
 )
 
+function isTrustedOrigin(origin: string | undefined): boolean {
+  if (!origin) return true
+  try {
+    const { hostname } = new URL(origin)
+    if (hostname === "localhost" || hostname === "127.0.0.1" || LOCAL_IPS.has(hostname)) return true
+    if (process.env.OCTOPUS_FRONTEND_URL && origin === process.env.OCTOPUS_FRONTEND_URL) return true
+  } catch { /* ignore */ }
+  return false
+}
+
 app.use("*", cors({
-  origin: (origin) => {
-    if (!origin) return "*"
-    return TRUSTED_ORIGINS.has(origin) ? origin : ""
-  },
+  origin: (origin) => isTrustedOrigin(origin) ? (origin ?? "*") : "",
   credentials: true,
   allowHeaders: ["Content-Type", "Authorization"],
   allowMethods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
