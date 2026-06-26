@@ -521,14 +521,14 @@ nodes:
       4. 机会假设 — 为什么现在？核心差异化？
       5. 不做这件事的代价
 
-      ## 任务 B：需求定义（01-requirements.md）
+      ## 任务 B：需求定义（02-requirements.md）
       覆盖：
       1. 用户画像（2-3 个，含职业、场景、技术水平）
       2. 用户故事（每个 IN-SCOPE 项至少 1 个，Given/When/Then 格式）
       3. 验收标准（嵌入每个 user story）
       4. UI 声明（如项目类型非 infrastructure）
 
-      ## 任务 C：验收用例（acceptance-cases.md）
+      ## 任务 C：验收用例（06-acceptance-cases.md）
       从 user stories 的 Given/When/Then 提取结构化验收用例，写入独立文件：
       - 每个 user story 至少 1 个 P0 验收用例
       - 关键 story 补充 P1 增强用例
@@ -548,10 +548,10 @@ nodes:
       - product 项目重点关注用户痛点、市场信号
 
       ## 输出
-      保存 01-discovery.md、01-requirements.md 和 acceptance-cases.md 到 $vars.output_dir/
+      保存 01-discovery.md、02-requirements.md 和 06-acceptance-cases.md 到 $vars.output_dir/
 
       直接输出纯 JSON 行（不要用代码块包裹）:
-      {"vars_update":{"discovery_file":"$vars.output_dir/01-discovery.md","requirements_file":"$vars.output_dir/01-requirements.md","acceptance_cases_file":"$vars.output_dir/acceptance-cases.md","personas_count":"<数量>","user_stories_count":"<数量>","acceptance_cases_count":"<用例数量>","conclusion":"<2-3句话总结>"}}
+      {"vars_update":{"discovery_file":"$vars.output_dir/01-discovery.md","requirements_file":"$vars.output_dir/02-requirements.md","acceptance_cases_file":"$vars.output_dir/06-acceptance-cases.md","personas_count":"<数量>","user_stories_count":"<数量>","acceptance_cases_count":"<用例数量>","conclusion":"<2-3句话总结>"}}
 
   # ═══════════════════════════════════════════════════════════════
   # Phase 2.5: Adversarial Refine — 对抗审查（Swarm Debate, 3 专家）
@@ -607,7 +607,7 @@ nodes:
         综合三方意见，输出:
         1. 采纳的挑战及对应修改（附修改后文档片段）
         2. 拒绝的挑战及理由
-        3. 需要更新到 01-discovery.md 和 01-requirements.md 的具体修改
+        3. 需要更新到 01-discovery.md 和 02-requirements.md 的具体修改
 
         最后，必须输出以下 assessment JSON 块用于共识检测：
         ```json
@@ -786,12 +786,12 @@ nodes:
 
       ## 任务
       1. 读取 $vars.ui_ux_synthesis
-      2. 提取 UI 部分写入 $vars.output_dir/04-ui-design.md
-      3. 提取 UX 部分写入 $vars.output_dir/05-ux-flow.md
+      2. 提取 UI 部分写入 $vars.output_dir/07-ui.md
+      3. 提取 UX 部分写入 $vars.output_dir/08-ux.md
 
       ## 输出
       直接输出纯 JSON 行（不要用代码块包裹）:
-      {"vars_update":{"ui_file":"$vars.output_dir/04-ui-design.md","ux_file":"$vars.output_dir/05-ux-flow.md","ui_pages_count":"<N>","conclusion":"UI/UX dispatch complete"}}
+      {"vars_update":{"ui_file":"$vars.output_dir/07-ui.md","ux_file":"$vars.output_dir/08-ux.md","ui_pages_count":"<N>","conclusion":"UI/UX dispatch complete"}}
 
   # ═══════════════════════════════════════════════════════════════
   # Phase 5: Completeness Output — 完整性审查 + 最终 PRD 生成（合并节点）
@@ -846,10 +846,10 @@ nodes:
       - product 型重点：用户画像与故事、API 设计、数据模型
 
       ## 输出
-      保存 completeness-check.md 和 PRD-FINAL.md 到 $vars.output_dir/
+      保存 05-completeness-review.md 和 PRD-FINAL.md 到 $vars.output_dir/
 
       直接输出纯 JSON 行（不要用代码块包裹）:
-      {"vars_update":{"completeness_file":"$vars.output_dir/completeness-check.md","completeness_score":"<0-15>/15","final_prd_file":"$vars.output_dir/PRD-FINAL.md","prd_word_count":"<字数>","conclusion":"<2-3句话总结>"}}
+      {"vars_update":{"completeness_file":"$vars.output_dir/05-completeness-review.md","completeness_score":"<0-15>/15","final_prd_file":"$vars.output_dir/PRD-FINAL.md","prd_word_count":"<字数>","conclusion":"<2-3句话总结>"}}
 
   # ═══════════════════════════════════════════════════════════════
   # Phase 6: Done — 输出完成信息
