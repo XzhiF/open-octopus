@@ -1,6 +1,7 @@
 "use client"
 
 import { useRef, useCallback, useEffect } from "react"
+import "@/lib/monaco-config"
 import Editor, { type OnMount } from "@monaco-editor/react"
 
 interface WorkflowYamlEditorProps {

@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react"
 import dynamic from "next/dynamic"
+import "@/lib/monaco-config"
 import type { Control } from "react-hook-form"
 import {
   FormField,

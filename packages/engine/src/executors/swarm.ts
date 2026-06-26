@@ -5,6 +5,7 @@ import type { IAgentProvider, MessageChunk } from "@octopus/providers"
 import type { ICheckpointStore, SwarmCheckpointData } from "../pipeline/checkpoint-types"
 import { existsSync } from "fs"
 import { join } from "path"
+import { applyVarsUpdate } from "./parse-vars-update"
 import { MessageBus } from "./swarm/message-bus"
 import { SharedMemory } from "./swarm/shared-memory"
 import { SwarmCoordinator } from "./swarm/swarm-coordinator"
@@ -242,6 +243,11 @@ export class SwarmExecutor implements NodeExecutor {
 
       // Write auto-outputs to VarPool
       this.writeAutoOutputs(result)
+
+      // Parse vars_update from host synthesis (same as agent executor)
+      if (result.synthesis) {
+        applyVarsUpdate(result.synthesis, this.pool, {})
+      }
 
       const durationMs = Date.now() - start
       logLines.push(

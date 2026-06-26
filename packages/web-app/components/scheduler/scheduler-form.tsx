@@ -112,6 +112,10 @@ export function SchedulerForm({
   const [maxRetain, setMaxRetain] = useState(10)
   const [branchPrefix, setBranchPrefix] = useState("")
   const [jsonMode, setJsonMode] = useState(false)
+  const [visualError, setVisualError] = useState<string | null>(null)
+
+  // Clear visual error when user modifies any required field
+  useEffect(() => { setVisualError(null) }, [projects, chain, branchPrefix])
 
   const handleClose = useCallback(() => {
     onOpenChange(false)
@@ -213,12 +217,25 @@ export function SchedulerForm({
   const handleFormSubmit = useCallback(
     (data: any) => {
       if (jobType === "workflow" && !jsonMode) {
+        if (projects.length === 0) {
+          setVisualError("请至少添加一个项目")
+          return
+        }
+        if (!branchPrefix.trim()) {
+          setVisualError("请填写分支前缀")
+          return
+        }
+        if (chain.length === 0) {
+          setVisualError("请至少添加一个工作流步骤")
+          return
+        }
+        setVisualError(null)
         const config = buildWorkflowConfig()
         data.workflow_config_json = JSON.stringify(config)
       }
       return submit(data)
     },
-    [jobType, jsonMode, buildWorkflowConfig, submit]
+    [jobType, jsonMode, buildWorkflowConfig, submit, projects, chain, branchPrefix]
   )
 
   const handleJsonModeToggle = useCallback(() => {
@@ -294,7 +311,7 @@ export function SchedulerForm({
                   onConfigChange={(v) =>
                     form.setValue("workflow_config_json", v, { shouldDirty: true })
                   }
-                  configError={configError}
+                  configError={visualError || configError}
                 />
               )}
 

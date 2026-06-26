@@ -201,9 +201,19 @@ export default function WorkspaceDetailPage({ params }: WorkspaceDetailPageProps
   const [builtInWorkflows, setBuiltInWorkflows] = useState<{ ref: string; name: string; inputs?: Record<string, { description: string; required: boolean; default: string }> }[]>([])
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
+  const hasLoaded = useRef(false)
+
+  // Reset hasLoaded when navigating to a different workspace
+  useEffect(() => {
+    hasLoaded.current = false
+  }, [id])
 
   const fetchWorkspaceData = useCallback(async () => {
-    setLoading(true)
+    // Only show loading skeleton on first fetch; subsequent refetches
+    // (e.g. visibility change) update data silently to preserve UI state (dialogs, etc.)
+    if (!hasLoaded.current) {
+      setLoading(true)
+    }
     setLoadError(null)
     try {
       const [wsData, execData, wfData, builtInData] = await Promise.all([
@@ -216,6 +226,7 @@ export default function WorkspaceDetailPage({ params }: WorkspaceDetailPageProps
       setExecutions(Array.isArray(execData) ? execData : execData.nodes ?? [])
       setWorkflows(Array.isArray(wfData) ? wfData : wfData.workflows ?? [])
       setBuiltInWorkflows(Array.isArray(builtInData) ? builtInData : [])
+      hasLoaded.current = true
       // Chat sessions are now managed by useChatStream hook
     } catch (err) {
       setLoadError(err instanceof Error ? err.message : "加载工作空间数据失败")

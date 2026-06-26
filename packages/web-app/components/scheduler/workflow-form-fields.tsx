@@ -2,6 +2,7 @@
 
 import type { Control } from "react-hook-form"
 import dynamic from "next/dynamic"
+import "@/lib/monaco-config"
 import {
   FormField,
   FormItem,

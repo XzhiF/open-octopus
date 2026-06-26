@@ -392,9 +392,17 @@ export class ExecutionDAO extends BaseDAO {
 
   cascadeDeleteExecution(executionId: string): void {
     this.transaction(() => {
+      // Leaf tables (FK → node_executions)
+      this.deleteAgentEventsByExecution(executionId)
+      this.stmt(`DELETE FROM llm_calls WHERE node_execution_id IN (SELECT id FROM node_executions WHERE execution_id = ?)`).run(executionId)
       this.deleteTokenUsagesByExecution(executionId)
       this.deleteBranchExecutionsByExecution(executionId)
+      // Tables with direct FK → executions
       this.deleteNodeEdgesByExecution(executionId)
+      this.deleteSummariesByExecution(executionId)
+      this.stmt("DELETE FROM schedule_executions WHERE execution_id = ?").run(executionId)
+      this.stmt("UPDATE schedule_workspaces SET execution_id = NULL WHERE execution_id = ?").run(executionId)
+      // Core tables
       this.deleteNodeExecutionsByExecution(executionId)
       this.deleteById(executionId)
     })

@@ -291,6 +291,9 @@ importers:
       lucide-react:
         specifier: ^0.564.0
         version: 0.564.0(react@19.2.4)
+      monaco-editor:
+        specifier: 0.55.1
+        version: 0.55.1
       next:
         specifier: 16.2.4
         version: 16.2.4(@playwright/test@1.60.0)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)

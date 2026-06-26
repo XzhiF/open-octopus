@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react"
 import * as Y from "yjs"
+import "@/lib/monaco-config"
 import Editor, { type OnMount } from "@monaco-editor/react"
 import type { editor } from "monaco-editor"
 import { getLanguageFromExtension } from "@/lib/yaml-utils"
