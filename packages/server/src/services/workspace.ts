@@ -5,6 +5,7 @@ import path from "path"
 import os from "os"
 import { WorkspaceDAO } from "../db/dao"
 import type { WorkspaceRow } from "../db/types"
+import type { ArchiveService } from "./archive"
 
 /**
  * Default pipeline.yaml template — auto-generated for new workspaces.
@@ -423,9 +424,11 @@ function workspaceGuide(): string[] {
 
 export class WorkspaceService {
   private dao: WorkspaceDAO
+  private archiveService?: ArchiveService
 
-  constructor(dao?: WorkspaceDAO) {
+  constructor(dao?: WorkspaceDAO, archiveService?: ArchiveService) {
     this.dao = dao!
+    this.archiveService = archiveService
   }
 
   create(input: { name: string; org: string; description?: string; path: string; repos?: string[]; branch?: string }): WorkspaceRow & { worktreeStatus?: { created: number; failed: string[] } } {
@@ -925,6 +928,37 @@ export class WorkspaceService {
     const ws = this.getById(id)
     if (!ws) return false
 
+    // ── Two-phase archive (if ArchiveService is wired) ──
+    if (this.archiveService) {
+      try {
+        // Phase 1: mark as archiving
+        this.dao.update(id, { archive_status: "archiving" })
+
+        // Phase 2: batch-archive all executions
+        const { archived, failed } = await this.archiveService.archiveWorkspace(id)
+
+        // Phase 3: build workspace_archive record
+        const executions = this.dao.findExecutionIdsByWorkspace(id)
+        this.archiveService.insertWorkspaceArchive(
+          id,
+          ws.name,
+          ws.org,
+          executions.length,
+          0, // total cost aggregated from archive table, not live
+          [], // execution chains — enriched later
+          [], // workflow manifest — enriched later
+        )
+
+        // Phase 4: mark as archived
+        this.dao.update(id, { archive_status: "archived" })
+      } catch (err) {
+        // Archive failed — mark status and continue with deletion
+        this.dao.update(id, { archive_status: "archive_failed" })
+        console.error(`[workspace] Archive failed for workspace ${id}:`, err)
+      }
+    }
+
+    // ── Cascade delete (existing logic) ──
     this.dao.cascadeDeleteByWorkspace(id)
 
     // ── 文件系统异步删除（不阻塞事件循环） ──

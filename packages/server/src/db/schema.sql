@@ -1,6 +1,6 @@
 -- =============================================================================
 -- Octopus Unified Schema (schema.sql)
--- Complete database schema: 28 tables + 3 FTS5 virtual tables + 4 triggers
+-- Complete database schema: 31 tables + 4 FTS5 virtual tables + 7 triggers
 -- This file is idempotent — safe to execute on an empty database.
 -- =============================================================================
 
@@ -617,3 +617,121 @@ INSERT OR IGNORE INTO orgs (name, path, created_at) VALUES ('xzf', '~/.octopus/o
 -- Scheduler state singleton (idempotent via PRIMARY KEY)
 INSERT INTO scheduler_state (id, schema_version, missed_alert_pending)
   VALUES (1, 21, 0) ON CONFLICT DO NOTHING;
+
+-- =============================================================================
+-- Archive Tables (Execution Memory)
+-- =============================================================================
+
+-- 29. Execution Archive — immutable snapshot of completed executions
+CREATE TABLE IF NOT EXISTS execution_archive (
+  id TEXT PRIMARY KEY,
+  org TEXT NOT NULL DEFAULT '',
+  workspace_id TEXT,
+  workspace_name TEXT,
+  workflow_ref TEXT NOT NULL,
+  workflow_name TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'completed',
+  started_at TEXT,
+  completed_at TEXT,
+  duration_ms INTEGER,
+  total_input_tokens INTEGER NOT NULL DEFAULT 0,
+  total_output_tokens INTEGER NOT NULL DEFAULT 0,
+  total_cost_usd REAL NOT NULL DEFAULT 0,
+  node_summary TEXT DEFAULT '[]',
+  model_breakdown TEXT,
+  failed_nodes TEXT,
+  error_message TEXT,
+  vars_snapshot TEXT DEFAULT '{}',
+  lessons_learned TEXT,
+  parent_execution_id TEXT,
+  workspace_archive_id TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- 30. Workspace Archive — aggregate snapshot when workspace is deleted
+CREATE TABLE IF NOT EXISTS workspace_archive (
+  id TEXT PRIMARY KEY,
+  org TEXT NOT NULL DEFAULT '',
+  workspace_name TEXT NOT NULL,
+  execution_count INTEGER NOT NULL DEFAULT 0,
+  total_cost_usd REAL NOT NULL DEFAULT 0,
+  execution_chains TEXT DEFAULT '[]',
+  workflow_manifest TEXT DEFAULT '[]',
+  archived_at TEXT NOT NULL DEFAULT (datetime('now')),
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- 31. Experience Index — structured lessons from executions
+CREATE TABLE IF NOT EXISTS experience_index (
+  id TEXT PRIMARY KEY,
+  type TEXT NOT NULL DEFAULT 'pattern',
+  title TEXT NOT NULL,
+  content TEXT NOT NULL,
+  project TEXT,
+  package TEXT,
+  file_pattern TEXT,
+  keywords TEXT,
+  status TEXT NOT NULL DEFAULT 'active',
+  relevance_score REAL NOT NULL DEFAULT 0.5,
+  use_count INTEGER NOT NULL DEFAULT 0,
+  workflow_name TEXT,
+  execution_id TEXT,
+  resolved_at TEXT,
+  resolved_by TEXT,
+  org TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- FTS5 virtual table for experience_index full-text search
+CREATE VIRTUAL TABLE IF NOT EXISTS experience_index_fts USING fts5(
+  title,
+  content,
+  keywords,
+  content='experience_index',
+  content_rowid='rowid'
+);
+
+-- =============================================================================
+-- Indexes — Archive Tables
+-- =============================================================================
+
+CREATE INDEX IF NOT EXISTS idx_archive_exec_org ON execution_archive(org);
+CREATE INDEX IF NOT EXISTS idx_archive_exec_workflow ON execution_archive(workflow_name);
+CREATE INDEX IF NOT EXISTS idx_archive_exec_status ON execution_archive(status);
+CREATE INDEX IF NOT EXISTS idx_archive_exec_created ON execution_archive(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_archive_exec_workspace ON execution_archive(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_archive_exec_cost ON execution_archive(total_cost_usd);
+CREATE INDEX IF NOT EXISTS idx_archive_exec_duration ON execution_archive(duration_ms) WHERE status = 'completed';
+CREATE INDEX IF NOT EXISTS idx_archive_ws_org ON workspace_archive(org);
+CREATE INDEX IF NOT EXISTS idx_archive_ws_archived ON workspace_archive(archived_at DESC);
+CREATE INDEX IF NOT EXISTS idx_exp_index_org ON experience_index(org);
+CREATE INDEX IF NOT EXISTS idx_exp_index_type ON experience_index(type);
+CREATE INDEX IF NOT EXISTS idx_exp_index_status ON experience_index(status);
+CREATE INDEX IF NOT EXISTS idx_exp_index_project ON experience_index(project);
+CREATE INDEX IF NOT EXISTS idx_exp_index_workflow ON experience_index(workflow_name);
+CREATE INDEX IF NOT EXISTS idx_exp_index_relevance ON experience_index(relevance_score DESC);
+CREATE INDEX IF NOT EXISTS idx_exp_index_created ON experience_index(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_exp_index_composite ON experience_index(status, type, relevance_score DESC);
+
+-- FTS sync triggers for experience_index
+CREATE TRIGGER IF NOT EXISTS exp_index_fts_insert
+AFTER INSERT ON experience_index
+BEGIN
+  INSERT INTO experience_index_fts(rowid, title, content, keywords)
+  VALUES (NEW.rowid, NEW.title, NEW.content, NEW.keywords);
+END;
+
+CREATE TRIGGER IF NOT EXISTS exp_index_fts_delete
+AFTER DELETE ON experience_index
+BEGIN
+  DELETE FROM experience_index_fts WHERE rowid = OLD.rowid;
+END;
+
+CREATE TRIGGER IF NOT EXISTS exp_index_fts_update
+AFTER UPDATE ON experience_index
+BEGIN
+  DELETE FROM experience_index_fts WHERE rowid = OLD.rowid;
+  INSERT INTO experience_index_fts(rowid, title, content, keywords)
+  VALUES (NEW.rowid, NEW.title, NEW.content, NEW.keywords);
+END;

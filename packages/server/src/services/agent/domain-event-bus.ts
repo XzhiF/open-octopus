@@ -28,6 +28,8 @@ export type DomainEventType =
   | 'task.completed'
   | 'task.failed'
   | 'task.cancelled'
+  | 'archive.execution_completed'
+  | 'archive.workspace_archived'
 
 export interface DomainEvent<T = unknown> {
   type: DomainEventType
