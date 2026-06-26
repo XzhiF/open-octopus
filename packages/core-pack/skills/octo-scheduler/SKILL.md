@@ -18,8 +18,10 @@ version: 1.0.0
    - Worktree：hash 端口，运行 `pnpm port` 查看
    - Prod 模式：`3099`
 3. 基础 URL：`http://localhost:<PORT>/api/scheduler`
+4. 健康检查：`GET /api/actuator/health`（不是 `/api/health`）
 
 > **在不确定端口时**，先执行 `pnpm port` 或检查环境变量 `$PORT`。
+> **确认服务状态**：`curl -s http://localhost:$PORT/api/actuator/health | jq .`
 
 ## 约束
 
@@ -28,7 +30,9 @@ version: 1.0.0
 - 创建限流 10/min，删除限流 5/min，触发限流 5/min，不要批量循环调用
 - Cron 表达式为标准 5 段式（分 时 日 月 周），如 `0 9 * * 1-5`
 - 时区使用 IANA 格式：`Asia/Shanghai`、`UTC`、`America/New_York` 等
-- `config` 对象中 `schema_version` 必须为 `"1.0"`，`type` 必须为 `"workflow"` 或 `"agent"`
+- `config` 对象中 `schema_version` 必须为 `"2.0"`，`type` 必须为 `"workflow"` 或 `"agent"`
+- Workflow 类型 config 必须包含 `workspace_spec`（org, branch_prefix, projects）和 `workflow_chain`（至少 1 个）
+- Agent 类型 config 必须包含 `prompt`
 - 返回的错误结构统一为 `{ "error": "错误信息" }`
 
 ## API 端点清单
@@ -68,16 +72,28 @@ curl -s -X POST "http://localhost:$PORT/api/scheduler/jobs" \
     "job_type": "workflow",
     "cron_expression": "0 2 * * *",
     "timezone": "Asia/Shanghai",
+    "org": "xzf",
     "config": {
-      "schema_version": "1.0",
+      "schema_version": "2.0",
       "type": "workflow",
-      "workflow_ref": "build.yaml",
-      "input_values": {"branch": "main"}
+      "workspace_spec": {
+        "org": "xzf",
+        "branch_prefix": "sched-build",
+        "projects": [
+          {"name": "my-app", "source_path": "/path/to/my-app"}
+        ]
+      },
+      "workflow_chain": [
+        {"workflow_ref": "build.yaml", "input_values": {"branch": "main"}}
+      ],
+      "max_retain": 5
     },
-    "workspace_id": "<workspace-uuid>",
+    "parallel_policy": "skip",
     "description": "每天凌晨 2 点执行构建"
   }' | jq .
 ```
+
+> **注意**：`max_retain` 在 `config` 内部（不是顶层字段），控制保留的工作空间数量，默认 10。
 
 ### 4. 创建 Agent 任务
 
@@ -256,18 +272,22 @@ curl -s -o scheduler-export.csv \
   "cron_expression": "0 9 * * *",
   "timezone": "Asia/Shanghai",
   "enabled": true,
-  "workspace_id": "uuid | null",
+  "org": "xzf",
   "config": {
-    "schema_version": "1.0",
-    "type": "workflow | agent",
-    "workflow_ref": "build.yaml (仅 workflow)",
-    "input_values": {"key": "value (仅 workflow)"},
-    "prompt": "指令文本 (仅 agent)",
-    "model": "claude-sonnet-4-6 (仅 agent)",
-    "timeout_seconds": 300,
-    "retry_policy": {"max_attempts": 2, "backoff_type": "exponential", "base_delay_ms": 1000, "max_delay_ms": 10000, "jitter": true}
+    "schema_version": "2.0",
+    "type": "workflow",
+    "workspace_spec": {
+      "org": "xzf",
+      "branch_prefix": "sched-build",
+      "projects": [{"name": "my-app", "source_path": "/path/to/my-app"}]
+    },
+    "workflow_chain": [
+      {"workflow_ref": "build.yaml", "input_values": {"branch": "main"}}
+    ],
+    "max_retain": 5
   },
   "parallel_policy": "skip | allow | wait",
+  "max_retain": 5,
   "timeout_seconds": 3600,
   "notify_on_failure": false,
   "version": 1,

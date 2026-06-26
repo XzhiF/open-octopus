@@ -205,9 +205,9 @@ export class SkillLoader {
 
       const loaded = this.loadSkill(skill.name)
       if (loaded) {
-        // Extract just the description (first 200 chars) for prompt
-        const desc = loaded.content.slice(0, 200)
-        parts.push(`### ${loaded.name}\n${desc}${loaded.content.length > 200 ? '...' : ''}`)
+        // Inject full skill content — assembler's truncateToBudget handles
+        // overflow via priority-based trimming (2000-token budget)
+        parts.push(`### ${loaded.name}\n${loaded.content}`)
       }
     }
 

@@ -1,5 +1,6 @@
 import type { Metadata } from 'next'
 import { headers } from 'next/headers'
+import Script from 'next/script'
 import { AppShell } from '@/components/providers/app-shell'
 import './globals.css'
 
@@ -43,11 +44,9 @@ export default async function RootLayout({
   return (
     <html lang="zh-CN" className="bg-background">
       <head>
-        <script
-          dangerouslySetInnerHTML={{
-            __html: `window.__SERVER_URL__=${JSON.stringify(serverUrl)}`,
-          }}
-        />
+        <Script id="inject-server-url" strategy="beforeInteractive">
+          {`window.__SERVER_URL__=${JSON.stringify(serverUrl)}`}
+        </Script>
       </head>
       <body className="font-sans antialiased">
         <AppShell>

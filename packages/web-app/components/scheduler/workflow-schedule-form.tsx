@@ -162,6 +162,12 @@ export function WorkflowScheduleForm({
       ) : (
         /* ── Visual Mode ── */
         <>
+          {configError && (
+            <div className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+              {configError}
+            </div>
+          )}
+
           {/* Workspace Config */}
           <div className="space-y-3">
             <Label className="text-sm font-medium">工作空间配置</Label>

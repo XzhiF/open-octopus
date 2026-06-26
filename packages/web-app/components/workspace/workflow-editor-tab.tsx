@@ -1,9 +1,14 @@
 "use client"
 
 import { useState, useCallback, useEffect } from "react"
+import dynamic from "next/dynamic"
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels"
-import { WorkflowYamlEditor } from "./workflow-yaml-editor"
 import { WorkflowFlowViewer } from "./workflow-flow-viewer"
+
+const WorkflowYamlEditor = dynamic(
+  () => import("./workflow-yaml-editor").then((m) => ({ default: m.WorkflowYamlEditor })),
+  { ssr: false, loading: () => <div className="h-full w-full animate-pulse bg-muted" /> }
+)
 import { parseYaml } from "@/lib/yaml-utils"
 import { yamlToFlowData } from "@/lib/workflow-parser"
 import { toast } from "sonner"

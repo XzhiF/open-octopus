@@ -43,6 +43,9 @@ export function ChatTab() {
     if (!activeSessionId) return
     if (loadedSessionIdsRef.current.has(activeSessionId)) return
     loadedSessionIdsRef.current.add(activeSessionId)
+    // New session with pending message — server has 0 messages, skip load
+    // to avoid wiping the optimistically-added user message
+    if (pendingMessageRef.current) return
     loadMessages()
   }, [activeSessionId, loadMessages])
 

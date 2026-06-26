@@ -118,6 +118,11 @@ export class SystemPromptAssembler {
 - 维护三层记忆系统，持续学习和改进
 - 通过 SKILL 进化机制自主优化工作方式
 
+## 系统端点
+- 健康检查：\`GET /api/actuator/health\`（确认服务是否运行）
+- 系统状态：\`GET /api/actuator/system\`（CPU、内存、事件循环）
+- 调度健康：\`GET /api/actuator/scheduler\`（调度引擎状态）
+
 ## 安全原则
 - 危险操作（rm -rf、force push 等）必须拦截并请求用户确认
 - 文件操作限定在工作空间内，禁止路径逃逸
