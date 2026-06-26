@@ -10,15 +10,23 @@ import type { ExecutionArchiveRow, WorkspaceArchiveRow } from "../db/types-archi
 import { PrivacyFilter } from "./privacy-filter"
 import { getDomainEventBus } from "./agent/domain-event-bus"
 import type { EngineCallbacks } from "@octopus/engine"
+import type { ExperienceExtractor } from "./experience-extractor"
+import type { KnowledgeFilesService } from "./knowledge-files"
 
 export class ArchiveService {
   private privacyFilter = new PrivacyFilter()
+  private extractor?: ExperienceExtractor
+  private knowledgeFiles?: KnowledgeFilesService
 
   constructor(
     private archiveDAO: ArchiveDAO,
     private experienceDAO: ExperienceDAO,
     private executionDAO: ExecutionDAO,
-  ) {}
+    options?: { extractor?: ExperienceExtractor; knowledgeFiles?: KnowledgeFilesService },
+  ) {
+    this.extractor = options?.extractor
+    this.knowledgeFiles = options?.knowledgeFiles
+  }
 
   // ── Public API ────────────────────────────────────────────────────
 
@@ -138,6 +146,25 @@ export class ArchiveService {
           const bus = getDomainEventBus()
           bus.emit("archive.execution_completed", { executionId })
         } catch { /* domain event is best-effort */ }
+
+        // Trigger experience extraction (fire-and-forget, best-effort)
+        if (this.extractor) {
+          this.extractor.extractLessons(executionId).then(() => {
+            // After extraction, update knowledge files (debounced)
+            if (this.knowledgeFiles) {
+              try {
+                const archive = this.archiveDAO.findById(executionId)
+                if (archive?.workflow_name && archive?.org) {
+                  this.knowledgeFiles.updateKnowledgeFiles(archive.org, archive.workflow_name)
+                }
+              } catch (err) {
+                console.error(`[ArchiveService] knowledge files update failed for ${executionId}:`, err)
+              }
+            }
+          }).catch(err => {
+            console.error(`[ArchiveService] experience extraction failed for ${executionId}:`, err)
+          })
+        }
         return
       } catch (err) {
         if (attempt < maxRetries - 1) {

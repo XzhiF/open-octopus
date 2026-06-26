@@ -296,6 +296,10 @@ export class ArchiveDAO extends BaseDAO {
     return this.stmt("UPDATE execution_archive SET node_summary = '[]' WHERE created_at < ?").run(cutoffIso)
   }
 
+  updateLessonsLearned(id: string, text: string): Database.RunResult {
+    return this.stmt("UPDATE execution_archive SET lessons_learned = ? WHERE id = ?").run(text, id)
+  }
+
   // ── workspace_archive ────────────────────────────────────────────
 
   insertWorkspaceArchive(row: WorkspaceArchiveRow): Database.RunResult {

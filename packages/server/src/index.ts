@@ -51,6 +51,8 @@ import { DashboardService } from "./services/scheduler/dashboard-service"
 import { ExportService } from "./services/scheduler/export-service"
 import { WorkspaceService } from "./services/workspace"
 import { ArchiveService } from "./services/archive"
+import { ExperienceExtractor } from "./services/experience-extractor"
+import { KnowledgeFilesService } from "./services/knowledge-files"
 import { ChatService } from "./services/chat"
 import { LeaderboardService } from "./services/leaderboard"
 import { getLogAnalysisService } from "./services/log-analysis"
@@ -149,8 +151,15 @@ let leaderboardService: LeaderboardService | undefined
 
 if (!process.env.VITEST && daos) {
   // Create services with DAOs
-  const archiveService = new ArchiveService(daos.archive, daos.experience, daos.execution)
+  const knowledgeFiles = new KnowledgeFilesService(daos.experience)
+  const extractor = new ExperienceExtractor(daos.experience, daos.archive)
+  const archiveService = new ArchiveService(daos.archive, daos.experience, daos.execution, {
+    extractor,
+    knowledgeFiles,
+  })
   ;(global as any).__octopus_archiveService = archiveService
+  ;(global as any).__octopus_experienceExtractor = extractor
+  ;(global as any).__octopus_knowledgeFiles = knowledgeFiles
   workspaceService = new WorkspaceService(daos.workspace, archiveService)
   chatService = new ChatService(daos.chat, sse)
   leaderboardService = new LeaderboardService(daos.tokenUsage)
@@ -535,6 +544,10 @@ if (shouldServe) {
       observability?.shutdown()
       const scheduler = (global as any).__octopus_scheduler as SchedulerEngine | undefined
       scheduler?.stop()
+      const extractor = (global as any).__octopus_experienceExtractor as ExperienceExtractor | undefined
+      extractor?.destroy()
+      const knowledgeFiles = (global as any).__octopus_knowledgeFiles as KnowledgeFilesService | undefined
+      knowledgeFiles?.destroy()
       if ((global as any).__octopus_cleanupRetention) {
         ;(global as any).__octopus_cleanupRetention()
       }
