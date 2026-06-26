@@ -17,6 +17,7 @@ import type { SwarmStrategyConfig, SwarmStrategy } from "./swarm/swarm-strategy"
 import { ContextTierResolver } from "./swarm/context-tier-resolver"
 import type { ContextTier } from "./swarm/context-tier-resolver"
 import { DEFAULT_CONTEXT_TIER } from "./swarm/swarm-constants"
+import { applyVarsUpdate } from "./parse-vars-update"
 import type { EngineCallbacks } from "../engine"
 import type { JsonlLogger } from "../logger"
 
@@ -248,9 +249,15 @@ export class SwarmExecutor implements NodeExecutor {
         `Swarm completed: ${result.status}, ${result.rounds_used} rounds, ${result.expert_count} experts`,
       )
 
+      // Extract vars_update from host synthesis (consistent with agent/bash/python executors)
+      const outputs = this.buildOutputs(result)
+      if (result.synthesis) {
+        applyVarsUpdate(result.synthesis, this.pool, outputs)
+      }
+
       return {
         lastOutput: result.synthesis,
-        outputs: this.buildOutputs(result),
+        outputs,
         status: result.status === "completed" ? "completed" : "failed",
         durationMs,
         logLines,
