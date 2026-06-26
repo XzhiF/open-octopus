@@ -364,6 +364,14 @@ PR 合并 → Agent 触发回归测试 → 自动推送结果
   - 下次"观察"时读到这些经验
 ```
 
+**Observe 的三种触发方式**:
+
+| 触发方式 | 时机 | 实现 |
+|---------|------|------|
+| 事件触发 | 每次归档完成后 | `DomainEventBus.emit('archive:complete')` → `ObserveService.analyze()` |
+| 定时调度 | 每 6 小时 | Scheduler 内置 job `agent-observe`, cron `0 */6 * * *` |
+| 用户触发 | Telegram "报告" 指令或 Agent 对话 | `Agent 对话 "最近怎么样"` → 触发 Observe |
+
 ### 7.1 一个具体的自主运行场景
 
 ```
@@ -431,7 +439,8 @@ workspace 可安全删除 (磁盘释放, 归档数据不受影响)
 
 ```sql
 CREATE TABLE execution_archive (
-  id              TEXT PRIMARY KEY,
+  rowid         INTEGER PRIMARY KEY AUTOINCREMENT,  -- FTS5 需要 INTEGER PK
+  id            TEXT NOT NULL UNIQUE,                -- 外部引用的 UUID
 
   -- 脱离 workspace 的独立记录
   org             TEXT NOT NULL DEFAULT '',
@@ -468,6 +477,7 @@ CREATE TABLE execution_archive (
   chain_position      INTEGER,            -- 在链条中的位置 (0-based)
   parent_execution_id TEXT,               -- 父执行 (父子链)
   schedule_id         TEXT,               -- 如果由调度器触发
+  clone_name          TEXT,               -- 产生此执行的分身名 (null=主Agent)
 
   created_at      TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -478,14 +488,6 @@ CREATE INDEX idx_archive_workflow ON execution_archive(workflow_ref);
 CREATE INDEX idx_archive_status ON execution_archive(status);
 CREATE INDEX idx_archive_created ON execution_archive(created_at);
 CREATE INDEX idx_archive_cost ON execution_archive(total_cost_usd);
-
--- FTS5 全文搜索
-CREATE VIRTUAL TABLE execution_archive_fts USING fts5(
-  workflow_name,
-  lessons_learned,
-  content='execution_archive',
-  content_rowid='rowid'
-);
 ```
 
 ### 8.3 Workspace 归档聚合层
@@ -494,7 +496,8 @@ CREATE VIRTUAL TABLE execution_archive_fts USING fts5(
 
 ```sql
 CREATE TABLE workspace_archive (
-  id              TEXT PRIMARY KEY,
+  rowid         INTEGER PRIMARY KEY AUTOINCREMENT,
+  id            TEXT NOT NULL UNIQUE,
   org             TEXT NOT NULL DEFAULT '',
 
   -- workspace 原始信息 (快照)
@@ -603,7 +606,10 @@ class ArchiveService {
   /**
    * 归档一次执行。在执行完成或 workspace 删除前调用。
    */
-  async archiveExecution(executionId: string): Promise<string> {
+  async archiveExecution(
+    executionId: string,
+    wsArchiveId?: string  // 由 archiveWorkspace 传入，onComplete 调用时为空
+  ): Promise<string> {
     // 1. 读取执行数据
     const execution = await execDAO.findById(executionId)
     const nodeResults = await nodeExecDAO.findByExecution(executionId)
@@ -640,6 +646,8 @@ class ArchiveService {
       total_cost_usd: totalCost,
       model_breakdown: JSON.stringify(modelBreakdown),
       vars_snapshot: JSON.stringify(varsSnapshot),
+      workspace_archive_id: wsArchiveId || null,
+      clone_name: execution.clone_name || null,
     })
 
     return archiveId
@@ -707,7 +715,22 @@ class ArchiveService {
     // 聚合统计
     await wsArchiveDAO.updateStats(wsArchiveId)
 
+    // workspace 级总结 (haiku, 异步, 仅 >= 3 个执行时)
+    if (count >= 3) {
+      this.generateWorkspaceSummary(wsArchiveId).catch(err => {
+        log.warn(`Failed to generate workspace summary: ${err.message}`)
+      })
+    }
+
     return count
+  }
+
+  private async generateWorkspaceSummary(wsArchiveId: string) {
+    const archives = await archiveDAO.findByWorkspaceArchive(wsArchiveId)
+    const prompt = `用 3 句话总结以下工作流执行记录:
+${archives.map(a => `- ${a.workflow_name}: ${a.status}, $${a.total_cost_usd}, ${a.duration_ms}ms`).join('\n')}`
+    const summary = await llmCall(prompt, 'haiku')
+    await wsArchiveDAO.update(wsArchiveId, { summary })
   }
 
   /**
@@ -730,20 +753,33 @@ class ArchiveService {
 }
 ```
 
-### Module 2: Workspace 删除拦截
+### Module 2: Workspace 删除拦截（两阶段提交）
 
 **修改**: `packages/server/src/services/workspace.ts` — `delete()` 方法
 
 ```typescript
 async delete(id: string) {
-  // 🔥 新增: 删除前自动归档
-  const archiveService = new ArchiveService()
-  const archived = await archiveService.archiveWorkspace(id)
-  log.info(`Archived ${archived} executions before workspace deletion`)
+  // Phase 1: 标记为 archiving (前端可展示归档中状态)
+  await this.dao.update(id, { archive_status: 'archiving' })
 
-  // 原有逻辑: 级联删除
-  await this.dao.cascadeDeleteByWorkspace(id)
-  await fs.promises.rm(workspacePath, { recursive: true, force: true })
+  try {
+    // Phase 2: 归档所有执行
+    const archiveService = new ArchiveService()
+    const archived = await archiveService.archiveWorkspace(id)
+    log.info(`Archived ${archived} executions`)
+
+    // Phase 3: 标记归档完成
+    await this.dao.update(id, { archive_status: 'archived' })
+
+    // Phase 4: 级联删除 (此时归档已完成且持久化)
+    await this.dao.cascadeDeleteByWorkspace(id)
+    await fs.promises.rm(workspacePath, { recursive: true, force: true })
+  } catch (err) {
+    // 归档失败 → 保留 workspace, 不删除, 标记失败
+    await this.dao.update(id, { archive_status: 'archive_failed' })
+    log.error(`Archive failed for workspace ${id}: ${err.message}`)
+    throw new Error('Workspace archiving failed, deletion aborted. Data preserved.')
+  }
 }
 ```
 
@@ -751,8 +787,10 @@ async delete(id: string) {
 
 ```sql
 ALTER TABLE workspaces ADD COLUMN archive_status TEXT DEFAULT 'none';
--- none | archiving | archived
+-- none | archiving | archived | archive_failed
 ```
+
+**恢复机制**: 定时任务扫描 `archive_status = 'archived'` 但文件仍存在的 workspace，重试文件删除。
 
 ### Module 3: Loop Dashboard API
 
@@ -784,6 +822,8 @@ GET  /archive/leaderboard        — 排行榜 (最省钱/最快/最高成功率
 }
 ```
 
+> **成本单位**: 存储统一用 USD（REAL 类型）。前端根据用户偏好设置 `currency_preference`（CNY/USD）和汇率（1 USD ≈ 7.2 CNY）转换显示。Dashboard 显示示例: `¥16.8 (≈$2.33)`。
+
 ### Module 4: Agent 闭环集成
 
 #### 4.1 编排器增强
@@ -794,21 +834,34 @@ GET  /archive/leaderboard        — 排行榜 (最省钱/最快/最高成功率
 async classifyAndRoute(message: string): Promise<RouteResult> {
   const intent = await this.classify(message)
 
-  // 🔥 查询相关执行记忆
-  const relatedArchives = await archiveDAO.search({
-    query: message, limit: 3, orderBy: 'created_at DESC',
+  // 查 experience_index — 精确匹配可行动经验
+  const experiences = await experienceDAO.search({
+    query: message, status: 'active', limit: 5,
   })
 
-  if (relatedArchives.length > 0) {
-    intent.executionMemory = relatedArchives.map(a => ({
-      workflow: a.workflow_name, status: a.status,
-      cost: a.total_cost_usd, lessons: a.lessons_learned,
+  // 查 execution_archive — 仅取最近执行摘要 (不含经验文本)
+  const recentRuns = await archiveDAO.findRecent({
+    workflow_name: intent.matchedWorkflow,
+    limit: 3,
+    fields: ['status', 'total_cost_usd', 'created_at', 'vars_snapshot'],
+  })
+
+  if (experiences.length > 0) {
+    intent.experiences = experiences.map(e => ({
+      type: e.type, title: e.title, content: e.content,
     }))
+  }
+  if (recentRuns.length > 0) {
+    intent.recentRuns = recentRuns
   }
 
   return intent
 }
 ```
+
+**职责分离**:
+- `experience_index` → 可行动的经验（注入 Agent prompt，FTS 搜索）
+- `execution_archive` → 执行记录统计（Dashboard + "上次跑了什么"）
 
 #### 4.2 执行完成自动触发
 
@@ -862,6 +915,26 @@ app.post('/agent/telegram/webhook', async (c) => {
   })
 })
 ```
+
+**Hermes provider 层增加动态路由**（不修改 Hermes CLI 本身）：
+
+```typescript
+// packages/server/src/providers/hermes.ts
+async send(config: NotifyConfig) {
+  const target = config.target
+
+  if (target.match(/^telegram:\d+$/)) {
+    // 动态 chat ID → 直接调用 Telegram Bot API
+    const chatId = target.split(':')[1]
+    await telegramBotAPI.sendMessage(chatId, config.message)
+  } else {
+    // 命名 target (如 "telegram:xzf_hermes") → 走 Hermes CLI
+    await hermesCLI.send(target, config.message)
+  }
+}
+```
+
+Hermes 从"通知工具"升级为"通信桥梁"——支持动态 chat ID 路由 + 命名 target 两种模式。
 
 ### Module 6: Agent 记忆/技能/分身系统整合
 
@@ -1166,7 +1239,8 @@ experience_scope:
 
 ```sql
 CREATE TABLE experience_index (
-  id              TEXT PRIMARY KEY,
+  rowid         INTEGER PRIMARY KEY AUTOINCREMENT,
+  id            TEXT NOT NULL UNIQUE,
   org             TEXT NOT NULL DEFAULT '',
 
   -- 经验来源
@@ -1177,7 +1251,11 @@ CREATE TABLE experience_index (
   type            TEXT NOT NULL,           -- bug / pattern / cost / failure
   title           TEXT NOT NULL,
   content         TEXT NOT NULL,
-  status          TEXT DEFAULT 'active',   -- active / resolved / obsolete
+  status          TEXT DEFAULT 'active',   -- active / resolved / obsolete / superseded
+
+  -- 生命周期
+  resolved_at     TEXT,                    -- 标记为 resolved 的时间
+  resolved_by     TEXT,                    -- PR URL 或手动标记来源
 
   -- 精确匹配维度
   project         TEXT,                    -- 适用的项目 (open-octopus)
@@ -1266,7 +1344,8 @@ async extractLessons(archiveId: string) {
 }
 
 /**
- * 更新 ~/.octopus/knowledge/{project}/*.md 文件
+ * 重写 ~/.octopus/knowledge/{project}/*.md 文件 (覆盖写, 非追加)
+ * 每次从 experience_index 全量重建, 已 resolved/obsolete 的条目自动消失
  */
 private async updateKnowledgeFiles(archive, items) {
   const project = archive.vars_snapshot.project_dir
@@ -1277,11 +1356,19 @@ private async updateKnowledgeFiles(archive, items) {
   )
   await fs.mkdir(knowledgeDir, { recursive: true })
 
-  for (const item of items) {
-    const filename = `${item.type}s.md`  // bugs.md / patterns.md / costs.md
-    const filepath = path.join(knowledgeDir, filename)
-    const entry = this.formatKnowledgeEntry(item, archive)
-    await fs.appendFile(filepath, entry + '\n')
+  // 从 DB 查询当前所有活跃条目 (包含本次新增的)
+  for (const type of ['bug', 'pattern', 'cost', 'failure']) {
+    const activeItems = await experienceDAO.query({
+      project, type, status: 'active',
+      orderBy: 'relevance_score DESC',
+    })
+
+    // 大小上限: 超过 50 条时按 relevance 裁剪
+    const capped = activeItems.slice(0, 50)
+
+    const content = this.renderKnowledgeMarkdown(type, capped, project)
+    const filepath = path.join(knowledgeDir, `${type}s.md`)
+    await fs.writeFile(filepath, content)  // 覆盖写, 不是追加
   }
 }
 ```
@@ -1382,6 +1469,139 @@ private formatExperienceContext(items, scope): string {
 }
 ```
 
+### Module 8: ExperienceLifecycleService（经验生命周期管理）
+
+#### 8.1 问题
+
+experience_index 的 status 字段（active/resolved/obsolete/superseded）没有更新机制。BUG 修复后经验仍为 active，Agent 被过时信息淹没。
+
+#### 8.2 三个触发点
+
+```typescript
+class ExperienceLifecycleService {
+  /**
+   * 触发点 1: PR 合并时标记 resolved
+   * 由 GitHub webhook → Octopus Server 触发
+   */
+  async markResolved(prUrl: string): Promise<number> {
+    // 从 PR 描述中提取 BUG 标识
+    const prBody = await githubAPI.getPR(prUrl)
+    const bugRefs = this.extractBugRefs(prBody)  // ["BUG-001", "BUG-002"]
+
+    let count = 0
+    for (const ref of bugRefs) {
+      const result = await experienceDAO.updateByKeyword({
+        keyword: ref,
+        updates: {
+          status: 'resolved',
+          resolved_at: new Date().toISOString(),
+          resolved_by: prUrl,
+        },
+      })
+      count += result.changes
+    }
+    return count
+  }
+
+  /**
+   * 触发点 2: 定期衰减过期经验
+   * 由 Scheduler 内置 job 触发 (每周一次)
+   */
+  async decayStale(): Promise<number> {
+    // use_count=0 且创建超过 90 天 → obsolete
+    return await experienceDAO.bulkUpdate({
+      where: {
+        use_count: 0,
+        created_before: daysAgo(90),
+        status: 'active',
+      },
+      updates: { status: 'obsolete' },
+    })
+  }
+
+  /**
+   * 触发点 3: 新经验替代旧经验
+   * 在 extractLessons() 写入新条目后调用
+   */
+  async supersede(newItem: ExperienceItem): Promise<void> {
+    if (!newItem.file_pattern) return
+
+    // 同 project + 同 file_pattern + 同 type 的旧条目 → superseded
+    await experienceDAO.bulkUpdate({
+      where: {
+        project: newItem.project,
+        file_pattern: newItem.file_pattern,
+        type: newItem.type,
+        status: 'active',
+        exclude_id: newItem.id,
+      },
+      updates: { status: 'superseded' },
+    })
+  }
+}
+```
+
+#### 8.3 注入时过滤
+
+引擎注入经验时只查 active 状态（§7.9 的 SQL 已包含 `AND status = 'active'`），resolved/obsolete/superseded 的条目不会被注入 Agent prompt，但仍可通过 Dashboard 搜索查看。
+
+### Module 9: ChainTriggerService（链条工作流自动触发）
+
+#### 9.1 问题
+
+§8.4 描述了 `bug-hunter → bug-fixer → regression-tester` 流水线链，但只有归档记录，没有自动触发机制。§7.1 场景说"Agent 读取归档数据 → 自动触发 bug-fixer"，但没有定义触发入口。
+
+#### 9.2 方案：工作流 YAML 声明后继 + 引擎自动触发
+
+```yaml
+# 工作流 YAML 新增 chain 字段
+# bug-hunter.yaml
+name: bug-hunter
+chain:
+  on_success:
+    - workflow: bug-fixer
+      condition: '$vars.confirmed == "true"'
+      auto_trigger: true
+      input_mapping:
+        bug_reports: '$vars.bug_report_dir'
+        base_branch: '$inputs.base_branch'
+  on_failure: []
+```
+
+```typescript
+// execution-engine.ts onComplete 中增加链条触发
+async onComplete(execution: Execution) {
+  // ... 归档 + 经验提取 ...
+
+  // 链条触发
+  const chainConfig = execution.workflow.chain
+  if (chainConfig?.on_success && execution.status === 'completed') {
+    for (const next of chainConfig.on_success) {
+      if (next.auto_trigger && evaluateCondition(next.condition, pool)) {
+        const mappedInputs = resolveInputMapping(next.input_mapping, pool)
+        await this.trigger({
+          workspace_id: execution.workspace_id,  // 同一 workspace
+          workflow_ref: next.workflow,
+          parent_id: execution.id,               // 建立父子链
+          input_values: mappedInputs,
+        })
+        log.info(`Chain triggered: ${next.workflow} (parent: ${execution.id})`)
+      }
+    }
+  }
+}
+```
+
+#### 9.3 效果
+
+```
+bug-hunter 完成 → onComplete 检测 chain.on_success
+  → condition '$vars.confirmed == "true"' 为 true
+  → 自动触发 bug-fixer (同一 workspace, parent_id 建立父子链)
+  → bug-fixer 完成 → 自动触发 regression-tester
+  → 全部完成 → archiveWorkspace 时链条关系自动检测并记录
+```
+
 ---
 
 ## 10. 前端改动
@@ -1418,35 +1638,48 @@ private formatExperienceContext(items, scope): string {
 
 | Phase | 内容 | 核心产出 | 优先级 |
 |-------|------|---------|--------|
-| **Phase 1** | 执行归档 | execution_archive + workspace_archive 表 + ArchiveService + workspace 删除拦截 | 🔴 最高 |
-| **Phase 2** | Experience Index | experience_index 表 + haiku 拆分结构化条目 + 知识库文件 | 🔴 最高 |
-| **Phase 3** | 引擎注入 | agent 节点 experience_scope 字段 + 引擎 prompt 注入逻辑 | 🔴 最高 |
-| **Phase 4** | Loop Dashboard | /archive/* API + 前端标签页 + 成本趋势 | 🟡 高 |
-| **Phase 5** | Agent 记忆整合 | 执行归档 → daily memory + experiences 同步 + session-compress 联动 | 🟡 高 |
-| **Phase 6** | Agent 闭环 | 编排器注入执行记忆 + 技能进化联动 | 🟡 高 |
-| **Phase 7** | Telegram 双向 | Telegram Bot webhook + 指令集 + Hermes 升级 | 🟢 中 |
-| **Phase 8** | 自主 Loop | Agent 自注册调度 + 模式识别 + 智能建议 + 自动清理 + 分身整合 | 🟢 中 |
+| **Phase 1** | 执行归档 | execution_archive + workspace_archive 表 (INTEGER PK) + ArchiveService + 两阶段删除 | 🔴 最高 |
+| **Phase 2** | Experience Index | experience_index 表 (含生命周期字段) + haiku 拆分 + 知识库重写模式 | 🔴 最高 |
+| **Phase 3** | 引擎注入 | experience_scope 字段 + injectExperience() + clone_name 支持 | 🔴 最高 |
+| **Phase 4** | 经验生命周期 | ExperienceLifecycleService (PR 合并标记 resolved + 定期衰减 + 新旧替代) | 🔴 最高 |
+| **Phase 5** | 链条触发 | 工作流 YAML chain 字段 + ChainTriggerService (onComplete 自动触发后继) | 🟡 高 |
+| **Phase 6** | Loop Dashboard | /archive/* API + 前端标签页 + 成本趋势 (USD 存储 + 前端汇率转换) | 🟡 高 |
+| **Phase 7** | Agent 记忆整合 | 执行归档 → daily memory + experiences 同步 + session-compress 联动 | 🟡 高 |
+| **Phase 8** | Agent 闭环 | 编排器查 experience_index + 技能进化联动 + Hermes 动态路由 | 🟡 高 |
+| **Phase 9** | Telegram 双向 | Telegram Bot webhook + 指令集 + Hermes provider chat ID 路由 | 🟢 中 |
+| **Phase 10** | 自主 Loop | Observe 三种触发 + Agent 自注册调度 + 模式识别 + 分身整合 | 🟢 中 |
 
 ### Phase 1 详细清单
 
-1. `packages/server/src/db/schema.sql` — 新增 execution_archive + workspace_archive 表 + FTS
+1. `packages/server/src/db/schema.sql` — 新增 execution_archive + workspace_archive 表 (INTEGER PK + TEXT UUID)
 2. `packages/server/src/db/dao/archive-dao.ts` — 新建 ArchiveDAO
 3. `packages/server/src/db/dao/workspace-archive-dao.ts` — 新建 WorkspaceArchiveDAO
-4. `packages/server/src/services/archive-service.ts` — 新建 ArchiveService (含链条检测)
-5. `packages/server/src/services/workspace.ts` — 修改 delete() 增加自动归档
+4. `packages/server/src/services/archive-service.ts` — 新建 ArchiveService (含链条检测 + clone_name + wsArchiveId 参数)
+5. `packages/server/src/services/workspace.ts` — 修改 delete() 为两阶段提交 (archiving → archived → cascade)
 6. `packages/server/src/engine/execution-engine.ts` — 修改 onComplete 自动归档
 
 ### Phase 2 详细清单
 
-7. `packages/server/src/db/schema.sql` — 新增 experience_index 表 + FTS
+7. `packages/server/src/db/schema.sql` — 新增 experience_index 表 (含 resolved_at/resolved_by)
 8. `packages/server/src/db/dao/experience-dao.ts` — 新建 ExperienceDAO
-9. `packages/server/src/services/archive-service.ts` — extractLessons() 增加 haiku 拆分 + 写入 index + 知识库文件
+9. `packages/server/src/services/archive-service.ts` — extractLessons() haiku 拆分 + 写入 index + 知识库重写模式
 
 ### Phase 3 详细清单
 
 10. `packages/shared/src/types/workflow.ts` — NodeSchema 增加 experience_scope 字段
-11. `packages/core-pack/presets/workflows/doc/workflow-schema.json` — schema 增加 experience_scope
+11. `packages/core-pack/presets/workflows/doc/workflow-schema.json` — schema 增加 experience_scope + chain
 12. `packages/engine/src/engine.ts` — 新增 injectExperience() 方法, agent 节点执行前调用
+
+### Phase 4 详细清单
+
+13. `packages/server/src/services/experience-lifecycle-service.ts` — 新建 ExperienceLifecycleService
+14. `packages/server/src/routes/webhooks/github.ts` — PR 合并 webhook → markResolved()
+15. Scheduler 内置 job `experience-decay` — 每周执行 decayStale()
+
+### Phase 5 详细清单
+
+16. `packages/shared/src/types/workflow.ts` — WorkflowSchema 增加 chain 字段
+17. `packages/engine/src/engine.ts` — onComplete 增加链条触发逻辑
 
 ---
 
@@ -1454,10 +1687,10 @@ private formatExperienceContext(items, scope): string {
 
 | Loop 构建模块 | 本设计如何补全 |
 |---------------|---------------|
-| **Memory/State** | execution_archive + workspace_archive + experience_index = 三层执行记忆; Agent daily memory 自动融入; 知识库文件持久化 |
-| Automations | Scheduler 自动创建 workspace + 执行 + 归档 + 清理; Agent 自注册调度任务 |
-| Skills | 经验 → reflect() 触发技能进化; experience_scope 让工作流执行时自动加载历史知识 |
-| Connectors | Telegram Bot 双向交互, Hermes 从单向通知升级为通信桥梁 |
-| Sub-agents | 编排器基于执行记忆做决策; 分身系统感知执行记忆归属; **agent 节点通过 experience_scope 注入项目级经验** |
+| **Memory/State** | execution_archive + workspace_archive + experience_index = 三层执行记忆; 生命周期管理 (resolved/obsolete/superseded); Agent daily memory 自动融入; 知识库文件重写模式保持精简 |
+| Automations | Scheduler 自动创建 workspace + 执行 + 归档 + 清理; Agent 自注册调度; **chain 字段自动触发后继工作流** |
+| Skills | 经验 → reflect() 触发技能进化; experience_scope 让工作流执行时自动加载历史知识; 过期经验自动衰减避免噪音 |
+| Connectors | Telegram Bot 双向交互; Hermes provider 支持动态 chat ID 路由 + 命名 target |
+| Sub-agents | 编排器查 experience_index 做决策; 分身系统通过 clone_name 隔离执行记忆; agent 节点通过 experience_scope 注入项目级经验 |
 
-> **核心转变**: 从 "执行→遗忘→冷启动" 到 "执行→归档→经验索引→引擎注入→带记忆执行→更好的结果→更好的经验→Loop"
+> **核心转变**: 从 "执行→遗忘→冷启动" 到 "执行→归档→经验索引→生命周期管理→引擎注入→带记忆执行→更好的结果→更好的经验→Loop"
