@@ -54,15 +54,16 @@ export function ExecutionButtonBar({
 }: ExecutionButtonBarProps) {
   const parentGateOpen = parentGateStatus === "open" || parentGateStatus === "bypassed"
   const isRoot = parentId === "0" || parentId === null
+  const isPendingLike = executionStatus === "pending"
   const showExecute = isRoot
-    ? (executionStatus === "pending" && gateStatus !== "bypassed")
-    : (parentGateOpen && executionStatus === "pending" && gateStatus !== "bypassed")
+    ? (isPendingLike && gateStatus !== "bypassed")
+    : (parentGateOpen && isPendingLike && gateStatus !== "bypassed")
   const showRetry = executionStatus === "failed"
-  const showSkip = (executionStatus === "pending" || executionStatus === "failed" || executionStatus === "cancelled") && gateStatus !== "bypassed"
-  const showTerminate = executionStatus === "running" || executionStatus === "paused" || executionStatus === "pending_approval"
+  const showSkip = (executionStatus === "pending" || executionStatus === "pending_resume" || executionStatus === "failed" || executionStatus === "cancelled") && gateStatus !== "bypassed"
+  const showTerminate = executionStatus === "running" || executionStatus === "paused" || executionStatus === "pending_approval" || executionStatus === "pending_resume"
   const showPause = executionStatus === "running"
-  const showResume = executionStatus === "paused"
-  const showDelete = isLeaf && (executionStatus === "pending" || executionStatus === "failed" || executionStatus === "cancelled" || executionStatus === "rejected")
+  const showResume = executionStatus === "paused" || executionStatus === "pending_resume"
+  const showDelete = isLeaf && (isPendingLike || executionStatus === "failed" || executionStatus === "cancelled" || executionStatus === "rejected")
   const showApprove = executionStatus === "pending_approval" && hasApproval
 
   return (

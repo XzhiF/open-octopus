@@ -23,6 +23,7 @@ const statusConfig: Record<ExecutionStatus, { color: string; bgColor: string; bo
   cancelled: { color: "text-gray-600", bgColor: "bg-gray-50", borderColor: "border-gray-200", label: "已取消" },
   paused: { color: "text-violet-600", bgColor: "bg-violet-50", borderColor: "border-violet-200", label: "已暂停" },
   pending_approval: { color: "text-amber-600", bgColor: "bg-amber-50", borderColor: "border-amber-200", label: "待审批" },
+  pending_resume: { color: "text-blue-600", bgColor: "bg-blue-50", borderColor: "border-blue-200", label: "待恢复" },
   skipped: { color: "text-gray-400", bgColor: "bg-gray-50", borderColor: "border-gray-200", label: "已跳过" },
   rejected: { color: "text-orange-600", bgColor: "bg-orange-50", borderColor: "border-orange-200", label: "已拒绝" },
 }
@@ -83,7 +84,7 @@ function ExecutionNodeInner({ data: rawData, selected }: NodeProps) {
           : data.executionStatus === "completed" ? <CheckCircle2 className={cn("h-4 w-4", config.color)} />
           : data.executionStatus === "failed" ? <XCircle className={cn("h-4 w-4", config.color)} />
           : data.executionStatus === "rejected" ? <Ban className={cn("h-4 w-4", config.color)} />
-          : data.executionStatus === "pending" ? <Clock className={cn("h-4 w-4", config.color)} />
+          : data.executionStatus === "pending" || data.executionStatus === "pending_resume" ? <Clock className={cn("h-4 w-4", config.color)} />
           : <SkipForward className={cn("h-4 w-4", config.color)} />}
         </div>
         <div className="flex-1 min-w-0">

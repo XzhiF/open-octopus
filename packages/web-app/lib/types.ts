@@ -87,7 +87,7 @@ export interface TokenUsage {
 }
 
 // ============ Execution ============
-export type ExecutionStatus = "pending" | "running" | "completed" | "completed_with_failures" | "failed" | "cancelled" | "paused" | "skipped" | "rejected" | "pending_approval"
+export type ExecutionStatus = "pending" | "running" | "completed" | "completed_with_failures" | "failed" | "cancelled" | "paused" | "skipped" | "rejected" | "pending_approval" | "pending_resume"
 
 export type GateStatus = "open" | "closed" | "bypassed"
 

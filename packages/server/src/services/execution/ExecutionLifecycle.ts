@@ -320,7 +320,7 @@ export class ExecutionLifecycle {
   async cancel(id: string): Promise<ExecutionRow> {
     const exec = this.dao.findById(id)
     if (!exec) throw Object.assign(new Error("Execution not found"), { status: 404 })
-    if (!["running", "paused", "pending_approval"].includes(exec.status))
+    if (!["running", "paused", "pending_approval", "pending_resume"].includes(exec.status))
       throw Object.assign(new Error("Cannot cancel in current status"), { status: 400 })
 
     const now = new Date().toISOString()
@@ -704,6 +704,13 @@ export class ExecutionLifecycle {
   async resume(executionId: string, intervention?: string): Promise<{ success: boolean; error?: string }> {
     const exec = this.dao.findById(executionId)
     if (!exec) return { success: false, error: "执行不存在" }
+
+    // pending_resume → delegate to autoResume (crash recovery path)
+    if (exec.status === "pending_resume") {
+      await this.autoResume(executionId)
+      return { success: true }
+    }
+
     if (exec.status !== "paused") return { success: false, error: "执行未处于暂停状态" }
 
     const pausedNodes = this.dao.findRunningNodeExecutionsByStatus(executionId, ["paused"])

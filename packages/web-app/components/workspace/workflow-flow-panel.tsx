@@ -184,6 +184,11 @@ export function WorkflowFlowPanel({
     onPause: (nodeId) => pauseExecution(nodeId),
     onResume: (nodeId) => {
       const node = treeNodes.find(n => n.id === nodeId)
+      // pending_resume → resume directly (crash recovery), no intervention needed
+      if (node?.executionStatus === "pending_resume") {
+        resumeExecution(nodeId)
+        return
+      }
       setInterventionDialog({ nodeId, nodeName: node?.name || node?.workflowName || nodeId })
     },
     isPausing: (nodeId) => pausingNodeIds.has(nodeId),

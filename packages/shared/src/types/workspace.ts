@@ -31,6 +31,7 @@ export const UpdateWorkspaceSchema = z.object({
 
 export const ExecutionStatusSchema = z.enum([
   "pending", "running", "completed", "failed", "paused", "cancelled", "pending_approval",
+  "completed_with_failures", "skipped", "rejected", "pending_resume",
 ])
 export type ExecutionStatus = z.infer<typeof ExecutionStatusSchema>
 
