@@ -11,6 +11,8 @@ export interface Message {
 
 export interface SwarmResult {
   synthesis: string
+  /** Full LLM response text from host (for vars_update extraction) */
+  rawResponse?: string
   consensus_score: number | null
   rounds_used: number
   expert_count: number
@@ -68,6 +70,8 @@ export interface FileConflict {
 
 export interface HostOutput {
   synthesis: string
+  /** Full LLM response text (for vars_update extraction) */
+  rawResponse?: string
   assessment?: {
     consensus_score: number
     key_agreements: string[]

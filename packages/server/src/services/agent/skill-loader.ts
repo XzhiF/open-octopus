@@ -202,17 +202,12 @@ export class SkillLoader {
 
     for (const skill of skills) {
       if (includeSkills && !includeSkills.includes(skill.name)) continue
-
-      const loaded = this.loadSkill(skill.name)
-      if (loaded) {
-        // Inject full skill content — assembler's truncateToBudget handles
-        // overflow via priority-based trimming (2000-token budget)
-        parts.push(`### ${loaded.name}\n${loaded.content}`)
-      }
+      // Inject only summary (name + description) — agent loads full content on-demand
+      parts.push(`- **${skill.name}**: ${skill.description}`)
     }
 
     const content = parts.length > 0
-      ? `# 可用技能\n\n${parts.join('\n\n')}`
+      ? `# 可用技能\n\n${parts.join('\n')}`
       : '# 可用技能\n\n（暂无已安装的技能）'
 
     return { content, count: parts.length }

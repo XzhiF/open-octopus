@@ -251,8 +251,11 @@ export class SwarmExecutor implements NodeExecutor {
 
       // Extract vars_update from host synthesis (consistent with agent/bash/python executors)
       const outputs = this.buildOutputs(result)
-      if (result.synthesis) {
-        applyVarsUpdate(result.synthesis, this.pool, outputs)
+      // Use rawResponse (full LLM text) for vars_update extraction — synthesis may only
+      // contain the first JSON object, missing vars_update if host outputs multiple JSONs
+      const varsUpdateSource = result.rawResponse ?? result.synthesis
+      if (varsUpdateSource) {
+        applyVarsUpdate(varsUpdateSource, this.pool, outputs)
       }
 
       return {

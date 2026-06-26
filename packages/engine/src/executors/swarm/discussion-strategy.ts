@@ -279,6 +279,7 @@ export class DiscussionStrategy extends SwarmStrategy {
     const allFailed = experts.length > 0 && failedExperts.length === experts.length
     const result: SwarmResult = {
       synthesis: hostOutput.synthesis,
+      rawResponse: hostOutput.rawResponse,
       consensus_score: consensusScore,
       rounds_used: roundsUsed,
       expert_count: experts.length,

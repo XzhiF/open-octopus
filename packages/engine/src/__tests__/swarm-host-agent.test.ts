@@ -271,4 +271,51 @@ describe("HostAgent", () => {
       expect(result.synthesis).toBe("Plain text synthesis without JSON")
     })
   })
+
+  describe("rawResponse propagation for vars_update extraction", () => {
+    it("returns full LLM response as rawResponse when host outputs multiple JSON objects", async () => {
+      // Simulate host outputting both assessment and vars_update as separate JSON objects
+      const fullResponse = `## 扫描报告
+
+分析完成，发现 20 个 BUG。
+
+{"assessment": {"consensus_score": 0.82, "should_continue": true, "summary": "20 bugs found"}}
+
+{"vars_update": {"candidate_count": "20", "conclusion": "Found 20 bugs"}}`
+
+      const llmCall = vi.fn().mockResolvedValue(fullResponse)
+
+      const agent = new HostAgent(llmCall)
+      const experts = [makeExpertResult("expert-a")]
+
+      const config = makeConfig({ outputFormat: "structured" })
+      const result = await agent.synthesize(experts, [], config)
+
+      // rawResponse should contain the full LLM response text
+      expect(result.rawResponse).toBe(fullResponse)
+      // rawResponse should contain vars_update
+      expect(result.rawResponse).toContain("vars_update")
+      expect(result.rawResponse).toContain("candidate_count")
+    })
+
+    it("rawResponse is available even when synthesis only captures first JSON", async () => {
+      const fullResponse = `Report text here.
+{"assessment": {"consensus_score": 0.9}}
+More text.
+{"vars_update": {"candidate_count": "5"}}`
+
+      const llmCall = vi.fn().mockResolvedValue(fullResponse)
+
+      const agent = new HostAgent(llmCall)
+      const experts = [makeExpertResult("expert-a")]
+
+      const config = makeConfig({ outputFormat: "structured" })
+      const result = await agent.synthesize(experts, [], config)
+
+      // synthesis might only capture the first JSON
+      // but rawResponse should have the full text
+      expect(result.rawResponse).toBe(fullResponse)
+      expect(result.rawResponse).toContain('"vars_update"')
+    })
+  })
 })

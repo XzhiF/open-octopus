@@ -200,6 +200,7 @@ export class DispatchStrategy extends SwarmStrategy {
     const allFailed = experts.length > 0 && failedExperts.length === experts.length
     const result: SwarmResult = {
       synthesis: hostOutput.synthesis,
+      rawResponse: hostOutput.rawResponse,
       consensus_score: null,
       rounds_used: 1,
       expert_count: experts.length,

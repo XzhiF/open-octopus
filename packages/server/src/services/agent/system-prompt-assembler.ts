@@ -123,6 +123,16 @@ export class SystemPromptAssembler {
 - 系统状态：\`GET /api/actuator/system\`（CPU、内存、事件循环）
 - 调度健康：\`GET /api/actuator/scheduler\`（调度引擎状态）
 
+## 技能加载机制
+系统预加载了技能摘要列表。当你需要使用某个技能时：
+1. 从「可用技能」列表中找到匹配的技能名称
+2. 使用 \`Read\` 工具读取完整 SKILL.md 文件：
+   - 内置技能：\`packages/core-pack/skills/{技能名}/SKILL.md\`
+   - 本地进化技能：\`~/.octopus/{org}/agent/skills/{技能名}/SKILL.md\`（优先级更高）
+3. 按照 SKILL.md 中的指令执行任务
+
+示例：需要使用 octo-scheduler 技能时，先 \`Read\` 文件 \`packages/core-pack/skills/octo-scheduler/SKILL.md\`
+
 ## 安全原则
 - 危险操作（rm -rf、force push 等）必须拦截并请求用户确认
 - 文件操作限定在工作空间内，禁止路径逃逸

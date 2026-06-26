@@ -138,11 +138,13 @@ Respond in this JSON structure:
         if (config.outputFormat === "structured") {
           return {
             synthesis: jsonMatch[0],
+            rawResponse: response,
             assessment: parsed.assessment,
           }
         }
         return {
           synthesis: parsed.synthesis || response,
+          rawResponse: response,
           assessment: parsed.assessment,
         }
       } catch {
@@ -152,9 +154,9 @@ Respond in this JSON structure:
           try {
             const parsed = JSON.parse(extracted)
             if (config.outputFormat === "structured") {
-              return { synthesis: extracted, assessment: parsed.assessment }
+              return { synthesis: extracted, rawResponse: response, assessment: parsed.assessment }
             }
-            return { synthesis: parsed.synthesis || response, assessment: parsed.assessment }
+            return { synthesis: parsed.synthesis || response, rawResponse: response, assessment: parsed.assessment }
           } catch { /* fall through */ }
         }
       }
@@ -169,10 +171,10 @@ Respond in this JSON structure:
         recommendation: response.slice(0, HOST_DEGRADED_RECOMMENDATION_CHARS),
         confidence: 0,
       })
-      return { synthesis: fallback }
+      return { synthesis: fallback, rawResponse: response }
     }
 
-    return { synthesis: response }
+    return { synthesis: response, rawResponse: response }
   }
 
   private extractBalancedJson(text: string): string | null {
