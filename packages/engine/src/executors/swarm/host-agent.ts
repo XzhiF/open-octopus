@@ -110,7 +110,9 @@ Consider all perspectives and provide a balanced analysis.
 Keep the synthesis under 2000 words to avoid output truncation.`
     }
 
-    if (config.outputFormat === "structured") {
+    // ponytail: custom host.prompt defines its own output format — don't
+    // append structured schema that would conflict with vars_update instructions.
+    if (config.outputFormat === "structured" && !config.host?.prompt) {
       prompt += `
 
 Respond in this JSON structure:

@@ -18,7 +18,6 @@ import type { SwarmStrategyConfig, SwarmStrategy } from "./swarm/swarm-strategy"
 import { ContextTierResolver } from "./swarm/context-tier-resolver"
 import type { ContextTier } from "./swarm/context-tier-resolver"
 import { DEFAULT_CONTEXT_TIER } from "./swarm/swarm-constants"
-import { applyVarsUpdate } from "./parse-vars-update"
 import type { EngineCallbacks } from "../engine"
 import type { JsonlLogger } from "../logger"
 
@@ -244,11 +243,6 @@ export class SwarmExecutor implements NodeExecutor {
 
       // Write auto-outputs to VarPool
       this.writeAutoOutputs(result)
-
-      // Parse vars_update from host synthesis (same as agent executor)
-      if (result.synthesis) {
-        applyVarsUpdate(result.synthesis, this.pool, {})
-      }
 
       const durationMs = Date.now() - start
       logLines.push(
