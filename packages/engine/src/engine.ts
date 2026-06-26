@@ -438,20 +438,51 @@ export class WorkflowEngine {
 
   // ── DAG ordering ──────────────────────────────────────────
 
+  /**
+   * Build implicit dependency edges: condition branch targets depend on their condition node.
+   * Without this, Kahn's algorithm places targets like `no-bugs-found` at Level 0 (no deps),
+   * causing them to execute before the condition gate that controls them.
+   * ponytail: engine-level safety net — YAML authors shouldn't need to know about this.
+   */
+  private buildConditionTargetDeps(nodes: NodeDef[]): Map<string, Set<string>> {
+    const implicitDeps = new Map<string, Set<string>>()
+    for (const node of nodes) {
+      if (node.type === "condition" && node.cases) {
+        for (const c of node.cases) {
+          if (c.then && c.then !== "default") {
+            if (!implicitDeps.has(c.then)) implicitDeps.set(c.then, new Set())
+            implicitDeps.get(c.then)!.add(node.id)
+          }
+        }
+      }
+    }
+    return implicitDeps
+  }
+
+  private getEffectiveDeps(node: NodeDef, implicitDeps: Map<string, Set<string>>): string[] {
+    const explicit = node.depends_on ?? []
+    const implicit = implicitDeps.get(node.id)
+    if (!implicit || implicit.size === 0) return explicit
+    const merged = new Set(explicit)
+    for (const dep of implicit) merged.add(dep)
+    return Array.from(merged)
+  }
+
   /** DFS topological sort producing a flat linear order. Used by retryFrom() for index-based slicing. */
   private topologicalSort(nodes: NodeDef[]): NodeDef[] {
     const nodeMap = new Map(nodes.map(n => [n.id, n]))
+    const implicitDeps = this.buildConditionTargetDeps(nodes)
     const sorted: NodeDef[] = []
     const visited = new Set<string>()
     const visiting = new Set<string>()
 
-    function visit(id: string) {
+    const visit = (id: string) => {
       if (visited.has(id)) return
       if (visiting.has(id)) throw new Error(`Circular dependency detected: ${id}`)
       visiting.add(id)
       const node = nodeMap.get(id)
       if (!node) throw new Error(`Node not found: ${id} (available: ${Array.from(nodeMap.keys()).join(",")})`)
-      for (const dep of (node.depends_on ?? [])) {
+      for (const dep of this.getEffectiveDeps(node, implicitDeps)) {
         visit(dep)
       }
       visiting.delete(id)
@@ -471,6 +502,7 @@ export class WorkflowEngine {
     this.detectCycles(nodes)
 
     const nodeMap = new Map(nodes.map(n => [n.id, n]))
+    const implicitDeps = this.buildConditionTargetDeps(nodes)
     const levels: NodeDef[][] = []
     const completed = new Set<string>()
     const remaining = new Set(nodes.map(n => n.id))
@@ -479,7 +511,7 @@ export class WorkflowEngine {
       const level: NodeDef[] = []
       for (const id of remaining) {
         const node = nodeMap.get(id)!
-        const deps = node.depends_on ?? []
+        const deps = this.getEffectiveDeps(node, implicitDeps)
         if (deps.every(d => completed.has(d))) {
           level.push(node)
         }
@@ -500,16 +532,17 @@ export class WorkflowEngine {
   /** Detect circular dependencies via DFS. Throws on cycle. */
   private detectCycles(nodes: NodeDef[]): void {
     const nodeMap = new Map(nodes.map(n => [n.id, n]))
+    const implicitDeps = this.buildConditionTargetDeps(nodes)
     const visited = new Set<string>()
     const visiting = new Set<string>()
 
-    function visit(id: string) {
+    const visit = (id: string) => {
       if (visited.has(id)) return
       if (visiting.has(id)) throw new Error(`Circular dependency detected: ${id}`)
       visiting.add(id)
       const node = nodeMap.get(id)
       if (!node) throw new Error(`Node not found: ${id} (available: ${Array.from(nodeMap.keys()).join(",")})`)
-      for (const dep of (node.depends_on ?? [])) {
+      for (const dep of this.getEffectiveDeps(node, implicitDeps)) {
         visit(dep)
       }
       visiting.delete(id)
