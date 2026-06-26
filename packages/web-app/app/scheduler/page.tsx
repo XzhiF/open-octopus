@@ -121,12 +121,15 @@ export default function SchedulerPage() {
 
   const handleEdit = useCallback((job: SchedulerJob) => {
     setEditingJob(job)
-    setFormOpen(true)
+    // ponytail: defer dialog open so DropdownMenu's DismissableLayer is
+    // fully removed before Dialog's layer is created — prevents the same
+    // pointerdown from being caught as "outside" and auto-closing the dialog.
+    setTimeout(() => setFormOpen(true), 0)
   }, [])
 
   const handleDeleteRequest = useCallback((job: SchedulerJob) => {
     setDeleteJobTarget(job)
-    setDeleteDialogOpen(true)
+    setTimeout(() => setDeleteDialogOpen(true), 0)
   }, [])
 
   const handleDeleteConfirm = useCallback(async () => {
