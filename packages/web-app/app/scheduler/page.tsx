@@ -67,10 +67,21 @@ export default function SchedulerPage() {
     onSessionCreated: (id) => setActiveSessionId(id),
   })
 
-  // Auto-select first session when sessions load and none is active
+  // Auto-select first session when sessions load and none is active.
+  // Also clears stale activeSessionId if the session no longer exists.
   const initialSelectDone = useRef(false)
   useEffect(() => {
-    if (!activeSessionId && !initialSelectDone.current && chat.sessions.length > 0) {
+    if (chat.sessions.length === 0) return
+
+    // Validate activeSessionId against loaded sessions
+    if (activeSessionId && !chat.sessions.some((s) => s.id === activeSessionId)) {
+      localStorage.removeItem("octopus:scheduler:activeSession")
+      setActiveSessionId(null)
+      initialSelectDone.current = false
+      return
+    }
+
+    if (!activeSessionId && !initialSelectDone.current) {
       initialSelectDone.current = true
       const first = chat.sessions[0]
       setActiveSessionId(first.id)

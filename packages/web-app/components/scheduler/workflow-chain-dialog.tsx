@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useState, useRef } from "react"
 import {
   ArrowDown,
   ArrowUp,
@@ -18,6 +18,7 @@ import {
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
   DialogFooter,
@@ -78,6 +79,7 @@ export function WorkflowChainDialog({
   onChange,
 }: WorkflowChainDialogProps) {
   const [workflowOptions, setWorkflowOptions] = useState<WorkflowOption[]>([])
+  const workflowOptionsRef = useRef<WorkflowOption[]>([])
   const [loading, setLoading] = useState(true)
   const [editingIndex, setEditingIndex] = useState<number | null>(null)
   const [draft, setDraft] = useState<ChainStep[]>(value)
@@ -96,28 +98,50 @@ export function WorkflowChainDialog({
           inputs: w.inputs,
         }))
         setWorkflowOptions(options)
+        workflowOptionsRef.current = options
       })
-      .catch(() => setWorkflowOptions([]))
+      .catch(() => {
+        setWorkflowOptions([])
+        workflowOptionsRef.current = []
+      })
       .finally(() => setLoading(false))
   }, [open])
 
-  // Sync draft when dialog opens
+  // Sync draft when dialog opens or value changes.
+  // Uses ref for workflowOptions to avoid re-triggering when options load async.
   useEffect(() => {
     if (open) {
-      setDraft(
-        value.map((step) => ({
-          ...step,
-          _label:
-            step._label ??
-            workflowOptions.find((o) => o.value === step.workflow_ref)?.label ??
-            step.workflow_ref,
-          _inputs:
-            step._inputs ??
-            workflowOptions.find((o) => o.value === step.workflow_ref)?.inputs,
-        }))
-      )
+      const opts = workflowOptionsRef.current
+      const newDraft = value.map((step) => ({
+        ...step,
+        _label:
+          step._label ??
+          opts.find((o) => o.value === step.workflow_ref)?.label ??
+          step.workflow_ref,
+        _inputs:
+          step._inputs ??
+          opts.find((o) => o.value === step.workflow_ref)?.inputs,
+      }))
+      setDraft(newDraft)
     }
-  }, [open, value, workflowOptions])
+  }, [open, value])
+
+  // When workflowOptions finish loading, patch labels/inputs on existing draft items
+  useEffect(() => {
+    if (!open || workflowOptions.length === 0) return
+    setDraft((prev) =>
+      prev.map((step) => ({
+        ...step,
+        _label:
+          step._label ??
+          workflowOptions.find((o) => o.value === step.workflow_ref)?.label ??
+          step.workflow_ref,
+        _inputs:
+          step._inputs ??
+          workflowOptions.find((o) => o.value === step.workflow_ref)?.inputs,
+      }))
+    )
+  }, [open, workflowOptions])
 
   const addStep = (option: WorkflowOption) => {
     const inputValues: Record<string, string> = {}
@@ -172,6 +196,9 @@ export function WorkflowChainDialog({
       <DialogContent className="max-h-[85vh] max-w-[720px] overflow-hidden flex flex-col">
         <DialogHeader>
           <DialogTitle>配置工作流链</DialogTitle>
+          <DialogDescription>
+            从左侧选择工作流添加到执行链中，并可配置每个步骤的输入参数
+          </DialogDescription>
         </DialogHeader>
 
         <div className="flex flex-1 gap-4 overflow-hidden min-h-0">
@@ -350,10 +377,10 @@ export function WorkflowChainDialog({
         </div>
 
         <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
+          <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
             取消
           </Button>
-          <Button onClick={handleConfirm} disabled={draft.length === 0}>
+          <Button type="button" onClick={handleConfirm} disabled={draft.length === 0}>
             确认 ({draft.length} 步)
           </Button>
         </DialogFooter>
@@ -375,7 +402,7 @@ export function ChainSummary({ chain, onOpen }: ChainSummaryProps) {
       {chain.length === 0 ? (
         <div className="flex items-center justify-between">
           <span className="text-sm text-muted-foreground">未配置工作流链</span>
-          <Button variant="outline" size="sm" onClick={onOpen}>
+          <Button type="button" variant="outline" size="sm" onClick={onOpen}>
             配置 →
           </Button>
         </div>
@@ -397,7 +424,7 @@ export function ChainSummary({ chain, onOpen }: ChainSummaryProps) {
             <span className="text-xs text-muted-foreground">
               共 {chain.length} 步
             </span>
-            <Button variant="outline" size="sm" onClick={onOpen}>
+            <Button type="button" variant="outline" size="sm" onClick={onOpen}>
               配置 →
             </Button>
           </div>

@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, type RefObject } from "react"
 import dynamic from "next/dynamic"
 import { configureMonaco } from "@/lib/monaco-config"
 import type { Control } from "react-hook-form"
@@ -65,6 +65,7 @@ interface WorkflowScheduleFormProps {
   configValue: string
   onConfigChange: (val: string) => void
   configError?: string | null
+  visualErrorRef?: RefObject<HTMLDivElement | null>
 }
 
 export function WorkflowScheduleForm({
@@ -84,6 +85,7 @@ export function WorkflowScheduleForm({
   configValue,
   onConfigChange,
   configError,
+  visualErrorRef,
 }: WorkflowScheduleFormProps) {
   const [chainDialogOpen, setChainDialogOpen] = useState(false)
   const [orgs, setOrgs] = useState<Array<{ name: string }>>([])
@@ -168,7 +170,7 @@ export function WorkflowScheduleForm({
         /* ── Visual Mode ── */
         <>
           {configError && (
-            <div className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+            <div ref={visualErrorRef} className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">
               {configError}
             </div>
           )}

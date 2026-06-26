@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useCallback } from "react"
+import { useState, useEffect, useCallback, useRef } from "react"
 import { useForm } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
 import { z } from "zod"
@@ -113,6 +113,7 @@ export function SchedulerForm({
   const [branchPrefix, setBranchPrefix] = useState("")
   const [jsonMode, setJsonMode] = useState(false)
   const [visualError, setVisualError] = useState<string | null>(null)
+  const visualErrorRef = useRef<HTMLDivElement>(null)
 
   // Clear visual error when user modifies any required field
   useEffect(() => { setVisualError(null) }, [projects, chain, branchPrefix])
@@ -132,6 +133,7 @@ export function SchedulerForm({
   const form = useForm<FormValues>({
     resolver: zodResolver(jobType === "workflow" ? workflowSchema : agentSchema),
     defaultValues: DEFAULT_VALUES,
+    shouldFocusError: true,
   })
 
   const { formState, reset, watch } = form
@@ -157,7 +159,7 @@ export function SchedulerForm({
             config.workspace_spec.projects.map((p) => ({
               name: p.name,
               source_path: p.source_path ?? "",
-              group: "",
+              group: p.group || config.workspace_spec?.org || "",
             }))
           )
           setBranchPrefix(config.workspace_spec.branch_prefix ?? "")
@@ -203,6 +205,7 @@ export function SchedulerForm({
         projects: projects.map((p) => ({
           name: p.name,
           source_path: p.source_path,
+          group: p.group,
         })),
       },
       workflow_chain: chain.map((step) => ({
@@ -219,14 +222,17 @@ export function SchedulerForm({
       if (jobType === "workflow" && !jsonMode) {
         if (projects.length === 0) {
           setVisualError("请至少添加一个项目")
+          setTimeout(() => visualErrorRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 50)
           return
         }
         if (!branchPrefix.trim()) {
           setVisualError("请填写分支前缀")
+          setTimeout(() => visualErrorRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 50)
           return
         }
         if (chain.length === 0) {
           setVisualError("请至少添加一个工作流步骤")
+          setTimeout(() => visualErrorRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 50)
           return
         }
         setVisualError(null)
@@ -312,6 +318,7 @@ export function SchedulerForm({
                     form.setValue("workflow_config_json", v, { shouldDirty: true })
                   }
                   configError={visualError || configError}
+                  visualErrorRef={visualErrorRef}
                 />
               )}
 

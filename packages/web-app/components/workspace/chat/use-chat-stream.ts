@@ -293,8 +293,11 @@ export function useChatStream(
     ?? (workspaceId ? `/api/workspaces/${workspaceId}/chat` : '/api/chat/global')
   const [messagesBySession, setMessagesBySession] = useState<Record<string, ChatMessage[]>>({})
   const [sessions, setSessions] = useState<ChatSession[]>([])
+  const [sessionsLoaded, setSessionsLoaded] = useState(false)
   const sessionsRef = useRef<ChatSession[]>([])
   useEffect(() => { sessionsRef.current = sessions }, [sessions])
+  const activeSessionIdRef = useRef<string | null>(activeSessionId)
+  useEffect(() => { activeSessionIdRef.current = activeSessionId }, [activeSessionId])
   const [streamingSessionId, setStreamingSessionId] = useState<string | null>(null)
   const [status, setStatus] = useState<'compacting' | 'requesting' | null>(null)
   const [streamMeta, setStreamMeta] = useState<Record<string, StreamMeta>>({})
@@ -341,8 +344,10 @@ export function useChatStream(
       try {
         const data = JSON.parse(e.data)
         const updatedSessionId = data?.sessionId
-        // Skip reload for currently streaming session — chunks are already delivering
+        // Skip reload for currently streaming or active session —
+        // chunks are already delivering messages via SSE.
         if (updatedSessionId === streamingSessionIdRef.current) return
+        if (updatedSessionId === activeSessionIdRef.current) return
         loadSessionMessages(updatedSessionId)
       } catch {
         if (activeSessionId && !streamingSessionIdRef.current) {
@@ -369,7 +374,9 @@ export function useChatStream(
       const data = await res.json()
       setSessions(Array.isArray(data) ? data : [])
     } catch {
-      // silent fail
+      setSessions([])
+    } finally {
+      setSessionsLoaded(true)
     }
   }, [workspaceId])
 
@@ -432,10 +439,13 @@ export function useChatStream(
   }, [loadSessions])
 
   useEffect(() => {
-    if (activeSessionId) {
-      loadSessionMessages(activeSessionId)
+    if (activeSessionId && sessionsLoaded) {
+      // Only load messages if the session actually exists
+      if (sessions.some(s => s.id === activeSessionId)) {
+        loadSessionMessages(activeSessionId)
+      }
     }
-  }, [activeSessionId, loadSessionMessages])
+  }, [activeSessionId, sessionsLoaded, sessions, loadSessionMessages])
 
   const applyChunk = useCallback((chunk: Record<string, unknown>) => {
     const type = chunk.type as string | undefined

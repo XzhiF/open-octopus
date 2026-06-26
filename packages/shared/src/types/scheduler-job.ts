@@ -18,6 +18,7 @@ export const projectSpecSchema = z.object({
   name: z.string().min(1).max(100),
   // ponytail: empty source_path resolved server-side from repos/index.md
   source_path: z.string().default(""),
+  group: z.string().default(""),
 })
 
 export const workspaceSpecSchema = z.object({

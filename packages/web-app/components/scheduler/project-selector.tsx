@@ -163,7 +163,7 @@ export function ProjectSelector({
           <div className="flex flex-wrap gap-1.5">
             {value.map((proj, i) => (
               <Badge
-                key={`${proj.group}/${proj.name}`}
+                key={i}
                 variant="secondary"
                 className="gap-1 pr-1"
               >

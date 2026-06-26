@@ -11,3 +11,5 @@ allowBuilds:
   esbuild: true
   sharp: true
   unrs-resolver: true
+overrides:
+  octopus: link:packages/cli
