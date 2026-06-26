@@ -406,7 +406,7 @@ export class AgentExecutor implements NodeExecutor {
         const resolved = evaluateExpression(rhs, this.pool)
         this.pool.set(varKey, resolved)
         outputs[key] = resolved
-        return
+        continue
       }
 
       if (expr === "$last_output") {
