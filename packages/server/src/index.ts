@@ -26,6 +26,7 @@ import builtInWorkflowRoutes from "./routes/builtin-workflow"
 import { createAnalyticsLogRoutes, createAnalyticsRoutes } from "./routes/analytics"
 import { eventRoutes } from "./routes/events"
 import { createPipelineRoutes } from "./routes/pipeline"
+import { createArchiveRoutes } from "./routes/archive"
 import chainRoutes from "./routes/chain-routes"
 import scheduleRoutes, { setScheduleService } from "./routes/schedule"
 import { createSchedulerRoutes } from "./routes/scheduler"
@@ -299,6 +300,7 @@ app.route("/api/agent", createAgentRoutes({
   schedulerService: schedSvc,
 }))
 app.route("/api/workflows/built-in", builtInWorkflowRoutes)
+app.route("/api/archive", createArchiveRoutes(d.archive, d.experience))
 
 // Set scheduler on agent service
 try { getAgentService().setSchedulerService(schedSvc) } catch {}
