@@ -359,6 +359,52 @@ describe("Parallel execution", () => {
     expect(result.nodeResults["target"]).toBeDefined()
   })
 
+  it("condition branch targets without depends_on get implicit deps (bug-hunter pattern)", async () => {
+    vi.mocked(BashExecutor).mockImplementation((node: any) => ({
+      execute: vi.fn().mockResolvedValue(makeCompletedResult()),
+    } as any))
+    vi.mocked(ConditionExecutor).mockImplementation((node: any) => ({
+      execute: vi.fn().mockResolvedValue(makeCompletedResult({
+        jumpTo: "no-results",
+      })),
+    } as any))
+
+    // Reproduces the bug-hunter workflow pattern where condition targets
+    // (no-results, error-handler) don't declare depends_on.
+    // Before the fix: no-results at Level 0, runs before scan-gate.
+    // After the fix: no-results after scan-gate.
+    const workflow: WorkflowDef = {
+      apiVersion: "octopus/v1",
+      kind: "Workflow",
+      name: "condition-implicit-deps",
+      execution_mode: "auto",
+      nodes: [
+        { id: "setup", type: "bash", bash: "echo setup" },
+        { id: "scan", type: "bash", bash: "echo scan", depends_on: ["setup"] },
+        {
+          id: "scan-gate", type: "condition", depends_on: ["scan"],
+          cases: [
+            { when: '$vars.found == "true"', then: "process" },
+            { when: "default", then: "no-results" },
+          ],
+        },
+        { id: "no-results", type: "bash", bash: "echo no-results" },
+        { id: "process", type: "bash", bash: "echo process", depends_on: ["scan-gate"] },
+      ],
+    }
+
+    const engine = new WorkflowEngine(workflow, { "claude": mockProvider }, "/tmp/test")
+    const result = await engine.run()
+
+    expect(result.status).toBe("completed")
+    // scan-gate must have run before no-results
+    expect(result.nodeResults["scan-gate"]).toBeDefined()
+    expect(result.nodeResults["no-results"]).toBeDefined()
+    // setup and scan must have completed before no-results
+    expect(result.nodeResults["setup"].status).toBe("completed")
+    expect(result.nodeResults["scan"].status).toBe("completed")
+  })
+
   // ── DAG mixed structure ──
 
   it("multi-layer fan-out + fan-in computes correct levels", async () => {
