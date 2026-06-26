@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react"
 import dynamic from "next/dynamic"
-import "@/lib/monaco-config"
+import { configureMonaco } from "@/lib/monaco-config"
 import type { Control } from "react-hook-form"
 import {
   FormField,
@@ -90,6 +90,11 @@ export function WorkflowScheduleForm({
 
   useEffect(() => {
     listOrgs().then((data) => setOrgs(data.map((o) => ({ name: o.name })))).catch(() => {})
+  }, [])
+
+  // Configure Monaco editor on client side
+  useEffect(() => {
+    configureMonaco()
   }, [])
 
   return (

@@ -1,7 +1,7 @@
 "use client"
 
 import { useRef, useCallback, useEffect } from "react"
-import "@/lib/monaco-config"
+import { configureMonaco } from "@/lib/monaco-config"
 import Editor, { type OnMount } from "@monaco-editor/react"
 
 interface WorkflowYamlEditorProps {
@@ -14,6 +14,11 @@ export function WorkflowYamlEditor({ value, onChange, onSave }: WorkflowYamlEdit
   const editorRef = useRef<unknown>(null)
   const onSaveRef = useRef(onSave)
   onSaveRef.current = onSave
+
+  // Configure Monaco on client side
+  useEffect(() => {
+    configureMonaco()
+  }, [])
 
   // Global Cmd+S / Ctrl+S — capture phase prevents the browser's native
   // "Save Page" dialog from stealing the event on macOS.

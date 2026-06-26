@@ -1,8 +1,9 @@
 "use client"
 
+import { useEffect } from "react"
 import type { Control } from "react-hook-form"
 import dynamic from "next/dynamic"
-import "@/lib/monaco-config"
+import { configureMonaco } from "@/lib/monaco-config"
 import {
   FormField,
   FormItem,
@@ -67,6 +68,11 @@ export function WorkflowFields({
   configValue,
   onConfigChange,
 }: WorkflowFieldsProps) {
+  // Configure Monaco on client side
+  useEffect(() => {
+    configureMonaco()
+  }, [])
+
   return (
     <>
       <FormField

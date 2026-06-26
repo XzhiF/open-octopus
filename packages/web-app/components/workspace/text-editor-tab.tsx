@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react"
 import * as Y from "yjs"
-import "@/lib/monaco-config"
+import { configureMonaco } from "@/lib/monaco-config"
 import Editor, { type OnMount } from "@monaco-editor/react"
 import type { editor } from "monaco-editor"
 import { getLanguageFromExtension } from "@/lib/yaml-utils"
@@ -64,6 +64,11 @@ export function TextEditorTab({
   useEffect(() => {
     setContent(initialContent)
   }, [initialContent])
+
+  // Configure Monaco editor on client side
+  useEffect(() => {
+    configureMonaco()
+  }, [])
 
   useEffect(() => {
     if (editorRef.current && bindingRef.current && ytextRef.current) {

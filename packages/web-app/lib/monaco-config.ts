@@ -1,11 +1,18 @@
-import { loader } from "@monaco-editor/react"
+// Monaco editor configuration - must only be called on client side
+let configured = false
 
-// ponytail: opaque import — Turbopack can't resolve monaco-editor through
-// pnpm symlinks at build time (Next 16 + Turbopack quirk).
-// new Function hides the import() from static analysis; identical at runtime.
-if (typeof window !== "undefined") {
-  const loadMonaco = new Function('return import("monaco-editor")') as () => Promise<typeof import("monaco-editor")>
-  loadMonaco().then((monaco) => {
+export function configureMonaco() {
+  if (configured || typeof window === "undefined") return
+  configured = true
+
+  // Dynamic imports - bundler will resolve these at build time
+  Promise.all([
+    import("@monaco-editor/react").then(m => m.loader),
+    import("monaco-editor"),
+  ]).then(([loader, monaco]) => {
     loader.config({ monaco })
+  }).catch(error => {
+    console.warn("Failed to configure Monaco:", error)
+    configured = false
   })
 }

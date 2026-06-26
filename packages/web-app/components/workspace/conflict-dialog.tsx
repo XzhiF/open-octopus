@@ -1,7 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useRef, useState } from "react"
-import "@/lib/monaco-config"
+import { configureMonaco } from "@/lib/monaco-config"
 import { DiffEditor } from "@monaco-editor/react"
 import Editor, { type OnMount } from "@monaco-editor/react"
 import type { editor } from "monaco-editor"
@@ -66,6 +66,11 @@ export function ConflictDialog({
       setMergeContent(buildConflictMarkers(myContent, externalContent))
     }
   }, [open, myContent, externalContent])
+
+  // Configure Monaco editor on client side
+  useEffect(() => {
+    configureMonaco()
+  }, [])
 
   const handleMergeMount: OnMount = useCallback((editor) => {
     mergeEditorRef.current = editor
