@@ -1,10 +1,11 @@
 import { loader } from "@monaco-editor/react"
 
-// Use locally installed monaco-editor instead of CDN (jsdelivr).
-// CDN is often unreachable behind firewalls/proxies, causing "Monaco initialization: error: {}"
-// Guard against SSR — monaco-editor requires window
+// ponytail: opaque import — Turbopack can't resolve monaco-editor through
+// pnpm symlinks at build time (Next 16 + Turbopack quirk).
+// new Function hides the import() from static analysis; identical at runtime.
 if (typeof window !== "undefined") {
-  import("monaco-editor").then((monaco) => {
+  const loadMonaco = new Function('return import("monaco-editor")') as () => Promise<typeof import("monaco-editor")>
+  loadMonaco().then((monaco) => {
     loader.config({ monaco })
   })
 }
