@@ -705,13 +705,13 @@ export class ExecutionLifecycle {
     const exec = this.dao.findById(executionId)
     if (!exec) return { success: false, error: "执行不存在" }
 
-    // pending_resume → delegate to autoResume (crash recovery path)
+    // pending_resume → triage interrupted nodes to paused, then fall through to normal resume
     if (exec.status === "pending_resume") {
-      await this.autoResume(executionId)
-      return { success: true }
+      this.dao.updateNodeExecutionsByStatus(executionId, "paused", ["running", "pending", "failed"])
+      this.dao.updateExecution(executionId, { status: "paused" })
     }
 
-    if (exec.status !== "paused") return { success: false, error: "执行未处于暂停状态" }
+    if (exec.status !== "paused" && exec.status !== "pending_resume") return { success: false, error: "执行未处于暂停状态" }
 
     const pausedNodes = this.dao.findRunningNodeExecutionsByStatus(executionId, ["paused"])
     const pausedNode = pausedNodes.length > 0 ? pausedNodes[0] : null
@@ -1339,12 +1339,16 @@ export class ExecutionLifecycle {
 
     const completedNodes = this.dao.findCompletedNodeExecutions(exec.id)
     for (const node of completedNodes) {
+      // Restore skippedByCondition: skipped nodes with execute_when were intentional skips,
+      // downstream dependents should NOT cascade-skip from them.
+      const nodeDef = node.status === "skipped" ? this.findNodeDef(wf.parsed.nodes, node.node_id) : null
       engine.setNodeResult(node.node_id, {
         status: node.status,
         outputs: JSON.parse(node.outputs || "{}"),
         durationMs: node.duration ?? 0,
         logLines: [], error: node.error ?? undefined,
         sessionId: node.session_id ?? undefined,
+        skippedByCondition: !!(nodeDef?.execute_when),
       })
     }
 
