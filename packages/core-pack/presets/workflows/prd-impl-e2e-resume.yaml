@@ -1219,7 +1219,7 @@ QA_EOF
           ## 任务
 
           ### 1. 确定验证范围
-          从 fix-progress.json 提取所有 `status == "passed"` 的用例。
+          从 e2e-fix-progress.json 提取所有 `status == "passed"` 的用例。
           这些是 fix-round 声称已修复的用例，你需要逐一验真。
 
           ### 2. 逐用例验真
@@ -1238,8 +1238,8 @@ QA_EOF
           - 无上述触发 → `verified`
           - 有任一触发 → `fake_pass`，写 `must_fix` 指导
 
-          ### 3. 写入批注文件（覆盖）
-          用 Write 工具写入 `$vars.output_dir/e2e-reality-notes.json`:
+          ### 3. 写入发现文件（覆盖）
+          用 Write 工具写入 `$vars.output_dir/e2e-reality-findings.json`:
           ```json
           {
             "round": $iteration,
@@ -1251,30 +1251,79 @@ QA_EOF
           }
           ```
           - 每个 passed 用例必须有 verdict
-          - fix-progress 中 `failed` 的用例不写入
-          - ⛔ 不读取上轮 e2e-reality-notes.json — 每轮独立评估
+          - e2e-fix-progress.json 中 `failed` 的用例不写入
+          - ⛔ 不读取 e2e-reality-notes.json — 每轮独立评估，合并由 merge 节点负责
 
-          ### 4. 发送通知
+          ## 输出
+          {"vars_update":{"conclusion":"第 $iteration 轮裁判发现: <verified N / fake_pass M>"}}
+
+          ## 规则
+          - 不修改代码，不修改 e2e-fix-progress.json
+          - 只读 e2e-fix-progress.json 和测试源码
+          - global_notes 要具体：指出系统性问题（如"本轮多个用例用 mock 绕过"）
+          - must_fix 要可执行：指明改哪个文件、用什么方式
+          - ⛔ 每轮独立，不读上轮批注，防止自我确认偏差
+
+      - id: e2e-reality-merge
+        type: agent
+        timeout: 600
+        context: new
+        prompt: |
+          你是裁判批注合并器。将本轮发现与累积批注合并，输出确定性结果。
+
+          ## 输入
+          - 本轮发现: `$vars.output_dir/e2e-reality-findings.json`（e2e-reality-check 产出）
+          - 累积批注: `$vars.output_dir/e2e-reality-notes.json`（上轮合并结果，可能不存在）
+          - 进度文件: `$vars.output_dir/e2e-fix-progress.json`（当前 case 状态）
+
+          ## 任务
+
+          ### 1. 读取文件
+          用 Read 工具读取三个文件。e2e-reality-notes.json 不存在时视为空 `{cases:{}}`。
+
+          ### 2. 合并规则（确定性，不靠 LLM 判断）
+          对每个 case 按以下优先级决策：
+
+          | 累积 notes | 本轮 findings | fix-progress | → 结果 |
+          |-----------|--------------|-------------|--------|
+          | verified  | 未提及        | passed      | verified（保留） |
+          | verified  | fake_pass    | passed      | fake_pass（本轮发现覆盖） |
+          | —         | verified     | passed      | verified（新增） |
+          | —         | fake_pass    | passed      | fake_pass（新增） |
+          | fake_pass | 未提及        | failed      | 丢弃（fix-round 还没修好） |
+          | fake_pass | 未提及        | passed      | 保留 fake_pass（fix-round 声称修好但本轮未验） |
+
+          `global_notes`: 取本轮 findings 的 global_notes（覆盖上轮）。
+
+          ### 3. 写入累积批注
+          用 Write 工具写入 `$vars.output_dir/e2e-reality-notes.json`:
+          ```json
+          {
+            "round": $iteration,
+            "global_notes": "<本轮 findings 的 global_notes>",
+            "cases": {
+              "TC-001": { "verdict": "verified" },
+              "TC-002": { "verdict": "verified" },
+              "TC-023": { "verdict": "fake_pass", "must_fix": "..." }
+            }
+          }
+          ```
+
+          ### 4. 统计并发送通知
           ```bash
           FAKE_COUNT=$(grep -c '"fake_pass"' "$vars.output_dir/e2e-reality-notes.json" 2>/dev/null || echo 0)
           VERIFIED_COUNT=$(grep -c '"verified"' "$vars.output_dir/e2e-reality-notes.json" 2>/dev/null || echo 0)
+          TOTAL=$(grep -c '"verdict"' "$vars.output_dir/e2e-reality-notes.json" 2>/dev/null || echo 0)
 
           if [ "$FAKE_COUNT" -gt 0 ]; then
             octopus notify --ignore-failure \
-              --title "⚠️ $vars.display_name — [修复 $iteration] 裁判: $FAKE_COUNT 个假跑" \
-              --body "verified: $VERIFIED_COUNT | fake_pass: $FAKE_COUNT"
+              --title "⚠️ $vars.display_name — [修复 $iteration] 合并: $FAKE_COUNT 个假跑 / $VERIFIED_COUNT 已验证" \
+              --body "累积: verified=$VERIFIED_COUNT fake_pass=$FAKE_COUNT total=$TOTAL"
           fi
           ```
 
           ## 输出
-          {"vars_update":{"e2e_reality_issues":"<fake_pass 数量>","e2e_reality_verified":"<verified 数量>","conclusion":"第 $iteration 轮裁判: verified N, fake_pass M"}}
-
-          ## 规则
-          - 不修改代码，不修改 fix-progress.json
-          - 只读 fix-progress.json 和测试源码
-          - global_notes 要具体：指出系统性问题（如"本轮多个用例用 mock 绕过"）
-          - must_fix 要可执行：指明改哪个文件、用什么方式
-          - ⛔ 每轮独立，不读上轮批注，防止自我确认偏差
+          {"vars_update":{"e2e_reality_issues":"<合并后 fake_pass 总数>","e2e_reality_verified":"<合并后 verified 总数>","conclusion":"第 $iteration 轮合并: verified=$VERIFIED_COUNT fake_pass=$FAKE_COUNT"}}
 
   # ═══════════════════════════════════════════════════════════════
   # Phase 5.5: E2E Teardown — 清理运行时产物 + 最终判定（与 prd-impl.yaml 同步）
