@@ -170,6 +170,10 @@ variables:
   e2e_p1_passed: "0"
   e2e_fix_all_passed: "false"
 
+  # ── Reality Check ──
+  e2e_reality_issues: "0"
+  e2e_reality_verified: "0"
+
   # ── E2E 完整度 R3 卡死检测 ──
   completeness_score_n1: "-:-"
   completeness_score_n2: "-:-"
@@ -356,7 +360,7 @@ hooks:
 
     - id: notify-e2e-pass
       type: notify
-      nodes: [e2e-reality-check]
+      nodes: [e2e-teardown]
       channel: default
       condition: '$vars.e2e_passed == "true"'
       template:
@@ -366,7 +370,7 @@ hooks:
 
     - id: notify-e2e-fail
       type: notify
-      nodes: [e2e-reality-check]
+      nodes: [e2e-teardown]
       channel: default
       condition: '$vars.e2e_passed == "false"'
       template:
@@ -2035,7 +2039,7 @@ QA_EOF
     depends_on: [e2e-completeness-loop]
     execute_when: '$inputs.run_e2e == "true"'
     max_iterations: 30
-    break_when: '$vars.e2e_fix_all_passed == "true" || $iteration >= $inputs.e2e_fix_rounds'
+    break_when: '($vars.e2e_reality_issues == "0" && $vars.e2e_fix_all_passed == "true") || $iteration >= $inputs.e2e_fix_rounds'
     nodes:
       - id: e2e-fix-round
         type: agent
@@ -2095,6 +2099,20 @@ QA_EOF
           - 项目目录: $vars.e2e_octopus_dir
           - ⛔ 保护端口: $inputs.protected_ports
           - ⚠️ P0（核心）和 P1（增强）都存在，两者都必须 100% 通过
+
+          ## 裁判批注（最高优先级，最先读取）
+          文件路径: `$vars.output_dir/e2e-reality-notes.json`
+
+          ### 每轮开始时（先读批注再做其他）
+          1. 尝试读取批注文件（Read 工具），文件不存在则跳过
+          2. 如果存在：
+             - 提取所有 `verdict == "fake_pass"` 的用例及其 `must_fix` 内容
+             - 读取 `global_notes`（如有）— 本轮所有修复必须遵守
+          3. **修复优先级**:
+             - 🔴 最高：`fake_pass` 用例 → 必须按 `must_fix` 要求重做，禁止用相同方式再次提交
+             - 🟡 次高：`failed` 用例 → 正常修复
+             - 🔵 普通：`pending` 用例 → 正常测试
+          4. 如果 `global_notes` 指出系统性问题（如"多个用例用 mock 绕过"），本轮所有修复都必须避免该模式
 
           ## 进度文件（⚠️ 必须使用，支持暂停续跑和失败重试）
           文件路径: `$vars.output_dir/e2e-fix-progress.json`
@@ -2228,77 +2246,114 @@ QA_EOF
           ## 输出
           {"vars_update":{"e2e_p0_passed":"<实际通过数>","e2e_p1_passed":"<实际通过数>","e2e_skipped":"0","e2e_excluded":"0","e2e_fix_all_passed":"<true/false>","e2e_fix_rounds":"$iteration","conclusion":"第 $iteration 轮修复: <摘要>"}}
 
-  - id: e2e-reality-check
+      - id: e2e-reality-check
+        type: agent
+        timeout: 1800
+        context: new
+        agents:
+          reality-checker:
+            description: "反假跑裁判 — 默认 NEEDS WORK，要求压倒性证据"
+            agent_file: ".claude/agents/testing-reality-checker.md"
+            model: opus[1m]
+            tools: ["Bash", "Read", "Grep"]
+        prompt: |
+          你是 E2E 反假跑裁判。这是第 $iteration 轮验证。
+          每轮完全独立评估，不读取上轮批注，不依赖历史结论。
+
+          $vars.workspace_rules
+
+          $inputs.e2e_project_rules
+
+          ## 输入
+          - 进度文件: $vars.output_dir/e2e-fix-progress.json
+          - E2E 用例: $vars.e2e_cases_file
+          - Server: http://localhost:$vars.e2e_server_port
+          - Web: http://localhost:$vars.e2e_web_port
+
+          ## 任务
+
+          ### 1. 确定验证范围
+          从 fix-progress.json 提取所有 `status == "passed"` 的用例。
+          这些是 fix-round 声称已修复的用例，你需要逐一验真。
+
+          ### 2. 逐用例验真
+          委派 **reality-checker** 对每个 passed 用例检查：
+
+          **自动 fake_pass 触发（任一即判定）**:
+          - 测试代码使用 mock/stub 绕过真实调用
+          - 断言检查的是常量而非运行时值
+          - HTTP 测试无实际响应文本证据
+          - UI 测试无截图证据
+          - 测试 duration < 1 秒（空跑）
+          - Agent 0 token 使用
+          - 修复文件与测试文件无关（改了 A 但测 B）
+
+          **判定**:
+          - 无上述触发 → `verified`
+          - 有任一触发 → `fake_pass`，写 `must_fix` 指导
+
+          ### 3. 写入批注文件（覆盖）
+          用 Write 工具写入 `$vars.output_dir/e2e-reality-notes.json`:
+          ```json
+          {
+            "round": $iteration,
+            "global_notes": "<本轮发现的系统性问题，给下轮 fix-round 的总体指导>",
+            "cases": {
+              "TC-001": { "verdict": "verified" },
+              "TC-023": { "verdict": "fake_pass", "must_fix": "<具体指导>" }
+            }
+          }
+          ```
+          - 每个 passed 用例必须有 verdict
+          - fix-progress 中 `failed` 的用例不写入
+          - ⛔ 不读取上轮 e2e-reality-notes.json — 每轮独立评估
+
+          ### 4. 发送通知
+          ```bash
+          FAKE_COUNT=$(grep -c '"fake_pass"' "$vars.output_dir/e2e-reality-notes.json" 2>/dev/null || echo 0)
+          VERIFIED_COUNT=$(grep -c '"verified"' "$vars.output_dir/e2e-reality-notes.json" 2>/dev/null || echo 0)
+
+          if [ "$FAKE_COUNT" -gt 0 ]; then
+            octopus notify --ignore-failure \
+              --title "⚠️ $vars.display_name — [修复 $iteration] 裁判: $FAKE_COUNT 个假跑" \
+              --body "verified: $VERIFIED_COUNT | fake_pass: $FAKE_COUNT"
+          fi
+          ```
+
+          ## 输出
+          {"vars_update":{"e2e_reality_issues":"<fake_pass 数量>","e2e_reality_verified":"<verified 数量>","conclusion":"第 $iteration 轮裁判: verified N, fake_pass M"}}
+
+          ## 规则
+          - 不修改代码，不修改 fix-progress.json
+          - 只读 fix-progress.json 和测试源码
+          - global_notes 要具体：指出系统性问题（如"本轮多个用例用 mock 绕过"）
+          - must_fix 要可执行：指明改哪个文件、用什么方式
+          - ⛔ 每轮独立，不读上轮批注，防止自我确认偏差
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 5.5: E2E Teardown — 清理运行时产物 + 最终判定（不阻断）
+  # ═══════════════════════════════════════════════════════════════
+  - id: e2e-teardown
     type: agent
     depends_on: [e2e-fix-loop]
     execute_when: '$inputs.run_e2e == "true"'
-    timeout: 1800
-    agents:
-      reality-checker:
-        description: "现实检验者 — 默认 NEEDS WORK，要求压倒性证据才判定通过"
-        agent_file: ".claude/agents/testing-reality-checker.md"
-        prompt: |
-          ## 验收任务
-          基于 evidence-collector 的证据判定测试是否真实通过。
-
-          默认判定: NEEDS WORK
-          自动失败触发:
-            - "全部通过" 但无截图/HTTP 响应证据
-            - API 测试无实际 HTTP 响应文本
-            - CLI 测试无 exit code
-            - Workflow duration < 5 秒
-            - Agent 节点 0 token 使用
-
-          输出判定: PASSED / NEEDS WORK / FAILED
-        model: opus[1m]
-        tools: ["Bash", "Read", "Grep"]
+    timeout: 600
     prompt: |
-      E2E 最终验证与收尾。
+      E2E 收尾：最终判定 + 环境清理。**不阻断**，单项失败也继续。
 
       $vars.workspace_rules
 
-      $inputs.e2e_project_rules
-
-      ## 结果汇总
-      - P0: $vars.e2e_p0_passed/$vars.e2e_p0_count
-      - P1: $vars.e2e_p1_passed/$vars.e2e_p1_count
-      - 完整度: $vars.completeness_score% (必需: $vars.completeness_must_have_score%)
-      - 退出码: $vars.completeness_exit_code
-      - 修复轮数: $vars.e2e_fix_rounds
-      - 完整度轮数: $vars.completeness_rounds
-
-      ## 任务
-
-      ### 1. 反假跑验证
-      委派 **reality-checker** 验证证据真实性。
-      默认判定 NEEDS WORK，需压倒性证据才 PASSED。
-
-      ### 2. 最终判定
+      ## 1. 最终判定
       ```
-      e2e_passed = (P0 == P0_TOTAL) && (P1 == P1_TOTAL)
-                   && (completeness_passed == true)
-                   && (reality_checker == PASSED)
+      e2e_passed = (e2e_fix_all_passed == "true")
+                   && (e2e_reality_issues == "0")
+                   && (completeness_passed == "true")
       ```
-      ⚠️ **严格 100%** — P0 和 P1 用例都必须实际执行并断言通过。
-      ⛔ **禁止任何形式的排除/跳过/N/A** — 任何非 `passed` 状态的用例都使 e2e_passed 为 false。
-      P0 和 P1 都必须 100% 通过，不存在 excluded，不存在 skipped。
+      ⛔ 三个条件必须全部满足。任一不满足 → e2e_passed = "false"。
 
-      ### 3. 环境处理
+      ## 2. 发送最终通知
       ```bash
-      if [ "$e2e_passed" = "true" ]; then
-        kill $vars.e2e_dev_pid 2>/dev/null
-        agent-browser --session e2e close 2>/dev/null
-        echo "✅ 测试通过，环境已清理"
-      else
-        echo "=== 测试未通过，环境已保留 ==="
-        echo "Server: http://localhost:$vars.e2e_server_port"
-        echo "Web: http://localhost:$vars.e2e_web_port"
-      fi
-      ```
-
-      ### 4. 发送通知
-      ```bash
-      if [ "$e2e_passed" = "true" ]; then
+      if [ "$vars.e2e_fix_all_passed" = "true" ] && [ "$vars.e2e_reality_issues" = "0" ] && [ "$vars.completeness_passed" = "true" ]; then
         RESULT_ICON="✅"
         RESULT_TEXT="E2E 质量保证通过"
       else
@@ -2307,61 +2362,34 @@ QA_EOF
       fi
 
       octopus notify --ignore-failure \
-        --title "$RESULT_ICON $vars.display_name — [Step 7] $RESULT_TEXT" \
+        --title "$RESULT_ICON $vars.display_name — $RESULT_TEXT" \
         --body "P0: $vars.e2e_p0_passed/$vars.e2e_p0_count | P1: $vars.e2e_p1_passed/$vars.e2e_p1_count
-      完整度总分: $vars.completeness_score% | 必需: $vars.completeness_must_have_score% (退出 $vars.completeness_exit_code)
-      反假跑: $VERDICT | 修复: $vars.e2e_fix_rounds 轮 | 完整度: $vars.completeness_rounds 轮"
+      完整度: $vars.completeness_score% | 必需: $vars.completeness_must_have_score%
+      裁判: verified=$vars.e2e_reality_verified fake_pass=$vars.e2e_reality_issues
+      修复: $vars.e2e_fix_rounds 轮 | 完整度: $vars.completeness_rounds 轮"
       ```
 
-      ## 输出
-
-      通过:
-      {"vars_update":{"e2e_passed":"true","e2e_worktree":"$vars.e2e_octopus_dir","e2e_port":"$vars.e2e_server_port","e2e_summary":"P0: N/N ✅ | P1: N/N ✅ | 修复: N 轮","e2e_results":"<每用例结果>","e2e_evidence_dir":"<证据目录>","completeness_score":"100","completeness_must_have_score":"100","completeness_passed":"true","completeness_exit_code":"R1","completeness_rounds":"<轮数>","completeness_missing":"","conclusion":"<2-3句话>"}}
-
-      失败:
-      {"vars_update":{"e2e_passed":"false","e2e_summary":"P0: N/N ❌ | P1: N/N ❌","e2e_failure_details":"<失败用例+根因>","e2e_fix_rounds":"<轮数>","completeness_score":"<总分>","completeness_must_have_score":"<必需功能分>","completeness_passed":"false","completeness_exit_code":"<R1/R2/R3>","completeness_rounds":"<轮数>","completeness_missing":"<缺失项>","conclusion":"<2-3句话>"}}
-
-      ## 规则
-      - 无人值守模式
-      - **视觉分析委托** — 截图统一委派 vision-analyzer 子代理
-      - 修复后必须 `pnpm build` 验证
-      - **所有 git/构建/测试命令在项目目录内执行**
-  # ═══════════════════════════════════════════════════════════════
-  # Phase 5.5: E2E Teardown — 清理运行时产物（不阻断）
-  # ═══════════════════════════════════════════════════════════════
-  - id: e2e-teardown
-    type: agent
-    depends_on: [e2e-reality-check]
-    execute_when: '$inputs.run_e2e == "true"'
-    timeout: 600
-    prompt: |
-      清理 E2E 运行时产物。**不阻断**，单项失败也继续。
-
-      $vars.workspace_rules
-
-      ## 必做（按顺序，单项失败不影响后续）
+      ## 3. 环境清理（按顺序，单项失败不影响后续）
       ```bash
-      # 1. 删除测试工作空间（yaml-workflow 类型才有）
+      # 关闭浏览器会话
+      agent-browser --session e2e close 2>/dev/null || true
+
+      # 删除测试工作空间（yaml-workflow 类型才有）
       if [ -n "$vars.e2e_workspace_id" ] && [ -n "$vars.e2e_server_port" ]; then
         curl -s -X DELETE "http://localhost:$vars.e2e_server_port/api/workspaces/$vars.e2e_workspace_id" || true
-        echo "Workspace $vars.e2e_workspace_id 已删除请求已发出"
       fi
 
-      # 2. 杀临时服务进程（仅按 PID，绝不广杀）
+      # 杀临时服务进程（仅按 PID，绝不广杀）
       if [ -n "$vars.e2e_dev_pid" ]; then
         kill $vars.e2e_dev_pid 2>/dev/null || true
-        echo "PID $vars.e2e_dev_pid 已发 SIGTERM"
       fi
 
-      # 3. 保留 $vars.e2e_sandbox_dir 用于审计（已 .gitignore，不会进 PR）
       echo "沙箱保留: $vars.e2e_sandbox_dir"
-
-      # 4. 报告（real-e2e-ui-report.md / e2e-fix-progress.json / completeness-progress.json）保留在 $vars.output_dir
       echo "报告保留: $vars.output_dir"
       ```
 
       ## 输出
-      {"vars_update":{"e2e_torn_down":"true","conclusion":"清理完成：workspace + PID + 产物隔离"}}
+      {"vars_update":{"e2e_passed":"<$vars.e2e_fix_all_passed && $vars.e2e_reality_issues==0 && $vars.completeness_passed>","e2e_summary":"P0: $vars.e2e_p0_passed/$vars.e2e_p0_count | P1: $vars.e2e_p1_passed/$vars.e2e_p1_count | 修复: $vars.e2e_fix_rounds 轮 | 裁判: verified=$vars.e2e_reality_verified fake=$vars.e2e_reality_issues","e2e_torn_down":"true","conclusion":"E2E 收尾完成: e2e_passed=<true/false>"}}
 
   # ═══════════════════════════════════════════════════════════════
   # Phase 5.6: Pre-PR Cleanup — 自动修补不阻断 PR。
@@ -2461,7 +2489,7 @@ QA_EOF
       ## 总体结论
       - 完整度总分: $vars.completeness_score / 100
       - 达标轮次: $vars.completeness_rounds / $inputs.completeness_max_rounds
-      - 质量判定: <PASSED / NEEDS WORK / FAILED 从 e2e-reality-check>
+      - 质量判定: <e2e_passed 从 e2e-teardown>
       - 推荐动作: <merge / 继续迭代 / 放弃>
 
       ## E2E 验收证据
@@ -2503,7 +2531,7 @@ QA_EOF
       - real_e2e_ui_passed == "true" 或 host_has_ui != "true"
       - scope_leak_count == "0"
       - host_contract_violations == "0"
-      - reality-check 判定 == "PASSED"
+      - e2e_reality_issues == "0" && e2e_fix_all_passed == "true"
       任一不满足 → ready_to_merge = "false"，但必须在报告里说明原因。
 
       ## 输出
