@@ -78,7 +78,7 @@ export async function fetchWorkflowStats(
   if (limit) params.set("limit", String(limit))
   if (org) params.set("org", org)
   const qs = params.toString()
-  const url = `${getServerUrl()}/api/archive/workflows${qs ? `?${qs}` : ""}`
+  const url = `${getServerUrl()}/api/archive/workflow-stats${qs ? `?${qs}` : ""}`
   const res = await apiFetch(url)
   return handleResponse<WorkflowStat[]>(res)
 }

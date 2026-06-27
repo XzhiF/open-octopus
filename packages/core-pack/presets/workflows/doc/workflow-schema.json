@@ -127,6 +127,69 @@
       "items": {
         "$ref": "#/$defs/Node"
       }
+    },
+    "chain": {
+      "type": "object",
+      "description": "Workflow chain triggers. When the current workflow completes, automatically trigger successor workflows based on success/failure conditions. Max depth: 10 layers. Max total executions: 20.",
+      "properties": {
+        "on_success": {
+          "type": "array",
+          "description": "Workflows triggered when this workflow completes successfully.",
+          "items": {
+            "type": "object",
+            "required": ["workflow"],
+            "properties": {
+              "workflow": {
+                "type": "string",
+                "description": "Name of the successor workflow to trigger."
+              },
+              "condition": {
+                "type": "string",
+                "description": "Expression evaluated against $vars. When truthy, the successor is triggered. Supports safe subset: comparison, arithmetic, logical operators."
+              },
+              "auto_trigger": {
+                "type": "boolean",
+                "default": true,
+                "description": "Whether to automatically trigger the successor. When false, the chain step is skipped."
+              },
+              "input_mapping": {
+                "type": "object",
+                "additionalProperties": { "type": "string" },
+                "description": "Variable mapping from parent to child workflow. Keys are child $inputs names, values are expressions evaluated against parent $vars."
+              }
+            }
+          }
+        },
+        "on_failure": {
+          "type": "array",
+          "description": "Workflows triggered when this workflow fails.",
+          "items": {
+            "type": "object",
+            "required": ["workflow"],
+            "properties": {
+              "workflow": {
+                "type": "string",
+                "description": "Name of the successor workflow to trigger."
+              },
+              "condition": {
+                "type": "string",
+                "description": "Expression evaluated against $vars. When truthy, the successor is triggered."
+              },
+              "auto_trigger": {
+                "type": "boolean",
+                "default": true,
+                "description": "Whether to automatically trigger the successor."
+              },
+              "input_mapping": {
+                "type": "object",
+                "additionalProperties": { "type": "string" },
+                "description": "Variable mapping from parent to child workflow."
+              }
+            }
+          }
+        }
+      },
+      "additionalProperties": false
     }
   },
   "$defs": {
@@ -683,6 +746,34 @@
           "type": "integer",
           "exclusiveMinimum": 0,
           "description": "[swarm node] Token budget for discussion context history. When exceeded, emergency truncation activates. Default: 60000 (200k tier) / 240000 (1m tier)."
+        },
+        "experience_scope": {
+          "type": "object",
+          "description": "[agent node] Scope for automatic experience injection. When defined, the engine queries the experience_index for matching historical lessons and injects them into the agent prompt. Total injected content is capped at 4000 tokens.",
+          "required": ["projects"],
+          "properties": {
+            "projects": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "Project names to search for matching experiences."
+            },
+            "packages": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "Optional package filter — only experiences matching these packages are included."
+            },
+            "types": {
+              "type": "array",
+              "items": { "type": "string", "enum": ["bug", "pattern", "cost", "failure"] },
+              "description": "Optional type filter — only experiences of these types are included."
+            },
+            "limit": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "description": "Maximum number of experience entries to inject. Default: 10."
+            }
+          },
+          "additionalProperties": false
         }
       },
       "allOf": [

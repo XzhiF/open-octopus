@@ -213,6 +213,29 @@ if (!process.env.VITEST && daos) {
       console.error("[server] Archive recovery timer error:", err)
     }
   }, 60 * 60 * 1000)
+
+  // OODA Observe timer — every 6 hours analyze execution patterns
+  const ObserveServiceClass = require('./services/observe-service').ObserveService
+  const observeSvc = new ObserveServiceClass(daos.archive, daos.experience)
+  ;(global as any).__octopus_observeService = observeSvc
+  setInterval(() => {
+    try {
+      observeSvc.analyze(7)
+    } catch (err) {
+      console.error("[server] Observe analysis failed:", err)
+    }
+  }, 6 * 60 * 60 * 1000)
+
+  // Execution memory compression — every 7 days: compress daily execution records into long-term.md
+  setInterval(() => {
+    try {
+      const { getMemoryService } = require('./services/agent/memory-service')
+      const memSvc = getMemoryService()
+      memSvc.compressExecutionRecords('', 7)
+    } catch (err) {
+      console.error("[server] Execution memory compression failed:", err)
+    }
+  }, 7 * 24 * 60 * 60 * 1000)
 }
 
 const app = new Hono()

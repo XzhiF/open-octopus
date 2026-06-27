@@ -59,6 +59,8 @@ export class DataRetentionService {
       // Experience cleanup: delete obsolete experiences older than 180 days
       if (this.lifecycleSvc) {
         this.lifecycleSvc.cleanupObsolete(180)
+        // Decay stale experiences: mark use_count=0 + >90d active experiences as obsolete (weekly effective, runs on 6h cycle with idempotent SQL)
+        this.lifecycleSvc.decayStale(90)
       }
 
       // VACUUM only when significant data was deleted (every 24h+ or manual)

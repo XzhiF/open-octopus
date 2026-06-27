@@ -23,27 +23,44 @@ export class ExperienceInjector {
     limit?: number
   }, varPool?: Record<string, string>): Promise<string> {
     try {
-      // Resolve variable references in project names
-      const resolvedProjects = scope.projects.map(p => this.resolveVars(p, varPool))
-      const types = scope.types ?? ["bug", "pattern", "cost", "failure"]
-      const limit = scope.limit ?? 10
-
-      const experiences = this.experienceDAO.getActiveByScope(resolvedProjects, types, limit)
-      if (experiences.length === 0) return ''
-
-      // Track use_count (fire-and-forget — don't block injection on increment)
-      try {
-        this.experienceDAO.incrementUseCount(experiences.map(e => e.id))
-      } catch (err) {
-        console.warn('[ExperienceInjector] incrementUseCount failed:', err)
-      }
-
-      // Format context with token budget
-      return this.formatContext(experiences)
+      // 5s timeout guard — injection must not block engine execution
+      const timeoutMs = 5000
+      const result = await Promise.race([
+        this._doInject(scope, varPool),
+        new Promise<string>((_, reject) =>
+          setTimeout(() => reject(new Error(`injectExperience timed out after ${timeoutMs}ms`)), timeoutMs)
+        ),
+      ])
+      return result
     } catch (err) {
       console.warn('[ExperienceInjector] injection failed:', err)
       return ''
     }
+  }
+
+  private async _doInject(scope: {
+    projects: string[]
+    packages?: string[]
+    types?: Array<"bug" | "pattern" | "cost" | "failure">
+    limit?: number
+  }, varPool?: Record<string, string>): Promise<string> {
+    // Resolve variable references in project names
+    const resolvedProjects = scope.projects.map(p => this.resolveVars(p, varPool))
+    const types = scope.types ?? ["bug", "pattern", "cost", "failure"]
+    const limit = scope.limit ?? 10
+
+    const experiences = this.experienceDAO.getActiveByScope(resolvedProjects, types, limit)
+    if (experiences.length === 0) return ''
+
+    // Track use_count (fire-and-forget — don't block injection on increment)
+    try {
+      this.experienceDAO.incrementUseCount(experiences.map(e => e.id))
+    } catch (err) {
+      console.warn('[ExperienceInjector] incrementUseCount failed:', err)
+    }
+
+    // Format context with token budget
+    return this.formatContext(experiences)
   }
 
   private resolveVars(template: string, varPool?: Record<string, string>): string {
@@ -73,6 +90,15 @@ export class ExperienceInjector {
     }
 
     if (sections.length === 0) return ''
+
+    // search_experience tool hint — agent can dynamically query via REST API
+    const serverUrl = process.env.OCTOPUS_SERVER_URL ?? 'http://localhost:3001'
+    sections.push(
+      `### [TOOL] search_experience\n` +
+      `需要更多历史经验时，用 Bash 调用:\n` +
+      `\`\`\`bash\ncurl -s "${serverUrl}/api/archive/lessons?q=<关键词>&type=bug,pattern&limit=10"\n\`\`\`\n` +
+      `参数: q(搜索词), type(bug/pattern/cost/failure), status(active/resolved), limit(条数)`
+    )
 
     let context = `[Experience Injection] 系统注入的历史经验:\n\n${sections.join('\n\n')}`
 

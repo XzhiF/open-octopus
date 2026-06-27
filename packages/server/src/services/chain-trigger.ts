@@ -64,6 +64,13 @@ export class ChainTriggerService {
           continue
         }
 
+        // Total execution count cap: ≤ 20 in chain
+        const totalInChain = this.countChainExecutions(archive)
+        if (totalInChain >= 20) {
+          console.warn(`[ChainTrigger] Total execution cap reached (${totalInChain}), skipping trigger`)
+          continue
+        }
+
         console.log(`[ChainTrigger] Triggering successor: ${next.workflow} from ${archive.workflow_name}`)
         // Note: actual triggering would call ExecutionService to start the next workflow.
         // For now, log the intent — full integration requires ExecutionService access.
@@ -135,5 +142,15 @@ export class ChainTriggerService {
       current = this.archiveDAO.findById(current.parent_execution_id)
     }
     return depth
+  }
+
+  private countChainExecutions(archive: ExecutionArchiveRow): number {
+    let count = 1
+    let current: ExecutionArchiveRow | null = archive
+    while (current?.parent_execution_id && count < 25) {
+      count++
+      current = this.archiveDAO.findById(current.parent_execution_id)
+    }
+    return count
   }
 }

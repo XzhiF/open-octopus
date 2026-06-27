@@ -249,6 +249,110 @@ export class MemoryService {
   }
 
   /**
+   * Compress execution records from daily memory into long-term.md (US-018b).
+   * - Scans daily/*.md for `## 执行记录:` sections
+   * - Extracts key insights and appends to long-term.md under `## 执行经验`
+   * - Moves processed daily files into daily/archive/
+   * - Triggered on file-level compression cycle (every 7 days)
+   */
+  compressExecutionRecords(org: string, daysOld: number = 7): { compressed: number; archived_files: number } {
+    const dailyDir = this.getDailyDir()
+    if (!fs.existsSync(dailyDir)) {
+      return { compressed: 0, archived_files: 0 }
+    }
+
+    const cutoff = new Date(Date.now() - daysOld * 86_400_000).toISOString().split('T')[0]
+    const dailyFiles = fs.readdirSync(dailyDir)
+      .filter(f => f.endsWith('.md') && f.replace('.md', '') <= cutoff)
+      .sort()
+
+    let compressedCount = 0
+    const executionInsights: string[] = []
+
+    for (const file of dailyFiles) {
+      const filePath = path.join(dailyDir, file)
+      const content = fs.readFileSync(filePath, 'utf-8')
+
+      // Extract `## 执行记录:` sections
+      const lines = content.split('\n')
+      let inExecutionSection = false
+      let sectionLines: string[] = []
+
+      for (const line of lines) {
+        if (line.startsWith('## 执行记录:')) {
+          if (sectionLines.length > 0) {
+            executionInsights.push(this.summarizeExecutionSection(sectionLines))
+            compressedCount++
+          }
+          inExecutionSection = true
+          sectionLines = [line]
+        } else if (inExecutionSection) {
+          if (line.startsWith('## ') && !line.startsWith('## 执行记录:')) {
+            // End of execution section
+            executionInsights.push(this.summarizeExecutionSection(sectionLines))
+            compressedCount++
+            inExecutionSection = false
+            sectionLines = []
+          } else {
+            sectionLines.push(line)
+          }
+        }
+      }
+      if (inExecutionSection && sectionLines.length > 0) {
+        executionInsights.push(this.summarizeExecutionSection(sectionLines))
+        compressedCount++
+      }
+    }
+
+    // Append to long-term.md under `## 执行经验`
+    if (executionInsights.length > 0) {
+      const ltPath = this.getMemoryPath('long-term')
+      const dir = path.dirname(ltPath)
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
+
+      const existing = fs.existsSync(ltPath) ? fs.readFileSync(ltPath, 'utf-8') : ''
+      const executionBlock = `\n## 执行经验\n${executionInsights.join('\n')}\n`
+
+      if (existing.includes('## 执行经验')) {
+        // Append to existing section
+        const updated = existing + executionInsights.join('\n') + '\n'
+        fs.writeFileSync(ltPath, updated, 'utf-8')
+      } else {
+        fs.writeFileSync(ltPath, existing + executionBlock, 'utf-8')
+      }
+    }
+
+    // Move processed daily files to daily/archive/
+    const archiveDir = path.join(dailyDir, 'archive')
+    if (!fs.existsSync(archiveDir)) fs.mkdirSync(archiveDir, { recursive: true })
+
+    let archivedFiles = 0
+    for (const file of dailyFiles) {
+      const src = path.join(dailyDir, file)
+      const dest = path.join(archiveDir, file)
+      try {
+        fs.renameSync(src, dest)
+        archivedFiles++
+      } catch {
+        // Best-effort — file may have been moved concurrently
+      }
+    }
+
+    return { compressed: compressedCount, archived_files: archivedFiles }
+  }
+
+  private summarizeExecutionSection(lines: string[]): string {
+    // Keep first line (## 执行记录: workflow_name) and key summary lines (status, cost, experience)
+    const keyLines = lines.filter(l =>
+      l.startsWith('## 执行记录:') ||
+      l.includes('状态:') ||
+      l.includes('成本:') ||
+      l.includes('经验:')
+    )
+    return keyLines.length > 0 ? keyLines.join('\n') : lines.slice(0, 3).join('\n')
+  }
+
+  /**
    * Check if agent should auto-enter safe mode due to inactivity (PRD H2).
    * Compares last activity date against config inactive_days_threshold.
    */

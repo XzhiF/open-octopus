@@ -139,9 +139,11 @@ export class ExecutionLifecycle {
 
     this.enginePool.create(id, engine, abortController)
 
-    // Wire experience injection resolver (if ExperienceInjector available)
+    // Wire experience injection resolver (if ExperienceInjector available and flag enabled)
+    // EXPERIENCE_INJECTION env flag: default true, set to "false" to disable
+    const experienceInjectionEnabled = process.env.EXPERIENCE_INJECTION !== 'false'
     const expInjector = (global as any).__octopus_experienceInjector
-    if (expInjector) {
+    if (expInjector && experienceInjectionEnabled) {
       engine.setExperienceResolver(async (scope, poolSnapshot) => {
         return expInjector.injectExperience(scope, poolSnapshot)
       })
@@ -183,24 +185,24 @@ export class ExecutionLifecycle {
       engine.setRefResolver(this.createRefResolver())
 
       // ── Register archive + chain trigger onComplete callbacks ──
-      // Fire-and-forget: archive after completion, then trigger workflow chain.
-      // Uses global registry (set in index.ts) to avoid constructor coupling.
+      // Archive first, then chain trigger (sequential to avoid race condition
+      // where chain trigger reads archive data before it's written).
       const archiveService = (global as any).__octopus_archiveService
       const chainTrigger = (global as any).__octopus_chainTrigger
       this.registerExternalCallbacks({
-        onComplete: () => {
-          // 1. Archive execution (fire-and-forget)
+        onComplete: async () => {
+          // 1. Archive execution (await to ensure data is persisted)
           if (archiveService) {
             try { archiveService.archiveExecution(id) } catch (err) {
               console.error("[ExecutionLifecycle] Archive callback failed:", err)
             }
+            // Brief yield to allow fire-and-forget _archiveWithRetry to complete insert
+            await new Promise(r => setTimeout(r, 100))
           }
-          // 2. Chain trigger (fire-and-forget)
+          // 2. Chain trigger (runs after archive data is available)
           if (chainTrigger) {
-            try { chainTrigger.onExecutionComplete(id).catch((err: unknown) => {
+            try { await chainTrigger.onExecutionComplete(id) } catch (err) {
               console.error("[ExecutionLifecycle] Chain trigger failed:", err)
-            }) } catch (err) {
-              console.error("[ExecutionLifecycle] Chain trigger callback failed:", err)
             }
           }
         },

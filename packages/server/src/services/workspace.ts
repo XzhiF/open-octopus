@@ -937,16 +937,62 @@ export class WorkspaceService {
         // Phase 2: batch-archive all executions
         const { archived, failed } = await this.archiveService.archiveWorkspace(id)
 
-        // Phase 3: build workspace_archive record
+        // Phase 3: build workspace_archive record with chain detection
         const executions = this.dao.findExecutionIdsByWorkspace(id)
+
+        // Detect execution chains: parent_id → parent-child, $parent → data dependency, temporal ordering
+        const executionChains: Array<{ type: string; from: string; to: string }> = []
+        const workflowManifest: Array<{ name: string; ref: string; run_count: number }> = []
+        try {
+          const archiveDAO = (global as any).__octopus_archiveDAO
+          if (archiveDAO) {
+            const archived = archiveDAO.listByCloneWorkspace(id)
+            const byId = new Map(archived.map((e: any) => [e.id, e]))
+            // Parent-child chains via parent_execution_id
+            for (const e of archived) {
+              if (e.parent_execution_id && e.parent_execution_id !== '0' && byId.has(e.parent_execution_id)) {
+                executionChains.push({ type: 'parent_child', from: e.parent_execution_id, to: e.id })
+              }
+            }
+            // Data dependency chains via vars_snapshot containing $parent references
+            for (const e of archived) {
+              if (e.vars_snapshot && typeof e.vars_snapshot === 'string' && e.vars_snapshot.includes('$parent')) {
+                const parentExec = archived.find((p: any) => p.id === e.parent_execution_id)
+                if (parentExec) {
+                  executionChains.push({ type: 'data_dependency', from: parentExec.id, to: e.id })
+                }
+              }
+            }
+            // Temporal chains: executions ordered by started_at within the same workspace
+            const sorted = [...archived].sort((a: any, b: any) =>
+              new Date(a.started_at).getTime() - new Date(b.started_at).getTime()
+            )
+            for (let i = 1; i < sorted.length; i++) {
+              executionChains.push({ type: 'temporal', from: sorted[i - 1].id, to: sorted[i].id })
+            }
+            // Build workflow manifest: group by workflow_name
+            const wfMap = new Map<string, { ref: string; count: number }>()
+            for (const e of archived) {
+              const existing = wfMap.get(e.workflow_name) ?? { ref: e.workflow_ref ?? '', count: 0 }
+              existing.count++
+              wfMap.set(e.workflow_name, existing)
+            }
+            for (const [name, info] of wfMap) {
+              workflowManifest.push({ name, ref: info.ref, run_count: info.count })
+            }
+          }
+        } catch {
+          // Best-effort chain detection — empty arrays on failure
+        }
+
         this.archiveService.insertWorkspaceArchive(
           id,
           ws.name,
           ws.org,
           executions.length,
           0, // total cost aggregated from archive table, not live
-          [], // execution chains — enriched later
-          [], // workflow manifest — enriched later
+          executionChains,
+          workflowManifest,
         )
 
         // Phase 4: mark as archived

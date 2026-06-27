@@ -127,10 +127,12 @@ export function createArchiveRoutes(archiveDAO: ArchiveDAO, experienceDAO: Exper
         error_message: row.error_message,
         vars_snapshot: safeJsonParse(row.vars_snapshot, {}),
         lessons_learned: row.lessons_learned,
-        parent_execution_id: row.parent_execution_id,
+        chain: {
+          parent_execution_id: row.parent_execution_id,
+          children,
+        },
         workspace_archive_id: row.workspace_archive_id,
         created_at: row.created_at,
-        children,
         lessons,
       })
     } catch (err) {
