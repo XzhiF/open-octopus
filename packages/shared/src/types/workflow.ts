@@ -206,6 +206,14 @@ export interface NodeDef {
   context_token_budget?: number
   context_tier?: "200k" | "1m"
 
+  // Experience injection scope
+  experience_scope?: {
+    projects: string[]
+    packages?: string[]
+    types?: Array<"bug" | "pattern" | "cost" | "failure">
+    limit?: number
+  }
+
   // 通用桶 — 不属于上述分类的任意数据
   variables?: Record<string, unknown>
 }
@@ -270,6 +278,14 @@ export const NodeSchema: z.ZodType<NodeDef> = z.lazy(() =>
     context_token_budget: z.number().int().positive().optional(),
     context_tier: z.enum(["200k", "1m"]).optional(),
 
+    // Experience injection scope
+    experience_scope: z.object({
+      projects: z.array(z.string()),
+      packages: z.array(z.string()).optional(),
+      types: z.array(z.enum(["bug", "pattern", "cost", "failure"])).optional(),
+      limit: z.number().int().positive().optional(),
+    }).optional(),
+
     variables: z.record(z.string(), z.unknown()).optional(),
   }).superRefine((data, ctx) => {
     // Swarm cross-field validations (only for type: "swarm")
@@ -301,6 +317,20 @@ export const WorkflowSchema = z.object({
   providers: z.record(z.string(), NotifyProviderConfigSchema).optional(),
   channels: z.record(z.string(), ChannelProfileSchema).optional(),
   nodes: z.array(NodeSchema),
+  chain: z.object({
+    on_success: z.array(z.object({
+      workflow: z.string(),
+      condition: z.string().optional(),
+      auto_trigger: z.boolean().optional(),
+      input_mapping: z.record(z.string()).optional(),
+    })).optional(),
+    on_failure: z.array(z.object({
+      workflow: z.string(),
+      condition: z.string().optional(),
+      auto_trigger: z.boolean().optional(),
+      input_mapping: z.record(z.string()).optional(),
+    })).optional(),
+  }).optional(),
 })
 
 export type WorkflowDef = z.infer<typeof WorkflowSchema>

@@ -1,6 +1,7 @@
 import Database from "better-sqlite3"
-import { ExecutionDAO, ScheduleRunDAO } from "../db/dao"
+import { ExecutionDAO, ScheduleRunDAO, ArchiveDAO } from "../db/dao"
 import { DataRetentionService } from "./data-retention"
+import type { ExperienceLifecycleService } from "./experience-lifecycle"
 
 export interface ErrorRecord {
   id: string
@@ -49,9 +50,12 @@ export class ErrorTracker {
 
 export const globalErrorTracker = new ErrorTracker()
 
-export function setupDataRetention(db: Database.Database): () => void {
+export function setupDataRetention(
+  db: Database.Database,
+  opts?: { archiveDAO?: ArchiveDAO; lifecycleSvc?: ExperienceLifecycleService },
+): () => void {
   const execDAO = new ExecutionDAO(db)
   const runDAO = new ScheduleRunDAO(db)
-  const service = new DataRetentionService(execDAO, runDAO)
+  const service = new DataRetentionService(execDAO, runDAO, opts?.archiveDAO, opts?.lifecycleSvc)
   return service.start()
 }

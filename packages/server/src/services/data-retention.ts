@@ -1,6 +1,8 @@
 // packages/server/src/services/data-retention.ts
 // Periodic cleanup of expired data — extracted from error-tracker.ts setupDataRetention()
 import type { ExecutionDAO, ScheduleRunDAO } from '../db/dao'
+import type { ArchiveDAO } from '../db/dao'
+import type { ExperienceLifecycleService } from './experience-lifecycle'
 
 export class DataRetentionService {
   private timer: ReturnType<typeof setInterval> | null = null
@@ -8,6 +10,8 @@ export class DataRetentionService {
   constructor(
     private execDAO: ExecutionDAO,
     private runDAO: ScheduleRunDAO,
+    private archiveDAO?: ArchiveDAO,
+    private lifecycleSvc?: ExperienceLifecycleService,
   ) {}
 
   /**
@@ -45,6 +49,17 @@ export class DataRetentionService {
       // Schedule executions: 90-day retention
       const cutoff90iso = new Date(cutoff90d).toISOString()
       this.runDAO.deleteOldScheduleExecutions(cutoff90iso)
+
+      // Archive compression: clear node_summary for archives older than 1 year
+      if (this.archiveDAO) {
+        const cutoff1y = new Date(now - 365 * 86_400_000).toISOString()
+        this.archiveDAO.clearNodeSummaryOlderThan(cutoff1y)
+      }
+
+      // Experience cleanup: delete obsolete experiences older than 180 days
+      if (this.lifecycleSvc) {
+        this.lifecycleSvc.cleanupObsolete(180)
+      }
 
       // VACUUM only when significant data was deleted (every 24h+ or manual)
       // Not auto-VACUUM: can block for seconds on large databases

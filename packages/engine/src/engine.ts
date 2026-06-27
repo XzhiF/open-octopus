@@ -88,6 +88,11 @@ export class WorkflowEngine {
   private pipelinePath?: string
   // Runtime node tracking (Upgrade 3)
   private runtimeNodeIds: Set<string> = new Set()
+  // Experience injection resolver (set by server via setExperienceResolver)
+  private experienceResolver?: (
+    scope: { projects: string[]; packages?: string[]; types?: string[]; limit?: number },
+    poolSnapshot: Record<string, string>,
+  ) => Promise<string>
 
   constructor(
     private workflow: WorkflowDef,
@@ -173,6 +178,14 @@ export class WorkflowEngine {
    */
   setRefResolver(resolver: (refPath: string) => any): void {
     this.pool.setRefResolver(resolver)
+  }
+
+  /** Set experience injection resolver. Called before each agent node with experience_scope. */
+  setExperienceResolver(resolver: (
+    scope: { projects: string[]; packages?: string[]; types?: string[]; limit?: number },
+    poolSnapshot: Record<string, string>,
+  ) => Promise<string>): void {
+    this.experienceResolver = resolver
   }
 
   setNodeResult(nodeId: string, result: NodeExecutionResult): void {
@@ -563,6 +576,22 @@ export class WorkflowEngine {
   ): Promise<NodeExecutionResult> {
     this.writeNotifyContextFile()
     try {
+      // Experience injection for agent nodes with experience_scope
+      if (node.type === "agent" && node.experience_scope && this.experienceResolver && this.promptInjector) {
+        try {
+          const snap = pool?.snapshot() ?? {}
+          const poolSnapshot: Record<string, string> = {}
+          for (const [k, v] of Object.entries(snap)) {
+            poolSnapshot[k] = String(v)
+          }
+          const context = await this.experienceResolver(node.experience_scope, poolSnapshot)
+          this.promptInjector.setExperienceContext(context)
+        } catch (err) {
+          console.warn('[Engine] Experience injection failed:', err)
+          this.promptInjector.setExperienceContext('')
+        }
+      }
+
       const executor = this.createExecutor(node, pool, signal)
 
       this.logger?.log(node.id, "start", { type: node.type })

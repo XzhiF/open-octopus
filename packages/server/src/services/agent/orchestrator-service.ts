@@ -33,6 +33,7 @@ export interface OrchestratorResult {
   inputs: Record<string, string>
   execution_id?: string
   summary: string
+  suggestions?: string[]
 }
 
 export interface GeneratedWorkflow {
@@ -414,6 +415,37 @@ ${nodes.map(n => `  - id: ${n.id}
     // Step 3: Organize inputs
     const inputs = this.organizeInputs(message, intent, workflow)
 
+    // Step 3.5: Inject experience context (P4.4)
+    if (workflow) {
+      try {
+        // FTS search experiences matching user message
+        const expDAO = (global as any).__octopus_experienceDAO
+        if (expDAO) {
+          const experiences = expDAO.searchExperiences(message, undefined, 'active', undefined, 5)
+          if (experiences.length > 0) {
+            const expContext = experiences.map((e: any) =>
+              `- [${e.type}] ${e.title}: ${e.content.slice(0, 150)}`
+            ).join('\n')
+            inputs.experience_context = `📚 相关历史经验:\n${expContext}`
+          }
+        }
+
+        // Recent execution history for this workflow
+        const archiveDAO = (global as any).__octopus_archiveDAO
+        if (archiveDAO) {
+          const recentArchives = archiveDAO.findRecentByWorkflow(workflow.workflow_name, 3)
+          if (recentArchives.length > 0) {
+            const historyContext = recentArchives.map((a: any) =>
+              `- ${a.created_at}: ${a.status} | $${a.total_cost_usd?.toFixed(2) ?? '0.00'} | ${(a.duration_ms ?? 0) / 1000}s`
+            ).join('\n')
+            inputs.execution_history = `📊 最近执行记录:\n${historyContext}`
+          }
+        }
+      } catch {
+        // Experience injection failure is non-fatal
+      }
+    }
+
     // Step 4: For info_query, read from memory
     if (intent.intent === 'info_query') {
       try {
@@ -462,7 +494,50 @@ ${nodes.map(n => `  - id: ${n.id}
       generated_workflow: generatedWorkflow,
       inputs,
       summary,
+      suggestions: workflow ? this.analyzeAndSuggest(workflow, inputs) : undefined,
     }
+  }
+
+  /**
+   * Analyze past executions and experiences to generate smart suggestions (P5.5).
+   * - TC-045: Failure warning if workflow matches active failure experience
+   * - TC-044: BUG warning if same package has 3+ BUG experiences in 7 days
+   * - TC-046: Cost optimization if average cost is high for simple tasks
+   */
+  private analyzeAndSuggest(workflow: WorkflowMatch, _inputs: Record<string, string>): string[] {
+    const suggestions: string[] = []
+    try {
+      const expDAO = (global as any).__octopus_experienceDAO
+      const archiveDAO = (global as any).__octopus_archiveDAO
+
+      if (expDAO) {
+        // TC-045: Failure warning — if workflow matches active failure experience
+        const failureExps = expDAO.searchExperiences(workflow.workflow_name, 'failure', 'active', undefined, 3)
+        if (failureExps.length > 0) {
+          suggestions.push(`⚠️ 预警: 此工作流有 ${failureExps.length} 条活跃失败经验，建议检查: ${failureExps[0].title}`)
+        }
+
+        // TC-044: Same package 3+ BUG in 7 days
+        const bugExps = expDAO.searchExperiences(workflow.workflow_name, 'bug', 'active', undefined, 10)
+        if (bugExps.length >= 3) {
+          suggestions.push(`💡 建议: 过去 7 天此工作流有 ${bugExps.length} 个 BUG 经验，建议增加错误处理或重试策略`)
+        }
+      }
+
+      if (archiveDAO) {
+        // TC-046: Cost optimization — check if average cost is high for this workflow
+        const recent = archiveDAO.findRecentByWorkflow(workflow.workflow_name, 5)
+        if (recent.length >= 3) {
+          const avgCost = recent.reduce((sum: number, a: any) => sum + (a.total_cost_usd ?? 0), 0) / recent.length
+          if (avgCost > 0.5) {
+            suggestions.push(`💰 成本优化: 此工作流平均成本 $${avgCost.toFixed(2)}，考虑对简单任务使用 sonnet 模型`)
+          }
+        }
+      }
+    } catch {
+      // Suggestion failure is non-fatal
+    }
+    return suggestions
   }
 
   /**

@@ -139,6 +139,14 @@ export class ExecutionLifecycle {
 
     this.enginePool.create(id, engine, abortController)
 
+    // Wire experience injection resolver (if ExperienceInjector available)
+    const expInjector = (global as any).__octopus_experienceInjector
+    if (expInjector) {
+      engine.setExperienceResolver(async (scope, poolSnapshot) => {
+        return expInjector.injectExperience(scope, poolSnapshot)
+      })
+    }
+
     let startCommitId = ""
     try {
       if (exec.node_type === "fork" && exec.branch) {
@@ -173,6 +181,30 @@ export class ExecutionLifecycle {
       } catch { /* best-effort */ }
 
       engine.setRefResolver(this.createRefResolver())
+
+      // ── Register archive + chain trigger onComplete callbacks ──
+      // Fire-and-forget: archive after completion, then trigger workflow chain.
+      // Uses global registry (set in index.ts) to avoid constructor coupling.
+      const archiveService = (global as any).__octopus_archiveService
+      const chainTrigger = (global as any).__octopus_chainTrigger
+      this.registerExternalCallbacks({
+        onComplete: () => {
+          // 1. Archive execution (fire-and-forget)
+          if (archiveService) {
+            try { archiveService.archiveExecution(id) } catch (err) {
+              console.error("[ExecutionLifecycle] Archive callback failed:", err)
+            }
+          }
+          // 2. Chain trigger (fire-and-forget)
+          if (chainTrigger) {
+            try { chainTrigger.onExecutionComplete(id).catch((err: unknown) => {
+              console.error("[ExecutionLifecycle] Chain trigger failed:", err)
+            }) } catch (err) {
+              console.error("[ExecutionLifecycle] Chain trigger callback failed:", err)
+            }
+          }
+        },
+      }, id)
 
       const result = await engine.run()
 
@@ -1329,6 +1361,14 @@ export class ExecutionLifecycle {
     )
 
     engine.updateVarPool(poolSnapshot)
+
+    // Wire experience injection resolver for resume/retry
+    const expInjector = (global as any).__octopus_experienceInjector
+    if (expInjector) {
+      engine.setExperienceResolver(async (scope, poolSnap) => {
+        return expInjector.injectExperience(scope, poolSnap)
+      })
+    }
 
     const completedNodes = this.dao.findCompletedNodeExecutions(exec.id)
     for (const node of completedNodes) {
