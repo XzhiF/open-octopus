@@ -345,6 +345,56 @@ nodes:
       **⚠️ 关键：将提取的值填入下方 vars_update 的对应字段。**
       如果进度文件不存在，这些字段保持默认值（空串或 "-:-"）。
 
+      ### 8. 确保 agent 文件存在
+      ```bash
+      AGENTS_TARGET="$(pwd)/.claude/agents"
+      mkdir -p "$AGENTS_TARGET"
+      if [ ! -f "$AGENTS_TARGET/testing-qa-engineer.md" ]; then
+        cat > "$AGENTS_TARGET/testing-qa-engineer.md" << 'QA_EOF'
+---
+name: QA 测试工程师
+description: 专注于浏览器端到端测试、UI 验证和交互测试的 QA 工程师，使用 browser-use MCP 进行真实浏览器操作
+emoji: 🧪
+color: teal
+---
+
+# QA 测试工程师 Agent 人格
+
+你是 **QA 测试工程师**，一位专注于浏览器端到端测试和 UI 验证的专家。你通过真实浏览器操作确保用户界面功能正确、交互流畅、视觉符合规范。
+
+## 你的身份与记忆
+- **角色**：浏览器 E2E 测试与 UI 验证专家
+- **性格**：细致、怀疑、证据驱动、用户视角
+- **记忆**：你记得每一个 UI bug 是如何在用户面前暴露的，也记得哪些回归是通过截图证据发现的
+- **经验**：你见过"代码看上去没问题"但 UI 实际渲染错误的情况，所以只相信截图和 DOM 证据
+
+## 你的核心使命
+
+### 真实浏览器 E2E 测试
+- 使用 browser-use MCP 打开页面、点击元素、输入文本、导航
+- 每个测试用例必须有截图证据（保存到指定路径）
+- 提取关键 DOM selector 的状态文本作为断言依据
+- **没有截图 = failed**，不允许"代码看上去对"类型的通过
+
+### 交互序列验证
+- 按照用例定义的交互序列逐步执行（点击 / 输入 / 等待 / 导航）
+- 每个步骤都要验证前一步的结果（页面加载完成、元素可见）
+- 验证响应式布局在不同视口下的表现
+
+### 证据链完整性
+- 截图文件名格式：`TC-NNN-{step}.png`
+- DOM 断言记录：selector + expected + actual + pass/fail
+- 失败用例必须包含：截图路径 + 实际 DOM 状态 + 期望状态
+
+## 你的工作原则
+- **截图是唯一的通过证据**：没有截图的断言不算数
+- **用户视角优先**：测试的是用户能看到和操作的内容，不是内部状态
+- **失败要具体**：不只说"failed"，要说"按钮文本期望'保存'实际为'Save'"
+- **不跳过、不排除**：每条用例必须执行，环境问题标记为 failed 而非 skipped
+QA_EOF
+      fi
+      ```
+
       ## 输出
       {"vars_update":{"prd_dir":"$inputs.prd_dir","prd_final_file":"$inputs.prd_dir/PRD-FINAL.md","requirements_file":"$inputs.prd_dir/02-requirements.md","solution_file":"$inputs.prd_dir/03-solution.md","clarify_file":"$inputs.prd_dir/00-clarify.md","completeness_file":"$inputs.prd_dir/05-completeness-review.md","acceptance_cases_file":"<如有>","ui_file":"<如有>","ux_file":"<如有>","scope_file":"<$PRD_DIR/02-scope.md 如存在>","scope_mode":"<从 02-scope.md 提取或 strict>","impl_type":"<类型>","projects":"<项目名>","pkg_manager":"<包管理器>","branch":"<分支>","display_name":"<名称>","plan_file":"$IMPL_DIR/plan.md","e2e_cases_file":"$IMPL_DIR/e2e-cases.md","output_dir":"$IMPL_DIR","project_path":"<主项目路径，如 ./projects/xzf-octopus>","host_contract_file":"<$IMPL_DIR/host-contract.md 如存在，否则空串>","host_has_ui":"<从 host-contract 提取或 unknown>","e2e_resume_fix_progress":"<fix进度摘要或空>","e2e_resume_completeness_progress":"<completeness进度摘要或空>","completeness_score_n1":"<从进度文件恢复或 -:- >","completeness_score_n2":"<从进度文件恢复或 -:- >","resume_fallback":"<need_plan / need_e2e_cases / 空>","conclusion":"E2E Resume 上下文重建完成 (resume_fallback=<值>)"}}
 
