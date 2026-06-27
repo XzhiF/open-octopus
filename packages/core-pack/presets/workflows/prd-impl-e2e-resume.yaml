@@ -1387,32 +1387,6 @@ QA_EOF
       {"vars_update":{"e2e_passed":"<$vars.e2e_fix_all_passed && $vars.e2e_reality_issues==0 && $vars.completeness_passed>","e2e_summary":"P0: $vars.e2e_p0_passed/$vars.e2e_p0_count | P1: $vars.e2e_p1_passed/$vars.e2e_p1_count | 修复: $vars.e2e_fix_rounds 轮 | 裁判: verified=$vars.e2e_reality_verified fake=$vars.e2e_reality_issues","e2e_torn_down":"true","conclusion":"E2E 收尾完成: e2e_passed=<true/false>"}}
 
   # ═══════════════════════════════════════════════════════════════
-  # Phase 6: Ship — 更新已有 PR 或创建新 PR
-  # ═══════════════════════════════════════════════════════════════
-    timeout: 600
-    prompt: |
-      清理 E2E 运行时产物。**不阻断**，单项失败也继续。
-
-      $vars.workspace_rules
-
-      ## 必做（按顺序，单项失败不影响后续）
-      ```bash
-      if [ -n "$vars.e2e_workspace_id" ] && [ -n "$vars.e2e_server_port" ]; then
-        curl -s -X DELETE "http://localhost:$vars.e2e_server_port/api/workspaces/$vars.e2e_workspace_id" || true
-        echo "Workspace $vars.e2e_workspace_id 删除请求已发出"
-      fi
-      if [ -n "$vars.e2e_dev_pid" ]; then
-        kill $vars.e2e_dev_pid 2>/dev/null || true
-        echo "PID $vars.e2e_dev_pid 已发 SIGTERM"
-      fi
-      echo "沙箱保留: $vars.e2e_sandbox_dir"
-      echo "报告保留: $vars.output_dir"
-      ```
-
-      ## 输出
-      {"vars_update":{"e2e_torn_down":"true","conclusion":"清理完成：workspace + PID + 产物隔离"}}
-
-  # ═══════════════════════════════════════════════════════════════
   # Phase 5.6: Pre-PR Cleanup — 自动修补不阻断 PR（与 prd-impl.yaml 同步）
   # ═══════════════════════════════════════════════════════════════
   - id: pre-pr-cleanup
@@ -1485,7 +1459,7 @@ QA_EOF
       ## 总体结论
       - 完整度总分: $vars.completeness_score / 100
       - 达标轮次: $vars.completeness_rounds / $inputs.completeness_max_rounds
-      - 质量判定: <从 e2e-reality-check>
+      - 质量判定: verified=$vars.e2e_reality_verified fake_pass=$vars.e2e_reality_issues
       - 推荐动作: <merge / 继续迭代 / 放弃>
 
       ## E2E 验收证据
@@ -1526,11 +1500,13 @@ QA_EOF
       - real_e2e_ui_passed == "true" 或 host_has_ui != "true"
       - scope_leak_count == "0"
       - host_contract_violations == "0"
-      - reality-check 判定 == "PASSED"
+      - e2e_reality_issues == "0" && e2e_fix_all_passed == "true"
 
       ## 输出
       {"vars_update":{"audit_file":"$vars.output_dir/delivery-audit.md","ready_to_merge":"<true/false 仅建议>","conclusion":"完整度 $vars.completeness_score% / ready_to_merge=<true|false>"}}
 
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 6: Ship — 更新已有 PR 或创建新 PR
   # ═══════════════════════════════════════════════════════════════
   - id: ship
     type: agent
