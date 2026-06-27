@@ -288,12 +288,45 @@ export class ArchiveDAO extends BaseDAO {
     `).all(workflowName, org, limit) as ExecutionArchiveRow[]
   }
 
+  findRecentByWorkflow(workflowName: string, limit = 3): ExecutionArchiveRow[] {
+    return this.stmt(`
+      SELECT * FROM execution_archive
+      WHERE workflow_name = ?
+      ORDER BY created_at DESC
+      LIMIT ?
+    `).all(workflowName, limit) as ExecutionArchiveRow[]
+  }
+
+  getRecentFailed(days: number, limit: number): ExecutionArchiveRow[] {
+    const cutoff = new Date(Date.now() - days * 86_400_000).toISOString()
+    return this.stmt(`
+      SELECT * FROM execution_archive
+      WHERE status IN ('failed', 'completed_with_failures')
+      AND created_at > ?
+      ORDER BY created_at DESC
+      LIMIT ?
+    `).all(cutoff, limit) as ExecutionArchiveRow[]
+  }
+
   deleteOldArchives(cutoffIso: string): Database.RunResult {
     return this.stmt("DELETE FROM execution_archive WHERE created_at < ?").run(cutoffIso)
   }
 
   clearNodeSummaryOlderThan(cutoffIso: string): Database.RunResult {
     return this.stmt("UPDATE execution_archive SET node_summary = '[]' WHERE created_at < ?").run(cutoffIso)
+  }
+
+  /**
+   * Query execution archives for a specific clone (identified by workspace_id).
+   * TC-042: clone queries only return matching workspace records.
+   */
+  listByCloneWorkspace(workspaceId: string, limit = 50): ExecutionArchiveRow[] {
+    return this.stmt(`
+      SELECT * FROM execution_archive
+      WHERE workspace_id = ?
+      ORDER BY created_at DESC
+      LIMIT ?
+    `).all(workspaceId, limit) as ExecutionArchiveRow[]
   }
 
   updateLessonsLearned(id: string, text: string): Database.RunResult {

@@ -205,6 +205,59 @@ export class EvolutionService {
   } {
     // ── Execution-based reflection (F1) ─────────────────────────
     if (input.type === 'execution') {
+      // ── Execution archive analysis: detect repeated node failures ──
+      try {
+        const archiveDAO = (global as any).__octopus_archiveDAO as any
+        if (archiveDAO) {
+          const recentArchives = archiveDAO.getRecentFailed(7, 20) // last 7 days, up to 20 records
+          if (recentArchives.length >= 5) {
+            // Group by workflow_name and check for same node failing repeatedly
+            const workflowFailures = new Map<string, { count: number; nodes: string[] }>()
+            for (const a of recentArchives) {
+              const key = a.workflow_name
+              const existing = workflowFailures.get(key) ?? { count: 0, nodes: [] }
+              existing.count++
+              // Parse node_summary to find failed nodes
+              try {
+                const nodes = typeof a.node_summary === 'string' ? JSON.parse(a.node_summary) : a.node_summary
+                if (Array.isArray(nodes)) {
+                  for (const n of nodes) {
+                    if (n.status === 'failed') existing.nodes.push(n.nodeId)
+                  }
+                }
+              } catch {}
+              workflowFailures.set(key, existing)
+            }
+
+            // Check for repeated pattern: same workflow fails 5+ times with same node
+            for (const [wf, data] of workflowFailures) {
+              if (data.count >= 5) {
+                const nodeCounts = new Map<string, number>()
+                for (const n of data.nodes) {
+                  nodeCounts.set(n, (nodeCounts.get(n) ?? 0) + 1)
+                }
+                for (const [nodeId, count] of nodeCounts) {
+                  if (count >= 5) {
+                    return {
+                      identified: true,
+                      level: 'major',
+                      candidate: {
+                        skill_name: input.skill_name ?? 'octo-workflow-runner',
+                        change_type: 'major',
+                        summary: `Repeated failure: workflow "${wf}" node "${nodeId}" failed ${count} times in 7 days (${data.count} total runs). Suggest reviewing node configuration or adding retry logic.`,
+                      },
+                      reasoning: `execution_archive shows ${data.count} failures for "${wf}" with node "${nodeId}" failing ${count} times.`,
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      } catch {
+        // Archive analysis failure is non-fatal
+      }
+
       // Look for repeated failure patterns in recent experiences
       const recentFailures = this.dao.findExperiencesWithFailurePattern(org)
 

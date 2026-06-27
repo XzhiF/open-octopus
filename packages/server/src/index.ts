@@ -53,6 +53,12 @@ import { WorkspaceService } from "./services/workspace"
 import { ArchiveService } from "./services/archive"
 import { ExperienceExtractor } from "./services/experience-extractor"
 import { KnowledgeFilesService } from "./services/knowledge-files"
+import { ExperienceInjector } from "./services/experience-injector"
+import { ExperienceLifecycleService } from "./services/experience-lifecycle"
+import { ChainTriggerService } from "./services/chain-trigger"
+import { createWebhookRoutes } from "./routes/webhooks"
+import telegramRoutes, { setTelegramBotService } from "./routes/telegram"
+import { TelegramBotService } from "./services/telegram-bot"
 import { ChatService } from "./services/chat"
 import { LeaderboardService } from "./services/leaderboard"
 import { getLogAnalysisService } from "./services/log-analysis"
@@ -158,8 +164,22 @@ if (!process.env.VITEST && daos) {
     knowledgeFiles,
   })
   ;(global as any).__octopus_archiveService = archiveService
+  ;(global as any).__octopus_archiveDAO = daos.archive
   ;(global as any).__octopus_experienceExtractor = extractor
   ;(global as any).__octopus_knowledgeFiles = knowledgeFiles
+
+  // Phase 4: Experience Injection, Lifecycle, Chain Trigger
+  const experienceInjector = new ExperienceInjector(daos.experience)
+  const lifecycleSvc = new ExperienceLifecycleService(daos.experience, knowledgeFiles)
+  const chainTrigger = new ChainTriggerService(daos.archive, daos.execution)
+  ;(global as any).__octopus_experienceInjector = experienceInjector
+  ;(global as any).__octopus_lifecycleSvc = lifecycleSvc
+  ;(global as any).__octopus_chainTrigger = chainTrigger
+
+  // Phase 6: Telegram Bot
+  const telegramBot = new TelegramBotService(daos.archive, daos.experience, daos.execution)
+  setTelegramBotService(telegramBot)
+
   workspaceService = new WorkspaceService(daos.workspace, archiveService)
   chatService = new ChatService(daos.chat, sse)
   leaderboardService = new LeaderboardService(daos.tokenUsage)
@@ -310,6 +330,10 @@ app.route("/api/agent", createAgentRoutes({
 }))
 app.route("/api/workflows/built-in", builtInWorkflowRoutes)
 app.route("/api/archive", createArchiveRoutes(d.archive, d.experience))
+app.route("/api/webhooks", createWebhookRoutes(
+  (global as any).__octopus_lifecycleSvc ?? new ExperienceLifecycleService(d.experience, new KnowledgeFilesService(d.experience))
+))
+app.route("/api/agent/telegram", telegramRoutes)
 
 // Set scheduler on agent service
 try { getAgentService().setSchedulerService(schedSvc) } catch {}

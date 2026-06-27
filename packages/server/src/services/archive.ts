@@ -134,6 +134,53 @@ export class ArchiveService {
     }
   }
 
+  // ── Clone memory isolation ────────────────────────────────────────
+
+  /**
+   * Migrate clone's execution experiences to main agent on merge.
+   * TC-043: clone lessons_learned written to main agent's experiences.
+   */
+  async migrateCloneExperiences(cloneWorkspaceId: string, mainWorkspaceId: string): Promise<number> {
+    try {
+      const cloneArchives = this.archiveDAO.listByCloneWorkspace(cloneWorkspaceId)
+      let migrated = 0
+      for (const archive of cloneArchives) {
+        if (archive.lessons_learned) {
+          try {
+            if (this.experienceDAO) {
+              this.experienceDAO.insertExperience({
+                id: randomUUID(),
+                type: "pattern",
+                title: `Clone lesson: ${archive.workflow_name}`,
+                content: archive.lessons_learned,
+                project: archive.workflow_name ?? null,
+                package: null,
+                file_pattern: null,
+                keywords: `${archive.workflow_name ?? ""},clone:${cloneWorkspaceId}`,
+                status: "active",
+                relevance_score: 0.5,
+                use_count: 0,
+                workflow_name: archive.workflow_name ?? null,
+                execution_id: archive.id,
+                resolved_at: null,
+                resolved_by: null,
+                org: archive.org ?? "",
+                created_at: new Date().toISOString(),
+                updated_at: new Date().toISOString(),
+              })
+              migrated++
+            }
+          } catch { /* duplicate or insert failure — skip */ }
+        }
+      }
+      console.log(`[ArchiveService] Migrated ${migrated} clone experiences from ${cloneWorkspaceId} to main`)
+      return migrated
+    } catch (err) {
+      console.error("[ArchiveService] clone experience migration failed:", err)
+      return 0
+    }
+  }
+
   // ── Internal: archive with retry ──────────────────────────────────
 
   private async _archiveWithRetry(executionId: string, maxRetries = 3): Promise<void> {
@@ -146,6 +193,27 @@ export class ArchiveService {
           const bus = getDomainEventBus()
           bus.emit("archive.execution_completed", { executionId })
         } catch { /* domain event is best-effort */ }
+
+        // After successful archive, write to Agent daily memory (best-effort)
+        try {
+          const { getMemoryService } = require('./agent/memory-service')
+          const memoryService = getMemoryService()
+          const archive = this.archiveDAO.findById(executionId)
+          if (archive && archive.org) {
+            const duration = archive.duration_ms ? `${Math.round(archive.duration_ms / 1000)}s` : 'N/A'
+            const cost = archive.total_cost_usd?.toFixed(2) ?? '0.00'
+            const conclusion = archive.lessons_learned || '无'
+            const content = [
+              `## 执行记录: ${archive.workflow_name}`,
+              `- 状态: ${archive.status} | 耗时: ${duration} | 成本: $${cost}`,
+              `- 关键结果: ${conclusion}`,
+              '',
+            ].join('\n')
+            memoryService.appendDaily(archive.org, content)
+          }
+        } catch (err) {
+          console.warn('[ArchiveService] daily memory write failed (best-effort):', err)
+        }
 
         // Trigger experience extraction (fire-and-forget, best-effort)
         if (this.extractor) {

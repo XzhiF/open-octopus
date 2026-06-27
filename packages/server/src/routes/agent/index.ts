@@ -121,9 +121,18 @@ export function createAgentRoutes(deps: AgentRouteDeps): Hono {
         }
       }
 
-      
+
       const scheduleId = crypto.randomUUID()
       const now = new Date().toISOString()
+
+      // TC-048: Per-agent limit — max 20 active schedules
+      try {
+        const existing = scheduleConfigDAO.countAgentSchedulesByOrg(org)
+        if (existing >= 20) {
+          return c.json(createAgentError('SCHEDULE_LIMIT', 'Maximum 20 active schedules per agent. Delete unused schedules first.'), 409)
+        }
+      } catch { /* count query failure is non-fatal — proceed */ }
+
       try {
         scheduleConfigDAO.insertAgentSchedule(scheduleId, org, body.name, body.cron, 'agent', JSON.stringify(jobConfig), now)
       } catch { /* fallback */ }

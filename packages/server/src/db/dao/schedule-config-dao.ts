@@ -514,4 +514,20 @@ export class ScheduleConfigDAO extends BaseDAO {
       return { changes: 0, lastInsertRowid: 0 }
     }
   }
+
+  /**
+   * Count active agent schedules for an org.
+   * TC-048: Per-agent limit — max 20 active schedules.
+   */
+  countAgentSchedulesByOrg(org: string): number {
+    try {
+      const row = this.stmt(`
+        SELECT COUNT(*) as count FROM schedules
+        WHERE org = ? AND job_type = 'agent' AND enabled = 1 AND deleted_at IS NULL
+      `).get(org) as { count: number } | undefined
+      return row?.count ?? 0
+    } catch {
+      return 0
+    }
+  }
 }
