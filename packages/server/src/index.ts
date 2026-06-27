@@ -226,6 +226,21 @@ if (!process.env.VITEST && daos) {
     }
   }, 6 * 60 * 60 * 1000)
 
+  // TC-055: Wire ObserveService to DomainEventBus (event-triggered mode)
+  try {
+    const { getDomainEventBus } = require('./services/agent/domain-event-bus')
+    const bus = getDomainEventBus()
+    bus.on('archive.execution_completed', () => {
+      try {
+        observeSvc.analyze(7)
+      } catch (err) {
+        console.warn('[server] Observe event-triggered analysis failed:', err)
+      }
+    })
+  } catch (err) {
+    console.warn('[server] DomainEventBus subscription failed:', err)
+  }
+
   // Execution memory compression — every 7 days: compress daily execution records into long-term.md
   setInterval(() => {
     try {

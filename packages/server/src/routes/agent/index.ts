@@ -129,7 +129,7 @@ export function createAgentRoutes(deps: AgentRouteDeps): Hono {
       try {
         const existing = scheduleConfigDAO.countAgentSchedulesByOrg(org)
         if (existing >= 20) {
-          return c.json(createAgentError('SCHEDULE_LIMIT', 'Maximum 20 active schedules per agent. Delete unused schedules first.'), 409)
+          return c.json(createAgentError('SCHEDULE_LIMIT_EXCEEDED', 'Maximum 20 active schedules per agent. Delete unused schedules first.'), 409)
         }
       } catch { /* count query failure is non-fatal — proceed */ }
 
@@ -2572,6 +2572,138 @@ nodes:
 
   // ── F6: Self-check (manual trigger with evolution integration) ─────
   // (Moved before parameterized routes for Hono routing priority)
+
+  // ── TC-045: Failure predictions based on experience_index ──────────
+  agent.post('/predictions', async (c) => {
+    try {
+      const org = c.req.header('X-Octopus-Org') || (c.get('org') as string)
+      if (!org) return c.json(createAgentError('ORG_NOT_FOUND', 'Organization not resolved'), 403)
+
+      const body = await c.req.json<{ workflow_name?: string }>().catch(() => ({}))
+      const { getDb } = require('../../db')
+      const { ExperienceDAO } = require('../../db/dao/experience-dao')
+      const experienceDAO = new ExperienceDAO(getDb())
+
+      // Query active failure-type experiences, optionally filtered by workflow
+      let failures: Array<{ id: string; title: string; content: string; workflow_name: string | null; created_at: string }>
+      if (body.workflow_name) {
+        failures = experienceDAO.searchExperiences('', 'failure', 'active', org, 50)
+          .filter((e: { workflow_name: string | null }) => e.workflow_name === body.workflow_name)
+      } else {
+        failures = experienceDAO.searchExperiences('', 'failure', 'active', org, 50)
+      }
+
+      const predictions = failures.map((f: { id: string; title: string; content: string; workflow_name: string | null; created_at: string }) => ({
+        risk_level: 'high',
+        workflow_name: f.workflow_name,
+        failure_reason: f.title,
+        description: f.content,
+        historical_reference: f.id,
+        created_at: f.created_at,
+      }))
+
+      return c.json({
+        ok: true,
+        predictions,
+        total: predictions.length,
+        analyzed_at: new Date().toISOString(),
+      })
+    } catch (err: unknown) {
+      const error = err instanceof Error ? err : new Error(String(err))
+      return c.json(createAgentError('INTERNAL_ERROR', error.message), 500)
+    }
+  })
+
+  // ── TC-046: Cost optimization suggestions ──────────────────────────
+  agent.post('/cost-optimization', async (c) => {
+    try {
+      const org = c.req.header('X-Octopus-Org') || (c.get('org') as string)
+      if (!org) return c.json(createAgentError('ORG_NOT_FOUND', 'Organization not resolved'), 403)
+
+      const { getDb } = require('../../db')
+      const { ArchiveDAO } = require('../../db/dao/archive-dao')
+      const archiveDAO = new ArchiveDAO(getDb())
+
+      // Analyze recent executions for cost optimization opportunities
+      const result = archiveDAO.listExecutions({ org }, 1, 50)
+      const recentArchives = result.data
+      const suggestions: Array<{
+        type: string; workflow_name: string; node_id?: string;
+        current_model: string; suggested_model: string;
+        estimated_savings_usd: number; reason: string
+      }> = []
+
+      for (const archive of recentArchives) {
+        try {
+          const breakdown = archive.model_breakdown ? JSON.parse(archive.model_breakdown) : {}
+          const totalCost = archive.total_cost_usd || 0
+          // Check if opus was used for low-complexity tasks
+          const opusCost = breakdown.opus?.cost_usd || breakdown['claude-opus-4-20250514']?.cost_usd || 0
+          const opusRatio = totalCost > 0 ? opusCost / totalCost : 0
+
+          if (opusRatio > 0.5 && totalCost > 0.1) {
+            // Check node complexity (simple if few nodes)
+            let nodeCount = 0
+            try {
+              const nodes = JSON.parse(archive.node_summary || '[]')
+              nodeCount = nodes.length
+            } catch { /* ignore */ }
+
+            if (nodeCount <= 5) {
+              const savings = opusCost * 0.7 // sonnet is ~70% cheaper
+              suggestions.push({
+                type: 'model_downgrade',
+                workflow_name: archive.workflow_name,
+                current_model: 'opus',
+                suggested_model: 'sonnet',
+                estimated_savings_usd: Math.round(savings * 100) / 100,
+                reason: `工作流 "${archive.workflow_name}" 使用 opus 模型成本占比 ${(opusRatio * 100).toFixed(0)}%，但仅有 ${nodeCount} 个节点（低复杂度），建议降级为 sonnet`,
+              })
+            }
+          }
+        } catch { /* skip malformed archives */ }
+      }
+
+      const totalSavings = suggestions.reduce((sum, s) => sum + s.estimated_savings_usd, 0)
+
+      return c.json({
+        ok: true,
+        suggestions,
+        total: suggestions.length,
+        total_estimated_savings_usd: Math.round(totalSavings * 100) / 100,
+        analyzed_at: new Date().toISOString(),
+      })
+    } catch (err: unknown) {
+      const error = err instanceof Error ? err : new Error(String(err))
+      return c.json(createAgentError('INTERNAL_ERROR', error.message), 500)
+    }
+  })
+
+  // ── TC-055: Observe API trigger (user-triggered analysis) ─────────
+  agent.post('/observe', async (c) => {
+    try {
+      const org = c.req.header('X-Octopus-Org') || (c.get('org') as string)
+      if (!org) return c.json(createAgentError('ORG_NOT_FOUND', 'Organization not resolved'), 403)
+
+      const body = await c.req.json<{ days?: number }>().catch(() => ({}))
+      const days = body.days ?? 7
+
+      const observeSvc = (global as any).__octopus_observeService
+      if (!observeSvc) {
+        return c.json(createAgentError('SERVICE_UNAVAILABLE', 'ObserveService not initialized'), 503)
+      }
+
+      const result = observeSvc.analyze(days)
+      return c.json({
+        ok: true,
+        ...result,
+        trigger: 'user_request',
+      })
+    } catch (err: unknown) {
+      const error = err instanceof Error ? err : new Error(String(err))
+      return c.json(createAgentError('INTERNAL_ERROR', error.message), 500)
+    }
+  })
 
   return agent
 }

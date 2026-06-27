@@ -24,7 +24,8 @@ import { getMemoryService } from './memory-service'
 import { getEvolutionService } from './evolution-service'
 import { getSubsystemAdapter } from './subsystem-adapter'
 import { getConfigManager } from './config-manager'
-import { AgentSessionDAO, SafetyDAO } from '../../db/dao'
+import { AgentSessionDAO, SafetyDAO, ExperienceDAO } from '../../db/dao'
+import { getDb } from '../../db'
 import { SchedulerService } from '../scheduler/scheduler-service'
 import { getRecoveryService } from './recovery-service'
 
@@ -325,6 +326,55 @@ export class AgentService {
         const existing = fs.existsSync(agentLtPath) ? fs.readFileSync(agentLtPath, 'utf-8') : ''
         fs.writeFileSync(agentLtPath, `${existing}\n\n## 分身归档: ${name}\n${content}`, 'utf-8')
         archivedLessons = 1
+      }
+
+      // TC-043: Experience conflict detection — merge clone experiences with newer-wins strategy
+      const cloneExperiencesFile = path.join(cloneMemoryDir, 'experiences.json')
+      if (fs.existsSync(cloneExperiencesFile)) {
+        try {
+          const cloneExperiences = JSON.parse(fs.readFileSync(cloneExperiencesFile, 'utf-8')) as Array<{
+            id: string; project: string; file_pattern: string; type: string;
+            title: string; content: string; created_at: string; keywords?: string
+          }>
+          const experienceDAO = new ExperienceDAO(getDb())
+          for (const cloneExp of cloneExperiences) {
+            if (!cloneExp.project || !cloneExp.file_pattern) continue
+            const conflicts = experienceDAO.findActiveByKeys(cloneExp.project, cloneExp.file_pattern, cloneExp.type)
+            if (conflicts.length > 0) {
+              // Compare created_at — newer wins
+              const newestConflict = conflicts[0] // already ORDER BY created_at DESC
+              if (cloneExp.created_at > newestConflict.created_at) {
+                // Clone is newer — supersede main agent entries, insert clone entry
+                const newId = crypto.randomUUID()
+                experienceDAO.insertExperience({
+                  id: newId, type: cloneExp.type, title: cloneExp.title, content: cloneExp.content,
+                  project: cloneExp.project, package: null, file_pattern: cloneExp.file_pattern,
+                  keywords: cloneExp.keywords ?? null, status: 'active',
+                  relevance_score: 0.5, use_count: 0, workflow_name: null, execution_id: null,
+                  resolved_at: null, resolved_by: name, org,
+                  created_at: cloneExp.created_at, updated_at: new Date().toISOString(),
+                })
+                experienceDAO.supersede(cloneExp.project, cloneExp.file_pattern, cloneExp.type, newId)
+                archivedLessons++
+              }
+              // else: main agent entry is newer — skip clone entry (do nothing)
+            } else {
+              // No conflict — insert clone entry directly
+              const newId = crypto.randomUUID()
+              experienceDAO.insertExperience({
+                id: newId, type: cloneExp.type, title: cloneExp.title, content: cloneExp.content,
+                project: cloneExp.project, package: null, file_pattern: cloneExp.file_pattern,
+                keywords: cloneExp.keywords ?? null, status: 'active',
+                relevance_score: 0.5, use_count: 0, workflow_name: null, execution_id: null,
+                resolved_at: null, resolved_by: name, org,
+                created_at: cloneExp.created_at, updated_at: new Date().toISOString(),
+              })
+              archivedLessons++
+            }
+          }
+        } catch (err) {
+          console.warn(`[AgentService] mergeClone experience merge failed:`, err)
+        }
       }
     }
 

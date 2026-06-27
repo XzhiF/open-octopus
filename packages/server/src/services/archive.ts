@@ -218,12 +218,15 @@ export class ArchiveService {
         // Trigger experience extraction (fire-and-forget, best-effort)
         if (this.extractor) {
           this.extractor.extractLessons(executionId).then(() => {
-            // After extraction, update knowledge files (debounced)
+            // After extraction, update knowledge files for all projects with active experiences
             if (this.knowledgeFiles) {
               try {
                 const archive = this.archiveDAO.findById(executionId)
-                if (archive?.workflow_name && archive?.org) {
-                  this.knowledgeFiles.updateKnowledgeFiles(archive.org, archive.workflow_name)
+                if (archive?.org) {
+                  const projects = this.experienceDAO.getDistinctProjects('active')
+                  for (const project of projects) {
+                    this.knowledgeFiles.updateKnowledgeFiles(archive.org, project)
+                  }
                 }
               } catch (err) {
                 console.error(`[ArchiveService] knowledge files update failed for ${executionId}:`, err)

@@ -163,6 +163,31 @@ export class ExperienceDAO extends BaseDAO {
     `).run(...ids)
   }
 
+  findActiveByKeys(project: string, filePattern: string, type: string): ExperienceIndexRow[] {
+    return this.stmt(`
+      SELECT * FROM experience_index
+      WHERE project = ? AND file_pattern = ? AND type = ? AND status = 'active'
+      ORDER BY created_at DESC
+    `).all(project, filePattern, type) as ExperienceIndexRow[]
+  }
+
+  updateSourceCloneId(id: string, cloneId: string): void {
+    this.stmt(`UPDATE experience_index SET resolved_by = ? WHERE id = ?`).run(cloneId, id)
+  }
+
+  getDistinctProjects(status?: string): string[] {
+    if (status) {
+      return (this.stmt(`
+        SELECT DISTINCT project FROM experience_index
+        WHERE project IS NOT NULL AND status = ?
+      `).all(status) as Array<{ project: string }>).map(r => r.project)
+    }
+    return (this.stmt(`
+      SELECT DISTINCT project FROM experience_index
+      WHERE project IS NOT NULL
+    `).all() as Array<{ project: string }>).map(r => r.project)
+  }
+
   getByExecution(executionId: string): ExperienceIndexRow[] {
     return this.stmt(`
       SELECT * FROM experience_index
