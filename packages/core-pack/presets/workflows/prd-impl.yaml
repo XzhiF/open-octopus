@@ -431,7 +431,7 @@ nodes:
         cat > "$AGENTS_TARGET/testing-qa-engineer.md" << 'QA_EOF'
 ---
 name: QA 测试工程师
-description: 专注于浏览器端到端测试、UI 验证和交互测试的 QA 工程师，使用 browser-use MCP 进行真实浏览器操作
+description: 专注于浏览器端到端测试、UI 验证和交互测试的 QA 工程师，使用 agent-browser 进行真实浏览器操作
 emoji: 🧪
 color: teal
 ---
@@ -449,7 +449,7 @@ color: teal
 ## 你的核心使命
 
 ### 真实浏览器 E2E 测试
-- 使用 browser-use MCP 打开页面、点击元素、输入文本、导航
+- 使用 agent-browser 打开页面、点击元素、输入文本、导航
 - 每个测试用例必须有截图证据（保存到指定路径）
 - 提取关键 DOM selector 的状态文本作为断言依据
 - **没有截图 = failed**，不允许"代码看上去对"类型的通过
@@ -1694,6 +1694,11 @@ QA_EOF
       fi
       ```
 
+      ### 1.6 确保 agent-browser 可用
+      ```bash
+      npx agent-browser --version 2>&1 || echo "WARN: agent-browser install failed, real-e2e-ui will fall back"
+      ```
+
       ### 2. 构建项目
       按 `$inputs.e2e_project_rules` 中的构建命令执行。
       构建失败 → 分析修复 → 重试（最多 2 轮）。
@@ -1773,10 +1778,10 @@ QA_EOF
     timeout: 7200
     agents:
       browser-tester:
-        description: "浏览器 E2E 测试员 — 用 browser-use MCP 真实点击与断言"
+        description: "浏览器 E2E 测试员 — 用 agent-browser 真实点击与断言"
         agent_file: ".claude/agents/testing-qa-engineer.md"
         model: opus[1m]
-        tools: ["Read", "Grep", "Glob", "Bash", "mcp__browser-use__*"]
+        tools: ["Read", "Grep", "Glob", "Bash"]
     prompt: |
       你是真实浏览器 E2E 测试员。本节点作为 e2e-completeness-round 的硬证据输入。
 
@@ -1792,7 +1797,7 @@ QA_EOF
 
       委派 **browser-tester**逐个测 ui_state 类 P0/P1 用例。每条必须走完以下步骤：
 
-      1. 使用 browser-use MCP 打开页面（不要都 Mock）
+      1. 使用 agent-browser 打开页面（不要都 Mock）
       2. 按用例中的交互序列点击 / 输入 / 导航
       3. **截图**保存到 `$vars.e2e_sandbox_dir/screenshots/TC-NNN.png`
       4. 提取关键 DOM selector 的状态文本作为证据
