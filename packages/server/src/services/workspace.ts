@@ -738,7 +738,7 @@ export class WorkspaceService {
     fs.mkdirSync(agentsDir, { recursive: true })
 
     // Copy all .md files (not .md.tpl templates) from core-pack/agents/
-    const coreAgents = ["devil-advocate.md", "architecture-explorer.md", "vision-analyzer.md"]
+    const coreAgents = ["devil-advocate.md", "architecture-explorer.md", "vision-analyzer.md", "testing-qa-engineer.md"]
     for (const agentFile of coreAgents) {
       const dest = path.join(agentsDir, agentFile)
       if (fs.existsSync(dest)) continue
