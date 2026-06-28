@@ -3,6 +3,7 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import type { Workspace, WorkspaceStatus } from "@/lib/types"
+import { ArchiveStatusBadge } from "@/components/archive/archive-status-badge"
 import {
   FolderKanban,
   GitBranch,
@@ -12,6 +13,7 @@ import {
   Settings,
   Trash2,
   ArrowRight,
+  Loader2,
 } from "lucide-react"
 import {
   DropdownMenu,
@@ -54,6 +56,7 @@ function formatRelativeTime(dateString: string | null | undefined): string {
 
 export function WorkspaceCard({ workspace, onDelete }: WorkspaceCardProps) {
   const config = statusConfig[workspace.status]
+  const isArchiving = workspace.archive_status === "archiving"
 
   return (
     <Card className="group relative transition-shadow hover:shadow-md">
@@ -98,9 +101,17 @@ export function WorkspaceCard({ workspace, onDelete }: WorkspaceCardProps) {
                 设置
               </DropdownMenuItem>
               <DropdownMenuSeparator />
-              <DropdownMenuItem className="text-destructive" onClick={() => onDelete?.(workspace.id)}>
-                <Trash2 className="mr-2 h-4 w-4" />
-                删除
+              <DropdownMenuItem
+                className="text-destructive"
+                onClick={() => !isArchiving && onDelete?.(workspace.id)}
+                disabled={isArchiving}
+              >
+                {isArchiving ? (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                ) : (
+                  <Trash2 className="mr-2 h-4 w-4" />
+                )}
+                {isArchiving ? "归档中..." : "删除"}
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
@@ -129,6 +140,7 @@ export function WorkspaceCard({ workspace, onDelete }: WorkspaceCardProps) {
         <div className="mt-4 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Badge variant={config.variant}>{config.label}</Badge>
+            <ArchiveStatusBadge status={workspace.archive_status} error={workspace.archive_error} />
             <span className="flex items-center gap-1 text-xs text-muted-foreground">
               <Clock className="h-3 w-3" />
               {formatRelativeTime(workspace.lastActivityAt ?? (workspace as unknown as Record<string, string>).created_at)}

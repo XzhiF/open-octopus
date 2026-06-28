@@ -37,6 +37,8 @@ export interface Workspace {
   updatedAt: string
   lastActivityAt?: string
   path: string
+  archive_status?: "none" | "archiving" | "archived" | "archive_failed"
+  archive_error?: string | null
 }
 
 // ============ Project ============
