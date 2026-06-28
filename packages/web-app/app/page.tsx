@@ -8,6 +8,7 @@ import { RecentExecutions } from "@/components/dashboard/recent-executions"
 import { LeaderboardSection } from "@/components/dashboard/leaderboard-section"
 import { WorkflowHealthCard } from "@/components/dashboard/workflow-health-card"
 import { CostTrendChart } from "@/components/dashboard/cost-trend-chart"
+import { MemoryTab } from "@/components/dashboard/memory-tab"
 import { fetchDashboardStats, fetchRunningQueue, fetchRecentExecutions, fetchWorkflowHealth } from "@/lib/api-client"
 import type { Execution } from "@/lib/types"
 
@@ -166,6 +167,12 @@ export default function DashboardPage() {
           pendingExecutions={pendingExecutions}
         />
         <RecentExecutions executions={recentExecutions} />
+      </div>
+
+      {/* 执行记忆 Section */}
+      <div>
+        <h2 className="text-xl font-semibold mb-4">执行记忆</h2>
+        <MemoryTab />
       </div>
     </div>
   )
