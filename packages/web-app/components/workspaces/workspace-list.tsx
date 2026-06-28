@@ -46,8 +46,9 @@ export function WorkspaceList({ workspaces, onRefresh }: WorkspaceListProps) {
     if (!deleteTarget) return
     setDeleting(true)
     try {
+      toast.info("正在归档执行数据...")
       await deleteWorkspace(deleteTarget.id)
-      toast.success(`"${deleteTarget.name}" 已删除`)
+      toast.success(`"${deleteTarget.name}" 已归档并删除`)
       setDeleteTarget(null)
       onRefresh?.()
     } catch (err) {
@@ -179,7 +180,7 @@ export function WorkspaceList({ workspaces, onRefresh }: WorkspaceListProps) {
           <AlertDialogHeader>
             <AlertDialogTitle>删除工作空间</AlertDialogTitle>
             <AlertDialogDescription>
-              确定要删除 &ldquo;{deleteTarget?.name}&rdquo; 吗？此操作不可撤销，相关执行记录也会被删除。
+              系统将自动归档所有执行数据后再删除工作空间，归档失败时不会删除。此操作不可撤销。
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

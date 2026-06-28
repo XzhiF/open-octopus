@@ -141,6 +141,19 @@ export function WorkspaceCard({ workspace, onDelete }: WorkspaceCardProps) {
           <div className="flex items-center gap-2">
             <Badge variant={config.variant}>{config.label}</Badge>
             <ArchiveStatusBadge status={workspace.archive_status} error={workspace.archive_error} />
+            {workspace.archive_status === "archive_failed" && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-6 text-xs gap-1"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  onDelete?.(workspace.id)
+                }}
+              >
+                重试
+              </Button>
+            )}
             <span className="flex items-center gap-1 text-xs text-muted-foreground">
               <Clock className="h-3 w-3" />
               {formatRelativeTime(workspace.lastActivityAt ?? (workspace as unknown as Record<string, string>).created_at)}
