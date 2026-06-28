@@ -57,6 +57,7 @@ CREATE TABLE IF NOT EXISTS executions (
   resume_attempts INTEGER DEFAULT 0,
   pipeline_config TEXT DEFAULT '{}',
   chain_retry_count INTEGER DEFAULT 0,
+  current_node TEXT DEFAULT NULL,
   preset_inputs TEXT DEFAULT NULL,
   started_at TEXT,
   completed_at TEXT,

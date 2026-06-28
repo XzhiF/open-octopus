@@ -386,4 +386,25 @@ describe("Experience Query Tests", () => {
       expect(e3!.use_count).toBe(0)
     })
   })
+
+  // FTS5 hyphen fix verification
+  describe("ExperienceDAO.searchFTS hyphen handling", () => {
+    it("searches for hyphenated terms without crashing (BUG-001 pattern)", () => {
+      seedExperience(db, { title: "BUG-001 CORS error", content: "CORS policy blocks requests" })
+      seedExperience(db, { title: "BUG-002 auth failure", content: "Authentication failed" })
+      seedExperience(db, { title: "normal issue", content: "no bug here" })
+
+      // This would previously throw SQLITE_ERROR: no such column: 001
+      const results = experienceDAO.searchFTS("BUG-001", { status: "active", limit: 10 })
+      expect(results.length).toBeGreaterThan(0)
+      expect(results[0].title).toContain("BUG")
+    })
+
+    it("handles quoted and unquoted queries safely", () => {
+      seedExperience(db, { title: "fix auth module", content: "auth module crash" })
+
+      const results = experienceDAO.searchFTS("auth", { status: "active", limit: 10 })
+      expect(results.length).toBeGreaterThan(0)
+    })
+  })
 })
