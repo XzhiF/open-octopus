@@ -354,6 +354,84 @@ export function createArchiveRoutes(deps: ArchiveDeps) {
     }
   })
 
+  // ─── 8. POST /seed ────────────────────────────────────────────────
+  // Seed test data for development/testing. Inserts execution archive
+  // and experience records.
+  router.post("/seed", async (c) => {
+    try {
+      const org = c.get("org" as any) as string
+      const body = await c.req.json()
+      const { executions = [], experiences = [] } = body
+
+      const insertedExecutions: string[] = []
+      for (const exec of executions) {
+        const id = exec.id ?? `seed-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+        archiveDAO.insertExecutionArchive({
+          id,
+          org,
+          workflow_ref: exec.workflow_ref ?? "test-workflow",
+          workflow_name: exec.workflow_name ?? exec.workflow_ref ?? "test-workflow",
+          status: exec.status ?? "completed",
+          started_at: exec.started_at ?? new Date().toISOString(),
+          completed_at: exec.completed_at ?? new Date().toISOString(),
+          duration_ms: exec.duration_ms ?? 1000,
+          node_summary: typeof exec.node_summary === "string" ? exec.node_summary : JSON.stringify(exec.node_summary ?? []),
+          failed_nodes: typeof exec.failed_nodes === "string" ? exec.failed_nodes : JSON.stringify(exec.failed_nodes ?? []),
+          error_message: exec.error_message ?? null,
+          total_input_tokens: exec.total_input_tokens ?? 100,
+          total_output_tokens: exec.total_output_tokens ?? 50,
+          total_cost_usd: exec.total_cost_usd ?? 0.01,
+          model_breakdown: typeof exec.model_breakdown === "string" ? exec.model_breakdown : JSON.stringify(exec.model_breakdown ?? []),
+          vars_snapshot: typeof exec.vars_snapshot === "string" ? exec.vars_snapshot : JSON.stringify(exec.vars_snapshot ?? {}),
+          lessons_learned: exec.lessons_learned ?? null,
+          workspace_archive_id: exec.workspace_archive_id ?? null,
+          workspace_id: exec.workspace_id ?? null,
+          chain_position: exec.chain_position ?? 0,
+          parent_execution_id: exec.parent_execution_id ?? null,
+          schedule_id: exec.schedule_id ?? null,
+          clone_name: exec.clone_name ?? null,
+          created_at: exec.created_at,
+        })
+        insertedExecutions.push(id)
+      }
+
+      const insertedExperiences: string[] = []
+      for (const exp of experiences) {
+        const id = exp.id ?? `exp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+        experienceDAO.insert({
+          id,
+          org,
+          archive_id: exp.archive_id ?? null,
+          workflow_name: exp.workflow_name ?? "test-workflow",
+          type: exp.type ?? "bug",
+          title: exp.title ?? "Test experience",
+          content: exp.content ?? "Test content",
+          status: exp.status ?? "active",
+          resolved_at: exp.resolved_at ?? null,
+          resolved_by: exp.resolved_by ?? null,
+          project: exp.project ?? "test-project",
+          package: exp.package ?? null,
+          file_pattern: exp.file_pattern ?? null,
+          keywords: exp.keywords ?? null,
+          relevance_score: exp.relevance_score ?? 0.5,
+          use_count: exp.use_count ?? 0,
+          created_at: exp.created_at,
+        })
+        insertedExperiences.push(id)
+      }
+
+      return c.json({
+        inserted_executions: insertedExecutions.length,
+        inserted_experiences: insertedExperiences.length,
+        execution_ids: insertedExecutions,
+        experience_ids: insertedExperiences,
+      })
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Failed to seed data"
+      return c.json({ error: message }, 500)
+    }
+  })
+
   return router
 }
 

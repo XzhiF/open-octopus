@@ -6,11 +6,20 @@ import { useArchiveStats } from "@/hooks/use-archive-stats"
 import { useCostTrends } from "@/hooks/use-cost-trends"
 import { useExperienceSearch } from "@/hooks/use-experience-search"
 import { getLeaderboard, type LeaderboardEntry } from "@/lib/archive-api"
+import { listWorkspaces } from "@/lib/api-client"
 import { formatCost } from "@/lib/cost-format"
 import { CostTrendSection } from "@/components/archive/cost-trend-section"
 import { WorkflowRanking } from "@/components/archive/workflow-ranking"
 import { ExperienceList } from "@/components/archive/experience-list"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import { ArrowRight, TrendingUp, DollarSign, Calendar } from "lucide-react"
+import type { Workspace } from "@/lib/types"
 
 function MemoryStatsCards({ stats }: { stats: ReturnType<typeof useArchiveStats>["data"] }) {
   if (!stats) return null
@@ -36,12 +45,25 @@ function MemoryStatsCards({ stats }: { stats: ReturnType<typeof useArchiveStats>
 export function MemoryTab() {
   const { data: stats, loading: statsLoading, error: statsError, refetch: refetchStats } = useArchiveStats()
   const [days, setDays] = useState(7)
-  const { trends, loading: trendsLoading, error: trendsError, refetch: refetchTrends } = useCostTrends(days)
+  const [workspaceId, setWorkspaceId] = useState<string | undefined>(undefined)
+  const [workspaces, setWorkspaces] = useState<Workspace[]>([])
+
+  const { trends, loading: trendsLoading, error: trendsError, refetch: refetchTrends } = useCostTrends(days, workspaceId)
   const { query, lessons, total, loading: lessonsLoading, search } = useExperienceSearch("", 10)
 
   const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([])
   const [leaderboardBy, setLeaderboardBy] = useState<"count" | "success_rate" | "cost">("count")
   const [leaderboardLoading, setLeaderboardLoading] = useState(true)
+
+  // Fetch workspace list for filter dropdown
+  useEffect(() => {
+    listWorkspaces()
+      .then(data => {
+        const list = Array.isArray(data) ? data : (data as any).workspaces ?? []
+        setWorkspaces(list)
+      })
+      .catch(() => {})
+  }, [])
 
   useEffect(() => {
     setLeaderboardLoading(true)
@@ -67,8 +89,28 @@ export function MemoryTab() {
 
   return (
     <div className="space-y-8">
-      {/* Stats Cards */}
-      <MemoryStatsCards stats={stats} />
+      {/* Workspace Filter + Stats Cards */}
+      <div className="flex items-start justify-between gap-4">
+        <div className="flex-1">
+          <MemoryStatsCards stats={stats} />
+        </div>
+        <div className="shrink-0">
+          <Select
+            value={workspaceId ?? "all"}
+            onValueChange={v => setWorkspaceId(v === "all" ? undefined : v)}
+          >
+            <SelectTrigger className="w-[180px]" aria-label="按工作空间过滤">
+              <SelectValue placeholder="全部工作空间" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">全部工作空间</SelectItem>
+              {workspaces.map(ws => (
+                <SelectItem key={ws.id} value={ws.id}>{ws.name}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
 
       {/* Cost Trend Chart */}
       <CostTrendSection
