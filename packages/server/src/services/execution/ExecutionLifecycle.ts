@@ -376,6 +376,9 @@ export class ExecutionLifecycle {
 
       this.updateStatus(id, "running", { started_at: new Date().toISOString() })
 
+      // Clean up orphaned node_executions (stuck "running"/"pending" from crash)
+      this.dao.updateNodeExecutionsByStatus(id, "failed", ["running", "pending"], { error: "重试前清理: 孤立节点" })
+
       if (inputValues) {
         this.dao.updateExecution(id, { input_values: JSON.stringify(inputValues) })
         inst.engine.updateVarPool(inputValues)
