@@ -4,8 +4,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
 import { NotificationService } from "../notification-service"
 
-// Mock execSync to avoid actual CLI calls
+// Mock execFileSync to avoid actual CLI calls
 vi.mock("child_process", () => ({
+  execFileSync: vi.fn(),
   execSync: vi.fn(),
 }))
 
@@ -28,11 +29,11 @@ vi.mock("fs", async () => {
   }
 })
 
-import { execSync } from "child_process"
+import { execFileSync } from "child_process"
 
 describe("TC-044: NotificationService dual-mode routing", () => {
   let service: NotificationService
-  const mockExecSync = execSync as unknown as ReturnType<typeof vi.fn>
+  const mockExecFileSync = execFileSync as unknown as ReturnType<typeof vi.fn>
 
   beforeEach(() => {
     service = new NotificationService()
@@ -47,7 +48,7 @@ describe("TC-044: NotificationService dual-mode routing", () => {
 
   it("routes numeric Telegram chat ID to direct Bot API (curl)", async () => {
     process.env.TELEGRAM_BOT_TOKEN = "test-bot-token-123"
-    mockExecSync.mockReturnValue(Buffer.from('{"ok":true}'))
+    mockExecFileSync.mockReturnValue(Buffer.from('{"ok":true}'))
 
     // Force config to use numeric telegram target
     vi.spyOn(service as any, "getConfig").mockReturnValue({
@@ -65,28 +66,23 @@ describe("TC-044: NotificationService dual-mode routing", () => {
     expect(result.retries).toBe(0)
 
     // Verify curl was called with Telegram Bot API URL (direct mode)
-    expect(mockExecSync).toHaveBeenCalledWith(
-      expect.stringContaining("api.telegram.org/bot"),
-      expect.any(Object),
-    )
-    expect(mockExecSync).toHaveBeenCalledWith(
-      expect.stringContaining("test-bot-token-123"),
-      expect.any(Object),
-    )
-    expect(mockExecSync).toHaveBeenCalledWith(
-      expect.stringContaining("12345678"),
+    expect(mockExecFileSync).toHaveBeenCalledWith(
+      "curl",
+      expect.arrayContaining(["https://api.telegram.org/bottest-bot-token-123/sendMessage"]),
       expect.any(Object),
     )
 
-    // Verify hermes CLI was NOT called
-    expect(mockExecSync).not.toHaveBeenCalledWith(
-      expect.stringContaining("hermes send"),
-      expect.any(Object),
-    )
+    // Verify the payload contains the chat_id
+    const curlCall = mockExecFileSync.mock.calls.find((c: any[]) => c[0] === "curl")
+    expect(curlCall).toBeDefined()
+    const args = curlCall![1] as string[]
+    const payloadIdx = args.indexOf("-d") + 1
+    const payload = JSON.parse(args[payloadIdx])
+    expect(payload.chat_id).toBe("12345678")
   })
 
   it("routes named Telegram channel to hermes CLI", async () => {
-    mockExecSync.mockReturnValue(Buffer.from(""))
+    mockExecFileSync.mockReturnValue(Buffer.from(""))
 
     vi.spyOn(service as any, "getConfig").mockReturnValue({
       provider: "hermes-cli",
@@ -102,29 +98,20 @@ describe("TC-044: NotificationService dual-mode routing", () => {
     expect(result.sent).toBe(true)
     expect(result.retries).toBe(0)
 
-    // Verify hermes CLI was called (named mode)
-    expect(mockExecSync).toHaveBeenCalledWith(
-      expect.stringContaining("hermes send"),
-      expect.any(Object),
-    )
-    expect(mockExecSync).toHaveBeenCalledWith(
-      expect.stringContaining("--provider telegram"),
-      expect.any(Object),
-    )
-    expect(mockExecSync).toHaveBeenCalledWith(
-      expect.stringContaining("--channel xzf_hermes"),
+    // Verify hermes CLI was called (named mode) with array args
+    expect(mockExecFileSync).toHaveBeenCalledWith(
+      "hermes",
+      expect.arrayContaining(["send", "--provider", "telegram", "--channel", "xzf_hermes"]),
       expect.any(Object),
     )
 
     // Verify direct Telegram API was NOT called
-    expect(mockExecSync).not.toHaveBeenCalledWith(
-      expect.stringContaining("api.telegram.org"),
-      expect.any(Object),
-    )
+    const curlCalls = mockExecFileSync.mock.calls.filter((c: any[]) => c[0] === "curl")
+    expect(curlCalls.length).toBe(0)
   })
 
   it("routes non-telegram provider to hermes CLI", async () => {
-    mockExecSync.mockReturnValue(Buffer.from(""))
+    mockExecFileSync.mockReturnValue(Buffer.from(""))
 
     vi.spyOn(service as any, "getConfig").mockReturnValue({
       provider: "hermes-cli",
@@ -138,8 +125,9 @@ describe("TC-044: NotificationService dual-mode routing", () => {
     })
 
     expect(result.sent).toBe(true)
-    expect(mockExecSync).toHaveBeenCalledWith(
-      expect.stringContaining("hermes send --provider discord --channel general"),
+    expect(mockExecFileSync).toHaveBeenCalledWith(
+      "hermes",
+      expect.arrayContaining(["send", "--provider", "discord", "--channel", "general"]),
       expect.any(Object),
     )
   })

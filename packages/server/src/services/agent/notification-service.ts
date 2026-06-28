@@ -1,4 +1,4 @@
-import { execSync } from 'child_process'
+import { execSync, execFileSync } from 'child_process'
 import fs from 'fs'
 import path from 'path'
 import { getAgentConfigPath, getNotificationQueueDir } from './paths'
@@ -109,14 +109,13 @@ export class NotificationService {
     // Named mode: use hermes CLI for named channels or other providers
     try {
       const message = this.formatMessage(request)
-      execSync(
-        `hermes send --provider ${provider} --channel ${channel} --message ${JSON.stringify(message)}`,
-        {
-          timeout: 30000,
-          stdio: 'pipe',
-          env: { ...process.env },
-        },
-      )
+      execFileSync('hermes', [
+        'send', '--provider', provider, '--channel', channel, '--message', message,
+      ], {
+        timeout: 30000,
+        stdio: 'pipe',
+        env: { ...process.env },
+      })
       return true
     } catch {
       return false
@@ -133,16 +132,17 @@ export class NotificationService {
 
     try {
       const message = this.formatMessage(request)
-      execSync(
-        `curl -s -X POST "https://api.telegram.org/bot${token}/sendMessage" ` +
-        `-H "Content-Type: application/json" ` +
-        `-d ${JSON.stringify(JSON.stringify({ chat_id: chatId, text: message }))}`,
-        {
-          timeout: 30000,
-          stdio: 'pipe',
-          env: { ...process.env },
-        },
-      )
+      const payload = JSON.stringify({ chat_id: chatId, text: message })
+      execFileSync('curl', [
+        '-s', '-X', 'POST',
+        `https://api.telegram.org/bot${token}/sendMessage`,
+        '-H', 'Content-Type: application/json',
+        '-d', payload,
+      ], {
+        timeout: 30000,
+        stdio: 'pipe',
+        env: { ...process.env },
+      })
       return true
     } catch {
       return false
