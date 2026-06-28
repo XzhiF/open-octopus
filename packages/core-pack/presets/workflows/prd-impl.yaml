@@ -111,6 +111,7 @@ variables:
   plan_skeleton_file: ""
   plan_balance_report: ""
   plan_balance_passed: "false"
+  plan_review_file: ""
   contract_file: ""
   conclusion: ""
 
@@ -2274,6 +2275,7 @@ nodes:
 
       - id: e2e-reality-check
         type: agent
+        depends_on: [e2e-fix-round]
         timeout: 1800
         context: new
         model: sonnet
@@ -2347,6 +2349,7 @@ nodes:
 
       - id: e2e-reality-merge
         type: agent
+        depends_on: [e2e-reality-check]
         timeout: 600
         context: new
         prompt: |

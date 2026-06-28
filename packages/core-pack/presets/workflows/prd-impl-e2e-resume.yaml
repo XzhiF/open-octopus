@@ -104,6 +104,7 @@ variables:
   plan_file: ""
   e2e_cases_file: ""
   completeness_checklist_file: ""
+  contract_file: ""
   output_dir: ""
   conclusion: ""
 
@@ -1234,6 +1235,7 @@ nodes:
 
       - id: e2e-reality-check
         type: agent
+        depends_on: [e2e-fix-round]
         timeout: 1800
         context: new
         agents:
@@ -1306,6 +1308,7 @@ nodes:
 
       - id: e2e-reality-merge
         type: agent
+        depends_on: [e2e-reality-check]
         timeout: 600
         context: new
         prompt: |
