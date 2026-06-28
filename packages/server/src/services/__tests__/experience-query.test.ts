@@ -6,7 +6,7 @@ import Database from "better-sqlite3"
 import { ArchiveDAO } from "../../db/dao/archive-dao"
 import { ExperienceDAO } from "../../db/dao/experience-dao"
 import { randomUUID } from "crypto"
-import { readFileSync, existsSync } from "fs"
+import { readFileSync } from "fs"
 import { resolve } from "path"
 
 const SCHEMA_SQL = readFileSync(resolve(__dirname, "../../db/schema.sql"), "utf-8")
@@ -184,10 +184,12 @@ describe("Experience Query Tests", () => {
     })
   })
 
-  // TC-030: Verify experience-injector test exists in engine package
-  it("TC-030: ExperienceInjector test file exists in engine package", () => {
+  // TC-030: Verify experience-injector test has meaningful content (≥7 test cases)
+  it("TC-030: ExperienceInjector test file has ≥7 test cases in engine package", () => {
     const testPath = resolve(__dirname, "../../../../engine/src/__tests__/experience-injector.test.ts")
-    expect(existsSync(testPath)).toBe(true)
+    const content = readFileSync(testPath, "utf-8")
+    const testCount = (content.match(/\bit\(/g) ?? []).length
+    expect(testCount).toBeGreaterThanOrEqual(7)
   })
 
   // TC-031: Mixed status filtering
