@@ -69,6 +69,8 @@ import { SecretMasker } from "./services/actuator/secret-masker"
 import { EventLoopMonitor } from "./services/actuator/event-loop-monitor"
 import { createActuatorRoutes } from "./routes/actuator"
 import { getRecoveryService } from "./services/agent/recovery-service"
+import { AutonomousLoop } from "./services/agent/autonomous-loop"
+import { SuggestionEngine } from "./services/suggestion-engine"
 
 // Install global error handlers early — catches uncaughtException / unhandledRejection
 if (!process.env.VITEST) {
@@ -150,6 +152,7 @@ let workspaceService: WorkspaceService | undefined
 let archiveService: ArchiveService | undefined
 let archiveRecoveryService: ArchiveRecoveryService | undefined
 let experienceLifecycleService: ExperienceLifecycleService | undefined
+let autonomousLoop: AutonomousLoop | undefined
 let decayTimer: NodeJS.Timeout | undefined
 let chatService: ChatService | undefined
 let leaderboardService: LeaderboardService | undefined
@@ -191,6 +194,16 @@ if (!process.env.VITEST && daos) {
     experienceLifecycleService.decayStale()
     const DECAY_INTERVAL = 7 * 24 * 60 * 60 * 1000 // 7 days
     decayTimer = setInterval(() => experienceLifecycleService!.decayStale(), DECAY_INTERVAL)
+  }
+
+  // ── P5.8: Autonomous Observe-Decide-Execute-Learn loop ─────────────────
+  if (daos.archive && daos.experience) {
+    const suggestionEngine = new SuggestionEngine(daos.archive, daos.experience)
+    autonomousLoop = new AutonomousLoop(
+      suggestionEngine, daos.archive, daos.experience,
+      { enabled: getFlag('suggestions') === true },
+    )
+    autonomousLoop.start()
   }
 }
 
@@ -304,6 +317,8 @@ app.route("/api/agent", createAgentRoutes({
   safetyDAO: d.safety,
   scheduleConfigDAO: d.scheduleConfig,
   executionDAO: d.execution,
+  archiveDAO: d.archive,
+  experienceDAO: d.experience,
   schedulerService: schedSvc,
 }))
 app.route("/api/workflows/built-in", builtInWorkflowRoutes)
@@ -548,6 +563,7 @@ if (shouldServe) {
       logInfo(`Server shutting down`, { signal, pid: process.pid })
       observability?.shutdown()
       archiveRecoveryService?.stop()
+      autonomousLoop?.stop()
       if (decayTimer) clearInterval(decayTimer)
       const scheduler = (global as any).__octopus_scheduler as SchedulerEngine | undefined
       scheduler?.stop()

@@ -14,8 +14,10 @@ import { createSafeModeRoutes } from './safe-mode'
 import { createSessionRoutes } from './sessions'
 import { createMemoryRoutes } from './memory'
 import { createSafetyRoutes } from './safety'
+import { createTelegramRoutes } from './telegram'
+import { TelegramHandler } from '../../services/agent/telegram-handler'
 import { getEvolutionService } from '../../services/agent/evolution-service'
-import { WorkspaceDAO, AgentSessionDAO, EvolutionDAO, SafetyDAO, ScheduleConfigDAO, ExecutionDAO } from '../../db/dao'
+import { WorkspaceDAO, AgentSessionDAO, EvolutionDAO, SafetyDAO, ScheduleConfigDAO, ExecutionDAO, ArchiveDAO, ExperienceDAO } from '../../db/dao'
 import { SchedulerService } from '../../services/scheduler/scheduler-service'
 import { SystemPromptAssembler } from '../../services/agent/system-prompt-assembler'
 import { getOrchestratorService } from '../../services/agent/orchestrator-service'
@@ -46,13 +48,15 @@ interface AgentRouteDeps {
   safetyDAO: SafetyDAO
   scheduleConfigDAO: ScheduleConfigDAO
   executionDAO: ExecutionDAO
+  archiveDAO: ArchiveDAO
+  experienceDAO: ExperienceDAO
   schedulerService: SchedulerService
 }
 
 export function createAgentRoutes(deps: AgentRouteDeps): Hono {
   const {
     workspaceDAO, sessionDAO, evolutionDAO, safetyDAO,
-    scheduleConfigDAO, executionDAO, schedulerService,
+    scheduleConfigDAO, executionDAO, archiveDAO, experienceDAO, schedulerService,
   } = deps
   const agent = new Hono()
 
@@ -351,6 +355,32 @@ export function createAgentRoutes(deps: AgentRouteDeps): Hono {
   agent.route('/', createSessionRoutes(sessionDAO))
   agent.route('/', createMemoryRoutes())
   agent.route('/', createSafetyRoutes(safetyDAO))
+
+  // ── Telegram webhook routes (P5.1) ────────────────────────────
+  const telegramHandler = new TelegramHandler({
+    experienceDAO,
+    archiveDAO,
+    executionDAO,
+    sendReply: async (_chatId: number, _text: string) => {
+      // Reply is sent via Hermes or Telegram Bot API — noop here;
+      // actual delivery handled by notification subsystem.
+      const { getNotificationService } = await import('../../services/agent/notification-service')
+      await getNotificationService().sendNotification('default', {
+        type: 'general',
+        title: 'Telegram Reply',
+        body: _text,
+      })
+    },
+  })
+  agent.route('/telegram', createTelegramRoutes({
+    getConfig: () => {
+      const botToken = process.env.OCTOPUS_TELEGRAM_BOT_TOKEN
+      const secretToken = process.env.OCTOPUS_TELEGRAM_WEBHOOK_SECRET
+      if (!botToken || !secretToken) return null
+      return { botToken, secretToken }
+    },
+    handler: telegramHandler,
+  }))
 
   // ── Evolution (inlined for route priority) ──────────────────
 
