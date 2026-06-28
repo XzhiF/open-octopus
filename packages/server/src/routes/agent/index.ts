@@ -15,7 +15,7 @@ import { createSessionRoutes } from './sessions'
 import { createMemoryRoutes } from './memory'
 import { createSafetyRoutes } from './safety'
 import { getEvolutionService } from '../../services/agent/evolution-service'
-import { WorkspaceDAO, AgentSessionDAO, EvolutionDAO, SafetyDAO, ScheduleConfigDAO, ExecutionDAO, ArchiveDAO, CloneDAO } from '../../db/dao'
+import { WorkspaceDAO, AgentSessionDAO, EvolutionDAO, SafetyDAO, ScheduleConfigDAO, ExecutionDAO, ArchiveDAO } from '../../db/dao'
 import { SchedulerService } from '../../services/scheduler/scheduler-service'
 import { SystemPromptAssembler } from '../../services/agent/system-prompt-assembler'
 import { getOrchestratorService } from '../../services/agent/orchestrator-service'
@@ -48,14 +48,13 @@ interface AgentRouteDeps {
   executionDAO: ExecutionDAO
   schedulerService: SchedulerService
   archiveDAO?: ArchiveDAO
-  cloneDAO?: CloneDAO
 }
 
 export function createAgentRoutes(deps: AgentRouteDeps): Hono {
   const {
     workspaceDAO, sessionDAO, evolutionDAO, safetyDAO,
     scheduleConfigDAO, executionDAO, schedulerService,
-    archiveDAO, cloneDAO,
+    archiveDAO,
   } = deps
   const agent = new Hono()
 
@@ -1565,7 +1564,10 @@ export function createAgentRoutes(deps: AgentRouteDeps): Hono {
         .filter((s: string) => s.startsWith('execution:'))
         .map((s: string) => s.replace('execution:', ''))
 
-      if (!archiveDAO) return c.json({ data: [], total: 0, page: 1, pageSize: 20 })
+      // ponytail: empty scope = no access (isolation means explicit scope required)
+      if (!archiveDAO || workflowRefs.length === 0) {
+        return c.json({ data: [], total: 0, page: 1, pageSize: 20 })
+      }
 
       const page = parseInt(c.req.query('page') ?? '1', 10) || 1
       const pageSize = parseInt(c.req.query('pageSize') ?? '20', 10) || 20
@@ -1574,7 +1576,7 @@ export function createAgentRoutes(deps: AgentRouteDeps): Hono {
         org,
         page,
         pageSize,
-        workflowRefs: workflowRefs.length > 0 ? workflowRefs : undefined,
+        workflowRefs,
       })
 
       return c.json(result)

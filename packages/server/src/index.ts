@@ -307,7 +307,6 @@ app.route("/api/agent", createAgentRoutes({
   executionDAO: d.execution,
   schedulerService: schedSvc,
   archiveDAO: d.archive,
-  cloneDAO: d.clone,
 }))
 app.route("/api/workflows/built-in", builtInWorkflowRoutes)
 app.route("/api/archive", createArchiveRoutes({ archiveDAO: d.archive, experienceDAO: d.experience }))
