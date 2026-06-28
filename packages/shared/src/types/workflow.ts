@@ -284,6 +284,22 @@ export const WorkflowInputSchema = z.object({
   default: z.string().default(""),
 })
 
+// Chain definition: triggers next workflows after current execution completes
+const YamlChainItemSchema = z.object({
+  workflow: z.string(),
+  condition: z.string().optional(),
+  auto_trigger: z.boolean().default(true),
+  input_mapping: z.record(z.string()).optional(),
+})
+
+export const WorkflowChainSchema = z.object({
+  on_success: z.array(YamlChainItemSchema).optional(),
+  on_failure: z.array(YamlChainItemSchema).optional(),
+})
+
+export type YamlChainItem = z.infer<typeof YamlChainItemSchema>
+export type YamlChainDef = z.infer<typeof WorkflowChainSchema>
+
 export const WorkflowSchema = z.object({
   apiVersion: z.string().regex(/^octopus\/v\d+$/, "apiVersion must match octopus/v{number}"),
   kind: z.literal("Workflow"),
@@ -300,6 +316,7 @@ export const WorkflowSchema = z.object({
   hooks: WorkflowHooksSchema.optional(),
   providers: z.record(z.string(), NotifyProviderConfigSchema).optional(),
   channels: z.record(z.string(), ChannelProfileSchema).optional(),
+  chain: WorkflowChainSchema.optional(),
   nodes: z.array(NodeSchema),
 })
 

@@ -10,7 +10,7 @@ import { applySchema } from "./db/schema"
 import {
   WorkspaceDAO, ExecutionDAO, TokenUsageDAO, ScheduleConfigDAO,
   ScheduleRunDAO, ChatDAO, OrgDAO, AgentSessionDAO, EvolutionDAO,
-  CloneDAO, SafetyDAO, ArchiveDAO,
+  CloneDAO, SafetyDAO, ArchiveDAO, ExperienceDAO,
 } from "./db/dao"
 import { ObservabilityService } from "./services/observability"
 import { PrivacyFilter } from "./services/privacy-filter"
@@ -51,6 +51,8 @@ import { ExportService } from "./services/scheduler/export-service"
 import { WorkspaceService } from "./services/workspace"
 import { ArchiveService } from "./services/archive-service"
 import { ArchiveRecoveryService } from "./services/archive-recovery"
+import { ExperienceLifecycleService } from "./services/experience-lifecycle"
+import { createWebhookRoutes } from "./routes/webhook"
 import { ChatService } from "./services/chat"
 import { LeaderboardService } from "./services/leaderboard"
 import { getLogAnalysisService } from "./services/log-analysis"
@@ -86,6 +88,7 @@ interface AllDAOs {
   clone: CloneDAO
   safety: SafetyDAO
   archive: ArchiveDAO
+  experience: ExperienceDAO
 }
 
 function createAllDAOs(db: ReturnType<typeof initDb>): AllDAOs {
@@ -102,6 +105,7 @@ function createAllDAOs(db: ReturnType<typeof initDb>): AllDAOs {
     clone: new CloneDAO(db),
     safety: new SafetyDAO(db),
     archive: new ArchiveDAO(db),
+    experience: new ExperienceDAO(db),
   }
 }
 
@@ -144,12 +148,15 @@ let observability: ObservabilityService | undefined
 let workspaceService: WorkspaceService | undefined
 let archiveService: ArchiveService | undefined
 let archiveRecoveryService: ArchiveRecoveryService | undefined
+let experienceLifecycleService: ExperienceLifecycleService | undefined
+let decayTimer: NodeJS.Timeout | undefined
 let chatService: ChatService | undefined
 let leaderboardService: LeaderboardService | undefined
 
 if (!process.env.VITEST && daos) {
   // Create services with DAOs
-  archiveService = new ArchiveService(daos.archive, daos.execution, daos.tokenUsage)
+  archiveService = new ArchiveService(daos.archive, daos.execution, daos.tokenUsage, daos.experience)
+  experienceLifecycleService = new ExperienceLifecycleService(daos.experience, daos.archive, archiveService)
   workspaceService = new WorkspaceService(daos.workspace, archiveService)
   chatService = new ChatService(daos.chat, sse)
   leaderboardService = new LeaderboardService(daos.tokenUsage)
@@ -177,6 +184,13 @@ if (!process.env.VITEST && daos) {
   // Start archive recovery service (scans for stuck/timed-out archives)
   archiveRecoveryService = new ArchiveRecoveryService(daos.workspace)
   archiveRecoveryService.start()
+
+  // Start experience decay: run once at startup, then every 7 days
+  if (experienceLifecycleService) {
+    experienceLifecycleService.decayStale()
+    const DECAY_INTERVAL = 7 * 24 * 60 * 60 * 1000 // 7 days
+    decayTimer = setInterval(() => experienceLifecycleService!.decayStale(), DECAY_INTERVAL)
+  }
 }
 
 const app = new Hono()
@@ -244,6 +258,7 @@ const d = daos ?? {
   clone: lazyDAO(CloneDAO),
   safety: lazyDAO(SafetyDAO),
   archive: lazyDAO(ArchiveDAO),
+  experience: lazyDAO(ExperienceDAO),
 }
 
 const wsSvc = workspaceService ?? new WorkspaceService(d.workspace)
@@ -291,6 +306,11 @@ app.route("/api/agent", createAgentRoutes({
   schedulerService: schedSvc,
 }))
 app.route("/api/workflows/built-in", builtInWorkflowRoutes)
+
+// Webhook routes (GitHub PR merge -> experience lifecycle)
+if (experienceLifecycleService) {
+  app.route("/api/webhooks", createWebhookRoutes(experienceLifecycleService))
+}
 
 // Set scheduler on agent service
 try { getAgentService().setSchedulerService(schedSvc) } catch {}
@@ -524,6 +544,7 @@ if (shouldServe) {
       logInfo(`Server shutting down`, { signal, pid: process.pid })
       observability?.shutdown()
       archiveRecoveryService?.stop()
+      if (decayTimer) clearInterval(decayTimer)
       const scheduler = (global as any).__octopus_scheduler as SchedulerEngine | undefined
       scheduler?.stop()
       if ((global as any).__octopus_cleanupRetention) {

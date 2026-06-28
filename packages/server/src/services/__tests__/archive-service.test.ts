@@ -287,9 +287,13 @@ describe("ArchiveService.archiveWorkspace", () => {
     expect(wsArchive).not.toBeNull()
 
     const manifest = JSON.parse(wsArchive!.workflow_manifest)
-    expect(manifest).toContain("flow-a.yaml")
-    expect(manifest).toContain("flow-b.yaml")
     expect(manifest).toHaveLength(2)
+    const flowA = manifest.find((m: any) => m.workflow_ref === "flow-a.yaml")
+    const flowB = manifest.find((m: any) => m.workflow_ref === "flow-b.yaml")
+    expect(flowA).toBeDefined()
+    expect(flowA.execution_count).toBe(2)
+    expect(flowB).toBeDefined()
+    expect(flowB.execution_count).toBe(1)
   })
 })
 

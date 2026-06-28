@@ -1,7 +1,11 @@
 // packages/server/src/services/archive-service.ts
+import fs from "fs"
+import path from "path"
+import os from "os"
 import type { ArchiveDAO } from "../db/dao/archive-dao"
 import type { ExecutionDAO } from "../db/dao/execution-dao"
 import type { TokenUsageDAO } from "../db/dao/token-usage-dao"
+import type { ExperienceDAO } from "../db/dao/experience-dao"
 
 /**
  * ArchiveService — Layer 1+2 synchronous extraction.
@@ -17,6 +21,7 @@ export class ArchiveService {
     private archiveDAO: ArchiveDAO,
     private executionDAO: ExecutionDAO,
     private tokenUsageDAO: TokenUsageDAO,
+    private experienceDAO?: ExperienceDAO,
   ) {}
 
   /**
@@ -170,12 +175,16 @@ export class ArchiveService {
         children,
       }))
 
-      // Build workflow_manifest: list of unique workflow refs
+      // Build workflow_manifest: list of unique workflow refs with metadata
       const workflowSet = new Set<string>()
       for (const exec of executions) {
         if (exec.workflow_ref) workflowSet.add(exec.workflow_ref)
       }
-      const workflowManifest = Array.from(workflowSet)
+      const workflowManifest = Array.from(workflowSet).map(ref => ({
+        workflow_ref: ref,
+        workflow_name: executions.find(e => e.workflow_ref === ref)?.workflow_name || ref,
+        execution_count: executions.filter(e => e.workflow_ref === ref).length,
+      }))
 
       // Aggregate totals
       let totalCost = 0
@@ -254,6 +263,141 @@ export class ArchiveService {
     } catch (err) {
       console.warn(`[archive] archiveExecutionForDetail failed for ${executionId}:`, err)
       return null
+    }
+  }
+
+  /**
+   * Layer 3: Extract lessons from an execution using haiku (cost-gated).
+   *
+   * Cost gate: skip LLM if total_cost_usd < $1 AND status === 'completed'.
+   * For now, the actual LLM call is deferred (TODO) — the method structure
+   * and cost gate logic are fully implemented.
+   *
+   * Returns null if: archive not found, cost gate skip, or LLM not yet integrated.
+   */
+  async extractLessons(executionId: string): Promise<null> {
+    try {
+      const archive = this.archiveDAO.getArchive(executionId)
+      if (!archive) return null
+
+      // ── Cost gate ──────────────────────────────────────────────
+      // Skip LLM call for cheap, successful executions
+      if (archive.total_cost_usd < 1.0 && archive.status === "completed") {
+        return null
+      }
+
+      // ── Build prompt for haiku ─────────────────────────────────
+      // Only reached if cost >= $1 OR status === 'failed'
+      const nodeSummary = safeJsonParse(archive.node_summary, [])
+      const failedNodes = safeJsonParse(archive.failed_nodes, null)
+      const varsSnapshot = safeJsonParse(archive.vars_snapshot, {})
+
+      // Truncate vars_snapshot to avoid token explosion
+      const truncatedVars: Record<string, unknown> = {}
+      for (const [k, v] of Object.entries(varsSnapshot)) {
+        if (typeof v === "string" && v.length > 200) {
+          truncatedVars[k] = v.slice(0, 200) + "...[truncated]"
+        } else {
+          truncatedVars[k] = v
+        }
+      }
+
+      const _prompt = [
+        "Analyze this workflow execution and extract actionable lessons.",
+        `Workflow: ${archive.workflow_name}`,
+        `Status: ${archive.status}`,
+        `Total cost: $${archive.total_cost_usd.toFixed(4)}`,
+        `Duration: ${archive.duration_ms ?? "unknown"}ms`,
+        `Node summary: ${JSON.stringify(nodeSummary)}`,
+        failedNodes ? `Failed nodes: ${JSON.stringify(failedNodes)}` : "",
+        archive.error_message ? `Error: ${archive.error_message}` : "",
+        `Vars snapshot: ${JSON.stringify(truncatedVars)}`,
+        "",
+        "Return JSON: { lessons: string, items: Array<{ type: 'bug'|'pattern'|'cost'|'failure', title: string, content: string, project?: string, package?: string, file_pattern?: string, keywords?: string }> }",
+      ].filter(Boolean).join("\n")
+
+      // TODO: Call haiku LLM provider here when integration is ready.
+      // For now, log and return null.
+      console.log(`[archive] extractLessons: haiku would be called for ${executionId} (cost=$${archive.total_cost_usd.toFixed(4)}, status=${archive.status})`)
+
+      // ── Future: write results when haiku integration is live ──────
+      // if (haikuResult) {
+      //   this.archiveDAO.updateLessonsLearned(executionId, haikuResult.lessons)
+      //   if (this.experienceDAO) {
+      //     for (const item of haikuResult.items) {
+      //       // Supersede check: find same-dimension active entries
+      //       const existing = this.experienceDAO.findByDimensions(
+      //         item.project ?? "", item.file_pattern ?? null, item.type
+      //       )
+      //       const newId = this.experienceDAO.insert({
+      //         type: item.type,
+      //         title: item.title,
+      //         content: item.content,
+      //         project: item.project ?? null,
+      //         package: item.package ?? null,
+      //         file_pattern: item.file_pattern ?? null,
+      //         keywords: item.keywords ?? null,
+      //         workflow_name: archive.workflow_name,
+      //         status: 'active',
+      //         relevance_score: 0,
+      //         use_count: 0,
+      //       })
+      //       // Supersede old entries
+      //       const toSupersede = existing.filter(e => e.id !== newId)
+      //       if (toSupersede.length > 0) {
+      //         this.experienceDAO.markSuperseded(toSupersede.map(e => e.id), newId)
+      //       }
+      //     }
+      //   }
+      // }
+
+      return null
+    } catch (err) {
+      console.warn(`[archive] extractLessons failed for ${executionId}:`, err)
+      return null
+    }
+  }
+
+  /**
+   * Regenerate knowledge base markdown files for a given project.
+   *
+   * For each type in ['bug', 'pattern', 'cost', 'failure'], queries active
+   * experiences (max 50, sorted by relevance_score DESC) and writes an
+   * overwriting markdown file to ~/.octopus/knowledge/{project}/{type}.md.
+   *
+   * Resolved/obsolete entries naturally disappear on next regeneration.
+   */
+  updateKnowledgeFiles(project: string): void {
+    if (!this.experienceDAO) return
+
+    const types = ["bug", "pattern", "cost", "failure"] as const
+    const baseDir = path.join(os.homedir(), ".octopus", "knowledge", project)
+
+    for (const type of types) {
+      try {
+        const entries = this.experienceDAO.getActiveByProject(project, type, 50)
+        // getActiveByProject already sorts by relevance_score DESC
+
+        const lines: string[] = [
+          `# ${type.charAt(0).toUpperCase() + type.slice(1)} Experiences — ${project}`,
+          `> Auto-generated from experience_index. Do not edit manually.`,
+          `> Generated: ${new Date().toISOString()}`,
+          "",
+        ]
+
+        for (const entry of entries) {
+          lines.push(`## ${entry.title}`)
+          lines.push(entry.content)
+          lines.push("---")
+          lines.push("")
+        }
+
+        fs.mkdirSync(baseDir, { recursive: true })
+        const filePath = path.join(baseDir, `${type}.md`)
+        fs.writeFileSync(filePath, lines.join("\n"), "utf-8")
+      } catch (err) {
+        console.warn(`[archive] updateKnowledgeFiles failed for ${project}/${type}:`, err)
+      }
     }
   }
 }

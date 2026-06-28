@@ -1,6 +1,6 @@
 -- =============================================================================
 -- Octopus Unified Schema (schema.sql)
--- Complete database schema: 30 tables + 3 FTS5 virtual tables + 4 triggers
+-- Complete database schema: 31 tables + 4 FTS5 virtual tables + 10 triggers
 -- This file is idempotent — safe to execute on an empty database.
 -- =============================================================================
 
@@ -619,6 +619,68 @@ CREATE TABLE IF NOT EXISTS workspace_archive (
 
 CREATE INDEX IF NOT EXISTS idx_ws_archive_workspace ON workspace_archive(workspace_id);
 CREATE INDEX IF NOT EXISTS idx_ws_archive_org ON workspace_archive(org);
+
+-- =============================================================================
+-- Experience Index (knowledge-loop PRD)
+-- =============================================================================
+
+-- 31. Experience Index
+CREATE TABLE IF NOT EXISTS experience_index (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  type TEXT NOT NULL,
+  title TEXT NOT NULL,
+  content TEXT NOT NULL,
+  project TEXT,
+  package TEXT,
+  file_pattern TEXT,
+  keywords TEXT,
+  workflow_name TEXT,
+  status TEXT NOT NULL DEFAULT 'active',
+  relevance_score REAL NOT NULL DEFAULT 0,
+  use_count INTEGER NOT NULL DEFAULT 0,
+  resolved_at TEXT,
+  resolved_by TEXT,
+  superseded_by INTEGER,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_exp_type ON experience_index(type);
+CREATE INDEX IF NOT EXISTS idx_exp_status ON experience_index(status);
+CREATE INDEX IF NOT EXISTS idx_exp_project ON experience_index(project);
+CREATE INDEX IF NOT EXISTS idx_exp_relevance ON experience_index(relevance_score DESC);
+
+-- FTS5 virtual table for experience_index
+CREATE VIRTUAL TABLE IF NOT EXISTS experience_index_fts USING fts5(
+  title,
+  content,
+  keywords,
+  content='experience_index',
+  content_rowid='rowid'
+);
+
+-- FTS sync triggers
+CREATE TRIGGER IF NOT EXISTS exp_fts_after_insert
+AFTER INSERT ON experience_index
+BEGIN
+  INSERT INTO experience_index_fts(rowid, title, content, keywords)
+  VALUES (NEW.rowid, NEW.title, NEW.content, NEW.keywords);
+END;
+
+CREATE TRIGGER IF NOT EXISTS exp_fts_after_delete
+AFTER DELETE ON experience_index
+BEGIN
+  INSERT INTO experience_index_fts(experience_index_fts, rowid, title, content, keywords)
+  VALUES ('delete', OLD.rowid, OLD.title, OLD.content, OLD.keywords);
+END;
+
+CREATE TRIGGER IF NOT EXISTS exp_fts_after_update
+AFTER UPDATE ON experience_index
+BEGIN
+  INSERT INTO experience_index_fts(experience_index_fts, rowid, title, content, keywords)
+  VALUES ('delete', OLD.rowid, OLD.title, OLD.content, OLD.keywords);
+  INSERT INTO experience_index_fts(rowid, title, content, keywords)
+  VALUES (NEW.rowid, NEW.title, NEW.content, NEW.keywords);
+END;
 
 -- =============================================================================
 -- Triggers

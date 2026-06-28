@@ -51,6 +51,8 @@ export interface EngineCallbacks {
   onCheckpoint?: (checkpoint: unknown) => void
   onPipelineReloaded?: (config: PipelineConfig) => void
   onRuntimeNodeAdded?: (nodeId: string, nodeType: string) => void
+  /** Emitted when workflow-level chain config triggers a next workflow. */
+  onChainTrigger?: (chainItems: Array<{ workflow: string; condition?: string; auto_trigger: boolean; input_mapping?: Record<string, string> }>, triggerType: "on_success" | "on_failure") => void
 }
 
 export class WorkflowEngine {
@@ -239,6 +241,35 @@ export class WorkflowEngine {
     // Write State JSON
     if (this.orgDir) {
       this.writeStateJson(result, durationMs)
+    }
+
+    // ── YAML chain trigger detection ───────────────────────────
+    // If the workflow YAML has a `chain` config, emit chain triggers
+    // for the server layer to handle (creating child executions).
+    // This coexists with the pipeline chain (pipeline chain takes priority).
+    if (this.workflow.chain) {
+      const chainConfig = this.workflow.chain
+      if ((result.status === "completed" || result.status === "completed_with_failures") && chainConfig.on_success?.length) {
+        const filteredItems = chainConfig.on_success.filter(item => {
+          if (!item.condition) return true
+          try {
+            return evaluateExpression(item.condition, this.pool, {})
+          } catch { return false }
+        })
+        if (filteredItems.length > 0) {
+          this.callbacks?.onChainTrigger?.(filteredItems, "on_success")
+        }
+      } else if (result.status === "failed" && chainConfig.on_failure?.length) {
+        const filteredItems = chainConfig.on_failure.filter(item => {
+          if (!item.condition) return true
+          try {
+            return evaluateExpression(item.condition, this.pool, {})
+          } catch { return false }
+        })
+        if (filteredItems.length > 0) {
+          this.callbacks?.onChainTrigger?.(filteredItems, "on_failure")
+        }
+      }
     }
 
     this.callbacks?.onComplete?.(result.status)
