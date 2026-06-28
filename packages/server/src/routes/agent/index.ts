@@ -92,7 +92,7 @@ export function createAgentRoutes(deps: AgentRouteDeps): Hono {
 
   // ── Specific literal routes MUST be before parameterized routes (Hono priority) ──
 
-  // M3: Cron job registration + execution
+  // M3: Cron job registration + execution — supports both agent (prompt) and workflow (job_type+workflow_ref) modes
   agent.post('/schedules/register', async (c) => {
     try {
       const org = c.req.header('X-Octopus-Org') || (c.get('org') as string)
@@ -100,12 +100,56 @@ export function createAgentRoutes(deps: AgentRouteDeps): Hono {
 
       const body = await c.req.json<{
         name?: string; cron?: string; prompt?: string; description?: string
+        job_type?: string; workflow_ref?: string; input_values?: Record<string, unknown>
+        timezone?: string; notify_strategy?: { on_success?: boolean; on_failure?: boolean; channels?: string[] }
         memory_strategy?: { read_recent_days?: number; read_last_report?: boolean; write_report_path?: string }
-        notify_strategy?: { on_success?: boolean; on_failure?: boolean; channels?: string[] }
       }>().catch(() => ({}))
 
-      if (!body.name || !body.cron || !body.prompt) {
-        return c.json(createAgentError('INVALID_PARAM', 'name, cron, and prompt are required'), 400)
+      if (!body.name || !body.cron) {
+        return c.json(createAgentError('INVALID_PARAM', 'name and cron are required'), 400)
+      }
+
+      // Validate cron format (basic check: 5 fields)
+      const cronParts = body.cron.trim().split(/\s+/)
+      if (cronParts.length !== 5) {
+        return c.json(createAgentError('INVALID_CRON', 'cron must have 5 fields'), 400)
+      }
+
+      // Workflow mode: job_type + workflow_ref
+      if (body.job_type || body.workflow_ref) {
+        const id = crypto.randomUUID()
+        const now = new Date().toISOString()
+        scheduleConfigDAO.insertSchedule({
+          id,
+          org,
+          name: body.name,
+          cron_expression: body.cron,
+          timezone: body.timezone || 'Asia/Shanghai',
+          workspace_id: null,
+          workflow_ref: body.workflow_ref || null,
+          input_values: JSON.stringify(body.input_values || {}),
+          enabled: 1,
+          timeout_seconds: 3600,
+          notify_on_failure: body.notify_strategy?.on_failure ? 1 : 0,
+          notify_channel: body.notify_strategy?.channels?.[0] || null,
+          notify_target: null,
+          container_execution_id: null,
+          next_trigger_at: null,
+          job_type: body.job_type || 'workflow',
+          config: '{}',
+          parallel_policy: 'sequential',
+          description: body.description || null,
+          version: 1,
+          consecutive_failures: 0,
+          max_retain: 10,
+        })
+        const nextRun = new Date(Date.now() + 60 * 60 * 1000).toISOString()
+        return c.json({ id, name: body.name, cron: body.cron, timezone: body.timezone || 'Asia/Shanghai', next_run: nextRun, workflow_ref: body.workflow_ref, created_at: now }, 201)
+      }
+
+      // Agent mode: prompt required
+      if (!body.prompt) {
+        return c.json(createAgentError('INVALID_PARAM', 'prompt is required for agent jobs'), 400)
       }
 
       const adapter = getSchedulerAdapter(org)
@@ -121,7 +165,7 @@ export function createAgentRoutes(deps: AgentRouteDeps): Hono {
         }
       }
 
-      
+
       const scheduleId = crypto.randomUUID()
       const now = new Date().toISOString()
       try {

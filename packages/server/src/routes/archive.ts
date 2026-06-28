@@ -360,8 +360,13 @@ export function createArchiveRoutes(deps: ArchiveDeps) {
   router.post("/seed", async (c) => {
     try {
       const org = c.get("org" as any) as string
-      const body = await c.req.json()
-      const { executions = [], experiences = [] } = body
+      const body = await c.req.json().catch(() => ({ executions: [], experiences: [] }))
+      const { executions = [], experiences = [], clear = false } = body
+
+      if (clear) {
+        archiveDAO.deleteAllByOrg(org)
+        experienceDAO.deleteAllByOrg(org)
+      }
 
       const insertedExecutions: string[] = []
       for (const exec of executions) {

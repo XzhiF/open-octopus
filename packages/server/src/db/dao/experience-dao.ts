@@ -121,4 +121,8 @@ export class ExperienceDAO extends BaseDAO {
     const countSql = `SELECT COUNT(*) as cnt FROM experience_index WHERE ${where}`
     return this.paginate<ExperienceIndexRow>(dataSql, countSql, params, opts.page, opts.pageSize)
   }
+
+  deleteAllByOrg(org: string): Database.RunResult {
+    return this.stmt("DELETE FROM experience_index WHERE org = ?").run(org)
+  }
 }

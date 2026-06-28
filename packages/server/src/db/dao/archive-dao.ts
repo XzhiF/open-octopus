@@ -174,6 +174,10 @@ export class ArchiveDAO extends BaseDAO {
     return this.stmt("DELETE FROM execution_archive WHERE workspace_id = ?").run(workspaceId)
   }
 
+  deleteAllByOrg(org: string): Database.RunResult {
+    return this.stmt("DELETE FROM execution_archive WHERE org = ?").run(org)
+  }
+
   // ── workspace_archive ────────────────────────────────────────────
 
   insertWorkspaceArchive(row: Omit<WorkspaceArchiveRow, "archived_at"> & { archived_at?: string }): string {

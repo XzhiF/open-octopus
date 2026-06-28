@@ -47,7 +47,7 @@ export function ExperienceList({ lessons, total, loading, query, onSearch }: Exp
 
       {lessons.length === 0 && !loading && (
         <p className="text-sm text-muted-foreground text-center py-8">
-          {query ? "未找到匹配的经验。尝试使用不同的关键词。" : "暂无经验数据"}
+          {query ? "未找到相关经验" : "暂无经验数据"}
         </p>
       )}
 

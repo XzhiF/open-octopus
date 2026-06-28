@@ -218,7 +218,7 @@ function isTrustedOrigin(origin: string | undefined): boolean {
 app.use("*", cors({
   origin: (origin) => origin ?? "*",
   credentials: true,
-  allowHeaders: ["Content-Type", "Authorization", "If-Match"],
+  allowHeaders: ["Content-Type", "Authorization", "If-Match", "X-Octopus-Org"],
   allowMethods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
 }))
 app.use("*", logger())
