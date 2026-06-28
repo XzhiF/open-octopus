@@ -8,25 +8,25 @@ export class WorkspaceDAO extends BaseDAO {
   // ── workspaces ──────────────────────────────────────────────────
 
   findById(id: string): WorkspaceRow | null {
-    return (this.stmt("SELECT * FROM workspaces WHERE id = ?").get(id) as WorkspaceRow) ?? null
+    return (this.stmt("SELECT * FROM workspaces WHERE id = ? AND archived = 0").get(id) as WorkspaceRow) ?? null
   }
 
   findAll(org?: string, source?: string): WorkspaceRow[] {
-    const conditions: string[] = []
+    const conditions: string[] = ["archived = 0"]
     const params: unknown[] = []
     if (org) { conditions.push("org = ?"); params.push(org) }
     if (source && source !== "all") {
       conditions.push("(source = ? OR source IS NULL)")
       params.push(source)
     }
-    const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : ""
+    const where = `WHERE ${conditions.join(" AND ")}`
     return this.stmt(`SELECT * FROM workspaces ${where} ORDER BY created_at DESC`).all(...params) as WorkspaceRow[]
   }
 
-  insert(row: Omit<WorkspaceRow, "source" | "source_schedule_id"> & { source?: string; source_schedule_id?: string | null }): Database.RunResult {
+  insert(row: Omit<WorkspaceRow, "source" | "source_schedule_id" | "archived"> & { source?: string; source_schedule_id?: string | null }): Database.RunResult {
     return this.stmt(
-      `INSERT INTO workspaces (id, name, org, description, status, path, source, source_schedule_id, created_at, updated_at)
-       VALUES (?, ?, ?, ?, 'active', ?, ?, ?, ?, ?)`
+      `INSERT INTO workspaces (id, name, org, description, status, path, source, source_schedule_id, created_at, updated_at, archived)
+       VALUES (?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, 0)`
     ).run(row.id, row.name, row.org, row.description, row.path, row.source ?? "user", row.source_schedule_id ?? null, row.created_at, row.updated_at)
   }
 
