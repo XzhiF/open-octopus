@@ -1,6 +1,6 @@
 -- =============================================================================
 -- Octopus Unified Schema (schema.sql)
--- Complete database schema: 30 tables + 3 FTS5 virtual tables + 4 triggers
+-- Complete database schema: 32 tables + 4 FTS5 virtual tables + 10 triggers
 -- This file is idempotent — safe to execute on an empty database.
 -- =============================================================================
 
@@ -518,7 +518,34 @@ CREATE TABLE IF NOT EXISTS workspace_archive (
 );
 
 -- =============================================================================
--- FTS5 Virtual Tables (from agent DB)
+-- Experience Index (Execution Lessons Learned — P2)
+-- =============================================================================
+
+-- 31. Experience Index — extracted lessons from executions
+CREATE TABLE IF NOT EXISTS experience_index (
+  rowid INTEGER PRIMARY KEY AUTOINCREMENT,
+  id TEXT NOT NULL UNIQUE,
+  org TEXT NOT NULL,
+  archive_id TEXT,
+  workflow_name TEXT NOT NULL,
+  type TEXT NOT NULL CHECK(type IN ('bug', 'pattern', 'cost', 'failure')),
+  title TEXT NOT NULL,
+  content TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'resolved', 'obsolete', 'superseded')),
+  resolved_at TEXT,
+  resolved_by TEXT,
+  project TEXT,
+  package TEXT,
+  file_pattern TEXT,
+  keywords TEXT,
+  relevance_score REAL DEFAULT 1.0,
+  use_count INTEGER DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- =============================================================================
+-- FTS5 Virtual Tables (from agent DB + experience index)
 -- =============================================================================
 
 CREATE VIRTUAL TABLE IF NOT EXISTS session_memory_fts USING fts5(
@@ -536,6 +563,15 @@ CREATE VIRTUAL TABLE IF NOT EXISTS experiences_fts USING fts5(
 CREATE VIRTUAL TABLE IF NOT EXISTS reports_fts USING fts5(
   task_name,
   content
+);
+
+-- 32. Experience Index FTS5 virtual table
+CREATE VIRTUAL TABLE IF NOT EXISTS experience_index_fts USING fts5(
+  title,
+  content,
+  keywords,
+  content='experience_index',
+  content_rowid='rowid'
 );
 
 -- =============================================================================
@@ -633,6 +669,17 @@ CREATE INDEX IF NOT EXISTS idx_archive_ws_archived ON workspace_archive(archived
 CREATE INDEX IF NOT EXISTS idx_workspaces_archive_status ON workspaces(archive_status);
 
 -- =============================================================================
+-- Indexes — Experience Index
+-- =============================================================================
+
+CREATE INDEX IF NOT EXISTS idx_exp_org ON experience_index(org);
+CREATE INDEX IF NOT EXISTS idx_exp_type ON experience_index(type);
+CREATE INDEX IF NOT EXISTS idx_exp_status ON experience_index(status);
+CREATE INDEX IF NOT EXISTS idx_exp_project ON experience_index(project);
+CREATE INDEX IF NOT EXISTS idx_exp_relevance ON experience_index(relevance_score DESC);
+CREATE INDEX IF NOT EXISTS idx_exp_archive ON experience_index(archive_id);
+
+-- =============================================================================
 -- Triggers
 -- =============================================================================
 
@@ -670,6 +717,24 @@ AFTER DELETE ON messages
 WHEN OLD.is_summary = 1
 BEGIN
   DELETE FROM session_memory_fts WHERE rowid = OLD.rowid;
+END;
+
+-- FTS sync triggers for experience_index
+CREATE TRIGGER IF NOT EXISTS experience_index_ai AFTER INSERT ON experience_index BEGIN
+  INSERT INTO experience_index_fts(rowid, title, content, keywords)
+  VALUES (NEW.rowid, NEW.title, NEW.content, NEW.keywords);
+END;
+
+CREATE TRIGGER IF NOT EXISTS experience_index_ad AFTER DELETE ON experience_index BEGIN
+  INSERT INTO experience_index_fts(experience_index_fts, rowid, title, content, keywords)
+  VALUES ('delete', OLD.rowid, OLD.title, OLD.content, OLD.keywords);
+END;
+
+CREATE TRIGGER IF NOT EXISTS experience_index_au AFTER UPDATE ON experience_index BEGIN
+  INSERT INTO experience_index_fts(experience_index_fts, rowid, title, content, keywords)
+  VALUES ('delete', OLD.rowid, OLD.title, OLD.content, OLD.keywords);
+  INSERT INTO experience_index_fts(rowid, title, content, keywords)
+  VALUES (NEW.rowid, NEW.title, NEW.content, NEW.keywords);
 END;
 
 -- =============================================================================

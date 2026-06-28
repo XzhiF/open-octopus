@@ -3,15 +3,29 @@ import type { ArchiveDAO } from "../../db/dao/archive-dao"
 import type { ExecutionDAO } from "../../db/dao/execution-dao"
 import type { TokenUsageDAO } from "../../db/dao/token-usage-dao"
 import type { WorkspaceDAO } from "../../db/dao/workspace-dao"
+import type { ExperienceDAO } from "../../db/dao/experience-dao"
 import type { ExecutionArchiveRow, WorkspaceArchiveRow } from "../../db/types"
+import { LayerFilter, REFLECTION_THRESHOLD } from "./layer-filter"
+import { LLMReflection } from "./llm-reflection"
+import { KnowledgeFiles } from "./knowledge-files"
 
 export class ArchiveService {
+  private layerFilter: LayerFilter
+  private llmReflection: LLMReflection
+  private knowledgeFiles: KnowledgeFiles
+
   constructor(
     private archiveDAO: ArchiveDAO,
     private executionDAO: ExecutionDAO,
     private tokenUsageDAO: TokenUsageDAO,
     private workspaceDAO: WorkspaceDAO,
-  ) {}
+    private experienceDAO?: ExperienceDAO,
+    anthropicClient?: any,
+  ) {
+    this.layerFilter = new LayerFilter(executionDAO, tokenUsageDAO, archiveDAO)
+    this.llmReflection = new LLMReflection(anthropicClient)
+    this.knowledgeFiles = new KnowledgeFiles(experienceDAO!)
+  }
 
   archiveExecution(executionId: string, workspaceArchiveId?: string): string {
     const exec = this.executionDAO.findById(executionId)
@@ -90,7 +104,67 @@ export class ArchiveService {
     }
 
     this.archiveDAO.insertExecutionArchive(row)
+
+    // P2.6: Trigger extractLessons asynchronously (fire-and-forget)
+    if (this.experienceDAO) {
+      setImmediate(() => {
+        this.extractLessons(archiveId).catch(err => {
+          console.warn(`[ArchiveService] extractLessons failed for ${archiveId}:`, err)
+        })
+      })
+    }
+
     return archiveId
+  }
+
+  async extractLessons(archiveId: string): Promise<void> {
+    const archive = this.archiveDAO.findExecutionArchiveById(archiveId)
+    if (!archive) return
+
+    const potential = this.layerFilter.computeExperiencePotential(archiveId)
+    if (potential.score < REFLECTION_THRESHOLD) {
+      return
+    }
+
+    const result = await this.llmReflection.reflect(archive, potential)
+    if (!result.lessons && result.items.length === 0) {
+      return
+    }
+
+    if (result.lessons) {
+      this.archiveDAO.insertExecutionArchive({
+        ...archive,
+        lessons_learned: result.lessons,
+      })
+    }
+
+    if (result.items.length > 0 && this.experienceDAO) {
+      for (const item of result.items) {
+        const itemId = randomUUID()
+        this.experienceDAO.insert({
+          id: itemId,
+          org: archive.org,
+          archive_id: archiveId,
+          workflow_name: archive.workflow_name,
+          type: item.type,
+          title: item.title,
+          content: item.content,
+          status: "active",
+          resolved_at: null,
+          resolved_by: null,
+          project: item.project ?? null,
+          package: item.package ?? null,
+          file_pattern: item.file_pattern ?? null,
+          keywords: item.keywords.join(" "),
+          relevance_score: 1.0,
+          use_count: 0,
+        })
+      }
+
+      if (result.items[0]?.project) {
+        this.knowledgeFiles.rebuild(result.items[0].project)
+      }
+    }
   }
 
   archiveWorkspace(workspaceId: string): number {

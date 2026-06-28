@@ -10,7 +10,7 @@ import { applySchema } from "./db/schema"
 import {
   WorkspaceDAO, ExecutionDAO, TokenUsageDAO, ScheduleConfigDAO,
   ScheduleRunDAO, ChatDAO, OrgDAO, AgentSessionDAO, EvolutionDAO,
-  CloneDAO, SafetyDAO, ArchiveDAO,
+  CloneDAO, SafetyDAO, ArchiveDAO, ExperienceDAO,
 } from "./db/dao"
 import { ObservabilityService } from "./services/observability"
 import { PrivacyFilter } from "./services/privacy-filter"
@@ -70,7 +70,7 @@ if (!process.env.VITEST) {
   installGlobalErrorHandlers()
 }
 
-// ── DAO Factory: Create all 12 DAOs from DB connection ─────────────────────
+// ── DAO Factory: Create all 13 DAOs from DB connection ─────────────────────
 interface AllDAOs {
   workspace: WorkspaceDAO
   execution: ExecutionDAO
@@ -84,6 +84,7 @@ interface AllDAOs {
   clone: CloneDAO
   safety: SafetyDAO
   archive: ArchiveDAO
+  experience: ExperienceDAO
 }
 
 function createAllDAOs(db: ReturnType<typeof initDb>): AllDAOs {
@@ -100,6 +101,7 @@ function createAllDAOs(db: ReturnType<typeof initDb>): AllDAOs {
     clone: new CloneDAO(db),
     safety: new SafetyDAO(db),
     archive: new ArchiveDAO(db),
+    experience: new ExperienceDAO(db),
   }
 }
 
@@ -153,7 +155,7 @@ if (!process.env.VITEST && daos) {
   try {
     const { ArchiveService } = require('./services/archive/archive-service')
     const { setArchiveService } = require('./services/archive/archive-registry')
-    const archiveService = new ArchiveService(daos.archive, daos.execution, daos.tokenUsage, daos.workspace)
+    const archiveService = new ArchiveService(daos.archive, daos.execution, daos.tokenUsage, daos.workspace, daos.experience)
     setArchiveService(archiveService)
 
     // P1.7: Schedule recovery jobs (every 6 hours)
@@ -257,6 +259,7 @@ const d = daos ?? {
   clone: lazyDAO(CloneDAO),
   safety: lazyDAO(SafetyDAO),
   archive: lazyDAO(ArchiveDAO),
+  experience: lazyDAO(ExperienceDAO),
 }
 
 const wsSvc = workspaceService ?? new WorkspaceService(d.workspace)

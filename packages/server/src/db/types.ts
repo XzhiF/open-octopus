@@ -465,6 +465,30 @@ export interface WorkspaceArchiveRow {
   summary: string | null
 }
 
+// ── Experience Index ────────────────────────────────────────────────
+
+export interface ExperienceIndexRow {
+  rowid: number
+  id: string
+  org: string
+  archive_id: string | null
+  workflow_name: string
+  type: string
+  title: string
+  content: string
+  status: string
+  resolved_at: string | null
+  resolved_by: string | null
+  project: string | null
+  package: string | null
+  file_pattern: string | null
+  keywords: string | null
+  relevance_score: number
+  use_count: number
+  created_at: string
+  updated_at: string
+}
+
 // ── Pagination ──────────────────────────────────────────────────────
 
 export interface PaginatedResult<T> {
