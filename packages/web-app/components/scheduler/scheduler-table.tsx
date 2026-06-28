@@ -12,7 +12,7 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { StatusBadge } from "./status-badge"
-import { JobTypeBadge } from "./job-type-badge"
+import { JobTypeBadge, isAgentRegistered, AgentRegisteredBadge } from "./job-type-badge"
 import { ToggleSwitch } from "./toggle-switch"
 import { ActionMenu } from "./action-menu"
 import { SchedulerTableSkeleton } from "./skeleton-loader"
@@ -79,13 +79,16 @@ export function SchedulerTable({
           {jobs.map((job) => (
             <TableRow key={job.id}>
               <TableCell>
-                <Link
-                  href={`/scheduler/jobs/${job.id}`}
-                  className="font-medium text-scheduler-primary hover:underline"
-                  aria-label={`查看任务 ${job.name}`}
-                >
-                  {job.name}
-                </Link>
+                <div className="flex items-center gap-1.5">
+                  <Link
+                    href={`/scheduler/jobs/${job.id}`}
+                    className="font-medium text-scheduler-primary hover:underline"
+                    aria-label={`查看任务 ${job.name}`}
+                  >
+                    {job.name}
+                  </Link>
+                  {isAgentRegistered(job) && <AgentRegisteredBadge />}
+                </div>
               </TableCell>
               <TableCell>
                 <JobTypeBadge type={job.job_type} />
