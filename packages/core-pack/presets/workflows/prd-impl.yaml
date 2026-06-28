@@ -1810,6 +1810,14 @@ nodes:
       | TC-018 | P1 | failed | screenshots/TC-018.png | - | selector 没找到 |
       ```
 
+      ## 同步到 e2e-fix-progress.json
+      读取 `$vars.output_dir/e2e-fix-progress.json`（如存在），将所有 UI 用例结果合并进去：
+      - 每个 ui_state 用例写入 `"type":"ui"` 字段
+      - 已存在的 case 更新 status/last_tested_round
+      - 不存在的 case 新增
+      - ⛔ 不覆盖 `type:"api"` 的已有用例
+      用 Write 工具写回文件。这确保 e2e-fix-round 能在统一数据流中看到 UI 失败用例。
+
       ⚠️ 本节点输出不阻断主流程——real_e2e_ui_passed=false 会驱动 e2e-fix-loop 修复。
 
       ## 输出
@@ -2141,10 +2149,12 @@ nodes:
           ```json
           {
             "cases": {
-              "TC-001": {"priority":"P0","status":"passed","last_tested_round":1},
-              "TC-015": {"priority":"P0","status":"failed","last_tested_round":2,
+              "TC-001": {"type":"api","priority":"P0","status":"passed","last_tested_round":1},
+              "TC-015": {"type":"api","priority":"P0","status":"failed","last_tested_round":2,
                          "root_cause":"CODE_BUG","fix_summary":"...","fix_files":["..."]},
-              "TC-048": {"priority":"P1","status":"failed","last_tested_round":1,
+              "TC-018": {"type":"ui","priority":"P1","status":"failed","last_tested_round":1,
+                         "root_cause":"ASSERTION_ERROR","fix_summary":"selector 错误","fix_files":["..."]},
+              "TC-048": {"type":"api","priority":"P1","status":"failed","last_tested_round":1,
                          "root_cause":"FEATURE_NOT_IMPL","fix_summary":"...","fix_files":["..."]}
             },
             "rounds": [
@@ -2154,6 +2164,8 @@ nodes:
             "summary": {"total_rounds":2,"all_passed":false}
           }
           ```
+          `type` 字段: `api`（API/CLI/文件类用例）或 `ui`（ui_state 类用例）。
+          初始化时从 `$vars.e2e_cases_file` 的 evidence_type 推断: `ui_state` → `ui`，其余 → `api`。
 
           ## 本轮任务（⚠️ 只做一轮，引擎会自动循环）
 
@@ -2219,31 +2231,29 @@ nodes:
             --body "修复: <具体改了哪些文件/功能> | build: <通过/失败>"
           ```
 
-          ### 3. 重测 API
-          委派 **api-tester** 重测失败用例。
-          逐用例记录结果，更新 P0/P1 通过数。
+          ### 3. 重测（按 type 分发）
+          从 `e2e-fix-progress.json` 提取所有 `status == "failed"` 的用例，按 `type` 分发：
+
+          **type == "api"** → 委派 **api-tester** 重测。逐用例记录结果。
+          **type == "ui"** → 委派 **browser-tester** 重测（如有失败 UI 用例）：
+          "以下 UI 用例上轮失败，需要重测：<失败用例列表>。
+          Server: http://localhost:$vars.e2e_server_port
+          Web: http://localhost:$vars.e2e_web_port
+          截图保存到 $vars.e2e_sandbox_dir/screenshots/TC-NNN.png
+          逐条测试，输出 JSON 结果。"
+
+          所有重测结果统一写回 `e2e-fix-progress.json` 的对应 case。
 
           重测完成后发通知:
           ```bash
           octopus notify --ignore-failure \
             --title "🔄 $vars.display_name — [修复 $iteration] 重测完成" \
-            --body "P0: <passed>/<total> | P1: <passed>/<total> | 全部通过: <是/否>"
+            --body "API P0: <passed>/<total> | API P1: <passed>/<total> | UI: <passed>/<total> | 全部通过: <是/否>"
           ```
 
-          ### 4. 重测 UI（仅当上轮有失败 UI 用例时）
-          读取 `$vars.output_dir/real-e2e-ui-report.md`（如存在），提取上轮 `failed` 的 ui_state 用例。
+          **无失败用例** → 跳过此步骤，直接设 `e2e_fix_all_passed="true"`。
 
-          **有失败 UI 用例** → 委派 **browser-tester** 重测这些失败用例：
-          "以下用例上轮失败，需要重测：<失败用例列表>。
-          Server: http://localhost:$vars.e2e_server_port
-          Web: http://localhost:$vars.e2e_web_port
-          截图保存到 $vars.e2e_sandbox_dir/screenshots/TC-NNN.png
-          逐条测试，输出 JSON 结果。"
-          从 browser-tester 返回中提取 JSON，更新 real-e2e-ui-report.md 中对应 case 的状态。
-
-          **无失败 UI 用例**（文件不存在或全部 passed）→ 跳过此步骤。
-
-          ### 5. 审查
+          ### 4. 审查
           委派 **code-reviewer** 审查修复代码。
           ```bash
           cd "$vars.e2e_octopus_dir"
