@@ -336,6 +336,35 @@ try {
   }
 }
 
+// P6: Telegram webhook route — /api/agent/telegram/webhook
+try {
+  const { createTelegramWebhookRoute } = require('./routes/webhooks')
+  app.route("/api/agent/telegram", createTelegramWebhookRoute({
+    archiveDAO: d.archive,
+    experienceDAO: d.experience,
+    executionDAO: d.execution,
+  }))
+} catch (err) {
+  if (!process.env.VITEST) {
+    const msg = err instanceof Error ? err.message : String(err)
+    console.warn(`[server] Telegram webhook init failed: ${msg}`)
+  }
+}
+
+// P6: Agent schedule register route — /api/agent/schedules/register
+try {
+  const { createScheduleRegisterRoutes } = require('./routes/agent/schedule-register')
+  app.route("/api/agent", createScheduleRegisterRoutes({
+    scheduleConfigDAO: d.scheduleConfig,
+    schedulerService: schedSvc,
+  }))
+} catch (err) {
+  if (!process.env.VITEST) {
+    const msg = err instanceof Error ? err.message : String(err)
+    console.warn(`[server] Schedule register routes init failed: ${msg}`)
+  }
+}
+
 // Set scheduler on agent service
 try { getAgentService().setSchedulerService(schedSvc) } catch {}
 
