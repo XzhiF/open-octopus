@@ -712,34 +712,67 @@ nodes:
       browser-tester:
         description: "浏览器 E2E 测试员 — 用 agent-browser 真实点击与断言"
         agent_file: ".claude/agents/testing-qa-engineer.md"
-        model: opus[1m]
-        tools: ["Read", "Grep", "Glob", "Bash"]
+        model: sonnet
+        tools: ["Read", "Grep", "Glob", "Bash", "Write"]
+        prompt: |
+          你是浏览器 E2E 测试执行者。逐条测试 ui_state 类 P0/P1 用例。
+
+          ## 每条用例必须完成
+          1. 使用 agent-browser 打开页面（不要 Mock）
+          2. 按用例中的交互序列点击 / 输入 / 导航
+          3. **截图**保存到 `$vars.e2e_sandbox_dir/screenshots/TC-NNN.png`
+          4. 提取关键 DOM selector 的状态文本作为证据
+          5. 只有同时有【截图】+【DOM 断言通过】才算 passed
+
+          ⛔ 禁止"代码看上去应该能用"类型的报告。没有截图证据 = failed。
+          ⛔ 不跳过、不排除。环境问题标记为 failed。
+
+          ## 全部用例测完后
+          用 Write 工具写入 `$vars.output_dir/real-e2e-ui-report.md`:
+
+          ```markdown
+          # Real E2E UI Report
+
+          运行时间: <ISO>
+          总用例数: N
+          通过数: M
+          失败数: K
+
+          ## 逐用例详情
+
+          | TC | Priority | 状态 | 截图证据 | DOM 证据 | 失败原因 |
+          |----|----------|------|----------|----------|----------|
+          | TC-001 | P0 | passed | screenshots/TC-001.png | div.workflow-list>li | - |
+          | TC-018 | P1 | failed | screenshots/TC-018.png | - | selector .timer-marching 没找到 |
+          ```
+
+          最后输出 JSON 行:
+          {"real_e2e_ui_passed":"<true 仅当全部 ui_state TC 都 passed>","real_e2e_ui_total":"<总数>","real_e2e_ui_failed_list":"<逗号分隔失败 TC ID，空串=全过>","conclusion":"<2 句话：通过率 + 失败主因>"}
     prompt: |
-      你是真实浏览器 E2E 测试员。本节点作为 e2e-completeness-round 的硬证据输入。
+      你是浏览器 E2E 测试调度器。将所有测试工作委派给 **browser-tester**。
 
       $vars.workspace_rules
 
       ## 环境
       - Server: http://localhost:$vars.e2e_server_port
       - Web: http://localhost:$vars.e2e_web_port
-      - 沙箱目录: $vars.e2e_sandbox_dir
-      - E2E 用例: $vars.e2e_cases_file
+      - 沙箱: $vars.e2e_sandbox_dir
+      - 用例文件: $vars.e2e_cases_file
 
-      ## 你的任务
-      委派 **browser-tester** 逐个测 ui_state 类 P0/P1 用例。每条必须走完以下步骤：
-      1. 使用 agent-browser 打开页面
-      2. 按用例交互序列点击 / 输入 / 导航
-      3. 截图保存到 `$vars.e2e_sandbox_dir/screenshots/TC-NNN.png`
-      4. 提取关键 DOM selector 的状态文本作为证据
-      5. 有【截图】+【DOM 断言通过】才算 passed
+      ## 委派
+      1. 读取 `$vars.e2e_cases_file`，提取所有 `ui_state` 类 P0/P1 用例
+      2. 将全部用例一次性委派给 **browser-tester**:
+         "以下是需要测试的 ui_state 类用例：<用例内容>。
+         Server: http://localhost:$vars.e2e_server_port
+         Web: http://localhost:$vars.e2e_web_port
+         截图保存到 $vars.e2e_sandbox_dir/screenshots/
+         逐条测试，写入报告，输出 JSON 结果。"
+      3. 从 browser-tester 返回中提取 JSON 结果
 
-      ⛔ 没有截图证据 = failed。本节点输出不阻断主流程。
-
-      ## 输出报告
-      保存到 `$vars.output_dir/real-e2e-ui-report.md`。与 prd-impl.yaml 同步。
+      ⚠️ 本节点输出不阻断主流程——real_e2e_ui_passed=false 会驱动 e2e-fix-loop 修复。
 
       ## 输出
-      {"vars_update":{"real_e2e_ui_passed":"<true 仅在所有 ui_state 类 TC 都 passed 时>","real_e2e_ui_total":"<总数>","real_e2e_ui_failed_list":"<逗号分隔的 TC ID 列表，空串 = 全过>","real_e2e_ui_report":"$vars.output_dir/real-e2e-ui-report.md","conclusion":"<2 句话总结：通过率 + 失败主因分类>"}}
+      {"vars_update":{"real_e2e_ui_passed":"<从 browser-tester 结果提取>","real_e2e_ui_total":"<总数>","real_e2e_ui_failed_list":"<失败列表>","real_e2e_ui_report":"$vars.output_dir/real-e2e-ui-report.md","conclusion":"<从 browser-tester 结论提取>"}}
 
   - id: e2e-completeness-loop
     type: loop
