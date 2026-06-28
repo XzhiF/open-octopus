@@ -44,9 +44,27 @@ function isWorktree() {
 
 function getBranchName() {
   try {
-    const gitContent = fs.readFileSync(path.join(repoRoot, ".git"), "utf8").trim()
-    const match = gitContent.match(/ref: refs\/heads\/(.+)/)
-    if (match) return match[1]
+    const gitPath = path.join(repoRoot, ".git")
+    const stat = fs.statSync(gitPath)
+
+    let headPath
+    if (stat.isFile()) {
+      // Git worktree: .git is a file with "gitdir: <path>"
+      const gitContent = fs.readFileSync(gitPath, "utf8").trim()
+      const gitdirMatch = gitContent.match(/^gitdir:\s*(.+)$/)
+      if (gitdirMatch) {
+        headPath = path.join(gitdirMatch[1], "HEAD")
+      }
+    } else if (stat.isDirectory()) {
+      // Normal repo: .git is a directory
+      headPath = path.join(gitPath, "HEAD")
+    }
+
+    if (headPath) {
+      const headContent = fs.readFileSync(headPath, "utf8").trim()
+      const match = headContent.match(/ref: refs\/heads\/(.+)/)
+      if (match) return match[1]
+    }
   } catch {}
   return path.basename(repoRoot)
 }
