@@ -28,8 +28,13 @@ export class ExperienceDAO extends BaseDAO {
   }
 
   searchFTS(query: string, opts: { org?: string; project?: string; type?: string; status?: string; limit?: number }): ExperienceIndexRow[] {
+    // Quote the query and normalize separators to prevent FTS5 from interpreting
+    // special characters (hyphens as NOT operators, colons as column filters).
+    // Replacing '-' with ' ' ensures "BUG-001" becomes the phrase "BUG 001"
+    // which matches the same tokens FTS5 produces when indexing "BUG-001".
+    const ftsQuery = `"${query.replace(/-/g, " ").replace(/"/g, '""')}"`
     const conditions: string[] = ["experience_index_fts MATCH ?"]
-    const params: unknown[] = [query]
+    const params: unknown[] = [ftsQuery]
     if (opts.org) { conditions.push("ei.org = ?"); params.push(opts.org) }
     if (opts.project) { conditions.push("ei.project = ?"); params.push(opts.project) }
     if (opts.type) { conditions.push("ei.type = ?"); params.push(opts.type) }
