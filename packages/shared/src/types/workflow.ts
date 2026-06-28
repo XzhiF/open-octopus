@@ -129,6 +129,46 @@ export const PlanningSchema = z.object({
   disallowed_tools: z.array(z.string()).optional(),
 })
 
+// P3: 经验注入范围声明
+export interface ExperienceScope {
+  projects?: string[]
+  packages?: string[]
+  types?: ("bug" | "pattern" | "cost" | "failure")[]
+  limit?: number
+}
+
+export const ExperienceScopeSchema = z.object({
+  projects: z.array(z.string()).optional(),
+  packages: z.array(z.string()).optional(),
+  types: z.array(z.enum(["bug", "pattern", "cost", "failure"])).optional(),
+  limit: z.number().int().min(1).max(50).optional(),
+})
+
+// P3: YAML chain 工作流触发声明
+export interface ChainItem {
+  workflow: string
+  condition?: string
+  auto_trigger?: boolean
+  input_mapping?: Record<string, string>
+}
+
+export interface ChainDef {
+  on_success?: ChainItem[]
+  on_failure?: ChainItem[]
+}
+
+export const ChainItemSchema = z.object({
+  workflow: z.string(),
+  condition: z.string().optional(),
+  auto_trigger: z.boolean().optional(),
+  input_mapping: z.record(z.string()).optional(),
+})
+
+export const ChainDefSchema = z.object({
+  on_success: z.array(ChainItemSchema).optional(),
+  on_failure: z.array(ChainItemSchema).optional(),
+})
+
 export interface NodeDef {
   id: string
   type: "bash" | "python" | "agent" | "condition" | "approval" | "loop" | "swarm"
@@ -208,6 +248,9 @@ export interface NodeDef {
 
   // 通用桶 — 不属于上述分类的任意数据
   variables?: Record<string, unknown>
+
+  // P3: 经验注入范围声明
+  experience_scope?: ExperienceScope
 }
 
 export const NodeSchema: z.ZodType<NodeDef> = z.lazy(() =>
@@ -271,6 +314,9 @@ export const NodeSchema: z.ZodType<NodeDef> = z.lazy(() =>
     context_tier: z.enum(["200k", "1m"]).optional(),
 
     variables: z.record(z.string(), z.unknown()).optional(),
+
+    // P3: 经验注入范围
+    experience_scope: ExperienceScopeSchema.optional(),
   }).superRefine((data, ctx) => {
     // Swarm cross-field validations (only for type: "swarm")
     if (data.type !== "swarm") return
@@ -301,6 +347,8 @@ export const WorkflowSchema = z.object({
   providers: z.record(z.string(), NotifyProviderConfigSchema).optional(),
   channels: z.record(z.string(), ChannelProfileSchema).optional(),
   nodes: z.array(NodeSchema),
+  // P3: YAML chain 工作流触发
+  chain: ChainDefSchema.optional(),
 })
 
 export type WorkflowDef = z.infer<typeof WorkflowSchema>

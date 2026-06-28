@@ -308,6 +308,32 @@ app.route("/api/agent", createAgentRoutes({
 }))
 app.route("/api/workflows/built-in", builtInWorkflowRoutes)
 
+// P3: GitHub webhook route
+try {
+  const { createWebhookRoutes } = require('./routes/webhooks')
+  const { ExperienceLifecycleService } = require('./services/experience/lifecycle-service')
+  const { KnowledgeFiles } = require('./services/archive/knowledge-files')
+  const knowledgeFiles = new KnowledgeFiles(d.experience)
+  const lifecycleService = new ExperienceLifecycleService(d.experience, knowledgeFiles)
+  app.route("/webhooks", createWebhookRoutes({
+    lifecycleService,
+    githubSecret: process.env.GITHUB_WEBHOOK_SECRET,
+  }))
+
+  // P3.6: Experience decay scheduled task (weekly)
+  const ONE_WEEK = 7 * 24 * 60 * 60 * 1000
+  setInterval(() => {
+    lifecycleService.decayStale().then((count: number) => {
+      if (count > 0) console.log(`[experience-decay] ${count} items marked obsolete`)
+    }).catch((err: any) => console.warn('[experience-decay] Failed:', err))
+  }, ONE_WEEK).unref()
+} catch (err) {
+  if (!process.env.VITEST) {
+    const msg = err instanceof Error ? err.message : String(err)
+    console.warn(`[server] Webhook routes init failed: ${msg}`)
+  }
+}
+
 // Set scheduler on agent service
 try { getAgentService().setSchedulerService(schedSvc) } catch {}
 
