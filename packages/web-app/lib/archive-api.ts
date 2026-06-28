@@ -1,7 +1,41 @@
 import { getServerUrl } from "@/lib/server-config"
+import type {
+  ArchiveStats,
+  ArchiveExecution,
+  ArchivePaginatedResult,
+  ArchiveExecutionDetail,
+  CostTrendPoint,
+  CostTrendSummary,
+  WorkflowStat,
+  ExperienceItem,
+  LeaderboardEntry,
+} from "@octopus/shared"
+
+// Re-export for consumers that imported types from here
+export type {
+  ArchiveStats,
+  ArchiveExecution,
+  ArchivePaginatedResult as PaginatedResult,
+  ArchiveExecutionDetail,
+  CostTrendPoint,
+  WorkflowStat,
+  ExperienceItem,
+  LeaderboardEntry,
+}
+
+function getOrg(): string {
+  if (typeof window !== "undefined") {
+    return localStorage.getItem("octopus-org") || "xzf"
+  }
+  return "xzf"
+}
 
 async function archiveFetch(url: string, init?: RequestInit): Promise<Response> {
-  return fetch(url, { ...init, credentials: "include" })
+  const headers = new Headers(init?.headers)
+  if (!headers.has("X-Octopus-Org")) {
+    headers.set("X-Octopus-Org", getOrg())
+  }
+  return fetch(url, { ...init, headers, credentials: "include" })
 }
 
 async function handleJson<T>(res: Response): Promise<T> {
@@ -10,118 +44,6 @@ async function handleJson<T>(res: Response): Promise<T> {
     throw new Error(body.error ?? `HTTP ${res.status}`)
   }
   return res.json()
-}
-
-// ============ Types ============
-
-export interface ArchiveStats {
-  total_executions: number
-  total_cost_usd: number
-  today_cost_usd: number
-  week_cost_usd: number
-  month_cost_usd: number
-  top_workflows: {
-    workflow_ref: string
-    workflow_name: string
-    execution_count: number
-    total_cost_usd: number
-  }[]
-}
-
-export interface ArchiveExecution {
-  id: string
-  workflow_ref: string
-  workflow_name: string
-  status: "completed" | "failed" | "cancelled"
-  started_at: string
-  completed_at: string | null
-  duration_ms: number | null
-  total_input_tokens: number
-  total_output_tokens: number
-  total_cost_usd: number
-  workspace_id: string | null
-  parent_execution_id: string | null
-  chain_position: number | null
-  created_at: string
-}
-
-export interface PaginatedResult<T> {
-  data: T[]
-  total: number
-  page: number
-  pageSize: number
-}
-
-export interface ArchiveExecutionDetail extends ArchiveExecution {
-  org: string
-  node_summary: {
-    nodeId: string
-    type: string
-    status: string
-    duration_ms: number | null
-  }[]
-  failed_nodes: string[] | null
-  error_message: string | null
-  model_breakdown: Record<string, { input_tokens: number; output_tokens: number; cost_usd: number }> | null
-  vars_snapshot: Record<string, unknown>
-  lessons_learned: string | null
-  workspace_archive_id: string | null
-  schedule_id: string | null
-  clone_name: string | null
-  experiences: {
-    id: string
-    type: string
-    title: string
-    content: string
-    relevance_score: number
-  }[]
-}
-
-export interface CostTrendPoint {
-  date: string
-  total_cost_usd: number
-  execution_count: number
-}
-
-export interface WorkflowStat {
-  workflow_ref: string
-  workflow_name: string
-  execution_count: number
-  success_count: number
-  failed_count: number
-  success_rate: number
-  total_cost_usd: number
-  avg_cost_usd: number
-  avg_duration_ms: number
-  last_executed_at: string | null
-}
-
-export interface ExperienceItem {
-  id: string
-  type: "bug" | "pattern" | "cost" | "failure"
-  title: string
-  content: string
-  status: "active" | "resolved" | "obsolete" | "superseded"
-  project: string | null
-  package: string | null
-  file_pattern: string | null
-  keywords: string[]
-  relevance_score: number
-  use_count: number
-  workflow_name: string | null
-  archive_id: string | null
-  created_at: string
-  updated_at: string
-}
-
-export interface LeaderboardEntry {
-  rank: number
-  workflow_ref: string
-  workflow_name: string
-  execution_count: number
-  success_rate: number
-  total_cost_usd: number
-  avg_duration_ms: number
 }
 
 // ============ API Functions ============
@@ -136,7 +58,7 @@ export async function getArchiveStats(): Promise<ArchiveStats> {
 export async function getArchiveExecutions(opts: {
   page?: number; pageSize?: number; workflow?: string; status?: string;
   from?: string; to?: string; sort?: string; order?: string
-} = {}): Promise<PaginatedResult<ArchiveExecution>> {
+} = {}): Promise<ArchivePaginatedResult<ArchiveExecution>> {
   const params = new URLSearchParams()
   if (opts.page) params.set("page", String(opts.page))
   if (opts.pageSize) params.set("pageSize", String(opts.pageSize))
@@ -152,11 +74,11 @@ export async function getArchiveExecutions(opts: {
 }
 
 export async function getArchiveExecution(id: string): Promise<ArchiveExecutionDetail> {
-  const res = await archiveFetch(`${base()}/executions/${id}`)
+  const res = await archiveFetch(`${base()}/executions/${encodeURIComponent(id)}`)
   return handleJson(res)
 }
 
-export async function getCostTrends(days: number = 7, workspaceId?: string): Promise<{ trends: CostTrendPoint[]; summary: { total_cost_usd: number; avg_daily_cost_usd: number; max_daily_cost_usd: number } }> {
+export async function getCostTrends(days: number = 7, workspaceId?: string): Promise<{ trends: CostTrendPoint[]; summary: CostTrendSummary }> {
   const params = new URLSearchParams({ days: String(days) })
   if (workspaceId) params.set("workspace_id", workspaceId)
   const res = await archiveFetch(`${base()}/cost-trends?${params}`)
@@ -168,14 +90,16 @@ export async function getWorkflowStats(days: number = 30): Promise<{ workflows: 
   return handleJson(res)
 }
 
-export async function searchLessons(query?: string, limit: number = 20): Promise<{ lessons: ExperienceItem[]; total: number }> {
-  const params = new URLSearchParams({ limit: String(limit) })
+export async function searchLessons(query?: string, opts?: { project?: string; type?: string; limit?: number }): Promise<{ lessons: ExperienceItem[]; total: number }> {
+  const params = new URLSearchParams({ limit: String(opts?.limit ?? 20) })
   if (query) params.set("q", query)
+  if (opts?.project) params.set("project", opts.project)
+  if (opts?.type) params.set("type", opts.type)
   const res = await archiveFetch(`${base()}/lessons?${params}`)
   return handleJson(res)
 }
 
-export async function getLeaderboard(by: "count" | "success_rate" | "cost" = "count", limit: number = 10): Promise<{ entries: LeaderboardEntry[] }> {
-  const res = await archiveFetch(`${base()}/leaderboard?by=${by}&limit=${limit}`)
+export async function getLeaderboard(by: "count" | "success_rate" | "cost" = "count", days: number = 30, limit: number = 10): Promise<{ entries: LeaderboardEntry[] }> {
+  const res = await archiveFetch(`${base()}/leaderboard?by=${by}&days=${days}&limit=${limit}`)
   return handleJson(res)
 }

@@ -105,12 +105,28 @@ export class ArchiveDAO extends BaseDAO {
     }>
   }
 
-  costTrends(org: string, days: number): Array<{
+  costTrends(org: string, days: number, workspaceId?: string): Array<{
     date: string
     total_cost_usd: number
     execution_count: number
   }> {
     const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString()
+    if (workspaceId) {
+      return this.stmt(`
+        SELECT
+          DATE(created_at) as date,
+          SUM(total_cost_usd) as total_cost_usd,
+          COUNT(*) as execution_count
+        FROM execution_archive
+        WHERE org = ? AND created_at >= ? AND workspace_id = ?
+        GROUP BY DATE(created_at)
+        ORDER BY date ASC
+      `).all(org, cutoff, workspaceId) as Array<{
+        date: string
+        total_cost_usd: number
+        execution_count: number
+      }>
+    }
     return this.stmt(`
       SELECT
         DATE(created_at) as date,

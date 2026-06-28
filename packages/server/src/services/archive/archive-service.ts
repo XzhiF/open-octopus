@@ -249,7 +249,14 @@ export class ArchiveService {
         const fs = require("fs")
         const path = require("path")
         const os = require("os")
-        const resolvedPath = ws.path.replace(/^~/, os.homedir())
+        const resolvedPath = path.resolve(ws.path.replace(/^~/, os.homedir()))
+        // Path traversal guard: only allow cleanup under ~/.octopus or known workspace dirs
+        const safeBases = [path.resolve(os.homedir(), ".octopus"), path.resolve(os.homedir(), "workspaces")]
+        const isSafe = safeBases.some((base) => resolvedPath.startsWith(base + path.sep))
+        if (!isSafe) {
+          console.warn(`[ArchiveService] Blocked cleanup of unsafe path: ${resolvedPath} (workspace ${ws.id})`)
+          continue
+        }
         if (fs.existsSync(resolvedPath)) {
           fs.rmSync(resolvedPath, { recursive: true, force: true })
           console.log(`[ArchiveService] Cleaned up stale workspace: ${ws.id}`)

@@ -5,6 +5,7 @@ import path from "path"
 import os from "os"
 import { WorkspaceDAO } from "../db/dao"
 import type { WorkspaceRow } from "../db/types"
+import { getArchiveService } from "./archive/archive-registry"
 
 /**
  * Default pipeline.yaml template — auto-generated for new workspaces.
@@ -926,7 +927,6 @@ export class WorkspaceService {
     if (!ws) return false
 
     // P1.5: Two-stage delete — archive first, then cascade
-    const { getArchiveService } = require("./archive/archive-registry")
     const archiveService = getArchiveService()
 
     if (archiveService) {

@@ -10,7 +10,7 @@ const _dirname: string =
     ? __dirname
     : path.dirname(fileURLToPath(import.meta.url))
 
-export const SCHEMA_VERSION = 26
+export const SCHEMA_VERSION = 27
 
 /**
  * Apply the complete unified schema to the given database.
@@ -22,8 +22,9 @@ export function applySchema(db: Database.Database): void {
   const currentVersion = (db.pragma('user_version', { simple: true }) as number) || 0
 
   // Run migrations for existing databases
-  if (currentVersion > 0 && currentVersion < 26) {
-    // P0 (v24): Add archived column to workspaces (soft delete)
+  // NOTE: Use literal 27 instead of SCHEMA_VERSION due to tsup __esm lazy init ordering
+  if (currentVersion > 0 && currentVersion < 27) {
+    // v24: Add archived column to workspaces (soft delete)
     if (currentVersion < 24) {
       try {
         db.exec('ALTER TABLE workspaces ADD COLUMN archived INTEGER DEFAULT 0')
@@ -32,7 +33,7 @@ export function applySchema(db: Database.Database): void {
       }
     }
 
-    // P1 (v25): Add archive status columns to workspaces
+    // v25: Add archive status columns to workspaces
     if (currentVersion < 25) {
       try {
         db.exec("ALTER TABLE workspaces ADD COLUMN archive_status TEXT DEFAULT 'none'")
@@ -51,11 +52,26 @@ export function applySchema(db: Database.Database): void {
       }
     }
 
-    // P2 (v26): Experience index + FTS5 — new tables use IF NOT EXISTS,
-    // no ALTER needed. schema.sql handles creation idempotently.
-    if (currentVersion < 26) {
-      // No migration SQL needed — experience_index and experience_index_fts
-      // are created by schema.sql via IF NOT EXISTS. Just bump version.
+    // v27: Add org column to tables that may lack it
+    // (DBs created at v24-v26 may have these tables without org)
+    if (currentVersion < 27) {
+      const tablesNeedingOrg = [
+        'node_executions', 'node_edges', 'branch_executions', 'chat_sessions',
+        'chat_messages', 'node_token_usages', 'agent_events', 'optimization_suggestions',
+        'execution_summaries', 'pipeline_state', 'schedule_executions', 'schedule_audit_logs',
+        'scheduler_state', 'scheduler_audit_logs', 'schedule_workspaces', 'messages',
+      ]
+      const existingTables = new Set(
+        (db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as { name: string }[]).map(r => r.name)
+      )
+      for (const table of tablesNeedingOrg) {
+        if (!existingTables.has(table)) continue
+        try {
+          db.exec(`ALTER TABLE ${table} ADD COLUMN org TEXT NOT NULL DEFAULT ''`)
+        } catch (e: any) {
+          if (!e.message?.includes('duplicate column')) throw e
+        }
+      }
     }
   }
 

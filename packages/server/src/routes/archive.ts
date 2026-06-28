@@ -49,12 +49,21 @@ export function createArchiveRoutes(deps: ArchiveDeps) {
   const { archiveDAO, experienceDAO } = deps
   const router = new Hono()
 
+  // Auth: require X-Octopus-Org header on all archive routes (vars_snapshot may contain sensitive data)
+  router.use("*", async (c, next) => {
+    const org = c.req.header("X-Octopus-Org") || c.req.query("org")
+    if (!org) {
+      return c.json({ error: "X-Octopus-Org header or org query parameter required" }, 401)
+    }
+    c.set("org" as any, org)
+    await next()
+  })
+
   // ─── 1. GET /stats ──────────────────────────────────────────────
   // Aggregate statistics: totals, period costs, top workflows.
-  // Query: ?org= (optional)
   router.get("/stats", (c) => {
     try {
-      const org = c.req.query("org") ?? ""
+      const org = c.get("org" as any) as string
 
       // Workflow aggregation (30-day window)
       const workflowStats = archiveDAO.aggregateByWorkflow(org, 30)
@@ -113,10 +122,10 @@ export function createArchiveRoutes(deps: ArchiveDeps) {
 
   // ─── 2. GET /executions ─────────────────────────────────────────
   // Paginated list of execution archives with filtering and sorting.
-  // Query: ?org=&page=1&pageSize=20&workflow=&status=&from=&to=&sort=created_at&order=desc
+  // Query: ?page=1&pageSize=20&workflow=&status=&from=&to=&sort=created_at&order=desc
   router.get("/executions", (c) => {
     try {
-      const org = c.req.query("org")
+      const org = c.get("org" as any) as string
       const workflow = c.req.query("workflow")
       const status = c.req.query("status")
       const from = c.req.query("from")
@@ -157,8 +166,14 @@ export function createArchiveRoutes(deps: ArchiveDeps) {
       return c.json({ error: "execution id is required" }, 400)
     }
 
+    const org = c.get("org" as any) as string
     const row = archiveDAO.findExecutionArchiveById(id)
     if (!row) {
+      return c.json({ error: "execution not found" }, 404)
+    }
+
+    // Org isolation: reject if the execution belongs to a different org
+    if (row.org !== org) {
       return c.json({ error: "execution not found" }, 404)
     }
 
@@ -183,13 +198,14 @@ export function createArchiveRoutes(deps: ArchiveDeps) {
 
   // ─── 4. GET /cost-trends ────────────────────────────────────────
   // Daily cost trends with summary statistics.
-  // Query: ?org=&days=7&workspace_id=
+  // Query: ?days=7&workspace_id=
   router.get("/cost-trends", (c) => {
     try {
-      const org = c.req.query("org") ?? ""
+      const org = c.get("org" as any) as string
       const days = parseIntParam(c.req.query("days"), 7, 1, 365, "days")
+      const workspaceId = c.req.query("workspace_id") || undefined
 
-      const trends = archiveDAO.costTrends(org, days)
+      const trends = archiveDAO.costTrends(org, days, workspaceId)
 
       const totalCost = trends.reduce((sum, t) => sum + (t.total_cost_usd ?? 0), 0)
       const maxDailyCost = trends.reduce((max, t) => Math.max(max, t.total_cost_usd ?? 0), 0)
@@ -214,10 +230,10 @@ export function createArchiveRoutes(deps: ArchiveDeps) {
 
   // ─── 5. GET /workflow-stats ─────────────────────────────────────
   // Per-workflow aggregate statistics with computed success_rate and avg_cost.
-  // Query: ?org=&days=30
+  // Query: ?days=30
   router.get("/workflow-stats", (c) => {
     try {
-      const org = c.req.query("org") ?? ""
+      const org = c.get("org" as any) as string
       const days = parseIntParam(c.req.query("days"), 30, 1, 365, "days")
 
       const workflows = archiveDAO.aggregateByWorkflow(org, days)
@@ -247,10 +263,10 @@ export function createArchiveRoutes(deps: ArchiveDeps) {
 
   // ─── 6. GET /lessons ────────────────────────────────────────────
   // Search or list experience index entries (lessons learned).
-  // Query: ?org=&q=&project=&type=&limit=20
+  // Query: ?q=&project=&type=&limit=20
   router.get("/lessons", (c) => {
     try {
-      const org = c.req.query("org") ?? ""
+      const org = c.get("org" as any) as string
       const q = c.req.query("q")
       const project = c.req.query("project")
       const type = c.req.query("type")
@@ -286,10 +302,10 @@ export function createArchiveRoutes(deps: ArchiveDeps) {
 
   // ─── 7. GET /leaderboard ────────────────────────────────────────
   // Ranked workflow leaderboard sorted by execution count, success rate, or cost.
-  // Query: ?org=&by=count&days=30&limit=10
+  // Query: ?by=count&days=30&limit=10
   router.get("/leaderboard", (c) => {
     try {
-      const org = c.req.query("org") ?? ""
+      const org = c.get("org" as any) as string
       const by = validateEnum(c.req.query("by"), VALID_LEADERBOARD_BY, "count", "by")
       const days = parseIntParam(c.req.query("days"), 30, 1, 365, "days")
       const limit = parseIntParam(c.req.query("limit"), 10, 1, 50, "limit")

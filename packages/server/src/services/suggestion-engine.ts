@@ -171,6 +171,8 @@ export class SuggestionEngine {
 
   /**
    * P5.2: Detect repeating bug patterns from experience index.
+   * Uses Jaccard similarity on bug content to cluster related bugs,
+   * not just exact project+package matching.
    */
   analyzeRepeatingPatterns(org: string, days: number = 7): Suggestion[] {
     try {
@@ -183,28 +185,62 @@ export class SuggestionEngine {
         limit: 100,
       }).filter(e => e.created_at >= cutoff)
 
-      // Group by project+package
-      const groups = new Map<string, typeof bugs>()
-      for (const bug of bugs) {
-        const key = `${bug.project ?? "unknown"}:${bug.package ?? "unknown"}`
-        if (!groups.has(key)) groups.set(key, [])
-        groups.get(key)!.push(bug)
+      if (bugs.length < 3) return []
+
+      // Tokenize bug content (title + content) for Jaccard similarity
+      const tokenize = (text: string): Set<string> => {
+        const words = (text ?? "").toLowerCase()
+          .replace(/[^\w一-鿿]/g, " ")
+          .split(/\s+/)
+          .filter(w => w.length > 1)
+        return new Set(words)
+      }
+
+      const jaccard = (a: Set<string>, b: Set<string>): number => {
+        if (a.size === 0 && b.size === 0) return 1
+        let intersection = 0
+        for (const word of a) if (b.has(word)) intersection++
+        const union = a.size + b.size - intersection
+        return union === 0 ? 0 : intersection / union
+      }
+
+      // Build similarity clusters: merge bugs with Jaccard > 0.6
+      const tokenSets = bugs.map(b => tokenize(`${b.title} ${b.content}`))
+      const clusters: number[][] = []
+      const assigned = new Set<number>()
+
+      for (let i = 0; i < bugs.length; i++) {
+        if (assigned.has(i)) continue
+        const cluster = [i]
+        assigned.add(i)
+        for (let j = i + 1; j < bugs.length; j++) {
+          if (assigned.has(j)) continue
+          // Check similarity with any member of the cluster
+          const similar = cluster.some(k => jaccard(tokenSets[k], tokenSets[j]) > 0.6)
+          if (similar) {
+            cluster.push(j)
+            assigned.add(j)
+          }
+        }
+        if (cluster.length >= 3) {
+          clusters.push(cluster)
+        }
       }
 
       const suggestions: Suggestion[] = []
-      for (const [key, items] of groups) {
-        if (items.length >= 3) {
-          const [project, pkg] = key.split(":")
-          suggestions.push({
-            ruleName: "RepeatingBugPattern",
-            severity: "warning",
-            title: `重复 BUG 模式: ${project}/${pkg}`,
-            detection: `过去 ${days} 天发现 ${items.length} 个相关 BUG`,
-            diagnosis: "同一模块反复出现类似问题，可能存在系统性缺陷",
-            prescription: "建议进行系统性代码审查，关注共同的根因",
-            impactEstimate: `${items.length} 个 BUG 待修复`,
-          })
-        }
+      for (const cluster of clusters) {
+        const items = cluster.map(i => bugs[i])
+        const projects = [...new Set(items.map(b => b.project ?? "unknown"))]
+        const packages = [...new Set(items.map(b => b.package ?? "unknown"))]
+        suggestions.push({
+          ruleName: "RepeatingBugPattern",
+          severity: "warning",
+          title: `重复 BUG 模式: ${projects.join(",")}/${packages.join(",")}`,
+          detection: `过去 ${days} 天发现 ${items.length} 个相似 BUG (Jaccard > 0.6)`,
+          diagnosis: "相似内容的 BUG 反复出现，可能存在系统性缺陷",
+          prescription: "建议进行系统性代码审查，关注共同的根因",
+          impactEstimate: `${items.length} 个 BUG 待修复`,
+        })
       }
       return suggestions
     } catch {
@@ -214,6 +250,7 @@ export class SuggestionEngine {
 
   /**
    * P5.3: Detect workflows with high failure rates from execution archive.
+   * Clusters failures by failed_nodes + error_message for root-cause analysis.
    */
   analyzeFailurePatterns(org: string): Suggestion[] {
     try {
@@ -224,15 +261,60 @@ export class SuggestionEngine {
       for (const wf of stats) {
         const failRate = wf.failed_count / wf.execution_count
         if (failRate > 0.3 && wf.execution_count >= 5) {
-          suggestions.push({
-            ruleName: "HighFailureRate",
-            severity: "critical",
-            title: `工作流 ${wf.workflow_name} 失败率过高`,
-            detection: `过去 30 天: ${wf.execution_count} 次执行, ${wf.failed_count} 次失败 (${(failRate * 100).toFixed(0)}%)`,
-            diagnosis: "该工作流频繁失败，可能存在配置或代码问题",
-            prescription: "检查失败节点的错误日志，修复根本原因",
-            impactEstimate: `预计可节省 $${(wf.total_cost_usd * failRate).toFixed(2)} / 30天`,
+          // Fetch individual failed executions for clustering
+          const failed = archiveDAO.listExecutionArchives({
+            org,
+            workflow: wf.workflow_ref,
+            status: "failed",
+            page: 1,
+            pageSize: 100,
           })
+
+          // Cluster by failed_nodes + error_message pattern
+          const patternCounts = new Map<string, { count: number; sampleError: string; sampleNodes: string }>()
+          for (const exec of failed.data) {
+            const nodes = exec.failed_nodes ?? "unknown"
+            // Normalize error message: strip variable parts (IDs, paths, timestamps)
+            const errorMsg = (exec.error_message ?? "unknown")
+              .replace(/[0-9a-f]{8,}/gi, "*")
+              .replace(/\/[\w/.-]+/g, "*")
+              .substring(0, 120)
+            const key = `${nodes}::${errorMsg}`
+            const existing = patternCounts.get(key)
+            if (existing) {
+              existing.count++
+            } else {
+              patternCounts.set(key, { count: 1, sampleError: exec.error_message ?? "unknown", sampleNodes: nodes })
+            }
+          }
+
+          // Report patterns with count >= 2 (recurring failures)
+          for (const [key, info] of patternCounts) {
+            if (info.count >= 2) {
+              suggestions.push({
+                ruleName: "RepeatingFailurePattern",
+                severity: "critical",
+                title: `工作流 ${wf.workflow_name} 重复失败模式`,
+                detection: `失败节点: ${info.sampleNodes}，出现 ${info.count} 次`,
+                diagnosis: `错误信息: ${info.sampleError.substring(0, 200)}`,
+                prescription: "检查失败节点的错误日志，修复根本原因或添加重试机制",
+                impactEstimate: `${info.count} 次失败，预计修复可节省 $${(wf.total_cost_usd * info.count / wf.execution_count).toFixed(2)} / 30天`,
+              })
+            }
+          }
+
+          // Also report overall high failure rate
+          if (patternCounts.size === 0 || failRate > 0.5) {
+            suggestions.push({
+              ruleName: "HighFailureRate",
+              severity: "critical",
+              title: `工作流 ${wf.workflow_name} 失败率过高`,
+              detection: `过去 30 天: ${wf.execution_count} 次执行, ${wf.failed_count} 次失败 (${(failRate * 100).toFixed(0)}%)`,
+              diagnosis: "该工作流频繁失败，可能存在配置或代码问题",
+              prescription: "检查失败节点的错误日志，修复根本原因",
+              impactEstimate: `预计可节省 $${(wf.total_cost_usd * failRate).toFixed(2)} / 30天`,
+            })
+          }
         }
       }
       return suggestions

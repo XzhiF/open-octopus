@@ -970,6 +970,22 @@ export class ExecutionLifecycle {
       const fields: Record<string, unknown> = { status, ...extra }
       this.dao.updateExecution(id, fields)
       this.sse.emit(this.workspaceId, { event: "execution_status", data: { executionId: id, status } })
+
+      // P6.6: Push execution progress to Telegram for terminal states
+      if (["completed", "completed_with_failures", "failed", "cancelled"].includes(status)) {
+        const exec = this.dao.findById(id)
+        if (exec) {
+          import("../agent/telegram-progress-notifier").then(({ TelegramProgressNotifier }) => {
+            new TelegramProgressNotifier().notify({
+              id: exec.id,
+              workflow_name: exec.workflow_name,
+              status: exec.status,
+              duration_ms: typeof extra.duration === "number" ? extra.duration : exec.duration ?? undefined,
+              name: exec.name ?? undefined,
+            }).catch(() => {})
+          }).catch(() => {})
+        }
+      }
     } catch (err: any) {
       console.error(`[ExecutionLifecycle] updateStatus failed: ${id} → ${status}:`, err.message)
       throw err
