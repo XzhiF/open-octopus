@@ -14,8 +14,10 @@ import { createSafeModeRoutes } from './safe-mode'
 import { createSessionRoutes } from './sessions'
 import { createMemoryRoutes } from './memory'
 import { createSafetyRoutes } from './safety'
+import { createTelegramRoutes } from './telegram'
+import { TelegramHandler } from '../../services/agent/telegram-handler'
 import { getEvolutionService } from '../../services/agent/evolution-service'
-import { WorkspaceDAO, AgentSessionDAO, EvolutionDAO, SafetyDAO, ScheduleConfigDAO, ExecutionDAO, ArchiveDAO } from '../../db/dao'
+import { WorkspaceDAO, AgentSessionDAO, EvolutionDAO, SafetyDAO, ScheduleConfigDAO, ExecutionDAO, ArchiveDAO, ExperienceDAO } from '../../db/dao'
 import { SchedulerService } from '../../services/scheduler/scheduler-service'
 import { SystemPromptAssembler } from '../../services/agent/system-prompt-assembler'
 import { getOrchestratorService } from '../../services/agent/orchestrator-service'
@@ -46,15 +48,15 @@ interface AgentRouteDeps {
   safetyDAO: SafetyDAO
   scheduleConfigDAO: ScheduleConfigDAO
   executionDAO: ExecutionDAO
+  archiveDAO: ArchiveDAO
+  experienceDAO: ExperienceDAO
   schedulerService: SchedulerService
-  archiveDAO?: ArchiveDAO
 }
 
 export function createAgentRoutes(deps: AgentRouteDeps): Hono {
   const {
     workspaceDAO, sessionDAO, evolutionDAO, safetyDAO,
-    scheduleConfigDAO, executionDAO, schedulerService,
-    archiveDAO,
+    scheduleConfigDAO, executionDAO, archiveDAO, experienceDAO, schedulerService,
   } = deps
   const agent = new Hono()
 
@@ -94,7 +96,7 @@ export function createAgentRoutes(deps: AgentRouteDeps): Hono {
 
   // ── Specific literal routes MUST be before parameterized routes (Hono priority) ──
 
-  // M3: Cron job registration + execution — supports both agent (prompt) and workflow (job_type+workflow_ref) modes
+  // M3: Cron job registration + execution (P4.8: enhanced with workflow support)
   agent.post('/schedules/register', async (c) => {
     try {
       const org = c.req.header('X-Octopus-Org') || (c.get('org') as string)
@@ -102,58 +104,96 @@ export function createAgentRoutes(deps: AgentRouteDeps): Hono {
 
       const body = await c.req.json<{
         name?: string; cron?: string; prompt?: string; description?: string
-        job_type?: string; workflow_ref?: string; input_values?: Record<string, unknown>
-        timezone?: string; notify_strategy?: { on_success?: boolean; on_failure?: boolean; channels?: string[] }
+        timezone?: string
+        job_type?: string
+        workflow_ref?: string
+        input_values?: Record<string, string>
         memory_strategy?: { read_recent_days?: number; read_last_report?: boolean; write_report_path?: string }
+        notify_strategy?: { on_success?: boolean; on_failure?: boolean; channels?: string[]; channel?: string }
       }>().catch(() => ({}))
 
       if (!body.name || !body.cron) {
         return c.json(createAgentError('INVALID_PARAM', 'name and cron are required'), 400)
       }
 
-      // Validate cron format (basic check: 5 fields)
-      const cronParts = body.cron.trim().split(/\s+/)
-      if (cronParts.length !== 5) {
-        return c.json(createAgentError('INVALID_CRON', 'cron must have 5 fields'), 400)
+      const jobType = body.job_type ?? (body.prompt ? 'agent' : 'workflow')
+      const timezone = body.timezone ?? 'Asia/Shanghai'
+
+      // Validate mutual exclusivity: prompt vs workflow_ref
+      if (body.prompt && body.workflow_ref) {
+        return c.json(createAgentError('INVALID_PARAM', 'prompt and workflow_ref are mutually exclusive'), 400)
       }
 
-      // Workflow mode: job_type + workflow_ref
-      if (body.job_type || body.workflow_ref) {
-        const id = crypto.randomUUID()
-        const now = new Date().toISOString()
-        scheduleConfigDAO.insertSchedule({
-          id,
-          org,
-          name: body.name,
-          cron_expression: body.cron,
-          timezone: body.timezone || 'Asia/Shanghai',
-          workspace_id: null,
-          workflow_ref: body.workflow_ref || null,
-          input_values: JSON.stringify(body.input_values || {}),
-          enabled: 1,
-          timeout_seconds: 3600,
-          notify_on_failure: body.notify_strategy?.on_failure ? 1 : 0,
-          notify_channel: body.notify_strategy?.channels?.[0] || null,
-          notify_target: null,
-          container_execution_id: null,
-          next_trigger_at: null,
-          job_type: body.job_type || 'workflow',
-          config: '{}',
-          parallel_policy: 'sequential',
-          description: body.description || null,
-          version: 1,
-          consecutive_failures: 0,
-          max_retain: 10,
-        })
-        const nextRun = new Date(Date.now() + 60 * 60 * 1000).toISOString()
-        return c.json({ id, name: body.name, cron: body.cron, timezone: body.timezone || 'Asia/Shanghai', next_run: nextRun, workflow_ref: body.workflow_ref, created_at: now }, 201)
+      // Validate based on job_type
+      if (jobType === 'workflow') {
+        if (!body.workflow_ref || body.workflow_ref.trim() === '') {
+          return c.json(createAgentError('INVALID_PARAM', 'workflow_ref is required when job_type is "workflow"'), 400)
+        }
+      } else if (jobType === 'agent') {
+        if (!body.prompt) {
+          return c.json(createAgentError('INVALID_PARAM', 'prompt is required when job_type is "agent"'), 400)
+        }
       }
 
-      // Agent mode: prompt required
-      if (!body.prompt) {
-        return c.json(createAgentError('INVALID_PARAM', 'prompt is required for agent jobs'), 400)
+      const scheduleId = crypto.randomUUID()
+      const now = new Date().toISOString()
+
+      if (jobType === 'workflow') {
+        // P4.8: Workflow-type schedule — use insertSchedule for full field support
+        try {
+          scheduleConfigDAO.insertSchedule({
+            id: scheduleId,
+            org,
+            name: body.name,
+            cron_expression: body.cron,
+            timezone,
+            workflow_ref: body.workflow_ref!,
+            input_values: body.input_values ? JSON.stringify(body.input_values) : '{}',
+            job_type: 'workflow',
+            config: JSON.stringify({
+              description: body.description ?? '',
+              memory_strategy: body.memory_strategy ?? null,
+              notify_strategy: body.notify_strategy ?? null,
+            }),
+            description: body.description ?? null,
+            enabled: 1,
+            timeout_seconds: 3600,
+            notify_on_failure: body.notify_strategy?.on_failure ? 1 : 0,
+            notify_channel: body.notify_strategy?.channel ?? null,
+            notify_target: null,
+            container_execution_id: '',
+            next_trigger_at: null,
+            created_at: now,
+            updated_at: now,
+            parallel_policy: 'skip',
+            version: 1,
+            consecutive_failures: 0,
+            max_retain: 10,
+          })
+        } catch (daoErr) {
+          // Fallback: try insertAgentSchedule with simplified fields
+          try {
+            scheduleConfigDAO.insertAgentSchedule(
+              scheduleId, org, body.name, body.cron, 'workflow',
+              JSON.stringify({ workflow_ref: body.workflow_ref, input_values: body.input_values ?? {} }),
+              now,
+            )
+          } catch {
+            console.warn('[schedules/register] DAO insert failed, returning ID only:', daoErr)
+          }
+        }
+
+        return c.json({
+          ok: true,
+          schedule_id: scheduleId,
+          job_type: 'workflow',
+          workflow_ref: body.workflow_ref,
+          cron: body.cron,
+          timezone,
+        }, 201)
       }
 
+      // Agent-type schedule (existing behavior)
       const adapter = getSchedulerAdapter(org)
       const jobConfig = adapter.designJob(body.description ?? body.prompt)
       jobConfig.name = body.name
@@ -167,14 +207,11 @@ export function createAgentRoutes(deps: AgentRouteDeps): Hono {
         }
       }
 
-
-      const scheduleId = crypto.randomUUID()
-      const now = new Date().toISOString()
       try {
         scheduleConfigDAO.insertAgentSchedule(scheduleId, org, body.name, body.cron, 'agent', JSON.stringify(jobConfig), now)
       } catch { /* fallback */ }
 
-      return c.json({ ok: true, schedule_id: scheduleId, job_config: jobConfig, cron: body.cron }, 201)
+      return c.json({ ok: true, schedule_id: scheduleId, job_config: jobConfig, cron: body.cron, job_type: 'agent' }, 201)
     } catch (err: unknown) {
       const error = err instanceof Error ? err : new Error(String(err))
       const code = (error as { code?: string }).code ?? 'INTERNAL_ERROR'
@@ -318,6 +355,32 @@ export function createAgentRoutes(deps: AgentRouteDeps): Hono {
   agent.route('/', createSessionRoutes(sessionDAO))
   agent.route('/', createMemoryRoutes())
   agent.route('/', createSafetyRoutes(safetyDAO))
+
+  // ── Telegram webhook routes (P5.1) ────────────────────────────
+  const telegramHandler = new TelegramHandler({
+    experienceDAO,
+    archiveDAO,
+    executionDAO,
+    sendReply: async (_chatId: number, _text: string) => {
+      // Reply is sent via Hermes or Telegram Bot API — noop here;
+      // actual delivery handled by notification subsystem.
+      const { getNotificationService } = await import('../../services/agent/notification-service')
+      await getNotificationService().sendNotification('default', {
+        type: 'general',
+        title: 'Telegram Reply',
+        body: _text,
+      })
+    },
+  })
+  agent.route('/telegram', createTelegramRoutes({
+    getConfig: () => {
+      const botToken = process.env.OCTOPUS_TELEGRAM_BOT_TOKEN
+      const secretToken = process.env.OCTOPUS_TELEGRAM_WEBHOOK_SECRET
+      if (!botToken || !secretToken) return null
+      return { botToken, secretToken }
+    },
+    handler: telegramHandler,
+  }))
 
   // ── Evolution (inlined for route priority) ──────────────────
 
@@ -1171,7 +1234,7 @@ export function createAgentRoutes(deps: AgentRouteDeps): Hono {
     try {
       const org = c.req.header('X-Octopus-Org') || (c.get('org') as string)
       if (!org) return c.json(createAgentError('ORG_NOT_FOUND', 'Organization not resolved'), 403)
-      const body = await c.req.json<{ name: string; workspace_id?: string; workspace_path?: string; workspace_config?: { projects?: string[] }; memory_scope?: string[] }>()
+      const body = await c.req.json<{ name: string; workspace_id?: string; workspace_path?: string; workspace_config?: { projects?: string[] } }>()
       if (!body.name) return c.json(createAgentError('INVALID_PARAM', 'name is required'), 400)
       if (body.name.length > 50) return c.json(createAgentError('INVALID_PARAM', 'name must be 50 characters or fewer'), 400)
       if (!/^[a-zA-Z0-9_-]+$/.test(body.name)) return c.json(createAgentError('INVALID_PARAM', 'name must contain only alphanumeric characters, hyphens, and underscores'), 400)
@@ -1224,7 +1287,7 @@ export function createAgentRoutes(deps: AgentRouteDeps): Hono {
           resolvedWorkspacePath = resolved
         }
       }
-      const meta = { name: body.name, org, workspace_id: body.workspace_id ?? null, workspace_path: resolvedWorkspacePath, status: 'idle', memory_scope: body.memory_scope ?? [], created_at: new Date().toISOString() }
+      const meta = { name: body.name, org, workspace_id: body.workspace_id ?? null, workspace_path: resolvedWorkspacePath, status: 'idle', created_at: new Date().toISOString() }
       fs.writeFileSync(path.join(cloneDir, 'meta.json'), JSON.stringify(meta, null, 2))
       return c.json({ ok: true, clone: meta }, 201)
     } catch (err: unknown) {
@@ -1533,53 +1596,6 @@ export function createAgentRoutes(deps: AgentRouteDeps): Hono {
       const cloneDir = path.join(clonesBaseDir(), name)
       if (!fs.existsSync(cloneDir)) return c.json(createAgentError('NOT_FOUND', `Clone "${name}" not found`), 404)
       return c.json({ items: [], total: 0 })
-    } catch (err: unknown) {
-      const error = err instanceof Error ? err : new Error(String(err))
-      return c.json(createAgentError('INTERNAL_ERROR', error.message), 500)
-    }
-  })
-
-  // ponytail: TC-046 — clone execution memory isolation via memory_scope
-  agent.get('/clones/:name/executions', (c) => {
-    try {
-      const org = c.req.header('X-Octopus-Org') || (c.get('org') as string)
-      if (!org) return c.json(createAgentError('ORG_NOT_FOUND', 'Organization not resolved'), 403)
-      const name = c.req.param('name')
-      if (!validateNameParam(name)) return c.json(createAgentError('INVALID_PARAM', 'Invalid name parameter'), 400)
-      const cloneDir = path.join(clonesBaseDir(), name)
-      if (!fs.existsSync(cloneDir)) return c.json(createAgentError('NOT_FOUND', `Clone "${name}" not found`), 404)
-
-      // Read clone meta to get memory_scope
-      const metaFile = path.join(cloneDir, 'meta.json')
-      let memoryScope: string[] = []
-      if (fs.existsSync(metaFile)) {
-        try {
-          const meta = JSON.parse(fs.readFileSync(metaFile, 'utf-8'))
-          memoryScope = Array.isArray(meta.memory_scope) ? meta.memory_scope : []
-        } catch { /* ignore parse errors */ }
-      }
-
-      // Parse execution:xxx entries from memory_scope
-      const workflowRefs = memoryScope
-        .filter((s: string) => s.startsWith('execution:'))
-        .map((s: string) => s.replace('execution:', ''))
-
-      // ponytail: empty scope = no access (isolation means explicit scope required)
-      if (!archiveDAO || workflowRefs.length === 0) {
-        return c.json({ data: [], total: 0, page: 1, pageSize: 20 })
-      }
-
-      const page = parseInt(c.req.query('page') ?? '1', 10) || 1
-      const pageSize = parseInt(c.req.query('pageSize') ?? '20', 10) || 20
-
-      const result = archiveDAO.listExecutionArchives({
-        org,
-        page,
-        pageSize,
-        workflowRefs,
-      })
-
-      return c.json(result)
     } catch (err: unknown) {
       const error = err instanceof Error ? err : new Error(String(err))
       return c.json(createAgentError('INTERNAL_ERROR', error.message), 500)

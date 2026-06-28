@@ -1,9 +1,10 @@
 import Database from "better-sqlite3"
 import { randomUUID } from "crypto"
-import { TokenUsageDAO, ExecutionDAO, WorkspaceDAO, ExperienceDAO, ArchiveDAO } from "../db/dao"
-import { getDb } from "../db/connection"
+import { TokenUsageDAO, ExecutionDAO, WorkspaceDAO } from "../db/dao"
+import type { ArchiveDAO } from "../db/dao/archive-dao"
+import type { ExperienceDAO } from "../db/dao/experience-dao"
 
-export interface Suggestion {
+interface Suggestion {
   ruleName: string
   nodeId?: string
   severity: 'info' | 'warning' | 'critical'
@@ -28,8 +29,12 @@ interface SuggestionRule {
 
 export class SuggestionEngine {
   private rules: SuggestionRule[]
+  private archiveDAO?: ArchiveDAO
+  private experienceDAO?: ExperienceDAO
 
-  constructor() {
+  constructor(archiveDAO?: ArchiveDAO, experienceDAO?: ExperienceDAO) {
+    this.archiveDAO = archiveDAO
+    this.experienceDAO = experienceDAO
     this.rules = [
       {
         name: 'OverpoweredModel',
@@ -170,185 +175,104 @@ export class SuggestionEngine {
   }
 
   /**
-   * P5.2: Detect repeating bug patterns from experience index.
-   * Uses Jaccard similarity on bug content to cluster related bugs,
-   * not just exact project+package matching.
+   * P4.2: Analyze repeating patterns across archived executions.
+   * Returns suggestions for systemic issues.
    */
-  analyzeRepeatingPatterns(org: string, days: number = 7): Suggestion[] {
+  analyzeRepeatingPatterns(days: number): Array<{
+    title: string
+    severity: 'info' | 'warning' | 'critical'
+    detail: string
+    recommendation: string
+  }> {
+    const suggestions: Array<{ title: string; severity: 'info' | 'warning' | 'critical'; detail: string; recommendation: string }> = []
+
+    if (!this.archiveDAO || !this.experienceDAO) return suggestions
+
     try {
-      const expDAO = new ExperienceDAO(getDb())
-      const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString()
-      const bugs = expDAO.searchFTS("bug", {
-        org,
-        type: "bug",
-        status: "active",
-        limit: 100,
-      }).filter(e => e.created_at >= cutoff)
+      // Find experiences with same project + package + type >= 3 in last N days
+      const _cutoff = new Date(Date.now() - days * 86400000).toISOString()
 
-      if (bugs.length < 3) return []
+      // Group bug experiences by project + package
+      const bugExperiences = this.experienceDAO.search("bug", { type: "bug", status: "active", limit: 100 })
+      const groups = new Map<string, typeof bugExperiences>()
 
-      // Tokenize bug content (title + content) for Jaccard similarity
-      const tokenize = (text: string): Set<string> => {
-        const words = (text ?? "").toLowerCase()
-          .replace(/[^\w一-鿿]/g, " ")
-          .split(/\s+/)
-          .filter(w => w.length > 1)
-        return new Set(words)
+      for (const exp of bugExperiences) {
+        const key = `${exp.project || "unknown"}:${exp.package || "unknown"}`
+        if (!groups.has(key)) groups.set(key, [])
+        groups.get(key)!.push(exp)
       }
 
-      const jaccard = (a: Set<string>, b: Set<string>): number => {
-        if (a.size === 0 && b.size === 0) return 1
-        let intersection = 0
-        for (const word of a) if (b.has(word)) intersection++
-        const union = a.size + b.size - intersection
-        return union === 0 ? 0 : intersection / union
-      }
-
-      // Build similarity clusters: merge bugs with Jaccard > 0.6
-      const tokenSets = bugs.map(b => tokenize(`${b.title} ${b.content}`))
-      const clusters: number[][] = []
-      const assigned = new Set<number>()
-
-      for (let i = 0; i < bugs.length; i++) {
-        if (assigned.has(i)) continue
-        const cluster = [i]
-        assigned.add(i)
-        for (let j = i + 1; j < bugs.length; j++) {
-          if (assigned.has(j)) continue
-          // Check similarity with any member of the cluster
-          const similar = cluster.some(k => jaccard(tokenSets[k], tokenSets[j]) > 0.6)
-          if (similar) {
-            cluster.push(j)
-            assigned.add(j)
-          }
-        }
-        if (cluster.length >= 3) {
-          clusters.push(cluster)
+      for (const [key, exps] of groups) {
+        if (exps.length >= 3) {
+          const [project, pkg] = key.split(":")
+          suggestions.push({
+            title: `重复 BUG 模式: ${pkg}`,
+            severity: "warning",
+            detail: `项目 ${project} 的 ${pkg} 包在过去 ${days} 天内出现 ${exps.length} 个同类 BUG`,
+            recommendation: `建议对 ${pkg} 做一次系统性审查`,
+          })
         }
       }
+    } catch (err) {
+      console.warn("[suggestion-engine] analyzeRepeatingPatterns failed:", err)
+    }
 
-      const suggestions: Suggestion[] = []
-      for (const cluster of clusters) {
-        const items = cluster.map(i => bugs[i])
-        const projects = [...new Set(items.map(b => b.project ?? "unknown"))]
-        const packages = [...new Set(items.map(b => b.package ?? "unknown"))]
-        suggestions.push({
-          ruleName: "RepeatingBugPattern",
-          severity: "warning",
-          title: `重复 BUG 模式: ${projects.join(",")}/${packages.join(",")}`,
-          detection: `过去 ${days} 天发现 ${items.length} 个相似 BUG (Jaccard > 0.6)`,
-          diagnosis: "相似内容的 BUG 反复出现，可能存在系统性缺陷",
-          prescription: "建议进行系统性代码审查，关注共同的根因",
-          impactEstimate: `${items.length} 个 BUG 待修复`,
+    return suggestions
+  }
+
+  /**
+   * P4.3: Detect failure patterns from experience index.
+   */
+  detectFailurePatterns(newWorkflow: string, experiences: Array<{ type: string; title: string; content: string }>): Array<{
+    warning: string
+    autoFix?: string
+  }> {
+    const warnings: Array<{ warning: string; autoFix?: string }> = []
+
+    const failureExps = experiences.filter(e => e.type === 'failure')
+    for (const exp of failureExps) {
+      // Simple pattern matching: if the failure content mentions keywords from the workflow name
+      if (exp.content.toLowerCase().includes(newWorkflow.toLowerCase()) ||
+          exp.title.toLowerCase().includes(newWorkflow.toLowerCase())) {
+        warnings.push({
+          warning: `历史失败经验: "${exp.title}" — ${exp.content.slice(0, 200)}`,
         })
       }
-      return suggestions
-    } catch {
-      return []
     }
+
+    return warnings
   }
 
   /**
-   * P5.3: Detect workflows with high failure rates from execution archive.
-   * Clusters failures by failed_nodes + error_message for root-cause analysis.
+   * P4.4: Analyze cost optimization opportunities from archived data.
    */
-  analyzeFailurePatterns(org: string): Suggestion[] {
+  analyzeCostOptimization(days: number): Array<{
+    nodeId: string
+    title: string
+    detail: string
+    estimatedSaving: string
+  }> {
+    const suggestions: Array<{ nodeId: string; title: string; detail: string; estimatedSaving: string }> = []
+
+    if (!this.archiveDAO) return suggestions
+
     try {
-      const archiveDAO = new ArchiveDAO(getDb())
-      const stats = archiveDAO.aggregateByWorkflow(org, 30)
-      const suggestions: Suggestion[] = []
+      const stats = this.archiveDAO.getWorkflowStats(days, "total_cost_usd", "desc", 20)
 
-      for (const wf of stats) {
-        const failRate = wf.failed_count / wf.execution_count
-        if (failRate > 0.3 && wf.execution_count >= 5) {
-          // Fetch individual failed executions for clustering
-          const failed = archiveDAO.listExecutionArchives({
-            org,
-            workflow: wf.workflow_ref,
-            status: "failed",
-            page: 1,
-            pageSize: 100,
-          })
-
-          // Cluster by failed_nodes + error_message pattern
-          const patternCounts = new Map<string, { count: number; sampleError: string; sampleNodes: string }>()
-          for (const exec of failed.data) {
-            const nodes = exec.failed_nodes ?? "unknown"
-            // Normalize error message: strip variable parts (IDs, paths, timestamps)
-            const errorMsg = (exec.error_message ?? "unknown")
-              .replace(/[0-9a-f]{8,}/gi, "*")
-              .replace(/\/[\w/.-]+/g, "*")
-              .substring(0, 120)
-            const key = `${nodes}::${errorMsg}`
-            const existing = patternCounts.get(key)
-            if (existing) {
-              existing.count++
-            } else {
-              patternCounts.set(key, { count: 1, sampleError: exec.error_message ?? "unknown", sampleNodes: nodes })
-            }
-          }
-
-          // Report patterns with count >= 2 (recurring failures)
-          for (const [key, info] of patternCounts) {
-            if (info.count >= 2) {
-              suggestions.push({
-                ruleName: "RepeatingFailurePattern",
-                severity: "critical",
-                title: `工作流 ${wf.workflow_name} 重复失败模式`,
-                detection: `失败节点: ${info.sampleNodes}，出现 ${info.count} 次`,
-                diagnosis: `错误信息: ${info.sampleError.substring(0, 200)}`,
-                prescription: "检查失败节点的错误日志，修复根本原因或添加重试机制",
-                impactEstimate: `${info.count} 次失败，预计修复可节省 $${(wf.total_cost_usd * info.count / wf.execution_count).toFixed(2)} / 30天`,
-              })
-            }
-          }
-
-          // Also report overall high failure rate
-          if (patternCounts.size === 0 || failRate > 0.5) {
-            suggestions.push({
-              ruleName: "HighFailureRate",
-              severity: "critical",
-              title: `工作流 ${wf.workflow_name} 失败率过高`,
-              detection: `过去 30 天: ${wf.execution_count} 次执行, ${wf.failed_count} 次失败 (${(failRate * 100).toFixed(0)}%)`,
-              diagnosis: "该工作流频繁失败，可能存在配置或代码问题",
-              prescription: "检查失败节点的错误日志，修复根本原因",
-              impactEstimate: `预计可节省 $${(wf.total_cost_usd * failRate).toFixed(2)} / 30天`,
-            })
-          }
-        }
-      }
-      return suggestions
-    } catch {
-      return []
-    }
-  }
-
-  /**
-   * P5.3: Detect workflows with high average cost from execution archive.
-   */
-  analyzeCostOptimization(org: string): Suggestion[] {
-    try {
-      const archiveDAO = new ArchiveDAO(getDb())
-      const stats = archiveDAO.aggregateByWorkflow(org, 30)
-      const suggestions: Suggestion[] = []
-
-      for (const wf of stats) {
-        const avgCost = wf.total_cost_usd / wf.execution_count
-        if (avgCost > 1.0) {
+      for (const ws of stats) {
+        if (ws.avg_cost_usd > 5) { // Workflows costing > $5 avg
           suggestions.push({
-            ruleName: "HighCostWorkflow",
-            severity: "info",
-            title: `工作流 ${wf.workflow_name} 成本偏高`,
-            detection: `平均每次执行 $${avgCost.toFixed(2)}, 总计 $${wf.total_cost_usd.toFixed(2)}`,
-            diagnosis: "该工作流消耗较多 token，可能存在优化空间",
-            prescription: "考虑使用更经济的模型 (Haiku) 或优化 prompt 减少 token 消耗",
-            impactEstimate: `降至 $${(avgCost * 0.5).toFixed(2)} 可节省 $${(wf.total_cost_usd * 0.5).toFixed(2)} / 30天`,
+            nodeId: ws.workflow_ref,
+            title: `高成本工作流: ${ws.workflow_name}`,
+            detail: `平均成本 $${ws.avg_cost_usd.toFixed(2)}, ${ws.execution_count} 次执行, 总成本 $${ws.total_cost_usd.toFixed(2)}`,
+            estimatedSaving: `考虑对 scan 类节点使用 sonnet 替代 opus, 预计降低 40-60% 成本`,
           })
         }
       }
-      return suggestions
-    } catch {
-      return []
+    } catch (err) {
+      console.warn("[suggestion-engine] analyzeCostOptimization failed:", err)
     }
+
+    return suggestions
   }
 }

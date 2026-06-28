@@ -14,10 +14,9 @@ export interface WorkspaceRow {
   updated_at: string
   source: string
   source_schedule_id: string | null
-  archived?: number
-  archive_status?: string
-  archive_started_at?: string | null
-  archive_error?: string | null
+  archive_status: string
+  archive_started_at: string | null
+  archive_error: string | null
 }
 
 export interface ExecutionRow {
@@ -424,69 +423,61 @@ export interface ScheduledJobExecutionRow {
 // ── Archive Tables ──────────────────────────────────────────────────
 
 export interface ExecutionArchiveRow {
-  id: string
-  org: string
+  id: number
+  execution_id: string
   workflow_ref: string
   workflow_name: string
   status: string
-  started_at: string
+  started_at: string | null
   completed_at: string | null
   duration_ms: number | null
-  node_summary: string
-  failed_nodes: string | null
-  error_message: string | null
   total_input_tokens: number
   total_output_tokens: number
   total_cost_usd: number
+  node_summary: string
+  failed_nodes: string | null
+  error_message: string | null
   model_breakdown: string | null
   vars_snapshot: string
   lessons_learned: string | null
-  workspace_archive_id: string | null
   workspace_id: string | null
-  chain_position: number | null
+  workspace_archive_id: string | null
   parent_execution_id: string | null
-  schedule_id: string | null
-  clone_name: string | null
+  chain_position: number | null
   created_at: string
 }
 
 export interface WorkspaceArchiveRow {
-  id: string
-  org: string
+  id: number
+  workspace_id: string
   workspace_name: string
-  workspace_path: string | null
-  created_at: string
-  archived_at: string
-  execution_count: number
-  total_cost_usd: number
-  total_duration_ms: number
+  org: string
   execution_chains: string
   workflow_manifest: string
-  summary: string | null
+  total_executions: number
+  total_cost_usd: number
+  archived_at: string
 }
 
-// ── Experience Index ────────────────────────────────────────────────
+// ── Experience Index ────────────────────────────────────────────────────
 
 export interface ExperienceIndexRow {
-  rowid: number
-  id: string
-  org: string
-  archive_id: string | null
-  workflow_name: string
+  id: number
   type: string
   title: string
   content: string
-  status: string
-  resolved_at: string | null
-  resolved_by: string | null
   project: string | null
   package: string | null
   file_pattern: string | null
   keywords: string | null
+  workflow_name: string | null
+  status: string
   relevance_score: number
   use_count: number
+  resolved_at: string | null
+  resolved_by: string | null
+  superseded_by: number | null
   created_at: string
-  updated_at: string
 }
 
 // ── Pagination ──────────────────────────────────────────────────────

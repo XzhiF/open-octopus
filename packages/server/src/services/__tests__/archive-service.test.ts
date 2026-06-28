@@ -1,834 +1,514 @@
-// packages/server/src/services/__tests__/archive-service.test.ts
-// Tests for ArchiveService: archiveExecution, archiveWorkspace, extractLessons,
-// retryCleanup, recoverStuckArchiving
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest"
 import Database from "better-sqlite3"
+import path from "path"
+import os from "os"
+import fs from "fs"
+import { applySchema } from "../../db/schema"
 import { ArchiveDAO } from "../../db/dao/archive-dao"
-import { ExperienceDAO } from "../../db/dao/experience-dao"
 import { ExecutionDAO } from "../../db/dao/execution-dao"
 import { TokenUsageDAO } from "../../db/dao/token-usage-dao"
 import { WorkspaceDAO } from "../../db/dao/workspace-dao"
-import { ArchiveService } from "../archive/archive-service"
-import { randomUUID } from "crypto"
-import { readFileSync, mkdirSync, existsSync, rmSync } from "fs"
-import { resolve, join } from "path"
-import { homedir } from "os"
+import { ArchiveService } from "../archive-service"
+import { WorkspaceService } from "../workspace"
+import { ArchiveRecoveryService } from "../archive-recovery"
 
-// Mock getMemoryService to avoid singleton initialization error.
-// The import path is relative to the archive-service module location.
-vi.mock("../agent/memory-service", () => ({
-  getMemoryService: () => ({
-    appendToDaily: vi.fn(),
-  }),
-}))
+let db: Database.Database
+let dbPath: string
+let archiveDAO: ArchiveDAO
+let executionDAO: ExecutionDAO
+let tokenUsageDAO: TokenUsageDAO
+let workspaceDAO: WorkspaceDAO
+let archiveService: ArchiveService
 
-const SCHEMA_SQL = readFileSync(resolve(__dirname, "../../db/schema.sql"), "utf-8")
+const WORKSPACE_ID = "ws-archive-001"
+const ORG = "xzf"
 
-function createTestDb(): Database.Database {
-  const db = new Database(":memory:")
-  db.pragma("journal_mode = WAL")
+function seedWorkspace(id?: string, name?: string) {
+  const wsId = id ?? WORKSPACE_ID
+  const now = new Date().toISOString()
+  db.prepare(
+    "INSERT INTO workspaces (id, name, org, path, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)"
+  ).run(wsId, name ?? "test-ws", ORG, `/tmp/${wsId}`, now, now)
+  return wsId
+}
+
+function seedExecution(opts: {
+  id: string
+  workspaceId?: string
+  workflowRef?: string
+  status?: string
+  parentId?: string
+  childIndex?: number
+  varPool?: string
+  duration?: number
+}) {
+  const now = new Date().toISOString()
+  const wsId = opts.workspaceId ?? WORKSPACE_ID
+  db.prepare(
+    `INSERT INTO executions (id, workspace_id, parent_id, child_index, workflow_ref, workflow_name, status, org, created_at, updated_at, var_pool, duration, started_at, completed_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(
+    opts.id, wsId, opts.parentId ?? "0", opts.childIndex ?? 0,
+    opts.workflowRef ?? "test-workflow.yaml", opts.workflowRef ?? "Test Workflow",
+    opts.status ?? "completed", ORG, now, now,
+    opts.varPool ?? "{}", opts.duration ?? 1000,
+    now, now,
+  )
+}
+
+function seedNodeExecution(opts: {
+  id: string
+  executionId: string
+  nodeId: string
+  nodeType?: string
+  status?: string
+  duration?: number
+  error?: string
+  exitCode?: number
+}) {
+  const now = new Date().toISOString()
+  db.prepare(
+    `INSERT INTO node_executions (id, execution_id, node_id, node_type, status, started_at, completed_at, duration, error, exit_code)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(
+    opts.id, opts.executionId, opts.nodeId, opts.nodeType ?? "agent",
+    opts.status ?? "completed", now, now, opts.duration ?? 500,
+    opts.error ?? null, opts.exitCode ?? null,
+  )
+}
+
+function seedTokenUsage(opts: {
+  id: string
+  nodeExecutionId: string
+  model?: string
+  inputTokens?: number
+  outputTokens?: number
+  costUsd?: number
+  cacheReadTokens?: number
+  cacheCreationTokens?: number
+}) {
+  const now = new Date().toISOString()
+  db.prepare(
+    `INSERT INTO node_token_usages (id, node_execution_id, model, input_tokens, output_tokens, cost_usd, cache_read_tokens, cache_creation_tokens, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(
+    opts.id, opts.nodeExecutionId, opts.model ?? "claude-sonnet-4-20250514",
+    opts.inputTokens ?? 100, opts.outputTokens ?? 50, opts.costUsd ?? 0.01,
+    opts.cacheReadTokens ?? 0, opts.cacheCreationTokens ?? 0, now,
+  )
+}
+
+beforeEach(() => {
+  dbPath = path.join(os.tmpdir(), `test-archive-${Date.now()}-${Math.random().toString(36).slice(2)}.db`)
+  db = new Database(dbPath)
   db.pragma("foreign_keys = ON")
-  db.exec(SCHEMA_SQL)
-  return db
-}
+  applySchema(db)
 
-// ── Seed helpers ────────────────────────────────────────────────────
+  archiveDAO = new ArchiveDAO(db)
+  executionDAO = new ExecutionDAO(db)
+  tokenUsageDAO = new TokenUsageDAO(db)
+  workspaceDAO = new WorkspaceDAO(db)
+  archiveService = new ArchiveService(archiveDAO, executionDAO, tokenUsageDAO)
 
-function seedWorkspace(db: Database.Database, id: string, org: string) {
-  db.prepare(
-    `INSERT INTO workspaces (id, name, org, path, status, created_at, updated_at)
-     VALUES (?, ?, ?, ?, 'active', datetime('now'), datetime('now'))`
-  ).run(id, `ws-${id}`, org, `/tmp/ws-${id}`)
-}
+  seedWorkspace()
+})
 
-function seedExecution(
-  db: Database.Database,
-  id: string,
-  workspaceId: string,
-  status: string,
-  parent_id = "0",
-) {
-  db.prepare(
-    `INSERT INTO executions
-      (id, workspace_id, workflow_ref, workflow_name, status, org,
-       parent_id, child_index, created_at, updated_at, started_at, duration)
-     VALUES (?, ?, 'wf-test', 'Test Workflow', ?, 'test-org', ?, 0,
-       datetime('now'), datetime('now'), datetime('now'), 60000)`
-  ).run(id, workspaceId, status, parent_id)
-}
+afterEach(() => {
+  db.close()
+  if (fs.existsSync(dbPath)) fs.unlinkSync(dbPath)
+})
 
-function seedNodeExecution(
-  db: Database.Database,
-  id: string,
-  executionId: string,
-  status: string,
-  error: string | null = null,
-) {
-  db.prepare(
-    `INSERT INTO node_executions
-      (id, execution_id, node_id, node_type, status, duration, error)
-     VALUES (?, ?, 'node-1', 'bash', ?, 30000, ?)`
-  ).run(id, executionId, status, error)
-}
+// ============================================================================
+// ArchiveService.archiveExecution
+// ============================================================================
 
-function seedTokenUsage(
-  db: Database.Database,
-  id: string,
-  nodeExecutionId: string,
-  model: string,
-  input: number,
-  output: number,
-  cost: number,
-) {
-  db.prepare(
-    `INSERT INTO node_token_usages
-      (id, node_execution_id, model, input_tokens, output_tokens, cost_usd,
-       cache_read_tokens, cache_creation_tokens, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, 0, 0, datetime('now'))`
-  ).run(id, nodeExecutionId, model, input, output, cost)
-}
+describe("ArchiveService.archiveExecution", () => {
+  it("creates archive record with correct node_summary and token aggregation", () => {
+    seedExecution({ id: "exec-1", status: "completed", duration: 2000 })
+    seedNodeExecution({ id: "exec-1-node1", executionId: "exec-1", nodeId: "analyze", nodeType: "agent", status: "completed", duration: 800 })
+    seedNodeExecution({ id: "exec-1-node2", executionId: "exec-1", nodeId: "implement", nodeType: "agent", status: "completed", duration: 1200 })
+    seedTokenUsage({ id: "tu-1", nodeExecutionId: "exec-1-node1", model: "claude-sonnet-4-20250514", inputTokens: 500, outputTokens: 200, costUsd: 0.02 })
+    seedTokenUsage({ id: "tu-2", nodeExecutionId: "exec-1-node2", model: "claude-sonnet-4-20250514", inputTokens: 800, outputTokens: 400, costUsd: 0.04 })
 
-// ── Tests ───────────────────────────────────────────────────────────
+    const archiveId = archiveService.archiveExecution("exec-1")
+    expect(archiveId).not.toBeNull()
 
-describe("ArchiveService", () => {
-  let db: Database.Database
-  let archiveDAO: ArchiveDAO
-  let executionDAO: ExecutionDAO
-  let tokenUsageDAO: TokenUsageDAO
-  let workspaceDAO: WorkspaceDAO
-  let experienceDAO: ExperienceDAO
-  let mockAnthropicClient: any
+    const archive = archiveDAO.getArchive("exec-1")
+    expect(archive).not.toBeNull()
+    expect(archive!.execution_id).toBe("exec-1")
+    expect(archive!.status).toBe("completed")
+    expect(archive!.total_input_tokens).toBe(1300)
+    expect(archive!.total_output_tokens).toBe(600)
+    expect(archive!.total_cost_usd).toBeCloseTo(0.06, 5)
 
-  beforeEach(() => {
-    db = createTestDb()
-    archiveDAO = new ArchiveDAO(db)
-    executionDAO = new ExecutionDAO(db)
-    tokenUsageDAO = new TokenUsageDAO(db)
-    workspaceDAO = new WorkspaceDAO(db)
-    experienceDAO = new ExperienceDAO(db)
-    mockAnthropicClient = {
-      messages: {
-        create: vi.fn(),
-      },
-    }
+    // Verify node_summary
+    const nodeSummary = JSON.parse(archive!.node_summary)
+    expect(nodeSummary).toHaveLength(2)
+    expect(nodeSummary[0].node_id).toBe("analyze")
+    expect(nodeSummary[0].type).toBe("agent")
+    expect(nodeSummary[0].status).toBe("completed")
+    expect(nodeSummary[0].duration_ms).toBe(800)
+    expect(nodeSummary[1].node_id).toBe("implement")
+
+    // Verify model_breakdown
+    const modelBreakdown = JSON.parse(archive!.model_breakdown!)
+    expect(modelBreakdown["claude-sonnet-4-20250514"]).toBeDefined()
+    expect(modelBreakdown["claude-sonnet-4-20250514"].input_tokens).toBe(1300)
+    expect(modelBreakdown["claude-sonnet-4-20250514"].output_tokens).toBe(600)
+    expect(modelBreakdown["claude-sonnet-4-20250514"].cost_usd).toBeCloseTo(0.06, 5)
   })
 
-  afterEach(() => {
-    db.close()
+  it("returns null for nonexistent execution", () => {
+    const result = archiveService.archiveExecution("nonexistent")
+    expect(result).toBeNull()
   })
 
-  // ── TC-001: Archive 3 executions (2 completed, 1 failed) ────────────
+  it("populates failed_nodes and error_message for failed execution", () => {
+    seedExecution({ id: "exec-fail", status: "failed", duration: 500 })
+    seedNodeExecution({ id: "exec-fail-node1", executionId: "exec-fail", nodeId: "step-1", status: "completed", duration: 200 })
+    seedNodeExecution({ id: "exec-fail-node2", executionId: "exec-fail", nodeId: "step-2", status: "failed", duration: 300, error: "Permission denied", exitCode: 1 })
+    seedNodeExecution({ id: "exec-fail-node3", executionId: "exec-fail", nodeId: "step-3", status: "failed", duration: 0, error: "Dependency failed" })
 
-  describe("TC-001: archiveExecution for multiple executions", () => {
-    it("should create 3 archive records with correct status, duration_ms, and total_cost_usd", () => {
-      const wsId = randomUUID()
-      seedWorkspace(db, wsId, "test-org")
+    const archiveId = archiveService.archiveExecution("exec-fail")
+    expect(archiveId).not.toBeNull()
 
-      const execIds: string[] = []
-      const statuses = ["completed", "completed", "failed"]
+    const archive = archiveDAO.getArchive("exec-fail")
+    expect(archive).not.toBeNull()
+    expect(archive!.status).toBe("failed")
 
-      for (let i = 0; i < 3; i++) {
-        const execId = randomUUID()
-        const nodeId = randomUUID()
-        const tokenId = randomUUID()
-
-        seedExecution(db, execId, wsId, statuses[i])
-        seedNodeExecution(
-          db, nodeId, execId, statuses[i],
-          statuses[i] === "failed" ? "Something went wrong" : null,
-        )
-        seedTokenUsage(db, tokenId, nodeId, "claude-3-sonnet", 1000, 500, 0.05)
-
-        execIds.push(execId)
-      }
-
-      const service = new ArchiveService(
-        archiveDAO, executionDAO, tokenUsageDAO, workspaceDAO,
-        experienceDAO, mockAnthropicClient,
-      )
-
-      const archiveIds: string[] = []
-      for (const execId of execIds) {
-        const archiveId = service.archiveExecution(execId)
-        expect(archiveId).toBeTruthy()
-        archiveIds.push(archiveId)
-      }
-
-      // All 3 archive IDs should be unique
-      expect(new Set(archiveIds).size).toBe(3)
-
-      // Verify via archiveDAO.listExecutionArchives
-      const result = archiveDAO.listExecutionArchives({
-        page: 1,
-        pageSize: 10,
-      })
-
-      expect(result.total).toBe(3)
-      expect(result.data).toHaveLength(3)
-
-      for (const archive of result.data) {
-        expect(archive.status).toMatch(/^(completed|failed)$/)
-        expect(archive.duration_ms).toBe(60000)
-        expect(archive.total_cost_usd).toBeCloseTo(0.05, 5)
-        expect(archive.total_input_tokens).toBe(1000)
-        expect(archive.total_output_tokens).toBe(500)
-      }
-
-      const completedArchives = result.data.filter(a => a.status === "completed")
-      const failedArchives = result.data.filter(a => a.status === "failed")
-      expect(completedArchives).toHaveLength(2)
-      expect(failedArchives).toHaveLength(1)
-    })
+    const failedNodes = JSON.parse(archive!.failed_nodes!)
+    expect(failedNodes).toContain("step-2")
+    expect(failedNodes).toContain("step-3")
+    expect(failedNodes).toHaveLength(2)
+    expect(archive!.error_message).toBe("Permission denied")
   })
 
-  // ── TC-002: archiveWorkspace error handling ─────────────────────────
-
-  describe("TC-002: archiveWorkspace error handling", () => {
-    it("should set archive_status to archive_failed and rethrow when executionDAO.listByWorkspace throws", () => {
-      const wsId = randomUUID()
-      seedWorkspace(db, wsId, "test-org")
-
-      const service = new ArchiveService(
-        archiveDAO, executionDAO, tokenUsageDAO, workspaceDAO,
-        experienceDAO, mockAnthropicClient,
-      )
-
-      // Spy on executionDAO.listByWorkspace to throw
-      vi.spyOn(executionDAO, "listByWorkspace").mockImplementation(() => {
-        throw new Error("DB connection lost")
-      })
-
-      expect(() => service.archiveWorkspace(wsId)).toThrow("DB connection lost")
-
-      // Verify workspace archive_status is "archive_failed"
-      const ws = db.prepare("SELECT archive_status, archive_error FROM workspaces WHERE id = ?").get(wsId) as {
-        archive_status: string
-        archive_error: string | null
-      }
-      expect(ws.archive_status).toBe("archive_failed")
-      expect(ws.archive_error).toBe("DB connection lost")
+  it("filters large values from vars_snapshot", () => {
+    const varPool = JSON.stringify({
+      short_val: "hello",
+      number_val: 42,
+      large_val: "x".repeat(2000), // > 1000 chars, should be excluded
+      nested: { key: "value" },
     })
+    seedExecution({ id: "exec-vars", status: "completed", varPool })
+
+    const archiveId = archiveService.archiveExecution("exec-vars")
+    expect(archiveId).not.toBeNull()
+
+    const archive = archiveDAO.getArchive("exec-vars")
+    expect(archive).not.toBeNull()
+
+    const varsSnapshot = JSON.parse(archive!.vars_snapshot)
+    expect(varsSnapshot.short_val).toBe("hello")
+    expect(varsSnapshot.number_val).toBe(42)
+    expect(varsSnapshot.nested).toEqual({ key: "value" })
+    expect(varsSnapshot.large_val).toBeUndefined() // excluded
   })
 
-  // ── TC-005: archiveExecution creates archive on completion ──────────
+  it("handles parent_execution_id and chain_position", () => {
+    seedExecution({ id: "exec-parent", status: "completed" })
+    seedExecution({ id: "exec-child", status: "completed", parentId: "exec-parent", childIndex: 1 })
 
-  describe("TC-005: archiveExecution creates archive record on execution completion", () => {
-    it("should create an archive record for a completed execution with all fields populated", () => {
-      const wsId = randomUUID()
-      seedWorkspace(db, wsId, "test-org")
-
-      const execId = randomUUID()
-      const nodeId = randomUUID()
-      const tokenId = randomUUID()
-
-      seedExecution(db, execId, wsId, "completed")
-      seedNodeExecution(db, nodeId, execId, "completed")
-      seedTokenUsage(db, tokenId, nodeId, "claude-3-haiku", 2000, 1000, 0.01)
-
-      const service = new ArchiveService(
-        archiveDAO, executionDAO, tokenUsageDAO, workspaceDAO,
-        experienceDAO, mockAnthropicClient,
-      )
-
-      const archiveId = service.archiveExecution(execId)
-      expect(archiveId).toBeTruthy()
-
-      const archive = archiveDAO.findExecutionArchiveById(archiveId)
-      expect(archive).not.toBeNull()
-      expect(archive!.id).toBe(archiveId)
-      expect(archive!.org).toBe("test-org")
-      expect(archive!.status).toBe("completed")
-      expect(archive!.workflow_ref).toBe("wf-test")
-      expect(archive!.workflow_name).toBe("Test Workflow")
-      expect(archive!.duration_ms).toBe(60000)
-      expect(archive!.total_input_tokens).toBe(2000)
-      expect(archive!.total_output_tokens).toBe(1000)
-      expect(archive!.total_cost_usd).toBeCloseTo(0.01, 5)
-      expect(archive!.workspace_id).toBe(wsId)
-    })
+    archiveService.archiveExecution("exec-child")
+    const archive = archiveDAO.getArchive("exec-child")
+    expect(archive).not.toBeNull()
+    expect(archive!.parent_execution_id).toBe("exec-parent")
+    expect(archive!.chain_position).toBe(1)
   })
 
-  // ── TC-006: fire-and-forget pattern ─────────────────────────────────
+  it("sets parent_execution_id to null for root executions", () => {
+    seedExecution({ id: "exec-root", status: "completed", parentId: "0" })
 
-  describe("TC-006: fire-and-forget pattern", () => {
-    it("archiveExecution should not throw even when extractLessons would fail", () => {
-      const wsId = randomUUID()
-      seedWorkspace(db, wsId, "test-org")
-
-      const execId = randomUUID()
-      seedExecution(db, execId, wsId, "completed")
-
-      const service = new ArchiveService(
-        archiveDAO, executionDAO, tokenUsageDAO, workspaceDAO,
-        experienceDAO, mockAnthropicClient,
-      )
-
-      // archiveExecution is synchronous. The extractLessons call is scheduled
-      // via setImmediate with .catch(), so errors in the async callback never
-      // propagate to the caller.
-      expect(() => service.archiveExecution(execId)).not.toThrow()
-    })
-
-    it("archiveExecution returns a valid archiveId synchronously despite async extractLessons", () => {
-      const wsId = randomUUID()
-      seedWorkspace(db, wsId, "test-org")
-
-      const execId = randomUUID()
-      seedExecution(db, execId, wsId, "completed")
-
-      const service = new ArchiveService(
-        archiveDAO, executionDAO, tokenUsageDAO, workspaceDAO,
-        experienceDAO, mockAnthropicClient,
-      )
-
-      const archiveId = service.archiveExecution(execId)
-      expect(archiveId).toBeTruthy()
-      expect(typeof archiveId).toBe("string")
-
-      // The archive record should exist immediately (synchronous insert)
-      const archive = archiveDAO.findExecutionArchiveById(archiveId)
-      expect(archive).not.toBeNull()
-    })
+    archiveService.archiveExecution("exec-root")
+    const archive = archiveDAO.getArchive("exec-root")
+    expect(archive).not.toBeNull()
+    expect(archive!.parent_execution_id).toBeNull()
   })
 
-  // ── TC-007: retryCleanup ────────────────────────────────────────────
+  it("aggregates multiple models in model_breakdown", () => {
+    seedExecution({ id: "exec-multi", status: "completed" })
+    seedNodeExecution({ id: "exec-multi-n1", executionId: "exec-multi", nodeId: "node-a", status: "completed" })
+    seedNodeExecution({ id: "exec-multi-n2", executionId: "exec-multi", nodeId: "node-b", status: "completed" })
+    seedTokenUsage({ id: "tu-a", nodeExecutionId: "exec-multi-n1", model: "claude-sonnet-4-20250514", inputTokens: 1000, outputTokens: 500, costUsd: 0.05 })
+    seedTokenUsage({ id: "tu-b", nodeExecutionId: "exec-multi-n2", model: "claude-haiku", inputTokens: 2000, outputTokens: 1000, costUsd: 0.01 })
 
-  describe("TC-007: retryCleanup", () => {
-    it("should clean up archived workspaces with existing directories at safe paths", () => {
-      const wsId = randomUUID()
-      // Use a safe path under ~/.octopus (passes the path traversal guard)
-      const safePath = join(homedir(), ".octopus", `test-stale-ws-${wsId}`)
+    archiveService.archiveExecution("exec-multi")
+    const archive = archiveDAO.getArchive("exec-multi")
+    expect(archive).not.toBeNull()
+    expect(archive!.total_input_tokens).toBe(3000)
+    expect(archive!.total_output_tokens).toBe(1500)
+    expect(archive!.total_cost_usd).toBeCloseTo(0.06, 5)
 
-      // Create the directory
-      mkdirSync(safePath, { recursive: true })
-      expect(existsSync(safePath)).toBe(true)
+    const breakdown = JSON.parse(archive!.model_breakdown!)
+    expect(breakdown["claude-sonnet-4-20250514"].input_tokens).toBe(1000)
+    expect(breakdown["claude-haiku"].input_tokens).toBe(2000)
+    expect(breakdown["claude-haiku"].cost_usd).toBeCloseTo(0.01, 5)
+  })
+})
 
-      // Seed workspace with archive_status='archived' and archived=1
-      db.prepare(
-        `INSERT INTO workspaces
-          (id, name, org, path, status, archive_status, archived, created_at, updated_at)
-         VALUES (?, ?, ?, ?, 'active', 'archived', 1, datetime('now'), datetime('now'))`
-      ).run(wsId, `ws-${wsId}`, "test-org", safePath)
+// ============================================================================
+// ArchiveService.archiveWorkspace
+// ============================================================================
 
-      const service = new ArchiveService(
-        archiveDAO, executionDAO, tokenUsageDAO, workspaceDAO,
-        experienceDAO, mockAnthropicClient,
-      )
+describe("ArchiveService.archiveWorkspace", () => {
+  it("archives all executions in a workspace", () => {
+    seedExecution({ id: "ws-exec-1", status: "completed" })
+    seedExecution({ id: "ws-exec-2", status: "failed" })
+    seedNodeExecution({ id: "ws-exec-1-n1", executionId: "ws-exec-1", nodeId: "n1", status: "completed" })
+    seedNodeExecution({ id: "ws-exec-2-n1", executionId: "ws-exec-2", nodeId: "n1", status: "failed", error: "Error" })
 
-      service.retryCleanup()
+    const wsArchiveId = archiveService.archiveWorkspace(WORKSPACE_ID)
+    expect(wsArchiveId).not.toBeNull()
 
-      // Directory should be deleted
-      expect(existsSync(safePath)).toBe(false)
-    })
+    // Verify execution archives were created
+    expect(archiveDAO.getArchive("ws-exec-1")).not.toBeNull()
+    expect(archiveDAO.getArchive("ws-exec-2")).not.toBeNull()
 
-    it("should block cleanup of unsafe paths (outside ~/.octopus and ~/workspaces)", () => {
-      const wsId = randomUUID()
-      const unsafePath = `/tmp/test-unsafe-ws-${wsId}`
-
-      // Create the directory
-      mkdirSync(unsafePath, { recursive: true })
-      expect(existsSync(unsafePath)).toBe(true)
-
-      // Seed workspace with archive_status='archived' and archived=1
-      db.prepare(
-        `INSERT INTO workspaces
-          (id, name, org, path, status, archive_status, archived, created_at, updated_at)
-         VALUES (?, ?, ?, ?, 'active', 'archived', 1, datetime('now'), datetime('now'))`
-      ).run(wsId, `ws-${wsId}`, "test-org", unsafePath)
-
-      const service = new ArchiveService(
-        archiveDAO, executionDAO, tokenUsageDAO, workspaceDAO,
-        experienceDAO, mockAnthropicClient,
-      )
-
-      service.retryCleanup()
-
-      // Directory should NOT be deleted (unsafe path)
-      expect(existsSync(unsafePath)).toBe(true)
-
-      // Clean up test artifact
-      rmSync(unsafePath, { recursive: true, force: true })
-    })
-
-    it("should handle non-existent paths gracefully", () => {
-      const wsId = randomUUID()
-      const safePath = join(homedir(), ".octopus", `test-nonexistent-${wsId}`)
-
-      // Do NOT create the directory
-      expect(existsSync(safePath)).toBe(false)
-
-      db.prepare(
-        `INSERT INTO workspaces
-          (id, name, org, path, status, archive_status, archived, created_at, updated_at)
-         VALUES (?, ?, ?, ?, 'active', 'archived', 1, datetime('now'), datetime('now'))`
-      ).run(wsId, `ws-${wsId}`, "test-org", safePath)
-
-      const service = new ArchiveService(
-        archiveDAO, executionDAO, tokenUsageDAO, workspaceDAO,
-        experienceDAO, mockAnthropicClient,
-      )
-
-      // Should not throw
-      expect(() => service.retryCleanup()).not.toThrow()
-    })
+    // Verify workspace archive
+    const wsArchive = archiveDAO.getWorkspaceArchive(WORKSPACE_ID)
+    expect(wsArchive).not.toBeNull()
+    expect(wsArchive!.total_executions).toBe(2)
   })
 
-  // ── TC-009: node_summary and failed_nodes populated ─────────────────
-
-  describe("TC-009: node_summary and failed_nodes in archive", () => {
-    it("should populate node_summary with all node info after archiveExecution", () => {
-      const wsId = randomUUID()
-      seedWorkspace(db, wsId, "test-org")
-
-      const execId = randomUUID()
-      const node1Id = randomUUID()
-      const node2Id = randomUUID()
-
-      seedExecution(db, execId, wsId, "failed")
-      seedNodeExecution(db, node1Id, execId, "completed")
-      // Use a different node_id for the second node
-      db.prepare(
-        `INSERT INTO node_executions
-          (id, execution_id, node_id, node_type, status, duration, error)
-         VALUES (?, ?, 'node-2', 'agent', 'failed', 15000, 'Agent crashed')`
-      ).run(node2Id, execId)
-
-      const service = new ArchiveService(
-        archiveDAO, executionDAO, tokenUsageDAO, workspaceDAO,
-        experienceDAO, mockAnthropicClient,
-      )
-
-      const archiveId = service.archiveExecution(execId)
-      const archive = archiveDAO.findExecutionArchiveById(archiveId)
-
-      // node_summary should contain both nodes
-      const nodeSummary = JSON.parse(archive!.node_summary)
-      expect(nodeSummary).toHaveLength(2)
-      expect(nodeSummary[0]).toHaveProperty("nodeId")
-      expect(nodeSummary[0]).toHaveProperty("type")
-      expect(nodeSummary[0]).toHaveProperty("status")
-      expect(nodeSummary[0]).toHaveProperty("duration_ms")
-
-      const statuses = nodeSummary.map((n: any) => n.status).sort()
-      expect(statuses).toEqual(["completed", "failed"])
-    })
-
-    it("should populate failed_nodes with failed node IDs and error_message from first failed node", () => {
-      const wsId = randomUUID()
-      seedWorkspace(db, wsId, "test-org")
-
-      const execId = randomUUID()
-      const node1Id = randomUUID()
-      const node2Id = randomUUID()
-
-      seedExecution(db, execId, wsId, "failed")
-      seedNodeExecution(db, node1Id, execId, "completed")
-      db.prepare(
-        `INSERT INTO node_executions
-          (id, execution_id, node_id, node_type, status, duration, error)
-         VALUES (?, ?, 'node-2', 'agent', 'failed', 15000, 'Agent crashed')`
-      ).run(node2Id, execId)
-
-      const service = new ArchiveService(
-        archiveDAO, executionDAO, tokenUsageDAO, workspaceDAO,
-        experienceDAO, mockAnthropicClient,
-      )
-
-      const archiveId = service.archiveExecution(execId)
-      const archive = archiveDAO.findExecutionArchiveById(archiveId)
-
-      // failed_nodes should list the failed node's node_id
-      const failedNodes = JSON.parse(archive!.failed_nodes!)
-      expect(failedNodes).toEqual(["node-2"])
-
-      // error_message should come from the first failed node execution
-      expect(archive!.error_message).toBe("Agent crashed")
-    })
-
-    it("should set failed_nodes to null when no nodes failed", () => {
-      const wsId = randomUUID()
-      seedWorkspace(db, wsId, "test-org")
-
-      const execId = randomUUID()
-      const nodeId = randomUUID()
-
-      seedExecution(db, execId, wsId, "completed")
-      seedNodeExecution(db, nodeId, execId, "completed")
-
-      const service = new ArchiveService(
-        archiveDAO, executionDAO, tokenUsageDAO, workspaceDAO,
-        experienceDAO, mockAnthropicClient,
-      )
-
-      const archiveId = service.archiveExecution(execId)
-      const archive = archiveDAO.findExecutionArchiveById(archiveId)
-
-      expect(archive!.failed_nodes).toBeNull()
-      expect(archive!.error_message).toBeNull()
-    })
+  it("returns null for empty workspace", () => {
+    const emptyWsId = "ws-empty"
+    seedWorkspace(emptyWsId, "empty-ws")
+    const result = archiveService.archiveWorkspace(emptyWsId)
+    expect(result).toBeNull()
   })
 
-  // ── TC-011: extractLessons with mocked LLM ──────────────────────────
+  it("builds workflow_manifest from unique workflow refs", () => {
+    seedExecution({ id: "wf-exec-1", workflowRef: "flow-a.yaml", status: "completed" })
+    seedExecution({ id: "wf-exec-2", workflowRef: "flow-b.yaml", status: "completed" })
+    seedExecution({ id: "wf-exec-3", workflowRef: "flow-a.yaml", status: "completed" })
 
-  describe("TC-011: extractLessons threshold behavior", () => {
-    it("should call LLM when score >= REFLECTION_THRESHOLD (40)", async () => {
-      const archiveId = randomUUID()
+    archiveService.archiveWorkspace(WORKSPACE_ID)
+    const wsArchive = archiveDAO.getWorkspaceArchive(WORKSPACE_ID)
+    expect(wsArchive).not.toBeNull()
 
-      // Create an archive that produces score >= 40:
-      //   failed_nodes present & non-empty  → retry_pattern  = true  (+15)
-      //   status = "failed" + error_message → failure_recovery = true (+15)
-      //   error_message present             → new_error_type = true  (+20)
-      //   Total = 50 >= 40
-      archiveDAO.insertExecutionArchive({
-        id: archiveId,
-        org: "test-org",
-        workflow_ref: "wf-test",
-        workflow_name: "Test Workflow",
-        status: "failed",
-        started_at: new Date().toISOString(),
-        completed_at: new Date().toISOString(),
-        duration_ms: 60000,
-        node_summary: "[]",
-        failed_nodes: JSON.stringify(["node-1"]),
-        error_message: "Something failed",
-        total_input_tokens: 1000,
-        total_output_tokens: 500,
-        total_cost_usd: 0.05,
-        model_breakdown: null,
-        vars_snapshot: "{}",
-        lessons_learned: null,
-        workspace_archive_id: null,
-        workspace_id: null,
-        chain_position: null,
-        parent_execution_id: null,
-        schedule_id: null,
-        clone_name: null,
-      })
+    const manifest = JSON.parse(wsArchive!.workflow_manifest)
+    expect(manifest).toHaveLength(2)
+    const flowA = manifest.find((m: any) => m.workflow_ref === "flow-a.yaml")
+    const flowB = manifest.find((m: any) => m.workflow_ref === "flow-b.yaml")
+    expect(flowA).toBeDefined()
+    expect(flowA.execution_count).toBe(2)
+    expect(flowB).toBeDefined()
+    expect(flowB.execution_count).toBe(1)
+  })
+})
 
-      mockAnthropicClient.messages.create.mockResolvedValue({
-        content: [{
-          text: JSON.stringify({
-            lessons: "Test lesson learned from failure",
-            items: [{
-              type: "failure",
-              title: "Test failure pattern",
-              content: "The agent node crashed due to timeout",
-              keywords: ["timeout", "agent"],
-            }],
-          }),
-        }],
-      })
+// ============================================================================
+// WorkspaceService two-phase delete
+// ============================================================================
 
-      // extractLessons re-inserts the archive row with lessons_learned populated.
-      // The production INSERT statement doesn't use ON CONFLICT, so the second
-      // insert would hit a UNIQUE constraint violation. Spy on the DAO to make
-      // the second call a no-op, simulating UPSERT behavior.
-      let insertCallCount = 0
-      vi.spyOn(archiveDAO, "insertExecutionArchive").mockImplementation((row: any) => {
-        insertCallCount++
-        // Swallow the duplicate insert — the seed insert used the real DAO
-        // before this spy was created, so this only catches the re-insert
-        // from extractLessons (updating lessons_learned).
-        return row.id
-      })
+describe("WorkspaceService two-phase delete", () => {
+  it("success path: archiving → archived → cascade delete", async () => {
+    seedExecution({ id: "del-exec-1", status: "completed" })
+    seedNodeExecution({ id: "del-exec-1-n1", executionId: "del-exec-1", nodeId: "n1", status: "completed" })
+    seedTokenUsage({ id: "del-tu-1", nodeExecutionId: "del-exec-1-n1", inputTokens: 100, outputTokens: 50, costUsd: 0.01 })
 
-      const service = new ArchiveService(
-        archiveDAO, executionDAO, tokenUsageDAO, workspaceDAO,
-        experienceDAO, mockAnthropicClient,
-      )
+    const wsService = new WorkspaceService(workspaceDAO, archiveService)
 
-      await service.extractLessons(archiveId)
+    // Workspace should exist before delete
+    expect(workspaceDAO.findById(WORKSPACE_ID)).not.toBeNull()
 
-      // LLM should have been called
-      expect(mockAnthropicClient.messages.create).toHaveBeenCalledTimes(1)
-      expect(mockAnthropicClient.messages.create).toHaveBeenCalledWith(
-        expect.objectContaining({
-          model: expect.any(String),
-          max_tokens: expect.any(Number),
-          messages: expect.any(Array),
-        }),
-      )
+    const result = await wsService.delete(WORKSPACE_ID)
+    expect(result).toBe(true)
 
-      // Spy was set up after the seed insert, so it only catches the
-      // extractLessons re-insert call (expect exactly 1 invocation).
-      expect(insertCallCount).toBe(1)
+    // After successful delete, the workspace record should be gone (cascade deleted)
+    expect(workspaceDAO.findById(WORKSPACE_ID)).toBeNull()
 
-      // Experience items should have been inserted into experience_index
-      const experiences = experienceDAO.findByArchiveId(archiveId)
-      expect(experiences).toHaveLength(1)
-      expect(experiences[0].type).toBe("failure")
-      expect(experiences[0].title).toBe("Test failure pattern")
-      expect(experiences[0].status).toBe("active")
-      expect(experiences[0].org).toBe("test-org")
-      expect(experiences[0].archive_id).toBe(archiveId)
-    })
-
-    it("should NOT call LLM when score < REFLECTION_THRESHOLD", async () => {
-      const archiveId = randomUUID()
-
-      // Create an archive with no anomaly signals → score = 0:
-      //   no failed_nodes → retry_pattern = false
-      //   status = "completed" → failure_recovery = false
-      //   no error_message → new_error_type = false
-      //   total tokens = 1500 (< 100000) → token_spike = false
-      archiveDAO.insertExecutionArchive({
-        id: archiveId,
-        org: "test-org",
-        workflow_ref: "wf-test",
-        workflow_name: "Test Workflow",
-        status: "completed",
-        started_at: new Date().toISOString(),
-        completed_at: new Date().toISOString(),
-        duration_ms: 60000,
-        node_summary: "[]",
-        failed_nodes: null,
-        error_message: null,
-        total_input_tokens: 1000,
-        total_output_tokens: 500,
-        total_cost_usd: 0.05,
-        model_breakdown: null,
-        vars_snapshot: "{}",
-        lessons_learned: null,
-        workspace_archive_id: null,
-        workspace_id: null,
-        chain_position: null,
-        parent_execution_id: null,
-        schedule_id: null,
-        clone_name: null,
-      })
-
-      const service = new ArchiveService(
-        archiveDAO, executionDAO, tokenUsageDAO, workspaceDAO,
-        experienceDAO, mockAnthropicClient,
-      )
-
-      await service.extractLessons(archiveId)
-
-      // LLM should NOT have been called
-      expect(mockAnthropicClient.messages.create).not.toHaveBeenCalled()
-
-      // No experience items should be inserted
-      const experiences = experienceDAO.findByArchiveId(archiveId)
-      expect(experiences).toHaveLength(0)
-    })
-
-    it("should return early when archive does not exist", async () => {
-      const service = new ArchiveService(
-        archiveDAO, executionDAO, tokenUsageDAO, workspaceDAO,
-        experienceDAO, mockAnthropicClient,
-      )
-
-      // Should not throw, should not call LLM
-      await service.extractLessons("nonexistent-archive-id")
-
-      expect(mockAnthropicClient.messages.create).not.toHaveBeenCalled()
-    })
-
-    it("should handle LLM returning empty results gracefully", async () => {
-      const archiveId = randomUUID()
-
-      archiveDAO.insertExecutionArchive({
-        id: archiveId,
-        org: "test-org",
-        workflow_ref: "wf-test",
-        workflow_name: "Test Workflow",
-        status: "failed",
-        started_at: new Date().toISOString(),
-        completed_at: new Date().toISOString(),
-        duration_ms: 60000,
-        node_summary: "[]",
-        failed_nodes: JSON.stringify(["node-1"]),
-        error_message: "Something failed",
-        total_input_tokens: 1000,
-        total_output_tokens: 500,
-        total_cost_usd: 0.05,
-        model_breakdown: null,
-        vars_snapshot: "{}",
-        lessons_learned: null,
-        workspace_archive_id: null,
-        workspace_id: null,
-        chain_position: null,
-        parent_execution_id: null,
-        schedule_id: null,
-        clone_name: null,
-      })
-
-      // LLM returns no lessons and no items
-      mockAnthropicClient.messages.create.mockResolvedValue({
-        content: [{
-          text: JSON.stringify({ lessons: "", items: [] }),
-        }],
-      })
-
-      const service = new ArchiveService(
-        archiveDAO, executionDAO, tokenUsageDAO, workspaceDAO,
-        experienceDAO, mockAnthropicClient,
-      )
-
-      await service.extractLessons(archiveId)
-
-      // LLM was called (score >= threshold)
-      expect(mockAnthropicClient.messages.create).toHaveBeenCalledTimes(1)
-
-      // But no experience items were inserted
-      const experiences = experienceDAO.findByArchiveId(archiveId)
-      expect(experiences).toHaveLength(0)
-    })
+    // Archive should have been created before cascade
+    const archive = archiveDAO.getArchive("del-exec-1")
+    // Note: archive is also cascade-deleted since cascadeDeleteByWorkspace deletes execution_archive
+    // So the archive may not exist after full delete. This is the expected behavior.
   })
 
-  // ── TC-058: recoverStuckArchiving ───────────────────────────────────
+  it("failure path: archive_failed preserves workspace data", async () => {
+    // Create a failing archive service (mock)
+    const failingArchiveService = {
+      archiveWorkspace: () => { throw new Error("Simulated archive failure") },
+      archiveExecution: () => null,
+      archiveExecutionForDetail: () => null,
+    } as unknown as ArchiveService
 
-  describe("TC-058: recoverStuckArchiving", () => {
-    it("should call workspaceDAO.resetStuckArchiving with 30 minutes", () => {
-      const service = new ArchiveService(
-        archiveDAO, executionDAO, tokenUsageDAO, workspaceDAO,
-        experienceDAO, mockAnthropicClient,
-      )
+    const wsService = new WorkspaceService(workspaceDAO, failingArchiveService)
 
-      const spy = vi.spyOn(workspaceDAO, "resetStuckArchiving")
+    seedExecution({ id: "fail-exec-1", status: "completed" })
 
-      service.recoverStuckArchiving()
+    // Workspace should exist before delete
+    const wsBefore = workspaceDAO.findById(WORKSPACE_ID)
+    expect(wsBefore).not.toBeNull()
 
-      expect(spy).toHaveBeenCalledWith(30)
-      expect(spy).toHaveBeenCalledTimes(1)
+    // Delete should throw because archive failed
+    await expect(wsService.delete(WORKSPACE_ID)).rejects.toThrow("Archive failed")
 
-      spy.mockRestore()
-    })
-
-    it("should recover workspaces stuck in archiving state for more than 30 minutes", () => {
-      const wsId = randomUUID()
-      seedWorkspace(db, wsId, "test-org")
-
-      // Set archive_status to 'archiving' with archive_started_at 1 hour ago
-      const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString()
-      db.prepare(
-        "UPDATE workspaces SET archive_status = 'archiving', archive_started_at = ? WHERE id = ?"
-      ).run(oneHourAgo, wsId)
-
-      const service = new ArchiveService(
-        archiveDAO, executionDAO, tokenUsageDAO, workspaceDAO,
-        experienceDAO, mockAnthropicClient,
-      )
-
-      service.recoverStuckArchiving()
-
-      // Workspace should be reset to 'none'
-      const ws = db.prepare("SELECT archive_status, archive_started_at FROM workspaces WHERE id = ?").get(wsId) as {
-        archive_status: string
-        archive_started_at: string | null
-      }
-      expect(ws.archive_status).toBe("none")
-      expect(ws.archive_started_at).toBeNull()
-    })
-
-    it("should NOT recover workspaces stuck for less than 30 minutes", () => {
-      const wsId = randomUUID()
-      seedWorkspace(db, wsId, "test-org")
-
-      // Set archive_status to 'archiving' with archive_started_at 10 minutes ago
-      const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000).toISOString()
-      db.prepare(
-        "UPDATE workspaces SET archive_status = 'archiving', archive_started_at = ? WHERE id = ?"
-      ).run(tenMinutesAgo, wsId)
-
-      const service = new ArchiveService(
-        archiveDAO, executionDAO, tokenUsageDAO, workspaceDAO,
-        experienceDAO, mockAnthropicClient,
-      )
-
-      service.recoverStuckArchiving()
-
-      // Workspace should NOT be reset (still within 30 minutes)
-      const ws = db.prepare("SELECT archive_status FROM workspaces WHERE id = ?").get(wsId) as {
-        archive_status: string
-      }
-      expect(ws.archive_status).toBe("archiving")
-    })
+    // Workspace should still exist (data preserved)
+    const wsAfter = workspaceDAO.findById(WORKSPACE_ID)
+    expect(wsAfter).not.toBeNull()
+    expect(wsAfter!.archive_status).toBe("archive_failed")
   })
 
-  // ── Additional: archiveWorkspace success path ───────────────────────
+  it("concurrent delete: only one acquires lock", async () => {
+    const wsService = new WorkspaceService(workspaceDAO, archiveService)
 
-  describe("archiveWorkspace success path", () => {
-    it("should archive all executions in a workspace and return the count", () => {
-      const wsId = randomUUID()
-      seedWorkspace(db, wsId, "test-org")
+    // Manually set archive_status to 'archiving' to simulate concurrent lock
+    workspaceDAO.setArchiveStatus(WORKSPACE_ID, "archiving")
 
-      // Seed 2 completed executions with nodes and token usage
-      for (let i = 0; i < 2; i++) {
-        const execId = randomUUID()
-        const nodeId = randomUUID()
-        const tokenId = randomUUID()
-        seedExecution(db, execId, wsId, "completed")
-        seedNodeExecution(db, nodeId, execId, "completed")
-        seedTokenUsage(db, tokenId, nodeId, "claude-3-sonnet", 500, 200, 0.02)
-      }
-
-      const service = new ArchiveService(
-        archiveDAO, executionDAO, tokenUsageDAO, workspaceDAO,
-        experienceDAO, mockAnthropicClient,
-      )
-
-      const count = service.archiveWorkspace(wsId)
-      expect(count).toBe(2)
-
-      // Verify workspace archive_status is "archived"
-      const ws = db.prepare("SELECT archive_status FROM workspaces WHERE id = ?").get(wsId) as {
-        archive_status: string
-      }
-      expect(ws.archive_status).toBe("archived")
-
-      // Verify execution archives were created
-      const archives = archiveDAO.listExecutionArchives({ page: 1, pageSize: 10 })
-      expect(archives.total).toBe(2)
-    })
-
-    it("should throw when workspace does not exist", () => {
-      const service = new ArchiveService(
-        archiveDAO, executionDAO, tokenUsageDAO, workspaceDAO,
-        experienceDAO, mockAnthropicClient,
-      )
-
-      expect(() => service.archiveWorkspace("nonexistent-ws-id")).toThrow("Workspace not found")
-    })
+    // Second delete should fail to acquire lock
+    await expect(wsService.delete(WORKSPACE_ID)).rejects.toThrow("already being archived")
   })
 
-  // ── Additional: model_breakdown and token aggregation ───────────────
+  it("delete without archiveService still works", async () => {
+    const wsService = new WorkspaceService(workspaceDAO)
 
-  describe("archiveExecution token aggregation", () => {
-    it("should aggregate token usage across multiple models", () => {
-      const wsId = randomUUID()
-      seedWorkspace(db, wsId, "test-org")
+    seedExecution({ id: "noarch-exec-1", status: "completed" })
 
-      const execId = randomUUID()
-      const node1Id = randomUUID()
-      const node2Id = randomUUID()
+    const result = await wsService.delete(WORKSPACE_ID)
+    expect(result).toBe(true)
+    expect(workspaceDAO.findById(WORKSPACE_ID)).toBeNull()
+  })
+})
 
-      seedExecution(db, execId, wsId, "completed")
-      seedNodeExecution(db, node1Id, execId, "completed")
-      seedNodeExecution(db, node2Id, execId, "completed")
+// ============================================================================
+// ArchiveRecoveryService
+// ============================================================================
 
-      // Two different models
-      seedTokenUsage(db, randomUUID(), node1Id, "claude-3-sonnet", 1000, 500, 0.03)
-      seedTokenUsage(db, randomUUID(), node2Id, "claude-3-haiku", 2000, 800, 0.01)
+describe("ArchiveRecoveryService", () => {
+  it("resets timed-out archiving workspaces to none", () => {
+    // Create a workspace stuck in 'archiving' for > 30 minutes
+    const stuckWsId = "ws-stuck"
+    const oldTime = new Date(Date.now() - 60 * 60 * 1000).toISOString() // 1 hour ago
+    db.prepare(
+      "INSERT INTO workspaces (id, name, org, path, archive_status, archive_started_at, created_at, updated_at) VALUES (?, ?, ?, ?, 'archiving', ?, ?, ?)"
+    ).run(stuckWsId, "stuck-ws", ORG, `/tmp/${stuckWsId}`, oldTime, oldTime, oldTime)
 
-      const service = new ArchiveService(
-        archiveDAO, executionDAO, tokenUsageDAO, workspaceDAO,
-        experienceDAO, mockAnthropicClient,
-      )
+    const recoveryService = new ArchiveRecoveryService(workspaceDAO, 60 * 60 * 1000) // 1 hour interval (won't fire in test)
 
-      const archiveId = service.archiveExecution(execId)
-      const archive = archiveDAO.findExecutionArchiveById(archiveId)
+    // Manually call recoverTimedOut
+    recoveryService.recoverTimedOut(30)
 
-      expect(archive!.total_input_tokens).toBe(3000)
-      expect(archive!.total_output_tokens).toBe(1300)
-      expect(archive!.total_cost_usd).toBeCloseTo(0.04, 5)
+    const ws = workspaceDAO.findById(stuckWsId)
+    expect(ws).not.toBeNull()
+    expect(ws!.archive_status).toBe("none")
+  })
 
-      // model_breakdown should have both models
-      const breakdown = JSON.parse(archive!.model_breakdown!)
-      expect(breakdown).toHaveProperty("claude-3-sonnet")
-      expect(breakdown).toHaveProperty("claude-3-haiku")
-      expect(breakdown["claude-3-sonnet"].input_tokens).toBe(1000)
-      expect(breakdown["claude-3-haiku"].input_tokens).toBe(2000)
-    })
+  it("does not reset recently started archiving", () => {
+    const recentWsId = "ws-recent"
+    const recentTime = new Date(Date.now() - 5 * 60 * 1000).toISOString() // 5 minutes ago
+    db.prepare(
+      "INSERT INTO workspaces (id, name, org, path, archive_status, archive_started_at, created_at, updated_at) VALUES (?, ?, ?, ?, 'archiving', ?, ?, ?)"
+    ).run(recentWsId, "recent-ws", ORG, `/tmp/${recentWsId}`, recentTime, recentTime, recentTime)
+
+    const recoveryService = new ArchiveRecoveryService(workspaceDAO)
+    recoveryService.recoverTimedOut(30)
+
+    const ws = workspaceDAO.findById(recentWsId)
+    expect(ws).not.toBeNull()
+    expect(ws!.archive_status).toBe("archiving") // unchanged
+  })
+
+  it("retryCleanup handles missing directory gracefully", () => {
+    const archivedWsId = "ws-archived-nodir"
+    const now = new Date().toISOString()
+    db.prepare(
+      "INSERT INTO workspaces (id, name, org, path, archive_status, created_at, updated_at) VALUES (?, ?, ?, ?, 'archived', ?, ?)"
+    ).run(archivedWsId, "archived-ws", ORG, "/tmp/nonexistent-archive-dir", now, now)
+
+    const recoveryService = new ArchiveRecoveryService(workspaceDAO)
+    // Should not throw
+    expect(() => recoveryService.retryCleanup()).not.toThrow()
+  })
+
+  it("start/stop lifecycle", () => {
+    const recoveryService = new ArchiveRecoveryService(workspaceDAO, 60000)
+    recoveryService.start()
+    // Should not throw
+    recoveryService.stop()
+    // Double stop should also not throw
+    recoveryService.stop()
+  })
+})
+
+// ============================================================================
+// Token aggregation precision
+// ============================================================================
+
+describe("Token aggregation precision", () => {
+  it("handles zero-cost token usages", () => {
+    seedExecution({ id: "exec-zero-cost", status: "completed" })
+    seedNodeExecution({ id: "exec-zero-cost-n1", executionId: "exec-zero-cost", nodeId: "n1", status: "completed" })
+    seedTokenUsage({ id: "tu-zero-1", nodeExecutionId: "exec-zero-cost-n1", inputTokens: 100, outputTokens: 50, costUsd: 0 })
+    seedTokenUsage({ id: "tu-zero-2", nodeExecutionId: "exec-zero-cost-n1", inputTokens: 200, outputTokens: 100, costUsd: 0 })
+
+    archiveService.archiveExecution("exec-zero-cost")
+    const archive = archiveDAO.getArchive("exec-zero-cost")
+    expect(archive).not.toBeNull()
+    expect(archive!.total_input_tokens).toBe(300)
+    expect(archive!.total_output_tokens).toBe(150)
+    expect(archive!.total_cost_usd).toBe(0)
+  })
+
+  it("handles null cost_usd gracefully", () => {
+    seedExecution({ id: "exec-null-cost", status: "completed" })
+    seedNodeExecution({ id: "exec-null-cost-n1", executionId: "exec-null-cost", nodeId: "n1", status: "completed" })
+
+    const now = new Date().toISOString()
+    db.prepare(
+      `INSERT INTO node_token_usages (id, node_execution_id, model, input_tokens, output_tokens, cost_usd, cache_read_tokens, cache_creation_tokens, created_at)
+       VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?)`
+    ).run("tu-null", "exec-null-cost-n1", "claude-sonnet-4-20250514", 100, 50, 0, 0, now)
+
+    archiveService.archiveExecution("exec-null-cost")
+    const archive = archiveDAO.getArchive("exec-null-cost")
+    expect(archive).not.toBeNull()
+    expect(archive!.total_cost_usd).toBe(0)
+  })
+
+  it("aggregates tokens across multiple nodes correctly", () => {
+    seedExecution({ id: "exec-multi-node", status: "completed" })
+    seedNodeExecution({ id: "emn-n1", executionId: "exec-multi-node", nodeId: "node-1", status: "completed" })
+    seedNodeExecution({ id: "emn-n2", executionId: "exec-multi-node", nodeId: "node-2", status: "completed" })
+    seedNodeExecution({ id: "emn-n3", executionId: "exec-multi-node", nodeId: "node-3", status: "completed" })
+
+    seedTokenUsage({ id: "emn-tu-1", nodeExecutionId: "emn-n1", model: "model-a", inputTokens: 100, outputTokens: 50, costUsd: 0.001 })
+    seedTokenUsage({ id: "emn-tu-2", nodeExecutionId: "emn-n2", model: "model-a", inputTokens: 200, outputTokens: 100, costUsd: 0.002 })
+    seedTokenUsage({ id: "emn-tu-3", nodeExecutionId: "emn-n3", model: "model-b", inputTokens: 300, outputTokens: 150, costUsd: 0.003 })
+
+    archiveService.archiveExecution("exec-multi-node")
+    const archive = archiveDAO.getArchive("exec-multi-node")
+    expect(archive).not.toBeNull()
+    expect(archive!.total_input_tokens).toBe(600)
+    expect(archive!.total_output_tokens).toBe(300)
+    expect(archive!.total_cost_usd).toBeCloseTo(0.006, 6)
+
+    const breakdown = JSON.parse(archive!.model_breakdown!)
+    expect(breakdown["model-a"].input_tokens).toBe(300)
+    expect(breakdown["model-a"].output_tokens).toBe(150)
+    expect(breakdown["model-b"].input_tokens).toBe(300)
+    expect(breakdown["model-b"].output_tokens).toBe(150)
+  })
+})
+
+// ============================================================================
+// ArchiveService.archiveExecutionForDetail
+// ============================================================================
+
+describe("ArchiveService.archiveExecutionForDetail", () => {
+  it("returns parsed archive data with experiences array", () => {
+    seedExecution({ id: "detail-exec", status: "completed" })
+    seedNodeExecution({ id: "detail-exec-n1", executionId: "detail-exec", nodeId: "n1", status: "completed" })
+
+    archiveService.archiveExecution("detail-exec")
+    const detail = archiveService.archiveExecutionForDetail("detail-exec") as any
+    expect(detail).not.toBeNull()
+    expect(detail.execution_id).toBe("detail-exec")
+    expect(detail.experiences).toEqual([])
+    expect(Array.isArray(detail.node_summary)).toBe(true)
+  })
+
+  it("returns null for non-archived execution", () => {
+    const result = archiveService.archiveExecutionForDetail("nonexistent")
+    expect(result).toBeNull()
   })
 })

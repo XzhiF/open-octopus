@@ -132,7 +132,7 @@ describe('Unified Schema (applySchema)', () => {
     applySchema(testDb)
 
     const rows = testDb.pragma('user_version') as Array<{ user_version: number }>
-    expect(rows[0].user_version).toBe(27)
+    expect(rows[0].user_version).toBe(25)
   })
 
   it('is idempotent — running twice does not error', () => {
@@ -141,7 +141,7 @@ describe('Unified Schema (applySchema)', () => {
     expect(() => applySchema(testDb)).not.toThrow()
 
     const rows = testDb.pragma('user_version') as Array<{ user_version: number }>
-    expect(rows[0].user_version).toBe(27)
+    expect(rows[0].user_version).toBe(25)
   })
 
   it('seeds default org', () => {

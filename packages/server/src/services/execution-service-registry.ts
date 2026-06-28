@@ -7,12 +7,14 @@ import { BuiltInWorkflowService } from "./builtin-workflow"
 import { SSEService } from "./sse"
 import { ObservabilityService } from "./observability"
 import { ExecutionDAO, WorkspaceDAO } from "../db/dao"
+import type { ArchiveService } from "./archive-service"
 
 let _db: Database.Database | null = null
 let _sse: SSEService | null = null
 let _obs: ObservabilityService | null = null
 let _execDAO: ExecutionDAO | null = null
 let _wsDAO: WorkspaceDAO | null = null
+let _archiveService: ArchiveService | null = null
 
 const serviceCache = new Map<string, { service: ExecutionService; wsPath: string }>()
 
@@ -21,12 +23,14 @@ export function initExecutionServiceRegistry(
   sse: SSEService,
   obs: ObservabilityService | undefined,
   daos?: { executionDAO?: ExecutionDAO; workspaceDAO?: WorkspaceDAO },
+  archiveService?: ArchiveService,
 ): void {
   _db = db
   _sse = sse
   _obs = obs ?? null
   _execDAO = daos?.executionDAO ?? null
   _wsDAO = daos?.workspaceDAO ?? null
+  _archiveService = archiveService ?? null
 }
 
 export function getExecutionService(
@@ -53,6 +57,7 @@ export function getExecutionService(
     ws.id,
     _obs ?? undefined,
     _execDAO ?? undefined,
+    _archiveService ?? undefined,
   )
   const result = { service, wsPath: resolvedPath }
   serviceCache.set(workspaceId, result)

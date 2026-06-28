@@ -6,6 +6,8 @@ import type { ExecutionDAO } from "../../db/dao/execution-dao"
 import type { EngineCallbacks as EngineCallbackType } from "@octopus/engine"
 
 export class EngineCallbacks implements IEngineCallbacks {
+  private lastPushTime = new Map<string, number>()
+
   constructor(
     private ctx: ServiceContext,
     private dao: ExecutionDAO,
@@ -68,6 +70,18 @@ export class EngineCallbacks implements IEngineCallbacks {
             }
             await this.hookExecutor.executeWorkflowHooks(hookEvent, context, workflow, executionId)
           }
+
+          // Push progress for Telegram-triggered executions
+          if (this.ctx.notificationService && execution.triggered_by === 'telegram') {
+            try {
+              const lastPush = this.lastPushTime.get(executionId) ?? 0
+              if (Date.now() - lastPush > 5 * 60 * 1000) {
+                this.lastPushTime.set(executionId, Date.now())
+                const msg = `🔧 ${nodeId} ${status === 'completed' ? '完成' : '失败'}`
+                this.ctx.notificationService.pushProgress(executionId, msg).catch(() => {})
+              }
+            } catch { /* silent */ }
+          }
         }
       },
 
@@ -101,6 +115,26 @@ export class EngineCallbacks implements IEngineCallbacks {
           type: "complete",
           status: finalStatus,
         })
+
+        // Final progress push for Telegram-triggered executions
+        if (this.ctx.notificationService && execution.triggered_by === 'telegram') {
+          try {
+            const msg = finalStatus === 'completed'
+              ? `✅ ${execution.workflow_name} 完成`
+              : `❌ ${execution.workflow_name} 失败`
+            this.ctx.notificationService.pushProgress(executionId, msg).catch(() => {})
+            this.lastPushTime.delete(executionId)
+          } catch { /* silent */ }
+        }
+
+        // Archive execution (Layer 1+2, synchronous within onComplete)
+        if (this.ctx.archiveService && (finalStatus === "completed" || finalStatus === "failed")) {
+          try {
+            this.ctx.archiveService.archiveExecution(executionId)
+          } catch (err) {
+            console.warn(`[engine] Archive failed for execution ${executionId}:`, err)
+          }
+        }
       },
 
       onAgentEvent: (nodeId: string, event: any) => {

@@ -19,8 +19,6 @@ import { mkdirSync, writeFileSync, appendFileSync, existsSync, readFileSync, unl
 import { tmpdir } from "os"
 import type { CrossExecResolver } from "@octopus/shared"
 import { PromptInjector } from "./prompt-injector"
-import { ExperienceInjector } from "./executors/experience-injector"
-import type { ExperienceQueryPort } from "./executors/experience-injector"
 import { RetryPolicyResolver } from "./pipeline/retry-resolver"
 import { FailureClassifier } from "./pipeline/failure-classifier"
 import { NotifyDispatcher } from "./notify/dispatcher"
@@ -29,6 +27,9 @@ import { registerBuiltinProviders } from "./notify/index"
 import type { ICheckpointStore, Checkpoint } from "./pipeline/checkpoint-types"
 import { calculateBackoff } from "./pipeline/backoff"
 import type { PipelineConfig } from "@octopus/shared"
+
+// TC-037: max chain depth — abort chain trigger if depth exceeds this
+const MAX_CHAIN_DEPTH = 5
 
 export interface ExecutionResult {
   workflowName: string
@@ -53,6 +54,8 @@ export interface EngineCallbacks {
   onCheckpoint?: (checkpoint: unknown) => void
   onPipelineReloaded?: (config: PipelineConfig) => void
   onRuntimeNodeAdded?: (nodeId: string, nodeType: string) => void
+  /** Emitted when workflow-level chain config triggers a next workflow. */
+  onChainTrigger?: (chainItems: Array<{ workflow: string; condition?: string; auto_trigger: boolean; input_mapping?: Record<string, string> }>, triggerType: "on_success" | "on_failure") => void
 }
 
 export class WorkflowEngine {
@@ -90,9 +93,8 @@ export class WorkflowEngine {
   private pipelinePath?: string
   // Runtime node tracking (Upgrade 3)
   private runtimeNodeIds: Set<string> = new Set()
-  // P3: Experience injection for agent nodes with experience_scope
-  private experienceInjector?: ExperienceInjector
-  private injectedExperienceIds: string[] = []
+  // Chain depth: how many parent→child hops above this execution (0 = root)
+  private chainDepth: number
 
   constructor(
     private workflow: WorkflowDef,
@@ -106,6 +108,7 @@ export class WorkflowEngine {
     executionName?: string,
     crossExecResolver?: CrossExecResolver,
     promptInjector?: PromptInjector,
+    chainDepth?: number,
   ) {
     this.pool = new VarPool(workflow.variables ?? {})
 
@@ -152,6 +155,7 @@ export class WorkflowEngine {
     this.maxConcurrent = workflow.max_concurrent
     this.crossExecResolver = crossExecResolver
     this.promptInjector = promptInjector
+    this.chainDepth = chainDepth ?? 0
 
     // Propagate workflow-level model to agent nodes that don't declare their own
     if (workflow.model) {
@@ -178,19 +182,6 @@ export class WorkflowEngine {
    */
   setRefResolver(resolver: (refPath: string) => any): void {
     this.pool.setRefResolver(resolver)
-  }
-
-  /**
-   * P3: Set the experience query port for injecting experiences into agent prompts.
-   * The server layer provides ExperienceDAO-backed implementation.
-   */
-  setExperienceQueryPort(port: ExperienceQueryPort): void {
-    this.experienceInjector = new ExperienceInjector(port)
-  }
-
-  /** Get the IDs of experiences that were injected during this execution (for use_count tracking). */
-  getInjectedExperienceIds(): string[] {
-    return this.injectedExperienceIds
   }
 
   setNodeResult(nodeId: string, result: NodeExecutionResult): void {
@@ -257,6 +248,38 @@ export class WorkflowEngine {
     // Write State JSON
     if (this.orgDir) {
       this.writeStateJson(result, durationMs)
+    }
+
+    // ── YAML chain trigger detection ───────────────────────────
+    // If the workflow YAML has a `chain` config, emit chain triggers
+    // for the server layer to handle (creating child executions).
+    // This coexists with the pipeline chain (pipeline chain takes priority).
+    // TC-037: abort if chain depth exceeds MAX_CHAIN_DEPTH (5 layers)
+    if (this.workflow.chain && this.chainDepth < MAX_CHAIN_DEPTH) {
+      const chainConfig = this.workflow.chain
+      if ((result.status === "completed" || result.status === "completed_with_failures") && chainConfig.on_success?.length) {
+        const filteredItems = chainConfig.on_success.filter(item => {
+          if (!item.condition) return true
+          try {
+            return evaluateExpression(item.condition, this.pool, {})
+          } catch { return false }
+        })
+        if (filteredItems.length > 0) {
+          this.callbacks?.onChainTrigger?.(filteredItems, "on_success")
+        }
+      } else if (result.status === "failed" && chainConfig.on_failure?.length) {
+        const filteredItems = chainConfig.on_failure.filter(item => {
+          if (!item.condition) return true
+          try {
+            return evaluateExpression(item.condition, this.pool, {})
+          } catch { return false }
+        })
+        if (filteredItems.length > 0) {
+          this.callbacks?.onChainTrigger?.(filteredItems, "on_failure")
+        }
+      }
+    } else if (this.workflow.chain && this.chainDepth >= MAX_CHAIN_DEPTH) {
+      console.error(`[engine] Chain depth ${this.chainDepth} >= max ${MAX_CHAIN_DEPTH}, aborting chain trigger for workflow "${this.workflow.name}" (execution ${this.executionId})`)
     }
 
     this.callbacks?.onComplete?.(result.status)
@@ -1347,27 +1370,15 @@ export class WorkflowEngine {
         const provider = this.providers[providerKey]
         if (!provider) throw new Error(`Unknown provider: ${rawKey}`)
 
-        // P3: Inject experience context from experience_scope
-        let effectiveNode = node
-        if (node.experience_scope && this.experienceInjector) {
-          const prefix = this.experienceInjector.inject(node.experience_scope)
-          if (prefix) {
-            effectiveNode = { ...node, prompt: prefix + (node.prompt ?? "") }
-            this.injectedExperienceIds.push(
-              ...this.experienceInjector.getInjectedIds(node.experience_scope)
-            )
-          }
-        }
-
         const runner = new AgentNodeRunner(provider, this.cwd, (event: AgentEvent) => {
           this.logger?.log(node.id, "agent_event", { event_data: event })
           this.callbacks?.onAgentEvent?.(node.id, event)
         })
 
-        const previousSessionId = this.resolvePreviousSessionId(effectiveNode)
+        const previousSessionId = this.resolvePreviousSessionId(node)
 
         return new AgentExecutor(
-          effectiveNode, p, runner, previousSessionId,
+          node, p, runner, previousSessionId,
           this.workflow.auto_answers, s,
           { nodeResults: this.nodeResults },
           this.promptInjector, this.workflow.name,

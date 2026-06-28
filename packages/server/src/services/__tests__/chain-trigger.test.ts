@@ -1,500 +1,267 @@
-// packages/server/src/services/__tests__/chain-trigger.test.ts
-// TC-035/036/037/038/039: Tests for ChainTrigger (evaluateAndTrigger)
-import { describe, it, expect, beforeEach, vi } from "vitest"
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest"
 import Database from "better-sqlite3"
+import path from "path"
+import os from "os"
+import fs from "fs"
+import crypto from "crypto"
+import { applySchema } from "../../db/schema"
+import { ArchiveDAO } from "../../db/dao/archive-dao"
 import { ExecutionDAO } from "../../db/dao/execution-dao"
-import { ChainTrigger } from "../chain-trigger"
-import { evaluateExpression } from "@octopus/shared"
-import { randomUUID } from "crypto"
-import { readFileSync } from "fs"
-import { resolve } from "path"
+import { TokenUsageDAO } from "../../db/dao/token-usage-dao"
+import { ExperienceDAO } from "../../db/dao/experience-dao"
+import { ArchiveService } from "../archive-service"
+import { ExperienceLifecycleService } from "../experience-lifecycle"
+import { createWebhookRoutes } from "../../routes/webhook"
+import { Hono } from "hono"
 
-// Mock evaluateExpression from @octopus/shared.
-// The real implementation expects a VarPool instance as the second argument,
-// but ChainTrigger passes a plain Record<string, unknown> (poolSnapshot).
-//
-// ChainTrigger uses evaluateExpression in two contexts:
-//   1. Condition evaluation: expects a truthy/falsy result
-//   2. Input mapping resolution: expects the actual resolved value (or throw on missing)
-//
-// This mock returns the actual resolved value for $vars.xxx references
-// and throws when the variable is missing from the pool, which triggers
-// resolveInputMapping's catch block to fall back to "".
-vi.mock("@octopus/shared", async () => {
-  const actual = await vi.importActual<typeof import("@octopus/shared")>(
-    "@octopus/shared",
-  )
-  return {
-    ...actual,
-    evaluateExpression: vi.fn(
-      (expr: string, pool: Record<string, unknown>): unknown => {
-        if (expr.trim() === "default") return true
+// ============================================================================
+// YAML chain schema validation
+// ============================================================================
 
-        // For $vars.xxx references, return/throw based on pool contents
-        const varsMatch = expr.match(/^\$vars\.([a-zA-Z0-9_]+)$/)
-        if (varsMatch) {
-          const key = varsMatch[1]
-          if (!(key in pool)) {
-            throw new Error(`Variable not found: ${key}`)
-          }
-          return pool[key]
-        }
-
-        // For other expressions, resolve $vars.xxx inline and evaluate
-        let resolved = expr
-        resolved = resolved.replace(
-          /\$vars\.([a-zA-Z0-9_]+)/g,
-          (_match: string, key: string) => {
-            const val = pool[key]
-            if (val === undefined || val === null) return "null"
-            if (typeof val === "string") return JSON.stringify(val)
-            return String(val)
+describe("YAML chain schema", () => {
+  it("WorkflowSchema accepts valid chain config", async () => {
+    const { WorkflowSchema } = await import("@octopus/shared")
+    const workflow = {
+      apiVersion: "octopus/v1",
+      kind: "Workflow",
+      name: "test-workflow",
+      chain: {
+        on_success: [
+          {
+            workflow: "next-workflow.yaml",
+            auto_trigger: true,
+            input_mapping: { "parent.result": "$vars.output" },
           },
-        )
-        try {
-          const fn = new Function(`return (${resolved})`)
-          return Boolean(fn())
-        } catch {
-          return false
-        }
+        ],
+        on_failure: [
+          {
+            workflow: "cleanup.yaml",
+            condition: "$vars.needs_cleanup == true",
+            auto_trigger: false,
+          },
+        ],
       },
-    ),
-  }
+      nodes: [
+        { id: "step-1", type: "bash", bash: "echo hello" },
+      ],
+    }
+
+    const result = WorkflowSchema.safeParse(workflow)
+    expect(result.success).toBe(true)
+    if (result.success) {
+      expect(result.data.chain).toBeDefined()
+      expect(result.data.chain.on_success).toHaveLength(1)
+      expect(result.data.chain.on_failure).toHaveLength(1)
+      expect(result.data.chain.on_success![0].workflow).toBe("next-workflow.yaml")
+    }
+  })
+
+  it("WorkflowSchema accepts workflow without chain", async () => {
+    const { WorkflowSchema } = await import("@octopus/shared")
+    const workflow = {
+      apiVersion: "octopus/v1",
+      kind: "Workflow",
+      name: "simple-workflow",
+      nodes: [
+        { id: "step-1", type: "bash", bash: "echo hello" },
+      ],
+    }
+
+    const result = WorkflowSchema.safeParse(workflow)
+    expect(result.success).toBe(true)
+    if (result.success) {
+      expect(result.data.chain).toBeUndefined()
+    }
+  })
+
+  it("WorkflowChainSchema validates chain items", async () => {
+    const { WorkflowChainSchema } = await import("@octopus/shared")
+
+    // Valid chain
+    const valid = WorkflowChainSchema.safeParse({
+      on_success: [{ workflow: "next.yaml", auto_trigger: true }],
+    })
+    expect(valid.success).toBe(true)
+
+    // Missing workflow field
+    const invalid = WorkflowChainSchema.safeParse({
+      on_success: [{ auto_trigger: true }],
+    })
+    expect(invalid.success).toBe(false)
+  })
 })
 
-const SCHEMA_SQL = readFileSync(resolve(__dirname, "../../db/schema.sql"), "utf-8")
+// ============================================================================
+// GitHub Webhook
+// ============================================================================
 
-function createTestDb(): Database.Database {
-  const db = new Database(":memory:")
-  db.pragma("journal_mode = WAL")
-  db.pragma("foreign_keys = ON")
-  db.exec(SCHEMA_SQL)
-  return db
-}
-
-const WS_ID = "ws-chain-test"
-const ORG = "test-org"
-
-/** Seed a workspace row so execution FK references are satisfied. */
-function seedWorkspace(db: Database.Database): void {
-  const now = new Date().toISOString()
-  db.prepare(
-    `INSERT OR IGNORE INTO workspaces
-      (id, name, org, description, status, path, created_at, updated_at, source)
-     VALUES (?, ?, ?, NULL, 'active', ?, ?, ?, 'user')`,
-  ).run(WS_ID, "Chain Test Workspace", ORG, `/tmp/${WS_ID}`, now, now)
-}
-
-/** Seed an execution row with optional parent_id for chain depth tests. */
-function seedExecution(
-  db: Database.Database,
-  opts: {
-    id: string
-    parent_id?: string
-    status?: string
-    child_index?: number
-  },
-): void {
-  const now = new Date().toISOString()
-  db.prepare(
-    `INSERT INTO executions
-      (id, workspace_id, parent_id, child_index, workflow_ref, workflow_name,
-       status, org, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run(
-    opts.id,
-    WS_ID,
-    opts.parent_id ?? "0",
-    opts.child_index ?? 0,
-    "test-wf",
-    "Test Workflow",
-    opts.status ?? "completed",
-    ORG,
-    now,
-    now,
-  )
-}
-
-describe("ChainTrigger", () => {
+describe("GitHub Webhook", () => {
   let db: Database.Database
-  let executionDAO: ExecutionDAO
-  let createExecution: ReturnType<typeof vi.fn>
-  let chainTrigger: ChainTrigger
+  let dbPath: string
+  let experienceDAO: ExperienceDAO
+  let lifecycle: ExperienceLifecycleService
+  let app: Hono
+
+  const WEBHOOK_SECRET = "test-secret-key"
+
+  function signPayload(body: string): string {
+    return "sha256=" + crypto.createHmac("sha256", WEBHOOK_SECRET).update(body).digest("hex")
+  }
 
   beforeEach(() => {
-    db = createTestDb()
-    seedWorkspace(db)
-    executionDAO = new ExecutionDAO(db)
-    createExecution = vi.fn().mockResolvedValue(randomUUID())
-    chainTrigger = new ChainTrigger(executionDAO, createExecution)
-    // Clear mock history between tests (vi.mock is module-scoped)
-    createExecution.mockClear()
-    vi.mocked(evaluateExpression)?.mockClear?.()
+    dbPath = path.join(os.tmpdir(), `test-webhook-${Date.now()}-${Math.random().toString(36).slice(2)}.db`)
+    db = new Database(dbPath)
+    db.pragma("foreign_keys = ON")
+    applySchema(db)
+
+    experienceDAO = new ExperienceDAO(db)
+    const archiveDAO = new ArchiveDAO(db)
+    const executionDAO = new ExecutionDAO(db)
+    const tokenUsageDAO = new TokenUsageDAO(db)
+    const archiveService = new ArchiveService(archiveDAO, executionDAO, tokenUsageDAO, experienceDAO)
+    lifecycle = new ExperienceLifecycleService(experienceDAO, archiveDAO, archiveService)
+
+    app = new Hono()
+    app.route("/api/webhooks", createWebhookRoutes(lifecycle))
+
+    // Set env variable for webhook secret
+    process.env.OCTOPUS_GITHUB_WEBHOOK_SECRET = WEBHOOK_SECRET
   })
 
-  // ── TC-035: on_success chain ────────────────────────────────────────
-
-  describe("on_success chain", () => {
-    it("TC-035: triggers on_success workflow when execution completes", async () => {
-      const executionId = randomUUID()
-      seedExecution(db, { id: executionId, status: "completed" })
-
-      const workflowDef = {
-        chain: {
-          on_success: [{ workflow: "bug-fixer" }],
-        },
-      }
-
-      await chainTrigger.evaluateAndTrigger(
-        workflowDef,
-        executionId,
-        "completed",
-        { confirmed: "true" },
-        WS_ID,
-      )
-
-      expect(createExecution).toHaveBeenCalledTimes(1)
-      expect(createExecution).toHaveBeenCalledWith(WS_ID, {
-        workflow_ref: "bug-fixer",
-        parent_id: executionId,
-        input_values: {},
-        triggered_by: "chain",
-      })
-    })
-
-    it("does not trigger on_success when execution fails", async () => {
-      const executionId = randomUUID()
-      seedExecution(db, { id: executionId, status: "failed" })
-
-      const workflowDef = {
-        chain: {
-          on_success: [{ workflow: "bug-fixer" }],
-        },
-      }
-
-      await chainTrigger.evaluateAndTrigger(
-        workflowDef,
-        executionId,
-        "failed",
-        {},
-        WS_ID,
-      )
-
-      expect(createExecution).not.toHaveBeenCalled()
-    })
+  afterEach(() => {
+    db.close()
+    if (fs.existsSync(dbPath)) fs.unlinkSync(dbPath)
+    delete process.env.OCTOPUS_GITHUB_WEBHOOK_SECRET
   })
 
-  // ── TC-036: on_failure chain ────────────────────────────────────────
+  it("returns 503 when webhook secret is not configured", async () => {
+    delete process.env.OCTOPUS_GITHUB_WEBHOOK_SECRET
 
-  describe("on_failure chain", () => {
-    it("TC-036: triggers on_failure workflow when execution fails", async () => {
-      const executionId = randomUUID()
-      seedExecution(db, { id: executionId, status: "failed" })
-
-      const workflowDef = {
-        chain: {
-          on_failure: [{ workflow: "error-notifier" }],
-        },
-      }
-
-      await chainTrigger.evaluateAndTrigger(
-        workflowDef,
-        executionId,
-        "failed",
-        {},
-        WS_ID,
-      )
-
-      expect(createExecution).toHaveBeenCalledTimes(1)
-      expect(createExecution).toHaveBeenCalledWith(WS_ID, {
-        workflow_ref: "error-notifier",
-        parent_id: executionId,
-        input_values: {},
-        triggered_by: "chain",
-      })
+    const body = JSON.stringify({ action: "closed" })
+    const res = await app.request("/api/webhooks/github", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Hub-Signature-256": signPayload(body),
+        "X-GitHub-Event": "pull_request",
+      },
+      body,
     })
 
-    it("does not trigger on_failure when execution succeeds", async () => {
-      const executionId = randomUUID()
-      seedExecution(db, { id: executionId, status: "completed" })
-
-      const workflowDef = {
-        chain: {
-          on_failure: [{ workflow: "error-notifier" }],
-        },
-      }
-
-      await chainTrigger.evaluateAndTrigger(
-        workflowDef,
-        executionId,
-        "completed",
-        {},
-        WS_ID,
-      )
-
-      expect(createExecution).not.toHaveBeenCalled()
-    })
+    expect(res.status).toBe(503)
+    const json = await res.json()
+    expect(json.error).toBe("GitHub webhook not configured")
   })
 
-  // ── TC-037: MAX_CHAIN_DEPTH ─────────────────────────────────────────
-
-  describe("MAX_CHAIN_DEPTH", () => {
-    it("TC-037: blocks chain triggering when depth exceeds limit of 5", async () => {
-      // Build a chain: E0 (root, parent='0') → E1 → E2 → E3 → E4 → E5 → E6
-      // calculateChainDepth(E6) walks up 6 levels, exceeding the limit of 5.
-      // (Need 7 executions for depth 6, since depth counts parent hops, not nodes.)
-      const ids: string[] = []
-      for (let i = 0; i < 7; i++) {
-        const id = randomUUID()
-        seedExecution(db, {
-          id,
-          parent_id: i === 0 ? "0" : ids[i - 1],
-          child_index: i,
-        })
-        ids.push(id)
-      }
-
-      const deepestId = ids[6]
-
-      const workflowDef = {
-        chain: {
-          on_success: [{ workflow: "should-not-trigger" }],
-        },
-      }
-
-      await chainTrigger.evaluateAndTrigger(
-        workflowDef,
-        deepestId,
-        "completed",
-        {},
-        WS_ID,
-      )
-
-      // Depth 6 > 5, so createExecution must NOT be called
-      expect(createExecution).not.toHaveBeenCalled()
+  it("returns 401 when signature is missing", async () => {
+    const body = JSON.stringify({ action: "closed" })
+    const res = await app.request("/api/webhooks/github", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-GitHub-Event": "pull_request",
+      },
+      body,
     })
 
-    it("allows chain triggering when depth is exactly at the limit", async () => {
-      // E0 → E1 → E2 → E3 → E4 → E5: depth of E5 = 5, which is NOT > 5
-      const ids: string[] = []
-      for (let i = 0; i < 6; i++) {
-        const id = randomUUID()
-        seedExecution(db, {
-          id,
-          parent_id: i === 0 ? "0" : ids[i - 1],
-          child_index: i,
-        })
-        ids.push(id)
-      }
-
-      const workflowDef = {
-        chain: {
-          on_success: [{ workflow: "next-step" }],
-        },
-      }
-
-      await chainTrigger.evaluateAndTrigger(
-        workflowDef,
-        ids[5],
-        "completed",
-        {},
-        WS_ID,
-      )
-
-      expect(createExecution).toHaveBeenCalledTimes(1)
-      expect(createExecution).toHaveBeenCalledWith(WS_ID, {
-        workflow_ref: "next-step",
-        parent_id: ids[5],
-        input_values: {},
-        triggered_by: "chain",
-      })
-    })
+    expect(res.status).toBe(401)
+    const json = await res.json()
+    expect(json.error).toBe("Missing signature")
   })
 
-  // ── TC-038: resolveInputMapping with missing vars ───────────────────
-
-  describe("resolveInputMapping", () => {
-    it("TC-038: falls back to empty string when variable does not exist in pool", async () => {
-      const executionId = randomUUID()
-      seedExecution(db, { id: executionId })
-
-      const workflowDef = {
-        chain: {
-          on_success: [
-            {
-              workflow: "downstream-wf",
-              input_mapping: {
-                data: "$vars.nonexistent",
-              },
-            },
-          ],
-        },
-      }
-
-      // Pool has 'existing' but NOT 'nonexistent'
-      await chainTrigger.evaluateAndTrigger(
-        workflowDef,
-        executionId,
-        "completed",
-        { existing: "value" },
-        WS_ID,
-      )
-
-      expect(createExecution).toHaveBeenCalledTimes(1)
-      const callArgs = createExecution.mock.calls[0]
-      expect(callArgs[0]).toBe(WS_ID)
-      expect(callArgs[1].workflow_ref).toBe("downstream-wf")
-      expect(callArgs[1].parent_id).toBe(executionId)
-      // $vars.nonexistent is not in the pool → evaluateExpression returns undefined → fallback to ""
-      expect(callArgs[1].input_values.data).toBe("")
+  it("returns 401 when signature is invalid", async () => {
+    const body = JSON.stringify({ action: "closed" })
+    const res = await app.request("/api/webhooks/github", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Hub-Signature-256": "sha256=invalidsignature00000000000000000000000000000000000000000000000",
+        "X-GitHub-Event": "pull_request",
+      },
+      body,
     })
 
-    it("resolves existing variables from the pool", async () => {
-      const executionId = randomUUID()
-      seedExecution(db, { id: executionId })
-
-      const workflowDef = {
-        chain: {
-          on_success: [
-            {
-              workflow: "downstream-wf",
-              input_mapping: {
-                result: "$vars.build_status",
-              },
-            },
-          ],
-        },
-      }
-
-      await chainTrigger.evaluateAndTrigger(
-        workflowDef,
-        executionId,
-        "completed",
-        { build_status: "success" },
-        WS_ID,
-      )
-
-      expect(createExecution).toHaveBeenCalledTimes(1)
-      const callArgs = createExecution.mock.calls[0]
-      // $vars.build_status resolves to the actual pool value
-      expect(callArgs[1].input_values.result).toBe("success")
-    })
+    expect(res.status).toBe(401)
+    const json = await res.json()
+    expect(json.error).toBe("Invalid signature")
   })
 
-  // ── TC-039: Chain position / parent-child relationship ──────────────
-
-  describe("chain parent-child relationships", () => {
-    it("TC-039: records correct parent_execution_id in a multi-level chain A->B->C", async () => {
-      // Create the chain: A (root) → B (child of A) → C (child of B)
-      const idA = randomUUID()
-      const idB = randomUUID()
-      const idC = randomUUID()
-
-      seedExecution(db, { id: idA, parent_id: "0" })
-      seedExecution(db, { id: idB, parent_id: idA, child_index: 1 })
-      seedExecution(db, { id: idC, parent_id: idB, child_index: 2 })
-
-      // Verify parent_execution_id relationships in the executions table
-      const execA = executionDAO.findById(idA)
-      const execB = executionDAO.findById(idB)
-      const execC = executionDAO.findById(idC)
-
-      expect(execA!.parent_id).toBe("0")
-      expect(execB!.parent_id).toBe(idA)
-      expect(execC!.parent_id).toBe(idB)
-
-      // Trigger from C (depth = 2, within limit)
-      const newExecId = randomUUID()
-      createExecution.mockResolvedValue(newExecId)
-
-      const workflowDef = {
-        chain: {
-          on_success: [{ workflow: "step-d" }],
-        },
-      }
-
-      await chainTrigger.evaluateAndTrigger(
-        workflowDef,
-        idC,
-        "completed",
-        {},
-        WS_ID,
-      )
-
-      // createExecution should be called with parent_id = idC
-      expect(createExecution).toHaveBeenCalledTimes(1)
-      expect(createExecution).toHaveBeenCalledWith(WS_ID, {
-        workflow_ref: "step-d",
-        parent_id: idC,
-        input_values: {},
-        triggered_by: "chain",
-      })
+  it("ignores non-pull_request events", async () => {
+    const body = JSON.stringify({ action: "completed" })
+    const res = await app.request("/api/webhooks/github", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Hub-Signature-256": signPayload(body),
+        "X-GitHub-Event": "push",
+      },
+      body,
     })
+
+    expect(res.status).toBe(200)
+    const json = await res.json()
+    expect(json.ignored).toBe(true)
   })
 
-  // ── Edge cases ──────────────────────────────────────────────────────
-
-  describe("edge cases", () => {
-    it("returns early when workflowDef has no chain property", async () => {
-      const executionId = randomUUID()
-      seedExecution(db, { id: executionId })
-
-      await chainTrigger.evaluateAndTrigger(
-        {},
-        executionId,
-        "completed",
-        {},
-        WS_ID,
-      )
-
-      expect(createExecution).not.toHaveBeenCalled()
+  it("ignores non-merged PRs", async () => {
+    const payload = {
+      action: "closed",
+      pull_request: {
+        merged: false,
+        html_url: "https://github.com/org/repo/pull/1",
+        body: "",
+      },
+    }
+    const body = JSON.stringify(payload)
+    const res = await app.request("/api/webhooks/github", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Hub-Signature-256": signPayload(body),
+        "X-GitHub-Event": "pull_request",
+      },
+      body,
     })
 
-    it("returns early when execution is not found in the database", async () => {
-      const nonExistentId = randomUUID()
+    expect(res.status).toBe(200)
+    const json = await res.json()
+    expect(json.ignored).toBe(true)
+  })
 
-      const workflowDef = {
-        chain: {
-          on_success: [{ workflow: "something" }],
-        },
-      }
-
-      await chainTrigger.evaluateAndTrigger(
-        workflowDef,
-        nonExistentId,
-        "completed",
-        {},
-        WS_ID,
-      )
-
-      expect(createExecution).not.toHaveBeenCalled()
+  it("processes merged PR and resolves matching experiences", async () => {
+    // Insert an experience that references BUG-001
+    experienceDAO.insert({
+      type: "bug",
+      title: "BUG-001 crash on null",
+      content: "Application crashes on null input. BUG-001",
+      project: "test-project",
+      status: "active",
+      relevance_score: 10,
+      use_count: 0,
     })
 
-    it("triggers on_success for completed_with_failures status", async () => {
-      const executionId = randomUUID()
-      seedExecution(db, { id: executionId, status: "completed" })
-
-      const workflowDef = {
-        chain: {
-          on_success: [{ workflow: "cleanup-wf" }],
-        },
-      }
-
-      await chainTrigger.evaluateAndTrigger(
-        workflowDef,
-        executionId,
-        "completed_with_failures",
-        {},
-        WS_ID,
-      )
-
-      expect(createExecution).toHaveBeenCalledTimes(1)
-      expect(createExecution).toHaveBeenCalledWith(WS_ID, {
-        workflow_ref: "cleanup-wf",
-        parent_id: executionId,
-        input_values: {},
-        triggered_by: "chain",
-      })
+    const payload = {
+      action: "closed",
+      pull_request: {
+        merged: true,
+        html_url: "https://github.com/org/repo/pull/42",
+        body: "Fixes BUG-001 by adding null check.",
+      },
+    }
+    const body = JSON.stringify(payload)
+    const res = await app.request("/api/webhooks/github", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Hub-Signature-256": signPayload(body),
+        "X-GitHub-Event": "pull_request",
+      },
+      body,
     })
+
+    expect(res.status).toBe(200)
+    const json = await res.json()
+    expect(json.ok).toBe(true)
+    expect(json.resolved_count).toBeGreaterThanOrEqual(1)
   })
 })

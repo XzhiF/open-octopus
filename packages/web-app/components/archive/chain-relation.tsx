@@ -1,31 +1,48 @@
 "use client"
 
 import Link from "next/link"
-import { ArrowUpRight } from "lucide-react"
+import { GitFork } from "lucide-react"
+import {
+  Card,
+  CardHeader,
+  CardTitle,
+  CardContent,
+} from "@/components/ui/card"
+import { Badge } from "@/components/ui/badge"
 
 interface ChainRelationProps {
-  parentId: string
+  parentExecutionId: string | null
   chainPosition: number | null
 }
 
-export function ChainRelation({ parentId, chainPosition }: ChainRelationProps) {
+export function ChainRelation({
+  parentExecutionId,
+  chainPosition,
+}: ChainRelationProps) {
+  if (!parentExecutionId) return null
+
   return (
-    <div className="rounded-lg border bg-card p-4">
-      <h3 className="text-sm font-medium mb-3">链条关系</h3>
-      <div className="flex items-center gap-2 text-sm">
-        <span className="text-muted-foreground">父执行:</span>
-        <Link
-          href={`/archive/executions/${parentId}`}
-          className="inline-flex items-center gap-1 text-primary hover:underline font-mono text-xs"
-        >
-          #{parentId.slice(0, 8)} <ArrowUpRight className="h-3 w-3" />
-        </Link>
-        {chainPosition !== null && (
-          <span className="text-xs text-muted-foreground ml-2">
-            (链条位置: {chainPosition})
-          </span>
-        )}
-      </div>
-    </div>
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2 text-base">
+          <GitFork className="h-4 w-4" />
+          链条关系
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        <div className="flex items-center gap-4 text-sm">
+          <span className="text-muted-foreground">父执行:</span>
+          <Link
+            href={`/archive/${parentExecutionId}`}
+            className="text-primary font-mono text-xs hover:underline"
+          >
+            {parentExecutionId.slice(0, 12)}...
+          </Link>
+          {chainPosition !== null && chainPosition !== undefined && (
+            <Badge variant="outline">链位置 #{chainPosition}</Badge>
+          )}
+        </div>
+      </CardContent>
+    </Card>
   )
 }

@@ -4,6 +4,11 @@ import type { SSEService } from "../sse"
 import type { WorkflowService } from "../workflow"
 import type { BuiltInWorkflowService } from "../builtin-workflow"
 import type { ObservabilityService } from "../observability"
+import type { ArchiveService } from "../archive-service"
+
+export interface NotificationPushService {
+  pushProgress(executionId: string, message: string): Promise<void>
+}
 
 export interface ServiceContext {
   db: Database.Database
@@ -14,6 +19,8 @@ export interface ServiceContext {
   workspacePath: string
   workspaceDbId: string
   observability?: ObservabilityService
+  archiveService?: ArchiveService
+  notificationService?: NotificationPushService
   chainCallback?: (executionId: string, status: string) => void | Promise<void>
 }
 

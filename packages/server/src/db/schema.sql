@@ -1,6 +1,6 @@
 -- =============================================================================
 -- Octopus Unified Schema (schema.sql)
--- Complete database schema: 32 tables + 4 FTS5 virtual tables + 10 triggers
+-- Complete database schema: 31 tables + 4 FTS5 virtual tables + 10 triggers
 -- This file is idempotent — safe to execute on an empty database.
 -- =============================================================================
 
@@ -21,11 +21,7 @@ CREATE TABLE IF NOT EXISTS workspaces (
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   source TEXT NOT NULL DEFAULT 'user',
-  source_schedule_id TEXT,
-  archived INTEGER DEFAULT 0,
-  archive_status TEXT DEFAULT 'none',
-  archive_started_at TEXT,
-  archive_error TEXT
+  source_schedule_id TEXT
 );
 
 -- 2. Executions
@@ -57,7 +53,6 @@ CREATE TABLE IF NOT EXISTS executions (
   resume_attempts INTEGER DEFAULT 0,
   pipeline_config TEXT DEFAULT '{}',
   chain_retry_count INTEGER DEFAULT 0,
-  current_node TEXT DEFAULT NULL,
   preset_inputs TEXT DEFAULT NULL,
   started_at TEXT,
   completed_at TEXT,
@@ -471,82 +466,7 @@ CREATE TABLE IF NOT EXISTS scheduled_job_executions (
 );
 
 -- =============================================================================
--- Archive Tables (Execution Memory Layer — P1)
--- =============================================================================
-
--- 29. Execution Archive — permanent record of completed executions
-CREATE TABLE IF NOT EXISTS execution_archive (
-  id TEXT PRIMARY KEY,
-  org TEXT NOT NULL,
-  workflow_ref TEXT NOT NULL,
-  workflow_name TEXT NOT NULL,
-  status TEXT NOT NULL,
-  started_at TEXT NOT NULL,
-  completed_at TEXT,
-  duration_ms INTEGER,
-  node_summary TEXT DEFAULT '[]',
-  failed_nodes TEXT,
-  error_message TEXT,
-  total_input_tokens INTEGER DEFAULT 0,
-  total_output_tokens INTEGER DEFAULT 0,
-  total_cost_usd REAL DEFAULT 0.0,
-  model_breakdown TEXT,
-  vars_snapshot TEXT DEFAULT '{}',
-  lessons_learned TEXT,
-  workspace_archive_id TEXT,
-  workspace_id TEXT,
-  chain_position INTEGER,
-  parent_execution_id TEXT,
-  schedule_id TEXT,
-  clone_name TEXT,
-  created_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
-
--- 30. Workspace Archive — snapshot of workspace at deletion time
-CREATE TABLE IF NOT EXISTS workspace_archive (
-  id TEXT PRIMARY KEY,
-  org TEXT NOT NULL,
-  workspace_name TEXT NOT NULL,
-  workspace_path TEXT,
-  created_at TEXT NOT NULL,
-  archived_at TEXT NOT NULL DEFAULT (datetime('now')),
-  execution_count INTEGER DEFAULT 0,
-  total_cost_usd REAL DEFAULT 0.0,
-  total_duration_ms INTEGER DEFAULT 0,
-  execution_chains TEXT DEFAULT '[]',
-  workflow_manifest TEXT DEFAULT '[]',
-  summary TEXT
-);
-
--- =============================================================================
--- Experience Index (Execution Lessons Learned — P2)
--- =============================================================================
-
--- 31. Experience Index — extracted lessons from executions
-CREATE TABLE IF NOT EXISTS experience_index (
-  rowid INTEGER PRIMARY KEY AUTOINCREMENT,
-  id TEXT NOT NULL UNIQUE,
-  org TEXT NOT NULL,
-  archive_id TEXT,
-  workflow_name TEXT NOT NULL,
-  type TEXT NOT NULL CHECK(type IN ('bug', 'pattern', 'cost', 'failure')),
-  title TEXT NOT NULL,
-  content TEXT NOT NULL,
-  status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'resolved', 'obsolete', 'superseded')),
-  resolved_at TEXT,
-  resolved_by TEXT,
-  project TEXT,
-  package TEXT,
-  file_pattern TEXT,
-  keywords TEXT,
-  relevance_score REAL DEFAULT 1.0,
-  use_count INTEGER DEFAULT 0,
-  created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
-
--- =============================================================================
--- FTS5 Virtual Tables (from agent DB + experience index)
+-- FTS5 Virtual Tables (from agent DB)
 -- =============================================================================
 
 CREATE VIRTUAL TABLE IF NOT EXISTS session_memory_fts USING fts5(
@@ -564,15 +484,6 @@ CREATE VIRTUAL TABLE IF NOT EXISTS experiences_fts USING fts5(
 CREATE VIRTUAL TABLE IF NOT EXISTS reports_fts USING fts5(
   task_name,
   content
-);
-
--- 32. Experience Index FTS5 virtual table
-CREATE VIRTUAL TABLE IF NOT EXISTS experience_index_fts USING fts5(
-  title,
-  content,
-  keywords,
-  content='experience_index',
-  content_rowid='rowid'
 );
 
 -- =============================================================================
@@ -657,28 +568,119 @@ CREATE INDEX IF NOT EXISTS idx_sje_started ON scheduled_job_executions(started_a
 CREATE INDEX IF NOT EXISTS idx_sje_status ON scheduled_job_executions(status);
 
 -- =============================================================================
--- Indexes — Archive Tables
+-- Archive Tables (execution-memory-loop PRD)
 -- =============================================================================
 
-CREATE INDEX IF NOT EXISTS idx_archive_exec_org ON execution_archive(org);
-CREATE INDEX IF NOT EXISTS idx_archive_exec_workflow ON execution_archive(workflow_ref);
-CREATE INDEX IF NOT EXISTS idx_archive_exec_status ON execution_archive(status);
-CREATE INDEX IF NOT EXISTS idx_archive_exec_created ON execution_archive(created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_archive_exec_workspace ON execution_archive(workspace_id);
-CREATE INDEX IF NOT EXISTS idx_archive_ws_org ON workspace_archive(org);
-CREATE INDEX IF NOT EXISTS idx_archive_ws_archived ON workspace_archive(archived_at DESC);
-CREATE INDEX IF NOT EXISTS idx_workspaces_archive_status ON workspaces(archive_status);
+-- 29. Execution Archive
+CREATE TABLE IF NOT EXISTS execution_archive (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  execution_id TEXT NOT NULL,
+  workflow_ref TEXT NOT NULL,
+  workflow_name TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'completed',
+  started_at TEXT,
+  completed_at TEXT,
+  duration_ms INTEGER,
+  total_input_tokens INTEGER NOT NULL DEFAULT 0,
+  total_output_tokens INTEGER NOT NULL DEFAULT 0,
+  total_cost_usd REAL NOT NULL DEFAULT 0,
+  node_summary TEXT NOT NULL DEFAULT '[]',
+  failed_nodes TEXT,
+  error_message TEXT,
+  model_breakdown TEXT,
+  vars_snapshot TEXT NOT NULL DEFAULT '{}',
+  lessons_learned TEXT,
+  workspace_id TEXT,
+  workspace_archive_id TEXT,
+  parent_execution_id TEXT,
+  chain_position INTEGER,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_archive_execution ON execution_archive(execution_id);
+CREATE INDEX IF NOT EXISTS idx_archive_workflow ON execution_archive(workflow_ref);
+CREATE INDEX IF NOT EXISTS idx_archive_status ON execution_archive(status);
+CREATE INDEX IF NOT EXISTS idx_archive_workspace ON execution_archive(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_archive_created ON execution_archive(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_archive_cost ON execution_archive(total_cost_usd);
+
+-- 30. Workspace Archive
+CREATE TABLE IF NOT EXISTS workspace_archive (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  workspace_id TEXT NOT NULL,
+  workspace_name TEXT NOT NULL,
+  org TEXT NOT NULL,
+  execution_chains TEXT NOT NULL DEFAULT '[]',
+  workflow_manifest TEXT NOT NULL DEFAULT '[]',
+  total_executions INTEGER NOT NULL DEFAULT 0,
+  total_cost_usd REAL NOT NULL DEFAULT 0,
+  archived_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_ws_archive_workspace ON workspace_archive(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_ws_archive_org ON workspace_archive(org);
 
 -- =============================================================================
--- Indexes — Experience Index
+-- Experience Index (knowledge-loop PRD)
 -- =============================================================================
 
-CREATE INDEX IF NOT EXISTS idx_exp_org ON experience_index(org);
+-- 31. Experience Index
+CREATE TABLE IF NOT EXISTS experience_index (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  type TEXT NOT NULL,
+  title TEXT NOT NULL,
+  content TEXT NOT NULL,
+  project TEXT,
+  package TEXT,
+  file_pattern TEXT,
+  keywords TEXT,
+  workflow_name TEXT,
+  status TEXT NOT NULL DEFAULT 'active',
+  relevance_score REAL NOT NULL DEFAULT 0,
+  use_count INTEGER NOT NULL DEFAULT 0,
+  resolved_at TEXT,
+  resolved_by TEXT,
+  superseded_by INTEGER,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE INDEX IF NOT EXISTS idx_exp_type ON experience_index(type);
 CREATE INDEX IF NOT EXISTS idx_exp_status ON experience_index(status);
 CREATE INDEX IF NOT EXISTS idx_exp_project ON experience_index(project);
 CREATE INDEX IF NOT EXISTS idx_exp_relevance ON experience_index(relevance_score DESC);
-CREATE INDEX IF NOT EXISTS idx_exp_archive ON experience_index(archive_id);
+
+-- FTS5 virtual table for experience_index
+CREATE VIRTUAL TABLE IF NOT EXISTS experience_index_fts USING fts5(
+  title,
+  content,
+  keywords,
+  content='experience_index',
+  content_rowid='rowid'
+);
+
+-- FTS sync triggers
+CREATE TRIGGER IF NOT EXISTS exp_fts_after_insert
+AFTER INSERT ON experience_index
+BEGIN
+  INSERT INTO experience_index_fts(rowid, title, content, keywords)
+  VALUES (NEW.rowid, NEW.title, NEW.content, NEW.keywords);
+END;
+
+CREATE TRIGGER IF NOT EXISTS exp_fts_after_delete
+AFTER DELETE ON experience_index
+BEGIN
+  INSERT INTO experience_index_fts(experience_index_fts, rowid, title, content, keywords)
+  VALUES ('delete', OLD.rowid, OLD.title, OLD.content, OLD.keywords);
+END;
+
+CREATE TRIGGER IF NOT EXISTS exp_fts_after_update
+AFTER UPDATE ON experience_index
+BEGIN
+  INSERT INTO experience_index_fts(experience_index_fts, rowid, title, content, keywords)
+  VALUES ('delete', OLD.rowid, OLD.title, OLD.content, OLD.keywords);
+  INSERT INTO experience_index_fts(rowid, title, content, keywords)
+  VALUES (NEW.rowid, NEW.title, NEW.content, NEW.keywords);
+END;
 
 -- =============================================================================
 -- Triggers
@@ -718,24 +720,6 @@ AFTER DELETE ON messages
 WHEN OLD.is_summary = 1
 BEGIN
   DELETE FROM session_memory_fts WHERE rowid = OLD.rowid;
-END;
-
--- FTS sync triggers for experience_index
-CREATE TRIGGER IF NOT EXISTS experience_index_ai AFTER INSERT ON experience_index BEGIN
-  INSERT INTO experience_index_fts(rowid, title, content, keywords)
-  VALUES (NEW.rowid, NEW.title, NEW.content, NEW.keywords);
-END;
-
-CREATE TRIGGER IF NOT EXISTS experience_index_ad AFTER DELETE ON experience_index BEGIN
-  INSERT INTO experience_index_fts(experience_index_fts, rowid, title, content, keywords)
-  VALUES ('delete', OLD.rowid, OLD.title, OLD.content, OLD.keywords);
-END;
-
-CREATE TRIGGER IF NOT EXISTS experience_index_au AFTER UPDATE ON experience_index BEGIN
-  INSERT INTO experience_index_fts(experience_index_fts, rowid, title, content, keywords)
-  VALUES ('delete', OLD.rowid, OLD.title, OLD.content, OLD.keywords);
-  INSERT INTO experience_index_fts(rowid, title, content, keywords)
-  VALUES (NEW.rowid, NEW.title, NEW.content, NEW.keywords);
 END;
 
 -- =============================================================================

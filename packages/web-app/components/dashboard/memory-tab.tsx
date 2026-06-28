@@ -1,151 +1,214 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useCallback } from "react"
 import Link from "next/link"
-import { useArchiveStats } from "@/hooks/use-archive-stats"
-import { useCostTrends } from "@/hooks/use-cost-trends"
-import { useExperienceSearch } from "@/hooks/use-experience-search"
-import { getLeaderboard, type LeaderboardEntry } from "@/lib/archive-api"
-import { listWorkspaces } from "@/lib/api-client"
-import { formatCost } from "@/lib/cost-format"
-import { CostTrendSection } from "@/components/archive/cost-trend-section"
-import { WorkflowRanking } from "@/components/archive/workflow-ranking"
-import { ExperienceList } from "@/components/archive/experience-list"
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
-import { ArrowRight, TrendingUp, DollarSign, Calendar } from "lucide-react"
-import type { Workspace } from "@/lib/types"
-
-function MemoryStatsCards({ stats }: { stats: ReturnType<typeof useArchiveStats>["data"] }) {
-  if (!stats) return null
-  return (
-    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-      {[
-        { label: "今日成本", value: stats.today_cost_usd, icon: DollarSign },
-        { label: "本周成本", value: stats.week_cost_usd, icon: TrendingUp },
-        { label: "本月成本", value: stats.month_cost_usd, icon: Calendar },
-      ].map(({ label, value, icon: Icon }) => (
-        <div key={label} className="rounded-lg border bg-card p-4">
-          <div className="flex items-center gap-2 text-sm text-muted-foreground">
-            <Icon className="h-4 w-4" />
-            {label}
-          </div>
-          <p className="mt-1 text-2xl font-bold">{formatCost(value)}</p>
-        </div>
-      ))}
-    </div>
-  )
-}
+import { ArrowRight, DollarSign, Calendar, TrendingUp, Database } from "lucide-react"
+import { cn } from "@/lib/utils"
+import { Card, CardContent } from "@/components/ui/card"
+import { Skeleton } from "@/components/ui/skeleton"
+import { Empty, EmptyHeader, EmptyTitle, EmptyDescription, EmptyMedia, EmptyContent } from "@/components/ui/empty"
+import { ChartErrorBoundary } from "@/components/ui/chart-error-boundary"
+import { MemoryCostTrend } from "./memory-cost-trend"
+import { WorkflowRanking } from "./workflow-ranking"
+import { ExperienceList } from "./experience-list"
+import { fetchArchiveStats, type ArchiveStats } from "@/lib/archive-api"
 
 export function MemoryTab() {
-  const { data: stats, loading: statsLoading, error: statsError, refetch: refetchStats } = useArchiveStats()
-  const [days, setDays] = useState(7)
-  const [workspaceId, setWorkspaceId] = useState<string | undefined>(undefined)
-  const [workspaces, setWorkspaces] = useState<Workspace[]>([])
+  const [stats, setStats] = useState<ArchiveStats | null>(null)
+  const [costDays, setCostDays] = useState(7)
+  const [loading, setLoading] = useState(true)
+  const [statsError, setStatsError] = useState<string | null>(null)
 
-  const { trends, loading: trendsLoading, error: trendsError, refetch: refetchTrends } = useCostTrends(days, workspaceId)
-  const { query, lessons, total, loading: lessonsLoading, search } = useExperienceSearch("", 10)
-
-  const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([])
-  const [leaderboardBy, setLeaderboardBy] = useState<"count" | "success_rate" | "cost">("count")
-  const [leaderboardLoading, setLeaderboardLoading] = useState(true)
-
-  // Fetch workspace list for filter dropdown
-  useEffect(() => {
-    listWorkspaces()
-      .then(data => {
-        const list = Array.isArray(data) ? data : (data as any).workspaces ?? []
-        setWorkspaces(list)
-      })
-      .catch(() => {})
+  const fetchStats = useCallback(async () => {
+    setLoading(true)
+    setStatsError(null)
+    try {
+      const result = await fetchArchiveStats()
+      setStats(result)
+    } catch (err) {
+      setStatsError(err instanceof Error ? err.message : "获取统计数据失败")
+    } finally {
+      setLoading(false)
+    }
   }, [])
 
   useEffect(() => {
-    setLeaderboardLoading(true)
-    getLeaderboard(leaderboardBy, 10)
-      .then(res => setLeaderboard(res.entries))
-      .catch(() => setLeaderboard([]))
-      .finally(() => setLeaderboardLoading(false))
-  }, [leaderboardBy])
+    fetchStats()
+  }, [fetchStats])
 
-  const isEmpty = stats?.total_executions === 0
-
-  if (isEmpty) {
+  // Empty state: no executions at all
+  if (!loading && stats && stats.total_executions === 0) {
     return (
-      <div className="flex flex-col items-center justify-center rounded-lg border border-dashed py-16 text-center" role="status">
-        <TrendingUp className="h-12 w-12 text-muted-foreground mb-4" />
-        <p className="text-lg font-medium">暂无执行记录</p>
-        <p className="text-sm text-muted-foreground mt-1">
-          首次工作流执行完成后，数据将自动归档并显示在这里。
-        </p>
+      <div className="space-y-6">
+        <Empty className="min-h-[400px]">
+          <EmptyHeader>
+            <EmptyMedia variant="icon">
+              <Database className="h-5 w-5" />
+            </EmptyMedia>
+            <EmptyTitle>暂无执行记忆</EmptyTitle>
+            <EmptyDescription>
+              工作流开始执行后，成本趋势、排行和经验将自动记录在此
+            </EmptyDescription>
+          </EmptyHeader>
+        </Empty>
       </div>
     )
   }
 
-  return (
-    <div className="space-y-8">
-      {/* Workspace Filter + Stats Cards */}
-      <div className="flex items-start justify-between gap-4">
-        <div className="flex-1">
-          <MemoryStatsCards stats={stats} />
+  if (loading) {
+    return (
+      <div className="space-y-6">
+        {/* Stats cards skeleton */}
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-3 lg:grid-cols-4">
+          {[1, 2, 3, 4].map((i) => (
+            <Card key={i}>
+              <CardContent className="p-4">
+                <Skeleton className="h-4 w-16 mb-2" />
+                <Skeleton className="h-7 w-24" />
+              </CardContent>
+            </Card>
+          ))}
         </div>
-        <div className="shrink-0">
-          <Select
-            value={workspaceId ?? "all"}
-            onValueChange={v => setWorkspaceId(v === "all" ? undefined : v)}
-          >
-            <SelectTrigger className="w-[180px]" aria-label="按工作空间过滤">
-              <SelectValue placeholder="全部工作空间" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">全部工作空间</SelectItem>
-              {workspaces.map(ws => (
-                <SelectItem key={ws.id} value={ws.id}>{ws.name}</SelectItem>
+
+        {/* Chart skeleton */}
+        <Card>
+          <CardContent className="p-4">
+            <Skeleton className="h-[300px] w-full" />
+          </CardContent>
+        </Card>
+
+        {/* Bottom row skeleton */}
+        <div className="grid gap-6 lg:grid-cols-2">
+          <Card>
+            <CardContent className="p-4 space-y-3">
+              <Skeleton className="h-5 w-24" />
+              {[1, 2, 3].map((i) => (
+                <Skeleton key={i} className="h-12 w-full" />
               ))}
-            </SelectContent>
-          </Select>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="p-4 space-y-3">
+              <Skeleton className="h-5 w-24" />
+              <Skeleton className="h-9 w-full" />
+              {[1, 2, 3].map((i) => (
+                <Skeleton key={i} className="h-14 w-full" />
+              ))}
+            </CardContent>
+          </Card>
         </div>
       </div>
+    )
+  }
 
-      {/* Cost Trend Chart */}
-      <CostTrendSection
-        trends={trends}
-        loading={trendsLoading}
-        error={trendsError}
-        days={days}
-        onDaysChange={setDays}
-        onRetry={refetchTrends}
-      />
+  // Stats error with retry
+  if (statsError && !stats) {
+    return (
+      <div className="space-y-6">
+        <div className="flex flex-col items-center justify-center rounded-lg border border-dashed py-12 text-center">
+          <p className="text-destructive">{statsError}</p>
+          <button className="mt-4 text-sm text-primary underline" onClick={fetchStats}>
+            重试
+          </button>
+        </div>
+      </div>
+    )
+  }
 
-      {/* Workflow Ranking + Experience List */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <WorkflowRanking
-          entries={leaderboard}
-          loading={leaderboardLoading}
-          sortBy={leaderboardBy}
-          onSortChange={setLeaderboardBy}
-        />
-        <ExperienceList
-          lessons={lessons}
-          total={total}
-          loading={lessonsLoading}
-          query={query}
-          onSearch={search}
-        />
+  const statCards = [
+    {
+      title: "今日成本",
+      value: stats?.today_cost_usd ?? 0,
+      format: "currency" as const,
+      icon: DollarSign,
+      color: "text-blue-500",
+      bgColor: "bg-blue-500/10",
+    },
+    {
+      title: "本周成本",
+      value: stats?.week_cost_usd ?? 0,
+      format: "currency" as const,
+      icon: Calendar,
+      color: "text-emerald-500",
+      bgColor: "bg-emerald-500/10",
+    },
+    {
+      title: "本月成本",
+      value: stats?.month_cost_usd ?? 0,
+      format: "currency" as const,
+      icon: TrendingUp,
+      color: "text-amber-500",
+      bgColor: "bg-amber-500/10",
+    },
+    {
+      title: "总成本",
+      value: stats?.total_cost_usd ?? 0,
+      format: "currency" as const,
+      icon: DollarSign,
+      color: "text-violet-500",
+      bgColor: "bg-violet-500/10",
+    },
+  ]
+
+  return (
+    <div className="space-y-6">
+      {/* Stats cards */}
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3 lg:grid-cols-4">
+        {statCards.map((card) => (
+          <Card key={card.title}>
+            <CardContent className="p-4">
+              <div className="flex items-start justify-between">
+                <div className="space-y-1">
+                  <p className="text-xs font-medium text-muted-foreground">
+                    {card.title}
+                  </p>
+                  <span className="text-2xl font-bold tabular-nums">
+                    ${card.value.toFixed(2)}
+                  </span>
+                </div>
+                <div
+                  className={cn(
+                    "flex h-8 w-8 items-center justify-center rounded-lg",
+                    card.bgColor
+                  )}
+                >
+                  <card.icon className={cn("h-4 w-4", card.color)} />
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        ))}
+      </div>
+
+      {/* Inline error for stats if partial */}
+      {statsError && stats && (
+        <div className="flex items-center gap-2 rounded-md border border-destructive/50 bg-destructive/5 px-3 py-2 text-sm">
+          <p className="text-destructive">{statsError}</p>
+          <button className="text-primary underline ml-auto" onClick={fetchStats}>
+            重试
+          </button>
+        </div>
+      )}
+
+      {/* Cost trend chart */}
+      <MemoryCostTrend days={costDays} onDaysChange={setCostDays} />
+
+      {/* Bottom row: Workflow Ranking + Experience List */}
+      <div className="grid gap-6 lg:grid-cols-2">
+        <WorkflowRanking />
+        <ExperienceList />
       </div>
 
       {/* Link to full archive */}
-      <Link
-        href="/archive/executions"
-        className="inline-flex items-center gap-1 text-sm text-primary hover:underline"
-      >
-        查看所有执行记录 <ArrowRight className="h-4 w-4" />
-      </Link>
+      <div className="flex justify-center">
+        <Link
+          href="/archive/executions"
+          className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-primary transition-colors"
+        >
+          查看所有执行记录
+          <ArrowRight className="h-3.5 w-3.5" />
+        </Link>
+      </div>
     </div>
   )
 }

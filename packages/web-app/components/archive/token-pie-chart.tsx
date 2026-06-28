@@ -1,17 +1,24 @@
 "use client"
 
-import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from "recharts"
+import { PieChart, Pie, Cell } from "recharts"
+import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card"
+import {
+  ChartContainer,
+  type ChartConfig,
+} from "@/components/ui/chart"
 import { ChartErrorBoundary } from "@/components/ui/chart-error-boundary"
-import { formatCostUSD } from "@/lib/cost-format"
 
-interface TokenPieChartProps {
-  breakdown: Record<
-    string,
-    { input_tokens: number; output_tokens: number; cost_usd: number }
-  > | null
+interface ModelData {
+  input_tokens: number
+  output_tokens: number
+  cost_usd: number
 }
 
-const COLORS = [
+interface TokenPieChartProps {
+  modelBreakdown: Record<string, ModelData> | null
+}
+
+const CHART_COLORS = [
   "var(--chart-1)",
   "var(--chart-2)",
   "var(--chart-3)",
@@ -19,83 +26,109 @@ const COLORS = [
   "var(--chart-5)",
 ]
 
-function CustomTooltip({
-  active,
-  payload,
-}: {
-  active?: boolean
-  payload?: Array<{ payload: { name: string; input_tokens: number; output_tokens: number; cost_usd: number } }>
-}) {
-  if (!active || !payload?.length) return null
-  const d = payload[0].payload
-  return (
-    <div className="rounded-lg border bg-card p-3 shadow-sm text-xs">
-      <p className="font-medium">{d.name}</p>
-      <p>输入: {d.input_tokens.toLocaleString()} tokens</p>
-      <p>输出: {d.output_tokens.toLocaleString()} tokens</p>
-      <p className="text-memory-cost-line">{formatCostUSD(d.cost_usd)}</p>
-    </div>
-  )
-}
-
-export function TokenPieChart({ breakdown }: TokenPieChartProps) {
-  if (!breakdown || Object.keys(breakdown).length === 0) {
+export function TokenPieChart({ modelBreakdown }: TokenPieChartProps) {
+  if (
+    !modelBreakdown ||
+    Object.keys(modelBreakdown).length === 0
+  ) {
     return (
-      <div className="rounded-lg border bg-card p-4 h-full">
-        <h3 className="text-sm font-medium mb-3">Token 分布</h3>
-        <p className="text-sm text-muted-foreground">无 Token 分布数据</p>
-      </div>
+      <Card>
+        <CardHeader>
+          <CardTitle>Token 分布</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <p className="text-muted-foreground text-center text-sm">
+            无 Token 分布数据
+          </p>
+        </CardContent>
+      </Card>
     )
   }
 
-  const data = Object.entries(breakdown).map(([model, info]) => ({
+  const data = Object.entries(modelBreakdown).map(([model, info]) => ({
     name: model,
-    ...info,
-    totalTokens: info.input_tokens + info.output_tokens,
+    value: info.input_tokens + info.output_tokens,
+    input: info.input_tokens,
+    output: info.output_tokens,
+    cost: info.cost_usd,
   }))
 
+  const config: ChartConfig = Object.fromEntries(
+    data.map((d, i) => [
+      d.name,
+      {
+        label: d.name,
+        color: CHART_COLORS[i % CHART_COLORS.length],
+      },
+    ]),
+  )
+
+  const totalTokens = data.reduce((sum, d) => sum + d.value, 0)
+  const totalCost = data.reduce((sum, d) => sum + d.cost, 0)
+
   return (
-    <div className="rounded-lg border bg-card p-4 h-full">
-      <h3 className="text-sm font-medium mb-3">Token 分布</h3>
-      <ChartErrorBoundary>
-        <div className="h-[200px]" role="img" aria-label="Token 分布饼图">
-          <ResponsiveContainer width="100%" height="100%">
+    <Card>
+      <CardHeader>
+        <CardTitle>Token 分布</CardTitle>
+      </CardHeader>
+      <CardContent>
+        <ChartErrorBoundary componentName="TokenPieChart">
+          <ChartContainer config={config} className="aspect-square max-h-[250px]">
             <PieChart>
               <Pie
                 data={data}
-                dataKey="totalTokens"
+                dataKey="value"
                 nameKey="name"
                 cx="50%"
                 cy="50%"
-                outerRadius={80}
+                innerRadius={50}
+                strokeWidth={2}
               >
                 {data.map((_, index) => (
                   <Cell
                     key={index}
-                    fill={COLORS[index % COLORS.length]}
+                    fill={CHART_COLORS[index % CHART_COLORS.length]}
                   />
                 ))}
               </Pie>
-              <Tooltip content={<CustomTooltip />} />
             </PieChart>
-          </ResponsiveContainer>
-        </div>
-      </ChartErrorBoundary>
-      {/* Legend */}
-      <div className="mt-2 space-y-1">
-        {data.map((d, i) => (
-          <div key={d.name} className="flex items-center gap-2 text-xs">
-            <span
-              className="h-3 w-3 rounded-sm shrink-0"
-              style={{ backgroundColor: COLORS[i % COLORS.length] }}
-            />
-            <span className="truncate">{d.name}</span>
-            <span className="text-muted-foreground ml-auto">
-              {formatCostUSD(d.cost_usd)}
-            </span>
+          </ChartContainer>
+        </ChartErrorBoundary>
+
+        {/* Legend */}
+        <div className="mt-4 space-y-2">
+          {data.map((d, i) => (
+            <div
+              key={d.name}
+              className="flex items-center justify-between text-xs"
+            >
+              <div className="flex items-center gap-2">
+                <div
+                  className="h-2.5 w-2.5 shrink-0 rounded-full"
+                  style={{
+                    backgroundColor:
+                      CHART_COLORS[i % CHART_COLORS.length],
+                  }}
+                />
+                <span className="truncate">{d.name}</span>
+              </div>
+              <div className="text-muted-foreground flex shrink-0 gap-3 font-mono">
+                <span>{d.value.toLocaleString()} tokens</span>
+                <span>${d.cost.toFixed(4)}</span>
+              </div>
+            </div>
+          ))}
+          <div className="border-t pt-2 text-xs font-medium">
+            <div className="flex justify-between">
+              <span>总计</span>
+              <div className="text-muted-foreground flex gap-3 font-mono">
+                <span>{totalTokens.toLocaleString()} tokens</span>
+                <span>${totalCost.toFixed(4)}</span>
+              </div>
+            </div>
           </div>
-        ))}
-      </div>
-    </div>
+        </div>
+      </CardContent>
+    </Card>
   )
 }

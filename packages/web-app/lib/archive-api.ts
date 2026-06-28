@@ -1,105 +1,218 @@
-import { getServerUrl } from "@/lib/server-config"
-import type {
-  ArchiveStats,
-  ArchiveExecution,
-  ArchivePaginatedResult,
-  ArchiveExecutionDetail,
-  CostTrendPoint,
-  CostTrendSummary,
-  WorkflowStat,
-  ExperienceItem,
-  LeaderboardEntry,
-} from "@octopus/shared"
+import { getServerUrl } from "./server-config"
 
-// Re-export for consumers that imported types from here
-export type {
-  ArchiveStats,
-  ArchiveExecution,
-  ArchivePaginatedResult as PaginatedResult,
-  ArchiveExecutionDetail,
-  CostTrendPoint,
-  WorkflowStat,
-  ExperienceItem,
-  LeaderboardEntry,
-}
-
-function getOrg(): string {
-  if (typeof window !== "undefined") {
-    return localStorage.getItem("octopus-org") || "xzf"
-  }
-  return "xzf"
-}
-
-async function archiveFetch(url: string, init?: RequestInit): Promise<Response> {
-  const headers = new Headers(init?.headers)
-  if (!headers.has("X-Octopus-Org")) {
-    headers.set("X-Octopus-Org", getOrg())
-  }
-  return fetch(url, { ...init, headers, credentials: "include" })
-}
-
-async function handleJson<T>(res: Response): Promise<T> {
+async function handleResponse<T>(res: Response): Promise<T> {
   if (!res.ok) {
     const body = await res.json().catch(() => ({}))
-    throw new Error(body.error ?? `HTTP ${res.status}`)
+    throw new Error(body.error?.message ?? body.error ?? `HTTP ${res.status}`)
   }
   return res.json()
 }
 
-// ============ API Functions ============
-
-const base = () => `${getServerUrl()}/api/archive`
-
-export async function getArchiveStats(): Promise<ArchiveStats> {
-  const res = await archiveFetch(`${base()}/stats`)
-  return handleJson(res)
+function apiFetch(url: string, init?: RequestInit): Promise<Response> {
+  return fetch(url, { ...init, credentials: "include" })
 }
 
-export async function getArchiveExecutions(opts: {
-  page?: number; pageSize?: number; workflow?: string; status?: string;
-  from?: string; to?: string; sort?: string; order?: string
-} = {}): Promise<ArchivePaginatedResult<ArchiveExecution>> {
-  const params = new URLSearchParams()
-  if (opts.page) params.set("page", String(opts.page))
-  if (opts.pageSize) params.set("pageSize", String(opts.pageSize))
-  if (opts.workflow) params.set("workflow", opts.workflow)
-  if (opts.status) params.set("status", opts.status)
-  if (opts.from) params.set("from", opts.from)
-  if (opts.to) params.set("to", opts.to)
-  if (opts.sort) params.set("sort", opts.sort)
-  if (opts.order) params.set("order", opts.order)
-  const qs = params.toString()
-  const res = await archiveFetch(`${base()}/executions${qs ? `?${qs}` : ""}`)
-  return handleJson(res)
+// ============ Archive Types ============
+
+export interface ArchiveStats {
+  total_executions: number
+  total_cost_usd: number
+  success_rate: number
+  today_cost_usd: number
+  week_cost_usd: number
+  month_cost_usd: number
+  top_workflows: {
+    workflow_ref: string
+    workflow_name: string
+    execution_count: number
+    success_rate: number
+    total_cost_usd: number
+  }[]
 }
 
-export async function getArchiveExecution(id: string): Promise<ArchiveExecutionDetail> {
-  const res = await archiveFetch(`${base()}/executions/${encodeURIComponent(id)}`)
-  return handleJson(res)
+export interface ArchiveExecutionItem {
+  id: string
+  workflow_ref: string
+  workflow_name: string
+  status: "completed" | "failed" | "cancelled"
+  started_at: string
+  completed_at: string | null
+  duration_ms: number | null
+  total_input_tokens: number
+  total_output_tokens: number
+  total_cost_usd: number
+  workspace_id: string | null
+  parent_execution_id: string | null
+  chain_position: number | null
+  created_at: string
 }
 
-export async function getCostTrends(days: number = 7, workspaceId?: string): Promise<{ trends: CostTrendPoint[]; summary: CostTrendSummary }> {
-  const params = new URLSearchParams({ days: String(days) })
-  if (workspaceId) params.set("workspace_id", workspaceId)
-  const res = await archiveFetch(`${base()}/cost-trends?${params}`)
-  return handleJson(res)
+export interface ArchiveExecutionDetail extends ArchiveExecutionItem {
+  node_summary: {
+    node_id: string
+    type: string
+    status: string
+    duration_ms: number | null
+    exit_code: number | null
+  }[]
+  failed_nodes: string[] | null
+  error_message: string | null
+  model_breakdown: Record<string, {
+    input_tokens: number
+    output_tokens: number
+    cost_usd: number
+  }> | null
+  vars_snapshot: Record<string, unknown>
+  lessons_learned: string | null
+  experiences: {
+    id: string
+    type: "bug" | "pattern" | "cost" | "failure"
+    title: string
+    content: string
+    status: string
+    created_at: string
+  }[]
+  workspace_archive_id: string | null
 }
 
-export async function getWorkflowStats(days: number = 30): Promise<{ workflows: WorkflowStat[] }> {
-  const res = await archiveFetch(`${base()}/workflow-stats?days=${days}`)
-  return handleJson(res)
+export interface CostTrendPoint {
+  date: string
+  total_cost_usd: number
+  execution_count: number
 }
 
-export async function searchLessons(query?: string, opts?: { project?: string; type?: string; limit?: number }): Promise<{ lessons: ExperienceItem[]; total: number }> {
-  const params = new URLSearchParams({ limit: String(opts?.limit ?? 20) })
-  if (query) params.set("q", query)
-  if (opts?.project) params.set("project", opts.project)
-  if (opts?.type) params.set("type", opts.type)
-  const res = await archiveFetch(`${base()}/lessons?${params}`)
-  return handleJson(res)
+export interface CostTrendSummary {
+  total_cost_usd: number
+  avg_daily_cost_usd: number
+  trend: "up" | "down" | "stable"
 }
 
-export async function getLeaderboard(by: "count" | "success_rate" | "cost" = "count", days: number = 30, limit: number = 10): Promise<{ entries: LeaderboardEntry[] }> {
-  const res = await archiveFetch(`${base()}/leaderboard?by=${by}&days=${days}&limit=${limit}`)
-  return handleJson(res)
+export interface WorkflowStat {
+  workflow_ref: string
+  workflow_name: string
+  execution_count: number
+  success_count: number
+  failure_count: number
+  success_rate: number
+  total_cost_usd: number
+  avg_cost_usd: number
+  avg_duration_ms: number
+}
+
+export interface ExperienceLesson {
+  id: string
+  type: "bug" | "pattern" | "cost" | "failure"
+  title: string
+  content: string
+  status: string
+  project: string | null
+  package: string | null
+  file_pattern: string | null
+  workflow_name: string | null
+  relevance_score: number
+  use_count: number
+  created_at: string
+}
+
+export interface LeaderboardEntry {
+  rank: number
+  workflow_ref: string
+  workflow_name: string
+  value: number
+  execution_count: number
+}
+
+// ============ Archive API Functions ============
+
+export async function fetchArchiveStats(): Promise<ArchiveStats> {
+  const res = await apiFetch(`${getServerUrl()}/api/archive/stats`)
+  return handleResponse(res)
+}
+
+export async function fetchArchiveExecutions(params: {
+  page?: number
+  limit?: number
+  workflow_ref?: string
+  status?: "completed" | "failed" | "cancelled"
+  workspace_id?: string
+  date_from?: string
+  date_to?: string
+  sort?: "created_at" | "total_cost_usd" | "duration_ms"
+  order?: "asc" | "desc"
+} = {}): Promise<{ items: ArchiveExecutionItem[], total: number, page: number, limit: number }> {
+  const searchParams = new URLSearchParams()
+  if (params.page) searchParams.set("page", String(params.page))
+  if (params.limit) searchParams.set("limit", String(params.limit))
+  if (params.workflow_ref) searchParams.set("workflow_ref", params.workflow_ref)
+  if (params.status) searchParams.set("status", params.status)
+  if (params.workspace_id) searchParams.set("workspace_id", params.workspace_id)
+  if (params.date_from) searchParams.set("date_from", params.date_from)
+  if (params.date_to) searchParams.set("date_to", params.date_to)
+  if (params.sort) searchParams.set("sort", params.sort)
+  if (params.order) searchParams.set("order", params.order)
+  const qs = searchParams.toString()
+  const res = await apiFetch(`${getServerUrl()}/api/archive/executions${qs ? `?${qs}` : ""}`)
+  return handleResponse(res)
+}
+
+export async function fetchArchiveExecution(id: string): Promise<ArchiveExecutionDetail> {
+  const res = await apiFetch(`${getServerUrl()}/api/archive/executions/${id}`)
+  return handleResponse(res)
+}
+
+export async function fetchCostTrends(days: number = 30, workspaceId?: string): Promise<{
+  trends: CostTrendPoint[]
+  summary: CostTrendSummary
+}> {
+  const searchParams = new URLSearchParams()
+  searchParams.set("days", String(days))
+  if (workspaceId) searchParams.set("workspace_id", workspaceId)
+  const res = await apiFetch(`${getServerUrl()}/api/archive/cost-trends?${searchParams.toString()}`)
+  return handleResponse(res)
+}
+
+export async function fetchWorkflowStats(params?: {
+  days?: number
+  sort?: "execution_count" | "success_rate" | "total_cost_usd"
+  order?: "asc" | "desc"
+  limit?: number
+}): Promise<{ items: WorkflowStat[] }> {
+  const searchParams = new URLSearchParams()
+  if (params?.days) searchParams.set("days", String(params.days))
+  if (params?.sort) searchParams.set("sort", params.sort)
+  if (params?.order) searchParams.set("order", params.order)
+  if (params?.limit) searchParams.set("limit", String(params.limit))
+  const qs = searchParams.toString()
+  const res = await apiFetch(`${getServerUrl()}/api/archive/workflow-stats${qs ? `?${qs}` : ""}`)
+  return handleResponse(res)
+}
+
+export async function fetchLessons(query: string, params?: {
+  project?: string
+  type?: "bug" | "pattern" | "cost" | "failure"
+  status?: string
+  limit?: number
+}): Promise<{ items: ExperienceLesson[], total: number }> {
+  const searchParams = new URLSearchParams()
+  searchParams.set("q", query)
+  if (params?.project) searchParams.set("project", params.project)
+  if (params?.type) searchParams.set("type", params.type)
+  if (params?.status) searchParams.set("status", params.status)
+  if (params?.limit) searchParams.set("limit", String(params.limit))
+  const res = await apiFetch(`${getServerUrl()}/api/archive/lessons?${searchParams.toString()}`)
+  return handleResponse(res)
+}
+
+export async function fetchLeaderboard(params?: {
+  dimension?: "cost" | "speed" | "success_rate"
+  days?: number
+  limit?: number
+}): Promise<{ dimension: string, entries: LeaderboardEntry[] }> {
+  const searchParams = new URLSearchParams()
+  if (params?.dimension) searchParams.set("dimension", params.dimension)
+  if (params?.days) searchParams.set("days", String(params.days))
+  if (params?.limit) searchParams.set("limit", String(params.limit))
+  const qs = searchParams.toString()
+  const res = await apiFetch(`${getServerUrl()}/api/archive/leaderboard${qs ? `?${qs}` : ""}`)
+  return handleResponse(res)
 }

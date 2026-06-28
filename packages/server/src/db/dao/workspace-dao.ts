@@ -8,25 +8,25 @@ export class WorkspaceDAO extends BaseDAO {
   // ── workspaces ──────────────────────────────────────────────────
 
   findById(id: string): WorkspaceRow | null {
-    return (this.stmt("SELECT * FROM workspaces WHERE id = ? AND archived = 0").get(id) as WorkspaceRow) ?? null
+    return (this.stmt("SELECT * FROM workspaces WHERE id = ?").get(id) as WorkspaceRow) ?? null
   }
 
   findAll(org?: string, source?: string): WorkspaceRow[] {
-    const conditions: string[] = ["archived = 0"]
+    const conditions: string[] = []
     const params: unknown[] = []
     if (org) { conditions.push("org = ?"); params.push(org) }
     if (source && source !== "all") {
       conditions.push("(source = ? OR source IS NULL)")
       params.push(source)
     }
-    const where = `WHERE ${conditions.join(" AND ")}`
+    const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : ""
     return this.stmt(`SELECT * FROM workspaces ${where} ORDER BY created_at DESC`).all(...params) as WorkspaceRow[]
   }
 
-  insert(row: Omit<WorkspaceRow, "source" | "source_schedule_id" | "archived"> & { source?: string; source_schedule_id?: string | null }): Database.RunResult {
+  insert(row: Omit<WorkspaceRow, "source" | "source_schedule_id" | "archive_status" | "archive_started_at" | "archive_error"> & { source?: string; source_schedule_id?: string | null }): Database.RunResult {
     return this.stmt(
-      `INSERT INTO workspaces (id, name, org, description, status, path, source, source_schedule_id, created_at, updated_at, archived)
-       VALUES (?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, 0)`
+      `INSERT INTO workspaces (id, name, org, description, status, path, source, source_schedule_id, created_at, updated_at)
+       VALUES (?, ?, ?, ?, 'active', ?, ?, ?, ?, ?)`
     ).run(row.id, row.name, row.org, row.description, row.path, row.source ?? "user", row.source_schedule_id ?? null, row.created_at, row.updated_at)
   }
 
@@ -45,36 +45,7 @@ export class WorkspaceDAO extends BaseDAO {
   }
 
   deleteById(id: string): Database.RunResult {
-    // ponytail: P0 soft delete — P1.5 WorkspaceService.delete() will add two-stage archive+ cascade
-    return this.stmt("UPDATE workspaces SET archived = 1 WHERE id = ?").run(id)
-  }
-
-  // ── Archive status methods ──────────────────────────────────────
-
-  updateArchiveStatus(id: string, status: string, error?: string): Database.RunResult {
-    const now = new Date().toISOString()
-    if (error) {
-      return this.stmt(
-        "UPDATE workspaces SET archive_status = ?, archive_error = ?, updated_at = ? WHERE id = ?"
-      ).run(status, error, now, id)
-    }
-    const startedAt = status === 'archiving' ? now : null
-    return this.stmt(
-      "UPDATE workspaces SET archive_status = ?, archive_started_at = ?, archive_error = NULL, updated_at = ? WHERE id = ?"
-    ).run(status, startedAt, now, id)
-  }
-
-  findArchivedButFilesExist(): WorkspaceRow[] {
-    return this.stmt(
-      "SELECT * FROM workspaces WHERE archive_status = 'archived' AND archived = 1"
-    ).all() as WorkspaceRow[]
-  }
-
-  resetStuckArchiving(minutes: number): Database.RunResult {
-    const cutoff = new Date(Date.now() - minutes * 60 * 1000).toISOString()
-    return this.stmt(
-      "UPDATE workspaces SET archive_status = 'none', archive_started_at = NULL WHERE archive_status = 'archiving' AND archive_started_at < ?"
-    ).run(cutoff)
+    return this.stmt("DELETE FROM workspaces WHERE id = ?").run(id)
   }
 
   // ── optimization_suggestions ────────────────────────────────────
@@ -151,6 +122,38 @@ export class WorkspaceDAO extends BaseDAO {
     return rows.map(r => r.id)
   }
 
+  // ── Archive status methods ────────────────────────────────────
+
+  setArchiveStatus(id: string, status: string, error?: string): Database.RunResult {
+    return this.stmt(
+      "UPDATE workspaces SET archive_status = ?, archive_started_at = ?, archive_error = ?, updated_at = ? WHERE id = ?"
+    ).run(status, status === 'none' ? null : new Date().toISOString(), error ?? null, new Date().toISOString(), id)
+  }
+
+  /**
+   * Try to acquire the archive lock. Returns true if lock acquired (was 'none', now 'archiving').
+   * Uses UPDATE WHERE to ensure atomicity.
+   */
+  tryAcquireArchiveLock(id: string): boolean {
+    const result = this.stmt(
+      "UPDATE workspaces SET archive_status = 'archiving', archive_started_at = datetime('now'), updated_at = datetime('now') WHERE id = ? AND archive_status = 'none'"
+    ).run(id)
+    return (result.changes ?? 0) === 1
+  }
+
+  getArchiveTimedOut(thresholdMinutes: number = 30): WorkspaceRow[] {
+    const cutoff = new Date(Date.now() - thresholdMinutes * 60 * 1000).toISOString()
+    return this.stmt(
+      "SELECT * FROM workspaces WHERE archive_status = 'archiving' AND archive_started_at < ?"
+    ).all(cutoff) as WorkspaceRow[]
+  }
+
+  findArchivedWithFiles(): WorkspaceRow[] {
+    return this.stmt(
+      "SELECT * FROM workspaces WHERE archive_status = 'archived'"
+    ).all() as WorkspaceRow[]
+  }
+
   cascadeDeleteByWorkspace(workspaceId: string): void {
     this.transaction(() => {
       // Chat data
@@ -182,6 +185,10 @@ export class WorkspaceDAO extends BaseDAO {
         this.stmt(`DELETE FROM schedule_executions WHERE execution_id IN (${placeholders})`).run(...vals)
       }
       this.stmt("DELETE FROM executions WHERE workspace_id = ?").run(workspaceId)
+
+      // Archive tables
+      this.stmt("DELETE FROM execution_archive WHERE workspace_id = ?").run(workspaceId)
+      this.stmt("DELETE FROM workspace_archive WHERE workspace_id = ?").run(workspaceId)
 
       // Workspace itself
       this.deleteById(workspaceId)

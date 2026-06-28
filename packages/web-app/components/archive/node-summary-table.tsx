@@ -1,84 +1,111 @@
 "use client"
 
-import { formatDuration } from "@/lib/cost-format"
-import { CheckCircle2, XCircle, MinusCircle } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { Badge } from "@/components/ui/badge"
+import {
+  Table,
+  TableHeader,
+  TableBody,
+  TableRow,
+  TableCell,
+  TableHead,
+} from "@/components/ui/table"
 
 interface NodeSummary {
-  nodeId: string
+  node_id: string
   type: string
   status: string
   duration_ms: number | null
+  exit_code: number | null
 }
 
 interface NodeSummaryTableProps {
   nodes: NodeSummary[]
 }
 
-const statusIcon: Record<string, React.ComponentType<{ className?: string }>> =
-  {
-    completed: CheckCircle2,
-    failed: XCircle,
-    cancelled: MinusCircle,
-    skipped: MinusCircle,
+function formatDuration(ms: number | null): string {
+  if (ms === null || ms === undefined) return "-"
+  const minutes = Math.floor(ms / 60000)
+  if (minutes < 60) return `${minutes}min`
+  const hours = Math.floor(minutes / 60)
+  const remainingMinutes = minutes % 60
+  return `${hours}h ${remainingMinutes}min`
+}
+
+function nodeStatusVariant(
+  status: string,
+): { variant: "default" | "destructive" | "secondary"; className?: string } {
+  switch (status) {
+    case "completed":
+      return { variant: "default", className: "bg-emerald-600 text-white" }
+    case "failed":
+      return { variant: "destructive" }
+    case "skipped":
+      return { variant: "secondary" }
+    case "running":
+      return { variant: "default", className: "bg-blue-600 text-white" }
+    default:
+      return { variant: "secondary" }
   }
+}
 
 export function NodeSummaryTable({ nodes }: NodeSummaryTableProps) {
   if (!nodes || nodes.length === 0) {
     return (
-      <div className="rounded-lg border bg-card p-4">
-        <h3 className="text-sm font-medium mb-3">节点摘要</h3>
-        <p className="text-sm text-muted-foreground">无节点摘要数据</p>
-      </div>
+      <p className="text-muted-foreground py-4 text-center text-sm">
+        无节点摘要数据
+      </p>
     )
   }
 
   return (
-    <div className="rounded-lg border bg-card">
-      <div className="p-4 border-b">
-        <h3 className="text-sm font-medium">节点摘要</h3>
-      </div>
-      <div className="overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b bg-muted/50">
-              <th className="text-left font-medium p-3">节点</th>
-              <th className="text-left font-medium p-3">类型</th>
-              <th className="text-left font-medium p-3">状态</th>
-              <th className="text-left font-medium p-3">耗时</th>
-            </tr>
-          </thead>
-          <tbody>
-            {nodes.map((node) => {
-              const Icon = statusIcon[node.status] ?? MinusCircle
-              return (
-                <tr key={node.nodeId} className="border-b last:border-b-0">
-                  <td className="p-3 font-mono text-xs">{node.nodeId}</td>
-                  <td className="p-3 text-muted-foreground">{node.type}</td>
-                  <td className="p-3">
-                    <span
-                      className={cn(
-                        "inline-flex items-center gap-1",
-                        node.status === "completed"
-                          ? "text-green-600"
-                          : node.status === "failed"
-                            ? "text-destructive"
-                            : "text-muted-foreground",
-                      )}
-                    >
-                      <Icon className="h-4 w-4" />
-                      {node.status}
-                    </span>
-                  </td>
-                  <td className="p-3 text-muted-foreground">
-                    {formatDuration(node.duration_ms)}
-                  </td>
-                </tr>
-              )
-            })}
-          </tbody>
-        </table>
-      </div>
-    </div>
+    <Table>
+      <TableHeader>
+        <TableRow>
+          <TableHead>节点 ID</TableHead>
+          <TableHead>类型</TableHead>
+          <TableHead>状态</TableHead>
+          <TableHead>耗时</TableHead>
+          <TableHead>退出码</TableHead>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {nodes.map((node) => {
+          const sv = nodeStatusVariant(node.status)
+          return (
+            <TableRow key={node.node_id}>
+              <TableCell className="font-mono text-xs">
+                {node.node_id}
+              </TableCell>
+              <TableCell>
+                <Badge variant="outline">{node.type}</Badge>
+              </TableCell>
+              <TableCell>
+                <Badge variant={sv.variant} className={sv.className}>
+                  {node.status}
+                </Badge>
+              </TableCell>
+              <TableCell className="text-muted-foreground">
+                {formatDuration(node.duration_ms)}
+              </TableCell>
+              <TableCell>
+                {node.exit_code !== null ? (
+                  <span
+                    className={cn(
+                      "font-mono text-xs",
+                      node.exit_code !== 0 && "text-destructive",
+                    )}
+                  >
+                    {node.exit_code}
+                  </span>
+                ) : (
+                  <span className="text-muted-foreground">-</span>
+                )}
+              </TableCell>
+            </TableRow>
+          )
+        })}
+      </TableBody>
+    </Table>
   )
 }

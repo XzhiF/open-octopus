@@ -1,41 +1,60 @@
 "use client"
 
+import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card"
+
 interface KeyValueTableProps {
-  data: Record<string, unknown>
+  vars: Record<string, unknown>
 }
 
-export function KeyValueTable({ data }: KeyValueTableProps) {
-  const entries = Object.entries(data ?? {})
+function formatValue(value: unknown): string {
+  if (value === null || value === undefined) return "-"
+  if (typeof value === "string") return value
+  if (typeof value === "number" || typeof value === "boolean")
+    return String(value)
+  try {
+    return JSON.stringify(value, null, 2)
+  } catch {
+    return String(value)
+  }
+}
+
+export function KeyValueTable({ vars }: KeyValueTableProps) {
+  const entries = Object.entries(vars)
 
   if (entries.length === 0) return null
 
   return (
-    <div className="rounded-lg border bg-card h-full">
-      <div className="p-4 border-b">
-        <h3 className="text-sm font-medium">关键变量</h3>
-      </div>
-      <div className="overflow-x-auto max-h-[400px] overflow-y-auto">
-        <table className="w-full text-sm">
-          <thead className="sticky top-0 bg-card">
-            <tr className="border-b bg-muted/50">
-              <th className="text-left font-medium p-3">键</th>
-              <th className="text-left font-medium p-3">值</th>
-            </tr>
-          </thead>
-          <tbody>
-            {entries.map(([key, value]) => (
-              <tr key={key} className="border-b last:border-b-0">
-                <td className="p-3 font-mono text-xs whitespace-nowrap">
+    <Card>
+      <CardHeader>
+        <CardTitle>变量快照</CardTitle>
+      </CardHeader>
+      <CardContent>
+        <div className="space-y-1">
+          {entries.map(([key, value]) => {
+            const formatted = formatValue(value)
+            const isLong = formatted.length > 60
+            return (
+              <div
+                key={key}
+                className="grid grid-cols-[auto_1fr] items-start gap-x-4 gap-y-1 py-1.5 text-sm [&:not(:last-child)]:border-b"
+              >
+                <span className="font-mono text-xs text-muted-foreground truncate max-w-[200px]">
                   {key}
-                </td>
-                <td className="p-3 text-xs break-all max-w-md">
-                  {typeof value === "string" ? value : JSON.stringify(value)}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </div>
+                </span>
+                <span
+                  className={
+                    isLong
+                      ? "font-mono text-xs whitespace-pre-wrap break-all"
+                      : "font-mono text-xs truncate"
+                  }
+                >
+                  {formatted}
+                </span>
+              </div>
+            )
+          })}
+        </div>
+      </CardContent>
+    </Card>
   )
 }

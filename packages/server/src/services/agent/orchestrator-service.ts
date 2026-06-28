@@ -7,8 +7,8 @@ import { SystemPromptAssembler } from './system-prompt-assembler'
 import { getMemoryService } from './memory-service'
 import { getNotificationService } from './notification-service'
 import { getAgentDir } from './paths'
-import { ExperienceDAO } from '../../db/dao/experience-dao'
-import { getDb } from '../../db/connection'
+import type { ExperienceDAO } from '../../db/dao/experience-dao'
+import type { ArchiveDAO } from '../../db/dao/archive-dao'
 
 // ── Types ──────────────────────────────────────────────────────────
 
@@ -35,7 +35,8 @@ export interface OrchestratorResult {
   inputs: Record<string, string>
   execution_id?: string
   summary: string
-  experienceContext?: string
+  experiences?: Array<{ type: string; title: string; content: string }>
+  recentExecutions?: Array<{ workflow_name: string; status: string; cost_usd: number }>
 }
 
 export interface GeneratedWorkflow {
@@ -63,12 +64,19 @@ export class OrchestratorService {
   private org: string
   private agentDir: string
   private assembler: SystemPromptAssembler
+  private experienceDAO?: ExperienceDAO
+  private archiveDAO?: ArchiveDAO
 
-  constructor(org: string) {
+  constructor(org: string, experienceDAO?: ExperienceDAO, archiveDAO?: ArchiveDAO) {
     this.org = org
     this.agentDir = getAgentDir()
     this.assembler = new SystemPromptAssembler(org)
+    this.experienceDAO = experienceDAO
+    this.archiveDAO = archiveDAO
   }
+
+  setExperienceDAO(dao: ExperienceDAO): void { this.experienceDAO = dao }
+  setArchiveDAO(dao: ArchiveDAO): void { this.archiveDAO = dao }
 
   /**
    * Classify user intent from a natural language message.
@@ -390,25 +398,27 @@ ${nodes.map(n => `  - id: ${n.id}
     const intent = this.classifyIntent(message)
     emitEvent('intent_classified', intent)
 
-    // P5.1: Query relevant experiences
-    let experienceContext = ""
+    // Step 1.5: Experience injection (P4.1)
+    let injectedExperiences: Array<{ type: string; title: string; content: string }> = []
+    let injectedRecentExecutions: Array<{ workflow_name: string; status: string; cost_usd: number }> = []
     try {
-      const expDAO = new ExperienceDAO(getDb())
-      const keywords = this.extractKeywords(message)
-      if (keywords.length > 0) {
-        const experiences = expDAO.searchFTS(keywords.join(" "), {
-          org: this.org,
-          status: "active",
-          limit: 5,
-        })
-        if (experiences.length > 0) {
-          experienceContext = "\n\n## 相关经验\n" + experiences.map(e =>
-            `- [${e.type}] ${e.title}: ${e.content.substring(0, 200)}`
-          ).join("\n")
-        }
+      if (this.experienceDAO) {
+        const keywords = message.slice(0, 100) // Use first 100 chars as FTS query
+        const experiences = this.experienceDAO.search(keywords, { status: 'active', limit: 5 })
+        // Also get recent archive records
+        const recentArchives = this.archiveDAO?.getRecentByOrg(this.org, 3) || []
+
+        // Inject into orchestration context
+        injectedExperiences = experiences.map(e => ({
+          type: e.type, title: e.title, content: e.content.slice(0, 300),
+        }))
+        injectedRecentExecutions = recentArchives.map(a => ({
+          workflow_name: a.workflow_name, status: a.status, cost_usd: a.total_cost_usd,
+        }))
       }
     } catch (err) {
-      console.warn("[OrchestratorService] Experience query failed:", err)
+      console.warn("[orchestrator] Experience injection failed:", err)
+      // Continue without experiences
     }
 
     // Step 2: Select workflow (for single_task and scheduled_task)
@@ -486,29 +496,9 @@ ${nodes.map(n => `  - id: ${n.id}
       generated_workflow: generatedWorkflow,
       inputs,
       summary,
-      experienceContext,
+      experiences: injectedExperiences.length > 0 ? injectedExperiences : undefined,
+      recentExecutions: injectedRecentExecutions.length > 0 ? injectedRecentExecutions : undefined,
     }
-  }
-
-  /**
-   * Extract project names and task type keywords from a message (P5.1).
-   * Used for experience injection to find relevant past experiences.
-   */
-  private extractKeywords(message: string): string[] {
-    const keywords: string[] = []
-    // Extract potential project/package names (kebab-case or snake_case identifiers)
-    const projectPatterns = /\b([a-z][a-z0-9]+[-_][a-z0-9]+)\b/gi
-    let match: RegExpExecArray | null
-    while ((match = projectPatterns.exec(message)) !== null) {
-      keywords.push(match[1])
-    }
-    // Extract task type keywords
-    const taskKeywords = ['bug', 'fix', 'feature', 'refactor', 'test', 'deploy', 'config', 'error', 'performance', 'security']
-    const lowerMsg = message.toLowerCase()
-    for (const kw of taskKeywords) {
-      if (lowerMsg.includes(kw)) keywords.push(kw)
-    }
-    return [...new Set(keywords)]
   }
 
   /**
@@ -543,11 +533,14 @@ ${nodes.map(n => `  - id: ${n.id}
 
 const instances = new Map<string, OrchestratorService>()
 
-export function getOrchestratorService(org: string): OrchestratorService {
+export function getOrchestratorService(org: string, experienceDAO?: ExperienceDAO, archiveDAO?: ArchiveDAO): OrchestratorService {
   let instance = instances.get(org)
   if (!instance) {
-    instance = new OrchestratorService(org)
+    instance = new OrchestratorService(org, experienceDAO, archiveDAO)
     instances.set(org, instance)
+  } else {
+    if (experienceDAO) instance.setExperienceDAO(experienceDAO)
+    if (archiveDAO) instance.setArchiveDAO(archiveDAO)
   }
   return instance
 }
