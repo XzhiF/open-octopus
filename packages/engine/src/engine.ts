@@ -28,6 +28,9 @@ import type { ICheckpointStore, Checkpoint } from "./pipeline/checkpoint-types"
 import { calculateBackoff } from "./pipeline/backoff"
 import type { PipelineConfig } from "@octopus/shared"
 
+// TC-037: max chain depth — abort chain trigger if depth exceeds this
+const MAX_CHAIN_DEPTH = 5
+
 export interface ExecutionResult {
   workflowName: string
   status: "completed" | "completed_with_failures" | "failed" | "paused" | "cancelled" | "rejected" | "pending_approval"
@@ -90,6 +93,8 @@ export class WorkflowEngine {
   private pipelinePath?: string
   // Runtime node tracking (Upgrade 3)
   private runtimeNodeIds: Set<string> = new Set()
+  // Chain depth: how many parent→child hops above this execution (0 = root)
+  private chainDepth: number
 
   constructor(
     private workflow: WorkflowDef,
@@ -103,6 +108,7 @@ export class WorkflowEngine {
     executionName?: string,
     crossExecResolver?: CrossExecResolver,
     promptInjector?: PromptInjector,
+    chainDepth?: number,
   ) {
     this.pool = new VarPool(workflow.variables ?? {})
 
@@ -149,6 +155,7 @@ export class WorkflowEngine {
     this.maxConcurrent = workflow.max_concurrent
     this.crossExecResolver = crossExecResolver
     this.promptInjector = promptInjector
+    this.chainDepth = chainDepth ?? 0
 
     // Propagate workflow-level model to agent nodes that don't declare their own
     if (workflow.model) {
@@ -247,7 +254,8 @@ export class WorkflowEngine {
     // If the workflow YAML has a `chain` config, emit chain triggers
     // for the server layer to handle (creating child executions).
     // This coexists with the pipeline chain (pipeline chain takes priority).
-    if (this.workflow.chain) {
+    // TC-037: abort if chain depth exceeds MAX_CHAIN_DEPTH (5 layers)
+    if (this.workflow.chain && this.chainDepth < MAX_CHAIN_DEPTH) {
       const chainConfig = this.workflow.chain
       if ((result.status === "completed" || result.status === "completed_with_failures") && chainConfig.on_success?.length) {
         const filteredItems = chainConfig.on_success.filter(item => {
@@ -270,6 +278,8 @@ export class WorkflowEngine {
           this.callbacks?.onChainTrigger?.(filteredItems, "on_failure")
         }
       }
+    } else if (this.workflow.chain && this.chainDepth >= MAX_CHAIN_DEPTH) {
+      console.error(`[engine] Chain depth ${this.chainDepth} >= max ${MAX_CHAIN_DEPTH}, aborting chain trigger for workflow "${this.workflow.name}" (execution ${this.executionId})`)
     }
 
     this.callbacks?.onComplete?.(result.status)

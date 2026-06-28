@@ -47,6 +47,7 @@ export class EngineFactory implements IEngineFactory {
       this.ctx.org ? `${this.ctx.workspacePath}/.octopus` : undefined,
       undefined, undefined, execution.id, inputValues,
       execution.name || undefined, crossExecResolver, promptInjector,
+      this.dao.computeChainDepth(execution.id),
     )
   }
 
