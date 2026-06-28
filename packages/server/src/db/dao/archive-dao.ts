@@ -41,6 +41,8 @@ export class ArchiveDAO extends BaseDAO {
     status?: string
     from?: string
     to?: string
+    sort?: string
+    order?: string
   }): PaginatedResult<ExecutionArchiveRow> {
     const conditions: string[] = []
     const params: unknown[] = []
@@ -51,8 +53,16 @@ export class ArchiveDAO extends BaseDAO {
     if (opts.from) { conditions.push("created_at >= ?"); params.push(opts.from) }
     if (opts.to) { conditions.push("created_at <= ?"); params.push(opts.to) }
 
+    const sortColumns: Record<string, string> = {
+      created_at: "created_at",
+      total_cost_usd: "total_cost_usd",
+      duration_ms: "duration_ms",
+    }
+    const sortCol = sortColumns[opts.sort ?? "created_at"] ?? "created_at"
+    const sortOrder = opts.order === "asc" ? "ASC" : "DESC"
+
     const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : ""
-    const dataSql = `SELECT * FROM execution_archive ${where} ORDER BY created_at DESC LIMIT ? OFFSET ?`
+    const dataSql = `SELECT * FROM execution_archive ${where} ORDER BY ${sortCol} ${sortOrder} LIMIT ? OFFSET ?`
     const countSql = `SELECT COUNT(*) as cnt FROM execution_archive ${where}`
 
     return this.paginate<ExecutionArchiveRow>(dataSql, countSql, params, opts.page, opts.pageSize)

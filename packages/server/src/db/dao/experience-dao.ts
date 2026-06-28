@@ -23,6 +23,10 @@ export class ExperienceDAO extends BaseDAO {
     return (this.stmt("SELECT * FROM experience_index WHERE id = ?").get(id) as ExperienceIndexRow) ?? null
   }
 
+  findByArchiveId(archiveId: string): ExperienceIndexRow[] {
+    return this.stmt("SELECT * FROM experience_index WHERE archive_id = ?").all(archiveId) as ExperienceIndexRow[]
+  }
+
   searchFTS(query: string, opts: { org?: string; project?: string; type?: string; status?: string; limit?: number }): ExperienceIndexRow[] {
     const conditions: string[] = ["experience_index_fts MATCH ?"]
     const params: unknown[] = [query]
