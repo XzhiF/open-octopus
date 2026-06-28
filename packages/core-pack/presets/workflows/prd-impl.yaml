@@ -2027,7 +2027,7 @@ nodes:
 
   - id: e2e-fix-loop
     type: loop
-    depends_on: [e2e-completeness-loop]
+    depends_on: [e2e-completeness-loop, real-e2e-ui]
     execute_when: '$inputs.run_e2e == "true"'
     max_iterations: 30
     break_when: '($vars.e2e_reality_issues == "0" && $vars.e2e_fix_all_passed == "true") || $iteration >= $inputs.e2e_fix_rounds'
