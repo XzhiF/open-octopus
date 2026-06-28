@@ -293,6 +293,8 @@ describe("Webhook Integration", () => {
       expect(sentBody.chat_id).toBe(12345)
       expect(sentBody.text).toContain("bug-hunter")
       expect(sentBody.text).toContain("全量")
+      // TC-040 E2E spec: assert message contains 🚀 (workflow triggered)
+      expect(sentBody.text).toContain("🚀")
     })
 
     it("TC-041: returns help text for unknown commands", async () => {

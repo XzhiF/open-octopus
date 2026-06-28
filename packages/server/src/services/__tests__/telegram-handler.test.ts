@@ -163,8 +163,14 @@ describe("TelegramCommandHandler", () => {
   // TC-049: register command with scheduleDAO
   it("TC-049: handle register command inserts schedule and confirms", async () => {
     const spy = vi.spyOn(scheduleDAO, "insertAgentSchedule")
+    const mockResolver = { listWorkspaceWorkflows: vi.fn().mockReturnValue(["bug-hunter.yaml"]) }
+    const resolverHandler = new TelegramCommandHandler({
+      archiveDAO, experienceDAO, executionDAO, scheduleDAO,
+      workflowResolver: mockResolver,
+      org: "test-org",
+    })
 
-    const result = await handler.handle({ type: "register", workflow: "bug-hunter", cronDesc: "每天2点" }, 12345)
+    const result = await resolverHandler.handle({ type: "register", workflow: "bug-hunter", cronDesc: "每天2点" }, 12345)
     expect(result).toContain("已注册")
     expect(result).toContain("bug-hunter")
     expect(spy).toHaveBeenCalledTimes(1)
@@ -186,12 +192,21 @@ describe("TelegramCommandHandler", () => {
     expect(result).toContain("请提供工作流名称")
   })
 
-  it("TC-050b: register with nonexistent workflow still inserts (no validation)", async () => {
-    // The handler does NOT validate workflow existence — it just inserts into schedules
+  it("TC-050b: register with nonexistent workflow returns error and lists available", async () => {
+    const mockResolver = { listWorkspaceWorkflows: vi.fn().mockReturnValue(["bug-hunter.yaml", "feat-dev.yaml"]) }
+    const resolverHandler = new TelegramCommandHandler({
+      archiveDAO, experienceDAO, executionDAO, scheduleDAO,
+      workflowResolver: mockResolver,
+      org: "test-org",
+    })
+
     const spy = vi.spyOn(scheduleDAO, "insertAgentSchedule")
-    const result = await handler.handle({ type: "register", workflow: "nonexistent-wf", cronDesc: "" }, 12345)
-    expect(result).toContain("已注册")
-    expect(spy).toHaveBeenCalledTimes(1)
+    const result = await resolverHandler.handle({ type: "register", workflow: "nonexistent-wf", cronDesc: "每天2点" }, 12345)
+    expect(result).toContain("❌ 未找到工作流")
+    expect(result).toContain("nonexistent-wf")
+    expect(result).toContain("bug-hunter")
+    expect(result).toContain("feat-dev")
+    expect(spy).not.toHaveBeenCalled()
   })
 
   // TC-051: stop command with executionId

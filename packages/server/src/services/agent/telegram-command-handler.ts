@@ -10,6 +10,10 @@ import type { EnginePool } from "../execution/EnginePool"
 import type { WorkflowService } from "../workflow"
 import { randomUUID } from "crypto"
 
+export interface WorkflowResolver {
+  listWorkspaceWorkflows(): string[]
+}
+
 export interface TelegramHandlerDeps {
   archiveDAO: ArchiveDAO
   experienceDAO: ExperienceDAO
@@ -17,6 +21,7 @@ export interface TelegramHandlerDeps {
   scheduleDAO?: ScheduleConfigDAO
   enginePool?: EnginePool
   workflowService?: WorkflowService
+  workflowResolver?: WorkflowResolver
   org?: string
 }
 
@@ -27,6 +32,7 @@ export class TelegramCommandHandler {
   private scheduleDAO?: ScheduleConfigDAO
   private enginePool?: EnginePool
   private workflowService?: WorkflowService
+  private workflowResolver?: WorkflowResolver
   private org: string
 
   constructor(deps: TelegramHandlerDeps)
@@ -44,6 +50,7 @@ export class TelegramCommandHandler {
       this.scheduleDAO = deps.scheduleDAO
       this.enginePool = deps.enginePool
       this.workflowService = deps.workflowService
+      this.workflowResolver = deps.workflowResolver
       this.org = deps.org ?? "xzf"
     } else {
       this.archiveDAO = depsOrArchive
@@ -146,6 +153,16 @@ export class TelegramCommandHandler {
 
   private async handleRegister(workflow: string, cronDesc: string): Promise<string> {
     if (!workflow) return "❌ 请提供工作流名称"
+
+    // TC-050: validate workflow existence before inserting schedule
+    if (this.workflowResolver) {
+      const available = this.workflowResolver.listWorkspaceWorkflows()
+      const found = available.some(ref => ref === workflow || ref === `${workflow}.yaml` || ref === `${workflow}.yml`)
+      if (!found) {
+        const list = available.map(r => r.replace(/\.ya?ml$/, '')).join(', ')
+        return `❌ 未找到工作流 "${workflow}"\n可用工作流: ${list || '(无)'}`
+      }
+    }
 
     try {
       if (!this.scheduleDAO) {
