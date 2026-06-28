@@ -1265,6 +1265,13 @@ nodes:
       ### Step 1: 探索项目
       确认项目的构建命令和测试命令（从配置文件读取）。
 
+      **了解 frontend/backend 做了什么**（⚠️ 它们已 commit，不要用 `git diff HEAD`）：
+      ```bash
+      git log --oneline -20                    # 最近 20 个 commits，找到 frontend/backend 的提交
+      git diff main --name-only 2>/dev/null    # 相对 main 分支的所有变更文件
+      git diff main --stat 2>/dev/null         # 变更统计（新增/修改行数）
+      ```
+
       ### Step 2: 验证
       1. 委派 **software-architect**: "对照 $vars.contract_file 验证前后端集成完整性。检查 API 签名、共享类型/模型、架构边界。"
       2. 使用项目自身的构建和测试命令验证
