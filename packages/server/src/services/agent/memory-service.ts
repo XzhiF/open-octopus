@@ -83,6 +83,18 @@ export class MemoryService {
   }
 
   /**
+   * Append content to a specific daily memory file (P5.4).
+   * If date is not provided, defaults to today.
+   */
+  appendToDaily(content: string, date?: string): void {
+    const d = date ?? new Date().toISOString().split("T")[0]
+    const dailyDir = path.join(getAgentDir(), "memory", "daily")
+    if (!fs.existsSync(dailyDir)) fs.mkdirSync(dailyDir, { recursive: true })
+    const filePath = path.join(dailyDir, `${d}.md`)
+    fs.appendFileSync(filePath, `\n${content}\n`, "utf-8")
+  }
+
+  /**
    * Search across memory layers.
    * - Session memory: FTS5 search via session_memory_fts with LIKE fallback (PRD C3)
    * - Long-term + daily: text search with snippet extraction

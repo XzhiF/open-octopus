@@ -1,8 +1,9 @@
 import Database from "better-sqlite3"
 import { randomUUID } from "crypto"
-import { TokenUsageDAO, ExecutionDAO, WorkspaceDAO } from "../db/dao"
+import { TokenUsageDAO, ExecutionDAO, WorkspaceDAO, ExperienceDAO, ArchiveDAO } from "../db/dao"
+import { getDb } from "../db/connection"
 
-interface Suggestion {
+export interface Suggestion {
   ruleName: string
   nodeId?: string
   severity: 'info' | 'warning' | 'critical'
@@ -166,5 +167,106 @@ export class SuggestionEngine {
 
   getSuggestions(dao: WorkspaceDAO, workspaceId: string, status?: string) {
     return dao.findSuggestionsSorted(workspaceId, status)
+  }
+
+  /**
+   * P5.2: Detect repeating bug patterns from experience index.
+   */
+  analyzeRepeatingPatterns(org: string, days: number = 7): Suggestion[] {
+    try {
+      const expDAO = new ExperienceDAO(getDb())
+      const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString()
+      const bugs = expDAO.searchFTS("bug", {
+        org,
+        type: "bug",
+        status: "active",
+        limit: 100,
+      }).filter(e => e.created_at >= cutoff)
+
+      // Group by project+package
+      const groups = new Map<string, typeof bugs>()
+      for (const bug of bugs) {
+        const key = `${bug.project ?? "unknown"}:${bug.package ?? "unknown"}`
+        if (!groups.has(key)) groups.set(key, [])
+        groups.get(key)!.push(bug)
+      }
+
+      const suggestions: Suggestion[] = []
+      for (const [key, items] of groups) {
+        if (items.length >= 3) {
+          const [project, pkg] = key.split(":")
+          suggestions.push({
+            ruleName: "RepeatingBugPattern",
+            severity: "warning",
+            title: `重复 BUG 模式: ${project}/${pkg}`,
+            detection: `过去 ${days} 天发现 ${items.length} 个相关 BUG`,
+            diagnosis: "同一模块反复出现类似问题，可能存在系统性缺陷",
+            prescription: "建议进行系统性代码审查，关注共同的根因",
+            impactEstimate: `${items.length} 个 BUG 待修复`,
+          })
+        }
+      }
+      return suggestions
+    } catch {
+      return []
+    }
+  }
+
+  /**
+   * P5.3: Detect workflows with high failure rates from execution archive.
+   */
+  analyzeFailurePatterns(org: string): Suggestion[] {
+    try {
+      const archiveDAO = new ArchiveDAO(getDb())
+      const stats = archiveDAO.aggregateByWorkflow(org, 30)
+      const suggestions: Suggestion[] = []
+
+      for (const wf of stats) {
+        const failRate = wf.failed_count / wf.execution_count
+        if (failRate > 0.3 && wf.execution_count >= 5) {
+          suggestions.push({
+            ruleName: "HighFailureRate",
+            severity: "critical",
+            title: `工作流 ${wf.workflow_name} 失败率过高`,
+            detection: `过去 30 天: ${wf.execution_count} 次执行, ${wf.failed_count} 次失败 (${(failRate * 100).toFixed(0)}%)`,
+            diagnosis: "该工作流频繁失败，可能存在配置或代码问题",
+            prescription: "检查失败节点的错误日志，修复根本原因",
+            impactEstimate: `预计可节省 $${(wf.total_cost_usd * failRate).toFixed(2)} / 30天`,
+          })
+        }
+      }
+      return suggestions
+    } catch {
+      return []
+    }
+  }
+
+  /**
+   * P5.3: Detect workflows with high average cost from execution archive.
+   */
+  analyzeCostOptimization(org: string): Suggestion[] {
+    try {
+      const archiveDAO = new ArchiveDAO(getDb())
+      const stats = archiveDAO.aggregateByWorkflow(org, 30)
+      const suggestions: Suggestion[] = []
+
+      for (const wf of stats) {
+        const avgCost = wf.total_cost_usd / wf.execution_count
+        if (avgCost > 1.0) {
+          suggestions.push({
+            ruleName: "HighCostWorkflow",
+            severity: "info",
+            title: `工作流 ${wf.workflow_name} 成本偏高`,
+            detection: `平均每次执行 $${avgCost.toFixed(2)}, 总计 $${wf.total_cost_usd.toFixed(2)}`,
+            diagnosis: "该工作流消耗较多 token，可能存在优化空间",
+            prescription: "考虑使用更经济的模型 (Haiku) 或优化 prompt 减少 token 消耗",
+            impactEstimate: `降至 $${(avgCost * 0.5).toFixed(2)} 可节省 $${(wf.total_cost_usd * 0.5).toFixed(2)} / 30天`,
+          })
+        }
+      }
+      return suggestions
+    } catch {
+      return []
+    }
   }
 }

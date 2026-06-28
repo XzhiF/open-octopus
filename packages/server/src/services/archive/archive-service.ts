@@ -8,6 +8,7 @@ import type { ExecutionArchiveRow, WorkspaceArchiveRow } from "../../db/types"
 import { LayerFilter, REFLECTION_THRESHOLD } from "./layer-filter"
 import { LLMReflection } from "./llm-reflection"
 import { KnowledgeFiles } from "./knowledge-files"
+import { getMemoryService } from "../agent/memory-service"
 
 export class ArchiveService {
   private layerFilter: LayerFilter
@@ -113,6 +114,13 @@ export class ArchiveService {
         })
       })
     }
+
+    // P5.4: Write daily memory entry (best-effort)
+    try {
+      const memService = getMemoryService()
+      const entry = `## ${exec.workflow_name} (${exec.status})\n- 耗时: ${exec.duration ?? 0}ms\n- 成本: $${totalCostUsd.toFixed(2)}\n`
+      memService.appendToDaily(entry)
+    } catch { /* memory write is best-effort */ }
 
     return archiveId
   }

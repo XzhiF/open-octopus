@@ -7,6 +7,8 @@ import { SystemPromptAssembler } from './system-prompt-assembler'
 import { getMemoryService } from './memory-service'
 import { getNotificationService } from './notification-service'
 import { getAgentDir } from './paths'
+import { ExperienceDAO } from '../../db/dao/experience-dao'
+import { getDb } from '../../db/connection'
 
 // ── Types ──────────────────────────────────────────────────────────
 
@@ -33,6 +35,7 @@ export interface OrchestratorResult {
   inputs: Record<string, string>
   execution_id?: string
   summary: string
+  experienceContext?: string
 }
 
 export interface GeneratedWorkflow {
@@ -387,6 +390,27 @@ ${nodes.map(n => `  - id: ${n.id}
     const intent = this.classifyIntent(message)
     emitEvent('intent_classified', intent)
 
+    // P5.1: Query relevant experiences
+    let experienceContext = ""
+    try {
+      const expDAO = new ExperienceDAO(getDb())
+      const keywords = this.extractKeywords(message)
+      if (keywords.length > 0) {
+        const experiences = expDAO.searchFTS(keywords.join(" "), {
+          org: this.org,
+          status: "active",
+          limit: 5,
+        })
+        if (experiences.length > 0) {
+          experienceContext = "\n\n## 相关经验\n" + experiences.map(e =>
+            `- [${e.type}] ${e.title}: ${e.content.substring(0, 200)}`
+          ).join("\n")
+        }
+      }
+    } catch (err) {
+      console.warn("[OrchestratorService] Experience query failed:", err)
+    }
+
     // Step 2: Select workflow (for single_task and scheduled_task)
     let workflow: WorkflowMatch | undefined
     let generatedWorkflow: GeneratedWorkflow | undefined
@@ -462,7 +486,29 @@ ${nodes.map(n => `  - id: ${n.id}
       generated_workflow: generatedWorkflow,
       inputs,
       summary,
+      experienceContext,
     }
+  }
+
+  /**
+   * Extract project names and task type keywords from a message (P5.1).
+   * Used for experience injection to find relevant past experiences.
+   */
+  private extractKeywords(message: string): string[] {
+    const keywords: string[] = []
+    // Extract potential project/package names (kebab-case or snake_case identifiers)
+    const projectPatterns = /\b([a-z][a-z0-9]+[-_][a-z0-9]+)\b/gi
+    let match: RegExpExecArray | null
+    while ((match = projectPatterns.exec(message)) !== null) {
+      keywords.push(match[1])
+    }
+    // Extract task type keywords
+    const taskKeywords = ['bug', 'fix', 'feature', 'refactor', 'test', 'deploy', 'config', 'error', 'performance', 'security']
+    const lowerMsg = message.toLowerCase()
+    for (const kw of taskKeywords) {
+      if (lowerMsg.includes(kw)) keywords.push(kw)
+    }
+    return [...new Set(keywords)]
   }
 
   /**
