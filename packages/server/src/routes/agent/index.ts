@@ -15,7 +15,7 @@ import { createSessionRoutes } from './sessions'
 import { createMemoryRoutes } from './memory'
 import { createSafetyRoutes } from './safety'
 import { getEvolutionService } from '../../services/agent/evolution-service'
-import { WorkspaceDAO, AgentSessionDAO, EvolutionDAO, SafetyDAO, ScheduleConfigDAO, ExecutionDAO } from '../../db/dao'
+import { WorkspaceDAO, AgentSessionDAO, EvolutionDAO, SafetyDAO, ScheduleConfigDAO, ExecutionDAO, ArchiveDAO, CloneDAO } from '../../db/dao'
 import { SchedulerService } from '../../services/scheduler/scheduler-service'
 import { SystemPromptAssembler } from '../../services/agent/system-prompt-assembler'
 import { getOrchestratorService } from '../../services/agent/orchestrator-service'
@@ -47,12 +47,15 @@ interface AgentRouteDeps {
   scheduleConfigDAO: ScheduleConfigDAO
   executionDAO: ExecutionDAO
   schedulerService: SchedulerService
+  archiveDAO?: ArchiveDAO
+  cloneDAO?: CloneDAO
 }
 
 export function createAgentRoutes(deps: AgentRouteDeps): Hono {
   const {
     workspaceDAO, sessionDAO, evolutionDAO, safetyDAO,
     scheduleConfigDAO, executionDAO, schedulerService,
+    archiveDAO, cloneDAO,
   } = deps
   const agent = new Hono()
 
@@ -1169,7 +1172,7 @@ export function createAgentRoutes(deps: AgentRouteDeps): Hono {
     try {
       const org = c.req.header('X-Octopus-Org') || (c.get('org') as string)
       if (!org) return c.json(createAgentError('ORG_NOT_FOUND', 'Organization not resolved'), 403)
-      const body = await c.req.json<{ name: string; workspace_id?: string; workspace_path?: string; workspace_config?: { projects?: string[] } }>()
+      const body = await c.req.json<{ name: string; workspace_id?: string; workspace_path?: string; workspace_config?: { projects?: string[] }; memory_scope?: string[] }>()
       if (!body.name) return c.json(createAgentError('INVALID_PARAM', 'name is required'), 400)
       if (body.name.length > 50) return c.json(createAgentError('INVALID_PARAM', 'name must be 50 characters or fewer'), 400)
       if (!/^[a-zA-Z0-9_-]+$/.test(body.name)) return c.json(createAgentError('INVALID_PARAM', 'name must contain only alphanumeric characters, hyphens, and underscores'), 400)
@@ -1222,7 +1225,7 @@ export function createAgentRoutes(deps: AgentRouteDeps): Hono {
           resolvedWorkspacePath = resolved
         }
       }
-      const meta = { name: body.name, org, workspace_id: body.workspace_id ?? null, workspace_path: resolvedWorkspacePath, status: 'idle', created_at: new Date().toISOString() }
+      const meta = { name: body.name, org, workspace_id: body.workspace_id ?? null, workspace_path: resolvedWorkspacePath, status: 'idle', memory_scope: body.memory_scope ?? [], created_at: new Date().toISOString() }
       fs.writeFileSync(path.join(cloneDir, 'meta.json'), JSON.stringify(meta, null, 2))
       return c.json({ ok: true, clone: meta }, 201)
     } catch (err: unknown) {
@@ -1531,6 +1534,50 @@ export function createAgentRoutes(deps: AgentRouteDeps): Hono {
       const cloneDir = path.join(clonesBaseDir(), name)
       if (!fs.existsSync(cloneDir)) return c.json(createAgentError('NOT_FOUND', `Clone "${name}" not found`), 404)
       return c.json({ items: [], total: 0 })
+    } catch (err: unknown) {
+      const error = err instanceof Error ? err : new Error(String(err))
+      return c.json(createAgentError('INTERNAL_ERROR', error.message), 500)
+    }
+  })
+
+  // ponytail: TC-046 — clone execution memory isolation via memory_scope
+  agent.get('/clones/:name/executions', (c) => {
+    try {
+      const org = c.req.header('X-Octopus-Org') || (c.get('org') as string)
+      if (!org) return c.json(createAgentError('ORG_NOT_FOUND', 'Organization not resolved'), 403)
+      const name = c.req.param('name')
+      if (!validateNameParam(name)) return c.json(createAgentError('INVALID_PARAM', 'Invalid name parameter'), 400)
+      const cloneDir = path.join(clonesBaseDir(), name)
+      if (!fs.existsSync(cloneDir)) return c.json(createAgentError('NOT_FOUND', `Clone "${name}" not found`), 404)
+
+      // Read clone meta to get memory_scope
+      const metaFile = path.join(cloneDir, 'meta.json')
+      let memoryScope: string[] = []
+      if (fs.existsSync(metaFile)) {
+        try {
+          const meta = JSON.parse(fs.readFileSync(metaFile, 'utf-8'))
+          memoryScope = Array.isArray(meta.memory_scope) ? meta.memory_scope : []
+        } catch { /* ignore parse errors */ }
+      }
+
+      // Parse execution:xxx entries from memory_scope
+      const workflowRefs = memoryScope
+        .filter((s: string) => s.startsWith('execution:'))
+        .map((s: string) => s.replace('execution:', ''))
+
+      if (!archiveDAO) return c.json({ data: [], total: 0, page: 1, pageSize: 20 })
+
+      const page = parseInt(c.req.query('page') ?? '1', 10) || 1
+      const pageSize = parseInt(c.req.query('pageSize') ?? '20', 10) || 20
+
+      const result = archiveDAO.listExecutionArchives({
+        org,
+        page,
+        pageSize,
+        workflowRefs: workflowRefs.length > 0 ? workflowRefs : undefined,
+      })
+
+      return c.json(result)
     } catch (err: unknown) {
       const error = err instanceof Error ? err : new Error(String(err))
       return c.json(createAgentError('INTERNAL_ERROR', error.message), 500)

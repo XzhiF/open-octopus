@@ -43,6 +43,7 @@ export class ArchiveDAO extends BaseDAO {
     to?: string
     sort?: string
     order?: string
+    workflowRefs?: string[]
   }): PaginatedResult<ExecutionArchiveRow> {
     const conditions: string[] = []
     const params: unknown[] = []
@@ -52,6 +53,12 @@ export class ArchiveDAO extends BaseDAO {
     if (opts.status) { conditions.push("status = ?"); params.push(opts.status) }
     if (opts.from) { conditions.push("created_at >= ?"); params.push(opts.from) }
     if (opts.to) { conditions.push("created_at <= ?"); params.push(opts.to) }
+    // ponytail: memory_scope filter — clones see only matching workflow_refs
+    if (opts.workflowRefs && opts.workflowRefs.length > 0) {
+      const placeholders = opts.workflowRefs.map(() => "?").join(", ")
+      conditions.push(`workflow_ref IN (${placeholders})`)
+      params.push(...opts.workflowRefs)
+    }
 
     const sortColumns: Record<string, string> = {
       created_at: "created_at",
