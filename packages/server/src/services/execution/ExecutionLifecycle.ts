@@ -7,6 +7,7 @@ import type { WorkflowService } from "../workflow"
 import type { BuiltInWorkflowService } from "../builtin-workflow"
 import type { ObservabilityService } from "../observability"
 import type { ErrorTracker } from "../error-tracker"
+import type { ArchiveService } from "../archive-service"
 import type { HookDef, NodeDef, WorkflowDef, WorkflowHooks, PipelineConfig, ExecutionLookup } from "@octopus/shared"
 import type { EngineCallbacks } from "@octopus/engine"
 import { WorkflowEngine, BashExecutor, AgentExecutor, AgentNodeRunner, FilesystemCheckpointStore } from "@octopus/engine"
@@ -36,6 +37,7 @@ export class ExecutionLifecycle {
     private workspaceId: string,
     private observability: ObservabilityService,
     private errorTracker?: ErrorTracker,
+    private archiveService?: ArchiveService,
   ) {
     this.enginePool = new EnginePool()
   }
@@ -1523,13 +1525,22 @@ export class ExecutionLifecycle {
         this.sse.emit(this.workspaceId, { event: "error", data: { executionId: id, nodeId, error } })
         this.syncStateJson()
       },
-      onComplete: () => {
+      onComplete: (finalStatus?: string) => {
         const ext = this._externalCallbacks.get(id) ?? this._externalCallbacks.get("__default__")
         if (ext?.onComplete) {
-          try { ext.onComplete() } catch (err) {
+          try { ext.onComplete(finalStatus ?? "") } catch (err) {
             console.error("[ExecutionLifecycle] External onComplete failed:", err)
           }
           this._externalCallbacks.delete(id)
+        }
+
+        // Archive execution (Layer 1+2, synchronous within onComplete)
+        if (this.archiveService && (finalStatus === "completed" || finalStatus === "failed")) {
+          try {
+            this.archiveService.archiveExecution(id)
+          } catch (err) {
+            console.warn(`[engine] Archive failed for execution ${id}:`, err)
+          }
         }
       },
       onBranchStart: (neId, iteration) => {

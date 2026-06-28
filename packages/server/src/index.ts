@@ -10,7 +10,7 @@ import { applySchema } from "./db/schema"
 import {
   WorkspaceDAO, ExecutionDAO, TokenUsageDAO, ScheduleConfigDAO,
   ScheduleRunDAO, ChatDAO, OrgDAO, AgentSessionDAO, EvolutionDAO,
-  CloneDAO, SafetyDAO,
+  CloneDAO, SafetyDAO, ArchiveDAO,
 } from "./db/dao"
 import { ObservabilityService } from "./services/observability"
 import { PrivacyFilter } from "./services/privacy-filter"
@@ -49,6 +49,8 @@ import { AgentExecutor } from "./services/scheduler/executors/agent-executor"
 import { DashboardService } from "./services/scheduler/dashboard-service"
 import { ExportService } from "./services/scheduler/export-service"
 import { WorkspaceService } from "./services/workspace"
+import { ArchiveService } from "./services/archive-service"
+import { ArchiveRecoveryService } from "./services/archive-recovery"
 import { ChatService } from "./services/chat"
 import { LeaderboardService } from "./services/leaderboard"
 import { getLogAnalysisService } from "./services/log-analysis"
@@ -83,6 +85,7 @@ interface AllDAOs {
   evolution: EvolutionDAO
   clone: CloneDAO
   safety: SafetyDAO
+  archive: ArchiveDAO
 }
 
 function createAllDAOs(db: ReturnType<typeof initDb>): AllDAOs {
@@ -98,6 +101,7 @@ function createAllDAOs(db: ReturnType<typeof initDb>): AllDAOs {
     evolution: new EvolutionDAO(db),
     clone: new CloneDAO(db),
     safety: new SafetyDAO(db),
+    archive: new ArchiveDAO(db),
   }
 }
 
@@ -138,12 +142,15 @@ let observability: ObservabilityService | undefined
 
 // ── Services (created once at startup with pre-built DAOs) ──────────
 let workspaceService: WorkspaceService | undefined
+let archiveService: ArchiveService | undefined
+let archiveRecoveryService: ArchiveRecoveryService | undefined
 let chatService: ChatService | undefined
 let leaderboardService: LeaderboardService | undefined
 
 if (!process.env.VITEST && daos) {
   // Create services with DAOs
-  workspaceService = new WorkspaceService(daos.workspace)
+  archiveService = new ArchiveService(daos.archive, daos.execution, daos.tokenUsage)
+  workspaceService = new WorkspaceService(daos.workspace, archiveService)
   chatService = new ChatService(daos.chat, sse)
   leaderboardService = new LeaderboardService(daos.tokenUsage)
 
@@ -152,7 +159,7 @@ if (!process.env.VITEST && daos) {
   initExecutionServiceRegistry(daos.execution as any, sse, observability, {
     executionDAO: daos.execution,
     workspaceDAO: daos.workspace,
-  })
+  }, archiveService)
   registerProvider('claude', () => new ClaudeSDKProvider())
 
   // Initialize agent service singletons
@@ -166,6 +173,10 @@ if (!process.env.VITEST && daos) {
   // Set DAOs for middleware and yjs-ws
   setAgentAuthOrgDAO(daos.org)
   setYjsWorkspaceDAO(daos.workspace)
+
+  // Start archive recovery service (scans for stuck/timed-out archives)
+  archiveRecoveryService = new ArchiveRecoveryService(daos.workspace)
+  archiveRecoveryService.start()
 }
 
 const app = new Hono()
@@ -232,6 +243,7 @@ const d = daos ?? {
   evolution: lazyDAO(EvolutionDAO),
   clone: lazyDAO(CloneDAO),
   safety: lazyDAO(SafetyDAO),
+  archive: lazyDAO(ArchiveDAO),
 }
 
 const wsSvc = workspaceService ?? new WorkspaceService(d.workspace)
@@ -511,6 +523,7 @@ if (shouldServe) {
       console.log(`\n[server] Received ${signal}, shutting down gracefully...`)
       logInfo(`Server shutting down`, { signal, pid: process.pid })
       observability?.shutdown()
+      archiveRecoveryService?.stop()
       const scheduler = (global as any).__octopus_scheduler as SchedulerEngine | undefined
       scheduler?.stop()
       if ((global as any).__octopus_cleanupRetention) {

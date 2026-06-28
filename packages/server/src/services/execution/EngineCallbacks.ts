@@ -101,6 +101,15 @@ export class EngineCallbacks implements IEngineCallbacks {
           type: "complete",
           status: finalStatus,
         })
+
+        // Archive execution (Layer 1+2, synchronous within onComplete)
+        if (this.ctx.archiveService && (finalStatus === "completed" || finalStatus === "failed")) {
+          try {
+            this.ctx.archiveService.archiveExecution(executionId)
+          } catch (err) {
+            console.warn(`[engine] Archive failed for execution ${executionId}:`, err)
+          }
+        }
       },
 
       onAgentEvent: (nodeId: string, event: any) => {
