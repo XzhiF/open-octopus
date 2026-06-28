@@ -129,6 +129,15 @@ export const PlanningSchema = z.object({
   disallowed_tools: z.array(z.string()).optional(),
 })
 
+export const ExperienceScopeSchema = z.object({
+  projects: z.array(z.string()),
+  packages: z.array(z.string()).optional(),
+  types: z.array(z.enum(["bug", "pattern", "cost", "failure"])),
+  limit: z.number().min(1).max(50).optional(),
+})
+
+export type ExperienceScope = z.infer<typeof ExperienceScopeSchema>
+
 export interface NodeDef {
   id: string
   type: "bash" | "python" | "agent" | "condition" | "approval" | "loop" | "swarm"
@@ -138,6 +147,9 @@ export interface NodeDef {
   depends_on?: string[]
   execute_when?: string
   outputs?: Record<string, string>
+
+  // experience injection (available on all node types)
+  experience_scope?: ExperienceScope
 
   // bash
   bash?: string
@@ -220,6 +232,8 @@ export const NodeSchema: z.ZodType<NodeDef> = z.lazy(() =>
     depends_on: z.array(z.string()).optional(),
     execute_when: z.string().optional(),
     outputs: z.record(z.string(), z.string()).optional(),
+
+    experience_scope: ExperienceScopeSchema.optional(),
 
     bash: z.string().optional(),
     python: z.string().optional(),

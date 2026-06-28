@@ -53,6 +53,7 @@ import { ArchiveService } from "./services/archive-service"
 import { ArchiveRecoveryService } from "./services/archive-recovery"
 import { ExperienceLifecycleService } from "./services/experience-lifecycle"
 import { createWebhookRoutes } from "./routes/webhook"
+import { createArchiveRoutes } from "./routes/archive"
 import { ChatService } from "./services/chat"
 import { LeaderboardService } from "./services/leaderboard"
 import { getLogAnalysisService } from "./services/log-analysis"
@@ -306,6 +307,9 @@ app.route("/api/agent", createAgentRoutes({
   schedulerService: schedSvc,
 }))
 app.route("/api/workflows/built-in", builtInWorkflowRoutes)
+
+// Archive routes (execution history + experience lessons)
+app.route("/api/archive", createArchiveRoutes({ archiveDAO: d.archive, experienceDAO: d.experience }))
 
 // Webhook routes (GitHub PR merge -> experience lifecycle)
 if (experienceLifecycleService) {

@@ -22,3 +22,7 @@ export * from "./pipeline"
 // Notify modules
 export { registerBuiltinProviders, ProviderRegistry, HermesProvider, WebhookProvider, NotifyDispatcher } from "./notify/index"
 export type { DispatchContext } from "./notify/index"
+
+// Prompt injection
+export { PromptInjector, injectExperience } from "./prompt-injector"
+export type { ExperienceEntry, ExperienceQueryFn, ExperienceIncrementFn } from "./prompt-injector"
