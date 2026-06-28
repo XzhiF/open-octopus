@@ -92,7 +92,7 @@ export function createAgentRoutes(deps: AgentRouteDeps): Hono {
 
   // ── Specific literal routes MUST be before parameterized routes (Hono priority) ──
 
-  // M3: Cron job registration + execution
+  // M3: Cron job registration + execution (P4.8: enhanced with workflow support)
   agent.post('/schedules/register', async (c) => {
     try {
       const org = c.req.header('X-Octopus-Org') || (c.get('org') as string)
@@ -100,14 +100,96 @@ export function createAgentRoutes(deps: AgentRouteDeps): Hono {
 
       const body = await c.req.json<{
         name?: string; cron?: string; prompt?: string; description?: string
+        timezone?: string
+        job_type?: string
+        workflow_ref?: string
+        input_values?: Record<string, string>
         memory_strategy?: { read_recent_days?: number; read_last_report?: boolean; write_report_path?: string }
-        notify_strategy?: { on_success?: boolean; on_failure?: boolean; channels?: string[] }
+        notify_strategy?: { on_success?: boolean; on_failure?: boolean; channels?: string[]; channel?: string }
       }>().catch(() => ({}))
 
-      if (!body.name || !body.cron || !body.prompt) {
-        return c.json(createAgentError('INVALID_PARAM', 'name, cron, and prompt are required'), 400)
+      if (!body.name || !body.cron) {
+        return c.json(createAgentError('INVALID_PARAM', 'name and cron are required'), 400)
       }
 
+      const jobType = body.job_type ?? (body.prompt ? 'agent' : 'workflow')
+      const timezone = body.timezone ?? 'Asia/Shanghai'
+
+      // Validate mutual exclusivity: prompt vs workflow_ref
+      if (body.prompt && body.workflow_ref) {
+        return c.json(createAgentError('INVALID_PARAM', 'prompt and workflow_ref are mutually exclusive'), 400)
+      }
+
+      // Validate based on job_type
+      if (jobType === 'workflow') {
+        if (!body.workflow_ref || body.workflow_ref.trim() === '') {
+          return c.json(createAgentError('INVALID_PARAM', 'workflow_ref is required when job_type is "workflow"'), 400)
+        }
+      } else if (jobType === 'agent') {
+        if (!body.prompt) {
+          return c.json(createAgentError('INVALID_PARAM', 'prompt is required when job_type is "agent"'), 400)
+        }
+      }
+
+      const scheduleId = crypto.randomUUID()
+      const now = new Date().toISOString()
+
+      if (jobType === 'workflow') {
+        // P4.8: Workflow-type schedule — use insertSchedule for full field support
+        try {
+          scheduleConfigDAO.insertSchedule({
+            id: scheduleId,
+            org,
+            name: body.name,
+            cron_expression: body.cron,
+            timezone,
+            workflow_ref: body.workflow_ref!,
+            input_values: body.input_values ? JSON.stringify(body.input_values) : '{}',
+            job_type: 'workflow',
+            config: JSON.stringify({
+              description: body.description ?? '',
+              memory_strategy: body.memory_strategy ?? null,
+              notify_strategy: body.notify_strategy ?? null,
+            }),
+            description: body.description ?? null,
+            enabled: 1,
+            timeout_seconds: 3600,
+            notify_on_failure: body.notify_strategy?.on_failure ? 1 : 0,
+            notify_channel: body.notify_strategy?.channel ?? null,
+            notify_target: null,
+            container_execution_id: '',
+            next_trigger_at: null,
+            created_at: now,
+            updated_at: now,
+            parallel_policy: 'skip',
+            version: 1,
+            consecutive_failures: 0,
+            max_retain: 10,
+          })
+        } catch (daoErr) {
+          // Fallback: try insertAgentSchedule with simplified fields
+          try {
+            scheduleConfigDAO.insertAgentSchedule(
+              scheduleId, org, body.name, body.cron, 'workflow',
+              JSON.stringify({ workflow_ref: body.workflow_ref, input_values: body.input_values ?? {} }),
+              now,
+            )
+          } catch {
+            console.warn('[schedules/register] DAO insert failed, returning ID only:', daoErr)
+          }
+        }
+
+        return c.json({
+          ok: true,
+          schedule_id: scheduleId,
+          job_type: 'workflow',
+          workflow_ref: body.workflow_ref,
+          cron: body.cron,
+          timezone,
+        }, 201)
+      }
+
+      // Agent-type schedule (existing behavior)
       const adapter = getSchedulerAdapter(org)
       const jobConfig = adapter.designJob(body.description ?? body.prompt)
       jobConfig.name = body.name
@@ -121,14 +203,11 @@ export function createAgentRoutes(deps: AgentRouteDeps): Hono {
         }
       }
 
-      
-      const scheduleId = crypto.randomUUID()
-      const now = new Date().toISOString()
       try {
         scheduleConfigDAO.insertAgentSchedule(scheduleId, org, body.name, body.cron, 'agent', JSON.stringify(jobConfig), now)
       } catch { /* fallback */ }
 
-      return c.json({ ok: true, schedule_id: scheduleId, job_config: jobConfig, cron: body.cron }, 201)
+      return c.json({ ok: true, schedule_id: scheduleId, job_config: jobConfig, cron: body.cron, job_type: 'agent' }, 201)
     } catch (err: unknown) {
       const error = err instanceof Error ? err : new Error(String(err))
       const code = (error as { code?: string }).code ?? 'INTERNAL_ERROR'

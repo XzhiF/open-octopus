@@ -6,6 +6,7 @@ import type { ArchiveDAO } from "../db/dao/archive-dao"
 import type { ExecutionDAO } from "../db/dao/execution-dao"
 import type { TokenUsageDAO } from "../db/dao/token-usage-dao"
 import type { ExperienceDAO } from "../db/dao/experience-dao"
+import type { MemoryService } from "./agent/memory-service"
 
 /**
  * ArchiveService — Layer 1+2 synchronous extraction.
@@ -17,12 +18,17 @@ import type { ExperienceDAO } from "../db/dao/experience-dao"
  * On error, log warning and return null (never throw to caller).
  */
 export class ArchiveService {
+  private memoryService?: MemoryService
+
   constructor(
     private archiveDAO: ArchiveDAO,
     private executionDAO: ExecutionDAO,
     private tokenUsageDAO: TokenUsageDAO,
     private experienceDAO?: ExperienceDAO,
-  ) {}
+    memoryService?: MemoryService,
+  ) {
+    this.memoryService = memoryService
+  }
 
   /**
    * Archive a single execution. Returns the archive row id, or null on failure.
@@ -119,6 +125,21 @@ export class ArchiveService {
         chain_position: chainPosition,
         workspace_archive_id: wsArchiveId ?? null,
       })
+
+      // ── P4.5: Daily memory write ─────────────────────────────
+      if (archiveId && this.memoryService) {
+        try {
+          const summary = this.formatMemoryEntry(
+            { workflow_name: execution.workflow_name, status: execution.status, duration: execution.duration },
+            totalCostUsd,
+            nodeSummary,
+          )
+          this.memoryService.appendDaily(execution.org ?? "default", summary)
+        } catch (err) {
+          console.warn("[archive] daily memory write failed:", err)
+        }
+      }
+
       return archiveId
     } catch (err) {
       console.warn(`[archive] archiveExecution failed for ${executionId}:`, err)
@@ -399,6 +420,25 @@ export class ArchiveService {
         console.warn(`[archive] updateKnowledgeFiles failed for ${project}/${type}:`, err)
       }
     }
+  }
+
+  /**
+   * P4.5: Format a memory entry for daily log after archiving.
+   */
+  private formatMemoryEntry(
+    execution: { workflow_name: string; status: string; duration: number | null },
+    costUsd: number,
+    nodeSummary: Array<{ node_id: string; status: string }>,
+  ): string {
+    const duration = execution.duration ? `${(execution.duration / 1000).toFixed(0)}s` : "unknown"
+    const failedCount = nodeSummary.filter(n => n.status === "failed").length
+    return `## ${execution.workflow_name}
+- 状态: ${execution.status}
+- 耗时: ${duration}
+- 成本: $${costUsd.toFixed(4)}
+- 节点: ${nodeSummary.length} 个 (${failedCount} 失败)
+- 时间: ${new Date().toISOString()}
+`
   }
 }
 
