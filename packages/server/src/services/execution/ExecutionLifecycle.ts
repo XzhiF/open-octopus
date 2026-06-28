@@ -273,6 +273,21 @@ export class ExecutionLifecycle {
 
       this.syncStateJson()
       this.sse.emit(this.workspaceId, { event: "complete", data: { executionId: id, finalStatus: result.status } })
+
+      // P1.6: Trigger archive on completion (fire-and-forget, non-blocking)
+      try {
+        const { getArchiveService } = require("../archive/archive-registry")
+        const archiveService = getArchiveService()
+        if (archiveService) {
+          setImmediate(() => {
+            try {
+              archiveService.archiveExecution(id)
+            } catch (archiveErr) {
+              console.warn(`[ExecutionLifecycle] Archive failed for ${id}:`, archiveErr)
+            }
+          })
+        }
+      } catch { /* archive registry not available */ }
     } catch (err: any) {
       this.errorTracker?.capture('execution', err.message ?? 'execution error', {
         execution_id: id, node_id: this.findFailedNode(id) ?? undefined, workflow_name: exec.workflow_name,

@@ -1,6 +1,6 @@
 -- =============================================================================
 -- Octopus Unified Schema (schema.sql)
--- Complete database schema: 28 tables + 3 FTS5 virtual tables + 4 triggers
+-- Complete database schema: 30 tables + 3 FTS5 virtual tables + 4 triggers
 -- This file is idempotent — safe to execute on an empty database.
 -- =============================================================================
 
@@ -22,7 +22,10 @@ CREATE TABLE IF NOT EXISTS workspaces (
   updated_at TEXT NOT NULL,
   source TEXT NOT NULL DEFAULT 'user',
   source_schedule_id TEXT,
-  archived INTEGER DEFAULT 0
+  archived INTEGER DEFAULT 0,
+  archive_status TEXT DEFAULT 'none',
+  archive_started_at TEXT,
+  archive_error TEXT
 );
 
 -- 2. Executions
@@ -467,6 +470,54 @@ CREATE TABLE IF NOT EXISTS scheduled_job_executions (
 );
 
 -- =============================================================================
+-- Archive Tables (Execution Memory Layer — P1)
+-- =============================================================================
+
+-- 29. Execution Archive — permanent record of completed executions
+CREATE TABLE IF NOT EXISTS execution_archive (
+  id TEXT PRIMARY KEY,
+  org TEXT NOT NULL,
+  workflow_ref TEXT NOT NULL,
+  workflow_name TEXT NOT NULL,
+  status TEXT NOT NULL,
+  started_at TEXT NOT NULL,
+  completed_at TEXT,
+  duration_ms INTEGER,
+  node_summary TEXT DEFAULT '[]',
+  failed_nodes TEXT,
+  error_message TEXT,
+  total_input_tokens INTEGER DEFAULT 0,
+  total_output_tokens INTEGER DEFAULT 0,
+  total_cost_usd REAL DEFAULT 0.0,
+  model_breakdown TEXT,
+  vars_snapshot TEXT DEFAULT '{}',
+  lessons_learned TEXT,
+  workspace_archive_id TEXT,
+  workspace_id TEXT,
+  chain_position INTEGER,
+  parent_execution_id TEXT,
+  schedule_id TEXT,
+  clone_name TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- 30. Workspace Archive — snapshot of workspace at deletion time
+CREATE TABLE IF NOT EXISTS workspace_archive (
+  id TEXT PRIMARY KEY,
+  org TEXT NOT NULL,
+  workspace_name TEXT NOT NULL,
+  workspace_path TEXT,
+  created_at TEXT NOT NULL,
+  archived_at TEXT NOT NULL DEFAULT (datetime('now')),
+  execution_count INTEGER DEFAULT 0,
+  total_cost_usd REAL DEFAULT 0.0,
+  total_duration_ms INTEGER DEFAULT 0,
+  execution_chains TEXT DEFAULT '[]',
+  workflow_manifest TEXT DEFAULT '[]',
+  summary TEXT
+);
+
+-- =============================================================================
 -- FTS5 Virtual Tables (from agent DB)
 -- =============================================================================
 
@@ -567,6 +618,19 @@ CREATE INDEX IF NOT EXISTS idx_sje_org ON scheduled_job_executions(org);
 CREATE INDEX IF NOT EXISTS idx_sje_job ON scheduled_job_executions(job_name);
 CREATE INDEX IF NOT EXISTS idx_sje_started ON scheduled_job_executions(started_at DESC);
 CREATE INDEX IF NOT EXISTS idx_sje_status ON scheduled_job_executions(status);
+
+-- =============================================================================
+-- Indexes — Archive Tables
+-- =============================================================================
+
+CREATE INDEX IF NOT EXISTS idx_archive_exec_org ON execution_archive(org);
+CREATE INDEX IF NOT EXISTS idx_archive_exec_workflow ON execution_archive(workflow_ref);
+CREATE INDEX IF NOT EXISTS idx_archive_exec_status ON execution_archive(status);
+CREATE INDEX IF NOT EXISTS idx_archive_exec_created ON execution_archive(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_archive_exec_workspace ON execution_archive(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_archive_ws_org ON workspace_archive(org);
+CREATE INDEX IF NOT EXISTS idx_archive_ws_archived ON workspace_archive(archived_at DESC);
+CREATE INDEX IF NOT EXISTS idx_workspaces_archive_status ON workspaces(archive_status);
 
 -- =============================================================================
 -- Triggers

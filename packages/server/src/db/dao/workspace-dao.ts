@@ -45,7 +45,36 @@ export class WorkspaceDAO extends BaseDAO {
   }
 
   deleteById(id: string): Database.RunResult {
-    return this.stmt("DELETE FROM workspaces WHERE id = ?").run(id)
+    // ponytail: P0 soft delete — P1.5 WorkspaceService.delete() will add two-stage archive+ cascade
+    return this.stmt("UPDATE workspaces SET archived = 1 WHERE id = ?").run(id)
+  }
+
+  // ── Archive status methods ──────────────────────────────────────
+
+  updateArchiveStatus(id: string, status: string, error?: string): Database.RunResult {
+    const now = new Date().toISOString()
+    if (error) {
+      return this.stmt(
+        "UPDATE workspaces SET archive_status = ?, archive_error = ?, updated_at = ? WHERE id = ?"
+      ).run(status, error, now, id)
+    }
+    const startedAt = status === 'archiving' ? now : null
+    return this.stmt(
+      "UPDATE workspaces SET archive_status = ?, archive_started_at = ?, archive_error = NULL, updated_at = ? WHERE id = ?"
+    ).run(status, startedAt, now, id)
+  }
+
+  findArchivedButFilesExist(): WorkspaceRow[] {
+    return this.stmt(
+      "SELECT * FROM workspaces WHERE archive_status = 'archived' AND archived = 1"
+    ).all() as WorkspaceRow[]
+  }
+
+  resetStuckArchiving(minutes: number): Database.RunResult {
+    const cutoff = new Date(Date.now() - minutes * 60 * 1000).toISOString()
+    return this.stmt(
+      "UPDATE workspaces SET archive_status = 'none', archive_started_at = NULL WHERE archive_status = 'archiving' AND archive_started_at < ?"
+    ).run(cutoff)
   }
 
   // ── optimization_suggestions ────────────────────────────────────

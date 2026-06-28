@@ -10,7 +10,7 @@ import { applySchema } from "./db/schema"
 import {
   WorkspaceDAO, ExecutionDAO, TokenUsageDAO, ScheduleConfigDAO,
   ScheduleRunDAO, ChatDAO, OrgDAO, AgentSessionDAO, EvolutionDAO,
-  CloneDAO, SafetyDAO,
+  CloneDAO, SafetyDAO, ArchiveDAO,
 } from "./db/dao"
 import { ObservabilityService } from "./services/observability"
 import { PrivacyFilter } from "./services/privacy-filter"
@@ -70,7 +70,7 @@ if (!process.env.VITEST) {
   installGlobalErrorHandlers()
 }
 
-// ── DAO Factory: Create all 11 DAOs from DB connection ─────────────────────
+// ── DAO Factory: Create all 12 DAOs from DB connection ─────────────────────
 interface AllDAOs {
   workspace: WorkspaceDAO
   execution: ExecutionDAO
@@ -83,6 +83,7 @@ interface AllDAOs {
   evolution: EvolutionDAO
   clone: CloneDAO
   safety: SafetyDAO
+  archive: ArchiveDAO
 }
 
 function createAllDAOs(db: ReturnType<typeof initDb>): AllDAOs {
@@ -98,6 +99,7 @@ function createAllDAOs(db: ReturnType<typeof initDb>): AllDAOs {
     evolution: new EvolutionDAO(db),
     clone: new CloneDAO(db),
     safety: new SafetyDAO(db),
+    archive: new ArchiveDAO(db),
   }
 }
 
@@ -146,6 +148,28 @@ if (!process.env.VITEST && daos) {
   workspaceService = new WorkspaceService(daos.workspace)
   chatService = new ChatService(daos.chat, sse)
   leaderboardService = new LeaderboardService(daos.tokenUsage)
+
+  // P1: Register ArchiveService singleton
+  try {
+    const { ArchiveService } = require('./services/archive/archive-service')
+    const { setArchiveService } = require('./services/archive/archive-registry')
+    const archiveService = new ArchiveService(daos.archive, daos.execution, daos.tokenUsage, daos.workspace)
+    setArchiveService(archiveService)
+
+    // P1.7: Schedule recovery jobs (every 6 hours)
+    const SIX_HOURS = 6 * 60 * 60 * 1000
+    setInterval(() => {
+      try {
+        archiveService.retryCleanup()
+        archiveService.recoverStuckArchiving()
+      } catch (err) {
+        console.warn('[server] Archive recovery failed:', err)
+      }
+    }, SIX_HOURS).unref()
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err)
+    console.warn(`[server] ArchiveService init failed: ${msg}`)
+  }
 
   observability = new ObservabilityService(daos.execution, daos.tokenUsage, new PrivacyFilter())
   setExecutionDependencies(sse, observability, daos.execution)
@@ -232,6 +256,7 @@ const d = daos ?? {
   evolution: lazyDAO(EvolutionDAO),
   clone: lazyDAO(CloneDAO),
   safety: lazyDAO(SafetyDAO),
+  archive: lazyDAO(ArchiveDAO),
 }
 
 const wsSvc = workspaceService ?? new WorkspaceService(d.workspace)

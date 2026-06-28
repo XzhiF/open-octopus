@@ -10,7 +10,7 @@ const _dirname: string =
     ? __dirname
     : path.dirname(fileURLToPath(import.meta.url))
 
-export const SCHEMA_VERSION = 24
+export const SCHEMA_VERSION = 25
 
 /**
  * Apply the complete unified schema to the given database.
@@ -22,11 +22,30 @@ export function applySchema(db: Database.Database): void {
   const currentVersion = (db.pragma('user_version', { simple: true }) as number) || 0
 
   // Run migrations for existing databases
-  if (currentVersion > 0 && currentVersion < 24) {
-    // P0: Add archived column to workspaces (soft delete)
+  if (currentVersion > 0 && currentVersion < 25) {
+    // P0 (v24): Add archived column to workspaces (soft delete)
     if (currentVersion < 24) {
       try {
         db.exec('ALTER TABLE workspaces ADD COLUMN archived INTEGER DEFAULT 0')
+      } catch (e: any) {
+        if (!e.message?.includes('duplicate column')) throw e
+      }
+    }
+
+    // P1 (v25): Add archive status columns to workspaces
+    if (currentVersion < 25) {
+      try {
+        db.exec("ALTER TABLE workspaces ADD COLUMN archive_status TEXT DEFAULT 'none'")
+      } catch (e: any) {
+        if (!e.message?.includes('duplicate column')) throw e
+      }
+      try {
+        db.exec('ALTER TABLE workspaces ADD COLUMN archive_started_at TEXT')
+      } catch (e: any) {
+        if (!e.message?.includes('duplicate column')) throw e
+      }
+      try {
+        db.exec('ALTER TABLE workspaces ADD COLUMN archive_error TEXT')
       } catch (e: any) {
         if (!e.message?.includes('duplicate column')) throw e
       }

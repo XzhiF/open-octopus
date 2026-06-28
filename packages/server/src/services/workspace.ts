@@ -925,6 +925,20 @@ export class WorkspaceService {
     const ws = this.getById(id)
     if (!ws) return false
 
+    // P1.5: Two-stage delete — archive first, then cascade
+    const { getArchiveService } = require("./archive/archive-registry")
+    const archiveService = getArchiveService()
+
+    if (archiveService) {
+      try {
+        archiveService.archiveWorkspace(id)
+      } catch (err) {
+        // Archive failed — don't delete, preserve data
+        console.error(`[workspace] Archive failed for ${id}, skipping delete:`, err)
+        return false
+      }
+    }
+
     this.dao.cascadeDeleteByWorkspace(id)
 
     // ── 文件系统异步删除（不阻塞事件循环） ──
