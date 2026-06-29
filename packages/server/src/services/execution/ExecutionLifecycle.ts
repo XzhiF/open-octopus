@@ -26,6 +26,14 @@ export class ExecutionLifecycle {
   private enginePool: EnginePool
   private _externalCallbacks = new Map<string, Partial<EngineCallbacks>>()
   private knowledgeService?: KnowledgeService
+  // Throttle retireStaleRules — only run at most once per RETIRE_INTERVAL_MS
+  // across all executions. retireStaleRules scans the DB and rewrites
+  // knowledge files for every stale rule, so calling it on every on_complete
+  // is wasteful under high execution throughput.
+  private lastRetireAt = 0
+  private static readonly RETIRE_INTERVAL_MS = Number(
+    process.env.OCTOPUS_KNOWLEDGE_RETIRE_INTERVAL_MS ?? 60 * 60 * 1000, // 1 hour
+  )
 
   constructor(
     private dao: ExecutionDAO,
@@ -290,8 +298,21 @@ export class ExecutionLifecycle {
           if (tracked > 0) {
             console.log(`[ExecutionLifecycle] Tracked effectiveness for ${tracked} rules in execution ${id}`)
           }
-          // Periodically retire stale rules (best-effort, errors are logged but not thrown)
-          this.knowledgeService.retireStaleRules()
+          // Throttled retire: run at most once per RETIRE_INTERVAL_MS.
+          // Effectiveness tracking runs on every execution (cheap DB write);
+          // retireStaleRules does DB scan + file rewrites and should not.
+          const now = Date.now()
+          if (now - this.lastRetireAt >= ExecutionLifecycle.RETIRE_INTERVAL_MS) {
+            this.lastRetireAt = now
+            try {
+              const retired = this.knowledgeService.retireStaleRules()
+              if (retired > 0) {
+                console.log(`[ExecutionLifecycle] Retired ${retired} stale rules`)
+              }
+            } catch (retireErr) {
+              console.warn(`[ExecutionLifecycle] retireStaleRules failed:`, retireErr)
+            }
+          }
         } catch (err) {
           console.warn(`[ExecutionLifecycle] Knowledge effectiveness tracking failed:`, err)
         }
