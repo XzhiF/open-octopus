@@ -1,7 +1,7 @@
 import fs from "fs"
 import path from "path"
 import os from "os"
-import { parseWorkflow, isOctopusWorkflow } from "@octopus/shared"
+import { parseWorkflow, isOctopusWorkflow, isSafeRef } from "@octopus/shared"
 import type { WorkflowInfo, WorkflowDetail } from "../types/workflow-api"
 
 export class WorkflowService {
@@ -11,6 +11,16 @@ export class WorkflowService {
 
   private workflowsDir(workspacePath: string): string {
     return path.join(this.resolve(workspacePath), "workflows")
+  }
+
+  /**
+   * Validate ref is a safe workflow filename (no path traversal).
+   * ponytail: SYN-P0-19 — ref must be a simple .yaml/.yml filename
+   */
+  private validateRef(ref: string): void {
+    if (!isSafeRef(ref)) {
+      throw new Error(`Invalid workflow ref: "${ref}" — must be a .yaml/.yml filename with no path separators`)
+    }
   }
 
   list(workspacePath: string): WorkflowInfo[] {
@@ -38,6 +48,7 @@ export class WorkflowService {
   }
 
   get(workspacePath: string, ref: string): WorkflowDetail | undefined {
+    this.validateRef(ref)
     const filePath = path.join(this.workflowsDir(workspacePath), ref)
     if (!fs.existsSync(filePath)) return undefined
     const content = fs.readFileSync(filePath, "utf-8")
@@ -46,6 +57,7 @@ export class WorkflowService {
   }
 
   create(workspacePath: string, ref: string, content: string): WorkflowDetail {
+    this.validateRef(ref)
     const dir = this.workflowsDir(workspacePath)
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
     fs.writeFileSync(path.join(dir, ref), content, "utf-8")
@@ -53,6 +65,7 @@ export class WorkflowService {
   }
 
   update(workspacePath: string, ref: string, content: string): WorkflowDetail | undefined {
+    this.validateRef(ref)
     const filePath = path.join(this.workflowsDir(workspacePath), ref)
     if (!fs.existsSync(filePath)) return undefined
     fs.writeFileSync(filePath, content, "utf-8")
@@ -60,6 +73,7 @@ export class WorkflowService {
   }
 
   delete(workspacePath: string, ref: string): boolean {
+    this.validateRef(ref)
     const filePath = path.join(this.workflowsDir(workspacePath), ref)
     if (!fs.existsSync(filePath)) return false
     fs.unlinkSync(filePath)

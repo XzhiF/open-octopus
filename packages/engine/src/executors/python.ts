@@ -1,5 +1,5 @@
 import { spawn } from "child_process"
-import { VarPool, substituteVars, evaluateExpression } from "@octopus/shared"
+import { VarPool, substituteVars, evaluateExpression, shellEscape } from "@octopus/shared"
 import type { NodeDef } from "@octopus/shared"
 import type { NodeExecutor, NodeExecutionResult } from "./types"
 import { applyVarsUpdate } from "./parse-vars-update"
@@ -24,7 +24,7 @@ export class PythonExecutor implements NodeExecutor {
     }
 
     const start = Date.now()
-    let script = substituteVars(this.node.python!, this.pool)
+    let script = this.pythonSafeSubstitute(this.node.python!)
     script = this.resolveInputs(script)
     const timeout = this.node.timeout ?? 60
 
@@ -79,9 +79,36 @@ export class PythonExecutor implements NodeExecutor {
     let result = script
     for (const [key, expr] of Object.entries(this.node.inputs)) {
       const value = substituteVars(expr, this.pool)
-      result = result.replaceAll(`__${key}__`, value)
+      // Wrap substituted values in Python repr() for safe string interpolation
+      result = result.replaceAll(`__${key}__`, JSON.stringify(value))
     }
     return result
+  }
+
+  /**
+   * Python-safe variable substitution: wraps values as JSON strings only when
+   * they contain characters that could inject Python code.
+   * ponytail: raw substituteVars allows arbitrary Python code injection
+   */
+  private pythonSafeSubstitute(text: string): string {
+    return text.replace(/\$([a-zA-Z0-9_.:-]+)/g, (_match, ref: string) => {
+      let val: any
+      if (ref.startsWith("vars.")) {
+        val = this.pool.get(ref.slice(5))
+      } else if (ref.startsWith("inputs.")) {
+        val = this.pool.get(ref.slice(7))
+      } else if (ref.startsWith("hook.")) {
+        val = this.pool.get(ref)
+      }
+      if (val !== undefined) {
+        const s = String(val)
+        // ponytail: only JSON-stringify values with dangerous characters
+        // Safe values (alphanumeric, etc.) pass through raw for backward compat
+        if (/^[a-zA-Z0-9_./:=@,+^-]*$/.test(s)) return s
+        return JSON.stringify(s)
+      }
+      return `$${ref}`
+    })
   }
 
   private applyVarsUpdate(stdout: string, outputs: Record<string, any>) {

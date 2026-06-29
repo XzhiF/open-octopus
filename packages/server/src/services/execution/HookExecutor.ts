@@ -11,7 +11,7 @@ import type { IHookExecutor } from "./interfaces"
 import type { ServiceContext } from "./types"
 import { HookResolver } from "../hook-resolver"
 import { PipelineConfigLoader } from "../pipeline-config"
-import { VarPool, substituteVars } from "@octopus/shared"
+import { VarPool, substituteVars, shellEscape, shellSafeValue } from "@octopus/shared"
 import type { HookDef } from "@octopus/shared"
 import { ExecutionDAO } from "../../db/dao"
 
@@ -126,8 +126,9 @@ export class HookExecutor implements IHookExecutor {
     pool.update(hookVars)
 
     // Substitute variables in the script ($vars.xxx, $hook.xxx, etc.)
+    // ponytail: shell-escape substituted values to prevent command injection (SYN-P0-10)
     let script = hook.bash || ""
-    script = substituteVars(script, pool)
+    script = this.shellSafeSubstitute(script, pool)
 
     // Also set HOOK_* environment variables for backward compatibility
     const hookEnv: Record<string, string> = {
@@ -155,5 +156,26 @@ export class HookExecutor implements IHookExecutor {
     } catch (error: any) {
       throw new Error(`Bash hook failed: ${error.message}`)
     }
+  }
+
+  /**
+   * Shell-safe variable substitution: wraps each substituted value in single quotes
+   * after shell-escaping, preventing command injection via $vars.xxx in hook scripts.
+   */
+  private shellSafeSubstitute(text: string, pool: VarPool): string {
+    return text.replace(/\$([a-zA-Z0-9_.:-]+)/g, (_match, ref: string) => {
+      let val: any
+      if (ref.startsWith("vars.")) {
+        val = pool.get(ref.slice(5))
+      } else if (ref.startsWith("hook.")) {
+        val = pool.get(ref)
+      } else if (ref.startsWith("inputs.")) {
+        val = pool.get(ref.slice(7))
+      }
+      if (val !== undefined) {
+        return shellSafeValue(String(val))
+      }
+      return `$${ref}`
+    })
   }
 }

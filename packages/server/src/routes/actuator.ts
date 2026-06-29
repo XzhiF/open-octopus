@@ -13,6 +13,13 @@ async function localhostOnly(c: Context, next: () => Promise<void>): Promise<Res
   await next()
 }
 
+// ponytail: auth for sensitive diagnostic endpoints (SYN-P0-13)
+// In test mode, bypass — app.request() has no raw socket
+async function sensitiveEndpoint(c: Context, next: () => Promise<void>): Promise<Response | void> {
+  if (process.env.VITEST) return next()
+  return localhostOnly(c, next)
+}
+
 export function createActuatorRoutes(actuatorService: ActuatorService): Hono {
   const router = new Hono()
 
@@ -28,13 +35,13 @@ export function createActuatorRoutes(actuatorService: ActuatorService): Hono {
     return c.json(health, statusCode)
   })
 
-  // GET /executions/active — active execution list
-  router.get('/executions/active', (c) => {
+  // GET /executions/active — active execution list (SYN-P0-13: localhost-only)
+  router.get('/executions/active', sensitiveEndpoint, (c) => {
     return c.json(actuatorService.getActiveExecutions())
   })
 
-  // GET /executions/:id/progress — single execution detail
-  router.get('/executions/:id/progress', (c) => {
+  // GET /executions/:id/progress — single execution detail (SYN-P0-13: localhost-only)
+  router.get('/executions/:id/progress', sensitiveEndpoint, (c) => {
     const id = c.req.param('id')
     const result = actuatorService.getExecutionProgress(id)
     if (!result) {
@@ -48,23 +55,23 @@ export function createActuatorRoutes(actuatorService: ActuatorService): Hono {
     return c.json(actuatorService.getConfig())
   })
 
-  // GET /errors — error tracking with execution context
-  router.get('/errors', (c) => {
+  // GET /errors — error tracking with execution context (SYN-P0-13: localhost-only)
+  router.get('/errors', sensitiveEndpoint, (c) => {
     return c.json(actuatorService.getErrors())
   })
 
-  // GET /system — system resources (CPU, memory, event loop)
-  router.get('/system', (c) => {
+  // GET /system — system resources (CPU, memory, event loop) (SYN-P0-13: localhost-only)
+  router.get('/system', sensitiveEndpoint, (c) => {
     return c.json(actuatorService.getSystem())
   })
 
-  // GET /recovery — recovery status (stale executions, agent recovery)
-  router.get('/recovery', (c) => {
+  // GET /recovery — recovery status (stale executions, agent recovery) (SYN-P0-13: localhost-only)
+  router.get('/recovery', sensitiveEndpoint, (c) => {
     return c.json(actuatorService.getRecovery())
   })
 
-  // GET /scheduler — scheduler health (jobs, circuit breaker, next fires)
-  router.get('/scheduler', (c) => {
+  // GET /scheduler — scheduler health (jobs, circuit breaker, next fires) (SYN-P0-13: localhost-only)
+  router.get('/scheduler', sensitiveEndpoint, (c) => {
     return c.json(actuatorService.getScheduler())
   })
 

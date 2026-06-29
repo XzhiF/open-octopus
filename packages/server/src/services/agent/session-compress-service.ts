@@ -97,12 +97,12 @@ export class SessionCompressService {
 
     // Mark early messages as compressed
     const compressIds = toCompress.map(m => m.id)
-    dao.markMessagesCompressed(compressIds)
+    this.dao.markMessagesCompressed(compressIds)
 
     // Insert summary message
     const summaryId = crypto.randomUUID()
     const now = new Date().toISOString()
-    dao.insertSummaryMessage(summaryId, sessionId, summary, now)
+    this.dao.insertSummaryMessage(summaryId, sessionId, summary, now)
 
     // Calculate token estimate for the compressed context
     const retainedChars = toRetain.reduce((sum, m) => sum + m.content.length, 0) + summary.length

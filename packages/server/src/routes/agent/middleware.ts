@@ -107,6 +107,22 @@ export async function agentAuthMiddleware(c: Context, next: Next): Promise<void>
     return
   }
 
+  const token = authHeader.slice(7) // Remove 'Bearer ' prefix
+
+  // Validate token against configured secret
+  const expectedToken = process.env.OCTOPUS_AGENT_TOKEN
+  if (!expectedToken) {
+    // No token configured — fail closed, don't silently allow
+    c.res = c.json(createAgentError('UNAUTHORIZED', 'Agent authentication not configured'), 503)
+    return
+  }
+
+  // Constant-time comparison to prevent timing attacks
+  if (token.length !== expectedToken.length || token !== expectedToken) {
+    c.res = c.json(createAgentError('UNAUTHORIZED', 'Invalid bearer token'), 401)
+    return
+  }
+
   // Validate org existence when X-Octopus-Org header is provided
   const orgHeader = c.req.header('X-Octopus-Org')
   if (orgHeader && orgHeader.trim() !== '') {
