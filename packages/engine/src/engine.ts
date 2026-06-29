@@ -19,6 +19,7 @@ import { mkdirSync, writeFileSync, appendFileSync, existsSync, readFileSync, unl
 import { tmpdir } from "os"
 import type { CrossExecResolver } from "@octopus/shared"
 import { PromptInjector } from "./prompt-injector"
+import type { KnowledgeInjector } from "./knowledge-injector"
 import { RetryPolicyResolver } from "./pipeline/retry-resolver"
 import { FailureClassifier } from "./pipeline/failure-classifier"
 import { NotifyDispatcher } from "./notify/dispatcher"
@@ -75,6 +76,10 @@ export class WorkflowEngine {
   private crossExecResolver?: CrossExecResolver
   // Pipeline-level prompt injector for global and targeted prompt injection
   private promptInjector?: PromptInjector
+  // Knowledge injector factory (creates per-pool KnowledgeInjector from VarPool)
+  private knowledgeInjectorFactory?: (pool: VarPool) => KnowledgeInjector
+  // Precompute hook: runs before node execution to populate VarPool with knowledge data
+  private precomputeHook?: (pool: VarPool, workflowName: string, inputs: Record<string, string>) => Promise<void>
   // Pipeline integration (set via setPipelineConfig)
   private pipelineConfig?: PipelineConfig
   private retryResolver?: RetryPolicyResolver
@@ -101,6 +106,8 @@ export class WorkflowEngine {
     executionName?: string,
     crossExecResolver?: CrossExecResolver,
     promptInjector?: PromptInjector,
+    precomputeHook?: (pool: VarPool, workflowName: string, inputs: Record<string, string>) => Promise<void>,
+    knowledgeInjectorFactory?: (pool: VarPool) => KnowledgeInjector,
   ) {
     this.pool = new VarPool(workflow.variables ?? {})
 
@@ -147,6 +154,8 @@ export class WorkflowEngine {
     this.maxConcurrent = workflow.max_concurrent
     this.crossExecResolver = crossExecResolver
     this.promptInjector = promptInjector
+    this.precomputeHook = precomputeHook
+    this.knowledgeInjectorFactory = knowledgeInjectorFactory
 
     // Propagate workflow-level model to agent nodes that don't declare their own
     if (workflow.model) {
@@ -192,6 +201,15 @@ export class WorkflowEngine {
 
   async run(): Promise<ExecutionResult> {
     const start = Date.now()
+
+    // Precompute hook: populate VarPool with knowledge data before node execution
+    if (this.precomputeHook) {
+      try {
+        await this.precomputeHook(this.pool, this.workflow.name, this.inputs as Record<string, string>)
+      } catch (err) {
+        console.warn("[engine] precomputeHook failed:", err)
+      }
+    }
 
     const result = await this.executeNodes(this.workflow.nodes, this.signal)
 
@@ -1335,12 +1353,15 @@ export class WorkflowEngine {
         })
 
         const previousSessionId = this.resolvePreviousSessionId(node)
+        const knowledgeInjector = this.knowledgeInjectorFactory
+          ? this.knowledgeInjectorFactory(p)
+          : undefined
 
         return new AgentExecutor(
           node, p, runner, previousSessionId,
           this.workflow.auto_answers, s,
           { nodeResults: this.nodeResults },
-          this.promptInjector, this.workflow.name,
+          this.promptInjector, knowledgeInjector, this.workflow.name,
           this.crossExecResolver, this.executionId,
         )
       }
@@ -1582,6 +1603,7 @@ export class WorkflowEngine {
       this.signal,
       undefined, // engineContext — hooks don't need previous node results
       this.promptInjector,
+      undefined, // knowledgeInjector — hooks don't inject knowledge
       this.workflow.name,
     )
 

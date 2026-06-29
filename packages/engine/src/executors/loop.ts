@@ -251,7 +251,7 @@ export class LoopExecutor implements NodeExecutor {
         return new AgentExecutor(
           node, p, runner, previousSessionId,
           this.globalAutoAnswers, this.signal,
-          undefined, undefined, undefined, undefined, undefined, loopCtx,
+          undefined, undefined, undefined, undefined, undefined, undefined, loopCtx,
         )
       }
       case "loop":
