@@ -2,6 +2,7 @@ import type { Context, Next } from 'hono'
 import type { AgentErrorResponse } from '@octopus/shared'
 import { NotImplementedError } from '../../services/agent/agent-service'
 import { OrgDAO } from '../../db/dao'
+import crypto from 'crypto'
 
 // ── DAO reference for auth middleware ────────────────────────────
 let _orgDAO: OrgDAO | null = null
@@ -117,8 +118,10 @@ export async function agentAuthMiddleware(c: Context, next: Next): Promise<void>
     return
   }
 
-  // Constant-time comparison to prevent timing attacks
-  if (token.length !== expectedToken.length || token !== expectedToken) {
+  // ponytail: constant-time comparison to prevent timing attacks (SYN-P0-01)
+  const tokenBuf = Buffer.from(token, 'utf-8')
+  const expectedBuf = Buffer.from(expectedToken, 'utf-8')
+  if (tokenBuf.length !== expectedBuf.length || !crypto.timingSafeEqual(tokenBuf, expectedBuf)) {
     c.res = c.json(createAgentError('UNAUTHORIZED', 'Invalid bearer token'), 401)
     return
   }

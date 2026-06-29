@@ -11,8 +11,12 @@ export function eventRoutes(sse: SSEService): Hono {
     if (!authHeader?.startsWith("Bearer ")) {
       return c.json({ error: { code: "UNAUTHORIZED", message: "Authorization required for SSE events" } }, 401)
     }
+    // ponytail: fail-closed when env var unset (SYN-P0-12 fix)
     const expectedToken = process.env.OCTOPUS_AGENT_TOKEN
-    if (expectedToken && authHeader.slice(7) !== expectedToken) {
+    if (!expectedToken) {
+      return c.json({ error: { code: "UNAUTHORIZED", message: "SSE authentication not configured" } }, 503)
+    }
+    if (authHeader.slice(7) !== expectedToken) {
       return c.json({ error: { code: "UNAUTHORIZED", message: "Invalid bearer token" } }, 401)
     }
     await next()
