@@ -26,7 +26,7 @@ export async function precomputeRelevantRules(
       relevantIds.push(rule.rule_id)
     }
 
-    pool.set("__knowledge_rules_cache", JSON.stringify(ruleCache))
+    pool.set("__knowledge_rule_cache", JSON.stringify(ruleCache))
     pool.set("__relevant_rule_ids", JSON.stringify(relevantIds))
   } catch (err) {
     console.warn("[knowledge] precomputeRelevantRules failed:", err)

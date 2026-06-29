@@ -10,6 +10,8 @@ import type { ParsedRule } from "@octopus/shared"
  * org → ~/.octopus/{org}/knowledge/
  */
 export function getKnowledgeDir(org?: string): string {
+  // ponytail: env override for testing
+  if (process.env.OCTOPUS_KNOWLEDGE_DIR) return process.env.OCTOPUS_KNOWLEDGE_DIR
   const base = path.join(os.homedir(), ".octopus")
   const dir = org ? path.join(base, org, "knowledge") : path.join(base, "knowledge")
   fs.mkdirSync(dir, { recursive: true })

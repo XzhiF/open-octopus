@@ -176,6 +176,11 @@ export function createKnowledgeRoutes(
 
     if (!filePath) return c.json({ error: { code: "INVALID_PARAM", message: "filePath required" } }, 400)
 
+    // Security: prevent path traversal
+    if (filePath.includes("..") || filePath.includes("/") || filePath.includes("\\")) {
+      return c.json({ error: { code: "INVALID_PARAM", message: "Invalid file path" } }, 400)
+    }
+
     try {
       const { compactKnowledgeFile } = await import("../services/knowledge/maintenance")
       const result = await compactKnowledgeFile(reqOrg ?? org, filePath, pendingReviewDAO)
@@ -188,10 +193,10 @@ export function createKnowledgeRoutes(
   })
 
   // POST /api/knowledge/rule/:id/restore — restore retired rule
-  routes.post("/rule/:id/restore", (c) => {
+  routes.post("/rule/:id/restore", async (c) => {
     const ruleId = c.req.param("id")
     try {
-      const { restoreRule } = require("../services/knowledge/effectiveness")
+      const { restoreRule } = await import("../services/knowledge/effectiveness")
       const result = restoreRule(ruleId, knowledgeRuleDAO)
       return c.json(result)
     } catch (err) {

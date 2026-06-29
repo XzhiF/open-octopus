@@ -17,6 +17,7 @@ export class KnowledgeInjector {
   /**
    * Get knowledge prompts to inject for a given workflow/node.
    * Returns string[] to be prepended to the agent prompt.
+   * Also writes __injected_rule_ids to VarPool for effectiveness tracking.
    */
   getInjectedPrompts(workflowName: string, nodeId: string): string[] {
     const prompts: string[] = []
@@ -31,17 +32,23 @@ export class KnowledgeInjector {
     const ruleCache = this.getRuleCache()
     const relevantIds = this.getRelevantIds()
 
+    let injectedIds: string[] = []
+
     if (ruleCache.size > 0 && relevantIds.length > 0) {
       // Filter by knowledge_scope if node has one
       const filteredIds = this.filterByScope(relevantIds, workflowName, nodeId)
 
       // Get rule texts, apply budget
-      const ruleTexts = this.getRuleTexts(ruleCache, filteredIds)
+      const { texts, usedIds } = this.getRuleTextsWithIds(ruleCache, filteredIds)
 
-      if (ruleTexts.length > 0) {
-        prompts.push(`## Knowledge Rules\n${ruleTexts.join("\n")}`)
+      if (texts.length > 0) {
+        prompts.push(`## Knowledge Rules\n${texts.join("\n")}`)
+        injectedIds = usedIds
       }
     }
+
+    // Write injected rule IDs to VarPool for effectiveness tracking
+    this.pool.set("__injected_rule_ids", JSON.stringify(injectedIds))
 
     return prompts
   }
@@ -87,12 +94,14 @@ export class KnowledgeInjector {
   /**
    * Get rule texts with budget control.
    * Max 10 rules, max ~4000 chars total (~1000 tokens).
+   * Returns both the formatted texts and the IDs that were actually used.
    */
-  private getRuleTexts(cache: Map<string, string>, ids: string[]): string[] {
+  private getRuleTextsWithIds(cache: Map<string, string>, ids: string[]): { texts: string[]; usedIds: string[] } {
     const MAX_RULES = 10
     const MAX_CHARS = 4000
 
     const texts: string[] = []
+    const usedIds: string[] = []
     let totalChars = 0
 
     for (const id of ids.slice(0, MAX_RULES)) {
@@ -101,9 +110,10 @@ export class KnowledgeInjector {
       const entry = `- ${text}`
       if (totalChars + entry.length > MAX_CHARS) break
       texts.push(entry)
+      usedIds.push(id)
       totalChars += entry.length
     }
 
-    return texts
+    return { texts, usedIds }
   }
 }

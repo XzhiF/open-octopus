@@ -43,12 +43,13 @@ export class KnowledgeEffectivenessDAO extends BaseDAO {
   }
 
   listStale(minInjected: number, maxConfidence: number, daysSinceLastInjected: number): KnowledgeEffectivenessRow[] {
+    // ponytail: when daysSinceLastInjected=0, skip date check (for testing)
     return this.stmt(
       `SELECT * FROM knowledge_effectiveness
        WHERE injected_count >= ?
          AND confidence < ?
-         AND last_injected < datetime('now', ? || ' days')`
-    ).all(minInjected, maxConfidence, -daysSinceLastInjected) as KnowledgeEffectivenessRow[]
+         AND (? <= 0 OR last_injected < datetime('now', '-' || ? || ' days'))`
+    ).all(minInjected, maxConfidence, daysSinceLastInjected, daysSinceLastInjected) as KnowledgeEffectivenessRow[]
   }
 
   incrementInjected(ruleId: string): void {

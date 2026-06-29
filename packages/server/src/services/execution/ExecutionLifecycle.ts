@@ -7,6 +7,7 @@ import type { WorkflowService } from "../workflow"
 import type { BuiltInWorkflowService } from "../builtin-workflow"
 import type { ObservabilityService } from "../observability"
 import type { ErrorTracker } from "../error-tracker"
+import type { KnowledgeService } from "../knowledge"
 import type { HookDef, NodeDef, WorkflowDef, WorkflowHooks, PipelineConfig, ExecutionLookup } from "@octopus/shared"
 import type { EngineCallbacks } from "@octopus/engine"
 import { WorkflowEngine, BashExecutor, AgentExecutor, AgentNodeRunner, FilesystemCheckpointStore } from "@octopus/engine"
@@ -24,6 +25,7 @@ import { randomUUID } from "crypto"
 export class ExecutionLifecycle {
   private enginePool: EnginePool
   private _externalCallbacks = new Map<string, Partial<EngineCallbacks>>()
+  private knowledgeService?: KnowledgeService
 
   constructor(
     private dao: ExecutionDAO,
@@ -38,6 +40,13 @@ export class ExecutionLifecycle {
     private errorTracker?: ErrorTracker,
   ) {
     this.enginePool = new EnginePool()
+  }
+
+  /**
+   * Set the knowledge service for injection and effectiveness tracking.
+   */
+  setKnowledgeService(service: KnowledgeService): void {
+    this.knowledgeService = service
   }
 
   getEnginePool(): EnginePool { return this.enginePool }
@@ -135,6 +144,10 @@ export class ExecutionLifecycle {
       id,
       resolvedInputValues,
       exec.name,
+      undefined, // crossExecResolver
+      undefined, // promptInjector
+      this.knowledgeService?.createPrecomputeHook(),
+      this.knowledgeService?.createInjectorFactory(),
     )
 
     this.enginePool.create(id, engine, abortController)
@@ -257,6 +270,32 @@ export class ExecutionLifecycle {
         await this.executeWorkflowHooks("on_success", { duration_ms: result.durationMs }, wf, id)
       }
       await this.executeWorkflowHooks("on_complete", { final_status: result.status, duration_ms: result.durationMs }, wf, id)
+
+      // Track knowledge effectiveness after execution completes
+      if (this.knowledgeService) {
+        try {
+          const execResult = {
+            id,
+            status: result.status,
+            nodes: Object.fromEntries(
+              Object.entries(result.nodeResults).map(([nodeId, r]) => [nodeId, {
+                status: r.status,
+                exitCode: r.exitCode ?? null,
+                lastOutput: r.lastOutput ?? null,
+              }])
+            ),
+            poolSnapshot: result.poolSnapshot,
+          }
+          const tracked = this.knowledgeService.trackExecutionEffectiveness(execResult)
+          if (tracked > 0) {
+            console.log(`[ExecutionLifecycle] Tracked effectiveness for ${tracked} rules in execution ${id}`)
+          }
+          // Periodically retire stale rules (best-effort, errors are logged but not thrown)
+          this.knowledgeService.retireStaleRules()
+        } catch (err) {
+          console.warn(`[ExecutionLifecycle] Knowledge effectiveness tracking failed:`, err)
+        }
+      }
 
       try {
         const summary = generateSummary(wf.parsed.name, result.status, result.nodeResults, result.durationMs)

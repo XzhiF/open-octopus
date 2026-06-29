@@ -3,6 +3,13 @@ import fs from "fs"
 import path from "path"
 import type { KnowledgeRuleDAO, PendingReviewDAO } from "../db/dao"
 
+// UUID format validation regex
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+function isValidUUID(id: string): boolean {
+  return UUID_REGEX.test(id)
+}
+
 export function createArchiveRoutes(
   knowledgeRuleDAO: KnowledgeRuleDAO,
   pendingReviewDAO: PendingReviewDAO,
@@ -14,6 +21,12 @@ export function createArchiveRoutes(
   // GET /api/archive/:id/summary — read execution result from state file
   routes.get("/:id/summary", (c) => {
     const id = c.req.param("id")
+
+    // Security: validate UUID format to prevent path traversal
+    if (!isValidUUID(id)) {
+      return c.json({ error: { code: "INVALID_PARAM", message: "Invalid execution ID format" } }, 400)
+    }
+
     const statePath = path.join(stateDir, `${id}.json`)
 
     if (!fs.existsSync(statePath)) {
@@ -59,6 +72,12 @@ export function createArchiveRoutes(
   // POST /api/archive/:id/propose — trigger rule extraction + skill proposal
   routes.post("/:id/propose", async (c) => {
     const id = c.req.param("id")
+
+    // Security: validate UUID format to prevent path traversal
+    if (!isValidUUID(id)) {
+      return c.json({ error: { code: "INVALID_PARAM", message: "Invalid execution ID format" } }, 400)
+    }
+
     const body = await c.req.json()
     const { org: reqOrg, skipSkillProposal } = body
 
