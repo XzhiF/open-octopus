@@ -56,6 +56,28 @@
   --scheduler-accent-hover: oklch(55% 0.23 310);
   --scheduler-accent-light: oklch(97% 0.03 310);
 
+  /* ── Execution Memory semantic colors ── */
+  --archive-none: oklch(0.70 0 0);
+  --archive-archiving: oklch(0.75 0.15 250);
+  --archive-archived: oklch(0.72 0.17 155);
+  --archive-failed: oklch(0.60 0.22 25);
+
+  --memory-cost-line: oklch(0.62 0.21 250);
+  --memory-cost-area: oklch(0.85 0.08 250);
+  --memory-cost-up: oklch(0.60 0.22 25);
+  --memory-cost-down: oklch(0.72 0.17 155);
+
+  --memory-exp-bug: oklch(0.60 0.22 25);
+  --memory-exp-pattern: oklch(0.62 0.21 250);
+  --memory-exp-cost: oklch(0.75 0.16 75);
+  --memory-exp-failure: oklch(0.58 0.18 30);
+
+  --memory-rank-1: oklch(0.75 0.16 75);
+  --memory-rank-2: oklch(0.75 0.04 0);
+  --memory-rank-3: oklch(0.65 0.10 50);
+  --memory-rank-4: oklch(0.60 0 0);
+  --memory-rank-5: oklch(0.60 0 0);
+
   /* ── Animation tokens ── */
   --duration-fast: 150ms;
   --duration-normal: 250ms;
@@ -119,6 +141,28 @@
   --scheduler-accent: oklch(68% 0.20 310);
   --scheduler-accent-hover: oklch(72% 0.18 310);
   --scheduler-accent-light: oklch(25% 0.04 310);
+
+  /* ── Execution Memory semantic colors (dark) ── */
+  --archive-none: oklch(0.55 0 0);
+  --archive-archiving: oklch(0.68 0.13 250);
+  --archive-archived: oklch(0.65 0.15 155);
+  --archive-failed: oklch(0.58 0.20 25);
+
+  --memory-cost-line: oklch(0.68 0.19 250);
+  --memory-cost-area: oklch(0.30 0.06 250);
+  --memory-cost-up: oklch(0.58 0.20 25);
+  --memory-cost-down: oklch(0.65 0.15 155);
+
+  --memory-exp-bug: oklch(0.58 0.20 25);
+  --memory-exp-pattern: oklch(0.68 0.19 250);
+  --memory-exp-cost: oklch(0.75 0.14 75);
+  --memory-exp-failure: oklch(0.55 0.16 30);
+
+  --memory-rank-1: oklch(0.75 0.14 75);
+  --memory-rank-2: oklch(0.70 0.03 0);
+  --memory-rank-3: oklch(0.60 0.08 50);
+  --memory-rank-4: oklch(0.55 0 0);
+  --memory-rank-5: oklch(0.55 0 0);
 }
 
 @theme inline {
@@ -175,6 +219,25 @@
   --color-scheduler-accent: var(--scheduler-accent);
   --color-scheduler-accent-hover: var(--scheduler-accent-hover);
   --color-scheduler-accent-light: var(--scheduler-accent-light);
+
+  /* ── Execution Memory colors ── */
+  --color-archive-none: var(--archive-none);
+  --color-archive-archiving: var(--archive-archiving);
+  --color-archive-archived: var(--archive-archived);
+  --color-archive-failed: var(--archive-failed);
+  --color-memory-cost-line: var(--memory-cost-line);
+  --color-memory-cost-area: var(--memory-cost-area);
+  --color-memory-cost-up: var(--memory-cost-up);
+  --color-memory-cost-down: var(--memory-cost-down);
+  --color-memory-exp-bug: var(--memory-exp-bug);
+  --color-memory-exp-pattern: var(--memory-exp-pattern);
+  --color-memory-exp-cost: var(--memory-exp-cost);
+  --color-memory-exp-failure: var(--memory-exp-failure);
+  --color-memory-rank-1: var(--memory-rank-1);
+  --color-memory-rank-2: var(--memory-rank-2);
+  --color-memory-rank-3: var(--memory-rank-3);
+  --color-memory-rank-4: var(--memory-rank-4);
+  --color-memory-rank-5: var(--memory-rank-5);
 }
 
 @layer base {

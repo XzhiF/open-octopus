@@ -1,6 +1,7 @@
 "use client"
 
-import { useState, useEffect, useCallback } from "react"
+import { useState, useEffect, useCallback, Suspense } from "react"
+import { useSearchParams, useRouter } from "next/navigation"
 import { StatsCards } from "@/components/dashboard/stats-cards"
 import { HeroMetrics } from "@/components/dashboard/hero-metrics"
 import { QueuePanel } from "@/components/dashboard/queue-panel"
@@ -8,6 +9,9 @@ import { RecentExecutions } from "@/components/dashboard/recent-executions"
 import { LeaderboardSection } from "@/components/dashboard/leaderboard-section"
 import { WorkflowHealthCard } from "@/components/dashboard/workflow-health-card"
 import { CostTrendChart } from "@/components/dashboard/cost-trend-chart"
+import { MemoryTab } from "@/components/dashboard/memory-tab"
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
+import { Database } from "lucide-react"
 import { fetchDashboardStats, fetchRunningQueue, fetchRecentExecutions, fetchWorkflowHealth } from "@/lib/api-client"
 import type { Execution } from "@/lib/types"
 
@@ -116,6 +120,63 @@ export default function DashboardPage() {
   const successRate = totalExecutions > 0 ? completedCount / totalExecutions : 0
 
   return (
+    <Suspense fallback={
+      <div className="container mx-auto flex items-center justify-center px-4 py-12 lg:px-6">
+        <p className="text-muted-foreground">加载中...</p>
+      </div>
+    }>
+      <DashboardTabs
+        dashboardStats={dashboardStats}
+        stats={stats}
+        totalExecutions={totalExecutions}
+        successRate={successRate}
+        workflows={workflows}
+        runningExecutions={runningExecutions}
+        pendingExecutions={pendingExecutions}
+        recentExecutions={recentExecutions}
+        error={error}
+        fetchData={fetchData}
+      />
+    </Suspense>
+  )
+}
+
+function DashboardTabs({
+  dashboardStats,
+  stats,
+  totalExecutions,
+  successRate,
+  workflows,
+  runningExecutions,
+  pendingExecutions,
+  recentExecutions,
+  error,
+  fetchData,
+}: {
+  dashboardStats: { activeWorkspaces: number; totalWorkspaces: number; runningExecutions: number; pendingExecutions: number; completedToday: number; failedToday: number }
+  stats: { total_workspaces: number; total_workflows: number; total_executions: number; completed_executions: number; failed_executions: number; running_executions: number; pending_executions: number; avg_duration_ms: number | null; total_cost: number }
+  totalExecutions: number
+  successRate: number
+  workflows: WorkflowHealth[]
+  runningExecutions: Execution[]
+  pendingExecutions: Execution[]
+  recentExecutions: Execution[]
+  error: string | null
+  fetchData: () => void
+}) {
+  const searchParams = useSearchParams()
+  const router = useRouter()
+  const activeTab = searchParams.get("tab") === "memory" ? "memory" : "overview"
+
+  function handleTabChange(value: string) {
+    if (value === "memory") {
+      router.replace("?tab=memory", { scroll: false })
+    } else {
+      router.replace("/", { scroll: false })
+    }
+  }
+
+  return (
     <div className="container mx-auto space-y-6 px-4 py-6 lg:px-6">
       {/* Page Header */}
       <div>
@@ -125,48 +186,73 @@ export default function DashboardPage() {
         </p>
       </div>
 
-      {/* Stats Cards - Overview */}
-      <StatsCards stats={dashboardStats} />
+      <Tabs value={activeTab} onValueChange={handleTabChange}>
+        <TabsList>
+          <TabsTrigger value="overview">概览</TabsTrigger>
+          <TabsTrigger value="memory">
+            <Database className="h-3.5 w-3.5" />
+            执行记忆
+          </TabsTrigger>
+        </TabsList>
 
-      {/* Hero Metrics - Key Performance Indicators */}
-      <HeroMetrics
-        totalExecutions={totalExecutions}
-        successRate={successRate}
-        totalCost={stats.total_cost ?? 0}
-        avgDurationMs={stats.avg_duration_ms ?? 0}
-      />
+        <TabsContent value="overview">
+          {error ? (
+            <div className="flex flex-col items-center justify-center rounded-lg border border-dashed py-12 text-center">
+              <p className="text-destructive">{error}</p>
+              <button className="mt-4 text-sm text-primary underline" onClick={fetchData}>重试</button>
+            </div>
+          ) : (
+            <div className="space-y-6 mt-6">
+              {/* Stats Cards - Overview */}
+              <StatsCards stats={dashboardStats} />
 
-      {/* Leaderboard Rankings */}
-      <LeaderboardSection />
-
-      {/* Workflow Health - Above Queue/Recent */}
-      {workflows.length > 0 && (
-        <div>
-          <h2 className="text-xl font-semibold mb-4">Workflow 健康度</h2>
-          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-            {workflows.map((w) => (
-              <WorkflowHealthCard
-                key={w.workflow_ref}
-                workflowRef={w.workflow_ref}
-                healthScore={w.success_rate ? Math.round(w.success_rate * 100) : 0}
-                grade={w.success_rate && w.success_rate > 0.9 ? 'A' : w.success_rate && w.success_rate > 0.75 ? 'B' : w.success_rate && w.success_rate > 0.6 ? 'C' : w.success_rate && w.success_rate > 0.4 ? 'D' : 'F'}
-                successRate={w.success_rate ?? 0}
-                avgDurationMs={w.avg_duration_ms ?? 0}
-                totalCost={0}
+              {/* Hero Metrics - Key Performance Indicators */}
+              <HeroMetrics
+                totalExecutions={totalExecutions}
+                successRate={successRate}
+                totalCost={stats.total_cost ?? 0}
+                avgDurationMs={stats.avg_duration_ms ?? 0}
               />
-            ))}
-          </div>
-        </div>
-      )}
 
-      {/* Queue & Recent */}
-      <div className="grid gap-6 lg:grid-cols-2 items-stretch max-h-[400px]">
-        <QueuePanel
-          runningExecutions={runningExecutions}
-          pendingExecutions={pendingExecutions}
-        />
-        <RecentExecutions executions={recentExecutions} />
-      </div>
+              {/* Leaderboard Rankings */}
+              <LeaderboardSection />
+
+              {/* Workflow Health - Above Queue/Recent */}
+              {workflows.length > 0 && (
+                <div>
+                  <h2 className="text-xl font-semibold mb-4">Workflow 健康度</h2>
+                  <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+                    {workflows.map((w) => (
+                      <WorkflowHealthCard
+                        key={w.workflow_ref}
+                        workflowRef={w.workflow_ref}
+                        healthScore={w.success_rate ? Math.round(w.success_rate * 100) : 0}
+                        grade={w.success_rate && w.success_rate > 0.9 ? 'A' : w.success_rate && w.success_rate > 0.75 ? 'B' : w.success_rate && w.success_rate > 0.6 ? 'C' : w.success_rate && w.success_rate > 0.4 ? 'D' : 'F'}
+                        successRate={w.success_rate ?? 0}
+                        avgDurationMs={w.avg_duration_ms ?? 0}
+                        totalCost={0}
+                      />
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Queue & Recent */}
+              <div className="grid gap-6 lg:grid-cols-2 items-stretch max-h-[400px]">
+                <QueuePanel
+                  runningExecutions={runningExecutions}
+                  pendingExecutions={pendingExecutions}
+                />
+                <RecentExecutions executions={recentExecutions} />
+              </div>
+            </div>
+          )}
+        </TabsContent>
+
+        <TabsContent value="memory" className="mt-6">
+          <MemoryTab />
+        </TabsContent>
+      </Tabs>
     </div>
   )
 }

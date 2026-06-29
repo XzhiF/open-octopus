@@ -306,6 +306,33 @@ executionRoutes.post("/:executionId/cancel", async (c) => {
   }
 })
 
+executionRoutes.patch("/:executionId/cancel", async (c) => {
+  const workspaceId = getWorkspaceId(c)
+  const executionId = getExecutionId(c)
+  const svc = getService(workspaceId)
+  if (!svc) return c.json({ error: "workspace not found" }, 404)
+
+  if (!_executionDAO) return c.json({ error: "database not available" }, 503)
+
+  const exec = _executionDAO.findById(executionId)
+  if (!exec) {
+    return c.json({ error: "Execution not found" }, 404)
+  }
+
+  if (exec.status !== "running") {
+    return c.json({ error: `Execution is not running (current status: ${exec.status})` }, 409)
+  }
+
+  // Mark as cancelling
+  _executionDAO.updateExecution(executionId, { status: "cancelling" })
+
+  return c.json({
+    id: executionId,
+    status: "cancelling",
+    cancel_requested_at: new Date().toISOString(),
+  })
+})
+
 executionRoutes.post("/:executionId/skip", async (c) => {
   const workspaceId = getWorkspaceId(c)
   const executionId = getExecutionId(c)

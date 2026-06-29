@@ -83,6 +83,18 @@ export class MemoryService {
   }
 
   /**
+   * Append content to a specific daily memory file (P5.4).
+   * If date is not provided, defaults to today.
+   */
+  appendToDaily(content: string, date?: string): void {
+    const d = date ?? new Date().toISOString().split("T")[0]
+    const dailyDir = path.join(getAgentDir(), "memory", "daily")
+    if (!fs.existsSync(dailyDir)) fs.mkdirSync(dailyDir, { recursive: true })
+    const filePath = path.join(dailyDir, `${d}.md`)
+    fs.appendFileSync(filePath, `\n${content}\n`, "utf-8")
+  }
+
+  /**
    * Search across memory layers.
    * - Session memory: FTS5 search via session_memory_fts with LIKE fallback (PRD C3)
    * - Long-term + daily: text search with snippet extraction
@@ -204,6 +216,113 @@ export class MemoryService {
     fs.writeFileSync(filePath, appended, 'utf-8')
 
     return { ok: true, token_count: this.estimateTokens(appended) }
+  }
+
+  /**
+   * P4.6: Search memory with execution scope filter.
+   * If memoryScope contains 'execution:{workflow_name}', filter to only return
+   * data for that workflow from execution_archive + experience_index.
+   */
+  searchWithScope(
+    org: string,
+    query: string,
+    memoryScope: string[],
+    topK: number = 3,
+  ): {
+    results: MemorySearchResult[]
+    executionArchives: Array<{ workflow_name: string; status: string; cost_usd: number }>
+    experiences: Array<{ type: string; title: string; content: string }>
+  } {
+    const executionArchives: Array<{ workflow_name: string; status: string; cost_usd: number }> = []
+    const experiences: Array<{ type: string; title: string; content: string }> = []
+
+    // Parse execution scope filters
+    const workflowFilters = memoryScope
+      .filter(s => s.startsWith('execution:'))
+      .map(s => s.replace('execution:', ''))
+
+    // If we have execution scope, filter execution_archive + experience_index
+    if (workflowFilters.length > 0) {
+      try {
+        const db = (this.dao as any).db
+        if (db) {
+          for (const wf of workflowFilters) {
+            // Query execution_archive for this workflow
+            const archives = db.prepare(
+              `SELECT workflow_name, status, total_cost_usd as cost_usd
+               FROM execution_archive
+               WHERE workflow_name LIKE ? AND workspace_id IN (
+                 SELECT id FROM workspaces WHERE org = ?
+               )
+               ORDER BY created_at DESC LIMIT 10`
+            ).all(`%${wf}%`, org) as Array<{ workflow_name: string; status: string; cost_usd: number }>
+            executionArchives.push(...archives)
+
+            // Query experience_index for this workflow
+            const exps = db.prepare(
+              `SELECT type, title, content FROM experience_index
+               WHERE workflow_name LIKE ? AND status = 'active'
+               ORDER BY relevance_score DESC LIMIT 10`
+            ).all(`%${wf}%`) as Array<{ type: string; title: string; content: string }>
+            experiences.push(...exps)
+          }
+        }
+      } catch {
+        // DB may not have these tables yet — non-fatal
+      }
+    }
+
+    // Standard memory search
+    const results = this.searchMemory(org, query, topK)
+
+    return { results, executionArchives, experiences }
+  }
+
+  /**
+   * P4.6: Merge clone experiences into main agent memory.
+   * Reads experience entries from the clone directory and writes them
+   * to the main agent's long-term memory.
+   */
+  mergeCloneExperiences(org: string, cloneName: string, cloneDir: string): {
+    merged_count: number
+    merged_entries: string[]
+  } {
+    const mergedEntries: string[] = []
+    const cloneExperienceDir = path.join(cloneDir, 'memory')
+
+    if (!fs.existsSync(cloneExperienceDir)) {
+      return { merged_count: 0, merged_entries: [] }
+    }
+
+    try {
+      // Read clone's long-term memory
+      const cloneLtPath = path.join(cloneExperienceDir, 'long-term.md')
+      if (fs.existsSync(cloneLtPath)) {
+        const content = fs.readFileSync(cloneLtPath, 'utf-8')
+        const agentLtPath = getLongTermMemoryPath()
+        const existing = fs.existsSync(agentLtPath) ? fs.readFileSync(agentLtPath, 'utf-8') : ''
+        const section = `\n\n## 分身经验归档: ${cloneName}\n${content}`
+        fs.writeFileSync(agentLtPath, `${existing}${section}`, 'utf-8')
+        mergedEntries.push(`long-term: ${content.length} chars`)
+      }
+
+      // Read clone's daily memory files and append to main daily
+      const cloneDailyDir = path.join(cloneExperienceDir, 'daily')
+      if (fs.existsSync(cloneDailyDir)) {
+        const dailyFiles = fs.readdirSync(cloneDailyDir).filter(f => f.endsWith('.md'))
+        for (const file of dailyFiles) {
+          const dailyContent = fs.readFileSync(path.join(cloneDailyDir, file), 'utf-8')
+          if (dailyContent.trim()) {
+            this.appendDaily(org, `[分身 ${cloneName}] ${dailyContent}`)
+            mergedEntries.push(`daily/${file}`)
+          }
+        }
+      }
+    } catch {
+      // Non-fatal: partial merge is acceptable
+    }
+
+    return { merged_count: mergedEntries.length, merged_entries: mergedEntries }
   }
 
   /**

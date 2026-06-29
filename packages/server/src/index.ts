@@ -10,7 +10,7 @@ import { applySchema } from "./db/schema"
 import {
   WorkspaceDAO, ExecutionDAO, TokenUsageDAO, ScheduleConfigDAO,
   ScheduleRunDAO, ChatDAO, OrgDAO, AgentSessionDAO, EvolutionDAO,
-  CloneDAO, SafetyDAO,
+  CloneDAO, SafetyDAO, ArchiveDAO, ExperienceDAO,
 } from "./db/dao"
 import { ObservabilityService } from "./services/observability"
 import { PrivacyFilter } from "./services/privacy-filter"
@@ -26,6 +26,7 @@ import builtInWorkflowRoutes from "./routes/builtin-workflow"
 import { createAnalyticsLogRoutes, createAnalyticsRoutes } from "./routes/analytics"
 import { eventRoutes } from "./routes/events"
 import { createPipelineRoutes } from "./routes/pipeline"
+import { createArchiveRoutes } from "./routes/archive"
 import chainRoutes from "./routes/chain-routes"
 import scheduleRoutes, { setScheduleService } from "./routes/schedule"
 import { createSchedulerRoutes } from "./routes/scheduler"
@@ -49,6 +50,10 @@ import { AgentExecutor } from "./services/scheduler/executors/agent-executor"
 import { DashboardService } from "./services/scheduler/dashboard-service"
 import { ExportService } from "./services/scheduler/export-service"
 import { WorkspaceService } from "./services/workspace"
+import { ArchiveService } from "./services/archive-service"
+import { ArchiveRecoveryService } from "./services/archive-recovery"
+import { ExperienceLifecycleService } from "./services/experience-lifecycle"
+import { createWebhookRoutes } from "./routes/webhook"
 import { ChatService } from "./services/chat"
 import { LeaderboardService } from "./services/leaderboard"
 import { getLogAnalysisService } from "./services/log-analysis"
@@ -64,13 +69,15 @@ import { SecretMasker } from "./services/actuator/secret-masker"
 import { EventLoopMonitor } from "./services/actuator/event-loop-monitor"
 import { createActuatorRoutes } from "./routes/actuator"
 import { getRecoveryService } from "./services/agent/recovery-service"
+import { AutonomousLoop } from "./services/agent/autonomous-loop"
+import { SuggestionEngine } from "./services/suggestion-engine"
 
 // Install global error handlers early — catches uncaughtException / unhandledRejection
 if (!process.env.VITEST) {
   installGlobalErrorHandlers()
 }
 
-// ── DAO Factory: Create all 11 DAOs from DB connection ─────────────────────
+// ── DAO Factory: Create all 13 DAOs from DB connection ─────────────────────
 interface AllDAOs {
   workspace: WorkspaceDAO
   execution: ExecutionDAO
@@ -83,6 +90,8 @@ interface AllDAOs {
   evolution: EvolutionDAO
   clone: CloneDAO
   safety: SafetyDAO
+  archive: ArchiveDAO
+  experience: ExperienceDAO
 }
 
 function createAllDAOs(db: ReturnType<typeof initDb>): AllDAOs {
@@ -98,6 +107,8 @@ function createAllDAOs(db: ReturnType<typeof initDb>): AllDAOs {
     evolution: new EvolutionDAO(db),
     clone: new CloneDAO(db),
     safety: new SafetyDAO(db),
+    archive: new ArchiveDAO(db),
+    experience: new ExperienceDAO(db),
   }
 }
 
@@ -138,21 +149,50 @@ let observability: ObservabilityService | undefined
 
 // ── Services (created once at startup with pre-built DAOs) ──────────
 let workspaceService: WorkspaceService | undefined
+let archiveService: ArchiveService | undefined
+let archiveRecoveryService: ArchiveRecoveryService | undefined
+let experienceLifecycleService: ExperienceLifecycleService | undefined
+let autonomousLoop: AutonomousLoop | undefined
+let decayTimer: NodeJS.Timeout | undefined
 let chatService: ChatService | undefined
 let leaderboardService: LeaderboardService | undefined
 
 if (!process.env.VITEST && daos) {
   // Create services with DAOs
-  workspaceService = new WorkspaceService(daos.workspace)
+  archiveService = new ArchiveService(daos.archive, daos.execution, daos.tokenUsage, daos.experience)
+  experienceLifecycleService = new ExperienceLifecycleService(daos.experience, daos.archive, archiveService)
+  workspaceService = new WorkspaceService(daos.workspace, archiveService)
   chatService = new ChatService(daos.chat, sse)
   leaderboardService = new LeaderboardService(daos.tokenUsage)
+
+  // P1: Register ArchiveService singleton
+  try {
+    const { ArchiveService } = require('./services/archive/archive-service')
+    const { setArchiveService } = require('./services/archive/archive-registry')
+    const archiveService = new ArchiveService(daos.archive, daos.execution, daos.tokenUsage, daos.workspace, daos.experience)
+    setArchiveService(archiveService)
+
+    // P1.7: Schedule recovery jobs (every 6 hours)
+    const SIX_HOURS = 6 * 60 * 60 * 1000
+    setInterval(() => {
+      try {
+        archiveService.retryCleanup()
+        archiveService.recoverStuckArchiving()
+      } catch (err) {
+        console.warn('[server] Archive recovery failed:', err)
+      }
+    }, SIX_HOURS).unref()
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err)
+    console.warn(`[server] ArchiveService init failed: ${msg}`)
+  }
 
   observability = new ObservabilityService(daos.execution, daos.tokenUsage, new PrivacyFilter())
   setExecutionDependencies(sse, observability, daos.execution)
   initExecutionServiceRegistry(daos.execution as any, sse, observability, {
     executionDAO: daos.execution,
     workspaceDAO: daos.workspace,
-  })
+  }, archiveService)
   registerProvider('claude', () => new ClaudeSDKProvider())
 
   // Initialize agent service singletons
@@ -166,6 +206,27 @@ if (!process.env.VITEST && daos) {
   // Set DAOs for middleware and yjs-ws
   setAgentAuthOrgDAO(daos.org)
   setYjsWorkspaceDAO(daos.workspace)
+
+  // Start archive recovery service (scans for stuck/timed-out archives)
+  archiveRecoveryService = new ArchiveRecoveryService(daos.workspace)
+  archiveRecoveryService.start()
+
+  // Start experience decay: run once at startup, then every 7 days
+  if (experienceLifecycleService) {
+    experienceLifecycleService.decayStale()
+    const DECAY_INTERVAL = 7 * 24 * 60 * 60 * 1000 // 7 days
+    decayTimer = setInterval(() => experienceLifecycleService!.decayStale(), DECAY_INTERVAL)
+  }
+
+  // ── P5.8: Autonomous Observe-Decide-Execute-Learn loop ─────────────────
+  if (daos.archive && daos.experience) {
+    const suggestionEngine = new SuggestionEngine(daos.archive, daos.experience)
+    autonomousLoop = new AutonomousLoop(
+      suggestionEngine, daos.archive, daos.experience,
+      { enabled: getFlag('suggestions') === true },
+    )
+    autonomousLoop.start()
+  }
 }
 
 const app = new Hono()
@@ -191,7 +252,7 @@ function isTrustedOrigin(origin: string | undefined): boolean {
 app.use("*", cors({
   origin: (origin) => origin ?? "*",
   credentials: true,
-  allowHeaders: ["Content-Type", "Authorization", "If-Match"],
+  allowHeaders: ["Content-Type", "Authorization", "If-Match", "X-Octopus-Org"],
   allowMethods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
 }))
 app.use("*", logger())
@@ -232,6 +293,8 @@ const d = daos ?? {
   evolution: lazyDAO(EvolutionDAO),
   clone: lazyDAO(CloneDAO),
   safety: lazyDAO(SafetyDAO),
+  archive: lazyDAO(ArchiveDAO),
+  experience: lazyDAO(ExperienceDAO),
 }
 
 const wsSvc = workspaceService ?? new WorkspaceService(d.workspace)
@@ -276,9 +339,72 @@ app.route("/api/agent", createAgentRoutes({
   safetyDAO: d.safety,
   scheduleConfigDAO: d.scheduleConfig,
   executionDAO: d.execution,
+  archiveDAO: d.archive,
+  experienceDAO: d.experience,
   schedulerService: schedSvc,
 }))
 app.route("/api/workflows/built-in", builtInWorkflowRoutes)
+app.route("/api/archive", createArchiveRoutes({ archiveDAO: d.archive, experienceDAO: d.experience }))
+
+// P3: GitHub webhook route
+try {
+  const { createWebhookRoutes } = require('./routes/webhooks')
+  const { ExperienceLifecycleService } = require('./services/experience/lifecycle-service')
+  const { KnowledgeFiles } = require('./services/archive/knowledge-files')
+  const knowledgeFiles = new KnowledgeFiles(d.experience)
+  const lifecycleService = new ExperienceLifecycleService(d.experience, knowledgeFiles)
+  app.route("/webhooks", createWebhookRoutes({
+    lifecycleService,
+    githubSecret: process.env.GITHUB_WEBHOOK_SECRET,
+  }))
+
+  // P3.6: Experience decay scheduled task (weekly)
+  const ONE_WEEK = 7 * 24 * 60 * 60 * 1000
+  setInterval(() => {
+    lifecycleService.decayStale().then((count: number) => {
+      if (count > 0) console.log(`[experience-decay] ${count} items marked obsolete`)
+    }).catch((err: any) => console.warn('[experience-decay] Failed:', err))
+  }, ONE_WEEK).unref()
+} catch (err) {
+  if (!process.env.VITEST) {
+    const msg = err instanceof Error ? err.message : String(err)
+    console.warn(`[server] Webhook routes init failed: ${msg}`)
+  }
+}
+
+// P6: Telegram webhook route — /api/agent/telegram/webhook
+try {
+  const { createTelegramWebhookRoute } = require('./routes/webhooks')
+  app.route("/api/agent/telegram", createTelegramWebhookRoute({
+    archiveDAO: d.archive,
+    experienceDAO: d.experience,
+    executionDAO: d.execution,
+  }))
+} catch (err) {
+  if (!process.env.VITEST) {
+    const msg = err instanceof Error ? err.message : String(err)
+    console.warn(`[server] Telegram webhook init failed: ${msg}`)
+  }
+}
+
+// P6: Agent schedule register route — /api/agent/schedules/register
+try {
+  const { createScheduleRegisterRoutes } = require('./routes/agent/schedule-register')
+  app.route("/api/agent", createScheduleRegisterRoutes({
+    scheduleConfigDAO: d.scheduleConfig,
+    schedulerService: schedSvc,
+  }))
+} catch (err) {
+  if (!process.env.VITEST) {
+    const msg = err instanceof Error ? err.message : String(err)
+    console.warn(`[server] Schedule register routes init failed: ${msg}`)
+  }
+}
+
+// Webhook routes (GitHub PR merge -> experience lifecycle)
+if (experienceLifecycleService) {
+  app.route("/api/webhooks", createWebhookRoutes(experienceLifecycleService))
+}
 
 // Set scheduler on agent service
 try { getAgentService().setSchedulerService(schedSvc) } catch {}
@@ -511,6 +637,9 @@ if (shouldServe) {
       console.log(`\n[server] Received ${signal}, shutting down gracefully...`)
       logInfo(`Server shutting down`, { signal, pid: process.pid })
       observability?.shutdown()
+      archiveRecoveryService?.stop()
+      autonomousLoop?.stop()
+      if (decayTimer) clearInterval(decayTimer)
       const scheduler = (global as any).__octopus_scheduler as SchedulerEngine | undefined
       scheduler?.stop()
       if ((global as any).__octopus_cleanupRetention) {

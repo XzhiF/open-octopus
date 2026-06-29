@@ -6,6 +6,8 @@ export { ApprovalExecutor } from "./executors/approval"
 export { LoopExecutor } from "./executors/loop"
 export { AgentExecutor } from "./executors/agent"
 export { AgentNodeRunner } from "./executors/agent-runner"
+export { ExperienceInjector } from "./executors/experience-injector"
+export type { ExperienceQueryPort } from "./executors/experience-injector"
 export { SwarmExecutor } from "./executors/swarm"
 export { RoleRegistry } from "./executors/swarm/role-registry"
 export type { RoleDef } from "./executors/swarm/role-registry"
@@ -22,3 +24,7 @@ export * from "./pipeline"
 // Notify modules
 export { registerBuiltinProviders, ProviderRegistry, HermesProvider, WebhookProvider, NotifyDispatcher } from "./notify/index"
 export type { DispatchContext } from "./notify/index"
+
+// Prompt injection
+export { PromptInjector, injectExperience } from "./prompt-injector"
+export type { ExperienceEntry, ExperienceQueryFn, ExperienceIncrementFn } from "./prompt-injector"

@@ -129,6 +129,15 @@ export const PlanningSchema = z.object({
   disallowed_tools: z.array(z.string()).optional(),
 })
 
+export const ExperienceScopeSchema = z.object({
+  projects: z.array(z.string()),
+  packages: z.array(z.string()).optional(),
+  types: z.array(z.enum(["bug", "pattern", "cost", "failure"])),
+  limit: z.number().min(1).max(50).optional(),
+})
+
+export type ExperienceScope = z.infer<typeof ExperienceScopeSchema>
+
 export interface NodeDef {
   id: string
   type: "bash" | "python" | "agent" | "condition" | "approval" | "loop" | "swarm"
@@ -138,6 +147,9 @@ export interface NodeDef {
   depends_on?: string[]
   execute_when?: string
   outputs?: Record<string, string>
+
+  // experience injection (available on all node types)
+  experience_scope?: ExperienceScope
 
   // bash
   bash?: string
@@ -221,6 +233,8 @@ export const NodeSchema: z.ZodType<NodeDef> = z.lazy(() =>
     execute_when: z.string().optional(),
     outputs: z.record(z.string(), z.string()).optional(),
 
+    experience_scope: ExperienceScopeSchema.optional(),
+
     bash: z.string().optional(),
     python: z.string().optional(),
     inputs: z.record(z.string(), z.string()).optional(),
@@ -284,6 +298,22 @@ export const WorkflowInputSchema = z.object({
   default: z.string().default(""),
 })
 
+// Chain definition: triggers next workflows after current execution completes
+const YamlChainItemSchema = z.object({
+  workflow: z.string(),
+  condition: z.string().optional(),
+  auto_trigger: z.boolean().default(true),
+  input_mapping: z.record(z.string()).optional(),
+})
+
+export const WorkflowChainSchema = z.object({
+  on_success: z.array(YamlChainItemSchema).optional(),
+  on_failure: z.array(YamlChainItemSchema).optional(),
+})
+
+export type YamlChainItem = z.infer<typeof YamlChainItemSchema>
+export type YamlChainDef = z.infer<typeof WorkflowChainSchema>
+
 export const WorkflowSchema = z.object({
   apiVersion: z.string().regex(/^octopus\/v\d+$/, "apiVersion must match octopus/v{number}"),
   kind: z.literal("Workflow"),
@@ -300,6 +330,7 @@ export const WorkflowSchema = z.object({
   hooks: WorkflowHooksSchema.optional(),
   providers: z.record(z.string(), NotifyProviderConfigSchema).optional(),
   channels: z.record(z.string(), ChannelProfileSchema).optional(),
+  chain: WorkflowChainSchema.optional(),
   nodes: z.array(NodeSchema),
 })
 

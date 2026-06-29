@@ -1,4 +1,4 @@
-import { execSync } from 'child_process'
+import { execSync, execFileSync } from 'child_process'
 import fs from 'fs'
 import path from 'path'
 import { getAgentConfigPath, getNotificationQueueDir } from './paths'
@@ -90,26 +90,59 @@ export class NotificationService {
   }
 
   /**
-   * Send notification via hermes CLI.
+   * Route notification to the appropriate provider.
+   * TC-044: dual-mode routing — numeric Telegram chat IDs use direct Bot API,
+   * named channels use hermes CLI.
    */
   private sendViaHermes(target: string, request: NotificationRequest): boolean {
     if (!target) return false
 
-    // Parse target format: "telegram:xzf_hermes" or "discord:channel_name"
+    // Parse target format: "telegram:12345678" or "telegram:xzf_hermes"
     const [provider, channel] = target.split(':')
     if (!provider || !channel) return false
 
+    // Direct mode: Telegram with numeric chat ID → call Bot API directly
+    if (provider === 'telegram' && /^\d+$/.test(channel)) {
+      return this.sendDirectTelegram(channel, request)
+    }
+
+    // Named mode: use hermes CLI for named channels or other providers
     try {
       const message = this.formatMessage(request)
-      // Use hermes CLI to send — non-blocking with timeout
-      execSync(
-        `hermes send --provider ${provider} --channel ${channel} --message ${JSON.stringify(message)}`,
-        {
-          timeout: 30000,
-          stdio: 'pipe',
-          env: { ...process.env },
-        },
-      )
+      execFileSync('hermes', [
+        'send', '--provider', provider, '--channel', channel, '--message', message,
+      ], {
+        timeout: 30000,
+        stdio: 'pipe',
+        env: { ...process.env },
+      })
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  /**
+   * Direct Telegram Bot API call for numeric chat IDs.
+   * Uses TELEGRAM_BOT_TOKEN env var for authentication.
+   */
+  private sendDirectTelegram(chatId: string, request: NotificationRequest): boolean {
+    const token = process.env.TELEGRAM_BOT_TOKEN
+    if (!token) return false
+
+    try {
+      const message = this.formatMessage(request)
+      const payload = JSON.stringify({ chat_id: chatId, text: message })
+      execFileSync('curl', [
+        '-s', '-X', 'POST',
+        `https://api.telegram.org/bot${token}/sendMessage`,
+        '-H', 'Content-Type: application/json',
+        '-d', payload,
+      ], {
+        timeout: 30000,
+        stdio: 'pipe',
+        env: { ...process.env },
+      })
       return true
     } catch {
       return false

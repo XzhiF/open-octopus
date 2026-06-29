@@ -15,7 +15,7 @@ describe("DB Schema", () => {
     db?.close()
   })
 
-  it("creates all 30 tables", () => {
+  it("creates all 31 tables", () => {
     db = createTestDb()
     applySchema(db)
     const rows = db.prepare(
@@ -25,12 +25,12 @@ describe("DB Schema", () => {
     expect(names).toEqual([
       // Core tables (20)
       "agent_events", "branch_executions", "chat_messages", "chat_sessions",
-      "clones", "evolution_log", "execution_summaries", "executions", "experiences",
+      "clones", "evolution_log", "execution_archive", "execution_summaries", "executions", "experience_index", "experiences",
       "llm_calls", "messages", "node_edges", "node_executions", "node_token_usages",
       "optimization_suggestions", "orgs", "pipeline_state", "reports", "safety_events",
       "schedule_audit_logs", "schedule_executions", "schedule_workspaces",
       "scheduled_job_executions", "scheduler_audit_logs", "scheduler_state", "schedules",
-      "sessions", "workspaces",
+      "sessions", "workspace_archive", "workspaces",
     ])
   })
 
@@ -40,8 +40,8 @@ describe("DB Schema", () => {
     const rows = db.prepare(
       "SELECT name FROM sqlite_master WHERE type='index' AND name LIKE 'idx_%'"
     ).all() as { name: string }[]
-    // 38 core indexes + 23 agent indexes = 61
-    expect(rows.length).toBe(61)
+    // 38 core indexes + 23 agent indexes + 8 archive indexes + 4 experience indexes = 73
+    expect(rows.length).toBe(73)
   })
 
   it("workspaces table has correct columns", () => {
@@ -50,7 +50,7 @@ describe("DB Schema", () => {
     const cols = db.prepare("PRAGMA table_info(workspaces)").all() as { name: string }[]
     expect(cols.map(c => c.name)).toEqual(expect.arrayContaining([
       "id", "name", "org", "status", "path", "created_at", "updated_at",
-      "source", "source_schedule_id",
+      "source", "source_schedule_id", "archive_status", "archive_started_at", "archive_error",
     ]))
   })
 

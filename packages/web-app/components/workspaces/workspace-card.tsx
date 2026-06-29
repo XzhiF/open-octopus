@@ -1,8 +1,9 @@
 import Link from "next/link"
+import { cn } from "@/lib/utils"
 import { Card, CardContent, CardHeader } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import type { Workspace, WorkspaceStatus } from "@/lib/types"
+import type { Workspace, WorkspaceStatus, ArchiveStatus } from "@/lib/types"
 import {
   FolderKanban,
   GitBranch,
@@ -12,6 +13,9 @@ import {
   Settings,
   Trash2,
   ArrowRight,
+  Loader2,
+  Check,
+  X,
 } from "lucide-react"
 import {
   DropdownMenu,
@@ -35,6 +39,27 @@ const statusConfig: Record<
   error: { label: "异常", variant: "destructive" },
 }
 
+const archiveStatusConfig: Record<
+  Exclude<ArchiveStatus, "none">,
+  { label: string; icon: typeof Loader2; className: string }
+> = {
+  archiving: {
+    label: "归档中...",
+    icon: Loader2,
+    className: "text-archive-archiving border-archive-archiving/40 bg-archive-archiving/10",
+  },
+  archived: {
+    label: "已归档",
+    icon: Check,
+    className: "text-archive-archived border-archive-archived/40 bg-archive-archived/10",
+  },
+  archive_failed: {
+    label: "归档失败",
+    icon: X,
+    className: "text-archive-failed border-archive-failed/40 bg-archive-failed/10",
+  },
+}
+
 function formatRelativeTime(dateString: string | null | undefined): string {
   if (!dateString) return "未知"
   const date = new Date(dateString)
@@ -54,6 +79,11 @@ function formatRelativeTime(dateString: string | null | undefined): string {
 
 export function WorkspaceCard({ workspace, onDelete }: WorkspaceCardProps) {
   const config = statusConfig[workspace.status]
+  const archiveStatus = workspace.archive_status
+  const archiveConfig =
+    archiveStatus && archiveStatus !== "none"
+      ? archiveStatusConfig[archiveStatus]
+      : null
 
   return (
     <Card className="group relative transition-shadow hover:shadow-md">
@@ -98,7 +128,14 @@ export function WorkspaceCard({ workspace, onDelete }: WorkspaceCardProps) {
                 设置
               </DropdownMenuItem>
               <DropdownMenuSeparator />
-              <DropdownMenuItem className="text-destructive" onClick={() => onDelete?.(workspace.id)}>
+              <DropdownMenuItem
+                className={cn(
+                  "text-destructive",
+                  workspace.archive_status === "archiving" && "opacity-50 pointer-events-none",
+                )}
+                disabled={workspace.archive_status === "archiving"}
+                onClick={() => onDelete?.(workspace.id)}
+              >
                 <Trash2 className="mr-2 h-4 w-4" />
                 删除
               </DropdownMenuItem>
@@ -129,6 +166,28 @@ export function WorkspaceCard({ workspace, onDelete }: WorkspaceCardProps) {
         <div className="mt-4 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Badge variant={config.variant}>{config.label}</Badge>
+            {archiveConfig && (
+              <Badge
+                variant="outline"
+                className={cn(
+                  archiveConfig.className,
+                  archiveStatus === "archiving" && "animate-pulse",
+                )}
+                title={
+                  archiveStatus === "archive_failed" && workspace.archive_error
+                    ? workspace.archive_error
+                    : undefined
+                }
+              >
+                <archiveConfig.icon
+                  className={cn(
+                    "h-3 w-3",
+                    archiveStatus === "archiving" && "animate-spin",
+                  )}
+                />
+                {archiveConfig.label}
+              </Badge>
+            )}
             <span className="flex items-center gap-1 text-xs text-muted-foreground">
               <Clock className="h-3 w-3" />
               {formatRelativeTime(workspace.lastActivityAt ?? (workspace as unknown as Record<string, string>).created_at)}

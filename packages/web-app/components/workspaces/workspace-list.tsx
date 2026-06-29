@@ -20,13 +20,23 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table"
 import { WorkspaceCard } from "./workspace-card"
 import { CreateWorkspaceDialog } from "./create-workspace-dialog"
 import { ImportWorkspaceDialog } from "./import-workspace-dialog"
+import { ArchiveStatusBadge } from "@/components/archive/archive-status-badge"
 import { deleteWorkspace } from "@/lib/api-client"
 import { toast } from "sonner"
 import type { Workspace, WorkspaceStatus } from "@/lib/types"
-import { Search, Plus, FolderInput, LayoutGrid, List } from "lucide-react"
+import { Search, Plus, FolderInput, LayoutGrid, List, Trash2, Loader2 } from "lucide-react"
+import Link from "next/link"
 
 interface WorkspaceListProps {
   workspaces: Workspace[]
@@ -36,7 +46,7 @@ interface WorkspaceListProps {
 export function WorkspaceList({ workspaces, onRefresh }: WorkspaceListProps) {
   const [search, setSearch] = useState("")
   const [statusFilter, setStatusFilter] = useState<WorkspaceStatus | "all">("all")
-  const [viewMode, setViewMode] = useState<"grid" | "list">("grid")
+  const [viewMode, setViewMode] = useState<"grid" | "list">("list")
   const [isCreateOpen, setIsCreateOpen] = useState(false)
   const [isImportOpen, setIsImportOpen] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<Workspace | null>(null)
@@ -46,8 +56,9 @@ export function WorkspaceList({ workspaces, onRefresh }: WorkspaceListProps) {
     if (!deleteTarget) return
     setDeleting(true)
     try {
+      toast.info("正在归档执行数据...")
       await deleteWorkspace(deleteTarget.id)
-      toast.success(`"${deleteTarget.name}" 已删除`)
+      toast.success(`"${deleteTarget.name}" 已归档并删除`)
       setDeleteTarget(null)
       onRefresh?.()
     } catch (err) {
@@ -142,7 +153,7 @@ export function WorkspaceList({ workspaces, onRefresh }: WorkspaceListProps) {
         {search && ` · 搜索 "${search}"`}
       </div>
 
-      {/* Grid */}
+      {/* Results */}
       {filteredWorkspaces.length === 0 ? (
         <div className="flex flex-col items-center justify-center rounded-lg border border-dashed py-12 text-center">
           <div className="flex h-12 w-12 items-center justify-center rounded-full bg-muted">
@@ -159,12 +170,69 @@ export function WorkspaceList({ workspaces, onRefresh }: WorkspaceListProps) {
             </Button>
           )}
         </div>
-      ) : (
+      ) : viewMode === "grid" ? (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {filteredWorkspaces.map((workspace) => (
             <WorkspaceCard key={workspace.id} workspace={workspace} onDelete={(id) => setDeleteTarget(workspaces.find(w => w.id === id) ?? null)} />
           ))}
         </div>
+      ) : (
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>名称</TableHead>
+              <TableHead>状态</TableHead>
+              <TableHead>归档状态</TableHead>
+              <TableHead>组织</TableHead>
+              <TableHead className="text-right">操作</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {filteredWorkspaces.map((workspace) => {
+              const isArchiving = workspace.archive_status === "archiving"
+              return (
+                <TableRow key={workspace.id}>
+                  <TableCell>
+                    <Link
+                      href={`/workspaces/${workspace.id}`}
+                      className="font-medium hover:underline"
+                    >
+                      {workspace.name}
+                    </Link>
+                    {workspace.description && (
+                      <p className="text-xs text-muted-foreground line-clamp-1">{workspace.description}</p>
+                    )}
+                  </TableCell>
+                  <TableCell>
+                    <span className="text-xs">{workspace.status === "active" ? "活跃" : workspace.status === "inactive" ? "未激活" : "异常"}</span>
+                  </TableCell>
+                  <TableCell>
+                    <ArchiveStatusBadge
+                      status={workspace.archive_status}
+                      error={workspace.archive_error}
+                    />
+                  </TableCell>
+                  <TableCell className="text-xs text-muted-foreground">{workspace.org}</TableCell>
+                  <TableCell className="text-right">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="text-destructive hover:text-destructive"
+                      onClick={() => !isArchiving && setDeleteTarget(workspace)}
+                      disabled={isArchiving}
+                    >
+                      {isArchiving ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Trash2 className="h-4 w-4" />
+                      )}
+                    </Button>
+                  </TableCell>
+                </TableRow>
+              )
+            })}
+          </TableBody>
+        </Table>
       )}
 
       {/* Create Dialog */}
@@ -179,7 +247,7 @@ export function WorkspaceList({ workspaces, onRefresh }: WorkspaceListProps) {
           <AlertDialogHeader>
             <AlertDialogTitle>删除工作空间</AlertDialogTitle>
             <AlertDialogDescription>
-              确定要删除 &ldquo;{deleteTarget?.name}&rdquo; 吗？此操作不可撤销，相关执行记录也会被删除。
+              系统将自动归档所有执行数据后再删除工作空间，归档失败时不会删除。此操作不可撤销。
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

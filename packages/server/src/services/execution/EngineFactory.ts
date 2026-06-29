@@ -2,11 +2,14 @@
 import type { IEngineFactory } from "./interfaces"
 import type { ServiceContext, ExecutionRow } from "./types"
 import type { ExecutionDAO } from "../../db/dao/execution-dao"
+import type { ExperienceQueryPort } from "@octopus/engine"
 import { WorkflowEngine } from "@octopus/engine"
 import { PromptInjector } from "@octopus/engine"
 import { CrossExecResolver } from "@octopus/shared"
 import { PipelineConfigLoader } from "../pipeline-config"
 import { getProvider } from "@octopus/providers"
+import { ExperienceDAO } from "../../db/dao/experience-dao"
+import { getDb } from "../../db/connection"
 
 export class EngineFactory implements IEngineFactory {
   constructor(
@@ -42,12 +45,26 @@ export class EngineFactory implements IEngineFactory {
       ? JSON.parse(execution.input_values)
       : undefined
 
-    return new WorkflowEngine(
+    const engine = new WorkflowEngine(
       workflow, providers, this.ctx.workspacePath,
       this.ctx.org ? `${this.ctx.workspacePath}/.octopus` : undefined,
       undefined, undefined, execution.id, inputValues,
       execution.name || undefined, crossExecResolver, promptInjector,
+      this.dao.computeChainDepth(execution.id),
     )
+
+    // P3: Wire experience injection — engine queries active experiences by scope
+    try {
+      const experienceDAO = new ExperienceDAO(getDb())
+      const queryPort: ExperienceQueryPort = {
+        findByScope: (scope) => experienceDAO.findByScope(scope as any),
+      }
+      engine.setExperienceQueryPort(queryPort)
+    } catch {
+      // Experience injection unavailable if DB not ready
+    }
+
+    return engine
   }
 
   reconstructEngine(execution: ExecutionRow): WorkflowEngine {

@@ -5,6 +5,7 @@ import path from "path"
 import os from "os"
 import { WorkspaceDAO } from "../db/dao"
 import type { WorkspaceRow } from "../db/types"
+import type { ArchiveService } from "./archive-service"
 
 /**
  * Default pipeline.yaml template — auto-generated for new workspaces.
@@ -423,9 +424,11 @@ function workspaceGuide(): string[] {
 
 export class WorkspaceService {
   private dao: WorkspaceDAO
+  private archiveService?: ArchiveService
 
-  constructor(dao?: WorkspaceDAO) {
+  constructor(dao?: WorkspaceDAO, archiveService?: ArchiveService) {
     this.dao = dao!
+    this.archiveService = archiveService
   }
 
   create(input: { name: string; org: string; description?: string; path: string; repos?: string[]; branch?: string }): WorkspaceRow & { worktreeStatus?: { created: number; failed: string[] } } {
@@ -925,7 +928,31 @@ export class WorkspaceService {
     const ws = this.getById(id)
     if (!ws) return false
 
-    this.dao.cascadeDeleteByWorkspace(id)
+    // Phase 1: Archive (two-phase commit)
+    const locked = this.dao.tryAcquireArchiveLock(id)
+    if (!locked) {
+      throw new Error("Workspace is already being archived or does not exist")
+    }
+
+    try {
+      if (this.archiveService) {
+        await this.archiveService.archiveWorkspace(id)
+      }
+      this.dao.setArchiveStatus(id, "archived")
+    } catch (err) {
+      // Archive failed — mark as failed, don't delete
+      const errMsg = err instanceof Error ? err.message : String(err)
+      this.dao.setArchiveStatus(id, "archive_failed", errMsg)
+      throw new Error(`Archive failed: ${errMsg}. Workspace data preserved.`)
+    }
+
+    // Phase 2: Cascade delete
+    try {
+      this.dao.cascadeDeleteByWorkspace(id)
+    } catch (err) {
+      // DB cascade delete failed — mark for recovery
+      console.warn(`[workspace] Cascade delete failed for ${id}, will retry`, err)
+    }
 
     // ── 文件系统异步删除（不阻塞事件循环） ──
     const resolvedPath = ws.path.replace(/^~/, os.homedir())
@@ -934,6 +961,7 @@ export class WorkspaceService {
         .rm(resolvedPath, { recursive: true, force: true })
         .catch((err) => {
           // 后台删除失败不影响 API 响应，仅记录日志
+          // ArchiveRecoveryService will retry on next scan
           console.error(`[workspace] Failed to delete directory ${resolvedPath}:`, err)
         })
     }
