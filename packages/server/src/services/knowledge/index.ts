@@ -1,6 +1,6 @@
 // packages/server/src/services/knowledge/index.ts
 import type { VarPool } from "@octopus/shared"
-import type { KnowledgeRuleDAO, KnowledgeEffectivenessDAO } from "../../db/dao"
+import type { KnowledgeRuleDAO, KnowledgeEffectivenessDAO, PendingReviewDAO } from "../../db/dao"
 import { precomputeRelevantRules } from "./precompute"
 import { KnowledgeInjector } from "@octopus/engine"
 import { trackEffectiveness, retireStaleRules } from "./effectiveness"
@@ -21,6 +21,7 @@ export class KnowledgeService {
   constructor(
     private knowledgeRuleDAO: KnowledgeRuleDAO,
     private effectivenessDAO: KnowledgeEffectivenessDAO,
+    private pendingReviewDAO: PendingReviewDAO,
     private org: string,
   ) {}
 
@@ -61,13 +62,11 @@ export class KnowledgeService {
    * Called after approveItem adds new rules to a file.
    */
   checkFileCompactThreshold(fileName: string, threshold = 100): void {
-    // Import pendingReviewDAO dynamically to avoid circular dependency
-    // This is a best-effort check, failures are logged but not thrown
+    // Best-effort check; failures are logged but not thrown.
+    // pendingReviewDAO is injected via constructor to avoid ESM-incompatible
+    // dynamic require() and circular dependency on the connection singleton.
     try {
-      const { getDb } = require("../../db/connection")
-      const { PendingReviewDAO } = require("../../db/dao/pending-review-dao")
-      const pendingReviewDAO = new PendingReviewDAO(getDb())
-      checkCompactThreshold(this.org, fileName, threshold, pendingReviewDAO)
+      checkCompactThreshold(this.org, fileName, threshold, this.pendingReviewDAO)
     } catch (err) {
       console.warn("[knowledge] checkCompactThreshold failed:", err)
     }
@@ -88,7 +87,8 @@ export class KnowledgeService {
 export function createKnowledgeService(
   knowledgeRuleDAO: KnowledgeRuleDAO,
   effectivenessDAO: KnowledgeEffectivenessDAO,
+  pendingReviewDAO: PendingReviewDAO,
   org: string,
 ): KnowledgeService {
-  return new KnowledgeService(knowledgeRuleDAO, effectivenessDAO, org)
+  return new KnowledgeService(knowledgeRuleDAO, effectivenessDAO, pendingReviewDAO, org)
 }
