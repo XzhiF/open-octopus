@@ -2,7 +2,7 @@ import { Hono } from "hono"
 import fs from "fs"
 import path from "path"
 import type { KnowledgeRuleDAO, PendingReviewDAO } from "../db/dao"
-import { isValidUUID } from "../services/knowledge/validators"
+import { isValidUUID, errorResponse } from "../services/knowledge/validators"
 
 export function createArchiveRoutes(
   knowledgeRuleDAO: KnowledgeRuleDAO,
@@ -59,7 +59,8 @@ export function createArchiveRoutes(
         poolSnapshot: data.poolSnapshot ?? null,
       })
     } catch (err) {
-      return c.json({ error: { code: "INTERNAL_ERROR", message: String(err) } }, 500)
+      const { body, status } = errorResponse(err, "archive.summary")
+      return c.json(body, status)
     }
   })
 
@@ -124,9 +125,19 @@ export function createArchiveRoutes(
         pendingCount,
       })
     } catch (err) {
+      // PROVIDER_TIMEOUT is a stable client-actionable code; preserve it
+      // while still sanitizing the message (clients don't need the raw
+      // provider response body).
       const msg = err instanceof Error ? err.message : String(err)
-      if (msg.includes("timeout")) return c.json({ error: { code: "PROVIDER_TIMEOUT", message: msg } }, 504)
-      return c.json({ error: { code: "INTERNAL_ERROR", message: msg } }, 500)
+      if (msg.includes("timeout")) {
+        process.stderr.write(`[knowledge/archive.propose] provider timeout: ${msg}\n`)
+        return c.json(
+          { error: { code: "PROVIDER_TIMEOUT", message: "LLM provider timed out; please retry" } },
+          504,
+        )
+      }
+      const { body, status } = errorResponse(err, "archive.propose")
+      return c.json(body, status)
     }
   })
 

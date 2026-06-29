@@ -14,7 +14,7 @@ import {
   markRuleRetired,
   unmarkRuleRetired,
 } from "../services/knowledge/file-ops"
-import { isValidRuleId, validateKnowledgeFileName } from "../services/knowledge/validators"
+import { isValidRuleId, validateKnowledgeFileName, errorResponse } from "../services/knowledge/validators"
 
 export function createKnowledgeRoutes(
   knowledgeRuleDAO: KnowledgeRuleDAO,
@@ -53,7 +53,8 @@ export function createKnowledgeRoutes(
 
       return c.json({ files: result })
     } catch (err) {
-      return c.json({ error: { code: "INTERNAL_ERROR", message: String(err) } }, 500)
+      const { body, status } = errorResponse(err, "files")
+      return c.json(body, status)
     }
   })
 
@@ -100,7 +101,8 @@ export function createKnowledgeRoutes(
       const rules = parseKnowledgeFile(filePath)
       return c.json({ ok: true, ruleCount: rules.length })
     } catch (err) {
-      return c.json({ error: { code: "INTERNAL_ERROR", message: String(err) } }, 500)
+      const { body, status } = errorResponse(err, "file.put")
+      return c.json(body, status)
     }
   })
 
@@ -137,7 +139,8 @@ export function createKnowledgeRoutes(
       writeUserPreference(prefOrg, content)
       return c.json({ ok: true })
     } catch (err) {
-      return c.json({ error: { code: "INTERNAL_ERROR", message: String(err) } }, 500)
+      const { body, status } = errorResponse(err, "preference.put")
+      return c.json(body, status)
     }
   })
 
@@ -176,7 +179,8 @@ export function createKnowledgeRoutes(
       })
       return c.json({ items })
     } catch (err) {
-      return c.json({ error: { code: "INTERNAL_ERROR", message: String(err) } }, 500)
+      const { body, status } = errorResponse(err, "effectiveness")
+      return c.json(body, status)
     }
   })
 
@@ -198,9 +202,8 @@ export function createKnowledgeRoutes(
       const result = await compactKnowledgeFile(reqOrg ?? org, filePath, pendingReviewDAO)
       return c.json(result)
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err)
-      if (msg === "NOT_FOUND") return c.json({ error: { code: "NOT_FOUND", message: "File not found" } }, 404)
-      return c.json({ error: { code: "INTERNAL_ERROR", message: msg } }, 500)
+      const { body, status } = errorResponse(err, "compact")
+      return c.json(body, status)
     }
   })
 
@@ -210,7 +213,8 @@ export function createKnowledgeRoutes(
       const result = rebuildIndex(org, knowledgeRuleDAO)
       return c.json({ ok: true, ...result })
     } catch (err) {
-      return c.json({ error: { code: "INTERNAL_ERROR", message: String(err) } }, 500)
+      const { body, status } = errorResponse(err, "rebuild-index")
+      return c.json(body, status)
     }
   })
 
@@ -242,9 +246,8 @@ export function createKnowledgeRoutes(
       }
       return c.json(result)
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err)
-      if (msg === "NOT_FOUND") return c.json({ error: { code: "NOT_FOUND", message: "Rule not found or not retired" } }, 404)
-      return c.json({ error: { code: "INTERNAL_ERROR", message: msg } }, 500)
+      const { body, status } = errorResponse(err, "rule.restore")
+      return c.json(body, status)
     }
   })
 

@@ -1,7 +1,7 @@
 import { Hono } from "hono"
 import type { PendingReviewDAO } from "../db/dao"
 import type { ReviewService } from "../services/knowledge/review"
-import { isValidRuleId } from "../services/knowledge/validators"
+import { isValidRuleId, errorResponse } from "../services/knowledge/validators"
 
 /**
  * Parse a `conflicts` column (stored as JSON text, nullable). Returns null on
@@ -86,10 +86,8 @@ export function createReviewRoutes(
           : "edited",
       })
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err)
-      if (msg === "NOT_FOUND") return c.json({ error: "NOT_FOUND" }, 404)
-      if (msg.includes("CONFLICT")) return c.json({ error: { code: "MEMORY_CONFLICT", message: msg } }, 409)
-      return c.json({ error: msg }, 500)
+      const { body, status } = errorResponse(err, "review.action")
+      return c.json(body, status)
     }
   })
 
@@ -122,7 +120,8 @@ export function createReviewRoutes(
         return c.json({ ok: true, succeeded: ids.length, failed: 0, details: ids.map((id: string) => ({ id, status: "ok" })) })
       }
     } catch (err) {
-      return c.json({ error: err instanceof Error ? err.message : String(err) }, 500)
+      const { body, status } = errorResponse(err, "review.batch")
+      return c.json(body, status)
     }
   })
 
@@ -132,7 +131,8 @@ export function createReviewRoutes(
       const summary = reviewService.getPendingSummary()
       return c.json(summary)
     } catch (err) {
-      return c.json({ error: err instanceof Error ? err.message : String(err) }, 500)
+      const { body, status } = errorResponse(err, "review.summary")
+      return c.json(body, status)
     }
   })
 
