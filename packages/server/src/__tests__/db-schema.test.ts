@@ -44,8 +44,8 @@ describe("DB Schema", () => {
     const rows = db.prepare(
       "SELECT name FROM sqlite_master WHERE type='index' AND name LIKE 'idx_%'"
     ).all() as { name: string }[]
-    // 38 core indexes + 23 agent indexes + 2 knowledge indexes = 63
-    expect(rows.length).toBe(63)
+    // 38 core indexes + 23 agent indexes + 7 knowledge indexes = 68
+    expect(rows.length).toBe(68)
   })
 
   it("workspaces table has correct columns", () => {

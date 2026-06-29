@@ -661,3 +661,12 @@ CREATE TABLE IF NOT EXISTS knowledge_effectiveness (
 
 CREATE INDEX IF NOT EXISTS idx_pending_status ON pending_review(status);
 CREATE INDEX IF NOT EXISTS idx_effectiveness_stale ON knowledge_effectiveness(injected_count, confidence, last_injected);
+
+-- Knowledge subsystem: indexes added in schema version 25 to support
+-- listByFile / listByScope / listBySource queries that previously did
+-- full-table scans. Idempotent via IF NOT EXISTS.
+CREATE INDEX IF NOT EXISTS idx_knowledge_rules_file ON knowledge_rules(file_name);
+CREATE INDEX IF NOT EXISTS idx_knowledge_rules_status ON knowledge_rules(status);
+CREATE INDEX IF NOT EXISTS idx_knowledge_rules_scope_status ON knowledge_rules(scope, status);
+CREATE INDEX IF NOT EXISTS idx_pending_review_source ON pending_review(source);
+CREATE INDEX IF NOT EXISTS idx_pending_review_type_status ON pending_review(type, status);
