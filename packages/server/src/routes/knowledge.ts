@@ -10,6 +10,9 @@ import {
   getKnowledgeFileInfo,
   readUserPreference,
   writeUserPreference,
+  rebuildIndex,
+  markRuleRetired,
+  unmarkRuleRetired,
 } from "../services/knowledge/file-ops"
 
 export function createKnowledgeRoutes(
@@ -20,21 +23,26 @@ export function createKnowledgeRoutes(
 ): Hono {
   const routes = new Hono()
 
-  // GET /api/knowledge/files — list knowledge files
+  // GET /api/knowledge/files — list knowledge files (org + global)
   routes.get("/files", (c) => {
     try {
       const scopeFilter = c.req.query("scope")
-      const knowledgeDir = getKnowledgeDir(org)
-      const files = listKnowledgeFiles(knowledgeDir)
+      const orgDir = getKnowledgeDir(org)
+      const globalDir = getKnowledgeDir() // global knowledge dir
 
-      const result = files.map(f => {
-        const filePath = path.join(knowledgeDir, f)
+      // Merge org-level and global-level files
+      const orgFiles = listKnowledgeFiles(orgDir).map(f => ({ file: f, dir: orgDir, scope: "org" as const }))
+      const globalFiles = listKnowledgeFiles(globalDir).map(f => ({ file: f, dir: globalDir, scope: "global" as const }))
+      const allFiles = [...orgFiles, ...globalFiles]
+
+      const result = allFiles.map(({ file: f, dir, scope: fileScope }) => {
+        const filePath = path.join(dir, f)
         const info = getKnowledgeFileInfo(filePath)
         const type = f.startsWith("workflow-") ? "workflow" : "project"
         return {
           name: info.name,
           type,
-          scope: "org",
+          scope: fileScope,
           ruleCount: info.ruleCount,
           retiredCount: info.retiredCount,
           lineCount: info.lineCount,
@@ -192,12 +200,29 @@ export function createKnowledgeRoutes(
     }
   })
 
+  // POST /api/knowledge/rebuild-index — rebuild index.md
+  routes.post("/rebuild-index", (c) => {
+    try {
+      const result = rebuildIndex(org, knowledgeRuleDAO)
+      return c.json({ ok: true, ...result })
+    } catch (err) {
+      return c.json({ error: { code: "INTERNAL_ERROR", message: String(err) } }, 500)
+    }
+  })
+
   // POST /api/knowledge/rule/:id/restore — restore retired rule
   routes.post("/rule/:id/restore", async (c) => {
     const ruleId = c.req.param("id")
     try {
       const { restoreRule } = await import("../services/knowledge/effectiveness")
       const result = restoreRule(ruleId, knowledgeRuleDAO)
+      // Remove retired annotation from knowledge file
+      const rule = knowledgeRuleDAO.getById(ruleId)
+      if (rule) {
+        const knowledgeDir = getKnowledgeDir(org)
+        const filePath = path.join(knowledgeDir, rule.file_name)
+        unmarkRuleRetired(filePath, ruleId)
+      }
       return c.json(result)
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)

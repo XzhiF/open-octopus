@@ -1,7 +1,7 @@
 'use client'
 
 /**
- * Traceability: P-05 × US-14, US-15, US-24 × TC-018, TC-019, TC-032, TC-033, TC-020
+ * Traceability: P-05 × US-14, US-15, US-24 × TC-018, TC-019, TC-032, TC-033, TC-020, TC-034, TC-035
  * Review queue with filtering, pagination, batch operations, and AI assistant integration
  */
 
@@ -15,6 +15,7 @@ import { AgentEmptyState } from '@/components/agent/shared/AgentEmptyState'
 import { ReviewFilterBar } from './ReviewFilterBar'
 import { ReviewItemCard, ReviewItemCardSkeleton } from './ReviewItemCard'
 import { BatchActionBar } from './BatchActionBar'
+import { KnowledgeAssistantPanel } from '../assistant/KnowledgeAssistantPanel'
 
 const PAGE_SIZE = 20
 
@@ -35,6 +36,7 @@ export function ReviewQueueList() {
   } = useReviewQueue(PAGE_SIZE)
 
   const [batchLoading, setBatchLoading] = useState(false)
+  const [assistantItem, setAssistantItem] = useState<PendingItem | null>(null)
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE))
 
@@ -113,10 +115,20 @@ export function ReviewQueueList() {
   }, [selectedIds, clearSelection, refetch])
 
   // ── Discuss (opens AI assistant panel) ──────────────────────────────────────
-  const handleDiscuss = useCallback((_item: PendingItem) => {
-    // TODO: open AI assistant side panel
-    toast.info('AI 讨论面板即将上线')
+  const handleDiscuss = useCallback((item: PendingItem) => {
+    setAssistantItem(item)
   }, [])
+
+  const handleAssistantAdopt = useCallback(async (modifiedContent: string) => {
+    if (!assistantItem) return
+    try {
+      await reviewAction(assistantItem.id, 'edit', modifiedContent)
+      toast.success('规则内容已更新')
+      refetch()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : '更新失败')
+    }
+  }, [assistantItem, refetch])
 
   // ── Error state with retry ──────────────────────────────────────────────────
   if (error && !loading && items.length === 0) {
@@ -134,7 +146,8 @@ export function ReviewQueueList() {
   }
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex h-full">
+      <div className="flex flex-col flex-1 min-w-0">
       {/* Filter bar */}
       <ReviewFilterBar
         filter={filter}
@@ -215,6 +228,16 @@ export function ReviewQueueList() {
         onBatchReject={handleBatchReject}
         onClearSelection={clearSelection}
         loading={batchLoading}
+      />
+      </div>
+
+      {/* AI Assistant Panel */}
+      <KnowledgeAssistantPanel
+        open={!!assistantItem}
+        mode="review"
+        ruleContent={assistantItem?.content}
+        onAdopt={handleAssistantAdopt}
+        onClose={() => setAssistantItem(null)}
       />
     </div>
   )

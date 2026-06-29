@@ -167,6 +167,42 @@ const IMPERATIVE_RE =
   /^(always|use|avoid|never|prefer|ensure|validate|check|don't|do|set|add|remove|keep|write|read|run|test|build|create|delete|update|handle|catch|log|monitor|track|skip|include|exclude|define|import|export|configure|enable|disable)$/i
 
 /**
+ * Heuristic fallback: extract basic rules from failed node outputs when LLM is unavailable.
+ * Generates imperative rules from error patterns in execution results.
+ */
+function buildHeuristicRules(execResult: ExecResult): RawExtractedRule[] {
+  const nodes = Object.entries(execResult.nodes ?? {})
+  const failedNodes = nodes.filter(([, n]) => n.exitCode !== null && n.exitCode !== 0)
+
+  if (failedNodes.length === 0) return []
+
+  const rules: RawExtractedRule[] = []
+  const seen = new Set<string>()
+
+  for (const [nodeId, node] of failedNodes) {
+    const output = (node.lastOutput ?? "").slice(0, 200)
+    if (!output) continue
+
+    // Generate a rule from the failure
+    const firstLine = output.split("\n").find(l => l.trim()) ?? "unknown error"
+    const ruleText = `Handle failure in ${nodeId}: ${firstLine.slice(0, 80)}`
+
+    // Deduplicate
+    if (seen.has(ruleText)) continue
+    seen.add(ruleText)
+
+    rules.push({
+      text: ruleText,
+      scope: "project",
+      target: "octopus",
+      source: "workspace_archive",
+    })
+  }
+
+  return rules
+}
+
+/**
  * Single Haiku call: extract rules and detect conflicts in one prompt.
  *
  * On any LLM or parse failure the function returns an empty array — it never
@@ -219,19 +255,24 @@ If no rules should be extracted, return an empty array [].
 Return ONLY the JSON array, no explanation.`
 
   const response = await callHaiku(prompt)
-  if (!response) return []
 
-  // Parse and validate
   let raw: unknown
-  try {
-    const cleaned = response
-      .replace(/```json?\n?/g, "")
-      .replace(/```/g, "")
-      .trim()
-    raw = JSON.parse(cleaned)
-  } catch (err) {
-    console.warn("[knowledge] Failed to parse LLM response:", err)
-    return []
+
+  if (!response) {
+    // Heuristic fallback: extract rules from failed node outputs when LLM is unavailable
+    raw = buildHeuristicRules(execResult)
+  } else {
+    // Parse and validate
+    try {
+      const cleaned = response
+        .replace(/```json?\n?/g, "")
+        .replace(/```/g, "")
+        .trim()
+      raw = JSON.parse(cleaned)
+    } catch (err) {
+      console.warn("[knowledge] Failed to parse LLM response:", err)
+      return []
+    }
   }
 
   if (!Array.isArray(raw)) return []
@@ -320,7 +361,8 @@ export async function detectRecurringPitfalls(
       .readdirSync(stateDir)
       // Execution result files are plain UUIDs ({uuid}.json); snapshots have a
       // dash suffix ({uuid}-{name}.yaml).
-      .filter((f) => f.endsWith(".json") && !f.includes("-"))
+      .filter((f) => f.endsWith(".json"))
+      // ponytail: snapshots are .yaml, execution results are {uuid}.json
       .map((f) => path.join(stateDir, f))
   } catch (err) {
     console.error("[knowledge] Cannot read state directory:", err)
@@ -424,6 +466,13 @@ export async function detectRecurringPitfalls(
 // P2.4 — Orchestrator
 // ---------------------------------------------------------------------------
 
+export interface KnowledgeConfig {
+  enabled?: boolean
+  auto_extract?: boolean
+  auto_inject?: boolean
+  knowledge_extraction?: "auto" | "disabled"
+}
+
 /**
  * Main entry point: propose rules for review after a workflow execution.
  *
@@ -445,8 +494,13 @@ export async function proposeRulesForReview(
   stateDir: string,
   knowledgeRuleDAO: KnowledgeRuleDAO,
   pendingReviewDAO: PendingReviewDAO,
+  config?: KnowledgeConfig,
 ): Promise<number> {
   try {
+    // Config gate: check if knowledge extraction is enabled
+    if (config?.enabled === false) return 0
+    if (config?.auto_extract === false) return 0
+    if (config?.knowledge_extraction === "disabled") return 0
     // Step 1: gate — is extraction needed?
     if (!shouldExtractRules(execResult)) return 0
 

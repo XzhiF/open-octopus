@@ -1,4 +1,6 @@
 import type { KnowledgeRuleDAO, KnowledgeEffectivenessDAO } from "../../db/dao"
+import { getKnowledgeDir, markRuleRetired } from "./file-ops"
+import path from "path"
 
 // ---------------------------------------------------------------------------
 // Types
@@ -136,12 +138,22 @@ export function retireStaleRules(
   minInjected = 3,
   maxConfidence = 0.2,
   daysSinceLastInjected = 30,
+  org?: string,
 ): number {
   const staleRules = effectivenessDAO.listStale(minInjected, maxConfidence, daysSinceLastInjected)
   let retiredCount = 0
 
   for (const row of staleRules) {
     knowledgeRuleDAO.updateStatus(row.rule_id, "retired")
+    // Also mark as retired in knowledge file
+    if (org) {
+      const rule = knowledgeRuleDAO.getById(row.rule_id)
+      if (rule) {
+        const knowledgeDir = getKnowledgeDir(org)
+        const filePath = path.join(knowledgeDir, rule.file_name)
+        markRuleRetired(filePath, row.rule_id)
+      }
+    }
     retiredCount++
   }
 

@@ -1,4 +1,5 @@
 import path from "path"
+import fs from "fs"
 import { KnowledgeRuleDAO, PendingReviewDAO } from "../../db/dao"
 import {
   appendToKnowledgeFile,
@@ -15,11 +16,22 @@ export class ReviewService {
 
   /**
    * Approve a pending item: write to knowledge file + insert into knowledge_rules + update status.
+   * For skill type items, writes SKILL.md to the org skills directory.
    */
   approveItem(id: string): { ok: true; ruleId: string } {
     const item = this.pendingReviewDAO.getById(id)
     if (!item) throw new Error("NOT_FOUND")
     if (item.status === "approved") return { ok: true, ruleId: id } // idempotent
+
+    // Handle skill type separately
+    if (item.type === "skill") {
+      const skillName = (item.target_file ?? "").replace("skills/", "").replace("/SKILL.md", "") || "unknown-skill"
+      const skillsDir = path.join(getKnowledgeDir(this.org), "..", "skills", skillName)
+      fs.mkdirSync(skillsDir, { recursive: true })
+      fs.writeFileSync(path.join(skillsDir, "SKILL.md"), item.content, "utf-8")
+      this.pendingReviewDAO.updateStatus(id, "approved")
+      return { ok: true, ruleId: id }
+    }
 
     const ruleId = item.status === "pending" || item.status === "deferred"
       ? generateRuleId(item.target_file.replace(".md", ""))

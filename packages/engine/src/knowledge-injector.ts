@@ -11,8 +11,12 @@ import type { VarPool } from "@octopus/shared"
  * - __knowledge_rule_cache: JSON map of ruleId → ruleText
  * - __relevant_rule_ids: JSON array of relevant rule IDs
  */
+export interface InjectorConfig {
+  auto_inject?: boolean
+}
+
 export class KnowledgeInjector {
-  constructor(private pool: VarPool) {}
+  constructor(private pool: VarPool, private config?: InjectorConfig) {}
 
   /**
    * Get knowledge prompts to inject for a given workflow/node.
@@ -22,10 +26,16 @@ export class KnowledgeInjector {
   getInjectedPrompts(workflowName: string, nodeId: string): string[] {
     const prompts: string[] = []
 
-    // 1. User preference (always inject if present)
+    // 1. User preference (always inject if present, even when auto_inject is false)
     const prefText = this.pool.get("__user_preference_text") as string | undefined
     if (prefText?.trim()) {
       prompts.push(`## User Preferences\n${prefText}`)
+    }
+
+    // Config gate: if auto_inject is false, only inject user_preference
+    if (this.config?.auto_inject === false) {
+      this.pool.set("__injected_rule_ids", JSON.stringify([]))
+      return prompts
     }
 
     // 2. Relevant rules from pre-computed cache

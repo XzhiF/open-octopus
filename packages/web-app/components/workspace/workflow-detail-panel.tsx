@@ -21,6 +21,7 @@ import {
   Coins,
   Loader2,
   X,
+  Archive as ArchiveIcon,
 } from "lucide-react"
 import { WorkflowFlowViewerWithStatus } from "./workflow-flow-viewer-with-status"
 import { TokenUsageDisplay } from "./workflow-nodes/token-usage-display"
@@ -28,6 +29,7 @@ import { ExecutionLogViewer } from "./execution-log-viewer"
 import { InterventionDialog } from "./intervention-dialog"
 import { NodeInfoDialog } from "./node-info-dialog"
 import { SwarmDetailDialog } from "@/components/swarm/organisms/swarm-detail-dialog"
+import { ArchiveDialog } from "@/components/agent/knowledge/archive/ArchiveDialog"
 import { useLiveTimer } from "@/hooks/use-live-timer"
 import { getServerUrl } from "@/lib/server-config"
 import { useAgentTraces } from "@/hooks/use-agent-traces"
@@ -119,6 +121,7 @@ export function WorkflowDetailPanel({ execution, workflow, workspaceId }: Workfl
   const [retryInterventionLoading, setRetryInterventionLoading] = useState(false)
   const [approvalOpen, setApprovalOpen] = useState(false)
   const [approvalLoading, setApprovalLoading] = useState(false)
+  const [archiveOpen, setArchiveOpen] = useState(false)
 
   // Always poll when panel is open — ensures recovery from stale prop data
   const fetchStatus = useCallback(() => {
@@ -338,6 +341,18 @@ export function WorkflowDetailPanel({ execution, workflow, workspaceId }: Workfl
               <CheckCircle2 className="h-3.5 w-3.5" />
             </Button>
           )}
+
+          {(liveStatus === "completed" || liveStatus === "failed") && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7"
+              onClick={() => setArchiveOpen(true)}
+              title="归档"
+            >
+              <ArchiveIcon className="h-3.5 w-3.5" />
+            </Button>
+          )}
         </div>
       </div>
 
@@ -416,6 +431,15 @@ export function WorkflowDetailPanel({ execution, workflow, workspaceId }: Workfl
           storageKey={`octopus:ws:${workspaceId}:intervention:${execution.id}`}
         />
       )}
+
+      {/* Archive Dialog */}
+      <ArchiveDialog
+        open={archiveOpen}
+        onOpenChange={setArchiveOpen}
+        executionId={execution.id}
+        org={workspaceId}
+        onArchiveComplete={() => setArchiveOpen(false)}
+      />
     </div>
   )
 }

@@ -26,6 +26,7 @@ import {
   compactKnowledge,
   restoreRule,
 } from '@/lib/knowledge/api'
+import { BookOpen } from 'lucide-react'
 
 export function KnowledgeTree() {
   const [files, setFiles] = useState<KnowledgeFile[]>([])

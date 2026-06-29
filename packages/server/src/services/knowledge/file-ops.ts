@@ -84,7 +84,7 @@ export function writeUserPreference(org: string | undefined, content: string): v
  */
 export function generateRuleId(target: string): string {
   const date = new Date().toISOString().slice(0, 10).replace(/-/g, "")
-  const rand = crypto.randomBytes(3).toString("base64url").slice(0, 4)
+  const rand = crypto.randomBytes(2).toString("hex").slice(0, 4)
   return `${target}-${date}-${rand}`
 }
 
@@ -119,6 +119,105 @@ export function parseKnowledgeFile(filePath: string): ParsedRule[] {
   }
 
   return rules
+}
+
+/**
+ * Mark a rule as retired in the knowledge file by adding <!-- retired --> annotation.
+ */
+export function markRuleRetired(filePath: string, ruleId: string): void {
+  const content = readKnowledgeFile(filePath)
+  if (!content) return
+  const marker = `<!-- id:${ruleId} |`
+  const retiredMarker = `<!-- retired -->`
+  // Add retired marker after the rule's metadata comment
+  const updated = content.replace(
+    new RegExp(`(${escapeRegex(marker)}[^\\n]*-->)(?!\\s*${escapeRegex(retiredMarker)})`),
+    `$1\n${retiredMarker}`,
+  )
+  if (updated !== content) writeKnowledgeFile(filePath, updated)
+}
+
+/**
+ * Remove retired annotation from a rule in the knowledge file.
+ */
+export function unmarkRuleRetired(filePath: string, ruleId: string): void {
+  const content = readKnowledgeFile(filePath)
+  if (!content) return
+  const marker = `<!-- id:${ruleId} |`
+  // Find the retired marker after the rule's metadata and remove it
+  const lines = content.split("\n")
+  const result: string[] = []
+  let skipNext = false
+  for (let i = 0; i < lines.length; i++) {
+    if (skipNext && lines[i].trim() === "<!-- retired -->") {
+      skipNext = false
+      continue
+    }
+    skipNext = lines[i].includes(marker)
+    result.push(lines[i])
+  }
+  writeKnowledgeFile(filePath, result.join("\n"))
+}
+
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+}
+
+/**
+ * Rebuild the index.md file for an org's knowledge directory.
+ *
+ * Scans all knowledge files, parses rules, and writes a summary index.md
+ * with statistics and a table of all rules.
+ */
+export function rebuildIndex(
+  org: string,
+  knowledgeRuleDAO: { listActive: () => Array<{ rule_id: string; file_name: string; text: string; scope: string; source: string; status: string }> },
+): { ruleCount: number; fileCount: number } {
+  const knowledgeDir = getKnowledgeDir(org)
+  const files = listKnowledgeFiles(knowledgeDir)
+
+  const allRules: Array<{ id: string; file: string; text: string; source: string; date: string; status: string }> = []
+
+  for (const file of files) {
+    const filePath = path.join(knowledgeDir, file)
+    const rules = parseKnowledgeFile(filePath)
+    for (const rule of rules) {
+      allRules.push({
+        id: rule.id,
+        file,
+        text: rule.text,
+        source: rule.source,
+        date: rule.date,
+        status: "active",
+      })
+    }
+  }
+
+  // Build index content
+  const lines: string[] = [
+    `# Knowledge Index — ${org}`,
+    "",
+    `## Statistics`,
+    `- Total rules: ${allRules.length}`,
+    `- Total files: ${files.length}`,
+    `- Last updated: ${new Date().toISOString().slice(0, 10)}`,
+    "",
+    "## Rules",
+    "",
+  ]
+
+  for (const rule of allRules) {
+    lines.push(`| ${rule.id} | ${rule.file} | ${rule.text.slice(0, 60)} | ${rule.source} | ${rule.date} | ${rule.status} |`)
+  }
+
+  if (allRules.length > 0) {
+    lines.splice(10, 0, "| ID | File | Summary | Source | Date | Status |", "|---|---|---|---|---|---|")
+  }
+
+  const indexPath = path.join(knowledgeDir, "index.md")
+  writeKnowledgeFile(indexPath, lines.join("\n") + "\n")
+
+  return { ruleCount: allRules.length, fileCount: files.length }
 }
 
 /**
