@@ -206,6 +206,12 @@ export interface NodeDef {
   context_token_budget?: number
   context_tier?: "200k" | "1m"
 
+  // knowledge
+  knowledge_scope?: {
+    projects?: string[]
+    workflows?: string[]
+  }
+
   // 通用桶 — 不属于上述分类的任意数据
   variables?: Record<string, unknown>
 }
@@ -269,6 +275,12 @@ export const NodeSchema: z.ZodType<NodeDef> = z.lazy(() =>
     context_window_rounds: z.number().int().positive().optional(),
     context_token_budget: z.number().int().positive().optional(),
     context_tier: z.enum(["200k", "1m"]).optional(),
+
+    // knowledge
+    knowledge_scope: z.object({
+      projects: z.array(z.string()).optional(),
+      workflows: z.array(z.string()).optional(),
+    }).optional(),
 
     variables: z.record(z.string(), z.unknown()).optional(),
   }).superRefine((data, ctx) => {
