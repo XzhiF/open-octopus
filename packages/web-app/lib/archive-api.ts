@@ -216,3 +216,31 @@ export async function fetchLeaderboard(params?: {
   const res = await apiFetch(`${getServerUrl()}/api/archive/leaderboard${qs ? `?${qs}` : ""}`)
   return handleResponse(res)
 }
+
+// ============ Compatibility aliases (get* → fetch*) ============
+
+export type ArchiveExecution = ArchiveExecutionItem
+export type PaginatedResult<T> = { data: T[], total: number, page: number, pageSize: number }
+
+export const getArchiveExecution = fetchArchiveExecution
+
+export async function getArchiveExecutions(opts: {
+  page?: number; pageSize?: number; workflow?: string; status?: string
+  from?: string; to?: string; sort?: string; order?: string
+} = {}): Promise<PaginatedResult<ArchiveExecution>> {
+  const result = await fetchArchiveExecutions({
+    page: opts.page,
+    limit: opts.pageSize,
+    workflow_ref: opts.workflow,
+    status: opts.status as any,
+    date_from: opts.from,
+    date_to: opts.to,
+    sort: opts.sort as any,
+    order: opts.order as any,
+  })
+  return { data: result.items, total: result.total, page: result.page, pageSize: result.limit }
+}
+
+export function getWorkflowStats(days: number = 30) {
+  return fetchWorkflowStats({ days })
+}

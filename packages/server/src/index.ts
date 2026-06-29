@@ -54,7 +54,6 @@ import { ArchiveService } from "./services/archive-service"
 import { ArchiveRecoveryService } from "./services/archive-recovery"
 import { ExperienceLifecycleService } from "./services/experience-lifecycle"
 import { createWebhookRoutes } from "./routes/webhook"
-import { createArchiveRoutes } from "./routes/archive"
 import { ChatService } from "./services/chat"
 import { LeaderboardService } from "./services/leaderboard"
 import { getLogAnalysisService } from "./services/log-analysis"
@@ -343,7 +342,6 @@ app.route("/api/agent", createAgentRoutes({
   archiveDAO: d.archive,
   experienceDAO: d.experience,
   schedulerService: schedSvc,
-  archiveDAO: d.archive,
 }))
 app.route("/api/workflows/built-in", builtInWorkflowRoutes)
 app.route("/api/archive", createArchiveRoutes({ archiveDAO: d.archive, experienceDAO: d.experience }))
@@ -402,9 +400,6 @@ try {
     console.warn(`[server] Schedule register routes init failed: ${msg}`)
   }
 }
-
-// Archive routes (execution history + experience lessons)
-app.route("/api/archive", createArchiveRoutes({ archiveDAO: d.archive, experienceDAO: d.experience }))
 
 // Webhook routes (GitHub PR merge -> experience lifecycle)
 if (experienceLifecycleService) {
