@@ -1,4 +1,4 @@
-import { VarPool, substituteVars, compileAutoAnswers, evaluateExpression } from "@octopus/shared"
+import { VarPool, substituteVars, compileAutoAnswers, evaluateExpression, isPathWithin } from "@octopus/shared"
 import type { NodeDef, AutoAnswer, SubAgentDef, CrossExecResolver } from "@octopus/shared"
 import type { NodeExecutor, NodeExecutionResult } from "./types"
 import { AgentNodeRunner } from "./agent-runner"
@@ -216,7 +216,17 @@ export class AgentExecutor implements NodeExecutor {
           ? expanded
           : path.resolve(cwd, expanded)
 
-        const rawContent = fs.readFileSync(absolutePath, "utf-8")
+        // ponytail: block path traversal in agent_file (SYN-P0-16)
+        // Reject paths containing ".." components AND paths outside cwd
+        const normalizedPath = path.normalize(absolutePath)
+        if (normalizedPath.includes(`..${path.sep}`) || normalizedPath.endsWith("..")) {
+          throw new Error(`agent_file path traversal blocked: "${filePath}" resolves outside allowed scope`)
+        }
+        if (!isPathWithin(normalizedPath, cwd)) {
+          throw new Error(`agent_file path outside project: "${filePath}" resolves to ${normalizedPath}, must be within ${cwd}`)
+        }
+
+        const rawContent = fs.readFileSync(normalizedPath, "utf-8")
         const frontmatter = this.parseFrontmatter(rawContent)
         const fileContent = this.stripFrontmatter(rawContent)
         const combinedPrompt = agentDef.prompt

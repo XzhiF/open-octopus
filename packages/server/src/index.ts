@@ -189,7 +189,10 @@ function isTrustedOrigin(origin: string | undefined): boolean {
 }
 
 app.use("*", cors({
-  origin: (origin) => origin ?? "*",
+  origin: (origin) => {
+    if (!origin) return "*"
+    return isTrustedOrigin(origin) ? origin : ""
+  },
   credentials: true,
   allowHeaders: ["Content-Type", "Authorization", "If-Match"],
   allowMethods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
@@ -361,10 +364,28 @@ if (shouldServe) {
     const proto = req.headers["x-forwarded-proto"] ?? "http"
     const url = `${proto}://${host}${req.url}`
 
+    // ponytail: enforce body size limit at HTTP layer (SYN-P0-20)
+    // Hono bodyLimit only applies to Hono's own request parsing, not raw http
+    const MAX_BODY_SIZE = 1024 * 1024 // 1MB, matches Hono bodyLimit
     const chunks: Buffer[] = []
+    let totalSize = 0
+    let bodyTooLarge = false
     for await (const chunk of req) {
-      chunks.push(Buffer.from(chunk))
+      const buf = Buffer.from(chunk)
+      totalSize += buf.length
+      if (totalSize > MAX_BODY_SIZE) {
+        bodyTooLarge = true
+        break
+      }
+      chunks.push(buf)
     }
+
+    if (bodyTooLarge) {
+      res.writeHead(413, { "Content-Type": "application/json" })
+      res.end(JSON.stringify({ error: { code: "PAYLOAD_TOO_LARGE", message: "Request body exceeds 1MB limit" } }))
+      return
+    }
+
     const body = Buffer.concat(chunks)
 
     const request = new Request(url, {

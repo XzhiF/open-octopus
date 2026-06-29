@@ -2,7 +2,7 @@ import { Hono } from "hono"
 import { WorkspaceService } from "../services/workspace"
 import { WorkspaceDAO, OrgDAO } from "../db/dao"
 import { orgExists } from "../services/org"
-import { parseManifest } from "@octopus/shared"
+import { parseManifest, isSafeName, isPathWithin } from "@octopus/shared"
 import { readFileSync, existsSync, readdirSync } from "fs"
 import { join } from "path"
 import os from "os"
@@ -32,7 +32,26 @@ export function createWorkspaceRoutes(workspaceService: WorkspaceService, orgDAO
     if (!orgExists(orgDAO, body.org)) {
       return c.json({ error: `Org '${body.org}' not found` }, 400)
     }
+
+    // ponytail: validate name to prevent path traversal (SYN-P0-07)
+    if (!isSafeName(body.name)) {
+      return c.json({ error: "Invalid workspace name. Use alphanumeric, hyphens, underscores only." }, 400)
+    }
+    if (!isSafeName(body.org)) {
+      return c.json({ error: "Invalid org name." }, 400)
+    }
+
     const workoutPath = body.path || `~/.octopus/orgs/${body.org}/workspaces/${body.name}`
+
+    // If custom path provided, verify it stays within allowed directory
+    if (body.path) {
+      const resolvedPath = workoutPath.replace(/^~/, os.homedir())
+      const allowedBase = join(os.homedir(), ".octopus")
+      if (!isPathWithin(resolvedPath, allowedBase)) {
+        return c.json({ error: "Workspace path must be within ~/.octopus" }, 400)
+      }
+    }
+
     const workspace = workspaceService.create({
       name: body.name,
       org: body.org,
@@ -97,6 +116,15 @@ export function createWorkspaceRoutes(workspaceService: WorkspaceService, orgDAO
 
   workspaceRoutes.post("/import", async (c) => {
     const body = await c.req.json<{ name: string; org: string }>()
+
+    // ponytail: validate name to prevent path traversal (SYN-P0-08)
+    if (!isSafeName(body.name)) {
+      return c.json({ error: "Invalid workspace name." }, 400)
+    }
+    if (!isSafeName(body.org)) {
+      return c.json({ error: "Invalid org name." }, 400)
+    }
+
     const wsPath = `~/.octopus/orgs/${body.org}/workspaces/${body.name}`
     const resolvedPath = wsPath.replace(/^~/, os.homedir())
     const configPath = join(resolvedPath, "config.json")

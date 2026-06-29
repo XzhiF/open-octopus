@@ -180,6 +180,12 @@ export function createMemoryRoutes(): Hono {
 
       // Find the target daily file
       const targetDate = body.date ?? new Date(Date.now() - 86400000).toISOString().split('T')[0]
+
+      // ponytail: validate date format to prevent path traversal (SYN-P0-15)
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(targetDate)) {
+        return c.json(createAgentError('INVALID_PARAM', 'Invalid date format. Expected YYYY-MM-DD.'), 400)
+      }
+
       const dailyFile = path.join(dailyDir, `${targetDate}.md`)
 
       if (!fs.existsSync(dailyFile)) {

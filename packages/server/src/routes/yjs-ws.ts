@@ -110,9 +110,31 @@ function send(conn: WebSocket, msg: Uint8Array): void {
 }
 
 export function createYjsWebSocketServer(server: http.Server): void {
-  const wss = new WebSocket.Server({ server, maxPayload: 100 * 1024 * 1024 })
+  // ponytail: reduced maxPayload from 100MB to 4MB — DoS prevention
+  const wss = new WebSocket.Server({ server, maxPayload: 4 * 1024 * 1024 })
 
   wss.on("connection", (ws: WebSocket, req: http.IncomingMessage) => {
+    // Origin check — reject connections from untrusted origins
+    // ponytail: require Origin/Referer header — non-browser clients must send one (SYN-P0-06)
+    const origin = req.headers.origin ?? req.headers.referer
+    if (!origin) {
+      ws.close(1008, "Origin header required")
+      return
+    }
+    try {
+      const { hostname } = new URL(origin)
+      const localIps = new Set(Object.values(os.networkInterfaces()).flat().filter(Boolean).map(i => i!.address))
+      const trusted = hostname === "localhost" || hostname === "127.0.0.1" || localIps.has(hostname)
+        || (process.env.OCTOPUS_FRONTEND_URL && origin === process.env.OCTOPUS_FRONTEND_URL)
+      if (!trusted) {
+        ws.close(1008, "Origin not allowed")
+        return
+      }
+    } catch {
+      ws.close(1008, "Invalid origin")
+      return
+    }
+
     const url = new URL(req.url ?? "/", "http://localhost")
     const roomName = url.pathname.slice(1) || "default"
 

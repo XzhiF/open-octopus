@@ -65,6 +65,9 @@ function transformInOperator(expr: string): string {
 
 const ALLOWED_PATTERN = /^[a-zA-Z0-9_\s'".\[\],:!|<>=()\-&]+$/
 
+// ponytail: block prototype chain traversal in expressions (RCE prevention)
+const DANGEROUS_PROP_RE = /\b(constructor|prototype|__proto__|eval|Function|require|process|global|globalThis)\b/
+
 export function evaluateExpression(
   expr: string,
   pool: VarPool,
@@ -79,6 +82,9 @@ export function evaluateExpression(
   const transformed = transformInOperator(resolved)
 
   if (!ALLOWED_PATTERN.test(transformed)) return false
+
+  // ponytail: block prototype chain access — ""["constructor"]("return process")()
+  if (DANGEROUS_PROP_RE.test(transformed)) return false
 
   try {
     const fn = new Function(`return (${transformed})`)

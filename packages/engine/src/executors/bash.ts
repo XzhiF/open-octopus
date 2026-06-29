@@ -1,6 +1,6 @@
 import { spawn } from "child_process"
 import { existsSync } from "fs"
-import { VarPool, substituteVars, evaluateExpression } from "@octopus/shared"
+import { VarPool, substituteVars, evaluateExpression, shellEscape, shellSafeValue } from "@octopus/shared"
 import type { NodeDef, CrossExecResolver } from "@octopus/shared"
 import type { NodeExecutor, NodeExecutionResult } from "./types"
 import { applyVarsUpdate } from "./parse-vars-update"
@@ -66,7 +66,7 @@ export class BashExecutor implements NodeExecutor {
     }
 
     const start = Date.now()
-    let script = substituteVars(this.node.bash!, this.pool, undefined, this.crossExecResolver, this.executionId, this.loopContext)
+    let script = this.shellSafeSubstitute(this.node.bash!)
     script = this.resolveInputs(script)
     const timeout = this.node.timeout ?? 30
 
@@ -121,9 +121,38 @@ export class BashExecutor implements NodeExecutor {
     let result = script
     for (const [key, expr] of Object.entries(this.node.inputs)) {
       const value = substituteVars(expr, this.pool, undefined, this.crossExecResolver, this.executionId)
-      result = result.replaceAll(`__${key}__`, value)
+      result = result.replaceAll(`__${key}__`, shellSafeValue(value))
     }
     return result
+  }
+
+  /**
+   * Shell-safe variable substitution: quotes values that contain shell-dangerous
+   * characters, passes safe values (alphanumeric, etc.) through raw.
+   * ponytail: raw substituteVars is unsafe when VarPool has untrusted data
+   */
+  private shellSafeSubstitute(text: string): string {
+    return text.replace(/\$([a-zA-Z0-9_.:-]+)/g, (_match, ref: string) => {
+      let val: any
+      if (ref.startsWith("vars.")) {
+        val = this.pool.get(ref.slice(5))
+      } else if (ref.startsWith("inputs.")) {
+        val = this.pool.get(ref.slice(7))
+      } else if (ref.startsWith("hook.")) {
+        val = this.pool.get(ref)
+      } else if (ref.startsWith("ref:") && this.crossExecResolver && this.executionId) {
+        val = undefined
+      } else {
+        const nodeMatch = ref.match(/^([a-zA-Z0-9_-]+)\.output\.([a-zA-Z0-9_.]+)$/)
+        if (nodeMatch) {
+          val = undefined
+        }
+      }
+      if (val !== undefined) {
+        return shellSafeValue(String(val))
+      }
+      return `$${ref}`
+    })
   }
 
   private applyVarsUpdate(stdout: string, outputs: Record<string, any>) {
