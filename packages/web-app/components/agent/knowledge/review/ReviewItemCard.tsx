@@ -43,7 +43,8 @@ export function ReviewItemCard({
   const needsTruncation = item.content.length > 120
 
   return (
-    <div
+    <article
+      aria-label={`待审项目：${item.content.slice(0, 60)}`}
       className={cn(
         'rounded-lg border transition-colors',
         isSelected
@@ -56,6 +57,7 @@ export function ReviewItemCard({
         <Checkbox
           checked={isSelected}
           onCheckedChange={() => onToggleSelect(item.id)}
+          aria-label={`选择此待审项目`}
           className="mt-1 shrink-0"
         />
 
@@ -103,7 +105,11 @@ export function ReviewItemCard({
           </div>
 
           {/* Action buttons */}
-          <div className="flex items-center gap-1.5 flex-wrap">
+          <div
+            role="toolbar"
+            aria-label="审核操作"
+            className="flex items-center gap-1.5 flex-wrap"
+          >
             <Button
               variant="ghost"
               size="sm"
@@ -114,7 +120,7 @@ export function ReviewItemCard({
               {actionLoading === 'edit' ? (
                 <Spinner className="size-3" />
               ) : (
-                <Edit3 className="size-3" />
+                <Edit3 className="size-3" aria-hidden="true" />
               )}
               编辑
             </Button>
@@ -125,7 +131,7 @@ export function ReviewItemCard({
               onClick={() => onDiscuss?.(item)}
               disabled={actionLoading !== null}
             >
-              <MessageCircle className="size-3" />
+              <MessageCircle className="size-3" aria-hidden="true" />
               讨论
             </Button>
             <Button
@@ -138,7 +144,7 @@ export function ReviewItemCard({
               {actionLoading === 'defer' ? (
                 <Spinner className="size-3" />
               ) : (
-                <Pause className="size-3" />
+                <Pause className="size-3" aria-hidden="true" />
               )}
               暂缓
             </Button>
@@ -152,7 +158,7 @@ export function ReviewItemCard({
               {actionLoading === 'reject' ? (
                 <Spinner className="size-3" />
               ) : (
-                <X className="size-3" />
+                <X className="size-3" aria-hidden="true" />
               )}
               拒绝
             </Button>
@@ -166,14 +172,14 @@ export function ReviewItemCard({
               {actionLoading === 'approve' ? (
                 <Spinner className="size-3" />
               ) : (
-                <Check className="size-3" />
+                <Check className="size-3" aria-hidden="true" />
               )}
               纳入
             </Button>
           </div>
         </div>
       </div>
-    </div>
+    </article>
   )
 }
 
