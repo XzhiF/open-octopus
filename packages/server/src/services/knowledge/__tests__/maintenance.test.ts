@@ -5,7 +5,13 @@ import os from "os"
 import Database from "better-sqlite3"
 import { PendingReviewDAO } from "../../../db/dao/pending-review-dao"
 import { applySchema } from "../../../db/schema"
-import { checkCompactThreshold } from "../maintenance"
+import {
+  checkCompactThreshold,
+  mergeCloneKnowledge,
+  analyzeKnowledgePatterns,
+  compactKnowledgeFile,
+} from "../maintenance"
+import { appendToKnowledgeFile, readKnowledgeFile } from "../file-ops"
 
 describe("maintenance", () => {
   let db: Database.Database
@@ -21,6 +27,7 @@ describe("maintenance", () => {
 
   afterEach(() => {
     db?.close()
+    delete process.env.OCTOPUS_KNOWLEDGE_DIR
     fs.rmSync(tmpDir, { recursive: true, force: true })
   })
 
@@ -97,6 +104,150 @@ describe("maintenance", () => {
           delete process.env.OCTOPUS_KNOWLEDGE_DIR
         }
       }
+    })
+  })
+
+  // =========================================================================
+  // TC-026: mergeCloneKnowledge
+  // =========================================================================
+  describe("mergeCloneKnowledge (TC-026)", () => {
+    it("creates clone_merge items from workspace_archive clone items", () => {
+      // Insert items that look like they came from a clone execution
+      pendingReviewDAO.insert({
+        id: "clone-rule-001",
+        type: "rule",
+        source: "workspace_archive",
+        source_ref: "clone:abc-123:exec-001",
+        source_label: "Clone execution",
+        content: "Always use TypeScript strict mode",
+        target_file: "octopus.md",
+        scope: "project",
+        conflicts: null,
+        confidence: 0.8,
+        auto_approve: 0,
+        status: "pending",
+        user_notes: null,
+      })
+
+      pendingReviewDAO.insert({
+        id: "clone-rule-002",
+        type: "rule",
+        source: "workspace_archive",
+        source_ref: "clone:abc-123:exec-002",
+        source_label: "Clone execution 2",
+        content: "Use connection pooling",
+        target_file: "octopus.md",
+        scope: "project",
+        conflicts: null,
+        confidence: 0.7,
+        auto_approve: 0,
+        status: "pending",
+        user_notes: null,
+      })
+
+      // Also insert a non-clone item that should NOT be merged
+      pendingReviewDAO.insert({
+        id: "normal-rule-001",
+        type: "rule",
+        source: "workspace_archive",
+        source_ref: "exec-normal",
+        source_label: "Normal execution",
+        content: "Normal rule",
+        target_file: "octopus.md",
+        scope: "project",
+        conflicts: null,
+        confidence: 0.8,
+        auto_approve: 0,
+        status: "pending",
+        user_notes: null,
+      })
+
+      const merged = mergeCloneKnowledge("abc-123", pendingReviewDAO)
+      expect(merged).toBe(2)
+
+      // Verify clone_merge items were created
+      const cloneMergeItems = pendingReviewDAO.listBySource("clone_merge")
+      expect(cloneMergeItems).toHaveLength(2)
+      expect(cloneMergeItems[0].source).toBe("clone_merge")
+      expect(cloneMergeItems.some(i => i.content === "Always use TypeScript strict mode")).toBe(true)
+      expect(cloneMergeItems.some(i => i.content === "Use connection pooling")).toBe(true)
+    })
+
+    it("returns 0 when no clone items found", () => {
+      const merged = mergeCloneKnowledge("nonexistent-clone", pendingReviewDAO)
+      expect(merged).toBe(0)
+    })
+  })
+
+  // =========================================================================
+  // TC-044: analyzeKnowledgePatterns
+  // =========================================================================
+  describe("analyzeKnowledgePatterns (TC-044)", () => {
+    it("returns 0 when callHaiku is placeholder (no LLM)", async () => {
+      process.env.OCTOPUS_KNOWLEDGE_DIR = tmpDir
+
+      // Create a file with 5+ rules (threshold for pattern analysis)
+      const filePath = path.join(tmpDir, "octopus.md")
+      for (let i = 0; i < 6; i++) {
+        appendToKnowledgeFile(filePath, `Rule number ${i + 1}`, `pattern-rule-${i}`, "system")
+      }
+
+      // callHaiku returns "" → no skill proposals generated
+      const proposals = await analyzeKnowledgePatterns("test-org", pendingReviewDAO)
+      expect(proposals).toBe(0)
+
+      // No pending skill items should be created
+      const count = pendingReviewDAO.countPending()
+      expect(count).toBe(0)
+
+      delete process.env.OCTOPUS_KNOWLEDGE_DIR
+    })
+
+    it("skips files with fewer than 5 rules", async () => {
+      process.env.OCTOPUS_KNOWLEDGE_DIR = tmpDir
+
+      // Create a file with only 3 rules (below threshold)
+      const filePath = path.join(tmpDir, "small.md")
+      for (let i = 0; i < 3; i++) {
+        appendToKnowledgeFile(filePath, `Small rule ${i}`, `small-rule-${i}`, "system")
+      }
+
+      const proposals = await analyzeKnowledgePatterns("test-org", pendingReviewDAO)
+      expect(proposals).toBe(0)
+
+      delete process.env.OCTOPUS_KNOWLEDGE_DIR
+    })
+  })
+
+  // =========================================================================
+  // compactKnowledgeFile
+  // =========================================================================
+  describe("compactKnowledgeFile", () => {
+    it("creates pending item for compact review", async () => {
+      process.env.OCTOPUS_KNOWLEDGE_DIR = tmpDir
+
+      const filePath = path.join(tmpDir, "compact-test.md")
+      appendToKnowledgeFile(filePath, "Rule A", "compact-a", "system")
+      appendToKnowledgeFile(filePath, "Rule B", "compact-b", "system")
+
+      const result = await compactKnowledgeFile("test-org", "compact-test.md", pendingReviewDAO)
+      expect(result.originalLineCount).toBeGreaterThan(0)
+      expect(result.pendingItemId).toBeDefined()
+
+      // Pending item should exist
+      const pending = pendingReviewDAO.getById(result.pendingItemId)
+      expect(pending).toBeDefined()
+      expect(pending?.source_ref).toBe("compact:compact-test.md")
+
+      delete process.env.OCTOPUS_KNOWLEDGE_DIR
+    })
+
+    it("throws NOT_FOUND for nonexistent file", async () => {
+      process.env.OCTOPUS_KNOWLEDGE_DIR = tmpDir
+      await expect(
+        compactKnowledgeFile("test-org", "nonexistent.md", pendingReviewDAO),
+      ).rejects.toThrow("NOT_FOUND")
+      delete process.env.OCTOPUS_KNOWLEDGE_DIR
     })
   })
 })

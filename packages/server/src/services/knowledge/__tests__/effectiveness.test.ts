@@ -1,4 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest"
+import fs from "fs"
+import path from "path"
+import os from "os"
 import Database from "better-sqlite3"
 import { KnowledgeRuleDAO } from "../../../db/dao/knowledge-rule-dao"
 import { KnowledgeEffectivenessDAO } from "../../../db/dao/knowledge-effectiveness-dao"
@@ -10,6 +13,12 @@ import {
   retireStaleRules,
   restoreRule,
 } from "../effectiveness"
+import {
+  appendToKnowledgeFile,
+  readKnowledgeFile,
+  markRuleRetired,
+  unmarkRuleRetired,
+} from "../file-ops"
 
 describe("effectiveness", () => {
   let db: Database.Database
@@ -138,6 +147,87 @@ describe("effectiveness", () => {
 
       const rule = ruleDAO.getById("stale-rule")
       expect(rule?.status).toBe("retired")
+    })
+  })
+
+  // TC-041: File-level retirement and restore assertions
+  describe("file-level retirement/restore (TC-041)", () => {
+    let tmpDir: string
+
+    beforeEach(() => {
+      tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "effectiveness-file-"))
+      process.env.OCTOPUS_KNOWLEDGE_DIR = tmpDir
+    })
+
+    afterEach(() => {
+      delete process.env.OCTOPUS_KNOWLEDGE_DIR
+      fs.rmSync(tmpDir, { recursive: true, force: true })
+    })
+
+    it("retireStaleRules marks knowledge file with <!-- retired -->", () => {
+      // Create knowledge file with a rule
+      const filePath = path.join(tmpDir, "test.md")
+      appendToKnowledgeFile(filePath, "Stale rule text", "stale-file-001", "system")
+
+      // Insert into DB
+      ruleDAO.insert({
+        rule_id: "stale-file-001",
+        file_name: "test.md",
+        text: "Stale rule text",
+        scope: "project",
+        source: "system",
+        status: "active",
+      })
+
+      // Simulate low confidence
+      for (let i = 0; i < 3; i++) {
+        effectivenessDAO.incrementInjected("stale-file-001")
+        effectivenessDAO.incrementNotHelpful("stale-file-001")
+      }
+
+      // Retire with org parameter to trigger file-level marking
+      const retired = retireStaleRules(effectivenessDAO, ruleDAO, 3, 0.2, 0, "test-org")
+      expect(retired).toBe(1)
+
+      // DB status should be retired
+      const rule = ruleDAO.getById("stale-file-001")
+      expect(rule?.status).toBe("retired")
+
+      // File should contain <!-- retired --> annotation
+      const content = readKnowledgeFile(filePath)
+      expect(content).toContain("<!-- retired -->")
+    })
+
+    it("restoreRule reactivates DB status", () => {
+      ruleDAO.insert({
+        rule_id: "restore-file-001",
+        file_name: "test.md",
+        text: "Rule to restore",
+        scope: "project",
+        source: "system",
+        status: "retired",
+      })
+
+      const result = restoreRule("restore-file-001", ruleDAO)
+      expect(result.ok).toBe(true)
+
+      const rule = ruleDAO.getById("restore-file-001")
+      expect(rule?.status).toBe("active")
+    })
+
+    it("markRuleRetired and unmarkRuleRetired toggle file annotation", () => {
+      const filePath = path.join(tmpDir, "toggle.md")
+      appendToKnowledgeFile(filePath, "Toggle rule", "toggle-001", "system")
+
+      // Retire in file
+      markRuleRetired(filePath, "toggle-001")
+      let content = readKnowledgeFile(filePath)
+      expect(content).toContain("<!-- retired -->")
+
+      // Restore in file
+      unmarkRuleRetired(filePath, "toggle-001")
+      content = readKnowledgeFile(filePath)
+      expect(content).not.toContain("<!-- retired -->")
     })
   })
 

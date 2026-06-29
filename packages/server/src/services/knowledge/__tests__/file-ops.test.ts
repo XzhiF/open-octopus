@@ -2,6 +2,9 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest"
 import fs from "fs"
 import path from "path"
 import os from "os"
+import Database from "better-sqlite3"
+import { KnowledgeRuleDAO } from "../../../db/dao/knowledge-rule-dao"
+import { applySchema } from "../../../db/schema"
 import {
   generateRuleId,
   parseKnowledgeFile,
@@ -9,6 +12,10 @@ import {
   readKnowledgeFile,
   writeKnowledgeFile,
   listKnowledgeFiles,
+  rebuildIndex,
+  markRuleRetired,
+  unmarkRuleRetired,
+  getKnowledgeFileInfo,
 } from "../file-ops"
 
 describe("file-ops", () => {
@@ -94,6 +101,148 @@ describe("file-ops", () => {
       const prefPath = path.join(tmpDir, "user_preference.md")
       writeKnowledgeFile(prefPath, "# My Preferences\n- Prefer concise code")
       expect(readKnowledgeFile(prefPath)).toContain("Prefer concise code")
+    })
+  })
+
+  // TC-001: Two-level knowledge storage merge
+  describe("two-level directory merge (TC-001)", () => {
+    it("lists files from both global and org directories", () => {
+      const globalDir = fs.mkdtempSync(path.join(os.tmpdir(), "knowledge-global-"))
+      const orgDir = fs.mkdtempSync(path.join(os.tmpdir(), "knowledge-org-"))
+
+      try {
+        fs.writeFileSync(path.join(globalDir, "global-rules.md"), "- Global rule")
+        fs.writeFileSync(path.join(orgDir, "project-rules.md"), "- Org rule")
+
+        const globalFiles = listKnowledgeFiles(globalDir)
+        const orgFiles = listKnowledgeFiles(orgDir)
+
+        // Combined list should contain files from both levels
+        const allFiles = [...globalFiles, ...orgFiles]
+        expect(allFiles).toContain("global-rules.md")
+        expect(allFiles).toContain("project-rules.md")
+      } finally {
+        fs.rmSync(globalDir, { recursive: true, force: true })
+        fs.rmSync(orgDir, { recursive: true, force: true })
+      }
+    })
+
+    it("GET /api/knowledge/files merges both levels", () => {
+      const globalDir = fs.mkdtempSync(path.join(os.tmpdir(), "knowledge-global-"))
+      const orgDir = fs.mkdtempSync(path.join(os.tmpdir(), "knowledge-org-"))
+
+      try {
+        appendToKnowledgeFile(
+          path.join(globalDir, "shared.md"),
+          "Always use strict mode",
+          "global-001",
+          "system",
+        )
+        appendToKnowledgeFile(
+          path.join(orgDir, "project.md"),
+          "Use TypeScript",
+          "org-001",
+          "workspace_archive",
+        )
+
+        // Simulate the merge that GET /api/knowledge/files performs
+        const globalFiles = listKnowledgeFiles(globalDir).map(f => ({
+          name: f,
+          scope: "global",
+          ...getKnowledgeFileInfo(path.join(globalDir, f)),
+        }))
+        const orgFiles = listKnowledgeFiles(orgDir).map(f => ({
+          name: f,
+          scope: "org",
+          ...getKnowledgeFileInfo(path.join(orgDir, f)),
+        }))
+
+        const merged = [...globalFiles, ...orgFiles]
+        expect(merged.length).toBeGreaterThanOrEqual(2)
+        expect(merged.some(f => f.scope === "global")).toBe(true)
+        expect(merged.some(f => f.scope === "org")).toBe(true)
+      } finally {
+        fs.rmSync(globalDir, { recursive: true, force: true })
+        fs.rmSync(orgDir, { recursive: true, force: true })
+      }
+    })
+  })
+
+  // TC-006: rebuildIndex
+  describe("rebuildIndex (TC-006)", () => {
+    it("creates index.md with statistics and rule entries", () => {
+      // Set up knowledge files with 3 rules
+      appendToKnowledgeFile(
+        path.join(tmpDir, "octopus.md"),
+        "Always validate inputs",
+        "rule-001",
+        "system",
+      )
+      appendToKnowledgeFile(
+        path.join(tmpDir, "octopus.md"),
+        "Use prepared statements",
+        "rule-002",
+        "workspace_archive",
+      )
+      appendToKnowledgeFile(
+        path.join(tmpDir, "workflow-build.md"),
+        "Run tests before deploy",
+        "rule-003",
+        "system",
+      )
+
+      // Mock knowledgeRuleDAO with listActive
+      const mockRuleDAO = {
+        listActive: () => [
+          { rule_id: "rule-001", file_name: "octopus.md", text: "Always validate inputs", scope: "project", source: "system", status: "active" },
+          { rule_id: "rule-002", file_name: "octopus.md", text: "Use prepared statements", scope: "project", source: "workspace_archive", status: "active" },
+          { rule_id: "rule-003", file_name: "workflow-build.md", text: "Run tests before deploy", scope: "project", source: "system", status: "active" },
+        ],
+      }
+
+      process.env.OCTOPUS_KNOWLEDGE_DIR = tmpDir
+      const result = rebuildIndex("test-org", mockRuleDAO)
+
+      expect(result.ruleCount).toBe(3)
+      expect(result.fileCount).toBe(2)
+
+      // Verify index.md content
+      const indexContent = readKnowledgeFile(path.join(tmpDir, "index.md"))
+      expect(indexContent).toContain("Knowledge Index")
+      expect(indexContent).toContain("Total rules: 3")
+      expect(indexContent).toContain("Total files: 2")
+      // Verify all 3 rule entries in the table
+      expect(indexContent).toContain("rule-001")
+      expect(indexContent).toContain("rule-002")
+      expect(indexContent).toContain("rule-003")
+      expect(indexContent).toContain("Always validate inputs")
+      expect(indexContent).toContain("Use prepared statements")
+      expect(indexContent).toContain("Run tests before deploy")
+
+      delete process.env.OCTOPUS_KNOWLEDGE_DIR
+    })
+  })
+
+  // markRuleRetired / unmarkRuleRetired
+  describe("markRuleRetired / unmarkRuleRetired", () => {
+    it("adds <!-- retired --> after rule metadata", () => {
+      const filePath = path.join(tmpDir, "retire-test.md")
+      appendToKnowledgeFile(filePath, "Active rule", "retire-001", "system")
+
+      markRuleRetired(filePath, "retire-001")
+      const content = readKnowledgeFile(filePath)
+      expect(content).toContain("<!-- retired -->")
+    })
+
+    it("removes <!-- retired --> on unmark", () => {
+      const filePath = path.join(tmpDir, "unmark-test.md")
+      appendToKnowledgeFile(filePath, "Rule to restore", "restore-001", "system")
+
+      markRuleRetired(filePath, "restore-001")
+      expect(readKnowledgeFile(filePath)).toContain("<!-- retired -->")
+
+      unmarkRuleRetired(filePath, "restore-001")
+      expect(readKnowledgeFile(filePath)).not.toContain("<!-- retired -->")
     })
   })
 })
