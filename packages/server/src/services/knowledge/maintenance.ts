@@ -8,17 +8,8 @@ import {
   generateRuleId,
 } from "./file-ops"
 import type { PendingSource } from "@octopus/shared"
-
-// ---------------------------------------------------------------------------
-// LLM wrapper (same pattern as extract.ts — placeholder until providers
-// exposes a simple completion API)
-// ---------------------------------------------------------------------------
-
-async function callHaiku(_prompt: string): Promise<string> {
-  // TODO: wire up real LLM call once providers exposes a simple completion API.
-  console.warn("[knowledge] callHaiku is a placeholder — returning empty string")
-  return ""
-}
+import { callHaiku } from "./llm"
+import type { LLMCall } from "./llm"
 
 // ---------------------------------------------------------------------------
 // P4.5 — Knowledge file compaction
@@ -36,6 +27,7 @@ export async function compactKnowledgeFile(
   org: string,
   fileName: string,
   pendingReviewDAO: PendingReviewDAO,
+  llmCall: LLMCall = callHaiku,
 ): Promise<{ pendingItemId: string; originalLineCount: number; suggestedLineCount: number }> {
   const knowledgeDir = getKnowledgeDir(org)
   const filePath = path.join(knowledgeDir, fileName)
@@ -54,7 +46,7 @@ Return a JSON array of consolidated rules (each as {"text": "imperative sentence
 Merge overlapping rules, remove duplicates, keep the most concise version.
 Return ONLY the JSON array.`
 
-  const response = await callHaiku(prompt)
+  const response = await llmCall(prompt)
   let consolidated: Array<{ text: string }> = []
   try {
     consolidated = JSON.parse(response.replace(/```json?\n?/g, "").replace(/```/g, "").trim())
@@ -192,6 +184,7 @@ export function mergeCloneKnowledge(
 export async function analyzeKnowledgePatterns(
   org: string,
   pendingReviewDAO: PendingReviewDAO,
+  llmCall: LLMCall = callHaiku,
 ): Promise<number> {
   const knowledgeDir = getKnowledgeDir(org)
   const files = listKnowledgeFiles(knowledgeDir)
@@ -224,7 +217,7 @@ If a Skill would help organize these rules, respond with JSON:
 {"skillName": "octo-skill-name", "category": "development|testing|ops", "content": "Skill markdown", "confidence": 0.6}
 Otherwise respond with: null`
 
-    const response = await callHaiku(prompt)
+    const response = await llmCall(prompt)
     if (!response || response.trim() === "null") continue
 
     try {

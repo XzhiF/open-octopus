@@ -14,33 +14,7 @@ import type {
   KnowledgeScope,
   ConflictType,
 } from "@octopus/shared"
-
-// ---------------------------------------------------------------------------
-// LLM wrapper
-// ---------------------------------------------------------------------------
-
-/**
- * ponytail: LLM provider wrapper — returns empty string on any failure.
- *
- * The @octopus/providers package exposes an agent-oriented streaming API
- * (IAgentProvider.sendQuery → AsyncGenerator<MessageChunk>) designed for
- * multi-turn Claude Agent SDK sessions. It does not expose a simple
- * single-shot chat completion method.
- *
- * Until a lightweight completion helper is added to the providers package,
- * this wrapper is a safe no-op placeholder. The extraction pipeline is
- * structured correctly and will function as soon as the real LLM call is
- * wired in here.
- */
-async function callHaiku(_prompt: string): Promise<string> {
-  // TODO: wire up real LLM call once providers exposes a simple completion API.
-  // Example future implementation:
-  //   const { complete } = await import("@octopus/providers")
-  //   const result = await complete({ model: "claude-haiku-4-5-20251001", prompt })
-  //   return result.text ?? ""
-  console.warn("[knowledge] callHaiku is a placeholder — returning empty string")
-  return ""
-}
+import { callHaiku } from "./llm"
 
 // ---------------------------------------------------------------------------
 // P2.1 — Trigger condition detection
@@ -210,6 +184,7 @@ function buildHeuristicRules(execResult: ExecResult): RawExtractedRule[] {
  */
 export async function extractAndCheckRules(
   input: ExtractInput,
+  llmCall: (prompt: string) => Promise<string> = callHaiku,
 ): Promise<(ProposedRule & { conflicts?: ConflictInfo[] })[]> {
   const { execResult, existingRulesSummary } = input
 
@@ -254,7 +229,7 @@ Return a JSON array:
 If no rules should be extracted, return an empty array [].
 Return ONLY the JSON array, no explanation.`
 
-  const response = await callHaiku(prompt)
+  const response = await llmCall(prompt)
 
   let raw: unknown
 

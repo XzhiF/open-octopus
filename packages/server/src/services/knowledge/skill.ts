@@ -4,21 +4,8 @@ import crypto from "crypto"
 import type { PendingReviewDAO } from "../../db/dao"
 import type { ProposedSkill, PendingSource } from "@octopus/shared"
 import { getKnowledgeDir } from "./file-ops"
-
-// ---------------------------------------------------------------------------
-// LLM wrapper (same pattern as extract.ts — placeholder until providers
-// exposes a simple completion API)
-// ---------------------------------------------------------------------------
-
-async function callHaiku(_prompt: string): Promise<string> {
-  // TODO: wire up real LLM call once providers exposes a simple completion API.
-  // Example future implementation:
-  //   const { complete } = await import("@octopus/providers")
-  //   const result = await complete({ model: "claude-haiku-4-5-20251001", prompt })
-  //   return result.text ?? ""
-  console.warn("[knowledge] callHaiku is a placeholder — returning empty string")
-  return ""
-}
+import { callHaiku } from "./llm"
+import type { LLMCall } from "./llm"
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -46,7 +33,7 @@ export async function proposeSkillFromWorkspace(
   org: string,
   pendingReviewDAO: PendingReviewDAO,
   executionSummary?: string,
-  llmCall: (prompt: string) => Promise<string> = callHaiku,
+  llmCall: LLMCall = callHaiku,
 ): Promise<ProposedSkill | null> {
   const prompt = `Based on the following workspace execution summary, propose a reusable Skill:
 
