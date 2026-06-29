@@ -56,6 +56,18 @@
   --scheduler-accent-hover: oklch(55% 0.23 310);
   --scheduler-accent-light: oklch(97% 0.03 310);
 
+  /* ── Knowledge module tokens ── */
+  --knowledge-primary: oklch(0.55 0.15 180);
+  --knowledge-primary-hover: oklch(0.48 0.17 180);
+  --knowledge-primary-light: oklch(0.96 0.02 180);
+  --knowledge-primary-foreground: oklch(0.985 0 0);
+  --knowledge-accent: oklch(0.70 0.16 70);
+  --knowledge-accent-light: oklch(0.97 0.03 70);
+  --knowledge-rule-bg: oklch(0.99 0 0);
+  --knowledge-rule-border: oklch(0.88 0.01 180);
+  --knowledge-retired: oklch(0.55 0 0);
+  --knowledge-retired-bg: oklch(0.97 0 0);
+
   /* ── Animation tokens ── */
   --duration-fast: 150ms;
   --duration-normal: 250ms;
@@ -119,6 +131,18 @@
   --scheduler-accent: oklch(68% 0.20 310);
   --scheduler-accent-hover: oklch(72% 0.18 310);
   --scheduler-accent-light: oklch(25% 0.04 310);
+
+  /* ── Knowledge module tokens (dark) ── */
+  --knowledge-primary: oklch(0.65 0.13 180);
+  --knowledge-primary-hover: oklch(0.70 0.11 180);
+  --knowledge-primary-light: oklch(0.22 0.03 180);
+  --knowledge-primary-foreground: oklch(0.985 0 0);
+  --knowledge-accent: oklch(0.75 0.14 70);
+  --knowledge-accent-light: oklch(0.24 0.03 70);
+  --knowledge-rule-bg: oklch(0.18 0 0);
+  --knowledge-rule-border: oklch(0.32 0.02 180);
+  --knowledge-retired: oklch(0.50 0 0);
+  --knowledge-retired-bg: oklch(0.17 0 0);
 }
 
 @theme inline {
@@ -175,6 +199,18 @@
   --color-scheduler-accent: var(--scheduler-accent);
   --color-scheduler-accent-hover: var(--scheduler-accent-hover);
   --color-scheduler-accent-light: var(--scheduler-accent-light);
+
+  /* ── Knowledge colors ── */
+  --color-knowledge-primary: var(--knowledge-primary);
+  --color-knowledge-primary-hover: var(--knowledge-primary-hover);
+  --color-knowledge-primary-light: var(--knowledge-primary-light);
+  --color-knowledge-primary-foreground: var(--knowledge-primary-foreground);
+  --color-knowledge-accent: var(--knowledge-accent);
+  --color-knowledge-accent-light: var(--knowledge-accent-light);
+  --color-knowledge-rule-bg: var(--knowledge-rule-bg);
+  --color-knowledge-rule-border: var(--knowledge-rule-border);
+  --color-knowledge-retired: var(--knowledge-retired);
+  --color-knowledge-retired-bg: var(--knowledge-retired-bg);
 }
 
 @layer base {
@@ -235,4 +271,14 @@
     repeating-linear-gradient(0deg, #f59e0b 0 6px, transparent 6px 12px) left   / 2px 100% no-repeat,
     repeating-linear-gradient(0deg, #f59e0b 0 6px, transparent 6px 12px) right  / 2px 100% no-repeat;
   animation: marching-ants 0.6s linear infinite;
+}
+
+@keyframes knowledge-slide-in {
+  from { opacity: 0; transform: translateX(16px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes knowledge-badge-pulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.1); }
 }
