@@ -14,6 +14,7 @@ import {
   markRuleRetired,
   unmarkRuleRetired,
 } from "../services/knowledge/file-ops"
+import { isValidRuleId, validateKnowledgeFileName } from "../services/knowledge/validators"
 
 export function createKnowledgeRoutes(
   knowledgeRuleDAO: KnowledgeRuleDAO,
@@ -59,13 +60,13 @@ export function createKnowledgeRoutes(
   // GET /api/knowledge/file/:path — read single file + parsed rules
   routes.get("/file/:path", (c) => {
     const fileName = c.req.param("path")
+    const fileNameCheck = validateKnowledgeFileName(fileName)
+    if (!fileNameCheck.ok) {
+      return c.json({ error: { code: "INVALID_PARAM", message: fileNameCheck.error } }, 400)
+    }
+
     const knowledgeDir = getKnowledgeDir(org)
     const filePath = path.join(knowledgeDir, fileName)
-
-    // Security: prevent path traversal
-    if (fileName.includes("..") || fileName.includes("/")) {
-      return c.json({ error: { code: "INVALID_PARAM", message: "Invalid file name" } }, 400)
-    }
 
     const content = readKnowledgeFile(filePath)
     if (!content) return c.json({ error: { code: "NOT_FOUND", message: "File not found" } }, 404)
@@ -81,13 +82,15 @@ export function createKnowledgeRoutes(
   // PUT /api/knowledge/file/:path — write file
   routes.put("/file/:path", async (c) => {
     const fileName = c.req.param("path")
+    const fileNameCheck = validateKnowledgeFileName(fileName)
+    if (!fileNameCheck.ok) {
+      return c.json({ error: { code: "INVALID_PARAM", message: fileNameCheck.error } }, 400)
+    }
+
     const body = await c.req.json()
     const { content } = body
 
     if (!content) return c.json({ error: { code: "INVALID_PARAM", message: "content required" } }, 400)
-    if (fileName.includes("..") || fileName.includes("/")) {
-      return c.json({ error: { code: "INVALID_PARAM", message: "Invalid file name" } }, 400)
-    }
 
     const knowledgeDir = getKnowledgeDir(org)
     const filePath = path.join(knowledgeDir, fileName)
@@ -184,9 +187,10 @@ export function createKnowledgeRoutes(
 
     if (!filePath) return c.json({ error: { code: "INVALID_PARAM", message: "filePath required" } }, 400)
 
-    // Security: prevent path traversal
-    if (filePath.includes("..") || filePath.includes("/") || filePath.includes("\\")) {
-      return c.json({ error: { code: "INVALID_PARAM", message: "Invalid file path" } }, 400)
+    // Security: same policy as GET/PUT /file/:path — shared validator.
+    const pathCheck = validateKnowledgeFileName(filePath)
+    if (!pathCheck.ok) {
+      return c.json({ error: { code: "INVALID_PARAM", message: pathCheck.error } }, 400)
     }
 
     try {
@@ -213,12 +217,25 @@ export function createKnowledgeRoutes(
   // POST /api/knowledge/rule/:id/restore — restore retired rule
   routes.post("/rule/:id/restore", async (c) => {
     const ruleId = c.req.param("id")
+
+    // Security: validate rule ID format before hitting the DAO. This also
+    // prevents DB-driven path traversal: the file_name returned by
+    // knowledgeRuleDAO.getById() is later joined with the knowledge dir,
+    // so a malicious id must be rejected up front.
+    if (!isValidRuleId(ruleId)) {
+      return c.json({ error: { code: "INVALID_PARAM", message: "Invalid rule ID format" } }, 400)
+    }
+
     try {
       const { restoreRule } = await import("../services/knowledge/effectiveness")
       const result = restoreRule(ruleId, knowledgeRuleDAO)
       // Remove retired annotation from knowledge file
       const rule = knowledgeRuleDAO.getById(ruleId)
       if (rule) {
+        const fileNameCheck = validateKnowledgeFileName(rule.file_name)
+        if (!fileNameCheck.ok) {
+          return c.json({ error: { code: "INTERNAL_ERROR", message: "stored file_name invalid" } }, 500)
+        }
         const knowledgeDir = getKnowledgeDir(org)
         const filePath = path.join(knowledgeDir, rule.file_name)
         unmarkRuleRetired(filePath, ruleId)

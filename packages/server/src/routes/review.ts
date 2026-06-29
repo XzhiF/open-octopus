@@ -1,6 +1,21 @@
 import { Hono } from "hono"
 import type { PendingReviewDAO } from "../db/dao"
 import type { ReviewService } from "../services/knowledge/review"
+import { isValidRuleId } from "../services/knowledge/validators"
+
+/**
+ * Parse a `conflicts` column (stored as JSON text, nullable). Returns null on
+ * null/empty or malformed input rather than throwing — a corrupted row must
+ * not take down the whole listing endpoint.
+ */
+function safeParseConflicts(raw: string | null | unknown): unknown {
+  if (typeof raw !== "string" || raw.length === 0) return null
+  try {
+    return JSON.parse(raw)
+  } catch {
+    return null
+  }
+}
 
 export function createReviewRoutes(
   reviewService: ReviewService,
@@ -17,7 +32,6 @@ export function createReviewRoutes(
 
     const result = pendingReviewDAO.listPending(type, status, page, pageSize)
 
-    // Parse conflicts JSON for each item
     const data = result.data.map(item => ({
       id: item.id,
       type: item.type,
@@ -27,7 +41,7 @@ export function createReviewRoutes(
       content: item.content,
       targetFile: item.target_file,
       scope: item.scope,
-      conflicts: item.conflicts ? JSON.parse(item.conflicts) : null,
+      conflicts: safeParseConflicts(item.conflicts),
       confidence: item.confidence,
       autoApprove: item.auto_approve === 1,
       status: item.status,
@@ -40,6 +54,12 @@ export function createReviewRoutes(
   // POST /api/review/:id/action — approve/reject/defer/edit
   routes.post("/:id/action", async (c) => {
     const id = c.req.param("id")
+
+    // Security: validate ID format before it reaches the DAO.
+    if (!isValidRuleId(id)) {
+      return c.json({ error: { code: "INVALID_PARAM", message: "Invalid review item ID format" } }, 400)
+    }
+
     const body = await c.req.json()
     const { action, content, userNotes } = body
 
@@ -81,6 +101,14 @@ export function createReviewRoutes(
     if (!ids || !Array.isArray(ids) || ids.length === 0) {
       return c.json({ error: "INVALID_PARAM: ids must be non-empty array" }, 400)
     }
+    if (ids.length > 200) {
+      return c.json({ error: "INVALID_PARAM: ids array too large (max 200)" }, 400)
+    }
+    // Validate every element — a single malformed id would otherwise be
+    // forwarded to the DAO and produce a confusing partial failure.
+    if (!ids.every((id: unknown) => typeof id === "string" && isValidRuleId(id))) {
+      return c.json({ error: "INVALID_PARAM: one or more ids have invalid format" }, 400)
+    }
     if (!["approve", "reject"].includes(action)) {
       return c.json({ error: "INVALID_PARAM: action must be approve|reject" }, 400)
     }
@@ -118,7 +146,7 @@ export function createReviewRoutes(
     c.res.headers.set("Cache-Control", "no-cache")
     c.res.headers.set("Connection", "keep-alive")
 
-    return c.body("") // ponytail: SSE stub — full implementation requires LLM streaming
+    return c.body("") // SSE stub — full implementation requires LLM streaming
   })
 
   return routes
