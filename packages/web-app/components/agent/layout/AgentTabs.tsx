@@ -1,11 +1,12 @@
 'use client'
 
-import { MessageSquare, Brain, Zap, Users, ClipboardList, Settings } from 'lucide-react'
+import { MessageSquare, Brain, BookOpen, Zap, Users, ClipboardList, Settings } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 const TAB_CONFIG = [
   { id: 'chat', label: '对话', icon: MessageSquare },
   { id: 'memory', label: '记忆', icon: Brain },
+  { id: 'knowledge', label: '知识', icon: BookOpen },
   { id: 'skill', label: 'SKILL', icon: Zap },
   { id: 'clone', label: '分身', icon: Users },
   { id: 'task', label: '任务', icon: ClipboardList },
