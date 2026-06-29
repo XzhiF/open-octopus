@@ -6,6 +6,23 @@ import {
   getKnowledgeDir,
   generateRuleId,
 } from "./file-ops"
+import { validateKnowledgeFileName } from "./validators"
+
+/**
+ * Strict validation for skill folder names. The value is derived from
+ * `target_file` (LLM-generated JSON in the pending_review row) so we must
+ * reject anything that could escape the skills directory via path
+ * traversal, even though an admin approval gate sits in front of this.
+ *
+ * Allowed: letters, digits, underscore, hyphen; 1..64 chars.
+ */
+const SKILL_NAME_REGEX = /^[a-z0-9_-]{1,64}$/i
+
+function assertValidSkillName(name: string): void {
+  if (!SKILL_NAME_REGEX.test(name)) {
+    throw new Error(`INVALID_SKILL_NAME: ${JSON.stringify(name)}`)
+  }
+}
 
 export class ReviewService {
   constructor(
@@ -25,24 +42,41 @@ export class ReviewService {
 
     // Handle skill type separately
     if (item.type === "skill") {
-      const skillName = (item.target_file ?? "").replace("skills/", "").replace("/SKILL.md", "") || "unknown-skill"
-      const skillsDir = path.join(getKnowledgeDir(this.org), "..", "skills", skillName)
+      // Extract the skill folder name from target_file (typically
+      // "skills/<name>/SKILL.md") but validate the result before any
+      // path operations. An LLM that returns a traversal payload in
+      // target_file would otherwise be written to disk.
+      const rawName = (item.target_file ?? "")
+        .replace(/^skills\//, "")
+        .replace(/\/SKILL\.md$/, "") || "unknown-skill"
+      assertValidSkillName(rawName)
+
+      const skillsDir = path.join(getKnowledgeDir(this.org), "..", "skills", rawName)
       fs.mkdirSync(skillsDir, { recursive: true })
       fs.writeFileSync(path.join(skillsDir, "SKILL.md"), item.content, "utf-8")
       this.pendingReviewDAO.updateStatus(id, "approved")
       return { ok: true, ruleId: id }
     }
 
+    // Non-skill path: also guard against a poisoned target_file.
+    // pending_review rows are system-generated but flow through LLM JSON,
+    // so defense in depth is still warranted.
+    const targetFile = item.target_file || "octopus.md"
+    const targetCheck = validateKnowledgeFileName(targetFile)
+    if (!targetCheck.ok) {
+      throw new Error(`INVALID_TARGET_FILE: ${targetCheck.error}`)
+    }
+
     const ruleId = item.status === "pending" || item.status === "deferred"
-      ? generateRuleId(item.target_file.replace(".md", ""))
+      ? generateRuleId(targetFile.replace(".md", ""))
       : id
     const knowledgeDir = getKnowledgeDir(this.org)
-    const filePath = path.join(knowledgeDir, item.target_file || "octopus.md")
+    const filePath = path.join(knowledgeDir, targetFile)
 
     appendToKnowledgeFile(filePath, item.content, ruleId, item.source)
     this.knowledgeRuleDAO.insert({
       rule_id: ruleId,
-      file_name: item.target_file || "octopus.md",
+      file_name: targetFile,
       text: item.content,
       scope: item.scope,
       source: item.source,
