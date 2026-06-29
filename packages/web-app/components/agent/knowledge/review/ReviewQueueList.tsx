@@ -6,6 +6,7 @@
  */
 
 import { useState, useCallback } from 'react'
+import { RefreshCw, CheckCircle, ChevronLeft, ChevronRight } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { toast } from 'sonner'
 import { useReviewQueue } from '@/hooks/useReviewQueue'

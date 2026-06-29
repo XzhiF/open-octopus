@@ -54,6 +54,39 @@ describe("skill", () => {
       const count = pendingReviewDAO.countPending()
       expect(count).toBe(0)
     })
+
+    it("proposes skill when LLM returns valid JSON (happy path)", async () => {
+      const mockLlm = async () =>
+        JSON.stringify({
+          skillName: "octo-test-automation",
+          category: "testing",
+          content: "# Test Automation Skill\n\nAutomate test writing.",
+          confidence: 0.85,
+        })
+
+      const result = await proposeSkillFromWorkspace(
+        "ws-001", "test-org", pendingReviewDAO,
+        "Executed 50 test suites with recurring patterns in test setup",
+        mockLlm,
+      )
+
+      expect(result).not.toBeNull()
+      expect(result!.skillName).toBe("octo-test-automation")
+      expect(result!.category).toBe("testing")
+      expect(result!.confidence).toBe(0.85)
+      expect(result!.source).toBe("workspace_archive")
+
+      // Verify pending item was inserted with complete fields
+      const items = pendingReviewDAO.listBySource("workspace_archive")
+      expect(items).toHaveLength(1)
+      const item = items[0]
+      expect(item.type).toBe("skill")
+      expect(item.status).toBe("pending")
+      expect(item.target_file).toBe("skills/octo-test-automation/SKILL.md")
+      expect(item.content).toContain("# Test Automation Skill")
+      expect(item.confidence).toBe(0.85)
+      expect(item.scope).toBe("project")
+    })
   })
 
   // =========================================================================

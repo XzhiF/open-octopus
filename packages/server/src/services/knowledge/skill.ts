@@ -46,6 +46,7 @@ export async function proposeSkillFromWorkspace(
   org: string,
   pendingReviewDAO: PendingReviewDAO,
   executionSummary?: string,
+  llmCall: (prompt: string) => Promise<string> = callHaiku,
 ): Promise<ProposedSkill | null> {
   const prompt = `Based on the following workspace execution summary, propose a reusable Skill:
 
@@ -56,7 +57,7 @@ If a skill would be valuable, respond with JSON:
 
 If no skill is warranted, respond with: null`
 
-  const response = await callHaiku(prompt)
+  const response = await llmCall(prompt)
   if (!response || response.trim() === "null") return null
 
   try {

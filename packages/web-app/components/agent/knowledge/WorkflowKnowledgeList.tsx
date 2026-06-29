@@ -6,6 +6,7 @@
  */
 
 import { useState, useEffect, useCallback } from 'react'
+import { GitBranch, FileText, Eye, Edit3 } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
