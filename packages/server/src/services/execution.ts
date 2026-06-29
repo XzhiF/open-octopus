@@ -10,7 +10,6 @@ import { ExecutionDAO } from "../db/dao/execution-dao"
 import { ExecutionLifecycle } from "./execution/ExecutionLifecycle"
 import { RecoveryManager } from "./execution/RecoveryManager"
 import { globalErrorTracker } from "./error-tracker"
-import type { ArchiveService } from "./archive-service"
 import type { EngineCallbacks } from "@octopus/engine"
 import type { ExecutionRow, NodeExecutionRow, BranchExecutionRow } from "./execution/types"
 
@@ -43,7 +42,6 @@ export class ExecutionService {
     workspaceDbId: string,
     observability?: ObservabilityService,
     execDAO?: ExecutionDAO,
-    archiveService?: ArchiveService,
   ) {
     this.dao = execDAO ?? new ExecutionDAO(db)
     const obs = observability ?? new ObservabilityService(db, new PrivacyFilter(), this.dao)
@@ -51,7 +49,7 @@ export class ExecutionService {
 
     this.lifecycle = new ExecutionLifecycle(
       this.dao, sse, workflowService, builtInWorkflowService,
-      org, workspacePath, workspaceDbId, workspaceId, obs, globalErrorTracker, archiveService,
+      org, workspacePath, workspaceDbId, workspaceId, obs, globalErrorTracker,
     )
 
     this.lifecycle.setupResumeListener()

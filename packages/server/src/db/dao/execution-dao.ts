@@ -14,22 +14,6 @@ export class ExecutionDAO extends BaseDAO {
     return (this.stmt("SELECT * FROM executions WHERE id = ?").get(id) as ExecutionRow) ?? null
   }
 
-  // ponytail: walks parent_id chain; O(depth) queries, fine since depth ≤ 5
-  computeChainDepth(executionId: string): number {
-    let depth = 0
-    let currentId: string | null = executionId
-    const seen = new Set<string>()
-    while (currentId) {
-      if (seen.has(currentId)) break // cycle guard
-      seen.add(currentId)
-      const row = this.stmt("SELECT parent_id FROM executions WHERE id = ?").get(currentId) as { parent_id: string } | undefined
-      if (!row || !row.parent_id || row.parent_id === "0") break
-      depth++
-      currentId = row.parent_id
-    }
-    return depth
-  }
-
   listByWorkspace(workspaceId: string): ExecutionRow[] {
     return this.stmt("SELECT * FROM executions WHERE workspace_id = ? ORDER BY created_at DESC").all(workspaceId) as ExecutionRow[]
   }

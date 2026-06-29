@@ -1,8 +1,6 @@
 import Database from "better-sqlite3"
 import { randomUUID } from "crypto"
 import { TokenUsageDAO, ExecutionDAO, WorkspaceDAO } from "../db/dao"
-import type { ArchiveDAO } from "../db/dao/archive-dao"
-import type { ExperienceDAO } from "../db/dao/experience-dao"
 
 interface Suggestion {
   ruleName: string
@@ -29,12 +27,8 @@ interface SuggestionRule {
 
 export class SuggestionEngine {
   private rules: SuggestionRule[]
-  private archiveDAO?: ArchiveDAO
-  private experienceDAO?: ExperienceDAO
 
-  constructor(archiveDAO?: ArchiveDAO, experienceDAO?: ExperienceDAO) {
-    this.archiveDAO = archiveDAO
-    this.experienceDAO = experienceDAO
+  constructor() {
     this.rules = [
       {
         name: 'OverpoweredModel',
@@ -172,107 +166,5 @@ export class SuggestionEngine {
 
   getSuggestions(dao: WorkspaceDAO, workspaceId: string, status?: string) {
     return dao.findSuggestionsSorted(workspaceId, status)
-  }
-
-  /**
-   * P4.2: Analyze repeating patterns across archived executions.
-   * Returns suggestions for systemic issues.
-   */
-  analyzeRepeatingPatterns(days: number): Array<{
-    title: string
-    severity: 'info' | 'warning' | 'critical'
-    detail: string
-    recommendation: string
-  }> {
-    const suggestions: Array<{ title: string; severity: 'info' | 'warning' | 'critical'; detail: string; recommendation: string }> = []
-
-    if (!this.archiveDAO || !this.experienceDAO) return suggestions
-
-    try {
-      // Find experiences with same project + package + type >= 3 in last N days
-      const _cutoff = new Date(Date.now() - days * 86400000).toISOString()
-
-      // Group bug experiences by project + package
-      const bugExperiences = this.experienceDAO.search("bug", { type: "bug", status: "active", limit: 100 })
-      const groups = new Map<string, typeof bugExperiences>()
-
-      for (const exp of bugExperiences) {
-        const key = `${exp.project || "unknown"}:${exp.package || "unknown"}`
-        if (!groups.has(key)) groups.set(key, [])
-        groups.get(key)!.push(exp)
-      }
-
-      for (const [key, exps] of groups) {
-        if (exps.length >= 3) {
-          const [project, pkg] = key.split(":")
-          suggestions.push({
-            title: `重复 BUG 模式: ${pkg}`,
-            severity: "warning",
-            detail: `项目 ${project} 的 ${pkg} 包在过去 ${days} 天内出现 ${exps.length} 个同类 BUG`,
-            recommendation: `建议对 ${pkg} 做一次系统性审查`,
-          })
-        }
-      }
-    } catch (err) {
-      console.warn("[suggestion-engine] analyzeRepeatingPatterns failed:", err)
-    }
-
-    return suggestions
-  }
-
-  /**
-   * P4.3: Detect failure patterns from experience index.
-   */
-  detectFailurePatterns(newWorkflow: string, experiences: Array<{ type: string; title: string; content: string }>): Array<{
-    warning: string
-    autoFix?: string
-  }> {
-    const warnings: Array<{ warning: string; autoFix?: string }> = []
-
-    const failureExps = experiences.filter(e => e.type === 'failure')
-    for (const exp of failureExps) {
-      // Simple pattern matching: if the failure content mentions keywords from the workflow name
-      if (exp.content.toLowerCase().includes(newWorkflow.toLowerCase()) ||
-          exp.title.toLowerCase().includes(newWorkflow.toLowerCase())) {
-        warnings.push({
-          warning: `历史失败经验: "${exp.title}" — ${exp.content.slice(0, 200)}`,
-        })
-      }
-    }
-
-    return warnings
-  }
-
-  /**
-   * P4.4: Analyze cost optimization opportunities from archived data.
-   */
-  analyzeCostOptimization(days: number): Array<{
-    nodeId: string
-    title: string
-    detail: string
-    estimatedSaving: string
-  }> {
-    const suggestions: Array<{ nodeId: string; title: string; detail: string; estimatedSaving: string }> = []
-
-    if (!this.archiveDAO) return suggestions
-
-    try {
-      const stats = this.archiveDAO.getWorkflowStats(days, "total_cost_usd", "desc", 20)
-
-      for (const ws of stats) {
-        if (ws.avg_cost_usd > 5) { // Workflows costing > $5 avg
-          suggestions.push({
-            nodeId: ws.workflow_ref,
-            title: `高成本工作流: ${ws.workflow_name}`,
-            detail: `平均成本 $${ws.avg_cost_usd.toFixed(2)}, ${ws.execution_count} 次执行, 总成本 $${ws.total_cost_usd.toFixed(2)}`,
-            estimatedSaving: `考虑对 scan 类节点使用 sonnet 替代 opus, 预计降低 40-60% 成本`,
-          })
-        }
-      }
-    } catch (err) {
-      console.warn("[suggestion-engine] analyzeCostOptimization failed:", err)
-    }
-
-    return suggestions
   }
 }

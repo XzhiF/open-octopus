@@ -7,7 +7,6 @@ import type { WorkflowService } from "../workflow"
 import type { BuiltInWorkflowService } from "../builtin-workflow"
 import type { ObservabilityService } from "../observability"
 import type { ErrorTracker } from "../error-tracker"
-import type { ArchiveService } from "../archive-service"
 import type { HookDef, NodeDef, WorkflowDef, WorkflowHooks, PipelineConfig, ExecutionLookup } from "@octopus/shared"
 import type { EngineCallbacks } from "@octopus/engine"
 import { WorkflowEngine, BashExecutor, AgentExecutor, AgentNodeRunner, FilesystemCheckpointStore } from "@octopus/engine"
@@ -37,7 +36,6 @@ export class ExecutionLifecycle {
     private workspaceId: string,
     private observability: ObservabilityService,
     private errorTracker?: ErrorTracker,
-    private archiveService?: ArchiveService,
   ) {
     this.enginePool = new EnginePool()
   }
@@ -275,21 +273,6 @@ export class ExecutionLifecycle {
 
       this.syncStateJson()
       this.sse.emit(this.workspaceId, { event: "complete", data: { executionId: id, finalStatus: result.status } })
-
-      // P1.6: Trigger archive on completion (fire-and-forget, non-blocking)
-      try {
-        const { getArchiveService } = require("../archive/archive-registry")
-        const archiveService = getArchiveService()
-        if (archiveService) {
-          setImmediate(() => {
-            try {
-              archiveService.archiveExecution(id)
-            } catch (archiveErr) {
-              console.warn(`[ExecutionLifecycle] Archive failed for ${id}:`, archiveErr)
-            }
-          })
-        }
-      } catch { /* archive registry not available */ }
     } catch (err: any) {
       this.errorTracker?.capture('execution', err.message ?? 'execution error', {
         execution_id: id, node_id: this.findFailedNode(id) ?? undefined, workflow_name: exec.workflow_name,
@@ -975,22 +958,6 @@ export class ExecutionLifecycle {
       const fields: Record<string, unknown> = { status, ...extra }
       this.dao.updateExecution(id, fields)
       this.sse.emit(this.workspaceId, { event: "execution_status", data: { executionId: id, status } })
-
-      // P6.6: Push execution progress to Telegram for terminal states
-      if (["completed", "completed_with_failures", "failed", "cancelled"].includes(status)) {
-        const exec = this.dao.findById(id)
-        if (exec) {
-          import("../agent/telegram-progress-notifier").then(({ TelegramProgressNotifier }) => {
-            new TelegramProgressNotifier().notify({
-              id: exec.id,
-              workflow_name: exec.workflow_name,
-              status: exec.status,
-              duration_ms: typeof extra.duration === "number" ? extra.duration : exec.duration ?? undefined,
-              name: exec.name ?? undefined,
-            }).catch(() => {})
-          }).catch(() => {})
-        }
-      }
     } catch (err: any) {
       console.error(`[ExecutionLifecycle] updateStatus failed: ${id} → ${status}:`, err.message)
       throw err
@@ -1559,22 +1526,13 @@ export class ExecutionLifecycle {
         this.sse.emit(this.workspaceId, { event: "error", data: { executionId: id, nodeId, error } })
         this.syncStateJson()
       },
-      onComplete: (finalStatus?: string) => {
+      onComplete: () => {
         const ext = this._externalCallbacks.get(id) ?? this._externalCallbacks.get("__default__")
         if (ext?.onComplete) {
-          try { ext.onComplete(finalStatus ?? "") } catch (err) {
+          try { ext.onComplete() } catch (err) {
             console.error("[ExecutionLifecycle] External onComplete failed:", err)
           }
           this._externalCallbacks.delete(id)
-        }
-
-        // Archive execution (Layer 1+2, synchronous within onComplete)
-        if (this.archiveService && (finalStatus === "completed" || finalStatus === "failed")) {
-          try {
-            this.archiveService.archiveExecution(id)
-          } catch (err) {
-            console.warn(`[engine] Archive failed for execution ${id}:`, err)
-          }
         }
       },
       onBranchStart: (neId, iteration) => {

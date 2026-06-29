@@ -7,8 +7,6 @@ import { SystemPromptAssembler } from './system-prompt-assembler'
 import { getMemoryService } from './memory-service'
 import { getNotificationService } from './notification-service'
 import { getAgentDir } from './paths'
-import type { ExperienceDAO } from '../../db/dao/experience-dao'
-import type { ArchiveDAO } from '../../db/dao/archive-dao'
 
 // ── Types ──────────────────────────────────────────────────────────
 
@@ -35,8 +33,6 @@ export interface OrchestratorResult {
   inputs: Record<string, string>
   execution_id?: string
   summary: string
-  experiences?: Array<{ type: string; title: string; content: string }>
-  recentExecutions?: Array<{ workflow_name: string; status: string; cost_usd: number }>
 }
 
 export interface GeneratedWorkflow {
@@ -64,19 +60,12 @@ export class OrchestratorService {
   private org: string
   private agentDir: string
   private assembler: SystemPromptAssembler
-  private experienceDAO?: ExperienceDAO
-  private archiveDAO?: ArchiveDAO
 
-  constructor(org: string, experienceDAO?: ExperienceDAO, archiveDAO?: ArchiveDAO) {
+  constructor(org: string) {
     this.org = org
     this.agentDir = getAgentDir()
     this.assembler = new SystemPromptAssembler(org)
-    this.experienceDAO = experienceDAO
-    this.archiveDAO = archiveDAO
   }
-
-  setExperienceDAO(dao: ExperienceDAO): void { this.experienceDAO = dao }
-  setArchiveDAO(dao: ArchiveDAO): void { this.archiveDAO = dao }
 
   /**
    * Classify user intent from a natural language message.
@@ -398,29 +387,6 @@ ${nodes.map(n => `  - id: ${n.id}
     const intent = this.classifyIntent(message)
     emitEvent('intent_classified', intent)
 
-    // Step 1.5: Experience injection (P4.1)
-    let injectedExperiences: Array<{ type: string; title: string; content: string }> = []
-    let injectedRecentExecutions: Array<{ workflow_name: string; status: string; cost_usd: number }> = []
-    try {
-      if (this.experienceDAO) {
-        const keywords = message.slice(0, 100) // Use first 100 chars as FTS query
-        const experiences = this.experienceDAO.search(keywords, { status: 'active', limit: 5 })
-        // Also get recent archive records
-        const recentArchives = this.archiveDAO?.getRecentByOrg(this.org, 3) || []
-
-        // Inject into orchestration context
-        injectedExperiences = experiences.map(e => ({
-          type: e.type, title: e.title, content: e.content.slice(0, 300),
-        }))
-        injectedRecentExecutions = recentArchives.map(a => ({
-          workflow_name: a.workflow_name, status: a.status, cost_usd: a.total_cost_usd,
-        }))
-      }
-    } catch (err) {
-      console.warn("[orchestrator] Experience injection failed:", err)
-      // Continue without experiences
-    }
-
     // Step 2: Select workflow (for single_task and scheduled_task)
     let workflow: WorkflowMatch | undefined
     let generatedWorkflow: GeneratedWorkflow | undefined
@@ -496,8 +462,6 @@ ${nodes.map(n => `  - id: ${n.id}
       generated_workflow: generatedWorkflow,
       inputs,
       summary,
-      experiences: injectedExperiences.length > 0 ? injectedExperiences : undefined,
-      recentExecutions: injectedRecentExecutions.length > 0 ? injectedRecentExecutions : undefined,
     }
   }
 
@@ -533,14 +497,11 @@ ${nodes.map(n => `  - id: ${n.id}
 
 const instances = new Map<string, OrchestratorService>()
 
-export function getOrchestratorService(org: string, experienceDAO?: ExperienceDAO, archiveDAO?: ArchiveDAO): OrchestratorService {
+export function getOrchestratorService(org: string): OrchestratorService {
   let instance = instances.get(org)
   if (!instance) {
-    instance = new OrchestratorService(org, experienceDAO, archiveDAO)
+    instance = new OrchestratorService(org)
     instances.set(org, instance)
-  } else {
-    if (experienceDAO) instance.setExperienceDAO(experienceDAO)
-    if (archiveDAO) instance.setArchiveDAO(archiveDAO)
   }
   return instance
 }

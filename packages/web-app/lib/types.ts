@@ -37,9 +37,6 @@ export interface Workspace {
   updatedAt: string
   lastActivityAt?: string
   path: string
-  archive_status?: ArchiveStatus
-  archive_error?: string | null
-  archive_started_at?: string | null
 }
 
 // ============ Project ============
@@ -691,19 +688,3 @@ export interface NaturalLanguageCronResult {
   confidence: 'high' | 'medium' | 'error'
   error?: string
 }
-
-// ============ Archive Module ============
-
-export type ArchiveStatus = "none" | "archiving" | "archived" | "archive_failed"
-
-export interface ArchiveStatsSummary {
-  total_executions: number
-  total_cost_usd: number
-  success_rate: number
-  today_cost_usd: number
-  week_cost_usd: number
-  month_cost_usd: number
-}
-
-export type ExperienceType = "bug" | "pattern" | "cost" | "failure"
-export type ExperienceStatus = "active" | "resolved" | "obsolete" | "superseded"

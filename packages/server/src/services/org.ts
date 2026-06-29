@@ -97,8 +97,7 @@ export function syncOrgsFromFilesystemWithDao(dao: OrgDAO, baseDir?: string): nu
     }
 
     const orgPath = `~/.octopus/orgs/${entry.name}`
-    // ponytail: INSERT OR IGNORE — changes==0 when org already exists, making sync truly idempotent
-    const result = dao.insert({ name: entry.name, path: orgPath, created_at: now })
+    const result = dao.upsert({ name: entry.name, path: orgPath, created_at: now })
     if (result.changes > 0) inserted++
   }
 
