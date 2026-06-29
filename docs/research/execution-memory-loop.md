@@ -49,184 +49,397 @@ workspace 删除 → cascadeDeleteByWorkspace() → 17 张表级联清空
 > **每一次执行都为系统贡献持久知识，而非随 workspace 消亡。**
 
 四个核心能力：
-1. **执行归档** — workspace 删除前，自动提取并持久化执行摘要 + token + 经验
-2. **经验提取** — 从海量日志中分层过滤，用低成本 LLM 提取可复用知识
+1. **执行归档** — workspace 删除前，自动提取并持久化执行摘要 + token + 诊断信号
+2. **诊断提取** — 从 DB 聚合 + JSONL 日志中程序提取结构性诊断信号
 3. **Loop Dashboard** — 跨 workspace 的执行历史、成本追踪、趋势分析
 4. **Agent 闭环** — 编排器注入执行记忆 + Hermes 双向交互 + 自主调度
 
 ---
 
-## 3. "经验"是什么？
+## 3. "经验"是什么？——从 AI 工程化角度重新定义
 
-经验不是日志摘要，而是**可行动的知识点**。按工作流类型：
+### 3.1 核心洞察：Agent 需要规则，不需要指标
 
-### 3.1 bug-hunter 产生的经验
+从真实执行数据出发，问一个关键问题：**什么信息能让 agent 在下一次执行时表现更好？**
 
-```yaml
-# ── 结构化部分 (程序提取, 不需要 LLM) ──
-workflow: bug-hunter
-date: 2026-06-26
-outcome: success
-duration: 45min
-cost_usd: 3.20
-bugs_found: 1
-pr_url: https://github.com/XzhiF/open-octopus/pull/2
-bug:
-  title: "agent.ts return→continue"
-  severity: P1
-  file: packages/engine/src/executors/agent.ts:409
-  root_cause: "for...of 循环内 return 退出整个方法"
-  fix: "return → continue, 一行改动"
+以 `feat-acturator-enahnce` 工作空间的 `prd-impl` 执行为例，review 发现了 4 个 blocker：
 
-# ── 非结构化部分 (LLM 从 node outputs 提取) ──
-lessons: |
-  1. swarm 节点的 host 输出不兼容 vars_update 协议 —
-     如果工作流依赖 condition gate 判断, 必须确保上游节点输出格式能被引擎解析。
-  2. condition target 节点必须声明 depends_on, 否则 DAG auto 模式下
-     会被放在 Level 0 提前执行。引擎已修复: 自动注入隐式依赖。
-  3. agency-agents-zh 的 role 名是中文, 预定义 expert 是英文,
-     swarm 去重按字符串匹配会失败。建议纯动态或统一命名。
+```
+B1: Tests missing scheduleRunDAO dependency
+B2: ErrorTracker never injected in production code
+B3: RecoveryResolver uses started_at instead of updated_at
+B4: HealthResolver missing global 5s timeout
 ```
 
-### 3.2 gen-workflow 产生的经验
+review-fix 节点花了 7 分钟修复。如果下次跑类似任务：
 
-```yaml
-workflow: gen-workflow
-outcome: success
-cost_usd: 5.80
-workflow_created: gen-workflow.yaml
-node_count: 14
-lessons: |
-  1. 旁路节点(no-bugs-found, fix-failed)必须有 depends_on,
-     否则 auto 模式下 Level 0 就执行并设置 __status: failed。
-  2. swarm 节点适合并行扫描, 但 host 输出格式需要兼容 vars_update,
-     否则下游 condition gate 拿到的是默认值。
-  3. loop + condition gate 比 prompt 描述的"最多重试3轮"可靠得多,
-     引擎原语保障执行, prompt 约束依赖 LLM 自觉性。
+| 信息类型 | 示例 | Agent 能用吗？ |
+|---------|------|--------------|
+| 指标 | "review 发现 4 个 blocker" | ❌ 看不懂，不改变行为 |
+| 指标 | "FragilityScore: review 0.3" | ❌ 看不懂，不改变行为 |
+| 指标 | "implement 节点 318 tool calls" | ❌ 看不懂，不改变行为 |
+| **规则** | "创建 actuator 测试时，必须在 setup 中导入所有 DAO 依赖 (ScheduleRunDAO, TokenUsageDAO)" | ✅ 直接遵守，避免 B1 |
+| **规则** | "HealthResolver 的 Promise.allSettled 必须包 withTimeout(5000)" | ✅ 直接遵守，避免 B4 |
+| **规则** | "actuator 端点不能仅依赖 x-real-ip 做 localhost 判断" | ✅ 直接遵守，避免安全警告 |
+
+**结论：agent 需要的是规则和约束（imperative），不是指标和统计（descriptive）。**
+
+### 3.2 知识文件格式：Markdown，不是 JSON/YAML
+
+JSON/YAML 的问题：
+- 加一个字段 → schema 变更 → 迁移 → 序列化/反序列化全改
+- 对 LLM 不友好（需要解析结构才能理解）
+- 不适合表达"规则"这种自然语言内容
+
+Markdown 的优势：
+- 加一条规则 → 追加一行文本
+- LLM 原生理解，直接注入 prompt
+- 规则天然适合用祈使句表达
+- 人可直接编辑，不需要工具
+
+### 3.3 知识的存储位置
+
+```
+~/.octopus/{org}/knowledge/           ← 全局持久（不随 workspace 删除）
+├── xzf-dev-octopus.md                ← 项目级知识（跨工作流共享）
+├── workflow-prd-impl.md              ← 工作流级知识
+└── workflow-bug-hunter.md            ← 工作流级知识
 ```
 
-### 3.3 prd-impl / feat-dev 产生的经验
+**项目知识文件**（`xzf-dev-octopus.md`）：跨工作流共享的项目约束
 
-```yaml
-workflow: prd-impl
-outcome: completed_with_failures
-cost_usd: 12.50
-lessons: |
-  1. E2E 测试在 worktree 环境下端口冲突概率高,
-     需要预检测 3100-3598 范围可用端口。
-  2. shared 包的类型变更会导致 server/web-app 构建级联失败,
-     修改 shared 后必须先 pnpm build -w shared 再全量构建。
-  3. opus[1m] 做实现任务时 token 消耗是 sonnet 的 4 倍,
-     辅助性 sub-agent 应优先用 sonnet 控制成本。
+```markdown
+# 项目知识: xzf-dev-octopus
+
+## 构建规则
+- 修改 shared/ 后必须 `pnpm build -w shared` 再全量构建
+- 构建命令: `pnpm build`
+- 启动隔离服务: `pnpm dev --isolated`
+
+## 测试
+- 运行测试: `pnpm test`
+- git-ops.test.ts 有已知环境相关失败，与代码改动无关，不需要修复
+- 创建 actuator 测试时，必须导入并实例化 ScheduleRunDAO, TokenUsageDAO
+
+## 已知陷阱
+- HealthResolver 的 Promise.allSettled 必须包 withTimeout(5000)
+- RecoveryResolver 的 stale 检测用 updated_at（不是 started_at）
+- actuator 端点不能仅依赖 x-real-ip 做 localhost 判断
+
+## 端口规则
+- ⛔ 保护端口: 3000, 3001, 3098, 3099（用户开发环境，绝不触碰）
+- 只允许 kill $vars.e2e_dev_pid 杀 e2e 隔离服务进程
 ```
 
-### 3.4 关键区分
+**工作流知识文件**（`workflow-prd-impl.md`）：工作流特有的经验
 
-| 层次 | 内容 | 提取方式 | 成本 |
-|------|------|---------|------|
-| **结构化数据** | 状态、成本、文件列表、BUG 详情 | 程序提取（读 DB 字段） | 免费 |
-| **非结构化知识** | 为什么失败、怎么避免、模式总结 | LLM 从 node outputs 提取 | haiku ~$0.01/次 |
+```markdown
+# 工作流知识: prd-impl
+
+## 实现阶段
+- P1 基础框架和 P2 详细诊断是最重要的阶段，各占 ~8 个任务
+- implement 节点通常 30+ 分钟，是最大的 token 消耗点
+- 拆分为 P1-P5 子阶段提交，每阶段独立 commit
+
+## 审查阶段
+- review 通常发现 4-6 个问题，大多数是依赖注入和超时相关
+- 4 个 blocker + review-fix 会增加 ~7 分钟，如果实现阶段遵守已知规则可以避免
+
+## E2E 阶段
+- E2E 修复通常 1 轮即通过
+- TC 都是 api_response/cli_output/file_content 类型（infrastructure 项目无 UI）
+```
+
+### 3.4 归档记录 vs 知识文件：职责分离
+
+| 维度 | 归档记录（SQL） | 知识文件（Markdown） |
+|------|----------------|---------------------|
+| 用途 | Dashboard 指标、成本趋势、搜索 | Agent 注入、改变下次行为 |
+| 读者 | 人（Dashboard）、程序（聚合查询） | AI Agent（直接读 prompt） |
+| 内容 | 结构化数据（status、cost、duration） | 规则、约束、已知陷阱 |
+| 更新方式 | 每次执行 INSERT | 每次执行追加新规则、衰减旧规则 |
+| 生命周期 | 永久保留 | 累积进化，过时规则被移除 |
+| 存储位置 | SQLite（execution_archive 表） | 文件系统（~/.octopus/{org}/knowledge/） |
+
+**归档记录保留但瘦身**——只存指标（Dashboard 需要），不存"经验"：
+
+```sql
+CREATE TABLE execution_archive (
+  id TEXT PRIMARY KEY,
+  org TEXT NOT NULL,
+  workflow_name TEXT NOT NULL,
+  status TEXT NOT NULL,
+  duration_ms INTEGER,
+  total_cost_usd REAL,
+  -- 节点耗时 profile (JSON: [{nodeId, durationMs, toolCallCount}])
+  node_profile TEXT,
+  -- 关键输出 (JSON: {conclusion, pr_url, completeness_score})
+  key_outputs TEXT,
+  -- 父子链
+  parent_execution_id TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+```
 
 ---
 
-## 4. 怎么从海量日志提取经验？
+## 4. 知识怎么产生？——执行 → 规则提取 → 写入知识文件
 
-不是把所有日志丢给 LLM，而是**三层过滤**：
+### 4.1 完整循环
 
 ```
-执行完成 (可能产生 MB 级日志)
-  │
-  ▼
-Layer 1: 程序提取 (免费, 即时)
-  ├── executions 表: status, duration, failed_nodes
-  ├── node_executions 表: 每个节点的 status + duration
-  ├── node_token_usages 表: 按 model 聚合 input/output/cost
-  ├── node outputs: vars_update JSON (已经是结构化数据)
-  └── git diff --stat: 变更文件列表
-  │
-  ▼
-Layer 2: 规则过滤 (免费)
-  ├── 只取 failed/skipped 节点的 error 字段
-  ├── 只取 vars_update 中的关键变量 (conclusion, root_cause, pr_url)
-  ├── 过滤掉 bash_log 噪音 (pnpm install 输出等)
-  └── 如果全部成功且 cost < $1 → 跳过 LLM 提取 (不值得)
-  │
-  ▼
-Layer 3: LLM 反思 (haiku, ~$0.01/次, 异步不阻塞)
-  ├── 输入: Layer 1+2 的过滤后摘要 (通常 < 2000 tokens)
-  ├── Prompt: "从以下执行摘要中提取最多 3 条可复用经验,
-  │            每条经验必须是下次执行时可直接参考的行动建议"
-  └── 输出: lessons_learned 文本
+工作流执行
+  ↓
+执行完成，ArchiveService 归档指标 → SQL (Dashboard 用)
+  ↓
+规则提取（LLM，这是 haiku 真正有价值的地方）:
+  ├── 输入: review 的 blockers/warnings
+  │         e2e 的失败用例和修复
+  │         关键 vars_update 中的 conclusion
+  ├── Prompt: "从以下执行结果中，提取 1-3 条具体规则，
+  │            供下次执行同类任务的 agent 遵守。
+  │            规则必须是 imperative（做X/不做Y），
+  │            不是 descriptive（发生了X）"
+  └── 输出: 新规则文本
+  ↓
+追加到知识文件:
+  ~/.octopus/{org}/knowledge/{project}.md
+  ~/.octopus/{org}/knowledge/workflow-{name}.md
+  ↓
+下次执行:
+  Agent 读到这些规则 → 直接遵守 → 更少 blocker → 更快完成
 ```
 
-### 成本控制
+### 4.2 规则提取的触发条件
 
-| 场景 | 频率 | 单次成本 | 月成本 |
-|------|------|---------|--------|
-| 结构化提取 | 每次执行 | $0 | $0 |
-| LLM 反思 (haiku) | 仅 cost > $1 或 failed | ~$0.01 | ~$3 (10 次/天) |
-| FTS 索引更新 | 每次经验写入 | $0 | $0 |
+不是每次执行都值得提取。触发条件：
+
+| 条件 | 原因 |
+|------|------|
+| review 发现 blocker ≥ 1 | blocker 说明实现有遗漏，应该成为下次规则 |
+| E2E 修复轮次 ≥ 2 | 多轮修复说明有系统性问题 |
+| 安全警告 ≥ 1 | 安全问题必须成为硬规则 |
+| 节点失败后重试成功 | 失败原因可能成为预防规则 |
+| 全部成功且无异常 | **跳过**——成功执行不产生新规则 |
+
+### 4.3 规则提取实现
+
+```typescript
+async function extractRules(
+  execResult: ExecutionResult,
+  logDir: string,
+): Promise<string[]> {
+  // 1. 收集提取素材
+  const materials: string[] = []
+
+  // Review blockers (从 lastOutput 提取)
+  const reviewNode = execResult.nodes['review']
+  if (reviewNode?.lastOutput) {
+    const blockers = extractBlockers(reviewNode.lastOutput)
+    if (blockers.length > 0) {
+      materials.push(`Review blockers:\n${blockers.join('\n')}`)
+    }
+  }
+
+  // E2E 修复轮次 (从 e2e-fix-round.jsonl 提取失败模式)
+  const e2eFixLog = join(logDir, 'e2e-fix-round.jsonl')
+  if (existsSync(e2eFixLog)) {
+    const events = readJSONL(e2eFixLog)
+    const fixRounds = events.filter(e => e.event === 'end').length
+    if (fixRounds >= 2) {
+      materials.push(`E2E 修复用了 ${fixRounds} 轮，检查测试覆盖是否有遗漏`)
+    }
+  }
+
+  // 安全警告
+  if (reviewNode?.lastOutput?.includes('Security Review')) {
+    const warnings = extractSecurityWarnings(reviewNode.lastOutput)
+    if (warnings.length > 0) {
+      materials.push(`Security warnings:\n${warnings.join('\n')}`)
+    }
+  }
+
+  if (materials.length === 0) return []  // 全部成功，不提取
+
+  // 2. LLM 提取规则（haiku，~$0.01）
+  const prompt = `从以下执行结果中，提取 1-3 条具体规则。
+规则要求:
+- 必须是祈使句（"做X" 或 "不做Y"）
+- 必须足够具体，agent 读到后能直接遵守
+- 不要写"建议"或"注意"，写"必须"或"禁止"
+
+执行结果:
+${materials.join('\n\n')}
+
+输出格式（每条规则一行，无其他内容）:`
+
+  const rules = await llmCall(prompt, 'haiku')
+  return rules.split('\n').filter(r => r.trim().length > 0)
+}
+```
+
+### 4.4 写入知识文件
+
+```typescript
+async function appendToKnowledgeFile(
+  org: string,
+  project: string,
+  workflowName: string,
+  rules: string[],
+): Promise<void> {
+  const knowledgeDir = join(os.homedir(), '.octopus', org, 'knowledge')
+  await mkdir(knowledgeDir, { recursive: true })
+
+  const date = new Date().toISOString().slice(0, 10)
+
+  // 项目级知识
+  const projectFile = join(knowledgeDir, `${project}.md`)
+  const header = `# 项目知识: ${project}\n\n`
+  const entry = `\n## ${date} ${workflowName}\n${rules.map(r => `- ${r}`).join('\n')}\n`
+
+  if (!existsSync(projectFile)) {
+    await writeFile(projectFile, header + entry)
+  } else {
+    await appendFile(projectFile, entry)
+  }
+
+  // 工作流级知识
+  const wfFile = join(knowledgeDir, `workflow-${workflowName}.md`)
+  const wfHeader = `# 工作流知识: ${workflowName}\n\n`
+  const wfEntry = `\n## ${date} (${project})\n${rules.map(r => `- ${r}`).join('\n')}\n`
+
+  if (!existsSync(wfFile)) {
+    await writeFile(wfFile, wfHeader + wfEntry)
+  } else {
+    await appendFile(wfFile, wfEntry)
+  }
+}
+```
+
+### 4.5 知识衰减
+
+知识文件不能无限增长。定期（每月或每 10 次执行后）用 LLM 整理：
+
+```typescript
+async function compactKnowledgeFile(filePath: string): Promise<void> {
+  const content = await readFile(filePath, 'utf-8')
+  const lineCount = content.split('\n').length
+
+  // 超过 100 行时触发整理
+  if (lineCount < 100) return
+
+  const prompt = `整理以下知识文件:
+1. 合并重复规则
+2. 移除已过时的规则（引用已修复的 BUG 或已删除的代码）
+3. 按主题分组（构建、测试、安全、已知陷阱）
+4. 保留最近的 30 条最重要的规则
+
+${content}`
+
+  const compacted = await llmCall(prompt, 'haiku')
+  await writeFile(filePath, compacted)
+}
+```
 
 ---
 
-## 5. 经验怎么用？
+## 5. 知识怎么用？——注入 Agent Prompt
 
-### 5.1 Agent 对话中自动注入
+### 5.1 注入时机
 
-用户在 Telegram 说："帮我扫描一下 engine 包的 BUG"
-
-```
-OrchestratorService 处理流程:
-
-1. 意图分类 → single_task → 匹配 bug-hunter 工作流
-
-2. 🔥 查询执行记忆:
-   SELECT * FROM execution_archive
-   WHERE workflow_name = 'bug-hunter'
-   ORDER BY created_at DESC LIMIT 3
-
-3. 注入 Agent context:
-
-   "📚 历史执行记忆:
-    - 06-26: 发现 P1 BUG (agent.ts return→continue), 已修复, $3.20
-    - 06-25: 未发现 BUG, $2.10
-    - 06-24: 发现 P0 路径穿越漏洞, 已修复, $4.50
-    
-    💡 经验提示:
-    - swarm 节点的 host 输出必须兼容 vars_update 协议
-    - condition target 需要 depends_on 或引擎隐式依赖"
-
-4. Agent 带着历史知识执行, 而非冷启动
-```
-
-### 5.2 智能建议
+引擎在执行 agent 节点前，自动读取相关知识文件并注入 prompt：
 
 ```
-Agent 分析执行记忆:
-  "过去 7 天 bug-hunter 在 engine 包发现了 3 个 P0-P1 BUG,
-   全部跟 applyOutputsMapping 相关。
-   建议对 executor 基类做一次系统性审查,
-   要我创建一个审查工作流吗？"
+工作流开始
+  ↓
+引擎解析 agent 节点的 knowledge_scope:
+  projects: ["$inputs.project_dir"]   ← 变量替换后: ["xzf-dev-octopus"]
+  workflows: ["prd-impl"]
+  ↓
+读取知识文件:
+  ~/.octopus/{org}/knowledge/xzf-dev-octopus.md     → 项目级规则
+  ~/.octopus/{org}/knowledge/workflow-prd-impl.md    → 工作流级规则
+  ↓
+组装 context:
+
+  "📋 项目知识 (xzf-dev-octopus):
+   - 修改 shared/ 后必须 pnpm build -w shared 再全量构建
+   - 创建 actuator 测试时，必须导入 ScheduleRunDAO, TokenUsageDAO
+   - HealthResolver 的 Promise.allSettled 必须包 withTimeout(5000)
+   - ⛔ 保护端口: 3000, 3001, 3098, 3099
+   
+   📋 工作流知识 (prd-impl):
+   - implement 节点通常 30+ 分钟，拆分为 P1-P5 子阶段提交
+   - review 通常发现依赖注入和超时相关问题"
+  ↓
+注入到 agent prompt 前面
+  ↓
+Agent 读到规则 → 直接遵守 → 更少 blocker → 更快完成
 ```
 
-### 5.3 失败预警
+### 5.2 注入实现
+
+```typescript
+// packages/engine/src/engine.ts — agent 节点执行前
+private async injectKnowledge(
+  node: NodeDef,
+  pool: VarPool,
+): Promise<string> {
+  if (!node.knowledge_scope) return ''
+
+  const projects = resolveVar(node.knowledge_scope.projects, pool)
+  const workflows = resolveVar(node.knowledge_scope.workflows, pool)
+
+  const sections: string[] = []
+
+  // 项目级知识
+  for (const project of projects) {
+    const filePath = join(knowledgeDir, `${project}.md`)
+    if (existsSync(filePath)) {
+      const content = await readFile(filePath, 'utf-8')
+      sections.push(`📋 项目知识 (${project}):\n${content}`)
+    }
+  }
+
+  // 工作流级知识
+  for (const wf of workflows) {
+    const filePath = join(knowledgeDir, `workflow-${wf}.md`)
+    if (existsSync(filePath)) {
+      const content = await readFile(filePath, 'utf-8')
+      sections.push(`📋 工作流知识 (${wf}):\n${content}`)
+    }
+  }
+
+  return sections.length > 0 ? sections.join('\n\n') + '\n\n---\n\n' : ''
+}
+```
+
+### 5.3 价值验证：从真实数据看闭环
+
+以 `feat-acturator-enahnce` 为例：
 
 ```
-Agent 发现模式:
-  "上次 gen-workflow 执行失败了, 原因是 condition target 没有 depends_on。
-   这次你创建的 bug-hunter 也有同样模式,
-   引擎已自动注入隐式依赖, 无需手动处理。"
+第 1 次执行 prd-impl (无知识注入):
+  implement → review (4 blockers) → review-fix (7min) → ship
+  总耗时: 117min
+
+  提取规则:
+  - "创建 actuator 测试时必须导入 ScheduleRunDAO 等 DAO 依赖"
+  - "HealthResolver 必须包 withTimeout(5000)"
+  - "RecoveryResolver stale 检测用 updated_at"
+  - "actuator 端点用 TCP remoteAddress 而非 x-real-ip"
+
+第 2 次执行 prd-impl (有知识注入):
+  implement → agent 读到规则 → 直接遵守
+  → review (0 blockers) → 跳过 review-fix → ship
+  预计: 节省 ~7min + review-fix 的 token 成本
+
+第 N 次执行:
+  知识文件持续累积 → agent 越来越了解项目约束
+  → 实现质量越来越高 → review 越来越轻 → 循环越来越快
 ```
 
-### 5.4 成本优化建议
-
-```
-Agent 分析 token 消耗:
-  "过去 30 天 bug-hunter 平均花费 $3.80/次。
-   scan 节点占总成本 60% (swarm 5 专家 opus)。
-   建议: scan 专家改用 sonnet, 预计降低到 $2.20/次。
-   要我修改工作流吗？"
-```
+这才是真正的 Loop：**执行 → 提取规则 → 注入规则 → 更好的执行 → 提取新规则 → Loop**
 
 ---
 
@@ -359,9 +572,9 @@ PR 合并 → Agent 触发回归测试 → 自动推送结果
 
 学习 (Learn):
   - ArchiveService 自动归档执行结果
-  - haiku 提取 lessons_learned
-  - 写入 experiences 表 (FTS 可搜索)
-  - 下次"观察"时读到这些经验
+  - 程序提取诊断信号（FragilityScore、JSONL 分析）
+  - 写入 execution_archive + 知识文件
+  - 下次"观察"时读到这些诊断数据
 ```
 
 **Observe 的三种触发方式**:
@@ -384,7 +597,7 @@ PR 合并 → Agent 触发回归测试 → 自动推送结果
 [周一 09:00] 用户打开 Telegram 看到通知
              → 回复: "修复这两个 BUG"
              → Agent 读取归档数据, 获取 BUG 详情
-             → 自动触发 bug-fixer, 注入修复经验
+             → 自动触发 bug-fixer, 注入诊断上下文
 
 [周一 10:30] bug-fixer 完成, 修复 2 个 BUG, 创建 PR
              → ArchiveService 自动归档
@@ -411,24 +624,24 @@ PR 合并 → Agent 触发回归测试 → 自动推送结果
   ↓
 ArchiveService.archiveExecution()
   │
-  ├── Layer 1: 程序提取 (免费)
+  ├── Layer 1: DB 聚合 (复用 LogAnalysisService 已有方法, 免费)
   │   ├── execution summary (状态/耗时/节点结果)
-  │   ├── token aggregation (按 model 汇总 cost)
-  │   └── vars snapshot (关键输出变量)
+  │   ├── token aggregation (按 model 汇总 cost, 来源: DB node_token_usages)
+  │   ├── FragilityScore / FailureChain / CostSpike
+  │   └── node_profile (从 {exec-id}.json 提取 durationMs + vars_update)
   │
-  ├── Layer 2: 规则过滤 (免费)
-  │   ├── failed 节点的 error 字段
-  │   └── vars_update 中的关键变量
+  ├── Layer 2: JSONL 行为解析 (【新建】, 免费, 按需)
+  │   ├── Top-3 耗时节点的 logs/{execution-id}/*.jsonl
+  │   └── Tool 频率 / Read 重复 / Bash 失败 / vars_update 质量
   │
-  └── Layer 3: LLM 反思 (haiku, $0.01)
-      └── 提取 lessons_learned
+  └── Layer 3: LLM 反思 (可选, haiku $0.01)
+      └── 仅 FragilityScore > 0.5 或 FailureChain > 2 时触发
   │
   ▼
 execution_archive 表 (永久保留, 脱离 workspace 生命周期)
   │
-  ├──→ Loop Dashboard API (统计/趋势/排行)
-  ├──→ Agent 编排器 (注入历史经验上下文)
-  ├──→ experiences 表 (FTS 搜索)
+  ├──→ Loop Dashboard API (健康度/成本分布)
+  ├──→ Agent 编排器 (注入知识文件内容)
   └──→ Hermes 推送 (Telegram 通知)
   │
   ▼
@@ -469,8 +682,8 @@ CREATE TABLE execution_archive (
   -- 关键变量快照 (JSON: {requirement, pr_url, confirmed_bug, ...})
   vars_snapshot   TEXT NOT NULL DEFAULT '{}',
 
-  -- LLM 提取的经验 (可搜索)
-  lessons_learned TEXT,
+  -- LLM 提取的诊断（可选，仅复杂场景触发）
+  diagnosis       TEXT,
 
   -- 关联
   workspace_archive_id TEXT,              -- 所属 workspace 归档
@@ -654,26 +867,49 @@ class ArchiveService {
   }
 
   /**
-   * Layer 3: LLM 反思 (haiku, 异步, $0.01/次)
-   * 仅在 cost > $1 或 status == failed 时调用
+   * 规则提取 + 送入审核队列
+   * 
+   * 注意: 规则的提取、审核、写入知识文件的完整流程已迁移到
+   * docs/research/knowledge-system/ 独立文档。
+   * 此方法只负责: 提取规则 → 送入审核队列 (pending_review 表)
+   * 审核通过后的写入由 ReviewQueue.approveItem() 完成。
+   * 
+   * 详见:
+   *   - 02-rule-extraction.md (提取逻辑)
+   *   - 05-review-queue.md (审核队列)
+   *   - 03-knowledge-injection.md (注入逻辑)
    */
-  async extractLessons(archiveId: string): Promise<void> {
+  async proposeRulesForReview(archiveId: string): Promise<void> {
     const archive = await archiveDAO.findById(archiveId)
+    const execResult = JSON.parse(
+      await readFile(path.join(stateDir, `${archive.execution_id}.json`))
+    )
+    const logDir = path.join(workspacePath, 'logs', archive.execution_id)
 
-    // 成本门槛: 低成本执行不值得 LLM 反思
-    if (archive.total_cost_usd < 1 && archive.status === 'completed') return
+    // 1. 提取规则 (02-rule-extraction.md §4)
+    const rules = await extractRules(execResult, logDir)
+    if (rules.length === 0) return
 
-    const prompt = this.buildReflectionPrompt(archive)
-    const lessons = await llmCall(prompt, 'haiku')
+    // 2. 送入审核队列 (05-review-queue.md)
+    for (const rule of rules) {
+      const conflicts = await detectConflicts(rule, knowledgeDir)
+      await pendingDAO.insert({
+        id: generateId(),
+        type: 'rule',
+        source: 'workspace_archive',
+        source_ref: archiveId,
+        source_label: `${archive.workflow_name} ${archive.created_at?.slice(0, 10)}`,
+        content: rule.text,
+        target_file: `${rule.scope === 'workflow' ? 'workflow-' + rule.target : rule.target}.md`,
+        scope: rule.scope,
+        conflicts: JSON.stringify(conflicts),
+        confidence: 0.5,
+        auto_approve: 0,
+        status: 'pending',
+      })
+    }
 
-    await archiveDAO.updateLessons(archiveId, lessons)
-
-    // 同步写入 experiences 表, 复用已有 FTS 搜索
-    await evolutionDAO.insertExperience({
-      skill_name: archive.workflow_name,
-      content: lessons,
-      org: archive.org,
-    })
+    log.info(`Proposed ${rules.length} rules for review from ${archive.workflow_name}`)
   }
 
   /**
@@ -834,10 +1070,8 @@ GET  /archive/leaderboard        — 排行榜 (最省钱/最快/最高成功率
 async classifyAndRoute(message: string): Promise<RouteResult> {
   const intent = await this.classify(message)
 
-  // 查 experience_index — 精确匹配可行动经验
-  const experiences = await experienceDAO.search({
-    query: message, status: 'active', limit: 5,
-  })
+  // 查知识文件 — 读取项目/工作流规则
+  const knowledge = await knowledgeService.search(message)
 
   // 查 execution_archive — 仅取最近执行摘要 (不含经验文本)
   const recentRuns = await archiveDAO.findRecent({
@@ -860,7 +1094,7 @@ async classifyAndRoute(message: string): Promise<RouteResult> {
 ```
 
 **职责分离**:
-- `experience_index` → 可行动的经验（注入 Agent prompt，FTS 搜索）
+- `知识文件` → 项目/工作流规则（注入 Agent prompt）
 - `execution_archive` → 执行记录统计（Dashboard + "上次跑了什么"）
 
 #### 4.2 执行完成自动触发
@@ -872,9 +1106,9 @@ async onComplete(execution: Execution) {
   const archiveService = new ArchiveService()
   const archiveId = await archiveService.archiveExecution(execution.id)
 
-  // 异步提取经验 (不阻塞)
-  archiveService.extractLessons(archiveId).catch(err => {
-    log.warn(`Failed to extract lessons: ${err.message}`)
+  // 异步提取规则并送入审核队列 (不阻塞)
+  archiveService.proposeRulesForReview(archiveId).catch(err => {
+    log.warn(`Failed to propose rules: ${err.message}`)
   })
 }
 ```
@@ -957,7 +1191,7 @@ Hermes 从"通知工具"升级为"通信桥梁"——支持动态 chat ID 路由
   DB: execution_archive + workspace_archive + FTS
 ```
 
-**问题**：四套系统互不知道对方的存在。执行记忆归档了但不进 Agent 记忆，Agent 记住了但不知道执行的 token 消耗，分身合并时不包含执行经验。
+**问题**：四套系统互不知道对方的存在。执行诊断归档了但不进 Agent 记忆，Agent 记住了但不知道执行的 token 消耗，分身合并时不包含诊断数据。
 
 #### 6.2 整合方案：数据流
 
@@ -991,7 +1225,7 @@ private formatMemoryEntry(archive: Archive): string {
   return `## 执行记录: ${archive.workflow_name}
 - 状态: ${archive.status} | 耗时: ${formatDuration(archive.duration_ms)} | 成本: $${archive.total_cost_usd}
 - 关键结果: ${archive.vars_snapshot.conclusion || '无'}
-${archive.lessons_learned ? `- 经验: ${archive.lessons_learned}` : ''}`
+${archive.diagnosis ? `- 诊断: ${archive.diagnosis}` : ''}`
 }
 ```
 
@@ -1014,7 +1248,7 @@ long-term.md 新增:
    经验: swarm 节点的 host 输出必须兼容 vars_update 协议。"
 ```
 
-#### 6.5 整合点 3：执行经验 → 技能进化
+#### 6.5 整合点 3：诊断信号 → 技能进化
 
 当某个工作流反复产生类似的经验，触发技能进化：
 
@@ -1029,7 +1263,7 @@ async reflect(): Promise<EvolutionSuggestion[]> {
 
   // 例: bug-hunter 连续 5 次都在 scan 节点失败
   // → 建议进化 octo-bug-investigation 技能
-  //   增加 "swarm vars_update 兼容性检查" 步骤
+  //   增加 "agent 文件定位策略" 检查步骤
 }
 ```
 
@@ -1044,17 +1278,17 @@ async reflect(): Promise<EvolutionSuggestion[]> {
   memory_scope: ["execution:bug-hunter"],  // 只读 bug-hunter 的执行记忆
 }
 
-// clone 合并时 — 执行经验合并到主 Agent
+// clone 合并时 — 诊断数据合并到主 Agent
 async mergeClone(cloneName: string) {
   // 现有: 合并记忆文件
 
-  // 新增: 合并执行经验到主 Agent 的 experiences
+  // 新增: 合并诊断数据到主 Agent 的知识文件
   const cloneArchives = await archiveDAO.findByClone(cloneName)
   for (const archive of cloneArchives) {
-    if (archive.lessons_learned) {
+    if (archive.diagnosis) {
       await evolutionDAO.insertExperience({
         skill_name: archive.workflow_name,
-        content: `[from clone:${cloneName}] ${archive.lessons_learned}`,
+        content: `[from clone:${cloneName}] ${archive.diagnosis}`,
         org: archive.org,
       })
     }
@@ -1071,7 +1305,7 @@ async mergeClone(cloneName: string) {
 Agent Orchestrator
   ├── 查询 execution_archive → "上次发现 P1, $3.20"
   ├── 查询 Agent memory → "上次 engine 扫描的上下文"
-  ├── 查询 experiences FTS → "swarm vars_update 兼容性经验"
+  ├── 查询知识文件 → "项目规则 + 工作流规则"
   └── 加载 skills → octo-bug-investigation (进化版)
   │
   ▼
@@ -1082,8 +1316,8 @@ Agent Orchestrator
   ├── 写入 execution_archive (永久)
   ├── 写入 workspace_archive (聚合)
   ├── 写入 Agent daily memory (对话级)
-  ├── haiku 提取 lessons_learned
-  └── 写入 experiences (FTS 可搜索)
+  ├── 程序提取诊断信号 (FragilityScore + JSONL 分析)
+  └── 写入知识文件 (规则追加, 见 §4.4)
   │
   ▼
 7 天后 → session-compress
@@ -1096,8 +1330,8 @@ Agent Orchestrator
   └── 建议技能进化 (如: 增加检查步骤)
   │
   ▼
-下次执行时 → Agent 带着进化后的技能 + 长期记忆 + 执行经验
-  → 更好的决策 → 更好的结果 → 更好的经验 → Loop
+下次执行时 → Agent 带着进化后的技能 + 长期记忆 + 诊断信号
+  → 更好的决策 → 更好的结果 → 更准确的诊断信号 → Loop
 ```
 
 #### 6.8 整合总结
@@ -1107,500 +1341,63 @@ Agent Orchestrator
 | **每日记忆** | 执行归档后自动写入 daily memory | archive → daily/*.md |
 | **长期记忆** | 通过 session-compress 自然压缩 | daily → long-term.md |
 | **技能进化** | reflect() 分析执行模式, 触发进化 | archive → SKILL.md |
-| **经验搜索** | lessons_learned 同步到 experiences FTS | archive → experiences 表 |
+| **诊断搜索** | diagnosis 字段 (归档记录内) + 知识文件 (全文可搜索) | archive 表 + 文件系统 |
 | **分身系统** | memory_scope 过滤执行记忆, merge 时合并 | archive ↔ clones |
 | **编排器** | 分类时注入执行记忆上下文 | archive → orchestrator |
 
-### Module 7: Experience Injection（执行时经验注入）
+### Module 7: Knowledge Injection（执行时知识注入）
 
-#### 7.1 经验的三种产出形态
+> 详细设计见 §5（知识怎么用）。此处仅列出与引擎的集成点。
 
-```
-执行完成 → ArchiveService 提取经验
-              │
-    ┌─────────┼─────────┐
-    ▼         ▼         ▼
-  Agent     Skill     Experience
-  记忆      进化      Index + 知识库
-  (对话时   (检测到   (工作流执行时
-   召回)    重复模式   引擎自动注入
-            触发进化)  agent prompt)
-```
+#### 7.1 工作流 YAML 声明
 
-| 形态 | 载体 | 触发方式 | 作用时机 |
-|------|------|---------|---------|
-| Agent 记忆 | daily/*.md + long-term.md | 归档时自动写入 | Agent 对话时召回 |
-| Skill 进化 | SKILL.md (本地进化版) | reflect() 检测重复模式 | Agent 执行时加载 |
-| Experience Index | DB 表 + FTS | haiku 拆分结构化条目 | **引擎注入 agent prompt** |
-| 知识库文件 | ~/.octopus/knowledge/{project}/*.md | 归档时追加 | 工作流 YAML 引用 |
-
-#### 7.2 经验的价值矩阵
-
-| 经验类型 | 具体价值 | 举例 |
-|---------|---------|------|
-| **BUG 模式** | 下次扫描同一文件时聚焦已知高危点 | "agent.ts 的 applyOutputsMapping 有 return/continue 问题" → 下次直接检查所有 executor 循环控制流 |
-| **修复模式** | 修复同类 BUG 时避免踩坑 | "swarm host 的 vars_update 不兼容" → 下次写 swarm 工作流时自动检查 |
-| **成本数据** | 选择最优参数 | "scan 用 5 专家 opus 花 $6, 3 专家 sonnet 花 $2 效果一样" → 自动降级 |
-| **失败模式** | 避免重复犯错 | "condition target 没 depends_on 会 Level 0 执行" → 自动加依赖 |
-| **项目知识** | 积累项目特有上下文 | "shared 包改类型后必须先 build shared" → 自动调整构建顺序 |
-
-#### 7.3 核心问题：新 workspace 执行时经验怎么流入？
-
-```
-新 workspace 创建 (空白环境)
-  ↓
-执行 bug-hunter (针对 projects/open-octopus)
-  ↓
-Agent 节点跑起来时, 它怎么知道:
-  - 上次在 engine 包发现了什么 BUG?
-  - 哪些文件是高危的?
-  - 上次花了多少钱, 什么参数最优?
-```
-
-#### 7.4 方案：引擎级 Experience Injection
-
-工作流 YAML 中 agent 节点声明 `experience_scope`：
+agent 节点通过 `knowledge_scope` 字段声明需要注入哪些知识文件：
 
 ```yaml
-- id: scan
+- id: implement
   type: agent
-  experience_scope:
-    projects: ["$inputs.project_dir"]     # 匹配哪个项目
-    packages: ["$inputs.scan_scope"]       # 匹配哪个包
-    types: ["bug", "pattern", "cost"]     # 加载哪些类型的经验
-    limit: 10                             # 最多注入 10 条
+  knowledge_scope:
+    projects: ["$inputs.project_dir"]     # 注入项目知识文件
+    workflows: ["$workflow.name"]         # 注入工作流知识文件
   prompt: |
-    扫描代码中的 BUG...
+    实现需求...
 ```
 
-引擎在发送 prompt 给 LLM 之前，自动查询 experience_index 并注入：
+引擎在执行 agent 节点前调用 `injectKnowledge()`（§5.2），将知识文件内容注入 prompt 前面。
+
+#### 7.2 知识文件位置
 
 ```
-工作流启动
-  ↓
-引擎解析 experience_scope (变量替换: $inputs.project_dir → "open-octopus")
-  ↓
-查询 experience_index:
-  SELECT * FROM experience_index
-  WHERE project IN ('open-octopus')
-    AND (package IN ('engine', 'server') OR package IS NULL)
-    AND type IN ('bug', 'pattern', 'cost')
-    AND status = 'active'
-  ORDER BY relevance_score DESC, use_count DESC
-  LIMIT 10
-  ↓
-构建 experience context (注入到 prompt 前面):
-
-  "📚 历史执行经验 (项目: open-octopus):
-   
-   🐛 BUG-001: executor applyOutputsMapping return→continue
-     文件: packages/engine/src/executors/*.ts
-     建议: 检查所有 executor 的循环控制流
-   
-   🐛 BUG-002: swarm host vars_update 不兼容
-     建议: 所有 swarm host prompt 必须包含 vars_update
-   
-   🔧 PATTERN: shared 包构建顺序
-     修改 shared/ 后必须 pnpm build -w shared 再全量构建
-   
-   💰 COST: scan 节点优化
-     5 专家 opus = $6 | 3 专家 sonnet = $2, 建议降级"
-  ↓
-Agent 收到: experience context + 原始 prompt
-  ↓
-Agent 带着历史知识执行 → 更好的决策
+~/.octopus/{org}/knowledge/
+├── xzf-dev-octopus.md       ← 项目级（跨工作流共享）
+├── workflow-prd-impl.md     ← 工作流级
+└── workflow-bug-hunter.md   ← 工作流级
 ```
 
-Agent 读到经验后：
-- 优先检查 `executors/*.ts` 循环控制流（上次在这里发现 BUG）
-- 检查 swarm 工作流的 host prompt 格式
-- 知道 sonnet 够用，可以建议降级节省成本
+### Module 8: Knowledge Compaction（知识文件整理）
 
-#### 7.5 多项目 workspace 精确匹配
-
-`projects/` 下有 N 个 git 项目时：
-
-```yaml
-# 单项目场景
-experience_scope:
-  projects: ["$inputs.project_dir"]   # 只加载 open-octopus 的经验
-
-# 多项目场景
-experience_scope:
-  projects: ["$inputs.target_projects"]  # 加载多个项目的经验
-
-# 全量场景 (不限项目)
-experience_scope:
-  types: ["bug"]
-  limit: 5
-```
-
-#### 7.6 Experience Index 数据表
-
-```sql
-CREATE TABLE experience_index (
-  rowid         INTEGER PRIMARY KEY AUTOINCREMENT,
-  id            TEXT NOT NULL UNIQUE,
-  org             TEXT NOT NULL DEFAULT '',
-
-  -- 经验来源
-  archive_id      TEXT,                   -- 关联的 execution_archive
-  workflow_name   TEXT NOT NULL,
-
-  -- 经验内容
-  type            TEXT NOT NULL,           -- bug / pattern / cost / failure
-  title           TEXT NOT NULL,
-  content         TEXT NOT NULL,
-  status          TEXT DEFAULT 'active',   -- active / resolved / obsolete / superseded
-
-  -- 生命周期
-  resolved_at     TEXT,                    -- 标记为 resolved 的时间
-  resolved_by     TEXT,                    -- PR URL 或手动标记来源
-
-  -- 精确匹配维度
-  project         TEXT,                    -- 适用的项目 (open-octopus)
-  package         TEXT,                    -- 适用的包 (engine)
-  file_pattern    TEXT,                    -- 适用的文件模式 (executors/*.ts)
-  keywords        TEXT,                    -- 关键词 (JSON array)
-
-  -- 排序
-  relevance_score REAL DEFAULT 1.0,
-  use_count       INTEGER DEFAULT 0,       -- 被引用次数 (越用越优先)
-
-  created_at      TEXT NOT NULL DEFAULT (datetime('now')),
-  updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
-);
-
-CREATE INDEX idx_exp_project ON experience_index(project);
-CREATE INDEX idx_exp_package ON experience_index(package);
-CREATE INDEX idx_exp_type ON experience_index(type);
-CREATE INDEX idx_exp_relevance ON experience_index(relevance_score DESC);
-
-CREATE VIRTUAL TABLE experience_index_fts USING fts5(
-  title, content, keywords,
-  content='experience_index',
-  content_rowid='rowid'
-);
-```
-
-#### 7.7 ArchiveService 写入 Experience Index
+知识文件不能无限增长。超过 100 行时用 LLM 整理（§4.5 的 `compactKnowledgeFile()`）：
 
 ```typescript
-// archive-service.ts
-async extractLessons(archiveId: string) {
-  const archive = await archiveDAO.findById(archiveId)
-
-  // 成本门槛
-  if (archive.total_cost_usd < 1 && archive.status === 'completed') return
-
-  // haiku 提取经验 (结构化 + 非结构化一次完成)
-  const prompt = `从以下执行结果中提取经验条目:
-    工作流: ${archive.workflow_name}
-    状态: ${archive.status}
-    项目: ${archive.vars_snapshot.project_dir}
-    节点摘要: ${archive.node_summary}
-    失败节点: ${archive.failed_nodes}
-    
-    输出 JSON:
-    {
-      "lessons": "整体经验总结 (非结构化)",
-      "items": [
-        {
-          "type": "bug|pattern|cost|failure",
-          "title": "简短标题",
-          "content": "详细内容 + 建议动作",
-          "project": "适用的项目名或null",
-          "package": "适用的包名或null",
-          "file_pattern": "适用的文件模式或null",
-          "keywords": ["关键词1", "关键词2"]
-        }
-      ]
-    }`
-
-  const result = await llmCall(prompt, 'haiku')
-
-  // 写入 lessons_learned
-  await archiveDAO.updateLessons(archiveId, result.lessons)
-
-  // 拆分为索引条目
-  for (const item of result.items) {
-    await experienceDAO.insert({
-      ...item,
-      archive_id: archiveId,
-      workflow_name: archive.workflow_name,
-      org: archive.org,
-    })
-  }
-
-  // 同步到 experiences 表 (复用 FTS)
-  await evolutionDAO.insertExperience({
-    skill_name: archive.workflow_name,
-    content: result.lessons,
-    org: archive.org,
-  })
-
-  // 追加到知识库文件
-  await this.updateKnowledgeFiles(archive, result.items)
-}
-
-/**
- * 重写 ~/.octopus/knowledge/{project}/*.md 文件 (覆盖写, 非追加)
- * 每次从 experience_index 全量重建, 已 resolved/obsolete 的条目自动消失
- */
-private async updateKnowledgeFiles(archive, items) {
-  const project = archive.vars_snapshot.project_dir
-  if (!project) return
-
-  const knowledgeDir = path.join(
-    os.homedir(), '.octopus', 'orgs', archive.org, 'knowledge', project
-  )
-  await fs.mkdir(knowledgeDir, { recursive: true })
-
-  // 从 DB 查询当前所有活跃条目 (包含本次新增的)
-  for (const type of ['bug', 'pattern', 'cost', 'failure']) {
-    const activeItems = await experienceDAO.query({
-      project, type, status: 'active',
-      orderBy: 'relevance_score DESC',
-    })
-
-    // 大小上限: 超过 50 条时按 relevance 裁剪
-    const capped = activeItems.slice(0, 50)
-
-    const content = this.renderKnowledgeMarkdown(type, capped, project)
-    const filepath = path.join(knowledgeDir, `${type}s.md`)
-    await fs.writeFile(filepath, content)  // 覆盖写, 不是追加
+// 触发条件
+async onKnowledgeUpdate(filePath: string): Promise<void> {
+  const lineCount = (await readFile(filePath, 'utf-8')).split('
+').length
+  if (lineCount >= 100) {
+    await compactKnowledgeFile(filePath)  // §4.5
   }
 }
 ```
 
-#### 7.8 知识库文件结构
+整理策略：
+1. 合并重复规则
+2. 移除已过时的规则（引用已修复的 BUG 或已删除的代码）
+3. 按主题分组（构建、测试、安全、已知陷阱）
+4. 保留最近的 30 条最重要的规则
 
-```
-~/.octopus/orgs/{org}/knowledge/
-├── open-octopus/
-│   ├── bugs.md           ← BUG 经验索引
-│   ├── patterns.md       ← 修复模式索引
-│   └── costs.md          ← 成本基准索引
-├── other-project/
-│   └── ...
-```
+### Module 9: ~~ChainTriggerService~~ (已删除)
 
-**bugs.md 示例**:
-
-```markdown
-# BUG 经验 — open-octopus
-
-## BUG-001: executor applyOutputsMapping return→continue
-- 文件: packages/engine/src/executors/*.ts
-- 模式: for...of 循环内使用 return 而非 continue
-- 修复: return → continue
-- 来源: bug-hunter 2026-06-26 | PR #2
-- 状态: ✅ 已修复
-- 检查建议: 扫描所有 executor 的循环控制流
-
-## BUG-002: swarm host vars_update 不兼容
-- 文件: 任何 swarm 工作流 YAML
-- 模式: host prompt 未输出 vars_update JSON
-- 修复: 引擎补丁 + host prompt 加 vars_update
-- 来源: bug-hunter 2026-06-26
-- 状态: ✅ 已修复
-- 检查建议: 所有 swarm host prompt 必须包含 vars_update + assessment
-```
-
-#### 7.9 引擎注入实现
-
-```typescript
-// packages/engine/src/engine.ts — 修改 agent 节点执行逻辑
-private async injectExperience(
-  node: NodeDef,
-  pool: VarPool
-): Promise<string> {
-  if (!node.experience_scope) return ''
-
-  // 变量替换
-  const scope = this.resolveScope(node.experience_scope, pool)
-
-  // 查询 experience_index
-  const items = await experienceDAO.query({
-    projects: scope.projects,
-    packages: scope.packages,
-    types: scope.types,
-    limit: scope.limit || 10,
-  })
-
-  if (items.length === 0) return ''
-
-  // 更新 use_count
-  await experienceDAO.incrementUseCount(items.map(i => i.id))
-
-  // 构建 context
-  return this.formatExperienceContext(items, scope)
-}
-
-private formatExperienceContext(items, scope): string {
-  const grouped = { bug: [], pattern: [], cost: [], failure: [] }
-  for (const item of items) grouped[item.type]?.push(item)
-
-  let ctx = `📚 历史执行经验 (项目: ${scope.projects?.join(', ') || '全局'}):\n\n`
-
-  if (grouped.bug.length) {
-    ctx += '🐛 BUG 模式:\n'
-    for (const b of grouped.bug) {
-      ctx += `- ${b.title}\n  ${b.content}\n`
-    }
-    ctx += '\n'
-  }
-  if (grouped.pattern.length) {
-    ctx += '🔧 修复模式:\n'
-    for (const p of grouped.pattern) {
-      ctx += `- ${p.title}\n  ${p.content}\n`
-    }
-    ctx += '\n'
-  }
-  if (grouped.cost.length) {
-    ctx += '💰 成本基准:\n'
-    for (const c of grouped.cost) {
-      ctx += `- ${c.title}\n  ${c.content}\n`
-    }
-    ctx += '\n'
-  }
-
-  return ctx + '---\n\n'
-}
-```
-
-### Module 8: ExperienceLifecycleService（经验生命周期管理）
-
-#### 8.1 问题
-
-experience_index 的 status 字段（active/resolved/obsolete/superseded）没有更新机制。BUG 修复后经验仍为 active，Agent 被过时信息淹没。
-
-#### 8.2 三个触发点
-
-```typescript
-class ExperienceLifecycleService {
-  /**
-   * 触发点 1: PR 合并时标记 resolved
-   * 由 GitHub webhook → Octopus Server 触发
-   */
-  async markResolved(prUrl: string): Promise<number> {
-    // 从 PR 描述中提取 BUG 标识
-    const prBody = await githubAPI.getPR(prUrl)
-    const bugRefs = this.extractBugRefs(prBody)  // ["BUG-001", "BUG-002"]
-
-    let count = 0
-    for (const ref of bugRefs) {
-      const result = await experienceDAO.updateByKeyword({
-        keyword: ref,
-        updates: {
-          status: 'resolved',
-          resolved_at: new Date().toISOString(),
-          resolved_by: prUrl,
-        },
-      })
-      count += result.changes
-    }
-    return count
-  }
-
-  /**
-   * 触发点 2: 定期衰减过期经验
-   * 由 Scheduler 内置 job 触发 (每周一次)
-   */
-  async decayStale(): Promise<number> {
-    // use_count=0 且创建超过 90 天 → obsolete
-    return await experienceDAO.bulkUpdate({
-      where: {
-        use_count: 0,
-        created_before: daysAgo(90),
-        status: 'active',
-      },
-      updates: { status: 'obsolete' },
-    })
-  }
-
-  /**
-   * 触发点 3: 新经验替代旧经验
-   * 在 extractLessons() 写入新条目后调用
-   */
-  async supersede(newItem: ExperienceItem): Promise<void> {
-    if (!newItem.file_pattern) return
-
-    // 同 project + 同 file_pattern + 同 type 的旧条目 → superseded
-    await experienceDAO.bulkUpdate({
-      where: {
-        project: newItem.project,
-        file_pattern: newItem.file_pattern,
-        type: newItem.type,
-        status: 'active',
-        exclude_id: newItem.id,
-      },
-      updates: { status: 'superseded' },
-    })
-  }
-}
-```
-
-#### 8.3 注入时过滤
-
-引擎注入经验时只查 active 状态（§7.9 的 SQL 已包含 `AND status = 'active'`），resolved/obsolete/superseded 的条目不会被注入 Agent prompt，但仍可通过 Dashboard 搜索查看。
-
-### Module 9: ChainTriggerService（链条工作流自动触发）
-
-#### 9.1 问题
-
-§8.4 描述了 `bug-hunter → bug-fixer → regression-tester` 流水线链，但只有归档记录，没有自动触发机制。§7.1 场景说"Agent 读取归档数据 → 自动触发 bug-fixer"，但没有定义触发入口。
-
-#### 9.2 方案：工作流 YAML 声明后继 + 引擎自动触发
-
-```yaml
-# 工作流 YAML 新增 chain 字段
-# bug-hunter.yaml
-name: bug-hunter
-chain:
-  on_success:
-    - workflow: bug-fixer
-      condition: '$vars.confirmed == "true"'
-      auto_trigger: true
-      input_mapping:
-        bug_reports: '$vars.bug_report_dir'
-        base_branch: '$inputs.base_branch'
-  on_failure: []
-```
-
-```typescript
-// execution-engine.ts onComplete 中增加链条触发
-async onComplete(execution: Execution) {
-  // ... 归档 + 经验提取 ...
-
-  // 链条触发
-  const chainConfig = execution.workflow.chain
-  if (chainConfig?.on_success && execution.status === 'completed') {
-    for (const next of chainConfig.on_success) {
-      if (next.auto_trigger && evaluateCondition(next.condition, pool)) {
-        const mappedInputs = resolveInputMapping(next.input_mapping, pool)
-        await this.trigger({
-          workspace_id: execution.workspace_id,  // 同一 workspace
-          workflow_ref: next.workflow,
-          parent_id: execution.id,               // 建立父子链
-          input_values: mappedInputs,
-        })
-        log.info(`Chain triggered: ${next.workflow} (parent: ${execution.id})`)
-      }
-    }
-  }
-}
-```
-
-#### 9.3 效果
-
-```
-bug-hunter 完成 → onComplete 检测 chain.on_success
-  → condition '$vars.confirmed == "true"' 为 true
-  → 自动触发 bug-fixer (同一 workspace, parent_id 建立父子链)
-  → bug-fixer 完成 → 自动触发 regression-tester
-  → 全部完成 → archiveWorkspace 时链条关系自动检测并记录
-```
+> **已砍掉**。现有 `ChainEngine`（pipeline.yaml 树结构执行）+ Scheduler 的 `job_type: workflow` 模式已完整覆盖工作流链条触发，无需引入第二套触发机制。
 
 ---
 
@@ -1624,10 +1421,10 @@ bug-hunter 完成 → onComplete 检测 chain.on_success
 │  │ 🥉 prd-forge     12次 92% ¥45          │    │
 │  └──────────────────────────────────────────┘   │
 │                                                 │
-│  ┌─── 最近经验 ────────────────────────────┐    │
-│  │ 📝 bug-hunter: return→continue 一行修复  │    │
-│  │ 📝 gen-workflow: loop+condition 更可靠   │    │
-│  │ 📝 bug-hunter: 路径穿越漏洞修复经验       │    │
+│  ┌─── 最近诊断信号 ─────────────────────────┐    │
+│  │ 📝 bug-hunter: scan 节点 agent_loop_detected │    │
+│  │ 📝 gen-workflow: condition_type_mismatch     │    │
+│  │ 📝 bug-hunter: create-pr auth_error           │    │
 │  └──────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────┘
 ```
@@ -1638,48 +1435,46 @@ bug-hunter 完成 → onComplete 检测 chain.on_success
 
 | Phase | 内容 | 核心产出 | 优先级 |
 |-------|------|---------|--------|
-| **Phase 1** | 执行归档 | execution_archive + workspace_archive 表 (INTEGER PK) + ArchiveService + 两阶段删除 | 🔴 最高 |
-| **Phase 2** | Experience Index | experience_index 表 (含生命周期字段) + haiku 拆分 + 知识库重写模式 | 🔴 最高 |
-| **Phase 3** | 引擎注入 | experience_scope 字段 + injectExperience() + clone_name 支持 | 🔴 最高 |
-| **Phase 4** | 经验生命周期 | ExperienceLifecycleService (PR 合并标记 resolved + 定期衰减 + 新旧替代) | 🔴 最高 |
-| **Phase 5** | 链条触发 | 工作流 YAML chain 字段 + ChainTriggerService (onComplete 自动触发后继) | 🟡 高 |
+| **Phase 1** | 执行归档 | execution_archive 表 (瘦身: 只存指标) + ArchiveService + 两阶段删除 | 🔴 最高 |
+| **Phase 2** | 规则提取 | extractRules() + appendToKnowledgeFile() (§4) — LLM 从执行结果提取规则写入 markdown | 🔴 最高 |
+| **Phase 3** | 知识注入 | knowledge_scope 字段 + injectKnowledge() (§5) — 引擎读 markdown 注入 prompt | 🔴 最高 |
+| **Phase 4** | 知识整理 | compactKnowledgeFile() (§4.5) — LLM 定期整理超长知识文件 | 🟡 高 |
+| **~~Phase 5~~** | ~~链条触发~~ | ~~已砍掉~~ (pipeline 树 + Scheduler 已覆盖) | ❌ 删除 |
 | **Phase 6** | Loop Dashboard | /archive/* API + 前端标签页 + 成本趋势 (USD 存储 + 前端汇率转换) | 🟡 高 |
-| **Phase 7** | Agent 记忆整合 | 执行归档 → daily memory + experiences 同步 + session-compress 联动 | 🟡 高 |
-| **Phase 8** | Agent 闭环 | 编排器查 experience_index + 技能进化联动 + Hermes 动态路由 | 🟡 高 |
+| **Phase 7** | Agent 记忆整合 | 执行归档 → daily memory 同步 + session-compress 联动 | 🟡 高 |
+| **Phase 8** | Agent 闭环 | 编排器读知识文件 + 技能进化联动 + Hermes 动态路由 | 🟡 高 |
 | **Phase 9** | Telegram 双向 | Telegram Bot webhook + 指令集 + Hermes provider chat ID 路由 | 🟢 中 |
 | **Phase 10** | 自主 Loop | Observe 三种触发 + Agent 自注册调度 + 模式识别 + 分身整合 | 🟢 中 |
 
 ### Phase 1 详细清单
 
-1. `packages/server/src/db/schema.sql` — 新增 execution_archive + workspace_archive 表 (INTEGER PK + TEXT UUID)
+1. `packages/server/src/db/schema.sql` — 新增 execution_archive 表 (瘦身: 只存指标)
 2. `packages/server/src/db/dao/archive-dao.ts` — 新建 ArchiveDAO
-3. `packages/server/src/db/dao/workspace-archive-dao.ts` — 新建 WorkspaceArchiveDAO
-4. `packages/server/src/services/archive-service.ts` — 新建 ArchiveService (含链条检测 + clone_name + wsArchiveId 参数)
-5. `packages/server/src/services/workspace.ts` — 修改 delete() 为两阶段提交 (archiving → archived → cascade)
-6. `packages/server/src/engine/execution-engine.ts` — 修改 onComplete 自动归档
+3. `packages/server/src/services/archive-service.ts` — 新建 ArchiveService
+4. `packages/server/src/services/workspace.ts` — 修改 delete() 为两阶段提交 (archiving → archived → cascade)
+5. `packages/server/src/engine/execution-engine.ts` — 修改 onComplete 自动归档
 
 ### Phase 2 详细清单
 
-7. `packages/server/src/db/schema.sql` — 新增 experience_index 表 (含 resolved_at/resolved_by)
-8. `packages/server/src/db/dao/experience-dao.ts` — 新建 ExperienceDAO
-9. `packages/server/src/services/archive-service.ts` — extractLessons() haiku 拆分 + 写入 index + 知识库重写模式
+6. `packages/server/src/services/rule-extractor.ts` — 新建 extractRules() (§4.3)
+7. `packages/server/src/services/knowledge-writer.ts` — 新建 appendToKnowledgeFile() (§4.4)
+8. `packages/server/src/services/archive-service.ts` — 新增 extractAndAppendRules() 方法
 
 ### Phase 3 详细清单
 
-10. `packages/shared/src/types/workflow.ts` — NodeSchema 增加 experience_scope 字段
-11. `packages/core-pack/presets/workflows/doc/workflow-schema.json` — schema 增加 experience_scope + chain
-12. `packages/engine/src/engine.ts` — 新增 injectExperience() 方法, agent 节点执行前调用
+9. `packages/shared/src/types/workflow.ts` — NodeSchema 增加 knowledge_scope 字段
+10. `packages/core-pack/presets/workflows/doc/workflow-schema.json` — schema 增加 knowledge_scope
+11. `packages/engine/src/engine.ts` — 新增 injectKnowledge() 方法 (§5.2)
 
 ### Phase 4 详细清单
 
-13. `packages/server/src/services/experience-lifecycle-service.ts` — 新建 ExperienceLifecycleService
-14. `packages/server/src/routes/webhooks/github.ts` — PR 合并 webhook → markResolved()
-15. Scheduler 内置 job `experience-decay` — 每周执行 decayStale()
+12. `packages/server/src/services/knowledge-compactor.ts` — 新建 compactKnowledgeFile() (§4.5)
+13. Scheduler 内置 job `knowledge-compact` — 每周检查知识文件行数，超过 100 行触发整理
 
-### Phase 5 详细清单
+### ~~Phase 5 详细清单~~ (已删除)
 
-16. `packages/shared/src/types/workflow.ts` — WorkflowSchema 增加 chain 字段
-17. `packages/engine/src/engine.ts` — onComplete 增加链条触发逻辑
+~~16. `packages/shared/src/types/workflow.ts` — WorkflowSchema 增加 chain 字段~~
+~~17. `packages/engine/src/engine.ts` — onComplete 增加链条触发逻辑~~
 
 ---
 
@@ -1687,10 +1482,10 @@ bug-hunter 完成 → onComplete 检测 chain.on_success
 
 | Loop 构建模块 | 本设计如何补全 |
 |---------------|---------------|
-| **Memory/State** | execution_archive + workspace_archive + experience_index = 三层执行记忆; 生命周期管理 (resolved/obsolete/superseded); Agent daily memory 自动融入; 知识库文件重写模式保持精简 |
-| Automations | Scheduler 自动创建 workspace + 执行 + 归档 + 清理; Agent 自注册调度; **chain 字段自动触发后继工作流** |
-| Skills | 经验 → reflect() 触发技能进化; experience_scope 让工作流执行时自动加载历史知识; 过期经验自动衰减避免噪音 |
+| **Memory/State** | execution_archive (指标, SQL) + 知识文件 (规则, Markdown); 执行 → 提取规则 → 注入 prompt → 更好的执行 → Loop |
+| Automations | Scheduler 自动创建 workspace + 执行 + 归档 + 清理; Agent 自注册调度; 链条执行通过 pipeline 树 + ChainEngine 覆盖 |
+| Skills | 知识文件累积进化 → reflect() 触发技能进化; 过期规则由 compactKnowledgeFile() 自动清理 |
 | Connectors | Telegram Bot 双向交互; Hermes provider 支持动态 chat ID 路由 + 命名 target |
-| Sub-agents | 编排器查 experience_index 做决策; 分身系统通过 clone_name 隔离执行记忆; agent 节点通过 experience_scope 注入项目级经验 |
+| Sub-agents | 编排器读知识文件做决策; agent 节点通过 knowledge_scope 注入项目级规则 |
 
-> **核心转变**: 从 "执行→遗忘→冷启动" 到 "执行→归档→经验索引→生命周期管理→引擎注入→带记忆执行→更好的结果→更好的经验→Loop"
+> **核心转变**: 从 "执行→遗忘→冷启动" 到 "执行→提取规则→写入知识文件→注入 prompt→带规则执行→更少 blocker→更快的循环→Loop"
