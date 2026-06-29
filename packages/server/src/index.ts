@@ -4,6 +4,7 @@ import { logger } from "hono/logger"
 import { bodyLimit } from "hono/body-limit"
 import http from "http"
 import os from "os"
+import path from "path"
 import { createYjsWebSocketServer, setYjsWorkspaceDAO } from "./routes/yjs-ws"
 import { initDb, getDb, getDbPath } from "./db/connection"
 import { applySchema } from "./db/schema"
@@ -15,6 +16,7 @@ import {
 } from "./db/dao"
 import { createKnowledgeRoutes } from "./routes/knowledge"
 import { createReviewRoutes } from "./routes/review"
+import { createArchiveRoutes } from "./routes/archive"
 import { ReviewService } from "./services/knowledge/review"
 import { ObservabilityService } from "./services/observability"
 import { PrivacyFilter } from "./services/privacy-filter"
@@ -296,8 +298,12 @@ app.route("/api/workflows/built-in", builtInWorkflowRoutes)
 // Knowledge system routes
 const knowledgeOrg = "xzf" // ponytail: default org, will be dynamic later
 const reviewService = new ReviewService(d.knowledgeRule, d.pendingReview, knowledgeOrg)
-app.route("/api/knowledge", createKnowledgeRoutes(d.knowledgeRule, d.knowledgeEffectiveness, knowledgeOrg))
+app.route("/api/knowledge", createKnowledgeRoutes(d.knowledgeRule, d.knowledgeEffectiveness, d.pendingReview, knowledgeOrg))
 app.route("/api/review", createReviewRoutes(reviewService, d.pendingReview))
+
+// Archive routes — execution result summarization + rule proposal
+const stateDir = path.join(process.env.HOME ?? "~", ".octopus", "state")
+app.route("/api/archive", createArchiveRoutes(d.knowledgeRule, d.pendingReview, stateDir, knowledgeOrg))
 
 // Set scheduler on agent service
 try { getAgentService().setSchedulerService(schedSvc) } catch {}

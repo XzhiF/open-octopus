@@ -1,6 +1,6 @@
 import { Hono } from "hono"
 import path from "path"
-import type { KnowledgeRuleDAO, KnowledgeEffectivenessDAO } from "../db/dao"
+import type { KnowledgeRuleDAO, KnowledgeEffectivenessDAO, PendingReviewDAO } from "../db/dao"
 import {
   getKnowledgeDir,
   readKnowledgeFile,
@@ -15,6 +15,7 @@ import {
 export function createKnowledgeRoutes(
   knowledgeRuleDAO: KnowledgeRuleDAO,
   effectivenessDAO: KnowledgeEffectivenessDAO,
+  pendingReviewDAO: PendingReviewDAO,
   org: string,
 ): Hono {
   const routes = new Hono()
@@ -168,14 +169,36 @@ export function createKnowledgeRoutes(
     }
   })
 
-  // POST /api/knowledge/compact — stub (full impl in P4)
+  // POST /api/knowledge/compact — trigger LLM compact
   routes.post("/compact", async (c) => {
-    return c.json({ error: "Not implemented" }, 501)
+    const body = await c.req.json()
+    const { org: reqOrg, filePath } = body
+
+    if (!filePath) return c.json({ error: { code: "INVALID_PARAM", message: "filePath required" } }, 400)
+
+    try {
+      const { compactKnowledgeFile } = await import("../services/knowledge/maintenance")
+      const result = await compactKnowledgeFile(reqOrg ?? org, filePath, pendingReviewDAO)
+      return c.json(result)
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      if (msg === "NOT_FOUND") return c.json({ error: { code: "NOT_FOUND", message: "File not found" } }, 404)
+      return c.json({ error: { code: "INTERNAL_ERROR", message: msg } }, 500)
+    }
   })
 
-  // POST /api/knowledge/rule/:id/restore — stub (full impl in P4)
+  // POST /api/knowledge/rule/:id/restore — restore retired rule
   routes.post("/rule/:id/restore", (c) => {
-    return c.json({ error: "Not implemented" }, 501)
+    const ruleId = c.req.param("id")
+    try {
+      const { restoreRule } = require("../services/knowledge/effectiveness")
+      const result = restoreRule(ruleId, knowledgeRuleDAO)
+      return c.json(result)
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      if (msg === "NOT_FOUND") return c.json({ error: { code: "NOT_FOUND", message: "Rule not found or not retired" } }, 404)
+      return c.json({ error: { code: "INTERNAL_ERROR", message: msg } }, 500)
+    }
   })
 
   return routes
