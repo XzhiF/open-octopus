@@ -1,7 +1,11 @@
 'use client'
 
+/**
+ * Traceability: P-04 × US-32 × TC-043
+ * Workflow knowledge flat list with expand/collapse rule details
+ */
+
 import { useState, useEffect, useCallback } from 'react'
-import { GitBranch, Eye, Edit3, FileText } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'

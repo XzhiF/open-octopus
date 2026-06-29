@@ -1,7 +1,11 @@
 'use client'
 
+/**
+ * Traceability: P-05 × US-14, US-15, US-24 × TC-018, TC-019, TC-032, TC-033, TC-020
+ * Review queue with filtering, pagination, batch operations, and AI assistant integration
+ */
+
 import { useState, useCallback } from 'react'
-import { CheckCircle, ChevronLeft, ChevronRight, RefreshCw } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { toast } from 'sonner'
 import { useReviewQueue } from '@/hooks/useReviewQueue'

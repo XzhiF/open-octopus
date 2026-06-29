@@ -1,5 +1,10 @@
 'use client'
 
+/**
+ * Traceability: P-02 × US-22 × TC-028, TC-029
+ * User preference editor with Markdown view/edit modes and scope switching
+ */
+
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { Edit3, Save, X } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'

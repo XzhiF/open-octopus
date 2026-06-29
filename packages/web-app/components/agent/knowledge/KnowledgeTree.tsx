@@ -1,7 +1,11 @@
 'use client'
 
+/**
+ * Traceability: P-03 × US-23, US-30, US-31 × TC-030, TC-031, TC-041
+ * Project knowledge tree browser with Accordion, retired rules, compact trigger
+ */
+
 import { useState, useEffect, useCallback } from 'react'
-import { BookOpen, Eye, Edit3, Trash2, RotateCcw, FolderOpen } from 'lucide-react'
 import {
   Accordion,
   AccordionContent,

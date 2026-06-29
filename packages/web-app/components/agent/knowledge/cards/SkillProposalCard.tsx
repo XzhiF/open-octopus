@@ -1,5 +1,10 @@
 'use client'
 
+/**
+ * Traceability: P-08 × US-12 × TC-016
+ * In-chat Skill proposal card with generate/reject/adjust actions
+ */
+
 import { useState, useCallback } from 'react'
 import { Zap, Check, X, Edit3, ChevronDown, ChevronUp } from 'lucide-react'
 import { Button } from '@/components/ui/button'

@@ -1,5 +1,10 @@
 'use client'
 
+/**
+ * Traceability: P-08 × US-17, US-24 × TC-022, TC-032
+ * In-chat review card for pending rules with approve/reject/defer/edit actions
+ */
+
 import { useState, useCallback } from 'react'
 import { Check, X, Pause, Edit3, ChevronDown, ChevronUp } from 'lucide-react'
 import { Button } from '@/components/ui/button'

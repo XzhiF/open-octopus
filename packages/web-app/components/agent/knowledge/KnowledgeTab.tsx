@@ -1,5 +1,10 @@
 'use client'
 
+/**
+ * Traceability: P-01 × US-21 × TC-027
+ * Knowledge Tab container with 4 sub-tabs (preference/project/workflow/review)
+ */
+
 import { useState } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
 import { SlidersHorizontal, FolderTree, GitBranch, ClipboardCheck } from 'lucide-react'

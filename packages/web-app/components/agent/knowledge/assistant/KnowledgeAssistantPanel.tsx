@@ -1,5 +1,10 @@
 'use client'
 
+/**
+ * Traceability: P-06 × US-25 × TC-034, TC-035
+ * AI assistant side panel with SSE streaming, adopt suggestions, 5-round limit
+ */
+
 import * as React from 'react'
 import {
   Bot,

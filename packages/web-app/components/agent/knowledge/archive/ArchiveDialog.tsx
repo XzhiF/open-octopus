@@ -1,7 +1,11 @@
 'use client'
 
+/**
+ * Traceability: P-07 × US-26, US-11 × TC-036, TC-037, TC-015
+ * Archive dialog with rule extraction, execution summary, and AI assistant panel
+ */
+
 import { useState, useCallback, useEffect, useMemo } from 'react'
-import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import {
   Dialog,
