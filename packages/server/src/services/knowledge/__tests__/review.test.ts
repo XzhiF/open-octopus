@@ -21,7 +21,7 @@ describe("review", () => {
     applySchema(db)
     ruleDAO = new KnowledgeRuleDAO(db)
     pendingReviewDAO = new PendingReviewDAO(db)
-    reviewService = new ReviewService(ruleDAO, pendingReviewDAO, "test-org")
+    reviewService = new ReviewService(ruleDAO, pendingReviewDAO)
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "review-test-"))
     process.env.OCTOPUS_KNOWLEDGE_DIR = tmpDir
   })
@@ -60,7 +60,7 @@ describe("review", () => {
     it("writes rule to org knowledge directory, not global", () => {
       const id = insertPendingRule()
 
-      const result = reviewService.approveItem(id)
+      const result = reviewService.approveItem(id, "test-org")
       expect(result.ok).toBe(true)
       expect(result.ruleId).toBeDefined()
 
@@ -84,14 +84,14 @@ describe("review", () => {
     it("is idempotent — approving twice returns same ruleId", () => {
       const id = insertPendingRule()
 
-      const first = reviewService.approveItem(id)
-      const second = reviewService.approveItem(id)
+      const first = reviewService.approveItem(id, "test-org")
+      const second = reviewService.approveItem(id, "test-org")
       expect(second.ok).toBe(true)
       expect(second.ruleId).toBe(id) // Already approved, returns original id
     })
 
     it("throws NOT_FOUND for nonexistent item", () => {
-      expect(() => reviewService.approveItem("nonexistent")).toThrow("NOT_FOUND")
+      expect(() => reviewService.approveItem("nonexistent", "test-org")).toThrow("NOT_FOUND")
     })
   })
 
@@ -159,7 +159,7 @@ describe("review", () => {
       const id1 = insertPendingRule({ id: "batch-1" })
       const id2 = insertPendingRule({ id: "batch-2" })
 
-      const result = reviewService.batchApprove([id1, id2, "nonexistent"])
+      const result = reviewService.batchApprove([id1, id2, "nonexistent"], "test-org")
       expect(result.succeeded).toBe(2)
       expect(result.failed).toBe(1)
       expect(result.details).toHaveLength(3)
@@ -213,7 +213,7 @@ describe("review", () => {
         user_notes: null,
       })
 
-      const result = reviewService.approveItem("skill-001")
+      const result = reviewService.approveItem("skill-001", "test-org")
       expect(result.ok).toBe(true)
 
       // Verify SKILL.md was written

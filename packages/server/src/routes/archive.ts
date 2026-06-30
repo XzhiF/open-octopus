@@ -8,7 +8,6 @@ export function createArchiveRoutes(
   knowledgeRuleDAO: KnowledgeRuleDAO,
   pendingReviewDAO: PendingReviewDAO,
   stateDir: string,
-  org: string,
 ): Hono {
   const routes = new Hono()
 
@@ -75,6 +74,8 @@ export function createArchiveRoutes(
 
     const body = await c.req.json()
     const { org: reqOrg, skipSkillProposal } = body
+    // Per-request org resolution: body `org` > query `org` > undefined.
+    const org = reqOrg || c.req.query("org") || undefined
 
     const statePath = path.join(stateDir, `${id}.json`)
     if (!fs.existsSync(statePath)) {
@@ -90,7 +91,7 @@ export function createArchiveRoutes(
       const pendingCount = await proposeRulesForReview(
         execResult,
         logDir,
-        reqOrg ?? org,
+        org,
         stateDir,
         knowledgeRuleDAO,
         pendingReviewDAO,
@@ -102,7 +103,7 @@ export function createArchiveRoutes(
         try {
           const { proposeSkillFromWorkspace } = await import("../services/knowledge/skill")
           const skill = await proposeSkillFromWorkspace(
-            id, reqOrg ?? org, pendingReviewDAO,
+            id, org, pendingReviewDAO,
             `Execution ${id} completed with status ${execResult.status}`,
           )
           if (skill) skills = [skill]

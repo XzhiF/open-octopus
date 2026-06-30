@@ -61,7 +61,8 @@ export function createReviewRoutes(
     }
 
     const body = await c.req.json()
-    const { action, content, userNotes } = body
+    const { action, content, userNotes, org: bodyOrg } = body
+    const org = bodyOrg || c.req.query("org") || undefined
 
     if (!["approve", "reject", "defer", "edit"].includes(action)) {
       return c.json({ error: "INVALID_PARAM: action must be approve|reject|defer|edit" }, 400)
@@ -72,7 +73,7 @@ export function createReviewRoutes(
 
     try {
       switch (action) {
-        case "approve": await reviewService.approveItem(id); break
+        case "approve": await reviewService.approveItem(id, org); break
         case "reject": await reviewService.rejectItem(id, userNotes); break
         case "defer": await reviewService.deferItem(id); break
         case "edit": await reviewService.editItem(id, content); break
@@ -94,7 +95,8 @@ export function createReviewRoutes(
   // POST /api/review/batch — batch approve/reject
   routes.post("/batch", async (c) => {
     const body = await c.req.json()
-    const { ids, action } = body
+    const { ids, action, org: bodyOrg } = body
+    const org = bodyOrg || c.req.query("org") || undefined
 
     if (!ids || !Array.isArray(ids) || ids.length === 0) {
       return c.json({ error: "INVALID_PARAM: ids must be non-empty array" }, 400)
@@ -113,7 +115,7 @@ export function createReviewRoutes(
 
     try {
       if (action === "approve") {
-        const result = reviewService.batchApprove(ids)
+        const result = reviewService.batchApprove(ids, org)
         return c.json({ ok: true, succeeded: result.succeeded, failed: result.failed, details: result.details })
       } else {
         reviewService.batchReject(ids)

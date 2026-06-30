@@ -20,13 +20,13 @@ export function createKnowledgeRoutes(
   knowledgeRuleDAO: KnowledgeRuleDAO,
   effectivenessDAO: KnowledgeEffectivenessDAO,
   pendingReviewDAO: PendingReviewDAO,
-  org: string,
 ): Hono {
   const routes = new Hono()
 
   // GET /api/knowledge/files — list knowledge files (org + global)
   routes.get("/files", (c) => {
     try {
+      const org = c.req.query("org") || undefined
       const scopeFilter = c.req.query("scope")
       const orgDir = getKnowledgeDir(org)
       const globalDir = getKnowledgeDir() // global knowledge dir
@@ -60,6 +60,7 @@ export function createKnowledgeRoutes(
 
   // GET /api/knowledge/file/:path — read single file + parsed rules
   routes.get("/file/:path", (c) => {
+    const org = c.req.query("org") || undefined
     const fileName = c.req.param("path")
     const fileNameCheck = validateKnowledgeFileName(fileName)
     if (!fileNameCheck.ok) {
@@ -82,6 +83,7 @@ export function createKnowledgeRoutes(
 
   // PUT /api/knowledge/file/:path — write file
   routes.put("/file/:path", async (c) => {
+    const org = c.req.query("org") || undefined
     const fileName = c.req.param("path")
     const fileNameCheck = validateKnowledgeFileName(fileName)
     if (!fileNameCheck.ok) {
@@ -113,9 +115,10 @@ export function createKnowledgeRoutes(
       return c.json({ error: { code: "INVALID_PARAM", message: "scope must be global|org" } }, 400)
     }
 
-    const prefOrg = scope === "global" ? undefined : org
-    const content = readUserPreference(prefOrg)
-    const knowledgeDir = getKnowledgeDir(prefOrg)
+    // Per-request org resolution. Undefined org → global scope.
+    const org = scope === "global" ? undefined : (c.req.query("org") || undefined)
+    const content = readUserPreference(org)
+    const knowledgeDir = getKnowledgeDir(org)
 
     return c.json({
       content,
@@ -127,20 +130,23 @@ export function createKnowledgeRoutes(
   // PUT /api/knowledge/preference — write user preference
   routes.put("/preference", async (c) => {
     const body = await c.req.json()
-    const { content, scope } = body
+    const { content, scope, org: bodyOrg } = body
 
     if (!content && content !== "") return c.json({ error: { code: "INVALID_PARAM", message: "content required" } }, 400)
     if (!scope || !["global", "org"].includes(scope)) {
       return c.json({ error: { code: "INVALID_PARAM", message: "scope must be global|org" } }, 400)
     }
 
+    // Per-request org resolution. Body `org` takes precedence, then query,
+    // then undefined (→ global scope).
+    const org = scope === "global" ? undefined : (bodyOrg || c.req.query("org") || undefined)
+
     try {
-      const prefOrg = scope === "global" ? undefined : org
-      writeUserPreference(prefOrg, content)
+      writeUserPreference(org, content)
       return c.json({ ok: true })
     } catch (err) {
-      const { body, status } = errorResponse(err, "preference.put")
-      return c.json(body, status)
+      const { body: respBody, status } = errorResponse(err, "preference.put")
+      return c.json(respBody, status)
     }
   })
 
@@ -188,6 +194,7 @@ export function createKnowledgeRoutes(
   routes.post("/compact", async (c) => {
     const body = await c.req.json()
     const { org: reqOrg, filePath } = body
+    const org = reqOrg || c.req.query("org") || undefined
 
     if (!filePath) return c.json({ error: { code: "INVALID_PARAM", message: "filePath required" } }, 400)
 
@@ -199,7 +206,7 @@ export function createKnowledgeRoutes(
 
     try {
       const { compactKnowledgeFile } = await import("../services/knowledge/maintenance")
-      const result = await compactKnowledgeFile(reqOrg ?? org, filePath, pendingReviewDAO)
+      const result = await compactKnowledgeFile(org, filePath, pendingReviewDAO)
       return c.json(result)
     } catch (err) {
       const { body, status } = errorResponse(err, "compact")
@@ -209,6 +216,7 @@ export function createKnowledgeRoutes(
 
   // POST /api/knowledge/rebuild-index — rebuild index.md
   routes.post("/rebuild-index", (c) => {
+    const org = c.req.query("org") || undefined
     try {
       const result = rebuildIndex(org, knowledgeRuleDAO)
       return c.json({ ok: true, ...result })
@@ -220,6 +228,7 @@ export function createKnowledgeRoutes(
 
   // POST /api/knowledge/rule/:id/restore — restore retired rule
   routes.post("/rule/:id/restore", async (c) => {
+    const org = c.req.query("org") || undefined
     const ruleId = c.req.param("id")
 
     // Security: validate rule ID format before hitting the DAO. This also

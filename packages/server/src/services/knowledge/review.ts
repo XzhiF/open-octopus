@@ -28,14 +28,16 @@ export class ReviewService {
   constructor(
     private knowledgeRuleDAO: KnowledgeRuleDAO,
     private pendingReviewDAO: PendingReviewDAO,
-    private org: string,
   ) {}
 
   /**
    * Approve a pending item: write to knowledge file + insert into knowledge_rules + update status.
    * For skill type items, writes SKILL.md to the org skills directory.
+   *
+   * `org` is passed per-request so a single ReviewService instance can
+   * serve multiple orgs; an undefined value means "global" scope.
    */
-  approveItem(id: string): { ok: true; ruleId: string } {
+  approveItem(id: string, org?: string): { ok: true; ruleId: string } {
     const item = this.pendingReviewDAO.getById(id)
     if (!item) throw new Error("NOT_FOUND")
     if (item.status === "approved") return { ok: true, ruleId: id } // idempotent
@@ -51,7 +53,7 @@ export class ReviewService {
         .replace(/\/SKILL\.md$/, "") || "unknown-skill"
       assertValidSkillName(rawName)
 
-      const skillsDir = path.join(getKnowledgeDir(this.org), "..", "skills", rawName)
+      const skillsDir = path.join(getKnowledgeDir(org), "..", "skills", rawName)
       fs.mkdirSync(skillsDir, { recursive: true })
       fs.writeFileSync(path.join(skillsDir, "SKILL.md"), item.content, "utf-8")
       this.pendingReviewDAO.updateStatus(id, "approved")
@@ -70,7 +72,7 @@ export class ReviewService {
     const ruleId = item.status === "pending" || item.status === "deferred"
       ? generateRuleId(targetFile.replace(".md", ""))
       : id
-    const knowledgeDir = getKnowledgeDir(this.org)
+    const knowledgeDir = getKnowledgeDir(org)
     const filePath = path.join(knowledgeDir, targetFile)
 
     appendToKnowledgeFile(filePath, item.content, ruleId, item.source)
@@ -109,13 +111,13 @@ export class ReviewService {
     return { ok: true }
   }
 
-  batchApprove(ids: string[]): { succeeded: number; failed: number; details: Array<{ id: string; status: string; error?: string }> } {
+  batchApprove(ids: string[], org?: string): { succeeded: number; failed: number; details: Array<{ id: string; status: string; error?: string }> } {
     const details: Array<{ id: string; status: string; error?: string }> = []
     let succeeded = 0
     let failed = 0
     for (const id of ids) {
       try {
-        this.approveItem(id)
+        this.approveItem(id, org)
         details.push({ id, status: "ok" })
         succeeded++
       } catch (err) {

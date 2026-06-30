@@ -295,15 +295,15 @@ app.route("/api/agent", createAgentRoutes({
 }))
 app.route("/api/workflows/built-in", builtInWorkflowRoutes)
 
-// Knowledge system routes
-const knowledgeOrg = "xzf" // ponytail: default org, will be dynamic later
-const reviewService = new ReviewService(d.knowledgeRule, d.pendingReview, knowledgeOrg)
-app.route("/api/knowledge", createKnowledgeRoutes(d.knowledgeRule, d.knowledgeEffectiveness, d.pendingReview, knowledgeOrg))
+// Knowledge system routes — org is resolved per-request from the query
+// string (`?org=<name>`), so the server no longer pins a default org.
+const reviewService = new ReviewService(d.knowledgeRule, d.pendingReview)
+app.route("/api/knowledge", createKnowledgeRoutes(d.knowledgeRule, d.knowledgeEffectiveness, d.pendingReview))
 app.route("/api/review", createReviewRoutes(reviewService, d.pendingReview))
 
 // Archive routes — execution result summarization + rule proposal
 const stateDir = path.join(process.env.HOME ?? "~", ".octopus", "state")
-app.route("/api/archive", createArchiveRoutes(d.knowledgeRule, d.pendingReview, stateDir, knowledgeOrg))
+app.route("/api/archive", createArchiveRoutes(d.knowledgeRule, d.pendingReview, stateDir))
 
 // Set scheduler on agent service
 try { getAgentService().setSchedulerService(schedSvc) } catch {}
