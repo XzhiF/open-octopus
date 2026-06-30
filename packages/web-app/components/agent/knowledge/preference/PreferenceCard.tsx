@@ -227,7 +227,7 @@ export const PreferenceCard = forwardRef<PreferenceCardHandle, PreferenceCardPro
               </div>
             ) : content ? (
               <div className="space-y-3">
-                <article className="prose prose-sm dark:prose-invert max-w-none">
+                <article className="preference-prose">
                   <ReactMarkdown remarkPlugins={[remarkGfm]}>
                     {content}
                   </ReactMarkdown>
