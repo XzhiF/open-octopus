@@ -41,18 +41,26 @@ export async function updateKnowledgeFile(path: string, content: string) {
   return handleResponse(res)
 }
 
-export async function getPreference(scope: 'global' | 'org') {
+export async function getPreference(scope: 'global' | 'org', orgId?: string) {
+  const params = new URLSearchParams({ scope })
+  if (orgId) params.set('org', orgId)
   const res = await apiFetch(
-    `${getServerUrl()}/api/knowledge/preference?scope=${encodeURIComponent(scope)}`
+    `${getServerUrl()}/api/knowledge/preference?${params.toString()}`
   )
   return handleResponse(res)
 }
 
-export async function updatePreference(scope: 'global' | 'org', content: string) {
+export async function updatePreference(
+  scope: 'global' | 'org',
+  content: string,
+  orgId?: string
+) {
+  const body: Record<string, string> = { scope, content }
+  if (orgId) body.org = orgId
   const res = await apiFetch(`${getServerUrl()}/api/knowledge/preference`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ scope, content }),
+    body: JSON.stringify(body),
   })
   return handleResponse(res)
 }

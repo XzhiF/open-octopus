@@ -47,6 +47,19 @@ vi.mock('@/lib/knowledge/api', () => ({
   createAssistantStream: vi.fn(),
 }))
 
+// useOrgs() pulls from api-client.listOrgs. Default to two orgs so the
+// PreferenceEditor waterfall renders as "global + xzf + acme".
+vi.mock('@/lib/api-client', async (importOriginal) => {
+  const actual = (await importOriginal()) as Record<string, unknown>
+  return {
+    ...actual,
+    listOrgs: vi.fn().mockResolvedValue([
+      { id: 1, name: 'xzf', path: '~/.octopus/orgs/xzf' },
+      { id: 2, name: 'acme', path: '~/.octopus/orgs/acme' },
+    ]),
+  }
+})
+
 // ── ReactMarkdown mock (renders raw text, no markdown parsing) ────────
 
 vi.mock('react-markdown', () => ({
@@ -537,70 +550,88 @@ describe('TC-035: KnowledgeAssistantPanel degradation', () => {
 // ═══════════════════════════════════════════════════════════════════════
 
 describe('TC-028: PreferenceEditor view and edit', () => {
-  it('renders preference content in view mode', async () => {
-    mockApi.getPreference.mockResolvedValueOnce({ content: '# My Prefs', scope: 'org' })
+  it('renders global + per-org cards as a waterfall', async () => {
     render(<PreferenceEditor />)
 
     await waitFor(() => {
-      expect(screen.getByText('# My Prefs')).toBeInTheDocument()
+      expect(screen.getByText('全局偏好')).toBeInTheDocument()
+      expect(screen.getByText('xzf')).toBeInTheDocument()
+      expect(screen.getByText('acme')).toBeInTheDocument()
     })
   })
 
-  it('shows edit button', async () => {
-    mockApi.getPreference.mockResolvedValueOnce({ content: 'test content', scope: 'org' })
+  it('shows edit button inside each card', async () => {
     render(<PreferenceEditor />)
 
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: '编辑' })).toBeInTheDocument()
+      const editButtons = screen.getAllByRole('button', { name: '编辑' })
+      expect(editButtons.length).toBeGreaterThanOrEqual(3) // global + xzf + acme
     })
   })
 
-  it('shows manual maintenance notice', async () => {
-    mockApi.getPreference.mockResolvedValueOnce({ content: 'test', scope: 'org' })
+  it('renders preference content when the server returns it', async () => {
+    const { getPreference } = await import('@/lib/knowledge/api')
+    const mockGet = vi.mocked(getPreference)
+    mockGet.mockImplementation(async (scope: string, orgId?: string) => {
+      if (scope === 'global') return { content: '# Global prefs', scope: 'global' }
+      if (orgId === 'xzf') return { content: '# XZF org prefs', scope: 'org' }
+      return { content: '', scope: 'org' }
+    })
+
     render(<PreferenceEditor />)
 
     await waitFor(() => {
-      expect(screen.getByText(/此文件手动维护/)).toBeInTheDocument()
+      expect(screen.getByText('# Global prefs')).toBeInTheDocument()
+      expect(screen.getByText('# XZF org prefs')).toBeInTheDocument()
     })
   })
 
-  it('switches to edit mode with textarea', async () => {
-    mockApi.getPreference.mockResolvedValueOnce({ content: 'test content', scope: 'org' })
+  it('switches to edit mode with textarea when clicking 编辑 on a card', async () => {
     render(<PreferenceEditor />)
 
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: '编辑' })).toBeInTheDocument()
+      expect(screen.getAllByRole('button', { name: '编辑' }).length).toBeGreaterThanOrEqual(3)
     })
 
-    await userEvent.click(screen.getByRole('button', { name: '编辑' }))
+    await userEvent.click(screen.getAllByRole('button', { name: '编辑' })[0])
 
-    expect(screen.getByPlaceholderText(/在此输入你的偏好配置/)).toBeInTheDocument()
+    expect(
+      screen.getByPlaceholderText(/在此编辑 Markdown 格式的偏好配置/),
+    ).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '保存' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '取消' })).toBeInTheDocument()
   })
 })
 
 // ═══════════════════════════════════════════════════════════════════════
-// TC-029: 用户偏好全局/Org 级切换
+// TC-029: 用户偏好多 Org 卡片瀑布流
 // ═══════════════════════════════════════════════════════════════════════
 
-describe('TC-029: PreferenceEditor scope switching', () => {
-  it('shows scope switcher with 全局 and 当前组织 options', async () => {
-    mockApi.getPreference.mockResolvedValueOnce({ content: 'org content', scope: 'org' })
+describe('TC-029: PreferenceEditor multi-org waterfall', () => {
+  it('renders one card per org alongside the global card', async () => {
     render(<PreferenceEditor />)
 
     await waitFor(() => {
-      expect(screen.getByText('全局')).toBeInTheDocument()
-      expect(screen.getByText('当前组织')).toBeInTheDocument()
+      expect(screen.getByText('全局偏好')).toBeInTheDocument()
+      expect(screen.getByText('xzf')).toBeInTheDocument()
+      expect(screen.getByText('acme')).toBeInTheDocument()
     })
   })
 
-  it('defaults to org scope', async () => {
-    mockApi.getPreference.mockResolvedValueOnce({ content: 'org content', scope: 'org' })
+  it('toolbar shows 全部收起 / 全部展开', async () => {
     render(<PreferenceEditor />)
 
     await waitFor(() => {
-      expect(screen.getByText('org content')).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: '全部收起' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: '全部展开' })).toBeInTheDocument()
+    })
+  })
+
+  it('shows the global + N org count in the header', async () => {
+    render(<PreferenceEditor />)
+
+    await waitFor(() => {
+      expect(screen.getByText('1 全局 + 2 组织')).toBeInTheDocument()
     })
   })
 })
