@@ -6,14 +6,25 @@ import type { ParsedRule } from "@octopus/shared"
 
 /**
  * Get the knowledge directory for a given org/scope.
- * global → ~/.octopus/knowledge/
- * org → ~/.octopus/{org}/knowledge/
+ *
+ * Path layout (matches the rest of the ~/.octopus hierarchy, where all
+ * per-org data lives under `orgs/<org>/...`):
+ *
+ *   global  →  ~/.octopus/knowledge/
+ *   org     →  ~/.octopus/orgs/<org>/knowledge/
+ *
+ * Historical note: the original PR wrote org-level data to
+ * `~/.octopus/<org>/knowledge/` (missing the `orgs/` segment). That path
+ * is still consulted by {@link readUserPreference} for backward
+ * compatibility, but all new writes go to the canonical location.
  */
 export function getKnowledgeDir(org?: string): string {
-  // ponytail: env override for testing
+  // Test hook — bypass the filesystem layout entirely.
   if (process.env.OCTOPUS_KNOWLEDGE_DIR) return process.env.OCTOPUS_KNOWLEDGE_DIR
   const base = path.join(os.homedir(), ".octopus")
-  const dir = org ? path.join(base, org, "knowledge") : path.join(base, "knowledge")
+  const dir = org
+    ? path.join(base, "orgs", org, "knowledge")
+    : path.join(base, "knowledge")
   fs.mkdirSync(dir, { recursive: true })
   return dir
 }
@@ -62,16 +73,52 @@ export function listKnowledgeFiles(dir: string): string[] {
 
 /**
  * Read user_preference.md for a given scope.
- * global → ~/.octopus/knowledge/user_preference.md
- * org → ~/.octopus/{org}/knowledge/user_preference.md
+ *
+ * Resolution order (first non-empty hit wins):
+ *
+ *   global scope
+ *     1. ~/.octopus/knowledge/user_preference.md            (canonical)
+ *     2. ~/.octopus/user_preference.md                      (legacy, pre-knowledge-subsystem)
+ *
+ *   org scope
+ *     1. ~/.octopus/orgs/<org>/knowledge/user_preference.md (canonical)
+ *     2. ~/.octopus/<org>/knowledge/user_preference.md      (legacy PR-v1 path)
+ *     3. ~/.octopus/user_preference.md                      (legacy global fallback)
+ *
+ * The fallback chain is what makes the "first load" case work for users
+ * who already have the older `~/.octopus/user_preference.md` file before
+ * the knowledge subsystem existed — without it, the editor would render
+ * empty even though a preference file is present on disk.
  */
 export function readUserPreference(org?: string): string {
-  const dir = getKnowledgeDir(org)
-  return readKnowledgeFile(path.join(dir, "user_preference.md"))
+  const base = path.join(os.homedir(), ".octopus")
+
+  // Test hook — use the override dir verbatim, no fallback chain.
+  if (process.env.OCTOPUS_KNOWLEDGE_DIR) {
+    return readKnowledgeFile(path.join(process.env.OCTOPUS_KNOWLEDGE_DIR, "user_preference.md"))
+  }
+
+  const candidates: string[] = []
+  if (org) {
+    candidates.push(path.join(base, "orgs", org, "knowledge", "user_preference.md"))
+    candidates.push(path.join(base, org, "knowledge", "user_preference.md"))
+  } else {
+    candidates.push(path.join(base, "knowledge", "user_preference.md"))
+  }
+  // Legacy global location (pre-knowledge-subsystem) — shared fallback.
+  candidates.push(path.join(base, "user_preference.md"))
+
+  for (const candidate of candidates) {
+    const content = readKnowledgeFile(candidate)
+    if (content) return content
+  }
+  return ""
 }
 
 /**
- * Write user_preference.md for a given scope.
+ * Write user_preference.md for a given scope. Always writes to the
+ * canonical location returned by {@link getKnowledgeDir} — legacy
+ * locations are read-only for backward compatibility.
  */
 export function writeUserPreference(org: string | undefined, content: string): void {
   const dir = getKnowledgeDir(org)

@@ -209,9 +209,13 @@ describe("Installer", () => {
   it("creates org subdirectories in global dir", () => {
     const installer = createInstaller(testDir, "xzf")
     installer.run()
+    // The rest of the codebase (workspace-cmd, setup-runner, agent cmd) uses
+    // ~/.octopus/orgs/<org>/ as the canonical org directory. The installer is
+    // expected to seed the same location, so assert against that.
     const orgDir = join(
       process.env.HOME || process.env.USERPROFILE || "",
       ".octopus",
+      "orgs",
       "xzf",
     )
     const expectedSubdirs = [
