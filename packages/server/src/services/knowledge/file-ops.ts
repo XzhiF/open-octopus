@@ -30,6 +30,24 @@ export function getKnowledgeDir(org?: string): string {
 }
 
 /**
+ * Get the project knowledge subdirectory: <knowledgeDir>/projects/
+ */
+export function getProjectKnowledgeDir(org: string): string {
+  const dir = path.join(getKnowledgeDir(org), "projects")
+  fs.mkdirSync(dir, { recursive: true })
+  return dir
+}
+
+/**
+ * Get the workflow knowledge subdirectory: <knowledgeDir>/workflows/
+ */
+export function getWorkflowKnowledgeDir(org: string): string {
+  const dir = path.join(getKnowledgeDir(org), "workflows")
+  fs.mkdirSync(dir, { recursive: true })
+  return dir
+}
+
+/**
  * Read a knowledge file. Returns empty string if not found.
  */
 export function readKnowledgeFile(filePath: string): string {
@@ -143,7 +161,9 @@ export function writeUserPreference(org: string | undefined, content: string): v
 export function generateRuleId(target: string): string {
   const date = new Date().toISOString().slice(0, 10).replace(/-/g, "")
   const rand = crypto.randomBytes(2).toString("hex").slice(0, 4)
-  return `${target}-${date}-${rand}`
+  // Strip subdirectory prefix: "projects/octopus" → "octopus"
+  const baseName = target.replace(/^(projects|workflows)\//, "")
+  return `${baseName}-${date}-${rand}`
 }
 
 /**

@@ -46,4 +46,10 @@ export class KnowledgeRuleDAO extends BaseDAO {
   searchByText(query: string): KnowledgeRuleRow[] {
     return this.stmt(`SELECT * FROM knowledge_rules WHERE text LIKE ? AND status = 'active'`).all(`%${query}%`) as KnowledgeRuleRow[]
   }
+
+  listActiveByFilePrefix(prefix: string): KnowledgeRuleRow[] {
+    return this.stmt(
+      `SELECT * FROM knowledge_rules WHERE status = 'active' AND file_name LIKE ? ORDER BY created_at DESC`
+    ).all(`${prefix}%`) as KnowledgeRuleRow[]
+  }
 }

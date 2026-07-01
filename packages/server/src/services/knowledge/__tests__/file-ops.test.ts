@@ -18,6 +18,8 @@ import {
   getKnowledgeFileInfo,
   readUserPreference,
   getEffectiveUserPreference,
+  getProjectKnowledgeDir,
+  getWorkflowKnowledgeDir,
 } from "../file-ops"
 
 describe("file-ops", () => {
@@ -335,6 +337,55 @@ describe("file-ops", () => {
 
       unmarkRuleRetired(filePath, "restore-001")
       expect(readKnowledgeFile(filePath)).not.toContain("<!-- retired -->")
+    })
+  })
+
+  describe("generateRuleId with subdirectory prefix", () => {
+    it("strips projects/ prefix from target", () => {
+      const id = generateRuleId("projects/octopus")
+      expect(id).toMatch(/^octopus-\d{8}-[A-Za-z0-9_-]{4}$/)
+      expect(id).not.toContain("projects/")
+    })
+
+    it("strips workflows/ prefix from target", () => {
+      const id = generateRuleId("workflows/build-flow")
+      expect(id).toMatch(/^build-flow-\d{8}-[A-Za-z0-9_-]{4}$/)
+      expect(id).not.toContain("workflows/")
+    })
+
+    it("keeps plain target unchanged", () => {
+      const id = generateRuleId("octopus")
+      expect(id).toMatch(/^octopus-\d{8}-[A-Za-z0-9_-]{4}$/)
+    })
+  })
+
+  describe("getProjectKnowledgeDir", () => {
+    it("returns projects/ subdirectory under org knowledge dir", () => {
+      const testDir = fs.mkdtempSync(path.join(os.tmpdir(), "knowledge-test-"))
+      process.env.OCTOPUS_KNOWLEDGE_DIR = testDir
+      try {
+        const dir = getProjectKnowledgeDir("myorg")
+        expect(dir).toMatch(/projects$/)
+        expect(fs.existsSync(dir)).toBe(true)
+      } finally {
+        delete process.env.OCTOPUS_KNOWLEDGE_DIR
+        fs.rmSync(testDir, { recursive: true, force: true })
+      }
+    })
+  })
+
+  describe("getWorkflowKnowledgeDir", () => {
+    it("returns workflows/ subdirectory", () => {
+      const testDir = fs.mkdtempSync(path.join(os.tmpdir(), "knowledge-test-"))
+      process.env.OCTOPUS_KNOWLEDGE_DIR = testDir
+      try {
+        const dir = getWorkflowKnowledgeDir("myorg")
+        expect(dir).toMatch(/workflows$/)
+        expect(fs.existsSync(dir)).toBe(true)
+      } finally {
+        delete process.env.OCTOPUS_KNOWLEDGE_DIR
+        fs.rmSync(testDir, { recursive: true, force: true })
+      }
     })
   })
 })
