@@ -1,22 +1,41 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest"
+import fs from "fs"
+import path from "path"
+import os from "os"
 import Database from "better-sqlite3"
 import { KnowledgeRuleDAO } from "../../../db/dao/knowledge-rule-dao"
 import { applySchema } from "../../../db/schema"
 import { precomputeRelevantRules } from "../precompute"
 import { VarPool } from "@octopus/shared"
+import { writeKnowledgeFile } from "../file-ops"
 
 describe("precompute", () => {
   let db: Database.Database
   let ruleDAO: KnowledgeRuleDAO
+  let tmpDir: string
 
   beforeEach(() => {
     db = new Database(":memory:")
     applySchema(db)
     ruleDAO = new KnowledgeRuleDAO(db)
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "precompute-test-"))
   })
 
   afterEach(() => {
     db?.close()
+    fs.rmSync(tmpDir, { recursive: true, force: true })
+    delete process.env.OCTOPUS_KNOWLEDGE_DIR
+  })
+
+  it("sets __user_preference_text from effective user preference", async () => {
+    process.env.OCTOPUS_KNOWLEDGE_DIR = tmpDir
+    writeKnowledgeFile(path.join(tmpDir, "user_preference.md"), "# Test Pref\n- Prefer tests")
+
+    const pool = new VarPool({})
+    await precomputeRelevantRules("test-org", "test-workflow", {}, ruleDAO, pool)
+
+    const prefText = pool.get("__user_preference_text") as string
+    expect(prefText).toContain("Prefer tests")
   })
 
   it("writes rule cache and relevant IDs to pool", async () => {

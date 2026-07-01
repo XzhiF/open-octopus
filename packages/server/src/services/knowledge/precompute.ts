@@ -1,9 +1,13 @@
 import type { KnowledgeRuleDAO } from "../../db/dao"
+import { getEffectiveUserPreference } from "./file-ops"
 
 /**
- * Pre-compute relevant rules for a workflow execution.
+ * Pre-compute relevant rules and user preferences for a workflow execution.
  * Called by the engine's precomputeHook before node execution.
- * Writes results to VarPool for KnowledgeInjector to read.
+ * Writes results to VarPool for KnowledgeInjector to read:
+ *   - __user_preference_text: merged global+org user preferences
+ *   - __knowledge_rule_cache: JSON map of ruleId → ruleText
+ *   - __relevant_rule_ids: JSON array of relevant rule IDs
  */
 export async function precomputeRelevantRules(
   org: string,
@@ -13,6 +17,13 @@ export async function precomputeRelevantRules(
   pool: { set: (key: string, value: unknown) => void },
 ): Promise<void> {
   try {
+    // 1. User preference (always inject, merged global+org)
+    const userPref = getEffectiveUserPreference(org)
+    if (userPref.trim()) {
+      pool.set("__user_preference_text", userPref)
+    }
+
+    // 2. Knowledge rules
     const activeRules = knowledgeRuleDAO.listActive()
     if (activeRules.length === 0) return
 

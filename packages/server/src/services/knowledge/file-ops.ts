@@ -72,47 +72,58 @@ export function listKnowledgeFiles(dir: string): string[] {
 }
 
 /**
- * Read user_preference.md for a given scope.
+ * Read user_preference.md for a given scope (single file, no merge).
+ * Used by API routes to read/edit preferences per scope in the Dashboard.
  *
- * Resolution order (first non-empty hit wins):
- *
- *   global scope
- *     1. ~/.octopus/knowledge/user_preference.md            (canonical)
- *     2. ~/.octopus/user_preference.md                      (legacy, pre-knowledge-subsystem)
- *
- *   org scope
- *     1. ~/.octopus/orgs/<org>/knowledge/user_preference.md (canonical)
- *     2. ~/.octopus/<org>/knowledge/user_preference.md      (legacy PR-v1 path)
- *     3. ~/.octopus/user_preference.md                      (legacy global fallback)
- *
- * The fallback chain is what makes the "first load" case work for users
- * who already have the older `~/.octopus/user_preference.md` file before
- * the knowledge subsystem existed — without it, the editor would render
- * empty even though a preference file is present on disk.
+ * Path resolution:
+ *   - org provided  → ~/.octopus/orgs/<org>/knowledge/user_preference.md
+ *   - no org        → ~/.octopus/knowledge/user_preference.md
  */
 export function readUserPreference(org?: string): string {
-  const base = path.join(os.homedir(), ".octopus")
-
-  // Test hook — use the override dir verbatim, no fallback chain.
+  // Test hook — use the override dir verbatim.
   if (process.env.OCTOPUS_KNOWLEDGE_DIR) {
     return readKnowledgeFile(path.join(process.env.OCTOPUS_KNOWLEDGE_DIR, "user_preference.md"))
   }
 
-  const candidates: string[] = []
-  if (org) {
-    candidates.push(path.join(base, "orgs", org, "knowledge", "user_preference.md"))
-    candidates.push(path.join(base, org, "knowledge", "user_preference.md"))
-  } else {
-    candidates.push(path.join(base, "knowledge", "user_preference.md"))
-  }
-  // Legacy global location (pre-knowledge-subsystem) — shared fallback.
-  candidates.push(path.join(base, "user_preference.md"))
+  const dir = getKnowledgeDir(org)
+  return readKnowledgeFile(path.join(dir, "user_preference.md"))
+}
 
-  for (const candidate of candidates) {
-    const content = readKnowledgeFile(candidate)
-    if (content) return content
+/**
+ * Get effective user preference by merging global + org preferences.
+ *
+ * Merge strategy:
+ *   - Both global and org are always included (not first-match-wins)
+ *   - Org preference takes priority on conflicts (clearly marked in output)
+ *   - Format uses markdown headers so LLM understands the priority
+ *
+ * Used by precompute hook to populate __user_preference_text for agent injection.
+ */
+export function getEffectiveUserPreference(org: string): string {
+  // Test hook — single file, no merge.
+  if (process.env.OCTOPUS_KNOWLEDGE_DIR) {
+    return readKnowledgeFile(path.join(process.env.OCTOPUS_KNOWLEDGE_DIR, "user_preference.md"))
   }
-  return ""
+
+  const globalDir = getKnowledgeDir()      // ~/.octopus/knowledge/
+  const orgDir = getKnowledgeDir(org)      // ~/.octopus/orgs/<org>/knowledge/
+
+  const globalPref = readKnowledgeFile(path.join(globalDir, "user_preference.md"))
+  const orgPref = readKnowledgeFile(path.join(orgDir, "user_preference.md"))
+
+  // Merge: global first, then org appended with explicit priority marker.
+  // The "overrides global on conflicts" instruction tells the LLM how to handle conflicts.
+  const parts: string[] = []
+
+  if (globalPref.trim()) {
+    parts.push("### Global Preferences\n" + globalPref.trim())
+  }
+
+  if (orgPref.trim()) {
+    parts.push("### Org Preferences (overrides global on conflicts)\n" + orgPref.trim())
+  }
+
+  return parts.join("\n\n")
 }
 
 /**
