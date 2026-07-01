@@ -134,8 +134,8 @@ pnpm dev
 3. **执行工作流** — 点击 "运行"，实时查看节点执行状态、专家讨论、日志输出
 4. **查看结果** — 执行完成后查看 synthesis 输出、共识分数、执行树
 <p align="center">
-  <img src="docs/imgs/workflow.png" alt="Workflow 执行界面" width="49%" height="300" />
-  <img src="docs/imgs/swarm.png" alt="Swarm 多智能体协作" width="49%" height="300" />
+  <img src="docs/imgs/workflow.png" alt="Workflow 执行界面" width="49%" />
+  <img src="docs/imgs/swarm.png" alt="Swarm 多智能体协作" width="49%" />
 </p>
 
 ---
