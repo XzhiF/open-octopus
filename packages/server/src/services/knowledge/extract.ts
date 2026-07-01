@@ -101,6 +101,8 @@ export interface ExtractInput {
   execResult: ExecResult
   logDir: string
   existingRulesSummary: string
+  repoName?: string
+  workflowName?: string
 }
 
 interface RawExtractedRule {
@@ -144,9 +146,10 @@ const IMPERATIVE_RE =
  * Heuristic fallback: extract basic rules from failed node outputs when LLM is unavailable.
  * Generates imperative rules from error patterns in execution results.
  */
-function buildHeuristicRules(execResult: ExecResult): RawExtractedRule[] {
+function buildHeuristicRules(execResult: ExecResult, repoName?: string): RawExtractedRule[] {
   const nodes = Object.entries(execResult.nodes ?? {})
   const failedNodes = nodes.filter(([, n]) => n.exitCode !== null && n.exitCode !== 0)
+  const target = repoName ? `projects/${repoName}` : "projects/unknown"
 
   if (failedNodes.length === 0) return []
 
@@ -168,7 +171,7 @@ function buildHeuristicRules(execResult: ExecResult): RawExtractedRule[] {
     rules.push({
       text: ruleText,
       scope: "project",
-      target: "octopus",
+      target,
       source: "workspace_archive",
     })
   }
@@ -187,6 +190,10 @@ export async function extractAndCheckRules(
   llmCall: (prompt: string) => Promise<string> = callHaiku,
 ): Promise<(ProposedRule & { conflicts?: ConflictInfo[] })[]> {
   const { execResult, existingRulesSummary } = input
+
+  // Compute project-aware targets for the LLM prompt
+  const repoTarget = input.repoName ? `projects/${input.repoName}` : "projects/unknown"
+  const wfTarget = input.workflowName ? `workflows/${input.workflowName}` : "workflows/unknown"
 
   // Gather materials for the prompt
   const nodes = Object.entries(execResult.nodes ?? {})
@@ -219,12 +226,14 @@ ${existingRulesSummary || "No existing rules."}
 Analyze the execution and extract actionable rules/lessons learned. For each rule:
 1. Write it as an imperative sentence (start with a verb like "Always...", "Use...", "Avoid...")
 2. Assign a scope: "project", "workflow", or "global"
-3. Assign a target file name (e.g., "octopus" or "workflow-build")
+3. Assign a target:
+   - For project-level rules: use "${repoTarget}"
+   - For workflow-level rules: use "${wfTarget}"
 4. Assign a source from: workspace_archive, agent_conversation, clone_merge, system, recurring_pitfall, knowledge_pattern, scheduler
 5. Check if it conflicts with any existing rule (contradicts, overlaps, or supersedes)
 
 Return a JSON array:
-[{"text": "imperative rule text", "scope": "project", "target": "octopus", "source": "workspace_archive", "conflicts": [{"existingRule": "rule-id", "existingFile": "file", "conflictType": "contradicts"}]}]
+[{"text": "imperative rule text", "scope": "project", "target": "${repoTarget}", "source": "workspace_archive", "conflicts": [{"existingRule": "rule-id", "existingFile": "file", "conflictType": "contradicts"}]}]
 
 If no rules should be extracted, return an empty array [].
 Return ONLY the JSON array, no explanation.`
@@ -235,7 +244,7 @@ Return ONLY the JSON array, no explanation.`
 
   if (!response) {
     // Heuristic fallback: extract rules from failed node outputs when LLM is unavailable
-    raw = buildHeuristicRules(execResult)
+    raw = buildHeuristicRules(execResult, input.repoName)
   } else {
     // Parse and validate
     try {
@@ -297,7 +306,7 @@ Return ONLY the JSON array, no explanation.`
       return {
         text: item.text,
         scope,
-        target: item.target ?? "octopus",
+        target: item.target ?? (input.repoName ? `projects/${input.repoName}` : "projects/unknown"),
         source,
         ...(conflicts && conflicts.length > 0 ? { conflicts } : {}),
       } as ProposedRule & { conflicts?: ConflictInfo[] }
@@ -327,6 +336,7 @@ export async function detectRecurringPitfalls(
   stateDir: string,
   pendingReviewDAO: PendingReviewDAO,
   knowledgeRuleDAO: KnowledgeRuleDAO,
+  repoName?: string,
 ): Promise<RecurringResult[]> {
   const results: RecurringResult[] = []
 
@@ -391,10 +401,11 @@ export async function detectRecurringPitfalls(
 
     const autoApprove = info.count >= 3
     const nodeId = patternKey.split(":")[0] ?? "unknown"
+    const target = repoName ? `projects/${repoName}` : "projects/unknown"
     const rule: ProposedRule = {
       text: `Investigate and fix recurring failure in ${nodeId}: ${info.sampleOutput.slice(0, 100)}`,
       scope: "project",
-      target: "octopus",
+      target,
       source: "recurring_pitfall",
     }
 
@@ -470,6 +481,8 @@ export async function proposeRulesForReview(
   knowledgeRuleDAO: KnowledgeRuleDAO,
   pendingReviewDAO: PendingReviewDAO,
   config?: KnowledgeConfig,
+  repoName?: string,
+  workflowName?: string,
 ): Promise<number> {
   try {
     // Config gate: check if knowledge extraction is enabled
@@ -490,6 +503,8 @@ export async function proposeRulesForReview(
       execResult,
       logDir,
       existingRulesSummary,
+      repoName,
+      workflowName,
     })
 
     // Step 4: detect recurring pitfalls (may auto-approve some)
@@ -498,6 +513,7 @@ export async function proposeRulesForReview(
       stateDir,
       pendingReviewDAO,
       knowledgeRuleDAO,
+      repoName,
     )
 
     // Step 5: create PendingReview rows for LLM-proposed rules

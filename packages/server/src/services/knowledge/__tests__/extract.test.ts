@@ -278,7 +278,7 @@ describe("extract", () => {
       expect(results[0].autoApprove).toBe(true)
 
       // Verify knowledge file was written
-      const knowledgeFile = path.join(tmpDir, "octopus.md")
+      const knowledgeFile = path.join(tmpDir, "projects/unknown.md")
       const content = readKnowledgeFile(knowledgeFile)
       expect(content).toContain("recurring failure")
 

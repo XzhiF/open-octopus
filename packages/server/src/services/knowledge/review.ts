@@ -63,7 +63,7 @@ export class ReviewService {
     // Non-skill path: also guard against a poisoned target_file.
     // pending_review rows are system-generated but flow through LLM JSON,
     // so defense in depth is still warranted.
-    const targetFile = item.target_file || "octopus.md"
+    const targetFile = item.target_file || "projects/unknown.md"
     const targetCheck = validateKnowledgeFileName(targetFile)
     if (!targetCheck.ok) {
       throw new Error(`INVALID_TARGET_FILE: ${targetCheck.error}`)
@@ -74,6 +74,9 @@ export class ReviewService {
       : id
     const knowledgeDir = getKnowledgeDir(org)
     const filePath = path.join(knowledgeDir, targetFile)
+
+    // Ensure subdirectory exists (projects/ or workflows/)
+    fs.mkdirSync(path.dirname(filePath), { recursive: true })
 
     appendToKnowledgeFile(filePath, item.content, ruleId, item.source)
     this.knowledgeRuleDAO.insert({
