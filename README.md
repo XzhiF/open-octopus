@@ -8,65 +8,6 @@
 
 > 💬 这是一个相貌平平、资质一般的老程序员，认认真真做的第一个开源项目。整个项目诞生于 vibe coding —— 从工作中遇到的一个个痛点出发，借助 AI 编程想办法解决，然后借鉴前辈的思路，按自己的理解一步步搭建出来。设计不够精巧，核心功能都是真实场景里逼出来的。希望能帮到同样在这条路上摸索的朋友。
 
----
-
-## 演变过程
-
-从一个痛点出发，一步步长出来的平台：
-
-```
-SKILL Helper
-  └→ 目标：创建企业级 SKILL
-
-Dev Workspace
-  └→ 聚合多项目 Git Worktree 并行开发
-
-Workflow
-  └→ 长任务无人值守，多节点分工（Agent / SubAgent / Skills）
-
-Agent Swarm
-  └→ 专家团并行协作，效率倍增
-
-Remote: Notify & Watch & Exec
-  └→ 借助 Hermes + Telegram 实现通知、监控、远程执行
-
-Scheduler
-  └→ 自循环初步（bug-hunter / research-2-pr / idea-2-pr）
-
-Orchestrator Agent
-  └→ 全局 Agent + SKILL + 知识库 + 分身 + 记忆
-
-Memory
-  └→ Workspace 归档，工作流执行知识注入，Orchestrator Agent 自动 SKILL 提升
-```
-
-**… 规划 ↓**
-
-```
-Agent Refine
-  └→ 分身提炼：针对特定领域，炼化日积月累的资产生产分身，
-     或直接生产新分身并令其修炼功法
-
-Agent Workflow
-  └→ Orchestrator Agent / 分身 → 领域级 Agent（自身 SKILL + 记忆），
-     增强节点类型，融入工作流修炼
-
-Octopus Repository
-  └→ Workflow / SKILL / 分身的共享仓库，上传、下载、分享
-```
-
-**… 未来考虑 ↓**
-
-```
-Sandbox
-  └→ 隔离环境，重点优化 E2E 测试，打通全链路
-
-Hub-and-Spoke
-  └→ 架构演变：配置集中管理，统筹调度，不再局限于单机
-```
-
----
-
 ## 简介
 
 Octopus 的目标是一个 **Loop Engineering** 开发平台，让 AI Agent 在隔离的多项目环境中，通过可编排的工作流持续迭代。
@@ -192,6 +133,10 @@ pnpm dev
 2. **选择工作流** — 在工作空间中选择要执行的工作流 YAML
 3. **执行工作流** — 点击 "运行"，实时查看节点执行状态、专家讨论、日志输出
 4. **查看结果** — 执行完成后查看 synthesis 输出、共识分数、执行树
+<p align="center">
+  <img src="docs/imgs/workflow.png" alt="Workflow 执行界面" width="49%" height="300" />
+  <img src="docs/imgs/swarm.png" alt="Swarm 多智能体协作" width="49%" height="300" />
+</p>
 
 ---
 
@@ -335,6 +280,64 @@ Octopus 借鉴了以下优秀项目的思路和实现：
 - **[agency-agents-zh](https://github.com/jnMetaCode/agency-agents-zh)** — 中文 Agent 角色库，30+ 预置角色供 Swarm Router 动态选择。
 
 感谢这些作者提供了这么好的开源项目。
+
+
+---
+
+## 演变过程
+
+从一个痛点出发，一步步长出来的平台：
+
+```
+SKILL Helper
+  └→ 目标：创建企业级 SKILL
+
+Dev Workspace
+  └→ 聚合多项目 Git Worktree 并行开发
+
+Workflow
+  └→ 长任务无人值守，多节点分工（Agent / SubAgent / Skills）
+
+Agent Swarm
+  └→ 专家团并行协作，效率倍增
+
+Remote: Notify & Watch & Exec
+  └→ 借助 Hermes + Telegram 实现通知、监控、远程执行
+
+Scheduler
+  └→ 自循环初步（bug-hunter / research-2-pr / idea-2-pr）
+
+Orchestrator Agent
+  └→ 全局 Agent + SKILL + 知识库 + 分身 + 记忆
+
+Memory
+  └→ Workspace 归档，工作流执行知识注入，Orchestrator Agent 自动 SKILL 提升
+```
+
+**… 规划 ↓**
+
+```
+Agent Refine
+  └→ 分身提炼：针对特定领域，炼化日积月累的资产生产分身，
+     或直接生产新分身并令其修炼功法
+
+Agent Workflow
+  └→ Orchestrator Agent / 分身 → 领域级 Agent（自身 SKILL + 记忆），
+     增强节点类型，融入工作流修炼
+
+Octopus Repository
+  └→ Workflow / SKILL / 分身的共享仓库，上传、下载、分享
+```
+
+**… 未来考虑 ↓**
+
+```
+Sandbox
+  └→ 隔离环境，重点优化 E2E 测试，打通全链路
+
+Hub-and-Spoke
+  └→ 架构演变：配置集中管理，统筹调度，不再局限于单机
+```
 
 ---
 
