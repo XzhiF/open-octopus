@@ -39,7 +39,7 @@ Core idea: **AI is not a one-shot tool — it's an engineering system that can r
 
 ```bash
 # 1. Clone the repository
-git clone git@github.com:XzhiF/octopus.git
+git clone git@github.com:XzhiF/open-octopus.git
 cd octopus
 
 # 2. Install dependencies + build
