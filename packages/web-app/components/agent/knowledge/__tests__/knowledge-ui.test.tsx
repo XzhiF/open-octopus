@@ -287,15 +287,15 @@ describe('TC-038: KnowledgeTabBadge', () => {
 describe('TC-030: KnowledgeTree', () => {
   it('renders file list from API', async () => {
     mockApi.getKnowledgeFiles.mockResolvedValueOnce([
-      { name: 'octopus.md', type: 'project', scope: 'org', ruleCount: 3, retiredCount: 0, lineCount: 50, compactNeeded: false },
-      { name: 'bug-hunter.md', type: 'project', scope: 'org', ruleCount: 2, retiredCount: 0, lineCount: 30, compactNeeded: false },
+      { name: 'projects/octopus.md', type: 'project', scope: 'org', ruleCount: 3, retiredCount: 0, lineCount: 50, compactNeeded: false },
+      { name: 'projects/bug-hunter.md', type: 'project', scope: 'org', ruleCount: 2, retiredCount: 0, lineCount: 30, compactNeeded: false },
     ])
 
     render(<KnowledgeTree />)
 
     await waitFor(() => {
-      expect(screen.getByText('octopus.md')).toBeInTheDocument()
-      expect(screen.getByText('bug-hunter.md')).toBeInTheDocument()
+      expect(screen.getByText('octopus')).toBeInTheDocument()
+      expect(screen.getByText('bug-hunter')).toBeInTheDocument()
     })
     expect(screen.getByText('3 条规则')).toBeInTheDocument()
     expect(screen.getByText('2 条规则')).toBeInTheDocument()
@@ -717,13 +717,13 @@ describe('TC-037: ArchiveDialog skip archive', () => {
 describe('TC-043: WorkflowKnowledgeList', () => {
   it('renders workflow knowledge files', async () => {
     mockApi.getKnowledgeFiles.mockResolvedValueOnce([
-      { name: 'workflow-prd-impl.md', type: 'workflow', scope: 'org', ruleCount: 3, retiredCount: 0, lineCount: 50, compactNeeded: false },
+      { name: 'workflows/prd-impl.md', type: 'workflow', scope: 'org', ruleCount: 3, retiredCount: 0, lineCount: 50, compactNeeded: false },
     ])
 
     render(<WorkflowKnowledgeList />)
 
     await waitFor(() => {
-      expect(screen.getByText('workflow-prd-impl.md')).toBeInTheDocument()
+      expect(screen.getByText('prd-impl')).toBeInTheDocument()
       expect(screen.getByText('3 条规则')).toBeInTheDocument()
     })
   })

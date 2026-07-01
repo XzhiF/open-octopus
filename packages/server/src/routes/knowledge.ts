@@ -1,5 +1,6 @@
 import { Hono } from "hono"
 import path from "path"
+import fs from "fs"
 import type { KnowledgeRuleDAO, KnowledgeEffectivenessDAO, PendingReviewDAO } from "../db/dao"
 import {
   getKnowledgeDir,
@@ -31,25 +32,49 @@ export function createKnowledgeRoutes(
       const orgDir = getKnowledgeDir(org)
       const globalDir = getKnowledgeDir() // global knowledge dir
 
-      // Merge org-level and global-level files
-      const orgFiles = listKnowledgeFiles(orgDir).map(f => ({ file: f, dir: orgDir, scope: "org" as const }))
-      const globalFiles = listKnowledgeFiles(globalDir).map(f => ({ file: f, dir: globalDir, scope: "global" as const }))
-      const allFiles = [...orgFiles, ...globalFiles]
-
-      const result = allFiles.map(({ file: f, dir, scope: fileScope }) => {
-        const filePath = path.join(dir, f)
-        const info = getKnowledgeFileInfo(filePath)
-        const type = f.startsWith("workflow-") ? "workflow" : "project"
-        return {
-          name: info.name,
-          type,
-          scope: fileScope,
-          ruleCount: info.ruleCount,
-          retiredCount: info.retiredCount,
-          lineCount: info.lineCount,
-          compactNeeded: info.lineCount >= 100,
+      const readSubDir = (
+        baseDir: string,
+        subDir: string,
+        type: "project" | "workflow",
+        fileScope: "org" | "global",
+      ) => {
+        const dir = path.join(baseDir, subDir)
+        try {
+          return fs
+            .readdirSync(dir)
+            .filter((f) => f.endsWith(".md"))
+            .map((f) => ({
+              name: `${subDir}/${f}`,
+              fullPath: path.join(dir, f),
+              type,
+              scope: fileScope as "org" | "global",
+            }))
+        } catch {
+          return []
         }
-      }).filter(f => !scopeFilter || f.type === scopeFilter)
+      }
+
+      const allFiles = [
+        ...readSubDir(orgDir, "projects", "project", "org"),
+        ...readSubDir(orgDir, "workflows", "workflow", "org"),
+        ...readSubDir(globalDir, "projects", "project", "global"),
+        ...readSubDir(globalDir, "workflows", "workflow", "global"),
+      ]
+
+      const result = allFiles
+        .map(({ name, fullPath, type, scope: fileScope }) => {
+          const info = getKnowledgeFileInfo(fullPath)
+          return {
+            name,
+            type,
+            scope: fileScope,
+            ruleCount: info.ruleCount,
+            retiredCount: info.retiredCount,
+            lineCount: info.lineCount,
+            compactNeeded: info.lineCount >= 100,
+          }
+        })
+        .filter((f) => !scopeFilter || f.type === scopeFilter)
 
       return c.json({ files: result })
     } catch (err) {
@@ -58,10 +83,10 @@ export function createKnowledgeRoutes(
     }
   })
 
-  // GET /api/knowledge/file/:path — read single file + parsed rules
-  routes.get("/file/:path", (c) => {
+  // GET /api/knowledge/file — read single file + parsed rules
+  routes.get("/file", (c) => {
     const org = c.req.query("org") || undefined
-    const fileName = c.req.param("path")
+    const fileName = c.req.query("path") || ""
     const fileNameCheck = validateKnowledgeFileName(fileName)
     if (!fileNameCheck.ok) {
       return c.json({ error: { code: "INVALID_PARAM", message: fileNameCheck.error } }, 400)
@@ -81,10 +106,10 @@ export function createKnowledgeRoutes(
     })
   })
 
-  // PUT /api/knowledge/file/:path — write file
-  routes.put("/file/:path", async (c) => {
+  // PUT /api/knowledge/file — write file
+  routes.put("/file", async (c) => {
     const org = c.req.query("org") || undefined
-    const fileName = c.req.param("path")
+    const fileName = c.req.query("path") || ""
     const fileNameCheck = validateKnowledgeFileName(fileName)
     if (!fileNameCheck.ok) {
       return c.json({ error: { code: "INVALID_PARAM", message: fileNameCheck.error } }, 400)

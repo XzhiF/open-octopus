@@ -28,6 +28,14 @@ import {
 } from '@/lib/knowledge/api'
 import { BookOpen, FolderOpen, Eye, RotateCcw, Edit3, Trash2 } from 'lucide-react'
 
+/**
+ * Extract display name from file path.
+ * "projects/octopus.md" → "octopus"
+ * "workflows/build.md" → "build"
+ */
+const getDisplayName = (name: string) =>
+  name.replace(/^(projects|workflows)\//, '').replace(/\.md$/, '')
+
 export function KnowledgeTree() {
   const [files, setFiles] = useState<KnowledgeFile[]>([])
   const [selectedFile, setSelectedFile] = useState<string | null>(null)
@@ -162,7 +170,7 @@ export function KnowledgeTree() {
                 <div className="flex items-center gap-3 w-full min-w-0">
                   <FolderOpen className="h-4 w-4 text-knowledge-primary shrink-0" />
                   <span className="font-medium text-sm truncate">
-                    {file.name}
+                    {getDisplayName(file.name)}
                   </span>
                   <Badge variant="secondary" className="text-xs shrink-0">
                     {file.ruleCount} 条规则

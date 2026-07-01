@@ -22,16 +22,18 @@ export async function getKnowledgeFiles(scope?: string) {
   return handleResponse(res)
 }
 
-export async function getKnowledgeFile(path: string) {
+export async function getKnowledgeFile(filePath: string) {
+  const params = new URLSearchParams({ path: filePath })
   const res = await apiFetch(
-    `${getServerUrl()}/api/knowledge/file/${encodeURIComponent(path)}`
+    `${getServerUrl()}/api/knowledge/file?${params.toString()}`
   )
   return handleResponse(res)
 }
 
-export async function updateKnowledgeFile(path: string, content: string) {
+export async function updateKnowledgeFile(filePath: string, content: string) {
+  const params = new URLSearchParams({ path: filePath })
   const res = await apiFetch(
-    `${getServerUrl()}/api/knowledge/file/${encodeURIComponent(path)}`,
+    `${getServerUrl()}/api/knowledge/file?${params.toString()}`,
     {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },

@@ -265,21 +265,26 @@ describe("file-ops", () => {
   // TC-006: rebuildIndex
   describe("rebuildIndex (TC-006)", () => {
     it("creates index.md with statistics and rule entries", () => {
-      // Set up knowledge files with 3 rules
+      // Set up knowledge files with 3 rules in subdirectories
+      const projectsDir = path.join(tmpDir, "projects")
+      const workflowsDir = path.join(tmpDir, "workflows")
+      fs.mkdirSync(projectsDir, { recursive: true })
+      fs.mkdirSync(workflowsDir, { recursive: true })
+
       appendToKnowledgeFile(
-        path.join(tmpDir, "octopus.md"),
+        path.join(projectsDir, "octopus.md"),
         "Always validate inputs",
         "rule-001",
         "system",
       )
       appendToKnowledgeFile(
-        path.join(tmpDir, "octopus.md"),
+        path.join(projectsDir, "octopus.md"),
         "Use prepared statements",
         "rule-002",
         "workspace_archive",
       )
       appendToKnowledgeFile(
-        path.join(tmpDir, "workflow-build.md"),
+        path.join(workflowsDir, "build.md"),
         "Run tests before deploy",
         "rule-003",
         "system",
@@ -288,9 +293,9 @@ describe("file-ops", () => {
       // Mock knowledgeRuleDAO with listActive
       const mockRuleDAO = {
         listActive: () => [
-          { rule_id: "rule-001", file_name: "octopus.md", text: "Always validate inputs", scope: "project", source: "system", status: "active" },
-          { rule_id: "rule-002", file_name: "octopus.md", text: "Use prepared statements", scope: "project", source: "workspace_archive", status: "active" },
-          { rule_id: "rule-003", file_name: "workflow-build.md", text: "Run tests before deploy", scope: "project", source: "system", status: "active" },
+          { rule_id: "rule-001", file_name: "projects/octopus.md", text: "Always validate inputs", scope: "project", source: "system", status: "active" },
+          { rule_id: "rule-002", file_name: "projects/octopus.md", text: "Use prepared statements", scope: "project", source: "workspace_archive", status: "active" },
+          { rule_id: "rule-003", file_name: "workflows/build.md", text: "Run tests before deploy", scope: "project", source: "system", status: "active" },
         ],
       }
 

@@ -17,6 +17,14 @@ import { cn } from '@/lib/utils'
 import type { KnowledgeFile, KnowledgeFileDetail } from '@/lib/knowledge/types'
 import { getKnowledgeFiles, getKnowledgeFile } from '@/lib/knowledge/api'
 
+/**
+ * Extract display name from file path.
+ * "projects/octopus.md" → "octopus"
+ * "workflows/build.md" → "build"
+ */
+const getDisplayName = (name: string) =>
+  name.replace(/^(projects|workflows)\//, '').replace(/\.md$/, '')
+
 export function WorkflowKnowledgeList() {
   const [files, setFiles] = useState<KnowledgeFile[]>([])
   const [selectedFile, setSelectedFile] = useState<string | null>(null)
@@ -115,7 +123,7 @@ export function WorkflowKnowledgeList() {
               <div className="flex items-center gap-3 px-4 py-3">
                 <FileText className="h-4 w-4 text-knowledge-primary shrink-0" />
                 <span className="font-medium text-sm truncate flex-1">
-                  {file.name}
+                  {getDisplayName(file.name)}
                 </span>
                 <Badge variant="secondary" className="text-xs shrink-0">
                   {file.ruleCount} 条规则

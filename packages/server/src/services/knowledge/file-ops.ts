@@ -244,21 +244,37 @@ function escapeRegex(s: string): string {
 /**
  * Rebuild the index.md file for an org's knowledge directory.
  *
- * Scans all knowledge files, parses rules, and writes a summary index.md
- * with statistics and a table of all rules.
+ * Scans all knowledge files in projects/ and workflows/ subdirectories,
+ * parses rules, and writes a summary index.md with statistics and a
+ * table of all rules.
  */
 export function rebuildIndex(
   org: string,
   knowledgeRuleDAO: { listActive: () => Array<{ rule_id: string; file_name: string; text: string; scope: string; source: string; status: string }> },
 ): { ruleCount: number; fileCount: number } {
   const knowledgeDir = getKnowledgeDir(org)
-  const files = listKnowledgeFiles(knowledgeDir)
+
+  // Scan projects/ and workflows/ subdirectories
+  const readSubDir = (subDir: string) => {
+    const dir = path.join(knowledgeDir, subDir)
+    try {
+      return fs.readdirSync(dir)
+        .filter(f => f.endsWith(".md"))
+        .map(f => ({ file: `${subDir}/${f}`, fullPath: path.join(dir, f) }))
+    } catch {
+      return []
+    }
+  }
+
+  const files = [
+    ...readSubDir("projects"),
+    ...readSubDir("workflows"),
+  ]
 
   const allRules: Array<{ id: string; file: string; text: string; source: string; date: string; status: string }> = []
 
-  for (const file of files) {
-    const filePath = path.join(knowledgeDir, file)
-    const rules = parseKnowledgeFile(filePath)
+  for (const { file, fullPath } of files) {
+    const rules = parseKnowledgeFile(fullPath)
     for (const rule of rules) {
       allRules.push({
         id: rule.id,
