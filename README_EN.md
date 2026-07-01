@@ -134,8 +134,8 @@ Open http://localhost:3000, where you can:
 3. **Run the Workflow** — Click "Run" to watch real-time node execution, expert discussions, and log output
 4. **View Results** — After completion, see synthesis output, consensus scores, and execution trees
 <p align="center">
-  <img src="docs/imgs/workflow.png?v=2" alt="Workflow Execution UI" width="49%" />
-  <img src="docs/imgs/swarm.png?v=2" alt="Swarm Multi-Agent Collaboration" width="49%" />
+  <img src="docs/imgs/workflow2.png" alt="Workflow Execution UI" width="49%" />
+  <img src="docs/imgs/swarm2.png" alt="Swarm Multi-Agent Collaboration" width="49%" />
 </p>
 
 ---
