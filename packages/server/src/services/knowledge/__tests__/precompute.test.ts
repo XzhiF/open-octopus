@@ -32,7 +32,7 @@ describe("precompute", () => {
     writeKnowledgeFile(path.join(tmpDir, "user_preference.md"), "# Test Pref\n- Prefer tests")
 
     const pool = new VarPool({})
-    await precomputeRelevantRules("test-org", "test-workflow", {}, ruleDAO, pool)
+    await precomputeRelevantRules("test-org", undefined, "test-workflow", {}, ruleDAO, pool)
 
     const prefText = pool.get("__user_preference_text") as string
     expect(prefText).toContain("Prefer tests")
@@ -57,7 +57,7 @@ describe("precompute", () => {
     })
 
     const pool = new VarPool({})
-    await precomputeRelevantRules("test-org", "test-workflow", {}, ruleDAO, pool)
+    await precomputeRelevantRules("test-org", undefined, "test-workflow", {}, ruleDAO, pool)
 
     const cacheRaw = pool.get("__knowledge_rule_cache") as string
     const cache = JSON.parse(cacheRaw)
@@ -72,7 +72,7 @@ describe("precompute", () => {
 
   it("skips when no active rules", async () => {
     const pool = new VarPool({})
-    await precomputeRelevantRules("test-org", "test-workflow", {}, ruleDAO, pool)
+    await precomputeRelevantRules("test-org", undefined, "test-workflow", {}, ruleDAO, pool)
 
     expect(pool.get("__knowledge_rule_cache")).toBeUndefined()
     expect(pool.get("__relevant_rule_ids")).toBeUndefined()
@@ -97,11 +97,58 @@ describe("precompute", () => {
     })
 
     const pool = new VarPool({})
-    await precomputeRelevantRules("test-org", "test-workflow", {}, ruleDAO, pool)
+    await precomputeRelevantRules("test-org", undefined, "test-workflow", {}, ruleDAO, pool)
 
     const idsRaw = pool.get("__relevant_rule_ids") as string
     const ids = JSON.parse(idsRaw)
     expect(ids).toContain("active-rule")
     expect(ids).not.toContain("retired-rule")
+  })
+
+  it("writes __knowledge_scope_filter with repoName and workflowName", async () => {
+    const pool = new VarPool({})
+    await precomputeRelevantRules("test-org", "octopus", "build", {}, ruleDAO, pool)
+
+    const raw = pool.get("__knowledge_scope_filter") as string
+    const filter = JSON.parse(raw)
+    expect(filter.repoName).toBe("octopus")
+    expect(filter.workflowName).toBe("build")
+  })
+
+  it("writes __knowledge_scope_filter with undefined repoName when not provided", async () => {
+    const pool = new VarPool({})
+    await precomputeRelevantRules("test-org", undefined, "build", {}, ruleDAO, pool)
+
+    const raw = pool.get("__knowledge_scope_filter") as string
+    const filter = JSON.parse(raw)
+    expect(filter.repoName).toBeUndefined()
+    expect(filter.workflowName).toBe("build")
+  })
+
+  it("writes __knowledge_rule_meta for each active rule", async () => {
+    ruleDAO.insert({
+      rule_id: "rule-1",
+      file_name: "projects/octopus.md",
+      text: "Project rule",
+      scope: "project",
+      source: "system",
+      status: "active",
+    })
+    ruleDAO.insert({
+      rule_id: "rule-2",
+      file_name: "workflows/build.md",
+      text: "Workflow rule",
+      scope: "workflow",
+      source: "system",
+      status: "active",
+    })
+
+    const pool = new VarPool({})
+    await precomputeRelevantRules("test-org", "octopus", "build", {}, ruleDAO, pool)
+
+    const raw = pool.get("__knowledge_rule_meta") as string
+    const meta = JSON.parse(raw)
+    expect(meta["rule-1"]).toEqual({ fileName: "projects/octopus.md", scope: "project" })
+    expect(meta["rule-2"]).toEqual({ fileName: "workflows/build.md", scope: "workflow" })
   })
 })

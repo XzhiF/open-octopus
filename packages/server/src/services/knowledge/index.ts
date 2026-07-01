@@ -18,12 +18,25 @@ import type { ExecResult } from "./effectiveness"
  * 5. retireStaleRules: called periodically to retire low-confidence rules
  */
 export class KnowledgeService {
+  private repoName?: string
+  private workflowName?: string
+
   constructor(
     private knowledgeRuleDAO: KnowledgeRuleDAO,
     private effectivenessDAO: KnowledgeEffectivenessDAO,
     private pendingReviewDAO: PendingReviewDAO,
     private org: string,
   ) {}
+
+  /**
+   * Set the execution context for scope filtering.
+   * Called before workflow execution to tell the precompute hook
+   * which repo and workflow are currently running.
+   */
+  setExecutionContext(repoName: string, workflowName: string): void {
+    this.repoName = repoName
+    this.workflowName = workflowName
+  }
 
   /**
    * Create a precompute hook that populates VarPool with relevant knowledge rules.
@@ -33,6 +46,7 @@ export class KnowledgeService {
     return async (pool: VarPool, workflowName: string, inputs: Record<string, string>) => {
       await precomputeRelevantRules(
         this.org,
+        this.repoName,
         workflowName,
         inputs,
         this.knowledgeRuleDAO,
