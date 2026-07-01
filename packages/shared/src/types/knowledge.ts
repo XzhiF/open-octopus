@@ -103,3 +103,13 @@ export interface ParsedRule {
   date: string
   source: string
 }
+
+export interface KnowledgeScopeFilter {
+  repoName?: string
+  workflowName: string
+}
+
+export interface RuleMeta {
+  fileName: string
+  scope: string
+}
