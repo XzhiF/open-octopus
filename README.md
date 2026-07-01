@@ -10,6 +10,63 @@
 
 ---
 
+## 演变过程
+
+从一个痛点出发，一步步长出来的平台：
+
+```
+SKILL Helper
+  └→ 目标：创建企业级 SKILL
+
+Dev Workspace
+  └→ 聚合多项目 Git Worktree 并行开发
+
+Workflow
+  └→ 长任务无人值守，多节点分工（Agent / SubAgent / Skills）
+
+Agent Swarm
+  └→ 专家团并行协作，效率倍增
+
+Remote: Notify & Watch & Exec
+  └→ 借助 Hermes + Telegram 实现通知、监控、远程执行
+
+Scheduler
+  └→ 自循环初步（bug-hunter / research-2-pr / idea-2-pr）
+
+Orchestrator Agent
+  └→ 全局 Agent + SKILL + 知识库 + 分身 + 记忆
+
+Memory
+  └→ Workspace 归档，工作流执行知识注入，Orchestrator Agent 自动 SKILL 提升
+```
+
+**… 规划 ↓**
+
+```
+Agent Refine
+  └→ 分身提炼：针对特定领域，炼化日积月累的资产生产分身，
+     或直接生产新分身并令其修炼功法
+
+Agent Workflow
+  └→ Orchestrator Agent / 分身 → 领域级 Agent（自身 SKILL + 记忆），
+     增强节点类型，融入工作流修炼
+
+Octopus Repository
+  └→ Workflow / SKILL / 分身的共享仓库，上传、下载、分享
+```
+
+**… 未来考虑 ↓**
+
+```
+Sandbox
+  └→ 隔离环境，重点优化 E2E 测试，打通全链路
+
+Hub-and-Spoke
+  └→ 架构演变：配置集中管理，统筹调度，不再局限于单机
+```
+
+---
+
 ## 简介
 
 Octopus 的目标是一个 **Loop Engineering** 开发平台，让 AI Agent 在隔离的多项目环境中，通过可编排的工作流持续迭代。
@@ -48,9 +105,13 @@ cd octopus
 pnpm install
 pnpm build
 
-# 3. 注册全局命令（二选一）
-npm link -w octopus          # 方式 A：软链接（推荐开发时使用）
-npm install -g octopus       # 方式 B：全局安装
+# 3. 注册全局命令（软链接，推荐开发时使用）
+
+# Linux / macOS
+ln -sf $(pwd)/packages/cli/dist/index.js /usr/local/bin/octopus
+
+# Windows (管理员 PowerShell)
+New-Item -ItemType SymbolicLink -Path "$env:USERPROFILE\AppData\Local\Microsoft\WindowsApps\octopus" -Target "$PWD\packages\cli\dist\index.js"
 
 # 4. 验证
 octopus version              # 预期输出: octopus v1.0.0
