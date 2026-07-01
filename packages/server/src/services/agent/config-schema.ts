@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { KnowledgeConfigSchema } from '@octopus/shared'
 
 // Allowed model list
 export const ALLOWED_MODELS = [
@@ -70,6 +71,7 @@ export const agentConfigSchema = z.object({
     long_term_refine_trigger_days: z.number().int().min(1).max(30).default(7),
     session_compress_threshold_messages: z.number().int().min(10).max(500).default(50),
   }).default({}),
+  knowledge: KnowledgeConfigSchema.optional(),
   safe_mode: z.object({
     enabled: z.boolean().default(false),
     inactive_days_threshold: z.number().int().min(7).max(90).default(14),

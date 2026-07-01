@@ -15,6 +15,8 @@ export type { AgentEvent, AgentRunResult } from "./executors/agent-types"
 export { WorkflowEngine } from "./engine"
 export type { ExecutionResult, EngineCallbacks } from "./engine"
 
+export { KnowledgeInjector } from "./knowledge-injector"
+
 export { JsonlLogger } from "./logger"
 // Pipeline modules
 export * from "./pipeline"

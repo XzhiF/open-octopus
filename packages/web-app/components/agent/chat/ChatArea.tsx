@@ -12,6 +12,8 @@ import { StreamingIndicator } from './StreamingIndicator'
 import { DangerConfirmCard } from './DangerConfirmCard'
 import { EvolutionConfirmCard } from './EvolutionConfirmCard'
 import { AgentEmptyState } from '../shared/AgentEmptyState'
+import { SkillProposalCard } from '../knowledge/cards/SkillProposalCard'
+import { ReviewCard } from '../knowledge/cards/ReviewCard'
 
 interface ChatAreaProps {
   messages: AgentMessage[]
@@ -32,11 +34,31 @@ interface ChatAreaProps {
   onStop: () => void
   onConfirm: (eventId: string, decision: 'accept' | 'reject') => void
   hasSession: boolean
+  skillProposal?: {
+    skillName: string
+    category: string
+    content: string
+    confidence: number
+  } | null
+  onSkillAction?: (action: 'generate' | 'reject' | 'adjust') => void
+  reviewItems?: Array<{
+    id: string
+    type: 'rule' | 'skill'
+    content: string
+    source: string
+    sourceLabel: string
+    targetFile: string
+    scope: string
+    conflicts: Array<{ existingRule: string; conflictType: string }> | null
+    confidence: number
+  }>
+  onReviewAction?: (id: string, action: 'approve' | 'reject' | 'defer' | 'edit') => void
 }
 
 export function ChatArea({
   messages, streaming, streamContent, streamThinking, isThinking, toolCalls, pendingConfirm,
   error, statusMessage, onSend, onStop, onConfirm, hasSession,
+  skillProposal, onSkillAction, reviewItems, onReviewAction,
 }: ChatAreaProps) {
   const [input, setInput] = useState('')
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -131,6 +153,27 @@ export function ChatArea({
                 detail={pendingConfirm.detail}
                 onConfirm={(decision) => onConfirm(pendingConfirm.event_id, decision)}
               />
+            )}
+
+            {/* Knowledge cards: skill proposal + review items */}
+            {skillProposal && onSkillAction && (
+              <div data-testid="skill-proposal-card">
+                <SkillProposalCard
+                  skill={skillProposal}
+                  onAction={onSkillAction}
+                />
+              </div>
+            )}
+            {reviewItems && reviewItems.length > 0 && onReviewAction && (
+              <div className="space-y-2">
+                {reviewItems.map((item) => (
+                  <ReviewCard
+                    key={item.id}
+                    item={item}
+                    onAction={onReviewAction}
+                  />
+                ))}
+              </div>
             )}
 
             {/* Error */}

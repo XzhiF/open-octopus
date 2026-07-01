@@ -617,3 +617,56 @@ INSERT OR IGNORE INTO orgs (name, path, created_at) VALUES ('xzf', '~/.octopus/o
 -- Scheduler state singleton (idempotent via PRIMARY KEY)
 INSERT INTO scheduler_state (id, schema_version, missed_alert_pending)
   VALUES (1, 21, 0) ON CONFLICT DO NOTHING;
+
+-- =============================================================================
+-- Knowledge System Tables
+-- =============================================================================
+
+CREATE TABLE IF NOT EXISTS knowledge_rules (
+  rule_id TEXT PRIMARY KEY,
+  file_name TEXT NOT NULL,
+  text TEXT NOT NULL,
+  scope TEXT NOT NULL DEFAULT 'project',
+  source TEXT NOT NULL DEFAULT 'system',
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  status TEXT NOT NULL DEFAULT 'active'
+);
+
+CREATE TABLE IF NOT EXISTS pending_review (
+  id TEXT PRIMARY KEY,
+  type TEXT NOT NULL DEFAULT 'rule',
+  source TEXT NOT NULL DEFAULT 'system',
+  source_ref TEXT NOT NULL DEFAULT '',
+  source_label TEXT NOT NULL DEFAULT '',
+  content TEXT NOT NULL,
+  target_file TEXT NOT NULL DEFAULT '',
+  scope TEXT NOT NULL DEFAULT 'project',
+  conflicts TEXT DEFAULT NULL,
+  confidence REAL NOT NULL DEFAULT 0.5,
+  auto_approve INTEGER NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'pending',
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  reviewed_at TEXT DEFAULT NULL,
+  user_notes TEXT DEFAULT NULL
+);
+
+CREATE TABLE IF NOT EXISTS knowledge_effectiveness (
+  rule_id TEXT PRIMARY KEY,
+  injected_count INTEGER NOT NULL DEFAULT 0,
+  helpful_count INTEGER NOT NULL DEFAULT 0,
+  not_helpful_count INTEGER NOT NULL DEFAULT 0,
+  last_injected TEXT DEFAULT NULL,
+  confidence REAL NOT NULL DEFAULT 0.5
+);
+
+CREATE INDEX IF NOT EXISTS idx_pending_status ON pending_review(status);
+CREATE INDEX IF NOT EXISTS idx_effectiveness_stale ON knowledge_effectiveness(injected_count, confidence, last_injected);
+
+-- Knowledge subsystem: indexes added in schema version 25 to support
+-- listByFile / listByScope / listBySource queries that previously did
+-- full-table scans. Idempotent via IF NOT EXISTS.
+CREATE INDEX IF NOT EXISTS idx_knowledge_rules_file ON knowledge_rules(file_name);
+CREATE INDEX IF NOT EXISTS idx_knowledge_rules_status ON knowledge_rules(status);
+CREATE INDEX IF NOT EXISTS idx_knowledge_rules_scope_status ON knowledge_rules(scope, status);
+CREATE INDEX IF NOT EXISTS idx_pending_review_source ON pending_review(source);
+CREATE INDEX IF NOT EXISTS idx_pending_review_type_status ON pending_review(type, status);
