@@ -5,8 +5,6 @@
 // review.ts, and tightens the path-traversal check so every file-bearing
 // endpoint enforces the same policy.
 
-import path from "path"
-
 /**
  * Strict UUID v4 (case-insensitive). Used by archive routes where the
  * path parameter is an execution id produced by `randomUUID()`.
@@ -40,8 +38,10 @@ export function isValidRuleId(id: string): boolean {
  * and `POST /api/knowledge/compact`.
  *
  * Policy:
- *   * Must be a non-empty basename (no path separators, no parent refs).
- *   * No null bytes, no URL-encoded separators, no backslashes.
+ *   * Must start with `projects/` or `workflows/` (subdirectory prefix).
+ *   * Sub-path (after prefix) must be a plain `.md` basename — no further
+ *     directory separators.
+ *   * No path traversal (`..`), null bytes, or URL-encoded separators.
  *   * Length capped to avoid filesystem-level surprises.
  *
  * Returns a structured result so callers can return a consistent
@@ -57,19 +57,27 @@ export function validateKnowledgeFileName(name: unknown): {
   if (name.length > 200) {
     return { ok: false, error: "fileName too long" }
   }
-  // Reject any path-separator variant (raw, URL-encoded, or Windows).
-  if (
-    name.includes("..") ||
-    name.includes("/") ||
-    name.includes("\\") ||
-    name.includes("\0") ||
-    /%2e|%2f|%5c/i.test(name)
-  ) {
+  // Reject path traversal and null bytes
+  if (name.includes("..") || name.includes("\0")) {
     return { ok: false, error: "Invalid file name" }
   }
-  // Must be a basename — parsing with path.basename should round-trip.
-  if (path.basename(name) !== name) {
+  // Reject URL-encoded separators
+  if (/%2e|%2f|%5c/i.test(name)) {
     return { ok: false, error: "Invalid file name" }
+  }
+  // Must start with "projects/" or "workflows/"
+  if (!name.startsWith("projects/") && !name.startsWith("workflows/")) {
+    return { ok: false, error: "Must start with projects/ or workflows/" }
+  }
+  // Extract sub-path after the directory prefix
+  const subPath = name.replace(/^(projects|workflows)\//, "")
+  // Sub-path must not contain directory separators
+  if (subPath.includes("/") || subPath.includes("\\") || subPath.length === 0) {
+    return { ok: false, error: "Invalid sub-path" }
+  }
+  // Must end with .md
+  if (!subPath.endsWith(".md")) {
+    return { ok: false, error: "Must end with .md" }
   }
   return { ok: true }
 }

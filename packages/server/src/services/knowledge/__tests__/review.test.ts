@@ -41,7 +41,7 @@ describe("review", () => {
       source_ref: "exec-001",
       source_label: "Test rule",
       content: "Always validate inputs",
-      target_file: "octopus.md",
+      target_file: "projects/octopus.md",
       scope: "project",
       conflicts: null,
       confidence: 0.8,
@@ -65,7 +65,7 @@ describe("review", () => {
       expect(result.ruleId).toBeDefined()
 
       // Verify file written to tmpDir (which simulates org-level dir via OCTOPUS_KNOWLEDGE_DIR)
-      const filePath = path.join(tmpDir, "octopus.md")
+      const filePath = path.join(tmpDir, "projects", "octopus.md")
       const content = readKnowledgeFile(filePath)
       expect(content).toContain("Always validate inputs")
       expect(content).toContain(result.ruleId)
