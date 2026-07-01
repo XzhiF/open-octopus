@@ -1109,6 +1109,11 @@ export class WorkflowEngine {
           if (settled.status === "fulfilled") {
             const nodeResult = settled.value
 
+            // Merge fork data immediately — before pause check and hooks —
+            // so every fulfilled fork is merged exactly once regardless of outcome.
+            // (Removed second merge at end of loop to prevent hook var overwrite.)
+            this.pool.merge([forks[i]])
+
             // 检查是否在执行期间被暂停（pause 优先于节点结果）
             // 无论节点是完成还是失败，只要 pausedAt 被设置就说明用户要求暂停
             if (this.pausedAt) {
@@ -1132,10 +1137,6 @@ export class WorkflowEngine {
             this.nodeResults[node.id] = nodeResult
 
             this.updateSessionContext(node, nodeResult)
-
-            // Merge this node's fork into main pool BEFORE hooks fire,
-            // so on_node_success/on_node_failure hooks can read vars_update
-            this.pool.merge([forks[i]])
 
             if (nodeResult.status === "failed") {
               hasFailure = true
@@ -1216,8 +1217,8 @@ export class WorkflowEngine {
           completedCount++
         }
 
-        // Merge forks back into main pool (last-writer)
-        this.pool.merge(forks)
+        // All fulfilled forks were already merged inside the loop above.
+        // Rejected forks are intentionally excluded (unreliable partial data).
 
         // Checkpoint save (per-node or per-batch mode)
         const saveOn = this.pipelineConfig?.checkpoint.save_on

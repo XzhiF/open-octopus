@@ -10,6 +10,63 @@
 
 ---
 
+## Evolution
+
+A platform grown step by step from real pain points:
+
+```
+SKILL Helper
+  └→ Goal: Create enterprise-grade SKILLs
+
+Dev Workspace
+  └→ Aggregate multi-project Git Worktree parallel development
+
+Workflow
+  └→ Long-running unattended tasks, multi-node orchestration (Agent / SubAgent / Skills)
+
+Agent Swarm
+  └→ Expert team parallel collaboration, efficiency boost
+
+Remote: Notify & Watch & Exec
+  └→ Notifications, monitoring, and remote execution via Hermes + Telegram
+
+Scheduler
+  └→ Self-looping foundations (bug-hunter / research-2-pr / idea-2-pr)
+
+Orchestrator Agent
+  └→ Global Agent + SKILL + knowledge base + avatars + memory
+
+Memory
+  └→ Workspace archival, workflow execution knowledge injection, Orchestrator Agent auto SKILL enhancement
+```
+
+**… Planned ↓**
+
+```
+Agent Refine
+  └→ Avatar refinement: distill accumulated assets for specific domains to produce avatars,
+     or directly create new avatars and let them practice their cultivation methods
+
+Agent Workflow
+  └→ Orchestrator Agent / avatars → domain-level Agents (own SKILL + memory),
+     enhanced node types, integrated into workflows for cultivation
+
+Octopus Repository
+  └→ Shared repository for Workflows / SKILLs / avatars — upload, download, share
+```
+
+**… Future Considerations ↓**
+
+```
+Sandbox
+  └→ Isolated environments, focus on E2E test optimization, end-to-end integration
+
+Hub-and-Spoke
+  └→ Architecture evolution: centralized configuration management, coordinated scheduling, no longer single-machine bound
+```
+
+---
+
 ## Introduction
 
 Octopus aims to be a **Loop Engineering** development platform that enables AI Agents to continuously iterate within isolated multi-project environments through orchestratable workflows.
@@ -48,9 +105,13 @@ cd octopus
 pnpm install
 pnpm build
 
-# 3. Register global command (choose one)
-npm link -w octopus          # Option A: symlink (recommended for development)
-npm install -g octopus       # Option B: global install
+# 3. Register global command (symlink, recommended for development)
+
+# Linux / macOS
+ln -sf $(pwd)/packages/cli/dist/index.js /usr/local/bin/octopus
+
+# Windows (Admin PowerShell)
+New-Item -ItemType SymbolicLink -Path "$env:USERPROFILE\AppData\Local\Microsoft\WindowsApps\octopus" -Target "$PWD\packages\cli\dist\index.js"
 
 # 4. Verify
 octopus version              # Expected output: octopus v1.0.0
