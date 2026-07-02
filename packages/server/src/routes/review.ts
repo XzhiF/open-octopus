@@ -139,18 +139,5 @@ export function createReviewRoutes(
     }
   })
 
-  // GET /api/review/assistant/stream — SSE endpoint (skeleton)
-  routes.get("/assistant/stream", (c) => {
-    const mode = c.req.query("mode")
-    if (!mode) return c.json({ error: "INVALID_PARAM: mode required" }, 400)
-
-    // SSE response
-    c.res.headers.set("Content-Type", "text/event-stream")
-    c.res.headers.set("Cache-Control", "no-cache")
-    c.res.headers.set("Connection", "keep-alive")
-
-    return c.body("") // SSE stub — full implementation requires LLM streaming
-  })
-
   return routes
 }

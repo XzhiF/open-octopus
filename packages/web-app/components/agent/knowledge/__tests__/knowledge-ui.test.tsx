@@ -427,7 +427,7 @@ describe('TC-033: ReviewItemCard defer action', () => {
     const onAction = vi.fn()
     const item = makePendingItem() as never
 
-    render(<ReviewItemCard item={item} isSelected={false} onToggleSelect={vi.fn()} onAction={onAction} onDiscuss={vi.fn()} />)
+    render(<ReviewItemCard item={item} isSelected={false} onToggleSelect={vi.fn()} onAction={onAction} />)
 
     const deferBtn = screen.getByRole('button', { name: '暂缓' })
     await userEvent.click(deferBtn)
@@ -438,7 +438,7 @@ describe('TC-033: ReviewItemCard defer action', () => {
     const onAction = vi.fn()
     const item = makePendingItem() as never
 
-    render(<ReviewItemCard item={item} isSelected={false} onToggleSelect={vi.fn()} onAction={onAction} onDiscuss={vi.fn()} />)
+    render(<ReviewItemCard item={item} isSelected={false} onToggleSelect={vi.fn()} onAction={onAction} />)
 
     await userEvent.click(screen.getByRole('button', { name: '纳入' }))
     expect(onAction).toHaveBeenCalledWith('item-1', 'approve')

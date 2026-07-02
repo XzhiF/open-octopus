@@ -1,8 +1,7 @@
 'use client'
 
 /**
- * Traceability: P-05 × US-14, US-15, US-24 × TC-018, TC-019, TC-032, TC-033, TC-020, TC-034, TC-035
- * Review queue with filtering, pagination, batch operations, and AI assistant integration
+ * Review queue with filtering, pagination, and batch operations.
  */
 
 import { useState, useCallback } from 'react'
@@ -12,12 +11,11 @@ import { toast } from 'sonner'
 import { useReviewQueue } from '@/hooks/useReviewQueue'
 import { useOrgs } from '@/hooks/useOrgs'
 import { reviewAction, batchReview } from '@/lib/knowledge/api'
-import type { PendingItem, BatchReviewResponse } from '@/lib/knowledge/types'
+import type { BatchReviewResponse } from '@/lib/knowledge/types'
 import { AgentEmptyState } from '@/components/agent/shared/AgentEmptyState'
 import { ReviewFilterBar } from './ReviewFilterBar'
 import { ReviewItemCard, ReviewItemCardSkeleton } from './ReviewItemCard'
 import { BatchActionBar } from './BatchActionBar'
-import { KnowledgeAssistantPanel } from '../assistant/KnowledgeAssistantPanel'
 
 const PAGE_SIZE = 20
 
@@ -44,7 +42,6 @@ export function ReviewQueueList() {
   const currentOrg = orgs[0]?.name
 
   const [batchLoading, setBatchLoading] = useState(false)
-  const [assistantItem, setAssistantItem] = useState<PendingItem | null>(null)
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE))
 
@@ -130,22 +127,6 @@ export function ReviewQueueList() {
     }
   }, [selectedIds, clearSelection, refetch, currentOrg])
 
-  // ── Discuss (opens AI assistant panel) ──────────────────────────────────────
-  const handleDiscuss = useCallback((item: PendingItem) => {
-    setAssistantItem(item)
-  }, [])
-
-  const handleAssistantAdopt = useCallback(async (modifiedContent: string) => {
-    if (!assistantItem) return
-    try {
-      await reviewAction(assistantItem.id, 'edit', modifiedContent, undefined, currentOrg)
-      toast.success('规则内容已更新')
-      refetch()
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : '更新失败')
-    }
-  }, [assistantItem, refetch, currentOrg])
-
   // ── Error state with retry ──────────────────────────────────────────────────
   if (error && !loading && items.length === 0) {
     return (
@@ -204,7 +185,6 @@ export function ReviewQueueList() {
                 isSelected={selectedIds.has(item.id)}
                 onToggleSelect={toggleSelect}
                 onAction={handleAction}
-                onDiscuss={handleDiscuss}
               />
             ))}
           </div>
@@ -249,15 +229,6 @@ export function ReviewQueueList() {
         loading={batchLoading}
       />
       </div>
-
-      {/* AI Assistant Panel */}
-      <KnowledgeAssistantPanel
-        open={!!assistantItem}
-        mode="review"
-        ruleContent={assistantItem?.content}
-        onAdopt={handleAssistantAdopt}
-        onClose={() => setAssistantItem(null)}
-      />
     </div>
   )
 }

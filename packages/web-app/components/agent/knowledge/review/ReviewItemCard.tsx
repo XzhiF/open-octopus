@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useCallback } from 'react'
-import { BookOpen, Zap, Edit3, MessageCircle, Pause, X, Check, Save } from 'lucide-react'
+import { BookOpen, Zap, Edit3, Pause, X, Check, Save } from 'lucide-react'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
@@ -15,7 +15,6 @@ interface ReviewItemCardProps {
   isSelected: boolean
   onToggleSelect: (id: string) => void
   onAction: (id: string, action: string, content?: string) => void
-  onDiscuss?: (item: PendingItem) => void
 }
 
 export function ReviewItemCard({
@@ -23,7 +22,6 @@ export function ReviewItemCard({
   isSelected,
   onToggleSelect,
   onAction,
-  onDiscuss,
 }: ReviewItemCardProps) {
   const [expanded, setExpanded] = useState(false)
   const [actionLoading, setActionLoading] = useState<string | null>(null)
@@ -178,16 +176,6 @@ export function ReviewItemCard({
             >
               <Edit3 className="size-3" aria-hidden="true" />
               编辑
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="gap-1.5 text-xs h-7 px-2"
-              onClick={() => onDiscuss?.(item)}
-              disabled={actionLoading !== null}
-            >
-              <MessageCircle className="size-3" aria-hidden="true" />
-              讨论
             </Button>
             <Button
               variant="ghost"
