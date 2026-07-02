@@ -200,21 +200,22 @@ export async function reviewAction(
   id: string,
   action: string,
   content?: string,
-  userNotes?: string
+  userNotes?: string,
+  org?: string
 ) {
   const res = await apiFetch(`${getServerUrl()}/api/review/${encodeURIComponent(id)}/action`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ action, content, userNotes }),
+    body: JSON.stringify({ action, content, userNotes, org }),
   })
   return handleResponse(res)
 }
 
-export async function batchReview(ids: string[], action: 'approve' | 'reject') {
+export async function batchReview(ids: string[], action: 'approve' | 'reject', org?: string) {
   const res = await apiFetch(`${getServerUrl()}/api/review/batch`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ ids, action }),
+    body: JSON.stringify({ ids, action, org }),
   })
   return handleResponse(res)
 }

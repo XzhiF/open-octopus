@@ -10,6 +10,7 @@ import { RefreshCw, CheckCircle, ChevronLeft, ChevronRight } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { toast } from 'sonner'
 import { useReviewQueue } from '@/hooks/useReviewQueue'
+import { useOrgs } from '@/hooks/useOrgs'
 import { reviewAction, batchReview } from '@/lib/knowledge/api'
 import type { PendingItem, BatchReviewResponse } from '@/lib/knowledge/types'
 import { AgentEmptyState } from '@/components/agent/shared/AgentEmptyState'
@@ -38,6 +39,9 @@ export function ReviewQueueList() {
     total,
   } = useReviewQueue(PAGE_SIZE)
 
+  const { orgs } = useOrgs()
+  const currentOrg = orgs[0]?.name
+
   const [batchLoading, setBatchLoading] = useState(false)
   const [assistantItem, setAssistantItem] = useState<PendingItem | null>(null)
 
@@ -49,7 +53,7 @@ export function ReviewQueueList() {
       if (action === 'edit') {
         if (!content) return
         try {
-          await reviewAction(id, 'edit', content)
+          await reviewAction(id, 'edit', content, undefined, currentOrg)
           toast.success('规则内容已更新')
           refetch()
         } catch (err) {
@@ -59,7 +63,7 @@ export function ReviewQueueList() {
       }
 
       try {
-        await reviewAction(id, action)
+        await reviewAction(id, action, undefined, undefined, currentOrg)
 
         const messages: Record<string, string> = {
           approve: '规则已纳入',
@@ -78,7 +82,7 @@ export function ReviewQueueList() {
         toast.error(err instanceof Error ? err.message : '操作失败')
       }
     },
-    [refetch],
+    [refetch, currentOrg],
   )
 
   // ── Batch approve ───────────────────────────────────────────────────────────
@@ -88,6 +92,7 @@ export function ReviewQueueList() {
       const result: BatchReviewResponse = await batchReview(
         Array.from(selectedIds),
         'approve',
+        currentOrg,
       )
       toast.success(`${result.succeeded} 条规则已纳入`)
       if (result.failed > 0) {
@@ -100,7 +105,7 @@ export function ReviewQueueList() {
     } finally {
       setBatchLoading(false)
     }
-  }, [selectedIds, clearSelection, refetch])
+  }, [selectedIds, clearSelection, refetch, currentOrg])
 
   // ── Batch reject ────────────────────────────────────────────────────────────
   const handleBatchReject = useCallback(async () => {
@@ -109,6 +114,7 @@ export function ReviewQueueList() {
       const result: BatchReviewResponse = await batchReview(
         Array.from(selectedIds),
         'reject',
+        currentOrg,
       )
       toast.success(`${result.succeeded} 条规则已拒绝`)
       if (result.failed > 0) {
@@ -121,7 +127,7 @@ export function ReviewQueueList() {
     } finally {
       setBatchLoading(false)
     }
-  }, [selectedIds, clearSelection, refetch])
+  }, [selectedIds, clearSelection, refetch, currentOrg])
 
   // ── Discuss (opens AI assistant panel) ──────────────────────────────────────
   const handleDiscuss = useCallback((item: PendingItem) => {
@@ -131,13 +137,13 @@ export function ReviewQueueList() {
   const handleAssistantAdopt = useCallback(async (modifiedContent: string) => {
     if (!assistantItem) return
     try {
-      await reviewAction(assistantItem.id, 'edit', modifiedContent)
+      await reviewAction(assistantItem.id, 'edit', modifiedContent, undefined, currentOrg)
       toast.success('规则内容已更新')
       refetch()
     } catch (err) {
       toast.error(err instanceof Error ? err.message : '更新失败')
     }
-  }, [assistantItem, refetch])
+  }, [assistantItem, refetch, currentOrg])
 
   // ── Error state with retry ──────────────────────────────────────────────────
   if (error && !loading && items.length === 0) {
