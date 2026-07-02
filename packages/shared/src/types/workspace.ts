@@ -10,6 +10,7 @@ export const WorkspaceSchema = z.object({
   description: z.string().optional(),
   status: WorkspaceStatusSchema.default("active"),
   path: z.string().min(1),
+  knowledge_extraction: z.enum(['auto', 'manual', 'disabled']).default('auto').optional(),
   created_at: z.string().min(1),
   updated_at: z.string().min(1),
 })
@@ -20,6 +21,7 @@ export const CreateWorkspaceSchema = z.object({
   org: z.string().min(1),
   description: z.string().optional(),
   path: z.string().min(1),
+  knowledge_extraction: z.enum(['auto', 'manual', 'disabled']).default('auto').optional(),
 })
 
 export const UpdateWorkspaceSchema = z.object({

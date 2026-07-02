@@ -346,7 +346,6 @@ nodes:
       if [ ! -f "$AGENTS_TARGET/devil-advocate.md" ]; then
         COREPACK_AGENTS=""
         for d in \
-          "$(pwd)/projects/xzf-dev-octopus/packages/core-pack/agents" \
           "$(pwd)/projects/*/packages/core-pack/agents" \
           "$(dirname "$(dirname "$(dirname "$0")")")/packages/core-pack/agents"; do
           if [ -f "$d/devil-advocate.md" ]; then

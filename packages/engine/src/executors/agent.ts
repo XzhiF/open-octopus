@@ -3,6 +3,7 @@ import type { NodeDef, AutoAnswer, SubAgentDef, CrossExecResolver } from "@octop
 import type { NodeExecutor, NodeExecutionResult } from "./types"
 import { AgentNodeRunner } from "./agent-runner"
 import type { PromptInjector } from "../prompt-injector"
+import type { KnowledgeInjector } from "../knowledge-injector"
 import { applyVarsUpdate } from "./parse-vars-update"
 import fs from "fs"
 import path from "path"
@@ -23,6 +24,7 @@ export class AgentExecutor implements NodeExecutor {
     private signal?: AbortSignal,
     private engineContext?: EngineContext,
     private promptInjector?: PromptInjector,
+    private knowledgeInjector?: KnowledgeInjector,
     private workflowName?: string,
     private crossExecResolver?: CrossExecResolver,
     private executionId?: string,
@@ -264,6 +266,14 @@ export class AgentExecutor implements NodeExecutor {
       const injectedPrompts = this.promptInjector.getInjectedPrompts(this.workflowName, this.node.id)
       if (injectedPrompts.length > 0) {
         prompt = injectedPrompts.join("\n\n---\n\n") + "\n\n---\n\n" + prompt
+      }
+    }
+
+    // Inject knowledge prompts
+    if (this.knowledgeInjector && this.workflowName) {
+      const knowledgePrompts = this.knowledgeInjector.getInjectedPrompts(this.workflowName, this.node.id)
+      if (knowledgePrompts.length > 0) {
+        prompt = knowledgePrompts.join("\n\n---\n\n") + "\n\n---\n\n" + prompt
       }
     }
 

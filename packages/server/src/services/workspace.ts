@@ -815,7 +815,7 @@ export class WorkspaceService {
     for (const spec of repoSpecs) {
       const parts = spec.includes("/") ? spec.split("/") : [org, spec]
       const [group, name] = parts
-      const wtDir = path.join(projectsDir, `${group}-${name}`)
+      const wtDir = path.join(projectsDir, name)
 
       const localMatch = new RegExp(`### ${name}\\n[^#]*?- local: (.+?)(?: ✓| —|$)`, "s").exec(indexContent)
       if (!localMatch) {
@@ -861,7 +861,7 @@ export class WorkspaceService {
           }
         }
         entries.push({ name, group, main_path: localPath, worktree_path: wtDir })
-        console.log(`[WorkspaceService] worktree created: ${group}-${name} → ${wtDir}${branch ? ` [${branch}]` : ''}`)
+        console.log(`[WorkspaceService] worktree created: ${name} → ${wtDir}${branch ? ` [${branch}]` : ''}`)
       } catch (e: any) {
         const reason = `${spec}: ${e.message}`
         console.error(`[WorkspaceService] worktree failed for ${group}/${name}:`, e.message)

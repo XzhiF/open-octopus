@@ -1,11 +1,15 @@
 'use client'
 
-import { MessageSquare, Brain, Zap, Users, ClipboardList, Settings } from 'lucide-react'
+import { useState, useEffect } from 'react'
+import { MessageSquare, Brain, BookOpen, Zap, Users, ClipboardList, Settings } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { KnowledgeTabBadge } from '../knowledge/shared/KnowledgeTabBadge'
+import { getReviewSummary } from '@/lib/knowledge/api'
 
 const TAB_CONFIG = [
   { id: 'chat', label: '对话', icon: MessageSquare },
   { id: 'memory', label: '记忆', icon: Brain },
+  { id: 'knowledge', label: '知识', icon: BookOpen },
   { id: 'skill', label: 'SKILL', icon: Zap },
   { id: 'clone', label: '分身', icon: Users },
   { id: 'task', label: '任务', icon: ClipboardList },
@@ -18,6 +22,17 @@ interface AgentTabsProps {
 }
 
 export function AgentTabs({ activeTab, onTabChange }: AgentTabsProps) {
+  const [pendingCount, setPendingCount] = useState(0)
+
+  useEffect(() => {
+    getReviewSummary()
+      .then((res) => {
+        const total = (res?.rules ?? 0) + (res?.skills ?? 0)
+        setPendingCount(total)
+      })
+      .catch(() => { /* ignore */ })
+  }, [activeTab]) // Re-fetch when tab changes (actions may have changed count)
+
   return (
     <div
       className="flex items-center gap-0.5 px-4 border-b border-agent-divider bg-agent-surface-raised overflow-x-auto"
@@ -52,6 +67,7 @@ export function AgentTabs({ activeTab, onTabChange }: AgentTabsProps) {
           >
             <Icon className="h-4 w-4" />
             {tab.label}
+            {tab.id === 'knowledge' && <KnowledgeTabBadge count={pendingCount} />}
           </button>
         )
       })}

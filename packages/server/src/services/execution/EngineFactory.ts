@@ -2,6 +2,7 @@
 import type { IEngineFactory } from "./interfaces"
 import type { ServiceContext, ExecutionRow } from "./types"
 import type { ExecutionDAO } from "../../db/dao/execution-dao"
+import type { KnowledgeService } from "../knowledge"
 import { WorkflowEngine } from "@octopus/engine"
 import { PromptInjector } from "@octopus/engine"
 import { CrossExecResolver } from "@octopus/shared"
@@ -9,11 +10,20 @@ import { PipelineConfigLoader } from "../pipeline-config"
 import { getProvider } from "@octopus/providers"
 
 export class EngineFactory implements IEngineFactory {
+  private knowledgeService?: KnowledgeService
+
   constructor(
     private ctx: ServiceContext,
     private dao: ExecutionDAO,
     private pipelineConfigLoader: PipelineConfigLoader,
   ) {}
+
+  /**
+   * Set the knowledge service for injection pipeline.
+   */
+  setKnowledgeService(service: KnowledgeService): void {
+    this.knowledgeService = service
+  }
 
   createEngine(execution: ExecutionRow, workflow: any): WorkflowEngine {
     const pipelineConfig = this.pipelineConfigLoader.getConfig()
@@ -47,6 +57,8 @@ export class EngineFactory implements IEngineFactory {
       this.ctx.org ? `${this.ctx.workspacePath}/.octopus` : undefined,
       undefined, undefined, execution.id, inputValues,
       execution.name || undefined, crossExecResolver, promptInjector,
+      this.knowledgeService?.createPrecomputeHook(),
+      this.knowledgeService?.createInjectorFactory(),
     )
   }
 

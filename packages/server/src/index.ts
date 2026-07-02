@@ -4,6 +4,7 @@ import { logger } from "hono/logger"
 import { bodyLimit } from "hono/body-limit"
 import http from "http"
 import os from "os"
+import path from "path"
 import { createYjsWebSocketServer, setYjsWorkspaceDAO } from "./routes/yjs-ws"
 import { initDb, getDb, getDbPath } from "./db/connection"
 import { applySchema } from "./db/schema"
@@ -11,7 +12,12 @@ import {
   WorkspaceDAO, ExecutionDAO, TokenUsageDAO, ScheduleConfigDAO,
   ScheduleRunDAO, ChatDAO, OrgDAO, AgentSessionDAO, EvolutionDAO,
   CloneDAO, SafetyDAO,
+  PendingReviewDAO, KnowledgeEffectivenessDAO,
 } from "./db/dao"
+import { createKnowledgeRoutes } from "./routes/knowledge"
+import { createReviewRoutes } from "./routes/review"
+import { createArchiveRoutes } from "./routes/archive"
+import { ReviewService } from "./services/knowledge/review"
 import { ObservabilityService } from "./services/observability"
 import { PrivacyFilter } from "./services/privacy-filter"
 import { createWorkspaceRoutes } from "./routes/workspace"
@@ -83,6 +89,8 @@ interface AllDAOs {
   evolution: EvolutionDAO
   clone: CloneDAO
   safety: SafetyDAO
+  pendingReview: PendingReviewDAO
+  knowledgeEffectiveness: KnowledgeEffectivenessDAO
 }
 
 function createAllDAOs(db: ReturnType<typeof initDb>): AllDAOs {
@@ -98,6 +106,8 @@ function createAllDAOs(db: ReturnType<typeof initDb>): AllDAOs {
     evolution: new EvolutionDAO(db),
     clone: new CloneDAO(db),
     safety: new SafetyDAO(db),
+    pendingReview: new PendingReviewDAO(db),
+    knowledgeEffectiveness: new KnowledgeEffectivenessDAO(db),
   }
 }
 
@@ -232,6 +242,8 @@ const d = daos ?? {
   evolution: lazyDAO(EvolutionDAO),
   clone: lazyDAO(CloneDAO),
   safety: lazyDAO(SafetyDAO),
+  pendingReview: lazyDAO(PendingReviewDAO),
+  knowledgeEffectiveness: lazyDAO(KnowledgeEffectivenessDAO),
 }
 
 const wsSvc = workspaceService ?? new WorkspaceService(d.workspace)
@@ -279,6 +291,16 @@ app.route("/api/agent", createAgentRoutes({
   schedulerService: schedSvc,
 }))
 app.route("/api/workflows/built-in", builtInWorkflowRoutes)
+
+// Knowledge system routes — org is resolved per-request from the query
+// string (`?org=<name>`), so the server no longer pins a default org.
+const reviewService = new ReviewService(d.pendingReview)
+app.route("/api/knowledge", createKnowledgeRoutes(d.knowledgeEffectiveness, d.pendingReview))
+app.route("/api/review", createReviewRoutes(reviewService, d.pendingReview))
+
+// Archive routes — execution result summarization + rule proposal
+const stateDir = path.join(process.env.HOME ?? "~", ".octopus", "state")
+app.route("/api/archive", createArchiveRoutes(d.pendingReview, stateDir))
 
 // Set scheduler on agent service
 try { getAgentService().setSchedulerService(schedSvc) } catch {}

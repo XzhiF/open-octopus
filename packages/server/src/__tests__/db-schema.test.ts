@@ -23,25 +23,28 @@ describe("DB Schema", () => {
     ).all() as { name: string }[]
     const names = rows.map(r => r.name).sort()
     expect(names).toEqual([
-      // Core tables (20)
+      // Core tables (29)
       "agent_events", "branch_executions", "chat_messages", "chat_sessions",
       "clones", "evolution_log", "execution_summaries", "executions", "experiences",
+      // Knowledge tables (1)
+      "knowledge_effectiveness",
       "llm_calls", "messages", "node_edges", "node_executions", "node_token_usages",
-      "optimization_suggestions", "orgs", "pipeline_state", "reports", "safety_events",
+      "optimization_suggestions", "orgs",
+      "pending_review", "pipeline_state", "reports", "safety_events",
       "schedule_audit_logs", "schedule_executions", "schedule_workspaces",
       "scheduled_job_executions", "scheduler_audit_logs", "scheduler_state", "schedules",
       "sessions", "workspaces",
     ])
   })
 
-  it("creates all indexes (core + agent)", () => {
+  it("creates all indexes (core + agent + knowledge)", () => {
     db = createTestDb()
     applySchema(db)
     const rows = db.prepare(
       "SELECT name FROM sqlite_master WHERE type='index' AND name LIKE 'idx_%'"
     ).all() as { name: string }[]
-    // 38 core indexes + 23 agent indexes = 61
-    expect(rows.length).toBe(61)
+    // 38 core indexes + 23 agent indexes + 4 knowledge indexes = 65
+    expect(rows.length).toBe(65)
   })
 
   it("workspaces table has correct columns", () => {
