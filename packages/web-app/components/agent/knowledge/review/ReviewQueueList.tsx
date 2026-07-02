@@ -35,7 +35,7 @@ export function ReviewQueueList() {
     page,
     setPage,
     total,
-    statusCounts,
+    typeStatusCounts,
   } = useReviewQueue(PAGE_SIZE)
 
   const { orgs } = useOrgs()
@@ -152,7 +152,7 @@ export function ReviewQueueList() {
         statusFilter={statusFilter}
         onStatusFilterChange={setStatusFilter}
         total={total}
-        statusCounts={statusCounts}
+        typeStatusCounts={typeStatusCounts}
       />
 
       {/* List area */}

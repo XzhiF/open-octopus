@@ -12,7 +12,6 @@ import { StreamingIndicator } from './StreamingIndicator'
 import { DangerConfirmCard } from './DangerConfirmCard'
 import { EvolutionConfirmCard } from './EvolutionConfirmCard'
 import { AgentEmptyState } from '../shared/AgentEmptyState'
-import { SkillProposalCard } from '../knowledge/cards/SkillProposalCard'
 import { ReviewCard } from '../knowledge/cards/ReviewCard'
 
 interface ChatAreaProps {
@@ -34,16 +33,9 @@ interface ChatAreaProps {
   onStop: () => void
   onConfirm: (eventId: string, decision: 'accept' | 'reject') => void
   hasSession: boolean
-  skillProposal?: {
-    skillName: string
-    category: string
-    content: string
-    confidence: number
-  } | null
-  onSkillAction?: (action: 'generate' | 'reject' | 'adjust') => void
   reviewItems?: Array<{
     id: string
-    type: 'rule' | 'skill'
+    type: 'rule'
     content: string
     source: string
     sourceLabel: string
@@ -58,7 +50,7 @@ interface ChatAreaProps {
 export function ChatArea({
   messages, streaming, streamContent, streamThinking, isThinking, toolCalls, pendingConfirm,
   error, statusMessage, onSend, onStop, onConfirm, hasSession,
-  skillProposal, onSkillAction, reviewItems, onReviewAction,
+  reviewItems, onReviewAction,
 }: ChatAreaProps) {
   const [input, setInput] = useState('')
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -155,15 +147,7 @@ export function ChatArea({
               />
             )}
 
-            {/* Knowledge cards: skill proposal + review items */}
-            {skillProposal && onSkillAction && (
-              <div data-testid="skill-proposal-card">
-                <SkillProposalCard
-                  skill={skillProposal}
-                  onAction={onSkillAction}
-                />
-              </div>
-            )}
+            {/* Knowledge cards: review items */}
             {reviewItems && reviewItems.length > 0 && onReviewAction && (
               <div className="space-y-2">
                 {reviewItems.map((item) => (

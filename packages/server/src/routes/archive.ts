@@ -72,7 +72,7 @@ export function createArchiveRoutes(
     }
 
     const body = await c.req.json()
-    const { org: reqOrg, skipSkillProposal } = body
+    const { org: reqOrg } = body
     // Per-request org resolution: body `org` > query `org` > undefined.
     const org = reqOrg || c.req.query("org") || undefined
 
@@ -95,19 +95,6 @@ export function createArchiveRoutes(
         pendingReviewDAO,
       )
 
-      // Skill proposal (if not skipped)
-      let skills: any[] | null = null
-      if (!skipSkillProposal) {
-        try {
-          const { proposeSkillFromWorkspace } = await import("../services/knowledge/skill")
-          const skill = await proposeSkillFromWorkspace(
-            id, org, pendingReviewDAO,
-            `Execution ${id} completed with status ${execResult.status}`,
-          )
-          if (skill) skills = [skill]
-        } catch { /* skill proposal is best-effort */ }
-      }
-
       // Get proposed rules from pending_review
       const pendingRules = pendingReviewDAO.listBySource("workspace_archive")
         .filter(item => item.source_ref === id && item.status === "pending")
@@ -120,7 +107,6 @@ export function createArchiveRoutes(
 
       return c.json({
         rules: pendingRules,
-        skills,
         pendingCount,
       })
     } catch (err) {

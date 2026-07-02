@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import type { PendingItem, ReviewFilter, ReviewStatusFilter, ReviewListResponse, ReviewStatusCounts } from '@/lib/knowledge/types'
+import type { PendingItem, ReviewFilter, ReviewStatusFilter, ReviewListResponse, ReviewTypeStatusCounts, ReviewStatusCounts } from '@/lib/knowledge/types'
 import * as api from '@/lib/knowledge/api'
 
 const DEFAULT_PAGE_SIZE = 20
@@ -15,8 +15,9 @@ export function useReviewQueue(pageSize: number = DEFAULT_PAGE_SIZE) {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [filter, setFilter] = useState<ReviewFilter>('all')
   const [statusFilter, setStatusFilter] = useState<ReviewStatusFilter>('all')
-  const [statusCounts, setStatusCounts] = useState<ReviewStatusCounts>({
-    all: 0, pending: 0, deferred: 0, approved: 0, rejected: 0, edited: 0,
+  const emptyCounts: ReviewStatusCounts = { all: 0, pending: 0, deferred: 0, approved: 0, rejected: 0, edited: 0 }
+  const [typeStatusCounts, setTypeStatusCounts] = useState<ReviewTypeStatusCounts>({
+    rule: { ...emptyCounts }, all: { ...emptyCounts },
   })
 
   const fetchItems = useCallback(async (currentPage: number, currentFilter: ReviewFilter, currentStatus: ReviewStatusFilter) => {
@@ -38,7 +39,7 @@ export function useReviewQueue(pageSize: number = DEFAULT_PAGE_SIZE) {
       setTotal(res.total)
       // Fetch status counts in parallel (lightweight summary endpoint)
       api.getReviewSummary().then((summary) => {
-        if (summary.statusCounts) setStatusCounts(summary.statusCounts)
+        if (summary.typeStatusCounts) setTypeStatusCounts(summary.typeStatusCounts)
       }).catch(() => { /* counts are supplementary, ignore errors */ })
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Failed to load pending reviews')
@@ -114,6 +115,6 @@ export function useReviewQueue(pageSize: number = DEFAULT_PAGE_SIZE) {
     page,
     setPage,
     total,
-    statusCounts,
+    typeStatusCounts,
   }
 }

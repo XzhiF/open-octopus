@@ -118,7 +118,6 @@ vi.mock('@/components/ui/alert-dialog', () => {
 
 // ── Imports (after mock setup) ────────────────────────────────────────
 
-import { SkillProposalCard } from '../cards/SkillProposalCard'
 import { ReviewCard } from '../cards/ReviewCard'
 import { BatchActionBar } from '../review/BatchActionBar'
 import { ConflictBadge } from '../shared/badges'
@@ -152,42 +151,6 @@ const chatBaseProps = {
   pendingConfirm: null, error: null, statusMessage: '',
   onSend: vi.fn(), onStop: vi.fn(), onConfirm: vi.fn(), hasSession: true,
 }
-
-const mockSkill = {
-  skillName: 'octo-test-skill', category: 'development',
-  content: 'Test skill content for verification', confidence: 0.8,
-}
-
-// ═══════════════════════════════════════════════════════════════════════
-// TC-016: Agent 对话中 Skill 提议卡片
-// ═══════════════════════════════════════════════════════════════════════
-
-describe('TC-016: SkillProposalCard in chat', () => {
-  it('renders skill proposal card with 3 action buttons', () => {
-    render(
-      <ChatArea
-        {...chatBaseProps}
-        skillProposal={mockSkill}
-        onSkillAction={vi.fn()}
-      />
-    )
-
-    expect(screen.getByTestId('skill-proposal-card')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '生成' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '不需要' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '调整' })).toBeInTheDocument()
-  })
-
-  it('calls onSkillAction when generate button clicked', async () => {
-    const onAction = vi.fn()
-    render(
-      <ChatArea {...chatBaseProps} skillProposal={mockSkill} onSkillAction={onAction} />
-    )
-
-    await userEvent.click(screen.getByRole('button', { name: '生成' }))
-    expect(onAction).toHaveBeenCalledWith('generate')
-  })
-})
 
 // ═══════════════════════════════════════════════════════════════════════
 // TC-022: Agent 对话审核卡片

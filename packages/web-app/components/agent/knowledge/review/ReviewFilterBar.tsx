@@ -1,6 +1,6 @@
 'use client'
 
-import type { ReviewFilter, ReviewStatusFilter, ReviewStatusCounts } from '@/lib/knowledge/types'
+import type { ReviewFilter, ReviewStatusFilter, ReviewTypeStatusCounts, ReviewStatusCounts } from '@/lib/knowledge/types'
 import { cn } from '@/lib/utils'
 
 interface ReviewFilterBarProps {
@@ -9,22 +9,8 @@ interface ReviewFilterBarProps {
   statusFilter: ReviewStatusFilter
   onStatusFilterChange: (status: ReviewStatusFilter) => void
   total: number
-  statusCounts: ReviewStatusCounts
+  typeStatusCounts: ReviewTypeStatusCounts
 }
-
-const TYPE_OPTIONS: { value: ReviewFilter; label: string }[] = [
-  { value: 'all', label: '全部' },
-  { value: 'rule', label: '规则' },
-  { value: 'skill', label: 'Skill' },
-]
-
-const STATUS_OPTIONS: { value: ReviewStatusFilter; label: string; countKey: keyof ReviewStatusCounts }[] = [
-  { value: 'all', label: '全部状态', countKey: 'all' },
-  { value: 'pending', label: '待审', countKey: 'pending' },
-  { value: 'deferred', label: '已暂缓', countKey: 'deferred' },
-  { value: 'approved', label: '已纳入', countKey: 'approved' },
-  { value: 'rejected', label: '已拒绝', countKey: 'rejected' },
-]
 
 function Pill({
   active,
@@ -67,26 +53,46 @@ function CountBadge({ count, active }: { count: number; active: boolean }) {
   )
 }
 
+const STATUS_KEYS: { key: keyof ReviewStatusCounts; label: string }[] = [
+  { key: 'all', label: '全部状态' },
+  { key: 'pending', label: '待审' },
+  { key: 'deferred', label: '已暂缓' },
+  { key: 'approved', label: '已纳入' },
+  { key: 'rejected', label: '已拒绝' },
+]
+
 export function ReviewFilterBar({
   filter,
   onFilterChange,
   statusFilter,
   onStatusFilterChange,
   total,
-  statusCounts,
+  typeStatusCounts,
 }: ReviewFilterBarProps) {
+  // Type filter options with counts from the "all statuses" row
+  const typeOptions: { value: ReviewFilter; label: string; count: number }[] = [
+    { value: 'all', label: '全部', count: typeStatusCounts.all?.all ?? 0 },
+    { value: 'rule', label: '经验', count: typeStatusCounts.rule?.all ?? 0 },
+  ]
+
+  // Status counts react to the selected type filter
+  const activeCounts: ReviewStatusCounts = filter === 'rule'
+    ? typeStatusCounts.rule
+    : typeStatusCounts.all
+
   return (
     <div className="space-y-2.5 px-4 py-3 border-b border-agent-divider">
       {/* Type filter + total */}
       <div className="flex items-center justify-between gap-3">
         <div className="flex items-center gap-2">
-          {TYPE_OPTIONS.map((opt) => (
+          {typeOptions.map((opt) => (
             <Pill
               key={opt.value}
               active={filter === opt.value}
               onClick={() => onFilterChange(opt.value)}
             >
               {opt.label}
+              <CountBadge count={opt.count} active={filter === opt.value} />
             </Pill>
           ))}
         </div>
@@ -96,18 +102,18 @@ export function ReviewFilterBar({
         </span>
       </div>
 
-      {/* Status filter with counts */}
+      {/* Status filter with counts (linked to type filter) */}
       <div className="flex items-center gap-2">
-        {STATUS_OPTIONS.map((opt) => (
+        {STATUS_KEYS.map((opt) => (
           <Pill
-            key={opt.value}
-            active={statusFilter === opt.value}
-            onClick={() => onStatusFilterChange(opt.value)}
+            key={opt.key}
+            active={statusFilter === opt.key}
+            onClick={() => onStatusFilterChange(opt.key as ReviewStatusFilter)}
           >
             {opt.label}
             <CountBadge
-              count={statusCounts[opt.countKey] ?? 0}
-              active={statusFilter === opt.value}
+              count={activeCounts?.[opt.key] ?? 0}
+              active={statusFilter === opt.key}
             />
           </Pill>
         ))}

@@ -223,7 +223,7 @@ export async function batchReview(ids: string[], action: 'approve' | 'reject', o
 export async function getReviewSummary(): Promise<{
   rules: number
   skills: number
-  statusCounts?: import('@/lib/knowledge/types').ReviewStatusCounts
+  typeStatusCounts?: import('@/lib/knowledge/types').ReviewTypeStatusCounts
 }> {
   const res = await apiFetch(`${getServerUrl()}/api/review/summary`)
   return handleResponse(res)
@@ -241,14 +241,13 @@ export async function getArchiveSummary(executionId: string) {
 export async function proposeArchive(
   executionId: string,
   org: string,
-  skipSkillProposal?: boolean
 ) {
   const res = await apiFetch(
     `${getServerUrl()}/api/archive/${encodeURIComponent(executionId)}/propose`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ org, skipSkillProposal }),
+      body: JSON.stringify({ org }),
     }
   )
   return handleResponse(res)

@@ -78,10 +78,9 @@ export class PendingReviewDAO extends BaseDAO {
     return (this.stmt(`SELECT COUNT(*) as cnt FROM pending_review WHERE status = 'pending'`).get() as { cnt: number }).cnt
   }
 
-  countPendingByType(): { rules: number; skills: number } {
+  countPendingByType(): { rules: number } {
     const rules = (this.stmt(`SELECT COUNT(*) as cnt FROM pending_review WHERE status = 'pending' AND type = 'rule'`).get() as { cnt: number }).cnt
-    const skills = (this.stmt(`SELECT COUNT(*) as cnt FROM pending_review WHERE status = 'pending' AND type = 'skill'`).get() as { cnt: number }).cnt
-    return { rules, skills }
+    return { rules }
   }
 
   countByStatus(): Record<string, number> {
@@ -94,6 +93,32 @@ export class PendingReviewDAO extends BaseDAO {
       counts.all += row.cnt
     }
     return counts
+  }
+
+  /**
+   * Cross-tabulated counts: type × status.
+   * Returns { rule: { all, pending, ... }, skill: { all, pending, ... }, all: { all, pending, ... } }
+   */
+  countByTypeAndStatus(): Record<string, Record<string, number>> {
+    const rows = this.stmt(
+      `SELECT type, status, COUNT(*) as cnt FROM pending_review GROUP BY type, status`
+    ).all() as Array<{ type: string; status: string; cnt: number }>
+
+    const empty = () => ({ all: 0, pending: 0, deferred: 0, approved: 0, rejected: 0, edited: 0 })
+    const result: Record<string, Record<string, number>> = {
+      rule: empty(),
+      all: empty(),
+    }
+
+    for (const row of rows) {
+      if (!result[row.type]) result[row.type] = empty()
+      result[row.type]![row.status] = row.cnt
+      result[row.type]!.all += row.cnt
+      result.all![row.status] += row.cnt
+      result.all!.all += row.cnt
+    }
+
+    return result
   }
 
   listBySource(source: string): PendingReviewRow[] {

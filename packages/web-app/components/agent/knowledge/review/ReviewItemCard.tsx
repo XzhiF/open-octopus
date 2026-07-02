@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useCallback } from 'react'
-import { BookOpen, Zap, Edit3, Pause, X, Check, Save } from 'lucide-react'
+import { BookOpen, Edit3, Pause, X, Check, Save } from 'lucide-react'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
@@ -59,7 +59,6 @@ export function ReviewItemCard({
     setIsEditing(false)
   }, [editDraft, handleAction])
 
-  const TypeIcon = item.type === 'skill' ? Zap : BookOpen
   const needsTruncation = item.content.length > 120
 
   return (
@@ -85,7 +84,7 @@ export function ReviewItemCard({
         <div className="flex-1 min-w-0 space-y-2.5">
           {/* Type icon + content */}
           <div className="flex items-start gap-2">
-            <TypeIcon className="h-4 w-4 text-knowledge-primary shrink-0 mt-0.5" />
+            <BookOpen className="h-4 w-4 text-knowledge-primary shrink-0 mt-0.5" />
             <div className="flex-1 min-w-0">
               {isEditing ? (
                 <div className="space-y-2">
