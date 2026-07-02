@@ -84,6 +84,18 @@ export class PendingReviewDAO extends BaseDAO {
     return { rules, skills }
   }
 
+  countByStatus(): Record<string, number> {
+    const rows = this.stmt(
+      `SELECT status, COUNT(*) as cnt FROM pending_review GROUP BY status`
+    ).all() as Array<{ status: string; cnt: number }>
+    const counts: Record<string, number> = { all: 0, pending: 0, deferred: 0, approved: 0, rejected: 0, edited: 0 }
+    for (const row of rows) {
+      counts[row.status] = row.cnt
+      counts.all += row.cnt
+    }
+    return counts
+  }
+
   listBySource(source: string): PendingReviewRow[] {
     return this.stmt(`SELECT * FROM pending_review WHERE source = ? ORDER BY created_at DESC`).all(source) as PendingReviewRow[]
   }

@@ -127,11 +127,12 @@ export function createReviewRoutes(
     }
   })
 
-  // GET /api/review/summary — pending counts for Agent system prompt
+  // GET /api/review/summary — pending counts for Agent system prompt + status counts for UI
   routes.get("/summary", (c) => {
     try {
       const summary = reviewService.getPendingSummary()
-      return c.json(summary)
+      const statusCounts = pendingReviewDAO.countByStatus()
+      return c.json({ ...summary, statusCounts })
     } catch (err) {
       const { body, status } = errorResponse(err, "review.summary")
       return c.json(body, status)

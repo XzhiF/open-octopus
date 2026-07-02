@@ -220,7 +220,11 @@ export async function batchReview(ids: string[], action: 'approve' | 'reject', o
   return handleResponse(res)
 }
 
-export async function getReviewSummary() {
+export async function getReviewSummary(): Promise<{
+  rules: number
+  skills: number
+  statusCounts?: import('@/lib/knowledge/types').ReviewStatusCounts
+}> {
   const res = await apiFetch(`${getServerUrl()}/api/review/summary`)
   return handleResponse(res)
 }

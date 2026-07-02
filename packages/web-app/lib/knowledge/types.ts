@@ -88,3 +88,12 @@ export interface AssistantMessage {
 
 export type ReviewFilter = 'all' | 'rule' | 'skill'
 export type ReviewStatusFilter = 'all' | 'pending' | 'approved' | 'rejected' | 'deferred'
+
+export interface ReviewStatusCounts {
+  all: number
+  pending: number
+  deferred: number
+  approved: number
+  rejected: number
+  edited: number
+}

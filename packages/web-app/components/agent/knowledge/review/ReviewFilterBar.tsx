@@ -1,7 +1,7 @@
 'use client'
 
-import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
-import type { ReviewFilter, ReviewStatusFilter } from '@/lib/knowledge/types'
+import type { ReviewFilter, ReviewStatusFilter, ReviewStatusCounts } from '@/lib/knowledge/types'
+import { cn } from '@/lib/utils'
 
 interface ReviewFilterBarProps {
   filter: ReviewFilter
@@ -9,6 +9,62 @@ interface ReviewFilterBarProps {
   statusFilter: ReviewStatusFilter
   onStatusFilterChange: (status: ReviewStatusFilter) => void
   total: number
+  statusCounts: ReviewStatusCounts
+}
+
+const TYPE_OPTIONS: { value: ReviewFilter; label: string }[] = [
+  { value: 'all', label: '全部' },
+  { value: 'rule', label: '规则' },
+  { value: 'skill', label: 'Skill' },
+]
+
+const STATUS_OPTIONS: { value: ReviewStatusFilter; label: string; countKey: keyof ReviewStatusCounts }[] = [
+  { value: 'all', label: '全部状态', countKey: 'all' },
+  { value: 'pending', label: '待审', countKey: 'pending' },
+  { value: 'deferred', label: '已暂缓', countKey: 'deferred' },
+  { value: 'approved', label: '已纳入', countKey: 'approved' },
+  { value: 'rejected', label: '已拒绝', countKey: 'rejected' },
+]
+
+function Pill({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean
+  onClick: () => void
+  children: React.ReactNode
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        'inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium transition-colors',
+        active
+          ? 'bg-knowledge-primary text-knowledge-primary-foreground'
+          : 'bg-agent-surface text-muted-foreground hover:bg-accent hover:text-foreground',
+      )}
+    >
+      {children}
+    </button>
+  )
+}
+
+function CountBadge({ count, active }: { count: number; active: boolean }) {
+  if (count === 0) return null
+  return (
+    <span
+      className={cn(
+        'inline-flex items-center justify-center min-w-[18px] h-[18px] rounded-full px-1 text-[10px] font-semibold tabular-nums',
+        active
+          ? 'bg-knowledge-primary-foreground/20 text-knowledge-primary-foreground'
+          : 'bg-agent-divider text-muted-foreground',
+      )}
+    >
+      {count}
+    </span>
+  )
 }
 
 export function ReviewFilterBar({
@@ -17,46 +73,45 @@ export function ReviewFilterBar({
   statusFilter,
   onStatusFilterChange,
   total,
+  statusCounts,
 }: ReviewFilterBarProps) {
   return (
-    <div className="space-y-2 px-4 py-3 border-b border-agent-divider">
-      {/* Type filter */}
+    <div className="space-y-2.5 px-4 py-3 border-b border-agent-divider">
+      {/* Type filter + total */}
       <div className="flex items-center justify-between gap-3">
-        <ToggleGroup
-          type="single"
-          variant="outline"
-          size="sm"
-          value={filter}
-          onValueChange={(value) => {
-            if (value) onFilterChange(value as ReviewFilter)
-          }}
-        >
-          <ToggleGroupItem value="all">全部</ToggleGroupItem>
-          <ToggleGroupItem value="rule">规则</ToggleGroupItem>
-          <ToggleGroupItem value="skill">Skill</ToggleGroupItem>
-        </ToggleGroup>
+        <div className="flex items-center gap-2">
+          {TYPE_OPTIONS.map((opt) => (
+            <Pill
+              key={opt.value}
+              active={filter === opt.value}
+              onClick={() => onFilterChange(opt.value)}
+            >
+              {opt.label}
+            </Pill>
+          ))}
+        </div>
 
-        <span className="text-xs text-muted-foreground whitespace-nowrap">
+        <span className="text-xs text-muted-foreground whitespace-nowrap tabular-nums">
           共 {total} 条
         </span>
       </div>
 
-      {/* Status filter */}
-      <ToggleGroup
-        type="single"
-        variant="outline"
-        size="sm"
-        value={statusFilter}
-        onValueChange={(value) => {
-          if (value) onStatusFilterChange(value as ReviewStatusFilter)
-        }}
-      >
-        <ToggleGroupItem value="all">全部状态</ToggleGroupItem>
-        <ToggleGroupItem value="pending">待审</ToggleGroupItem>
-        <ToggleGroupItem value="deferred">已暂缓</ToggleGroupItem>
-        <ToggleGroupItem value="approved">已纳入</ToggleGroupItem>
-        <ToggleGroupItem value="rejected">已拒绝</ToggleGroupItem>
-      </ToggleGroup>
+      {/* Status filter with counts */}
+      <div className="flex items-center gap-2">
+        {STATUS_OPTIONS.map((opt) => (
+          <Pill
+            key={opt.value}
+            active={statusFilter === opt.value}
+            onClick={() => onStatusFilterChange(opt.value)}
+          >
+            {opt.label}
+            <CountBadge
+              count={statusCounts[opt.countKey] ?? 0}
+              active={statusFilter === opt.value}
+            />
+          </Pill>
+        ))}
+      </div>
     </div>
   )
 }
