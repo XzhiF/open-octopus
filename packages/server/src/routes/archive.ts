@@ -1,11 +1,10 @@
 import { Hono } from "hono"
 import fs from "fs"
 import path from "path"
-import type { KnowledgeRuleDAO, PendingReviewDAO } from "../db/dao"
+import type { PendingReviewDAO } from "../db/dao"
 import { isValidUUID, errorResponse } from "../services/knowledge/validators"
 
 export function createArchiveRoutes(
-  knowledgeRuleDAO: KnowledgeRuleDAO,
   pendingReviewDAO: PendingReviewDAO,
   stateDir: string,
 ): Hono {
@@ -93,7 +92,6 @@ export function createArchiveRoutes(
         logDir,
         org,
         stateDir,
-        knowledgeRuleDAO,
         pendingReviewDAO,
       )
 

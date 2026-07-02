@@ -622,16 +622,6 @@ INSERT INTO scheduler_state (id, schema_version, missed_alert_pending)
 -- Knowledge System Tables
 -- =============================================================================
 
-CREATE TABLE IF NOT EXISTS knowledge_rules (
-  rule_id TEXT PRIMARY KEY,
-  file_name TEXT NOT NULL,
-  text TEXT NOT NULL,
-  scope TEXT NOT NULL DEFAULT 'project',
-  source TEXT NOT NULL DEFAULT 'system',
-  created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  status TEXT NOT NULL DEFAULT 'active'
-);
-
 CREATE TABLE IF NOT EXISTS pending_review (
   id TEXT PRIMARY KEY,
   type TEXT NOT NULL DEFAULT 'rule',
@@ -663,10 +653,7 @@ CREATE INDEX IF NOT EXISTS idx_pending_status ON pending_review(status);
 CREATE INDEX IF NOT EXISTS idx_effectiveness_stale ON knowledge_effectiveness(injected_count, confidence, last_injected);
 
 -- Knowledge subsystem: indexes added in schema version 25 to support
--- listByFile / listByScope / listBySource queries that previously did
--- full-table scans. Idempotent via IF NOT EXISTS.
-CREATE INDEX IF NOT EXISTS idx_knowledge_rules_file ON knowledge_rules(file_name);
-CREATE INDEX IF NOT EXISTS idx_knowledge_rules_status ON knowledge_rules(status);
-CREATE INDEX IF NOT EXISTS idx_knowledge_rules_scope_status ON knowledge_rules(scope, status);
+-- listBySource queries that previously did full-table scans.
+-- Idempotent via IF NOT EXISTS.
 CREATE INDEX IF NOT EXISTS idx_pending_review_source ON pending_review(source);
 CREATE INDEX IF NOT EXISTS idx_pending_review_type_status ON pending_review(type, status);

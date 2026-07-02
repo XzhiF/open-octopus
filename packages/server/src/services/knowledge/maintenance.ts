@@ -77,6 +77,43 @@ Return ONLY the JSON array.`
   return { pendingItemId: pendingId, originalLineCount, suggestedLineCount }
 }
 
+/**
+ * Build the compact prompt for a knowledge file.
+ * Returns the original content and the prompt string.
+ */
+export function buildCompactPrompt(
+  org: string,
+  fileName: string,
+): { originalContent: string; prompt: string } | null {
+  const knowledgeDir = getKnowledgeDir(org)
+  const filePath = path.join(knowledgeDir, fileName)
+  const content = readKnowledgeFile(filePath)
+
+  if (!content) return null
+
+  const rules = parseKnowledgeFile(filePath)
+  if (rules.length === 0) return null
+
+  const date = new Date().toISOString().slice(0, 10)
+  const baseName = fileName.replace(/\.md$/, "")
+
+  const prompt = `Consolidate and deduplicate these knowledge rules.
+Output directly in knowledge file format. Each rule should be on one line starting with "- ",
+followed by a metadata comment on the next line.
+
+Example format:
+- Consolidated rule text here
+<!-- id:${baseName}-001 | ${date} | compact -->
+
+Rules to consolidate:
+${rules.map(r => `- [${r.id}] ${r.text}`).join("\n")}
+
+Merge overlapping rules, remove duplicates, keep the most concise version.
+Output the final markdown directly. Do NOT output JSON or explanations.`
+
+  return { originalContent: content, prompt }
+}
+
 // ---------------------------------------------------------------------------
 // P4.6 — Compact threshold check
 // ---------------------------------------------------------------------------

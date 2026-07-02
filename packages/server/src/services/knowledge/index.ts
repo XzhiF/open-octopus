@@ -1,6 +1,6 @@
 // packages/server/src/services/knowledge/index.ts
 import type { VarPool } from "@octopus/shared"
-import type { KnowledgeRuleDAO, KnowledgeEffectivenessDAO, PendingReviewDAO } from "../../db/dao"
+import type { KnowledgeEffectivenessDAO, PendingReviewDAO } from "../../db/dao"
 import { precomputeRelevantRules } from "./precompute"
 import { KnowledgeInjector } from "@octopus/engine"
 import { trackEffectiveness, retireStaleRules } from "./effectiveness"
@@ -22,7 +22,6 @@ export class KnowledgeService {
   private workflowName?: string
 
   constructor(
-    private knowledgeRuleDAO: KnowledgeRuleDAO,
     private effectivenessDAO: KnowledgeEffectivenessDAO,
     private pendingReviewDAO: PendingReviewDAO,
     private org: string,
@@ -49,7 +48,6 @@ export class KnowledgeService {
         this.repoName,
         workflowName,
         inputs,
-        this.knowledgeRuleDAO,
         pool,
       )
     }
@@ -68,7 +66,7 @@ export class KnowledgeService {
    * Called by ExecutionLifecycle after each execution.
    */
   trackExecutionEffectiveness(execResult: ExecResult): number {
-    return trackEffectiveness(execResult, this.effectivenessDAO, this.knowledgeRuleDAO)
+    return trackEffectiveness(execResult, this.effectivenessDAO, this.org)
   }
 
   /**
@@ -76,9 +74,6 @@ export class KnowledgeService {
    * Called after approveItem adds new rules to a file.
    */
   checkFileCompactThreshold(fileName: string, threshold = 100): void {
-    // Best-effort check; failures are logged but not thrown.
-    // pendingReviewDAO is injected via constructor to avoid ESM-incompatible
-    // dynamic require() and circular dependency on the connection singleton.
     try {
       checkCompactThreshold(this.org, fileName, threshold, this.pendingReviewDAO)
     } catch (err) {
@@ -91,7 +86,7 @@ export class KnowledgeService {
    * Called periodically or after execution completes.
    */
   retireStaleRules(minInjected = 3, maxConfidence = 0.2, daysSinceLastInjected = 30): number {
-    return retireStaleRules(this.effectivenessDAO, this.knowledgeRuleDAO, minInjected, maxConfidence, daysSinceLastInjected)
+    return retireStaleRules(this.effectivenessDAO, this.org, minInjected, maxConfidence, daysSinceLastInjected)
   }
 }
 
@@ -99,10 +94,9 @@ export class KnowledgeService {
  * Create a KnowledgeService instance with the given DAOs and org.
  */
 export function createKnowledgeService(
-  knowledgeRuleDAO: KnowledgeRuleDAO,
   effectivenessDAO: KnowledgeEffectivenessDAO,
   pendingReviewDAO: PendingReviewDAO,
   org: string,
 ): KnowledgeService {
-  return new KnowledgeService(knowledgeRuleDAO, effectivenessDAO, pendingReviewDAO, org)
+  return new KnowledgeService(effectivenessDAO, pendingReviewDAO, org)
 }

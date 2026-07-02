@@ -168,7 +168,9 @@ export function generateRuleId(target: string): string {
 
 /**
  * Parse a knowledge file into structured rules.
- * Matches: `- rule text\n<!-- id:xxx | YYYY-MM-DD | source -->`
+ * Supports two formats:
+ *   1. Inline:  `- rule text <!-- id:xxx | date | source -->`
+ *   2. Two-line: `- rule text\n<!-- id:xxx | date | source -->`
  */
 export function parseKnowledgeFile(filePath: string): ParsedRule[] {
   const content = readKnowledgeFile(filePath)
@@ -176,23 +178,36 @@ export function parseKnowledgeFile(filePath: string): ParsedRule[] {
 
   const rules: ParsedRule[] = []
   const lines = content.split("\n")
+  const metaRegex = /<!-- id:(\S+) \| (\S+) \| (\S+) -->/
 
   for (let i = 0; i < lines.length; i++) {
-    const metaMatch = lines[i].match(/<!-- id:(\S+) \| (\S+) \| (\S+) -->/)
-    if (metaMatch) {
-      // The rule text is on the preceding line (should start with "- ")
-      const textLine = i > 0 ? lines[i - 1] : ""
-      const text = textLine.replace(/^-\s*/, "").trim()
-      if (text) {
-        rules.push({
-          id: metaMatch[1],
-          date: metaMatch[2],
-          source: metaMatch[3],
-          text,
-        })
-      } else {
-        console.warn(`[knowledge] Skipping rule with empty text near line ${i + 1} in ${filePath}`)
-      }
+    const metaMatch = lines[i].match(metaRegex)
+    if (!metaMatch) continue
+
+    // Case 1: inline — rule text and metadata on the same line
+    const inlineText = lines[i].replace(metaRegex, "").replace(/^-\s*/, "").trim()
+    if (inlineText) {
+      rules.push({
+        id: metaMatch[1],
+        date: metaMatch[2],
+        source: metaMatch[3],
+        text: inlineText,
+      })
+      continue
+    }
+
+    // Case 2: two-line — rule text on the preceding line
+    const textLine = i > 0 ? lines[i - 1] : ""
+    const text = textLine.replace(/^-\s*/, "").trim()
+    if (text) {
+      rules.push({
+        id: metaMatch[1],
+        date: metaMatch[2],
+        source: metaMatch[3],
+        text,
+      })
+    } else {
+      console.warn(`[knowledge] Skipping rule with empty text near line ${i + 1} in ${filePath}`)
     }
   }
 
@@ -248,10 +263,7 @@ function escapeRegex(s: string): string {
  * parses rules, and writes a summary index.md with statistics and a
  * table of all rules.
  */
-export function rebuildIndex(
-  org: string,
-  knowledgeRuleDAO: { listActive: () => Array<{ rule_id: string; file_name: string; text: string; scope: string; source: string; status: string }> },
-): { ruleCount: number; fileCount: number } {
+export function rebuildIndex(org: string): { ruleCount: number; fileCount: number } {
   const knowledgeDir = getKnowledgeDir(org)
 
   // Scan projects/ and workflows/ subdirectories
@@ -334,4 +346,90 @@ export function getKnowledgeFileInfo(filePath: string): {
     retiredCount,
     lineCount,
   }
+}
+
+// ---------------------------------------------------------------------------
+// File-based rule index — replaces KnowledgeRuleDAO
+// ---------------------------------------------------------------------------
+
+export interface FileRule {
+  rule_id: string
+  file_name: string
+  text: string
+  scope: string
+  source: string
+  date: string
+  retired: boolean
+}
+
+/**
+ * Scan all knowledge files (projects/ + workflows/) and return all rules
+ * (both active and retired). Replaces knowledgeRuleDAO.listActive() + getById().
+ */
+export function listAllRules(org: string): FileRule[] {
+  const knowledgeDir = getKnowledgeDir(org)
+  const rules: FileRule[] = []
+
+  const scanSubDir = (subDir: string, scope: string) => {
+    const dir = path.join(knowledgeDir, subDir)
+    let files: string[]
+    try {
+      files = fs.readdirSync(dir).filter(f => f.endsWith(".md"))
+    } catch {
+      return
+    }
+    for (const file of files) {
+      const fullPath = path.join(dir, file)
+      const content = readKnowledgeFile(fullPath)
+      const parsed = parseKnowledgeFile(fullPath)
+      const fileName = `${subDir}/${file}`
+
+      // Detect retired rules from <!-- retired --> markers
+      const lines = content.split("\n")
+      const retiredIds = new Set<string>()
+      for (let i = 0; i < lines.length; i++) {
+        if (lines[i].trim() === "<!-- retired -->") {
+          // Find the nearest preceding rule ID
+          for (let j = i - 1; j >= 0; j--) {
+            const idMatch = lines[j].match(/<!-- id:(\S+) \|/)
+            if (idMatch) {
+              retiredIds.add(idMatch[1]!)
+              break
+            }
+          }
+        }
+      }
+
+      for (const rule of parsed) {
+        rules.push({
+          rule_id: rule.id,
+          file_name: fileName,
+          text: rule.text,
+          scope,
+          source: rule.source,
+          date: rule.date,
+          retired: retiredIds.has(rule.id),
+        })
+      }
+    }
+  }
+
+  scanSubDir("projects", "project")
+  scanSubDir("workflows", "workflow")
+
+  return rules
+}
+
+/**
+ * List only active (non-retired) rules. Replaces knowledgeRuleDAO.listActive().
+ */
+export function listAllActiveRules(org: string): FileRule[] {
+  return listAllRules(org).filter(r => !r.retired)
+}
+
+/**
+ * Find a single rule by ID (active or retired). Replaces knowledgeRuleDAO.getById().
+ */
+export function findRuleById(org: string, ruleId: string): FileRule | undefined {
+  return listAllRules(org).find(r => r.rule_id === ruleId)
 }

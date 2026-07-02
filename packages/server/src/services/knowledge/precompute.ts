@@ -1,5 +1,4 @@
-import type { KnowledgeRuleDAO } from "../../db/dao"
-import { getEffectiveUserPreference } from "./file-ops"
+import { getEffectiveUserPreference, listAllActiveRules } from "./file-ops"
 import type { KnowledgeScopeFilter, RuleMeta } from "@octopus/shared"
 
 /**
@@ -16,7 +15,6 @@ export async function precomputeRelevantRules(
   repoName: string | undefined,
   workflowName: string,
   inputValues: Record<string, string>,
-  knowledgeRuleDAO: KnowledgeRuleDAO,
   pool: { set: (key: string, value: unknown) => void },
 ): Promise<void> {
   try {
@@ -33,8 +31,8 @@ export async function precomputeRelevantRules(
     }
     pool.set("__knowledge_scope_filter", JSON.stringify(scopeFilter))
 
-    // 3. Knowledge rules — load all active, filtering happens in injector
-    const activeRules = knowledgeRuleDAO.listActive()
+    // 3. Knowledge rules — load all active from files, filtering happens in injector
+    const activeRules = listAllActiveRules(org)
     if (activeRules.length === 0) return
 
     const ruleCache: Record<string, string> = {}

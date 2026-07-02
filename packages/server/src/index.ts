@@ -12,7 +12,7 @@ import {
   WorkspaceDAO, ExecutionDAO, TokenUsageDAO, ScheduleConfigDAO,
   ScheduleRunDAO, ChatDAO, OrgDAO, AgentSessionDAO, EvolutionDAO,
   CloneDAO, SafetyDAO,
-  KnowledgeRuleDAO, PendingReviewDAO, KnowledgeEffectivenessDAO,
+  PendingReviewDAO, KnowledgeEffectivenessDAO,
 } from "./db/dao"
 import { createKnowledgeRoutes } from "./routes/knowledge"
 import { createReviewRoutes } from "./routes/review"
@@ -89,7 +89,6 @@ interface AllDAOs {
   evolution: EvolutionDAO
   clone: CloneDAO
   safety: SafetyDAO
-  knowledgeRule: KnowledgeRuleDAO
   pendingReview: PendingReviewDAO
   knowledgeEffectiveness: KnowledgeEffectivenessDAO
 }
@@ -107,7 +106,6 @@ function createAllDAOs(db: ReturnType<typeof initDb>): AllDAOs {
     evolution: new EvolutionDAO(db),
     clone: new CloneDAO(db),
     safety: new SafetyDAO(db),
-    knowledgeRule: new KnowledgeRuleDAO(db),
     pendingReview: new PendingReviewDAO(db),
     knowledgeEffectiveness: new KnowledgeEffectivenessDAO(db),
   }
@@ -244,7 +242,6 @@ const d = daos ?? {
   evolution: lazyDAO(EvolutionDAO),
   clone: lazyDAO(CloneDAO),
   safety: lazyDAO(SafetyDAO),
-  knowledgeRule: lazyDAO(KnowledgeRuleDAO),
   pendingReview: lazyDAO(PendingReviewDAO),
   knowledgeEffectiveness: lazyDAO(KnowledgeEffectivenessDAO),
 }
@@ -297,13 +294,13 @@ app.route("/api/workflows/built-in", builtInWorkflowRoutes)
 
 // Knowledge system routes — org is resolved per-request from the query
 // string (`?org=<name>`), so the server no longer pins a default org.
-const reviewService = new ReviewService(d.knowledgeRule, d.pendingReview)
-app.route("/api/knowledge", createKnowledgeRoutes(d.knowledgeRule, d.knowledgeEffectiveness, d.pendingReview))
+const reviewService = new ReviewService(d.pendingReview)
+app.route("/api/knowledge", createKnowledgeRoutes(d.knowledgeEffectiveness, d.pendingReview))
 app.route("/api/review", createReviewRoutes(reviewService, d.pendingReview))
 
 // Archive routes — execution result summarization + rule proposal
 const stateDir = path.join(process.env.HOME ?? "~", ".octopus", "state")
-app.route("/api/archive", createArchiveRoutes(d.knowledgeRule, d.pendingReview, stateDir))
+app.route("/api/archive", createArchiveRoutes(d.pendingReview, stateDir))
 
 // Set scheduler on agent service
 try { getAgentService().setSchedulerService(schedSvc) } catch {}

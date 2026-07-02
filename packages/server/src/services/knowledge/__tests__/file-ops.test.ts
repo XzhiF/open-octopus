@@ -2,9 +2,6 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest"
 import fs from "fs"
 import path from "path"
 import os from "os"
-import Database from "better-sqlite3"
-import { KnowledgeRuleDAO } from "../../../db/dao/knowledge-rule-dao"
-import { applySchema } from "../../../db/schema"
 import {
   generateRuleId,
   parseKnowledgeFile,
@@ -290,17 +287,8 @@ describe("file-ops", () => {
         "system",
       )
 
-      // Mock knowledgeRuleDAO with listActive
-      const mockRuleDAO = {
-        listActive: () => [
-          { rule_id: "rule-001", file_name: "projects/octopus.md", text: "Always validate inputs", scope: "project", source: "system", status: "active" },
-          { rule_id: "rule-002", file_name: "projects/octopus.md", text: "Use prepared statements", scope: "project", source: "workspace_archive", status: "active" },
-          { rule_id: "rule-003", file_name: "workflows/build.md", text: "Run tests before deploy", scope: "project", source: "system", status: "active" },
-        ],
-      }
-
       process.env.OCTOPUS_KNOWLEDGE_DIR = tmpDir
-      const result = rebuildIndex("test-org", mockRuleDAO)
+      const result = rebuildIndex("test-org")
 
       expect(result.ruleCount).toBe(3)
       expect(result.fileCount).toBe(2)

@@ -2,62 +2,41 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest"
 import fs from "fs"
 import path from "path"
 import os from "os"
-import Database from "better-sqlite3"
-import { KnowledgeRuleDAO } from "../../../db/dao/knowledge-rule-dao"
-import { applySchema } from "../../../db/schema"
 import { precomputeRelevantRules } from "../precompute"
 import { VarPool } from "@octopus/shared"
-import { writeKnowledgeFile } from "../file-ops"
+import { writeKnowledgeFile, appendToKnowledgeFile } from "../file-ops"
 
 describe("precompute", () => {
-  let db: Database.Database
-  let ruleDAO: KnowledgeRuleDAO
   let tmpDir: string
 
   beforeEach(() => {
-    db = new Database(":memory:")
-    applySchema(db)
-    ruleDAO = new KnowledgeRuleDAO(db)
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "precompute-test-"))
+    process.env.OCTOPUS_KNOWLEDGE_DIR = tmpDir
   })
 
   afterEach(() => {
-    db?.close()
     fs.rmSync(tmpDir, { recursive: true, force: true })
     delete process.env.OCTOPUS_KNOWLEDGE_DIR
   })
 
   it("sets __user_preference_text from effective user preference", async () => {
-    process.env.OCTOPUS_KNOWLEDGE_DIR = tmpDir
     writeKnowledgeFile(path.join(tmpDir, "user_preference.md"), "# Test Pref\n- Prefer tests")
 
     const pool = new VarPool({})
-    await precomputeRelevantRules("test-org", undefined, "test-workflow", {}, ruleDAO, pool)
+    await precomputeRelevantRules("test-org", undefined, "test-workflow", {}, pool)
 
     const prefText = pool.get("__user_preference_text") as string
     expect(prefText).toContain("Prefer tests")
   })
 
   it("writes rule cache and relevant IDs to pool", async () => {
-    ruleDAO.insert({
-      rule_id: "rule-1",
-      file_name: "test.md",
-      text: "Always validate inputs",
-      scope: "project",
-      source: "system",
-      status: "active",
-    })
-    ruleDAO.insert({
-      rule_id: "rule-2",
-      file_name: "test.md",
-      text: "Use prepared statements",
-      scope: "project",
-      source: "system",
-      status: "active",
-    })
+    const filePath = path.join(tmpDir, "projects", "test.md")
+    fs.mkdirSync(path.dirname(filePath), { recursive: true })
+    appendToKnowledgeFile(filePath, "Always validate inputs", "rule-1", "system")
+    appendToKnowledgeFile(filePath, "Use prepared statements", "rule-2", "system")
 
     const pool = new VarPool({})
-    await precomputeRelevantRules("test-org", undefined, "test-workflow", {}, ruleDAO, pool)
+    await precomputeRelevantRules("test-org", undefined, "test-workflow", {}, pool)
 
     const cacheRaw = pool.get("__knowledge_rule_cache") as string
     const cache = JSON.parse(cacheRaw)
@@ -72,32 +51,24 @@ describe("precompute", () => {
 
   it("skips when no active rules", async () => {
     const pool = new VarPool({})
-    await precomputeRelevantRules("test-org", undefined, "test-workflow", {}, ruleDAO, pool)
+    await precomputeRelevantRules("test-org", undefined, "test-workflow", {}, pool)
 
     expect(pool.get("__knowledge_rule_cache")).toBeUndefined()
     expect(pool.get("__relevant_rule_ids")).toBeUndefined()
   })
 
   it("only includes active rules", async () => {
-    ruleDAO.insert({
-      rule_id: "active-rule",
-      file_name: "test.md",
-      text: "Active rule",
-      scope: "project",
-      source: "system",
-      status: "active",
-    })
-    ruleDAO.insert({
-      rule_id: "retired-rule",
-      file_name: "test.md",
-      text: "Retired rule",
-      scope: "project",
-      source: "system",
-      status: "retired",
-    })
+    const filePath = path.join(tmpDir, "projects", "test.md")
+    fs.mkdirSync(path.dirname(filePath), { recursive: true })
+    appendToKnowledgeFile(filePath, "Active rule", "active-rule", "system")
+    appendToKnowledgeFile(filePath, "Retired rule", "retired-rule", "system")
+
+    // Mark one rule as retired in the file
+    const { markRuleRetired } = await import("../file-ops")
+    markRuleRetired(filePath, "retired-rule")
 
     const pool = new VarPool({})
-    await precomputeRelevantRules("test-org", undefined, "test-workflow", {}, ruleDAO, pool)
+    await precomputeRelevantRules("test-org", undefined, "test-workflow", {}, pool)
 
     const idsRaw = pool.get("__relevant_rule_ids") as string
     const ids = JSON.parse(idsRaw)
@@ -107,7 +78,7 @@ describe("precompute", () => {
 
   it("writes __knowledge_scope_filter with repoName and workflowName", async () => {
     const pool = new VarPool({})
-    await precomputeRelevantRules("test-org", "octopus", "build", {}, ruleDAO, pool)
+    await precomputeRelevantRules("test-org", "octopus", "build", {}, pool)
 
     const raw = pool.get("__knowledge_scope_filter") as string
     const filter = JSON.parse(raw)
@@ -117,7 +88,7 @@ describe("precompute", () => {
 
   it("writes __knowledge_scope_filter with undefined repoName when not provided", async () => {
     const pool = new VarPool({})
-    await precomputeRelevantRules("test-org", undefined, "build", {}, ruleDAO, pool)
+    await precomputeRelevantRules("test-org", undefined, "build", {}, pool)
 
     const raw = pool.get("__knowledge_scope_filter") as string
     const filter = JSON.parse(raw)
@@ -126,25 +97,16 @@ describe("precompute", () => {
   })
 
   it("writes __knowledge_rule_meta for each active rule", async () => {
-    ruleDAO.insert({
-      rule_id: "rule-1",
-      file_name: "projects/octopus.md",
-      text: "Project rule",
-      scope: "project",
-      source: "system",
-      status: "active",
-    })
-    ruleDAO.insert({
-      rule_id: "rule-2",
-      file_name: "workflows/build.md",
-      text: "Workflow rule",
-      scope: "workflow",
-      source: "system",
-      status: "active",
-    })
+    const projPath = path.join(tmpDir, "projects", "octopus.md")
+    fs.mkdirSync(path.dirname(projPath), { recursive: true })
+    appendToKnowledgeFile(projPath, "Project rule", "rule-1", "system")
+
+    const wfPath = path.join(tmpDir, "workflows", "build.md")
+    fs.mkdirSync(path.dirname(wfPath), { recursive: true })
+    appendToKnowledgeFile(wfPath, "Workflow rule", "rule-2", "system")
 
     const pool = new VarPool({})
-    await precomputeRelevantRules("test-org", "octopus", "build", {}, ruleDAO, pool)
+    await precomputeRelevantRules("test-org", "octopus", "build", {}, pool)
 
     const raw = pool.get("__knowledge_rule_meta") as string
     const meta = JSON.parse(raw)

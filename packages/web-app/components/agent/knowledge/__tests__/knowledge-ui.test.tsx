@@ -38,6 +38,13 @@ vi.mock('@/lib/knowledge/api', () => ({
   getKnowledgeFile: vi.fn().mockResolvedValue({ content: '', rules: [], filePath: '' }),
   getPreference: vi.fn().mockResolvedValue({ content: '', scope: 'org' }),
   updatePreference: vi.fn().mockResolvedValue({ ok: true }),
+  updateKnowledgeFile: vi.fn().mockResolvedValue({ ok: true, ruleCount: 0 }),
+  deleteKnowledgeFile: vi.fn().mockResolvedValue({ ok: true, deletedRules: 0 }),
+  compactKnowledge: vi.fn().mockResolvedValue({ ok: true }),
+  previewCompact: vi.fn().mockResolvedValue({ originalContent: '', compactedContent: '', llmAvailable: true }),
+  restoreRule: vi.fn().mockResolvedValue({ ok: true }),
+  generateKnowledge: vi.fn().mockResolvedValue({ content: '', suggestedPath: '' }),
+  getAvailableWorkflows: vi.fn().mockResolvedValue({ workflows: [] }),
   getPendingReviews: vi.fn().mockResolvedValue({ data: [], total: 0, page: 1, pageSize: 20 }),
   reviewAction: vi.fn().mockResolvedValue({ ok: true, id: '', newStatus: 'approved' }),
   batchReview: vi.fn().mockResolvedValue({ ok: true, succeeded: 0, failed: 0, details: [] }),
@@ -57,6 +64,7 @@ vi.mock('@/lib/api-client', async (importOriginal) => {
       { id: 1, name: 'xzf', path: '~/.octopus/orgs/xzf' },
       { id: 2, name: 'acme', path: '~/.octopus/orgs/acme' },
     ]),
+    fetchManifestRepos: vi.fn().mockResolvedValue({ groups: {}, org: 'xzf' }),
   }
 })
 
@@ -117,8 +125,7 @@ import { ConflictBadge } from '../shared/badges'
 import { KnowledgeTabBadge } from '../shared/KnowledgeTabBadge'
 import { AgentTabs } from '../../layout/AgentTabs'
 import { ChatArea } from '../../chat/ChatArea'
-import { KnowledgeTree } from '../KnowledgeTree'
-import { WorkflowKnowledgeList } from '../WorkflowKnowledgeList'
+import { ExperienceList } from '../ExperienceList'
 import { KnowledgeAssistantPanel } from '../assistant/KnowledgeAssistantPanel'
 import { PreferenceEditor } from '../PreferenceEditor'
 import { ArchiveDialog } from '../archive/ArchiveDialog'
@@ -281,39 +288,51 @@ describe('TC-038: KnowledgeTabBadge', () => {
 })
 
 // ═══════════════════════════════════════════════════════════════════════
-// TC-030: 项目知识树状浏览
+// TC-030: 经验库列表浏览
 // ═══════════════════════════════════════════════════════════════════════
 
-describe('TC-030: KnowledgeTree', () => {
-  it('renders file list from API', async () => {
-    mockApi.getKnowledgeFiles.mockResolvedValueOnce([
-      { name: 'projects/octopus.md', type: 'project', scope: 'org', ruleCount: 3, retiredCount: 0, lineCount: 50, compactNeeded: false },
-      { name: 'projects/bug-hunter.md', type: 'project', scope: 'org', ruleCount: 2, retiredCount: 0, lineCount: 30, compactNeeded: false },
-    ])
+describe('TC-030: ExperienceList', () => {
+  it('renders file list grouped by type', async () => {
+    const files = [
+      { name: 'projects/octopus.md', type: 'project' as const, scope: 'org' as const, ruleCount: 3, retiredCount: 0, lineCount: 50, compactNeeded: false },
+      { name: 'projects/bug-hunter.md', type: 'project' as const, scope: 'org' as const, ruleCount: 2, retiredCount: 0, lineCount: 30, compactNeeded: false },
+      { name: 'workflows/prd-impl.md', type: 'workflow' as const, scope: 'org' as const, ruleCount: 5, retiredCount: 0, lineCount: 40, compactNeeded: false },
+    ]
 
-    render(<KnowledgeTree />)
+    render(
+      <ExperienceList
+        files={files}
+        selectedFile={null}
+        onSelect={vi.fn()}
+        onCreate={vi.fn()}
+      />
+    )
 
-    await waitFor(() => {
-      expect(screen.getByText('octopus')).toBeInTheDocument()
-      expect(screen.getByText('bug-hunter')).toBeInTheDocument()
-    })
-    expect(screen.getByText('3 条规则')).toBeInTheDocument()
-    expect(screen.getByText('2 条规则')).toBeInTheDocument()
+    expect(screen.getByText('octopus')).toBeInTheDocument()
+    expect(screen.getByText('bug-hunter')).toBeInTheDocument()
+    expect(screen.getByText('prd-impl')).toBeInTheDocument()
+    expect(screen.getByText('项目经验')).toBeInTheDocument()
+    expect(screen.getByText('工作流经验')).toBeInTheDocument()
   })
 })
 
 // ═══════════════════════════════════════════════════════════════════════
-// TC-031: 项目知识空态
+// TC-031: 经验库空态
 // ═══════════════════════════════════════════════════════════════════════
 
-describe('TC-031: KnowledgeTree empty state', () => {
-  it('shows empty state when no files', async () => {
-    mockApi.getKnowledgeFiles.mockResolvedValueOnce([])
-    render(<KnowledgeTree />)
+describe('TC-031: ExperienceList empty state', () => {
+  it('shows empty text when no files', () => {
+    render(
+      <ExperienceList
+        files={[]}
+        selectedFile={null}
+        onSelect={vi.fn()}
+        onCreate={vi.fn()}
+      />
+    )
 
-    await waitFor(() => {
-      expect(screen.getByText('暂无项目知识')).toBeInTheDocument()
-    })
+    // Both groups show "暂无" when empty
+    expect(screen.getAllByText('暂无').length).toBe(2)
   })
 })
 
@@ -711,29 +730,39 @@ describe('TC-037: ArchiveDialog skip archive', () => {
 })
 
 // ═══════════════════════════════════════════════════════════════════════
-// TC-043: 工作流知识子 Tab 浏览
+// TC-043: 经验库列表包含工作流经验
 // ═══════════════════════════════════════════════════════════════════════
 
-describe('TC-043: WorkflowKnowledgeList', () => {
-  it('renders workflow knowledge files', async () => {
-    mockApi.getKnowledgeFiles.mockResolvedValueOnce([
-      { name: 'workflows/prd-impl.md', type: 'workflow', scope: 'org', ruleCount: 3, retiredCount: 0, lineCount: 50, compactNeeded: false },
-    ])
+describe('TC-043: ExperienceList workflow files', () => {
+  it('renders workflow knowledge files in workflow group', () => {
+    const files = [
+      { name: 'workflows/prd-impl.md', type: 'workflow' as const, scope: 'org' as const, ruleCount: 3, retiredCount: 0, lineCount: 50, compactNeeded: false },
+    ]
 
-    render(<WorkflowKnowledgeList />)
+    render(
+      <ExperienceList
+        files={files}
+        selectedFile={null}
+        onSelect={vi.fn()}
+        onCreate={vi.fn()}
+      />
+    )
 
-    await waitFor(() => {
-      expect(screen.getByText('prd-impl')).toBeInTheDocument()
-      expect(screen.getByText('3 条规则')).toBeInTheDocument()
-    })
+    expect(screen.getByText('prd-impl')).toBeInTheDocument()
+    expect(screen.getByText('工作流经验')).toBeInTheDocument()
   })
 
-  it('shows empty state when no workflow knowledge', async () => {
-    mockApi.getKnowledgeFiles.mockResolvedValueOnce([])
-    render(<WorkflowKnowledgeList />)
+  it('shows empty in workflow group when no workflow files', () => {
+    render(
+      <ExperienceList
+        files={[]}
+        selectedFile={null}
+        onSelect={vi.fn()}
+        onCreate={vi.fn()}
+      />
+    )
 
-    await waitFor(() => {
-      expect(screen.getByText('暂无工作流知识')).toBeInTheDocument()
-    })
+    // Both groups show "暂无"
+    expect(screen.getAllByText('暂无').length).toBe(2)
   })
 })

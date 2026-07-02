@@ -1,11 +1,11 @@
 import fs from "fs"
 import path from "path"
-import { KnowledgeRuleDAO } from "../../db/dao/knowledge-rule-dao"
 import { PendingReviewDAO } from "../../db/dao/pending-review-dao"
 import {
   appendToKnowledgeFile,
   generateRuleId,
   getKnowledgeDir,
+  listAllActiveRules,
 } from "./file-ops"
 import type {
   ProposedRule,
@@ -335,7 +335,6 @@ export async function detectRecurringPitfalls(
   org: string,
   stateDir: string,
   pendingReviewDAO: PendingReviewDAO,
-  knowledgeRuleDAO: KnowledgeRuleDAO,
   repoName?: string,
 ): Promise<RecurringResult[]> {
   const results: RecurringResult[] = []
@@ -416,15 +415,6 @@ export async function detectRecurringPitfalls(
 
       appendToKnowledgeFile(filePath, rule.text, ruleId, rule.source)
 
-      knowledgeRuleDAO.insert({
-        rule_id: ruleId,
-        file_name: `${rule.target}.md`,
-        text: rule.text,
-        scope: rule.scope,
-        source: rule.source,
-        status: "active",
-      })
-
       pendingReviewDAO.insert({
         id: ruleId,
         type: "rule",
@@ -478,7 +468,6 @@ export async function proposeRulesForReview(
   logDir: string,
   org: string,
   stateDir: string,
-  knowledgeRuleDAO: KnowledgeRuleDAO,
   pendingReviewDAO: PendingReviewDAO,
   config?: KnowledgeConfig,
   repoName?: string,
@@ -493,7 +482,7 @@ export async function proposeRulesForReview(
     if (!shouldExtractRules(execResult)) return 0
 
     // Step 2: build existing-rules summary for the LLM prompt
-    const existingRules = knowledgeRuleDAO.listActive()
+    const existingRules = listAllActiveRules(org)
     const existingRulesSummary = existingRules
       .map((r) => `- [${r.rule_id}] ${r.text.slice(0, 80)}`)
       .join("\n")
@@ -512,7 +501,6 @@ export async function proposeRulesForReview(
       org,
       stateDir,
       pendingReviewDAO,
-      knowledgeRuleDAO,
       repoName,
     )
 

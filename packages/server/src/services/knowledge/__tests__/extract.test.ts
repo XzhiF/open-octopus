@@ -4,7 +4,6 @@ import path from "path"
 import os from "os"
 import crypto from "crypto"
 import Database from "better-sqlite3"
-import { KnowledgeRuleDAO } from "../../../db/dao/knowledge-rule-dao"
 import { PendingReviewDAO } from "../../../db/dao/pending-review-dao"
 import { applySchema } from "../../../db/schema"
 import {
@@ -44,7 +43,6 @@ function makeExecResult(overrides: Partial<ExecResult> = {}): ExecResult {
 
 describe("extract", () => {
   let db: Database.Database
-  let ruleDAO: KnowledgeRuleDAO
   let pendingReviewDAO: PendingReviewDAO
   let tmpDir: string
   let stateDir: string
@@ -52,7 +50,6 @@ describe("extract", () => {
   beforeEach(() => {
     db = new Database(":memory:")
     applySchema(db)
-    ruleDAO = new KnowledgeRuleDAO(db)
     pendingReviewDAO = new PendingReviewDAO(db)
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "extract-test-"))
     stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "extract-state-"))
@@ -254,7 +251,7 @@ describe("extract", () => {
       writeStateFile(stateDir, "node-1", 1, "unique error A")
       writeStateFile(stateDir, "node-2", 1, "unique error B")
 
-      const results = await detectRecurringPitfalls("test-org", stateDir, pendingReviewDAO, ruleDAO)
+      const results = await detectRecurringPitfalls("test-org", stateDir, pendingReviewDAO)
       expect(results).toHaveLength(0)
     })
 
@@ -262,7 +259,7 @@ describe("extract", () => {
       writeStateFile(stateDir, "build", 1, "Module not found: react-foo")
       writeStateFile(stateDir, "build", 1, "Module not found: react-foo")
 
-      const results = await detectRecurringPitfalls("test-org", stateDir, pendingReviewDAO, ruleDAO)
+      const results = await detectRecurringPitfalls("test-org", stateDir, pendingReviewDAO)
       expect(results).toHaveLength(1)
       expect(results[0].autoApprove).toBe(false)
       expect(results[0].rule.source).toBe("recurring_pitfall")
@@ -273,7 +270,7 @@ describe("extract", () => {
       writeStateFile(stateDir, "build", 1, "Module not found: react-foo")
       writeStateFile(stateDir, "build", 1, "Module not found: react-foo")
 
-      const results = await detectRecurringPitfalls("test-org", stateDir, pendingReviewDAO, ruleDAO)
+      const results = await detectRecurringPitfalls("test-org", stateDir, pendingReviewDAO)
       expect(results).toHaveLength(1)
       expect(results[0].autoApprove).toBe(true)
 
@@ -281,10 +278,6 @@ describe("extract", () => {
       const knowledgeFile = path.join(tmpDir, "projects/unknown.md")
       const content = readKnowledgeFile(knowledgeFile)
       expect(content).toContain("recurring failure")
-
-      // Verify DB has the rule
-      const activeRules = ruleDAO.listActive()
-      expect(activeRules.length).toBeGreaterThanOrEqual(1)
 
       // Verify pendingReviewDAO has approved entry
       const approved = pendingReviewDAO.listBySource("recurring_pitfall")
@@ -299,7 +292,7 @@ describe("extract", () => {
       // YAML snapshot files should be ignored
       fs.writeFileSync(path.join(stateDir, "snapshot.yaml"), "not json")
 
-      const results = await detectRecurringPitfalls("test-org", stateDir, pendingReviewDAO, ruleDAO)
+      const results = await detectRecurringPitfalls("test-org", stateDir, pendingReviewDAO)
       expect(results).toHaveLength(1)
     })
   })
@@ -365,7 +358,7 @@ describe("extract", () => {
 
     it("returns 0 when config.enabled=false", async () => {
       const count = await proposeRulesForReview(
-        anomalousExec, "/tmp/logs", "test-org", stateDir, ruleDAO, pendingReviewDAO,
+        anomalousExec, "/tmp/logs", "test-org", stateDir, pendingReviewDAO,
         { enabled: false },
       )
       expect(count).toBe(0)
@@ -373,7 +366,7 @@ describe("extract", () => {
 
     it("returns 0 when config.auto_extract=false", async () => {
       const count = await proposeRulesForReview(
-        anomalousExec, "/tmp/logs", "test-org", stateDir, ruleDAO, pendingReviewDAO,
+        anomalousExec, "/tmp/logs", "test-org", stateDir, pendingReviewDAO,
         { auto_extract: false },
       )
       expect(count).toBe(0)
@@ -381,7 +374,7 @@ describe("extract", () => {
 
     it("returns 0 when config.knowledge_extraction='disabled'", async () => {
       const count = await proposeRulesForReview(
-        anomalousExec, "/tmp/logs", "test-org", stateDir, ruleDAO, pendingReviewDAO,
+        anomalousExec, "/tmp/logs", "test-org", stateDir, pendingReviewDAO,
         { knowledge_extraction: "disabled" },
       )
       expect(count).toBe(0)
@@ -389,7 +382,7 @@ describe("extract", () => {
 
     it("proceeds when config is undefined or enabled", async () => {
       const count = await proposeRulesForReview(
-        anomalousExec, "/tmp/logs", "test-org", stateDir, ruleDAO, pendingReviewDAO,
+        anomalousExec, "/tmp/logs", "test-org", stateDir, pendingReviewDAO,
         undefined,
       )
       // Heuristic fallback generates rules from failed nodes → pendingCount >= 1
@@ -411,7 +404,7 @@ describe("extract", () => {
       }
 
       const count = await proposeRulesForReview(
-        exec, "/tmp/logs", "test-org", stateDir, ruleDAO, pendingReviewDAO,
+        exec, "/tmp/logs", "test-org", stateDir, pendingReviewDAO,
         { auto_extract: true, knowledge_extraction: "disabled" },
       )
       expect(count).toBe(0)
@@ -444,7 +437,7 @@ describe("extract", () => {
 
       // Should not throw, should return a number (possibly >0 from heuristics)
       const count = await proposeRulesForReview(
-        exec, "/tmp/logs", "test-org", stateDir, ruleDAO, pendingReviewDAO,
+        exec, "/tmp/logs", "test-org", stateDir, pendingReviewDAO,
       )
       expect(typeof count).toBe("number")
       expect(count).toBeGreaterThanOrEqual(0)
@@ -457,7 +450,7 @@ describe("extract", () => {
       })
 
       const count = await proposeRulesForReview(
-        exec, "/nonexistent/path", "test-org", "/nonexistent/state", ruleDAO, pendingReviewDAO,
+        exec, "/nonexistent/path", "test-org", "/nonexistent/state", pendingReviewDAO,
       )
       expect(typeof count).toBe("number")
     })

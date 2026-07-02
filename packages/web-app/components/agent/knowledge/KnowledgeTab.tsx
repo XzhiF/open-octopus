@@ -7,18 +7,16 @@
 
 import { useState } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
-import { SlidersHorizontal, FolderTree, GitBranch, ClipboardCheck } from 'lucide-react'
+import { SlidersHorizontal, BookOpen, ClipboardCheck } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useReviewQueue } from '@/hooks/useReviewQueue'
 import { PreferenceEditor } from './PreferenceEditor'
-import { KnowledgeTree } from './KnowledgeTree'
-import { WorkflowKnowledgeList } from './WorkflowKnowledgeList'
+import { ExperienceLibrary } from './ExperienceLibrary'
 import { ReviewQueueList } from './review/ReviewQueueList'
 
 const SUB_TABS = [
   { id: 'preference', label: '用户偏好', icon: SlidersHorizontal },
-  { id: 'project', label: '项目知识', icon: FolderTree },
-  { id: 'workflow', label: '工作流知识', icon: GitBranch },
+  { id: 'experience', label: '经验库', icon: BookOpen },
   { id: 'review', label: '审核队列', icon: ClipboardCheck },
 ] as const
 
@@ -109,8 +107,7 @@ export function KnowledgeTab() {
       {/* Content area */}
       <div className="flex-1 overflow-auto">
         {activeSub === 'preference' && <PreferenceEditor />}
-        {activeSub === 'project' && <KnowledgeTree />}
-        {activeSub === 'workflow' && <WorkflowKnowledgeList />}
+        {activeSub === 'experience' && <ExperienceLibrary />}
         {activeSub === 'review' && <ReviewQueueList />}
       </div>
     </div>

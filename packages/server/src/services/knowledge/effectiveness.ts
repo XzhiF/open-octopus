@@ -1,5 +1,5 @@
-import type { KnowledgeRuleDAO, KnowledgeEffectivenessDAO } from "../../db/dao"
-import { getKnowledgeDir, markRuleRetired } from "./file-ops"
+import type { KnowledgeEffectivenessDAO } from "../../db/dao"
+import { getKnowledgeDir, markRuleRetired, unmarkRuleRetired, findRuleById } from "./file-ops"
 import path from "path"
 
 // ---------------------------------------------------------------------------
@@ -78,12 +78,11 @@ export function applyEffectivenessUpdates(
  * execution errors/review blockers, and applies the updates to the effectiveness DAO.
  *
  * Returns the number of rules tracked, or 0 if no injected rules were found.
- * The caller is responsible for passing the DAOs — this keeps the function pure.
  */
 export function trackEffectiveness(
   execResult: ExecResult,
   effectivenessDAO: KnowledgeEffectivenessDAO,
-  knowledgeRuleDAO: KnowledgeRuleDAO,
+  org: string,
 ): number {
   // Read injected rule IDs from execution (set by KnowledgeInjector)
   const injectedIdsRaw = execResult.poolSnapshot?.__injected_rule_ids
@@ -106,10 +105,10 @@ export function trackEffectiveness(
   const reviewBlockers = execResult.poolSnapshot?.review_blockers ?? ""
   const problemText = errorText + " " + reviewBlockers
 
-  // Build a map of ruleId -> rule text for keyword matching
+  // Build a map of ruleId -> rule text for keyword matching (from files)
   const ruleTexts = new Map<string, string>()
   for (const ruleId of injectedIds) {
-    const rule = knowledgeRuleDAO.getById(ruleId)
+    const rule = findRuleById(org, ruleId)
     if (rule) {
       ruleTexts.set(ruleId, rule.text)
     }
@@ -134,27 +133,22 @@ export function trackEffectiveness(
  */
 export function retireStaleRules(
   effectivenessDAO: KnowledgeEffectivenessDAO,
-  knowledgeRuleDAO: KnowledgeRuleDAO,
+  org: string,
   minInjected = 3,
   maxConfidence = 0.2,
   daysSinceLastInjected = 30,
-  org?: string,
 ): number {
   const staleRules = effectivenessDAO.listStale(minInjected, maxConfidence, daysSinceLastInjected)
   let retiredCount = 0
 
   for (const row of staleRules) {
-    knowledgeRuleDAO.updateStatus(row.rule_id, "retired")
-    // Also mark as retired in knowledge file
-    if (org) {
-      const rule = knowledgeRuleDAO.getById(row.rule_id)
-      if (rule) {
-        const knowledgeDir = getKnowledgeDir(org)
-        const filePath = path.join(knowledgeDir, rule.file_name)
-        markRuleRetired(filePath, row.rule_id)
-      }
+    const rule = findRuleById(org, row.rule_id)
+    if (rule) {
+      const knowledgeDir = getKnowledgeDir(org)
+      const filePath = path.join(knowledgeDir, rule.file_name)
+      markRuleRetired(filePath, row.rule_id)
+      retiredCount++
     }
-    retiredCount++
   }
 
   return retiredCount
@@ -165,12 +159,15 @@ export function retireStaleRules(
  */
 export function restoreRule(
   ruleId: string,
-  knowledgeRuleDAO: KnowledgeRuleDAO,
+  org: string,
 ): { ok: true; ruleId: string } {
-  const rule = knowledgeRuleDAO.getById(ruleId)
-  if (!rule || rule.status !== "retired") {
+  const rule = findRuleById(org, ruleId)
+  if (!rule || !rule.retired) {
     throw new Error("NOT_FOUND")
   }
-  knowledgeRuleDAO.updateStatus(ruleId, "active")
+  // Remove retired annotation from the knowledge file
+  const knowledgeDir = getKnowledgeDir(org)
+  const filePath = path.join(knowledgeDir, rule.file_name)
+  unmarkRuleRetired(filePath, ruleId)
   return { ok: true, ruleId }
 }

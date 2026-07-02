@@ -1,7 +1,9 @@
 import { Hono } from "hono"
+import { streamSSE } from "hono/streaming"
 import path from "path"
 import fs from "fs"
-import type { KnowledgeRuleDAO, KnowledgeEffectivenessDAO, PendingReviewDAO } from "../db/dao"
+import os from "os"
+import type { KnowledgeEffectivenessDAO, PendingReviewDAO } from "../db/dao"
 import {
   getKnowledgeDir,
   readKnowledgeFile,
@@ -12,13 +14,12 @@ import {
   readUserPreference,
   writeUserPreference,
   rebuildIndex,
-  markRuleRetired,
   unmarkRuleRetired,
+  findRuleById,
 } from "../services/knowledge/file-ops"
 import { isValidRuleId, validateKnowledgeFileName, errorResponse } from "../services/knowledge/validators"
 
 export function createKnowledgeRoutes(
-  knowledgeRuleDAO: KnowledgeRuleDAO,
   effectivenessDAO: KnowledgeEffectivenessDAO,
   pendingReviewDAO: PendingReviewDAO,
 ): Hono {
@@ -133,6 +134,30 @@ export function createKnowledgeRoutes(
     }
   })
 
+  // DELETE /api/knowledge/file — delete a knowledge file
+  routes.delete("/file", (c) => {
+    const org = c.req.query("org") || undefined
+    const fileName = c.req.query("path") || ""
+    const fileNameCheck = validateKnowledgeFileName(fileName)
+    if (!fileNameCheck.ok) {
+      return c.json({ error: { code: "INVALID_PARAM", message: fileNameCheck.error } }, 400)
+    }
+
+    const knowledgeDir = getKnowledgeDir(org)
+    const filePath = path.join(knowledgeDir, fileName)
+
+    try {
+      // Remove file from disk
+      if (fs.existsSync(filePath)) {
+        fs.unlinkSync(filePath)
+      }
+      return c.json({ ok: true })
+    } catch (err) {
+      const { body, status } = errorResponse(err, "file.delete")
+      return c.json(body, status)
+    }
+  })
+
   // GET /api/knowledge/preference — read user preference
   routes.get("/preference", (c) => {
     const scope = c.req.query("scope") ?? "org"
@@ -181,7 +206,8 @@ export function createKnowledgeRoutes(
       const ruleId = c.req.query("ruleId")
       if (ruleId) {
         const row = effectivenessDAO.getByRuleId(ruleId)
-        const rule = knowledgeRuleDAO.getById(ruleId)
+        const org = c.req.query("org") || undefined
+        const rule = org ? findRuleById(org, ruleId) : undefined
         return c.json({
           items: row ? [{
             ruleId: row.rule_id,
@@ -196,8 +222,9 @@ export function createKnowledgeRoutes(
       }
 
       const all = effectivenessDAO.listAll()
+      const org = c.req.query("org") || undefined
       const items = all.map(row => {
-        const rule = knowledgeRuleDAO.getById(row.rule_id)
+        const rule = org ? findRuleById(org, row.rule_id) : undefined
         return {
           ruleId: row.rule_id,
           injectedCount: row.injected_count,
@@ -213,6 +240,64 @@ export function createKnowledgeRoutes(
       const { body, status } = errorResponse(err, "effectiveness")
       return c.json(body, status)
     }
+  })
+
+  // POST /api/knowledge/compact-preview — streaming preview compact via SSE
+  routes.post("/compact-preview", async (c) => {
+    const body = await c.req.json()
+    const { org: reqOrg, filePath } = body
+    const org = reqOrg || c.req.query("org") || undefined
+
+    if (!filePath) return c.json({ error: { code: "INVALID_PARAM", message: "filePath required" } }, 400)
+
+    const pathCheck = validateKnowledgeFileName(filePath)
+    if (!pathCheck.ok) {
+      return c.json({ error: { code: "INVALID_PARAM", message: pathCheck.error } }, 400)
+    }
+
+    const { buildCompactPrompt } = await import("../services/knowledge/maintenance")
+    const result = buildCompactPrompt(org ?? "", filePath)
+
+    if (!result) {
+      const { readKnowledgeFile } = await import("../services/knowledge/file-ops")
+      const knowledgeDir = getKnowledgeDir(org ?? "")
+      const originalContent = readKnowledgeFile(path.join(knowledgeDir, filePath))
+      return c.json({ originalContent, compactedContent: originalContent, llmAvailable: false })
+    }
+
+    return streamSSE(c, async (stream) => {
+      try {
+        await stream.writeSSE({
+          event: "original",
+          data: JSON.stringify({ originalContent: result.originalContent }),
+        })
+
+        const { callHaikuStream } = await import("../services/knowledge/llm")
+        let hasContent = false
+        for await (const delta of callHaikuStream(result.prompt)) {
+          hasContent = true
+          await stream.writeSSE({
+            event: "text_delta",
+            data: JSON.stringify({ content: delta }),
+          })
+        }
+
+        if (!hasContent) {
+          await stream.writeSSE({
+            event: "fallback",
+            data: JSON.stringify({ content: result.originalContent }),
+          })
+        }
+
+        await stream.writeSSE({ event: "done", data: "{}" })
+      } catch (err) {
+        const reason = err instanceof Error ? err.message : String(err)
+        await stream.writeSSE({
+          event: "error",
+          data: JSON.stringify({ message: reason }),
+        })
+      }
+    })
   })
 
   // POST /api/knowledge/compact — trigger LLM compact
@@ -243,7 +328,7 @@ export function createKnowledgeRoutes(
   routes.post("/rebuild-index", (c) => {
     const org = c.req.query("org") || undefined
     try {
-      const result = rebuildIndex(org, knowledgeRuleDAO)
+      const result = rebuildIndex(org)
       return c.json({ ok: true, ...result })
     } catch (err) {
       const { body, status } = errorResponse(err, "rebuild-index")
@@ -256,9 +341,9 @@ export function createKnowledgeRoutes(
     const org = c.req.query("org") || undefined
     const ruleId = c.req.param("id")
 
-    // Security: validate rule ID format before hitting the DAO. This also
-    // prevents DB-driven path traversal: the file_name returned by
-    // knowledgeRuleDAO.getById() is later joined with the knowledge dir,
+    // Security: validate rule ID format. This also
+    // prevents path traversal: the file_name returned by
+    // findRuleById() is later joined with the knowledge dir,
     // so a malicious id must be rejected up front.
     if (!isValidRuleId(ruleId)) {
       return c.json({ error: { code: "INVALID_PARAM", message: "Invalid rule ID format" } }, 400)
@@ -266,22 +351,55 @@ export function createKnowledgeRoutes(
 
     try {
       const { restoreRule } = await import("../services/knowledge/effectiveness")
-      const result = restoreRule(ruleId, knowledgeRuleDAO)
-      // Remove retired annotation from knowledge file
-      const rule = knowledgeRuleDAO.getById(ruleId)
-      if (rule) {
-        const fileNameCheck = validateKnowledgeFileName(rule.file_name)
-        if (!fileNameCheck.ok) {
-          return c.json({ error: { code: "INTERNAL_ERROR", message: "stored file_name invalid" } }, 500)
-        }
-        const knowledgeDir = getKnowledgeDir(org)
-        const filePath = path.join(knowledgeDir, rule.file_name)
-        unmarkRuleRetired(filePath, ruleId)
-      }
+      const result = restoreRule(ruleId, org ?? "")
       return c.json(result)
     } catch (err) {
       const { body, status } = errorResponse(err, "rule.restore")
       return c.json(body, status)
+    }
+  })
+
+  // GET /api/knowledge/workflows — list available workflow YAML files
+  routes.get("/workflows", (c) => {
+    try {
+      const workflowsDir = path.join(os.homedir(), ".octopus", "workflows")
+      if (!fs.existsSync(workflowsDir)) {
+        return c.json({ workflows: [] })
+      }
+      const files = fs.readdirSync(workflowsDir)
+        .filter((f: string) => f.endsWith(".yaml") || f.endsWith(".yml"))
+        .map((f: string) => f.replace(/\.ya?ml$/, ""))
+      return c.json({ workflows: files })
+    } catch (err) {
+      const { body, status } = errorResponse(err, "workflows")
+      return c.json(body, status)
+    }
+  })
+
+  // POST /api/knowledge/generate — AI-generate initial knowledge content
+  routes.post("/generate", async (c) => {
+    const body = await c.req.json()
+    const { org, type, name } = body
+
+    if (!org || !type || !name) {
+      return c.json({ error: { code: "INVALID_PARAM", message: "org, type, and name are required" } }, 400)
+    }
+    if (!["project", "workflow"].includes(type)) {
+      return c.json({ error: { code: "INVALID_PARAM", message: "type must be project or workflow" } }, 400)
+    }
+
+    const nameCheck = validateKnowledgeFileName(`${type === "project" ? "projects" : "workflows"}/${name}.md`)
+    if (!nameCheck.ok) {
+      return c.json({ error: { code: "INVALID_PARAM", message: nameCheck.error } }, 400)
+    }
+
+    try {
+      const { generateInitialKnowledge } = await import("../services/knowledge/generate")
+      const result = generateInitialKnowledge(org, type, name)
+      return c.json(result)
+    } catch (err) {
+      const { body: respBody, status } = errorResponse(err, "generate")
+      return c.json(respBody, status)
     }
   })
 

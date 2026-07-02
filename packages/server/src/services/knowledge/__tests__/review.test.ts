@@ -3,7 +3,6 @@ import fs from "fs"
 import path from "path"
 import os from "os"
 import Database from "better-sqlite3"
-import { KnowledgeRuleDAO } from "../../../db/dao/knowledge-rule-dao"
 import { PendingReviewDAO } from "../../../db/dao/pending-review-dao"
 import { applySchema } from "../../../db/schema"
 import { ReviewService } from "../review"
@@ -11,7 +10,6 @@ import { readKnowledgeFile } from "../file-ops"
 
 describe("review", () => {
   let db: Database.Database
-  let ruleDAO: KnowledgeRuleDAO
   let pendingReviewDAO: PendingReviewDAO
   let reviewService: ReviewService
   let tmpDir: string
@@ -19,9 +17,8 @@ describe("review", () => {
   beforeEach(() => {
     db = new Database(":memory:")
     applySchema(db)
-    ruleDAO = new KnowledgeRuleDAO(db)
     pendingReviewDAO = new PendingReviewDAO(db)
-    reviewService = new ReviewService(ruleDAO, pendingReviewDAO)
+    reviewService = new ReviewService(pendingReviewDAO)
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "review-test-"))
     process.env.OCTOPUS_KNOWLEDGE_DIR = tmpDir
   })
@@ -69,12 +66,6 @@ describe("review", () => {
       const content = readKnowledgeFile(filePath)
       expect(content).toContain("Always validate inputs")
       expect(content).toContain(result.ruleId)
-
-      // Verify DB has the rule
-      const dbRule = ruleDAO.getById(result.ruleId)
-      expect(dbRule).toBeDefined()
-      expect(dbRule?.status).toBe("active")
-      expect(dbRule?.text).toBe("Always validate inputs")
 
       // Verify pending status updated
       const pending = pendingReviewDAO.getById(id)

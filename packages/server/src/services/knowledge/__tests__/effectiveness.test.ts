@@ -3,7 +3,6 @@ import fs from "fs"
 import path from "path"
 import os from "os"
 import Database from "better-sqlite3"
-import { KnowledgeRuleDAO } from "../../../db/dao/knowledge-rule-dao"
 import { KnowledgeEffectivenessDAO } from "../../../db/dao/knowledge-effectiveness-dao"
 import { applySchema } from "../../../db/schema"
 import {
@@ -18,22 +17,26 @@ import {
   readKnowledgeFile,
   markRuleRetired,
   unmarkRuleRetired,
+  findRuleById,
 } from "../file-ops"
 
 describe("effectiveness", () => {
   let db: Database.Database
-  let ruleDAO: KnowledgeRuleDAO
   let effectivenessDAO: KnowledgeEffectivenessDAO
+  let tmpDir: string
 
   beforeEach(() => {
     db = new Database(":memory:")
     applySchema(db)
-    ruleDAO = new KnowledgeRuleDAO(db)
     effectivenessDAO = new KnowledgeEffectivenessDAO(db)
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "effectiveness-test-"))
+    process.env.OCTOPUS_KNOWLEDGE_DIR = tmpDir
   })
 
   afterEach(() => {
     db?.close()
+    delete process.env.OCTOPUS_KNOWLEDGE_DIR
+    fs.rmSync(tmpDir, { recursive: true, force: true })
   })
 
   describe("computeEffectivenessUpdates", () => {
@@ -85,14 +88,9 @@ describe("effectiveness", () => {
 
   describe("trackEffectiveness", () => {
     it("tracks effectiveness from execution result", () => {
-      ruleDAO.insert({
-        rule_id: "rule-1",
-        file_name: "test.md",
-        text: "Always validate inputs",
-        scope: "project",
-        source: "system",
-        status: "active",
-      })
+      const filePath = path.join(tmpDir, "projects", "test.md")
+      fs.mkdirSync(path.dirname(filePath), { recursive: true })
+      appendToKnowledgeFile(filePath, "Always validate inputs", "rule-1", "system")
 
       const execResult = {
         id: "exec-1",
@@ -105,7 +103,7 @@ describe("effectiveness", () => {
         },
       }
 
-      const tracked = trackEffectiveness(execResult, effectivenessDAO, ruleDAO)
+      const tracked = trackEffectiveness(execResult, effectivenessDAO, "test-org")
       expect(tracked).toBe(1)
 
       const row = effectivenessDAO.getByRuleId("rule-1")
@@ -120,21 +118,16 @@ describe("effectiveness", () => {
         poolSnapshot: {},
       }
 
-      const tracked = trackEffectiveness(execResult, effectivenessDAO, ruleDAO)
+      const tracked = trackEffectiveness(execResult, effectivenessDAO, "test-org")
       expect(tracked).toBe(0)
     })
   })
 
   describe("retireStaleRules", () => {
     it("retires rules with low confidence", () => {
-      ruleDAO.insert({
-        rule_id: "stale-rule",
-        file_name: "test.md",
-        text: "Bad rule",
-        scope: "project",
-        source: "system",
-        status: "active",
-      })
+      const filePath = path.join(tmpDir, "projects", "test.md")
+      fs.mkdirSync(path.dirname(filePath), { recursive: true })
+      appendToKnowledgeFile(filePath, "Bad rule", "stale-rule", "system")
 
       // Simulate 3 injections, all not helpful (confidence = 0)
       for (let i = 0; i < 3; i++) {
@@ -142,42 +135,21 @@ describe("effectiveness", () => {
         effectivenessDAO.incrementNotHelpful("stale-rule")
       }
 
-      const retired = retireStaleRules(effectivenessDAO, ruleDAO, 3, 0.2, 0)
+      const retired = retireStaleRules(effectivenessDAO, "test-org", 3, 0.2, 0)
       expect(retired).toBe(1)
 
-      const rule = ruleDAO.getById("stale-rule")
-      expect(rule?.status).toBe("retired")
+      const rule = findRuleById("test-org", "stale-rule")
+      expect(rule?.retired).toBe(true)
     })
   })
 
   // TC-041: File-level retirement and restore assertions
   describe("file-level retirement/restore (TC-041)", () => {
-    let tmpDir: string
-
-    beforeEach(() => {
-      tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "effectiveness-file-"))
-      process.env.OCTOPUS_KNOWLEDGE_DIR = tmpDir
-    })
-
-    afterEach(() => {
-      delete process.env.OCTOPUS_KNOWLEDGE_DIR
-      fs.rmSync(tmpDir, { recursive: true, force: true })
-    })
-
     it("retireStaleRules marks knowledge file with <!-- retired -->", () => {
-      // Create knowledge file with a rule
-      const filePath = path.join(tmpDir, "test.md")
+      // Create knowledge file with a rule (must be in projects/ subdirectory)
+      const filePath = path.join(tmpDir, "projects", "test.md")
+      fs.mkdirSync(path.dirname(filePath), { recursive: true })
       appendToKnowledgeFile(filePath, "Stale rule text", "stale-file-001", "system")
-
-      // Insert into DB
-      ruleDAO.insert({
-        rule_id: "stale-file-001",
-        file_name: "test.md",
-        text: "Stale rule text",
-        scope: "project",
-        source: "system",
-        status: "active",
-      })
 
       // Simulate low confidence
       for (let i = 0; i < 3; i++) {
@@ -186,33 +158,25 @@ describe("effectiveness", () => {
       }
 
       // Retire with org parameter to trigger file-level marking
-      const retired = retireStaleRules(effectivenessDAO, ruleDAO, 3, 0.2, 0, "test-org")
+      const retired = retireStaleRules(effectivenessDAO, "test-org", 3, 0.2, 0)
       expect(retired).toBe(1)
-
-      // DB status should be retired
-      const rule = ruleDAO.getById("stale-file-001")
-      expect(rule?.status).toBe("retired")
 
       // File should contain <!-- retired --> annotation
       const content = readKnowledgeFile(filePath)
       expect(content).toContain("<!-- retired -->")
     })
 
-    it("restoreRule reactivates DB status", () => {
-      ruleDAO.insert({
-        rule_id: "restore-file-001",
-        file_name: "test.md",
-        text: "Rule to restore",
-        scope: "project",
-        source: "system",
-        status: "retired",
-      })
+    it("restoreRule reactivates file status", () => {
+      const filePath = path.join(tmpDir, "projects", "test.md")
+      fs.mkdirSync(path.dirname(filePath), { recursive: true })
+      appendToKnowledgeFile(filePath, "Rule to restore", "restore-file-001", "system")
+      markRuleRetired(filePath, "restore-file-001")
 
-      const result = restoreRule("restore-file-001", ruleDAO)
+      const result = restoreRule("restore-file-001", "test-org")
       expect(result.ok).toBe(true)
 
-      const rule = ruleDAO.getById("restore-file-001")
-      expect(rule?.status).toBe("active")
+      const rule = findRuleById("test-org", "restore-file-001")
+      expect(rule?.retired).toBe(false)
     })
 
     it("markRuleRetired and unmarkRuleRetired toggle file annotation", () => {
@@ -233,24 +197,20 @@ describe("effectiveness", () => {
 
   describe("restoreRule", () => {
     it("restores a retired rule", () => {
-      ruleDAO.insert({
-        rule_id: "rule-1",
-        file_name: "test.md",
-        text: "Test rule",
-        scope: "project",
-        source: "system",
-        status: "retired",
-      })
+      const filePath = path.join(tmpDir, "projects", "test.md")
+      fs.mkdirSync(path.dirname(filePath), { recursive: true })
+      appendToKnowledgeFile(filePath, "Test rule", "rule-1", "system")
+      markRuleRetired(filePath, "rule-1")
 
-      const result = restoreRule("rule-1", ruleDAO)
+      const result = restoreRule("rule-1", "test-org")
       expect(result.ok).toBe(true)
 
-      const rule = ruleDAO.getById("rule-1")
-      expect(rule?.status).toBe("active")
+      const rule = findRuleById("test-org", "rule-1")
+      expect(rule?.retired).toBe(false)
     })
 
     it("throws when rule not found or not retired", () => {
-      expect(() => restoreRule("nonexistent", ruleDAO)).toThrow("NOT_FOUND")
+      expect(() => restoreRule("nonexistent", "test-org")).toThrow("NOT_FOUND")
     })
   })
 })

@@ -16,22 +16,27 @@ function apiFetch(url: string, init?: RequestInit): Promise<Response> {
 
 // ============ Knowledge API ============
 
-export async function getKnowledgeFiles(scope?: string) {
-  const params = scope ? `?scope=${encodeURIComponent(scope)}` : ''
-  const res = await apiFetch(`${getServerUrl()}/api/knowledge/files${params}`)
+export async function getKnowledgeFiles(scope?: string, org?: string) {
+  const params = new URLSearchParams()
+  if (scope) params.set('scope', scope)
+  if (org) params.set('org', org)
+  const qs = params.toString()
+  const res = await apiFetch(`${getServerUrl()}/api/knowledge/files${qs ? `?${qs}` : ''}`)
   return handleResponse(res)
 }
 
-export async function getKnowledgeFile(filePath: string) {
+export async function getKnowledgeFile(filePath: string, org?: string) {
   const params = new URLSearchParams({ path: filePath })
+  if (org) params.set('org', org)
   const res = await apiFetch(
     `${getServerUrl()}/api/knowledge/file?${params.toString()}`
   )
   return handleResponse(res)
 }
 
-export async function updateKnowledgeFile(filePath: string, content: string) {
+export async function updateKnowledgeFile(filePath: string, content: string, org?: string) {
   const params = new URLSearchParams({ path: filePath })
+  if (org) params.set('org', org)
   const res = await apiFetch(
     `${getServerUrl()}/api/knowledge/file?${params.toString()}`,
     {
@@ -39,6 +44,16 @@ export async function updateKnowledgeFile(filePath: string, content: string) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ content }),
     }
+  )
+  return handleResponse(res)
+}
+
+export async function deleteKnowledgeFile(filePath: string, org?: string) {
+  const params = new URLSearchParams({ path: filePath })
+  if (org) params.set('org', org)
+  const res = await apiFetch(
+    `${getServerUrl()}/api/knowledge/file?${params.toString()}`,
+    { method: 'DELETE' }
   )
   return handleResponse(res)
 }
@@ -73,9 +88,10 @@ export async function getEffectiveness(ruleId?: string) {
   return handleResponse(res)
 }
 
-export async function restoreRule(ruleId: string) {
+export async function restoreRule(ruleId: string, org?: string) {
+  const params = org ? `?org=${encodeURIComponent(org)}` : ''
   const res = await apiFetch(
-    `${getServerUrl()}/api/knowledge/rule/${encodeURIComponent(ruleId)}/restore`,
+    `${getServerUrl()}/api/knowledge/rule/${encodeURIComponent(ruleId)}/restore${params}`,
     { method: 'POST' }
   )
   return handleResponse(res)
@@ -87,6 +103,76 @@ export async function compactKnowledge(org: string, filePath: string) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ org, filePath }),
   })
+  return handleResponse(res)
+}
+
+export function createCompactStream(org: string, filePath: string): {
+  reader: ReadableStreamDefaultReader<string>
+  abort: () => void
+} {
+  const controller = new AbortController()
+
+  const reader = new ReadableStream<string>({
+    async start(ctrl) {
+      try {
+        const res = await fetch(`${getServerUrl()}/api/knowledge/compact-preview`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ org, filePath }),
+          credentials: 'include',
+          signal: controller.signal,
+        })
+
+        if (!res.ok || !res.body) {
+          ctrl.error(new Error(`Stream failed: ${res.status}`))
+          return
+        }
+
+        const textDecoder = new TextDecoder()
+        const bodyReader = res.body.getReader()
+        let currentEvent = 'message'
+
+        while (true) {
+          const { done, value } = await bodyReader.read()
+          if (done) break
+
+          const text = textDecoder.decode(value, { stream: true })
+          const lines = text.split('\n')
+          for (const line of lines) {
+            if (line.startsWith('event: ')) {
+              currentEvent = line.slice(7).trim()
+            } else if (line.startsWith('data: ')) {
+              // Combine event type with data for the consumer
+              ctrl.enqueue(JSON.stringify({ event: currentEvent, data: JSON.parse(line.slice(6)) }))
+              currentEvent = 'message'
+            }
+          }
+        }
+        ctrl.close()
+      } catch (err) {
+        if ((err as Error).name !== 'AbortError') ctrl.error(err)
+      }
+    },
+  }).getReader()
+
+  return { reader, abort: () => controller.abort() }
+}
+
+export async function generateKnowledge(
+  org: string,
+  type: 'project' | 'workflow',
+  name: string
+): Promise<{ content: string; suggestedPath: string }> {
+  const res = await apiFetch(`${getServerUrl()}/api/knowledge/generate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ org, type, name }),
+  })
+  return handleResponse(res)
+}
+
+export async function getAvailableWorkflows(): Promise<{ workflows: string[] }> {
+  const res = await apiFetch(`${getServerUrl()}/api/knowledge/workflows`)
   return handleResponse(res)
 }
 

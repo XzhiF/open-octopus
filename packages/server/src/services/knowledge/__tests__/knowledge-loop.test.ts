@@ -4,7 +4,6 @@ import fs from "fs"
 import path from "path"
 import os from "os"
 import { applySchema } from "../../../db/schema"
-import { KnowledgeRuleDAO } from "../../../db/dao/knowledge-rule-dao"
 import { KnowledgeEffectivenessDAO } from "../../../db/dao/knowledge-effectiveness-dao"
 import { PendingReviewDAO } from "../../../db/dao/pending-review-dao"
 import { appendToKnowledgeFile, generateRuleId } from "../file-ops"
@@ -19,7 +18,6 @@ import { VarPool } from "@octopus/shared"
  */
 describe("US-28: knowledge loop integration", () => {
   let db: Database.Database
-  let ruleDAO: KnowledgeRuleDAO
   let effectivenessDAO: KnowledgeEffectivenessDAO
   let pendingReviewDAO: PendingReviewDAO
   let tmpDir: string
@@ -27,7 +25,6 @@ describe("US-28: knowledge loop integration", () => {
   beforeEach(() => {
     db = new Database(":memory:")
     applySchema(db)
-    ruleDAO = new KnowledgeRuleDAO(db)
     effectivenessDAO = new KnowledgeEffectivenessDAO(db)
     pendingReviewDAO = new PendingReviewDAO(db)
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "knowledge-loop-"))
@@ -81,18 +78,10 @@ describe("US-28: knowledge loop integration", () => {
     expect(pending).toHaveLength(1)
     expect(pending[0].content).toBe("Always run tests before merging")
 
-    // Step 4: Write — approve rule, write to knowledge file + DB
+    // Step 4: Write — approve rule, write to knowledge file
     const ruleId = generateRuleId("test")
-    ruleDAO.insert({
-      rule_id: ruleId,
-      file_name: "octopus.md",
-      text: proposedRule.text,
-      scope: "project",
-      source: "manual",
-      status: "active",
-    })
-
-    const knowledgeFile = path.join(tmpDir, "octopus.md")
+    const knowledgeFile = path.join(tmpDir, "projects", "octopus.md")
+    fs.mkdirSync(path.dirname(knowledgeFile), { recursive: true })
     fs.writeFileSync(knowledgeFile, "", "utf-8")
     appendToKnowledgeFile(knowledgeFile, proposedRule.text, ruleId, "manual")
 
@@ -107,7 +96,7 @@ describe("US-28: knowledge loop integration", () => {
 
     // Step 5: Inject — precompute + inject rules into agent prompt
     const pool = new VarPool({})
-    await precomputeRelevantRules("test-org", "octopus", "test-workflow", {}, ruleDAO, pool)
+    await precomputeRelevantRules("test-org", "octopus", "test-workflow", {}, pool)
 
     const cacheRaw = pool.get("__knowledge_rule_cache") as string
     expect(cacheRaw).toBeDefined()
@@ -135,7 +124,7 @@ describe("US-28: knowledge loop integration", () => {
       },
     }
 
-    const tracked = trackEffectiveness(postExecResult, effectivenessDAO, ruleDAO)
+    const tracked = trackEffectiveness(postExecResult, effectivenessDAO, "test-org")
     expect(tracked).toBe(1)
 
     const effectiveness = effectivenessDAO.getByRuleId(ruleId)
@@ -146,18 +135,13 @@ describe("US-28: knowledge loop integration", () => {
   it("handles the loop cycling — rules from one execution improve the next", async () => {
     // First cycle: add a rule
     const ruleId = generateRuleId("cycle")
-    ruleDAO.insert({
-      rule_id: ruleId,
-      file_name: "octopus.md",
-      text: "Use prepared statements for SQL queries",
-      scope: "project",
-      source: "manual",
-      status: "active",
-    })
+    const knowledgeFile = path.join(tmpDir, "projects", "octopus.md")
+    fs.mkdirSync(path.dirname(knowledgeFile), { recursive: true })
+    appendToKnowledgeFile(knowledgeFile, "Use prepared statements for SQL queries", ruleId, "manual")
 
     // Second cycle: rule is available for injection
     const pool = new VarPool({})
-    await precomputeRelevantRules("test-org", "octopus", "test-workflow", {}, ruleDAO, pool)
+    await precomputeRelevantRules("test-org", "octopus", "test-workflow", {}, pool)
 
     const injector = new KnowledgeInjector(pool)
     const prompts = injector.getInjectedPrompts("test-workflow", "node-1")

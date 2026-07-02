@@ -1,6 +1,6 @@
 import path from "path"
 import fs from "fs"
-import { KnowledgeRuleDAO, PendingReviewDAO } from "../../db/dao"
+import { PendingReviewDAO } from "../../db/dao"
 import {
   appendToKnowledgeFile,
   getKnowledgeDir,
@@ -26,7 +26,6 @@ function assertValidSkillName(name: string): void {
 
 export class ReviewService {
   constructor(
-    private knowledgeRuleDAO: KnowledgeRuleDAO,
     private pendingReviewDAO: PendingReviewDAO,
   ) {}
 
@@ -79,14 +78,6 @@ export class ReviewService {
     fs.mkdirSync(path.dirname(filePath), { recursive: true })
 
     appendToKnowledgeFile(filePath, item.content, ruleId, item.source)
-    this.knowledgeRuleDAO.insert({
-      rule_id: ruleId,
-      file_name: targetFile,
-      text: item.content,
-      scope: item.scope,
-      source: item.source,
-      status: "active",
-    })
     this.pendingReviewDAO.updateStatus(id, "approved")
 
     return { ok: true, ruleId }
