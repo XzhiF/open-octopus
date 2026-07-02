@@ -18,7 +18,7 @@ import type { ExecResult } from "./effectiveness"
  * 5. retireStaleRules: called periodically to retire low-confidence rules
  */
 export class KnowledgeService {
-  private repoName?: string
+  private repoNames: string[] = []
   private workflowName?: string
 
   constructor(
@@ -30,10 +30,10 @@ export class KnowledgeService {
   /**
    * Set the execution context for scope filtering.
    * Called before workflow execution to tell the precompute hook
-   * which repo and workflow are currently running.
+   * which repos and workflow are currently running.
    */
-  setExecutionContext(repoName: string, workflowName: string): void {
-    this.repoName = repoName
+  setExecutionContext(repoNames: string[], workflowName: string): void {
+    this.repoNames = repoNames
     this.workflowName = workflowName
   }
 
@@ -45,7 +45,7 @@ export class KnowledgeService {
     return async (pool: VarPool, workflowName: string, inputs: Record<string, string>) => {
       await precomputeRelevantRules(
         this.org,
-        this.repoName,
+        this.repoNames,
         workflowName,
         inputs,
         pool,

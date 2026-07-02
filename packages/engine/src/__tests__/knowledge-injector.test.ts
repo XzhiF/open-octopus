@@ -33,7 +33,7 @@ describe("KnowledgeInjector", () => {
     pool.set("__knowledge_rule_cache", JSON.stringify(ruleCache))
     pool.set("__knowledge_rule_meta", JSON.stringify(ruleMeta))
     pool.set("__relevant_rule_ids", JSON.stringify(["rule-1", "rule-2"]))
-    pool.set("__knowledge_scope_filter", JSON.stringify({ repoName: "octopus", workflowName: "build" }))
+    pool.set("__knowledge_scope_filter", JSON.stringify({ repoNames: ["octopus"], workflowName: "build" }))
 
     const injector = new KnowledgeInjector(pool)
     const prompts = injector.getInjectedPrompts("build", "node-1")
@@ -103,7 +103,7 @@ describe("KnowledgeInjector", () => {
     pool.set("__knowledge_rule_cache", JSON.stringify(ruleCache))
     pool.set("__knowledge_rule_meta", JSON.stringify(ruleMeta))
     pool.set("__relevant_rule_ids", JSON.stringify(["rule-1", "rule-2"]))
-    pool.set("__knowledge_scope_filter", JSON.stringify({ repoName: "octopus", workflowName: "build" }))
+    pool.set("__knowledge_scope_filter", JSON.stringify({ repoNames: ["octopus"], workflowName: "build" }))
 
     const injector = new KnowledgeInjector(pool)
     const prompts = injector.getInjectedPrompts("build", "node-1")
@@ -131,7 +131,7 @@ describe("KnowledgeInjector", () => {
     pool.set("__knowledge_rule_cache", JSON.stringify(ruleCache))
     pool.set("__knowledge_rule_meta", JSON.stringify(ruleMeta))
     pool.set("__relevant_rule_ids", JSON.stringify(["rule-1", "rule-2"]))
-    pool.set("__knowledge_scope_filter", JSON.stringify({ repoName: "octopus", workflowName: "build" }))
+    pool.set("__knowledge_scope_filter", JSON.stringify({ repoNames: ["octopus"], workflowName: "build" }))
 
     const injector = new KnowledgeInjector(pool)
     const prompts = injector.getInjectedPrompts("build", "node-1")
@@ -146,7 +146,7 @@ describe("KnowledgeInjector", () => {
     expect(injectedIds).toEqual(["rule-1"])
   })
 
-  it("does not inject project rules when repoName is undefined", () => {
+  it("does not inject project rules when repoNames is empty", () => {
     const pool = new VarPool({})
     const ruleCache = {
       "rule-1": "Project rule",
@@ -157,8 +157,8 @@ describe("KnowledgeInjector", () => {
     pool.set("__knowledge_rule_cache", JSON.stringify(ruleCache))
     pool.set("__knowledge_rule_meta", JSON.stringify(ruleMeta))
     pool.set("__relevant_rule_ids", JSON.stringify(["rule-1"]))
-    // No repoName in scope filter
-    pool.set("__knowledge_scope_filter", JSON.stringify({ workflowName: "build" }))
+    // Empty repoNames in scope filter
+    pool.set("__knowledge_scope_filter", JSON.stringify({ repoNames: [], workflowName: "build" }))
 
     const injector = new KnowledgeInjector(pool)
     const prompts = injector.getInjectedPrompts("build", "node-1")
@@ -205,7 +205,7 @@ describe("KnowledgeInjector", () => {
     pool.set("__knowledge_rule_cache", JSON.stringify(ruleCache))
     pool.set("__knowledge_rule_meta", JSON.stringify(ruleMeta))
     pool.set("__relevant_rule_ids", JSON.stringify(["rule-global", "rule-proj", "rule-wf"]))
-    pool.set("__knowledge_scope_filter", JSON.stringify({ repoName: "octopus", workflowName: "build" }))
+    pool.set("__knowledge_scope_filter", JSON.stringify({ repoNames: ["octopus"], workflowName: "build" }))
 
     const injector = new KnowledgeInjector(pool)
     const prompts = injector.getInjectedPrompts("build", "node-1")
@@ -222,5 +222,41 @@ describe("KnowledgeInjector", () => {
 
     const injectedIds = JSON.parse(pool.get("__injected_rule_ids") as string)
     expect(injectedIds).toEqual(["rule-global", "rule-proj", "rule-wf"])
+  })
+
+  it("injects rules from multiple matching projects", () => {
+    const pool = new VarPool({})
+    const ruleCache = {
+      "r1": "Octopus rule",
+      "r2": "My-app rule",
+      "r3": "Other-repo rule",
+    }
+    const ruleMeta = {
+      "r1": { fileName: "projects/octopus.md", scope: "project" },
+      "r2": { fileName: "projects/my-app.md", scope: "project" },
+      "r3": { fileName: "projects/other.md", scope: "project" },
+    }
+    pool.set("__knowledge_rule_cache", JSON.stringify(ruleCache))
+    pool.set("__knowledge_rule_meta", JSON.stringify(ruleMeta))
+    pool.set("__relevant_rule_ids", JSON.stringify(["r1", "r2", "r3"]))
+    pool.set("__knowledge_scope_filter", JSON.stringify({ repoNames: ["octopus", "my-app"], workflowName: "build" }))
+
+    const injector = new KnowledgeInjector(pool)
+    const prompts = injector.getInjectedPrompts("build", "node-1")
+
+    // Should inject r1 and r2 but not r3
+    const allText = prompts.join("\n")
+    expect(allText).toContain("Octopus rule")
+    expect(allText).toContain("My-app rule")
+    expect(allText).not.toContain("Other-repo rule")
+
+    // Should have sections for each matching project
+    const projectSections = prompts.filter(p => p.includes("Knowledge Rules — Project:"))
+    expect(projectSections).toHaveLength(2)
+    expect(projectSections[0]).toContain("Project: octopus")
+    expect(projectSections[1]).toContain("Project: my-app")
+
+    const injectedIds = JSON.parse(pool.get("__injected_rule_ids") as string)
+    expect(injectedIds).toEqual(["r1", "r2"])
   })
 })

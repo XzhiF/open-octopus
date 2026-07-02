@@ -7,12 +7,12 @@ import type { KnowledgeScopeFilter, RuleMeta } from "@octopus/shared"
  *   - __user_preference_text: merged global+org user preferences
  *   - __knowledge_rule_cache: JSON map of ruleId → ruleText
  *   - __knowledge_rule_meta: JSON map of ruleId → { fileName, scope }
- *   - __knowledge_scope_filter: { repoName, workflowName }
+ *   - __knowledge_scope_filter: { repoNames, workflowName }
  *   - __relevant_rule_ids: JSON array of relevant rule IDs
  */
 export async function precomputeRelevantRules(
   org: string,
-  repoName: string | undefined,
+  repoNames: string[],
   workflowName: string,
   inputValues: Record<string, string>,
   pool: { set: (key: string, value: unknown) => void },
@@ -24,9 +24,9 @@ export async function precomputeRelevantRules(
       pool.set("__user_preference_text", userPref)
     }
 
-    // 2. Scope filter — tells injector which repo/workflow is current
+    // 2. Scope filter — tells injector which repos/workflow are current
     const scopeFilter: KnowledgeScopeFilter = {
-      repoName: repoName ?? undefined,
+      repoNames,
       workflowName,
     }
     pool.set("__knowledge_scope_filter", JSON.stringify(scopeFilter))

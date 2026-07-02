@@ -96,7 +96,7 @@ describe("US-28: knowledge loop integration", () => {
 
     // Step 5: Inject — precompute + inject rules into agent prompt
     const pool = new VarPool({})
-    await precomputeRelevantRules("test-org", "octopus", "test-workflow", {}, pool)
+    await precomputeRelevantRules("test-org", ["octopus"], "test-workflow", {}, pool)
 
     const cacheRaw = pool.get("__knowledge_rule_cache") as string
     expect(cacheRaw).toBeDefined()
@@ -141,7 +141,7 @@ describe("US-28: knowledge loop integration", () => {
 
     // Second cycle: rule is available for injection
     const pool = new VarPool({})
-    await precomputeRelevantRules("test-org", "octopus", "test-workflow", {}, pool)
+    await precomputeRelevantRules("test-org", ["octopus"], "test-workflow", {}, pool)
 
     const injector = new KnowledgeInjector(pool)
     const prompts = injector.getInjectedPrompts("test-workflow", "node-1")

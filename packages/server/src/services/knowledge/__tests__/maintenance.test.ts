@@ -8,7 +8,6 @@ import { applySchema } from "../../../db/schema"
 import {
   checkCompactThreshold,
   mergeCloneKnowledge,
-  analyzeKnowledgePatterns,
   compactKnowledgeFile,
 } from "../maintenance"
 import { appendToKnowledgeFile, readKnowledgeFile } from "../file-ops"
@@ -176,46 +175,6 @@ describe("maintenance", () => {
     it("returns 0 when no clone items found", () => {
       const merged = mergeCloneKnowledge("nonexistent-clone", pendingReviewDAO)
       expect(merged).toBe(0)
-    })
-  })
-
-  // =========================================================================
-  // TC-044: analyzeKnowledgePatterns
-  // =========================================================================
-  describe("analyzeKnowledgePatterns (TC-044)", () => {
-    it("returns 0 when callHaiku is placeholder (no LLM)", async () => {
-      process.env.OCTOPUS_KNOWLEDGE_DIR = tmpDir
-
-      // Create a file with 5+ rules (threshold for pattern analysis)
-      const filePath = path.join(tmpDir, "octopus.md")
-      for (let i = 0; i < 6; i++) {
-        appendToKnowledgeFile(filePath, `Rule number ${i + 1}`, `pattern-rule-${i}`, "system")
-      }
-
-      // callHaiku returns "" → no skill proposals generated
-      const proposals = await analyzeKnowledgePatterns("test-org", pendingReviewDAO)
-      expect(proposals).toBe(0)
-
-      // No pending skill items should be created
-      const count = pendingReviewDAO.countPending()
-      expect(count).toBe(0)
-
-      delete process.env.OCTOPUS_KNOWLEDGE_DIR
-    })
-
-    it("skips files with fewer than 5 rules", async () => {
-      process.env.OCTOPUS_KNOWLEDGE_DIR = tmpDir
-
-      // Create a file with only 3 rules (below threshold)
-      const filePath = path.join(tmpDir, "small.md")
-      for (let i = 0; i < 3; i++) {
-        appendToKnowledgeFile(filePath, `Small rule ${i}`, `small-rule-${i}`, "system")
-      }
-
-      const proposals = await analyzeKnowledgePatterns("test-org", pendingReviewDAO)
-      expect(proposals).toBe(0)
-
-      delete process.env.OCTOPUS_KNOWLEDGE_DIR
     })
   })
 

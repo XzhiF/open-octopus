@@ -1,5 +1,8 @@
 import { describe, it, expect } from "vitest"
-import { parseRepoNameFromUrl, resolveRepoName } from "../repo-resolver"
+import fs from "fs"
+import path from "path"
+import os from "os"
+import { parseRepoNameFromUrl, resolveRepoName, resolveAllProjectNames } from "../repo-resolver"
 
 describe("parseRepoNameFromUrl", () => {
   it("parses SSH URL", () => {
@@ -27,5 +30,50 @@ describe("resolveRepoName", () => {
   it("falls back to directory basename when not in a git repo", () => {
     const result = resolveRepoName("/tmp")
     expect(result).toBe("tmp")
+  })
+})
+
+describe("resolveAllProjectNames", () => {
+  it("falls back to single repo when no projects/ directory", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "resolver-test-"))
+    try {
+      const result = resolveAllProjectNames(tmpDir)
+      expect(result).toHaveLength(1)
+      expect(result[0]).toBe(path.basename(tmpDir))
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true })
+    }
+  })
+
+  it("returns deduplicated names from projects/ subdirectories", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "resolver-test-"))
+    const projectsDir = path.join(tmpDir, "projects")
+    fs.mkdirSync(projectsDir, { recursive: true })
+    // Create non-git subdirectories — they'll fall back to directory name
+    fs.mkdirSync(path.join(projectsDir, "alpha"))
+    fs.mkdirSync(path.join(projectsDir, "beta"))
+
+    try {
+      const result = resolveAllProjectNames(tmpDir)
+      expect(result).toContain("alpha")
+      expect(result).toContain("beta")
+      expect(result).toHaveLength(2)
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true })
+    }
+  })
+
+  it("falls back to workspace root when projects/ is empty", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "resolver-test-"))
+    const projectsDir = path.join(tmpDir, "projects")
+    fs.mkdirSync(projectsDir, { recursive: true })
+
+    try {
+      const result = resolveAllProjectNames(tmpDir)
+      expect(result).toHaveLength(1)
+      expect(result[0]).toBe(path.basename(tmpDir))
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true })
+    }
   })
 })

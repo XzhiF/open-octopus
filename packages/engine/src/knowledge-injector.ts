@@ -10,7 +10,7 @@ import type { VarPool, KnowledgeScopeFilter, RuleMeta } from "@octopus/shared"
  * - __user_preference_text: user preference markdown
  * - __knowledge_rule_cache: JSON map of ruleId → ruleText
  * - __knowledge_rule_meta: JSON map of ruleId → { fileName, scope }
- * - __knowledge_scope_filter: { repoName, workflowName }
+ * - __knowledge_scope_filter: { repoNames, workflowName }
  * - __relevant_rule_ids: JSON array of relevant rule IDs
  */
 export interface InjectorConfig {
@@ -109,10 +109,10 @@ export class KnowledgeInjector {
   private getScopeFilter(workflowName: string): KnowledgeScopeFilter {
     try {
       const raw = this.pool.get("__knowledge_scope_filter") as string | undefined
-      if (!raw) return { workflowName }
+      if (!raw) return { repoNames: [], workflowName }
       return JSON.parse(raw) as KnowledgeScopeFilter
     } catch {
-      return { workflowName }
+      return { repoNames: [], workflowName }
     }
   }
 
@@ -133,10 +133,10 @@ export class KnowledgeInjector {
           result.push(id)
           break
         case "project":
-          // Project rules match against repoName
-          if (scopeFilter.repoName !== undefined) {
+          // Project rules match against any repoName in the list
+          if (scopeFilter.repoNames.length > 0) {
             const projectName = this.extractProjectName(meta.fileName)
-            if (projectName === scopeFilter.repoName) {
+            if (scopeFilter.repoNames.includes(projectName)) {
               result.push(id)
             }
           }

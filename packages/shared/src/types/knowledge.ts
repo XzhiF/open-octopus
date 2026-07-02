@@ -105,7 +105,7 @@ export interface ParsedRule {
 }
 
 export interface KnowledgeScopeFilter {
-  repoName?: string
+  repoNames: string[]
   workflowName: string
 }
 

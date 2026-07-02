@@ -18,7 +18,7 @@ import { ObservabilityService as ObsSvc } from "../observability"
 import { PrivacyFilter } from "../privacy-filter"
 import { getFlag } from "../../config/feature-flags"
 import { generateSummary, formatDuration } from "../execution-summary"
-import { resolveRepoName } from "../knowledge/repo-resolver"
+import { resolveAllProjectNames } from "../knowledge/repo-resolver"
 import { join } from "path"
 import { existsSync, readdirSync, readFileSync, writeFileSync, mkdirSync } from "fs"
 import { randomUUID } from "crypto"
@@ -143,9 +143,9 @@ export class ExecutionLifecycle {
       }
     }
 
-    // Resolve repo name for knowledge scope filtering
-    const repoName = resolveRepoName(this.workspacePath)
-    this.knowledgeService?.setExecutionContext(repoName, wf.parsed.name)
+    // Resolve project repo names for knowledge scope filtering
+    const repoNames = resolveAllProjectNames(this.workspacePath)
+    this.knowledgeService?.setExecutionContext(repoNames, wf.parsed.name)
 
     const engine = new WorkflowEngine(
       wf.parsed,

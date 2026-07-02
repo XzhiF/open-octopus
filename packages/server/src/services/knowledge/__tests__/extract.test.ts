@@ -19,7 +19,6 @@ import {
   writeKnowledgeFile,
 } from "../file-ops"
 import { compactKnowledgeFile } from "../maintenance"
-import { proposeSkillFromWorkspace } from "../skill"
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -217,15 +216,6 @@ describe("extract", () => {
       appendToKnowledgeFile(targetPath, "Rule 2", "r2-20260629-efgh", "system")
 
       await compactKnowledgeFile("test-org", "octopus.md", pendingReviewDAO)
-
-      expect(readKnowledgeFile(prefPath)).toBe("original content")
-    })
-
-    it("proposeSkillFromWorkspace does not touch user_preference.md", async () => {
-      const prefPath = path.join(tmpDir, "user_preference.md")
-      writeKnowledgeFile(prefPath, "original content")
-
-      await proposeSkillFromWorkspace("ws-1", "test-org", pendingReviewDAO, "summary")
 
       expect(readKnowledgeFile(prefPath)).toBe("original content")
     })

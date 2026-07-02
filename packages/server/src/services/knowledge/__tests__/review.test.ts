@@ -158,64 +158,12 @@ describe("review", () => {
   })
 
   describe("getPendingSummary", () => {
-    it("returns counts by type", () => {
+    it("returns rule count", () => {
       insertPendingRule({ id: "r1" })
       insertPendingRule({ id: "r2" })
-      pendingReviewDAO.insert({
-        id: "s1",
-        type: "skill",
-        source: "workspace_archive",
-        source_ref: "ws-1",
-        source_label: "Skill proposal",
-        content: "Skill content",
-        target_file: "skills/test/SKILL.md",
-        scope: "project",
-        conflicts: null,
-        confidence: 0.7,
-        auto_approve: 0,
-        status: "pending",
-        user_notes: null,
-      })
 
       const summary = reviewService.getPendingSummary()
       expect(summary.rules).toBe(2)
-      expect(summary.skills).toBe(1)
-    })
-  })
-
-  // =========================================================================
-  // Skill approval via ReviewService (TC-017 partial)
-  // =========================================================================
-  describe("approveItem — skill type", () => {
-    it("writes SKILL.md to skills directory", () => {
-      pendingReviewDAO.insert({
-        id: "skill-001",
-        type: "skill",
-        source: "workspace_archive",
-        source_ref: "ws-1",
-        source_label: "Skill proposal",
-        content: "# My Skill\n\nSkill content here",
-        target_file: "skills/octo-test-skill/SKILL.md",
-        scope: "project",
-        conflicts: null,
-        confidence: 0.8,
-        auto_approve: 0,
-        status: "pending",
-        user_notes: null,
-      })
-
-      const result = reviewService.approveItem("skill-001", "test-org")
-      expect(result.ok).toBe(true)
-
-      // Verify SKILL.md was written
-      // getKnowledgeDir returns tmpDir, so skills dir is tmpDir/../skills/octo-test-skill/
-      const skillPath = path.join(tmpDir, "..", "skills", "octo-test-skill", "SKILL.md")
-      const content = fs.readFileSync(skillPath, "utf-8")
-      expect(content).toContain("# My Skill")
-
-      // Verify status updated
-      const pending = pendingReviewDAO.getById("skill-001")
-      expect(pending?.status).toBe("approved")
     })
   })
 })

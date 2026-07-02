@@ -1,4 +1,5 @@
 import { execSync } from "child_process"
+import fs from "fs"
 import path from "path"
 
 /**
@@ -49,4 +50,52 @@ export function resolveRepoName(cwd: string): string {
       return path.basename(cwd)
     }
   }
+}
+
+/**
+ * Resolve all project repo names from a workspace's projects/ directory.
+ *
+ * Scans <workspacePath>/projects/ for subdirectories, each treated as a
+ * potential git repo. The repo name is extracted from the git remote URL.
+ *
+ * Falls back to single-repo resolution if projects/ doesn't exist.
+ *
+ * Returns deduplicated array of repo names.
+ */
+export function resolveAllProjectNames(workspacePath: string): string[] {
+  const projectsDir = path.join(workspacePath, "projects")
+
+  // If no projects/ subdirectory, fall back to single-repo resolution
+  if (!fs.existsSync(projectsDir)) {
+    const single = resolveRepoName(workspacePath)
+    return [single]
+  }
+
+  const names = new Set<string>()
+
+  try {
+    const entries = fs.readdirSync(projectsDir, { withFileTypes: true })
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue
+      const projectPath = path.join(projectsDir, entry.name)
+      try {
+        const name = resolveRepoName(projectPath)
+        names.add(name)
+      } catch {
+        // Skip non-git directories
+      }
+    }
+  } catch {
+    // If projects/ can't be read, fall back to single-repo
+    const single = resolveRepoName(workspacePath)
+    return [single]
+  }
+
+  // If no valid projects found, fall back to workspace root
+  if (names.size === 0) {
+    const single = resolveRepoName(workspacePath)
+    return [single]
+  }
+
+  return [...names]
 }
