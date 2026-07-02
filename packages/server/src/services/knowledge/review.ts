@@ -101,7 +101,7 @@ export class ReviewService {
     const item = this.pendingReviewDAO.getById(id)
     if (!item) throw new Error("NOT_FOUND")
     this.pendingReviewDAO.updateContent(id, newContent)
-    this.pendingReviewDAO.updateStatus(id, "edited")
+    // Keep status as-is (pending) — editing content doesn't change review state
     return { ok: true }
   }
 

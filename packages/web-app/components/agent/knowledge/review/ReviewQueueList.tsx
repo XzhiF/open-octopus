@@ -30,6 +30,8 @@ export function ReviewQueueList() {
     clearSelection,
     filter,
     setFilter,
+    statusFilter,
+    setStatusFilter,
     refetch,
     page,
     setPage,
@@ -43,10 +45,16 @@ export function ReviewQueueList() {
 
   // ── Single-item action ──────────────────────────────────────────────────────
   const handleAction = useCallback(
-    async (id: string, action: string) => {
+    async (id: string, action: string, content?: string) => {
       if (action === 'edit') {
-        // TODO: inline edit — not yet implemented
-        toast.info('编辑功能即将上线')
+        if (!content) return
+        try {
+          await reviewAction(id, 'edit', content)
+          toast.success('规则内容已更新')
+          refetch()
+        } catch (err) {
+          toast.error(err instanceof Error ? err.message : '更新失败')
+        }
         return
       }
 
@@ -153,6 +161,8 @@ export function ReviewQueueList() {
       <ReviewFilterBar
         filter={filter}
         onFilterChange={setFilter}
+        statusFilter={statusFilter}
+        onStatusFilterChange={setStatusFilter}
         total={total}
       />
 

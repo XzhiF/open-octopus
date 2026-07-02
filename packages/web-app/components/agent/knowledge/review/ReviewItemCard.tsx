@@ -1,9 +1,10 @@
 'use client'
 
 import { useState, useCallback } from 'react'
-import { BookOpen, Zap, Edit3, MessageCircle, Pause, X, Check } from 'lucide-react'
+import { BookOpen, Zap, Edit3, MessageCircle, Pause, X, Check, Save } from 'lucide-react'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Button } from '@/components/ui/button'
+import { Textarea } from '@/components/ui/textarea'
 import { Spinner } from '@/components/ui/spinner'
 import { cn } from '@/lib/utils'
 import { SourceBadge, ScopeBadge, ConflictBadge } from '../shared/badges'
@@ -13,7 +14,7 @@ interface ReviewItemCardProps {
   item: PendingItem
   isSelected: boolean
   onToggleSelect: (id: string) => void
-  onAction: (id: string, action: string) => void
+  onAction: (id: string, action: string, content?: string) => void
   onDiscuss?: (item: PendingItem) => void
 }
 
@@ -26,18 +27,39 @@ export function ReviewItemCard({
 }: ReviewItemCardProps) {
   const [expanded, setExpanded] = useState(false)
   const [actionLoading, setActionLoading] = useState<string | null>(null)
+  const [isEditing, setIsEditing] = useState(false)
+  const [editDraft, setEditDraft] = useState(item.content)
 
   const handleAction = useCallback(
-    async (action: string) => {
+    async (action: string, content?: string) => {
       setActionLoading(action)
       try {
-        await onAction(item.id, action)
+        if (content !== undefined) {
+          await onAction(item.id, action, content)
+        } else {
+          await onAction(item.id, action)
+        }
       } finally {
         setActionLoading(null)
       }
     },
     [item.id, onAction],
   )
+
+  const startEditing = useCallback(() => {
+    setEditDraft(item.content)
+    setIsEditing(true)
+  }, [item.content])
+
+  const cancelEditing = useCallback(() => {
+    setIsEditing(false)
+    setEditDraft(item.content)
+  }, [item.content])
+
+  const saveEditing = useCallback(async () => {
+    await handleAction('edit', editDraft)
+    setIsEditing(false)
+  }, [editDraft, handleAction])
 
   const TypeIcon = item.type === 'skill' ? Zap : BookOpen
   const needsTruncation = item.content.length > 120
@@ -67,21 +89,58 @@ export function ReviewItemCard({
           <div className="flex items-start gap-2">
             <TypeIcon className="h-4 w-4 text-knowledge-primary shrink-0 mt-0.5" />
             <div className="flex-1 min-w-0">
-              <p
-                className={cn(
-                  'text-sm leading-relaxed text-foreground',
-                  !expanded && 'line-clamp-2',
-                )}
-              >
-                {item.content}
-              </p>
-              {needsTruncation && (
-                <button
-                  onClick={() => setExpanded(!expanded)}
-                  className="text-xs text-knowledge-primary hover:underline mt-0.5"
-                >
-                  {expanded ? '收起' : '展开'}
-                </button>
+              {isEditing ? (
+                <div className="space-y-2">
+                  <Textarea
+                    value={editDraft}
+                    onChange={(e) => setEditDraft(e.target.value)}
+                    className="min-h-[80px] font-mono text-sm"
+                    autoFocus
+                  />
+                  <div className="flex items-center gap-2">
+                    <Button
+                      size="sm"
+                      onClick={saveEditing}
+                      disabled={actionLoading !== null}
+                      className="h-7 gap-1 text-xs bg-knowledge-primary hover:bg-knowledge-primary-hover text-knowledge-primary-foreground"
+                    >
+                      {actionLoading === 'edit' ? (
+                        <Spinner className="size-3" />
+                      ) : (
+                        <Save className="size-3" />
+                      )}
+                      保存
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 gap-1 text-xs"
+                      onClick={cancelEditing}
+                      disabled={actionLoading !== null}
+                    >
+                      取消
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <p
+                    className={cn(
+                      'text-sm leading-relaxed text-foreground',
+                      !expanded && 'line-clamp-2',
+                    )}
+                  >
+                    {item.content}
+                  </p>
+                  {needsTruncation && (
+                    <button
+                      onClick={() => setExpanded(!expanded)}
+                      className="text-xs text-knowledge-primary hover:underline mt-0.5"
+                    >
+                      {expanded ? '收起' : '展开'}
+                    </button>
+                  )}
+                </>
               )}
             </div>
           </div>
@@ -114,14 +173,10 @@ export function ReviewItemCard({
               variant="ghost"
               size="sm"
               className="gap-1.5 text-xs h-7 px-2"
-              onClick={() => handleAction('edit')}
-              disabled={actionLoading !== null}
+              onClick={startEditing}
+              disabled={actionLoading !== null || isEditing}
             >
-              {actionLoading === 'edit' ? (
-                <Spinner className="size-3" />
-              ) : (
-                <Edit3 className="size-3" aria-hidden="true" />
-              )}
+              <Edit3 className="size-3" aria-hidden="true" />
               编辑
             </Button>
             <Button
