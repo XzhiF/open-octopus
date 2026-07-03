@@ -78,4 +78,24 @@ describe('SubAgentTool', () => {
     const result = await tools[0].execute({ task: 'extract test' })
     expect(result).toEqual({ content: 'structured answer' })
   })
+
+  it('TC-045: rejects nesting beyond max depth', async () => {
+    const createSession = vi.fn().mockResolvedValue({ prompt: vi.fn().mockResolvedValue('ok') })
+    const tools = createSubAgentTools(makeOpts({ createSession, depth: 3 }))
+
+    const result = await tools[0].execute({ task: 'nested call' })
+    expect(result.isError).toBe(true)
+    expect(result.content).toContain('不支持嵌套委派')
+    expect(createSession).not.toHaveBeenCalled()
+  })
+
+  it('TC-046: times out when sub-agent exceeds timeoutMs', async () => {
+    const neverResolve = vi.fn().mockImplementation(() => new Promise(() => {}))
+    const createSession = vi.fn().mockResolvedValue({ prompt: neverResolve })
+    const tools = createSubAgentTools(makeOpts({ createSession, timeoutMs: 100 }))
+
+    const result = await tools[0].execute({ task: 'slow task' })
+    expect(result.isError).toBe(true)
+    expect(result.content).toContain('超时')
+  })
 })

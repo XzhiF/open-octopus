@@ -129,7 +129,7 @@ export class PiAgentProvider implements IAgentProvider {
         bridge.close()
       }).catch((err: unknown) => {
         const message = err instanceof Error ? err.message : String(err)
-        bridge.push({ type: 'error', code: 'agent_error', message })
+        bridge.push(this.classifyError(message))
         bridge.close()
       })
 
@@ -142,14 +142,7 @@ export class PiAgentProvider implements IAgentProvider {
         yield { type: 'error', code: err.code, message: err.message }
       } else {
         const message = err instanceof Error ? err.message : String(err)
-        // Structured error hints for common failure patterns — sanitize raw messages
-        if (message.includes('API key') || message.includes('apiKey')) {
-          yield { type: 'error', code: ProviderErrorCode.API_KEY_MISSING, message: 'API Key 配置错误。请检查环境变量 ANTHROPIC_API_KEY / OPENAI_API_KEY / DASHSCOPE_API_KEY 等' }
-        } else if (message.includes('model') && message.includes('not found')) {
-          yield { type: 'error', code: ProviderErrorCode.MODEL_NOT_FOUND, message: '模型未找到。使用 "provider/model-id" 格式指定' }
-        } else {
-          yield { type: 'error', code: 'unknown_error', message: '服务内部错误' }
-        }
+        yield this.classifyError(message)
       }
     }
   }
@@ -159,6 +152,16 @@ export class PiAgentProvider implements IAgentProvider {
   }
 
   // ── Private helpers ──
+
+  private classifyError(message: string): MessageChunk {
+    if (message.includes('API key') || message.includes('apiKey')) {
+      return { type: 'error', code: ProviderErrorCode.API_KEY_MISSING, message: 'API Key 配置错误。请检查环境变量 ANTHROPIC_API_KEY / OPENAI_API_KEY / DASHSCOPE_API_KEY 等' }
+    }
+    if (message.includes('model') && message.includes('not found')) {
+      return { type: 'error', code: ProviderErrorCode.MODEL_NOT_FOUND, message: '模型未找到。使用 "provider/model-id" 格式指定' }
+    }
+    return { type: 'error', code: 'agent_error', message }
+  }
 
   private async createPiSession(cwd: string, options?: any): Promise<any> {
     const { createAgentSession, DefaultResourceLoader, ModelRegistry, AuthStorage } = await import('@earendil-works/pi-coding-agent')

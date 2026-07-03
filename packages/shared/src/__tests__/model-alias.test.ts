@@ -1,6 +1,19 @@
 import { describe, it, expect, vi } from 'vitest'
-import { resolveModelAlias, loadModelAliasConfig, BUILTIN_DEFAULTS } from '../config/model-alias'
 import type { ModelAliasConfig } from '../types/model-alias'
+import yaml from 'js-yaml'
+
+// Mock fs for TC-037
+const mockFs: { existsOverride?: (p: string) => boolean; readOverride?: (p: string) => string } = {}
+vi.mock('fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('fs')>()
+  return {
+    ...actual,
+    existsSync: (p: any) => mockFs.existsOverride ? mockFs.existsOverride(String(p)) : actual.existsSync(p),
+    readFileSync: (p: any, ...args: any[]) => mockFs.readOverride ? mockFs.readOverride(String(p)) : (actual as any).readFileSync(p, ...args),
+  }
+})
+
+import { resolveModelAlias, loadModelAliasConfig, BUILTIN_DEFAULTS } from '../config/model-alias'
 
 const testConfig: ModelAliasConfig = {
   default: 'pro',
@@ -47,5 +60,28 @@ describe('loadModelAliasConfig', () => {
   it('builtin defaults contain pi and claude mappings', () => {
     expect(BUILTIN_DEFAULTS.providers.pi?.['pro-max']).toBe('anthropic/claude-opus-4-20250514')
     expect(BUILTIN_DEFAULTS.providers.claude?.pro).toBe('sonnet')
+  })
+
+  it('TC-037: org-level config overrides builtin defaults', () => {
+    const customYaml = yaml.dump({
+      default: 'se',
+      providers: {
+        pi: { 'pro-max': 'custom/model-v99' },
+      },
+    })
+
+    mockFs.existsOverride = (p: string) => p.includes('test-org-tc037')
+    mockFs.readOverride = () => customYaml
+
+    try {
+      const config = loadModelAliasConfig('test-org-tc037')
+      expect(config.default).toBe('se')
+      expect(config.providers.pi?.['pro-max']).toBe('custom/model-v99')
+      // Non-overridden keys should still come from builtin
+      expect(config.providers.pi?.pro).toBe('anthropic/claude-sonnet-4-20250514')
+    } finally {
+      mockFs.existsOverride = undefined
+      mockFs.readOverride = undefined
+    }
   })
 })

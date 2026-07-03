@@ -11,18 +11,25 @@ interface SubAgentToolOptions {
   cwd: string
   parentSignal?: AbortSignal
   timeoutMs?: number
+  depth?: number
 }
 
 const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000 // 5 minutes
+const MAX_DEPTH = 3
 
 export function createSubAgentTools(opts: SubAgentToolOptions): any[] {
+  const currentDepth = opts.depth ?? 0
   return Object.entries(opts.agents).map(([name, def]) => ({
     name: `delegate_to_${name}`,
     description: def.description,
     inputSchema: { type: 'object', properties: { task: { type: 'string' } }, required: ['task'] },
     async execute(input: { task: string }) {
+      if (currentDepth >= MAX_DEPTH) {
+        return { content: '不支持嵌套委派: 已达最大深度限制', isError: true }
+      }
+
       const controller = new AbortController()
-      const timeout = setTimeout(() => controller.abort(), opts.timeoutMs ?? DEFAULT_TIMEOUT_MS)
+      const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS
 
       const onParentAbort = () => controller.abort()
       opts.parentSignal?.addEventListener('abort', onParentAbort, { once: true })
@@ -30,15 +37,24 @@ export function createSubAgentTools(opts: SubAgentToolOptions): any[] {
       try {
         const session = await opts.createSession(opts.cwd, { model: def.model })
         const prompt = `${def.prompt}\n\n---\n\nTask: ${input.task}`
-        const result = await session.prompt(prompt)
+
+        // Race prompt against timeout so we don't hang on unresponsive sessions
+        const result = await Promise.race([
+          session.prompt(prompt),
+          new Promise<never>((_, reject) =>
+            setTimeout(() => {
+              controller.abort()
+              reject(new Error('__timeout__'))
+            }, timeoutMs),
+          ),
+        ])
         return { content: extractResultText(result) }
       } catch (err) {
-        if (controller.signal.aborted) {
-          return { content: `子代理执行超时（${(opts.timeoutMs ?? DEFAULT_TIMEOUT_MS) / 1000}s）`, isError: true }
+        if (controller.signal.aborted || (err instanceof Error && err.message === '__timeout__')) {
+          return { content: `子代理执行超时（${timeoutMs / 1000}s）`, isError: true }
         }
         return { content: `子代理执行失败: ${err instanceof Error ? err.message : String(err)}`, isError: true }
       } finally {
-        clearTimeout(timeout)
         opts.parentSignal?.removeEventListener('abort', onParentAbort)
       }
     },
