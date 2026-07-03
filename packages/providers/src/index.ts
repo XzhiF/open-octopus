@@ -1,5 +1,8 @@
 export { ClaudeSDKProvider } from './claude/provider'
+export { PiSDKProvider } from './pi/provider'
+export type { PiModelConfig } from './pi/provider'
 export type { IAgentProvider, SendQueryOptions, MessageChunk, TokenUsage, ModelUsageEntry, SystemPromptInput, SystemPromptPreset } from './types'
 export { registerProvider, getProvider, isProviderRegistered, listProviders } from './registry'
 export { LLMCallTracker, computeCost, calibrateCosts } from './llm-call-tracker'
 export type { LLMCallRecord } from './llm-call-tracker'
+export { ProviderErrorCode, ProviderError, getHttpStatus } from './shared/error-types'
