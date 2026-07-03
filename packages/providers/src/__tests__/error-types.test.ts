@@ -2,9 +2,9 @@ import { describe, it, expect } from 'vitest'
 import { ProviderErrorCode, ProviderError, getHttpStatus } from '../shared/error-types'
 
 describe('ProviderErrorCode', () => {
-  it('should have exactly 8 error codes', () => {
+  it('should have exactly 12 error codes', () => {
     const codes = Object.keys(ProviderErrorCode)
-    expect(codes).toHaveLength(8)
+    expect(codes).toHaveLength(12)
   })
 
   it('should define all required error codes', () => {

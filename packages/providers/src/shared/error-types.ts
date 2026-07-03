@@ -18,6 +18,10 @@ export const ProviderErrorCode = {
   LLM_TIMEOUT: 'llm_timeout',
   NETWORK_ERROR: 'network_error',
   ABORTED: 'aborted',
+  PROVIDER_DISPOSED: 'provider_disposed',
+  NESTING_NOT_SUPPORTED: 'nesting_not_supported',
+  SUB_AGENT_TIMEOUT: 'sub_agent_timeout',
+  BUDGET_EXCEEDED: 'budget_exceeded',
 } as const
 
 export type ProviderErrorCode = (typeof ProviderErrorCode)[keyof typeof ProviderErrorCode]
@@ -35,6 +39,10 @@ const HTTP_STATUS_MAP: Record<ProviderErrorCode, number> = {
   [ProviderErrorCode.LLM_TIMEOUT]: 504,
   [ProviderErrorCode.NETWORK_ERROR]: 502,
   [ProviderErrorCode.ABORTED]: 499,
+  [ProviderErrorCode.PROVIDER_DISPOSED]: 503,
+  [ProviderErrorCode.NESTING_NOT_SUPPORTED]: 400,
+  [ProviderErrorCode.SUB_AGENT_TIMEOUT]: 504,
+  [ProviderErrorCode.BUDGET_EXCEEDED]: 429,
 }
 
 const DEFAULT_HTTP_STATUS = 500
@@ -61,6 +69,10 @@ const DEFAULT_MESSAGES: Record<ProviderErrorCode, string> = {
   [ProviderErrorCode.LLM_TIMEOUT]: 'LLM request timed out',
   [ProviderErrorCode.NETWORK_ERROR]: 'Network error while communicating with the provider',
   [ProviderErrorCode.ABORTED]: 'Request was aborted by the caller',
+  [ProviderErrorCode.PROVIDER_DISPOSED]: 'Provider has been disposed and cannot accept new requests',
+  [ProviderErrorCode.NESTING_NOT_SUPPORTED]: 'Nested sub-agent delegation is not supported',
+  [ProviderErrorCode.SUB_AGENT_TIMEOUT]: 'Sub-agent execution timed out',
+  [ProviderErrorCode.BUDGET_EXCEEDED]: 'Token budget exceeded',
 }
 
 /**
@@ -79,11 +91,15 @@ const DEFAULT_MESSAGES: Record<ProviderErrorCode, string> = {
 export class ProviderError extends Error {
   readonly code: ProviderErrorCode
   readonly httpStatus: number
+  readonly recoverable: boolean
+  readonly suggestion?: string
 
-  constructor(code: ProviderErrorCode, message?: string) {
+  constructor(code: ProviderErrorCode, message?: string, opts?: { recoverable?: boolean; suggestion?: string }) {
     super(message ?? DEFAULT_MESSAGES[code])
     this.name = 'ProviderError'
     this.code = code
     this.httpStatus = getHttpStatus(code)
+    this.recoverable = opts?.recoverable ?? false
+    this.suggestion = opts?.suggestion
   }
 }
