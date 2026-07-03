@@ -1,5 +1,5 @@
-import { VarPool, evaluateExpression, parsePipelineConfig, TemplateRenderer } from "@octopus/shared"
-import type { WorkflowDef, NodeDef, AutoAnswer, HookDef, WorkflowHooks } from "@octopus/shared"
+import { VarPool, evaluateExpression, parsePipelineConfig, TemplateRenderer, loadModelAliasConfig, resolveModelAlias } from "@octopus/shared"
+import type { WorkflowDef, NodeDef, AutoAnswer, HookDef, WorkflowHooks, ModelAliasConfig } from "@octopus/shared"
 import type { IAgentProvider } from "@octopus/providers"
 import type { TokenUsage } from "@octopus/providers"
 import type { NodeExecutionResult } from "./executors/types"
@@ -14,7 +14,7 @@ import { AgentExecutor } from "./executors/agent"
 import { SwarmExecutor } from "./executors/swarm"
 import { AgentNodeRunner } from "./executors/agent-runner"
 import { JsonlLogger } from "./logger"
-import { join } from "path"
+import { join, basename } from "path"
 import { mkdirSync, writeFileSync, appendFileSync, existsSync, readFileSync, unlinkSync } from "fs"
 import { tmpdir } from "os"
 import type { CrossExecResolver } from "@octopus/shared"
@@ -93,6 +93,8 @@ export class WorkflowEngine {
   private pipelinePath?: string
   // Runtime node tracking (Upgrade 3)
   private runtimeNodeIds: Set<string> = new Set()
+  // Model alias config for tier resolution (pro-max/pro/se → real model names)
+  private modelAliasConfig: ModelAliasConfig
 
   constructor(
     private workflow: WorkflowDef,
@@ -110,6 +112,7 @@ export class WorkflowEngine {
     knowledgeInjectorFactory?: (pool: VarPool) => KnowledgeInjector,
   ) {
     this.pool = new VarPool(workflow.variables ?? {})
+    this.modelAliasConfig = loadModelAliasConfig(orgDir ? basename(orgDir) : undefined)
 
     // Inject execution metadata (name from UI input, workflow_name as fallback)
     if (executionName) {
@@ -1348,6 +1351,12 @@ export class WorkflowEngine {
         const provider = this.providers[providerKey]
         if (!provider) throw new Error(`Unknown provider: ${rawKey}`)
 
+        // Resolve model alias (pro-max/pro/se → real model name)
+        if (node.model) {
+          const resolved = resolveModelAlias(node.model, providerKey, this.modelAliasConfig)
+          if (resolved !== undefined) node.model = resolved
+        }
+
         const runner = new AgentNodeRunner(provider, this.cwd, (event: AgentEvent) => {
           this.logger?.log(node.id, "agent_event", { event_data: event })
           this.callbacks?.onAgentEvent?.(node.id, event)
@@ -1366,7 +1375,20 @@ export class WorkflowEngine {
           this.crossExecResolver, this.executionId,
         )
       }
-      case "swarm":
+      case "swarm": {
+        // Resolve model aliases for swarm experts and host
+        const swarmProviderKey = node.engine ?? this.workflow.engine ?? "claude"
+        for (const expert of node.experts ?? []) {
+          if (expert.model) {
+            const resolved = resolveModelAlias(expert.model, swarmProviderKey, this.modelAliasConfig)
+            if (resolved !== undefined) expert.model = resolved
+          }
+        }
+        if (node.host?.model) {
+          const resolved = resolveModelAlias(node.host.model, swarmProviderKey, this.modelAliasConfig)
+          if (resolved !== undefined) node.host.model = resolved
+        }
+
         return new SwarmExecutor(
           node, p, this.providers, this.cwd,
           this.callbacks, this.logger, s,
@@ -1376,6 +1398,7 @@ export class WorkflowEngine {
             await this.executeHooks(event as keyof WorkflowHooks, context)
           },
         )
+      }
       default:
         throw new Error(`Unknown node type: ${(node as any).type}`)
     }
