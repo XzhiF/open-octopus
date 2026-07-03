@@ -33,7 +33,10 @@ export async function precomputeRelevantRules(
 
     // 3. Knowledge rules — load all active from files, filtering happens in injector
     const activeRules = listAllActiveRules(org)
-    if (activeRules.length === 0) return
+    if (activeRules.length === 0) {
+      console.log(`[knowledge-precompute] org=${org} workflow=${workflowName} pref=${!!userPref.trim()} rules=0 (no active rules)`)
+      return
+    }
 
     const ruleCache: Record<string, string> = {}
     const ruleMeta: Record<string, RuleMeta> = {}
@@ -48,6 +51,8 @@ export async function precomputeRelevantRules(
     pool.set("__knowledge_rule_cache", JSON.stringify(ruleCache))
     pool.set("__knowledge_rule_meta", JSON.stringify(ruleMeta))
     pool.set("__relevant_rule_ids", JSON.stringify(relevantIds))
+
+    console.log(`[knowledge-precompute] org=${org} workflow=${workflowName} repos=${repoNames.join(",")} pref=${!!userPref.trim()} rules=${relevantIds.length}`)
   } catch (err) {
     console.warn("[knowledge] precomputeRelevantRules failed:", err)
   }

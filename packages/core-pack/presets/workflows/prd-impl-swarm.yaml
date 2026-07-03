@@ -603,11 +603,19 @@ nodes:
   - id: plan-balance-check
     type: agent
     depends_on: [plan-deepen]
-    timeout: 1800
+    timeout: 600
+    tools: ["Read", "Write", "Grep", "Glob"]
     prompt: |
-      你是计划均衡性审查员，检查 plan.md 是否存在「前详后略」问题。
+      你是计划均衡性审查员。你的唯一职责是计算指标并输出报告。
+
+      ⛔ **你只做数学计算和文件读写。禁止：**
+      - 不要委派子代理（Agent 工具不可用）
+      - 不要运行任何 Bash 命令
+      - 不要修改任何代码文件（只读写 plan.md 和报告文件）
+      - 不要实现计划中的任务
 
       ## 检查项
+      读取 $vars.plan_file，对每个阶段计算：
       | 指标 | 说明 |
       |------|------|
       | task_count | 该阶段 Task 总数 |

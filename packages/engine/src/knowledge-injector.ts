@@ -73,6 +73,9 @@ export class KnowledgeInjector {
     // Write injected rule IDs to VarPool for effectiveness tracking
     this.pool.set("__injected_rule_ids", JSON.stringify(injectedIds))
 
+    // Diagnostic log — verify injection is happening
+    console.log(`[knowledge-injector] node=${nodeId} workflow=${workflowName} prompts=${prompts.length} rules=${injectedIds.length} pref=${!!prefText?.trim()}`)
+
     return prompts
   }
 

@@ -822,9 +822,17 @@ nodes:
   - id: plan-balance-check
     type: agent
     depends_on: [plan-deepen]
-    timeout: 1800
+    timeout: 600
+    tools: ["Read", "Write", "Grep", "Glob"]
     prompt: |
-      你是计划均衡性审查员，检查 plan.md 是否存在「前详后略」问题。
+      你是计划均衡性审查员。你的唯一职责是计算指标并输出报告。
+
+      ⛔ **你只做数学计算和文件读写。禁止：**
+      - 不要委派子代理（Agent 工具不可用）
+      - 不要运行任何 Bash 命令（构建/测试/安装）
+      - 不要修改任何代码文件（只读写 plan.md 和报告文件）
+      - 不要实现计划中的任务
+      - 不要审查代码质量
 
       ## 检查项
       读取 $vars.plan_file，对每个阶段计算以下指标：
@@ -842,9 +850,11 @@ nodes:
       - 全部估算同一阶段不能都是 low → warn
 
       ## 你的任务
-      1. 计算指标，输出表格报告到 `$vars.output_dir/plan.balance.md`。
-      2. 如果不均衡阶段 <= 1 且可以就地修补，直接封装 plan.md。
-      3. 如果不均衡阶段 >= 2，记录「需要 challenge-plan」。
+      1. 用 Read 读取 $vars.plan_file
+      2. 用 Grep 统计各阶段的 task_count / acceptance_count / files_referenced
+      3. 计算指标，用 Write 输出表格报告到 `$vars.output_dir/plan.balance.md`
+      4. 如果不均衡阶段 <= 1 且可以就地修补（仅在 plan.md 中补充缺失的任务描述或验收标准），用 Write 修改 plan.md
+      5. 如果不均衡阶段 >= 2，记录「需要 challenge-plan」
 
       ## 输出
       {"vars_update":{"plan_balance_report":"$vars.output_dir/plan.balance.md","plan_balance_passed":"<true/false>","conclusion":"<不均衡阶段数 + 详情>"}}
