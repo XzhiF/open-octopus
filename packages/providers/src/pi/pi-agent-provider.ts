@@ -5,6 +5,8 @@ import { AsyncEventBridge } from './async-event-bridge'
 import { mapPiEventToChunks, createMapperContext } from './event-mapper'
 import { resolveModel } from './model-resolver'
 import { SessionCache } from './session-cache'
+import { injectSkills } from './extensions/skills-injector'
+import { createSubAgentTools } from './extensions/sub-agent-tool'
 import { ProviderError, ProviderErrorCode } from '../shared/error-types'
 
 /**
@@ -53,10 +55,17 @@ export class PiAgentProvider implements IAgentProvider {
     const mapperCtx = createMapperContext()
     this.llmCallTracker.reset()
 
+    // Skills injection
+    let enrichedPrompt = prompt
+    if (options?.skills?.length) {
+      enrichedPrompt = injectSkills(enrichedPrompt, options.skills)
+    }
+
+    // System prompt override
     const systemPrompt = resolveSystemPrompt(options?.systemPrompt)
-    const enrichedPrompt = systemPrompt
-      ? `${systemPrompt}\n\n---\n\n${prompt}`
-      : prompt
+    if (systemPrompt) {
+      enrichedPrompt = `${systemPrompt}\n\n---\n\n${enrichedPrompt}`
+    }
 
     try {
       const session = await this.sessionCache.getOrCreate(cwd, resumeSessionId, options) as any
@@ -95,7 +104,28 @@ export class PiAgentProvider implements IAgentProvider {
         session.subscribe(onEvent)
       }
 
-      const runPromise = session.prompt(enrichedPrompt).then(() => {
+      // Sub-agent tools
+      if (options?.agents) {
+        const subTools = createSubAgentTools({
+          agents: options.agents as any,
+          createSession: (cwd, opts) => this.createPiSession(cwd, opts),
+          cwd,
+          parentSignal: options.abortSignal,
+        })
+        if (typeof session.addTools === 'function') {
+          session.addTools(subTools)
+        }
+      }
+
+      // Budget control via shouldStopAfterTurn
+      const promptOptions: any = {}
+      if (options?.maxBudgetUsd) {
+        promptOptions.shouldStopAfterTurn = () => {
+          return mapperCtx.tokenAggregator.totalCost() > options.maxBudgetUsd!
+        }
+      }
+
+      const runPromise = session.prompt(enrichedPrompt, promptOptions).then(() => {
         bridge.close()
       }).catch((err: unknown) => {
         const message = err instanceof Error ? err.message : String(err)
