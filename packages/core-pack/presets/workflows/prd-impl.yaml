@@ -1391,14 +1391,23 @@ nodes:
 
           ⛔ **规则：用户输入的所有功能都是"必需"，如果某个用户提出的功能未实现，必须列为缺失项。**
 
-          ## 评估维度（4 个，加权计分）
+          ## 评估维度（5 个，加权计分）
 
-          ### 1. 全部功能覆盖（权重 40%）
+          ### 1. 全部功能覆盖（权重 35%）
           - 逐个检查所有 PRD 列出的功能（P0 核心 + P1 增强，不含 Won't Have），每个是否有对应实现？
           - 实现是否可运行？（不是空壳或 TODO）
           - 评分: 已实现数 / 全部功能总数 × 100%
 
-          ### 2. UI/UX 操作闭环（权重 30%，仅当功能涉及 UI 时评估）
+          ### 2. 接线完整性（权重 15%）
+          检查每个已实现功能是否正确接入宿主调用链（代码存在 ≠ 功能可用）:
+          - **Server 路由**: 新路由文件是否在 server 入口文件中被 import 并注册（如 `app.route()` / `router.use()`）？
+          - **前端组件**: 新页面/组件是否在路由配置或父组件中被 import 并渲染？
+          - **生命周期 / Hook**: 新增的生命周期函数是否在 hook 链或启动序列中被调用？
+          - **数据管道**: 新增的处理函数是否在数据流管道中被串联？
+          - 评分: 已接线数 / 需接线总数 × 100%
+          - ⚠️ 如果项目类型不涉及路由/页面（如纯 CLI、纯 YAML），此维度标记 N/A 并给 100%
+
+          ### 3. UI/UX 操作闭环（权重 30%，仅当功能涉及 UI 时评估）
           对每个涉及用户界面的必需功能:
           - **入口**: 用户从哪里进入？（菜单/路由/按钮）
           - **操作**: 用户怎么执行？（表单/交互序列）
@@ -1407,28 +1416,29 @@ nodes:
           - 4 项都有 → 该功能 UI 闭环完整
           - **如果只有 API/后端实现但没有 UI 操作路径 → 该功能 UI 闭环缺失**
 
-          ### 3. 验收标准通过率（权重 20%）
+          ### 4. 验收标准通过率（权重 15%）
           - 提取必需故事的 Given/When/Then 验收标准
           - 逐条检查: 实现是否能通过该验收标准？
           - 评分: 可通过的验收标准数 / 总验收标准数 × 100%
 
-          ### 4. Non-Goals 遵守（权重 10%）
+          ### 5. Non-Goals 遵守（权重 5%）
           - 检查 Won't Have 列表
           - 是否误实现了明确不做的功能？
           - 无误实现 → 100%，有误实现 → 0%
 
           ## 总分计算
-          总分 = 维度1×0.4 + 维度2×0.3 + 维度3×0.2 + 维度4×0.1
+          总分 = 维度1×0.35 + 维度2×0.15 + 维度3×0.3 + 维度4×0.15 + 维度5×0.05
 
           ## 输出格式
 
           ### 评分明细
           | 维度 | 权重 | 评分 | 详情 |
           |------|------|------|------|
-          | 全部功能覆盖 | 40% | N% | X/Y 个功能已实现 |
+          | 全部功能覆盖 | 35% | N% | X/Y 个功能已实现 |
+          | 接线完整性 | 15% | N% | X/Y 个功能已接入调用链 |
           | UI/UX 操作闭环 | 30% | N% | X/Y 个 UI 功能闭环完整 |
-          | 验收标准通过率 | 20% | N% | X/Y 条标准可通过 |
-          | Non-Goals 遵守 | 10% | N% | 有/无误实现 |
+          | 验收标准通过率 | 15% | N% | X/Y 条标准可通过 |
+          | Non-Goals 遵守 | 5% | N% | 有/无误实现 |
           | **总分** | **100%** | **N%** | |
 
           ### 缺失项清单（按优先级排序）
@@ -1464,10 +1474,17 @@ nodes:
            - 是否引入了新的 CSS 方案与现有不一致？
            - 是否重写了现有错误中间件/鉴权机制？
          - 每项违反都计为 1 个 BLOCKER，并在 review_issues 里详述 "违反了契约的哪一项"
-      5. 汇总报告。host_contract_violations 计入 review_blockers未走完会由 review-fix 循环驱动修复。
+      5. 汇总报告。以下两类问题计入 review_blockers（会由 review-fix 循环驱动修复）：
+         - host_contract_violations（宿主契约违反）
+         - product-completeness-assessor 缺失项清单中"接线完整性"维度且优先级为"高"的项
+
+      ## 附加记录
+      6. 从 product-completeness-assessor 的评分结果中提取：
+         - wiring_issues: 接线完整性维度中得分 <100% 的具体项数量（缺失项清单中属于"接线完整性"维度的条目数）
+         - verification_depth: 固定为 "static_only"（review 阶段仅做静态分析，运行时验证由下游 E2E 负责）
 
       ## 输出
-      {"vars_update":{"review_blockers":"<数量，含 host 契约违反>","review_issues":"<汇总，独立列出 host 契约违反项>","host_contract_violations":"<仅 host 契约违反数量>","completeness_score":"<0-100>","completeness_passed":"<score == 100>","conclusion":"<2-3句话，必须提及 host 契约一致性结论>"}}
+      {"vars_update":{"review_blockers":"<数量，含 host 契约违反 + 接线高优先级项>","review_issues":"<汇总，独立列出 host 契约违反项和接线缺失项>","host_contract_violations":"<仅 host 契约违反数量>","wiring_issues":"<接线完整性缺失项数量>","verification_depth":"static_only","completeness_score":"<0-100>","completeness_passed":"<score == 100>","conclusion":"<2-3句话，必须提及 host 契约一致性结论>"}}
 
   - id: review-fix
     type: agent
@@ -2643,11 +2660,21 @@ nodes:
 
       产品: <PRD 名称> | 生成时间: <ISO> | 工作流: prd-impl
 
+      ## 置信度降级规则
+      最终完整度 = PCA 基准分经以下规则降级（诚实反映验证深度，不阻止 PR 创建）：
+      - host_has_ui == "true" 且 real_e2e_ui_passed != "true" → 扣 15 分（UI 未经浏览器验证）
+      - $inputs.run_e2e != "true"（E2E 整体被禁用）→ 扣 10 分（接口未经运行时验证）
+      - review_blockers 存在未解决项 → 每个扣 2 分，上限扣 10 分
+      - 降级后分数下限为 0，最终分标注置信度标签：
+        - ≥90: "高置信"
+        - 70-89: "中置信"
+        - <70: "低置信"
+
       ## 总体结论
-      - 完整度总分: $vars.completeness_score / 100
+      - 完整度总分: <降级后最终分> / 100（原始 $vars.completeness_score → 最终分，置信度: <高/中/低>）
       - 达标轮次: $vars.completeness_rounds / $inputs.completeness_max_rounds
       - 质量判定: <e2e_passed 从 e2e-teardown>
-      - 推荐动作: <merge / 继续迭代 / 放弃>
+      - 推荐动作: <merge / 继续迭代 / 放弃>（低置信应建议"继续迭代"）
 
       ## E2E 验收证据
       - **有 UI** (host_has_ui = $vars.host_has_ui):
@@ -2673,6 +2700,11 @@ nodes:
 
       ## 未达项 / 已知问题
       <逐项列出 failed TC 与未实现 IN-SCOPE Story以及建议的后续动作>
+
+      ## 验证深度说明
+      - 验证方式: <列出本次实际执行的验证手段：静态审查 / API E2E / 浏览器 E2E>
+      - 降级因素: <逐项列出触发的降级规则及扣分>
+      - 未验证项: <列出因 E2E 未执行而无法确认的功能清单>
 
       ## 证据链
       - delivery-audit.md（本报告）
