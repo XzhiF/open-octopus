@@ -9,7 +9,7 @@ import { getReviewSummary } from '@/lib/knowledge/api'
 const TAB_CONFIG = [
   { id: 'chat', label: '对话', icon: MessageSquare },
   { id: 'memory', label: '记忆', icon: Brain },
-  { id: 'knowledge', label: '知识', icon: BookOpen },
+  { id: 'knowledge', label: '执行档案', icon: BookOpen },
   { id: 'skill', label: 'SKILL', icon: Zap },
   { id: 'clone', label: '分身', icon: Users },
   { id: 'task', label: '任务', icon: ClipboardList },
@@ -27,8 +27,7 @@ export function AgentTabs({ activeTab, onTabChange }: AgentTabsProps) {
   useEffect(() => {
     getReviewSummary()
       .then((res) => {
-        const total = (res?.rules ?? 0) + (res?.skills ?? 0)
-        setPendingCount(total)
+        setPendingCount(res?.rules ?? 0)
       })
       .catch(() => { /* ignore */ })
   }, [activeTab]) // Re-fetch when tab changes (actions may have changed count)

@@ -1,15 +1,13 @@
 'use client'
 
-import type { ReviewFilter, ReviewStatusFilter, ReviewTypeStatusCounts, ReviewStatusCounts } from '@/lib/knowledge/types'
+import type { ReviewStatusFilter, ReviewStatusCounts } from '@/lib/knowledge/types'
 import { cn } from '@/lib/utils'
 
 interface ReviewFilterBarProps {
-  filter: ReviewFilter
-  onFilterChange: (filter: ReviewFilter) => void
   statusFilter: ReviewStatusFilter
   onStatusFilterChange: (status: ReviewStatusFilter) => void
   total: number
-  typeStatusCounts: ReviewTypeStatusCounts
+  statusCounts: ReviewStatusCounts
 }
 
 function Pill({
@@ -62,47 +60,13 @@ const STATUS_KEYS: { key: keyof ReviewStatusCounts; label: string }[] = [
 ]
 
 export function ReviewFilterBar({
-  filter,
-  onFilterChange,
   statusFilter,
   onStatusFilterChange,
   total,
-  typeStatusCounts,
+  statusCounts,
 }: ReviewFilterBarProps) {
-  // Type filter options with counts from the "all statuses" row
-  const typeOptions: { value: ReviewFilter; label: string; count: number }[] = [
-    { value: 'all', label: '全部', count: typeStatusCounts.all?.all ?? 0 },
-    { value: 'rule', label: '经验', count: typeStatusCounts.rule?.all ?? 0 },
-  ]
-
-  // Status counts react to the selected type filter
-  const activeCounts: ReviewStatusCounts = filter === 'rule'
-    ? typeStatusCounts.rule
-    : typeStatusCounts.all
-
   return (
-    <div className="space-y-2.5 px-4 py-3 border-b border-agent-divider">
-      {/* Type filter + total */}
-      <div className="flex items-center justify-between gap-3">
-        <div className="flex items-center gap-2">
-          {typeOptions.map((opt) => (
-            <Pill
-              key={opt.value}
-              active={filter === opt.value}
-              onClick={() => onFilterChange(opt.value)}
-            >
-              {opt.label}
-              <CountBadge count={opt.count} active={filter === opt.value} />
-            </Pill>
-          ))}
-        </div>
-
-        <span className="text-xs text-muted-foreground whitespace-nowrap tabular-nums">
-          共 {total} 条
-        </span>
-      </div>
-
-      {/* Status filter with counts (linked to type filter) */}
+    <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-agent-divider">
       <div className="flex items-center gap-2">
         {STATUS_KEYS.map((opt) => (
           <Pill
@@ -112,12 +76,16 @@ export function ReviewFilterBar({
           >
             {opt.label}
             <CountBadge
-              count={activeCounts?.[opt.key] ?? 0}
+              count={statusCounts?.[opt.key] ?? 0}
               active={statusFilter === opt.key}
             />
           </Pill>
         ))}
       </div>
+
+      <span className="text-xs text-muted-foreground whitespace-nowrap tabular-nums">
+        共 {total} 条
+      </span>
     </div>
   )
 }

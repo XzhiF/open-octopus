@@ -27,15 +27,13 @@ export function ReviewQueueList() {
     selectedIds,
     toggleSelect,
     clearSelection,
-    filter,
-    setFilter,
     statusFilter,
     setStatusFilter,
     refetch,
     page,
     setPage,
     total,
-    typeStatusCounts,
+    statusCounts,
   } = useReviewQueue(PAGE_SIZE)
 
   const { orgs } = useOrgs()
@@ -147,12 +145,10 @@ export function ReviewQueueList() {
       <div className="flex flex-col flex-1 min-w-0">
       {/* Filter bar */}
       <ReviewFilterBar
-        filter={filter}
-        onFilterChange={setFilter}
         statusFilter={statusFilter}
         onStatusFilterChange={setStatusFilter}
         total={total}
-        typeStatusCounts={typeStatusCounts}
+        statusCounts={statusCounts}
       />
 
       {/* List area */}

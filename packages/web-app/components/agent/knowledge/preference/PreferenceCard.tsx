@@ -12,7 +12,7 @@
  * "全部收起 / 全部展开" without lifting state.
  */
 
-import { useState, useEffect, useCallback, useImperativeHandle, forwardRef } from 'react'
+import { useState, useEffect, useCallback, useImperativeHandle, forwardRef, useRef } from 'react'
 import { ChevronDown, ChevronUp, Edit3, Save, X, Globe2, Building2, Loader2, FileText } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -48,6 +48,7 @@ export const PreferenceCard = forwardRef<PreferenceCardHandle, PreferenceCardPro
     const [draft, setDraft] = useState('')
     const [loading, setLoading] = useState(true)
     const [saving, setSaving] = useState(false)
+    const initialLoadRef = useRef(true)
 
     const scope: 'global' | 'org' = kind === 'global' ? 'global' : 'org'
     const orgId = kind === 'org' ? orgName : undefined
@@ -62,7 +63,13 @@ export const PreferenceCard = forwardRef<PreferenceCardHandle, PreferenceCardPro
       getPreference(scope, orgId)
         .then((res) => {
           if (cancelled) return
-          setContent(res.content ?? '')
+          const text = res.content ?? ''
+          setContent(text)
+          // Auto-collapse on first load if content is empty
+          if (initialLoadRef.current) {
+            initialLoadRef.current = false
+            if (!text.trim()) setExpanded(false)
+          }
         })
         .catch((err: unknown) => {
           if (cancelled) return

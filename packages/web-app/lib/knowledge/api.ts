@@ -179,13 +179,11 @@ export async function getAvailableWorkflows(): Promise<{ workflows: string[] }> 
 // ============ Review API ============
 
 export async function getPendingReviews(params?: {
-  type?: string
   status?: string
   page?: number
   pageSize?: number
 }) {
   const searchParams = new URLSearchParams()
-  if (params?.type) searchParams.set('type', params.type)
   if (params?.status) searchParams.set('status', params.status)
   if (params?.page) searchParams.set('page', String(params.page))
   if (params?.pageSize) searchParams.set('pageSize', String(params.pageSize))
@@ -222,8 +220,8 @@ export async function batchReview(ids: string[], action: 'approve' | 'reject', o
 
 export async function getReviewSummary(): Promise<{
   rules: number
-  skills: number
-  typeStatusCounts?: import('@/lib/knowledge/types').ReviewTypeStatusCounts
+  statusCounts?: import('@/lib/knowledge/types').ReviewStatusCounts
+  typeStatusCounts?: Record<string, import('@/lib/knowledge/types').ReviewStatusCounts>
 }> {
   const res = await apiFetch(`${getServerUrl()}/api/review/summary`)
   return handleResponse(res)

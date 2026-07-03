@@ -131,8 +131,8 @@ export function createReviewRoutes(
   routes.get("/summary", (c) => {
     try {
       const summary = reviewService.getPendingSummary()
-      const typeStatusCounts = pendingReviewDAO.countByTypeAndStatus()
-      return c.json({ ...summary, typeStatusCounts })
+      const statusCounts = pendingReviewDAO.countByStatus()
+      return c.json({ ...summary, statusCounts })
     } catch (err) {
       const { body, status } = errorResponse(err, "review.summary")
       return c.json(body, status)

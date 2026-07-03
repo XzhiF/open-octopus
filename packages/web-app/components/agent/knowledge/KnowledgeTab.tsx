@@ -29,7 +29,8 @@ function isValidSubTab(value: string | null): value is SubTabId {
 export function KnowledgeTab() {
   const searchParams = useSearchParams()
   const router = useRouter()
-  const { pendingCount } = useReviewQueue()
+  const { statusCounts } = useReviewQueue()
+  const pendingCount = statusCounts.all
 
   const [activeSub, setActiveSub] = useState<SubTabId>(() => {
     const sub = searchParams.get('sub')
@@ -105,7 +106,7 @@ export function KnowledgeTab() {
       </div>
 
       {/* Content area */}
-      <div className="flex-1 overflow-auto">
+      <div className="flex-1 min-h-0">
         {activeSub === 'preference' && <PreferenceEditor />}
         {activeSub === 'experience' && <ExperienceLibrary />}
         {activeSub === 'review' && <ReviewQueueList />}

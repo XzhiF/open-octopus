@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import type { PendingItem, ReviewFilter, ReviewStatusFilter, ReviewListResponse, ReviewTypeStatusCounts, ReviewStatusCounts } from '@/lib/knowledge/types'
+import type { PendingItem, ReviewStatusFilter, ReviewListResponse, ReviewStatusCounts } from '@/lib/knowledge/types'
 import * as api from '@/lib/knowledge/api'
 
 const DEFAULT_PAGE_SIZE = 20
@@ -13,23 +13,17 @@ export function useReviewQueue(pageSize: number = DEFAULT_PAGE_SIZE) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
-  const [filter, setFilter] = useState<ReviewFilter>('all')
   const [statusFilter, setStatusFilter] = useState<ReviewStatusFilter>('all')
   const emptyCounts: ReviewStatusCounts = { all: 0, pending: 0, deferred: 0, approved: 0, rejected: 0, edited: 0 }
-  const [typeStatusCounts, setTypeStatusCounts] = useState<ReviewTypeStatusCounts>({
-    rule: { ...emptyCounts }, all: { ...emptyCounts },
-  })
+  const [statusCounts, setStatusCounts] = useState<ReviewStatusCounts>(emptyCounts)
 
-  const fetchItems = useCallback(async (currentPage: number, currentFilter: ReviewFilter, currentStatus: ReviewStatusFilter) => {
+  const fetchItems = useCallback(async (currentPage: number, currentStatus: ReviewStatusFilter) => {
     try {
       setLoading(true)
       setError(null)
-      const params: { type?: string; status?: string; page: number; pageSize: number } = {
+      const params: { status?: string; page: number; pageSize: number } = {
         page: currentPage,
         pageSize,
-      }
-      if (currentFilter !== 'all') {
-        params.type = currentFilter
       }
       if (currentStatus !== 'all') {
         params.status = currentStatus
@@ -39,7 +33,12 @@ export function useReviewQueue(pageSize: number = DEFAULT_PAGE_SIZE) {
       setTotal(res.total)
       // Fetch status counts in parallel (lightweight summary endpoint)
       api.getReviewSummary().then((summary) => {
-        if (summary.typeStatusCounts) setTypeStatusCounts(summary.typeStatusCounts)
+        if (summary.statusCounts) {
+          setStatusCounts(summary.statusCounts)
+        } else if (summary.typeStatusCounts?.all) {
+          // Fallback: server still returns old type×status cross-tab format
+          setStatusCounts(summary.typeStatusCounts.all)
+        }
       }).catch(() => { /* counts are supplementary, ignore errors */ })
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Failed to load pending reviews')
@@ -75,28 +74,19 @@ export function useReviewQueue(pageSize: number = DEFAULT_PAGE_SIZE) {
   }, [])
 
   const refetch = useCallback(() => {
-    return fetchItems(page, filter, statusFilter)
-  }, [fetchItems, page, filter, statusFilter])
+    return fetchItems(page, statusFilter)
+  }, [fetchItems, page, statusFilter])
 
-  // Re-fetch when page, filter, or statusFilter changes
+  // Re-fetch when page or statusFilter changes
   useEffect(() => {
-    fetchItems(page, filter, statusFilter)
-  }, [fetchItems, page, filter, statusFilter])
-
-  // Reset to page 1 when filter changes
-  const changeFilter = useCallback((newFilter: ReviewFilter) => {
-    setFilter(newFilter)
-    setPage(1)
-    setSelectedIds(new Set())
-  }, [])
+    fetchItems(page, statusFilter)
+  }, [fetchItems, page, statusFilter])
 
   const changeStatusFilter = useCallback((newStatus: ReviewStatusFilter) => {
     setStatusFilter(newStatus)
     setPage(1)
     setSelectedIds(new Set())
   }, [])
-
-  const pendingCount = total
 
   return {
     items,
@@ -106,15 +96,12 @@ export function useReviewQueue(pageSize: number = DEFAULT_PAGE_SIZE) {
     toggleSelect,
     selectAll,
     clearSelection,
-    filter,
-    setFilter: changeFilter,
     statusFilter,
     setStatusFilter: changeStatusFilter,
-    pendingCount,
     refetch,
     page,
     setPage,
     total,
-    typeStatusCounts,
+    statusCounts,
   }
 }

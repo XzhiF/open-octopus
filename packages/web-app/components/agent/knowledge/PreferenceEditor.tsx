@@ -50,7 +50,7 @@ export function PreferenceEditor() {
   }, [])
 
   return (
-    <div className="flex flex-col gap-4 p-2 sm:p-3">
+    <div className="flex flex-col gap-4 p-2 sm:p-3 h-full overflow-auto">
       {/* Toolbar */}
       <header className="flex items-center gap-3 flex-wrap">
         <h2 className="text-base font-semibold text-foreground">用户偏好</h2>

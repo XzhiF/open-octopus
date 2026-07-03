@@ -80,7 +80,6 @@ export interface AssistantMessage {
   suggestion?: string
 }
 
-export type ReviewFilter = 'all' | 'rule'
 export type ReviewStatusFilter = 'all' | 'pending' | 'approved' | 'rejected' | 'deferred'
 
 export interface ReviewStatusCounts {
@@ -90,9 +89,4 @@ export interface ReviewStatusCounts {
   approved: number
   rejected: number
   edited: number
-}
-
-export interface ReviewTypeStatusCounts {
-  rule: ReviewStatusCounts
-  all: ReviewStatusCounts
 }
