@@ -141,7 +141,15 @@ export class PiAgentProvider implements IAgentProvider {
       if (err instanceof ProviderError) {
         yield { type: 'error', code: err.code, message: err.message }
       } else {
-        yield { type: 'error', code: 'unknown_error', message: err instanceof Error ? err.message : String(err) }
+        const message = err instanceof Error ? err.message : String(err)
+        // Structured error hints for common failure patterns
+        if (message.includes('API key') || message.includes('apiKey')) {
+          yield { type: 'error', code: ProviderErrorCode.API_KEY_MISSING, message: `API Key 配置错误: ${message}。请检查环境变量 ANTHROPIC_API_KEY / OPENAI_API_KEY / DASHSCOPE_API_KEY 等` }
+        } else if (message.includes('model') && message.includes('not found')) {
+          yield { type: 'error', code: ProviderErrorCode.MODEL_NOT_FOUND, message: `模型未找到: ${message}。使用 "provider/model-id" 格式指定` }
+        } else {
+          yield { type: 'error', code: 'unknown_error', message }
+        }
       }
     }
   }
