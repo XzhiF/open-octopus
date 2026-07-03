@@ -142,13 +142,13 @@ export class PiAgentProvider implements IAgentProvider {
         yield { type: 'error', code: err.code, message: err.message }
       } else {
         const message = err instanceof Error ? err.message : String(err)
-        // Structured error hints for common failure patterns
+        // Structured error hints for common failure patterns — sanitize raw messages
         if (message.includes('API key') || message.includes('apiKey')) {
-          yield { type: 'error', code: ProviderErrorCode.API_KEY_MISSING, message: `API Key 配置错误: ${message}。请检查环境变量 ANTHROPIC_API_KEY / OPENAI_API_KEY / DASHSCOPE_API_KEY 等` }
+          yield { type: 'error', code: ProviderErrorCode.API_KEY_MISSING, message: 'API Key 配置错误。请检查环境变量 ANTHROPIC_API_KEY / OPENAI_API_KEY / DASHSCOPE_API_KEY 等' }
         } else if (message.includes('model') && message.includes('not found')) {
-          yield { type: 'error', code: ProviderErrorCode.MODEL_NOT_FOUND, message: `模型未找到: ${message}。使用 "provider/model-id" 格式指定` }
+          yield { type: 'error', code: ProviderErrorCode.MODEL_NOT_FOUND, message: '模型未找到。使用 "provider/model-id" 格式指定' }
         } else {
-          yield { type: 'error', code: 'unknown_error', message }
+          yield { type: 'error', code: 'unknown_error', message: '服务内部错误' }
         }
       }
     }
@@ -194,9 +194,10 @@ export class PiAgentProvider implements IAgentProvider {
   private async findPiSession(resumeId: string): Promise<any> {
     try {
       const { SessionManager } = await import('@earendil-works/pi-coding-agent')
-      // SessionManager.list is static — needs cwd, which we don't have here.
-      // ponytail: basic resume — upgrade when we have cwd context in findSession
-      return null
+      // SessionManager.list returns sessions for a given cwd.
+      // Use process.cwd() as fallback since we don't have the original cwd here.
+      const sessions = await SessionManager.list(process.cwd())
+      return sessions.find((s: any) => s.id === resumeId) ?? null
     } catch {
       return null
     }

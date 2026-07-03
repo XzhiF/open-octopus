@@ -6,15 +6,22 @@ import type { MessageChunk } from '../types'
 vi.mock('@earendil-works/pi-coding-agent', () => ({
   createAgentSession: vi.fn().mockResolvedValue({
     subscribe: vi.fn((cb: (e: any) => void) => {
-      // Simulate Pi events
-      setTimeout(() => {
-        cb({ type: 'message_start' })
-        cb({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: 'Hello from Pi' } })
-        cb({ type: 'message_end' })
-        cb({ type: 'agent_end', messages: [] })
-      }, 10)
+      // Store callback for prompt() to invoke
+      ;(globalThis as any).__piSubscribeCb = cb
     }),
-    prompt: vi.fn().mockResolvedValue(undefined),
+    prompt: vi.fn().mockImplementation(() => {
+      const cb = (globalThis as any).__piSubscribeCb
+      return new Promise<void>((resolve) => {
+        // Fire events then resolve — ensures bridge sees them before close
+        setTimeout(() => {
+          cb({ type: 'message_start' })
+          cb({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: 'Hello from Pi' } })
+          cb({ type: 'message_end' })
+          cb({ type: 'agent_end', messages: [] })
+          resolve()
+        }, 10)
+      })
+    }),
     abort: vi.fn(),
     dispose: vi.fn(),
   }),
@@ -25,11 +32,7 @@ vi.mock('@earendil-works/pi-coding-agent', () => ({
 }))
 
 describe('PiAgentProvider integration', () => {
-  // ponytail: full sendQuery integration requires mocking dynamic ESM imports
-  // which is fragile in vitest. Real integration testing deferred to P4 E2E tests
-  // with WorkflowEngine + mock provider. The 3 unit-level tests below cover the
-  // provider's public API surface adequately for CI.
-  it.skip('produces text_delta + result sequence (requires ESM mock)', async () => {
+  it('produces text_delta + result sequence', async () => {
     const provider = new PiAgentProvider()
     const chunks: MessageChunk[] = []
     for await (const chunk of provider.sendQuery('hello', '/tmp')) {

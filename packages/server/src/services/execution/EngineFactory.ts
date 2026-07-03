@@ -62,7 +62,7 @@ export class EngineFactory implements IEngineFactory {
     )
   }
 
-  reconstructEngine(execution: ExecutionRow): WorkflowEngine {
+  async reconstructEngine(execution: ExecutionRow): Promise<WorkflowEngine> {
     const poolSnapshot = execution.var_pool ? JSON.parse(execution.var_pool) : {}
     const workflow = this.ctx.workflowService.getWorkflow(execution.workflow_ref)
     if (!workflow) {

@@ -6,6 +6,7 @@ packages:
   - packages/web-app
   - packages/core-pack
   - packages/providers
+  - packages/sdk-provider
 allowBuilds:
   better-sqlite3: true
   esbuild: true

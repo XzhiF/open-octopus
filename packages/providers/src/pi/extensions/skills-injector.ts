@@ -1,5 +1,5 @@
 import { readFileSync, existsSync } from 'fs'
-import { join } from 'path'
+import { join, resolve, normalize } from 'path'
 import { homedir } from 'os'
 
 /**
@@ -20,13 +20,24 @@ export function injectSkills(prompt: string, skills: string[], orgDir?: string):
   return `${prompt}\n\n## Available Skills\n\n${contents.join('\n\n')}`
 }
 
+function isPathTraversal(name: string): boolean {
+  const normalized = normalize(name)
+  return normalized.includes('..') || normalized.startsWith('/') || normalized.startsWith('\\')
+}
+
 function loadSkillContent(name: string, orgDir?: string): string | null {
+  if (isPathTraversal(name)) return null
+
   if (orgDir) {
-    const orgPath = join(orgDir, 'skills', name, 'SKILL.md')
+    const orgBase = resolve(orgDir, 'skills')
+    const orgPath = join(orgBase, name, 'SKILL.md')
+    if (!resolve(orgPath).startsWith(orgBase)) return null
     if (existsSync(orgPath)) return readFileSync(orgPath, 'utf-8')
   }
 
-  const globalPath = join(homedir(), '.octopus', 'skills', name, 'SKILL.md')
+  const globalBase = join(homedir(), '.octopus', 'skills')
+  const globalPath = join(globalBase, name, 'SKILL.md')
+  if (!resolve(globalPath).startsWith(globalBase)) return null
   if (existsSync(globalPath)) return readFileSync(globalPath, 'utf-8')
 
   return null
