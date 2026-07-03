@@ -7,7 +7,7 @@ import { WorkflowEngine } from "@octopus/engine"
 import { PromptInjector } from "@octopus/engine"
 import { CrossExecResolver } from "@octopus/shared"
 import { PipelineConfigLoader } from "../pipeline-config"
-import { getProvider } from "@octopus/providers"
+import { getProviderAsync } from "@octopus/providers"
 
 export class EngineFactory implements IEngineFactory {
   private knowledgeService?: KnowledgeService
@@ -25,7 +25,7 @@ export class EngineFactory implements IEngineFactory {
     this.knowledgeService = service
   }
 
-  createEngine(execution: ExecutionRow, workflow: any): WorkflowEngine {
+  async createEngine(execution: ExecutionRow, workflow: any): Promise<WorkflowEngine> {
     const pipelineConfig = this.pipelineConfigLoader.getConfig()
 
     const promptInjector = pipelineConfig?.prompts
@@ -43,7 +43,7 @@ export class EngineFactory implements IEngineFactory {
 
     const providers: Record<string, any> = {}
     const engineType = workflow.engine || "claude"
-    const provider = getProvider(engineType, { cwd: this.ctx.workspacePath })
+    const provider = await getProviderAsync(engineType)
     if (provider) {
       providers[engineType] = provider
     }
@@ -69,7 +69,7 @@ export class EngineFactory implements IEngineFactory {
       throw new Error(`Workflow ${execution.workflow_ref} not found`)
     }
 
-    const engine = this.createEngine(execution, workflow)
+    const engine = await this.createEngine(execution, workflow)
     engine.updateVarPool(poolSnapshot)
     return engine
   }

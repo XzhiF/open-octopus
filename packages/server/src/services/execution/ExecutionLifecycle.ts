@@ -11,7 +11,7 @@ import type { KnowledgeService } from "../knowledge"
 import type { HookDef, NodeDef, WorkflowDef, WorkflowHooks, PipelineConfig, ExecutionLookup } from "@octopus/shared"
 import type { EngineCallbacks } from "@octopus/engine"
 import { WorkflowEngine, BashExecutor, AgentExecutor, AgentNodeRunner, FilesystemCheckpointStore } from "@octopus/engine"
-import { getProvider } from "@octopus/providers"
+import { getProvider, getProviderAsync } from "@octopus/providers"
 import { parseWorkflow, VarPool, evaluateExpression, parsePipelineConfig, CrossExecResolver } from "@octopus/shared"
 import { gitOps } from "../git-ops"
 import { ObservabilityService as ObsSvc } from "../observability"
@@ -1742,7 +1742,7 @@ export class ExecutionLifecycle {
     const pool = new VarPool({ ...poolSnapshot })
     pool.update(hookVars)
     const providerKey = hook.engine ?? wf.engine ?? "claude"
-    const provider = getProvider(providerKey)
+    const provider = await getProviderAsync(providerKey)
     const agentNode: NodeDef = {
       id: hook.id ?? `hook-agent-${Date.now()}`, type: "agent",
       prompt: hook.prompt!, model: hook.model ?? wf.model,

@@ -3,7 +3,7 @@ import { streamSSE } from "hono/streaming"
 import { ChatService } from "../services/chat"
 import { WorkspaceService } from "../services/workspace"
 import { SSEService } from "../services/sse"
-import { getProvider, type TokenUsage } from "@octopus/providers"
+import { getProviderAsync, type TokenUsage } from "@octopus/providers"
 import os from "os"
 
 export function chatRoutes(sseService: SSEService, chatService: ChatService, workspaceService: WorkspaceService): Hono {
@@ -82,7 +82,7 @@ export function chatRoutes(sseService: SSEService, chatService: ChatService, wor
     })
 
     const provider = session.provider ?? "claude"
-    const agent = getProvider(provider)
+    const agent = await getProviderAsync(provider)
 
     let fullText = ""
     let sdkMessageId = ""
@@ -317,7 +317,7 @@ export function chatRoutes(sseService: SSEService, chatService: ChatService, wor
 
     try {
       const provider = session.provider ?? "claude"
-      const agent = getProvider(provider)
+      const agent = await getProviderAsync(provider)
       const prompt = `Generate a short Chinese title (≤20 characters) for this conversation. Only output the title, no extra text.\n\nUser: ${userMsg.content.slice(0, 200)}\nAssistant: ${assistantMsg.content.slice(0, 200)}`
       const stream = agent.sendQuery(prompt, process.cwd())
       let title = ""

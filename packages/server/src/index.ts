@@ -43,7 +43,7 @@ import { ExecutionService } from "./services/execution"
 import { errorHandler } from "./middleware/error"
 import { agentAuthMiddleware, setAgentAuthOrgDAO } from "./routes/agent/middleware"
 import { installGlobalErrorHandlers, logInfo, getLogFilePath } from "./file-logger"
-import { registerProvider, ClaudeSDKProvider } from "@octopus/providers"
+import { registerProvider, ClaudeSDKProvider, registerPiProvider } from "@octopus/providers"
 import { isPortInUse, findPidOnPort, killPid, waitForPort } from "./port-utils"
 import { globalErrorTracker, setupDataRetention } from "./services/error-tracker"
 import { initExecutionServiceRegistry } from "./services/execution-service-registry"
@@ -164,6 +164,7 @@ if (!process.env.VITEST && daos) {
     workspaceDAO: daos.workspace,
   })
   registerProvider('claude', () => new ClaudeSDKProvider())
+  registerPiProvider()
 
   // Initialize agent service singletons
   initSessionService(daos.agentSession)
