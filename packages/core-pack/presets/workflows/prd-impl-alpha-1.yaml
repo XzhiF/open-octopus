@@ -485,21 +485,21 @@ nodes:
   - id: host-audit
     type: agent
     depends_on: [setup]
-    timeout: 3600
+    timeout: 900
     agents:
       architecture-explorer:
-        description: "架构勘探员 — 扫描宿主项目实际架构、技术栈、启动命令"
+        description: "架构勘探员 — 定向提取后端架构信息"
         agent_file: ".claude/agents/architecture-explorer.md"
-        model: opus[1m]
-        tools: ["Read", "Grep", "Glob", "Bash"]
+        model: sonnet
+        tools: ["Read", "Write", "Grep", "Glob"]
       ui-system-auditor:
-        description: "UI 系统审计员 — 扫描设计 tokens、现有组件、路由、状态管理、错误中间件、页面约定"
+        description: "UI 系统审计员 — 定向提取前端约定"
         agent_file: ".claude/agents/engineering-frontend-developer.md"
-        model: opus[1m]
-        tools: ["Read", "Grep", "Glob"]
+        model: sonnet
+        tools: ["Read", "Write", "Grep", "Glob"]
     prompt: |
       你是宿主项目契约生成器。后续所有实现节点必须遵守 host-contract.md。
-      本节点是为了防止“干净藏主义实现”——LLM 在不看现有代码的情况下凭空创造组件、另起炉灶。
+      本节点防止 LLM 不看现有代码就凭空创造组件、另起炉灶。
 
       $vars.workspace_rules
 
@@ -509,30 +509,106 @@ nodes:
       ## 输出目录
       $vars.output_dir/host-contract/
 
-      ## 委派
+      ## ⚡ 短路检查（最先执行）
+      如果 `$vars.output_dir/host-contract.md` 已存在：
+      1. Read 该文件前 10 行，提取 "是否含 UI" 和 "扫描时间"
+      2. 扫描时间在 24h 内 → 直接输出 vars_update 并结束，不做任何扫描：
+         {"vars_update":{"host_contract_file":"$vars.output_dir/host-contract.md","host_has_ui":"<从文件提取>","conclusion":"host-contract.md 已存在且在 24h 内，跳过扫描"}}
+      3. 超过 24h → 读取旧文件作为 baseline，继续下方扫描
 
-      ### 1. 委派 architecture-explorer 扫描架构
-      输出: $vars.output_dir/host-contract/01-architecture.md
-      扫描项：
-      - monorepo 结构（packages/ / apps/ / projects/ 各包职责）
-      - 后端框架 / 数据库 / ORM / 路由约定 / 错误中间件 / 鉴权
-      - 构建命令 / 测试命令 / 启动命令（从 package.json / Makefile / scripts/ 提取）
-      - 现有的 API 模式（REST / GraphQL / SSE / RPC）及路径命名规则
-      - 现有的文件组织慣例（类似路由放哪里 / 服务层放哪里）
+      ## ⛔ 扫描预算（你和子 Agent 都必须遵守）
+      - **Glob 优先于 Read**：先 Glob 列文件名，从中挑选关键文件再 Read
+      - **Read 预算**: 单个 Agent（含你自己和每个子 Agent）最多 Read 20 个文件
+      - **Grep 定位法**：先 Grep 找到匹配文件，只 Read 匹配的
+      - **入口优先**：只读 entry points（index.ts / main.go / app.py / lib.rs 等）
+      - **禁止递归展开**：不要 `Glob **/*`，用 `Glob *` 看一级目录
+      - **禁止读**：`node_modules/` `dist/` `build/` `.git/` `__tests__/` `*.test.*` `*.spec.*`
 
-      ### 2. 委派 ui-system-auditor 扫描 UI 系统（仅在有前端项目时）
-      输出: $vars.output_dir/host-contract/02-ui-system.md
-      扫描项：
-      - 设计 tokens 位置（tailwind.config / theme.ts / *.css 变量）
-      - 现有组件库清单（到具体路径与导出名，如 packages/web-app/src/components/Button.tsx）
-      - 路由方案（react-router / next.js / vue-router） + 现有页面清单
-      - 状态管理方案（zustand / redux / context / pinia）与现有 stores
-      - 错误展示 / loading / empty / partial 状态的现有约定
-      - HTTP 客户端封装（lib/api.ts / apiClient 类）
-      - 截图保存 5 个典型现有页面到 $vars.output_dir/host-contract/screenshots/（如运行环境不可用则跳过截图步骤）
+      ## Phase 1: 探针（你亲自做，不委派，目标 2 分钟内）
 
-      ## 你的合成任务
-      读完两份子代理产物，合成最终约束文档 `$vars.output_dir/host-contract.md`：
+      用 Glob + Grep 快速建立项目地图：
+
+      ### 1.1 识别项目结构
+      Glob 各语言的清单文件：`package.json` / `pyproject.toml` / `Cargo.toml` / `go.mod` / `pom.xml` / `Gemfile`
+      → 确定语言 / 包管理器 / 模块划分
+
+      ### 1.2 识别入口文件
+      Glob: `*/src/{index,main,app,lib}.{ts,js,py,go,rs,java}` 及类似模式
+      → 确定各模块入口点
+
+      ### 1.3 定位关键层
+      Grep 关键模式（每种最多看 5 个匹配）：
+      - `"router|Router|route|handler|controller"` → 路由/API 层
+      - `"middleware|Middleware|interceptor"` → 中间件层
+      - `"store|Store|repository|Repository"` → 数据层
+      - `"tailwind|styled|css.*module|theme"` → 样式方案（判断是否有前端）
+
+      ### 1.4 Read 关键文件（≤8 个）
+      从以上结果中选最关键的文件 Read，提取：
+      - 技术栈（框架/ORM/CSS 方案）
+      - 构建/测试/启动命令
+      - API 路径命名和错误格式
+
+      ### 1.5 新项目快速通道
+      如果 Phase 1 发现项目入口文件 < 5 个且无现有组件库/路由层：
+      → 这是新项目，直接产出最小契约，跳过 Phase 2
+      → 写 `$vars.output_dir/host-contract.md`（必须包含以下完整结构，空 sections 保留表头）：
+
+      ```markdown
+      # Host Project Contract
+      项目: <项目名与路径>
+      扫描时间: <ISO 时间>
+      是否含 UI: false
+
+      ## 必须复用的现有资产
+      | 资产类别 | 路径 | 用法 |
+      |----------|------|------|
+      （新项目暂无现有资产）
+
+      ## 路由 / API / 目录约定
+      - <从 Phase 1 提取，如无则为空>
+
+      ## 构建与启动命令
+      - <从 Phase 1 提取>
+
+      ## 强烈不建议
+      - 不要引入与现有项目不一致的技术方案
+      ```
+
+      → 输出 vars_update 并结束
+
+      ## Phase 2: 定向委派（子 Agent 直接写文件）
+
+      ⚠️ 子 Agent 必须用 Write 工具将结果直接写入目标文件，然后只返回一行摘要。
+      不要返回扫描全文——主 Agent 不需要读完整扫描结果。
+
+      ### 2.1 委派 architecture-explorer
+      给出精确目标（从 Phase 1 探针结果中选取具体文件路径）：
+
+      "Read 以下文件并提取架构信息，用 Write 写入 $vars.output_dir/host-contract/01-architecture.md：
+       - 路由文件: <从 Phase 1 Grep 结果中选取的具体路径，最多 5 个>
+       - 中间件: <具体路径，最多 3 个>
+       - 数据模型/Schema: <具体路径，最多 3 个>
+       - 构建配置: package.json / Makefile 等
+       提取: API 路径命名规则 / 错误响应格式 / 鉴权机制 / 数据库方案
+       ⛔ Read 预算: 最多 15 个文件。
+       写完后只返回一行: '已写入 01-architecture.md: <技术栈> / <N 个 API 端点> / <鉴权方式>'"
+
+      ### 2.2 委派 ui-system-auditor（仅当 Phase 1 发现有前端项目时）
+      "Read 以下文件并提取 UI 约定，用 Write 写入 $vars.output_dir/host-contract/02-ui-system.md：
+       - 样式配置: tailwind.config / postcss.config 等
+       - 组件清单: Glob components/ 目录列文件名（不读实现）
+       - API 客户端: lib/api.* 或等价文件
+       - 路由/页面: Glob pages/ 或 app/ 列文件名
+       - 状态管理: Glob stores/ 或 store/ 列文件名 + Read 1 个 store 的导出签名
+       提取: CSS 方案 / 组件库路径 / 状态管理方案 / HTTP 客户端封装
+       ⛔ Read 预算: 最多 10 个文件。禁止读组件实现细节。
+       写完后只返回一行: '已写入 02-ui-system.md: <CSS 方案> / <N 个组件> / <状态管理>'"
+
+      ## Phase 3: 合成
+
+      读两份子代理产物文件（Read 文件，不是从子 Agent 返回值读），
+      结合 Phase 1 项目地图，合成 `$vars.output_dir/host-contract.md`：
 
       ```markdown
       # Host Project Contract
@@ -541,39 +617,31 @@ nodes:
       扫描时间: <ISO 时间>
       是否含 UI: <true / false>
 
-      ## 成果错纱（所有后续节点必须遵守）
-
-      ### 1. 必须复用的现有资产
+      ## 必须复用的现有资产
       | 资产类别 | 路径 | 用法 |
       |----------|------|------|
-      | 组件 | packages/web-app/src/components/Button.tsx | 所有按钮使用 |
-      | Hook | hooks/useToast.ts | 所有反馈 |
-      | API 客户端 | lib/api.ts | 所有 HTTP |
-      | Store | stores/workflowStore.ts | 工作流状态 |
+      | 组件 | <从 02-ui-system.md 提取> | <用途> |
+      | Hook | <从 02-ui-system.md 提取> | <用途> |
+      | API 客户端 | <从 02-ui-system.md 提取> | 所有 HTTP |
+      | Store | <从 02-ui-system.md 提取> | <用途> |
 
-      ### 2. 路由 / API / 目录约定
-      - 后端 API 路由都在: packages/server/src/routes/
-      - 错误响应格式: { error: { code, message, details? } }
-      - 前端页面都在: packages/web-app/src/pages/
-      - 所有 HTTP 调用走 lib/api.ts不要直接 fetch
+      ## 路由 / API / 目录约定
+      - <从 01-architecture.md 提取>
 
-      ### 3. 构建与启动命令
-      - 安装: pnpm install
-      - 构建: pnpm build
-      - 测试: pnpm test
-      - 启动: pnpm dev / pnpm dev --isolated
+      ## 构建与启动命令
+      - <从 Phase 1 提取>
 
-      ## 强烈不建议（违反会进 review_blockers 走 review-fix 循环修）
-      - 不要新建 packages/如需新能力，在现有包内补充
-      - 不要引入新的 CSS 方案（tailwind / styled-components / css modules 选一与现有一致）
-      - 不要绕过 lib/api.ts 自己 fetch
+      ## 强烈不建议（违反会进 review_blockers）
+      - 不要新建 packages/（如需新能力，在现有包内补充）
+      - 不要引入新的 CSS 方案（与现有一致）
+      - 不要绕过现有 API 客户端自己 fetch
       - 不要创建与现有组件功能重复的新组件
       - 不要重写现有错误中间件 / 鉴权机制
       ```
 
       ## 失败容忍
       子代理扫描失败不要退出：
-      - architecture-explorer 失败 → 合成时标记“架构未扫描”，实现节点需自探索
+      - architecture-explorer 失败 → 合成时标记"架构未扫描"，实现节点需自探索
       - ui-system-auditor 失败 → host_has_ui 标记为 unknown
 
       ## 输出
@@ -582,7 +650,7 @@ nodes:
   # ═══════════════════════════════════════════════════════════════
   # Phase 1: Plan — 两遍式规划（skeleton → deepen → balance-check）
   # 为什么拆三节点：避免 LLM context attention degradation 导致的
-  # “前面阶段写详、后面阶段写略”问题。
+  # "前面阶段写详、后面阶段写略"问题。
   # ═══════════════════════════════════════════════════════════════
   - id: plan-skeleton
     type: agent
@@ -599,7 +667,7 @@ nodes:
       ⛔ 不要自创契约已列出可复用项。骨架阶段必须不带入与契约冲突的交付物
 
       ## 设计哲学
-      LLM 在单轮输出中对“前面阶段”有 attention 偏差，导致后面阶段逐渐变浅。
+      LLM 在单轮输出中对"前面阶段"有 attention 偏差，导致后面阶段逐渐变浅。
       拆成「skeleton + deepen」两遍：骨架轮只判断阶段划分，深化轮逐阶段展开。
 
       ## PRD 输入（按优先级读取）
@@ -670,7 +738,7 @@ nodes:
 
       ## 规则
       - 不要写任何阶段内部任务、文件路径、验收标准
-      - 交付物只列出骨干よ（“API 路由、数据模型、首页 UI”）不需具体名称
+      - 交付物只列出骨干よ（"API 路由、数据模型、首页 UI"）不需具体名称
       - 阶段之间依赖必须明确（后一阶段依赖上一阶段交付物）
       - 阶段体量预期要均衡：任务数上下限不能相差 2 倍以上
 
@@ -695,7 +763,7 @@ nodes:
 
       ## 设计哲学
       本节点以「骨架」为输入，逐阶段充填详细任务。每个阶段必须达到相同深度，
-      绝对不允许“前面阶段任务详细、后面阶段只写一句话”。
+      绝对不允许"前面阶段任务详细、后面阶段只写一句话"。
 
       ## 输入
       - 骨架: $vars.plan_skeleton_file（必读）
@@ -765,7 +833,7 @@ nodes:
       | task_count | 该阶段 Task P{N}.X 总数 |
       | total_chars | 该阶段从 "## P{N}:" 到下一个 "## P" 之间的字符数 |
       | files_referenced | 该阶段提及的独立文件路径数 |
-      | acceptance_count | 该阶段“验收标准”出现次数 |
+      | acceptance_count | 该阶段"验收标准"出现次数 |
 
       ## 判定规则
       - 任一指标的 max/min > 3.0 → fail
@@ -985,7 +1053,7 @@ nodes:
       $vars.project_structure
 
       ## 输入
-      1. 架构级 API 描述: $vars.solution_file（必读，提取“API 设计”小节）
+      1. 架构级 API 描述: $vars.solution_file（必读，提取"API 设计"小节）
       2. 需求定义: $vars.requirements_file
       3. 实现计划: $vars.plan_file（只看 Backend/Shared 任务）
       4. 验收用例: $vars.acceptance_cases_file（可选，有则取 binding_hints 补足错误码/路由详情）
@@ -1019,7 +1087,7 @@ nodes:
       |-----|------------------|-------------|-------------|----------|
       | POST /api/xxx | L120-L135 | STORY-3 | TC-007, TC-008 | 无 |
 
-      如发现与 03-solution.md 冲突，必须以“Conflict”小节记录反馈给上游 PRD。
+      如发现与 03-solution.md 冲突，必须以"Conflict"小节记录反馈给上游 PRD。
 
       ## 输出
       保存到 `$vars.output_dir/api-contract.md`，结构：
@@ -1388,14 +1456,14 @@ nodes:
       2. 委派 security-engineer: "安全审查"（yaml-workflow 类型可跳过）
       3. 委派 product-completeness-assessor: "对照 $vars.requirements_file 评估产品完整度"
       4. **宿主契约一致性检查（新增）**：
-         - 读取 $vars.host_contract_file 的 “必须复用的现有资产” 与 “强烈不建议” 清单
+         - 读取 $vars.host_contract_file 的 "必须复用的现有资产" 与 "强烈不建议" 清单
          - 扫描本次变更的 git diff，逐项检查：
            - 是否创建了与契约中同名现有组件重复的新组件？
            - 是否绕过了 lib/api.ts 直接 fetch？
            - 是否新建了 packages/？
            - 是否引入了新的 CSS 方案与现有不一致？
            - 是否重写了现有错误中间件/鉴权机制？
-         - 每项违反都计为 1 个 BLOCKER，并在 review_issues 里详述 “违反了契约的哪一项”
+         - 每项违反都计为 1 个 BLOCKER，并在 review_issues 里详述 "违反了契约的哪一项"
       5. 汇总报告。以下两类问题计入 review_blockers（会由 review-fix 循环驱动修复）：
          - host_contract_violations（宿主契约违反）
          - product-completeness-assessor 缺失项清单中"接线完整性"维度且优先级为"高"的项
@@ -1474,9 +1542,9 @@ nodes:
       ## ⛔ 前置过滤：排除基准/性能测试
       在生成用例前，先过滤掉以下类型的用例（不生成可执行 case）：
       - evidence_type 为 benchmark / performance 的用例
-      - scenario 中包含“基准测试”“性能测试”“压力测试”“压测”“benchmark”“performance”关键词的用例
+      - scenario 中包含"基准测试""性能测试""压力测试""压测""benchmark""performance"关键词的用例
       - 纯测量性质（吞吐量、延迟、QPS 等）的用例
-      被过滤的用例在 conclusion 中记录为“已排除（基准/性能测试）”，不计入 e2e_total。
+      被过滤的用例在 conclusion 中记录为"已排除（基准/性能测试）"，不计入 e2e_total。
       本工作流聚焦功能验收，性能基准由专门工具处理。
 
       ## 你的任务
@@ -1760,14 +1828,14 @@ nodes:
   - id: real-e2e-ui
     type: agent
     depends_on: [e2e-setup, completeness-bind]
-    execute_when: '$inputs.run_e2e == “true” && $vars.host_has_ui == “true”'
+    execute_when: '$inputs.run_e2e == "true" && $vars.host_has_ui == "true"'
     timeout: 7200
     agents:
       browser-tester:
-        description: “浏览器 E2E 测试员 — 用 agent-browser 真实点击与断言”
-        agent_file: “.claude/agents/testing-qa-engineer.md”
+        description: "浏览器 E2E 测试员 — 用 agent-browser 真实点击与断言"
+        agent_file: ".claude/agents/testing-qa-engineer.md"
         model: sonnet
-        tools: [“Read”, “Grep”, “Glob”, “Bash”]
+        tools: ["Read", "Grep", "Glob", "Bash"]
         prompt: |
           你是浏览器 E2E 测试执行者。测试分配给你的 ui_state 类用例。
 
@@ -1778,12 +1846,12 @@ nodes:
           4. 提取关键 DOM selector 的状态文本作为证据
           5. 只有同时有【截图】+【DOM 断言通过】才算 passed
 
-          ⛔ 禁止”代码看上去应该能用”类型的报告。没有截图证据 = failed。
+          ⛔ 禁止"代码看上去应该能用"类型的报告。没有截图证据 = failed。
           ⛔ 不跳过、不排除。环境问题标记为 failed。
 
           ## 输出
           每条用例测完后输出 JSON 行:
-          {“tc”:”TC-NNN”,”status”:”passed/failed”,”screenshot”:”截图路径”,”dom_evidence”:”selector + 实际文本”,”fail_reason”:”失败原因或空”}
+          {"tc":"TC-NNN","status":"passed/failed","screenshot":"截图路径","dom_evidence":"selector + 实际文本","fail_reason":"失败原因或空"}
     prompt: |
       你是浏览器 E2E 测试编排器。你**不做**任何浏览器操作、不读截图、不分析 DOM。
       所有测试工作委派给 **browser-tester** 子代理执行。
@@ -1802,11 +1870,11 @@ nodes:
          - 独立页面/无共享状态的用例 → 并行（同时发起多个 Agent 调用）
          - 有依赖关系的用例（如同一页面的不同交互序列）→ 串行
       3. 每个 browser-tester 的委派 prompt 包含：
-         “测试用例 TC-NNN：<用例内容>。
+         "测试用例 TC-NNN：<用例内容>。
          Server: http://localhost:$vars.e2e_server_port
          Web: http://localhost:$vars.e2e_web_port
          截图保存到 $vars.e2e_sandbox_dir/screenshots/TC-NNN.png
-         测试完成后输出 JSON: {tc, status, screenshot, dom_evidence, fail_reason}”
+         测试完成后输出 JSON: {tc, status, screenshot, dom_evidence, fail_reason}"
       4. ⛔ 你不读截图、不分析图片。只从 browser-tester 返回的 JSON 提取结果
 
       ## 收集与报告
@@ -1839,7 +1907,7 @@ nodes:
       ⚠️ 本节点输出不阻断主流程——real_e2e_ui_passed=false 会驱动 e2e-fix-loop 修复。
 
       ## 输出
-      {“vars_update”:{“real_e2e_ui_passed”:”<true 仅当全部 ui_state TC 都 passed>”,”real_e2e_ui_total”:”<总数>”,”real_e2e_ui_failed_list”:”<逗号分隔失败 TC ID，空串=全过>”,”real_e2e_ui_report”:”$vars.output_dir/real-e2e-ui-report.md”,”conclusion”:”<2 句话：通过率 + 失败主因>”}}
+      {"vars_update":{"real_e2e_ui_passed":"<true 仅当全部 ui_state TC 都 passed>","real_e2e_ui_total":"<总数>","real_e2e_ui_failed_list":"<逗号分隔失败 TC ID，空串=全过>","real_e2e_ui_report":"$vars.output_dir/real-e2e-ui-report.md","conclusion":"<2 句话：通过率 + 失败主因>"}}
 
   - id: e2e-completeness-loop
     type: loop
@@ -2285,7 +2353,7 @@ nodes:
           - 全部用例实际通过（passed == total，零失败）→ `e2e_fix_all_passed="true"`
           - 仍有失败 → `e2e_fix_all_passed="false"`（引擎会驱动下一轮）
           - 零失败进入本轮 → 发"无需修复"通知 → 设 `e2e_fix_all_passed="true"`
-          - ⚠️ **强化完成** — 每轮必须尽可能多的修复失败用例，不允许“心理满意退出”。每轮至少修复所有 failed 用例或明确记录无法修复的原因。
+          - ⚠️ **强化完成** — 每轮必须尽可能多的修复失败用例，不允许"心理满意退出"。每轮至少修复所有 failed 用例或明确记录无法修复的原因。
 
           ## 输出
           {"vars_update":{"e2e_p0_passed":"<实际通过数>","e2e_p1_passed":"<实际通过数>","e2e_skipped":"0","e2e_excluded":"0","e2e_fix_all_passed":"<true/false>","e2e_fix_rounds":"$iteration","conclusion":"第 $iteration 轮修复: <摘要>"}}
@@ -2549,7 +2617,7 @@ nodes:
       ⚠️ 不删除代码（completeness-fix 循环本该在需求层处理越界问题），仅记录到审计。
 
       ## 记录 4：宿主契约违反（仅记录）
-      读取 $vars.host_contract_file 的 “强烈不建议” 清单。
+      读取 $vars.host_contract_file 的 "强烈不建议" 清单。
       扫描 git diff --cached --stat 检查：
       - 是否创建了 packages/<新包>/
       - 是否引入了新 CSS 方案（package.json 的 dependencies 变化）
@@ -2722,7 +2790,7 @@ nodes:
       # Always-Deliver：不再写 __status=failed。
       # PR 已创建即表示工作流完成交付即使完整度低。
       # 未达 100% 时画由用户基于审计报告决定后续动作（merge / 迭代 / 放弃）。
-      # 如仍需“低完整度”通知，由 hook 根据 ready_to_merge=false 发送“建议人工查看”通知。
+      # 如仍需"低完整度"通知，由 hook 根据 ready_to_merge=false 发送"建议人工查看"通知。
       if [ "$vars.ready_to_merge" != "true" ] && [ "$inputs.run_e2e" = "true" ]; then
         REASON="完整度未达 100% 但 PR 已交付｜E2E: $vars.e2e_summary｜完整度: $vars.completeness_score% (退出 $vars.completeness_exit_code)｜必需: $vars.completeness_must_have_score%｜修复: $vars.e2e_fix_rounds 轮｜完整度: $vars.completeness_rounds/$inputs.completeness_max_rounds 轮"
         echo "⚠️ $REASON"

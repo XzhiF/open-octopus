@@ -427,65 +427,81 @@ nodes:
   - id: host-audit-swarm
     type: swarm
     depends_on: [setup]
-    timeout: 3600
+    timeout: 900
     topic: |
       扫描宿主项目的实际架构、技术栈、现有资产，产出约束文档 host-contract.md。
-      后续所有实现节点必须遵守此契约，防止"干净藏主义实现"。
+      后续所有实现节点必须遵守此契约，防止 LLM 凭空创造组件。
+
+      ## ⚡ 短路检查（最先执行）
+      如果 `$vars.output_dir/host-contract.md` 已存在：
+      Host 应 Read 该文件前 10 行，如扫描时间在 24h 内则跳过所有 expert，直接输出 vars_update。
 
       ## 项目路径
       $vars.project_path
 
       ## 输出目录
       $vars.output_dir/host-contract/
+
+      ## ⛔ 扫描预算（所有 expert 必须遵守）
+      - Glob 优先于 Read：先列文件名，再挑选关键文件 Read
+      - Read 预算：单个 expert 最多 Read 20 个文件
+      - Grep 定位法：先 Grep 找到匹配，只 Read 匹配的文件
+      - 禁止递归 Glob（不要用 `**/*`），禁止读 node_modules/ dist/ build/ __tests__/ *.test.*
     mode: dispatch
     failure_policy: continue_partial
     budget: 500000
     context_tier: "200k"
 
     expert_defaults:
-      model: opus[1m]
-      tools: ["Read", "Grep", "Glob", "Bash"]
+      model: sonnet
+      tools: ["Read", "Write", "Grep", "Glob"]
 
     experts:
       - role: architecture-explorer
         agent_file: ".claude/agents/architecture-explorer.md"
         task: |
-          扫描宿主项目的架构和技术栈。
+          定向提取宿主项目的后端架构信息。
 
-          输出到 $vars.output_dir/host-contract/01-architecture.md：
-          - monorepo 结构（packages/ / apps/ / projects/ 各包职责）
+          用 Write 写入 $vars.output_dir/host-contract/01-architecture.md：
           - 后端框架 / 数据库 / ORM / 路由约定 / 错误中间件 / 鉴权
           - 构建命令 / 测试命令 / 启动命令
-          - 现有的 API 模式（REST / GraphQL / SSE / RPC）及路径命名规则
-          - 现有的文件组织惯例
+          - API 路径命名规则
+
+          方法：先 Glob 入口文件（package.json / index.ts / main.go 等），
+          再 Grep 定位路由/中间件/数据层，只 Read 匹配到的关键文件。
+          ⛔ Read 预算: 最多 15 个文件。
+          写完后只返回一行摘要。
 
       - role: ui-system-auditor
         agent_file: ".claude/agents/engineering-frontend-developer.md"
         task: |
-          扫描宿主项目的 UI 系统（仅在有前端项目时执行）。
+          定向提取宿主项目的 UI 约定（仅在有前端项目时执行）。
 
-          输出到 $vars.output_dir/host-contract/02-ui-system.md：
-          - 设计 tokens 位置（tailwind.config / theme.ts / CSS 变量）
-          - 现有组件库清单（路径 + 导出名）
-          - 路由方案 + 现有页面清单
-          - 状态管理方案 + 现有 stores
-          - 错误展示/loading/empty 状态的现有约定
+          用 Write 写入 $vars.output_dir/host-contract/02-ui-system.md：
+          - CSS 方案（tailwind / styled / css modules）
+          - 组件库路径（Glob 列文件名，不读实现）
+          - 状态管理方案
           - HTTP 客户端封装
+
+          方法：Glob components/ 列文件名，Read lib/api.* 和 1 个 store 导出签名。
+          ⛔ Read 预算: 最多 10 个文件。禁止读组件实现细节。
+          写完后只返回一行摘要。
 
       - role: contract-synthesizer
         perspective: "契约综合者 — 将架构扫描和 UI 扫描合并为统一约束文档"
         depends_on: [architecture-explorer, ui-system-auditor]
         task: |
-          读取两份扫描报告，合成最终约束文档 host-contract.md。
+          读取两份扫描报告文件（Read 文件，不依赖 expert 返回值），合成最终约束文档。
 
           读取：
           - $vars.output_dir/host-contract/01-architecture.md
           - $vars.output_dir/host-contract/02-ui-system.md（如存在）
 
-          输出到 $vars.output_dir/host-contract.md：
+          用 Write 输出到 $vars.output_dir/host-contract.md：
           ```markdown
           # Host Project Contract
           项目: <项目名与路径>
+          扫描时间: <ISO 时间>
           是否含 UI: <true / false>
 
           ## 必须复用的现有资产
@@ -496,7 +512,7 @@ nodes:
           ## 强烈不建议（违反会进 review_blockers）
           - 不要新建 packages/
           - 不要引入新的 CSS 方案
-          - 不要绕过 lib/api.ts
+          - 不要绕过现有 API 客户端
           - 不要创建与现有组件功能重复的新组件
           ```
 

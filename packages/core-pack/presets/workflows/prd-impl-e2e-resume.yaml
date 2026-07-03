@@ -368,28 +368,29 @@ nodes:
   - id: host-audit
     type: agent
     depends_on: [resume-setup]
-    timeout: 3600
+    timeout: 900
     agents:
       architecture-explorer:
-        description: "架构勘探员 — 扫描宿主项目实际架构、技术栈、启动命令"
+        description: "架构勘探员 — 定向提取后端架构信息"
         agent_file: ".claude/agents/architecture-explorer.md"
-        model: opus[1m]
-        tools: ["Read", "Grep", "Glob", "Bash"]
+        model: sonnet
+        tools: ["Read", "Write", "Grep", "Glob"]
       ui-system-auditor:
-        description: "UI 系统审计员 — 扫描设计 tokens、现有组件、路由、状态管理"
+        description: "UI 系统审计员 — 定向提取前端约定"
         agent_file: ".claude/agents/engineering-frontend-developer.md"
-        model: opus[1m]
-        tools: ["Read", "Grep", "Glob"]
+        model: sonnet
+        tools: ["Read", "Write", "Grep", "Glob"]
     prompt: |
       你是宿主项目契约生成器。本节点与 prd-impl.yaml 同名节点一致。
 
       $vars.workspace_rules
 
-      ## ✨ 短路检查（最先执行）
-      如果 $vars.host_contract_file 非空且文件存在，直接输出，不重生：
-      ```
-      {"vars_update":{"host_contract_file":"$vars.host_contract_file","host_has_ui":"$vars.host_has_ui","conclusion":"复用上轮 host-contract.md"}}
-      ```
+      ## ⚡ 短路检查（最先执行）
+      如果 $vars.host_contract_file 非空且文件存在：
+      1. Read 该文件前 10 行，提取 "扫描时间"
+      2. 扫描时间在 24h 内 → 直接输出 vars_update，不重生：
+         {"vars_update":{"host_contract_file":"$vars.host_contract_file","host_has_ui":"$vars.host_has_ui","conclusion":"复用上轮 host-contract.md（24h 内）"}}
+      3. 超过 24h → 读取旧文件作为 baseline，继续下方扫描
 
       ## 项目路径
       $vars.project_path
@@ -397,12 +398,15 @@ nodes:
       ## 输出目录
       $vars.output_dir/host-contract/
 
-      ## 委派任务
+      ## 执行方法
       与 prd-impl.yaml 中 host-audit 节点一致：
-      1. architecture-explorer：扫描 monorepo / 后端框架 / API 模式 / 启动命令 / 错误中间件 → host-contract/01-architecture.md
-      2. ui-system-auditor：扫描设计 tokens / 现有组件 / 路由 / 状态管理 / HTTP 客户端 → host-contract/02-ui-system.md并截 5 个典型页面到 host-contract/screenshots/
+      1. Phase 1 探针：你亲自用 Glob+Grep 建立项目地图（≤8 个 Read）
+      2. Phase 1.5 新项目快速通道：入口文件 < 5 个且无组件库 → 产出最小契约（含空占位 sections），跳过 Phase 2
+      3. Phase 2 定向委派：给子 Agent 精确文件列表，子 Agent 用 Write 直接写入目标文件，只返回一行摘要
+      4. Phase 3 合成：读子 Agent 产物文件 + 项目地图，合成 host-contract.md
 
-      合成 `$vars.output_dir/host-contract.md`详细结构参考 prd-impl.yaml host-audit 节点。
+      子 Agent 扫描预算：每个最多 Read 15-20 个文件，禁止递归 Glob，禁止读测试/构建产物。
+      详细结构参考 prd-impl.yaml host-audit 节点。
       子代理失败不退出。
 
       ## 输出
