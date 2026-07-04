@@ -39,6 +39,12 @@ describe('resolveModelAlias', () => {
     expect(resolveModelAlias('pro-max', 'claude', config)).toBe('opus')
   })
 
+  it('resolves dashscope tiers', () => {
+    expect(resolveModelAlias('pro-max', 'dashscope', config)).toBe('dashscope/qwen3.7-max')
+    expect(resolveModelAlias('pro', 'dashscope', config)).toBe('dashscope/qwen3.7-plus')
+    expect(resolveModelAlias('se', 'dashscope', config)).toBe('dashscope/qwen3.6-plus')
+  })
+
   it('returns model as-is when provider has no mapping for tier', () => {
     expect(resolveModelAlias('pro', 'unknown-provider', config)).toBe('pro')
   })

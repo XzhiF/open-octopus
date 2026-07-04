@@ -25,6 +25,11 @@ export const DEFAULT_MODEL_ALIASES: ModelAliasConfig = {
       pro: 'anthropic/claude-sonnet-4-20250514',
       se: 'anthropic/claude-haiku-4-5-20251001',
     },
+    dashscope: {
+      'pro-max': 'dashscope/qwen3.7-max',
+      pro: 'dashscope/qwen3.7-plus',
+      se: 'dashscope/qwen3.6-plus',
+    },
   },
 }
 
