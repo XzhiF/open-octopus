@@ -440,7 +440,7 @@ nodes:
 
       - role: domain-analyst
         perspective: "领域分析师，专注于市场信号、竞品分析和技术趋势"
-        task: |
+        prompt: |
           从市场和技术角度分析这个 idea：
           1. 竞品分析：现有替代方案有哪些？它们做得好/不好的地方？
           2. 市场信号：行业趋势、技术成熟度、用户行为变化
@@ -476,6 +476,11 @@ nodes:
         将完整的需求发现文档直接作为 synthesis 输出，格式为 markdown。
         文档必须包含：问题陈述、问题证据、目标用户、机会假设、不做代价、对抗质疑回应。
         保持 2000 字以内。
+
+        ## 共识评估（JSON，最后一行）
+        ```json
+        {"assessment": {"consensus_score": 0.0-1.0, "should_continue": true/false, "reason": "<1-2句>"}}
+        ```
 
   # ── discover-swarm 输出落盘 ──
   - id: discover-write
@@ -593,6 +598,11 @@ nodes:
         将完整的需求定义文档直接作为 synthesis 输出，格式为 markdown。
         必须包含：画像、故事、界面声明、Non-Goals、旅程、边界、优先级、对抗质疑回应。
         保持 3000 字以内。
+
+        ## 共识评估（JSON，最后一行）
+        ```json
+        {"assessment": {"consensus_score": 0.0-1.0, "should_continue": true/false, "reason": "<1-2句>"}}
+        ```
 
   # ── define-swarm 输出落盘 ──
   - id: define-write
@@ -760,6 +770,11 @@ nodes:
         将完整的技术方案文档直接作为 synthesis 输出，格式为 markdown。
         必须包含：概述、架构、核心设计章节（按项目类型）、安全、性能、错误处理、依赖、风险、对抗审查回应。
         保持 4000 字以内。
+
+        ## 共识评估（JSON，最后一行）
+        ```json
+        {"assessment": {"consensus_score": 0.0-1.0, "should_continue": true/false, "reason": "<1-2句>"}}
+        ```
 
   # ── design-swarm 输出落盘 ──
   - id: design-write
@@ -957,7 +972,7 @@ nodes:
 
       - role: completeness-scope-checker
         perspective: "范围一致性审查 — 检查文档是否有越界内容"
-        task: |
+        prompt: |
           审查以下维度：
           15. 文档跨引用一致性 — solution 里的 API 是否都能在 acceptance-cases 找到验收点？
               ui 里的页面是否都在 ux 里有状态机？
