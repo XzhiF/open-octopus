@@ -15,12 +15,22 @@
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.2.0",
+    "@octopus/shared": "workspace:*"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": ">=0.80.3 <0.82.0",
+    "@earendil-works/pi-agent-core": ">=0.80.3 <0.82.0",
+    "@earendil-works/pi-ai": ">=0.80.3 <0.82.0"
+  },
+  "peerDependenciesMeta": {
+    "@earendil-works/pi-coding-agent": { "optional": true },
+    "@earendil-works/pi-agent-core": { "optional": true },
+    "@earendil-works/pi-ai": { "optional": true }
+  },
+  "devDependencies": {
     "@earendil-works/pi-agent-core": "0.80.3",
     "@earendil-works/pi-ai": "0.80.3",
     "@earendil-works/pi-coding-agent": "0.80.3",
-    "@octopus/shared": "workspace:*"
-  },
-  "devDependencies": {
     "@types/node": "^22.15.0"
   }
 }

@@ -1,5 +1,5 @@
-import { query, type Options } from '@anthropic-ai/claude-agent-sdk'
-import type { IAgentProvider, SendQueryOptions, MessageChunk, TokenUsage, ModelUsageEntry } from '../types'
+import { query, type Options, type AgentDefinition } from '@anthropic-ai/claude-agent-sdk'
+import type { IAgentProvider, SendQueryOptions, MessageChunk, TokenUsage, ModelUsageEntry, OctopusAgentDef } from '../types'
 import { LLMCallTracker } from '../llm-call-tracker'
 import { getPluginSdkConfigs } from '@octopus/shared'
 import fs from 'fs'
@@ -129,6 +129,15 @@ function resolvePlugins(
   return merged.length > 0 ? merged : undefined
 }
 
+function toClaudeAgentDef(def: OctopusAgentDef): AgentDefinition {
+  return {
+    description: def.description,
+    prompt: def.prompt,
+    tools: def.tools,
+    model: def.model,
+  } as AgentDefinition
+}
+
 export class ClaudeSDKProvider implements IAgentProvider {
   private _llmTracker = new LLMCallTracker()
 
@@ -166,7 +175,11 @@ export class ClaudeSDKProvider implements IAgentProvider {
       env: buildSubprocessEnv(options?.env as Record<string, string> | undefined),
       agent: options?.agent,
       skills: options?.skills,
-      agents: options?.agents,
+      agents: options?.agents
+        ? Object.fromEntries(
+            Object.entries(options.agents).map(([k, v]) => [k, toClaudeAgentDef(v)])
+          )
+        : undefined,
       plugins: resolvePlugins(options),
       ...(options?.abortSignal ? { abortController: new AbortController() } : {}),
       ...(resumeSessionId ? { resume: resumeSessionId } : {}),

@@ -1,6 +1,6 @@
 import type { NodeExecutor, NodeExecutionResult } from "./types"
-import type { NodeDef, ExpertDef } from "@octopus/shared"
-import { VarPool, substituteVars } from "@octopus/shared"
+import type { NodeDef, ExpertDef, ModelAliasConfig } from "@octopus/shared"
+import { VarPool, substituteVars, resolveModelAlias } from "@octopus/shared"
 import type { IAgentProvider, MessageChunk } from "@octopus/providers"
 import type { ICheckpointStore, SwarmCheckpointData } from "../pipeline/checkpoint-types"
 import { existsSync } from "fs"
@@ -40,6 +40,8 @@ export class SwarmExecutor implements NodeExecutor {
     private checkpointStore?: ICheckpointStore,
     private executionId?: string,
     private engineHookFn?: (event: string, context: Record<string, unknown>) => Promise<void>,
+    /** BL-5: Model alias config for resolving expert.model aliases */
+    private modelAliasConfig?: ModelAliasConfig,
   ) {}
 
   async execute(): Promise<NodeExecutionResult> {
@@ -48,10 +50,21 @@ export class SwarmExecutor implements NodeExecutor {
 
     try {
       // Merge expert_defaults into each expert
-      const experts: ExpertDef[] = (this.node.experts ?? []).map(e => ({
+      const baseExperts: ExpertDef[] = (this.node.experts ?? []).map(e => ({
         ...this.node.expert_defaults,
         ...e,
       }))
+
+      // BL-5: Resolve expert.model aliases immutably (tier → real model name)
+      const experts: ExpertDef[] = this.modelAliasConfig
+        ? baseExperts.map(expert => {
+            if (!expert.model) return expert
+            const rawKey = this.node.engine ?? "claude"
+            const providerKey = rawKey === "claude-code" ? "claude" : rawKey
+            const resolved = resolveModelAlias(expert.model, providerKey, this.modelAliasConfig!)
+            return resolved ? { ...expert, model: resolved } : expert
+          })
+        : baseExperts
 
       // Resolve $vars.* references in topic (consistent with agent/bash/python executors)
       const resolvedTopic = substituteVars(this.node.topic ?? "", this.pool)

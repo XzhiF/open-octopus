@@ -220,6 +220,8 @@ export async function batchReview(ids: string[], action: 'approve' | 'reject', o
 
 export async function getReviewSummary(): Promise<{
   rules: number
+  skills: number
+  total: number
   statusCounts?: import('@/lib/knowledge/types').ReviewStatusCounts
   typeStatusCounts?: Record<string, import('@/lib/knowledge/types').ReviewStatusCounts>
 }> {

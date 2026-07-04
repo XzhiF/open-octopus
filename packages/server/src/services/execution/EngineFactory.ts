@@ -8,6 +8,7 @@ import { PromptInjector } from "@octopus/engine"
 import { CrossExecResolver } from "@octopus/shared"
 import { PipelineConfigLoader } from "../pipeline-config"
 import { getProvider } from "@octopus/providers"
+import { collectNodeEngines } from "@octopus/shared"
 
 export class EngineFactory implements IEngineFactory {
   private knowledgeService?: KnowledgeService
@@ -41,11 +42,18 @@ export class EngineFactory implements IEngineFactory {
     }
     const crossExecResolver = new CrossExecResolver(lookup)
 
+    // F-1: Collect all engines used by workflow nodes (including swarm experts)
+    // and pre-register all required providers
     const providers: Record<string, any> = {}
-    const engineType = workflow.engine || "claude"
-    const provider = getProvider(engineType, { cwd: this.ctx.workspacePath })
-    if (provider) {
-      providers[engineType] = provider
+    const nodes = workflow.nodes ?? []
+    const engineKeys = collectNodeEngines(nodes)
+    for (const key of engineKeys) {
+      try {
+        const provider = getProvider(key)
+        providers[key] = provider
+      } catch (err) {
+        console.warn(`[EngineFactory] Provider '${key}' not registered, skipping: ${err instanceof Error ? err.message : err}`)
+      }
     }
 
     const inputValues = execution.input_values
