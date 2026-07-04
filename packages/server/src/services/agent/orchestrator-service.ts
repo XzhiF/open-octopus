@@ -61,10 +61,10 @@ export class OrchestratorService {
   private agentDir: string
   private assembler: SystemPromptAssembler
 
-  constructor(org: string) {
+  constructor(org: string, workspaceDir?: string) {
     this.org = org
     this.agentDir = getAgentDir()
-    this.assembler = new SystemPromptAssembler(org)
+    this.assembler = new SystemPromptAssembler(org, workspaceDir)
   }
 
   /**

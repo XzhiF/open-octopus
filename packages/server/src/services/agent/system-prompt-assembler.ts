@@ -44,10 +44,20 @@ const CHARS_PER_TOKEN = 4 // rough estimate
 export class SystemPromptAssembler {
   private org: string
   private agentDir: string
+  private workspaceDir?: string
 
-  constructor(org: string) {
+  constructor(org: string, workspaceDir?: string) {
     this.org = org
+    this.workspaceDir = workspaceDir
     this.agentDir = getAgentDir()
+  }
+
+  /**
+   * Set or update workspace directory for Tier 0 skill resolution.
+   * Call when workspace context becomes available after construction.
+   */
+  setWorkspaceDir(dir: string): void {
+    this.workspaceDir = dir
   }
 
   /**
@@ -225,7 +235,7 @@ export class SystemPromptAssembler {
   }
 
   private buildSkillsSegment(includeSkills?: string[]): PromptSegment {
-    const loader = getSkillLoader(this.org)
+    const loader = getSkillLoader(this.org, this.workspaceDir)
     const { content } = loader.buildPromptSegment(includeSkills)
 
     return {

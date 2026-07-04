@@ -1396,7 +1396,7 @@ export function createAgentRoutes(deps: AgentRouteDeps): Hono {
       }
 
       // Assemble clone-specific system prompt (PRD L3 clone scenario)
-      const assembler = new SystemPromptAssembler(org)
+      const assembler = new SystemPromptAssembler(org, workspacePath ?? undefined)
       const systemPrompt = assembler.assembleForClone(name, {
         session_context: { clone_name: name, task: taskPrompt },
       })

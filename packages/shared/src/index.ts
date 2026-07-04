@@ -30,3 +30,54 @@ export * from "./types/knowledge"
 export { ModelAliasConfigSchema, DEFAULT_MODEL_ALIASES } from './config/model-alias'
 export type { ModelAliasConfig } from './config/model-alias'
 export { resolveModelAlias, loadModelAliasConfig, collectNodeEngines } from './config/model-alias'
+
+// ── 统一资源管理 ──────────────────────────────────────────────────
+// Resource module utilities (utils, not duplicated from repository/)
+export {
+  collectFiles,
+  copyDirRecursive,
+  computeDirSize,
+  isPathWithinBase,
+  safeRemove,
+  formatBytes,
+  formatSourceRef,
+  nowISO,
+} from "./resource/utils"
+
+// Enhanced dependency resolver types & computeReverseDependencies
+export {
+  computeReverseDependencies,
+} from "./resource/dependency-resolver"
+export type {
+  DependencyNode,
+  DependencyEdge,
+  DependencyGraph,
+  ResolveResult,
+  DependencyLookup,
+} from "./resource/dependency-resolver"
+
+// Core resource manifest types
+export * from "./types/resource-manifest"
+
+// Split type files for resource management
+export * from "./types/registry"
+export * from "./types/lock-file"
+// AuditAction from types/audit conflicts with scheduler-audit's AuditAction,
+// so we re-export with prefixed names to avoid ambiguity.
+export {
+  AuditActionSchema as ResourceAuditActionV2Schema,
+  AuditEntrySchema as ResourceAuditEntryV2Schema,
+} from "./types/audit"
+export type {
+  AuditAction as ResourceAuditActionV2,
+  AuditEntry as ResourceAuditEntryV2,
+} from "./types/audit"
+export * from "./types/trusted-sources"
+export * from "./types/workspace-config"
+
+// Repository infrastructure (canonical error/store/resolver)
+export * from "./repository/dependency-resolver"
+export * from "./repository/atomic-store"
+export * from "./repository/errors"
+export * from "./repository/content-hash"
+export type { ISecurityContext } from "./repository/security-interface"

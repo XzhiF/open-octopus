@@ -205,7 +205,10 @@ function isTrustedOrigin(origin: string | undefined): boolean {
 }
 
 app.use("*", cors({
-  origin: (origin) => origin ?? "*",
+  origin: (origin) => {
+    if (!origin) return "*"
+    return isTrustedOrigin(origin) ? origin : null
+  },
   credentials: true,
   allowHeaders: ["Content-Type", "Authorization", "If-Match"],
   allowMethods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],

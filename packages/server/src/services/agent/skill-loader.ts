@@ -5,7 +5,7 @@ import { getAgentSkillsDir } from './paths'
 
 // ── Types ──────────────────────────────────────────────────────
 
-export type SkillSource = 'local_evolved' | 'builtin' | 'prod'
+export type SkillSource = 'workspace_installed' | 'local_evolved' | 'builtin' | 'prod'
 
 export interface LoadedSkill {
   name: string
@@ -26,9 +26,11 @@ export interface SkillSummary {
 // ── SkillLoader ────────────────────────────────────────────────
 
 /**
- * Three-tier skill loading service (P2.8).
+ * Four-tier skill loading service.
  *
  * Priority order:
+ *   0. Workspace installed — `{workspaceDir}/.claude/skills/{name}/SKILL.md`
+ *      (highest priority, per-workspace resource management)
  *   1. Local evolved — `~/.octopus/{org}/agent/skills/{name}/SKILL.md`
  *      (has `.bak` file = evolved from builtin)
  *   2. Core-pack builtin — `packages/core-pack/skills/{name}/SKILL.md`
@@ -38,15 +40,25 @@ export interface SkillSummary {
  */
 export class SkillLoader {
   private org: string
+  private workspaceDir?: string
   private agentSkillsDir: string
   private builtinSkillsDir: string
   private prodSkillsDir: string
 
-  constructor(org: string) {
+  constructor(org: string, workspaceDir?: string) {
     this.org = org
+    this.workspaceDir = workspaceDir
     this.agentSkillsDir = getAgentSkillsDir()
     this.builtinSkillsDir = path.join(process.cwd(), 'packages', 'core-pack', 'skills')
     this.prodSkillsDir = path.join(os.homedir(), '.octopus', 'prod', 'packages', 'core-pack', 'skills')
+  }
+
+  /**
+   * Set or update the workspace directory for Tier 0 scanning.
+   * Useful when workspace context is not available at construction time.
+   */
+  setWorkspaceDir(dir: string): void {
+    this.workspaceDir = dir
   }
 
   /**
@@ -54,7 +66,23 @@ export class SkillLoader {
    * Returns null if skill not found in any tier.
    */
   loadSkill(name: string): LoadedSkill | null {
-    // Tier 1: Local evolved (highest priority)
+    // Tier 0: Workspace-installed (highest priority)
+    if (this.workspaceDir) {
+      const wsPath = path.join(this.workspaceDir, '.claude', 'skills', name, 'SKILL.md')
+      if (fs.existsSync(wsPath)) {
+        const content = fs.readFileSync(wsPath, 'utf-8')
+        return {
+          name,
+          content,
+          source: 'workspace_installed',
+          file_path: wsPath,
+          has_backup: false,
+          description: this.extractDescription(content),
+        }
+      }
+    }
+
+    // Tier 1: Local evolved (next highest priority)
     const localPath = path.join(this.agentSkillsDir, name, 'SKILL.md')
     const bakPath = path.join(this.agentSkillsDir, name, 'SKILL.md.bak')
     if (fs.existsSync(localPath)) {
@@ -137,6 +165,12 @@ export class SkillLoader {
       } catch { /* skip */ }
     }
 
+    // Scan Tier 0: Workspace-installed (highest priority — overwrites all)
+    if (this.workspaceDir) {
+      const wsSkillsDir = path.join(this.workspaceDir, '.claude', 'skills')
+      this.scanDirectory(wsSkillsDir, 'workspace_installed', skillMap)
+    }
+
     return [...skillMap.values()].sort((a, b) => a.name.localeCompare(b.name))
   }
 
@@ -144,6 +178,12 @@ export class SkillLoader {
    * Get the source tier for a skill without loading its full content.
    */
   getSkillSource(name: string): SkillSource | null {
+    // Tier 0: Workspace-installed
+    if (this.workspaceDir) {
+      const wsPath = path.join(this.workspaceDir, '.claude', 'skills', name, 'SKILL.md')
+      if (fs.existsSync(wsPath)) return 'workspace_installed'
+    }
+
     const localPath = path.join(this.agentSkillsDir, name, 'SKILL.md')
     if (fs.existsSync(localPath)) {
       const bakPath = path.join(this.agentSkillsDir, name, 'SKILL.md.bak')
@@ -270,11 +310,12 @@ export class SkillLoader {
 
 const instances = new Map<string, SkillLoader>()
 
-export function getSkillLoader(org: string): SkillLoader {
-  let instance = instances.get(org)
+export function getSkillLoader(org: string, workspaceDir?: string): SkillLoader {
+  const key = workspaceDir ? `${org}:${workspaceDir}` : org
+  let instance = instances.get(key)
   if (!instance) {
-    instance = new SkillLoader(org)
-    instances.set(org, instance)
+    instance = new SkillLoader(org, workspaceDir)
+    instances.set(key, instance)
   }
   return instance
 }

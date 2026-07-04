@@ -38,15 +38,18 @@
   },
   "dependencies": {
     "@octopus/engine": "workspace:*",
-    "@octopus/shared": "workspace:*",
     "@octopus/providers": "workspace:*",
+    "@octopus/shared": "workspace:*",
     "chalk": "^5.4",
+    "cli-table3": "^0.6.5",
     "commander": "^13.0",
+    "inquirer": "^12.0",
     "js-yaml": "^4.1",
-    "inquirer": "^12.0"
+    "ora": "^9.4.1",
+    "proper-lockfile": "^4.1.2"
   },
   "devDependencies": {
-    "@types/node": "^22.19.19",
-    "@types/js-yaml": "^4.0.9"
+    "@types/js-yaml": "^4.0.9",
+    "@types/node": "^22.19.19"
   }
 }

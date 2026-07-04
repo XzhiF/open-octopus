@@ -5,6 +5,7 @@ import { initCmd } from "./commands/init"
 import { setupCmd } from "./commands/setup"
 import { upgradeCmd } from "./commands/upgrade"
 import { reposCmd } from "./commands/repos"
+import { repoCmd } from "./commands/repo"
 import { workflowCmd } from "./commands/workflow"
 import { skillSearchCmd } from "./commands/skill-search"
 import { mcpCliCmd } from "./commands/mcp-cli"
@@ -12,6 +13,7 @@ import { workspaceCmd } from "./commands/workspace-cmd"
 import { notifyCmd } from "./commands/notify"
 import { agentCmd } from "./commands/agent"
 import { agentsCmd } from "./commands/agents"
+import { resourcesCmd } from "./commands/resources"
 
 export function createProgram(): Command {
   return new Command()
@@ -28,6 +30,7 @@ export function createProgram(): Command {
     .addCommand(setupCmd)
     .addCommand(upgradeCmd)
     .addCommand(reposCmd)
+    .addCommand(repoCmd)
     .addCommand(workflowCmd)
     .addCommand(skillSearchCmd)
     .addCommand(mcpCliCmd)
@@ -35,9 +38,10 @@ export function createProgram(): Command {
     .addCommand(notifyCmd)
     .addCommand(agentCmd)
     .addCommand(agentsCmd)
+    .addCommand(resourcesCmd)
 }
 
-export { versionCmd, initCmd, setupCmd, upgradeCmd, reposCmd, workflowCmd, mcpCliCmd, skillSearchCmd, workspaceCmd, agentCmd, agentsCmd }
+export { versionCmd, initCmd, setupCmd, upgradeCmd, reposCmd, repoCmd, workflowCmd, mcpCliCmd, skillSearchCmd, workspaceCmd, agentCmd, agentsCmd, resourcesCmd }
 
 const shouldRun = !process.env.VITEST && !process.env.NODE_TEST
 if (shouldRun) {
