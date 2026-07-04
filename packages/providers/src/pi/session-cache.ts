@@ -1,6 +1,11 @@
 import type { SessionResult } from './pi-sdk-adapter'
 
-type SessionFactory = (cwd: string, resumeSessionId?: string) => Promise<SessionResult>
+export interface SessionFactoryOptions {
+  filteredEnv?: Record<string, string>
+  subAgentTools?: any[]
+}
+
+type SessionFactory = (cwd: string, resumeSessionId?: string, options?: SessionFactoryOptions) => Promise<SessionResult>
 
 interface CacheEntry {
   result: SessionResult
@@ -15,6 +20,7 @@ interface SessionCacheOptions {
 export class SessionCache {
   private cache = new Map<string, CacheEntry>()
   private locks = new Map<string, Promise<void>>()
+  private inflight = new Map<string, Promise<SessionResult>>()  // BL-2: deduplicate concurrent creates
   private factory: SessionFactory
   private maxSessions: number
   private idleTimeoutMs: number
@@ -39,15 +45,34 @@ export class SessionCache {
     }
   }
 
-  async getOrCreate(cwd: string, resumeSessionId?: string): Promise<SessionResult> {
+  async getOrCreate(cwd: string, resumeSessionId?: string, options?: SessionFactoryOptions): Promise<SessionResult> {
     const key = resumeSessionId ? `${cwd}:${resumeSessionId}` : cwd
     const entry = this.cache.get(key)
     if (entry) {
       entry.lastAccessed = Date.now()
       return entry.result
     }
+    // BL-2: Deduplicate concurrent session creation for the same key
+    const existingInflight = this.inflight.get(key)
+    if (existingInflight) return existingInflight
+
+    const createPromise = this._createAndCache(key, cwd, resumeSessionId, options)
+    this.inflight.set(key, createPromise)
+    try {
+      return await createPromise
+    } finally {
+      this.inflight.delete(key)
+    }
+  }
+
+  private async _createAndCache(
+    key: string,
+    cwd: string,
+    resumeSessionId?: string,
+    options?: SessionFactoryOptions,
+  ): Promise<SessionResult> {
     this.evictIfNeeded()
-    const result = await this.factory(cwd, resumeSessionId)
+    const result = await this.factory(cwd, resumeSessionId, options)
     this.cache.set(key, { result, lastAccessed: Date.now() })
     return result
   }

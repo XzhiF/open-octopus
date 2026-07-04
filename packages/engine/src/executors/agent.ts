@@ -29,6 +29,8 @@ export class AgentExecutor implements NodeExecutor {
     private crossExecResolver?: CrossExecResolver,
     private executionId?: string,
     private loopContext?: Record<string, any>,
+    /** BL-6: Resolved model passed from engine (avoids node.model mutation) */
+    private resolvedModel?: string,
   ) {}
 
   async execute(): Promise<NodeExecutionResult> {
@@ -83,7 +85,7 @@ export class AgentExecutor implements NodeExecutor {
         agent: this.node.agent,
         skills: this.node.skills,
         agents: this.resolveAgents(),
-        model: this.node.model,
+        model: this.resolvedModel ?? this.node.model,
         context: this.node.context ?? "continue",
         previousSessionId: this.previousSessionId,
         signal: timeoutAc.signal,

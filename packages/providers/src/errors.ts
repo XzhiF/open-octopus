@@ -71,5 +71,15 @@ export function sanitizeErrorMessage(raw: string): string {
     .replace(/AKIA[A-Z0-9]{12,}/g, 'AKIA***')
     .replace(/key-[a-zA-Z0-9]{16,}/g, 'key-***')
     .replace(/Bearer\s+[a-zA-Z0-9._-]+/g, 'Bearer ***')
-    .replace(/[a-zA-Z0-9_-]{36,}/g, '***')
+    // BL-4: Replace catch-all 36+ char regex with targeted token patterns
+    // JWT tokens (full or partial — eyJ prefix is unambiguous base64 JSON header)
+    .replace(/eyJ[a-zA-Z0-9_-]{10,}(?:\.[a-zA-Z0-9_-]+)*/g, '***JWT***')
+    // GitHub personal access tokens (ghp_, gho_, ghu_, ghs_, ghr_)
+    .replace(/gh[poushr]_[a-zA-Z0-9_]{36,}/g, '***')
+    // GitLab tokens (glpat-)
+    .replace(/glpat-[a-zA-Z0-9_-]{20,}/g, '***')
+    // npm tokens (npm_)
+    .replace(/npm_[a-zA-Z0-9]{36,}/g, '***')
+    // PyPI tokens (pypi-)
+    .replace(/pypi-[a-zA-Z0-9_-]{50,}/g, '***')
 }

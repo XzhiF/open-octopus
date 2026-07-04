@@ -57,4 +57,21 @@ describe('sanitizeErrorMessage', () => {
     const msg = 'Token eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9 is expired'
     expect(sanitizeErrorMessage(msg)).not.toContain('eyJhbGci')
   })
+
+  it('BL-4: preserves UUIDs and file paths (no over-sanitization)', () => {
+    const msg = 'Session abc12345-def6-7890-abcd-ef1234567890 failed at /usr/local/lib/node_modules/package/index.ts'
+    const result = sanitizeErrorMessage(msg)
+    expect(result).toContain('abc12345-def6-7890-abcd-ef1234567890')
+    expect(result).toContain('/usr/local/lib/node_modules/package/index.ts')
+  })
+
+  it('BL-4: removes GitHub PAT tokens', () => {
+    const msg = 'Authentication failed with token ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefgh12'
+    expect(sanitizeErrorMessage(msg)).not.toContain('ghp_')
+  })
+
+  it('BL-4: removes npm tokens', () => {
+    const msg = 'npm error: npm_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefgh1234 expired'
+    expect(sanitizeErrorMessage(msg)).not.toContain('npm_ABC')
+  })
 })

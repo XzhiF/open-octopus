@@ -82,6 +82,8 @@ export class WorkflowEngine {
   private knowledgeInjectorFactory?: (pool: VarPool) => KnowledgeInjector
   // Model alias config for tier resolution (P0-2)
   private modelAliasConfig: ModelAliasConfig
+  // BL-6: Workflow-level default model (replaces propagateModel mutation)
+  private workflowDefaultModel?: string
   // Precompute hook: runs before node execution to populate VarPool with knowledge data
   private precomputeHook?: (pool: VarPool, workflowName: string, inputs: Record<string, string>) => Promise<void>
   // Pipeline integration (set via setPipelineConfig)
@@ -166,10 +168,9 @@ export class WorkflowEngine {
       orgDir: orgDir,
     })
 
-    // Propagate workflow-level model to agent nodes that don't declare their own
-    if (workflow.model) {
-      this.propagateModel(workflow.nodes, workflow.model)
-    }
+    // BL-6: Don't mutate node.model — store the workflow default model instead
+    // and use it as fallback when resolving model for agent/swarm nodes
+    this.workflowDefaultModel = workflow.model
 
     if (orgDir) {
       this.logger = new JsonlLogger(orgDir, this.executionId)
@@ -1357,10 +1358,13 @@ export class WorkflowEngine {
         const provider = this.providers[providerKey]
         if (!provider) throw new Error(`Unknown provider: ${rawKey}`)
 
-        // P0-2: Resolve model alias (tier → real model name)
-        if (node.model) {
-          const resolved = resolveModelAlias(node.model, providerKey, this.modelAliasConfig)
-          if (resolved) node.model = resolved
+        // P0-2 + BL-6: Resolve model alias without mutating node.model
+        // Priority: node.model > workflow default model
+        const rawModel = node.model ?? this.workflowDefaultModel
+        let resolvedModel = rawModel
+        if (rawModel) {
+          const resolved = resolveModelAlias(rawModel, providerKey, this.modelAliasConfig)
+          if (resolved) resolvedModel = resolved
         }
 
         const runner = new AgentNodeRunner(provider, this.cwd, (event: AgentEvent) => {
@@ -1379,6 +1383,8 @@ export class WorkflowEngine {
           { nodeResults: this.nodeResults },
           this.promptInjector, knowledgeInjector, this.workflow.name,
           this.crossExecResolver, this.executionId,
+          undefined, // loopContext
+          resolvedModel,
         )
       }
       case "swarm":
@@ -1390,6 +1396,7 @@ export class WorkflowEngine {
           async (event: string, context: Record<string, unknown>) => {
             await this.executeHooks(event as keyof WorkflowHooks, context)
           },
+          this.modelAliasConfig,
         )
       default:
         throw new Error(`Unknown node type: ${(node as any).type}`)
@@ -1665,17 +1672,7 @@ export class WorkflowEngine {
     return false
   }
 
-  /** Propagate workflow-level model to agent nodes that don't declare their own. */
-  private propagateModel(nodes: NodeDef[], model: string): void {
-    for (const node of nodes) {
-      if (node.type === "agent" && !node.model) {
-        node.model = model
-      }
-      if (node.nodes) {
-        this.propagateModel(node.nodes, model)
-      }
-    }
-  }
+  // BL-6: propagateModel removed — use workflowDefaultModel as fallback at executor creation time
 
   // ── Pause / Resume ────────────────────────────────────────
 

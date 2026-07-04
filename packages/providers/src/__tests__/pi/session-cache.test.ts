@@ -100,4 +100,26 @@ describe('SessionCache', () => {
     expect(disposed).toContain('/idle')
     vi.useRealTimers()
   })
+
+  it('BL-2: deduplicates concurrent session creation for same key', async () => {
+    let createCount = 0
+    let resolveFactory: (() => void) | null = null
+    const mockFactory = async (cwd: string) => {
+      createCount++
+      // Simulate slow factory — both calls should hit inflight
+      await new Promise<void>(r => { resolveFactory = r })
+      return { session: { id: cwd }, sessionId: cwd, modelRegistry: null }
+    }
+    const cache = new SessionCache(mockFactory)
+
+    const p1 = cache.getOrCreate('/concurrent')
+    const p2 = cache.getOrCreate('/concurrent')
+
+    // Resolve the factory
+    resolveFactory!()
+
+    const [r1, r2] = await Promise.all([p1, p2])
+    expect(r1).toBe(r2) // Same session object
+    expect(createCount).toBe(1) // Factory called only once
+  })
 })

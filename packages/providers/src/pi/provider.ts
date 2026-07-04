@@ -1,10 +1,15 @@
 import type { IAgentProvider, SendQueryOptions, MessageChunk } from '../types'
 import type { LLMCallRecord } from '../llm-call-tracker'
+import { LLMCallTracker } from '../llm-call-tracker'
 import { AsyncEventBridge } from './async-bridge'
 import { mapPiEventToChunks, MapperState } from './event-mapper'
 import { TokenAggregator } from './token-aggregator'
 import { SessionCache } from './session-cache'
 import { buildSessionEnv } from './security'
+import { resolveModel } from './model-resolver'
+import { enhancePromptWithSkills } from './prompt-enhancer'
+import { createOctopusHooks } from './extensions/octopus-hooks'
+import { toSubAgentTool } from './extensions/sub-agent-tool'
 import { classifyProviderError } from '../errors'
 import * as PiSdk from './pi-sdk-adapter'
 
@@ -29,16 +34,26 @@ function extractProvider(model: string | undefined): string | undefined {
 
 export class PiAgentProvider implements IAgentProvider {
   private sessionCache: SessionCache
-  private llmCalls: LLMCallRecord[] = []
+  private llmTracker = new LLMCallTracker()
 
   constructor() {
-    this.sessionCache = new SessionCache(async (cwd, resumeSessionId) => {
+    this.sessionCache = new SessionCache(async (cwd, resumeSessionId, opts) => {
+      const extensions: any[] = [createOctopusHooks()]
+      if (opts?.subAgentTools) {
+        for (const tool of opts.subAgentTools) {
+          extensions.push(tool)
+        }
+      }
       if (resumeSessionId) {
         const restored = await PiSdk.findSession(cwd, resumeSessionId)
         if (restored) return restored
         console.warn(`[PiProvider] Session '${resumeSessionId}' not found, creating new session`)
       }
-      return PiSdk.createSession({ cwd, filteredEnv: {} })
+      return PiSdk.createSession({
+        cwd,
+        filteredEnv: opts?.filteredEnv ?? {},
+        extensions,
+      })
     })
   }
 
@@ -47,7 +62,7 @@ export class PiAgentProvider implements IAgentProvider {
   }
 
   getLLMCalls(): LLMCallRecord[] {
-    return [...this.llmCalls]
+    return this.llmTracker.getLLMCalls()
   }
 
   async *sendQuery(
@@ -82,14 +97,62 @@ export class PiAgentProvider implements IAgentProvider {
     // Build safe env
     const filteredEnv = buildSessionEnv(options)
 
+    // S15: Build sub-agent tools if agents are provided
+    const subAgentTools: any[] = []
+    if (options?.agents) {
+      for (const [name, def] of Object.entries(options.agents)) {
+        subAgentTools.push(toSubAgentTool(name, def, cwd))
+      }
+    }
+
+    // Reset tracker for this query
+    this.llmTracker.reset()
+
     // Create bridge with event mapper
     const mapperState = new MapperState()
     const tokenAgg = new TokenAggregator()
+    let sessionResult: PiSdk.SessionResult | null = null
+
     const bridge = new AsyncEventBridge<any, MessageChunk>((event) => {
+      // Track message lifecycle for LLMCallTracker (S19)
+      if (event.type === 'message_start') {
+        const msgId = event.messageId ?? event.id ?? mapperState.messageId
+        this.llmTracker.onMessageStart(msgId, options?.model)
+      } else if (event.type === 'message_update') {
+        const sub = event.assistantMessageEvent
+        if (sub?.type === 'text_delta' || sub?.type === 'thinking_delta') {
+          this.llmTracker.onTextDelta()
+        }
+      } else if (event.type === 'message_end') {
+        this.llmTracker.onMessageDelta(event.stopReason)
+        this.llmTracker.onMessageStop(mapperState.messageId)
+      }
+
+      // Aggregate token usage from agent_end
       if (event.type === 'agent_end' && event.usage) {
         tokenAgg.add(options?.model ?? 'unknown', event.usage)
       }
-      return mapPiEventToChunks(event, mapperState)
+
+      const chunks = mapPiEventToChunks(event, mapperState)
+      if (chunks === null) return null
+
+      // BL-3: Enrich result chunk with tokens/costUsd/sessionId
+      const arr = Array.isArray(chunks) ? chunks : [chunks]
+      const enriched = arr.map(chunk => {
+        if (chunk.type === 'result') {
+          const tokenUsage = tokenAgg.toTokenUsage()
+          const modelUsages = tokenAgg.toModelUsages()
+          return {
+            ...chunk,
+            sessionId: sessionResult?.sessionId,
+            tokens: (tokenUsage.total ?? 0) > 0 ? tokenUsage : undefined,
+            costUsd: tokenAgg.totalCost() || undefined,
+            modelUsages: modelUsages.length > 0 ? modelUsages : undefined,
+          }
+        }
+        return chunk
+      })
+      return Array.isArray(chunks) ? enriched : enriched[0]
     })
 
     // Abort handling
@@ -99,8 +162,26 @@ export class PiAgentProvider implements IAgentProvider {
     options?.abortSignal?.addEventListener('abort', abortHandler, { once: true })
 
     try {
-      // Step 1: Get or create session
-      const sr = await this.sessionCache.getOrCreate(cwd, resumeSessionId)
+      // Step 1: Get or create session (with extensions S14/S15 and filteredEnv)
+      const sr = await this.sessionCache.getOrCreate(cwd, resumeSessionId, {
+        filteredEnv,
+        subAgentTools,
+      })
+      sessionResult = sr
+
+      // S13: Resolve model via alias registry
+      const resolvedModel = resolveModel(options?.model, sr.modelRegistry)
+
+      // S11: Enhance prompt with skills if provided
+      let effectivePrompt = prompt
+      if (options?.skills && options.skills.length > 0) {
+        // Skill contents would be loaded from the resource loader; pass empty for now
+        // as the Pi SDK handles skill injection via its own resource loader
+        effectivePrompt = enhancePromptWithSkills(prompt, {
+          skills: options.skills,
+          skillContents: {},
+        })
+      }
 
       // Step 2: Subscribe to events (push → bridge)
       const unsub = PiSdk.subscribeEvents(sr.session, (event: any) => {
@@ -108,11 +189,8 @@ export class PiAgentProvider implements IAgentProvider {
       })
 
       // Step 3: Fire-and-forget prompt (ADR-1: parallel with bridge consumer)
-      PiSdk.promptSession(sr.session, prompt, {
-        model: options?.model ? sr.modelRegistry?.getModel?.(
-          extractProvider(options.model)!,
-          options.model.slice(options.model.indexOf('/') + 1),
-        ) : undefined,
+      PiSdk.promptSession(sr.session, effectivePrompt, {
+        model: resolvedModel,
       }).then(
         () => { unsub(); bridge.end() },
         (err: unknown) => { unsub(); bridge.fail(err instanceof Error ? err : new Error(String(err))) },
