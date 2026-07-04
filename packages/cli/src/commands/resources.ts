@@ -11,7 +11,7 @@ import {
   DependencyResolver,
   RepoError,
 } from "@octopus/shared"
-import type { ResourceType, ResourceDependency } from "@octopus/shared"
+import type { ResourceType, ResourceDependency, ResourceAuditActionV2 as AuditAction } from "@octopus/shared"
 import { createRepository } from "../repository"
 import { WorkspaceInstaller } from "../repository/installer"
 import type { InstallPlan, InstallOptions } from "../repository/installer"
@@ -88,7 +88,12 @@ resourcesCmd
       console.log(`  Reading declarations: config.json → ${totalCount} resources`)
 
       // Resolve declared resources from repository
-      const { manager, security } = createRepository({ repoDir: opts.repoDir })
+      const { manager, security, audit } = createRepository({ repoDir: opts.repoDir, workspaceDir: wsDir })
+
+      audit.log("config.parsed" as AuditAction, {
+        detail: { workspace: wsDir, totalCount },
+      })
+
       const installer = new WorkspaceInstaller(manager, security)
 
       // Build dependency resolver from all registry entries
@@ -144,11 +149,17 @@ resourcesCmd
 
       // Print results
       for (let i = 0; i < result.installed.length; i++) {
+        const inst = result.installed[i]
+        audit.log("resource.installed" as AuditAction, {
+          name: inst.name,
+          type: inst.type,
+          detail: { target: inst.target, source: "resources-install" },
+        })
         console.log(fmt.installProgress(
           i + 1, plan.ordered.length,
-          result.installed[i].name,
+          inst.name,
           "success",
-          `→ ${result.installed[i].target}`,
+          `→ ${inst.target}`,
         ))
       }
 
@@ -156,6 +167,17 @@ resourcesCmd
       const failedSummary = result.failed.map(f => ({ name: f.name, reason: f.reason }))
 
       console.log(fmt.installSummary(installedSummary, failedSummary, result.skipped))
+
+      // Audit lock update
+      if (result.installed.length > 0) {
+        audit.log("lock.updated" as AuditAction, {
+          detail: {
+            installed: result.installed.length,
+            failed: result.failed.length,
+            skipped: result.skipped?.length ?? 0,
+          },
+        })
+      }
 
       process.exit(result.status === "success" ? 0 : 1)
     } catch (err: any) {
