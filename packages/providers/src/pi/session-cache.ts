@@ -3,6 +3,7 @@ import type { SessionResult } from './pi-sdk-adapter'
 export interface SessionFactoryOptions {
   filteredEnv?: Record<string, string>
   subAgentTools?: any[]
+  systemPrompt?: string
 }
 
 type SessionFactory = (cwd: string, resumeSessionId?: string, options?: SessionFactoryOptions) => Promise<SessionResult>

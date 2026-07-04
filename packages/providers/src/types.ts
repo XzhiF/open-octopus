@@ -69,7 +69,7 @@ export type MessageChunk =
   | { type: 'tool_summary'; summary: string; toolCallIds: string[] }
   | { type: 'ask_user_question'; toolCallId: string; questions: unknown }
   | { type: 'local_command_output'; content: string }
-  | { type: 'status'; status: 'compacting' | 'requesting' | null }
+  | { type: 'status'; status: 'compacting' | 'requesting' | null; varsUpdate?: Record<string, unknown> }
   | { type: 'result'; content?: string; sessionId?: string; tokens?: TokenUsage; costUsd?: number; modelUsages?: ModelUsageEntry[] }
   | { type: 'error'; code: string; message: string }
 

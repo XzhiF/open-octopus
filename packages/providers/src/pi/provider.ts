@@ -1,4 +1,4 @@
-import type { IAgentProvider, SendQueryOptions, MessageChunk } from '../types'
+import type { IAgentProvider, SendQueryOptions, MessageChunk, SystemPromptInput } from '../types'
 import type { LLMCallRecord } from '../llm-call-tracker'
 import { LLMCallTracker } from '../llm-call-tracker'
 import { AsyncEventBridge } from './async-bridge'
@@ -7,7 +7,7 @@ import { TokenAggregator } from './token-aggregator'
 import { SessionCache } from './session-cache'
 import { buildSessionEnv } from './security'
 import { resolveModel } from './model-resolver'
-import { enhancePromptWithSkills } from './prompt-enhancer'
+import { enhancePromptWithSkills, parseVarsUpdate } from './prompt-enhancer'
 import { createOctopusHooks } from './extensions/octopus-hooks'
 import { toSubAgentTool } from './extensions/sub-agent-tool'
 import { classifyProviderError } from '../errors'
@@ -32,6 +32,15 @@ function extractProvider(model: string | undefined): string | undefined {
   return slash > 0 ? model.slice(0, slash) : undefined
 }
 
+/** S-8: Resolve SystemPromptInput to a plain string for Pi SDK session creation. */
+export function resolveSystemPrompt(input: SystemPromptInput | undefined): string | undefined {
+  if (!input) return undefined
+  if (typeof input === 'string') return input
+  // preset: only use append text (Pi SDK has its own default system prompt)
+  if (input.append) return input.append
+  return undefined
+}
+
 export class PiAgentProvider implements IAgentProvider {
   private sessionCache: SessionCache
   private llmTracker = new LLMCallTracker()
@@ -52,6 +61,7 @@ export class PiAgentProvider implements IAgentProvider {
       return PiSdk.createSession({
         cwd,
         filteredEnv: opts?.filteredEnv ?? {},
+        systemPrompt: opts?.systemPrompt,
         extensions,
       })
     })
@@ -162,10 +172,14 @@ export class PiAgentProvider implements IAgentProvider {
     options?.abortSignal?.addEventListener('abort', abortHandler, { once: true })
 
     try {
+      // S-8: Resolve systemPrompt from options
+      const resolvedSystemPrompt = resolveSystemPrompt(options?.systemPrompt)
+
       // Step 1: Get or create session (with extensions S14/S15 and filteredEnv)
       const sr = await this.sessionCache.getOrCreate(cwd, resumeSessionId, {
         filteredEnv,
         subAgentTools,
+        systemPrompt: resolvedSystemPrompt,
       })
       sessionResult = sr
 
@@ -198,6 +212,21 @@ export class PiAgentProvider implements IAgentProvider {
 
       // Step 4: Yield chunks in real-time (parallel with promptSession)
       yield* bridge.generator()
+
+      // S15: Parse vars_update from accumulated agent text output
+      if (options?.varsUpdate !== false) {
+        const agentText = mapperState.getTextBuffer()
+        if (agentText) {
+          const varsUpdate = parseVarsUpdate(agentText)
+          if (Object.keys(varsUpdate).length > 0) {
+            yield {
+              type: 'status',
+              status: null,
+              varsUpdate,
+            }
+          }
+        }
+      }
     } catch (err: unknown) {
       const classified = classifyProviderError(err, {
         provider: providerName,
