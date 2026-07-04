@@ -75,14 +75,13 @@ function collectEvents<T>(events: T[], label: string) {
 // Test 1: pi-ai 原始流式协议
 // ═══════════════════════════════════════════════════
 
-describe('Pi Streaming Events × DashScope', () => {
+describe.skipIf(!process.env.DASHSCOPE_API_KEY)('Pi Streaming Events × DashScope', () => {
   it('pi-ai: streamSimple 产出 AssistantMessageEvent 流', async () => {
     // 动态 import compat 层（pi-ai 的 streamSimple 入口）
     const { streamSimple } = await import('@earendil-works/pi-ai/compat')
 
     const model = makeDashScopeModel()
-    const apiKey = process.env.DASHSCOPE_API_KEY
-    expect(apiKey, 'DASHSCOPE_API_KEY 环境变量未设置').toBeTruthy()
+    const apiKey = process.env.DASHSCOPE_API_KEY!
 
     const context: Context = {
       messages: [
