@@ -1,5 +1,3 @@
-import type { AgentDefinition } from '@anthropic-ai/claude-agent-sdk'
-
 import type { LLMCallRecord } from './llm-call-tracker'
 
 export interface TokenUsage {
@@ -25,6 +23,22 @@ export interface SystemPromptPreset {
 
 export type SystemPromptInput = string | SystemPromptPreset
 
+export interface OctopusAgentDef {
+  description: string
+  prompt: string
+  tools?: string[]
+  model?: string
+  skills?: string[]
+  maxTurns?: number
+  background?: boolean
+}
+
+export interface ProviderPolicy {
+  allowedEngines?: string[]
+  maxConcurrentSessions?: number
+  budgetLimitUsd?: number
+}
+
 export interface SendQueryOptions {
   model?: string
   systemPrompt?: SystemPromptInput
@@ -33,11 +47,10 @@ export interface SendQueryOptions {
   env?: Record<string, string>
   agent?: string
   skills?: string[]
-  agents?: Record<string, AgentDefinition>
-  /** 额外指定的 plugins（与自动检测的白名单 plugins 合并） */
+  agents?: Record<string, OctopusAgentDef>
   plugins?: Array<{ type: 'local'; path: string }>
-  /** 禁用的 plugin 名称列表（从自动检测结果中排除） */
   disablePlugins?: string[]
+  varsUpdate?: boolean
 }
 
 export type MessageChunk =

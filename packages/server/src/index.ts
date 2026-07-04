@@ -43,7 +43,7 @@ import { ExecutionService } from "./services/execution"
 import { errorHandler } from "./middleware/error"
 import { agentAuthMiddleware, setAgentAuthOrgDAO } from "./routes/agent/middleware"
 import { installGlobalErrorHandlers, logInfo, getLogFilePath } from "./file-logger"
-import { registerProvider, ClaudeSDKProvider } from "@octopus/providers"
+import { registerProvider, ClaudeSDKProvider, PiAgentProvider } from "@octopus/providers"
 import { isPortInUse, findPidOnPort, killPid, waitForPort } from "./port-utils"
 import { globalErrorTracker, setupDataRetention } from "./services/error-tracker"
 import { initExecutionServiceRegistry } from "./services/execution-service-registry"
@@ -164,6 +164,12 @@ if (!process.env.VITEST && daos) {
     workspaceDAO: daos.workspace,
   })
   registerProvider('claude', () => new ClaudeSDKProvider())
+
+  // Pi Provider registration — gated by feature flag (P0-1, P1-4)
+  if (process.env.OCTOPUS_ENABLE_PI === 'true') {
+    registerProvider('pi', () => new PiAgentProvider())
+    console.log('[server] Pi Provider registered (OCTOPUS_ENABLE_PI=true)')
+  }
 
   // Initialize agent service singletons
   initSessionService(daos.agentSession)

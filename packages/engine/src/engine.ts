@@ -18,6 +18,8 @@ import { join } from "path"
 import { mkdirSync, writeFileSync, appendFileSync, existsSync, readFileSync, unlinkSync } from "fs"
 import { tmpdir } from "os"
 import type { CrossExecResolver } from "@octopus/shared"
+import { resolveModelAlias, loadModelAliasConfig } from "@octopus/shared"
+import type { ModelAliasConfig } from "@octopus/shared"
 import { PromptInjector } from "./prompt-injector"
 import type { KnowledgeInjector } from "./knowledge-injector"
 import { RetryPolicyResolver } from "./pipeline/retry-resolver"
@@ -78,6 +80,8 @@ export class WorkflowEngine {
   private promptInjector?: PromptInjector
   // Knowledge injector factory (creates per-pool KnowledgeInjector from VarPool)
   private knowledgeInjectorFactory?: (pool: VarPool) => KnowledgeInjector
+  // Model alias config for tier resolution (P0-2)
+  private modelAliasConfig: ModelAliasConfig
   // Precompute hook: runs before node execution to populate VarPool with knowledge data
   private precomputeHook?: (pool: VarPool, workflowName: string, inputs: Record<string, string>) => Promise<void>
   // Pipeline integration (set via setPipelineConfig)
@@ -156,6 +160,11 @@ export class WorkflowEngine {
     this.promptInjector = promptInjector
     this.precomputeHook = precomputeHook
     this.knowledgeInjectorFactory = knowledgeInjectorFactory
+
+    // Load model alias config (P0-2: tier resolution for engine/model fields)
+    this.modelAliasConfig = loadModelAliasConfig({
+      orgDir: orgDir,
+    })
 
     // Propagate workflow-level model to agent nodes that don't declare their own
     if (workflow.model) {
@@ -1347,6 +1356,12 @@ export class WorkflowEngine {
         const providerKey = rawKey === "claude-code" ? "claude" : rawKey
         const provider = this.providers[providerKey]
         if (!provider) throw new Error(`Unknown provider: ${rawKey}`)
+
+        // P0-2: Resolve model alias (tier → real model name)
+        if (node.model) {
+          const resolved = resolveModelAlias(node.model, providerKey, this.modelAliasConfig)
+          if (resolved) node.model = resolved
+        }
 
         const runner = new AgentNodeRunner(provider, this.cwd, (event: AgentEvent) => {
           this.logger?.log(node.id, "agent_event", { event_data: event })

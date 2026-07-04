@@ -1,0 +1,42 @@
+name: Pi SDK Compatibility Check
+
+on:
+  schedule:
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+
+jobs:
+  compat-check:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        pi-version: ['0.80.x', '0.81.x']
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install
+
+      - name: Install Pi SDK ${{ matrix.pi-version }}
+        run: |
+          cd packages/providers
+          pnpm add @earendil-works/pi-coding-agent@${{ matrix.pi-version }}
+          pnpm add @earendil-works/pi-agent-core@${{ matrix.pi-version }}
+          pnpm add @earendil-works/pi-ai@${{ matrix.pi-version }}
+
+      - name: Run unit tests
+        run: pnpm --filter @octopus/providers test -- --run
+
+      - name: Report results
+        if: failure()
+        run: |
+          echo "::error::Pi SDK ${{ matrix.pi-version }} compatibility check FAILED"
+          echo "Review PiSdkAdapter for breaking changes"
