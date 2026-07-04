@@ -97,6 +97,7 @@ export class SetupRunner {
     this.handleOrgIndex()
     this.handleUserPreference()
     this.handleIgnoreList()
+    this.handleModelsYaml()
     this.handleWorkflows()
     this.writeVersion()
     this.syncWorkspaceSkills()
@@ -699,6 +700,32 @@ export class SetupRunner {
       writeFileSync(ignorePath, content, "utf-8")
       this.report.newFiles.push(rel)
       console.log("  Created setup_ignore.yaml")
+    }
+  }
+
+  private handleModelsYaml(): void {
+    const modelsPath = join(this.globalDir, "models.yaml")
+    const rel = "models.yaml"
+
+    if (existsSync(modelsPath)) {
+      console.log(`  ${rel} exists, not overwriting`)
+      this.report.skippedFiles.push(rel)
+      return
+    }
+
+    const tplPath = this.corePackPath
+      ? join(this.corePackPath, "config", "models.yaml.tpl")
+      : null
+
+    if (tplPath && existsSync(tplPath)) {
+      if (this.dryRun) {
+        console.log("  (dry-run) Will create models.yaml")
+        this.report.newFiles.push(rel)
+        return
+      }
+      copyFileSync(tplPath, modelsPath)
+      this.report.newFiles.push(rel)
+      console.log("  Created models.yaml")
     }
   }
 
