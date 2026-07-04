@@ -3,7 +3,7 @@ import { readFileSync, writeFileSync, existsSync, readdirSync, mkdirSync, copyFi
 import { resolve, join } from "path"
 import { parseWorkflow, validateWorkflow, resolveOrgDir, isOctopusWorkflow, PipelineConfigSchema, PipelineConfigV1Schema } from "@octopus/shared"
 import { WorkflowEngine, registerBuiltinProviders } from "@octopus/engine"
-import { registerProvider, ClaudeSDKProvider, getProvider } from "@octopus/providers"
+import { registerProvider, ClaudeSDKProvider, PiAgentProvider, getProviderAsync } from "@octopus/providers"
 import { resolveCurrentOrg, resolveBuiltinWorkflowsDir } from "../utils/path"
 import { load as yamlLoad, JSON_SCHEMA } from "js-yaml"
 
@@ -23,6 +23,9 @@ workflowCmd
     const org = options.org || resolveCurrentOrg()
     const orgDir = resolveOrgDir(org)
     registerProvider('claude', () => new ClaudeSDKProvider())
+    if (process.env.OCTOPUS_ENABLE_PI === 'true') {
+      registerProvider('pi', () => new PiAgentProvider())
+    }
 
     const absPath = resolve(yamlPath)
     if (!existsSync(absPath)) {
@@ -50,9 +53,24 @@ workflowCmd
       }
     }
 
+    // Resolve providers dynamically for the workflow engine + cross-provider support
+    const providers: Record<string, any> = {}
+    const engineType = wf.engine || "claude"
+    const provider = await getProviderAsync(engineType)
+    if (provider) {
+      providers[engineType] = provider
+    }
+    // Also register the other provider for swarm sub-agents
+    if (engineType !== "pi") {
+      try { providers["pi"] = await getProviderAsync("pi") } catch { /* not registered */ }
+    }
+    if (engineType !== "claude") {
+      try { providers["claude"] = await getProviderAsync("claude") } catch { /* not registered */ }
+    }
+
     const engine = new WorkflowEngine(
       wf,
-      { "claude": getProvider("claude") },
+      providers,
       process.cwd(),
       orgDir,
       undefined,

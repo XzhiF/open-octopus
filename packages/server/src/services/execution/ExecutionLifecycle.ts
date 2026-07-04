@@ -12,7 +12,7 @@ import type { HookDef, NodeDef, WorkflowDef, WorkflowHooks, PipelineConfig, Exec
 import type { EngineCallbacks } from "@octopus/engine"
 import { WorkflowEngine, BashExecutor, AgentExecutor, AgentNodeRunner, FilesystemCheckpointStore } from "@octopus/engine"
 import { getProvider } from "@octopus/providers"
-import { parseWorkflow, VarPool, evaluateExpression, parsePipelineConfig, CrossExecResolver } from "@octopus/shared"
+import { parseWorkflow, VarPool, evaluateExpression, parsePipelineConfig, CrossExecResolver, collectNodeEngines } from "@octopus/shared"
 import { gitOps } from "../git-ops"
 import { ObservabilityService as ObsSvc } from "../observability"
 import { PrivacyFilter } from "../privacy-filter"
@@ -149,7 +149,7 @@ export class ExecutionLifecycle {
 
     const engine = new WorkflowEngine(
       wf.parsed,
-      { "claude": getProvider("claude") },
+      this.resolveProviders(wf.parsed),
       this.workspacePath,
       this.workspacePath,
       this.buildCallbacks(id),
@@ -1018,6 +1018,26 @@ export class ExecutionLifecycle {
 
   // ==================== Helpers ====================
 
+  /**
+   * Resolve providers for a workflow by scanning all node engines.
+   * Falls back to { "claude": getProvider("claude") } if no engines found.
+   */
+  private resolveProviders(workflow: WorkflowDef): Record<string, any> {
+    const providers: Record<string, any> = {}
+    const engineKeys = collectNodeEngines(workflow.nodes ?? [])
+    for (const key of engineKeys) {
+      try {
+        providers[key] = getProvider(key)
+      } catch {
+        // Provider not registered — skip silently
+      }
+    }
+    if (Object.keys(providers).length === 0) {
+      try { providers["claude"] = getProvider("claude") } catch { /* no providers at all */ }
+    }
+    return providers
+  }
+
   private updateStatus(id: string, status: string, extra: Record<string, unknown> = {}): void {
     try {
       const fields: Record<string, unknown> = { status, ...extra }
@@ -1397,7 +1417,7 @@ export class ExecutionLifecycle {
 
     const engine = new WorkflowEngine(
       wf.parsed,
-      { "claude": getProvider("claude") },
+      this.resolveProviders(wf.parsed),
       this.workspacePath, this.workspacePath,
       this.buildCallbacks(exec.id),
       abortController.signal, exec.id, inputValues,
