@@ -8,25 +8,24 @@ interface RegistryLike {
   getAll(): ModelLike[]
 }
 
-const MODEL_ALIASES: Record<string, { provider: string; modelId: string }> = {
-  sonnet: { provider: 'anthropic', modelId: 'claude-sonnet-4-20250514' },
-  opus: { provider: 'anthropic', modelId: 'claude-opus-4-20250514' },
-  haiku: { provider: 'anthropic', modelId: 'claude-haiku-4-5-20251001' },
-  'gpt-4o': { provider: 'openai', modelId: 'gpt-4o' },
-  'gpt-4o-mini': { provider: 'openai', modelId: 'gpt-4o-mini' },
-  'qwen3-max': { provider: 'dashscope', modelId: 'qwen3-max' },
-  'qwen3.7-max': { provider: 'dashscope', modelId: 'qwen3.7-max' },
-  'qwen3.7-plus': { provider: 'dashscope', modelId: 'qwen3.7-plus' },
-  'qwen3.6-plus': { provider: 'dashscope', modelId: 'qwen3.6-plus' },
-}
-
+/**
+ * Resolve a model string to a Model object in the Pi SDK registry.
+ *
+ * Supports three formats:
+ *   1. "provider/model-id" → direct lookup via registry.find()
+ *   2. Bare model id       → search across all providers via registry.getAll()
+ *
+ * Tier resolution (pro-max/pro/se) is handled upstream by shared/model-alias.ts
+ * before reaching this function. By the time we get here, the string should
+ * already be in "provider/model-id" format.
+ */
 export function resolveModel(
   modelStr: string | undefined,
   registry: RegistryLike,
 ): ModelLike | undefined {
   if (!modelStr) return undefined
 
-  // 1. "provider/model-id" format
+  // 1. "provider/model-id" format — direct lookup
   const slashIndex = modelStr.indexOf('/')
   if (slashIndex > 0) {
     const provider = modelStr.slice(0, slashIndex)
@@ -34,13 +33,7 @@ export function resolveModel(
     return registry.find(provider, modelId) ?? undefined
   }
 
-  // 2. Short-name aliases
-  const alias = MODEL_ALIASES[modelStr]
-  if (alias) {
-    return registry.find(alias.provider, alias.modelId) ?? undefined
-  }
-
-  // 3. Full-text search across all providers
+  // 2. Bare model id — search across all registered providers
   const all = registry.getAll()
   const matches = all.filter((m: ModelLike) => m.id === modelStr)
   if (matches.length > 0) {

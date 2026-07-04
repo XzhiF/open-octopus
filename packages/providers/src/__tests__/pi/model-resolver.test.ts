@@ -17,30 +17,25 @@ describe('ModelResolver', () => {
     getAll: () => allModels,
   }
 
-  it('resolves "provider/model-id" format (TC-012)', () => {
+  it('resolves "provider/model-id" format via find()', () => {
     const result = resolveModel('openai/gpt-4o', mockRegistry as any)
     expect(result).toEqual({ provider: 'openai', id: 'gpt-4o' })
   })
 
-  it('returns undefined for undefined input (TC-013)', () => {
+  it('returns undefined for undefined input', () => {
     expect(resolveModel(undefined, mockRegistry as any)).toBeUndefined()
   })
 
-  it('returns undefined for unknown model', () => {
+  it('returns undefined for unknown provider/model-id', () => {
     expect(resolveModel('unknown/model', mockRegistry as any)).toBeUndefined()
   })
 
-  it('resolves short-name aliases via MODEL_ALIASES', () => {
-    const result = resolveModel('sonnet', mockRegistry as any)
-    expect(result).toEqual({ provider: 'anthropic', id: 'claude-sonnet-4-20250514' })
-  })
-
-  it('resolves qwen aliases', () => {
-    expect(resolveModel('qwen3.7-max', mockRegistry as any)).toEqual({ provider: 'dashscope', id: 'qwen3.7-max' })
-    expect(resolveModel('qwen3-max', mockRegistry as any)).toEqual({ provider: 'dashscope', id: 'qwen3-max' })
-  })
-
-  it('falls back to getAll search for bare model id', () => {
+  it('resolves bare model id via getAll() search', () => {
     expect(resolveModel('gpt-4o', mockRegistry as any)).toEqual({ provider: 'openai', id: 'gpt-4o' })
+    expect(resolveModel('qwen3.7-max', mockRegistry as any)).toEqual({ provider: 'dashscope', id: 'qwen3.7-max' })
+  })
+
+  it('returns undefined for unknown bare model id', () => {
+    expect(resolveModel('nonexistent-model', mockRegistry as any)).toBeUndefined()
   })
 })
