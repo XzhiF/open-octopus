@@ -8,7 +8,7 @@ describe('EventMapper', () => {
     expect(chunks).not.toBeNull()
     if (Array.isArray(chunks)) {
       expect(chunks[0].type).toBe('message_start')
-      expect(chunks[0].messageId).toBeTruthy()
+      expect((chunks[0] as any).messageId).toBeTruthy()
     } else {
       expect(chunks!.type).toBe('message_start')
     }

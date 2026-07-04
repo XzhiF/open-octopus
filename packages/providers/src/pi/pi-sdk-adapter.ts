@@ -30,7 +30,7 @@ export interface SessionResult {
 
 export async function createSession(opts: SessionOptions): Promise<SessionResult> {
   const pi = await getPiModule()
-  const piAi = await import('@earendil-works/pi-ai')
+  const piAi = await import('@earendil-works/pi-ai') as any
 
   const authStorage = piAi.AuthStorage.inMemory()
   const modelRegistry = piAi.ModelRegistry.inMemory(authStorage)
@@ -39,7 +39,7 @@ export async function createSession(opts: SessionOptions): Promise<SessionResult
     registerProvidersFromEnv(modelRegistry, opts.filteredEnv)
   }
 
-  const resourceLoader = pi.DefaultResourceLoader({
+  const resourceLoader = new (pi.DefaultResourceLoader as any)({
     noExtensions: true,
     noSkills: true,
     noContextFiles: true,
@@ -51,13 +51,13 @@ export async function createSession(opts: SessionOptions): Promise<SessionResult
     cwd: opts.cwd,
     modelRegistry,
     resourceLoader,
-    systemPrompt: opts.systemPrompt,
-    extensions: opts.extensions,
-  })
+    ...(opts.systemPrompt ? { systemPrompt: opts.systemPrompt } : {}),
+    ...(opts.extensions ? { extensions: opts.extensions } : {}),
+  } as any)
 
   return {
     session,
-    sessionId: session.id ?? `session-${Date.now()}`,
+    sessionId: (session as any).id ?? `session-${Date.now()}`,
     modelRegistry,
   }
 }
@@ -123,7 +123,7 @@ export async function findSession(cwd: string, id: string): Promise<SessionResul
       const match = sessions?.find((s: any) => s.id?.startsWith(id))
       if (match) {
         const session = await pi.SessionManager.open(match.path)
-        return { session, sessionId: match.id }
+        return { session, sessionId: match.id, modelRegistry: null }
       }
     }
   } catch {
