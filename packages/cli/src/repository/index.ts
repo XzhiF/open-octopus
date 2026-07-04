@@ -34,6 +34,10 @@ export { WorkspaceUninstaller } from "./uninstaller"
 export type { UninstallResult } from "./uninstaller"
 export { OutputFormatter } from "./output"
 export type { OutputOptions } from "./output"
+export { scanUnusedCache, runGc, aggregateGcResult } from "./gc"
+export type { GcEntry, GcResult } from "./gc"
+export { readLockFile, readWorkspaceConfig, computeDrift } from "./lock-manager"
+export type { LockEntry, LockFile, WorkspaceConfig, DriftItem, DriftReport } from "./lock-manager"
 
 // ── 工厂函数 ────────────────────────────────────────────────────
 

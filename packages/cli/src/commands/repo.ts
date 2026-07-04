@@ -8,13 +8,12 @@
 import { Command } from "commander"
 import { join } from "path"
 import { homedir } from "os"
-import { existsSync, readFileSync, readdirSync, rmSync, statSync } from "fs"
+import { existsSync } from "fs"
 import {
   DependencyResolver,
   RepoError,
   formatBytes,
   registryKey,
-  computeDirSize,
 } from "@octopus/shared"
 import type {
   ResourceType,
@@ -30,6 +29,8 @@ import { ResourceSearcher } from "../repository/searcher"
 import { WorkspaceUninstaller } from "../repository/uninstaller"
 import { AuditLogger } from "../repository/audit-logger"
 import { OutputFormatter } from "../repository/output"
+import { scanUnusedCache, runGc, aggregateGcResult } from "../repository/gc"
+import { readLockFile, readWorkspaceConfig, computeDrift } from "../repository/lock-manager"
 
 // ── Helpers ─────────────────────────────────────────────────────
 
@@ -502,65 +503,37 @@ repoCmd
       await security.checkCallerPermission("gc")
 
       const repoDir = manager.getRepoDir()
-      const cacheDir = join(repoDir, "cache")
       const entries = manager.list()
       const usedPaths = new Set(entries.map(e => e.cache_path))
 
-      const unused: string[] = []
-      let freedBytes = 0
-
-      if (existsSync(cacheDir)) {
-        for (const type of ["skill", "agent", "workflow", "source"] as ResourceType[]) {
-          const typeDir = join(cacheDir, type)
-          if (!existsSync(typeDir)) continue
-          for (const dir of readdirSync(typeDir)) {
-            const relPath = join("cache", type, dir)
-            if (!usedPaths.has(relPath)) {
-              const fullPath = join(repoDir, relPath)
-              try {
-                const stat = statSync(fullPath)
-                if (stat.isDirectory()) {
-                  freedBytes += computeDirSize(fullPath)
-                } else {
-                  freedBytes += stat.size
-                }
-              } catch {
-                // skip
-              }
-              unused.push(relPath)
-            }
-          }
-        }
-      }
+      const unused = scanUnusedCache(repoDir, usedPaths)
+      const result = aggregateGcResult(unused, entries.length)
 
       if (opts.dryRun) {
         if (opts.json) {
-          console.log(JSON.stringify({ would_remove: unused, freed_bytes: freedBytes }))
+          console.log(JSON.stringify({ would_remove: unused.map(e => e.relPath), freed_bytes: result.freedBytes }))
         } else {
-          console.log(`  Would remove ${unused.length} entries (~${formatBytes(freedBytes)})`)
-          for (const d of unused) console.log(`  - ${d}`)
+          console.log(`  Would remove ${unused.length} entries (~${formatBytes(result.freedBytes)})`)
+          for (const e of unused) console.log(`  - ${e.relPath}`)
         }
         return
       }
 
       // Actual removal
-      for (const relPath of unused) {
-        const fullPath = join(repoDir, relPath)
-        if (existsSync(fullPath)) rmSync(fullPath, { recursive: true, force: true })
-      }
+      runGc(repoDir, unused)
 
       audit.log("cache.gc" as AuditAction, {
-        detail: { removed: unused.length, freed_bytes: freedBytes },
+        detail: { removed: unused.length, freed_bytes: result.freedBytes },
       })
 
       if (opts.json) {
         console.log(JSON.stringify({
-          freed_bytes: freedBytes,
+          freed_bytes: result.freedBytes,
           removed: unused.length,
-          retained: entries.length,
+          retained: result.retained,
         }))
       } else {
-        console.log(`  ✓ Garbage collected: ${unused.length} entries removed (~${formatBytes(freedBytes)})`)
+        console.log(`  ✓ Garbage collected: ${unused.length} entries removed (~${formatBytes(result.freedBytes)})`)
       }
     } catch (err: any) {
       handleError(err, fmt)
@@ -704,67 +677,28 @@ repoCmd
     try {
       const wsDir = opts.workspace
 
-      // Read config.json
-      const configPath = join(wsDir, "config.json")
-      if (!existsSync(configPath)) {
+      let config
+      try {
+        config = readWorkspaceConfig(wsDir)
+      } catch {
         console.error(fmt.error("CONFIG_NOT_FOUND", "config.json not found", "Create config.json with 'resources' field"))
         process.exit(2)
       }
 
-      const config = JSON.parse(readFileSync(configPath, "utf-8"))
-      const declared = config.resources ?? { skills: [], agents: [], workflows: [], sources: [] }
-
-      // Read resources.lock
-      const lockPath = join(wsDir, ".octopus", "resources.lock")
-      let installed: any[] = []
-      if (existsSync(lockPath)) {
-        const lock = JSON.parse(readFileSync(lockPath, "utf-8"))
-        installed = lock.resources ?? []
-      }
-
-      // Compute diff
-      const add: any[] = []
-      const remove: any[] = []
-
-      for (const skill of declared.skills ?? []) {
-        if (!installed.find((i: any) => i.name === skill && i.type === "skill")) {
-          add.push({ name: skill, type: "skill", reason: "declared but not installed" })
-        }
-      }
-      for (const agent of declared.agents ?? []) {
-        if (!installed.find((i: any) => i.name === agent && i.type === "agent")) {
-          add.push({ name: agent, type: "agent", reason: "declared but not installed" })
-        }
-      }
-      for (const wf of declared.workflows ?? []) {
-        if (!installed.find((i: any) => i.name === wf && i.type === "workflow")) {
-          add.push({ name: wf, type: "workflow", reason: "declared but not installed" })
-        }
-      }
-      for (const src of declared.sources ?? []) {
-        if (!installed.find((i: any) => i.name === src && i.type === "source")) {
-          add.push({ name: src, type: "source", reason: "declared but not installed" })
-        }
-      }
-
-      // Detect installed but not declared (drift)
-      for (const inst of installed) {
-        const list = declared[inst.type + "s"] ?? []
-        if (!list.includes(inst.name)) {
-          remove.push({ name: inst.name, type: inst.type, reason: "installed but not declared" })
-        }
-      }
+      const lock = readLockFile(wsDir)
+      const installed = lock.resources ?? []
+      const drift = computeDrift(config, installed)
 
       if (opts.json) {
         console.log(JSON.stringify({
-          diff: { add, remove, update: [], unchanged: installed.length - remove.length },
-          summary: `${add.length} to add, ${remove.length} to remove, 0 to update, ${installed.length - remove.length} unchanged`,
+          diff: { add: drift.add, remove: drift.remove, update: drift.update, unchanged: drift.unchanged },
+          summary: `${drift.add.length} to add, ${drift.remove.length} to remove, 0 to update, ${drift.unchanged} unchanged`,
         }))
       } else {
         console.log(`  Sync Report:`)
-        for (const a of add) console.log(`  + ${a.type}:${a.name.padEnd(30)} ${a.reason}`)
-        for (const r of remove) console.log(`  - ${r.type}:${r.name.padEnd(30)} ${r.reason}`)
-        console.log(`\n  ${add.length} to add, ${remove.length} to remove, ${installed.length - remove.length} unchanged.`)
+        for (const a of drift.add) console.log(`  + ${a.type}:${a.name.padEnd(30)} ${a.reason}`)
+        for (const r of drift.remove) console.log(`  - ${r.type}:${r.name.padEnd(30)} ${r.reason}`)
+        console.log(`\n  ${drift.add.length} to add, ${drift.remove.length} to remove, ${drift.unchanged} unchanged.`)
       }
     } catch (err: any) {
       handleError(err, fmt)

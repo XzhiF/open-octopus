@@ -1,5 +1,9 @@
 /**
- * DependencyResolver — BFS 构建依赖图 + DFS 三色标记环检测 + Kahn 拓扑排序
+ * GraphDependencyResolver — BFS 构建依赖图 + DFS 三色标记环检测 + Kahn 拓扑排序
+ *
+ * 区别于 repository/dependency-resolver.ts 中的 DependencyResolver:
+ *   - 本类 (resource/): BFS 构建图 + DFS 三色环检测 + Kahn 拓扑排序；API 基于 lookup 函数
+ *   - repository/ 版本: DFS 直接遍历；API 基于 ResourceManifest[] 数组
  *
  * 算法流程:
  *   1. BFS 从入口资源展开，构建完整依赖图（含 optional 边）
@@ -64,7 +68,7 @@ const COLOR_BLACK = 2 // 已完成
 
 // ── 解析器 ──────────────────────────────────────────────────────
 
-export class DependencyResolver {
+export class GraphDependencyResolver {
   constructor(
     private readonly lookup: DependencyLookup,
     private readonly maxDepth: number = MAX_DEPTH,

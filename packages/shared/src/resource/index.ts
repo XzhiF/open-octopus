@@ -34,9 +34,11 @@ export {
 } from "./errors"
 
 // ── Enhanced Dependency Resolver (BFS + DFS + Kahn topology) ────
-// The simple DependencyResolver is in repository/dependency-resolver.ts.
-// This enhanced version uses a different API (lookup function vs manifest map).
-// Only non-conflicting exports are re-exported here.
+// GraphDependencyResolver (this module) uses a lookup-function API with full
+// graph construction + cycle detection + Kahn topological sort.
+// The simpler DependencyResolver (repository/dependency-resolver.ts) takes a
+// ResourceManifest[] array and uses direct DFS traversal.
+// Only non-conflicting types and functions are re-exported here.
 export {
   computeReverseDependencies,
 } from "./dependency-resolver"

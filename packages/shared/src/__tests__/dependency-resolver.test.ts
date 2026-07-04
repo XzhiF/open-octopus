@@ -1,5 +1,5 @@
 /**
- * DependencyResolver 单元测试
+ * GraphDependencyResolver 单元测试
  *
  * 覆盖:
  *   - 简单线性依赖链
@@ -11,7 +11,7 @@
  */
 import { describe, it, expect } from "vitest"
 import {
-  DependencyResolver,
+  GraphDependencyResolver,
   computeReverseDependencies,
 } from "../resource/dependency-resolver"
 import type { DependencyLookup } from "../resource/dependency-resolver"
@@ -34,13 +34,13 @@ function createMockLookup(
   }
 }
 
-describe("DependencyResolver", () => {
+describe("GraphDependencyResolver", () => {
   describe("简单依赖链", () => {
     it("单资源无依赖 → 直接返回", () => {
       const lookup = createMockLookup({
         "skill:brainstorming": [],
       })
-      const resolver = new DependencyResolver(lookup)
+      const resolver = new GraphDependencyResolver(lookup)
       const result = resolver.resolve([{ name: "brainstorming", type: "skill" }])
 
       expect(result.ordered).toHaveLength(1)
@@ -52,7 +52,7 @@ describe("DependencyResolver", () => {
         "agent:security-engineer": [{ name: "security-review", type: "skill", optional: false }],
         "skill:security-review": [],
       })
-      const resolver = new DependencyResolver(lookup)
+      const resolver = new GraphDependencyResolver(lookup)
       const result = resolver.resolve([{ name: "security-engineer", type: "agent" }])
 
       expect(result.ordered).toHaveLength(2)
@@ -67,7 +67,7 @@ describe("DependencyResolver", () => {
         "skill:b": [{ name: "c", type: "skill", optional: false }],
         "skill:c": [],
       })
-      const resolver = new DependencyResolver(lookup)
+      const resolver = new GraphDependencyResolver(lookup)
       const result = resolver.resolve([{ name: "a", type: "agent" }])
 
       expect(result.ordered).toHaveLength(3)
@@ -88,7 +88,7 @@ describe("DependencyResolver", () => {
         "skill:c": [{ name: "d", type: "skill", optional: false }],
         "skill:d": [],
       })
-      const resolver = new DependencyResolver(lookup)
+      const resolver = new GraphDependencyResolver(lookup)
       const result = resolver.resolve([{ name: "a", type: "agent" }])
 
       expect(result.ordered).toHaveLength(4)
@@ -106,7 +106,7 @@ describe("DependencyResolver", () => {
         "agent:y": [{ name: "shared", type: "skill", optional: false }],
         "skill:shared": [],
       })
-      const resolver = new DependencyResolver(lookup)
+      const resolver = new GraphDependencyResolver(lookup)
       const result = resolver.resolve([
         { name: "x", type: "agent" },
         { name: "y", type: "agent" },
@@ -125,7 +125,7 @@ describe("DependencyResolver", () => {
         "skill:a": [{ name: "b", type: "skill", optional: false }],
         "skill:b": [{ name: "a", type: "skill", optional: false }],
       })
-      const resolver = new DependencyResolver(lookup)
+      const resolver = new GraphDependencyResolver(lookup)
 
       expect(() => resolver.resolve([{ name: "a", type: "skill" }])).toThrow(
         CircularDependencyError
@@ -138,7 +138,7 @@ describe("DependencyResolver", () => {
         "skill:b": [{ name: "c", type: "skill", optional: false }],
         "skill:c": [{ name: "a", type: "skill", optional: false }],
       })
-      const resolver = new DependencyResolver(lookup)
+      const resolver = new GraphDependencyResolver(lookup)
 
       try {
         resolver.resolve([{ name: "a", type: "skill" }])
@@ -155,7 +155,7 @@ describe("DependencyResolver", () => {
       const lookup = createMockLookup({
         "skill:a": [{ name: "a", type: "skill", optional: false }],
       })
-      const resolver = new DependencyResolver(lookup)
+      const resolver = new GraphDependencyResolver(lookup)
 
       expect(() => resolver.resolve([{ name: "a", type: "skill" }])).toThrow(
         CircularDependencyError
@@ -173,7 +173,7 @@ describe("DependencyResolver", () => {
         "skill:d5": [],
       })
       // maxDepth = 2，d1→d2→d3 已经深度 2，d3→d4 超限
-      const resolver = new DependencyResolver(lookup, 2)
+      const resolver = new GraphDependencyResolver(lookup, 2)
 
       expect(() => resolver.resolve([{ name: "d1", type: "skill" }])).toThrow(
         DepthExceededError
@@ -186,7 +186,7 @@ describe("DependencyResolver", () => {
         "skill:d2": [{ name: "d3", type: "skill", optional: false }],
         "skill:d3": [],
       })
-      const resolver = new DependencyResolver(lookup, 3)
+      const resolver = new GraphDependencyResolver(lookup, 3)
       const result = resolver.resolve([{ name: "d1", type: "skill" }])
 
       expect(result.ordered).toHaveLength(3)
@@ -202,7 +202,7 @@ describe("DependencyResolver", () => {
         ],
         "skill:required-skill": [],
       })
-      const resolver = new DependencyResolver(lookup)
+      const resolver = new GraphDependencyResolver(lookup)
       const result = resolver.resolve([{ name: "x", type: "agent" }])
 
       expect(result.ordered).toHaveLength(2) // x + required-skill
@@ -217,7 +217,7 @@ describe("DependencyResolver", () => {
         ],
         "skill:optional-skill": [],
       })
-      const resolver = new DependencyResolver(lookup)
+      const resolver = new GraphDependencyResolver(lookup)
       const result = resolver.resolve([{ name: "x", type: "agent" }])
 
       expect(result.ordered).toHaveLength(2)
@@ -231,7 +231,7 @@ describe("DependencyResolver", () => {
       const lookup = createMockLookup({
         "agent:x": [{ name: "nonexistent", type: "skill", optional: false }],
       })
-      const resolver = new DependencyResolver(lookup)
+      const resolver = new GraphDependencyResolver(lookup)
 
       expect(() => resolver.resolve([{ name: "x", type: "agent" }])).toThrow(
         ResourceNotFoundError
@@ -240,7 +240,7 @@ describe("DependencyResolver", () => {
 
     it("入口资源不存在 → 抛出 ResourceNotFoundError", () => {
       const lookup = createMockLookup({})
-      const resolver = new DependencyResolver(lookup)
+      const resolver = new GraphDependencyResolver(lookup)
 
       expect(() => resolver.resolve([{ name: "ghost", type: "skill" }])).toThrow(
         ResourceNotFoundError
@@ -255,7 +255,7 @@ describe("DependencyResolver", () => {
         "agent:b": [{ name: "shared", type: "skill", optional: false }],
         "skill:shared": [],
       })
-      const resolver = new DependencyResolver(lookup)
+      const resolver = new GraphDependencyResolver(lookup)
       const result = resolver.resolve([
         { name: "a", type: "agent" },
         { name: "b", type: "agent" },
