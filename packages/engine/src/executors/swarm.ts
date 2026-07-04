@@ -1,6 +1,6 @@
 import type { NodeExecutor, NodeExecutionResult } from "./types"
-import type { NodeDef, ExpertDef } from "@octopus/shared"
-import { VarPool, substituteVars } from "@octopus/shared"
+import type { NodeDef, ExpertDef, ModelAliasConfig } from "@octopus/shared"
+import { VarPool, substituteVars, resolveModelAlias } from "@octopus/shared"
 import type { IAgentProvider, MessageChunk } from "@octopus/providers"
 import type { ICheckpointStore, SwarmCheckpointData } from "../pipeline/checkpoint-types"
 import { existsSync } from "fs"
@@ -40,6 +40,8 @@ export class SwarmExecutor implements NodeExecutor {
     private checkpointStore?: ICheckpointStore,
     private executionId?: string,
     private engineHookFn?: (event: string, context: Record<string, unknown>) => Promise<void>,
+    /** BL-5: Model alias config for resolving expert.model aliases */
+    private modelAliasConfig?: ModelAliasConfig,
   ) {}
 
   async execute(): Promise<NodeExecutionResult> {
@@ -52,6 +54,18 @@ export class SwarmExecutor implements NodeExecutor {
         ...this.node.expert_defaults,
         ...e,
       }))
+
+      // BL-5: Resolve expert.model aliases (tier → real model name)
+      if (this.modelAliasConfig) {
+        const rawKey = this.node.engine ?? "claude"
+        const providerKey = rawKey === "claude-code" ? "claude" : rawKey
+        for (const expert of experts) {
+          if (expert.model) {
+            const resolved = resolveModelAlias(expert.model, providerKey, this.modelAliasConfig)
+            if (resolved) expert.model = resolved
+          }
+        }
+      }
 
       // Resolve $vars.* references in topic (consistent with agent/bash/python executors)
       const resolvedTopic = substituteVars(this.node.topic ?? "", this.pool)

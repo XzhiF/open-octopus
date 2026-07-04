@@ -1,23 +1,33 @@
 import type { IAgentProvider } from './types'
 
-const providers = new Map<string, () => IAgentProvider>()
+const factories = new Map<string, () => IAgentProvider>()
+const instances = new Map<string, IAgentProvider>()
 
 export function registerProvider(id: string, factory: () => IAgentProvider): void {
-  providers.set(id, factory)
+  factories.set(id, factory)
+  instances.delete(id)
 }
 
 export function getProvider(id: string): IAgentProvider {
-  const factory = providers.get(id)
+  const cached = instances.get(id)
+  if (cached) return cached
+  const factory = factories.get(id)
   if (!factory) {
-    throw new Error(`Unknown provider: ${id}. Registered: ${[...providers.keys()].join(', ')}`)
+    throw new Error(`Unknown provider: ${id}. Registered: ${[...factories.keys()].join(', ')}`)
   }
-  return factory()
+  const instance = factory()
+  instances.set(id, instance)
+  return instance
 }
 
 export function isProviderRegistered(id: string): boolean {
-  return providers.has(id)
+  return factories.has(id)
 }
 
 export function listProviders(): string[] {
-  return [...providers.keys()]
+  return [...factories.keys()]
+}
+
+export function resetProviderInstances(): void {
+  instances.clear()
 }

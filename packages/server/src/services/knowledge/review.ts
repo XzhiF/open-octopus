@@ -92,7 +92,7 @@ export class ReviewService {
     this.pendingReviewDAO.batchUpdateStatus(ids, "rejected")
   }
 
-  getPendingSummary(): { rules: number } {
+  getPendingSummary(): { rules: number; skills: number; total: number } {
     return this.pendingReviewDAO.countPendingByType()
   }
 

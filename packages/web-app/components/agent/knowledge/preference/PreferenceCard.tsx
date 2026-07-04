@@ -65,10 +65,8 @@ export const PreferenceCard = forwardRef<PreferenceCardHandle, PreferenceCardPro
           if (cancelled) return
           const text = res.content ?? ''
           setContent(text)
-          // Auto-collapse on first load if content is empty
           if (initialLoadRef.current) {
             initialLoadRef.current = false
-            if (!text.trim()) setExpanded(false)
           }
         })
         .catch((err: unknown) => {

@@ -82,6 +82,10 @@ importers:
       '@anthropic-ai/claude-agent-sdk':
         specifier: ^0.2.0
         version: 0.2.141(zod@3.25.76)
+      '@octopus/shared':
+        specifier: workspace:*
+        version: link:../shared
+    devDependencies:
       '@earendil-works/pi-agent-core':
         specifier: 0.80.3
         version: 0.80.3(@modelcontextprotocol/sdk@1.29.0(zod@3.25.76))(ws@8.20.1)(zod@3.25.76)
@@ -91,10 +95,6 @@ importers:
       '@earendil-works/pi-coding-agent':
         specifier: 0.80.3
         version: 0.80.3(@modelcontextprotocol/sdk@1.29.0(zod@3.25.76))(ws@8.20.1)(zod@3.25.76)
-      '@octopus/shared':
-        specifier: workspace:*
-        version: link:../shared
-    devDependencies:
       '@types/node':
         specifier: ^22.15.0
         version: 22.19.19

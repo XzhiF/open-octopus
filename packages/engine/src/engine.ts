@@ -18,6 +18,8 @@ import { join } from "path"
 import { mkdirSync, writeFileSync, appendFileSync, existsSync, readFileSync, unlinkSync } from "fs"
 import { tmpdir } from "os"
 import type { CrossExecResolver } from "@octopus/shared"
+import { resolveModelAlias, loadModelAliasConfig } from "@octopus/shared"
+import type { ModelAliasConfig } from "@octopus/shared"
 import { PromptInjector } from "./prompt-injector"
 import type { KnowledgeInjector } from "./knowledge-injector"
 import { RetryPolicyResolver } from "./pipeline/retry-resolver"
@@ -78,6 +80,10 @@ export class WorkflowEngine {
   private promptInjector?: PromptInjector
   // Knowledge injector factory (creates per-pool KnowledgeInjector from VarPool)
   private knowledgeInjectorFactory?: (pool: VarPool) => KnowledgeInjector
+  // Model alias config for tier resolution (P0-2)
+  private modelAliasConfig: ModelAliasConfig
+  // BL-6: Workflow-level default model (replaces propagateModel mutation)
+  private workflowDefaultModel?: string
   // Precompute hook: runs before node execution to populate VarPool with knowledge data
   private precomputeHook?: (pool: VarPool, workflowName: string, inputs: Record<string, string>) => Promise<void>
   // Pipeline integration (set via setPipelineConfig)
@@ -157,10 +163,14 @@ export class WorkflowEngine {
     this.precomputeHook = precomputeHook
     this.knowledgeInjectorFactory = knowledgeInjectorFactory
 
-    // Propagate workflow-level model to agent nodes that don't declare their own
-    if (workflow.model) {
-      this.propagateModel(workflow.nodes, workflow.model)
-    }
+    // Load model alias config (P0-2: tier resolution for engine/model fields)
+    this.modelAliasConfig = loadModelAliasConfig({
+      orgDir: orgDir,
+    })
+
+    // BL-6: Don't mutate node.model — store the workflow default model instead
+    // and use it as fallback when resolving model for agent/swarm nodes
+    this.workflowDefaultModel = workflow.model
 
     if (orgDir) {
       this.logger = new JsonlLogger(orgDir, this.executionId)
@@ -1348,6 +1358,15 @@ export class WorkflowEngine {
         const provider = this.providers[providerKey]
         if (!provider) throw new Error(`Unknown provider: ${rawKey}`)
 
+        // P0-2 + BL-6: Resolve model alias without mutating node.model
+        // Priority: node.model > workflow default model
+        const rawModel = node.model ?? this.workflowDefaultModel
+        let resolvedModel = rawModel
+        if (rawModel) {
+          const resolved = resolveModelAlias(rawModel, providerKey, this.modelAliasConfig)
+          if (resolved) resolvedModel = resolved
+        }
+
         const runner = new AgentNodeRunner(provider, this.cwd, (event: AgentEvent) => {
           this.logger?.log(node.id, "agent_event", { event_data: event })
           this.callbacks?.onAgentEvent?.(node.id, event)
@@ -1364,6 +1383,8 @@ export class WorkflowEngine {
           { nodeResults: this.nodeResults },
           this.promptInjector, knowledgeInjector, this.workflow.name,
           this.crossExecResolver, this.executionId,
+          undefined, // loopContext
+          resolvedModel,
         )
       }
       case "swarm":
@@ -1375,6 +1396,7 @@ export class WorkflowEngine {
           async (event: string, context: Record<string, unknown>) => {
             await this.executeHooks(event as keyof WorkflowHooks, context)
           },
+          this.modelAliasConfig,
         )
       default:
         throw new Error(`Unknown node type: ${(node as any).type}`)
@@ -1650,17 +1672,7 @@ export class WorkflowEngine {
     return false
   }
 
-  /** Propagate workflow-level model to agent nodes that don't declare their own. */
-  private propagateModel(nodes: NodeDef[], model: string): void {
-    for (const node of nodes) {
-      if (node.type === "agent" && !node.model) {
-        node.model = model
-      }
-      if (node.nodes) {
-        this.propagateModel(node.nodes, model)
-      }
-    }
-  }
+  // BL-6: propagateModel removed — use workflowDefaultModel as fallback at executor creation time
 
   // ── Pause / Resume ────────────────────────────────────────
 
