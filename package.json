@@ -47,12 +47,6 @@
     "typescript": "^5.9.3",
     "vitest": "^3.2.6"
   },
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "esbuild",
-      "better-sqlite3"
-    ]
-  },
   "dependencies": {
     "octopus": "link:packages/cli"
   }
