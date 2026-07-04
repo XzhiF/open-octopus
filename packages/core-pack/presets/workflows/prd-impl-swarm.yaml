@@ -612,7 +612,7 @@ nodes:
       - role: contract-synthesizer
         perspective: "契约综合者 — 将架构扫描和 UI 扫描合并为统一约束文档"
         depends_on: [architecture-explorer, ui-system-auditor]
-        task: |
+        prompt: |
           读取两份扫描报告文件（Read 文件，不依赖 expert 返回值），合成最终约束文档。
 
           读取：
@@ -838,6 +838,11 @@ nodes:
         2. 每条问题的修正建议
         3. 修正后对计划的具体改动指令（修改哪个阶段、哪个任务、怎么改）
         保持 2000 字以内。
+
+        ## 共识评估（JSON，最后一行）
+        ```json
+        {"assessment": {"consensus_score": 0.0-1.0, "should_continue": true/false, "reason": "<1-2句>"}}
+        ```
 
   # ── refine-plan-swarm 输出处理 ──
   - id: refine-plan-write
@@ -1085,7 +1090,7 @@ nodes:
 
       - role: product-completeness-assessor
         perspective: "产品完整度评估员"
-        task: |
+        prompt: |
           对照 PRD 需求评估实现完整度。**P0（核心）和 P1（增强）都必须 100% 实现。**
 
           ⛔ 用户输入的所有功能都是"必需"，未实现的功能必须列为缺失项。
