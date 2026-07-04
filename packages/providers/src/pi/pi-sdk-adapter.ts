@@ -62,6 +62,7 @@ export async function createSession(opts: SessionOptions): Promise<SessionResult
   }
 }
 
+/** Env var → provider name mapping. */
 const PROVIDER_ENV_KEYS: Record<string, string> = {
   ANTHROPIC_API_KEY: 'anthropic',
   OPENAI_API_KEY: 'openai',
@@ -75,15 +76,58 @@ const PROVIDER_ENV_KEYS: Record<string, string> = {
   FIREWORKS_API_KEY: 'fireworks',
 }
 
+/**
+ * Extra provider definitions for providers NOT in Pi SDK's built-in catalog.
+ * Built-in providers (anthropic, openai, etc.) only need an API key.
+ * Non-builtin providers need baseUrl + model definitions.
+ *
+ * To add a new provider: add an entry here with its baseUrl, api type, and models.
+ */
+const EXTRA_PROVIDERS: Record<string, {
+  name: string
+  baseUrl: string
+  api: string
+  models: Array<{
+    id: string; name: string; api: string; reasoning: boolean
+    input: ('text' | 'image')[]
+    cost: { input: number; output: number; cacheRead: number; cacheWrite: number }
+    contextWindow: number; maxTokens: number
+  }>
+}> = {
+  dashscope: {
+    name: 'DashScope',
+    baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+    api: 'openai-completions',
+    models: [
+      { id: 'qwen3.7-max', name: 'Qwen 3.7 Max', api: 'openai-completions', reasoning: false, input: ['text'], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 131072, maxTokens: 16384 },
+      { id: 'qwen3.7-plus', name: 'Qwen 3.7 Plus', api: 'openai-completions', reasoning: false, input: ['text'], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 131072, maxTokens: 16384 },
+      { id: 'qwen3.6-plus', name: 'Qwen 3.6 Plus', api: 'openai-completions', reasoning: false, input: ['text'], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 131072, maxTokens: 16384 },
+      { id: 'qwen3-max', name: 'Qwen 3 Max', api: 'openai-completions', reasoning: false, input: ['text'], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 32768, maxTokens: 8192 },
+    ],
+  },
+}
+
+/**
+ * Register all available providers into the ModelRegistry.
+ * - Built-in providers (in Pi SDK catalog): register with API key only
+ * - Extra providers (EXTRA_PROVIDERS): register with full config (baseUrl + models)
+ */
 function registerProvidersFromEnv(registry: any, env: Record<string, string>): void {
   for (const [envKey, providerName] of Object.entries(PROVIDER_ENV_KEYS)) {
     const apiKey = env[envKey]
-    if (apiKey) {
-      try {
+    if (!apiKey) continue
+
+    try {
+      const extra = EXTRA_PROVIDERS[providerName]
+      if (extra) {
+        // Non-builtin provider — needs full config with models
+        registry.registerProvider(providerName, { ...extra, apiKey })
+      } else {
+        // Built-in provider — API key is enough
         registry.registerProvider(providerName, { apiKey })
-      } catch {
-        // Provider registration may fail for unknown providers — skip silently
       }
+    } catch {
+      // Provider registration may fail — skip silently
     }
   }
 }
