@@ -28,7 +28,7 @@ describe('resolveModelAlias', () => {
 
   it('resolves tier "pro" for provider "pi" (TC-001)', () => {
     const result = resolveModelAlias('pro', 'pi', config)
-    expect(result).toBe('anthropic/claude-sonnet-4-20250514')
+    expect(result).toBe('dashscope/qwen3.7-plus')
   })
 
   it('passes through non-tier strings unchanged (TC-002)', () => {
@@ -39,10 +39,10 @@ describe('resolveModelAlias', () => {
     expect(resolveModelAlias('pro-max', 'claude', config)).toBe('opus')
   })
 
-  it('resolves dashscope tiers', () => {
-    expect(resolveModelAlias('pro-max', 'dashscope', config)).toBe('dashscope/qwen3.7-max')
-    expect(resolveModelAlias('pro', 'dashscope', config)).toBe('dashscope/qwen3.7-plus')
-    expect(resolveModelAlias('se', 'dashscope', config)).toBe('dashscope/qwen3.6-plus')
+  it('resolves all pi tiers to dashscope models', () => {
+    expect(resolveModelAlias('pro-max', 'pi', config)).toBe('dashscope/qwen3.7-max')
+    expect(resolveModelAlias('pro', 'pi', config)).toBe('dashscope/qwen3.7-plus')
+    expect(resolveModelAlias('se', 'pi', config)).toBe('dashscope/qwen3.6-plus')
   })
 
   it('returns model as-is when provider has no mapping for tier', () => {
@@ -50,7 +50,7 @@ describe('resolveModelAlias', () => {
   })
 
   it('uses default tier when model is undefined', () => {
-    expect(resolveModelAlias(undefined, 'pi', config)).toBe('anthropic/claude-sonnet-4-20250514')
+    expect(resolveModelAlias(undefined, 'pi', config)).toBe('dashscope/qwen3.7-plus')
   })
 
   it('handles circular aliases with depth guard', () => {
