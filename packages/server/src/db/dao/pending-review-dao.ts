@@ -78,9 +78,10 @@ export class PendingReviewDAO extends BaseDAO {
     return (this.stmt(`SELECT COUNT(*) as cnt FROM pending_review WHERE status = 'pending'`).get() as { cnt: number }).cnt
   }
 
-  countPendingByType(): { rules: number } {
+  countPendingByType(): { rules: number; skills: number; total: number } {
     const rules = (this.stmt(`SELECT COUNT(*) as cnt FROM pending_review WHERE status = 'pending' AND type = 'rule'`).get() as { cnt: number }).cnt
-    return { rules }
+    const skills = (this.stmt(`SELECT COUNT(*) as cnt FROM pending_review WHERE status = 'pending' AND type = 'skill'`).get() as { cnt: number }).cnt
+    return { rules, skills, total: rules + skills }
   }
 
   countByStatus(): Record<string, number> {
