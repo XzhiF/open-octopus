@@ -50,22 +50,21 @@ export class SwarmExecutor implements NodeExecutor {
 
     try {
       // Merge expert_defaults into each expert
-      const experts: ExpertDef[] = (this.node.experts ?? []).map(e => ({
+      const baseExperts: ExpertDef[] = (this.node.experts ?? []).map(e => ({
         ...this.node.expert_defaults,
         ...e,
       }))
 
-      // BL-5: Resolve expert.model aliases (tier → real model name)
-      if (this.modelAliasConfig) {
-        const rawKey = this.node.engine ?? "claude"
-        const providerKey = rawKey === "claude-code" ? "claude" : rawKey
-        for (const expert of experts) {
-          if (expert.model) {
-            const resolved = resolveModelAlias(expert.model, providerKey, this.modelAliasConfig)
-            if (resolved) expert.model = resolved
-          }
-        }
-      }
+      // BL-5: Resolve expert.model aliases immutably (tier → real model name)
+      const experts: ExpertDef[] = this.modelAliasConfig
+        ? baseExperts.map(expert => {
+            if (!expert.model) return expert
+            const rawKey = this.node.engine ?? "claude"
+            const providerKey = rawKey === "claude-code" ? "claude" : rawKey
+            const resolved = resolveModelAlias(expert.model, providerKey, this.modelAliasConfig!)
+            return resolved ? { ...expert, model: resolved } : expert
+          })
+        : baseExperts
 
       // Resolve $vars.* references in topic (consistent with agent/bash/python executors)
       const resolvedTopic = substituteVars(this.node.topic ?? "", this.pool)
