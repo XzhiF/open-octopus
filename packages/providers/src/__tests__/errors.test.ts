@@ -27,6 +27,15 @@ describe('classifyProviderError (E-5)', () => {
     expect(result.code).toBe('network_error')
   })
 
+  it('classifies budget errors as budget_exceeded (S08-6, TC-020)', () => {
+    const result = classifyProviderError(
+      new Error('budget_exceeded: Budget limit exceeded. Accumulated cost $0.055000 >= maxBudgetUsd $0.05.'),
+      { provider: 'dashscope' },
+    )
+    expect(result.code).toBe('budget_exceeded')
+    expect(result.message).toContain('Budget limit exceeded')
+  })
+
   it('falls back to provider_error with sanitized message', () => {
     const result = classifyProviderError(
       new Error('sk-abc123secret456789012345 is invalid'),

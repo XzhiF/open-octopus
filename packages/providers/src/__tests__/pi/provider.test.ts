@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest'
-import { PiAgentProvider } from '../../pi/provider'
+import { PiAgentProvider, resolveSystemPrompt } from '../../pi/provider'
+import { classifyProviderError } from '../../errors'
+import { TokenAggregator } from '../../pi/token-aggregator'
 
 describe('PiAgentProvider', () => {
   it('getType returns "pi"', () => {
@@ -58,5 +60,36 @@ describe('PiAgentProvider', () => {
       results.push(chunk)
     }
     expect(results).toEqual([])
+  })
+
+  it('S08-6: budget_exceeded error is classifiable and roundtrips through error classifier (TC-020)', () => {
+    // Simulate the budget enforcement error message that provider.ts emits
+    const agg = new TokenAggregator()
+    agg.add('qwen-max', { input: 500, output: 200, cost: { total: 0.055 } })
+    const maxBudgetUsd = 0.05
+
+    // Verify the budget check logic works
+    expect(agg.totalCost() >= maxBudgetUsd).toBe(true)
+
+    // Simulate the error that provider.ts would throw
+    const budgetError = new Error(
+      `budget_exceeded: Budget limit exceeded. Accumulated cost $${agg.totalCost().toFixed(6)} >= maxBudgetUsd $${maxBudgetUsd}.`
+    )
+
+    // Verify the error classifier recognizes it
+    const classified = classifyProviderError(budgetError, { provider: 'dashscope' })
+    expect(classified.code).toBe('budget_exceeded')
+    expect(classified.message).toContain('Budget limit exceeded')
+  })
+
+  it('S08-6: resolveSystemPrompt handles all input types correctly', () => {
+    // string passthrough
+    expect(resolveSystemPrompt('You are a helpful assistant')).toBe('You are a helpful assistant')
+    // undefined returns undefined
+    expect(resolveSystemPrompt(undefined)).toBeUndefined()
+    // preset with append
+    expect(resolveSystemPrompt({ type: 'preset', preset: 'claude_code', append: 'extra' })).toBe('extra')
+    // preset without append
+    expect(resolveSystemPrompt({ type: 'preset', preset: 'claude_code' })).toBeUndefined()
   })
 })

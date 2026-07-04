@@ -198,8 +198,18 @@ export class PiAgentProvider implements IAgentProvider {
       }
 
       // Step 2: Subscribe to events (push → bridge)
+      let budgetExceeded = false
       const unsub = PiSdk.subscribeEvents(sr.session, (event: any) => {
+        if (budgetExceeded) return // stop processing after budget limit
         bridge.push(event)
+
+        // S08-6: Best-effort budget enforcement — check after each agent_end
+        if (options?.maxBudgetUsd && event.type === 'agent_end' && event.usage) {
+          if (tokenAgg.totalCost() >= options.maxBudgetUsd) {
+            budgetExceeded = true
+            bridge.end()
+          }
+        }
       })
 
       // Step 3: Fire-and-forget prompt (ADR-1: parallel with bridge consumer)
@@ -212,6 +222,15 @@ export class PiAgentProvider implements IAgentProvider {
 
       // Step 4: Yield chunks in real-time (parallel with promptSession)
       yield* bridge.generator()
+
+      // S08-6: If budget was exceeded during streaming, emit warning
+      if (budgetExceeded) {
+        yield {
+          type: 'error',
+          code: 'budget_exceeded',
+          message: `Budget limit exceeded. Accumulated cost $${tokenAgg.totalCost().toFixed(6)} >= maxBudgetUsd $${options!.maxBudgetUsd}. Increase maxBudgetUsd or reduce usage.`,
+        }
+      }
 
       // S15: Parse vars_update from accumulated agent text output
       if (options?.varsUpdate !== false) {

@@ -193,4 +193,90 @@ describe('E2E Pi Provider workflow tests', () => {
 
     expect(totalTokens).toBe(75) // 25 * 3 calls
   })
+
+  it('S17-4: second provider validation — cross-engine routing with faux providers (TC-042b)', async () => {
+    // Simulate two different provider engines handling queries independently
+    // This validates that the registry correctly routes to different providers by engine type
+    resetProviderInstances()
+
+    const fauxPi = new FauxPiProvider([
+      { type: 'message_start', messageId: 'pi-msg-1' },
+      { type: 'text_delta', content: 'Pi engine response', messageId: 'pi-msg-1' },
+      { type: 'result', content: 'Pi engine response', sessionId: 'pi-sess-1', tokens: { input: 10, output: 5, total: 15 } },
+    ])
+    const fauxClaude = new FauxPiProvider([
+      { type: 'text_delta', content: 'Claude engine response', messageId: 'cl-msg-1' },
+      { type: 'result', content: 'Claude engine response', sessionId: 'cl-sess-1', tokens: { input: 20, output: 10, total: 30 } },
+    ])
+
+    registerProvider('pi', () => fauxPi as any)
+    registerProvider('claude', () => fauxClaude as any)
+
+    // Query pi provider
+    const piChunks: any[] = []
+    for await (const c of getProvider('pi').sendQuery('test', '/tmp')) piChunks.push(c)
+    const piResult = piChunks.find(c => c.type === 'result')
+    expect(piResult?.content).toBe('Pi engine response')
+    expect(piResult?.tokens?.total).toBe(15)
+
+    // Query claude provider — different engine, different result
+    const claudeChunks: any[] = []
+    for await (const c of getProvider('claude').sendQuery('test', '/tmp')) claudeChunks.push(c)
+    const claudeResult = claudeChunks.find(c => c.type === 'result')
+    expect(claudeResult?.content).toBe('Claude engine response')
+    expect(claudeResult?.tokens?.total).toBe(30)
+
+    // Verify providers are distinct instances
+    expect(getProvider('pi')).not.toBe(getProvider('claude'))
+  })
+
+  it('S17-5: swarm mixed provider — multi-node workflow with different providers (TC-043b)', async () => {
+    // Simulate a swarm-style workflow where different nodes use different provider engines
+    // This validates the multi-provider DAG pattern used in Swarm execution
+    resetProviderInstances()
+
+    // Set up three different providers for different swarm roles
+    const hostProvider = new FauxPiProvider([
+      { type: 'text_delta', content: 'Host: coordinating experts', messageId: 'h-1' },
+      { type: 'result', content: 'Host: coordinating experts', sessionId: 'host-1' },
+    ])
+    const expertAProvider = new FauxPiProvider([
+      { type: 'text_delta', content: 'Expert A: architecture analysis complete', messageId: 'a-1' },
+      { type: 'result', content: 'Expert A: architecture analysis complete', sessionId: 'expert-a-1' },
+    ])
+    const expertBProvider = new FauxPiProvider([
+      { type: 'text_delta', content: 'Expert B: security review passed', messageId: 'b-1' },
+      { type: 'result', content: 'Expert B: security review passed', sessionId: 'expert-b-1' },
+    ])
+
+    registerProvider('pi', () => hostProvider as any)
+    registerProvider('claude', () => expertAProvider as any)
+    registerProvider('openai', () => expertBProvider as any)
+
+    // Simulate swarm dispatch: host coordinates, experts respond
+    const swarmResults: string[] = []
+
+    // Phase 1: Experts respond in parallel (dispatch mode)
+    for (const [engine, prompt] of [['claude', 'analyze architecture'], ['openai', 'review security']] as const) {
+      const provider = getProvider(engine)
+      const chunks: any[] = []
+      for await (const c of provider.sendQuery(prompt, '/tmp')) chunks.push(c)
+      const result = chunks.find(c => c.type === 'result')
+      swarmResults.push(result?.content ?? '')
+    }
+
+    // Phase 2: Host synthesizes expert outputs
+    const hostProvider2 = getProvider('pi')
+    const hostChunks: any[] = []
+    const synthesisPrompt = `Synthesize: ${swarmResults.join(' | ')}`
+    for await (const c of hostProvider2.sendQuery(synthesisPrompt, '/tmp')) hostChunks.push(c)
+    const hostResult = hostChunks.find(c => c.type === 'result')
+    swarmResults.push(hostResult?.content ?? '')
+
+    // Verify all three providers contributed
+    expect(swarmResults).toHaveLength(3)
+    expect(swarmResults[0]).toContain('Expert A')
+    expect(swarmResults[1]).toContain('Expert B')
+    expect(swarmResults[2]).toContain('Host')
+  })
 })

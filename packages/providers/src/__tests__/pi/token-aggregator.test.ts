@@ -39,4 +39,22 @@ describe('TokenAggregator', () => {
     expect(agg.toModelUsages()).toHaveLength(1)
     expect(agg.toModelUsages()[0].inputTokens).toBe(80)
   })
+
+  it('S08-6: totalCost supports budget threshold comparison', () => {
+    const agg = new TokenAggregator()
+    const maxBudgetUsd = 0.05
+
+    // Simulate multiple LLM turns accumulating cost
+    agg.add('qwen-max', { input: 500, output: 200, cost: { total: 0.02 } })
+    expect(agg.totalCost() < maxBudgetUsd).toBe(true) // under budget
+
+    agg.add('qwen-max', { input: 800, output: 300, cost: { total: 0.025 } })
+    expect(agg.totalCost() < maxBudgetUsd).toBe(true) // 0.045, still under
+
+    agg.add('qwen-max', { input: 300, output: 100, cost: { total: 0.01 } })
+    expect(agg.totalCost() >= maxBudgetUsd).toBe(true) // 0.055, over budget
+
+    // Verify exact cost for error message
+    expect(agg.totalCost()).toBe(0.055)
+  })
 })
