@@ -160,7 +160,7 @@ export function writeUserPreference(org: string | undefined, content: string): v
  */
 export function generateRuleId(target: string): string {
   const date = new Date().toISOString().slice(0, 10).replace(/-/g, "")
-  const rand = crypto.randomBytes(2).toString("hex").slice(0, 4)
+  const rand = crypto.randomBytes(3).toString("base64url").slice(0, 4)
   // Strip subdirectory prefix: "projects/octopus" → "octopus"
   const baseName = target.replace(/^(projects|workflows)\//, "")
   return `${baseName}-${date}-${rand}`
