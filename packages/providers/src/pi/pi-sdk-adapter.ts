@@ -30,16 +30,18 @@ export interface SessionResult {
 
 export async function createSession(opts: SessionOptions): Promise<SessionResult> {
   const pi = await getPiModule()
-  const piAi = await import('@earendil-works/pi-ai') as any
 
-  const authStorage = piAi.AuthStorage.inMemory()
-  const modelRegistry = piAi.ModelRegistry.inMemory(authStorage)
+  // AuthStorage and ModelRegistry are from pi-coding-agent, not pi-ai
+  const authStorage = (pi as any).AuthStorage.inMemory()
+  const modelRegistry = (pi as any).ModelRegistry.inMemory(authStorage)
 
   if (opts.filteredEnv) {
     registerProvidersFromEnv(modelRegistry, opts.filteredEnv)
   }
 
   const resourceLoader = new (pi.DefaultResourceLoader as any)({
+    cwd: opts.cwd,
+    agentDir: `${opts.cwd}/.pi-agent`,
     noExtensions: true,
     noSkills: true,
     noContextFiles: true,
@@ -47,7 +49,7 @@ export async function createSession(opts: SessionOptions): Promise<SessionResult
     noThemes: true,
   })
 
-  const session = await pi.createAgentSession({
+  const result = await pi.createAgentSession({
     cwd: opts.cwd,
     modelRegistry,
     resourceLoader,
@@ -55,9 +57,12 @@ export async function createSession(opts: SessionOptions): Promise<SessionResult
     ...(opts.extensions ? { extensions: opts.extensions } : {}),
   } as any)
 
+  // createAgentSession returns { session: AgentSession, extensionsResult, ... }
+  const agentSession = (result as any).session ?? result
+
   return {
-    session,
-    sessionId: (session as any).id ?? `session-${Date.now()}`,
+    session: agentSession,
+    sessionId: (agentSession as any).sessionId ?? `session-${Date.now()}`,
     modelRegistry,
   }
 }
