@@ -76,6 +76,24 @@
   --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
   --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
 
+  /* ── Resource module tokens ── */
+  --resource-skill: oklch(0.65 0.20 250);
+  --resource-agent: oklch(0.65 0.18 280);
+  --resource-workflow: oklch(0.65 0.18 160);
+  --resource-source: oklch(0.65 0.18 40);
+  --resource-installed: oklch(0.72 0.19 145);
+  --resource-outdated: oklch(0.75 0.18 80);
+  --resource-missing: oklch(0.62 0.22 25);
+  --resource-installing: oklch(0.70 0.16 250);
+  --resource-trusted: oklch(0.72 0.19 145);
+  --resource-blocked: oklch(0.62 0.22 25);
+  --resource-unknown: oklch(0.75 0.18 80);
+  --resource-audit-install: oklch(0.72 0.19 145);
+  --resource-audit-uninstall: oklch(0.62 0.22 25);
+  --resource-audit-update: oklch(0.70 0.16 250);
+  --resource-audit-trust: oklch(0.75 0.18 80);
+  --resource-audit-security: oklch(0.62 0.22 25);
+
   /* ── Spacing tokens ── */
   --space-section: clamp(4rem, 3rem + 5vw, 10rem);
 }
@@ -143,6 +161,24 @@
   --knowledge-rule-border: oklch(0.32 0.02 180);
   --knowledge-retired: oklch(0.50 0 0);
   --knowledge-retired-bg: oklch(0.17 0 0);
+
+  /* ── Resource module tokens (dark) ── */
+  --resource-skill: oklch(0.70 0.18 250);
+  --resource-agent: oklch(0.70 0.16 280);
+  --resource-workflow: oklch(0.70 0.16 160);
+  --resource-source: oklch(0.70 0.16 40);
+  --resource-installed: oklch(0.75 0.17 145);
+  --resource-outdated: oklch(0.78 0.16 80);
+  --resource-missing: oklch(0.68 0.20 25);
+  --resource-installing: oklch(0.73 0.14 250);
+  --resource-trusted: oklch(0.75 0.17 145);
+  --resource-blocked: oklch(0.68 0.20 25);
+  --resource-unknown: oklch(0.78 0.16 80);
+  --resource-audit-install: oklch(0.75 0.17 145);
+  --resource-audit-uninstall: oklch(0.68 0.20 25);
+  --resource-audit-update: oklch(0.73 0.14 250);
+  --resource-audit-trust: oklch(0.78 0.16 80);
+  --resource-audit-security: oklch(0.68 0.20 25);
 }
 
 @theme inline {
@@ -211,6 +247,19 @@
   --color-knowledge-rule-border: var(--knowledge-rule-border);
   --color-knowledge-retired: var(--knowledge-retired);
   --color-knowledge-retired-bg: var(--knowledge-retired-bg);
+
+  /* ── Resource colors ── */
+  --color-resource-skill: var(--resource-skill);
+  --color-resource-agent: var(--resource-agent);
+  --color-resource-workflow: var(--resource-workflow);
+  --color-resource-source: var(--resource-source);
+  --color-resource-installed: var(--resource-installed);
+  --color-resource-outdated: var(--resource-outdated);
+  --color-resource-missing: var(--resource-missing);
+  --color-resource-installing: var(--resource-installing);
+  --color-resource-trusted: var(--resource-trusted);
+  --color-resource-blocked: var(--resource-blocked);
+  --color-resource-unknown: var(--resource-unknown);
 }
 
 @layer base {
@@ -415,4 +464,36 @@
 .preference-prose input[type="checkbox"] {
   margin-right: 0.5em;
   vertical-align: middle;
+}
+
+/* ─── Resource module animations ───────────────────────────────────── */
+
+@keyframes resource-highlight {
+  0% {
+    box-shadow: 0 0 0 2px var(--resource-installed), 0 0 12px var(--resource-installed);
+  }
+  100% {
+    box-shadow: 0 0 0 0px transparent, 0 0 0px transparent;
+  }
+}
+
+.new-resource-highlight {
+  animation: resource-highlight 2s ease-out forwards;
+}
+
+@keyframes card-fade-out {
+  from { opacity: 1; transform: scale(1); }
+  to { opacity: 0; transform: scale(0.95); }
+}
+
+.card-fade-out {
+  animation: card-fade-out 300ms ease-out forwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .new-resource-highlight,
+  .card-fade-out {
+    animation: none !important;
+    transition: none !important;
+  }
 }

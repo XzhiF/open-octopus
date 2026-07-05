@@ -1,4 +1,9 @@
-import type { ChatSession, LeaderboardResponse } from "@/lib/types"
+import type {
+  ChatSession, LeaderboardResponse,
+  Resource, ResourceListResponse, ResourceSearchResult,
+  AuditListResponse, TrustListResponse,
+  OutdatedEntry, DoctorResponse, SyncResponse, GcResponse,
+} from "@/lib/types"
 import { getServerUrl } from "@/lib/server-config"
 
 async function handleResponse(res: Response) {
@@ -340,4 +345,146 @@ export async function fetchSwarmStats(workspaceId: string, params?: { from?: str
   const qs = searchParams.toString()
   const url = `${getServerUrl()}/api/workspaces/${workspaceId}/analytics/swarm-stats${qs ? `?${qs}` : ""}`
   return handleResponse(await apiFetch(url))
+}
+
+// ============ Resource Management ============
+
+export const resourceApi = {
+  list: async (type?: string): Promise<ResourceListResponse> => {
+    const url = new URL(`${getServerUrl()}/api/resources`)
+    if (type && type !== "all") url.searchParams.set("type", type)
+    return handleResponse(await apiFetch(url.toString()))
+  },
+
+  detail: async (type: string, name: string): Promise<Resource> => {
+    return handleResponse(
+      await apiFetch(`${getServerUrl()}/api/resources/${encodeURIComponent(type)}/${encodeURIComponent(name)}`)
+    )
+  },
+
+  search: async (q: string): Promise<ResourceSearchResult> => {
+    return handleResponse(
+      await apiFetch(`${getServerUrl()}/api/resources/search?q=${encodeURIComponent(q)}`)
+    )
+  },
+
+  install: async (names: string[], confirmed = false): Promise<{ installId: string }> => {
+    return handleResponse(
+      await apiFetch(`${getServerUrl()}/api/resources/install`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ names, confirmed }),
+      })
+    )
+  },
+
+  uninstall: async (names: string[]): Promise<{ success: boolean; uninstalled: string[] }> => {
+    return handleResponse(
+      await apiFetch(`${getServerUrl()}/api/resources/uninstall`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ names }),
+      })
+    )
+  },
+
+  update: async (names?: string[]): Promise<{ success: boolean; updated: string[]; details: Array<{ name: string; from: string; to: string }> }> => {
+    return handleResponse(
+      await apiFetch(`${getServerUrl()}/api/resources/update`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ names }),
+      })
+    )
+  },
+
+  outdated: async (): Promise<{ outdated: OutdatedEntry[]; total: number }> => {
+    return handleResponse(
+      await apiFetch(`${getServerUrl()}/api/resources/outdated`)
+    )
+  },
+
+  audit: async (params?: { action?: string; resource?: string; last?: number }): Promise<AuditListResponse> => {
+    const url = new URL(`${getServerUrl()}/api/resources/audit`)
+    if (params?.action) url.searchParams.set("action", params.action)
+    if (params?.resource) url.searchParams.set("resource", params.resource)
+    if (params?.last) url.searchParams.set("last", String(params.last))
+    return handleResponse(await apiFetch(url.toString()))
+  },
+
+  listTrust: async (): Promise<TrustListResponse> => {
+    return handleResponse(
+      await apiFetch(`${getServerUrl()}/api/resources/trust`)
+    )
+  },
+
+  addTrust: async (protocol: string, pkg: string): Promise<{ success: boolean }> => {
+    return handleResponse(
+      await apiFetch(`${getServerUrl()}/api/resources/trust`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ protocol, package: pkg }),
+      })
+    )
+  },
+
+  removeTrust: async (protocol: string, pkg: string): Promise<{ success: boolean }> => {
+    return handleResponse(
+      await apiFetch(`${getServerUrl()}/api/resources/trust`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ protocol, package: pkg }),
+      })
+    )
+  },
+
+  addBlock: async (protocol: string, pkg: string, reason?: string): Promise<{ success: boolean }> => {
+    return handleResponse(
+      await apiFetch(`${getServerUrl()}/api/resources/trust/block`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ protocol, package: pkg, reason }),
+      })
+    )
+  },
+
+  removeBlock: async (protocol: string, pkg: string): Promise<{ success: boolean }> => {
+    return handleResponse(
+      await apiFetch(`${getServerUrl()}/api/resources/trust/block`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ protocol, package: pkg }),
+      })
+    )
+  },
+
+  sync: async (fix = false): Promise<SyncResponse> => {
+    return handleResponse(
+      await apiFetch(`${getServerUrl()}/api/resources/sync`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ fix }),
+      })
+    )
+  },
+
+  gc: async (dryRun = false): Promise<GcResponse> => {
+    return handleResponse(
+      await apiFetch(`${getServerUrl()}/api/resources/gc`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ dryRun }),
+      })
+    )
+  },
+
+  doctor: async (): Promise<DoctorResponse> => {
+    return handleResponse(
+      await apiFetch(`${getServerUrl()}/api/resources/doctor`)
+    )
+  },
+
+  getInstallSSEUrl: (installId: string): string => {
+    return `${getServerUrl()}/api/resources/install/${encodeURIComponent(installId)}/stream`
+  },
 }

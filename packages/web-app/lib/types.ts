@@ -688,3 +688,153 @@ export interface NaturalLanguageCronResult {
   confidence: 'high' | 'medium' | 'error'
   error?: string
 }
+
+// ============ Resource Management ============
+
+export type ResourceType = "skill" | "agent" | "workflow" | "source"
+
+export interface ResourceManifest {
+  name: string
+  type: ResourceType
+  version: string
+  source: {
+    protocol: "npm" | "git" | "local" | "builtin"
+    location: string
+    version: string
+    subpath?: string
+  }
+  hash: string
+  dependencies: string[]
+  references: string[]
+  install?: {
+    target: string
+    post_install?: string
+  }
+  description?: string
+  tags?: string[]
+}
+
+export interface RegistryEntry {
+  manifest: ResourceManifest
+  installedAt: string
+  cachePath?: string
+}
+
+export interface Resource {
+  manifest: ResourceManifest
+  installedAt: string
+  cachePath?: string
+}
+
+export interface ResourceListResponse {
+  resources: Resource[]
+  total: number
+  by_type: Record<string, number>
+}
+
+export interface ResourceSearchResult {
+  results: Resource[]
+  total: number
+}
+
+export interface AuditEntry {
+  timestamp: string
+  action: string
+  resource: string
+  caller: "human" | "agent"
+  detail?: Record<string, unknown>
+}
+
+export interface AuditListResponse {
+  entries: AuditEntry[]
+  total: number
+}
+
+export interface TrustEntry {
+  protocol: string
+  location: string
+  trusted_at: string
+}
+
+export interface BlockedEntry {
+  protocol: string
+  location: string
+  blocked_at: string
+  reason?: string
+}
+
+export interface TrustListResponse {
+  trusted: TrustEntry[]
+  blocked: BlockedEntry[]
+}
+
+export interface InstallPlan {
+  id: string
+  additions: Array<{ name: string; type: string; version: string; source: string }>
+  removals: string[]
+  conflicts: Array<{ name: string; reason: string }>
+}
+
+export interface InstallProgress {
+  type: "install_progress"
+  step: number
+  total: number
+  name: string
+  status?: string
+}
+
+export interface InstallComplete {
+  type: "install_complete"
+  success: number
+  failed: number
+}
+
+export interface InstallError {
+  type: "install_error"
+  error: string
+}
+
+export type InstallSSEEvent = InstallProgress | InstallComplete | InstallError
+
+export interface OutdatedEntry {
+  name: string
+  type: ResourceType
+  current: string
+  latest: string
+  source: string
+}
+
+export interface DoctorCheck {
+  name: string
+  passed: boolean
+  message: string
+}
+
+export interface DoctorResponse {
+  status: "ok" | "degraded"
+  checks: DoctorCheck[]
+}
+
+export interface SyncResponse {
+  synced: boolean
+  fix: boolean
+  drift: {
+    missing: Array<{ name: string; type: string }>
+    extra: Array<{ name: string; type: string }>
+    hash_mismatch: Array<{ name: string; type: string }>
+  }
+}
+
+export interface GcResponse {
+  success: boolean
+  cleaned: number
+  freedBytes: number
+  items: Array<{ path: string; size: number }>
+}
+
+export interface DepNode {
+  name: string
+  type: ResourceType
+  version: string
+  children?: DepNode[]
+}

@@ -4,6 +4,7 @@ import Link from "next/link"
 import { usePathname } from "next/navigation"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
+import { useIsMobile } from "@/hooks/use-mobile"
 import {
   LayoutDashboard,
   FolderKanban,
@@ -12,6 +13,7 @@ import {
   Bell,
   Activity,
   BrainCircuit,
+  Package,
 } from "lucide-react"
 
 const navigation = [
@@ -19,16 +21,18 @@ const navigation = [
   { name: "工作空间", href: "/workspaces", icon: FolderKanban },
   { name: "系统调度", href: "/scheduler", icon: Clock },
   { name: "Agent", href: "/agent", icon: BrainCircuit },
+  { name: "资源管理", href: "/resources", icon: Package },
 ]
 
 export function Header() {
   const pathname = usePathname()
+  const isMobile = useIsMobile()
 
   return (
     <header className="sticky top-0 z-50 w-full border-b border-border bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
       <div className="flex h-14 items-center px-4 lg:px-6">
         {/* Logo */}
-        <Link href="/" className="flex items-center gap-2 mr-6">
+        <Link href="/" className="flex items-center gap-2 mr-6 shrink-0">
           <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary text-primary-foreground">
             <Activity className="h-4 w-4" />
           </div>
@@ -36,7 +40,7 @@ export function Header() {
         </Link>
 
         {/* Navigation */}
-        <nav aria-label="主导航" className="flex items-center gap-1">
+        <nav aria-label="主导航" className="flex items-center gap-1 overflow-x-auto hide-scrollbar">
           {navigation.map((item) => {
             const isActive = pathname === item.href ||
               (item.href !== "/" && pathname.startsWith(item.href))
@@ -44,15 +48,17 @@ export function Header() {
               <Link
                 key={item.name}
                 href={item.href}
+                title={isMobile ? item.name : undefined}
+                aria-label={isMobile ? item.name : undefined}
                 className={cn(
-                  "flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium transition-colors",
+                  "flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium transition-colors whitespace-nowrap shrink-0",
                   isActive
                     ? "bg-accent text-accent-foreground"
                     : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
                 )}
               >
-                <item.icon className="h-4 w-4" />
-                {item.name}
+                <item.icon className="h-4 w-4 shrink-0" />
+                <span className={cn(isMobile && "hidden sm:inline")}>{item.name}</span>
               </Link>
             )
           })}
