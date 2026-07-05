@@ -23,12 +23,14 @@ export function rateLimit(config: Partial<RateLimitConfig> = {}) {
   }, windowMs * 2).unref()
 
   return async (c: Context, next: Next) => {
-    // B-03 fix: Use socket remoteAddress (can't be spoofed via headers).
-    // Fallback to x-real-ip only if explicitly trusted via TRUST_PROXY env.
+    // B-03 fix: Use socket remoteAddress as the rate-limit key by default.
+    // Headers like x-forwarded-for / x-real-ip are easily forged by clients
+    // and MUST NOT be used unless the operator explicitly opts in via TRUST_PROXY=true
+    // (i.e. the server sits behind a trusted reverse proxy that strips/overwrites those headers).
     const trustProxy = process.env.TRUST_PROXY === 'true'
     const key = trustProxy
       ? (c.req.header('x-forwarded-for')?.split(',')[0]?.trim() ?? c.req.header('x-real-ip') ?? 'unknown')
-      : ((c.env?.incoming as any)?.remoteAddress ?? c.req.header('x-real-ip') ?? 'unknown')
+      : ((c.env?.incoming as any)?.remoteAddress ?? 'unknown')
     const now = Date.now()
     let entry = requests.get(key)
     if (!entry || now > entry.resetAt) {

@@ -203,10 +203,16 @@ export class HookExecutor {
     }
 
     const { execFileSync } = await import('child_process')
-    // B-01 fix: use execFileSync instead of execSync to prevent command injection.
-    // Run via sh -c with the command as a single argument — no shell interpolation of args.
+    // B-01 fix: split command into argv and pass via execFileSync — no shell interpolation.
+    // The allowlist check above validates the base command before we run it.
+    const argv = command.split(/\s+/).filter(Boolean)
+    const cmd = argv[0]
+    const args = argv.slice(1)
+    if (!cmd) {
+      return { stdout: '', exitCode: 1 }
+    }
     try {
-      const stdout = execFileSync('sh', ['-c', command], {
+      const stdout = execFileSync(cmd, args, {
         cwd,
         encoding: 'utf-8',
         timeout: 60_000,

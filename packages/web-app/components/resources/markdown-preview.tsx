@@ -27,15 +27,26 @@ export function MarkdownPreview({ content }: { content: string }) {
  * Minimal markdown-to-HTML converter for preview.
  * Handles headings, bold, italic, code, links, lists.
  * Uses DOMPurify-style sanitization by only allowing safe elements.
+ *
+ * B-06 fix: HTML entities are escaped BEFORE markdown processing, so user
+ * content can never inject tags. Links are further restricted to safe protocols
+ * and quotes are entity-escaped to prevent attribute breakout.
  */
 function simpleMarkdown(md: string): string {
+  // Step 1: Escape all HTML-significant characters so the input becomes plain text.
   let html = md
-    // Escape HTML
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;")
 
-    // Code blocks (before inline code)
+  // Step 2: Apply markdown transformations on the escaped text.
+  // Because all HTML entities are escaped first, markdown output is the only
+  // source of HTML tags — user content cannot inject arbitrary attributes.
+
+  // Code blocks (before inline code)
+  html = html
     .replace(/```(\w*)\n([\s\S]*?)```/g, '<pre><code>$2</code></pre>')
 
     // Inline code
@@ -50,9 +61,15 @@ function simpleMarkdown(md: string): string {
     .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
     .replace(/\*(.+?)\*/g, "<em>$1</em>")
 
-    // Links — B-06 fix: only allow safe URL protocols (http/https/mailto), block javascript:
+    // Links — B-06 fix: only http/https/mailto/relative paths, and URL is
+    // already HTML-escaped (quotes become &quot; so attribute breakout is impossible).
     .replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_match, text, url) => {
-      const safeUrl = /^(https?:\/\/|mailto:|\/)/.test(url) ? url : '#'
+      // Decode HTML entities for protocol check, then re-encode for safe href.
+      const decodedUrl = url
+        .replace(/&quot;/g, '"')
+        .replace(/&#39;/g, "'")
+        .replace(/&amp;/g, "&")
+      const safeUrl = /^(https?:\/\/|mailto:|\/[^"]*$)/.test(decodedUrl) ? url : '#'
       return `<a href="${safeUrl}" rel="noopener noreferrer">${text}</a>`
     })
 

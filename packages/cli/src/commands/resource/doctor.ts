@@ -167,6 +167,14 @@ export function doctorCommand(): Command {
           console.log("\nAttempting repairs...")
           let repaired = 0
 
+          // Create kernel for repairs (not instantiated at top-level to avoid cost when no fix needed)
+          const kernel = new ResourceKernel({
+            store: new FsResourceStore(resourceDir),
+            trustStore: new TrustStore(),
+            auditLogger: new AuditLogger(join(resourceDir, "audit")),
+            cacheDir,
+          })
+
           // Fix missing registry
           if (!existsSync(registryPath)) {
             try {

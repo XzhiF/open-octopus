@@ -2,7 +2,11 @@ import { Hono } from 'hono'
 import { streamSSE } from 'hono/streaming'
 import { ResourceError, ResourceErrorCode } from '@octopus/shared'
 import type { ResourceManifest } from '@octopus/shared'
-import { ResourceManifestSchema, RegistrySchema } from '@octopus/shared'
+import {
+  ResourceManifestSchema, RegistrySchema,
+  TrustSourceInputSchema, InstallRequestSchema, UninstallRequestSchema,
+  SyncRequestSchema, GcRequestSchema, InitRequestSchema,
+} from '@octopus/shared'
 import { ResourceService } from '../services/resource-service'
 import { InstallEventBus } from '../services/install-event-bus'
 import { rateLimit } from '../middleware/rate-limit'
@@ -111,8 +115,12 @@ export function createResourceRoutes(
   // ── POST /api/resources/init — Initialize resource directory ────────────
   app.post('/init', writeLimit, async (c) => {
     try {
-      const body = await c.req.json<{ force?: boolean }>().catch(() => ({}))
-      await kernel.init({ force: body.force })
+      const raw = await c.req.json().catch(() => ({}))
+      const parsed = InitRequestSchema.safeParse(raw)
+      if (!parsed.success) {
+        return c.json({ error: 'Invalid request body', details: parsed.error.issues }, 400)
+      }
+      await kernel.init({ force: parsed.data.force })
       return c.json({ ok: true, message: 'Resource directory initialized' })
     } catch (err) {
       return handleError(c, err)
@@ -139,16 +147,18 @@ export function createResourceRoutes(
   // ── POST /api/resources/install — Install with async SSE progress ───────
   app.post('/install', writeLimit, async (c) => {
     try {
-      const raw = await c.req.json()
+      const raw = await c.req.json().catch(() => ({}))
       // B-07 fix: Zod validation on install body
-      const names = Array.isArray(raw.names) ? raw.names : []
-      const confirmed = !!raw.confirmed
-      const removals = Array.isArray(raw.removals) ? raw.removals : []
+      const parsed = InstallRequestSchema.safeParse(raw)
+      if (!parsed.success) {
+        return c.json({ error: 'Invalid request body', details: parsed.error.issues }, 400)
+      }
+      const { names = [], confirmed = false, removals = [], additions: rawAdditions } = parsed.data
 
       // Build additions from either format
       let additions: { name: string; type: string; version: string; source: string }[]
-      if (Array.isArray(raw.additions) && raw.additions.length > 0) {
-        additions = raw.additions
+      if (rawAdditions && rawAdditions.length > 0) {
+        additions = rawAdditions
       } else {
         // Frontend simplified format: just names
         const registry = await kernel.getRegistry()
@@ -248,8 +258,12 @@ export function createResourceRoutes(
   // ── POST /api/resources/uninstall — Uninstall resources ─────────────────
   app.post('/uninstall', writeLimit, async (c) => {
     try {
-      const body = await c.req.json<{ names: string[] }>()
-      const names = body.names ?? []
+      const raw = await c.req.json().catch(() => ({}))
+      const parsed = UninstallRequestSchema.safeParse(raw)
+      if (!parsed.success) {
+        return c.json({ error: 'Invalid request body', details: parsed.error.issues }, 400)
+      }
+      const names = parsed.data.names
       const uninstalled: string[] = []
       const errors: { name: string; error: string }[] = []
 
@@ -289,17 +303,17 @@ export function createResourceRoutes(
   // ── POST /api/resources/update — Update resources ──────────────────────
   app.post('/update', writeLimit, async (c) => {
     try {
-      const body = await c.req.json<{
-        names?: string[]
-        additions?: { name: string; type: string; version: string; source: string }[]
-        removals?: string[]
-      }>()
+      const raw = await c.req.json().catch(() => ({}))
+      const parsed = InstallRequestSchema.safeParse(raw)
+      if (!parsed.success) {
+        return c.json({ error: 'Invalid request body', details: parsed.error.issues }, 400)
+      }
+      const { names = [], removals = [], additions: rawAdditions } = parsed.data
 
       let additions: { name: string; type: string; version: string; source: string }[]
-      if (body.additions && body.additions.length > 0) {
-        additions = body.additions
+      if (rawAdditions && rawAdditions.length > 0) {
+        additions = rawAdditions
       } else {
-        const names = body.names ?? []
         const registry = await kernel.getRegistry()
         additions = names.map(name => {
           const entry = Object.values(registry.entries).find(e => e.manifest.name === name)
@@ -317,7 +331,7 @@ export function createResourceRoutes(
 
       const plan = await kernel.plan({
         additions,
-        removals: body.removals ?? [],
+        removals,
       })
 
       // Apply plan: removals first, then additions
@@ -381,7 +395,11 @@ export function createResourceRoutes(
   // ── POST /api/resources/sync — Sync workspace config ───────────────────
   app.post('/sync', writeLimit, async (c) => {
     try {
-      const body = await c.req.json<{ fix?: boolean }>().catch(() => ({}))
+      const raw = await c.req.json().catch(() => ({}))
+      const parsed = SyncRequestSchema.safeParse(raw)
+      if (!parsed.success) {
+        return c.json({ error: 'Invalid request body', details: parsed.error.issues }, 400)
+      }
       const registry = await kernel.getRegistry()
       const resources = Object.values(registry.entries).map(e => ({
         name: e.manifest.name,
@@ -390,7 +408,7 @@ export function createResourceRoutes(
 
       return c.json({
         synced: true,
-        fix: !!body.fix,
+        fix: !!parsed.data.fix,
         drift: {
           missing: [],
           extra: [],
@@ -405,7 +423,11 @@ export function createResourceRoutes(
   // ── POST /api/resources/gc — Garbage collect ───────────────────────────
   app.post('/gc', writeLimit, async (c) => {
     try {
-      const body = await c.req.json<{ dryRun?: boolean }>().catch(() => ({}))
+      const raw = await c.req.json().catch(() => ({}))
+      const parsed = GcRequestSchema.safeParse(raw)
+      if (!parsed.success) {
+        return c.json({ error: 'Invalid request body', details: parsed.error.issues }, 400)
+      }
       const registry = await kernel.getRegistry()
       const activeCount = Object.keys(registry.entries).length
 
@@ -413,7 +435,7 @@ export function createResourceRoutes(
         action: 'cache.gc',
         resource: '*',
         caller: 'human',
-        detail: { activeResources: activeCount, dryRun: !!body.dryRun },
+        detail: { activeResources: activeCount, dryRun: !!parsed.data.dryRun },
       })
 
       return c.json({
@@ -509,23 +531,26 @@ export function createResourceRoutes(
   // ── POST /api/resources/trust — Add trust entry ────────────────────────
   app.post('/trust', writeLimit, async (c) => {
     try {
-      // Frontend sends { protocol, package }, server uses "location"
-      const body = await c.req.json<{ protocol: string; location?: string; package?: string }>()
-      const location = body.location ?? body.package ?? ''
-      if (!body.protocol || !location) {
+      const raw = await c.req.json().catch(() => ({}))
+      const parsed = TrustSourceInputSchema.safeParse(raw)
+      if (!parsed.success) {
+        return c.json({ error: 'Invalid request body', details: parsed.error.issues }, 400)
+      }
+      const location = parsed.data.location ?? parsed.data.package ?? ''
+      if (!parsed.data.protocol || !location) {
         return c.json({ error: 'protocol and location/package are required' }, 400)
       }
 
       // Check for duplicate
-      if (trustStore.isTrusted({ protocol: body.protocol, location })) {
+      if (trustStore.isTrusted({ protocol: parsed.data.protocol, location })) {
         return c.json({ success: true }) // idempotent
       }
 
-      trustStore.trust({ protocol: body.protocol, location })
+      trustStore.trust({ protocol: parsed.data.protocol, location })
 
       auditLogger.append({
         action: 'trust.added',
-        resource: `${body.protocol}:${location}`,
+        resource: `${parsed.data.protocol}:${location}`,
         caller: 'human',
       })
 
@@ -538,17 +563,21 @@ export function createResourceRoutes(
   // ── DELETE /api/resources/trust — Remove trust entry ────────────────────
   app.delete('/trust', writeLimit, async (c) => {
     try {
-      const body = await c.req.json<{ protocol: string; location?: string; package?: string }>()
-      const location = body.location ?? body.package ?? ''
-      if (!body.protocol || !location) {
+      const raw = await c.req.json().catch(() => ({}))
+      const parsed = TrustSourceInputSchema.safeParse(raw)
+      if (!parsed.success) {
+        return c.json({ error: 'Invalid request body', details: parsed.error.issues }, 400)
+      }
+      const location = parsed.data.location ?? parsed.data.package ?? ''
+      if (!parsed.data.protocol || !location) {
         return c.json({ error: 'protocol and location/package are required' }, 400)
       }
 
-      trustStore.untrust({ protocol: body.protocol, location })
+      trustStore.untrust({ protocol: parsed.data.protocol, location })
 
       auditLogger.append({
         action: 'trust.removed',
-        resource: `${body.protocol}:${location}`,
+        resource: `${parsed.data.protocol}:${location}`,
         caller: 'human',
       })
 
@@ -561,19 +590,23 @@ export function createResourceRoutes(
   // ── POST /api/resources/trust/block — Add blocked entry ────────────────
   app.post('/trust/block', writeLimit, async (c) => {
     try {
-      const body = await c.req.json<{ protocol: string; location?: string; package?: string; reason?: string }>()
-      const location = body.location ?? body.package ?? ''
-      if (!body.protocol || !location) {
+      const raw = await c.req.json().catch(() => ({}))
+      const parsed = TrustSourceInputSchema.safeParse(raw)
+      if (!parsed.success) {
+        return c.json({ error: 'Invalid request body', details: parsed.error.issues }, 400)
+      }
+      const location = parsed.data.location ?? parsed.data.package ?? ''
+      if (!parsed.data.protocol || !location) {
         return c.json({ error: 'protocol and location/package are required' }, 400)
       }
 
-      trustStore.block({ protocol: body.protocol, location }, body.reason)
+      trustStore.block({ protocol: parsed.data.protocol, location }, parsed.data.reason)
 
       auditLogger.append({
         action: 'trust.blocked',
-        resource: `${body.protocol}:${location}`,
+        resource: `${parsed.data.protocol}:${location}`,
         caller: 'human',
-        detail: body.reason ? { reason: body.reason } : undefined,
+        detail: parsed.data.reason ? { reason: parsed.data.reason } : undefined,
       })
 
       return c.json({ success: true })
@@ -585,13 +618,17 @@ export function createResourceRoutes(
   // ── DELETE /api/resources/trust/block — Remove blocked entry ────────────
   app.delete('/trust/block', writeLimit, async (c) => {
     try {
-      const body = await c.req.json<{ protocol: string; location?: string; package?: string }>()
-      const location = body.location ?? body.package ?? ''
-      if (!body.protocol || !location) {
+      const raw = await c.req.json().catch(() => ({}))
+      const parsed = TrustSourceInputSchema.safeParse(raw)
+      if (!parsed.success) {
+        return c.json({ error: 'Invalid request body', details: parsed.error.issues }, 400)
+      }
+      const location = parsed.data.location ?? parsed.data.package ?? ''
+      if (!parsed.data.protocol || !location) {
         return c.json({ error: 'protocol and location/package are required' }, 400)
       }
 
-      trustStore.unblock({ protocol: body.protocol, location })
+      trustStore.unblock({ protocol: parsed.data.protocol, location })
       return c.json({ success: true })
     } catch (err) {
       return handleError(c, err)

@@ -208,8 +208,9 @@ export class BashExecutor implements NodeExecutor {
         if (process.platform === "win32") {
           // Windows: 使用 taskkill 强制杀死进程树
           try {
-            const { execSync } = require("child_process")
-            execSync(`taskkill /PID ${proc.pid} /T /F`, { stdio: "ignore" })
+            // B-01 fix: Use execFileSync (no shell interpolation) instead of execSync.
+            const { execFileSync } = require("child_process")
+            execFileSync("taskkill", ["/PID", String(proc.pid), "/T", "/F"], { stdio: "ignore", timeout: 5000 })
           } catch {
             proc.kill("SIGKILL")
           }

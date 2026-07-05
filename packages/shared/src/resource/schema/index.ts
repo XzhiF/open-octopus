@@ -130,3 +130,50 @@ export const InstallPlanSchema = z.object({
 })
 
 export type InstallPlan = z.infer<typeof InstallPlanSchema>
+
+// ── API Request Schemas (B-07: runtime validation for HTTP endpoints) ────
+
+// TrustSource input — used by POST/DELETE /trust, /trust/block
+export const TrustSourceInputSchema = z.object({
+  protocol: z.string().min(1, 'protocol is required'),
+  // Accept either `location` or legacy `package` field; both resolve to `location`.
+  location: z.string().optional(),
+  package: z.string().optional(),
+  reason: z.string().optional(),
+})
+
+// POST /install and POST /update body
+export const InstallRequestSchema = z.object({
+  names: z.array(z.string()).optional(),
+  confirmed: z.boolean().optional(),
+  additions: z.array(z.object({
+    name: z.string().min(1),
+    type: z.string().min(1),
+    version: z.string().min(1),
+    source: z.string().min(1),
+  })).optional(),
+  removals: z.array(z.string()).optional(),
+})
+
+// POST /uninstall body
+export const UninstallRequestSchema = z.object({
+  names: z.array(z.string()),
+})
+
+// POST /sync body
+export const SyncRequestSchema = z.object({
+  fix: z.boolean().optional(),
+})
+
+// POST /gc body
+export const GcRequestSchema = z.object({
+  dryRun: z.boolean().optional(),
+})
+
+// POST /init body
+export const InitRequestSchema = z.object({
+  force: z.boolean().optional(),
+})
+
+// POST /register body — reuse existing manifest schema
+export const RegisterRequestSchema = ResourceManifestSchema
