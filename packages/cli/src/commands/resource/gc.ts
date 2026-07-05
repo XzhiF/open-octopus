@@ -104,14 +104,27 @@ export function gcCommand(): Command {
 
         // Delete
         let deleted = 0
+        const deletedNames: string[] = []
         for (const entry of toDelete) {
           const fullPath = join(cacheDir, entry.name.replace(/\/$/, ""))
           try {
             rmSync(fullPath, { recursive: true, force: true })
             deleted++
+            deletedNames.push(entry.name)
           } catch {
             console.error(fmt.error(`Failed to delete: ${entry.name}`))
           }
+        }
+
+        // Audit: record gc action (F8 fix)
+        if (deleted > 0) {
+          const auditLogger = new AuditLogger(join(resourceDir, "audit"))
+          auditLogger.append({
+            action: "cache.gc",
+            resource: `cache:${deletedNames.length} entries`,
+            caller: "human",
+            detail: { deleted: deletedNames, totalFreed: totalSize },
+          })
         }
 
         console.log(fmt.success(`Collected ${deleted}/${toDelete.length} entries (${formatBytes(totalSize)} freed)`))

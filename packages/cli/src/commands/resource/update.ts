@@ -97,6 +97,19 @@ export function updateCommand(): Command {
               hash: result.hash,
             })
             await kernel.register(updatedManifest)
+            // F6 fix: emit resource.updated audit entry
+            const updateAudit = new AuditLogger(join(resourceDir, "audit"))
+            updateAudit.append({
+              action: "resource.updated",
+              resource: manifest.name,
+              caller: "human",
+              detail: {
+                fromVersion: manifest.version,
+                toVersion: result.version,
+                oldHash: manifest.hash,
+                newHash: result.hash,
+              },
+            })
             console.log(fmt.success(`Updated ${manifest.name}: ${manifest.version} -> ${result.version}`))
             updated++
           } catch (err: unknown) {

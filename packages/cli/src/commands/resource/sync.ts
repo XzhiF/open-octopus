@@ -44,8 +44,9 @@ export function syncCommand(): Command {
         // Get registered resources
         const registered = await kernel.list()
         const registeredNames = new Set(registered.map(m => m.name))
+        const registeredByHash = new Map(registered.map(m => [m.name, m.hash]))
 
-        // Scan installed resources on disk
+        // F7: Scan installed resources on disk — include .claude/skills/ for project-local installs
         const typeDirs: Record<string, string> = {
           skill: "skills", agent: "agents", workflow: "workflows", source: "sources",
         }
@@ -59,6 +60,16 @@ export function syncCommand(): Command {
             }
           }
         }
+        // F7: Also scan .claude/skills/ (project-local resource install target)
+        const claudeSkillsDir = join(orgDir, "..", ".claude", "skills")
+        if (existsSync(claudeSkillsDir)) {
+          const found = scanInstalledResources(claudeSkillsDir)
+          for (const r of found) {
+            if (!onDisk.some(o => o.name === r.name)) {
+              onDisk.push({ name: r.name, type: r.type, path: r.path })
+            }
+          }
+        }
 
         const onDiskNames = new Set(onDisk.map(r => r.name))
 
@@ -66,12 +77,29 @@ export function syncCommand(): Command {
         const missingFromRegistry = onDisk.filter(r => !registeredNames.has(r.name))
         const missingFromDisk = registered.filter(m => !onDiskNames.has(m.name))
 
+        // F7: Hash mismatch detection — compare registered hash with lock file hash
+        const lock = await kernel.getLockFile()
+        const hashMismatch: { name: string; registeredHash: string; lockHash: string }[] = []
+        for (const lockEntry of lock.resources) {
+          const regEntry = registered.find(m => m.name === lockEntry.name)
+          if (regEntry && regEntry.hash !== lockEntry.hash) {
+            hashMismatch.push({
+              name: lockEntry.name,
+              registeredHash: regEntry.hash,
+              lockHash: lockEntry.hash,
+            })
+          }
+        }
+
         const rows: Record<string, any>[] = []
         for (const r of missingFromRegistry) {
           rows.push({ name: r.name, type: r.type, status: "on-disk only", action: "register" })
         }
         for (const m of missingFromDisk) {
-          rows.push({ name: m.name, type: m.type, status: "registry only", action: "no files" })
+          rows.push({ name: m.name, type: m.type, status: "registry only", action: opts.fix ? "unregister" : "no files" })
+        }
+        for (const h of hashMismatch) {
+          rows.push({ name: h.name, type: "-", status: "hash mismatch", action: "re-sync" })
         }
 
         if (rows.length === 0) {
@@ -112,7 +140,20 @@ export function syncCommand(): Command {
           }
         }
 
-        console.log(`\nSummary: ${missingFromRegistry.length} on-disk only, ${missingFromDisk.length} registry-only`)
+        // F7: --fix also unregisters "registry only" entries (no files on disk)
+        if (opts.fix && missingFromDisk.length > 0) {
+          console.log("\nUnregistering stale registry entries...")
+          for (const m of missingFromDisk) {
+            try {
+              await kernel.unregister(m.name)
+              console.log(`  ✓ Unregistered ${m.name} (no files on disk)`)
+            } catch (err) {
+              console.error(`  ✗ Failed to unregister ${m.name}: ${err instanceof Error ? err.message : String(err)}`)
+            }
+          }
+        }
+
+        console.log(`\nSummary: ${missingFromRegistry.length} on-disk only, ${missingFromDisk.length} registry-only, ${hashMismatch.length} hash mismatch`)
       } catch (err: unknown) {
         if (err instanceof ResourceError) {
           process.exitCode = ResourceError.toExitCode(err.code as any)

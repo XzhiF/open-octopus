@@ -1,6 +1,7 @@
 import { readFile, writeFile, rename, unlink, stat, open } from 'fs/promises'
 import { existsSync, mkdirSync, readFileSync } from 'fs'
 import { join } from 'path'
+import { ResourceError, ResourceErrorCode } from './errors'
 
 export class AtomicJsonStore {
   constructor(private dir: string) {
@@ -60,7 +61,7 @@ export class FsResourceStore {
     if (!this.concurrent) {
       // CLI mode: simple boolean guard
       if (this._locked) {
-        throw new Error('LOCK_FAILED: Operation in progress')
+        throw new ResourceError(ResourceErrorCode.LOCK_HELD, 'Operation in progress')
       }
       this._locked = true
       return async () => { this._locked = false }
@@ -86,7 +87,7 @@ export class FsResourceStore {
           await unlink(lockFile).catch(() => {})
         }
       } catch {
-        if (i === 5) throw new Error('LOCK_FAILED: Lock acquire failed after 5 retries')
+        if (i === 5) throw new ResourceError(ResourceErrorCode.LOCK_HELD, 'Lock acquire failed after 5 retries')
         await new Promise(r => setTimeout(r, 500))
       }
     }

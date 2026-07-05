@@ -13,9 +13,10 @@ interface AddTrustDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   onConfirm: (protocol: string, pkg: string) => Promise<void>
+  existingTrusted?: { protocol: string; location: string }[]  // F13: for duplicate detection
 }
 
-export function AddTrustDialog({ open, onOpenChange, onConfirm }: AddTrustDialogProps) {
+export function AddTrustDialog({ open, onOpenChange, onConfirm, existingTrusted = [] }: AddTrustDialogProps) {
   const [input, setInput] = useState("")
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState("")
@@ -36,6 +37,15 @@ export function AddTrustDialog({ open, onOpenChange, onConfirm }: AddTrustDialog
 
     if (!protocol || !pkg) {
       setError("协议和包名不能为空")
+      return
+    }
+
+    // F13: Check for duplicate source — inline warning
+    const isDuplicate = existingTrusted.some(
+      t => t.protocol === protocol && t.location === pkg,
+    )
+    if (isDuplicate) {
+      setError(`来源 ${protocol}:${pkg} 已在信任列表中，无需重复添加`)
       return
     }
 

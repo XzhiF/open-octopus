@@ -13,9 +13,9 @@ import { AuditLogger } from "./audit"
 import { DependencyResolver } from "./resolver"
 import { ResourceError, ResourceErrorCode } from "./errors"
 import { createInstallPlan } from "./install-plan"
-import type { Registry, InstallPlan, ResourceManifest } from "./schema"
+import type { Registry, InstallPlan, ResourceManifest, LockFile, LockFileEntry } from "./schema"
 import type { SourceProvider, SourceRef } from "./providers"
-import { ResourceManifestSchema, RegistrySchema } from "./schema"
+import { ResourceManifestSchema, RegistrySchema, LockFileSchema } from "./schema"
 
 export interface KernelDeps {
   store: FsResourceStore
@@ -142,6 +142,50 @@ export class ResourceKernel {
   }
 
   /**
+   * F3: Read resources.lock — content lock file tracking installed resources
+   * (similar to package-lock.json)
+   */
+  async getLockFile(): Promise<LockFile> {
+    const data = await this.store.atomicStore.read("resources.lock")
+    if (!data) return { version: 1, resources: [] }
+    try {
+      return LockFileSchema.parse(data)
+    } catch {
+      return { version: 1, resources: [] }
+    }
+  }
+
+  /**
+   * F3: Write resources.lock after install/register/uninstall
+   */
+  async writeLockFile(lock: LockFile): Promise<void> {
+    await this.store.atomicStore.write("resources.lock", lock)
+  }
+
+  /**
+   * F3: Add or update an entry in resources.lock
+   */
+  async updateLockEntry(entry: LockFileEntry): Promise<void> {
+    const lock = await this.getLockFile()
+    const idx = lock.resources.findIndex(r => r.name === entry.name)
+    if (idx >= 0) {
+      lock.resources[idx] = entry
+    } else {
+      lock.resources.push(entry)
+    }
+    await this.writeLockFile(lock)
+  }
+
+  /**
+   * F3: Remove an entry from resources.lock
+   */
+  async removeLockEntry(name: string): Promise<void> {
+    const lock = await this.getLockFile()
+    lock.resources = lock.resources.filter(r => r.name !== name)
+    await this.writeLockFile(lock)
+  }
+
+  /**
    * 注册资源到 registry
    */
   async register(manifest: ResourceManifest): Promise<void> {
@@ -150,11 +194,25 @@ export class ResourceKernel {
       const registry = await this.getRegistry()
       const key = `${manifest.type}:${manifest.source.protocol}:${manifest.source.location}:${manifest.name}`
       const isReplace = key in registry.entries
+      const installedAt = new Date().toISOString()
       registry.entries[key] = {
         manifest,
-        installedAt: new Date().toISOString(),
+        installedAt,
       }
       await this.store.atomicStore.write("registry.json", registry)
+
+      // F3: Also update resources.lock content lock file
+      await this.updateLockEntry({
+        name: manifest.name,
+        type: manifest.type as 'skill' | 'agent' | 'workflow' | 'source',
+        version: manifest.version,
+        hash: manifest.hash,
+        source: `${manifest.source.protocol}:${manifest.source.location}`,
+        installedAt,
+        installedBy: "human",
+        path: "",
+      })
+
       this.auditLogger.append({
         action: isReplace ? "resource.replaced" : "resource.registered",
         resource: manifest.name,
@@ -213,6 +271,8 @@ export class ResourceKernel {
       }
       delete registry.entries[key]
       await this.store.atomicStore.write("registry.json", registry)
+      // F3: Also remove from resources.lock
+      await this.removeLockEntry(name)
       this.auditLogger.append({
         action: "resource.uninstalled",
         resource: name,
@@ -244,8 +304,9 @@ export class ResourceKernel {
     const backups = new Map<string, { bakPath: string; origPath: string }>()
     const failed: { name: string; error: string }[] = []
 
+    // F3: Install skills to .claude/skills/ (project-local) so SkillLoader can find them
     const TYPE_DIRS: Record<string, string> = {
-      skill: "skills", agent: "agents", workflow: "workflows", source: "sources",
+      skill: ".claude/skills", agent: "agents", workflow: "workflows", source: "sources",
     }
 
     for (const addition of plan.additions) {

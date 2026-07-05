@@ -249,6 +249,15 @@ export function ArchiveDialog({
 
                 {!loading && error && (
                   <div className="flex flex-col items-center justify-center h-full gap-3 px-6">
+                    {/* F14: Extraction failure banner — distinct from generic error */}
+                    {(error.includes("extract") || error.includes("解压") || error.includes("decompress") || error.includes("corrupt")) && (
+                      <div className="w-full rounded-md border border-destructive/50 bg-destructive/10 p-3 mb-2">
+                        <p className="text-sm font-medium text-destructive">归档解压失败</p>
+                        <p className="text-xs text-muted-foreground mt-1">
+                          归档文件可能已损坏或格式不兼容。请检查执行日志或尝试重新归档。
+                        </p>
+                      </div>
+                    )}
                     <p className="text-sm text-agent-error text-center">{error}</p>
                     <Button variant="outline" size="sm" onClick={handleRetry}>
                       重试

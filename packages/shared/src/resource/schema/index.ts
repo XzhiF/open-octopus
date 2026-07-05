@@ -65,6 +65,7 @@ export const LockFileSchema = z.object({
 })
 
 export type LockFile = z.infer<typeof LockFileSchema>
+export type LockFileEntry = z.infer<typeof LockFileEntrySchema>
 
 // --- WorkspaceResourceConfig ---
 export const WorkspaceResourceConfigSchema = z.object({

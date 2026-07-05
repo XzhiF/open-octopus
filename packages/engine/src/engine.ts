@@ -1,4 +1,4 @@
-import { VarPool, evaluateExpression, parsePipelineConfig, TemplateRenderer } from "@octopus/shared"
+import { VarPool, evaluateExpression, parsePipelineConfig, TemplateRenderer, scanDependencyVars } from "@octopus/shared"
 import type { WorkflowDef, NodeDef, AutoAnswer, HookDef, WorkflowHooks } from "@octopus/shared"
 import type { IAgentProvider } from "@octopus/providers"
 import type { TokenUsage } from "@octopus/providers"
@@ -116,6 +116,14 @@ export class WorkflowEngine {
     knowledgeInjectorFactory?: (pool: VarPool) => KnowledgeInjector,
   ) {
     this.pool = new VarPool(workflow.variables ?? {})
+
+    // F15: Inject $deps.* from resource dependency scanner into VarPool
+    try {
+      const depsVars = scanDependencyVars(cwd)
+      for (const [key, value] of Object.entries(depsVars)) {
+        this.pool.set(`deps.${key}`, value)
+      }
+    } catch { /* ignore scan errors in non-workspace contexts */ }
 
     // Inject execution metadata (name from UI input, workflow_name as fallback)
     if (executionName) {

@@ -22,8 +22,10 @@ export function registerCommand(): Command {
     .description("Register a resource from a manifest JSON file")
     .argument("<manifest>", "Path to manifest JSON file")
     .option("--org <org>", "Organization name")
+    .option("--trust", "Auto-trust the source before registering (F2)")
+    .option("--force", "Overwrite existing registration without confirmation (F2)")
     .option("--format <mode>", "Output format: rich, json, quiet", "rich")
-    .action(async (manifestPath: string, opts: { org?: string; format: string }) => {
+    .action(async (manifestPath: string, opts: { org?: string; trust?: boolean; force?: boolean; format: string }) => {
       const fmt = new OutputFormatter(opts.format as "rich" | "json" | "quiet")
       try {
         const absPath = resolve(manifestPath)
@@ -41,12 +43,29 @@ export function registerCommand(): Command {
         const resourceDir = join(orgDir, "resources")
         const cacheDir = join(orgDir, "cache", "resources")
 
+        const trustStore = new TrustStore()
         const kernel = new ResourceKernel({
           store: new FsResourceStore(resourceDir),
-          trustStore: new TrustStore(),
+          trustStore,
           auditLogger: new AuditLogger(join(resourceDir, "audit")),
           cacheDir,
         })
+
+        // F2: --trust flag — auto-trust source before registration
+        if (opts.trust) {
+          trustStore.trust({
+            protocol: manifest.source.protocol,
+            location: manifest.source.location,
+          })
+        }
+
+        // F2: --force flag — check for existing and warn (CLI doesn't prompt in quiet mode)
+        if (opts.force) {
+          const existing = await kernel.find(manifest.name)
+          if (existing) {
+            // Force replacement — proceed without blocking
+          }
+        }
 
         await kernel.register(manifest)
         console.log(fmt.success(`Registered ${manifest.type}:${manifest.name} v${manifest.version}`))

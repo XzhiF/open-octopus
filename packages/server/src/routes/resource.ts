@@ -14,6 +14,7 @@ import { requireAuth } from './resource-auth'
 import { logInfo, logError } from '../file-logger'
 import {
   BuiltinSourceProvider, LocalSourceProvider, NpmSourceProvider, GitSourceProvider,
+  scanInstalledResources,
 } from '@octopus/shared'
 import type { SourceProvider } from '@octopus/shared'
 
@@ -392,6 +393,24 @@ export function createResourceRoutes(
     }
   })
 
+  // ── GET /api/resources/scan — Scan installed resources on disk (F15) ──────
+  app.get('/scan', async (c) => {
+    try {
+      const installBase = process.env.OCTOPUS_RESOURCE_INSTALL_DIR || process.cwd()
+      const installed = scanInstalledResources(installBase)
+      const registry = await kernel.getRegistry()
+      const registeredNames = new Set(Object.values(registry.entries).map(e => e.manifest.name))
+      const onDiskNames = new Set(installed.map(r => r.name))
+
+      const missing = installed.filter(r => !registeredNames.has(r.name))
+      const extra = [...registeredNames].filter(n => !onDiskNames.has(n))
+
+      return c.json({ installed, missing, extra, total: installed.length })
+    } catch (err) {
+      return handleError(c, err)
+    }
+  })
+
   // ── POST /api/resources/sync — Sync workspace config ───────────────────
   app.post('/sync', writeLimit, async (c) => {
     try {
@@ -401,17 +420,20 @@ export function createResourceRoutes(
         return c.json({ error: 'Invalid request body', details: parsed.error.issues }, 400)
       }
       const registry = await kernel.getRegistry()
-      const resources = Object.values(registry.entries).map(e => ({
-        name: e.manifest.name,
-        type: e.manifest.type,
-      }))
+      const installBase = process.env.OCTOPUS_RESOURCE_INSTALL_DIR || process.cwd()
+      const onDisk = scanInstalledResources(installBase)
+      const registeredNames = new Set(Object.values(registry.entries).map(e => e.manifest.name))
+      const onDiskNames = new Set(onDisk.map(r => r.name))
+
+      const missing = onDisk.filter(r => !registeredNames.has(r.name)).map(r => r.name)
+      const extra = [...registeredNames].filter(n => !onDiskNames.has(n))
 
       return c.json({
         synced: true,
         fix: !!parsed.data.fix,
         drift: {
-          missing: [],
-          extra: [],
+          missing,
+          extra,
           hash_mismatch: [],
         },
       })

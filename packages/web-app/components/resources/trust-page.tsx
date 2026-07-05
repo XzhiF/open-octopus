@@ -111,6 +111,7 @@ export function TrustPage() {
         open={addTrustOpen}
         onOpenChange={setAddTrustOpen}
         onConfirm={handleAddTrust}
+        existingTrusted={trusted}
       />
 
       {/* Add block dialog */}

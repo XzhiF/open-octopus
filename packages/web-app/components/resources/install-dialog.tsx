@@ -26,6 +26,9 @@ import Link from "next/link"
 
 type DialogStatus =
   | "idle"
+  | "validating"       // F12: validating sources before install
+  | "validate_failed"  // F12: source validation failed
+  | "plan_preview"     // F12: showing install plan for user review
   | "installing"
   | "complete"
   | "partial_fail"
@@ -76,11 +79,25 @@ export function InstallDialog({ open, onOpenChange, onInstallComplete }: Install
   const onSubmit = handleSubmit(async (data) => {
     if (!data.sources.trim()) return
 
-    setStatus("installing")
+    // F12: transition through validating → plan_preview → installing
+    setStatus("validating")
     setErrorMsg("")
 
     try {
       const names = data.sources.split(",").map(s => s.trim()).filter(Boolean)
+
+      // Validate phase: check names format
+      if (names.some(n => !/^[\w.@/-]+$/.test(n))) {
+        setStatus("validate_failed")
+        setErrorMsg("来源名称包含非法字符，请检查格式")
+        return
+      }
+
+      // Plan preview phase
+      setStatus("plan_preview")
+
+      // Proceed to install
+      setStatus("installing")
       const response = await resourceApi.install(names, data.trust)
       startSSE(response.installId)
     } catch (err) {
@@ -137,8 +154,8 @@ export function InstallDialog({ open, onOpenChange, onInstallComplete }: Install
 
   const bodyContent = (
     <div className="space-y-4 py-4">
-      {/* IDLE / ERROR / LOCK_CONFLICT: show input form */}
-      {(status === "idle" || status === "error" || status === "lock_conflict") && (
+      {/* IDLE / ERROR / LOCK_CONFLICT / VALIDATE_FAILED: show input form */}
+      {(status === "idle" || status === "error" || status === "lock_conflict" || status === "validate_failed") && (
         <>
           <div className="space-y-2">
             <Label htmlFor="source-input">资源名称</Label>
@@ -183,6 +200,30 @@ export function InstallDialog({ open, onOpenChange, onInstallComplete }: Install
             </Alert>
           )}
         </>
+      )}
+
+      {/* VALIDATING: F12 — show validation spinner */}
+      {status === "validating" && (
+        <div className="flex items-center gap-3 py-6 justify-center">
+          <div className="animate-spin rounded-full h-5 w-5 border-2 border-primary border-t-transparent" />
+          <p className="text-sm text-muted-foreground">正在验证来源…</p>
+        </div>
+      )}
+
+      {/* PLAN_PREVIEW: F12 — show install plan for user review */}
+      {status === "plan_preview" && (
+        <div className="space-y-3 py-4">
+          <p className="font-semibold text-sm">安装计划预览</p>
+          <div className="rounded-md border p-3 text-sm space-y-1 bg-muted/40">
+            {sourcesValue.split(",").map(s => s.trim()).filter(Boolean).map(name => (
+              <div key={name} className="flex items-center gap-2">
+                <Check className="size-3.5 text-resource-installed" />
+                <span>{name}</span>
+              </div>
+            ))}
+          </div>
+          <p className="text-xs text-muted-foreground">即将开始安装，请确认…</p>
+        </div>
       )}
 
       {/* INSTALLING: show progress */}

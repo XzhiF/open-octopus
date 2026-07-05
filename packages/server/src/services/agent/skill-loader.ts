@@ -5,7 +5,7 @@ import { getAgentSkillsDir } from './paths'
 
 // ── Types ──────────────────────────────────────────────────────
 
-export type SkillSource = 'local_evolved' | 'builtin' | 'prod'
+export type SkillSource = 'local_evolved' | 'installed' | 'builtin' | 'prod'
 
 export interface LoadedSkill {
   name: string
@@ -39,12 +39,14 @@ export interface SkillSummary {
 export class SkillLoader {
   private org: string
   private agentSkillsDir: string
+  private installedSkillsDir: string  // F15: .claude/skills/ in CWD (resource-installed)
   private builtinSkillsDir: string
   private prodSkillsDir: string
 
   constructor(org: string) {
     this.org = org
     this.agentSkillsDir = getAgentSkillsDir()
+    this.installedSkillsDir = path.join(process.cwd(), '.claude', 'skills')
     this.builtinSkillsDir = path.join(process.cwd(), 'packages', 'core-pack', 'skills')
     this.prodSkillsDir = path.join(os.homedir(), '.octopus', 'prod', 'packages', 'core-pack', 'skills')
   }
@@ -54,7 +56,21 @@ export class SkillLoader {
    * Returns null if skill not found in any tier.
    */
   loadSkill(name: string): LoadedSkill | null {
-    // Tier 1: Local evolved (highest priority)
+    // Tier 0: Installed via resource system — .claude/skills/ (F15)
+    const installedPath = path.join(this.installedSkillsDir, name, 'SKILL.md')
+    if (fs.existsSync(installedPath)) {
+      const content = fs.readFileSync(installedPath, 'utf-8')
+      return {
+        name,
+        content,
+        source: 'installed',
+        file_path: installedPath,
+        has_backup: false,
+        description: this.extractDescription(content),
+      }
+    }
+
+    // Tier 1: Local evolved (highest priority after installed)
     const localPath = path.join(this.agentSkillsDir, name, 'SKILL.md')
     const bakPath = path.join(this.agentSkillsDir, name, 'SKILL.md.bak')
     if (fs.existsSync(localPath)) {
@@ -113,7 +129,7 @@ export class SkillLoader {
     // Scan Tier 2 (builtin — overwrites prod)
     this.scanDirectory(this.builtinSkillsDir, 'builtin', skillMap)
 
-    // Scan Tier 1 (local evolved — overwrites all)
+    // Scan Tier 1 (local evolved — overwrites builtin/prod)
     if (fs.existsSync(this.agentSkillsDir)) {
       try {
         const entries = fs.readdirSync(this.agentSkillsDir, { withFileTypes: true })
@@ -137,6 +153,9 @@ export class SkillLoader {
       } catch { /* skip */ }
     }
 
+    // Scan Tier 0 (installed via resource system — .claude/skills/, highest priority, F15)
+    this.scanDirectory(this.installedSkillsDir, 'installed', skillMap)
+
     return [...skillMap.values()].sort((a, b) => a.name.localeCompare(b.name))
   }
 
@@ -144,6 +163,10 @@ export class SkillLoader {
    * Get the source tier for a skill without loading its full content.
    */
   getSkillSource(name: string): SkillSource | null {
+    // F15: Check installed tier first (.claude/skills/)
+    const installedPath = path.join(this.installedSkillsDir, name, 'SKILL.md')
+    if (fs.existsSync(installedPath)) return 'installed'
+
     const localPath = path.join(this.agentSkillsDir, name, 'SKILL.md')
     if (fs.existsSync(localPath)) {
       const bakPath = path.join(this.agentSkillsDir, name, 'SKILL.md.bak')

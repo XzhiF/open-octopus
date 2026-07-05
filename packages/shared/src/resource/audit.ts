@@ -1,5 +1,7 @@
-import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, statSync } from 'fs'
+import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, statSync, unlinkSync, createReadStream, createWriteStream } from 'fs'
 import { join } from 'path'
+import { createGzip } from 'zlib'
+import { pipeline } from 'stream/promises'
 import type { AuditEntry } from './schema'
 
 const MAX_LOG_SIZE = 10 * 1024 * 1024 // 10 MB
@@ -68,15 +70,46 @@ export class AuditLogger {
       const s = statSync(this.logPath)
       if (s.size < MAX_LOG_SIZE) return
 
-      // Rotate: audit.jsonl -> audit.jsonl.1 -> .2 -> ... -> .{MAX_ROTATED}
+      // F9: Rotate + gzip compress oldest archive
+      // Remove oldest (compressed or not)
+      const oldestGz = join(this.dir, `audit.jsonl.${MAX_ROTATED}.gz`)
+      const oldestRaw = join(this.dir, `audit.jsonl.${MAX_ROTATED}`)
+      if (existsSync(oldestGz)) unlinkSync(oldestGz)
+      if (existsSync(oldestRaw)) unlinkSync(oldestRaw)
+
+      // Shift numbered archives
       for (let i = MAX_ROTATED - 1; i >= 1; i--) {
-        const src = join(this.dir, `audit.jsonl.${i}`)
-        const dst = join(this.dir, `audit.jsonl.${i + 1}`)
-        if (existsSync(src)) renameSync(src, dst)
+        const srcGz = join(this.dir, `audit.jsonl.${i}.gz`)
+        const srcRaw = join(this.dir, `audit.jsonl.${i}`)
+        const dstGz = join(this.dir, `audit.jsonl.${i + 1}.gz`)
+        const dstRaw = join(this.dir, `audit.jsonl.${i + 1}`)
+        if (existsSync(srcGz)) renameSync(srcGz, dstGz)
+        else if (existsSync(srcRaw)) renameSync(srcRaw, dstRaw)
       }
-      renameSync(this.logPath, join(this.dir, 'audit.jsonl.1'))
+
+      // Rotate current → .1 and gzip compress it
+      const rotated = join(this.dir, 'audit.jsonl.1')
+      renameSync(this.logPath, rotated)
+      // F9: Compress the rotated file to .gz
+      this.compressFile(rotated, rotated + '.gz').catch(() => {})
     } catch {
       // Ignore rotation errors
+    }
+  }
+
+  /**
+   * F9: Gzip compress a file asynchronously
+   */
+  private async compressFile(src: string, dst: string): Promise<void> {
+    try {
+      await pipeline(
+        createReadStream(src),
+        createGzip(),
+        createWriteStream(dst),
+      )
+      unlinkSync(src)
+    } catch {
+      // Keep uncompressed if compression fails
     }
   }
 }
