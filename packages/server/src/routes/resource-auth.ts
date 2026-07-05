@@ -17,11 +17,19 @@ export function verifyToken(provided: string, stored: string): boolean {
 }
 
 /**
- * B-02 fix: Auth middleware — validates session cookie on resource routes.
+ * B-02 fix: Auth middleware — validates session cookie or X-Octopus-Token header on resource routes.
  * Applied via `app.use('*', requireAuth(storedToken))` in resource routes.
  */
 export function requireAuth(storedToken: string) {
   return async (c: Context, next: Next) => {
+    // Check X-Octopus-Token header first (for CLI/API clients)
+    const headerToken = c.req.header('X-Octopus-Token')
+    if (headerToken && verifyToken(headerToken, storedToken)) {
+      await next()
+      return
+    }
+
+    // Fall back to session cookie
     const cookie = c.req.header('cookie') ?? ''
     const session = cookie.split(';').find(s => s.trim().startsWith('octopus_session='))
     const token = session?.split('=')[1]
@@ -54,6 +62,12 @@ export function createAuthRoutes(storedToken: string): Hono {
 
   // GET /status — Check auth state
   app.get('/status', (c) => {
+    // Check X-Octopus-Token header first
+    const headerToken = c.req.header('X-Octopus-Token')
+    if (headerToken && verifyToken(headerToken, storedToken)) {
+      return c.json({ authenticated: true })
+    }
+    // Fall back to session cookie
     const cookie = c.req.header('cookie') ?? ''
     const session = cookie.split(';').find(s => s.trim().startsWith('octopus_session='))
     const token = session?.split('=')[1]

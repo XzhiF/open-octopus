@@ -2,6 +2,7 @@ import { join } from "path"
 import { existsSync } from "fs"
 import type { SourceProvider, SourceRef, FetchResult } from "./index"
 import { readDirRecursive, computeHash } from "./index"
+import { ResourceError, ResourceErrorCode } from "../errors"
 
 /**
  * BuiltinSourceProvider — 从 core-pack 目录获取内置资源
@@ -13,7 +14,7 @@ export class BuiltinSourceProvider implements SourceProvider {
     const subpath = ref.subpath ?? ""
     const targetDir = join(this.corePackDir, subpath)
     if (!existsSync(targetDir)) {
-      throw new Error(`FETCH_FAILED: Builtin path not found: ${targetDir}`)
+      throw new ResourceError(ResourceErrorCode.FETCH_FAILED, `FETCH_FAILED: Builtin path not found: ${targetDir}`)
     }
     const files = await readDirRecursive(targetDir)
     return { files, hash: computeHash(files), version: ref.version }

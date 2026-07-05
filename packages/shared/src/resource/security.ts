@@ -1,5 +1,6 @@
 import { join, resolve, relative } from 'path'
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs'
+import { existsSync, readFileSync, writeFileSync, mkdirSync, chmodSync } from 'fs'
+import { ResourceError, ResourceErrorCode } from './errors'
 
 /**
  * SecurityContext — 路径遍历检测 + 目标安全校验
@@ -13,7 +14,7 @@ export class SecurityContext {
     // Check raw path for .. segments before resolution
     const segments = target.split(/[/\\]/)
     if (segments.includes('..')) {
-      throw new Error(`PATH_TRAVERSAL_DETECTED: "${target}" escapes base directory "${baseDir}"`)
+      throw new ResourceError(ResourceErrorCode.PATH_TRAVERSAL_DETECTED, `PATH_TRAVERSAL_DETECTED: "${target}" escapes base directory "${baseDir}"`)
     }
 
     const resolved = resolve(baseDir, target)
@@ -21,7 +22,7 @@ export class SecurityContext {
 
     // Double-check after resolution
     if (rel.startsWith('..') || rel.includes('/..') || rel.includes('\\..')) {
-      throw new Error(`PATH_TRAVERSAL_DETECTED: "${target}" escapes base directory "${baseDir}"`)
+      throw new ResourceError(ResourceErrorCode.PATH_TRAVERSAL_DETECTED, `PATH_TRAVERSAL_DETECTED: "${target}" escapes base directory "${baseDir}"`)
     }
 
     return resolved
@@ -34,7 +35,7 @@ export class SecurityContext {
     const dangerous = ['..', '~', '$', '`', ';', '|', '&', '>', '<', '(', ')']
     for (const ch of dangerous) {
       if (target.includes(ch)) {
-        throw new Error(`PATH_TRAVERSAL_DETECTED: install.target contains dangerous character "${ch}"`)
+        throw new ResourceError(ResourceErrorCode.PATH_TRAVERSAL_DETECTED, `PATH_TRAVERSAL_DETECTED: install.target contains dangerous character "${ch}"`)
       }
     }
   }
@@ -108,6 +109,8 @@ export class TrustStore {
       const dir = this.filePath.substring(0, this.filePath.lastIndexOf('/'))
       if (dir && !existsSync(dir)) mkdirSync(dir, { recursive: true })
       writeFileSync(this.filePath, JSON.stringify(this.data, null, 2), 'utf-8')
+      // L8: File permissions — restrict trust store to owner-only read/write
+      try { chmodSync(this.filePath, 0o600) } catch { /* best-effort */ }
     } catch {
       // Best-effort persistence
     }
@@ -174,10 +177,10 @@ export class TrustStore {
   assertAllowed(source: TrustSource): void {
     if (source.protocol === 'builtin' || source.protocol === 'local') return
     if (this.isBlocked(source)) {
-      throw new Error(`SOURCE_BLOCKED: ${source.protocol}:${source.location} is blocked`)
+      throw new ResourceError(ResourceErrorCode.SOURCE_BLOCKED, `SOURCE_BLOCKED: ${source.protocol}:${source.location} is blocked`)
     }
     if (!this.isTrusted(source)) {
-      throw new Error(`SOURCE_NOT_TRUSTED: ${source.protocol}:${source.location} is not trusted. Use --trust to add it.`)
+      throw new ResourceError(ResourceErrorCode.SOURCE_NOT_TRUSTED, `SOURCE_NOT_TRUSTED: ${source.protocol}:${source.location} is not trusted. Use --trust to add it.`, { suggestion: 'Use --trust to add it' })
     }
   }
 }
@@ -195,7 +198,7 @@ export class HookExecutor {
     // Validate command against allowlist
     const baseCmd = command.split(/\s+/)[0]
     if (this.allowlist.length > 0 && !this.allowlist.includes(baseCmd)) {
-      throw new Error(`AGENT_CONFIRMATION_REQUIRED: post_install command "${baseCmd}" is not in the allowlist`)
+      throw new ResourceError(ResourceErrorCode.AGENT_CONFIRMATION_REQUIRED, `AGENT_CONFIRMATION_REQUIRED: post_install command "${baseCmd}" is not in the allowlist`)
     }
 
     if (this.dryRun) {

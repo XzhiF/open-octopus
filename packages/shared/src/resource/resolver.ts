@@ -1,4 +1,5 @@
 import type { ResourceManifest } from './schema'
+import { ResourceError, ResourceErrorCode } from './errors'
 
 /**
  * DependencyResolver — DFS + 拓扑排序
@@ -77,7 +78,7 @@ export class DependencyResolver {
     if (sorted.length !== reachable.size) {
       // Cycle detected
       const remaining = [...reachable].filter(n => !sorted.includes(n))
-      throw new Error(`DEPENDENCY_CYCLE: Cycle detected among: ${remaining.join(', ')}`)
+      throw new ResourceError(ResourceErrorCode.DEPENDENCY_CYCLE, `DEPENDENCY_CYCLE: Cycle detected among: ${remaining.join(', ')}`)
     }
 
     return sorted

@@ -1,7 +1,7 @@
 export interface InstallEvent {
   id: string
   installId: string
-  type: 'start' | 'progress' | 'complete' | 'error'
+  type: 'install_start' | 'install_progress' | 'install_complete' | 'install_error'
   resource: string
   message: string
   timestamp: string

@@ -14,6 +14,7 @@ import {
   TrustStore,
   AuditLogger,
   ResourceError,
+  CallerContext,
   BuiltinSourceProvider,
   LocalSourceProvider,
   NpmSourceProvider,
@@ -46,6 +47,8 @@ export function installCommand(): Command {
     .option("--version <version>", "Resource version", "latest")
     .option("--source <source>", "Source protocol:location", "builtin:core-pack")
     .option("--trust", "Auto-trust the source")
+    .option("--yes", "Skip confirmation prompts")
+    .option("--confirmed", "Agent gate: confirm destructive operation (required when OCTOPUS_CALLER=agent)")
     .option("--dry-run", "Show install plan without executing")
     .option("--org <org>", "Organization name")
     .option("--format <mode>", "Output format: rich, json, quiet", "rich")
@@ -53,7 +56,7 @@ export function installCommand(): Command {
       name: string,
       opts: {
         type: string; version: string; source: string; trust?: boolean
-        dryRun?: boolean; org?: string; format: string
+        yes?: boolean; confirmed?: boolean; dryRun?: boolean; org?: string; format: string
       },
     ) => {
       const fmt = new OutputFormatter(opts.format as "rich" | "json" | "quiet")
@@ -98,6 +101,15 @@ export function installCommand(): Command {
           }))
           console.log(fmt.table(rows))
           return
+        }
+
+        // L4: Agent gate — require --confirmed when OCTOPUS_CALLER=agent
+        const caller = new CallerContext()
+        if (caller.isAgent() && !opts.confirmed) {
+          throw new ResourceError(
+            "AGENT_CONFIRMATION_REQUIRED" as any,
+            "AGENT_CONFIRMATION_REQUIRED: Agent callers must pass --confirmed to install resources",
+          )
         }
 
         // Trust check

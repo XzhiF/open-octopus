@@ -4,6 +4,7 @@ import { join } from "path"
 import { tmpdir } from "os"
 import type { SourceProvider, SourceRef, FetchResult } from "./index"
 import { readDirRecursive, computeHash } from "./index"
+import { ResourceError, ResourceErrorCode } from "../errors"
 
 // Whitelist: only https://, git://, and git@ protocols
 const ALLOWED_GIT_URL = /^https?:\/\/|^git:\/\/|^git@/
@@ -20,7 +21,8 @@ export class GitSourceProvider implements SourceProvider {
 
   async fetch(ref: SourceRef): Promise<FetchResult> {
     if (!this.validateGitUrl(ref.location)) {
-      throw new Error(
+      throw new ResourceError(
+        ResourceErrorCode.INVALID_MANIFEST,
         `INVALID_MANIFEST: Git URL must use https://, git://, or git@ protocol. Got: ${ref.location}`,
       )
     }
@@ -29,7 +31,7 @@ export class GitSourceProvider implements SourceProvider {
     try {
       await new Promise<void>((resolve, reject) => {
         execFile("git", ["clone", "--depth", "1", ref.location, repoDir], (err) => {
-          if (err) reject(new Error(`FETCH_FAILED: git clone failed: ${err.message}`))
+          if (err) reject(new ResourceError(ResourceErrorCode.FETCH_FAILED, `FETCH_FAILED: git clone failed: ${err.message}`))
           else resolve()
         })
       })

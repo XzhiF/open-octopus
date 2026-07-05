@@ -694,7 +694,7 @@ async function runInstallAsync(
   corePackDir: string,
 ): Promise<void> {
   eventBus.emit(installId, {
-    type: 'start',
+    type: 'install_start',
     resource: additions.map(a => a.name).join(', '),
     message: `Installing ${additions.length} resource(s)`,
     progress: 0,
@@ -708,7 +708,7 @@ async function runInstallAsync(
     const progress = Math.round(((i + 1) / additions.length) * 100)
 
     eventBus.emit(installId, {
-      type: 'progress',
+      type: 'install_progress',
       resource: addition.name,
       message: `Fetching ${addition.name}@${addition.version}`,
       progress,
@@ -739,7 +739,7 @@ async function runInstallAsync(
       installed++
 
       eventBus.emit(installId, {
-        type: 'progress',
+        type: 'install_progress',
         resource: addition.name,
         message: `${addition.name} installed successfully`,
         progress,
@@ -747,7 +747,7 @@ async function runInstallAsync(
     } catch (err) {
       failed++
       eventBus.emit(installId, {
-        type: 'error',
+        type: 'install_error',
         resource: addition.name,
         message: err instanceof Error ? err.message : 'Install failed',
       })
@@ -755,7 +755,7 @@ async function runInstallAsync(
   }
 
   eventBus.emit(installId, {
-    type: 'complete',
+    type: 'install_complete',
     resource: additions.map(a => a.name).join(', '),
     message: `Installed ${installed} resource(s)${failed > 0 ? `, ${failed} failed` : ''}`,
     progress: 100,

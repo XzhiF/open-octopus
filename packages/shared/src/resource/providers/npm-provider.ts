@@ -4,6 +4,7 @@ import { join } from "path"
 import { tmpdir } from "os"
 import type { SourceProvider, SourceRef, FetchResult } from "./index"
 import { readDirRecursive, computeHash } from "./index"
+import { ResourceError, ResourceErrorCode } from "../errors"
 
 /**
  * NpmSourceProvider — 从 npm 注册表获取包
@@ -17,20 +18,20 @@ export class NpmSourceProvider implements SourceProvider {
 
   async fetch(ref: SourceRef): Promise<FetchResult> {
     if (!this.validatePackageName(ref.location)) {
-      throw new Error(`INVALID_MANIFEST: Invalid npm package name: ${ref.location}`)
+      throw new ResourceError(ResourceErrorCode.INVALID_MANIFEST, `INVALID_MANIFEST: Invalid npm package name: ${ref.location}`)
     }
     const tmpDir = mkdtempSync(join(tmpdir(), "npm-fetch-"))
     try {
       // npm pack to download the tarball
       await new Promise<void>((resolve, reject) => {
         execFile("npm", ["pack", ref.location, "--pack-destination", tmpDir], { cwd: tmpDir }, (err) => {
-          if (err) reject(new Error(`FETCH_FAILED: npm pack failed: ${err.message}`))
+          if (err) reject(new ResourceError(ResourceErrorCode.FETCH_FAILED, `FETCH_FAILED: npm pack failed: ${err.message}`))
           else resolve()
         })
       })
       // Extract .tgz
       const tgzFiles = readdirSync(tmpDir).filter(f => f.endsWith(".tgz"))
-      if (tgzFiles.length === 0) throw new Error("FETCH_FAILED: No .tgz file found after npm pack")
+      if (tgzFiles.length === 0) throw new ResourceError(ResourceErrorCode.FETCH_FAILED, "FETCH_FAILED: No .tgz file found after npm pack")
       await new Promise<void>((resolve, reject) => {
         execFile("tar", ["-xzf", tgzFiles[0]], { cwd: tmpDir }, (err) => {
           if (err) reject(err)

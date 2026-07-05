@@ -57,11 +57,22 @@ export class ResourceError extends Error {
   static toExitCode(code: ResourceErrorCode): number {
     const map: Record<string, number> = {
       RESOURCE_NOT_FOUND: 4,
+      RESOURCE_ALREADY_EXISTS: 1,
+      RESOURCE_ALREADY_INITIALIZED: 1,
+      RESOURCE_NOT_INSTALLED: 4,
       SOURCE_NOT_TRUSTED: 3,
       SOURCE_BLOCKED: 3,
       DEPENDENCY_CYCLE: 5,
+      DEPENDENCY_MISSING: 5,
+      LOCK_HELD: 1,
+      LOCK_FAILED: 1,
+      PATH_TRAVERSAL_DETECTED: 1,
       AUTH_FAILED: 6,
+      AGENT_CONFIRMATION_REQUIRED: 3,
       RATE_LIMITED: 7,
+      FETCH_FAILED: 1,
+      HASH_MISMATCH: 1,
+      INVALID_MANIFEST: 1,
     }
     return map[code] ?? 1
   }

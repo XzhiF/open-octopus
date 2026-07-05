@@ -5,6 +5,7 @@
  */
 import { Command } from "commander"
 import { join } from "path"
+import { existsSync } from "fs"
 import {
   ResourceKernel,
   FsResourceStore,
@@ -20,9 +21,10 @@ export function listCommand(): Command {
     .description("List registered resources")
     .option("--type <type>", "Filter by resource type: skill, agent, workflow, source")
     .option("--source <source>", "Filter by source protocol: npm, git, local, builtin")
+    .option("--installed", "Only show resources that are installed on disk")
     .option("--org <org>", "Organization name")
     .option("--format <mode>", "Output format: rich, json, quiet", "rich")
-    .action(async (opts: { type?: string; source?: string; org?: string; format: string }) => {
+    .action(async (opts: { type?: string; source?: string; installed?: boolean; org?: string; format: string }) => {
       const fmt = new OutputFormatter(opts.format as "rich" | "json" | "quiet")
       try {
         const org = opts.org || resolveCurrentOrg()
@@ -37,10 +39,21 @@ export function listCommand(): Command {
           cacheDir,
         })
 
-        const manifests = await kernel.list({
+        let manifests = await kernel.list({
           type: opts.type,
           source: opts.source,
         })
+
+        // --installed: cross-check with disk
+        if (opts.installed) {
+          const typeDirs: Record<string, string> = {
+            skill: "skills", agent: "agents", workflow: "workflows", source: "sources",
+          }
+          manifests = manifests.filter(m => {
+            const dir = join(orgDir, typeDirs[m.type] ?? m.type + "s", m.name)
+            return existsSync(dir)
+          })
+        }
 
         if (manifests.length === 0) {
           console.log(fmt.error("No resources found", "Use 'octopus resource install' to add resources"))

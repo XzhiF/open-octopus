@@ -10,6 +10,7 @@ import {
   TrustStore,
   AuditLogger,
   ResourceError,
+  CallerContext,
 } from "@octopus/shared"
 import { resolveOrgDir, resolveCurrentOrg } from "../../utils/path"
 import { OutputFormatter } from "./formatter"
@@ -19,11 +20,22 @@ export function uninstallCommand(): Command {
     .description("Uninstall a registered resource")
     .argument("<name>", "Resource name to uninstall")
     .option("--purge", "Also remove installed files from disk")
+    .option("--yes", "Skip confirmation prompts")
+    .option("--confirmed", "Agent gate: confirm destructive operation (required when OCTOPUS_CALLER=agent)")
     .option("--org <org>", "Organization name")
     .option("--format <mode>", "Output format: rich, json, quiet", "rich")
-    .action(async (name: string, opts: { purge?: boolean; org?: string; format: string }) => {
+    .action(async (name: string, opts: { purge?: boolean; yes?: boolean; confirmed?: boolean; org?: string; format: string }) => {
       const fmt = new OutputFormatter(opts.format as "rich" | "json" | "quiet")
       try {
+        // L4: Agent gate — require --confirmed when OCTOPUS_CALLER=agent
+        const caller = new CallerContext()
+        if (caller.isAgent() && !opts.confirmed) {
+          throw new ResourceError(
+            "AGENT_CONFIRMATION_REQUIRED" as any,
+            "AGENT_CONFIRMATION_REQUIRED: Agent callers must pass --confirmed to uninstall resources",
+          )
+        }
+
         const org = opts.org || resolveCurrentOrg()
         const orgDir = resolveOrgDir(org)
         const resourceDir = join(orgDir, "resources")
