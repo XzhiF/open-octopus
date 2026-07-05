@@ -1,4 +1,16 @@
+import { randomUUID } from "crypto"
 import type { InstallPlan, ResourceManifest } from './schema'
+
+/**
+ * 快速创建 InstallPlan（工厂函数）
+ */
+export function createInstallPlan(
+  additions: InstallPlan['additions'] = [],
+  removals: string[] = [],
+  conflicts: InstallPlan['conflicts'] = [],
+): InstallPlan {
+  return { id: randomUUID(), additions, removals, conflicts }
+}
 
 /**
  * InstallPlan builder — 计算安装计划的 additions/removals/conflicts

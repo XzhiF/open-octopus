@@ -1,7 +1,7 @@
 import { join, resolve, relative } from 'path'
 
 /**
- * SecurityContext — 路径遍历检测 + 信任校验
+ * SecurityContext — 路径遍历检测 + 目标安全校验
  */
 export class SecurityContext {
   /**
@@ -36,6 +36,27 @@ export class SecurityContext {
         throw new Error(`PATH_TRAVERSAL_DETECTED: install.target contains dangerous character "${ch}"`)
       }
     }
+  }
+}
+
+/**
+ * CallerContext — 调用者身份识别 + Agent 门控
+ *
+ * 通过 OCTOPUS_CALLER 环境变量区分 human/agent 调用者，
+ * agent 调用者需要显式 --confirmed 才能执行破坏性操作。
+ */
+export class CallerContext {
+  readonly caller: 'human' | 'agent'
+
+  constructor(private env: Record<string, string | undefined> = process.env) {
+    this.caller = env.OCTOPUS_CALLER === 'agent' ? 'agent' : 'human'
+  }
+
+  isAgent(): boolean { return this.caller === 'agent' }
+
+  requireConfirmation(confirmed: boolean): boolean {
+    if (!this.isAgent()) return true
+    return confirmed
   }
 }
 

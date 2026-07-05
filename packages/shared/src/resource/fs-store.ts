@@ -1,4 +1,4 @@
-import { readFile, writeFile, rename, unlink, stat, open, close } from 'fs/promises'
+import { readFile, writeFile, rename, unlink, stat, open } from 'fs/promises'
 import { existsSync, mkdirSync, readFileSync } from 'fs'
 import { join } from 'path'
 
@@ -81,9 +81,8 @@ export class FsResourceStore {
     for (let i = 0; i <= 5; i++) {
       try {
         const fh = await open(lockFile, 'wx')
-        const fd = fh.fd
         return async () => {
-          await close(fd).catch(() => {})
+          await fh.close().catch(() => {})
           await unlink(lockFile).catch(() => {})
         }
       } catch {

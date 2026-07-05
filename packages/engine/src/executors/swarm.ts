@@ -1,10 +1,8 @@
 import type { NodeExecutor, NodeExecutionResult } from "./types"
 import type { NodeDef, ExpertDef, ModelAliasConfig } from "@octopus/shared"
-import { VarPool, substituteVars, resolveModelAlias } from "@octopus/shared"
+import { VarPool, substituteVars, resolveModelAlias, getScanPaths as sharedGetScanPaths } from "@octopus/shared"
 import type { IAgentProvider, MessageChunk } from "@octopus/providers"
 import type { ICheckpointStore, SwarmCheckpointData } from "../pipeline/checkpoint-types"
-import { existsSync } from "fs"
-import { join } from "path"
 import { applyVarsUpdate } from "./parse-vars-update"
 import { MessageBus } from "./swarm/message-bus"
 import { SharedMemory } from "./swarm/shared-memory"
@@ -301,23 +299,10 @@ export class SwarmExecutor implements NodeExecutor {
   }
 
   private getScanPaths(): string[] {
-    const paths: string[] = []
-    // Highest priority: workspace .claude/agents/
-    const claudeAgents = join(this.cwd, ".claude/agents")
-    if (existsSync(claudeAgents)) paths.push(claudeAgents)
-
-    // Shared agents: ~/.octopus/agents/ (not org-scoped)
-    const home = process.env.HOME || process.env.USERPROFILE || ""
-    if (home) {
-      const orgAgents = join(home, ".octopus/agents")
-      if (existsSync(orgAgents)) paths.push(orgAgents)
-    }
-
-    // agency-agents-zh dependency (installed via `octopus setup`)
-    const agencyAgents = join(this.cwd, "dependencies/agency-agents-zh")
-    if (existsSync(agencyAgents)) paths.push(agencyAgents)
-
-    return paths
+    return sharedGetScanPaths(
+      { resourceType: "agent" },
+      { cwd: this.cwd, includeResources: true },
+    )
   }
 
   private selectStrategy(

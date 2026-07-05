@@ -30,3 +30,6 @@ export * from "./types/knowledge"
 export { ModelAliasConfigSchema, DEFAULT_MODEL_ALIASES } from './config/model-alias'
 export type { ModelAliasConfig } from './config/model-alias'
 export { resolveModelAlias, loadModelAliasConfig, collectNodeEngines } from './config/model-alias'
+
+// Resource management (Phase 0+)
+export * from './resource'
