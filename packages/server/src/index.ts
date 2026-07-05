@@ -41,6 +41,10 @@ import { SSEService } from "./services/sse"
 import { migrateOrgDirs, syncOrgsFromFilesystem } from "./services/org"
 import { ExecutionService } from "./services/execution"
 import { errorHandler } from "./middleware/error"
+import { createResourceRoutes } from "./routes/resource"
+import { createAuthRoutes, generateSessionToken } from "./routes/resource-auth"
+import { ResourceService } from "./services/resource-service"
+import { InstallEventBus } from "./services/install-event-bus"
 import { agentAuthMiddleware, setAgentAuthOrgDAO } from "./routes/agent/middleware"
 import { installGlobalErrorHandlers, logInfo, getLogFilePath } from "./file-logger"
 import { registerProvider, ClaudeSDKProvider, PiAgentProvider } from "@octopus/providers"
@@ -307,6 +311,14 @@ app.route("/api/review", createReviewRoutes(reviewService, d.pendingReview))
 // Archive routes — execution result summarization + rule proposal
 const stateDir = path.join(process.env.HOME ?? "~", ".octopus", "state")
 app.route("/api/archive", createArchiveRoutes(d.pendingReview, stateDir))
+
+// ── Resource management: REST API + SSE install progress + auth ────────
+const resourceWorkDir = process.env.HOME ?? "~"
+const resourceService = new ResourceService(resourceWorkDir)
+const installEventBus = new InstallEventBus()
+const resourceAuthToken = process.env.OCTOPUS_RESOURCE_TOKEN ?? generateSessionToken()
+app.route("/api/resources", createResourceRoutes(resourceService, installEventBus))
+app.route("/api/auth", createAuthRoutes(resourceAuthToken))
 
 // Set scheduler on agent service
 try { getAgentService().setSchedulerService(schedSvc) } catch {}
