@@ -2,15 +2,29 @@
 
 ## 6.1 页面结构
 
-在现有 AgentTabs 中新增一个 "资源" tab：
+资源管理作为**顶级导航页面**，与 Agent 同级，不作为 Agent 的子 tab。
+
+### 设计决策：为什么独立于 Agent
+
+| 维度 | Agent 页面 | 资源页面 |
+|------|-----------|---------|
+| 数据范围 | 当前 agent 的对话/记忆/知识 | 全局注册表、缓存、信任策略 |
+| 生命周期 | 跟随 agent 实例 | 平台级，所有 workspace 共享 |
+| 用户心智 | "跟 AI 交互" | "管理平台资产" |
+
+如果塞进 Agent tab，切换 agent 后看到的资源列表完全相同——维度不匹配。
+
+### 顶级导航结构
 
 ```
-AgentTabs:
-  对话 | 记忆 | 知识 | SKILL | 资源 | 分身 | 任务
-                              ▲ 新增
+左侧导航:
+  📁 项目      → 当前项目概览（workspace 信息）
+  💬 Agent     → 对话 | 记忆 | 知识 | SKILL | 分身 | 任务
+  📦 资源      → 列表 | 安装 | 信任 | 审计       ← 新增，与 Agent 同级
+  ⚙️ 设置      → 模型别名 | 全局配置
 ```
 
-### 资源 Tab 内部页面
+### 资源页面内部路由
 
 ```
 /resources
@@ -161,17 +175,21 @@ AgentTabs:
 ## 6.7 组件设计
 
 ```
-packages/web-app/components/resource/
-├── ResourceTab.tsx              # Tab 容器
-├── ResourceList.tsx             # 资源列表（卡片网格）
-├── ResourceCard.tsx             # 单个资源卡片
-├── ResourceDetail.tsx           # 资源详情页
-├── ResourceSearch.tsx           # 搜索栏
-├── InstallDialog.tsx            # 安装对话框
-├── TrustManager.tsx             # 信任管理
-├── AuditLog.tsx                 # 审计日志表格
-├── DepsGraph.tsx                # 依赖图可视化
-└── api.ts                       # API client 函数
+packages/web-app/
+├── components/layout/
+│   └── AppSidebar.tsx             # 更新：添加 "📦 资源" 导航项
+├── components/resource/
+│   ├── ResourcePage.tsx           # 资源页面容器（路由分发）
+│   ├── ResourceList.tsx           # 资源列表（卡片网格）
+│   ├── ResourceCard.tsx           # 单个资源卡片
+│   ├── ResourceDetail.tsx         # 资源详情页
+│   ├── ResourceSearch.tsx         # 搜索栏
+│   ├── InstallDialog.tsx          # 安装对话框
+│   ├── TrustManager.tsx           # 信任管理
+│   ├── AuditLog.tsx               # 审计日志表格
+│   └── DepsGraph.tsx              # 依赖图可视化
+└── lib/resource/
+    └── api.ts                     # API client 函数
 ```
 
 ### API Client
