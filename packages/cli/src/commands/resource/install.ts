@@ -7,7 +7,6 @@
  * 4. 写入安装目录 + 注册到 registry
  */
 import { Command } from "commander"
-import { existsSync, mkdirSync, writeFileSync } from "fs"
 import { join } from "path"
 import {
   ResourceKernel,
@@ -15,14 +14,12 @@ import {
   TrustStore,
   AuditLogger,
   ResourceError,
-  ResourceManifestSchema,
   BuiltinSourceProvider,
   LocalSourceProvider,
   NpmSourceProvider,
   GitSourceProvider,
-  SecurityContext,
 } from "@octopus/shared"
-import type { SourceProvider, SourceRef } from "@octopus/shared"
+import type { SourceProvider } from "@octopus/shared"
 import { resolveOrgDir, resolveCurrentOrg } from "../../utils/path"
 import { OutputFormatter } from "./formatter"
 
@@ -110,44 +107,26 @@ export function installCommand(): Command {
         }
         trustStore.assertAllowed(sourceRef)
 
-        // Fetch from provider
-        const provider = getProvider(protocol)
-        const fetchRef: SourceRef = {
-          protocol,
-          location,
-          version: opts.version,
-        }
-        const result = await provider.fetch(fetchRef)
+        // Execute atomic install via kernel (staging → rename + .bak rollback)
+        const providers = new Map<string, SourceProvider>()
+        providers.set(protocol, getProvider(protocol))
 
-        // Determine install target
-        const typeDirs: Record<string, string> = {
-          skill: "skills", agent: "agents", workflow: "workflows", source: "sources",
-        }
-        const targetDir = join(orgDir, typeDirs[opts.type] ?? opts.type + "s", name)
-        SecurityContext.assertSafePath(targetDir, orgDir)
-        mkdirSync(targetDir, { recursive: true })
+        const { installed, failed: installErrors } = await kernel.execute(
+          plan,
+          providers,
+          orgDir,
+        )
 
-        // Write files
-        for (const file of result.files) {
-          const filePath = join(targetDir, file.path)
-          SecurityContext.assertSafePath(filePath, orgDir)
-          mkdirSync(join(filePath, ".."), { recursive: true })
-          writeFileSync(filePath, file.content)
+        if (installErrors.length > 0) {
+          for (const f of installErrors) {
+            console.error(fmt.error(`Failed to install ${f.name}: ${f.error}`))
+          }
+          process.exitCode = 1
         }
 
-        // Register in kernel
-        const manifest = ResourceManifestSchema.parse({
-          name,
-          type: opts.type,
-          version: result.version || opts.version,
-          source: { protocol, location, version: result.version || opts.version },
-          hash: result.hash,
-          dependencies: [],
-          references: [],
-        })
-        await kernel.register(manifest)
-
-        console.log(fmt.success(`Installed ${opts.type}:${name} v${result.version || opts.version}`))
+        if (installed.length > 0) {
+          console.log(fmt.success(`Installed ${installed.join(", ")}`))
+        }
       } catch (err: unknown) {
         if (err instanceof ResourceError) {
           process.exitCode = ResourceError.toExitCode(err.code as any)

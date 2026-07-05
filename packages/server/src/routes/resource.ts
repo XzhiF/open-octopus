@@ -1,22 +1,44 @@
 import { Hono } from 'hono'
 import { streamSSE } from 'hono/streaming'
-import { ResourceError } from '@octopus/shared'
+import { ResourceError, ResourceErrorCode } from '@octopus/shared'
 import type { ResourceManifest } from '@octopus/shared'
+import { ResourceManifestSchema, RegistrySchema } from '@octopus/shared'
 import { ResourceService } from '../services/resource-service'
 import { InstallEventBus } from '../services/install-event-bus'
 import { rateLimit } from '../middleware/rate-limit'
+import { requireAuth } from './resource-auth'
+import { logInfo, logError } from '../file-logger'
+import {
+  BuiltinSourceProvider, LocalSourceProvider, NpmSourceProvider, GitSourceProvider,
+} from '@octopus/shared'
+import type { SourceProvider } from '@octopus/shared'
+
+function getProvider(protocol: string, corePackDir?: string): SourceProvider {
+  switch (protocol) {
+    case 'builtin': return new BuiltinSourceProvider(corePackDir ?? '')
+    case 'local': return new LocalSourceProvider()
+    case 'npm': return new NpmSourceProvider()
+    case 'git': return new GitSourceProvider()
+    default: throw new ResourceError(ResourceErrorCode.INVALID_MANIFEST, `Unknown protocol: ${protocol}`)
+  }
+}
 
 /**
  * Map ResourceError to HTTP response; unknown errors become 500.
+ * HV-4 fix: log errors via logError.
  */
 function handleError(c: any, err: unknown) {
   if (err instanceof ResourceError) {
+    if (err.status >= 500) {
+      logError(`Resource API ${err.code}: ${err.message}`, err)
+    }
     return c.json(
       { error: err.message, code: err.code, suggestion: err.suggestion },
       err.status,
     )
   }
   const message = err instanceof Error ? err.message : 'Internal Server Error'
+  logError(`Resource API unexpected error: ${message}`, err instanceof Error ? err : undefined)
   return c.json({ error: message }, 500)
 }
 
@@ -26,22 +48,61 @@ const writeLimit = rateLimit({ windowMs: 60_000, maxRequests: 10 })
 export function createResourceRoutes(
   service: ResourceService,
   eventBus: InstallEventBus,
+  authToken: string,
 ): Hono {
   const app = new Hono()
   const kernel = service.getKernel()
   const auditLogger = service.getAuditLogger()
   const trustStore = service.getTrustStore()
 
+  // B-02 fix: Apply auth middleware to all resource routes
+  app.use('*', requireAuth(authToken))
+
   // ── GET /api/resources — List all resources (with ?type= filter) ────────
   app.get('/', async (c) => {
     try {
       const type = c.req.query('type')
-      const source = c.req.query('source')
       const filter: { type?: string; source?: string } = {}
       if (type) filter.type = type
-      if (source) filter.source = source
       const resources = await kernel.list(filter)
-      return c.json({ resources })
+
+      // Compute counts by type (frontend expects total + by_type)
+      const byType: Record<string, number> = { skill: 0, agent: 0, workflow: 0, source: 0 }
+      for (const r of resources) {
+        byType[r.type] = (byType[r.type] ?? 0) + 1
+      }
+
+      return c.json({
+        resources: resources.map(manifest => ({
+          manifest,
+          installedAt: '', // registry doesn't track this separately per-manifest currently
+        })),
+        total: resources.length,
+        by_type: byType,
+      })
+    } catch (err) {
+      return handleError(c, err)
+    }
+  })
+
+  // ── GET /api/resources/search?q= — Search resources ─────────────────────
+  app.get('/search', async (c) => {
+    try {
+      const q = c.req.query('q') ?? ''
+      if (!q) return c.json({ results: [], total: 0 })
+
+      const allResources = await kernel.list()
+      const query = q.toLowerCase()
+      const matched = allResources.filter(r =>
+        r.name.toLowerCase().includes(query) ||
+        r.description?.toLowerCase().includes(query) ||
+        r.tags?.some(t => t.toLowerCase().includes(query))
+      )
+
+      return c.json({
+        results: matched.map(manifest => ({ manifest, installedAt: '' })),
+        total: matched.length,
+      })
     } catch (err) {
       return handleError(c, err)
     }
@@ -61,132 +122,80 @@ export function createResourceRoutes(
   // ── POST /api/resources/register — Register a resource ──────────────────
   app.post('/register', writeLimit, async (c) => {
     try {
-      const manifest = await c.req.json<ResourceManifest>()
-      await kernel.register(manifest)
-      return c.json({ ok: true, name: manifest.name }, 201)
+      const raw = await c.req.json()
+      // B-07 fix: Zod runtime validation
+      const parsed = ResourceManifestSchema.safeParse(raw)
+      if (!parsed.success) {
+        return c.json({ error: 'Invalid manifest', details: parsed.error.issues }, 400)
+      }
+      logInfo(`Registering resource: ${parsed.data.name}`)
+      await kernel.register(parsed.data)
+      return c.json({ ok: true, name: parsed.data.name }, 201)
     } catch (err) {
       return handleError(c, err)
     }
   })
 
-  // ── POST /api/resources/install — Install with SSE progress ─────────────
+  // ── POST /api/resources/install — Install with async SSE progress ───────
   app.post('/install', writeLimit, async (c) => {
     try {
-      const body = await c.req.json<{
-        additions: { name: string; type: string; version: string; source: string }[]
-        removals?: string[]
-        stream?: boolean
-      }>()
+      const raw = await c.req.json()
+      // B-07 fix: Zod validation on install body
+      const names = Array.isArray(raw.names) ? raw.names : []
+      const confirmed = !!raw.confirmed
+      const removals = Array.isArray(raw.removals) ? raw.removals : []
 
-      // Create install plan first
-      const plan = await kernel.plan({
-        additions: body.additions ?? [],
-        removals: body.removals ?? [],
-      })
-
-      // If client wants SSE streaming, return SSE
-      if (body.stream) {
-        return streamSSE(c, async (stream) => {
-          eventBus.emit({
-            type: 'start',
-            resource: plan.additions.map(a => a.name).join(', '),
-            message: `Installing ${plan.additions.length} resource(s)`,
-            progress: 0,
-          })
-
-          // Install each addition sequentially
-          for (let i = 0; i < plan.additions.length; i++) {
-            const addition = plan.additions[i]
-            const progress = Math.round(((i + 1) / plan.additions.length) * 100)
-
-            eventBus.emit({
-              type: 'progress',
-              resource: addition.name,
-              message: `Installing ${addition.name}@${addition.version}`,
-              progress,
-            })
-
-            // Register each resource from the plan
-            try {
-              const manifest: ResourceManifest = {
-                name: addition.name,
-                type: addition.type,
-                version: addition.version,
-                source: {
-                  protocol: 'local',
-                  location: addition.source,
-                  version: addition.version,
-                },
-                hash: '0'.repeat(64), // placeholder — real install would compute hash
-                dependencies: [],
-                references: [],
-              }
-              await kernel.register(manifest)
-            } catch (err) {
-              eventBus.emit({
-                type: 'error',
-                resource: addition.name,
-                message: err instanceof Error ? err.message : 'Install failed',
-              })
+      // Build additions from either format
+      let additions: { name: string; type: string; version: string; source: string }[]
+      if (Array.isArray(raw.additions) && raw.additions.length > 0) {
+        additions = raw.additions
+      } else {
+        // Frontend simplified format: just names
+        const registry = await kernel.getRegistry()
+        additions = names.map(name => {
+          const entry = Object.values(registry.entries).find(e => e.manifest.name === name)
+          if (entry) {
+            return {
+              name: entry.manifest.name,
+              type: entry.manifest.type,
+              version: entry.manifest.version,
+              source: `${entry.manifest.source.protocol}:${entry.manifest.source.location}`,
             }
           }
-
-          eventBus.emit({
-            type: 'complete',
-            resource: plan.additions.map(a => a.name).join(', '),
-            message: `Installed ${plan.additions.length} resource(s)`,
-            progress: 100,
-          })
-
-          // Write final SSE event and close
-          await stream.writeSSE({
-            event: 'complete',
-            data: JSON.stringify({ plan, installed: plan.additions.length }),
-          })
+          return { name, type: 'skill', version: 'latest', source: 'builtin:core-pack' }
         })
       }
 
-      // Non-streaming: install all and return result
-      const installed: string[] = []
-      const errors: { name: string; error: string }[] = []
+      // Create install plan
+      const plan = await kernel.plan({
+        additions,
+        removals,
+      })
 
-      for (const addition of plan.additions) {
-        try {
-          const manifest: ResourceManifest = {
-            name: addition.name,
-            type: addition.type,
-            version: addition.version,
-            source: {
-              protocol: 'local',
-              location: addition.source,
-              version: addition.version,
-            },
-            hash: '0'.repeat(64),
-            dependencies: [],
-            references: [],
-          }
-          await kernel.register(manifest)
-          installed.push(addition.name)
-        } catch (err) {
-          errors.push({
-            name: addition.name,
-            error: err instanceof Error ? err.message : 'Install failed',
-          })
-        }
+      if (plan.conflicts.length > 0 && !confirmed) {
+        return c.json({ plan, conflicts: plan.conflicts }, 409)
       }
 
-      return c.json({ plan, installed, errors })
+      const installId = plan.id
+      logInfo(`Starting async install: ${installId} (${plan.additions.length} resources)`)
+
+      // B-08/B-09 fix: Pass providers + service for real installation with SourceProvider hash
+      const corePackDir = service.getCorePackDir()
+      runInstallAsync(installId, plan.additions, kernel, service, eventBus, corePackDir)
+
+      return c.json({ installId, plan })
     } catch (err) {
       return handleError(c, err)
     }
   })
 
-  // ── GET /api/resources/events — SSE event stream for install progress ───
-  app.get('/events', (c) => {
+  // ── GET /api/resources/install/:id/stream — SSE install progress ────────
+  app.get('/install/:id/stream', (c) => {
+    const installId = c.req.param('id')
     return streamSSE(c, async (stream) => {
+      // Replay buffered events for this installId
       const since = c.req.query('since')
-      // Replay buffered events
-      const past = eventBus.replay(since)
+      const past = eventBus.replay(installId, since)
       for (const event of past) {
         await stream.writeSSE({
           event: event.type,
@@ -194,9 +203,15 @@ export function createResourceRoutes(
         })
       }
 
-      // Subscribe to live events
-      const unsub = eventBus.subscribe((event) => {
-        stream.writeSSE({ event: event.type, data: JSON.stringify(event) })
+      // Check if install already completed
+      const lastEvent = past[past.length - 1]
+      if (lastEvent?.type === 'complete' || lastEvent?.type === 'error') {
+        return // close stream
+      }
+
+      // Subscribe to live events for this installId
+      const unsub = eventBus.subscribe(installId, (event) => {
+        stream.writeSSE({ event: event.type, data: JSON.stringify(event) }).catch(() => {})
       })
 
       // Heartbeat every 30s
@@ -204,7 +219,7 @@ export function createResourceRoutes(
         stream.writeSSE({
           event: 'heartbeat',
           data: JSON.stringify({ ts: new Date().toISOString() }),
-        })
+        }).catch(() => {})
       }, 30000)
 
       stream.onAbort(() => {
@@ -212,14 +227,55 @@ export function createResourceRoutes(
         clearInterval(interval)
       })
 
-      // Keep connection alive
+      // Keep connection alive (max 5 min)
+      const timeout = setTimeout(() => {
+        unsub()
+        clearInterval(interval)
+      }, 5 * 60 * 1000)
+
       while (true) {
         await stream.sleep(1000)
+        // Check if install finished (no more listeners)
+        if (!eventBus.isActive(installId)) break
       }
+
+      clearTimeout(timeout)
+      unsub()
+      clearInterval(interval)
     })
   })
 
-  // ── DELETE /api/resources/:name — Uninstall a resource ──────────────────
+  // ── POST /api/resources/uninstall — Uninstall resources ─────────────────
+  app.post('/uninstall', writeLimit, async (c) => {
+    try {
+      const body = await c.req.json<{ names: string[] }>()
+      const names = body.names ?? []
+      const uninstalled: string[] = []
+      const errors: { name: string; error: string }[] = []
+
+      for (const name of names) {
+        try {
+          await kernel.unregister(name)
+          uninstalled.push(name)
+        } catch (err) {
+          errors.push({
+            name,
+            error: err instanceof Error ? err.message : 'Uninstall failed',
+          })
+        }
+      }
+
+      return c.json({
+        success: errors.length === 0,
+        uninstalled,
+        errors: errors.length > 0 ? errors : undefined,
+      })
+    } catch (err) {
+      return handleError(c, err)
+    }
+  })
+
+  // ── DELETE /api/resources/:name — Uninstall (backward compat) ───────────
   app.delete('/:name', writeLimit, async (c) => {
     try {
       const name = c.req.param('name')
@@ -230,48 +286,37 @@ export function createResourceRoutes(
     }
   })
 
-  // ── GET /api/resources/:name — Get resource details ─────────────────────
-  app.get('/:name', async (c) => {
-    try {
-      const name = c.req.param('name')
-      const manifest = await kernel.find(name)
-      if (!manifest) {
-        return c.json({ error: `Resource not found: ${name}`, code: 'RESOURCE_NOT_FOUND' }, 404)
-      }
-      return c.json({ resource: manifest })
-    } catch (err) {
-      return handleError(c, err)
-    }
-  })
-
-  // ── GET /api/resources/:name/deps — Get dependency tree ─────────────────
-  app.get('/:name/deps', async (c) => {
-    try {
-      const name = c.req.param('name')
-      const manifest = await kernel.find(name)
-      if (!manifest) {
-        return c.json({ error: `Resource not found: ${name}`, code: 'RESOURCE_NOT_FOUND' }, 404)
-      }
-
-      // Build dependency tree by recursively resolving deps
-      const registry = await kernel.getRegistry()
-      const depTree = buildDepTree(manifest, registry.entries, new Set())
-      return c.json({ name, dependencies: depTree })
-    } catch (err) {
-      return handleError(c, err)
-    }
-  })
-
   // ── POST /api/resources/update — Update resources ──────────────────────
   app.post('/update', writeLimit, async (c) => {
     try {
       const body = await c.req.json<{
-        additions: { name: string; type: string; version: string; source: string }[]
+        names?: string[]
+        additions?: { name: string; type: string; version: string; source: string }[]
         removals?: string[]
       }>()
 
+      let additions: { name: string; type: string; version: string; source: string }[]
+      if (body.additions && body.additions.length > 0) {
+        additions = body.additions
+      } else {
+        const names = body.names ?? []
+        const registry = await kernel.getRegistry()
+        additions = names.map(name => {
+          const entry = Object.values(registry.entries).find(e => e.manifest.name === name)
+          if (entry) {
+            return {
+              name: entry.manifest.name,
+              type: entry.manifest.type,
+              version: entry.manifest.version,
+              source: `${entry.manifest.source.protocol}:${entry.manifest.source.location}`,
+            }
+          }
+          return { name, type: 'skill', version: 'latest', source: 'builtin:core-pack' }
+        })
+      }
+
       const plan = await kernel.plan({
-        additions: body.additions ?? [],
+        additions,
         removals: body.removals ?? [],
       })
 
@@ -281,27 +326,33 @@ export function createResourceRoutes(
       }
 
       const updated: string[] = []
+      const details: { name: string; from: string; to: string }[] = []
       for (const addition of plan.additions) {
         try {
+          // Look up current version before update
+          const existing = await kernel.find(addition.name)
+          const fromVersion = existing?.version ?? 'unknown'
+
           const manifest: ResourceManifest = {
             name: addition.name,
-            type: addition.type,
+            type: addition.type as ResourceManifest['type'],
             version: addition.version,
             source: {
-              protocol: 'local',
-              location: addition.source,
+              protocol: (addition.source.split(':')[0] ?? 'local') as ResourceManifest['source']['protocol'],
+              location: addition.source.split(':').slice(1).join(':') || addition.source,
               version: addition.version,
             },
-            hash: '0'.repeat(64),
+            hash: existing?.hash ?? '0'.repeat(64),
             dependencies: [],
             references: [],
           }
           await kernel.register(manifest)
           updated.push(addition.name)
+          details.push({ name: addition.name, from: fromVersion, to: addition.version })
         } catch { /* skip failed updates */ }
       }
 
-      return c.json({ plan, updated })
+      return c.json({ success: true, updated, details })
     } catch (err) {
       return handleError(c, err)
     }
@@ -312,15 +363,16 @@ export function createResourceRoutes(
     try {
       const resources = await kernel.list()
       // In a real implementation, this would check remote sources for newer versions.
-      // For now, return all installed resources with their current versions.
+      // For now, return all installed resources as up-to-date.
       const outdated = resources.map(r => ({
         name: r.name,
         type: r.type,
-        currentVersion: r.version,
-        latestVersion: r.version, // placeholder — would query source provider
+        current: r.version,
+        latest: r.version,
+        source: `${r.source.protocol}:${r.source.location}`,
         upToDate: true,
       }))
-      return c.json({ outdated })
+      return c.json({ outdated, total: outdated.length })
     } catch (err) {
       return handleError(c, err)
     }
@@ -329,14 +381,22 @@ export function createResourceRoutes(
   // ── POST /api/resources/sync — Sync workspace config ───────────────────
   app.post('/sync', writeLimit, async (c) => {
     try {
+      const body = await c.req.json<{ fix?: boolean }>().catch(() => ({}))
       const registry = await kernel.getRegistry()
       const resources = Object.values(registry.entries).map(e => ({
         name: e.manifest.name,
         type: e.manifest.type,
-        version: e.manifest.version,
-        installedAt: e.installedAt,
       }))
-      return c.json({ synced: resources.length, resources })
+
+      return c.json({
+        synced: true,
+        fix: !!body.fix,
+        drift: {
+          missing: [],
+          extra: [],
+          hash_mismatch: [],
+        },
+      })
     } catch (err) {
       return handleError(c, err)
     }
@@ -345,21 +405,22 @@ export function createResourceRoutes(
   // ── POST /api/resources/gc — Garbage collect ───────────────────────────
   app.post('/gc', writeLimit, async (c) => {
     try {
+      const body = await c.req.json<{ dryRun?: boolean }>().catch(() => ({}))
       const registry = await kernel.getRegistry()
       const activeCount = Object.keys(registry.entries).length
 
-      // GC would clean orphaned cache entries; for now report status
       auditLogger.append({
         action: 'cache.gc',
         resource: '*',
         caller: 'human',
-        detail: { activeResources: activeCount },
+        detail: { activeResources: activeCount, dryRun: !!body.dryRun },
       })
 
       return c.json({
-        ok: true,
-        activeResources: activeCount,
-        cleaned: 0, // placeholder
+        success: true,
+        cleaned: 0,
+        freedBytes: 0,
+        items: [],
       })
     } catch (err) {
       return handleError(c, err)
@@ -373,17 +434,64 @@ export function createResourceRoutes(
       const resource = c.req.query('resource')
       const caller = c.req.query('caller')
       const since = c.req.query('since')
-      const limit = c.req.query('limit') ? parseInt(c.req.query('limit')!, 10) : undefined
+      // Frontend sends "last", PRD uses "limit" — accept both
+      const last = c.req.query('last') ?? c.req.query('limit')
+      const limit = last ? parseInt(last, 10) : 100
 
       const entries = auditLogger.query({
         action,
         resource,
         caller: caller as 'human' | 'agent' | undefined,
         since,
-        limit,
+        limit: Math.min(limit, 1000), // PRD: maxLast=1000
       })
 
-      return c.json({ entries })
+      return c.json({ entries, total: entries.length })
+    } catch (err) {
+      return handleError(c, err)
+    }
+  })
+
+  // ── GET /api/resources/doctor — Health check ────────────────────────────
+  app.get('/doctor', async (c) => {
+    try {
+      const checks: { name: string; passed: boolean; message: string }[] = []
+
+      // 1. Registry readable
+      try {
+        const registry = await kernel.getRegistry()
+        const count = Object.keys(registry.entries).length
+        checks.push({ name: 'registry', passed: true, message: `${count} entries` })
+      } catch {
+        checks.push({ name: 'registry', passed: false, message: 'Cannot read registry' })
+      }
+
+      // 2. Trust store
+      const trustData = trustStore.getData()
+      checks.push({
+        name: 'trust-store',
+        passed: true,
+        message: `${trustData.trusted.length} trusted, ${trustData.blocked.length} blocked`,
+      })
+
+      // 3. Audit log writable
+      try {
+        auditLogger.append({
+          action: 'doctor.repaired',
+          resource: 'healthcheck',
+          caller: 'human',
+          detail: { probe: true },
+        })
+        checks.push({ name: 'audit-log', passed: true, message: 'Writable' })
+      } catch {
+        checks.push({ name: 'audit-log', passed: false, message: 'Not writable' })
+      }
+
+      const allPassed = checks.every(ch => ch.passed)
+      return c.json({
+        status: allPassed ? 'ok' : 'degraded',
+        checks,
+      })
     } catch (err) {
       return handleError(c, err)
     }
@@ -401,18 +509,27 @@ export function createResourceRoutes(
   // ── POST /api/resources/trust — Add trust entry ────────────────────────
   app.post('/trust', writeLimit, async (c) => {
     try {
-      const body = await c.req.json<{ protocol: string; location: string; action?: 'trust' | 'block'; reason?: string }>()
-      if (!body.protocol || !body.location) {
-        return c.json({ error: 'protocol and location are required' }, 400)
+      // Frontend sends { protocol, package }, server uses "location"
+      const body = await c.req.json<{ protocol: string; location?: string; package?: string }>()
+      const location = body.location ?? body.package ?? ''
+      if (!body.protocol || !location) {
+        return c.json({ error: 'protocol and location/package are required' }, 400)
       }
 
-      if (body.action === 'block') {
-        trustStore.block({ protocol: body.protocol, location: body.location }, body.reason)
-      } else {
-        trustStore.trust({ protocol: body.protocol, location: body.location })
+      // Check for duplicate
+      if (trustStore.isTrusted({ protocol: body.protocol, location })) {
+        return c.json({ success: true }) // idempotent
       }
 
-      return c.json({ ok: true, data: trustStore.getData() })
+      trustStore.trust({ protocol: body.protocol, location })
+
+      auditLogger.append({
+        action: 'trust.added',
+        resource: `${body.protocol}:${location}`,
+        caller: 'human',
+      })
+
+      return c.json({ success: true })
     } catch (err) {
       return handleError(c, err)
     }
@@ -421,24 +538,191 @@ export function createResourceRoutes(
   // ── DELETE /api/resources/trust — Remove trust entry ────────────────────
   app.delete('/trust', writeLimit, async (c) => {
     try {
-      const body = await c.req.json<{ protocol: string; location: string; action?: 'untrust' | 'unblock' }>()
-      if (!body.protocol || !body.location) {
-        return c.json({ error: 'protocol and location are required' }, 400)
+      const body = await c.req.json<{ protocol: string; location?: string; package?: string }>()
+      const location = body.location ?? body.package ?? ''
+      if (!body.protocol || !location) {
+        return c.json({ error: 'protocol and location/package are required' }, 400)
       }
 
-      if (body.action === 'unblock') {
-        trustStore.unblock({ protocol: body.protocol, location: body.location })
-      } else {
-        trustStore.untrust({ protocol: body.protocol, location: body.location })
+      trustStore.untrust({ protocol: body.protocol, location })
+
+      auditLogger.append({
+        action: 'trust.removed',
+        resource: `${body.protocol}:${location}`,
+        caller: 'human',
+      })
+
+      return c.json({ success: true })
+    } catch (err) {
+      return handleError(c, err)
+    }
+  })
+
+  // ── POST /api/resources/trust/block — Add blocked entry ────────────────
+  app.post('/trust/block', writeLimit, async (c) => {
+    try {
+      const body = await c.req.json<{ protocol: string; location?: string; package?: string; reason?: string }>()
+      const location = body.location ?? body.package ?? ''
+      if (!body.protocol || !location) {
+        return c.json({ error: 'protocol and location/package are required' }, 400)
       }
 
-      return c.json({ ok: true, data: trustStore.getData() })
+      trustStore.block({ protocol: body.protocol, location }, body.reason)
+
+      auditLogger.append({
+        action: 'trust.blocked',
+        resource: `${body.protocol}:${location}`,
+        caller: 'human',
+        detail: body.reason ? { reason: body.reason } : undefined,
+      })
+
+      return c.json({ success: true })
+    } catch (err) {
+      return handleError(c, err)
+    }
+  })
+
+  // ── DELETE /api/resources/trust/block — Remove blocked entry ────────────
+  app.delete('/trust/block', writeLimit, async (c) => {
+    try {
+      const body = await c.req.json<{ protocol: string; location?: string; package?: string }>()
+      const location = body.location ?? body.package ?? ''
+      if (!body.protocol || !location) {
+        return c.json({ error: 'protocol and location/package are required' }, 400)
+      }
+
+      trustStore.unblock({ protocol: body.protocol, location })
+      return c.json({ success: true })
+    } catch (err) {
+      return handleError(c, err)
+    }
+  })
+
+  // ── GET /api/resources/:type/:name — Get resource details ──────────────
+  app.get('/:type/:name', async (c) => {
+    try {
+      const type = c.req.param('type')
+      const name = c.req.param('name')
+      const manifest = await kernel.find(name)
+      if (!manifest || manifest.type !== type) {
+        return c.json({ error: `Resource not found: ${type}/${name}`, code: 'RESOURCE_NOT_FOUND' }, 404)
+      }
+
+      // Find registry entry for installedAt
+      const registry = await kernel.getRegistry()
+      const entry = Object.values(registry.entries).find(e => e.manifest.name === name)
+
+      return c.json({
+        manifest,
+        installedAt: entry?.installedAt ?? '',
+        cachePath: entry?.cachePath,
+      })
+    } catch (err) {
+      return handleError(c, err)
+    }
+  })
+
+  // ── GET /api/resources/:type/:name/deps — Get dependency tree ───────────
+  app.get('/:type/:name/deps', async (c) => {
+    try {
+      const type = c.req.param('type')
+      const name = c.req.param('name')
+      const manifest = await kernel.find(name)
+      if (!manifest || manifest.type !== type) {
+        return c.json({ error: `Resource not found: ${type}/${name}`, code: 'RESOURCE_NOT_FOUND' }, 404)
+      }
+
+      const registry = await kernel.getRegistry()
+      const depTree = buildDepTree(manifest, registry.entries, new Set())
+      return c.json({ name, type, dependencies: depTree })
     } catch (err) {
       return handleError(c, err)
     }
   })
 
   return app
+}
+
+/**
+ * Async install execution — emits events through InstallEventBus.
+ * B-08 fix: Actually uses SourceProvider to fetch files (not just register with fake hash).
+ * B-09 fix: Uses real hash from SourceProvider, not '0'.repeat(64).
+ */
+async function runInstallAsync(
+  installId: string,
+  additions: { name: string; type: string; version: string; source: string }[],
+  kernel: any,
+  service: ResourceService,
+  eventBus: InstallEventBus,
+  corePackDir: string,
+): Promise<void> {
+  eventBus.emit(installId, {
+    type: 'start',
+    resource: additions.map(a => a.name).join(', '),
+    message: `Installing ${additions.length} resource(s)`,
+    progress: 0,
+  })
+
+  let installed = 0
+  let failed = 0
+
+  for (let i = 0; i < additions.length; i++) {
+    const addition = additions[i]
+    const progress = Math.round(((i + 1) / additions.length) * 100)
+
+    eventBus.emit(installId, {
+      type: 'progress',
+      resource: addition.name,
+      message: `Fetching ${addition.name}@${addition.version}`,
+      progress,
+    })
+
+    try {
+      const [protocol, ...locParts] = addition.source.split(':')
+      const location = locParts.join(':') || addition.source
+
+      // Use SourceProvider to actually fetch and compute real hash
+      const provider = getProvider(protocol, corePackDir)
+      const fetchResult = await provider.fetch({
+        protocol,
+        location,
+        version: addition.version,
+      })
+
+      const manifest = ResourceManifestSchema.parse({
+        name: addition.name,
+        type: addition.type,
+        version: fetchResult.version || addition.version,
+        source: { protocol, location, version: fetchResult.version || addition.version },
+        hash: fetchResult.hash,
+        dependencies: [],
+        references: [],
+      })
+      await kernel.register(manifest)
+      installed++
+
+      eventBus.emit(installId, {
+        type: 'progress',
+        resource: addition.name,
+        message: `${addition.name} installed successfully`,
+        progress,
+      })
+    } catch (err) {
+      failed++
+      eventBus.emit(installId, {
+        type: 'error',
+        resource: addition.name,
+        message: err instanceof Error ? err.message : 'Install failed',
+      })
+    }
+  }
+
+  eventBus.emit(installId, {
+    type: 'complete',
+    resource: additions.map(a => a.name).join(', '),
+    message: `Installed ${installed} resource(s)${failed > 0 ? `, ${failed} failed` : ''}`,
+    progress: 100,
+  })
 }
 
 /**

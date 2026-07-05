@@ -317,7 +317,7 @@ const resourceWorkDir = process.env.HOME ?? "~"
 const resourceService = new ResourceService(resourceWorkDir)
 const installEventBus = new InstallEventBus()
 const resourceAuthToken = process.env.OCTOPUS_RESOURCE_TOKEN ?? generateSessionToken()
-app.route("/api/resources", createResourceRoutes(resourceService, installEventBus))
+app.route("/api/resources", createResourceRoutes(resourceService, installEventBus, resourceAuthToken))
 app.route("/api/auth", createAuthRoutes(resourceAuthToken))
 
 // Set scheduler on agent service

@@ -50,8 +50,11 @@ function simpleMarkdown(md: string): string {
     .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
     .replace(/\*(.+?)\*/g, "<em>$1</em>")
 
-    // Links
-    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" rel="noopener">$1</a>')
+    // Links — B-06 fix: only allow safe URL protocols (http/https/mailto), block javascript:
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_match, text, url) => {
+      const safeUrl = /^(https?:\/\/|mailto:|\/)/.test(url) ? url : '#'
+      return `<a href="${safeUrl}" rel="noopener noreferrer">${text}</a>`
+    })
 
     // Unordered lists
     .replace(/^- (.+)$/gm, "<li>$1</li>")

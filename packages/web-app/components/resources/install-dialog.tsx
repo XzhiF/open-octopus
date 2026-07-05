@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useCallback, useEffect } from "react"
+import { useForm } from "react-hook-form"
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
   DialogFooter,
@@ -38,24 +39,33 @@ interface InstallDialogProps {
   onInstallComplete: (installedNames: string[]) => void
 }
 
+interface InstallFormValues {
+  sources: string
+  trust: boolean
+}
+
 export function InstallDialog({ open, onOpenChange, onInstallComplete }: InstallDialogProps) {
   const isMobile = useIsMobile()
   const { status: sseStatus, progress: sseProgress, result: sseResult, start: startSSE, reset: resetSSE } = useInstallSSE()
 
-  const [sourceInput, setSourceInput] = useState("")
-  const [trustChecked, setTrustChecked] = useState(false)
   const [status, setStatus] = useState<DialogStatus>("idle")
   const [errorMsg, setErrorMsg] = useState("")
+
+  // HV-5 fix: Use react-hook-form for form state management
+  const { register, handleSubmit, reset, setValue, watch } = useForm<InstallFormValues>({
+    defaultValues: { sources: "", trust: false },
+  })
+  const sourcesValue = watch("sources")
+  const trustValue = watch("trust")
 
   const isInstalling = status === "installing"
 
   const resetState = useCallback(() => {
-    setSourceInput("")
-    setTrustChecked(false)
+    reset({ sources: "", trust: false })
     setStatus("idle")
     setErrorMsg("")
     resetSSE()
-  }, [resetSSE])
+  }, [reset, resetSSE])
 
   const handleClose = useCallback((nextOpen: boolean) => {
     if (isInstalling) return
@@ -63,15 +73,15 @@ export function InstallDialog({ open, onOpenChange, onInstallComplete }: Install
     onOpenChange(nextOpen)
   }, [isInstalling, onOpenChange, resetState])
 
-  const handleInstall = useCallback(async () => {
-    if (!sourceInput.trim()) return
+  const onSubmit = handleSubmit(async (data) => {
+    if (!data.sources.trim()) return
 
     setStatus("installing")
     setErrorMsg("")
 
     try {
-      const names = sourceInput.split(",").map(s => s.trim()).filter(Boolean)
-      const response = await resourceApi.install(names, trustChecked)
+      const names = data.sources.split(",").map(s => s.trim()).filter(Boolean)
+      const response = await resourceApi.install(names, data.trust)
       startSSE(response.installId)
     } catch (err) {
       const message = err instanceof Error ? err.message : "安装失败"
@@ -89,7 +99,7 @@ export function InstallDialog({ open, onOpenChange, onInstallComplete }: Install
         setErrorMsg(message)
       }
     }
-  }, [sourceInput, trustChecked, startSSE])
+  })
 
   // Watch SSE status transitions
   useEffect(() => {
@@ -111,10 +121,10 @@ export function InstallDialog({ open, onOpenChange, onInstallComplete }: Install
       const installedNames = sseProgress
         .filter(p => p.status === "success")
         .map(p => p.name)
-      onInstallComplete(installedNames.length > 0 ? installedNames : sourceInput.split(",").map(s => s.trim()))
+      onInstallComplete(installedNames.length > 0 ? installedNames : sourcesValue.split(",").map(s => s.trim()))
     }
     handleClose(false)
-  }, [sseResult, sseProgress, onInstallComplete, sourceInput, handleClose])
+  }, [sseResult, sseProgress, onInstallComplete, sourcesValue, handleClose])
 
   const totalSteps = sseProgress.length > 0 ? sseProgress[sseProgress.length - 1].total : 0
 
@@ -135,10 +145,12 @@ export function InstallDialog({ open, onOpenChange, onInstallComplete }: Install
             <Input
               id="source-input"
               placeholder="brainstorming, code-reviewer"
-              value={sourceInput}
-              onChange={(e) => setSourceInput(e.target.value)}
+              {...register("sources")}
               onKeyDown={(e) => {
-                if (e.key === "Enter" && sourceInput.trim()) handleInstall()
+                if (e.key === "Enter" && sourcesValue?.trim()) {
+                  e.preventDefault()
+                  onSubmit()
+                }
               }}
             />
             <p className="text-xs text-muted-foreground">
@@ -149,8 +161,8 @@ export function InstallDialog({ open, onOpenChange, onInstallComplete }: Install
           <div className="flex items-center gap-2">
             <Checkbox
               id="trust-checkbox"
-              checked={trustChecked}
-              onCheckedChange={(checked) => setTrustChecked(!!checked)}
+              checked={trustValue}
+              onCheckedChange={(checked) => setValue("trust", !!checked)}
             />
             <Label htmlFor="trust-checkbox" className="text-sm font-normal cursor-pointer">
               信任此来源（首次安装新来源时需勾选）
@@ -235,7 +247,7 @@ export function InstallDialog({ open, onOpenChange, onInstallComplete }: Install
       {(status === "idle" || status === "error" || status === "lock_conflict") ? (
         <>
           <Button variant="outline" onClick={() => handleClose(false)}>取消</Button>
-          <Button onClick={handleInstall} disabled={!sourceInput.trim()} className="gap-1.5">
+          <Button onClick={onSubmit} disabled={!sourcesValue?.trim()} className="gap-1.5">
             <PackagePlus className="size-3.5" />
             安装
           </Button>

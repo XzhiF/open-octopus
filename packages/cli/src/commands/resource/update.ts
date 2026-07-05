@@ -74,6 +74,7 @@ export function updateCommand(): Command {
         }
 
         let updated = 0
+        let updateFailures = 0
         for (const manifest of manifests) {
           try {
             const provider = getProvider(manifest.source.protocol)
@@ -99,15 +100,21 @@ export function updateCommand(): Command {
             console.log(fmt.success(`Updated ${manifest.name}: ${manifest.version} -> ${result.version}`))
             updated++
           } catch (err: unknown) {
+            updateFailures++
             const msg = err instanceof Error ? err.message : String(err)
             console.error(fmt.error(`Failed to update ${manifest.name}: ${msg}`))
           }
         }
 
-        if (updated === 0) {
+        if (updated === 0 && updateFailures === 0) {
           console.log(fmt.success("All resources are up to date"))
-        } else {
+        } else if (updated > 0) {
           console.log(fmt.success(`${updated} resource(s) updated`))
+        }
+
+        // B-11 fix: Set exit code when updates fail
+        if (updateFailures > 0) {
+          process.exitCode = 1
         }
       } catch (err: unknown) {
         if (err instanceof ResourceError) {
@@ -156,7 +163,14 @@ export function outdatedCommand(): Command {
               location: manifest.source.location,
               version: "latest",
             }
-            const result = await provider.fetch(ref)
+            // B-12 fix: Add timeout to prevent hanging on slow/unreachable sources
+            const TIMEOUT_MS = 30_000
+            const result = await Promise.race([
+              provider.fetch(ref),
+              new Promise<never>((_, reject) =>
+                setTimeout(() => reject(new Error(`Timeout after ${TIMEOUT_MS / 1000}s`)), TIMEOUT_MS)
+              ),
+            ])
 
             if (result.version !== manifest.version) {
               rows.push({
@@ -168,7 +182,7 @@ export function outdatedCommand(): Command {
               })
             }
           } catch {
-            // Skip resources that can't be checked
+            // Skip resources that can't be checked (timeout, network error, etc.)
           }
         }
 

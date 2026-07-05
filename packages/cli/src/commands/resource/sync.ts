@@ -84,8 +84,31 @@ export function syncCommand(): Command {
         if (opts.fix && missingFromRegistry.length > 0) {
           console.log("\nRegistering missing resources...")
           for (const r of missingFromRegistry) {
-            // We can't fully register without a manifest, but report intent
-            console.log(`  Would register: ${r.type}:${r.name} from ${r.path}`)
+            try {
+              // Read manifest from disk if available
+              const manifestPath = join(r.path, 'manifest.json')
+              if (existsSync(manifestPath)) {
+                const { readFileSync } = require('fs')
+                const manifest = JSON.parse(readFileSync(manifestPath, 'utf-8'))
+                await kernel.register(manifest)
+                console.log(`  ✓ Registered ${r.type}:${r.name}`)
+              } else {
+                // Create minimal manifest from directory info
+                const minimalManifest = {
+                  name: r.name,
+                  type: r.type,
+                  version: '0.0.0',
+                  source: { protocol: 'local', location: r.path, version: '0.0.0' },
+                  hash: '0'.repeat(64),
+                  dependencies: [],
+                  references: [],
+                }
+                await kernel.register(minimalManifest)
+                console.log(`  ✓ Registered ${r.type}:${r.name} (minimal manifest)`)
+              }
+            } catch (err) {
+              console.error(`  ✗ Failed to register ${r.name}: ${err instanceof Error ? err.message : String(err)}`)
+            }
           }
         }
 

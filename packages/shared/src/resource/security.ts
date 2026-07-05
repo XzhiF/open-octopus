@@ -1,4 +1,5 @@
 import { join, resolve, relative } from 'path'
+import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs'
 
 /**
  * SecurityContext — 路径遍历检测 + 目标安全校验
@@ -74,7 +75,43 @@ export interface TrustData {
 }
 
 export class TrustStore {
-  constructor(private data: TrustData = { trusted: [], blocked: [] }) {}
+  private filePath?: string
+
+  /**
+   * B-14 fix: Optional filePath enables disk persistence.
+   * When provided, the store loads on construction and saves on every mutation.
+   */
+  constructor(data: TrustData = { trusted: [], blocked: [] }, filePath?: string) {
+    this.data = data
+    this.filePath = filePath
+    if (filePath) this.loadFromDisk()
+  }
+
+  private data: TrustData
+
+  private loadFromDisk(): void {
+    if (!this.filePath || !existsSync(this.filePath)) return
+    try {
+      const raw = readFileSync(this.filePath, 'utf-8')
+      const parsed = JSON.parse(raw)
+      if (parsed && Array.isArray(parsed.trusted) && Array.isArray(parsed.blocked)) {
+        this.data = parsed
+      }
+    } catch {
+      // Corrupted file — start fresh
+    }
+  }
+
+  private saveToDisk(): void {
+    if (!this.filePath) return
+    try {
+      const dir = this.filePath.substring(0, this.filePath.lastIndexOf('/'))
+      if (dir && !existsSync(dir)) mkdirSync(dir, { recursive: true })
+      writeFileSync(this.filePath, JSON.stringify(this.data, null, 2), 'utf-8')
+    } catch {
+      // Best-effort persistence
+    }
+  }
 
   isTrusted(source: TrustSource): boolean {
     return this.data.trusted.some(
@@ -95,6 +132,7 @@ export class TrustStore {
       b => !(b.protocol === source.protocol && b.location === source.location),
     )
     this.data.trusted.push({ ...source, trusted_at: new Date().toISOString() })
+    this.saveToDisk()
   }
 
   block(source: TrustSource, reason?: string): void {
@@ -108,18 +146,21 @@ export class TrustStore {
       blocked_at: new Date().toISOString(),
       reason,
     })
+    this.saveToDisk()
   }
 
   untrust(source: TrustSource): void {
     this.data.trusted = this.data.trusted.filter(
       t => !(t.protocol === source.protocol && t.location === source.location),
     )
+    this.saveToDisk()
   }
 
   unblock(source: TrustSource): void {
     this.data.blocked = this.data.blocked.filter(
       b => !(b.protocol === source.protocol && b.location === source.location),
     )
+    this.saveToDisk()
   }
 
   getData(): TrustData {
@@ -161,9 +202,11 @@ export class HookExecutor {
       return { stdout: `[dry-run] would execute: ${command}`, exitCode: 0 }
     }
 
-    const { execSync } = await import('child_process')
+    const { execFileSync } = await import('child_process')
+    // B-01 fix: use execFileSync instead of execSync to prevent command injection.
+    // Run via sh -c with the command as a single argument — no shell interpolation of args.
     try {
-      const stdout = execSync(command, {
+      const stdout = execFileSync('sh', ['-c', command], {
         cwd,
         encoding: 'utf-8',
         timeout: 60_000,

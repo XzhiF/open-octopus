@@ -74,26 +74,40 @@ export class WorkflowDiscovery {
 
   /**
    * 扫描已安装的工作流
+   * PRD §6.3: workflow 安装目标为 .octopus/workflows/
+   * 同时兼容旧路径 .claude/workflows/（向后兼容）
    */
   discoverInstalled(workspaceDir: string): InstalledWorkflow[] {
-    const dir = join(workspaceDir, ".claude", "workflows")
-    if (!existsSync(dir)) return []
+    const candidates = [
+      join(workspaceDir, ".octopus", "workflows"),
+      join(workspaceDir, ".claude", "workflows"),
+    ]
     const workflows: InstalledWorkflow[] = []
-    try {
-      for (const entry of readdirSync(dir, { withFileTypes: true })) {
-        if (entry.isDirectory()) {
-          const yamlPath = join(dir, entry.name, "workflow.yaml")
-          if (existsSync(yamlPath)) {
+    for (const dir of candidates) {
+      if (!existsSync(dir)) continue
+      try {
+        for (const entry of readdirSync(dir, { withFileTypes: true })) {
+          if (entry.isDirectory()) {
+            const yamlPath = join(dir, entry.name, "workflow.yaml")
+            if (existsSync(yamlPath)) {
+              workflows.push({
+                name: entry.name,
+                path: yamlPath,
+                references: [],
+              })
+            }
+          } else if (entry.isFile() && (entry.name.endsWith(".yaml") || entry.name.endsWith(".yml"))) {
+            // Flat file workflow (e.g. my-flow.yaml)
             workflows.push({
-              name: entry.name,
-              path: yamlPath,
+              name: entry.name.replace(/\.(yaml|yml)$/, ""),
+              path: join(dir, entry.name),
               references: [],
             })
           }
         }
+      } catch {
+        // Ignore errors
       }
-    } catch {
-      // Ignore errors
     }
     return workflows
   }

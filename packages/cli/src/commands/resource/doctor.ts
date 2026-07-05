@@ -162,6 +162,56 @@ export function doctorCommand(): Command {
         const failCount = checks.filter(c => c.status === "fail").length
         const warnCount = checks.filter(c => c.status === "warn").length
 
+        // B-10 fix: Actually implement --fix to repair issues
+        if (opts.fix && (failCount > 0 || warnCount > 0)) {
+          console.log("\nAttempting repairs...")
+          let repaired = 0
+
+          // Fix missing registry
+          if (!existsSync(registryPath)) {
+            try {
+              await kernel.init({ force: true })
+              console.log("  ✓ Created registry.json")
+              repaired++
+            } catch (err) {
+              console.error(`  ✗ Failed to create registry: ${err instanceof Error ? err.message : String(err)}`)
+            }
+          }
+
+          // Fix missing directories
+          for (const type of ["skill", "agent", "workflow", "source"]) {
+            const dir = join(resourceDir, "manifests", type)
+            if (!existsSync(dir)) {
+              try {
+                const { mkdirSync } = require('fs')
+                mkdirSync(dir, { recursive: true })
+                console.log(`  ✓ Created manifests/${type}/`)
+                repaired++
+              } catch (err) {
+                console.error(`  ✗ Failed to create manifests/${type}/: ${err instanceof Error ? err.message : String(err)}`)
+              }
+            }
+          }
+
+          // Fix missing cache directory
+          if (!existsSync(cacheDir)) {
+            try {
+              const { mkdirSync } = require('fs')
+              mkdirSync(cacheDir, { recursive: true })
+              console.log("  ✓ Created cache directory")
+              repaired++
+            } catch (err) {
+              console.error(`  ✗ Failed to create cache directory: ${err instanceof Error ? err.message : String(err)}`)
+            }
+          }
+
+          if (repaired > 0) {
+            console.log(`\n${repaired} issue(s) repaired. Run 'octopus resource doctor' again to verify.`)
+          } else {
+            console.log("\nNo repairs needed or possible.")
+          }
+        }
+
         if (failCount === 0 && warnCount === 0) {
           console.log(fmt.success("All checks passed"))
         } else if (failCount > 0) {
