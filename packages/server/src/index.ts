@@ -165,11 +165,8 @@ if (!process.env.VITEST && daos) {
   })
   registerProvider('claude', () => new ClaudeSDKProvider())
 
-  // Pi Provider registration — gated by feature flag (P0-1, P1-4)
-  if (process.env.OCTOPUS_ENABLE_PI === 'true') {
-    registerProvider('pi', () => new PiAgentProvider())
-    console.log('[server] Pi Provider registered (OCTOPUS_ENABLE_PI=true)')
-  }
+  // Pi Provider registration — always available (lazy-loaded, SDK imported on first query)
+  registerProvider('pi', () => new PiAgentProvider())
 
   // Initialize agent service singletons
   initSessionService(daos.agentSession)

@@ -27,6 +27,8 @@ export class LoopExecutor implements NodeExecutor {
     private globalSessionId?: string,
     private branchSessionIds?: Map<string, string>,
     private inputs?: Record<string, any>,
+    /** Workflow-level engine fallback (node.engine ?? workflow.engine ?? "claude") */
+    private workflowEngine?: string,
   ) {}
 
   async execute(): Promise<NodeExecutionResult> {
@@ -236,7 +238,7 @@ export class LoopExecutor implements NodeExecutor {
       case "approval":
         return new ApprovalExecutor(node, p, undefined, undefined, this.signal)
       case "agent": {
-        const rawKey = node.engine ?? "claude"
+        const rawKey = node.engine ?? this.workflowEngine ?? "claude"
         const providerKey = rawKey === "claude-code" ? "claude" : rawKey
         const provider = this.providers[providerKey]
         if (!provider) throw new Error(`Unknown provider: ${rawKey}`)

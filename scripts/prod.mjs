@@ -345,8 +345,12 @@ async function waitForServer(port, timeoutMs = 15000) {
   const start = Date.now()
   while (Date.now() - start < timeoutMs) {
     try {
-      const res = await fetch(`http://localhost:${port}/api/health`)
-      if (res.ok) return await res.json()
+      const res = await fetch(`http://localhost:${port}/api/actuator/health`)
+      if (res.ok) {
+        const data = await res.json()
+        const server = data.components?.server?.details ?? {}
+        return { mode: server.mode, pid: server.pid, status: data.status }
+      }
     } catch {}
     await new Promise(r => setTimeout(r, 300))
   }

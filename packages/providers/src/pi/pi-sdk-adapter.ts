@@ -60,6 +60,23 @@ export async function createSession(opts: SessionOptions): Promise<SessionResult
   // createAgentSession returns { session: AgentSession, extensionsResult, ... }
   const agentSession = (result as any).session ?? result
 
+  // Inject custom system prompt into resource loader so _rebuildSystemPrompt picks it up.
+  // Setting agent.state.systemPrompt directly gets overwritten by _rebuildSystemPrompt.
+  if (opts.systemPrompt) {
+    const originalGetSystemPrompt = resourceLoader.getSystemPrompt?.bind(resourceLoader)
+    resourceLoader.getSystemPrompt = () => {
+      const base = originalGetSystemPrompt?.() ?? ''
+      return base ? base + '\n\n' + opts.systemPrompt : opts.systemPrompt!
+    }
+    // Trigger rebuild so the current state picks up the new prompt
+    if ((agentSession as any)._rebuildSystemPrompt) {
+      (agentSession as any)._baseSystemPrompt = (agentSession as any)._rebuildSystemPrompt(
+        (agentSession as any).getActiveToolNames?.() ?? []
+      )
+      ;(agentSession as any).agent.state.systemPrompt = (agentSession as any)._baseSystemPrompt
+    }
+  }
+
   return {
     session: agentSession,
     sessionId: (agentSession as any).sessionId ?? `session-${Date.now()}`,

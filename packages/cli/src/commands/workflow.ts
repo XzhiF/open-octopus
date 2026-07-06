@@ -23,9 +23,7 @@ workflowCmd
     const org = options.org || resolveCurrentOrg()
     const orgDir = resolveOrgDir(org)
     registerProvider('claude', () => new ClaudeSDKProvider())
-    if (process.env.OCTOPUS_ENABLE_PI === 'true') {
-      registerProvider('pi', () => new PiAgentProvider())
-    }
+    registerProvider('pi', () => new PiAgentProvider())
 
     const absPath = resolve(yamlPath)
     if (!existsSync(absPath)) {

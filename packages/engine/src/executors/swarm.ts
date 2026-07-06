@@ -42,6 +42,8 @@ export class SwarmExecutor implements NodeExecutor {
     private engineHookFn?: (event: string, context: Record<string, unknown>) => Promise<void>,
     /** BL-5: Model alias config for resolving expert.model aliases */
     private modelAliasConfig?: ModelAliasConfig,
+    /** Workflow-level engine fallback (node.engine ?? workflow.engine ?? "claude") */
+    private workflowEngine?: string,
   ) {}
 
   async execute(): Promise<NodeExecutionResult> {
@@ -59,7 +61,7 @@ export class SwarmExecutor implements NodeExecutor {
       const experts: ExpertDef[] = this.modelAliasConfig
         ? baseExperts.map(expert => {
             if (!expert.model) return expert
-            const rawKey = this.node.engine ?? "claude"
+            const rawKey = this.node.engine ?? this.workflowEngine ?? "claude"
             const providerKey = rawKey === "claude-code" ? "claude" : rawKey
             const resolved = resolveModelAlias(expert.model, providerKey, this.modelAliasConfig!)
             return resolved ? { ...expert, model: resolved } : expert
@@ -295,7 +297,7 @@ export class SwarmExecutor implements NodeExecutor {
   }
 
   private resolveProvider(): IAgentProvider | undefined {
-    const rawKey = this.node.engine ?? "claude"
+    const rawKey = this.node.engine ?? this.workflowEngine ?? "claude"
     const providerKey = rawKey === "claude-code" ? "claude" : rawKey
     return this.providers[providerKey] ?? this.providers["claude"]
   }

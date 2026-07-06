@@ -47,6 +47,10 @@ export class EngineFactory implements IEngineFactory {
     const providers: Record<string, any> = {}
     const nodes = workflow.nodes ?? []
     const engineKeys = collectNodeEngines(nodes)
+    // Include workflow-level engine (nodes inherit it when node.engine is unset)
+    if (workflow.engine && !engineKeys.includes(workflow.engine)) {
+      engineKeys.push(workflow.engine)
+    }
     for (const key of engineKeys) {
       try {
         const provider = getProvider(key)

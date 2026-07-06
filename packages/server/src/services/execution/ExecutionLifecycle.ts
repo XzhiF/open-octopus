@@ -1025,6 +1025,10 @@ export class ExecutionLifecycle {
   private resolveProviders(workflow: WorkflowDef): Record<string, any> {
     const providers: Record<string, any> = {}
     const engineKeys = collectNodeEngines(workflow.nodes ?? [])
+    // Include workflow-level engine (nodes inherit it when node.engine is unset)
+    if (workflow.engine && !engineKeys.includes(workflow.engine)) {
+      engineKeys.push(workflow.engine)
+    }
     for (const key of engineKeys) {
       try {
         providers[key] = getProvider(key)

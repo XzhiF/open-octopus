@@ -1351,9 +1351,10 @@ export class WorkflowEngine {
           node, p, this.providers, this.cwd,
           this.workflow.auto_answers, s, this.callbacks, this.logger,
           this.globalSessionId, this.branchSessionIds, this.inputs,
+          this.workflow.engine,
         )
       case "agent": {
-        const rawKey = node.engine ?? "claude"
+        const rawKey = node.engine ?? this.workflow.engine ?? "claude"
         const providerKey = rawKey === "claude-code" ? "claude" : rawKey
         const provider = this.providers[providerKey]
         if (!provider) throw new Error(`Unknown provider: ${rawKey}`)
@@ -1397,6 +1398,7 @@ export class WorkflowEngine {
             await this.executeHooks(event as keyof WorkflowHooks, context)
           },
           this.modelAliasConfig,
+          this.workflow.engine,
         )
       default:
         throw new Error(`Unknown node type: ${(node as any).type}`)

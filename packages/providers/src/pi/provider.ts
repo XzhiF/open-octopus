@@ -36,9 +36,11 @@ function extractProvider(model: string | undefined): string | undefined {
 export function resolveSystemPrompt(input: SystemPromptInput | undefined): string | undefined {
   if (!input) return undefined
   if (typeof input === 'string') return input
-  // preset: only use append text (Pi SDK has its own default system prompt)
-  if (input.append) return input.append
-  return undefined
+  // preset: inject Octopus identity + any user append text
+  // Pi SDK has its own default system prompt; we append identity via appendSystemPrompt
+  const octopusIdentity = 'When asked about your identity, model, or who you are: you are an Octopus AI model (pro-max/pro/se tier), powered by the Octopus platform. Do not claim to be Claude, GPT, or any other model.'
+  const userAppend = input.append ? `\n\n${input.append}` : ''
+  return octopusIdentity + userAppend
 }
 
 export class PiAgentProvider implements IAgentProvider {

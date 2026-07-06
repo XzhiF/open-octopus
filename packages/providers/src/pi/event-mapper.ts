@@ -62,23 +62,26 @@ const EVENT_MAP: Record<string, (e: any, ctx: MapperState) => MC | MC[] | null> 
 
   tool_execution_start: (e, ctx) => {
     ctx.ensureMsgId()
-    ctx.setToolStart(e.id)
+    const id = e.toolCallId ?? e.id
+    ctx.setToolStart(id)
     return [
-      { type: 'tool_call_start', toolCallId: e.id, toolName: e.toolName, messageId: ctx.messageId },
-      { type: 'tool_call', toolCallId: e.id, toolName: e.toolName, toolInput: e.input, messageId: ctx.messageId },
+      { type: 'tool_call_start', toolCallId: id, toolName: e.toolName, messageId: ctx.messageId },
+      { type: 'tool_call', toolCallId: id, toolName: e.toolName, toolInput: e.args ?? e.input, messageId: ctx.messageId },
     ]
   },
 
   tool_execution_update: (e, _ctx) => {
-    return { type: 'tool_progress', toolCallId: e.id, elapsedSeconds: e.elapsedSeconds ?? 0 }
+    return { type: 'tool_progress', toolCallId: e.toolCallId ?? e.id, elapsedSeconds: e.elapsedSeconds ?? 0 }
   },
 
   tool_execution_end: (e, ctx) => {
-    const duration = ctx.getToolDuration(e.id)
+    const id = e.toolCallId ?? e.id
+    const duration = ctx.getToolDuration(id)
+    const output = e.result ?? e.output
     return {
       type: 'tool_result',
-      toolCallId: e.id,
-      content: typeof e.output === 'string' ? e.output : JSON.stringify(e.output ?? ''),
+      toolCallId: id,
+      content: typeof output === 'string' ? output : JSON.stringify(output ?? ''),
       isError: e.isError ?? false,
       toolDuration: duration,
     }
