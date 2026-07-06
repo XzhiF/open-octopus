@@ -214,6 +214,49 @@ resourceCmd
     }
   })
 
+// --- search ---
+resourceCmd
+  .command("search")
+  .description("搜索可安装的 builtin 资源")
+  .argument("<query>", "搜索关键词 (匹配名称/描述)")
+  .option("--type <type>", "按类型过滤 (skill/agent/workflow)")
+  .action(async (query: string, options: { type?: string }) => {
+    const org = resolveCurrentOrg()
+    const data = await apiRequest<{
+      resources: Array<{ name: string; type: string; description?: string; installed: boolean }>
+    }>("GET", "/builtin", org)
+
+    const q = query.toLowerCase()
+    let results = data.resources.filter(r =>
+      r.name.toLowerCase().includes(q) ||
+      (r.description ?? "").toLowerCase().includes(q),
+    )
+    if (options.type) {
+      results = results.filter(r => r.type === options.type)
+    }
+
+    if (!results.length) {
+      console.log(`No builtin resources matching "${query}".`)
+      return
+    }
+
+    const cols = { name: 28, type: 10, status: 12, desc: 40 }
+    console.log(
+      chalk.dim(
+        `${pad("NAME", cols.name)}${pad("TYPE", cols.type)}${pad("STATUS", cols.status)}${pad("DESCRIPTION", cols.desc)}`,
+      ),
+    )
+    for (const r of results) {
+      const status = r.installed ? chalk.green("installed") : chalk.dim("available")
+      const desc = (r.description ?? "-").slice(0, cols.desc)
+      console.log(
+        `${pad(r.name, cols.name)}${pad(r.type, cols.type)}${pad(status, cols.status)}${pad(desc, cols.desc)}`,
+      )
+    }
+    console.log()
+    console.log(chalk.dim(`Found ${results.length} result(s). Install with: octopus resource install builtin:${results[0].name}`))
+  })
+
 // --- stats ---
 resourceCmd
   .command("stats")

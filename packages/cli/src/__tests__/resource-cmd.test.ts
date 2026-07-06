@@ -20,7 +20,7 @@ describe("resource command — error handling", () => {
     const { resourceCmd } = await import("../commands/resource")
     expect(resourceCmd.name()).toBe("resource")
     const subcmds = resourceCmd.commands.map((c) => c.name())
-    expect(subcmds).toEqual(["install", "uninstall", "list", "info", "audit", "stats"])
+    expect(subcmds).toEqual(["install", "uninstall", "list", "info", "audit", "search", "stats"])
   })
 
   it("resource install sends POST to /api/resources/install", async () => {
@@ -149,5 +149,31 @@ describe("resource command — error handling", () => {
 
     errSpy.mockRestore()
     exitSpy.mockRestore()
+  })
+
+  it("resource search sends GET to /api/resources/builtin and filters results", async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve({
+        resources: [
+          { name: "brainstorming", type: "skill", description: "Creative brainstorming", installed: false },
+          { name: "code-review", type: "skill", description: "Code review helper", installed: true },
+          { name: "test-agent", type: "agent", description: "Testing agent", installed: false },
+        ],
+        total: 3,
+      }),
+    })
+
+    const { resourceCmd } = await import("../commands/resource")
+    const searchCmd = resourceCmd.commands.find((c) => c.name() === "search")!
+
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {})
+    await searchCmd.parseAsync(["brain"], { from: "user" })
+    logSpy.mockRestore()
+
+    expect(mockFetch).toHaveBeenCalledWith(
+      expect.stringContaining("/api/resources/builtin"),
+      expect.objectContaining({ method: "GET" }),
+    )
   })
 })
