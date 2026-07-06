@@ -13,8 +13,8 @@ import type { ResourceType, BuiltinCatalogEntry } from "./types"
 
 /** Resolve core-pack base directory */
 function getCorePackBase(): string {
-  // Try env override first (for testing)
-  if (process.env.OCTOPUS_CORE_PACK_PATH) {
+  // B7 fix: env override only in development/test — ignore in production
+  if (process.env.OCTOPUS_CORE_PACK_PATH && process.env.NODE_ENV !== "production") {
     return process.env.OCTOPUS_CORE_PACK_PATH
   }
 
@@ -22,9 +22,11 @@ function getCorePackBase(): string {
   // In production: packages/server/dist/resource/ → packages/core-pack/
   // In development: packages/shared/src/resource/ → packages/core-pack/
   const candidates = [
+    path.resolve(__dirname, "../../core-pack"),
     path.resolve(__dirname, "../../../core-pack"),
     path.resolve(__dirname, "../../../../core-pack"),
     path.resolve(__dirname, "../../../../../packages/core-pack"),
+    path.resolve(process.cwd(), "packages/core-pack"),
   ]
 
   for (const c of candidates) {

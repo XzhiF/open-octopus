@@ -165,12 +165,19 @@ describe("AtomicJsonStore", () => {
     expect(data.resources[0].name).toBe("test-skill")
   })
 
-  it("returns default when both main and .bak corrupt", () => {
+  it("throws REGISTRY_CORRUPT when both main and .bak corrupt (B3 fix)", () => {
     const filePath = path.join(tmpDir, "test.json")
     const store = new AtomicJsonStore(filePath, RegistryFileSchema, { version: 1 as const, resources: [] })
 
     fs.writeFileSync(filePath, "corrupt", "utf-8")
     fs.writeFileSync(filePath + ".bak", "also corrupt", "utf-8")
+
+    expect(() => store.read()).toThrow(/corrupt/)
+  })
+
+  it("returns defaults when neither file exists (fresh install)", () => {
+    const filePath = path.join(tmpDir, "nonexistent.json")
+    const store = new AtomicJsonStore(filePath, RegistryFileSchema, { version: 1 as const, resources: [] })
 
     const data = store.read()
     expect(data.resources).toEqual([])

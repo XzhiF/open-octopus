@@ -40,13 +40,23 @@ export class AtomicJsonStore<T extends { version: number }> {
         console.warn(`[AtomicJsonStore] Primary corrupt, recovered from .bak: ${this.filePath}`)
         return recovered
       } catch (bakErr) {
-        // Both corrupt or missing
-        console.warn(
-          `[AtomicJsonStore] Both primary and .bak corrupt, using defaults. ` +
+        // B3 fix: distinguish "no files yet" (return defaults) vs "both corrupt" (throw)
+        const primaryMissing = (primaryErr as NodeJS.ErrnoException).code === "ENOENT"
+        const bakMissing = (bakErr as NodeJS.ErrnoException).code === "ENOENT"
+
+        if (primaryMissing && bakMissing) {
+          // Fresh install — no files yet, return defaults
+          return structuredClone(this.defaultData)
+        }
+
+        // At least one file exists but is corrupt — data loss risk
+        throw new ResourceError(
+          "REGISTRY_CORRUPT",
+          `Both primary and .bak files corrupt or unreadable. ` +
           `Primary: ${this.filePath}, bak: ${this.bakPath}. ` +
-          `Primary error: ${primaryErr instanceof Error ? primaryErr.message : primaryErr}`
+          `Primary error: ${primaryErr instanceof Error ? primaryErr.message : primaryErr}. ` +
+          `Bak error: ${bakErr instanceof Error ? bakErr.message : bakErr}`,
         )
-        return structuredClone(this.defaultData)
       }
     }
   }

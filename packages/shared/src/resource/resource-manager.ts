@@ -293,13 +293,23 @@ export class ResourceManager extends EventEmitter {
 
     const fullPath = path.join(entry.installPath, filePath)
 
-    // Security: prevent path traversal
-    if (!isPathWithinBase(fullPath, entry.installPath)) {
+    // B6 fix: use realpathSync to resolve symlinks before path check (TOCTOU prevention)
+    let realFullPath: string
+    let realBasePath: string
+    try {
+      realFullPath = fs.realpathSync(fullPath)
+      realBasePath = fs.realpathSync(entry.installPath)
+    } catch {
+      throw new ResourceError("RESOURCE_NOT_FOUND", `File not found: ${filePath}`)
+    }
+
+    // Security: prevent path traversal via symlinks
+    if (!isPathWithinBase(realFullPath, realBasePath)) {
       throw new ResourceError("PATH_TRAVERSAL", "Cannot read file outside resource directory")
     }
 
     try {
-      return fs.readFileSync(fullPath, "utf-8")
+      return fs.readFileSync(realFullPath, "utf-8")
     } catch (err: any) {
       if (err.code === "ENOENT") {
         throw new ResourceError("RESOURCE_NOT_FOUND", `File not found: ${filePath}`)
