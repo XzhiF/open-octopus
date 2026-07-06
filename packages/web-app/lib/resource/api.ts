@@ -49,7 +49,14 @@ export class ResourceApiError extends Error {
 // ── Fetch helpers ──
 
 function apiFetch(url: string, init?: RequestInit): Promise<Response> {
-  return fetch(url, { ...init, credentials: "include" })
+  return fetch(url, {
+    ...init,
+    credentials: "include",
+    headers: {
+      ...(init?.headers as Record<string, string> ?? {}),
+      "Authorization": "Bearer agent",
+    },
+  })
 }
 
 async function handleResponse<T>(res: Response): Promise<T> {

@@ -9,32 +9,35 @@ import os from "os"
  * when it starts. Playwright reads this at config load time.
  */
 function resolveWebPort(): number {
-  const repoRoot = path.resolve(__dirname, "..")
-  const gitPath = path.join(repoRoot, ".git")
-
-  // Detect worktree: .git is a file
-  let isWorktree = false
-  try { isWorktree = fs.statSync(gitPath).isFile() } catch { /* ignore */ }
-
-  if (!isWorktree) return 3000
-
-  let branch = ""
-  try {
-    const content = fs.readFileSync(gitPath, "utf8").trim()
-    const match = content.match(/ref: refs\/heads\/(.+)/)
-    branch = match ? match[1] : path.basename(repoRoot)
-  } catch { return 3000 }
-
-  const safe = branch.replace(/\//g, "-").replace(/[^a-zA-Z0-9\-_.]/g, "_")
-  const portFile = path.join(os.homedir(), ".octopus", "ports", `${safe}.json`)
-
-  if (fs.existsSync(portFile)) {
+  // Walk up from config dir to find the repo root (follows worktree gitdir)
+  let dir = path.resolve(__dirname, "..")
+  for (let i = 0; i < 5; i++) {
     try {
-      const data = JSON.parse(fs.readFileSync(portFile, "utf8"))
-      if (typeof data.web === "number") return data.web
-    } catch { /* fall through */ }
+      const gitPath = path.join(dir, ".git")
+      const stat = fs.statSync(gitPath)
+      if (stat.isFile() || stat.isDirectory()) {
+        let headPath: string
+        if (stat.isFile()) {
+          const content = fs.readFileSync(gitPath, "utf8").trim()
+          const gitdirMatch = content.match(/^gitdir:\s*(.+)$/)
+          headPath = gitdirMatch ? path.join(gitdirMatch[1], "HEAD") : path.join(dir, ".git", "HEAD")
+        } else {
+          headPath = path.join(gitPath, "HEAD")
+        }
+        const headContent = fs.readFileSync(headPath, "utf8").trim()
+        const branchMatch = headContent.match(/ref: refs\/heads\/(.+)/)
+        const branch = branchMatch ? branchMatch[1] : path.basename(dir)
+        const safe = branch.replace(/\//g, "-").replace(/[^a-zA-Z0-9\-_.]/g, "_")
+        const portFile = path.join(os.homedir(), ".octopus", "ports", `${safe}.json`)
+        if (fs.existsSync(portFile)) {
+          const data = JSON.parse(fs.readFileSync(portFile, "utf8"))
+          if (typeof data.web === "number") return data.web
+        }
+        break
+      }
+    } catch { /* not found at this level, go up */ }
+    dir = path.dirname(dir)
   }
-
   return 3000
 }
 

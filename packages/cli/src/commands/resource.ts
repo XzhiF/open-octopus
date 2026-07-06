@@ -16,8 +16,14 @@ interface ApiErrorResponse {
   error: { code: string; message: string; hint?: string }
 }
 
+const AUTH_TOKEN = process.env.OCTOPUS_AGENT_TOKEN ?? "agent"
+
 async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${getServerUrl()}${path}`, init)
+  const headers: Record<string, string> = {
+    ...(init?.headers as Record<string, string> ?? {}),
+    "Authorization": `Bearer ${AUTH_TOKEN}`,
+  }
+  const res = await fetch(`${getServerUrl()}${path}`, { ...init, headers })
   const body = await res.json()
   if (!res.ok) {
     const err = body as ApiErrorResponse

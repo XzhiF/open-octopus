@@ -38,10 +38,16 @@ export function computeContentHash(dirPath: string): string {
   return hash.digest("hex")
 }
 
-export function parseRef(ref: string): { type: "builtin" | "local"; value: string } {
+export function parseRef(ref: string): { type: "builtin" | "local"; resourceType?: string; value: string } {
   const match = ref.match(/^(builtin|local):(.+)$/)
   if (!match) {
     throw new Error(`Invalid ref format: '${ref}'. Expected 'builtin:<name>' or 'local:<path>'`)
   }
-  return { type: match[1] as "builtin" | "local", value: match[2] }
+  const rawValue = match[2]
+  // Value may include a resource type prefix: "skill/octo-workflow-dev" → extract both
+  const typeMatch = rawValue.match(/^(skill|agent|workflow)\/(.+)$/)
+  if (typeMatch) {
+    return { type: match[1] as "builtin" | "local", resourceType: typeMatch[1] as "skill" | "agent" | "workflow", value: typeMatch[2] }
+  }
+  return { type: match[1] as "builtin" | "local", value: rawValue }
 }

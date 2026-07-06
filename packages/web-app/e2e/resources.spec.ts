@@ -21,6 +21,8 @@ test.describe("资源管理 — 列表页", () => {
     // 点击 Skills tab
     const skillTab = page.getByRole("tab", { name: "Skills" })
     await skillTab.click()
+    // Wait for URL to update after tab click
+    await page.waitForURL(/type=skill/, { timeout: 5000 })
     expect(page.url()).toContain("type=skill")
     // URL 状态同步
     await page.reload()
@@ -28,6 +30,7 @@ test.describe("资源管理 — 列表页", () => {
     expect(page.url()).toContain("type=skill")
     // 切回全部
     await page.getByRole("tab", { name: "全部" }).click()
+    await page.waitForTimeout(500)
     expect(page.url()).not.toContain("type=")
   })
 
@@ -54,7 +57,7 @@ test.describe("资源管理 — 列表页", () => {
     await page.goto("/resources")
     await page.waitForTimeout(2000)
     await expect(page.getByText("暂无资源")).toBeVisible()
-    await expect(page.getByText(/安装资源/)).toBeVisible()
+    await expect(page.getByText(/安装资源/).first()).toBeVisible()
   })
 
   test("B5: 安装对话框 — 打开 + 输入", async ({ page }) => {

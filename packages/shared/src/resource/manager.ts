@@ -55,7 +55,13 @@ export class ResourceManager {
   async install(ref: string, opts?: { caller?: string }): Promise<RegistryEntry> {
     const startTime = Date.now()
     try {
-      const { type: sourceType, value } = parseRef(ref)
+      let parsed: ReturnType<typeof parseRef>
+      try {
+        parsed = parseRef(ref)
+      } catch {
+        throw new ResourceError("INVALID_REF", `Invalid ref format: '${ref}'. Expected 'builtin:<name>' or 'local:<path>'`)
+      }
+      const { type: sourceType, resourceType, value } = parsed
 
       // Find matching provider
       const provider = this.providers.find(p => p.type === sourceType)
@@ -63,10 +69,12 @@ export class ResourceManager {
         throw new ResourceError("PROVIDER_NOT_FOUND", `No provider for source type: ${sourceType}`)
       }
 
-      // Resolve manifest
-      // ponytail: try each resource type — ref doesn't encode type
+      // Resolve manifest — narrow to the resource type from the ref if present
+      const typesToTry: ResourceType[] = resourceType
+        ? [resourceType as ResourceType]
+        : ["skill", "agent", "workflow"]
       let manifest: ResourceManifest | undefined
-      for (const rt of ["skill", "agent", "workflow"] as ResourceType[]) {
+      for (const rt of typesToTry) {
         try {
           manifest = await provider.resolve(value, rt)
           break
