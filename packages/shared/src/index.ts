@@ -30,3 +30,22 @@ export * from "./types/knowledge"
 export { ModelAliasConfigSchema, DEFAULT_MODEL_ALIASES, CustomProvidersMapSchema } from './config/model-alias'
 export type { ModelAliasConfig, CustomProviderDef, CustomProvidersMap } from './config/model-alias'
 export { resolveModelAlias, loadModelAliasConfig, collectNodeEngines } from './config/model-alias'
+
+// Resource management
+export * from "./resource/types"
+export { ResourceError } from "./resource/errors"
+export type { ResourceErrorCode } from "./resource/errors"
+export * from "./resource/utils"
+export * from "./resource/security"
+export type { ResourceEvent } from "./resource/resource-event"
+export type { SourceProvider } from "./resource/providers/types"
+export { ResourceManager } from "./resource/manager"
+export type { ResourceManagerConfig } from "./resource/manager"
+export { RegistryStore } from "./resource/registry"
+export type { RegistryFilter } from "./resource/registry"
+export { LockManager } from "./resource/lock-manager"
+export { DependencyResolver } from "./resource/dependency-resolver"
+export { AuditLogger } from "./resource/audit-logger"
+export { GarbageCollector } from "./resource/gc"
+export { BuiltinProvider } from "./resource/providers/builtin-provider"
+export { LocalProvider } from "./resource/providers/local-provider"

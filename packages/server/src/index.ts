@@ -70,6 +70,9 @@ import { SecretMasker } from "./services/actuator/secret-masker"
 import { EventLoopMonitor } from "./services/actuator/event-loop-monitor"
 import { createActuatorRoutes } from "./routes/actuator"
 import { getRecoveryService } from "./services/agent/recovery-service"
+import { createResourceRoutes } from "./routes/resource"
+import { ResourceManager, BuiltinProvider, LocalProvider } from "@octopus/shared"
+import type { ResourceManagerConfig } from "@octopus/shared"
 
 // Install global error handlers early — catches uncaughtException / unhandledRejection
 if (!process.env.VITEST) {
@@ -304,6 +307,38 @@ app.route("/api/review", createReviewRoutes(reviewService, d.pendingReview))
 // Archive routes — execution result summarization + rule proposal
 const stateDir = path.join(process.env.HOME ?? "~", ".octopus", "state")
 app.route("/api/archive", createArchiveRoutes(d.pendingReview, stateDir))
+
+// Resource management routes — Per-Org Singleton
+const resourceManagerCache = new Map<string, ResourceManager>()
+function getResourceManager(org: string): ResourceManager {
+  let mgr = resourceManagerCache.get(org)
+  if (!mgr) {
+    const orgDir = path.join(process.env.HOME ?? "~", ".octopus", "orgs", org)
+    const workspacePath = path.join(orgDir, "workspaces", "default")
+    const cachePath = path.join(orgDir, "cache", "resources")
+    const corePackPaths = [
+      path.join(process.cwd(), "packages", "core-pack"),
+      path.join(process.cwd(), ".octopus", "core-pack"),
+      path.join(orgDir, "core-pack"),
+    ]
+    const corePackPath = corePackPaths.find(p => { try { return require("fs").existsSync(p) } catch { return false } }) ?? corePackPaths[0]
+    const config: ResourceManagerConfig = {
+      workspacePath,
+      cachePath,
+      registryPath: path.join(orgDir, "resources", "registry.json"),
+      lockPath: path.join(orgDir, "resources", "resources.lock"),
+      auditPath: path.join(orgDir, "resources", "audit.jsonl"),
+      providers: [new BuiltinProvider(corePackPath), new LocalProvider()],
+    }
+    mgr = new ResourceManager(config)
+    resourceManagerCache.set(org, mgr)
+  }
+  return mgr
+}
+app.route("/api/resources", createResourceRoutes(() => {
+  // ponytail: default org for now — real impl extracts from auth header
+  return getResourceManager(process.env.OCTOPUS_ORG ?? "default")
+}))
 
 // Set scheduler on agent service
 try { getAgentService().setSchedulerService(schedSvc) } catch {}
