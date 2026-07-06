@@ -43,18 +43,24 @@ export function toSubAgentTool(
       const { buildSessionEnv } = await import('../security')
       const { createSession, promptSession, disposeSession } = await import('../pi-sdk-adapter')
       const filteredEnv = buildSessionEnv()
+
+      // Map tool names from PascalCase (Claude SDK convention) to lowercase (Pi SDK convention)
+      const piTools = def.tools?.map(t => t.toLowerCase())
+
       const result = await createSession({
         cwd,
         filteredEnv,
         extensions: [createOctopusHooks()],
+        systemPrompt: def.prompt,
+        skills: def.skills,
+        ...(piTools ? { tools: piTools } : {}),
       })
 
       try {
-        const combinedPrompt = `${def.prompt}\n\nTask: ${args.task}`
-        await promptSession(result.session, combinedPrompt, {
+        await promptSession(result.session, args.task, {
           model: def.model,
         })
-        const messages = result.session.state?.messages ?? (result.session as any).agent?.state?.messages ?? []
+        const messages = (result.session as any).agent?.state?.messages ?? []
         const lastAssistant = messages.filter((m: any) => m.role === 'assistant').pop()
         const textContent = lastAssistant?.content
           ?.filter((c: any) => c.type === 'text')

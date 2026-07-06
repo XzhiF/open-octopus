@@ -23,6 +23,8 @@ export interface SessionOptions {
   customTools?: any[]
   /** Skill name filter — undefined = all discovered skills, [] = none, ["a","b"] = only those */
   skills?: string[]
+  /** Allowed tool names (Pi SDK lowercase names: "read", "bash", etc.) — undefined = all tools */
+  tools?: string[]
 }
 
 export interface SessionResult {
@@ -72,6 +74,7 @@ export async function createSession(opts: SessionOptions): Promise<SessionResult
     ...(opts.systemPrompt ? { systemPrompt: opts.systemPrompt } : {}),
     ...(opts.extensions ? { extensions: opts.extensions } : {}),
     ...(opts.customTools ? { customTools: opts.customTools } : {}),
+    ...(opts.tools ? { tools: opts.tools } : {}),
   } as any)
 
   // createAgentSession returns { session: AgentSession, extensionsResult, ... }
