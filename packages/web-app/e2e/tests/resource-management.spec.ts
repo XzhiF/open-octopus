@@ -27,6 +27,8 @@ test.describe("Resource Management — TC-E2E-001", () => {
     await expect(page.getByRole("tablist")).toBeVisible()
     await expect(page.getByRole("tab", { name: /资源列表/ })).toBeVisible()
     await expect(page.getByRole("tab", { name: /审计日志/ })).toBeVisible()
+    // Visual baseline: empty resource list
+    await expect(page).toHaveScreenshot("resource-list-empty.png", { maxDiffPixelRatio: 0.05 })
   })
 
   test("S2: Tab switching works (list → audit → list)", async ({ page }) => {
@@ -38,6 +40,8 @@ test.describe("Resource Management — TC-E2E-001", () => {
     await page.getByRole("tab", { name: /审计日志/ }).click()
     await expect(page).toHaveURL(/tab=audit/)
     await expect(page.getByRole("tab", { name: /审计日志/ })).toHaveAttribute("aria-selected", "true")
+    // Visual baseline: audit tab active
+    await expect(page).toHaveScreenshot("resource-tab-audit.png", { maxDiffPixelRatio: 0.05 })
 
     // Switch back to list
     await page.getByRole("tab", { name: /资源列表/ }).click()
@@ -68,6 +72,8 @@ test.describe("Resource Management — TC-E2E-001", () => {
     await page.goto("/resources")
     // Card should appear (wait for data load)
     await expect(page.getByTestId(`resource-card-${TEST_NAME}`)).toBeVisible({ timeout: 10000 })
+    // Visual baseline: resource card in list
+    await expect(page).toHaveScreenshot("resource-list-with-card.png", { maxDiffPixelRatio: 0.05 })
   })
 
   test("S5: Detail page shows resource info", async ({ page }) => {
@@ -78,6 +84,8 @@ test.describe("Resource Management — TC-E2E-001", () => {
     await expect(page.getByText(TEST_NAME)).toBeVisible({ timeout: 10000 })
     // Uninstall button with aria-label
     await expect(page.getByRole("button", { name: /卸载/ })).toBeVisible()
+    // Visual baseline: detail page
+    await expect(page).toHaveScreenshot("resource-detail.png", { maxDiffPixelRatio: 0.05 })
   })
 
   test("S6: Uninstall removes resource from list", async ({ page }) => {
@@ -104,6 +112,8 @@ test.describe("Resource Management — TC-E2E-001", () => {
     // Should show install and uninstall records
     await expect(page.getByText("install")).toBeVisible()
     await expect(page.getByText("uninstall")).toBeVisible()
+    // Visual baseline: audit timeline
+    await expect(page).toHaveScreenshot("resource-audit.png", { maxDiffPixelRatio: 0.05 })
   })
 
   test("S8: Accessibility — no critical violations on resource pages", async ({ page }) => {

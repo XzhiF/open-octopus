@@ -20,6 +20,7 @@ import {
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { getResource, uninstallResource } from "@/lib/resource/api"
+import { toast } from "sonner"
 import type { ResourceEntry, ResourceType } from "@/lib/resource/types"
 import { useResourceOrg } from "./resource-context"
 import { UninstallConfirm } from "./UninstallConfirm"
@@ -52,6 +53,7 @@ export function ResourceDetail() {
     setUninstalling(true)
     try {
       await uninstallResource(org, entry.name, entry.type)
+      toast.success(`资源 ${entry.name} 已卸载`)
       router.push("/resources")
     } catch {
       setShowUninstall(false)

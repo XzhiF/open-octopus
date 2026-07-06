@@ -15,6 +15,7 @@ import {
 } from "@/components/ui/dialog"
 import { Loader2 } from "lucide-react"
 import { installResource } from "@/lib/resource/api"
+import { toast } from "sonner"
 import { useResourceOrg } from "./resource-context"
 
 interface InstallDialogProps {
@@ -35,6 +36,7 @@ export function InstallDialog({ open, onOpenChange }: InstallDialogProps) {
     setError(null)
     try {
       await installResource(org, ref.trim())
+      toast.success(`资源 ${ref.trim()} 安装成功`)
       onOpenChange(false)
       setRef("")
       router.refresh()

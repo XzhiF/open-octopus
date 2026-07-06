@@ -2,16 +2,16 @@
 
 import { usePathname, useRouter, useSearchParams } from "next/navigation"
 import { cn } from "@/lib/utils"
-import { Package, ScrollText, Shield, FolderOpen } from "lucide-react"
+import { Package, ScrollText, FolderOpen } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { ResourceProvider } from "./resource-context"
 import { InstallDialog } from "./install-dialog"
+import { Toaster } from "@/components/ui/sonner"
 import { useState } from "react"
 
 const TABS = [
   { id: "list", label: "资源列表", icon: Package },
   { id: "audit", label: "审计日志", icon: ScrollText },
-  { id: "trust", label: "信任", icon: Shield },
 ] as const
 
 type TabId = (typeof TABS)[number]["id"]
@@ -28,7 +28,6 @@ export function ResourceLayout({ children }: { children: React.ReactNode }) {
   // If on a legacy route (/resources/audit, /resources/trust), map to tab
   let activeTab: TabId = (searchParams.get("tab") as TabId) || "list"
   if (pathname === "/resources/audit") activeTab = "audit"
-  if (pathname === "/resources/trust") activeTab = "trust"
 
   const handleTabChange = (tab: TabId) => {
     const params = new URLSearchParams(searchParams.toString())
@@ -87,6 +86,7 @@ export function ResourceLayout({ children }: { children: React.ReactNode }) {
       </div>
 
       <InstallDialog open={installOpen} onOpenChange={setInstallOpen} />
+      <Toaster position="top-right" />
     </ResourceProvider>
   )
 }
