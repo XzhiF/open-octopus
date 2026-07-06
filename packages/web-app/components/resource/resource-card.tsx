@@ -33,7 +33,7 @@ export function ResourceCard({ entry, onUninstall }: ResourceCardProps) {
   const Icon = typeIcon[entry.type as ResourceType] ?? BrainCircuit
 
   return (
-    <div className="group relative rounded-lg border border-border bg-card p-4 transition-colors hover:border-primary/50">
+    <div data-testid={`resource-card-${entry.name}`} className="group relative rounded-lg border border-border bg-card p-4 transition-colors hover:border-primary/50">
       <div className="flex items-start justify-between gap-3">
         <div className="flex items-start gap-3 min-w-0 flex-1">
           <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-muted">

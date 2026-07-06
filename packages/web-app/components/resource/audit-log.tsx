@@ -58,7 +58,7 @@ export function AuditLog() {
   }
 
   return (
-    <div aria-label="审计日志">
+    <div data-testid="audit-timeline" aria-label="审计日志">
       {/* Filters */}
       <div className="mb-4 flex items-center gap-3">
         <div className="flex items-center gap-2">
