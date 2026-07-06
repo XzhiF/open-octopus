@@ -226,6 +226,56 @@ function registerProvidersFromEnv(
   }
 }
 
+/**
+ * Register custom providers from models.yaml into an existing modelRegistry.
+ * Called on every sendQuery to ensure cached sessions have up-to-date providers.
+ */
+export function ensureCustomProvidersRegistered(
+  registry: any,
+  env: Record<string, string>,
+  customProviders?: SessionOptions['customProviders'],
+): void {
+  if (!customProviders) return
+  for (const [providerName, config] of Object.entries(customProviders)) {
+    const envKey = config.env_key ?? `${providerName.toUpperCase()}_API_KEY`
+    const apiKey = env[envKey]
+    if (!apiKey) continue
+
+    // Skip if already registered (avoid redundant work)
+    try {
+      const existing = registry.listProviders?.()
+      if (existing?.includes(providerName)) continue
+    } catch { /* no listProviders — proceed */ }
+
+    try {
+      const api = config.api ?? 'openai-completions'
+      registry.registerProvider(providerName, {
+        name: providerName,
+        baseUrl: config.base_url,
+        api,
+        apiKey,
+        models: config.models.map(m => ({
+          id: m.id,
+          name: m.name ?? m.id,
+          api,
+          reasoning: m.reasoning ?? false,
+          input: ['text'] as ('text' | 'image')[],
+          cost: {
+            input: m.cost?.input ?? 0,
+            output: m.cost?.output ?? 0,
+            cacheRead: m.cost?.cacheRead ?? 0,
+            cacheWrite: m.cost?.cacheWrite ?? 0,
+          },
+          contextWindow: m.context_window ?? 32768,
+          maxTokens: m.max_tokens ?? 8192,
+        })),
+      })
+    } catch {
+      // Registration may fail — skip silently
+    }
+  }
+}
+
 export function subscribeEvents(
   session: any,
   callback: (event: any) => void,

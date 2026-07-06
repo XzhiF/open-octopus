@@ -141,6 +141,17 @@ export class PiAgentProvider implements IAgentProvider {
     // Build safe env
     const filteredEnv = buildSessionEnv(options)
 
+    // Inject custom provider API keys into filteredEnv
+    // (buildSessionEnv only allows known prefixes like DASHSCOPE_, OPENAI_, etc.)
+    const customProviders = this.getCustomProviders()
+    if (customProviders) {
+      for (const [name, config] of Object.entries(customProviders as Record<string, any>)) {
+        const envKey = config.env_key ?? `${name.toUpperCase()}_API_KEY`
+        const val = process.env[envKey]
+        if (val) filteredEnv[envKey] = val
+      }
+    }
+
     // S15: Build sub-agent tools if agents are provided
     const subAgentTools: any[] = []
     if (options?.agents) {
@@ -220,8 +231,24 @@ export class PiAgentProvider implements IAgentProvider {
       })
       sessionResult = sr
 
+      // Ensure custom providers are registered in the modelRegistry
+      // (cached sessions may not have them if API keys were set after session creation)
+      PiSdk.ensureCustomProvidersRegistered(
+        sr.modelRegistry,
+        filteredEnv,
+        this.getCustomProviders(),
+      )
+
       // S13: Resolve model via alias registry
       const resolvedModel = resolveModel(options?.model, sr.modelRegistry)
+      if (!resolvedModel && options?.model) {
+        yield {
+          type: 'error',
+          code: 'model_not_found',
+          message: `Model "${options.model}" not found in registry. Check that the provider is registered and the API key is set.`,
+        }
+        return
+      }
 
       // Skills are handled natively by Pi SDK's resource loader (noSkills: false)
       // which injects skill listings into the system prompt via formatSkillsForPrompt
