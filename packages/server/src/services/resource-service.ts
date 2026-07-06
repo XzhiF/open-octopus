@@ -17,9 +17,14 @@ export class ResourceService {
   constructor(workspaceDir: string) {
     this.resourceDir = join(workspaceDir, '.octopus', 'resources')
     const store = new FsResourceStore(this.resourceDir, true) // concurrent mode for server
-    // B-14 fix: TrustStore now persists to disk
-    this.trustStore = new TrustStore({ trusted: [], blocked: [] }, join(this.resourceDir, 'trust.json'))
     this.auditLogger = new AuditLogger(this.resourceDir)
+    // B-14 fix: TrustStore now persists to disk
+    // cross-errors: Audit callback records security events to audit log
+    this.trustStore = new TrustStore(
+      { trusted: [], blocked: [] },
+      join(this.resourceDir, 'trust.json'),
+      (entry) => this.auditLogger.append(entry),
+    )
     this.kernel = new ResourceKernel({
       store,
       trustStore: this.trustStore,

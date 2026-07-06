@@ -16,6 +16,7 @@ export enum ResourceErrorCode {
   FETCH_FAILED = 'FETCH_FAILED',
   HASH_MISMATCH = 'HASH_MISMATCH',
   INVALID_MANIFEST = 'INVALID_MANIFEST',
+  RESOURCE_HAS_DEPENDENTS = 'RESOURCE_HAS_DEPENDENTS',
 }
 
 export class ResourceError extends Error {
@@ -50,6 +51,7 @@ export class ResourceError extends Error {
       FETCH_FAILED: 502,
       HASH_MISMATCH: 422,
       INVALID_MANIFEST: 400,
+      RESOURCE_HAS_DEPENDENTS: 409,
     }
     return map[code] ?? 500
   }
@@ -73,6 +75,7 @@ export class ResourceError extends Error {
       FETCH_FAILED: 1,
       HASH_MISMATCH: 1,
       INVALID_MANIFEST: 1,
+      RESOURCE_HAS_DEPENDENTS: 1,
     }
     return map[code] ?? 1
   }

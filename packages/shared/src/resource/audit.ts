@@ -24,6 +24,20 @@ export class AuditLogger {
     this.rotateIfNeeded()
   }
 
+  /**
+   * F14: Check if rotated archive files exist (indicating historical data
+   * that is not included in query results)
+   */
+  hasArchives(): boolean {
+    try {
+      const gz1 = join(this.dir, 'audit.jsonl.1.gz')
+      const raw1 = join(this.dir, 'audit.jsonl.1')
+      return existsSync(gz1) || existsSync(raw1)
+    } catch {
+      return false
+    }
+  }
+
   query(filter?: {
     action?: string
     resource?: string

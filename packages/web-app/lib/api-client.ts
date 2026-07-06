@@ -484,7 +484,11 @@ export const resourceApi = {
     )
   },
 
-  getInstallSSEUrl: (installId: string): string => {
-    return `${getServerUrl()}/api/resources/install/${encodeURIComponent(installId)}/stream`
+  getInstallSSEUrl: (installId: string, since?: string): string => {
+    let url = `${getServerUrl()}/api/resources/install/${encodeURIComponent(installId)}/stream`
+    if (since) {
+      url += `?since=${encodeURIComponent(since)}`
+    }
+    return url
   },
 }

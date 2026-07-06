@@ -75,16 +75,30 @@ export interface TrustData {
   blocked: Array<TrustSource & { blocked_at: string; reason?: string }>
 }
 
+/**
+ * cross-errors: Audit callback for security events.
+ * Called when trust/block/untrust/unblock/assertAllowed operations occur.
+ */
+export type SecurityAuditCallback = (entry: {
+  action: "security.trust_added" | "security.trust_removed" | "security.source_blocked" | "security.source_unblocked" | "security.access_denied"
+  resource: string
+  caller: "human" | "agent"
+  detail?: Record<string, unknown>
+}) => void
+
 export class TrustStore {
   private filePath?: string
+  private auditCallback?: SecurityAuditCallback
 
   /**
    * B-14 fix: Optional filePath enables disk persistence.
    * When provided, the store loads on construction and saves on every mutation.
+   * cross-errors: Optional auditCallback records security events to audit log.
    */
-  constructor(data: TrustData = { trusted: [], blocked: [] }, filePath?: string) {
+  constructor(data: TrustData = { trusted: [], blocked: [] }, filePath?: string, auditCallback?: SecurityAuditCallback) {
     this.data = data
     this.filePath = filePath
+    this.auditCallback = auditCallback
     if (filePath) this.loadFromDisk()
   }
 
@@ -136,6 +150,11 @@ export class TrustStore {
     )
     this.data.trusted.push({ ...source, trusted_at: new Date().toISOString() })
     this.saveToDisk()
+    this.auditCallback?.({
+      action: "security.trust_added",
+      resource: `${source.protocol}:${source.location}`,
+      caller: "human",
+    })
   }
 
   block(source: TrustSource, reason?: string): void {
@@ -150,6 +169,12 @@ export class TrustStore {
       reason,
     })
     this.saveToDisk()
+    this.auditCallback?.({
+      action: "security.source_blocked",
+      resource: `${source.protocol}:${source.location}`,
+      caller: "human",
+      detail: reason ? { reason } : undefined,
+    })
   }
 
   untrust(source: TrustSource): void {
@@ -157,6 +182,11 @@ export class TrustStore {
       t => !(t.protocol === source.protocol && t.location === source.location),
     )
     this.saveToDisk()
+    this.auditCallback?.({
+      action: "security.trust_removed",
+      resource: `${source.protocol}:${source.location}`,
+      caller: "human",
+    })
   }
 
   unblock(source: TrustSource): void {
@@ -164,6 +194,11 @@ export class TrustStore {
       b => !(b.protocol === source.protocol && b.location === source.location),
     )
     this.saveToDisk()
+    this.auditCallback?.({
+      action: "security.source_unblocked",
+      resource: `${source.protocol}:${source.location}`,
+      caller: "human",
+    })
   }
 
   getData(): TrustData {
@@ -177,9 +212,21 @@ export class TrustStore {
   assertAllowed(source: TrustSource): void {
     if (source.protocol === 'builtin' || source.protocol === 'local') return
     if (this.isBlocked(source)) {
+      this.auditCallback?.({
+        action: "security.access_denied",
+        resource: `${source.protocol}:${source.location}`,
+        caller: "human",
+        detail: { reason: "blocked" },
+      })
       throw new ResourceError(ResourceErrorCode.SOURCE_BLOCKED, `SOURCE_BLOCKED: ${source.protocol}:${source.location} is blocked`)
     }
     if (!this.isTrusted(source)) {
+      this.auditCallback?.({
+        action: "security.access_denied",
+        resource: `${source.protocol}:${source.location}`,
+        caller: "human",
+        detail: { reason: "not_trusted" },
+      })
       throw new ResourceError(ResourceErrorCode.SOURCE_NOT_TRUSTED, `SOURCE_NOT_TRUSTED: ${source.protocol}:${source.location} is not trusted. Use --trust to add it.`, { suggestion: 'Use --trust to add it' })
     }
   }

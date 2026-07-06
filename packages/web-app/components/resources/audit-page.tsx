@@ -9,7 +9,7 @@ import { EmptyState } from "@/components/resources/empty-state"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Button } from "@/components/ui/button"
 import { Alert, AlertDescription } from "@/components/ui/alert"
-import { ScrollText, ArrowLeft, RotateCcw, PackageOpen } from "lucide-react"
+import { ScrollText, ArrowLeft, RotateCcw, PackageOpen, AlertTriangle } from "lucide-react"
 
 export function AuditPage() {
   const searchParams = useSearchParams()
@@ -18,7 +18,7 @@ export function AuditPage() {
   const resource = searchParams.get("resource") ?? undefined
   const last = searchParams.get("last") ? Number(searchParams.get("last")) : 20
 
-  const { entries, loading, error, refetch } = useAuditLog({ action, resource, last })
+  const { entries, loading, error, partial, refetch } = useAuditLog({ action, resource, last })
 
   const hasFilters = !!action || !!resource
 
@@ -40,6 +40,16 @@ export function AuditPage() {
 
       {/* Filter bar */}
       <AuditFilterBar resourceNames={[]} />
+
+      {/* F14: Partial data banner — archived logs exist but not extracted */}
+      {partial && (
+        <Alert className="border-amber-200 bg-amber-50">
+          <AlertTriangle className="size-4 text-amber-600" />
+          <AlertDescription className="text-amber-800">
+            显示的数据不完整 — 部分历史日志已归档压缩，当前查询结果不包含归档内容。
+          </AlertDescription>
+        </Alert>
+      )}
 
       {/* Error */}
       {error && (

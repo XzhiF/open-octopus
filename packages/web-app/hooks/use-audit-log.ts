@@ -12,6 +12,7 @@ interface UseAuditLogReturn {
   entries: AuditEntry[]
   loading: boolean
   error: string | null
+  partial: boolean
   refetch: () => void
 }
 
@@ -19,6 +20,7 @@ export function useAuditLog(filters: UseAuditLogFilters = {}): UseAuditLogReturn
   const [entries, setEntries] = useState<AuditEntry[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [partial, setPartial] = useState(false)
 
   const fetchAuditLog = useCallback(async () => {
     setLoading(true)
@@ -30,6 +32,7 @@ export function useAuditLog(filters: UseAuditLogFilters = {}): UseAuditLogReturn
         last: filters.last || 20,
       })
       setEntries(data.entries)
+      setPartial(!!data.partial)
     } catch (err) {
       setError(err instanceof Error ? err.message : "加载审计日志失败")
     } finally {
@@ -41,5 +44,5 @@ export function useAuditLog(filters: UseAuditLogFilters = {}): UseAuditLogReturn
     fetchAuditLog()
   }, [fetchAuditLog])
 
-  return { entries, loading, error, refetch: fetchAuditLog }
+  return { entries, loading, error, partial, refetch: fetchAuditLog }
 }

@@ -159,6 +159,7 @@ export const InstallRequestSchema = z.object({
 // POST /uninstall body
 export const UninstallRequestSchema = z.object({
   names: z.array(z.string()),
+  force: z.boolean().optional(),
 })
 
 // POST /sync body

@@ -255,8 +255,9 @@ export class ResourceKernel {
 
   /**
    * 注销资源
+   * F4: Reverse dependency check — warn if other resources depend on this one
    */
-  async unregister(name: string): Promise<void> {
+  async unregister(name: string, opts?: { force?: boolean }): Promise<void> {
     const release = await this.store.acquireLock()
     try {
       const registry = await this.getRegistry()
@@ -269,6 +270,24 @@ export class ResourceKernel {
           `Resource not found: ${name}`,
         )
       }
+
+      // F4: Check reverse dependencies (other resources that depend on this one)
+      const reverseDeps: string[] = []
+      for (const [k, entry] of Object.entries(registry.entries)) {
+        if (k === key) continue
+        const deps = entry.manifest.dependencies ?? []
+        if (deps.includes(name)) {
+          reverseDeps.push(entry.manifest.name)
+        }
+      }
+      if (reverseDeps.length > 0 && !opts?.force) {
+        throw new ResourceError(
+          ResourceErrorCode.RESOURCE_HAS_DEPENDENTS,
+          `Cannot uninstall "${name}": required by ${reverseDeps.join(", ")}. Use --force to override.`,
+          { suggestion: `Use --force or uninstall dependents first: ${reverseDeps.join(", ")}` },
+        )
+      }
+
       delete registry.entries[key]
       await this.store.atomicStore.write("registry.json", registry)
       // F3: Also remove from resources.lock

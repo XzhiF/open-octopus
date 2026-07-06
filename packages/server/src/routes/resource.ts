@@ -265,12 +265,13 @@ export function createResourceRoutes(
         return c.json({ error: 'Invalid request body', details: parsed.error.issues }, 400)
       }
       const names = parsed.data.names
+      const force = parsed.data.force ?? false
       const uninstalled: string[] = []
       const errors: { name: string; error: string }[] = []
 
       for (const name of names) {
         try {
-          await kernel.unregister(name)
+          await kernel.unregister(name, { force })
           uninstalled.push(name)
         } catch (err) {
           errors.push({
@@ -490,7 +491,11 @@ export function createResourceRoutes(
         limit: Math.min(limit, 1000), // PRD: maxLast=1000
       })
 
-      return c.json({ entries, total: entries.length })
+      // F14: Check if archived (rotated) logs exist — indicates partial data
+      // when querying with filters that might match older entries
+      const hasArchives = auditLogger.hasArchives()
+
+      return c.json({ entries, total: entries.length, partial: hasArchives })
     } catch (err) {
       return handleError(c, err)
     }

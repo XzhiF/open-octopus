@@ -1,5 +1,5 @@
-import { VarPool, evaluateExpression, parsePipelineConfig, TemplateRenderer, scanDependencyVars } from "@octopus/shared"
-import type { WorkflowDef, NodeDef, AutoAnswer, HookDef, WorkflowHooks } from "@octopus/shared"
+import { VarPool, evaluateExpression, parsePipelineConfig, TemplateRenderer, scanDependencyVars, WorkflowDiscovery } from "@octopus/shared"
+import type { WorkflowDef, NodeDef, AutoAnswer, HookDef, WorkflowHooks, ResourceReference } from "@octopus/shared"
 import type { IAgentProvider } from "@octopus/providers"
 import type { TokenUsage } from "@octopus/providers"
 import type { NodeExecutionResult } from "./executors/types"
@@ -99,6 +99,11 @@ export class WorkflowEngine {
   private pipelinePath?: string
   // Runtime node tracking (Upgrade 3)
   private runtimeNodeIds: Set<string> = new Set()
+  // F15/F16: Resource reference validator (WorkflowDiscovery + registry)
+  private resourceValidator?: {
+    discovery: WorkflowDiscovery
+    registry: Record<string, { manifest: { name: string; type: string } }>
+  }
 
   constructor(
     private workflow: WorkflowDef,
@@ -121,7 +126,8 @@ export class WorkflowEngine {
     try {
       const depsVars = scanDependencyVars(cwd)
       for (const [key, value] of Object.entries(depsVars)) {
-        this.pool.set(`deps.${key}`, value)
+        // scanDependencyVars returns keys already prefixed with "deps."
+        this.pool.set(key, value)
       }
     } catch { /* ignore scan errors in non-workspace contexts */ }
 
@@ -202,6 +208,19 @@ export class WorkflowEngine {
     this.pool.setRefResolver(resolver)
   }
 
+  /**
+   * F15/F16: Set resource reference validator for workflow dependency checking.
+   * Validates that all referenced skills/sources/workflows are installed.
+   * - Missing skill → warn + continue
+   * - Missing source/workflow → error + abort
+   */
+  setResourceValidator(
+    discovery: WorkflowDiscovery,
+    registry: Record<string, { manifest: { name: string; type: string } }>,
+  ): void {
+    this.resourceValidator = { discovery, registry }
+  }
+
   setNodeResult(nodeId: string, result: NodeExecutionResult): void {
     this.nodeResults[nodeId] = result
   }
@@ -219,6 +238,38 @@ export class WorkflowEngine {
 
   async run(): Promise<ExecutionResult> {
     const start = Date.now()
+
+    // F15/F16: Validate workflow resource references before execution
+    if (this.resourceValidator) {
+      try {
+        const refs = this.resourceValidator.discovery.parseReferences(this.workflow)
+        if (refs.length > 0) {
+          const result = this.resourceValidator.discovery.validateReferences(refs, this.resourceValidator.registry)
+          for (const m of result.missing) {
+            if (m.type === "skill") {
+              // F15: Missing skill → warn + continue
+              console.warn(`[engine] RESOURCE_MISSING: skill "${m.name}" is referenced but not installed. Continuing without it.`)
+              this.logger?.log("workflow", "resource_warning", { missing: m.name, type: "skill" })
+            } else {
+              // F15/F16: Missing source/workflow/agent → error + abort
+              const msg = `DEPENDENCY_MISSING: ${m.type} "${m.name}" is referenced but not installed. Cannot proceed.`
+              this.logger?.log("workflow", "resource_error", { missing: m.name, type: m.type })
+              this.callbacks?.onError?.("workflow", msg)
+              const durationMs = Date.now() - start
+              return {
+                workflowName: this.workflow.name,
+                status: "failed",
+                nodeResults: this.nodeResults,
+                poolSnapshot: this.pool.snapshot(),
+                durationMs,
+              }
+            }
+          }
+        }
+      } catch (err) {
+        console.warn("[engine] Resource validation failed:", err)
+      }
+    }
 
     // Precompute hook: populate VarPool with knowledge data before node execution
     if (this.precomputeHook) {

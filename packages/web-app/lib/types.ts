@@ -748,6 +748,7 @@ export interface AuditEntry {
 export interface AuditListResponse {
   entries: AuditEntry[]
   total: number
+  partial?: boolean
 }
 
 export interface TrustEntry {

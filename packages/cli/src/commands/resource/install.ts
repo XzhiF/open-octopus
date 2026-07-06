@@ -66,11 +66,14 @@ export function installCommand(): Command {
         const resourceDir = join(orgDir, "resources")
         const cacheDir = join(orgDir, "cache", "resources")
 
-        const trustStore = new TrustStore()
+        const auditLogger = new AuditLogger(join(resourceDir, "audit"))
+        const trustStore = new TrustStore(undefined, undefined, (entry) => {
+          auditLogger.append(entry)
+        })
         const kernel = new ResourceKernel({
           store: new FsResourceStore(resourceDir),
           trustStore,
-          auditLogger: new AuditLogger(join(resourceDir, "audit")),
+          auditLogger,
           cacheDir,
         })
 

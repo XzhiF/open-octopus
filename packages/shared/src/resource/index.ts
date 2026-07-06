@@ -19,7 +19,7 @@ export { AuditLogger } from "./audit"
 
 // Security
 export { SecurityContext, CallerContext, TrustStore, HookExecutor } from "./security"
-export type { TrustSource, TrustData } from "./security"
+export type { TrustSource, TrustData, SecurityAuditCallback } from "./security"
 
 // Dependency resolution
 export { DependencyResolver } from "./resolver"

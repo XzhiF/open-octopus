@@ -33,6 +33,12 @@ export function substituteVars(
       return val !== undefined ? String(val) : `$${ref}`
     }
 
+    if (ref.startsWith("deps.")) {
+      const key = ref.slice(5)
+      const val = pool.get(`deps.${key}`)
+      return val !== undefined ? String(val) : `$${ref}`
+    }
+
     if (ref.startsWith("hook.")) {
       const val = pool.get(ref)
       return val !== undefined ? String(val) : `$${ref}`

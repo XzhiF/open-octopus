@@ -21,10 +21,11 @@ export function uninstallCommand(): Command {
     .argument("<name>", "Resource name to uninstall")
     .option("--purge", "Also remove installed files from disk")
     .option("--yes", "Skip confirmation prompts")
+    .option("--force", "Force uninstall even if other resources depend on it")
     .option("--confirmed", "Agent gate: confirm destructive operation (required when OCTOPUS_CALLER=agent)")
     .option("--org <org>", "Organization name")
     .option("--format <mode>", "Output format: rich, json, quiet", "rich")
-    .action(async (name: string, opts: { purge?: boolean; yes?: boolean; confirmed?: boolean; org?: string; format: string }) => {
+    .action(async (name: string, opts: { purge?: boolean; yes?: boolean; force?: boolean; confirmed?: boolean; org?: string; format: string }) => {
       const fmt = new OutputFormatter(opts.format as "rich" | "json" | "quiet")
       try {
         // L4: Agent gate — require --confirmed when OCTOPUS_CALLER=agent
@@ -56,7 +57,7 @@ export function uninstallCommand(): Command {
           return
         }
 
-        await kernel.unregister(name)
+        await kernel.unregister(name, { force: opts.force })
 
         // Purge installed files if requested
         if (opts.purge && manifest) {
