@@ -315,7 +315,7 @@ export function WorkflowFlowPanel({
 
   if (loading) {
     return (
-      <div className="h-full flex flex-col">
+      <div className="h-full flex flex-col" data-testid="workflow-flow-panel">
         <div className="flex h-10 items-center border-b border-border bg-background px-3">
           <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
             执行流程
@@ -331,7 +331,7 @@ export function WorkflowFlowPanel({
   if (treeNodes.length === 0) {
     return (
       <ExecutionNodeProvider callbacks={callbacks}>
-        <div className="h-full flex flex-col">
+        <div className="h-full flex flex-col" data-testid="workflow-flow-panel">
           <div className="flex h-10 items-center border-b border-border bg-background px-3">
             <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
               执行流程
