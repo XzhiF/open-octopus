@@ -3,7 +3,7 @@ import type { LLMCallRecord } from '../llm-call-tracker'
 import { LLMCallTracker } from '../llm-call-tracker'
 import { AsyncEventBridge } from './async-bridge'
 import { mapPiEventToChunks, MapperState } from './event-mapper'
-import { loadModelAliasConfig } from '@octopus/shared'
+import { loadModelAliasConfig, resolveModelAlias } from '@octopus/shared'
 import { TokenAggregator } from './token-aggregator'
 import { SessionCache } from './session-cache'
 import { buildSessionEnv } from './security'
@@ -34,12 +34,12 @@ function extractProvider(model: string | undefined): string | undefined {
 }
 
 /** S-8: Resolve SystemPromptInput to a plain string for Pi SDK session creation. */
-export function resolveSystemPrompt(input: SystemPromptInput | undefined): string | undefined {
+export function resolveSystemPrompt(input: SystemPromptInput | undefined, modelId?: string): string | undefined {
   if (!input) return undefined
   if (typeof input === 'string') return input
-  // preset: inject Octopus platform context + any user append text
-  // Let the model identify as its actual underlying model
-  const octopusIdentity = 'You are running on the Octopus platform. When asked about your identity or model, state your actual model name truthfully.'
+  // preset: inject Octopus platform context + actual model name
+  const modelInfo = modelId ? ` Your underlying model is ${modelId}.` : ''
+  const octopusIdentity = `You are running on the Octopus platform.${modelInfo} When asked about your identity or model, always state this model name. Do not claim to be Claude, GPT, or any other model.`
   const userAppend = input.append ? `\n\n${input.append}` : ''
   return octopusIdentity + userAppend
 }
@@ -47,23 +47,37 @@ export function resolveSystemPrompt(input: SystemPromptInput | undefined): strin
 export class PiAgentProvider implements IAgentProvider {
   private sessionCache: SessionCache
   private llmTracker = new LLMCallTracker()
-  private cachedCustomProviders: any = undefined
-  private customProvidersLoaded = false
+  private cachedConfig: any = undefined
+  private configLoaded = false
 
-  /** Lazy-load custom providers from models.yaml on first use */
-  private getCustomProviders(): any {
-    if (!this.customProvidersLoaded) {
-      this.customProvidersLoaded = true
+  /** Lazy-load models config from models.yaml on first use */
+  private loadConfig(): any {
+    if (!this.configLoaded) {
+      this.configLoaded = true
       try {
-        const config = loadModelAliasConfig()
-        this.cachedCustomProviders = Object.keys(config.custom_providers ?? {}).length > 0
-          ? config.custom_providers
-          : undefined
+        this.cachedConfig = loadModelAliasConfig()
       } catch {
         // Config load may fail — skip silently
       }
     }
-    return this.cachedCustomProviders
+    return this.cachedConfig
+  }
+
+  /** Get custom providers for adapter */
+  private getCustomProviders(): any {
+    const config = this.loadConfig()
+    const cp = config?.custom_providers
+    return cp && Object.keys(cp).length > 0 ? cp : undefined
+  }
+
+  /** Resolve model tier alias to actual model ID (e.g. "pro-max" → "my-ai/glm-5.2") */
+  private resolveModelName(model: string | undefined): string | undefined {
+    if (!model) return undefined
+    const config = this.loadConfig()
+    if (!config) return model
+    // Try resolving as a tier alias for the pi provider
+    const resolved = resolveModelAlias(model, 'pi', config)
+    return resolved ?? model
   }
 
   constructor() {
@@ -192,8 +206,9 @@ export class PiAgentProvider implements IAgentProvider {
     options?.abortSignal?.addEventListener('abort', abortHandler, { once: true })
 
     try {
-      // S-8: Resolve systemPrompt from options
-      const resolvedSystemPrompt = resolveSystemPrompt(options?.systemPrompt)
+      // S-8: Resolve systemPrompt from options (inject resolved model name for identity)
+      const resolvedModelName = this.resolveModelName(options?.model)
+      const resolvedSystemPrompt = resolveSystemPrompt(options?.systemPrompt, resolvedModelName)
 
       // Step 1: Get or create session (with extensions S14/S15 and filteredEnv)
       const sr = await this.sessionCache.getOrCreate(cwd, resumeSessionId, {
