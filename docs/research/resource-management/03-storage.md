@@ -11,49 +11,56 @@
 ## 3.2 目录结构
 
 ```
-~/.octopus/resources/
+~/.octopus/orgs/{org}/resources/
 ├── registry.json                    # 资源注册表（所有已注册资源的元数据）
-├── trusted-sources.yaml             # 信任来源列表（TOFU）
-├── audit.jsonl                      # 操作审计日志（追加写入）
-├── manifests/                       # 资源清单文件（按类型分子目录）
-│   ├── skill/
-│   │   ├── brainstorming.yaml
-│   │   └── tdd-workflow.yaml
-│   ├── agent/
-│   │   ├── code-reviewer.yaml
-│   │   └── security-auditor.yaml
-│   └── workflow/
-│       ├── prd-impl.yaml
-│       └── bug-hunter.yaml
+├── resources.lock                   # 锁文件：已安装资源 + hash + 来源
+├── audit.jsonl                      # 操作审计日志（链式哈希，追加写入）
 └── cache/                           # 内容寻址缓存（按 hash 存储）
-    ├── skill/
-    │   ├── brainstorming@a1b2c3d4e5f6/
+    ├── resources/
+    │   ├── brainstorming/
     │   │   ├── SKILL.md
     │   │   └── scripts/
-    │   └── tdd-workflow@f6e5d4c3b2a1/
-    │       └── SKILL.md
-    ├── agent/
-    │   └── code-reviewer@c1d2e3f4a5b6/
+    │   └── code-reviewer/
     │       └── code-reviewer.md
-    └── workflow/
-        └── prd-impl@d1e2f3a4b5c6/
-            └── prd-impl.yaml
+    └── sources/                     # 集合源缓存（git clone 的仓库）
+        ├── agency-agents-zh/        # git clone --depth 1
+        │   ├── octopus-resource.json  # 自动/手动生成的 manifest
+        │   └── agents/
+        │       ├── code-reviewer.md
+        │       └── architect.md
+        ├── superpowers-zh/
+        │   ├── octopus-resource.json
+        │   └── skills/
+        │       ├── brainstorming/SKILL.md
+        │       └── tdd-workflow/SKILL.md
+        └── gstack/
+            ├── octopus-resource.json
+            └── skills/
 ```
+
+> **注意**：相比原设计，移除了 `trusted-sources.yaml`（信任列表在 config.yaml 的 `resource_sources.trusted` 中）、
+> `manifests/` 子目录（manifest 数据直接存储在 registry.json 中）。
+> 目录从 `~/.octopus/resources/` 改为 `~/.octopus/orgs/{org}/resources/`（per-org 隔离）。
+> 新增 `cache/sources/` 存放集合源的 git clone 缓存。
 
 ### Workspace 级别
 
 ```
 workspace/
-├── .octopus/
-│   └── resources.lock               # 锁文件：已安装资源 + hash + 来源
 ├── .claude/
 │   ├── skills/                      # 安装目标：skill 文件
 │   │   ├── brainstorming/SKILL.md
 │   │   └── tdd-workflow/SKILL.md
 │   └── agents/                      # 安装目标：agent 文件
 │       └── code-reviewer.md
-└── config.json                      # 声明式配置：需要哪些资源
+└── workflows/                       # 安装目标：workflow 文件
+    └── bug-hunter.yaml
 ```
+
+> **注意**：相比原设计，移除了 `.octopus/resources.lock`（lock 文件存储在 org 级别
+> `~/.octopus/orgs/{org}/resources/resources.lock`，而非 workspace 级别）和
+> `config.json`（声明式配置由 registry.json 替代）。
+> workflow 安装到 `workspace/workflows/` 而非 `workspace/.octopus/workflows/`。
 
 ## 3.3 文件格式
 
@@ -82,25 +89,60 @@ workspace/
 }
 ```
 
-### trusted-sources.yaml — 信任来源
+### octopus-resource.json — 集合源清单
 
-```yaml
-trusted:
-  - protocol: npm
-    package: superpowers-zh
-    trusted_at: "2026-07-05"
-  - protocol: github
-    repo: XzhiF/octopus-skills
-    trusted_at: "2026-07-05"
+存在于集合源 git repo 根目录，声明包含哪些资源以及如何安装。
+由 repo 作者编写（Layer 1），或由 AI 分析生成（Layer 2），或由约定扫描生成（Layer 3）。
 
-blocked:
-  - protocol: npm
-    package: malicious-skill
-    reason: "Reported by community"
-    blocked_at: "2026-07-05"
+```jsonc
+{
+  "name": "superpowers-zh",
+  "version": "1.0.0",
+  "description": "中文 Claude Code 技能包",
+  // 可选：安装前执行一次（npm 包构建、代码生成等）
+  // ResourceManager 使用 execFileSync 在 source 缓存目录中执行
+  "setup": "npx superpowers-zh@latest --tool claude --force",
+  // 声明包含的资源（路径相对于 repo 根目录）
+  "resources": {
+    "skills": [
+      "skills/brainstorming",
+      "skills/chinese-code-review",
+      "skills/test-driven-development"
+    ],
+    "agents": [],
+    "workflows": []
+  }
+}
 ```
 
-### resources.lock — Workspace 锁文件
+### config.yaml — 组织配置（含信任源列表）
+
+信任列表存储在组织配置文件中，而非独立文件：
+
+```yaml
+# ~/.octopus/orgs/{org}/config.yaml
+name: xzf
+prefix: xzf-
+platform: github
+
+# 信任的集合源（allowlist 模型）
+resource_sources:
+  trusted:
+    - url: https://github.com/jnMetaCode/agency-agents-zh
+      name: agency-agents-zh
+      added_at: "2026-07-07"
+      discovery_method: convention-scan   # manifest | ai-analysis | convention-scan
+    - url: https://github.com/jnMetaCode/superpowers-zh
+      name: superpowers-zh
+      added_at: "2026-07-07"
+      discovery_method: ai-analysis
+    - url: https://github.com/garrytan/gstack
+      name: gstack
+      added_at: "2026-07-07"
+      discovery_method: convention-scan
+```
+
+### resources.lock — 锁文件
 
 ```jsonc
 {
