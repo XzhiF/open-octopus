@@ -99,24 +99,31 @@
 1. 创建 server/src/routes/resource/middleware.ts (CORS + JSON 校验)
 2. 创建 server/src/routes/resource/index.ts (10 端点)
 3. 在 server/src/index.ts 添加 ResourceManager 单例工厂 + 路由注册
-4. 更新 SkillLoader: 加 Tier 0 workspace 扫描
-5. 编写路由测试 (mock ResourceManager)
-6. 验证: curl 测试各端点 + pnpm test --filter @octopus/server
+4. 迁移 BuiltInWorkflowService → ResourceManager (6 文件, ~100 行)
+5. 迁移 OrchestratorService workflow 扫描 → ResourceManager (~20 行)
+6. 迁移 Knowledge file-ops workflow 扫描 → ResourceManager (~10 行)
+7. 更新 SkillLoader: 加 Tier 0 workspace 扫描
+8. 编写路由测试 (mock ResourceManager)
+9. 验证: curl 测试各端点 + pnpm test --filter @octopus/server
 ```
 
-**预计**: 2-3 小时，~4 文件
+**预计**: 3-4 小时，~10 文件
 
 ### Phase 3: CLI 瘦客户端
 
 ```
-1. 创建 cli/src/commands/resource.ts (8 子命令, 纯 HTTP)
+1. 创建 cli/src/commands/resource.ts (8+6 子命令, 纯 HTTP)
 2. 在 cli/src/index.ts 注册 resourceCmd
-3. 删除旧的 cli/src/commands/repo.ts (如果有)
-4. 编写 CLI 测试 (mock fetch)
-5. 验证: octopus resource list/install/doctor
+3. 迁移 CLI workflow 命令:
+   - run 支持 resource ref (builtin:prd-impl)
+   - list 改为 resource list --type workflow
+   - sync 废弃，改为 resource install
+4. 删除旧的 cli/src/commands/repo.ts (如果有)
+5. 编写 CLI 测试 (mock fetch)
+6. 验证: octopus resource list/install/doctor
 ```
 
-**预计**: 1-2 小时，~2 文件
+**预计**: 2-3 小时，~3 文件
 
 ### Phase 4: Web UI
 
@@ -140,7 +147,7 @@
 
 **预计**: 4-6 小时，~20 文件
 
-### Phase 5: 集合源管理（Source Management）
+### Phase 5: 集合源管理 + 消费者统一迁移
 
 ```
 1. 实现 git-provider.ts (git clone --depth 1 + 缓存管理)
@@ -150,14 +157,19 @@
 5. CLI 添加 source 子命令 (source add/remove/list/update/analyze/info)
 6. 更新 config.yaml 添加 resource_sources.trusted
 7. 实现 setup 命令执行 (execFileSync + 超时 + 审计)
-8. 更新 SkillLoader: 扩展 Tier 1 (~/.claude/skills/) 和 Tier 2 (org 级)
-9. 创建 octo-source-analyzer skill (AI 分析 README 生成 manifest)
-10. 创建 octo-resource-manager skill (CLI 参考手册)
-11. 编写 source 相关测试
-12. 验证: 用 agency-agents-zh + superpowers-zh + gstack 三个真实 repo 测试
+8. 迁移 SkillLoader: 底层目录扫描改为 ResourceManager 查询 (~50 行)
+9. 迁移 RoleRegistry: 目录扫描改为 ResourceManager 查询 (~40 行)
+10. core-pack 内置资源启动时自动注册 (BuiltinProvider.list → registry)
+11. 更新 SkillLoader 扫描层级 (Tier 1: ~/.claude/skills/, Tier 2: org 级)
+12. 创建 octo-source-analyzer skill (AI 分析 README 生成 manifest)
+13. 创建 octo-resource-manager skill (CLI 参考手册)
+14. 编写 source 相关测试
+15. 验证: 用 agency-agents-zh + superpowers-zh + gstack 三个真实 repo 测试
+16. 验证: SwarmExecutor 能正确发现 agency-agents-zh 角色
+17. 验证: SkillLoader 能正确发现 superpowers-zh skills
 ```
 
-**预计**: 6-8 小时，~15 文件
+**预计**: 8-10 小时，~20 文件
 
 ### Phase 6: DB 索引层（可选）
 
@@ -184,3 +196,6 @@
 10. ✅ `octopus resource source add git:github.com/jnMetaCode/superpowers-zh` 成功执行 setup 并安装 skills
 11. ✅ `octopus resource source add git:github.com/garrytan/gstack` 三层降级正确工作
 12. ✅ `octo-source-analyzer` skill 能正确分析 README 并生成 manifest
+13. ✅ BuiltInWorkflowService 废弃，`octopus workflow run builtin:prd-impl` 通过 ResourceManager 查找
+14. ✅ SwarmExecutor 通过 RoleRegistry → ResourceManager 正确发现 agency-agents-zh 角色
+15. ✅ SkillLoader 所有 tier 通过 ResourceManager 查询，无独立目录扫描

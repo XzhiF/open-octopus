@@ -9,7 +9,7 @@
 | 章节 | 文件 | 内容 |
 |------|------|------|
 | [1. 现状与问题](./01-current-state.md) | `01-current-state.md` | 当前资源散落现状、PR #12 分析、设计目标 |
-| [2. 架构设计](./02-architecture.md) | `02-architecture.md` | 瘦 CLI + Server 单一入口、shared 核心、模块划分 |
+| [2. 架构设计](./02-architecture.md) | `02-architecture.md` | 瘦 CLI + Server 单一入口、shared 核心、Source 集合源、现有服务迁移 |
 | [3. 存储层设计](./03-storage.md) | `03-storage.md` | 文件为主 DB 为辅、目录结构、Schema |
 | [4. CLI 设计](./04-cli.md) | `04-cli.md` | 瘦 HTTP 客户端、8 个子命令 |
 | [5. Server API 设计](./05-server-api.md) | `05-server-api.md` | Server 唯一入口、ResourceManager 单例、10 REST 端点 |

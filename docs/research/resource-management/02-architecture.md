@@ -503,3 +503,218 @@ core-pack/skills/
 └── octo-resource-manager/SKILL.md  # CLI 参考 skill
 ```
 
+## 2.6 现有服务迁移 — 统一资源发现
+
+### 问题
+
+当前有 **5 个独立的服务**各自扫描文件系统发现 skill/agent/workflow，互不通信：
+
+```
+BuiltInWorkflowService ──→ 扫描 core-pack/presets/workflows/ + ~/.octopus/workflows/
+SkillLoader            ──→ 扫描 3 层目录 (local/builtin/prod)
+RoleRegistry           ──→ 扫描 .claude/agents/ + org/agents/ + agency-agents-zh/
+OrchestratorService    ──→ 扫描 workspace/*/workflows/
+Knowledge file-ops     ──→ 扫描 workflows/ 做知识索引
+```
+
+每个服务都有自己的扫描逻辑、路径拼接、缓存策略。引入 ResourceManager 后，这些服务应该**统一从 ResourceManager 获取资源**，而非各自扫描文件系统。
+
+### 迁移总览
+
+| 现有服务 | 当前位置 | 扫描什么 | 迁移方式 |
+|---------|---------|---------|---------|
+| **BuiltInWorkflowService** | server (80 行) | workflow YAML | → 废弃，改为 `ResourceManager.list/get` |
+| **SkillLoader** | server (~250 行) | skill SKILL.md | → 保留分层逻辑，但每层查询 ResourceManager |
+| **RoleRegistry** | engine (~160 行) | agent .md frontmatter | → 保留两阶段加载，但索引来源改为 ResourceManager |
+| **OrchestratorService** | server | workspace workflow YAML | → 改为 `ResourceManager.list({ type: "workflow" })` |
+| **Knowledge file-ops** | server | workflow 文件 | → 改为 `ResourceManager.list({ type: "workflow" })` |
+| **CLI workflow** | cli | 3 个目录拼路径 | → 改为 `octopus resource list --type workflow` |
+
+### 迁移详细
+
+#### ① BuiltInWorkflowService → ResourceManager
+
+**当前**：独立类，扫描 `core-pack/presets/workflows/` + `~/.octopus/workflows/`。
+
+**消费者**（6 处）：
+- `routes/builtin-workflow.ts` — GET /api/workflows/builtin
+- `routes/execution.ts` — 执行时查找 workflow
+- `services/execution-service-registry.ts` — 注册为依赖
+- `services/execution.ts` — ExecutionService 构造注入
+- `services/execution/ExecutionLifecycle.ts` — 生命周期管理
+- `services/execution/types.ts` — 类型定义
+
+**迁移方案**：
+
+```typescript
+// 迁移前
+const wf = builtInWorkflowService.get("prd-impl.yaml")
+
+// 迁移后
+const entry = resourceManager.info("prd-impl", "workflow")
+const wf = entry ? { ref: entry.name, content: fs.readFileSync(entry.installPath, "utf-8") } : null
+```
+
+- 废弃 `BuiltInWorkflowService` 类
+- 消费者改为注入 `ResourceManager`
+- `routes/builtin-workflow.ts` 改为调用 `resourceManager.list({ type: "workflow" })`
+- core-pack 内置 workflow 通过 `BuiltinProvider.list("workflow")` 发现并注册到 registry
+
+**改动范围**：~6 文件，~100 行改动
+
+#### ② SkillLoader — 保留分层，数据源改为 ResourceManager
+
+**当前**：自己扫描 3 个目录（+ PR #14 新增的 Tier 0）。
+
+**迁移方案**：不废弃 SkillLoader（它有 source 分类和 description 提取逻辑），但底层的目录扫描改为查询 ResourceManager：
+
+```typescript
+// 迁移前
+private scanDirectory(dir: string, source: SkillSource, map: Map<string, LoadedSkill>) {
+  for (const entry of fs.readdirSync(dir)) {
+    const skillMd = path.join(dir, entry, "SKILL.md")
+    if (fs.existsSync(skillMd)) { ... }
+  }
+}
+
+// 迁移后
+private loadFromResource(source: SkillSource, map: Map<string, LoadedSkill>) {
+  const entries = resourceManager.list({ type: "skill", installed: true })
+  for (const entry of entries) {
+    if (entry.installPath && fs.existsSync(path.join(entry.installPath, "SKILL.md"))) {
+      const content = fs.readFileSync(path.join(entry.installPath, "SKILL.md"), "utf-8")
+      map.set(entry.name, { name: entry.name, content, source, ... })
+    }
+  }
+}
+```
+
+- SkillLoader 保留 tier 优先级逻辑（Tier 0 > Tier 1 > ...）
+- 每个 tier 不再自己 `readdirSync`，而是查询 ResourceManager 的 registry
+- ResourceManager 的 registry 是所有已注册 skill 的唯一索引
+
+**改动范围**：~1 文件，~50 行改动
+
+#### ③ RoleRegistry — 保留两阶段加载，索引来源改为 ResourceManager
+
+**当前**：扫描 `.claude/agents/` > `org/agents/` > `agency-agents-zh/` 三个目录，解析 YAML frontmatter。
+
+**消费者**：SwarmExecutor（动态选择 expert agent）
+
+**迁移方案**：
+
+```typescript
+// 迁移前
+loadIndex(): Promise<void> {
+  for (const basePath of this.basePaths) {
+    const files = this.scanDirectory(basePath)  // readdirSync
+    for (const file of files) {
+      const frontmatter = this.parseFrontmatter(readFileSync(file))
+      this.index.push({ name: frontmatter.name, ... })
+    }
+  }
+}
+
+// 迁移后
+loadIndex(): Promise<void> {
+  const agents = resourceManager.list({ type: "agent", installed: true })
+  for (const entry of agents) {
+    if (entry.installPath && fs.existsSync(entry.installPath)) {
+      const content = fs.readFileSync(entry.installPath, "utf-8")
+      const frontmatter = this.parseFrontmatter(content)
+      this.index.push({ name: frontmatter.name ?? entry.name, ... })
+    }
+  }
+}
+```
+
+- RoleRegistry 保留 frontmatter 解析 + 两阶段加载（index + resolve）
+- 但不再自己扫描目录，而是从 ResourceManager 获取已安装 agent 列表
+- `agency-agents-zh` 的资源通过 `octopus resource source install` 安装后自动出现在 registry 中
+
+**改动范围**：~1 文件，~40 行改动
+
+#### ④ OrchestratorService — workflow 查找改为 ResourceManager
+
+**当前**：`readdirSync` 扫描所有 workspace 的 `workflows/` 目录。
+
+**迁移方案**：
+
+```typescript
+// 迁移前
+const workflowsDir = path.join(os.homedir(), '.octopus', 'orgs', this.org, 'workspaces')
+for (const entry of fs.readdirSync(workflowsDir)) {
+  const yamlFiles = fs.readdirSync(path.join(workflowsDir, entry.name, 'workflows'))
+  ...
+}
+
+// 迁移后
+const workflows = resourceManager.list({ type: "workflow", installed: true })
+for (const entry of workflows) {
+  // entry.installPath 指向 YAML 文件
+}
+```
+
+**改动范围**：~1 文件，~20 行改动
+
+#### ⑤ Knowledge file-ops — workflow 扫描改为 ResourceManager
+
+**当前**：`scanSubDir("workflows", "workflow")` 扫描工作流做知识索引。
+
+**迁移方案**：改为 `resourceManager.list({ type: "workflow" })`。
+
+**改动范围**：~1 文件，~10 行改动
+
+#### ⑥ CLI workflow 命令 — 改为 resource 消费者
+
+**当前**：
+
+```bash
+octopus workflow run <yaml-path>           # 直接读文件
+octopus workflow list --built-in           # 自己扫目录
+octopus workflow sync                      # 复制 core-pack → ~/.octopus/
+```
+
+**迁移后**：
+
+```bash
+# run 同时支持文件路径和 resource ref
+octopus workflow run <yaml-path>           # 兼容旧方式
+octopus workflow run builtin:prd-impl      # 通过 resource 查找
+
+# list 改为 resource list
+octopus workflow list                      # 当前项目 workflow
+octopus workflow list --all                # 全部（含 builtin）
+# 等同于: octopus resource list --type workflow
+
+# sync 废弃，改为 resource install
+# 旧: octopus workflow sync
+# 新: octopus resource install builtin:prd-impl --scope user
+```
+
+**改动范围**：~1 文件，~30 行改动
+
+### 迁移顺序
+
+```
+Phase 2 完成 Server API 后:
+  ① BuiltInWorkflowService → 影响面最大，先做
+  ④ OrchestratorService → 依赖 ①
+  ⑤ Knowledge file-ops → 依赖 ①
+
+Phase 3 完成 CLI 后:
+  ⑥ CLI workflow 命令
+
+Phase 4/5 完成 Source 管理后:
+  ② SkillLoader → 依赖 registry 完整
+  ③ RoleRegistry → 依赖 agent 资源已注册（agency-agents-zh 通过 source add 注册）
+```
+
+### 迁移原则
+
+1. **ResourceManager 是唯一的资源索引** — 所有服务从 registry 查询，不自己扫描目录
+2. **渐进迁移** — 每个服务独立迁移，不一次性全改
+3. **保留消费者特化逻辑** — SkillLoader 保留 tier 优先级、RoleRegistry 保留 frontmatter 解析、BuiltInWorkflowService 的 YAML 解析移到 ResourceManager
+4. **core-pack 内置资源自动注册** — Server 启动时 `BuiltinProvider.list()` 注册到 registry，无需手动 install
+
+
