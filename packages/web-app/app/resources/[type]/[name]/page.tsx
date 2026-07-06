@@ -184,7 +184,7 @@ export default function ResourceDetailPage() {
                 <CardTitle className="text-base">描述</CardTitle>
               </CardHeader>
               <CardContent>
-                <p className="text-sm text-muted-foreground">{resource.description}</p>
+                <MarkdownPreview content={resource.description} className="text-sm" />
               </CardContent>
             </Card>
           )}

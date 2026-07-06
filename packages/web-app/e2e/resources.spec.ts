@@ -1,6 +1,43 @@
 // packages/web-app/e2e/resources.spec.ts
 // E2E UI tests for 资源管理 — TC-061~099 (Suite B + D5)
 import { test, expect } from "@playwright/test"
+import fs from "fs"
+import path from "path"
+import os from "os"
+
+/** Resolve server URL from env or worktree port allocation file. */
+function resolveServerUrl(): string {
+  if (process.env.OCTOPUS_SERVER_URL) return process.env.OCTOPUS_SERVER_URL
+  let dir = path.resolve(__dirname, "..")
+  for (let i = 0; i < 5; i++) {
+    try {
+      const gitPath = path.join(dir, ".git")
+      const stat = fs.statSync(gitPath)
+      if (stat.isFile() || stat.isDirectory()) {
+        let headPath: string
+        if (stat.isFile()) {
+          const content = fs.readFileSync(gitPath, "utf8").trim()
+          const gitdirMatch = content.match(/^gitdir:\s*(.+)$/)
+          headPath = gitdirMatch ? path.join(gitdirMatch[1], "HEAD") : path.join(dir, ".git", "HEAD")
+        } else {
+          headPath = path.join(dir, ".git", "HEAD")
+        }
+        const headContent = fs.readFileSync(headPath, "utf8").trim()
+        const branchMatch = headContent.match(/ref: refs\/heads\/(.+)/)
+        const branch = branchMatch ? branchMatch[1] : path.basename(dir)
+        const safe = branch.replace(/\//g, "-").replace(/[^a-zA-Z0-9\-_.]/g, "_")
+        const portFile = path.join(os.homedir(), ".octopus", "ports", `${safe}.json`)
+        if (fs.existsSync(portFile)) {
+          const data = JSON.parse(fs.readFileSync(portFile, "utf8"))
+          if (typeof data.server === "number") return `http://localhost:${data.server}`
+        }
+        break
+      }
+    } catch { /* not found at this level, go up */ }
+    dir = path.dirname(dir)
+  }
+  return "http://localhost:3001"
+}
 
 test.describe("资源管理 — 列表页", () => {
   test("B1: 导航到 /resources — 列表加载", async ({ page }) => {
@@ -40,8 +77,8 @@ test.describe("资源管理 — 列表页", () => {
     const searchInput = page.locator('input[aria-label="搜索资源"]')
     await expect(searchInput).toBeVisible()
     await searchInput.fill("octo")
-    // 等待 debounce (300ms) + 一些余量
-    await page.waitForTimeout(600)
+    // 等待 URL 更新 (debounce 300ms + router.push)
+    await page.waitForURL(/q=octo/, { timeout: 5000 })
     expect(page.url()).toContain("q=octo")
   })
 
@@ -96,60 +133,66 @@ test.describe("资源管理 — 列表页", () => {
 })
 
 test.describe("资源管理 — 详情页", () => {
-  test.beforeEach(async ({ page }) => {
+  test.beforeEach(async ({ page, request }) => {
+    // Ensure at least one resource is installed so detail page is reachable
+    const serverUrl = resolveServerUrl()
+    try {
+      await request.post(`${serverUrl}/api/resources/install`, {
+        headers: { "Content-Type": "application/json", Authorization: "Bearer agent" },
+        data: { ref: "builtin:skill/octo-workflow-dev" },
+      })
+    } catch {
+      // Resource may already be installed — ignore
+    }
     await page.goto("/resources")
     await page.waitForTimeout(3000)
   })
 
   test("B7: 资源详情页 — 三 Tab 布局", async ({ page }) => {
     const firstCard = page.locator("a[aria-label*='查看']").first()
-    if (await firstCard.isVisible()) {
-      await firstCard.click()
-      // 详情页加载
-      await page.waitForTimeout(3000)
-      // 三 Tab 存在
-      await expect(page.getByRole("tab", { name: "概览" })).toBeVisible()
-      await expect(page.getByRole("tab", { name: "依赖" })).toBeVisible()
-      await expect(page.getByRole("tab", { name: "审计" })).toBeVisible()
-      // 默认概览 Tab 内容
-      await expect(page.getByText("基本信息")).toBeVisible()
-    }
+    await expect(firstCard).toBeVisible({ timeout: 5000 })
+    await firstCard.click()
+    // 详情页加载
+    await page.waitForTimeout(3000)
+    // 三 Tab 存在
+    await expect(page.getByRole("tab", { name: "概览" })).toBeVisible()
+    await expect(page.getByRole("tab", { name: "依赖" })).toBeVisible()
+    await expect(page.getByRole("tab", { name: "审计" })).toBeVisible()
+    // 默认概览 Tab 内容
+    await expect(page.getByText("基本信息")).toBeVisible()
   })
 
   test("B8: 详情页 — Tab 切换", async ({ page }) => {
     const firstCard = page.locator("a[aria-label*='查看']").first()
-    if (await firstCard.isVisible()) {
-      await firstCard.click()
-      await page.waitForTimeout(3000)
-      // 切换到依赖 Tab
-      await page.getByRole("tab", { name: "依赖" }).click()
-      await expect(page.getByText("依赖关系")).toBeVisible()
-      // 切换到审计 Tab
-      await page.getByRole("tab", { name: "审计" }).click()
-      await expect(page.getByText("审计记录")).toBeVisible()
-      // 切回概览
-      await page.getByRole("tab", { name: "概览" }).click()
-      await expect(page.getByText("基本信息")).toBeVisible()
-    }
+    await expect(firstCard).toBeVisible({ timeout: 5000 })
+    await firstCard.click()
+    await page.waitForTimeout(3000)
+    // 切换到依赖 Tab
+    await page.getByRole("tab", { name: "依赖" }).click()
+    await expect(page.getByText("依赖关系")).toBeVisible()
+    // 切换到审计 Tab
+    await page.getByRole("tab", { name: "审计" }).click()
+    await expect(page.getByText("审计记录")).toBeVisible()
+    // 切回概览
+    await page.getByRole("tab", { name: "概览" }).click()
+    await expect(page.getByText("基本信息")).toBeVisible()
   })
 
   test("B9: 卸载确认 — 对话框弹出", async ({ page }) => {
     const firstCard = page.locator("a[aria-label*='查看']").first()
-    if (await firstCard.isVisible()) {
-      await firstCard.click()
-      await page.waitForTimeout(3000)
-      const uninstallBtn = page.getByRole("button", { name: /卸载/ })
-      if (await uninstallBtn.isVisible()) {
-        await uninstallBtn.click()
-        // AlertDialog 弹出
-        const alert = page.getByRole("alertdialog")
-        await expect(alert).toBeVisible()
-        await expect(alert.getByText(/卸载/)).toBeVisible()
-        // 取消
-        await alert.getByRole("button", { name: "取消" }).click()
-        await expect(alert).not.toBeVisible()
-      }
-    }
+    await expect(firstCard).toBeVisible({ timeout: 5000 })
+    await firstCard.click()
+    await page.waitForTimeout(3000)
+    const uninstallBtn = page.getByRole("button", { name: /卸载/ })
+    await expect(uninstallBtn).toBeVisible()
+    await uninstallBtn.click()
+    // AlertDialog 弹出
+    const alert = page.getByRole("alertdialog")
+    await expect(alert).toBeVisible()
+    await expect(alert.getByText(/卸载/).first()).toBeVisible()
+    // 取消
+    await alert.getByRole("button", { name: "取消" }).click()
+    await expect(alert).not.toBeVisible()
   })
 })
 
