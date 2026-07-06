@@ -4,6 +4,7 @@ export interface SessionFactoryOptions {
   filteredEnv?: Record<string, string>
   subAgentTools?: any[]
   systemPrompt?: string
+  skills?: string[]
 }
 
 type SessionFactory = (cwd: string, resumeSessionId?: string, options?: SessionFactoryOptions) => Promise<SessionResult>

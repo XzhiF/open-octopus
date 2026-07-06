@@ -20,6 +20,9 @@ export interface SessionOptions {
   filteredEnv?: Record<string, string>
   systemPrompt?: string
   extensions?: any[]
+  customTools?: any[]
+  /** Skill name filter — undefined = all discovered skills, [] = none, ["a","b"] = only those */
+  skills?: string[]
 }
 
 export interface SessionResult {
@@ -41,13 +44,26 @@ export async function createSession(opts: SessionOptions): Promise<SessionResult
 
   const resourceLoader = new (pi.DefaultResourceLoader as any)({
     cwd: opts.cwd,
-    agentDir: `${opts.cwd}/.pi-agent`,
+    agentDir: `${opts.cwd}/.claude`,
     noExtensions: true,
-    noSkills: true,
+    noSkills: false,
     noContextFiles: true,
     noPromptTemplates: true,
     noThemes: true,
   })
+
+  // Must call reload() — createAgentSession only auto-reloads when it creates
+  // its own resourceLoader. Since we pass a custom one, we must trigger scanning.
+  await resourceLoader.reload()
+
+  // Filter skills by name (aligns with Claude Agent SDK's `skills` parameter behavior)
+  // undefined = all discovered skills visible; [] = none; ["a","b"] = only those
+  if (opts.skills !== undefined) {
+    const allowedNames = new Set(opts.skills)
+    resourceLoader.skills = (resourceLoader.skills ?? []).filter(
+      (s: any) => allowedNames.has(s.name)
+    )
+  }
 
   const result = await pi.createAgentSession({
     cwd: opts.cwd,
@@ -55,6 +71,7 @@ export async function createSession(opts: SessionOptions): Promise<SessionResult
     resourceLoader,
     ...(opts.systemPrompt ? { systemPrompt: opts.systemPrompt } : {}),
     ...(opts.extensions ? { extensions: opts.extensions } : {}),
+    ...(opts.customTools ? { customTools: opts.customTools } : {}),
   } as any)
 
   // createAgentSession returns { session: AgentSession, extensionsResult, ... }

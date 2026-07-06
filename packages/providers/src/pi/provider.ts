@@ -7,7 +7,7 @@ import { TokenAggregator } from './token-aggregator'
 import { SessionCache } from './session-cache'
 import { buildSessionEnv } from './security'
 import { resolveModel } from './model-resolver'
-import { enhancePromptWithSkills, parseVarsUpdate } from './prompt-enhancer'
+import { parseVarsUpdate } from './prompt-enhancer'
 import { createOctopusHooks } from './extensions/octopus-hooks'
 import { toSubAgentTool } from './extensions/sub-agent-tool'
 import { classifyProviderError } from '../errors'
@@ -50,11 +50,7 @@ export class PiAgentProvider implements IAgentProvider {
   constructor() {
     this.sessionCache = new SessionCache(async (cwd, resumeSessionId, opts) => {
       const extensions: any[] = [createOctopusHooks()]
-      if (opts?.subAgentTools) {
-        for (const tool of opts.subAgentTools) {
-          extensions.push(tool)
-        }
-      }
+      const customTools: any[] = opts?.subAgentTools ?? []
       if (resumeSessionId) {
         const restored = await PiSdk.findSession(cwd, resumeSessionId)
         if (restored) return restored
@@ -65,6 +61,8 @@ export class PiAgentProvider implements IAgentProvider {
         filteredEnv: opts?.filteredEnv ?? {},
         systemPrompt: opts?.systemPrompt,
         extensions,
+        customTools,
+        skills: opts?.skills,
       })
     })
   }
@@ -182,22 +180,16 @@ export class PiAgentProvider implements IAgentProvider {
         filteredEnv,
         subAgentTools,
         systemPrompt: resolvedSystemPrompt,
+        skills: options?.skills,
       })
       sessionResult = sr
 
       // S13: Resolve model via alias registry
       const resolvedModel = resolveModel(options?.model, sr.modelRegistry)
 
-      // S11: Enhance prompt with skills if provided
-      let effectivePrompt = prompt
-      if (options?.skills && options.skills.length > 0) {
-        // Skill contents would be loaded from the resource loader; pass empty for now
-        // as the Pi SDK handles skill injection via its own resource loader
-        effectivePrompt = enhancePromptWithSkills(prompt, {
-          skills: options.skills,
-          skillContents: {},
-        })
-      }
+      // Skills are handled natively by Pi SDK's resource loader (noSkills: false)
+      // which injects skill listings into the system prompt via formatSkillsForPrompt
+      const effectivePrompt = prompt
 
       // Step 2: Subscribe to events (push → bridge)
       let budgetExceeded = false
