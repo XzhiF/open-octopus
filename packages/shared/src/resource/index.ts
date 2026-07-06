@@ -1,0 +1,17 @@
+// Resource management module — barrel exports
+
+export * from "./types"
+export * from "./errors"
+export { AtomicJsonStore } from "./atomic-json-store"
+export { RegistryStore } from "./registry-store"
+export { LockManager } from "./lock-manager"
+export { parseRef, registerRefParser, getRegisteredSources } from "./ref-parser"
+export type { ParsedRef } from "./ref-parser"
+export { BuiltinProvider } from "./builtin-provider"
+export { LocalProvider } from "./local-provider"
+export { isPathWithinBase, copyDirSync, generateFileHash, listFilesRecursive } from "./fs-utils"
+export { PostInstallVerifier, PostUninstallVerifier } from "./verifier"
+export type { VerifyStep, VerifyContext } from "./verifier"
+export { AuditWriter } from "./audit-writer"
+export { ResourceManager } from "./resource-manager"
+export type { ResourceManagerConfig } from "./resource-manager"

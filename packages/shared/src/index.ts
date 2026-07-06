@@ -27,6 +27,7 @@ export * from "./types/swarm"
 export * from "./plugin/detector"
 export * from "./plugin/types"
 export * from "./types/knowledge"
+export * from "./resource"
 export { ModelAliasConfigSchema, DEFAULT_MODEL_ALIASES, CustomProvidersMapSchema } from './config/model-alias'
 export type { ModelAliasConfig, CustomProviderDef, CustomProvidersMap } from './config/model-alias'
 export { resolveModelAlias, loadModelAliasConfig, collectNodeEngines } from './config/model-alias'

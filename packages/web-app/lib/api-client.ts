@@ -1,7 +1,7 @@
 import type { ChatSession, LeaderboardResponse } from "@/lib/types"
 import { getServerUrl } from "@/lib/server-config"
 
-async function handleResponse(res: Response) {
+export async function handleResponse<T = unknown>(res: Response): Promise<T> {
   if (!res.ok) {
     const body = await res.json().catch(() => ({}))
     throw new Error(body.error?.message ?? body.error ?? `HTTP ${res.status}`)
@@ -10,7 +10,7 @@ async function handleResponse(res: Response) {
 }
 
 /** Fetch wrapper that includes credentials (cookies) for auth. */
-function apiFetch(url: string, init?: RequestInit): Promise<Response> {
+export function apiFetch(url: string, init?: RequestInit): Promise<Response> {
   return fetch(url, { ...init, credentials: "include" })
 }
 
