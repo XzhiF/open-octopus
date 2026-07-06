@@ -62,3 +62,7 @@ tmp/
 # Playwright test artifacts
 test-results/
 .e2e-sandbox/
+
+# E2E test artifacts
+.e2e-sandbox/
+.e2e-octopus.db*
