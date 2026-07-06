@@ -12,6 +12,7 @@ import {
   Bell,
   Activity,
   BrainCircuit,
+  Package,
 } from "lucide-react"
 
 const navigation = [
@@ -19,6 +20,7 @@ const navigation = [
   { name: "工作空间", href: "/workspaces", icon: FolderKanban },
   { name: "系统调度", href: "/scheduler", icon: Clock },
   { name: "Agent", href: "/agent", icon: BrainCircuit },
+  { name: "资源", href: "/resources", icon: Package },
 ]
 
 export function Header() {
