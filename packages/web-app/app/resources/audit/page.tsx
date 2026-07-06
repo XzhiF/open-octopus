@@ -1,7 +1,5 @@
-"use client"
-
-import { AuditLog } from "@/components/resource/audit-log"
+import { redirect } from "next/navigation"
 
 export default function AuditPage() {
-  return <AuditLog />
+  redirect("/resources?tab=audit")
 }

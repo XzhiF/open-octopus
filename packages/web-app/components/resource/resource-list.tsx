@@ -6,6 +6,8 @@ import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { Search, RefreshCw } from "lucide-react"
 import { ResourceCard } from "./resource-card"
+import { PageState } from "./PageState"
+import { UninstallConfirm } from "./UninstallConfirm"
 import { listResources, uninstallResource } from "@/lib/resource/api"
 import type { ResourceEntry, ResourceType } from "@/lib/resource/types"
 import { useResourceOrg } from "./resource-context"
@@ -25,6 +27,8 @@ export function ResourceList() {
   const [typeFilter, setTypeFilter] = useState<ResourceType | "all">("all")
   const [query, setQuery] = useState("")
   const [total, setTotal] = useState(0)
+  const [uninstallTarget, setUninstallTarget] = useState<{ name: string; type: ResourceType } | null>(null)
+  const [uninstalling, setUninstalling] = useState(false)
 
   const fetchResources = useCallback(async () => {
     setLoading(true)
@@ -48,13 +52,17 @@ export function ResourceList() {
     fetchResources()
   }, [fetchResources])
 
-  const handleUninstall = async (name: string, type: ResourceType) => {
-    if (!confirm(`确认卸载 ${type}:${name}？`)) return
+  const handleUninstallConfirm = async () => {
+    if (!uninstallTarget) return
+    setUninstalling(true)
     try {
-      await uninstallResource(org, name, type)
+      await uninstallResource(org, uninstallTarget.name, uninstallTarget.type)
+      setUninstallTarget(null)
       fetchResources()
-    } catch (err) {
-      alert(err instanceof Error ? err.message : "卸载失败")
+    } catch {
+      // Error handled by PageState on next fetch
+    } finally {
+      setUninstalling(false)
     }
   }
 
@@ -66,13 +74,15 @@ export function ResourceList() {
   }
 
   return (
-    <div>
+    <div aria-label="资源列表">
       {/* Filters */}
       <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex gap-1">
+        <div className="flex gap-1" role="tablist" aria-label="资源类型过滤">
           {TYPE_FILTERS.map((f) => (
             <Button
               key={f.value}
+              role="tab"
+              aria-selected={typeFilter === f.value}
               variant={typeFilter === f.value ? "default" : "outline"}
               size="sm"
               onClick={() => setTypeFilter(f.value)}
@@ -95,31 +105,27 @@ export function ResourceList() {
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               className="w-64 pl-9"
+              aria-label="搜索资源"
             />
           </div>
-          <Button variant="outline" size="icon" onClick={fetchResources} disabled={loading}>
+          <Button variant="outline" size="icon" onClick={fetchResources} disabled={loading} aria-label="刷新">
             <RefreshCw className={cn("h-4 w-4", loading && "animate-spin")} />
-            <span className="sr-only">刷新</span>
           </Button>
         </div>
       </div>
 
       {/* Content */}
       {loading && entries.length === 0 ? (
-        <div className="flex items-center justify-center py-12 text-muted-foreground">
-          <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
-          加载中...
-        </div>
+        <PageState status="loading" />
       ) : error ? (
-        <div className="rounded-lg border border-destructive/50 bg-destructive/10 p-4 text-sm text-destructive">
-          {error}
-        </div>
+        <PageState status="error" message={error} onRetry={fetchResources} />
       ) : entries.length === 0 ? (
-        <div className="flex flex-col items-center justify-center py-12 text-center text-muted-foreground">
-          <Search className="mb-3 h-8 w-8 opacity-50" />
-          <p className="font-medium">暂无资源</p>
-          <p className="text-sm">安装第一个 Skill、Agent 或 Workflow 开始使用</p>
-        </div>
+        <PageState
+          status="empty"
+          title="暂无资源"
+          description="安装第一个 Skill、Agent 或 Workflow 开始使用"
+          icon={Search}
+        />
       ) : (
         <>
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -127,7 +133,7 @@ export function ResourceList() {
               <ResourceCard
                 key={`${entry.type}:${entry.name}`}
                 entry={entry}
-                onUninstall={handleUninstall}
+                onUninstall={(name, type) => setUninstallTarget({ name, type })}
               />
             ))}
           </div>
@@ -136,6 +142,15 @@ export function ResourceList() {
           </div>
         </>
       )}
+
+      <UninstallConfirm
+        open={!!uninstallTarget}
+        onOpenChange={(open) => !open && setUninstallTarget(null)}
+        name={uninstallTarget?.name || ""}
+        type={uninstallTarget?.type || "skill"}
+        onConfirm={handleUninstallConfirm}
+        loading={uninstalling}
+      />
     </div>
   )
 }

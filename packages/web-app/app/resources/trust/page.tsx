@@ -1,5 +1,5 @@
-import { TrustManager } from "@/components/resource/trust-manager"
+import { redirect } from "next/navigation"
 
 export default function TrustPage() {
-  return <TrustManager />
+  redirect("/resources?tab=trust")
 }
