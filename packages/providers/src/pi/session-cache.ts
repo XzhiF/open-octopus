@@ -1,10 +1,11 @@
-import type { SessionResult } from './pi-sdk-adapter'
+import type { SessionResult, SessionOptions } from './pi-sdk-adapter'
 
 export interface SessionFactoryOptions {
   filteredEnv?: Record<string, string>
   subAgentTools?: any[]
   systemPrompt?: string
   skills?: string[]
+  customProviders?: SessionOptions['customProviders']
 }
 
 type SessionFactory = (cwd: string, resumeSessionId?: string, options?: SessionFactoryOptions) => Promise<SessionResult>

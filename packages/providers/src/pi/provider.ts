@@ -3,6 +3,7 @@ import type { LLMCallRecord } from '../llm-call-tracker'
 import { LLMCallTracker } from '../llm-call-tracker'
 import { AsyncEventBridge } from './async-bridge'
 import { mapPiEventToChunks, MapperState } from './event-mapper'
+import { loadModelAliasConfig } from '@octopus/shared'
 import { TokenAggregator } from './token-aggregator'
 import { SessionCache } from './session-cache'
 import { buildSessionEnv } from './security'
@@ -46,6 +47,24 @@ export function resolveSystemPrompt(input: SystemPromptInput | undefined): strin
 export class PiAgentProvider implements IAgentProvider {
   private sessionCache: SessionCache
   private llmTracker = new LLMCallTracker()
+  private cachedCustomProviders: any = undefined
+  private customProvidersLoaded = false
+
+  /** Lazy-load custom providers from models.yaml on first use */
+  private getCustomProviders(): any {
+    if (!this.customProvidersLoaded) {
+      this.customProvidersLoaded = true
+      try {
+        const config = loadModelAliasConfig()
+        this.cachedCustomProviders = Object.keys(config.custom_providers ?? {}).length > 0
+          ? config.custom_providers
+          : undefined
+      } catch {
+        // Config load may fail — skip silently
+      }
+    }
+    return this.cachedCustomProviders
+  }
 
   constructor() {
     this.sessionCache = new SessionCache(async (cwd, resumeSessionId, opts) => {
@@ -63,6 +82,7 @@ export class PiAgentProvider implements IAgentProvider {
         extensions,
         customTools,
         skills: opts?.skills,
+        customProviders: opts?.customProviders ?? this.getCustomProviders(),
       })
     })
   }
@@ -181,6 +201,7 @@ export class PiAgentProvider implements IAgentProvider {
         subAgentTools,
         systemPrompt: resolvedSystemPrompt,
         skills: options?.skills,
+        customProviders: options?.customProviders,
       })
       sessionResult = sr
 

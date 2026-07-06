@@ -25,6 +25,20 @@ export interface SessionOptions {
   skills?: string[]
   /** Allowed tool names (Pi SDK lowercase names: "read", "bash", etc.) — undefined = all tools */
   tools?: string[]
+  /** Custom provider definitions from models.yaml custom_providers */
+  customProviders?: Record<string, {
+    base_url: string
+    api?: string
+    env_key?: string
+    models: Array<{
+      id: string
+      name?: string
+      context_window?: number
+      max_tokens?: number
+      reasoning?: boolean
+      cost?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number }
+    }>
+  }>
 }
 
 export interface SessionResult {
@@ -41,7 +55,7 @@ export async function createSession(opts: SessionOptions): Promise<SessionResult
   const modelRegistry = (pi as any).ModelRegistry.inMemory(authStorage)
 
   if (opts.filteredEnv) {
-    registerProvidersFromEnv(modelRegistry, opts.filteredEnv)
+    registerProvidersFromEnv(modelRegistry, opts.filteredEnv, opts.customProviders)
   }
 
   const resourceLoader = new (pi.DefaultResourceLoader as any)({
@@ -151,10 +165,14 @@ const EXTRA_PROVIDERS: Record<string, {
 
 /**
  * Register all available providers into the ModelRegistry.
- * - Built-in providers (in Pi SDK catalog): register with API key only
- * - Extra providers (EXTRA_PROVIDERS): register with full config (baseUrl + models)
+ * Priority: customProviders (YAML) > EXTRA_PROVIDERS (hardcoded) > built-in (API key only)
  */
-function registerProvidersFromEnv(registry: any, env: Record<string, string>): void {
+function registerProvidersFromEnv(
+  registry: any,
+  env: Record<string, string>,
+  customProviders?: SessionOptions['customProviders'],
+): void {
+  // 1. Built-in providers — API key is enough
   for (const [envKey, providerName] of Object.entries(PROVIDER_ENV_KEYS)) {
     const apiKey = env[envKey]
     if (!apiKey) continue
@@ -162,14 +180,48 @@ function registerProvidersFromEnv(registry: any, env: Record<string, string>): v
     try {
       const extra = EXTRA_PROVIDERS[providerName]
       if (extra) {
-        // Non-builtin provider — needs full config with models
         registry.registerProvider(providerName, { ...extra, apiKey })
       } else {
-        // Built-in provider — API key is enough
         registry.registerProvider(providerName, { apiKey })
       }
     } catch {
       // Provider registration may fail — skip silently
+    }
+  }
+
+  // 2. Custom providers from models.yaml — override any with same name
+  if (customProviders) {
+    for (const [providerName, config] of Object.entries(customProviders)) {
+      const envKey = config.env_key ?? `${providerName.toUpperCase()}_API_KEY`
+      const apiKey = env[envKey]
+      if (!apiKey) continue
+
+      try {
+        const api = config.api ?? 'openai-completions'
+        registry.registerProvider(providerName, {
+          name: providerName,
+          baseUrl: config.base_url,
+          api,
+          apiKey,
+          models: config.models.map(m => ({
+            id: m.id,
+            name: m.name ?? m.id,
+            api,
+            reasoning: m.reasoning ?? false,
+            input: ['text'] as ('text' | 'image')[],
+            cost: {
+              input: m.cost?.input ?? 0,
+              output: m.cost?.output ?? 0,
+              cacheRead: m.cost?.cacheRead ?? 0,
+              cacheWrite: m.cost?.cacheWrite ?? 0,
+            },
+            contextWindow: m.context_window ?? 32768,
+            maxTokens: m.max_tokens ?? 8192,
+          })),
+        })
+      } catch {
+        // Registration may fail — skip silently
+      }
     }
   }
 }

@@ -5,9 +5,35 @@ import * as yaml from 'js-yaml'
 
 export const ModelTierMapSchema = z.record(z.string(), z.string())
 
+const CustomModelSchema = z.object({
+  id: z.string(),
+  name: z.string().optional(),
+  context_window: z.number().default(32768),
+  max_tokens: z.number().default(8192),
+  reasoning: z.boolean().default(false),
+  cost: z.object({
+    input: z.number().default(0),
+    output: z.number().default(0),
+    cacheRead: z.number().default(0),
+    cacheWrite: z.number().default(0),
+  }).default({}),
+})
+
+const CustomProviderSchema = z.object({
+  base_url: z.string(),
+  api: z.string().default('openai-completions'),
+  env_key: z.string().optional(),
+  models: z.array(CustomModelSchema).min(1),
+})
+
+export const CustomProvidersMapSchema = z.record(z.string(), CustomProviderSchema)
+export type CustomProviderDef = z.infer<typeof CustomProviderSchema>
+export type CustomProvidersMap = z.infer<typeof CustomProvidersMapSchema>
+
 export const ModelAliasConfigSchema = z.object({
   default: z.string().default('pro'),
   providers: z.record(z.string(), ModelTierMapSchema).default({}),
+  custom_providers: CustomProvidersMapSchema.default({}),
 })
 
 export type ModelAliasConfig = z.infer<typeof ModelAliasConfigSchema>
@@ -26,6 +52,7 @@ export const DEFAULT_MODEL_ALIASES: ModelAliasConfig = {
       se: 'dashscope/qwen3.6-plus',
     },
   },
+  custom_providers: {},
 }
 
 function isTierKey(model: string, config: ModelAliasConfig): boolean {

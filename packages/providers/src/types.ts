@@ -51,6 +51,19 @@ export interface SendQueryOptions {
   plugins?: Array<{ type: 'local'; path: string }>
   disablePlugins?: string[]
   varsUpdate?: boolean
+  customProviders?: Record<string, {
+    base_url: string
+    api?: string
+    env_key?: string
+    models: Array<{
+      id: string
+      name?: string
+      context_window?: number
+      max_tokens?: number
+      reasoning?: boolean
+      cost?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number }
+    }>
+  }>
 }
 
 export type MessageChunk =
