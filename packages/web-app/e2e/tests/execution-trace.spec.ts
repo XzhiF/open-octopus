@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test'
 
 // Workspace ID for test-workspace (UUID, not name — API requires UUID)
-const TEST_WORKSPACE_ID = 'bba463c7-4538-4b54-a746-08297340bee9'
+const TEST_WORKSPACE_ID = '569873c2-d648-4bbc-bf11-ef5b37761507'
 
 test('completed agent node shows Turn-Centric Timeline', async ({ page }) => {
   await page.goto(`/workspaces/${TEST_WORKSPACE_ID}`)

@@ -49,7 +49,7 @@ export function HeroMetrics({ totalExecutions, successRate, totalCost, avgDurati
   ]
 
   return (
-    <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+    <div data-testid="hero-metrics" className="grid grid-cols-2 gap-4 lg:grid-cols-4">
       {metrics.map(m => (
         <div key={m.label} className="rounded-lg border bg-card p-4">
           <p className="text-xs text-muted-foreground">{m.label}</p>

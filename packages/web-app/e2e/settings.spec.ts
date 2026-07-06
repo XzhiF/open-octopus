@@ -7,12 +7,12 @@ test.describe("Settings 页面", () => {
     await page.locator('a[href="/settings"]').first().click()
     await expect(page).toHaveURL(/\/settings/)
     // 验证页面标题
-    await expect(page.getByText("日志分析")).toBeVisible()
+    await expect(page.getByText("日志分析").first()).toBeVisible()
   })
 
   test("Settings 页面显示左侧 Sidebar", async ({ page }) => {
     await page.goto("/settings")
-    await expect(page.getByText("日志分析")).toBeVisible()
+    await expect(page.getByText("日志分析").first()).toBeVisible()
   })
 
   test("Tab 切换更新 URL", async ({ page }) => {
@@ -82,7 +82,7 @@ test.describe("Settings 页面", () => {
 
   test("Header 导航栏设置链接可点击（bonus）", async ({ page }) => {
     await page.goto("/")
-    const settingsLink = page.locator('nav a[href="/settings"]')
+    const settingsLink = page.locator('a[href="/settings"]')
     await expect(settingsLink.first()).toBeVisible()
     await settingsLink.first().click()
     await expect(page).toHaveURL(/\/settings/)

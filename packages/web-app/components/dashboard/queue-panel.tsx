@@ -53,7 +53,7 @@ function ExecutionItem({ execution }: { execution: Execution }) {
         </p>
         {isRunning && (
           <div className="mt-2 flex items-center gap-2">
-            <Progress value={execution.progress} className="h-1.5 flex-1" />
+            <Progress value={execution.progress} className="h-1.5 flex-1" aria-label="执行进度" />
             <span className="text-xs tabular-nums text-muted-foreground">
               {execution.progress}%
             </span>

@@ -1,10 +1,17 @@
 "use client"
 
 import Link from "next/link"
-import { usePathname } from "next/navigation"
+import { usePathname, useRouter } from "next/navigation"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { useIsMobile } from "@/hooks/use-mobile"
+import { useAuth } from "@/lib/auth-context"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import {
   LayoutDashboard,
   FolderKanban,
@@ -14,6 +21,8 @@ import {
   Activity,
   BrainCircuit,
   Package,
+  LogOut,
+  User,
 } from "lucide-react"
 
 const navigation = [
@@ -27,6 +36,13 @@ const navigation = [
 export function Header() {
   const pathname = usePathname()
   const isMobile = useIsMobile()
+  const { user, logout } = useAuth()
+  const router = useRouter()
+
+  async function handleLogout() {
+    await logout()
+    router.push("/login")
+  }
 
   return (
     <header className="sticky top-0 z-50 w-full border-b border-border bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
@@ -82,6 +98,24 @@ export function Header() {
               <span className="sr-only">设置</span>
             </Link>
           </Button>
+
+          {/* User menu */}
+          {user && (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" size="sm" className="gap-2">
+                  <User className="h-4 w-4" />
+                  <span>{user.username}</span>
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onClick={handleLogout}>
+                  <LogOut className="mr-2 h-4 w-4" />
+                  退出登录
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
         </div>
       </div>
     </header>

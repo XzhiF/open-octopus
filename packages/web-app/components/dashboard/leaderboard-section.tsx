@@ -82,7 +82,7 @@ export function LeaderboardSection() {
       <div role="status" aria-live="polite" className="sr-only">
         {isEmpty ? '暂无排行数据' : '排行榜加载完成'}
       </div>
-      <div className="grid gap-6 lg:grid-cols-3">
+      <div data-testid="leaderboard-grid" className="grid gap-6 lg:grid-cols-3">
       <LeaderboardCard
         title="Workspace 用量排行"
         icon={<FolderOpen className="h-4 w-4" />}

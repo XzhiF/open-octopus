@@ -43,6 +43,7 @@ import { ExecutionService } from "./services/execution"
 import { errorHandler } from "./middleware/error"
 import { createResourceRoutes } from "./routes/resource"
 import { createAuthRoutes, generateSessionToken } from "./routes/resource-auth"
+import { createUserAuthRoutes } from "./routes/user-auth"
 import { ResourceService } from "./services/resource-service"
 import { InstallEventBus } from "./services/install-event-bus"
 import { agentAuthMiddleware, setAgentAuthOrgDAO } from "./routes/agent/middleware"
@@ -319,6 +320,7 @@ const installEventBus = new InstallEventBus()
 const resourceAuthToken = process.env.OCTOPUS_RESOURCE_TOKEN ?? generateSessionToken()
 app.route("/api/resources", createResourceRoutes(resourceService, installEventBus, resourceAuthToken))
 app.route("/api/auth", createAuthRoutes(resourceAuthToken))
+app.route("/api/auth", createUserAuthRoutes())
 
 // Set scheduler on agent service
 try { getAgentService().setSchedulerService(schedSvc) } catch {}
@@ -417,8 +419,13 @@ if (shouldServe) {
     })
 
     const response = await app.fetch(request)
-    const headers: Record<string, string> = {}
+    const headers: Record<string, string | string[]> = {}
     response.headers.forEach((v, k) => { headers[k] = v })
+    // Fix: preserve multiple Set-Cookie headers (forEach merges them with comma)
+    const setCookieHeader = response.headers.getSetCookie?.()
+    if (setCookieHeader && setCookieHeader.length > 0) {
+      headers['set-cookie'] = setCookieHeader
+    }
     res.writeHead(response.status, headers)
     if (response.body) {
       const reader = response.body.getReader()

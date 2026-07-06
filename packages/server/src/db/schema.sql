@@ -657,3 +657,21 @@ CREATE INDEX IF NOT EXISTS idx_effectiveness_stale ON knowledge_effectiveness(in
 -- Idempotent via IF NOT EXISTS.
 CREATE INDEX IF NOT EXISTS idx_pending_review_source ON pending_review(source);
 CREATE INDEX IF NOT EXISTS idx_pending_review_type_status ON pending_review(type, status);
+
+-- 26. User authentication tables
+CREATE TABLE IF NOT EXISTS users (
+  id TEXT PRIMARY KEY,
+  username TEXT UNIQUE NOT NULL,
+  password_hash TEXT NOT NULL,
+  email TEXT,
+  created_at TEXT DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS user_sessions (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  token TEXT UNIQUE NOT NULL,
+  expires_at TEXT NOT NULL,
+  created_at TEXT DEFAULT (datetime('now')),
+  FOREIGN KEY (user_id) REFERENCES users(id)
+);

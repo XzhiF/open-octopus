@@ -9,7 +9,7 @@ import os from "os"
  * when it starts. Playwright reads this at config load time.
  */
 function resolveWebPort(): number {
-  const repoRoot = path.resolve(__dirname, "..")
+  const repoRoot = path.resolve(__dirname, "../..")
   const gitPath = path.join(repoRoot, ".git")
 
   // Detect worktree: .git is a file
@@ -21,8 +21,19 @@ function resolveWebPort(): number {
   let branch = ""
   try {
     const content = fs.readFileSync(gitPath, "utf8").trim()
-    const match = content.match(/ref: refs\/heads\/(.+)/)
-    branch = match ? match[1] : path.basename(repoRoot)
+    // Worktree: .git is a file with "gitdir: <path>"
+    const gitdirMatch = content.match(/^gitdir:\s+(.+)$/)
+    if (gitdirMatch) {
+      // Follow gitdir to HEAD file
+      const headPath = path.join(gitdirMatch[1], "HEAD")
+      const headContent = fs.readFileSync(headPath, "utf8").trim()
+      const headMatch = headContent.match(/ref: refs\/heads\/(.+)/)
+      branch = headMatch ? headMatch[1] : path.basename(repoRoot)
+    } else {
+      // Normal repo: .git is a directory (shouldn't happen since isWorktree=true)
+      const refMatch = content.match(/ref: refs\/heads\/(.+)/)
+      branch = refMatch ? refMatch[1] : path.basename(repoRoot)
+    }
   } catch { return 3000 }
 
   const safe = branch.replace(/\//g, "-").replace(/[^a-zA-Z0-9\-_.]/g, "_")

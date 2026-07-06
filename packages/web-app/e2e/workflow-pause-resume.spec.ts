@@ -1,7 +1,7 @@
 import { test, expect } from "@playwright/test"
 
 // Workspace ID from API — the app needs to be on a workspace page to show the workflow panel
-const WORKSPACE_ID = "04b22482-c63a-4ce4-b25d-3d798f0992f6"
+const WORKSPACE_ID = "569873c2-d648-4bbc-bf11-ef5b37761507"
 
 test.describe("Workflow Pause & Resume", () => {
   test.beforeEach(async ({ page }) => {

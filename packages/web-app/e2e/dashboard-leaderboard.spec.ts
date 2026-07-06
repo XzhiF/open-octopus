@@ -13,7 +13,7 @@ test.describe("Dashboard Leaderboard", () => {
   })
 
   test("等高对齐（桌面端）", async ({ page }) => {
-    const cards = page.locator(".grid.lg\\:grid-cols-3 > *")
+    const cards = page.locator('[data-testid="leaderboard-grid"] > *')
     const count = await cards.count()
     if (count < 3) {
       test.skip()
@@ -43,7 +43,7 @@ test.describe("Dashboard Leaderboard", () => {
 
   test("响应式布局（移动端）", async ({ page }) => {
     await page.setViewportSize({ width: 375, height: 812 })
-    const grid = page.locator(".grid.lg\\:grid-cols-3")
+    const grid = page.locator('[data-testid="leaderboard-grid"]')
     await expect(grid).toBeVisible()
   })
 
