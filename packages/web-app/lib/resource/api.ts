@@ -1,56 +1,21 @@
 import { getServerUrl } from "@/lib/server-config"
+import type {
+  ResourceType,
+  SourceRef,
+  RegistryEntry,
+  AuditEntry,
+  DriftItem,
+  DoctorCheck,
+} from "@octopus/shared"
 
-// ── Types (matching API contract) ──
-
-export type ResourceType = "skill" | "agent" | "workflow"
-
-export interface SourceRef {
-  type: "builtin" | "local"
-  name?: string
-  subpath?: string
-  path?: string
-}
-
-export interface RegistryEntry {
-  name: string
-  type: ResourceType
-  version: string
-  source: SourceRef
-  installed: boolean
-  installPath?: string
-  contentHash?: string
-  dependencies: string[]
-  createdAt: string
-  updatedAt: string
-  description?: string
-  tags?: string[]
-}
-
-export interface AuditEntry {
-  timestamp: string
-  action: "install" | "uninstall" | "register" | "gc" | "sync" | "doctor"
-  resource: string
-  type: ResourceType
-  status: "success" | "failed"
-  caller?: string
-  detail?: string
-  prevHash?: string
-}
-
-export interface DriftItem {
-  resource: string
-  type: ResourceType
-  issue: "MISSING" | "MODIFIED" | "EXTRA"
-  expected?: string
-  actual?: string
-  fixed: boolean
-}
-
-export interface DoctorCheck {
-  name: string
-  healthy: boolean
-  detail?: string
-  fixApplied?: boolean
+// Re-export for consumers
+export type {
+  ResourceType,
+  SourceRef,
+  RegistryEntry,
+  AuditEntry,
+  DriftItem,
+  DoctorCheck,
 }
 
 export interface DepNode {
@@ -60,7 +25,8 @@ export interface DepNode {
   depth?: number
 }
 
-export interface ResourceError {
+// H2 fix: renamed to avoid collision with shared ResourceError class
+interface ResourceErrorBody {
   code: string
   message: string
   hint?: string
@@ -89,7 +55,7 @@ function apiFetch(url: string, init?: RequestInit): Promise<Response> {
 async function handleResponse<T>(res: Response): Promise<T> {
   const body = await res.json().catch(() => ({}))
   if (!res.ok) {
-    const err = body.error as ResourceError | undefined
+    const err = body.error as ResourceErrorBody | undefined
     throw new ResourceApiError(
       err?.message ?? `HTTP ${res.status}`,
       err?.code ?? "UNKNOWN",

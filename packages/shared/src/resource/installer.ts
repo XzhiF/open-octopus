@@ -6,11 +6,7 @@ import type { ResourceManifest } from "./types"
 import type { SourceProvider } from "./providers/types"
 
 export class WorkspaceInstaller {
-  install(manifest: ResourceManifest, provider: SourceProvider, targetDir: string): { installPath: string; contentHash: string } {
-    if (!isPathWithinBase(targetDir, path.resolve(targetDir, "..", ".."))) {
-      // ponytail: basic parent check — targetDir must be within workspace
-    }
-
+  async install(manifest: ResourceManifest, provider: SourceProvider, targetDir: string): Promise<{ installPath: string; contentHash: string }> {
     const installPath = path.join(targetDir, manifest.name)
 
     if (!isPathWithinBase(installPath, targetDir)) {
@@ -22,9 +18,9 @@ export class WorkspaceInstaller {
       fs.mkdirSync(targetDir, { recursive: true })
     }
 
-    // Fetch from provider
+    // Fetch from provider (async)
     try {
-      provider.fetch(manifest, installPath)
+      await provider.fetch(manifest, installPath)
     } catch (err) {
       throw new ResourceError("INSTALL_FAILED", `Failed to fetch resource: ${err instanceof Error ? err.message : String(err)}`)
     }

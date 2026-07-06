@@ -2,6 +2,7 @@
 
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
+import rehypeSanitize from "rehype-sanitize"
 import { cn } from "@/lib/utils"
 
 interface MarkdownPreviewProps {
@@ -21,8 +22,8 @@ export function MarkdownPreview({ content, className }: MarkdownPreviewProps) {
     <div className={cn("prose prose-sm dark:prose-invert max-w-none", className)}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
+        rehypePlugins={[rehypeSanitize]}
         components={{
-          // ponytail: no dangerouslySetInnerHTML — react-markdown sanitizes by default
           a: ({ href, children, ...props }) => (
             <a
               href={href}

@@ -5,7 +5,7 @@ import { getAgentSkillsDir } from './paths'
 
 // ── Types ──────────────────────────────────────────────────────
 
-export type SkillSource = 'local_evolved' | 'builtin' | 'prod'
+export type SkillSource = 'workspace' | 'local_evolved' | 'builtin' | 'prod'
 
 export interface LoadedSkill {
   name: string
@@ -41,20 +41,41 @@ export class SkillLoader {
   private agentSkillsDir: string
   private builtinSkillsDir: string
   private prodSkillsDir: string
+  // B7 fix: Tier 0 — workspace-installed skills via ResourceManager
+  private workspaceSkillsDir: string | null
 
-  constructor(org: string) {
+  constructor(org: string, workspacePath?: string) {
     this.org = org
     this.agentSkillsDir = getAgentSkillsDir()
     this.builtinSkillsDir = path.join(process.cwd(), 'packages', 'core-pack', 'skills')
     this.prodSkillsDir = path.join(os.homedir(), '.octopus', 'prod', 'packages', 'core-pack', 'skills')
+    this.workspaceSkillsDir = workspacePath
+      ? path.join(workspacePath, '.claude', 'skills')
+      : null
   }
 
   /**
-   * Load a single skill by name, resolving through the three-tier priority.
-   * Returns null if skill not found in any tier.
+   * Load a single skill by name, resolving through the priority tiers.
+   * Tier 0: workspace-installed (highest) → Tier 1: local evolved → Tier 2: builtin → Tier 3: prod
    */
   loadSkill(name: string): LoadedSkill | null {
-    // Tier 1: Local evolved (highest priority)
+    // Tier 0: Workspace-installed skills (resource manager installs here)
+    if (this.workspaceSkillsDir) {
+      const wsPath = path.join(this.workspaceSkillsDir, name, 'SKILL.md')
+      if (fs.existsSync(wsPath)) {
+        const content = fs.readFileSync(wsPath, 'utf-8')
+        return {
+          name,
+          content,
+          source: 'workspace',
+          file_path: wsPath,
+          has_backup: false,
+          description: this.extractDescription(content),
+        }
+      }
+    }
+
+    // Tier 1: Local evolved (highest priority among standard tiers)
     const localPath = path.join(this.agentSkillsDir, name, 'SKILL.md')
     const bakPath = path.join(this.agentSkillsDir, name, 'SKILL.md.bak')
     if (fs.existsSync(localPath)) {
@@ -113,7 +134,7 @@ export class SkillLoader {
     // Scan Tier 2 (builtin — overwrites prod)
     this.scanDirectory(this.builtinSkillsDir, 'builtin', skillMap)
 
-    // Scan Tier 1 (local evolved — overwrites all)
+    // Scan Tier 1 (local evolved — overwrites builtin)
     if (fs.existsSync(this.agentSkillsDir)) {
       try {
         const entries = fs.readdirSync(this.agentSkillsDir, { withFileTypes: true })
@@ -135,6 +156,11 @@ export class SkillLoader {
           }
         }
       } catch { /* skip */ }
+    }
+
+    // B7 fix: Scan Tier 0 (workspace-installed — highest priority, overwrites all)
+    if (this.workspaceSkillsDir) {
+      this.scanDirectory(this.workspaceSkillsDir, 'workspace', skillMap)
     }
 
     return [...skillMap.values()].sort((a, b) => a.name.localeCompare(b.name))
@@ -270,11 +296,13 @@ export class SkillLoader {
 
 const instances = new Map<string, SkillLoader>()
 
-export function getSkillLoader(org: string): SkillLoader {
-  let instance = instances.get(org)
+export function getSkillLoader(org: string, workspacePath?: string): SkillLoader {
+  // B7 fix: include workspace in key to allow workspace-specific skill resolution
+  const key = workspacePath ? `${org}:${workspacePath}` : org
+  let instance = instances.get(key)
   if (!instance) {
-    instance = new SkillLoader(org)
-    instances.set(org, instance)
+    instance = new SkillLoader(org, workspacePath)
+    instances.set(key, instance)
   }
   return instance
 }

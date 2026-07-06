@@ -2,7 +2,16 @@ import fs from "fs"
 import path from "path"
 import type { SourceProvider } from "./types"
 import type { ResourceManifest, ResourceType } from "../types"
-import { isPathWithinBase } from "../utils"
+import { ResourceError } from "../errors"
+
+// B5: reject names that could traverse directories
+const SAFE_NAME_RE = /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/
+
+// B5: sensitive directories that must never be used as local resource sources
+const BLOCKED_PREFIXES = [
+  "/etc", "/proc", "/sys", "/dev", "/var/run", "/var/spool",
+  "C:\\Windows", "C:\\Program Files",
+]
 
 export class LocalProvider implements SourceProvider {
   readonly type = "local" as const
@@ -14,6 +23,18 @@ export class LocalProvider implements SourceProvider {
     }
 
     const name = path.basename(localPath)
+    // B5 fix: validate extracted name is safe
+    if (!SAFE_NAME_RE.test(name)) {
+      throw new ResourceError("INVALID_RESOURCE_NAME", `Resource name from path is invalid: '${name}'`)
+    }
+
+    // B5 fix: block sensitive system directories
+    const normalized = localPath.replace(/\\/g, "/").toLowerCase()
+    for (const blocked of BLOCKED_PREFIXES) {
+      if (normalized.startsWith(blocked.toLowerCase())) {
+        throw new ResourceError("PATH_TRAVERSAL", `Local source path is in a restricted directory: '${ref}'`)
+      }
+    }
 
     // Try to read manifest.json for richer metadata
     const manifestPath = path.join(localPath, "manifest.json")
@@ -55,14 +76,12 @@ export class LocalProvider implements SourceProvider {
       throw new Error(`Source path does not exist: ${sourcePath}`)
     }
 
-    // Safety: verify the source path is not escaping to unexpected locations.
-    // The caller is expected to provide a reasonable basePath (e.g. workspace root).
-    // Without an explicit base we log the check against the process cwd.
-    const cwd = process.cwd()
-    if (!isPathWithinBase(sourcePath, cwd) && !path.isAbsolute(sourcePath)) {
-      throw new Error(
-        `Local source path escapes working directory: ${sourcePath}`,
-      )
+    // B5 fix: verify source path is not in a restricted system directory
+    const normalized = path.resolve(sourcePath).replace(/\\/g, "/").toLowerCase()
+    for (const blocked of BLOCKED_PREFIXES) {
+      if (normalized.startsWith(blocked.toLowerCase())) {
+        throw new ResourceError("PATH_TRAVERSAL", `Local source path is in a restricted directory: '${sourcePath}'`)
+      }
     }
 
     const stat = fs.statSync(sourcePath)

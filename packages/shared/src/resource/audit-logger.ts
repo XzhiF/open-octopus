@@ -54,7 +54,7 @@ export class AuditLogger {
       let entries = lines.map(l => JSON.parse(l) as AuditEntry).reverse()
       if (filter?.action) entries = entries.filter(e => e.action === filter.action)
       if (filter?.resource) entries = entries.filter(e => e.resource === filter.resource)
-      if (filter?.last) entries = entries.slice(0, filter.last)
+      if (filter?.last) entries = entries.slice(0, Math.min(filter.last, 1000))
       return entries
     } catch {
       return []

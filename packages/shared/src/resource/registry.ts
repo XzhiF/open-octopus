@@ -35,8 +35,10 @@ export class RegistryStore {
       const updated: RegistryEntry = {
         ...existing,
         version: manifest.version,
+        description: manifest.description,
         source: manifest.source,
         dependencies: manifest.dependencies,
+        tags: manifest.tags,
         updatedAt: now,
       }
       const next = entries.map(e => e.name === manifest.name && e.type === manifest.type ? updated : e)
@@ -49,9 +51,11 @@ export class RegistryStore {
       name: manifest.name,
       type: manifest.type,
       version: manifest.version,
+      description: manifest.description,
       source: manifest.source,
       installed: false,
       dependencies: manifest.dependencies,
+      tags: manifest.tags,
       createdAt: now,
       updatedAt: now,
     }
@@ -80,10 +84,10 @@ export class RegistryStore {
       const q = filter.query.toLowerCase()
       result = result.filter(e =>
         e.name.toLowerCase().includes(q) ||
-        (e as any).description?.toLowerCase().includes(q)
+        e.description?.toLowerCase().includes(q)
       )
     }
-    if (filter?.tag) result = result.filter(e => (e as any).tags?.includes(filter.tag))
+    if (filter?.tag) result = result.filter(e => e.tags?.includes(filter.tag as string))
     return result
   }
 

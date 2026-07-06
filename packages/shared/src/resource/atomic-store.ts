@@ -1,6 +1,13 @@
 import fs from "fs"
 import path from "path"
 
+export class ResourceLockError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = "ResourceLockError"
+  }
+}
+
 export class AtomicJsonStore<T> {
   private filePath: string
   private tmpPath: string
@@ -67,17 +74,22 @@ export class AtomicJsonStore<T> {
   }
 
   private acquireLock(): void {
-    // Simple file lock with timeout, not Atomics.wait
-    const start = Date.now()
-    while (fs.existsSync(this.lockPath)) {
-      if (Date.now() - start > this.lockTimeoutMs) {
-        // Stale lock — clean up
+    // ponytail: try-and-recover — no spin-lock (single-threaded Node can't busy-wait its way out)
+    if (fs.existsSync(this.lockPath)) {
+      try {
+        const stat = fs.statSync(this.lockPath)
+        const age = Date.now() - stat.mtimeMs
+        if (age > this.lockTimeoutMs) {
+          // Stale lock — clean up and proceed
+          fs.unlinkSync(this.lockPath)
+        } else {
+          throw new ResourceLockError(`Lock held by another process (age ${Math.round(age / 1000)}s)`)
+        }
+      } catch (err) {
+        if (err instanceof ResourceLockError) throw err
+        // stat failed — lock file is broken, remove it
         try { fs.unlinkSync(this.lockPath) } catch { /* ignore */ }
-        break
       }
-      // Busy wait with small delay
-      const waitUntil = Date.now() + 50
-      while (Date.now() < waitUntil) { /* spin */ }
     }
     fs.writeFileSync(this.lockPath, String(Date.now()), "utf-8")
   }

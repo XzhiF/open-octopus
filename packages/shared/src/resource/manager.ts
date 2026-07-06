@@ -40,6 +40,7 @@ export class ResourceManager {
     this.registry = new RegistryStore(config.registryPath)
     this.lockManager = new LockManager(config.lockPath)
     this.resolver = new DependencyResolver(
+      // B9 fix: cross-type lookup — try all types for dependency resolution
       (name) => this.registry.get(name, "skill") ?? this.registry.get(name, "agent") ?? this.registry.get(name, "workflow"),
     )
     this.resolver.setGetAllEntries(() => this.registry.list())
@@ -92,59 +93,69 @@ export class ResourceManager {
       const tx = new InstallTransaction()
       const installed: Array<{ name: string; type: ResourceType; installPath: string; contentHash: string }> = []
 
-      for (const depName of order) {
-        const entry = this.registry.get(depName, manifest.type) // simplified — real impl tracks type per dep
-        if (!entry) continue
-        if (entry.installed) continue
+      try {
+        for (const depName of order) {
+          // B9 fix: look up dependency across all types, not just the primary manifest's type
+          const entry = this.registry.get(depName, "skill")
+            ?? this.registry.get(depName, "agent")
+            ?? this.registry.get(depName, "workflow")
+          if (!entry) continue
+          if (entry.installed) continue
 
-        // Resolve dependency's provider and manifest if needed
-        let depProvider = provider
-        let depManifest = entry as unknown as ResourceManifest
-        if (entry.source) {
-          const depRef = formatSourceRef(entry.source)
-          const parsed = parseRef(depRef)
-          const p = this.providers.find(pp => pp.type === parsed.type)
-          if (p) {
-            depProvider = p
-            try {
-              depManifest = await p.resolve(parsed.value, entry.type)
-            } catch {
-              // Use registry entry as manifest
+          // Resolve dependency's provider and manifest if needed
+          let depProvider = provider
+          let depManifest = entry as unknown as ResourceManifest
+          if (entry.source) {
+            const depRef = formatSourceRef(entry.source)
+            const parsed = parseRef(depRef)
+            const p = this.providers.find(pp => pp.type === parsed.type)
+            if (p) {
+              depProvider = p
+              try {
+                depManifest = await p.resolve(parsed.value, entry.type)
+              } catch {
+                // Use registry entry as manifest
+              }
             }
           }
+
+          // Determine target directory based on resource type
+          const targetDir = this.getTargetDir(entry.type)
+          // B1 fix: await async install
+          const result = await this.installer.install(depManifest, depProvider, targetDir)
+
+          installed.push({ name: depName, type: entry.type, ...result })
+
+          // Add undo step for rollback
+          const installPath = result.installPath
+          tx.addStep(() => {
+            try { fs.rmSync(installPath, { recursive: true, force: true }) } catch { /* best effort */ }
+          })
+
+          // Update registry and lock
+          this.registry.updateInstalled(depName, entry.type, true, result.installPath, result.contentHash)
+          this.lockManager.add({
+            name: depName,
+            type: entry.type,
+            version: entry.version,
+            installPath: result.installPath,
+            contentHash: result.contentHash,
+            installedAt: new Date().toISOString(),
+          })
+
+          this.audit.log({
+            action: "install",
+            resource: depName,
+            type: entry.type,
+            status: "success",
+            caller: opts?.caller,
+            detail: `Installed from ${formatSourceRef(entry.source)}`,
+          })
         }
-
-        // Determine target directory based on resource type
-        const targetDir = this.getTargetDir(entry.type)
-        const result = this.installer.install(depManifest, depProvider, targetDir)
-
-        installed.push({ name: depName, type: entry.type, ...result })
-
-        // Add undo step
-        const installPath = result.installPath
-        tx.addStep(() => {
-          try { fs.rmSync(installPath, { recursive: true, force: true }) } catch { /* best effort */ }
-        })
-
-        // Update registry and lock
-        this.registry.updateInstalled(depName, entry.type, true, result.installPath, result.contentHash)
-        this.lockManager.add({
-          name: depName,
-          type: entry.type,
-          version: entry.version,
-          installPath: result.installPath,
-          contentHash: result.contentHash,
-          installedAt: new Date().toISOString(),
-        })
-
-        this.audit.log({
-          action: "install",
-          resource: depName,
-          type: entry.type,
-          status: "success",
-          caller: opts?.caller,
-          detail: `Installed from ${formatSourceRef(entry.source)}`,
-        })
+      } catch (installErr) {
+        // B2 fix: rollback all completed install steps on failure
+        tx.rollback()
+        throw installErr
       }
 
       const durationMs = Date.now() - startTime
@@ -231,14 +242,15 @@ export class ResourceManager {
   async sync(opts?: { fix?: boolean; targets?: string[]; caller?: string }): Promise<{ drifts: DriftItem[]; totalDrifts: number }> {
     try {
       const rawDrifts = this.lockManager.detectDrift()
-      let drifts: DriftItem[] = rawDrifts.map(d => ({ ...d, fixed: false }))
+      const drifts: DriftItem[] = rawDrifts.map(d => ({ ...d, fixed: false }))
 
+      let filtered = drifts
       if (opts?.targets && opts.targets.length > 0) {
-        drifts = drifts.filter(d => opts.targets!.includes(d.resource))
+        filtered = drifts.filter(d => opts.targets!.includes(d.resource))
       }
 
       if (opts?.fix) {
-        for (const drift of drifts) {
+        for (const drift of filtered) {
           try {
             const entry = this.registry.get(drift.resource, drift.type)
             if (!entry) continue
@@ -250,7 +262,7 @@ export class ResourceManager {
 
             const manifest = await provider.resolve(parsed.value, entry.type)
             const targetDir = this.getTargetDir(entry.type)
-            const result = this.installer.install(manifest, provider, targetDir)
+            const result = await this.installer.install(manifest, provider, targetDir)
 
             this.registry.updateInstalled(drift.resource, drift.type, true, result.installPath, result.contentHash)
             this.lockManager.add({
@@ -274,11 +286,11 @@ export class ResourceManager {
           type: "skill",
           status: "success",
           caller: opts?.caller,
-          detail: `Fixed ${drifts.filter(d => d.fixed).length}/${drifts.length} drifts`,
+          detail: `Fixed ${filtered.filter(d => d.fixed).length}/${filtered.length} drifts`,
         })
       }
 
-      return { drifts, totalDrifts: drifts.length }
+      return { drifts: filtered, totalDrifts: filtered.length }
     } catch (err) {
       throw new ResourceError("SYNC_FAILED", err instanceof Error ? err.message : String(err))
     }
@@ -332,8 +344,20 @@ export class ResourceManager {
       checks.push({ name: "lock_consistency", healthy: false, detail: `Lock check failed: ${err instanceof Error ? err.message : String(err)}` })
     }
 
-    // Check 3: stale locks
-    checks.push({ name: "stale_locks", healthy: true, detail: "No stale lock files" })
+    // Check 3: stale locks (B8 fix: actual implementation instead of hardcoded stub)
+    try {
+      const resourceDir = path.dirname(this.registry.list().length > 0
+        ? (this.registry.list()[0].installPath ?? this.workspacePath)
+        : this.workspacePath)
+      const staleLocks = this.findStaleLocks(resourceDir)
+      if (staleLocks.length === 0) {
+        checks.push({ name: "stale_locks", healthy: true, detail: "No stale lock files" })
+      } else {
+        checks.push({ name: "stale_locks", healthy: false, detail: `${staleLocks.length} stale lock file(s): ${staleLocks.join(", ")}` })
+      }
+    } catch {
+      checks.push({ name: "stale_locks", healthy: true, detail: "No stale lock files" })
+    }
 
     // Check 4: cache references
     try {
@@ -368,5 +392,34 @@ export class ResourceManager {
       case "agent": return path.join(this.workspacePath, ".claude", "agents")
       case "workflow": return path.join(this.workspacePath, "workflows")
     }
+  }
+
+  /** B8 fix: scan directory for .lock files older than 30s */
+  private findStaleLocks(dir: string): string[] {
+    const stale: string[] = []
+    const STALE_THRESHOLD_MS = 30_000
+
+    const scanDir = (d: string) => {
+      if (!fs.existsSync(d)) return
+      try {
+        const entries = fs.readdirSync(d, { withFileTypes: true })
+        for (const entry of entries) {
+          if (entry.isFile() && entry.name.endsWith(".lock")) {
+            const full = path.join(d, entry.name)
+            try {
+              const stat = fs.statSync(full)
+              if (Date.now() - stat.mtimeMs > STALE_THRESHOLD_MS) {
+                stale.push(full)
+              }
+            } catch { /* skip unreadable */ }
+          } else if (entry.isDirectory() && !entry.name.startsWith(".") && entry.name !== "node_modules") {
+            scanDir(path.join(d, entry.name))
+          }
+        }
+      } catch { /* skip unreadable */ }
+    }
+
+    scanDir(dir)
+    return stale
   }
 }

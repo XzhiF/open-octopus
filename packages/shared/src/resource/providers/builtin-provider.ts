@@ -2,6 +2,8 @@ import fs from "fs"
 import path from "path"
 import type { SourceProvider } from "./types"
 import type { ResourceManifest, ResourceType } from "../types"
+import { isPathWithinBase } from "../utils"
+import { ResourceError } from "../errors"
 
 const RESOURCE_DIRS: Record<ResourceType, string> = {
   skill: "skills",
@@ -15,6 +17,9 @@ const RESOURCE_EXTENSIONS: Record<ResourceType, string> = {
   workflow: ".yaml",
 }
 
+// B5: reject names that could traverse directories
+const SAFE_NAME_RE = /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/
+
 export class BuiltinProvider implements SourceProvider {
   readonly type = "builtin" as const
   private readonly corePackPath: string
@@ -24,6 +29,11 @@ export class BuiltinProvider implements SourceProvider {
   }
 
   async resolve(ref: string, resourceType: ResourceType): Promise<ResourceManifest> {
+    // B5 fix: validate ref doesn't contain path separators or traversal sequences
+    if (!SAFE_NAME_RE.test(ref)) {
+      throw new ResourceError("INVALID_REF", `Invalid builtin resource name: '${ref}'`)
+    }
+
     const baseDir = path.join(this.corePackPath, RESOURCE_DIRS[resourceType])
 
     switch (resourceType) {
@@ -98,6 +108,11 @@ export class BuiltinProvider implements SourceProvider {
 
     if (!fs.existsSync(sourcePath)) {
       throw new Error(`Source path does not exist: ${sourcePath}`)
+    }
+
+    // B5 fix: verify resolved path is within corePackPath
+    if (!isPathWithinBase(sourcePath, this.corePackPath)) {
+      throw new ResourceError("PATH_TRAVERSAL", `Builtin source path escapes core-pack directory: ${sourcePath}`)
     }
 
     const stat = fs.statSync(sourcePath)

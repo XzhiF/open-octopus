@@ -24,11 +24,13 @@ export const RegistryEntrySchema = z.object({
   name: z.string(),
   type: ResourceTypeSchema,
   version: z.string(),
+  description: z.string().optional(),
   source: SourceRefSchema,
   installed: z.boolean().default(false),
   installPath: z.string().optional(),
   contentHash: z.string().optional(),
   dependencies: z.array(z.string()).default([]),
+  tags: z.array(z.string()).default([]),
   createdAt: z.string(),
   updatedAt: z.string(),
 })

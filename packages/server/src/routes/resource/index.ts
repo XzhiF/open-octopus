@@ -26,6 +26,7 @@ export function createResourceRoutes(getManager: () => ResourceManager): Hono {
   const isValidType = (type: string): boolean => VALID_TYPES.has(type)
 
   // ── Error helper ───────────────────────────────────────────────
+  // H6 fix: don't leak internal error details to clients
   function handleError(c: Context, err: unknown) {
     if (err instanceof ResourceError) {
       return c.json(
@@ -39,13 +40,7 @@ export function createResourceRoutes(getManager: () => ResourceManager): Hono {
         err.httpStatus as any,
       )
     }
-    const message = err instanceof Error ? err.message : String(err)
-    if (message.includes("Export limited")) {
-      return c.json(
-        { error: { code: "EXPORT_TOO_LARGE", message } },
-        413 as any,
-      )
-    }
+    // ponytail: generic 500 — never leak stack traces or internal messages
     console.error("[resource] Unexpected error:", err)
     return c.json(
       { error: { code: "INTERNAL_ERROR", message: "An unexpected error occurred" } },
@@ -90,7 +85,8 @@ export function createResourceRoutes(getManager: () => ResourceManager): Hono {
       const filter: { last?: number; action?: AuditEntry["action"]; resource?: string } = {}
       if (lastParam) {
         const n = parseInt(lastParam, 10)
-        if (Number.isFinite(n) && n > 0) filter.last = n
+        // H5 fix: cap audit limit at 1000
+        if (Number.isFinite(n) && n > 0) filter.last = Math.min(n, 1000)
       }
       if (action) filter.action = action as AuditEntry["action"]
       if (resource) filter.resource = resource
@@ -138,7 +134,7 @@ export function createResourceRoutes(getManager: () => ResourceManager): Hono {
         )
       }
       const result = await mgr.install(ref)
-      return c.json({ data: result }, 201 as any)
+      return c.json({ data: result })
     } catch (err) {
       return handleError(c, err)
     }
@@ -272,8 +268,30 @@ export function createResourceRoutes(getManager: () => ResourceManager): Hono {
         )
       }
 
+      // B3 fix: return { forward, reverse } matching web-app contract
       const order = mgr.resolver.resolveTree(name)
-      return c.json({ data: { name, type, order, depth: order.length } })
+      const reverseDeps = mgr.resolver.getReverseDeps(name)
+
+      const forward = order.map(depName => {
+        const depEntry = mgr.info(depName, type as ResourceType)
+          ?? mgr.info(depName, "skill")
+          ?? mgr.info(depName, "agent")
+          ?? mgr.info(depName, "workflow")
+        return depEntry
+          ? { name: depEntry.name, type: depEntry.type, version: depEntry.version }
+          : { name: depName, type: "skill" as ResourceType, version: "0.0.0" }
+      })
+
+      const reverse = reverseDeps.map(depName => {
+        const depEntry = mgr.info(depName, "skill")
+          ?? mgr.info(depName, "agent")
+          ?? mgr.info(depName, "workflow")
+        return depEntry
+          ? { name: depEntry.name, type: depEntry.type, version: depEntry.version }
+          : { name: depName, type: "skill" as ResourceType, version: "0.0.0" }
+      })
+
+      return c.json({ data: { forward, reverse } })
     } catch (err) {
       return handleError(c, err)
     }
