@@ -16,7 +16,7 @@ description: >
   Swarm 增强点: Host-Audit(dispatch并行扫描), Refine-Plan(debate多视角审查),
   Review(review动态路由选专家), Integrate(review集成验证)。
 
-model: opus[1m]
+model: pro-max
 engine: claude
 execution_mode: auto
 max_concurrent: 3
@@ -213,13 +213,23 @@ hooks:
         body: "📂 项目: $vars.projects | 🌿 $vars.branch\n🔴 失败节点: ${hook.failed_node_id | default:unknown}\n⏱️ 已运行: ${hook.total_duration_ms | duration}\n\n💡 原因: ${vars.failed_reason | default:${hook.error | default:未提供}}"
 
   on_complete:
-    - id: notify-complete
+    - id: notify-complete-success
       type: notify
+      condition: '$hook.final_status == "completed"'
       channel: default
       template:
         severity: info
         title: "🏁 $vars.display_name — 工作流完成"
-        body: "状态: $hook.final_status\n✅ 完成: $hook.completed_count / ⏭️ 跳过: $hook.skipped_count / ❌ 失败: $hook.failed_count / 📊 总计: $hook.total_count\n⏱️ 总耗时: ${hook.total_duration_ms | duration}"
+        body: "🎉 全部完成！\n✅ 完成: $hook.completed_count / ⏭️ 跳过: $hook.skipped_count / 📊 总计: $hook.total_count\n⏱️ 总耗时: ${hook.total_duration_ms | duration}"
+
+    - id: notify-complete-with-failures
+      type: notify
+      condition: '$hook.final_status != "completed"'
+      channel: default
+      template:
+        severity: warn
+        title: "🏁 $vars.display_name — 工作流结束"
+        body: "⚠️ 状态: $hook.final_status\n✅ 完成: $hook.completed_count / ⏭️ 跳过: $hook.skipped_count / ❌ 失败: $hook.failed_count / 📊 总计: $hook.total_count\n⏱️ 总耗时: ${hook.total_duration_ms | duration}"
 
   on_node_success:
     - id: notify-setup
@@ -233,7 +243,7 @@ hooks:
 
     - id: notify-host-audit-swarm
       type: notify
-      nodes: [host-audit-swarm]
+      nodes: [host-audit-write]
       channel: default
       template:
         severity: info
@@ -251,7 +261,7 @@ hooks:
 
     - id: notify-refine-plan-swarm
       type: notify
-      nodes: [refine-plan-swarm]
+      nodes: [refine-plan-write]
       channel: default
       template:
         severity: info
@@ -269,12 +279,120 @@ hooks:
 
     - id: notify-review-swarm
       type: notify
-      nodes: [review-swarm]
+      nodes: [review-write]
       channel: default
       template:
         severity: info
         title: "🔍 $vars.display_name — Review Swarm 完成"
         body: "🚫 Blockers: $vars.review_blockers\n👥 审查专家: $vars.review_swarm_experts\n📊 完整度: $vars.completeness_score%\n\n💡 $vars.conclusion"
+
+    - id: notify-contract
+      type: notify
+      nodes: [contract]
+      channel: default
+      template:
+        severity: info
+        title: "📝 $vars.display_name — API 契约完成"
+        body: "📄 契约: $vars.contract_file\n\n💡 $vars.conclusion"
+
+    - id: notify-backend
+      type: notify
+      nodes: [backend]
+      channel: default
+      template:
+        severity: info
+        title: "⚙️ $vars.display_name — Backend 实现完成"
+        body: "📂 项目: $vars.projects\n\n💡 $vars.conclusion"
+
+    - id: notify-frontend
+      type: notify
+      nodes: [frontend]
+      channel: default
+      template:
+        severity: info
+        title: "🎨 $vars.display_name — Frontend 实现完成"
+        body: "📂 项目: $vars.projects\n\n💡 $vars.conclusion"
+
+    - id: notify-integrate-swarm
+      type: notify
+      nodes: [integrate-write]
+      channel: default
+      template:
+        severity: info
+        title: "🔗 $vars.display_name — 集成验证完成"
+        body: "✅ 集成通过: $vars.integration_passed\n\n💡 $vars.conclusion"
+
+    - id: notify-review-fix-round
+      type: notify
+      nodes: [review-fix-round]
+      channel: default
+      template:
+        severity: info
+        title: "🔧 $vars.display_name — Review 修复"
+        body: "🚫 剩余 Blockers: $vars.review_blockers\n\n💡 $vars.conclusion"
+
+    - id: notify-e2e-setup
+      type: notify
+      nodes: [e2e-setup]
+      channel: default
+      template:
+        severity: info
+        title: "🏗️ $vars.display_name — E2E 环境就绪"
+        body: "🌐 Server: $vars.e2e_server_port | Web: $vars.e2e_web_port\n\n💡 $vars.conclusion"
+
+    - id: notify-real-e2e-ui
+      type: notify
+      nodes: [real-e2e-ui]
+      channel: default
+      template:
+        severity: info
+        title: "🖥️ $vars.display_name — 浏览器 E2E 完成"
+        body: "📊 总计: $vars.real_e2e_ui_total | 失败: $vars.real_e2e_ui_failed_list\n✅ 通过: $vars.real_e2e_ui_passed\n\n💡 $vars.conclusion"
+
+    - id: notify-e2e-completeness-round
+      type: notify
+      nodes: [e2e-completeness-round]
+      channel: default
+      template:
+        severity: info
+        title: "📊 $vars.display_name — 完整度评估"
+        body: "📊 分数: $vars.completeness_score%\n📝 缺失: ${vars.completeness_missing | default:无}\n🔄 轮次: $vars.completeness_rounds\n\n💡 $vars.conclusion"
+
+    - id: notify-e2e-fix-round
+      type: notify
+      nodes: [e2e-fix-round]
+      channel: default
+      template:
+        severity: info
+        title: "🔧 $vars.display_name — E2E 修复"
+        body: "P0 通过: $vars.e2e_p0_passed | P1 通过: $vars.e2e_p1_passed\n✅ 全部通过: $vars.e2e_fix_all_passed\n\n💡 $vars.conclusion"
+
+    - id: notify-e2e-reality-check
+      type: notify
+      nodes: [e2e-reality-check]
+      channel: default
+      template:
+        severity: info
+        title: "⚖️ $vars.display_name — 反假跑裁判"
+        body: "💡 $vars.conclusion"
+
+    - id: notify-e2e-reality-merge
+      type: notify
+      nodes: [e2e-reality-merge]
+      channel: default
+      template:
+        severity: info
+        title: "📋 $vars.display_name — 裁判批注合并"
+        body: "🔍 已验证: $vars.e2e_reality_verified | ⚠️ 假通过: $vars.e2e_reality_issues\n\n💡 $vars.conclusion"
+
+    - id: notify-pre-pr-cleanup
+      type: notify
+      nodes: [pre-pr-cleanup]
+      channel: default
+      template:
+        severity: info
+        title: "🧹 $vars.display_name — PR 前清理完成"
+        body: "📊 范围越界: $vars.scope_leak_count | 契约违反: $vars.host_contract_violations\n\n💡 $vars.conclusion"
 
     - id: notify-e2e-cases
       type: notify
@@ -571,7 +689,7 @@ nodes:
     context_tier: "200k"
 
     expert_defaults:
-      model: sonnet
+      model: pro
       tools: ["Read", "Write", "Grep", "Glob"]
 
     experts:
@@ -640,7 +758,7 @@ nodes:
 
     host:
       role: audit-host
-      model: sonnet
+      model: pro
       prompt: |
         综合 contract-synthesizer 的输出，确认 host-contract.md 已生成。
         简要总结宿主项目技术栈。
@@ -782,7 +900,7 @@ nodes:
     context_tier: "200k"
 
     expert_defaults:
-      model: opus[1m]
+      model: pro-max
       tools: ["Read", "Grep", "Glob"]
 
     experts:
@@ -824,7 +942,7 @@ nodes:
 
     host:
       role: plan-review-host
-      model: opus[1m]
+      model: pro-max
       prompt: |
         综合所有专家对实现计划的审查意见，产出修正后的计划审查报告。
 
@@ -882,7 +1000,7 @@ nodes:
       code-quality-advisor:
         description: "代码质量顾问"
         agent_file: ".claude/agents/engineering-code-reviewer.md"
-        model: sonnet
+        model: pro
         tools: ["Read", "Grep", "Glob"]
     prompt: |
       使用 subagent-driven-development 按实现计划生成所有交付物。
@@ -970,7 +1088,7 @@ nodes:
     context_tier: "200k"
 
     expert_defaults:
-      model: opus[1m]
+      model: pro-max
       tools: ["Bash", "Read", "Grep", "Glob"]
 
     experts:
@@ -1006,7 +1124,7 @@ nodes:
 
     host:
       role: integrate-host
-      model: opus[1m]
+      model: pro-max
       prompt: |
         综合三位专家的集成验证结果。
         1. 列出所有不一致项
@@ -1066,7 +1184,7 @@ nodes:
     context_tier: "200k"
 
     expert_defaults:
-      model: opus[1m]
+      model: pro-max
 
     experts:
       - role: code-reviewer
@@ -1141,7 +1259,7 @@ nodes:
 
     host:
       role: review-host
-      model: opus[1m]
+      model: pro-max
       prompt: |
         综合所有专家的审查意见，产出最终审查报告。
 
@@ -1214,6 +1332,13 @@ nodes:
           4. git add -A && git commit -m "fix: review 第 $iteration 轮修复"
           5. 重新统计剩余 BLOCKER 数量
 
+          ### 发送通知
+          ```bash
+          octopus notify --ignore-failure \
+            --title "🔧 $vars.display_name — Review 修复第 $iteration 轮" \
+            --body "剩余 Blockers: <新数量>\n💡 <修复了什么>"
+          ```
+
           ## 输出
           {"vars_update":{"review_blockers":"<剩余BLOCKER数>","conclusion":"第 $iteration 轮: 修复 N 个 BLOCKER，剩余 M 个"}}
 
@@ -1229,7 +1354,7 @@ nodes:
       api-tester:
         description: "API 测试架构师 — 将抽象验收用例绑定到可执行脚本"
         agent_file: ".claude/agents/testing-api-tester.md"
-        model: sonnet
+        model: pro
         tools: ["Read", "Write", "Edit", "Grep", "Glob"]
     prompt: |
       你是 E2E 用例绑定工程师。将上游 prd-forge 产出的抽象验收用例绑定到可执行脚本。
@@ -1336,7 +1461,7 @@ nodes:
       browser-tester:
         description: "浏览器 E2E 测试员"
         agent_file: ".claude/agents/testing-qa-engineer.md"
-        model: sonnet
+        model: pro
         tools: ["Read", "Grep", "Glob", "Bash"]
         prompt: |
           你是浏览器 E2E 测试执行者。测试分配给你的 ui_state 类用例。
@@ -1402,13 +1527,13 @@ nodes:
 
               ### 3. 轮次对比（round > 1 时）
               - 本轮新增通过 / 本轮退步 / 累计进展
-            model: sonnet
+            model: pro
             tools: ["Bash", "Read", "Grep", "Glob"]
 
           api-tester:
             description: "API 测试员 — 重测修复后的用例"
             agent_file: ".claude/agents/testing-api-tester.md"
-            model: sonnet
+            model: pro
             tools: ["Bash", "Read", "Write", "Edit", "Grep", "Glob"]
         prompt: |
           你是产品完整度修复工程师。这是第 $iteration 轮（上限 $inputs.completeness_max_rounds）。
@@ -1423,6 +1548,13 @@ nodes:
           A. 评估 — 委派 assessor 逐 Story 验证
           B. 退出判定: R1 达标(100%) / R3 卡死(连续3轮无变化)
           C. 修复 — 选取高优先级缺失项修复 → build → commit → 重测
+
+          ### 发送通知
+          ```bash
+          octopus notify --ignore-failure \
+            --title "📊 $vars.display_name — 完整度第 $iteration 轮" \
+            --body "分数: <新分数>%\n缺失: <剩余缺失项>"
+          ```
 
           ## 输出
           {"vars_update":{"completeness_score":"<总分>","completeness_must_have_score":"<必需分>","completeness_exit_code":"<R1/R3/空>","completeness_rounds":"$iteration","completeness_score_n1":"<本轮分>","completeness_score_n2":"$vars.completeness_score_n1","completeness_missing":"<缺失>","completeness_passed":"<true仅R1>","conclusion":"第 $iteration 轮"}}
@@ -1442,22 +1574,22 @@ nodes:
           diagnostician:
             description: "深度诊断分析员"
             agent_file: ".claude/agents/engineering-software-architect.md"
-            model: sonnet
+            model: pro
             tools: ["Bash", "Read", "Grep", "Glob"]
           code-reviewer:
             description: "代码审查员 — 验证修复质量"
             agent_file: ".claude/agents/engineering-code-reviewer.md"
-            model: sonnet
+            model: pro
             tools: ["Bash", "Read", "Grep", "Glob"]
           api-tester:
             description: "API 测试员 — 重测"
             agent_file: ".claude/agents/testing-api-tester.md"
-            model: sonnet
+            model: pro
             tools: ["Bash", "Read", "Write", "Edit", "Grep", "Glob"]
           browser-tester:
             description: "浏览器测试员 — 重测 UI"
             agent_file: ".claude/agents/testing-qa-engineer.md"
-            model: sonnet
+            model: pro
             tools: ["Bash", "Read", "Grep", "Glob"]
         prompt: |
           你是 E2E 修复工程师。第 $iteration 轮（上限 $inputs.e2e_fix_rounds）。
@@ -1477,6 +1609,13 @@ nodes:
           ⛔ Server 重启只允许 kill $vars.e2e_dev_pid
           ⛔ 禁止跳过/排除用例
 
+          ### 发送通知
+          ```bash
+          octopus notify --ignore-failure \
+            --title "🔧 $vars.display_name — E2E 修复第 $iteration 轮" \
+            --body "P0 通过: <N> | P1 通过: <N>\n全部通过: <true/false>"
+          ```
+
           ## 输出
           {"vars_update":{"e2e_p0_passed":"<通过数>","e2e_p1_passed":"<通过数>","e2e_skipped":"0","e2e_excluded":"0","e2e_fix_all_passed":"<true/false>","e2e_fix_rounds":"$iteration","conclusion":"第 $iteration 轮"}}
 
@@ -1485,17 +1624,24 @@ nodes:
         depends_on: [e2e-fix-round]
         timeout: 1800
         context: new
-        model: sonnet
+        model: pro
         agents:
           reality-checker:
             description: "反假跑裁判 — 默认 NEEDS WORK"
             agent_file: ".claude/agents/testing-reality-checker.md"
-            model: sonnet
+            model: pro
             tools: ["Bash", "Read", "Grep"]
         prompt: |
           你是 E2E 反假跑裁判。第 $iteration 轮。每轮独立评估。
           检查所有 passed 用例是否有真实证据（非 mock/stub/空跑）。
           写入 $vars.output_dir/e2e-reality-findings.json。
+
+          ### 发送通知
+          ```bash
+          octopus notify --ignore-failure \
+            --title "⚖️ $vars.display_name — 反假跑裁判第 $iteration 轮" \
+            --body "verified <N> / fake_pass <M>"
+          ```
 
           ## 输出
           {"vars_update":{"conclusion":"第 $iteration 轮: verified N / fake_pass M"}}
@@ -1508,6 +1654,13 @@ nodes:
         prompt: |
           你是裁判批注合并器。将本轮 findings 与累积 notes 合并。
           写入 $vars.output_dir/e2e-reality-notes.json。
+
+          ### 发送通知
+          ```bash
+          octopus notify --ignore-failure \
+            --title "📋 $vars.display_name — 裁判批注合并" \
+            --body "verified=$VERIFIED fake=$FAKE"
+          ```
 
           ## 输出
           {"vars_update":{"e2e_reality_issues":"<fake_pass总数>","e2e_reality_verified":"<verified总数>","conclusion":"合并: verified=$VERIFIED fake=$FAKE"}}

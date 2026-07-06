@@ -12,7 +12,7 @@ description: >
   Setup → Clarify → Locked-Scope → Discover-Swarm → Define-Swarm
   → Acceptance-Cases → Design-Swarm → UI/UX-Swarm → Completeness-Swarm → Output。
 
-model: opus[1m]
+model: pro-max
 engine: claude
 execution_mode: serial
 timeout: 86400
@@ -130,13 +130,23 @@ hooks:
         body: "📝 Idea: $inputs.idea\n🔴 失败节点: ${hook.failed_node_id | default:unknown}\n⏱️ 已运行: ${hook.total_duration_ms | duration}\n\n💡 错误: ${hook.error | default:Unknown error}"
 
   on_complete:
-    - id: notify-complete
+    - id: notify-complete-success
       type: notify
+      condition: '$hook.final_status == "completed"'
       channel: default
       template:
         severity: info
         title: "🏁 $vars.display_name — 工作流完成"
-        body: "状态: $hook.final_status\n✅ 完成: $hook.completed_count / ⏭️ 跳过: $hook.skipped_count / ❌ 失败: $hook.failed_count / 📊 总计: $hook.total_count\n⏱️ 总耗时: ${hook.total_duration_ms | duration}"
+        body: "🎉 全部完成！\n✅ 完成: $hook.completed_count / ⏭️ 跳过: $hook.skipped_count / 📊 总计: $hook.total_count\n⏱️ 总耗时: ${hook.total_duration_ms | duration}"
+
+    - id: notify-complete-with-failures
+      type: notify
+      condition: '$hook.final_status != "completed"'
+      channel: default
+      template:
+        severity: warn
+        title: "🏁 $vars.display_name — 工作流结束"
+        body: "⚠️ 状态: $hook.final_status\n✅ 完成: $hook.completed_count / ⏭️ 跳过: $hook.skipped_count / ❌ 失败: $hook.failed_count / 📊 总计: $hook.total_count\n⏱️ 总耗时: ${hook.total_duration_ms | duration}"
 
   on_node_success:
     - id: notify-setup
@@ -159,7 +169,7 @@ hooks:
 
     - id: notify-discover-swarm
       type: notify
-      nodes: [discover-swarm]
+      nodes: [discover-write]
       channel: default
       template:
         severity: info
@@ -168,7 +178,7 @@ hooks:
 
     - id: notify-define-swarm
       type: notify
-      nodes: [define-swarm]
+      nodes: [define-write]
       channel: default
       template:
         severity: info
@@ -177,7 +187,7 @@ hooks:
 
     - id: notify-design-swarm
       type: notify
-      nodes: [design-swarm]
+      nodes: [design-write]
       channel: default
       template:
         severity: info
@@ -186,21 +196,21 @@ hooks:
 
     - id: notify-uiux-swarm
       type: notify
-      nodes: [uiux-swarm]
+      nodes: [uiux-write]
       channel: default
       template:
         severity: info
         title: "🎨 $vars.display_name — UI/UX Swarm 完成"
-        body: "📄 UI 规范: $vars.ui_file\n📄 UX 交互: $vars.ux_file\n👥 专家数: $vars.uiux_swarm_experts\n\n💡 $vars.conclusion"
+        body: "📄 UI 规范: $vars.ui_file\n📄 UX 交互: $vars.ux_file\n👥 专家数: $vars.uiux_swarm_experts\n📊 页面数: $vars.ui_pages_count\n\n💡 $vars.conclusion"
 
     - id: notify-completeness-swarm
       type: notify
-      nodes: [completeness-swarm]
+      nodes: [completeness-write]
       channel: default
       template:
         severity: info
         title: "✅ $vars.display_name — Completeness Swarm 完成"
-        body: "📊 覆盖: $vars.completeness_score\n📝 缺失: ${vars.completeness_missing | default:无}\n🔍 审查分数: $vars.completeness_swarm_score\n\n💡 $vars.conclusion"
+        body: "📊 覆盖: $vars.completeness_score\n📝 缺失: ${vars.completeness_missing | default:无}\n🔍 审查分: $vars.completeness_swarm_score\n✅ 通过: $vars.completeness_passed\n\n💡 $vars.conclusion"
 
     - id: notify-output
       type: notify
@@ -419,7 +429,7 @@ nodes:
     context_tier: "200k"
 
     expert_defaults:
-      model: opus[1m]
+      model: pro-max
       tools: ["Read", "Grep", "Glob", "Write"]
 
     experts:
@@ -460,7 +470,7 @@ nodes:
 
     host:
       role: discovery-host
-      model: opus[1m]
+      model: pro-max
       prompt: |
         综合所有专家的需求发现意见，产出最终的需求发现文档。
 
@@ -527,7 +537,7 @@ nodes:
     context_tier: "200k"
 
     expert_defaults:
-      model: opus[1m]
+      model: pro-max
       tools: ["Read", "Grep", "Glob", "Write"]
 
     experts:
@@ -582,7 +592,7 @@ nodes:
 
     host:
       role: define-host
-      model: opus[1m]
+      model: pro-max
       prompt: |
         综合所有专家的需求定义意见，产出最终的需求定义文档。
 
@@ -691,7 +701,7 @@ nodes:
     context_tier: "1m"
 
     expert_defaults:
-      model: opus[1m]
+      model: pro-max
       tools: ["Read", "Grep", "Glob", "Write"]
 
     experts:
@@ -752,7 +762,7 @@ nodes:
 
     host:
       role: design-host
-      model: opus[1m]
+      model: pro-max
       prompt: |
         综合所有专家的技术方案意见，产出最终的技术方案文档。
 
@@ -813,7 +823,7 @@ nodes:
     context_tier: "200k"
 
     expert_defaults:
-      model: opus[1m]
+      model: pro-max
       tools: ["Read", "Write", "Grep", "Glob"]
 
     experts:
@@ -858,7 +868,7 @@ nodes:
 
     host:
       role: uiux-host
-      model: opus[1m]
+      model: pro-max
       prompt: |
         综合所有专家的 UI/UX 意见，产出两份文档内容。
 
@@ -924,7 +934,7 @@ nodes:
     context_tier: "1m"
 
     expert_defaults:
-      model: opus[1m]
+      model: pro-max
       tools: ["Read", "Grep"]
 
     experts:
@@ -984,7 +994,7 @@ nodes:
 
     host:
       role: completeness-host
-      model: opus[1m]
+      model: pro-max
       prompt: |
         综合所有专家的完整性审查结果，产出最终的完整性审查报告。
 
