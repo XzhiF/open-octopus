@@ -66,7 +66,7 @@ export async function installResource(org: string, ref: string): Promise<Install
   const res = await apiFetch(`${base()}/install?${orgParam(org)}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ ref, scope: "org" }),
+    body: JSON.stringify({ ref, scope: "org", caller: "ui" }),
   })
   return handleResponse<InstallResponse>(res)
 }
@@ -75,7 +75,7 @@ export async function uninstallResource(org: string, name: string, type: string)
   const res = await apiFetch(`${base()}/uninstall?${orgParam(org)}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ name, type }),
+    body: JSON.stringify({ name, type, caller: "ui" }),
   })
   return handleResponse<UninstallResponse>(res)
 }

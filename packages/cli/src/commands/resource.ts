@@ -16,7 +16,8 @@ async function apiRequest<T>(
   org: string,
   body?: unknown,
 ): Promise<T> {
-  const url = `${resolveServerUrl()}/api/resources${path}?org=${encodeURIComponent(org)}`
+  const sep = path.includes("?") ? "&" : "?"
+  const url = `${resolveServerUrl()}/api/resources${path}${sep}org=${encodeURIComponent(org)}`
   const headers: Record<string, string> = {}
   if (body !== undefined) {
     headers["Content-Type"] = "application/json"
@@ -111,7 +112,7 @@ resourceCmd
   .option("--query <q>", "按名称搜索")
   .action(async (options: { type?: string; query?: string }) => {
     const org = resolveCurrentOrg()
-    let path = "/"
+    let path = ""
     const params = new URLSearchParams()
     if (options.type) params.set("type", options.type)
     if (options.query) params.set("query", options.query)
@@ -193,7 +194,7 @@ resourceCmd
     if (options.action) params.set("action", options.action)
 
     const data = await apiRequest<{
-      records: Array<{ timestamp: string; action: string; resourceName: string; resourceType: string; source: string; caller: string }>
+      records: Array<{ timestamp: string; action: string; resource_name: string; resource_type: string; source: string; caller: string }>
     }>("GET", `/audit?${params}`, org)
 
     if (!data.records?.length) {
@@ -209,7 +210,7 @@ resourceCmd
     )
     for (const r of data.records) {
       console.log(
-        `${pad(formatDate(r.timestamp), cols.time)}${pad(r.action, cols.action)}${pad(r.resourceName, cols.name)}${pad(r.resourceType, cols.type)}${pad(r.source, cols.source)}${pad(r.caller, cols.caller)}`,
+        `${pad(formatDate(r.timestamp), cols.time)}${pad(r.action, cols.action)}${pad(r.resource_name, cols.name)}${pad(r.resource_type, cols.type)}${pad(r.source, cols.source)}${pad(r.caller, cols.caller)}`,
       )
     }
   })

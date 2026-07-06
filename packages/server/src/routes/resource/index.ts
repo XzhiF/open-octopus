@@ -124,7 +124,7 @@ export function createResourceRoutes(
     const refName = parsed.data.ref.replace(/^[^:]+:/, "")
     const result = await withResourceLock(`${o}:${refName}`, async () => {
       try {
-        return await manager.install({ ...parsed.data, caller: "ui" })
+        return await manager.install(parsed.data)
       } catch (err) { mapError(err) }
     })
 
@@ -146,7 +146,7 @@ export function createResourceRoutes(
 
     const result = await withResourceLock(`${o}:${parsed.data.name}`, async () => {
       try {
-        return await manager.uninstall({ ...parsed.data, caller: "ui" })
+        return await manager.uninstall(parsed.data)
       } catch (err) { mapError(err) }
     })
 
