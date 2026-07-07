@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useEffect, useCallback } from "react"
+import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Card } from "@/components/ui/card"
@@ -13,12 +14,64 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { Package, FolderGit2, FolderOpen, RefreshCw } from "lucide-react"
-import { listSources, installFromSource } from "@/lib/resource/api"
+import { Package, FolderGit2, FolderOpen, RefreshCw, Loader2 } from "lucide-react"
+import { listSources, installFromSource, installResource } from "@/lib/resource/api"
 import { useResourceOrg } from "./resource-context"
-import { PageState } from "./PageState"
+import { toast } from "sonner"
 
 type SourceTab = "builtin" | "git" | "local"
+
+function RefInstallForm({ org, placeholder, tabLabel }: { org: string; placeholder: string; tabLabel: string }) {
+  const router = useRouter()
+  const [ref, setRef] = useState("")
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const handleInstall = async () => {
+    if (!ref.trim()) return
+    setLoading(true)
+    setError(null)
+    try {
+      await installResource(org, ref.trim())
+      toast.success(`${tabLabel}资源 ${ref.trim()} 安装成功`)
+      setRef("")
+      router.refresh()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "安装失败")
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <Card className="space-y-4 p-4">
+      <div className="space-y-2">
+        <Label htmlFor={`${tabLabel}-ref`}>来源引用</Label>
+        <Input
+          id={`${tabLabel}-ref`}
+          placeholder={placeholder}
+          value={ref}
+          onChange={(e) => setRef(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter" && ref.trim()) handleInstall() }}
+        />
+      </div>
+
+      {error && (
+        <div
+          role="alert"
+          className="rounded border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive"
+        >
+          {error}
+        </div>
+      )}
+
+      <Button onClick={handleInstall} disabled={loading || !ref.trim()}>
+        {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+        安装
+      </Button>
+    </Card>
+  )
+}
 
 export function SourceInstallTab() {
   const org = useResourceOrg()
@@ -40,7 +93,7 @@ export function SourceInstallTab() {
       const res = await listSources(org)
       setSources(res.sources)
     } catch {
-      // Silently ignore — sources list will be empty
+      // ponytail: silent — empty list is acceptable fallback
     }
   }, [org])
 
@@ -59,9 +112,9 @@ export function SourceInstallTab() {
         all: true,
       })
       setResult(res)
+      toast.success(`从 ${selectedSource} 安装了 ${res.installed} 个资源`)
     } catch (err) {
-      // eslint-disable-next-line no-console
-      console.error("Install failed:", err)
+      toast.error(err instanceof Error ? err.message : "安装失败")
     } finally {
       setLoading(false)
     }
@@ -145,18 +198,18 @@ export function SourceInstallTab() {
       )}
 
       {activeTab === "builtin" && (
-        <PageState
-          status="empty"
-          title="内置资源"
-          description="使用 CLI 安装: octopus resource install builtin:<name>"
+        <RefInstallForm
+          org={org}
+          placeholder="builtin:brainstorming"
+          tabLabel="内置"
         />
       )}
 
       {activeTab === "local" && (
-        <PageState
-          status="empty"
-          title="本地路径"
-          description="使用 CLI 安装: octopus resource install local:<path>"
+        <RefInstallForm
+          org={org}
+          placeholder="local:/path/to/skill"
+          tabLabel="本地"
         />
       )}
     </div>

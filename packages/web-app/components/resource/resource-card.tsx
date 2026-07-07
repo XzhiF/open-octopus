@@ -40,22 +40,21 @@ export function ResourceCard({ entry, onUninstall }: ResourceCardProps) {
             <Icon className="h-5 w-5 text-muted-foreground" />
           </div>
           <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-2">
-              <Link
-                href={`/resources/${entry.type}/${entry.name}`}
-                className="font-semibold text-foreground hover:text-primary truncate"
-              >
-                {entry.name}
-              </Link>
+            <Link
+              href={`/resources/${entry.type}/${entry.name}`}
+              className="block font-semibold text-foreground hover:text-primary truncate"
+              title={entry.name}
+            >
+              {entry.name}
+            </Link>
+            <div className="mt-1.5 flex items-center gap-2 text-xs text-muted-foreground">
               <Badge variant="outline" className={cn("shrink-0", typeBadge({ type: entry.type as ResourceType }))}>
                 {entry.type}
               </Badge>
-            </div>
-            <div className="mt-2 flex items-center gap-3 text-xs text-muted-foreground">
               {(entry as any).group && (
                 <Badge variant="outline" className="shrink-0 text-[10px] px-1.5">{(entry as any).group}</Badge>
               )}
-              <span className="truncate">{entry.source}: {entry.ref}</span>
+              <span className="truncate" title={`${entry.source}: ${entry.ref}`}>{entry.source}: {entry.ref}</span>
             </div>
           </div>
         </div>

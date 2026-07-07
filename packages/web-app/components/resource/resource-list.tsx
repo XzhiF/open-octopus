@@ -5,6 +5,7 @@ import { cn } from "@/lib/utils"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
+import { Checkbox } from "@/components/ui/checkbox"
 import { Search, RefreshCw, ChevronDown, ChevronUp } from "lucide-react"
 import { ResourceCard } from "./resource-card"
 import { PageState } from "./PageState"
@@ -25,15 +26,29 @@ export function ResourceList() {
   const org = useResourceOrg()
   const [typeFilter, setTypeFilter] = useState<ResourceType | "all">("all")
   const [query, setQuery] = useState("")
-  const [selectedGroups, setSelectedGroups] = useState<Set<string>>(new Set())
+  const [selectedGroups, setSelectedGroups] = useState<Set<string> | null>(null)
   const [groupsExpanded, setGroupsExpanded] = useState(false)
   const [uninstallTarget, setUninstallTarget] = useState<{ name: string; type: ResourceType } | null>(null)
   const [uninstalling, setUninstalling] = useState(false)
 
-  const { resources: entries, total, loading, error, refresh } = useResourceList(org, {
-    type: typeFilter === "all" ? undefined : typeFilter,
+  // Always fetch all types — filter client-side so counts stay accurate
+  const { resources: allEntries, loading, error, refresh } = useResourceList(org, {
     query: query || undefined,
   })
+
+  // Type counts from full dataset
+  const counts = useMemo(() => ({
+    all: allEntries.length,
+    skill: allEntries.filter((e) => e.type === "skill").length,
+    agent: allEntries.filter((e) => e.type === "agent").length,
+    workflow: allEntries.filter((e) => e.type === "workflow").length,
+  }), [allEntries])
+
+  // Apply type filter
+  const entries = useMemo(() => {
+    if (typeFilter === "all") return allEntries
+    return allEntries.filter((e) => e.type === typeFilter)
+  }, [allEntries, typeFilter])
 
   // Extract unique groups with counts
   const groups = useMemo(() => {
@@ -47,12 +62,12 @@ export function ResourceList() {
       .sort((a, b) => b.count - a.count)
   }, [entries])
 
-  // Initialize selected groups to all on first load
+  // null = uninitialized (show all). Empty Set = user explicitly deselected all.
   const activeGroups = useMemo(() => {
-    if (selectedGroups.size === 0 && groups.length > 0) {
+    if (selectedGroups === null && groups.length > 0) {
       return new Set(groups.map((g) => g.name))
     }
-    return selectedGroups
+    return selectedGroups ?? new Set<string>()
   }, [selectedGroups, groups])
 
   // Filter entries by selected groups
@@ -62,7 +77,8 @@ export function ResourceList() {
   }, [entries, activeGroups, groups])
 
   const handleGroupToggle = (group: string) => {
-    const next = new Set(activeGroups)
+    const base = selectedGroups ?? new Set(groups.map((g) => g.name))
+    const next = new Set(base)
     if (next.has(group)) {
       next.delete(group)
     } else {
@@ -91,13 +107,6 @@ export function ResourceList() {
     } finally {
       setUninstalling(false)
     }
-  }
-
-  const counts = {
-    all: entries.length,
-    skill: entries.filter((e) => e.type === "skill").length,
-    agent: entries.filter((e) => e.type === "agent").length,
-    workflow: entries.filter((e) => e.type === "workflow").length,
   }
 
   const GROUP_COLLAPSE_THRESHOLD = 5
@@ -145,35 +154,42 @@ export function ResourceList() {
       </div>
 
       {/* Group filter */}
-      {groups.length > 1 && (
-        <div className="mb-4 rounded-lg border border-border bg-muted/30 p-3">
+      {groups.length > 0 && (
+        <div className="mb-4 rounded-lg border border-border bg-card p-3">
           <div className="mb-2 flex items-center justify-between">
-            <span className="text-xs font-medium text-muted-foreground">组过滤</span>
-            <div className="flex gap-2">
-              <button onClick={handleSelectAll} className="text-xs text-primary hover:underline">全选</button>
-              <span className="text-xs text-muted-foreground">|</span>
-              <button onClick={handleSelectNone} className="text-xs text-primary hover:underline">全不选</button>
+            <span className="text-sm font-medium text-foreground">分组</span>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={handleSelectAll}
+                className="text-xs text-muted-foreground hover:text-primary transition-colors"
+              >
+                全选
+              </button>
+              <button
+                onClick={handleSelectNone}
+                className="text-xs text-muted-foreground hover:text-primary transition-colors"
+              >
+                清除
+              </button>
             </div>
           </div>
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             {visibleGroups.map((g) => (
               <label
                 key={g.name}
                 className={cn(
-                  "inline-flex cursor-pointer items-center gap-1.5 rounded-full border px-3 py-1 text-xs transition-colors",
+                  "inline-flex cursor-pointer items-center gap-2 rounded-md border px-3 py-1.5 text-sm transition-colors",
                   activeGroups.has(g.name)
-                    ? "border-primary bg-primary/10 text-foreground"
-                    : "border-border bg-background text-muted-foreground hover:border-primary/50"
+                    ? "border-primary bg-primary/5 text-foreground"
+                    : "border-border bg-background text-muted-foreground hover:border-primary/40"
                 )}
               >
-                <input
-                  type="checkbox"
+                <Checkbox
                   checked={activeGroups.has(g.name)}
-                  onChange={() => handleGroupToggle(g.name)}
-                  className="sr-only"
+                  onCheckedChange={() => handleGroupToggle(g.name)}
                 />
-                {g.name}
-                <Badge variant="secondary" className="ml-0.5 h-4 px-1 text-[10px]">
+                <span>{g.name}</span>
+                <Badge variant="secondary" className="h-5 px-1.5 text-[11px]">
                   {g.count}
                 </Badge>
               </label>
@@ -181,9 +197,9 @@ export function ResourceList() {
             {groups.length > GROUP_COLLAPSE_THRESHOLD && (
               <button
                 onClick={() => setGroupsExpanded(!groupsExpanded)}
-                className="inline-flex items-center gap-1 rounded-full border border-dashed border-border px-3 py-1 text-xs text-muted-foreground hover:text-foreground"
+                className="inline-flex items-center gap-1 rounded-md border border-dashed border-border px-3 py-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors"
               >
-                {groupsExpanded ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+                {groupsExpanded ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
                 {groupsExpanded ? "收起" : `+${groups.length - GROUP_COLLAPSE_THRESHOLD} 更多`}
               </button>
             )}

@@ -3,11 +3,8 @@
 import { usePathname, useRouter, useSearchParams } from "next/navigation"
 import { cn } from "@/lib/utils"
 import { Package, ScrollText, FolderOpen, FolderGit2 } from "lucide-react"
-import { Button } from "@/components/ui/button"
 import { ResourceProvider } from "./resource-context"
-import { InstallDialog } from "./install-dialog"
 import { Toaster } from "@/components/ui/sonner"
-import { useState } from "react"
 
 const TABS = [
   { id: "list", label: "资源列表", icon: Package },
@@ -22,12 +19,11 @@ export function ResourceLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter()
   const pathname = usePathname()
   const searchParams = useSearchParams()
-  const [installOpen, setInstallOpen] = useState(false)
 
   // Detail page — no tab nav
   const isDetailPage = pathname.match(/^\/resources\/[^/]+\/[^/]+$/)
 
-  // If on a legacy route (/resources/audit, /resources/trust), map to tab
+  // If on a legacy route (/resources/audit), map to tab
   let activeTab: TabId = (searchParams.get("tab") as TabId) || "list"
   if (pathname === "/resources/audit") activeTab = "audit"
 
@@ -40,19 +36,11 @@ export function ResourceLayout({ children }: { children: React.ReactNode }) {
   return (
     <ResourceProvider>
       <div className="mx-auto max-w-7xl px-4 py-6 lg:px-8">
-        <div className="mb-6 flex items-start justify-between">
-          <div>
-            <h1 className="text-2xl font-bold tracking-tight">资源管理</h1>
-            <p className="mt-1 text-sm text-muted-foreground">
-              管理平台 Skills、Agents、Workflows 资产
-            </p>
-          </div>
-          {!isDetailPage && (
-            <Button size="sm" onClick={() => setInstallOpen(true)} aria-label="安装资源">
-              <FolderOpen className="mr-1.5 h-4 w-4" />
-              安装
-            </Button>
-          )}
+        <div className="mb-6">
+          <h1 className="text-2xl font-bold tracking-tight">资源管理</h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            管理平台 Skills、Agents、Workflows 资产
+          </p>
         </div>
 
         {!isDetailPage && (
@@ -87,7 +75,6 @@ export function ResourceLayout({ children }: { children: React.ReactNode }) {
         </div>
       </div>
 
-      <InstallDialog open={installOpen} onOpenChange={setInstallOpen} />
       <Toaster position="top-right" />
     </ResourceProvider>
   )
