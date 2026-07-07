@@ -52,6 +52,9 @@ export function ResourceCard({ entry, onUninstall }: ResourceCardProps) {
               </Badge>
             </div>
             <div className="mt-2 flex items-center gap-3 text-xs text-muted-foreground">
+              {(entry as any).group && (
+                <Badge variant="outline" className="shrink-0 text-[10px] px-1.5">{(entry as any).group}</Badge>
+              )}
               <span className="truncate">{entry.source}: {entry.ref}</span>
             </div>
           </div>
