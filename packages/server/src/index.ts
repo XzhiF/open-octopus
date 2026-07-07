@@ -320,7 +320,7 @@ app.route("/api/review", createReviewRoutes(reviewService, d.pendingReview))
 
 // Archive routes — execution result summarization + rule proposal
 const stateDir = path.join(process.env.HOME ?? "~", ".octopus", "state")
-app.route("/api/archive", createArchiveRoutes(d.pendingReview, stateDir))
+app.route("/api/archive", createArchiveRoutes(d.pendingReview, stateDir, d.archive))
 
 // Set scheduler on agent service
 try { getAgentService().setSchedulerService(schedSvc) } catch {}

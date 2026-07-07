@@ -2,13 +2,78 @@ import { Hono } from "hono"
 import fs from "fs"
 import path from "path"
 import type { PendingReviewDAO } from "../db/dao"
+import type { ArchiveDAO } from "../db/dao/archive-dao"
 import { isValidUUID, errorResponse } from "../services/knowledge/validators"
 
 export function createArchiveRoutes(
   pendingReviewDAO: PendingReviewDAO,
   stateDir: string,
+  archiveDAO?: ArchiveDAO,
 ): Hono {
   const routes = new Hono()
+
+  // GET /api/archive/stats
+  routes.get("/stats", (c) => {
+    if (!archiveDAO) return c.json({ error: { code: "SUBSYSTEM_UNAVAILABLE", message: "Archive DAO not available" } }, 503)
+    const org = c.req.query("org") || undefined
+    const workspaceId = c.req.query("workspace_id") || undefined
+    try {
+      const stats = archiveDAO.getStats(org, workspaceId)
+      return c.json(stats)
+    } catch (err) {
+      const { body, status } = errorResponse(err, "archive.stats")
+      return c.json(body, status)
+    }
+  })
+
+  // GET /api/archive/cost-trends
+  routes.get("/cost-trends", (c) => {
+    if (!archiveDAO) return c.json({ error: { code: "SUBSYSTEM_UNAVAILABLE", message: "Archive DAO not available" } }, 503)
+    const org = c.req.query("org") || ""
+    const period = (c.req.query("period") || "30d") as '7d' | '30d' | '90d'
+    const workflowName = c.req.query("workflow_name") || undefined
+    if (!['7d', '30d', '90d'].includes(period)) {
+      return c.json({ error: { code: "INVALID_PARAM", message: "period must be 7d, 30d, or 90d" } }, 400)
+    }
+    try {
+      const data = archiveDAO.getCostTrends(org, period, workflowName)
+      return c.json({ period, data })
+    } catch (err) {
+      const { body, status } = errorResponse(err, "archive.costTrends")
+      return c.json(body, status)
+    }
+  })
+
+  // GET /api/archive/workflow-stats
+  routes.get("/workflow-stats", (c) => {
+    if (!archiveDAO) return c.json({ error: { code: "SUBSYSTEM_UNAVAILABLE", message: "Archive DAO not available" } }, 503)
+    const org = c.req.query("org") || undefined
+    try {
+      const data = archiveDAO.getWorkflowStats(org)
+      return c.json({ data })
+    } catch (err) {
+      const { body, status } = errorResponse(err, "archive.workflowStats")
+      return c.json(body, status)
+    }
+  })
+
+  // GET /api/archive/leaderboard
+  routes.get("/leaderboard", (c) => {
+    if (!archiveDAO) return c.json({ error: { code: "SUBSYSTEM_UNAVAILABLE", message: "Archive DAO not available" } }, 503)
+    const org = c.req.query("org") || ""
+    const metric = (c.req.query("metric") || "cost") as 'cost' | 'duration' | 'frequency'
+    const limit = Math.min(50, Math.max(1, parseInt(c.req.query("limit") || "10", 10)))
+    if (!['cost', 'duration', 'frequency'].includes(metric)) {
+      return c.json({ error: { code: "INVALID_PARAM", message: "metric must be cost, duration, or frequency" } }, 400)
+    }
+    try {
+      const data = archiveDAO.getLeaderboard(org, metric, limit)
+      return c.json({ metric, limit, data })
+    } catch (err) {
+      const { body, status } = errorResponse(err, "archive.leaderboard")
+      return c.json(body, status)
+    }
+  })
 
   // GET /api/archive/:id/summary — read execution result from state file
   routes.get("/:id/summary", (c) => {

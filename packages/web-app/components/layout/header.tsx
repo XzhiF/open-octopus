@@ -12,6 +12,7 @@ import {
   Bell,
   Activity,
   BrainCircuit,
+  BarChart3,
 } from "lucide-react"
 
 const navigation = [
@@ -19,6 +20,7 @@ const navigation = [
   { name: "工作空间", href: "/workspaces", icon: FolderKanban },
   { name: "系统调度", href: "/scheduler", icon: Clock },
   { name: "Agent", href: "/agent", icon: BrainCircuit },
+  { name: "Loop Dashboard", href: "/loop-dashboard", icon: BarChart3 },
 ]
 
 export function Header() {
