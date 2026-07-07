@@ -35,6 +35,15 @@ export function copyDirSync(src: string, dest: string): number {
     if (entry.isDirectory()) {
       count += copyDirSync(srcPath, destPath)
     } else {
+      // Re-check with lstatSync immediately before copy to narrow TOCTOU window.
+      // lstatSync does not follow symlinks, so isSymbolicLink() catches late swaps.
+      const preStat = fs.lstatSync(srcPath)
+      if (preStat.isSymbolicLink()) {
+        throw new ResourceError(
+          "SYMLINK_REJECTED",
+          `Symlinks not allowed in resource directory: ${entry.name}`
+        )
+      }
       fs.copyFileSync(srcPath, destPath)
       count++
     }
@@ -64,13 +73,23 @@ export function listFilesRecursive(dir: string, prefix = ""): string[] {
 }
 
 /**
- * Generate SHA256 hash from file manifest.
+ * Generate SHA256 hash from file or directory contents (not just names).
+ * For a single file: hashes file content directly.
+ * For a directory: includes both relative path and file content for each file,
+ * so any content modification changes the hash.
  */
-export function generateFileHash(dir: string): string {
+export function generateFileHash(dirOrFile: string): string {
+  const stat = fs.statSync(dirOrFile)
+  if (stat.isFile()) {
+    const hash = crypto.createHash("sha256")
+    hash.update(fs.readFileSync(dirOrFile))
+    return hash.digest("hex").slice(0, 16)
+  }
   const hash = crypto.createHash("sha256")
-  const files = listFilesRecursive(dir).sort()
+  const files = listFilesRecursive(dirOrFile).sort()
   for (const f of files) {
     hash.update(f)
+    hash.update(fs.readFileSync(path.join(dirOrFile, f)))
   }
   return hash.digest("hex").slice(0, 16)
 }

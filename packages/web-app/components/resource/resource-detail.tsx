@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useState } from "react"
 import { useParams, useRouter } from "next/navigation"
 import Link from "next/link"
 import { Button } from "@/components/ui/button"
@@ -19,11 +19,12 @@ import {
   AlertTriangle,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
-import { getResource, uninstallResource } from "@/lib/resource/api"
+import { uninstallResource } from "@/lib/resource/api"
 import { toast } from "sonner"
-import type { ResourceEntry, ResourceType } from "@/lib/resource/types"
+import type { ResourceType } from "@/lib/resource/types"
 import { useResourceOrg } from "./resource-context"
 import { UninstallConfirm } from "./UninstallConfirm"
+import { useResourceDetail } from "@/hooks/use-resource-detail"
 
 const typeIcon = { skill: BrainCircuit, agent: Cog, workflow: Workflow }
 
@@ -34,19 +35,9 @@ export function ResourceDetail() {
   const type = params.type as string
   const name = params.name as string
 
-  const [entry, setEntry] = useState<ResourceEntry | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
+  const { resource: entry, loading, error } = useResourceDetail(org, type, name)
   const [showUninstall, setShowUninstall] = useState(false)
   const [uninstalling, setUninstalling] = useState(false)
-
-  useEffect(() => {
-    if (!type || !name) return
-    getResource(org, type, name)
-      .then(setEntry)
-      .catch((err) => setError(err.message))
-      .finally(() => setLoading(false))
-  }, [type, name])
 
   const handleUninstall = async () => {
     if (!entry) return

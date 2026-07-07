@@ -102,3 +102,69 @@ export async function getAuditLog(org: string, opts?: { last?: number; action?: 
   const res = await apiFetch(`${base()}/audit?${qs}`)
   return handleResponse(res)
 }
+
+// ============ Sources ============
+
+export async function listSources(org: string): Promise<{
+  sources: Array<{
+    name: string; url: string; branch: string
+    resourceCount: { skills: number; agents: number; workflows: number }
+    addedAt: string; lastUpdated: string; cachePath: string; trusted: boolean
+  }>; total: number
+}> {
+  const res = await apiFetch(`${base()}/source/list?${orgParam(org)}`)
+  return handleResponse(res)
+}
+
+export async function getSource(org: string, name: string): Promise<{
+  name: string; url: string; branch: string
+  resourceCount: { skills: number; agents: number; workflows: number }
+  addedAt: string; lastUpdated: string; cachePath: string; trusted: boolean
+}> {
+  const res = await apiFetch(`${base()}/source/${encodeURIComponent(name)}?${orgParam(org)}`)
+  return handleResponse(res)
+}
+
+export async function addSource(org: string, url: string, name?: string, branch?: string): Promise<{
+  name: string; url: string; branch: string
+  resourceCount: { skills: number; agents: number; workflows: number }
+  addedAt: string; trusted: boolean
+}> {
+  const res = await apiFetch(`${base()}/source/add?${orgParam(org)}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ url, name, branch: branch ?? "main", caller: "ui" }),
+  })
+  return handleResponse(res)
+}
+
+export async function updateSource(org: string, name: string): Promise<{
+  name: string; url: string; branch: string
+  resourceCount: { skills: number; agents: number; workflows: number }
+  addedAt: string; trusted: boolean
+}> {
+  const res = await apiFetch(`${base()}/source/update?${orgParam(org)}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name, caller: "ui" }),
+  })
+  return handleResponse(res)
+}
+
+export async function removeSource(org: string, name: string): Promise<{ name: string; status: string }> {
+  const res = await apiFetch(`${base()}/source/${encodeURIComponent(name)}?${orgParam(org)}`, {
+    method: "DELETE",
+  })
+  return handleResponse(res)
+}
+
+export async function analyzeSource(org: string, url: string): Promise<{
+  resources: Array<{ name: string; type: string; path: string }>
+}> {
+  const res = await apiFetch(`${base()}/source/analyze?${orgParam(org)}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ url }),
+  })
+  return handleResponse(res)
+}

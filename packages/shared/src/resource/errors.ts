@@ -32,6 +32,7 @@ export type ResourceErrorCode =
   | "SOURCE_NOT_FOUND"
   | "SOURCE_ALREADY_EXISTS"
   | "SOURCE_NOT_TRUSTED"
+  | "SOURCE_SYNC_FAILED"
 
 const STATUS_MAP: Record<ResourceErrorCode, number> = {
   RESOURCE_NOT_FOUND: 404,
@@ -65,6 +66,7 @@ const STATUS_MAP: Record<ResourceErrorCode, number> = {
   SOURCE_NOT_FOUND: 404,
   SOURCE_ALREADY_EXISTS: 409,
   SOURCE_NOT_TRUSTED: 403,
+  SOURCE_SYNC_FAILED: 500,
 }
 
 const DEFAULT_SUGGESTIONS: Record<ResourceErrorCode, string> = {
@@ -99,6 +101,7 @@ const DEFAULT_SUGGESTIONS: Record<ResourceErrorCode, string> = {
   SOURCE_NOT_FOUND: "Source not found. Use 'octopus resource source list' to see available.",
   SOURCE_ALREADY_EXISTS: "Source already added. Use 'octopus resource source update' to refresh.",
   SOURCE_NOT_TRUSTED: "Source not in allowlist. Use 'octopus resource source add' to trust.",
+  SOURCE_SYNC_FAILED: "Failed to sync source. Check network connectivity and repository status.",
 }
 
 export class ResourceError extends Error {

@@ -29,6 +29,12 @@ parsers.set("local", (namePart) => ({
   raw: `local:${namePart}`,
 }))
 
+parsers.set("git", (namePart) => ({
+  source: "git",
+  name: namePart,
+  raw: `git:${namePart}`,
+}))
+
 export function parseRef(ref: string): ParsedRef {
   if (!REF_RE.test(ref)) {
     throw new ResourceError("INVALID_REF", `Invalid ref: ${ref}`)

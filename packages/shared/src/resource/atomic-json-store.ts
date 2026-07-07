@@ -49,6 +49,14 @@ export class AtomicJsonStore<T extends { version: number }> {
           return structuredClone(this.defaultData)
         }
 
+        // Detect old format (plain array) and auto-migrate to new schema
+        if (this.isLegacyFormat(primaryErr, bakErr)) {
+          console.warn(
+            `[AtomicJsonStore] Legacy format detected, resetting to defaults: ${this.filePath}`,
+          )
+          return structuredClone(this.defaultData)
+        }
+
         // At least one file exists but is corrupt — data loss risk
         throw new ResourceError(
           "REGISTRY_CORRUPT",
@@ -68,9 +76,11 @@ export class AtomicJsonStore<T extends { version: number }> {
       fs.mkdirSync(dir, { recursive: true })
     }
 
-    // Backup current file
+    // Backup current file atomically: write .bak.tmp then rename
     if (fs.existsSync(this.filePath)) {
-      fs.copyFileSync(this.filePath, this.bakPath)
+      const bakTmp = this.bakPath + ".tmp"
+      fs.copyFileSync(this.filePath, bakTmp)
+      fs.renameSync(bakTmp, this.bakPath)
     }
 
     const tmpPath = this.filePath + ".tmp"
@@ -90,5 +100,19 @@ export class AtomicJsonStore<T extends { version: number }> {
 
   getPath(): string {
     return this.filePath
+  }
+
+  /** Detect if schema validation failed because data is a plain array (old format) */
+  private isLegacyFormat(primaryErr: unknown, bakErr: unknown): boolean {
+    const isLegacy = (err: unknown): boolean => {
+      if (err && typeof err === "object" && "issues" in err) {
+        const issues = (err as { issues: Array<{ code: string; path: (string | number)[]; message: string }> }).issues
+        return issues.some(
+          (issue) => issue.path.length === 0 && issue.code === "invalid_type" && issue.message.includes("array"),
+        )
+      }
+      return false
+    }
+    return isLegacy(primaryErr) || isLegacy(bakErr)
   }
 }

@@ -97,14 +97,24 @@ export class RegistryStore {
     return this.load().resources.length
   }
 
-  stats(): { total: number; byType: Record<string, number>; installed: number } {
+  stats(): {
+    total: number
+    byType: Record<string, number>
+    bySource: Record<string, number>
+    byStatus: Record<string, number>
+    installed: number
+  } {
     const data = this.load()
     const byType: Record<string, number> = {}
+    const bySource: Record<string, number> = {}
+    const byStatus: Record<string, number> = {}
     let installed = 0
     for (const r of data.resources) {
       byType[r.type] = (byType[r.type] ?? 0) + 1
+      bySource[r.source] = (bySource[r.source] ?? 0) + 1
+      byStatus[r.status] = (byStatus[r.status] ?? 0) + 1
       if (r.installed) installed++
     }
-    return { total: data.resources.length, byType, installed }
+    return { total: data.resources.length, byType, bySource, byStatus, installed }
   }
 }

@@ -3,6 +3,7 @@
 import { useSearchParams } from "next/navigation"
 import { ResourceList } from "@/components/resource/resource-list"
 import { AuditLog } from "@/components/resource/audit-log"
+import { SourceList } from "@/components/resource/source-list"
 import { Suspense } from "react"
 
 export default function ResourcesPage() {
@@ -13,6 +14,8 @@ export default function ResourcesPage() {
     <Suspense>
       {tab === "audit" ? (
         <AuditLog />
+      ) : tab === "sources" ? (
+        <SourceList />
       ) : (
         <ResourceList />
       )}

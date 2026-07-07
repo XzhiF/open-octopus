@@ -8,7 +8,7 @@ import { RegistryStore } from "./registry-store"
 import { LockManager } from "./lock-manager"
 import { BuiltinProvider } from "./builtin-provider"
 import { LocalProvider } from "./local-provider"
-import { isPathWithinBase, listFilesRecursive } from "./fs-utils"
+import { isPathWithinBase, listFilesRecursive, generateFileHash } from "./fs-utils"
 import { PostInstallVerifier, PostUninstallVerifier } from "./verifier"
 import { AuditWriter } from "./audit-writer"
 import { SourceManager } from "./source-manager"
@@ -366,6 +366,153 @@ export class ResourceManager extends EventEmitter {
 
   getSourceManager(): SourceManager {
     return this.sourceManager
+  }
+
+  // ── Source Install ──────────────────────────────────────────
+
+  installFromSource(
+    sourceName: string,
+    group: string,
+    resources: Array<{ type: ResourceType; name: string; path: string }>,
+    caller: ResourceAuditCaller,
+  ): { installed: number; skipped: number } {
+    let installed = 0
+    let skipped = 0
+
+    for (const res of resources) {
+      const { cachePath } = this.sourceManager.getResourceFromSource(sourceName, res.path)
+      const installPath = this.getInstallPath(res.type, res.name, group)
+
+      // Skip if already installed
+      const existing = this.registry.get(res.type, res.name)
+      if (existing?.installed) {
+        skipped++
+        continue
+      }
+
+      // Copy from cache — handle single files (agents) vs directories (skills)
+      let hash: string
+      let fileCount: number
+      const cacheStat = fs.statSync(cachePath)
+      if (cacheStat.isFile()) {
+        fs.mkdirSync(installPath, { recursive: true })
+        fs.copyFileSync(cachePath, path.join(installPath, path.basename(cachePath)))
+        fileCount = 1
+        hash = generateFileHash(installPath)
+      } else {
+        const result = this.local.install(cachePath, installPath)
+        fileCount = result.fileCount
+        hash = result.hash
+      }
+
+      const entry: ResourceEntry = {
+        name: res.name,
+        type: res.type,
+        source: "git",
+        ref: `git:${sourceName}/${res.path}`,
+        group,
+        installed: true,
+        verified: true,
+        status: "installed",
+        installedAt: new Date().toISOString(),
+        scope: "org",
+        installPath,
+        dependsOn: [],
+        sourceHash: hash,
+      }
+      this.registry.upsert(entry)
+      this.lock.upsert({
+        name: res.name,
+        type: res.type,
+        hash,
+        lockedAt: new Date().toISOString(),
+        installPath,
+        fileCount,
+      })
+      installed++
+    }
+
+    this.audit.append(
+      "source_install",
+      { name: sourceName, type: "skill" as ResourceType, source: "git" },
+      caller,
+      { group, installed, skipped, total: resources.length },
+    )
+
+    return { installed, skipped }
+  }
+
+  // ── Source Sync ─────────────────────────────────────────────
+
+  syncSource(sourceName: string, caller: ResourceAuditCaller): {
+    sourceName: string
+    updated: number
+    added: number
+    removed: number
+    unchanged: number
+  } {
+    const syncResult = this.sourceManager.sync(sourceName, caller)
+    const discovered = syncResult.newResources
+    const group = sourceName
+
+    const installed = this.registry.list({}).filter(
+      (r) => r.group === group && r.source === "git",
+    )
+
+    let updated = 0
+    let added = 0
+    let removed = 0
+    let unchanged = 0
+
+    const discoveredMap = new Map(discovered.map((d) => [`${d.type}:${d.name}`, d]))
+    const installedMap = new Map(installed.map((i) => [`${i.type}:${i.name}`, i]))
+
+    for (const [key, disc] of discoveredMap) {
+      const inst = installedMap.get(key)
+      if (!inst) {
+        added++
+        continue
+      }
+
+      const { cachePath } = this.sourceManager.getResourceFromSource(sourceName, disc.path)
+      const newHash = generateFileHash(cachePath)
+
+      if (newHash !== inst.sourceHash) {
+        const cacheStat = fs.statSync(cachePath)
+        if (cacheStat.isFile()) {
+          fs.mkdirSync(inst.installPath, { recursive: true })
+          fs.copyFileSync(cachePath, path.join(inst.installPath, path.basename(cachePath)))
+        } else {
+          this.local.install(cachePath, inst.installPath)
+        }
+        const updatedEntry: ResourceEntry = {
+          ...inst,
+          sourceHash: generateFileHash(inst.installPath),
+          syncedAt: new Date().toISOString(),
+        }
+        this.registry.upsert(updatedEntry)
+        updated++
+      } else {
+        unchanged++
+      }
+    }
+
+    for (const [key, inst] of installedMap) {
+      if (!discoveredMap.has(key)) {
+        const orphanEntry: ResourceEntry = { ...inst, status: "orphan" }
+        this.registry.upsert(orphanEntry)
+        removed++
+      }
+    }
+
+    this.audit.append(
+      "source_sync",
+      { name: sourceName, type: "skill" as ResourceType, source: "git" },
+      caller,
+      { updated, added, removed, unchanged },
+    )
+
+    return { sourceName, updated, added, removed, unchanged }
   }
 
   // ── Health ────────────────────────────────────────────────────

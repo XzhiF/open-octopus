@@ -18,6 +18,10 @@ export type {
   VerifyResult,
   VerifyStepResult,
   BuiltinCatalogEntry,
+  SourceEntry,
+  SourceAddRequest,
+  SourceAddResponse,
+  SourceUpdateRequest,
 } from "@octopus/shared"
 
 // Web-app specific query params (not in shared — UI concern)

@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useCallback } from "react"
+import { useState } from "react"
 import { cn } from "@/lib/utils"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
@@ -8,9 +8,10 @@ import { Search, RefreshCw } from "lucide-react"
 import { ResourceCard } from "./resource-card"
 import { PageState } from "./PageState"
 import { UninstallConfirm } from "./UninstallConfirm"
-import { listResources, uninstallResource } from "@/lib/resource/api"
-import type { ResourceEntry, ResourceType } from "@/lib/resource/types"
+import { uninstallResource } from "@/lib/resource/api"
+import type { ResourceType } from "@/lib/resource/types"
 import { useResourceOrg } from "./resource-context"
+import { useResourceList } from "@/hooks/use-resource-list"
 
 const TYPE_FILTERS: Array<{ label: string; value: ResourceType | "all" }> = [
   { label: "全部", value: "all" },
@@ -21,36 +22,15 @@ const TYPE_FILTERS: Array<{ label: string; value: ResourceType | "all" }> = [
 
 export function ResourceList() {
   const org = useResourceOrg()
-  const [entries, setEntries] = useState<ResourceEntry[]>([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
   const [typeFilter, setTypeFilter] = useState<ResourceType | "all">("all")
   const [query, setQuery] = useState("")
-  const [total, setTotal] = useState(0)
   const [uninstallTarget, setUninstallTarget] = useState<{ name: string; type: ResourceType } | null>(null)
   const [uninstalling, setUninstalling] = useState(false)
 
-  const fetchResources = useCallback(async () => {
-    setLoading(true)
-    setError(null)
-    try {
-      const res = await listResources(org, {
-        type: typeFilter === "all" ? undefined : typeFilter,
-        query: query || undefined,
-      })
-      setEntries(res.resources)
-      setTotal(res.total)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "加载失败")
-      setEntries([])
-    } finally {
-      setLoading(false)
-    }
-  }, [typeFilter, query])
-
-  useEffect(() => {
-    fetchResources()
-  }, [fetchResources])
+  const { resources: entries, total, loading, error, refresh } = useResourceList(org, {
+    type: typeFilter === "all" ? undefined : typeFilter,
+    query: query || undefined,
+  })
 
   const handleUninstallConfirm = async () => {
     if (!uninstallTarget) return
@@ -58,7 +38,7 @@ export function ResourceList() {
     try {
       await uninstallResource(org, uninstallTarget.name, uninstallTarget.type)
       setUninstallTarget(null)
-      fetchResources()
+      refresh()
     } catch {
       // Error handled by PageState on next fetch
     } finally {
@@ -108,7 +88,7 @@ export function ResourceList() {
               aria-label="搜索资源"
             />
           </div>
-          <Button variant="outline" size="icon" onClick={fetchResources} disabled={loading} aria-label="刷新">
+          <Button variant="outline" size="icon" onClick={refresh} disabled={loading} aria-label="刷新">
             <RefreshCw className={cn("h-4 w-4", loading && "animate-spin")} />
           </Button>
         </div>
@@ -118,7 +98,7 @@ export function ResourceList() {
       {loading && entries.length === 0 ? (
         <PageState status="loading" />
       ) : error ? (
-        <PageState status="error" message={error} onRetry={fetchResources} />
+        <PageState status="error" message={error} onRetry={refresh} />
       ) : entries.length === 0 ? (
         <PageState
           status="empty"

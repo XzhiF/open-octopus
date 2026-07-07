@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState } from "react"
 import { cn } from "@/lib/utils"
 import { Card } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -14,38 +14,19 @@ import {
 } from "@/components/ui/select"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { ScrollText, Download, RefreshCw } from "lucide-react"
-import { getAuditLog } from "@/lib/resource/api"
-import type { ResourceAuditRecord } from "@/lib/resource/types"
 import { useResourceOrg } from "./resource-context"
 import { PageState } from "./PageState"
+import { useAuditLog } from "@/hooks/use-audit-log"
 
 export function AuditLog() {
   const org = useResourceOrg()
-  const [entries, setEntries] = useState<ResourceAuditRecord[]>([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
   const [last, setLast] = useState(50)
   const [actionFilter, setActionFilter] = useState<string>("all")
 
-  const fetchAudit = async () => {
-    setLoading(true)
-    setError(null)
-    try {
-      const res = await getAuditLog(org, {
-        last,
-        action: actionFilter === "all" ? undefined : actionFilter,
-      })
-      setEntries(res.records)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "加载审计日志失败")
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  useEffect(() => {
-    fetchAudit()
-  }, [last, actionFilter])
+  const { records: entries, loading, error, refresh } = useAuditLog(org, {
+    last,
+    action: actionFilter,
+  })
 
   const handleExport = () => {
     const blob = new Blob([JSON.stringify(entries, null, 2)], { type: "application/json" })
@@ -90,7 +71,7 @@ export function AuditLog() {
           </Select>
         </div>
         <div className="flex-1" />
-        <Button variant="outline" size="sm" onClick={fetchAudit} disabled={loading} aria-label="刷新审计日志">
+        <Button variant="outline" size="sm" onClick={refresh} disabled={loading} aria-label="刷新审计日志">
           <RefreshCw className={cn("mr-1.5 h-3.5 w-3.5", loading && "animate-spin")} />
           刷新
         </Button>
@@ -104,7 +85,7 @@ export function AuditLog() {
       {loading && entries.length === 0 ? (
         <PageState status="loading" />
       ) : error ? (
-        <PageState status="error" message={error} onRetry={fetchAudit} />
+        <PageState status="error" message={error} onRetry={refresh} />
       ) : entries.length === 0 ? (
         <PageState status="empty" title="暂无审计日志" icon={ScrollText} />
       ) : (

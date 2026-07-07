@@ -5,6 +5,8 @@ import {
   ResourceError,
   InstallRequestSchema,
   UninstallRequestSchema,
+  SourceAddRequestSchema,
+  SourceUpdateRequestSchema,
   type ResourceType,
 } from "@octopus/shared"
 import type { ResourceManager } from "@octopus/shared"
@@ -12,6 +14,7 @@ import {
   requireJsonContentType,
   validateTypeParam,
   validateNameParam,
+  validateOrgParam,
   withResourceLock,
   withErrorCatch,
 } from "./middleware"
@@ -36,7 +39,8 @@ export function createResourceRoutes(
   // ── Helpers ──────────────────────────────────────────────────────────────
 
   function org(c: Context): string {
-    return (c.req.query("org") as string) || "default"
+    const raw = (c.req.query("org") as string) || "default"
+    return validateOrgParam(raw)
   }
 
   /**
@@ -151,6 +155,80 @@ export function createResourceRoutes(
     })
 
     return c.json(result)
+  }))
+
+  // ── Source management routes (must be before /:type/:name) ───────────────
+
+  // ── POST /source/add — Add collection source ─────────────────────────────
+  app.post("/source/add", withErrorCatch(async (c) => {
+    const o = org(c)
+    const sm = getManager(o).getSourceManager()
+    const body = await c.req.json()
+    const parsed = SourceAddRequestSchema.safeParse(body)
+    if (!parsed.success) {
+      throw new ResourceError("INVALID_REF", parsed.error.issues[0]?.message ?? "Invalid request")
+    }
+    const result = await withResourceLock(`${o}:source:add`, async () => {
+      return sm.add(parsed.data)
+    })
+    return c.json(result)
+  }))
+
+  // ── GET /source/list — List collection sources ───────────────────────────
+  app.get("/source/list", withErrorCatch(async (c) => {
+    const sm = getManager(org(c)).getSourceManager()
+    const sources = sm.list()
+    return c.json({ sources, total: sources.length })
+  }))
+
+  // ── POST /source/update — Update collection source ───────────────────────
+  app.post("/source/update", withErrorCatch(async (c) => {
+    const o = org(c)
+    const sm = getManager(o).getSourceManager()
+    const body = await c.req.json()
+    const parsed = SourceUpdateRequestSchema.safeParse(body)
+    if (!parsed.success) {
+      throw new ResourceError("INVALID_NAME", parsed.error.issues[0]?.message ?? "Invalid request")
+    }
+    const result = await withResourceLock(`${o}:source:${parsed.data.name}`, async () => {
+      return sm.update(parsed.data)
+    })
+    return c.json(result)
+  }))
+
+  // ── POST /source/analyze — Preview source without installing ─────────────
+  app.post("/source/analyze", withErrorCatch(async (c) => {
+    const sm = getManager(org(c)).getSourceManager()
+    const body = await c.req.json()
+    if (!body.url) {
+      throw new ResourceError("INVALID_REF", "URL is required")
+    }
+    const result = sm.analyze(body.url)
+    return c.json(result)
+  }))
+
+  // ── GET /source/:name — Source detail ────────────────────────────────────
+  app.get("/source/:name", withErrorCatch(async (c) => {
+    const sm = getManager(org(c)).getSourceManager()
+    const name = c.req.param("name")
+    validateNameParam(name)
+    const source = sm.get(name)
+    if (!source) {
+      throw new ResourceError("SOURCE_NOT_FOUND", `Source ${name} not found`)
+    }
+    return c.json(source)
+  }))
+
+  // ── DELETE /source/:name — Remove collection source ──────────────────────
+  app.delete("/source/:name", withErrorCatch(async (c) => {
+    const o = org(c)
+    const sm = getManager(o).getSourceManager()
+    const name = c.req.param("name")
+    validateNameParam(name)
+    await withResourceLock(`${o}:source:${name}`, async () => {
+      sm.remove(name, "ui")
+    })
+    return c.json({ name, status: "removed" })
   }))
 
   // ── GET /:type/:name — Detail ────────────────────────────────────────────

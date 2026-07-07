@@ -142,8 +142,8 @@ test.describe("Audit schema validation", () => {
       {
         timestamp: "2026-07-07T05:00:00Z",
         action: "install",
-        resourceName: "test",
-        resourceType: "skill",
+        resource_name: "test",
+        resource_type: "skill",
         source: "builtin",
         caller: "cli",
       },

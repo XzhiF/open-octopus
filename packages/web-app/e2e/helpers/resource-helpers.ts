@@ -72,7 +72,7 @@ export async function listResourcesViaApi(org: string): Promise<Array<{ name: st
 
 /** Assert audit records match expected schema shape */
 export function assertAuditSchema(records: Array<Record<string, unknown>>): void {
-  const required = ["timestamp", "action", "resourceName", "resourceType", "source", "caller"]
+  const required = ["timestamp", "action", "resource_name", "resource_type", "source", "caller"]
   for (const r of records) {
     for (const key of required) {
       if (!(key in r)) throw new Error(`Audit record missing ${key}: ${JSON.stringify(r)}`)

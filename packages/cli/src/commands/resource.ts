@@ -151,7 +151,7 @@ resourceCmd
     const org = resolveCurrentOrg()
     // If type not given, try common types
     const types = options.type ? [options.type] : ["skill", "agent", "workflow"]
-    let detail: { name: string; type: string; source: string; status: string; installedAt?: string; installPath?: string; dependencies?: string[]; metadata?: Record<string, unknown> } | undefined
+    let detail: { name: string; type: string; source: string; status: string; installedAt?: string; installPath?: string; dependsOn?: string[] } | undefined
 
     for (const t of types) {
       try {
@@ -173,13 +173,7 @@ resourceCmd
     console.log(chalk.bold(`Status:      `) + detail.status)
     if (detail.installPath) console.log(chalk.bold(`Install Path:`) + detail.installPath)
     if (detail.installedAt) console.log(chalk.bold(`Installed At:`) + formatDate(detail.installedAt))
-    if (detail.dependencies?.length) console.log(chalk.bold(`Dependencies:`) + detail.dependencies.join(", "))
-    if (detail.metadata && Object.keys(detail.metadata).length > 0) {
-      console.log(chalk.bold(`Metadata:`))
-      for (const [k, v] of Object.entries(detail.metadata)) {
-        console.log(`  ${k}: ${v}`)
-      }
-    }
+    if (detail.dependsOn?.length) console.log(chalk.bold(`Dependencies:`) + detail.dependsOn.join(", "))
   })
 
 // --- audit ---
@@ -282,4 +276,140 @@ resourceCmd
       console.log(chalk.bold("By source:"))
       for (const [k, v] of Object.entries(data.bySource)) console.log(`  ${k}: ${v}`)
     }
+  })
+
+// ── source subcommand group ─────────────────────────────────────────────────
+
+const sourceCmd = resourceCmd
+  .command("source")
+  .description("管理集合源 (git repositories)")
+
+// --- source add ---
+sourceCmd
+  .command("add")
+  .description("添加集合源 (git clone + discover)")
+  .argument("<url>", "Git URL (https://github.com/...)")
+  .option("--name <name>", "自定义源名称")
+  .option("--branch <branch>", "Git branch", "main")
+  .action(async (url: string, options: { name?: string; branch: string }) => {
+    const org = resolveCurrentOrg()
+    const result = await apiRequest<{
+      name: string; url: string
+      resourceCount: { skills: number; agents: number; workflows: number }
+    }>("POST", "/source/add", org, { url, name: options.name, branch: options.branch })
+
+    console.log(chalk.green(`✓ Added source: ${result.name}`))
+    console.log(chalk.dim(`  URL: ${result.url}`))
+    const { skills, agents, workflows } = result.resourceCount
+    console.log(chalk.dim(`  Resources: ${skills} skills, ${agents} agents, ${workflows} workflows`))
+    console.log(chalk.dim(`  Install: octopus resource install git:${result.name}/<resource-path>`))
+  })
+
+// --- source list ---
+sourceCmd
+  .command("list")
+  .description("列出已添加的集合源")
+  .action(async () => {
+    const org = resolveCurrentOrg()
+    const data = await apiRequest<{
+      sources: Array<{ name: string; url: string; resourceCount: { skills: number; agents: number; workflows: number }; lastUpdated: string; trusted: boolean }>
+    }>("GET", "/source/list", org)
+
+    if (!data.sources?.length) {
+      console.log("No sources added.")
+      return
+    }
+
+    const cols = { name: 24, url: 50, resources: 20, updated: 20, trusted: 8 }
+    console.log(
+      chalk.dim(
+        `${pad("NAME", cols.name)}${pad("URL", cols.url)}${pad("RESOURCES", cols.resources)}${pad("UPDATED", cols.updated)}${pad("TRUSTED", cols.trusted)}`,
+      ),
+    )
+    for (const s of data.sources) {
+      const r = `${s.resourceCount.agents}a ${s.resourceCount.skills}s`
+      const t = s.trusted ? chalk.green("yes") : chalk.red("no")
+      console.log(
+        `${pad(s.name, cols.name)}${pad(s.url, cols.url)}${pad(r, cols.resources)}${pad(formatDate(s.lastUpdated), cols.updated)}${pad(t, cols.trusted)}`,
+      )
+    }
+  })
+
+// --- source update ---
+sourceCmd
+  .command("update")
+  .description("更新集合源 (git pull + re-discover)")
+  .argument("<name>", "源名称")
+  .action(async (name: string) => {
+    const org = resolveCurrentOrg()
+    const result = await apiRequest<{
+      name: string; resourceCount: { skills: number; agents: number; workflows: number }
+    }>("POST", "/source/update", org, { name })
+
+    console.log(chalk.green(`✓ Updated: ${result.name}`))
+    const { skills, agents, workflows } = result.resourceCount
+    console.log(chalk.dim(`  ${skills} skills, ${agents} agents, ${workflows} workflows`))
+  })
+
+// --- source remove ---
+sourceCmd
+  .command("remove")
+  .description("移除集合源")
+  .argument("<name>", "源名称")
+  .action(async (name: string) => {
+    const org = resolveCurrentOrg()
+    await apiRequest("DELETE", `/source/${encodeURIComponent(name)}`, org)
+    console.log(chalk.green(`✓ Removed: ${name}`))
+    console.log(chalk.yellow("  Note: Already installed resources remain installed."))
+  })
+
+// --- source analyze ---
+sourceCmd
+  .command("analyze")
+  .description("预览集合源资源 (不安装)")
+  .argument("<url>", "Git URL")
+  .action(async (url: string) => {
+    const org = resolveCurrentOrg()
+    const data = await apiRequest<{
+      resources: Array<{ name: string; type: string; path: string }>
+    }>("POST", "/source/analyze", org, { url })
+
+    if (!data.resources?.length) {
+      console.log("No resources discovered.")
+      return
+    }
+
+    console.log(chalk.bold(`Discovered ${data.resources.length} resource(s):`))
+    const cols = { name: 30, type: 10, path: 50 }
+    console.log(
+      chalk.dim(`${pad("NAME", cols.name)}${pad("TYPE", cols.type)}${pad("PATH", cols.path)}`),
+    )
+    for (const r of data.resources) {
+      console.log(`${pad(r.name, cols.name)}${pad(r.type, cols.type)}${pad(r.path, cols.path)}`)
+    }
+  })
+
+// --- source info ---
+sourceCmd
+  .command("info")
+  .description("查看集合源详情")
+  .argument("<name>", "源名称")
+  .action(async (name: string) => {
+    const org = resolveCurrentOrg()
+    const s = await apiRequest<{
+      name: string; url: string; branch: string; addedAt: string; lastUpdated: string
+      cachePath: string; trusted: boolean
+      resourceCount: { skills: number; agents: number; workflows: number }
+    }>("GET", `/source/${encodeURIComponent(name)}`, org)
+
+    console.log(chalk.bold("Name:         ") + s.name)
+    console.log(chalk.bold("URL:          ") + s.url)
+    console.log(chalk.bold("Branch:       ") + s.branch)
+    console.log(chalk.bold("Added:        ") + formatDate(s.addedAt))
+    console.log(chalk.bold("Updated:      ") + formatDate(s.lastUpdated))
+    console.log(chalk.bold("Cache:        ") + s.cachePath)
+    console.log(chalk.bold("Trusted:      ") + (s.trusted ? chalk.green("yes") : chalk.red("no")))
+    console.log(chalk.bold("Skills:       ") + s.resourceCount.skills)
+    console.log(chalk.bold("Agents:       ") + s.resourceCount.agents)
+    console.log(chalk.bold("Workflows:    ") + s.resourceCount.workflows)
   })
