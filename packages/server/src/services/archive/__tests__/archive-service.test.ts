@@ -165,7 +165,7 @@ describe("ArchiveService", () => {
 
       // Archive status set to 'archived'
       const ws = workspaceDAO.findById("ws-1")
-      expect((ws as any).archive_status).toBe("archived")
+      expect(ws!.archive_status).toBe("archived")
     })
 
     it("returns not found for nonexistent workspace", async () => {
@@ -198,7 +198,7 @@ describe("ArchiveService", () => {
 
       // archive_status should be 'archiving' (set outside the rolled-back transaction)
       const ws = workspaceDAO.findById("ws-1")
-      expect((ws as any).archive_status).toBe("archiving")
+      expect(ws!.archive_status).toBe("archiving")
     })
 
     it("rolls back on partial failure (ArchivePartialFailure)", async () => {
@@ -227,7 +227,7 @@ describe("ArchiveService", () => {
 
       // archive_status set to 'archiving' post-rollback
       const ws = workspaceDAO.findById("ws-1")
-      expect((ws as any).archive_status).toBe("archiving")
+      expect(ws!.archive_status).toBe("archiving")
     })
   })
 })

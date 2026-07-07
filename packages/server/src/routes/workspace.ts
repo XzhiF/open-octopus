@@ -6,7 +6,7 @@ import { parseManifest } from "@octopus/shared"
 import { readFileSync, existsSync, readdirSync } from "fs"
 import { join } from "path"
 import os from "os"
-import { getArchiveService } from "../services/archive/archive-service"
+import { getArchiveService, ArchivePartialFailure } from "../services/archive/archive-service"
 
 export function createWorkspaceRoutes(workspaceService: WorkspaceService, orgDAO: OrgDAO, workspaceDAO: WorkspaceDAO): Hono {
   const workspaceRoutes = new Hono()
@@ -137,7 +137,7 @@ export function createWorkspaceRoutes(workspaceService: WorkspaceService, orgDAO
     const id = c.req.param("id")
     const ws = workspaceDAO.findById(id)
     if (!ws) return c.json({ error: { code: "NOT_FOUND", message: "Workspace not found" } }, 404)
-    if ((ws as any).archive_status !== "archiving") {
+    if (ws.archive_status !== "archiving") {
       return c.json({ error: { code: "INVALID_STATE", message: "Workspace not in archiving state" } }, 409)
     }
     try {
@@ -147,7 +147,10 @@ export function createWorkspaceRoutes(workspaceService: WorkspaceService, orgDAO
       workspaceDAO.cascadeDeleteByWorkspace(id)
       return c.json({ ok: true })
     } catch (err) {
-      return c.json({ error: { code: "ARCHIVE_FAILED", message: err instanceof Error ? err.message : String(err) } }, 500)
+      if (err instanceof ArchivePartialFailure) {
+        return c.json({ error: { code: "ARCHIVE_PARTIAL_FAILURE", message: "Some executions failed to archive", failureCount: err.failures.length } }, 409)
+      }
+      return c.json({ error: { code: "ARCHIVE_FAILED", message: "Archive operation failed" } }, 500)
     }
   })
 
@@ -168,8 +171,17 @@ export function createWorkspaceRoutes(workspaceService: WorkspaceService, orgDAO
 
   workspaceRoutes.delete("/:id", async (c) => {
     const id = c.req.param("id")
-    await workspaceService.delete(id)
-    return c.json({ ok: true })
+    try {
+      await workspaceService.delete(id)
+      return c.json({ ok: true })
+    } catch (err) {
+      if (err instanceof ArchivePartialFailure) {
+        return c.json({
+          error: { code: "ARCHIVE_PARTIAL_FAILURE", message: `${err.failures.length} executions failed to archive`, details: err.failures },
+        }, 409)
+      }
+      throw err
+    }
   })
 
   return workspaceRoutes

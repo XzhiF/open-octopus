@@ -5,6 +5,18 @@ import type { PendingReviewDAO } from "../db/dao"
 import type { ArchiveDAO } from "../db/dao/archive-dao"
 import { isValidUUID, errorResponse } from "../services/knowledge/validators"
 
+// ponytail: redact keys matching secret patterns before exposing poolSnapshot
+const SECRET_KEY_RE = /secret|password|token|api[_-]?key|private[_-]?key|credential|auth[_-]?key/i
+
+function sanitizePoolSnapshot(snapshot: Record<string, unknown> | null | undefined): Record<string, unknown> | null {
+  if (!snapshot || typeof snapshot !== "object") return null
+  const sanitized: Record<string, unknown> = {}
+  for (const [key, value] of Object.entries(snapshot)) {
+    sanitized[key] = SECRET_KEY_RE.test(key) ? "[REDACTED]" : value
+  }
+  return sanitized
+}
+
 export function createArchiveRoutes(
   pendingReviewDAO: PendingReviewDAO,
   stateDir: string,
@@ -119,7 +131,7 @@ export function createArchiveRoutes(
         nodes,
         reviewBlockers,
         e2eResults,
-        poolSnapshot: data.poolSnapshot ?? null,
+        poolSnapshot: sanitizePoolSnapshot(data.poolSnapshot),
       })
     } catch (err) {
       const { body, status } = errorResponse(err, "archive.summary")

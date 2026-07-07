@@ -3,7 +3,7 @@ import type { ArchiveDAO } from "../../db/dao/archive-dao"
 import type { ExecutionDAO } from "../../db/dao/execution-dao"
 import type { WorkspaceDAO } from "../../db/dao/workspace-dao"
 import type { DomainEventBus } from "../agent/domain-event-bus"
-import type { ExecutionArchiveRow, WorkspaceArchiveRow } from "../../db/types"
+import type { ExecutionArchiveRow, WorkspaceArchiveRow, ExecutionRow } from "../../db/types"
 import { logError, logInfo } from "../../file-logger"
 
 export class ArchivePartialFailure extends Error {
@@ -23,11 +23,30 @@ export class ArchiveService {
 
   // ── P1.1: archiveExecution ──────────────────────────────────────────
 
+  private static TERMINAL_STATUSES = new Set(["completed", "failed", "cancelled", "timeout"])
+
   async archiveExecution(executionId: string): Promise<{ archived: boolean; reason?: string }> {
     const exec = this.executionDAO.findById(executionId)
     if (!exec) return { archived: false, reason: "execution_not_found" }
 
-    // Aggregate metrics from source tables
+    if (!ArchiveService.TERMINAL_STATUSES.has(exec.status)) {
+      return { archived: false, reason: "execution_not_terminal" }
+    }
+
+    const row = this.buildExecutionArchiveRow(executionId, exec)
+
+    try {
+      this.archiveDAO.insertExecutionArchive(row)
+      return { archived: true }
+    } catch (err) {
+      logError("archive execution failed", err, { executionId })
+      return { archived: false, reason: "insert_failed" }
+    }
+  }
+
+  // ── Shared: build ExecutionArchiveRow from source tables ─────────
+
+  private buildExecutionArchiveRow(executionId: string, exec: ExecutionRow): ExecutionArchiveRow {
     const nodeCount = (this.db.prepare(
       "SELECT COUNT(*) as cnt FROM node_executions WHERE execution_id = ?",
     ).get(executionId) as { cnt: number }).cnt
@@ -35,8 +54,6 @@ export class ArchiveService {
     const successNodes = (this.db.prepare(
       "SELECT COUNT(*) as cnt FROM node_executions WHERE execution_id = ? AND status = 'completed'",
     ).get(executionId) as { cnt: number }).cnt
-
-    const successRate = nodeCount > 0 ? successNodes / nodeCount : 0
 
     const tokenAgg = this.db.prepare(`
       SELECT
@@ -46,7 +63,7 @@ export class ArchiveService {
         COALESCE(SUM(cache_creation_tokens), 0) as cache_creation
       FROM node_token_usages
       WHERE node_execution_id IN (SELECT id FROM node_executions WHERE execution_id = ?)
-    `).get(executionId) as { input: number; output: number; cache_read: number; cache_creation: number }
+    `).get(executionId) as Record<string, number>
 
     const modelRows = this.db.prepare(`
       SELECT model, COUNT(*) as calls,
@@ -67,18 +84,13 @@ export class ArchiveService {
       SELECT node_id, node_type, status, duration
       FROM node_executions WHERE execution_id = ?
       ORDER BY started_at ASC
-    `).all(executionId) as Array<{ node_id: string; node_type: string; status: string; duration: number | null }>
+    `).all(executionId)
 
     const children = this.db.prepare(
       "SELECT id FROM executions WHERE parent_id = ?",
     ).all(executionId) as Array<{ id: string }>
 
-    const chainInfo = {
-      parent_execution_id: exec.parent_id !== "0" ? exec.parent_id : null,
-      child_execution_ids: children.map(c => c.id),
-    }
-
-    const row: ExecutionArchiveRow = {
+    return {
       execution_id: exec.id,
       workspace_id: exec.workspace_id,
       org: exec.org,
@@ -86,22 +98,17 @@ export class ArchiveService {
       total_cost: totalCost,
       total_duration_ms: exec.duration ?? 0,
       node_count: nodeCount,
-      success_rate: successRate,
+      success_rate: nodeCount > 0 ? successNodes / nodeCount : 0,
       token_breakdown: JSON.stringify(tokenAgg),
       model_breakdown: JSON.stringify(modelBreakdown),
       node_summary: JSON.stringify(nodeSummary),
-      chain_info: JSON.stringify(chainInfo),
+      chain_info: JSON.stringify({
+        parent_execution_id: exec.parent_id !== "0" ? exec.parent_id : null,
+        child_execution_ids: children.map(c => c.id),
+      }),
       status: exec.status,
       archived_at: new Date().toISOString(),
       metadata: null,
-    }
-
-    try {
-      this.archiveDAO.insertExecutionArchive(row)
-      return { archived: true }
-    } catch (err) {
-      logError("archive execution failed", err, { executionId })
-      return { archived: false, reason: "insert_failed" }
     }
   }
 
@@ -130,61 +137,7 @@ export class ArchiveService {
           try {
             const exec = this.executionDAO.findById(id)
             if (!exec) continue
-
-            const nodeCount = (this.db.prepare(
-              "SELECT COUNT(*) as cnt FROM node_executions WHERE execution_id = ?",
-            ).get(id) as { cnt: number }).cnt
-
-            const successNodes = (this.db.prepare(
-              "SELECT COUNT(*) as cnt FROM node_executions WHERE execution_id = ? AND status = 'completed'",
-            ).get(id) as { cnt: number }).cnt
-
-            const tokenAgg = this.db.prepare(`
-              SELECT COALESCE(SUM(input_tokens), 0) as input, COALESCE(SUM(output_tokens), 0) as output,
-                     COALESCE(SUM(cache_read_tokens), 0) as cache_read, COALESCE(SUM(cache_creation_tokens), 0) as cache_creation
-              FROM node_token_usages WHERE node_execution_id IN (SELECT id FROM node_executions WHERE execution_id = ?)
-            `).get(id) as Record<string, number>
-
-            const modelRows = this.db.prepare(`
-              SELECT model, COUNT(*) as calls, SUM(input_tokens + output_tokens) as tokens, COALESCE(SUM(cost_usd), 0) as cost
-              FROM llm_calls WHERE execution_id = ? GROUP BY model
-            `).all(id) as Array<{ model: string; calls: number; tokens: number; cost: number }>
-
-            const modelBreakdown: Record<string, unknown> = {}
-            let totalCost = 0
-            for (const r of modelRows) {
-              modelBreakdown[r.model ?? "unknown"] = { calls: r.calls, tokens: r.tokens, cost: r.cost }
-              totalCost += r.cost
-            }
-
-            const nodeSummary = this.db.prepare(
-              "SELECT node_id, node_type, status, duration FROM node_executions WHERE execution_id = ?",
-            ).all(id)
-
-            const children = this.db.prepare(
-              "SELECT id FROM executions WHERE parent_id = ?",
-            ).all(id) as Array<{ id: string }>
-
-            const row: ExecutionArchiveRow = {
-              execution_id: exec.id,
-              workspace_id: exec.workspace_id,
-              org: exec.org,
-              workflow_name: exec.workflow_name,
-              total_cost: totalCost,
-              total_duration_ms: exec.duration ?? 0,
-              node_count: nodeCount,
-              success_rate: nodeCount > 0 ? successNodes / nodeCount : 0,
-              token_breakdown: JSON.stringify(tokenAgg),
-              model_breakdown: JSON.stringify(modelBreakdown),
-              node_summary: JSON.stringify(nodeSummary),
-              chain_info: JSON.stringify({
-                parent_execution_id: exec.parent_id !== "0" ? exec.parent_id : null,
-                child_execution_ids: children.map(c => c.id),
-              }),
-              status: exec.status,
-              archived_at: new Date().toISOString(),
-              metadata: null,
-            }
+            const row = this.buildExecutionArchiveRow(id, exec)
             this.archiveDAO.insertExecutionArchive(row)
           } catch (e) {
             failures.push({ execId: id, error: e instanceof Error ? e.message : String(e) })

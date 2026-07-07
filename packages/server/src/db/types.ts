@@ -14,6 +14,7 @@ export interface WorkspaceRow {
   updated_at: string
   source: string
   source_schedule_id: string | null
+  archive_status: string | null
 }
 
 export interface ExecutionRow {
