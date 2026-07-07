@@ -97,6 +97,11 @@ export class ResourceManager extends EventEmitter {
       group = req.group ?? "local"
     }
 
+    // Validate group name to prevent path traversal
+    if (!SAFE_NAME_RE.test(group)) {
+      throw new ResourceError("INVALID_NAME", `Invalid group name: ${group}`)
+    }
+
     // Validate name
     if (!SAFE_NAME_RE.test(name)) {
       throw new ResourceError("INVALID_NAME", `Invalid resource name: ${name}`)
@@ -109,6 +114,9 @@ export class ResourceManager extends EventEmitter {
     }
 
     const installPath = this.getInstallPath(type, name, group)
+    if (!isPathWithinBase(installPath, this.basePath)) {
+      throw new ResourceError("PATH_TRAVERSAL", `Install path escapes base: ${installPath}`)
+    }
 
     // Audit-first: write install intent
     this.audit.append("install", { name, type, source: parsed.source }, req.caller)
@@ -342,12 +350,6 @@ export class ResourceManager extends EventEmitter {
 
     if (!isPathWithinBase(realFullPath, realBasePath)) {
       throw new ResourceError("PATH_TRAVERSAL", "Cannot read file outside resource directory")
-    }
-
-    // Final check: resolved path is still a regular file (not a symlink swap target)
-    const resolvedStat = fs.lstatSync(realFullPath)
-    if (resolvedStat.isSymbolicLink()) {
-      throw new ResourceError("SYMLINK_REJECTED", `Symlinks not allowed: ${filePath}`)
     }
 
     try {

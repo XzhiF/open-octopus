@@ -103,11 +103,11 @@ export type LockFile = z.infer<typeof LockFileSchema>
 // ── API Request/Response Schemas ────────────────────────────────
 
 export const InstallRequestSchema = z.object({
-  ref: z.string().regex(REF_RE, "Invalid ref format. Use: builtin:{name} or local:{path}"),
+  ref: z.string().regex(REF_RE, "Invalid ref format. Use: builtin:{name}, local:{path}, or git:{source}/{resource}"),
   scope: ResourceScope.default("org"),
   caller: ResourceAuditCaller.default("cli"),
   type: ResourceType.optional(),
-  group: z.string().optional(),
+  group: z.string().regex(SAFE_NAME_RE).optional(),
 })
 
 export type InstallRequest = z.infer<typeof InstallRequestSchema>

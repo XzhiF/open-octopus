@@ -26,6 +26,12 @@ export type ResourceErrorCode =
   | "INVALID_ORG"
   | "INTERNAL_ERROR"
   | "SYMLINK_REJECTED"
+  | "GIT_CLONE_FAILED"
+  | "GIT_PULL_FAILED"
+  | "GIT_URL_INVALID"
+  | "SOURCE_NOT_FOUND"
+  | "SOURCE_ALREADY_EXISTS"
+  | "SOURCE_NOT_TRUSTED"
 
 const STATUS_MAP: Record<ResourceErrorCode, number> = {
   RESOURCE_NOT_FOUND: 404,
@@ -53,6 +59,12 @@ const STATUS_MAP: Record<ResourceErrorCode, number> = {
   INVALID_ORG: 400,
   INTERNAL_ERROR: 500,
   SYMLINK_REJECTED: 400,
+  GIT_CLONE_FAILED: 500,
+  GIT_PULL_FAILED: 500,
+  GIT_URL_INVALID: 400,
+  SOURCE_NOT_FOUND: 404,
+  SOURCE_ALREADY_EXISTS: 409,
+  SOURCE_NOT_TRUSTED: 403,
 }
 
 const DEFAULT_SUGGESTIONS: Record<ResourceErrorCode, string> = {
@@ -61,9 +73,9 @@ const DEFAULT_SUGGESTIONS: Record<ResourceErrorCode, string> = {
   INVALID_REF: "Use format: builtin:{name} or local:{path}",
   INVALID_NAME: "Name must match: ^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$",
   INVALID_TYPE: "Type must be one of: skill, agent, workflow",
-  INVALID_SOURCE: "Source must be one of: builtin, local",
-  REGISTRY_CORRUPT: "Registry file is corrupted. Check ~/.octopus/orgs/{org}/resources/registry.json",
-  LOCK_CORRUPT: "Lock file is corrupted. Check ~/.octopus/orgs/{org}/resources/resources.lock",
+  INVALID_SOURCE: "Source must be one of: builtin, local, git",
+  REGISTRY_CORRUPT: "Registry file is corrupted. Check ~/.octopus/resources/registry.json",
+  LOCK_CORRUPT: "Lock file is corrupted. Check ~/.octopus/resources/resources.lock",
   AUDIT_WRITE_FAILED: "Failed to write audit log. Check disk space and permissions.",
   FILE_COPY_FAILED: "Failed to copy resource files. Check disk space and permissions.",
   FILE_DELETE_FAILED: "Failed to delete resource files. Check file permissions.",
@@ -81,6 +93,12 @@ const DEFAULT_SUGGESTIONS: Record<ResourceErrorCode, string> = {
   INVALID_ORG: "Org must match: ^[a-zA-Z0-9._-]{1,64}$ and not be reserved",
   INTERNAL_ERROR: "Internal error. Check server logs for details.",
   SYMLINK_REJECTED: "Symlinks are not allowed in resource directories for security.",
+  GIT_CLONE_FAILED: "Git clone failed. Check network connectivity and repository access.",
+  GIT_PULL_FAILED: "Git pull failed. The repository may have been deleted or moved.",
+  GIT_URL_INVALID: "URL must be https://github.com/{owner}/{repo}",
+  SOURCE_NOT_FOUND: "Source not found. Use 'octopus resource source list' to see available.",
+  SOURCE_ALREADY_EXISTS: "Source already added. Use 'octopus resource source update' to refresh.",
+  SOURCE_NOT_TRUSTED: "Source not in allowlist. Use 'octopus resource source add' to trust.",
 }
 
 export class ResourceError extends Error {
