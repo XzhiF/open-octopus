@@ -229,6 +229,84 @@ export class ArchiveService {
       throw err
     }
   }
+
+  // ── P2.2: archiveMemoryBatch ─────────────────────────────────────
+
+  async archiveMemoryBatch(
+    org: string,
+    config: { session_retention_days: number; long_term_refine_trigger_days: number },
+  ): Promise<{ archived_count: number }> {
+    // Dynamic imports to avoid circular deps and heavy transitive loads
+    const { getAgentService } = await import('../agent/agent-service')
+    const { getMemoryService } = await import('../agent/memory-service')
+    const { getDailyMemoryDir, getLongTermMemoryPath } = await import('../agent/paths')
+    const fs = await import('fs')
+
+    let archivedCount = 0
+
+    // 1. Archive daily memory files older than retention days
+    try {
+      const agentService = getAgentService()
+      const dailyDir = getDailyMemoryDir()
+
+      if (fs.existsSync(dailyDir)) {
+        const files = fs.readdirSync(dailyDir).filter((f: string) => f.endsWith('.md'))
+        const retentionCutoff = new Date()
+        retentionCutoff.setDate(retentionCutoff.getDate() - config.session_retention_days)
+
+        for (const file of files) {
+          const dateMatch = file.match(/^(\d{4}-\d{2}-\d{2})\.md$/)
+          if (!dateMatch) continue
+          const fileDate = new Date(dateMatch[1])
+          if (fileDate >= retentionCutoff) continue
+
+          try {
+            await agentService.archiveMemory(org, dateMatch[1])
+            archivedCount++
+            this.emitArchived(dateMatch[1], 'daily_memory', new Date().toISOString())
+          } catch (err) {
+            logError('failed to archive daily memory', err, { org, date: dateMatch[1] })
+          }
+        }
+      }
+    } catch (err) {
+      logError('archiveMemoryBatch daily scan failed', err, { org })
+    }
+
+    // 2. Check long-term memory refine trigger
+    try {
+      const ltPath = getLongTermMemoryPath()
+      if (fs.existsSync(ltPath)) {
+        const stat = fs.statSync(ltPath)
+        const daysSinceModified = (Date.now() - stat.mtimeMs) / (1000 * 60 * 60 * 24)
+        if (daysSinceModified >= config.long_term_refine_trigger_days) {
+          try {
+            const memoryService = getMemoryService()
+            memoryService.refineLongTerm(org)
+          } catch (err) {
+            logError('long-term refine failed', err, { org })
+          }
+        }
+      }
+    } catch (err) {
+      logError('long-term refine check failed', err, { org })
+    }
+
+    return { archived_count: archivedCount }
+  }
+
+  // ── P2.3: emitArchived ───────────────────────────────────────────
+
+  private emitArchived(memoryId: string, memoryType: string, archivedAt: string): void {
+    if (!this.domainEventBus) return
+    this.domainEventBus.emit('memory.archived', {
+      memory_id: memoryId,
+      memory_type: memoryType,
+      archived_at: archivedAt,
+    }, { source: 'archive-service' }).catch(err => {
+      logError('emit memory.archived failed', err, { memoryId })
+    })
+  }
 }
 
 // ── Singleton ───────────────────────────────────────────────────────

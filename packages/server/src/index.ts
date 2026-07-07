@@ -71,6 +71,8 @@ import { EventLoopMonitor } from "./services/actuator/event-loop-monitor"
 import { createActuatorRoutes } from "./routes/actuator"
 import { getRecoveryService } from "./services/agent/recovery-service"
 import { initArchiveService } from "./services/archive/archive-service"
+import { ArchiveScheduler } from "./services/archive/archive-scheduler"
+import { getDomainEventBus } from "./services/agent/domain-event-bus"
 
 // Install global error handlers early — catches uncaughtException / unhandledRejection
 if (!process.env.VITEST) {
@@ -180,7 +182,14 @@ if (!process.env.VITEST && daos) {
   initAgentService(daos.agentSession, daos.safety)
 
   // Initialize archive service singleton
-  initArchiveService(daos.archive, daos.execution, db)
+  initArchiveService(daos.archive, daos.execution, db, getDomainEventBus())
+
+  // Initialize archive scheduler — periodic memory archival across all orgs
+  const archiveScheduler = new ArchiveScheduler(
+    () => daos ? daos.org.findAll().map(o => o.name) : [],
+  )
+  const stopArchiveScheduler = archiveScheduler.start()
+  ;(global as any).__octopus_stopArchiveScheduler = stopArchiveScheduler
 
   // Set DAOs for middleware and yjs-ws
   setAgentAuthOrgDAO(daos.org)
@@ -272,7 +281,7 @@ if (!daos) {
     initAgentService(d.agentSession, d.safety)
     setAgentAuthOrgDAO(d.org)
     setYjsWorkspaceDAO(d.workspace)
-    try { initArchiveService(d.archive, d.execution, getDb()) } catch { /* db not ready yet */ }
+    try { initArchiveService(d.archive, d.execution, getDb(), getDomainEventBus()) } catch { /* db not ready yet */ }
   } catch { /* ignore */ }
 }
 
@@ -548,6 +557,9 @@ if (shouldServe) {
       scheduler?.stop()
       if ((global as any).__octopus_cleanupRetention) {
         ;(global as any).__octopus_cleanupRetention()
+      }
+      if ((global as any).__octopus_stopArchiveScheduler) {
+        ;(global as any).__octopus_stopArchiveScheduler()
       }
       server.close(() => {
         console.log(`[server] HTTP server closed.`)

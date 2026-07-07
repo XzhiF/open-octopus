@@ -235,6 +235,17 @@ export class AgentService {
     fs.copyFileSync(sourceFile, path.join(archiveDir, `${targetDate}.md`))
     fs.unlinkSync(sourceFile)
 
+    // P2.6: emit memory.archived domain event
+    try {
+      const { getDomainEventBus } = require('./domain-event-bus')
+      const bus = getDomainEventBus()
+      bus.emit('memory.archived', {
+        memory_id: targetDate,
+        memory_type: 'daily_memory',
+        archived_at: new Date().toISOString(),
+      }, { source: 'agent-service' }).catch(() => {})
+    } catch {}
+
     return { archived_date: targetDate, essence_summary: content.slice(0, 500) }
   }
 
