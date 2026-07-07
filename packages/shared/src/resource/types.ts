@@ -5,13 +5,13 @@ import { z } from "zod"
 export const ResourceType = z.enum(["skill", "agent", "workflow"])
 export type ResourceType = z.infer<typeof ResourceType>
 
-export const ResourceSource = z.enum(["builtin", "local"])
+export const ResourceSource = z.enum(["builtin", "local", "git"])
 export type ResourceSource = z.infer<typeof ResourceSource>
 
 export const ResourceScope = z.literal("org")
 export type ResourceScope = z.infer<typeof ResourceScope>
 
-export const ResourceStatus = z.enum(["installed", "installed_but_unverified"])
+export const ResourceStatus = z.enum(["installed", "installed_but_unverified", "orphan"])
 export type ResourceStatus = z.infer<typeof ResourceStatus>
 
 // ── Validation Patterns ─────────────────────────────────────────
@@ -19,8 +19,8 @@ export type ResourceStatus = z.infer<typeof ResourceStatus>
 /** Safe resource name: alphanumeric start, then alphanumeric/dot/underscore/hyphen, max 128 chars */
 export const SAFE_NAME_RE = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/
 
-/** Ref format: source:name (e.g. builtin:brainstorming, local:/path/to/skill) */
-export const REF_RE = /^(builtin|local):[a-zA-Z0-9._:/-]{1,256}$/
+/** Ref format: source:name (e.g. builtin:brainstorming, local:/path/to/skill, git:source-name/resource-path) */
+export const REF_RE = /^(builtin|local|git):[a-zA-Z0-9._:/-]{1,256}$/
 
 // ── Schemas ─────────────────────────────────────────────────────
 
@@ -29,6 +29,7 @@ export const ResourceEntrySchema = z.object({
   type: ResourceType,
   source: ResourceSource,
   ref: z.string(),
+  group: z.string().default("core-pack"),
   installed: z.boolean(),
   verified: z.boolean(),
   status: ResourceStatus,
@@ -36,6 +37,8 @@ export const ResourceEntrySchema = z.object({
   scope: ResourceScope,
   installPath: z.string(),
   dependsOn: z.array(z.string()).default([]),
+  sourceHash: z.string().optional(),
+  syncedAt: z.string().optional(),
 })
 
 export type ResourceEntry = z.infer<typeof ResourceEntrySchema>
@@ -58,6 +61,11 @@ export const ResourceAuditAction = z.enum([
   "install_blocked",
   "verify_warn",
   "verify_fail",
+  "source_add",
+  "source_remove",
+  "source_update",
+  "source_install",
+  "source_sync",
 ])
 export type ResourceAuditAction = z.infer<typeof ResourceAuditAction>
 
@@ -98,6 +106,8 @@ export const InstallRequestSchema = z.object({
   ref: z.string().regex(REF_RE, "Invalid ref format. Use: builtin:{name} or local:{path}"),
   scope: ResourceScope.default("org"),
   caller: ResourceAuditCaller.default("cli"),
+  type: ResourceType.optional(),
+  group: z.string().optional(),
 })
 
 export type InstallRequest = z.infer<typeof InstallRequestSchema>
@@ -158,3 +168,87 @@ export interface BuiltinCatalogEntry {
   description: string
   sourcePath: string
 }
+
+// ── Collection Source Schemas (Phase 5) ─────────────────────────
+
+export const ResourceCountSchema = z.object({
+  skills: z.number().int().nonnegative(),
+  agents: z.number().int().nonnegative(),
+  workflows: z.number().int().nonnegative(),
+})
+
+export const SourceEntrySchema = z.object({
+  name: z.string().regex(SAFE_NAME_RE),
+  type: z.literal("git"),
+  url: z.string().url(),
+  branch: z.string().default("main"),
+  addedAt: z.string(),
+  lastUpdated: z.string(),
+  resourceCount: ResourceCountSchema,
+  cachePath: z.string(),
+  trusted: z.boolean(),
+})
+
+export type SourceEntry = z.infer<typeof SourceEntrySchema>
+
+export const SourcesFileSchema = z.object({
+  version: z.literal(1),
+  sources: z.array(SourceEntrySchema),
+})
+
+export type SourcesFile = z.infer<typeof SourcesFileSchema>
+
+export const SourceAddRequestSchema = z.object({
+  url: z.string().url(),
+  name: z.string().regex(SAFE_NAME_RE).optional(),
+  branch: z.string().default("main"),
+  caller: ResourceAuditCaller.default("cli"),
+})
+
+export type SourceAddRequest = z.infer<typeof SourceAddRequestSchema>
+
+export const SourceUpdateRequestSchema = z.object({
+  name: z.string().regex(SAFE_NAME_RE),
+  caller: ResourceAuditCaller.default("cli"),
+})
+
+export type SourceUpdateRequest = z.infer<typeof SourceUpdateRequestSchema>
+
+export const SourceAddResponseSchema = z.object({
+  name: z.string(),
+  url: z.string(),
+  branch: z.string(),
+  resourceCount: ResourceCountSchema,
+  addedAt: z.string(),
+  trusted: z.boolean(),
+})
+
+export type SourceAddResponse = z.infer<typeof SourceAddResponseSchema>
+
+export const SourceInstallRequestSchema = z.object({
+  sourceName: z.string().regex(SAFE_NAME_RE),
+  group: z.string().optional(),
+  resources: z.array(z.object({
+    type: ResourceType,
+    name: z.string(),
+    path: z.string(),
+  })).optional(),
+  all: z.boolean().default(false),
+  caller: ResourceAuditCaller.default("cli"),
+})
+export type SourceInstallRequest = z.infer<typeof SourceInstallRequestSchema>
+
+export const SourceSyncRequestSchema = z.object({
+  sourceName: z.string().regex(SAFE_NAME_RE),
+  caller: ResourceAuditCaller.default("cli"),
+})
+export type SourceSyncRequest = z.infer<typeof SourceSyncRequestSchema>
+
+export const SourceSyncResponseSchema = z.object({
+  sourceName: z.string(),
+  updated: z.number(),
+  added: z.number(),
+  removed: z.number(),
+  unchanged: z.number(),
+})
+export type SourceSyncResponse = z.infer<typeof SourceSyncResponseSchema>

@@ -11,6 +11,7 @@ import { LocalProvider } from "./local-provider"
 import { isPathWithinBase, listFilesRecursive } from "./fs-utils"
 import { PostInstallVerifier, PostUninstallVerifier } from "./verifier"
 import { AuditWriter } from "./audit-writer"
+import { SourceManager } from "./source-manager"
 import {
   type ResourceEntry,
   type ResourceType,
@@ -27,13 +28,12 @@ import {
 
 /**
  * ResourceManager — orchestrates install/uninstall/verify lifecycle.
- * Per-org singleton. All operations are serialized via withResourceLock.
+ * Per-org singleton.
+ * Concurrency control is handled by the server-level lock (middleware.ts).
  *
  * Five-node closed loop:
  *   INSTALL → REGISTER → VERIFY → UNINSTALL → VERIFY-CLEAN
  */
-
-const LOCK_TIMEOUT_MS = 30_000
 
 export interface ResourceManagerConfig {
   org: string
@@ -51,12 +51,12 @@ export class ResourceManager extends EventEmitter {
   private local: LocalProvider
   private installVerifier: PostInstallVerifier
   private uninstallVerifier: PostUninstallVerifier
-  private activeLocks = new Map<string, Promise<void>>()
+  private sourceManager: SourceManager
 
   constructor(config: ResourceManagerConfig) {
     super()
     this.org = config.org
-    this.basePath = config.basePath ?? path.join(os.homedir(), ".octopus", "orgs", config.org, "resources")
+    this.basePath = config.basePath ?? path.join(os.homedir(), ".octopus", "resources")
     this.registry = new RegistryStore(this.basePath)
     this.lock = new LockManager(this.basePath)
     this.audit = new AuditWriter(this.basePath)
@@ -64,14 +64,38 @@ export class ResourceManager extends EventEmitter {
     this.local = new LocalProvider()
     this.installVerifier = new PostInstallVerifier()
     this.uninstallVerifier = new PostUninstallVerifier()
+    this.sourceManager = new SourceManager({ org: config.org, basePath: this.basePath })
   }
 
   // ── Install ───────────────────────────────────────────────────
 
   async install(req: InstallRequest): Promise<InstallResponse> {
     const parsed = parseRef(req.ref)
-    const type = this.detectType(parsed.name, parsed.source)
-    const name = parsed.name
+    let type: ResourceType
+    let name: string
+    let group: string
+    let sourceCopyPath: string | undefined
+
+    // Resolve name/type/path based on source
+    if (parsed.source === "git") {
+      // git:sourceName/resourcePath — resolve from source cache first
+      const [sourceName, ...rest] = parsed.name.split("/")
+      const resourcePath = rest.join("/")
+      const { cachePath, type: detectedType } = this.sourceManager.getResourceFromSource(sourceName, resourcePath)
+      type = req.type ?? detectedType
+      name = path.basename(resourcePath).replace(/\.(md|yaml|yml)$/, "")
+      group = req.group ?? sourceName
+      sourceCopyPath = cachePath
+    } else if (parsed.source === "builtin") {
+      type = this.detectType(parsed.name, parsed.source, req.type)
+      name = parsed.name
+      group = req.group ?? "core-pack"
+    } else {
+      // local
+      type = this.detectType(parsed.name, parsed.source, req.type)
+      name = parsed.name
+      group = req.group ?? "local"
+    }
 
     // Validate name
     if (!SAFE_NAME_RE.test(name)) {
@@ -84,81 +108,85 @@ export class ResourceManager extends EventEmitter {
       throw new ResourceError("RESOURCE_ALREADY_EXISTS", `Resource ${type}/${name} is already installed`)
     }
 
-    const installPath = this.getInstallPath(type, name)
+    const installPath = this.getInstallPath(type, name, group)
 
-    return this.withResourceLock(`${type}:${name}`, async () => {
-      // Audit-first: write install intent
-      this.audit.append("install", { name, type, source: parsed.source }, req.caller)
+    // Audit-first: write install intent
+    this.audit.append("install", { name, type, source: parsed.source }, req.caller)
 
-      // Install files
-      let fileCount = 0
-      let hash = ""
+    // Install files
+    let fileCount = 0
+    let hash = ""
 
-      if (parsed.source === "builtin") {
-        const result = this.builtin.install(name, type, installPath)
-        fileCount = result.fileCount
-        hash = result.hash
-      } else if (parsed.source === "local") {
-        const result = this.local.install(parsed.name, installPath)
-        fileCount = result.fileCount
-        hash = result.hash
-      }
+    if (parsed.source === "builtin") {
+      const result = this.builtin.install(name, type, installPath)
+      fileCount = result.fileCount
+      hash = result.hash
+    } else if (parsed.source === "local") {
+      const result = this.local.install(parsed.name, installPath)
+      fileCount = result.fileCount
+      hash = result.hash
+    } else if (parsed.source === "git" && sourceCopyPath) {
+      const result = this.local.install(sourceCopyPath, installPath)
+      fileCount = result.fileCount
+      hash = result.hash
+    }
 
-      // Register
-      const entry: ResourceEntry = {
-        name,
-        type,
-        source: parsed.source,
-        ref: req.ref,
-        installed: true,
-        verified: false,
-        status: "installed",
-        installedAt: new Date().toISOString(),
-        scope: "org",
-        installPath,
-        dependsOn: [],
-      }
-      this.registry.upsert(entry)
+    // Register
+    const entry: ResourceEntry = {
+      name,
+      type,
+      source: parsed.source,
+      ref: req.ref,
+      group,
+      installed: true,
+      verified: false,
+      status: "installed",
+      installedAt: new Date().toISOString(),
+      scope: "org",
+      installPath,
+      dependsOn: [],
+      sourceHash: hash,
+    }
+    this.registry.upsert(entry)
 
-      // Lock
-      this.lock.upsert({
-        name,
-        type,
-        hash,
-        lockedAt: new Date().toISOString(),
-        installPath,
-        fileCount,
-      })
-
-      // Verify
-      const verifyResult = this.installVerifier.verify(type, name, installPath, {
-        registry: this.registry,
-        lock: this.lock,
-      })
-
-      // Update verified status
-      entry.verified = verifyResult.passed
-      entry.status = verifyResult.passed ? "installed" : "installed_but_unverified"
-      this.registry.upsert(entry)
-
-      if (!verifyResult.passed) {
-        this.audit.append("verify_warn", { name, type, source: parsed.source }, req.caller, {
-          steps: verifyResult.steps,
-        })
-      }
-
-      // Emit event (预埋 — Phase 4+ consumers)
-      this.emit("install", entry)
-
-      return {
-        name,
-        type,
-        source: parsed.source,
-        status: entry.status,
-        installPath,
-        installedAt: entry.installedAt,
-      }
+    // Lock
+    this.lock.upsert({
+      name,
+      type,
+      hash,
+      lockedAt: new Date().toISOString(),
+      installPath,
+      fileCount,
     })
+
+    // Verify
+    const verifyResult = this.installVerifier.verify(type, name, installPath, {
+      registry: this.registry,
+      lock: this.lock,
+    })
+
+    // Update verified status
+    entry.verified = verifyResult.passed
+    entry.status = verifyResult.passed ? "installed" : "installed_but_unverified"
+    this.registry.upsert(entry)
+
+    if (!verifyResult.passed) {
+      this.audit.append("verify_warn", { name, type, source: parsed.source }, req.caller, {
+        steps: verifyResult.steps,
+      })
+    }
+
+    // Emit event (预埋 — Phase 4+ consumers)
+    this.emit("install", entry)
+
+    return {
+      name,
+      type,
+      source: parsed.source,
+      status: entry.status,
+      installPath,
+      installedAt: entry.installedAt,
+    }
   }
 
   // ── Uninstall ─────────────────────────────────────────────────
@@ -185,42 +213,40 @@ export class ResourceManager extends EventEmitter {
       )
     }
 
-    return this.withResourceLock(`${type}:${name}`, async () => {
-      const installPath = entry.installPath
+    const installPath = entry.installPath
 
-      // Audit-first
-      this.audit.append("uninstall", { name, type, source: entry.source }, req.caller)
+    // Audit-first
+    this.audit.append("uninstall", { name, type, source: entry.source }, req.caller)
 
-      // Delete files
-      try {
-        if (fs.existsSync(installPath)) {
-          fs.rmSync(installPath, { recursive: true, force: true })
-        }
-      } catch (err: any) {
-        throw new ResourceError("FILE_DELETE_FAILED", `Failed to delete ${installPath}: ${err.message}`)
+    // Delete files
+    try {
+      if (fs.existsSync(installPath)) {
+        fs.rmSync(installPath, { recursive: true, force: true })
       }
+    } catch (err: any) {
+      throw new ResourceError("FILE_DELETE_FAILED", `Failed to delete ${installPath}: ${err.message}`)
+    }
 
-      // Remove from registry
-      this.registry.remove(type, name)
+    // Remove from registry
+    this.registry.remove(type, name)
 
-      // Remove from lock
-      this.lock.remove(type, name)
+    // Remove from lock
+    this.lock.remove(type, name)
 
-      // Verify clean
-      const verifyResult = this.uninstallVerifier.verify(type, name, installPath, {
-        registry: this.registry,
-        lock: this.lock,
-      })
-
-      this.emit("uninstall", { name, type, verified: verifyResult.passed })
-
-      return {
-        name,
-        type,
-        status: "uninstalled" as const,
-        verified: verifyResult.passed,
-      }
+    // Verify clean
+    const verifyResult = this.uninstallVerifier.verify(type, name, installPath, {
+      registry: this.registry,
+      lock: this.lock,
     })
+
+    this.emit("uninstall", { name, type, verified: verifyResult.passed })
+
+    return {
+      name,
+      type,
+      status: "uninstalled" as const,
+      verified: verifyResult.passed,
+    }
   }
 
   // ── List ──────────────────────────────────────────────────────
@@ -293,7 +319,18 @@ export class ResourceManager extends EventEmitter {
 
     const fullPath = path.join(entry.installPath, filePath)
 
-    // B6 fix: use realpathSync to resolve symlinks before path check (TOCTOU prevention)
+    // Reject symlinks at source before resolving (narrows TOCTOU window)
+    try {
+      const srcStat = fs.lstatSync(fullPath)
+      if (srcStat.isSymbolicLink()) {
+        throw new ResourceError("SYMLINK_REJECTED", `Symlinks not allowed: ${filePath}`)
+      }
+    } catch (err: any) {
+      if (err instanceof ResourceError) throw err
+      throw new ResourceError("RESOURCE_NOT_FOUND", `File not found: ${filePath}`)
+    }
+
+    // Resolve and verify path stays within install directory
     let realFullPath: string
     let realBasePath: string
     try {
@@ -303,9 +340,14 @@ export class ResourceManager extends EventEmitter {
       throw new ResourceError("RESOURCE_NOT_FOUND", `File not found: ${filePath}`)
     }
 
-    // Security: prevent path traversal via symlinks
     if (!isPathWithinBase(realFullPath, realBasePath)) {
       throw new ResourceError("PATH_TRAVERSAL", "Cannot read file outside resource directory")
+    }
+
+    // Final check: resolved path is still a regular file (not a symlink swap target)
+    const resolvedStat = fs.lstatSync(realFullPath)
+    if (resolvedStat.isSymbolicLink()) {
+      throw new ResourceError("SYMLINK_REJECTED", `Symlinks not allowed: ${filePath}`)
     }
 
     try {
@@ -316,6 +358,12 @@ export class ResourceManager extends EventEmitter {
       }
       throw err
     }
+  }
+
+  // ── Source Manager ───────────────────────────────────────────
+
+  getSourceManager(): SourceManager {
+    return this.sourceManager
   }
 
   // ── Health ────────────────────────────────────────────────────
@@ -330,14 +378,17 @@ export class ResourceManager extends EventEmitter {
 
   // ── Private Helpers ───────────────────────────────────────────
 
-  private getInstallPath(type: ResourceType, name: string): string {
-    // Install to ~/.octopus/orgs/{org}/.claude/{type}s/{name}/
-    const orgBase = path.join(os.homedir(), ".octopus", "orgs", this.org)
+  private getInstallPath(type: ResourceType, name: string, group: string): string {
+    // Centralized: all installed resources under resources/installed/{type}s/{group}/{name}/
+    // Keeps registry, lock, audit, and installed files co-located.
     const subdir = type === "skill" ? "skills" : type === "agent" ? "agents" : "workflows"
-    return path.join(orgBase, ".claude", subdir, name)
+    return path.join(this.basePath, "installed", subdir, group, name)
   }
 
-  private detectType(name: string, source: string): ResourceType {
+  private detectType(name: string, source: string, typeHint?: ResourceType): ResourceType {
+    // If caller provides explicit type, use it
+    if (typeHint) return typeHint
+
     // For builtin: check which directory has it
     if (source === "builtin") {
       if (this.builtin.exists(name, "skill")) return "skill"
@@ -347,33 +398,5 @@ export class ResourceManager extends EventEmitter {
 
     // For local: default to skill
     return "skill"
-  }
-
-  /** Serialize operations per resource key with timeout */
-  private async withResourceLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
-    const existing = this.activeLocks.get(key)
-    if (existing) {
-      throw new ResourceError("LOCK_BUSY", `Operation in progress for ${key}`)
-    }
-
-    let release!: () => void
-    const lockPromise = new Promise<void>((resolve) => {
-      release = resolve
-    })
-
-    this.activeLocks.set(key, lockPromise)
-
-    const timeout = setTimeout(() => {
-      this.activeLocks.delete(key)
-      release()
-    }, LOCK_TIMEOUT_MS)
-
-    try {
-      return await fn()
-    } finally {
-      clearTimeout(timeout)
-      this.activeLocks.delete(key)
-      release()
-    }
   }
 }

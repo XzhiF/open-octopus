@@ -38,6 +38,7 @@ function makeEntry(overrides: Partial<ResourceEntry> = {}): ResourceEntry {
     type: "skill",
     source: "builtin",
     ref: "builtin:test-skill",
+    group: "core-pack",
     installed: true,
     verified: true,
     status: "installed",
