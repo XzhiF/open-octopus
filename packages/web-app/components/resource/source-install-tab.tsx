@@ -1,0 +1,164 @@
+"use client"
+
+import { useState, useEffect, useCallback } from "react"
+import { Button } from "@/components/ui/button"
+import { Badge } from "@/components/ui/badge"
+import { Card } from "@/components/ui/card"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
+import { Package, FolderGit2, FolderOpen, RefreshCw } from "lucide-react"
+import { listSources, installFromSource } from "@/lib/resource/api"
+import { useResourceOrg } from "./resource-context"
+import { PageState } from "./PageState"
+
+type SourceTab = "builtin" | "git" | "local"
+
+export function SourceInstallTab() {
+  const org = useResourceOrg()
+  const [activeTab, setActiveTab] = useState<SourceTab>("git")
+  const [sources, setSources] = useState<
+    Array<{
+      name: string
+      url: string
+      resourceCount: { skills: number; agents: number; workflows: number }
+    }>
+  >([])
+  const [selectedSource, setSelectedSource] = useState("")
+  const [group, setGroup] = useState("")
+  const [loading, setLoading] = useState(false)
+  const [result, setResult] = useState<{ installed: number; skipped: number } | null>(null)
+
+  const fetchSources = useCallback(async () => {
+    try {
+      const res = await listSources(org)
+      setSources(res.sources)
+    } catch {
+      // Silently ignore — sources list will be empty
+    }
+  }, [org])
+
+  useEffect(() => {
+    fetchSources()
+  }, [fetchSources])
+
+  const handleInstallAll = async () => {
+    if (!selectedSource) return
+    setLoading(true)
+    setResult(null)
+    try {
+      const res = await installFromSource(org, {
+        sourceName: selectedSource,
+        group: group || selectedSource,
+        all: true,
+      })
+      setResult(res)
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error("Install failed:", err)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <div aria-label="安装资源">
+      <div className="mb-4 flex gap-1 border-b border-border">
+        {(
+          [
+            { id: "builtin" as const, label: "内置", icon: Package },
+            { id: "git" as const, label: "Git 源", icon: FolderGit2 },
+            { id: "local" as const, label: "本地路径", icon: FolderOpen },
+          ] as const
+        ).map((tab) => (
+          <button
+            key={tab.id}
+            type="button"
+            className={`flex items-center gap-2 border-b-2 px-4 py-2.5 text-sm font-medium transition-colors ${
+              activeTab === tab.id
+                ? "border-primary text-foreground"
+                : "border-transparent text-muted-foreground hover:text-foreground"
+            }`}
+            onClick={() => setActiveTab(tab.id)}
+          >
+            <tab.icon className="h-4 w-4" />
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
+      {activeTab === "git" && (
+        <Card className="space-y-4 p-4">
+          <div className="space-y-2">
+            <Label>选择已添加的源</Label>
+            <Select
+              value={selectedSource}
+              onValueChange={(v) => {
+                setSelectedSource(v)
+                setGroup(v)
+              }}
+            >
+              <SelectTrigger>
+                <SelectValue placeholder="选择集合源..." />
+              </SelectTrigger>
+              <SelectContent>
+                {sources.map((s) => (
+                  <SelectItem key={s.name} value={s.name}>
+                    {s.name} ({s.resourceCount.agents}a {s.resourceCount.skills}s)
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="space-y-2">
+            <Label>组名</Label>
+            <Input
+              value={group}
+              onChange={(e) => setGroup(e.target.value)}
+              placeholder="安装到哪个组目录"
+            />
+          </div>
+
+          <Button onClick={handleInstallAll} disabled={!selectedSource || loading}>
+            {loading && <RefreshCw className="mr-2 h-4 w-4 animate-spin" />}
+            全部安装
+          </Button>
+
+          {result && (
+            <div className="text-sm">
+              <Badge variant="outline" className="mr-2">
+                ✓ {result.installed} installed
+              </Badge>
+              {result.skipped > 0 && (
+                <Badge variant="secondary">{result.skipped} skipped</Badge>
+              )}
+            </div>
+          )}
+        </Card>
+      )}
+
+      {activeTab === "builtin" && (
+        <PageState
+          status="empty"
+          title="内置资源"
+          description="使用 CLI 安装: octopus resource install builtin:<name>"
+        />
+      )}
+
+      {activeTab === "local" && (
+        <PageState
+          status="empty"
+          title="本地路径"
+          description="使用 CLI 安装: octopus resource install local:<path>"
+        />
+      )}
+    </div>
+  )
+}

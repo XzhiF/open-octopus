@@ -168,3 +168,26 @@ export async function analyzeSource(org: string, url: string): Promise<{
   })
   return handleResponse(res)
 }
+
+export async function installFromSource(org: string, req: {
+  sourceName: string; group?: string; all?: boolean
+  resources?: Array<{ type: string; name: string; path: string }>
+}): Promise<{ installed: number; skipped: number }> {
+  const res = await apiFetch(`${base()}/source/install?${orgParam(org)}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ...req, caller: "ui" }),
+  })
+  return handleResponse(res)
+}
+
+export async function syncSource(org: string, sourceName: string): Promise<{
+  sourceName: string; updated: number; added: number; removed: number; unchanged: number
+}> {
+  const res = await apiFetch(`${base()}/source/sync?${orgParam(org)}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ sourceName, caller: "ui" }),
+  })
+  return handleResponse(res)
+}

@@ -11,6 +11,7 @@ import { useState } from "react"
 
 const TABS = [
   { id: "list", label: "资源列表", icon: Package },
+  { id: "install", label: "安装", icon: FolderOpen },
   { id: "audit", label: "审计日志", icon: ScrollText },
   { id: "sources", label: "来源管理", icon: FolderGit2 },
 ] as const

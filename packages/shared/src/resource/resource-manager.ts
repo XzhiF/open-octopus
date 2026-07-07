@@ -184,6 +184,9 @@ export class ResourceManager extends EventEmitter {
       })
     }
 
+    // Update CLAUDE.md with current resource inventory
+    this.updateClaudeMd()
+
     // Emit event (预埋 — Phase 4+ consumers)
     this.emit("install", entry)
 
@@ -246,6 +249,9 @@ export class ResourceManager extends EventEmitter {
       registry: this.registry,
       lock: this.lock,
     })
+
+    // Update CLAUDE.md with current resource inventory
+    this.updateClaudeMd()
 
     this.emit("uninstall", { name, type, verified: verifyResult.passed })
 
@@ -547,5 +553,57 @@ export class ResourceManager extends EventEmitter {
 
     // For local: default to skill
     return "skill"
+  }
+
+  // ── CLAUDE.md Auto-Update ──────────────────────────────────
+
+  private updateClaudeMd(): void {
+    const candidates = [
+      path.join(process.cwd(), "CLAUDE.md"),
+      path.join(process.cwd(), "..", "CLAUDE.md"),
+    ]
+
+    const claudePath = candidates.find((p) => fs.existsSync(p))
+    if (!claudePath) return
+
+    const content = fs.readFileSync(claudePath, "utf-8")
+    const marker = "## 可用资源 (Octopus 资源库)"
+    const endMarker = "<!-- /octopus-resources -->"
+
+    const resources = this.registry.list({})
+    const skills = resources.filter((r) => r.type === "skill" && r.installed)
+    const agents = resources.filter((r) => r.type === "agent" && r.installed)
+
+    let section = `${marker}\n<!-- octopus-resources -->\n\n`
+    if (skills.length > 0) {
+      section += `### Skills\n`
+      for (const s of skills) {
+        section += `- ${s.name} (${s.group})\n`
+      }
+      section += "\n"
+    }
+    if (agents.length > 0) {
+      section += `### Agents\n`
+      for (const a of agents) {
+        section += `- ${a.name} (${a.group})\n`
+      }
+      section += "\n"
+    }
+    section += `### 使用方式\n`
+    section += `- 搜索更多: 使用 octo-resource-manager skill\n`
+    section += `- 浏览全部: octopus resource list\n\n`
+    section += endMarker
+
+    const startIdx = content.indexOf(marker)
+    const endIdx = content.indexOf(endMarker)
+
+    let newContent: string
+    if (startIdx >= 0 && endIdx >= 0) {
+      newContent = content.slice(0, startIdx) + section + content.slice(endIdx + endMarker.length)
+    } else {
+      newContent = content + "\n\n" + section
+    }
+
+    fs.writeFileSync(claudePath, newContent, "utf-8")
   }
 }

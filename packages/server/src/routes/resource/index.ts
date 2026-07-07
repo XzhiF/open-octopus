@@ -7,6 +7,8 @@ import {
   UninstallRequestSchema,
   SourceAddRequestSchema,
   SourceUpdateRequestSchema,
+  SourceInstallRequestSchema,
+  SourceSyncRequestSchema,
   type ResourceType,
 } from "@octopus/shared"
 import type { ResourceManager } from "@octopus/shared"
@@ -171,6 +173,55 @@ export function createResourceRoutes(
     const result = await withResourceLock(`${o}:source:add`, async () => {
       return sm.add(parsed.data)
     })
+    return c.json(result)
+  }))
+
+  // ── POST /source/install — Batch install from collection source ──────────
+  app.post("/source/install", withErrorCatch(async (c) => {
+    const o = org(c)
+    const manager = getManager(o)
+    const body = await c.req.json()
+    const parsed = SourceInstallRequestSchema.safeParse(body)
+    if (!parsed.success) {
+      throw new ResourceError("INVALID_REF", parsed.error.issues[0]?.message ?? "Invalid request")
+    }
+
+    const sm = manager.getSourceManager()
+    const group = parsed.data.group ?? parsed.data.sourceName
+
+    let resources: Array<{ type: ResourceType; name: string; path: string }>
+    if (parsed.data.all) {
+      const discovered = sm.getDiscoveredResources(parsed.data.sourceName)
+      resources = discovered.map((d) => ({ type: d.type, name: d.name, path: d.path }))
+    } else {
+      resources = parsed.data.resources ?? []
+    }
+
+    if (resources.length === 0) {
+      return c.json({ installed: 0, skipped: 0, message: "No resources to install" })
+    }
+
+    const result = await withResourceLock(`${o}:source:${parsed.data.sourceName}:install`, async () => {
+      return manager.installFromSource(parsed.data.sourceName, group, resources as any, parsed.data.caller)
+    })
+
+    return c.json(result)
+  }))
+
+  // ── POST /source/sync — Sync collection source ───────────────────────────
+  app.post("/source/sync", withErrorCatch(async (c) => {
+    const o = org(c)
+    const manager = getManager(o)
+    const body = await c.req.json()
+    const parsed = SourceSyncRequestSchema.safeParse(body)
+    if (!parsed.success) {
+      throw new ResourceError("INVALID_NAME", parsed.error.issues[0]?.message ?? "Invalid request")
+    }
+
+    const result = await withResourceLock(`${o}:source:${parsed.data.sourceName}:sync`, async () => {
+      return manager.syncSource(parsed.data.sourceName, parsed.data.caller)
+    })
+
     return c.json(result)
   }))
 

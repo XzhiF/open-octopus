@@ -413,3 +413,52 @@ sourceCmd
     console.log(chalk.bold("Agents:       ") + s.resourceCount.agents)
     console.log(chalk.bold("Workflows:    ") + s.resourceCount.workflows)
   })
+
+// --- source install ---
+sourceCmd
+  .command("install")
+  .description("从集合源批量安装资源")
+  .argument("<source>", "源名称 (如 agency-agents-zh)")
+  .option("--group <group>", "安装到指定组 (默认=源名称)")
+  .option("--all", "安装源中所有资源", false)
+  .action(async (source: string, options: { group?: string; all: boolean }) => {
+    const org = resolveCurrentOrg()
+
+    if (!options.all) {
+      console.log(chalk.yellow("请指定 --all 安装所有资源:"))
+      console.log(chalk.dim(`  octopus resource source install ${source} --all`))
+      return
+    }
+
+    const result = await apiRequest<{ installed: number; skipped: number }>(
+      "POST", "/source/install", org,
+      { sourceName: source, group: options.group, all: true },
+    )
+    console.log(chalk.green(`✓ Installed ${result.installed} resource(s) from ${source}`))
+    if (result.skipped > 0) {
+      console.log(chalk.dim(`  Skipped ${result.skipped} already installed`))
+    }
+  })
+
+// --- source sync ---
+sourceCmd
+  .command("sync")
+  .description("同步集合源 — 更新已安装资源，检测新增/删除")
+  .argument("<name>", "源名称")
+  .action(async (name: string) => {
+    const org = resolveCurrentOrg()
+    const result = await apiRequest<{
+      sourceName: string; updated: number; added: number; removed: number; unchanged: number
+    }>("POST", "/source/sync", org, { sourceName: name })
+
+    console.log(chalk.green(`✓ Synced: ${result.sourceName}`))
+    console.log(chalk.dim(`  Updated: ${result.updated}`))
+    console.log(chalk.dim(`  New:     ${result.added} (not installed)`))
+    console.log(chalk.dim(`  Removed: ${result.removed} (marked orphan)`))
+    console.log(chalk.dim(`  Unchanged: ${result.unchanged}`))
+
+    if (result.added > 0) {
+      console.log(chalk.yellow(`\n  ${result.added} new resource(s) available. Install with:`))
+      console.log(chalk.dim(`  octopus resource source install ${name} --all`))
+    }
+  })
