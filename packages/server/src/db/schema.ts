@@ -10,7 +10,7 @@ const _dirname: string =
     ? __dirname
     : path.dirname(fileURLToPath(import.meta.url))
 
-export const SCHEMA_VERSION = 25
+export const SCHEMA_VERSION = 26
 
 /**
  * Apply the complete unified schema to the given database.
@@ -21,5 +21,13 @@ export function applySchema(db: Database.Database): void {
   const sqlPath = path.join(_dirname, "schema.sql")
   const sql = fs.readFileSync(sqlPath, "utf-8")
   db.exec(sql)
+  ensureArchiveStatusColumn(db)
   db.pragma(`user_version = ${SCHEMA_VERSION}`)
+}
+
+function ensureArchiveStatusColumn(db: Database.Database): void {
+  const cols = db.prepare("PRAGMA table_info(workspaces)").all() as { name: string }[]
+  if (!cols.some(c => c.name === 'archive_status')) {
+    db.exec("ALTER TABLE workspaces ADD COLUMN archive_status TEXT DEFAULT NULL")
+  }
 }

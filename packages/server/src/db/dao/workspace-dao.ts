@@ -158,4 +158,16 @@ export class WorkspaceDAO extends BaseDAO {
       this.deleteById(workspaceId)
     })
   }
+
+  // ── archive_status ────────────────────────────────────────────────
+
+  setArchiveStatus(workspaceId: string, status: string | null): void {
+    this.stmt("UPDATE workspaces SET archive_status = ?, updated_at = ? WHERE id = ?")
+      .run(status, new Date().toISOString(), workspaceId)
+  }
+
+  listByArchiveStatus(status: string): WorkspaceRow[] {
+    return this.stmt("SELECT * FROM workspaces WHERE archive_status = ? ORDER BY updated_at DESC")
+      .all(status) as WorkspaceRow[]
+  }
 }

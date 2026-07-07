@@ -657,3 +657,49 @@ CREATE INDEX IF NOT EXISTS idx_effectiveness_stale ON knowledge_effectiveness(in
 -- Idempotent via IF NOT EXISTS.
 CREATE INDEX IF NOT EXISTS idx_pending_review_source ON pending_review(source);
 CREATE INDEX IF NOT EXISTS idx_pending_review_type_status ON pending_review(type, status);
+
+-- =============================================================================
+-- Archive Tables (schema version 26)
+-- =============================================================================
+
+-- execution_archive: permanent storage for archived execution metrics
+CREATE TABLE IF NOT EXISTS execution_archive (
+  execution_id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL,
+  org TEXT NOT NULL,
+  workflow_name TEXT,
+  total_cost REAL DEFAULT 0,
+  total_duration_ms INTEGER DEFAULT 0,
+  node_count INTEGER DEFAULT 0,
+  success_rate REAL DEFAULT 0,
+  token_breakdown TEXT,
+  model_breakdown TEXT,
+  node_summary TEXT,
+  chain_info TEXT,
+  status TEXT NOT NULL,
+  archived_at TEXT NOT NULL DEFAULT (datetime('now')),
+  metadata TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_execution_archive_workspace ON execution_archive(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_execution_archive_org ON execution_archive(org);
+CREATE INDEX IF NOT EXISTS idx_execution_archive_archived ON execution_archive(archived_at);
+CREATE INDEX IF NOT EXISTS idx_execution_archive_workflow ON execution_archive(workflow_name);
+
+-- workspace_archive: permanent storage for deleted workspace metadata snapshots
+CREATE TABLE IF NOT EXISTS workspace_archive (
+  workspace_id TEXT PRIMARY KEY,
+  org TEXT NOT NULL,
+  name TEXT NOT NULL,
+  description TEXT,
+  source TEXT,
+  execution_count INTEGER DEFAULT 0,
+  total_cost REAL DEFAULT 0,
+  total_duration_ms INTEGER DEFAULT 0,
+  created_at TEXT,
+  archived_at TEXT NOT NULL DEFAULT (datetime('now')),
+  metadata TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_workspace_archive_org ON workspace_archive(org);
+CREATE INDEX IF NOT EXISTS idx_workspace_archive_archived ON workspace_archive(archived_at);

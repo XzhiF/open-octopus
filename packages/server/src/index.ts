@@ -12,7 +12,7 @@ import {
   WorkspaceDAO, ExecutionDAO, TokenUsageDAO, ScheduleConfigDAO,
   ScheduleRunDAO, ChatDAO, OrgDAO, AgentSessionDAO, EvolutionDAO,
   CloneDAO, SafetyDAO,
-  PendingReviewDAO, KnowledgeEffectivenessDAO,
+  PendingReviewDAO, KnowledgeEffectivenessDAO, ArchiveDAO,
 } from "./db/dao"
 import { createKnowledgeRoutes } from "./routes/knowledge"
 import { createReviewRoutes } from "./routes/review"
@@ -91,6 +91,7 @@ interface AllDAOs {
   safety: SafetyDAO
   pendingReview: PendingReviewDAO
   knowledgeEffectiveness: KnowledgeEffectivenessDAO
+  archive: ArchiveDAO
 }
 
 function createAllDAOs(db: ReturnType<typeof initDb>): AllDAOs {
@@ -108,6 +109,7 @@ function createAllDAOs(db: ReturnType<typeof initDb>): AllDAOs {
     safety: new SafetyDAO(db),
     pendingReview: new PendingReviewDAO(db),
     knowledgeEffectiveness: new KnowledgeEffectivenessDAO(db),
+    archive: new ArchiveDAO(db),
   }
 }
 
@@ -247,6 +249,7 @@ const d = daos ?? {
   safety: lazyDAO(SafetyDAO),
   pendingReview: lazyDAO(PendingReviewDAO),
   knowledgeEffectiveness: lazyDAO(KnowledgeEffectivenessDAO),
+  archive: lazyDAO(ArchiveDAO),
 }
 
 const wsSvc = workspaceService ?? new WorkspaceService(d.workspace)
