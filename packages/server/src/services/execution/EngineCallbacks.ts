@@ -4,6 +4,8 @@ import type { IStateFileManager } from "./interfaces"
 import type { ServiceContext } from "./types"
 import type { ExecutionDAO } from "../../db/dao/execution-dao"
 import type { EngineCallbacks as EngineCallbackType } from "@octopus/engine"
+import { getArchiveService } from "../archive/archive-service"
+import { logError } from "../../file-logger"
 
 export class EngineCallbacks implements IEngineCallbacks {
   constructor(
@@ -101,6 +103,13 @@ export class EngineCallbacks implements IEngineCallbacks {
           type: "complete",
           status: finalStatus,
         })
+
+        // Archive hook — fire-and-forget, never blocks engine
+        const archiveService = getArchiveService()
+        if (archiveService) {
+          archiveService.archiveExecution(executionId)
+            .catch(err => logError("auto-archive failed", err, { executionId }))
+        }
       },
 
       onAgentEvent: (nodeId: string, event: any) => {

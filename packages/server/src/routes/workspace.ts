@@ -6,6 +6,7 @@ import { parseManifest } from "@octopus/shared"
 import { readFileSync, existsSync, readdirSync } from "fs"
 import { join } from "path"
 import os from "os"
+import { getArchiveService } from "../services/archive/archive-service"
 
 export function createWorkspaceRoutes(workspaceService: WorkspaceService, orgDAO: OrgDAO, workspaceDAO: WorkspaceDAO): Hono {
   const workspaceRoutes = new Hono()
@@ -122,6 +123,31 @@ export function createWorkspaceRoutes(workspaceService: WorkspaceService, orgDAO
       return c.json(workspace, 201)
     } catch (e: any) {
       return c.json({ error: `Failed to import: ${e.message}` }, 500)
+    }
+  })
+
+  // ── P1.5: Archive ops endpoints ──────────────────────────────────
+
+  workspaceRoutes.get("/archive/status", (c) => {
+    const stuck = workspaceDAO.listByArchiveStatus("archiving")
+    return c.json({ data: stuck })
+  })
+
+  workspaceRoutes.post("/:id/archive/retry", async (c) => {
+    const id = c.req.param("id")
+    const ws = workspaceDAO.findById(id)
+    if (!ws) return c.json({ error: { code: "NOT_FOUND", message: "Workspace not found" } }, 404)
+    if ((ws as any).archive_status !== "archiving") {
+      return c.json({ error: { code: "INVALID_STATE", message: "Workspace not in archiving state" } }, 409)
+    }
+    try {
+      const archiveSvc = getArchiveService()
+      if (!archiveSvc) return c.json({ error: { code: "SUBSYSTEM_UNAVAILABLE", message: "Archive service not available" } }, 503)
+      await archiveSvc.archiveWorkspace(id, workspaceDAO)
+      workspaceDAO.cascadeDeleteByWorkspace(id)
+      return c.json({ ok: true })
+    } catch (err) {
+      return c.json({ error: { code: "ARCHIVE_FAILED", message: err instanceof Error ? err.message : String(err) } }, 500)
     }
   })
 

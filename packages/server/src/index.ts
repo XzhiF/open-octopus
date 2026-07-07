@@ -70,6 +70,7 @@ import { SecretMasker } from "./services/actuator/secret-masker"
 import { EventLoopMonitor } from "./services/actuator/event-loop-monitor"
 import { createActuatorRoutes } from "./routes/actuator"
 import { getRecoveryService } from "./services/agent/recovery-service"
+import { initArchiveService } from "./services/archive/archive-service"
 
 // Install global error handlers early — catches uncaughtException / unhandledRejection
 if (!process.env.VITEST) {
@@ -178,6 +179,9 @@ if (!process.env.VITEST && daos) {
   initSessionCompressService(daos.agentSession)
   initAgentService(daos.agentSession, daos.safety)
 
+  // Initialize archive service singleton
+  initArchiveService(daos.archive, daos.execution, db)
+
   // Set DAOs for middleware and yjs-ws
   setAgentAuthOrgDAO(daos.org)
   setYjsWorkspaceDAO(daos.workspace)
@@ -268,6 +272,7 @@ if (!daos) {
     initAgentService(d.agentSession, d.safety)
     setAgentAuthOrgDAO(d.org)
     setYjsWorkspaceDAO(d.workspace)
+    try { initArchiveService(d.archive, d.execution, getDb()) } catch { /* db not ready yet */ }
   } catch { /* ignore */ }
 }
 
