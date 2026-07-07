@@ -49,7 +49,14 @@ export class SessionCache {
   }
 
   async getOrCreate(cwd: string, resumeSessionId?: string, options?: SessionFactoryOptions): Promise<SessionResult> {
-    const key = resumeSessionId ? `${cwd}:${resumeSessionId}` : cwd
+    // Only use cache for session resumption (explicit resumeSessionId).
+    // Without resumeSessionId, always create a fresh session to prevent
+    // cross-workflow conversation history contamination.
+    if (!resumeSessionId) {
+      return this.factory(cwd, undefined, options)
+    }
+
+    const key = `${cwd}:${resumeSessionId}`
     const entry = this.cache.get(key)
     if (entry) {
       entry.lastAccessed = Date.now()
