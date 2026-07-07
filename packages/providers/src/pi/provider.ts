@@ -163,6 +163,9 @@ export class PiAgentProvider implements IAgentProvider {
     // Reset tracker for this query
     this.llmTracker.reset()
 
+    // Resolve model name early (before bridge) for token tracking and identity injection
+    const resolvedModelName = this.resolveModelName(options?.model)
+
     // Create bridge with event mapper
     const mapperState = new MapperState()
     const tokenAgg = new TokenAggregator()
@@ -172,7 +175,7 @@ export class PiAgentProvider implements IAgentProvider {
       // Track message lifecycle for LLMCallTracker (S19)
       if (event.type === 'message_start') {
         const msgId = event.messageId ?? event.id ?? mapperState.messageId
-        this.llmTracker.onMessageStart(msgId, options?.model)
+        this.llmTracker.onMessageStart(msgId, resolvedModelName)
       } else if (event.type === 'message_update') {
         const sub = event.assistantMessageEvent
         if (sub?.type === 'text_delta' || sub?.type === 'thinking_delta') {
@@ -181,6 +184,11 @@ export class PiAgentProvider implements IAgentProvider {
       } else if (event.type === 'message_end') {
         this.llmTracker.onMessageDelta(event.stopReason)
         this.llmTracker.onMessageStop(mapperState.messageId)
+        // Capture token usage from message (Pi SDK stores usage per-message, not per-agent)
+        const usage = event.message?.usage
+        if (usage) {
+          tokenAgg.add(resolvedModelName ?? 'unknown', usage)
+        }
       }
 
       // Aggregate token usage from agent_end
@@ -200,6 +208,7 @@ export class PiAgentProvider implements IAgentProvider {
           return {
             ...chunk,
             sessionId: sessionResult?.sessionId,
+            model: resolvedModelName,
             tokens: (tokenUsage.total ?? 0) > 0 ? tokenUsage : undefined,
             costUsd: tokenAgg.totalCost() || undefined,
             modelUsages: modelUsages.length > 0 ? modelUsages : undefined,
@@ -218,7 +227,6 @@ export class PiAgentProvider implements IAgentProvider {
 
     try {
       // S-8: Resolve systemPrompt from options (inject resolved model name for identity)
-      const resolvedModelName = this.resolveModelName(options?.model)
       const resolvedSystemPrompt = resolveSystemPrompt(options?.systemPrompt, resolvedModelName)
 
       // Step 1: Get or create session (with extensions S14/S15 and filteredEnv)
