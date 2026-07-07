@@ -227,11 +227,11 @@ export type SourceAddResponse = z.infer<typeof SourceAddResponseSchema>
 
 export const SourceInstallRequestSchema = z.object({
   sourceName: z.string().regex(SAFE_NAME_RE),
-  group: z.string().optional(),
+  group: z.string().regex(SAFE_NAME_RE).optional(),
   resources: z.array(z.object({
     type: ResourceType,
-    name: z.string(),
-    path: z.string(),
+    name: z.string().regex(SAFE_NAME_RE),
+    path: z.string().refine((p) => !p.includes(".."), { message: "Path must not contain '..'" }),
   })).optional(),
   all: z.boolean().default(false),
   caller: ResourceAuditCaller.default("cli"),

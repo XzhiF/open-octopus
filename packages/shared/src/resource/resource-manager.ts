@@ -382,12 +382,26 @@ export class ResourceManager extends EventEmitter {
     resources: Array<{ type: ResourceType; name: string; path: string }>,
     caller: ResourceAuditCaller,
   ): { installed: number; skipped: number } {
+    // Validate group name to prevent path traversal
+    if (!SAFE_NAME_RE.test(group)) {
+      throw new ResourceError("INVALID_NAME", `Invalid group name: ${group}`)
+    }
+
     let installed = 0
     let skipped = 0
 
     for (const res of resources) {
-      const { cachePath } = this.sourceManager.getResourceFromSource(sourceName, res.path)
+      // Validate resource name — same guards as install()
+      if (!SAFE_NAME_RE.test(res.name)) {
+        throw new ResourceError("INVALID_NAME", `Invalid resource name: ${res.name}`)
+      }
+
       const installPath = this.getInstallPath(res.type, res.name, group)
+      if (!isPathWithinBase(installPath, this.basePath)) {
+        throw new ResourceError("PATH_TRAVERSAL", `Install path escapes base: ${installPath}`)
+      }
+
+      const { cachePath } = this.sourceManager.getResourceFromSource(sourceName, res.path)
 
       // Skip if already installed
       const existing = this.registry.get(res.type, res.name)
@@ -484,6 +498,11 @@ export class ResourceManager extends EventEmitter {
       const newHash = generateFileHash(cachePath)
 
       if (newHash !== inst.sourceHash) {
+        // Validate install path hasn't been tampered
+        if (!isPathWithinBase(inst.installPath, this.basePath)) {
+          throw new ResourceError("PATH_TRAVERSAL", `Sync target escapes base: ${inst.installPath}`)
+        }
+
         const cacheStat = fs.statSync(cachePath)
         if (cacheStat.isFile()) {
           fs.mkdirSync(inst.installPath, { recursive: true })

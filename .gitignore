@@ -55,6 +55,9 @@ dist/
 .turbo/
 .next/.worktrees/
 
+# Crash dumps
+*.stackdump
+
 # Temporary / local-only artifacts — NEVER commit
 tmp/
 
