@@ -491,6 +491,67 @@ ${nodes.map(n => `  - id: ${n.id}
 
     return parts.join(' | ')
   }
+
+  /**
+   * Execute a specific task via the AI agent with skill guidance.
+   * Used for resource operations (install, sync, provision) that need
+   * intelligent decision-making and auditability.
+   *
+   * @param task - Natural language task description
+   * @param skills - Skill names to load for guidance (e.g., "octo-resource-manager")
+   * @param context - Additional context for the task
+   * @returns Agent's text response
+   */
+  async executeTask(
+    task: string,
+    skills: string[] = [],
+    context?: Record<string, unknown>,
+  ): Promise<string> {
+    const provider = getProvider(this.org)
+
+    // Build system prompt with skill content
+    const skillSegments = skills.map((skillName) => {
+      const skillPath = path.join(this.agentDir, 'skills', skillName, 'SKILL.md')
+      if (fs.existsSync(skillPath)) {
+        return `# Skill: ${skillName}\n\n${fs.readFileSync(skillPath, 'utf-8')}`
+      }
+      return null
+    }).filter(Boolean)
+
+    const contextStr = context ? `\n\n## Context\n\n\`\`\`json\n${JSON.stringify(context, null, 2)}\n\`\`\`` : ''
+
+    const systemPrompt = [
+      '你是 Octopus 平台的资源管理 Agent。你的职责是执行资源操作任务（安装、同步、预配等）。',
+      '严格按照 Skill 指导执行操作，确保每一步都有审计记录。',
+      '如果遇到异常，智能处理并报告结果。',
+      '',
+      ...skillSegments,
+    ].join('\n\n')
+
+    const prompt = `${task}${contextStr}`
+    const cwd = path.join(os.homedir(), '.octopus', 'resources')
+
+    // Collect response from agent
+    const chunks: string[] = []
+    try {
+      const stream = provider.sendQuery(prompt, cwd, undefined, {
+        systemPrompt: systemPrompt as any,
+        skills,
+      })
+
+      for await (const chunk of stream) {
+        if (chunk.type === 'text_delta') {
+          chunks.push(chunk.content)
+        } else if (chunk.type === 'error') {
+          throw new Error(`Agent error: ${chunk.message}`)
+        }
+      }
+    } catch (err: any) {
+      throw new Error(`executeTask failed: ${err.message}`)
+    }
+
+    return chunks.join('')
+  }
 }
 
 // ── Singleton ───────────────────────────────────────────────────────
