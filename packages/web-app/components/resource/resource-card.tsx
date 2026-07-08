@@ -47,14 +47,14 @@ export function ResourceCard({ entry, onUninstall }: ResourceCardProps) {
             >
               {entry.name}
             </Link>
-            <div className="mt-1.5 flex items-center gap-2 text-xs text-muted-foreground">
+            <div className="mt-1.5 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
               <Badge variant="outline" className={cn("shrink-0", typeBadge({ type: entry.type as ResourceType }))}>
                 {entry.type}
               </Badge>
               {(entry as any).group && (
                 <Badge variant="outline" className="shrink-0 text-[10px] px-1.5">{(entry as any).group}</Badge>
               )}
-              <span className="truncate" title={`${entry.source}: ${entry.ref}`}>{entry.source}: {entry.ref}</span>
+              <span className="break-all text-[11px] leading-relaxed" title={`${entry.source}: ${entry.ref}`}>{entry.source}: {entry.ref}</span>
             </div>
           </div>
         </div>
@@ -80,11 +80,20 @@ export function ResourceCard({ entry, onUninstall }: ResourceCardProps) {
       </div>
 
       {entry.installed && (
-        <div className="mt-3 flex items-center gap-1.5 text-xs text-green-700 dark:text-green-400">
-          <CheckCircle2 className="h-3.5 w-3.5" />
-          {entry.status === "installed" ? "已安装" : "已安装 (未验证)"}
+        <div className="mt-3 flex items-start gap-3 text-xs">
+          <div
+            className="flex h-10 w-10 shrink-0 items-center justify-center"
+            title={entry.status === "installed" ? "已安装" : "未验证"}
+          >
+            <CheckCircle2 className={cn(
+              "h-5 w-5",
+              entry.status === "installed" ? "text-green-600 dark:text-green-400" : "text-amber-500"
+            )} />
+          </div>
           {entry.installPath && (
-            <span className="text-muted-foreground ml-1 truncate">→ {entry.installPath}</span>
+            <span className="break-all text-[11px] leading-relaxed text-muted-foreground" title={entry.installPath}>
+              {entry.installPath}
+            </span>
           )}
         </div>
       )}
