@@ -15,6 +15,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { Edit3, Save, X, Loader2, BookOpen, Sparkles, RotateCcw, Trash2 } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import rehypeSanitize from 'rehype-sanitize'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { Badge } from '@/components/ui/badge'
@@ -286,7 +287,7 @@ export function ExperienceDetail({
         {detail?.content ? (
           <div className="space-y-4">
             <article className="preference-prose">
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>
+              <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeSanitize]}>
                 {detail.content}
               </ReactMarkdown>
             </article>

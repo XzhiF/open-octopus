@@ -22,6 +22,9 @@ import { resolveAllProjectNames } from "../knowledge/repo-resolver"
 import { join } from "path"
 import { existsSync, readdirSync, readFileSync, writeFileSync, mkdirSync } from "fs"
 import { randomUUID } from "crypto"
+import { ResourcePreFlight } from "../resource-preflight"
+import { ResourceProvisioner } from "../resource-provisioner"
+import { getResourceRegistry } from "../resource-registry"
 
 export class ExecutionLifecycle {
   private enginePool: EnginePool
@@ -146,6 +149,29 @@ export class ExecutionLifecycle {
     // Resolve project repo names for knowledge scope filtering
     const repoNames = resolveAllProjectNames(this.workspacePath)
     this.knowledgeService?.setExecutionContext(repoNames, wf.parsed.name)
+
+    // Resource pre-flight: check and provision missing agents/skills
+    try {
+      const preflight = new ResourcePreFlight()
+      const manifest = preflight.analyze(wf.parsed)
+      if (manifest.agents.length > 0 || manifest.skills.length > 0) {
+        const check = preflight.check(manifest, this.workspacePath)
+        if (check.missing.length > 0) {
+          const manager = getResourceRegistry().getOrCreate(this.org)
+          const provisioner = new ResourceProvisioner(manager, this.org)
+          const result = await provisioner.provision(check.missing, this.workspacePath)
+          if (result.provisioned > 0) {
+            process.stdout.write(`[preflight] Provisioned ${result.provisioned} resource(s) to workspace\n`)
+          }
+          if (result.failed.length > 0) {
+            process.stderr.write(`[preflight] Failed to provision: ${result.failed.join(", ")}\n`)
+          }
+        }
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err)
+      process.stderr.write(`[preflight] Resource pre-flight failed (non-fatal): ${msg}\n`)
+    }
 
     const engine = new WorkflowEngine(
       wf.parsed,

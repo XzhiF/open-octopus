@@ -68,6 +68,7 @@ interface WorkflowChainDialogProps {
   onOpenChange: (open: boolean) => void
   value: ChainStep[]
   onChange: (chain: ChainStep[]) => void
+  org?: string
 }
 
 // ── Main Dialog ────────────────────────────────────────────────────
@@ -77,6 +78,7 @@ export function WorkflowChainDialog({
   onOpenChange,
   value,
   onChange,
+  org,
 }: WorkflowChainDialogProps) {
   const [workflowOptions, setWorkflowOptions] = useState<WorkflowOption[]>([])
   const workflowOptionsRef = useRef<WorkflowOption[]>([])
@@ -88,7 +90,7 @@ export function WorkflowChainDialog({
   useEffect(() => {
     if (!open) return
     setLoading(true)
-    fetchBuiltInWorkflows()
+    fetchBuiltInWorkflows(org)
       .then((items: Array<{ ref: string; name: string; inputs?: Record<string, WorkflowInputDef> }>) => {
         const options: WorkflowOption[] = items.map((w) => ({
           value: w.ref,

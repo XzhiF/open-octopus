@@ -18,6 +18,7 @@ import {
   parseManifest,
   buildProjectInfos,
   generateIndex,
+  ResourceManager,
 } from "@octopus/shared"
 
 const DEFAULT_IGNORE_PATTERNS = [
@@ -98,9 +99,9 @@ export class SetupRunner {
     this.handleUserPreference()
     this.handleIgnoreList()
     this.handleModelsYaml()
-    this.handleWorkflows()
     this.writeVersion()
     this.syncWorkspaceSkills()
+    await this.installCorePackResources()
     this.printReport()
   }
 
@@ -729,55 +730,6 @@ export class SetupRunner {
     }
   }
 
-  private handleWorkflows(): void {
-    const workflowsDir = join(this.globalDir, "workflows")
-    const templatesDir = this.corePackPath
-      ? join(this.corePackPath, "presets", "workflows")
-      : null
-
-    if (this.dryRun) {
-      console.log(`  (dry-run) Will create workflows/ with built-in workflows`)
-      if (templatesDir && existsSync(templatesDir)) {
-        console.log(`  (dry-run) Will copy workflows from ${templatesDir}`)
-      }
-      return
-    }
-
-    // Create directories
-    const docDir = join(workflowsDir, "doc")
-    if (!existsSync(docDir)) {
-      mkdirSync(docDir, { recursive: true })
-      console.log("  Created workflows/doc/")
-    }
-
-    if (!templatesDir || !existsSync(templatesDir)) return
-
-    // Copy .yaml workflow files
-    try {
-      const files = readdirSync(templatesDir)
-      for (const file of files) {
-        if (file.endsWith(".yaml") || file.endsWith(".yml")) {
-          const src = join(templatesDir, file)
-          const dest = join(workflowsDir, file)
-          if (statSync(src).isFile()) {
-            copyFileSync(src, dest)
-            this.report.newFiles.push(`workflows/${file}`)
-            console.log(`  Created workflows/${file}`)
-          }
-        }
-      }
-    } catch { /* optional */ }
-
-    // Copy workflow-schema.json
-    const schemaSrc = join(templatesDir, "doc", "workflow-schema.json")
-    const schemaDest = join(docDir, "workflow-schema.json")
-    if (existsSync(schemaSrc)) {
-      copyFileSync(schemaSrc, schemaDest)
-      this.report.newFiles.push("workflows/doc/workflow-schema.json")
-      console.log("  Created workflows/doc/workflow-schema.json")
-    }
-  }
-
   private writeVersion(): void {
     const versionPath = join(this.globalDir, ".version")
     if (this.dryRun) {
@@ -1182,6 +1134,54 @@ export class SetupRunner {
         }
       }
     }
+  }
+
+  /**
+   * Install core-pack resources (skills, agents, workflows) to ~/.octopus/resources/installed/
+   * Uses ResourceManager.installOrUpgrade() to ensure latest versions.
+   */
+  private async installCorePackResources(): Promise<void> {
+    if (!this.corePackPath) {
+      console.log("  core-pack not found, skipping resource installation")
+      return
+    }
+
+    if (this.dryRun) {
+      console.log("  (dry-run) Will install core-pack resources to ~/.octopus/resources/installed/")
+      return
+    }
+
+    const manager = new ResourceManager({
+      org: this.org,
+      corePackBase: this.corePackPath,
+    })
+
+    const builtinResources = manager.listBuiltin()
+    let installed = 0
+    let upgraded = 0
+
+    for (const resource of builtinResources) {
+      try {
+        const result = await manager.installOrUpgrade({
+          ref: `builtin:${resource.name}`,
+          type: resource.type,
+          scope: "org",
+        })
+        if (result.status === "installed" || result.status === "installed_but_unverified") {
+          // Check if this was an upgrade or fresh install by looking at the timestamp
+          const isUpgrade = result.installedAt && new Date(result.installedAt).getTime() < Date.now() - 1000
+          if (isUpgrade) {
+            upgraded++
+          } else {
+            installed++
+          }
+        }
+      } catch (err: any) {
+        console.log(`  Warning: Failed to install ${resource.type}/${resource.name}: ${err.message}`)
+      }
+    }
+
+    console.log(`  Installed ${installed} new, upgraded ${upgraded} core-pack resources`)
   }
 
   private findPresetsPath(): string | null {

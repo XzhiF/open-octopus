@@ -13,6 +13,7 @@ import {
   Activity,
   BrainCircuit,
   BarChart3,
+  Package,
 } from "lucide-react"
 
 const navigation = [
@@ -21,6 +22,7 @@ const navigation = [
   { name: "系统调度", href: "/scheduler", icon: Clock },
   { name: "Agent", href: "/agent", icon: BrainCircuit },
   { name: "Loop Dashboard", href: "/loop-dashboard", icon: BarChart3 },
+  { name: "资源", href: "/resources", icon: Package },
 ]
 
 export function Header() {

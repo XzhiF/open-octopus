@@ -61,14 +61,17 @@ export function loadFeatureFlags(configPath?: string): ObservabilityFlags {
     }
   }
 
-  for (const [key, value] of Object.entries(process.env)) {
-    if (key.startsWith('OCTOPUS_FF_')) {
-      const flagKey = key.replace('OCTOPUS_FF_', '').toLowerCase()
-      const typedKey = flagKey as keyof ObservabilityFlags
-      if (flagKey === 'privacy') continue
-      if (typeof (flags as Record<string, unknown>)[typedKey] !== 'boolean') continue
-      if (value === 'true') (flags as Record<string, boolean>)[typedKey] = true
-      else if (value === 'false') (flags as Record<string, boolean>)[typedKey] = false
+  // Skip env override in test mode to prevent test pollution (B7 fix)
+  if (process.env.NODE_ENV !== 'test') {
+    for (const [key, value] of Object.entries(process.env)) {
+      if (key.startsWith('OCTOPUS_FF_')) {
+        const flagKey = key.replace('OCTOPUS_FF_', '').toLowerCase()
+        const typedKey = flagKey as keyof ObservabilityFlags
+        if (flagKey === 'privacy') continue
+        if (typeof (flags as Record<string, unknown>)[typedKey] !== 'boolean') continue
+        if (value === 'true') (flags as Record<string, boolean>)[typedKey] = true
+        else if (value === 'false') (flags as Record<string, boolean>)[typedKey] = false
+      }
     }
   }
 

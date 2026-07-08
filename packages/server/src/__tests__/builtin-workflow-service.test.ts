@@ -1,73 +1,92 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest"
-import fs from "fs"
-import path from "path"
-import os from "os"
+import { describe, it, expect, vi, beforeEach } from "vitest"
 import { BuiltInWorkflowService } from "../services/builtin-workflow"
-import type { WorkflowInfo } from "../types/workflow-api"
-
-const BUILTIN_DIR = path.join(os.tmpdir(), `test-builtin-workflows-${Date.now()}`)
-let service: BuiltInWorkflowService
+import type { ResourceManager, ResourceEntry } from "@octopus/shared"
 
 const VALID_WF = "apiVersion: octopus/v1\nkind: Workflow\nname: deploy\ninputs:\n  environment: { description: 'deploy env', required: true, default: dev }\nnodes:\n  - id: step1\n    type: bash\n    bash: echo deploy"
-const VALID_WF_NO_INPUTS = "apiVersion: octopus/v1\nkind: Workflow\nname: test\nnodes:\n  - id: step1\n    type: bash\n    bash: echo test"
-const NON_OCTOPUS_YAML = "foo: bar\nbaz: 123"
-
-beforeEach(() => {
-  fs.mkdirSync(BUILTIN_DIR, { recursive: true })
-  service = new BuiltInWorkflowService(BUILTIN_DIR)
-})
-
-afterEach(() => {
-  fs.rmSync(BUILTIN_DIR, { recursive: true, force: true })
-})
 
 describe("BuiltInWorkflowService", () => {
-  it("lists Octopus workflow YAML files from directory", () => {
-    fs.writeFileSync(path.join(BUILTIN_DIR, "deploy.yaml"), VALID_WF)
-    fs.writeFileSync(path.join(BUILTIN_DIR, "test.yaml"), VALID_WF_NO_INPUTS)
-    expect(service.list().length).toBe(2)
+  let mockResourceManager: Partial<ResourceManager>
+
+  beforeEach(() => {
+    mockResourceManager = {
+      list: vi.fn().mockReturnValue([]),
+      get: vi.fn().mockReturnValue(undefined),
+    }
   })
 
-  it("skips non-Octopus YAML files", () => {
-    fs.writeFileSync(path.join(BUILTIN_DIR, "deploy.yaml"), VALID_WF)
-    fs.writeFileSync(path.join(BUILTIN_DIR, "random.yaml"), NON_OCTOPUS_YAML)
-    expect(service.list().length).toBe(1)
-    expect(service.list()[0].ref).toBe("deploy.yaml")
+  it("returns empty list when no workflows installed", () => {
+    const service = new BuiltInWorkflowService(mockResourceManager as ResourceManager)
+    expect(service.list()).toEqual([])
   })
 
-  it("returns name parsed from YAML", () => {
-    fs.writeFileSync(path.join(BUILTIN_DIR, "deploy.yaml"), VALID_WF)
+  it("lists workflows from ResourceManager", () => {
+    const mockEntry: Partial<ResourceEntry> = {
+      name: "deploy",
+      type: "workflow",
+      group: "built-in",
+      installed: true,
+      installPath: "/fake/path/workflows/deploy",
+    }
+    mockResourceManager.list = vi.fn().mockReturnValue([mockEntry])
+
+    // Mock fs to return valid workflow content
+    const fs = require("fs")
+    vi.spyOn(fs, "existsSync").mockReturnValue(true)
+    vi.spyOn(fs, "readdirSync").mockReturnValue(["deploy.yaml"])
+    vi.spyOn(fs, "readFileSync").mockReturnValue(VALID_WF)
+
+    const service = new BuiltInWorkflowService(mockResourceManager as ResourceManager)
     const list = service.list()
+
+    expect(list).toHaveLength(1)
+    expect(list[0].ref).toBe("built-in/deploy")
     expect(list[0].name).toBe("deploy")
+
+    vi.restoreAllMocks()
   })
 
-  it("returns inputs from parsed workflow", () => {
-    fs.writeFileSync(path.join(BUILTIN_DIR, "deploy.yaml"), VALID_WF)
-    const list = service.list()
-    expect(list[0].inputs).toBeDefined()
-    expect(list[0].inputs!.environment.description).toBe("deploy env")
-  })
+  it("gets workflow by ref", () => {
+    const mockEntry: Partial<ResourceEntry> = {
+      name: "deploy",
+      type: "workflow",
+      group: "built-in",
+      installed: true,
+      installPath: "/fake/path/workflows/deploy",
+    }
+    mockResourceManager.get = vi.fn().mockReturnValue(mockEntry)
 
-  it("returns empty list when directory does not exist", () => {
-    const emptyService = new BuiltInWorkflowService(path.join(os.tmpdir(), "nonexistent"))
-    expect(emptyService.list().length).toBe(0)
-  })
+    const fs = require("fs")
+    vi.spyOn(fs, "existsSync").mockReturnValue(true)
+    vi.spyOn(fs, "readdirSync").mockReturnValue(["deploy.yaml"])
+    vi.spyOn(fs, "readFileSync").mockReturnValue(VALID_WF)
 
-  it("gets workflow detail by ref", () => {
-    fs.writeFileSync(path.join(BUILTIN_DIR, "deploy.yaml"), VALID_WF)
-    const detail = service.get("deploy.yaml")
+    const service = new BuiltInWorkflowService(mockResourceManager as ResourceManager)
+    const detail = service.get("built-in/deploy")
+
     expect(detail).toBeDefined()
-    expect(detail!.parsed.name).toBe("deploy")
-    expect(detail!.parsed.inputs).toBeDefined()
+    expect(detail?.parsed.name).toBe("deploy")
+
+    vi.restoreAllMocks()
   })
 
   it("returns null for nonexistent ref", () => {
-    expect(service.get("nonexistent.yaml")).toBeNull()
+    const service = new BuiltInWorkflowService(mockResourceManager as ResourceManager)
+    expect(service.get("nonexistent/workflow")).toBeNull()
   })
 
-  it("handles .yml extension files", () => {
-    fs.writeFileSync(path.join(BUILTIN_DIR, "build.yml"), VALID_WF_NO_INPUTS)
-    expect(service.list().length).toBe(1)
-    expect(service.list()[0].ref).toBe("build.yml")
+  it("handles group mismatch in get()", () => {
+    const mockEntry: Partial<ResourceEntry> = {
+      name: "deploy",
+      type: "workflow",
+      group: "custom-group",
+      installed: true,
+      installPath: "/fake/path",
+    }
+    mockResourceManager.get = vi.fn().mockReturnValue(mockEntry)
+
+    const service = new BuiltInWorkflowService(mockResourceManager as ResourceManager)
+    const result = service.get("wrong-group/deploy")
+
+    expect(result).toBeNull()
   })
 })

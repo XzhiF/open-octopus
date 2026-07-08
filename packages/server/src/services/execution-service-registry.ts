@@ -7,6 +7,7 @@ import { BuiltInWorkflowService } from "./builtin-workflow"
 import { SSEService } from "./sse"
 import { ObservabilityService } from "./observability"
 import { ExecutionDAO, WorkspaceDAO } from "../db/dao"
+import { getResourceRegistry } from "./resource-registry"
 
 let _db: Database.Database | null = null
 let _sse: SSEService | null = null
@@ -43,11 +44,12 @@ export function getExecutionService(
   if (!ws) return undefined
 
   const resolvedPath = ws.path.replace(/^~/, os.homedir())
+  const resourceManager = getResourceRegistry().getOrCreate(ws.org)
   const service = new ExecutionService(
     _db,
     _sse,
     new WorkflowService(),
-    new BuiltInWorkflowService(),
+    new BuiltInWorkflowService(resourceManager),
     ws.org,
     resolvedPath,
     ws.id,

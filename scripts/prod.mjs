@@ -127,6 +127,7 @@ function copyDist() {
     const destNm = path.join(PROD_DIR, "packages", pkg, "node_modules")
     if (fs.existsSync(srcNm)) {
       fs.rmSync(destNm, { recursive: true, force: true })
+      fs.mkdirSync(path.dirname(destNm), { recursive: true })
       fs.symlinkSync(srcNm, destNm, "junction")
       console.log(`[prod]   linked packages/${pkg}/node_modules/`)
     }

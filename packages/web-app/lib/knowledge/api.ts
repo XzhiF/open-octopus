@@ -1,18 +1,5 @@
 import { getServerUrl } from '@/lib/server-config'
-
-// ── Helpers (mirrors lib/api-client.ts pattern) ──────────────────────
-
-async function handleResponse(res: Response) {
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({}))
-    throw new Error(body.error?.message ?? body.error ?? `HTTP ${res.status}`)
-  }
-  return res.json()
-}
-
-function apiFetch(url: string, init?: RequestInit): Promise<Response> {
-  return fetch(url, { ...init, credentials: 'include' })
-}
+import { apiFetch, handleResponse } from '@/lib/api-client'
 
 // ============ Knowledge API ============
 
