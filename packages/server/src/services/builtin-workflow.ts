@@ -18,7 +18,8 @@ export class BuiltInWorkflowService {
 
   list(): WorkflowInfo[] {
     const results: WorkflowInfo[] = []
-    const installed = this.resourceManager.list({ type: "workflow", installed: true })
+    const response = this.resourceManager.list({ type: "workflow", installed: true })
+    const installed = response.resources ?? []
 
     for (const entry of installed) {
       if (!entry.installPath) continue
