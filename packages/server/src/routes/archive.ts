@@ -74,7 +74,8 @@ export function createArchiveRoutes(
     if (!archiveDAO) return c.json({ error: { code: "SUBSYSTEM_UNAVAILABLE", message: "Archive DAO not available" } }, 503)
     const org = c.req.query("org") || ""
     const metric = (c.req.query("metric") || "cost") as 'cost' | 'duration' | 'frequency'
-    const limit = Math.min(50, Math.max(1, parseInt(c.req.query("limit") || "10", 10)))
+    const parsed = parseInt(c.req.query("limit") || "10", 10)
+    const limit = Number.isNaN(parsed) ? 10 : Math.min(50, Math.max(1, parsed))
     if (!['cost', 'duration', 'frequency'].includes(metric)) {
       return c.json({ error: { code: "INVALID_PARAM", message: "metric must be cost, duration, or frequency" } }, 400)
     }

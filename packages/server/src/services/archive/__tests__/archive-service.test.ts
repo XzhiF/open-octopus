@@ -187,7 +187,7 @@ describe("ArchiveService", () => {
       expect(wsArchive!.total_cost).toBe(0)
     })
 
-    it("sets archive_status to 'archiving' on failure rollback", async () => {
+    it("sets archive_status to 'archive_failed' on failure rollback", async () => {
       seedWorkspace(db, "ws-1")
       seedExecution(db, "exec-1", "ws-1")
 
@@ -196,9 +196,9 @@ describe("ArchiveService", () => {
 
       await expect(service.archiveWorkspace("ws-1", workspaceDAO)).rejects.toThrow()
 
-      // archive_status should be 'archiving' (set outside the rolled-back transaction)
+      // archive_status should be 'archive_failed' (set outside the rolled-back transaction)
       const ws = workspaceDAO.findById("ws-1")
-      expect(ws!.archive_status).toBe("archiving")
+      expect(ws!.archive_status).toBe("archive_failed")
     })
 
     it("rolls back on partial failure (ArchivePartialFailure)", async () => {
@@ -225,9 +225,9 @@ describe("ArchiveService", () => {
       expect(archiveDAO.findByExecutionId("exec-1")).toBeNull()
       expect(archiveDAO.findByWorkspaceId("ws-1")).toBeNull()
 
-      // archive_status set to 'archiving' post-rollback
+      // archive_status set to 'archive_failed' post-rollback
       const ws = workspaceDAO.findById("ws-1")
-      expect(ws!.archive_status).toBe("archiving")
+      expect(ws!.archive_status).toBe("archive_failed")
     })
   })
 })
