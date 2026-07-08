@@ -195,69 +195,6 @@ function findCorePackPresetsWorkflowsDir(): string | null {
   return null
 }
 
-workflowCmd
-  .command("sync")
-  .description("同步内置工作流到 ~/.octopus/workflows/（先清空目标目录，再写入工程内置工作流）")
-  .action(() => {
-    const sourceDir = findCorePackPresetsWorkflowsDir()
-    if (!sourceDir) {
-      console.error("Error: 找不到 core-pack/presets/workflows/ 源目录")
-      process.exit(1)
-    }
-
-    const destDir = resolveBuiltinWorkflowsDir()
-
-    // Clean destination: remove all existing workflows before syncing
-    if (existsSync(destDir)) {
-      const existing = readdirSync(destDir)
-      if (existing.length > 0) {
-        console.log(`清理旧工作流: ${destDir}`)
-        let cleaned = 0
-        for (const entry of existing) {
-          try {
-            rmSync(join(destDir, entry), { recursive: true, force: true, maxRetries: 3, retryDelay: 100 })
-            cleaned++
-          } catch {
-            // Windows may lock files — try chmod + retry
-            try {
-              chmodSync(join(destDir, entry), 0o777)
-              rmSync(join(destDir, entry), { recursive: true, force: true })
-              cleaned++
-            } catch {
-              console.warn(`  ⚠ 跳过 ${entry}（文件被占用或权限不足）`)
-            }
-          }
-        }
-        console.log(`  ✓ 已清理 ${cleaned}/${existing.length} 个文件/目录`)
-      }
-    }
-
-    mkdirSync(destDir, { recursive: true })
-    mkdirSync(join(destDir, "doc"), { recursive: true })
-
-    let synced = 0
-    const files = readdirSync(sourceDir)
-
-    for (const file of files) {
-      if (file.endsWith(".yaml") || file.endsWith(".yml")) {
-        const src = join(sourceDir, file)
-        if (statSync(src).isFile()) {
-          copyFileSync(src, join(destDir, file))
-          synced++
-          console.log(`  ✓ ${file}`)
-        }
-      }
-    }
-
-    // Sync doc/workflow-schema.json
-    const schemaSrc = join(sourceDir, "doc", "workflow-schema.json")
-    if (existsSync(schemaSrc)) {
-      copyFileSync(schemaSrc, join(destDir, "doc", "workflow-schema.json"))
-      console.log("  ✓ doc/workflow-schema.json")
-    }
-
-    console.log(`\n同步完成: ${synced} 个工作流 → ${destDir}`)
-  })
 
 workflowCmd
   .command("new")

@@ -5,10 +5,12 @@ import { copyDirSync, generateFileHash } from "./fs-utils"
 import type { ResourceType, BuiltinCatalogEntry } from "./types"
 
 /**
- * BuiltinProvider — install resources from core-pack (bundled skills/agents).
- * Source path: packages/core-pack/{type}s/{name}/
+ * BuiltinProvider — install resources from core-pack (bundled skills/agents/workflows).
  *
- * Detects resource type from directory structure.
+ * Resource structure:
+ * - Skills: directories in skills/ (e.g., skills/octo-skill-creator/SKILL.md)
+ * - Agents: .md files in agents/ (e.g., agents/devil-advocate.md)
+ * - Workflows: .yaml files in presets/workflows/ (e.g., presets/workflows/prd-impl.yaml)
  */
 
 /** Resolve core-pack base directory */
@@ -66,15 +68,15 @@ export class BuiltinProvider {
 
   /** Check if a builtin resource exists */
   exists(name: string, type: ResourceType): boolean {
-    const sourcePath = path.join(this.base, typeToSubdir(type), name)
-    return fs.existsSync(sourcePath)
+    const sourcePath = this.getSourcePath(name, type)
+    return sourcePath !== null
   }
 
   /** Copy builtin resource to install path */
   install(name: string, type: ResourceType, installPath: string): { fileCount: number; hash: string } {
-    const sourcePath = path.join(this.base, typeToSubdir(type), name)
+    const sourcePath = this.getSourcePath(name, type)
 
-    if (!fs.existsSync(sourcePath)) {
+    if (!sourcePath) {
       throw new ResourceError("BUILTIN_NOT_FOUND", `Builtin ${type} '${name}' not found`)
     }
 
@@ -82,7 +84,16 @@ export class BuiltinProvider {
 
     let fileCount = 0
     try {
-      fileCount = copyDirSync(sourcePath, installPath)
+      if (type === "skill") {
+        // Skills are directories, copy entire directory
+        fileCount = copyDirSync(sourcePath, installPath)
+      } else {
+        // Agents and workflows are single files
+        const fileName = path.basename(sourcePath)
+        const destPath = path.join(installPath, fileName)
+        fs.copyFileSync(sourcePath, destPath)
+        fileCount = 1
+      }
     } catch (err: any) {
       if (err instanceof ResourceError) throw err
       throw new ResourceError("FILE_COPY_FAILED", `Failed to copy ${name}: ${err.message}`)
@@ -96,34 +107,90 @@ export class BuiltinProvider {
   /** List all available builtin resources */
   list(): BuiltinCatalogEntry[] {
     const entries: BuiltinCatalogEntry[] = []
-    const typeDirs: Array<{ subdir: string; type: ResourceType }> = [
-      { subdir: "skills", type: "skill" },
-      { subdir: "agents", type: "agent" },
-      { subdir: "presets/workflows", type: "workflow" },
-    ]
 
-    for (const { subdir, type } of typeDirs) {
-      const dirPath = path.join(this.base, subdir)
-      if (!fs.existsSync(dirPath)) continue
+    // Skills: scan directories in skills/
+    this.scanSkillDirs(entries)
 
-      const items = fs.readdirSync(dirPath, { withFileTypes: true })
-      for (const item of items) {
-        if (!item.isDirectory() || item.isSymbolicLink()) continue
-        entries.push({
-          name: item.name,
-          type,
-          description: "",
-          sourcePath: path.join(dirPath, item.name),
-        })
-      }
-    }
+    // Agents: scan .md files in agents/
+    this.scanAgentFiles(entries)
+
+    // Workflows: scan .yaml files in presets/workflows/
+    this.scanWorkflowFiles(entries)
 
     return entries
   }
 
-  /** Get source path for a builtin resource (for file reading) */
+  /** Get source path for a builtin resource */
   getSourcePath(name: string, type: ResourceType): string | null {
-    const sourcePath = path.join(this.base, typeToSubdir(type), name)
-    return fs.existsSync(sourcePath) ? sourcePath : null
+    const subdir = typeToSubdir(type)
+    const basePath = path.join(this.base, subdir)
+
+    if (type === "skill") {
+      // Skills are directories
+      const dirPath = path.join(basePath, name)
+      return fs.existsSync(dirPath) ? dirPath : null
+    } else if (type === "agent") {
+      // Agents are .md files
+      const filePath = path.join(basePath, `${name}.md`)
+      return fs.existsSync(filePath) ? filePath : null
+    } else {
+      // Workflows are .yaml files
+      const yamlPath = path.join(basePath, `${name}.yaml`)
+      if (fs.existsSync(yamlPath)) return yamlPath
+      const ymlPath = path.join(basePath, `${name}.yml`)
+      return fs.existsSync(ymlPath) ? ymlPath : null
+    }
+  }
+
+  private scanSkillDirs(entries: BuiltinCatalogEntry[]): void {
+    const dirPath = path.join(this.base, "skills")
+    if (!fs.existsSync(dirPath)) return
+
+    const items = fs.readdirSync(dirPath, { withFileTypes: true })
+    for (const item of items) {
+      if (!item.isDirectory() || item.isSymbolicLink()) continue
+      entries.push({
+        name: item.name,
+        type: "skill",
+        description: "",
+        sourcePath: path.join(dirPath, item.name),
+      })
+    }
+  }
+
+  private scanAgentFiles(entries: BuiltinCatalogEntry[]): void {
+    const dirPath = path.join(this.base, "agents")
+    if (!fs.existsSync(dirPath)) return
+
+    const items = fs.readdirSync(dirPath, { withFileTypes: true })
+    for (const item of items) {
+      if (!item.isFile()) continue
+      if (!item.name.endsWith(".md")) continue
+      const name = item.name.replace(/\.md$/, "")
+      entries.push({
+        name,
+        type: "agent",
+        description: "",
+        sourcePath: path.join(dirPath, item.name),
+      })
+    }
+  }
+
+  private scanWorkflowFiles(entries: BuiltinCatalogEntry[]): void {
+    const dirPath = path.join(this.base, "presets", "workflows")
+    if (!fs.existsSync(dirPath)) return
+
+    const items = fs.readdirSync(dirPath, { withFileTypes: true })
+    for (const item of items) {
+      if (!item.isFile()) continue
+      if (!item.name.endsWith(".yaml") && !item.name.endsWith(".yml")) continue
+      const name = item.name.replace(/\.ya?ml$/, "")
+      entries.push({
+        name,
+        type: "workflow",
+        description: "",
+        sourcePath: path.join(dirPath, item.name),
+      })
+    }
   }
 }

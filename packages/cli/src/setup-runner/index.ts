@@ -99,7 +99,6 @@ export class SetupRunner {
     this.handleUserPreference()
     this.handleIgnoreList()
     this.handleModelsYaml()
-    this.handleWorkflows()
     this.writeVersion()
     this.syncWorkspaceSkills()
     await this.installCorePackResources()
@@ -728,55 +727,6 @@ export class SetupRunner {
       copyFileSync(tplPath, modelsPath)
       this.report.newFiles.push(rel)
       console.log("  Created models.yaml")
-    }
-  }
-
-  private handleWorkflows(): void {
-    const workflowsDir = join(this.globalDir, "workflows")
-    const templatesDir = this.corePackPath
-      ? join(this.corePackPath, "presets", "workflows")
-      : null
-
-    if (this.dryRun) {
-      console.log(`  (dry-run) Will create workflows/ with built-in workflows`)
-      if (templatesDir && existsSync(templatesDir)) {
-        console.log(`  (dry-run) Will copy workflows from ${templatesDir}`)
-      }
-      return
-    }
-
-    // Create directories
-    const docDir = join(workflowsDir, "doc")
-    if (!existsSync(docDir)) {
-      mkdirSync(docDir, { recursive: true })
-      console.log("  Created workflows/doc/")
-    }
-
-    if (!templatesDir || !existsSync(templatesDir)) return
-
-    // Copy .yaml workflow files
-    try {
-      const files = readdirSync(templatesDir)
-      for (const file of files) {
-        if (file.endsWith(".yaml") || file.endsWith(".yml")) {
-          const src = join(templatesDir, file)
-          const dest = join(workflowsDir, file)
-          if (statSync(src).isFile()) {
-            copyFileSync(src, dest)
-            this.report.newFiles.push(`workflows/${file}`)
-            console.log(`  Created workflows/${file}`)
-          }
-        }
-      }
-    } catch { /* optional */ }
-
-    // Copy workflow-schema.json
-    const schemaSrc = join(templatesDir, "doc", "workflow-schema.json")
-    const schemaDest = join(docDir, "workflow-schema.json")
-    if (existsSync(schemaSrc)) {
-      copyFileSync(schemaSrc, schemaDest)
-      this.report.newFiles.push("workflows/doc/workflow-schema.json")
-      console.log("  Created workflows/doc/workflow-schema.json")
     }
   }
 
