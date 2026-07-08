@@ -389,6 +389,8 @@ export class ResourceManager extends EventEmitter {
 
     let installed = 0
     let skipped = 0
+    const pendingEntries: ResourceEntry[] = []
+    const pendingLocks: Array<{ name: string; type: ResourceType; hash: string; lockedAt: string; installPath: string; fileCount: number }> = []
 
     for (const res of resources) {
       // Validate resource name — same guards as install()
@@ -425,7 +427,7 @@ export class ResourceManager extends EventEmitter {
         hash = result.hash
       }
 
-      const entry: ResourceEntry = {
+      pendingEntries.push({
         name: res.name,
         type: res.type,
         source: "git",
@@ -439,9 +441,8 @@ export class ResourceManager extends EventEmitter {
         installPath,
         dependsOn: [],
         sourceHash: hash,
-      }
-      this.registry.upsert(entry)
-      this.lock.upsert({
+      })
+      pendingLocks.push({
         name: res.name,
         type: res.type,
         hash,
@@ -451,6 +452,10 @@ export class ResourceManager extends EventEmitter {
       })
       installed++
     }
+
+    // Single batch write instead of per-entry upsert
+    this.registry.batchUpsert(pendingEntries)
+    this.lock.batchUpsert(pendingLocks)
 
     this.audit.append(
       "source_install",
@@ -487,6 +492,8 @@ export class ResourceManager extends EventEmitter {
     const discoveredMap = new Map(discovered.map((d) => [`${d.type}:${d.name}`, d]))
     const installedMap = new Map(installed.map((i) => [`${i.type}:${i.name}`, i]))
 
+    const pendingUpserts: ResourceEntry[] = []
+
     for (const [key, disc] of discoveredMap) {
       const inst = installedMap.get(key)
       if (!inst) {
@@ -510,12 +517,11 @@ export class ResourceManager extends EventEmitter {
         } else {
           this.local.install(cachePath, inst.installPath)
         }
-        const updatedEntry: ResourceEntry = {
+        pendingUpserts.push({
           ...inst,
           sourceHash: generateFileHash(inst.installPath),
           syncedAt: new Date().toISOString(),
-        }
-        this.registry.upsert(updatedEntry)
+        })
         updated++
       } else {
         unchanged++
@@ -524,11 +530,13 @@ export class ResourceManager extends EventEmitter {
 
     for (const [key, inst] of installedMap) {
       if (!discoveredMap.has(key)) {
-        const orphanEntry: ResourceEntry = { ...inst, status: "orphan" }
-        this.registry.upsert(orphanEntry)
+        pendingUpserts.push({ ...inst, status: "orphan" })
         removed++
       }
     }
+
+    // Single batch write instead of per-entry upsert
+    this.registry.batchUpsert(pendingUpserts)
 
     this.audit.append(
       "source_sync",

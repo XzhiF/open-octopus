@@ -60,6 +60,26 @@ export class LockManager {
     this.save(data)
   }
 
+  /** Batch upsert: read once, apply all entries, write once. */
+  batchUpsert(entries: LockEntry[]): void {
+    if (entries.length === 0) return
+    const data = this.load()
+    const index = new Map<string, number>()
+    for (let i = 0; i < data.entries.length; i++) {
+      index.set(`${data.entries[i].type}:${data.entries[i].name}`, i)
+    }
+    for (const entry of entries) {
+      const key = `${entry.type}:${entry.name}`
+      const idx = index.get(key)
+      if (idx !== undefined) {
+        data.entries[idx] = entry
+      } else {
+        data.entries.push(entry)
+      }
+    }
+    this.save(data)
+  }
+
   remove(type: ResourceType, name: string): boolean {
     const data = this.load()
     const idx = data.entries.findIndex(

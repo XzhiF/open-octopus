@@ -74,6 +74,32 @@ export class RegistryStore {
     this.save(data)
   }
 
+  /** Batch upsert: read once, apply all entries, write once. O(n) instead of O(n²). */
+  batchUpsert(entries: ResourceEntry[]): { inserted: number; updated: number } {
+    if (entries.length === 0) return { inserted: 0, updated: 0 }
+    const data = this.load()
+    let inserted = 0
+    let updated = 0
+    const index = new Map<string, number>()
+    for (let i = 0; i < data.resources.length; i++) {
+      index.set(`${data.resources[i].type}:${data.resources[i].name}`, i)
+    }
+    for (const entry of entries) {
+      const key = `${entry.type}:${entry.name}`
+      const idx = index.get(key)
+      if (idx !== undefined) {
+        data.resources[idx] = entry
+        updated++
+      } else {
+        data.resources.push(entry)
+        index.set(key, data.resources.length - 1)
+        inserted++
+      }
+    }
+    this.save(data)
+    return { inserted, updated }
+  }
+
   remove(type: ResourceType, name: string): boolean {
     const data = this.load()
     const idx = data.resources.findIndex(

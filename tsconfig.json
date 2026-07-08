@@ -1,0 +1,30 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "noEmit": true,
+    "baseUrl": ".",
+    "paths": {
+      "@octopus/shared": ["packages/shared/src/index.ts"],
+      "@octopus/shared/*": ["packages/shared/src/*"],
+      "@octopus/providers": ["packages/providers/src/index.ts"],
+      "@octopus/providers/*": ["packages/providers/src/*"],
+      "@octopus/engine": ["packages/engine/src/index.ts"],
+      "@octopus/engine/*": ["packages/engine/src/*"],
+      "@octopus/server": ["packages/server/src/index.ts"],
+      "@octopus/server/*": ["packages/server/src/*"],
+      "octopus": ["packages/cli/src/index.ts"],
+      "octopus/*": ["packages/cli/src/*"]
+    }
+  },
+  "include": ["packages/*/src/**/*"],
+  "exclude": ["node_modules", "dist"]
+}
