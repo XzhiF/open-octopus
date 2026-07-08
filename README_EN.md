@@ -327,6 +327,14 @@ Agent Workflow
 
 Octopus Repository
   └→ Shared repository for Workflows / SKILLs / avatars — upload, download, share
+
+Workflow Observability
+  └→ Runtime observability for workflows: tool call error detection,
+     model anomalous behavior recognition, custom node scoring
+     (e.g., bugs found/resolved per E2E round, node quality scores),
+     scoring data accumulates as knowledge to feed back into workflow
+     design, prompt optimization, and input prompt reviews;
+     extensible via Hooks (e.g., Ponytail plugins) for runtime intervention
 ```
 
 **… Future Considerations ↓**

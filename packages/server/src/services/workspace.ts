@@ -706,7 +706,7 @@ export class WorkspaceService {
     const skillsDir = path.join(workspacePath, ".claude", "skills")
     fs.mkdirSync(skillsDir, { recursive: true })
     // Copy all core skills to workspace
-    const coreSkills = ["octo-dev-copilot", "octo-workflow-dev", "octo-swarm-dev", "octo-browser-debug", "octo-browser-vision", "octo-e2e-tester"]
+    const coreSkills = ["octo-dev-copilot", "octo-workflow-dev", "octo-swarm-dev", "octo-browser-debug", "octo-browser-vision", "octo-e2e-tester", "octo-resource-manager", "octo-source-analyzer"]
     for (const skillName of coreSkills) {
       const dest = path.join(skillsDir, skillName)
       if (fs.existsSync(dest)) continue

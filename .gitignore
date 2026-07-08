@@ -55,6 +55,9 @@ dist/
 .turbo/
 .next/.worktrees/
 
+# Crash dumps
+*.stackdump
+
 # Temporary / local-only artifacts — NEVER commit
 tmp/
 
@@ -62,3 +65,4 @@ tmp/
 # Playwright test artifacts
 test-results/
 .e2e-sandbox/
+.gstack/

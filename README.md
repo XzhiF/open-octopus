@@ -327,6 +327,12 @@ Agent Workflow
 
 Octopus Repository
   └→ Workflow / SKILL / 分身的共享仓库，上传、下载、分享
+
+Workflow Observability
+  └→ 工作流运行时可观测：工具调用错误检测、模型异常行为识别、
+     节点自定义评分（如 E2E 轮次发现/解决 BUG 数、节点质量评分），
+     评分数据沉淀为知识，反哺工作流设计、Prompt 优化与输入点评；
+     后续可接入 Hooks（如 Ponytail 等插件）实现运行时干预与纠偏
 ```
 
 **… 未来考虑 ↓**

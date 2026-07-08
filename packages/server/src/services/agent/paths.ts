@@ -6,11 +6,14 @@ import path from 'path'
  * Agent data is stored at ~/.octopus/agent/ — shared across all orgs.
  */
 
-const OCTOPUS_HOME = process.env.OCTOPUS_HOME ?? path.join(os.homedir(), '.octopus')
+/** Get Octopus home dir — function for test isolation (B7 fix) */
+function getHome(): string {
+  return process.env.OCTOPUS_HOME ?? path.join(os.homedir(), '.octopus')
+}
 
 /** Root agent directory: ~/.octopus/agent */
 export function getAgentDir(): string {
-  return path.join(OCTOPUS_HOME, 'agent')
+  return path.join(getHome(), 'agent')
 }
 
 /** Agent memory directory: ~/.octopus/agent/memory */
@@ -75,5 +78,5 @@ export function getNotificationQueueDir(): string {
 
 /** Octopus home directory: ~/.octopus (or $OCTOPUS_HOME) */
 export function getOctopusHome(): string {
-  return OCTOPUS_HOME
+  return getHome()
 }

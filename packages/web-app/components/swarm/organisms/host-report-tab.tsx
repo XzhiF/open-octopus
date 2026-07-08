@@ -3,6 +3,7 @@
 import { useMemo } from "react"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
+import rehypeSanitize from "rehype-sanitize"
 import { AlertBanner } from "../atoms/alert-banner"
 
 export interface HostReportTabProps {
@@ -111,7 +112,7 @@ export function HostReportTab({ report, hostDegraded }: HostReportTabProps) {
         </div>
       ) : (
         <div className="prose prose-sm dark:prose-invert max-w-none rounded-lg border border-border bg-card p-4">
-          <ReactMarkdown remarkPlugins={[remarkGfm]}>
+          <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeSanitize]}>
             {report}
           </ReactMarkdown>
         </div>

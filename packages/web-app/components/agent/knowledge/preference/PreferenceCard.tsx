@@ -16,6 +16,7 @@ import { useState, useEffect, useCallback, useImperativeHandle, forwardRef, useR
 import { ChevronDown, ChevronUp, Edit3, Save, X, Globe2, Building2, Loader2, FileText } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import rehypeSanitize from 'rehype-sanitize'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -233,7 +234,7 @@ export const PreferenceCard = forwardRef<PreferenceCardHandle, PreferenceCardPro
             ) : content ? (
               <div className="space-y-3">
                 <article className="preference-prose">
-                  <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                  <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeSanitize]}>
                     {content}
                   </ReactMarkdown>
                 </article>

@@ -1,80 +1,86 @@
 import fs from "fs"
 import path from "path"
-import { parseWorkflow, isOctopusWorkflow, resolveGlobalDir } from "@octopus/shared"
+import { parseWorkflow, isOctopusWorkflow } from "@octopus/shared"
+import type { ResourceManager } from "@octopus/shared"
 import type { WorkflowInfo, WorkflowDetail } from "../types/workflow-api"
 
+/**
+ * BuiltInWorkflowService — queries ResourceManager for installed workflows.
+ * Only reads from ~/.octopus/resources/installed/ via ResourceManager.
+ * No directory scanning.
+ */
 export class BuiltInWorkflowService {
-  private dirs: string[]
+  private resourceManager: ResourceManager
 
-  constructor(dir?: string) {
-    const globalDir = dir ?? path.join(resolveGlobalDir(), "workflows")
-    this.dirs = []
-
-    // 仅在默认模式（非测试/非自定义 dir）下，额外读取 core-pack 源码目录
-    if (!dir) {
-      try {
-        const corePack = require("@octopus/core-pack")
-        const presetsWorkflowsDir = path.join(corePack.presetsDir, "workflows")
-        if (
-          presetsWorkflowsDir !== globalDir &&
-          fs.existsSync(presetsWorkflowsDir)
-        ) {
-          this.dirs.push(presetsWorkflowsDir)
-        }
-      } catch {
-        // core-pack 不可用（生产环境），跳过
-      }
-    }
-
-    // 全局目录（或自定义目录）作为兜底
-    this.dirs.push(globalDir)
+  constructor(resourceManager: ResourceManager) {
+    this.resourceManager = resourceManager
   }
 
   list(): WorkflowInfo[] {
-    const seen = new Map<string, WorkflowInfo>()
+    const results: WorkflowInfo[] = []
+    const response = this.resourceManager.list({ type: "workflow", installed: true })
+    const installed = response.resources ?? []
 
-    for (const dir of this.dirs) {
-      if (!fs.existsSync(dir)) continue
+    for (const entry of installed) {
+      if (!entry.installPath) continue
+      const yamlPath = this.findYamlFile(entry.installPath)
+      if (!yamlPath) continue
 
-      const files = fs.readdirSync(dir)
-        .filter(f => f.endsWith(".yaml") || f.endsWith(".yml"))
-
-      for (const filename of files) {
-        // 后遍历的目录优先级更高（覆盖同名文件）
-        if (seen.has(filename)) continue
-
-        const filePath = path.join(dir, filename)
-        const content = fs.readFileSync(filePath, "utf-8")
+      try {
+        const content = fs.readFileSync(yamlPath, "utf-8")
         if (!isOctopusWorkflow(content)) continue
-        try {
-          const parsed = parseWorkflow(content)
-          seen.set(filename, {
-            ref: filename,
-            name: parsed.name,
-            inputs: parsed.inputs,
-          })
-        } catch {
-          // 解析失败，跳过
-        }
+        const parsed = parseWorkflow(content)
+        results.push({
+          ref: `${entry.group}/${entry.name}`,
+          name: parsed.name,
+          inputs: parsed.inputs,
+        })
+      } catch {
+        // Parse failure, skip
       }
     }
 
-    return [...seen.values()]
+    return results
   }
 
   get(ref: string): WorkflowDetail | null {
-    for (const dir of this.dirs) {
-      const filePath = path.join(dir, ref)
-      if (!fs.existsSync(filePath)) continue
-      const content = fs.readFileSync(filePath, "utf-8")
-      if (!isOctopusWorkflow(content)) continue
-      try {
-        const parsed = parseWorkflow(content)
-        return { ref, content, parsed }
-      } catch {
-        continue
-      }
+    // ref format: "group/name" or "name"
+    const parts = ref.split("/")
+    const name = parts.length > 1 ? parts[1] : parts[0]
+    const group = parts.length > 1 ? parts[0] : undefined
+
+    const entry = this.resourceManager.get("workflow", name)
+    if (!entry || !entry.installed || !entry.installPath) {
+      return null
     }
-    return null
+
+    // If group specified, must match
+    if (group && entry.group !== group) {
+      return null
+    }
+
+    const yamlPath = this.findYamlFile(entry.installPath)
+    if (!yamlPath) return null
+
+    try {
+      const content = fs.readFileSync(yamlPath, "utf-8")
+      if (!isOctopusWorkflow(content)) return null
+      const parsed = parseWorkflow(content)
+      return {
+        ref: `${entry.group}/${entry.name}`,
+        content,
+        parsed,
+      }
+    } catch {
+      return null
+    }
+  }
+
+  /** Find .yaml or .yml file in install directory */
+  private findYamlFile(dir: string): string | null {
+    if (!fs.existsSync(dir)) return null
+    const files = fs.readdirSync(dir).filter(f => f.endsWith(".yaml") || f.endsWith(".yml"))
+    if (files.length === 0) return null
+    return path.join(dir, files[0])
   }
 }

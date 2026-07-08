@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, readdirSync } from "fs"
+import { existsSync, readFileSync, readdirSync, openSync, readSync, closeSync } from "fs"
 import { join } from "path"
 
 /**
@@ -46,7 +46,7 @@ export class RoleRegistry {
 
       for (const file of files) {
         try {
-          const content = readFileSync(file, "utf-8")
+          const content = this.readFrontmatterOnly(file)
           const frontmatter = this.parseFrontmatter(content)
 
           if (!frontmatter.name || !frontmatter.description) {
@@ -147,6 +147,18 @@ export class RoleRegistry {
       }
     } catch { /* ignore permission errors */ }
     return files
+  }
+
+  /** Read only the first 2KB of a file for frontmatter extraction. Avoids loading full .md body. */
+  private readFrontmatterOnly(filePath: string): string {
+    const fd = openSync(filePath, "r")
+    try {
+      const buf = Buffer.alloc(2048)
+      const bytesRead = readSync(fd, buf, 0, 2048, 0)
+      return buf.toString("utf-8", 0, bytesRead)
+    } finally {
+      closeSync(fd)
+    }
   }
 
   private parseFrontmatter(content: string): Record<string, string> {

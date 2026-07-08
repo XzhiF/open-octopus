@@ -17,6 +17,8 @@ import {
 import { createKnowledgeRoutes } from "./routes/knowledge"
 import { createReviewRoutes } from "./routes/review"
 import { createArchiveRoutes } from "./routes/archive"
+import { createResourceRoutes } from "./routes/resource"
+import { getResourceRegistry } from "./services/resource-registry"
 import { ReviewService } from "./services/knowledge/review"
 import { ObservabilityService } from "./services/observability"
 import { PrivacyFilter } from "./services/privacy-filter"
@@ -28,7 +30,7 @@ import { chatRoutes } from "./routes/chat"
 import { globalChatRoutes } from "./routes/global-chat"
 import { createFileRoutes } from "./routes/file-routes"
 import { createOrgRoutes } from "./routes/org"
-import builtInWorkflowRoutes from "./routes/builtin-workflow"
+import { createBuiltInWorkflowRoutes } from "./routes/builtin-workflow"
 import { createAnalyticsLogRoutes, createAnalyticsRoutes } from "./routes/analytics"
 import { eventRoutes } from "./routes/events"
 import { createPipelineRoutes } from "./routes/pipeline"
@@ -202,7 +204,7 @@ function isTrustedOrigin(origin: string | undefined): boolean {
 }
 
 app.use("*", cors({
-  origin: (origin) => origin ?? "*",
+  origin: (origin) => isTrustedOrigin(origin) ? (origin ?? "*") : undefined,
   credentials: true,
   allowHeaders: ["Content-Type", "Authorization", "If-Match"],
   allowMethods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
@@ -293,7 +295,7 @@ app.route("/api/agent", createAgentRoutes({
   executionDAO: d.execution,
   schedulerService: schedSvc,
 }))
-app.route("/api/workflows/built-in", builtInWorkflowRoutes)
+app.route("/api/workflows/built-in", createBuiltInWorkflowRoutes((o) => resourceRegistry.getOrCreate(o)))
 
 // Knowledge system routes — org is resolved per-request from the query
 // string (`?org=<name>`), so the server no longer pins a default org.
@@ -304,6 +306,10 @@ app.route("/api/review", createReviewRoutes(reviewService, d.pendingReview))
 // Archive routes — execution result summarization + rule proposal
 const stateDir = path.join(process.env.HOME ?? "~", ".octopus", "state")
 app.route("/api/archive", createArchiveRoutes(d.pendingReview, stateDir))
+
+// Resource management — unified resource lifecycle (install/uninstall/verify/audit)
+const resourceRegistry = getResourceRegistry()
+app.route("/api/resources", createResourceRoutes((o) => resourceRegistry.getOrCreate(o)))
 
 // Set scheduler on agent service
 try { getAgentService().setSchedulerService(schedSvc) } catch {}

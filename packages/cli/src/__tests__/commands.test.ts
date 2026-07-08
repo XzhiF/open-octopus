@@ -29,6 +29,20 @@ describe("CLI program setup", () => {
     expect(cmds).toContain("repos")
     expect(cmds).toContain("skill-search")
     expect(cmds).toContain("mcp-cli")
+    expect(cmds).toContain("resource")
+  })
+
+  it("resource command has all subcommands", () => {
+    const program = createProgram()
+    const resCmd = program.commands.find((c) => c.name() === "resource")
+    expect(resCmd).toBeDefined()
+    const subcmds = resCmd!.commands.map((c) => c.name())
+    expect(subcmds).toContain("install")
+    expect(subcmds).toContain("uninstall")
+    expect(subcmds).toContain("list")
+    expect(subcmds).toContain("info")
+    expect(subcmds).toContain("audit")
+    expect(subcmds).toContain("stats")
   })
 
   it("repos command has subcommands", () => {
