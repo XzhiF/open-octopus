@@ -20,6 +20,7 @@ import {
   withResourceLock,
   withErrorCatch,
 } from "./middleware"
+import { ResourceAgentService } from "../../services/resource-agent-service"
 
 /**
  * Resource routes — 10 REST endpoints for unified resource management.
@@ -198,11 +199,18 @@ export function createResourceRoutes(
     }
 
     if (resources.length === 0) {
-      return c.json({ installed: 0, skipped: 0, message: "No resources to install" })
+      return c.json({ installed: 0, skipped: 0, errors: [], message: "No resources to install" })
     }
 
+    // Delegate to ResourceAgentService for intelligent install
+    const agent = new ResourceAgentService(manager, o)
     const result = await withResourceLock(`${o}:source:${parsed.data.sourceName}:install`, async () => {
-      return manager.installFromSource(parsed.data.sourceName, group, resources as any, parsed.data.caller)
+      return agent.installFromSource({
+        sourceName: parsed.data.sourceName,
+        group,
+        resources: resources as any,
+        caller: parsed.data.caller,
+      })
     })
 
     return c.json(result)
@@ -218,8 +226,13 @@ export function createResourceRoutes(
       throw new ResourceError("INVALID_NAME", parsed.error.issues[0]?.message ?? "Invalid request")
     }
 
+    // Delegate to ResourceAgentService for intelligent sync
+    const agent = new ResourceAgentService(manager, o)
     const result = await withResourceLock(`${o}:source:${parsed.data.sourceName}:sync`, async () => {
-      return manager.syncSource(parsed.data.sourceName, parsed.data.caller)
+      return agent.syncSource({
+        sourceName: parsed.data.sourceName,
+        caller: parsed.data.caller,
+      })
     })
 
     return c.json(result)

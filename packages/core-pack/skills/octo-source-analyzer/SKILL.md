@@ -84,3 +84,48 @@ skills:
 - **遇到无法识别的文件**，跳过并在报告中说明
 - **大型仓库 (>500 文件)**，只扫描目标目录，不遍历全部文件
 - **名称冲突**（不同分类下同名 agent），用 `{name}-{category}` 去重
+
+## source sync 执行指导
+
+当执行 `source sync` 时，按以下步骤操作（条件判断不可省略）：
+
+### Step 1: git pull 更新缓存
+
+调用 `source update <name>` 拉取最新代码。如果 pull 失败（网络/权限），报告错误并退出。
+
+### Step 2: 重新 discover
+
+获取最新的资源清单（使用本 SKILL 的分析策略）。
+
+### Step 3: hash 对比（关键优化 — 必须执行）
+
+对每个已安装的资源：
+- 计算缓存中源文件的 hash
+- 对比 registry.json 中记录的 `sourceHash`
+- **hash 相同 → 跳过**（不复制，不写文件，计入 unchanged）
+- **hash 不同 → 标记为 updated**
+
+### Step 4: 检测新增
+
+发现列表中有但 registry 中没有的资源 → 标记为 added。
+added 资源不自动安装，报告给用户。
+
+### Step 5: 检测删除
+
+registry 中有但发现列表中没有的资源 → 标记为 orphan。
+设置 `status: "orphan"`，不删除文件。
+
+### Step 6: 执行覆盖（仅 updated）
+
+从缓存复制到 installed/（覆盖已有文件）。
+更新 registry.json 的 `sourceHash` 和 `syncedAt`。
+
+### Step 7: 报告结果
+
+```
+✓ Synced: agency-agents-zh
+  Updated: 12（已覆盖）
+  New: 3（可安装: octopus resource source install agency-agents-zh --all）
+  Removed: 1（orphan）
+  Unchanged: 250（跳过）
+```
