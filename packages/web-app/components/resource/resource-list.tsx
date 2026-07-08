@@ -30,6 +30,7 @@ export function ResourceList() {
   const [groupsExpanded, setGroupsExpanded] = useState(false)
   const [uninstallTarget, setUninstallTarget] = useState<{ name: string; type: ResourceType } | null>(null)
   const [uninstalling, setUninstalling] = useState(false)
+  const [page, setPage] = useState(1)
 
   // Always fetch all types — filter client-side so counts stay accurate
   const { resources: allEntries, loading, error, refresh } = useResourceList(org, {
@@ -76,6 +77,19 @@ export function ResourceList() {
     return entries.filter((e) => activeGroups.has((e as any).group ?? "unknown"))
   }, [entries, activeGroups, groups])
 
+  // Pagination
+  const PAGE_SIZE = 24
+  const totalPages = Math.max(1, Math.ceil(filteredEntries.length / PAGE_SIZE))
+  const currentPage = Math.min(page, totalPages)
+  const paginatedEntries = useMemo(() => {
+    const start = (currentPage - 1) * PAGE_SIZE
+    return filteredEntries.slice(start, start + PAGE_SIZE)
+  }, [filteredEntries, currentPage])
+
+  // Reset page when filters change
+  const handleTypeFilter = (v: ResourceType | "all") => { setTypeFilter(v); setPage(1) }
+  const handleQueryChange = (v: string) => { setQuery(v); setPage(1) }
+
   const handleGroupToggle = (group: string) => {
     const base = selectedGroups ?? new Set(groups.map((g) => g.name))
     const next = new Set(base)
@@ -85,14 +99,17 @@ export function ResourceList() {
       next.add(group)
     }
     setSelectedGroups(next)
+    setPage(1)
   }
 
   const handleSelectAll = () => {
     setSelectedGroups(new Set(groups.map((g) => g.name)))
+    setPage(1)
   }
 
   const handleSelectNone = () => {
     setSelectedGroups(new Set())
+    setPage(1)
   }
 
   const handleUninstallConfirm = async () => {
@@ -124,7 +141,7 @@ export function ResourceList() {
               aria-selected={typeFilter === f.value}
               variant={typeFilter === f.value ? "default" : "outline"}
               size="sm"
-              onClick={() => setTypeFilter(f.value)}
+              onClick={() => handleTypeFilter(f.value)}
             >
               {f.label}
               {f.value !== "all" && (
@@ -142,7 +159,7 @@ export function ResourceList() {
             <Input
               placeholder="搜索资源..."
               value={query}
-              onChange={(e) => setQuery(e.target.value)}
+              onChange={(e) => handleQueryChange(e.target.value)}
               className="w-64 pl-9"
               aria-label="搜索资源"
             />
@@ -222,7 +239,7 @@ export function ResourceList() {
       ) : (
         <>
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {filteredEntries.map((entry) => (
+            {paginatedEntries.map((entry) => (
               <ResourceCard
                 key={`${entry.type}:${(entry as any).group ?? ""}:${entry.name}`}
                 entry={entry}
@@ -230,8 +247,68 @@ export function ResourceList() {
               />
             ))}
           </div>
-          <div className="mt-4 text-center text-sm text-muted-foreground">
-            共 {filteredEntries.length} 个资源{activeGroups.size < groups.length && ` (已选 ${activeGroups.size}/${groups.length} 组)`}
+
+          {/* Pagination */}
+          <div className="mt-4 flex items-center justify-between">
+            <span className="text-sm text-muted-foreground">
+              共 {filteredEntries.length} 个{activeGroups.size < groups.length && ` (已选 ${activeGroups.size}/${groups.length} 组)`}
+              {totalPages > 1 && `，第 ${currentPage}/${totalPages} 页`}
+            </span>
+            {totalPages > 1 && (
+              <div className="flex items-center gap-1">
+                <Button
+                  variant="outline" size="sm"
+                  disabled={currentPage <= 1}
+                  onClick={() => setPage(1)}
+                >
+                  首页
+                </Button>
+                <Button
+                  variant="outline" size="sm"
+                  disabled={currentPage <= 1}
+                  onClick={() => setPage(currentPage - 1)}
+                >
+                  上一页
+                </Button>
+                {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
+                  // Show pages around current page
+                  let p: number
+                  if (totalPages <= 5) {
+                    p = i + 1
+                  } else if (currentPage <= 3) {
+                    p = i + 1
+                  } else if (currentPage >= totalPages - 2) {
+                    p = totalPages - 4 + i
+                  } else {
+                    p = currentPage - 2 + i
+                  }
+                  return (
+                    <Button
+                      key={p}
+                      variant={p === currentPage ? "default" : "outline"}
+                      size="sm"
+                      onClick={() => setPage(p)}
+                    >
+                      {p}
+                    </Button>
+                  )
+                })}
+                <Button
+                  variant="outline" size="sm"
+                  disabled={currentPage >= totalPages}
+                  onClick={() => setPage(currentPage + 1)}
+                >
+                  下一页
+                </Button>
+                <Button
+                  variant="outline" size="sm"
+                  disabled={currentPage >= totalPages}
+                  onClick={() => setPage(totalPages)}
+                >
+                  末页
+                </Button>
+              </div>
+            )}
           </div>
         </>
       )}
