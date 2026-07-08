@@ -104,7 +104,8 @@ describe("ArchiveService", () => {
       expect(r1.archived).toBe(true)
 
       const r2 = await service.archiveExecution("exec-1")
-      expect(r2.archived).toBe(true) // INSERT OR IGNORE, no error
+      expect(r2.archived).toBe(false) // duplicate detected
+      expect(r2.reason).toBe("already_archived")
 
       expect(archiveDAO.countByWorkspace("ws-1")).toBe(1)
     })

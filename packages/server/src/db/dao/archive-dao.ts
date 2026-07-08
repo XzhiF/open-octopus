@@ -10,8 +10,8 @@ export class ArchiveDAO extends BaseDAO {
 
   // ── execution_archive CRUD ──────────────────────────────────────────
 
-  insertExecutionArchive(row: ExecutionArchiveRow): void {
-    this.stmt(`
+  insertExecutionArchive(row: ExecutionArchiveRow): { inserted: boolean } {
+    const result = this.stmt(`
       INSERT OR IGNORE INTO execution_archive
         (execution_id, workspace_id, org, workflow_name, total_cost, total_duration_ms,
          node_count, success_rate, token_breakdown, model_breakdown, node_summary,
@@ -23,6 +23,7 @@ export class ArchiveDAO extends BaseDAO {
       row.token_breakdown, row.model_breakdown, row.node_summary,
       row.chain_info, row.status, row.archived_at, row.metadata,
     )
+    return { inserted: result.changes > 0 }
   }
 
   findByExecutionId(executionId: string): ExecutionArchiveRow | null {

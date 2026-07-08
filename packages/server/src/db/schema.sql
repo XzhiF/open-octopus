@@ -21,7 +21,8 @@ CREATE TABLE IF NOT EXISTS workspaces (
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   source TEXT NOT NULL DEFAULT 'user',
-  source_schedule_id TEXT
+  source_schedule_id TEXT,
+  archive_status TEXT DEFAULT NULL
 );
 
 -- 2. Executions

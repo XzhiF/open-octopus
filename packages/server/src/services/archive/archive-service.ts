@@ -23,7 +23,7 @@ export class ArchiveService {
 
   // ── P1.1: archiveExecution ──────────────────────────────────────────
 
-  private static TERMINAL_STATUSES = new Set(["completed", "failed", "cancelled", "timeout"])
+  private static TERMINAL_STATUSES = new Set(["completed", "completed_with_failures", "failed", "cancelled", "rejected"])
 
   async archiveExecution(executionId: string): Promise<{ archived: boolean; reason?: string }> {
     const exec = this.executionDAO.findById(executionId)
@@ -36,8 +36,8 @@ export class ArchiveService {
     const row = this.buildExecutionArchiveRow(executionId, exec)
 
     try {
-      this.archiveDAO.insertExecutionArchive(row)
-      return { archived: true }
+      const { inserted } = this.archiveDAO.insertExecutionArchive(row)
+      return { archived: inserted, reason: inserted ? undefined : "already_archived" }
     } catch (err) {
       logError("archive execution failed", err, { executionId })
       return { archived: false, reason: "insert_failed" }
@@ -200,66 +200,60 @@ export class ArchiveService {
     // 1. Archive daily memory files older than retention days
     try {
       // Dynamic imports to avoid circular deps and heavy transitive loads
-      const { getAgentService } = await import('../agent/agent-service').catch(() => ({ getAgentService: null }))
-      const { getDailyMemoryDir } = await import('../agent/paths').catch(() => ({ getDailyMemoryDir: null }))
+      const { getAgentService } = await import('../agent/agent-service')
+      const { getDailyMemoryDir } = await import('../agent/paths')
       const fs = await import('fs')
 
-      if (!getAgentService || !getDailyMemoryDir) {
-        logError('archiveMemoryBatch: required modules not available', null, { org })
-      } else {
-        const agentService = getAgentService()
-        const dailyDir = getDailyMemoryDir()
+      const agentService = getAgentService()
+      const dailyDir = getDailyMemoryDir()
 
-        if (fs.existsSync(dailyDir)) {
-          const files = fs.readdirSync(dailyDir).filter((f: string) => f.endsWith('.md'))
-          const retentionCutoff = new Date()
-          retentionCutoff.setDate(retentionCutoff.getDate() - config.session_retention_days)
+      if (fs.existsSync(dailyDir)) {
+        const files = fs.readdirSync(dailyDir).filter((f: string) => f.endsWith('.md'))
+        const retentionCutoff = new Date()
+        retentionCutoff.setDate(retentionCutoff.getDate() - config.session_retention_days)
 
-          for (const file of files) {
-            const dateMatch = file.match(/^(\d{4}-\d{2}-\d{2})\.md$/)
-            if (!dateMatch) continue
-            const fileDate = new Date(dateMatch[1])
-            if (fileDate >= retentionCutoff) continue
+        for (const file of files) {
+          const dateMatch = file.match(/^(\d{4}-\d{2}-\d{2})\.md$/)
+          if (!dateMatch) continue
+          const fileDate = new Date(dateMatch[1])
+          if (fileDate >= retentionCutoff) continue
 
-            try {
-              await agentService.archiveMemory(org, dateMatch[1])
-              archivedCount++
-              this.emitArchived(dateMatch[1], 'daily_memory', new Date().toISOString())
-            } catch (err) {
-              logError('failed to archive daily memory', err, { org, date: dateMatch[1] })
-            }
+          try {
+            await agentService.archiveMemory(org, dateMatch[1])
+            archivedCount++
+            this.emitArchived(dateMatch[1], 'daily_memory', new Date().toISOString())
+          } catch (err) {
+            logError('failed to archive daily memory', err, { org, date: dateMatch[1] })
           }
         }
       }
     } catch (err) {
       logError('archiveMemoryBatch daily scan failed', err, { org })
+      throw err
     }
 
     // 2. Check long-term memory refine trigger
     try {
-      const { getMemoryService } = await import('../agent/memory-service').catch(() => ({ getMemoryService: null }))
-      const { getLongTermMemoryPath } = await import('../agent/paths').catch(() => ({ getLongTermMemoryPath: null }))
+      const { getMemoryService } = await import('../agent/memory-service')
+      const { getLongTermMemoryPath } = await import('../agent/paths')
       const fs = await import('fs')
 
-      if (!getMemoryService || !getLongTermMemoryPath) {
-        logError('archiveMemoryBatch: memory service modules not available', null, { org })
-      } else {
-        const ltPath = getLongTermMemoryPath()
-        if (fs.existsSync(ltPath)) {
-          const stat = fs.statSync(ltPath)
-          const daysSinceModified = (Date.now() - stat.mtimeMs) / (1000 * 60 * 60 * 24)
-          if (daysSinceModified >= config.long_term_refine_trigger_days) {
-            try {
-              const memoryService = getMemoryService()
-              memoryService.refineLongTerm(org)
-            } catch (err) {
-              logError('long-term refine failed', err, { org })
-            }
+      const ltPath = getLongTermMemoryPath()
+      if (fs.existsSync(ltPath)) {
+        const stat = fs.statSync(ltPath)
+        const daysSinceModified = (Date.now() - stat.mtimeMs) / (1000 * 60 * 60 * 24)
+        if (daysSinceModified >= config.long_term_refine_trigger_days) {
+          try {
+            const memoryService = getMemoryService()
+            memoryService.refineLongTerm(org)
+          } catch (err) {
+            logError('long-term refine failed', err, { org })
           }
         }
       }
     } catch (err) {
       logError('long-term refine check failed', err, { org })
+      throw err
     }
 
     return { archived_count: archivedCount }

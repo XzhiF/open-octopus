@@ -137,8 +137,8 @@ export function createWorkspaceRoutes(workspaceService: WorkspaceService, orgDAO
     const id = c.req.param("id")
     const ws = workspaceDAO.findById(id)
     if (!ws) return c.json({ error: { code: "NOT_FOUND", message: "Workspace not found" } }, 404)
-    if (ws.archive_status !== "archiving") {
-      return c.json({ error: { code: "INVALID_STATE", message: "Workspace not in archiving state" } }, 409)
+    if (ws.archive_status !== "archiving" && ws.archive_status !== "archive_failed") {
+      return c.json({ error: { code: "INVALID_STATE", message: `Workspace not in retryable state (current: ${ws.archive_status})` } }, 409)
     }
     try {
       const archiveSvc = getArchiveService()

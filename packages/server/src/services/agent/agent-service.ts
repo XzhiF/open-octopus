@@ -27,6 +27,7 @@ import { getConfigManager } from './config-manager'
 import { AgentSessionDAO, SafetyDAO } from '../../db/dao'
 import { SchedulerService } from '../scheduler/scheduler-service'
 import { getRecoveryService } from './recovery-service'
+import { logError } from '../../file-logger'
 
 import fs from 'fs'
 import path from 'path'
@@ -243,8 +244,12 @@ export class AgentService {
         memory_id: targetDate,
         memory_type: 'daily_memory',
         archived_at: new Date().toISOString(),
-      }, { source: 'agent-service' }).catch(() => {})
-    } catch {}
+      }, { source: 'agent-service' }).catch((err: unknown) => {
+        logError('memory.archived emit failed', err, { targetDate })
+      })
+    } catch (err) {
+      logError('memory.archived event setup failed', err, { targetDate })
+    }
 
     return { archived_date: targetDate, essence_summary: content.slice(0, 500) }
   }

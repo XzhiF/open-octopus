@@ -109,6 +109,8 @@ export class EngineCallbacks implements IEngineCallbacks {
         if (archiveService) {
           archiveService.archiveExecution(executionId)
             .catch(err => logError("auto-archive failed", err, { executionId }))
+        } else {
+          logError("auto-archive skipped: ArchiveService not initialized", null, { executionId })
         }
       },
 

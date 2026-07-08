@@ -33,12 +33,13 @@ function handleSchemaMigrations(db: Database.Database): void {
   if (tables.length > 0) {
     const cols = db.prepare("PRAGMA table_info(execution_archive)").all() as { name: string; pk: number }[]
     const idCol = cols.find(c => c.name === 'id')
-    const execIdCol = cols.find(c => c.name === 'execution_id')
 
-    // Old schema: has 'id' as PRIMARY KEY, new schema: has 'execution_id' as PRIMARY KEY
-    if (idCol && idCol.pk === 1 && execIdCol && execIdCol.pk === 0) {
-      // Drop old table, will be recreated by schema.sql
-      db.exec("DROP TABLE execution_archive")
+    // Old schema: has 'id' as PRIMARY KEY (new schema uses 'execution_id' as PK)
+    if (idCol && idCol.pk === 1) {
+      const count = (db.prepare("SELECT COUNT(*) as cnt FROM execution_archive").get() as { cnt: number }).cnt
+      // Rename to backup instead of dropping — preserves data for manual inspection
+      db.exec("ALTER TABLE execution_archive RENAME TO execution_archive_old_schema_backup")
+      console.log(`[schema] Renamed old execution_archive (${count} rows) → execution_archive_old_schema_backup`)
     }
   }
 
