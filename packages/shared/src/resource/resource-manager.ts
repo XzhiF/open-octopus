@@ -89,7 +89,7 @@ export class ResourceManager extends EventEmitter {
     } else if (parsed.source === "builtin") {
       type = this.detectType(parsed.name, parsed.source, req.type)
       name = parsed.name
-      group = req.group ?? "core-pack"
+      group = req.group ?? "built-in"
     } else {
       // local
       type = this.detectType(parsed.name, parsed.source, req.type)
@@ -211,7 +211,7 @@ export class ResourceManager extends EventEmitter {
     const parsed = parseRef(req.ref)
     const type = req.type ?? this.detectType(parsed.name, parsed.source, req.type)
     const name = parsed.name
-    const group = req.group ?? (parsed.source === "builtin" ? "core-pack" : "local")
+    const group = req.group ?? (parsed.source === "builtin" ? "built-in" : "local")
 
     if (!SAFE_NAME_RE.test(group)) {
       throw new ResourceError("INVALID_NAME", `Invalid group name: ${group}`)
@@ -746,7 +746,7 @@ export class ResourceManager extends EventEmitter {
 
   /**
    * Register all core-pack builtin resources into the registry.
-   * Resources are registered as installed with group "core-pack".
+   * Resources are registered as installed with group "built-in".
    * Already-registered entries are skipped (idempotent).
    */
   registerBuiltins(): { registered: number; skipped: number } {
@@ -761,13 +761,13 @@ export class ResourceManager extends EventEmitter {
         continue
       }
 
-      const installPath = this.getInstallPath(entry.type, entry.name, "core-pack")
+      const installPath = this.getInstallPath(entry.type, entry.name, "built-in")
       const registryEntry: ResourceEntry = {
         name: entry.name,
         type: entry.type,
         source: "builtin",
         ref: `builtin:${entry.name}`,
-        group: "core-pack",
+        group: "built-in",
         installed: true,
         verified: true,
         status: "installed",

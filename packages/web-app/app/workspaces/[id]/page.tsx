@@ -216,12 +216,13 @@ export default function WorkspaceDetailPage({ params }: WorkspaceDetailPageProps
     }
     setLoadError(null)
     try {
-      const [wsData, execData, wfData, builtInData] = await Promise.all([
+      const [wsData, execData, wfData] = await Promise.all([
         getWorkspace(id),
         listExecutions(id),
         fetchWorkflows(id),
-        fetchBuiltInWorkflows(),
       ])
+      // Fetch built-in workflows with the correct org
+      const builtInData = await fetchBuiltInWorkflows(wsData.org)
       setWorkspace(wsData)
       setExecutions(Array.isArray(execData) ? execData : execData.nodes ?? [])
       setWorkflows(Array.isArray(wfData) ? wfData : wfData.workflows ?? [])

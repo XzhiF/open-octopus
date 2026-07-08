@@ -23,7 +23,7 @@ describe("BuiltInWorkflowService", () => {
     const mockEntry: Partial<ResourceEntry> = {
       name: "deploy",
       type: "workflow",
-      group: "core-pack",
+      group: "built-in",
       installed: true,
       installPath: "/fake/path/workflows/deploy",
     }
@@ -39,7 +39,7 @@ describe("BuiltInWorkflowService", () => {
     const list = service.list()
 
     expect(list).toHaveLength(1)
-    expect(list[0].ref).toBe("core-pack/deploy")
+    expect(list[0].ref).toBe("built-in/deploy")
     expect(list[0].name).toBe("deploy")
 
     vi.restoreAllMocks()
@@ -49,7 +49,7 @@ describe("BuiltInWorkflowService", () => {
     const mockEntry: Partial<ResourceEntry> = {
       name: "deploy",
       type: "workflow",
-      group: "core-pack",
+      group: "built-in",
       installed: true,
       installPath: "/fake/path/workflows/deploy",
     }
@@ -61,7 +61,7 @@ describe("BuiltInWorkflowService", () => {
     vi.spyOn(fs, "readFileSync").mockReturnValue(VALID_WF)
 
     const service = new BuiltInWorkflowService(mockResourceManager as ResourceManager)
-    const detail = service.get("core-pack/deploy")
+    const detail = service.get("built-in/deploy")
 
     expect(detail).toBeDefined()
     expect(detail?.parsed.name).toBe("deploy")

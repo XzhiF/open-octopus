@@ -246,6 +246,7 @@ export function WorkflowScheduleForm({
               onOpenChange={setChainDialogOpen}
               value={chain}
               onChange={onChainChange}
+              org={orgValue}
             />
           </div>
 

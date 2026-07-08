@@ -184,8 +184,9 @@ interface WorkflowListItem {
   inputs?: Record<string, { description: string; required: boolean; default: string }>
 }
 
-export async function fetchBuiltInWorkflows(): Promise<WorkflowListItem[]> {
-  const res = await apiFetch(`${getServerUrl()}/api/workflows/built-in`)
+export async function fetchBuiltInWorkflows(org?: string): Promise<WorkflowListItem[]> {
+  const orgParam = org ? `?org=${encodeURIComponent(org)}` : ""
+  const res = await apiFetch(`${getServerUrl()}/api/workflows/built-in${orgParam}`)
   if (!res.ok) return []
   return res.json()
 }

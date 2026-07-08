@@ -29,7 +29,7 @@ export const ResourceEntrySchema = z.object({
   type: ResourceType,
   source: ResourceSource,
   ref: z.string(),
-  group: z.string().default("core-pack"),
+  group: z.string().default("built-in"),
   installed: z.boolean(),
   verified: z.boolean(),
   status: ResourceStatus,
