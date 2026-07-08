@@ -117,7 +117,7 @@ export function AuditLog() {
                   </TableCell>
                   <TableCell>
                     <Badge variant={entry.caller === "cli" ? "outline" : "default"} className="text-xs">
-                      {entry.caller.toUpperCase()}
+                      {(entry.caller || "unknown").toUpperCase()}
                     </Badge>
                   </TableCell>
                   <TableCell className="text-xs text-muted-foreground truncate max-w-xs">
