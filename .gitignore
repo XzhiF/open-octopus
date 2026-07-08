@@ -65,3 +65,4 @@ tmp/
 # Playwright test artifacts
 test-results/
 .e2e-sandbox/
+.gstack/

@@ -30,7 +30,7 @@ import { chatRoutes } from "./routes/chat"
 import { globalChatRoutes } from "./routes/global-chat"
 import { createFileRoutes } from "./routes/file-routes"
 import { createOrgRoutes } from "./routes/org"
-import builtInWorkflowRoutes from "./routes/builtin-workflow"
+import { createBuiltInWorkflowRoutes } from "./routes/builtin-workflow"
 import { createAnalyticsLogRoutes, createAnalyticsRoutes } from "./routes/analytics"
 import { eventRoutes } from "./routes/events"
 import { createPipelineRoutes } from "./routes/pipeline"
@@ -295,7 +295,7 @@ app.route("/api/agent", createAgentRoutes({
   executionDAO: d.execution,
   schedulerService: schedSvc,
 }))
-app.route("/api/workflows/built-in", builtInWorkflowRoutes)
+app.route("/api/workflows/built-in", createBuiltInWorkflowRoutes((o) => resourceRegistry.getOrCreate(o)))
 
 // Knowledge system routes — org is resolved per-request from the query
 // string (`?org=<name>`), so the server no longer pins a default org.
