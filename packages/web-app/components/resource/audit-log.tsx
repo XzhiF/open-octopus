@@ -104,16 +104,16 @@ export function AuditLog() {
               {entries.map((entry, i) => (
                 <TableRow key={i}>
                   <TableCell className="text-xs font-mono text-muted-foreground">
-                    {new Date(entry.timestamp).toLocaleString("zh-CN")}
+                    {entry.timestamp ? new Date(entry.timestamp).toLocaleString("zh-CN") : "-"}
                   </TableCell>
                   <TableCell>
                     <span className="rounded bg-muted px-1.5 py-0.5 text-xs font-medium">
-                      {entry.action}
+                      {entry.action || "-"}
                     </span>
                   </TableCell>
                   <TableCell className="text-sm">
-                    {entry.resource_name}
-                    <span className="ml-1 text-xs text-muted-foreground">({entry.resource_type})</span>
+                    {entry.resource_name || "-"}
+                    <span className="ml-1 text-xs text-muted-foreground">({entry.resource_type || "-"})</span>
                   </TableCell>
                   <TableCell>
                     <Badge variant={entry.caller === "cli" ? "outline" : "default"} className="text-xs">
