@@ -1,6 +1,7 @@
 "use client"
 
-import { useState, useMemo } from "react"
+import { useState, useMemo, useEffect } from "react"
+import { useRouter, useSearchParams } from "next/navigation"
 import { cn } from "@/lib/utils"
 import { Card } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -23,10 +24,52 @@ const PAGE_SIZE = 20
 
 export function AuditLog() {
   const org = useResourceOrg()
-  const [page, setPage] = useState(1)
-  const [actionFilter, setActionFilter] = useState<string>("all")
-  const [callerFilter, setCallerFilter] = useState<string>("all")
-  const [nameFilter, setNameFilter] = useState("")
+  const router = useRouter()
+  const searchParams = useSearchParams()
+
+  // Read initial state from URL search params
+  const [page, setPage] = useState(() => {
+    const pageParam = searchParams.get("auditPage")
+    return pageParam ? parseInt(pageParam, 10) : 1
+  })
+  const [actionFilter, setActionFilter] = useState<string>(
+    () => searchParams.get("auditAction") || "all"
+  )
+  const [callerFilter, setCallerFilter] = useState<string>(
+    () => searchParams.get("auditCaller") || "all"
+  )
+  const [nameFilter, setNameFilter] = useState(() => searchParams.get("auditName") || "")
+
+  // Update URL search params when state changes
+  useEffect(() => {
+    const params = new URLSearchParams(searchParams.toString())
+
+    if (actionFilter !== "all") {
+      params.set("auditAction", actionFilter)
+    } else {
+      params.delete("auditAction")
+    }
+
+    if (callerFilter !== "all") {
+      params.set("auditCaller", callerFilter)
+    } else {
+      params.delete("auditCaller")
+    }
+
+    if (nameFilter) {
+      params.set("auditName", nameFilter)
+    } else {
+      params.delete("auditName")
+    }
+
+    if (page > 1) {
+      params.set("auditPage", String(page))
+    } else {
+      params.delete("auditPage")
+    }
+
+    router.replace(`/resources?${params.toString()}`, { scroll: false })
+  }, [actionFilter, callerFilter, nameFilter, page, router, searchParams])
 
   // Fetch more records to support client-side pagination and filtering
   const { records: allRecords, loading, error, refresh } = useAuditLog(org, {

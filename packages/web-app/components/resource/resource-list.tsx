@@ -1,6 +1,7 @@
 "use client"
 
-import { useState, useMemo } from "react"
+import { useState, useMemo, useEffect } from "react"
+import { useRouter, useSearchParams } from "next/navigation"
 import { cn } from "@/lib/utils"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
@@ -24,13 +25,56 @@ const TYPE_FILTERS: Array<{ label: string; value: ResourceType | "all" }> = [
 
 export function ResourceList() {
   const org = useResourceOrg()
-  const [typeFilter, setTypeFilter] = useState<ResourceType | "all">("all")
-  const [query, setQuery] = useState("")
-  const [selectedGroups, setSelectedGroups] = useState<Set<string> | null>(null)
+  const router = useRouter()
+  const searchParams = useSearchParams()
+
+  // Read initial state from URL search params
+  const [typeFilter, setTypeFilter] = useState<ResourceType | "all">(
+    () => (searchParams.get("type") as ResourceType | "all") || "all"
+  )
+  const [query, setQuery] = useState(() => searchParams.get("q") || "")
+  const [selectedGroups, setSelectedGroups] = useState<Set<string> | null>(() => {
+    const groupsParam = searchParams.get("groups")
+    return groupsParam ? new Set(groupsParam.split(",")) : null
+  })
   const [groupsExpanded, setGroupsExpanded] = useState(false)
   const [uninstallTarget, setUninstallTarget] = useState<{ name: string; type: ResourceType } | null>(null)
   const [uninstalling, setUninstalling] = useState(false)
-  const [page, setPage] = useState(1)
+  const [page, setPage] = useState(() => {
+    const pageParam = searchParams.get("page")
+    return pageParam ? parseInt(pageParam, 10) : 1
+  })
+
+  // Update URL search params when state changes
+  useEffect(() => {
+    const params = new URLSearchParams(searchParams.toString())
+
+    if (typeFilter !== "all") {
+      params.set("type", typeFilter)
+    } else {
+      params.delete("type")
+    }
+
+    if (query) {
+      params.set("q", query)
+    } else {
+      params.delete("q")
+    }
+
+    if (selectedGroups && selectedGroups.size > 0) {
+      params.set("groups", Array.from(selectedGroups).join(","))
+    } else {
+      params.delete("groups")
+    }
+
+    if (page > 1) {
+      params.set("page", String(page))
+    } else {
+      params.delete("page")
+    }
+
+    router.replace(`/resources?${params.toString()}`, { scroll: false })
+  }, [typeFilter, query, selectedGroups, page, router, searchParams])
 
   // Always fetch all types — filter client-side so counts stay accurate
   const { resources: allEntries, loading, error, refresh } = useResourceList(org, {
