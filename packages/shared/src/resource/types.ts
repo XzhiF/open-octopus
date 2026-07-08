@@ -66,6 +66,7 @@ export const ResourceAuditAction = z.enum([
   "source_update",
   "source_install",
   "source_sync",
+  "install_or_upgrade",
 ])
 export type ResourceAuditAction = z.infer<typeof ResourceAuditAction>
 

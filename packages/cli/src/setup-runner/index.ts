@@ -18,6 +18,7 @@ import {
   parseManifest,
   buildProjectInfos,
   generateIndex,
+  ResourceManager,
 } from "@octopus/shared"
 
 const DEFAULT_IGNORE_PATTERNS = [
@@ -101,6 +102,7 @@ export class SetupRunner {
     this.handleWorkflows()
     this.writeVersion()
     this.syncWorkspaceSkills()
+    await this.installCorePackResources()
     this.printReport()
   }
 
@@ -1182,6 +1184,54 @@ export class SetupRunner {
         }
       }
     }
+  }
+
+  /**
+   * Install core-pack resources (skills, agents, workflows) to ~/.octopus/resources/installed/
+   * Uses ResourceManager.installOrUpgrade() to ensure latest versions.
+   */
+  private async installCorePackResources(): Promise<void> {
+    if (!this.corePackPath) {
+      console.log("  core-pack not found, skipping resource installation")
+      return
+    }
+
+    if (this.dryRun) {
+      console.log("  (dry-run) Will install core-pack resources to ~/.octopus/resources/installed/")
+      return
+    }
+
+    const manager = new ResourceManager({
+      org: this.org,
+      corePackBase: this.corePackPath,
+    })
+
+    const builtinResources = manager.listBuiltin()
+    let installed = 0
+    let upgraded = 0
+
+    for (const resource of builtinResources) {
+      try {
+        const result = await manager.installOrUpgrade({
+          ref: `builtin:${resource.name}`,
+          type: resource.type,
+          scope: "org",
+        })
+        if (result.status === "installed" || result.status === "installed_but_unverified") {
+          // Check if this was an upgrade or fresh install by looking at the timestamp
+          const isUpgrade = result.installedAt && new Date(result.installedAt).getTime() < Date.now() - 1000
+          if (isUpgrade) {
+            upgraded++
+          } else {
+            installed++
+          }
+        }
+      } catch (err: any) {
+        console.log(`  Warning: Failed to install ${resource.type}/${resource.name}: ${err.message}`)
+      }
+    }
+
+    console.log(`  Installed ${installed} new, upgraded ${upgraded} core-pack resources`)
   }
 
   private findPresetsPath(): string | null {

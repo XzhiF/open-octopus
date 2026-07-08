@@ -8,14 +8,14 @@ export function createBuiltInWorkflowRoutes(getManager: (org: string) => Resourc
   app.get("/", (c) => {
     const org = c.req.query("org") || "default"
     const manager = getManager(org)
-    const service = new BuiltInWorkflowService(undefined, manager)
+    const service = new BuiltInWorkflowService(manager)
     return c.json(service.list())
   })
 
   app.get("/:ref", (c) => {
     const org = c.req.query("org") || "default"
     const manager = getManager(org)
-    const service = new BuiltInWorkflowService(undefined, manager)
+    const service = new BuiltInWorkflowService(manager)
     const ref = c.req.param("ref")
     const workflow = service.get(ref)
     if (!workflow) return c.json({ error: "not found" }, 404)

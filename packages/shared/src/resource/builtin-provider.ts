@@ -49,7 +49,7 @@ function typeToSubdir(type: ResourceType): string {
   switch (type) {
     case "skill": return "skills"
     case "agent": return "agents"
-    case "workflow": return "workflows"
+    case "workflow": return "presets/workflows"
   }
 }
 
@@ -99,6 +99,7 @@ export class BuiltinProvider {
     const typeDirs: Array<{ subdir: string; type: ResourceType }> = [
       { subdir: "skills", type: "skill" },
       { subdir: "agents", type: "agent" },
+      { subdir: "presets/workflows", type: "workflow" },
     ]
 
     for (const { subdir, type } of typeDirs) {

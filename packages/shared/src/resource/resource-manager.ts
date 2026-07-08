@@ -200,6 +200,114 @@ export class ResourceManager extends EventEmitter {
     }
   }
 
+  // ── Install or Upgrade (for setup) ────────────────────────────
+
+  /**
+   * Install a resource if not present, or upgrade if already installed.
+   * Used by `octopus setup` to ensure core-pack resources are up-to-date.
+   * Always replaces files, updates sourceHash, and sets installedAt to now.
+   */
+  async installOrUpgrade(req: InstallRequest): Promise<InstallResponse> {
+    const parsed = parseRef(req.ref)
+    const type = req.type ?? this.detectType(parsed.name, parsed.source, req.type)
+    const name = parsed.name
+    const group = req.group ?? (parsed.source === "builtin" ? "core-pack" : "local")
+
+    if (!SAFE_NAME_RE.test(group)) {
+      throw new ResourceError("INVALID_NAME", `Invalid group name: ${group}`)
+    }
+    if (!SAFE_NAME_RE.test(name)) {
+      throw new ResourceError("INVALID_NAME", `Invalid resource name: ${name}`)
+    }
+
+    const installPath = this.getInstallPath(type, name, group)
+    if (!isPathWithinBase(installPath, this.basePath)) {
+      throw new ResourceError("PATH_TRAVERSAL", `Install path escapes base: ${installPath}`)
+    }
+
+    // Delete old files if exists (direct replacement strategy)
+    if (fs.existsSync(installPath)) {
+      try {
+        fs.rmSync(installPath, { recursive: true, force: true })
+      } catch (err: any) {
+        throw new ResourceError("FILE_DELETE_FAILED", `Failed to delete old ${installPath}: ${err.message}`)
+      }
+    }
+
+    // Audit
+    this.audit.append("install_or_upgrade", { name, type, source: parsed.source }, req.caller)
+
+    // Install files
+    let fileCount = 0
+    let hash = ""
+
+    if (parsed.source === "builtin") {
+      const result = this.builtin.install(name, type, installPath)
+      fileCount = result.fileCount
+      hash = result.hash
+    } else if (parsed.source === "local") {
+      const result = this.local.install(parsed.name, installPath)
+      fileCount = result.fileCount
+      hash = result.hash
+    } else if (parsed.source === "git") {
+      const [sourceName, ...rest] = parsed.name.split("/")
+      const resourcePath = rest.join("/")
+      const { cachePath } = this.sourceManager.getResourceFromSource(sourceName, resourcePath)
+      const result = this.local.install(cachePath, installPath)
+      fileCount = result.fileCount
+      hash = result.hash
+    }
+
+    // Register (upsert)
+    const entry: ResourceEntry = {
+      name,
+      type,
+      source: parsed.source,
+      ref: req.ref,
+      group,
+      installed: true,
+      verified: false,
+      status: "installed",
+      installedAt: new Date().toISOString(),
+      scope: "org",
+      installPath,
+      dependsOn: [],
+      sourceHash: hash,
+    }
+    this.registry.upsert(entry)
+
+    // Lock
+    this.lock.upsert({
+      name,
+      type,
+      hash,
+      lockedAt: new Date().toISOString(),
+      installPath,
+      fileCount,
+    })
+
+    // Verify
+    const verifyResult = this.installVerifier.verify(type, name, installPath, {
+      registry: this.registry,
+      lock: this.lock,
+    })
+
+    entry.verified = verifyResult.passed
+    entry.status = verifyResult.passed ? "installed" : "installed_but_unverified"
+    this.registry.upsert(entry)
+
+    this.emit("install", entry)
+
+    return {
+      name,
+      type,
+      source: parsed.source,
+      status: entry.status,
+      installPath,
+      installedAt: entry.installedAt,
+    }
+  }
+
   // ── Uninstall ─────────────────────────────────────────────────
 
   async uninstall(req: UninstallRequest): Promise<UninstallResponse> {
