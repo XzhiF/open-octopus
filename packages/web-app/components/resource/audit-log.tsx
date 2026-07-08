@@ -14,7 +14,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { ScrollText, Download, RefreshCw, ChevronLeft, ChevronRight } from "lucide-react"
+import { ScrollText, Download, RefreshCw } from "lucide-react"
 import { useResourceOrg } from "./resource-context"
 import { PageState } from "./PageState"
 import { useAuditLog } from "@/hooks/use-audit-log"
@@ -179,26 +179,60 @@ export function AuditLog() {
 
           {/* Pagination */}
           {totalPages > 1 && (
-            <div className="mt-3 flex items-center justify-between">
-              <span className="text-xs text-muted-foreground">
+            <div className="mt-4 flex items-center justify-between">
+              <span className="text-sm text-muted-foreground">
                 共 {filteredRecords.length} 条，第 {currentPage}/{totalPages} 页
               </span>
               <div className="flex items-center gap-1">
                 <Button
-                  variant="outline"
-                  size="sm"
+                  variant="outline" size="sm"
+                  disabled={currentPage <= 1}
+                  onClick={() => setPage(1)}
+                >
+                  首页
+                </Button>
+                <Button
+                  variant="outline" size="sm"
                   disabled={currentPage <= 1}
                   onClick={() => setPage(currentPage - 1)}
                 >
-                  <ChevronLeft className="h-4 w-4" />
+                  上一页
                 </Button>
+                {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
+                  let p: number
+                  if (totalPages <= 5) {
+                    p = i + 1
+                  } else if (currentPage <= 3) {
+                    p = i + 1
+                  } else if (currentPage >= totalPages - 2) {
+                    p = totalPages - 4 + i
+                  } else {
+                    p = currentPage - 2 + i
+                  }
+                  return (
+                    <Button
+                      key={p}
+                      variant={p === currentPage ? "default" : "outline"}
+                      size="sm"
+                      onClick={() => setPage(p)}
+                    >
+                      {p}
+                    </Button>
+                  )
+                })}
                 <Button
-                  variant="outline"
-                  size="sm"
+                  variant="outline" size="sm"
                   disabled={currentPage >= totalPages}
                   onClick={() => setPage(currentPage + 1)}
                 >
-                  <ChevronRight className="h-4 w-4" />
+                  下一页
+                </Button>
+                <Button
+                  variant="outline" size="sm"
+                  disabled={currentPage >= totalPages}
+                  onClick={() => setPage(totalPages)}
+                >
+                  末页
                 </Button>
               </div>
             </div>
