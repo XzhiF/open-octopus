@@ -60,7 +60,12 @@ export class AuditWriter {
     const lines = content.trim().split("\n").filter(Boolean)
     return lines.map((line) => {
       try {
-        return JSON.parse(line) as ResourceAuditRecord
+        const record = JSON.parse(line) as ResourceAuditRecord
+        // Default caller to "cli" for old records without this field
+        if (!record.caller) {
+          record.caller = "cli"
+        }
+        return record
       } catch {
         return null
       }
