@@ -625,4 +625,45 @@ export class ResourceManager extends EventEmitter {
 
     fs.writeFileSync(claudePath, newContent, "utf-8")
   }
+
+  // ── Builtin Auto-Registration ──────────────────────────────────
+
+  /**
+   * Register all core-pack builtin resources into the registry.
+   * Resources are registered as installed with group "core-pack".
+   * Already-registered entries are skipped (idempotent).
+   */
+  registerBuiltins(): { registered: number; skipped: number } {
+    const catalog = this.builtin.list()
+    let registered = 0
+    let skipped = 0
+
+    for (const entry of catalog) {
+      const existing = this.registry.get(entry.type, entry.name)
+      if (existing) {
+        skipped++
+        continue
+      }
+
+      const installPath = this.getInstallPath(entry.type, entry.name, "core-pack")
+      const registryEntry: ResourceEntry = {
+        name: entry.name,
+        type: entry.type,
+        source: "builtin",
+        ref: `builtin:${entry.name}`,
+        group: "core-pack",
+        installed: true,
+        verified: true,
+        status: "installed",
+        installedAt: new Date().toISOString(),
+        scope: "org",
+        installPath,
+        dependsOn: [],
+      }
+      this.registry.upsert(registryEntry)
+      registered++
+    }
+
+    return { registered, skipped }
+  }
 }

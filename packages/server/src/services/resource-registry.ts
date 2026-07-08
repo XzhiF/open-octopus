@@ -29,6 +29,8 @@ export class ResourceManagerRegistry {
     let manager = this.managers.get(org)
     if (!manager) {
       manager = new ResourceManager({ org, ...this.defaultConfig })
+      // Auto-register core-pack builtin resources on first access
+      manager.registerBuiltins()
       this.managers.set(org, manager)
     }
     return manager
