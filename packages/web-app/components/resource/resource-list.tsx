@@ -1,7 +1,6 @@
 "use client"
 
 import { useState, useMemo, useEffect } from "react"
-import { useRouter, useSearchParams } from "next/navigation"
 import { cn } from "@/lib/utils"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
@@ -23,58 +22,63 @@ const TYPE_FILTERS: Array<{ label: string; value: ResourceType | "all" }> = [
   { label: "Workflows", value: "workflow" },
 ]
 
+const STORAGE_KEY = "resource-list-state"
+
+interface ListState {
+  typeFilter: ResourceType | "all"
+  query: string
+  selectedGroups: string[] | null
+  page: number
+}
+
+function loadState(): ListState {
+  if (typeof window === "undefined") {
+    return { typeFilter: "all", query: "", selectedGroups: null, page: 1 }
+  }
+  try {
+    const stored = sessionStorage.getItem(STORAGE_KEY)
+    if (stored) {
+      const parsed = JSON.parse(stored)
+      return {
+        typeFilter: parsed.typeFilter || "all",
+        query: parsed.query || "",
+        selectedGroups: parsed.selectedGroups || null,
+        page: parsed.page || 1,
+      }
+    }
+  } catch {}
+  return { typeFilter: "all", query: "", selectedGroups: null, page: 1 }
+}
+
+function saveState(state: ListState) {
+  if (typeof window === "undefined") return
+  try {
+    sessionStorage.setItem(STORAGE_KEY, JSON.stringify(state))
+  } catch {}
+}
+
 export function ResourceList() {
   const org = useResourceOrg()
-  const router = useRouter()
-  const searchParams = useSearchParams()
-
-  // Read initial state from URL search params
-  const [typeFilter, setTypeFilter] = useState<ResourceType | "all">(
-    () => (searchParams.get("type") as ResourceType | "all") || "all"
-  )
-  const [query, setQuery] = useState(() => searchParams.get("q") || "")
+  const [typeFilter, setTypeFilter] = useState<ResourceType | "all">(() => loadState().typeFilter)
+  const [query, setQuery] = useState(() => loadState().query)
   const [selectedGroups, setSelectedGroups] = useState<Set<string> | null>(() => {
-    const groupsParam = searchParams.get("groups")
-    return groupsParam ? new Set(groupsParam.split(",")) : null
+    const stored = loadState().selectedGroups
+    return stored ? new Set(stored) : null
   })
   const [groupsExpanded, setGroupsExpanded] = useState(false)
   const [uninstallTarget, setUninstallTarget] = useState<{ name: string; type: ResourceType } | null>(null)
   const [uninstalling, setUninstalling] = useState(false)
-  const [page, setPage] = useState(() => {
-    const pageParam = searchParams.get("page")
-    return pageParam ? parseInt(pageParam, 10) : 1
-  })
+  const [page, setPage] = useState(() => loadState().page)
 
-  // Update URL search params when state changes
+  // Save state to sessionStorage whenever it changes
   useEffect(() => {
-    const params = new URLSearchParams(searchParams.toString())
-
-    if (typeFilter !== "all") {
-      params.set("type", typeFilter)
-    } else {
-      params.delete("type")
-    }
-
-    if (query) {
-      params.set("q", query)
-    } else {
-      params.delete("q")
-    }
-
-    if (selectedGroups && selectedGroups.size > 0) {
-      params.set("groups", Array.from(selectedGroups).join(","))
-    } else {
-      params.delete("groups")
-    }
-
-    if (page > 1) {
-      params.set("page", String(page))
-    } else {
-      params.delete("page")
-    }
-
-    router.replace(`/resources?${params.toString()}`, { scroll: false })
-  }, [typeFilter, query, selectedGroups, page, router, searchParams])
+    saveState({
+      typeFilter,
+      query,
+      selectedGroups: selectedGroups ? Array.from(selectedGroups) : null,
+      page,
+    })
+  }, [typeFilter, query, selectedGroups, page])
 
   // Always fetch all types — filter client-side so counts stay accurate
   const { resources: allEntries, loading, error, refresh } = useResourceList(org, {

@@ -1,7 +1,6 @@
 "use client"
 
 import { useState, useMemo, useEffect } from "react"
-import { useRouter, useSearchParams } from "next/navigation"
 import { cn } from "@/lib/utils"
 import { Card } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -22,54 +21,52 @@ import { useAuditLog } from "@/hooks/use-audit-log"
 
 const PAGE_SIZE = 20
 
+const STORAGE_KEY = "audit-log-state"
+
+interface AuditState {
+  page: number
+  actionFilter: string
+  callerFilter: string
+  nameFilter: string
+}
+
+function loadState(): AuditState {
+  if (typeof window === "undefined") {
+    return { page: 1, actionFilter: "all", callerFilter: "all", nameFilter: "" }
+  }
+  try {
+    const stored = sessionStorage.getItem(STORAGE_KEY)
+    if (stored) {
+      const parsed = JSON.parse(stored)
+      return {
+        page: parsed.page || 1,
+        actionFilter: parsed.actionFilter || "all",
+        callerFilter: parsed.callerFilter || "all",
+        nameFilter: parsed.nameFilter || "",
+      }
+    }
+  } catch {}
+  return { page: 1, actionFilter: "all", callerFilter: "all", nameFilter: "" }
+}
+
+function saveState(state: AuditState) {
+  if (typeof window === "undefined") return
+  try {
+    sessionStorage.setItem(STORAGE_KEY, JSON.stringify(state))
+  } catch {}
+}
+
 export function AuditLog() {
   const org = useResourceOrg()
-  const router = useRouter()
-  const searchParams = useSearchParams()
+  const [page, setPage] = useState(() => loadState().page)
+  const [actionFilter, setActionFilter] = useState<string>(() => loadState().actionFilter)
+  const [callerFilter, setCallerFilter] = useState<string>(() => loadState().callerFilter)
+  const [nameFilter, setNameFilter] = useState(() => loadState().nameFilter)
 
-  // Read initial state from URL search params
-  const [page, setPage] = useState(() => {
-    const pageParam = searchParams.get("auditPage")
-    return pageParam ? parseInt(pageParam, 10) : 1
-  })
-  const [actionFilter, setActionFilter] = useState<string>(
-    () => searchParams.get("auditAction") || "all"
-  )
-  const [callerFilter, setCallerFilter] = useState<string>(
-    () => searchParams.get("auditCaller") || "all"
-  )
-  const [nameFilter, setNameFilter] = useState(() => searchParams.get("auditName") || "")
-
-  // Update URL search params when state changes
+  // Save state to sessionStorage whenever it changes
   useEffect(() => {
-    const params = new URLSearchParams(searchParams.toString())
-
-    if (actionFilter !== "all") {
-      params.set("auditAction", actionFilter)
-    } else {
-      params.delete("auditAction")
-    }
-
-    if (callerFilter !== "all") {
-      params.set("auditCaller", callerFilter)
-    } else {
-      params.delete("auditCaller")
-    }
-
-    if (nameFilter) {
-      params.set("auditName", nameFilter)
-    } else {
-      params.delete("auditName")
-    }
-
-    if (page > 1) {
-      params.set("auditPage", String(page))
-    } else {
-      params.delete("auditPage")
-    }
-
-    router.replace(`/resources?${params.toString()}`, { scroll: false })
-  }, [actionFilter, callerFilter, nameFilter, page, router, searchParams])
+    saveState({ page, actionFilter, callerFilter, nameFilter })
+  }, [page, actionFilter, callerFilter, nameFilter])
 
   // Fetch more records to support client-side pagination and filtering
   const { records: allRecords, loading, error, refresh } = useAuditLog(org, {
