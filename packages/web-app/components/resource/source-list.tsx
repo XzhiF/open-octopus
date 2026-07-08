@@ -118,15 +118,15 @@ export function SourceList() {
                 <TableRow key={s.name}>
                   <TableCell className="text-sm font-medium">{s.name}</TableCell>
                   <TableCell className="text-xs font-mono text-muted-foreground truncate max-w-xs">
-                    {s.url}
+                    {s.url || "-"}
                   </TableCell>
                   <TableCell className="text-sm">
                     <Badge variant="secondary" className="text-xs">
-                      {s.resourceCount.agents}a {s.resourceCount.skills}s
+                      {s.resourceCount?.agents ?? 0}a {s.resourceCount?.skills ?? 0}s
                     </Badge>
                   </TableCell>
                   <TableCell className="text-xs text-muted-foreground">
-                    {new Date(s.lastUpdated).toLocaleDateString("zh-CN")}
+                    {s.lastUpdated ? new Date(s.lastUpdated).toLocaleDateString("zh-CN") : "-"}
                   </TableCell>
                   <TableCell>
                     {s.trusted ? (
