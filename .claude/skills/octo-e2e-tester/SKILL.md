@@ -32,7 +32,7 @@ agents:
     prompt: |
       你是视觉分析专家。分析图片并返回纯文本结果。
       规则：只返回文本，不要返回图片数据或 base64 编码。
-    model: sonnet
+    model: pro
     tools: ["Bash", "Read"]
 ```
 

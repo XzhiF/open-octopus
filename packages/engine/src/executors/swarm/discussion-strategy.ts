@@ -247,7 +247,7 @@ export class DiscussionStrategy extends SwarmStrategy {
           try {
             const summary = await this.services.llmCall(
               `用 3-5 句话总结以下讨论中各专家的核心观点、共识和分歧点:\n\n${content.slice(0, this.config.contextTier.compressionInputMaxChars)}`,
-              "haiku",
+              "se",
             )
             summaries.push({ round: roundToCompress, content: summary })
           } catch {

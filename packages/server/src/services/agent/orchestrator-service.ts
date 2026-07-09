@@ -586,23 +586,142 @@ ${nodes.map(n => `  - id: ${n.id}
     // Phase 1.5: Auto-discover skills from .claude/skills/
     await emitter.stepStart("discover_skills", "扫描 .claude/skills/ 自动发现...")
     await emitter.log("扫描 .claude/skills/ 目录...")
-    const workspacePath = workspaceDAO.findPathById(workspaceId)
-    const autoDiscoveredSkills = workspacePath
-      ? discoverSkillsFromWorkspace(workspacePath).map((s) => ({
-          name: s.name,
-          description: s.description,
-          content_outline: s.content_outline,
-          reason: s.reason,
-          evidence_workflows: [] as string[],
-          evidence_executions: [] as number[],
-          estimated_reuse: s.estimated_reuse,
-          content: s.content,
-          path: s.path,
-          auto_discovered: true,
-        }))
+    const rawPath = workspaceDAO.findPathById(workspaceId)
+    const workspacePath = rawPath?.replace(/^~/, os.homedir()) ?? null
+    const rawDiscoveredSkills = workspacePath
+      ? discoverSkillsFromWorkspace(workspacePath)
       : []
-    await emitter.log(`✓ 自动发现 ${autoDiscoveredSkills.length} 个 Skill`)
+
+    // Compare against ResourceManager installed skills
+    let autoDiscoveredSkills: Array<Record<string, unknown>> = []
+    try {
+      const { getResourceManager } = await import('../resource-manager')
+      const resourceManager = getResourceManager(this.org)
+      const installed = resourceManager.list({ type: "skill", installed: true })
+      const installedMap = new Map<string, { group: string; installPath: string }>()
+      for (const entry of installed.resources ?? []) {
+        if (entry.installPath) installedMap.set(entry.name, { group: entry.group, installPath: entry.installPath })
+      }
+
+      const fs = await import("fs")
+      const crypto = await import("crypto")
+
+      for (const skill of rawDiscoveredSkills) {
+        const existing = installedMap.get(skill.name)
+        if (existing) {
+          // Compare content
+          let existingContent = ""
+          try {
+            const files = fs.readdirSync(existing.installPath)
+            const mainFile = files.find((f: string) => f.endsWith(".md") || f.endsWith(".yaml") || f.endsWith(".yml"))
+            if (mainFile) existingContent = fs.readFileSync(`${existing.installPath}/${mainFile}`, "utf-8")
+          } catch {}
+
+          const hash1 = crypto.createHash("md5").update(skill.content).digest("hex")
+          const hash2 = crypto.createHash("md5").update(existingContent).digest("hex")
+
+          if (hash1 === hash2) {
+            await emitter.log(`  ⊘ ${skill.name} — 内容相同，跳过`)
+            continue // Skip unchanged
+          }
+          await emitter.log(`  ↻ ${skill.name} — 内容有更新 (原组: ${existing.group})`)
+          autoDiscoveredSkills.push({
+            name: skill.name, description: skill.description,
+            content_outline: skill.content_outline, reason: skill.reason,
+            evidence_workflows: [], evidence_executions: [],
+            estimated_reuse: skill.estimated_reuse,
+            content: skill.content, path: skill.path,
+            auto_discovered: true, status: "updated", existingGroup: existing.group,
+          })
+        } else {
+          await emitter.log(`  + ${skill.name} — 新发现`)
+          autoDiscoveredSkills.push({
+            name: skill.name, description: skill.description,
+            content_outline: skill.content_outline, reason: skill.reason,
+            evidence_workflows: [], evidence_executions: [],
+            estimated_reuse: skill.estimated_reuse,
+            content: skill.content, path: skill.path,
+            auto_discovered: true, status: "new", existingGroup: null,
+          })
+        }
+      }
+    } catch (err) {
+      // Fallback: treat all as new
+      await emitter.log(`ResourceManager 比对失败: ${err instanceof Error ? err.message : String(err)}`)
+      autoDiscoveredSkills = rawDiscoveredSkills.map((s) => ({
+        name: s.name, description: s.description,
+        content_outline: s.content_outline, reason: s.reason,
+        evidence_workflows: [], evidence_executions: [],
+        estimated_reuse: s.estimated_reuse,
+        content: s.content, path: s.path,
+        auto_discovered: true, status: "new", existingGroup: null,
+      }))
+    }
+
+    await emitter.log(`✓ 发现 ${autoDiscoveredSkills.length} 个 Skill (${rawDiscoveredSkills.length - autoDiscoveredSkills.length} 个无变化已跳过)`)
     await emitter.stepDone("discover_skills", { count: autoDiscoveredSkills.length })
+
+    // Phase 1.6: Auto-discover workflows from workflows/
+    await emitter.stepStart("discover_workflows", "扫描 workflows/ 目录...")
+    const { discoverWorkflowsFromWorkspace } = await import('../archive/skill-discovery')
+    const rawDiscoveredWorkflows = workspacePath
+      ? discoverWorkflowsFromWorkspace(workspacePath)
+      : []
+
+    // Compare against ResourceManager installed workflows
+    let autoDiscoveredWorkflows: Array<Record<string, unknown>> = []
+    try {
+      const { getResourceManager } = await import('../resource-manager')
+      const resourceManager = getResourceManager(this.org)
+      const installed = resourceManager.list({ type: "workflow", installed: true })
+      const installedMap = new Map<string, { group: string; installPath: string }>()
+      for (const entry of installed.resources ?? []) {
+        if (entry.installPath) installedMap.set(entry.name, { group: entry.group, installPath: entry.installPath })
+      }
+
+      const fs = await import("fs")
+      const crypto = await import("crypto")
+
+      for (const wf of rawDiscoveredWorkflows) {
+        const existing = installedMap.get(wf.name)
+        if (existing) {
+          let existingContent = ""
+          try {
+            const files = fs.readdirSync(existing.installPath)
+            const yamlFile = files.find((f: string) => f.endsWith(".yaml") || f.endsWith(".yml"))
+            if (yamlFile) existingContent = fs.readFileSync(`${existing.installPath}/${yamlFile}`, "utf-8")
+          } catch {}
+
+          const hash1 = crypto.createHash("md5").update(wf.content).digest("hex")
+          const hash2 = crypto.createHash("md5").update(existingContent).digest("hex")
+
+          if (hash1 === hash2) {
+            await emitter.log(`  ⊘ ${wf.name} — 内容相同，跳过`)
+            continue
+          }
+          await emitter.log(`  ↻ ${wf.name} — 内容有更新 (原组: ${existing.group})`)
+          autoDiscoveredWorkflows.push({
+            name: wf.name, description: wf.description, content: wf.content, path: wf.path,
+            status: "updated", existingGroup: existing.group,
+          })
+        } else {
+          await emitter.log(`  + ${wf.name} — 新发现`)
+          autoDiscoveredWorkflows.push({
+            name: wf.name, description: wf.description, content: wf.content, path: wf.path,
+            status: "new", existingGroup: null,
+          })
+        }
+      }
+    } catch (err) {
+      await emitter.log(`ResourceManager 比对失败: ${err instanceof Error ? err.message : String(err)}`)
+      autoDiscoveredWorkflows = rawDiscoveredWorkflows.map((w) => ({
+        name: w.name, description: w.description, content: w.content, path: w.path,
+        status: "new", existingGroup: null,
+      }))
+    }
+
+    await emitter.log(`✓ 发现 ${autoDiscoveredWorkflows.length} 个项目级工作流 (${rawDiscoveredWorkflows.length - autoDiscoveredWorkflows.length} 个已跳过)`)
+    await emitter.stepDone("discover_workflows", { count: autoDiscoveredWorkflows.length })
 
     // Phase 2: Parallel LLM analysis (3 calls)
     await emitter.stepStart("analyze_parallel", "3 个 LLM 并行分析中...")
@@ -654,6 +773,18 @@ ${nodes.map(n => `  - id: ${n.id}
     await emitter.stepStart("assemble", "合并分析结果...")
     const preview = assembleAnalysis(ctx, report, experiences, mergedSkills)
     ;(preview as any).tokenStats = tokenStats
+    // Use tokenStats cost when execution-level cost is 0
+    if (tokenStats.total.cost > 0 && preview.stats.total_cost === 0) {
+      preview.stats.total_cost = tokenStats.total.cost
+      preview.stats.avg_cost_per_execution = preview.stats.execution_count > 0
+        ? tokenStats.total.cost / preview.stats.execution_count : 0
+    }
+    ;(preview as any).workflows = autoDiscoveredWorkflows.map(w => ({
+      name: w.name,
+      description: w.description,
+      content: w.content,
+      path: w.path,
+    }))
     await emitter.log(`✓ 结果合并完成: ${preview.experiences.length} 经验, ${preview.skills.length} Skill`)
     await emitter.stepDone("assemble")
 
@@ -669,6 +800,8 @@ ${nodes.map(n => `  - id: ${n.id}
         experiences: JSON.stringify(preview.experiences),
         skills: JSON.stringify(preview.skills),
         stats: JSON.stringify(preview.stats),
+        workflows: JSON.stringify((preview as any).workflows ?? []),
+        token_stats: JSON.stringify((preview as any).tokenStats ?? {}),
       })
     } catch (err) {
       console.warn('Failed to save archive draft:', err)
@@ -677,7 +810,6 @@ ${nodes.map(n => `  - id: ${n.id}
     await emitter.stepDone("save_draft")
     await emitter.log("✓ 草稿已保存")
     await emitter.log("═══ 归档分析完成 ═══")
-    await emitter.complete({ success: true })
 
     return preview
   }

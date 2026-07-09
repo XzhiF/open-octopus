@@ -58,7 +58,7 @@ export class ContextManager {
 
         const summary = await this.llmCall(
           `Summarize the following expert discussion from round ${round} in 2-3 sentences:\n\n${content}`,
-          "haiku"
+          "se"
         )
 
         summaries.push({

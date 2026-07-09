@@ -190,6 +190,7 @@ export function createArchiveRoutes(
     const body = await c.req.json<{
       extractExperiences?: string[]
       installSkills?: Array<{ name: string; group: string; path?: string; content?: string }>
+      installWorkflows?: Array<{ name: string; group: string; path?: string; content?: string }>
       analysisReport?: unknown
       stats?: Record<string, unknown>
       metadata?: Record<string, unknown>
@@ -217,6 +218,7 @@ export function createArchiveRoutes(
           {
             extractExperiences: body.extractExperiences || [],
             installSkills: body.installSkills || [],
+            installWorkflows: body.installWorkflows || [],
             analysisReport: body.analysisReport,
             stats: body.stats as any,
             metadata: body.metadata,
@@ -265,28 +267,25 @@ export function createArchiveRoutes(
     }
   })
 
-  // GET /api/archive/skill-groups — list available skill groups
+  // GET /api/archive/skill-groups — list available resource groups (skills + workflows + agents)
   routes.get("/skill-groups", (c) => {
-    const org = c.req.query("org") || "default"
-    const base = path.join(os.homedir(), ".octopus", "orgs", org, "resources", "installed", "skills")
-    let groups: string[] = []
-    try {
-      if (fs.existsSync(base)) {
-        groups = fs.readdirSync(base).filter((f: string) => {
-          try {
-            return fs.statSync(path.join(base, f)).isDirectory()
-          } catch {
-            return false
-          }
-        })
-      }
-    } catch {
-      // Directory doesn't exist yet
+    const base = path.join(os.homedir(), ".octopus", "resources", "installed")
+    const groupSet = new Set<string>()
+    for (const subdir of ["skills", "workflows", "agents"]) {
+      const dir = path.join(base, subdir)
+      try {
+        if (fs.existsSync(dir)) {
+          fs.readdirSync(dir).filter((f: string) => {
+            try { return fs.statSync(path.join(dir, f)).isDirectory() } catch { return false }
+          }).forEach((g: string) => groupSet.add(g))
+        }
+      } catch {}
     }
+    const groups = Array.from(groupSet).sort()
     if (!groups.includes("archive-extracted")) {
       groups.push("archive-extracted")
     }
-    return c.json({ groups: groups.sort() })
+    return c.json({ groups })
   })
 
   // ── Draft routes ──────────────────────────────────────────
@@ -316,6 +315,8 @@ export function createArchiveRoutes(
         experiences: JSON.parse(draft.experiences),
         skills: JSON.parse(draft.skills),
         stats: JSON.parse(draft.stats),
+        workflows: JSON.parse(draft.workflows || '[]'),
+        tokenStats: JSON.parse(draft.token_stats || '{}'),
         created_at: (draft as any).created_at,
         updated_at: (draft as any).updated_at,
       },

@@ -18,6 +18,7 @@ const STEP_DEFS: StepDef[] = [
   { key: "create_record", label: "创建归档记录" },
   { key: "extract_experiences", label: "提取经验" },
   { key: "install_skills", label: "安装 Skill" },
+  { key: "install_workflows", label: "安装 Workflow" },
   { key: "delete_files", label: "清理文件" },
   { key: "update_stats", label: "更新统计" },
   { key: "soft_archive", label: "软归档" },
@@ -39,6 +40,7 @@ interface ArchiveProgressProps {
   options?: {
     extractExperiences?: string[]
     installSkills?: SkillInstallOption[]
+    installWorkflows?: SkillInstallOption[]
     analysisReport?: unknown
     stats?: Record<string, unknown>
     metadata?: Record<string, unknown>

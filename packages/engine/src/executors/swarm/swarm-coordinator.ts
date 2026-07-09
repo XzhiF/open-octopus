@@ -65,7 +65,7 @@ export class SwarmCoordinator implements SwarmServices {
       data: {
         nodeId: this.deps.nodeId,
         role: expert.role,
-        model: (model as string) || "sonnet",
+        model: (model as string) || "pro",
         source: "predefined",
       },
     })
@@ -155,7 +155,7 @@ export class SwarmCoordinator implements SwarmServices {
   }
 
   async llmCall(prompt: string, model?: string): Promise<string> {
-    const result = await this.deps.llmCall(prompt, model ?? "haiku")
+    const result = await this.deps.llmCall(prompt, model ?? "se")
     return result.text
   }
 

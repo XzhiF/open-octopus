@@ -269,6 +269,7 @@ export class ArchiveService {
     options: {
       extractExperiences: string[]
       installSkills: Array<{ name: string; group: string; path?: string; content?: string }>
+      installWorkflows?: Array<{ name: string; group: string; path?: string; content?: string }>
       analysisReport?: unknown
       metadata?: Record<string, unknown>
       stats?: {
@@ -389,6 +390,15 @@ export class ArchiveService {
         installedSkills = await this.installSkills(org, options.installSkills, emitter)
       }
       await emitter.stepDone("install_skills", { count: installedSkills })
+
+      // Step 5.5: Install workflows (resources system)
+      const installWorkflows = options.installWorkflows || []
+      await emitter.stepStart("install_workflows", `安装 ${installWorkflows.length} 个 Workflow...`)
+      let installedWorkflows = 0
+      if (installWorkflows.length > 0) {
+        installedWorkflows = await this.installWorkflowsToResources(org, installWorkflows, emitter)
+      }
+      await emitter.stepDone("install_workflows", { count: installedWorkflows })
 
       // Step 6: Delete workspace files from disk
       await emitter.stepStart("delete_files", "清理工作空间文件...")
@@ -554,7 +564,7 @@ export class ArchiveService {
           if (skill.path && fs.existsSync(skill.path)) {
             // Auto-discovered skill: copy the entire skill directory
             const sourceDir = path.dirname(skill.path)
-            const basePath = path.join(os.homedir(), ".octopus", "orgs", org, "resources")
+            const basePath = path.join(os.homedir(), ".octopus", "resources")
             const installDir = path.join(basePath, "installed", "skills", skill.group, skill.name)
 
             // Create target directory
@@ -589,6 +599,69 @@ export class ArchiveService {
       return installedCount
     } catch (err) {
       logError("installSkills failed", err, { org })
+      return 0
+    }
+  }
+
+  private async installWorkflowsToResources(
+    org: string,
+    workflows: Array<{ name: string; group: string; path?: string; content?: string }>,
+    emitter: StepEmitter,
+  ): Promise<number> {
+    try {
+      const { getResourceManager } = await import("../resource-manager")
+      const resourceManager = getResourceManager(org)
+      const fs = await import("fs")
+      const path = await import("path")
+      const os = await import("os")
+      let installedCount = 0
+
+      for (const wf of workflows) {
+        try {
+          await emitter.stepProgress("install_workflows", `安装 ${wf.name} → ${wf.group}`)
+
+          const basePath = path.join(os.homedir(), ".octopus", "orgs", org, "resources")
+          const installDir = path.join(basePath, "installed", "workflows", wf.group, wf.name)
+
+          // Create target directory
+          fs.mkdirSync(installDir, { recursive: true })
+
+          // Copy workflow yaml file or write content
+          if (wf.path && fs.existsSync(wf.path)) {
+            const destFile = path.join(installDir, path.basename(wf.path))
+            fs.copyFileSync(wf.path, destFile)
+            await emitter.log(`✓ Copied workflow from ${wf.path} → ${destFile}`)
+          } else if (wf.content) {
+            const destFile = path.join(installDir, `${wf.name}.yaml`)
+            fs.writeFileSync(destFile, wf.content, "utf-8")
+            await emitter.log(`✓ Written workflow content → ${destFile}`)
+          }
+
+          // Uninstall existing if overwriting
+          const existing = (resourceManager as any).registry?.get("workflow", wf.name)
+          if (existing?.installed) {
+            try {
+              await resourceManager.uninstall({ ref: `${existing.group}/${wf.name}`, type: "workflow" })
+              await emitter.log(`  覆盖已有 ${wf.group}/${wf.name}`)
+            } catch { /* ignore uninstall errors */ }
+          }
+
+          // Register in resource manager
+          await resourceManager.install({
+            ref: `local:${installDir}`,
+            type: "workflow",
+            group: wf.group,
+          })
+
+          installedCount++
+        } catch (err) {
+          await emitter.log(`✗ Failed to install workflow ${wf.name}: ${err instanceof Error ? err.message : String(err)}`)
+        }
+      }
+
+      return installedCount
+    } catch (err) {
+      logError("installWorkflowsToResources failed", err, { org })
       return 0
     }
   }

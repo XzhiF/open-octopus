@@ -717,6 +717,8 @@ CREATE TABLE IF NOT EXISTS archive_drafts (
   experiences TEXT NOT NULL DEFAULT '[]',
   skills TEXT NOT NULL DEFAULT '[]',
   stats TEXT NOT NULL DEFAULT '{}',
+  workflows TEXT NOT NULL DEFAULT '[]',
+  token_stats TEXT NOT NULL DEFAULT '{}',
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );

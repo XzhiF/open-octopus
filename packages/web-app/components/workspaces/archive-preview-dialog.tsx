@@ -50,6 +50,7 @@ interface ArchivePreviewDialogProps {
 const PREVIEW_STEP_DEFS = [
   { key: "build_context", label: "构建分析上下文" },
   { key: "discover_skills", label: "扫描 Skill 目录" },
+  { key: "discover_workflows", label: "扫描 Workflow 目录" },
   { key: "analyze_parallel", label: "LLM 并行分析" },
   { key: "assemble", label: "合并分析结果" },
   { key: "save_draft", label: "保存分析草稿" },
@@ -67,10 +68,12 @@ export function ArchivePreviewDialog({
   const [archiving, setArchiving] = useState(false)
   const [selectedExperiences, setSelectedExperiences] = useState<string[]>([])
   const [selectedSkills, setSelectedSkills] = useState<string[]>([])
+  const [selectedWorkflows, setSelectedWorkflows] = useState<string[]>([])
   const [activeTab, setActiveTab] = useState("analysis")
   const [draft, setDraft] = useState<ArchiveDraft | null>(null)
   const [draftAge, setDraftAge] = useState<string | null>(null)
   const [skillGroups, setSkillGroups] = useState<Record<string, string>>({})
+  const [workflowGroups, setWorkflowGroups] = useState<Record<string, string>>({})
   const [availableGroups, setAvailableGroups] = useState<string[]>(["archive-extracted"])
   const [expandedSkills, setExpandedSkills] = useState<Set<string>>(new Set())
   const previewDriverRef = useRef<{
@@ -97,11 +100,22 @@ export function ArchivePreviewDialog({
     if (preview?.skills) {
       const defaults: Record<string, string> = {}
       for (const skill of preview.skills) {
-        defaults[skill.name] = skillGroups[skill.name] ?? "archive-extracted"
+        defaults[skill.name] = skillGroups[skill.name] ?? (skill as any).existingGroup ?? "archive-extracted"
       }
       setSkillGroups(defaults)
     }
   }, [preview?.skills])
+
+  useEffect(() => {
+    const wfs = (preview as any)?.workflows ?? []
+    if (wfs.length > 0) {
+      const defaults: Record<string, string> = {}
+      for (const wf of wfs) {
+        defaults[wf.name] = workflowGroups[wf.name] ?? wf.existingGroup ?? "archive-extracted"
+      }
+      setWorkflowGroups(defaults)
+    }
+  }, [(preview as any)?.workflows])
 
   const checkDraft = async () => {
     if (!workspace) return
@@ -114,7 +128,9 @@ export function ArchivePreviewDialog({
           analysis: existingDraft.analysis_report,
           experiences: existingDraft.experiences,
           skills: existingDraft.skills,
-        })
+          workflows: (existingDraft as any).workflows ?? [],
+          tokenStats: (existingDraft as any).tokenStats ?? {},
+        } as any)
         setDraftAge(formatDraftAge(existingDraft.updated_at))
       }
     } catch {
@@ -130,6 +146,7 @@ export function ArchivePreviewDialog({
   const loadPreview = () => {
     if (!workspace) return
     setStarted(true)
+    setPreview(null)
     setLoading(true)
   }
 
@@ -231,6 +248,15 @@ export function ArchivePreviewDialog({
                   content: skill?.content,
                 }
               }),
+              installWorkflows: selectedWorkflows.map((name) => {
+                const wf = ((preview as any).workflows ?? []).find((w: any) => w.name === name)
+                return {
+                  name,
+                  group: workflowGroups[name] ?? "archive-extracted",
+                  path: wf?.path,
+                  content: wf?.content,
+                }
+              }),
               analysisReport: preview.analysis,
               stats: preview.stats,
               metadata: {
@@ -239,6 +265,8 @@ export function ArchivePreviewDialog({
                 allExperiences: preview.experiences,
                 allSkills: preview.skills,
                 tokenStats: (preview as any).tokenStats,
+                workflows: ((preview as any).workflows ?? []).filter((w: any) => selectedWorkflows.includes(w.name)),
+                allWorkflows: (preview as any).workflows ?? [],
               },
             }}
             onComplete={() => {
@@ -276,7 +304,7 @@ export function ArchivePreviewDialog({
                 <CardContent>
                   <div className="text-2xl font-bold">{preview.stats.execution_count}</div>
                   <div className="text-xs text-muted-foreground">
-                    成功率: {(preview.stats.success_rate * 100).toFixed(1)}%
+                    成功率: {(preview.stats.success_rate > 1 ? preview.stats.success_rate : preview.stats.success_rate * 100).toFixed(1)}%
                   </div>
                 </CardContent>
               </Card>
@@ -316,10 +344,10 @@ export function ArchivePreviewDialog({
                 </CardHeader>
                 <CardContent>
                   <div className="text-2xl font-bold">
-                    {preview.experiences.length + preview.skills.length}
+                    {preview.experiences.length + preview.skills.length + ((preview as any).workflows ?? []).length}
                   </div>
                   <div className="text-xs text-muted-foreground">
-                    {preview.experiences.length} 经验, {preview.skills.length} Skill
+                    {preview.experiences.length} 经验, {preview.skills.length} Skill, {((preview as any).workflows ?? []).length} 工作流
                   </div>
                 </CardContent>
               </Card>
@@ -327,13 +355,14 @@ export function ArchivePreviewDialog({
 
             {/* Tabs */}
             <Tabs value={activeTab} onValueChange={setActiveTab}>
-              <TabsList className="grid w-full grid-cols-5">
+              <TabsList className="grid w-full grid-cols-6">
                 <TabsTrigger value="analysis">分析报告</TabsTrigger>
                 <TabsTrigger value="tokens">Token 统计</TabsTrigger>
                 <TabsTrigger value="experiences">
                   经验 ({preview.experiences.length})
                 </TabsTrigger>
                 <TabsTrigger value="skills">Skill ({preview.skills.length})</TabsTrigger>
+                <TabsTrigger value="workflows">工作流 ({((preview as any).workflows ?? []).length})</TabsTrigger>
                 <TabsTrigger value="summary">归档摘要</TabsTrigger>
               </TabsList>
 
@@ -419,7 +448,7 @@ export function ArchivePreviewDialog({
               <TabsContent value="tokens" className="space-y-4">
                 {(() => {
                   const ts = (preview as any).tokenStats
-                  if (!ts || (ts.total.inputTokens === 0 && ts.total.outputTokens === 0)) {
+                  if (!ts?.total || (ts.total.inputTokens === 0 && ts.total.outputTokens === 0)) {
                     return <div className="text-center py-8 text-muted-foreground">无 Token 使用数据</div>
                   }
                   const fmt = (n: number) => n >= 1000000 ? `${(n / 1000000).toFixed(1)}M` : n >= 1000 ? `${(n / 1000).toFixed(1)}K` : String(n)
@@ -628,7 +657,11 @@ export function ArchivePreviewDialog({
                               <div className="flex items-center gap-2 mb-1">
                                 <Package className="h-4 w-4" />
                                 <h4 className="font-semibold">{skill.name}</h4>
-                                {skill.auto_discovered ? (
+                                {(skill as any).status === "updated" ? (
+                                  <Badge variant="default" className="text-xs bg-amber-500">有更新</Badge>
+                                ) : (skill as any).status === "new" ? (
+                                  <Badge variant="default" className="text-xs bg-green-600">新发现</Badge>
+                                ) : skill.auto_discovered ? (
                                   <Badge variant="default" className="text-xs">
                                     <FileText className="h-3 w-3 mr-1" />
                                     自动发现
@@ -681,19 +714,13 @@ export function ArchivePreviewDialog({
                               )}
                               <div className="flex items-center gap-2">
                                 <span className="text-xs text-muted-foreground">安装到组:</span>
-                                <Select
+                                <input
+                                  list="skill-group-options"
+                                  className="h-7 w-[180px] rounded-md border border-input bg-background px-2 text-xs"
                                   value={skillGroups[skill.name] ?? "archive-extracted"}
-                                  onValueChange={(v) => setSkillGroups(prev => ({ ...prev, [skill.name]: v }))}
-                                >
-                                  <SelectTrigger className="h-7 w-[180px] text-xs">
-                                    <SelectValue />
-                                  </SelectTrigger>
-                                  <SelectContent>
-                                    {availableGroups.map((g) => (
-                                      <SelectItem key={g} value={g}>{g}</SelectItem>
-                                    ))}
-                                  </SelectContent>
-                                </Select>
+                                  onChange={(e) => setSkillGroups(prev => ({ ...prev, [skill.name]: e.target.value }))}
+                                  placeholder="输入或选择组"
+                                />
                               </div>
                             </div>
                           </div>
@@ -702,6 +729,73 @@ export function ArchivePreviewDialog({
                     ))}
                   </div>
                 )}
+              </TabsContent>
+
+              <TabsContent value="workflows">
+                {(() => {
+                  const wfs: Array<{ name: string; description: string; content?: string }> = (preview as any).workflows ?? []
+                  if (wfs.length === 0) {
+                    return <div className="text-center py-8 text-muted-foreground">未发现项目级工作流</div>
+                  }
+                  return (
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between mb-4">
+                        <p className="text-sm text-muted-foreground">
+                          选择要安装到资源库的工作流（已选 {selectedWorkflows.length}）
+                        </p>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() =>
+                            setSelectedWorkflows(
+                              selectedWorkflows.length === wfs.length ? [] : wfs.map((w) => w.name)
+                            )
+                          }
+                        >
+                          {selectedWorkflows.length === wfs.length ? "取消全选" : "全选"}
+                        </Button>
+                      </div>
+                      {wfs.map((wf) => (
+                        <Card key={wf.name}>
+                          <CardContent className="pt-4">
+                            <div className="flex items-start gap-3">
+                              <Checkbox
+                                checked={selectedWorkflows.includes(wf.name)}
+                                onCheckedChange={() =>
+                                  setSelectedWorkflows((prev) =>
+                                    prev.includes(wf.name) ? prev.filter((s) => s !== wf.name) : [...prev, wf.name]
+                                  )
+                                }
+                              />
+                              <div className="flex-1">
+                                <div className="flex items-center gap-2 mb-1">
+                                  <Package className="h-4 w-4" />
+                                  <h4 className="font-semibold">{wf.name}</h4>
+                                  {wf.status === "updated" ? (
+                                    <Badge variant="default" className="text-xs bg-amber-500">有更新</Badge>
+                                  ) : wf.status === "new" ? (
+                                    <Badge variant="default" className="text-xs bg-green-600">新发现</Badge>
+                                  ) : null}
+                                </div>
+                                <p className="text-sm text-muted-foreground mb-2">{wf.description}</p>
+                                <div className="flex items-center gap-2">
+                                  <span className="text-xs text-muted-foreground">安装到组:</span>
+                                  <input
+                                    list="workflow-group-options"
+                                    className="h-7 w-[180px] rounded-md border border-input bg-background px-2 text-xs"
+                                    value={workflowGroups[wf.name] ?? "archive-extracted"}
+                                    onChange={(e) => setWorkflowGroups((prev) => ({ ...prev, [wf.name]: e.target.value }))}
+                                    placeholder="输入或选择组"
+                                  />
+                                </div>
+                              </div>
+                            </div>
+                          </CardContent>
+                        </Card>
+                      ))}
+                    </div>
+                  )
+                })()}
               </TabsContent>
 
               <TabsContent value="summary">
@@ -731,6 +825,10 @@ export function ArchivePreviewDialog({
                         <span className="text-sm text-muted-foreground">安装 Skill</span>
                         <span className="font-medium">{selectedSkills.length} 个</span>
                       </div>
+                      <div className="flex justify-between">
+                        <span className="text-sm text-muted-foreground">安装工作流</span>
+                        <span className="font-medium">{selectedWorkflows.length} 个</span>
+                      </div>
                     </CardContent>
                   </Card>
                 </div>
@@ -748,6 +846,14 @@ export function ArchivePreviewDialog({
         ) : (
           <div className="text-center py-8 text-muted-foreground">加载预览失败</div>
         )}
+
+        {/* Datalists for group comboboxes */}
+        <datalist id="skill-group-options">
+          {availableGroups.map((g) => <option key={g} value={g} />)}
+        </datalist>
+        <datalist id="workflow-group-options">
+          {availableGroups.map((g) => <option key={g} value={g} />)}
+        </datalist>
 
         {!archiving && preview && (
           <DialogFooter>

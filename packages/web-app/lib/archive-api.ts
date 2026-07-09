@@ -109,6 +109,7 @@ export async function archiveWorkspace(
   options: {
     extractExperiences?: string[]
     installSkills?: SkillInstallOption[]
+    installWorkflows?: SkillInstallOption[]
   },
   org?: string
 ): Promise<ArchiveResult> {
@@ -130,6 +131,8 @@ export interface ArchiveDraft {
   experiences: ExperienceCandidate[]
   skills: SkillCandidate[]
   stats: WorkspaceStats
+  workflows?: Array<{ name: string; description: string; content?: string; path?: string }>
+  tokenStats?: Record<string, unknown>
   created_at: string
   updated_at: string
 }
@@ -164,6 +167,7 @@ export function archiveWorkspaceSSE(
   options: {
     extractExperiences?: string[]
     installSkills?: SkillInstallOption[]
+    installWorkflows?: SkillInstallOption[]
     analysisReport?: unknown
     stats?: Record<string, unknown>
     metadata?: Record<string, unknown>

@@ -157,3 +157,52 @@ function truncate(s: string, maxLen: number): string {
   if (s.length <= maxLen) return s
   return s.slice(0, maxLen - 3) + "\n... [truncated]"
 }
+
+// ── Workflow Discovery ──────────────────────────────────────────────
+
+export interface DiscoveredWorkflow {
+  name: string
+  description: string
+  content: string
+  path: string
+}
+
+/**
+ * Auto-discover workflows from workspace's workflows/ directory.
+ * Reads .yaml/.yml files and extracts name + description from YAML frontmatter.
+ */
+export function discoverWorkflowsFromWorkspace(workspacePath: string): DiscoveredWorkflow[] {
+  const workflowsDir = path.join(workspacePath, "workflows")
+  const discovered: DiscoveredWorkflow[] = []
+
+  if (!fs.existsSync(workflowsDir)) return discovered
+
+  try {
+    const files = fs.readdirSync(workflowsDir).filter(f => f.endsWith(".yaml") || f.endsWith(".yml"))
+
+    for (const file of files) {
+      try {
+        const filePath = path.join(workflowsDir, file)
+        const content = fs.readFileSync(filePath, "utf-8")
+        const name = file.replace(/\.(yaml|yml)$/, "")
+
+        // Extract name and description from YAML content
+        const nameMatch = content.match(/^name:\s*(.+)$/m)
+        const descMatch = content.match(/^description:\s*(.+)$/m)
+
+        discovered.push({
+          name: nameMatch?.[1]?.trim() || name,
+          description: descMatch?.[1]?.trim() || `Workflow: ${name}`,
+          content,
+          path: filePath,
+        })
+      } catch {
+        // Skip unreadable files
+      }
+    }
+  } catch (err) {
+    logError("discoverWorkflowsFromWorkspace failed", err, { workspacePath })
+  }
+
+  return discovered
+}

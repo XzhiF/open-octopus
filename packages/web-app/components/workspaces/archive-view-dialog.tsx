@@ -28,6 +28,8 @@ interface ArchiveMetadata {
   skills?: Array<{ name: string; description: string; reason?: string; auto_discovered?: boolean }>
   allExperiences?: Array<{ id: string; text: string; action?: string; confidence?: number; scope?: string; target?: string }>
   allSkills?: Array<{ name: string; description: string; reason?: string; auto_discovered?: boolean }>
+  allWorkflows?: Array<{ name: string; description: string }>
+  workflows?: Array<{ name: string; description: string }>
   tokenStats?: {
     total: { inputTokens: number; outputTokens: number; cost: number }
     byModel: Array<{ model: string; inputTokens: number; outputTokens: number; cost: number }>
@@ -162,7 +164,7 @@ export function ArchiveViewDialog({ workspaceId, workspaceName, open, onOpenChan
 
               {/* Tabs */}
               <Tabs value={activeTab} onValueChange={setActiveTab}>
-                <TabsList className="grid w-full grid-cols-5">
+                <TabsList className="grid w-full grid-cols-6">
                   <TabsTrigger value="analysis">分析报告</TabsTrigger>
                   <TabsTrigger value="tokens">Token 统计</TabsTrigger>
                   <TabsTrigger value="experiences">
@@ -170,6 +172,9 @@ export function ArchiveViewDialog({ workspaceId, workspaceName, open, onOpenChan
                   </TabsTrigger>
                   <TabsTrigger value="skills">
                     Skill ({metadata?.allSkills?.length ?? 0})
+                  </TabsTrigger>
+                  <TabsTrigger value="workflows">
+                    工作流 ({metadata?.allWorkflows?.length ?? 0})
                   </TabsTrigger>
                   <TabsTrigger value="summary">归档摘要</TabsTrigger>
                 </TabsList>
@@ -248,7 +253,7 @@ export function ArchiveViewDialog({ workspaceId, workspaceName, open, onOpenChan
                 <TabsContent value="tokens" className="space-y-4">
                   {(() => {
                     const ts = metadata?.tokenStats
-                    if (!ts || (ts.total.inputTokens === 0 && ts.total.outputTokens === 0)) {
+                    if (!ts?.total || (ts.total.inputTokens === 0 && ts.total.outputTokens === 0)) {
                       return <div className="text-center py-8 text-muted-foreground">无 Token 使用数据</div>
                     }
                     const fmt = (n: number) => n >= 1000000 ? `${(n / 1000000).toFixed(1)}M` : n >= 1000 ? `${(n / 1000).toFixed(1)}K` : String(n)
@@ -330,6 +335,46 @@ export function ArchiveViewDialog({ workspaceId, workspaceName, open, onOpenChan
                           </Card>
                         )}
                       </>
+                    )
+                  })()}
+                </TabsContent>
+
+                <TabsContent value="workflows">
+                  {(() => {
+                    const allWfs = metadata?.allWorkflows ?? []
+                    const adoptedWfs = new Set((metadata?.workflows ?? []).map(w => w.name))
+                    if (allWfs.length === 0) {
+                      return <div className="text-center py-8 text-muted-foreground">无工作流记录</div>
+                    }
+                    return (
+                      <div className="space-y-2">
+                        {allWfs.map((wf) => {
+                          const adopted = adoptedWfs.has(wf.name)
+                          return (
+                            <Card key={wf.name}>
+                              <CardContent className="pt-4">
+                                <div className="flex items-start gap-3">
+                                  {adopted ? (
+                                    <div className="flex h-5 w-5 items-center justify-center rounded-full bg-green-100 dark:bg-green-900/30 shrink-0 mt-0.5">
+                                      <Check className="h-3 w-3 text-green-600" />
+                                    </div>
+                                  ) : (
+                                    <div className="flex h-5 w-5 items-center justify-center rounded-full bg-muted shrink-0 mt-0.5" />
+                                  )}
+                                  <div className="flex-1">
+                                    <div className="flex items-center gap-2 mb-1">
+                                      <Package className="h-4 w-4" />
+                                      <h4 className="font-semibold">{wf.name}</h4>
+                                      {adopted && <Badge className="text-xs bg-green-600">已安装</Badge>}
+                                    </div>
+                                    <p className="text-sm text-muted-foreground">{wf.description}</p>
+                                  </div>
+                                </div>
+                              </CardContent>
+                            </Card>
+                          )
+                        })}
+                      </div>
                     )
                   })()}
                 </TabsContent>

@@ -373,7 +373,7 @@ agent-browser --session e2e close
 
 截图后委派子 Agent（Sonnet 模型）直接分析截图：
 ```
-Agent(model="sonnet", prompt="读取并分析 /tmp/e2e-step1.png: 页面是否正常渲染？关键元素是否可见？布局是否合理？")
+Agent(model="pro", prompt="读取并分析 /tmp/e2e-step1.png: 页面是否正常渲染？关键元素是否可见？布局是否合理？")
 ```
 
 #### CLI 测试

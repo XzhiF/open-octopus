@@ -238,7 +238,7 @@ curl -s "http://localhost:$PORT/api/actuator/config" | jq .
     "ANTHROPIC_API_KEY": "sk-ant-****masked****"
   },
   "agent": {
-    "model": "claude-sonnet-4-20250514",
+    "model": "pro",
     "timeout": 300,
     "max_clones": 5,
     "safe_mode": false,
