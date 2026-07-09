@@ -13,7 +13,7 @@ import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Loader2, TrendingUp, DollarSign, AlertCircle, Lightbulb, Package, FileText, Check } from "lucide-react"
+import { Loader2, TrendingUp, DollarSign, AlertCircle, Lightbulb, Package, FileText, Check, Badge as BadgeIcon } from "lucide-react"
 import { getServerUrl } from "@/lib/server-config"
 
 interface ArchiveViewDialogProps {
@@ -28,6 +28,12 @@ interface ArchiveMetadata {
   skills?: Array<{ name: string; description: string; reason?: string; auto_discovered?: boolean }>
   allExperiences?: Array<{ id: string; text: string; action?: string; confidence?: number; scope?: string; target?: string }>
   allSkills?: Array<{ name: string; description: string; reason?: string; auto_discovered?: boolean }>
+  tokenStats?: {
+    total: { inputTokens: number; outputTokens: number; cost: number }
+    byModel: Array<{ model: string; inputTokens: number; outputTokens: number; cost: number }>
+    byWorkflow: Array<{ workflowRef: string; inputTokens: number; outputTokens: number; cost: number; byModel: Array<{ model: string; inputTokens: number; outputTokens: number; cost: number }> }>
+    nodes: Array<{ workflowRef: string; nodeId: string; nodeName: string; nodeType: string; inputTokens: number; outputTokens: number; cost: number; byModel: Array<{ model: string; inputTokens: number; outputTokens: number; cost: number }> }>
+  }
 }
 
 interface AnalysisReport {
@@ -156,8 +162,9 @@ export function ArchiveViewDialog({ workspaceId, workspaceName, open, onOpenChan
 
               {/* Tabs */}
               <Tabs value={activeTab} onValueChange={setActiveTab}>
-                <TabsList className="grid w-full grid-cols-4">
+                <TabsList className="grid w-full grid-cols-5">
                   <TabsTrigger value="analysis">分析报告</TabsTrigger>
+                  <TabsTrigger value="tokens">Token 统计</TabsTrigger>
                   <TabsTrigger value="experiences">
                     经验 ({metadata?.allExperiences?.length ?? 0})
                   </TabsTrigger>
@@ -236,6 +243,95 @@ export function ArchiveViewDialog({ workspaceId, workspaceName, open, onOpenChan
                   ) : (
                     <div className="text-center py-8 text-muted-foreground">无分析报告数据</div>
                   )}
+                </TabsContent>
+
+                <TabsContent value="tokens" className="space-y-4">
+                  {(() => {
+                    const ts = metadata?.tokenStats
+                    if (!ts || (ts.total.inputTokens === 0 && ts.total.outputTokens === 0)) {
+                      return <div className="text-center py-8 text-muted-foreground">无 Token 使用数据</div>
+                    }
+                    const fmt = (n: number) => n >= 1000000 ? `${(n / 1000000).toFixed(1)}M` : n >= 1000 ? `${(n / 1000).toFixed(1)}K` : String(n)
+                    return (
+                      <>
+                        <div className="grid grid-cols-3 gap-4">
+                          <Card><CardContent className="pt-4 text-center">
+                            <div className="text-xs text-muted-foreground mb-1">Input Tokens</div>
+                            <div className="text-xl font-bold">{fmt(ts.total.inputTokens)}</div>
+                          </CardContent></Card>
+                          <Card><CardContent className="pt-4 text-center">
+                            <div className="text-xs text-muted-foreground mb-1">Output Tokens</div>
+                            <div className="text-xl font-bold">{fmt(ts.total.outputTokens)}</div>
+                          </CardContent></Card>
+                          <Card><CardContent className="pt-4 text-center">
+                            <div className="text-xs text-muted-foreground mb-1">Total Cost</div>
+                            <div className="text-xl font-bold">${ts.total.cost.toFixed(4)}</div>
+                          </CardContent></Card>
+                        </div>
+                        {ts.byModel.length > 0 && (
+                          <Card>
+                            <CardHeader className="pb-2"><CardTitle className="text-sm">按 Model</CardTitle></CardHeader>
+                            <CardContent>
+                              <table className="w-full text-xs">
+                                <thead><tr className="border-b text-muted-foreground">
+                                  <th className="text-left py-1">Model</th>
+                                  <th className="text-right py-1">Input</th>
+                                  <th className="text-right py-1">Output</th>
+                                  <th className="text-right py-1">Cost</th>
+                                </tr></thead>
+                                <tbody>
+                                  {ts.byModel.map((m) => (
+                                    <tr key={m.model} className="border-b last:border-0">
+                                      <td className="py-1 font-mono">{m.model}</td>
+                                      <td className="text-right py-1">{fmt(m.inputTokens)}</td>
+                                      <td className="text-right py-1">{fmt(m.outputTokens)}</td>
+                                      <td className="text-right py-1">${m.cost.toFixed(4)}</td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </CardContent>
+                          </Card>
+                        )}
+                        {ts.byWorkflow.length > 0 && (
+                          <Card>
+                            <CardHeader className="pb-2"><CardTitle className="text-sm">按工作流 / 节点</CardTitle></CardHeader>
+                            <CardContent className="space-y-3">
+                              {ts.byWorkflow.map((wf) => {
+                                const wfNodes = (ts.nodes || []).filter((n) => n.workflowRef === wf.workflowRef)
+                                return (
+                                  <div key={wf.workflowRef} className="border rounded-md p-3">
+                                    <div className="flex justify-between items-center mb-2">
+                                      <span className="text-sm font-medium">{wf.workflowRef}</span>
+                                      <span className="text-xs text-muted-foreground">{fmt(wf.inputTokens + wf.outputTokens)} tokens · ${wf.cost.toFixed(4)}</span>
+                                    </div>
+                                    {wf.byModel.length > 0 && (
+                                      <div className="flex gap-3 text-xs text-muted-foreground mb-2">
+                                        {wf.byModel.map((m) => <span key={m.model}>{m.model}: {fmt(m.inputTokens + m.outputTokens)}</span>)}
+                                      </div>
+                                    )}
+                                    {wfNodes.length > 0 && (
+                                      <div className="ml-3 space-y-1">
+                                        {wfNodes.map((node) => (
+                                          <div key={node.nodeId} className="flex justify-between items-center text-xs py-0.5">
+                                            <span className="flex items-center gap-2">
+                                              <Badge variant="outline" className="text-[10px] px-1">{node.nodeType}</Badge>
+                                              <span className="font-mono">{node.nodeName}</span>
+                                            </span>
+                                            <span className="text-muted-foreground">{fmt(node.inputTokens + node.outputTokens)} tokens · ${node.cost.toFixed(4)}</span>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    )}
+                                  </div>
+                                )
+                              })}
+                            </CardContent>
+                          </Card>
+                        )}
+                      </>
+                    )
+                  })()}
                 </TabsContent>
 
                 <TabsContent value="summary" className="space-y-4">

@@ -636,9 +636,24 @@ ${nodes.map(n => `  - id: ${n.id}
       ...llmSkills.filter((s) => !autoNames.has(s.name)),
     ]
 
+    // Phase 2.5: Token stats
+    await emitter.log("查询 Token 使用统计...")
+    let tokenStats = { total: { inputTokens: 0, outputTokens: 0, cost: 0 }, byModel: [] as any[], byWorkflow: [] as any[], nodes: [] as any[] }
+    try {
+      const { TokenUsageDAO } = await import('../../db/dao/token-usage-dao')
+      const tokenDAO = new TokenUsageDAO(db)
+      const wsStats = tokenDAO.getWorkspaceTokenStats(workspaceId)
+      const nodes = tokenDAO.getNodeTokenStats(workspaceId)
+      tokenStats = { ...wsStats, nodes }
+      await emitter.log(`✓ Token 统计: ${tokenStats.total.inputTokens + tokenStats.total.outputTokens} tokens, $${tokenStats.total.cost.toFixed(4)}, ${tokenStats.byModel.length} models, ${nodes.length} nodes`)
+    } catch (err) {
+      await emitter.log(`Token 统计查询失败: ${err instanceof Error ? err.message : String(err)}`)
+    }
+
     // Phase 3: Assemble
     await emitter.stepStart("assemble", "合并分析结果...")
     const preview = assembleAnalysis(ctx, report, experiences, mergedSkills)
+    ;(preview as any).tokenStats = tokenStats
     await emitter.log(`✓ 结果合并完成: ${preview.experiences.length} 经验, ${preview.skills.length} Skill`)
     await emitter.stepDone("assemble")
 
