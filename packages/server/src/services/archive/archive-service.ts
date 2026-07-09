@@ -280,6 +280,16 @@ export class ArchiveService {
         lifespan_days: number
         workflow_count: number
       }
+      experienceActions?: Array<{
+        id: string
+        text: string
+        action: "add" | "update" | "delete"
+        replaces_text?: string
+        confidence: number
+        category: string
+        scope?: string
+        target?: string
+      }>
     },
     emitter: StepEmitter = createNullEmitter(),
   ): Promise<{
@@ -349,13 +359,27 @@ export class ArchiveService {
       this.archiveDAO.insertWorkspaceArchive(workspaceArchiveRow)
       await emitter.stepDone("create_record")
 
-      // Step 4: Extract experiences (knowledge loop)
+      // Step 4: Merge experiences via Agent
       await emitter.stepStart("extract_experiences", `提取 ${options.extractExperiences.length} 条经验...`)
       let extractedExperiences = 0
-      if (options.extractExperiences.length > 0) {
-        extractedExperiences = await this.extractExperiences(workspaceId, org, options.extractExperiences)
+      if (options.experienceActions && options.experienceActions.length > 0) {
+        try {
+          const { ExperienceMerger } = await import("./experience-merger")
+          const merger = new ExperienceMerger()
+          const result = await merger.merge(org, options.experienceActions, emitter)
+          extractedExperiences = result.added + result.updated + result.deleted
+          await emitter.stepDone("extract_experiences", {
+            added: result.added,
+            updated: result.updated,
+            deleted: result.deleted,
+          })
+        } catch (err) {
+          await emitter.stepError("extract_experiences", err instanceof Error ? err.message : String(err))
+          throw err
+        }
+      } else {
+        await emitter.stepDone("extract_experiences", { count: 0 })
       }
-      await emitter.stepDone("extract_experiences", { count: extractedExperiences })
 
       // Step 5: Install skills (resources system)
       await emitter.stepStart("install_skills", `安装 ${options.installSkills.length} 个 Skill...`)
