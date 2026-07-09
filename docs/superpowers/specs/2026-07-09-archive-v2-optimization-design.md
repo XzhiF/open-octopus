@@ -556,7 +556,45 @@ class ArchiveDraftDAO {
 | `/workspaces/:id/archive-draft` | GET | 获取 draft（200 有 / 404 无） |
 | `/workspaces/:id/archive-draft` | DELETE | 删除 draft |
 
-**preview API 改造：** 分析完成后自动调用 `archiveDraftDAO.upsert()` 保存结果。
+**preview API 改造 — 先存后返回：**
+
+`analyzeWorkspaceForArchive()` 内部顺序：
+
+```typescript
+async analyzeWorkspaceForArchive(workspaceId: string): Promise<ArchivePreview> {
+  // Phase 1: build context
+  const ctx = await buildArchiveContext(...)
+  if (!ctx) return this.emptyPreview('Workspace not found')
+
+  // Phase 2: parallel LLM calls
+  const [report, experiences, skills] = await Promise.allSettled([...])
+
+  // Phase 3: assemble
+  const preview = assembleAnalysis(ctx, report, experiences, skills)
+
+  // ★ Draft 先落库，再返回 — 即使客户端断开，draft 已安全
+  await archiveDraftDAO.upsert({
+    workspace_id: workspaceId,
+    org: this.org,
+    analysis_report: JSON.stringify(preview.analysis),
+    experiences: JSON.stringify(preview.experiences),
+    skills: JSON.stringify(preview.skills),
+    stats: JSON.stringify(preview.stats),
+  })
+
+  return preview
+}
+```
+
+**数据安全保障：**
+
+| 场景 | 结果 |
+|------|------|
+| 分析中途关闭弹窗 | LLM 调用可能被 abort，无 draft 产生（正常） |
+| 分析完成、HTTP response 传输中断 | draft 已在 DB ✅，下次打开可加载 |
+| 服务端 crash（LLM 调用后、upsert 前） | 极端情况，无 draft（可接受，重新分析） |
+| 多标签页同时打开同一 workspace | 后者覆盖前者 draft（upsert 语义，正确） |
+| 归档完成后 | draft 删除 ✅ |
 
 ### 3.4 前端流程
 
