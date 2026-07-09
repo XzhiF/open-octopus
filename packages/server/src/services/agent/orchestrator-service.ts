@@ -592,7 +592,26 @@ ${nodes.map(n => `  - id: ${n.id}
     const skills = parseSkills(skillResult)
 
     // Phase 3: Assemble
-    return assembleAnalysis(ctx, report, experiences, skills)
+    const preview = assembleAnalysis(ctx, report, experiences, skills)
+
+    // ★ Draft: persist before returning — survives client disconnect
+    try {
+      const { ArchiveDraftDAO } = await import('../../db/dao/archive-draft-dao')
+      const archiveDraftDAO = new ArchiveDraftDAO(db)
+      archiveDraftDAO.upsert({
+        workspace_id: workspaceId,
+        org: this.org,
+        analysis_report: JSON.stringify(preview.analysis),
+        experiences: JSON.stringify(preview.experiences),
+        skills: JSON.stringify(preview.skills),
+        stats: JSON.stringify(preview.stats),
+      })
+    } catch (err) {
+      console.warn('Failed to save archive draft:', err)
+      // Non-fatal: preview still returns to client
+    }
+
+    return preview
   }
 
   private async callArchiveLLM(prompt: string, systemPrompt: string): Promise<string> {
