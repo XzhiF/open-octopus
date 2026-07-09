@@ -25,6 +25,8 @@ export interface ExperienceCandidate {
   evidence: string
   category: string
   conflicts: ConflictInfo[]
+  action: "add" | "update" | "delete"
+  replaces_text?: string
 }
 
 export interface ConflictInfo {

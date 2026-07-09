@@ -209,15 +209,23 @@ OUTPUT FORMAT
 Return ONLY a JSON array of experience objects (max 15):
 [
   {
-    "text": "Imperative sentence: a clear instruction or lesson learned (e.g., 'Always validate config files before running deploy workflows')",
-    "scope": "workspace|workflow|node",
-    "target": "The workflow name, node_id, or 'all' this experience applies to",
+    "text": "Imperative sentence: a clear instruction or lesson",
+    "action": "add|update|delete",
+    "scope": "workflow|project|org",
+    "target": "The workflow name, project name, or 'all'",
+    "replaces_text": "For update/delete: the original text being replaced. Null for add.",
     "confidence": 0.0-1.0,
     "evidence": "Brief description of what executions support this",
-    "category": "error-prevention|cost-optimization|pattern-improvement|reliability|efficiency",
-    "conflicts": ["ids of existing knowledge rules this conflicts with, if any"]
+    "category": "error-prevention|cost-optimization|pattern-improvement|reliability|efficiency"
   }
 ]
+
+ACTION RULES:
+- "add": New experience not covered by existing knowledge.
+- "update": Existing knowledge rule needs revision (provide replaces_text with the original).
+- "delete": Existing knowledge rule is outdated or contradicted (provide replaces_text with the original).
+- Compare against the EXISTING KNOWLEDGE RULES section above to determine action.
+- If uncertain, prefer "add" over "update".
 
 RULES:
 - Extract at most 15 experiences.

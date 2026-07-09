@@ -47,6 +47,9 @@ export interface ExperienceCandidate {
   evidence?: string
   source?: string
   category?: string
+  target?: string
+  action?: "add" | "update" | "delete"
+  replaces_text?: string
 }
 
 export interface SkillCandidate {

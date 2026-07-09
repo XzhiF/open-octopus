@@ -720,6 +720,8 @@ function parseExperiences(result: PromiseSettledResult<string>): ExperienceCandi
       evidence: e.evidence || '',
       category: e.category || 'process',
       conflicts: Array.isArray(e.conflicts) ? e.conflicts : [],
+      action: (['add', 'update', 'delete'].includes(e.action) ? e.action : 'add') as 'add' | 'update' | 'delete',
+      replaces_text: e.replaces_text || undefined,
     }))
   } catch {
     return []

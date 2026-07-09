@@ -81,6 +81,7 @@ function makeExp(overrides: Partial<ExperienceCandidate> = {}): ExperienceCandid
     evidence: "deploy,review",
     category: "security",
     conflicts: [],
+    action: "add",
     ...overrides,
   }
 }
