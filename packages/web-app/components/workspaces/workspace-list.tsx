@@ -10,6 +10,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -26,7 +27,7 @@ import { ImportWorkspaceDialog } from "./import-workspace-dialog"
 import { deleteWorkspace } from "@/lib/api-client"
 import { toast } from "sonner"
 import type { Workspace, WorkspaceStatus } from "@/lib/types"
-import { Search, Plus, FolderInput, LayoutGrid, List } from "lucide-react"
+import { Search, Plus, FolderInput, LayoutGrid, List, Archive } from "lucide-react"
 
 interface WorkspaceListProps {
   workspaces: Workspace[]
@@ -41,6 +42,7 @@ export function WorkspaceList({ workspaces, onRefresh }: WorkspaceListProps) {
   const [isImportOpen, setIsImportOpen] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<Workspace | null>(null)
   const [deleting, setDeleting] = useState(false)
+  const [archiveTab, setArchiveTab] = useState<"active" | "archived">("active")
 
   const handleDelete = async () => {
     if (!deleteTarget) return
@@ -59,16 +61,34 @@ export function WorkspaceList({ workspaces, onRefresh }: WorkspaceListProps) {
 
   const filteredWorkspaces = useMemo(() => {
     return workspaces.filter((ws) => {
+      // Filter by archive status
+      const isArchived = (ws as any).archive_status === "archived"
+      if (archiveTab === "archived" && !isArchived) return false
+      if (archiveTab === "active" && isArchived) return false
+
       const matchesSearch =
         ws.name.toLowerCase().includes(search.toLowerCase()) ||
         ws.description.toLowerCase().includes(search.toLowerCase())
       const matchesStatus = statusFilter === "all" || ws.status === statusFilter
       return matchesSearch && matchesStatus
     })
-  }, [workspaces, search, statusFilter])
+  }, [workspaces, search, statusFilter, archiveTab])
 
   return (
     <div className="space-y-6">
+      {/* Archive Tabs */}
+      <Tabs value={archiveTab} onValueChange={(v) => setArchiveTab(v as "active" | "archived")}>
+        <TabsList>
+          <TabsTrigger value="active">
+            活跃工作空间
+          </TabsTrigger>
+          <TabsTrigger value="archived">
+            <Archive className="mr-2 h-4 w-4" />
+            已归档
+          </TabsTrigger>
+        </TabsList>
+      </Tabs>
+
       {/* Toolbar */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex flex-1 items-center gap-3">
@@ -139,6 +159,7 @@ export function WorkspaceList({ workspaces, onRefresh }: WorkspaceListProps) {
       {/* Results Info */}
       <div className="text-sm text-muted-foreground">
         共 {filteredWorkspaces.length} 个工作空间
+        {archiveTab === "archived" && " (已归档)"}
         {search && ` · 搜索 "${search}"`}
       </div>
 
