@@ -15,10 +15,21 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Loader2, TrendingUp, DollarSign, AlertCircle, Lightbulb, Package } from "lucide-react"
-import { previewArchive, archiveWorkspace } from "@/lib/archive-api"
+import { previewArchive, archiveWorkspace, getArchiveDraft, deleteArchiveDraft } from "@/lib/archive-api"
 import { toast } from "sonner"
 import type { Workspace } from "@/lib/types"
-import type { ArchivePreview, ExperienceCandidate, SkillCandidate } from "@/lib/archive-api"
+import type { ArchivePreview, ArchiveDraft, ExperienceCandidate, SkillCandidate } from "@/lib/archive-api"
+
+function formatDraftAge(updatedAt: string): string {
+  const diff = Date.now() - new Date(updatedAt).getTime()
+  const minutes = Math.floor(diff / 60000)
+  if (minutes < 1) return "刚刚"
+  if (minutes < 60) return `${minutes}分钟前`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return `${hours}小时前`
+  const days = Math.floor(hours / 24)
+  return `${days}天前`
+}
 
 interface ArchivePreviewDialogProps {
   workspace: Workspace | null
@@ -39,6 +50,8 @@ export function ArchivePreviewDialog({
   const [selectedExperiences, setSelectedExperiences] = useState<string[]>([])
   const [selectedSkills, setSelectedSkills] = useState<string[]>([])
   const [activeTab, setActiveTab] = useState("analysis")
+  const [draft, setDraft] = useState<ArchiveDraft | null>(null)
+  const [draftAge, setDraftAge] = useState<string | null>(null)
 
   useEffect(() => {
     if (open && workspace) {
@@ -48,15 +61,46 @@ export function ArchivePreviewDialog({
 
   const loadPreview = async () => {
     if (!workspace) return
+
+    // Check for existing draft
+    try {
+      const existingDraft = await getArchiveDraft(workspace.id)
+      if (existingDraft) {
+        setDraft(existingDraft)
+        setPreview({
+          stats: existingDraft.stats,
+          analysis: existingDraft.analysis_report,
+          experiences: existingDraft.experiences,
+          skills: existingDraft.skills,
+        })
+        setDraftAge(formatDraftAge(existingDraft.updated_at))
+        return
+      }
+    } catch {
+      // Draft load failed — fall through to normal preview
+    }
+
+    // No draft, load normally
     setLoading(true)
     try {
       const result = await previewArchive(workspace.id)
       setPreview(result)
+      setDraft(null)
+      setDraftAge(null)
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "加载预览失败")
     } finally {
       setLoading(false)
     }
+  }
+
+  const handleRegenerate = async () => {
+    if (!workspace) return
+    await deleteArchiveDraft(workspace.id)
+    setDraft(null)
+    setDraftAge(null)
+    setPreview(null)
+    loadPreview()
   }
 
   const handleArchive = async () => {
@@ -121,6 +165,17 @@ export function ArchivePreviewDialog({
           </div>
         ) : preview ? (
           <div className="space-y-6">
+            {draft && draftAge && (
+              <div className="flex items-center justify-between rounded-md bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 px-3 py-2 text-sm">
+                <span className="text-amber-800 dark:text-amber-200">
+                  已加载上次分析结果（{draftAge}）
+                </span>
+                <Button variant="outline" size="sm" onClick={handleRegenerate}>
+                  重新分析
+                </Button>
+              </div>
+            )}
+
             {/* Stats Cards */}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
               <Card>

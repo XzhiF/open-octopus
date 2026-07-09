@@ -98,3 +98,32 @@ export async function archiveWorkspace(
   })
   return handleResponse(res)
 }
+
+// ── Draft API ────────────────────────────────────────────────
+
+export interface ArchiveDraft {
+  workspace_id: string
+  org: string
+  analysis_report: AnalysisReport
+  experiences: ExperienceCandidate[]
+  skills: SkillCandidate[]
+  stats: WorkspaceStats
+  created_at: string
+  updated_at: string
+}
+
+export async function getArchiveDraft(workspaceId: string): Promise<ArchiveDraft | null> {
+  const res = await apiFetch(`${getServerUrl()}/api/archive/workspaces/${workspaceId}/archive-draft`, {
+    credentials: "include",
+  })
+  if (res.status === 404) return null
+  if (!res.ok) throw new Error(`Failed to load draft: ${res.status}`)
+  return res.json()
+}
+
+export async function deleteArchiveDraft(workspaceId: string): Promise<void> {
+  await apiFetch(`${getServerUrl()}/api/archive/workspaces/${workspaceId}/archive-draft`, {
+    method: "DELETE",
+    credentials: "include",
+  })
+}
