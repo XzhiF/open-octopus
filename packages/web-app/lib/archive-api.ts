@@ -127,3 +127,76 @@ export async function deleteArchiveDraft(workspaceId: string): Promise<void> {
     credentials: "include",
   })
 }
+
+// ── SSE Archive ──────────────────────────────────────────────
+
+export interface StepEvent {
+  step: string
+  status: "running" | "progress" | "done" | "error"
+  detail?: string
+  data?: Record<string, unknown>
+}
+
+export function archiveWorkspaceSSE(
+  workspaceId: string,
+  options: {
+    extractExperiences?: string[]
+    installSkills?: string[]
+    analysisReport?: unknown
+    stats?: Record<string, unknown>
+  },
+  onStep: (event: StepEvent) => void,
+  onLog: (message: string) => void,
+  onComplete: (result: ArchiveResult) => void,
+  onError: (error: Error) => void,
+): AbortController {
+  const abort = new AbortController()
+
+  fetch(`${getServerUrl()}/api/archive/workspaces/${workspaceId}/archive`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(options),
+    credentials: "include",
+    signal: abort.signal,
+  }).then(async (res) => {
+    if (!res.ok || !res.body) {
+      onError(new Error(`HTTP ${res.status}`))
+      return
+    }
+    const reader = res.body.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ""
+
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+
+      buffer += decoder.decode(value, { stream: true })
+      const lines = buffer.split("\n")
+      buffer = lines.pop() || ""
+
+      let currentEvent = ""
+      for (const line of lines) {
+        if (line.startsWith("event:")) {
+          currentEvent = line.slice(6).trim()
+        } else if (line.startsWith("data:")) {
+          const raw = line.slice(5).trim()
+          try {
+            const data = JSON.parse(raw)
+            if (currentEvent === "step") onStep(data as StepEvent)
+            else if (currentEvent === "log") onLog(data.message)
+            else if (currentEvent === "complete") onComplete(data as ArchiveResult)
+            else if (currentEvent === "error") onError(new Error(data.message))
+          } catch {
+            // Skip malformed JSON
+          }
+          currentEvent = ""
+        }
+      }
+    }
+  }).catch((err) => {
+    if (err.name !== "AbortError") onError(err)
+  })
+
+  return abort
+}

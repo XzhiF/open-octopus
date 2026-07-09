@@ -15,7 +15,8 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Loader2, TrendingUp, DollarSign, AlertCircle, Lightbulb, Package } from "lucide-react"
-import { previewArchive, archiveWorkspace, getArchiveDraft, deleteArchiveDraft } from "@/lib/archive-api"
+import { previewArchive, getArchiveDraft, deleteArchiveDraft } from "@/lib/archive-api"
+import { ArchiveProgress } from "./archive-progress"
 import { toast } from "sonner"
 import type { Workspace } from "@/lib/types"
 import type { ArchivePreview, ArchiveDraft, ExperienceCandidate, SkillCandidate } from "@/lib/archive-api"
@@ -103,22 +104,9 @@ export function ArchivePreviewDialog({
     loadPreview()
   }
 
-  const handleArchive = async () => {
+  const handleArchive = () => {
     if (!workspace) return
     setArchiving(true)
-    try {
-      await archiveWorkspace(workspace.id, {
-        extractExperiences: selectedExperiences,
-        installSkills: selectedSkills,
-      })
-      toast.success(`"${workspace.name}" 已归档`)
-      onOpenChange(false)
-      onArchived()
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "归档失败")
-    } finally {
-      setArchiving(false)
-    }
   }
 
   const toggleExperience = (id: string) => {
@@ -163,6 +151,23 @@ export function ArchivePreviewDialog({
             <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
             <span className="ml-2 text-muted-foreground">正在分析工作空间...</span>
           </div>
+        ) : archiving && preview ? (
+          <ArchiveProgress
+            workspaceId={workspace.id}
+            options={{
+              extractExperiences: selectedExperiences,
+              installSkills: selectedSkills,
+            }}
+            onComplete={() => {
+              toast.success(`"${workspace.name}" 已归档`)
+              onOpenChange(false)
+              onArchived()
+            }}
+            onCancel={() => {
+              setArchiving(false)
+              onOpenChange(false)
+            }}
+          />
         ) : preview ? (
           <div className="space-y-6">
             {draft && draftAge && (
@@ -471,14 +476,16 @@ export function ArchivePreviewDialog({
           <div className="text-center py-8 text-muted-foreground">加载预览失败</div>
         )}
 
-        <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={archiving}>
-            取消
-          </Button>
-          <Button onClick={handleArchive} disabled={archiving || loading}>
-            {archiving ? "归档中..." : "确认归档"}
-          </Button>
-        </DialogFooter>
+        {!archiving && (
+          <DialogFooter>
+            <Button variant="outline" onClick={() => onOpenChange(false)} disabled={archiving}>
+              取消
+            </Button>
+            <Button onClick={handleArchive} disabled={archiving || loading}>
+              {archiving ? "归档中..." : "确认归档"}
+            </Button>
+          </DialogFooter>
+        )}
       </DialogContent>
     </Dialog>
   )
