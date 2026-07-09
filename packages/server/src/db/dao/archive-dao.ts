@@ -179,21 +179,26 @@ export class ArchiveDAO extends BaseDAO {
   }
 
   getArchivedWorkspaces(
-    org: string,
+    org?: string,
     filter?: { name?: string }
   ): WorkspaceArchiveRow[] {
-    const conditions: string[] = ["org = ?"]
-    const params: unknown[] = [org]
+    const conditions: string[] = []
+    const params: unknown[] = []
+
+    if (org) {
+      conditions.push("org = ?")
+      params.push(org)
+    }
 
     if (filter?.name) {
       conditions.push("name LIKE ?")
       params.push(`%${filter.name}%`)
     }
 
-    const where = conditions.join(" AND ")
+    const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : ""
     return this.stmt(`
       SELECT * FROM workspace_archive
-      WHERE ${where}
+      ${where}
       ORDER BY archived_at DESC
     `).all(...params) as WorkspaceArchiveRow[]
   }

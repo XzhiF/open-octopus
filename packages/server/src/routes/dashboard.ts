@@ -3,6 +3,7 @@ import { WorkspaceService } from "../services/workspace"
 import { WorkflowService } from "../services/workflow"
 import { LeaderboardService } from "../services/leaderboard"
 import { ExecutionDAO, TokenUsageDAO } from "../db/dao"
+import type { ArchiveDAO } from "../db/dao/archive-dao"
 
 const workflowService = new WorkflowService()
 
@@ -11,6 +12,7 @@ export function createDashboardRoutes(
   leaderboardService: LeaderboardService,
   execDAO: ExecutionDAO,
   tokenUsageDAO: TokenUsageDAO,
+  archiveDAO?: ArchiveDAO,
 ): Hono {
   const dashboardRoutes = new Hono()
 
@@ -24,6 +26,21 @@ export function createDashboardRoutes(
     const execRow = execDAO.getDashboardStats()
     const totalCost = tokenUsageDAO.totalCost()
 
+    // Get archived workspace stats
+    let archivedWorkspaces = 0
+    let archivedExecutions = 0
+    let archivedCost = 0
+    if (archiveDAO) {
+      try {
+        const archived = archiveDAO.getArchivedWorkspaces()
+        archivedWorkspaces = archived.length
+        archivedExecutions = archived.reduce((sum, ws) => sum + ws.execution_count, 0)
+        archivedCost = archived.reduce((sum, ws) => sum + ws.total_cost, 0)
+      } catch (err) {
+        console.warn("Failed to get archived workspace stats:", err)
+      }
+    }
+
     const stats = {
       total_workspaces: workspaces.length,
       total_workflows: totalWorkflows,
@@ -34,6 +51,10 @@ export function createDashboardRoutes(
       pending_executions: execRow.pending_executions,
       avg_duration_ms: execRow.avg_duration_ms,
       total_cost: totalCost,
+      // Archive V2 stats
+      archived_workspaces: archivedWorkspaces,
+      archived_executions: archivedExecutions,
+      archived_cost: archivedCost,
     }
     return c.json(stats)
   })
