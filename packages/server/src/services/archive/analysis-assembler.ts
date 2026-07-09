@@ -178,6 +178,14 @@ function extractKeywords(text: string): string[] {
     .filter((word) => word.length > 3)
 }
 
+/** Extract all words (no length filter) for contradiction detection */
+function extractAllWords(text: string): string[] {
+  return text
+    .toLowerCase()
+    .split(/\s+/)
+    .filter(Boolean)
+}
+
 function hasContradiction(a: string, b: string): boolean {
   const oppositePairs = [
     ["always", "never"],
@@ -188,8 +196,10 @@ function hasContradiction(a: string, b: string): boolean {
     ["add", "remove"],
   ]
 
-  const wordsA = new Set(extractKeywords(a))
-  const wordsB = new Set(extractKeywords(b))
+  // Use separate extraction that includes short words (e.g., "use", "add")
+  // — extractKeywords filters words <=3 chars which would miss these pairs
+  const wordsA = new Set(extractAllWords(a))
+  const wordsB = new Set(extractAllWords(b))
 
   for (const [word1, word2] of oppositePairs) {
     const has1A = wordsA.has(word1)

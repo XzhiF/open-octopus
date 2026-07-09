@@ -159,6 +159,17 @@ describe("detectConflicts", () => {
     expect(result[0].conflicts[0].type).toBe("contradicts")
   })
 
+  it("detects contradiction with short verb pairs (use/avoid, add/remove)", () => {
+    const exps = [makeExp({ id: "e1", text: "Use parameterized queries for all database access" })]
+    const rules: ExistingRule[] = [
+      { id: "r1", text: "Avoid parameterized queries for cached database reads", scope: "global" },
+    ]
+
+    const result = detectConflicts(exps, rules)
+    expect(result[0].conflicts).toHaveLength(1)
+    expect(result[0].conflicts[0].type).toBe("contradicts")
+  })
+
   it("does not flag when keyword overlap is low", () => {
     const exps = [makeExp({ id: "e1", text: "Use parameterized SQL queries" })]
     const rules: ExistingRule[] = [
