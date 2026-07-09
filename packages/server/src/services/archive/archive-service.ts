@@ -270,6 +270,7 @@ export class ArchiveService {
       extractExperiences: string[]
       installSkills: Array<{ name: string; group: string; path?: string; content?: string }>
       analysisReport?: unknown
+      metadata?: Record<string, unknown>
       stats?: {
         execution_count: number
         total_cost: number
@@ -345,7 +346,7 @@ export class ArchiveService {
         total_duration_ms: stats.total_duration_ms,
         created_at: workspace.created_at,
         archived_at: new Date().toISOString(),
-        metadata: null,
+        metadata: options.metadata ? JSON.stringify(options.metadata) : null,
         extracted_experiences: 0,
         extracted_skills: 0,
         analysis_report: null,

@@ -145,7 +145,7 @@ export function createArchiveRoutes(
     }
   })
 
-  // POST /api/archive/workspaces/:id/archive-preview — Archive V2
+  // POST /api/archive/workspaces/:id/archive-preview — Archive V2 (SSE progress)
   routes.post("/workspaces/:id/archive-preview", async (c) => {
     const id = c.req.param("id")
 
@@ -154,18 +154,28 @@ export function createArchiveRoutes(
       return c.json({ error: { code: "INVALID_PARAM", message: "Invalid workspace ID format" } }, 400)
     }
 
-    try {
-      // Import OrchestratorService dynamically
-      const { getOrchestratorService } = await import("../services/agent/orchestrator-service")
-      const org = c.req.query("org") || "default"
-      const orchestratorService = getOrchestratorService(org)
+    return streamSSE(c, async (stream) => {
+      const emitter = createStepEmitter(stream)
 
-      const preview = await orchestratorService.analyzeWorkspaceForArchive(id)
-      return c.json(preview)
-    } catch (err) {
-      const { body, status } = errorResponse(err, "archive.preview")
-      return c.json(body, status)
-    }
+      try {
+        const { getOrchestratorService } = await import("../services/agent/orchestrator-service")
+        const org = c.req.query("org") || "default"
+        const orchestratorService = getOrchestratorService(org)
+
+        const preview = await orchestratorService.analyzeWorkspaceForArchive(id, emitter)
+
+        await stream.writeSSE({
+          event: "preview",
+          data: JSON.stringify(preview),
+        })
+      } catch (err) {
+        const { body } = errorResponse(err, "archive.preview")
+        await stream.writeSSE({
+          event: "error",
+          data: JSON.stringify(body.error || { message: "Preview analysis failed" }),
+        })
+      }
+    })
   })
 
   // POST /api/archive/workspaces/:id/archive — Archive V2 (execute) with SSE
@@ -182,6 +192,7 @@ export function createArchiveRoutes(
       installSkills?: Array<{ name: string; group: string; path?: string; content?: string }>
       analysisReport?: unknown
       stats?: Record<string, unknown>
+      metadata?: Record<string, unknown>
     }>()
 
     return streamSSE(c, async (stream) => {
@@ -208,6 +219,7 @@ export function createArchiveRoutes(
             installSkills: body.installSkills || [],
             analysisReport: body.analysisReport,
             stats: body.stats as any,
+            metadata: body.metadata,
           },
           emitter,
         )
@@ -294,9 +306,10 @@ export function createArchiveRoutes(
     try {
       const draft = archiveDraftDAO.findByWorkspaceId(workspaceId)
       if (!draft) {
-        return c.json({ error: { code: "NOT_FOUND", message: "Draft not found" } }, 404)
+        return c.json({ draft: null })
       }
       return c.json({
+        draft: {
         workspace_id: draft.workspace_id,
         org: draft.org,
         analysis_report: JSON.parse(draft.analysis_report),
@@ -305,6 +318,7 @@ export function createArchiveRoutes(
         stats: JSON.parse(draft.stats),
         created_at: (draft as any).created_at,
         updated_at: (draft as any).updated_at,
+      },
       })
     } catch (err) {
       const { body, status } = errorResponse(err, "archive.draft.get")

@@ -4,6 +4,7 @@ export interface WorkflowInfo {
   ref: string
   name: string
   inputs?: Record<string, WorkflowInput>
+  group: string
 }
 
 export interface WorkflowDetail {

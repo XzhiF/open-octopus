@@ -34,22 +34,34 @@ interface StepState {
 // ── Props ──────────────────────────────────────────────────────
 
 interface ArchiveProgressProps {
-  workspaceId: string
-  options: {
+  workspaceId?: string
+  stepDefs?: StepDef[]
+  options?: {
     extractExperiences?: string[]
     installSkills?: SkillInstallOption[]
     analysisReport?: unknown
     stats?: Record<string, unknown>
+    metadata?: Record<string, unknown>
   }
   onComplete: (result: ArchiveResult) => void
   onCancel: () => void
+  /** External SSE driver — when provided, component does NOT start its own SSE */
+  externalDriver?: {
+    onStep: (handler: (event: StepEvent) => void) => void
+    onLog: (handler: (message: string) => void) => void
+    onComplete: (handler: (result: ArchiveResult) => void) => void
+    onError: (handler: (error: Error) => void) => void
+    onReady?: (start: () => void) => void
+    abort: () => void
+  }
 }
 
 // ── Component ──────────────────────────────────────────────────
 
-export function ArchiveProgress({ workspaceId, options, onComplete, onCancel }: ArchiveProgressProps) {
+export function ArchiveProgress({ workspaceId, stepDefs, options, onComplete, onCancel, externalDriver }: ArchiveProgressProps) {
+  const defs = stepDefs ?? STEP_DEFS
   const [steps, setSteps] = useState<Record<string, StepState>>(
-    Object.fromEntries(STEP_DEFS.map(s => [s.key, { status: "pending" as StepStatus }]))
+    Object.fromEntries(defs.map(s => [s.key, { status: "pending" as StepStatus }]))
   )
   const [logs, setLogs] = useState<string[]>([])
   const [phase, setPhase] = useState<"running" | "complete" | "error">("running")
@@ -61,49 +73,58 @@ export function ArchiveProgress({ workspaceId, options, onComplete, onCancel }: 
     logEndRef.current?.scrollIntoView({ behavior: "smooth" })
   }, [logs])
 
-  // Start SSE on mount
+  // Start SSE on mount — use externalDriver if provided, otherwise internal SSE
   useEffect(() => {
+    const handleStep = (event: StepEvent) => {
+      setSteps(prev => ({
+        ...prev,
+        [event.step]: {
+          status: event.status === "progress"
+            ? (prev[event.step]?.status ?? "running")
+            : event.status as StepStatus,
+          detail: event.detail,
+        },
+      }))
+    }
+    const handleLog = (message: string) => {
+      const ts = new Date().toLocaleTimeString("zh-CN", { hour12: false })
+      setLogs(prev => [...prev, `${ts}  ${message}`])
+    }
+    const handleError = (error: Error) => {
+      setErrorMsg(error.message)
+      setPhase("error")
+      setSteps(prev => {
+        const updated = { ...prev }
+        let foundError = false
+        for (const def of defs) {
+          if (updated[def.key]?.status === "error") foundError = true
+          if (foundError && updated[def.key]?.status === "pending") {
+            updated[def.key] = { status: "paused" }
+          }
+        }
+        return updated
+      })
+    }
+
+    if (externalDriver) {
+      externalDriver.onStep(handleStep)
+      externalDriver.onLog(handleLog)
+      externalDriver.onComplete((result) => { setPhase("complete"); onComplete(result) })
+      externalDriver.onError(handleError)
+      externalDriver.onReady?.(() => {})
+      return () => externalDriver.abort()
+    }
+
     const abort = archiveWorkspaceSSE(
-      workspaceId,
-      options,
-      // onStep
-      (event: StepEvent) => {
-        setSteps(prev => ({
-          ...prev,
-          [event.step]: {
-            status: event.status === "progress"
-              ? (prev[event.step]?.status ?? "running")
-              : event.status as StepStatus,
-            detail: event.detail,
-          },
-        }))
-      },
-      // onLog
-      (message: string) => {
-        const ts = new Date().toLocaleTimeString("zh-CN", { hour12: false })
-        setLogs(prev => [...prev, `${ts}  ${message}`])
-      },
-      // onComplete
+      workspaceId!,
+      options!,
+      handleStep,
+      handleLog,
       (archiveResult: ArchiveResult) => {
         setPhase("complete")
         onComplete(archiveResult)
       },
-      // onError
-      (error: Error) => {
-        setErrorMsg(error.message)
-        setPhase("error")
-        setSteps(prev => {
-          const updated = { ...prev }
-          let foundError = false
-          for (const def of STEP_DEFS) {
-            if (updated[def.key]?.status === "error") foundError = true
-            if (foundError && updated[def.key]?.status === "pending") {
-              updated[def.key] = { status: "paused" }
-            }
-          }
-          return updated
-        })
-      },
+      handleError,
     )
 
     return () => abort.abort()
@@ -124,14 +145,14 @@ export function ArchiveProgress({ workspaceId, options, onComplete, onCancel }: 
   // ── Render ──────────────────────────────────────────────────
 
   return (
-    <div className="flex flex-col h-full min-h-[400px]">
+    <div className="flex flex-col flex-1 min-h-0">
       {/* Dual panel layout */}
       <div className="flex flex-1 gap-4 min-h-0">
         {/* Steps panel — left 280px */}
         <div className="w-[280px] shrink-0 border rounded-lg p-4 overflow-y-auto">
           <h4 className="text-sm font-semibold mb-3 text-muted-foreground">归档步骤</h4>
           <div className="space-y-1">
-            {STEP_DEFS.map((def) => {
+            {defs.map((def) => {
               const state = steps[def.key]
               return (
                 <div

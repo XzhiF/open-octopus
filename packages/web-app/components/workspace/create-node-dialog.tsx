@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState } from "react"
 import {
   Dialog,
   DialogContent,
@@ -28,7 +28,6 @@ import {
 } from "@/components/ui/command"
 import { Check, ChevronsUpDown, Package, FolderOpen } from "lucide-react"
 import { cn } from "@/lib/utils"
-import { fetchWorkflows } from "@/lib/api-client"
 import { AutoResizeTextarea } from "@/components/ui/auto-resize-textarea"
 import type { CreateNodeFormData, WorkflowOption, WorkflowInputDef } from "@/lib/types"
 import { usePersistedState } from "@/hooks/use-persisted-state"
@@ -64,28 +63,15 @@ export function CreateNodeDialog({
     defaultFormData()
   )
   const [comboboxOpen, setComboboxOpen] = useState(false)
-  const [localWorkflows, setLocalWorkflows] = useState<WorkflowOption[]>([])
-  const builtInOptions = workflowOptions.filter((o) => o.group === "built-in")
 
-  useEffect(() => {
-    if (!open) return
-    fetchWorkflows(workspaceId).then((data) => {
-      const arr = Array.isArray(data) ? data : data.workflows ?? []
-      setLocalWorkflows(arr.map((w: Record<string, unknown>) => ({
-        value: (w.ref as string) || (w.name as string),
-        label: (w.ref as string) || (w.name as string),
-        name: (w.name as string),
-        group: "local" as const,
-        path: `workflows/${(w.ref as string) || (w.name as string)}`,
-        inputs: w.inputs as Record<string, { description: string; required: boolean; default: string }> | undefined,
-      })))
-    }).catch(() => {})
-  }, [open, workspaceId])
+  // Group workflow options by their group field
+  const GROUP_LABELS: Record<string, string> = { project: "项目工作流", "built-in": "系统内置" }
+  const groupedOptions = workflowOptions.reduce<Record<string, WorkflowOption[]>>((acc, w) => {
+    (acc[w.group] ??= []).push(w)
+    return acc
+  }, {})
 
-  const options = [...localWorkflows, ...builtInOptions]
-  const localOptions = localWorkflows
-
-  const selectedOption = options.find((o) => o.value === formData.workflowRef)
+  const selectedOption = workflowOptions.find((o) => o.value === formData.workflowRef)
   const workflowInputs = selectedOption?.inputs
   const inputKeys = workflowInputs ? Object.keys(workflowInputs) : []
 
@@ -163,15 +149,17 @@ export function CreateNodeDialog({
                   <CommandInput placeholder="搜索工作流..." />
                   <CommandList>
                     <CommandEmpty>未找到工作流</CommandEmpty>
-                    {localOptions.length > 0 && (
-                      <CommandGroup heading="本地工作流">
-                        {localOptions.map((option) => (
+                    {Object.entries(groupedOptions).map(([group, items]) => (
+                      <CommandGroup key={group} heading={GROUP_LABELS[group] ?? group}>
+                        {items.map((option) => (
                           <CommandItem
                             key={option.value}
                             value={option.value + " " + option.label}
                             onSelect={() => handleWorkflowSelect(option)}
                           >
-                            <FolderOpen className="mr-2 h-4 w-4 shrink-0" />
+                            {group === "built-in"
+                              ? <Package className="mr-2 h-4 w-4 shrink-0" />
+                              : <FolderOpen className="mr-2 h-4 w-4 shrink-0" />}
                             {option.label}
                             {option.description && (
                               <span className="ml-1 text-xs text-muted-foreground">
@@ -189,32 +177,7 @@ export function CreateNodeDialog({
                           </CommandItem>
                         ))}
                       </CommandGroup>
-                    )}
-                    <CommandGroup heading="系统内置">
-                      {builtInOptions.map((option) => (
-                        <CommandItem
-                          key={option.value}
-                          value={option.value + " " + option.label}
-                          onSelect={() => handleWorkflowSelect(option)}
-                        >
-                          <Package className="mr-2 h-4 w-4 shrink-0" />
-                          {option.label}
-                          {option.description && (
-                            <span className="ml-1 text-xs text-muted-foreground">
-                              — {option.description}
-                            </span>
-                          )}
-                          <Check
-                            className={cn(
-                              "ml-auto h-4 w-4",
-                              formData.workflowRef === option.value
-                                ? "opacity-100"
-                                : "opacity-0",
-                            )}
-                          />
-                        </CommandItem>
-                      ))}
-                    </CommandGroup>
+                    ))}
                   </CommandList>
                 </Command>
               </PopoverContent>

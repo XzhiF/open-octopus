@@ -25,6 +25,7 @@ import { WorkspaceCard } from "./workspace-card"
 import { CreateWorkspaceDialog } from "./create-workspace-dialog"
 import { ImportWorkspaceDialog } from "./import-workspace-dialog"
 import { ArchivePreviewDialog } from "./archive-preview-dialog"
+import { ArchiveViewDialog } from "./archive-view-dialog"
 import { deleteWorkspace } from "@/lib/api-client"
 import { archiveWorkspace } from "@/lib/archive-api"
 import { toast } from "sonner"
@@ -45,6 +46,7 @@ export function WorkspaceList({ workspaces, onRefresh }: WorkspaceListProps) {
   const [deleteTarget, setDeleteTarget] = useState<Workspace | null>(null)
   const [deleting, setDeleting] = useState(false)
   const [archiveTarget, setArchiveTarget] = useState<Workspace | null>(null)
+  const [viewArchiveTarget, setViewArchiveTarget] = useState<Workspace | null>(null)
   const [archiveTab, setArchiveTab] = useState<"active" | "archived">("active")
   const [sortBy, setSortBy] = useState<"updated" | "name" | "created">("updated")
 
@@ -217,6 +219,7 @@ export function WorkspaceList({ workspaces, onRefresh }: WorkspaceListProps) {
               workspace={workspace}
               onDelete={(id) => setDeleteTarget(workspaces.find(w => w.id === id) ?? null)}
               onArchive={(id) => setArchiveTarget(workspaces.find(w => w.id === id) ?? null)}
+              onViewArchive={(id) => setViewArchiveTarget(workspaces.find(w => w.id === id) ?? null)}
             />
           ))}
         </div>
@@ -255,6 +258,14 @@ export function WorkspaceList({ workspaces, onRefresh }: WorkspaceListProps) {
           setArchiveTarget(null)
           onRefresh?.()
         }}
+      />
+
+      {/* Archive View */}
+      <ArchiveViewDialog
+        workspaceId={viewArchiveTarget?.id ?? null}
+        workspaceName={viewArchiveTarget?.name ?? ""}
+        open={!!viewArchiveTarget}
+        onOpenChange={(open) => { if (!open) setViewArchiveTarget(null) }}
       />
     </div>
   )

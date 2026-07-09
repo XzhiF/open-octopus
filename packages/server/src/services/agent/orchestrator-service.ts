@@ -7,6 +7,8 @@ import { SystemPromptAssembler } from './system-prompt-assembler'
 import { getMemoryService } from './memory-service'
 import { getNotificationService } from './notification-service'
 import { getAgentDir } from './paths'
+import type { StepEmitter } from '../archive/step-emitter'
+import { createNullEmitter } from '../archive/step-emitter'
 
 // ── Types ──────────────────────────────────────────────────────────
 
@@ -557,8 +559,11 @@ ${nodes.map(n => `  - id: ${n.id}
 
   // ── Archive V2: 3-Phase Analysis Pipeline ────────────────────────
 
-  async analyzeWorkspaceForArchive(workspaceId: string): Promise<ArchivePreview> {
+  async analyzeWorkspaceForArchive(workspaceId: string, emitter: StepEmitter = createNullEmitter()): Promise<ArchivePreview> {
     // Phase 1: Build context
+    await emitter.stepStart("build_context", "构建分析上下文...")
+    await emitter.log("═══ 归档分析开始 ═══")
+    await emitter.log(`工作空间: ${workspaceId}`)
     const { buildArchiveContext } = await import('../archive/context-builder')
     const { WorkspaceDAO } = await import('../../db/dao/workspace-dao')
     const { ExecutionDAO } = await import('../../db/dao/execution-dao')
@@ -571,10 +576,16 @@ ${nodes.map(n => `  - id: ${n.id}
     const ctx = await buildArchiveContext(workspaceId, workspaceDAO, executionDAO, db, this.org)
 
     if (!ctx) {
+      await emitter.stepError("build_context", "工作空间未找到")
+      await emitter.log("ERROR: 工作空间未找到")
       return this.emptyPreview('Workspace not found')
     }
+    await emitter.log(`✓ 上下文构建完成: ${ctx.executions.length} 条执行记录, ${ctx.workflows.length} 个工作流`)
+    await emitter.stepDone("build_context")
 
     // Phase 1.5: Auto-discover skills from .claude/skills/
+    await emitter.stepStart("discover_skills", "扫描 .claude/skills/ 自动发现...")
+    await emitter.log("扫描 .claude/skills/ 目录...")
     const workspacePath = workspaceDAO.findPathById(workspaceId)
     const autoDiscoveredSkills = workspacePath
       ? discoverSkillsFromWorkspace(workspacePath).map((s) => ({
@@ -590,8 +601,12 @@ ${nodes.map(n => `  - id: ${n.id}
           auto_discovered: true,
         }))
       : []
+    await emitter.log(`✓ 自动发现 ${autoDiscoveredSkills.length} 个 Skill`)
+    await emitter.stepDone("discover_skills", { count: autoDiscoveredSkills.length })
 
     // Phase 2: Parallel LLM analysis (3 calls)
+    await emitter.stepStart("analyze_parallel", "3 个 LLM 并行分析中...")
+    await emitter.log("启动 3 个 LLM 并行分析: 报告 / 经验提取 / Skill 发现...")
     const { buildRetrospectivePrompt, buildExperiencePrompt, buildSkillDiscoveryPrompt } = await import('../archive/prompts')
     const { assembleAnalysis } = await import('../archive/analysis-assembler')
 
@@ -600,14 +615,19 @@ ${nodes.map(n => `  - id: ${n.id}
     const skillPrompt = buildSkillDiscoveryPrompt(ctx)
 
     const [reportResult, experienceResult, skillResult] = await Promise.allSettled([
-      this.callArchiveLLM(retrospectivePrompt, 'You are an expert engineering analyst reviewing a completed workspace for archival.'),
-      this.callArchiveLLM(experiencePrompt, 'You are a knowledge extraction engine. Respond with only the JSON array.'),
-      this.callArchiveLLM(skillPrompt, 'You are a skill discovery agent. Respond with only the JSON array.'),
+      (async () => { await emitter.log("  → 分析报告 LLM 调用中..."); const r = await this.callArchiveLLM(retrospectivePrompt, 'You are an expert engineering analyst reviewing a completed workspace for archival.'); await emitter.log("  ✓ 分析报告完成"); return r })(),
+      (async () => { await emitter.log("  → 经验提取 LLM 调用中..."); const r = await this.callArchiveLLM(experiencePrompt, 'You are a knowledge extraction engine. Respond with only the JSON array.'); await emitter.log("  ✓ 经验提取完成"); return r })(),
+      (async () => { await emitter.log("  → Skill 发现 LLM 调用中..."); const r = await this.callArchiveLLM(skillPrompt, 'You are a skill discovery agent. Respond with only the JSON array.'); await emitter.log("  ✓ Skill 发现完成"); return r })(),
     ])
 
     const report = parseReport(reportResult)
     const experiences = parseExperiences(experienceResult)
     const llmSkills = parseSkills(skillResult)
+    await emitter.log(`✓ LLM 分析完成: 提取 ${experiences.length} 条经验, 发现 ${llmSkills.length} 个 Skill`)
+    await emitter.stepDone("analyze_parallel", {
+      experiences: experiences.length,
+      skills: llmSkills.length,
+    })
 
     // Merge: auto-discovered skills take priority, LLM skills fill gaps
     const autoNames = new Set(autoDiscoveredSkills.map((s) => s.name))
@@ -617,9 +637,13 @@ ${nodes.map(n => `  - id: ${n.id}
     ]
 
     // Phase 3: Assemble
+    await emitter.stepStart("assemble", "合并分析结果...")
     const preview = assembleAnalysis(ctx, report, experiences, mergedSkills)
+    await emitter.log(`✓ 结果合并完成: ${preview.experiences.length} 经验, ${preview.skills.length} Skill`)
+    await emitter.stepDone("assemble")
 
     // ★ Draft: persist before returning — survives client disconnect
+    await emitter.stepStart("save_draft", "保存分析草稿...")
     try {
       const { ArchiveDraftDAO } = await import('../../db/dao/archive-draft-dao')
       const archiveDraftDAO = new ArchiveDraftDAO(db)
@@ -635,6 +659,10 @@ ${nodes.map(n => `  - id: ${n.id}
       console.warn('Failed to save archive draft:', err)
       // Non-fatal: preview still returns to client
     }
+    await emitter.stepDone("save_draft")
+    await emitter.log("✓ 草稿已保存")
+    await emitter.log("═══ 归档分析完成 ═══")
+    await emitter.complete({ success: true })
 
     return preview
   }

@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
 import {
   Dialog,
   DialogContent,
@@ -15,7 +15,8 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Loader2, TrendingUp, DollarSign, AlertCircle, Lightbulb, Package, FileText, ChevronDown, ChevronUp } from "lucide-react"
-import { previewArchive, getArchiveDraft, deleteArchiveDraft, getSkillGroups } from "@/lib/archive-api"
+import { previewArchive, getArchiveDraft, deleteArchiveDraft, getSkillGroups, previewArchiveSSE } from "@/lib/archive-api"
+import type { StepEvent } from "@/lib/archive-api"
 import { ArchiveProgress } from "./archive-progress"
 import { toast } from "sonner"
 import type { Workspace } from "@/lib/types"
@@ -46,6 +47,14 @@ interface ArchivePreviewDialogProps {
   onArchived: () => void
 }
 
+const PREVIEW_STEP_DEFS = [
+  { key: "build_context", label: "构建分析上下文" },
+  { key: "discover_skills", label: "扫描 Skill 目录" },
+  { key: "analyze_parallel", label: "LLM 并行分析" },
+  { key: "assemble", label: "合并分析结果" },
+  { key: "save_draft", label: "保存分析草稿" },
+]
+
 export function ArchivePreviewDialog({
   workspace,
   open,
@@ -54,6 +63,7 @@ export function ArchivePreviewDialog({
 }: ArchivePreviewDialogProps) {
   const [preview, setPreview] = useState<ArchivePreview | null>(null)
   const [loading, setLoading] = useState(false)
+  const [started, setStarted] = useState(false)
   const [archiving, setArchiving] = useState(false)
   const [selectedExperiences, setSelectedExperiences] = useState<string[]>([])
   const [selectedSkills, setSelectedSkills] = useState<string[]>([])
@@ -63,10 +73,17 @@ export function ArchivePreviewDialog({
   const [skillGroups, setSkillGroups] = useState<Record<string, string>>({})
   const [availableGroups, setAvailableGroups] = useState<string[]>(["archive-extracted"])
   const [expandedSkills, setExpandedSkills] = useState<Set<string>>(new Set())
+  const previewDriverRef = useRef<{
+    onStep: ((e: StepEvent) => void) | null
+    onLog: ((m: string) => void) | null
+    onComplete: ((r: any) => void) | null
+    onError: ((e: Error) => void) | null
+    abort: (() => void) | null
+  }>({ onStep: null, onLog: null, onComplete: null, onError: null, abort: null })
 
   useEffect(() => {
     if (open && workspace) {
-      loadPreview()
+      checkDraft()
     }
   }, [open, workspace])
 
@@ -86,10 +103,8 @@ export function ArchivePreviewDialog({
     }
   }, [preview?.skills])
 
-  const loadPreview = async () => {
+  const checkDraft = async () => {
     if (!workspace) return
-
-    // Check for existing draft
     try {
       const existingDraft = await getArchiveDraft(workspace.id)
       if (existingDraft) {
@@ -101,24 +116,21 @@ export function ArchivePreviewDialog({
           skills: existingDraft.skills,
         })
         setDraftAge(formatDraftAge(existingDraft.updated_at))
-        return
       }
     } catch {
-      // Draft load failed — fall through to normal preview
+      // No draft — user will click to start
     }
+  }
 
-    // No draft, load normally
+  const handleStartAnalysis = () => {
+    setStarted(true)
     setLoading(true)
-    try {
-      const result = await previewArchive(workspace.id)
-      setPreview(result)
-      setDraft(null)
-      setDraftAge(null)
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "加载预览失败")
-    } finally {
-      setLoading(false)
-    }
+  }
+
+  const loadPreview = () => {
+    if (!workspace) return
+    setStarted(true)
+    setLoading(true)
   }
 
   const handleRegenerate = async () => {
@@ -164,7 +176,7 @@ export function ArchivePreviewDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[90vh] w-full max-w-[960px] overflow-y-auto">
+      <DialogContent className="h-[80vh] w-full sm:max-w-[960px] flex flex-col overflow-hidden">
         <DialogHeader>
           <DialogTitle>归档工作空间预览</DialogTitle>
           <DialogDescription>
@@ -173,10 +185,38 @@ export function ArchivePreviewDialog({
         </DialogHeader>
 
         {loading ? (
-          <div className="flex items-center justify-center py-12">
-            <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-            <span className="ml-2 text-muted-foreground">正在分析工作空间...</span>
-          </div>
+          <ArchiveProgress
+            stepDefs={PREVIEW_STEP_DEFS}
+            externalDriver={{
+              onStep: (h) => { previewDriverRef.current.onStep = h },
+              onLog: (h) => { previewDriverRef.current.onLog = h },
+              onComplete: (h) => { previewDriverRef.current.onComplete = h },
+              onError: (h) => { previewDriverRef.current.onError = h },
+              onReady: () => {
+                if (!workspace) return
+                const abort = previewArchiveSSE(
+                  workspace.id,
+                  (step) => previewDriverRef.current.onStep?.(step),
+                  (msg) => previewDriverRef.current.onLog?.(msg),
+                  (result) => {
+                    setPreview(result)
+                    setDraft(null)
+                    setDraftAge(null)
+                    setLoading(false)
+                  },
+                  (err) => {
+                    toast.error(err.message || "加载预览失败")
+                    setLoading(false)
+                  },
+                  (workspace as any).org,
+                )
+                previewDriverRef.current.abort = () => abort.abort()
+              },
+              abort: () => previewDriverRef.current.abort?.(),
+            }}
+            onComplete={() => {}}
+            onCancel={() => { setLoading(false); onOpenChange(false) }}
+          />
         ) : archiving && preview ? (
           <ArchiveProgress
             workspaceId={workspace.id}
@@ -191,10 +231,17 @@ export function ArchivePreviewDialog({
                   content: skill?.content,
                 }
               }),
+              analysisReport: preview.analysis,
+              stats: preview.stats,
+              metadata: {
+                experiences: preview.experiences.filter(e => selectedExperiences.includes(e.id)),
+                skills: preview.skills.filter(s => selectedSkills.includes(s.name)),
+                allExperiences: preview.experiences,
+                allSkills: preview.skills,
+              },
             }}
             onComplete={() => {
               toast.success(`"${workspace.name}" 已归档`)
-              onOpenChange(false)
               onArchived()
             }}
             onCancel={() => {
@@ -203,6 +250,7 @@ export function ArchivePreviewDialog({
             }}
           />
         ) : preview ? (
+        <div className="flex-1 min-h-0 overflow-y-auto">
           <div className="space-y-6">
             {draft && draftAge && (
               <div className="flex items-center justify-between rounded-md bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 px-3 py-2 text-sm">
@@ -593,11 +641,19 @@ export function ArchivePreviewDialog({
               </TabsContent>
             </Tabs>
           </div>
+        </div>
+        ) : !started ? (
+          <div className="flex flex-col items-center justify-center gap-4 py-16">
+            <p className="text-muted-foreground">分析工作空间的执行记录，提取可复用的经验和 Skill</p>
+            <Button onClick={handleStartAnalysis} size="lg">
+              开始归档分析
+            </Button>
+          </div>
         ) : (
           <div className="text-center py-8 text-muted-foreground">加载预览失败</div>
         )}
 
-        {!archiving && (
+        {!archiving && preview && (
           <DialogFooter>
             <Button variant="outline" onClick={() => onOpenChange(false)} disabled={archiving}>
               取消

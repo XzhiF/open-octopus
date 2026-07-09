@@ -26,6 +26,7 @@ interface WorkspaceCardProps {
   workspace: Workspace
   onDelete?: (id: string) => void
   onArchive?: (id: string) => void
+  onViewArchive?: (id: string) => void
 }
 
 const statusConfig: Record<
@@ -54,8 +55,8 @@ function formatRelativeTime(dateString: string | null | undefined): string {
   return date.toLocaleDateString("zh-CN")
 }
 
-export function WorkspaceCard({ workspace, onDelete, onArchive }: WorkspaceCardProps) {
-  const config = statusConfig[workspace.status]
+export function WorkspaceCard({ workspace, onDelete, onArchive, onViewArchive }: WorkspaceCardProps) {
+  const config = statusConfig[workspace.status] ?? { label: workspace.status, variant: "outline" as const }
   const isArchived = (workspace as any).archive_status === "archived"
   const cardHref = isArchived
     ? `/workspaces/${workspace.id}/archive-detail`
@@ -152,12 +153,19 @@ export function WorkspaceCard({ workspace, onDelete, onArchive }: WorkspaceCardP
               {formatRelativeTime(workspace.lastActivityAt ?? (workspace as unknown as Record<string, string>).created_at)}
             </span>
           </div>
-          <Button variant="ghost" size="sm" asChild className="gap-1">
-            <Link href={cardHref}>
-              进入
+          {isArchived ? (
+            <Button variant="ghost" size="sm" onClick={() => onViewArchive?.(workspace.id)} className="gap-1">
+              查看
               <ArrowRight className="h-3.5 w-3.5" />
-            </Link>
-          </Button>
+            </Button>
+          ) : (
+            <Button variant="ghost" size="sm" asChild className="gap-1">
+              <Link href={cardHref}>
+                进入
+                <ArrowRight className="h-3.5 w-3.5" />
+              </Link>
+            </Button>
+          )}
         </div>
       </CardContent>
     </Card>
