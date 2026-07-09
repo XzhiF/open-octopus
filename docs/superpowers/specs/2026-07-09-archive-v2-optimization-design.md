@@ -96,34 +96,391 @@ event: complete
 data: {"success":true,"archivedExecutions":12,"extractedExperiences":5,"installedSkills":2}
 ```
 
-### 2.2 前端进度组件
+### 2.2 前端进度 UI 详细设计
+
+#### 整体布局 — "归档操作" Tab 内容区
+
+点击"确认归档"后，弹窗内容区切换为进度视图（隐藏其他 Tab 内容）：
+
+```
+┌──────────────────────────────────────────────────────────────────────────┐
+│  归档工作空间: "my-project"                                  [×]        │
+├──────────────────────────────────────────────────────────────────────────┤
+│                                                                          │
+│  ┌─────────────────────────────┬──────────────────────────────────────┐ │
+│  │     Steps 面板 (左 280px)    │     Terminal 日志面板 (右 flex-1)    │ │
+│  │                             │                                      │ │
+│  │  ✅ 归档执行记录             │  12:03:01  [archive_executions]      │ │
+│  │     12/12 完成 · 1.2s       │  12:03:01  Archiving execution       │ │
+│  │                             │            abc-123... done           │ │
+│  │  ✅ 创建归档记录             │  12:03:01  Archiving execution       │ │
+│  │     完成 · 0.3s             │            def-456... done           │ │
+│  │                             │  12:03:02  [archive_executions]      │ │
+│  │  🔄 提取经验                 │            All 12 executions         │ │
+│  │     3/5 合并中...            │            archived                  │ │
+│  │                             │  12:03:02  [create_record]           │ │
+│  │  ⏳ 安装 Skill               │  12:03:02  Workspace archive record  │ │
+│  │                             │            created                   │ │
+│  │  ⏳ 清理文件                 │  12:03:03  [extract_experiences]     │ │
+│  │                             │  12:03:03  Loading workflows/        │ │
+│  │  ⏳ 更新统计                 │            deploy-flow.md            │ │
+│  │                             │  12:03:04  Merging 3 experiences     │ │
+│  │  ⏳ 软归档                   │            into deploy-flow.md...    │ │
+│  │                             │  12:03:04  ✓ deploy-flow.md updated  │ │
+│  │  ⏳ 清理草稿                 │  12:03:05  Loading projects/         │ │
+│  │                             │            my-project.md             │ │
+│  │                             │  12:03:05  Merging 2 experiences...  │ │
+│  │                             │  █                                   │ │
+│  └─────────────────────────────┴──────────────────────────────────────┘ │
+│                                                                          │
+│  ┌─ 底部操作栏 ─────────────────────────────────────────────────────┐  │
+│  │                                                                    │  │
+│  │  [取消]                                        [归档中... 禁用]   │  │
+│  └────────────────────────────────────────────────────────────────────┘  │
+└──────────────────────────────────────────────────────────────────────────┘
+```
+
+#### 完成状态
+
+```
+┌─────────────────────────────┬──────────────────────────────────────┐
+│  ✅ 归档执行记录             │  ... (同上日志)                      │
+│     12/12 完成 · 1.2s       │                                      │
+│  ✅ 创建归档记录             │  12:03:08  [complete]                │
+│     完成 · 0.3s             │  12:03:08  ══════════════════════    │
+│  ✅ 提取经验                 │  12:03:08  归档完成！                 │
+│     5 条已合并 · 3.1s       │  12:03:08  执行记录: 12 条已归档      │
+│  ✅ 安装 Skill               │  12:03:08  经验: 3新增 1修改 1删除   │
+│     2 个已安装 · 1.5s       │  12:03:08  Skill: 2 个已安装          │
+│  ✅ 清理文件                 │  12:03:08  文件: 已清理               │
+│     完成 · 0.8s             │  12:03:08  总耗时: 7.2s              │
+│  ✅ 更新统计                 │  12:03:08  ══════════════════════    │
+│  ✅ 软归档                   │                                      │
+│  ✅ 清理草稿                 │                                      │
+└─────────────────────────────┴──────────────────────────────────────┘
+
+┌─ 底部操作栏 ─────────────────────────────────────────────────────┐
+│  ✅ 归档完成                                                        │
+│  [关闭]                                      [查看归档详情 →]      │
+└────────────────────────────────────────────────────────────────────┘
+```
+
+#### 错误状态
+
+```
+┌─────────────────────────────┬──────────────────────────────────────┐
+│  ✅ 归档执行记录             │  ... (同上日志)                      │
+│  ✅ 创建归档记录             │                                      │
+│  ❌ 提取经验                 │  12:03:04  [extract_experiences]     │
+│     合并失败                 │  12:03:04  ERROR: LLM call failed    │
+│                             │  12:03:04  Provider timeout after    │
+│  ⏸ 安装 Skill               │            30s                       │
+│  ⏸ 清理文件                 │  12:03:04  ══════════════════════    │
+│  ⏸ 更新统计                 │  12:03:04  归档已中止                 │
+│  ⏸ 软归档                   │  12:03:04  已完成的步骤不受影响       │
+│  ⏸ 清理草稿                 │  12:03:04  可重试或查看日志           │
+└─────────────────────────────┴──────────────────────────────────────┘
+
+┌─ 底部操作栏 ─────────────────────────────────────────────────────┐
+│  ⚠️ 提取经验步骤失败                                                │
+│  [查看日志]                    [重试失败步骤]        [关闭]         │
+└────────────────────────────────────────────────────────────────────┘
+```
+
+#### 组件结构
 
 **文件：** `packages/web-app/components/workspaces/archive-progress.tsx`（新建）
 
 ```tsx
-interface ArchiveStep {
+"use client"
+
+import { useState, useEffect, useRef, useCallback } from "react"
+import { CheckCircle2, Circle, Loader2, XCircle, Pause, Terminal } from "lucide-react"
+import { cn } from "@/lib/utils"
+import { archiveWorkspaceSSE, type ArchiveResult } from "@/lib/archive-api"
+
+// ── Types ──────────────────────────────────────────────────────
+
+interface StepDef {
   key: string
   label: string
-  status: 'pending' | 'running' | 'done' | 'error'
-  detail?: string
 }
 
+const STEP_DEFS: StepDef[] = [
+  { key: "archive_executions", label: "归档执行记录" },
+  { key: "create_record", label: "创建归档记录" },
+  { key: "extract_experiences", label: "提取经验" },
+  { key: "install_skills", label: "安装 Skill" },
+  { key: "delete_files", label: "清理文件" },
+  { key: "update_stats", label: "更新统计" },
+  { key: "soft_archive", label: "软归档" },
+  { key: "cleanup_draft", label: "清理草稿" },
+]
+
+type StepStatus = "pending" | "running" | "done" | "error" | "paused"
+
+interface StepState {
+  status: StepStatus
+  detail?: string
+  elapsed?: number  // ms
+}
+
+// ── Props ──────────────────────────────────────────────────────
+
 interface ArchiveProgressProps {
-  steps: ArchiveStep[]
-  logs: string[]
-  onComplete?: (result: ArchiveResult) => void
+  workspaceId: string
+  org?: string
+  options: {
+    extractExperiences: ExperienceAction[]
+    installSkills: SkillInstallOption[]
+    stats?: ArchiveStats
+  }
+  onComplete: (result: ArchiveResult) => void
+  onCancel: () => void
+}
+
+// ── Component ──────────────────────────────────────────────────
+
+export function ArchiveProgress({ workspaceId, org, options, onComplete, onCancel }: ArchiveProgressProps) {
+  const [steps, setSteps] = useState<Record<string, StepState>>(
+    Object.fromEntries(STEP_DEFS.map(s => [s.key, { status: "pending" }]))
+  )
+  const [logs, setLogs] = useState<string[]>([])
+  const [phase, setPhase] = useState<"running" | "complete" | "error">("running")
+  const [result, setResult] = useState<ArchiveResult | null>(null)
+  const [errorMsg, setErrorMsg] = useState<string | null>(null)
+  const logEndRef = useRef<HTMLDivElement>(null)
+  const abortRef = useRef<AbortController | null>(null)
+
+  // Auto-scroll terminal
+  useEffect(() => {
+    logEndRef.current?.scrollIntoView({ behavior: "smooth" })
+  }, [logs])
+
+  // Start SSE on mount
+  useEffect(() => {
+    const abort = new AbortController()
+    abortRef.current = abort
+
+    archiveWorkspaceSSE(
+      workspaceId,
+      options,
+      // onStep
+      (event) => {
+        setSteps(prev => ({
+          ...prev,
+          [event.step]: {
+            status: event.status === "progress"
+              ? prev[event.step]?.status ?? "running"
+              : event.status as StepStatus,
+            detail: event.detail,
+          },
+        }))
+      },
+      // onLog
+      (message) => {
+        const ts = new Date().toLocaleTimeString("zh-CN", { hour12: false })
+        setLogs(prev => [...prev, `${ts}  ${message}`])
+      },
+      // onComplete
+      (archiveResult) => {
+        setResult(archiveResult)
+        setPhase("complete")
+        onComplete(archiveResult)
+      },
+      // onError
+      (error) => {
+        setErrorMsg(error.message)
+        setPhase("error")
+        // Mark subsequent steps as paused
+        setSteps(prev => {
+          const updated = { ...prev }
+          let foundError = false
+          for (const def of STEP_DEFS) {
+            if (updated[def.key]?.status === "error") foundError = true
+            if (foundError && updated[def.key]?.status === "pending") {
+              updated[def.key] = { status: "paused" }
+            }
+          }
+          return updated
+        })
+      },
+    )
+
+    return () => abort.abort()
+  }, [workspaceId])
+
+  // ── Step icon renderer ──────────────────────────────────────
+
+  const StepIcon = ({ status }: { status: StepStatus }) => {
+    switch (status) {
+      case "done":    return <CheckCircle2 className="h-5 w-5 text-green-500" />
+      case "running": return <Loader2 className="h-5 w-5 text-blue-500 animate-spin" />
+      case "error":   return <XCircle className="h-5 w-5 text-red-500" />
+      case "paused":  return <Pause className="h-5 w-5 text-muted-foreground" />
+      default:        return <Circle className="h-5 w-5 text-muted-foreground" />
+    }
+  }
+
+  // ── Render ──────────────────────────────────────────────────
+
+  return (
+    <div className="flex flex-col h-full min-h-[400px]">
+      {/* Dual panel layout */}
+      <div className="flex flex-1 gap-4 min-h-0">
+        {/* Steps panel — left 280px */}
+        <div className="w-[280px] shrink-0 border rounded-lg p-4 overflow-y-auto">
+          <h4 className="text-sm font-semibold mb-3 text-muted-foreground">归档步骤</h4>
+          <div className="space-y-1">
+            {STEP_DEFS.map((def) => {
+              const state = steps[def.key]
+              return (
+                <div
+                  key={def.key}
+                  className={cn(
+                    "flex items-start gap-2 rounded-md px-2 py-1.5 text-sm transition-colors",
+                    state?.status === "running" && "bg-blue-50 dark:bg-blue-950/30",
+                    state?.status === "error" && "bg-red-50 dark:bg-red-950/30",
+                  )}
+                >
+                  <StepIcon status={state?.status ?? "pending"} />
+                  <div className="flex-1 min-w-0">
+                    <div className={cn(
+                      "font-medium",
+                      state?.status === "done" && "text-green-700 dark:text-green-400",
+                      state?.status === "error" && "text-red-700 dark:text-red-400",
+                      state?.status === "paused" && "text-muted-foreground",
+                    )}>
+                      {def.label}
+                    </div>
+                    {state?.detail && (
+                      <div className="text-xs text-muted-foreground truncate">
+                        {state.detail}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+
+        {/* Terminal panel — right flex-1 */}
+        <div className="flex-1 min-w-0 border rounded-lg flex flex-col">
+          <div className="flex items-center gap-2 px-3 py-2 border-b bg-muted/50 rounded-t-lg">
+            <Terminal className="h-4 w-4 text-muted-foreground" />
+            <span className="text-xs font-mono text-muted-foreground">归档日志</span>
+          </div>
+          <div className="flex-1 overflow-y-auto p-3 font-mono text-xs leading-relaxed bg-zinc-950 text-zinc-100 dark:bg-zinc-900 rounded-b-lg">
+            {logs.length === 0 ? (
+              <div className="text-zinc-500 italic">等待归档开始...</div>
+            ) : (
+              logs.map((line, i) => (
+                <div key={i} className={cn(
+                  "whitespace-pre-wrap",
+                  line.includes("ERROR") && "text-red-400",
+                  line.includes("✓") && "text-green-400",
+                  line.includes("═══") && "text-zinc-500",
+                )}>
+                  {line}
+                </div>
+              ))
+            )}
+            <div ref={logEndRef} />
+          </div>
+        </div>
+      </div>
+
+      {/* Bottom action bar */}
+      <div className="mt-4 flex items-center justify-between border-t pt-4">
+        <div className="text-sm">
+          {phase === "running" && (
+            <span className="text-muted-foreground">归档进行中，请勿关闭此窗口</span>
+          )}
+          {phase === "complete" && (
+            <span className="text-green-600 font-medium">✅ 归档完成</span>
+          )}
+          {phase === "error" && (
+            <span className="text-red-600 font-medium">⚠️ {errorMsg ?? "归档失败"}</span>
+          )}
+        </div>
+        <div className="flex items-center gap-2">
+          {phase === "running" && (
+            <Button variant="outline" onClick={onCancel} disabled>
+              取消
+            </Button>
+          )}
+          {phase === "error" && (
+            <>
+              <Button variant="outline" onClick={onCancel}>关闭</Button>
+              <Button variant="outline" onClick={() => { /* retry logic */ }}>
+                重试失败步骤
+              </Button>
+            </>
+          )}
+          {phase === "complete" && (
+            <>
+              <Button variant="outline" onClick={onCancel}>关闭</Button>
+              <Button onClick={() => { /* navigate to archive detail */ }}>
+                查看归档详情 →
+              </Button>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  )
 }
 ```
 
-布局：左侧 Steps 列表（图标 + 名称 + 状态），右侧 Terminal 日志区（滚动显示）。
+#### Dialog 集成 — archive-preview-dialog.tsx 改造
 
-**文件：** `packages/web-app/components/workspaces/archive-preview-dialog.tsx`
+```tsx
+// 新增状态
+const [archiving, setArchiving] = useState(false)
+const [archiveResult, setArchiveResult] = useState<ArchiveResult | null>(null)
 
-"归档操作" Tab 内容替换为 `ArchiveProgress` 组件。确认归档按钮点击后：
-1. 切换 Tab 到"归档操作"
-2. 建立 SSE 连接
-3. 实时更新 Steps + Logs
-4. complete 事件后显示成功状态
+// 确认归档按钮 → 切换视图
+const handleStartArchive = () => {
+  setArchiving(true)
+  setActiveTab("progress")  // 新增 tab value
+}
+
+// Tabs 渲染逻辑
+{archiving ? (
+  <ArchiveProgress
+    workspaceId={workspace.id}
+    org={workspace.org}
+    options={{
+      extractExperiences: selectedExperienceActions,
+      installSkills: selectedSkillOptions,
+      stats: preview.stats,
+    }}
+    onComplete={(result) => setArchiveResult(result)}
+    onCancel={() => { setArchiving(false); onOpenChange(false) }}
+  />
+) : (
+  <Tabs value={activeTab} onValueChange={setActiveTab}>
+    {/* 原有 4 tabs: analysis, experiences, skills, summary */}
+  </Tabs>
+)}
+```
+
+#### 视觉规范
+
+| 属性 | 值 | 说明 |
+|------|------|------|
+| Steps 面板宽度 | 280px | 固定宽度，不随弹窗缩放 |
+| Terminal 面板 | flex-1 | 占满剩余空间 |
+| Terminal 背景 | `bg-zinc-950` | 深色终端风格，与 light/dark 主题均兼容 |
+| Terminal 字体 | `font-mono text-xs` | 等宽字体，紧凑显示 |
+| Step 行高 | `py-1.5` | 紧凑但有呼吸空间 |
+| Running 高亮 | `bg-blue-50` | 蓝色背景标识当前执行步骤 |
+| Error 高亮 | `bg-red-50` | 红色背景标识失败步骤 |
+| 图标 | lucide-react | CheckCircle2/Loader2/XCircle/Pause/Circle |
+| 日志颜色 | ERROR→红, ✓→绿, ═══→灰 | 语义着色 |
+| 自动滚动 | `scrollIntoView smooth` | 新日志自动滚到底部 |
+| 底部栏 | `border-t pt-4` | 分隔线 + 内间距 |
 
 ### 2.3 客户端 SSE 消费
 
