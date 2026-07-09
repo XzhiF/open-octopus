@@ -131,7 +131,7 @@ Analyze the data thoroughly. Be specific and data-driven. Do not invent data not
 // ── buildExperiencePrompt ───────────────────────────────────────────────────
 
 export function buildExperiencePrompt(ctx: ArchiveContext): string {
-  const { workspace, executions, errorCatalog, existingKnowledge } = ctx
+  const { workspace, executions, errorCatalog, workflows, existingKnowledge } = ctx
 
   const executionHistory = executions
     .map((exec) => {
@@ -156,6 +156,16 @@ export function buildExperiencePrompt(ctx: ArchiveContext): string {
           )
           .join("\n")
       : "  No errors recorded."
+
+  const workflowTrends =
+    workflows.length > 0
+      ? workflows
+          .map(
+            (wf) =>
+              `  - ${wf.name}: ${wf.successRate.toFixed(1)}% success rate (${wf.costTrendDirection} over time, ${wf.count} executions)`,
+          )
+          .join("\n")
+      : "  No workflow data recorded."
 
   const knowledgeRules =
     existingKnowledge.length > 0
@@ -182,6 +192,11 @@ ${executionHistory || "  No executions recorded."}
 ERROR FREQUENCY ANALYSIS
 ═══════════════════════════════════════════════════════
 ${errorFrequency}
+
+═══════════════════════════════════════════════════════
+WORKFLOW SUCCESS RATE TRENDS
+═══════════════════════════════════════════════════════
+${workflowTrends}
 
 ═══════════════════════════════════════════════════════
 EXISTING KNOWLEDGE RULES (avoid conflicts with these)
