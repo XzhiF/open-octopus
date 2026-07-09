@@ -46,6 +46,7 @@ export function WorkspaceList({ workspaces, onRefresh }: WorkspaceListProps) {
   const [deleting, setDeleting] = useState(false)
   const [archiveTarget, setArchiveTarget] = useState<Workspace | null>(null)
   const [archiveTab, setArchiveTab] = useState<"active" | "archived">("active")
+  const [sortBy, setSortBy] = useState<"updated" | "name" | "created">("updated")
 
   const handleDelete = async () => {
     if (!deleteTarget) return
@@ -63,7 +64,7 @@ export function WorkspaceList({ workspaces, onRefresh }: WorkspaceListProps) {
   }
 
   const filteredWorkspaces = useMemo(() => {
-    return workspaces.filter((ws) => {
+    const filtered = workspaces.filter((ws) => {
       // Filter by archive status
       const isArchived = (ws as any).archive_status === "archived"
       if (archiveTab === "archived" && !isArchived) return false
@@ -75,7 +76,13 @@ export function WorkspaceList({ workspaces, onRefresh }: WorkspaceListProps) {
       const matchesStatus = statusFilter === "all" || ws.status === statusFilter
       return matchesSearch && matchesStatus
     })
-  }, [workspaces, search, statusFilter, archiveTab])
+
+    return [...filtered].sort((a, b) => {
+      if (sortBy === "name") return a.name.localeCompare(b.name)
+      if (sortBy === "created") return b.createdAt.localeCompare(a.createdAt)
+      return b.updatedAt.localeCompare(a.updatedAt)
+    })
+  }, [workspaces, search, statusFilter, archiveTab, sortBy])
 
   return (
     <div className="space-y-6">
@@ -120,6 +127,21 @@ export function WorkspaceList({ workspaces, onRefresh }: WorkspaceListProps) {
               <SelectItem value="active">活跃</SelectItem>
               <SelectItem value="inactive">未激活</SelectItem>
               <SelectItem value="error">异常</SelectItem>
+            </SelectContent>
+          </Select>
+
+          {/* Sort */}
+          <Select
+            value={sortBy}
+            onValueChange={(value) => setSortBy(value as "updated" | "name" | "created")}
+          >
+            <SelectTrigger className="w-[120px]" aria-label="排序方式">
+              <SelectValue placeholder="排序" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="updated">最近更新</SelectItem>
+              <SelectItem value="created">创建时间</SelectItem>
+              <SelectItem value="name">名称</SelectItem>
             </SelectContent>
           </Select>
         </div>

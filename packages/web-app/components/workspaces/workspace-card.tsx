@@ -57,6 +57,9 @@ function formatRelativeTime(dateString: string | null | undefined): string {
 export function WorkspaceCard({ workspace, onDelete, onArchive }: WorkspaceCardProps) {
   const config = statusConfig[workspace.status]
   const isArchived = (workspace as any).archive_status === "archived"
+  const cardHref = isArchived
+    ? `/workspaces/${workspace.id}/archive-detail`
+    : `/workspaces/${workspace.id}`
 
   return (
     <Card className={`group relative transition-shadow hover:shadow-md ${isArchived ? "opacity-75" : ""}`}>
@@ -68,7 +71,7 @@ export function WorkspaceCard({ workspace, onDelete, onArchive }: WorkspaceCardP
             </div>
             <div>
               <Link
-                href={`/workspaces/${workspace.id}`}
+                href={cardHref}
                 className="font-semibold hover:underline"
               >
                 {workspace.name}
@@ -92,7 +95,7 @@ export function WorkspaceCard({ workspace, onDelete, onArchive }: WorkspaceCardP
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
                 <DropdownMenuItem asChild>
-                  <Link href={`/workspaces/${workspace.id}`}>
+                  <Link href={cardHref}>
                     <ExternalLink className="mr-2 h-4 w-4" />
                     打开工作空间
                   </Link>
@@ -150,7 +153,7 @@ export function WorkspaceCard({ workspace, onDelete, onArchive }: WorkspaceCardP
             </span>
           </div>
           <Button variant="ghost" size="sm" asChild className="gap-1">
-            <Link href={`/workspaces/${workspace.id}`}>
+            <Link href={cardHref}>
               进入
               <ArrowRight className="h-3.5 w-3.5" />
             </Link>
