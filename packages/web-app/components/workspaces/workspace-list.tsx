@@ -24,6 +24,7 @@ import {
 import { WorkspaceCard } from "./workspace-card"
 import { CreateWorkspaceDialog } from "./create-workspace-dialog"
 import { ImportWorkspaceDialog } from "./import-workspace-dialog"
+import { ArchivePreviewDialog } from "./archive-preview-dialog"
 import { deleteWorkspace } from "@/lib/api-client"
 import { archiveWorkspace } from "@/lib/archive-api"
 import { toast } from "sonner"
@@ -44,7 +45,6 @@ export function WorkspaceList({ workspaces, onRefresh }: WorkspaceListProps) {
   const [deleteTarget, setDeleteTarget] = useState<Workspace | null>(null)
   const [deleting, setDeleting] = useState(false)
   const [archiveTarget, setArchiveTarget] = useState<Workspace | null>(null)
-  const [archiving, setArchiving] = useState(false)
   const [archiveTab, setArchiveTab] = useState<"active" | "archived">("active")
 
   const handleDelete = async () => {
@@ -59,24 +59,6 @@ export function WorkspaceList({ workspaces, onRefresh }: WorkspaceListProps) {
       toast.error(err instanceof Error ? err.message : "删除失败")
     } finally {
       setDeleting(false)
-    }
-  }
-
-  const handleArchive = async () => {
-    if (!archiveTarget) return
-    setArchiving(true)
-    try {
-      await archiveWorkspace(archiveTarget.id, {
-        extractExperiences: [],
-        installSkills: [],
-      })
-      toast.success(`"${archiveTarget.name}" 已归档`)
-      setArchiveTarget(null)
-      onRefresh?.()
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "归档失败")
-    } finally {
-      setArchiving(false)
     }
   }
 
@@ -239,27 +221,15 @@ export function WorkspaceList({ workspaces, onRefresh }: WorkspaceListProps) {
       </AlertDialog>
 
       {/* Archive Confirmation */}
-      <AlertDialog open={!!archiveTarget} onOpenChange={(open) => { if (!open) setArchiveTarget(null) }}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>归档工作空间</AlertDialogTitle>
-            <AlertDialogDescription>
-              确定要归档 &ldquo;{archiveTarget?.name}&rdquo; 吗？此操作将：
-              <ul className="list-disc ml-4 mt-2">
-                <li>归档所有执行记录</li>
-                <li>删除工作空间文件目录</li>
-                <li>保留统计数据用于 Dashboard 分析</li>
-              </ul>
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={archiving}>取消</AlertDialogCancel>
-            <AlertDialogAction onClick={handleArchive} disabled={archiving}>
-              {archiving ? "归档中..." : "归档"}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <ArchivePreviewDialog
+        workspace={archiveTarget}
+        open={!!archiveTarget}
+        onOpenChange={(open) => { if (!open) setArchiveTarget(null) }}
+        onArchived={() => {
+          setArchiveTarget(null)
+          onRefresh?.()
+        }}
+      />
     </div>
   )
 }
