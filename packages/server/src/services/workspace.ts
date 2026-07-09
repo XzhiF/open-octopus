@@ -939,7 +939,8 @@ export class WorkspaceService {
       }
     }
 
-    this.dao.cascadeDeleteByWorkspace(id)
+    // Soft-archive: mark workspace as archived in DB (no cascade delete)
+    this.dao.softArchive(id)
 
     // ── 文件系统异步删除（不阻塞事件循环） ──
     const resolvedPath = ws.path.replace(/^~/, os.homedir())

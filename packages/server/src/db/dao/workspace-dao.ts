@@ -11,7 +11,7 @@ export class WorkspaceDAO extends BaseDAO {
     return (this.stmt("SELECT * FROM workspaces WHERE id = ?").get(id) as WorkspaceRow) ?? null
   }
 
-  findAll(org?: string, source?: string): WorkspaceRow[] {
+  findAll(org?: string, source?: string, excludeArchived = false): WorkspaceRow[] {
     const conditions: string[] = []
     const params: unknown[] = []
     if (org) { conditions.push("org = ?"); params.push(org) }
@@ -19,8 +19,9 @@ export class WorkspaceDAO extends BaseDAO {
       conditions.push("(source = ? OR source IS NULL)")
       params.push(source)
     }
+    if (excludeArchived) { conditions.push("status != 'archived'") }
     const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : ""
-    return this.stmt(`SELECT * FROM workspaces ${where} ORDER BY created_at DESC`).all(...params) as WorkspaceRow[]
+    return this.stmt(`SELECT * FROM workspaces ${where} ORDER BY updated_at DESC`).all(...params) as WorkspaceRow[]
   }
 
   insert(row: Omit<WorkspaceRow, "source" | "source_schedule_id"> & { source?: string; source_schedule_id?: string | null }): Database.RunResult {
@@ -160,6 +161,14 @@ export class WorkspaceDAO extends BaseDAO {
   }
 
   // ── archive_status ────────────────────────────────────────────────
+
+  softArchive(id: string): void {
+    this.stmt(`
+      UPDATE workspaces
+      SET status = 'archived', archive_status = 'archived', updated_at = datetime('now')
+      WHERE id = ?
+    `).run(id)
+  }
 
   setArchiveStatus(workspaceId: string, status: string | null): void {
     this.stmt("UPDATE workspaces SET archive_status = ?, updated_at = ? WHERE id = ?")

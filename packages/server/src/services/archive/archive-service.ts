@@ -267,6 +267,7 @@ export class ArchiveService {
     options: {
       extractExperiences: string[]
       installSkills: string[]
+      analysisReport?: unknown
     }
   ): Promise<{
     success: boolean
@@ -321,6 +322,10 @@ export class ArchiveService {
         file_deleted: 0,
       }
 
+      if (options.analysisReport) {
+        workspaceArchiveRow.analysis_report = JSON.stringify(options.analysisReport)
+      }
+
       this.archiveDAO.insertWorkspaceArchive(workspaceArchiveRow)
 
       // Step 4: Extract experiences (knowledge loop)
@@ -350,8 +355,8 @@ export class ArchiveService {
       this.archiveDAO.updateExtractionStats(workspaceId, extractedExperiences, installedSkills)
       this.archiveDAO.setFileDeleted(workspaceId, fileDeleted ? 1 : 0)
 
-      // Step 8: Mark workspace as archived
-      workspaceDAO.setArchiveStatus(workspaceId, "archived")
+      // Step 8: Soft-archive workspace (mark as archived, preserve DB row)
+      workspaceDAO.softArchive(workspaceId)
 
       logInfo("workspace archived successfully", {
         workspaceId,
