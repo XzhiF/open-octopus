@@ -202,8 +202,8 @@ describe("ArchiveService", () => {
       seedWorkspace(db, "ws-1")
       seedExecution(db, "exec-1", "ws-1")
 
-      // Corrupt: delete the execution_archive table to force insert failure
-      db.exec("DROP TABLE IF EXISTS execution_archive")
+      // Corrupt: delete the workspace_archive table to force insert failure
+      db.exec("DROP TABLE IF EXISTS workspace_archive")
 
       const result = await service.archiveWorkspace("ws-1", "test-org", {
         extractExperiences: [],

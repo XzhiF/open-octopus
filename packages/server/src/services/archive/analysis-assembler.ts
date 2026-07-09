@@ -87,16 +87,17 @@ export function assembleAnalysis(
 export function computeStats(ctx: ArchiveContext): ArchiveStats {
   const { executions, workspace } = ctx
 
-  const execution_count = executions.length
-  const completed = executions.filter((e) => e.status === "completed").length
-  const success_rate = execution_count > 0 ? (completed / execution_count) * 100 : 0
+  const execution_count = ctx.totalExecutionCount
+  const success_rate = execution_count > 0
+    ? (ctx.totalSuccessCount / execution_count) * 100
+    : 0
 
   const total_cost = executions.reduce((sum, e) => sum + e.cost, 0)
   const total_duration_s = executions.reduce((sum, e) => sum + e.duration_s, 0)
   const total_duration_ms = total_duration_s * 1000
 
-  const avg_cost_per_execution = execution_count > 0 ? total_cost / execution_count : 0
-  const avg_duration_ms = execution_count > 0 ? total_duration_ms / execution_count : 0
+  const avg_cost_per_execution = execution_count > 0 ? total_cost / executions.length : 0
+  const avg_duration_ms = execution_count > 0 ? total_duration_ms / executions.length : 0
 
   return {
     execution_count,

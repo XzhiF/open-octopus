@@ -30,6 +30,8 @@ export interface ArchiveContext {
   costProfile: CostProfile
   nodePatterns: NodePattern[]
   existingKnowledge: ExistingRule[]
+  totalExecutionCount: number
+  totalSuccessCount: number
 }
 
 export interface ExecutionSummary {
@@ -115,7 +117,7 @@ export async function buildArchiveContext(
   const executions = executionDAO.listByWorkspace(workspaceId)
   const sampled = sampleExecutions(executions, db)
 
-  const [executionSummaries, workflowProfiles, errorCatalog, costProfile, nodePatterns, existingKnowledge] =
+  const [executionSummaries, workflowProfiles, errorCatalog, costProfile, nodePatterns, existingKnowledge, totalCounts] =
     await Promise.all([
       buildExecutionSummaries(sampled, executionDAO, db),
       buildWorkflowProfiles(executions, db),
@@ -123,6 +125,7 @@ export async function buildArchiveContext(
       buildCostProfile(workspaceId, db),
       buildNodePatterns(workspaceId, db),
       loadExistingKnowledge(org),
+      fetchTotalCounts(workspaceId, db),
     ])
 
   const createdDate = new Date(workspace.created_at)
@@ -148,10 +151,31 @@ export async function buildArchiveContext(
     costProfile,
     nodePatterns,
     existingKnowledge,
+    totalExecutionCount: totalCounts.total,
+    totalSuccessCount: totalCounts.success,
   }
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────
+
+function fetchTotalCounts(
+  workspaceId: string,
+  db: Database.Database,
+): Promise<{ total: number; success: number }> {
+  const row = db
+    .prepare(
+      `SELECT
+         COUNT(*) as total,
+         SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as success
+       FROM executions
+       WHERE workspace_id = ?`,
+    )
+    .get(workspaceId) as { total: number; success: number }
+  return Promise.resolve({
+    total: row?.total ?? 0,
+    success: row?.success ?? 0,
+  })
+}
 
 function buildFailedNodes(executionId: string, db: Database.Database): FailedNode[] {
   const rows = db

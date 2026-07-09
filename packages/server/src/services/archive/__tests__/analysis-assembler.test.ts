@@ -16,6 +16,19 @@ import {
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
+function makeExecution(overrides: Partial<ArchiveContext["executions"][number]> = {}): ArchiveContext["executions"][number] {
+  return {
+    index: 0,
+    workflow_name: "test",
+    status: "completed",
+    duration_s: 10,
+    cost: 0.1,
+    started_at: "2024-01-02T00:00:00Z",
+    failedNodes: [],
+    ...overrides,
+  }
+}
+
 function makeCtx(overrides: Partial<ArchiveContext> = {}): ArchiveContext {
   return {
     workspace: {
@@ -41,6 +54,8 @@ function makeCtx(overrides: Partial<ArchiveContext> = {}): ArchiveContext {
     costProfile: { total_cost: 0.5, daily_avg: 0.05, trend_direction: "stable", trend_pct: 0, modelBreakdown: [] },
     nodePatterns: [],
     existingKnowledge: [],
+    totalExecutionCount: 4,
+    totalSuccessCount: 3,
     ...overrides,
   }
 }
@@ -101,7 +116,7 @@ describe("computeStats", () => {
   })
 
   it("handles empty executions", () => {
-    const ctx = makeCtx({ executions: [] })
+    const ctx = makeCtx({ executions: [], totalExecutionCount: 0, totalSuccessCount: 0 })
     const stats = computeStats(ctx)
 
     expect(stats.execution_count).toBe(0)
@@ -110,6 +125,21 @@ describe("computeStats", () => {
     expect(stats.total_duration_ms).toBe(0)
     expect(stats.avg_cost_per_execution).toBe(0)
     expect(stats.avg_duration_ms).toBe(0)
+  })
+
+  it("uses totalExecutionCount instead of sampled executions length", () => {
+    const ctx = makeCtx({
+      totalExecutionCount: 100,
+      totalSuccessCount: 80,
+      executions: [
+        makeExecution({ status: "completed", cost: 1.0, duration_s: 10 }),
+        makeExecution({ status: "failed", cost: 0.5, duration_s: 5 }),
+      ],
+    })
+    const stats = computeStats(ctx)
+    expect(stats.execution_count).toBe(100)
+    expect(stats.success_rate).toBe(80)
+    expect(stats.total_cost).toBe(1.5)
   })
 })
 
@@ -277,7 +307,7 @@ describe("assembleAnalysis", () => {
   })
 
   it("handles empty inputs", () => {
-    const ctx = makeCtx({ executions: [] })
+    const ctx = makeCtx({ executions: [], totalExecutionCount: 0, totalSuccessCount: 0 })
     const report = makeReport()
     const preview = assembleAnalysis(ctx, report, [], [])
 

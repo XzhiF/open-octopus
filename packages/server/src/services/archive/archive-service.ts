@@ -268,6 +268,16 @@ export class ArchiveService {
       extractExperiences: string[]
       installSkills: string[]
       analysisReport?: unknown
+      stats?: {
+        execution_count: number
+        total_cost: number
+        total_duration_ms: number
+        success_rate: number
+        avg_cost_per_execution: number
+        avg_duration_ms: number
+        lifespan_days: number
+        workflow_count: number
+      }
     }
   ): Promise<{
     success: boolean
@@ -294,15 +304,16 @@ export class ArchiveService {
       }
 
       // Step 3: Create workspace archive record
-      const totalCost = executions.reduce((sum, exec) => {
-        const archiveRow = this.archiveDAO.findByExecutionId(exec.id)
-        return sum + (archiveRow?.total_cost || 0)
-      }, 0)
-
-      const totalDurationMs = executions.reduce((sum, exec) => {
-        const archiveRow = this.archiveDAO.findByExecutionId(exec.id)
-        return sum + (archiveRow?.total_duration_ms || 0)
-      }, 0)
+      const stats = options.stats ?? {
+        execution_count: archivedExecutions,
+        total_cost: 0,
+        total_duration_ms: 0,
+        success_rate: 0,
+        avg_cost_per_execution: 0,
+        avg_duration_ms: 0,
+        lifespan_days: 0,
+        workflow_count: 0,
+      }
 
       const workspaceArchiveRow: WorkspaceArchiveRow = {
         workspace_id: workspaceId,
@@ -310,9 +321,9 @@ export class ArchiveService {
         name: workspace.name,
         description: workspace.description,
         source: workspace.source,
-        execution_count: archivedExecutions,
-        total_cost: totalCost,
-        total_duration_ms: totalDurationMs,
+        execution_count: stats.execution_count,
+        total_cost: stats.total_cost,
+        total_duration_ms: stats.total_duration_ms,
         created_at: workspace.created_at,
         archived_at: new Date().toISOString(),
         metadata: null,

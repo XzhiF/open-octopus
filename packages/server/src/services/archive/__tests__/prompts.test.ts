@@ -122,6 +122,8 @@ function makeCtx(overrides: Partial<ArchiveContext> = {}): ArchiveContext {
       { id: "rule-1", text: "Always run tests before deploying", scope: "workspace" },
       { id: "rule-2", text: "Use staging environment for review workflows", scope: "workflow" },
     ],
+    totalExecutionCount: 3,
+    totalSuccessCount: 2,
     ...overrides,
   }
 }
@@ -140,6 +142,8 @@ function makeEmptyCtx(): ArchiveContext {
     },
     nodePatterns: [],
     existingKnowledge: [],
+    totalExecutionCount: 0,
+    totalSuccessCount: 0,
   })
 }
 
