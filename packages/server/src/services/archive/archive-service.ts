@@ -285,7 +285,7 @@ export class ArchiveService {
       }
 
       // Step 2: Archive all executions in this workspace
-      const executions = this.executionDAO.findByWorkspace(workspaceId)
+      const executions = this.executionDAO.listByWorkspace(workspaceId)
       let archivedExecutions = 0
       for (const exec of executions) {
         const result = await this.archiveExecution(exec.id)

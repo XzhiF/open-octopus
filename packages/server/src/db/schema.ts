@@ -43,6 +43,23 @@ function handleSchemaMigrations(db: Database.Database): void {
     }
   }
 
+  // Check if workspace_archive table exists with old schema (has 'id' column and old column names)
+  const wsTables = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='workspace_archive'").all()
+  if (wsTables.length > 0) {
+    const cols = db.prepare("PRAGMA table_info(workspace_archive)").all() as { name: string }[]
+    const idCol = cols.find(c => c.name === 'id')
+    const nameCol = cols.find(c => c.name === 'name')
+
+    // Old schema: has 'id' as PRIMARY KEY and 'workspace_name' instead of 'name'
+    // New schema: uses 'workspace_id' as PRIMARY KEY and has 'name' column
+    if (idCol || !nameCol) {
+      const count = (db.prepare("SELECT COUNT(*) as cnt FROM workspace_archive").get() as { cnt: number }).cnt
+      // Rename to backup instead of dropping — preserves data for manual inspection
+      db.exec("ALTER TABLE workspace_archive RENAME TO workspace_archive_old_schema_backup")
+      console.log(`[schema] Renamed old workspace_archive (${count} rows) → workspace_archive_old_schema_backup`)
+    }
+  }
+
   // Add missing columns for existing tables
   ensureColumnsForExistingTables(db)
 }
@@ -71,6 +88,14 @@ function ensureColumnsForExistingTables(db: Database.Database): void {
   ensureColumn(db, 'workspaces', 'archive_status', "TEXT DEFAULT NULL")
 
   // Archive V2 columns for workspace_archive
+  ensureColumn(db, 'workspace_archive', 'name', "TEXT NOT NULL DEFAULT ''")
+  ensureColumn(db, 'workspace_archive', 'description', "TEXT")
+  ensureColumn(db, 'workspace_archive', 'source', "TEXT")
+  ensureColumn(db, 'workspace_archive', 'execution_count', "INTEGER DEFAULT 0")
+  ensureColumn(db, 'workspace_archive', 'total_cost', "REAL DEFAULT 0")
+  ensureColumn(db, 'workspace_archive', 'total_duration_ms', "INTEGER DEFAULT 0")
+  ensureColumn(db, 'workspace_archive', 'created_at', "TEXT")
+  ensureColumn(db, 'workspace_archive', 'metadata', "TEXT")
   ensureColumn(db, 'workspace_archive', 'extracted_experiences', "INTEGER DEFAULT 0")
   ensureColumn(db, 'workspace_archive', 'extracted_skills', "INTEGER DEFAULT 0")
   ensureColumn(db, 'workspace_archive', 'analysis_report', "TEXT")

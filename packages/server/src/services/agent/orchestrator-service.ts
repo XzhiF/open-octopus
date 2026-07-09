@@ -725,7 +725,7 @@ Respond in JSON format with keys: summary, execution_patterns (array), cost_effi
       const { getExecutionDAO } = await import('../../db/dao')
 
       const executionDAO = getExecutionDAO()
-      const executions = executionDAO.findByWorkspaceId(workspaceId)
+      const executions = executionDAO.listByWorkspace(workspaceId)
 
       const candidates: ExperienceCandidate[] = []
 
