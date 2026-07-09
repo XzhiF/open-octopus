@@ -338,10 +338,10 @@ export function ArchivePreviewDialog({
                     未检测到可提取的经验
                   </div>
                 ) : (
-                  <div className="space-y-2">
+                  <div className="space-y-4">
                     <div className="flex items-center justify-between mb-4">
                       <p className="text-sm text-muted-foreground">
-                        选择要提取到知识库的经验（已选 {selectedExperiences.length}）
+                        选择要合并到知识库的经验（已选 {selectedExperiences.length}）
                       </p>
                       <Button
                         variant="outline"
@@ -359,29 +359,56 @@ export function ArchivePreviewDialog({
                           : "全选"}
                       </Button>
                     </div>
-                    {preview.experiences.map((exp) => (
-                      <Card key={exp.id}>
-                        <CardContent className="pt-4">
-                          <div className="flex items-start gap-3">
-                            <Checkbox
-                              checked={selectedExperiences.includes(exp.id)}
-                              onCheckedChange={() => toggleExperience(exp.id)}
-                            />
-                            <div className="flex-1">
-                              <p className="text-sm">{exp.text}</p>
-                              <div className="flex items-center gap-2 mt-2">
-                                <Badge variant="outline" className="text-xs">
-                                  {exp.scope}
-                                </Badge>
-                                <Badge variant="secondary" className="text-xs">
-                                  置信度: {(exp.confidence * 100).toFixed(0)}%
-                                </Badge>
-                              </div>
-                            </div>
+
+                    {(["add", "update", "delete"] as const).map((action) => {
+                      const group = preview.experiences.filter(
+                        (e) => (e.action ?? "add") === action
+                      )
+                      if (group.length === 0) return null
+
+                      const label =
+                        action === "add" ? "新增" : action === "update" ? "修改" : "删除"
+                      const icon =
+                        action === "add" ? "🟢" : action === "update" ? "🟡" : "🔴"
+
+                      return (
+                        <div key={action}>
+                          <h4 className="text-sm font-medium mb-2">
+                            {icon} {label} ({group.length})
+                          </h4>
+                          <div className="space-y-2">
+                            {group.map((exp) => (
+                              <Card key={exp.id}>
+                                <CardContent className="pt-4">
+                                  <div className="flex items-start gap-3">
+                                    <Checkbox
+                                      checked={selectedExperiences.includes(exp.id)}
+                                      onCheckedChange={() => toggleExperience(exp.id)}
+                                    />
+                                    <div className="flex-1">
+                                      <p className="text-sm">{exp.text}</p>
+                                      {exp.replaces_text && (
+                                        <p className="text-xs text-muted-foreground mt-1 italic">
+                                          原文: &ldquo;{exp.replaces_text}&rdquo;
+                                        </p>
+                                      )}
+                                      <div className="flex items-center gap-2 mt-2">
+                                        <Badge variant="outline" className="text-xs">
+                                          {exp.scope ?? "org"}: {exp.target ?? "all"}
+                                        </Badge>
+                                        <Badge variant="secondary" className="text-xs">
+                                          置信度: {((exp.confidence ?? 0.5) * 100).toFixed(0)}%
+                                        </Badge>
+                                      </div>
+                                    </div>
+                                  </div>
+                                </CardContent>
+                              </Card>
+                            ))}
                           </div>
-                        </CardContent>
-                      </Card>
-                    ))}
+                        </div>
+                      )
+                    })}
                   </div>
                 )}
               </TabsContent>
