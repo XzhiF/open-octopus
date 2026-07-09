@@ -268,7 +268,7 @@ export class ArchiveService {
     org: string,
     options: {
       extractExperiences: string[]
-      installSkills: string[]
+      installSkills: Array<{ name: string; group: string }>
       analysisReport?: unknown
       stats?: {
         execution_count: number
@@ -385,7 +385,7 @@ export class ArchiveService {
       await emitter.stepStart("install_skills", `安装 ${options.installSkills.length} 个 Skill...`)
       let installedSkills = 0
       if (options.installSkills.length > 0) {
-        installedSkills = await this.installSkills(org, options.installSkills)
+        installedSkills = await this.installSkills(org, options.installSkills, emitter)
       }
       await emitter.stepDone("install_skills", { count: installedSkills })
 
@@ -533,22 +533,23 @@ export class ArchiveService {
     }
   }
 
-  private async installSkills(org: string, skillNames: string[]): Promise<number> {
+  private async installSkills(org: string, skills: Array<{ name: string; group: string }>, emitter: StepEmitter): Promise<number> {
     try {
       const { getResourceManager } = await import("../resource-manager")
       const resourceManager = getResourceManager(org)
-
       let installedCount = 0
-      for (const skillName of skillNames) {
+
+      for (const skill of skills) {
         try {
+          await emitter.stepProgress("install_skills", `安装 ${skill.name} → ${skill.group}`)
           await resourceManager.install({
+            ref: `builtin:${skill.name}`,
             type: "skill",
-            name: skillName,
-            source: "builtin",
+            group: skill.group,
           })
           installedCount++
         } catch (err) {
-          logError("failed to install skill", err, { skillName })
+          await emitter.log(`✗ Failed to install ${skill.name}: ${err instanceof Error ? err.message : String(err)}`)
         }
       }
 

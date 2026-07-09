@@ -15,11 +15,18 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Loader2, TrendingUp, DollarSign, AlertCircle, Lightbulb, Package } from "lucide-react"
-import { previewArchive, getArchiveDraft, deleteArchiveDraft } from "@/lib/archive-api"
+import { previewArchive, getArchiveDraft, deleteArchiveDraft, getSkillGroups } from "@/lib/archive-api"
 import { ArchiveProgress } from "./archive-progress"
 import { toast } from "sonner"
 import type { Workspace } from "@/lib/types"
-import type { ArchivePreview, ArchiveDraft, ExperienceCandidate, SkillCandidate } from "@/lib/archive-api"
+import type { ArchivePreview, ArchiveDraft, ExperienceCandidate, SkillCandidate, SkillInstallOption } from "@/lib/archive-api"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 
 function formatDraftAge(updatedAt: string): string {
   const diff = Date.now() - new Date(updatedAt).getTime()
@@ -53,12 +60,30 @@ export function ArchivePreviewDialog({
   const [activeTab, setActiveTab] = useState("analysis")
   const [draft, setDraft] = useState<ArchiveDraft | null>(null)
   const [draftAge, setDraftAge] = useState<string | null>(null)
+  const [skillGroups, setSkillGroups] = useState<Record<string, string>>({})
+  const [availableGroups, setAvailableGroups] = useState<string[]>(["archive-extracted"])
 
   useEffect(() => {
     if (open && workspace) {
       loadPreview()
     }
   }, [open, workspace])
+
+  useEffect(() => {
+    if (open && workspace) {
+      getSkillGroups((workspace as any).org).then(setAvailableGroups)
+    }
+  }, [open, workspace])
+
+  useEffect(() => {
+    if (preview?.skills) {
+      const defaults: Record<string, string> = {}
+      for (const skill of preview.skills) {
+        defaults[skill.name] = skillGroups[skill.name] ?? "archive-extracted"
+      }
+      setSkillGroups(defaults)
+    }
+  }, [preview?.skills])
 
   const loadPreview = async () => {
     if (!workspace) return
@@ -156,7 +181,10 @@ export function ArchivePreviewDialog({
             workspaceId={workspace.id}
             options={{
               extractExperiences: selectedExperiences,
-              installSkills: selectedSkills,
+              installSkills: selectedSkills.map((name) => ({
+                name,
+                group: skillGroups[name] ?? "archive-extracted",
+              })),
             }}
             onComplete={() => {
               toast.success(`"${workspace.name}" 已归档`)
@@ -454,9 +482,25 @@ export function ArchivePreviewDialog({
                               <p className="text-sm text-muted-foreground mb-2">
                                 {skill.description}
                               </p>
-                              <p className="text-xs text-muted-foreground">
+                              <p className="text-xs text-muted-foreground mb-2">
                                 <strong>提取原因:</strong> {skill.reason}
                               </p>
+                              <div className="flex items-center gap-2">
+                                <span className="text-xs text-muted-foreground">安装到组:</span>
+                                <Select
+                                  value={skillGroups[skill.name] ?? "archive-extracted"}
+                                  onValueChange={(v) => setSkillGroups(prev => ({ ...prev, [skill.name]: v }))}
+                                >
+                                  <SelectTrigger className="h-7 w-[180px] text-xs">
+                                    <SelectValue />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    {availableGroups.map((g) => (
+                                      <SelectItem key={g} value={g}>{g}</SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                              </div>
                             </div>
                           </div>
                         </CardContent>

@@ -14,6 +14,21 @@ function apiFetch(url: string, init?: RequestInit): Promise<Response> {
 
 // ── Archive V2 Types ──────────────────────────────────────────────
 
+export interface SkillInstallOption {
+  name: string
+  group: string
+}
+
+export async function getSkillGroups(org?: string): Promise<string[]> {
+  const params = org ? `?org=${encodeURIComponent(org)}` : ""
+  const res = await apiFetch(`${getServerUrl()}/api/archive/skill-groups${params}`, {
+    credentials: "include",
+  })
+  if (!res.ok) return ["archive-extracted"]
+  const data = await res.json()
+  return data.groups || ["archive-extracted"]
+}
+
 export interface WorkspaceStats {
   execution_count: number
   success_rate: number
@@ -89,7 +104,7 @@ export async function archiveWorkspace(
   workspaceId: string,
   options: {
     extractExperiences?: string[]
-    installSkills?: string[]
+    installSkills?: SkillInstallOption[]
   },
   org?: string
 ): Promise<ArchiveResult> {
@@ -144,7 +159,7 @@ export function archiveWorkspaceSSE(
   workspaceId: string,
   options: {
     extractExperiences?: string[]
-    installSkills?: string[]
+    installSkills?: SkillInstallOption[]
     analysisReport?: unknown
     stats?: Record<string, unknown>
   },

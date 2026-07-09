@@ -4,7 +4,7 @@ import { useState, useEffect, useRef } from "react"
 import { CheckCircle2, Circle, Loader2, XCircle, Pause, Terminal } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
-import { archiveWorkspaceSSE, type StepEvent, type ArchiveResult } from "@/lib/archive-api"
+import { archiveWorkspaceSSE, type StepEvent, type ArchiveResult, type SkillInstallOption } from "@/lib/archive-api"
 
 // ── Types ──────────────────────────────────────────────────────
 
@@ -37,7 +37,7 @@ interface ArchiveProgressProps {
   workspaceId: string
   options: {
     extractExperiences?: string[]
-    installSkills?: string[]
+    installSkills?: SkillInstallOption[]
     analysisReport?: unknown
     stats?: Record<string, unknown>
   }
