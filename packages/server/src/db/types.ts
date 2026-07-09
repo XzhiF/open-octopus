@@ -459,6 +459,10 @@ export interface WorkspaceArchiveRow {
   created_at: string | null
   archived_at: string
   metadata: string | null
+  extracted_experiences: number
+  extracted_skills: number
+  analysis_report: string | null
+  file_deleted: number
 }
 
 export interface ArchiveStats {

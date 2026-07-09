@@ -69,6 +69,12 @@ function ensureColumnsForExistingTables(db: Database.Database): void {
 
   // Archive status column for workspaces
   ensureColumn(db, 'workspaces', 'archive_status', "TEXT DEFAULT NULL")
+
+  // Archive V2 columns for workspace_archive
+  ensureColumn(db, 'workspace_archive', 'extracted_experiences', "INTEGER DEFAULT 0")
+  ensureColumn(db, 'workspace_archive', 'extracted_skills', "INTEGER DEFAULT 0")
+  ensureColumn(db, 'workspace_archive', 'analysis_report', "TEXT")
+  ensureColumn(db, 'workspace_archive', 'file_deleted', "INTEGER DEFAULT 0")
 }
 
 function ensureColumn(db: Database.Database, table: string, column: string, definition: string): void {

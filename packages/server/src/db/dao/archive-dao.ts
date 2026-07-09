@@ -54,12 +54,15 @@ export class ArchiveDAO extends BaseDAO {
     this.stmt(`
       INSERT OR IGNORE INTO workspace_archive
         (workspace_id, org, name, description, source, execution_count,
-         total_cost, total_duration_ms, created_at, archived_at, metadata)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         total_cost, total_duration_ms, created_at, archived_at, metadata,
+         extracted_experiences, extracted_skills, analysis_report, file_deleted)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       row.workspace_id, row.org, row.name, row.description, row.source,
       row.execution_count, row.total_cost, row.total_duration_ms,
       row.created_at, row.archived_at, row.metadata,
+      row.extracted_experiences ?? 0, row.extracted_skills ?? 0,
+      row.analysis_report, row.file_deleted ?? 0,
     )
   }
 
@@ -155,5 +158,43 @@ export class ArchiveDAO extends BaseDAO {
       SELECT COUNT(*) as total_workspaces, COALESCE(SUM(execution_count), 0) as total_execution_count, COALESCE(SUM(total_cost), 0) as total_cost
       FROM workspace_archive WHERE org = ?
     `).get(org) as { total_workspaces: number; total_execution_count: number; total_cost: number }
+  }
+
+  // ── Archive V2: Extraction tracking ─────────────────────────────
+
+  updateExtractionStats(workspaceId: string, experiences: number, skills: number): void {
+    this.stmt(`
+      UPDATE workspace_archive
+      SET extracted_experiences = ?, extracted_skills = ?
+      WHERE workspace_id = ?
+    `).run(experiences, skills, workspaceId)
+  }
+
+  setFileDeleted(workspaceId: string, deleted: number): void {
+    this.stmt(`
+      UPDATE workspace_archive
+      SET file_deleted = ?
+      WHERE workspace_id = ?
+    `).run(deleted, workspaceId)
+  }
+
+  getArchivedWorkspaces(
+    org: string,
+    filter?: { name?: string }
+  ): WorkspaceArchiveRow[] {
+    const conditions: string[] = ["org = ?"]
+    const params: unknown[] = [org]
+
+    if (filter?.name) {
+      conditions.push("name LIKE ?")
+      params.push(`%${filter.name}%`)
+    }
+
+    const where = conditions.join(" AND ")
+    return this.stmt(`
+      SELECT * FROM workspace_archive
+      WHERE ${where}
+      ORDER BY archived_at DESC
+    `).all(...params) as WorkspaceArchiveRow[]
   }
 }

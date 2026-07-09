@@ -27,7 +27,7 @@ describe("BuiltInWorkflowService", () => {
       installed: true,
       installPath: "/fake/path/workflows/deploy",
     }
-    mockResourceManager.list = vi.fn().mockReturnValue([mockEntry])
+    mockResourceManager.list = vi.fn().mockReturnValue({ resources: [mockEntry], total: 1 })
 
     // Mock fs to return valid workflow content
     const fs = require("fs")

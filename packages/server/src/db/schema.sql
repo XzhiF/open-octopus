@@ -699,7 +699,11 @@ CREATE TABLE IF NOT EXISTS workspace_archive (
   total_duration_ms INTEGER DEFAULT 0,
   created_at TEXT,
   archived_at TEXT NOT NULL DEFAULT (datetime('now')),
-  metadata TEXT
+  metadata TEXT,
+  extracted_experiences INTEGER DEFAULT 0,
+  extracted_skills INTEGER DEFAULT 0,
+  analysis_report TEXT,
+  file_deleted INTEGER DEFAULT 0
 );
 
 CREATE INDEX IF NOT EXISTS idx_workspace_archive_org ON workspace_archive(org);
