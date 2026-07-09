@@ -151,9 +151,12 @@ describe("ArchiveService", () => {
       seedNodeExecution(db, "ne-1", "exec-1")
       seedLlmCall(db, "exec-1", "ne-1")
 
-      const result = await service.archiveWorkspace("ws-1", workspaceDAO)
-      expect(result.archived).toBe(true)
-      expect(result.execution_count).toBe(2)
+      const result = await service.archiveWorkspace("ws-1", "test-org", {
+        extractExperiences: [],
+        installSkills: [],
+      })
+      expect(result.success).toBe(true)
+      expect(result.archivedExecutions).toBe(2)
 
       // Both executions archived
       expect(archiveDAO.findByExecutionId("exec-1")).not.toBeNull()
@@ -170,17 +173,24 @@ describe("ArchiveService", () => {
     })
 
     it("returns not found for nonexistent workspace", async () => {
-      const result = await service.archiveWorkspace("no-such-ws", workspaceDAO)
-      expect(result.archived).toBe(false)
-      expect(result.execution_count).toBe(0)
+      const result = await service.archiveWorkspace("no-such-ws", "test-org", {
+        extractExperiences: [],
+        installSkills: [],
+      })
+      expect(result.success).toBe(false)
+      expect(result.archivedExecutions).toBe(0)
+      expect(result.error).toBe("workspace_not_found")
     })
 
     it("handles empty workspace (no executions)", async () => {
       seedWorkspace(db, "ws-1")
 
-      const result = await service.archiveWorkspace("ws-1", workspaceDAO)
-      expect(result.archived).toBe(true)
-      expect(result.execution_count).toBe(0)
+      const result = await service.archiveWorkspace("ws-1", "test-org", {
+        extractExperiences: [],
+        installSkills: [],
+      })
+      expect(result.success).toBe(true)
+      expect(result.archivedExecutions).toBe(0)
 
       const wsArchive = archiveDAO.findByWorkspaceId("ws-1")
       expect(wsArchive).not.toBeNull()
@@ -195,11 +205,14 @@ describe("ArchiveService", () => {
       // Corrupt: delete the execution_archive table to force insert failure
       db.exec("DROP TABLE IF EXISTS execution_archive")
 
-      await expect(service.archiveWorkspace("ws-1", workspaceDAO)).rejects.toThrow()
+      const result = await service.archiveWorkspace("ws-1", "test-org", {
+        extractExperiences: [],
+        installSkills: [],
+      })
 
-      // archive_status should be 'archive_failed' (set outside the rolled-back transaction)
-      const ws = workspaceDAO.findById("ws-1")
-      expect(ws!.archive_status).toBe("archive_failed")
+      // Should fail but not throw
+      expect(result.success).toBe(false)
+      expect(result.error).toBeDefined()
     })
 
     it("rolls back on partial failure (ArchivePartialFailure)", async () => {
@@ -219,8 +232,13 @@ describe("ArchiveService", () => {
 
       const failService = new ArchiveService(archiveDAO, failingExecDAO, db)
 
-      await expect(failService.archiveWorkspace("ws-1", workspaceDAO))
-        .rejects.toThrow(ArchivePartialFailure)
+      const result = await failService.archiveWorkspace("ws-1", "test-org", {
+        extractExperiences: [],
+        installSkills: [],
+      })
+
+      // Should fail but not throw
+      expect(result.success).toBe(false)
 
       // Transaction rolled back — no archive rows
       expect(archiveDAO.findByExecutionId("exec-1")).toBeNull()

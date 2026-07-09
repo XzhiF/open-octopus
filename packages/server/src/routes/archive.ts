@@ -227,5 +227,44 @@ export function createArchiveRoutes(
     }
   })
 
+  // POST /api/archive/workspaces/:id/archive — Archive V2 (execute)
+  routes.post("/workspaces/:id/archive", async (c) => {
+    const id = c.req.param("id")
+
+    // Security: validate UUID format
+    if (!isValidUUID(id)) {
+      return c.json({ error: { code: "INVALID_PARAM", message: "Invalid workspace ID format" } }, 400)
+    }
+
+    try {
+      const body = await c.req.json<{
+        extractExperiences?: string[]
+        installSkills?: string[]
+      }>()
+
+      const { getArchiveService } = await import("../services/archive/archive-service")
+      const archiveService = getArchiveService()
+
+      if (!archiveService) {
+        return c.json({ error: { code: "SUBSYSTEM_UNAVAILABLE", message: "Archive service not available" } }, 503)
+      }
+
+      const org = c.req.query("org") || "default"
+      const result = await archiveService.archiveWorkspace(id, org, {
+        extractExperiences: body.extractExperiences || [],
+        installSkills: body.installSkills || [],
+      })
+
+      if (!result.success) {
+        return c.json({ error: { code: "ARCHIVE_FAILED", message: result.error } }, 500)
+      }
+
+      return c.json(result)
+    } catch (err) {
+      const { body, status } = errorResponse(err, "archive.execute")
+      return c.json(body, status)
+    }
+  })
+
   return routes
 }

@@ -122,3 +122,29 @@ export async function previewArchive(workspaceId: string, org?: string): Promise
   })
   return handleResponse(res)
 }
+
+export interface ArchiveResult {
+  success: boolean
+  archivedExecutions: number
+  extractedExperiences: number
+  installedSkills: number
+  fileDeleted: boolean
+  error?: string
+}
+
+export async function archiveWorkspace(
+  workspaceId: string,
+  options: {
+    extractExperiences?: string[]
+    installSkills?: string[]
+  },
+  org?: string
+): Promise<ArchiveResult> {
+  const params = org ? `?org=${encodeURIComponent(org)}` : ""
+  const res = await apiFetch(`${getServerUrl()}/api/archive/workspaces/${workspaceId}/archive${params}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(options),
+  })
+  return handleResponse(res)
+}

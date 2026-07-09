@@ -1,7 +1,7 @@
 import type Database from "better-sqlite3"
 import type { ArchiveDAO } from "../../db/dao/archive-dao"
 import type { ExecutionDAO } from "../../db/dao/execution-dao"
-import type { WorkspaceDAO } from "../../db/dao/workspace-dao"
+import { WorkspaceDAO } from "../../db/dao/workspace-dao"
 import type { DomainEventBus } from "../agent/domain-event-bus"
 import type { ExecutionArchiveRow, WorkspaceArchiveRow, ExecutionRow } from "../../db/types"
 import { logError, logInfo } from "../../file-logger"
@@ -257,6 +257,198 @@ export class ArchiveService {
     }
 
     return { archived_count: archivedCount }
+  }
+
+  // ── P2.4: archiveWorkspace (full archive with knowledge loop) ────
+
+  async archiveWorkspace(
+    workspaceId: string,
+    org: string,
+    options: {
+      extractExperiences: string[]
+      installSkills: string[]
+    }
+  ): Promise<{
+    success: boolean
+    archivedExecutions: number
+    extractedExperiences: number
+    installedSkills: number
+    fileDeleted: boolean
+    error?: string
+  }> {
+    try {
+      // Step 1: Get workspace details
+      const workspaceDAO = new WorkspaceDAO(this.db)
+      const workspace = workspaceDAO.findById(workspaceId)
+      if (!workspace) {
+        return { success: false, archivedExecutions: 0, extractedExperiences: 0, installedSkills: 0, fileDeleted: false, error: "workspace_not_found" }
+      }
+
+      // Step 2: Archive all executions in this workspace
+      const executions = this.executionDAO.findByWorkspace(workspaceId)
+      let archivedExecutions = 0
+      for (const exec of executions) {
+        const result = await this.archiveExecution(exec.id)
+        if (result.archived) archivedExecutions++
+      }
+
+      // Step 3: Create workspace archive record
+      const totalCost = executions.reduce((sum, exec) => {
+        const archiveRow = this.archiveDAO.findByExecutionId(exec.id)
+        return sum + (archiveRow?.total_cost || 0)
+      }, 0)
+
+      const totalDurationMs = executions.reduce((sum, exec) => {
+        const archiveRow = this.archiveDAO.findByExecutionId(exec.id)
+        return sum + (archiveRow?.total_duration_ms || 0)
+      }, 0)
+
+      const workspaceArchiveRow: WorkspaceArchiveRow = {
+        workspace_id: workspaceId,
+        org: workspace.org,
+        name: workspace.name,
+        description: workspace.description,
+        source: workspace.source,
+        execution_count: archivedExecutions,
+        total_cost: totalCost,
+        total_duration_ms: totalDurationMs,
+        created_at: workspace.created_at,
+        archived_at: new Date().toISOString(),
+        metadata: null,
+        extracted_experiences: 0,
+        extracted_skills: 0,
+        analysis_report: null,
+        file_deleted: 0,
+      }
+
+      this.archiveDAO.insertWorkspaceArchive(workspaceArchiveRow)
+
+      // Step 4: Extract experiences (knowledge loop)
+      let extractedExperiences = 0
+      if (options.extractExperiences.length > 0) {
+        extractedExperiences = await this.extractExperiences(workspaceId, org, options.extractExperiences)
+      }
+
+      // Step 5: Install skills (resources system)
+      let installedSkills = 0
+      if (options.installSkills.length > 0) {
+        installedSkills = await this.installSkills(org, options.installSkills)
+      }
+
+      // Step 6: Delete workspace files from disk
+      let fileDeleted = false
+      try {
+        const fs = await import("fs/promises")
+        await fs.rm(workspace.path, { recursive: true, force: true })
+        fileDeleted = true
+        logInfo("workspace files deleted", { workspaceId, path: workspace.path })
+      } catch (err) {
+        logError("failed to delete workspace files", err, { workspaceId, path: workspace.path })
+      }
+
+      // Step 7: Update workspace archive with extraction stats
+      this.archiveDAO.updateExtractionStats(workspaceId, extractedExperiences, installedSkills)
+      this.archiveDAO.setFileDeleted(workspaceId, fileDeleted ? 1 : 0)
+
+      // Step 8: Mark workspace as archived
+      workspaceDAO.setArchiveStatus(workspaceId, "archived")
+
+      logInfo("workspace archived successfully", {
+        workspaceId,
+        archivedExecutions,
+        extractedExperiences,
+        installedSkills,
+        fileDeleted,
+      })
+
+      return {
+        success: true,
+        archivedExecutions,
+        extractedExperiences,
+        installedSkills,
+        fileDeleted,
+      }
+    } catch (err) {
+      logError("archiveWorkspace failed", err, { workspaceId })
+      return {
+        success: false,
+        archivedExecutions: 0,
+        extractedExperiences: 0,
+        installedSkills: 0,
+        fileDeleted: false,
+        error: err instanceof Error ? err.message : String(err),
+      }
+    }
+  }
+
+  private async extractExperiences(
+    workspaceId: string,
+    org: string,
+    executionIds: string[]
+  ): Promise<number> {
+    try {
+      const { extractAndCheckRules } = await import("../knowledge/extract")
+      const { getPendingReviewDAO } = await import("../../db/dao")
+      const pendingReviewDAO = getPendingReviewDAO()
+
+      let extractedCount = 0
+      for (const execId of executionIds) {
+        const exec = this.executionDAO.findById(execId)
+        if (!exec) continue
+
+        try {
+          const rules = await extractAndCheckRules(exec)
+          for (const rule of rules) {
+            // Insert into pending_review for user approval
+            pendingReviewDAO.insert({
+              id: `exp-${workspaceId}-${execId}-${Date.now()}`,
+              type: "experience",
+              scope: "workspace",
+              target_file: null,
+              content: rule.text,
+              source_ref: execId,
+              conflicts: null,
+              status: "pending",
+              created_at: new Date().toISOString(),
+            })
+            extractedCount++
+          }
+        } catch (err) {
+          logError("failed to extract experience from execution", err, { execId })
+        }
+      }
+
+      return extractedCount
+    } catch (err) {
+      logError("extractExperiences failed", err, { workspaceId })
+      return 0
+    }
+  }
+
+  private async installSkills(org: string, skillNames: string[]): Promise<number> {
+    try {
+      const { getResourceManager } = await import("../resource-manager")
+      const resourceManager = getResourceManager(org)
+
+      let installedCount = 0
+      for (const skillName of skillNames) {
+        try {
+          await resourceManager.install({
+            type: "skill",
+            name: skillName,
+            source: "builtin",
+          })
+          installedCount++
+        } catch (err) {
+          logError("failed to install skill", err, { skillName })
+        }
+      }
+
+      return installedCount
+    } catch (err) {
+      logError("installSkills failed", err, { org })
+      return 0
+    }
   }
 
   // ── P2.3: emitArchived ───────────────────────────────────────────
