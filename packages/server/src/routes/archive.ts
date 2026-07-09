@@ -179,7 +179,7 @@ export function createArchiveRoutes(
 
     const body = await c.req.json<{
       extractExperiences?: string[]
-      installSkills?: Array<{ name: string; group: string }>
+      installSkills?: Array<{ name: string; group: string; path?: string; content?: string }>
       analysisReport?: unknown
       stats?: Record<string, unknown>
     }>()

@@ -268,7 +268,7 @@ export class ArchiveService {
     org: string,
     options: {
       extractExperiences: string[]
-      installSkills: Array<{ name: string; group: string }>
+      installSkills: Array<{ name: string; group: string; path?: string; content?: string }>
       analysisReport?: unknown
       stats?: {
         execution_count: number
@@ -533,20 +533,52 @@ export class ArchiveService {
     }
   }
 
-  private async installSkills(org: string, skills: Array<{ name: string; group: string }>, emitter: StepEmitter): Promise<number> {
+  private async installSkills(
+    org: string,
+    skills: Array<{ name: string; group: string; path?: string; content?: string }>,
+    emitter: StepEmitter,
+  ): Promise<number> {
     try {
       const { getResourceManager } = await import("../resource-manager")
       const resourceManager = getResourceManager(org)
+      const fs = await import("fs")
+      const path = await import("path")
+      const os = await import("os")
       let installedCount = 0
 
       for (const skill of skills) {
         try {
           await emitter.stepProgress("install_skills", `安装 ${skill.name} → ${skill.group}`)
-          await resourceManager.install({
-            ref: `builtin:${skill.name}`,
-            type: "skill",
-            group: skill.group,
-          })
+
+          if (skill.path && fs.existsSync(skill.path)) {
+            // Auto-discovered skill: copy the entire skill directory
+            const sourceDir = path.dirname(skill.path)
+            const basePath = path.join(os.homedir(), ".octopus", "orgs", org, "resources")
+            const installDir = path.join(basePath, "installed", "skills", skill.group, skill.name)
+
+            // Create target directory
+            fs.mkdirSync(installDir, { recursive: true })
+
+            // Copy all files from source skill directory
+            this.copyDirRecursive(sourceDir, installDir)
+
+            // Register in resource manager (use local source for file-based skills)
+            await resourceManager.install({
+              ref: `local:${sourceDir}`,
+              type: "skill",
+              group: skill.group,
+            })
+
+            await emitter.log(`✓ Copied skill from ${sourceDir} → ${installDir}`)
+          } else {
+            // LLM-generated or builtin skill: use resource manager
+            await resourceManager.install({
+              ref: `builtin:${skill.name}`,
+              type: "skill",
+              group: skill.group,
+            })
+          }
+
           installedCount++
         } catch (err) {
           await emitter.log(`✗ Failed to install ${skill.name}: ${err instanceof Error ? err.message : String(err)}`)
@@ -557,6 +589,27 @@ export class ArchiveService {
     } catch (err) {
       logError("installSkills failed", err, { org })
       return 0
+    }
+  }
+
+  private copyDirRecursive(src: string, dest: string): void {
+    const fs = require("fs")
+    const path = require("path")
+
+    if (!fs.existsSync(dest)) {
+      fs.mkdirSync(dest, { recursive: true })
+    }
+
+    const entries = fs.readdirSync(src, { withFileTypes: true })
+    for (const entry of entries) {
+      const srcPath = path.join(src, entry.name)
+      const destPath = path.join(dest, entry.name)
+
+      if (entry.isDirectory()) {
+        this.copyDirRecursive(srcPath, destPath)
+      } else {
+        fs.copyFileSync(srcPath, destPath)
+      }
     }
   }
 

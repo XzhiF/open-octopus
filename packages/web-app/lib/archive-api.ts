@@ -17,6 +17,8 @@ function apiFetch(url: string, init?: RequestInit): Promise<Response> {
 export interface SkillInstallOption {
   name: string
   group: string
+  path?: string
+  content?: string
 }
 
 export async function getSkillGroups(org?: string): Promise<string[]> {
@@ -74,6 +76,8 @@ export interface SkillCandidate {
   content?: string
   content_outline?: string[]
   estimated_reuse?: string
+  path?: string
+  auto_discovered?: boolean
 }
 
 export interface ArchivePreview {

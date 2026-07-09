@@ -563,6 +563,7 @@ ${nodes.map(n => `  - id: ${n.id}
     const { WorkspaceDAO } = await import('../../db/dao/workspace-dao')
     const { ExecutionDAO } = await import('../../db/dao/execution-dao')
     const { getDb } = await import('../../db')
+    const { discoverSkillsFromWorkspace } = await import('../archive/skill-discovery')
 
     const db = getDb()
     const workspaceDAO = new WorkspaceDAO(db)
@@ -572,6 +573,23 @@ ${nodes.map(n => `  - id: ${n.id}
     if (!ctx) {
       return this.emptyPreview('Workspace not found')
     }
+
+    // Phase 1.5: Auto-discover skills from .claude/skills/
+    const workspacePath = workspaceDAO.findPathById(workspaceId)
+    const autoDiscoveredSkills = workspacePath
+      ? discoverSkillsFromWorkspace(workspacePath).map((s) => ({
+          name: s.name,
+          description: s.description,
+          content_outline: s.content_outline,
+          reason: s.reason,
+          evidence_workflows: [] as string[],
+          evidence_executions: [] as number[],
+          estimated_reuse: s.estimated_reuse,
+          content: s.content,
+          path: s.path,
+          auto_discovered: true,
+        }))
+      : []
 
     // Phase 2: Parallel LLM analysis (3 calls)
     const { buildRetrospectivePrompt, buildExperiencePrompt, buildSkillDiscoveryPrompt } = await import('../archive/prompts')
@@ -589,10 +607,17 @@ ${nodes.map(n => `  - id: ${n.id}
 
     const report = parseReport(reportResult)
     const experiences = parseExperiences(experienceResult)
-    const skills = parseSkills(skillResult)
+    const llmSkills = parseSkills(skillResult)
+
+    // Merge: auto-discovered skills take priority, LLM skills fill gaps
+    const autoNames = new Set(autoDiscoveredSkills.map((s) => s.name))
+    const mergedSkills = [
+      ...autoDiscoveredSkills,
+      ...llmSkills.filter((s) => !autoNames.has(s.name)),
+    ]
 
     // Phase 3: Assemble
-    const preview = assembleAnalysis(ctx, report, experiences, skills)
+    const preview = assembleAnalysis(ctx, report, experiences, mergedSkills)
 
     // ★ Draft: persist before returning — survives client disconnect
     try {

@@ -14,7 +14,7 @@ import { Badge } from "@/components/ui/badge"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Loader2, TrendingUp, DollarSign, AlertCircle, Lightbulb, Package } from "lucide-react"
+import { Loader2, TrendingUp, DollarSign, AlertCircle, Lightbulb, Package, FileText, ChevronDown, ChevronUp } from "lucide-react"
 import { previewArchive, getArchiveDraft, deleteArchiveDraft, getSkillGroups } from "@/lib/archive-api"
 import { ArchiveProgress } from "./archive-progress"
 import { toast } from "sonner"
@@ -62,6 +62,7 @@ export function ArchivePreviewDialog({
   const [draftAge, setDraftAge] = useState<string | null>(null)
   const [skillGroups, setSkillGroups] = useState<Record<string, string>>({})
   const [availableGroups, setAvailableGroups] = useState<string[]>(["archive-extracted"])
+  const [expandedSkills, setExpandedSkills] = useState<Set<string>>(new Set())
 
   useEffect(() => {
     if (open && workspace) {
@@ -181,10 +182,15 @@ export function ArchivePreviewDialog({
             workspaceId={workspace.id}
             options={{
               extractExperiences: selectedExperiences,
-              installSkills: selectedSkills.map((name) => ({
-                name,
-                group: skillGroups[name] ?? "archive-extracted",
-              })),
+              installSkills: selectedSkills.map((name) => {
+                const skill = preview.skills.find((s) => s.name === name)
+                return {
+                  name,
+                  group: skillGroups[name] ?? "archive-extracted",
+                  path: skill?.path,
+                  content: skill?.content,
+                }
+              }),
             }}
             onComplete={() => {
               toast.success(`"${workspace.name}" 已归档`)
@@ -478,6 +484,17 @@ export function ArchivePreviewDialog({
                               <div className="flex items-center gap-2 mb-1">
                                 <Package className="h-4 w-4" />
                                 <h4 className="font-semibold">{skill.name}</h4>
+                                {skill.auto_discovered ? (
+                                  <Badge variant="default" className="text-xs">
+                                    <FileText className="h-3 w-3 mr-1" />
+                                    自动发现
+                                  </Badge>
+                                ) : (
+                                  <Badge variant="secondary" className="text-xs">
+                                    <Lightbulb className="h-3 w-3 mr-1" />
+                                    LLM 生成
+                                  </Badge>
+                                )}
                               </div>
                               <p className="text-sm text-muted-foreground mb-2">
                                 {skill.description}
@@ -485,6 +502,39 @@ export function ArchivePreviewDialog({
                               <p className="text-xs text-muted-foreground mb-2">
                                 <strong>提取原因:</strong> {skill.reason}
                               </p>
+                              {skill.content && (
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className="h-6 px-2 text-xs mb-2"
+                                  onClick={() => {
+                                    const newExpanded = new Set(expandedSkills)
+                                    if (newExpanded.has(skill.name)) {
+                                      newExpanded.delete(skill.name)
+                                    } else {
+                                      newExpanded.add(skill.name)
+                                    }
+                                    setExpandedSkills(newExpanded)
+                                  }}
+                                >
+                                  {expandedSkills.has(skill.name) ? (
+                                    <>
+                                      <ChevronUp className="h-3 w-3 mr-1" />
+                                      收起内容
+                                    </>
+                                  ) : (
+                                    <>
+                                      <ChevronDown className="h-3 w-3 mr-1" />
+                                      查看内容
+                                    </>
+                                  )}
+                                </Button>
+                              )}
+                              {expandedSkills.has(skill.name) && skill.content && (
+                                <div className="mb-2 p-2 bg-muted rounded-md text-xs font-mono max-h-60 overflow-y-auto whitespace-pre-wrap">
+                                  {skill.content}
+                                </div>
+                              )}
                               <div className="flex items-center gap-2">
                                 <span className="text-xs text-muted-foreground">安装到组:</span>
                                 <Select

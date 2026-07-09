@@ -42,6 +42,12 @@ export interface SkillCandidate {
   evidence_workflows: string[]
   evidence_executions: number[]
   estimated_reuse: "high" | "medium" | "low"
+  /** Raw SKILL.md content (auto-discovered skills only) */
+  content?: string
+  /** Absolute path to SKILL.md file (auto-discovered skills only) */
+  path?: string
+  /** Whether this skill was auto-discovered from .claude/skills/ */
+  auto_discovered?: boolean
 }
 
 export interface ArchiveStats {
