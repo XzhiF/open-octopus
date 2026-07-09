@@ -79,8 +79,12 @@ export function WorkspaceList({ workspaces, onRefresh }: WorkspaceListProps) {
 
     return [...filtered].sort((a, b) => {
       if (sortBy === "name") return a.name.localeCompare(b.name)
-      if (sortBy === "created") return b.createdAt.localeCompare(a.createdAt)
-      return b.updatedAt.localeCompare(a.updatedAt)
+      const aCreated = (a as any).created_at ?? a.createdAt ?? ""
+      const bCreated = (b as any).created_at ?? b.createdAt ?? ""
+      const aUpdated = (a as any).updated_at ?? a.updatedAt ?? ""
+      const bUpdated = (b as any).updated_at ?? b.updatedAt ?? ""
+      if (sortBy === "created") return bCreated.localeCompare(aCreated)
+      return bUpdated.localeCompare(aUpdated)
     })
   }, [workspaces, search, statusFilter, archiveTab, sortBy])
 
