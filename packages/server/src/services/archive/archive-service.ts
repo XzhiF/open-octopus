@@ -389,38 +389,68 @@ export class ArchiveService {
   private async extractExperiences(
     workspaceId: string,
     org: string,
-    executionIds: string[]
+    _executionIds: string[]
   ): Promise<number> {
     try {
-      const { extractAndCheckRules } = await import("../knowledge/extract")
-      const { getPendingReviewDAO } = await import("../../db/dao")
-      const pendingReviewDAO = getPendingReviewDAO()
+      const { buildArchiveContext } = await import("./context-builder")
+      const { buildExperiencePrompt } = await import("./prompts")
+      const { getProvider } = await import("@octopus/providers")
+      const { PendingReviewDAO } = await import("../../db/dao/pending-review-dao")
+      const { WorkspaceDAO } = await import("../../db/dao/workspace-dao")
+      const { ExecutionDAO } = await import("../../db/dao/execution-dao")
+
+      const pendingReviewDAO = new PendingReviewDAO(this.db)
+      const workspaceDAO = new WorkspaceDAO(this.db)
+      const executionDAO = new ExecutionDAO(this.db)
+
+      const ctx = await buildArchiveContext(workspaceId, workspaceDAO, executionDAO, this.db, org)
+      if (!ctx) {
+        logError("extractExperiences: workspace not found", new Error("workspace not found"), { workspaceId })
+        return 0
+      }
+
+      const prompt = buildExperiencePrompt(ctx)
+      const systemPrompt = "You are a knowledge extraction engine. Respond with only the JSON array."
+
+      const provider = getProvider(org)
+      const chunks: string[] = []
+      const stream = provider.sendQuery(prompt, process.cwd(), undefined, { systemPrompt })
+      for await (const chunk of stream) {
+        if (chunk.type === "text_delta") chunks.push(chunk.content)
+      }
+      const raw = chunks.join("")
+
+      if (!raw) {
+        logError("extractExperiences: empty LLM response", new Error("empty LLM response"), { workspaceId })
+        return 0
+      }
+
+      const cleaned = raw.replace(/```json?\n?/g, "").replace(/```/g, "").trim()
+      const arr = JSON.parse(cleaned)
+      if (!Array.isArray(arr)) {
+        logError("extractExperiences: LLM response is not an array", new Error("invalid response"), { workspaceId })
+        return 0
+      }
 
       let extractedCount = 0
-      for (const execId of executionIds) {
-        const exec = this.executionDAO.findById(execId)
-        if (!exec) continue
-
-        try {
-          const rules = await extractAndCheckRules(exec)
-          for (const rule of rules) {
-            // Insert into pending_review for user approval
-            pendingReviewDAO.insert({
-              id: `exp-${workspaceId}-${execId}-${Date.now()}`,
-              type: "experience",
-              scope: "workspace",
-              target_file: null,
-              content: rule.text,
-              source_ref: execId,
-              conflicts: null,
-              status: "pending",
-              created_at: new Date().toISOString(),
-            })
-            extractedCount++
-          }
-        } catch (err) {
-          logError("failed to extract experience from execution", err, { execId })
-        }
+      for (const exp of arr) {
+        const id = exp.id || `exp-${workspaceId}-${extractedCount}-${Date.now()}`
+        pendingReviewDAO.insert({
+          id,
+          type: "experience",
+          source: "archive",
+          source_ref: workspaceId,
+          source_label: ctx.workspace.name,
+          content: exp.text || "",
+          target_file: "",
+          scope: exp.scope || "workspace",
+          conflicts: null,
+          confidence: typeof exp.confidence === "number" ? exp.confidence : 0.5,
+          auto_approve: 0,
+          status: "pending",
+          user_notes: null,
+        })
+        extractedCount++
       }
 
       return extractedCount
