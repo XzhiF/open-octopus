@@ -412,7 +412,7 @@ export class ArchiveService {
       const prompt = buildExperiencePrompt(ctx)
       const systemPrompt = "You are a knowledge extraction engine. Respond with only the JSON array."
 
-      const provider = getProvider(org)
+      const provider = getProvider('claude')
       const chunks: string[] = []
       const stream = provider.sendQuery(prompt, process.cwd(), undefined, { systemPrompt })
       for await (const chunk of stream) {

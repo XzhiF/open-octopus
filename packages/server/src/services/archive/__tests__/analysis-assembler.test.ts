@@ -49,9 +49,8 @@ function makeReport(overrides: Partial<AnalysisReport> = {}): AnalysisReport {
   return {
     summary: "Test summary",
     execution_patterns: [],
-    cost_efficiency: { assessment: "efficient", detail: "Good", optimization_suggestions: [] },
+    cost_efficiency: { rating: "efficient", analysis: "Good", optimization_ideas: [] },
     error_patterns: [],
-    workflow_health: [],
     recommendations: [],
     ...overrides,
   }

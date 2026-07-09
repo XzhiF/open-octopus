@@ -509,7 +509,7 @@ ${nodes.map(n => `  - id: ${n.id}
     skills: string[] = [],
     context?: Record<string, unknown>,
   ): Promise<string> {
-    const provider = getProvider(this.org)
+    const provider = getProvider('claude')
 
     // Build system prompt with skill content
     const skillSegments = skills.map((skillName) => {
@@ -597,7 +597,7 @@ ${nodes.map(n => `  - id: ${n.id}
 
   private async callArchiveLLM(prompt: string, systemPrompt: string): Promise<string> {
     try {
-      const provider = getProvider(this.org)
+      const provider = getProvider('claude')
       const chunks: string[] = []
       const stream = provider.sendQuery(prompt, process.cwd(), undefined, {
         systemPrompt,
@@ -627,9 +627,8 @@ ${nodes.map(n => `  - id: ${n.id}
       analysis: {
         summary: reason,
         execution_patterns: [],
-        cost_efficiency: { assessment: 'moderate', detail: '', optimization_suggestions: [] },
+        cost_efficiency: { rating: 'moderate', analysis: '', optimization_ideas: [] },
         error_patterns: [],
-        workflow_health: [],
         recommendations: [],
       },
       experiences: [],
@@ -644,18 +643,46 @@ function parseReport(result: PromiseSettledResult<string>): AnalysisReport {
   const fallback: AnalysisReport = {
     summary: 'Analysis unavailable',
     execution_patterns: [],
-    cost_efficiency: { assessment: 'moderate', detail: 'Analysis failed', optimization_suggestions: [] },
+    cost_efficiency: { rating: 'moderate', analysis: 'Analysis failed', optimization_ideas: [] },
     error_patterns: [],
-    workflow_health: [],
     recommendations: [],
   }
   if (result.status !== 'fulfilled' || !result.value) return fallback
   try {
     const cleaned = result.value.replace(/```json?\n?/g, '').replace(/```/g, '').trim()
     const parsed = JSON.parse(cleaned)
-    return { ...fallback, ...parsed }
+    return {
+      summary: parsed.summary || fallback.summary,
+      execution_patterns: toStringArray(parsed.execution_patterns),
+      cost_efficiency: normalizeCostEfficiency(parsed.cost_efficiency),
+      error_patterns: toStringArray(parsed.error_patterns),
+      recommendations: toStringArray(parsed.recommendations),
+    }
   } catch {
     return { ...fallback, summary: result.value.slice(0, 500) || 'Analysis parse failed' }
+  }
+}
+
+function toStringArray(arr: unknown): string[] {
+  if (!Array.isArray(arr)) return []
+  return arr.map((item: unknown) => {
+    if (typeof item === 'string') return item
+    if (item && typeof item === 'object') {
+      const obj = item as Record<string, unknown>
+      return String(obj.pattern || obj.action || obj.text || obj.analysis || JSON.stringify(item))
+    }
+    return String(item)
+  })
+}
+
+function normalizeCostEfficiency(raw: unknown): AnalysisReport['cost_efficiency'] {
+  const fallback = { rating: 'moderate', analysis: '', optimization_ideas: [] as string[] }
+  if (!raw || typeof raw !== 'object') return fallback
+  const obj = raw as Record<string, unknown>
+  return {
+    rating: String(obj.rating || obj.assessment || 'moderate'),
+    analysis: String(obj.analysis || obj.detail || ''),
+    optimization_ideas: toStringArray(obj.optimization_ideas || obj.optimization_suggestions || []),
   }
 }
 

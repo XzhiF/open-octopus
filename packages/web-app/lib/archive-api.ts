@@ -21,12 +21,20 @@ export interface WorkspaceStats {
   total_duration_ms: number
   avg_cost_per_execution: number
   avg_duration_ms: number
+  lifespan_days?: number
+  workflow_count?: number
+}
+
+export interface CostEfficiency {
+  rating: string
+  analysis: string
+  optimization_ideas: string[]
 }
 
 export interface AnalysisReport {
   summary: string
   execution_patterns: string[]
-  cost_efficiency: string
+  cost_efficiency: CostEfficiency
   error_patterns: string[]
   recommendations: string[]
 }
@@ -36,14 +44,18 @@ export interface ExperienceCandidate {
   text: string
   scope: string
   confidence: number
-  source: string
+  evidence?: string
+  source?: string
+  category?: string
 }
 
 export interface SkillCandidate {
   name: string
   description: string
-  content: string
   reason: string
+  content?: string
+  content_outline?: string[]
+  estimated_reuse?: string
 }
 
 export interface ArchivePreview {

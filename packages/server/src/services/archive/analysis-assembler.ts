@@ -4,11 +4,16 @@ import type { ArchiveContext, ExistingRule } from "./context-builder"
 
 export interface AnalysisReport {
   summary: string
-  execution_patterns: Array<{ pattern: string; evidence: string; severity: "info" | "warning" | "critical" }>
-  cost_efficiency: { assessment: "efficient" | "moderate" | "wasteful"; detail: string; optimization_suggestions: string[] }
-  error_patterns: Array<{ pattern: string; root_cause_hypothesis: string; affected_workflows: string[]; fix_suggestion: string }>
-  workflow_health: Array<{ name: string; grade: string; issues: string[]; improvements: string[] }>
-  recommendations: Array<{ priority: "high" | "medium" | "low"; category: "cost" | "reliability" | "performance" | "process"; action: string; expected_impact: string }>
+  execution_patterns: string[]
+  cost_efficiency: CostEfficiency
+  error_patterns: string[]
+  recommendations: string[]
+}
+
+export interface CostEfficiency {
+  rating: string
+  analysis: string
+  optimization_ideas: string[]
 }
 
 export interface ExperienceCandidate {

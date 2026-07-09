@@ -223,9 +223,19 @@ export function ArchivePreviewDialog({
                       <DollarSign className="h-4 w-4" />
                       成本效率
                     </h4>
-                    <p className="text-sm text-muted-foreground">
-                      {preview.analysis.cost_efficiency}
-                    </p>
+                    <div className="space-y-1">
+                      <p className="text-sm">
+                        <Badge variant="outline" className="mr-2">{preview.analysis.cost_efficiency.rating}</Badge>
+                        {preview.analysis.cost_efficiency.analysis}
+                      </p>
+                      {preview.analysis.cost_efficiency.optimization_ideas.length > 0 && (
+                        <ul className="list-disc ml-4 mt-1 space-y-1">
+                          {preview.analysis.cost_efficiency.optimization_ideas.map((idea, idx) => (
+                            <li key={idx} className="text-sm text-muted-foreground">{idea}</li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
                   </div>
                 )}
 
