@@ -1,10 +1,12 @@
 import { Hono } from "hono"
+import { streamSSE } from "hono/streaming"
 import fs from "fs"
 import path from "path"
 import type { PendingReviewDAO } from "../db/dao"
 import type { ArchiveDAO } from "../db/dao/archive-dao"
 import type { ArchiveDraftDAO } from "../db/dao/archive-draft-dao"
 import { isValidUUID, errorResponse } from "../services/knowledge/validators"
+import { createStepEmitter } from "../services/archive/step-emitter"
 
 // ponytail: redact keys matching secret patterns before exposing poolSnapshot
 const SECRET_KEY_RE = /secret|password|token|api[_-]?key|private[_-]?key|credential|auth[_-]?key/i
@@ -165,7 +167,7 @@ export function createArchiveRoutes(
     }
   })
 
-  // POST /api/archive/workspaces/:id/archive — Archive V2 (execute)
+  // POST /api/archive/workspaces/:id/archive — Archive V2 (execute) with SSE
   routes.post("/workspaces/:id/archive", async (c) => {
     const id = c.req.param("id")
 
@@ -174,34 +176,55 @@ export function createArchiveRoutes(
       return c.json({ error: { code: "INVALID_PARAM", message: "Invalid workspace ID format" } }, 400)
     }
 
-    try {
-      const body = await c.req.json<{
-        extractExperiences?: string[]
-        installSkills?: string[]
-      }>()
+    const body = await c.req.json<{
+      extractExperiences?: string[]
+      installSkills?: string[]
+      analysisReport?: unknown
+      stats?: Record<string, unknown>
+    }>()
 
-      const { getArchiveService } = await import("../services/archive/archive-service")
-      const archiveService = getArchiveService()
+    return streamSSE(c, async (stream) => {
+      const emitter = createStepEmitter(stream)
 
-      if (!archiveService) {
-        return c.json({ error: { code: "SUBSYSTEM_UNAVAILABLE", message: "Archive service not available" } }, 503)
+      try {
+        const { getArchiveService } = await import("../services/archive/archive-service")
+        const archiveService = getArchiveService()
+
+        if (!archiveService) {
+          await stream.writeSSE({
+            event: "error",
+            data: JSON.stringify({ code: "SUBSYSTEM_UNAVAILABLE", message: "Archive service not available" }),
+          })
+          return
+        }
+
+        const org = c.req.query("org") || "default"
+        const result = await archiveService.archiveWorkspace(
+          id,
+          org,
+          {
+            extractExperiences: body.extractExperiences || [],
+            installSkills: body.installSkills || [],
+            analysisReport: body.analysisReport,
+            stats: body.stats as any,
+          },
+          emitter,
+        )
+
+        if (!result.success) {
+          await stream.writeSSE({
+            event: "error",
+            data: JSON.stringify({ code: "ARCHIVE_FAILED", message: result.error || "Archive failed" }),
+          })
+        }
+      } catch (err) {
+        const { body: errBody } = errorResponse(err, "archive.execute")
+        await stream.writeSSE({
+          event: "error",
+          data: JSON.stringify(errBody.error || { message: "Archive failed" }),
+        })
       }
-
-      const org = c.req.query("org") || "default"
-      const result = await archiveService.archiveWorkspace(id, org, {
-        extractExperiences: body.extractExperiences || [],
-        installSkills: body.installSkills || [],
-      })
-
-      if (!result.success) {
-        return c.json({ error: { code: "ARCHIVE_FAILED", message: result.error } }, 500)
-      }
-
-      return c.json(result)
-    } catch (err) {
-      const { body, status } = errorResponse(err, "archive.execute")
-      return c.json(body, status)
-    }
+    })
   })
 
   // GET /api/archive/workspaces/:id — Get single archived workspace

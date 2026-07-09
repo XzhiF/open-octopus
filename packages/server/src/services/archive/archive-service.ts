@@ -5,6 +5,8 @@ import { WorkspaceDAO } from "../../db/dao/workspace-dao"
 import type { DomainEventBus } from "../agent/domain-event-bus"
 import type { ExecutionArchiveRow, WorkspaceArchiveRow, ExecutionRow } from "../../db/types"
 import { logError, logInfo } from "../../file-logger"
+import type { StepEmitter } from "./step-emitter"
+import { createNullEmitter } from "./step-emitter"
 
 export class ArchivePartialFailure extends Error {
   constructor(public readonly failures: Array<{ execId: string; error: string }>) {
@@ -278,7 +280,8 @@ export class ArchiveService {
         lifespan_days: number
         workflow_count: number
       }
-    }
+    },
+    emitter: StepEmitter = createNullEmitter(),
   ): Promise<{
     success: boolean
     archivedExecutions: number
@@ -298,12 +301,18 @@ export class ArchiveService {
       // Step 2: Archive all executions in this workspace
       const executions = this.executionDAO.listByWorkspace(workspaceId)
       let archivedExecutions = 0
+      await emitter.stepStart("archive_executions", `归档 ${executions.length} 条执行记录...`)
       for (const exec of executions) {
         const result = await this.archiveExecution(exec.id)
-        if (result.archived) archivedExecutions++
+        if (result.archived) {
+          archivedExecutions++
+          await emitter.log(`Archived execution ${exec.id}`)
+        }
       }
+      await emitter.stepDone("archive_executions", { count: archivedExecutions })
 
       // Step 3: Create workspace archive record
+      await emitter.stepStart("create_record", "创建归档记录...")
       const stats = options.stats ?? {
         execution_count: archivedExecutions,
         total_cost: 0,
@@ -338,20 +347,26 @@ export class ArchiveService {
       }
 
       this.archiveDAO.insertWorkspaceArchive(workspaceArchiveRow)
+      await emitter.stepDone("create_record")
 
       // Step 4: Extract experiences (knowledge loop)
+      await emitter.stepStart("extract_experiences", `提取 ${options.extractExperiences.length} 条经验...`)
       let extractedExperiences = 0
       if (options.extractExperiences.length > 0) {
         extractedExperiences = await this.extractExperiences(workspaceId, org, options.extractExperiences)
       }
+      await emitter.stepDone("extract_experiences", { count: extractedExperiences })
 
       // Step 5: Install skills (resources system)
+      await emitter.stepStart("install_skills", `安装 ${options.installSkills.length} 个 Skill...`)
       let installedSkills = 0
       if (options.installSkills.length > 0) {
         installedSkills = await this.installSkills(org, options.installSkills)
       }
+      await emitter.stepDone("install_skills", { count: installedSkills })
 
       // Step 6: Delete workspace files from disk
+      await emitter.stepStart("delete_files", "清理工作空间文件...")
       let fileDeleted = false
       try {
         const fs = await import("fs/promises")
@@ -361,16 +376,38 @@ export class ArchiveService {
       } catch (err) {
         logError("failed to delete workspace files", err, { workspaceId, path: workspace.path })
       }
+      await emitter.stepDone("delete_files", { deleted: fileDeleted })
 
       // Step 7: Update workspace archive with extraction stats
+      await emitter.stepStart("update_stats", "更新统计...")
       this.archiveDAO.updateExtractionStats(workspaceId, extractedExperiences, installedSkills)
       this.archiveDAO.setFileDeleted(workspaceId, fileDeleted ? 1 : 0)
+      await emitter.stepDone("update_stats")
 
       // Step 8: Soft-archive workspace (mark as archived, preserve DB row)
+      await emitter.stepStart("soft_archive", "软归档...")
       workspaceDAO.softArchive(workspaceId)
+      await emitter.stepDone("soft_archive")
 
       logInfo("workspace archived successfully", {
         workspaceId,
+        archivedExecutions,
+        extractedExperiences,
+        installedSkills,
+        fileDeleted,
+      })
+
+      // Cleanup draft after successful archive
+      await emitter.stepStart("cleanup_draft", "清理草稿...")
+      try {
+        const { ArchiveDraftDAO } = await import("../../db/dao/archive-draft-dao")
+        const draftDAO = new ArchiveDraftDAO(this.db)
+        draftDAO.delete(workspaceId)
+      } catch { /* non-fatal */ }
+      await emitter.stepDone("cleanup_draft")
+
+      await emitter.complete({
+        success: true,
         archivedExecutions,
         extractedExperiences,
         installedSkills,
@@ -385,6 +422,7 @@ export class ArchiveService {
         fileDeleted,
       }
     } catch (err) {
+      await emitter.stepError("unknown", err instanceof Error ? err.message : String(err))
       logError("archiveWorkspace failed", err, { workspaceId })
       return {
         success: false,
