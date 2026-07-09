@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import {
   Dialog,
   DialogContent,
@@ -28,6 +28,7 @@ import {
 } from "@/components/ui/command"
 import { Check, ChevronsUpDown, Package, FolderOpen } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { fetchWorkflows } from "@/lib/api-client"
 import { AutoResizeTextarea } from "@/components/ui/auto-resize-textarea"
 import type { CreateNodeFormData, WorkflowOption, WorkflowInputDef } from "@/lib/types"
 import { usePersistedState } from "@/hooks/use-persisted-state"
@@ -63,15 +64,34 @@ export function CreateNodeDialog({
     defaultFormData()
   )
   const [comboboxOpen, setComboboxOpen] = useState(false)
+  const [freshOptions, setFreshOptions] = useState<WorkflowOption[] | null>(null)
+
+  // Re-fetch workflows when dialog opens to pick up newly created ones
+  useEffect(() => {
+    if (!open) { setFreshOptions(null); return }
+    fetchWorkflows(workspaceId).then((data) => {
+      const arr = Array.isArray(data) ? data : data.workflows ?? []
+      setFreshOptions(arr.map((w: Record<string, unknown>) => ({
+        value: (w.ref as string) || (w.name as string),
+        label: (w.ref as string) || (w.name as string),
+        name: (w.name as string),
+        group: (w.group as string) || "project",
+        path: (w.group as string) === "project" ? `workflows/${(w.ref as string) || (w.name as string)}` : undefined,
+        inputs: w.inputs as Record<string, { description: string; required: boolean; default: string }> | undefined,
+      })))
+    }).catch(() => {})
+  }, [open, workspaceId])
+
+  const effectiveOptions = freshOptions ?? workflowOptions
 
   // Group workflow options by their group field
   const GROUP_LABELS: Record<string, string> = { project: "项目工作流", "built-in": "系统内置" }
-  const groupedOptions = workflowOptions.reduce<Record<string, WorkflowOption[]>>((acc, w) => {
+  const groupedOptions = effectiveOptions.reduce<Record<string, WorkflowOption[]>>((acc, w) => {
     (acc[w.group] ??= []).push(w)
     return acc
   }, {})
 
-  const selectedOption = workflowOptions.find((o) => o.value === formData.workflowRef)
+  const selectedOption = effectiveOptions.find((o) => o.value === formData.workflowRef)
   const workflowInputs = selectedOption?.inputs
   const inputKeys = workflowInputs ? Object.keys(workflowInputs) : []
 
