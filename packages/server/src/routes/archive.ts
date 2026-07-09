@@ -1,6 +1,7 @@
 import { Hono } from "hono"
 import { streamSSE } from "hono/streaming"
 import fs from "fs"
+import os from "os"
 import path from "path"
 import type { PendingReviewDAO } from "../db/dao"
 import type { ArchiveDAO } from "../db/dao/archive-dao"
@@ -178,7 +179,7 @@ export function createArchiveRoutes(
 
     const body = await c.req.json<{
       extractExperiences?: string[]
-      installSkills?: string[]
+      installSkills?: Array<{ name: string; group: string }>
       analysisReport?: unknown
       stats?: Record<string, unknown>
     }>()
@@ -250,6 +251,30 @@ export function createArchiveRoutes(
       const { body, status } = errorResponse(err, "archive.get")
       return c.json(body, status)
     }
+  })
+
+  // GET /api/archive/skill-groups — list available skill groups
+  routes.get("/skill-groups", (c) => {
+    const org = c.req.query("org") || "default"
+    const base = path.join(os.homedir(), ".octopus", "orgs", org, "resources", "installed", "skills")
+    let groups: string[] = []
+    try {
+      if (fs.existsSync(base)) {
+        groups = fs.readdirSync(base).filter((f: string) => {
+          try {
+            return fs.statSync(path.join(base, f)).isDirectory()
+          } catch {
+            return false
+          }
+        })
+      }
+    } catch {
+      // Directory doesn't exist yet
+    }
+    if (!groups.includes("archive-extracted")) {
+      groups.push("archive-extracted")
+    }
+    return c.json({ groups: groups.sort() })
   })
 
   // ── Draft routes ──────────────────────────────────────────
