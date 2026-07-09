@@ -204,5 +204,28 @@ export function createArchiveRoutes(
     }
   })
 
+  // POST /api/archive/workspaces/:id/archive-preview — Archive V2
+  routes.post("/workspaces/:id/archive-preview", async (c) => {
+    const id = c.req.param("id")
+
+    // Security: validate UUID format
+    if (!isValidUUID(id)) {
+      return c.json({ error: { code: "INVALID_PARAM", message: "Invalid workspace ID format" } }, 400)
+    }
+
+    try {
+      // Import OrchestratorService dynamically
+      const { getOrchestratorService } = await import("../services/agent/orchestrator-service")
+      const org = c.req.query("org") || "default"
+      const orchestratorService = getOrchestratorService(org)
+
+      const preview = await orchestratorService.analyzeWorkspaceForArchive(id)
+      return c.json(preview)
+    } catch (err) {
+      const { body, status } = errorResponse(err, "archive.preview")
+      return c.json(body, status)
+    }
+  })
+
   return routes
 }

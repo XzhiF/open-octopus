@@ -49,6 +49,47 @@ export interface OrchestrationEvent {
   timestamp: string
 }
 
+// ── Archive V2 Types ──────────────────────────────────────────────
+
+export interface WorkspaceStats {
+  execution_count: number
+  success_rate: number
+  total_cost: number
+  total_duration_ms: number
+  avg_cost_per_execution: number
+  avg_duration_ms: number
+}
+
+export interface AnalysisReport {
+  summary: string
+  execution_patterns: string[]
+  cost_efficiency: string
+  error_patterns: string[]
+  recommendations: string[]
+}
+
+export interface ExperienceCandidate {
+  id: string
+  text: string
+  scope: string
+  confidence: number
+  source: string
+}
+
+export interface SkillCandidate {
+  name: string
+  description: string
+  content: string
+  reason: string
+}
+
+export interface ArchivePreview {
+  stats: WorkspaceStats
+  analysis: AnalysisReport
+  experiences: ExperienceCandidate[]
+  skills: SkillCandidate[]
+}
+
 // ── OrchestratorService ────────────────────────────────────────────
 
 /**
@@ -551,6 +592,183 @@ ${nodes.map(n => `  - id: ${n.id}
     }
 
     return chunks.join('')
+  }
+
+  // ── Archive V2: Workspace Analysis ────────────────────────────────
+
+  /**
+   * 分析工作空间归档预览
+   * 协调 ArchiveService + KnowledgeService + EvolutionService
+   */
+  async analyzeWorkspaceForArchive(workspaceId: string): Promise<ArchivePreview> {
+    // 1. 聚合统计（复用 ArchiveService 逻辑）
+    const stats = await this.aggregateWorkspaceStats(workspaceId)
+
+    // 2. Agent 分析（调用 Claude API）
+    const analysis = await this.analyzeWorkspacePatterns(workspaceId, stats)
+
+    // 3. 提取候选经验（复用 knowledge/extract.ts 逻辑）
+    const experiences = await this.extractExperienceCandidates(workspaceId)
+
+    // 4. 提取候选 Skill（复用 evolution-service.ts 逻辑）
+    const skills = await this.extractSkillCandidates(workspaceId)
+
+    return {
+      stats,
+      analysis,
+      experiences,
+      skills,
+    }
+  }
+
+  private async aggregateWorkspaceStats(workspaceId: string): Promise<WorkspaceStats> {
+    // Import ArchiveService dynamically to avoid circular deps
+    const { getArchiveService } = await import('../archive/archive-service')
+    const archiveService = getArchiveService()
+
+    if (!archiveService) {
+      // Fallback: return empty stats
+      return {
+        execution_count: 0,
+        success_rate: 0,
+        total_cost: 0,
+        total_duration_ms: 0,
+        avg_cost_per_execution: 0,
+        avg_duration_ms: 0,
+      }
+    }
+
+    // Use ArchiveService's aggregation logic
+    // This is a simplified version - in production, we'd call archiveService.aggregateWorkspaceStats()
+    // For now, return placeholder stats
+    return {
+      execution_count: 0,
+      success_rate: 0,
+      total_cost: 0,
+      total_duration_ms: 0,
+      avg_cost_per_execution: 0,
+      avg_duration_ms: 0,
+    }
+  }
+
+  private async analyzeWorkspacePatterns(workspaceId: string, stats: WorkspaceStats): Promise<AnalysisReport> {
+    // Call Claude API to analyze workspace patterns
+    const prompt = `Analyze the following workspace execution statistics and provide insights:
+
+Execution Count: ${stats.execution_count}
+Success Rate: ${(stats.success_rate * 100).toFixed(1)}%
+Total Cost: $${stats.total_cost.toFixed(2)}
+Total Duration: ${Math.round(stats.total_duration_ms / 1000)}s
+Avg Cost per Execution: $${stats.avg_cost_per_execution.toFixed(2)}
+Avg Duration: ${Math.round(stats.avg_duration_ms / 1000)}s
+
+Please provide:
+1. Execution patterns (success/failure trends)
+2. Cost efficiency analysis
+3. Common error patterns (if any)
+4. Improvement recommendations
+
+Respond in JSON format with keys: summary, execution_patterns (array), cost_efficiency, error_patterns (array), recommendations (array).`
+
+    try {
+      const provider = getProvider(this.org)
+      const chunks: string[] = []
+
+      const stream = provider.sendQuery(prompt, process.cwd(), undefined, {
+        systemPrompt: 'You are an expert at analyzing workflow execution patterns and providing actionable insights.',
+      })
+
+      for await (const chunk of stream) {
+        if (chunk.type === 'text_delta') {
+          chunks.push(chunk.content)
+        }
+      }
+
+      const response = chunks.join('')
+
+      // Parse JSON response
+      try {
+        const parsed = JSON.parse(response)
+        return {
+          summary: parsed.summary || 'No summary available',
+          execution_patterns: parsed.execution_patterns || [],
+          cost_efficiency: parsed.cost_efficiency || 'No analysis available',
+          error_patterns: parsed.error_patterns || [],
+          recommendations: parsed.recommendations || [],
+        }
+      } catch {
+        // Fallback if JSON parsing fails
+        return {
+          summary: response,
+          execution_patterns: [],
+          cost_efficiency: 'Analysis unavailable',
+          error_patterns: [],
+          recommendations: [],
+        }
+      }
+    } catch (err: any) {
+      // Fallback if Claude API fails
+      return {
+        summary: `Analysis unavailable: ${err.message}`,
+        execution_patterns: [],
+        cost_efficiency: 'Analysis unavailable',
+        error_patterns: [],
+        recommendations: [],
+      }
+    }
+  }
+
+  private async extractExperienceCandidates(workspaceId: string): Promise<ExperienceCandidate[]> {
+    // Import knowledge extraction logic dynamically
+    try {
+      const { extractAndCheckRules, shouldExtractRules } = await import('../knowledge/extract')
+      const { getExecutionDAO } = await import('../../db/dao')
+
+      const executionDAO = getExecutionDAO()
+      const executions = executionDAO.findByWorkspaceId(workspaceId)
+
+      const candidates: ExperienceCandidate[] = []
+
+      for (const exec of executions) {
+        if (shouldExtractRules(exec)) {
+          const rules = await extractAndCheckRules(exec)
+          candidates.push(...rules.map((r: any) => ({
+            id: r.id,
+            text: r.text,
+            scope: r.scope,
+            confidence: r.confidence || 0.5,
+            source: `workspace:${workspaceId}`,
+          })))
+        }
+      }
+
+      return candidates
+    } catch (err: any) {
+      // Fallback if knowledge extraction fails
+      console.warn(`Failed to extract experience candidates: ${err.message}`)
+      return []
+    }
+  }
+
+  private async extractSkillCandidates(workspaceId: string): Promise<SkillCandidate[]> {
+    // Import evolution service logic dynamically
+    try {
+      const { getEvolutionService } = await import('./evolution-service')
+      const evolutionService = getEvolutionService()
+
+      if (!evolutionService) {
+        return []
+      }
+
+      // Use reflection to detect patterns
+      // This is a simplified version - in production, we'd call evolutionService.reflect()
+      // For now, return empty array as placeholder
+      return []
+    } catch (err: any) {
+      // Fallback if skill extraction fails
+      console.warn(`Failed to extract skill candidates: ${err.message}`)
+      return []
+    }
   }
 }
 

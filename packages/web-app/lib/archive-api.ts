@@ -73,3 +73,52 @@ export async function getLeaderboard(
   const res = await apiFetch(`${getServerUrl()}/api/archive/leaderboard?${params}`)
   return handleResponse(res)
 }
+
+// ── Archive V2 Types ──────────────────────────────────────────────
+
+export interface WorkspaceStats {
+  execution_count: number
+  success_rate: number
+  total_cost: number
+  total_duration_ms: number
+  avg_cost_per_execution: number
+  avg_duration_ms: number
+}
+
+export interface AnalysisReport {
+  summary: string
+  execution_patterns: string[]
+  cost_efficiency: string
+  error_patterns: string[]
+  recommendations: string[]
+}
+
+export interface ExperienceCandidate {
+  id: string
+  text: string
+  scope: string
+  confidence: number
+  source: string
+}
+
+export interface SkillCandidate {
+  name: string
+  description: string
+  content: string
+  reason: string
+}
+
+export interface ArchivePreview {
+  stats: WorkspaceStats
+  analysis: AnalysisReport
+  experiences: ExperienceCandidate[]
+  skills: SkillCandidate[]
+}
+
+export async function previewArchive(workspaceId: string, org?: string): Promise<ArchivePreview> {
+  const params = org ? `?org=${encodeURIComponent(org)}` : ""
+  const res = await apiFetch(`${getServerUrl()}/api/archive/workspaces/${workspaceId}/archive-preview${params}`, {
+    method: "POST",
+  })
+  return handleResponse(res)
+}
