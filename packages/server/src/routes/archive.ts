@@ -3,6 +3,7 @@ import fs from "fs"
 import path from "path"
 import type { PendingReviewDAO } from "../db/dao"
 import type { ArchiveDAO } from "../db/dao/archive-dao"
+import type { ArchiveDraftDAO } from "../db/dao/archive-draft-dao"
 import { isValidUUID, errorResponse } from "../services/knowledge/validators"
 
 // ponytail: redact keys matching secret patterns before exposing poolSnapshot
@@ -21,6 +22,7 @@ export function createArchiveRoutes(
   pendingReviewDAO: PendingReviewDAO,
   stateDir: string,
   archiveDAO?: ArchiveDAO,
+  archiveDraftDAO?: ArchiveDraftDAO,
 ): Hono {
   const routes = new Hono()
 
@@ -223,6 +225,62 @@ export function createArchiveRoutes(
       return c.json(archive)
     } catch (err) {
       const { body, status } = errorResponse(err, "archive.get")
+      return c.json(body, status)
+    }
+  })
+
+  // ── Draft routes ──────────────────────────────────────────
+
+  // GET /api/archive/workspaces/:id/archive-draft — load cached analysis draft
+  routes.get("/workspaces/:id/archive-draft", (c) => {
+    const workspaceId = c.req.param("id")
+
+    if (!isValidUUID(workspaceId)) {
+      return c.json({ error: { code: "INVALID_PARAM", message: "Invalid workspace ID format" } }, 400)
+    }
+
+    if (!archiveDraftDAO) {
+      return c.json({ error: { code: "SUBSYSTEM_UNAVAILABLE", message: "Archive Draft DAO not available" } }, 503)
+    }
+
+    try {
+      const draft = archiveDraftDAO.findByWorkspaceId(workspaceId)
+      if (!draft) {
+        return c.json({ error: { code: "NOT_FOUND", message: "Draft not found" } }, 404)
+      }
+      return c.json({
+        workspace_id: draft.workspace_id,
+        org: draft.org,
+        analysis_report: JSON.parse(draft.analysis_report),
+        experiences: JSON.parse(draft.experiences),
+        skills: JSON.parse(draft.skills),
+        stats: JSON.parse(draft.stats),
+        created_at: (draft as any).created_at,
+        updated_at: (draft as any).updated_at,
+      })
+    } catch (err) {
+      const { body, status } = errorResponse(err, "archive.draft.get")
+      return c.json(body, status)
+    }
+  })
+
+  // DELETE /api/archive/workspaces/:id/archive-draft — clear draft
+  routes.delete("/workspaces/:id/archive-draft", (c) => {
+    const workspaceId = c.req.param("id")
+
+    if (!isValidUUID(workspaceId)) {
+      return c.json({ error: { code: "INVALID_PARAM", message: "Invalid workspace ID format" } }, 400)
+    }
+
+    if (!archiveDraftDAO) {
+      return c.json({ error: { code: "SUBSYSTEM_UNAVAILABLE", message: "Archive Draft DAO not available" } }, 503)
+    }
+
+    try {
+      archiveDraftDAO.delete(workspaceId)
+      return c.json({ success: true })
+    } catch (err) {
+      const { body, status } = errorResponse(err, "archive.draft.delete")
       return c.json(body, status)
     }
   })

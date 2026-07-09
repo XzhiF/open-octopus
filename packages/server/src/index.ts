@@ -14,6 +14,7 @@ import {
   CloneDAO, SafetyDAO,
   PendingReviewDAO, KnowledgeEffectivenessDAO, ArchiveDAO,
 } from "./db/dao"
+import { ArchiveDraftDAO } from "./db/dao/archive-draft-dao"
 import { createKnowledgeRoutes } from "./routes/knowledge"
 import { createReviewRoutes } from "./routes/review"
 import { createArchiveRoutes } from "./routes/archive"
@@ -97,6 +98,7 @@ interface AllDAOs {
   pendingReview: PendingReviewDAO
   knowledgeEffectiveness: KnowledgeEffectivenessDAO
   archive: ArchiveDAO
+  archiveDraft: ArchiveDraftDAO
 }
 
 function createAllDAOs(db: ReturnType<typeof initDb>): AllDAOs {
@@ -115,6 +117,7 @@ function createAllDAOs(db: ReturnType<typeof initDb>): AllDAOs {
     pendingReview: new PendingReviewDAO(db),
     knowledgeEffectiveness: new KnowledgeEffectivenessDAO(db),
     archive: new ArchiveDAO(db),
+    archiveDraft: new ArchiveDraftDAO(db),
   }
 }
 
@@ -265,6 +268,7 @@ const d = daos ?? {
   pendingReview: lazyDAO(PendingReviewDAO),
   knowledgeEffectiveness: lazyDAO(KnowledgeEffectivenessDAO),
   archive: lazyDAO(ArchiveDAO),
+  archiveDraft: lazyDAO(ArchiveDraftDAO),
 }
 
 const wsSvc = workspaceService ?? new WorkspaceService(d.workspace)
@@ -322,7 +326,7 @@ app.route("/api/review", createReviewRoutes(reviewService, d.pendingReview))
 
 // Archive routes — execution result summarization + rule proposal
 const stateDir = path.join(process.env.HOME ?? "~", ".octopus", "state")
-app.route("/api/archive", createArchiveRoutes(d.pendingReview, stateDir, d.archive))
+app.route("/api/archive", createArchiveRoutes(d.pendingReview, stateDir, d.archive, d.archiveDraft))
 
 // Resource management — unified resource lifecycle (install/uninstall/verify/audit)
 const resourceRegistry = getResourceRegistry()
