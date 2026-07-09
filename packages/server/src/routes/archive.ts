@@ -266,5 +266,30 @@ export function createArchiveRoutes(
     }
   })
 
+  // GET /api/archive/workspaces/:id — Get single archived workspace
+  routes.get("/workspaces/:id", (c) => {
+    const id = c.req.param("id")
+
+    // Security: validate UUID format
+    if (!isValidUUID(id)) {
+      return c.json({ error: { code: "INVALID_PARAM", message: "Invalid workspace ID format" } }, 400)
+    }
+
+    if (!archiveDAO) {
+      return c.json({ error: { code: "SUBSYSTEM_UNAVAILABLE", message: "Archive DAO not available" } }, 503)
+    }
+
+    try {
+      const archive = archiveDAO.findByWorkspaceId(id)
+      if (!archive) {
+        return c.json({ error: { code: "NOT_FOUND", message: "Archived workspace not found" } }, 404)
+      }
+      return c.json(archive)
+    } catch (err) {
+      const { body, status } = errorResponse(err, "archive.get")
+      return c.json(body, status)
+    }
+  })
+
   return routes
 }
