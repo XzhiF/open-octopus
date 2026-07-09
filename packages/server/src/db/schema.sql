@@ -708,3 +708,15 @@ CREATE TABLE IF NOT EXISTS workspace_archive (
 
 CREATE INDEX IF NOT EXISTS idx_workspace_archive_org ON workspace_archive(org);
 CREATE INDEX IF NOT EXISTS idx_workspace_archive_archived ON workspace_archive(archived_at);
+
+-- archive_drafts: cached analysis results to avoid repeated LLM calls
+CREATE TABLE IF NOT EXISTS archive_drafts (
+  workspace_id TEXT PRIMARY KEY,
+  org TEXT NOT NULL,
+  analysis_report TEXT NOT NULL,
+  experiences TEXT NOT NULL DEFAULT '[]',
+  skills TEXT NOT NULL DEFAULT '[]',
+  stats TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
