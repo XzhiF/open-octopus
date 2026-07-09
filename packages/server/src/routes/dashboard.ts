@@ -17,7 +17,8 @@ export function createDashboardRoutes(
   const dashboardRoutes = new Hono()
 
   dashboardRoutes.get("/stats", (c) => {
-    const workspaces = workspaceService.list()
+    const allWorkspaces = workspaceService.list()
+    const workspaces = allWorkspaces.filter(ws => ws.status !== "archived")
     const totalWorkflows = workspaces.reduce(
       (sum, ws) => sum + workflowService.list(ws.path).length,
       0,
@@ -42,6 +43,7 @@ export function createDashboardRoutes(
     }
 
     const stats = {
+      // Active stats
       total_workspaces: workspaces.length,
       total_workflows: totalWorkflows,
       total_executions: execRow.total_executions,
@@ -51,10 +53,14 @@ export function createDashboardRoutes(
       pending_executions: execRow.pending_executions,
       avg_duration_ms: execRow.avg_duration_ms,
       total_cost: totalCost,
-      // Archive V2 stats
+      // Archive stats
       archived_workspaces: archivedWorkspaces,
       archived_executions: archivedExecutions,
       archived_cost: archivedCost,
+      // Merged totals (active + archived)
+      all_time_executions: execRow.total_executions + archivedExecutions,
+      all_time_cost: totalCost + archivedCost,
+      all_time_workspaces: workspaces.length + archivedWorkspaces,
     }
     return c.json(stats)
   })
