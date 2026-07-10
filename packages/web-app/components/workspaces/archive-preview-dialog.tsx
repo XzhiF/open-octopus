@@ -40,6 +40,84 @@ function formatDraftAge(updatedAt: string): string {
   return `${days}天前`
 }
 
+const CREATE_NEW = "__create_new__"
+
+function GroupSelector({
+  value,
+  groups,
+  onChange,
+  onCreateGroup,
+}: {
+  value: string
+  groups: string[]
+  onChange: (group: string) => void
+  onCreateGroup: (name: string) => void
+}) {
+  const [creating, setCreating] = useState(false)
+  const [newName, setNewName] = useState("")
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    if (creating) inputRef.current?.focus()
+  }, [creating])
+
+  const handleConfirm = () => {
+    const trimmed = newName.trim()
+    if (trimmed && !groups.includes(trimmed)) {
+      onCreateGroup(trimmed)
+      onChange(trimmed)
+    }
+    setCreating(false)
+    setNewName("")
+  }
+
+  if (creating) {
+    return (
+      <div className="flex items-center gap-1">
+        <input
+          ref={inputRef}
+          className="h-7 w-[140px] rounded-md border border-input bg-background px-2 text-xs"
+          value={newName}
+          onChange={(e) => setNewName(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") handleConfirm()
+            if (e.key === "Escape") { setCreating(false); setNewName("") }
+          }}
+          placeholder="输入组名..."
+        />
+        <Button variant="ghost" size="icon" className="h-7 w-7" onClick={handleConfirm}>
+          <span className="text-green-500 text-sm">✓</span>
+        </Button>
+        <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => { setCreating(false); setNewName("") }}>
+          <span className="text-muted-foreground text-sm">✕</span>
+        </Button>
+      </div>
+    )
+  }
+
+  return (
+    <Select
+      value={value}
+      onValueChange={(v) => {
+        if (v === CREATE_NEW) { setCreating(true); return }
+        onChange(v)
+      }}
+    >
+      <SelectTrigger className="h-7 w-[180px] text-xs">
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent>
+        {groups.map((g) => (
+          <SelectItem key={g} value={g}>{g}</SelectItem>
+        ))}
+        <SelectItem value={CREATE_NEW} className="text-blue-600 font-medium">
+          + 新建组...
+        </SelectItem>
+      </SelectContent>
+    </Select>
+  )
+}
+
 interface ArchivePreviewDialogProps {
   workspace: Workspace | null
   open: boolean
@@ -714,19 +792,15 @@ export function ArchivePreviewDialog({
                               )}
                               <div className="flex items-center gap-2">
                                 <span className="text-xs text-muted-foreground">安装到组:</span>
-                                <Select
+                                <GroupSelector
                                   value={skillGroups[skill.name] ?? "archive-extracted"}
-                                  onValueChange={(v) => setSkillGroups(prev => ({ ...prev, [skill.name]: v }))}
-                                >
-                                  <SelectTrigger className="h-7 w-[180px] text-xs">
-                                    <SelectValue />
-                                  </SelectTrigger>
-                                  <SelectContent>
-                                    {resourceGroups.skillGroups.map((g) => (
-                                      <SelectItem key={g} value={g}>{g}</SelectItem>
-                                    ))}
-                                  </SelectContent>
-                                </Select>
+                                  groups={resourceGroups.skillGroups}
+                                  onChange={(v) => setSkillGroups(prev => ({ ...prev, [skill.name]: v }))}
+                                  onCreateGroup={(name) => setResourceGroups(prev => ({
+                                    ...prev,
+                                    skillGroups: [...prev.skillGroups, name].sort(),
+                                  }))}
+                                />
                               </div>
                             </div>
                           </div>
@@ -786,19 +860,15 @@ export function ArchivePreviewDialog({
                                 <p className="text-sm text-muted-foreground mb-2">{wf.description}</p>
                                 <div className="flex items-center gap-2">
                                   <span className="text-xs text-muted-foreground">安装到组:</span>
-                                  <Select
+                                  <GroupSelector
                                     value={workflowGroups[wf.name] ?? "archive-extracted"}
-                                    onValueChange={(v) => setWorkflowGroups(prev => ({ ...prev, [wf.name]: v }))}
-                                  >
-                                    <SelectTrigger className="h-7 w-[180px] text-xs">
-                                      <SelectValue />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                      {resourceGroups.workflowGroups.map((g) => (
-                                        <SelectItem key={g} value={g}>{g}</SelectItem>
-                                      ))}
-                                    </SelectContent>
-                                  </Select>
+                                    groups={resourceGroups.workflowGroups}
+                                    onChange={(v) => setWorkflowGroups(prev => ({ ...prev, [wf.name]: v }))}
+                                    onCreateGroup={(name) => setResourceGroups(prev => ({
+                                      ...prev,
+                                      workflowGroups: [...prev.workflowGroups, name].sort(),
+                                    }))}
+                                  />
                                 </div>
                               </div>
                             </div>
