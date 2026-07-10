@@ -24,19 +24,21 @@ export interface SkillInstallOption {
 export interface ResourceGroups {
   skillGroups: string[]
   workflowGroups: string[]
+  agentGroups: string[]
 }
 
 export async function getResourceGroups(): Promise<ResourceGroups> {
   const res = await apiFetch(`${getServerUrl()}/api/archive/skill-groups`, {
     credentials: "include",
   })
-  if (!res.ok) return { skillGroups: ["archive-extracted"], workflowGroups: ["archive-extracted"] }
+  if (!res.ok) return { skillGroups: ["archive-extracted"], workflowGroups: ["archive-extracted"], agentGroups: ["archive-extracted"] }
   const data = await res.json()
-  // Backward compat: old server returns {groups: [...]}, new returns {skillGroups, workflowGroups}
+  // Backward compat: old server returns {groups: [...]}, new returns {skillGroups, workflowGroups, agentGroups}
   const fallback = data.groups || ["archive-extracted"]
   return {
     skillGroups: data.skillGroups || fallback,
     workflowGroups: data.workflowGroups || fallback,
+    agentGroups: data.agentGroups || fallback,
   }
 }
 
@@ -115,6 +117,7 @@ export interface ArchiveResult {
   archivedExecutions: number
   extractedExperiences: number
   installedSkills: number
+  installedAgents?: number
   fileDeleted: boolean
   error?: string
 }
@@ -125,6 +128,7 @@ export async function archiveWorkspace(
     extractExperiences?: string[]
     installSkills?: SkillInstallOption[]
     installWorkflows?: SkillInstallOption[]
+    installAgents?: SkillInstallOption[]
   },
   org?: string
 ): Promise<ArchiveResult> {
@@ -183,6 +187,7 @@ export function archiveWorkspaceSSE(
     extractExperiences?: string[]
     installSkills?: SkillInstallOption[]
     installWorkflows?: SkillInstallOption[]
+    installAgents?: SkillInstallOption[]
     analysisReport?: unknown
     stats?: Record<string, unknown>
     metadata?: Record<string, unknown>

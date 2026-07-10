@@ -41,6 +41,7 @@ interface ArchiveProgressProps {
     extractExperiences?: string[]
     installSkills?: SkillInstallOption[]
     installWorkflows?: SkillInstallOption[]
+    installAgents?: SkillInstallOption[]
     analysisReport?: unknown
     stats?: Record<string, unknown>
     metadata?: Record<string, unknown>

@@ -147,12 +147,14 @@ export function ArchivePreviewDialog({
   const [selectedExperiences, setSelectedExperiences] = useState<string[]>([])
   const [selectedSkills, setSelectedSkills] = useState<string[]>([])
   const [selectedWorkflows, setSelectedWorkflows] = useState<string[]>([])
+  const [selectedAgents, setSelectedAgents] = useState<string[]>([])
   const [activeTab, setActiveTab] = useState("analysis")
   const [draft, setDraft] = useState<ArchiveDraft | null>(null)
   const [draftAge, setDraftAge] = useState<string | null>(null)
   const [skillGroups, setSkillGroups] = useState<Record<string, string>>({})
   const [workflowGroups, setWorkflowGroups] = useState<Record<string, string>>({})
-  const [resourceGroups, setResourceGroups] = useState<ResourceGroups>({ skillGroups: ["archive-extracted"], workflowGroups: ["archive-extracted"] })
+  const [agentGroups, setAgentGroups] = useState<Record<string, string>>({})
+  const [resourceGroups, setResourceGroups] = useState<ResourceGroups>({ skillGroups: ["archive-extracted"], workflowGroups: ["archive-extracted"], agentGroups: ["archive-extracted"] })
   const [expandedSkills, setExpandedSkills] = useState<Set<string>>(new Set())
   const previewDriverRef = useRef<{
     onStep: ((e: StepEvent) => void) | null
@@ -194,6 +196,17 @@ export function ArchivePreviewDialog({
       setWorkflowGroups(defaults)
     }
   }, [(preview as any)?.workflows])
+
+  useEffect(() => {
+    const agents = (preview as any)?.agents ?? []
+    if (agents.length > 0) {
+      const defaults: Record<string, string> = {}
+      for (const agent of agents) {
+        defaults[agent.name] = agentGroups[agent.name] ?? agent.existingGroup ?? "archive-extracted"
+      }
+      setAgentGroups(defaults)
+    }
+  }, [(preview as any)?.agents])
 
   const checkDraft = async () => {
     if (!workspace) return
@@ -335,6 +348,15 @@ export function ArchivePreviewDialog({
                   content: wf?.content,
                 }
               }),
+              installAgents: selectedAgents.map((name) => {
+                const agent = ((preview as any).agents ?? []).find((a: any) => a.name === name)
+                return {
+                  name,
+                  group: agentGroups[name] ?? "archive-extracted",
+                  path: agent?.path,
+                  content: agent?.content,
+                }
+              }),
               analysisReport: preview.analysis,
               stats: preview.stats,
               metadata: {
@@ -345,6 +367,8 @@ export function ArchivePreviewDialog({
                 tokenStats: (preview as any).tokenStats,
                 workflows: ((preview as any).workflows ?? []).filter((w: any) => selectedWorkflows.includes(w.name)),
                 allWorkflows: (preview as any).workflows ?? [],
+                agents: ((preview as any).agents ?? []).filter((a: any) => selectedAgents.includes(a.name)),
+                allAgents: (preview as any).agents ?? [],
               },
             }}
             onComplete={() => {
@@ -422,10 +446,10 @@ export function ArchivePreviewDialog({
                 </CardHeader>
                 <CardContent>
                   <div className="text-2xl font-bold">
-                    {preview.experiences.length + preview.skills.length + ((preview as any).workflows ?? []).length}
+                    {preview.experiences.length + preview.skills.length + ((preview as any).workflows ?? []).length + ((preview as any).agents ?? []).length}
                   </div>
                   <div className="text-xs text-muted-foreground">
-                    {preview.experiences.length} 经验, {preview.skills.length} Skill, {((preview as any).workflows ?? []).length} 工作流
+                    {preview.experiences.length} 经验, {preview.skills.length} Skill, {((preview as any).workflows ?? []).length} 工作流, {((preview as any).agents ?? []).length} Agent
                   </div>
                 </CardContent>
               </Card>
@@ -433,7 +457,7 @@ export function ArchivePreviewDialog({
 
             {/* Tabs */}
             <Tabs value={activeTab} onValueChange={setActiveTab}>
-              <TabsList className="grid w-full grid-cols-6">
+              <TabsList className="grid w-full grid-cols-7">
                 <TabsTrigger value="analysis">分析报告</TabsTrigger>
                 <TabsTrigger value="tokens">Token 统计</TabsTrigger>
                 <TabsTrigger value="experiences">
@@ -441,6 +465,7 @@ export function ArchivePreviewDialog({
                 </TabsTrigger>
                 <TabsTrigger value="skills">Skill ({preview.skills.length})</TabsTrigger>
                 <TabsTrigger value="workflows">工作流 ({((preview as any).workflows ?? []).length})</TabsTrigger>
+                <TabsTrigger value="agents">Agent ({((preview as any).agents ?? []).length})</TabsTrigger>
                 <TabsTrigger value="summary">归档摘要</TabsTrigger>
               </TabsList>
 
@@ -880,6 +905,75 @@ export function ArchivePreviewDialog({
                 })()}
               </TabsContent>
 
+              <TabsContent value="agents">
+                {(() => {
+                  const agents: Array<{ name: string; description: string; content?: string }> = (preview as any).agents ?? []
+                  if (agents.length === 0) {
+                    return <div className="text-center py-8 text-muted-foreground">未发现 Agent</div>
+                  }
+                  return (
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between mb-4">
+                        <p className="text-sm text-muted-foreground">
+                          选择要安装到资源库的 Agent（已选 {selectedAgents.length}）
+                        </p>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() =>
+                            setSelectedAgents(
+                              selectedAgents.length === agents.length ? [] : agents.map((a) => a.name)
+                            )
+                          }
+                        >
+                          {selectedAgents.length === agents.length ? "取消全选" : "全选"}
+                        </Button>
+                      </div>
+                      {agents.map((agent) => (
+                        <Card key={agent.name}>
+                          <CardContent className="pt-4">
+                            <div className="flex items-start gap-3">
+                              <Checkbox
+                                checked={selectedAgents.includes(agent.name)}
+                                onCheckedChange={() =>
+                                  setSelectedAgents((prev) =>
+                                    prev.includes(agent.name) ? prev.filter((s) => s !== agent.name) : [...prev, agent.name]
+                                  )
+                                }
+                              />
+                              <div className="flex-1">
+                                <div className="flex items-center gap-2 mb-1">
+                                  <Package className="h-4 w-4" />
+                                  <h4 className="font-semibold">{agent.name}</h4>
+                                  {(agent as any).status === "updated" ? (
+                                    <Badge variant="default" className="text-xs bg-amber-500">有更新</Badge>
+                                  ) : (agent as any).status === "new" ? (
+                                    <Badge variant="default" className="text-xs bg-green-600">新发现</Badge>
+                                  ) : null}
+                                </div>
+                                <p className="text-sm text-muted-foreground mb-2">{agent.description}</p>
+                                <div className="flex items-center gap-2">
+                                  <span className="text-xs text-muted-foreground">安装到组:</span>
+                                  <GroupSelector
+                                    value={agentGroups[agent.name] ?? "archive-extracted"}
+                                    groups={resourceGroups.agentGroups}
+                                    onChange={(v) => setAgentGroups(prev => ({ ...prev, [agent.name]: v }))}
+                                    onCreateGroup={(name) => setResourceGroups(prev => ({
+                                      ...prev,
+                                      agentGroups: [...prev.agentGroups, name].sort(),
+                                    }))}
+                                  />
+                                </div>
+                              </div>
+                            </div>
+                          </CardContent>
+                        </Card>
+                      ))}
+                    </div>
+                  )
+                })()}
+              </TabsContent>
+
               <TabsContent value="summary">
                 <div className="space-y-4">
                   <Card>
@@ -910,6 +1004,10 @@ export function ArchivePreviewDialog({
                       <div className="flex justify-between">
                         <span className="text-sm text-muted-foreground">安装工作流</span>
                         <span className="font-medium">{selectedWorkflows.length} 个</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-sm text-muted-foreground">安装 Agent</span>
+                        <span className="font-medium">{selectedAgents.length} 个</span>
                       </div>
                     </CardContent>
                   </Card>
