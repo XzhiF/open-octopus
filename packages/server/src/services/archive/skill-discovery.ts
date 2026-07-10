@@ -206,3 +206,51 @@ export function discoverWorkflowsFromWorkspace(workspacePath: string): Discovere
 
   return discovered
 }
+
+// ── Agent Discovery ────────────────────────────────────────────────
+
+export interface DiscoveredAgent {
+  name: string
+  description: string
+  content: string
+  path: string
+}
+
+/**
+ * Auto-discover agents from workspace's .claude/agents/ directory.
+ * Reads .md files and extracts name + description from frontmatter.
+ */
+export function discoverAgentsFromWorkspace(workspacePath: string): DiscoveredAgent[] {
+  const agentsDir = path.join(workspacePath, ".claude", "agents")
+  const discovered: DiscoveredAgent[] = []
+
+  if (!fs.existsSync(agentsDir)) return discovered
+
+  try {
+    const files = fs.readdirSync(agentsDir).filter(f => f.endsWith(".md"))
+
+    for (const file of files) {
+      try {
+        const filePath = path.join(agentsDir, file)
+        const content = fs.readFileSync(filePath, "utf-8")
+        const name = file.replace(/\.md$/, "")
+
+        const nameMatch = content.match(/^name:\s*(.+)$/m)
+        const descMatch = content.match(/^description:\s*(.+)$/m)
+
+        discovered.push({
+          name: nameMatch?.[1]?.trim() || name,
+          description: descMatch?.[1]?.trim() || `Agent: ${name}`,
+          content,
+          path: filePath,
+        })
+      } catch {
+        // Skip unreadable files
+      }
+    }
+  } catch (err) {
+    logError("discoverAgentsFromWorkspace failed", err, { workspacePath })
+  }
+
+  return discovered
+}

@@ -729,6 +729,68 @@ ${nodes.map(n => `  - id: ${n.id}
     await emitter.log(`✓ 发现 ${autoDiscoveredWorkflows.length} 个项目级工作流 (${rawDiscoveredWorkflows.length - autoDiscoveredWorkflows.length} 个已跳过)`)
     await emitter.stepDone("discover_workflows", { count: autoDiscoveredWorkflows.length })
 
+    // Phase 1.7: Auto-discover agents from .claude/agents/
+    await emitter.stepStart("discover_agents", "扫描 .claude/agents/ 目录...")
+    const { discoverAgentsFromWorkspace } = await import('../archive/skill-discovery')
+    const rawDiscoveredAgents = workspacePath
+      ? discoverAgentsFromWorkspace(workspacePath)
+      : []
+
+    let autoDiscoveredAgents: Array<Record<string, unknown>> = []
+    try {
+      const { getResourceRegistry } = await import('../resource-registry')
+      const resourceManager = getResourceRegistry().getOrCreate(this.org)
+      const installed = resourceManager.list({ type: "agent", installed: true })
+      const installedMap = new Map<string, { group: string; installPath: string }>()
+      for (const entry of installed.resources ?? []) {
+        if (entry.installPath) installedMap.set(entry.name, { group: entry.group, installPath: entry.installPath })
+      }
+
+      const fsAgent = await import("fs")
+      const cryptoAgent = await import("crypto")
+
+      for (const agent of rawDiscoveredAgents) {
+        const existing = installedMap.get(agent.name)
+        if (existing) {
+          let existingContent = ""
+          try {
+            const files = fsAgent.readdirSync(existing.installPath)
+            const mdFile = files.find((f: string) => f.endsWith(".md"))
+            if (mdFile) existingContent = fsAgent.readFileSync(`${existing.installPath}/${mdFile}`, "utf-8")
+          } catch {}
+
+          const norm = (s: string) => s.replace(/\r\n/g, "\n").replace(/\r/g, "\n").trimEnd()
+          const h1 = cryptoAgent.createHash("md5").update(norm(agent.content)).digest("hex")
+          const h2 = cryptoAgent.createHash("md5").update(norm(existingContent)).digest("hex")
+
+          if (h1 === h2) {
+            await emitter.log(`  ⊘ ${agent.name} — 内容相同，跳过`)
+            continue
+          }
+          await emitter.log(`  ↻ ${agent.name} — 内容有更新 (原组: ${existing.group})`)
+          autoDiscoveredAgents.push({
+            name: agent.name, description: agent.description, content: agent.content, path: agent.path,
+            status: "updated", existingGroup: existing.group,
+          })
+        } else {
+          await emitter.log(`  + ${agent.name} — 新发现`)
+          autoDiscoveredAgents.push({
+            name: agent.name, description: agent.description, content: agent.content, path: agent.path,
+            status: "new", existingGroup: null,
+          })
+        }
+      }
+    } catch (err) {
+      await emitter.log(`ResourceManager 比对失败: ${err instanceof Error ? err.message : String(err)}`)
+      autoDiscoveredAgents = rawDiscoveredAgents.map((a) => ({
+        name: a.name, description: a.description, content: a.content, path: a.path,
+        status: "new", existingGroup: null,
+      }))
+    }
+
+    await emitter.log(`✓ 发现 ${autoDiscoveredAgents.length} 个 Agent`)
+    await emitter.stepDone("discover_agents", { count: autoDiscoveredAgents.length })
+
     // Phase 2: Parallel LLM analysis (3 calls)
     await emitter.stepStart("analyze_parallel", "3 个 LLM 并行分析中...")
     await emitter.log("启动 3 个 LLM 并行分析: 报告 / 经验提取 / Skill 发现...")
@@ -790,6 +852,12 @@ ${nodes.map(n => `  - id: ${n.id}
       description: w.description,
       content: w.content,
       path: w.path,
+    }))
+    ;(preview as any).agents = autoDiscoveredAgents.map(a => ({
+      name: a.name,
+      description: a.description,
+      content: a.content,
+      path: a.path,
     }))
     await emitter.log(`✓ 结果合并完成: ${preview.experiences.length} 经验, ${preview.skills.length} Skill`)
     await emitter.stepDone("assemble")

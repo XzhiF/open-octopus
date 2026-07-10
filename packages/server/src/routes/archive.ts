@@ -191,6 +191,7 @@ export function createArchiveRoutes(
       extractExperiences?: string[]
       installSkills?: Array<{ name: string; group: string; path?: string; content?: string }>
       installWorkflows?: Array<{ name: string; group: string; path?: string; content?: string }>
+      installAgents?: Array<{ name: string; group: string; path?: string; content?: string }>
       analysisReport?: unknown
       stats?: Record<string, unknown>
       metadata?: Record<string, unknown>
@@ -219,6 +220,7 @@ export function createArchiveRoutes(
             extractExperiences: body.extractExperiences || [],
             installSkills: body.installSkills || [],
             installWorkflows: body.installWorkflows || [],
+            installAgents: body.installAgents || [],
             analysisReport: body.analysisReport,
             stats: body.stats as any,
             metadata: body.metadata,
@@ -283,9 +285,11 @@ export function createArchiveRoutes(
     }
     const skillGroups = readGroups("skills").sort()
     const workflowGroups = readGroups("workflows").sort()
+    const agentGroups = readGroups("agents").sort()
     if (!skillGroups.includes("archive-extracted")) skillGroups.push("archive-extracted")
     if (!workflowGroups.includes("archive-extracted")) workflowGroups.push("archive-extracted")
-    return c.json({ skillGroups, workflowGroups })
+    if (!agentGroups.includes("archive-extracted")) agentGroups.push("archive-extracted")
+    return c.json({ skillGroups, workflowGroups, agentGroups })
   })
 
   // ── Draft routes ──────────────────────────────────────────

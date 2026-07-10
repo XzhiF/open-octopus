@@ -171,6 +171,7 @@ export class ArchiveService {
           extracted_experiences: 0,
           extracted_skills: 0,
           extracted_workflows: 0,
+          extracted_agents: 0,
           analysis_report: null,
           file_deleted: 0,
         }
@@ -275,6 +276,7 @@ export class ArchiveService {
       extractExperiences: string[]
       installSkills: Array<{ name: string; group: string; path?: string; content?: string }>
       installWorkflows?: Array<{ name: string; group: string; path?: string; content?: string }>
+      installAgents?: Array<{ name: string; group: string; path?: string; content?: string }>
       analysisReport?: unknown
       metadata?: Record<string, unknown>
       stats?: {
@@ -304,6 +306,7 @@ export class ArchiveService {
     archivedExecutions: number
     extractedExperiences: number
     installedSkills: number
+    installedAgents: number
     fileDeleted: boolean
     error?: string
   }> {
@@ -312,7 +315,7 @@ export class ArchiveService {
       const workspaceDAO = new WorkspaceDAO(this.db)
       const workspace = workspaceDAO.findById(workspaceId)
       if (!workspace) {
-        return { success: false, archivedExecutions: 0, extractedExperiences: 0, installedSkills: 0, fileDeleted: false, error: "workspace_not_found" }
+        return { success: false, archivedExecutions: 0, extractedExperiences: 0, installedSkills: 0, installedAgents: 0, fileDeleted: false, error: "workspace_not_found" }
       }
 
       // Step 2: Archive all executions in this workspace
@@ -406,6 +409,15 @@ export class ArchiveService {
       }
       await emitter.stepDone("install_workflows", { count: installedWorkflows })
 
+      // Step 5.6: Install agents
+      const installAgents = options.installAgents || []
+      await emitter.stepStart("install_agents", `安装 ${installAgents.length} 个 Agent...`)
+      let installedAgents = 0
+      if (installAgents.length > 0) {
+        installedAgents = await this.installAgentsToResources(org, installAgents, emitter)
+      }
+      await emitter.stepDone("install_agents", { count: installedAgents })
+
       // Step 6: Delete workspace files from disk
       await emitter.stepStart("delete_files", "清理工作空间文件...")
       let fileDeleted = false
@@ -421,7 +433,7 @@ export class ArchiveService {
 
       // Step 7: Update workspace archive with extraction stats
       await emitter.stepStart("update_stats", "更新统计...")
-      this.archiveDAO.updateExtractionStats(workspaceId, extractedExperiences, installedSkills, installedWorkflows)
+      this.archiveDAO.updateExtractionStats(workspaceId, extractedExperiences, installedSkills, installedWorkflows, installedAgents)
       this.archiveDAO.setFileDeleted(workspaceId, fileDeleted ? 1 : 0)
       await emitter.stepDone("update_stats")
 
@@ -452,6 +464,7 @@ export class ArchiveService {
         archivedExecutions,
         extractedExperiences,
         installedSkills,
+        installedAgents,
         fileDeleted,
       })
 
@@ -460,6 +473,7 @@ export class ArchiveService {
         archivedExecutions,
         extractedExperiences,
         installedSkills,
+        installedAgents,
         fileDeleted,
       }
     } catch (err) {
@@ -470,6 +484,7 @@ export class ArchiveService {
         archivedExecutions: 0,
         extractedExperiences: 0,
         installedSkills: 0,
+        installedAgents: 0,
         fileDeleted: false,
         error: err instanceof Error ? err.message : String(err),
       }
@@ -668,6 +683,69 @@ export class ArchiveService {
       return installedCount
     } catch (err) {
       logError("installWorkflowsToResources failed", err, { org })
+      return 0
+    }
+  }
+
+  private async installAgentsToResources(
+    org: string,
+    agents: Array<{ name: string; group: string; path?: string; content?: string }>,
+    emitter: StepEmitter,
+  ): Promise<number> {
+    try {
+      const { getResourceRegistry } = await import("../resource-registry")
+      const resourceManager = getResourceRegistry().getOrCreate(org)
+      const fs = await import("fs")
+      const path = await import("path")
+      const os = await import("os")
+      let installedCount = 0
+
+      for (const agent of agents) {
+        try {
+          await emitter.stepProgress("install_agents", `安装 ${agent.name} → ${agent.group}`)
+
+          const basePath = path.join(os.homedir(), ".octopus", "resources")
+          const installDir = path.join(basePath, "installed", "agents", agent.group, agent.name)
+
+          // Create target directory
+          fs.mkdirSync(installDir, { recursive: true })
+
+          // Copy agent md file or write content
+          if (agent.path && fs.existsSync(agent.path)) {
+            const destFile = path.join(installDir, path.basename(agent.path))
+            fs.copyFileSync(agent.path, destFile)
+            await emitter.log(`✓ Copied agent from ${agent.path} → ${destFile}`)
+          } else if (agent.content) {
+            const destFile = path.join(installDir, `${agent.name}.md`)
+            fs.writeFileSync(destFile, agent.content, "utf-8")
+            await emitter.log(`✓ Written agent content → ${destFile}`)
+          }
+
+          // Uninstall existing if overwriting
+          const existing = (resourceManager as any).registry?.get("agent", agent.name)
+          if (existing?.installed) {
+            try {
+              await resourceManager.uninstall({ ref: `${existing.group}/${agent.name}`, type: "agent" })
+              await emitter.log(`  覆盖已有 ${agent.group}/${agent.name}`)
+            } catch { /* ignore uninstall errors */ }
+          }
+
+          // Register in resource manager
+          await resourceManager.install({
+            ref: `local:${installDir}`,
+            type: "agent",
+            group: agent.group,
+          })
+
+          installedCount++
+        } catch (err) {
+          await emitter.log(`✗ Failed to install agent ${agent.name}: ${err instanceof Error ? err.message : String(err)}`)
+        }
+      }
+
+      return installedCount
+    } catch (err) {
+      logError("installAgentsToResources failed", err, { org })
       return 0
     }
   }
