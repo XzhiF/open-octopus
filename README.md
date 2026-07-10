@@ -312,6 +312,10 @@ Orchestrator Agent
 
 Memory
   └→ Workspace 归档，工作流执行知识注入，Orchestrator Agent 自动 SKILL 提升
+
+Resource
+  └→ 统一管理 SKILL / Agent / Workflow 的安装、版本与依赖；
+     运行工作流时智能绑定所需资源，按需加载、自动解析
 ```
 
 **… 规划 ↓**
@@ -333,6 +337,18 @@ Workflow Observability
      节点自定义评分（如 E2E 轮次发现/解决 BUG 数、节点质量评分），
      评分数据沉淀为知识，反哺工作流设计、Prompt 优化与输入点评；
      后续可接入 Hooks（如 Ponytail 等插件）实现运行时干预与纠偏
+
+Agent Router
+  └→ Orchestrator Agent 全面接管调度层（Workflow Engine 除外）：
+     可观测性补全（分身行为追踪、调度链路日志）；
+     分身编排调度优化——任务分发、负载均衡、失败重试、
+     分身能力画像动态更新
+
+Verifiable Framework
+  └→ 可验证框架：定义可度量的交付标准，精确到 Workflow 节点级；
+     基于 Workflow Observability，由"包工头"调度 + "质检员"校验，
+     双角色监督闭环——标准定义 → 执行验证 → 偏差修正 → 交付确认；
+     验证结果沉淀为知识，反哺标准迭代与流程优化
 ```
 
 **… 未来考虑 ↓**

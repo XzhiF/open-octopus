@@ -312,6 +312,11 @@ Orchestrator Agent
 
 Memory
   └→ Workspace archival, workflow execution knowledge injection, Orchestrator Agent auto SKILL enhancement
+
+Resource
+  └→ Unified management of SKILL / Agent / Workflow installation, versioning,
+     and dependencies; smart binding on workflow execution — load on demand,
+     resolve automatically
 ```
 
 **… Planned ↓**
@@ -335,6 +340,21 @@ Workflow Observability
      scoring data accumulates as knowledge to feed back into workflow
      design, prompt optimization, and input prompt reviews;
      extensible via Hooks (e.g., Ponytail plugins) for runtime intervention
+
+Agent Router
+  └→ Orchestrator Agent takes over the full scheduling layer
+     (except Workflow Engine): complete observability
+     (avatar behavior tracing, dispatch chain logging);
+     improved avatar orchestration — task distribution, load balancing,
+     failure retry, dynamic capability profiling
+
+Verifiable Framework
+  └→ Define measurable delivery standards, precise down to Workflow node level;
+     built on Workflow Observability, supervised by a "Foreman" (dispatch)
+     and "Inspector" (validation) dual-role closed loop —
+     standard definition → execution verification → deviation correction
+     → delivery confirmation; verification results accumulate as knowledge
+     to feed back into standard iteration and process optimization
 ```
 
 **… Future Considerations ↓**
