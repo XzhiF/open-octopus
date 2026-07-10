@@ -239,7 +239,7 @@ export function discoverAgentsFromWorkspace(workspacePath: string): DiscoveredAg
         const descMatch = content.match(/^description:\s*(.+)$/m)
 
         discovered.push({
-          name: nameMatch?.[1]?.trim() || name,
+          name,  // Always use filename for matching (e.g. "architecture-explorer")
           description: descMatch?.[1]?.trim() || `Agent: ${name}`,
           content,
           path: filePath,
