@@ -485,9 +485,9 @@ if (shouldServe) {
       }
     }
 
-    server.listen(port, () => {
-      console.log(`Octopus Server running on http://localhost:${port} (PID: ${process.pid})`)
-      console.log(`WebSocket ready on ws://localhost:${port}`)
+    server.listen(port, "0.0.0.0", () => {
+      console.log(`Octopus Server running on http://0.0.0.0:${port} (PID: ${process.pid})`)
+      console.log(`WebSocket ready on ws://0.0.0.0:${port}`)
       console.log(`Log file: ${getLogFilePath()}`)
       logInfo(`Server started`, {
         pid: process.pid,
