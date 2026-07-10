@@ -14,13 +14,6 @@ import { Badge } from "@/components/ui/badge"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Loader2, TrendingUp, DollarSign, AlertCircle, Lightbulb, Package, FileText, ChevronDown, ChevronUp } from "lucide-react"
-import { previewArchive, getArchiveDraft, deleteArchiveDraft, getResourceGroups, previewArchiveSSE } from "@/lib/archive-api"
-import type { StepEvent, ResourceGroups } from "@/lib/archive-api"
-import { ArchiveProgress } from "./archive-progress"
-import { toast } from "sonner"
-import type { Workspace } from "@/lib/types"
-import type { ArchivePreview, ArchiveDraft, ExperienceCandidate, SkillCandidate, SkillInstallOption } from "@/lib/archive-api"
 import {
   Select,
   SelectContent,
@@ -28,6 +21,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
+import { Loader2, TrendingUp, DollarSign, AlertCircle, Lightbulb, Package, FileText, ChevronDown, ChevronUp } from "lucide-react"
+import { previewArchive, getArchiveDraft, deleteArchiveDraft, getResourceGroups, previewArchiveSSE } from "@/lib/archive-api"
+import type { StepEvent, ResourceGroups } from "@/lib/archive-api"
+import { ArchiveProgress } from "./archive-progress"
+import { toast } from "sonner"
+import type { Workspace } from "@/lib/types"
+import type { ArchivePreview, ArchiveDraft, ExperienceCandidate, SkillCandidate, SkillInstallOption } from "@/lib/archive-api"
 
 function formatDraftAge(updatedAt: string): string {
   const diff = Date.now() - new Date(updatedAt).getTime()
@@ -714,13 +714,19 @@ export function ArchivePreviewDialog({
                               )}
                               <div className="flex items-center gap-2">
                                 <span className="text-xs text-muted-foreground">安装到组:</span>
-                                <input
-                                  list="skill-group-options"
-                                  className="h-7 w-[180px] rounded-md border border-input bg-background px-2 text-xs"
+                                <Select
                                   value={skillGroups[skill.name] ?? "archive-extracted"}
-                                  onChange={(e) => setSkillGroups(prev => ({ ...prev, [skill.name]: e.target.value }))}
-                                  placeholder="输入或选择组"
-                                />
+                                  onValueChange={(v) => setSkillGroups(prev => ({ ...prev, [skill.name]: v }))}
+                                >
+                                  <SelectTrigger className="h-7 w-[180px] text-xs">
+                                    <SelectValue />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    {resourceGroups.skillGroups.map((g) => (
+                                      <SelectItem key={g} value={g}>{g}</SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
                               </div>
                             </div>
                           </div>
@@ -780,13 +786,19 @@ export function ArchivePreviewDialog({
                                 <p className="text-sm text-muted-foreground mb-2">{wf.description}</p>
                                 <div className="flex items-center gap-2">
                                   <span className="text-xs text-muted-foreground">安装到组:</span>
-                                  <input
-                                    list="workflow-group-options"
-                                    className="h-7 w-[180px] rounded-md border border-input bg-background px-2 text-xs"
+                                  <Select
                                     value={workflowGroups[wf.name] ?? "archive-extracted"}
-                                    onChange={(e) => setWorkflowGroups((prev) => ({ ...prev, [wf.name]: e.target.value }))}
-                                    placeholder="输入或选择组"
-                                  />
+                                    onValueChange={(v) => setWorkflowGroups(prev => ({ ...prev, [wf.name]: v }))}
+                                  >
+                                    <SelectTrigger className="h-7 w-[180px] text-xs">
+                                      <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      {resourceGroups.workflowGroups.map((g) => (
+                                        <SelectItem key={g} value={g}>{g}</SelectItem>
+                                      ))}
+                                    </SelectContent>
+                                  </Select>
                                 </div>
                               </div>
                             </div>
@@ -846,14 +858,6 @@ export function ArchivePreviewDialog({
         ) : (
           <div className="text-center py-8 text-muted-foreground">加载预览失败</div>
         )}
-
-        {/* Datalists for group comboboxes */}
-        <datalist id="skill-group-options">
-          {resourceGroups.skillGroups.map((g) => <option key={g} value={g} />)}
-        </datalist>
-        <datalist id="workflow-group-options">
-          {resourceGroups.workflowGroups.map((g) => <option key={g} value={g} />)}
-        </datalist>
 
         {!archiving && preview && (
           <DialogFooter>
