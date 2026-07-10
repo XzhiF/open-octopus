@@ -461,6 +461,7 @@ export interface WorkspaceArchiveRow {
   metadata: string | null
   extracted_experiences: number
   extracted_skills: number
+  extracted_workflows: number
   analysis_report: string | null
   file_deleted: number
 }

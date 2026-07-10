@@ -168,6 +168,11 @@ export class ArchiveService {
           created_at: ws.created_at,
           archived_at: new Date().toISOString(),
           metadata: null,
+          extracted_experiences: 0,
+          extracted_skills: 0,
+          extracted_workflows: 0,
+          analysis_report: null,
+          file_deleted: 0,
         }
         this.archiveDAO.insertWorkspaceArchive(wsRow)
 
@@ -350,6 +355,7 @@ export class ArchiveService {
         metadata: options.metadata ? JSON.stringify(options.metadata) : null,
         extracted_experiences: 0,
         extracted_skills: 0,
+        extracted_workflows: 0,
         analysis_report: null,
         file_deleted: 0,
       }
@@ -415,7 +421,7 @@ export class ArchiveService {
 
       // Step 7: Update workspace archive with extraction stats
       await emitter.stepStart("update_stats", "更新统计...")
-      this.archiveDAO.updateExtractionStats(workspaceId, extractedExperiences, installedSkills)
+      this.archiveDAO.updateExtractionStats(workspaceId, extractedExperiences, installedSkills, installedWorkflows)
       this.archiveDAO.setFileDeleted(workspaceId, fileDeleted ? 1 : 0)
       await emitter.stepDone("update_stats")
 
@@ -620,7 +626,7 @@ export class ArchiveService {
         try {
           await emitter.stepProgress("install_workflows", `安装 ${wf.name} → ${wf.group}`)
 
-          const basePath = path.join(os.homedir(), ".octopus", "orgs", org, "resources")
+          const basePath = path.join(os.homedir(), ".octopus", "resources")
           const installDir = path.join(basePath, "installed", "workflows", wf.group, wf.name)
 
           // Create target directory

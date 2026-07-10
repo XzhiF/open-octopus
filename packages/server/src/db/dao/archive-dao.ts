@@ -55,13 +55,13 @@ export class ArchiveDAO extends BaseDAO {
       INSERT OR IGNORE INTO workspace_archive
         (workspace_id, org, name, description, source, execution_count,
          total_cost, total_duration_ms, created_at, archived_at, metadata,
-         extracted_experiences, extracted_skills, analysis_report, file_deleted)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         extracted_experiences, extracted_skills, extracted_workflows, analysis_report, file_deleted)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       row.workspace_id, row.org, row.name, row.description, row.source,
       row.execution_count, row.total_cost, row.total_duration_ms,
       row.created_at, row.archived_at, row.metadata,
-      row.extracted_experiences ?? 0, row.extracted_skills ?? 0,
+      row.extracted_experiences ?? 0, row.extracted_skills ?? 0, row.extracted_workflows ?? 0,
       row.analysis_report, row.file_deleted ?? 0,
     )
   }
@@ -162,12 +162,12 @@ export class ArchiveDAO extends BaseDAO {
 
   // ── Archive V2: Extraction tracking ─────────────────────────────
 
-  updateExtractionStats(workspaceId: string, experiences: number, skills: number): void {
+  updateExtractionStats(workspaceId: string, experiences: number, skills: number, workflows: number = 0): void {
     this.stmt(`
       UPDATE workspace_archive
-      SET extracted_experiences = ?, extracted_skills = ?
+      SET extracted_experiences = ?, extracted_skills = ?, extracted_workflows = ?
       WHERE workspace_id = ?
-    `).run(experiences, skills, workspaceId)
+    `).run(experiences, skills, workflows, workspaceId)
   }
 
   setFileDeleted(workspaceId: string, deleted: number): void {

@@ -702,6 +702,7 @@ CREATE TABLE IF NOT EXISTS workspace_archive (
   metadata TEXT,
   extracted_experiences INTEGER DEFAULT 0,
   extracted_skills INTEGER DEFAULT 0,
+  extracted_workflows INTEGER DEFAULT 0,
   analysis_report TEXT,
   file_deleted INTEGER DEFAULT 0
 );
