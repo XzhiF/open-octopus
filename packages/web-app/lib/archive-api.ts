@@ -32,9 +32,11 @@ export async function getResourceGroups(): Promise<ResourceGroups> {
   })
   if (!res.ok) return { skillGroups: ["archive-extracted"], workflowGroups: ["archive-extracted"] }
   const data = await res.json()
+  // Backward compat: old server returns {groups: [...]}, new returns {skillGroups, workflowGroups}
+  const fallback = data.groups || ["archive-extracted"]
   return {
-    skillGroups: data.skillGroups || ["archive-extracted"],
-    workflowGroups: data.workflowGroups || ["archive-extracted"],
+    skillGroups: data.skillGroups || fallback,
+    workflowGroups: data.workflowGroups || fallback,
   }
 }
 
