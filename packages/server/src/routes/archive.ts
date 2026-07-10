@@ -321,6 +321,7 @@ export function createArchiveRoutes(
         stats: JSON.parse(draft.stats),
         workflows: JSON.parse(draft.workflows || '[]'),
         tokenStats: JSON.parse(draft.token_stats || '{}'),
+        agents: JSON.parse(draft.agents || '[]'),
         created_at: (draft as any).created_at,
         updated_at: (draft as any).updated_at,
       },

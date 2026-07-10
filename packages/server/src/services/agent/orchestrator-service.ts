@@ -876,6 +876,7 @@ ${nodes.map(n => `  - id: ${n.id}
         stats: JSON.stringify(preview.stats),
         workflows: JSON.stringify((preview as any).workflows ?? []),
         token_stats: JSON.stringify((preview as any).tokenStats ?? {}),
+        agents: JSON.stringify((preview as any).agents ?? []),
       })
     } catch (err) {
       console.warn('Failed to save archive draft:', err)

@@ -129,6 +129,7 @@ const PREVIEW_STEP_DEFS = [
   { key: "build_context", label: "构建分析上下文" },
   { key: "discover_skills", label: "扫描 Skill 目录" },
   { key: "discover_workflows", label: "扫描 Workflow 目录" },
+  { key: "discover_agents", label: "扫描 Agent 目录" },
   { key: "analyze_parallel", label: "LLM 并行分析" },
   { key: "assemble", label: "合并分析结果" },
   { key: "save_draft", label: "保存分析草稿" },
@@ -221,6 +222,7 @@ export function ArchivePreviewDialog({
           skills: existingDraft.skills,
           workflows: (existingDraft as any).workflows ?? [],
           tokenStats: (existingDraft as any).tokenStats ?? {},
+          agents: (existingDraft as any).agents ?? [],
         } as any)
         setDraftAge(formatDraftAge(existingDraft.updated_at))
       }
@@ -457,7 +459,7 @@ export function ArchivePreviewDialog({
 
             {/* Tabs */}
             <Tabs value={activeTab} onValueChange={setActiveTab}>
-              <TabsList className="grid w-full grid-cols-7">
+              <TabsList className="grid w-full grid-cols-6">
                 <TabsTrigger value="analysis">分析报告</TabsTrigger>
                 <TabsTrigger value="tokens">Token 统计</TabsTrigger>
                 <TabsTrigger value="experiences">
@@ -466,7 +468,6 @@ export function ArchivePreviewDialog({
                 <TabsTrigger value="skills">Skill ({preview.skills.length})</TabsTrigger>
                 <TabsTrigger value="workflows">工作流 ({((preview as any).workflows ?? []).length})</TabsTrigger>
                 <TabsTrigger value="agents">Agent ({((preview as any).agents ?? []).length})</TabsTrigger>
-                <TabsTrigger value="summary">归档摘要</TabsTrigger>
               </TabsList>
 
               <TabsContent value="analysis" className="space-y-4">
@@ -972,46 +973,6 @@ export function ArchivePreviewDialog({
                     </div>
                   )
                 })()}
-              </TabsContent>
-
-              <TabsContent value="summary">
-                <div className="space-y-4">
-                  <Card>
-                    <CardHeader>
-                      <CardTitle className="text-base">归档操作摘要</CardTitle>
-                    </CardHeader>
-                    <CardContent className="space-y-3">
-                      <div className="flex justify-between">
-                        <span className="text-sm text-muted-foreground">执行记录</span>
-                        <span className="font-medium">{preview.stats.execution_count} 个将被归档</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-sm text-muted-foreground">文件目录</span>
-                        <span className="font-medium">将被删除（释放磁盘空间）</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-sm text-muted-foreground">统计数据</span>
-                        <span className="font-medium">保留用于 Dashboard 分析</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-sm text-muted-foreground">提取经验</span>
-                        <span className="font-medium">{selectedExperiences.length} 个</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-sm text-muted-foreground">安装 Skill</span>
-                        <span className="font-medium">{selectedSkills.length} 个</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-sm text-muted-foreground">安装工作流</span>
-                        <span className="font-medium">{selectedWorkflows.length} 个</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-sm text-muted-foreground">安装 Agent</span>
-                        <span className="font-medium">{selectedAgents.length} 个</span>
-                      </div>
-                    </CardContent>
-                  </Card>
-                </div>
               </TabsContent>
             </Tabs>
           </div>
