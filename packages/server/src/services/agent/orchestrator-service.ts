@@ -621,8 +621,9 @@ ${nodes.map(n => `  - id: ${n.id}
             }
           } catch {}
 
-          const hash1 = crypto.createHash("md5").update(sourceContent).digest("hex")
-          const hash2 = crypto.createHash("md5").update(existingContent).digest("hex")
+          const normalize = (s: string) => s.replace(/\r\n/g, "\n").replace(/\r/g, "\n").trimEnd()
+          const hash1 = crypto.createHash("md5").update(normalize(sourceContent)).digest("hex")
+          const hash2 = crypto.createHash("md5").update(normalize(existingContent)).digest("hex")
 
           if (hash1 === hash2) {
             await emitter.log(`  ⊘ ${skill.name} — 内容相同，跳过`)
@@ -696,8 +697,9 @@ ${nodes.map(n => `  - id: ${n.id}
             if (yamlFile) existingContent = fs.readFileSync(`${existing.installPath}/${yamlFile}`, "utf-8")
           } catch {}
 
-          const hash1 = crypto.createHash("md5").update(wf.content).digest("hex")
-          const hash2 = crypto.createHash("md5").update(existingContent).digest("hex")
+          const normalizeWS = (s: string) => s.replace(/\r\n/g, "\n").replace(/\r/g, "\n").trimEnd()
+          const hash1 = crypto.createHash("md5").update(normalizeWS(wf.content)).digest("hex")
+          const hash2 = crypto.createHash("md5").update(normalizeWS(existingContent)).digest("hex")
 
           if (hash1 === hash2) {
             await emitter.log(`  ⊘ ${wf.name} — 内容相同，跳过`)
