@@ -462,6 +462,7 @@ export interface WorkspaceArchiveRow {
   extracted_experiences: number
   extracted_skills: number
   extracted_workflows: number
+  extracted_agents: number
   analysis_report: string | null
   file_deleted: number
 }
