@@ -194,14 +194,28 @@ function buildFailedNodes(executionId: string, db: Database.Database): FailedNod
 }
 
 function getExecutionCost(executionId: string, db: Database.Database): number {
-  const row = db
+  // Primary: node_token_usages (covers all executor types including swarm)
+  const ntuRow = db
+    .prepare(
+      `SELECT COALESCE(SUM(cost_usd), 0) as cost
+       FROM node_token_usages
+       WHERE node_execution_id IN (
+         SELECT id FROM node_executions WHERE execution_id = ?
+       )`,
+    )
+    .get(executionId) as { cost: number }
+  const ntuCost = Number(ntuRow.cost) || 0
+  if (ntuCost > 0) return ntuCost
+
+  // Fallback: llm_calls (legacy path)
+  const lcRow = db
     .prepare(
       `SELECT COALESCE(SUM(cost_usd), 0) as cost
        FROM llm_calls
        WHERE execution_id = ?`,
     )
     .get(executionId) as { cost: number }
-  return Number(row.cost) || 0
+  return Number(lcRow.cost) || 0
 }
 
 function sampleExecutions(executions: ExecutionRow[], db: Database.Database): ExecutionRow[] {
@@ -390,12 +404,14 @@ function buildCostProfile(
   workspaceId: string,
   db: Database.Database,
 ): CostProfile {
-  // Join through executions since llm_calls.workspace_id may be NULL
+  // Use node_token_usages (covers all executor types including swarm)
+  // Path: node_token_usages → node_executions → executions
   const totalRow = db
     .prepare(
-      `SELECT COALESCE(SUM(lc.cost_usd), 0) as total
-       FROM llm_calls lc
-       JOIN executions e ON lc.execution_id = e.id
+      `SELECT COALESCE(SUM(ntu.cost_usd), 0) as total
+       FROM node_token_usages ntu
+       JOIN node_executions ne ON ntu.node_execution_id = ne.id
+       JOIN executions e ON ne.execution_id = e.id
        WHERE e.workspace_id = ?`,
     )
     .get(workspaceId) as { total: number }
@@ -405,8 +421,9 @@ function buildCostProfile(
   const dateRangeRow = db
     .prepare(
       `SELECT MIN(e.started_at) as min_ts, MAX(e.started_at) as max_ts
-       FROM llm_calls lc
-       JOIN executions e ON lc.execution_id = e.id
+       FROM node_token_usages ntu
+       JOIN node_executions ne ON ntu.node_execution_id = ne.id
+       JOIN executions e ON ne.execution_id = e.id
        WHERE e.workspace_id = ?`,
     )
     .get(workspaceId) as { min_ts: string | null; max_ts: string | null }
@@ -427,9 +444,10 @@ function buildCostProfile(
   // Cost trend from daily costs (group by execution date)
   const dailyRows = db
     .prepare(
-      `SELECT DATE(e.started_at) as day, SUM(lc.cost_usd) as cost
-       FROM llm_calls lc
-       JOIN executions e ON lc.execution_id = e.id
+      `SELECT DATE(e.started_at) as day, SUM(ntu.cost_usd) as cost
+       FROM node_token_usages ntu
+       JOIN node_executions ne ON ntu.node_execution_id = ne.id
+       JOIN executions e ON ne.execution_id = e.id
        WHERE e.workspace_id = ?
        GROUP BY day
        ORDER BY day ASC`,
@@ -457,14 +475,15 @@ function buildCostProfile(
   // Model breakdown
   const modelRows = db
     .prepare(
-      `SELECT lc.model,
+      `SELECT ntu.model,
               COUNT(*) as calls,
-              SUM(lc.input_tokens + lc.output_tokens) as tokens,
-              COALESCE(SUM(lc.cost_usd), 0) as cost
-       FROM llm_calls lc
-       JOIN executions e ON lc.execution_id = e.id
+              SUM(ntu.input_tokens + ntu.output_tokens) as tokens,
+              COALESCE(SUM(ntu.cost_usd), 0) as cost
+       FROM node_token_usages ntu
+       JOIN node_executions ne ON ntu.node_execution_id = ne.id
+       JOIN executions e ON ne.execution_id = e.id
        WHERE e.workspace_id = ?
-       GROUP BY lc.model
+       GROUP BY ntu.model
        ORDER BY cost DESC`,
     )
     .all(workspaceId) as Array<{ model: string; calls: number; tokens: number; cost: number }>
