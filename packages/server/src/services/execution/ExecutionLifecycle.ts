@@ -105,7 +105,7 @@ export class ExecutionLifecycle {
 
     const stateDir = join(this.workspacePath, "state")
     if (!existsSync(stateDir)) mkdirSync(stateDir, { recursive: true })
-    const snapshotName = `${id}-${exec.workflow_ref}`
+    const snapshotName = `${id}-${exec.workflow_ref.replace(/[\/\\]/g, "__")}`
     writeFileSync(join(stateDir, snapshotName), wf.content, "utf-8")
 
     this.ensureNodeExecutions(id, wf.parsed)
