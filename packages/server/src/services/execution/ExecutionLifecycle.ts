@@ -12,7 +12,7 @@ import type { HookDef, NodeDef, WorkflowDef, WorkflowHooks, PipelineConfig, Exec
 import type { EngineCallbacks } from "@octopus/engine"
 import { WorkflowEngine, BashExecutor, AgentExecutor, AgentNodeRunner, FilesystemCheckpointStore } from "@octopus/engine"
 import { getProvider } from "@octopus/providers"
-import { parseWorkflow, VarPool, evaluateExpression, parsePipelineConfig, CrossExecResolver, collectNodeEngines } from "@octopus/shared"
+import { parseWorkflow, VarPool, evaluateExpression, parsePipelineConfig, CrossExecResolver, collectNodeEngines, WorkflowRef } from "@octopus/shared"
 import { gitOps } from "../git-ops"
 import { ObservabilityService as ObsSvc } from "../observability"
 import { PrivacyFilter } from "../privacy-filter"
@@ -105,7 +105,7 @@ export class ExecutionLifecycle {
 
     const stateDir = join(this.workspacePath, "state")
     if (!existsSync(stateDir)) mkdirSync(stateDir, { recursive: true })
-    const snapshotName = `${id}-${exec.workflow_ref.replace(/[\/\\]/g, "__")}`
+    const snapshotName = `${id}-${WorkflowRef.sanitize(exec.workflow_ref)}`
     writeFileSync(join(stateDir, snapshotName), wf.content, "utf-8")
 
     this.ensureNodeExecutions(id, wf.parsed)
@@ -1317,7 +1317,7 @@ export class ExecutionLifecycle {
     const exec = this.dao.findById(executionId)
     if (!exec) return null
 
-    const snapshotPath = join(this.workspacePath, "state", `${executionId}-${exec.workflow_ref}`)
+    const snapshotPath = join(this.workspacePath, "state", `${executionId}-${WorkflowRef.sanitize(exec.workflow_ref)}`)
     if (existsSync(snapshotPath)) return readFileSync(snapshotPath, "utf-8")
 
     const local = this.workflowService.get(this.workspacePath, exec.workflow_ref)
@@ -1425,7 +1425,7 @@ export class ExecutionLifecycle {
   // ==================== Engine reconstruction ====================
 
   private reconstructEngine(exec: ExecutionRow): { engine: WorkflowEngine; abortController: AbortController } {
-    const snapshotPath = join(this.workspacePath, "state", `${exec.id}-${exec.workflow_ref}`)
+    const snapshotPath = join(this.workspacePath, "state", `${exec.id}-${WorkflowRef.sanitize(exec.workflow_ref)}`)
     let wf: { ref: string; content: string; parsed: any } | undefined
     if (existsSync(snapshotPath)) {
       const content = readFileSync(snapshotPath, "utf-8")

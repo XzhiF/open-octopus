@@ -2,7 +2,7 @@
 import type { ExecutionDAO } from "../../db/dao/execution-dao"
 import type { ExecutionLifecycle } from "./ExecutionLifecycle"
 import type { HookDef, NodeDef } from "@octopus/shared"
-import { parseWorkflow, VarPool } from "@octopus/shared"
+import { parseWorkflow, VarPool, WorkflowRef } from "@octopus/shared"
 import { BashExecutor, AgentExecutor, AgentNodeRunner } from "@octopus/engine"
 import { getProvider } from "@octopus/providers"
 import { join } from "path"
@@ -152,7 +152,7 @@ export class RecoveryManager {
         const workspacePath = wsPath.replace(/^~/, process.env.HOME || process.env.USERPROFILE || "~")
 
         const stateDir = join(workspacePath, "state")
-        const snapshotPath = join(stateDir, `${exec.id}-${exec.workflow_ref}`)
+        const snapshotPath = join(stateDir, `${exec.id}-${WorkflowRef.sanitize(exec.workflow_ref)}`)
         let parsed: any = null
 
         if (existsSync(snapshotPath)) {
@@ -163,7 +163,7 @@ export class RecoveryManager {
         }
 
         if (!parsed) {
-          const wfPath = join(workspacePath, "workflows", exec.workflow_ref)
+          const wfPath = WorkflowRef.toPath(join(workspacePath, "workflows"), exec.workflow_ref)
           if (existsSync(wfPath)) {
             try {
               const content = readFileSync(wfPath, "utf-8")

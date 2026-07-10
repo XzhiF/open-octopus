@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { WorkflowRef } from '../resource/workflow-ref'
 
 export type JobType = 'workflow' | 'agent'
 export type ParallelPolicy = 'allow' | 'wait' | 'skip'
@@ -28,7 +29,7 @@ export const workspaceSpecSchema = z.object({
 })
 
 export const workflowChainItemSchema = z.object({
-  workflow_ref: z.string().min(1).regex(/^[a-zA-Z0-9_\-./]+\.ya?ml$/),
+  workflow_ref: WorkflowRef.zodSchema(),
   input_values: z.record(z.string(), z.string()).default({}),
 })
 
@@ -46,7 +47,7 @@ export const agentRetryPolicySchema = z.object({
 export const workflowConfigSchemaV1 = z.object({
   schema_version: z.literal('1.0'),
   type: z.literal('workflow'),
-  workflow_ref: z.string().min(1).regex(/^[a-zA-Z0-9_\-./]+\.ya?ml$/),
+  workflow_ref: WorkflowRef.zodSchema(),
   input_values: z.record(z.string(), z.string()).optional(),
 })
 

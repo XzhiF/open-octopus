@@ -1,6 +1,6 @@
 import fs from "fs"
 import path from "path"
-import { parseWorkflow, isOctopusWorkflow } from "@octopus/shared"
+import { parseWorkflow, isOctopusWorkflow, WorkflowRef } from "@octopus/shared"
 import type { ResourceManager } from "@octopus/shared"
 import type { WorkflowInfo, WorkflowDetail } from "../types/workflow-api"
 
@@ -46,9 +46,7 @@ export class BuiltInWorkflowService {
 
   get(ref: string): WorkflowDetail | null {
     // ref format: "group/name" or "name"
-    const parts = ref.split("/")
-    const name = parts.length > 1 ? parts[1] : parts[0]
-    const group = parts.length > 1 ? parts[0] : undefined
+    const { name, group } = WorkflowRef.parse(ref)
 
     const entry = this.resourceManager.get("workflow", name)
     if (!entry || !entry.installed || !entry.installPath) {

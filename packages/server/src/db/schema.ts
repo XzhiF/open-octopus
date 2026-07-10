@@ -98,6 +98,8 @@ function ensureColumnsForExistingTables(db: Database.Database): void {
   ensureColumn(db, 'workspace_archive', 'metadata', "TEXT")
   ensureColumn(db, 'workspace_archive', 'extracted_experiences', "INTEGER DEFAULT 0")
   ensureColumn(db, 'workspace_archive', 'extracted_skills', "INTEGER DEFAULT 0")
+  ensureColumn(db, 'workspace_archive', 'extracted_workflows', "INTEGER DEFAULT 0")
+  ensureColumn(db, 'workspace_archive', 'extracted_agents', "INTEGER DEFAULT 0")
   ensureColumn(db, 'workspace_archive', 'analysis_report', "TEXT")
   ensureColumn(db, 'workspace_archive', 'file_deleted', "INTEGER DEFAULT 0")
 }

@@ -3,6 +3,7 @@ import { randomUUID } from "crypto"
 import { parseExpression } from "cron-parser"
 import cronstrue from "cronstrue"
 import { z } from "zod"
+import { WorkflowRef } from "@octopus/shared"
 import { SSEService } from "./sse"
 import { getExecutionService } from "./execution-service-registry"
 import { ScheduleConfigDAO, ScheduleRunDAO, ExecutionDAO } from "../db/dao"
@@ -20,15 +21,7 @@ export class ScheduleConflictError extends Error {
 
 const createScheduleSchema = z.object({
   name: z.string().min(1).max(64),
-  workflow_ref: z.string().min(1).max(255).refine(
-    (val) => {
-      // Reject path traversal patterns
-      if (val.includes('..') || val.startsWith('/') || val.includes('\\')) return false
-      // Only allow alphanumeric, hyphens, underscores, dots, and forward slashes (for paths)
-      return /^[a-zA-Z0-9_\-./]+\.ya?ml$/.test(val)
-    },
-    { message: "无效的工作流引用格式" },
-  ),
+  workflow_ref: WorkflowRef.zodSchema(),
   cron_expression: z.string().min(1).refine(
     (val) => { try { parseExpression(val); return true } catch { return false } },
     { message: "无效的 Cron 表达式" },
