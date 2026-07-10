@@ -550,8 +550,8 @@ export class ArchiveService {
     emitter: StepEmitter,
   ): Promise<number> {
     try {
-      const { getResourceManager } = await import("../resource-manager")
-      const resourceManager = getResourceManager(org)
+      const { getResourceRegistry } = await import("../resource-registry")
+      const resourceManager = getResourceRegistry().getOrCreate(org)
       const fs = await import("fs")
       const path = await import("path")
       const os = await import("os")
@@ -609,8 +609,8 @@ export class ArchiveService {
     emitter: StepEmitter,
   ): Promise<number> {
     try {
-      const { getResourceManager } = await import("../resource-manager")
-      const resourceManager = getResourceManager(org)
+      const { getResourceRegistry } = await import("../resource-registry")
+      const resourceManager = getResourceRegistry().getOrCreate(org)
       const fs = await import("fs")
       const path = await import("path")
       const os = await import("os")

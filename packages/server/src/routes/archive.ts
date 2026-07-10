@@ -267,25 +267,25 @@ export function createArchiveRoutes(
     }
   })
 
-  // GET /api/archive/skill-groups — list available resource groups (skills + workflows + agents)
+  // GET /api/archive/skill-groups — list available resource groups (separated by type)
   routes.get("/skill-groups", (c) => {
     const base = path.join(os.homedir(), ".octopus", "resources", "installed")
-    const groupSet = new Set<string>()
-    for (const subdir of ["skills", "workflows", "agents"]) {
+    const readGroups = (subdir: string): string[] => {
       const dir = path.join(base, subdir)
       try {
         if (fs.existsSync(dir)) {
-          fs.readdirSync(dir).filter((f: string) => {
+          return fs.readdirSync(dir).filter((f: string) => {
             try { return fs.statSync(path.join(dir, f)).isDirectory() } catch { return false }
-          }).forEach((g: string) => groupSet.add(g))
+          })
         }
       } catch {}
+      return []
     }
-    const groups = Array.from(groupSet).sort()
-    if (!groups.includes("archive-extracted")) {
-      groups.push("archive-extracted")
-    }
-    return c.json({ groups })
+    const skillGroups = readGroups("skills").sort()
+    const workflowGroups = readGroups("workflows").sort()
+    if (!skillGroups.includes("archive-extracted")) skillGroups.push("archive-extracted")
+    if (!workflowGroups.includes("archive-extracted")) workflowGroups.push("archive-extracted")
+    return c.json({ skillGroups, workflowGroups })
   })
 
   // ── Draft routes ──────────────────────────────────────────

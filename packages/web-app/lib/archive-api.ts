@@ -21,14 +21,27 @@ export interface SkillInstallOption {
   content?: string
 }
 
-export async function getSkillGroups(org?: string): Promise<string[]> {
-  const params = org ? `?org=${encodeURIComponent(org)}` : ""
-  const res = await apiFetch(`${getServerUrl()}/api/archive/skill-groups${params}`, {
+export interface ResourceGroups {
+  skillGroups: string[]
+  workflowGroups: string[]
+}
+
+export async function getResourceGroups(): Promise<ResourceGroups> {
+  const res = await apiFetch(`${getServerUrl()}/api/archive/skill-groups`, {
     credentials: "include",
   })
-  if (!res.ok) return ["archive-extracted"]
+  if (!res.ok) return { skillGroups: ["archive-extracted"], workflowGroups: ["archive-extracted"] }
   const data = await res.json()
-  return data.groups || ["archive-extracted"]
+  return {
+    skillGroups: data.skillGroups || ["archive-extracted"],
+    workflowGroups: data.workflowGroups || ["archive-extracted"],
+  }
+}
+
+/** @deprecated Use getResourceGroups() instead */
+export async function getSkillGroups(org?: string): Promise<string[]> {
+  const groups = await getResourceGroups()
+  return groups.skillGroups
 }
 
 export interface WorkspaceStats {

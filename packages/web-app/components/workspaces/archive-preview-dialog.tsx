@@ -15,8 +15,8 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Loader2, TrendingUp, DollarSign, AlertCircle, Lightbulb, Package, FileText, ChevronDown, ChevronUp } from "lucide-react"
-import { previewArchive, getArchiveDraft, deleteArchiveDraft, getSkillGroups, previewArchiveSSE } from "@/lib/archive-api"
-import type { StepEvent } from "@/lib/archive-api"
+import { previewArchive, getArchiveDraft, deleteArchiveDraft, getResourceGroups, previewArchiveSSE } from "@/lib/archive-api"
+import type { StepEvent, ResourceGroups } from "@/lib/archive-api"
 import { ArchiveProgress } from "./archive-progress"
 import { toast } from "sonner"
 import type { Workspace } from "@/lib/types"
@@ -74,7 +74,7 @@ export function ArchivePreviewDialog({
   const [draftAge, setDraftAge] = useState<string | null>(null)
   const [skillGroups, setSkillGroups] = useState<Record<string, string>>({})
   const [workflowGroups, setWorkflowGroups] = useState<Record<string, string>>({})
-  const [availableGroups, setAvailableGroups] = useState<string[]>(["archive-extracted"])
+  const [resourceGroups, setResourceGroups] = useState<ResourceGroups>({ skillGroups: ["archive-extracted"], workflowGroups: ["archive-extracted"] })
   const [expandedSkills, setExpandedSkills] = useState<Set<string>>(new Set())
   const previewDriverRef = useRef<{
     onStep: ((e: StepEvent) => void) | null
@@ -92,7 +92,7 @@ export function ArchivePreviewDialog({
 
   useEffect(() => {
     if (open && workspace) {
-      getSkillGroups((workspace as any).org).then(setAvailableGroups)
+      getResourceGroups().then(setResourceGroups)
     }
   }, [open, workspace])
 
@@ -849,10 +849,10 @@ export function ArchivePreviewDialog({
 
         {/* Datalists for group comboboxes */}
         <datalist id="skill-group-options">
-          {availableGroups.map((g) => <option key={g} value={g} />)}
+          {resourceGroups.skillGroups.map((g) => <option key={g} value={g} />)}
         </datalist>
         <datalist id="workflow-group-options">
-          {availableGroups.map((g) => <option key={g} value={g} />)}
+          {resourceGroups.workflowGroups.map((g) => <option key={g} value={g} />)}
         </datalist>
 
         {!archiving && preview && (

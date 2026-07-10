@@ -595,29 +595,33 @@ ${nodes.map(n => `  - id: ${n.id}
     // Compare against ResourceManager installed skills
     let autoDiscoveredSkills: Array<Record<string, unknown>> = []
     try {
-      const { getResourceManager } = await import('../resource-manager')
-      const resourceManager = getResourceManager(this.org)
+      const { getResourceRegistry } = await import('../resource-registry')
+      const resourceManager = getResourceRegistry().getOrCreate(this.org)
       const installed = resourceManager.list({ type: "skill", installed: true })
       const installedMap = new Map<string, { group: string; installPath: string }>()
       for (const entry of installed.resources ?? []) {
         if (entry.installPath) installedMap.set(entry.name, { group: entry.group, installPath: entry.installPath })
       }
 
-      const fs = await import("fs")
+      const fsMod = await import("fs")
       const crypto = await import("crypto")
 
       for (const skill of rawDiscoveredSkills) {
         const existing = installedMap.get(skill.name)
         if (existing) {
-          // Compare content
+          // Compare content — read FULL source file (not truncated)
+          let sourceContent = ""
+          try { sourceContent = fsMod.readFileSync(skill.path, "utf-8") } catch {}
+
           let existingContent = ""
           try {
-            const files = fs.readdirSync(existing.installPath)
-            const mainFile = files.find((f: string) => f.endsWith(".md") || f.endsWith(".yaml") || f.endsWith(".yml"))
-            if (mainFile) existingContent = fs.readFileSync(`${existing.installPath}/${mainFile}`, "utf-8")
+            const mainFile = path.join(existing.installPath, "SKILL.md")
+            if (fsMod.existsSync(mainFile)) {
+              existingContent = fsMod.readFileSync(mainFile, "utf-8")
+            }
           } catch {}
 
-          const hash1 = crypto.createHash("md5").update(skill.content).digest("hex")
+          const hash1 = crypto.createHash("md5").update(sourceContent).digest("hex")
           const hash2 = crypto.createHash("md5").update(existingContent).digest("hex")
 
           if (hash1 === hash2) {
@@ -671,8 +675,8 @@ ${nodes.map(n => `  - id: ${n.id}
     // Compare against ResourceManager installed workflows
     let autoDiscoveredWorkflows: Array<Record<string, unknown>> = []
     try {
-      const { getResourceManager } = await import('../resource-manager')
-      const resourceManager = getResourceManager(this.org)
+      const { getResourceRegistry } = await import('../resource-registry')
+      const resourceManager = getResourceRegistry().getOrCreate(this.org)
       const installed = resourceManager.list({ type: "workflow", installed: true })
       const installedMap = new Map<string, { group: string; installPath: string }>()
       for (const entry of installed.resources ?? []) {
