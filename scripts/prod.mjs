@@ -452,7 +452,7 @@ async function main() {
   const prodWebAppDir = path.join(PROD_DIR, "packages", "web-app")
   const nextBin = path.join(prodWebAppDir, "node_modules", "next", "dist", "bin", "next")
   const webEnv = {
-    SERVER_URL: `http://localhost:${SERVER_PORT}`,
+    SERVER_URL: `http://${localIP}:${SERVER_PORT}`,
   }
   startProcess(
     process.execPath,
