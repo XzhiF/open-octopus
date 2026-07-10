@@ -486,7 +486,15 @@ if (shouldServe) {
     }
 
     server.listen(port, "0.0.0.0", () => {
-      console.log(`Octopus Server running on http://0.0.0.0:${port} (PID: ${process.pid})`)
+      const localIP = (() => {
+        for (const ifaces of Object.values(os.networkInterfaces())) {
+          for (const iface of ifaces || []) {
+            if (iface.family === "IPv4" && !iface.internal) return iface.address
+          }
+        }
+        return "localhost"
+      })()
+      console.log(`Octopus Server running on http://0.0.0.0:${port} (LAN: http://${localIP}:${port}) (PID: ${process.pid})`)
       console.log(`WebSocket ready on ws://0.0.0.0:${port}`)
       console.log(`Log file: ${getLogFilePath()}`)
       logInfo(`Server started`, {
