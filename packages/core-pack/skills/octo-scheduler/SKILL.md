@@ -109,7 +109,7 @@ curl -s -X POST "http://localhost:$PORT/api/scheduler/jobs" \
       "schema_version": "1.0",
       "type": "agent",
       "prompt": "检查最近 24 小时的 git 提交，汇总代码质量问题",
-      "model": "claude-sonnet-4-6",
+      "model": "pro",
       "timeout_seconds": 300,
       "retry_policy": {
         "max_attempts": 2,

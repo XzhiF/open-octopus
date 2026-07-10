@@ -5,6 +5,8 @@
 # Archon runtime artifacts — NEVER commit
 .archon/state/
 .archon/.env
+# gstack QA tool artifacts — NEVER commit
+.gstack/
 
 # docs
 docs/superpowers/

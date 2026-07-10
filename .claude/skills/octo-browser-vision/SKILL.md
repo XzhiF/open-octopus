@@ -35,7 +35,7 @@ agents:
     prompt: |
       你是视觉分析专家。分析图片并返回纯文本结果。
       规则：只返回文本，不要返回图片数据或 base64 编码。
-    model: sonnet          # 使用支持视觉的模型
+    model: pro          # 使用支持视觉的模型
     tools: ["Bash", "Read"]
 
 # 在 prompt 中指示父代理委派
@@ -52,7 +52,7 @@ prompt: |
   │
   ├── 委派 vision-analyzer 子代理
   │     │
-  │     └── 子代理 (sonnet, 独立 session)
+  │     └── 子代理 (pro, 独立 session)
   │           ├── 读取图片
   │           ├── 分析图片（图片在子代理 session 里）
   │           └── 返回文本结果 → 流回父代理
@@ -273,7 +273,7 @@ agents:
     prompt: |
       你是视觉分析专家。分析图片并返回纯文本结果。
       规则：只返回文本，不要返回图片数据或 base64 编码。
-    model: sonnet
+    model: pro
     tools: ["Bash", "Read"]
 ```
 

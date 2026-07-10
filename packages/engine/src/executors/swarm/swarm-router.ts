@@ -98,7 +98,7 @@ Respond in JSON:
 }`
 
     try {
-      const response = await config.llmCall(prompt, "haiku")
+      const response = await config.llmCall(prompt, "se")
       const jsonMatch = response.match(/\{[\s\S]*\}/)
       if (!jsonMatch) throw new Error("No JSON in router response")
 

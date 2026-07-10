@@ -6,7 +6,7 @@
 
 > ⚠️ **开发阶段**：Octopus 目前仍处于积极开发中，许多功能正在完善和通用化。API 和工作流格式可能会变化。欢迎试用和反馈，但暂不建议用于生产环境。
 
-> 💬 这是一个相貌平平、资质一般的老程序员，认认真真做的第一个开源项目。整个项目诞生于 vibe coding —— 从工作中遇到的一个个痛点出发，借助 AI 编程想办法解决，然后借鉴前辈的思路，按自己的理解一步步搭建出来。设计不够精巧，核心功能都是真实场景里逼出来的。希望能帮到同样在这条路上摸索的朋友。
+> 💬 整个项目诞生于 vibe coding —— 从工作中遇到的一个个痛点出发，借助 AI 编程想办法解决，然后借鉴前辈的思路，按自己的理解一步步搭建出来。设计不够精巧，核心功能都是真实场景里逼出来的。希望能帮到同样在这条路上摸索的朋友。
 
 ## 简介
 
@@ -134,8 +134,7 @@ pnpm dev
 3. **执行工作流** — 点击 "运行"，实时查看节点执行状态、专家讨论、日志输出
 4. **查看结果** — 执行完成后查看 synthesis 输出、共识分数、执行树
 <p align="center">
-  <img src="docs/imgs/workflow2.png" alt="Workflow 执行界面" width="49%" />
-  <img src="docs/imgs/swarm2.png" alt="Swarm 多智能体协作" width="49%" />
+<img src="docs/imgs/workflow.jpg" alt="Workflow 执行界面" width="30%" /><img src="docs/imgs/swarm.jpg" alt="Swarm 多智能体协作" width="30%" /><img src="docs/imgs/archive.jpg" alt="Archive 归档" width="30%" />
 </p>
 
 ---
@@ -312,6 +311,10 @@ Orchestrator Agent
 
 Memory
   └→ Workspace 归档，工作流执行知识注入，Orchestrator Agent 自动 SKILL 提升
+
+Resource
+  └→ 统一管理 SKILL / Agent / Workflow 的安装、版本与依赖；
+     运行工作流时智能绑定所需资源，按需加载、自动解析
 ```
 
 **… 规划 ↓**
@@ -333,6 +336,25 @@ Workflow Observability
      节点自定义评分（如 E2E 轮次发现/解决 BUG 数、节点质量评分），
      评分数据沉淀为知识，反哺工作流设计、Prompt 优化与输入点评；
      后续可接入 Hooks（如 Ponytail 等插件）实现运行时干预与纠偏
+
+Agent Router
+  └→ Orchestrator Agent 全面接管调度层（Workflow Engine 除外）：
+     可观测性补全（分身行为追踪、调度链路日志）；
+     分身编排调度优化——任务分发、负载均衡、失败重试、
+     分身能力画像动态更新
+
+Verifiable Framework
+  └→ 可验证框架：定义可度量的交付标准，精确到 Workflow 节点级；
+     基于 Workflow Observability，由"包工头"调度 + "质检员"校验，
+     双角色监督闭环——标准定义 → 执行验证 → 偏差修正 → 交付确认；
+     验证结果沉淀为知识，反哺标准迭代与流程优化
+
+Workspace Chat Dev
+  └→ Workspace 内嵌 Chat Agent，对话式驱动工作流执行：
+     用户通过对话触发工作流 → 等待执行 → Agent 反馈结果 →
+     进入下一轮人机交互；适用于需求澄清、设计确认等前期阶段，
+     可调用专家团工作流（如 MoA 辅助决策、Spec 撰写）；
+     底层能力已具备，重点优化交互流畅度与上下文衔接
 ```
 
 **… 未来考虑 ↓**

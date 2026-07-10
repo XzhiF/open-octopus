@@ -6,6 +6,7 @@ import { parseManifest } from "@octopus/shared"
 import { readFileSync, existsSync, readdirSync } from "fs"
 import { join } from "path"
 import os from "os"
+import { getArchiveService, ArchivePartialFailure } from "../services/archive/archive-service"
 
 export function createWorkspaceRoutes(workspaceService: WorkspaceService, orgDAO: OrgDAO, workspaceDAO: WorkspaceDAO): Hono {
   const workspaceRoutes = new Hono()
@@ -125,6 +126,34 @@ export function createWorkspaceRoutes(workspaceService: WorkspaceService, orgDAO
     }
   })
 
+  // ── P1.5: Archive ops endpoints ──────────────────────────────────
+
+  workspaceRoutes.get("/archive/status", (c) => {
+    const stuck = workspaceDAO.listByArchiveStatus("archiving")
+    return c.json({ data: stuck })
+  })
+
+  workspaceRoutes.post("/:id/archive/retry", async (c) => {
+    const id = c.req.param("id")
+    const ws = workspaceDAO.findById(id)
+    if (!ws) return c.json({ error: { code: "NOT_FOUND", message: "Workspace not found" } }, 404)
+    if (ws.archive_status !== "archiving" && ws.archive_status !== "archive_failed") {
+      return c.json({ error: { code: "INVALID_STATE", message: `Workspace not in retryable state (current: ${ws.archive_status})` } }, 409)
+    }
+    try {
+      const archiveSvc = getArchiveService()
+      if (!archiveSvc) return c.json({ error: { code: "SUBSYSTEM_UNAVAILABLE", message: "Archive service not available" } }, 503)
+      await archiveSvc.archiveWorkspace(id, workspaceDAO)
+      workspaceDAO.cascadeDeleteByWorkspace(id)
+      return c.json({ ok: true })
+    } catch (err) {
+      if (err instanceof ArchivePartialFailure) {
+        return c.json({ error: { code: "ARCHIVE_PARTIAL_FAILURE", message: "Some executions failed to archive", failureCount: err.failures.length } }, 409)
+      }
+      return c.json({ error: { code: "ARCHIVE_FAILED", message: "Archive operation failed" } }, 500)
+    }
+  })
+
   workspaceRoutes.get("/:id", (c) => {
     const id = c.req.param("id")
     const workspace = workspaceService.getById(id)
@@ -142,8 +171,17 @@ export function createWorkspaceRoutes(workspaceService: WorkspaceService, orgDAO
 
   workspaceRoutes.delete("/:id", async (c) => {
     const id = c.req.param("id")
-    await workspaceService.delete(id)
-    return c.json({ ok: true })
+    try {
+      await workspaceService.delete(id)
+      return c.json({ ok: true })
+    } catch (err) {
+      if (err instanceof ArchivePartialFailure) {
+        return c.json({
+          error: { code: "ARCHIVE_PARTIAL_FAILURE", message: `${err.failures.length} executions failed to archive`, details: err.failures },
+        }, 409)
+      }
+      throw err
+    }
   })
 
   return workspaceRoutes

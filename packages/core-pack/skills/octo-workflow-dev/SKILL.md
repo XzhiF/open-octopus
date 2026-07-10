@@ -130,12 +130,12 @@ kind: Workflow
 ```yaml
 - id: design
   type: agent
-  model: opus[1m]
+  model: pro-max[1m]
   agents:
     devil-advocate:
       description: "魔鬼代言人 — 审查方案完整性。默认立场 INCOMPLETE。"
       agent_file: ".claude/agents/devil-advocate.md"     # ⭐ 引用外部角色
-      model: opus[1m]
+      model: pro-max[1m]
       tools: ["Read", "Grep", "Write"]
       prompt: |
         审查 $vars.solution_file，使用 Write 工具直接写入
@@ -144,7 +144,7 @@ kind: Workflow
     feasibility-reviewer:
       description: "可行性审查者 — 审查技术可行性。"
       agent_file: ".claude/agents/engineering-software-architect.md"
-      model: opus[1m]
+      model: pro-max[1m]
       tools: ["Read", "Grep", "Write"]
       prompt: |
         审查 $vars.solution_file 的工作量与单点故障，使用 Write 写入
@@ -571,7 +571,7 @@ nodes:
     vision-analyzer:
       description: "分析截图。需要看图时必须委派此子代理。"
       agent_file: ".claude/agents/vision-analyzer.md"
-      model: sonnet
+      model: pro
       tools: ["Bash", "Read"]
   prompt: |
     执行 E2E 测试。需要分析截图时委派 vision-analyzer，**只取它返回的文本结论**。
@@ -610,7 +610,7 @@ node .claude/skills/octo-workflow-dev/scripts/validate-workflow.bundle.js ./work
 
 ```bash
 octopus workflow run ./deploy.yaml --org {org}
-octopus workflow run ./deploy.yaml --org {org} --model claude-opus-4-7 --engine claude
+octopus workflow run ./deploy.yaml --org {org} --model pro-max --engine claude
 ```
 
 ---

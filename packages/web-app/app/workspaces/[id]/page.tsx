@@ -16,7 +16,6 @@ import {
   getWorkspace,
   listExecutions,
   fetchWorkflows,
-  fetchBuiltInWorkflows,
   createFileEntry,
   saveFileEntry,
   deleteFileEntry,
@@ -198,7 +197,6 @@ export default function WorkspaceDetailPage({ params }: WorkspaceDetailPageProps
   const [workspace, setWorkspace] = useState<Awaited<ReturnType<typeof getWorkspace>>>(undefined)
   const [executions, setExecutions] = useState<Execution[]>([])
   const [workflows, setWorkflows] = useState<Awaited<ReturnType<typeof fetchWorkflows>>>([])
-  const [builtInWorkflows, setBuiltInWorkflows] = useState<{ ref: string; name: string; inputs?: Record<string, { description: string; required: boolean; default: string }> }[]>([])
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
   const hasLoaded = useRef(false)
@@ -221,12 +219,9 @@ export default function WorkspaceDetailPage({ params }: WorkspaceDetailPageProps
         listExecutions(id),
         fetchWorkflows(id),
       ])
-      // Fetch built-in workflows with the correct org
-      const builtInData = await fetchBuiltInWorkflows(wsData.org)
       setWorkspace(wsData)
       setExecutions(Array.isArray(execData) ? execData : execData.nodes ?? [])
       setWorkflows(Array.isArray(wfData) ? wfData : wfData.workflows ?? [])
-      setBuiltInWorkflows(Array.isArray(builtInData) ? builtInData : [])
       hasLoaded.current = true
       // Chat sessions are now managed by useChatStream hook
     } catch (err) {
@@ -255,24 +250,15 @@ export default function WorkspaceDetailPage({ params }: WorkspaceDetailPageProps
   const { open: cmdOpen, setOpen: setCmdOpen } = useGlobalCommandPalette()
   const { workflows: cmdWorkflows, executions: cmdExecutions } = useCommandPaletteData(id)
 
-  // Combine local + built-in workflows into WorkflowOption[]
-  const workflowOptions: WorkflowOption[] = [
-    ...workflows.map((w: Record<string, unknown>) => ({
-      value: (w.ref as string) || (w.name as string),
-      label: (w.ref as string) || (w.name as string),
-      name: (w.name as string),
-      group: "local" as const,
-      path: `workflows/${(w.ref as string) || (w.name as string)}`,
-      inputs: w.inputs as Record<string, { description: string; required: boolean; default: string }> | undefined,
-    })),
-    ...builtInWorkflows.map((w) => ({
-      value: w.ref,
-      label: w.ref,
-      name: w.name,
-      group: "built-in" as const,
-      inputs: w.inputs,
-    })),
-  ]
+  // Build WorkflowOption[] from unified API response (includes group field)
+  const workflowOptions: WorkflowOption[] = workflows.map((w: Record<string, unknown>) => ({
+    value: (w.ref as string) || (w.name as string),
+    label: (w.ref as string) || (w.name as string),
+    name: (w.name as string),
+    group: (w.group as string) || "project",
+    path: (w.group as string) === "project" ? `workflows/${(w.ref as string) || (w.name as string)}` : undefined,
+    inputs: w.inputs as Record<string, { description: string; required: boolean; default: string }> | undefined,
+  }))
 
   const { doc: yDoc, connected, synced } = useYDoc(id)
 
@@ -431,7 +417,7 @@ export default function WorkspaceDetailPage({ params }: WorkspaceDetailPageProps
     : null)
 
   const activeWorkflow = activeExecution
-    ? (workflows as any[]).concat(builtInWorkflows).find((w: any) =>
+    ? (workflows as any[]).find((w: any) =>
         w.id === activeExecution.workflowId || w.ref === (activeExecution as any).workflow_ref
       )
     : undefined

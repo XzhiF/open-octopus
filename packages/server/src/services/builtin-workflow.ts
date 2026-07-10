@@ -34,6 +34,7 @@ export class BuiltInWorkflowService {
           ref: `${entry.group}/${entry.name}`,
           name: parsed.name,
           inputs: parsed.inputs,
+          group: entry.group,
         })
       } catch {
         // Parse failure, skip

@@ -12,8 +12,9 @@ import {
   WorkspaceDAO, ExecutionDAO, TokenUsageDAO, ScheduleConfigDAO,
   ScheduleRunDAO, ChatDAO, OrgDAO, AgentSessionDAO, EvolutionDAO,
   CloneDAO, SafetyDAO,
-  PendingReviewDAO, KnowledgeEffectivenessDAO,
+  PendingReviewDAO, KnowledgeEffectivenessDAO, ArchiveDAO,
 } from "./db/dao"
+import { ArchiveDraftDAO } from "./db/dao/archive-draft-dao"
 import { createKnowledgeRoutes } from "./routes/knowledge"
 import { createReviewRoutes } from "./routes/review"
 import { createArchiveRoutes } from "./routes/archive"
@@ -72,6 +73,9 @@ import { SecretMasker } from "./services/actuator/secret-masker"
 import { EventLoopMonitor } from "./services/actuator/event-loop-monitor"
 import { createActuatorRoutes } from "./routes/actuator"
 import { getRecoveryService } from "./services/agent/recovery-service"
+import { initArchiveService } from "./services/archive/archive-service"
+import { ArchiveScheduler } from "./services/archive/archive-scheduler"
+import { getDomainEventBus } from "./services/agent/domain-event-bus"
 
 // Install global error handlers early — catches uncaughtException / unhandledRejection
 if (!process.env.VITEST) {
@@ -93,6 +97,8 @@ interface AllDAOs {
   safety: SafetyDAO
   pendingReview: PendingReviewDAO
   knowledgeEffectiveness: KnowledgeEffectivenessDAO
+  archive: ArchiveDAO
+  archiveDraft: ArchiveDraftDAO
 }
 
 function createAllDAOs(db: ReturnType<typeof initDb>): AllDAOs {
@@ -110,6 +116,8 @@ function createAllDAOs(db: ReturnType<typeof initDb>): AllDAOs {
     safety: new SafetyDAO(db),
     pendingReview: new PendingReviewDAO(db),
     knowledgeEffectiveness: new KnowledgeEffectivenessDAO(db),
+    archive: new ArchiveDAO(db),
+    archiveDraft: new ArchiveDraftDAO(db),
   }
 }
 
@@ -177,6 +185,16 @@ if (!process.env.VITEST && daos) {
   initRecoveryService(daos.agentSession, daos.execution)
   initSessionCompressService(daos.agentSession)
   initAgentService(daos.agentSession, daos.safety)
+
+  // Initialize archive service singleton
+  initArchiveService(daos.archive, daos.execution, db, getDomainEventBus())
+
+  // Initialize archive scheduler — periodic memory archival across all orgs
+  const archiveScheduler = new ArchiveScheduler(
+    () => daos ? daos.org.findAll().map(o => o.name) : [],
+  )
+  const stopArchiveScheduler = archiveScheduler.start()
+  ;(global as any).__octopus_stopArchiveScheduler = stopArchiveScheduler
 
   // Set DAOs for middleware and yjs-ws
   setAgentAuthOrgDAO(daos.org)
@@ -249,6 +267,8 @@ const d = daos ?? {
   safety: lazyDAO(SafetyDAO),
   pendingReview: lazyDAO(PendingReviewDAO),
   knowledgeEffectiveness: lazyDAO(KnowledgeEffectivenessDAO),
+  archive: lazyDAO(ArchiveDAO),
+  archiveDraft: lazyDAO(ArchiveDraftDAO),
 }
 
 const wsSvc = workspaceService ?? new WorkspaceService(d.workspace)
@@ -267,15 +287,16 @@ if (!daos) {
     initAgentService(d.agentSession, d.safety)
     setAgentAuthOrgDAO(d.org)
     setYjsWorkspaceDAO(d.workspace)
+    try { initArchiveService(d.archive, d.execution, getDb(), getDomainEventBus()) } catch { /* db not ready yet */ }
   } catch { /* ignore */ }
 }
 
 app.route("/api/orgs", createOrgRoutes(d.org))
 app.route("/api/workspaces", createWorkspaceRoutes(wsSvc, d.org, d.workspace))
-app.route("/api/workspaces/:id/workflows", createWorkflowRoutes(d.workspace))
+app.route("/api/workspaces/:id/workflows", createWorkflowRoutes(d.workspace, (o) => resourceRegistry.getOrCreate(o)))
 app.route("/api/workspaces/:id/executions", executionRoutes)
 app.route("/api/workspaces/:id/analytics", createAnalyticsLogRoutes(d.workspace, getLogAnalysisService({ tokenDao: d.tokenUsage, execDao: d.execution }) ?? new (require('./services/log-analysis').LogAnalysisService)(d.tokenUsage, d.execution)))
-app.route("/api/dashboard", createDashboardRoutes(wsSvc, lbSvc, d.execution, d.tokenUsage))
+app.route("/api/dashboard", createDashboardRoutes(wsSvc, lbSvc, d.execution, d.tokenUsage, d.archive))
 app.route("/api/workspaces/:id/chat", chatRoutes(sse, chatSvc, wsSvc))
 app.route("/api/chat/global", globalChatRoutes(sse, chatSvc))
 app.route("/api/workspaces/:id/files", createFileRoutes(d.workspace))
@@ -305,7 +326,7 @@ app.route("/api/review", createReviewRoutes(reviewService, d.pendingReview))
 
 // Archive routes — execution result summarization + rule proposal
 const stateDir = path.join(process.env.HOME ?? "~", ".octopus", "state")
-app.route("/api/archive", createArchiveRoutes(d.pendingReview, stateDir))
+app.route("/api/archive", createArchiveRoutes(d.pendingReview, stateDir, d.archive, d.archiveDraft))
 
 // Resource management — unified resource lifecycle (install/uninstall/verify/audit)
 const resourceRegistry = getResourceRegistry()
@@ -546,6 +567,9 @@ if (shouldServe) {
       scheduler?.stop()
       if ((global as any).__octopus_cleanupRetention) {
         ;(global as any).__octopus_cleanupRetention()
+      }
+      if ((global as any).__octopus_stopArchiveScheduler) {
+        ;(global as any).__octopus_stopArchiveScheduler()
       }
       server.close(() => {
         console.log(`[server] HTTP server closed.`)

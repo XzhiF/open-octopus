@@ -6,7 +6,7 @@
 
 > ⚠️ **Early Stage**: Octopus is under active development. Many features are being refined and generalized. APIs and workflow formats may change. Feedback is welcome, but not recommended for production use yet.
 
-> 💬 This is the first open-source project seriously built by an unremarkable, average veteran programmer. The entire project was born from vibe coding — starting with real pain points at work, solving them with AI-assisted programming, borrowing ideas from those who came before, and building things step by step. The design may not be clever, but every core feature was forced into existence by real-world needs. Hope it helps others walking the same path.
+> 💬 The entire project was born from vibe coding — starting with real pain points at work, solving them with AI-assisted programming, borrowing ideas from those who came before, and building things step by step. The design may not be clever, but every core feature was forced into existence by real-world needs. Hope it helps others walking the same path.
 
 ## Introduction
 
@@ -134,8 +134,7 @@ Open http://localhost:3000, where you can:
 3. **Run the Workflow** — Click "Run" to watch real-time node execution, expert discussions, and log output
 4. **View Results** — After completion, see synthesis output, consensus scores, and execution trees
 <p align="center">
-  <img src="docs/imgs/workflow2.png" alt="Workflow Execution UI" width="49%" />
-  <img src="docs/imgs/swarm2.png" alt="Swarm Multi-Agent Collaboration" width="49%" />
+<img src="docs/imgs/workflow.jpg" alt="Workflow Execution UI" width="30%" /><img src="docs/imgs/swarm.jpg" alt="Swarm Multi-Agent Collaboration" width="30%" /><img src="docs/imgs/archive.jpg" alt="Archive" width="30%" />
 </p>
 
 ---
@@ -312,6 +311,11 @@ Orchestrator Agent
 
 Memory
   └→ Workspace archival, workflow execution knowledge injection, Orchestrator Agent auto SKILL enhancement
+
+Resource
+  └→ Unified management of SKILL / Agent / Workflow installation, versioning,
+     and dependencies; smart binding on workflow execution — load on demand,
+     resolve automatically
 ```
 
 **… Planned ↓**
@@ -335,6 +339,30 @@ Workflow Observability
      scoring data accumulates as knowledge to feed back into workflow
      design, prompt optimization, and input prompt reviews;
      extensible via Hooks (e.g., Ponytail plugins) for runtime intervention
+
+Agent Router
+  └→ Orchestrator Agent takes over the full scheduling layer
+     (except Workflow Engine): complete observability
+     (avatar behavior tracing, dispatch chain logging);
+     improved avatar orchestration — task distribution, load balancing,
+     failure retry, dynamic capability profiling
+
+Verifiable Framework
+  └→ Define measurable delivery standards, precise down to Workflow node level;
+     built on Workflow Observability, supervised by a "Foreman" (dispatch)
+     and "Inspector" (validation) dual-role closed loop —
+     standard definition → execution verification → deviation correction
+     → delivery confirmation; verification results accumulate as knowledge
+     to feed back into standard iteration and process optimization
+
+Workspace Chat Dev
+  └→ Embedded Chat Agent in Workspace for conversational workflow driving:
+     user triggers workflow via chat → awaits execution → Agent reports
+     results → enters next human-AI interaction round; targets early-stage
+     phases like requirements clarification and design confirmation,
+     can invoke expert-team workflows (e.g., MoA-assisted decision-making,
+     spec writing); underlying capabilities exist — focus on optimizing
+     interaction fluency and context continuity
 ```
 
 **… Future Considerations ↓**

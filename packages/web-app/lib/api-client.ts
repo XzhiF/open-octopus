@@ -176,15 +176,7 @@ export async function fetchWorkflows(workspaceId: string) {
   return res.json()
 }
 
-// ============ Built-in Workflows ============
-
-interface WorkflowListItem {
-  ref: string
-  name: string
-  inputs?: Record<string, { description: string; required: boolean; default: string }>
-}
-
-export async function fetchBuiltInWorkflows(org?: string): Promise<WorkflowListItem[]> {
+export async function fetchBuiltInWorkflows(org?: string) {
   const orgParam = org ? `?org=${encodeURIComponent(org)}` : ""
   const res = await apiFetch(`${getServerUrl()}/api/workflows/built-in${orgParam}`)
   if (!res.ok) return []

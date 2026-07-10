@@ -14,6 +14,7 @@ export interface WorkspaceRow {
   updated_at: string
   source: string
   source_schedule_id: string | null
+  archive_status: string | null
 }
 
 export interface ExecutionRow {
@@ -424,4 +425,74 @@ export interface PaginatedResult<T> {
   total: number
   page: number
   pageSize: number
+}
+
+// ── Archive Tables ──────────────────────────────────────────────────
+
+export interface ExecutionArchiveRow {
+  execution_id: string
+  workspace_id: string
+  org: string
+  workflow_name: string | null
+  total_cost: number
+  total_duration_ms: number
+  node_count: number
+  success_rate: number
+  token_breakdown: string | null
+  model_breakdown: string | null
+  node_summary: string | null
+  chain_info: string | null
+  status: string
+  archived_at: string
+  metadata: string | null
+}
+
+export interface WorkspaceArchiveRow {
+  workspace_id: string
+  org: string
+  name: string
+  description: string | null
+  source: string | null
+  execution_count: number
+  total_cost: number
+  total_duration_ms: number
+  created_at: string | null
+  archived_at: string
+  metadata: string | null
+  extracted_experiences: number
+  extracted_skills: number
+  extracted_workflows: number
+  extracted_agents: number
+  analysis_report: string | null
+  file_deleted: number
+}
+
+export interface ArchiveStats {
+  total_executions: number
+  total_cost: number
+  avg_duration_ms: number
+  avg_cost_per_execution: number
+  success_rate: number
+  archived_workspaces: number
+  archived_workspace_cost: number
+}
+
+export interface CostTrend {
+  date: string
+  cost: number
+  execution_count: number
+}
+
+export interface WorkflowStat {
+  workflow_name: string
+  execution_count: number
+  success_rate: number
+  avg_duration_ms: number
+  avg_cost: number
+}
+
+export interface LeaderboardEntry {
+  workflow_name: string
+  metric_value: number
+  execution_count: number
 }

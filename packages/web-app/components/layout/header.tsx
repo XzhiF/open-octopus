@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button"
 import {
   LayoutDashboard,
   FolderKanban,
+  BookOpen,
   Clock,
   Settings,
   Bell,
@@ -18,6 +19,7 @@ import {
 const navigation = [
   { name: "Dashboard", href: "/", icon: LayoutDashboard },
   { name: "工作空间", href: "/workspaces", icon: FolderKanban },
+  { name: "工作经验", href: "/experience", icon: BookOpen },
   { name: "系统调度", href: "/scheduler", icon: Clock },
   { name: "Agent", href: "/agent", icon: BrainCircuit },
   { name: "资源", href: "/resources", icon: Package },

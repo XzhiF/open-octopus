@@ -40,7 +40,7 @@ export function KnowledgeTab() {
   const handleSubChange = (id: SubTabId) => {
     setActiveSub(id)
     const url = new URL(window.location.href)
-    url.searchParams.set('tab', 'knowledge')
+    url.searchParams.delete('tab')
     url.searchParams.set('sub', id)
     router.replace(url.toString())
   }

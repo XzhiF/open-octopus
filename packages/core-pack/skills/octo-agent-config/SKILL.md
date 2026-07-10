@@ -18,7 +18,7 @@ View and update agent runtime configuration stored in `~/.octopus/{org}/agent/co
 octopus agent config --org <org>
 
 # Update a config field
-octopus agent config --org <org> --set model=claude-sonnet-4-20250514
+octopus agent config --org <org> --set model=pro
 ```
 
 ## API Endpoints
@@ -31,7 +31,7 @@ octopus agent config --org <org> --set model=claude-sonnet-4-20250514
 ## Config Schema
 
 ```yaml
-model: claude-sonnet-4-20250514
+model: pro
 timeout: 300
 max_clones: 5
 notification:

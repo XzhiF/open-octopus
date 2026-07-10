@@ -563,6 +563,108 @@ export class TokenUsageDAO extends BaseDAO {
     }>
   }
 
+  // ── Workspace Token Stats (for archive preview) ──────────────────────
+
+  getWorkspaceTokenStats(workspaceId: string): {
+    total: { inputTokens: number; outputTokens: number; cost: number }
+    byModel: Array<{ model: string; inputTokens: number; outputTokens: number; cost: number }>
+    byWorkflow: Array<{
+      workflowRef: string; inputTokens: number; outputTokens: number; cost: number
+      byModel: Array<{ model: string; inputTokens: number; outputTokens: number; cost: number }>
+    }>
+  } {
+    // Workspace total + model breakdown
+    const modelRows = this.stmt(`
+      SELECT ntu.model,
+        SUM(ntu.input_tokens) as input_tokens, SUM(ntu.output_tokens) as output_tokens,
+        COALESCE(SUM(ntu.cost_usd), 0) as cost
+      FROM node_token_usages ntu
+      JOIN node_executions ne ON ntu.node_execution_id = ne.id
+      JOIN executions e ON ne.execution_id = e.id
+      WHERE e.workspace_id = ?
+      GROUP BY ntu.model ORDER BY cost DESC
+    `).all(workspaceId) as Array<{ model: string; input_tokens: number; output_tokens: number; cost: number }>
+
+    const total = modelRows.reduce((acc, r) => ({
+      inputTokens: acc.inputTokens + r.input_tokens,
+      outputTokens: acc.outputTokens + r.output_tokens,
+      cost: acc.cost + r.cost,
+    }), { inputTokens: 0, outputTokens: 0, cost: 0 })
+
+    // Per-workflow with model breakdown
+    const wfRows = this.stmt(`
+      SELECT e.workflow_ref, ntu.model,
+        SUM(ntu.input_tokens) as input_tokens, SUM(ntu.output_tokens) as output_tokens,
+        COALESCE(SUM(ntu.cost_usd), 0) as cost
+      FROM node_token_usages ntu
+      JOIN node_executions ne ON ntu.node_execution_id = ne.id
+      JOIN executions e ON ne.execution_id = e.id
+      WHERE e.workspace_id = ?
+      GROUP BY e.workflow_ref, ntu.model ORDER BY e.workflow_ref, cost DESC
+    `).all(workspaceId) as Array<{ workflow_ref: string; model: string; input_tokens: number; output_tokens: number; cost: number }>
+
+    const wfMap = new Map<string, { inputTokens: number; outputTokens: number; cost: number; byModel: Array<{ model: string; inputTokens: number; outputTokens: number; cost: number }> }>()
+    for (const r of wfRows) {
+      let wf = wfMap.get(r.workflow_ref)
+      if (!wf) { wf = { inputTokens: 0, outputTokens: 0, cost: 0, byModel: [] }; wfMap.set(r.workflow_ref, wf) }
+      wf.inputTokens += r.input_tokens
+      wf.outputTokens += r.output_tokens
+      wf.cost += r.cost
+      wf.byModel.push({ model: r.model, inputTokens: r.input_tokens, outputTokens: r.output_tokens, cost: r.cost })
+    }
+    const byWorkflow = Array.from(wfMap.entries()).map(([workflowRef, stats]) => ({ workflowRef, ...stats }))
+
+    return {
+      total,
+      byModel: modelRows.map(r => ({ model: r.model, inputTokens: r.input_tokens, outputTokens: r.output_tokens, cost: r.cost })),
+      byWorkflow,
+    }
+  }
+
+  getNodeTokenStats(workspaceId: string): Array<{
+    workflowRef: string; nodeId: string; nodeName: string; nodeType: string
+    inputTokens: number; outputTokens: number; cost: number
+    byModel: Array<{ model: string; inputTokens: number; outputTokens: number; cost: number }>
+  }> {
+    const rows = this.stmt(`
+      SELECT e.workflow_ref, ne.node_id,
+        ne.node_type,
+        ntu.model,
+        SUM(ntu.input_tokens) as input_tokens, SUM(ntu.output_tokens) as output_tokens,
+        COALESCE(SUM(ntu.cost_usd), 0) as cost
+      FROM node_token_usages ntu
+      JOIN node_executions ne ON ntu.node_execution_id = ne.id
+      JOIN executions e ON ne.execution_id = e.id
+      WHERE e.workspace_id = ?
+      GROUP BY e.workflow_ref, ne.node_id, ntu.model
+      ORDER BY e.workflow_ref, cost DESC
+    `).all(workspaceId) as Array<{
+      workflow_ref: string; node_id: string; node_type: string
+      model: string; input_tokens: number; output_tokens: number; cost: number
+    }>
+
+    const nodeMap = new Map<string, {
+      workflowRef: string; nodeId: string; nodeName: string; nodeType: string
+      inputTokens: number; outputTokens: number; cost: number
+      byModel: Array<{ model: string; inputTokens: number; outputTokens: number; cost: number }>
+    }>()
+
+    for (const r of rows) {
+      const key = `${r.workflow_ref}:${r.node_id}`
+      let node = nodeMap.get(key)
+      if (!node) {
+        node = { workflowRef: r.workflow_ref, nodeId: r.node_id, nodeName: r.node_id, nodeType: r.node_type, inputTokens: 0, outputTokens: 0, cost: 0, byModel: [] }
+        nodeMap.set(key, node)
+      }
+      node.inputTokens += r.input_tokens
+      node.outputTokens += r.output_tokens
+      node.cost += r.cost
+      node.byModel.push({ model: r.model, inputTokens: r.input_tokens, outputTokens: r.output_tokens, cost: r.cost })
+    }
+
+    return Array.from(nodeMap.values())
+  }
+
   // ── LLM call analysis (for suggestion-engine) ────────────────────────
 
   findLlmCallStatsByNode(workspaceId: string, workflowRef: string): Array<{

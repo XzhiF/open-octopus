@@ -29,6 +29,7 @@ export class WorkflowService {
             ref: filename,
             name: parsed.name,
             inputs: parsed.inputs,
+            group: "project",
           }
         } catch {
           return null

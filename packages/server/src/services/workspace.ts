@@ -5,6 +5,8 @@ import path from "path"
 import os from "os"
 import { WorkspaceDAO } from "../db/dao"
 import type { WorkspaceRow } from "../db/types"
+import { logError } from "../file-logger"
+import { getArchiveService } from "./archive/archive-service"
 
 /**
  * Default pipeline.yaml template — auto-generated for new workspaces.
@@ -925,7 +927,20 @@ export class WorkspaceService {
     const ws = this.getById(id)
     if (!ws) return false
 
-    this.dao.cascadeDeleteByWorkspace(id)
+    // Two-phase archive before cascade delete
+    const archiveSvc = getArchiveService()
+    if (archiveSvc) {
+      try {
+        await archiveSvc.archiveWorkspace(id, this.dao)
+      } catch (err) {
+        logError("workspace archive during delete failed", err, { workspaceId: id })
+        // Don't cascade delete if archive failed — data preservation
+        throw err
+      }
+    }
+
+    // Soft-archive: mark workspace as archived in DB (no cascade delete)
+    this.dao.softArchive(id)
 
     // ── 文件系统异步删除（不阻塞事件循环） ──
     const resolvedPath = ws.path.replace(/^~/, os.homedir())

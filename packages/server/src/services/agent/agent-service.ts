@@ -27,6 +27,7 @@ import { getConfigManager } from './config-manager'
 import { AgentSessionDAO, SafetyDAO } from '../../db/dao'
 import { SchedulerService } from '../scheduler/scheduler-service'
 import { getRecoveryService } from './recovery-service'
+import { logError } from '../../file-logger'
 
 import fs from 'fs'
 import path from 'path'
@@ -234,6 +235,21 @@ export class AgentService {
     const content = fs.readFileSync(sourceFile, 'utf-8')
     fs.copyFileSync(sourceFile, path.join(archiveDir, `${targetDate}.md`))
     fs.unlinkSync(sourceFile)
+
+    // P2.6: emit memory.archived domain event
+    try {
+      const { getDomainEventBus } = require('./domain-event-bus')
+      const bus = getDomainEventBus()
+      bus.emit('memory.archived', {
+        memory_id: targetDate,
+        memory_type: 'daily_memory',
+        archived_at: new Date().toISOString(),
+      }, { source: 'agent-service' }).catch((err: unknown) => {
+        logError('memory.archived emit failed', err, { targetDate })
+      })
+    } catch (err) {
+      logError('memory.archived event setup failed', err, { targetDate })
+    }
 
     return { archived_date: targetDate, essence_summary: content.slice(0, 500) }
   }

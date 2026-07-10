@@ -153,7 +153,7 @@ export interface WorkflowOption {
   label: string
   name: string
   description?: string
-  group: "built-in" | "local"
+  group: string
   path?: string
   inputs?: Record<string, WorkflowInputDef>
 }

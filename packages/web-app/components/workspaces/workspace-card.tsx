@@ -12,6 +12,7 @@ import {
   Settings,
   Trash2,
   ArrowRight,
+  Archive,
 } from "lucide-react"
 import {
   DropdownMenu,
@@ -24,6 +25,8 @@ import {
 interface WorkspaceCardProps {
   workspace: Workspace
   onDelete?: (id: string) => void
+  onArchive?: (id: string) => void
+  onViewArchive?: (id: string) => void
 }
 
 const statusConfig: Record<
@@ -52,11 +55,15 @@ function formatRelativeTime(dateString: string | null | undefined): string {
   return date.toLocaleDateString("zh-CN")
 }
 
-export function WorkspaceCard({ workspace, onDelete }: WorkspaceCardProps) {
-  const config = statusConfig[workspace.status]
+export function WorkspaceCard({ workspace, onDelete, onArchive, onViewArchive }: WorkspaceCardProps) {
+  const config = statusConfig[workspace.status] ?? { label: workspace.status, variant: "outline" as const }
+  const isArchived = (workspace as any).archive_status === "archived"
+  const cardHref = isArchived
+    ? `/workspaces/${workspace.id}/archive-detail`
+    : `/workspaces/${workspace.id}`
 
   return (
-    <Card className="group relative transition-shadow hover:shadow-md">
+    <Card className={`group relative transition-shadow hover:shadow-md ${isArchived ? "opacity-75" : ""}`}>
       <CardHeader className="py-2 pb-0">
         <div className="flex items-start justify-between">
           <div className="flex items-center gap-3">
@@ -65,7 +72,7 @@ export function WorkspaceCard({ workspace, onDelete }: WorkspaceCardProps) {
             </div>
             <div>
               <Link
-                href={`/workspaces/${workspace.id}`}
+                href={cardHref}
                 className="font-semibold hover:underline"
               >
                 {workspace.name}
@@ -75,35 +82,41 @@ export function WorkspaceCard({ workspace, onDelete }: WorkspaceCardProps) {
               </p>
             </div>
           </div>
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-8 w-8 opacity-0 transition-opacity group-hover:opacity-100"
-              >
-                <MoreHorizontal className="h-4 w-4" />
-                <span className="sr-only">更多操作</span>
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              <DropdownMenuItem asChild>
-                <Link href={`/workspaces/${workspace.id}`}>
-                  <ExternalLink className="mr-2 h-4 w-4" />
-                  打开工作空间
-                </Link>
-              </DropdownMenuItem>
-              <DropdownMenuItem>
-                <Settings className="mr-2 h-4 w-4" />
-                设置
-              </DropdownMenuItem>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem className="text-destructive" onClick={() => onDelete?.(workspace.id)}>
-                <Trash2 className="mr-2 h-4 w-4" />
-                删除
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
+          {!isArchived && (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8 opacity-0 transition-opacity group-hover:opacity-100"
+                >
+                  <MoreHorizontal className="h-4 w-4" />
+                  <span className="sr-only">更多操作</span>
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem asChild>
+                  <Link href={cardHref}>
+                    <ExternalLink className="mr-2 h-4 w-4" />
+                    打开工作空间
+                  </Link>
+                </DropdownMenuItem>
+                <DropdownMenuItem>
+                  <Settings className="mr-2 h-4 w-4" />
+                  设置
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onClick={() => onArchive?.(workspace.id)}>
+                  <Archive className="mr-2 h-4 w-4" />
+                  归档
+                </DropdownMenuItem>
+                <DropdownMenuItem className="text-destructive" onClick={() => onDelete?.(workspace.id)}>
+                  <Trash2 className="mr-2 h-4 w-4" />
+                  删除
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
         </div>
       </CardHeader>
       <CardContent className="pt-0">
@@ -129,17 +142,30 @@ export function WorkspaceCard({ workspace, onDelete }: WorkspaceCardProps) {
         <div className="mt-4 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Badge variant={config.variant}>{config.label}</Badge>
+            {isArchived && (
+              <Badge variant="secondary" className="text-xs">
+                <Archive className="mr-1 h-3 w-3" />
+                已归档
+              </Badge>
+            )}
             <span className="flex items-center gap-1 text-xs text-muted-foreground">
               <Clock className="h-3 w-3" />
               {formatRelativeTime(workspace.lastActivityAt ?? (workspace as unknown as Record<string, string>).created_at)}
             </span>
           </div>
-          <Button variant="ghost" size="sm" asChild className="gap-1">
-            <Link href={`/workspaces/${workspace.id}`}>
-              进入
+          {isArchived ? (
+            <Button variant="ghost" size="sm" onClick={() => onViewArchive?.(workspace.id)} className="gap-1">
+              查看
               <ArrowRight className="h-3.5 w-3.5" />
-            </Link>
-          </Button>
+            </Button>
+          ) : (
+            <Button variant="ghost" size="sm" asChild className="gap-1">
+              <Link href={cardHref}>
+                进入
+                <ArrowRight className="h-3.5 w-3.5" />
+              </Link>
+            </Button>
+          )}
         </div>
       </CardContent>
     </Card>

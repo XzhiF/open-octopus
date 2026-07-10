@@ -14,8 +14,8 @@ export interface HostAgentConfig {
  * In debate mode, also assesses consensus and decides whether to continue.
  *
  * Degradation chain:
- *   1. Try host.model ?? "opus"
- *   2. On failure: try "sonnet" fallback
+ *   1. Try host.model ?? "pro-max"
+ *   2. On failure: try "pro" fallback
  *   3. On all models failed: degrade to concatenation, set degraded: true
  *
  * When host.prompt is provided, it replaces the built-in synthesis instructions.
@@ -40,9 +40,9 @@ export class HostAgent {
     }
 
     const prompt = this.buildPrompt(completedExperts, messages, config)
-    // Degradation chain: host.model ?? opus → sonnet → concatenation
-    const primaryModel = config.host?.model ?? "opus"
-    const models = primaryModel === "sonnet" ? ["sonnet"] : [primaryModel, "sonnet"]
+    // Degradation chain: host.model ?? pro-max → pro → concatenation
+    const primaryModel = config.host?.model ?? "pro-max"
+    const models = primaryModel === "pro" ? ["pro"] : [primaryModel, "pro"]
 
     for (const model of models) {
       try {
