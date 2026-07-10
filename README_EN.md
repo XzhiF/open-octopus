@@ -6,7 +6,7 @@
 
 > ⚠️ **Early Stage**: Octopus is under active development. Many features are being refined and generalized. APIs and workflow formats may change. Feedback is welcome, but not recommended for production use yet.
 
-> 💬 This is the first open-source project seriously built by an unremarkable, average veteran programmer. The entire project was born from vibe coding — starting with real pain points at work, solving them with AI-assisted programming, borrowing ideas from those who came before, and building things step by step. The design may not be clever, but every core feature was forced into existence by real-world needs. Hope it helps others walking the same path.
+> 💬 The entire project was born from vibe coding — starting with real pain points at work, solving them with AI-assisted programming, borrowing ideas from those who came before, and building things step by step. The design may not be clever, but every core feature was forced into existence by real-world needs. Hope it helps others walking the same path.
 
 ## Introduction
 
