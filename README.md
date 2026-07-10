@@ -134,9 +134,7 @@ pnpm dev
 3. **执行工作流** — 点击 "运行"，实时查看节点执行状态、专家讨论、日志输出
 4. **查看结果** — 执行完成后查看 synthesis 输出、共识分数、执行树
 <p align="center">
-  <img src="docs/imgs/workflow.jpg" alt="Workflow 执行界面" width="32%" />
-  <img src="docs/imgs/swarm.jpg" alt="Swarm 多智能体协作" width="32%" />
-  <img src="docs/imgs/archive.jpg" alt="Archive 归档" width="32%" />
+<img src="docs/imgs/workflow.jpg" alt="Workflow 执行界面" width="30%" /><img src="docs/imgs/swarm.jpg" alt="Swarm 多智能体协作" width="30%" /><img src="docs/imgs/archive.jpg" alt="Archive 归档" width="30%" />
 </p>
 
 ---
@@ -350,6 +348,13 @@ Verifiable Framework
      基于 Workflow Observability，由"包工头"调度 + "质检员"校验，
      双角色监督闭环——标准定义 → 执行验证 → 偏差修正 → 交付确认；
      验证结果沉淀为知识，反哺标准迭代与流程优化
+
+Workspace Chat Dev
+  └→ Workspace 内嵌 Chat Agent，对话式驱动工作流执行：
+     用户通过对话触发工作流 → 等待执行 → Agent 反馈结果 →
+     进入下一轮人机交互；适用于需求澄清、设计确认等前期阶段，
+     可调用专家团工作流（如 MoA 辅助决策、Spec 撰写）；
+     底层能力已具备，重点优化交互流畅度与上下文衔接
 ```
 
 **… 未来考虑 ↓**

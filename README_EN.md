@@ -134,9 +134,7 @@ Open http://localhost:3000, where you can:
 3. **Run the Workflow** — Click "Run" to watch real-time node execution, expert discussions, and log output
 4. **View Results** — After completion, see synthesis output, consensus scores, and execution trees
 <p align="center">
-  <img src="docs/imgs/workflow.jpg" alt="Workflow Execution UI" width="32%" />
-  <img src="docs/imgs/swarm.jpg" alt="Swarm Multi-Agent Collaboration" width="32%" />
-  <img src="docs/imgs/archive.jpg" alt="Archive" width="32%" />
+<img src="docs/imgs/workflow.jpg" alt="Workflow Execution UI" width="30%" /><img src="docs/imgs/swarm.jpg" alt="Swarm Multi-Agent Collaboration" width="30%" /><img src="docs/imgs/archive.jpg" alt="Archive" width="30%" />
 </p>
 
 ---
@@ -356,6 +354,15 @@ Verifiable Framework
      standard definition → execution verification → deviation correction
      → delivery confirmation; verification results accumulate as knowledge
      to feed back into standard iteration and process optimization
+
+Workspace Chat Dev
+  └→ Embedded Chat Agent in Workspace for conversational workflow driving:
+     user triggers workflow via chat → awaits execution → Agent reports
+     results → enters next human-AI interaction round; targets early-stage
+     phases like requirements clarification and design confirmation,
+     can invoke expert-team workflows (e.g., MoA-assisted decision-making,
+     spec writing); underlying capabilities exist — focus on optimizing
+     interaction fluency and context continuity
 ```
 
 **… Future Considerations ↓**
