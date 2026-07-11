@@ -15,6 +15,18 @@
 //   P2 × US-14 × TC-037: HostReportTab hostDegraded 横幅
 //   P2 × US-15 × TC-039: ExpertRow failed/skipped 状态
 //   P5.10 × R-28 × TC-P1-005: StatsDashboard (swarm 执行统计)
+//
+//   ── MOA Swarm Mode ──
+//   P1 × STORY-2.4.1 × TC-016: MoaConfigPanel (MOA 节点配置面板)
+//   P2 × STORY-2.4.1 × TC-017: MoaConfigPanel (experts<2 保存禁用)
+//   P4 × STORY-2.4.2 × TC-018: ModelResolveBadge (模型解析三态)
+//   P5 × STORY-2.4.3 × TC-019: YamlSyncModal (YAML 导出 + 复制)
+//   P5 × STORY-2.4.3 × TC-020: YamlSyncModal (YAML 导入错误行号)
+//   P7 × STORY-2.5.1 × TC-021: MoaResultTab (五态 + 三栏布局)
+//   P7 × STORY-2.5.1 × TC-022: MoaResultTab (部分 expert 失败)
+//   P8 × STORY-2.5.2 × TC-023: MoaResultTab compare (并排对比)
+//   P7 × STORY-2.5.1 × TC-028: MoaResultTab Collapsible (展开全部)
+//   P1 × STORY-2.1.1 × TC-001: SwarmBadge mode="moa" (靛蓝紫)
 
 // Types
 export type {
