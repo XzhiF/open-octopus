@@ -581,22 +581,20 @@ export class ArchiveService {
       for (const skill of skills) {
         try {
           // 清理名称：LLM 提取的名称可能带引号或非法字符
-          const safeName = skill.name.replace(/["']/g, "").replace(/[^a-zA-Z0-9._-]/g, "-").replace(/^[^a-zA-Z0-9]+/, "")
-          const safeGroup = skill.group.replace(/["']/g, "").replace(/[^a-zA-Z0-9._-]/g, "-").replace(/^[^a-zA-Z0-9]+/, "")
-          if (!safeName) {
+          const finalName = skill.name.replace(/["']/g, "").replace(/[^a-zA-Z0-9._-]/g, "-").replace(/^[^a-zA-Z0-9]+/, "").slice(0, 128)
+          const finalGroup = skill.group.replace(/["']/g, "").replace(/[^a-zA-Z0-9._-]/g, "-").replace(/^[^a-zA-Z0-9]+/, "").slice(0, 128) || "archive-extracted"
+          if (!finalName) {
             await emitter.log(`✗ Skipping skill with empty name after sanitization: ${skill.name}`)
             continue
           }
-          skill.name = safeName
-          skill.group = safeGroup || "archive-extracted"
 
-          await emitter.stepProgress("install_skills", `安装 ${skill.name} → ${skill.group}`)
+          await emitter.stepProgress("install_skills", `安装 ${finalName} → ${finalGroup}`)
 
           if (skill.path && fs.existsSync(skill.path)) {
             // Auto-discovered skill: copy the entire skill directory
             const sourceDir = path.dirname(skill.path)
             const basePath = path.join(os.homedir(), ".octopus", "resources")
-            const installDir = path.join(basePath, "installed", "skills", skill.group, skill.name)
+            const installDir = path.join(basePath, "installed", "skills", finalGroup, finalName)
 
             // Create target directory
             fs.mkdirSync(installDir, { recursive: true })
@@ -606,18 +604,18 @@ export class ArchiveService {
 
             // Register in resource manager (files already copied)
             resourceManager.registerInstalled({
-              name: skill.name,
+              name: finalName,
               type: "skill",
-              group: skill.group,
+              group: finalGroup,
             })
 
             await emitter.log(`✓ Copied skill from ${sourceDir} → ${installDir}`)
           } else {
             // LLM-generated or builtin skill: use resource manager
             await resourceManager.install({
-              ref: `builtin:${skill.name}`,
+              ref: `builtin:${finalName}`,
               type: "skill",
-              group: skill.group,
+              group: finalGroup,
             })
           }
 
@@ -649,19 +647,17 @@ export class ArchiveService {
       for (const wf of workflows) {
         try {
           // 清理名称：LLM 提取的 YAML name 可能带引号或其他非法字符
-          const safeName = wf.name.replace(/["']/g, "").replace(/[^a-zA-Z0-9._-]/g, "-").replace(/^[^a-zA-Z0-9]+/, "")
-          const safeGroup = wf.group.replace(/["']/g, "").replace(/[^a-zA-Z0-9._-]/g, "-").replace(/^[^a-zA-Z0-9]+/, "")
-          if (!safeName) {
+          const finalName = wf.name.replace(/["']/g, "").replace(/[^a-zA-Z0-9._-]/g, "-").replace(/^[^a-zA-Z0-9]+/, "").slice(0, 128)
+          const finalGroup = wf.group.replace(/["']/g, "").replace(/[^a-zA-Z0-9._-]/g, "-").replace(/^[^a-zA-Z0-9]+/, "").slice(0, 128) || "archive-extracted"
+          if (!finalName) {
             await emitter.log(`✗ Skipping workflow with empty name after sanitization: ${wf.name}`)
             continue
           }
-          wf.name = safeName
-          wf.group = safeGroup || "archive-extracted"
 
-          await emitter.stepProgress("install_workflows", `安装 ${wf.name} → ${wf.group}`)
+          await emitter.stepProgress("install_workflows", `安装 ${finalName} → ${finalGroup}`)
 
           const basePath = path.join(os.homedir(), ".octopus", "resources")
-          const installDir = path.join(basePath, "installed", "workflows", wf.group, wf.name)
+          const installDir = path.join(basePath, "installed", "workflows", finalGroup, finalName)
 
           // Create target directory
           fs.mkdirSync(installDir, { recursive: true })
@@ -672,16 +668,16 @@ export class ArchiveService {
             fs.copyFileSync(wf.path, destFile)
             await emitter.log(`✓ Copied workflow from ${wf.path} → ${destFile}`)
           } else if (wf.content) {
-            const destFile = path.join(installDir, `${wf.name}.yaml`)
+            const destFile = path.join(installDir, `${finalName}.yaml`)
             fs.writeFileSync(destFile, wf.content, "utf-8")
             await emitter.log(`✓ Written workflow content → ${destFile}`)
           }
 
           // Register in resource manager (files already copied, upsert handles overwrite)
           resourceManager.registerInstalled({
-            name: wf.name,
+            name: finalName,
             type: "workflow",
-            group: wf.group,
+            group: finalGroup,
           })
 
           installedCount++
@@ -712,19 +708,17 @@ export class ArchiveService {
       for (const agent of agents) {
         try {
           // 清理名称：LLM 提取的名称可能带引号或非法字符
-          const safeName = agent.name.replace(/["']/g, "").replace(/[^a-zA-Z0-9._-]/g, "-").replace(/^[^a-zA-Z0-9]+/, "")
-          const safeGroup = agent.group.replace(/["']/g, "").replace(/[^a-zA-Z0-9._-]/g, "-").replace(/^[^a-zA-Z0-9]+/, "")
-          if (!safeName) {
+          const finalName = agent.name.replace(/["']/g, "").replace(/[^a-zA-Z0-9._-]/g, "-").replace(/^[^a-zA-Z0-9]+/, "").slice(0, 128)
+          const finalGroup = agent.group.replace(/["']/g, "").replace(/[^a-zA-Z0-9._-]/g, "-").replace(/^[^a-zA-Z0-9]+/, "").slice(0, 128) || "archive-extracted"
+          if (!finalName) {
             await emitter.log(`✗ Skipping agent with empty name after sanitization: ${agent.name}`)
             continue
           }
-          agent.name = safeName
-          agent.group = safeGroup || "archive-extracted"
 
-          await emitter.stepProgress("install_agents", `安装 ${agent.name} → ${agent.group}`)
+          await emitter.stepProgress("install_agents", `安装 ${finalName} → ${finalGroup}`)
 
           const basePath = path.join(os.homedir(), ".octopus", "resources")
-          const installDir = path.join(basePath, "installed", "agents", agent.group, agent.name)
+          const installDir = path.join(basePath, "installed", "agents", finalGroup, finalName)
 
           // Create target directory
           fs.mkdirSync(installDir, { recursive: true })
@@ -735,16 +729,16 @@ export class ArchiveService {
             fs.copyFileSync(agent.path, destFile)
             await emitter.log(`✓ Copied agent from ${agent.path} → ${destFile}`)
           } else if (agent.content) {
-            const destFile = path.join(installDir, `${agent.name}.md`)
+            const destFile = path.join(installDir, `${finalName}.md`)
             fs.writeFileSync(destFile, agent.content, "utf-8")
             await emitter.log(`✓ Written agent content → ${destFile}`)
           }
 
           // Register in resource manager (files already copied, upsert handles overwrite)
           resourceManager.registerInstalled({
-            name: agent.name,
+            name: finalName,
             type: "agent",
-            group: agent.group,
+            group: finalGroup,
           })
 
           installedCount++

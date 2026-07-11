@@ -21,11 +21,6 @@ export class ResourceManagerRegistry {
     return this.manager
   }
 
-  /** @deprecated Use get() — org param is ignored */
-  getOrCreate(_org: string): ResourceManager {
-    return this.get()
-  }
-
   /** Clear manager (for cleanup/testing) */
   clear(): void {
     this.manager = null

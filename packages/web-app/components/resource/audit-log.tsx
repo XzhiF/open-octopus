@@ -67,7 +67,7 @@ export function AuditLog() {
   }, [page, actionFilter, callerFilter, nameFilter])
 
   // Fetch more records to support client-side pagination and filtering
-  const { records: allRecords, loading, error, refresh } = useAuditLog( {
+  const { records: allRecords, loading, error, refresh } = useAuditLog({
     last: 1000,
     action: actionFilter === "all" ? undefined : actionFilter,
   })
