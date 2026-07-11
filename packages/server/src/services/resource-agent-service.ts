@@ -49,6 +49,7 @@ export class ResourceAgentService {
       `如果某个资源安装失败，记录错误并继续下一个。\n` +
       `最后报告安装结果（installed/skipped/errors 数量）。`
 
+    // ponytail: orchestrator org is for workspace scanning, not resources. "default" is fine.
     const orchestrator = getOrchestratorService("default")
     try {
       const agentLog = await orchestrator.executeTask(
@@ -103,6 +104,7 @@ export class ResourceAgentService {
       `6. 检测删除 — 标记为 orphan，不删除文件\n` +
       `7. 报告结果（updated/added/removed/unchanged 数量）`
 
+    // ponytail: orchestrator org is for workspace scanning, not resources. "default" is fine.
     const orchestrator = getOrchestratorService("default")
     try {
       const agentLog = await orchestrator.executeTask(

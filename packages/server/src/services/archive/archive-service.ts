@@ -566,6 +566,16 @@ export class ArchiveService {
     }
   }
 
+  /** 清理 LLM 提取的资源名称，确保符合 SAFE_NAME_RE */
+  private sanitizeResourceName(raw: string, fallback = "unnamed"): string {
+    const sanitized = raw
+      .replace(/["']/g, "")
+      .replace(/[^a-zA-Z0-9._-]/g, "-")
+      .replace(/^[^a-zA-Z0-9]+/, "")
+      .slice(0, 128)
+    return sanitized || fallback
+  }
+
   private async installSkills(
     skills: Array<{ name: string; group: string; path?: string; content?: string }>,
     emitter: StepEmitter,
@@ -580,9 +590,8 @@ export class ArchiveService {
 
       for (const skill of skills) {
         try {
-          // 清理名称：LLM 提取的名称可能带引号或非法字符
-          const finalName = skill.name.replace(/["']/g, "").replace(/[^a-zA-Z0-9._-]/g, "-").replace(/^[^a-zA-Z0-9]+/, "").slice(0, 128)
-          const finalGroup = skill.group.replace(/["']/g, "").replace(/[^a-zA-Z0-9._-]/g, "-").replace(/^[^a-zA-Z0-9]+/, "").slice(0, 128) || "archive-extracted"
+          const finalName = this.sanitizeResourceName(skill.name)
+          const finalGroup = this.sanitizeResourceName(skill.group, "archive-extracted")
           if (!finalName) {
             await emitter.log(`✗ Skipping skill with empty name after sanitization: ${skill.name}`)
             continue
@@ -646,9 +655,8 @@ export class ArchiveService {
 
       for (const wf of workflows) {
         try {
-          // 清理名称：LLM 提取的 YAML name 可能带引号或其他非法字符
-          const finalName = wf.name.replace(/["']/g, "").replace(/[^a-zA-Z0-9._-]/g, "-").replace(/^[^a-zA-Z0-9]+/, "").slice(0, 128)
-          const finalGroup = wf.group.replace(/["']/g, "").replace(/[^a-zA-Z0-9._-]/g, "-").replace(/^[^a-zA-Z0-9]+/, "").slice(0, 128) || "archive-extracted"
+          const finalName = this.sanitizeResourceName(wf.name)
+          const finalGroup = this.sanitizeResourceName(wf.group, "archive-extracted")
           if (!finalName) {
             await emitter.log(`✗ Skipping workflow with empty name after sanitization: ${wf.name}`)
             continue
@@ -707,9 +715,8 @@ export class ArchiveService {
 
       for (const agent of agents) {
         try {
-          // 清理名称：LLM 提取的名称可能带引号或非法字符
-          const finalName = agent.name.replace(/["']/g, "").replace(/[^a-zA-Z0-9._-]/g, "-").replace(/^[^a-zA-Z0-9]+/, "").slice(0, 128)
-          const finalGroup = agent.group.replace(/["']/g, "").replace(/[^a-zA-Z0-9._-]/g, "-").replace(/^[^a-zA-Z0-9]+/, "").slice(0, 128) || "archive-extracted"
+          const finalName = this.sanitizeResourceName(agent.name)
+          const finalGroup = this.sanitizeResourceName(agent.group, "archive-extracted")
           if (!finalName) {
             await emitter.log(`✗ Skipping agent with empty name after sanitization: ${agent.name}`)
             continue

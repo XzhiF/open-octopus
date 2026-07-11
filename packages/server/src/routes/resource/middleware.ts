@@ -36,7 +36,7 @@ export function validateNameParam(name: string): void {
 }
 
 // ── withResourceLock ───────────────────────────────────────────────────────
-// Server-level concurrent lock per org:resourceName (R1 fix).
+// Server-level concurrent lock per resourceName.
 // Wraps install/uninstall; rejects if another operation is in-flight.
 
 const LOCK_TIMEOUT_MS = 30_000
