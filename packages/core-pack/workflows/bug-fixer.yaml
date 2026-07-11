@@ -1,4 +1,4 @@
-# yaml-language-server: $schema=./doc/workflow-schema.json
+# yaml-language-server: $schema=./workflow-schema.json
 apiVersion: octopus/v1
 kind: Workflow
 name: bug-fixer
@@ -6,7 +6,7 @@ description: >
   BUG 修复闭环工作流。支持 Batch 模式（指定 BUG 报告文件批量修复）和 Freeform 模式（输入问题描述自主判断→复现→修复→验证）。
   对 P0-P1 BUG 启用对抗审查，修复后 E2E 验证闭环，提交 PR。非 BUG 问题输出分析报告。
 
-model: opus[1m]
+model: pro-max
 engine: claude
 execution_mode: auto
 max_concurrent: 2
@@ -173,7 +173,7 @@ nodes:
           ## 输出
           直接输出纯 JSON 行:
           {"vars_update":{"projects":"<项目列表,逗号分隔>","pkg_manager":"<包管理器>","server_port":"<端口>","web_port":"<端口>"}}
-        model: sonnet
+        model: pro
         tools: [Bash, Read, Grep, Glob]
     prompt: |
       你是 BUG 修复工作流的环境准备阶段。
@@ -310,7 +310,7 @@ nodes:
           ### 输出
           直接输出纯 JSON 行:
           {"vars_update":{"<key>":"<value>"}}
-        model: sonnet
+        model: pro
         tools: [Bash, Read, Write, Grep, Glob]
 
       diagnostician:
@@ -353,7 +353,7 @@ nodes:
             "test_scenarios": ["<需要测试的场景>"]
           }
           ```
-        model: opus[1m]
+        model: pro-max
         maxTurns: 30
         effort: high
         tools: [Bash, Read, Grep, Glob]
@@ -406,7 +406,7 @@ nodes:
           ## 建设性约束
           [必须遵守的修复约束清单]
           ```
-        model: opus[1m]
+        model: pro-max
         maxTurns: 20
         effort: high
         tools: [Read, Grep, Glob]
@@ -458,7 +458,7 @@ nodes:
             }
           }
           ```
-        model: sonnet
+        model: pro
         maxTurns: 15
         tools: [Bash, Read, Grep, Glob]
 
@@ -496,7 +496,7 @@ nodes:
             "recommendation": "<建议下一步>"
           }
           ```
-        model: opus[1m]
+        model: pro-max
         maxTurns: 10
         effort: high
         tools: [Bash, Read, Grep]
@@ -596,7 +596,7 @@ nodes:
           ### 输出
           直接输出纯 JSON 行:
           {"vars_update":{"fix_report_dir":"<报告目录路径>","conclusion":"<摘要>"}}
-        model: sonnet
+        model: pro
         maxTurns: 10
         tools: [Bash, Read, Write, Grep, Glob]
 
@@ -679,7 +679,7 @@ nodes:
           ### 输出
           直接输出纯 JSON 行:
           {"vars_update":{"pr_url":"<PR URL 或多个URL逗号分隔>","conclusion":"<ship 摘要>"}}
-        model: sonnet
+        model: pro
         maxTurns: 15
         tools: [Bash, Read, Grep, Glob]
 
@@ -958,7 +958,7 @@ nodes:
           ## 输出
           直接输出纯 JSON 行:
           {"vars_update":{"cleanup_done":"true","duration_seconds":"<秒数>","conclusion":"$vars.conclusion"}}
-        model: sonnet
+        model: pro
         tools: [Bash, Read, Grep, Glob]
     prompt: |
       你是 BUG 修复工作流的清理阶段。

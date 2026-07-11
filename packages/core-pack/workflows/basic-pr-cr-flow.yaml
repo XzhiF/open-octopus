@@ -1,4 +1,4 @@
-# yaml-language-server: $schema=./doc/workflow-schema.json
+# yaml-language-server: $schema=./workflow-schema.json
 apiVersion: octopus/v1
 kind: Workflow
 name: basic-pr-cr-flow
@@ -8,7 +8,7 @@ description: >
   Agent 驱动，自动适配任意技术栈 (Node/Java/Python/Rust/Go/...)。
   支持自动解决合并冲突、应用用户修改指令、代码审查、构建测试循环。
 
-model: "opus[1m]"
+model: "pro-max"
 engine: claude
 execution_mode: serial
 timeout: 86400

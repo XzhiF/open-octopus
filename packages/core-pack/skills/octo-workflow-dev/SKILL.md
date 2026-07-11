@@ -28,7 +28,7 @@ YAML DSL 工作流引擎：7 种节点类型（agent / bash / python / condition
 每个工作流 YAML 第一行应当声明：
 
 ```yaml
-# yaml-language-server: $schema=./doc/workflow-schema.json
+# yaml-language-server: $schema=../../workflows/workflow-schema.json
 apiVersion: octopus/v1
 kind: Workflow
 ```
@@ -37,9 +37,8 @@ kind: Workflow
 
 | 位置 | 用途 |
 |------|------|
-| `~/.octopus/workflows/doc/workflow-schema.json` | 用户级 schema（IDE 自动补全、CLI 校验时引用） |
-| `packages/core-pack/presets/workflows/doc/workflow-schema.json` | 仓内权威源 |
-| 相对路径 `./doc/workflow-schema.json` | 工作流目录内 IDE 引用 |
+| `packages/core-pack/workflows/workflow-schema.json` | 仓内权威源（唯一真相） |
+| 相对路径 `../../workflows/workflow-schema.json` | 从 workflows/ 子目录引用 |
 
 任何字段不确定（`hooks` / `agents` / `condition.cases` / `loop.break_when` / `inputs` 校验等）一律先查 schema，不要凭记忆下笔。
 
@@ -629,4 +628,4 @@ octopus workflow run ./deploy.yaml --org {org} --model pro-max --engine claude
 - `context: continue` 仅在前一个节点也是 agent 时有效。
 - 工作流不绑定技术栈 — 不在 YAML 中硬编码 npm/mvn/gradle，让 agent 自动检测。
 - 视觉/截图分析必须用子代理隔离，防止图片数据污染主 session。
-- 任何字段不确定先查 `~/.octopus/workflows/doc/workflow-schema.json`，不要凭记忆写。
+- 任何字段不确定先查 `packages/core-pack/workflows/workflow-schema.json`，不要凭记忆写。

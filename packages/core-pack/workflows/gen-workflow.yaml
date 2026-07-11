@@ -1,4 +1,4 @@
-# yaml-language-server: $schema=./doc/workflow-schema.json
+# yaml-language-server: $schema=./workflow-schema.json
 apiVersion: octopus/v1
 kind: Workflow
 name: gen-workflow
@@ -10,7 +10,7 @@ description: >
   流程: Setup → Analyze → [Challenge] → Plan → [Challenge] → Implement
         → Review (Swarm) → Test-Verify (Loop) → [Gate] → Ship → Done。
 
-model: "opus[1m]"
+model: "pro-max"
 engine: claude
 execution_mode: auto
 max_concurrent: 3
@@ -369,7 +369,7 @@ nodes:
       devil-advocate:
         description: "魔鬼代言人 — 质疑需求假设、识别范围蔓延、挑战技术盲点"
         agent_file: ".claude/agents/devil-advocate.md"
-        model: "opus[1m]"
+        model: "pro-max"
         tools: ["Read", "Grep", "Glob"]
     prompt: |
       读取需求分析规格文档 $vars.spec_file，使用 devil-advocate 子代理对其发起挑战。
@@ -428,7 +428,7 @@ nodes:
       feasibility-reviewer:
         description: "可行性审查者 — 验证实现计划的技术可行性和风险"
         agent_file: ".claude/agents/engineering-software-architect.md"
-        model: "opus[1m]"
+        model: "pro-max"
         tools: ["Read", "Grep", "Glob"]
     prompt: |
       读取实现计划文档 $vars.plan_file 和设计规格 $vars.spec_file。
@@ -458,7 +458,7 @@ nodes:
       code-quality-advisor:
         description: "代码质量顾问 — 在实现过程中审查代码质量和最佳实践"
         agent_file: ".claude/agents/engineering-code-reviewer.md"
-        model: sonnet
+        model: pro
         tools: ["Read", "Grep", "Glob"]
     prompt: |
       你正在执行 Gen Workflow 开发流程的实现阶段。
@@ -532,7 +532,7 @@ nodes:
         type: agent
         timeout: 1800
         context: new
-        model: sonnet
+        model: pro
         skills:
           - octo-workflow-dev
         prompt: |
@@ -550,7 +550,7 @@ nodes:
           cd projects/$vars.projects
           git diff $inputs.base_branch --name-only -- '*.yaml' '*.yml'
           ```
-          目标文件通常在 packages/core-pack/presets/workflows/ 下。
+          目标文件通常在 packages/core-pack/workflows/ 下。
 
           ### Step 2: 静态验证
           检查新工作流 YAML:

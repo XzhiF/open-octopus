@@ -1,4 +1,4 @@
-# yaml-language-server: $schema=./doc/workflow-schema.json
+# yaml-language-server: $schema=./workflow-schema.json
 apiVersion: octopus/v1
 kind: Workflow
 name: regression-tester
@@ -6,7 +6,7 @@ description: >
   系统回归测试工作流。在隔离工作空间中真实运行 Octopus，支持全链路或选择性模块回归，
   与上次基线对比，发现新 BUG 自动写入 bug-report 目录。
 
-model: opus[1m]
+model: pro-max
 engine: claude
 execution_mode: auto
 max_concurrent: 4
@@ -181,7 +181,7 @@ nodes:
           ## Output
           Output pure JSON line (no code block wrapping):
           {"vars_update":{"server_port":"<port>","web_port":"<port>","server_pid":"<PID>","build_ok":"true"}}
-        model: sonnet
+        model: pro
         tools: [Bash, Read, Grep, Glob]
     prompt: |
       You are the Regression Tester setup agent. Complete environment preparation in strict order.
@@ -380,7 +380,7 @@ nodes:
           ## Output
           Output a JSON evidence array:
           {"evidence":[{"module":"<name>","test_name":"<name>","command":"<cmd>","exit_code":0,"duration_ms":1234,"has_real_output":true,"output_snippet":"<first 200 chars>","individual_results":[{"name":"<test>","status":"pass|fail","duration_ms":100}]}]}
-        model: sonnet
+        model: pro
         tools: [Bash, Read, Grep]
 
       reality-checker:
@@ -412,7 +412,7 @@ nodes:
           ## Output
           Output judgment per module:
           {"judgments":[{"module":"<name>","verdict":"PASSED|NEEDS_WORK|FAILED","reason":"<explanation>","evidence_strength":"strong|weak|none"}]}
-        model: opus[1m]
+        model: pro-max
         tools: [Bash, Read, Grep]
 
       vision-analyzer:
@@ -439,7 +439,7 @@ nodes:
           ## Output
           Output structured analysis per page:
           {"visual_results":[{"page":"<url>","breakpoint":1024,"verdict":"PASS|WARN|FAIL","issues":["<description>"],"screenshot_path":"<path>","has_baseline":true,"baseline_diff":"<description>"}]}
-        model: haiku
+        model: se
         tools: [Bash, Read]
 
       report-generator:
@@ -585,7 +585,7 @@ nodes:
           ## Output
           Output pure JSON line (no code block wrapping):
           {"vars_update":{"regression_result":"<PASS|FAIL>","pass_count":"<N>","fail_count":"<N>","new_bugs_found":"<N>","newly_failed":"<comma-separated>","recovered":"<comma-separated>","conclusion":"<2-3 sentences>","token_usage":"<total>"}}
-        model: sonnet
+        model: pro
         tools: [Bash, Read, Write, Grep, Glob]
     prompt: |
       You are the Regression Orchestrator. Execute regression tests for each module in strict sequence,
@@ -710,7 +710,7 @@ nodes:
       ```
 
       ### core-pack (@octopus/core-pack)
-      - Preset workflow YAML validation: every .yaml in presets/workflows/ must parse as valid YAML
+      - Preset workflow YAML validation: every .yaml in workflows/ must parse as valid YAML
         and contain required fields (apiVersion, kind, name, nodes)
       - Skills file existence: every directory in presets/skills/ contains a SKILL.md
       - Agents file existence: every .md in presets/agents/ has valid YAML frontmatter
@@ -719,7 +719,7 @@ nodes:
       ```bash
       cd <worktree_path>
       # Validate all preset workflow YAMLs
-      for f in packages/core-pack/presets/workflows/*.yaml; do
+      for f in packages/core-pack/workflows/*.yaml; do
         node -e "const yaml=require('yaml'); yaml.parse(require('fs').readFileSync('$f','utf-8')); console.log('VALID: $f')" 2>&1
       done
       # Check skills
@@ -924,7 +924,7 @@ nodes:
           ## Output
           Output pure JSON line:
           {"vars_update":{"cleanup_status":"complete","server_pid":""}}
-        model: sonnet
+        model: pro
         tools: [Bash, Read, Grep]
     prompt: |
       You are the cleanup agent. Clean up the regression testing environment after test completion.

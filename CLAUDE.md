@@ -33,7 +33,7 @@ octopus/
 │   ├── engine/          ← @octopus/engine (7 executors + harness + WorkflowEngine + SQLite + JSONL)
 │   ├── server/          ← @octopus/server (Hono REST API + SSE + WebSocket)
 │   ├── web-app/         ← @octopus/web-app (Next.js 前端 + API client)
-│   └── core-pack/       ← @octopus/core-pack (skills/agents/scripts/templates/presets/config)
+│   └── core-pack/       ← @octopus/core-pack (skills/agents/workflows/scripts/templates/config)
 ├── scripts/             ← 开发工具脚本 (dev.mjs, prod.mjs, branch-port.mjs, kill-port.mjs)
 ├── pnpm-workspace.yaml
 ├── package.json         ← root monorepo config + version

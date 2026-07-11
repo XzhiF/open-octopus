@@ -1,4 +1,4 @@
-# yaml-language-server: $schema=./doc/workflow-schema.json
+# yaml-language-server: $schema=./workflow-schema.json
 #
 # ⚠️ 节点同步约定（v4 精简版）
 # 以下节点在 prd-impl.yaml 和 prd-impl-e2e-resume.yaml 之间应保持一致：
@@ -16,7 +16,7 @@ description: >
   split-code (前后端分离，走 Contract → Backend∥Frontend → Integrate) / docs-config (文档/配置)。
   PRD Given/When/Then 驱动 E2E 测试用例生成，独立 git worktree 隔离测试执行。
 
-model: opus[1m]
+model: pro-max
 engine: claude
 execution_mode: auto
 max_concurrent: 3
@@ -458,12 +458,12 @@ nodes:
       architecture-explorer:
         description: "架构勘探员 — 定向提取后端架构信息"
         agent_file: ".claude/agents/architecture-explorer.md"
-        model: sonnet
+        model: pro
         tools: ["Read", "Write", "Grep", "Glob"]
       ui-system-auditor:
         description: "UI 系统审计员 — 定向提取前端约定"
         agent_file: ".claude/agents/engineering-frontend-developer.md"
-        model: sonnet
+        model: pro
         tools: ["Read", "Write", "Grep", "Glob"]
     prompt: |
       你是宿主项目契约生成器。后续所有实现节点必须遵守 host-contract.md。
@@ -759,7 +759,7 @@ nodes:
       code-quality-advisor:
         description: "代码质量顾问 — 实时质量、安全和性能建议"
         agent_file: ".claude/agents/engineering-code-reviewer.md"
-        model: sonnet
+        model: pro
         tools: ["Read", "Grep", "Glob"]
     prompt: |
       使用 subagent-driven-development 按实现计划生成所有交付物。
@@ -850,7 +850,7 @@ nodes:
       backend-architect:
         description: "后端架构师 — 定义 API 契约和共享类型"
         agent_file: ".claude/agents/engineering-backend-architect.md"
-        model: opus[1m]
+        model: pro-max
         tools: ["Read", "Write", "Grep", "Glob"]
     prompt: |
       你是 API 契约工程师，将 $vars.solution_file 的架构级 API 描述展开为工程实现可用的完整契约。
@@ -943,12 +943,12 @@ nodes:
       backend-architect:
         description: "后端架构师 — 实现 API、数据库、服务层"
         agent_file: ".claude/agents/engineering-backend-architect.md"
-        model: opus[1m]
+        model: pro-max
         tools: ["Read", "Write", "Edit", "Bash", "Grep", "Glob"]
       database-optimizer:
         description: "数据库优化师 — Schema 设计、查询优化"
         agent_file: ".claude/agents/engineering-database-optimizer.md"
-        model: sonnet
+        model: pro
         tools: ["Read", "Write", "Edit", "Bash", "Grep", "Glob"]
     prompt: |
       你是后端实现协调者。你有 2 个子代理。
@@ -1032,12 +1032,12 @@ nodes:
       frontend-developer:
         description: "前端开发者 — UI 实现"
         agent_file: ".claude/agents/engineering-frontend-developer.md"
-        model: opus[1m]
+        model: pro-max
         tools: ["Read", "Write", "Edit", "Bash", "Grep", "Glob"]
       ui-designer:
         description: "UI 设计师 — 设计系统、组件库"
         agent_file: ".claude/agents/design-ui-designer.md"
-        model: sonnet
+        model: pro
         tools: ["Read", "Write", "Edit", "Grep", "Glob"]
     prompt: |
       你是前端实现协调者。你有 2 个子代理。
@@ -1138,7 +1138,7 @@ nodes:
       software-architect:
         description: "软件架构师 — 验证前后端集成完整性"
         agent_file: ".claude/agents/engineering-software-architect.md"
-        model: opus[1m]
+        model: pro-max
         tools: ["Bash", "Read", "Write", "Edit", "Grep", "Glob"]
     prompt: |
       前后端并行实现已完成。你是集成验证协调者。你有 1 个子代理。
@@ -1190,12 +1190,12 @@ nodes:
       code-reviewer:
         description: "独立代码审查员"
         agent_file: ".claude/agents/engineering-code-reviewer.md"
-        model: opus[1m]
+        model: pro-max
         tools: ["Bash", "Read", "Grep", "Glob"]
       security-engineer:
         description: "安全工程师"
         agent_file: ".claude/agents/engineering-security-engineer.md"
-        model: opus[1m]
+        model: pro-max
         tools: ["Bash", "Read", "Grep", "Glob"]
       product-completeness-assessor:
         description: "产品完整度评估员 — 对照 PRD 必需功能评估实现完整度"
@@ -1264,7 +1264,7 @@ nodes:
           - **修复方式**: 具体怎么补
           - **优先级**: 高/中/低
           - **预期分值**: 修复后预计提升多少分
-        model: opus[1m]
+        model: pro-max
         tools: ["Bash", "Read", "Grep", "Glob"]
     prompt: |
       你是审查协调者。你有 3 个子代理。
@@ -1338,7 +1338,7 @@ nodes:
       api-tester:
         description: "API 测试架构师 — 将抽象验收用例绑定到可执行脚本"
         agent_file: ".claude/agents/testing-api-tester.md"
-        model: sonnet
+        model: pro
         tools: ["Read", "Write", "Edit", "Grep", "Glob"]
     prompt: |
       你是 E2E 用例绑定工程师。合并原 e2e-case-bind + completeness-bind。

@@ -1,4 +1,4 @@
-# yaml-language-server: $schema=./doc/workflow-schema.json
+# yaml-language-server: $schema=./workflow-schema.json
 apiVersion: octopus/v1
 kind: Workflow
 name: mvp-doc
@@ -10,7 +10,7 @@ description: >
   输出: ai-docs/mvp-{name}/ 下的 feature-centric 文档树，含 FR-XXX → TEST-XXX → IMPL-XXX 可追溯 ID 链。
   借鉴 mvp-builder 的 Document-Driven Development 方法论。
 
-model: opus[1m]
+model: pro-max
 engine: claude
 execution_mode: serial
 timeout: 86400
@@ -885,7 +885,7 @@ nodes:
       devil-advocate:
         description: "魔鬼代言人 — MVP 文档完整性审查"
         agent_file: ".claude/agents/devil-advocate.md"
-        model: opus[1m]
+        model: pro-max
         tools: ["Read", "Grep", "Glob"]
     prompt: |
       你是 MVP 文档完整性审查协调者。你有 devil-advocate 子代理可用。

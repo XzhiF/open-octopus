@@ -79,7 +79,9 @@ octopus setup --org xzf
 │   └── mcp_prod.yaml    ← MCP 服务注册表
 ├── agents/              ← 组织级 Agent 定义
 ├── skills/              ← 组织级 Skill
-└── workflows/           ← 组织级工作流
+└── resources/
+    └── installed/
+        └── workflows/   ← 内置工作流（setup 安装）
 ```
 
 ### 2. 编辑项目清单
@@ -109,11 +111,11 @@ octopus repos sync --org xzf
 
 ### 4. 同步工作流
 
-```bash
-octopus workflow sync --org xzf
-```
+工作流随 `octopus setup` 一起安装，无需单独同步。setup 会将内置工作流安装到 `~/.octopus/resources/installed/workflows/`。
 
-将内置工作流模板同步到 `~/.octopus/orgs/xzf/workflows/`。
+```bash
+octopus workflow list --built-in    # 查看已安装的内置工作流
+```
 
 ### 5. 启动服务
 
@@ -245,10 +247,9 @@ octopus repos clone my-project --org xzf # 克隆指定项目
 octopus repos pull --org xzf             # 拉取所有项目最新代码
 
 # 工作流
-octopus workflow sync --org xzf          # 同步内置工作流模板
 octopus workflow run <yaml> --org xzf    # 执行工作流
 octopus workflow validate <yaml>         # 验证 YAML 格式
-octopus workflow list --org xzf          # 列出可用工作流
+octopus workflow list --built-in         # 列出已安装的内置工作流
 
 # 其他
 octopus version                          # 版本信息

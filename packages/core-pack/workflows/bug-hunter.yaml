@@ -1,4 +1,4 @@
-# yaml-language-server: $schema=./doc/workflow-schema.json
+# yaml-language-server: $schema=./workflow-schema.json
 apiVersion: octopus/v1
 kind: Workflow
 name: bug-hunter
@@ -9,7 +9,7 @@ description: >
         → [Gate] → Fix → Fix-Verify (Loop) → [Gate] → Ship → Done。
   特性: 事实依据优先、reality-checker 引擎级门控、最小复现验证、对抗审查。
 
-model: "opus[1m]"
+model: "pro-max"
 engine: claude
 execution_mode: auto
 max_concurrent: 3
@@ -362,7 +362,7 @@ nodes:
     output_format: structured
     host:
       role: bug-triage-host
-      model: "opus[1m]"
+      model: "pro-max"
       prompt: |
         综合所有专家的扫描结果，执行 BUG 分诊:
 
@@ -437,7 +437,7 @@ nodes:
         agents:
           evidence-collector:
             description: "证据收集者 — 最小复现脚本 + 运行时证据链"
-            model: sonnet
+            model: pro
             tools: ["Bash", "Read", "Write", "Grep", "Glob"]
             prompt: |
               ## 复现证据收集
@@ -462,7 +462,7 @@ nodes:
 
           reality-checker:
             description: "现实检验者 — 默认 NOT CONFIRMED，要求铁证才确认"
-            model: "opus[1m]"
+            model: "pro-max"
             tools: ["Bash", "Read", "Grep"]
             prompt: |
               ## 复现验证现实检查
@@ -559,7 +559,7 @@ nodes:
     agents:
       diagnostician:
         description: "根因分析专家 — 5 Whys 深度诊断 + 修复方案设计"
-        model: "opus[1m]"
+        model: "pro-max"
         agent_file: ".claude/agents/engineering-software-architect.md"
         tools: ["Bash", "Read", "Grep", "Glob"]
         maxTurns: 30
@@ -582,7 +582,7 @@ nodes:
 
       devil-advocate:
         description: "魔鬼代言人 — 对抗审查修复方案"
-        model: "opus[1m]"
+        model: "pro-max"
         agent_file: ".claude/agents/devil-advocate.md"
         tools: ["Read", "Grep", "Glob"]
         maxTurns: 20
@@ -663,7 +663,7 @@ nodes:
         agents:
           evidence-collector:
             description: "修复验证证据收集 — 复现脚本重跑 + 前后对比"
-            model: sonnet
+            model: pro
             tools: ["Bash", "Read", "Grep", "Glob"]
             prompt: |
               ## 修复验证证据收集
@@ -683,7 +683,7 @@ nodes:
 
           reality-checker:
             description: "修复验证现实检查 — 默认 NOT FIXED，要求压倒性证据"
-            model: "opus[1m]"
+            model: "pro-max"
             tools: ["Bash", "Read", "Grep"]
             prompt: |
               ## 修复验证

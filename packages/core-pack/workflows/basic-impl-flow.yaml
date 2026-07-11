@@ -1,4 +1,4 @@
-# yaml-language-server: $schema=./doc/workflow-schema.json
+# yaml-language-server: $schema=./workflow-schema.json
 apiVersion: octopus/v1
 kind: Workflow
 name: basic-impl-flow
@@ -9,7 +9,7 @@ description: >
   E2E 阶段可选（默认开启），agent 自主规划测试、发现问题直接修复、重新验证，测试通过后才提交 PR。
   需求全部一次性规划实现，不分阶段交付。
 
-model: "opus[1m]"
+model: "pro-max"
 engine: claude
 execution_mode: serial
 timeout: 86400
@@ -375,7 +375,7 @@ nodes:
   # ═══════════════════════════════════════════════════════════════
   - id: e2e-test
     type: agent
-    model: sonnet
+    model: pro
     depends_on: [review]
     timeout: 7200
     execute_when: '$inputs.run_e2e == "true"'
@@ -399,7 +399,7 @@ nodes:
           - 只返回文本结果
           - 不要返回图片数据或 base64 编码
           - 如果图片不存在，报告错误
-        model: sonnet
+        model: pro
         tools: ["Bash", "Read"]
     prompt: |
       你正在执行 Hermes 实现流程的 E2E 端到端测试阶段。
