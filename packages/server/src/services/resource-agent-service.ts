@@ -13,11 +13,9 @@ import { getOrchestratorService } from './agent/orchestrator-service'
  */
 export class ResourceAgentService {
   private manager: ResourceManager
-  private org: string
 
-  constructor(manager: ResourceManager, org: string) {
+  constructor(manager: ResourceManager) {
     this.manager = manager
-    this.org = org
   }
 
   /**
@@ -48,7 +46,7 @@ export class ResourceAgentService {
       `如果批量操作失败，尝试逐个安装。` +
       `最后报告安装结果（installed/skipped/errors 数量）。`
 
-    const orchestrator = getOrchestratorService(this.org)
+    const orchestrator = getOrchestratorService("default")
     try {
       const agentLog = await orchestrator.executeTask(
         task,
@@ -98,7 +96,7 @@ export class ResourceAgentService {
       `6. 覆盖更新已变更的文件 ` +
       `7. 报告结果（updated/added/removed/unchanged 数量）`
 
-    const orchestrator = getOrchestratorService(this.org)
+    const orchestrator = getOrchestratorService("default")
     try {
       const agentLog = await orchestrator.executeTask(
         task,

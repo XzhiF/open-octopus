@@ -44,7 +44,7 @@ export function getExecutionService(
   if (!ws) return undefined
 
   const resolvedPath = ws.path.replace(/^~/, os.homedir())
-  const resourceManager = getResourceRegistry().getOrCreate(ws.org)
+  const resourceManager = getResourceRegistry().get()
   const service = new ExecutionService(
     _db,
     _sse,

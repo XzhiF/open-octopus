@@ -12,7 +12,6 @@ import { PageState } from "./PageState"
 import { UninstallConfirm } from "./UninstallConfirm"
 import { uninstallResource } from "@/lib/resource/api"
 import type { ResourceType } from "@/lib/resource/types"
-import { useResourceOrg } from "./resource-context"
 import { useResourceList } from "@/hooks/use-resource-list"
 
 const TYPE_FILTERS: Array<{ label: string; value: ResourceType | "all" }> = [
@@ -58,7 +57,6 @@ function saveState(state: ListState) {
 }
 
 export function ResourceList() {
-  const org = useResourceOrg()
   const [typeFilter, setTypeFilter] = useState<ResourceType | "all">(() => loadState().typeFilter)
   const [query, setQuery] = useState(() => loadState().query)
   const [selectedGroups, setSelectedGroups] = useState<Set<string> | null>(() => {
@@ -81,7 +79,7 @@ export function ResourceList() {
   }, [typeFilter, query, selectedGroups, page])
 
   // Always fetch all types — filter client-side so counts stay accurate
-  const { resources: allEntries, loading, error, refresh } = useResourceList(org, {
+  const { resources: allEntries, loading, error, refresh } = useResourceList({
     query: query || undefined,
   })
 
@@ -164,7 +162,7 @@ export function ResourceList() {
     if (!uninstallTarget) return
     setUninstalling(true)
     try {
-      await uninstallResource(org, uninstallTarget.name, uninstallTarget.type)
+      await uninstallResource(uninstallTarget.name, uninstallTarget.type)
       setUninstallTarget(null)
       refresh()
     } catch {

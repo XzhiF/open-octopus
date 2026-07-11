@@ -15,7 +15,6 @@ import {
 } from "@/components/ui/select"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { ScrollText, Download, RefreshCw } from "lucide-react"
-import { useResourceOrg } from "./resource-context"
 import { PageState } from "./PageState"
 import { useAuditLog } from "@/hooks/use-audit-log"
 
@@ -57,7 +56,6 @@ function saveState(state: AuditState) {
 }
 
 export function AuditLog() {
-  const org = useResourceOrg()
   const [page, setPage] = useState(() => loadState().page)
   const [actionFilter, setActionFilter] = useState<string>(() => loadState().actionFilter)
   const [callerFilter, setCallerFilter] = useState<string>(() => loadState().callerFilter)
@@ -69,7 +67,7 @@ export function AuditLog() {
   }, [page, actionFilter, callerFilter, nameFilter])
 
   // Fetch more records to support client-side pagination and filtering
-  const { records: allRecords, loading, error, refresh } = useAuditLog(org, {
+  const { records: allRecords, loading, error, refresh } = useAuditLog( {
     last: 1000,
     action: actionFilter === "all" ? undefined : actionFilter,
   })

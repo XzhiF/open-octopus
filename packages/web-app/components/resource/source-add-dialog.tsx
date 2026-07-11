@@ -13,7 +13,6 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { addSource } from "@/lib/resource/api"
-import { useResourceOrg } from "./resource-context"
 
 interface SourceAddDialogProps {
   open: boolean
@@ -22,7 +21,6 @@ interface SourceAddDialogProps {
 }
 
 export function SourceAddDialog({ open, onOpenChange, onSuccess }: SourceAddDialogProps) {
-  const org = useResourceOrg()
   const [url, setUrl] = useState("")
   const [name, setName] = useState("")
   const [branch, setBranch] = useState("main")
@@ -34,7 +32,7 @@ export function SourceAddDialog({ open, onOpenChange, onSuccess }: SourceAddDial
     setLoading(true)
     setError(null)
     try {
-      const result = await addSource(org, url, name || undefined, branch)
+      const result = await addSource(url, name || undefined, branch)
       onOpenChange(false)
       setUrl("")
       setName("")

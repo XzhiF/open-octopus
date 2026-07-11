@@ -1,4 +1,4 @@
-import { Hono, type Context } from "hono"
+import { Hono } from "hono"
 import fs from "fs"
 import path from "path"
 import {
@@ -16,7 +16,6 @@ import {
   requireJsonContentType,
   validateTypeParam,
   validateNameParam,
-  validateOrgParam,
   withResourceLock,
   withErrorCatch,
 } from "./middleware"
@@ -32,7 +31,7 @@ import { ResourceAgentService } from "../../services/resource-agent-service"
  */
 
 export function createResourceRoutes(
-  getManager: (org: string) => ResourceManager,
+  getManager: () => ResourceManager,
 ): Hono {
   const app = new Hono()
 
@@ -41,13 +40,7 @@ export function createResourceRoutes(
 
   // ── Helpers ──────────────────────────────────────────────────────────────
 
-  function org(c: Context): string {
-    const raw = (c.req.query("org") as string) || "default"
-    return validateOrgParam(raw)
-  }
-
-  /**
-   * Translate ResourceManager error codes to API-contract codes.
+  /** Translate ResourceManager error codes to API-contract codes.
    * - RESOURCE_ALREADY_EXISTS → ALREADY_INSTALLED (409)
    * - LOCK_BUSY               → RESOURCE_LOCKED   (409)
    */
@@ -69,7 +62,7 @@ export function createResourceRoutes(
 
   // ── GET / — List resources ───────────────────────────────────────────────
   app.get("/", withErrorCatch(async (c) => {
-    const manager = getManager(org(c))
+    const manager = getManager()
     const type = c.req.query("type") as ResourceType | undefined
     const query = c.req.query("query") as string | undefined
     const installedParam = c.req.query("installed") as string | undefined
@@ -84,12 +77,12 @@ export function createResourceRoutes(
 
   // ── GET /stats — Statistics ──────────────────────────────────────────────
   app.get("/stats", withErrorCatch(async (c) => {
-    return c.json(getManager(org(c)).stats())
+    return c.json(getManager().stats())
   }))
 
   // ── GET /audit — Audit log (time-descending) ────────────────────────────
   app.get("/audit", withErrorCatch(async (c) => {
-    const manager = getManager(org(c))
+    const manager = getManager()
     const action = c.req.query("action") as string | undefined
     const lastParam = c.req.query("last") as string | undefined
     const last = lastParam ? parseInt(lastParam, 10) : undefined
@@ -105,7 +98,7 @@ export function createResourceRoutes(
 
   // ── GET /builtin — Available builtin catalog ─────────────────────────────
   app.get("/builtin", withErrorCatch(async (c) => {
-    const manager = getManager(org(c))
+    const manager = getManager()
     const catalog = manager.listBuiltin().map((entry) => ({
       ...entry,
       installed: manager.get(entry.type, entry.name) !== null,
@@ -115,8 +108,7 @@ export function createResourceRoutes(
 
   // ── POST /install — Install resource ─────────────────────────────────────
   app.post("/install", withErrorCatch(async (c) => {
-    const o = org(c)
-    const manager = getManager(o)
+    const manager = getManager()
 
     const body = await c.req.json()
     const parsed = InstallRequestSchema.safeParse(body)
@@ -126,10 +118,8 @@ export function createResourceRoutes(
       })
     }
 
-    // Server-level lock: `${org}:${name}` to serialize concurrent install/uninstall.
-    // Key uses resource name (not ref/type) so install and uninstall lock the same resource.
     const refName = parsed.data.ref.replace(/^[^:]+:/, "")
-    const result = await withResourceLock(`${o}:${refName}`, async () => {
+    const result = await withResourceLock(refName, async () => {
       try {
         return await manager.install(parsed.data)
       } catch (err) { mapError(err) }
@@ -140,8 +130,7 @@ export function createResourceRoutes(
 
   // ── POST /uninstall — Uninstall resource ─────────────────────────────────
   app.post("/uninstall", withErrorCatch(async (c) => {
-    const o = org(c)
-    const manager = getManager(o)
+    const manager = getManager()
 
     const body = await c.req.json()
     const parsed = UninstallRequestSchema.safeParse(body)
@@ -151,7 +140,7 @@ export function createResourceRoutes(
       })
     }
 
-    const result = await withResourceLock(`${o}:${parsed.data.name}`, async () => {
+    const result = await withResourceLock(parsed.data.name, async () => {
       try {
         return await manager.uninstall(parsed.data)
       } catch (err) { mapError(err) }
@@ -164,14 +153,13 @@ export function createResourceRoutes(
 
   // ── POST /source/add — Add collection source ─────────────────────────────
   app.post("/source/add", withErrorCatch(async (c) => {
-    const o = org(c)
-    const sm = getManager(o).getSourceManager()
+    const sm = getManager().getSourceManager()
     const body = await c.req.json()
     const parsed = SourceAddRequestSchema.safeParse(body)
     if (!parsed.success) {
       throw new ResourceError("INVALID_REF", parsed.error.issues[0]?.message ?? "Invalid request")
     }
-    const result = await withResourceLock(`${o}:source:add`, async () => {
+    const result = await withResourceLock("source:add", async () => {
       return sm.add(parsed.data)
     })
     return c.json(result)
@@ -179,8 +167,7 @@ export function createResourceRoutes(
 
   // ── POST /source/install — Batch install from collection source ──────────
   app.post("/source/install", withErrorCatch(async (c) => {
-    const o = org(c)
-    const manager = getManager(o)
+    const manager = getManager()
     const body = await c.req.json()
     const parsed = SourceInstallRequestSchema.safeParse(body)
     if (!parsed.success) {
@@ -202,9 +189,8 @@ export function createResourceRoutes(
       return c.json({ installed: 0, skipped: 0, errors: [], message: "No resources to install" })
     }
 
-    // Delegate to ResourceAgentService for intelligent install
-    const agent = new ResourceAgentService(manager, o)
-    const result = await withResourceLock(`${o}:source:${parsed.data.sourceName}:install`, async () => {
+    const agent = new ResourceAgentService(manager)
+    const result = await withResourceLock(`source:${parsed.data.sourceName}:install`, async () => {
       return agent.installFromSource({
         sourceName: parsed.data.sourceName,
         group,
@@ -218,17 +204,15 @@ export function createResourceRoutes(
 
   // ── POST /source/sync — Sync collection source ───────────────────────────
   app.post("/source/sync", withErrorCatch(async (c) => {
-    const o = org(c)
-    const manager = getManager(o)
+    const manager = getManager()
     const body = await c.req.json()
     const parsed = SourceSyncRequestSchema.safeParse(body)
     if (!parsed.success) {
       throw new ResourceError("INVALID_NAME", parsed.error.issues[0]?.message ?? "Invalid request")
     }
 
-    // Delegate to ResourceAgentService for intelligent sync
-    const agent = new ResourceAgentService(manager, o)
-    const result = await withResourceLock(`${o}:source:${parsed.data.sourceName}:sync`, async () => {
+    const agent = new ResourceAgentService(manager)
+    const result = await withResourceLock(`source:${parsed.data.sourceName}:sync`, async () => {
       return agent.syncSource({
         sourceName: parsed.data.sourceName,
         caller: parsed.data.caller,
@@ -240,21 +224,20 @@ export function createResourceRoutes(
 
   // ── GET /source/list — List collection sources ───────────────────────────
   app.get("/source/list", withErrorCatch(async (c) => {
-    const sm = getManager(org(c)).getSourceManager()
+    const sm = getManager().getSourceManager()
     const sources = sm.list()
     return c.json({ sources, total: sources.length })
   }))
 
   // ── POST /source/update — Update collection source ───────────────────────
   app.post("/source/update", withErrorCatch(async (c) => {
-    const o = org(c)
-    const sm = getManager(o).getSourceManager()
+    const sm = getManager().getSourceManager()
     const body = await c.req.json()
     const parsed = SourceUpdateRequestSchema.safeParse(body)
     if (!parsed.success) {
       throw new ResourceError("INVALID_NAME", parsed.error.issues[0]?.message ?? "Invalid request")
     }
-    const result = await withResourceLock(`${o}:source:${parsed.data.name}`, async () => {
+    const result = await withResourceLock(`source:${parsed.data.name}`, async () => {
       return sm.update(parsed.data)
     })
     return c.json(result)
@@ -262,7 +245,7 @@ export function createResourceRoutes(
 
   // ── POST /source/analyze — Preview source without installing ─────────────
   app.post("/source/analyze", withErrorCatch(async (c) => {
-    const sm = getManager(org(c)).getSourceManager()
+    const sm = getManager().getSourceManager()
     const body = await c.req.json()
     if (!body.url) {
       throw new ResourceError("INVALID_REF", "URL is required")
@@ -273,7 +256,7 @@ export function createResourceRoutes(
 
   // ── GET /source/:name — Source detail ────────────────────────────────────
   app.get("/source/:name", withErrorCatch(async (c) => {
-    const sm = getManager(org(c)).getSourceManager()
+    const sm = getManager().getSourceManager()
     const name = c.req.param("name")
     validateNameParam(name)
     const source = sm.get(name)
@@ -285,11 +268,10 @@ export function createResourceRoutes(
 
   // ── DELETE /source/:name — Remove collection source ──────────────────────
   app.delete("/source/:name", withErrorCatch(async (c) => {
-    const o = org(c)
-    const sm = getManager(o).getSourceManager()
+    const sm = getManager().getSourceManager()
     const name = c.req.param("name")
     validateNameParam(name)
-    await withResourceLock(`${o}:source:${name}`, async () => {
+    await withResourceLock(`source:${name}`, async () => {
       sm.remove(name, "ui")
     })
     return c.json({ name, status: "removed" })
@@ -302,7 +284,7 @@ export function createResourceRoutes(
     validateTypeParam(type)
     validateNameParam(name)
 
-    const manager = getManager(org(c))
+    const manager = getManager()
     const entry = manager.get(type as ResourceType, name)
     if (!entry) {
       throw new ResourceError("RESOURCE_NOT_FOUND", `Resource ${type}/${name} not found`)
@@ -317,7 +299,7 @@ export function createResourceRoutes(
     validateTypeParam(type)
     validateNameParam(name)
 
-    const manager = getManager(org(c))
+    const manager = getManager()
     const entry = manager.get(type as ResourceType, name)
     if (!entry) {
       throw new ResourceError("RESOURCE_NOT_FOUND", `Resource ${type}/${name} not found`)
@@ -346,7 +328,7 @@ export function createResourceRoutes(
     validateTypeParam(type)
     validateNameParam(name)
 
-    const manager = getManager(org(c))
+    const manager = getManager()
     const entry = manager.get(type as ResourceType, name)
     if (!entry) {
       throw new ResourceError("RESOURCE_NOT_FOUND", `Resource ${type}/${name} not found`)

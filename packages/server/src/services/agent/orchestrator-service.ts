@@ -596,7 +596,7 @@ ${nodes.map(n => `  - id: ${n.id}
     let autoDiscoveredSkills: Array<Record<string, unknown>> = []
     try {
       const { getResourceRegistry } = await import('../resource-registry')
-      const resourceManager = getResourceRegistry().getOrCreate(this.org)
+      const resourceManager = getResourceRegistry().get()
       const installed = resourceManager.list({ type: "skill", installed: true })
       const installedMap = new Map<string, { group: string; installPath: string }>()
       for (const entry of installed.resources ?? []) {
@@ -677,7 +677,7 @@ ${nodes.map(n => `  - id: ${n.id}
     let autoDiscoveredWorkflows: Array<Record<string, unknown>> = []
     try {
       const { getResourceRegistry } = await import('../resource-registry')
-      const resourceManager = getResourceRegistry().getOrCreate(this.org)
+      const resourceManager = getResourceRegistry().get()
       const installed = resourceManager.list({ type: "workflow", installed: true })
       const installedMap = new Map<string, { group: string; installPath: string }>()
       for (const entry of installed.resources ?? []) {
@@ -739,7 +739,7 @@ ${nodes.map(n => `  - id: ${n.id}
     let autoDiscoveredAgents: Array<Record<string, unknown>> = []
     try {
       const { getResourceRegistry } = await import('../resource-registry')
-      const resourceManager = getResourceRegistry().getOrCreate(this.org)
+      const resourceManager = getResourceRegistry().get()
       const installed = resourceManager.list({ type: "agent", installed: true })
       const installedMap = new Map<string, { group: string; installPath: string }>()
       for (const entry of installed.resources ?? []) {

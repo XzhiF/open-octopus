@@ -397,7 +397,7 @@ export class ArchiveService {
       await emitter.stepStart("install_skills", `安装 ${options.installSkills.length} 个 Skill...`)
       let installedSkills = 0
       if (options.installSkills.length > 0) {
-        installedSkills = await this.installSkills(org, options.installSkills, emitter)
+        installedSkills = await this.installSkills(options.installSkills, emitter)
       }
       await emitter.stepDone("install_skills", { count: installedSkills })
 
@@ -406,7 +406,7 @@ export class ArchiveService {
       await emitter.stepStart("install_workflows", `安装 ${installWorkflows.length} 个 Workflow...`)
       let installedWorkflows = 0
       if (installWorkflows.length > 0) {
-        installedWorkflows = await this.installWorkflowsToResources(org, installWorkflows, emitter)
+        installedWorkflows = await this.installWorkflowsToResources(installWorkflows, emitter)
       }
       await emitter.stepDone("install_workflows", { count: installedWorkflows })
 
@@ -415,7 +415,7 @@ export class ArchiveService {
       await emitter.stepStart("install_agents", `安装 ${installAgents.length} 个 Agent...`)
       let installedAgents = 0
       if (installAgents.length > 0) {
-        installedAgents = await this.installAgentsToResources(org, installAgents, emitter)
+        installedAgents = await this.installAgentsToResources(installAgents, emitter)
       }
       await emitter.stepDone("install_agents", { count: installedAgents })
 
@@ -567,13 +567,12 @@ export class ArchiveService {
   }
 
   private async installSkills(
-    org: string,
     skills: Array<{ name: string; group: string; path?: string; content?: string }>,
     emitter: StepEmitter,
   ): Promise<number> {
     try {
       const { getResourceRegistry } = await import("../resource-registry")
-      const resourceManager = getResourceRegistry().getOrCreate(org)
+      const resourceManager = getResourceRegistry().get()
       const fs = await import("fs")
       const path = await import("path")
       const os = await import("os")
@@ -581,6 +580,16 @@ export class ArchiveService {
 
       for (const skill of skills) {
         try {
+          // 清理名称：LLM 提取的名称可能带引号或非法字符
+          const safeName = skill.name.replace(/["']/g, "").replace(/[^a-zA-Z0-9._-]/g, "-").replace(/^[^a-zA-Z0-9]+/, "")
+          const safeGroup = skill.group.replace(/["']/g, "").replace(/[^a-zA-Z0-9._-]/g, "-").replace(/^[^a-zA-Z0-9]+/, "")
+          if (!safeName) {
+            await emitter.log(`✗ Skipping skill with empty name after sanitization: ${skill.name}`)
+            continue
+          }
+          skill.name = safeName
+          skill.group = safeGroup || "archive-extracted"
+
           await emitter.stepProgress("install_skills", `安装 ${skill.name} → ${skill.group}`)
 
           if (skill.path && fs.existsSync(skill.path)) {
@@ -620,19 +629,18 @@ export class ArchiveService {
 
       return installedCount
     } catch (err) {
-      logError("installSkills failed", err, { org })
+      logError("installSkills failed", err)
       return 0
     }
   }
 
   private async installWorkflowsToResources(
-    org: string,
     workflows: Array<{ name: string; group: string; path?: string; content?: string }>,
     emitter: StepEmitter,
   ): Promise<number> {
     try {
       const { getResourceRegistry } = await import("../resource-registry")
-      const resourceManager = getResourceRegistry().getOrCreate(org)
+      const resourceManager = getResourceRegistry().get()
       const fs = await import("fs")
       const path = await import("path")
       const os = await import("os")
@@ -640,6 +648,16 @@ export class ArchiveService {
 
       for (const wf of workflows) {
         try {
+          // 清理名称：LLM 提取的 YAML name 可能带引号或其他非法字符
+          const safeName = wf.name.replace(/["']/g, "").replace(/[^a-zA-Z0-9._-]/g, "-").replace(/^[^a-zA-Z0-9]+/, "")
+          const safeGroup = wf.group.replace(/["']/g, "").replace(/[^a-zA-Z0-9._-]/g, "-").replace(/^[^a-zA-Z0-9]+/, "")
+          if (!safeName) {
+            await emitter.log(`✗ Skipping workflow with empty name after sanitization: ${wf.name}`)
+            continue
+          }
+          wf.name = safeName
+          wf.group = safeGroup || "archive-extracted"
+
           await emitter.stepProgress("install_workflows", `安装 ${wf.name} → ${wf.group}`)
 
           const basePath = path.join(os.homedir(), ".octopus", "resources")
@@ -674,19 +692,18 @@ export class ArchiveService {
 
       return installedCount
     } catch (err) {
-      logError("installWorkflowsToResources failed", err, { org })
+      logError("installWorkflowsToResources failed", err)
       return 0
     }
   }
 
   private async installAgentsToResources(
-    org: string,
     agents: Array<{ name: string; group: string; path?: string; content?: string }>,
     emitter: StepEmitter,
   ): Promise<number> {
     try {
       const { getResourceRegistry } = await import("../resource-registry")
-      const resourceManager = getResourceRegistry().getOrCreate(org)
+      const resourceManager = getResourceRegistry().get()
       const fs = await import("fs")
       const path = await import("path")
       const os = await import("os")
@@ -694,6 +711,16 @@ export class ArchiveService {
 
       for (const agent of agents) {
         try {
+          // 清理名称：LLM 提取的名称可能带引号或非法字符
+          const safeName = agent.name.replace(/["']/g, "").replace(/[^a-zA-Z0-9._-]/g, "-").replace(/^[^a-zA-Z0-9]+/, "")
+          const safeGroup = agent.group.replace(/["']/g, "").replace(/[^a-zA-Z0-9._-]/g, "-").replace(/^[^a-zA-Z0-9]+/, "")
+          if (!safeName) {
+            await emitter.log(`✗ Skipping agent with empty name after sanitization: ${agent.name}`)
+            continue
+          }
+          agent.name = safeName
+          agent.group = safeGroup || "archive-extracted"
+
           await emitter.stepProgress("install_agents", `安装 ${agent.name} → ${agent.group}`)
 
           const basePath = path.join(os.homedir(), ".octopus", "resources")
@@ -728,7 +755,7 @@ export class ArchiveService {
 
       return installedCount
     } catch (err) {
-      logError("installAgentsToResources failed", err, { org })
+      logError("installAgentsToResources failed", err)
       return 0
     }
   }

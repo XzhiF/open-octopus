@@ -8,7 +8,6 @@ import { Badge } from "@/components/ui/badge"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { FolderGit2, RefreshCw, Trash2, Plus } from "lucide-react"
 import { listSources, updateSource, removeSource } from "@/lib/resource/api"
-import { useResourceOrg } from "./resource-context"
 import { PageState } from "./PageState"
 import { SourceAddDialog } from "./source-add-dialog"
 
@@ -24,7 +23,6 @@ interface SourceEntry {
 }
 
 export function SourceList() {
-  const org = useResourceOrg()
   const [sources, setSources] = useState<SourceEntry[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -35,14 +33,14 @@ export function SourceList() {
     setLoading(true)
     setError(null)
     try {
-      const res = await listSources(org)
+      const res = await listSources()
       setSources(res.sources)
     } catch (err) {
       setError(err instanceof Error ? err.message : "加载来源列表失败")
     } finally {
       setLoading(false)
     }
-  }, [org])
+  }, [])
 
   useEffect(() => {
     fetchSources()
@@ -51,7 +49,7 @@ export function SourceList() {
   const handleUpdate = async (name: string) => {
     setUpdating(name)
     try {
-      await updateSource(org, name)
+      await updateSource(name)
       fetchSources()
     } catch (err) {
       setError(err instanceof Error ? err.message : "更新失败")
@@ -63,7 +61,7 @@ export function SourceList() {
   const handleRemove = async (name: string) => {
     if (!confirm(`确定移除来源 ${name}？已安装的资源不受影响。`)) return
     try {
-      await removeSource(org, name)
+      await removeSource(name)
       fetchSources()
     } catch (err) {
       setError(err instanceof Error ? err.message : "移除失败")
