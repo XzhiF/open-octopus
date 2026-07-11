@@ -299,4 +299,35 @@ describe("MoaStrategy", () => {
     expect(emitCalls.filter((e: { type: string }) => e.type === "expert_complete")).toHaveLength(2)
     expect(emitCalls.filter((e: { type: string }) => e.type === "swarm_complete")).toHaveLength(1)
   })
+
+  // TC-027: 10+ experts parallel without rate limit
+  it("runs 10+ experts in parallel without rate limit", async () => {
+    const services = createMockServices({
+      runExpert: vi.fn().mockImplementation(
+        async (expert: ExpertDef): Promise<ExpertOutput> => {
+          await new Promise((r) => setTimeout(r, 100))
+          return {
+            output: `Output from ${expert.role}`,
+            tokens: 100,
+            inputTokens: 50,
+            outputTokens: 50,
+            files_changed: [],
+            tools_used: [],
+          }
+        },
+      ),
+    })
+
+    const strategy = new MoaStrategy(services, makeConfig({ rounds: 0 }))
+    const experts = Array.from({ length: 12 }, (_, i) => makeExpert({ role: `e${i}` }))
+
+    const start = Date.now()
+    const result = await strategy.run(experts, new MessageBus(), new SharedMemory())
+    const elapsed = Date.now() - start
+
+    // 12 experts × 100ms serial = 1200ms, parallel should be < 250ms
+    expect(elapsed).toBeLessThan(250)
+    expect(result.experts).toHaveLength(12)
+    expect(result.experts.every((e) => e.status === "completed")).toBe(true)
+  })
 })

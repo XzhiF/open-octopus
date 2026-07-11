@@ -313,7 +313,7 @@ Y Combinator CEO Garry Tan 的 AI 工程技能包，提供虚拟工程团队角�
 <!-- octopus-resources -->
 
 ### Skills
-- test-skill (core-pack)
+- test-skill (built-in)
 
 ### 使用方式
 - 搜索更多: 使用 octo-resource-manager skill

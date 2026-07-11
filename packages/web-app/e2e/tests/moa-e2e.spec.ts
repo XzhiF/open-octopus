@@ -53,6 +53,7 @@ test.describe("TC-016: MoaConfigPanel — Expert list", () => {
 
     // Empty state
     await expect(moaSection.getByText("点击「添加 Expert」开始配置")).toBeVisible()
+    await expect(page).toHaveScreenshot("moa-config-empty.png", { maxDiffPixelRatio: 0.02 })
 
     // Add expert button
     const addButton = moaSection.getByRole("button", { name: /添加 Expert/ })
@@ -60,6 +61,7 @@ test.describe("TC-016: MoaConfigPanel — Expert list", () => {
 
     // First expert row appears
     await expect(moaSection.getByPlaceholder("角色名")).toBeVisible()
+    await expect(page).toHaveScreenshot("moa-config-expert-added.png", { maxDiffPixelRatio: 0.02 })
   })
 })
 
@@ -102,6 +104,8 @@ test.describe("TC-018: ModelResolveBadge — three states", () => {
 
     // Error badge
     await expect(badgeSection.getByText("无法解析", { exact: false }).first()).toBeVisible()
+
+    await expect(page).toHaveScreenshot("moa-badge-states.png", { maxDiffPixelRatio: 0.02 })
   })
 })
 
@@ -123,6 +127,7 @@ test.describe("TC-019: YAML Export", () => {
 
     // Copy button present
     await expect(page.getByRole("button", { name: /复制/ })).toBeVisible()
+    await expect(page).toHaveScreenshot("moa-yaml-export.png", { maxDiffPixelRatio: 0.02 })
   })
 })
 
@@ -166,6 +171,7 @@ test.describe("TC-021: MoaResultTab — five states", () => {
 
     // Empty state
     await expect(resultSection.getByText("暂无执行数据")).toBeVisible()
+    await expect(page).toHaveScreenshot("moa-result-empty.png", { maxDiffPixelRatio: 0.02 })
   })
 
   test("renders success state with expert cards and aggregator output", async ({ page }) => {
@@ -175,15 +181,16 @@ test.describe("TC-021: MoaResultTab — five states", () => {
     const resultSection = page.getByTestId("tc-moa-result-success")
     await expect(resultSection).toBeVisible()
 
-    // Expert cards visible
-    await expect(resultSection.getByText("security")).toBeVisible()
-    await expect(resultSection.getByText("performance")).toBeVisible()
+    // Expert cards visible (use .first() to avoid strict mode on multiple matches)
+    await expect(resultSection.getByText("security").first()).toBeVisible()
+    await expect(resultSection.getByText("performance").first()).toBeVisible()
 
     // Aggregator section visible
-    await expect(resultSection.getByText("Aggregator")).toBeVisible()
+    await expect(resultSection.getByText("Aggregator").first()).toBeVisible()
 
     // Compare button visible
-    await expect(resultSection.getByRole("button", { name: /对比视图/ })).toBeVisible()
+    await expect(resultSection.getByRole("button", { name: /对比视图/ }).first()).toBeVisible()
+    await expect(page).toHaveScreenshot("moa-result-success.png", { maxDiffPixelRatio: 0.02 })
   })
 })
 
@@ -203,6 +210,7 @@ test.describe("TC-023: Expert compare view", () => {
 
     // Back button appears
     await expect(resultSection.getByRole("button", { name: /返回/ })).toBeVisible()
+    await expect(page).toHaveScreenshot("moa-compare-view.png", { maxDiffPixelRatio: 0.02 })
   })
 })
 

@@ -98,6 +98,12 @@ export class SwarmCoordinator implements SwarmServices {
     } catch (e: unknown) {
       const message = e instanceof Error ? e.message : String(e)
 
+      // Sanitize error message for SSE — strip ANSI, truncate length
+      const sanitized = message
+        .replace(/\x1b\[[0-9;]*m/g, "")
+        .replace(/[^\x20-\x7E -￿]/g, "")
+        .slice(0, 500)
+
       // Emit expert_complete with failed status so the UI can track it
       this.emit({
         type: "expert_complete",
@@ -105,7 +111,7 @@ export class SwarmCoordinator implements SwarmServices {
           nodeId: this.deps.nodeId,
           role: expert.role,
           status: "failed",
-          output: message,
+          output: sanitized,
           tokens: 0,
           inputTokens: 0,
           outputTokens: 0,

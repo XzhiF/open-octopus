@@ -33,6 +33,21 @@ export class MoaStrategy extends SwarmStrategy {
       topic: this.config.topic,
     })
 
+    // Pre-fan-out budget check — gate before launching all parallel experts
+    const preBudget = this.services.checkBudget()
+    if (preBudget.status === "exhausted") {
+      const result = this.buildResult({
+        synthesis: "Budget exhausted before expert fan-out",
+        status: "budget_exhausted",
+        budget_exhausted: true,
+        expert_count: experts.length,
+        experts: [],
+        rounds_used: 0,
+      })
+      this.emitSwarmComplete(result)
+      return result
+    }
+
     // Phase 1: Parallel expert fan-out
     const expertResults: ExpertResult[] = await Promise.all(
       experts.map(async (expert) => {
@@ -98,6 +113,9 @@ export class MoaStrategy extends SwarmStrategy {
           return expertResult
         } catch (e: unknown) {
           const message = e instanceof Error ? e.message : String(e)
+          const sanitized = message
+            .replace(/\x1b\[[0-9;]*m/g, "")
+            .slice(0, 500)
 
           this.services.triggerHook("on_expert_complete", {
             nodeId: this.config.nodeId,
@@ -114,7 +132,7 @@ export class MoaStrategy extends SwarmStrategy {
               role: expert.role,
               model: expert.model,
               status: "failed",
-              output: "",
+              output: sanitized,
               tokens: 0,
               inputTokens: 0,
               outputTokens: 0,
