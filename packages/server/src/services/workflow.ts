@@ -1,7 +1,7 @@
 import fs from "fs"
 import path from "path"
 import os from "os"
-import { parseWorkflow, isOctopusWorkflow } from "@octopus/shared"
+import { parseWorkflow, isOctopusWorkflow, WorkflowRef } from "@octopus/shared"
 import type { WorkflowInfo, WorkflowDetail } from "../types/workflow-api"
 
 export class WorkflowService {
@@ -39,7 +39,7 @@ export class WorkflowService {
   }
 
   get(workspacePath: string, ref: string): WorkflowDetail | undefined {
-    const filePath = path.join(this.workflowsDir(workspacePath), ref)
+    const filePath = WorkflowRef.toPath(this.workflowsDir(workspacePath), ref)
     if (!fs.existsSync(filePath)) return undefined
     const content = fs.readFileSync(filePath, "utf-8")
     const parsed = parseWorkflow(content)
@@ -49,19 +49,23 @@ export class WorkflowService {
   create(workspacePath: string, ref: string, content: string): WorkflowDetail {
     const dir = this.workflowsDir(workspacePath)
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
-    fs.writeFileSync(path.join(dir, ref), content, "utf-8")
+    const filePath = WorkflowRef.toPath(dir, ref)
+    // Ensure parent directory exists for group/name refs
+    const parentDir = path.dirname(filePath)
+    if (!fs.existsSync(parentDir)) fs.mkdirSync(parentDir, { recursive: true })
+    fs.writeFileSync(filePath, content, "utf-8")
     return this.get(workspacePath, ref)!
   }
 
   update(workspacePath: string, ref: string, content: string): WorkflowDetail | undefined {
-    const filePath = path.join(this.workflowsDir(workspacePath), ref)
+    const filePath = WorkflowRef.toPath(this.workflowsDir(workspacePath), ref)
     if (!fs.existsSync(filePath)) return undefined
     fs.writeFileSync(filePath, content, "utf-8")
     return this.get(workspacePath, ref)
   }
 
   delete(workspacePath: string, ref: string): boolean {
-    const filePath = path.join(this.workflowsDir(workspacePath), ref)
+    const filePath = WorkflowRef.toPath(this.workflowsDir(workspacePath), ref)
     if (!fs.existsSync(filePath)) return false
     fs.unlinkSync(filePath)
     return true

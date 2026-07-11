@@ -80,7 +80,7 @@ export class HostAgent {
 
     prompt += `\n\n===USER TOPIC START===\n${config.topic}\n===USER TOPIC END===\n\n## Expert Opinions\n\n${expertSections}\n`
 
-    // Use custom host.prompt if provided, otherwise built-in per mode
+    // Layer 1: Task instructions (custom or built-in)
     if (config.host?.prompt) {
       prompt += `\n## Your Instructions\n${config.host.prompt}`
     } else if (isDebate) {
@@ -89,9 +89,22 @@ export class HostAgent {
 1. Assess the consensus among experts (score 0.0-1.0)
 2. Identify key agreements and disagreements
 3. Determine if further rounds of discussion would be productive
-4. Provide a comprehensive synthesis (keep under 2000 words to avoid truncation)
+4. Provide a comprehensive synthesis (keep under 2000 words to avoid truncation)`
+    } else {
+      prompt += `
+## Your Task
+Provide a comprehensive synthesis of the expert opinions above.
+Consider all perspectives and provide a balanced analysis.
+Keep the synthesis under 2000 words to avoid output truncation.`
+    }
 
-Respond in JSON format:
+    // Layer 2: System-enforced output format (always appended for debate/swarm)
+    // Ensures parseable assessment regardless of custom prompt content.
+    if (isDebate) {
+      prompt += `
+
+## Output Format (MANDATORY)
+You MUST respond with a single JSON object in this exact structure:
 {
   "synthesis": "your comprehensive analysis (under 2000 words)...",
   "assessment": {
@@ -101,13 +114,8 @@ Respond in JSON format:
     "should_continue": true/false,
     "confidence": 0.0-1.0
   }
-}`
-    } else {
-      prompt += `
-## Your Task
-Provide a comprehensive synthesis of the expert opinions above.
-Consider all perspectives and provide a balanced analysis.
-Keep the synthesis under 2000 words to avoid output truncation.`
+}
+Do NOT use markdown code fences around the JSON. Respond with the raw JSON object only.`
     }
 
     // ponytail: custom host.prompt defines its own output format — don't
@@ -145,7 +153,7 @@ Respond in this JSON structure:
         return {
           synthesis: parsed.synthesis || response,
           rawResponse: response,
-          assessment: parsed.assessment,
+          assessment: parsed.assessment ?? this.extractAssessmentBlock(response),
         }
       } catch {
         // Not valid JSON — try extracting with balanced braces
@@ -156,10 +164,16 @@ Respond in this JSON structure:
             if (config.outputFormat === "structured") {
               return { synthesis: extracted, rawResponse: response, assessment: parsed.assessment }
             }
-            return { synthesis: parsed.synthesis || response, rawResponse: response, assessment: parsed.assessment }
+            return { synthesis: parsed.synthesis || response, rawResponse: response, assessment: parsed.assessment ?? this.extractAssessmentBlock(response) }
           } catch { /* fall through */ }
         }
       }
+    }
+
+    // Fallback: try extracting assessment from ```assessment code block
+    const blockAssessment = this.extractAssessmentBlock(response)
+    if (blockAssessment) {
+      return { synthesis: response, rawResponse: response, assessment: blockAssessment }
     }
 
     // For structured output without JSON: wrap in minimal valid JSON
@@ -175,6 +189,25 @@ Respond in this JSON structure:
     }
 
     return { synthesis: response, rawResponse: response }
+  }
+
+  /**
+   * Extract assessment from ```assessment ... ``` code block.
+   * Used when custom host.prompt defines its own output format instead of the built-in JSON schema.
+   */
+  private extractAssessmentBlock(response: string): HostOutput["assessment"] | undefined {
+    const match = response.match(/```assessment\s*\n?([\s\S]*?)```/)
+    if (!match) return undefined
+    try {
+      return JSON.parse(match[1].trim())
+    } catch {
+      // Try to find JSON within the block
+      const jsonInBlock = match[1].match(/\{[\s\S]*\}/)
+      if (jsonInBlock) {
+        try { return JSON.parse(jsonInBlock[0]) } catch { /* ignore */ }
+      }
+      return undefined
+    }
   }
 
   private extractBalancedJson(text: string): string | null {

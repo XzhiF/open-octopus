@@ -308,6 +308,53 @@ export class ResourceManager extends EventEmitter {
     }
   }
 
+  /**
+   * Register an already-installed resource in the registry.
+   * Caller is responsible for having placed files at the correct install path.
+   * Used by archive-service which copies files before registering.
+   */
+  registerInstalled(req: {
+    name: string
+    type: ResourceType
+    group: string
+    source?: string
+  }): ResourceEntry {
+    const { name, type, group } = req
+    const source = (req.source ?? "local") as ResourceEntry["source"]
+
+    if (!SAFE_NAME_RE.test(name)) {
+      throw new ResourceError("INVALID_NAME", `Invalid resource name: ${name}`)
+    }
+    if (!SAFE_NAME_RE.test(group)) {
+      throw new ResourceError("INVALID_NAME", `Invalid group name: ${group}`)
+    }
+
+    const installPath = this.getInstallPath(type, name, group)
+    if (!isPathWithinBase(installPath, this.basePath)) {
+      throw new ResourceError("PATH_TRAVERSAL", `Install path escapes base: ${installPath}`)
+    }
+
+    const hash = fs.existsSync(installPath) ? generateFileHash(installPath) : ""
+
+    const entry: ResourceEntry = {
+      name,
+      type,
+      source,
+      ref: `${source}:${name}`,
+      group,
+      installed: true,
+      verified: false,
+      status: "installed",
+      installedAt: new Date().toISOString(),
+      scope: "org",
+      installPath,
+      dependsOn: [],
+      sourceHash: hash,
+    }
+    this.registry.upsert(entry)
+    return entry
+  }
+
   // ── Uninstall ─────────────────────────────────────────────────
 
   async uninstall(req: UninstallRequest): Promise<UninstallResponse> {

@@ -30,6 +30,8 @@ interface ArchiveMetadata {
   allSkills?: Array<{ name: string; description: string; reason?: string; auto_discovered?: boolean }>
   allWorkflows?: Array<{ name: string; description: string }>
   workflows?: Array<{ name: string; description: string }>
+  allAgents?: Array<{ name: string; description: string }>
+  agents?: Array<{ name: string; description: string }>
   tokenStats?: {
     total: { inputTokens: number; outputTokens: number; cost: number }
     byModel: Array<{ model: string; inputTokens: number; outputTokens: number; cost: number }>
@@ -56,6 +58,8 @@ interface ArchiveData {
   archived_at: string
   extracted_experiences: number
   extracted_skills: number
+  extracted_workflows: number
+  extracted_agents: number
   analysis_report: unknown
   metadata: string | null
 }
@@ -76,7 +80,7 @@ function formatCost(cost: number) {
 export function ArchiveViewDialog({ workspaceId, workspaceName, open, onOpenChange }: ArchiveViewDialogProps) {
   const [data, setData] = useState<ArchiveData | null>(null)
   const [loading, setLoading] = useState(false)
-  const [activeTab, setActiveTab] = useState("summary")
+  const [activeTab, setActiveTab] = useState("analysis")
 
   useEffect(() => {
     if (open && workspaceId) {
@@ -89,7 +93,7 @@ export function ArchiveViewDialog({ workspaceId, workspaceName, open, onOpenChan
     }
     if (!open) {
       setData(null)
-      setActiveTab("summary")
+      setActiveTab("analysis")
     }
   }, [open, workspaceId])
 
@@ -97,6 +101,7 @@ export function ArchiveViewDialog({ workspaceId, workspaceName, open, onOpenChan
   const analysisReport: AnalysisReport | null = data?.analysis_report ? (typeof data.analysis_report === "string" ? JSON.parse(data.analysis_report) : data.analysis_report) : null
   const adoptedExpIds = new Set(metadata?.experiences?.map(e => e.id) ?? [])
   const adoptedSkillNames = new Set(metadata?.skills?.map(s => s.name) ?? [])
+  const adoptedAgentNames = new Set(metadata?.agents?.map(a => a.name) ?? [])
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -153,10 +158,10 @@ export function ArchiveViewDialog({ workspaceId, workspaceName, open, onOpenChan
                   </CardHeader>
                   <CardContent>
                     <div className="text-2xl font-bold">
-                      {data.extracted_experiences + data.extracted_skills}
+                      {(data.extracted_experiences ?? 0) + (data.extracted_skills ?? 0) + (data.extracted_workflows ?? 0) + (data.extracted_agents ?? 0)}
                     </div>
                     <div className="text-xs text-muted-foreground">
-                      {data.extracted_experiences} 经验, {data.extracted_skills} Skill
+                      {data.extracted_experiences ?? 0} 经验, {data.extracted_skills ?? 0} Skill, {data.extracted_workflows ?? 0} 工作流, {data.extracted_agents ?? 0} Agent
                     </div>
                   </CardContent>
                 </Card>
@@ -176,7 +181,9 @@ export function ArchiveViewDialog({ workspaceId, workspaceName, open, onOpenChan
                   <TabsTrigger value="workflows">
                     工作流 ({metadata?.allWorkflows?.length ?? 0})
                   </TabsTrigger>
-                  <TabsTrigger value="summary">归档摘要</TabsTrigger>
+                  <TabsTrigger value="agents">
+                    Agent ({metadata?.allAgents?.length ?? 0})
+                  </TabsTrigger>
                 </TabsList>
 
                 <TabsContent value="analysis" className="space-y-4">
@@ -379,34 +386,43 @@ export function ArchiveViewDialog({ workspaceId, workspaceName, open, onOpenChan
                   })()}
                 </TabsContent>
 
-                <TabsContent value="summary" className="space-y-4">
-                  <Card>
-                    <CardHeader>
-                      <CardTitle className="text-base">归档信息</CardTitle>
-                    </CardHeader>
-                    <CardContent className="space-y-3">
-                      <div className="flex justify-between">
-                        <span className="text-sm text-muted-foreground">归档时间</span>
-                        <span className="font-medium">{new Date(data.archived_at).toLocaleString("zh-CN")}</span>
+                <TabsContent value="agents">
+                  {(() => {
+                    const allAgents = metadata?.allAgents ?? []
+                    if (allAgents.length === 0) {
+                      return <div className="text-center py-8 text-muted-foreground">无 Agent 记录</div>
+                    }
+                    return (
+                      <div className="space-y-2">
+                        {allAgents.map((agent) => {
+                          const adopted = adoptedAgentNames.has(agent.name)
+                          return (
+                            <Card key={agent.name}>
+                              <CardContent className="pt-4">
+                                <div className="flex items-start gap-3">
+                                  {adopted ? (
+                                    <div className="flex h-5 w-5 items-center justify-center rounded-full bg-green-100 dark:bg-green-900/30 shrink-0 mt-0.5">
+                                      <Check className="h-3 w-3 text-green-600" />
+                                    </div>
+                                  ) : (
+                                    <div className="flex h-5 w-5 items-center justify-center rounded-full bg-muted shrink-0 mt-0.5" />
+                                  )}
+                                  <div className="flex-1">
+                                    <div className="flex items-center gap-2 mb-1">
+                                      <BadgeIcon className="h-4 w-4" />
+                                      <h4 className="font-semibold">{agent.name}</h4>
+                                      {adopted && <Badge className="text-xs bg-green-600">已安装</Badge>}
+                                    </div>
+                                    <p className="text-sm text-muted-foreground">{agent.description}</p>
+                                  </div>
+                                </div>
+                              </CardContent>
+                            </Card>
+                          )
+                        })}
                       </div>
-                      <div className="flex justify-between">
-                        <span className="text-sm text-muted-foreground">执行记录</span>
-                        <span className="font-medium">{data.execution_count} 个已归档</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-sm text-muted-foreground">提取经验</span>
-                        <span className="font-medium">{data.extracted_experiences} 个</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-sm text-muted-foreground">安装 Skill</span>
-                        <span className="font-medium">{data.extracted_skills} 个</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-sm text-muted-foreground">文件清理</span>
-                        <span className="font-medium">已删除</span>
-                      </div>
-                    </CardContent>
-                  </Card>
+                    )
+                  })()}
                 </TabsContent>
 
                 <TabsContent value="experiences">

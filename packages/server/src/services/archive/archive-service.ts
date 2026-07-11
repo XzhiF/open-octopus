@@ -359,6 +359,7 @@ export class ArchiveService {
         extracted_experiences: 0,
         extracted_skills: 0,
         extracted_workflows: 0,
+        extracted_agents: 0,
         analysis_report: null,
         file_deleted: 0,
       }
@@ -594,9 +595,9 @@ export class ArchiveService {
             // Copy all files from source skill directory
             this.copyDirRecursive(sourceDir, installDir)
 
-            // Register in resource manager (use local source for file-based skills)
-            await resourceManager.install({
-              ref: `local:${sourceDir}`,
+            // Register in resource manager (files already copied)
+            resourceManager.registerInstalled({
+              name: skill.name,
               type: "skill",
               group: skill.group,
             })
@@ -658,18 +659,9 @@ export class ArchiveService {
             await emitter.log(`✓ Written workflow content → ${destFile}`)
           }
 
-          // Uninstall existing if overwriting
-          const existing = (resourceManager as any).registry?.get("workflow", wf.name)
-          if (existing?.installed) {
-            try {
-              await resourceManager.uninstall({ ref: `${existing.group}/${wf.name}`, type: "workflow" })
-              await emitter.log(`  覆盖已有 ${wf.group}/${wf.name}`)
-            } catch { /* ignore uninstall errors */ }
-          }
-
-          // Register in resource manager
-          await resourceManager.install({
-            ref: `local:${installDir}`,
+          // Register in resource manager (files already copied, upsert handles overwrite)
+          resourceManager.registerInstalled({
+            name: wf.name,
             type: "workflow",
             group: wf.group,
           })
@@ -721,18 +713,9 @@ export class ArchiveService {
             await emitter.log(`✓ Written agent content → ${destFile}`)
           }
 
-          // Uninstall existing if overwriting
-          const existing = (resourceManager as any).registry?.get("agent", agent.name)
-          if (existing?.installed) {
-            try {
-              await resourceManager.uninstall({ ref: `${existing.group}/${agent.name}`, type: "agent" })
-              await emitter.log(`  覆盖已有 ${agent.group}/${agent.name}`)
-            } catch { /* ignore uninstall errors */ }
-          }
-
-          // Register in resource manager
-          await resourceManager.install({
-            ref: `local:${installDir}`,
+          // Register in resource manager (files already copied, upsert handles overwrite)
+          resourceManager.registerInstalled({
+            name: agent.name,
             type: "agent",
             group: agent.group,
           })

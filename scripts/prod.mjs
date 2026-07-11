@@ -363,12 +363,23 @@ async function waitForServer(port, timeoutMs = 15000) {
 async function main() {
   const skipBuild = process.argv.includes("--skip-build")
 
+  const getLocalIP = () => {
+    const interfaces = os.networkInterfaces()
+    for (const name of Object.keys(interfaces)) {
+      for (const iface of interfaces[name] || []) {
+        if (iface.family === 'IPv4' && !iface.internal) return iface.address
+      }
+    }
+    return 'localhost'
+  }
+  const localIP = getLocalIP()
+
   console.log("[prod] ═══════════════════════════════════════")
   console.log("[prod] Octopus Production Mode")
   console.log("[prod] ═══════════════════════════════════════")
   console.log(`[prod] Stable dir: ${PROD_DIR}`)
-  console.log(`[prod] Server:     http://localhost:${SERVER_PORT}`)
-  console.log(`[prod] Web:        http://localhost:${WEB_PORT}`)
+  console.log(`[prod] Server:     http://localhost:${SERVER_PORT} (LAN: http://${localIP}:${SERVER_PORT})`)
+  console.log(`[prod] Web:        http://localhost:${WEB_PORT} (LAN: http://${localIP}:${WEB_PORT})`)
   console.log(`[prod] DB:         ${DB_PATH}`)
   console.log(`[prod] PID:        ${process.pid}`)
   console.log(`[prod] Auto-restart: up to ${MAX_RESTARTS} times in ${RESTART_WINDOW_MS / 1000}s`)
@@ -441,7 +452,7 @@ async function main() {
   const prodWebAppDir = path.join(PROD_DIR, "packages", "web-app")
   const nextBin = path.join(prodWebAppDir, "node_modules", "next", "dist", "bin", "next")
   const webEnv = {
-    SERVER_URL: `http://localhost:${SERVER_PORT}`,
+    SERVER_URL: `http://${localIP}:${SERVER_PORT}`,
   }
   startProcess(
     process.execPath,
@@ -451,7 +462,7 @@ async function main() {
     prodWebAppDir
   )
 
-  console.log(`\n[prod] ✓ server: http://localhost:${SERVER_PORT} (PID: ${health.pid})`)
+  console.log(`\n[prod] ✓ server: http://${localIP}:${SERVER_PORT} (PID: ${health.pid})`)
   console.log(`[prod] ✓ web:    http://localhost:${WEB_PORT}`)
   console.log(`[prod] ✓ db:     ${DB_PATH}`)
   console.log(`\n[prod] Source code changes will NOT affect the running server.`)
