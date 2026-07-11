@@ -1,5 +1,31 @@
-import { appendFileSync, mkdirSync } from "fs"
+import { appendFileSync, mkdirSync, readFileSync, writeFileSync, renameSync, unlinkSync, existsSync } from "fs"
 import { join } from "path"
+
+/** Event types produced by the merge algorithm. */
+export type MergedEventType =
+  | "thinking_block"
+  | "text_block"
+  | "tool_call"
+  | "bash_output"
+  | "bash_stderr"
+  | "python_output"
+  | "python_stderr"
+
+/** Set of merged event type strings — used to detect already-compacted entries. */
+export const MERGED_EVENT_TYPES: Set<string> = new Set<MergedEventType>([
+  "thinking_block",
+  "text_block",
+  "tool_call",
+  "bash_output",
+  "bash_stderr",
+  "python_output",
+  "python_stderr",
+])
+
+/** Returns true if the entry is a merged (compacted) event. */
+export function isMergedEvent(entry: { event: string }): boolean {
+  return MERGED_EVENT_TYPES.has(entry.event)
+}
 
 export class JsonlLogger {
   private logDir: string
@@ -44,5 +70,270 @@ export class JsonlLogger {
 
   getLogDir(): string {
     return this.logDir
+  }
+
+  // ── JSONL compaction ──────────────────────────────────────
+
+  /**
+   * Compact a node's JSONL log by merging related event fragments.
+   * Reads → parses → merges → writes back (with .bak safety net).
+   * Non-fatal: warns on failure, never throws to caller.
+   */
+  compactFile(nodeId: string): void {
+    const filePath = join(this.logDir, `${nodeId}.jsonl`)
+    const bakPath = `${filePath}.bak`
+
+    try {
+      if (!existsSync(filePath)) return
+
+      const content = readFileSync(filePath, "utf8")
+      const entries: any[] = []
+      for (const line of content.split("\n")) {
+        if (!line.trim()) continue
+        try {
+          entries.push(JSON.parse(line))
+        } catch {
+          // skip malformed lines
+        }
+      }
+
+      const merged = this.mergeEvents(entries)
+
+      // backup → write → delete backup
+      renameSync(filePath, bakPath)
+      try {
+        writeFileSync(filePath, merged.map(e => JSON.stringify(e)).join("\n") + "\n")
+        unlinkSync(bakPath)
+      } catch (writeErr) {
+        // restore from backup on write failure
+        try { renameSync(bakPath, filePath) } catch { /* already lost */ }
+        throw writeErr
+      }
+    } catch (err) {
+      console.warn(`[JsonlLogger] compactFile failed for ${nodeId}:`, err)
+    }
+  }
+
+  /**
+   * Merge related JSONL event fragments into compact blocks.
+   *
+   * Rules:
+   * - thinking_start + thinking* + thinking_done → thinking_block
+   * - consecutive text_delta → text_block
+   * - tool_start + tool_input + tool_result → tool_call
+   * - consecutive bash_log → bash_output
+   * - consecutive bash_stderr → bash_stderr (merged)
+   * - consecutive python_log → python_output
+   * - consecutive python_stderr → python_stderr (merged)
+   * - start / end / branch_start / branch_end pass through unchanged
+   * - already-merged events pass through (idempotent)
+   */
+  private mergeEvents(entries: any[]): any[] {
+    const results: any[] = []
+    let block: any = null
+
+    const closeBlock = () => {
+      if (!block) return
+      const { type: _type, ...emitted } = block
+      results.push(emitted)
+      block = null
+    }
+
+    for (const entry of entries) {
+      const topEvent: string = entry.event ?? ""
+
+      // Pass-through: lifecycle markers
+      if (topEvent === "start" || topEvent === "end" ||
+          topEvent === "branch_start" || topEvent === "branch_end") {
+        closeBlock()
+        results.push(entry)
+        continue
+      }
+
+      // Pass-through: already-merged block-shaped events (idempotent)
+      // Note: bash_stderr/python_stderr are NOT here — they are also raw top-level events
+      if (topEvent === "thinking_block" || topEvent === "text_block" ||
+          topEvent === "tool_call" || topEvent === "bash_output" ||
+          topEvent === "python_output") {
+        closeBlock()
+        results.push(entry)
+        continue
+      }
+
+      // ── agent_event fragments ───────────────────────────
+      if (topEvent === "agent_event") {
+        const ed = entry.event_data
+        const subType: string = ed?.type ?? ""
+
+        if (subType === "thinking_start") {
+          closeBlock()
+          block = {
+            type: "thinking",
+            event: "thinking_block",
+            nodeId: entry.nodeId,
+            content: "",
+            startedAt: entry.timestamp,
+            completedAt: entry.timestamp,
+          }
+          continue
+        }
+
+        if (subType === "thinking") {
+          if (block?.type === "thinking") {
+            block.content += (ed?.content ?? "")
+            block.completedAt = entry.timestamp
+          }
+          continue
+        }
+
+        if (subType === "thinking_done") {
+          if (block?.type === "thinking") {
+            block.completedAt = entry.timestamp
+            closeBlock()
+          }
+          continue
+        }
+
+        if (subType === "text_delta") {
+          if (block?.type !== "text") {
+            closeBlock()
+            block = {
+              type: "text",
+              event: "text_block",
+              nodeId: entry.nodeId,
+              content: "",
+              startedAt: entry.timestamp,
+              completedAt: entry.timestamp,
+            }
+          }
+          block.content += (ed?.content ?? "")
+          block.completedAt = entry.timestamp
+          continue
+        }
+
+        if (subType === "tool_start") {
+          closeBlock()
+          block = {
+            type: "tool",
+            event: "tool_call",
+            nodeId: entry.nodeId,
+            toolCallId: ed?.tool_use_id ?? ed?.toolCallId ?? "",
+            toolName: ed?.tool ?? ed?.name ?? ed?.toolName ?? "",
+            input: "",
+            result: null,
+            isError: false,
+            startedAt: entry.timestamp,
+            completedAt: entry.timestamp,
+          }
+          continue
+        }
+
+        if (subType === "tool_input") {
+          if (block?.type === "tool") {
+            if (ed?.input !== undefined) {
+              block.input = typeof ed.input === "string" ? ed.input : JSON.stringify(ed.input)
+            }
+            if (ed?.toolCallId) block.toolCallId = ed.toolCallId
+            if (ed?.tool) block.toolName = ed.tool
+            block.completedAt = entry.timestamp
+          }
+          continue
+        }
+
+        if (subType === "tool_result") {
+          if (block?.type === "tool") {
+            block.result = ed?.content ?? ed?.result ?? null
+            block.isError = ed?.is_error ?? ed?.isError ?? false
+            block.completedAt = entry.timestamp
+            closeBlock()
+          }
+          continue
+        }
+
+        // Unknown agent_event subtype → close any open block, pass through
+        closeBlock()
+        results.push(entry)
+        continue
+      }
+
+      // ── bash_log → bash_output ─────────────────────────
+      if (topEvent === "bash_log") {
+        if (block?.type !== "bash_output") {
+          closeBlock()
+          block = {
+            type: "bash_output",
+            event: "bash_output",
+            nodeId: entry.nodeId,
+            lines: [],
+            startedAt: entry.timestamp,
+            completedAt: entry.timestamp,
+          }
+        }
+        block.lines.push(entry.line ?? "")
+        block.completedAt = entry.timestamp
+        continue
+      }
+
+      // ── bash_stderr → bash_stderr ──────────────────────
+      if (topEvent === "bash_stderr") {
+        if (block?.type !== "bash_stderr") {
+          closeBlock()
+          block = {
+            type: "bash_stderr",
+            event: "bash_stderr",
+            nodeId: entry.nodeId,
+            content: "",
+            startedAt: entry.timestamp,
+            completedAt: entry.timestamp,
+          }
+        }
+        block.content += (entry.line ?? "")
+        block.completedAt = entry.timestamp
+        continue
+      }
+
+      // ── python_log → python_output ─────────────────────
+      if (topEvent === "python_log") {
+        if (block?.type !== "python_output") {
+          closeBlock()
+          block = {
+            type: "python_output",
+            event: "python_output",
+            nodeId: entry.nodeId,
+            lines: [],
+            startedAt: entry.timestamp,
+            completedAt: entry.timestamp,
+          }
+        }
+        block.lines.push(entry.line ?? "")
+        block.completedAt = entry.timestamp
+        continue
+      }
+
+      // ── python_stderr → python_stderr ──────────────────
+      if (topEvent === "python_stderr") {
+        if (block?.type !== "python_stderr") {
+          closeBlock()
+          block = {
+            type: "python_stderr",
+            event: "python_stderr",
+            nodeId: entry.nodeId,
+            content: "",
+            startedAt: entry.timestamp,
+            completedAt: entry.timestamp,
+          }
+        }
+        block.content += (entry.line ?? "")
+        block.completedAt = entry.timestamp
+        continue
+      }
+
+      // ── Unknown event → close block, pass through ──────
+      closeBlock()
+      results.push(entry)
+    }
+
+    closeBlock()
+    return results
   }
 }

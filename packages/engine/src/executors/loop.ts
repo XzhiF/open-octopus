@@ -58,6 +58,7 @@ export class LoopExecutor implements NodeExecutor {
       this.iterations++
       logLines.push(`Loop iteration ${this.iterations}`)
 
+      this.logger?.log(this.node.id, 'branch_start', { iteration: this.iterations })
       this.callbacks?.onBranchStart?.(`${this.node.id}-iter-${this.iterations}`, this.iterations)
 
       let shouldBreak = false
@@ -89,6 +90,7 @@ export class LoopExecutor implements NodeExecutor {
         }
 
         if (result.status === "cancelled") {
+          this.logger?.log(this.node.id, 'branch_end', { iteration: this.iterations, status: "cancelled" })
           this.callbacks?.onBranchEnd?.(`${this.node.id}-iter-${this.iterations}`, this.iterations, "cancelled")
           const durationMs = Date.now() - start
           return {
@@ -101,6 +103,7 @@ export class LoopExecutor implements NodeExecutor {
         }
 
         if (result.status === "failed") {
+          this.logger?.log(this.node.id, 'branch_end', { iteration: this.iterations, status: "failed" })
           this.callbacks?.onBranchEnd?.(`${this.node.id}-iter-${this.iterations}`, this.iterations, "failed")
           const durationMs = Date.now() - start
           return {
@@ -146,6 +149,7 @@ export class LoopExecutor implements NodeExecutor {
         }
       }
 
+      this.logger?.log(this.node.id, 'branch_end', { iteration: this.iterations, status: "completed" })
       this.callbacks?.onBranchEnd?.(`${this.node.id}-iter-${this.iterations}`, this.iterations, "completed")
 
       if (shouldBreak) {

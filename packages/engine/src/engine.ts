@@ -606,6 +606,13 @@ export class WorkflowEngine {
 
       this.callbacks?.onNodeEnd?.(node.id, nodeResult.status, nodeResult.durationMs, nodeResult, node.type)
 
+      // Compact JSONL after node completes
+      try {
+        this.logger?.compactFile(node.id)
+      } catch (err) {
+        // compact failure is non-fatal
+      }
+
       return nodeResult
     } finally {
       this.deleteNotifyContextFile()
