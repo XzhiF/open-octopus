@@ -28,7 +28,7 @@ import {
 
 /**
  * ResourceManager — orchestrates install/uninstall/verify lifecycle.
- * Per-org singleton.
+ * Global singleton (not org-scoped).
  * Concurrency control is handled by the server-level lock (middleware.ts).
  *
  * Five-node closed loop:
@@ -36,13 +36,11 @@ import {
  */
 
 export interface ResourceManagerConfig {
-  org: string
   basePath?: string
   corePackBase?: string
 }
 
 export class ResourceManager extends EventEmitter {
-  readonly org: string
   readonly basePath: string
   private registry: RegistryStore
   private lock: LockManager
@@ -53,9 +51,8 @@ export class ResourceManager extends EventEmitter {
   private uninstallVerifier: PostUninstallVerifier
   private sourceManager: SourceManager
 
-  constructor(config: ResourceManagerConfig) {
+  constructor(config: ResourceManagerConfig = {}) {
     super()
-    this.org = config.org
     this.basePath = config.basePath ?? path.join(os.homedir(), ".octopus", "resources")
     this.registry = new RegistryStore(this.basePath)
     this.lock = new LockManager(this.basePath)
@@ -64,7 +61,7 @@ export class ResourceManager extends EventEmitter {
     this.local = new LocalProvider()
     this.installVerifier = new PostInstallVerifier()
     this.uninstallVerifier = new PostUninstallVerifier()
-    this.sourceManager = new SourceManager({ org: config.org, basePath: this.basePath })
+    this.sourceManager = new SourceManager({ basePath: this.basePath })
   }
 
   // ── Install ───────────────────────────────────────────────────

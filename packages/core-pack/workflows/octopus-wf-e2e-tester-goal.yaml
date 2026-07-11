@@ -1,4 +1,4 @@
-# yaml-language-server: $schema=./doc/workflow-schema.json
+# yaml-language-server: $schema=./workflow-schema.json
 apiVersion: octopus/v1
 kind: Workflow
 name: octopus-wf-e2e-tester-goal
@@ -10,7 +10,7 @@ description: >
   编排策略: goal + constraints + agents 子代理，自主规划执行路径。
   注意: goal 模式支持 sub-agents（engine agent.ts resolveAgents() 与模式无关）。
 
-model: opus[1m]
+model: pro-max
 engine: claude
 execution_mode: serial
 timeout: 86400
@@ -22,7 +22,7 @@ inputs:
       1) 工作流名称，多个逗号分隔:
          "octopus-dev-flow,octopus-pr-review-fix-flow"
          Agent 从当前工作空间的 config.json 找到 octopus 项目的 worktree_path，
-         然后在 {worktree_path}/packages/core-pack/presets/workflows/ 中查找对应 YAML
+         然后在 {worktree_path}/packages/core-pack/workflows/ 中查找对应 YAML
       2) JSON 数组（向后兼容）:
          [{"ref":"octopus-dev-flow","inputs":{"requirement":"xxx"}}]
       第一个为 root execution，后续为 children。
@@ -330,7 +330,7 @@ nodes:
           ## 输出
           直接输出纯 JSON 行:
           {"vars_update":{"workspace_id":"...","root_execution_id":"...","resolved_workspace_name":"...","resolved_org":"...","resolved_repos":"...","resolved_inputs":"..."}}
-        model: sonnet
+        model: pro
         tools: [Bash, Read, Write, Grep, Glob]
 
       diagnostician:
@@ -352,7 +352,7 @@ nodes:
           ```json
           {"root_cause":"<类型>","details":"<描述>","fix_plan":"<修复方案>","needs_workspace_rebuild":"<true/false>"}
           ```
-        model: sonnet
+        model: pro
         tools: [Bash, Read, Grep, Glob]
 
       evidence-collector:
@@ -361,7 +361,7 @@ nodes:
         prompt: |
           收集所有 execution 的执行证据链。
           输出: `{"evidence":[{execution_id, node_id, type, duration, tokens, has_real_output}]}`
-        model: sonnet
+        model: pro
         tools: [Bash, Read, Grep]
 
       reality-checker:
@@ -370,7 +370,7 @@ nodes:
         prompt: |
           基于证据判定工作流是否真实执行。
           输出判定: PASSED / NEEDS WORK / FAILED
-        model: opus[1m]
+        model: pro-max
         tools: [Bash, Read, Grep]
 
       shipper:
@@ -406,7 +406,7 @@ nodes:
           ## 输出
           直接输出纯 JSON 行:
           {"vars_update":{"pr_url":"<PR URL>","ship_summary":"<总结>"}}
-        model: sonnet
+        model: pro
         tools: [Bash, Read, Grep]
 
   - id: notify-orchestrator

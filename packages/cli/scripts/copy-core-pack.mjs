@@ -11,7 +11,7 @@ if (!existsSync(corePackDir)) {
   process.exit(1)
 }
 
-const subdirs = ["config", "presets", "skills", "agents", "scripts", "templates"]
+const subdirs = ["config", "presets", "workflows", "skills", "agents", "scripts", "templates"]
 
 for (const subdir of subdirs) {
   const src = join(corePackDir, subdir)

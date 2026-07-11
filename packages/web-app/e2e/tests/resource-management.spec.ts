@@ -6,7 +6,6 @@ import {
   assertAuditSchema,
 } from "../helpers/resource-helpers"
 
-const TEST_ORG = "e2e-test"
 // Use a known builtin skill from core-pack
 const TEST_REF = "builtin:octo-agent-clones"
 const TEST_NAME = "octo-agent-clones"
@@ -16,7 +15,7 @@ test.describe("Resource Management — TC-E2E-001", () => {
   // Cleanup after each test
   test.afterEach(async () => {
     try {
-      await uninstallResourceViaApi(TEST_ORG, TEST_NAME, TEST_TYPE)
+      await uninstallResourceViaApi(TEST_NAME, TEST_TYPE)
     } catch { /* already uninstalled */ }
   })
 
@@ -67,7 +66,7 @@ test.describe("Resource Management — TC-E2E-001", () => {
 
   test("S4: After install, resource card appears in list", async ({ page }) => {
     // Pre-install via API
-    await installResourceViaApi(TEST_ORG, TEST_REF)
+    await installResourceViaApi(TEST_REF)
 
     await page.goto("/resources")
     // Card should appear (wait for data load)
@@ -77,7 +76,7 @@ test.describe("Resource Management — TC-E2E-001", () => {
   })
 
   test("S5: Detail page shows resource info", async ({ page }) => {
-    await installResourceViaApi(TEST_ORG, TEST_REF)
+    await installResourceViaApi(TEST_REF)
 
     await page.goto(`/resources/${TEST_TYPE}/${TEST_NAME}`)
     // Detail page heading
@@ -89,13 +88,13 @@ test.describe("Resource Management — TC-E2E-001", () => {
   })
 
   test("S6: Uninstall removes resource from list", async ({ page }) => {
-    await installResourceViaApi(TEST_ORG, TEST_REF)
+    await installResourceViaApi(TEST_REF)
 
     await page.goto("/resources")
     await expect(page.getByTestId(`resource-card-${TEST_NAME}`)).toBeVisible({ timeout: 10000 })
 
     // Trigger uninstall via API for reliability
-    await uninstallResourceViaApi(TEST_ORG, TEST_NAME, TEST_TYPE)
+    await uninstallResourceViaApi(TEST_NAME, TEST_TYPE)
 
     // Refresh
     await page.reload()
@@ -103,8 +102,8 @@ test.describe("Resource Management — TC-E2E-001", () => {
   })
 
   test("S7: Audit page shows install/uninstall records", async ({ page }) => {
-    await installResourceViaApi(TEST_ORG, TEST_REF)
-    await uninstallResourceViaApi(TEST_ORG, TEST_NAME, TEST_TYPE)
+    await installResourceViaApi(TEST_REF)
+    await uninstallResourceViaApi(TEST_NAME, TEST_TYPE)
 
     await page.goto("/resources?tab=audit")
     // Audit timeline visible

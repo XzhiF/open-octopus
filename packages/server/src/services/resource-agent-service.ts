@@ -13,11 +13,9 @@ import { getOrchestratorService } from './agent/orchestrator-service'
  */
 export class ResourceAgentService {
   private manager: ResourceManager
-  private org: string
 
-  constructor(manager: ResourceManager, org: string) {
+  constructor(manager: ResourceManager) {
     this.manager = manager
-    this.org = org
   }
 
   /**
@@ -41,14 +39,18 @@ export class ResourceAgentService {
       resources: resources.slice(0, 50), // 限制 context 大小
     }
 
-    const task = `从源 ${sourceName} 安装 ${resources.length} 个资源到全局资源库。` +
-      `组名: ${group}。` +
-      `请按 octo-resource-manager skill 的指导，逐个将资源从 sources/ 缓存复制到 installed/ 目录，` +
-      `注册到 registry.json，写入 resources.lock。` +
-      `如果批量操作失败，尝试逐个安装。` +
+    const task = `从源 ${sourceName} 安装 ${resources.length} 个资源到全局资源库。组名: ${group}。\n\n` +
+      `安装策略（按优先级）：\n` +
+      `1. 检查源仓库是否有安装脚本（setup.sh, install.sh, Makefile, package.json scripts），` +
+      `如果有，按仓库自身的安装流程执行\n` +
+      `2. 如果没有安装脚本，按 octo-resource-manager skill 指导，从 sources/ 缓存复制到 installed/ 目录\n` +
+      `3. 检查资源依赖（agent frontmatter 中的 skills: 字段），一并安装依赖资源\n` +
+      `4. 注册到 registry.json\n\n` +
+      `如果某个资源安装失败，记录错误并继续下一个。\n` +
       `最后报告安装结果（installed/skipped/errors 数量）。`
 
-    const orchestrator = getOrchestratorService(this.org)
+    // ponytail: orchestrator org is for workspace scanning, not resources. "default" is fine.
+    const orchestrator = getOrchestratorService("default")
     try {
       const agentLog = await orchestrator.executeTask(
         task,
@@ -88,17 +90,22 @@ export class ResourceAgentService {
       basePath: this.manager.basePath,
     }
 
-    const task = `同步源 ${sourceName}。` +
-      `请按 octo-source-analyzer skill 的 sync 7 步指导执行：` +
-      `1. git pull 更新缓存 ` +
-      `2. 重新 discover 资源列表 ` +
-      `3. hash 对比（跳过未变文件，这是关键优化） ` +
-      `4. 检测新增资源 ` +
-      `5. 检测删除资源（标记 orphan） ` +
-      `6. 覆盖更新已变更的文件 ` +
+    const task = `同步源 ${sourceName}。请按以下步骤执行：\n\n` +
+      `1. git pull 更新 sources/ 缓存\n` +
+      `2. 重新 discover 资源列表（用 octo-source-analyzer skill 的分析策略）\n` +
+      `3. hash 对比：对比缓存文件和 installed/ 中已安装文件的 hash\n` +
+      `   - hash 相同 → 跳过（计入 unchanged）\n` +
+      `   - hash 不同 → 标记为 updated\n` +
+      `4. 对 updated 资源：\n` +
+      `   - 检查源仓库是否有安装脚本，如果有则重新执行安装流程\n` +
+      `   - 如果没有安装脚本，直接从缓存覆盖 installed/ 中的文件\n` +
+      `   - 更新 registry.json 的 sourceHash\n` +
+      `5. 检测新增（added）— 不自动安装，报告给用户\n` +
+      `6. 检测删除 — 标记为 orphan，不删除文件\n` +
       `7. 报告结果（updated/added/removed/unchanged 数量）`
 
-    const orchestrator = getOrchestratorService(this.org)
+    // ponytail: orchestrator org is for workspace scanning, not resources. "default" is fine.
+    const orchestrator = getOrchestratorService("default")
     try {
       const agentLog = await orchestrator.executeTask(
         task,

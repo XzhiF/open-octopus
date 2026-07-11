@@ -5,7 +5,7 @@ import { join, dirname } from "path"
 import { fileURLToPath } from "url"
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
-const workflowsDir = join(__dirname, "..", "..", "..", "core-pack", "presets", "workflows")
+const workflowsDir = join(__dirname, "..", "..", "..", "core-pack", "workflows")
 
 const v2YamlPath = join(workflowsDir, "octopus-dev-s1-pr-flow.yaml")
 const reviewYamlPath = join(workflowsDir, "octopus-dev-s2-cr-flow.yaml")
@@ -30,7 +30,7 @@ describe("octopus-dev-s1-pr-flow YAML Validation", () => {
   it("has correct name and metadata", () => {
     const wf = parseWorkflow(yaml)
     expect(wf.name).toBe("octopus-dev-s1-pr-flow")
-    expect(wf.model).toBe("opus[1m]")
+    expect(wf.model).toBe("pro-max")
     expect(wf.engine).toBe("claude")
     expect(wf.execution_mode).toBe("serial")
     expect(wf.timeout).toBe(86400)
@@ -291,7 +291,7 @@ describe("octopus-dev-s2-cr-flow YAML Validation", () => {
   it("has correct name and metadata", () => {
     const wf = parseWorkflow(yaml)
     expect(wf.name).toBe("octopus-dev-s2-cr-flow")
-    expect(wf.model).toBe("opus[1m]")
+    expect(wf.model).toBe("pro-max")
     expect(wf.engine).toBe("claude")
     expect(wf.execution_mode).toBe("serial")
     expect(wf.timeout).toBe(86400)

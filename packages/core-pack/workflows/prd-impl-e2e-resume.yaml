@@ -1,4 +1,4 @@
-# yaml-language-server: $schema=./doc/workflow-schema.json
+# yaml-language-server: $schema=./workflow-schema.json
 #
 # ⚠️ 节点同步约定（v3 Always-Deliver / Harness 设计）
 # 以下节点在 prd-impl.yaml 和 prd-impl-e2e-resume.yaml 之间必须保持一致：
@@ -16,7 +16,7 @@ description: >
   重建上下文后直接进入 E2E 管线（fix-loop + completeness-loop）。
   不重复 Plan/Implement 阶段。
 
-model: opus[1m]
+model: pro-max
 engine: claude
 execution_mode: auto
 max_concurrent: 3
@@ -373,12 +373,12 @@ nodes:
       architecture-explorer:
         description: "架构勘探员 — 定向提取后端架构信息"
         agent_file: ".claude/agents/architecture-explorer.md"
-        model: sonnet
+        model: pro
         tools: ["Read", "Write", "Grep", "Glob"]
       ui-system-auditor:
         description: "UI 系统审计员 — 定向提取前端约定"
         agent_file: ".claude/agents/engineering-frontend-developer.md"
-        model: sonnet
+        model: pro
         tools: ["Read", "Write", "Grep", "Glob"]
     prompt: |
       你是宿主项目契约生成器。本节点与 prd-impl.yaml 同名节点一致。
@@ -420,7 +420,7 @@ nodes:
       api-tester:
         description: "API 测试架构师 — 将抽象验收用例绑定到可执行脚本"
         agent_file: ".claude/agents/testing-api-tester.md"
-        model: sonnet
+        model: pro
         tools: ["Read", "Write", "Edit", "Grep", "Glob"]
     prompt: |
       你是 E2E 用例绑定工程师。将上游 prd-forge 产出的抽象验收用例绑定到可执行脚本。
@@ -717,7 +717,7 @@ nodes:
       browser-tester:
         description: "浏览器 E2E 测试员 — 用 agent-browser 真实点击与断言"
         agent_file: ".claude/agents/testing-qa-engineer.md"
-        model: sonnet
+        model: pro
         tools: ["Read", "Grep", "Glob", "Bash"]
         prompt: |
           你是浏览器 E2E 测试执行者。测试分配给你的 ui_state 类用例。
@@ -858,7 +858,7 @@ nodes:
               ### 3. 轮次对比（round > 1 时）
               - 上一轮的哪些缺失项本轮拿到证据了？
               - 评分变化: <上轮>% → <本轮>% (±<delta>)
-            model: sonnet
+            model: pro
             tools: ["Bash", "Read", "Grep", "Glob"]
 
           api-tester:
@@ -868,7 +868,7 @@ nodes:
               ## API 重测任务
               重测与本轮修复相关的 API 端点，验证修复是否生效。
               每个断言必须有 HTTP 响应证据。
-            model: sonnet
+            model: pro
             tools: ["Bash", "Read", "Write", "Edit", "Grep", "Glob"]
         prompt: |
           你是产品完整度修复工程师。这是第 $iteration 轮（上限 $inputs.completeness_max_rounds 轮）。
@@ -1015,7 +1015,7 @@ nodes:
               1. 具体错误位置和原因
               2. 修复方案（改哪个文件、改什么内容）
               3. 是否需要 workspace rebuild
-            model: sonnet
+            model: pro
             tools: ["Bash", "Read", "Grep", "Glob"]
 
           code-reviewer:
@@ -1028,7 +1028,7 @@ nodes:
               2. 修复是否引入新问题？
               3. 代码质量是否达标（错误处理、命名、结构）？
               严重级别: 🔴 BLOCKER / 🟡 SUGGESTION / 🔵 MINOR
-            model: sonnet
+            model: pro
             tools: ["Bash", "Read", "Grep", "Glob"]
 
           api-tester:
@@ -1038,7 +1038,7 @@ nodes:
               ## API 重测任务
               重测之前失败的 API 端点，验证修复是否生效。
               每个断言必须有 HTTP 响应证据。
-            model: sonnet
+            model: pro
             tools: ["Bash", "Read", "Write", "Edit", "Grep", "Glob"]
 
           browser-tester:
@@ -1059,7 +1059,7 @@ nodes:
               ## 输出
               每条用例测完后输出 JSON 行:
               {"tc":"TC-NNN","status":"passed/failed","screenshot":"截图路径","dom_evidence":"selector + 实际文本","fail_reason":"失败原因或空"}
-            model: sonnet
+            model: pro
             tools: ["Bash", "Read", "Grep", "Glob"]
         prompt: |
           你是 E2E 修复工程师。这是第 $iteration 轮修复（上限 $inputs.e2e_fix_rounds 轮）。
@@ -1246,7 +1246,7 @@ nodes:
           reality-checker:
             description: "反假跑裁判 — 默认 NEEDS WORK，要求压倒性证据"
             agent_file: ".claude/agents/testing-reality-checker.md"
-            model: opus[1m]
+            model: pro-max
             tools: ["Bash", "Read", "Grep"]
         prompt: |
           你是 E2E 反假跑裁判。这是第 $iteration 轮验证。

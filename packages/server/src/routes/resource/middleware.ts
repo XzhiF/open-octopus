@@ -35,22 +35,8 @@ export function validateNameParam(name: string): void {
   }
 }
 
-// ── validateOrgParam ───────────────────────────────────────────────────────
-// Org must be alphanumeric with dots/hyphens/underscores, max 64 chars.
-
-const ORG_RE = /^[a-zA-Z0-9._-]{1,64}$/
-
-export function validateOrgParam(org: string): string {
-  if (!ORG_RE.test(org)) {
-    throw new ResourceError("INVALID_ORG", `Invalid org: ${org}`, {
-      suggestion: "Org must match ^[a-zA-Z0-9._-]{1,64}$ and not be reserved",
-    })
-  }
-  return org
-}
-
 // ── withResourceLock ───────────────────────────────────────────────────────
-// Server-level concurrent lock per org:resourceName (R1 fix).
+// Server-level concurrent lock per resourceName.
 // Wraps install/uninstall; rejects if another operation is in-flight.
 
 const LOCK_TIMEOUT_MS = 30_000

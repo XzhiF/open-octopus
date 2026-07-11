@@ -105,20 +105,23 @@ skills:
 - **hash 相同 → 跳过**（不复制，不写文件，计入 unchanged）
 - **hash 不同 → 标记为 updated**
 
-### Step 4: 检测新增
+### Step 4: 更新已变更的资源
+
+对每个 updated 资源，按 octo-resource-manager skill 的安装策略处理：
+1. 检查源仓库是否有安装脚本（setup.sh, Makefile, package.json scripts）
+2. 如果有安装脚本 → 重新执行安装流程（脚本可能处理了编译、依赖等）
+3. 如果没有安装脚本 → 直接从缓存覆盖 installed/ 中的文件
+4. 更新 registry.json 的 `sourceHash` 和 `syncedAt`
+
+### Step 5: 检测新增
 
 发现列表中有但 registry 中没有的资源 → 标记为 added。
 added 资源不自动安装，报告给用户。
 
-### Step 5: 检测删除
+### Step 6: 检测删除
 
 registry 中有但发现列表中没有的资源 → 标记为 orphan。
 设置 `status: "orphan"`，不删除文件。
-
-### Step 6: 执行覆盖（仅 updated）
-
-从缓存复制到 installed/（覆盖已有文件）。
-更新 registry.json 的 `sourceHash` 和 `syncedAt`。
 
 ### Step 7: 报告结果
 

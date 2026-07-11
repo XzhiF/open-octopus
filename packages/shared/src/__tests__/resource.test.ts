@@ -509,7 +509,6 @@ describe("ResourceManager", () => {
     fs.writeFileSync(path.join(agentDir, "AGENT.md"), "# Test Agent", "utf-8")
 
     manager = new ResourceManager({
-      org: "test-org",
       basePath: tmpDir,
       corePackBase: corePackDir,
     })
@@ -602,7 +601,7 @@ describe("ResourceManager", () => {
     // Manually add dependent entry
     const list = manager.list()
     // We need to add a dependent — access registry store through a second manager on same path
-    const manager2 = new ResourceManager({ org: "test-org", basePath: tmpDir, corePackBase: corePackDir })
+    const manager2 = new ResourceManager({ basePath: tmpDir, corePackBase: corePackDir })
     // Hack: install another skill then modify its dependsOn
     await manager2.install({ ref: "builtin:test-agent", scope: "org", caller: "cli" })
 

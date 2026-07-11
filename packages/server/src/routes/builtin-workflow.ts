@@ -2,19 +2,17 @@ import { Hono } from "hono"
 import { BuiltInWorkflowService } from "../services/builtin-workflow"
 import type { ResourceManager } from "@octopus/shared"
 
-export function createBuiltInWorkflowRoutes(getManager: (org: string) => ResourceManager): Hono {
+export function createBuiltInWorkflowRoutes(getManager: () => ResourceManager): Hono {
   const app = new Hono()
 
   app.get("/", (c) => {
-    const org = c.req.query("org") || "default"
-    const manager = getManager(org)
+    const manager = getManager()
     const service = new BuiltInWorkflowService(manager)
     return c.json(service.list())
   })
 
   app.get("/:ref", (c) => {
-    const org = c.req.query("org") || "default"
-    const manager = getManager(org)
+    const manager = getManager()
     const service = new BuiltInWorkflowService(manager)
     const ref = c.req.param("ref")
     const workflow = service.get(ref)

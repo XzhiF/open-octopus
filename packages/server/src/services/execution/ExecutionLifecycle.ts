@@ -157,8 +157,8 @@ export class ExecutionLifecycle {
       if (manifest.agents.length > 0 || manifest.skills.length > 0) {
         const check = preflight.check(manifest, this.workspacePath)
         if (check.missing.length > 0) {
-          const manager = getResourceRegistry().getOrCreate(this.org)
-          const provisioner = new ResourceProvisioner(manager, this.org)
+          const manager = getResourceRegistry().get()
+          const provisioner = new ResourceProvisioner(manager)
           const result = await provisioner.provision(check.missing, this.workspacePath)
           if (result.provisioned > 0) {
             process.stdout.write(`[preflight] Provisioned ${result.provisioned} resource(s) to workspace\n`)

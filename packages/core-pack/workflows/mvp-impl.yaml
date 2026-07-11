@@ -1,4 +1,4 @@
-# yaml-language-server: $schema=./doc/workflow-schema.json
+# yaml-language-server: $schema=./workflow-schema.json
 apiVersion: octopus/v1
 kind: Workflow
 name: mvp-impl
@@ -9,7 +9,7 @@ description: >
   特性: FR-XXX 追溯链贯穿全程，TDD 任务结构 (INIT/TEST/IMPL) 驱动实现顺序。
   E2E 阶段: 7 步循环 + 7 子代理 + MVP 完整度评估 + 反假跑验证。
 
-model: opus[1m]
+model: pro-max
 engine: claude
 execution_mode: auto
 max_concurrent: 3
@@ -517,7 +517,7 @@ nodes:
       feasibility-reviewer:
         description: "可行性审查者 — 评估实现计划的技术可行性"
         agent_file: ".claude/agents/engineering-software-architect.md"
-        model: opus[1m]
+        model: pro-max
         tools: ["Read", "Grep", "Glob"]
     prompt: |
       你是 Plan 阶段的对抗审查者。
@@ -578,7 +578,7 @@ nodes:
       code-quality-advisor:
         description: "代码质量顾问 — 实时质量建议"
         agent_file: ".claude/agents/engineering-code-reviewer.md"
-        model: sonnet
+        model: pro
         tools: ["Read", "Grep", "Glob"]
     prompt: |
       你是 MVP 实现者。按实现计划和 TDD 任务顺序实现所有功能。
@@ -651,7 +651,7 @@ nodes:
       backend-architect:
         description: "后端架构师 — 定义 API 契约和共享类型"
         agent_file: ".claude/agents/engineering-backend-architect.md"
-        model: opus[1m]
+        model: pro-max
         tools: ["Read", "Write", "Grep", "Glob"]
     prompt: |
       读取 MVP 文档中的 API 契约定义，生成/确认 API 契约文件。
@@ -687,12 +687,12 @@ nodes:
       backend-architect:
         description: "后端架构师 — 实现 API、数据库、服务层"
         agent_file: ".claude/agents/engineering-backend-architect.md"
-        model: opus[1m]
+        model: pro-max
         tools: ["Read", "Write", "Edit", "Bash", "Grep", "Glob"]
       database-optimizer:
         description: "数据库优化师 — Schema 设计、查询优化"
         agent_file: ".claude/agents/engineering-database-optimizer.md"
-        model: sonnet
+        model: pro
         tools: ["Read", "Write", "Edit", "Bash", "Grep", "Glob"]
     prompt: |
       你是后端实现者。按 API 契约和 tasks.md 的 TDD 顺序实现所有后端任务。
@@ -731,12 +731,12 @@ nodes:
       frontend-developer:
         description: "前端开发者 — React/Next.js UI 实现"
         agent_file: ".claude/agents/engineering-frontend-developer.md"
-        model: opus[1m]
+        model: pro-max
         tools: ["Read", "Write", "Edit", "Bash", "Grep", "Glob"]
       ui-designer:
         description: "UI 设计师 — 设计系统、组件库"
         agent_file: ".claude/agents/design-ui-designer.md"
-        model: sonnet
+        model: pro
         tools: ["Read", "Write", "Edit", "Grep", "Glob"]
     prompt: |
       你是前端实现者。按 API 契约和 tasks.md 的 TDD 顺序实现所有前端任务。
@@ -774,7 +774,7 @@ nodes:
       software-architect:
         description: "软件架构师 — 验证前后端集成完整性"
         agent_file: ".claude/agents/engineering-software-architect.md"
-        model: opus[1m]
+        model: pro-max
         tools: ["Bash", "Read", "Write", "Edit", "Grep", "Glob"]
     prompt: |
       前后端并行实现已完成。验证集成完整性。
@@ -811,12 +811,12 @@ nodes:
       code-reviewer:
         description: "独立代码审查员"
         agent_file: ".claude/agents/engineering-code-reviewer.md"
-        model: opus[1m]
+        model: pro-max
         tools: ["Bash", "Read", "Grep", "Glob"]
       security-engineer:
         description: "安全工程师"
         agent_file: ".claude/agents/engineering-security-engineer.md"
-        model: opus[1m]
+        model: pro-max
         tools: ["Bash", "Read", "Grep", "Glob"]
       mvp-assessor:
         description: "MVP 完整性评估员 — 对照 FR-XXX 追溯链评估"
@@ -834,7 +834,7 @@ nodes:
           - MVP 完整度 0-100%
           - 每个 FR-XXX 的覆盖状态（✅/❌）
           - 缺失 FR 清单（具体到 FR-XXX ID 和修复方式）
-        model: opus[1m]
+        model: pro-max
         tools: ["Bash", "Read", "Grep", "Glob"]
     prompt: |
       你是审查协调者。你有 3 个子代理。
@@ -905,7 +905,7 @@ nodes:
       api-tester:
         description: "API 测试架构师 — 从 FR-XXX Given/When/Then 生成测试用例"
         agent_file: ".claude/agents/testing-api-tester.md"
-        model: sonnet
+        model: pro
         tools: ["Read", "Write", "Edit", "Grep", "Glob"]
     prompt: |
       从 MVP 文档的 spec.md 生成结构化 E2E 测试用例，每个用例追溯到 FR-XXX。
@@ -970,7 +970,7 @@ nodes:
           3. 是否需要 workspace rebuild
 
           输出: {"root_cause":"<类型>","details":"<描述>","fix_plan":"<方案>","needs_rebuild":"<true/false>"}
-        model: sonnet
+        model: pro
         tools: ["Bash", "Read", "Grep", "Glob"]
 
       vision-analyzer:
@@ -979,7 +979,7 @@ nodes:
         prompt: |
           分析截图: 读取 PNG 文件 → 判断页面状态 → 返回文本结果。
           只返回文本描述，不返回图片数据。
-        model: sonnet
+        model: pro
         tools: ["Bash", "Read"]
 
       api-tester:
@@ -991,7 +991,7 @@ nodes:
           - 安全: OWASP API Top 10
           - 边界条件: 空 body / 超长输入 / 非法参数
           每个断言必须有 HTTP 响应证据。
-        model: sonnet
+        model: pro
         tools: ["Bash", "Read", "Write", "Edit", "Grep", "Glob"]
 
       evidence-collector:
@@ -1005,7 +1005,7 @@ nodes:
           标记可疑信号: duration < 1s / 0 token / 无输出。
 
           输出: {"evidence":[{id,type,evidence,suspicious}],"suspicious_count":N}
-        model: sonnet
+        model: pro
         tools: ["Bash", "Read", "Grep"]
 
       reality-checker:
@@ -1021,7 +1021,7 @@ nodes:
             - duration < 5 秒
             - 0 token 使用
           输出: PASSED / NEEDS WORK / FAILED
-        model: opus[1m]
+        model: pro-max
         tools: ["Bash", "Read", "Grep"]
 
       mvp-assessor:
@@ -1037,7 +1037,7 @@ nodes:
           5. FR→TEST→IMPL→CHK 追溯链完整性
 
           输出: 评分 0-100% + 每个 FR-XXX 状态 + 缺失项清单
-        model: opus[1m]
+        model: pro-max
         tools: ["Bash", "Read", "Grep", "Glob"]
 
       code-reviewer:
@@ -1049,7 +1049,7 @@ nodes:
           2. 修复是否引入新问题？
           3. 代码质量是否达标？
           严重级别: 🔴 BLOCKER / 🟡 SUGGESTION / 🔵 MINOR
-        model: sonnet
+        model: pro
         tools: ["Bash", "Read", "Grep", "Glob"]
     prompt: |
       你是 E2E 质量保证 Orchestrator。管理测试环境、执行测试用例、诊断修复失败、

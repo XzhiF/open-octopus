@@ -9,12 +9,9 @@ import path from 'path'
  */
 export class ResourceProvisioner {
   private manager: ResourceManager
-  // ponytail: org kept in constructor for future use, currently unused
-  private org: string
 
-  constructor(manager: ResourceManager, org: string) {
+  constructor(manager: ResourceManager) {
     this.manager = manager
-    this.org = org
   }
 
   /**

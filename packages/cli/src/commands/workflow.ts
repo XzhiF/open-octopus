@@ -1,7 +1,7 @@
 import { Command } from "commander"
 import { readFileSync, writeFileSync, existsSync, readdirSync, mkdirSync, copyFileSync, statSync, rmSync, chmodSync } from "fs"
 import { resolve, join } from "path"
-import { parseWorkflow, validateWorkflow, resolveOrgDir, isOctopusWorkflow, PipelineConfigSchema, PipelineConfigV1Schema } from "@octopus/shared"
+import { parseWorkflow, validateWorkflow, resolveOrgDir, PipelineConfigSchema, PipelineConfigV1Schema } from "@octopus/shared"
 import { WorkflowEngine, registerBuiltinProviders } from "@octopus/engine"
 import { registerProvider, ClaudeSDKProvider, PiAgentProvider, getProviderAsync } from "@octopus/providers"
 import { resolveCurrentOrg, resolveBuiltinWorkflowsDir } from "../utils/path"
@@ -150,25 +150,32 @@ workflowCmd
 workflowCmd
   .command("list")
   .description("列出工作流")
-  .option("--built-in", "列出系统内置工作流（~/.octopus/workflows/）")
+  .option("--built-in", "列出系统内置工作流")
   .action(async (options: { builtIn?: boolean }) => {
     if (options.builtIn) {
       const dir = resolveBuiltinWorkflowsDir()
       if (!existsSync(dir)) {
         console.log("系统内置工作流目录不存在:", dir)
+        console.log("请先运行: octopus setup --org <org>")
         return
       }
-      const files = readdirSync(dir).filter((f: string) => f.endsWith(".yaml") || f.endsWith(".yml"))
-      const workflows = files
-        .map((filename: string) => {
-          const content = readFileSync(join(dir, filename), "utf-8")
-          if (!isOctopusWorkflow(content)) return null
-          try {
-            const parsed = parseWorkflow(content)
-            return { filename }
-          } catch { return null }
-        })
-        .filter((item: { filename: string } | null): item is { filename: string } => item !== null)
+
+      // Walk nested structure: workflows/{group}/{name}/*.yaml
+      const workflows: Array<{ name: string; group: string }> = []
+      const groups = readdirSync(dir, { withFileTypes: true })
+        .filter(d => d.isDirectory())
+      for (const groupDir of groups) {
+        const groupPath = join(dir, groupDir.name)
+        const names = readdirSync(groupPath, { withFileTypes: true })
+          .filter(d => d.isDirectory())
+        for (const nameDir of names) {
+          const wfPath = join(groupPath, nameDir.name)
+          const yamlFiles = readdirSync(wfPath).filter(f => f.endsWith(".yaml") || f.endsWith(".yml"))
+          if (yamlFiles.length > 0) {
+            workflows.push({ name: nameDir.name, group: groupDir.name })
+          }
+        }
+      }
 
       if (workflows.length === 0) {
         console.log("无系统内置工作流")
@@ -176,18 +183,18 @@ workflowCmd
       }
       console.log("系统内置工作流:")
       for (const wf of workflows) {
-        console.log(`  ${wf.filename}`)
+        console.log(`  ${wf.group}/${wf.name}`)
       }
     } else {
       console.log("请指定 --built-in 以列出系统内置工作流，或使用 workflow run <yaml-path> 执行本地工作流")
     }
   })
 
-function findCorePackPresetsWorkflowsDir(): string | null {
+function findCorePackWorkflowsDir(): string | null {
   const candidates = [
-    join(__dirname, "core-pack", "presets", "workflows"),
-    join(__dirname, "..", "..", "core-pack", "presets", "workflows"),
-    join(__dirname, "..", "..", "node_modules", "@octopus", "core-pack", "presets", "workflows"),
+    join(__dirname, "core-pack", "workflows"),
+    join(__dirname, "..", "..", "core-pack", "workflows"),
+    join(__dirname, "..", "..", "node_modules", "@octopus", "core-pack", "workflows"),
   ]
   for (const c of candidates) {
     if (existsSync(c)) return c

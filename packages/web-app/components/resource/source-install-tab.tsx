@@ -16,12 +16,11 @@ import {
 } from "@/components/ui/select"
 import { Package, FolderGit2, FolderOpen, RefreshCw, Loader2 } from "lucide-react"
 import { listSources, installFromSource, installResource } from "@/lib/resource/api"
-import { useResourceOrg } from "./resource-context"
 import { toast } from "sonner"
 
 type SourceTab = "builtin" | "git" | "local"
 
-function RefInstallForm({ org, placeholder, tabLabel }: { org: string; placeholder: string; tabLabel: string }) {
+function RefInstallForm({ placeholder, tabLabel }: { placeholder: string; tabLabel: string }) {
   const router = useRouter()
   const [ref, setRef] = useState("")
   const [loading, setLoading] = useState(false)
@@ -32,7 +31,7 @@ function RefInstallForm({ org, placeholder, tabLabel }: { org: string; placehold
     setLoading(true)
     setError(null)
     try {
-      await installResource(org, ref.trim())
+      await installResource(ref.trim())
       toast.success(`${tabLabel}资源 ${ref.trim()} 安装成功`)
       setRef("")
       router.refresh()
@@ -74,7 +73,6 @@ function RefInstallForm({ org, placeholder, tabLabel }: { org: string; placehold
 }
 
 export function SourceInstallTab() {
-  const org = useResourceOrg()
   const [activeTab, setActiveTab] = useState<SourceTab>("git")
   const [sources, setSources] = useState<
     Array<{
@@ -90,12 +88,12 @@ export function SourceInstallTab() {
 
   const fetchSources = useCallback(async () => {
     try {
-      const res = await listSources(org)
+      const res = await listSources()
       setSources(res.sources)
     } catch {
       // ponytail: silent — empty list is acceptable fallback
     }
-  }, [org])
+  }, [])
 
   useEffect(() => {
     fetchSources()
@@ -106,7 +104,7 @@ export function SourceInstallTab() {
     setLoading(true)
     setResult(null)
     try {
-      const res = await installFromSource(org, {
+      const res = await installFromSource({
         sourceName: selectedSource,
         group: group || selectedSource,
         all: true,
@@ -199,7 +197,6 @@ export function SourceInstallTab() {
 
       {activeTab === "builtin" && (
         <RefInstallForm
-          org={org}
           placeholder="builtin:brainstorming"
           tabLabel="内置"
         />
@@ -207,7 +204,6 @@ export function SourceInstallTab() {
 
       {activeTab === "local" && (
         <RefInstallForm
-          org={org}
           placeholder="local:/path/to/skill"
           tabLabel="本地"
         />

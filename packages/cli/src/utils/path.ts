@@ -42,5 +42,5 @@ export function resolveEvolutionDir(org: string): string {
 }
 
 export function resolveBuiltinWorkflowsDir(): string {
-  return join(resolveGlobalDir(), "workflows")
+  return join(resolveGlobalDir(), "resources", "installed", "workflows")
 }

@@ -11,7 +11,6 @@ interface UseResourceDetailResult {
 }
 
 export function useResourceDetail(
-  org: string,
   type: string | undefined,
   name: string | undefined,
 ): UseResourceDetailResult {
@@ -27,14 +26,14 @@ export function useResourceDetail(
 
     setLoading(true)
     setError(null)
-    getResource(org, type, name)
+    getResource(type, name)
       .then(setResource)
       .catch((err) => {
         setError(err instanceof Error ? err.message : "Failed to load resource")
         setResource(null)
       })
       .finally(() => setLoading(false))
-  }, [org, type, name])
+  }, [type, name])
 
   return { resource, loading, error }
 }

@@ -10,7 +10,7 @@ import type { ResourceType, BuiltinCatalogEntry } from "./types"
  * Resource structure:
  * - Skills: directories in skills/ (e.g., skills/octo-skill-creator/SKILL.md)
  * - Agents: .md files in agents/ (e.g., agents/devil-advocate.md)
- * - Workflows: .yaml files in presets/workflows/ (e.g., presets/workflows/prd-impl.yaml)
+ * - Workflows: .yaml files in workflows/ (e.g., workflows/prd-impl.yaml)
  */
 
 /** Resolve core-pack base directory */
@@ -51,7 +51,7 @@ function typeToSubdir(type: ResourceType): string {
   switch (type) {
     case "skill": return "skills"
     case "agent": return "agents"
-    case "workflow": return "presets/workflows"
+    case "workflow": return "workflows"
   }
 }
 
@@ -114,7 +114,7 @@ export class BuiltinProvider {
     // Agents: scan .md files in agents/
     this.scanAgentFiles(entries)
 
-    // Workflows: scan .yaml files in presets/workflows/
+    // Workflows: scan .yaml files in workflows/
     this.scanWorkflowFiles(entries)
 
     return entries
@@ -177,7 +177,7 @@ export class BuiltinProvider {
   }
 
   private scanWorkflowFiles(entries: BuiltinCatalogEntry[]): void {
-    const dirPath = path.join(this.base, "presets", "workflows")
+    const dirPath = path.join(this.base, "workflows")
     if (!fs.existsSync(dirPath)) return
 
     const items = fs.readdirSync(dirPath, { withFileTypes: true })

@@ -293,7 +293,7 @@ if (!daos) {
 
 app.route("/api/orgs", createOrgRoutes(d.org))
 app.route("/api/workspaces", createWorkspaceRoutes(wsSvc, d.org, d.workspace))
-app.route("/api/workspaces/:id/workflows", createWorkflowRoutes(d.workspace, (o) => resourceRegistry.getOrCreate(o)))
+app.route("/api/workspaces/:id/workflows", createWorkflowRoutes(d.workspace, () => resourceRegistry.get()))
 app.route("/api/workspaces/:id/executions", executionRoutes)
 app.route("/api/workspaces/:id/analytics", createAnalyticsLogRoutes(d.workspace, getLogAnalysisService({ tokenDao: d.tokenUsage, execDao: d.execution }) ?? new (require('./services/log-analysis').LogAnalysisService)(d.tokenUsage, d.execution)))
 app.route("/api/dashboard", createDashboardRoutes(wsSvc, lbSvc, d.execution, d.tokenUsage, d.archive))
@@ -316,7 +316,7 @@ app.route("/api/agent", createAgentRoutes({
   executionDAO: d.execution,
   schedulerService: schedSvc,
 }))
-app.route("/api/workflows/built-in", createBuiltInWorkflowRoutes((o) => resourceRegistry.getOrCreate(o)))
+app.route("/api/workflows/built-in", createBuiltInWorkflowRoutes(() => resourceRegistry.get()))
 
 // Knowledge system routes — org is resolved per-request from the query
 // string (`?org=<name>`), so the server no longer pins a default org.
@@ -330,7 +330,7 @@ app.route("/api/archive", createArchiveRoutes(d.pendingReview, stateDir, d.archi
 
 // Resource management — unified resource lifecycle (install/uninstall/verify/audit)
 const resourceRegistry = getResourceRegistry()
-app.route("/api/resources", createResourceRoutes((o) => resourceRegistry.getOrCreate(o)))
+app.route("/api/resources", createResourceRoutes(() => resourceRegistry.get()))
 
 // Set scheduler on agent service
 try { getAgentService().setSchedulerService(schedSvc) } catch {}

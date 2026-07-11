@@ -5,10 +5,9 @@ import type { ResourceType } from "./types"
 
 /**
  * SourceDiscovery — discover resources in a git repository.
- * Three-layer fallback:
+ * Two-layer strategy:
  *   Layer 1: octopus-resource.json manifest (explicit)
- *   Layer 2: AI README analysis (stub — future phase)
- *   Layer 3: Convention scan (file patterns)
+ *   Layer 2: Convention scan (file patterns)
  */
 
 export interface DiscoveredResource {
@@ -50,9 +49,7 @@ export class SourceDiscovery {
     const manifest = this.discoverFromManifest(dir)
     if (manifest.length > 0) return manifest
 
-    // Layer 2: AI analysis (stub — skip)
-
-    // Layer 3: Conventions
+    // Layer 2: Convention scan
     return this.discoverFromConventions(dir)
   }
 

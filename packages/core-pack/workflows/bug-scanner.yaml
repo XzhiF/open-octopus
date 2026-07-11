@@ -1,4 +1,4 @@
-# yaml-language-server: $schema=./doc/workflow-schema.json
+# yaml-language-server: $schema=./workflow-schema.json
 apiVersion: octopus/v1
 kind: Workflow
 name: bug-scanner
@@ -8,7 +8,7 @@ description: >
   发现潜在 BUG，输出结构化证据报告到 ~/.octopus/bug-report/。
   支持 fingerprint 去重、动态验证升级、BUG 模式库学习。
 
-model: opus[1m]
+model: pro-max
 engine: claude
 execution_mode: auto
 max_concurrent: 3
@@ -116,7 +116,7 @@ nodes:
     agents:
       workspace-manager:
         description: "工作空间生命周期管理"
-        model: sonnet
+        model: pro
         prompt: |
           ## 工作空间管理任务
 
@@ -324,7 +324,7 @@ nodes:
     agents:
       code-analyzer:
         description: "代码静态分析"
-        model: sonnet
+        model: pro
         agent_file: .claude/agents/testing-engineering-software-architect.md
         prompt: |
           ## 代码静态分析任务
@@ -382,7 +382,7 @@ nodes:
 
       diagnostician:
         description: "深度根因分析 + 动态升级评估"
-        model: opus[1m]
+        model: pro-max
         agent_file: .claude/agents/testing-engineering-software-architect.md
         prompt: |
           ## 深度根因分析 + 动态升级评估
@@ -429,7 +429,7 @@ nodes:
 
       evidence-collector:
         description: "运行时证据收集"
-        model: sonnet
+        model: pro
         agent_file: .claude/agents/testing-evidence-collector.md
         prompt: |
           ## 运行时证据收集
@@ -474,7 +474,7 @@ nodes:
 
       reality-checker:
         description: "Anti-fake-run 验证"
-        model: opus[1m]
+        model: pro-max
         agent_file: .claude/agents/testing-reality-checker.md
         prompt: |
           ## Anti-Fake-Run 验证
@@ -516,7 +516,7 @@ nodes:
 
       vision-analyzer:
         description: "截图视觉分析"
-        model: haiku
+        model: se
         agent_file: .claude/agents/vision-analyzer.md
         prompt: |
           ## 截图视觉分析
@@ -545,7 +545,7 @@ nodes:
 
       report-generator:
         description: "生成 .md 报告 + index.json + bug-patterns"
-        model: sonnet
+        model: pro
         prompt: |
           ## BUG 报告生成
 
@@ -863,7 +863,7 @@ nodes:
     agents:
       workspace-manager:
         description: "工作空间清理"
-        model: sonnet
+        model: pro
         prompt: |
           ## 工作空间清理任务
 

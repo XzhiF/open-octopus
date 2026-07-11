@@ -1,4 +1,4 @@
-# yaml-language-server: $schema=./doc/workflow-schema.json
+# yaml-language-server: $schema=./workflow-schema.json
 apiVersion: octopus/v1
 kind: Workflow
 name: prd-forge
@@ -9,7 +9,7 @@ description: >
   产出 3+1 文档：brief + requirements + solution + PRD-FINAL。
   原 swarm 变体(prd-forge-swarm)已废弃，design-swarm 合并为本节点的可选模式。
 
-model: opus[1m]
+model: pro-max
 engine: claude
 execution_mode: serial
 timeout: 86400
@@ -608,7 +608,7 @@ nodes:
     depends_on: [design-swarm-write, design-simple]
     execute_when: '$inputs.enable_adversarial == "true"'
     timeout: 1800
-    model: sonnet
+    model: pro
     prompt: |
       你是独立技术方案审查者。你的模型与方案设计者不同，这是刻意的——
       不同模型有不同的注意力模式和偏见，跨模型审查比同模型"角色扮演"更有效。

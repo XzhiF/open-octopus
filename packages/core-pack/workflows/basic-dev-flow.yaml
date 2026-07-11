@@ -1,15 +1,15 @@
-# yaml-language-server: $schema=./doc/workflow-schema.json
+# yaml-language-server: $schema=./workflow-schema.json
 apiVersion: octopus/v1
 kind: Workflow
-name: octopus-dev-s1-pr-flow
+name: basic-dev-flow
 description: >
-  Octopus 开发流程 —— 对抗式多智能体协作 + 多项目 PR 输出。
+  Hermes 增强版开发流程 —— 对抗式多智能体协作（MVP 版）。
   9 阶段：Setup → Analyze → Challenge → Plan → Implement → Review+Fix → E2E → Ship。
-  核心改进：Ship 阶段遍历所有有变更的项目，独立创建 PR，输出 pr_urls JSON Map。
-  支持与 octopus-dev-s2-cr-flow 串联（通过 execution chain 传递 pr_urls）。
-  Analyze/Plan 对抗审查，Review 独立审查+修复自循环，E2E 多维度测试团队。
+  核心改进：Analyze/Plan 阶段独立对抗审查，Review 阶段独立代码+安全审查（含修复自循环），
+  E2E 多维度专业测试团队（含修复自循环），agency-agents-zh 代理库集成。
+  需求全部一次性规划实现，不分阶段交付。
 
-model: opus[1m]
+model: pro-max
 engine: claude
 execution_mode: serial
 timeout: 86400
@@ -46,9 +46,6 @@ inputs:
 variables:
   pkg_manager: "pnpm"
   notify_target: "telegram:xzf_hermes"
-  display_name: ""
-  projects: ""
-  branch: ""
   e2e_passed: "true"
   e2e_summary: ""
   e2e_failure_details: ""
@@ -57,9 +54,6 @@ variables:
   review_blockers: "0"
   review_issues: ""
   actual_port: ""
-  # ── V2 新增: 多项目 PR URL 输出 ──
-  pr_urls: ""
-  pr_count: "0"
   workspace_rules: |
     ## 工作空间规范
     - 当前 cwd 是 octopus 聚合工作空间，不是单个 git 仓库
@@ -97,63 +91,40 @@ hooks:
       channel: default
       template:
         severity: error
-        title: "❌ $vars.display_name — 工作流失败"
-        body: "📂 项目: $vars.projects | 🌿 $vars.branch\n🔴 失败节点: ${hook.failed_node_id | default:unknown}\n⏱️ 已运行: ${hook.total_duration_ms | duration}\n\n💡 *错误信息*:\n${hook.error | default:Unknown error}"
+        title: "❌ ${display_name | default:Hermes Workflow} — 工作流失败"
+        body: "📂 项目: ${projects | default:unknown} | 🌿 ${branch | default:unknown}\n🔴 失败节点: ${hook.failed_node_id | default:unknown}\n⏱️ 已运行: ${hook.total_duration_ms | duration}\n\n💡 *错误信息*:\n${hook.error | default:Unknown error}"
 
   # ② 服务中断 — 服务器重启导致执行被中断
   on_interrupt:
     - id: notify-interrupt
-      type: bash
-      timeout: 30
-      bash: |
-        DISPLAY_NAME="${vars.display_name:-Hermes Workflow}"
-        PROJECTS="${vars.projects:-unknown}"
-        BRANCH="${vars.branch:-unknown}"
-
-        hermes send -t "$vars.notify_target" -q "⚠️ $DISPLAY_NAME — 工作流被中断
-        📂 项目: $PROJECTS | 🌿 $BRANCH
-        🔧 原因: ${hook.interrupt_reason:-unknown}
-        🕐 中断时间: ${hook.timestamp:-unknown}
-
-        工作流需要重新启动或从断点恢复。" 2>&1 || echo "WARN: hermes send failed"
+      type: notify
+      channel: default
+      template:
+        severity: warn
+        title: "⚠️ ${display_name | default:Hermes Workflow} — 工作流被中断"
+        body: "📂 项目: ${projects | default:unknown} | 🌿 ${branch | default:unknown}\n🔧 原因: ${hook.interrupt_reason | default:unknown}\n🕐 中断时间: ${hook.timestamp | default:unknown}\n\n工作流需要重新启动或从断点恢复。"
 
   # ③ 用户取消 — 手动取消执行
   on_cancel:
     - id: notify-cancel
-      type: bash
-      timeout: 30
-      bash: |
-        DISPLAY_NAME="${vars.display_name:-Hermes Workflow}"
-        PROJECTS="${vars.projects:-unknown}"
-        BRANCH="${vars.branch:-unknown}"
-
-        hermes send -t "$vars.notify_target" -q "🛑 $DISPLAY_NAME — 工作流已取消
-        📂 项目: $PROJECTS | 🌿 $BRANCH
-        🕐 取消时间: ${hook.timestamp:-unknown}" 2>&1 || echo "WARN: hermes send failed"
-
-  # ④ 工作流完成（无论成功/失败）— 使用新 notify 特性
-  on_complete:
-    - id: notify-complete
       type: notify
       channel: default
       template:
-        severity: info
-        title: "🏁 $vars.display_name — 工作流完成"
-        body: "状态: $hook.final_status\n✅ 完成: $hook.completed_count/$hook.total_count\n❌ 失败: $hook.failed_count\n⏱️ 总耗时: ${hook.total_duration_ms | duration}"
+        severity: warn
+        title: "🛑 ${display_name | default:Hermes Workflow} — 工作流已取消"
+        body: "📂 项目: ${projects | default:unknown} | 🌿 ${branch | default:unknown}\n🕐 取消时间: ${hook.timestamp | default:unknown}"
 
-  # ⑤ 节点级通知 — 使用新 notify 特性替代原有 notify-* bash 节点
+  # ④ 节点级通知
   on_node_success:
-    # Setup 完成
     - id: notify-setup
       type: notify
       nodes: [setup]
       channel: default
       template:
         severity: info
-        title: "🚀 $vars.display_name 启动 (Octopus)"
+        title: "🚀 $vars.display_name 启动 (Enhanced)"
         body: "📂 项目: $vars.projects\n🌿 分支: $vars.branch → $inputs.base_branch\n📦 包管理: $vars.pkg_manager\n😈 对抗审查: $inputs.enable_adversarial\n📋 需求: $inputs.requirement"
 
-    # Challenge Analyze 完成（execute_when 跳过时 hook 不触发）
     - id: notify-challenge-analyze
       type: notify
       nodes: [challenge-analyze]
@@ -163,7 +134,6 @@ hooks:
         title: "😈 $vars.display_name — Challenge Analyze 完成"
         body: "📂 项目: $vars.projects | 🌿 $vars.branch\n🔥 $vars.challenge_count 条质疑\n\n💡 *关键质疑*:\n$vars.conclusion"
 
-    # Synthesis Analyze 完成
     - id: notify-synthesis-analyze
       type: notify
       nodes: [synthesis-analyze]
@@ -173,7 +143,26 @@ hooks:
         title: "🔄 $vars.display_name — Synthesis Analyze 完成"
         body: "📂 项目: $vars.projects | 🌿 $vars.branch\n📄 规格文档已更新\n\n💡 *综合结论*:\n$vars.conclusion"
 
-    # Challenge Plan 完成
+    - id: notify-analyze-no-adv
+      type: notify
+      nodes: [analyze]
+      channel: default
+      condition: '$inputs.enable_adversarial != "true"'
+      template:
+        severity: info
+        title: "📝 $vars.display_name — Analyze 完成"
+        body: "📂 项目: $vars.projects | 🌿 $vars.branch\n📄 规格文档: $vars.spec_file\n\n💡 *分析结论*:\n$vars.conclusion"
+
+    - id: notify-analyze-adv
+      type: notify
+      nodes: [synthesis-analyze]
+      channel: default
+      condition: '$inputs.enable_adversarial == "true"'
+      template:
+        severity: info
+        title: "📝 $vars.display_name — Analyze 完成{{#if $vars.challenge_count}} | 😈 $vars.challenge_count 条质疑已审查{{/if}}"
+        body: "📂 项目: $vars.projects | 🌿 $vars.branch\n📄 规格文档: $vars.spec_file\n\n💡 *分析结论*:\n$vars.conclusion"
+
     - id: notify-challenge-plan
       type: notify
       nodes: [challenge-plan]
@@ -183,7 +172,6 @@ hooks:
         title: "🏛️ $vars.display_name — Challenge Plan 完成"
         body: "📂 项目: $vars.projects | 🌿 $vars.branch\n🔍 $vars.plan_review_count 条可行性发现\n\n💡 *审查结论*:\n$vars.conclusion"
 
-    # Refine Plan 完成
     - id: notify-refine-plan
       type: notify
       nodes: [refine-plan]
@@ -193,7 +181,26 @@ hooks:
         title: "✏️ $vars.display_name — Refine Plan 完成"
         body: "📂 项目: $vars.projects | 🌿 $vars.branch\n📄 计划文档已修正\n\n💡 *修正结论*:\n$vars.conclusion"
 
-    # Implement 完成
+    - id: notify-plan-no-adv
+      type: notify
+      nodes: [plan]
+      channel: default
+      condition: '$inputs.enable_adversarial != "true"'
+      template:
+        severity: info
+        title: "📋 $vars.display_name — Plan 完成"
+        body: "📂 项目: $vars.projects | 🌿 $vars.branch\n📄 计划文档: $vars.plan_file\n\n💡 *计划概要*:\n$vars.conclusion"
+
+    - id: notify-plan-adv
+      type: notify
+      nodes: [refine-plan]
+      channel: default
+      condition: '$inputs.enable_adversarial == "true"'
+      template:
+        severity: info
+        title: "📋 $vars.display_name — Plan 完成{{#if $vars.plan_review_count}} | 🏛️ $vars.plan_review_count 条可行性发现已审查{{/if}}"
+        body: "📂 项目: $vars.projects | 🌿 $vars.branch\n📄 计划文档: $vars.plan_file\n\n💡 *计划概要*:\n$vars.conclusion"
+
     - id: notify-implement
       type: notify
       nodes: [implement]
@@ -203,6 +210,76 @@ hooks:
         title: "⚙️ $vars.display_name — Implement 完成"
         body: "📂 项目: $vars.projects | 🌿 $vars.branch\n\n💡 *实现概要*:\n$vars.conclusion"
 
+    - id: notify-review-no-fix
+      type: notify
+      nodes: [review]
+      channel: default
+      condition: '$vars.review_blockers == "0"'
+      template:
+        severity: info
+        title: "🔍 $vars.display_name — Review 完成"
+        body: "📂 项目: $vars.projects | 🌿 $vars.branch\n🚫 Blockers: $vars.review_blockers\n\n💡 *审查结论*:\n$vars.conclusion"
+
+    - id: notify-review-fixed
+      type: notify
+      nodes: [review-fix]
+      channel: default
+      condition: '$vars.review_blockers != "0"'
+      template:
+        severity: info
+        title: "🔍 $vars.display_name — Review 完成"
+        body: "📂 项目: $vars.projects | 🌿 $vars.branch\n🚫 Blockers: $vars.review_blockers\n\n💡 *审查结论*:\n$vars.conclusion"
+
+    - id: notify-e2e-pass
+      type: notify
+      nodes: [e2e-test]
+      channel: default
+      condition: '$vars.e2e_passed == "true"'
+      template:
+        severity: info
+        title: "✅ $vars.display_name — E2E 测试通过"
+        body: "📂 项目: $vars.projects | 🌿 $vars.branch\n📝 $vars.e2e_summary"
+
+    - id: notify-e2e-skipped
+      type: notify
+      nodes: [e2e-gate]
+      channel: default
+      condition: '$vars.e2e_passed == "true" && $inputs.run_e2e != "true"'
+      template:
+        severity: info
+        title: "✅ $vars.display_name — E2E 测试通过"
+        body: "📂 项目: $vars.projects | 🌿 $vars.branch\n📝 $vars.e2e_summary"
+
+    - id: notify-e2e-fail
+      type: notify
+      nodes: [e2e-test]
+      channel: default
+      condition: '$vars.e2e_passed != "true"'
+      template:
+        severity: error
+        title: "❌ $vars.display_name — E2E 测试未通过"
+        body: "📂 项目: $vars.projects | 🌿 $vars.branch\n📝 $vars.e2e_summary\n🔍 失败详情: $vars.e2e_failure_details"
+
+    - id: notify-ship
+      type: notify
+      nodes: [ship]
+      channel: default
+      template:
+        severity: info
+        title: "✅ $vars.display_name — Ship 完成 (Enhanced)"
+        body: "📂 项目: $vars.projects | 🌿 $vars.branch → $inputs.base_branch\n🔗 PR: ${pr_url | default:none}\n📝 $vars.ship_summary\n😈 对抗审查: challenge=${challenge_count | default:0}, review_blockers=$vars.review_blockers"
+
+  # ⑤ E2E 终止通知 — notify-e2e-fail 节点标记 __status: failed 后触发
+  on_node_failure:
+    - id: notify-e2e-terminate
+      type: notify
+      nodes: [notify-e2e-fail]
+      channel: default
+      template:
+        severity: error
+        title: "🚫 $vars.display_name — E2E 测试未通过，工作流终止"
+        body: "📂 项目: $vars.projects | 🌿 $vars.branch\n⚠️ 自循环修复后仍未通过，不提交 PR\n📝 $vars.e2e_summary"
+
 nodes:
   # ═══════════════════════════════════════════════════════════════
   # Phase 0: Setup — 环境检测 + agency-agents 安装 + 变量初始化
@@ -211,7 +288,7 @@ nodes:
     type: agent
     timeout: 900
     prompt: |
-      你正在执行 Octopus 开发流程的环境检测阶段。
+      你正在执行 Hermes 增强版开发流程的环境检测阶段。
 
       $vars.workspace_rules
 
@@ -264,6 +341,25 @@ nodes:
         INSTALLED=$(ls "$AGENTS_TARGET"/engineering-*.md "$AGENTS_TARGET"/testing-*.md 2>/dev/null | wc -l)
         echo "Installed $INSTALLED agency agents to $AGENTS_TARGET"
       fi
+
+      # 安装 devil-advocate (core-pack 内置代理，challenge-analyze 阶段必需)
+      if [ ! -f "$AGENTS_TARGET/devil-advocate.md" ]; then
+        COREPACK_AGENTS=""
+        for d in \
+          "$(pwd)/projects/*/packages/core-pack/agents" \
+          "$(dirname "$(dirname "$(dirname "$0")")")/packages/core-pack/agents"; do
+          if [ -f "$d/devil-advocate.md" ]; then
+            COREPACK_AGENTS="$d"
+            break
+          fi
+        done
+        if [ -n "$COREPACK_AGENTS" ]; then
+          cp "$COREPACK_AGENTS/devil-advocate.md" "$AGENTS_TARGET/"
+          echo "Installed devil-advocate.md from $COREPACK_AGENTS"
+        else
+          echo "WARN: devil-advocate.md not found in core-pack, challenge-analyze may fail"
+        fi
+      fi
       ```
 
       ### 3. 遍历项目
@@ -299,12 +395,20 @@ nodes:
       如果检测失败或为 HEAD，使用 `$inputs.base_branch` 作为默认值。
 
       ### 6. 计算 display_name（必须非空）
-      - 优先使用 `$vars.execution_name`，其次 `$vars.workflow_name`，兜底 "Octopus Dev Flow"
+      - 优先使用 `$vars.execution_name`，其次 `$vars.workflow_name`，兜底 "Hermes Enhanced"
 
       ## 输出要求
 
-      在回复末尾直接输出纯 JSON 行（不要用代码块包裹，必须是最后一行）:
-      {"vars_update":{"projects":"<项目目录名>","pkg_manager":"<包管理器>","branch":"<当前分支>","display_name":"<非空名称>","agency_agents_dir":"<绝对路径>"}}
+      在回复末尾输出 JSON（必须是最后一行）:
+      ```json
+      {"vars_update":{
+        "projects":"<项目目录名，逗号分隔>",
+        "pkg_manager":"<包管理器>",
+        "branch":"<当前分支>",
+        "display_name":"<非空名称>",
+        "agency_agents_dir":"<实际 .claude/agents 目录绝对路径>"
+      }}
+      ```
 
       ## 规则
       - 无人值守模式，直接执行
@@ -323,7 +427,7 @@ nodes:
     skills:
       - brainstorming
     prompt: |
-      你正在执行 Octopus 开发流程的需求分析阶段。
+      你正在执行 Hermes 增强版开发流程的需求分析阶段。
 
       $vars.workspace_rules
 
@@ -371,7 +475,7 @@ nodes:
           - 🔵 QUESTION: 需要澄清但不阻塞
 
           每条必须包含: 1) 质疑什么 2) 为什么有问题 3) 什么证据能让你接受
-        model: opus[1m]
+        model: pro-max
         tools: ["Read", "Grep", "Glob"]
     prompt: |
       你是对抗审查协调者。你的职责是委派 devil-advocate 子代理审查规格文档。
@@ -410,29 +514,12 @@ nodes:
       完成后输出:
       {"vars_update":{"conclusion":"<2-3句话: 采纳几条/拒绝几条/关键修改>"}}
 
-  - id: notify-analyze
-    type: bash
-    depends_on: [analyze, synthesis-analyze]
-    timeout: 15
-    bash: |
-      CHALLENGE_NOTE=""
-      if [ "$inputs.enable_adversarial" = "true" ] && [ -n "$vars.challenge_count" ]; then
-        CHALLENGE_NOTE="| 😈 $vars.challenge_count 条质疑已审查"
-      fi
-      octopus notify --ignore-failure \
-        --title "📝 $vars.display_name — Analyze 完成 $CHALLENGE_NOTE" \
-        --body "📂 项目: $vars.projects | 🌿 $vars.branch
-      📄 规格文档: $vars.spec_file
-
-      💡 *分析结论*:
-      $vars.conclusion"
-
   # ═══════════════════════════════════════════════════════════════
   # Phase 2: Plan — 生成实现计划
   # ═══════════════════════════════════════════════════════════════
   - id: plan
     type: agent
-    depends_on: [notify-analyze]
+    depends_on: [analyze]
     timeout: 86400
     skills:
       - writing-plans
@@ -480,7 +567,7 @@ nodes:
           - 🔴 CRITICAL: 计划缺陷，可能导致实施失败
           - 🟡 RISK: 可能导致延期或返工
           - 🔵 IMPROVEMENT: 建议改进（非阻塞）
-        model: opus[1m]
+        model: pro-max
         tools: ["Read", "Grep", "Glob"]
     prompt: |
       你是可行性审查协调者。委派 feasibility-reviewer 子代理审查实现计划。
@@ -518,29 +605,12 @@ nodes:
       完成后输出:
       {"vars_update":{"conclusion":"<2-3句话: 修正了什么>"}}
 
-  - id: notify-plan
-    type: bash
-    depends_on: [plan, refine-plan]
-    timeout: 15
-    bash: |
-      REVIEW_NOTE=""
-      if [ "$inputs.enable_adversarial" = "true" ] && [ -n "$vars.plan_review_count" ]; then
-        REVIEW_NOTE="| 🏛️ $vars.plan_review_count 条可行性发现已审查"
-      fi
-      octopus notify --ignore-failure \
-        --title "📋 $vars.display_name — Plan 完成 $REVIEW_NOTE" \
-        --body "📂 项目: $vars.projects | 🌿 $vars.branch
-      📄 计划文档: $vars.plan_file
-
-      💡 *计划概要*:
-      $vars.conclusion"
-
   # ═══════════════════════════════════════════════════════════════
   # Phase 3: Implement — 单次实现
   # ═══════════════════════════════════════════════════════════════
   - id: implement
     type: agent
-    depends_on: [notify-plan]
+    depends_on: [plan]
     timeout: 86400
     skills:
       - subagent-driven-development
@@ -555,7 +625,7 @@ nodes:
           - 错误处理遗漏（未捕获异常、静默吞掉错误）
           - 明显的安全漏洞（注入、XSS、硬编码密钥）
           - 性能问题（N+1 查询、内存泄漏、不必要的重渲染）
-        model: sonnet
+        model: pro
         tools: ["Read", "Grep", "Glob"]
     prompt: |
       使用 subagent-driven-development 执行实现计划。
@@ -607,7 +677,7 @@ nodes:
           - 🔵 MINOR: 风格/命名 — 可选
 
           输出: 按严重级别分组的发现清单
-        model: opus[1m]
+        model: pro-max
         tools: ["Bash", "Read", "Grep", "Glob"]
 
       security-engineer:
@@ -628,7 +698,7 @@ nodes:
           8. 错误处理 — 错误信息不泄露内部细节？
 
           输出: CRITICAL/HIGH/MEDIUM/LOW 分级
-        model: opus[1m]
+        model: pro-max
         tools: ["Bash", "Read", "Grep", "Glob"]
     prompt: |
       你是审查协调者。你与实现者完全独立，没有实现阶段的上下文。
@@ -672,7 +742,7 @@ nodes:
           审查最新的代码变更（修复），验证是否正确解决了之前发现的 BLOCKER 问题。
           重点关注: 修复是否引入新问题？修复是否完整？
           严重级别: 🔴 BLOCKER / 🟡 SUGGESTION / 🔵 MINOR
-        model: opus[1m]
+        model: pro-max
         tools: ["Bash", "Read", "Grep", "Glob"]
 
       security-engineer:
@@ -684,7 +754,7 @@ nodes:
           1. 之前的安全漏洞是否被正确修复
           2. 修复是否引入新的安全问题
           输出: CRITICAL/HIGH/MEDIUM/LOW 分级
-        model: opus[1m]
+        model: pro-max
         tools: ["Bash", "Read", "Grep", "Glob"]
     prompt: |
       你是代码修复协调者。上一轮审查发现了 BLOCKER 级别问题，需要你修复并验证。
@@ -728,28 +798,15 @@ nodes:
       ## 输出
       {"vars_update":{"review_blockers":"<剩余BLOCKER数量>","review_issues":"<最终问题状态>","conclusion":"<2-3句话: 修复了什么/剩余什么>"}}
 
-  - id: notify-review
-    type: bash
-    depends_on: [review, review-fix]
-    timeout: 15
-    bash: |
-      octopus notify --ignore-failure \
-        --title "🔍 $vars.display_name — Review 完成" \
-        --body "📂 项目: $vars.projects | 🌿 $vars.branch
-      🚫 Blockers: $vars.review_blockers
-
-      💡 *审查结论*:
-      $vars.conclusion"
-
   # ═══════════════════════════════════════════════════════════════
   # Phase 5: E2E — 多维度测试（自循环修复）
   # ═══════════════════════════════════════════════════════════════
   - id: e2e-test
     type: agent
-    depends_on: [notify-review]
+    depends_on: [review]
     timeout: 7200
     context: new
-    model: sonnet
+    model: pro
     execute_when: '$inputs.run_e2e == "true"'
     skills:
       - octo-browser-vision
@@ -762,7 +819,7 @@ nodes:
           你是一个视觉分析专家。你的唯一职责是分析图片并返回文本结果。
           工作流程：1. 接收图片路径和问题 2. 读取图片文件 3. 分析内容 4. 文本回答
           规则：只返回文本，不返回图片数据或 base64
-        model: sonnet
+        model: pro
         tools: ["Bash", "Read"]
 
       api-tester:
@@ -773,7 +830,7 @@ nodes:
           根据需求 $inputs.requirement 和计划 $vars.plan_file，测试所有相关 API 端点。
           使用实际端口（从环境准备阶段获取）。
           测试: 功能正确性 + 安全（认证/授权/注入）+ 边界条件
-        model: sonnet
+        model: pro
         tools: ["Bash", "Read", "Grep", "Glob"]
 
       a11y-auditor:
@@ -784,7 +841,7 @@ nodes:
           审核运行中的 Web UI（端口从环境准备阶段获取）。
           默认立场是找问题 — 没用屏幕阅读器测过的就不算无障碍。
           Lighthouse 绿色不等于无障碍。自定义组件假设有问题直到证明正常。
-        model: sonnet
+        model: pro
         tools: ["Bash", "Read", "Grep"]
 
       perf-benchmark:
@@ -794,7 +851,7 @@ nodes:
           ## 本次测试范围
           对核心 API 进行性能基准测试（端口从环境准备阶段获取）。
           输出: P50/P95/P99 延迟数据 + 瓶颈分析 + 容量建议
-        model: haiku
+        model: se
         tools: ["Bash", "Read"]
 
       evidence-collector:
@@ -807,7 +864,7 @@ nodes:
           - API 请求/响应记录
           - 控制台错误日志
           - 每个 bug: 实际结果 vs 预期结果 + 复现步骤 + 严重程度
-        model: sonnet
+        model: pro
         tools: ["Bash", "Read", "Grep"]
 
       reality-checker:
@@ -827,7 +884,7 @@ nodes:
           - "简单实现"被标为"豪华/高级"
 
           输出判定: READY / NEEDS WORK / FAILED
-        model: opus[1m]
+        model: pro-max
         tools: ["Read", "Grep"]
     prompt: |
       你正在执行 E2E 测试阶段。你的职责是协调多维度测试团队，收集证据，
@@ -917,30 +974,12 @@ nodes:
       - 发现问题直接修复代码
       - 修复后重新跑完整测试
 
-  - id: notify-e2e
-    type: bash
-    depends_on: [e2e-test]
-    timeout: 15
-    bash: |
-      if [ "$vars.e2e_passed" = "true" ]; then
-        octopus notify --ignore-failure \
-          --title "✅ $vars.display_name — E2E 测试通过" \
-          --body "📂 项目: $vars.projects | 🌿 $vars.branch
-        📝 $vars.e2e_summary"
-      else
-        octopus notify --ignore-failure --severity warn \
-          --title "❌ $vars.display_name — E2E 测试未通过" \
-          --body "📂 项目: $vars.projects | 🌿 $vars.branch
-        📝 $vars.e2e_summary
-        🔍 失败详情: $vars.e2e_failure_details"
-      fi
-
   # ═══════════════════════════════════════════════════════════════
   # E2E Gate
   # ═══════════════════════════════════════════════════════════════
   - id: e2e-gate
     type: condition
-    depends_on: [notify-e2e]
+    depends_on: [e2e-test]
     cases:
       - when: '$vars.e2e_passed == "true"'
         then: ship
@@ -953,108 +992,57 @@ nodes:
     type: bash
     timeout: 30
     bash: |
-      octopus notify --ignore-failure --severity error \
-        --title "🚫 $vars.display_name — E2E 测试未通过，工作流终止" \
-        --body "📂 项目: $vars.projects | 🌿 $vars.branch
-      ⚠️ 自循环修复后仍未通过，不提交 PR
-      📝 $vars.e2e_summary"
-
       echo "=== E2E 测试未通过，工作流以失败状态退出 ==="
       printf '{"vars_update":{"__status":"failed"}}\n'
 
   # ═══════════════════════════════════════════════════════════════
-  # Phase 6: Ship — 多项目推送 + 创建 PR (V2 升级)
+  # Phase 6: Ship — 推送 + 创建 PR
   # ═══════════════════════════════════════════════════════════════
   - id: ship
     type: agent
     depends_on: [e2e-gate]
     timeout: 86400
     prompt: |
-      代码审查和 E2E 测试已通过，进入最终阶段：遍历所有项目，提交、推送并创建 Pull Request。
+      代码审查和 E2E 测试已通过，进入最终阶段：提交、推送并创建 Pull Request。
 
       $vars.workspace_rules
 
       ## 环境信息
-      - 项目列表: $vars.projects
       - 当前分支: $vars.branch
       - 基础分支: $inputs.base_branch
       - 工作目录: $(pwd)
 
-      ## 你的任务（V2 多项目 PR 收集）
+      ## 你的任务
 
-      遍历 `./projects/` 下所有有 git 变更的项目，逐个创建 PR 并收集 URL。
+      ### 步骤 1：遍历 projects/ 下所有有变更的项目
+      对每个有 .git 的项目:
 
-      ### 对每个项目执行以下步骤:
+      ### 步骤 2：提交更改
+      ```bash
+      cd <项目目录>
+      git add -A
+      git commit -m "feat: enhanced dev flow implementation"
+      ```
 
-      1. **检查变更**:
-         ```bash
-         cd <项目目录>
-         git status --porcelain
-         ```
-         如果没有变更（输出为空），跳过此项目。
+      ### 步骤 3：推送分支
+      ```bash
+      git push -u origin HEAD
+      ```
 
-      2. **提交更改**:
-         ```bash
-         git add -A
-         git commit -m "feat: enhanced dev flow v2 implementation"
-         ```
-
-      3. **推送分支**:
-         ```bash
-         git push -u origin HEAD
-         ```
-         如果 push 失败，重试最多 2 次（non-fast-forward 时先 pull --rebase）。
-
-      4. **创建 PR**:
-         ```bash
-         PR_URL=$(gh pr create \
-           --base "$inputs.base_branch" \
-           --title "<基于需求的 PR 标题>" \
-           --body "<中文 PR 描述: 摘要、实现说明、测试情况、对抗审查结果>" \
-           2>&1)
-         echo "$PR_URL"
-         ```
-         如果 `gh pr create` 失败，检查是否已有 PR（`gh pr list --head <branch>`），有则获取其 URL。
-
-      5. **收集 PR URL**:
-         将每个项目的 PR URL 记录到一个 JSON Map 中:
-         `{"<项目目录名>":"<PR URL>", ...}`
-
-      ### 汇总所有项目的 PR URL
-
-      遍历完所有项目后，将所有 PR URL 合并为一个 JSON Map 字符串。
+      ### 步骤 4：创建 PR
+      ```bash
+      PR_URL=$(gh pr create \
+        --base "$inputs.base_branch" \
+        --title "<PR 标题>" \
+        --body "<中文 PR 描述: 摘要、实现说明、测试情况、对抗审查结果>" \
+        2>&1)
+      echo "$PR_URL"
+      ```
 
       ## 关键规则
       - 无人值守模式
       - gh pr create 失败时重试最多 2 次
       - PR 描述中包含对抗审查结果摘要
-      - **必须输出 pr_urls 为合法 JSON 字符串**（内部引号需转义）
-      - 如果某项目没有变更，不为其创建 PR，不包含在 pr_urls 中
-      - 如果所有项目都没有变更，pr_urls 为空 JSON `{}`，pr_count 为 "0"
 
       完成后输出:
-      {"vars_update":{"display_name":"$vars.display_name","pr_urls":"{<转义JSON Map>}","pr_count":"<创建的PR数量>","ship_summary":"<总结: N个项目创建了PR>","conclusion":"<2-3句话总结>"}}
-    outputs:
-      pr_urls: $vars.pr_urls
-      pr_count: $vars.pr_count
-
-  - id: notify-ship
-    type: bash
-    depends_on: [ship]
-    timeout: 15
-    bash: |
-      PR_LIST=""
-      if [ -n "$vars.pr_urls" ] && [ "$vars.pr_count" != "0" ]; then
-        PR_LIST="\n🔗 PR URLs ($vars.pr_count 个):"
-        # 解析 JSON Map 列出每个 PR
-        PR_LIST="$PR_LIST\n$vars.pr_urls"
-      else
-        PR_LIST="\n⚠️ 无项目有变更，未创建 PR"
-      fi
-
-      octopus notify --ignore-failure \
-        --title "✅ $vars.display_name — Ship 完成 (Octopus)" \
-        --body "📂 项目: $vars.projects | 🌿 $vars.branch → $inputs.base_branch
-      📦 PR 数量: $vars.pr_count${PR_LIST}
-      📝 $vars.ship_summary
-      😈 对抗审查: challenge=$vars.challenge_count, review_blockers=$vars.review_blockers"
+      {"vars_update":{"display_name":"$vars.display_name","pr_url":"<PR URL>","ship_summary":"<总结>"}}
