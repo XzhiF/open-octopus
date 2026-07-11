@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels"
-import type { Execution, StepExecution, StepExecutionStatus, Workflow, TokenUsage } from "@/lib/types"
+import type { Execution, StepExecution, StepExecutionStatus, Workflow, TokenUsage, LoopIterationSummary } from "@/lib/types"
 import {
   Play,
   Pause,
@@ -100,9 +100,10 @@ interface WorkflowDetailPanelProps {
   execution: Execution
   workflow?: Workflow
   workspaceId: string
+  loopIterationsMap?: Map<string, LoopIterationSummary>
 }
 
-export function WorkflowDetailPanel({ execution, workflow, workspaceId }: WorkflowDetailPanelProps) {
+export function WorkflowDetailPanel({ execution, workflow, workspaceId, loopIterationsMap }: WorkflowDetailPanelProps) {
   const [activeStepId, setActiveStepId] = useState<string | null>(null)
   const [isPaused, setIsPaused] = useState(false)
   const [yamlContent, setYamlContent] = useState(workflow?.yamlContent || "")
@@ -391,6 +392,7 @@ export function WorkflowDetailPanel({ execution, workflow, workspaceId }: Workfl
         workspaceId={workspaceId}
         executionId={execution.id}
         isRunning={liveStatus === "running"}
+        loopIterations={nodeInfoDialog ? loopIterationsMap?.get(nodeInfoDialog.stepId) : undefined}
         onOpenSwarmDialog={() => {
           if (nodeInfoDialog) {
             setSwarmDialogStepId(nodeInfoDialog.stepId)

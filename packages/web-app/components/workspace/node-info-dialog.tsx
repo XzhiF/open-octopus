@@ -10,7 +10,7 @@ import {
 import { Badge } from "@/components/ui/badge"
 import { formatDuration, formatTokenCount } from "@/lib/format"
 import { Timer as TimerIcon } from "lucide-react"
-import type { StepExecution } from "@/lib/types"
+import type { StepExecution, LoopIterationSummary } from "@/lib/types"
 import { AgentDetailTabs } from "@/components/node-detail/agent-detail-tabs"
 import { BashDetailTabs } from "@/components/node-detail/bash-detail-tabs"
 import { PythonDetailTabs } from "@/components/node-detail/python-detail-tabs"
@@ -30,6 +30,7 @@ export interface NodeInfoDialogProps {
   executionId: string
   isRunning: boolean
   onOpenSwarmDialog?: () => void
+  loopIterations?: LoopIterationSummary
 }
 
 export function NodeInfoDialog({
@@ -41,6 +42,7 @@ export function NodeInfoDialog({
   executionId,
   isRunning,
   onOpenSwarmDialog,
+  loopIterations,
 }: NodeInfoDialogProps) {
   const startedAt = step?.status === "running" ? step?.startedAt : undefined
   const elapsedSeconds = useLiveTimer(startedAt)
@@ -110,7 +112,7 @@ export function NodeInfoDialog({
           {executorType === "python" && <PythonDetailTabs step={step} isRunning={isRunning} />}
           {executorType === "condition" && <ConditionDetailTabs step={step} isRunning={isRunning} />}
           {executorType === "approval" && <ApprovalDetailTabs step={step} isRunning={isRunning} />}
-          {executorType === "loop" && <LoopDetailTabs step={step} isRunning={isRunning} />}
+          {executorType === "loop" && <LoopDetailTabs step={step} isRunning={isRunning} loopIterations={loopIterations} />}
           {executorType === "swarm" && (
             <SwarmDetailTabs
               executionId={executionId}
