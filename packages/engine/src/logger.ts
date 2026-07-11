@@ -27,12 +27,65 @@ export function isMergedEvent(entry: { event: string }): boolean {
   return MERGED_EVENT_TYPES.has(entry.event)
 }
 
+/** Sanitize a node ID for use in filenames. Replaces unsafe chars and escapes -iter-N suffix. */
+export function sanitizeId(id: string): string {
+  let safe = id.replace(/[^a-zA-Z0-9_-]/g, "_")
+  // Escape -iter-N suffix to prevent filename collision with loop iteration files
+  safe = safe.replace(/-iter-\d+$/, "_escaped")
+  return safe
+}
+
+export interface ParsedLogFilename {
+  loopId?: string
+  iteration?: number
+  nodeId: string
+}
+
+/** Parse a JSONL log filename to extract loop/iteration/node information. */
+export function parseLogFilename(filename: string): ParsedLogFilename {
+  const base = filename.replace('.jsonl', '')
+  const lastSep = base.lastIndexOf('__')
+  if (lastSep === -1) return { nodeId: base }
+  const prefix = base.substring(0, lastSep)
+  const nodeId = base.substring(lastSep + 2)
+  const iterMatch = prefix.match(/^(.+)-iter-(\d+)$/)
+  if (iterMatch) {
+    return { loopId: iterMatch[1], iteration: parseInt(iterMatch[2], 10), nodeId }
+  }
+  // Has __ but not a loop iteration file — treat entire base as nodeId
+  return { nodeId: base }
+}
+
 export class JsonlLogger {
   private logDir: string
+  private loopNodeId?: string
+  private iteration?: number
 
   constructor(orgDir: string, executionId: string) {
     this.logDir = join(orgDir, "logs", executionId)
     mkdirSync(this.logDir, { recursive: true })
+  }
+
+  /** Set loop context so subsequent log() calls write to iteration-scoped files. */
+  setLoopContext(loopNodeId: string, iteration: number): void {
+    this.loopNodeId = loopNodeId
+    this.iteration = iteration
+  }
+
+  /** Clear loop context — log() reverts to writing to {nodeId}.jsonl. */
+  clearLoopContext(): void {
+    this.loopNodeId = undefined
+    this.iteration = undefined
+  }
+
+  /** Resolve the JSONL file path for a given node, considering loop context. */
+  private getLogFilePath(nodeId: string): string {
+    if (this.loopNodeId && this.iteration !== undefined) {
+      const safeLoopId = sanitizeId(this.loopNodeId)
+      const safeNodeId = sanitizeId(nodeId)
+      return join(this.logDir, `${safeLoopId}-iter-${this.iteration}__${safeNodeId}.jsonl`)
+    }
+    return join(this.logDir, `${sanitizeId(nodeId)}.jsonl`)
   }
 
   log(nodeId: string, event: string, data: Record<string, any>): void {
@@ -47,14 +100,20 @@ export class JsonlLogger {
       }
     }
 
-    const entry = {
+    const entry: Record<string, any> = {
       timestamp: new Date().toISOString(),
       nodeId,
       event,
       ...filteredData,
     }
+
+    // Add iteration field when loop context is active
+    if (this.loopNodeId && this.iteration !== undefined) {
+      entry.iteration = this.iteration
+    }
+
     appendFileSync(
-      join(this.logDir, `${nodeId}.jsonl`),
+      this.getLogFilePath(nodeId),
       JSON.stringify(entry) + "\n",
     )
   }

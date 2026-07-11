@@ -387,6 +387,9 @@ executionRoutes.get("/:executionId/agent-events", (c) => {
   const workspaceId = getWorkspaceId(c)
   const executionId = getExecutionId(c)
   const nodeId = c.req.query("nodeId")
+  const loopId = c.req.query("loopId") || undefined
+  const iterationParam = c.req.query("iteration")
+  const iteration = iterationParam ? parseInt(iterationParam, 10) : undefined
   const svc = getService(workspaceId)
   if (!svc) return c.json({ error: "workspace not found" }, 404)
 
@@ -397,6 +400,9 @@ executionRoutes.get("/:executionId/agent-events", (c) => {
   } catch {
     return c.json({ error: "execution not found" }, 404)
   }
+
+  // Compute loop iteration summary
+  const loopIterations = svc.service.getLoopIterationSummary(executionId)
 
   // SQLite-first: query agent_events joined with node_executions
   try {
@@ -450,20 +456,20 @@ executionRoutes.get("/:executionId/agent-events", (c) => {
 
       // Merge with JSONL non-agent events (start/end/bash_log/python_log)
       // SQLite only stores agent events; lifecycle & script logs live in JSONL files
-      const jsonlEvents = svc.service.getAgentEvents(executionId, nodeId || undefined)
+      const jsonlEvents = svc.service.getAgentEvents(executionId, nodeId || undefined, loopId, iteration)
       const nonAgentEvents = jsonlEvents.filter((e: any) => e.event !== "agent_event")
       const merged = [...transformed, ...nonAgentEvents]
         .sort((a: any, b: any) => (a.timestamp ?? "").localeCompare(b.timestamp ?? ""))
 
-      return c.json({ executionId, events: merged, source: 'sqlite', _degraded: false, _message: null })
+      return c.json({ executionId, events: merged, source: 'sqlite', _degraded: false, _message: null, loopIterations })
     }
   } catch {
     // SQLite query failed — fall through to JSONL
   }
 
   // JSONL fallback
-  const events = svc.service.getAgentEvents(executionId, nodeId || undefined)
-  return c.json({ executionId, events, source: 'jsonl', _degraded: true, _message: '从 JSONL 日志读取' })
+  const events = svc.service.getAgentEvents(executionId, nodeId || undefined, loopId, iteration)
+  return c.json({ executionId, events, source: 'jsonl', _degraded: true, _message: '从 JSONL 日志读取', loopIterations })
 })
 
 executionRoutes.get("/:executionId/branches", async (c) => {

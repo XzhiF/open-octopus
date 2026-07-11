@@ -22,6 +22,8 @@ import { resolveAllProjectNames } from "../knowledge/repo-resolver"
 import { join } from "path"
 import { existsSync, readdirSync, readFileSync, writeFileSync, mkdirSync } from "fs"
 import { randomUUID } from "crypto"
+import { parseLogFilename } from "@octopus/engine"
+import type { ParsedLogFilename } from "@octopus/engine"
 import { ResourcePreFlight } from "../resource-preflight"
 import { ResourceProvisioner } from "../resource-provisioner"
 import { getResourceRegistry } from "../resource-registry"
@@ -1292,25 +1294,90 @@ export class ExecutionLifecycle {
     }))
   }
 
-  getAgentEvents(executionId: string, nodeId?: string): any[] {
+  getAgentEvents(executionId: string, nodeId?: string, loopId?: string, iteration?: number): any[] {
     const logDir = join(this.workspacePath, "logs", executionId)
     if (!existsSync(logDir)) return []
 
     const events: any[] = []
     const files = readdirSync(logDir).filter(f => f.endsWith(".jsonl"))
     for (const file of files) {
-      const fileNodeId = file.replace(".jsonl", "")
-      if (nodeId && fileNodeId !== nodeId) continue
+      const parsed = parseLogFilename(file)
+
+      // If loopId filter is set, skip files not belonging to that loop
+      if (loopId && parsed.loopId && parsed.loopId !== loopId) continue
+      // If iteration filter is set, skip files not matching
+      if (iteration !== undefined && parsed.iteration !== undefined && parsed.iteration !== iteration) continue
+
+      // For non-iteration files, apply nodeId filter
+      const fileNodeId = parsed.nodeId
+      if (nodeId && !parsed.loopId && fileNodeId !== nodeId) continue
+
       const content = readFileSync(join(logDir, file), "utf-8")
       for (const line of content.split("\n")) {
         if (!line.trim()) continue
         try {
           const entry = JSON.parse(line)
-          events.push({ ...entry, nodeId: entry.nodeId ?? fileNodeId })
+          events.push({
+            ...entry,
+            nodeId: entry.nodeId ?? fileNodeId,
+            ...(parsed.loopId ? { loopId: parsed.loopId, iteration: parsed.iteration } : {}),
+          })
         } catch { /* skip malformed lines */ }
       }
     }
     return events.sort((a, b) => (a.timestamp ?? "").localeCompare(b.timestamp ?? ""))
+  }
+
+  /** Compute loop iteration summary from JSONL branch events. */
+  getLoopIterationSummary(executionId: string): Record<string, any[]> {
+    const logDir = join(this.workspacePath, "logs", executionId)
+    if (!existsSync(logDir)) return {}
+
+    const files = readdirSync(logDir).filter(f => f.endsWith(".jsonl"))
+    const summary: Record<string, any[]> = {}
+
+    for (const file of files) {
+      const parsed = parseLogFilename(file)
+      if (parsed.loopId) continue // skip iteration files — read from loop's own file
+
+      const content = readFileSync(join(logDir, file), "utf-8")
+      for (const line of content.split("\n")) {
+        if (!line.trim()) continue
+        try {
+          const entry = JSON.parse(line)
+          if (entry.event !== "branch_start" && entry.event !== "branch_end") continue
+
+          const nodeId = entry.nodeId ?? parsed.nodeId
+          if (!summary[nodeId]) summary[nodeId] = []
+
+          const iter = entry.iteration
+          if (iter === undefined) continue
+
+          let iterEntry = summary[nodeId].find((e: any) => e.iteration === iter)
+          if (!iterEntry) {
+            iterEntry = { iteration: iter, status: "running", startedAt: null, completedAt: null, durationMs: null }
+            summary[nodeId].push(iterEntry)
+          }
+
+          if (entry.event === "branch_start") {
+            iterEntry.startedAt = entry.timestamp
+          } else if (entry.event === "branch_end") {
+            iterEntry.status = entry.status ?? "completed"
+            iterEntry.completedAt = entry.timestamp
+            if (iterEntry.startedAt) {
+              iterEntry.durationMs = new Date(entry.timestamp).getTime() - new Date(iterEntry.startedAt).getTime()
+            }
+          }
+        } catch { /* skip */ }
+      }
+    }
+
+    // Sort iterations within each loop
+    for (const key of Object.keys(summary)) {
+      summary[key].sort((a: any, b: any) => a.iteration - b.iteration)
+    }
+
+    return summary
   }
 
   getWorkflowContent(executionId: string): string | null {
@@ -1538,6 +1605,8 @@ export class ExecutionLifecycle {
 
   buildCallbacks(executionId: string): EngineCallbacks {
     const id = executionId
+    // Track branch start times for durationMs computation
+    const branchStartTimes = new Map<string, number>()
     return {
       onNodeStart: (nodeId, nodeType) => {
         const neId = `${id}-${nodeId}`
@@ -1651,10 +1720,14 @@ export class ExecutionLifecycle {
         }
       },
       onBranchStart: (neId, iteration) => {
+        branchStartTimes.set(neId, Date.now())
         this.sse.emit(this.workspaceId, { event: "branch_start", data: { executionId: id, nodeExecutionId: neId, iteration } })
       },
       onBranchEnd: (neId, iteration, status) => {
-        this.sse.emit(this.workspaceId, { event: "branch_end", data: { executionId: id, nodeExecutionId: neId, iteration, status } })
+        const startMs = branchStartTimes.get(neId)
+        const durationMs = startMs ? Date.now() - startMs : undefined
+        branchStartTimes.delete(neId)
+        this.sse.emit(this.workspaceId, { event: "branch_end", data: { executionId: id, nodeExecutionId: neId, iteration, status, durationMs } })
       },
       onAgentEvent: (nodeId, event) => {
         this.sse.emit(this.workspaceId, { event: "agent_event", data: { executionId: id, nodeId, event } })

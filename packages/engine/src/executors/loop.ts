@@ -65,7 +65,9 @@ export class LoopExecutor implements NodeExecutor {
       let shouldContinue = false
       let jumpToIndex = -1
 
-      for (let ni = jumpToIndex >= 0 ? jumpToIndex : 0; ni < innerNodes.length; ni++) {
+      this.logger?.setLoopContext(this.node.id, this.iterations)
+      try {
+        for (let ni = jumpToIndex >= 0 ? jumpToIndex : 0; ni < innerNodes.length; ni++) {
         jumpToIndex = -1 // reset for this iteration of the for loop
         const innerNode = innerNodes[ni]
         if (shouldContinue) continue
@@ -147,6 +149,9 @@ export class LoopExecutor implements NodeExecutor {
             break
           }
         }
+      }
+      } finally {
+        this.logger?.clearLoopContext()
       }
 
       this.logger?.log(this.node.id, 'branch_end', { iteration: this.iterations, status: "completed" })
