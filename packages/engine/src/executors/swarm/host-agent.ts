@@ -145,7 +145,7 @@ Respond in this JSON structure:
         return {
           synthesis: parsed.synthesis || response,
           rawResponse: response,
-          assessment: parsed.assessment,
+          assessment: parsed.assessment ?? this.extractAssessmentBlock(response),
         }
       } catch {
         // Not valid JSON — try extracting with balanced braces
@@ -156,10 +156,16 @@ Respond in this JSON structure:
             if (config.outputFormat === "structured") {
               return { synthesis: extracted, rawResponse: response, assessment: parsed.assessment }
             }
-            return { synthesis: parsed.synthesis || response, rawResponse: response, assessment: parsed.assessment }
+            return { synthesis: parsed.synthesis || response, rawResponse: response, assessment: parsed.assessment ?? this.extractAssessmentBlock(response) }
           } catch { /* fall through */ }
         }
       }
+    }
+
+    // Fallback: try extracting assessment from ```assessment code block
+    const blockAssessment = this.extractAssessmentBlock(response)
+    if (blockAssessment) {
+      return { synthesis: response, rawResponse: response, assessment: blockAssessment }
     }
 
     // For structured output without JSON: wrap in minimal valid JSON
@@ -175,6 +181,25 @@ Respond in this JSON structure:
     }
 
     return { synthesis: response, rawResponse: response }
+  }
+
+  /**
+   * Extract assessment from ```assessment ... ``` code block.
+   * Used when custom host.prompt defines its own output format instead of the built-in JSON schema.
+   */
+  private extractAssessmentBlock(response: string): HostOutput["assessment"] | undefined {
+    const match = response.match(/```assessment\s*\n?([\s\S]*?)```/)
+    if (!match) return undefined
+    try {
+      return JSON.parse(match[1].trim())
+    } catch {
+      // Try to find JSON within the block
+      const jsonInBlock = match[1].match(/\{[\s\S]*\}/)
+      if (jsonInBlock) {
+        try { return JSON.parse(jsonInBlock[0]) } catch { /* ignore */ }
+      }
+      return undefined
+    }
   }
 
   private extractBalancedJson(text: string): string | null {
