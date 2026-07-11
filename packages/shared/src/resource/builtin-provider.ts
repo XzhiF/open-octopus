@@ -177,7 +177,7 @@ export class BuiltinProvider {
   }
 
   private scanWorkflowFiles(entries: BuiltinCatalogEntry[]): void {
-    const dirPath = path.join(this.base, "presets", "workflows")
+    const dirPath = path.join(this.base, "workflows")
     if (!fs.existsSync(dirPath)) return
 
     const items = fs.readdirSync(dirPath, { withFileTypes: true })
