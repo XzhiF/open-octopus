@@ -1,6 +1,7 @@
 "use client"
 
-import { resolveMoaModel, type MoaModelResolution, type ModelAliasConfig } from "@octopus/shared"
+import { resolveMoaModel, type MoaModelResolution } from "@/lib/moa-model-resolver"
+import type { ModelAliasConfig } from "@octopus/shared"
 import { Badge } from "@/components/ui/badge"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { CheckCircle, AlertTriangle, XCircle } from "lucide-react"

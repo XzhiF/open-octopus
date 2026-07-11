@@ -1,6 +1,6 @@
-// ponytail: standalone module — no runtime imports from model-alias (which uses fs).
-// Browser-safe: "use client" components can import this without pulling Node.js builtins.
-import type { ModelAliasConfig } from './model-alias'
+// ponytail: browser-safe copy of resolveMoaModel from @octopus/shared.
+// Avoids barrel import that pulls Node.js fs/child_process into client bundle.
+// Keep in sync with packages/shared/src/config/moa-model-resolver.ts.
 
 export interface MoaModelResolution {
   resolved: string
@@ -8,16 +8,19 @@ export interface MoaModelResolution {
   chain: string[]
 }
 
-function isTierKey(model: string, config: ModelAliasConfig): boolean {
+interface TierConfig {
+  default?: string
+  providers: Record<string, Record<string, string>>
+}
+
+function isTierKey(model: string, config: TierConfig): boolean {
   return Object.values(config.providers).some(tierMap => model in tierMap)
 }
 
-// Inlined from model-alias.ts to avoid transitive fs/path imports.
-// Pure logic, no side effects.
 function resolveAlias(
   model: string | undefined,
   providerType: string,
-  config: ModelAliasConfig,
+  config: TierConfig,
   depth = 0,
 ): string | undefined {
   if (depth > 3) return model
@@ -29,24 +32,22 @@ function resolveAlias(
   return resolved
 }
 
-const TIER_HIERARCHY = ['pro-max', 'pro', 'se'] as const
+const TIER_HIERARCHY = ["pro-max", "pro", "se"] as const
 
 export function resolveMoaModel(
   modelId: string,
   providerType: string,
-  config: ModelAliasConfig,
+  config: TierConfig,
 ): MoaModelResolution {
-  // Step 1: exact tier-key match
   if (isTierKey(modelId, config)) {
     const resolved = resolveAlias(modelId, providerType, config) ?? modelId
     return { resolved, degraded: false, chain: [modelId] }
   }
 
-  // Step 2: suffix degradation — strip after last '-'
   const chain: string[] = [modelId]
   let current = modelId
-  while (current.includes('-')) {
-    current = current.substring(0, current.lastIndexOf('-'))
+  while (current.includes("-")) {
+    current = current.substring(0, current.lastIndexOf("-"))
     chain.push(current)
     if (isTierKey(current, config)) {
       const resolved = resolveAlias(current, providerType, config) ?? current
@@ -54,7 +55,6 @@ export function resolveMoaModel(
     }
   }
 
-  // Step 3: fixed hierarchy fallback (pro-max → pro → se), skip already-tried
   for (const tier of TIER_HIERARCHY) {
     if (chain.includes(tier)) continue
     if (isTierKey(tier, config)) {
@@ -64,6 +64,5 @@ export function resolveMoaModel(
     }
   }
 
-  // Step 4: all miss — return original
   return { resolved: modelId, degraded: false, chain: [modelId] }
 }
