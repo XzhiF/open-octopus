@@ -15,9 +15,10 @@ import { MessageTimelineTab } from "./message-timeline-tab"
 import { ConsensusChartTab } from "./consensus-chart-tab"
 import { InternalDagTab } from "./internal-dag-tab"
 import { HostReportTab } from "./host-report-tab"
+import { MoaResultTab } from "./moa-result-tab"
 import { SwarmDialogSkeleton } from "./swarm-dialog-skeleton"
 import { AlertBanner } from "../atoms/alert-banner"
-import { Users, MessageSquare, TrendingUp, GitBranch, FileText } from "lucide-react"
+import { Users, MessageSquare, TrendingUp, GitBranch, FileText, Sparkles } from "lucide-react"
 import { cn } from "@/lib/utils"
 
 export interface SwarmDetailDialogProps {
@@ -57,6 +58,12 @@ export function SwarmDetailDialog({
     finalResult,
     budgetExhausted,
     timeoutExceeded,
+    moaExpertResults,
+    aggregatorStatus,
+    aggregatorRound,
+    aggregatorTotalRounds,
+    aggregatorModel,
+    aggregatorInputExpertCount,
   } = useSwarmEvents(workspaceId, open ? nodeId : null, open ? executionId : undefined)
 
   const consensusScore = finalResult?.consensus_score ?? (
@@ -70,8 +77,9 @@ export function SwarmDetailDialog({
 
   const showConsensusTab = mode === "debate" || mode === "swarm"
   const showDagTab = mode === "dispatch"
+  const showMoaTab = mode === "moa"
 
-  const tabCount = 3 + (showConsensusTab ? 1 : 0) + (showDagTab ? 1 : 0)
+  const tabCount = 3 + (showConsensusTab ? 1 : 0) + (showDagTab ? 1 : 0) + (showMoaTab ? 1 : 0)
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -127,6 +135,12 @@ export function SwarmDetailDialog({
                 <span className="hidden sm:inline">DAG</span>
               </TabsTrigger>
             )}
+            {showMoaTab && (
+              <TabsTrigger value="moa" className="gap-1">
+                <Sparkles className="h-3.5 w-3.5" />
+                <span className="hidden sm:inline">MOA</span>
+              </TabsTrigger>
+            )}
             <TabsTrigger value="report" className="gap-1">
               <FileText className="h-3.5 w-3.5" />
               <span className="hidden sm:inline">报告</span>
@@ -158,6 +172,22 @@ export function SwarmDetailDialog({
                 taskBreakdown={taskBreakdown}
                 experts={experts}
                 onNodeClick={handleDagNodeClick}
+              />
+            </TabsContent>
+          )}
+
+          {showMoaTab && (
+            <TabsContent value="moa" className="mt-3 flex-1 overflow-y-auto min-h-0">
+              <MoaResultTab
+                status={status}
+                experts={experts}
+                moaExpertResults={moaExpertResults}
+                aggregatorStatus={aggregatorStatus}
+                aggregatorRound={aggregatorRound}
+                aggregatorTotalRounds={aggregatorTotalRounds}
+                aggregatorModel={aggregatorModel}
+                aggregatorInputExpertCount={aggregatorInputExpertCount}
+                hostReport={hostReport}
               />
             </TabsContent>
           )}

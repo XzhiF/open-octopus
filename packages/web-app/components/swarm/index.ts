@@ -101,6 +101,18 @@ export { SwarmDialogSkeleton } from "./organisms/swarm-dialog-skeleton"
 export { SwarmNode } from "./organisms/swarm-node"
 export type { SwarmNodeData } from "./organisms/swarm-node"
 
+// MOA components
+export { ModelResolveBadge } from "./atoms/model-resolve-badge"
+export type { ModelResolveBadgeProps } from "./atoms/model-resolve-badge"
+
+export { MoaConfigPanel } from "./organisms/moa-config-panel"
+export type { MoaConfigPanelProps } from "./organisms/moa-config-panel"
+
+export { MoaResultTab } from "./organisms/moa-result-tab"
+
+export { YamlSyncModal } from "./molecules/yaml-sync-modal"
+export type { YamlSyncModalProps } from "./molecules/yaml-sync-modal"
+
 // Stats
 export { StatsDashboard } from "./stats-dashboard"
 export type { StatsDashboardProps } from "./stats-dashboard"

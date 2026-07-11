@@ -31,6 +31,20 @@ interface SwarmState {
   finalResult: SwarmCompleteEvent["result"] | null
   budgetExhausted: boolean
   timeoutExceeded: boolean
+  moaExpertResults: Array<{
+    role: string
+    model: string
+    status: "completed" | "failed"
+    outputPreview: string
+    durationMs: number
+    degraded: boolean
+    degradationChain?: string[]
+  }>
+  aggregatorStatus: "idle" | "running" | "completed" | "failed"
+  aggregatorRound: number
+  aggregatorTotalRounds: number
+  aggregatorModel: string
+  aggregatorInputExpertCount: number
 }
 
 type SwarmAction =
@@ -45,6 +59,9 @@ type SwarmAction =
   | { type: "task_breakdown"; payload: TaskBreakdown }
   | { type: "file_conflict"; payload: FileConflict }
   | { type: "host_report"; payload: { content: string; degraded: boolean } }
+  | { type: "moa_expert_complete"; payload: { role: string; model: string; status: "completed" | "failed"; outputPreview: string; durationMs: number; degraded: boolean; degradationChain?: string[] } }
+  | { type: "moa_aggregator_start"; payload: { round: number; totalRounds: number; model: string; inputExpertCount: number } }
+  | { type: "moa_aggregator_complete"; payload: { round: number; totalRounds: number; model: string; inputExpertCount: number } }
   | { type: "reset" }
 
 const initialState: SwarmState = {
@@ -63,6 +80,12 @@ const initialState: SwarmState = {
   finalResult: null,
   budgetExhausted: false,
   timeoutExceeded: false,
+  moaExpertResults: [],
+  aggregatorStatus: "idle" as const,
+  aggregatorRound: 0,
+  aggregatorTotalRounds: 0,
+  aggregatorModel: "",
+  aggregatorInputExpertCount: 0,
 }
 
 function swarmReducer(state: SwarmState, action: SwarmAction): SwarmState {
@@ -200,6 +223,32 @@ function swarmReducer(state: SwarmState, action: SwarmAction): SwarmState {
         hostDegraded: action.payload.degraded,
       }
 
+    case "moa_expert_complete": {
+      const result = action.payload
+      return {
+        ...state,
+        moaExpertResults: [...state.moaExpertResults, result],
+      }
+    }
+
+    case "moa_aggregator_start":
+      return {
+        ...state,
+        aggregatorStatus: "running",
+        aggregatorRound: action.payload.round,
+        aggregatorTotalRounds: action.payload.totalRounds,
+        aggregatorModel: action.payload.model,
+        aggregatorInputExpertCount: action.payload.inputExpertCount,
+      }
+
+    case "moa_aggregator_complete":
+      return {
+        ...state,
+        aggregatorStatus: "completed",
+        aggregatorRound: action.payload.round,
+        aggregatorTotalRounds: action.payload.totalRounds,
+      }
+
     default:
       return state
   }
@@ -221,6 +270,20 @@ export interface UseSwarmEventsResult {
   finalResult: SwarmCompleteEvent["result"] | null
   budgetExhausted: boolean
   timeoutExceeded: boolean
+  moaExpertResults: Array<{
+    role: string
+    model: string
+    status: "completed" | "failed"
+    outputPreview: string
+    durationMs: number
+    degraded: boolean
+    degradationChain?: string[]
+  }>
+  aggregatorStatus: "idle" | "running" | "completed" | "failed"
+  aggregatorRound: number
+  aggregatorTotalRounds: number
+  aggregatorModel: string
+  aggregatorInputExpertCount: number
   connected: boolean
 }
 
@@ -344,6 +407,35 @@ function replayHistoricalEvents(
       case "swarm_event":
         // The actual event is nested in eventData — already handled above
         break
+
+      case "moa_expert_complete":
+        dispatch({
+          type: "moa_expert_complete",
+          payload: {
+            role: (data.role as string) ?? "unknown",
+            model: (data.model as string) ?? "unknown",
+            status: ((data.status as string) ?? "completed") as "completed" | "failed",
+            outputPreview: (data.outputPreview as string) ?? "",
+            durationMs: (data.durationMs as number) ?? 0,
+            degraded: (data.degraded as boolean) ?? false,
+            degradationChain: data.degradationChain as string[] | undefined,
+          },
+        })
+        break
+
+      case "moa_aggregator": {
+        const phase = (data.phase as string) ?? "start"
+        dispatch({
+          type: phase === "start" ? "moa_aggregator_start" : "moa_aggregator_complete",
+          payload: {
+            round: (data.round as number) ?? 1,
+            totalRounds: (data.totalRounds as number) ?? 1,
+            model: (data.model as string) ?? "unknown",
+            inputExpertCount: (data.inputExpertCount as number) ?? 0,
+          },
+        })
+        break
+      }
     }
   }
 }
@@ -542,6 +634,42 @@ export function useSwarmEvents(
       } catch { /* skip */ }
     })
 
+    es.addEventListener("moa_expert_complete", (e) => {
+      try {
+        const data = JSON.parse(e.data)
+        if (!isEventForNode(data)) return
+        dispatch({
+          type: "moa_expert_complete",
+          payload: {
+            role: data.role,
+            model: data.model ?? "unknown",
+            status: data.status ?? "completed",
+            outputPreview: data.outputPreview ?? "",
+            durationMs: data.durationMs ?? 0,
+            degraded: data.degraded ?? false,
+            degradationChain: data.degradationChain,
+          },
+        })
+      } catch { /* skip */ }
+    })
+
+    es.addEventListener("moa_aggregator", (e) => {
+      try {
+        const data = JSON.parse(e.data)
+        if (!isEventForNode(data)) return
+        const phase = data.phase as string
+        dispatch({
+          type: phase === "start" ? "moa_aggregator_start" : "moa_aggregator_complete",
+          payload: {
+            round: data.round ?? 1,
+            totalRounds: data.totalRounds ?? 1,
+            model: data.model ?? "unknown",
+            inputExpertCount: data.inputExpertCount ?? 0,
+          },
+        })
+      } catch { /* skip */ }
+    })
+
     es.onerror = () => {
       connectedRef.current = false
     }
@@ -571,6 +699,12 @@ export function useSwarmEvents(
     finalResult: state.finalResult,
     budgetExhausted: state.budgetExhausted,
     timeoutExceeded: state.timeoutExceeded,
+    moaExpertResults: state.moaExpertResults,
+    aggregatorStatus: state.aggregatorStatus,
+    aggregatorRound: state.aggregatorRound,
+    aggregatorTotalRounds: state.aggregatorTotalRounds,
+    aggregatorModel: state.aggregatorModel,
+    aggregatorInputExpertCount: state.aggregatorInputExpertCount,
     connected: connectedRef.current,
   }
 }
