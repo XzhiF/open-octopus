@@ -16,6 +16,9 @@ import { resourceCmd } from "./commands/resource"
 import { schedulerCmd } from "./commands/scheduler"
 import { workflowOptimizeCmd } from "./commands/workflow-optimize"
 import { workflowRetireCmd } from "./commands/workflow-retire"
+import { frontierCmd } from "./commands/frontier"
+import { swarmCmd } from "./commands/swarm"
+import { evolutionCmd } from "./commands/evolution"
 
 export function createProgram(): Command {
   const program = new Command()
@@ -41,6 +44,9 @@ export function createProgram(): Command {
     .addCommand(agentsCmd)
     .addCommand(resourceCmd)
     .addCommand(schedulerCmd)
+    .addCommand(frontierCmd)
+    .addCommand(swarmCmd)
+    .addCommand(evolutionCmd)
 
   // Register workflow sub-commands for optimization and retirement
   workflowCmd.addCommand(workflowOptimizeCmd)
