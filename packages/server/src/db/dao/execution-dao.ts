@@ -1042,4 +1042,61 @@ export class ExecutionDAO extends BaseDAO {
   deleteOldLlmCalls(cutoffTimestamp: number): Database.RunResult {
     return this.stmt("DELETE FROM llm_calls WHERE timestamp < ?").run(cutoffTimestamp)
   }
+
+  // ── Usage tracking queries (for UsageTrackerService) ──────────────
+
+  getUsageStatsByWorkflow(workflowRef: string, days: number): {
+    total_runs: number; success_runs: number; failure_runs: number;
+    avg_duration_ms: number | null; failure_rate: number;
+  } | null {
+    const cutoff = this.daysToCutoff(days)
+    const row = this.stmt(`
+      SELECT
+        COUNT(*) as total_runs,
+        SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as success_runs,
+        SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failure_runs,
+        AVG(duration) as avg_duration_ms
+      FROM executions
+      WHERE workflow_ref = ? AND created_at >= ?
+        AND (parent_id IS NULL OR parent_id = '0')
+    `).get(workflowRef, cutoff) as { total_runs: number; success_runs: number; failure_runs: number; avg_duration_ms: number | null }
+    if (!row || row.total_runs === 0) return null
+    const failure_rate = row.total_runs > 0 ? row.failure_runs / row.total_runs : 0
+    return { ...row, failure_rate }
+  }
+
+  getAllWorkflowUsageStats(days: number): Array<{
+    workflow_ref: string; total_runs: number; success_runs: number; failure_runs: number;
+    avg_duration_ms: number | null; failure_rate: number; usage_rate: number;
+  }> {
+    const cutoff = this.daysToCutoff(days)
+    const rows = this.stmt(`
+      SELECT
+        workflow_ref,
+        COUNT(*) as total_runs,
+        SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as success_runs,
+        SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failure_runs,
+        AVG(duration) as avg_duration_ms
+      FROM executions
+      WHERE created_at >= ? AND (parent_id IS NULL OR parent_id = '0')
+        AND workflow_ref IS NOT NULL AND workflow_ref != ''
+      GROUP BY workflow_ref
+    `).all(cutoff) as Array<{
+      workflow_ref: string; total_runs: number; success_runs: number; failure_runs: number;
+      avg_duration_ms: number | null
+    }>
+
+    // usage_rate = runs / days (average runs per day)
+    return rows.map(r => ({
+      ...r,
+      failure_rate: r.total_runs > 0 ? r.failure_runs / r.total_runs : 0,
+      usage_rate: r.total_runs / Math.max(1, days),
+    }))
+  }
+
+  private daysToCutoff(days: number): string {
+    const d = new Date()
+    d.setDate(d.getDate() - days)
+    return d.toISOString()
+  }
 }

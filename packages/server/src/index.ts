@@ -57,6 +57,8 @@ import { WorkflowExecutor } from "./services/scheduler/executors/workflow-execut
 import { AgentExecutor } from "./services/scheduler/executors/agent-executor"
 import { DashboardService } from "./services/scheduler/dashboard-service"
 import { ExportService } from "./services/scheduler/export-service"
+import { EvolutionConfigService } from "./services/scheduler/evolution-config"
+import { UsageTrackerService } from "./services/scheduler/usage-tracker"
 import { WorkspaceService } from "./services/workspace"
 import { ChatService } from "./services/chat"
 import { LeaderboardService } from "./services/leaderboard"
@@ -522,7 +524,9 @@ if (shouldServe) {
       const schedulerService = new SchedulerService(daos!.scheduleConfig, daos!.scheduleRun)
       const dashboardService = new DashboardService(daos!.scheduleConfig, daos!.scheduleRun)
       const exportService = new ExportService(daos!.scheduleConfig)
-      app.route('/api/scheduler', createSchedulerRoutes(schedulerService, dashboardService, exportService))
+      const evolutionService = new EvolutionConfigService()
+      const usageTracker = new UsageTrackerService(daos!.execution)
+      app.route('/api/scheduler', createSchedulerRoutes(schedulerService, dashboardService, exportService, evolutionService, usageTracker))
       ;(global as any).__octopus_scheduler_service = schedulerService
 
       // ★ Initialize Scheduler Engine with executors
