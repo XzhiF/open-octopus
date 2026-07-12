@@ -152,7 +152,7 @@ nodes:
 apiVersion: octopus/v1
 kind: Workflow
 name: valid-flow
-model: sonnet
+model: pro
 engine: claude-code
 timeout: 600
 variables:

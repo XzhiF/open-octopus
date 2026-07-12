@@ -17,7 +17,6 @@ import type {
 } from "./types"
 
 export interface SourceManagerConfig {
-  org: string
   basePath?: string
 }
 
@@ -29,7 +28,6 @@ export interface SourceManagerConfig {
  * analyze → clone + discover + clean (preview mode)
  */
 export class SourceManager {
-  private org: string
   private basePath: string
   private gitProvider: GitProvider
   private discovery: SourceDiscovery
@@ -37,8 +35,7 @@ export class SourceManager {
   private trustManager: TrustManager
   private audit: AuditWriter
 
-  constructor(config: SourceManagerConfig) {
-    this.org = config.org
+  constructor(config: SourceManagerConfig = {}) {
     const globalBase = path.join(os.homedir(), ".octopus")
     this.basePath = config.basePath ?? path.join(globalBase, "resources")
 

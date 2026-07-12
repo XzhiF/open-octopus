@@ -17,7 +17,7 @@ interface UseAuditLogResult {
   refresh: () => Promise<void>
 }
 
-export function useAuditLog(org: string, options?: UseAuditLogOptions): UseAuditLogResult {
+export function useAuditLog(options?: UseAuditLogOptions): UseAuditLogResult {
   const [records, setRecords] = useState<ResourceAuditRecord[]>([])
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(true)
@@ -27,7 +27,7 @@ export function useAuditLog(org: string, options?: UseAuditLogOptions): UseAudit
     setLoading(true)
     setError(null)
     try {
-      const res = await getAuditLog(org, {
+      const res = await getAuditLog({
         last: options?.last,
         action: options?.action === "all" ? undefined : options?.action,
       })
@@ -39,7 +39,7 @@ export function useAuditLog(org: string, options?: UseAuditLogOptions): UseAudit
     } finally {
       setLoading(false)
     }
-  }, [org, options?.last, options?.action])
+  }, [options?.last, options?.action])
 
   useEffect(() => {
     refresh()

@@ -552,7 +552,7 @@ export class WorkspaceService {
     this.copySkill(wsDir)
     this.copyAgents(wsDir)
 
-    // Copy built-in workflows from ~/.octopus/workflows/
+    // Copy built-in workflows from ~/.octopus/resources/installed/workflows/
     this.copyBuiltInWorkflows(wsDir)
 
     // Write config.json with scheduler-specific fields

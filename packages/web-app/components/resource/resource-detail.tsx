@@ -24,7 +24,6 @@ import { cn } from "@/lib/utils"
 import { uninstallResource, getResourceFiles } from "@/lib/resource/api"
 import { toast } from "sonner"
 import type { ResourceType } from "@/lib/resource/types"
-import { useResourceOrg } from "./resource-context"
 import { UninstallConfirm } from "./UninstallConfirm"
 import { useResourceDetail } from "@/hooks/use-resource-detail"
 import { MarkdownPreview } from "./MarkdownPreview"
@@ -56,11 +55,10 @@ function formatSize(bytes: number): string {
 export function ResourceDetail() {
   const params = useParams()
   const router = useRouter()
-  const org = useResourceOrg()
   const type = params.type as string
   const name = params.name as string
 
-  const { resource: entry, loading, error } = useResourceDetail(org, type, name)
+  const { resource: entry, loading, error } = useResourceDetail(type, name)
   const [showUninstall, setShowUninstall] = useState(false)
   const [uninstalling, setUninstalling] = useState(false)
 
@@ -74,7 +72,7 @@ export function ResourceDetail() {
   const loadFiles = useCallback(async () => {
     if (!type || !name) return
     try {
-      const res = await getResourceFiles(org, type, name)
+      const res = await getResourceFiles(type, name)
       if ("files" in res) {
         setFiles(res.files)
         // Auto-select primary file
@@ -86,7 +84,7 @@ export function ResourceDetail() {
     } catch {
       // Files may not exist for this resource
     }
-  }, [org, type, name])
+  }, [type, name])
 
   useEffect(() => {
     loadFiles()
@@ -97,19 +95,19 @@ export function ResourceDetail() {
     if (!selectedFile || !type || !name) return
     setFileLoading(true)
     setFileContent(null)
-    getResourceFiles(org, type, name, selectedFile)
+    getResourceFiles(type, name, selectedFile)
       .then((res) => {
         if ("content" in res) setFileContent(res.content)
       })
       .catch(() => setFileContent(null))
       .finally(() => setFileLoading(false))
-  }, [org, type, name, selectedFile])
+  }, [type, name, selectedFile])
 
   const handleUninstall = async () => {
     if (!entry) return
     setUninstalling(true)
     try {
-      await uninstallResource(org, entry.name, entry.type)
+      await uninstallResource(entry.name, entry.type)
       toast.success(`资源 ${entry.name} 已卸载`)
       router.push("/resources")
     } catch {

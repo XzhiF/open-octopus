@@ -142,9 +142,9 @@ function resolveVarRef(
   const ref = varExpr.trim()
 
   if (ref.startsWith("$vars.")) return pool.get(ref.slice(6))
-  if (ref.startsWith("$hook.")) return pool.get(ref)
+  if (ref.startsWith("$hook.")) return pool.get(ref.slice(1)) // "$hook.xxx" → pool key "hook.xxx"
   if (ref.startsWith("$inputs.")) return pool.get(ref.slice(8))
-  if (ref.startsWith("$notify.")) return pool.get(ref)
+  if (ref.startsWith("$notify.")) return pool.get(ref.slice(1)) // "$notify.xxx" → pool key "notify.xxx"
 
   const nodeMatch = ref.match(/^\$([a-zA-Z0-9_-]+)\.output\.([a-zA-Z0-9_.]+)$/)
   if (nodeMatch) {
@@ -159,7 +159,13 @@ function resolveVarRef(
 
 function isTruthyValue(value: any): boolean {
   if (value === null || value === undefined) return false
-  if (typeof value === "string") return value.length > 0
+  if (typeof value === "string") {
+    if (value.length === 0) return false
+    // Numeric strings (e.g. "0" from String(0)) — evaluate as number
+    const n = Number(value)
+    if (!isNaN(n)) return n !== 0
+    return true
+  }
   if (typeof value === "number") return value !== 0
   if (typeof value === "boolean") return value
   return true

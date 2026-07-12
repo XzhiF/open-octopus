@@ -12,7 +12,7 @@ interface UseResourceListResult {
   refresh: () => Promise<void>
 }
 
-export function useResourceList(org: string, query?: ListQuery): UseResourceListResult {
+export function useResourceList(query?: ListQuery): UseResourceListResult {
   const [resources, setResources] = useState<ResourceEntry[]>([])
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(true)
@@ -22,7 +22,7 @@ export function useResourceList(org: string, query?: ListQuery): UseResourceList
     setLoading(true)
     setError(null)
     try {
-      const res = await listResources(org, query)
+      const res = await listResources(query)
       setResources(res.resources)
       setTotal(res.total)
     } catch (err) {
@@ -31,7 +31,7 @@ export function useResourceList(org: string, query?: ListQuery): UseResourceList
     } finally {
       setLoading(false)
     }
-  }, [org, query?.type, query?.query, query?.installed])
+  }, [query?.type, query?.query, query?.installed])
 
   useEffect(() => {
     refresh()

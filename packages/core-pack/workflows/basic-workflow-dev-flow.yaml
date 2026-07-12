@@ -1,4 +1,4 @@
-# yaml-language-server: $schema=./doc/workflow-schema.json
+# yaml-language-server: $schema=./workflow-schema.json
 apiVersion: octopus/v1
 kind: Workflow
 name: basic-workflow-dev-flow
@@ -8,7 +8,7 @@ description: >
   新增 Test-Run 阶段：在 workspace 内实际执行新开发的工作流进行验证。
   每个阶段完成后通过 notify 子系统实时推送到群聊。
 
-model: "opus[1m]"
+model: "pro-max"
 engine: claude
 execution_mode: serial
 timeout: 86400
@@ -383,7 +383,7 @@ nodes:
       cd projects/<项目目录>
       git diff $inputs.base_branch --name-only
       ```
-      目标文件通常在 packages/core-pack/presets/workflows/ 下。
+      目标文件通常在 packages/core-pack/workflows/ 下。
 
       ### Step 2: 静态验证
       如果项目有 octopus CLI，尝试：

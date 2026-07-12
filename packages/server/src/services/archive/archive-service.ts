@@ -397,7 +397,7 @@ export class ArchiveService {
       await emitter.stepStart("install_skills", `安装 ${options.installSkills.length} 个 Skill...`)
       let installedSkills = 0
       if (options.installSkills.length > 0) {
-        installedSkills = await this.installSkills(org, options.installSkills, emitter)
+        installedSkills = await this.installSkills(options.installSkills, emitter)
       }
       await emitter.stepDone("install_skills", { count: installedSkills })
 
@@ -406,7 +406,7 @@ export class ArchiveService {
       await emitter.stepStart("install_workflows", `安装 ${installWorkflows.length} 个 Workflow...`)
       let installedWorkflows = 0
       if (installWorkflows.length > 0) {
-        installedWorkflows = await this.installWorkflowsToResources(org, installWorkflows, emitter)
+        installedWorkflows = await this.installWorkflowsToResources(installWorkflows, emitter)
       }
       await emitter.stepDone("install_workflows", { count: installedWorkflows })
 
@@ -415,7 +415,7 @@ export class ArchiveService {
       await emitter.stepStart("install_agents", `安装 ${installAgents.length} 个 Agent...`)
       let installedAgents = 0
       if (installAgents.length > 0) {
-        installedAgents = await this.installAgentsToResources(org, installAgents, emitter)
+        installedAgents = await this.installAgentsToResources(installAgents, emitter)
       }
       await emitter.stepDone("install_agents", { count: installedAgents })
 
@@ -566,14 +566,23 @@ export class ArchiveService {
     }
   }
 
+  /** 清理 LLM 提取的资源名称，确保符合 SAFE_NAME_RE */
+  private sanitizeResourceName(raw: string, fallback = "unnamed"): string {
+    const sanitized = raw
+      .replace(/["']/g, "")
+      .replace(/[^a-zA-Z0-9._-]/g, "-")
+      .replace(/^[^a-zA-Z0-9]+/, "")
+      .slice(0, 128)
+    return sanitized || fallback
+  }
+
   private async installSkills(
-    org: string,
     skills: Array<{ name: string; group: string; path?: string; content?: string }>,
     emitter: StepEmitter,
   ): Promise<number> {
     try {
       const { getResourceRegistry } = await import("../resource-registry")
-      const resourceManager = getResourceRegistry().getOrCreate(org)
+      const resourceManager = getResourceRegistry().get()
       const fs = await import("fs")
       const path = await import("path")
       const os = await import("os")
@@ -581,13 +590,20 @@ export class ArchiveService {
 
       for (const skill of skills) {
         try {
-          await emitter.stepProgress("install_skills", `安装 ${skill.name} → ${skill.group}`)
+          const finalName = this.sanitizeResourceName(skill.name)
+          const finalGroup = this.sanitizeResourceName(skill.group, "archive-extracted")
+          if (!finalName) {
+            await emitter.log(`✗ Skipping skill with empty name after sanitization: ${skill.name}`)
+            continue
+          }
+
+          await emitter.stepProgress("install_skills", `安装 ${finalName} → ${finalGroup}`)
 
           if (skill.path && fs.existsSync(skill.path)) {
             // Auto-discovered skill: copy the entire skill directory
             const sourceDir = path.dirname(skill.path)
             const basePath = path.join(os.homedir(), ".octopus", "resources")
-            const installDir = path.join(basePath, "installed", "skills", skill.group, skill.name)
+            const installDir = path.join(basePath, "installed", "skills", finalGroup, finalName)
 
             // Create target directory
             fs.mkdirSync(installDir, { recursive: true })
@@ -597,18 +613,18 @@ export class ArchiveService {
 
             // Register in resource manager (files already copied)
             resourceManager.registerInstalled({
-              name: skill.name,
+              name: finalName,
               type: "skill",
-              group: skill.group,
+              group: finalGroup,
             })
 
             await emitter.log(`✓ Copied skill from ${sourceDir} → ${installDir}`)
           } else {
             // LLM-generated or builtin skill: use resource manager
             await resourceManager.install({
-              ref: `builtin:${skill.name}`,
+              ref: `builtin:${finalName}`,
               type: "skill",
-              group: skill.group,
+              group: finalGroup,
             })
           }
 
@@ -620,19 +636,18 @@ export class ArchiveService {
 
       return installedCount
     } catch (err) {
-      logError("installSkills failed", err, { org })
+      logError("installSkills failed", err)
       return 0
     }
   }
 
   private async installWorkflowsToResources(
-    org: string,
     workflows: Array<{ name: string; group: string; path?: string; content?: string }>,
     emitter: StepEmitter,
   ): Promise<number> {
     try {
       const { getResourceRegistry } = await import("../resource-registry")
-      const resourceManager = getResourceRegistry().getOrCreate(org)
+      const resourceManager = getResourceRegistry().get()
       const fs = await import("fs")
       const path = await import("path")
       const os = await import("os")
@@ -640,10 +655,17 @@ export class ArchiveService {
 
       for (const wf of workflows) {
         try {
-          await emitter.stepProgress("install_workflows", `安装 ${wf.name} → ${wf.group}`)
+          const finalName = this.sanitizeResourceName(wf.name)
+          const finalGroup = this.sanitizeResourceName(wf.group, "archive-extracted")
+          if (!finalName) {
+            await emitter.log(`✗ Skipping workflow with empty name after sanitization: ${wf.name}`)
+            continue
+          }
+
+          await emitter.stepProgress("install_workflows", `安装 ${finalName} → ${finalGroup}`)
 
           const basePath = path.join(os.homedir(), ".octopus", "resources")
-          const installDir = path.join(basePath, "installed", "workflows", wf.group, wf.name)
+          const installDir = path.join(basePath, "installed", "workflows", finalGroup, finalName)
 
           // Create target directory
           fs.mkdirSync(installDir, { recursive: true })
@@ -654,16 +676,16 @@ export class ArchiveService {
             fs.copyFileSync(wf.path, destFile)
             await emitter.log(`✓ Copied workflow from ${wf.path} → ${destFile}`)
           } else if (wf.content) {
-            const destFile = path.join(installDir, `${wf.name}.yaml`)
+            const destFile = path.join(installDir, `${finalName}.yaml`)
             fs.writeFileSync(destFile, wf.content, "utf-8")
             await emitter.log(`✓ Written workflow content → ${destFile}`)
           }
 
           // Register in resource manager (files already copied, upsert handles overwrite)
           resourceManager.registerInstalled({
-            name: wf.name,
+            name: finalName,
             type: "workflow",
-            group: wf.group,
+            group: finalGroup,
           })
 
           installedCount++
@@ -674,19 +696,18 @@ export class ArchiveService {
 
       return installedCount
     } catch (err) {
-      logError("installWorkflowsToResources failed", err, { org })
+      logError("installWorkflowsToResources failed", err)
       return 0
     }
   }
 
   private async installAgentsToResources(
-    org: string,
     agents: Array<{ name: string; group: string; path?: string; content?: string }>,
     emitter: StepEmitter,
   ): Promise<number> {
     try {
       const { getResourceRegistry } = await import("../resource-registry")
-      const resourceManager = getResourceRegistry().getOrCreate(org)
+      const resourceManager = getResourceRegistry().get()
       const fs = await import("fs")
       const path = await import("path")
       const os = await import("os")
@@ -694,10 +715,17 @@ export class ArchiveService {
 
       for (const agent of agents) {
         try {
-          await emitter.stepProgress("install_agents", `安装 ${agent.name} → ${agent.group}`)
+          const finalName = this.sanitizeResourceName(agent.name)
+          const finalGroup = this.sanitizeResourceName(agent.group, "archive-extracted")
+          if (!finalName) {
+            await emitter.log(`✗ Skipping agent with empty name after sanitization: ${agent.name}`)
+            continue
+          }
+
+          await emitter.stepProgress("install_agents", `安装 ${finalName} → ${finalGroup}`)
 
           const basePath = path.join(os.homedir(), ".octopus", "resources")
-          const installDir = path.join(basePath, "installed", "agents", agent.group, agent.name)
+          const installDir = path.join(basePath, "installed", "agents", finalGroup, finalName)
 
           // Create target directory
           fs.mkdirSync(installDir, { recursive: true })
@@ -708,16 +736,16 @@ export class ArchiveService {
             fs.copyFileSync(agent.path, destFile)
             await emitter.log(`✓ Copied agent from ${agent.path} → ${destFile}`)
           } else if (agent.content) {
-            const destFile = path.join(installDir, `${agent.name}.md`)
+            const destFile = path.join(installDir, `${finalName}.md`)
             fs.writeFileSync(destFile, agent.content, "utf-8")
             await emitter.log(`✓ Written agent content → ${destFile}`)
           }
 
           // Register in resource manager (files already copied, upsert handles overwrite)
           resourceManager.registerInstalled({
-            name: agent.name,
+            name: finalName,
             type: "agent",
-            group: agent.group,
+            group: finalGroup,
           })
 
           installedCount++
@@ -728,7 +756,7 @@ export class ArchiveService {
 
       return installedCount
     } catch (err) {
-      logError("installAgentsToResources failed", err, { org })
+      logError("installAgentsToResources failed", err)
       return 0
     }
   }

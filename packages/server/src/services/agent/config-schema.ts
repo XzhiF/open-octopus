@@ -3,7 +3,7 @@ import { KnowledgeConfigSchema } from '@octopus/shared'
 
 // Allowed model list
 export const ALLOWED_MODELS = [
-  'opus[1m]', 'sonnet', 'haiku',
+  'pro-max', 'pro', 'se',
   'claude-opus-4-20250514', 'claude-sonnet-4-20250514',
   'claude-haiku-4-5-20251001'
 ] as const
@@ -16,7 +16,7 @@ export const notificationProviderSchema = z.enum(['hermes', 'telegram', 'slack',
 export const agentConfigSchema = z.object({
   model: z.string().refine(v => ALLOWED_MODELS.includes(v as any), {
     message: `model must be one of: ${ALLOWED_MODELS.join(', ')}`
-  }).default('opus[1m]'),
+  }).default('pro-max'),
   timeout: z.number().int().min(30).max(1800).default(300),
   max_clones: z.number().int().min(1).max(20).default(5),
   notification: z.object({

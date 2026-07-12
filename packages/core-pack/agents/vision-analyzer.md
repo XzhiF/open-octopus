@@ -1,7 +1,7 @@
 ---
 name: vision-analyzer
 description: 视觉分析子代理 — 分析截图和图片内容，返回纯文本结果。用于 E2E 测试的页面验证、UI 布局检查、截图对比分析。
-model: sonnet
+model: pro
 tools: ["Bash", "Read"]
 ---
 

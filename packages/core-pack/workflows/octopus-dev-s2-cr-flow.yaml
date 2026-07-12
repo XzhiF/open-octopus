@@ -1,4 +1,4 @@
-# yaml-language-server: $schema=./doc/workflow-schema.json
+# yaml-language-server: $schema=./workflow-schema.json
 apiVersion: octopus/v1
 kind: Workflow
 name: octopus-dev-s2-cr-flow
@@ -8,7 +8,7 @@ description: >
   支持智能冲突解决（双向分析 + 三种分支策略）、产品完整性评估、业务影响审查。
   通过 execution chain 与 octopus-dev-s1-pr-flow 串联，自动接收 pr_urls。
 
-model: opus[1m]
+model: pro-max
 engine: claude
 execution_mode: serial
 timeout: 86400
@@ -434,7 +434,7 @@ nodes:
           - 🔵 MINOR: 可选改进
 
           输出: 按严重级别分组的发现清单 + 产品完整性评估
-        model: opus[1m]
+        model: pro-max
         tools: ["Bash", "Read", "Grep", "Glob"]
 
       product-completeness-assessor:
@@ -488,7 +488,7 @@ nodes:
 
           ### 5. 总结
           一句话说明当前完整度状态和最关键缺失。
-        model: opus[1m]
+        model: pro-max
         tools: ["Bash", "Read", "Grep", "Glob"]
 
       business-reviewer:
@@ -507,7 +507,7 @@ nodes:
           5. **过度修改风险** — review doc 中的修改建议是否超出 PR 范围？
 
           输出: 修正后的 review document（添加 "## 业务审查修正" section）
-        model: opus[1m]
+        model: pro-max
         tools: ["Read", "Grep", "Glob"]
 
       api-tester:
@@ -517,7 +517,7 @@ nodes:
           ## API 测试任务
           测试 PR 涉及的所有 API 端点。
           测试: 功能正确性 + 安全（认证/授权/注入）+ 边界条件
-        model: sonnet
+        model: pro
         tools: ["Bash", "Read", "Grep", "Glob"]
 
       vision-analyzer:
@@ -583,7 +583,7 @@ nodes:
           - 每个关键步骤都要截图作为证据
           - 优先用 snapshot 验证文本内容，截图用于视觉布局验证
           - 发现 JS 错误要记录到测试结果中
-        model: sonnet
+        model: pro
         tools: ["Bash", "Read", "Grep", "Glob"]
     prompt: |
       你是 PR 审查修复工作流的 Orchestrator。你需要遍历 $vars.pr_count 个 PR，对每个 PR 执行完整的审查-合并-修复-测试-推送流程。
@@ -1057,7 +1057,7 @@ nodes:
     type: agent
     depends_on: [pr-review-orchestrator]
     timeout: 7200
-    model: sonnet
+    model: pro
     execute_when: '$inputs.run_regression == "true"'
     skills:
       - octo-e2e-assurance
@@ -1068,7 +1068,7 @@ nodes:
           - octo-browser-vision
         prompt: |
           浏览器 E2E 回归测试: agent-browser 操控浏览器 → snapshot 验证结构 → screenshot 截图 → Read PNG 视觉分析 → errors 检查 → 输出结构化结果。
-        model: sonnet
+        model: pro
         tools: ["Bash", "Read", "Grep", "Glob"]
     prompt: |
       你正在执行跨 PR 回归测试阶段。

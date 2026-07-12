@@ -1,4 +1,4 @@
-# yaml-language-server: $schema=./doc/workflow-schema.json
+# yaml-language-server: $schema=./workflow-schema.json
 apiVersion: octopus/v1
 kind: Workflow
 name: prd-refine
@@ -8,7 +8,7 @@ description: >
   产物以 revisions/rev-NNN/ 为序号目录保存（before/after/diffs/SUMMARY），原文档就地更新并追加 Revision 标记，
   REVISIONS.md 以追加方式维护累计变更索引。角色团队：产品经理 + UX 架构师 + UI 设计师 + 软件架构师。
 
-model: opus[1m]
+model: pro-max
 engine: claude
 execution_mode: serial
 timeout: 86400
@@ -294,7 +294,7 @@ nodes:
       product-manager:
         description: "产品经理 — 通览既有 PRD 资产并提炼上下文"
         agent_file: ".claude/agents/product-manager.md"
-        model: opus[1m]
+        model: pro-max
         tools: ["Read", "Grep", "Glob"]
     prompt: |
       你是 PRD Refine 的上下文协调者。委派 product-manager 子代理通览既有 PRD 资产并提炼上下文摘要。
@@ -411,7 +411,7 @@ nodes:
       engineering-software-architect:
         description: "软件架构师 — 产出修订方案与 ripple checklist"
         agent_file: ".claude/agents/engineering-software-architect.md"
-        model: opus[1m]
+        model: pro-max
         tools: ["Read", "Grep", "Glob", "Write"]
     prompt: |
       你是修订方案协调者。委派 engineering-software-architect 子代理产出 structural 修订的详细方案。
@@ -474,22 +474,22 @@ nodes:
       product-manager:
         description: "产品经理 — 修订需求/最终 PRD"
         agent_file: ".claude/agents/product-manager.md"
-        model: opus[1m]
+        model: pro-max
         tools: ["Read", "Grep", "Glob", "Write", "Edit"]
       design-ux-architect:
         description: "UX 架构师 — 修订 UX 流程与状态机"
         agent_file: ".claude/agents/design-ux-architect.md"
-        model: opus[1m]
+        model: pro-max
         tools: ["Read", "Grep", "Glob", "Write", "Edit"]
       design-ui-designer:
         description: "UI 设计师 — 修订 UI 规范与组件清单"
         agent_file: ".claude/agents/design-ui-designer.md"
-        model: opus[1m]
+        model: pro-max
         tools: ["Read", "Grep", "Glob", "Write", "Edit"]
       engineering-software-architect:
         description: "软件架构师 — 修订技术方案/数据模型/API"
         agent_file: ".claude/agents/engineering-software-architect.md"
-        model: opus[1m]
+        model: pro-max
         tools: ["Read", "Grep", "Glob", "Write", "Edit"]
     prompt: |
       你是修订执行协调者。按文件类型路由到对应子代理执行修改。**严格遵守 before/after 快照纪律。**
@@ -546,7 +546,7 @@ nodes:
       product-manager:
         description: "产品经理 — 跨文档一致性审查"
         agent_file: ".claude/agents/product-manager.md"
-        model: opus[1m]
+        model: pro-max
         tools: ["Read", "Grep", "Glob", "Write"]
     prompt: |
       你是交叉一致性检查协调者。委派 product-manager 子代理对修订后文档做轻量一致性扫描。

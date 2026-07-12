@@ -1,4 +1,4 @@
-# yaml-language-server: $schema=./doc/workflow-schema.json
+# yaml-language-server: $schema=./workflow-schema.json
 apiVersion: octopus/v1
 kind: Workflow
 name: octopus-wf-e2e-tester
@@ -9,7 +9,7 @@ description: >
   环境损坏时支持废弃工作空间并重建新环境。
   编排策略: prompt + agents 子代理，精细控制每一步。
 
-model: opus[1m]
+model: pro-max
 engine: claude
 execution_mode: serial
 timeout: 86400
@@ -21,7 +21,7 @@ inputs:
       1) 工作流名称，多个逗号分隔:
          "octopus-dev-flow,octopus-pr-review-fix-flow"
          Agent 从当前工作空间的 config.json 找到 octopus 项目的 worktree_path，
-         然后在 {worktree_path}/packages/core-pack/presets/workflows/ 中查找对应 YAML
+         然后在 {worktree_path}/packages/core-pack/workflows/ 中查找对应 YAML
       2) JSON 数组（向后兼容）:
          [{"ref":"octopus-dev-flow","inputs":{"requirement":"xxx"}}]
       第一个为 root execution，后续为 children。
@@ -350,7 +350,7 @@ nodes:
 
           ### Step 2: 解析 target_workflows
           **格式 A** — 逗号分隔的工作流名称:
-          从 config.json 找 octopus worktree_path，在 `{worktree_path}/packages/core-pack/presets/workflows/` 查找:
+          从 config.json 找 octopus worktree_path，在 `{worktree_path}/packages/core-pack/workflows/` 查找:
           - 验证每个文件存在: `ls <path>/<name>.yaml`
           - 读取 YAML 提取 `name:` 和 `inputs:` 定义
           **格式 B** — JSON 数组: 直接使用。
@@ -390,7 +390,7 @@ nodes:
             git -C "$dir" log -1
           done
           ls "$WS_PATH/projects/" | grep -i octopus
-          ls "<octopus_worktree>/packages/core-pack/presets/workflows/"
+          ls "<octopus_worktree>/packages/core-pack/workflows/"
           ```
           **门控**: 任一 worktree 无效 / 缺少 octopus 项目 → 报错停止，不继续。
 
@@ -409,7 +409,7 @@ nodes:
           ## 输出
           在回复末尾直接输出纯 JSON 行（不要用代码块包裹）:
           {"vars_update":{"workspace_id":"<ID>","root_execution_id":"<ID>","resolved_workspace_name":"<名称>","resolved_org":"<org>","resolved_repos":"<repos>","resolved_inputs":"<摘要>"}}
-        model: sonnet
+        model: pro
         tools: [Bash, Read, Write, Grep, Glob]
 
       diagnostician:
@@ -431,7 +431,7 @@ nodes:
           ```json
           {"root_cause":"<类型>","details":"<描述>","fix_plan":"<修复方案>","needs_workspace_rebuild":"<true/false>"}
           ```
-        model: sonnet
+        model: pro
         tools: [Bash, Read, Grep, Glob]
 
       evidence-collector:
@@ -449,7 +449,7 @@ nodes:
           ```json
           {"evidence":[{execution_id, node_id, type, duration, tokens, has_real_output}]}
           ```
-        model: sonnet
+        model: pro
         tools: [Bash, Read, Grep]
 
       reality-checker:
@@ -469,7 +469,7 @@ nodes:
           - "全部通过"但无实质证据
 
           输出判定: PASSED / NEEDS WORK / FAILED
-        model: opus[1m]
+        model: pro-max
         tools: [Bash, Read, Grep]
 
       shipper:
@@ -516,7 +516,7 @@ nodes:
           ## 输出
           直接输出纯 JSON 行:
           {"vars_update":{"pr_url":"<PR URL>","ship_summary":"<总结>"}}
-        model: sonnet
+        model: pro
         tools: [Bash, Read, Grep]
     prompt: |
       你是工作流 E2E 测试 Orchestrator。你的职责是管理测试工作空间、运行目标工作流链、
@@ -538,7 +538,7 @@ nodes:
 
       ## 关键路径说明
       - octopus 项目的实际目录名**不是固定的**，从 config.json 的 `repos[].name == "octopus"` 取 `worktree_path`
-      - 工作流 YAML 位置: `{worktree_path}/packages/core-pack/presets/workflows/<name>.yaml`
+      - 工作流 YAML 位置: `{worktree_path}/packages/core-pack/workflows/<name>.yaml`
       - 修复代码位置: `{worktree_path}/` 下对应的源码目录
 
       ## 你有 5 个子代理（通过 Agent 工具调用）

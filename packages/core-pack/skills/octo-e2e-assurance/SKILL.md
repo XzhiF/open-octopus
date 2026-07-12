@@ -261,7 +261,7 @@ grep "^- " "$MANIFEST" | awk '{print $2}'
 ### Step 3.3: 拷贝目标工作流到工作空间
 
 ```bash
-WORKFLOW_SRC="$OCTOPUS_DIR/packages/core-pack/presets/workflows"
+WORKFLOW_SRC="$OCTOPUS_DIR/packages/core-pack/workflows"
 WORKFLOW_DEST="$WS_PATH/workflows"
 mkdir -p "$WORKFLOW_DEST"
 

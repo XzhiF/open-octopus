@@ -5,7 +5,7 @@ import { join, dirname } from "path"
 import { fileURLToPath } from "url"
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
-const workflowsDir = join(__dirname, "..", "..", "..", "core-pack", "presets", "workflows")
+const workflowsDir = join(__dirname, "..", "..", "..", "core-pack", "workflows")
 
 const promptYamlPath = join(workflowsDir, "octopus-wf-e2e-tester.yaml")
 const goalYamlPath = join(workflowsDir, "octopus-wf-e2e-tester-goal.yaml")
@@ -59,7 +59,7 @@ describe("octopus-wf-e2e-tester (Prompt Mode) YAML Validation", () => {
   it("has correct name and metadata", () => {
     const wf = parseWorkflow(yaml)
     expect(wf.name).toBe("octopus-wf-e2e-tester")
-    expect(wf.model).toBe("opus[1m]")
+    expect(wf.model).toBe("pro-max")
     expect(wf.engine).toBe("claude")
     expect(wf.execution_mode).toBe("serial")
     expect(wf.timeout).toBe(86400)

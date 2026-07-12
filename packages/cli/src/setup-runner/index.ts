@@ -1152,7 +1152,6 @@ export class SetupRunner {
     }
 
     const manager = new ResourceManager({
-      org: this.org,
       corePackBase: this.corePackPath,
     })
 
@@ -1166,6 +1165,7 @@ export class SetupRunner {
           ref: `builtin:${resource.name}`,
           type: resource.type,
           scope: "org",
+          caller: "cli",
         })
         if (result.status === "installed" || result.status === "installed_but_unverified") {
           // Check if this was an upgrade or fresh install by looking at the timestamp

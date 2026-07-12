@@ -9,14 +9,14 @@ const service = new WorkflowService()
 
 export function createWorkflowRoutes(
   workspaceDAO: WorkspaceDAO,
-  getManager: (org: string) => ResourceManager,
+  getManager: () => ResourceManager,
 ): Hono {
   const router = new Hono()
 
   function getWorkspace(id: string) {
     const ws = workspaceDAO.findById(id)
     if (!ws) return undefined
-    return { path: ws.path.replace(/^~/, os.homedir()), org: ws.org }
+    return { path: ws.path.replace(/^~/, os.homedir()) }
   }
 
   router.get("/", (c) => {
@@ -25,7 +25,7 @@ export function createWorkflowRoutes(
     if (!ws) return c.json({ error: "workspace not found" }, 404)
 
     const local = service.list(ws.path)
-    const builtIn = new BuiltInWorkflowService(getManager(ws.org)).list()
+    const builtIn = new BuiltInWorkflowService(getManager()).list()
     return c.json([...local, ...builtIn])
   })
 
@@ -51,7 +51,7 @@ export function createWorkflowRoutes(
     const local = service.get(ws.path, ref)
     if (local) return c.json(local)
 
-    const builtIn = new BuiltInWorkflowService(getManager(ws.org)).get(ref)
+    const builtIn = new BuiltInWorkflowService(getManager()).get(ref)
     if (builtIn) return c.json(builtIn)
 
     return c.json({ error: "not found" }, 404)
