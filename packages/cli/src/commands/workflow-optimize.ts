@@ -26,20 +26,23 @@ workflowOptimizeCmd
       const res = await fetch(`${serverUrl}/api/analysis/workflow-inefficient?days=${days}&topN=${topN}`)
       if (!res.ok) throw new Error(`Server returned ${res.status}`)
 
-      const data = await res.json() as Array<{
-        workflowId: string
-        avgDurationMs: number
-        failureRate: number
-        totalRuns: number
-        suggestions: string[]
-      }>
+      const data = await res.json() as {
+        items: Array<{
+          workflowId: string
+          avgDurationMs: number
+          failureRate: number
+          totalRuns: number
+          suggestions: string[]
+        }>
+        count: number
+      }
 
-      if (data.length === 0) {
+      if (!data.items || data.items.length === 0) {
         console.log(chalk.green("No inefficient workflows detected."))
         return
       }
 
-      for (const wf of data) {
+      for (const wf of data.items) {
         console.log(chalk.yellow(`\n--- ${wf.workflowId} ---`))
         console.log(`  Avg duration: ${(wf.avgDurationMs / 1000).toFixed(1)}s`)
         console.log(`  Failure rate: ${(wf.failureRate * 100).toFixed(1)}%`)
@@ -116,7 +119,14 @@ workflowOptimizeCmd
           split,
         }),
       })
-      if (!res.ok) throw new Error(`Server returned ${res.status}`)
+      if (!res.ok) {
+        if (res.status === 404) {
+          const err = await res.json() as { error: string }
+          console.error(chalk.red(err.error))
+          process.exit(1)
+        }
+        throw new Error(`Server returned ${res.status}`)
+      }
 
       const data = await res.json() as { message: string }
       console.log(chalk.green(data.message || "A/B test configured."))

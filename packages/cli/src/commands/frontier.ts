@@ -68,7 +68,14 @@ frontierCmd
           org: options.org,
         }),
       })
-      if (!res.ok) throw new Error(`Server returned ${res.status}`)
+      if (!res.ok) {
+        if (res.status === 404) {
+          const err = await res.json() as { error: string }
+          console.error(chalk.red(err.error))
+          process.exit(1)
+        }
+        throw new Error(`Server returned ${res.status}`)
+      }
 
       const data = await res.json() as {
         items: Array<{ name: string; url: string; score: number; summary: string }>

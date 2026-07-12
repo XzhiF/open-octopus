@@ -30,14 +30,15 @@ workflowRetireCmd
       )
       if (!res.ok) throw new Error(`Server returned ${res.status}`)
 
-      const data = await res.json() as Array<{
+      const body = await res.json() as any
+      const data: Array<{
         workflowId: string
         usageRate: number
         failureRate: number
         lastExecution: string | null
         reason: string[]
         impact: string
-      }>
+      }> = Array.isArray(body) ? body : (body.candidates || [])
 
       if (data.length === 0) {
         console.log(chalk.green("No retirement candidates found."))
@@ -86,7 +87,14 @@ workflowRetireCmd
           baseBranch: options.baseBranch,
         }),
       })
-      if (!res.ok) throw new Error(`Server returned ${res.status}`)
+      if (!res.ok) {
+        if (res.status === 404) {
+          const err = await res.json() as { error: string }
+          console.error(chalk.red(err.error))
+          process.exit(1)
+        }
+        throw new Error(`Server returned ${res.status}`)
+      }
 
       const data = await res.json() as { prUrl?: string; message: string }
       if (data.prUrl) {
@@ -115,7 +123,8 @@ workflowRetireCmd
       const res = await fetch(`${serverUrl}/api/analysis/retire-protected?org=${org}`)
       if (!res.ok) throw new Error(`Server returned ${res.status}`)
 
-      const data = await res.json() as string[]
+      const body = await res.json() as any
+      const data: string[] = Array.isArray(body) ? body : (body.retire_protected || [])
 
       if (data.length === 0) {
         console.log(chalk.yellow("No protected workflows configured."))

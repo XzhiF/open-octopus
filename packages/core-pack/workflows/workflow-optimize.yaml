@@ -92,9 +92,11 @@ nodes:
     type: condition
     depends_on: [generate-report]
     description: "Check if auto-apply is enabled"
-    condition: "$vars.auto_apply == 'true' AND $vars.inefficient_count > 0"
-    on_true: apply-optimizations
-    on_false: done
+    cases:
+      - when: "$vars.auto_apply == 'true' AND $vars.inefficient_count > 0"
+        then: apply-optimizations
+      - when: default
+        then: done
 
   - id: apply-optimizations
     type: agent
@@ -115,7 +117,7 @@ nodes:
   - id: done
     type: bash
     description: "Summary output"
-    command: |
+    bash: |
       echo "=== Workflow Optimization Complete ==="
       echo "Inefficient workflows: $vars.inefficient_count"
       if [ -n "$vars.pr_url" ]; then

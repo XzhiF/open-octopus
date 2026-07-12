@@ -113,9 +113,11 @@ nodes:
     type: condition
     depends_on: [generate-report]
     description: "Check if auto-retire is enabled"
-    condition: "$vars.auto_retire == 'true' AND $vars.candidate_count > 0"
-    on_true: archive-workflows
-    on_false: done
+    cases:
+      - when: "$vars.auto_retire == 'true' AND $vars.candidate_count > 0"
+        then: archive-workflows
+      - when: default
+        then: done
 
   - id: archive-workflows
     type: agent
@@ -134,7 +136,7 @@ nodes:
   - id: done
     type: bash
     description: "Summary output"
-    command: |
+    bash: |
       echo "=== Workflow Retirement Analysis Complete ==="
       echo "Candidates found: $vars.candidate_count"
       if [ -n "$vars.pr_url" ]; then

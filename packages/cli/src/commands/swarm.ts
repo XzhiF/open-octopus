@@ -102,7 +102,13 @@ swarmCmd
     const serverUrl = process.env.OCTOPUS_SERVER_URL || "http://localhost:3001"
     try {
       const res = await fetch(`${serverUrl}/api/swarm/discussion/${id}`)
-      if (!res.ok) throw new Error(`Server returned ${res.status}`)
+      if (!res.ok) {
+        if (res.status === 404) {
+          console.error(chalk.red(`Discussion not found: ${id}`))
+          process.exit(1)
+        }
+        throw new Error(`Server returned ${res.status}`)
+      }
 
       const data = await res.json() as {
         topic: string

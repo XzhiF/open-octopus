@@ -60,9 +60,11 @@ nodes:
     type: condition
     depends_on: [read-scopes]
     description: "Verify scopes are configured"
-    condition: "$vars.scopes != '[]' AND $vars.scopes != ''"
-    on_true: generate-proposals
-    on_false: no-scopes
+    cases:
+      - when: "$vars.scopes != '[]' AND $vars.scopes != ''"
+        then: generate-proposals
+      - when: default
+        then: no-scopes
 
   - id: generate-proposals
     type: agent
@@ -94,16 +96,19 @@ nodes:
     type: condition
     depends_on: [generate-proposals]
     description: "Check if swarm discussion is enabled"
-    condition: "$vars.discuss_top == 'true'"
-    on_true: discuss-proposals
-    on_false: create-pr
+    cases:
+      - when: "$vars.discuss_top == 'true'"
+        then: discuss-proposals
+      - when: default
+        then: create-pr
 
   - id: discuss-proposals
     type: swarm
     depends_on: [decide-discuss]
     description: "Run swarm discussion on top proposals"
-    swarm_mode: debate
-    experts: "$vars.experts"
+    mode: debate
+    dynamic: true
+    max_experts: 5
     prompt: |
       Review the following evolution proposals:
       $vars.proposals
@@ -134,7 +139,7 @@ nodes:
   - id: done
     type: bash
     description: "Summary output"
-    command: |
+    bash: |
       echo "=== Meta Evolution Complete ==="
       echo "Proposals generated: $vars.proposal_count_actual"
       if [ -n "$vars.pr_url" ]; then
@@ -144,7 +149,7 @@ nodes:
   - id: no-scopes
     type: bash
     description: "Error: no scopes configured"
-    command: |
+    bash: |
       echo "Error: No evolution_scope configured in scheduler.yaml"
       echo "Add evolution_scope to your scheduler config to enable meta-evolution."
       exit 1

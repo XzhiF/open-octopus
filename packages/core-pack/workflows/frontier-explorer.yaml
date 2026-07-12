@@ -109,7 +109,7 @@ nodes:
     type: bash
     depends_on: [generate-report]
     description: "Save report to output directory"
-    command: |
+    bash: |
       mkdir -p "$vars.output_dir"
       REPORT_FILE="$vars.output_dir/frontier-$(date +%Y%m%d-%H%M%S).md"
       echo "$vars.report_output" > "$REPORT_FILE"
@@ -119,7 +119,7 @@ nodes:
     type: bash
     depends_on: [save-report]
     description: "Summary output"
-    command: |
+    bash: |
       echo "=== Frontier Explorer Complete ==="
       echo "Domains: $vars.domains"
       echo "Items found: $vars.item_count"

@@ -39,7 +39,7 @@ nodes:
   - id: validate-inputs
     type: bash
     description: "Validate expert count (max 5)"
-    command: |
+    bash: |
       EXPERT_COUNT=$(echo "$vars.experts" | tr ',' '\n' | wc -l)
       if [ "$EXPERT_COUNT" -gt 5 ]; then
         echo "Error: Expert limit is 5, got $EXPERT_COUNT"
@@ -51,8 +51,9 @@ nodes:
     type: swarm
     depends_on: [validate-inputs]
     description: "Run multi-expert discussion using swarm mode"
-    swarm_mode: review
-    experts: "$vars.experts"
+    mode: review
+    dynamic: true
+    max_experts: 5
     prompt: |
       Discussion topic: $vars.topic
 
@@ -86,9 +87,11 @@ nodes:
     type: condition
     depends_on: [review-proposal]
     description: "Check if chatbot sync is enabled"
-    condition: "$vars.sync_chatbot == 'true'"
-    on_true: sync-to-chatbot
-    on_false: done
+    cases:
+      - when: "$vars.sync_chatbot == 'true'"
+        then: sync-to-chatbot
+      - when: default
+        then: done
 
   - id: sync-to-chatbot
     type: agent
@@ -109,7 +112,7 @@ nodes:
   - id: done
     type: bash
     description: "Summary output"
-    command: |
+    bash: |
       echo "=== Swarm Discussion Complete ==="
       echo "Topic: $vars.topic"
       echo "Discussion ID: $vars.discussion_id"

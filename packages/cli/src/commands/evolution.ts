@@ -30,7 +30,8 @@ evolutionCmd
           }),
         })
         if (!res.ok) throw new Error(`Server returned ${res.status}`)
-        const data = await res.json() as { scopes: string[] }
+        const body = await res.json() as any
+        const data: { scopes: string[] } = { scopes: body.scopes || body.evolution_scope || [] }
         console.log(chalk.green(`Updated scopes: ${data.scopes.join(", ")}`))
       } catch (err: any) {
         console.error(chalk.red(`Failed: ${err.message}`))
@@ -44,7 +45,8 @@ evolutionCmd
     try {
       const res = await fetch(`${serverUrl}/api/evolution/scope?org=${org}`)
       if (!res.ok) throw new Error(`Server returned ${res.status}`)
-      const data = await res.json() as { scopes: string[] }
+      const body = await res.json() as any
+      const data: { scopes: string[] } = { scopes: body.scopes || body.evolution_scope || [] }
 
       if (data.scopes.length === 0) {
         console.log(chalk.yellow("No evolution scope configured."))
@@ -82,7 +84,7 @@ evolutionCmd
         body: JSON.stringify(body),
       })
       if (!res.ok) {
-        if (res.status === 400) {
+        if (res.status === 400 || res.status === 404) {
           const err = await res.json() as { error: string }
           console.error(chalk.red(err.error))
           process.exit(1)

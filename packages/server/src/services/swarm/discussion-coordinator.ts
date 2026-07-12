@@ -23,6 +23,13 @@ export interface DiscussionResult {
 
 const MAX_EXPERTS = 5
 
+// Known expert roles (ponytail: hardcoded list, replace with agent registry lookup when available)
+const KNOWN_ROLES = new Set([
+  'architect', 'security', 'product', 'tester', 'reviewer',
+  'frontend', 'backend', 'devops', 'dba', 'ux',
+  'engineering-manager', 'tech-lead', 'qa', 'performance',
+])
+
 export class DiscussionCoordinator {
   private logDir: string
 
@@ -37,6 +44,7 @@ export class DiscussionCoordinator {
   /**
    * Start a multi-expert discussion on a topic.
    * Expert limit: 5 — rejects with error if exceeded.
+   * Validates expert roles against known registry.
    *
    * ponytail: Agent SDK integration is a TODO — each expert currently
    * generates a placeholder opinion. Replace the generateOpinion() call
@@ -48,6 +56,12 @@ export class DiscussionCoordinator {
     }
     if (experts.length === 0) {
       throw new Error('At least one expert is required')
+    }
+    // Validate roles
+    for (const role of experts) {
+      if (!KNOWN_ROLES.has(role)) {
+        throw new Error(`Agent not found: ${role}`)
+      }
     }
 
     const id = crypto.randomUUID()

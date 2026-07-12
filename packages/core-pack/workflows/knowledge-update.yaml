@@ -89,9 +89,11 @@ nodes:
     type: condition
     depends_on: [generate-report]
     description: "Check if auto-fix is enabled and issues were found"
-    condition: "$vars.auto_fix == 'true' AND $vars.outdated_count > 0"
-    on_true: apply-fixes
-    on_false: done
+    cases:
+      - when: "$vars.auto_fix == 'true' AND $vars.outdated_count > 0"
+        then: apply-fixes
+      - when: default
+        then: done
 
   - id: apply-fixes
     type: agent
@@ -113,7 +115,7 @@ nodes:
   - id: done
     type: bash
     description: "Summary output"
-    command: |
+    bash: |
       echo "=== Knowledge Update Complete ==="
       echo "Skills scanned: $vars.skills_scanned"
       echo "Outdated refs: $vars.outdated_count"
