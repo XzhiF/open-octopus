@@ -143,7 +143,7 @@ export class ExecutionService {
     return this.lifecycle.getAgentEvents(executionId, nodeId, loopId, iteration)
   }
 
-  getLoopIterationSummary(executionId: string): Record<string, any[]> {
+  getLoopIterationSummary(executionId: string): Record<string, any> {
     return this.lifecycle.getLoopIterationSummary(executionId)
   }
 

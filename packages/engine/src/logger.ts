@@ -136,14 +136,15 @@ export class JsonlLogger {
   /**
    * Compact a node's JSONL log by merging related event fragments.
    * Reads → parses → merges → writes back (with .bak safety net).
-   * Non-fatal: warns on failure, never throws to caller.
+   * Returns the merged events array on success (for SQLite sync), or null on failure.
+   * Uses getLogFilePath() to respect loop iteration context.
    */
-  compactFile(nodeId: string): void {
-    const filePath = join(this.logDir, `${nodeId}.jsonl`)
+  compactFile(nodeId: string): any[] | null {
+    const filePath = this.getLogFilePath(nodeId)
     const bakPath = `${filePath}.bak`
 
     try {
-      if (!existsSync(filePath)) return
+      if (!existsSync(filePath)) return null
 
       const content = readFileSync(filePath, "utf8")
       const entries: any[] = []
@@ -168,8 +169,10 @@ export class JsonlLogger {
         try { renameSync(bakPath, filePath) } catch { /* already lost */ }
         throw writeErr
       }
+      return merged
     } catch (err) {
       console.warn(`[JsonlLogger] compactFile failed for ${nodeId}:`, err)
+      return null
     }
   }
 
@@ -188,6 +191,15 @@ export class JsonlLogger {
    * - already-merged events pass through (idempotent)
    */
   private mergeEvents(entries: any[]): any[] {
+    return mergeAgentEvents(entries)
+  }
+}
+
+/**
+ * Merge related event fragments into compact blocks.
+ * Standalone function for reuse in server-side SQLite merge.
+ */
+export function mergeAgentEvents(entries: any[]): any[] {
     const results: any[] = []
     let block: any = null
 
@@ -238,6 +250,18 @@ export class JsonlLogger {
         }
 
         if (subType === "thinking") {
+          if (!block || block.type !== "thinking") {
+            // Resilient: SQLite data may lack thinking_start
+            closeBlock()
+            block = {
+              type: "thinking",
+              event: "thinking_block",
+              nodeId: entry.nodeId,
+              content: "",
+              startedAt: entry.timestamp,
+              completedAt: entry.timestamp,
+            }
+          }
           if (block?.type === "thinking") {
             block.content += (ed?.content ?? "")
             block.completedAt = entry.timestamp
@@ -288,6 +312,22 @@ export class JsonlLogger {
         }
 
         if (subType === "tool_input") {
+          if (!block || block.type !== "tool") {
+            // Resilient: SQLite data may lack tool_start
+            closeBlock()
+            block = {
+              type: "tool",
+              event: "tool_call",
+              nodeId: entry.nodeId,
+              toolCallId: ed?.tool_call_id ?? ed?.toolCallId ?? "",
+              toolName: ed?.tool ?? ed?.name ?? ed?.toolName ?? "",
+              input: "",
+              result: null,
+              isError: false,
+              startedAt: entry.timestamp,
+              completedAt: entry.timestamp,
+            }
+          }
           if (block?.type === "tool") {
             if (ed?.input !== undefined) {
               block.input = typeof ed.input === "string" ? ed.input : JSON.stringify(ed.input)
@@ -300,6 +340,22 @@ export class JsonlLogger {
         }
 
         if (subType === "tool_result") {
+          if (!block || block.type !== "tool") {
+            // Resilient: SQLite data may lack tool_start/tool_input
+            closeBlock()
+            block = {
+              type: "tool",
+              event: "tool_call",
+              nodeId: entry.nodeId,
+              toolCallId: ed?.tool_call_id ?? ed?.toolCallId ?? "",
+              toolName: ed?.tool ?? ed?.name ?? ed?.toolName ?? "",
+              input: "",
+              result: null,
+              isError: false,
+              startedAt: entry.timestamp,
+              completedAt: entry.timestamp,
+            }
+          }
           if (block?.type === "tool") {
             block.result = ed?.content ?? ed?.result ?? null
             block.isError = ed?.is_error ?? ed?.isError ?? false
@@ -394,5 +450,4 @@ export class JsonlLogger {
 
     closeBlock()
     return results
-  }
 }

@@ -1328,13 +1328,14 @@ export class ExecutionLifecycle {
     return events.sort((a, b) => (a.timestamp ?? "").localeCompare(b.timestamp ?? ""))
   }
 
-  /** Compute loop iteration summary from JSONL branch events. */
-  getLoopIterationSummary(executionId: string): Record<string, any[]> {
+  /** Compute loop iteration summary from JSONL branch events.
+   *  Returns Record<loopNodeId, LoopIterationSummary> matching frontend contract. */
+  getLoopIterationSummary(executionId: string): Record<string, any> {
     const logDir = join(this.workspacePath, "logs", executionId)
     if (!existsSync(logDir)) return {}
 
     const files = readdirSync(logDir).filter(f => f.endsWith(".jsonl"))
-    const summary: Record<string, any[]> = {}
+    const raw: Record<string, any[]> = {}
 
     for (const file of files) {
       const parsed = parseLogFilename(file)
@@ -1348,15 +1349,15 @@ export class ExecutionLifecycle {
           if (entry.event !== "branch_start" && entry.event !== "branch_end") continue
 
           const nodeId = entry.nodeId ?? parsed.nodeId
-          if (!summary[nodeId]) summary[nodeId] = []
+          if (!raw[nodeId]) raw[nodeId] = []
 
           const iter = entry.iteration
           if (iter === undefined) continue
 
-          let iterEntry = summary[nodeId].find((e: any) => e.iteration === iter)
+          let iterEntry = raw[nodeId].find((e: any) => e.iteration === iter)
           if (!iterEntry) {
-            iterEntry = { iteration: iter, status: "running", startedAt: null, completedAt: null, durationMs: null }
-            summary[nodeId].push(iterEntry)
+            iterEntry = { iteration: iter, status: "running", startedAt: null, completedAt: null, durationMs: null, nodes: [] }
+            raw[nodeId].push(iterEntry)
           }
 
           if (entry.event === "branch_start") {
@@ -1367,14 +1368,34 @@ export class ExecutionLifecycle {
             if (iterEntry.startedAt) {
               iterEntry.durationMs = new Date(entry.timestamp).getTime() - new Date(iterEntry.startedAt).getTime()
             }
+            // Capture nodeResults from branch_end (passed by LoopExecutor via SSE)
+            if (Array.isArray(entry.nodeResults)) {
+              iterEntry.nodes = entry.nodeResults
+            }
           }
         } catch { /* skip */ }
       }
     }
 
-    // Sort iterations within each loop
-    for (const key of Object.keys(summary)) {
-      summary[key].sort((a: any, b: any) => a.iteration - b.iteration)
+    // Build LoopIterationSummary wrapper with aggregates
+    const summary: Record<string, any> = {}
+    for (const [loopNodeId, iterations] of Object.entries(raw)) {
+      iterations.sort((a: any, b: any) => a.iteration - b.iteration)
+      const completed = iterations.filter((i: any) => i.status === "completed").length
+      const failed = iterations.filter((i: any) => i.status === "failed").length
+      const running = iterations.find((i: any) => i.status === "running")
+
+      // ponytail: mode detection heuristic — if all iterations completed with no max_iterations
+      // signal, treat as "dynamic" (while-loop). Fixed mode needs workflow YAML inspection,
+      // deferred until needed. Frontend renders correctly with either mode.
+      summary[loopNodeId] = {
+        total: undefined, // dynamic mode — unknown until loop exits
+        completed,
+        failed,
+        current: running?.iteration,
+        mode: "dynamic" as const,
+        iterations,
+      }
     }
 
     return summary
@@ -1699,6 +1720,10 @@ export class ExecutionLifecycle {
       },
       onNodeLog: (nodeId, logLine) => {
         this.sse.emit(this.workspaceId, { event: "node_log", data: { executionId: id, nodeId, logLine } })
+      },
+      onNodeCompacted: (nodeId, mergedEvents) => {
+        // Sync compacted JSONL events to SQLite agent_events table
+        try { this.dao.replaceMergedEvents(id, nodeId, mergedEvents) } catch { /* non-fatal */ }
       },
       onStatusChange: (status, progress) => {
         this.dao.updateExecutionProgress(id, progress)

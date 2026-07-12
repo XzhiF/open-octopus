@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/badge"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels"
 import type { Execution, StepExecution, StepExecutionStatus, Workflow, TokenUsage, LoopIterationSummary } from "@/lib/types"
+import { fetchAgentEvents } from "@/lib/api-client"
 import {
   Play,
   Pause,
@@ -100,15 +101,15 @@ interface WorkflowDetailPanelProps {
   execution: Execution
   workflow?: Workflow
   workspaceId: string
-  loopIterationsMap?: Map<string, LoopIterationSummary>
 }
 
-export function WorkflowDetailPanel({ execution, workflow, workspaceId, loopIterationsMap }: WorkflowDetailPanelProps) {
+export function WorkflowDetailPanel({ execution, workflow, workspaceId }: WorkflowDetailPanelProps) {
   const [activeStepId, setActiveStepId] = useState<string | null>(null)
   const [isPaused, setIsPaused] = useState(false)
   const [yamlContent, setYamlContent] = useState(workflow?.yamlContent || "")
   const [liveStatus, setLiveStatus] = useState(execution.status)
   const [liveSteps, setLiveSteps] = useState(execution.steps)
+  const [loopIterationsMap, setLoopIterationsMap] = useState<Map<string, LoopIterationSummary>>(new Map())
 
   // Dialog states (replacing drawer)
   const [nodeInfoDialog, setNodeInfoDialog] = useState<{ stepId: string; executorType: string | undefined } | null>(null)
@@ -132,6 +133,14 @@ export function WorkflowDetailPanel({ execution, workflow, workspaceId, loopIter
         if (d.status) setLiveStatus(d.status)
         if (d.steps) setLiveSteps(d.steps.map(mapRawStep))
         if (d.workflow_content && !yamlContent) setYamlContent(d.workflow_content)
+      })
+      .catch(() => {})
+    // Fetch loop iterations data for NodeInfoDialog (S9/S10/S11)
+    fetchAgentEvents(workspaceId, execution.id)
+      .then(data => {
+        if (data.loopIterations) {
+          setLoopIterationsMap(new Map(Object.entries(data.loopIterations)))
+        }
       })
       .catch(() => {})
   }, [workspaceId, execution.id, yamlContent])
@@ -392,7 +401,7 @@ export function WorkflowDetailPanel({ execution, workflow, workspaceId, loopIter
         workspaceId={workspaceId}
         executionId={execution.id}
         isRunning={liveStatus === "running"}
-        loopIterations={nodeInfoDialog ? loopIterationsMap?.get(nodeInfoDialog.stepId) : undefined}
+        loopIterations={nodeInfoDialog ? loopIterationsMap.get(nodeInfoDialog.stepId) : undefined}
         onOpenSwarmDialog={() => {
           if (nodeInfoDialog) {
             setSwarmDialogStepId(nodeInfoDialog.stepId)

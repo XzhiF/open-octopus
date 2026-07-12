@@ -10,6 +10,7 @@ import { PipelineConfigLoader } from "../services/pipeline-config"
 import { ExecutionDAO } from "../db/dao"
 import { initExecutionServiceRegistry, getService } from "../services/execution-service-registry"
 export { getService } from "../services/execution-service-registry"
+import { mergeAgentEvents } from "@octopus/engine"
 import os from "os"
 
 const executionRoutes = new Hono()
@@ -454,11 +455,35 @@ executionRoutes.get("/:executionId/agent-events", (c) => {
         }
       })
 
+      // Merge legacy agent_event fragments into compact blocks (thinking_block/text_block/tool_call)
+      // Group by nodeId, apply merge per group, then re-sort by timestamp
+      const byNode = new Map<string, any[]>()
+      for (const e of transformed) {
+        const key = e.nodeId ?? "_unknown"
+        if (!byNode.has(key)) byNode.set(key, [])
+        byNode.get(key)!.push(e)
+      }
+      const mergedSqlite: any[] = []
+      for (const group of byNode.values()) {
+        mergedSqlite.push(...mergeAgentEvents(group))
+      }
+
       // Merge with JSONL non-agent events (start/end/bash_log/python_log)
       // SQLite only stores agent events; lifecycle & script logs live in JSONL files
       const jsonlEvents = svc.service.getAgentEvents(executionId, nodeId || undefined, loopId, iteration)
       const nonAgentEvents = jsonlEvents.filter((e: any) => e.event !== "agent_event")
-      const merged = [...transformed, ...nonAgentEvents]
+      // Merge JSONL events by nodeId to compact bash_log→bash_output, python_log→python_output
+      const jsonlByNode = new Map<string, any[]>()
+      for (const e of nonAgentEvents) {
+        const key = e.nodeId ?? "_unknown"
+        if (!jsonlByNode.has(key)) jsonlByNode.set(key, [])
+        jsonlByNode.get(key)!.push(e)
+      }
+      const mergedJsonl: any[] = []
+      for (const group of jsonlByNode.values()) {
+        mergedJsonl.push(...mergeAgentEvents(group))
+      }
+      const merged = [...mergedSqlite, ...mergedJsonl]
         .sort((a: any, b: any) => (a.timestamp ?? "").localeCompare(b.timestamp ?? ""))
 
       return c.json({ executionId, events: merged, source: 'sqlite', _degraded: false, _message: null, loopIterations })
@@ -468,7 +493,18 @@ executionRoutes.get("/:executionId/agent-events", (c) => {
   }
 
   // JSONL fallback
-  const events = svc.service.getAgentEvents(executionId, nodeId || undefined, loopId, iteration)
+  const rawEvents = svc.service.getAgentEvents(executionId, nodeId || undefined, loopId, iteration)
+  // Merge by nodeId to compact bash_log→bash_output, python_log→python_output
+  const byNodeJsonl = new Map<string, any[]>()
+  for (const e of rawEvents) {
+    const key = e.nodeId ?? "_unknown"
+    if (!byNodeJsonl.has(key)) byNodeJsonl.set(key, [])
+    byNodeJsonl.get(key)!.push(e)
+  }
+  const events: any[] = []
+  for (const group of byNodeJsonl.values()) {
+    events.push(...mergeAgentEvents(group))
+  }
   return c.json({ executionId, events, source: 'jsonl', _degraded: true, _message: '从 JSONL 日志读取', loopIterations })
 })
 
