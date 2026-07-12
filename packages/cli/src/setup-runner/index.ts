@@ -1182,6 +1182,13 @@ export class SetupRunner {
     }
 
     console.log(`  Installed ${installed} new, upgraded ${upgraded} core-pack resources`)
+
+    // Copy workflow-schema.json to ~/.octopus/workflow-schema.json
+    const schemaSrc = join(this.corePackPath, "workflows", "workflow-schema.json")
+    if (existsSync(schemaSrc)) {
+      const schemaDst = join(this.globalDir, "workflow-schema.json")
+      copyFileSync(schemaSrc, schemaDst)
+    }
   }
 
   private findPresetsPath(): string | null {

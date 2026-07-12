@@ -1,0 +1,475 @@
+# yaml-language-server: $schema=./workflow-schema.json
+apiVersion: octopus/v1
+kind: Workflow
+name: gstack-full-loop
+description: >
+  gstack 全流程无人值守工作流 — 纯 gstack 方法论，Octopus 只做编排。
+  Plan → Implement → QA → Review → Design Check → Ship → Canary → Benchmark。
+  每个 gstack skill 自包含修复循环（/qa 自带 test→fix→verify，/review 自带 blocker 修复）。
+  auto_answers 跳过仪式性提问，工作决策选推荐选项。
+
+model: pro
+engine: claude
+execution_mode: serial
+timeout: 7200
+
+# ── 输入参数 ──
+inputs:
+  feature_description:
+    description: "功能描述或 bug 描述（一句话）"
+    required: true
+  target_url:
+    description: "应用访问 URL（QA/设计审查/Canary 用）"
+    required: false
+    default: "http://localhost:3000"
+  skip_plan:
+    description: "跳过规划阶段（feature branch 已有代码时设为 true）"
+    required: false
+    default: "false"
+  skip_ship:
+    description: "跳过发货阶段（本地验证时设为 true）"
+    required: false
+    default: "false"
+
+# ── 变量池 ──
+variables:
+  app_url: "http://localhost:3000"
+  office_hours_done: "false"
+  ceo_review_done: "false"
+  eng_review_done: "false"
+  design_plan_done: "false"
+  implemented_files: ""
+  commit_sha: ""
+  app_ready: "false"
+  qa_score: ""
+  qa_issues: ""
+  qa_fixed: ""
+  review_verdict: ""
+  review_findings: ""
+  design_issues: ""
+  pr_url: ""
+  ship_status: ""
+  canary_status: ""
+  benchmark_lcp: ""
+  benchmark_cls: ""
+
+# ── 无人值守：跳过仪式性提问 + 工作决策选推荐 ──
+auto_answers:
+  - pattern: "gstack|upgrade|telemetry|skill routing|proactive|checkpoint|model overlay|writing style|boil the ocean|gbrain|artifacts|cross-project|first-loop|completeness intro|feature discovery"
+    answer: "No thanks"
+  - pattern: ".*"
+    answer: "recommended"
+
+# ── Notify 子系统 ──
+providers:
+  hermes-cli:
+    type: hermes
+    timeout: 30
+    min_severity: info
+
+channels:
+  default:
+    provider: hermes-cli
+    target: "telegram:xzf_hermes"
+
+# ── 生命周期 Hooks ──
+hooks:
+  on_node_success:
+    - id: notify-plan-done
+      type: notify
+      nodes: [design-plan]
+      channel: default
+      template:
+        severity: info
+        title: "📋 Plan 阶段完成"
+        body: "Office Hours → CEO Review → Eng Review → Design Plan 全部完成"
+
+    - id: notify-implement-done
+      type: notify
+      nodes: [implement]
+      channel: default
+      template:
+        severity: info
+        title: "⚙️ Implement 完成"
+        body: "变更文件: $vars.implemented_files"
+
+    - id: notify-qa-done
+      type: notify
+      nodes: [qa]
+      channel: default
+      template:
+        severity: info
+        title: "🧪 QA 完成 — Score: $vars.qa_score"
+        body: "发现 $vars.qa_issues 个问题，修复 $vars.qa_fixed 个"
+
+    - id: notify-review-done
+      type: notify
+      nodes: [code-review]
+      channel: default
+      template:
+        severity: info
+        title: "🔍 Code Review — $vars.review_verdict"
+        body: "$vars.review_findings"
+
+    - id: notify-ship-done
+      type: notify
+      nodes: [ship]
+      channel: default
+      template:
+        severity: info
+        title: "🚀 Ship 完成"
+        body: "PR: $vars.pr_url"
+
+  on_complete:
+    - type: notify
+      channel: default
+      template:
+        severity: info
+        title: "✅ gstack autopilot 完成"
+        body: |
+          状态: $hook.final_status
+          QA Score: $vars.qa_score | Review: $vars.review_verdict
+          PR: $vars.pr_url | Canary: $vars.canary_status
+          LCP: $vars.benchmark_lcp | CLS: $vars.benchmark_cls
+
+  on_workflow_failure:
+    - type: notify
+      channel: default
+      template:
+        severity: error
+        title: "❌ gstack autopilot 失败"
+        body: "节点 $hook.failed_node_id 失败: $hook.error"
+
+# ═══════════════════════════════════════════════════════════════
+# NODES — 10 个阶段，线性串联
+# ═══════════════════════════════════════════════════════════════
+nodes:
+
+  # ── Phase 0: Setup ──
+  - id: setup-env
+    type: bash
+    timeout: 120
+    bash: |
+      # 链接 gstack skills 到项目级
+      bash scripts/gstack-link.sh 2>/dev/null || true
+      # 创建 artifacts 目录
+      mkdir -p .gstack/artifacts .gstack/qa-reports .gstack/benchmarks
+      # 检测环境
+      echo "GSTACK_VERSION: $(cat ~/.claude/skills/gstack/VERSION 2>/dev/null || echo unknown)"
+      echo "BROWSE_BIN: $(ls ~/.claude/skills/gstack/browse/dist/browse 2>/dev/null || echo NOT_FOUND)"
+      echo "APP_URL: $inputs.target_url"
+      printf '{"vars_update":{"app_url":"%s"}}\n' "$inputs.target_url"
+
+  # ── Phase 1: Plan（可选）──
+  - id: office-hours
+    type: agent
+    depends_on: [setup-env]
+    execute_when: '$inputs.skip_plan != "true"'
+    timeout: 900
+    skills: [office-hours]
+    prompt: |
+      执行 /office-hours。
+
+      功能描述: $inputs.feature_description
+
+      规则:
+      - 跳过 preamble（upgrade/telemetry/routing 等仪式性 bash），直接执行核心流程
+      - 对任何交互提问选推荐选项后继续，不要停下来等用户
+      - 你正在无人值守工作流中执行
+
+      输出:
+      1. 将 office-hours 完整输出写到 .gstack/artifacts/office-hours.md
+      2. 在回复末尾输出 JSON:
+      {"vars_update":{"office_hours_done":"true"}}
+
+  - id: ceo-review
+    type: agent
+    depends_on: [office-hours]
+    execute_when: '$inputs.skip_plan != "true"'
+    timeout: 900
+    skills: [plan-ceo-review]
+    prompt: |
+      执行 /plan-ceo-review。
+
+      功能描述: $inputs.feature_description
+
+      上下文:
+      - 读 .gstack/artifacts/office-hours.md 获取 office-hours 输出
+      - 模式: HOLD SCOPE（最大严谨度，不扩张范围）
+
+      规则:
+      - 跳过 preamble，直接执行核心审查逻辑
+      - 对提问选推荐选项后继续
+      - 你正在无人值守工作流中执行
+
+      输出:
+      1. 将审查结果写到 .gstack/artifacts/ceo-review.md
+      2. 在回复末尾输出 JSON:
+      {"vars_update":{"ceo_review_done":"true"}}
+
+  - id: eng-review
+    type: agent
+    depends_on: [ceo-review]
+    execute_when: '$inputs.skip_plan != "true"'
+    timeout: 900
+    skills: [plan-eng-review]
+    prompt: |
+      执行 /plan-eng-review。
+
+      上下文:
+      - 读 .gstack/artifacts/office-hours.md
+      - 读 .gstack/artifacts/ceo-review.md
+
+      规则:
+      - 跳过 preamble，直接执行核心工程审查
+      - 对提问选推荐选项后继续
+      - 你正在无人值守工作流中执行
+
+      输出:
+      1. 将工程审查结果写到 .gstack/artifacts/eng-review.md
+      2. 在回复末尾输出 JSON:
+      {"vars_update":{"eng_review_done":"true"}}
+
+  - id: design-plan
+    type: agent
+    depends_on: [eng-review]
+    execute_when: '$inputs.skip_plan != "true"'
+    timeout: 900
+    skills: [plan-design-review]
+    prompt: |
+      执行 /plan-design-review。
+
+      上下文:
+      - 读 .gstack/artifacts/ 下所有 plan 文件（office-hours.md, ceo-review.md, eng-review.md）
+
+      规则:
+      - 跳过 preamble，直接执行核心设计审查
+      - 对提问选推荐选项后继续
+      - 你正在无人值守工作流中执行
+
+      输出:
+      1. 将设计审查结果写到 .gstack/artifacts/design-plan.md
+      2. 在回复末尾输出 JSON:
+      {"vars_update":{"design_plan_done":"true"}}
+
+  # ── Phase 2: Build ──
+  - id: implement
+    type: agent
+    depends_on: [setup-env]
+    timeout: 3600
+    prompt: |
+      实现功能: $inputs.feature_description
+
+      上下文:
+      - 如果 .gstack/artifacts/ 下有 plan 文件，先读取所有 .md 作为实现指导
+      - 如果没有 plan 文件（skip_plan=true），直接根据 feature_description 实现
+
+      规则:
+      - 先写测试（TDD）
+      - 小步提交，每个逻辑单元一个 commit
+      - 遵循项目现有代码风格
+      - 你正在无人值守工作流中执行
+
+      输出:
+      在回复末尾输出 JSON:
+      {"vars_update":{
+        "implemented_files":"<变更文件列表，逗号分隔>",
+        "commit_sha":"<最后一次 commit SHA>"
+      }}
+
+  - id: start-app
+    type: bash
+    depends_on: [implement]
+    timeout: 120
+    bash: |
+      URL="$vars.app_url"
+      # 检测已有运行的 dev server
+      if curl -sf "$URL" > /dev/null 2>&1; then
+        echo "APP_RUNNING: $URL"
+        printf '{"vars_update":{"app_ready":"true"}}\n'
+        exit 0
+      fi
+      # 后台启动 dev server
+      echo "Starting dev server..."
+      pnpm dev > /tmp/gstack-dev-server.log 2>&1 &
+      SERVER_PID=$!
+      # 等待 ready（最多 60 秒）
+      for i in $(seq 1 30); do
+        if curl -sf "$URL" > /dev/null 2>&1; then
+          echo "APP_READY: $URL (PID $SERVER_PID)"
+          printf '{"vars_update":{"app_ready":"true"}}\n'
+          exit 0
+        fi
+        sleep 2
+      done
+      echo "APP_START_FAILED after 60s"
+      echo "Server log:"
+      tail -20 /tmp/gstack-dev-server.log 2>/dev/null
+      printf '{"vars_update":{"app_ready":"false"}}\n'
+
+  # ── Phase 3: Verify ──
+  - id: qa
+    type: agent
+    depends_on: [start-app]
+    timeout: 900
+    skills: [browse, qa]
+    prompt: |
+      执行 /qa $vars.app_url
+
+      规则:
+      - 跳过 preamble（upgrade/telemetry/routing 等仪式性 bash），直接执行 QA 核心逻辑
+      - 对任何交互提问选推荐选项后继续
+      - 你正在无人值守工作流中执行
+      - 模式: Standard（修 critical + high + medium 级别 bug）
+
+      /qa 会自动执行:
+      1. 打开浏览器访问 $vars.app_url
+      2. 系统探索每个页面（截图、console 错误、交互测试）
+      3. 发现 bug → 修源码 → 原子 commit → 重新验证
+      4. 输出 health score + 修复报告
+
+      输出:
+      1. QA 报告写到 .gstack/qa-reports/
+      2. 在回复末尾输出 JSON:
+      {"vars_update":{
+        "qa_score":"<0-100 健康分数>",
+        "qa_issues":"<发现问题数>",
+        "qa_fixed":"<修复问题数>"
+      }}
+
+  - id: code-review
+    type: agent
+    depends_on: [qa]
+    timeout: 600
+    skills: [review]
+    prompt: |
+      执行 /review
+
+      规则:
+      - 跳过 preamble，直接执行 review 核心逻辑
+      - 对提问选推荐选项后继续
+      - 你正在无人值守工作流中执行
+
+      /review 会自动:
+      1. git diff 分析全部变更（对比 base branch）
+      2. 检查 SQL 安全、LLM 信任边界、条件副作用
+      3. 发现 blocker → 修代码 → 原子 commit
+      4. 输出 pass/block verdict
+
+      输出:
+      在回复末尾输出 JSON:
+      {"vars_update":{
+        "review_verdict":"<approve 或 block>",
+        "review_findings":"<关键发现摘要>"
+      }}
+
+  - id: design-check
+    type: agent
+    depends_on: [code-review]
+    timeout: 600
+    skills: [browse, design-review]
+    prompt: |
+      执行 /design-review $vars.app_url
+
+      规则:
+      - 跳过 preamble，直接执行设计审查核心逻辑
+      - 对提问选推荐选项后继续
+      - 你正在无人值守工作流中执行
+
+      检查项:
+      - 视觉一致性（间距、层级、AI slop 模式）
+      - 响应式（375, 768, 1280 断点截图）
+      - 交互状态（hover、focus、active）
+      - 发现问题直接修
+
+      输出:
+      在回复末尾输出 JSON:
+      {"vars_update":{
+        "design_issues":"<发现的设计问题摘要，无问题写 none>"
+      }}
+
+  # ── Phase 4: Ship ──
+  - id: ship
+    type: agent
+    depends_on: [design-check]
+    execute_when: '$inputs.skip_ship != "true"'
+    timeout: 600
+    skills: [ship]
+    prompt: |
+      执行 /ship
+
+      规则:
+      - 跳过 preamble，直接执行 ship 核心逻辑
+      - 对提问选推荐选项后继续
+      - 你正在无人值守工作流中执行
+
+      /ship 会自动:
+      1. 检测平台（GitHub/GitLab）和 base branch
+      2. merge base branch
+      3. 跑测试
+      4. review diff
+      5. bump VERSION
+      6. 更新 CHANGELOG
+      7. commit + push
+      8. 创建 PR
+
+      输出:
+      在回复末尾输出 JSON:
+      {"vars_update":{
+        "pr_url":"<PR URL，如无则写 none>",
+        "ship_status":"<shipped 或 blocked>"
+      }}
+
+  # ── Phase 5: Monitor ──
+  - id: canary
+    type: agent
+    depends_on: [ship]
+    execute_when: '$vars.ship_status == "shipped"'
+    timeout: 600
+    skills: [browse, canary]
+    prompt: |
+      执行 /canary $vars.app_url
+
+      规则:
+      - 跳过 preamble
+      - 你正在无人值守工作流中执行
+
+      监控项:
+      - console 错误
+      - 性能回归
+      - 截图对比基线
+
+      运行 5 分钟后输出结果。
+
+      输出:
+      在回复末尾输出 JSON:
+      {"vars_update":{
+        "canary_status":"<clean 或 issues_found>"
+      }}
+
+  - id: benchmark
+    type: agent
+    depends_on: [ship]
+    execute_when: '$vars.ship_status == "shipped"'
+    timeout: 300
+    skills: [browse, benchmark]
+    prompt: |
+      执行 /benchmark $vars.app_url
+
+      规则:
+      - 跳过 preamble
+      - 你正在无人值守工作流中执行
+
+      建立性能基线:
+      - Core Web Vitals (LCP, INP, CLS, FCP)
+      - 页面加载时间
+      - 资源大小
+
+      保存到 .gstack/benchmarks/
+
+      输出:
+      在回复末尾输出 JSON:
+      {"vars_update":{
+        "benchmark_lcp":"<LCP 毫秒>",
+        "benchmark_cls":"<CLS 值>"
+      }}

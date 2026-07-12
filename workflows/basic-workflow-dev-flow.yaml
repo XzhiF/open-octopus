@@ -1,0 +1,534 @@
+# yaml-language-server: $schema=./workflow-schema.json
+apiVersion: octopus/v1
+kind: Workflow
+name: basic-workflow-dev-flow
+description: >
+  Hermes 工作流开发流程 —— 基于 hermes-dev-flow 增强版。
+  8 阶段：Setup → Analyze → Plan → Implement → Review → Test-Run → Ship。
+  新增 Test-Run 阶段：在 workspace 内实际执行新开发的工作流进行验证。
+  每个阶段完成后通过 notify 子系统实时推送到群聊。
+
+model: "pro-max"
+engine: claude
+execution_mode: serial
+timeout: 86400
+
+inputs:
+  requirement:
+    description: "工作流开发需求描述（自然语言，中文或英文）"
+    required: true
+  base_branch:
+    description: "PR 目标分支"
+    required: false
+    default: "main"
+
+variables:
+  pkg_manager: "pnpm"
+  notify_target: "telegram:xzf_hermes"
+  workspace_rules: |
+    ## 工作空间规范
+    - 当前 cwd 是 octopus 聚合工作空间，不是单个 git 仓库
+    - 项目在 ./projects/ 目录下，每个是独立的 git worktree
+    - git 命令（log/status/commit/push/PR）必须在具体项目目录内执行，不能在 workspace 根目录执行
+    - 需要创建 PR 时，每个有变更的项目都要单独创建 PR
+    - superpowers 文档必须保存在 workspace 根目录（cwd）的 docs/superpowers/ 下，不能保存在 projects/ 下的项目目录里
+    - **所有项目级命令必须在对应项目目录内执行**：
+      - 构建/测试/启动/安装依赖等命令（pnpm build, pnpm dev, pnpm test, npm run, mvn, go run 等）必须 cd 到 ./projects/{项目名}/ 再执行
+      - 禁止在 workspace 根目录执行 pnpm dev / pnpm build 等项目命令
+      - 根据需求和上下文判断应该在哪个项目目录执行命令，工作空间内可能有多个项目
+      - 示例: `cd projects/xzf-octopus && pnpm dev`
+
+auto_answers:
+  - pattern: ".*"
+    answer: "proceed"
+
+# ── Notify 子系统配置 ──
+providers:
+  hermes-cli:
+    type: hermes
+    timeout: 30
+    min_severity: info
+
+channels:
+  default:
+    provider: hermes-cli
+    target: "telegram:xzf_hermes"
+
+hooks:
+  on_node_success:
+    - id: notify-setup
+      type: notify
+      nodes: [setup]
+      channel: default
+      template:
+        severity: info
+        title: "🚀 $vars.display_name 启动"
+        body: "📂 项目: $vars.projects\n🌿 分支: $vars.branch → $inputs.base_branch\n📦 包管理: $vars.pkg_manager\n📋 需求: $inputs.requirement"
+
+    - id: notify-analyze
+      type: notify
+      nodes: [analyze]
+      channel: default
+      template:
+        severity: info
+        title: "📝 $vars.display_name — Analyze 完成"
+        body: "📂 项目: $vars.projects | 🌿 $vars.branch\n📄 规格文档: $vars.spec_file\n\n💡 *分析结论*:\n$vars.conclusion"
+
+    - id: notify-plan
+      type: notify
+      nodes: [plan]
+      channel: default
+      template:
+        severity: info
+        title: "📋 $vars.display_name — Plan 完成"
+        body: "📂 项目: $vars.projects | 🌿 $vars.branch\n📄 计划文档: $vars.plan_file\n\n💡 *计划概要*:\n$vars.conclusion"
+
+    - id: notify-implement
+      type: notify
+      nodes: [implement]
+      channel: default
+      template:
+        severity: info
+        title: "⚙️ $vars.display_name — Implement 完成"
+        body: "📂 项目: $vars.projects | 🌿 $vars.branch\n\n💡 *实现概要*:\n$vars.conclusion"
+
+    - id: notify-review
+      type: notify
+      nodes: [review]
+      channel: default
+      template:
+        severity: info
+        title: "🔍 $vars.display_name — Review 完成"
+        body: "📂 项目: $vars.projects | 🌿 $vars.branch\n\n💡 *审查结论*:\n$vars.conclusion"
+
+    - id: notify-test-run-pass
+      type: notify
+      nodes: [test-run]
+      channel: default
+      condition: '$vars.test_run_passed == "true"'
+      template:
+        severity: info
+        title: "✅ $vars.display_name — Test-Run 通过"
+        body: "📂 项目: $vars.projects | 🌿 $vars.branch\n📝 $vars.test_run_log"
+
+    - id: notify-test-run-fail
+      type: notify
+      nodes: [test-run]
+      channel: default
+      condition: '$vars.test_run_passed != "true"'
+      template:
+        severity: warn
+        title: "⚠️ $vars.display_name — Test-Run 未通过"
+        body: "📂 项目: $vars.projects | 🌿 $vars.branch\n📝 $vars.test_run_log"
+
+    - id: notify-ship
+      type: notify
+      nodes: [ship]
+      channel: default
+      template:
+        severity: info
+        title: "✅ $vars.display_name — Ship 完成"
+        body: "📂 项目: $vars.projects | 🌿 $vars.branch → $inputs.base_branch\n🔗 PR: ${pr_url | default:none}\n📝 ${ship_summary | default:none}\n🧪 Test-Run: $vars.test_run_passed"
+
+nodes:
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 0: Setup — 环境检测 + 变量初始化
+  # ═══════════════════════════════════════════════════════════════
+  - id: setup
+    type: agent
+    timeout: 600
+    prompt: |
+      你正在执行 Hermes 工作流开发流程的环境检测阶段。
+
+      $vars.workspace_rules
+
+      ## 输入
+      - 需求描述: $inputs.requirement
+      - 目标分支: $inputs.base_branch
+
+      ## 你的任务
+
+      ### 1. 安装 superpowers-zh 技能（必须首先执行）
+      ```bash
+      echo "Installing superpowers-zh skills..."
+      npx superpowers-zh@latest --tool claude --force 2>&1 | head -5
+      ```
+
+      ### 2. 遍历项目
+      遍历 `./projects/` 目录，找出所有 git 项目:
+      ```bash
+      PROJECTS=""
+      if [ -d projects ]; then
+        for dir in projects/*/; do
+          if [ -d "$dir/.git" ] || [ -f "$dir/.git" ]; then
+            name=$(basename "$dir")
+            if [ -z "$PROJECTS" ]; then
+              PROJECTS="$name"
+            else
+              PROJECTS="$PROJECTS, $name"
+            fi
+          fi
+        done
+      fi
+      ```
+
+      ### 3. 检测包管理器
+      查看第一个项目的 lock 文件，确定 package manager:
+      - 有 `pnpm-lock.yaml` → `pnpm`
+      - 有 `yarn.lock` → `yarn`
+      - 有 `package.json` 但无 lock 文件 → `npm`
+      - 其他 → `npm`
+
+      ### 4. 检测当前分支
+      获取第一个项目的当前 git 分支:
+      ```bash
+      GIT_BRANCH=$(git -C "projects/$FIRST_PROJECT" rev-parse --abbrev-ref HEAD 2>/dev/null)
+      ```
+      如果检测失败或为 HEAD，使用 `$inputs.base_branch` 作为默认值。
+
+      ## 输出要求
+
+      在回复末尾输出 JSON（必须是最后一行）:
+      ```json
+      {"vars_update":{
+        "projects":"<项目目录名，逗号分隔>",
+        "pkg_manager":"<包管理器>",
+        "branch":"<当前分支>",
+        "display_name":"<步骤5计算的值>"
+      }}
+      ```
+
+      ### 5. 计算 display_name（必须非空）
+      display_name 用于所有通知消息中标识当前执行，**绝对不能为空**:
+      - 执行名称: `$vars.execution_name`
+      - 工作流名称: `$vars.workflow_name`
+      - 优先使用执行名称，如果为空则使用工作流名称，如果都为空则使用 "Hermes Workflow Dev Flow"
+      - 示例输出: `"display_name":"开发审批工作流"` 或 `"display_name":"basic-workflow-dev-flow"`
+
+      ## 规则
+      - 无人值守模式，直接执行
+      - **必须首先安装 superpowers-zh，这是前置条件**
+      - **display_name 必须非空**
+      - JSON 输出前不要有多余的 ```json 标记，直接输出 JSON 行
+      - 确保 JSON 中的特殊字符（引号、换行）已正确转义
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 1: Analyze — 需求分析 + 技能匹配
+  # ═══════════════════════════════════════════════════════════════
+  - id: analyze
+    type: agent
+    depends_on: [setup]
+    timeout: 86400
+    skills:
+      - brainstorming
+    outputs:
+      spec_file: $vars.spec_file
+    prompt: |
+      你正在执行 Hermes 工作流开发流程的第一阶段：需求分析与头脑风暴。
+
+      $vars.workspace_rules
+
+      ## 用户需求
+
+      $inputs.requirement
+
+      ## 当前环境
+
+      - 工作目录: $(pwd)
+      - 当前分支: $vars.branch
+      - 基础分支: $inputs.base_branch
+
+      ## 你的任务
+
+      1. 使用 brainstorming 深入分析需求，明确技术方向和设计方案
+      2. 这是开发 Octopus 工作流（YAML），不是普通代码
+
+      ## 规则
+
+      - 这是无人值守模式，跳过需要用户确认的步骤，直接给出最佳判断
+      - 中文项目使用中文输出
+      - 分析要具体，避免泛泛而谈
+      - writing-plans 技能会在下一阶段使用，不要在这一阶段使用它，也不要自己创建实现计划
+
+      完成后在回复末尾依次输出：
+      ---ANALYSIS_COMPLETE---
+      {"vars_update":{"spec_file":"<你实际生成的规格文档完整路径>","conclusion":"<2-3句话总结：分析了什么、确定了什么技术方向、关键设计决策>"}}
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 2: Plan — 生成实现计划
+  # ═══════════════════════════════════════════════════════════════
+  - id: plan
+    type: agent
+    depends_on: [analyze]
+    timeout: 86400
+    skills:
+      - writing-plans
+    outputs:
+      plan_file: $vars.plan_file
+    prompt: |
+      继续上一阶段的分析结果，现在使用 writing-plans 技能生成详细的实现计划。
+
+      $vars.workspace_rules
+
+      ## 上一阶段输出
+
+      设计规格文档: $vars.spec_file
+      请先读取该文件，基于其中的设计方案进行规划。
+
+      ## 当前环境
+
+      - 工作目录: $(pwd)
+      - 当前分支: $vars.branch
+
+      ## 你的任务
+
+      1. 读取设计规格文档 $vars.spec_file，理解需求分析结论
+      2. 使用 writing-plans 技能生成详细的实现计划
+
+      ## 规则
+      - 这是无人值守模式，直接生成最终计划
+
+      完成后在回复末尾依次输出：
+      ---PLAN_COMPLETE---
+      {"vars_update":{"plan_file":"<你实际生成的计划文档完整路径>","conclusion":"<2-3句话总结：计划包含几个步骤、主要改动范围、预计复杂度>"}}
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 3: Implement — 子智能体驱动实现
+  # ═══════════════════════════════════════════════════════════════
+  - id: implement
+    type: agent
+    depends_on: [plan]
+    timeout: 86400
+    skills:
+      - subagent-driven-development
+    prompt: |
+      继续上一阶段，现在使用 subagent-driven-development 执行实现计划。
+
+      $vars.workspace_rules
+
+      ## 上一阶段输出
+
+      设计规格文档: $vars.spec_file
+      实现计划文档: $vars.plan_file
+      请先读取这两个文件，理解设计规格和实现步骤后再开始执行。
+
+      ## 当前环境
+      - 工作目录: $(pwd)
+      - 当前分支: $vars.branch
+
+      ## 你的任务
+      1. 读取设计规格文档 $vars.spec_file 和实现计划 $vars.plan_file
+      2. 使用 subagent-driven-development 方法按计划执行所有任务
+
+      ## 关键规则
+      - 这是无人值守模式，所有选择使用最佳判断
+
+      完成后在回复末尾依次输出：
+      ---IMPLEMENT_COMPLETE---
+      {"vars_update":{"conclusion":"<2-3句话总结：实际改了哪些文件、新增/修改了多少行代码、主要实现了什么功能>"}}
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 4: Review — 最终代码审查
+  # ═══════════════════════════════════════════════════════════════
+  - id: review
+    type: agent
+    depends_on: [implement]
+    timeout: 86400
+    skills:
+      - requesting-code-review
+    prompt: |
+      使用 requesting-code-review 技能审查当前实现。如有问题直接修复。
+
+      $vars.workspace_rules
+
+      实现计划文档: $vars.plan_file
+      工作目录: $(pwd)
+      当前分支: $vars.branch
+
+      无人值守模式，不要询问确认。审查发现的问题直接修复，不做无关改动。
+
+      完成后在回复末尾依次输出：
+      ---REVIEW_COMPLETE---
+      {"vars_update":{"conclusion":"<2-3句话总结：发现多少问题、修复了多少、剩余问题严重程度（无/低/中/高）>"}}
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 5: Test-Run — 在 workspace 内实际执行新工作流进行验证
+  # ═══════════════════════════════════════════════════════════════
+  - id: test-run
+    type: agent
+    depends_on: [review]
+    timeout: 86400
+    outputs:
+      test_run_passed: $vars.test_run_passed
+      test_run_log: $vars.test_run_log
+    prompt: |
+      你正在执行 Hermes 工作流开发流程的 Test-Run 阶段。
+
+      $vars.workspace_rules
+
+      ## 当前环境
+      - 工作目录: $(pwd)
+      - 当前分支: $vars.branch
+      - Octopus Server API: http://localhost:3099
+
+      ## 背景
+      刚刚通过 Implement 阶段开发了一个新的工作流 YAML 文件，
+      现在需要在当前 workspace 内实际触发执行来验证它能跑通。
+
+      ## 你的任务
+
+      ### Step 1: 找到新开发的工作流文件
+      通过 git diff 找到本次新增/修改的工作流 YAML：
+      ```bash
+      cd projects/<项目目录>
+      git diff $inputs.base_branch --name-only
+      ```
+      目标文件通常在 packages/core-pack/workflows/ 下。
+
+      ### Step 2: 静态验证
+      如果项目有 octopus CLI，尝试：
+      ```bash
+      npx octopus workflow validate <yaml_path>
+      ```
+      如果没有 CLI，手动检查：
+      - YAML 语法正确
+      - 有 apiVersion/kind/name 字段
+      - nodes 数组非空
+      - 所有 depends_on 引用的节点存在
+      - 变量表达式 $vars.xxx 和 $inputs.xxx 语法正确
+
+      ### Step 3: 部署到 server 可加载的路径
+      ```bash
+      cp <新工作流yaml> ~/.octopus/workflows/
+      ```
+      server 的 chokidar watch 会自动加载新文件，无需重启。
+
+      ### Step 4: 获取当前 workspace ID
+      从环境变量或配置文件读取当前 workspace ID。
+      也可以通过 API 查询：
+      ```bash
+      curl -s http://localhost:3099/api/workspaces | jq '.[] | select(.name=="<workspace名>") | .id'
+      ```
+
+      ### Step 5: 分析工作流输入要求并构造测试参数
+      读取新工作流 YAML 的 inputs 字段：
+      - 无 required inputs → params 传空对象 {}
+      - 有 required inputs → 构造合理的测试值（基于工作流描述推断）
+
+      ### Step 6: 触发执行
+      ```bash
+      curl -X POST http://localhost:3099/api/workspaces/{ws_id}/executions \
+        -H 'Content-Type: application/json' \
+        -d '{"workflow_ref":"<新工作流name>","params":{...}}'
+      ```
+
+      ### Step 7: 轮询等待结果
+      每 10 秒查询一次执行状态，最多等待 10 分钟：
+      ```bash
+      curl -s http://localhost:3099/api/workspaces/{ws_id}/executions/{exec_id}
+      ```
+      关注 status 字段：completed / failed / running / pending
+
+      ### Step 8: 结果判定
+      - **completed** → test_run_passed=true，进入 Ship
+      - **failed** → 读取日志：
+        ```bash
+        curl -s http://localhost:3099/api/workspaces/{ws_id}/executions/{exec_id}/logs
+        ```
+        分析失败原因，修复 YAML，回到 Step 3 重新部署+执行
+      - **最多重试 3 轮**，仍失败则 test_run_passed=false，在 test_run_log 中记录失败原因，仍然允许进入 Ship
+
+      ### Step 9: 记录结果
+      无论成功失败，在 test_run_log 中记录：
+      - 执行了几轮
+      - 每轮的失败/成功信息
+      - 最终状态
+
+      ## 关键规则
+      - 无人值守模式，所有选择使用最佳判断
+      - 新工作流的 YAML 修改必须在 projects/ 下的 worktree 中操作
+      - 部署到 ~/.octopus/workflows/ 是为了让 server 能加载
+      - 修复 YAML 时同时更新 worktree 中的源文件和 ~/.octopus/workflows/ 中的副本
+
+      完成后在回复末尾依次输出：
+      ---TEST_RUN_COMPLETE---
+      {"vars_update":{"test_run_passed":"<true/false>","test_run_log":"<执行摘要>"}}
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 6: Ship — 推送 + 创建 PR + 捕获 PR URL
+  # ═══════════════════════════════════════════════════════════════
+  - id: ship
+    type: agent
+    depends_on: [test-run]
+    timeout: 86400
+    outputs:
+      pr_url: $vars.pr_url
+    prompt: |
+      代码审查和测试验证已通过，进入最终阶段：提交、推送并创建 Pull Request。
+
+      $vars.workspace_rules
+
+      ## 环境信息
+
+      - 当前分支: $vars.branch
+      - 基础分支: $inputs.base_branch
+      - 工作目录: $(pwd)
+
+      ## Test-Run 结果
+
+      - 验证状态: $vars.test_run_passed
+      - 验证日志: $vars.test_run_log
+
+      ## 你的任务
+
+      ### 步骤 1：遍历 projects/ 下所有有变更的项目
+
+      对于 projects/ 下每一个有 .git 目录的项目，依次执行以下操作：
+
+      ### 步骤 2：检查并提交未保存的更改
+
+      ```bash
+      cd <项目目录>
+      git status --short
+      ```
+
+      如果有未提交的更改：
+      ```bash
+      git add -A
+      git commit -m "fix: review and test-run fixes from basic-workflow-dev-flow"
+      ```
+
+      ### 步骤 3：查看提交历史
+
+      ```bash
+      git log $inputs.base_branch..HEAD --oneline
+      ```
+
+      ### 步骤 4：推送分支
+
+      ```bash
+      git push -u origin HEAD
+      ```
+
+      如果 push 失败，查看错误信息并处理。
+
+      ### 步骤 5：创建 PR
+
+      ```bash
+      PR_URL=$(gh pr create \
+        --base "$inputs.base_branch" \
+        --title "<基于提交历史生成的 PR 标题>" \
+        --body "<基于提交历史生成的中文 PR 描述，包含摘要、实现说明、测试验证情况>" \
+        2>&1)
+      echo "$PR_URL"
+      ```
+
+      ## 关键规则
+
+      - 无人值守模式，直接执行
+      - gh pr create 失败时重试最多 2 次
+      - PR 描述中必须包含 Test-Run 验证结果
+
+      完成后在回复末尾依次输出：
+      ---SHIP_COMPLETE---
+      {"vars_update":{"pr_url":"<实际的 PR URL，如有多个用逗号分隔>","ship_summary":"<简要总结>"}}

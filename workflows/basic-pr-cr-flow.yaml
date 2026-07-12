@@ -1,0 +1,1019 @@
+# yaml-language-server: $schema=./workflow-schema.json
+apiVersion: octopus/v1
+kind: Workflow
+name: basic-pr-cr-flow
+description: >
+  PR 跟进工作流 (Hermes 版) — 每个阶段完成后通过 notify 子系统实时推送到群聊。
+  流程：Setup → Pull-Merge → Conflict-Resolve → Modify → Review → Build-Test → Push → Notify。
+  Agent 驱动，自动适配任意技术栈 (Node/Java/Python/Rust/Go/...)。
+  支持自动解决合并冲突、应用用户修改指令、代码审查、构建测试循环。
+
+model: "pro-max"
+engine: claude
+execution_mode: serial
+timeout: 86400
+
+inputs:
+  pr_url:
+    description: "GitHub PR URL（如 https://github.com/owner/repo/pull/25）"
+    required: true
+  base_branch:
+    description: "目标合并分支"
+    required: false
+    default: "main"
+  modifications:
+    description: "需要修改的代码描述（自然语言，可选）"
+    required: false
+    default: ""
+  merge_strategy:
+    description: "最终推送时的提交策略: squash / merge / rebase"
+    required: false
+    default: "squash"
+
+variables:
+  # 环境信息
+  projects: ""
+  project_path: ""
+  project_name: ""
+  pr_branch: ""
+  pr_title: ""
+  pr_url: ""
+  pr_number_clean: ""
+  pr_base_sha: ""
+  pkg_manager: ""
+
+  # 构建/测试命令
+  build_cmd: ""
+  test_cmd: ""
+  lint_cmd: ""
+
+  # 冲突状态
+  has_conflicts: "false"
+  conflict_resolved: "false"
+  conflict_files: ""
+  conflict_reason: ""
+  conflict_resolution_summary: ""
+  merge_aborted: "false"
+
+  # 修改状态
+  modifications: ""
+  modify_done: "false"
+  modify_summary: ""
+
+  # 构建/测试状态
+  build_passed: "false"
+  tests_passed: "false"
+  lint_passed: "true"
+  test_failure_summary: ""
+  preexisting_test_failures: ""
+
+  # 最终状态
+  push_success: "false"
+  push_error: ""
+  notified: "false"
+
+  # 通知目标
+  notify_target: "telegram:xzf_hermes"
+
+  # 全局规则
+  workspace_rules: |
+    ## 工作空间规范
+    - 当前 cwd 是 octopus 聚合工作空间，不是单个 git 仓库
+    - 项目在 ./projects/ 目录下，每个是独立的 git worktree
+    - git 命令必须在具体项目目录内执行
+    - 需要创建 PR 时，每个有变更的项目都要单独创建 PR
+    - **所有项目级命令必须在对应项目目录内执行**：
+      - 构建/测试/启动/安装依赖等命令（pnpm build, pnpm dev, pnpm test, npm run, mvn, go run 等）必须 cd 到 ./projects/{项目名}/ 再执行
+      - 禁止在 workspace 根目录执行 pnpm dev / pnpm build 等项目命令
+      - 根据需求和上下文判断应该在哪个项目目录执行命令，工作空间内可能有多个项目
+      - 示例: `cd projects/xzf-octopus && pnpm dev`
+
+auto_answers:
+  - pattern: ".*"
+    answer: "proceed"
+
+# ── Notify 子系统配置 ──
+providers:
+  hermes-cli:
+    type: hermes
+    timeout: 30
+    min_severity: info
+
+channels:
+  default:
+    provider: hermes-cli
+    target: "telegram:xzf_hermes"
+
+hooks:
+  on_node_success:
+    - id: notify-setup
+      type: notify
+      nodes: [setup]
+      channel: default
+      template:
+        severity: info
+        title: "🔧 $vars.display_name 启动"
+        body: "📂 项目: $vars.projects\n🌿 PR #$vars.pr_number_clean: $vars.pr_title\n🔗 $vars.pr_url\n🎯 合并目标: $vars.pr_branch → $inputs.base_branch\n✏️ 修改要求: ${modifications | default:(无)}"
+
+    - id: notify-pull-merge-conflict
+      type: notify
+      nodes: [pull-merge]
+      channel: default
+      condition: '$vars.has_conflicts == "true"'
+      template:
+        severity: warn
+        title: "⚠️ $vars.display_name — 检测到合并冲突"
+        body: "📂 项目: $vars.projects | 🌿 PR #$vars.pr_number_clean\n📁 冲突文件: $vars.conflict_files\n🔄 正在尝试自动解决..."
+
+    - id: notify-pull-merge-ok
+      type: notify
+      nodes: [pull-merge]
+      channel: default
+      condition: '$vars.has_conflicts != "true"'
+      template:
+        severity: info
+        title: "✅ $vars.display_name — 合并 $inputs.base_branch 成功"
+        body: "📂 项目: $vars.projects | 🌿 PR #$vars.pr_number_clean\n无冲突，继续后续阶段"
+
+    - id: notify-conflict-resolve
+      type: notify
+      nodes: [conflict-resolve]
+      channel: default
+      template:
+        severity: info
+        title: "🔀 $vars.display_name — 冲突解决完成"
+        body: "📂 项目: $vars.projects | 🌿 PR #$vars.pr_number_clean\n\n💡 *解决结论*:\n$vars.conclusion"
+
+    - id: notify-approval-resolve
+      type: notify
+      nodes: [approval-resolve]
+      channel: default
+      template:
+        severity: error
+        title: "❌ $vars.display_name — 冲突无法自动解决"
+        body: "📂 项目: $vars.projects | 🌿 PR #$vars.pr_number_clean\n📁 冲突文件: $vars.conflict_files\n\n💡 *分析报告*:\n$vars.conclusion"
+
+    - id: notify-modify-start
+      type: notify
+      nodes: [modify-check]
+      channel: default
+      condition: '$vars.modifications != ""'
+      template:
+        severity: info
+        title: "✏️ $vars.display_name — 开始应用修改"
+        body: "📂 项目: $vars.projects | 🌿 PR #$vars.pr_number_clean\n📋 修改要求: $vars.modifications"
+
+    - id: notify-modify-skip
+      type: notify
+      nodes: [modify-check]
+      channel: default
+      condition: '$vars.modifications == ""'
+      template:
+        severity: info
+        title: "🔍 $vars.display_name — 跳过修改，进入代码审查"
+        body: "📂 项目: $vars.projects | 🌿 PR #$vars.pr_number_clean\n无修改要求"
+
+    - id: notify-modify
+      type: notify
+      nodes: [modify]
+      channel: default
+      template:
+        severity: info
+        title: "✏️ $vars.display_name — Modify 完成"
+        body: "📂 项目: $vars.projects | 🌿 PR #$vars.pr_number_clean\n\n💡 *修改结论*:\n$vars.conclusion"
+
+    - id: notify-review
+      type: notify
+      nodes: [review]
+      channel: default
+      template:
+        severity: info
+        title: "🔍 $vars.display_name — Review 完成"
+        body: "📂 项目: $vars.projects | 🌿 PR #$vars.pr_number_clean\n\n💡 *审查结论*:\n$vars.conclusion"
+
+    - id: notify-build-test-pass
+      type: notify
+      nodes: [build-test]
+      channel: default
+      condition: '$vars.build_passed == "true" && $vars.tests_passed == "true"'
+      template:
+        severity: info
+        title: "✅ $vars.display_name — Build-Test 通过"
+        body: "📂 项目: $vars.projects | 🌿 PR #$vars.pr_number_clean\n构建和测试全部通过，准备推送\n⚠️ 既有测试失败（非本次 PR 引起，已放行）:\n${preexisting_test_failures | default:(无）}"
+
+    - id: notify-build-test-fail
+      type: notify
+      nodes: [build-test]
+      channel: default
+      condition: '$vars.build_passed != "true" || $vars.tests_passed != "true"'
+      template:
+        severity: error
+        title: "❌ $vars.display_name — Build-Test 失败"
+        body: "📂 项目: $vars.projects | 🌿 PR #$vars.pr_number_clean\n⚠️ 构建或测试失败（3 轮修复后仍未通过）\n📝 $vars.test_failure_summary"
+
+    - id: notify-push-success
+      type: notify
+      nodes: [push]
+      channel: default
+      condition: '$vars.push_success == "true"'
+      template:
+        severity: info
+        title: "🚀 $vars.display_name — 推送成功"
+        body: "📂 项目: $vars.projects | 🌿 $vars.pr_branch\n🔗 PR #$vars.pr_number_clean: $vars.pr_url"
+
+    - id: notify-push-fail
+      type: notify
+      nodes: [push]
+      channel: default
+      condition: '$vars.push_success != "true"'
+      template:
+        severity: error
+        title: "❌ $vars.display_name — 推送失败"
+        body: "📂 项目: $vars.projects | 🌿 $vars.pr_branch\n💡 $vars.conclusion"
+
+  on_complete:
+    - id: notify-final-completed
+      type: notify
+      channel: default
+      condition: '$vars.final_status_label == "completed"'
+      template:
+        severity: info
+        title: "$vars.final_icon $vars.display_name — 最终状态: completed"
+        body: "📂 项目: $vars.projects\n🌿 PR #$vars.pr_number_clean: $vars.pr_title\n🔗 $vars.pr_url\n🎯 $vars.pr_branch → $inputs.base_branch\n📝 $vars.final_summary"
+
+    - id: notify-final-failed
+      type: notify
+      channel: default
+      condition: '$vars.final_status_label != "completed"'
+      template:
+        severity: error
+        title: "$vars.final_icon $vars.display_name — 最终状态: $vars.final_status_label"
+        body: "📂 项目: $vars.projects\n🌿 PR #$vars.pr_number_clean: $vars.pr_title\n🔗 $vars.pr_url\n🎯 $vars.pr_branch → $inputs.base_branch\n📝 $vars.final_summary"
+
+nodes:
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 0: Setup — 环境检测 + PR 信息获取 + 分支检出 (Agent)
+  # ═══════════════════════════════════════════════════════════════
+  - id: setup
+    type: agent
+    timeout: 600
+    prompt: |
+      你正在执行 PR Follow-Up 工作流的环境检测阶段。
+
+      $vars.workspace_rules
+
+      ## 输入
+      - PR URL: $inputs.pr_url
+      - 目标分支: $inputs.base_branch
+      - 用户修改要求: $inputs.modifications
+
+      ## 你的任务
+
+      ### 1. 安装 superpowers-zh 技能（必须首先执行）
+      ```bash
+      echo "Installing superpowers-zh skills..."
+      npx superpowers-zh@latest --tool claude --force 2>&1 | head -5
+      ```
+
+      ### 2. 解析 PR 信息
+      从 PR URL 解析 owner/repo 和 PR 编号:
+      ```bash
+      PR_URL_INPUT="$inputs.pr_url"
+      OWNER_REPO=$(echo "$PR_URL_INPUT" | grep -oE 'github\.com/[^/]+/[^/]+' | sed 's|github\.com/||')
+      PR_NUM=$(echo "$PR_URL_INPUT" | grep -oE '/pull/[0-9]+' | grep -oE '[0-9]+')
+      ```
+
+      ### 3. 查找匹配项目
+      遍历 `./projects/` 目录，通过 `git remote get-url origin` 匹配 PR 所属的项目:
+      ```bash
+      MATCHED_PROJECT=""
+      if [ -d projects ]; then
+        for dir in projects/*/; do
+          if [ -d "$dir/.git" ] || [ -f "$dir/.git" ]; then
+            proj="${dir%/}"
+            remote_url=$(git -C "$proj" remote get-url origin 2>/dev/null || echo "")
+            if echo "$remote_url" | grep -qE "(github\.com[:/]${OWNER_REPO}(\.git)?$|^${OWNER_REPO}$)"; then
+              MATCHED_PROJECT="$proj"
+              break
+            fi
+          fi
+        done
+      fi
+      ```
+      如果未找到匹配项目，报告错误并停止。
+
+      ### 4. 配置 Git 用户
+      ```bash
+      cd "$MATCHED_PROJECT"
+      git config user.email 2>/dev/null || git config user.email "octopus-bot@noreply.github.com"
+      git config user.name 2>/dev/null || git config user.name "Octopus Bot"
+      ```
+
+      ### 5. 获取 PR 详细信息（关键步骤）
+      使用 `gh pr view` 获取 PR 元数据:
+      ```bash
+      PR_JSON=$(gh pr view "$PR_NUM" --json headRefName,title,url,state,baseRefOid 2>&1)
+      ```
+      然后用 `jq` 逐个提取字段:
+      ```bash
+      PR_BRANCH=$(echo "$PR_JSON" | jq -r '.headRefName')
+      PR_TITLE=$(echo "$PR_JSON" | jq -r '.title')
+      PR_URL=$(echo "$PR_JSON" | jq -r '.url')
+      PR_STATE=$(echo "$PR_JSON" | jq -r '.state')
+      PR_BASE_SHA=$(echo "$PR_JSON" | jq -r '.baseRefOid')
+      ```
+
+      **验证提取结果**: 确认 PR_BRANCH、PR_TITLE、PR_URL 均非空。如果 `jq` 不可用，用 grep/sed 从 JSON 提取:
+      ```bash
+      PR_TITLE=$(echo "$PR_JSON" | grep -o '"title":"[^"]*"' | cut -d'"' -f4)
+      PR_URL=$(echo "$PR_JSON" | grep -o '"url":"[^"]*"' | cut -d'"' -f4)
+      ```
+
+      如果 PR 已 MERGED 或 CLOSED，报告错误并停止。
+
+      ### 6. 检出 PR 分支
+      ```bash
+      git fetch origin
+      git checkout "$PR_BRANCH" || git checkout -b "$PR_BRANCH" "origin/$PR_BRANCH" || gh pr checkout "$PR_NUM"
+      ```
+
+      ### 7. 检测包管理器和构建命令
+      **必须通用，不能假设特定技术栈**:
+      - 查看项目根目录文件，判断项目类型
+      - 确定 package manager（pnpm/yarn/npm/cargo/go/maven/gradle/make/...）
+      - 确定 build 命令（检查 package.json scripts / Makefile / pom.xml / build.gradle / Cargo.toml / go.mod 等）
+      - 确定 test 命令
+      - 确定 lint 命令（如果有）
+      - 如果无法确定某个命令，对应字段留空
+
+      ### 8. 获取项目路径
+      ```bash
+      PROJECT_PATH=$(pwd)
+      ```
+
+      ## 输出要求
+
+      在回复末尾输出 JSON（必须是最后一行）:
+      ```json
+      {"vars_update":{
+        "projects":"<项目目录名>",
+        "project_path":"<项目绝对路径>",
+        "project_name":"<项目名称>",
+        "pr_branch":"<步骤5提取的PR_BRANCH值>",
+        "pr_title":"<步骤5提取的PR_TITLE值>",
+        "pr_url":"<步骤5提取的PR_URL值>",
+        "pr_number_clean":"<PR编号>",
+        "pr_base_sha":"<步骤5提取的PR_BASE_SHA值>",
+        "build_cmd":"<构建命令或空>",
+        "test_cmd":"<测试命令或空>",
+        "lint_cmd":"<lint命令或空>",
+        "pkg_manager":"<包管理器或空>",
+        "modifications":"<用户修改要求原文>",
+        "display_name":"<步骤9计算的值>"
+      }}
+      ```
+
+      ### 9. 计算 display_name（必须非空）
+      display_name 用于所有通知消息中标识当前执行，**绝对不能为空**:
+      - 执行名称: `$vars.execution_name`
+      - 工作流名称: `$vars.workflow_name`
+      - 优先使用执行名称，如果为空则使用工作流名称，如果都为空则使用 "PR Follow-Up"
+      - 示例输出: `"display_name":"PR-28-fix-auth"` 或 `"display_name":"basic-pr-cr-flow"`
+
+      ## 规则
+      - 无人值守模式，直接执行
+      - **必须首先安装 superpowers-zh，这是前置条件**
+      - **PR 元数据（pr_branch, pr_title, pr_url, pr_base_sha）必须从 gh pr view 实际提取，不能留空**
+      - **display_name 必须非空**
+      - JSON 输出前不要有多余的 ```json 标记，直接输出 JSON 行
+      - 确保 JSON 中的特殊字符（引号、换行）已正确转义
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 1: Pull-Merge — 拉取最新 base 分支并尝试合并 (Agent)
+  # ═══════════════════════════════════════════════════════════════
+  - id: pull-merge
+    type: agent
+    depends_on: [setup]
+    timeout: 300
+    prompt: |
+      你正在执行 PR Follow-Up 工作流的合并阶段。
+
+      $vars.workspace_rules
+
+      ## 环境信息
+      - 项目目录: $vars.project_path
+      - PR 分支: $vars.pr_branch
+      - 目标分支: $inputs.base_branch
+
+      ## 你的任务
+
+      1. cd 到项目目录: `cd $vars.project_path`
+      2. 确认当前分支: `git rev-parse --abbrev-ref HEAD`
+      3. 拉取最新 base 分支: `git fetch origin $inputs.base_branch`
+      4. 尝试合并: `git merge origin/$inputs.base_branch --no-edit`
+      5. 判断结果:
+         - 合并成功（exit 0）→ 报告无冲突
+         - 有冲突 → 列出冲突文件: `git diff --name-only --diff-filter=U`
+         - 合并失败但无冲突标记 → `git merge --abort`，报告为 merge_error
+
+      ## 输出要求
+
+      在回复末尾输出 JSON（必须是最后一行）:
+
+      无冲突时:
+      ```json
+      {"vars_update":{"has_conflicts":"false","conflict_files":"","conflict_reason":"none"}}
+      ```
+
+      有冲突时:
+      ```json
+      {"vars_update":{"has_conflicts":"true","conflict_files":"<逗号分隔的冲突文件列表>","conflict_reason":"merge_conflicts"}}
+      ```
+
+      合并非冲突失败时:
+      ```json
+      {"vars_update":{"has_conflicts":"false","conflict_files":"","conflict_reason":"merge_error"}}
+      ```
+
+      ## 规则
+      - 无人值守模式，直接执行
+      - 不要尝试解决冲突（后续阶段处理）
+      - JSON 输出前不要有多余的 ```json 标记
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 1.5: Conflict-Check — 路由
+  # ═══════════════════════════════════════════════════════════════
+  - id: conflict-check
+    type: condition
+    depends_on: [pull-merge]
+    cases:
+      - when: '$vars.has_conflicts == "false"'
+        then: modify-check
+      - when: default
+        then: conflict-resolve
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 2: Conflict-Resolve — 双向分析冲突并智能解决
+  # ═══════════════════════════════════════════════════════════════
+  - id: conflict-resolve
+    type: agent
+    timeout: 7200
+    prompt: |
+      你正在执行 PR Follow-Up 工作流的自动冲突解决阶段。
+
+      $vars.workspace_rules
+
+      ## 环境信息
+      - 项目目录: $vars.project_path
+      - PR 分支: $vars.pr_branch
+      - 目标分支: $inputs.base_branch
+      - PR 分支点 SHA: $vars.pr_base_sha
+      - 冲突文件: $vars.conflict_files
+
+      ## ⚠️ 核心原则：双向分析
+
+      你必须同时分析 PR 侧和 main 侧的变更意图，绝不能只看 PR。
+      main 在 PR 分支之后可能包含了重要的 bug 修复、安全补丁或功能改进。
+      **盲目以 PR 为准覆盖 main 的后续修复是最常见的错误。**
+
+      ## 你的任务
+
+      1. cd 到项目目录: `cd $vars.project_path`
+      2. 查看当前合并状态: `git status`
+
+      3. **分析 PR 侧** — PR 的意图和变更:
+         ```
+         git log $vars.pr_base_sha..HEAD --oneline --name-only
+         ```
+
+      4. **分析 main 侧** — main 在 PR 分支点之后对冲突文件的变更:
+         ```
+         git log $vars.pr_base_sha..origin/$inputs.base_branch --oneline --name-only
+         ```
+         对每个冲突文件，专门查看 main 做了什么:
+         ```
+         git log $vars.pr_base_sha..origin/$inputs.base_branch --oneline -- <冲突文件路径>
+         ```
+
+      5. 逐个分析冲突文件，读取冲突内容
+
+      6. 对每个冲突文件，按以下优先级判断:
+
+         **规则 A — Main 有后续修改（最高优先级）**:
+         如果 main 在 PR 分支点之后修改了该冲突文件（步骤 4 有结果），
+         说明 main 对该文件有意的后续改动（可能是 bug fix、安全修复等）。
+         → **保守处理**: 保留 main 的代码，或仔细合并两边，
+         → 不要盲目以 PR 版本覆盖 main 的后续修改。
+         → 如果无法安全合并，标记为 needs_human。
+
+         **规则 B — PR 明确提及的功能**:
+         如果冲突区域的代码在 PR 的 commit message 中被明确提及，
+         且 main 在 PR 分支点之后**没有**修改该文件，
+         → 以 PR 代码为准。
+
+         **规则 C — 非重叠变更**:
+         如果两边改的是不同部分，合并两边。
+
+         **规则 D — 无法判断**:
+         如果冲突涉及核心逻辑且无法从 commit 历史判断意图，
+         → 标记为 needs_human，不要猜测。
+
+      7. 解决冲突后:
+         ```
+         git add <resolved_files>
+         ```
+      8. 所有冲突解决后:
+         ```
+         git commit --no-edit
+         ```
+
+      ## 输出要求
+
+      在回复末尾输出 JSON（必须是最后一行）:
+      ```json
+      {"vars_update":{"display_name":"$vars.display_name","conflict_resolved":"<true或false>","conflict_resolution_summary":"<简要说明>","conclusion":"<2-3句话总结：分析了哪些冲突、采用了什么策略、最终结果>"}}
+      ```
+
+      - `conflict_resolved` 设为 "true" 表示所有冲突已安全解决
+      - `conflict_resolved` 设为 "false" 表示有无法自动解决的冲突（标记为 needs_human）
+
+      ## 规则
+      - 无人值守模式，直接给出最佳判断
+      - 不要修改非冲突区域的代码
+      - 保持代码功能完整性
+      - **不确定时，宁可标记 needs_human 也不要盲目以 PR 为准覆盖 main 的代码**
+      - **必须执行步骤 4 的 main 侧分析，这是强制要求**
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 2.5: Resolution-Check — 路由
+  # ═══════════════════════════════════════════════════════════════
+  - id: resolution-check
+    type: condition
+    depends_on: [conflict-resolve]
+    cases:
+      - when: '$vars.conflict_resolved == "true"'
+        then: modify-check
+      - when: default
+        then: approval-resolve
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 2.6: Approval-Resolve — 冲突无法自动解决
+  # ═══════════════════════════════════════════════════════════════
+  - id: approval-resolve
+    type: agent
+    timeout: 300
+    prompt: |
+      PR Follow-Up 工作流遇到无法自动安全解决的合并冲突。
+
+      $vars.workspace_rules
+
+      ## 环境信息
+      - 项目目录: $vars.project_path
+      - PR 分支: $vars.pr_branch
+      - PR 编号: $vars.pr_number_clean
+      - PR URL: $vars.pr_url
+      - 目标分支: $inputs.base_branch
+      - 冲突文件: $vars.conflict_files
+
+      ## 你的任务
+
+      冲突自动解决失败，你需要：
+
+      1. cd 到项目目录: `cd $vars.project_path`
+      2. 查看当前合并状态: `git status`
+      3. 查看未解决的冲突文件内容
+      4. 中止合并: `git merge --abort`
+      5. 生成冲突分析报告，包含：
+         - 每个冲突文件的冲突区域
+         - 无法自动解决的原因
+         - 建议的手动解决方向
+
+      6. **在回复末尾输出 JSON（必须是最后一行）**:
+      ```json
+      {"vars_update":{"display_name":"$vars.display_name","merge_aborted":"true","conflict_resolution_summary":"<冲突分析报告>","conclusion":"<2-3句话总结：哪些文件冲突无法解决、原因是什么、建议如何处理>"}}
+      ```
+
+      ## 规则
+      - 无人值守模式，直接执行
+      - 必须执行 git merge --abort，恢复干净的分支状态
+      - 不要尝试再次解决冲突
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 3.5: Modify-Check — 路由
+  # ═══════════════════════════════════════════════════════════════
+  - id: modify-check
+    type: condition
+    cases:
+      - when: '$vars.modifications != ""'
+        then: modify
+      - when: default
+        then: review
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 4: Modify — 根据用户描述的 modifications 修改代码
+  # ═══════════════════════════════════════════════════════════════
+  - id: modify
+    type: agent
+    timeout: 7200
+    prompt: |
+      你正在执行 PR Follow-Up 工作流的代码修改阶段。
+
+      $vars.workspace_rules
+
+      ## 环境信息
+      - 项目目录: $vars.project_path
+      - PR 分支: $vars.pr_branch
+      - 目标分支: $inputs.base_branch
+      - 包管理器: $vars.pkg_manager
+      - Lint 命令: $vars.lint_cmd
+      - 构建命令: $vars.build_cmd
+
+      ## 用户修改要求
+
+      $vars.modifications
+
+      ## 你的任务
+
+      1. cd 到项目目录: `cd $vars.project_path`
+      2. 查看当前分支状态:
+         ```
+         git status
+         git log --oneline -10
+         ```
+      3. 理解用户的修改意图：
+         - 仔细阅读 $vars.modifications 的描述
+         - 分析当前代码状态
+         - 确定需要修改的具体文件和位置
+      4. 执行代码修改：
+         - 修改相关代码文件
+         - 如果修改涉及新增功能，确保添加相应的测试
+         - 如果修改涉及 API 变更，更新相关文档
+      5. 运行 lint 检查（如果 $vars.lint_cmd 非空）:
+         ```
+         $vars.lint_cmd
+         ```
+      6. 运行构建检查（如果 $vars.build_cmd 非空）:
+         ```
+         $vars.build_cmd
+         ```
+      7. 提交修改:
+         ```
+         git add -A
+         git diff --cached --quiet || git commit -m "feat: apply user modifications from pr-follow-up-flow"
+         ```
+
+      ## 输出要求
+
+      在回复末尾输出 JSON（必须是最后一行）:
+      ```json
+      {"vars_update":{"display_name":"$vars.display_name","modify_done":"true","modify_summary":"<修改摘要，列出修改的文件和改动要点>","conclusion":"<2-3句话总结：修改了哪些文件、做了什么改动、是否符合预期>"}}
+      ```
+
+      ## 规则
+      - 无人值守模式，直接给出最佳判断
+      - 只修改用户描述中明确要求的部分
+      - 不做无关的代码改进
+      - 如果修改描述模糊无法理解，记录在 modify_summary 中并设置 modify_done=true
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 5: Review — 代码审查 + 修复
+  # ═══════════════════════════════════════════════════════════════
+  - id: review
+    type: agent
+    timeout: 7200
+    skills:
+      - requesting-code-review
+    prompt: |
+      你正在执行 PR Follow-Up 工作流的代码审查阶段。
+
+      $vars.workspace_rules
+
+      ## 环境信息
+      - 项目目录: $vars.project_path
+      - PR 分支: $vars.pr_branch
+      - 目标分支: $inputs.base_branch
+      - PR 编号: $vars.pr_number_clean
+
+      ## 你的任务
+
+      1. cd 到项目目录: `cd $vars.project_path`
+      2. 查看所有变更（相对于 base 分支）:
+         ```
+         git log origin/$inputs.base_branch..HEAD --oneline
+         git diff origin/$inputs.base_branch..HEAD --stat
+         ```
+      3. 逐文件审查代码变更，重点关注:
+         - **Bug**: 逻辑错误、边界条件、空指针
+         - **安全**: 注入、XSS、硬编码密钥、不安全的反序列化
+         - **性能**: N+1 查询、内存泄漏、不必要的重复计算
+         - **代码质量**: 命名不规范、重复代码、过长函数
+         - **类型安全**: 类型错误、类型断言滥用
+         - **合并残留**: 冲突标记、不完整的合并
+      4. 对发现的问题，**直接修复代码**（不做无关改动）
+      5. 如果有修复，提交:
+         ```
+         git add -A
+         git diff --cached --quiet || git commit -m "fix: address review issues from pr-follow-up-flow"
+         ```
+
+      ## 输出要求
+
+      在回复末尾输出 JSON（必须是最后一行）:
+      ```json
+      {"vars_update":{"display_name":"$vars.display_name","conclusion":"<2-3句话总结：发现多少问题、修复了多少、剩余问题严重程度（无/低/中/高）>"}}
+      ```
+
+      同时输出审查摘要：
+      ---REVIEW_SUMMARY---
+      发现问题数: X
+      已修复: Y
+      关键问题: [列表]
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 6: Build-Test — 构建 + 测试 + 自动修复循环（最多 3 轮）
+  # ═══════════════════════════════════════════════════════════════
+  - id: build-test
+    type: loop
+    depends_on: [review]
+    max_iterations: 3
+    break_when: '$vars.build_passed == "true" && $vars.tests_passed == "true"'
+    nodes:
+      - id: build-test-iteration
+        type: agent
+        timeout: 3600
+        prompt: |
+          构建或测试失败，你需要分析并修复。这是第 $iteration 轮修复尝试。
+
+          $vars.workspace_rules
+
+          ## 环境信息
+          - 项目目录: $vars.project_path
+          - Lint 命令: $vars.lint_cmd
+          - 构建命令: $vars.build_cmd
+          - 测试命令: $vars.test_cmd
+          - Lint 状态: $vars.lint_passed
+          - 构建状态: $vars.build_passed
+          - 测试状态: $vars.tests_passed
+          - 上次测试失败摘要: $vars.test_failure_summary
+
+          ## 你的任务
+
+          1. cd 到项目目录: `cd $vars.project_path`
+
+          2. **如果 Lint 失败** ($vars.lint_passed == "false"):
+             - 先尝试自动修复: `$vars.lint_cmd --fix` 或对应的 fix 命令
+             - 如果自动修复不完整，手动修复剩余问题
+             - 重新运行 lint 验证
+
+          3. **如果构建失败** ($vars.build_passed == "false"):
+             - 运行 `$vars.build_cmd` 获取完整错误输出
+             - 分析错误原因:
+               - **类型/编译错误** → 修复类型定义或编译问题
+               - **导入错误** → 修复 import 路径
+               - **语法错误** → 修复语法
+               - **合并残留** → 清理冲突标记
+               - **依赖问题** → 检查依赖配置
+             - 修复后重新运行构建验证
+
+          4. **如果测试失败** ($vars.tests_passed == "false"):
+             - 运行 `$vars.test_cmd` 获取完整输出
+             - **先做 PR 因果关系判断，再决定是否修复**:
+
+               a. 获取 PR 变更文件:
+                  ```
+                  git diff origin/$inputs.base_branch...HEAD --name-only
+                  ```
+               b. 对每个失败的测试，分析失败是否由 PR 变更引起:
+                  - PR 变更了该测试覆盖的源码文件 → PR 引起，需要修复
+                  - PR 未变更相关文件 → 既有失败，**不尝试修复**
+                  - 基础设施类失败（DB连接/网络/环境变量）→ 通常非 PR 引起
+
+             - 修复策略（仅针对 PR 引起的失败）:
+               - **PR 变更导致的失败** → 修复 PR 代码
+               - **测试期望值过时** → 仅在 PR 确实改变了行为时才更新测试
+               - **不要**为了让测试通过而删除测试或降低测试覆盖
+               - **既有失败不修复** — 记录在 summary 中但不尝试解决
+             - 修复后重新运行测试验证
+
+          5. 如果修复成功，提交:
+             ```
+             git add -A
+             git diff --cached --quiet || git commit -m "fix: resolve build/test issues (round $iteration)"
+             ```
+
+          ## 输出要求
+
+          在回复末尾输出 JSON（必须是最后一行）:
+          ```json
+          {"vars_update":{
+            "display_name":"$vars.display_name",
+            "conclusion":"<修复摘要：修复了什么问题、结果如何>"
+          }}
+          ```
+
+          ## 规则
+          - 无人值守模式
+          - 优先修复代码而非测试
+          - 每轮只修复明确识别的问题
+          - 不要做无关的代码改进
+
+      - id: reverify
+        type: agent
+        timeout: 7200
+        prompt: |
+          你正在执行修复后的重新验证。
+
+          $vars.workspace_rules
+
+          ## 环境信息
+          - 项目目录: $vars.project_path
+          - PR 分支: $vars.pr_branch
+          - 目标分支: $inputs.base_branch
+          - Lint 命令: $vars.lint_cmd
+          - 构建命令: $vars.build_cmd
+          - 测试命令: $vars.test_cmd
+
+          ## 你的任务
+
+          1. cd 到项目目录: `cd $vars.project_path`
+
+          2. **依次运行验证**（命令为空则跳过该步）:
+             a. Lint: `$vars.lint_cmd`（如果非空）
+             b. 构建: `$vars.build_cmd`（如果非空）
+             c. 测试: `$vars.test_cmd`（如果非空）
+
+          3. **分析每步结果**:
+             - 成功 → 标记为通过
+             - 失败 → 提取关键错误信息作为失败摘要
+             - 命令为空 → 标记为通过（跳过）
+
+          4. **测试失败的 PR 因果关系判断（重要）**:
+
+             如果测试失败，**不要立即标记为失败**。先判断失败是否由本次 PR 引起：
+
+             a. 获取 PR 变更的文件列表:
+                ```
+                git diff origin/$inputs.base_branch...HEAD --name-only
+                ```
+
+             b. 分析每个失败的测试:
+                - 失败的测试文件路径
+                - 该测试测试的源代码文件路径
+                - 该测试依赖的模块/工具文件路径
+
+             c. 判断因果关系:
+                - 如果 PR 变更的文件与失败测试的文件/依赖**有交集** → 是 PR 引起的失败
+                - 如果 PR 变更的文件与失败测试的文件/依赖**无交集** → 是既有失败，非 PR 引起
+                - 对于基础设施类失败（数据库连接、网络超时、环境变量缺失等）→ 通常非 PR 引起
+
+             d. 结果处理:
+                - **全部失败都由 PR 引起** → tests_passed = "false"，test_failure_summary 记录详情
+                - **部分失败由 PR 引起，部分为既有** → tests_passed = "false"，test_failure_summary 区分说明
+                - **全部失败均为既有问题（非 PR 引起）** → tests_passed = "true"，preexisting_test_failures 记录既有失败列表，test_failure_summary 说明"所有失败均为既有问题，非本次 PR 引起"
+
+          ## 输出要求
+
+          在回复末尾输出 JSON（必须是最后一行）:
+          ```json
+          {"vars_update":{
+            "display_name":"$vars.display_name",
+            "lint_passed":"<true或false>",
+            "build_passed":"<true或false>",
+            "tests_passed":"<true或false>",
+            "test_failure_summary":"<失败摘要，通过时为空>",
+            "preexisting_test_failures":"<既有失败列表，无则为空>"
+          }}
+          ```
+
+          ## 规则
+          - 无人值守模式，直接执行
+          - 只报告结果，不修复代码（修复由上一轮 agent 负责）
+          - 命令为空字符串时对应检查标记为 true（跳过）
+          - 失败摘要要简洁精确，便于下一轮 agent 定位问题
+          - **既有测试失败不应阻塞 PR 流程** — 只要能证明不是本次 PR 引起的，就放行
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 6.5: Build-Check — 路由
+  # ═══════════════════════════════════════════════════════════════
+  - id: build-check
+    type: condition
+    depends_on: [build-test]
+    cases:
+      - when: '$vars.build_passed == "true" && $vars.tests_passed == "true"'
+        then: push
+      - when: default
+        then: notify
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 7: Push — 提交并推送所有变更
+  # ═══════════════════════════════════════════════════════════════
+  - id: push
+    type: agent
+    timeout: 600
+    prompt: |
+      你正在执行 PR Follow-Up 工作流的推送阶段。
+
+      $vars.workspace_rules
+
+      ## 环境信息
+      - 项目目录: $vars.project_path
+      - PR 分支: $vars.pr_branch
+      - 目标分支: $inputs.base_branch
+      - PR 编号: $vars.pr_number_clean
+      - PR URL: $vars.pr_url
+      - 提交策略: $inputs.merge_strategy
+
+      ## 你的任务
+
+      1. cd 到项目目录: `cd $vars.project_path`
+      2. 检查当前状态:
+         ```
+         git status
+         git log --oneline -10
+         ```
+      3. 如果有未提交的修复，提交:
+         ```
+         git add -A
+         git diff --cached --quiet || git commit -m "fix: final fixes from pr-follow-up-flow"
+         ```
+      4. 推送 PR 分支到 origin（重试最多 2 次）:
+         ```
+         git push -u origin $vars.pr_branch
+         ```
+         如果 push 失败:
+         - 检查错误信息
+         - 如果是 non-fast-forward，先 `git pull --rebase origin $vars.pr_branch` 再重试 push
+         - 如果是网络错误，等待 5 秒后重试
+         - 最多重试 2 次
+      5. 推送成功后，输出:
+         ```
+         echo "推送成功 ✓"
+         echo "PR URL: $vars.pr_url"
+         ```
+
+      ## 输出要求
+
+      在回复末尾输出 JSON（必须是最后一行）:
+      - 成功时:
+      ```json
+      {"vars_update":{"display_name":"$vars.display_name","push_success":"true","conclusion":"推送成功，PR 已更新"}}
+      ```
+      - 失败时:
+      ```json
+      {"vars_update":{"display_name":"$vars.display_name","push_success":"false","push_error":"<错误信息>","conclusion":"<推送失败原因和建议>"}}
+      ```
+
+      ## 规则
+      - 无人值守模式，直接执行
+      - 推送失败时重试最多 2 次
+      - 不要使用 --force push，除非是 non-fast-forward 且确认安全
+      - 推送失败时输出详细错误信息
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 8: Notify — 最终状态通知 + 失败退出
+  # ═══════════════════════════════════════════════════════════════
+  - id: notify
+    type: bash
+    depends_on: [push, build-check]
+    timeout: 60
+    bash: |
+      echo "=== 最终状态判定 ==="
+
+      # 判断最终状态
+      STATUS="completed"
+      ICON="✅"
+      SUMMARY="流程完成"
+
+      if [ "$vars.merge_aborted" = "true" ]; then
+        STATUS="aborted"
+        ICON="🚫"
+        SUMMARY="冲突无法自动解决，已中止合并"
+      elif [ "$vars.build_passed" = "false" ] || [ "$vars.tests_passed" = "false" ]; then
+        STATUS="failed"
+        ICON="❌"
+        SUMMARY="构建或测试失败（3 轮修复后仍未通过）"
+      elif [ "$vars.push_success" = "false" ]; then
+        STATUS="failed"
+        ICON="❌"
+        PUSH_ERROR="$vars.push_error"
+        if [ -z "$PUSH_ERROR" ]; then
+          PUSH_ERROR="unknown error"
+        fi
+        SUMMARY="推送失败: $PUSH_ERROR"
+      fi
+
+      echo "Status:    ${STATUS}"
+      echo "PR:        $vars.pr_url"
+      echo "Branch:    $vars.pr_branch → $inputs.base_branch"
+      echo "Conflicts: $vars.has_conflicts (resolved: $vars.conflict_resolved)"
+      echo "Modify:    $vars.modify_done"
+      echo "Build:     $vars.build_passed"
+      echo "Tests:     $vars.tests_passed"
+      echo "Push:      $vars.push_success"
+
+      # 工作流失败时标记节点状态为 failed，引擎自动终止整个执行
+      if [ "$STATUS" = "failed" ] || [ "$STATUS" = "aborted" ]; then
+        printf '{"vars_update":{"notified":"true","final_status_label":"%s","final_icon":"%s","final_summary":"%s","__status":"failed"}}\n' "$STATUS" "$ICON" "$SUMMARY"
+      else
+        printf '{"vars_update":{"notified":"true","final_status_label":"%s","final_icon":"%s","final_summary":"%s"}}\n' "$STATUS" "$ICON" "$SUMMARY"
+      fi

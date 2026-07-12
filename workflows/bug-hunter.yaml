@@ -1,0 +1,878 @@
+# yaml-language-server: $schema=./workflow-schema.json
+apiVersion: octopus/v1
+kind: Workflow
+name: bug-hunter
+description: >
+  Bug Hunter — 端到端 BUG 发现→100%复现验证→修复→PR 工作流。
+  15 节点，使用引擎原生 loop/condition 保障关键环节。
+  流程: Setup → Merge Main → Scan → [Gate] → Verify-Reproduce (Loop)
+        → [Gate] → Fix → Fix-Verify (Loop) → [Gate] → Ship → Done。
+  特性: 事实依据优先、reality-checker 引擎级门控、最小复现验证、对抗审查。
+
+model: "pro-max"
+engine: claude
+execution_mode: auto
+max_concurrent: 3
+timeout: 28800
+
+inputs:
+  project_dir:
+    description: "projects/ 下的项目目录名（带 org 前缀，如 xzf-open-octopus）"
+    required: false
+    default: "xzf-open-octopus"
+  scan_scope:
+    description: "扫描范围: 'all' 或 'packages:<list>'（逗号分隔包名）"
+    required: false
+    default: "all"
+  min_severity:
+    description: "最低报告严重级别: P0/P1/P2/P3/P4"
+    required: false
+    default: "P2"
+  max_verify_rounds:
+    description: "复现验证最大轮数"
+    required: false
+    default: "5"
+  max_fix_rounds:
+    description: "修复验证最大轮数"
+    required: false
+    default: "5"
+  base_branch:
+    description: "PR 目标分支"
+    required: false
+    default: "main"
+
+variables:
+  # ── 环境 ──
+  pkg_manager: "pnpm"
+  branch: ""
+  display_name: "Bug Hunter"
+
+  # ── 扫描 ──
+  candidate_count: "0"
+  candidates: ""
+
+  # ── 复现验证 ──
+  confirmed: "false"
+  confirmed_bug: ""
+  confirmed_severity: ""
+  confirmed_fingerprint: ""
+  all_checked: "false"
+  reproduce_evidence: ""
+  verified_bugs: ""
+  rejected_bugs: ""
+
+  # ── 修复 ──
+  fix_applied: "false"
+  root_cause: ""
+  fix_plan: ""
+  fix_files_changed: ""
+
+  # ── 修复验证 ──
+  fixed: "false"
+  fix_evidence: ""
+
+  # ── 交付 ──
+  pr_url: ""
+  conclusion: ""
+  report_dir: ""
+
+auto_answers:
+  - pattern: ".*"
+    answer: "proceed"
+
+# ── Notify 子系统 ──
+providers:
+  hermes-cli:
+    type: hermes
+    timeout: 30
+    min_severity: info
+
+channels:
+  default:
+    provider: hermes-cli
+    target: "telegram:xzf_hermes"
+
+hooks:
+  on_workflow_failure:
+    - id: notify-failure
+      type: notify
+      channel: default
+      template:
+        severity: error
+        title: "❌ $vars.display_name — 工作流失败"
+        body: "🔴 失败节点: ${hook.failed_node_id | default:unknown}\n⏱️ 已运行: ${hook.total_duration_ms | duration}\n💡 错误: ${hook.error | default:Unknown error}"
+
+  on_complete:
+    - id: notify-complete
+      type: notify
+      channel: default
+      template:
+        severity: info
+        title: "🏁 $vars.display_name — 工作流完成"
+        body: "状态: $hook.final_status\n✅ 完成: $hook.completed_count / ⏭️ 跳过: $hook.skipped_count / ❌ 失败: $hook.failed_count\n⏱️ 总耗时: ${hook.total_duration_ms | duration}\n💡 $vars.conclusion"
+
+  on_interrupt:
+    - id: notify-interrupt
+      type: notify
+      channel: default
+      template:
+        severity: warn
+        title: "⚡ $vars.display_name — 中断"
+        body: "工作流被中断，已完成 $hook.completed_count 个节点"
+
+  on_cancel:
+    - id: notify-cancel
+      type: notify
+      channel: default
+      template:
+        severity: warn
+        title: "🚫 $vars.display_name — 取消"
+        body: "工作流被用户取消"
+
+  on_node_success:
+    - id: notify-setup
+      type: notify
+      nodes: [setup]
+      channel: default
+      template:
+        severity: info
+        title: "🚀 $vars.display_name — Setup 完成"
+        body: "📂 项目: $vars.project_dir\n🌿 分支: $vars.branch\n📦 包管理: $vars.pkg_manager"
+
+    - id: notify-merge
+      type: notify
+      nodes: [merge-main]
+      channel: default
+      template:
+        severity: info
+        title: "🔀 $vars.display_name — Merge Main 完成"
+        body: "🌿 已合并 origin/$inputs.base_branch"
+
+    - id: notify-scan
+      type: notify
+      nodes: [scan]
+      channel: default
+      template:
+        severity: info
+        title: "🔍 $vars.display_name — Scan 完成"
+        body: "📊 候选 BUG: $vars.candidate_count\n💡 $vars.conclusion"
+
+    - id: notify-verify
+      type: notify
+      nodes: [verify-reproduce]
+      channel: default
+      template:
+        severity: info
+        title: "🧪 $vars.display_name — 复现验证完成"
+        body: "✅ 已确认: $vars.verified_bugs\n✗ 已拒绝: $vars.rejected_bugs\n📝 详见 scan-report.md Status 列"
+
+    - id: notify-fix
+      type: notify
+      nodes: [fix]
+      channel: default
+      template:
+        severity: info
+        title: "🔧 $vars.display_name — Fix 完成"
+        body: "📄 变更文件: $vars.fix_files_changed\n🔧 修复 BUG: $vars.verified_bugs"
+
+    - id: notify-fix-verify
+      type: notify
+      nodes: [fix-verify]
+      channel: default
+      template:
+        severity: info
+        title: "✅ $vars.display_name — 修复验证完成"
+        body: "🔧 已修复: $vars.fixed\n📝 证据: $vars.fix_evidence"
+
+    - id: notify-ship
+      type: notify
+      nodes: [ship]
+      channel: default
+      template:
+        severity: info
+        title: "🚢 $vars.display_name — Ship 完成"
+        body: "🔗 PR: $vars.pr_url\n🐛 修复: $vars.verified_bugs"
+
+nodes:
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 0: Setup — 环境准备 + Agent 安装
+  # ═══════════════════════════════════════════════════════════════
+  - id: setup
+    type: agent
+    timeout: 600
+    skills: [octo-bug-investigation]
+    prompt: |
+      你正在执行 Bug Hunter 工作流的环境准备阶段。
+
+      ## 你的任务
+
+      ### 1. 安装 superpowers-zh 技能
+      ```bash
+      npx superpowers-zh@latest --tool claude --force 2>&1 | tail -3
+      ```
+
+      ### 2. 安装 agency-agents-zh 角色库
+      ```bash
+      AGENTS_TARGET="$(pwd)/.claude/agents"
+      mkdir -p "$AGENTS_TARGET"
+
+      NEED_CLONE=false
+      for agent in engineering-software-architect engineering-code-reviewer engineering-security-engineer; do
+        if [ ! -f "$AGENTS_TARGET/$agent.md" ]; then
+          NEED_CLONE=true
+          break
+        fi
+      done
+
+      if [ "$NEED_CLONE" = "true" ]; then
+        DEPS_DIR="$(pwd)/dependencies"
+        mkdir -p "$DEPS_DIR"
+        if [ ! -d "$DEPS_DIR/agency-agents-zh" ]; then
+          git clone --depth 1 https://github.com/jnMetaCode/agency-agents-zh.git "$DEPS_DIR/agency-agents-zh" 2>&1
+        fi
+        REPO="$DEPS_DIR/agency-agents-zh"
+        for f in engineering-software-architect engineering-code-reviewer engineering-security-engineer; do
+          [ -f "$REPO/engineering/$f.md" ] && cp "$REPO/engineering/$f.md" "$AGENTS_TARGET/"
+        done
+        echo "Installed agency agents"
+      else
+        echo "Agency agents already installed"
+      fi
+      ```
+
+      ### 3. 安装 core-pack 内置 agents
+      ```bash
+      AGENTS_TARGET="$(pwd)/.claude/agents"
+      COREPACK_AGENTS=""
+      for d in "$(pwd)/.octopus/core-pack/agents" "$(pwd)/packages/core-pack/agents" "$(pwd)/../core-pack/agents"; do
+        if [ -f "$d/devil-advocate.md" ]; then COREPACK_AGENTS="$d"; break; fi
+      done
+      if [ -n "$COREPACK_AGENTS" ]; then
+        for f in devil-advocate architecture-explorer vision-analyzer; do
+          [ -f "$COREPACK_AGENTS/$f.md" ] && cp "$COREPACK_AGENTS/$f.md" "$AGENTS_TARGET/"
+        done
+        echo "Installed core-pack agents from $COREPACK_AGENTS"
+      fi
+      ```
+
+      ### 4. 环境检测
+      ```bash
+      PROJECT_DIR="projects/$inputs.project_dir"
+      if [ ! -d "$PROJECT_DIR" ]; then
+        echo "ERROR: $PROJECT_DIR not found"
+        exit 1
+      fi
+
+      cd "$PROJECT_DIR"
+      PKG="npm"
+      [ -f "pnpm-lock.yaml" ] && PKG="pnpm"
+      [ -f "yarn.lock" ] && PKG="yarn"
+
+      BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "main")
+      [ "$BRANCH" = "HEAD" ] && BRANCH="$inputs.base_branch"
+      cd -
+      ```
+
+      ### 5. 依赖检查
+      ```bash
+      which pnpm && which git && which gh && which curl
+      ```
+
+      ### 6. 创建报告目录
+      ```bash
+      REPORT_DIR="$HOME/.octopus/bug-hunter/$(date +%Y-%m-%d-%H%M%S)"
+      mkdir -p "$REPORT_DIR/reproduce" "$REPORT_DIR/fix-verify"
+      # 输出时使用 ~ 格式，避免暴露用户路径
+      REPORT_DIR_DISPLAY="~/.octopus/bug-hunter/$(basename "$REPORT_DIR")"
+      echo "Report directory: $REPORT_DIR_DISPLAY"
+      ```
+
+      ## 输出
+      在回复末尾直接输出纯 JSON:
+      {"vars_update":{"pkg_manager":"<包管理器>","branch":"<分支>","display_name":"Bug Hunter · $inputs.project_dir","report_dir":"~/.octopus/bug-hunter/<时间戳目录名>"}}
+
+      ## 规则
+      - 无人值守模式
+      - display_name 必须非空
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 1: Merge Main — 合并最新主分支代码
+  # ═══════════════════════════════════════════════════════════════
+  - id: merge-main
+    type: agent
+    depends_on: [setup]
+    timeout: 120
+    prompt: |
+      合并最新主分支代码到当前工作分支。
+
+      ## 环境
+      - 项目: projects/$inputs.project_dir
+      - 目标分支: $inputs.base_branch
+
+      ## 你的任务
+
+      ### 1. Fetch + Merge
+      ```bash
+      cd "projects/$inputs.project_dir"
+      git fetch origin "$inputs.base_branch"
+      ```
+
+      然后执行 merge:
+      ```bash
+      git merge "origin/$inputs.base_branch" --no-edit
+      ```
+
+      ### 2. 冲突处理
+      如果 merge 冲突:
+      ```bash
+      git merge --abort
+      ```
+      输出失败状态并停止:
+      {"vars_update":{"__status":"failed","conclusion":"merge 冲突，无法自动合并 origin/$inputs.base_branch"}}
+
+      ### 3. 成功
+      如果 merge 成功:
+      ```bash
+      git log --oneline -3
+      ```
+      输出确认信息。
+
+      ## 规则
+      - 无人值守模式
+      - 冲突时 abort，不尝试自动解决
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 2: Scan — 代码分析 + BUG 候选发现
+  # ═══════════════════════════════════════════════════════════════
+  - id: scan
+    type: swarm
+    depends_on: [merge-main]
+    timeout: 3600
+    topic: |
+      对 projects/$inputs.project_dir 的代码库进行深度 BUG 扫描。
+      扫描范围: $inputs.scan_scope
+      最低严重级别: $inputs.min_severity
+      重点关注 packages/engine/ 和 packages/server/ 的核心逻辑。
+      跳过: node_modules/, dist/, *.test.ts
+      报告目录: $vars.report_dir
+    mode: swarm
+    dynamic: true
+    max_experts: 5
+    context_tier: "200k"
+    output_format: structured
+    host:
+      role: bug-triage-host
+      model: "pro-max"
+      prompt: |
+        综合所有专家的扫描结果，执行 BUG 分诊:
+
+        1. **合并去重** — 不同专家可能发现同一 BUG，按 file:line 去重
+        2. **评估 confidence** (0-100) — 这是真正 BUG 的概率
+        3. **过滤** — 去掉 confidence < 60 或低于 $inputs.min_severity 的候选
+        4. **排序** — 按 severity (P0 > P1 > P2 > P3 > P4) 排序
+        5. **选出** — 最高优先级的 1 个候选（单 BUG 聚焦模式）
+
+        ## 落盘要求
+        将完整扫描报告写入 $vars.report_dir/scan-report.md，包含:
+        - 每个候选 BUG 的详细信息（severity/package/file/line/pattern/evidence）
+        - 专家来源标注（哪个专家发现的）
+        - 过滤和排序结果
+        - 最终选出的候选 BUG
+
+        **重要 — BUG 清单表格必须包含 Status 列**:
+        在排序结果表格中，第一列为 `| Status |`，所有条目标记为 `[ ]`。
+        格式示例:
+        ```
+        | Status | ID | 级别 | 置信度 | 文件 | 问题 |
+        |--------|------|------|--------|------|------|
+        | [ ] | BUG-001 | P1 | 95 | engine.ts:1202 | Pool 二次 Merge |
+        | [ ] | BUG-002 | P2 | 92 | execution.ts:114 | JSON.parse 无容错 |
+        ```
+        后续工作流节点会更新此列: `[✓] confirmed` / `[✗] rejected` / `[✓] fixed`
+
+        在报告末尾输出（必须是最后一行）:
+        {"vars_update":{"candidate_count":"<过滤后数量>","candidates":"<最高优先级候选JSON>","conclusion":"<扫描结论>"}}
+
+        同时输出评估 JSON:
+        ```json
+        {"assessment": {"consensus_score": 0.0-1.0, "should_continue": true/false, "summary": "一句话总结"}}
+        ```
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 2.5: Scan Gate — 是否有候选 BUG
+  # ═══════════════════════════════════════════════════════════════
+  - id: scan-gate
+    type: condition
+    depends_on: [scan]
+    cases:
+      - when: '$vars.candidate_count != "0"'
+        then: verify-reproduce
+      - when: default
+        then: no-bugs-found
+
+  - id: no-bugs-found
+    type: bash
+    depends_on: [scan-gate]
+    execute_when: '$vars.candidate_count == "0"'
+    timeout: 30
+    bash: |
+      echo "🎉 未发现符合条件的候选 BUG（severity >= $inputs.min_severity, confidence >= 60）"
+      echo "代码质量良好，工作流正常结束。"
+      printf '{"vars_update":{"__status":"failed","conclusion":"未发现 BUG，代码质量良好"}}\n'
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 3: Verify-Reproduce — 引擎级 100% 复现验证
+  # ═══════════════════════════════════════════════════════════════
+  - id: verify-reproduce
+    type: loop
+    depends_on: [scan-gate]
+    max_iterations: 20
+    break_when: '$vars.all_checked == "true"'
+    nodes:
+      - id: verify-round
+        type: agent
+        timeout: 3600
+        context: new
+        skills: [octo-bug-investigation]
+        agents:
+          evidence-collector:
+            description: "证据收集者 — 最小复现脚本 + 运行时证据链"
+            model: pro
+            tools: ["Bash", "Read", "Write", "Grep", "Glob"]
+            prompt: |
+              ## 复现证据收集
+
+              当前验证 BUG: $vars.current_bug
+              项目: projects/$inputs.project_dir
+              当前轮次: $iteration
+
+              ### 任务
+              1. 编写最小复现脚本（shell 或 Node.js），存放在 /tmp/bug-repro/
+              2. 执行复现脚本，捕获完整输出
+              3. 收集运行时证据:
+                 - 错误堆栈 / 异常输出
+                 - 相关日志
+                 - 与正常行为的对比
+              4. 如果第一次复现失败，分析原因并调整复现策略（最多 3 次尝试）
+
+              ### 复现要求
+              - 脚本必须是最小化的（只触发目标 BUG，不做无关操作）
+              - 必须可重复执行（幂等）
+              - 必须记录退出码和输出
+
+          reality-checker:
+            description: "现实检验者 — 默认 NOT CONFIRMED，要求铁证才确认"
+            model: "pro-max"
+            tools: ["Bash", "Read", "Grep"]
+            prompt: |
+              ## 复现验证现实检查
+
+              你是 BUG 复现的最终验证关卡。默认为 NOT CONFIRMED。
+
+              ### 自动失败触发
+              - 复现脚本没有实际执行（只有代码没有运行记录）
+              - 输出是模板化的（不是真实运行结果）
+              - 无法重复触发（第一次出现第二次不出现）
+              - 代码分析认为是 BUG 但运行时表现正常（by design）
+
+              ### 确认条件（全部满足才 CONFIRMED）
+              1. 复现脚本实际执行过，有真实输出
+              2. 输出明确显示了异常行为（非正常逻辑）
+              3. 至少成功复现 1 次
+              4. 排除了环境干扰（不是特定于测试环境的问题）
+
+              ### 输出
+              verdict: CONFIRMED / NOT_CONFIRMED
+              confidence: 0-100
+              evidence_summary: 一句话描述关键证据
+              fake_run_detected: true/false
+
+        prompt: |
+          你正在执行第 $iteration 轮复现验证。
+
+          ## 你的任务
+
+          ### Step 1: 读取 BUG 清单
+          读取 $vars.report_dir/scan-report.md，找到 Status 列为 `[ ]` 的 BUG。
+          如果没有 `[ ]` 项 → 设置 all_checked=true 并输出结果，结束本轮。
+
+          ### Step 2: 验证第一个未检查的 BUG
+          选取第一个 `[ ]` 状态的 BUG:
+          1. 委托 evidence-collector 编写并执行最小复现脚本
+          2. 委托 reality-checker 验证证据真实性
+
+          ### Step 3: 更新 scan-report.md
+          使用 Edit 工具更新 scan-report.md 中该 BUG 的 Status 列:
+          - CONFIRMED + confidence >= 80 → `[ ]` 改为 `[✓] confirmed`
+          - NOT_CONFIRMED → `[ ]` 改为 `[✗] rejected`
+
+          ### 落盘要求
+          - 复现脚本写入: $vars.report_dir/reproduce/repro-$iteration.sh
+          - 执行输出写入: $vars.report_dir/reproduce/repro-$iteration.log
+          - 证据链写入: $vars.report_dir/reproduce/evidence-$iteration.md
+
+          ### 判定逻辑
+          - 还有 `[ ]` 项 → all_checked=false（继续循环）
+          - 无 `[ ]` 项 → all_checked=true（循环结束）
+
+          ## 输出
+          {"vars_update":{
+            "all_checked":"<true/false>",
+            "verified_bugs":"<comma-separated confirmed BUG IDs>",
+            "rejected_bugs":"<comma-separated rejected BUG IDs>",
+            "current_bug":"<本轮验证的 BUG ID 和标题>",
+            "reproduce_evidence":"<关键证据摘要>"
+          }}
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 3.5: Reproduce Gate — BUG 是否已确认
+  # ═══════════════════════════════════════════════════════════════
+  - id: reproduce-gate
+    type: condition
+    depends_on: [verify-reproduce]
+    cases:
+      - when: '$vars.verified_bugs != ""'
+        then: fix
+      - when: default
+        then: bug-not-reproducible
+
+  - id: bug-not-reproducible
+    type: bash
+    depends_on: [reproduce-gate]
+    execute_when: '$vars.verified_bugs == ""'
+    timeout: 30
+    bash: |
+      echo "⚠️ 所有候选 BUG 均无法 100% 复现，工作流终止。"
+      echo "已拒绝: $vars.rejected_bugs"
+      echo "可能原因: by design、间歇性 BUG、环境依赖"
+      printf '{"vars_update":{"__status":"failed","conclusion":"所有 BUG 无法复现，需要更多证据"}}\n'
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 4: Fix — 根因分析 + 对抗审查 + 实现修复
+  # ═══════════════════════════════════════════════════════════════
+  - id: fix
+    type: agent
+    depends_on: [reproduce-gate]
+    timeout: 7200
+    context: new
+    skills: [systematic-debugging, test-driven-development]
+    agents:
+      diagnostician:
+        description: "根因分析专家 — 5 Whys 深度诊断 + 修复方案设计"
+        model: "pro-max"
+        agent_file: ".claude/agents/engineering-software-architect.md"
+        tools: ["Bash", "Read", "Grep", "Glob"]
+        maxTurns: 30
+        effort: high
+        prompt: |
+          ## 根因诊断
+
+          读取 $vars.report_dir/scan-report.md 中所有 `[✓] confirmed` 的 BUG。
+          对每个已确认 BUG 执行:
+
+          ### 任务（每个 BUG）
+          1. 5 Whys 追溯根因（5 层深度）
+          2. 评估影响面（受影响模块/功能/数据）
+          3. 设计修复方案:
+             - 最小修复（只修 BUG，不改架构）
+             - 评估回归风险
+          4. 列出需要修改的文件和行号
+
+          项目: projects/$inputs.project_dir
+
+      devil-advocate:
+        description: "魔鬼代言人 — 对抗审查修复方案"
+        model: "pro-max"
+        agent_file: ".claude/agents/devil-advocate.md"
+        tools: ["Read", "Grep", "Glob"]
+        maxTurns: 20
+        effort: high
+        prompt: |
+          ## 修复方案对抗审查
+
+          审查 diagnostician 的修复方案，挑战假设:
+          1. 修复是否真正解决根因？还是只处理表象？
+          2. 修复是否可能影响其他功能？
+          3. 极端情况下修复是否仍然有效？（空值、并发、大数据量）
+          4. 有没有更简单/更安全的修复方式？
+          5. 修复后需要哪些额外测试？
+
+          判定: ACCEPTED / NEEDS REVISION + 具体挑战点
+
+    prompt: |
+      你正在执行 Bug Hunter 工作流的修复阶段。
+
+      ## 你的任务
+
+      ### Step 1: 读取 BUG 清单
+      读取 $vars.report_dir/scan-report.md，找出所有 `[✓] confirmed` 的 BUG。
+      如果没有已确认 BUG → 输出空结果并结束。
+
+      ### Step 2: 逐项修复
+      对每个 `[✓] confirmed` 的 BUG，按优先级顺序:
+
+      1. **根因分析** — 委托 diagnostician 执行 5 Whys 深度诊断
+      2. **对抗审查**（P0-P1 强制执行）— 委托 devil-advocate 审查修复方案
+         如果 NEEDS REVISION → 修改方案 → 再次审查（最多 2 轮）
+      3. **实现修复** — 修改代码（Edit/Write）
+      4. **验证** — `cd projects/$inputs.project_dir && pnpm build && pnpm test`
+         失败 → 分析原因 → 修复 → 重试
+      5. **更新 scan-report.md** — 将该 BUG 的 Status 从 `[✓] confirmed` 改为 `[✓] fixed`
+
+      ### Step 3: 提交所有修复
+      ```bash
+      cd projects/$inputs.project_dir
+      git add -A
+      git diff --cached --stat
+      git commit -m "fix: resolve confirmed bugs from bug-hunter scan
+
+      Bugs fixed: $vars.verified_bugs"
+      ```
+
+      ## 规则
+      - 无人值守模式
+      - 修复必须是最小化的，不做无关改动
+      - 所有构建和测试必须通过
+      - 每个 BUG 修复后立即更新 scan-report.md 状态
+
+      ## 落盘要求
+      - 根因分析写入: $vars.report_dir/diagnosis.md（所有 BUG 汇总）
+      - 对抗审查写入: $vars.report_dir/adversarial.md（P0-P1 时）
+      - 代码 diff 写入: $vars.report_dir/fix-diff.patch
+
+      完成后输出:
+      {"vars_update":{
+        "fix_applied":"true",
+        "fix_files_changed":"<变更文件列表>",
+        "conclusion":"修复了 <N> 个已确认 BUG"
+      }}
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 5: Fix-Verify — 引擎级修复验证
+  # ═══════════════════════════════════════════════════════════════
+  - id: fix-verify
+    type: loop
+    depends_on: [fix]
+    max_iterations: 5
+    break_when: '$vars.fixed == "true"'
+    nodes:
+      - id: fix-verify-round
+        type: agent
+        timeout: 3600
+        context: new
+        agents:
+          evidence-collector:
+            description: "修复验证证据收集 — 复现脚本重跑 + 前后对比"
+            model: pro
+            tools: ["Bash", "Read", "Grep", "Glob"]
+            prompt: |
+              ## 修复验证证据收集
+
+              已修复 BUG: $vars.verified_bugs
+              项目: projects/$inputs.project_dir
+              当前验证轮次: $iteration
+
+              ### 任务
+              1. 读取 $vars.report_dir/scan-report.md 获取所有 `[✓] fixed` 的 BUG
+              2. 重新运行 $vars.report_dir/reproduce/ 下的复现脚本
+              3. 验证 BUG 不再出现
+              4. 运行相关包的完整测试: `cd projects/$inputs.project_dir && pnpm test`
+              5. 收集修复前后对比证据:
+                 - 修复前: BUG 触发时的输出/行为
+                 - 修复后: 相同操作的正常输出/行为
+
+          reality-checker:
+            description: "修复验证现实检查 — 默认 NOT FIXED，要求压倒性证据"
+            model: "pro-max"
+            tools: ["Bash", "Read", "Grep"]
+            prompt: |
+              ## 修复验证
+
+              默认为 NOT FIXED，只有压倒性证据才确认 FIXED。
+
+              ### 自动失败触发
+              - 复现脚本没有实际重跑
+              - 只有 1 次验证运行
+              - 回归测试 0 个通过
+              - git diff 为空（没有实际代码变更）
+              - 修复后引入了新的测试失败
+
+              ### 确认条件（全部满足才 FIXED）
+              1. 原始复现脚本重跑后 BUG 不再出现
+              2. 相关包的测试全部通过
+              3. 没有引入新的测试失败
+              4. 代码变更合理（不过度修改）
+
+              ### 输出
+              verdict: FIXED / NOT_FIXED / PARTIALLY_FIXED
+              confidence: 0-100
+              remaining_issues: 仍存在的问题列表
+
+        prompt: |
+          你正在执行第 $iteration 轮修复验证（最多 $inputs.max_fix_rounds 轮）。
+
+          ## BUG 信息
+          读取 $vars.report_dir/scan-report.md 获取所有 `[✓] fixed` 的 BUG。
+          已修复 BUG IDs: $vars.verified_bugs
+
+          ## 你的任务
+          1. 委托 evidence-collector 重跑所有复现脚本 + 收集对比证据
+          2. 委托 reality-checker 验证所有修复结果
+          3. 根据验证结果更新状态
+
+          ## 落盘要求
+          - 修复后复现输出写入: $vars.report_dir/fix-verify/verify-$iteration.log
+          - 前后对比证据写入: $vars.report_dir/fix-verify/evidence-$iteration.md
+            包含: 修复前行为 vs 修复后行为、回归测试结果、reality-checker 判定
+
+          ## 判定逻辑
+          - reality-checker: FIXED + confidence >= 80 → fixed=true
+          - NOT_FIXED → 分析原因，补充修复，下一轮重试
+          - PARTIALLY_FIXED → 分析剩余问题，补充修复
+
+          ## 输出
+          {"vars_update":{
+            "fixed":"<true/false>",
+            "fix_evidence":"<关键验证证据摘要>"
+          }}
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 5.5: Fix Gate — 修复是否成功
+  # ═══════════════════════════════════════════════════════════════
+  - id: fix-gate
+    type: condition
+    depends_on: [fix-verify]
+    cases:
+      - when: '$vars.fixed == "true"'
+        then: ship
+      - when: default
+        then: fix-failed
+
+  - id: fix-failed
+    type: bash
+    depends_on: [fix-gate]
+    execute_when: '$vars.fixed != "true"'
+    timeout: 30
+    bash: |
+      echo "❌ 修复验证 $inputs.max_fix_rounds 轮均未通过"
+      echo "已确认 BUG: $vars.verified_bugs"
+      echo "证据: $vars.fix_evidence"
+      printf '{"vars_update":{"__status":"failed","conclusion":"修复验证失败，需要人工介入"}}\n'
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 6: Ship — 提交 + 推送 + 创建 PR
+  # ═══════════════════════════════════════════════════════════════
+  - id: ship
+    type: agent
+    depends_on: [fix-gate]
+    timeout: 3600
+    prompt: |
+      修复已通过验证，进入最终交付阶段。
+
+      ## BUG 信息
+      读取 $vars.report_dir/scan-report.md 获取所有 `[✓] fixed` 的 BUG 列表。
+      已确认 BUG IDs: $vars.verified_bugs
+
+      ## 环境
+      - 项目: projects/$inputs.project_dir
+      - 基础分支: $inputs.base_branch
+
+      ## 你的任务
+
+      ### 1. 提交修复
+      ```bash
+      cd projects/$inputs.project_dir
+      git add -A
+      git diff --cached --stat
+      git commit -m "fix: resolve confirmed bugs from bug-hunter scan
+
+      Bugs fixed: $vars.verified_bugs
+      See scan-report.md for details"
+      ```
+
+      ### 2. 推送
+      ```bash
+      git push -u origin HEAD
+      ```
+      失败时 `git pull --rebase origin $inputs.base_branch` 后重试（最多 2 次）。
+
+      ### 3. 创建 PR
+      从 scan-report.md 提取所有 `[✓] fixed` 的 BUG 生成 PR body:
+      ```bash
+      gh pr create \
+        --base "$inputs.base_branch" \
+        --title "fix: resolve $vars.verified_bugs" \
+        --body "## BUG 修复
+
+      **Fixed BUGs**: $vars.verified_bugs
+
+      ## 变更文件
+      $vars.fix_files_changed
+
+      ## 完整报告
+      📁 $vars.report_dir/
+
+      详见 scan-report.md 中 Status 列为 \`[✓] fixed\` 的条目。"
+      ```
+
+      ## 规则
+      - 无人值守模式
+      - gh pr create 失败时重试最多 2 次
+      - 如果已有 PR，获取已有 URL
+
+      完成后输出:
+      {"vars_update":{"pr_url":"<PR URL>","conclusion":"修复 $vars.verified_bugs 并创建 PR"}}
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 7: Done — 汇总输出
+  # ═══════════════════════════════════════════════════════════════
+  - id: done
+    type: agent
+    depends_on: [ship]
+    timeout: 300
+    prompt: |
+      生成最终汇总报告。
+
+      ## 落盘要求
+      读取 $vars.report_dir/scan-report.md 的 Status 列，生成汇总:
+
+      写入 $vars.report_dir/summary.md:
+
+      ```markdown
+      # Bug Hunter Report Summary
+
+      ## 基本信息
+      - 项目: $inputs.project_dir
+      - 分支: $vars.branch → $inputs.base_branch
+
+      ## 状态统计
+      - [✓] fixed: <N> 个
+      - [✓] confirmed (未修复): <N> 个
+      - [✗] rejected: <N> 个
+      - [ ] 未验证: <N> 个
+
+      ## 已修复 BUG
+      (从 scan-report.md 提取所有 `[✓] fixed` 行)
+
+      ## 已确认但未修复 BUG
+      (从 scan-report.md 提取所有 `[✓] confirmed` 行，如有)
+
+      ## 已拒绝 BUG
+      (从 scan-report.md 提取所有 `[✗] rejected` 行)
+
+      ## PR
+      $vars.pr_url
+
+      ## 报告文件索引
+      - scan-report.md — BUG 清单（含 Status 追踪）
+      - reproduce/ — 复现脚本和证据
+      - diagnosis.md — 根因分析
+      - adversarial.md — 对抗审查（如有）
+      - fix-diff.patch — 代码变更
+      - fix-verify/ — 修复验证证据
+      ```
+
+      同时输出到控制台。
+
+      完成后输出:
+      {"vars_update":{"conclusion":"修复 $vars.verified_bugs 并创建 PR $vars.pr_url，完整报告: $vars.report_dir"}}

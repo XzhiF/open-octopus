@@ -1,0 +1,1083 @@
+# yaml-language-server: $schema=./workflow-schema.json
+apiVersion: octopus/v1
+kind: Workflow
+name: mvp-doc
+description: >
+  MVP Doc — 将 Idea 转化为结构化 MVP 文档的智能文档生成工作流。
+  核心创新: 智能检测 (Smart Detection) — 根据 MVP 特征自动判断 arch_type 并按需生成文档，
+  不是所有 MVP 都需要 UX/UI/data-model，避免过度文档化。
+  4 阶段: Define (setup→clarify→detect) → Specify (spec→ux→ui→data-model) → Plan (plan→tasks) → Verify (review→fix→output)。
+  输出: ai-docs/mvp-{name}/ 下的 feature-centric 文档树，含 FR-XXX → TEST-XXX → IMPL-XXX 可追溯 ID 链。
+  借鉴 mvp-builder 的 Document-Driven Development 方法论。
+
+model: pro-max
+engine: claude
+execution_mode: serial
+timeout: 86400
+
+inputs:
+  idea:
+    description: "MVP Idea 描述（自然语言，越详细越好）"
+    required: true
+  enable_adversarial:
+    description: "开启对抗审查（devil-advocate 质疑文档完整性）"
+    required: false
+    default: "true"
+  tech_stack:
+    description: "预设技术栈（如 'Next.js + Supabase'）。留空则由 detect 阶段自动推断。"
+    required: false
+    default: ""
+  output_root:
+    description: "输出根目录"
+    required: false
+    default: "./ai-docs"
+
+variables:
+  # ── 输出路径 ──
+  output_root: "./ai-docs"
+  output_dir: ""
+  mvp_name: ""
+  display_name: "MVP Doc"
+
+  # ── Clarify 阶段 ──
+  clarify_file: ""
+  project_type: ""
+  user_emphasis: ""
+  key_decisions: ""
+
+  # ── Detect 阶段（核心创新）──
+  has_ui: "false"
+  has_ux: "false"
+  has_data_model: "false"
+  has_api: "false"
+  is_backend_only: "false"
+  is_config_only: "false"
+  arch_type: ""
+  tech_stack_detected: ""
+  features_detected: ""
+  detect_file: ""
+
+  # ── 文档文件路径 ──
+  prd_file: ""
+  features_file: ""
+  readme_file: ""
+
+  # ── Review ──
+  review_file: ""
+  review_score: "0"
+  review_missing: ""
+  review_passed: "false"
+
+  # ── 通用 ──
+  conclusion: ""
+
+auto_answers:
+  - pattern: ".*"
+    answer: "proceed"
+
+# ── Notify 子系统配置 ──
+providers:
+  hermes-cli:
+    type: hermes
+    timeout: 30
+    min_severity: info
+
+channels:
+  default:
+    provider: hermes-cli
+    target: "telegram:xzf_hermes"
+
+hooks:
+  # ① 工作流失败
+  on_workflow_failure:
+    - id: notify-failure
+      type: notify
+      channel: default
+      template:
+        severity: error
+        title: "❌ $vars.display_name — 工作流失败"
+        body: "📝 Idea: $inputs.idea\n🔴 失败节点: ${hook.failed_node_id | default:unknown}\n⏱️ 已运行: ${hook.total_duration_ms | duration}\n\n💡 错误: ${hook.error | default:Unknown error}"
+
+  # ② 工作流完成
+  on_complete:
+    - id: notify-complete
+      type: notify
+      channel: default
+      template:
+        severity: info
+        title: "🏁 $vars.display_name — 工作流完成"
+        body: "状态: $hook.final_status\n✅ 完成: $hook.completed_count/$hook.total_count\n❌ 失败: $hook.failed_count\n⏱️ 总耗时: ${hook.total_duration_ms | duration}"
+
+  # ③ 节点级通知
+  on_node_success:
+    - id: notify-setup
+      type: notify
+      nodes: [setup]
+      channel: default
+      template:
+        severity: info
+        title: "🔨 $vars.display_name 启动"
+        body: "📝 Idea: $inputs.idea\n📂 输出: $vars.output_dir\n😈 对抗审查: $inputs.enable_adversarial"
+
+    - id: notify-clarify
+      type: notify
+      nodes: [clarify]
+      channel: default
+      template:
+        severity: info
+        title: "🧭 $vars.display_name — Clarify 完成"
+        body: "📂 项目类型: $vars.project_type\n🎯 重点: $vars.user_emphasis\n\n💡 $vars.conclusion"
+
+    - id: notify-detect
+      type: notify
+      nodes: [detect]
+      channel: default
+      template:
+        severity: info
+        title: "🎯 $vars.display_name — Smart Detection 完成"
+        body: "🏷️ 架构: $vars.arch_type\n🖥️ UI: $vars.has_ui | 🧩 UX: $vars.has_ux | 📊 Data: $vars.has_data_model | 🔌 API: $vars.has_api\n📦 技术栈: $vars.tech_stack_detected\n\n💡 $vars.conclusion"
+
+    - id: notify-spec
+      type: notify
+      nodes: [spec]
+      channel: default
+      template:
+        severity: info
+        title: "📋 $vars.display_name — Spec 完成"
+        body: "📄 PRD: $vars.prd_file\n📄 Features: $vars.features_file\n\n💡 $vars.conclusion"
+
+    - id: notify-ux-doc
+      type: notify
+      nodes: [ux-doc]
+      channel: default
+      template:
+        severity: info
+        title: "🧩 $vars.display_name — UX Doc 完成"
+        body: "💡 $vars.conclusion"
+
+    - id: notify-ui-doc
+      type: notify
+      nodes: [ui-doc]
+      channel: default
+      template:
+        severity: info
+        title: "🎨 $vars.display_name — UI Doc 完成"
+        body: "💡 $vars.conclusion"
+
+    - id: notify-data-model-doc
+      type: notify
+      nodes: [data-model-doc]
+      channel: default
+      template:
+        severity: info
+        title: "📊 $vars.display_name — Data Model 完成"
+        body: "💡 $vars.conclusion"
+
+    - id: notify-plan
+      type: notify
+      nodes: [plan]
+      channel: default
+      template:
+        severity: info
+        title: "📅 $vars.display_name — Plan 完成"
+        body: "🏷️ 架构: $vars.arch_type | 📦 技术栈: $vars.tech_stack_detected\n\n💡 $vars.conclusion"
+
+    - id: notify-tasks
+      type: notify
+      nodes: [tasks]
+      channel: default
+      template:
+        severity: info
+        title: "✅ $vars.display_name — Tasks 完成"
+        body: "💡 $vars.conclusion"
+
+    - id: notify-review
+      type: notify
+      nodes: [review]
+      channel: default
+      template:
+        severity: info
+        title: "🔍 $vars.display_name — Review 完成"
+        body: "📊 覆盖: $vars.review_score/8\n📝 缺失: ${vars.review_missing | default:无}\n✅ 通过: $vars.review_passed\n\n💡 $vars.conclusion"
+
+    - id: notify-output
+      type: notify
+      nodes: [output]
+      channel: default
+      template:
+        severity: info
+        title: "📦 $vars.display_name — 文档生成完成！"
+        body: "📂 目录: $vars.output_dir\n🏷️ 架构: $vars.arch_type\n📄 Code Map: $vars.readme_file\n\n💡 $vars.conclusion"
+
+nodes:
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 0: Setup — 环境准备 + 目录初始化
+  # ═══════════════════════════════════════════════════════════════
+  - id: setup
+    type: agent
+    timeout: 600
+    prompt: |
+      你正在执行 MVP Doc 工作流的环境准备阶段。
+
+      ## 你的任务
+
+      ### 1. 安装 superpowers-zh 技能
+      ```bash
+      npx superpowers-zh@latest --tool claude --force 2>&1 | head -5
+      ```
+
+      ### 2. 安装 agency-agents-zh 代理
+      ```bash
+      AGENTS_TARGET="$(pwd)/.claude/agents"
+      mkdir -p "$AGENTS_TARGET"
+
+      NEED_CLONE=false
+      for agent in engineering-software-architect product-manager design-ux-architect; do
+        if [ ! -f "$AGENTS_TARGET/$agent.md" ]; then
+          NEED_CLONE=true
+          break
+        fi
+      done
+
+      if [ "$NEED_CLONE" = "true" ]; then
+        echo "Cloning agency-agents-zh..."
+        DEPS_DIR="$(pwd)/dependencies"
+        mkdir -p "$DEPS_DIR"
+
+        if [ ! -d "$DEPS_DIR/agency-agents-zh" ]; then
+          git clone --depth 1 https://github.com/jnMetaCode/agency-agents-zh.git "$DEPS_DIR/agency-agents-zh" 2>&1
+        fi
+
+        REPO="$DEPS_DIR/agency-agents-zh"
+
+        for f in product-manager; do
+          [ -f "$REPO/product/product-$f.md" ] && cp "$REPO/product/product-$f.md" "$AGENTS_TARGET/"
+        done
+        for f in design-ux-architect; do
+          [ -f "$REPO/design/design-$f.md" ] && cp "$REPO/design/design-$f.md" "$AGENTS_TARGET/"
+        done
+        for f in software-architect; do
+          [ -f "$REPO/engineering/engineering-$f.md" ] && cp "$REPO/engineering/engineering-$f.md" "$AGENTS_TARGET/"
+        done
+
+        INSTALLED=$(ls "$AGENTS_TARGET"/engineering-*.md "$AGENTS_TARGET"/product-*.md "$AGENTS_TARGET"/design-*.md 2>/dev/null | wc -l)
+        echo "Installed $INSTALLED agency agents"
+      else
+        echo "All agency agents already installed"
+      fi
+      ```
+
+      ### 3. 安装 devil-advocate + architecture-explorer（core-pack 内置）
+      ```bash
+      AGENTS_TARGET="$(pwd)/.claude/agents"
+      COREPACK_AGENTS=""
+      for d in \
+        "$(pwd)/.octopus/core-pack/agents" \
+        "$(pwd)/packages/core-pack/agents" \
+        "$(pwd)/../core-pack/agents"; do
+        if [ -f "$d/devil-advocate.md" ]; then
+          COREPACK_AGENTS="$d"
+          break
+        fi
+      done
+      if [ -n "$COREPACK_AGENTS" ]; then
+        cp "$COREPACK_AGENTS/devil-advocate.md" "$AGENTS_TARGET/"
+        [ -f "$COREPACK_AGENTS/architecture-explorer.md" ] && cp "$COREPACK_AGENTS/architecture-explorer.md" "$AGENTS_TARGET/"
+        echo "Installed devil-advocate + architecture-explorer from $COREPACK_AGENTS"
+      fi
+      ```
+
+      ### 4. 计算输出目录
+      ```bash
+      OUTPUT_ROOT="$vars.output_root"
+      mkdir -p "$OUTPUT_ROOT"
+
+      MAX_INDEX=0
+      for dir in "$OUTPUT_ROOT"/mvp-*/; do
+        if [ -d "$dir" ]; then
+          INDEX=$(basename "$dir" | sed 's/mvp-0*//' | sed 's/^$/0/')
+          if [ "$INDEX" -gt "$MAX_INDEX" ] 2>/dev/null; then
+            MAX_INDEX=$INDEX
+          fi
+        fi
+      done
+
+      NEW_INDEX=$((MAX_INDEX + 1))
+      MVP_INDEX=$(printf "%03d" $NEW_INDEX)
+      OUTPUT_DIR="$OUTPUT_ROOT/mvp-$MVP_INDEX"
+      mkdir -p "$OUTPUT_DIR/features" "$OUTPUT_DIR/references"
+
+      echo "Output directory: $OUTPUT_DIR"
+      ```
+
+      ### 5. 生成 MVP 名称
+      根据 $inputs.idea 生成一个简短的 MVP 名称（英文，kebab-case，最多 5 个单词）。
+
+      ## 输出
+      直接输出纯 JSON 行:
+      {"vars_update":{"output_dir":"<OUTPUT_DIR>","mvp_name":"<kebab-case名称>","display_name":"MVP Doc #<序号>","conclusion":"环境准备完成，输出目录: <OUTPUT_DIR>"}}
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 1: Clarify — Idea 理解与分析
+  # ═══════════════════════════════════════════════════════════════
+  - id: clarify
+    type: agent
+    depends_on: [setup]
+    timeout: 1200
+    prompt: |
+      你是一位经验丰富的技术产品分析师，正在深入理解用户的 MVP idea。
+
+      ## 用户 Idea
+      $inputs.idea
+
+      ## 输出目录
+      $vars.output_dir
+
+      ## 你的任务
+
+      对 idea 进行深度分析，为后续智能检测和文档生成提供精确上下文。
+
+      ### 1. 项目类型识别
+      | 类型 | 特征 | 后续重点 |
+      |------|------|----------|
+      | **product** | 面向终端用户、需要 UI/UX、有商业模式 | 用户画像、故事、API |
+      | **infrastructure** | 内部工具、CLI、配置改造、架构重构 | 接口设计、配置语法、迁移 |
+      | **hybrid** | 兼具产品和基础设施特征 | 两者兼顾 |
+
+      ### 2. MVP 范围估算
+      - 这是一个单 feature 还是多 feature 的 MVP？
+      - 预估复杂度（低/中/高）
+      - 初步特征列表（feature name 列表，kebab-case）
+
+      ### 3. 关键设计决策点
+      - 用户提到的权衡（"A 还是 B"）
+      - 用户明确排除的方案
+      - 用户偏好的方向
+
+      ### 4. 用户核心价值推断
+      - 用户反复强调的关键词
+      - 用户最看重的产出
+      - 用户期望的深度和创造性
+
+      ## 规则
+      - 无人值守模式，直接执行
+      - 中文输出
+      - 不要跳到解决方案，专注于理解 idea
+
+      ## 输出
+      将分析保存到 `$vars.output_dir/00-clarify.md`
+
+      直接输出纯 JSON 行:
+      {"vars_update":{"clarify_file":"$vars.output_dir/00-clarify.md","project_type":"<product/infrastructure/hybrid>","user_emphasis":"<核心价值，逗号分隔>","key_decisions":"<关键决策，逗号分隔>","features_detected":"<初步feature列表，逗号分隔>","conclusion":"<2-3句话总结>"}}
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 2: Detect — 智能检测（核心创新节点）
+  # ═══════════════════════════════════════════════════════════════
+  - id: detect
+    type: agent
+    depends_on: [clarify]
+    timeout: 900
+    prompt: |
+      你是一个 MVP 架构分类器。你的核心任务是根据 idea 和澄清结果，**精确判断** MVP 的特征类型标志，
+      这些标志将控制后续所有文档生成节点的开关。
+
+      ## 用户 Idea
+      $inputs.idea
+
+      ## 澄清分析
+      $vars.clarify_file
+
+      ## 预设技术栈
+      $inputs.tech_stack
+
+      ## 你的任务：智能检测
+
+      ### 1. 分析每个标志位（必须给出判断和证据）
+
+      **has_ui** — 是否需要用户界面？
+      - ✅ 触发: page, screen, dashboard, form, app, website, UI, 页面, 界面, 前端, Web App, 移动端
+      - ❌ 不触发: 纯 CLI, 纯库, 纯 API, 脚本工具, 配置文件
+
+      **has_ux** — 是否需要 UX 流程设计？
+      - ✅ 触发: flow, wizard, onboarding, journey, multi-step, 流程, 引导, 多步骤, 用户旅程, 导航
+      - ❌ 不触发: 单页面, 简单 CRUD, 单一操作, 命令行工具
+
+      **has_data_model** — 是否有实体/关系？
+      - ✅ 触发: CRUD, entity, database, model, schema, table, 用户, 订单, 商品, 数据, 存储, 持久化
+      - ❌ 不触发: 无状态, 纯配置, 纯展示, 一次性脚本
+
+      **has_api** — 是否暴露 API？
+      - ✅ 触发: API, endpoint, REST, GraphQL, webhook, microservice, 接口, 后端服务
+      - ❌ 不触发: 纯前端, 纯 CLI, 内部脚本
+
+      **is_config_only** — 是否纯配置/文档？
+      - ✅ 触发: config, template, settings, manifest, preset, 配置文件, 文档模板
+      - ❌ 不触发: 有可执行代码
+
+      **is_backend_only** — 是否纯后端？
+      - ✅ 触发: 无 UI 信号 && (has_api || CLI 工具 || 库)
+      - ❌ 不触发: 有 UI 需求
+
+      ### 2. 推导 arch_type
+
+      ```
+      yaml-workflow  ← idea 明确提到生成 workflow YAML / Octopus 工作流
+      config-only    ← is_config_only && !has_ui && !has_api
+      split-code     ← has_ui && has_api（前后端都需要）
+      monolith       ← 其他所有情况（纯 UI / 纯 API / CLI / 脚本 / 单体应用）
+      ```
+
+      ### 3. 推断技术栈
+      - 如果 $inputs.tech_stack 非空 → 使用用户指定的
+      - 否则根据 project_type + arch_type 推断合理的技术栈
+
+      ### 4. 输出置信度
+      对每个标志给出 confidence（0-100%），低于 70% 的要标注 ⚠️
+
+      ## 输出
+      将检测报告保存到 `$vars.output_dir/01-detect.md`，包含:
+      - Detection Results 表格（Flag | Value | Confidence | Evidence）
+      - Architecture Type 推导过程
+      - Tech Stack 推荐
+      - 低置信度标志的 ⚠️ 警告
+
+      直接输出纯 JSON 行:
+      {"vars_update":{"has_ui":"<true/false>","has_ux":"<true/false>","has_data_model":"<true/false>","has_api":"<true/false>","is_backend_only":"<true/false>","is_config_only":"<true/false>","arch_type":"<monolith|split-code|config-only|yaml-workflow>","tech_stack_detected":"<技术栈>","detect_file":"$vars.output_dir/01-detect.md","features_detected":"<feature列表，逗号分隔>","conclusion":"<2-3句话: 架构判断和理由>"}}
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 3: Spec — 功能规格（始终生成）
+  # ═══════════════════════════════════════════════════════════════
+  - id: spec
+    type: agent
+    depends_on: [detect]
+    timeout: 7200
+    prompt: |
+      你是资深产品经理，正在为 MVP 生成功能规格文档。
+
+      ## 用户 Idea
+      $inputs.idea
+
+      ## 澄清分析
+      $vars.clarify_file
+
+      ## 智能检测结果
+      $vars.detect_file
+
+      ## 检测到的 Feature 列表
+      $vars.features_detected
+
+      ## 输出目录
+      $vars.output_dir
+
+      ## 架构类型
+      $vars.arch_type
+
+      ## 你的任务
+
+      ### 1. 生成 PRD.md（顶层产品需求文档）
+      保存到 `$vars.output_dir/PRD.md`，包含:
+      - **产品愿景**: 一句话描述
+      - **目标用户**: 谁在用、什么场景
+      - **核心问题**: 解决什么痛点
+      - **MVP 范围**: MoSCoW 优先级（Must/Should/Could/Won't）
+      - **Non-Goals**: 明确不做什么
+      - **成功标准**: 可度量的验收标准
+
+      ### 2. 生成 FEATURES.md（Feature 索引）
+      保存到 `$vars.output_dir/FEATURES.md`，包含:
+      - 所有 feature 列表及依赖关系
+      - 每个 feature 的 arch_type 相关信息
+
+      ### 3. 为每个 Feature 生成 spec.md
+      对 $vars.features_detected 中的每个 feature（kebab-case 名称）:
+
+      创建目录: `$vars.output_dir/features/{feature-name}/`
+
+      生成 `$vars.output_dir/features/{feature-name}/spec.md`:
+
+      **FR-XXX 可追溯 ID 格式**:
+      ```markdown
+      ## Requirements
+
+      ### FR-001: <功能名称>
+      - **Priority**: Must Have / Should Have / Could Have
+      - **Description**: <描述>
+      - **Acceptance Criteria** (Given/When/Then):
+        - **Given**: <前置条件>
+        - **When**: <操作步骤>
+        - **Then**: <预期结果>
+      ```
+
+      **每个 FR 必须有**:
+      - 唯一 FR-XXX ID
+      - Given/When/Then 验收标准
+      - MoSCoW 优先级分类
+
+      ### 4. 创建验证目录
+      每个 feature 下创建 `validation/` 空目录
+
+      ## 规则
+      - 无人值守模式
+      - 中文输出（技术术语保留英文）
+      - FR-XXX ID 全局唯一（跨 feature 不重复）
+      - Given/When/Then 必须可测试、可验证
+      - Must Have 控制在 3-5 个 FR 以内（MVP 精神）
+
+      ## 输出
+      直接输出纯 JSON 行:
+      {"vars_update":{"prd_file":"$vars.output_dir/PRD.md","features_file":"$vars.output_dir/FEATURES.md","conclusion":"<2-3句话: 生成了几个 feature, 几个 FR>"}}
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 4: UX Doc（条件生成）
+  # ═══════════════════════════════════════════════════════════════
+  - id: ux-doc
+    type: agent
+    depends_on: [spec]
+    timeout: 3600
+    execute_when: '$vars.has_ux == "true"'
+    prompt: |
+      你是 UX 设计师，正在为 MVP 生成用户体验文档。
+
+      ## 用户 Idea
+      $inputs.idea
+
+      ## Feature 列表
+      $vars.features_detected
+
+      ## Spec 目录
+      $vars.output_dir/features/
+
+      ## 你的任务
+
+      对每个有用户交互的 feature，生成 `$vars.output_dir/features/{feature-name}/ux.md`:
+
+      ```markdown
+      # UX: {feature-name}
+
+      ## User Flows
+
+      ### Flow 1: <流程名称> (→ FR-XXX)
+      1. User sees: <页面/状态>
+      2. User does: <操作>
+      3. System responds: <反馈>
+
+      ## States
+      - Empty state: <描述>
+      - Loading state: <描述>
+      - Error state: <描述>
+      - Success state: <描述>
+
+      ## UX-XXX IDs
+      | UX ID | Related FR | Description |
+      |-------|-----------|-------------|
+      | UX-001 | FR-001 | <UX 需求> |
+
+      ## Accessibility
+      - Keyboard navigation requirements
+      - Screen reader considerations
+      ```
+
+      ## 规则
+      - UX-XXX ID 与 FR-XXX 交叉引用
+      - 每个用户流程必须覆盖所有状态（empty/loading/error/success）
+      - ASCII 流程图优先
+
+      ## 输出
+      直接输出纯 JSON 行:
+      {"vars_update":{"conclusion":"<2-3句话: UX 文档生成情况>"}}
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 5: UI Doc（条件生成）
+  # ═══════════════════════════════════════════════════════════════
+  - id: ui-doc
+    type: agent
+    depends_on: [spec]
+    timeout: 3600
+    execute_when: '$vars.has_ui == "true"'
+    prompt: |
+      你是 UI 设计师，正在为 MVP 生成用户界面文档。
+
+      ## 用户 Idea
+      $inputs.idea
+
+      ## Feature 列表
+      $vars.features_detected
+
+      ## Spec 目录
+      $vars.output_dir/features/
+
+      ## 技术栈
+      $vars.tech_stack_detected
+
+      ## 你的任务
+
+      对每个有 UI 的 feature，生成 `$vars.output_dir/features/{feature-name}/ui.md`:
+
+      ```markdown
+      # UI: {feature-name}
+
+      ## Component Tree
+      ```
+      Page
+      ├── Header
+      │   ├── Logo
+      │   └── Navigation
+      ├── Main
+      │   ├── <Component A>
+      │   └── <Component B>
+      └── Footer
+      ```
+
+      ## Layout Wireframes (ASCII)
+      ┌────────────────────────┐
+      │        Header          │
+      ├────────────────────────┤
+      │                        │
+      │      Main Content      │
+      │                        │
+      ├────────────────────────┤
+      │        Footer          │
+      └────────────────────────┘
+
+      ## Design Tokens
+      | Token | Value | Usage |
+      |-------|-------|-------|
+      | --color-primary | <hex> | Primary actions |
+      | --space-section | <rem> | Section spacing |
+
+      ## Responsive Breakpoints
+      - Mobile: 320px - 767px
+      - Tablet: 768px - 1023px
+      - Desktop: 1024px+
+      ```
+
+      ## 规则
+      - ASCII wireframe，不生成图片
+      - 组件树必须与 UX 流程对应
+      - 标注响应式断点
+
+      ## 输出
+      直接输出纯 JSON 行:
+      {"vars_update":{"conclusion":"<2-3句话: UI 文档生成情况>"}}
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 6: Data Model（条件生成）
+  # ═══════════════════════════════════════════════════════════════
+  - id: data-model-doc
+    type: agent
+    depends_on: [spec]
+    timeout: 3600
+    execute_when: '$vars.has_data_model == "true"'
+    prompt: |
+      你是数据架构师，正在为 MVP 生成数据模型文档。
+
+      ## 用户 Idea
+      $inputs.idea
+
+      ## Feature 列表
+      $vars.features_detected
+
+      ## Spec 目录
+      $vars.output_dir/features/
+
+      ## 技术栈
+      $vars.tech_stack_detected
+
+      ## 你的任务
+
+      对每个有数据实体的 feature，生成 `$vars.output_dir/features/{feature-name}/data-model.md`:
+
+      ```markdown
+      # Data Model: {feature-name}
+
+      ## Entity Relationship Diagram (ASCII)
+      ┌──────────┐     ┌──────────┐
+      │  User    │────>│  Order   │
+      └──────────┘     └──────────┘
+
+      ## Entities
+
+      ### User
+      | Field | Type | Constraints | Description |
+      |-------|------|-------------|-------------|
+      | id | string (UUID) | PK, required | Unique identifier |
+      | email | string | unique, required | User email |
+
+      ## Validation Rules
+      - email: valid email format, max 255 chars
+      - password: min 8 chars, must contain number + letter
+
+      ## State Machines
+      (if applicable)
+      ```
+
+      ## 规则
+      - 字段定义必须完整（类型、约束、描述）
+      - 验证规则必须具体（不是"合理长度"而是"max 255 chars"）
+      - 与 FR-XXX 交叉引用（哪些 FR 操作哪些实体）
+
+      ## 输出
+      直接输出纯 JSON 行:
+      {"vars_update":{"conclusion":"<2-3句话: 数据模型生成情况>"}}
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 7: Plan — 技术架构方案（始终生成）
+  # ═══════════════════════════════════════════════════════════════
+  - id: plan
+    type: agent
+    depends_on: [ux-doc, ui-doc, data-model-doc]
+    timeout: 7200
+    prompt: |
+      你是软件架构师，正在为 MVP 生成技术实现方案。
+
+      ## 用户 Idea
+      $inputs.idea
+
+      ## 智能检测结果
+      $vars.detect_file
+
+      ## 架构类型
+      $vars.arch_type
+
+      ## 技术栈
+      $vars.tech_stack_detected
+
+      ## Feature 列表
+      $vars.features_detected
+
+      ## Spec 目录
+      $vars.output_dir/features/
+
+      ## 你的任务
+
+      ### 1. 为每个 Feature 生成 plan.md
+      `$vars.output_dir/features/{feature-name}/plan.md`:
+      ```markdown
+      # Plan: {feature-name}
+
+      ## Architecture Overview
+      - Pattern: <MVC / Clean Architecture / Serverless / etc.>
+      - Key decisions: <ADR 格式>
+
+      ## File Structure
+      ```
+      src/
+      ├── <file1> — <purpose>
+      └── <file2> — <purpose>
+      ```
+
+      ## Dependencies
+      | Package | Version | Purpose |
+      |---------|---------|---------|
+
+      ## Implementation Order
+      1. <step 1> (→ INIT-XXX)
+      2. <step 2> (→ INIT-XXX)
+
+      ## Risks
+      | Risk | Impact | Mitigation |
+      ```
+
+      ### 2. 为每个 Feature 生成 setup.md
+      `$vars.output_dir/features/{feature-name}/setup.md`:
+      - 环境配置步骤
+      - 依赖安装命令
+      - 配置文件示例
+
+      ### 3. 如果有 API（has_api == true），生成 contracts/
+      `$vars.output_dir/features/{feature-name}/contracts/api-contract.md`:
+      ```markdown
+      # API Contract: {feature-name}
+
+      ## Endpoints
+
+      ### POST /api/{resource}
+      - **Request**: { field: type }
+      - **Response 200**: { field: type }
+      - **Response 400**: { error: string }
+      ```
+
+      ## 规则
+      - 方案必须与 arch_type 匹配
+      - monolith: 单体架构，不要过度拆分
+      - split-code: 前后端分离，明确 API 契约
+      - config-only: 配置文件结构，无可执行代码
+      - yaml-workflow: YAML 工作流节点设计
+      - 文件路径使用相对路径
+
+      ## 输出
+      直接输出纯 JSON 行:
+      {"vars_update":{"conclusion":"<2-3句话: 技术方案生成情况>"}}
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 8: Tasks — TDD 任务列表（始终生成）
+  # ═══════════════════════════════════════════════════════════════
+  - id: tasks
+    type: agent
+    depends_on: [plan]
+    timeout: 7200
+    prompt: |
+      你是 TDD 实现规划师，正在为 MVP 生成 TDD 结构化任务列表。
+
+      ## Feature 列表
+      $vars.features_detected
+
+      ## Spec 目录
+      $vars.output_dir/features/
+
+      ## 架构类型
+      $vars.arch_type
+
+      ## 你的任务
+
+      为每个 feature 生成 `$vars.output_dir/features/{feature-name}/tasks.md`:
+
+      **TDD 任务格式（严格遵循）**:
+
+      ```markdown
+      # Tasks: {feature-name}
+
+      ## Phase 1: INIT (基础设施)
+      - [ ] INIT-001: <描述> → setup.md
+      - [ ] INIT-002: <描述> → data-model.md
+
+      ## Phase 2: TDD Cycles (per User Story)
+
+      ### [US1] <Story 名称> (→ FR-XXX)
+      - [ ] TEST-001: 编写 <功能> 测试 (→ FR-XXX)
+        - Given: <前置条件>
+        - When: <操作>
+        - Then: <预期结果>
+      - [ ] IMPL-001: 实现 <功能>（通过 TEST-001）
+        - Files: <涉及文件列表>
+
+      ### [US2] <Story 名称> (→ FR-XXX)
+      - [ ] TEST-002: ...
+      - [ ] IMPL-002: ...
+
+      ## Phase 3: CHK (集成验证)
+      - [ ] CHK-001: <集成测试描述>
+      - [ ] CHK-002: <安全审计描述>
+      ```
+
+      **关键规则**:
+      1. **INIT 在前**: 所有基础设施搭建任务排最前
+      2. **TEST 在 IMPL 前**: 每个 User Story 先写测试再写实现
+      3. **FR-XXX 追溯**: 每个 TEST/IMPL 必须标注对应的 FR-XXX
+      4. **User Story 分组**: 按 [US1], [US2] 分组，来自 spec.md 的 Given/When/Then
+      5. **CHK 在后**: 集成验证排最后
+      6. **ID 全局唯一**: INIT/TEST/IMPL/CHK 的序号跨 feature 不重复
+      7. **config-only 类型**: 无 TEST/IMPL，只有 INIT（生成配置）+ CHK（验证配置）
+      8. **yaml-workflow 类型**: INIT（创建 YAML）+ CHK（validate + test-run）
+
+      ## 输出
+      直接输出纯 JSON 行:
+      {"vars_update":{"conclusion":"<2-3句话: 任务生成情况，INIT/TEST/IMPL/CHK 各多少个>"}}
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 9: Review — 8 维完整性审查
+  # ═══════════════════════════════════════════════════════════════
+  - id: review
+    type: agent
+    depends_on: [tasks]
+    timeout: 3600
+    agents:
+      devil-advocate:
+        description: "魔鬼代言人 — MVP 文档完整性审查"
+        agent_file: ".claude/agents/devil-advocate.md"
+        model: pro-max
+        tools: ["Read", "Grep", "Glob"]
+    prompt: |
+      你是 MVP 文档完整性审查协调者。你有 devil-advocate 子代理可用。
+
+      ## 输出目录
+      $vars.output_dir
+
+      ## 智能检测结果
+      $vars.detect_file
+
+      ## 你的任务
+
+      ### 1. 读取所有生成的文档
+      遍历 `$vars.output_dir/` 下的所有 .md 文件
+
+      ### 2. 8 维完整性审查
+
+      | # | 维度 | 检查点 |
+      |---|------|--------|
+      | 1 | 问题清晰度 | PRD.md 中问题是否一句话能说清楚？ |
+      | 2 | Feature 范围 | MVP 边界（Must/Won't）是否清晰？ |
+      | 3 | 可追溯性 | 每个 FR-XXX 是否有对应的 TEST-XXX 和 IMPL-XXX？ |
+      | 4 | 验收标准 | Given/When/Then 是否可测试、可自动化？ |
+      | 5 | 技术可行性 | 技术栈是否能交付这些 feature？ |
+      | 6 | 任务结构 | TDD 任务是否正确排序（INIT→TEST→IMPL→CHK）？ |
+      | 7 | 检测准确性 | arch_type 判断是否正确？has_ui/ux/api/dm 标志是否准确？ |
+      | 8 | Non-Goals | 排除项是否明确？Won't Have 是否合理？ |
+
+      ### 3. 委派 devil-advocate
+      让 devil-advocate 审查文档完整性，特别关注:
+      - 有没有遗漏的 feature？
+      - 有没有不合理的假设？
+      - MVP 范围是否过大或过小？
+
+      ### 4. 汇总审查结果
+      保存到 `$vars.output_dir/review.md`:
+      ```markdown
+      # Review Results
+
+      ## Score: N/8
+      ## Missing Dimensions: <逗号分隔>
+      ## Passed: <true/false> (≥6/8 = true)
+
+      ## Details
+      | # | Dimension | Status | Notes |
+      |---|-----------|--------|-------|
+      | 1 | 问题清晰度 | ✅/❌ | <说明> |
+      ...
+
+      ## Devil's Advocate Findings
+      <devil-advocate 的发现>
+      ```
+
+      ## 输出
+      直接输出纯 JSON 行:
+      {"vars_update":{"review_file":"$vars.output_dir/review.md","review_score":"<N>","review_missing":"<缺失维度，逗号分隔>","review_passed":"<true if N>=6 else false>","conclusion":"<2-3句话: 审查结论>"}}
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 10: Review Gate — 路由
+  # ═══════════════════════════════════════════════════════════════
+  - id: review-gate
+    type: condition
+    depends_on: [review]
+    cases:
+      - when: '$vars.review_passed == "true"'
+        then: output
+      - when: default
+        then: review-fix
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 10.5: Review Fix — 修复缺失维度
+  # ═══════════════════════════════════════════════════════════════
+  - id: review-fix
+    type: agent
+    depends_on: [review-gate]
+    timeout: 3600
+    execute_when: '$vars.review_passed != "true"'
+    prompt: |
+      审查发现缺失维度，需要补充修复。
+
+      ## 审查结果
+      $vars.review_file
+
+      ## 缺失维度
+      $vars.review_missing
+
+      ## 当前得分
+      $vars.review_score / 8
+
+      ## 你的任务
+
+      1. 读取 $vars.review_file 了解具体缺失项
+      2. 针对每个缺失维度，补充或修正对应文档
+      3. 确保修复后得分 ≥ 6/8
+
+      ## 常见修复
+      - 缺可追溯性 → 在 tasks.md 中补充 FR→TEST→IMPL 交叉引用
+      - 缺验收标准 → 在 spec.md 中补充 Given/When/Then
+      - 缺 Non-Goals → 在 PRD.md 中补充 Won't Have 列表
+      - 检测不准 → 更新 01-detect.md 的标志位
+
+      ## 输出
+      直接输出纯 JSON 行:
+      {"vars_update":{"review_passed":"true","conclusion":"<2-3句话: 修复了什么>"}}
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 11: Output — 生成 Code Map + 追溯矩阵
+  # ═══════════════════════════════════════════════════════════════
+  - id: output
+    type: agent
+    depends_on: [review-gate, review-fix]
+    timeout: 3600
+    prompt: |
+      你是文档整合者，正在生成 MVP 文档的最终 Code Map。
+
+      ## 输出目录
+      $vars.output_dir
+
+      ## 智能检测结果
+      $vars.detect_file
+
+      ## 架构类型
+      $vars.arch_type
+
+      ## Feature 列表
+      $vars.features_detected
+
+      ## 你的任务
+
+      ### 1. 生成 README.md（Code Map）
+      保存到 `$vars.output_dir/README.md`:
+
+      ```markdown
+      # MVP: {mvp_name}
+
+      > 架构: {arch_type} | 技术栈: {tech_stack_detected}
+
+      ## Document Map
+
+      | Feature | Spec | UX | UI | Data Model | Plan | Tasks |
+      |---------|------|-----|-----|------------|------|-------|
+      | {feat1} | ✅ | ✅/— | ✅/— | ✅/— | ✅ | ✅ |
+
+      ## Traceability Matrix
+
+      | FR ID | Description | Priority | Test | Impl | CHK |
+      |-------|-------------|----------|------|------|-----|
+      | FR-001 | <描述> | Must Have | TEST-001 | IMPL-001 | CHK-001 |
+
+      ## Feature Details
+
+      ### {feature-name}
+      - Spec: features/{feature-name}/spec.md
+      - Tasks: features/{feature-name}/tasks.md
+      - FR count: N
+      - INIT/TEST/IMPL/CHK: N/N/N/N
+
+      ## Quick Start
+      1. 运行 mvp-impl 工作流消费此文档
+      2. 或手动按 tasks.md 中的 Phase 1→2→3 顺序实现
+      ```
+
+      ### 2. 验证追溯完整性
+      遍历所有 features/*/spec.md 提取 FR-XXX
+      遍历所有 features/*/tasks.md 提取 TEST/IMPL/CHK
+      检查每个 FR 是否有对应的 TEST 和 IMPL
+
+      ### 3. 统计汇总
+      - Feature 总数
+      - FR 总数（按 Must/Should/Could 分类）
+      - Task 总数（INIT/TEST/IMPL/CHK 分类）
+
+      ## 输出
+      直接输出纯 JSON 行:
+      {"vars_update":{"readme_file":"$vars.output_dir/README.md","conclusion":"<2-3句话: 文档整合完成，统计信息>"}}
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 12: Done
+  # ═══════════════════════════════════════════════════════════════
+  - id: done
+    type: bash
+    depends_on: [output]
+    timeout: 10
+    bash: |
+      echo "=========================================="
+      echo "  MVP Doc 完成"
+      echo "=========================================="
+      echo "  输出目录: $vars.output_dir"
+      echo "  架构类型: $vars.arch_type"
+      echo "  Features: $vars.features_detected"
+      echo "  技术栈:   $vars.tech_stack_detected"
+      echo "  审查得分: $vars.review_score/8"
+      echo "=========================================="
+      echo "  下一步: 运行 mvp-impl 工作流实现此 MVP"
+      echo "=========================================="

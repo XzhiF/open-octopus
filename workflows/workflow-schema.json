@@ -1,0 +1,750 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://octopus.dev/workflow-schema.json",
+  "title": "Octopus Workflow",
+  "description": "Octopus workflow YAML schema — 7 node types (bash, python, agent, condition, approval, loop, swarm) with variable pooling, expressions, auto answers, DAG parallel execution, sub-agent definitions, and multi-expert swarm collaboration.",
+  "type": "object",
+  "required": ["apiVersion", "kind", "name", "nodes"],
+  "properties": {
+    "apiVersion": {
+      "type": "string",
+      "pattern": "^octopus/v\\d+$",
+      "description": "Octopus workflow API version (e.g. octopus/v1). Must match octopus/v{number}."
+    },
+    "kind": {
+      "type": "string",
+      "const": "Workflow",
+      "description": "File type identifier. Must be 'Workflow' for Octopus workflow YAML files."
+    },
+    "name": {
+      "type": "string",
+      "description": "Workflow name (unique within workspace)"
+    },
+    "description": {
+      "type": "string",
+      "description": "Human-readable description of what this workflow does"
+    },
+    "model": {
+      "type": "string",
+      "description": "Default AI model for agent nodes (e.g. claude-3-opus, gpt-4o). Can be overridden per node."
+    },
+    "engine": {
+      "type": "string",
+      "description": "Default AI provider for agent nodes (e.g. claude). Can be overridden per node."
+    },
+    "timeout": {
+      "type": "integer",
+      "exclusiveMinimum": 0,
+      "description": "Global timeout in seconds for the entire workflow"
+    },
+    "execution_mode": {
+      "type": "string",
+      "enum": ["auto", "serial"],
+      "default": "auto",
+      "description": "Execution mode. 'auto' — nodes without depends_on run concurrently in parallel levels. 'serial' — all nodes execute sequentially, preserving legacy behavior."
+    },
+    "max_concurrent": {
+      "type": "integer",
+      "exclusiveMinimum": 0,
+      "description": "Maximum number of nodes that can run concurrently within a single execution level. When unset, all nodes in a level run in parallel without limit. Setting to 1 is equivalent to execution_mode: serial."
+    },
+    "variables": {
+      "type": "object",
+      "description": "Initial global variable pool. Values can be any JSON-compatible type (string, number, boolean, array, object). Referenced via $vars.xxx."
+    },
+    "auto_answers": {
+      "type": "array",
+      "description": "Global auto-answer rules injected into every agent node prompt. For unattended/CI execution.",
+      "items": {
+        "type": "object",
+        "required": ["pattern", "answer"],
+        "properties": {
+          "pattern": {
+            "type": "string",
+            "description": "Regex or substring pattern to match in agent output"
+          },
+          "answer": {
+            "type": "string",
+            "description": "Auto-reply when pattern matches"
+          }
+        }
+      }
+    },
+    "inputs": {
+      "type": "object",
+      "description": "Workflow input parameter definitions. Values are provided at execution time and referenced via $inputs.xxx.",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["description"],
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "required": {
+            "type": "boolean",
+            "default": false
+          },
+          "default": {
+            "type": "string",
+            "default": ""
+          }
+        }
+      }
+    },
+    "providers": {
+      "type": "object",
+      "description": "Notification provider definitions. Each key is a provider name; each value configures a delivery backend (hermes CLI or HTTP webhook). Used by notify-type hooks.",
+      "additionalProperties": {
+        "$ref": "#/$defs/NotifyProviderConfig"
+      }
+    },
+    "channels": {
+      "type": "object",
+      "description": "Notification channel profiles. Each key is a channel name referenced by notify hooks; each value binds a channel to a provider and optional target/severity filter.",
+      "additionalProperties": {
+        "$ref": "#/$defs/ChannelProfile"
+      }
+    },
+    "hooks": {
+      "type": "object",
+      "description": "Lifecycle hooks triggered on workflow and node events. Each event type maps to an array of hook definitions.",
+      "properties": {
+        "on_node_success": { "$ref": "#/$defs/HookArray" },
+        "on_node_failure": { "$ref": "#/$defs/HookArray" },
+        "on_workflow_failure": { "$ref": "#/$defs/HookArray" },
+        "on_cancel": { "$ref": "#/$defs/HookArray" },
+        "on_interrupt": { "$ref": "#/$defs/HookArray" },
+        "on_retry": { "$ref": "#/$defs/HookArray" },
+        "on_success": { "$ref": "#/$defs/HookArray" },
+        "on_complete": { "$ref": "#/$defs/HookArray" }
+      },
+      "additionalProperties": false
+    },
+    "nodes": {
+      "type": "array",
+      "description": "Ordered list of workflow nodes (steps). In execution_mode: auto, nodes without depends_on run concurrently; in serial mode, nodes execute sequentially.",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/Node"
+      }
+    }
+  },
+  "$defs": {
+    "ExpertDef": {
+      "type": "object",
+      "description": "A swarm expert definition. Each expert represents a role with a specific perspective that participates in multi-expert collaboration.",
+      "required": ["role"],
+      "properties": {
+        "role": {
+          "type": "string",
+          "description": "Expert role identifier. Used in MessageBus for from/to routing and in outputs."
+        },
+        "agent_file": {
+          "type": "string",
+          "description": "Path to a .md agent definition file. Engine reads content, strips YAML frontmatter, and concatenates with prompt."
+        },
+        "prompt": {
+          "type": "string",
+          "description": "Inline prompt for this expert. At least one of agent_file or prompt is required."
+        },
+        "perspective": {
+          "type": "string",
+          "description": "Expert's viewpoint angle. Injected into the expert prompt as 'Your perspective: ...'."
+        },
+        "task": {
+          "type": "string",
+          "description": "[dispatch mode] Specific task for this expert to execute. Replaces prompt for task-oriented experts."
+        },
+        "depends_on": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "[dispatch mode] Expert role IDs that must complete before this expert runs. Builds internal DAG via Kahn's algorithm."
+        },
+        "tools": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Allowed tools for this expert (e.g. Read, Write, Edit, Bash, Grep, Glob)."
+        },
+        "disallowed_tools": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Disallowed tools for this expert."
+        },
+        "model": {
+          "type": "string",
+          "description": "Model override for this expert (sonnet, opus, haiku). Defaults to expert_defaults.model."
+        },
+        "engine": {
+          "type": "string",
+          "description": "AI provider engine for this expert (e.g. 'claude', 'pi'). Priority: expert.engine → node.engine → workflow.engine → 'claude'."
+        }
+      }
+    },
+    "SubAgentDefinition": {
+      "type": "object",
+      "required": ["description"],
+      "description": "A sub-agent definition for the Claude Agent SDK 'agents' parameter. Each sub-agent runs within the parent agent node and can execute in parallel (background: true) or sequentially.",
+      "properties": {
+        "description": {
+          "type": "string",
+          "description": "Tells Claude when to invoke this sub-agent"
+        },
+        "prompt": {
+          "type": "string",
+          "description": "System prompt for the sub-agent. Optional when agent_file is provided — will be appended to agent_file content."
+        },
+        "agent_file": {
+          "type": "string",
+          "description": "Path to a .md agent definition file. Engine reads file content, strips YAML frontmatter, and concatenates with prompt. Supports $vars.* substitution."
+        },
+        "tools": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Allowed tools for this sub-agent"
+        },
+        "disallowedTools": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Disallowed tools for this sub-agent"
+        },
+        "model": {
+          "type": "string",
+          "description": "Model override for this sub-agent (sonnet, opus, haiku)"
+        },
+        "skills": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Skill names to load into this sub-agent"
+        },
+        "maxTurns": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "description": "Maximum conversation turns for this sub-agent"
+        },
+        "background": {
+          "type": "boolean",
+          "description": "If true, this sub-agent runs in non-blocking parallel mode. Other sub-agents can proceed without waiting for it."
+        },
+        "effort": {
+          "description": "Reasoning effort level for this sub-agent",
+          "oneOf": [
+            { "type": "string", "enum": ["low", "medium", "high", "xhigh", "max"] },
+            { "type": "number" }
+          ]
+        }
+      }
+    },
+    "Hook": {
+      "type": "object",
+      "description": "A lifecycle hook definition. Can be an agent hook (natural language prompt), a bash hook (shell script), or a notify hook (structured notification via providers/channels).",
+      "properties": {
+        "id": { "type": "string", "description": "Optional identifier for this hook, used in logs and error messages." },
+        "type": { "type": "string", "enum": ["agent", "bash", "notify"], "default": "agent", "description": "Hook execution type. 'agent' — AI prompt. 'bash' — shell script. 'notify' — structured notification dispatch." },
+        "prompt": { "type": "string", "description": "[agent hook] Natural language task description. Variables ($hook.*, $vars.*) are substituted." },
+        "bash": { "type": "string", "description": "[bash hook] Shell script body. Variables ($hook.*, $vars.*) are substituted." },
+        "timeout": { "type": "integer", "exclusiveMinimum": 0, "description": "Hook timeout in seconds. Default: 60 for bash, 120 for agent." },
+        "model": { "type": "string", "description": "[agent hook] AI model override." },
+        "engine": { "type": "string", "description": "[agent hook] AI provider override." },
+        "nodes": { "type": "array", "items": { "type": "string" }, "description": "[on_node_* only] Limit hook to specific node IDs." },
+        "condition": { "type": "string", "description": "Expression evaluated before hook execution. If falsy, hook is skipped." },
+        "channel": {
+          "description": "[notify hook] Target channel name(s) for notification delivery. Must match a key defined in top-level 'channels'. Supports single channel or array for multi-channel broadcast.",
+          "oneOf": [
+            { "type": "string" },
+            { "type": "array", "items": { "type": "string" }, "minItems": 1 }
+          ]
+        },
+        "template": {
+          "$ref": "#/$defs/NotifyTemplate",
+          "description": "[notify hook] Message template with severity, title, and optional body. Supports ${var | filter} variable substitution."
+        },
+        "on_failure": {
+          "type": "string",
+          "enum": ["log", "retry", "abort"],
+          "description": "[notify hook] Behavior when notification delivery fails. 'log' — log error and continue. 'retry' — retry per retry config. 'abort' — abort remaining hooks in the chain."
+        },
+        "retry": {
+          "$ref": "#/$defs/NotifyRetry",
+          "description": "[notify hook] Retry configuration for notification delivery. Only effective when on_failure is 'retry'."
+        }
+      },
+      "additionalProperties": false
+    },
+    "HookArray": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/Hook" }
+    },
+    "NotifyProviderConfig": {
+      "type": "object",
+      "description": "Configuration for a notification delivery provider. Defines the backend type and connection parameters.",
+      "required": ["type"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "description": "Provider backend type. 'hermes' — CLI-based delivery via hermes send command. 'webhook' — HTTP POST/PUT to a URL with SSRF protection."
+        },
+        "timeout": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "default": 15,
+          "description": "Delivery timeout in seconds per attempt."
+        },
+        "min_severity": {
+          "type": "string",
+          "enum": ["info", "warn", "error"],
+          "default": "info",
+          "description": "Minimum severity threshold for this provider. Messages below this severity are silently dropped."
+        },
+        "cli_path": {
+          "type": "string",
+          "description": "[hermes type] Path to the hermes CLI binary. Defaults to 'hermes' in PATH."
+        },
+        "url": {
+          "type": "string",
+          "description": "[webhook type] Target URL for HTTP delivery. Subject to SSRF protection (private IPs, localhost, and metadata endpoints are blocked)."
+        },
+        "method": {
+          "type": "string",
+          "enum": ["POST", "PUT"],
+          "default": "POST",
+          "description": "[webhook type] HTTP method for delivery requests."
+        },
+        "headers": {
+          "type": "object",
+          "description": "[webhook type] Custom HTTP headers sent with each delivery request. Values support $vars.* substitution.",
+          "additionalProperties": { "type": "string" }
+        }
+      }
+    },
+    "ChannelProfile": {
+      "type": "object",
+      "description": "A named notification channel that binds a provider to an optional target and severity filter. Referenced by channel name in notify hooks.",
+      "required": ["provider"],
+      "properties": {
+        "provider": {
+          "type": "string",
+          "description": "Provider name — must match a key defined in top-level 'providers'."
+        },
+        "target": {
+          "type": "string",
+          "description": "Default delivery target (e.g. 'telegram:chat_id' for hermes, or a URL for webhook). Can be overridden per hook."
+        },
+        "url": {
+          "type": "string",
+          "description": "URL override for this channel. Takes precedence over the provider-level url."
+        },
+        "min_severity": {
+          "type": "string",
+          "enum": ["info", "warn", "error"],
+          "description": "Channel-level severity filter. Messages below this severity are silently dropped. Overrides provider-level min_severity."
+        }
+      }
+    },
+    "NotifyTemplate": {
+      "type": "object",
+      "description": "Notification message template. Supports ${var | filter} variable substitution and {{#if var}}...{{/if}} conditionals (max nesting depth 3).",
+      "required": ["title"],
+      "properties": {
+        "severity": {
+          "type": "string",
+          "enum": ["info", "warn", "error"],
+          "default": "info",
+          "description": "Message severity level. Used for filtering against provider/channel min_severity thresholds."
+        },
+        "title": {
+          "type": "string",
+          "description": "Message title. Supports variable substitution: $vars.*, $hook.*, $inputs.*, $notify.*, $nodeId.output.*."
+        },
+        "body": {
+          "type": "string",
+          "description": "Optional message body. Supports the same variable substitution and filter syntax as title. Use \\n for line breaks."
+        }
+      }
+    },
+    "NotifyRetry": {
+      "type": "object",
+      "description": "Retry configuration for notification delivery. Only effective when the hook's on_failure is set to 'retry'.",
+      "properties": {
+        "max_attempts": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10,
+          "default": 1,
+          "description": "Maximum delivery attempts (1–10). Default 1 means no retry."
+        },
+        "delay": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 60,
+          "default": 1,
+          "description": "Delay in seconds between retry attempts (0–60)."
+        }
+      }
+    },
+    "Node": {
+      "type": "object",
+      "required": ["id", "type"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique node identifier within the workflow. Used for variable references ($node_id.output.xxx) and depends_on."
+        },
+        "type": {
+          "type": "string",
+          "enum": ["bash", "python", "agent", "condition", "approval", "loop", "swarm"],
+          "description": "Node executor type"
+        },
+        "model": {
+          "type": "string",
+          "description": "AI model override for this node (agent type only)"
+        },
+        "engine": {
+          "type": "string",
+          "description": "AI provider name for agent nodes. Default: 'claude'. The legacy value 'claude-code' is automatically mapped to 'claude'."
+        },
+        "timeout": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "description": "Node-level timeout in seconds"
+        },
+        "depends_on": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Node IDs that must complete before this node runs. Enables parallel/DAG execution in auto mode."
+        },
+        "execute_when": {
+          "type": "string",
+          "description": "Expression evaluated before execution. If falsy, the node is skipped. Uses the same expression grammar as other fields."
+        },
+        "outputs": {
+          "type": "object",
+          "description": "Map variable names to expressions. Evaluated after node succeeds and written into $vars. Use $vars.xxx = expression to assign, or $vars.xxx for read-only mapping.",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "variables": {
+          "type": "object",
+          "description": "Arbitrary metadata bucket — not used by the engine directly."
+        },
+
+        "bash": {
+          "type": "string",
+          "description": "[bash node] Shell script body. Executed via child_process (bash on Linux/macOS, cmd on Windows). Variables ($vars.xxx, $inputs.xxx) are substituted before execution."
+        },
+        "python": {
+          "type": "string",
+          "description": "[python node] Python script body. Executed via python3 child_process. Variables are substituted before execution."
+        },
+        "inputs": {
+          "type": "object",
+          "description": "[python / condition node] Key-value inputs injected into the node's evaluation context. For python: passed as environment variables. For condition: referenced via $inputs.xxx in case expressions.",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+
+        "agent": {
+          "type": "string",
+          "description": "[agent node] Agent name to invoke (e.g. skill-searcher, code-reviewer). Must match a registered agent."
+        },
+        "skills": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "[agent node] Skill names to load into the agent context"
+        },
+        "prompt": {
+          "type": "string",
+          "description": "[agent node] The task prompt sent to the AI agent. Variables ($vars.xxx, $node_id.output.xxx) are substituted."
+        },
+        "context": {
+          "type": "string",
+          "enum": ["new", "continue"],
+          "description": "[agent node] Session context mode. 'new' = start an independent session (stored for resume_from). 'continue' (default) = resume the workflow's global conversation thread."
+        },
+        "resume_from": {
+          "type": "string",
+          "description": "[agent node] Explicitly resume a specific context: 'new' node's session. Merges that branch back into the global conversation thread."
+        },
+        "goal": {
+          "type": "string",
+          "description": "[agent node — goal mode] High-level goal description. Mutually exclusive with 'prompt'. Engine builds a structured goal prompt with constraints, allowed tools, and context injection."
+        },
+        "constraints": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "[agent node — goal mode] List of constraints rendered as bullet points in the goal prompt. Requires 'goal' to be set."
+        },
+        "planning": {
+          "type": "object",
+          "description": "[agent node — goal mode] Planning configuration for goal-driven agents.",
+          "properties": {
+            "max_turns": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "description": "Maximum conversation turns (prompt-level hint)"
+            },
+            "verify": {
+              "type": "boolean",
+              "description": "If true, adds 'Verify your result before finishing' instruction"
+            },
+            "tools": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "Allowed tools rendered in the goal prompt"
+            },
+            "disallowed_tools": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "Disallowed tools rendered in the goal prompt"
+            }
+          }
+        },
+        "agents": {
+          "type": "object",
+          "description": "[agent node] Sub-agent definitions for parallel multi-agent invocation via Claude Agent SDK. Each key is a sub-agent name; each value is a SubAgentDefinition.",
+          "additionalProperties": {
+            "$ref": "#/$defs/SubAgentDefinition"
+          }
+        },
+        "auto_answers": {
+          "type": "array",
+          "description": "[agent node] Node-level auto-answer rules. Merged with global auto_answers and compiled into prompt instructions.",
+          "items": {
+            "type": "object",
+            "required": ["pattern", "answer"],
+            "properties": {
+              "pattern": {
+                "type": "string"
+              },
+              "answer": {
+                "type": "string"
+              }
+            }
+          }
+        },
+
+        "cases": {
+          "type": "array",
+          "description": "[condition node] Ordered list of when/then cases. First matching case wins. Use when: \"default\" for the fallback case.",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["when", "then"],
+            "properties": {
+              "when": {
+                "type": "string",
+                "description": "Expression evaluated against $vars and $inputs. Truthy → this case matches. Use \"default\" for fallback."
+              },
+              "then": {
+                "type": "string",
+                "description": "Node ID to jump to when this case matches"
+              }
+            }
+          }
+        },
+
+        "options": {
+          "type": "array",
+          "description": "[approval node] List of approval choices presented to the user",
+          "items": {
+            "type": "object",
+            "required": ["label", "value"],
+            "properties": {
+              "label": {
+                "type": "string",
+                "description": "Display label shown to the user"
+              },
+              "value": {
+                "type": "string",
+                "description": "Value written to $vars when this option is selected"
+              }
+            }
+          }
+        },
+        "approval_timeout": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "description": "[approval node] Timeout in seconds. If no user response within this time, the node fails."
+        },
+        "on_reject": {
+          "type": "string",
+          "description": "[approval node] Node ID to jump to when the approval is rejected. If unset, rejection fails the node."
+        },
+
+        "while": {
+          "type": "string",
+          "description": "[loop node] Expression evaluated before each iteration. Falsy → exit loop. Defaults to \"true\" (loop until break or max_iterations)."
+        },
+        "break_when": {
+          "type": "string",
+          "description": "[loop node] Expression evaluated after each child node. Truthy → exit loop immediately. Checked per child node within an iteration."
+        },
+        "continue_when": {
+          "type": "string",
+          "description": "[loop node] Expression evaluated after each child node. Truthy → skip remaining child nodes and start next iteration."
+        },
+        "max_iterations": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "default": 100,
+          "description": "[loop node] Safety limit — maximum number of loop iterations"
+        },
+        "nodes": {
+          "type": "array",
+          "description": "[loop node] Child nodes executed in each iteration",
+          "items": {
+            "$ref": "#/$defs/Node"
+          }
+        },
+
+        "topic": {
+          "type": "string",
+          "description": "[swarm node] The topic/question for all experts to discuss or analyze. Supports $vars.* substitution. Required for swarm nodes."
+        },
+        "mode": {
+          "type": "string",
+          "enum": ["review", "debate", "dispatch", "swarm"],
+          "description": "[swarm node] Orchestration mode. review: single-round parallel expert review. debate: multi-round discussion with consensus checks. dispatch: DAG-based task execution with dependencies. swarm: meta-mode where Router auto-selects mode and experts."
+        },
+        "experts": {
+          "type": "array",
+          "description": "[swarm node] Predefined expert definitions. Each expert participates in the discussion with their own role and perspective.",
+          "items": {
+            "$ref": "#/$defs/ExpertDef"
+          }
+        },
+        "dynamic": {
+          "type": "boolean",
+          "description": "[swarm node] Enable dynamic routing. When true, SwarmRouter auto-selects experts from the role registry (266+ agents) using keyword pre-filter + LLM selection."
+        },
+        "max_experts": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "description": "[swarm node] Maximum number of experts the Router can select when dynamic: true. Required when dynamic is enabled."
+        },
+        "rounds": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "description": "[swarm node — debate mode] Maximum number of discussion rounds. Default: 3. Ignored in review mode (fixed at 1)."
+        },
+        "consensus_threshold": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "[swarm node — debate mode] Consensus score (0.0-1.0) threshold for early termination. When Host-assessed consensus >= threshold, discussion ends. Default: 0.7."
+        },
+        "budget": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "description": "[swarm node] Token budget limit for the entire swarm execution (all experts + Host). When exhausted, execution stops with status budget_exhausted."
+        },
+        "host": {
+          "$ref": "#/$defs/ExpertDef",
+          "description": "[swarm node] Host agent definition. The Host synthesizes expert outputs into a final report and (in debate mode) assesses consensus. Default model: opus. Fallback: sonnet → concatenation. Custom host.prompt replaces built-in synthesis instructions."
+        },
+        "failure_policy": {
+          "type": "string",
+          "enum": ["fail_fast", "continue_partial", "retry_failed"],
+          "description": "[swarm node] Expert failure handling. fail_fast: stop on first failure (dispatch default). continue_partial: proceed with completed experts (discussion default). retry_failed: retry failed experts."
+        },
+        "output_format": {
+          "type": "string",
+          "enum": ["summary", "full", "structured"],
+          "description": "[swarm node] Host synthesis output format. summary: concise overview. full: comprehensive analysis. structured: JSON with synthesis, experts[], disagreements[], recommendation, confidence."
+        },
+        "expert_defaults": {
+          "type": "object",
+          "description": "[swarm node] Default values merged into every expert definition (expert defaults are overridden by expert-level values).",
+          "properties": {
+            "model": {
+              "type": "string",
+              "description": "Default model for all experts"
+            },
+            "tools": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "Default allowed tools for all experts"
+            },
+            "disallowed_tools": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "Default disallowed tools for all experts"
+            }
+          }
+        },
+        "context_tier": {
+          "type": "string",
+          "enum": ["200k", "1m"],
+          "description": "[swarm node] Context tier for parameter scaling. '200k' (default): baseline values. '1m': 4× scale for large-context models. Affects token budgets, truncation thresholds, and detail limits."
+        },
+        "context_window_rounds": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "description": "[swarm node — debate mode] Number of recent rounds to keep in full text (sliding window). Older rounds are compressed via LLM summarization. Default: 2."
+        },
+        "context_token_budget": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "description": "[swarm node] Token budget for discussion context history. When exceeded, emergency truncation activates. Default: 60000 (200k tier) / 240000 (1m tier)."
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "type": { "const": "bash" } },
+            "required": ["type"]
+          },
+          "then": { "required": ["bash"] }
+        },
+        {
+          "if": {
+            "properties": { "type": { "const": "python" } },
+            "required": ["type"]
+          },
+          "then": { "required": ["python"] }
+        },
+        {
+          "if": {
+            "properties": { "type": { "const": "agent" } },
+            "required": ["type"]
+          },
+          "then": {
+            "description": "Agent nodes require at least one of: agent name, prompt, or agents definition."
+          }
+        },
+        {
+          "if": {
+            "properties": { "type": { "const": "condition" } },
+            "required": ["type"]
+          },
+          "then": { "required": ["cases"] }
+        },
+        {
+          "if": {
+            "properties": { "type": { "const": "approval" } },
+            "required": ["type"]
+          },
+          "then": { "required": ["options"] }
+        },
+        {
+          "if": {
+            "properties": { "type": { "const": "loop" } },
+            "required": ["type"]
+          },
+          "then": { "required": ["nodes"] }
+        },
+        {
+          "if": {
+            "properties": { "type": { "const": "swarm" } },
+            "required": ["type"]
+          },
+          "then": {
+            "required": ["topic", "mode"],
+            "description": "Swarm nodes require topic and mode. review needs ≥1 expert, debate needs ≥2 experts (unless dynamic: true). dynamic requires max_experts."
+          }
+        }
+      ]
+    }
+  }
+}

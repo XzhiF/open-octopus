@@ -1,0 +1,1198 @@
+# yaml-language-server: $schema=./workflow-schema.json
+apiVersion: octopus/v1
+kind: Workflow
+name: octopus-dev-s2-cr-flow
+description: >
+  PR 审查修复工作流 —— 接收多项目 PR URLs，逐个执行完整的审查、合并、修复、测试、推送流程。
+  流程：Setup → Orchestrator (对每个 PR: Review → Doc-Review → Merge → Fix → E2E → Regression → Push) → Final Notify。
+  支持智能冲突解决（双向分析 + 三种分支策略）、产品完整性评估、业务影响审查。
+  通过 execution chain 与 octopus-dev-s1-pr-flow 串联，自动接收 pr_urls。
+
+model: pro-max
+engine: claude
+execution_mode: serial
+timeout: 86400
+
+inputs:
+  pr_urls:
+    description: "PR URLs JSON Map（如 {\"project-a\":\"https://github.com/owner/repo/pull/5\",\"project-b\":\"https://github.com/owner/repo/pull/3\"}）"
+    required: false
+    default: "$parent.var_pool.pr_urls"
+  base_branch:
+    description: "目标合并分支（留空则自动检测每个项目的主分支）"
+    required: false
+    default: ""
+  run_e2e:
+    description: "是否运行 PR 相关的 E2E 测试（UI/UX 浏览器验证）"
+    required: false
+    default: "true"
+  run_regression:
+    description: "是否运行影响范围的回归测试"
+    required: false
+    default: "false"
+  merge_strategy:
+    description: "最终推送时的提交策略: squash / merge / rebase"
+    required: false
+    default: "squash"
+  protected_ports:
+    description: "E2E 期间不能杀死的端口列表（逗号分隔）"
+    required: false
+    default: "3000,3001,3098,3099"
+  completeness_threshold:
+    description: "产品完整度阈值（0-100），低于此值会触发补充修复"
+    required: false
+    default: "95"
+  review_guidance:
+    description: >
+      审查指导指令。告知审查 agent 如何查找和使用 PRD/设计/计划文档来指导 PR 审查。
+      留空时使用默认值（自动搜索 docs/ 目录下的 PRD、设计、计划文件）。
+      设为 "skip" 跳过文档指导。
+    required: false
+    default: |
+      在审查 PR 之前，必须先查找并阅读以下指导文档，作为审查的基准参照：
+
+      1. PRD 文档: 在 ./docs/prd-forge/ 下找序号最大的 prd-* 目录，读取其中的 PRD-FINAL.md
+      2. 设计文档: 在 ./docs/superpowers/specs/ 下找时间戳最新的 *.design.md 文件
+      3. 计划文档: 在 ./docs/superpowers/specs/ 下找时间戳最新的 *.plan.md 文件
+
+      这些文档定义了"应该做成什么样"。审查 PR 时，对照这些文档判断：
+      - PR 的实现是否偏离了 PRD 中定义的目标和方案？
+      - PR 是否覆盖了设计文档中描述的核心接口和配置？
+      - PR 的进度是否与计划文档中的阶段一致？
+      - 如果实现偏离了文档，偏离是否合理？如果不合理，应如何纠正？
+
+variables:
+  # ── 输入 ──
+  pr_urls: ""
+  pr_count: "0"
+
+  # ── 环境 ──
+  projects: ""
+  pkg_manager: ""
+  notify_target: "telegram:xzf_hermes"
+  display_name: ""
+
+  # ── 文档目录 ──
+  doc_dir: ""  # 格式: docs/<workflow-name>-{NNN}/
+
+  # ── 审查指导 ──
+  guidance_files: ""  # 发现的指导文档路径列表
+  guidance_summary: ""  # 指导文档核心要点摘要
+
+  # ── 处理结果 ──
+  review_results: ""
+  total_processed: "0"
+  total_fixed: "0"
+  total_pushed: "0"
+  total_skipped: "0"
+  total_failed: "0"
+
+  # ── 回归测试结果 ──
+  regression_completed: "false"
+  regression_issues: "0"
+  regression_summary: ""
+
+  # ── 产品完整度验证结果 ──
+  completeness_score: "0"
+  completeness_rounds: "0"
+  completeness_missing: ""
+  completeness_passed: "false"
+
+  # ── 全局规则 ──
+  workspace_rules: |
+    ## 工作空间规范
+    - 当前 cwd 是 octopus 聚合工作空间，不是单个 git 仓库
+    - 项目在 ./projects/ 目录下，每个是独立的 git worktree
+    - git 命令必须在具体项目目录内执行
+    - **所有项目级命令必须在对应项目目录内执行**：
+      - 构建/测试/启动/安装依赖等命令必须 cd 到 ./projects/{项目名}/ 再执行
+      - 禁止在 workspace 根目录执行 pnpm dev / pnpm build 等项目命令
+      - 示例: `cd projects/xzf-octopus && pnpm dev`
+
+auto_answers:
+  - pattern: ".*"
+    answer: "proceed"
+
+# ── Notify 子系统配置 ──
+providers:
+  hermes-cli:
+    type: hermes
+    timeout: 30
+    min_severity: info
+
+channels:
+  default:
+    provider: hermes-cli
+    target: "telegram:xzf_hermes"
+
+hooks:
+  # ① 工作流失败 — 节点执行错误导致终止
+  on_workflow_failure:
+    - id: notify-failure
+      type: notify
+      channel: default
+      template:
+        severity: error
+        title: "❌ $vars.display_name — 工作流失败"
+        body: "🔴 失败节点: ${hook.failed_node_id | default:unknown}\n⏱️ 已运行: ${hook.total_duration_ms | duration}\n📊 已处理: $vars.total_processed / $vars.pr_count 个 PR\n\n💡 *错误信息*:\n${hook.error | default:Unknown error}"
+
+  # ② 服务中断 — 保留 bash（引擎未触发此事件）
+  on_interrupt:
+    - id: notify-interrupt
+      type: bash
+      timeout: 30
+      bash: |
+        DISPLAY_NAME="$vars.display_name"
+        [ -z "$DISPLAY_NAME" ] && DISPLAY_NAME="Octopus PR Review"
+        REASON="$hook.interrupt_reason"
+        [ -z "$REASON" ] && REASON="unknown"
+        TS="$hook.timestamp"
+        [ -z "$TS" ] && TS="unknown"
+
+        hermes send -t "$vars.notify_target" -q "⚠️ $DISPLAY_NAME — 工作流被中断
+        🔧 原因: $REASON
+        📊 已处理: $vars.total_processed / $vars.pr_count 个 PR
+        🕐 中断时间: $TS" 2>&1 || echo "WARN: hermes send failed"
+
+  # ③ 用户取消 — 保留 bash（引擎未触发此事件）
+  on_cancel:
+    - id: notify-cancel
+      type: bash
+      timeout: 30
+      bash: |
+        DISPLAY_NAME="$vars.display_name"
+        [ -z "$DISPLAY_NAME" ] && DISPLAY_NAME="Octopus PR Review"
+        TS="$hook.timestamp"
+        [ -z "$TS" ] && TS="unknown"
+
+        hermes send -t "$vars.notify_target" -q "🛑 $DISPLAY_NAME — 工作流已取消
+        📊 已处理: $vars.total_processed / $vars.pr_count 个 PR
+        🕐 取消时间: $TS" 2>&1 || echo "WARN: hermes send failed"
+
+  # ④ 工作流完成（无论成功/失败）— 使用新 notify 特性
+  on_complete:
+    - id: notify-complete
+      type: notify
+      channel: default
+      template:
+        severity: info
+        title: "🏁 $vars.display_name — 工作流完成"
+        body: "状态: $hook.final_status\n📊 已处理: $vars.total_processed / $vars.pr_count 个 PR\n✅ 完成: $hook.completed_count/$hook.total_count\n⏱️ 总耗时: ${hook.total_duration_ms | duration}"
+
+  # ⑤ 节点级通知 — 使用新 notify 特性替代原有 notify-* bash 节点
+  on_node_success:
+    # Setup 完成
+    - id: notify-setup
+      type: notify
+      nodes: [setup]
+      channel: default
+      template:
+        severity: info
+        title: "🔍 $vars.display_name 启动 (PR Review & Fix)"
+        body: "📂 项目: $vars.projects\n📊 PR 数量: $vars.pr_count\n🎯 合并策略: $inputs.merge_strategy\n🧪 E2E 测试: $inputs.run_e2e\n🔄 回归测试: $inputs.run_regression"
+
+    # 回归测试完成（execute_when 跳过时 hook 不触发）
+    - id: notify-regression
+      type: notify
+      nodes: [regression-test]
+      channel: default
+      template:
+        severity: info
+        title: "🔄 $vars.display_name — 回归测试完成"
+        body: "📂 项目: $vars.projects\n🐛 发现问题: $vars.regression_issues\n\n💡 $vars.regression_summary"
+
+nodes:
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 0: Setup — 解析 PR URLs + 环境检测 + 依赖安装
+  # ═══════════════════════════════════════════════════════════════
+  - id: setup
+    type: agent
+    timeout: 900
+    prompt: |
+      你正在执行 PR 审查修复工作流的环境检测阶段。
+
+      $vars.workspace_rules
+
+      ## 输入
+      - PR URLs (JSON Map): $inputs.pr_urls
+      - 目标分支: $inputs.base_branch
+      - 合并策略: $inputs.merge_strategy
+
+      ## 你的任务
+
+      ### 1. 安装 superpowers-zh 技能（必须首先执行）
+      ```bash
+      echo "Installing superpowers-zh skills..."
+      npx superpowers-zh@latest --tool claude --force 2>&1 | head -5
+      ```
+
+      ### 2. 安装 agency-agents-zh 代理
+      ```bash
+      AGENTS_TARGET="$(pwd)/.claude/agents"
+      mkdir -p "$AGENTS_TARGET"
+
+      NEED_CLONE=false
+      for agent in engineering-code-reviewer engineering-software-architect testing-api-tester; do
+        if [ ! -f "$AGENTS_TARGET/$agent.md" ]; then
+          NEED_CLONE=true
+          break
+        fi
+      done
+
+      if [ "$NEED_CLONE" = "true" ]; then
+        echo "Cloning agency-agents-zh..."
+        DEPS_DIR="$(pwd)/dependencies"
+        mkdir -p "$DEPS_DIR"
+
+        if [ ! -d "$DEPS_DIR/agency-agents-zh" ]; then
+          git clone --depth 1 https://github.com/jnMetaCode/agency-agents-zh.git "$DEPS_DIR/agency-agents-zh" 2>&1
+        fi
+
+        REPO="$DEPS_DIR/agency-agents-zh"
+
+        for f in code-reviewer software-architect; do
+          [ -f "$REPO/engineering/engineering-$f.md" ] && cp "$REPO/engineering/engineering-$f.md" "$AGENTS_TARGET/"
+        done
+
+        for f in api-tester reality-checker; do
+          [ -f "$REPO/testing/testing-$f.md" ] && cp "$REPO/testing/testing-$f.md" "$AGENTS_TARGET/"
+        done
+
+        echo "Installed agents to $AGENTS_TARGET"
+      fi
+      ```
+
+      ### 3. 解析 PR URLs JSON Map
+      解析 `$inputs.pr_urls` 获取每个项目和对应的 PR URL。
+      使用 jq 或手动解析:
+      ```bash
+      echo '$inputs.pr_urls' | jq -r 'to_entries[] | "\(.key) \(.value)"'
+      ```
+      记录项目数量（pr_count）。
+
+      ### 4. 遍历项目，检测主分支和环境信息
+      对 pr_urls 中的每个项目:
+      1. cd 到 `./projects/<项目名>/`
+      2. 检测主分支（按优先级）:
+         ```bash
+         # 方法 1: gh CLI
+         DEFAULT_BRANCH=$(gh repo view --json defaultBranchRef --jq .defaultBranchRef.name 2>/dev/null)
+         # 方法 2: git symbolic-ref
+         [ -z "$DEFAULT_BRANCH" ] && DEFAULT_BRANCH=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's|refs/remotes/origin/||')
+         # 方法 3: 常见名称
+         if [ -z "$DEFAULT_BRANCH" ]; then
+           for branch in main master develop; do
+             if git show-ref --verify --quiet "refs/remotes/origin/$branch"; then
+               DEFAULT_BRANCH=$branch
+               break
+             fi
+           done
+         fi
+         ```
+      3. 确保 Git 用户已配置:
+         ```bash
+         git config user.email 2>/dev/null || git config user.email "octopus-bot@noreply.github.com"
+         git config user.name 2>/dev/null || git config user.name "Octopus Bot"
+         ```
+      4. 检测包管理器和构建/测试命令
+
+      ### 5. 计算 display_name（必须非空）
+      - 优先使用 `$vars.execution_name`，其次 `$vars.workflow_name`，兜底 "Octopus PR Review"
+
+      ### 6. 计算文档目录（递增序号）
+      ```bash
+      WORKFLOW_NAME="octopus-dev-s2-cr-flow"
+      DOCS_ROOT="./docs"
+      mkdir -p "$DOCS_ROOT"
+
+      # 找到最大序号 + 1
+      MAX_INDEX=0
+      for dir in "$DOCS_ROOT"/${WORKFLOW_NAME}-*/; do
+        if [ -d "$dir" ]; then
+          # 提取序号（去掉前缀，去掉前导零）
+          INDEX=$(basename "$dir" | sed "s/${WORKFLOW_NAME}-0*//" | sed 's/^$/0/')
+          if [ "$INDEX" -gt "$MAX_INDEX" ] 2>/dev/null; then
+            MAX_INDEX=$INDEX
+          fi
+        fi
+      done
+
+      NEW_INDEX=$((MAX_INDEX + 1))
+      DOC_INDEX=$(printf "%03d" $NEW_INDEX)
+      DOC_DIR="$DOCS_ROOT/${WORKFLOW_NAME}-${DOC_INDEX}"
+      mkdir -p "$DOC_DIR"
+
+      echo "Document directory: $DOC_DIR"
+      ```
+
+      ### 7. 查找审查指导文档（$inputs.review_guidance 不为 "skip" 时执行）
+
+      按 $inputs.review_guidance 中的指令查找指导文档:
+      ```bash
+      GUIDANCE_FILES=""
+      GUIDANCE_SUMMARY=""
+
+      # 1. 查找最新 PRD 文档
+      PRD_DIR=$(ls -d ./docs/prd-forge/prd-*/ 2>/dev/null | sort -V | tail -1)
+      if [ -n "$PRD_DIR" ] && [ -f "${PRD_DIR}PRD-FINAL.md" ]; then
+        GUIDANCE_FILES="${GUIDANCE_FILES}PRD: ${PRD_DIR}PRD-FINAL.md\n"
+        echo "Found PRD: ${PRD_DIR}PRD-FINAL.md"
+      fi
+
+      # 2. 查找最新设计文档
+      DESIGN_FILE=$(ls -t ./docs/superpowers/specs/*.design.md 2>/dev/null | head -1)
+      if [ -n "$DESIGN_FILE" ]; then
+        GUIDANCE_FILES="${GUIDANCE_FILES}Design: ${DESIGN_FILE}\n"
+        echo "Found Design: ${DESIGN_FILE}"
+      fi
+
+      # 3. 查找最新计划文档
+      PLAN_FILE=$(ls -t ./docs/superpowers/specs/*.plan.md 2>/dev/null | head -1)
+      if [ -n "$PLAN_FILE" ]; then
+        GUIDANCE_FILES="${GUIDANCE_FILES}Plan: ${PLAN_FILE}\n"
+        echo "Found Plan: ${PLAN_FILE}"
+      fi
+
+      if [ -z "$GUIDANCE_FILES" ]; then
+        echo "No guidance documents found"
+        GUIDANCE_SUMMARY="未找到指导文档"
+      fi
+      ```
+
+      如果找到了文档，**读取每个文件的核心内容**，提取:
+      - PRD: 核心目标、方案概述、关键设计决策、Non-Goals
+      - Design: 核心接口/配置设计、架构决策、迁移策略
+      - Plan: 当前阶段、里程碑、成功指标
+
+      将提取的要点写入 `guidance_summary`。
+
+      ## 输出要求
+
+      在回复末尾直接输出纯 JSON 行（不要用代码块包裹，必须是最后一行）:
+      {"vars_update":{"pr_urls":"<JSON Map>","pr_count":"<PR 数量>","projects":"<项目目录名>","pkg_manager":"<包管理器>","display_name":"<非空名称>","doc_dir":"<文档目录路径>","guidance_files":"<找到的文档路径列表>","guidance_summary":"<指导文档核心要点摘要>"}}
+
+      ## 规则
+      - 无人值守模式，直接执行
+      - **必须首先安装 superpowers-zh**
+      - **必须安装 agency-agents-zh 代理**
+      - **display_name 必须非空**
+      - **pr_count 必须与实际解析到的 PR 数量一致**
+      - 如果 $inputs.base_branch 非空，使用它作为所有项目的主分支；否则自动检测
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 0.5: PR Count Check — 空 PR 短路处理
+  # ═══════════════════════════════════════════════════════════════
+  - id: pr-count-check
+    type: condition
+    depends_on: [setup]
+    cases:
+      - when: '$vars.pr_count == "0"'
+        then: final-summary-empty
+      - when: default
+        then: pr-review-orchestrator
+
+  - id: final-summary-empty
+    type: bash
+    depends_on: [pr-count-check]
+    timeout: 15
+    bash: |
+      octopus notify --ignore-failure \
+        --title "🎯 $vars.display_name — 完成（无 PR）" \
+        --body "📊 PR 数量: 0
+      ✅ 无需审查"
+      echo "=== PR Review Flow 完成 (无 PR) ==="
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 1: PR Review Orchestrator — 核心处理
+  # 单 agent 驱动，遍历每个 PR 执行 7 步流程
+  # ═══════════════════════════════════════════════════════════════
+  - id: pr-review-orchestrator
+    type: agent
+    depends_on: [pr-count-check]
+    timeout: 86400
+    context: new
+    skills:
+      - chinese-code-review
+      - systematic-debugging
+      - verification-before-completion
+    agents:
+      code-reviewer:
+        description: "独立代码审查员 — 从主分支视角审查 PR 变更，识别阻塞点和优化点"
+        agent_file: ".claude/agents/engineering-code-reviewer.md"
+        prompt: |
+          ## 审查任务
+          从主分支的 codebase 视角，审查指定 PR 的所有变更。
+
+          审查维度:
+          1. **阻塞点** — 会导致功能无法使用的严重问题
+          2. **优化点** — 代码质量、性能、安全方面的改进建议
+          3. **产品完整性** — 对照 PR 目标，是否覆盖了完整功能链路
+
+          严重级别:
+          - 🔴 BLOCKER: 必须修复才能合并
+          - 🟡 IMPORTANT: 建议修复
+          - 🔵 MINOR: 可选改进
+
+          输出: 按严重级别分组的发现清单 + 产品完整性评估
+        model: pro-max
+        tools: ["Bash", "Read", "Grep", "Glob"]
+
+      product-completeness-assessor:
+        description: "产品完整性评估员 — 评估 PR 是否构成完整功能，覆盖数据层/Server/UI/UX 全流程"
+        prompt: |
+          ## 产品完整性评估
+
+          你是一个产品技术评估专家。你的任务是从产品完整度的角度评估 PR 是否覆盖了所有层级。
+
+          ## 评估维度（6 个）
+
+          1. **数据层** — 数据模型是否完整？Migration 是否到位？数据校验是否充分？索引是否合理？
+          2. **Server 层** — API 端点是否完整？错误处理是否完善？中间件是否配置？认证/授权是否覆盖？
+          3. **UI 层** — 页面/组件是否完整？状态管理是否正确？响应式是否处理？TypeScript 类型是否齐全？
+             - 如果 PRD 定义了页面设计，PR 是否实现了对应的页面和组件？
+             - 每个页面是否覆盖了 5 种状态（空态/加载/成功/错误/部分数据）？
+             - **如果 PRD 有 UI 设计但 PR 只有后端代码没有 UI → 严重缺失**
+          4. **UX 交互** — 用户操作流程是否完整闭环？
+             - **入口**: 用户从哪里进入此功能？（菜单/路由/按钮）
+             - **操作**: 用户怎么执行操作？（表单/交互序列）
+             - **反馈**: 用户怎么知道操作成功了？（toast/状态变化/列表刷新）
+             - **恢复**: 操作失败后用户怎么修正？（错误提示/重试/编辑）
+             - **如果只有 API 实现但没有用户操作路径 → 交互闭环缺失**
+          5. **测试** — 单元测试覆盖核心逻辑？集成测试覆盖 API？E2E 覆盖关键路径？
+          6. **文档** — API 文档更新？用户文档更新？CHANGELOG 更新？
+
+          ## 输出要求（极其重要）
+
+          ### 1. 评分: 0-100%
+          基于 6 个维度加权计算。每个维度 0-100%，总评分 = 各维度加权平均。
+
+          ### 2. 各维度评分明细
+          | 维度 | 评分 | 已覆盖 | 缺失项 |
+          |------|------|--------|--------|
+          | 数据层 | N% | ... | ... |
+          | Server 层 | N% | ... | ... |
+          | ... | | | |
+
+          ### 3. 缺失项清单
+          每个缺失项必须包含:
+          - **具体描述**: 缺什么（不是"文档不完整"，而是"缺少 POST /api/schedules 端点的错误处理测试"）
+          - **涉及文件**: 应该在哪个文件中补充
+          - **修复方式**: 具体怎么补（不是"完善测试"，而是"在 schedule.test.ts 中添加 invalid input 返回 400 的测试"）
+          - **优先级**: 高/中/低
+          - **预期分值**: 修复后预计提升多少分
+
+          ### 4. 轮次对比（round > 1 时）
+          - 上一轮的哪些缺失项已被修复？
+          - 哪些仍未修复？为什么分数没变？
+          - 评分变化: <上轮分数>% → <本轮分数>% (±<delta>)
+
+          ### 5. 总结
+          一句话说明当前完整度状态和最关键缺失。
+        model: pro-max
+        tools: ["Bash", "Read", "Grep", "Glob"]
+
+      business-reviewer:
+        description: "业务审查员 — 从业务从头到尾审查 review doc，验证影响范围和最终目标对齐"
+        agent_file: ".claude/agents/engineering-software-architect.md"
+        prompt: |
+          ## 业务审查任务
+
+          读取 review document，从业务全链路角度进行二次审查和修正。
+
+          审查重点:
+          1. **业务目标对齐** — review doc 中的问题和方案是否与 PR 的最终业务目标一致？
+          2. **影响范围** — 修改是否会影响到 PR 未涉及但业务上有关联的功能？
+          3. **端到端流程** — 从用户入口到数据落地的完整链路是否通畅？
+          4. **向后兼容** — 修改是否会导致现有功能回归？
+          5. **过度修改风险** — review doc 中的修改建议是否超出 PR 范围？
+
+          输出: 修正后的 review document（添加 "## 业务审查修正" section）
+        model: pro-max
+        tools: ["Read", "Grep", "Glob"]
+
+      api-tester:
+        description: "API 测试员 — 端点发现、功能测试、安全测试"
+        agent_file: ".claude/agents/testing-api-tester.md"
+        prompt: |
+          ## API 测试任务
+          测试 PR 涉及的所有 API 端点。
+          测试: 功能正确性 + 安全（认证/授权/注入）+ 边界条件
+        model: pro
+        tools: ["Bash", "Read", "Grep", "Glob"]
+
+      vision-analyzer:
+        description: "E2E 浏览器验证子代理 — 真实浏览器操控 + 截图 + 视觉分析，验证页面渲染和交互"
+        skills:
+          - octo-browser-vision
+        prompt: |
+          ## E2E 浏览器验证任务
+
+          你是一个 E2E 浏览器测试专家。使用 agent-browser 进行真实的浏览器操控和视觉验证。
+
+          ## 工作流程
+
+          ### 1. 启动浏览器并导航
+          ```bash
+          agent-browser --session e2e open <URL>
+          agent-browser --session e2e wait 2000  # 等待页面加载
+          ```
+
+          ### 2. 页面结构验证（Accessibility Tree 优先）
+          ```bash
+          agent-browser --session e2e snapshot -i -c  # 获取可交互元素
+          agent-browser --session e2e snapshot --full  # 获取完整页面文本
+          ```
+          从 snapshot 文本中验证：元素是否存在、文本是否正确、交互元素是否可用。
+
+          ### 3. 交互测试
+          ```bash
+          agent-browser --session e2e click @eN       # 点击按钮/链接
+          agent-browser --session e2e fill @eN "text" # 填写表单
+          agent-browser --session e2e press Enter     # 提交
+          agent-browser --session e2e wait 1000       # 等待响应
+          ```
+
+          ### 4. 视觉验证（截图 + 分析）
+          ```bash
+          agent-browser --session e2e screenshot /tmp/e2e-<step>.png
+          ```
+          截图后，用 Read 工具直接读取 PNG 文件分析内容：
+          - 页面是否正常渲染（不是白屏/错误页）
+          - 布局是否合理
+          - 关键内容是否可见
+          - 交互反馈是否正确（toast、modal、状态变化）
+
+          ### 5. 控制台检查
+          ```bash
+          agent-browser --session e2e errors   # 检查 JS 异常
+          agent-browser --session e2e console  # 查看日志
+          ```
+
+          ### 6. 清理
+          ```bash
+          agent-browser --session e2e close
+          ```
+
+          ## 输出格式
+          返回结构化的测试结果：
+          - 每个验证点: check / result (pass/fail) / evidence
+          - 截图路径列表
+          - 发现的问题和修复建议
+
+          ## 规则
+          - 每个关键步骤都要截图作为证据
+          - 优先用 snapshot 验证文本内容，截图用于视觉布局验证
+          - 发现 JS 错误要记录到测试结果中
+        model: pro
+        tools: ["Bash", "Read", "Grep", "Glob"]
+    prompt: |
+      你是 PR 审查修复工作流的 Orchestrator。你需要遍历 $vars.pr_count 个 PR，对每个 PR 执行完整的审查-合并-修复-测试-推送流程。
+
+      $vars.workspace_rules
+
+      ## 环境信息
+      - PR URLs: $vars.pr_urls
+      - PR 数量: $vars.pr_count
+      - 项目列表: $vars.projects
+      - 目标分支: $inputs.base_branch（为空时自动检测主分支）
+      - 合并策略: $inputs.merge_strategy
+      - 运行 E2E: $inputs.run_e2e
+      - 运行回归: $inputs.run_regression
+
+      ## 审查指导文档
+      $inputs.review_guidance
+
+      已发现的指导文档:
+      $vars.guidance_files
+
+      指导文档核心要点:
+      $vars.guidance_summary
+
+      **⚠️ 重要**: 在 Step 1 审查 PR 时，必须将以上指导文档作为"应该做成什么样"的基准。
+      委派 code-reviewer 和 product-completeness-assessor 时，将 guidance_summary 传入 prompt，让它们对照文档审查。
+      如果 PR 实现偏离了指导文档，在 Step 4 修复时纠正偏离。
+
+      ## 你有 5 个子代理可用（通过 Agent 工具调用）
+      - **code-reviewer**: 独立代码审查（阻塞点 + 优化点 + 产品完整性）
+      - **product-completeness-assessor**: 产品完整性评估（数据层/Server/UI/UX/测试/文档）
+      - **business-reviewer**: 业务影响审查（目标对齐 + 影响范围 + 向后兼容）
+      - **api-tester**: API 功能+安全测试
+      - **vision-analyzer**: UI 截图分析
+
+      调用方式: 使用 Agent 工具，subagent_type 填子代理名称，prompt 填具体任务。
+
+      ## 对每个 PR 的处理流程（7 步）
+
+      遍历 pr_urls 中的每个项目。对每个项目:
+
+      ### Step 1: Full-Codebase Review（代码审查 + 产品完整度评估）
+
+      1. cd 到项目目录: `cd ./projects/<项目名>/`
+      2. 解析 PR URL 获取 PR 编号:
+         ```bash
+         PR_NUM=$(echo "<PR_URL>" | grep -oE '/pull/[0-9]+' | grep -oE '[0-9]+')
+         ```
+      3. 获取 PR 信息:
+         ```bash
+         gh pr view $PR_NUM --json headRefName,title,body,state,files
+         ```
+      4. **切到主分支**，从主分支的 codebase 视角审查 PR:
+         ```bash
+         # 检测主分支
+         DEFAULT_BRANCH=$(gh repo view --json defaultBranchRef --jq .defaultBranchRef.name 2>/dev/null)
+         [ -z "$DEFAULT_BRANCH" ] && DEFAULT_BRANCH="main"
+         git checkout $DEFAULT_BRANCH
+         git pull origin $DEFAULT_BRANCH
+         ```
+      5. 查看 PR diff:
+         ```bash
+         git diff origin/$DEFAULT_BRANCH...origin/<PR分支> --stat
+         ```
+      6. 委派 **code-reviewer**:
+         `Agent(subagent_type="code-reviewer", prompt="cd ./projects/<项目名>/ && 审查 PR #$PR_NUM 的所有变更。从主分支 $DEFAULT_BRANCH 的 codebase 视角。PR 分支: <PR分支>。\n\n## 审查基准（指导文档）\n$vars.guidance_summary\n\n对照以上文档审查：PR 实现是否偏离了 PRD/设计文档的目标和方案？如果偏离，标注为阻塞点。\n\n输出阻塞点、优化点、产品完整性评估、偏离分析。")`
+      7. 委派 **product-completeness-assessor**:
+         `Agent(subagent_type="product-completeness-assessor", prompt="cd ./projects/<项目名>/ && 评估 PR #$PR_NUM 的 产品完整性。PR 目标: <PR标题和描述>。PR 变更文件: <files列表>。\n\n## 评估基准（指导文档）\n$vars.guidance_summary\n\n对照以上文档评估：PRD 中定义的核心目标、接口设计、迁移策略是否在 PR 中被覆盖？\n\n评估数据层/Server/UI/UX/测试/文档是否完整。")`
+      8. 综合两个 sub-agent 的结果，生成 **review-doc**:
+         将审查结果写入 `$vars.doc_dir/<项目名>-review-doc.md`，包含:
+         - 阻塞点清单 + 解决方案
+         - 优化点清单 + 解决方案
+         - 产品完整性评估 + 缺失部分 + 优先级
+         - 需要做什么开发才是完整功能
+
+      9. **发送 Step 1 完成通知**:
+         ```bash
+         octopus notify --ignore-failure \
+           --title "📝 $vars.display_name — [Step 1/7] 代码审查完成" \
+           --body "📂 项目: <项目名>
+         🚫 阻塞点: <N> 个
+         💡 优化点: <N> 个
+         📊 产品完整度: <N>%"
+         ```
+
+      ### Step 2: Document Review（业务审查）
+
+      1. 委派 **business-reviewer**:
+         `Agent(subagent_type="business-reviewer", prompt="读取 review document $vars.doc_dir/<项目名>-review-doc.md。PR 目标: <PR标题和描述>。从业务全链路角度审查，验证影响范围和最终目标对齐。输出修正后的文档。")`
+      2. 将修正后的文档写入 `$vars.doc_dir/<项目名>-refined-review-doc.md`
+
+      3. **发送 Step 2 完成通知**:
+         ```bash
+         octopus notify --ignore-failure \
+           --title "📋 $vars.display_name — [Step 2/7] 业务审查完成" \
+           --body "📂 项目: <项目名>"
+         ```
+
+      ### Step 3: Fetch & Merge Main（拉取并合并主分支）
+
+      1. **验证分支名**（安全检查）:
+         ```bash
+         PR_BRANCH="<PR分支>"
+         if [[ ! "$PR_BRANCH" =~ ^[a-zA-Z0-9._/-]+$ ]]; then
+           echo "❌ 无效的分支名: $PR_BRANCH"
+           # 跳过此 PR，标记为 failed
+         fi
+         ```
+
+      2. 切到 PR 分支:
+         ```bash
+         git fetch origin
+         git checkout $PR_BRANCH || git checkout -b $PR_BRANCH origin/$PR_BRANCH
+         ```
+
+      3. 清理工作区（保留重要目录）:
+         ```bash
+         git checkout . 2>/dev/null
+         git clean -fd \
+           -e ".env*" \
+           -e "dist/" \
+           -e "node_modules/" \
+           -e ".next/" \
+           -e "build/" \
+           -e ".claude/" \
+           -e ".worktrees/" \
+           -e "tmp/" \
+           -e "dependencies/"
+         ```
+
+      4. 尝试合并主分支:
+         ```bash
+         git fetch origin $DEFAULT_BRANCH
+         git merge origin/$DEFAULT_BRANCH --no-edit
+         ```
+      5. 根据结果处理:
+
+         **分支 a — 无需修改（review-doc 表示一切OK）**:
+         如果 review-doc 中没有阻塞点且 产品完整度 ≥ $inputs.completeness_threshold%:
+         → 跳到 Step 6 (Regression) → Step 7 (Push)
+
+         **分支 b — 有冲突**:
+         进入智能冲突解决:
+
+         **规则 A — 简单无逻辑影响**:
+         如果冲突文件是配置文件、lock 文件、格式化差异等无逻辑影响的:
+         → 简单合并（git checkout --theirs/ours 后 add）
+
+         **规则 B — 逻辑冲突（双向分析）**:
+         ```bash
+         # 分析 PR 侧
+         git log <PR_BASE_SHA>..HEAD --oneline --name-only
+         # 分析 main 侧
+         git log <PR_BASE_SHA>..origin/$DEFAULT_BRANCH --oneline --name-only
+         # 对每个冲突文件查看两边做了什么
+         git log <PR_BASE_SHA>..origin/$DEFAULT_BRANCH --oneline -- <冲突文件>
+         ```
+         分析两边各自解决了什么问题:
+         - 如果最终效果可以兼备 → 做效果兼备合并
+         - 保留两边各自的核心逻辑
+
+         **规则 C — 完全矛盾**:
+         如果主分支是要去掉某功能，PR 分支是要增强该功能:
+         → 以主分支为主
+         → 但通过其他途径保证 PR 功能（如配置开关、插件机制、扩展点等）
+         → 记录处理策略到 refined-review-doc
+
+         解决后:
+         ```bash
+         git add <resolved_files>
+         git commit --no-edit
+         ```
+
+         **分支 c — 合并成功无冲突**:
+         → 继续 Step 4
+
+      6. **发送 Step 3 完成通知**:
+         ```bash
+         octopus notify --ignore-failure \
+           --title "🔀 $vars.display_name — [Step 3/7] 分支合并完成" \
+           --body "📂 项目: <项目名>
+         📊 状态: <clean|conflicts-resolved|no-changes>"
+         ```
+
+      ### Step 4: Apply Modifications（根据方案修正开发）
+
+      对当前项目，读取审查文档并委派子代理进行修正开发:
+
+      1. **明确当前项目信息**:
+         - 项目名: `<项目名>`
+         - 项目目录: `./projects/<项目名>/`
+         - 审查文档: `$vars.doc_dir/<项目名>-refined-review-doc.md`（修正后的方案）
+         - 原始审查: `$vars.doc_dir/<项目名>-review-doc.md`（原始审查结果）
+
+      2. **委派 code-reviewer 子代理执行修复**:
+         ```
+         Agent(subagent_type="code-reviewer", prompt="
+         ## 修复任务
+         项目: <项目名>
+         项目目录: ./projects/<项目名>/
+
+         ## 你需要读取的文档
+         1. 修正方案: $vars.doc_dir/<项目名>-refined-review-doc.md
+         2. 原始审查: $vars.doc_dir/<项目名>-review-doc.md
+
+         ## 你的任务
+         1. 先读取两个文档，理解审查发现和修正方案
+         2. cd 到项目目录 ./projects/<项目名>/
+         3. 按优先级执行修复:
+            - 阻塞点修复（必须全部处理）
+            - 优化点改进（按重要性排序）
+            - 产品完整度缺失部分（仅处理高优先级）
+         4. 对于每个修复，你需要:
+            - 理解问题根因
+            - 判断修正方案是否合理（如果不合理，给出你的判断和替代方案）
+            - 执行代码修改
+            - 验证修改是否解决原问题
+         5. 提交修改:
+            git add -A
+            git diff --cached --quiet || git commit -m 'fix: apply review modifications from pr-review-flow'
+
+         ## 规则
+         - 只修改与审查发现相关的代码
+         - 如果修正方案有明显问题，可以调整方案但必须记录原因
+         - 保持代码风格与项目一致
+         ")
+         ```
+
+      3. **发送 Step 4 完成通知**:
+         ```bash
+         octopus notify --ignore-failure \
+           --title "✏️ $vars.display_name — [Step 4/7] 修正开发完成" \
+           --body "📂 项目: <项目名>
+         📝 修改: <N> 个文件"
+         ```
+
+      ### Step 4.5: 产品完整度验证循环（产品完整度验证）
+
+      验证修复后的 产品完整度，目标达到阈值（默认 100%）。最多 10 轮评估-修复循环。
+
+      **核心原则：每轮修复必须产生真实、可验证的改进。不接受"加了几个测试就算修复"。**
+
+      **循环逻辑（最多 10 轮）**:
+
+      对每一轮 `round`（从 1 到 10）:
+
+      **A. 评估（product-completeness-assessor 必须输出具体、可操作的缺失项）**:
+      委派 **product-completeness-assessor**:
+      ```
+      Agent(subagent_type="product-completeness-assessor", prompt="
+      项目: <项目名>
+      项目目录: ./projects/<项目名>/
+      PR 目标: <PR标题和描述>
+      当前轮次: <round>/10
+
+      ## 上一轮结果（如果有）
+      评分: <上轮分数>%
+      缺失项: <completeness_missing>
+
+      ## 你的任务
+      评估当前代码的 产品完整度。
+
+      ## 输出要求（极其重要）
+
+      ### 1. 评分: 0-100%
+
+      ### 2. 缺失项清单
+      每个缺失项必须包含:
+      - **具体描述**: 缺什么（不是"文档不完整"，而是"缺少 hook 超时处理的单元测试"）
+      - **涉及文件**: 应该在哪个文件中补充
+      - **修复方式**: 具体怎么修（不是"完善测试"，而是"在 notify-pipeline.test.ts 中添加 timeout=0 的边界测试"）
+      - **优先级**: 高/中/低
+      - **预期分值**: 修复后预计提升多少分
+
+      ### 3. 轮次对比（round > 1 时）
+      - 上一轮的哪些缺失项已被修复？
+      - 哪些仍未修复？为什么分数没变？
+      - 评分变化: <上轮分数>% → <本轮分数>% (±<delta>)
+      ")
+      ```
+
+      **B. 判断**:
+      - 解析评估结果，更新 `completeness_score`、`completeness_missing`
+      - 如果 `completeness_score >= $inputs.completeness_threshold` → **completeness_passed=true，退出循环**
+      - 如果 `round == 10` → **退出循环**（记录最终状态）
+      - 如果分数**连续 2 轮未提升** → 必须在下一轮修复中换策略（见 C.2）
+
+      **C. 修复（每轮必须有实质改进）**:
+
+      **C.1 标准修复**:
+      1. 从 product-completeness-assessor 的缺失项清单中选取**所有高优先级项**
+      2. 对每项，**按 assessor 指定的文件和修复方式**实施
+      3. 修复完成后，自行验证修复是否有效（运行相关测试）
+      4. 提交: `git add -A && git commit -m "feat: 完整度轮次 <round> — <本轮修复的具体内容摘要>"`
+
+      **C.2 停滞应对（连续 2 轮分数未提升时）**:
+      1. 分析为什么修复没有带来分数提升:
+         - assessor 的评分标准是否一致？
+         - 修复是否真正解决了缺失项描述的问题？
+         - 是否存在 assessor 未识别的隐藏缺失？
+      2. 换一个角度补充：直接阅读代码和 review-doc，**自己判断**还缺什么，不依赖 assessor
+      3. 提交: `git commit -m "feat: 完整度轮次 <round> (strategy change) — <具体内容>"`
+
+      **退出后记录结果（必须）**:
+      - `completeness_rounds`: 实际执行的轮次数
+      - `completeness_score`: 最终 产品完整度
+      - `completeness_passed`: "true"（达标）或 "false"（未达标）
+      - `completeness_missing`: 最终缺失项完整清单（含具体文件+修复方式）
+      - `fix_log` 中追加每轮完整度修复记录: `{round, completeness_before, completeness_after, fixes_applied}`
+
+      **发送 Step 4.5 完成通知**:
+      ```bash
+      if [ "$vars.completeness_passed" = "true" ]; then
+        COMPLETENESS_STATUS="✅"
+      else
+        COMPLETENESS_STATUS="⚠️"
+      fi
+      octopus notify --ignore-failure \
+        --title "🎯 $vars.display_name — [Step 4.5] 完整度验证完成" \
+        --body "📂 项目: <项目名>
+      $COMPLETENESS_STATUS 产品完整度: $vars.completeness_score% (阈值: $inputs.completeness_threshold%)
+      🔄 评估轮次: $vars.completeness_rounds / 10
+      📋 剩余缺失: $vars.completeness_missing"
+      ```
+
+      ### Step 5: PR E2E Testing（PR 相关 E2E 测试）
+
+      仅当 `$inputs.run_e2e == "true"` 时执行:
+
+      **5.1 环境准备**: 启动项目 → 端口保护检查 → 健康检查 → 分析 PR 变更确定测试范围
+      **5.2 API 测试**（有 API 变更时）: 委派 **api-tester** 测试 PR 涉及的 API 端点
+      **5.3 浏览器 E2E 测试**（有 UI 变更时）: 委派 **vision-analyzer**（已集成 octo-browser-vision）执行真实浏览器 E2E 测试:
+      ```
+      Agent(subagent_type="vision-analyzer", prompt="
+        项目: <项目名>  Web: http://localhost:<web_port>  PR: <files>
+        流程:
+        1. agent-browser open 页面 → wait 加载
+        2. snapshot 验证页面结构 + screenshot 截图留证
+        3. 执行用户操作(click/fill/press) → 每步 snapshot 验证
+        4. screenshot 截图 → Read PNG 直接视觉分析(布局/内容/交互反馈)
+        5. errors + console 检查 JS 异常
+        6. 输出结构化结果: check/result/evidence + 截图路径 + 问题和建议
+        7. close 浏览器
+      ")
+      ```
+      **5.4 Fix loop**（最多 3 轮）: 发现问题 → 修复 → 重新测试
+      **5.5 清理**: 关闭浏览器，终止服务进程
+      **5.6 通知**:
+      ```bash
+      octopus notify --ignore-failure \
+        --title "🧪 $vars.display_name — [Step 5/7] E2E 完成" \
+        --body "📂 <项目名> | 🔌 API <N> 通过 | 🌐 浏览器 <N> 验证点"
+      ```
+
+      ### Step 6: Regression Testing（回归测试）
+
+      仅当 `$inputs.run_regression == "true"` 时执行:
+      1. 基于 PR 影响范围，判断需要回归测试的功能
+      2. Step 5 已测试过的功能跳过
+      3. 运行项目测试套件:
+         ```bash
+         # 根据项目类型运行测试
+         pnpm test / npm test / mvn test / go test ./... / cargo test
+         ```
+      4. Fix loop（最多 2 轮）:
+         - PR 引起的失败 → 修复
+         - 既有失败（非 PR 引起）→ 记录但不修复
+      5. 提交修复:
+         ```bash
+         git add -A
+         git diff --cached --quiet || git commit -m "fix: resolve regression issues from pr-review-flow"
+         ```
+
+      6. **发送 Step 6 完成通知**:
+         ```bash
+         octopus notify --ignore-failure \
+           --title "🔄 $vars.display_name — [Step 6/7] 回归测试完成" \
+           --body "📂 项目: <项目名>"
+         ```
+
+      ### Step 7: Push（提交并推送）
+
+      1. 最终检查:
+         ```bash
+         git status
+         git log --oneline -10
+         ```
+      2. 推送 PR 分支:
+         ```bash
+         git push -u origin <PR分支>
+         ```
+         失败时重试最多 2 次
+
+      3. **添加 PR Comment（如果有修改）**:
+         如果 Step 4 有实际修改并推送，添加 PR comment 总结修改点:
+         ```bash
+         # 检查是否有 fix commit
+         FIX_COMMITS=$(git log --oneline origin/$DEFAULT_BRANCH..<PR分支> | grep -E "^.*fix:.*review" || true)
+
+         if [ -n "$FIX_COMMITS" ]; then
+           # 从 refined-review-doc 提取修改摘要
+           REVIEW_DOC="$vars.doc_dir/<项目名>-refined-review-doc.md"
+           if [ -f "$REVIEW_DOC" ]; then
+             # 提取阻塞点和优化点的修复情况
+             CHANGES_SUMMARY=$(grep -E "✅|已修复|已处理|BLOCKER|IMPORTANT" "$REVIEW_DOC" | head -20 || echo "审查问题已修复")
+           else
+             CHANGES_SUMMARY="根据代码审查建议进行了修复"
+           fi
+
+           # 获取修改的文件列表
+           FILES_CHANGED=$(git diff --name-only origin/$DEFAULT_BRANCH..<PR分支> | head -20)
+
+           # 构建 comment 内容
+           COMMENT_BODY="## 🤖 Octopus PR Review - 自动修复摘要
+
+         ### 修改内容
+         $CHANGES_SUMMARY
+
+         ### 修改的文件
+         \`\`\`
+         $FILES_CHANGED
+         \`\`\`
+
+         ### 审查文档
+         - 原始审查: \`$vars.doc_dir/<项目名>-review-doc.md\`
+         - 修正方案: \`$vars.doc_dir/<项目名>-refined-review-doc.md\`
+
+         ---
+         *此修改由 Octopus PR Review 工作流自动完成*"
+
+           # 发布 comment
+           gh pr comment $PR_NUM --body "$COMMENT_BODY" 2>&1 || echo "WARN: Failed to add PR comment"
+         fi
+         ```
+
+      4. 记录该 PR 的处理结果
+
+      5. **发送 Step 7 完成通知**:
+         ```bash
+         octopus notify --ignore-failure \
+           --title "🚀 $vars.display_name — [Step 7/7] 推送完成" \
+           --body "📂 项目: <项目名>
+         🔗 PR: <PR URL>
+         💬 Comment: ${FIX_COMMITS:+已添加}"
+         ```
+
+      ## 处理完所有 PR 后
+
+      汇总所有 PR 的处理结果:
+      - 每个 PR: 项目名称、PR URL、处理状态（fixed/skipped/failed）、修改摘要、产品完整度
+      - 统计: 总处理数、修复数、推送数、跳过数、失败数、平均 产品完整度
+
+      ## 输出
+
+      在回复末尾直接输出纯 JSON 行（不要用代码块包裹，必须是最后一行）:
+      {"vars_update":{"display_name":"$vars.display_name","review_results":"<每个PR的处理结果>","total_processed":"<总数>","total_fixed":"<修复数>","total_pushed":"<推送数>","total_skipped":"<跳过数>","total_failed":"<失败数>","completeness_score":"<最终产品完整度>","completeness_rounds":"<评估轮次>","completeness_passed":"<true/false>","completeness_missing":"<最终缺失项清单>","conclusion":"<2-3句话>"}}
+
+      ## 规则
+      - 无人值守模式，直接执行
+      - **视觉分析委托** — 浏览器 E2E 验证统一委派 vision-analyzer 子代理（它已集成 agent-browser + 视觉分析）
+      - 每个 PR 独立处理，一个 PR 的失败不影响其他 PR
+      - 冲突解决不确定时，宁可保守处理（主分支优先）
+      - 不要修改与 PR 无关的代码
+      - **所有 git/构建/测试命令必须在对应项目目录内执行**
+      - review-doc 和 refined-review-doc 保存到 workspace 根目录的 $vars.doc_dir 下
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 1.5: Regression Test — 跨 PR 回归测试（可选）
+  # ═══════════════════════════════════════════════════════════════
+  - id: regression-test
+    type: agent
+    depends_on: [pr-review-orchestrator]
+    timeout: 7200
+    model: pro
+    execute_when: '$inputs.run_regression == "true"'
+    skills:
+      - octo-e2e-assurance
+    agents:
+      vision-analyzer:
+        description: "E2E 浏览器验证子代理 — 真实浏览器操控 + 截图 + 视觉分析"
+        skills:
+          - octo-browser-vision
+        prompt: |
+          浏览器 E2E 回归测试: agent-browser 操控浏览器 → snapshot 验证结构 → screenshot 截图 → Read PNG 视觉分析 → errors 检查 → 输出结构化结果。
+        model: pro
+        tools: ["Bash", "Read", "Grep", "Glob"]
+    prompt: |
+      你正在执行跨 PR 回归测试阶段。
+
+      $vars.workspace_rules
+
+      ## 环境信息
+      - PR URLs: $vars.pr_urls
+      - 项目列表: $vars.projects
+      - 保护端口: $inputs.protected_ports
+
+      ## 你的任务
+
+      ### 1. 分析跨 PR 交互
+      遍历所有已处理的 PR，分析它们之间的功能交互:
+      - 多个 PR 修改了相同模块
+      - 多个 PR 的功能有上下游关系
+      - 多个 PR 共享相同的数据模型
+
+      ### 2. 确定回归测试范围
+      识别需要重点测试的功能区域:
+      - PR 交互涉及的模块
+      - 核心业务链路
+      - 共享组件和 API
+
+      ### 3. 执行回归测试
+      对每个受影响的项目:
+      1. cd 到项目目录
+      2. 启动服务（注意保护端口: $inputs.protected_ports）
+      3. 运行回归测试:
+         - API 集成测试
+         - 跨模块功能测试
+         - UI 关键路径验证
+      4. 发现问题则修复并提交
+
+      ### 4. 端口保护规则
+      以下端口绝对不能杀死: $inputs.protected_ports
+      启动服务时避开这些端口，或使用其他端口。
+
+      ## 输出
+      直接输出纯 JSON 行（不要用代码块包裹）:
+      {"vars_update":{"regression_completed":"true","regression_issues":"<问题数量>","regression_summary":"<回归测试摘要>"}}
+
+  - id: notify-regression-skip
+    type: bash
+    depends_on: [pr-review-orchestrator]
+    timeout: 15
+    execute_when: '$inputs.run_regression != "true"'
+    bash: |
+      echo "⏭️ 回归测试已跳过 (run_regression=$inputs.run_regression)"
+
+  - id: notify-review-done
+    type: bash
+    depends_on: [regression-test, notify-regression-skip]
+    timeout: 15
+    bash: |
+      octopus notify --ignore-failure \
+        --title "📋 $vars.display_name — PR 审查处理完成" \
+        --body "📊 统计: 处理 $vars.total_processed / $vars.pr_count 个 PR
+      ✅ 修复: $vars.total_fixed | 🚀 推送: $vars.total_pushed
+      ⏭️ 跳过: $vars.total_skipped | ❌ 失败: $vars.total_failed
+
+      💡 *结论*:
+      $vars.conclusion"
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 2: Final Notify — 最终汇总通知
+  # ═══════════════════════════════════════════════════════════════
+  - id: final-notify
+    type: bash
+    depends_on: [notify-review-done]
+    timeout: 60
+    bash: |
+      echo "=== PR Review & Fix Flow 最终报告 ==="
+
+      # 判断最终状态
+      STATUS="unknown"
+      ICON="❓"
+
+      if [ "$vars.total_failed" = "0" ] && [ "$vars.total_processed" = "$vars.pr_count" ]; then
+        STATUS="completed"
+        ICON="✅"
+      elif [ "$vars.total_failed" != "0" ] && [ "$vars.total_processed" = "$vars.pr_count" ]; then
+        STATUS="partial"
+        ICON="⚠️"
+      else
+        STATUS="failed"
+        ICON="❌"
+      fi
+
+      SUMMARY="处理: $vars.total_processed/$vars.pr_count | 修复: $vars.total_fixed | 推送: $vars.total_pushed | 跳过: $vars.total_skipped | 失败: $vars.total_failed"
+
+      # 产品完整度显示
+      if [ -n "$vars.completeness_score" ] && [ "$vars.completeness_score" != "0" ]; then
+        if [ "$vars.completeness_passed" = "true" ]; then
+          COMPLETENESS_ICON="✅"
+        else
+          COMPLETENESS_ICON="⚠️"
+        fi
+        COMPLETENESS_SCORE="$vars.completeness_score"
+        COMPLETENESS_THRESH="$inputs.completeness_threshold"
+        COMPLETENESS_RNDS="$vars.completeness_rounds"
+        COMPLETENESS_LINE="$COMPLETENESS_ICON 产品完整度: $COMPLETENESS_SCORE% (阈值: $COMPLETENESS_THRESH%, 轮次: $COMPLETENESS_RNDS)"
+      else
+        COMPLETENESS_LINE=""
+      fi
+
+      octopus notify --ignore-failure \
+        --title "${ICON} $vars.display_name — 最终状态: ${STATUS}" \
+        --body "📊 ${SUMMARY}
+      ${COMPLETENESS_LINE}
+
+      💡 *结论*:
+      $vars.conclusion"
+
+      echo "=== NOTIFY SENT ==="
+      echo "Status:  ${STATUS}"
+      echo "Summary: ${SUMMARY}"
+      echo "完整度:     ${COMPLETENESS_LINE:-N/A}"
+
+      printf '{"vars_update":{"notified":"true"}}\n'
+
+      # 工作流失败时标记节点状态为 failed
+      if [ "$STATUS" = "failed" ]; then
+        echo "工作流失败"
+        printf '{"vars_update":{"__status":"failed"}}\n'
+      fi

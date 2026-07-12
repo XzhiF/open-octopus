@@ -1,0 +1,1048 @@
+# yaml-language-server: $schema=./workflow-schema.json
+apiVersion: octopus/v1
+kind: Workflow
+name: basic-dev-flow
+description: >
+  Hermes 增强版开发流程 —— 对抗式多智能体协作（MVP 版）。
+  9 阶段：Setup → Analyze → Challenge → Plan → Implement → Review+Fix → E2E → Ship。
+  核心改进：Analyze/Plan 阶段独立对抗审查，Review 阶段独立代码+安全审查（含修复自循环），
+  E2E 多维度专业测试团队（含修复自循环），agency-agents-zh 代理库集成。
+  需求全部一次性规划实现，不分阶段交付。
+
+model: pro-max
+engine: claude
+execution_mode: serial
+timeout: 86400
+
+inputs:
+  requirement:
+    description: "开发需求描述（自然语言，中文或英文）"
+    required: true
+  base_branch:
+    description: "PR 目标分支"
+    required: false
+    default: "main"
+  run_e2e:
+    description: "是否运行 E2E 端到端测试验收（设为 false 可跳过）"
+    required: false
+    default: "true"
+  enable_adversarial:
+    description: "开启 Analyze/Plan 阶段的对抗挑战（魔鬼代言人 + 可行性审查）"
+    required: false
+    default: "true"
+  enable_security:
+    description: "开启安全审查（OWASP Top 10、威胁建模）"
+    required: false
+    default: "true"
+  enable_a11y:
+    description: "开启无障碍审查（WCAG 2.2 AA）"
+    required: false
+    default: "true"
+  enable_performance:
+    description: "开启性能基准测试（P50/P95/P99）"
+    required: false
+    default: "false"
+
+variables:
+  pkg_manager: "pnpm"
+  notify_target: "telegram:xzf_hermes"
+  e2e_passed: "true"
+  e2e_summary: ""
+  e2e_failure_details: ""
+  challenge_file: ""
+  plan_review_file: ""
+  review_blockers: "0"
+  review_issues: ""
+  actual_port: ""
+  workspace_rules: |
+    ## 工作空间规范
+    - 当前 cwd 是 octopus 聚合工作空间，不是单个 git 仓库
+    - 项目在 ./projects/ 目录下，每个是独立的 git worktree
+    - git 命令（log/status/commit/push/PR）必须在具体项目目录内执行，不能在 workspace 根目录执行
+    - 需要创建 PR 时，每个有变更的项目都要单独创建 PR
+    - superpowers 文档必须保存在 workspace 根目录（cwd）的 docs/superpowers/ 下，不能保存在 projects/ 下的项目目录里
+    - **所有项目级命令必须在对应项目目录内执行**：
+      - 构建/测试/启动/安装依赖等命令（pnpm build, pnpm dev, pnpm test, npm run, mvn, go run 等）必须 cd 到 ./projects/{项目名}/ 再执行
+      - 禁止在 workspace 根目录执行 pnpm dev / pnpm build 等项目命令
+      - 根据需求和上下文判断应该在哪个项目目录执行命令，工作空间内可能有多个项目
+      - 示例: `cd projects/xzf-octopus && pnpm dev`
+
+auto_answers:
+  - pattern: ".*"
+    answer: "proceed"
+
+# ── Notify 子系统配置 ──
+providers:
+  hermes-cli:
+    type: hermes
+    timeout: 30
+    min_severity: info
+
+channels:
+  default:
+    provider: hermes-cli
+    target: "telegram:xzf_hermes"
+
+hooks:
+  # ① 工作流失败 — 节点执行错误导致终止
+  on_workflow_failure:
+    - id: notify-failure
+      type: notify
+      channel: default
+      template:
+        severity: error
+        title: "❌ ${display_name | default:Hermes Workflow} — 工作流失败"
+        body: "📂 项目: ${projects | default:unknown} | 🌿 ${branch | default:unknown}\n🔴 失败节点: ${hook.failed_node_id | default:unknown}\n⏱️ 已运行: ${hook.total_duration_ms | duration}\n\n💡 *错误信息*:\n${hook.error | default:Unknown error}"
+
+  # ② 服务中断 — 服务器重启导致执行被中断
+  on_interrupt:
+    - id: notify-interrupt
+      type: notify
+      channel: default
+      template:
+        severity: warn
+        title: "⚠️ ${display_name | default:Hermes Workflow} — 工作流被中断"
+        body: "📂 项目: ${projects | default:unknown} | 🌿 ${branch | default:unknown}\n🔧 原因: ${hook.interrupt_reason | default:unknown}\n🕐 中断时间: ${hook.timestamp | default:unknown}\n\n工作流需要重新启动或从断点恢复。"
+
+  # ③ 用户取消 — 手动取消执行
+  on_cancel:
+    - id: notify-cancel
+      type: notify
+      channel: default
+      template:
+        severity: warn
+        title: "🛑 ${display_name | default:Hermes Workflow} — 工作流已取消"
+        body: "📂 项目: ${projects | default:unknown} | 🌿 ${branch | default:unknown}\n🕐 取消时间: ${hook.timestamp | default:unknown}"
+
+  # ④ 节点级通知
+  on_node_success:
+    - id: notify-setup
+      type: notify
+      nodes: [setup]
+      channel: default
+      template:
+        severity: info
+        title: "🚀 $vars.display_name 启动 (Enhanced)"
+        body: "📂 项目: $vars.projects\n🌿 分支: $vars.branch → $inputs.base_branch\n📦 包管理: $vars.pkg_manager\n😈 对抗审查: $inputs.enable_adversarial\n📋 需求: $inputs.requirement"
+
+    - id: notify-challenge-analyze
+      type: notify
+      nodes: [challenge-analyze]
+      channel: default
+      template:
+        severity: info
+        title: "😈 $vars.display_name — Challenge Analyze 完成"
+        body: "📂 项目: $vars.projects | 🌿 $vars.branch\n🔥 $vars.challenge_count 条质疑\n\n💡 *关键质疑*:\n$vars.conclusion"
+
+    - id: notify-synthesis-analyze
+      type: notify
+      nodes: [synthesis-analyze]
+      channel: default
+      template:
+        severity: info
+        title: "🔄 $vars.display_name — Synthesis Analyze 完成"
+        body: "📂 项目: $vars.projects | 🌿 $vars.branch\n📄 规格文档已更新\n\n💡 *综合结论*:\n$vars.conclusion"
+
+    - id: notify-analyze-no-adv
+      type: notify
+      nodes: [analyze]
+      channel: default
+      condition: '$inputs.enable_adversarial != "true"'
+      template:
+        severity: info
+        title: "📝 $vars.display_name — Analyze 完成"
+        body: "📂 项目: $vars.projects | 🌿 $vars.branch\n📄 规格文档: $vars.spec_file\n\n💡 *分析结论*:\n$vars.conclusion"
+
+    - id: notify-analyze-adv
+      type: notify
+      nodes: [synthesis-analyze]
+      channel: default
+      condition: '$inputs.enable_adversarial == "true"'
+      template:
+        severity: info
+        title: "📝 $vars.display_name — Analyze 完成{{#if $vars.challenge_count}} | 😈 $vars.challenge_count 条质疑已审查{{/if}}"
+        body: "📂 项目: $vars.projects | 🌿 $vars.branch\n📄 规格文档: $vars.spec_file\n\n💡 *分析结论*:\n$vars.conclusion"
+
+    - id: notify-challenge-plan
+      type: notify
+      nodes: [challenge-plan]
+      channel: default
+      template:
+        severity: info
+        title: "🏛️ $vars.display_name — Challenge Plan 完成"
+        body: "📂 项目: $vars.projects | 🌿 $vars.branch\n🔍 $vars.plan_review_count 条可行性发现\n\n💡 *审查结论*:\n$vars.conclusion"
+
+    - id: notify-refine-plan
+      type: notify
+      nodes: [refine-plan]
+      channel: default
+      template:
+        severity: info
+        title: "✏️ $vars.display_name — Refine Plan 完成"
+        body: "📂 项目: $vars.projects | 🌿 $vars.branch\n📄 计划文档已修正\n\n💡 *修正结论*:\n$vars.conclusion"
+
+    - id: notify-plan-no-adv
+      type: notify
+      nodes: [plan]
+      channel: default
+      condition: '$inputs.enable_adversarial != "true"'
+      template:
+        severity: info
+        title: "📋 $vars.display_name — Plan 完成"
+        body: "📂 项目: $vars.projects | 🌿 $vars.branch\n📄 计划文档: $vars.plan_file\n\n💡 *计划概要*:\n$vars.conclusion"
+
+    - id: notify-plan-adv
+      type: notify
+      nodes: [refine-plan]
+      channel: default
+      condition: '$inputs.enable_adversarial == "true"'
+      template:
+        severity: info
+        title: "📋 $vars.display_name — Plan 完成{{#if $vars.plan_review_count}} | 🏛️ $vars.plan_review_count 条可行性发现已审查{{/if}}"
+        body: "📂 项目: $vars.projects | 🌿 $vars.branch\n📄 计划文档: $vars.plan_file\n\n💡 *计划概要*:\n$vars.conclusion"
+
+    - id: notify-implement
+      type: notify
+      nodes: [implement]
+      channel: default
+      template:
+        severity: info
+        title: "⚙️ $vars.display_name — Implement 完成"
+        body: "📂 项目: $vars.projects | 🌿 $vars.branch\n\n💡 *实现概要*:\n$vars.conclusion"
+
+    - id: notify-review-no-fix
+      type: notify
+      nodes: [review]
+      channel: default
+      condition: '$vars.review_blockers == "0"'
+      template:
+        severity: info
+        title: "🔍 $vars.display_name — Review 完成"
+        body: "📂 项目: $vars.projects | 🌿 $vars.branch\n🚫 Blockers: $vars.review_blockers\n\n💡 *审查结论*:\n$vars.conclusion"
+
+    - id: notify-review-fixed
+      type: notify
+      nodes: [review-fix]
+      channel: default
+      condition: '$vars.review_blockers != "0"'
+      template:
+        severity: info
+        title: "🔍 $vars.display_name — Review 完成"
+        body: "📂 项目: $vars.projects | 🌿 $vars.branch\n🚫 Blockers: $vars.review_blockers\n\n💡 *审查结论*:\n$vars.conclusion"
+
+    - id: notify-e2e-pass
+      type: notify
+      nodes: [e2e-test]
+      channel: default
+      condition: '$vars.e2e_passed == "true"'
+      template:
+        severity: info
+        title: "✅ $vars.display_name — E2E 测试通过"
+        body: "📂 项目: $vars.projects | 🌿 $vars.branch\n📝 $vars.e2e_summary"
+
+    - id: notify-e2e-skipped
+      type: notify
+      nodes: [e2e-gate]
+      channel: default
+      condition: '$vars.e2e_passed == "true" && $inputs.run_e2e != "true"'
+      template:
+        severity: info
+        title: "✅ $vars.display_name — E2E 测试通过"
+        body: "📂 项目: $vars.projects | 🌿 $vars.branch\n📝 $vars.e2e_summary"
+
+    - id: notify-e2e-fail
+      type: notify
+      nodes: [e2e-test]
+      channel: default
+      condition: '$vars.e2e_passed != "true"'
+      template:
+        severity: error
+        title: "❌ $vars.display_name — E2E 测试未通过"
+        body: "📂 项目: $vars.projects | 🌿 $vars.branch\n📝 $vars.e2e_summary\n🔍 失败详情: $vars.e2e_failure_details"
+
+    - id: notify-ship
+      type: notify
+      nodes: [ship]
+      channel: default
+      template:
+        severity: info
+        title: "✅ $vars.display_name — Ship 完成 (Enhanced)"
+        body: "📂 项目: $vars.projects | 🌿 $vars.branch → $inputs.base_branch\n🔗 PR: ${pr_url | default:none}\n📝 $vars.ship_summary\n😈 对抗审查: challenge=${challenge_count | default:0}, review_blockers=$vars.review_blockers"
+
+  # ⑤ E2E 终止通知 — notify-e2e-fail 节点标记 __status: failed 后触发
+  on_node_failure:
+    - id: notify-e2e-terminate
+      type: notify
+      nodes: [notify-e2e-fail]
+      channel: default
+      template:
+        severity: error
+        title: "🚫 $vars.display_name — E2E 测试未通过，工作流终止"
+        body: "📂 项目: $vars.projects | 🌿 $vars.branch\n⚠️ 自循环修复后仍未通过，不提交 PR\n📝 $vars.e2e_summary"
+
+nodes:
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 0: Setup — 环境检测 + agency-agents 安装 + 变量初始化
+  # ═══════════════════════════════════════════════════════════════
+  - id: setup
+    type: agent
+    timeout: 900
+    prompt: |
+      你正在执行 Hermes 增强版开发流程的环境检测阶段。
+
+      $vars.workspace_rules
+
+      ## 输入
+      - 需求描述: $inputs.requirement
+      - 目标分支: $inputs.base_branch
+
+      ## 你的任务
+
+      ### 1. 安装 superpowers-zh 技能（必须首先执行）
+      ```bash
+      echo "Installing superpowers-zh skills..."
+      npx superpowers-zh@latest --tool claude --force 2>&1 | head -5
+      ```
+
+      ### 2. 安装 agency-agents-zh 对抗代理
+
+      ```bash
+      AGENTS_TARGET="$(pwd)/.claude/agents"
+      mkdir -p "$AGENTS_TARGET"
+
+      NEED_CLONE=false
+      for agent in engineering-code-reviewer engineering-security-engineer testing-reality-checker; do
+        if [ ! -f "$AGENTS_TARGET/$agent.md" ]; then
+          NEED_CLONE=true
+          break
+        fi
+      done
+
+      if [ "$NEED_CLONE" = "true" ]; then
+        echo "Cloning agency-agents-zh..."
+        DEPS_DIR="$(pwd)/dependencies"
+        mkdir -p "$DEPS_DIR"
+
+        if [ ! -d "$DEPS_DIR/agency-agents-zh" ]; then
+          git clone --depth 1 https://github.com/jnMetaCode/agency-agents-zh.git "$DEPS_DIR/agency-agents-zh" 2>&1
+        fi
+
+        REPO="$DEPS_DIR/agency-agents-zh"
+
+        echo "Installing selected agents..."
+        for f in code-reviewer security-engineer software-architect; do
+          [ -f "$REPO/engineering/engineering-$f.md" ] && cp "$REPO/engineering/engineering-$f.md" "$AGENTS_TARGET/"
+        done
+
+        for f in reality-checker api-tester accessibility-auditor performance-benchmarker evidence-collector; do
+          [ -f "$REPO/testing/testing-$f.md" ] && cp "$REPO/testing/testing-$f.md" "$AGENTS_TARGET/"
+        done
+
+        INSTALLED=$(ls "$AGENTS_TARGET"/engineering-*.md "$AGENTS_TARGET"/testing-*.md 2>/dev/null | wc -l)
+        echo "Installed $INSTALLED agency agents to $AGENTS_TARGET"
+      fi
+
+      # 安装 devil-advocate (core-pack 内置代理，challenge-analyze 阶段必需)
+      if [ ! -f "$AGENTS_TARGET/devil-advocate.md" ]; then
+        COREPACK_AGENTS=""
+        for d in \
+          "$(pwd)/projects/*/packages/core-pack/agents" \
+          "$(dirname "$(dirname "$(dirname "$0")")")/packages/core-pack/agents"; do
+          if [ -f "$d/devil-advocate.md" ]; then
+            COREPACK_AGENTS="$d"
+            break
+          fi
+        done
+        if [ -n "$COREPACK_AGENTS" ]; then
+          cp "$COREPACK_AGENTS/devil-advocate.md" "$AGENTS_TARGET/"
+          echo "Installed devil-advocate.md from $COREPACK_AGENTS"
+        else
+          echo "WARN: devil-advocate.md not found in core-pack, challenge-analyze may fail"
+        fi
+      fi
+      ```
+
+      ### 3. 遍历项目
+      遍历 `./projects/` 目录，找出所有 git 项目:
+      ```bash
+      PROJECTS=""
+      if [ -d projects ]; then
+        for dir in projects/*/; do
+          if [ -d "$dir/.git" ] || [ -f "$dir/.git" ]; then
+            name=$(basename "$dir")
+            if [ -z "$PROJECTS" ]; then
+              PROJECTS="$name"
+            else
+              PROJECTS="$PROJECTS, $name"
+            fi
+          fi
+        done
+      fi
+      ```
+
+      ### 4. 检测包管理器
+      查看第一个项目的 lock 文件，确定 package manager:
+      - 有 `pnpm-lock.yaml` → `pnpm`
+      - 有 `yarn-lock.yaml` → `yarn`
+      - 有 `package.json` 但无 lock 文件 → `npm`
+      - 其他 → `npm`
+
+      ### 5. 检测当前分支
+      获取第一个项目的当前 git 分支:
+      ```bash
+      GIT_BRANCH=$(git -C "projects/$FIRST_PROJECT" rev-parse --abbrev-ref HEAD 2>/dev/null)
+      ```
+      如果检测失败或为 HEAD，使用 `$inputs.base_branch` 作为默认值。
+
+      ### 6. 计算 display_name（必须非空）
+      - 优先使用 `$vars.execution_name`，其次 `$vars.workflow_name`，兜底 "Hermes Enhanced"
+
+      ## 输出要求
+
+      在回复末尾输出 JSON（必须是最后一行）:
+      ```json
+      {"vars_update":{
+        "projects":"<项目目录名，逗号分隔>",
+        "pkg_manager":"<包管理器>",
+        "branch":"<当前分支>",
+        "display_name":"<非空名称>",
+        "agency_agents_dir":"<实际 .claude/agents 目录绝对路径>"
+      }}
+      ```
+
+      ## 规则
+      - 无人值守模式，直接执行
+      - **必须首先安装 superpowers-zh**
+      - **必须安装 agency-agents-zh 代理**
+      - **display_name 必须非空**
+      - **agency_agents_dir 必须是绝对路径**
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 1: Analyze — 需求分析
+  # ═══════════════════════════════════════════════════════════════
+  - id: analyze
+    type: agent
+    depends_on: [setup]
+    timeout: 86400
+    skills:
+      - brainstorming
+    prompt: |
+      你正在执行 Hermes 增强版开发流程的需求分析阶段。
+
+      $vars.workspace_rules
+
+      ## 用户需求
+      $inputs.requirement
+
+      ## 当前环境
+      - 工作目录: $(pwd)
+      - 当前分支: $vars.branch
+
+      ## 你的任务
+      1. 使用 brainstorming 深入分析需求，明确技术方向和设计方案
+
+      ## 核心原则：一次性全部实现
+      - 需求来了就全部规划、一次性实现，不要分阶段
+      - 分析和规划的范围要覆盖需求的完整功能
+
+      ## 规则
+      - 无人值守模式，跳过需要用户确认的步骤
+      - 中文项目使用中文输出
+      - writing-plans 技能会在后续阶段使用，不要在这一阶段使用
+
+      完成后在回复末尾输出：
+      {"vars_update":{"display_name":"$vars.display_name","spec_file":"<规格文档完整路径>","conclusion":"<2-3句话总结>"}}
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 1.5: Challenge Analyze — 魔鬼代言人对抗（可选）
+  # ═══════════════════════════════════════════════════════════════
+  - id: challenge-analyze
+    type: agent
+    depends_on: [analyze]
+    timeout: 3600
+    execute_when: '$inputs.enable_adversarial == "true"'
+    agents:
+      devil-advocate:
+        description: "魔鬼代言人 — 质疑需求假设、识别范围蔓延、挑战技术盲点。默认为 NEEDS MORE JUSTIFICATION。"
+        agent_file: ".claude/agents/devil-advocate.md"
+        prompt: |
+          ## 本次挑战目标
+          读取规格文档 $vars.spec_file，对其中的每一个假设、技术决策和范围定义进行质疑。
+
+          输出格式（每条质疑）:
+          - 🔴 CRITICAL: 可能导致项目失败或大规模返工
+          - 🟡 RISK: 可能导致延期或范围蔓延
+          - 🔵 QUESTION: 需要澄清但不阻塞
+
+          每条必须包含: 1) 质疑什么 2) 为什么有问题 3) 什么证据能让你接受
+        model: pro-max
+        tools: ["Read", "Grep", "Glob"]
+    prompt: |
+      你是对抗审查协调者。你的职责是委派 devil-advocate 子代理审查规格文档。
+
+      ## 工作流
+      1. 委派 devil-advocate: "审查规格文档 $vars.spec_file"
+      2. 将审查结果保存到文件 $vars.spec_file.challenges.md
+
+      ## 输出
+      在回复末尾输出 JSON:
+      {"vars_update":{"challenge_file":"$vars.spec_file.challenges.md","challenge_count":"<质疑数量>","conclusion":"<2-3句话总结发现的关键质疑>"}}
+
+  - id: synthesis-analyze
+    type: agent
+    depends_on: [challenge-analyze]
+    timeout: 3600
+    execute_when: '$inputs.enable_adversarial == "true"'
+    prompt: |
+      你是分析综合者。读取规格文档和挑战报告，更新规格文档。
+
+      ## 输入
+      - 规格文档: $vars.spec_file
+      - 挑战报告: $vars.challenge_file
+
+      ## 你的任务
+      1. 读取两个文件
+      2. 对每条质疑判断: 采纳 / 拒绝（附理由）/ 需补充信息
+      3. 更新规格文档: 在文档末尾添加 "## 对抗审查回应" section
+      4. 保存更新后的文档
+
+      ## 规则
+      - 被采纳的质疑: 修改规格文档相应部分
+      - 被拒绝的质疑: 记录拒绝理由
+      - 保持无人值守模式
+
+      完成后输出:
+      {"vars_update":{"conclusion":"<2-3句话: 采纳几条/拒绝几条/关键修改>"}}
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 2: Plan — 生成实现计划
+  # ═══════════════════════════════════════════════════════════════
+  - id: plan
+    type: agent
+    depends_on: [analyze]
+    timeout: 86400
+    skills:
+      - writing-plans
+    prompt: |
+      使用 writing-plans 技能生成详细的实现计划。
+
+      $vars.workspace_rules
+
+      ## 上一阶段输出
+      设计规格文档: $vars.spec_file
+      请先读取该文件，基于其中的设计方案进行规划。
+
+      ## 当前环境
+      - 工作目录: $(pwd)
+      - 当前分支: $vars.branch
+
+      ## 规则
+      - 无人值守模式，直接生成最终计划
+
+      完成后输出:
+      {"vars_update":{"display_name":"$vars.display_name","plan_file":"<计划文档完整路径>","conclusion":"<2-3句话总结>"}}
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 2.5: Challenge Plan — 可行性审查（可选）
+  # ═══════════════════════════════════════════════════════════════
+  - id: challenge-plan
+    type: agent
+    depends_on: [plan]
+    timeout: 3600
+    execute_when: '$inputs.enable_adversarial == "true"'
+    agents:
+      feasibility-reviewer:
+        description: "可行性审查者 — 审查计划的时间估算、依赖关系、风险遗漏和技术盲点"
+        agent_file: ".claude/agents/engineering-software-architect.md"
+        prompt: |
+          ## 本次审查目标
+          读取实现计划 $vars.plan_file，重点关注:
+          1. 时间估算是否过于乐观（步骤声称"简单"但涉及多文件改动）
+          2. 步骤间的依赖关系是否有遗漏
+          3. 是否缺少错误处理、边界条件、回滚策略
+          4. 技术选型是否有更简单的替代方案被忽略
+          5. 是否有单点故障风险
+
+          输出格式:
+          - 🔴 CRITICAL: 计划缺陷，可能导致实施失败
+          - 🟡 RISK: 可能导致延期或返工
+          - 🔵 IMPROVEMENT: 建议改进（非阻塞）
+        model: pro-max
+        tools: ["Read", "Grep", "Glob"]
+    prompt: |
+      你是可行性审查协调者。委派 feasibility-reviewer 子代理审查实现计划。
+
+      ## 工作流
+      1. 委派 feasibility-reviewer: "审查实现计划 $vars.plan_file"
+      2. 将审查结果保存到 $vars.plan_file.review.md
+
+      ## 输出
+      {"vars_update":{"plan_review_file":"$vars.plan_file.review.md","plan_review_count":"<发现数量>","conclusion":"<2-3句话>"}}
+
+  - id: refine-plan
+    type: agent
+    depends_on: [challenge-plan]
+    timeout: 3600
+    execute_when: '$inputs.enable_adversarial == "true"'
+    prompt: |
+      你是计划修正者。读取实现计划和审查报告，修正问题。
+
+      ## 输入
+      - 实现计划: $vars.plan_file
+      - 审查报告: $vars.plan_review_file
+
+      ## 你的任务
+      1. 读取两个文件
+      2. 对 CRITICAL 发现: 必须修改计划
+      3. 对 RISK 发现: 添加风险缓解措施或备选方案
+      4. 对 IMPROVEMENT: 评估后决定是否采纳
+      5. 更新计划文档
+
+      ## 规则
+      - 只修改计划中确实有问题的部分
+      - 保持无人值守模式
+
+      完成后输出:
+      {"vars_update":{"conclusion":"<2-3句话: 修正了什么>"}}
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 3: Implement — 单次实现
+  # ═══════════════════════════════════════════════════════════════
+  - id: implement
+    type: agent
+    depends_on: [plan]
+    timeout: 86400
+    skills:
+      - subagent-driven-development
+    agents:
+      code-quality-advisor:
+        description: "代码质量顾问 — 在实现过程中提供实时代码质量、安全和性能建议"
+        agent_file: ".claude/agents/engineering-code-reviewer.md"
+        prompt: |
+          ## 本次咨询范围
+          审查当前正在实现的代码变更，关注:
+          - 反模式和过度设计
+          - 错误处理遗漏（未捕获异常、静默吞掉错误）
+          - 明显的安全漏洞（注入、XSS、硬编码密钥）
+          - 性能问题（N+1 查询、内存泄漏、不必要的重渲染）
+        model: pro
+        tools: ["Read", "Grep", "Glob"]
+    prompt: |
+      使用 subagent-driven-development 执行实现计划。
+
+      $vars.workspace_rules
+
+      ## 上一阶段输出
+      设计规格文档: $vars.spec_file
+      实现计划文档: $vars.plan_file
+      请先读取这两个文件。
+
+      ## 你的任务
+      按计划全新实现所有任务。实现过程中可以委派 code-quality-advisor 子代理检查代码质量。
+
+      ## 关键规则
+      - 无人值守模式
+      - 发现问题直接修复代码
+      - 一次性完成所有计划中的任务
+
+      完成后输出:
+      {"vars_update":{"display_name":"$vars.display_name","conclusion":"<2-3句话总结实现内容>"}}
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 4: Review + Fix — 独立审查 + 自循环修复
+  # ═══════════════════════════════════════════════════════════════
+  - id: review
+    type: agent
+    depends_on: [implement]
+    timeout: 7200
+    agents:
+      code-reviewer:
+        description: "独立代码审查员 — 你与实现者完全独立，没有实现阶段的上下文。审查代码质量、正确性、可维护性。"
+        agent_file: ".claude/agents/engineering-code-reviewer.md"
+        prompt: |
+          ## 本次审查任务
+          审查当前工作目录中所有代码变更（git diff）。
+          对照计划文档 $vars.plan_file 验证实现完整性。
+
+          审查维度:
+          1. 正确性 — 代码是否按计划实现？逻辑是否正确？
+          2. 安全性 — OWASP Top 10（注入/XSS/CSRF/认证绕过）
+          3. 可维护性 — 函数<50行？文件<800行？嵌套<4层？
+          4. 错误处理 — 所有错误路径都有处理？没有静默吞掉？
+          5. 测试 — 新功能有测试覆盖？
+
+          严重级别:
+          - 🔴 BLOCKER: 安全漏洞/数据丢失/崩溃 — 必须修复
+          - 🟡 SUGGESTION: 可维护性/性能问题 — 建议修复
+          - 🔵 MINOR: 风格/命名 — 可选
+
+          输出: 按严重级别分组的发现清单
+        model: pro-max
+        tools: ["Bash", "Read", "Grep", "Glob"]
+
+      security-engineer:
+        description: "安全工程师 — 像攻击者一样思考，像工程师一样防御。威胁建模和安全代码审查。"
+        agent_file: ".claude/agents/engineering-security-engineer.md"
+        prompt: |
+          ## 本次安全审查范围
+          审查当前工作目录的代码变更。
+
+          安全审查清单:
+          1. 认证 — 认证机制完整？有无绕过路径？
+          2. 授权 — 权限检查覆盖所有端点？
+          3. 输入验证 — 用户输入在服务端验证？
+          4. 注入 — SQL/XSS/命令注入防护？
+          5. 敏感数据 — 密钥/令牌硬编码？日志泄露？
+          6. CSRF — 状态变更操作有防护？
+          7. 速率限制 — 端点有限制？
+          8. 错误处理 — 错误信息不泄露内部细节？
+
+          输出: CRITICAL/HIGH/MEDIUM/LOW 分级
+        model: pro-max
+        tools: ["Bash", "Read", "Grep", "Glob"]
+    prompt: |
+      你是审查协调者。你与实现者完全独立，没有实现阶段的上下文。
+      你有 2 个子代理可用（通过 Agent 工具调用）。
+
+      $vars.workspace_rules
+
+      ## 审查目标
+      - 计划文档: $vars.plan_file
+      - 设计规格: $vars.spec_file
+
+      ## 你有 2 个子代理可用（通过 Agent 工具调用）
+      - **code-reviewer**: 审查代码质量、正确性、可维护性
+      - **security-engineer**: 安全审查、威胁建模
+
+      调用方式: 使用 Agent 工具，subagent_type 填子代理名称，prompt 填具体任务。
+
+      ## 工作流
+      1. 调用 `Agent(subagent_type="code-reviewer", prompt="审查当前目录的所有代码变更（git diff + 未暂存变更），对照计划文档 $vars.plan_file 验证实现完整性。输出按严重级别分组的发现清单：🔴 BLOCKER / 🟡 SUGGESTION / 🔵 MINOR")`
+      2. 调用 `Agent(subagent_type="security-engineer", prompt="对当前工作目录的代码变更进行安全审查。输出 CRITICAL/HIGH/MEDIUM/LOW 分级")`
+      3. 汇总两份报告:
+         - 合并重复发现
+         - 按严重级别排序
+         - 统计 BLOCKER 和 CRITICAL 数量
+
+      ## 输出
+      {"vars_update":{"review_blockers":"<BLOCKER+CRITICAL数量>","review_issues":"<汇总问题列表>","conclusion":"<2-3句话: 多少问题/严重程度>"}}
+
+  - id: review-fix
+    type: agent
+    depends_on: [review]
+    timeout: 7200
+    context: new
+    execute_when: '$vars.review_blockers != "0"'
+    agents:
+      code-reviewer:
+        description: "代码审查员 — 验证修复是否正确解决了 BLOCKER 问题"
+        agent_file: ".claude/agents/engineering-code-reviewer.md"
+        prompt: |
+          ## 本次验证任务
+          审查最新的代码变更（修复），验证是否正确解决了之前发现的 BLOCKER 问题。
+          重点关注: 修复是否引入新问题？修复是否完整？
+          严重级别: 🔴 BLOCKER / 🟡 SUGGESTION / 🔵 MINOR
+        model: pro-max
+        tools: ["Bash", "Read", "Grep", "Glob"]
+
+      security-engineer:
+        description: "安全工程师 — 验证安全修复是否有效"
+        agent_file: ".claude/agents/engineering-security-engineer.md"
+        prompt: |
+          ## 本次验证任务
+          审查最新的安全修复变更，验证:
+          1. 之前的安全漏洞是否被正确修复
+          2. 修复是否引入新的安全问题
+          输出: CRITICAL/HIGH/MEDIUM/LOW 分级
+        model: pro-max
+        tools: ["Bash", "Read", "Grep", "Glob"]
+    prompt: |
+      你是代码修复协调者。上一轮审查发现了 BLOCKER 级别问题，需要你修复并验证。
+      你有 2 个子代理可用（通过 Agent 工具调用）。
+
+      $vars.workspace_rules
+
+      ## 审查发现
+      上一轮审查问题: $vars.review_issues
+      BLOCKER 数量: $vars.review_blockers
+
+      ## 你有 2 个子代理可用（通过 Agent 工具调用）
+      - **code-reviewer**: 验证代码修复是否正确解决问题
+      - **security-engineer**: 验证安全修复是否有效
+
+      调用方式: 使用 Agent 工具，subagent_type 填子代理名称，prompt 填具体任务。
+
+      ## 你的自循环工作流（最多 3 轮）
+
+      ### 第 1 轮
+      1. 分析每个 BLOCKER/CRITICAL 问题的根因
+      2. 逐个修复（Edit/Write 代码）
+      3. 修复完成后，调用 `Agent(subagent_type="code-reviewer", prompt="验证最新修复是否正确解决了 BLOCKER 问题，检查修复是否引入新问题。输出：🔴 BLOCKER / 🟡 SUGGESTION / 🔵 MINOR")`
+      4. 调用 `Agent(subagent_type="security-engineer", prompt="验证最新安全修复是否有效，检查修复是否引入新的安全问题。输出 CRITICAL/HIGH/MEDIUM/LOW 分级")`
+
+      ### 第 2-3 轮（如果验证仍有 BLOCKER）
+      如果子代理报告仍有 BLOCKER:
+      1. 分析剩余问题
+      2. 继续修复
+      3. 再次调用两个子代理验证
+
+      ### 退出条件
+      - BLOCKER 数量 = 0 → 退出，review_blockers=0
+      - 达到 3 轮仍有 BLOCKER → 退出，记录剩余问题
+
+      ## 规则
+      - 只修复 BLOCKER 和 CRITICAL 级别问题
+      - SUGGESTION 和 MINOR 记录但不修复
+      - 每轮修复后必须委派子代理验证
+
+      ## 输出
+      {"vars_update":{"review_blockers":"<剩余BLOCKER数量>","review_issues":"<最终问题状态>","conclusion":"<2-3句话: 修复了什么/剩余什么>"}}
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 5: E2E — 多维度测试（自循环修复）
+  # ═══════════════════════════════════════════════════════════════
+  - id: e2e-test
+    type: agent
+    depends_on: [review]
+    timeout: 7200
+    context: new
+    model: pro
+    execute_when: '$inputs.run_e2e == "true"'
+    skills:
+      - octo-browser-vision
+      - octo-browser-debug
+      - octo-e2e-assurance
+    agents:
+      vision-analyzer:
+        description: "视觉分析子代理。当需要分析截图或图片内容时，必须委派此子代理，禁止父代理直接处理图片。"
+        prompt: |
+          你是一个视觉分析专家。你的唯一职责是分析图片并返回文本结果。
+          工作流程：1. 接收图片路径和问题 2. 读取图片文件 3. 分析内容 4. 文本回答
+          规则：只返回文本，不返回图片数据或 base64
+        model: pro
+        tools: ["Bash", "Read"]
+
+      api-tester:
+        description: "API 测试员 — 端点发现、功能测试、安全测试、OWASP API Top 10 覆盖"
+        agent_file: ".claude/agents/testing-api-tester.md"
+        prompt: |
+          ## 本次测试范围
+          根据需求 $inputs.requirement 和计划 $vars.plan_file，测试所有相关 API 端点。
+          使用实际端口（从环境准备阶段获取）。
+          测试: 功能正确性 + 安全（认证/授权/注入）+ 边界条件
+        model: pro
+        tools: ["Bash", "Read", "Grep", "Glob"]
+
+      a11y-auditor:
+        description: "无障碍审核员 — WCAG 2.2 AA 合规、键盘导航、屏幕阅读器测试"
+        agent_file: ".claude/agents/testing-accessibility-auditor.md"
+        prompt: |
+          ## 本次审核范围
+          审核运行中的 Web UI（端口从环境准备阶段获取）。
+          默认立场是找问题 — 没用屏幕阅读器测过的就不算无障碍。
+          Lighthouse 绿色不等于无障碍。自定义组件假设有问题直到证明正常。
+        model: pro
+        tools: ["Bash", "Read", "Grep"]
+
+      perf-benchmark:
+        description: "性能基准师 — P50/P95/P99 延迟分析、吞吐量测试、瓶颈识别"
+        agent_file: ".claude/agents/testing-performance-benchmarker.md"
+        prompt: |
+          ## 本次测试范围
+          对核心 API 进行性能基准测试（端口从环境准备阶段获取）。
+          输出: P50/P95/P99 延迟数据 + 瓶颈分析 + 容量建议
+        model: se
+        tools: ["Bash", "Read"]
+
+      evidence-collector:
+        description: "证据收集者 — 确保每个测试结论有截图/日志/API响应/HAR等证据支撑"
+        agent_file: ".claude/agents/testing-evidence-collector.md"
+        prompt: |
+          ## 本次收集范围
+          收集所有测试执行的证据链:
+          - 截图路径和描述
+          - API 请求/响应记录
+          - 控制台错误日志
+          - 每个 bug: 实际结果 vs 预期结果 + 复现步骤 + 严重程度
+        model: pro
+        tools: ["Bash", "Read", "Grep"]
+
+      reality-checker:
+        description: "现实检验者 — 最终验收关卡。默认为 NEEDS WORK，要求压倒性证据才能认定生产就绪"
+        agent_file: ".claude/agents/testing-reality-checker.md"
+        prompt: |
+          ## 本次验收
+          基于所有测试结果和证据，判定是否达到生产就绪。
+
+          默认判定: NEEDS WORK
+          只有在压倒性证据下才判定 READY。
+
+          自动失败触发:
+          - 前序 agent 声称"无问题"
+          - 满分无证据
+          - "生产就绪"无证明
+          - "简单实现"被标为"豪华/高级"
+
+          输出判定: READY / NEEDS WORK / FAILED
+        model: pro-max
+        tools: ["Read", "Grep"]
+    prompt: |
+      你正在执行 E2E 测试阶段。你的职责是协调多维度测试团队，收集证据，
+      最终由现实检验者判定是否通过。如果测试失败，你直接修复代码并重试。
+
+      $vars.workspace_rules
+
+      ## 环境信息
+      - 项目列表: $vars.projects
+      - 当前分支: $vars.branch
+
+      ## 业务需求（测试验收的依据）
+      $inputs.requirement
+
+      ## 你有 6 个子代理可用（通过 Agent 工具调用）
+      - **vision-analyzer**: 分析截图/图片（禁止你自己处理图片）
+      - **api-tester**: 测试 API 端点（功能+安全+边界条件）
+      - **a11y-auditor**: 无障碍审核（WCAG 2.2 AA）
+      - **perf-benchmark**: 性能基准测试（P50/P95/P99）
+      - **evidence-collector**: 收集测试证据链
+      - **reality-checker**: 最终验收判定
+
+      调用方式: 使用 Agent 工具，subagent_type 填子代理名称，prompt 填具体任务。
+      示例: `Agent(subagent_type="api-tester", prompt="测试端口 3001 上的所有 API 端点...")`
+
+      ## 你的自循环工作流（最多 3 轮）
+
+      ### 环境准备（每轮开始时执行）
+      **首先确定要测试的项目**（当前 cwd 是 workspace 根，不是项目目录）：
+      1. 根据需求 $inputs.requirement 和实现计划 $vars.plan_file，判断需要测试哪些项目
+      2. 遍历 ./projects/ 目录，查看每个项目的内容，确定与需求相关的项目
+      3. 对每个需要测试的项目，cd 到该目录内检测项目类型并启动所需服务：
+         - `package.json` + lock → pnpm/yarn/npm dev
+         - `pom.xml` → mvn spring-boot:run
+         - `manage.py` → python manage.py runserver
+         - `go.mod` → go run ./cmd/...
+         - `docker-compose.yml` → docker compose up
+      4. 在后台启动，从日志捕获每个项目的实际端口
+      5. 轮询各项目健康检查端点直到 200（超时 120s）
+      **注意**：所有后续命令（curl、测试、浏览器操作等）必须在对应项目目录内执行，不能留在 workspace 根目录。
+      **注意**：如果多个项目有依赖关系（如 monorepo），需要按依赖顺序启动。
+
+      ### 第 1 轮: 完整测试
+      按以下顺序逐一调用子代理:
+
+      1. **UI 测试**: 用 Bash 执行 `agent-browser --session e2e open/snapshot/click/fill/screenshot`
+         截图后，调用 `Agent(subagent_type="vision-analyzer", prompt="分析 /tmp/screenshot.png，页面是否正常加载？")`
+
+      2. **API 测试**: 调用 `Agent(subagent_type="api-tester", prompt="根据需求 $inputs.requirement，测试端口 <实际端口> 上的所有 API 端点")`
+
+      3. **无障碍测试**: 调用 `Agent(subagent_type="a11y-auditor", prompt="审核端口 <实际端口> 上的 Web UI 无障碍合规性")`
+
+      4. **性能测试**: 调用 `Agent(subagent_type="perf-benchmark", prompt="对端口 <实际端口> 的核心 API 进行性能基准测试")`
+
+      5. **证据收集**: 调用 `Agent(subagent_type="evidence-collector", prompt="收集本轮所有测试执行的证据链")`
+
+      6. **最终判定**: 调用 `Agent(subagent_type="reality-checker", prompt="基于以下测试证据判定是否生产就绪:\n[汇总所有子代理返回的结果]")`
+
+      7. 判定结果:
+         - READY → 设置 e2e_passed=true → 跳到清理
+         - NEEDS WORK → 进入第 2 轮
+
+      ### 第 2-3 轮: 修复 + 重测
+      1. 分析 reality-checker 的失败原因
+      2. 直接用 Edit/Write 修复代码
+      3. 等待服务热更新（或手动重启）
+      4. 重新调用所有子代理执行**完整的**测试（不是只测失败的部分）
+      5. 再次调用 reality-checker 判定
+      6. READY → e2e_passed=true → 跳到清理
+      7. NEEDS WORK → 继续下一轮（最多 3 轮）
+
+      ### 清理
+      - 关闭浏览器: `agent-browser --session e2e close`
+      - 终止开发服务进程
+
+      ## 输出
+      通过时:
+      {"vars_update":{"e2e_passed":"true","e2e_summary":"<测试摘要>","actual_port":"<实际端口>","conclusion":"<2-3句话>"}}
+
+      未通过时（3 轮后）:
+      {"vars_update":{"e2e_passed":"false","e2e_summary":"<摘要>","e2e_failure_details":"<失败详情>","conclusion":"<2-3句话>"}}
+
+      ## 规则
+      - 无人值守模式
+      - **禁止自己处理图片** — 必须调用 vision-analyzer 子代理
+      - 每个断言必须有具体证据
+      - 发现问题直接修复代码
+      - 修复后重新跑完整测试
+
+  # ═══════════════════════════════════════════════════════════════
+  # E2E Gate
+  # ═══════════════════════════════════════════════════════════════
+  - id: e2e-gate
+    type: condition
+    depends_on: [e2e-test]
+    cases:
+      - when: '$vars.e2e_passed == "true"'
+        then: ship
+      - when: '$inputs.run_e2e != "true"'
+        then: ship
+      - when: default
+        then: notify-e2e-fail
+
+  - id: notify-e2e-fail
+    type: bash
+    timeout: 30
+    bash: |
+      echo "=== E2E 测试未通过，工作流以失败状态退出 ==="
+      printf '{"vars_update":{"__status":"failed"}}\n'
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 6: Ship — 推送 + 创建 PR
+  # ═══════════════════════════════════════════════════════════════
+  - id: ship
+    type: agent
+    depends_on: [e2e-gate]
+    timeout: 86400
+    prompt: |
+      代码审查和 E2E 测试已通过，进入最终阶段：提交、推送并创建 Pull Request。
+
+      $vars.workspace_rules
+
+      ## 环境信息
+      - 当前分支: $vars.branch
+      - 基础分支: $inputs.base_branch
+      - 工作目录: $(pwd)
+
+      ## 你的任务
+
+      ### 步骤 1：遍历 projects/ 下所有有变更的项目
+      对每个有 .git 的项目:
+
+      ### 步骤 2：提交更改
+      ```bash
+      cd <项目目录>
+      git add -A
+      git commit -m "feat: enhanced dev flow implementation"
+      ```
+
+      ### 步骤 3：推送分支
+      ```bash
+      git push -u origin HEAD
+      ```
+
+      ### 步骤 4：创建 PR
+      ```bash
+      PR_URL=$(gh pr create \
+        --base "$inputs.base_branch" \
+        --title "<PR 标题>" \
+        --body "<中文 PR 描述: 摘要、实现说明、测试情况、对抗审查结果>" \
+        2>&1)
+      echo "$PR_URL"
+      ```
+
+      ## 关键规则
+      - 无人值守模式
+      - gh pr create 失败时重试最多 2 次
+      - PR 描述中包含对抗审查结果摘要
+
+      完成后输出:
+      {"vars_update":{"display_name":"$vars.display_name","pr_url":"<PR URL>","ship_summary":"<总结>"}}
