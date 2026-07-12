@@ -1,0 +1,122 @@
+apiVersion: octopus/v1
+kind: Workflow
+name: knowledge-update
+description: >
+  Knowledge Update Flow — scans skill .md files for outdated references,
+  generates fix suggestions, and optionally opens a PR with corrections.
+  Integrates SkillScanner analysis with automated remediation.
+
+model: pro-max
+engine: claude
+execution_mode: auto
+max_concurrent: 2
+timeout: 7200
+
+metadata:
+  usage_tracking:
+    enabled: true
+  category: knowledge-management
+
+inputs:
+  skills_dir:
+    description: "Directory containing skill .md files to scan"
+    required: false
+    default: "~/.octopus/orgs/$vars.org/skills"
+  project_root:
+    description: "Project root for path traversal boundary"
+    required: false
+    default: "$vars.org_dir"
+  auto_fix:
+    description: "Automatically create PR with suggested fixes"
+    required: false
+    default: "false"
+  base_branch:
+    description: "PR target branch"
+    required: false
+    default: "main"
+
+variables:
+  scan_results: ""
+  outdated_count: "0"
+  skills_scanned: "0"
+  pr_url: ""
+  report_output: ""
+
+nodes:
+  - id: scan-skills
+    type: agent
+    description: "Scan all skill .md files for outdated references"
+    prompt: |
+      Scan all .md files in $vars.skills_dir for broken links and outdated references.
+      For each file, extract markdown links [text](path) and verify the target exists.
+      Use path traversal protection: resolve paths relative to the .md file's directory,
+      reject anything outside $vars.project_root.
+
+      Output a JSON report:
+      ```json
+      {
+        "scanned": <count>,
+        "outdated_refs": [{"file": "...", "link": "...", "reason": "..."}],
+        "fix_suggestions": [{"file": "...", "suggestion": "..."}]
+      }
+      ```
+    output: $vars.scan_results
+    vars_update:
+      skills_scanned: "$last_output.scanned"
+      outdated_count: "$last_output.outdated_refs.length"
+      report_output: "$last_output"
+
+  - id: generate-report
+    type: agent
+    depends_on: [scan-skills]
+    description: "Generate human-readable report from scan results"
+    prompt: |
+      Based on the scan results in $vars.scan_results, generate a clear markdown report:
+
+      ## Knowledge Update Report
+      - Skills scanned: $vars.skills_scanned
+      - Outdated references found: $vars.outdated_count
+
+      For each outdated reference, list:
+      1. The file and broken link
+      2. The reason (file not found / path traversal blocked)
+      3. Suggested fix
+
+      If no issues found, output a clean "All references OK" summary.
+    output: $vars.report_output
+
+  - id: decide-fix
+    type: condition
+    depends_on: [generate-report]
+    description: "Check if auto-fix is enabled and issues were found"
+    condition: "$vars.auto_fix == 'true' AND $vars.outdated_count > 0"
+    on_true: apply-fixes
+    on_false: done
+
+  - id: apply-fixes
+    type: agent
+    depends_on: [decide-fix]
+    description: "Apply suggested fixes and create PR"
+    prompt: |
+      The scan found $vars.outdated_count outdated references.
+      Based on the fix suggestions in $vars.scan_results:
+
+      1. For each fixable reference, apply the suggested update to the .md file
+      2. Stage all changes in git
+      3. Create a branch named "knowledge-update/$(date +%Y%m%d-%H%M%S)"
+      4. Open a PR to $vars.base_branch with title "chore: update outdated skill references"
+         and the report as the PR body
+
+      Output the PR URL.
+    output: $vars.pr_url
+
+  - id: done
+    type: bash
+    description: "Summary output"
+    command: |
+      echo "=== Knowledge Update Complete ==="
+      echo "Skills scanned: $vars.skills_scanned"
+      echo "Outdated refs: $vars.outdated_count"
+      if [ -n "$vars.pr_url" ]; then
+        echo "PR created: $vars.pr_url"
+      fi

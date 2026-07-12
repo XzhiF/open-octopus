@@ -14,9 +14,11 @@ import { agentCmd } from "./commands/agent"
 import { agentsCmd } from "./commands/agents"
 import { resourceCmd } from "./commands/resource"
 import { schedulerCmd } from "./commands/scheduler"
+import { workflowOptimizeCmd } from "./commands/workflow-optimize"
+import { workflowRetireCmd } from "./commands/workflow-retire"
 
 export function createProgram(): Command {
-  return new Command()
+  const program = new Command()
     .name("octopus")
     .description("Octopus - 企业级 Skill + Workflow 工具集")
     .version(VERSION)
@@ -39,9 +41,15 @@ export function createProgram(): Command {
     .addCommand(agentsCmd)
     .addCommand(resourceCmd)
     .addCommand(schedulerCmd)
+
+  // Register workflow sub-commands for optimization and retirement
+  workflowCmd.addCommand(workflowOptimizeCmd)
+  workflowCmd.addCommand(workflowRetireCmd)
+
+  return program
 }
 
-export { versionCmd, initCmd, setupCmd, upgradeCmd, reposCmd, workflowCmd, mcpCliCmd, skillSearchCmd, workspaceCmd, agentCmd, agentsCmd, resourceCmd, schedulerCmd }
+export { versionCmd, initCmd, setupCmd, upgradeCmd, reposCmd, workflowCmd, mcpCliCmd, skillSearchCmd, workspaceCmd, agentCmd, agentsCmd, resourceCmd, schedulerCmd, workflowOptimizeCmd, workflowRetireCmd }
 
 const shouldRun = !process.env.VITEST && !process.env.NODE_TEST
 if (shouldRun) {

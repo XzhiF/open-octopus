@@ -1,0 +1,123 @@
+apiVersion: octopus/v1
+kind: Workflow
+name: workflow-optimize
+description: >
+  Workflow Optimization Flow — analyzes execution data to find inefficient workflows,
+  generates optimization suggestions, and optionally applies changes or sets up A/B tests.
+  Integrates WorkflowAnalyzer with automated remediation.
+
+model: pro-max
+engine: claude
+execution_mode: auto
+max_concurrent: 2
+timeout: 7200
+
+metadata:
+  usage_tracking:
+    enabled: true
+  category: workflow-management
+
+inputs:
+  analysis_days:
+    description: "Look-back window in days for usage analysis"
+    required: false
+    default: "30"
+  top_n:
+    description: "Number of top inefficient workflows to analyse"
+    required: false
+    default: "10"
+  auto_apply:
+    description: "Automatically apply suggested optimisations"
+    required: false
+    default: "false"
+  base_branch:
+    description: "PR target branch"
+    required: false
+    default: "main"
+
+variables:
+  analysis_results: ""
+  inefficient_count: "0"
+  report_output: ""
+  pr_url: ""
+
+nodes:
+  - id: analyze-workflows
+    type: agent
+    description: "Analyze workflow execution data for inefficiencies"
+    prompt: |
+      Analyze workflow execution data from the last $vars.analysis_days days.
+      Identify the top $vars.top_n most inefficient workflows using these rules:
+
+      1. High failure rate (>50%): suggest retry logic, pre-flight checks
+      2. Long duration (>10 min avg): suggest parallelisation of sequential nodes
+      3. Low usage (<0.05 runs/day): suggest merging with similar workflows
+      4. High run count with moderate duration: suggest caching repeated computation
+
+      For each workflow, output:
+      - workflowId, avgDurationMs, failureRate, totalRuns
+      - Specific optimisation suggestions
+
+      Output JSON format:
+      ```json
+      {
+        "workflows": [...],
+        "count": <number>
+      }
+      ```
+    output: $vars.analysis_results
+    vars_update:
+      inefficient_count: "$last_output.count"
+
+  - id: generate-report
+    type: agent
+    depends_on: [analyze-workflows]
+    description: "Generate optimisation report"
+    prompt: |
+      Based on the analysis results in $vars.analysis_results, generate a markdown report:
+
+      ## Workflow Optimisation Report
+      - Analysis window: $vars.analysis_days days
+      - Inefficient workflows found: $vars.inefficient_count
+
+      For each workflow:
+      1. Current metrics (duration, failure rate, run count)
+      2. Specific optimisation suggestions with expected impact
+      3. Priority ranking (high/medium/low)
+
+      End with a summary of recommended actions.
+    output: $vars.report_output
+
+  - id: decide-apply
+    type: condition
+    depends_on: [generate-report]
+    description: "Check if auto-apply is enabled"
+    condition: "$vars.auto_apply == 'true' AND $vars.inefficient_count > 0"
+    on_true: apply-optimizations
+    on_false: done
+
+  - id: apply-optimizations
+    type: agent
+    depends_on: [decide-apply]
+    description: "Apply optimisation changes and create PR"
+    prompt: |
+      Based on the optimisation report, apply the following changes:
+
+      1. For workflows needing parallelisation: update YAML node definitions
+         to add parallel execution where dependencies allow
+      2. For workflows needing caching: add cache configuration to relevant nodes
+      3. For workflows needing merge: create a combined workflow YAML
+
+      Stage all changes, create branch "workflow-optimize/$(date +%Y%m%d-%H%M%S)",
+      and open a PR to $vars.base_branch.
+    output: $vars.pr_url
+
+  - id: done
+    type: bash
+    description: "Summary output"
+    command: |
+      echo "=== Workflow Optimization Complete ==="
+      echo "Inefficient workflows: $vars.inefficient_count"
+      if [ -n "$vars.pr_url" ]; then
+        echo "PR created: $vars.pr_url"
+      fi
