@@ -13,6 +13,7 @@ import { notifyCmd } from "./commands/notify"
 import { agentCmd } from "./commands/agent"
 import { agentsCmd } from "./commands/agents"
 import { resourceCmd } from "./commands/resource"
+import { schedulerCmd } from "./commands/scheduler"
 
 export function createProgram(): Command {
   return new Command()
@@ -37,9 +38,10 @@ export function createProgram(): Command {
     .addCommand(agentCmd)
     .addCommand(agentsCmd)
     .addCommand(resourceCmd)
+    .addCommand(schedulerCmd)
 }
 
-export { versionCmd, initCmd, setupCmd, upgradeCmd, reposCmd, workflowCmd, mcpCliCmd, skillSearchCmd, workspaceCmd, agentCmd, agentsCmd, resourceCmd }
+export { versionCmd, initCmd, setupCmd, upgradeCmd, reposCmd, workflowCmd, mcpCliCmd, skillSearchCmd, workspaceCmd, agentCmd, agentsCmd, resourceCmd, schedulerCmd }
 
 const shouldRun = !process.env.VITEST && !process.env.NODE_TEST
 if (shouldRun) {
