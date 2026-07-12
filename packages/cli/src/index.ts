@@ -49,8 +49,13 @@ export function createProgram(): Command {
     .addCommand(evolutionCmd)
 
   // Register workflow sub-commands for optimization and retirement
-  workflowCmd.addCommand(workflowOptimizeCmd)
-  workflowCmd.addCommand(workflowRetireCmd)
+  // Guard against duplicate registration (Commander singletons persist across test reruns)
+  if (!workflowCmd.commands.find(c => c.name() === "optimize")) {
+    workflowCmd.addCommand(workflowOptimizeCmd)
+  }
+  if (!workflowCmd.commands.find(c => c.name() === "retire")) {
+    workflowCmd.addCommand(workflowRetireCmd)
+  }
 
   return program
 }

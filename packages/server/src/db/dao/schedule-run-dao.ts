@@ -352,4 +352,35 @@ export class ScheduleRunDAO extends BaseDAO {
       WHERE triggered_at >= ?
     `).get(today + 'T00:00:00') as { total: number; failed: number }
   }
+
+  // ── Monitoring queries (P5.7) ──────────────────────────────────
+
+  /** Total count of triggered/running executions across all schedules. */
+  countRunningExecutions(): number {
+    return (this.stmt(
+      "SELECT COUNT(*) as cnt FROM schedule_executions WHERE status IN ('triggered', 'running')"
+    ).get() as { cnt: number }).cnt
+  }
+
+  /** Schedule IDs with executions still in triggered/running state before cutoff. */
+  findDelayedExecutions(cutoffIso: string): string[] {
+    const rows = this.stmt(
+      `SELECT DISTINCT schedule_id FROM schedule_executions
+       WHERE status IN ('triggered', 'running') AND triggered_at < ?`
+    ).all(cutoffIso) as Array<{ schedule_id: string }>
+    return rows.map((r) => r.schedule_id)
+  }
+
+  /** Per-schedule failure rate since cutoff. */
+  failureRateBySchedule(sinceIso: string): Array<{ schedule_id: string; rate: number }> {
+    return this.stmt(`
+      SELECT schedule_id,
+        CASE WHEN COUNT(*) = 0 THEN 0
+          ELSE CAST(SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS REAL) / COUNT(*)
+        END as rate
+      FROM schedule_executions
+      WHERE triggered_at >= ? AND status IN ('completed', 'failed')
+      GROUP BY schedule_id
+    `).all(sinceIso) as Array<{ schedule_id: string; rate: number }>
+  }
 }
