@@ -110,8 +110,8 @@ hooks:
       channel: default
       template:
         severity: info
-        title: "🏁 $vars.display_name — 工作流完成"
-        body: "状态: $hook.final_status\n✅ 完成: $hook.completed_count / ⏭️ 跳过: $hook.skipped_count / ❌ 失败: $hook.failed_count / 📊 总计: $hook.total_count\n⏱️ 总耗时: ${hook.total_duration_ms | duration}"
+        title: "{{#if $hook.final_status}}🎉{{/if}}{{#if $hook.failed_count}}😵{{/if}} $vars.display_name — 工作流完成"
+        body: "📊 状态: {{#if $hook.final_status}}✅ 完成{{/if}}{{#if $hook.failed_count}}❌ 失败{{/if}} $hook.final_status\n✅ 完成: $hook.completed_count{{#if $hook.skipped_count}} / ⏭️ 跳过: $hook.skipped_count{{/if}}{{#if $hook.failed_count}} / ❌ 失败: $hook.failed_count{{/if}} / 📊 总计: $hook.total_count\n⏱️ 总耗时: ${hook.total_duration_ms | duration}"
 
   on_node_success:
     - id: notify-setup

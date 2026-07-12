@@ -239,8 +239,8 @@ hooks:
       channel: default
       template:
         severity: info
-        title: "🏁 $vars.display_name — 工作流完成"
-        body: "状态: $hook.final_status\n✅ 完成: $hook.completed_count / ⏭️ 跳过: $hook.skipped_count / ❌ 失败: $hook.failed_count / 📊 总计: $hook.total_count\n⏱️ 总耗时: ${hook.total_duration_ms | duration}"
+        title: "{{#if $hook.final_status}}🎉{{/if}}{{#if $hook.failed_count}}😵{{/if}} $vars.display_name — 工作流完成"
+        body: "📊 状态: {{#if $hook.final_status}}✅ 完成{{/if}}{{#if $hook.failed_count}}❌ 失败{{/if}} $hook.final_status\n✅ 完成: $hook.completed_count{{#if $hook.skipped_count}} / ⏭️ 跳过: $hook.skipped_count{{/if}}{{#if $hook.failed_count}} / ❌ 失败: $hook.failed_count{{/if}} / 📊 总计: $hook.total_count\n⏱️ 总耗时: ${hook.total_duration_ms | duration}"
 
   on_node_success:
     - id: notify-setup
@@ -1529,7 +1529,7 @@ nodes:
     timeout: 86400
     prompt: |
       遍历所有项目，提交、推送并创建 PR。
-      ⚠️ Always-Deliver 原则：无论完整度是否达 100%，都必须提交 PR，描述中包含完整的 delivery-audit.md。
+      ⚠️ Always-Deliver 原则：无论完整度是否达 100%，都必须提交 PR。
       资产营造代价很高，不能因为完整度未达就跳过 PR。
 
       $vars.workspace_rules
@@ -1541,45 +1541,111 @@ nodes:
       - 完整度: $vars.completeness_score%
       - ready_to_merge: $vars.ready_to_merge（仅建议）
 
+      ## ⚠️ PR 标题和描述质量要求（强制）
+
+      **标题必须体现功能名称**，不能用泛化的 "PRD implementation"。
+
+      ### 功能名称提取
+      1. 读取 `$vars.prd_final_file` 前 10 行，提取 PRD 标题或产品名称
+      2. 或从 `$inputs.prd_dir` 的目录名提取（去掉 prd- 前缀和序号）
+      3. 或从 `$vars.display_name` 提取
+      4. 选最短最有辨识度的作为 `<功能名>`
+
+      ### PR 标题格式
+      ```
+      feat(<scope>): <功能名> — <一句话功能描述>
+      ```
+      - `<scope>` 从交付物类型推导：impl_type=split-code 用 "fullstack"，monolith-code 用 "backend"，yaml-workflow 用 "workflow"
+      - `<功能名>` 必须是具体功能（如 "MOA Swarm Mode"、"用户认证系统"）
+      - `<一句话功能描述>` 从 PRD 执行摘要或 solution_file 概述提取，10-20 字
+      - ⛔ 禁止 "PRD implementation"、"实现 PRD" 等泛化用语
+      - ⛔ 标题不超过 72 字符
+
+      ### PR 标题示例
+      ✅ feat(fullstack): MOA Swarm Mode — 多智能体混合协作引擎
+      ✅ feat(backend): 用户权限系统 — RBAC + OAuth2 集成
+      ❌ feat: PRD implementation (完整度 88%)
+      ❌ feat: implement PRD prd-001
+
+      ### PR Body 结构（⚠️ 不是审计报告原文转储）
+
+      PR 描述必须有上下文，让 reviewer 不读 PRD 也能理解这个 PR 做了什么。
+      按以下结构生成 PR Body：
+
+      ```markdown
+      ## 🎯 功能概述
+      <2-3 句话：这个 PRD 要实现什么？解决什么问题？核心价值是什么？>
+      <从 PRD 执行摘要或 requirements_file 的用户画像/故事中提取>
+
+      ## 🏗️ 实现内容
+      <从 git log --oneline 的 commit 列表中总结主要交付物>
+      - **后端**: <主要模块/功能>
+      - **前端**: <主要页面/组件>（如有）
+      - **测试**: <测试覆盖情况>
+
+      ## 📊 完成状态
+      - 完整度: <score>% (<通过维度数>/<总维度数>)
+      - E2E: <passed/failed> (P0: <passed>/<total>, P1: <passed>/<total>)
+      - 修复轮数: <N>
+
+      {{#if 有未完成项}}
+      ## ⚠️ 已知未完成项
+      <从 delivery-audit.md 的"未达项"章节提取，每项说明：>
+      - <具体缺什么> — <原因/状态>
+      {{/if}}
+
+      <details>
+      <summary>📋 完整审计报告</summary>
+
+      <粘贴 delivery-audit.md 全文>
+
+      </details>
+      ```
+
+      ### PR Body 写作规则
+      - **功能概述必须有人话**：让不了解 PRD 的人看懂这是什么功能
+      - **完成状态要诚实**：score < 100% 就写 < 100%，不要写 "100%" 然后下面又列缺失项
+      - **审计报告折叠**：用 `<details>` 标签包裹，不占据 PR 正文主体
+      - **未完成项要具体**：不能只写 "部分 E2E 未验证"，要写清楚具体缺什么
+
       ## 对每个有变更的项目
 
       1. **进入项目目录**: cd projects/<项目名>
       2. **检查变更**: git status --porcelain（无变更 → 跳过）
-      3. **提交**:
+      3. **提取功能名称**: 从 PRD 文件或 display_name 提取
+      4. **提交**:
          ```bash
          git add -A
-         git commit -m "feat: implement PRD $(basename $inputs.prd_dir) (完整度 $vars.completeness_score%)"
+         git commit -m "feat(<scope>): <功能名> — <描述> (完整度 $vars.completeness_score%)"
          ```
-      4. **推送**: git push -u origin $vars.branch
-      5. **创建或更新 PR**:
+      5. **推送**: git push -u origin $vars.branch
+      6. **创建或更新 PR**:
          - 检查是否已有 PR: `EXISTING_PR=$(gh pr list --head "$vars.branch" --json url --jq '.[0].url' 2>/dev/null)`
-         - **描述主体**使用 delivery-audit.md 全文：`PR_BODY=$(cat "$vars.audit_file" 2>/dev/null || echo "审计报告生成失败，请查看 $vars.output_dir")`
-         - **标题根据 ready_to_merge 描述状态**（但 PR 始终创建）：
-           - ready_to_merge=true → "feat: PRD implementation (完整度 $vars.completeness_score%)"
-           - ready_to_merge=false → "feat: PRD implementation (完整度 $vars.completeness_score% — 详见审计报告)"
+         - **按上面 PR Body 结构生成描述**（不是 cat delivery-audit.md）
          - **创建**：
            ```bash
            if [ -n "$EXISTING_PR" ]; then
              gh pr comment "$EXISTING_PR" --body "$PR_BODY"
-             gh pr edit "$EXISTING_PR" --title "<根据上面规则填入>"
+             gh pr edit "$EXISTING_PR" --title "$PR_TITLE"
              PR_URL="$EXISTING_PR"
            else
              PR_URL=$(gh pr create \
-               --title "<根据上面规则填入>" \
+               --title "$PR_TITLE" \
                --body "$PR_BODY" \
                --base "$inputs.base_branch")
            fi
            ```
-      6. **收集 PR URL**
+      7. **收集 PR URL**
 
       ## ⛔ 绝对不能做的事
       - 不要因为 completeness_score < 100 跳过 PR 创建
-      - 不要因为 real_e2e_ui_passed != true 跳过 PR
-      - 不要因为 ready_to_merge=false 跳过 PR——那只是给用户看的建议
-      - 不要因为某个子步骤失败跳过后面项目的 PR
+      - 不要因为 ready_to_merge=false 跳过 PR
+      - 不要用 "PRD implementation" 作为 PR 标题
+      - 不要把 delivery-audit.md 原文直接作为 PR Body 主体（必须折叠到 details 标签内）
+      - 不要在 PR Body 中省略功能概述（reviewer 需要知道这是什么功能）
 
       ## 输出
-      {"vars_update":{"pr_urls":"<JSON Map>","pr_count":"<数量>","conclusion":"创建/更新 N 个 PR 完成 (完整度 $vars.completeness_score%)"}}
+      {"vars_update":{"pr_urls":"<JSON Map>","pr_count":"<数量>","conclusion":"创建/更新 N 个 PR: <PR 标题>"}}
 
   - id: done
     type: bash

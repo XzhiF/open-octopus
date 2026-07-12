@@ -113,6 +113,62 @@ describe("TemplateRenderer", () => {
       )
       expect(msg.title).toBe("beforeafter")
     })
+
+    it("renders $hook.* conditional — truthy", () => {
+      const pool = new VarPool({})
+      pool.set("hook.final_status", "completed")
+      const msg = renderer.render(
+        { severity: "info", title: "{{#if $hook.final_status}}🎉{{/if}} done" },
+        pool
+      )
+      expect(msg.title).toBe("🎉 done")
+    })
+
+    it("hides $hook.* conditional — falsy (0)", () => {
+      const pool = new VarPool({})
+      pool.set("hook.failed_count", "0")
+      const msg = renderer.render(
+        { severity: "info", title: "ok{{#if $hook.failed_count}} / ❌ $hook.failed_count{{/if}}" },
+        pool
+      )
+      expect(msg.title).toBe("ok")
+    })
+
+    it("shows $hook.* conditional — truthy (non-zero)", () => {
+      const pool = new VarPool({})
+      pool.set("hook.failed_count", "3")
+      const msg = renderer.render(
+        { severity: "info", title: "ok{{#if $hook.failed_count}} / ❌ $hook.failed_count{{/if}}" },
+        pool
+      )
+      expect(msg.title).toBe("ok / ❌ 3")
+    })
+
+    it("handles sequential $hook.* conditionals (status emoji pattern)", () => {
+      const pool = new VarPool({})
+      pool.set("hook.final_status", "completed")
+      pool.set("hook.failed_count", "0")
+      const msg = renderer.render(
+        { severity: "info", title: "{{#if $hook.final_status}}🎉{{/if}}{{#if $hook.failed_count}}😵{{/if}} done" },
+        pool
+      )
+      expect(msg.title).toBe("🎉 done")
+    })
+
+    it("handles mixed $vars.* and $hook.* conditionals", () => {
+      const pool = new VarPool({ display_name: "test-flow" })
+      pool.set("hook.failed_count", "0")
+      pool.set("hook.skipped_count", "2")
+      const msg = renderer.render(
+        {
+          severity: "info",
+          title: "✅ $vars.display_name",
+          body: "✅ $hook.completed_count{{#if $hook.skipped_count}} / ⏭️ $hook.skipped_count{{/if}}{{#if $hook.failed_count}} / ❌ $hook.failed_count{{/if}}"
+        },
+        pool
+      )
+      expect(msg.body).toBe("✅ $hook.completed_count / ⏭️ 2")
+    })
   })
 
   describe("nested default filter expressions", () => {
