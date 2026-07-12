@@ -18,6 +18,7 @@ import { ObservabilityService as ObsSvc } from "../observability"
 import { PrivacyFilter } from "../privacy-filter"
 import { getFlag } from "../../config/feature-flags"
 import { generateSummary, formatDuration } from "../execution-summary"
+import { getOrchestratorService } from "../agent/orchestrator-service"
 import { resolveAllProjectNames } from "../knowledge/repo-resolver"
 import { join } from "path"
 import { existsSync, readdirSync, readFileSync, writeFileSync, mkdirSync } from "fs"
@@ -173,6 +174,11 @@ export class ExecutionLifecycle {
       process.stderr.write(`[preflight] Resource pre-flight failed (non-fatal): ${msg}\n`)
     }
 
+    // Dynamic agent resolver: delegates swarm agent selection to OrchestratorService
+    const orchestrator = getOrchestratorService(this.org)
+    const agentResolver = (topic: string, maxExperts: number) =>
+      orchestrator.selectAndInstallAgents(topic, maxExperts, this.workspacePath)
+
     const engine = new WorkflowEngine(
       wf.parsed,
       this.resolveProviders(wf.parsed),
@@ -187,6 +193,7 @@ export class ExecutionLifecycle {
       undefined, // promptInjector
       this.knowledgeService?.createPrecomputeHook(),
       this.knowledgeService?.createInjectorFactory(),
+      agentResolver,
     )
 
     this.enginePool.create(id, engine, abortController)
@@ -1445,12 +1452,23 @@ export class ExecutionLifecycle {
     const poolSnapshot = JSON.parse(exec.var_pool || "{}")
     const abortController = new AbortController()
 
+    // Resume path: create engine with agent resolver for dynamic swarm routing
+    const resumeOrchestrator = getOrchestratorService(this.org)
+    const resumeAgentResolver = (topic: string, maxExperts: number) =>
+      resumeOrchestrator.selectAndInstallAgents(topic, maxExperts, this.workspacePath)
+
     const engine = new WorkflowEngine(
       wf.parsed,
       this.resolveProviders(wf.parsed),
       this.workspacePath, this.workspacePath,
       this.buildCallbacks(exec.id),
       abortController.signal, exec.id, inputValues,
+      undefined, // executionName
+      undefined, // crossExecResolver
+      undefined, // promptInjector
+      undefined, // precomputeHook
+      undefined, // knowledgeInjectorFactory
+      resumeAgentResolver,
     )
 
     engine.updateVarPool(poolSnapshot)

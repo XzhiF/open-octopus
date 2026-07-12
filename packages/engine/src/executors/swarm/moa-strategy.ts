@@ -66,8 +66,12 @@ export class MoaStrategy extends SwarmStrategy {
         })
 
         try {
+          // ponytail: combine expert prompt (may include agent_file content) with topic
+          const expertPrompt = expert.prompt
+            ? `${expert.prompt}\n\n===USER TOPIC START===\n${this.config.topic}\n===USER TOPIC END===`
+            : this.config.topic
           const result = await Promise.race([
-            this.services.runExpert(expert, this.config.topic, 1),
+            this.services.runExpert(expert, expertPrompt, 1),
             timeoutPromise,
           ]).finally(() => clearTimeout(timer!))
 

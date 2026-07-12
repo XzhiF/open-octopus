@@ -1,7 +1,7 @@
 import { Command } from "commander"
 import { readFileSync, writeFileSync, existsSync, readdirSync, mkdirSync, copyFileSync, statSync, rmSync, chmodSync } from "fs"
 import { resolve, join } from "path"
-import { parseWorkflow, validateWorkflow, resolveOrgDir, PipelineConfigSchema, PipelineConfigV1Schema } from "@octopus/shared"
+import { parseWorkflow, validateWorkflow, resolveOrgDir, PipelineConfigSchema, PipelineConfigV1Schema, ResourcePreFlight, ResourceProvisioner, ResourceManager } from "@octopus/shared"
 import { WorkflowEngine, registerBuiltinProviders } from "@octopus/engine"
 import { registerProvider, ClaudeSDKProvider, PiAgentProvider, getProviderAsync } from "@octopus/providers"
 import { resolveCurrentOrg, resolveBuiltinWorkflowsDir } from "../utils/path"
@@ -64,6 +64,30 @@ workflowCmd
     }
     if (engineType !== "claude") {
       try { providers["claude"] = await getProviderAsync("claude") } catch { /* not registered */ }
+    }
+
+    // Resource preflight: ensure agent_file/skills are available in workspace
+    const workspaceDir = orgDir ?? process.cwd()
+    try {
+      const preflight = new ResourcePreFlight()
+      const manifest = preflight.analyze(wf)
+      if (manifest.agents.length > 0 || manifest.skills.length > 0) {
+        const check = preflight.check(manifest, workspaceDir)
+        if (check.missing.length > 0) {
+          const manager = new ResourceManager()
+          manager.registerBuiltins()
+          const provisioner = new ResourceProvisioner(manager)
+          const result = await provisioner.provision(check.missing, workspaceDir)
+          if (result.provisioned > 0) {
+            console.log(`[preflight] Provisioned ${result.provisioned} resource(s) to ${workspaceDir}`)
+          }
+          if (result.failed.length > 0) {
+            console.warn(`[preflight] Failed to provision: ${result.failed.join(", ")}`)
+          }
+        }
+      }
+    } catch (err) {
+      console.warn(`[preflight] ${err instanceof Error ? err.message : String(err)}`)
     }
 
     const engine = new WorkflowEngine(
