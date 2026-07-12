@@ -1,4 +1,4 @@
-import { execSync } from 'child_process'
+import { execFileSync } from 'child_process'
 
 // ── Types ──────────────────────────────────────────────────────────
 
@@ -66,38 +66,36 @@ async function withRetry<T>(fn: () => T, attempts = 3, baseMs = 1000): Promise<T
 export class GitHubPRCreator {
   /**
    * Create a PR: writes files to a temp branch, commits, pushes, and opens the PR.
+   * Uses execFileSync with argument arrays — no shell interpolation = no command injection.
    */
   async createPR(options: CreatePROptions): Promise<PRResult> {
     const { repo, branch, title, body, files, baseBranch = 'main' } = options
     const safeBody = maskSensitiveInfo(body)
     const safeTitle = maskSensitiveInfo(title)
 
-    // Write files, commit, push, and create PR via gh CLI
-    return withRetry(() => {
-      // Create branch + commit
-      const writeCmds = files.map(f => {
-        const escaped = f.content.replace(/'/g, "'\\''")
-        return `mkdir -p "$(dirname '${f.path}')" && printf '%s' '${escaped}' > '${f.path}'`
-      })
+    return withRetry(async () => {
+      // Write files to disk
+      for (const f of files) {
+        const dir = require('path').dirname(f.path)
+        require('fs').mkdirSync(require('path').join(repo, dir), { recursive: true })
+        require('fs').writeFileSync(require('path').join(repo, f.path), f.content, 'utf-8')
+      }
 
-      const script = [
-        `cd "${repo}"`,
-        `git checkout -B "${branch}"`,
-        ...writeCmds,
-        `git add -A`,
-        `git commit -m "${safeTitle.replace(/"/g, '\\"')}" --allow-empty`,
-        `git push origin "${branch}" --force-with-lease 2>&1`,
-      ].join(' && ')
+      // Git operations via execFileSync (no shell interpolation)
+      execFileSync('git', ['checkout', '-B', branch], { cwd: repo, stdio: 'pipe' })
+      execFileSync('git', ['add', '-A'], { cwd: repo, stdio: 'pipe' })
+      execFileSync('git', ['commit', '-m', safeTitle, '--allow-empty'], { cwd: repo, stdio: 'pipe' })
+      execFileSync('git', ['push', 'origin', branch, '--force-with-lease'], { cwd: repo, stdio: 'pipe' })
 
-      execSync(script, { stdio: 'pipe', encoding: 'utf-8' })
+      // Create the PR via gh CLI (argument array, no shell)
+      const prOutput = execFileSync('gh', [
+        'pr', 'create',
+        '--title', safeTitle,
+        '--body', safeBody,
+        '--base', baseBranch,
+        '--head', branch,
+      ], { cwd: repo, stdio: 'pipe', encoding: 'utf-8' }).trim()
 
-      // Create the PR
-      const prOutput = execSync(
-        `cd "${repo}" && gh pr create --title "${safeTitle.replace(/"/g, '\\"')}" --body "${safeBody.replace(/"/g, '\\"')}" --base "${baseBranch}" --head "${branch}" 2>&1`,
-        { stdio: 'pipe', encoding: 'utf-8' },
-      ).trim()
-
-      // gh outputs the PR URL on the last line
       const prUrl = prOutput.split('\n').pop() ?? ''
       const prNumberMatch = prUrl.match(/\/pull\/(\d+)/)
       const prNumber = prNumberMatch ? parseInt(prNumberMatch[1], 10) : 0

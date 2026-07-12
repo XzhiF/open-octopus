@@ -514,4 +514,32 @@ export class ScheduleConfigDAO extends BaseDAO {
       return { changes: 0, lastInsertRowid: 0 }
     }
   }
+
+  // ── Org-level config store (evolution config, etc.) ──────────────
+
+  findOrgConfig(org: string, name: string): { config: string } | null {
+    const row = this.stmt(
+      "SELECT config FROM schedules WHERE org = ? AND name = ? AND job_type = 'org_config' AND deleted_at IS NULL"
+    ).get(org, name) as { config: string } | undefined
+    return row ?? null
+  }
+
+  upsertOrgConfig(org: string, name: string, config: string): void {
+    const now = new Date().toISOString()
+    const existing = this.stmt(
+      "SELECT id FROM schedules WHERE org = ? AND name = ? AND job_type = 'org_config' AND deleted_at IS NULL"
+    ).get(org, name) as { id: string } | undefined
+
+    if (existing) {
+      this.stmt(
+        "UPDATE schedules SET config = ?, updated_at = ? WHERE id = ?"
+      ).run(config, now, existing.id)
+    } else {
+      const crypto = require('crypto')
+      this.stmt(`
+        INSERT INTO schedules (id, org, name, workflow_ref, status, job_type, config, created_at, updated_at)
+        VALUES (?, ?, ?, '', 'active', 'org_config', ?, ?, ?)
+      `).run(crypto.randomUUID(), org, name, config, now, now)
+    }
+  }
 }

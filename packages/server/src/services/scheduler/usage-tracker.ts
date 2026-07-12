@@ -57,4 +57,22 @@ export class UsageTrackerService {
     const all = this.executionDAO.getAllWorkflowUsageStats(days)
     return all.sort((a, b) => b.usage_rate - a.usage_rate)
   }
+
+  /**
+   * Record that a workflow execution occurred.
+   * Writes to execution table so usage stats reflect real data.
+   */
+  trackExecution(
+    workflowRef: string,
+    status: 'completed' | 'failed',
+    durationMs: number,
+    workspaceId?: string,
+    org?: string,
+  ): void {
+    // ExecutionDAO already tracks executions via create/update methods.
+    // This method is a convenience wrapper that ensures the execution
+    // is recorded with the correct workflow_ref for usage analytics.
+    // ponytail: delegates to ExecutionDAO.create — no separate usage table needed.
+    this.executionDAO.trackWorkflowExecution(workflowRef, status, durationMs, workspaceId, org)
+  }
 }

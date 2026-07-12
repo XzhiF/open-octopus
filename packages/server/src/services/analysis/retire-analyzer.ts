@@ -38,9 +38,10 @@ export class RetireAnalyzer {
     days = 90,
     usageThreshold = 0.05,
     failureThreshold = 0.5,
+    org = 'default',
   ): RetireCandidate[] {
     const all = this.usageTracker.listAllWorkflowStats(days)
-    const protectedSet = new Set(this.getRetireProtected('default'))
+    const protectedSet = new Set(this.getRetireProtected(org))
 
     const candidates: RetireCandidate[] = []
 

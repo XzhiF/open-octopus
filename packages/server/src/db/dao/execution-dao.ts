@@ -1,4 +1,5 @@
 import type Database from "better-sqlite3"
+import crypto from "crypto"
 import { BaseDAO } from "./base"
 import type {
   ExecutionRow, NodeExecutionRow, NodeEdgeRow, BranchExecutionRow,
@@ -1092,6 +1093,32 @@ export class ExecutionDAO extends BaseDAO {
       failure_rate: r.total_runs > 0 ? r.failure_runs / r.total_runs : 0,
       usage_rate: r.total_runs / Math.max(1, days),
     }))
+  }
+
+  /**
+   * Lightweight insert for usage tracking — records that a workflow ran.
+   * Used by UsageTrackerService.trackExecution() to ensure usage stats reflect real data.
+   */
+  trackWorkflowExecution(
+    workflowRef: string,
+    status: 'completed' | 'failed',
+    durationMs: number,
+    workspaceId?: string,
+    org?: string,
+  ): void {
+    const now = new Date().toISOString()
+    const id = crypto.randomUUID()
+    this.stmt(`
+      INSERT INTO executions (
+        id, workspace_id, parent_id, workflow_ref, workflow_name,
+        status, triggered_by, org, duration, started_at, completed_at,
+        created_at, updated_at, node_type, var_pool, input_values
+      ) VALUES (?, ?, '0', ?, ?, ?, 'tracker', ?, ?, ?, ?, ?, ?, 'normal', '{}', '{}')
+    `).run(
+      id, workspaceId ?? null, workflowRef, workflowRef,
+      status, org ?? 'default', durationMs,
+      now, now, now, now,
+    )
   }
 
   private daysToCutoff(days: number): string {

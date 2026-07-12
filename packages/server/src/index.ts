@@ -59,6 +59,15 @@ import { DashboardService } from "./services/scheduler/dashboard-service"
 import { ExportService } from "./services/scheduler/export-service"
 import { EvolutionConfigService } from "./services/scheduler/evolution-config"
 import { UsageTrackerService } from "./services/scheduler/usage-tracker"
+import { FrontierScraper } from "./services/analysis/frontier-scraper"
+import { DiscussionCoordinator } from "./services/swarm/discussion-coordinator"
+import { ProposalGenerator } from "./services/evolution/proposal-generator"
+import { WorkflowAnalyzer } from "./services/analysis/workflow-analyzer"
+import { RetireAnalyzer } from "./services/analysis/retire-analyzer"
+import { createFrontierRoutes } from "./routes/frontier"
+import { createSwarmRoutes } from "./routes/swarm"
+import { createEvolutionRoutes } from "./routes/evolution"
+import { createAnalysisRoutes } from "./routes/analysis"
 import { WorkspaceService } from "./services/workspace"
 import { ChatService } from "./services/chat"
 import { LeaderboardService } from "./services/leaderboard"
@@ -524,9 +533,21 @@ if (shouldServe) {
       const schedulerService = new SchedulerService(daos!.scheduleConfig, daos!.scheduleRun)
       const dashboardService = new DashboardService(daos!.scheduleConfig, daos!.scheduleRun)
       const exportService = new ExportService(daos!.scheduleConfig)
-      const evolutionService = new EvolutionConfigService()
+      const evolutionService = new EvolutionConfigService(undefined, daos!.scheduleConfig as any)
       const usageTracker = new UsageTrackerService(daos!.execution)
       app.route('/api/scheduler', createSchedulerRoutes(schedulerService, dashboardService, exportService, evolutionService, usageTracker))
+
+      // ★ Evolution services: frontier, swarm, proposal, analysis
+      const proposalGenerator = new ProposalGenerator(evolutionService)
+      const workflowAnalyzer = new WorkflowAnalyzer(usageTracker)
+      const retireAnalyzer = new RetireAnalyzer(evolutionService, usageTracker)
+      const discussionCoordinator = new DiscussionCoordinator()
+
+      app.route('/api/frontier', createFrontierRoutes())
+      app.route('/api/swarm', createSwarmRoutes(discussionCoordinator))
+      app.route('/api/evolution', createEvolutionRoutes(proposalGenerator))
+      app.route('/api/analysis', createAnalysisRoutes(workflowAnalyzer, retireAnalyzer))
+
       ;(global as any).__octopus_scheduler_service = schedulerService
 
       // ★ Initialize Scheduler Engine with executors
