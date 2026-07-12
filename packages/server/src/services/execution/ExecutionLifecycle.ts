@@ -1723,11 +1723,11 @@ export class ExecutionLifecycle {
         branchStartTimes.set(neId, Date.now())
         this.sse.emit(this.workspaceId, { event: "branch_start", data: { executionId: id, nodeExecutionId: neId, iteration } })
       },
-      onBranchEnd: (neId, iteration, status) => {
+      onBranchEnd: (neId, iteration, status, nodeResults) => {
         const startMs = branchStartTimes.get(neId)
         const durationMs = startMs ? Date.now() - startMs : undefined
         branchStartTimes.delete(neId)
-        this.sse.emit(this.workspaceId, { event: "branch_end", data: { executionId: id, nodeExecutionId: neId, iteration, status, durationMs } })
+        this.sse.emit(this.workspaceId, { event: "branch_end", data: { executionId: id, nodeExecutionId: neId, iteration, status, durationMs, nodeResults } })
       },
       onAgentEvent: (nodeId, event) => {
         this.sse.emit(this.workspaceId, { event: "agent_event", data: { executionId: id, nodeId, event } })

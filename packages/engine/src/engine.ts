@@ -47,7 +47,7 @@ export interface EngineCallbacks {
   onError?: (nodeId: string, error: string) => void
   onComplete?: (finalStatus: string) => void
   onBranchStart?: (nodeExecutionId: string, iteration: number) => void
-  onBranchEnd?: (nodeExecutionId: string, iteration: number, status: string) => void
+  onBranchEnd?: (nodeExecutionId: string, iteration: number, status: string, nodeResults?: { nodeId: string; status: string; durationMs?: number; error?: string }[]) => void
   onAgentEvent?: (nodeId: string, event: AgentEvent) => void
   onSwarmEvent?: (nodeId: string, event: SwarmSSEEvent) => void
   onNodeRetry?: (nodeId: string, attempt: number, maxAttempts: number, delayMs: number) => void

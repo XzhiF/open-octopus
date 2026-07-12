@@ -64,6 +64,7 @@ export class LoopExecutor implements NodeExecutor {
       let shouldBreak = false
       let shouldContinue = false
       let jumpToIndex = -1
+      const iterationNodeResults: { nodeId: string; status: string; durationMs?: number; error?: string }[] = []
 
       this.logger?.setLoopContext(this.node.id, this.iterations)
       try {
@@ -76,6 +77,12 @@ export class LoopExecutor implements NodeExecutor {
         const result = await executor.execute()
 
         logLines.push(...result.logLines)
+        iterationNodeResults.push({
+          nodeId: innerNode.id,
+          status: result.status,
+          durationMs: result.durationMs,
+          error: result.error ?? (result.logLines?.length && result.status === "failed" ? result.logLines.join("\n") : undefined),
+        })
 
         this.updateSessionContext(innerNode, result)
 
@@ -93,7 +100,7 @@ export class LoopExecutor implements NodeExecutor {
 
         if (result.status === "cancelled") {
           this.logger?.log(this.node.id, 'branch_end', { iteration: this.iterations, status: "cancelled" })
-          this.callbacks?.onBranchEnd?.(`${this.node.id}-iter-${this.iterations}`, this.iterations, "cancelled")
+          this.callbacks?.onBranchEnd?.(`${this.node.id}-iter-${this.iterations}`, this.iterations, "cancelled", iterationNodeResults)
           const durationMs = Date.now() - start
           return {
             outputs: { iterations: this.iterations },
@@ -106,7 +113,7 @@ export class LoopExecutor implements NodeExecutor {
 
         if (result.status === "failed") {
           this.logger?.log(this.node.id, 'branch_end', { iteration: this.iterations, status: "failed" })
-          this.callbacks?.onBranchEnd?.(`${this.node.id}-iter-${this.iterations}`, this.iterations, "failed")
+          this.callbacks?.onBranchEnd?.(`${this.node.id}-iter-${this.iterations}`, this.iterations, "failed", iterationNodeResults)
           const durationMs = Date.now() - start
           return {
             outputs: { iterations: this.iterations },
@@ -155,7 +162,7 @@ export class LoopExecutor implements NodeExecutor {
       }
 
       this.logger?.log(this.node.id, 'branch_end', { iteration: this.iterations, status: "completed" })
-      this.callbacks?.onBranchEnd?.(`${this.node.id}-iter-${this.iterations}`, this.iterations, "completed")
+      this.callbacks?.onBranchEnd?.(`${this.node.id}-iter-${this.iterations}`, this.iterations, "completed", iterationNodeResults)
 
       if (shouldBreak) {
         logLines.push(`Loop break at iteration ${this.iterations}`)
