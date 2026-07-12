@@ -173,6 +173,10 @@
         "model": {
           "type": "string",
           "description": "Model override for this expert (sonnet, opus, haiku). Defaults to expert_defaults.model."
+        },
+        "engine": {
+          "type": "string",
+          "description": "AI provider engine for this expert (e.g. 'claude', 'pi'). Priority: expert.engine → node.engine → workflow.engine → 'claude'."
         }
       }
     },

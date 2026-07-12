@@ -145,6 +145,32 @@ export interface SwarmCompleteEvent {
   }
 }
 
+export interface MoaExpertCompleteEvent {
+  nodeId: string
+  role: string
+  model: string
+  status: "completed" | "failed"
+  outputPreview: string
+  durationMs: number
+  degraded: boolean
+  degradationChain?: string[]
+}
+
+export interface MoaAggregatorEvent {
+  nodeId: string
+  phase: "start" | "complete"
+  round: number
+  totalRounds: number
+  model: string
+  inputExpertCount: number
+}
+
+export interface SwarmStartEvent {
+  nodeId: string
+  mode: string
+  expertCount: number
+}
+
 export type SwarmSSEEvent =
   | { type: "expert_spawn"; data: ExpertSpawnEvent }
   | { type: "expert_message"; data: ExpertMessageEvent }
@@ -152,3 +178,6 @@ export type SwarmSSEEvent =
   | { type: "consensus_check"; data: ConsensusCheckEvent }
   | { type: "swarm_round_end"; data: SwarmRoundEndEvent }
   | { type: "swarm_complete"; data: SwarmCompleteEvent }
+  | { type: "moa_expert_complete"; data: MoaExpertCompleteEvent }
+  | { type: "moa_aggregator"; data: MoaAggregatorEvent }
+  | { type: "swarm_start"; data: SwarmStartEvent }

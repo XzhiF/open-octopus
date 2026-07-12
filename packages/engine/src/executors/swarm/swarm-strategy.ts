@@ -55,7 +55,7 @@ export interface SwarmServices {
 
 /** Configuration passed to strategy */
 export interface SwarmStrategyConfig {
-  mode: "review" | "debate" | "dispatch" | "swarm"
+  mode: "review" | "debate" | "dispatch" | "swarm" | "moa"
   topic: string
   rounds: number
   consensusThreshold: number
@@ -68,6 +68,8 @@ export interface SwarmStrategyConfig {
   contextTier: ContextTierResolver
   /** Host agent definition (ExpertDef) — model, prompt, perspective for synthesis */
   host?: ExpertDef
+  /** Aggregator expert definition (MOA mode) */
+  aggregator?: ExpertDef
 }
 
 /** Abstract strategy for swarm orchestration modes */

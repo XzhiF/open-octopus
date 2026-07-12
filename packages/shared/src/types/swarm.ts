@@ -11,6 +11,7 @@ export const ExpertDefSchema = z.object({
   tools: z.array(z.string()).optional(),
   disallowed_tools: z.array(z.string()).optional(),
   model: z.string().optional(),
+  engine: z.string().optional(),
 }).refine(
   (data) => data.agent_file || data.prompt,
   { message: "Expert must declare at least one of agent_file or prompt" }
@@ -41,6 +42,8 @@ export function validateSwarmConstraints(
     dynamic?: boolean
     experts?: Array<{ role: string; depends_on?: string[] }>
     max_experts?: number
+    rounds?: number
+    aggregator?: unknown
   },
   ctx: z.RefinementCtx,
 ): void {
@@ -51,6 +54,21 @@ export function validateSwarmConstraints(
   // debate mode (non-dynamic) needs at least 2 experts
   if (data.mode === "debate" && !data.dynamic && (!data.experts || data.experts.length < 2)) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, message: "debate mode requires at least 2 experts" })
+  }
+  // moa mode (non-dynamic) needs at least 2 experts and aggregator
+  if (data.mode === "moa" && !data.dynamic && (!data.experts || data.experts.length < 2)) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: "moa mode requires at least 2 experts" })
+  }
+  if (data.mode === "moa" && !data.aggregator) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: "moa mode requires aggregator" })
+  }
+  // moa rounds 0-5
+  if (data.mode === "moa" && data.rounds !== undefined && (data.rounds < 0 || data.rounds > 5)) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: "moa mode rounds must be 0-5" })
+  }
+  // debate/review rounds ≥ 1
+  if ((data.mode === "debate" || data.mode === "review") && data.rounds !== undefined && data.rounds < 1) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: "debate/review mode rounds must be ≥ 1" })
   }
   // depends_on reference validation
   if (data.experts) {
@@ -75,15 +93,16 @@ export function validateSwarmConstraints(
 export const SwarmNodeDefSchema = z.object({
   type: z.literal("swarm"),
   topic: z.string(),
-  mode: z.enum(["review", "debate", "dispatch", "swarm"]),
+  mode: z.enum(["review", "debate", "dispatch", "swarm", "moa"]),
   experts: z.array(ExpertDefSchema).optional(),
   dynamic: z.boolean().optional(),
   max_experts: z.number().int().positive().optional(),
-  rounds: z.number().int().positive().optional(),
+  rounds: z.number().int().nonnegative().optional(),
   consensus_threshold: z.number().min(0).max(1).optional(),
   budget: z.number().int().positive().optional(),
   timeout: z.number().int().positive().optional(),
   host: ExpertDefSchema.optional(),
+  aggregator: ExpertDefSchema.optional(),
   failure_policy: z.enum(["fail_fast", "continue_partial", "retry_failed"]).optional(),
   output_format: OutputFormatSchema.optional(),
   outputs: z.record(z.string(), z.string()).optional(),

@@ -16,7 +16,7 @@ import { SSE_EXPERT_OUTPUT_PREVIEW_CHARS } from "./swarm-constants"
  * These bridge the strategy layer with the engine infrastructure.
  */
 export interface CoordinatorDeps {
-  llmCall: (prompt: string, model?: string) => Promise<{ text: string; model: string; tokens: number; inputTokens: number; outputTokens: number; toolsUsed: string[]; filesChanged: string[] }>
+  llmCall: (prompt: string, model?: string, engine?: string) => Promise<{ text: string; model: string; tokens: number; inputTokens: number; outputTokens: number; toolsUsed: string[]; filesChanged: string[] }>
   hostAgent: HostAgent
   emitSSE?: (event: SwarmSSEEvent) => void
   logSwarmEvent?: (nodeId: string, event: string, data: Record<string, any>) => void
@@ -71,7 +71,7 @@ export class SwarmCoordinator implements SwarmServices {
     })
 
     try {
-      const result = await this.deps.llmCall(prompt, model)
+      const result = await this.deps.llmCall(prompt, model, expert.engine)
 
       this.emit({
         type: "expert_complete",
@@ -98,6 +98,11 @@ export class SwarmCoordinator implements SwarmServices {
     } catch (e: unknown) {
       const message = e instanceof Error ? e.message : String(e)
 
+      // Sanitize error message for SSE — strip ANSI only, preserve CJK and all Unicode
+      const sanitized = message
+        .replace(/\x1b\[[0-9;]*m/g, "")
+        .slice(0, 500)
+
       // Emit expert_complete with failed status so the UI can track it
       this.emit({
         type: "expert_complete",
@@ -105,7 +110,7 @@ export class SwarmCoordinator implements SwarmServices {
           nodeId: this.deps.nodeId,
           role: expert.role,
           status: "failed",
-          output: message,
+          output: sanitized,
           tokens: 0,
           inputTokens: 0,
           outputTokens: 0,

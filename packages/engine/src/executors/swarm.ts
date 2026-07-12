@@ -1,6 +1,10 @@
 import type { NodeExecutor, NodeExecutionResult } from "./types"
 import type { NodeDef, ExpertDef, ModelAliasConfig } from "@octopus/shared"
-import { VarPool, substituteVars, resolveModelAlias } from "@octopus/shared"
+import type { SwarmNodeDef } from "@octopus/shared"
+
+// ponytail: NodeDef.mode union lags behind SwarmNodeDef; cast once here
+const asSwarm = (n: NodeDef): SwarmNodeDef => n as SwarmNodeDef
+import { VarPool, substituteVars, resolveModelAlias, resolveMoaModel } from "@octopus/shared"
 import type { IAgentProvider, MessageChunk } from "@octopus/providers"
 import type { ICheckpointStore, SwarmCheckpointData } from "../pipeline/checkpoint-types"
 import { existsSync } from "fs"
@@ -11,6 +15,7 @@ import { SharedMemory } from "./swarm/shared-memory"
 import { SwarmCoordinator } from "./swarm/swarm-coordinator"
 import { DiscussionStrategy } from "./swarm/discussion-strategy"
 import { DispatchStrategy } from "./swarm/dispatch-strategy"
+import { MoaStrategy } from "./swarm/moa-strategy"
 import { BudgetTracker } from "./swarm/budget-tracker"
 import { HostAgent } from "./swarm/host-agent"
 import type { SwarmResult, RouterDecision } from "./swarm/swarm-types"
@@ -58,12 +63,32 @@ export class SwarmExecutor implements NodeExecutor {
       }))
 
       // BL-5: Resolve expert.model aliases immutably (tier → real model name)
+      const nodeMode = asSwarm(this.node).mode ?? "review"
+      const rawEngineKey = this.node.engine ?? this.workflowEngine ?? "claude"
+      const providerKey = rawEngineKey === "claude-code" ? "claude" : rawEngineKey
+
+      // ponytail: per-expert engine → resolve providerKey for alias lookup
+      const resolveExpertProviderKey = (expert: ExpertDef): string => {
+        const raw = expert.engine ?? this.node.engine ?? this.workflowEngine ?? "claude"
+        return raw === "claude-code" ? "claude" : raw
+      }
+
       const experts: ExpertDef[] = this.modelAliasConfig
         ? baseExperts.map(expert => {
             if (!expert.model) return expert
-            const rawKey = this.node.engine ?? this.workflowEngine ?? "claude"
-            const providerKey = rawKey === "claude-code" ? "claude" : rawKey
-            const resolved = resolveModelAlias(expert.model, providerKey, this.modelAliasConfig!)
+            const epk = resolveExpertProviderKey(expert)
+            if (nodeMode === "moa") {
+              // C-3 fix: claude engine → resolve tier alias (pro-max → opus) via resolveModelAlias
+              if (epk === "claude") {
+                const resolved = resolveModelAlias(expert.model, epk, this.modelAliasConfig!)
+                return resolved ? { ...expert, model: resolved } : expert
+              }
+              // pi engine → MOA-aware resolution with degradation chain
+              const resolution = resolveMoaModel(expert.model, epk, this.modelAliasConfig!)
+              logLines.push(`[moa] Model ${expert.model} degraded: ${resolution.chain.join(" → ")} → ${resolution.resolved}`)
+              return resolution.resolved ? { ...expert, model: resolution.resolved } : expert
+            }
+            const resolved = resolveModelAlias(expert.model, epk, this.modelAliasConfig!)
             return resolved ? { ...expert, model: resolved } : expert
           })
         : baseExperts
@@ -72,16 +97,31 @@ export class SwarmExecutor implements NodeExecutor {
       const resolvedTopic = substituteVars(this.node.topic ?? "", this.pool)
 
       // Setup LLM call function using the provider's sendQuery
-      const provider = this.resolveProvider()
-      if (!provider) throw new Error("No LLM provider available")
+      const defaultProvider = this.resolveProvider()
+      if (!defaultProvider) throw new Error("No LLM provider available")
+
+      // ponytail: per-expert provider lookup — expert.engine → node.engine → workflow.engine → "claude"
+      const resolveProviderForExpert = (expertEngine?: string): IAgentProvider => {
+        if (!expertEngine) return defaultProvider
+        const raw = expertEngine === "claude-code" ? "claude" : expertEngine
+        return this.providers[raw] ?? defaultProvider
+      }
 
       const budgetTracker = new BudgetTracker(this.node.budget, this.node.timeout)
 
       const llmCall = async (
         prompt: string,
         model?: string,
+        engine?: string,
       ): Promise<{ text: string; model: string; tokens: number; inputTokens: number; outputTokens: number; toolsUsed: string[]; filesChanged: string[] }> => {
-        const result = await collectFromProvider(provider, prompt, this.cwd, model ?? this.node.model)
+        // ponytail: resolve provider per-expert, then resolve tier aliases for that provider
+        const p = resolveProviderForExpert(engine)
+        const epk = engine ? (engine === "claude-code" ? "claude" : engine) : providerKey
+        const rawModel = model ?? this.node.model
+        const resolvedModel = this.modelAliasConfig
+          ? resolveModelAlias(rawModel, epk, this.modelAliasConfig) ?? rawModel
+          : rawModel
+        const result = await collectFromProvider(p, prompt, this.cwd, resolvedModel)
         budgetTracker.addUsage(result.model, result.inputTokens, result.outputTokens, result.cacheReadTokens, result.cacheCreationTokens, result.costUsd)
         return { text: result.text, model: result.model, tokens: result.tokens, inputTokens: result.inputTokens, outputTokens: result.outputTokens, toolsUsed: result.toolsUsed, filesChanged: result.filesChanged }
       }
@@ -221,6 +261,7 @@ export class SwarmExecutor implements NodeExecutor {
         resumeFromRound: resumeFromRound,
         contextTier: new ContextTierResolver((this.node.context_tier as ContextTier) ?? DEFAULT_CONTEXT_TIER),
         host: this.node.host,
+        aggregator: asSwarm(this.node).aggregator,
       }
 
       // ponytail: restore coordinator checkpoint state if resuming
@@ -333,6 +374,12 @@ export class SwarmExecutor implements NodeExecutor {
         return new DiscussionStrategy(coordinator, config)
       case "dispatch":
         return new DispatchStrategy(coordinator, config)
+      case "moa":
+        return new MoaStrategy(coordinator, {
+          ...config,
+          aggregator: asSwarm(this.node).aggregator,
+          timeout: this.node.timeout,
+        })
       default:
         throw new Error(`Unknown swarm mode: ${config.mode}`)
     }
@@ -349,6 +396,8 @@ export class SwarmExecutor implements NodeExecutor {
     this.pool.set(`${id}_task_breakdown`, JSON.stringify(result.task_breakdown ?? null))
     this.pool.set(`${id}_budget_exhausted`, result.budget_exhausted)
     this.pool.set(`${id}_timeout_exceeded`, result.timeout_exceeded)
+    this.pool.set(`${id}_expert_outputs`, JSON.stringify(result.experts.filter(e => e.status === "completed").map(e => ({ role: e.role, output: e.output }))))
+    this.pool.set(`${id}_failed_experts`, JSON.stringify(result.failed_experts))
   }
 
   private buildOutputs(result: SwarmResult): Record<string, any> {
@@ -358,6 +407,8 @@ export class SwarmExecutor implements NodeExecutor {
       rounds_used: result.rounds_used,
       expert_count: result.expert_count,
       status: result.status,
+      experts: result.experts.filter(e => e.status === "completed").map(e => ({ role: e.role, output: e.output })),
+      failed_experts: result.failed_experts,
     }
     // Map user-defined outputs
     if (this.node.outputs) {

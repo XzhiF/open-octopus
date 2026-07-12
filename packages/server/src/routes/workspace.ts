@@ -2,7 +2,7 @@ import { Hono } from "hono"
 import { WorkspaceService } from "../services/workspace"
 import { WorkspaceDAO, OrgDAO } from "../db/dao"
 import { orgExists } from "../services/org"
-import { parseManifest } from "@octopus/shared"
+import { parseManifest, loadModelAliasConfig } from "@octopus/shared"
 import { readFileSync, existsSync, readdirSync } from "fs"
 import { join } from "path"
 import os from "os"
@@ -127,6 +127,13 @@ export function createWorkspaceRoutes(workspaceService: WorkspaceService, orgDAO
   })
 
   // ── P1.5: Archive ops endpoints ──────────────────────────────────
+
+  // ── MOA config endpoints ─────────────────────────────────────────
+  // M7 fix: drop misleading :id — endpoint returns global config, not workspace-specific
+  workspaceRoutes.get("/config/models", (c) => {
+    const config = loadModelAliasConfig()
+    return c.json({ providers: config.providers })
+  })
 
   workspaceRoutes.get("/archive/status", (c) => {
     const stuck = workspaceDAO.listByArchiveStatus("archiving")

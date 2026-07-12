@@ -82,6 +82,7 @@ Swarm 节点将复杂任务分配给多个 AI 专家协作完成：
 | **debate** | Discussion | N 轮 | 技术决策、方案比选 — 多轮讨论 + 共识检测，达标提前终止 |
 | **dispatch** | Dispatch | 1 轮 | 功能实现 — DAG 依赖调度，上游完成后下游才执行 |
 | **swarm** | 动态路由 | 由 Router 决定 | 智能模式 — LLM 自动选择模式和专家 |
+| **moa** | Fan-out + Aggregator | 0-5 轮 | Mixture of Agents — 多专家并行 + 聚合器综合输出 |
 
 **关键组件：**
 - **Host Agent** — 综合专家输出，退化链 opus→sonnet→拼接
@@ -90,6 +91,7 @@ Swarm 节点将复杂任务分配给多个 AI 专家协作完成：
 - **动态路由** — SwarmRouter 从角色库自动选 2-5 专家 + 决定编排模式
 - **上下文管理** — 滑动窗口 + 渐进压缩 + Token 预算安全阀
 - **Checkpoint** — 每轮保存状态，中断后可恢复
+- **Per-Expert Engine** — 每个专家可设 `engine: claude|pi`，实现跨 provider MOA
 
 ### 变量引用语法
 

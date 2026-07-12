@@ -334,3 +334,38 @@ export async function fetchSwarmStats(workspaceId: string, params?: { from?: str
   const url = `${getServerUrl()}/api/workspaces/${workspaceId}/analytics/swarm-stats${qs ? `?${qs}` : ""}`
   return handleResponse(await apiFetch(url))
 }
+
+// ============ MOA Config ============
+
+/**
+ * Fetch model alias configuration (tier map) for MOA model resolution.
+ * GET /api/workspaces/config/models
+ */
+export async function fetchModelAliasConfig(_workspaceId: string): Promise<{
+  providers: Record<string, Record<string, string>>
+}> {
+  const res = await apiFetch(`${getServerUrl()}/api/workspaces/config/models`)
+  return handleResponse(res)
+}
+
+/**
+ * Validate a workflow YAML snippet.
+ * POST /api/workspaces/:workspaceId/workflows/validate
+ */
+export async function validateWorkflow(
+  workspaceId: string,
+  yaml: string,
+  nodeId?: string,
+): Promise<{
+  valid: boolean
+  errors: Array<{ path: string[]; message: string; code: string }>
+  warnings: Array<{ path: string[]; message: string; severity: "warning" }>
+  parsed?: { mode?: string; expertCount?: number; hasAggregator?: boolean }
+}> {
+  const res = await apiFetch(`${getServerUrl()}/api/workspaces/${workspaceId}/workflows/validate`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ yaml, nodeId }),
+  })
+  return handleResponse(res)
+}

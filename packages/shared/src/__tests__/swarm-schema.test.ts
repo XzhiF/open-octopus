@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest"
 import { ExpertDefSchema, SwarmNodeDefSchema, StructuredOutputSchema, OutputFormatSchema } from "../types/swarm"
+import { NodeSchema } from "../types/workflow"
 
 describe("ExpertDefSchema", () => {
   it("validates expert with agent_file", () => {
@@ -45,6 +46,30 @@ describe("ExpertDefSchema", () => {
       prompt: "do something",
     })
     expect(result.success).toBe(false)
+  })
+
+  it("validates expert with engine field (per-expert provider)", () => {
+    const result = ExpertDefSchema.safeParse({
+      role: "pi-expert",
+      prompt: "Analyze with pi provider",
+      model: "pro-max",
+      engine: "pi",
+    })
+    expect(result.success).toBe(true)
+    if (result.success) {
+      expect(result.data.engine).toBe("pi")
+    }
+  })
+
+  it("accepts expert without engine (backward compat)", () => {
+    const result = ExpertDefSchema.safeParse({
+      role: "default-expert",
+      prompt: "Uses node/workflow default engine",
+    })
+    expect(result.success).toBe(true)
+    if (result.success) {
+      expect(result.data.engine).toBeUndefined()
+    }
   })
 })
 
@@ -347,6 +372,177 @@ describe("SwarmNodeDefSchema", () => {
       experts: [{ role: "r1", prompt: "review" }],
       failure_policy: "ignore_errors",
     })
+    expect(result.success).toBe(false)
+  })
+
+  // ── MOA mode tests ────────────────────────────────────
+
+  // TC-001: mode:moa + 2 experts + aggregator → pass
+  it("TC-001: validates moa mode with 2 experts and aggregator", () => {
+    const result = SwarmNodeDefSchema.safeParse({
+      type: "swarm",
+      topic: "MOA analysis",
+      mode: "moa",
+      rounds: 1,
+      experts: [
+        { role: "security-reviewer", prompt: "Check vulnerabilities" },
+        { role: "perf-engineer", prompt: "Check performance" },
+      ],
+      aggregator: { role: "tech-lead", prompt: "Synthesize findings" },
+    })
+    expect(result.success).toBe(true)
+  })
+
+  // TC-002: mode:moa + 1 expert → fail "requires at least 2 experts"
+  it("TC-002: rejects moa mode with fewer than 2 experts", () => {
+    const result = SwarmNodeDefSchema.safeParse({
+      type: "swarm",
+      topic: "MOA analysis",
+      mode: "moa",
+      experts: [
+        { role: "only-expert", prompt: "I am alone" },
+      ],
+      aggregator: { role: "tech-lead", prompt: "Synthesize" },
+    })
+    expect(result.success).toBe(false)
+    if (!result.success) {
+      const messages = result.error.issues.map(i => i.message)
+      expect(messages).toContain("moa mode requires at least 2 experts")
+    }
+  })
+
+  // mode:moa + no aggregator → fail "requires aggregator"
+  it("rejects moa mode without aggregator", () => {
+    const result = SwarmNodeDefSchema.safeParse({
+      type: "swarm",
+      topic: "MOA analysis",
+      mode: "moa",
+      experts: [
+        { role: "expert-a", prompt: "task A" },
+        { role: "expert-b", prompt: "task B" },
+      ],
+    })
+    expect(result.success).toBe(false)
+    if (!result.success) {
+      const messages = result.error.issues.map(i => i.message)
+      expect(messages).toContain("moa mode requires aggregator")
+    }
+  })
+
+  // mode:moa + rounds:0 → pass (0 is valid for MOA — skip aggregation)
+  it("accepts moa mode with rounds:0", () => {
+    const result = SwarmNodeDefSchema.safeParse({
+      type: "swarm",
+      topic: "MOA raw output",
+      mode: "moa",
+      rounds: 0,
+      experts: [
+        { role: "expert-a", prompt: "task A" },
+        { role: "expert-b", prompt: "task B" },
+      ],
+      aggregator: { role: "lead", prompt: "synthesize" },
+    })
+    expect(result.success).toBe(true)
+  })
+
+  // mode:moa + rounds:6 → fail "rounds must be 0-5"
+  it("rejects moa mode with rounds:6", () => {
+    const result = SwarmNodeDefSchema.safeParse({
+      type: "swarm",
+      topic: "MOA too many rounds",
+      mode: "moa",
+      rounds: 6,
+      experts: [
+        { role: "expert-a", prompt: "task A" },
+        { role: "expert-b", prompt: "task B" },
+      ],
+      aggregator: { role: "lead", prompt: "synthesize" },
+    })
+    expect(result.success).toBe(false)
+    if (!result.success) {
+      const messages = result.error.issues.map(i => i.message)
+      expect(messages).toContain("moa mode rounds must be 0-5")
+    }
+  })
+
+  // mode:moa + rounds:-1 → fail (negative)
+  it("rejects moa mode with negative rounds", () => {
+    const result = SwarmNodeDefSchema.safeParse({
+      type: "swarm",
+      topic: "MOA negative rounds",
+      mode: "moa",
+      rounds: -1,
+      experts: [
+        { role: "expert-a", prompt: "task A" },
+        { role: "expert-b", prompt: "task B" },
+      ],
+      aggregator: { role: "lead", prompt: "synthesize" },
+    })
+    expect(result.success).toBe(false)
+  })
+
+  // mode:moa + no experts → fail (both missing experts + missing aggregator possible)
+  it("rejects moa mode with no experts and no aggregator", () => {
+    const result = SwarmNodeDefSchema.safeParse({
+      type: "swarm",
+      topic: "MOA empty",
+      mode: "moa",
+    })
+    expect(result.success).toBe(false)
+    if (!result.success) {
+      const messages = result.error.issues.map(i => i.message)
+      expect(messages).toContain("moa mode requires at least 2 experts")
+      expect(messages).toContain("moa mode requires aggregator")
+    }
+  })
+})
+
+// ── Workflow inline swarm schema regression (C3 fix) ──
+
+describe("NodeSchema inline swarm (workflow.ts)", () => {
+  it("C3 regression: accepts inline swarm with mode:moa + aggregator", () => {
+    const node = {
+      id: "moa-review",
+      type: "swarm",
+      topic: "Review code quality",
+      mode: "moa",
+      rounds: 1,
+      experts: [
+        { role: "security", prompt: "Check for vulnerabilities" },
+        { role: "perf", prompt: "Check performance" },
+      ],
+      aggregator: { role: "host", prompt: "Synthesize findings" },
+    }
+    const result = NodeSchema.safeParse(node)
+    expect(result.success).toBe(true)
+  })
+
+  it("regression: accepts inline swarm mode:review with rounds:1", () => {
+    const node = {
+      id: "review-node",
+      type: "swarm",
+      topic: "Code review",
+      mode: "review",
+      rounds: 1,
+      experts: [{ role: "reviewer", prompt: "Review this" }],
+    }
+    const result = NodeSchema.safeParse(node)
+    expect(result.success).toBe(true)
+  })
+
+  it("regression: rejects inline swarm mode:debate with rounds:0", () => {
+    const node = {
+      id: "debate-node",
+      type: "swarm",
+      topic: "Architecture decision",
+      mode: "debate",
+      rounds: 0,
+      experts: [
+        { role: "pro", prompt: "Argue for" },
+        { role: "con", prompt: "Argue against" },
+      ],
+    }
+    const result = NodeSchema.safeParse(node)
     expect(result.success).toBe(false)
   })
 })
