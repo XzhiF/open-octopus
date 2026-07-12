@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest"
 import { ExpertDefSchema, SwarmNodeDefSchema, StructuredOutputSchema, OutputFormatSchema } from "../types/swarm"
+import { NodeSchema } from "../types/workflow"
 
 describe("ExpertDefSchema", () => {
   it("validates expert with agent_file", () => {
@@ -45,6 +46,30 @@ describe("ExpertDefSchema", () => {
       prompt: "do something",
     })
     expect(result.success).toBe(false)
+  })
+
+  it("validates expert with engine field (per-expert provider)", () => {
+    const result = ExpertDefSchema.safeParse({
+      role: "pi-expert",
+      prompt: "Analyze with pi provider",
+      model: "pro-max",
+      engine: "pi",
+    })
+    expect(result.success).toBe(true)
+    if (result.success) {
+      expect(result.data.engine).toBe("pi")
+    }
+  })
+
+  it("accepts expert without engine (backward compat)", () => {
+    const result = ExpertDefSchema.safeParse({
+      role: "default-expert",
+      prompt: "Uses node/workflow default engine",
+    })
+    expect(result.success).toBe(true)
+    if (result.success) {
+      expect(result.data.engine).toBeUndefined()
+    }
   })
 })
 
@@ -469,5 +494,55 @@ describe("SwarmNodeDefSchema", () => {
       expect(messages).toContain("moa mode requires at least 2 experts")
       expect(messages).toContain("moa mode requires aggregator")
     }
+  })
+})
+
+// ── Workflow inline swarm schema regression (C3 fix) ──
+
+describe("NodeSchema inline swarm (workflow.ts)", () => {
+  it("C3 regression: accepts inline swarm with mode:moa + aggregator", () => {
+    const node = {
+      id: "moa-review",
+      type: "swarm",
+      topic: "Review code quality",
+      mode: "moa",
+      rounds: 1,
+      experts: [
+        { role: "security", prompt: "Check for vulnerabilities" },
+        { role: "perf", prompt: "Check performance" },
+      ],
+      aggregator: { role: "host", prompt: "Synthesize findings" },
+    }
+    const result = NodeSchema.safeParse(node)
+    expect(result.success).toBe(true)
+  })
+
+  it("regression: accepts inline swarm mode:review with rounds:1", () => {
+    const node = {
+      id: "review-node",
+      type: "swarm",
+      topic: "Code review",
+      mode: "review",
+      rounds: 1,
+      experts: [{ role: "reviewer", prompt: "Review this" }],
+    }
+    const result = NodeSchema.safeParse(node)
+    expect(result.success).toBe(true)
+  })
+
+  it("regression: rejects inline swarm mode:debate with rounds:0", () => {
+    const node = {
+      id: "debate-node",
+      type: "swarm",
+      topic: "Architecture decision",
+      mode: "debate",
+      rounds: 0,
+      experts: [
+        { role: "pro", prompt: "Argue for" },
+        { role: "con", prompt: "Argue against" },
+      ],
+    }
+    const result = NodeSchema.safeParse(node)
+    expect(result.success).toBe(false)
   })
 })

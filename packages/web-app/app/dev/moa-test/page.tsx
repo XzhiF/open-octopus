@@ -38,6 +38,9 @@ const MOCK_MOA_RESULTS = [
 ]
 
 export default function MoaTestPage() {
+  // M4 fix: don't ship dev test page in production builds
+  if (process.env.NODE_ENV === "production") return null
+
   return (
     <TooltipProvider>
       <div className="p-6 space-y-8 max-w-[1200px] mx-auto">

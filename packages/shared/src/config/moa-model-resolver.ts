@@ -39,7 +39,14 @@ export function resolveMoaModel(
   // Step 1: exact tier-key match
   if (isTierKey(modelId, config)) {
     const resolved = resolveAlias(modelId, providerType, config) ?? modelId
-    return { resolved, degraded: false, chain: [modelId] }
+    // M8 fix: if resolveAlias returned a tier key (not a real model), treat as unresolved
+    if (resolved !== modelId && !isTierKey(resolved, config)) {
+      return { resolved, degraded: false, chain: [modelId] }
+    }
+    if (!isTierKey(resolved, config)) {
+      return { resolved, degraded: false, chain: [modelId] }
+    }
+    // resolved is still a tier key — provider has no mapping, fall through to degradation
   }
 
   // Step 2: suffix degradation — strip after last '-'

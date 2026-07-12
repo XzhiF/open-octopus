@@ -71,4 +71,13 @@ export default defineConfig({
       use: { ...devices["Desktop Chrome"] },
     },
   ],
+  // H7 fix: restore webServer so E2E tests auto-start the app
+  webServer: {
+    command: "pnpm dev --skip-build",
+    url: `http://localhost:${webPort}`,
+    reuseExistingServer: !process.env.CI,
+    timeout: 180_000,
+    stdout: "pipe",
+    stderr: "pipe",
+  },
 })

@@ -11,6 +11,7 @@ export const ExpertDefSchema = z.object({
   tools: z.array(z.string()).optional(),
   disallowed_tools: z.array(z.string()).optional(),
   model: z.string().optional(),
+  engine: z.string().optional(),
 }).refine(
   (data) => data.agent_file || data.prompt,
   { message: "Expert must declare at least one of agent_file or prompt" }

@@ -129,7 +129,8 @@ export function createWorkspaceRoutes(workspaceService: WorkspaceService, orgDAO
   // ── P1.5: Archive ops endpoints ──────────────────────────────────
 
   // ── MOA config endpoints ─────────────────────────────────────────
-  workspaceRoutes.get("/:id/config/models", (c) => {
+  // M7 fix: drop misleading :id — endpoint returns global config, not workspace-specific
+  workspaceRoutes.get("/config/models", (c) => {
     const config = loadModelAliasConfig()
     return c.json({ providers: config.providers })
   })

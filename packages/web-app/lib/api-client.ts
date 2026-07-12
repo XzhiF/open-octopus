@@ -339,12 +339,12 @@ export async function fetchSwarmStats(workspaceId: string, params?: { from?: str
 
 /**
  * Fetch model alias configuration (tier map) for MOA model resolution.
- * GET /api/workspaces/:workspaceId/config/models
+ * GET /api/workspaces/config/models
  */
-export async function fetchModelAliasConfig(workspaceId: string): Promise<{
+export async function fetchModelAliasConfig(_workspaceId: string): Promise<{
   providers: Record<string, Record<string, string>>
 }> {
-  const res = await apiFetch(`${getServerUrl()}/api/workspaces/${workspaceId}/config/models`)
+  const res = await apiFetch(`${getServerUrl()}/api/workspaces/config/models`)
   return handleResponse(res)
 }
 

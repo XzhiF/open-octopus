@@ -60,4 +60,17 @@ describe('resolveMoaModel', () => {
     expect(result.chain).toEqual(['pro-max-foo-bar', 'pro-max-foo', 'pro-max'])
     expect(result.resolved).toBe('pi-pro-max-v2')
   })
+
+  // M8 fix: when provider lacks mapping for matched tier key, resolver degrades further instead of returning tier key
+  it('M8: degrades when provider lacks mapping for matched tier key', () => {
+    const partialConfig: ModelAliasConfig = {
+      default: 'se',
+      providers: { pi: { se: 'pi-se-v1' } }, // only has 'se' tier
+      custom_providers: {},
+    }
+    // 'pro-max' is a tier key, but pi has no mapping for it → should fall through to 'se'
+    const result = resolveMoaModel('pro-max', 'pi', partialConfig)
+    expect(result.resolved).toBe('pi-se-v1') // should NOT be 'pro-max' (tier key)
+    expect(result.degraded).toBe(true)
+  })
 })

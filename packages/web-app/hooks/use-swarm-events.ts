@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useReducer, useRef, useCallback, type Dispatch } from "react"
+import { useEffect, useReducer, useRef, useState, useCallback, type Dispatch } from "react"
 import { getServerUrl } from "@/lib/server-config"
 import type {
   ExpertInfo,
@@ -447,7 +447,8 @@ export function useSwarmEvents(
 ): UseSwarmEventsResult {
   const [state, dispatch] = useReducer(swarmReducer, initialState)
   const esRef = useRef<EventSource | null>(null)
-  const connectedRef = useRef(false)
+  // H5 fix: useState instead of useRef so connected state triggers re-renders
+  const [connected, setConnected] = useState(false)
 
   const isEventForNode = useCallback(
     (data: { nodeId?: string }) => {
@@ -475,14 +476,14 @@ export function useSwarmEvents(
     }
 
     // Phase 2: Connect SSE for live updates
-    connectedRef.current = false
+    setConnected(false)
     const es = new EventSource(
       `${getServerUrl()}/api/workspaces/${workspaceId}/executions/events`,
     )
     esRef.current = es
 
     es.addEventListener("open", () => {
-      connectedRef.current = true
+      setConnected(true)
     })
 
     es.addEventListener("swarm_mode", (e) => {
@@ -671,13 +672,13 @@ export function useSwarmEvents(
     })
 
     es.onerror = () => {
-      connectedRef.current = false
+      setConnected(false)
     }
 
     return () => {
       es.close()
       esRef.current = null
-      connectedRef.current = false
+      setConnected(false)
     }
   }, [workspaceId, nodeId, executionId, isEventForNode])
 
@@ -705,6 +706,6 @@ export function useSwarmEvents(
     aggregatorTotalRounds: state.aggregatorTotalRounds,
     aggregatorModel: state.aggregatorModel,
     aggregatorInputExpertCount: state.aggregatorInputExpertCount,
-    connected: connectedRef.current,
+    connected,
   }
 }

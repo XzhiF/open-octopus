@@ -162,6 +162,7 @@ experts:
     tools: [Read, Write, Bash]      # 允许的工具
     disallowed_tools: [Edit]        # 禁止的工具
     model: pro                    # 模型覆盖
+    engine: claude                # AI provider 引擎（可选，优先级：expert > node > workflow > "claude"）
 ```
 
 **Expert 优先级**：expert 字段 > expert_defaults > 引擎默认值。
@@ -177,6 +178,28 @@ experts:
     agent_file: ".claude/agents/devil-advocate.md"     # core-pack
     perspective: "质疑所有假设"
 ```
+
+### 跨 Provider 专家（Per-Expert Engine）
+
+每个专家可以指定不同的 AI provider，实现跨 provider MOA：
+
+```yaml
+experts:
+  - role: architect
+    engine: claude        # 使用 Claude Opus
+    model: pro-max
+    prompt: "系统架构分析"
+  - role: cost-analyst
+    engine: pi            # 使用 Pi provider (Qwen/GLM)
+    model: pro-max
+    prompt: "成本与 ROI 分析"
+  - role: devops
+    engine: claude        # 可以混用
+    model: pro
+    prompt: "运维与部署评估"
+```
+
+**Engine 优先级**：`expert.engine` → `node.engine` → `workflow.engine` → `"claude"`。
 
 ---
 

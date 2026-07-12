@@ -24,7 +24,8 @@ export class MoaStrategy extends SwarmStrategy {
   }
 
   async run(experts: ExpertDef[], bus: MessageBus, memory: SharedMemory): Promise<SwarmResult> {
-    const timeoutMs = this.config.timeout ?? 120_000
+    // ponytail: node.timeout is in seconds (consistent with BudgetTracker), convert to ms
+    const timeoutMs = (this.config.timeout ?? 120) * 1000
 
     this.services.triggerHook("on_swarm_start", {
       nodeId: this.config.nodeId,
@@ -49,6 +50,7 @@ export class MoaStrategy extends SwarmStrategy {
     }
 
     // Phase 1: Parallel expert fan-out
+    // ponytail: SSE events (expert_spawn/complete) emitted by SwarmCoordinator.runExpert() — don't duplicate here
     const expertResults: ExpertResult[] = await Promise.all(
       experts.map(async (expert) => {
         this.services.triggerHook("on_expert_spawn", {
@@ -57,25 +59,17 @@ export class MoaStrategy extends SwarmStrategy {
           round: 1,
         })
 
-        this.services.emit({
-          type: "expert_spawn",
-          data: {
-            nodeId: this.config.nodeId,
-            role: expert.role,
-            model: expert.model ?? "default",
-            source: "predefined",
-          },
+        // H1 fix: clearTimeout on race resolution to prevent dangling timers
+        let timer: ReturnType<typeof setTimeout>
+        const timeoutPromise = new Promise<never>((_, reject) => {
+          timer = setTimeout(() => reject(new Error(`Expert ${expert.role} timeout after ${timeoutMs}ms`)), timeoutMs)
         })
-
-        const timeoutPromise = new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error(`Expert ${expert.role} timeout after ${timeoutMs}ms`)), timeoutMs),
-        )
 
         try {
           const result = await Promise.race([
             this.services.runExpert(expert, this.config.topic, 1),
             timeoutPromise,
-          ])
+          ]).finally(() => clearTimeout(timer!))
 
           const expertResult: ExpertResult = {
             role: expert.role,
@@ -96,26 +90,9 @@ export class MoaStrategy extends SwarmStrategy {
             tokens: result.tokens,
           })
 
-          this.services.emit({
-            type: "expert_complete",
-            data: {
-              nodeId: this.config.nodeId,
-              role: expert.role,
-              model: expert.model,
-              status: "completed",
-              output: result.output,
-              tokens: result.tokens,
-              inputTokens: result.inputTokens,
-              outputTokens: result.outputTokens,
-            },
-          })
-
           return expertResult
         } catch (e: unknown) {
           const message = e instanceof Error ? e.message : String(e)
-          const sanitized = message
-            .replace(/\x1b\[[0-9;]*m/g, "")
-            .slice(0, 500)
 
           this.services.triggerHook("on_expert_complete", {
             nodeId: this.config.nodeId,
@@ -123,20 +100,6 @@ export class MoaStrategy extends SwarmStrategy {
             round: 1,
             status: "failed",
             error: message,
-          })
-
-          this.services.emit({
-            type: "expert_complete",
-            data: {
-              nodeId: this.config.nodeId,
-              role: expert.role,
-              model: expert.model,
-              status: "failed",
-              output: sanitized,
-              tokens: 0,
-              inputTokens: 0,
-              outputTokens: 0,
-            },
           })
 
           return {
@@ -192,18 +155,33 @@ export class MoaStrategy extends SwarmStrategy {
     let roundsUsed = 0
 
     for (let round = 1; round <= this.config.rounds; round++) {
+      // H2 fix: check budget before each aggregation round
+      const roundBudget = this.services.checkBudget()
+      if (roundBudget.status === "exhausted") {
+        synthesis = synthesis || "(Budget exhausted during aggregation)"
+        break
+      }
+
       roundsUsed = round
 
-      const hostOutput = await this.services.runHost({
-        expertOutputs: currentExpertOutputs,
-        messages: [],
-        outputFormat: this.config.outputFormat,
-        mode: "moa",
-        topic: this.config.topic,
-        host: this.aggregator,
-      })
+      // M1 fix: wrap aggregator in try/catch — don't lose all expert work on host failure
+      try {
+        const hostOutput = await this.services.runHost({
+          expertOutputs: currentExpertOutputs,
+          messages: [],
+          outputFormat: this.config.outputFormat,
+          mode: "moa",
+          topic: this.config.topic,
+          host: this.aggregator,
+        })
 
-      synthesis = hostOutput.synthesis
+        synthesis = hostOutput.synthesis
+      } catch (e: unknown) {
+        // Degrade gracefully — return partial synthesis from expert outputs
+        const message = e instanceof Error ? e.message : String(e)
+        synthesis = `## Aggregation failed (${message.slice(0, 100)})\n\n### Raw expert outputs:\n\n${successfulResults.map((r) => `**${r.role}:** ${r.output.slice(0, 500)}`).join("\n\n")}`
+        break
+      }
 
       // Phase 4: Multi-round refinement — feed synthesis back as a "synthesis expert"
       if (round < this.config.rounds) {

@@ -64,20 +64,31 @@ export class SwarmExecutor implements NodeExecutor {
 
       // BL-5: Resolve expert.model aliases immutably (tier → real model name)
       const nodeMode = asSwarm(this.node).mode ?? "review"
+      const rawEngineKey = this.node.engine ?? this.workflowEngine ?? "claude"
+      const providerKey = rawEngineKey === "claude-code" ? "claude" : rawEngineKey
+
+      // ponytail: per-expert engine → resolve providerKey for alias lookup
+      const resolveExpertProviderKey = (expert: ExpertDef): string => {
+        const raw = expert.engine ?? this.node.engine ?? this.workflowEngine ?? "claude"
+        return raw === "claude-code" ? "claude" : raw
+      }
+
       const experts: ExpertDef[] = this.modelAliasConfig
         ? baseExperts.map(expert => {
             if (!expert.model) return expert
-            const rawKey = this.node.engine ?? this.workflowEngine ?? "claude"
-            const providerKey = rawKey === "claude-code" ? "claude" : rawKey
+            const epk = resolveExpertProviderKey(expert)
             if (nodeMode === "moa") {
-              // C-3 fix: claude engine → fixed opus, skip resolveMoaModel
-              if (providerKey === "claude") return expert
+              // C-3 fix: claude engine → resolve tier alias (pro-max → opus) via resolveModelAlias
+              if (epk === "claude") {
+                const resolved = resolveModelAlias(expert.model, epk, this.modelAliasConfig!)
+                return resolved ? { ...expert, model: resolved } : expert
+              }
               // pi engine → MOA-aware resolution with degradation chain
-              const resolution = resolveMoaModel(expert.model, providerKey, this.modelAliasConfig!)
+              const resolution = resolveMoaModel(expert.model, epk, this.modelAliasConfig!)
               logLines.push(`[moa] Model ${expert.model} degraded: ${resolution.chain.join(" → ")} → ${resolution.resolved}`)
               return resolution.resolved ? { ...expert, model: resolution.resolved } : expert
             }
-            const resolved = resolveModelAlias(expert.model, providerKey, this.modelAliasConfig!)
+            const resolved = resolveModelAlias(expert.model, epk, this.modelAliasConfig!)
             return resolved ? { ...expert, model: resolved } : expert
           })
         : baseExperts
@@ -86,16 +97,31 @@ export class SwarmExecutor implements NodeExecutor {
       const resolvedTopic = substituteVars(this.node.topic ?? "", this.pool)
 
       // Setup LLM call function using the provider's sendQuery
-      const provider = this.resolveProvider()
-      if (!provider) throw new Error("No LLM provider available")
+      const defaultProvider = this.resolveProvider()
+      if (!defaultProvider) throw new Error("No LLM provider available")
+
+      // ponytail: per-expert provider lookup — expert.engine → node.engine → workflow.engine → "claude"
+      const resolveProviderForExpert = (expertEngine?: string): IAgentProvider => {
+        if (!expertEngine) return defaultProvider
+        const raw = expertEngine === "claude-code" ? "claude" : expertEngine
+        return this.providers[raw] ?? defaultProvider
+      }
 
       const budgetTracker = new BudgetTracker(this.node.budget, this.node.timeout)
 
       const llmCall = async (
         prompt: string,
         model?: string,
+        engine?: string,
       ): Promise<{ text: string; model: string; tokens: number; inputTokens: number; outputTokens: number; toolsUsed: string[]; filesChanged: string[] }> => {
-        const result = await collectFromProvider(provider, prompt, this.cwd, model ?? this.node.model)
+        // ponytail: resolve provider per-expert, then resolve tier aliases for that provider
+        const p = resolveProviderForExpert(engine)
+        const epk = engine ? (engine === "claude-code" ? "claude" : engine) : providerKey
+        const rawModel = model ?? this.node.model
+        const resolvedModel = this.modelAliasConfig
+          ? resolveModelAlias(rawModel, epk, this.modelAliasConfig) ?? rawModel
+          : rawModel
+        const result = await collectFromProvider(p, prompt, this.cwd, resolvedModel)
         budgetTracker.addUsage(result.model, result.inputTokens, result.outputTokens, result.cacheReadTokens, result.cacheCreationTokens, result.costUsd)
         return { text: result.text, model: result.model, tokens: result.tokens, inputTokens: result.inputTokens, outputTokens: result.outputTokens, toolsUsed: result.toolsUsed, filesChanged: result.filesChanged }
       }

@@ -14,6 +14,7 @@ import { ExpertAvatar } from "../atoms/expert-avatar"
 import { YamlSyncModal } from "../molecules/yaml-sync-modal"
 import { Plus, Trash2, Download, Upload } from "lucide-react"
 import { toast } from "sonner"
+import yaml from "js-yaml"
 import { fetchModelAliasConfig, validateWorkflow } from "@/lib/api-client"
 
 // ── Types ──
@@ -44,9 +45,9 @@ type MoaConfigAction =
   | { type: "update_aggregator"; field: keyof MoaAggregator; value: string | number }
   | { type: "import_config"; config: Partial<MoaConfigState> }
 
-let expertCounter = 0
+// C2 fix: crypto.randomUUID() — SSR-safe, no module-level mutable state
 function nextExpertId() {
-  return `expert-${++expertCounter}`
+  return crypto.randomUUID()
 }
 
 function moaConfigReducer(state: MoaConfigState, action: MoaConfigAction): MoaConfigState {
@@ -109,7 +110,9 @@ export function MoaConfigPanel({
   useEffect(() => {
     fetchModelAliasConfig(workspaceId)
       .then((cfg) => setTierMap(cfg.providers ?? {}))
-      .catch(() => {})
+      .catch(() => {
+        toast.error("无法加载模型配置，请检查服务端连接")
+      })
   }, [workspaceId])
 
   const modelOptions = Object.keys(tierMap[providerType] ?? {})
@@ -124,22 +127,23 @@ export function MoaConfigPanel({
     (e, i) => state.experts.findIndex((o) => o.role === e.role) !== i && e.role,
   )
 
+  // H6 fix: use js-yaml instead of hand-rolled string concatenation
   const generateYaml = useCallback(() => {
-    const lines: string[] = [
-      "type: swarm",
-      "mode: moa",
-      "experts:",
-    ]
-    for (const e of state.experts) {
-      lines.push(`  - role: "${e.role}"`)
-      lines.push(`    model: "${e.model}"`)
-      lines.push(`    prompt: "${e.prompt.replace(/"/g, '\\"')}"`)
+    const doc = {
+      type: "swarm",
+      mode: "moa",
+      experts: state.experts.map((e) => ({
+        role: e.role,
+        model: e.model,
+        prompt: e.prompt,
+      })),
+      aggregator: {
+        model: state.aggregator.model,
+        prompt: state.aggregator.prompt,
+      },
+      rounds: state.aggregator.rounds,
     }
-    lines.push("aggregator:")
-    lines.push(`  model: "${state.aggregator.model}"`)
-    lines.push(`  prompt: "${state.aggregator.prompt.replace(/"/g, '\\"')}"`)
-    lines.push(`rounds: ${state.aggregator.rounds}`)
-    return lines.join("\n")
+    return yaml.dump(doc, { lineWidth: -1 })
   }, [state])
 
   const handleSave = useCallback(async () => {
@@ -160,22 +164,33 @@ export function MoaConfigPanel({
     }
   }, [workspaceId, state, generateYaml, onSave])
 
+  // M9 fix: validate parsed YAML structure before using it
   const handleImport = useCallback((parsed: Record<string, unknown>) => {
-    const experts = ((parsed.experts as Array<Record<string, string>>) ?? []).map((e) => ({
-      id: nextExpertId(),
-      role: e.role ?? "",
-      model: e.model ?? "",
-      prompt: e.prompt ?? "",
-    }))
-    const agg = parsed.aggregator as Record<string, string> | undefined
+    if (!Array.isArray(parsed.experts)) {
+      toast.error("YAML 格式错误: experts 必须是数组")
+      return
+    }
+    const experts = parsed.experts.map((e) => {
+      if (typeof e !== "object" || e === null) return { id: nextExpertId(), role: "", model: "", prompt: "" }
+      const obj = e as Record<string, unknown>
+      return {
+        id: nextExpertId(),
+        role: typeof obj.role === "string" ? obj.role : "",
+        model: typeof obj.model === "string" ? obj.model : "",
+        prompt: typeof obj.prompt === "string" ? obj.prompt : "",
+      }
+    })
+    const agg = typeof parsed.aggregator === "object" && parsed.aggregator !== null
+      ? parsed.aggregator as Record<string, unknown>
+      : {}
     dispatch({
       type: "import_config",
       config: {
         mode: "moa",
         experts,
         aggregator: {
-          model: agg?.model ?? "",
-          prompt: agg?.prompt ?? "",
+          model: typeof agg.model === "string" ? agg.model : "",
+          prompt: typeof agg.prompt === "string" ? agg.prompt : "",
           rounds: typeof parsed.rounds === "number" ? parsed.rounds : 1,
         },
       },
@@ -187,7 +202,7 @@ export function MoaConfigPanel({
       <ScrollArea className="flex-1">
         <div className="space-y-4 p-1">
           {/* Expert list */}
-          <div className="space-y-2">
+          <div className="space-y-2" role="list" aria-label="Experts">
             <div className="flex items-center justify-between">
               <Label className="text-sm font-semibold">Experts ({state.experts.length})</Label>
               <Button

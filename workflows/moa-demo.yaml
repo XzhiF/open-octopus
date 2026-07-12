@@ -1,7 +1,9 @@
+apiVersion: octopus/v1
+kind: Workflow
 name: moa-demo
 description: MOA mode demo — 3 experts + aggregator with 1 refinement round
 nodes:
-  moa-analysis:
+  - id: moa-analysis
     type: swarm
     topic: "Review this codebase for security, performance, and maintainability"
     mode: moa

@@ -20,7 +20,6 @@ export function ModelResolveBadge({ modelId, providerType, tierMap }: ModelResol
   const resolution = resolveMoaModel(modelId, providerType, config)
 
   const isExact = !resolution.degraded && resolution.resolved === modelId
-  const isUnresolvable = resolution.resolved === modelId && resolution.chain.length === 1 && !Object.values(tierMap).some(t => modelId in t)
 
   if (isExact) {
     return (

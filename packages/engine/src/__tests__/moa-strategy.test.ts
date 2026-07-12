@@ -230,6 +230,7 @@ describe("MoaStrategy", () => {
   })
 
   // Timeout: expert exceeding timeout is marked failed
+  // ponytail: timeout is in seconds (consistent with BudgetTracker), so 0.05 = 50ms
   it("marks expert as failed on timeout", async () => {
     const services = createMockServices({
       runExpert: vi.fn().mockImplementation(
@@ -244,7 +245,7 @@ describe("MoaStrategy", () => {
       ),
     })
 
-    const strategy = new MoaStrategy(services, makeConfig({ rounds: 0, timeout: 50 }))
+    const strategy = new MoaStrategy(services, makeConfig({ rounds: 0, timeout: 0.05 }))
     const experts = [makeExpert({ role: "slow" })]
 
     const result = await strategy.run(experts, new MessageBus(), new SharedMemory())
@@ -279,25 +280,30 @@ describe("MoaStrategy", () => {
     }
   })
 
-  // SSE events: expert_spawn, expert_complete, swarm_complete emitted
-  it("emits expected SSE events", async () => {
+  // SSE events: expert_spawn/complete emitted by coordinator, not strategy.
+  // Strategy emits lifecycle hooks + swarm_complete.
+  it("emits swarm_complete SSE and lifecycle hooks for experts", async () => {
     const services = createMockServices()
     const strategy = new MoaStrategy(services, makeConfig({ rounds: 1 }))
     const experts = [makeExpert({ role: "e1" }), makeExpert({ role: "e2" })]
 
     await strategy.run(experts, new MessageBus(), new SharedMemory())
 
+    // SSE: strategy only emits swarm_complete (expert_spawn/complete come from coordinator)
     const emitCalls = (services.emit as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[0])
     const eventTypes = emitCalls.map((e: { type: string }) => e.type)
 
-    expect(eventTypes).toContain("expert_spawn")
-    expect(eventTypes).toContain("expert_complete")
+    expect(eventTypes).not.toContain("expert_spawn")
+    expect(eventTypes).not.toContain("expert_complete")
     expect(eventTypes).toContain("swarm_complete")
-
-    // 2 experts → 2 spawns + 2 completes + 1 swarm_complete
-    expect(emitCalls.filter((e: { type: string }) => e.type === "expert_spawn")).toHaveLength(2)
-    expect(emitCalls.filter((e: { type: string }) => e.type === "expert_complete")).toHaveLength(2)
     expect(emitCalls.filter((e: { type: string }) => e.type === "swarm_complete")).toHaveLength(1)
+
+    // Lifecycle hooks: strategy fires on_expert_spawn and on_expert_complete
+    const hookCalls = (services.triggerHook as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[0])
+    expect(hookCalls.filter((h: string) => h === "on_expert_spawn")).toHaveLength(2)
+    expect(hookCalls.filter((h: string) => h === "on_expert_complete")).toHaveLength(2)
+    expect(hookCalls).toContain("on_swarm_start")
+    expect(hookCalls).toContain("on_swarm_complete")
   })
 
   // TC-027: 10+ experts parallel without rate limit
@@ -331,3 +337,132 @@ describe("MoaStrategy", () => {
     expect(result.experts.every((e) => e.status === "completed")).toBe(true)
   })
 })
+
+  // H1 fix: timer leak — clearTimeout when expert completes before timeout
+  it("clears timeout timer when expert completes before timeout", async () => {
+    vi.useFakeTimers()
+    try {
+      const services = createMockServices({
+        runExpert: vi.fn().mockImplementation(async (expert: ExpertDef) => ({
+          output: `Output from ${expert.role}`,
+          tokens: 100,
+          inputTokens: 50,
+          outputTokens: 50,
+          files_changed: [],
+          tools_used: [],
+        })),
+      })
+
+      const clearTimeoutSpy = vi.spyOn(global, "clearTimeout")
+      const strategy = new MoaStrategy(services, makeConfig({ rounds: 1, timeout: 120 }))
+      const experts = [makeExpert({ role: "e1" })]
+
+      const resultPromise = strategy.run(experts, new MessageBus(), new SharedMemory())
+      // Let microtasks run (expert completes synchronously in mock)
+      await vi.runAllTimersAsync()
+      await resultPromise
+
+      expect(clearTimeoutSpy).toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  // H2 fix: budget exhaustion in aggregation loop stops early
+  it("stops aggregation loop when budget exhausted between rounds", async () => {
+    let budgetCalls = 0
+    const services = createMockServices({
+      checkBudget: vi.fn().mockImplementation(() => {
+        budgetCalls++
+        // Pre-fan-out: ok, round 1: ok, round 2: exhausted
+        if (budgetCalls <= 2) {
+          return { status: "ok", consumed: 0, limit: 100, percentage: 50 } as BudgetStatus
+        }
+        return { status: "exhausted", consumed: 100, limit: 100, percentage: 100 } as BudgetStatus
+      }),
+    })
+
+    const strategy = new MoaStrategy(services, makeConfig({ rounds: 3 }))
+    const experts = [makeExpert({ role: "e1" }), makeExpert({ role: "e2" })]
+
+    const result = await strategy.run(experts, new MessageBus(), new SharedMemory())
+
+    // runHost should only be called once (round 2 exits early)
+    expect(services.runHost as ReturnType<typeof vi.fn>).toHaveBeenCalledTimes(1)
+    expect(result.rounds_used).toBe(1)
+  })
+
+  // M1 fix: aggregator failure returns partial synthesis
+  it("returns partial synthesis when aggregator throws", async () => {
+    const services = createMockServices({
+      runHost: vi.fn().mockRejectedValue(new Error("LLM rate limit exceeded")),
+    })
+
+    const strategy = new MoaStrategy(services, makeConfig({ rounds: 1 }))
+    const experts = [makeExpert({ role: "e1" }), makeExpert({ role: "e2" })]
+
+    const result = await strategy.run(experts, new MessageBus(), new SharedMemory())
+
+    // Should not be "failed" — graceful degradation
+    expect(result.status).not.toBe("failed")
+    expect(result.synthesis).toContain("Aggregation failed")
+    expect(result.synthesis).toContain("Raw expert outputs")
+    expect(result.synthesis).toContain("e1")
+    expect(result.synthesis).toContain("e2")
+  })
+
+  // Budget pre-fan-out exhaustion
+  it("returns budget_exhausted before launching experts when budget already consumed", async () => {
+    const services = createMockServices({
+      checkBudget: vi.fn().mockReturnValue({
+        status: "exhausted",
+        consumed: 100,
+        limit: 100,
+        percentage: 100,
+      } as BudgetStatus),
+    })
+
+    const strategy = new MoaStrategy(services, makeConfig({ rounds: 1 }))
+    const experts = [makeExpert({ role: "e1" }), makeExpert({ role: "e2" })]
+
+    const result = await strategy.run(experts, new MessageBus(), new SharedMemory())
+
+    expect(result.status).toBe("budget_exhausted")
+    expect(result.budget_exhausted).toBe(true)
+    expect(result.rounds_used).toBe(0)
+    expect(result.experts).toHaveLength(0) // No experts launched
+    expect(services.runExpert).not.toHaveBeenCalled()
+  })
+
+  // Aggregator rounds:0 with partial failures
+  it("returns raw expert outputs when rounds=0 and some experts fail", async () => {
+    const services = createMockServices({
+      runExpert: vi.fn().mockImplementation(async (expert: ExpertDef) => {
+        if (expert.role === "failing-expert") {
+          throw new Error("Simulated failure")
+        }
+        return {
+          output: `Output from ${expert.role}`,
+          tokens: 100,
+          inputTokens: 50,
+          outputTokens: 50,
+          files_changed: [],
+          tools_used: [],
+        }
+      }),
+    })
+
+    const strategy = new MoaStrategy(services, makeConfig({ rounds: 0 }))
+    const experts = [
+      makeExpert({ role: "working" }),
+      makeExpert({ role: "failing-expert" }),
+    ]
+
+    const result = await strategy.run(experts, new MessageBus(), new SharedMemory())
+
+    expect(result.status).toBe("completed")
+    expect(result.rounds_used).toBe(0)
+    expect(result.synthesis).toContain("working")
+    expect(result.synthesis).not.toContain("failing-expert")
+    expect(result.failed_experts).toContain("failing-expert")
+  })
