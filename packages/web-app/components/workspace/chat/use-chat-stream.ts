@@ -26,7 +26,7 @@ interface UseChatStreamReturn {
   streamEndState: 'done' | 'aborted' | null
   hasMoreMessages: boolean
   sendMessage: (content: string) => Promise<string>
-  abort: () => void
+  abort: (sessionId?: string) => void
   createSession: () => Promise<string>
   switchSession: (sessionId: string) => void
   deleteSession: (sessionId: string) => void
@@ -298,23 +298,24 @@ export function useChatStream(
   useEffect(() => { sessionsRef.current = sessions }, [sessions])
   const activeSessionIdRef = useRef<string | null>(activeSessionId)
   useEffect(() => { activeSessionIdRef.current = activeSessionId }, [activeSessionId])
-  const [streamingSessionId, setStreamingSessionId] = useState<string | null>(null)
+  const [streamingSessions, setStreamingSessions] = useState<Set<string>>(new Set())
   const [status, setStatus] = useState<'compacting' | 'requesting' | null>(null)
   const [streamMeta, setStreamMeta] = useState<Record<string, StreamMeta>>({})
   const [sessionMetaMap, setSessionMetaMap] = useState<Record<string, SessionMeta>>({})
-  const abortRef = useRef<AbortController | null>(null)
-  const streamingSessionIdRef = useRef<string | null>(null)
+  const abortControllers = useRef<Map<string, AbortController>>(new Map())
+  const streamingSessionsRef = useRef<Set<string>>(new Set())
 
   // Keep ref in sync with state (for EventSource handler which runs outside React lifecycle)
   useEffect(() => {
-    streamingSessionIdRef.current = streamingSessionId
-  }, [streamingSessionId])
+    streamingSessionsRef.current = streamingSessions
+  }, [streamingSessions])
 
   // Derived values
   const messages = messagesBySession[activeSessionId ?? ''] ?? []
-  const isStreaming = streamingSessionId !== null
-  const isCurrentSessionStreaming = streamingSessionId !== null && streamingSessionId === activeSessionId
-  const streamStartMs = streamMeta[streamingSessionId ?? '']?.startMs ?? null
+  const isStreaming = streamingSessions.size > 0
+  const isCurrentSessionStreaming = activeSessionId !== null && streamingSessions.has(activeSessionId)
+  const currentStreamingSession = streamingSessions.size > 0 ? [...streamingSessions][0] : null
+  const streamStartMs = streamMeta[currentStreamingSession ?? '']?.startMs ?? null
   const streamEndState = streamMeta[activeSessionId ?? '']?.endState ?? null
   const activeMeta = sessionMetaMap[activeSessionId ?? '']
   const hasMoreMessages = activeMeta?.oldestCreatedAt !== null &&
@@ -346,11 +347,11 @@ export function useChatStream(
         const updatedSessionId = data?.sessionId
         // Skip reload for currently streaming or active session —
         // chunks are already delivering messages via SSE.
-        if (updatedSessionId === streamingSessionIdRef.current) return
+        if (streamingSessionsRef.current.has(updatedSessionId)) return
         if (updatedSessionId === activeSessionIdRef.current) return
         loadSessionMessages(updatedSessionId)
       } catch {
-        if (activeSessionId && !streamingSessionIdRef.current) {
+        if (activeSessionId && streamingSessionsRef.current.size === 0) {
           loadSessionMessages(activeSessionId)
         }
       }
@@ -389,7 +390,7 @@ export function useChatStream(
       const res = await fetch(`${getServerUrl()}${apiBase}/sessions/${sessionId}?limit=100`)
       if (!res.ok) return
       // Re-check: don't overwrite messages if a new stream started during the fetch
-      if (streamingSessionIdRef.current === sessionId) return
+      if (streamingSessionsRef.current.has(sessionId)) return
       const data = await res.json()
       const msgs: ChatMessage[] = (data.messages ?? []).map((m: Record<string, unknown>) =>
         fromDBMessage({
@@ -475,11 +476,6 @@ export function useChatStream(
   }, [])
 
   const sendMessage = useCallback(async (content: string): Promise<string> => {
-    if (streamingSessionIdRef.current) {
-      toast.error("请等待当前响应完成")
-      return ""
-    }
-
     let sessionId: string | null = activeSessionId
 
     if (!sessionId) {
@@ -505,6 +501,12 @@ export function useChatStream(
 
     const resolvedSessionId = sessionId as string
 
+    // Per-session guard: only block if THIS session is already streaming
+    if (streamingSessionsRef.current.has(resolvedSessionId)) {
+      toast.error("请等待当前响应完成")
+      return ""
+    }
+
     const userMsg: ChatMessage = {
       id: `user-${Date.now()}`,
       sessionId: resolvedSessionId,
@@ -518,8 +520,8 @@ export function useChatStream(
       [resolvedSessionId]: [...(prev[resolvedSessionId] ?? []), userMsg],
     }))
 
-    setStreamingSessionId(resolvedSessionId)
-    streamingSessionIdRef.current = resolvedSessionId
+    setStreamingSessions(prev => new Set(prev).add(resolvedSessionId))
+    streamingSessionsRef.current = new Set(streamingSessionsRef.current).add(resolvedSessionId)
     setStatus("requesting")
     setStreamMeta(prev => ({
       ...prev,
@@ -527,7 +529,7 @@ export function useChatStream(
     }))
 
     const controller = new AbortController()
-    abortRef.current = controller
+    abortControllers.current.set(resolvedSessionId, controller)
 
     let wasAborted = false
 
@@ -610,8 +612,12 @@ export function useChatStream(
       toast.error(err instanceof Error ? err.message : "发送消息失败")
       return resolvedSessionId
     } finally {
-      setStreamingSessionId(null)
-      streamingSessionIdRef.current = null
+      setStreamingSessions(prev => {
+        const next = new Set(prev)
+        next.delete(resolvedSessionId)
+        return next
+      })
+      streamingSessionsRef.current = new Set([...streamingSessionsRef.current].filter(id => id !== resolvedSessionId))
       setStatus(null)
       setStreamMeta(prev => ({
         ...prev,
@@ -620,7 +626,7 @@ export function useChatStream(
           endState: wasAborted ? 'aborted' : 'done',
         },
       }))
-      abortRef.current = null
+      abortControllers.current.delete(resolvedSessionId)
       // Convert pending AskUserQuestion tool_calls to interactive question cards
       if (!wasAborted && resolvedSessionId) {
         setMessagesBySession(prev => {
@@ -640,8 +646,15 @@ export function useChatStream(
     }
   }, [workspaceId, activeSessionId, sessions, applyChunk, apiBase, options?.onSessionCreated])
 
-  const abort = useCallback(() => {
-    abortRef.current?.abort()
+  const abort = useCallback((sessionId?: string) => {
+    if (sessionId) {
+      abortControllers.current.get(sessionId)?.abort()
+    } else {
+      // Abort all active streams
+      for (const controller of abortControllers.current.values()) {
+        controller.abort()
+      }
+    }
   }, [])
 
   const createSession = useCallback(async (): Promise<string> => {

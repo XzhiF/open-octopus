@@ -298,6 +298,12 @@ providers:
 | `on_cancel` | 用户主动取消 | 清理资源 |
 | `on_interrupt` | 进程中断（如崩溃） | 标记中断状态 |
 | `on_retry` | 节点重试时 | 记录重试次数 |
+| `on_swarm_start` | Swarm 节点开始执行 | Swarm 进度通知 |
+| `on_expert_spawn` | 专家实例启动 | 追踪专家分配 |
+| `on_expert_complete` | 专家执行完成 | 专家输出审计 |
+| `on_swarm_round_end` | debate 模式一轮结束 | 轮次进度通知 |
+| `on_swarm_consensus` | 共识评估完成 | 共识分数监控 |
+| `on_swarm_complete` | Swarm 节点全部完成 | Swarm 结果通知 |
 
 ### 4.1 三种 hook 类型
 
@@ -426,6 +432,7 @@ hook prompt / template / bash 中可用：
 | `debate` | 技术选型、架构决策 | 多轮讨论 + 共识检查 |
 | `dispatch` | 全栈开发、多步任务 | DAG 依赖调度 |
 | `swarm` | 故障诊断、开放问题 | Router 自动选模式和专家 |
+| `moa` | 多模型综合分析 | Fan-out + Aggregator 聚合，支持跨 Provider |
 
 ---
 
@@ -442,6 +449,11 @@ hook prompt / template / bash 中可用：
 | `$last_output` | 当前节点自身输出 | outputs 块 |
 | `$iteration` | loop 当前迭代（1-based） | loop 子节点 |
 | `$ref:flow.yaml.node.key` | 跨执行引用 | 所有节点 |
+| `$parent.var_pool.xxx` | 父执行变量池 | 子工作流节点 |
+| `$parent.input_values.xxx` | 父执行输入参数 | 子工作流节点 |
+| `$parent.$nodeId.outputs.xxx` | 父执行特定节点输出 | 子工作流节点 |
+| `$ancestor[N].var_pool.xxx` | N 级祖先变量池 (0=parent) | 嵌套子工作流 |
+| `$ancestor[N].$nodeId.outputs.xxx` | N 级祖先节点输出 | 嵌套子工作流 |
 
 ### 6.2 outputs — 写入变量池
 

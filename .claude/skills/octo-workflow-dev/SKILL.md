@@ -2,12 +2,14 @@
 name: octo-workflow-dev
 description: Octopus 工作流开发助手 — YAML 工作流设计、Agent-First 节点哲学、子代理委派、Notify/Hook 子系统、外部角色复用（superpowers-zh / agency-agents-zh）、变量系统、跨执行引用、无人值守模式
 category: coding-assistant
-tags: [octopus, workflow, YAML, agent, subagent, notify, hooks, goal, bash, python, condition, approval, loop, agency-agents-zh, superpowers-zh, schema]
+tags: [octopus, workflow, YAML, agent, subagent, notify, hooks, goal, bash, python, condition, approval, loop, swarm, agency-agents-zh, superpowers-zh, schema]
 ---
 
 # Octopus 工作流开发助手
 
-YAML DSL 工作流引擎：6 种节点类型（agent / bash / python / condition / approval / loop）+ 子代理（agents）+ Notify/Hook 生命周期，通过变量池、表达式求值与 DAG 拓扑实现自动化编排。
+YAML DSL 工作流引擎：7 种节点类型（agent / bash / python / condition / approval / loop / swarm）+ 子代理（agents）+ Notify/Hook 生命周期，通过变量池、表达式求值与 DAG 拓扑实现自动化编排。
+
+> **Swarm 专家团节点** (`type: swarm`) 的完整指南见 `octo-swarm-dev` skill。
 
 ## 设计哲学（按重要性排序）
 
@@ -26,7 +28,7 @@ YAML DSL 工作流引擎：6 种节点类型（agent / bash / python / condition
 每个工作流 YAML 第一行应当声明：
 
 ```yaml
-# yaml-language-server: $schema=./doc/workflow-schema.json
+# yaml-language-server: $schema=../../workflows/workflow-schema.json
 apiVersion: octopus/v1
 kind: Workflow
 ```
@@ -35,9 +37,8 @@ kind: Workflow
 
 | 位置 | 用途 |
 |------|------|
-| `~/.octopus/workflows/doc/workflow-schema.json` | 用户级 schema（IDE 自动补全、CLI 校验时引用） |
-| `packages/core-pack/presets/workflows/doc/workflow-schema.json` | 仓内权威源 |
-| 相对路径 `./doc/workflow-schema.json` | 工作流目录内 IDE 引用 |
+| `packages/core-pack/workflows/workflow-schema.json` | 仓内权威源（唯一真相） |
+| 相对路径 `../../workflows/workflow-schema.json` | 从 workflows/ 子目录引用 |
 
 任何字段不确定（`hooks` / `agents` / `condition.cases` / `loop.break_when` / `inputs` 校验等）一律先查 schema，不要凭记忆下笔。
 
@@ -297,6 +298,12 @@ providers:
 | `on_cancel` | 用户主动取消 | 清理资源 |
 | `on_interrupt` | 进程中断（如崩溃） | 标记中断状态 |
 | `on_retry` | 节点重试时 | 记录重试次数 |
+| `on_swarm_start` | Swarm 节点开始执行 | Swarm 进度通知 |
+| `on_expert_spawn` | 专家实例启动 | 追踪专家分配 |
+| `on_expert_complete` | 专家执行完成 | 专家输出审计 |
+| `on_swarm_round_end` | debate 模式一轮结束 | 轮次进度通知 |
+| `on_swarm_consensus` | 共识评估完成 | 共识分数监控 |
+| `on_swarm_complete` | Swarm 节点全部完成 | Swarm 结果通知 |
 
 ### 4.1 三种 hook 类型
 
@@ -396,6 +403,37 @@ hook prompt / template / bash 中可用：
       prompt: "第 $iteration 次尝试部署..."
 ```
 
+### 5.1 Swarm — 多专家协作节点
+
+`type: swarm` 实现多专家协作编排（4 种模式：review / debate / dispatch / swarm）。完整指南见 **`octo-swarm-dev`** skill。
+
+```yaml
+# 最小 swarm 节点 — review 模式
+- id: review
+  type: swarm
+  topic: "审查以下代码: $vars.code"
+  mode: review
+  experts:
+    - role: security-engineer
+      perspective: "专注于安全漏洞"
+      prompt: "审查安全问题"
+    - role: code-reviewer
+      perspective: "专注于代码质量"
+      prompt: "审查质量"
+
+# 自动输出到变量池
+# $vars.review_synthesis — Host 综合报告
+# $vars.review_expert_count — 专家数
+```
+
+| 模式 | 场景 | 特点 |
+|------|------|------|
+| `review` | 代码审查、安全审计 | 1 轮并行，Host 综合 |
+| `debate` | 技术选型、架构决策 | 多轮讨论 + 共识检查 |
+| `dispatch` | 全栈开发、多步任务 | DAG 依赖调度 |
+| `swarm` | 故障诊断、开放问题 | Router 自动选模式和专家 |
+| `moa` | 多模型综合分析 | Fan-out + Aggregator 聚合，支持跨 Provider |
+
 ---
 
 ## 6. 变量与表达式
@@ -411,6 +449,11 @@ hook prompt / template / bash 中可用：
 | `$last_output` | 当前节点自身输出 | outputs 块 |
 | `$iteration` | loop 当前迭代（1-based） | loop 子节点 |
 | `$ref:flow.yaml.node.key` | 跨执行引用 | 所有节点 |
+| `$parent.var_pool.xxx` | 父执行变量池 | 子工作流节点 |
+| `$parent.input_values.xxx` | 父执行输入参数 | 子工作流节点 |
+| `$parent.$nodeId.outputs.xxx` | 父执行特定节点输出 | 子工作流节点 |
+| `$ancestor[N].var_pool.xxx` | N 级祖先变量池 (0=parent) | 嵌套子工作流 |
+| `$ancestor[N].$nodeId.outputs.xxx` | N 级祖先节点输出 | 嵌套子工作流 |
 
 ### 6.2 outputs — 写入变量池
 
@@ -597,4 +640,4 @@ octopus workflow run ./deploy.yaml --org {org} --model pro-max --engine claude
 - `context: continue` 仅在前一个节点也是 agent 时有效。
 - 工作流不绑定技术栈 — 不在 YAML 中硬编码 npm/mvn/gradle，让 agent 自动检测。
 - 视觉/截图分析必须用子代理隔离，防止图片数据污染主 session。
-- 任何字段不确定先查 `~/.octopus/workflows/doc/workflow-schema.json`，不要凭记忆写。
+- 任何字段不确定先查 `packages/core-pack/workflows/workflow-schema.json`，不要凭记忆写。

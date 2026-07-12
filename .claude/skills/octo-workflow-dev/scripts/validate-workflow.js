@@ -162,6 +162,12 @@ function validateInline(filePath) {
         break
       case 'approval':
         break
+      case 'swarm':
+        if (!n.topic)
+          return fail(filePath, `节点 "${n.id}": type=swarm 必须有 topic 字段`)
+        if (!n.mode)
+          return fail(filePath, `节点 "${n.id}": type=swarm 必须有 mode 字段`)
+        break
       default:
         return fail(filePath, `节点 "${n.id}": 未知类型 "${n.type}"`)
     }

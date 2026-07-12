@@ -541,7 +541,7 @@ export function createAgentRoutes(deps: AgentRouteDeps): Hono {
       // M7: Register active stream for stop generation
       let aborted = false
       const abortStream = () => { aborted = true }
-      registerActiveStream(id, abortStream)
+      const streamId = registerActiveStream(id, abortStream)
 
       try {
         // Step 1: Auto-compress long sessions (C5)
@@ -995,7 +995,7 @@ export function createAgentRoutes(deps: AgentRouteDeps): Hono {
         })
       } finally {
         // M7: Always unregister stream on completion
-        unregisterActiveStream(id)
+        unregisterActiveStream(id, streamId)
       }
     })
   })

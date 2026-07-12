@@ -13,43 +13,6 @@ tags: [debug, browser, ui, screenshot, explore, diagnose, agent-browser]
 
 ---
 
-## ⚠️ 视觉分析核心原则（重要）
-
-**图片数据永远不能进入父代理的 session 上下文，只允许文本结果流回。**
-
-当前模型是纯文本模型，无法直接处理图片。如果父代理直接分析图片：
-- 图片数据（base64/image_url）会进入 session 上下文
-- 下一个使用非视觉模型的节点会收到被污染的上下文
-- 导致 API 400 错误：`Unexpected item type in content`
-
-**正确做法：委派 `vision-analyzer` 子代理**
-
-```yaml
-# workflow YAML 中定义子代理
-agents:
-  vision-analyzer:
-    description: "视觉分析子代理。分析截图或图片内容时委派此子代理。"
-    prompt: |
-      你是视觉分析专家。分析图片并返回纯文本结果。
-      规则：只返回文本，不要返回图片数据或 base64 编码。
-    model: pro
-    tools: ["Bash", "Read"]
-```
-
-**在 prompt 中指示父代理：**
-
-```markdown
-需要截图分析时，委派 vision-analyzer 子代理：
-
-1. 截图：agent-browser --session debug screenshot /tmp/debug-step1.png
-2. 委派子代理："委派 vision-analyzer 分析 /tmp/debug-step1.png，描述页面状态和可见元素"
-3. 子代理返回纯文本结果，父代理基于结果继续调试
-```
-
-**优先使用 snapshot（Accessibility Tree）**，只在 snapshot 不够时才用视觉分析。
-
----
-
 ## 核心原则
 
 1. **复现优先** — 先复现问题，再分析原因。不要假设原因
@@ -260,7 +223,7 @@ agent-browser --session debug evaluate "document.querySelector('[data-reactroot]
 
 ## Hermes 兜底（调试层面）
 
-当自己分析不了时，让 Hermes 帮忙（仅限文本分析，不涉及图片）：
+当自己分析不了时，让 Hermes 帮忙：
 
 ```bash
 # 分析控制台错误
@@ -268,26 +231,16 @@ ERRORS=$(agent-browser --session debug errors)
 hermes chat -q "以下是浏览器控制台错误，帮我分析最可能的原因和影响范围：
 $ERRORS"
 
+# 分析截图
+hermes chat -q "看 /tmp/debug-after-action.png，页面上有什么异常？有没有错误提示、空白区域、或错位的元素？"
+
+# 对比前后截图
+hermes chat -q "对比 /tmp/debug-initial.png 和 /tmp/debug-after-action.png，点击按钮后页面有什么变化？如果没有变化说明什么？"
+
 # 分析网络请求
 NETWORK=$(agent-browser --session debug network)
 hermes chat -q "以下是网络请求记录，哪些请求失败了？失败的请求和页面问题有什么关联？
 $NETWORK"
-```
-
-**注意：如果涉及截图分析，必须委派 vision-analyzer 子代理，不要直接用 hermes 分析图片。**
-
-```markdown
-# 分析截图（委派子代理）
-agent-browser --session debug screenshot /tmp/debug-after-action.png
-委派 vision-analyzer 分析 /tmp/debug-after-action.png：
-"页面上有什么异常？有没有错误提示、空白区域、或错位的元素？"
-
-# 对比前后截图（委派子代理）
-agent-browser --session debug screenshot /tmp/debug-initial.png
-# ... 执行操作 ...
-agent-browser --session debug screenshot /tmp/debug-after-action.png
-委派 vision-analyzer 对比 /tmp/debug-initial.png 和 /tmp/debug-after-action.png：
-"点击按钮后页面有什么变化？如果没有变化说明什么？"
 ```
 
 ---

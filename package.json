@@ -21,7 +21,7 @@
     "loop-engineering"
   ],
   "scripts": {
-    "build": "pnpm -r run build",
+    "build": "pnpm -r run build && node scripts/sync-skills.mjs",
     "build:shared": "pnpm --filter @octopus/shared build",
     "build:engine": "pnpm --filter @octopus/engine build",
     "build:server": "pnpm --filter @octopus/server build",
