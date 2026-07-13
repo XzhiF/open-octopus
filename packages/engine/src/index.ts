@@ -17,7 +17,8 @@ export type { ExecutionResult, EngineCallbacks } from "./engine"
 
 export { KnowledgeInjector } from "./knowledge-injector"
 
-export { JsonlLogger } from "./logger"
+export { JsonlLogger, sanitizeId, parseLogFilename, isMergedEvent, MERGED_EVENT_TYPES, mergeAgentEvents } from "./logger"
+export type { MergedEventType, ParsedLogFilename } from "./logger"
 // Pipeline modules
 export * from "./pipeline"
 

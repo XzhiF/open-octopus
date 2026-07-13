@@ -224,6 +224,37 @@ export class ExecutionDAO extends BaseDAO {
     return this.stmt("DELETE FROM agent_events WHERE node_execution_id = ?").run(nodeExecutionId)
   }
 
+  /** Replace all agent events for a node with merged (compacted) events. */
+  replaceMergedEvents(executionId: string, nodeId: string, mergedEvents: any[]): void {
+    this.transaction(() => {
+      const neId = `${executionId}-${nodeId}`
+      // Delete old fragmented events for this node
+      this.stmt("DELETE FROM agent_events WHERE node_execution_id = ?").run(neId)
+      // Insert merged events
+      const insert = this.stmt(`
+        INSERT INTO agent_events (
+          node_execution_id, event_order, turn_index, event_type, timestamp,
+          content, content_length, tool_call_id, tool_name, tool_input,
+          tool_result, tool_is_error, tool_duration_ms, status_value, error_code, error_message
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `)
+      for (let i = 0; i < mergedEvents.length; i++) {
+        const e = mergedEvents[i]
+        const ts = e.startedAt || e.timestamp || new Date().toISOString()
+        const content = e.content ?? (e.lines ? e.lines.join("\n") : null)
+        insert.run(
+          neId, i, e.turnIndex ?? 1, e.event, ts,
+          content, content ? content.length : 0,
+          e.toolCallId ?? null, e.toolName ?? null,
+          e.input ? (typeof e.input === "string" ? e.input : JSON.stringify(e.input)) : null,
+          e.result ? (typeof e.result === "string" ? e.result : JSON.stringify(e.result)) : null,
+          e.isError ? 1 : 0, e.toolDurationMs ?? null,
+          null, null, null,
+        )
+      }
+    })
+  }
+
   // ── execution_summaries ─────────────────────────────────────────
 
   findSummariesByExecution(executionId: string): ExecutionSummaryRow[] {

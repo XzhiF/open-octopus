@@ -58,21 +58,47 @@ export class LoopExecutor implements NodeExecutor {
       this.iterations++
       logLines.push(`Loop iteration ${this.iterations}`)
 
+      this.logger?.log(this.node.id, 'branch_start', { iteration: this.iterations })
       this.callbacks?.onBranchStart?.(`${this.node.id}-iter-${this.iterations}`, this.iterations)
 
       let shouldBreak = false
       let shouldContinue = false
       let jumpToIndex = -1
+      const iterationNodeResults: { nodeId: string; status: string; durationMs?: number; error?: string }[] = []
 
-      for (let ni = jumpToIndex >= 0 ? jumpToIndex : 0; ni < innerNodes.length; ni++) {
+      const prevLoopContext = this.logger?.setLoopContext(this.node.id, this.iterations)
+      try {
+        for (let ni = jumpToIndex >= 0 ? jumpToIndex : 0; ni < innerNodes.length; ni++) {
         jumpToIndex = -1 // reset for this iteration of the for loop
         const innerNode = innerNodes[ni]
         if (shouldContinue) continue
 
         const executor = this.createExecutor(innerNode)
+
+        // Notify engine about inner node execution (so it records to node_executions)
+        this.callbacks?.onNodeStart?.(innerNode.id, innerNode.type)
+        const innerStart = Date.now()
         const result = await executor.execute()
+        const innerDurationMs = Date.now() - innerStart
+        this.callbacks?.onNodeEnd?.(innerNode.id, result.status, innerDurationMs, result, innerNode.type)
+
+        // Compact iteration-scoped JSONL after inner node completes
+        if (this.logger) {
+          try {
+            const mergedEvents = this.logger.compactFile(innerNode.id)
+            if (mergedEvents && mergedEvents.length > 0) {
+              this.callbacks?.onNodeCompacted?.(innerNode.id, mergedEvents)
+            }
+          } catch { /* compact failure is non-fatal */ }
+        }
 
         logLines.push(...result.logLines)
+        iterationNodeResults.push({
+          nodeId: innerNode.id,
+          status: result.status,
+          durationMs: result.durationMs,
+          error: result.error ?? (result.logLines?.length && result.status === "failed" ? result.logLines.join("\n") : undefined),
+        })
 
         this.updateSessionContext(innerNode, result)
 
@@ -89,7 +115,8 @@ export class LoopExecutor implements NodeExecutor {
         }
 
         if (result.status === "cancelled") {
-          this.callbacks?.onBranchEnd?.(`${this.node.id}-iter-${this.iterations}`, this.iterations, "cancelled")
+          this.logger?.log(this.node.id, 'branch_end', { iteration: this.iterations, status: "cancelled", nodeResults: iterationNodeResults })
+          this.callbacks?.onBranchEnd?.(`${this.node.id}-iter-${this.iterations}`, this.iterations, "cancelled", iterationNodeResults)
           const durationMs = Date.now() - start
           return {
             outputs: { iterations: this.iterations },
@@ -101,7 +128,8 @@ export class LoopExecutor implements NodeExecutor {
         }
 
         if (result.status === "failed") {
-          this.callbacks?.onBranchEnd?.(`${this.node.id}-iter-${this.iterations}`, this.iterations, "failed")
+          this.logger?.log(this.node.id, 'branch_end', { iteration: this.iterations, status: "failed", nodeResults: iterationNodeResults })
+          this.callbacks?.onBranchEnd?.(`${this.node.id}-iter-${this.iterations}`, this.iterations, "failed", iterationNodeResults)
           const durationMs = Date.now() - start
           return {
             outputs: { iterations: this.iterations },
@@ -145,8 +173,12 @@ export class LoopExecutor implements NodeExecutor {
           }
         }
       }
+      } finally {
+        this.logger?.restoreLoopContext(prevLoopContext ?? { loopNodeId: undefined, iteration: undefined })
+      }
 
-      this.callbacks?.onBranchEnd?.(`${this.node.id}-iter-${this.iterations}`, this.iterations, "completed")
+      this.logger?.log(this.node.id, 'branch_end', { iteration: this.iterations, status: "completed", nodeResults: iterationNodeResults })
+      this.callbacks?.onBranchEnd?.(`${this.node.id}-iter-${this.iterations}`, this.iterations, "completed", iterationNodeResults)
 
       if (shouldBreak) {
         logLines.push(`Loop break at iteration ${this.iterations}`)

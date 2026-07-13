@@ -688,3 +688,91 @@ export interface NaturalLanguageCronResult {
   confidence: 'high' | 'medium' | 'error'
   error?: string
 }
+
+// ============ Agent Events & Loop Iterations (PRD-001) ============
+
+export type MergedEventType =
+  | "thinking_block" | "text_block" | "tool_call"
+  | "bash_output" | "bash_stderr"
+  | "python_output" | "python_stderr"
+  | "branch_start" | "branch_end"
+
+export const MERGED_EVENT_TYPES: Set<string> = new Set([
+  "thinking_block", "text_block", "tool_call",
+  "bash_output", "bash_stderr", "python_output", "python_stderr",
+  "branch_start", "branch_end",
+])
+
+export function isMergedEvent(entry: { event: string }): boolean {
+  return MERGED_EVENT_TYPES.has(entry.event)
+}
+
+export interface AgentEvent {
+  nodeId: string
+  event: string
+  timestamp?: string
+  iteration?: number
+  // Merged event fields
+  startedAt?: string
+  completedAt?: string
+  content?: string
+  lines?: string[]
+  toolCallId?: string
+  toolName?: string
+  input?: unknown
+  result?: string
+  isError?: boolean
+  // Legacy compat
+  type?: string
+  line?: string
+  status?: string
+  durationMs?: number
+  exitCode?: number
+  event_data?: {
+    type: string
+    content?: string
+    toolCallId?: string
+    toolName?: string
+    input?: unknown
+    isError?: boolean
+    duration?: string
+    status?: string
+    code?: string
+    message?: string
+  }
+}
+
+export interface AgentEventsResponse {
+  executionId: string
+  events: AgentEvent[]
+  source: "sqlite" | "jsonl"
+  _degraded: boolean
+  _message: string | null
+  loopIterations?: Record<string, LoopIterationSummary>
+}
+
+export interface LoopIterationSummary {
+  total?: number
+  completed: number
+  failed: number
+  current?: number
+  mode: "fixed" | "dynamic"
+  iterations: IterationDetail[]
+}
+
+export interface IterationDetail {
+  iteration: number
+  status: "pending" | "running" | "completed" | "failed"
+  startedAt?: string
+  completedAt?: string
+  durationMs?: number
+  error?: string
+  nodes: IterationNodeResult[]
+}
+
+export interface IterationNodeResult {
+  nodeId: string
+  status: "pending" | "running" | "completed" | "failed" | "skipped"
+  durationMs?: number
+  error?: string
+}

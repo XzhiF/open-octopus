@@ -47,10 +47,11 @@ export interface EngineCallbacks {
   onError?: (nodeId: string, error: string) => void
   onComplete?: (finalStatus: string) => void
   onBranchStart?: (nodeExecutionId: string, iteration: number) => void
-  onBranchEnd?: (nodeExecutionId: string, iteration: number, status: string) => void
+  onBranchEnd?: (nodeExecutionId: string, iteration: number, status: string, nodeResults?: { nodeId: string; status: string; durationMs?: number; error?: string }[]) => void
   onAgentEvent?: (nodeId: string, event: AgentEvent) => void
   onSwarmEvent?: (nodeId: string, event: SwarmSSEEvent) => void
   onNodeRetry?: (nodeId: string, attempt: number, maxAttempts: number, delayMs: number) => void
+  onNodeCompacted?: (nodeId: string, mergedEvents: any[]) => void
   onCheckpoint?: (checkpoint: unknown) => void
   onPipelineReloaded?: (config: PipelineConfig) => void
   onRuntimeNodeAdded?: (nodeId: string, nodeType: string) => void
@@ -610,6 +611,16 @@ export class WorkflowEngine {
       })
 
       this.callbacks?.onNodeEnd?.(node.id, nodeResult.status, nodeResult.durationMs, nodeResult, node.type)
+
+      // Compact JSONL after node completes
+      try {
+        const mergedEvents = this.logger?.compactFile(node.id)
+        if (mergedEvents && mergedEvents.length > 0) {
+          this.callbacks?.onNodeCompacted?.(node.id, mergedEvents)
+        }
+      } catch (err) {
+        // compact failure is non-fatal
+      }
 
       return nodeResult
     } finally {

@@ -139,8 +139,12 @@ export class ExecutionService {
     return this.lifecycle.getLogEvents(executionId)
   }
 
-  getAgentEvents(executionId: string, nodeId?: string): any[] {
-    return this.lifecycle.getAgentEvents(executionId, nodeId)
+  getAgentEvents(executionId: string, nodeId?: string, loopId?: string, iteration?: number): any[] {
+    return this.lifecycle.getAgentEvents(executionId, nodeId, loopId, iteration)
+  }
+
+  getLoopIterationSummary(executionId: string): Record<string, any> {
+    return this.lifecycle.getLoopIterationSummary(executionId)
   }
 
   getBranches(executionId: string): BranchExecutionRow[] {

@@ -10,6 +10,7 @@ import { PipelineConfigLoader } from "../services/pipeline-config"
 import { ExecutionDAO } from "../db/dao"
 import { initExecutionServiceRegistry, getService } from "../services/execution-service-registry"
 export { getService } from "../services/execution-service-registry"
+import { mergeAgentEvents } from "@octopus/engine"
 import os from "os"
 
 const executionRoutes = new Hono()
@@ -387,6 +388,9 @@ executionRoutes.get("/:executionId/agent-events", (c) => {
   const workspaceId = getWorkspaceId(c)
   const executionId = getExecutionId(c)
   const nodeId = c.req.query("nodeId")
+  const loopId = c.req.query("loopId") || undefined
+  const iterationParam = c.req.query("iteration")
+  const iteration = iterationParam ? parseInt(iterationParam, 10) : undefined
   const svc = getService(workspaceId)
   if (!svc) return c.json({ error: "workspace not found" }, 404)
 
@@ -397,6 +401,9 @@ executionRoutes.get("/:executionId/agent-events", (c) => {
   } catch {
     return c.json({ error: "execution not found" }, 404)
   }
+
+  // Compute loop iteration summary
+  const loopIterations = svc.service.getLoopIterationSummary(executionId)
 
   // SQLite-first: query agent_events joined with node_executions
   try {
@@ -448,22 +455,92 @@ executionRoutes.get("/:executionId/agent-events", (c) => {
         }
       })
 
-      // Merge with JSONL non-agent events (start/end/bash_log/python_log)
-      // SQLite only stores agent events; lifecycle & script logs live in JSONL files
-      const jsonlEvents = svc.service.getAgentEvents(executionId, nodeId || undefined)
-      const nonAgentEvents = jsonlEvents.filter((e: any) => e.event !== "agent_event")
-      const merged = [...transformed, ...nonAgentEvents]
-        .sort((a: any, b: any) => (a.timestamp ?? "").localeCompare(b.timestamp ?? ""))
+      // Merge legacy agent_event fragments into compact blocks (thinking_block/text_block/tool_call)
+      // Group by nodeId, apply merge per group, then re-sort by timestamp
+      const byNode = new Map<string, any[]>()
+      for (const e of transformed) {
+        const key = e.nodeId ?? "_unknown"
+        if (!byNode.has(key)) byNode.set(key, [])
+        byNode.get(key)!.push(e)
+      }
+      const mergedSqlite: any[] = []
+      for (const group of byNode.values()) {
+        mergedSqlite.push(...mergeAgentEvents(group))
+      }
 
-      return c.json({ executionId, events: merged, source: 'sqlite', _degraded: false, _message: null })
+      // Merge with JSONL events that SQLite doesn't capture:
+      // 1. Iteration-scoped events (carry iteration field that SQLite doesn't store)
+      // 2. Lifecycle events (start/end) for all nodes
+      // Exclude raw agent_event wrappers and branch_start/branch_end (only needed for LoopOverview)
+      const jsonlEvents = svc.service.getAgentEvents(executionId, nodeId || undefined, loopId, iteration)
+      const jsonlToAdd = jsonlEvents.filter((e: any) => {
+        // Exclude branch markers — they're metadata for LoopOverview, not display events
+        if (e.event === "branch_start" || e.event === "branch_end") return false
+        // Include lifecycle events (start/end)
+        if (e.event === "start" || e.event === "end") return true
+        // Include iteration-scoped events (from iteration JSONL files)
+        if (e.iteration != null && e.iteration > 0) return true
+        return false
+      })
+      // Merge JSONL supplemental events by nodeId
+      const jsonlByNode = new Map<string, any[]>()
+      for (const e of jsonlToAdd) {
+        const key = e.nodeId ?? "_unknown"
+        if (!jsonlByNode.has(key)) jsonlByNode.set(key, [])
+        jsonlByNode.get(key)!.push(e)
+      }
+      const mergedJsonl: any[] = []
+      for (const group of jsonlByNode.values()) {
+        mergedJsonl.push(...mergeAgentEvents(group))
+      }
+
+      // Detect loop inner nodes: nodes that have iteration-scoped events in JSONL.
+      // SQLite doesn't store iteration info, so its events for these nodes are duplicates.
+      const loopInnerNodes = new Set<string>()
+      for (const e of jsonlToAdd) {
+        if (e.iteration != null && e.iteration > 0) {
+          loopInnerNodes.add(e.nodeId)
+        }
+      }
+
+      // Filter SQLite events: remove events for loop inner nodes (JSONL has better data with iteration)
+      // Also remove raw agent_event entries (they're wrapper events, merged versions come from JSONL)
+      const filteredSqlite = mergedSqlite.filter((e: any) => {
+        if (loopInnerNodes.has(e.nodeId)) return false
+        return true
+      })
+
+      const merged = [...filteredSqlite, ...mergedJsonl]
+      // Normalize: ensure every event has a sortable time field
+      for (const e of merged) {
+        if (!e.timestamp && !e.startedAt) {
+          e.timestamp = e.completedAt || new Date().toISOString()
+        }
+      }
+      merged.sort((a: any, b: any) =>
+        ((a.timestamp ?? a.startedAt) ?? "").localeCompare((b.timestamp ?? b.startedAt) ?? "")
+      )
+
+      return c.json({ executionId, events: merged, source: 'sqlite', _degraded: false, _message: null, loopIterations })
     }
   } catch {
     // SQLite query failed — fall through to JSONL
   }
 
   // JSONL fallback
-  const events = svc.service.getAgentEvents(executionId, nodeId || undefined)
-  return c.json({ executionId, events, source: 'jsonl', _degraded: true, _message: '从 JSONL 日志读取' })
+  const rawEvents = svc.service.getAgentEvents(executionId, nodeId || undefined, loopId, iteration)
+  // Merge by nodeId to compact bash_log→bash_output, python_log→python_output
+  const byNodeJsonl = new Map<string, any[]>()
+  for (const e of rawEvents) {
+    const key = e.nodeId ?? "_unknown"
+    if (!byNodeJsonl.has(key)) byNodeJsonl.set(key, [])
+    byNodeJsonl.get(key)!.push(e)
+  }
+  const events: any[] = []
+  for (const group of byNodeJsonl.values()) {
+    events.push(...mergeAgentEvents(group))
+  }
+  return c.json({ executionId, events, source: 'jsonl', _degraded: true, _message: '从 JSONL 日志读取', loopIterations })
 })
 
 executionRoutes.get("/:executionId/branches", async (c) => {

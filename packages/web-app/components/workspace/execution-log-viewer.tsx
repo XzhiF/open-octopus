@@ -1,47 +1,27 @@
 "use client"
 
 import { useState, useEffect, useRef, useCallback, useMemo } from "react"
-import { ScrollArea } from "@/components/ui/scroll-area"
-import { formatDuration } from "@/lib/format"
 import { ChevronDown, ChevronRight, ChevronUp, ChevronsDown, Terminal, Brain, Wrench, FileText, Play, Check, X, Clock, Users, MessageSquare, Award, RotateCcw } from "lucide-react"
-import { getServerUrl } from "@/lib/server-config"
-import { formatTokenCount } from "@/lib/format"
+import { cn } from "@/lib/utils"
+import { formatDuration, formatTokenCount } from "@/lib/format"
+import { isMergedEvent, type AgentEvent, type LoopIterationSummary } from "@/lib/types"
+import { useExecutionEvents } from "@/hooks/use-execution-events"
+// IterationGroup used in loop-overview panel
 
-const POLL_INTERVAL_MS = 2000
-const RUNNING_STATUSES = new Set(["running", "paused"])
+// ============ LogEvent (extends AgentEvent for legacy compat) ============
 
-interface LogEvent {
-  timestamp: string
-  nodeId: string
-  event: string
-  type?: string
-  line?: string
-  status?: string
-  durationMs?: number
-  exitCode?: number
+export interface LogEvent extends AgentEvent {
   __mergedCount?: number
-  // Swarm event fields (flat, not nested in event_data)
+  // Swarm event fields
   role?: string
   model?: string
   round?: number
   expertCount?: number
-  content?: string
   output?: string
   tokens?: number
   synthesis?: string
   source?: string
-  event_data?: {
-    type: string
-    content?: string
-    toolCallId?: string
-    toolName?: string
-    input?: unknown
-    isError?: boolean
-    duration?: string
-    status?: string
-    code?: string
-    message?: string
-  }
+  __done?: boolean
 }
 
 interface LogViewerProps {
@@ -50,15 +30,28 @@ interface LogViewerProps {
   executionStatus?: string
 }
 
-function formatTime(iso: string) {
-  try {
-    return new Date(iso).toLocaleTimeString()
-  } catch {
-    return iso
-  }
+function formatTime(iso?: string) {
+  if (!iso) return ""
+  try { return new Date(iso).toLocaleTimeString() } catch { return iso }
 }
 
-function EventIcon({ event, agentType }: { event: string; agentType?: string }) {
+// ============ EventIcon ============
+
+export function EventIcon({ event, agentType }: { event: string; agentType?: string }) {
+  // Merged event types (server-side pre-merged)
+  switch (event) {
+    case "thinking_block": return <Brain className="h-3 w-3 text-purple-400 shrink-0" />
+    case "text_block": return <FileText className="h-3 w-3 text-blue-400 shrink-0" />
+    case "tool_call": return <Wrench className="h-3 w-3 text-amber-400 shrink-0" />
+    case "bash_output": return <Terminal className="h-3 w-3 text-muted-foreground shrink-0" />
+    case "python_output": return <Terminal className="h-3 w-3 text-muted-foreground shrink-0" />
+    case "bash_stderr": return <X className="h-3 w-3 text-red-400 shrink-0" />
+    case "python_stderr": return <X className="h-3 w-3 text-red-400 shrink-0" />
+    case "branch_start": return <Play className="h-3 w-3 text-emerald-400 shrink-0" />
+    case "branch_end": return <Check className="h-3 w-3 text-emerald-400 shrink-0" />
+  }
+
+  // Legacy agent_event sub-types
   if (event === "agent_event" && agentType) {
     switch (agentType) {
       case "thinking_block": return <Brain className="h-3 w-3 text-purple-400 shrink-0" />
@@ -70,14 +63,12 @@ function EventIcon({ event, agentType }: { event: string; agentType?: string }) 
       default: return <FileText className="h-3 w-3 text-muted-foreground shrink-0" />
     }
   }
+
   switch (event) {
     case "start": return <Play className="h-3 w-3 text-emerald-400 shrink-0" />
     case "end": return <Check className="h-3 w-3 text-emerald-400 shrink-0" />
     case "bash_log": return <Terminal className="h-3 w-3 text-muted-foreground shrink-0" />
     case "python_log": return <Terminal className="h-3 w-3 text-muted-foreground shrink-0" />
-    case "bash_stderr": return <X className="h-3 w-3 text-red-400 shrink-0" />
-    case "python_stderr": return <X className="h-3 w-3 text-red-400 shrink-0" />
-    // Swarm events
     case "expert_spawn": return <Users className="h-3 w-3 text-cyan-400 shrink-0" />
     case "expert_complete": return <Check className="h-3 w-3 text-cyan-400 shrink-0" />
     case "expert_message": return <MessageSquare className="h-3 w-3 text-blue-400 shrink-0" />
@@ -88,14 +79,67 @@ function EventIcon({ event, agentType }: { event: string; agentType?: string }) 
   }
 }
 
-function EventLabel({ entry }: { entry: LogEvent }) {
+// ============ EventLabel ============
+
+export function EventLabel({ entry }: { entry: LogEvent }) {
+  // Merged event types (server-side pre-merged) — render directly
+  switch (entry.event) {
+    case "thinking_block": {
+      const dur = entry.startedAt && entry.completedAt
+        ? formatDuration((new Date(entry.completedAt).getTime() - new Date(entry.startedAt).getTime()) / 1000)
+        : undefined
+      return <span className="text-purple-400">思考完成{dur ? ` (${dur})` : ""}</span>
+    }
+    case "text_block": {
+      const text = entry.content ?? ""
+      return (
+        <span className="text-blue-300 font-mono truncate max-w-[300px]">
+          {text.length > 80 ? `${text.slice(0, 80)}...` : text}
+        </span>
+      )
+    }
+    case "tool_call": {
+      const name = entry.toolName ?? "unknown"
+      const dur = entry.startedAt && entry.completedAt
+        ? formatDuration((new Date(entry.completedAt).getTime() - new Date(entry.startedAt).getTime()) / 1000)
+        : undefined
+      return (
+        <span className={entry.isError ? "text-red-400" : "text-amber-400"}>
+          <code className="text-xs bg-muted px-1 rounded">{name}</code>
+          {" "}{entry.isError ? "失败" : "完成"}{dur ? ` (${dur})` : ""}
+        </span>
+      )
+    }
+    case "bash_output": {
+      const lineCount = entry.lines?.length ?? 0
+      return <span className="text-muted-foreground">终端输出 ({lineCount} 行)</span>
+    }
+    case "python_output": {
+      const lineCount = entry.lines?.length ?? 0
+      return <span className="text-muted-foreground">Python 输出 ({lineCount} 行)</span>
+    }
+    case "bash_stderr": {
+      const text = entry.content ?? entry.lines?.join("\n") ?? ""
+      return <span className="text-red-400 font-mono">终端错误{text ? `: ${text.slice(0, 60)}` : ""}</span>
+    }
+    case "python_stderr": {
+      const text = entry.content ?? entry.lines?.join("\n") ?? ""
+      return <span className="text-red-400 font-mono">Python 错误{text ? `: ${text.slice(0, 60)}` : ""}</span>
+    }
+    case "branch_start":
+      return <span className="text-emerald-400">迭代开始{entry.iteration ? ` #${entry.iteration}` : ""}</span>
+    case "branch_end":
+      return <span className="text-emerald-400">迭代结束{entry.iteration ? ` #${entry.iteration}` : ""}</span>
+  }
+
+  // Legacy agent_event sub-types (client-side merged)
   if (entry.event === "agent_event" && entry.event_data) {
     const e = entry.event_data
     switch (e.type) {
       case "thinking_block": {
-        const isDone = (entry as any).__done
+        const isDone = entry.__done
         const tokenCount = entry.__mergedCount ?? 0
-        const dur = entry.event_data?.duration
+        const dur = e.duration
         return (
           <span className={isDone ? "text-purple-400" : "text-purple-300"}>
             {isDone
@@ -127,6 +171,7 @@ function EventLabel({ entry }: { entry: LogEvent }) {
       default: return <span className="text-muted-foreground">{e.type}</span>
     }
   }
+
   switch (entry.event) {
     case "start": return <span className="text-emerald-400">开始执行</span>
     case "end": return (
@@ -138,15 +183,12 @@ function EventLabel({ entry }: { entry: LogEvent }) {
     )
     case "bash_log": {
       const isStderr = entry.line?.startsWith("[stderr]")
-      return <span className={isStderr ? "text-red-400 font-mono" : "text-muted-foreground font-mono"}>{entry.line}</span>
+      return <span className={cn(isStderr ? "text-red-400" : "text-muted-foreground", "font-mono")}>{entry.line}</span>
     }
     case "python_log": {
       const isStderr = entry.line?.startsWith("[stderr]")
-      return <span className={isStderr ? "text-red-400 font-mono" : "text-muted-foreground font-mono"}>{entry.line}</span>
+      return <span className={cn(isStderr ? "text-red-400" : "text-muted-foreground", "font-mono")}>{entry.line}</span>
     }
-    case "bash_stderr": return <span className="text-red-400 font-mono">{entry.line}</span>
-    case "python_stderr": return <span className="text-red-400 font-mono">{entry.line}</span>
-    // Swarm events
     case "expert_spawn":
       return <span className="text-cyan-400">专家启动 <code className="text-xs bg-muted px-1 rounded">{entry.role}</code> <span className="text-muted-foreground/60">({entry.model ?? "default"})</span></span>
     case "expert_complete":
@@ -172,27 +214,43 @@ function EventLabel({ entry }: { entry: LogEvent }) {
   }
 }
 
-function ExpandableRow({ entry }: { entry: LogEvent }) {
+// ============ ExpandableRow ============
+
+export function ExpandableRow({ entry }: { entry: LogEvent }) {
   const [expanded, setExpanded] = useState(false)
 
-  const isBashLog = entry.event === "bash_log" || entry.event === "python_log" || entry.event === "bash_stderr" || entry.event === "python_stderr"
+  // Merged event expandable content
+  const isMergedOutput = ["bash_output", "python_output", "bash_stderr", "python_stderr"].includes(entry.event)
+  const isMergedToolCall = entry.event === "tool_call"
+  const isMergedThinking = entry.event === "thinking_block"
+  const isMergedText = entry.event === "text_block"
+
+  // Legacy expandable content
+  const isBashLog = entry.event === "bash_log" || entry.event === "python_log"
   const isAgentDetail = entry.event === "agent_event" &&
     ["tool_input", "tool_result", "thinking_block", "text_delta"].includes(entry.event_data?.type ?? "")
   const isSwarmDetail = ["expert_message", "expert_complete", "swarm_complete"].includes(entry.event)
 
   const bashLine = isBashLog ? (entry.line ?? "") : ""
   const isLongLine = bashLine.length > 80
-  const hasDetail = isAgentDetail || (isBashLog && isLongLine) || isSwarmDetail
+  const hasDetail = isMergedOutput || isMergedToolCall || isMergedThinking || isMergedText ||
+    isAgentDetail || (isBashLog && isLongLine) || isSwarmDetail
 
   const toggle = () => hasDetail && setExpanded(!expanded)
 
   return (
     <div>
       <div
-        className={`flex items-center gap-1.5 py-0.5 text-xs ${hasDetail ? "cursor-pointer hover:bg-muted/50 rounded" : ""}`}
+        className={cn(
+          "flex items-center gap-1.5 py-0.5 text-xs",
+          hasDetail && "cursor-pointer hover:bg-muted/50 rounded",
+        )}
         onClick={toggle}
       >
-        {hasDetail && (expanded ? <ChevronDown className="h-3 w-3 shrink-0" /> : <ChevronRight className="h-3 w-3 shrink-0" />)}
+        {hasDetail && (expanded
+          ? <ChevronDown className="h-3 w-3 shrink-0" />
+          : <ChevronRight className="h-3 w-3 shrink-0" />
+        )}
         <EventIcon event={entry.event} agentType={entry.event_data?.type} />
         {isBashLog && isLongLine && !expanded ? (
           <span className="text-muted-foreground font-mono truncate">{bashLine.slice(0, 80)}...</span>
@@ -201,11 +259,65 @@ function ExpandableRow({ entry }: { entry: LogEvent }) {
         )}
         <span className="text-muted-foreground/40 ml-auto text-[10px] shrink-0">{formatTime(entry.timestamp)}</span>
       </div>
+
+      {/* Merged bash/python output */}
+      {expanded && isMergedOutput && entry.lines && entry.lines.length > 0 && (
+        <div className={cn(
+          "ml-6 mt-0.5 mb-1 p-1.5 rounded text-xs font-mono whitespace-pre-wrap break-all max-h-[400px] overflow-y-auto",
+          entry.event.includes("stderr") ? "bg-red-950/20" : "bg-muted/30",
+        )}>
+          <code>{entry.lines.join("\n")}</code>
+        </div>
+      )}
+      {expanded && isMergedOutput && entry.content && (!entry.lines || entry.lines.length === 0) && (
+        <div className={cn(
+          "ml-6 mt-0.5 mb-1 p-1.5 rounded text-xs font-mono whitespace-pre-wrap break-all",
+          entry.event.includes("stderr") ? "bg-red-950/20" : "bg-muted/30",
+        )}>
+          <code>{entry.content}</code>
+        </div>
+      )}
+
+      {/* Merged tool_call detail */}
+      {expanded && isMergedToolCall && (
+        <div className="ml-6 mt-0.5 mb-1 p-1.5 bg-muted/30 rounded text-xs font-mono whitespace-pre-wrap break-all">
+          {entry.input != null && (
+            <div className="mb-1">
+              <span className="text-muted-foreground">输入:</span>{" "}
+              <code>{typeof entry.input === "string" ? entry.input : JSON.stringify(entry.input, null, 2)}</code>
+            </div>
+          )}
+          {entry.result != null && (
+            <div>
+              <span className="text-muted-foreground">结果:</span>{" "}
+              <code>{entry.result}</code>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Merged thinking_block detail */}
+      {expanded && isMergedThinking && entry.content && (
+        <div className="ml-6 mt-0.5 mb-1 p-1.5 bg-muted/30 rounded text-xs font-mono whitespace-pre-wrap break-all">
+          <code>{entry.content}</code>
+        </div>
+      )}
+
+      {/* Merged text_block detail */}
+      {expanded && isMergedText && entry.content && (
+        <div className="ml-6 mt-0.5 mb-1 p-1.5 bg-muted/30 rounded text-xs font-mono whitespace-pre-wrap break-all">
+          <code>{entry.content}</code>
+        </div>
+      )}
+
+      {/* Legacy bash_log expanded */}
       {expanded && isBashLog && (
         <div className="ml-6 mt-0.5 mb-1 p-1.5 bg-muted/30 rounded text-xs font-mono whitespace-pre-wrap break-all">
           <code>{bashLine}</code>
         </div>
       )}
+
+      {/* Legacy agent_event detail */}
       {expanded && entry.event_data && (
         <div className="ml-6 mt-0.5 mb-1 p-1.5 bg-muted/30 rounded text-xs font-mono whitespace-pre-wrap break-all">
           {entry.event_data.type === "tool_input" && entry.event_data.input != null && (
@@ -222,6 +334,8 @@ function ExpandableRow({ entry }: { entry: LogEvent }) {
           )}
         </div>
       )}
+
+      {/* Legacy swarm detail */}
       {expanded && isSwarmDetail && (
         <div className="ml-6 mt-0.5 mb-1 p-1.5 bg-muted/30 rounded text-xs whitespace-pre-wrap break-all max-h-[300px] overflow-y-auto">
           {entry.event === "expert_message" && entry.content && (
@@ -248,74 +362,21 @@ function ExpandableRow({ entry }: { entry: LogEvent }) {
   )
 }
 
+// ============ Main Component ============
+
 export function ExecutionLogViewer({ workspaceId, executionId, executionStatus }: LogViewerProps) {
-  const [events, setEvents] = useState<LogEvent[]>([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
+  const { events: rawEvents, loopIterations, loading, error } = useExecutionEvents(
+    workspaceId, executionId, executionStatus,
+  )
   const [collapsedNodes, setCollapsedNodes] = useState<Set<string>>(new Set())
   const containerRef = useRef<HTMLDivElement>(null)
   const prevCountRef = useRef(0)
   const prevGroupKeysRef = useRef("")
 
-  const fetchEvents = useCallback(() => {
-    return fetch(`${getServerUrl()}/api/workspaces/${workspaceId}/executions/${executionId}/agent-events`)
-      .then(r => {
-        if (!r.ok) throw new Error(`HTTP ${r.status}`)
-        return r.json()
-      })
-      .then(data => {
-        const arr = Array.isArray(data) ? data : (data.events ?? [])
-        setEvents(arr)
-      })
-      .catch(err => { setError(err.message) })
-  }, [workspaceId, executionId])
-
-  // Initial fetch
-  useEffect(() => {
-    setLoading(true)
-    setError(null)
-    fetchEvents().finally(() => setLoading(false))
-  }, [fetchEvents])
-
-  // Poll when execution is running
-  useEffect(() => {
-    const isRunning = RUNNING_STATUSES.has(executionStatus ?? "")
-    if (!isRunning) return
-
-    const interval = setInterval(() => {
-      fetchEvents()
-    }, POLL_INTERVAL_MS)
-
-    return () => clearInterval(interval)
-  }, [executionStatus, fetchEvents])
-
-  // Final fetch when execution transitions to completed/failed/cancelled
-  const prevStatusRef = useRef(executionStatus)
-  useEffect(() => {
-    const wasRunning = RUNNING_STATUSES.has(prevStatusRef.current ?? "")
-    const isDone = !RUNNING_STATUSES.has(executionStatus ?? "")
-    if (wasRunning && isDone) {
-      fetchEvents()
-    }
-    prevStatusRef.current = executionStatus
-  }, [executionStatus, fetchEvents])
-
-  // Pin to bottom when new events arrive (chatbot style)
-  useEffect(() => {
-    if (events.length > prevCountRef.current && containerRef.current) {
-      requestAnimationFrame(() => {
-        if (containerRef.current) {
-          containerRef.current.scrollTop = containerRef.current.scrollHeight
-        }
-      })
-    }
-    prevCountRef.current = events.length
-  }, [events])
-
-  // Merge agent streaming events into coherent blocks
-  const mergedEvents = useMemo(() => {
+  // Legacy client-side merging for old agent_event format
+  const processedEvents = useMemo(() => {
     const result: LogEvent[] = []
-    let thinkingBlock: LogEvent | null = null // accumulate thinking_start + thinking* + thinking_done
+    let thinkingBlock: LogEvent | null = null
 
     const flushThinking = () => {
       if (!thinkingBlock) return
@@ -323,17 +384,21 @@ export function ExecutionLogViewer({ workspaceId, executionId, executionStatus }
       thinkingBlock = null
     }
 
-    for (const e of events) {
+    for (const e of rawEvents) {
+      // New merged format — skip client-side merging
+      if (isMergedEvent(e)) {
+        flushThinking()
+        result.push(e as LogEvent)
+        continue
+      }
+
       const ed = e.event_data
       const isThinking = e.event === "agent_event" && ed && (
         ed.type === "thinking_start" || ed.type === "thinking" || ed.type === "thinking_done"
       )
       const isTextDelta = e.event === "agent_event" && ed?.type === "text_delta"
 
-      // Flush thinking block if a non-thinking event arrives
-      if (thinkingBlock && !isThinking) {
-        flushThinking()
-      }
+      if (thinkingBlock && !isThinking) flushThinking()
 
       if (isThinking) {
         if (!thinkingBlock) {
@@ -348,7 +413,7 @@ export function ExecutionLogViewer({ workspaceId, executionId, executionStatus }
           thinkingBlock.__mergedCount = (thinkingBlock.__mergedCount ?? 0) + 1
         } else if (ed!.type === "thinking_done") {
           thinkingBlock.event_data!.duration = ed!.duration
-          ;(thinkingBlock as any).__done = true
+          thinkingBlock.__done = true
         }
         thinkingBlock.timestamp = e.timestamp
         continue
@@ -361,32 +426,90 @@ export function ExecutionLogViewer({ workspaceId, executionId, executionStatus }
           prev.__mergedCount = (prev.__mergedCount ?? 1) + 1
           prev.timestamp = e.timestamp
         } else {
-          result.push({ ...e })
+          result.push({ ...e } as LogEvent)
         }
         continue
       }
 
-      result.push({ ...e })
+      flushThinking()
+      result.push({ ...e } as LogEvent)
     }
 
     flushThinking()
     return result
-  }, [events])
+  }, [rawEvents])
 
-  // Group events by nodeId
-  const groups = useMemo(() => {
-    const g = new Map<string, LogEvent[]>()
-    for (const e of mergedEvents) {
-      const key = e.nodeId || "(未分类)"
-      if (!g.has(key)) g.set(key, [])
-      g.get(key)!.push(e)
+  // Flat grouping with loop-aware rendering:
+  // - Iteration events: key = "{nodeId}-{iteration}"
+  // - Loop node start/end: key = "{nodeId}-start" / "{nodeId}-end" (bookends)
+  // - Other events: key = "{nodeId}"
+  // - branch_start/branch_end: excluded (metadata for LoopOverview only)
+  // Groups ordered by first event timestamp
+  interface FlatGroup {
+    key: string
+    label: string
+    events: LogEvent[]
+    firstTimestamp: string
+  }
+
+  const nodeGroups = useMemo(() => {
+    // Detect loop parent nodes from loopIterations (server-provided)
+    const loopParentNodes = new Set<string>()
+    if (loopIterations) {
+      for (const nodeId of Object.keys(loopIterations)) {
+        loopParentNodes.add(nodeId)
+      }
     }
-    return g
-  }, [mergedEvents])
 
-  // Auto-collapse: when new node groups appear, collapse old ones, expand newest.
-  // Uses useMemo to cache groupKeys (prevents infinite loop from new array each render).
-  const groupKeys = useMemo(() => Array.from(groups.keys()).join(","), [groups])
+    const map = new Map<string, FlatGroup>()
+
+    for (const e of processedEvents) {
+      // Skip branch markers — they're metadata, not display events
+      if (e.event === "branch_start" || e.event === "branch_end") continue
+
+      const nodeId = e.nodeId || "(未分类)"
+      const hasIter = e.iteration != null && e.iteration > 0
+
+      let key: string
+      let label: string
+
+      if (loopParentNodes.has(nodeId) && !hasIter) {
+        // Loop parent node: split into start/end bookends
+        if (e.event === "start") {
+          key = `${nodeId}-start`
+          label = `${nodeId} start`
+        } else if (e.event === "end") {
+          key = `${nodeId}-end`
+          label = `${nodeId} end`
+        } else {
+          // Skip other loop parent events (agent_event wrappers)
+          continue
+        }
+      } else if (hasIter) {
+        key = `${nodeId}-${e.iteration}`
+        label = `${nodeId}-${e.iteration}`
+      } else {
+        key = nodeId
+        label = nodeId
+      }
+
+      if (!map.has(key)) {
+        map.set(key, { key, label, events: [], firstTimestamp: e.timestamp || e.startedAt || "" })
+      }
+      map.get(key)!.events.push(e)
+    }
+
+    // Sort groups by first event timestamp (chronological)
+    const sorted = new Map(
+      Array.from(map.entries()).sort((a, b) =>
+        (a[1].firstTimestamp).localeCompare(b[1].firstTimestamp)
+      )
+    )
+    return sorted
+  }, [processedEvents, loopIterations])
+
+  // Auto-collapse: collapse old groups, expand newest
+  const groupKeys = useMemo(() => Array.from(nodeGroups.keys()).join(","), [nodeGroups])
 
   useEffect(() => {
     if (groupKeys === prevGroupKeysRef.current) return
@@ -399,6 +522,18 @@ export function ExecutionLogViewer({ workspaceId, executionId, executionStatus }
     setCollapsedNodes(toCollapse)
   }, [groupKeys])
 
+  // Pin to bottom on new events
+  useEffect(() => {
+    if (processedEvents.length > prevCountRef.current && containerRef.current) {
+      requestAnimationFrame(() => {
+        if (containerRef.current) {
+          containerRef.current.scrollTop = containerRef.current.scrollHeight
+        }
+      })
+    }
+    prevCountRef.current = processedEvents.length
+  }, [processedEvents])
+
   const toggleNode = (nodeId: string) => {
     setCollapsedNodes(prev => {
       const next = new Set(prev)
@@ -408,13 +543,8 @@ export function ExecutionLogViewer({ workspaceId, executionId, executionStatus }
     })
   }
 
-  const collapseAll = () => {
-    setCollapsedNodes(new Set(groups.keys()))
-  }
-
-  const expandAll = () => {
-    setCollapsedNodes(new Set())
-  }
+  const collapseAll = () => setCollapsedNodes(new Set(nodeGroups.keys()))
+  const expandAll = () => setCollapsedNodes(new Set())
 
   if (loading) {
     return (
@@ -433,7 +563,7 @@ export function ExecutionLogViewer({ workspaceId, executionId, executionStatus }
     )
   }
 
-  if (groups.size === 0) {
+  if (nodeGroups.size === 0) {
     return (
       <div className="flex items-center justify-center h-full text-xs text-muted-foreground">
         暂无日志
@@ -443,8 +573,7 @@ export function ExecutionLogViewer({ workspaceId, executionId, executionStatus }
 
   return (
     <div className="h-full flex flex-col">
-      {/* Toolbar — always visible at top */}
-      {groups.size > 1 && (
+      {nodeGroups.size > 1 && (
         <div className="flex items-center gap-1 px-2 py-1 border-b border-border/30 shrink-0">
           <button
             onClick={expandAll}
@@ -466,27 +595,34 @@ export function ExecutionLogViewer({ workspaceId, executionId, executionStatus }
       )}
       <div ref={containerRef} className="flex-1 overflow-y-auto min-h-0">
         <div className="p-2 space-y-2">
-        {Array.from(groups.entries()).map(([nodeId, nodeEvents]) => (
-          <div key={nodeId} className="rounded border border-border/50 overflow-hidden">
-            <div
-              className="flex items-center gap-1.5 px-2 py-1 bg-muted/30 cursor-pointer hover:bg-muted/50 text-xs font-medium"
-              onClick={() => toggleNode(nodeId)}
-            >
-              {collapsedNodes.has(nodeId) ? <ChevronRight className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
-              <span className="text-muted-foreground">{nodeId}</span>
-              <span className="text-muted-foreground/40 ml-auto">{nodeEvents.length} events</span>
-            </div>
-            {!collapsedNodes.has(nodeId) && (
-              <div className="px-2 py-1 space-y-0.5">
-                {nodeEvents.map((entry, i) => (
-                  <ExpandableRow key={i} entry={entry} />
-                ))}
+          {Array.from(nodeGroups.entries()).map(([key, group]) => {
+            return (
+              <div key={key} className="rounded border border-border/50 overflow-hidden">
+                <div
+                  className="flex items-center gap-1.5 px-2 py-1 bg-muted/30 cursor-pointer hover:bg-muted/50 text-xs font-medium"
+                  onClick={() => toggleNode(key)}
+                >
+                  {collapsedNodes.has(key)
+                    ? <ChevronRight className="h-3 w-3" />
+                    : <ChevronDown className="h-3 w-3" />
+                  }
+                  <span className="text-muted-foreground">{group.label}</span>
+                  <span className="text-muted-foreground/40 ml-auto">
+                    {group.events.length} events
+                  </span>
+                </div>
+                {!collapsedNodes.has(key) && (
+                  <div className="px-2 py-1 space-y-1">
+                    {group.events.map((entry, i) => (
+                      <ExpandableRow key={`${key}-${i}`} entry={entry} />
+                    ))}
+                  </div>
+                )}
               </div>
-            )}
-          </div>
-        ))}
+            )
+          })}
+        </div>
       </div>
-    </div>
     </div>
   )
 }

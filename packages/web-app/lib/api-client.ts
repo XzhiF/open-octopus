@@ -335,6 +335,24 @@ export async function fetchSwarmStats(workspaceId: string, params?: { from?: str
   return handleResponse(await apiFetch(url))
 }
 
+// ============ Agent Events (PRD-001) ============
+
+export async function fetchAgentEvents(
+  workspaceId: string,
+  executionId: string,
+  options?: { nodeId?: string; loopId?: string; iteration?: number }
+): Promise<import("@/lib/types").AgentEventsResponse> {
+  const url = new URL(
+    `${getServerUrl()}/api/workspaces/${workspaceId}/executions/${executionId}/agent-events`
+  )
+  if (options?.nodeId) url.searchParams.set("nodeId", options.nodeId)
+  if (options?.loopId) url.searchParams.set("loopId", options.loopId)
+  if (options?.iteration != null) url.searchParams.set("iteration", String(options.iteration))
+
+  const res = await apiFetch(url.toString())
+  return handleResponse(res)
+}
+
 // ============ MOA Config ============
 
 /**

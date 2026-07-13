@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import dagre from '@dagrejs/dagre'
 import { type Node, type Edge, useNodesState, useEdgesState } from '@xyflow/react'
-import type { ExecutionStatus, ExecutionTreeNode, GateStatus, CreateNodeFormData, ExecuteNodeFormData, AgentTraceEvent } from '@/lib/types'
+import type { ExecutionStatus, ExecutionTreeNode, GateStatus, CreateNodeFormData, ExecuteNodeFormData, AgentTraceEvent, LoopIterationSummary, IterationDetail } from '@/lib/types'
 import { getBranchColor } from '@/lib/branch-colors'
 import { fetchExecutionTree, createExecution, startExecution, retryExecution, cancelExecution, skipExecution, deleteExecution } from '@/lib/api-client'
 import { getServerUrl } from '@/lib/server-config'
@@ -197,6 +197,9 @@ export function useExecutionTree(
   // Track tree structure to detect add/delete vs data-only changes
   const prevTreeIdsRef = useRef<string>("")
 
+  // Loop iteration state keyed by loopNodeId (for P4 consumption)
+  const [loopIterations, setLoopIterations] = useState<Map<string, LoopIterationSummary>>(new Map())
+
   // ---- load ----
 
   const loadTree = useCallback(async () => {
@@ -304,6 +307,58 @@ export function useExecutionTree(
         const { executionId, nodeId, event } = JSON.parse(e.data) as { executionId: string; nodeId: string; event: AgentTraceEvent }
         pushAgentEvents([{ executionId, nodeId, event }])
       } catch { /* skip malformed event */ }
+    })
+    es.addEventListener("branch_start", (e) => {
+      try {
+        const { executionId, nodeExecutionId, iteration } = JSON.parse(e.data)
+        // nodeExecutionId encodes the loop node — extract loop part
+        const loopId = nodeExecutionId?.split("-iter-")[0] ?? executionId
+        setLoopIterations(prev => {
+          const next = new Map(prev)
+          const existing = next.get(loopId) ?? {
+            completed: 0, failed: 0, current: 0, mode: "fixed" as const, iterations: [],
+          }
+          const iterDetail: IterationDetail = {
+            iteration,
+            status: "running",
+            startedAt: new Date().toISOString(),
+            nodes: [],
+          }
+          const updatedIterations = existing.iterations.filter(i => i.iteration !== iteration)
+          updatedIterations.push(iterDetail)
+          next.set(loopId, {
+            ...existing,
+            current: iteration,
+            iterations: updatedIterations,
+          })
+          return next
+        })
+      } catch { /* skip */ }
+    })
+    es.addEventListener("branch_end", (e) => {
+      try {
+        const { executionId, nodeExecutionId, iteration, status, durationMs, nodeResults } = JSON.parse(e.data)
+        const loopId = nodeExecutionId?.split("-iter-")[0] ?? executionId
+        setLoopIterations(prev => {
+          const next = new Map(prev)
+          const existing = next.get(loopId)
+          if (!existing) return prev
+          const updatedIterations = existing.iterations.map(i => {
+            if (i.iteration !== iteration) return i
+            return {
+              ...i,
+              status: (status ?? "completed") as IterationDetail["status"],
+              completedAt: new Date().toISOString(),
+              durationMs,
+              nodes: nodeResults ?? i.nodes,
+            }
+          })
+          const completed = updatedIterations.filter(i => i.status === "completed").length
+          const failed = updatedIterations.filter(i => i.status === "failed").length
+          next.set(loopId, { ...existing, iterations: updatedIterations, completed, failed })
+          return next
+        })
+      } catch { /* skip */ }
     })
     es.addEventListener("gate_change", (e) => {
       const { executionId, gateStatus } = JSON.parse(e.data)
@@ -515,5 +570,6 @@ export function useExecutionTree(
     skipNode, deleteNode, executeNode, retryNode, retryNodeWithIntervention, terminateNode,
     resetTree,
     resetLayout,
+    loopIterations,
   }
 }
