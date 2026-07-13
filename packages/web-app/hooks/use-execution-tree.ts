@@ -312,7 +312,7 @@ export function useExecutionTree(
       try {
         const { executionId, nodeExecutionId, iteration } = JSON.parse(e.data)
         // nodeExecutionId encodes the loop node — extract loop part
-        const loopId = nodeExecutionId?.split(":")[0] ?? executionId
+        const loopId = nodeExecutionId?.split("-iter-")[0] ?? executionId
         setLoopIterations(prev => {
           const next = new Map(prev)
           const existing = next.get(loopId) ?? {
@@ -338,7 +338,7 @@ export function useExecutionTree(
     es.addEventListener("branch_end", (e) => {
       try {
         const { executionId, nodeExecutionId, iteration, status, durationMs, nodeResults } = JSON.parse(e.data)
-        const loopId = nodeExecutionId?.split(":")[0] ?? executionId
+        const loopId = nodeExecutionId?.split("-iter-")[0] ?? executionId
         setLoopIterations(prev => {
           const next = new Map(prev)
           const existing = next.get(loopId)
