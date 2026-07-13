@@ -270,13 +270,17 @@ export function yamlToFlowData(parsed: WorkflowDefinition): { nodes: Node[]; edg
     // Build a lookup map for original inner nodes (avoids O(n²) find)
     const origNodeMap = new Map(innerNodes.map(n => [`${loopId}:${n.id}`, n]))
 
+    // Offset inner node Y positions by header height so they render below the container header
+    const HEADER_HEIGHT = 36
+
     // Build inner React Flow nodes with parentId and extent
     for (const innerWfNode of innerWfNodes) {
       const origNode = origNodeMap.get(innerWfNode.id)!
+      const rawPos = innerPositions[innerWfNode.id] ?? { x: 0, y: 0 }
       allInnerNodes.push({
         id: innerWfNode.id,
         type: innerWfNode.type,
-        position: innerPositions[innerWfNode.id] ?? { x: 0, y: 0 },
+        position: { x: rawPos.x, y: rawPos.y + HEADER_HEIGHT },
         parentId: loopId,
         extent: "parent",
         data: {
