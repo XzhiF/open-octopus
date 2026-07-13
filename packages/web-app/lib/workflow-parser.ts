@@ -124,7 +124,7 @@ function dagreLayout(
   const positions = new Map<string, { x: number; y: number; rank: number }>()
   for (const node of workflowNodes) {
     const pos = g.node(node.id)
-    const dim = getNodeDimensions(node)
+    const dim = dimensionOverrides?.get(node.id) ?? getNodeDimensions(node)
     if (pos) {
       positions.set(node.id, {
         x: pos.x - dim.width / 2,
