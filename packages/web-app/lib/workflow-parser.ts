@@ -83,7 +83,8 @@ function computeRanks(workflowNodes: WorkflowNode[]): Record<string, number> {
 function dagreLayout(
   workflowNodes: WorkflowNode[],
   edges: Edge[],
-  options?: { rankdir?: "TB" | "LR"; padding?: number; nodesep?: number; ranksep?: number }
+  options?: { rankdir?: "TB" | "LR"; padding?: number; nodesep?: number; ranksep?: number },
+  dimensionOverrides?: Map<string, { width: number; height: number }>
 ): Record<string, { x: number; y: number }> {
   const {
     rankdir = "TB",
@@ -101,7 +102,8 @@ function dagreLayout(
   g.setDefaultEdgeLabel(() => ({}))
 
   for (const node of workflowNodes) {
-    const dim = getNodeDimensions(node)
+    const override = dimensionOverrides?.get(node.id)
+    const dim = override ?? getNodeDimensions(node)
     g.setNode(node.id, dim)
   }
 
@@ -182,6 +184,73 @@ export function yamlToFlowData(parsed: WorkflowDefinition): { nodes: Node[]; edg
     }
   }
 
+  // ─── Inner dagre layout constants ───
+  const INNER_LAYOUT_RANKDIR = "TB" as const
+  const INNER_LAYOUT_PADDING = 20
+  const INNER_LAYOUT_NODESEP = 40
+  const INNER_LAYOUT_RANKSEP = 60
+  const HEADER_HEIGHT = 36
+  const CONTAINER_SIDE_PADDING = 20
+
+  // ─── Pre-compute container sizes (BEFORE outer layout) ───
+  const containerSizes = new Map<string, { width: number; height: number }>()
+  const innerLayoutData = new Map<string, {
+    wfNodes: WorkflowNode[]
+    edges: Edge[]
+    positions: Record<string, { x: number; y: number }>
+  }>()
+
+  for (const [loopId, loopNode] of loopNodesWithInner) {
+    const innerNodes = loopNode.nodes!
+    if (!innerNodes.every((n: WorkflowNode) => VALID_NODE_TYPES.has(n.type))) return null
+
+    const innerWfNodes: WorkflowNode[] = innerNodes.map((n) => ({
+      ...n,
+      id: `${loopId}:${n.id}`,
+      depends_on: n.depends_on?.map((dep) => `${loopId}:${dep}`),
+    }))
+
+    const innerEdges: Edge[] = []
+    for (const innerNode of innerWfNodes) {
+      if (innerNode.depends_on) {
+        for (const dep of innerNode.depends_on) {
+          innerEdges.push({
+            id: `e-${dep}-${innerNode.id}`,
+            source: dep,
+            target: innerNode.id,
+            type: "smoothstep",
+          })
+        }
+      }
+    }
+
+    const innerPositions = dagreLayout(innerWfNodes, innerEdges, {
+      rankdir: INNER_LAYOUT_RANKDIR,
+      padding: INNER_LAYOUT_PADDING,
+      nodesep: INNER_LAYOUT_NODESEP,
+      ranksep: INNER_LAYOUT_RANKSEP,
+    })
+
+    // Compute container size
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
+    for (const innerWfNode of innerWfNodes) {
+      const pos = innerPositions[innerWfNode.id]
+      if (!pos) continue
+      const dim = getNodeDimensions(innerWfNode)
+      minX = Math.min(minX, pos.x)
+      minY = Math.min(minY, pos.y)
+      maxX = Math.max(maxX, pos.x + dim.width)
+      maxY = Math.max(maxY, pos.y + dim.height)
+    }
+    if (minX === Infinity) { minX = 0; minY = 0; maxX = 280; maxY = 130 }
+
+    containerSizes.set(loopId, {
+      width: (maxX - minX) + CONTAINER_SIDE_PADDING * 2,
+      height: HEADER_HEIGHT + (maxY - minY) + CONTAINER_SIDE_PADDING,
+    })
+    innerLayoutData.set(loopId, { wfNodes: innerWfNodes, edges: innerEdges, positions: innerPositions })
+  }
+
   // ─── Build outer edges (top-level graph) ───
   const outerEdges: Edge[] = []
 
@@ -215,111 +284,43 @@ export function yamlToFlowData(parsed: WorkflowDefinition): { nodes: Node[]; edg
     }
   }
 
-  // ─── Top-level dagre layout ───
-  const topPositions = dagreLayout(topWorkflowNodes, outerEdges)
+  // ─── Top-level dagre layout with ACTUAL container dimensions ───
+  const topPositions = dagreLayout(topWorkflowNodes, outerEdges, undefined, containerSizes)
 
-  // ─── Extract inner nodes and edges from loop containers ───
+  // ─── Build inner nodes at ABSOLUTE positions (no parentId) ───
   const allInnerNodes: Node[] = []
   const allInnerEdges: Edge[] = []
-  const containerSizes = new Map<string, { width: number; height: number }>()
 
-  // ─── Inner dagre layout constants ───
-  const INNER_LAYOUT_RANKDIR = "TB" as const
-  const INNER_LAYOUT_PADDING = 20
-  const INNER_LAYOUT_NODESEP = 40
-  const INNER_LAYOUT_RANKSEP = 60
-  const CONTAINER_PADDING = 20
+  for (const [loopId, data] of innerLayoutData) {
+    const containerPos = topPositions[loopId] ?? { x: 0, y: 0 }
 
-  for (const [loopId, loopNode] of loopNodesWithInner) {
-    const innerNodes = loopNode.nodes!
+    for (const innerWfNode of data.wfNodes) {
+      const rawPos = data.positions[innerWfNode.id] ?? { x: 0, y: 0 }
+      // Find original node data
+      const origId = innerWfNode.id.slice(loopId.length + 1)
+      const origNode = loopNodesWithInner.get(loopId)!.nodes!.find((n: any) => n.id === origId) as WorkflowNode | undefined
 
-    // Validate inner node types
-    if (!innerNodes.every((n: WorkflowNode) => VALID_NODE_TYPES.has(n.type))) return null
-
-    // Note: nested loops (loop inside loop) are not yet supported — inner loop
-    // nodes are treated as regular inner nodes without recursive expansion.
-    const innerWfNodes: WorkflowNode[] = innerNodes.map((n) => ({
-      ...n,
-      id: `${loopId}:${n.id}`,
-      depends_on: n.depends_on?.map((dep) => `${loopId}:${dep}`),
-    }))
-
-    // Build inner edges
-    const innerEdges: Edge[] = []
-    for (const innerNode of innerWfNodes) {
-      if (innerNode.depends_on) {
-        for (const dep of innerNode.depends_on) {
-          innerEdges.push({
-            id: `e-${dep}-${innerNode.id}`,
-            source: dep,
-            target: innerNode.id,
-            type: "smoothstep",
-          })
-        }
-      }
-    }
-
-    // Inner dagre layout with LR direction and tighter padding
-    const innerPositions = dagreLayout(innerWfNodes, innerEdges, {
-      rankdir: INNER_LAYOUT_RANKDIR,
-      padding: INNER_LAYOUT_PADDING,
-      nodesep: INNER_LAYOUT_NODESEP,
-      ranksep: INNER_LAYOUT_RANKSEP,
-    })
-
-    // Build a lookup map for original inner nodes (avoids O(n²) find)
-    const origNodeMap = new Map(innerNodes.map(n => [`${loopId}:${n.id}`, n]))
-
-    // Offset inner node Y positions by header height so they render below the container header
-    const HEADER_HEIGHT = 36
-
-    // Build inner React Flow nodes with parentId and extent
-    for (const innerWfNode of innerWfNodes) {
-      const origNode = origNodeMap.get(innerWfNode.id)!
-      const rawPos = innerPositions[innerWfNode.id] ?? { x: 0, y: 0 }
       allInnerNodes.push({
         id: innerWfNode.id,
         type: innerWfNode.type,
-        position: { x: rawPos.x, y: rawPos.y + HEADER_HEIGHT },
-        parentId: loopId,
-        extent: "parent",
+        // Absolute position = container top-left + padding + relative offset
+        position: {
+          x: containerPos.x + CONTAINER_SIDE_PADDING + rawPos.x,
+          y: containerPos.y + HEADER_HEIGHT + rawPos.y,
+        },
         data: {
           id: innerWfNode.id,
           type: innerWfNode.type,
-          name: origNode.description || origNode.id,
-          command: origNode.command,
-          script: origNode.script,
-          prompt: origNode.prompt,
-          risk_level: origNode.risk_level,
+          name: origNode?.description || origId,
+          command: origNode?.command,
+          script: origNode?.script,
+          prompt: origNode?.prompt,
+          risk_level: origNode?.risk_level,
         },
       })
     }
 
-    allInnerEdges.push(...innerEdges)
-
-    // Compute container size from inner node bounding box + padding
-    let minX = Infinity
-    let minY = Infinity
-    let maxX = -Infinity
-    let maxY = -Infinity
-    for (const innerWfNode of innerWfNodes) {
-      const pos = innerPositions[innerWfNode.id]
-      if (!pos) continue
-      const dim = getNodeDimensions(innerWfNode)
-      minX = Math.min(minX, pos.x)
-      minY = Math.min(minY, pos.y)
-      maxX = Math.max(maxX, pos.x + dim.width)
-      maxY = Math.max(maxY, pos.y + dim.height)
-    }
-    // Guard: if no positions found, use minimum size
-    if (minX === Infinity) { minX = 0; minY = 0; maxX = 280; maxY = 130 }
-    // Container size: padding around nodes + header height
-    // minX/minY already include INNER_LAYOUT_PADDING (20px) and HEADER_HEIGHT (36px)
-    // We need: 20px top + 36px header + node height + 20px bottom
-    containerSizes.set(loopId, {
-      width: (maxX - minX) + INNER_LAYOUT_PADDING * 2,
-      height: HEADER_HEIGHT + (maxY - minY) + INNER_LAYOUT_PADDING,
-    })
+    allInnerEdges.push(...data.edges)
   }
 
   // ─── Build final nodes array ───

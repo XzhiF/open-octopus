@@ -62,22 +62,19 @@ describe("yamlToFlowData — loop container extraction", () => {
     ])
   })
 
-  it("sets parentId on inner nodes pointing to loop container", () => {
+  it("positions inner nodes at absolute coordinates within container area", () => {
     const result = yamlToFlowData(buildLoopWorkflow())!
     const innerA = result.nodes.find((n) => n.id === "my-loop:inner-a")
     const innerB = result.nodes.find((n) => n.id === "my-loop:inner-b")
+    const loopContainer = result.nodes.find((n) => n.id === "my-loop")
 
-    expect(innerA?.parentId).toBe("my-loop")
-    expect(innerB?.parentId).toBe("my-loop")
-  })
+    // Inner nodes should NOT have parentId (absolute positioning)
+    expect(innerA?.parentId).toBeUndefined()
+    expect(innerB?.parentId).toBeUndefined()
 
-  it("sets extent: 'parent' on inner nodes", () => {
-    const result = yamlToFlowData(buildLoopWorkflow())!
-    const innerA = result.nodes.find((n) => n.id === "my-loop:inner-a")
-    const innerB = result.nodes.find((n) => n.id === "my-loop:inner-b")
-
-    expect(innerA?.extent).toBe("parent")
-    expect(innerB?.extent).toBe("parent")
+    // Inner nodes should be positioned below and to the right of container top-left
+    expect(innerA!.position.y).toBeGreaterThan(loopContainer!.position.y)
+    expect(innerA!.position.x).toBeGreaterThanOrEqual(loopContainer!.position.x)
   })
 
   it("creates inner dependency edge between inner-a → inner-b", () => {
