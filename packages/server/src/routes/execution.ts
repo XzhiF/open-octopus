@@ -468,13 +468,16 @@ executionRoutes.get("/:executionId/agent-events", (c) => {
         mergedSqlite.push(...mergeAgentEvents(group))
       }
 
-      // Merge with JSONL non-agent events (start/end/bash_log/python_log)
-      // SQLite only stores agent events; lifecycle & script logs live in JSONL files
+      // Merge with JSONL lifecycle events (start/end/branch_start/branch_end).
+      // SQLite stores merged agent events; JSONL has compaction that may differ.
+      // Only keep truly non-agent lifecycle events from JSONL to avoid duplicates.
       const jsonlEvents = svc.service.getAgentEvents(executionId, nodeId || undefined, loopId, iteration)
-      const nonAgentEvents = jsonlEvents.filter((e: any) => e.event !== "agent_event")
-      // Merge JSONL events by nodeId to compact bash_log→bash_output, python_log→python_output
+      const lifecycleOnly = jsonlEvents.filter((e: any) =>
+        ["start", "end", "branch_start", "branch_end"].includes(e.event)
+      )
+      // Merge JSONL lifecycle events by nodeId
       const jsonlByNode = new Map<string, any[]>()
-      for (const e of nonAgentEvents) {
+      for (const e of lifecycleOnly) {
         const key = e.nodeId ?? "_unknown"
         if (!jsonlByNode.has(key)) jsonlByNode.set(key, [])
         jsonlByNode.get(key)!.push(e)
@@ -484,7 +487,7 @@ executionRoutes.get("/:executionId/agent-events", (c) => {
         mergedJsonl.push(...mergeAgentEvents(group))
       }
       const merged = [...mergedSqlite, ...mergedJsonl]
-        .sort((a: any, b: any) => (a.timestamp ?? "").localeCompare(b.timestamp ?? ""))
+        .sort((a: any, b: any) => ((a.timestamp ?? a.startedAt) ?? "").localeCompare((b.timestamp ?? b.startedAt) ?? ""))
 
       return c.json({ executionId, events: merged, source: 'sqlite', _degraded: false, _message: null, loopIterations })
     }

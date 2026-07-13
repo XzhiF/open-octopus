@@ -567,6 +567,7 @@ export function ExecutionLogViewer({ workspaceId, executionId, executionStatus }
             const totalEvents = group.directEvents.length +
               group.iterationGroups.reduce((s, g) => s + g.events.length, 0)
             const totalIters = group.iterationGroups.length
+            const hasIterations = totalIters > 0
 
             return (
               <div key={nodeId} className="rounded border border-border/50 overflow-hidden">
@@ -585,21 +586,34 @@ export function ExecutionLogViewer({ workspaceId, executionId, executionStatus }
                 </div>
                 {!collapsedNodes.has(nodeId) && (
                   <div className="px-2 py-1 space-y-1">
-                    {/* Direct (non-iteration) events */}
+                    {/* Direct (non-iteration) events — always show */}
                     {group.directEvents.map((entry, i) => (
                       <ExpandableRow key={`direct-${i}`} entry={entry} />
                     ))}
-                    {/* Iteration sub-groups */}
-                    {group.iterationGroups.map((ig) => (
-                      <IterationGroup
-                        key={`iter-${ig.iteration}`}
-                        loopId={nodeId}
-                        iteration={ig.iteration}
-                        events={ig.events as AgentEvent[]}
-                        isLatest={ig.iteration === group.iterationGroups[group.iterationGroups.length - 1].iteration}
-                        totalIterations={totalIters}
-                      />
-                    ))}
+                    {/* Iteration sub-groups: render iteration-first with per-node sub-groups */}
+                    {group.iterationGroups.map((ig, idx) => {
+                      // Group events by nodeId within this iteration
+                      const nodeEventMap = new Map<string, typeof ig.events>()
+                      for (const e of ig.events) {
+                        const key = e.nodeId || "(node)"
+                        if (!nodeEventMap.has(key)) nodeEventMap.set(key, [])
+                        nodeEventMap.get(key)!.push(e)
+                      }
+                      const iterDurationMs = ig.events.reduce((s, e) => s + (e.durationMs ?? 0), 0)
+
+                      return (
+                        <IterationGroup
+                          key={`iter-${ig.iteration}`}
+                          loopId={nodeId}
+                          iteration={ig.iteration}
+                          events={ig.events as AgentEvent[]}
+                          isLatest={idx === group.iterationGroups.length - 1}
+                          totalIterations={totalIters}
+                          nodeEventMap={nodeEventMap as Map<string, AgentEvent[]>}
+                          iterDurationMs={iterDurationMs}
+                        />
+                      )
+                    })}
                   </div>
                 )}
               </div>
