@@ -13,6 +13,7 @@ interface WorkflowNode {
   risk_level?: string
   iterations?: number
   loop_body?: Array<Record<string, unknown>>
+  nodes?: WorkflowNode[]
   [key: string]: unknown
 }
 
@@ -81,13 +82,20 @@ function computeRanks(workflowNodes: WorkflowNode[]): Record<string, number> {
  */
 function dagreLayout(
   workflowNodes: WorkflowNode[],
-  edges: Edge[]
+  edges: Edge[],
+  options?: { rankdir?: "TB" | "LR"; padding?: number; nodesep?: number; ranksep?: number }
 ): Record<string, { x: number; y: number }> {
+  const {
+    rankdir = "TB",
+    padding = 50,
+    nodesep = 100,
+    ranksep = 70,
+  } = options ?? {}
   const g = new dagre.graphlib.Graph()
   g.setGraph({
-    rankdir: "TB",
-    nodesep: 100,
-    ranksep: 70,
+    rankdir,
+    nodesep,
+    ranksep,
     edgesep: 40,
   })
   g.setDefaultEdgeLabel(() => ({}))
@@ -146,8 +154,8 @@ function dagreLayout(
   const result: Record<string, { x: number; y: number }> = {}
   for (const [id, data] of positions) {
     result[id] = {
-      x: data.x - anchorX + 50,
-      y: data.y - anchorY + 50,
+      x: data.x - anchorX + padding,
+      y: data.y - anchorY + padding,
     }
   }
 
@@ -161,12 +169,26 @@ export function yamlToFlowData(parsed: WorkflowDefinition): { nodes: Node[]; edg
   const workflowNodes = parsed.nodes as WorkflowNode[]
   if (!workflowNodes.every((n) => VALID_NODE_TYPES.has(n.type))) return null
 
-  const edges: Edge[] = []
+  // ─── Separate loop nodes with inner nodes from top-level nodes ───
+  const loopNodesWithInner = new Map<string, WorkflowNode>()
+  const topWorkflowNodes: WorkflowNode[] = []
 
   for (const node of workflowNodes) {
+    if (node.type === "loop" && Array.isArray(node.nodes) && node.nodes.length > 0) {
+      loopNodesWithInner.set(node.id, node)
+      topWorkflowNodes.push(node) // keep as placeholder for outer layout
+    } else {
+      topWorkflowNodes.push(node)
+    }
+  }
+
+  // ─── Build outer edges (top-level graph) ───
+  const outerEdges: Edge[] = []
+
+  for (const node of topWorkflowNodes) {
     if (node.depends_on && Array.isArray(node.depends_on)) {
       for (const parentId of node.depends_on) {
-        edges.push({
+        outerEdges.push({
           id: `e-${parentId}-${node.id}`,
           source: parentId,
           target: node.id,
@@ -177,11 +199,11 @@ export function yamlToFlowData(parsed: WorkflowDefinition): { nodes: Node[]; edg
 
     if (node.type === "condition" && node.cases) {
       for (const caseItem of node.cases) {
-        const existing = edges.find(
+        const existing = outerEdges.find(
           (e) => e.source === node.id && e.target === caseItem.then
         )
         if (!existing) {
-          edges.push({
+          outerEdges.push({
             id: `e-${node.id}-${caseItem.then}-case`,
             source: node.id,
             target: caseItem.then,
@@ -193,35 +215,133 @@ export function yamlToFlowData(parsed: WorkflowDefinition): { nodes: Node[]; edg
     }
   }
 
-  const positions = dagreLayout(workflowNodes, edges)
+  // ─── Top-level dagre layout ───
+  const topPositions = dagreLayout(topWorkflowNodes, outerEdges)
 
-  const nodes: Node[] = workflowNodes.map((node) => ({
-    id: node.id,
-    type: node.type,
-    position: positions[node.id] || { x: 0, y: 0 },
-    data: {
+  // ─── Extract inner nodes and edges from loop containers ───
+  const allInnerNodes: Node[] = []
+  const allInnerEdges: Edge[] = []
+  const containerSizes = new Map<string, { width: number; height: number }>()
+
+  for (const [loopId, loopNode] of loopNodesWithInner) {
+    const innerNodes = loopNode.nodes!
+    const innerWfNodes: WorkflowNode[] = innerNodes.map((n) => ({
+      ...n,
+      id: `${loopId}:${n.id}`,
+      depends_on: n.depends_on?.map((dep) => `${loopId}:${dep}`),
+    }))
+
+    // Build inner edges
+    const innerEdges: Edge[] = []
+    for (const innerNode of innerWfNodes) {
+      if (innerNode.depends_on) {
+        for (const dep of innerNode.depends_on) {
+          innerEdges.push({
+            id: `e-${dep}-${innerNode.id}`,
+            source: dep,
+            target: innerNode.id,
+            type: "smoothstep",
+          })
+        }
+      }
+    }
+
+    // Inner dagre layout with LR direction and tighter padding
+    const innerPositions = dagreLayout(innerWfNodes, innerEdges, {
+      rankdir: "LR",
+      padding: 20,
+      nodesep: 60,
+      ranksep: 80,
+    })
+
+    // Build inner React Flow nodes with parentId and extent
+    for (const innerWfNode of innerWfNodes) {
+      const origNode = innerNodes.find(
+        (n) => `${loopId}:${n.id}` === innerWfNode.id
+      )!
+      allInnerNodes.push({
+        id: innerWfNode.id,
+        type: innerWfNode.type,
+        position: innerPositions[innerWfNode.id] ?? { x: 0, y: 0 },
+        parentId: loopId,
+        extent: "parent",
+        data: {
+          id: innerWfNode.id,
+          type: innerWfNode.type,
+          name: origNode.description || origNode.id,
+          command: origNode.command,
+          script: origNode.script,
+          prompt: origNode.prompt,
+          risk_level: origNode.risk_level,
+        },
+      })
+    }
+
+    allInnerEdges.push(...innerEdges)
+
+    // Compute container size from inner node bounding box + padding
+    const CONTAINER_PADDING = 40
+    let maxX = 0
+    let maxY = 0
+    for (const innerWfNode of innerWfNodes) {
+      const pos = innerPositions[innerWfNode.id]
+      if (!pos) continue
+      const dim = getNodeDimensions(innerWfNode)
+      maxX = Math.max(maxX, pos.x + dim.width)
+      maxY = Math.max(maxY, pos.y + dim.height)
+    }
+    containerSizes.set(loopId, {
+      width: maxX + CONTAINER_PADDING,
+      height: maxY + CONTAINER_PADDING,
+    })
+  }
+
+  // ─── Build final nodes array ───
+  const nodes: Node[] = topWorkflowNodes.map((node) => {
+    const isLoopContainer = loopNodesWithInner.has(node.id)
+    const containerSize = containerSizes.get(node.id)
+
+    const baseNode: Node = {
       id: node.id,
-      type: node.type,
-      name: node.description || node.id,
-      command: node.command,
-      script: node.script,
-      prompt: node.prompt,
-      risk_level: node.risk_level,
-      iterations: node.iterations,
-      loop_body: node.loop_body,
-      cases: node.cases,
-      // Swarm-specific fields from YAML
-      ...(node.type === "swarm" ? {
-        mode: (node as Record<string, unknown>).mode,
-        topic: (node as Record<string, unknown>).topic,
-        expertCount: Array.isArray((node as Record<string, unknown>).experts)
-          ? ((node as Record<string, unknown>).experts as unknown[]).length
-          : ((node as Record<string, unknown>).max_experts as number) ?? 0,
-        consensusScore: null,
-        status: "pending",
+      type: isLoopContainer ? "loop-container" : node.type,
+      position: topPositions[node.id] || { x: 0, y: 0 },
+      data: {
+        id: node.id,
+        type: isLoopContainer ? "loop-container" : node.type,
+        name: node.description || node.id,
+        command: node.command,
+        script: node.script,
+        prompt: node.prompt,
+        risk_level: node.risk_level,
+        iterations: node.iterations,
+        loop_body: node.loop_body,
+        cases: node.cases,
+        ...(node.type === "swarm" ? {
+          mode: (node as Record<string, unknown>).mode,
+          topic: (node as Record<string, unknown>).topic,
+          expertCount: Array.isArray((node as Record<string, unknown>).experts)
+            ? ((node as Record<string, unknown>).experts as unknown[]).length
+            : ((node as Record<string, unknown>).max_experts as number) ?? 0,
+          consensusScore: null,
+          status: "pending",
+        } : {}),
+        ...(isLoopContainer && containerSize ? {
+          containerWidth: containerSize.width,
+          containerHeight: containerSize.height,
+        } : {}),
+      },
+      ...(isLoopContainer && containerSize ? {
+        style: {
+          width: containerSize.width,
+          height: containerSize.height,
+        },
       } : {}),
-    },
-  }))
+    }
 
-  return { nodes, edges }
+    return baseNode
+  })
+
+  nodes.push(...allInnerNodes)
+
+  return { nodes, edges: [...outerEdges, ...allInnerEdges] }
 }
