@@ -253,7 +253,7 @@ export function yamlToFlowData(parsed: WorkflowDefinition): { nodes: Node[]; edg
             id: `e-${dep}-${innerNode.id}`,
             source: dep,
             target: innerNode.id,
-            type: "smoothstep",
+            type: "default",
           })
         }
       }
@@ -313,9 +313,12 @@ export function yamlToFlowData(parsed: WorkflowDefinition): { nodes: Node[]; edg
     }
     // Guard: if no positions found, use minimum size
     if (minX === Infinity) { minX = 0; minY = 0; maxX = 280; maxY = 130 }
+    // Container size: padding around nodes + header height
+    // minX/minY already include INNER_LAYOUT_PADDING (20px) and HEADER_HEIGHT (36px)
+    // We need: 20px top + 36px header + node height + 20px bottom
     containerSizes.set(loopId, {
-      width: (maxX - minX) + CONTAINER_PADDING * 2,
-      height: (maxY - minY) + CONTAINER_PADDING * 2 + 36, // +36 for header
+      width: (maxX - minX) + INNER_LAYOUT_PADDING * 2,
+      height: HEADER_HEIGHT + (maxY - minY) + INNER_LAYOUT_PADDING,
     })
   }
 
