@@ -20,6 +20,7 @@ import { AgentNode } from "./workflow-nodes/agent-node"
 import { ConditionNode } from "./workflow-nodes/condition-node"
 import { ApprovalNode } from "./workflow-nodes/approval-node"
 import { LoopNode } from "./workflow-nodes/loop-node"
+import { LoopContainerNode } from "./workflow-nodes/loop-container-node"
 import { SwarmNode } from "@/components/swarm/organisms/swarm-node"
 import { ConditionEdge } from "./workflow-edges/condition-edge"
 import { WorkflowStepEdge } from "./workflow-edges/workflow-step-edge"
@@ -46,6 +47,7 @@ const nodeTypes = {
   agent: AgentNode,
   condition: ConditionNode,
   approval: ApprovalNode,
+  "loop-container": LoopContainerNode,
   loop: LoopNode,
   swarm: SwarmNode,
 }
