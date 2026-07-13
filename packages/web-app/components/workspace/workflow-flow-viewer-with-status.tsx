@@ -91,6 +91,7 @@ export function WorkflowFlowViewerWithStatus({
 
     const enrichedNodes: Node[] = data.nodes.map((node) => {
       const step = stepMap.get(node.id)
+        ?? (node.id.includes(":") ? stepMap.get(node.id.split(":")[1]) : undefined)
       const statusOverlay: StatusOverlay | undefined = step
         ? {
             stepStatus: step.status,
