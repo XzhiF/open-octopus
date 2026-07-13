@@ -246,7 +246,8 @@ export function yamlToFlowData(parsed: WorkflowDefinition): { nodes: Node[]; edg
 
     containerSizes.set(loopId, {
       width: (maxX - minX) + CONTAINER_SIDE_PADDING * 2,
-      height: HEADER_HEIGHT + (maxY - minY) + CONTAINER_SIDE_PADDING,
+      // Add extra height for dynamic content (model, tokens, duration)
+      height: HEADER_HEIGHT + (maxY - minY) + CONTAINER_SIDE_PADDING + 30,
     })
     innerLayoutData.set(loopId, { wfNodes: innerWfNodes, edges: innerEdges, positions: innerPositions })
   }
@@ -293,6 +294,7 @@ export function yamlToFlowData(parsed: WorkflowDefinition): { nodes: Node[]; edg
 
   for (const [loopId, data] of innerLayoutData) {
     const containerPos = topPositions[loopId] ?? { x: 0, y: 0 }
+    const containerSize = containerSizes.get(loopId)!
 
     for (const innerWfNode of data.wfNodes) {
       const rawPos = data.positions[innerWfNode.id] ?? { x: 0, y: 0 }
@@ -303,9 +305,9 @@ export function yamlToFlowData(parsed: WorkflowDefinition): { nodes: Node[]; edg
       allInnerNodes.push({
         id: innerWfNode.id,
         type: innerWfNode.type,
-        // Absolute position = container top-left + padding + relative offset
+        // Absolute position: center horizontally within container, stack vertically
         position: {
-          x: containerPos.x + CONTAINER_SIDE_PADDING + rawPos.x,
+          x: containerPos.x + (containerSize.width - getNodeDimensions(innerWfNode).width) / 2,
           y: containerPos.y + HEADER_HEIGHT + rawPos.y,
         },
         data: {
