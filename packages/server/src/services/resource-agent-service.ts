@@ -39,15 +39,26 @@ export class ResourceAgentService {
       resources: resources.slice(0, 50), // 限制 context 大小
     }
 
-    const task = `从源 ${sourceName} 安装 ${resources.length} 个资源到全局资源库。组名: ${group}。\n\n` +
-      `安装策略（按优先级）：\n` +
-      `1. 检查源仓库是否有安装脚本（setup.sh, install.sh, Makefile, package.json scripts），` +
-      `如果有，按仓库自身的安装流程执行\n` +
-      `2. 如果没有安装脚本，按 octo-resource-manager skill 指导，从 sources/ 缓存复制到 installed/ 目录\n` +
-      `3. 检查资源依赖（agent frontmatter 中的 skills: 字段），一并安装依赖资源\n` +
-      `4. 注册到 registry.json\n\n` +
-      `如果某个资源安装失败，记录错误并继续下一个。\n` +
-      `最后报告安装结果（installed/skipped/errors 数量）。`
+    const task = resources.length > 0
+      ? `从源 ${sourceName} 安装 ${resources.length} 个资源到全局资源库。组名: ${group}。\n\n` +
+        `安装策略（按优先级）：\n` +
+        `1. 检查源仓库是否有安装脚本（setup.sh, install.sh, Makefile, package.json scripts），` +
+        `如果有，按仓库自身的安装流程执行\n` +
+        `2. 如果没有安装脚本，按 octo-resource-manager skill 指导，从 sources/ 缓存复制到 installed/ 目录\n` +
+        `3. 检查资源依赖（agent frontmatter 中的 skills: 字段），一并安装依赖资源\n` +
+        `4. 注册到 registry.json\n\n` +
+        `如果某个资源安装失败，记录错误并继续下一个。\n` +
+        `最后报告安装结果（installed/skipped/errors 数量）。`
+      : `从源 ${sourceName} 安装资源到全局资源库。组名: ${group}。\n\n` +
+        `静态扫描未发现资源。请按以下步骤：\n` +
+        `1. 先分析源仓库结构，确定资源类型和位置\n` +
+        `2. 检查是否有安装脚本（setup.sh, install.sh, Makefile, package.json scripts），` +
+        `如果有，按仓库自身的安装流程执行\n` +
+        `3. 如果没有安装脚本，识别所有资源（skills/agents/workflows），` +
+        `按 octo-resource-manager skill 指导从 sources/ 缓存复制到 installed/ 目录\n` +
+        `4. 注册到 registry.json\n\n` +
+        `如果某个资源安装失败，记录错误并继续下一个。\n` +
+        `最后报告安装结果（installed/skipped/errors 数量）。`
 
     // ponytail: orchestrator org is for workspace scanning, not resources. "default" is fine.
     const orchestrator = getOrchestratorService("default")
