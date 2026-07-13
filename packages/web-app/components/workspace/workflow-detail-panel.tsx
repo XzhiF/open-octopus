@@ -379,6 +379,7 @@ export function WorkflowDetailPanel({ execution, workflow, workspaceId }: Workfl
             onSwarmClick={handleSwarmClick}
             workspaceId={workspaceId}
             executionId={execution.id}
+            loopIterationsMap={loopIterationsMap}
           />
         </Panel>
 

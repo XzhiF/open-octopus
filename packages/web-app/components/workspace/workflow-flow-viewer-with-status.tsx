@@ -27,7 +27,7 @@ import { WorkflowStepEdge } from "./workflow-edges/workflow-step-edge"
 
 import { parseYaml } from "@/lib/yaml-utils"
 import { yamlToFlowData } from "@/lib/workflow-parser"
-import type { StepExecution, StatusOverlay, TokenUsage } from "@/lib/types"
+import type { StepExecution, StatusOverlay, TokenUsage, LoopIterationSummary } from "@/lib/types"
 
 interface WorkflowFlowViewerWithStatusProps {
   yamlContent: string
@@ -39,6 +39,7 @@ interface WorkflowFlowViewerWithStatusProps {
   onSwarmClick?: (stepId: string) => void
   workspaceId?: string
   executionId?: string
+  loopIterationsMap?: Map<string, LoopIterationSummary>
 }
 
 const nodeTypes = {
@@ -67,6 +68,7 @@ export function WorkflowFlowViewerWithStatus({
   onSwarmClick,
   workspaceId,
   executionId,
+  loopIterationsMap,
 }: WorkflowFlowViewerWithStatusProps) {
   const [contextMenu, setContextMenu] = useState<{
     stepId: string
@@ -90,8 +92,28 @@ export function WorkflowFlowViewerWithStatus({
     if (!data) return null
 
     const enrichedNodes: Node[] = data.nodes.map((node) => {
-      const step = stepMap.get(node.id)
+      let step = stepMap.get(node.id)
         ?? (node.id.includes(":") ? stepMap.get(node.id.slice(node.id.indexOf(":") + 1)) : undefined)
+
+      // For inner loop nodes with "skipped" status, derive actual status from loopIterations
+      if (step?.status === "skipped" && node.id.includes(":") && loopIterationsMap) {
+        const loopId = node.id.slice(0, node.id.indexOf(":"))
+        const innerNodeId = node.id.slice(node.id.indexOf(":") + 1)
+        const loopSummary = loopIterationsMap.get(loopId)
+        if (loopSummary?.iterations?.length) {
+          // Use the latest iteration's node result for this inner node
+          const lastIter = loopSummary.iterations[loopSummary.iterations.length - 1]
+          const nodeResult = lastIter?.nodes?.find(n => n.nodeId === innerNodeId)
+          if (nodeResult && nodeResult.status !== "skipped") {
+            step = {
+              ...step,
+              status: nodeResult.status as StepExecution["status"],
+              duration: nodeResult.durationMs ? nodeResult.durationMs / 1000 : undefined,
+            }
+          }
+        }
+      }
+
       const statusOverlay: StatusOverlay | undefined = step
         ? {
             stepStatus: step.status,
@@ -137,7 +159,7 @@ export function WorkflowFlowViewerWithStatus({
     })
 
     return { nodes: enrichedNodes, edges: enrichedEdges }
-  }, [yamlContent, stepMap, activeStepId, currentStepId, workspaceId, executionId])
+  }, [yamlContent, stepMap, activeStepId, currentStepId, workspaceId, executionId, loopIterationsMap])
 
   const onInit = useCallback((instance: unknown) => {
     setTimeout(() => {
