@@ -185,10 +185,6 @@ export function createResourceRoutes(
       resources = parsed.data.resources ?? []
     }
 
-    if (resources.length === 0) {
-      return c.json({ installed: 0, skipped: 0, errors: [], message: "No resources to install" })
-    }
-
     const agent = new ResourceAgentService(manager)
     const result = await withResourceLock(`source:${parsed.data.sourceName}:install`, async () => {
       return agent.installFromSource({

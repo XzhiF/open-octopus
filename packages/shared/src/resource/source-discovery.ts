@@ -116,12 +116,34 @@ export class SourceDiscovery {
   private scanSkills(dir: string, resources: DiscoveredResource[]): void {
     const skillsDir = path.join(dir, "skills")
     if (!fs.existsSync(skillsDir)) return
+    this.scanSkillCategory(skillsDir, dir, resources)
+  }
 
-    for (const item of fs.readdirSync(skillsDir, { withFileTypes: true })) {
-      if (!item.isDirectory() || item.isSymbolicLink()) continue
-      const skillMd = path.join(skillsDir, item.name, "SKILL.md")
+  /** Recursively scan a skills category directory for SKILL.md files.
+   * Handles both flat repos (skills/foo/SKILL.md) and nested category repos
+   * (skills/engineering/foo/SKILL.md, skills/misc/bar/SKILL.md).
+   */
+  private scanSkillCategory(
+    categoryDir: string,
+    repoRoot: string,
+    resources: DiscoveredResource[],
+  ): void {
+    if (!fs.existsSync(categoryDir)) return
+
+    for (const item of fs.readdirSync(categoryDir, { withFileTypes: true })) {
+      if (item.isSymbolicLink()) continue
+      if (!item.isDirectory()) continue
+
+      const itemPath = path.join(categoryDir, item.name)
+      const skillMd = path.join(itemPath, "SKILL.md")
+
       if (fs.existsSync(skillMd)) {
-        resources.push({ name: item.name, type: "skill", path: `skills/${item.name}` })
+        // Found a skill directory — record it
+        const relativePath = path.relative(repoRoot, itemPath).replace(/\\/g, "/")
+        resources.push({ name: item.name, type: "skill", path: relativePath })
+      } else {
+        // Category directory — recurse
+        this.scanSkillCategory(itemPath, repoRoot, resources)
       }
     }
   }
