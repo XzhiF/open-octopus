@@ -511,7 +511,15 @@ executionRoutes.get("/:executionId/agent-events", (c) => {
       })
 
       const merged = [...filteredSqlite, ...mergedJsonl]
-        .sort((a: any, b: any) => ((a.timestamp ?? a.startedAt) ?? "").localeCompare((b.timestamp ?? b.startedAt) ?? ""))
+      // Normalize: ensure every event has a sortable time field
+      for (const e of merged) {
+        if (!e.timestamp && !e.startedAt) {
+          e.timestamp = e.completedAt || new Date().toISOString()
+        }
+      }
+      merged.sort((a: any, b: any) =>
+        ((a.timestamp ?? a.startedAt) ?? "").localeCompare((b.timestamp ?? b.startedAt) ?? "")
+      )
 
       return c.json({ executionId, events: merged, source: 'sqlite', _degraded: false, _message: null, loopIterations })
     }
