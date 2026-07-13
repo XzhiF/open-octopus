@@ -74,7 +74,13 @@ export class LoopExecutor implements NodeExecutor {
         if (shouldContinue) continue
 
         const executor = this.createExecutor(innerNode)
+
+        // Notify engine about inner node execution (so it records to node_executions)
+        this.callbacks?.onNodeStart?.(innerNode.id, innerNode.type)
+        const innerStart = Date.now()
         const result = await executor.execute()
+        const innerDurationMs = Date.now() - innerStart
+        this.callbacks?.onNodeEnd?.(innerNode.id, result.status, innerDurationMs, result, innerNode.type)
 
         // Compact iteration-scoped JSONL after inner node completes
         if (this.logger) {

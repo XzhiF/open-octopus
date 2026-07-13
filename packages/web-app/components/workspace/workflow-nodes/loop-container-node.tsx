@@ -2,9 +2,11 @@
 
 import { Repeat, Check, X, Circle, Loader2, ArrowUp, ArrowDown } from "lucide-react"
 import type { NodeProps } from "@xyflow/react"
+import { Handle, Position } from "@xyflow/react"
 import { cn } from "@/lib/utils"
+import { Badge } from "@/components/ui/badge"
 import { formatTokenCount } from "@/lib/format"
-import type { LoopIterationSummary, StatusOverlay, TokenUsage } from "@/lib/types"
+import type { LoopIterationSummary, StatusOverlay, TokenUsage, StepExecutionStatus } from "@/lib/types"
 
 interface LoopContainerData {
   id: string
@@ -34,6 +36,18 @@ const statusBgColor: Record<string, string> = {
   completed: "bg-green-50/80",
   failed: "bg-red-50/80",
   paused: "bg-violet-50/80",
+}
+
+const statusVisualConfig: Record<StepExecutionStatus, { color: string; label: string }> = {
+  pending: { color: "text-blue-600", label: "待开始" },
+  running: { color: "text-amber-600", label: "运行中" },
+  completed: { color: "text-emerald-600", label: "已完成" },
+  failed: { color: "text-red-600", label: "失败" },
+  skipped: { color: "text-gray-600", label: "跳过" },
+  cancelled: { color: "text-gray-500", label: "已取消" },
+  paused: { color: "text-violet-600", label: "已暂停" },
+  rejected: { color: "text-orange-600", label: "已拒绝" },
+  pending_approval: { color: "text-amber-600", label: "待审批" },
 }
 
 function aggregateTokens(overlay?: StatusOverlay): { input: number; output: number } | null {
@@ -102,15 +116,41 @@ export function LoopContainerNode({ data, selected }: NodeProps) {
   const headerBg = stepStatus ? statusBgColor[stepStatus] ?? "bg-gray-50/80" : "bg-gray-50/80"
   const tokens = aggregateTokens(loopData.statusOverlay)
   const maxIter = loopData.max_iterations ?? loopData.iterations
+  const statusConfig = loopData.statusOverlay ? statusVisualConfig[loopData.statusOverlay.stepStatus] : null
 
   return (
-    <div
-      className={cn(
-        "border-2 border-dashed rounded-lg w-full h-full",
-        borderColor,
-        selected && "ring-2 ring-primary ring-offset-2",
+    <>
+      {stepStatus === "running" && (
+        <style>{`
+          @keyframes border-march {
+            to {
+              background-position:
+                -12px 0,
+                -12px 100%,
+                0 -12px,
+                100% -12px;
+            }
+          }
+          .border-running {
+            border-color: transparent;
+            background:
+              repeating-linear-gradient(90deg, #f59e0b 0 6px, transparent 6px 12px) top    / 100% 2px no-repeat,
+              repeating-linear-gradient(90deg, #f59e0b 0 6px, transparent 6px 12px) bottom / 100% 2px no-repeat,
+              repeating-linear-gradient(0deg, #f59e0b 0 6px, transparent 6px 12px) left   / 2px 100% no-repeat,
+              repeating-linear-gradient(0deg, #f59e0b 0 6px, transparent 6px 12px) right  / 2px 100% no-repeat;
+            animation: border-march 0.6s linear infinite;
+          }
+        `}</style>
       )}
-    >
+      <div
+        className={cn(
+          "border-2 border-dashed rounded-lg w-full h-full relative",
+          borderColor,
+          selected && "ring-2 ring-primary ring-offset-2",
+          stepStatus === "running" && "border-running",
+        )}
+      >
+      <Handle type="target" position={Position.Top} className="!bg-muted-foreground !w-3 !h-3" />
       {/* Header */}
       <div
         className={cn(
@@ -119,7 +159,9 @@ export function LoopContainerNode({ data, selected }: NodeProps) {
         )}
       >
         <Repeat className="w-4 h-4 text-orange-500 shrink-0" />
-        <span className="text-sm font-medium truncate">{loopData.name}</span>
+        <div className="flex-1 min-w-0">
+          <span className="text-sm font-medium truncate block">{loopData.name}</span>
+        </div>
 
         {maxIter != null && (
           <span className="text-[11px] text-muted-foreground shrink-0">
@@ -131,13 +173,22 @@ export function LoopContainerNode({ data, selected }: NodeProps) {
           <IterationDots summary={loopData.loopIterations} />
         )}
 
-        <div className="flex-1" />
+        <Badge variant="outline" className="text-xs border-border text-muted-foreground bg-transparent shrink-0">
+          循环
+        </Badge>
+        {statusConfig && (
+          <Badge variant="outline" className={cn("text-xs", statusConfig.color, "shrink-0")}>
+            {statusConfig.label}
+          </Badge>
+        )}
 
         {tokens && <TokenSummary input={tokens.input} output={tokens.output} />}
       </div>
 
       {/* Body — React Flow renders child nodes here via parentId */}
       <div className="p-2 min-h-[80px]" />
+      <Handle type="source" position={Position.Bottom} className="!bg-muted-foreground !w-3 !h-3" />
     </div>
+    </>
   )
 }

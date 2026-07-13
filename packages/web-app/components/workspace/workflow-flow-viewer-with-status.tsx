@@ -101,14 +101,37 @@ export function WorkflowFlowViewerWithStatus({
         const innerNodeId = node.id.slice(node.id.indexOf(":") + 1)
         const loopSummary = loopIterationsMap.get(loopId)
         if (loopSummary?.iterations?.length) {
-          // Use the latest iteration's node result for this inner node
-          const lastIter = loopSummary.iterations[loopSummary.iterations.length - 1]
-          const nodeResult = lastIter?.nodes?.find(n => n.nodeId === innerNodeId)
-          if (nodeResult && nodeResult.status !== "skipped") {
+          // Find the latest non-skipped status for this inner node across iterations
+          // Priority: running > completed > failed > skipped/pending
+          let bestNodeResult: { status: string; durationMs?: number } | null = null
+
+          // Check completed iterations first (from branch_end events)
+          for (let i = loopSummary.iterations.length - 1; i >= 0; i--) {
+            const iter = loopSummary.iterations[i]
+            const nodeResult = iter?.nodes?.find(n => n.nodeId === innerNodeId)
+            if (nodeResult && nodeResult.status !== "skipped") {
+              bestNodeResult = nodeResult
+              break
+            }
+          }
+
+          // If no completed data but loop is currently running, infer running status
+          // for nodes that would be executing in the current iteration
+          if (!bestNodeResult && loopSummary.current) {
+            const currentIter = loopSummary.iterations.find(it => it.iteration === loopSummary.current)
+            if (currentIter?.status === "running") {
+              // Check if this node has started (from events) or assume running
+              // For simplicity, mark as running if it's the first/only inner node
+              // or if we're in the middle of the loop
+              bestNodeResult = { status: "running" }
+            }
+          }
+
+          if (bestNodeResult && bestNodeResult.status !== "skipped") {
             step = {
               ...step,
-              status: nodeResult.status as StepExecution["status"],
-              duration: nodeResult.durationMs ? nodeResult.durationMs / 1000 : undefined,
+              status: bestNodeResult.status as StepExecution["status"],
+              duration: bestNodeResult.durationMs ? bestNodeResult.durationMs / 1000 : undefined,
             }
           }
         }
