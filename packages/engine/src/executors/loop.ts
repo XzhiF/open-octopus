@@ -66,7 +66,7 @@ export class LoopExecutor implements NodeExecutor {
       let jumpToIndex = -1
       const iterationNodeResults: { nodeId: string; status: string; durationMs?: number; error?: string }[] = []
 
-      this.logger?.setLoopContext(this.node.id, this.iterations)
+      const prevLoopContext = this.logger?.setLoopContext(this.node.id, this.iterations)
       try {
         for (let ni = jumpToIndex >= 0 ? jumpToIndex : 0; ni < innerNodes.length; ni++) {
         jumpToIndex = -1 // reset for this iteration of the for loop
@@ -168,7 +168,7 @@ export class LoopExecutor implements NodeExecutor {
         }
       }
       } finally {
-        this.logger?.clearLoopContext()
+        this.logger?.restoreLoopContext(prevLoopContext ?? { loopNodeId: undefined, iteration: undefined })
       }
 
       this.logger?.log(this.node.id, 'branch_end', { iteration: this.iterations, status: "completed", nodeResults: iterationNodeResults })

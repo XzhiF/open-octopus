@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest"
 import { JsonlLogger, isMergedEvent, MERGED_EVENT_TYPES } from "../logger"
 import type { MergedEventType } from "../logger"
-import { mkdtempSync, rmSync, readFileSync, existsSync } from "fs"
+import { mkdtempSync, rmSync, readFileSync, existsSync, readdirSync } from "fs"
 import { join } from "path"
 import { tmpdir } from "os"
 
@@ -278,5 +278,34 @@ describe("JSONL log compaction", () => {
     expect(result[4].event).toBe("text_block")
     expect(result[4].content).toBe("Done.")
     expect(result[5].event).toBe("end")
+  })
+
+  it("nested loop context: save/restore preserves outer loop scoping", () => {
+    // Outer loop sets context
+    const outerPrev = logger.setLoopContext("outer-loop", 1)
+    logger.log("node-a", "start", {})
+
+    // Inner loop overwrites context, saving outer's
+    const innerPrev = logger.setLoopContext("inner-loop", 1)
+    logger.log("node-b", "start", {})
+
+    // Inner loop restores outer's context
+    logger.restoreLoopContext(innerPrev)
+    logger.log("node-c", "start", {})
+
+    // Outer loop restores to no context
+    logger.restoreLoopContext(outerPrev)
+    logger.log("node-d", "start", {})
+
+    const logDir = join(tmpDir, "logs", "test-exec")
+    const files = readdirSync(logDir)
+
+    // node-a and node-c should be in outer loop's iteration file
+    expect(files).toContain("outer-loop-iter-1__node-a.jsonl")
+    expect(files).toContain("outer-loop-iter-1__node-c.jsonl")
+    // node-b should be in inner loop's iteration file
+    expect(files).toContain("inner-loop-iter-1__node-b.jsonl")
+    // node-d should be in plain file (no loop context)
+    expect(files).toContain("node-d.jsonl")
   })
 })

@@ -140,10 +140,10 @@ describe("JsonlLogger loop context", () => {
     expect(entry.iteration).toBeUndefined()
   })
 
-  it("clearLoopContext reverts to plain file", () => {
-    logger.setLoopContext("loop1", 1)
+  it("restoreLoopContext reverts to plain file", () => {
+    const prev = logger.setLoopContext("loop1", 1)
     logger.log("a", "start", {})
-    logger.clearLoopContext()
+    logger.restoreLoopContext(prev)
     logger.log("b", "start", {})
     const logDir = join(tmpDir, "logs", "test-exec")
     const files = readdirSync(logDir)

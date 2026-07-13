@@ -66,16 +66,18 @@ export class JsonlLogger {
     mkdirSync(this.logDir, { recursive: true })
   }
 
-  /** Set loop context so subsequent log() calls write to iteration-scoped files. */
-  setLoopContext(loopNodeId: string, iteration: number): void {
+  /** Set loop context so subsequent log() calls write to iteration-scoped files. Returns previous context for nesting. */
+  setLoopContext(loopNodeId: string, iteration: number): { loopNodeId: string | undefined; iteration: number | undefined } {
+    const prev = { loopNodeId: this.loopNodeId, iteration: this.iteration }
     this.loopNodeId = loopNodeId
     this.iteration = iteration
+    return prev
   }
 
-  /** Clear loop context — log() reverts to writing to {nodeId}.jsonl. */
-  clearLoopContext(): void {
-    this.loopNodeId = undefined
-    this.iteration = undefined
+  /** Restore a previously saved loop context — supports nested loops. */
+  restoreLoopContext(saved: { loopNodeId: string | undefined; iteration: number | undefined }): void {
+    this.loopNodeId = saved.loopNodeId
+    this.iteration = saved.iteration
   }
 
   /** Resolve the JSONL file path for a given node, considering loop context. */
