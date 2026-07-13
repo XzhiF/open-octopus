@@ -1,6 +1,5 @@
 "use client"
 
-import { Handle, Position } from "@xyflow/react"
 import { Repeat, Check, X, Circle, Loader2, ArrowUp, ArrowDown } from "lucide-react"
 import type { NodeProps } from "@xyflow/react"
 import { cn } from "@/lib/utils"
@@ -105,56 +104,40 @@ export function LoopContainerNode({ data, selected }: NodeProps) {
   const maxIter = loopData.max_iterations ?? loopData.iterations
 
   return (
-    <div className="relative">
-      {/* Target handle — incoming edge from previous node */}
-      <Handle
-        type="target"
-        position={Position.Top}
-        className="!w-3 !h-3 !bg-muted-foreground !border-2 !border-white"
-      />
-
+    <div
+      className={cn(
+        "border-2 border-dashed rounded-lg w-full h-full",
+        borderColor,
+        selected && "ring-2 ring-primary ring-offset-2",
+      )}
+    >
+      {/* Header */}
       <div
         className={cn(
-          "border-2 border-dashed rounded-lg w-full h-full",
-          borderColor,
-          selected && "ring-2 ring-primary ring-offset-2",
+          "flex items-center gap-2 px-3 py-2 rounded-t-md border-b border-dashed border-inherit",
+          headerBg,
         )}
       >
-        {/* Header */}
-        <div
-          className={cn(
-            "flex items-center gap-2 px-3 py-2 rounded-t-md border-b border-dashed border-inherit",
-            headerBg,
-          )}
-        >
-          <Repeat className="w-4 h-4 text-orange-500 shrink-0" />
-          <span className="text-sm font-medium truncate">{loopData.name}</span>
+        <Repeat className="w-4 h-4 text-orange-500 shrink-0" />
+        <span className="text-sm font-medium truncate">{loopData.name}</span>
 
-          {maxIter != null && (
-            <span className="text-[11px] text-muted-foreground shrink-0">
-              /{maxIter}
-            </span>
-          )}
+        {maxIter != null && (
+          <span className="text-[11px] text-muted-foreground shrink-0">
+            /{maxIter}
+          </span>
+        )}
 
-          {loopData.loopIterations && (
-            <IterationDots summary={loopData.loopIterations} />
-          )}
+        {loopData.loopIterations && (
+          <IterationDots summary={loopData.loopIterations} />
+        )}
 
-          <div className="flex-1" />
+        <div className="flex-1" />
 
-          {tokens && <TokenSummary input={tokens.input} output={tokens.output} />}
-        </div>
-
-        {/* Body — React Flow renders child nodes here via absolute positioning */}
-        <div className="p-2 min-h-[80px]" />
+        {tokens && <TokenSummary input={tokens.input} output={tokens.output} />}
       </div>
 
-      {/* Source handle — outgoing edge to next node */}
-      <Handle
-        type="source"
-        position={Position.Bottom}
-        className="!w-3 !h-3 !bg-muted-foreground !border-2 !border-white"
-      />
+      {/* Body — React Flow renders child nodes here via parentId */}
+      <div className="p-2 min-h-[80px]" />
     </div>
   )
 }
