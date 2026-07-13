@@ -453,26 +453,11 @@ export function ExecutionLogViewer({ workspaceId, executionId, executionStatus }
   }
 
   const nodeGroups = useMemo(() => {
-    // First pass: detect loop nodes (nodes that have iteration-scoped children)
-    const loopNodes = new Set<string>()
-    for (const e of processedEvents) {
-      if (e.iteration != null && e.iteration > 0) {
-        // Find the parent loop node — it's the node whose branch events reference this iteration
-        // Loop nodes have start/end events and their nodeId appears as a group with branch events
-        loopNodes.add(e.nodeId || "")
-      }
-    }
-    // Detect loop parent nodes: nodes that have both start and end events
-    const nodeEventTypes = new Map<string, Set<string>>()
-    for (const e of processedEvents) {
-      const nid = e.nodeId || ""
-      if (!nodeEventTypes.has(nid)) nodeEventTypes.set(nid, new Set())
-      nodeEventTypes.get(nid)!.add(e.event)
-    }
+    // Detect loop parent nodes from loopIterations (server-provided)
     const loopParentNodes = new Set<string>()
-    for (const [nid, types] of nodeEventTypes) {
-      if (types.has("start") && types.has("end") && (types.has("branch_start") || types.has("branch_end"))) {
-        loopParentNodes.add(nid)
+    if (loopIterations) {
+      for (const nodeId of Object.keys(loopIterations)) {
+        loopParentNodes.add(nodeId)
       }
     }
 
@@ -521,7 +506,7 @@ export function ExecutionLogViewer({ workspaceId, executionId, executionStatus }
       )
     )
     return sorted
-  }, [processedEvents])
+  }, [processedEvents, loopIterations])
 
   // Auto-collapse: collapse old groups, expand newest
   const groupKeys = useMemo(() => Array.from(nodeGroups.keys()).join(","), [nodeGroups])
