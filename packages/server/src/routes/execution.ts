@@ -468,16 +468,21 @@ executionRoutes.get("/:executionId/agent-events", (c) => {
         mergedSqlite.push(...mergeAgentEvents(group))
       }
 
-      // Merge with JSONL lifecycle events (start/end/branch_start/branch_end).
-      // SQLite stores merged agent events; JSONL has compaction that may differ.
-      // Only keep truly non-agent lifecycle events from JSONL to avoid duplicates.
+      // Merge with JSONL events that SQLite doesn't capture:
+      // 1. Iteration-scoped events (carry iteration field that SQLite doesn't store)
+      // 2. Lifecycle events (start/end) for all nodes
+      // Exclude raw agent_event wrappers and branch_start/branch_end (only needed for LoopOverview)
       const jsonlEvents = svc.service.getAgentEvents(executionId, nodeId || undefined, loopId, iteration)
-      const lifecycleOnly = jsonlEvents.filter((e: any) =>
-        ["start", "end", "branch_start", "branch_end"].includes(e.event)
-      )
-      // Merge JSONL lifecycle events by nodeId
+      const jsonlToAdd = jsonlEvents.filter((e: any) => {
+        // Include lifecycle events (start/end) — but NOT branch markers
+        if (e.event === "start" || e.event === "end") return true
+        // Include iteration-scoped events (from iteration JSONL files)
+        if (e.iteration != null && e.iteration > 0) return true
+        return false
+      })
+      // Merge JSONL supplemental events by nodeId
       const jsonlByNode = new Map<string, any[]>()
-      for (const e of lifecycleOnly) {
+      for (const e of jsonlToAdd) {
         const key = e.nodeId ?? "_unknown"
         if (!jsonlByNode.has(key)) jsonlByNode.set(key, [])
         jsonlByNode.get(key)!.push(e)

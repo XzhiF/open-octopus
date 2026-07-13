@@ -247,6 +247,7 @@ export function mergeAgentEvents(entries: any[]): any[] {
             content: "",
             startedAt: entry.timestamp,
             completedAt: entry.timestamp,
+            iteration: entry.iteration,
           }
           continue
         }
@@ -262,6 +263,7 @@ export function mergeAgentEvents(entries: any[]): any[] {
               content: "",
               startedAt: entry.timestamp,
               completedAt: entry.timestamp,
+              iteration: entry.iteration,
             }
           }
           if (block?.type === "thinking") {
@@ -289,6 +291,7 @@ export function mergeAgentEvents(entries: any[]): any[] {
               content: "",
               startedAt: entry.timestamp,
               completedAt: entry.timestamp,
+              iteration: entry.iteration,
             }
           }
           block.content += (ed?.content ?? "")
@@ -309,6 +312,7 @@ export function mergeAgentEvents(entries: any[]): any[] {
             isError: false,
             startedAt: entry.timestamp,
             completedAt: entry.timestamp,
+            iteration: entry.iteration,
           }
           continue
         }
@@ -384,6 +388,7 @@ export function mergeAgentEvents(entries: any[]): any[] {
             lines: [],
             startedAt: entry.timestamp,
             completedAt: entry.timestamp,
+            iteration: entry.iteration,
           }
         }
         block.lines.push(entry.line ?? "")
@@ -402,6 +407,7 @@ export function mergeAgentEvents(entries: any[]): any[] {
             content: "",
             startedAt: entry.timestamp,
             completedAt: entry.timestamp,
+            iteration: entry.iteration,
           }
         }
         block.content += (entry.line ?? "")
@@ -420,6 +426,7 @@ export function mergeAgentEvents(entries: any[]): any[] {
             lines: [],
             startedAt: entry.timestamp,
             completedAt: entry.timestamp,
+            iteration: entry.iteration,
           }
         }
         block.lines.push(entry.line ?? "")
@@ -438,6 +445,7 @@ export function mergeAgentEvents(entries: any[]): any[] {
             content: "",
             startedAt: entry.timestamp,
             completedAt: entry.timestamp,
+            iteration: entry.iteration,
           }
         }
         block.content += (entry.line ?? "")
