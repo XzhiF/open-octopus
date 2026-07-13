@@ -30,10 +30,9 @@ interface ListState {
   page: number
 }
 
+const DEFAULT_STATE: ListState = { typeFilter: "all", query: "", selectedGroups: null, page: 1 }
+
 function loadState(): ListState {
-  if (typeof window === "undefined") {
-    return { typeFilter: "all", query: "", selectedGroups: null, page: 1 }
-  }
   try {
     const stored = sessionStorage.getItem(STORAGE_KEY)
     if (stored) {
@@ -46,7 +45,7 @@ function loadState(): ListState {
       }
     }
   } catch {}
-  return { typeFilter: "all", query: "", selectedGroups: null, page: 1 }
+  return DEFAULT_STATE
 }
 
 function saveState(state: ListState) {
@@ -57,26 +56,36 @@ function saveState(state: ListState) {
 }
 
 export function ResourceList() {
-  const [typeFilter, setTypeFilter] = useState<ResourceType | "all">(() => loadState().typeFilter)
-  const [query, setQuery] = useState(() => loadState().query)
-  const [selectedGroups, setSelectedGroups] = useState<Set<string> | null>(() => {
-    const stored = loadState().selectedGroups
-    return stored ? new Set(stored) : null
-  })
+  // ponytail: use defaults for SSR, hydrate from sessionStorage after mount
+  const [typeFilter, setTypeFilter] = useState<ResourceType | "all">(DEFAULT_STATE.typeFilter)
+  const [query, setQuery] = useState(DEFAULT_STATE.query)
+  const [selectedGroups, setSelectedGroups] = useState<Set<string> | null>(null)
   const [groupsExpanded, setGroupsExpanded] = useState(false)
   const [uninstallTarget, setUninstallTarget] = useState<{ name: string; type: ResourceType } | null>(null)
   const [uninstalling, setUninstalling] = useState(false)
-  const [page, setPage] = useState(() => loadState().page)
+  const [page, setPage] = useState(DEFAULT_STATE.page)
+  const [hydrated, setHydrated] = useState(false)
 
-  // Save state to sessionStorage whenever it changes
+  // Hydrate from sessionStorage after mount
   useEffect(() => {
+    const saved = loadState()
+    setTypeFilter(saved.typeFilter)
+    setQuery(saved.query)
+    setSelectedGroups(saved.selectedGroups ? new Set(saved.selectedGroups) : null)
+    setPage(saved.page)
+    setHydrated(true)
+  }, [])
+
+  // Save state to sessionStorage whenever it changes (skip before hydration completes)
+  useEffect(() => {
+    if (!hydrated) return
     saveState({
       typeFilter,
       query,
       selectedGroups: selectedGroups ? Array.from(selectedGroups) : null,
       page,
     })
-  }, [typeFilter, query, selectedGroups, page])
+  }, [typeFilter, query, selectedGroups, page, hydrated])
 
   // Always fetch all types — filter client-side so counts stay accurate
   const { resources: allEntries, loading, error, refresh } = useResourceList({

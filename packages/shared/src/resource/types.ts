@@ -8,9 +8,6 @@ export type ResourceType = z.infer<typeof ResourceType>
 export const ResourceSource = z.enum(["builtin", "local", "git"])
 export type ResourceSource = z.infer<typeof ResourceSource>
 
-export const ResourceScope = z.literal("org")
-export type ResourceScope = z.infer<typeof ResourceScope>
-
 export const ResourceStatus = z.enum(["installed", "installed_but_unverified", "orphan"])
 export type ResourceStatus = z.infer<typeof ResourceStatus>
 
@@ -34,7 +31,6 @@ export const ResourceEntrySchema = z.object({
   verified: z.boolean(),
   status: ResourceStatus,
   installedAt: z.string(),
-  scope: ResourceScope,
   installPath: z.string(),
   dependsOn: z.array(z.string()).default([]),
   sourceHash: z.string().optional(),
@@ -105,7 +101,6 @@ export type LockFile = z.infer<typeof LockFileSchema>
 
 export const InstallRequestSchema = z.object({
   ref: z.string().regex(REF_RE, "Invalid ref format. Use: builtin:{name}, local:{path}, or git:{source}/{resource}"),
-  scope: ResourceScope.default("org"),
   caller: ResourceAuditCaller.default("cli"),
   type: ResourceType.optional(),
   group: z.string().regex(SAFE_NAME_RE).optional(),

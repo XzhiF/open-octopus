@@ -75,10 +75,9 @@ resourceCmd
   .command("install")
   .description("安装资源 (builtin:xxx 或 local:path)")
   .argument("<ref>", "资源引用 (如 builtin:brainstorming)")
-  .option("--scope <scope>", "安装范围 (org)")
-  .action(async (ref: string, options: { scope?: string }) => {
+  .action(async (ref: string) => {
     const result = await apiRequest<{ name: string; type: string; source: string }>(
-      "POST", "/install", { ref, scope: options.scope ?? "org" },
+      "POST", "/install", { ref },
     )
     console.log(
       chalk.green(`✓ Installed ${result.name} (${result.type}) from ${result.source}`),

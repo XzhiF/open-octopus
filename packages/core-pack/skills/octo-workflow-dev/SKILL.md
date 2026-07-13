@@ -21,7 +21,7 @@ YAML DSL 工作流引擎：7 种节点类型（agent / bash / python / condition
 
 ---
 
-## 0. 权威来源 — Schema 与外部依赖
+## 0. 权威来源 — Schema 与资源发现
 
 ### Workflow Schema（结构定义的唯一来源）
 
@@ -42,57 +42,58 @@ kind: Workflow
 
 任何字段不确定（`hooks` / `agents` / `condition.cases` / `loop.break_when` / `inputs` 校验等）一律先查 schema，不要凭记忆下笔。
 
-### 外部角色与技能开源依赖（强烈推荐复用）
+### 资源发现 — 写工作流前必须执行
 
-工作流的 agent / 子代理优先复用以下两个开源项目，避免重复造轮。
+工作流的 agent 节点和子代理应优先使用**本机已安装的资源**（agents / skills），不要凭记忆硬编码角色名。
 
-| 项目 | 类型 | 复用方式 | 备注 |
-|------|------|---------|------|
-| [agency-agents-zh](https://github.com/jnMetaCode/agency-agents-zh) | 中文 agent 角色卡（产品 / 设计 / 工程 / 数据 等 215 个） | `agents.<name>.agent_file` 引用 `.claude/agents/<name>.md` | 每个 agent 是带 frontmatter 的 markdown，引擎读取后剥离 frontmatter 拼接到 system prompt |
-| [superpowers-zh](https://www.npmjs.com/package/superpowers-zh) | 中文技能包（脑暴 / 评审 / 文档 等） | `npx superpowers-zh@latest --tool claude --force` 安装到 `.claude/skills/` | 安装后通过节点的 `skills` 字段加载 |
+**第一步：查询已安装资源**
 
-**典型 Setup 步骤模板**（在工作流第一个 agent 节点中执行）：
+```bash
+# 列出所有已安装 agents（name + group + installPath）
+node -e "
+const d=JSON.parse(require('fs').readFileSync(
+  require('os').homedir()+'/.octopus/resources/registry.json','utf8'));
+d.resources.filter(r=>r.installed&&r.type==='agent')
+  .forEach(r=>console.log(r.group+'/'+r.name+' → '+r.installPath+'/'+r.name+'.md'))
+"
 
-````yaml
-- id: setup
-  type: agent
-  timeout: 600
-  prompt: |
-    ### 1. 安装 superpowers-zh 技能
-    ```bash
-    npx superpowers-zh@latest --tool claude --force 2>&1 | head -5
-    ```
+# 列出所有已安装 skills
+node -e "
+const d=JSON.parse(require('fs').readFileSync(
+  require('os').homedir()+'/.octopus/resources/registry.json','utf8'));
+d.resources.filter(r=>r.installed&&r.type==='skill')
+  .forEach(r=>console.log(r.group+'/'+r.name+' → '+r.installPath+'/SKILL.md'))
+"
+```
 
-    ### 2. 安装 agency-agents-zh 角色（缺失才克隆）
-    ```bash
-    AGENTS_TARGET="$(pwd)/.claude/agents"
-    mkdir -p "$AGENTS_TARGET"
+**第二步：根据任务选择角色**
 
-    NEED_CLONE=false
-    for agent in product-manager design-ux-architect engineering-software-architect; do
-      [ -f "$AGENTS_TARGET/$agent.md" ] || NEED_CLONE=true
-    done
+从输出清单中选择与当前工作流任务匹配的 agents/skills。按 group 分类：
 
-    if [ "$NEED_CLONE" = "true" ]; then
-      DEPS_DIR="$(pwd)/dependencies"
-      mkdir -p "$DEPS_DIR"
-      [ -d "$DEPS_DIR/agency-agents-zh" ] || \
-        git clone --depth 1 https://github.com/jnMetaCode/agency-agents-zh.git "$DEPS_DIR/agency-agents-zh"
-      REPO="$DEPS_DIR/agency-agents-zh"
-      cp "$REPO/product/product-manager.md"                 "$AGENTS_TARGET/" 2>/dev/null || true
-      cp "$REPO/design/design-ux-architect.md"              "$AGENTS_TARGET/" 2>/dev/null || true
-      cp "$REPO/engineering/engineering-software-architect.md" "$AGENTS_TARGET/" 2>/dev/null || true
-    fi
-    ```
+| Group | 说明 | 典型用途 |
+|-------|------|---------|
+| `agency-agents-zh` | 215+ 中文角色卡（产品/设计/工程/数据等） | agent_file 引用 |
+| `superpowers-zh` | 中文技能包（脑暴/评审/文档等） | 节点 skills 加载 |
+| `mattpocock-skills` | Matt Pocock 工程技能（TDD/调试/架构等） | 节点 skills 加载 |
+| `gstack` | YC 工程团队角色（CEO 审查/安全/QA 等） | agent_file 引用 |
+| `built-in` | Octopus 内置资源 | 直接引用 |
 
-    ### 3. 安装 core-pack 内置角色（devil-advocate / architecture-explorer / vision-analyzer）
-    在以下候选路径里取第一个存在的并复制到 .claude/agents/：
-    - $(pwd)/.octopus/core-pack/agents
-    - $(pwd)/packages/core-pack/agents
-    - $(pwd)/../core-pack/agents
-````
+**第三步：使用 installPath 作为 agent_file**
 
-> 角色目录约定：所有 agent 角色卡放 `.claude/agents/`；所有技能放 `.claude/skills/`。引擎读取 `agent_file` 时会自动剥离 YAML frontmatter，把正文拼到子代理的 system prompt。
+```yaml
+agents:
+  product-manager:
+    # ✅ 使用 installPath 完整路径
+    agent_file: "~/.octopus/resources/installed/agents/agency-agents-zh/product-manager/product-manager.md"
+    prompt: "..."
+  devil-advocate:
+    # ✅ core-pack 内置角色
+    agent_file: "~/.octopus/resources/installed/agents/built-in/devil-advocate/devil-advocate.md"
+    prompt: "..."
+```
+
+> **注意**：`agent_file` 路径 = `{installPath}/{name}.md`（agents）或 `{installPath}/SKILL.md`（skills）。
+> 如果查询结果为空或找不到合适角色，再考虑内联 prompt 或 `octopus setup` 安装缺失资源。
 
 ---
 
@@ -133,7 +134,7 @@ kind: Workflow
   agents:
     devil-advocate:
       description: "魔鬼代言人 — 审查方案完整性。默认立场 INCOMPLETE。"
-      agent_file: ".claude/agents/devil-advocate.md"     # ⭐ 引用外部角色
+      agent_file: "~/.octopus/resources/installed/agents/built-in/devil-advocate/devil-advocate.md"
       model: pro-max[1m]
       tools: ["Read", "Grep", "Write"]
       prompt: |
@@ -142,7 +143,7 @@ kind: Workflow
         Write 完成后只返回 1 行确认。
     feasibility-reviewer:
       description: "可行性审查者 — 审查技术可行性。"
-      agent_file: ".claude/agents/engineering-software-architect.md"
+      agent_file: "~/.octopus/resources/installed/agents/agency-agents-zh/engineering-software-architect/engineering-software-architect.md"
       model: pro-max[1m]
       tools: ["Read", "Grep", "Write"]
       prompt: |
@@ -160,7 +161,7 @@ kind: Workflow
 **子代理纪律**：
 
 - 父 prompt **不要**逐字复述子代理报告内容；让子代理 `Write` 落盘，父代理只读"摘要 section"。
-- 子代理用 `agent_file` 引用现成角色卡（如 `agency-agents-zh` 的 product-manager / engineering-software-architect / design-ui-designer / design-ux-architect）。
+- 子代理用 `agent_file` 引用已安装资源（通过资源发现查询 registry.json），避免重写 system prompt。
 - 子代理 `tools` 白名单收紧到必需项（`Read` / `Write` / `Grep` / `Bash`）。
 - 子代理输出协议：返回 1 行确认即可，长文必须 Write 到磁盘。
 - 视觉/截图分析必须放子代理（防止图片数据污染主 session）。
@@ -547,7 +548,7 @@ nodes:
     type: agent
     agents:
       engineering-software-architect:
-        agent_file: ".claude/agents/engineering-software-architect.md"
+        agent_file: "~/.octopus/resources/installed/agents/agency-agents-zh/engineering-software-architect/engineering-software-architect.md"
         tools: [Read, Write, Grep]
         prompt: "Write 技术方案到 $vars.output_dir/03-solution.md"
     prompt: |
@@ -581,7 +582,7 @@ nodes:
   agents:
     vision-analyzer:
       description: "分析截图。需要看图时必须委派此子代理。"
-      agent_file: ".claude/agents/vision-analyzer.md"
+      agent_file: "~/.octopus/resources/installed/agents/built-in/vision-analyzer/vision-analyzer.md"
       model: pro
       tools: ["Bash", "Read"]
   prompt: |
@@ -633,7 +634,7 @@ octopus workflow run ./deploy.yaml --org {org} --model pro-max --engine claude
 - `condition.cases` 的 `when: default` 必须放最后。
 - `agent` 节点必须有 `agent` / `prompt` / `goal` / `agents` 之一；`goal` 与 `prompt` 互斥。
 - **当节点定义了 `agents`，主 prompt 只编排不执行重活；Write/Bash 由子代理负责**。
-- 子代理优先 `agent_file` 引用 `agency-agents-zh` / core-pack 现成角色，避免重写 system prompt。
+- 子代理优先 `agent_file` 引用已安装资源（通过 §0 资源发现查询 registry.json），避免重写 system prompt。
 - 通知一律走 `providers + channels + notify hook`，禁止在 bash 节点里硬编码 `hermes send`。
 - 节点失败用 `__status: "failed"` 标记，**不要用 `exit 1`**。
 - 字符串字面量在 outputs 中需二次引号：`"$vars.x": '"hello"'`。

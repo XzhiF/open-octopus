@@ -18,7 +18,7 @@ export async function installResourceViaApi(
     const res = await ctx.post(
       `${resolveApiBase()}/api/resources/install`,
       {
-        data: { ref, scope: "org" },
+        data: { ref },
         headers: { "Content-Type": "application/json" },
       },
     )

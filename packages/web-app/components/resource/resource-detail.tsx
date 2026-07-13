@@ -197,10 +197,6 @@ export function ResourceDetail() {
             <span className="text-muted-foreground">安装时间</span>
             <span className="ml-1.5 font-medium">{new Date(entry.installedAt).toLocaleDateString("zh-CN")}</span>
           </div>
-          <div>
-            <span className="text-muted-foreground">范围</span>
-            <span className="ml-1.5 font-medium">{entry.scope}</span>
-          </div>
           {entry.dependsOn && entry.dependsOn.length > 0 && (
             <div className="flex items-center gap-1.5">
               <span className="text-muted-foreground">依赖</span>

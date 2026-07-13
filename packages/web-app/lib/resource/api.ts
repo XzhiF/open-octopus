@@ -64,7 +64,7 @@ export async function installResource(ref: string): Promise<InstallResponse> {
   const res = await apiFetch(`${base()}/install`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ ref, scope: "org", caller: "ui" }),
+    body: JSON.stringify({ ref, caller: "ui" }),
   })
   return handleResponse<InstallResponse>(res)
 }

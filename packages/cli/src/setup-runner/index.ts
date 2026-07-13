@@ -1164,7 +1164,6 @@ export class SetupRunner {
         const result = await manager.installOrUpgrade({
           ref: `builtin:${resource.name}`,
           type: resource.type,
-          scope: "org",
           caller: "cli",
         })
         if (result.status === "installed" || result.status === "installed_but_unverified") {
