@@ -55,7 +55,7 @@ export interface SwarmCompleteEvent {
   }
 }
 
-export type SwarmMode = "review" | "debate" | "dispatch" | "swarm"
+export type SwarmMode = "review" | "debate" | "dispatch" | "swarm" | "moa"
 export type ExpertStatus = "running" | "completed" | "failed" | "skipped" | "budget_exceeded" | "pending"
 export type SwarmStatus = "initializing" | "running" | "completed" | "failed"
 

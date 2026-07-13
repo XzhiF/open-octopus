@@ -1152,7 +1152,6 @@ export class SetupRunner {
     }
 
     const manager = new ResourceManager({
-      org: this.org,
       corePackBase: this.corePackPath,
     })
 
@@ -1166,6 +1165,7 @@ export class SetupRunner {
           ref: `builtin:${resource.name}`,
           type: resource.type,
           scope: "org",
+          caller: "cli",
         })
         if (result.status === "installed" || result.status === "installed_but_unverified") {
           // Check if this was an upgrade or fresh install by looking at the timestamp
@@ -1182,6 +1182,13 @@ export class SetupRunner {
     }
 
     console.log(`  Installed ${installed} new, upgraded ${upgraded} core-pack resources`)
+
+    // Copy workflow-schema.json to ~/.octopus/workflow-schema.json
+    const schemaSrc = join(this.corePackPath, "workflows", "workflow-schema.json")
+    if (existsSync(schemaSrc)) {
+      const schemaDst = join(this.globalDir, "workflow-schema.json")
+      copyFileSync(schemaSrc, schemaDst)
+    }
   }
 
   private findPresetsPath(): string | null {

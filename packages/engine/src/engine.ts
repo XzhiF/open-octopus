@@ -87,6 +87,8 @@ export class WorkflowEngine {
   private workflowDefaultModel?: string
   // Precompute hook: runs before node execution to populate VarPool with knowledge data
   private precomputeHook?: (pool: VarPool, workflowName: string, inputs: Record<string, string>) => Promise<void>
+  // Dynamic agent resolver for swarm nodes
+  private agentResolver?: (topic: string, maxExperts: number) => Promise<Array<{ role: string; agent_file: string; description: string }>>
   // Pipeline integration (set via setPipelineConfig)
   private pipelineConfig?: PipelineConfig
   private retryResolver?: RetryPolicyResolver
@@ -115,6 +117,8 @@ export class WorkflowEngine {
     promptInjector?: PromptInjector,
     precomputeHook?: (pool: VarPool, workflowName: string, inputs: Record<string, string>) => Promise<void>,
     knowledgeInjectorFactory?: (pool: VarPool) => KnowledgeInjector,
+    /** Dynamic agent resolver for swarm nodes: selects and installs agents from ResourceManager */
+    agentResolver?: (topic: string, maxExperts: number) => Promise<Array<{ role: string; agent_file: string; description: string }>>,
   ) {
     this.pool = new VarPool(workflow.variables ?? {})
 
@@ -163,6 +167,7 @@ export class WorkflowEngine {
     this.promptInjector = promptInjector
     this.precomputeHook = precomputeHook
     this.knowledgeInjectorFactory = knowledgeInjectorFactory
+    this.agentResolver = agentResolver
 
     // Load model alias config (P0-2: tier resolution for engine/model fields)
     this.modelAliasConfig = loadModelAliasConfig({
@@ -1410,6 +1415,7 @@ export class WorkflowEngine {
           },
           this.modelAliasConfig,
           this.workflow.engine,
+          this.agentResolver,
         )
       default:
         throw new Error(`Unknown node type: ${(node as any).type}`)

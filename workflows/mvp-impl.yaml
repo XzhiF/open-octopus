@@ -1,0 +1,1267 @@
+# yaml-language-server: $schema=./workflow-schema.json
+apiVersion: octopus/v1
+kind: Workflow
+name: mvp-impl
+description: >
+  MVP Impl — 消费 mvp-doc 产出，按架构类型智能路由实现路径，通过 E2E 验证后交付 PR。
+  智能路由: monolith (单体) / split-code (前后端分离) / config-only (配置) / yaml-workflow (工作流)。
+  流程: Setup → Plan → Challenge → Route → Implement → Review+Fix → E2E → Ship。
+  特性: FR-XXX 追溯链贯穿全程，TDD 任务结构 (INIT/TEST/IMPL) 驱动实现顺序。
+  E2E 阶段: 7 步循环 + 7 子代理 + MVP 完整度评估 + 反假跑验证。
+
+model: pro-max
+engine: claude
+execution_mode: auto
+max_concurrent: 3
+timeout: 86400
+
+inputs:
+  mvp_dir:
+    description: "mvp-doc 产出目录路径。链式执行时自动从 mvp-doc 获取；独立运行时自动检测最新 ai-docs/mvp-*/ 目录。"
+    required: false
+    default: "$parent.var_pool.output_dir"
+  base_branch:
+    description: "PR 目标分支"
+    required: false
+    default: "main"
+  enable_adversarial:
+    description: "开启 Plan 阶段对抗审查（可行性审查 + 修正）"
+    required: false
+    default: "true"
+  run_e2e:
+    description: "是否运行 E2E 验收测试"
+    required: false
+    default: "true"
+  mvp_threshold:
+    description: "MVP 完整度阈值（0-100），Review 阶段对照 FR-XXX 评估"
+    required: false
+    default: "95"
+  e2e_fix_rounds:
+    description: "E2E 测试失败后的最大修复轮数"
+    required: false
+    default: "3"
+
+variables:
+  # ── mvp-doc 文件路径 (Setup 填充) ──
+  mvp_dir: ""
+  prd_file: ""
+  features_file: ""
+  detect_file: ""
+  readme_file: ""
+
+  # ── 检测到的特征 (Setup 从 detect.md 读取) ──
+  arch_type: ""
+  has_ui: "false"
+  has_ux: "false"
+  has_data_model: "false"
+  has_api: "false"
+  tech_stack: ""
+  features_list: ""
+
+  # ── Feature 文件路径 ──
+  feature_dirs: ""
+
+  # ── 环境 ──
+  projects: ""
+  pkg_manager: ""
+  branch: ""
+  display_name: "MVP Impl"
+  notify_target: "telegram:xzf_hermes"
+
+  # ── 产出 ──
+  plan_file: ""
+  contract_file: ""
+  conclusion: ""
+  output_dir: ""
+
+  # ── Review ──
+  review_blockers: "0"
+  review_issues: ""
+  mvp_score: "0"
+  mvp_passed: "false"
+  integration_passed: "false"
+
+  # ── E2E ──
+  e2e_cases_file: ""
+  e2e_worktree: ""
+  e2e_port: ""
+  e2e_passed: "false"
+  e2e_summary: ""
+  e2e_results: ""
+  e2e_total: "0"
+  e2e_p0_count: "0"
+  e2e_p1_count: "0"
+  e2e_fail_count: "0"
+  e2e_fix_rounds: "0"
+  mvp_rounds: "0"
+  mvp_missing: ""
+
+  # ── Ship ──
+  pr_urls: ""
+  pr_count: "0"
+
+  # ── 全局规则 ──
+  workspace_rules: |
+    ## 工作空间规范
+    - 当前 cwd 是 octopus 聚合工作空间，不是单个 git 仓库
+    - 项目在 ./projects/ 目录下，每个是独立的 git worktree
+    - git 命令必须在具体项目目录内执行
+    - **所有项目级命令必须在对应项目目录内执行**:
+      - 构建/测试/启动/安装依赖等命令必须 cd 到 ./projects/{项目名}/ 再执行
+      - 禁止在 workspace 根目录执行 pnpm dev / pnpm build 等项目命令
+      - 示例: `cd projects/xzf-octopus && pnpm dev`
+
+auto_answers:
+  - pattern: ".*"
+    answer: "proceed"
+
+# ── Notify 子系统 ──
+providers:
+  hermes-cli:
+    type: hermes
+    timeout: 30
+    min_severity: info
+
+channels:
+  default:
+    provider: hermes-cli
+    target: "telegram:xzf_hermes"
+
+hooks:
+  on_workflow_failure:
+    - id: notify-failure
+      type: notify
+      channel: default
+      template:
+        severity: error
+        title: "❌ $vars.display_name — 工作流失败"
+        body: "📂 项目: $vars.projects | 🌿 $vars.branch\n🔴 失败节点: ${hook.failed_node_id | default:unknown}\n⏱️ 已运行: ${hook.total_duration_ms | duration}\n\n💡 错误: ${hook.error | default:Unknown error}"
+
+  on_interrupt:
+    - id: notify-interrupt
+      type: bash
+      timeout: 30
+      bash: |
+        DISPLAY_NAME="${vars.display_name:-MVP Impl}"
+        hermes send -t "$vars.notify_target" -q "⚠️ $DISPLAY_NAME — 工作流被中断
+        📂 项目: ${vars.projects:-unknown} | 🌿 ${vars.branch:-unknown}
+        🔧 原因: ${hook.interrupt_reason:-unknown}" 2>&1 || echo "WARN: hermes send failed"
+
+  on_cancel:
+    - id: notify-cancel
+      type: bash
+      timeout: 30
+      bash: |
+        hermes send -t "$vars.notify_target" -q "🛑 ${vars.display_name:-MVP Impl} — 工作流已取消" 2>&1 || echo "WARN: hermes send failed"
+
+  on_complete:
+    - id: notify-complete
+      type: notify
+      channel: default
+      template:
+        severity: info
+        title: "🏁 $vars.display_name — 工作流完成"
+        body: "状态: $hook.final_status\n✅ 完成: $hook.completed_count/$hook.total_count\n⏱️ 总耗时: ${hook.total_duration_ms | duration}"
+
+  on_node_success:
+    - id: notify-setup
+      type: notify
+      nodes: [setup]
+      channel: default
+      template:
+        severity: info
+        title: "🚀 $vars.display_name 启动"
+        body: "📂 MVP: $vars.mvp_dir\n🏷️ 架构: $vars.arch_type\n📦 技术栈: $vars.tech_stack\n📋 Features: $vars.features_list"
+
+    - id: notify-plan
+      type: notify
+      nodes: [plan]
+      channel: default
+      template:
+        severity: info
+        title: "📋 $vars.display_name — Plan 完成"
+        body: "🏷️ 架构: $vars.arch_type\n📄 计划: $vars.plan_file\n\n💡 $vars.conclusion"
+
+    - id: notify-challenge-plan
+      type: notify
+      nodes: [challenge-plan]
+      channel: default
+      condition: '$inputs.enable_adversarial == "true"'
+      template:
+        severity: info
+        title: "😈 $vars.display_name — Challenge Plan 完成"
+        body: "💡 $vars.conclusion"
+
+    - id: notify-refine-plan
+      type: notify
+      nodes: [refine-plan]
+      channel: default
+      condition: '$inputs.enable_adversarial == "true"'
+      template:
+        severity: info
+        title: "✏️ $vars.display_name — Refine Plan 完成"
+        body: "💡 $vars.conclusion"
+
+    - id: notify-implement
+      type: notify
+      nodes: [implement]
+      channel: default
+      template:
+        severity: info
+        title: "⚙️ $vars.display_name — Implement 完成"
+        body: "🏷️ 架构: $vars.arch_type\n📂 项目: $vars.projects\n\n💡 $vars.conclusion"
+
+    - id: notify-contract
+      type: notify
+      nodes: [contract]
+      channel: default
+      template:
+        severity: info
+        title: "📜 $vars.display_name — API 契约完成"
+        body: "📄 $vars.contract_file\n\n💡 $vars.conclusion"
+
+    - id: notify-backend
+      type: notify
+      nodes: [backend]
+      channel: default
+      template:
+        severity: info
+        title: "🏗️ $vars.display_name — Backend 完成"
+        body: "💡 $vars.conclusion"
+
+    - id: notify-frontend
+      type: notify
+      nodes: [frontend]
+      channel: default
+      template:
+        severity: info
+        title: "🎨 $vars.display_name — Frontend 完成"
+        body: "💡 $vars.conclusion"
+
+    - id: notify-integrate
+      type: notify
+      nodes: [integrate]
+      channel: default
+      template:
+        severity: info
+        title: "🔗 $vars.display_name — 集成验证通过"
+        body: "💡 $vars.conclusion"
+
+    - id: notify-review
+      type: notify
+      nodes: [review]
+      channel: default
+      template:
+        severity: info
+        title: "🔍 $vars.display_name — Review 完成"
+        body: "🚫 Blockers: $vars.review_blockers\n📊 MVP: $vars.mvp_score%\n\n💡 $vars.conclusion"
+
+    - id: notify-e2e-cases
+      type: notify
+      nodes: [e2e-case-gen]
+      channel: default
+      template:
+        severity: info
+        title: "🧪 $vars.display_name — E2E 用例生成"
+        body: "📊 总计: $vars.e2e_total (P0: $vars.e2e_p0_count)"
+
+    - id: notify-e2e-pass
+      type: notify
+      nodes: [e2e-assurance]
+      channel: default
+      template:
+        severity: info
+        title: "✅ $vars.display_name — E2E 通过"
+        body: "📊 $vars.e2e_summary"
+
+    - id: notify-ship
+      type: notify
+      nodes: [ship]
+      channel: default
+      template:
+        severity: info
+        title: "🚀 $vars.display_name — PR 已创建"
+        body: "📊 PR 数量: $vars.pr_count\n🔗 $vars.pr_urls"
+
+nodes:
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 0: Setup — 环境准备 + MVP Doc 验证
+  # ═══════════════════════════════════════════════════════════════
+  - id: setup
+    type: agent
+    timeout: 900
+    prompt: |
+      你正在执行 MVP Impl 工作流的环境准备阶段。
+
+      $vars.workspace_rules
+
+      ## 输入
+      - MVP Doc 目录: $inputs.mvp_dir
+
+      ## 你的任务
+
+      ### 1. 安装 superpowers-zh 技能
+      ```bash
+      npx superpowers-zh@latest --tool claude --force 2>&1 | head -5
+      ```
+
+      ### 2. 安装 agency-agents-zh 代理
+      ```bash
+      AGENTS_TARGET="$(pwd)/.claude/agents"
+      mkdir -p "$AGENTS_TARGET"
+
+      NEED_CLONE=false
+      for agent in engineering-software-architect engineering-code-reviewer engineering-security-engineer engineering-backend-architect engineering-database-optimizer engineering-frontend-developer design-ui-designer testing-api-tester testing-evidence-collector testing-reality-checker; do
+        if [ ! -f "$AGENTS_TARGET/$agent.md" ]; then
+          NEED_CLONE=true
+          break
+        fi
+      done
+
+      if [ "$NEED_CLONE" = "true" ]; then
+        DEPS_DIR="$(pwd)/dependencies"
+        mkdir -p "$DEPS_DIR"
+        if [ ! -d "$DEPS_DIR/agency-agents-zh" ]; then
+          git clone --depth 1 https://github.com/jnMetaCode/agency-agents-zh.git "$DEPS_DIR/agency-agents-zh" 2>&1
+        fi
+        REPO="$DEPS_DIR/agency-agents-zh"
+
+        for f in software-architect code-reviewer security-engineer backend-architect database-optimizer; do
+          [ -f "$REPO/engineering/engineering-$f.md" ] && cp "$REPO/engineering/engineering-$f.md" "$AGENTS_TARGET/"
+        done
+        for f in frontend-developer; do
+          [ -f "$REPO/engineering/engineering-$f.md" ] && cp "$REPO/engineering/engineering-$f.md" "$AGENTS_TARGET/"
+        done
+        for f in ui-designer; do
+          [ -f "$REPO/design/design-$f.md" ] && cp "$REPO/design/design-$f.md" "$AGENTS_TARGET/"
+        done
+        for f in api-tester evidence-collector reality-checker; do
+          [ -f "$REPO/testing/testing-$f.md" ] && cp "$REPO/testing/testing-$f.md" "$AGENTS_TARGET/"
+        done
+
+        INSTALLED=$(ls "$AGENTS_TARGET"/*.md 2>/dev/null | wc -l)
+        echo "Installed $INSTALLED agents"
+      fi
+      ```
+
+      ### 3. 安装 devil-advocate（core-pack 内置）
+      ```bash
+      AGENTS_TARGET="$(pwd)/.claude/agents"
+      COREPACK_AGENTS=""
+      for d in \
+        "$(pwd)/.octopus/core-pack/agents" \
+        "$(pwd)/packages/core-pack/agents" \
+        "$(pwd)/../core-pack/agents"; do
+        if [ -f "$d/devil-advocate.md" ]; then
+          COREPACK_AGENTS="$d"
+          break
+        fi
+      done
+      if [ -n "$COREPACK_AGENTS" ]; then
+        cp "$COREPACK_AGENTS/devil-advocate.md" "$AGENTS_TARGET/"
+        [ -f "$COREPACK_AGENTS/vision-analyzer.md" ] && cp "$COREPACK_AGENTS/vision-analyzer.md" "$AGENTS_TARGET/"
+        echo "Installed devil-advocate + vision-analyzer"
+      fi
+      ```
+
+      ### 4. 定位 MVP Doc 目录
+      ```bash
+      MVP_DIR="$inputs.mvp_dir"
+
+      # 如果为空或 $parent 引用未解析，自动检测最新
+      if [ -z "$MVP_DIR" ] || echo "$MVP_DIR" | grep -q '\$parent'; then
+        MVP_DIR=$(ls -dt ./ai-docs/mvp-*/ 2>/dev/null | head -1)
+        if [ -z "$MVP_DIR" ]; then
+          echo "ERROR: 找不到 ai-docs/mvp-*/ 目录"
+          echo '{"vars_update":{"__status":"failed","conclusion":"找不到 MVP Doc 目录"}}'
+          exit 1
+        fi
+        MVP_DIR="${MVP_DIR%/}"
+      fi
+
+      # 验证必要文件
+      for f in PRD.md FEATURES.md 01-detect.md README.md; do
+        if [ ! -f "$MVP_DIR/$f" ]; then
+          echo "WARNING: $MVP_DIR/$f 不存在"
+        fi
+      done
+
+      echo "MVP Dir: $MVP_DIR"
+      ```
+
+      ### 5. 读取 detect.md 提取特征标志
+      读取 `$MVP_DIR/01-detect.md`，提取:
+      - arch_type
+      - has_ui, has_ux, has_data_model, has_api
+      - tech_stack_detected
+      - features_detected
+
+      ### 6. 枚举 Feature 目录
+      ```bash
+      FEATURE_DIRS=$(find "$MVP_DIR/features" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort | tr '\n' ',' | sed 's/,$//')
+      echo "Feature dirs: $FEATURE_DIRS"
+      ```
+
+      ### 7. 检测项目环境
+      ```bash
+      # 检测项目结构
+      if [ -d "projects" ]; then
+        PROJECTS=$(ls projects/ | tr '\n' ',' | sed 's/,$//')
+        PKG_MANAGER="pnpm"
+      elif [ -f "package.json" ]; then
+        PROJECTS=$(basename $(pwd))
+        PKG_MANAGER=$(cat package.json | grep -o '"packageManager"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | grep -o '[^"]*$' | cut -d@ -f1 || echo "npm")
+      else
+        PROJECTS=$(basename $(pwd))
+        PKG_MANAGER="unknown"
+      fi
+
+      BRANCH=$(git branch --show-current 2>/dev/null || echo "main")
+      ```
+
+      ### 8. 创建输出目录
+      ```bash
+      OUTPUT_DIR="./docs/mvp-impl-$(date +%s | tail -c 6)"
+      mkdir -p "$OUTPUT_DIR"
+      ```
+
+      ## 输出
+      直接输出纯 JSON 行:
+      {"vars_update":{"mvp_dir":"<MVP_DIR>","prd_file":"<MVP_DIR>/PRD.md","features_file":"<MVP_DIR>/FEATURES.md","detect_file":"<MVP_DIR>/01-detect.md","readme_file":"<MVP_DIR>/README.md","arch_type":"<from detect.md>","has_ui":"<from detect.md>","has_ux":"<from detect.md>","has_data_model":"<from detect.md>","has_api":"<from detect.md>","tech_stack":"<from detect.md>","features_list":"<from detect.md>","feature_dirs":"<FEATURE_DIRS>","projects":"<PROJECTS>","pkg_manager":"<PKG_MANAGER>","branch":"<BRANCH>","display_name":"MVP Impl","output_dir":"<OUTPUT_DIR>","conclusion":"环境准备完成，arch_type=<type>"}}
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 1: Plan — 统一实现计划
+  # ═══════════════════════════════════════════════════════════════
+  - id: plan
+    type: agent
+    depends_on: [setup]
+    timeout: 86400
+    prompt: |
+      你是实现计划编排者。读取 mvp-doc 的所有产出，生成统一的实现计划。
+
+      $vars.workspace_rules
+
+      ## MVP Doc 目录
+      $vars.mvp_dir
+
+      ## 架构类型
+      $vars.arch_type
+
+      ## Feature 目录
+      $vars.feature_dirs
+
+      ## 技术栈
+      $vars.tech_stack
+
+      ## 你的任务
+
+      ### 1. 读取所有文档
+      按以下顺序读取:
+      1. `$vars.prd_file` — PRD（MVP 范围和优先级）
+      2. `$vars.features_file` — Feature 索引
+      3. `$vars.detect_file` — 智能检测结果
+      4. `$vars.readme_file` — Code Map + 追溯矩阵
+      5. 每个 feature 的 `spec.md`, `plan.md`, `tasks.md`
+      6. 如果存在: `ux.md`, `ui.md`, `data-model.md`, `contracts/`
+
+      ### 2. 生成实现计划
+      保存到 `$vars.output_dir/plan.md`:
+
+      ```markdown
+      # Implementation Plan
+
+      ## Architecture: {arch_type}
+      ## Tech Stack: {tech_stack}
+
+      ## Implementation Order
+
+      ### Sprint 1: INIT Tasks (所有 feature 的基础设施)
+      从各 feature 的 tasks.md 提取 INIT-XXX 任务
+
+      ### Sprint 2: TDD Cycles (按 FR-XXX 优先级)
+      按 Must Have → Should Have 排序:
+      - FR-001 (Must): TEST-001 → IMPL-001
+      - FR-002 (Must): TEST-002 → IMPL-002
+      ...
+
+      ### Sprint 3: CHK Tasks (集成验证)
+      从各 feature 的 tasks.md 提取 CHK-XXX 任务
+
+      ## Routing
+      - arch_type: {arch_type}
+      - 如果 split-code: Contract → Backend ∥ Frontend → Integrate
+      - 如果 monolith: 单一 implement 节点
+      - 如果 config-only: 仅生成配置
+      - 如果 yaml-workflow: 生成 YAML + validate
+      ```
+
+      ### 3. 架构适配
+      - **monolith**: 按 feature 顺序线性实现，每个 feature 的 INIT→TEST→IMPL→CHK
+      - **split-code**: 先定义 API 契约（从 contracts/），再并行 Backend + Frontend
+      - **config-only**: 按 feature 生成配置文件 + 验证
+      - **yaml-workflow**: 按 feature 生成工作流 YAML + octopus workflow validate
+
+      ## 输出
+      直接输出纯 JSON 行:
+      {"vars_update":{"plan_file":"$vars.output_dir/plan.md","conclusion":"<2-3句话: 计划概述>"}}
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 1.5: Challenge Plan — 对抗审查
+  # ═══════════════════════════════════════════════════════════════
+  - id: challenge-plan
+    type: agent
+    depends_on: [plan]
+    timeout: 3600
+    execute_when: '$inputs.enable_adversarial == "true"'
+    agents:
+      feasibility-reviewer:
+        description: "可行性审查者 — 评估实现计划的技术可行性"
+        agent_file: ".claude/agents/engineering-software-architect.md"
+        model: pro-max
+        tools: ["Read", "Grep", "Glob"]
+    prompt: |
+      你是 Plan 阶段的对抗审查者。
+
+      ## 实现计划
+      $vars.plan_file
+
+      ## 架构类型
+      $vars.arch_type
+
+      ## 你的任务
+      委派 feasibility-reviewer 审查实现计划:
+      1. 任务依赖关系是否正确？
+      2. 技术栈选择是否合理？
+      3. 有没有遗漏的关键步骤？
+      4. 路由策略是否匹配 arch_type？
+      5. FR-XXX → TEST-XXX → IMPL-XXX 追溯链是否完整？
+
+      ## 输出
+      直接输出纯 JSON 行:
+      {"vars_update":{"conclusion":"<2-3句话: 审查发现>"}}
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 1.5: Refine Plan — 应用审查反馈
+  # ═══════════════════════════════════════════════════════════════
+  - id: refine-plan
+    type: agent
+    depends_on: [challenge-plan]
+    timeout: 3600
+    execute_when: '$inputs.enable_adversarial == "true"'
+    prompt: |
+      根据对抗审查反馈修正实现计划。
+
+      ## 当前计划
+      $vars.plan_file
+
+      ## 审查发现
+      $vars.conclusion
+
+      ## 你的任务
+      1. 分析审查发现
+      2. 修正计划中的问题
+      3. 更新 $vars.plan_file
+
+      ## 输出
+      直接输出纯 JSON 行:
+      {"vars_update":{"conclusion":"<2-3句话: 修正了什么>"}}
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 2: Implement — 单体/配置/YAML 实现
+  # ═══════════════════════════════════════════════════════════════
+  - id: implement
+    type: agent
+    depends_on: [refine-plan]
+    timeout: 86400
+    execute_when: '$vars.arch_type != "split-code"'
+    agents:
+      code-quality-advisor:
+        description: "代码质量顾问 — 实时质量建议"
+        agent_file: ".claude/agents/engineering-code-reviewer.md"
+        model: pro
+        tools: ["Read", "Grep", "Glob"]
+    prompt: |
+      你是 MVP 实现者。按实现计划和 TDD 任务顺序实现所有功能。
+
+      $vars.workspace_rules
+
+      ## 实现计划
+      $vars.plan_file
+
+      ## 架构类型
+      $vars.arch_type
+
+      ## Feature 目录
+      $vars.feature_dirs
+
+      ## MVP Doc 目录
+      $vars.mvp_dir
+
+      ## 技术栈
+      $vars.tech_stack
+
+      ## 执行顺序
+
+      ### Sprint 1: INIT Tasks
+      读取每个 feature 的 `tasks.md`，执行所有 INIT-XXX 任务:
+      - 搭建项目结构
+      - 安装依赖
+      - 配置数据库/环境
+      - 创建配置文件
+
+      ### Sprint 2: TDD Cycles
+      按 FR-XXX 优先级（Must Have 先）:
+      1. 先写 TEST（RED）— 测试必须失败
+      2. 再写 IMPL（GREEN）— 最小实现让测试通过
+      3. 每个 TEST→IMPL 循环后 git commit
+
+      ### Sprint 3: CHK Tasks
+      集成验证:
+      - 运行所有测试确认通过
+      - 检查 FR-XXX 覆盖率
+      - 安全审计（如适用）
+
+      ## 关键规则
+      - 无人值守模式
+      - 发现问题直接修复
+      - 一次性完成所有计划中的交付物
+      - 可委派 code-quality-advisor 检查质量
+      - 每完成一个 TEST→IMPL 循环就 git commit（原子提交）
+      - config-only: 生成配置 + 验证语法
+      - yaml-workflow: 生成 YAML + octopus workflow validate
+
+      ## 完成后
+      1. pnpm build / npm run build / 项目构建命令
+      2. pnpm test / npm test / 项目测试命令
+      3. 确保构建和测试都通过
+
+      ## 输出
+      直接输出纯 JSON 行:
+      {"vars_update":{"conclusion":"<2-3句话: 实现了什么>"}}
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 2 (split-code): Contract → Backend ∥ Frontend → Integrate
+  # ═══════════════════════════════════════════════════════════════
+  - id: contract
+    type: agent
+    depends_on: [refine-plan]
+    timeout: 1800
+    execute_when: '$vars.arch_type == "split-code"'
+    agents:
+      backend-architect:
+        description: "后端架构师 — 定义 API 契约和共享类型"
+        agent_file: ".claude/agents/engineering-backend-architect.md"
+        model: pro-max
+        tools: ["Read", "Write", "Grep", "Glob"]
+    prompt: |
+      读取 MVP 文档中的 API 契约定义，生成/确认 API 契约文件。
+
+      ## MVP Doc 目录
+      $vars.mvp_dir
+
+      ## 实现计划
+      $vars.plan_file
+
+      ## Feature 目录
+      $vars.feature_dirs
+
+      ## 你的任务
+      1. 读取每个 feature 的 `contracts/` 目录（如果存在）
+      2. 读取每个 feature 的 `spec.md` 中的 API 相关 FR-XXX
+      3. 生成统一的 API 契约文件: `$vars.output_dir/api-contract.md`
+         - 每个 API 端点的完整签名 (method, path, request, response, errors)
+         - 共享类型定义
+         - 数据模型（从 data-model.md 提取）
+
+      ## 输出
+      直接输出纯 JSON 行:
+      {"vars_update":{"contract_file":"$vars.output_dir/api-contract.md","conclusion":"<2-3句话>"}}
+
+  - id: backend
+    type: agent
+    depends_on: [contract]
+    timeout: 86400
+    context: new
+    execute_when: '$vars.arch_type == "split-code"'
+    agents:
+      backend-architect:
+        description: "后端架构师 — 实现 API、数据库、服务层"
+        agent_file: ".claude/agents/engineering-backend-architect.md"
+        model: pro-max
+        tools: ["Read", "Write", "Edit", "Bash", "Grep", "Glob"]
+      database-optimizer:
+        description: "数据库优化师 — Schema 设计、查询优化"
+        agent_file: ".claude/agents/engineering-database-optimizer.md"
+        model: pro
+        tools: ["Read", "Write", "Edit", "Bash", "Grep", "Glob"]
+    prompt: |
+      你是后端实现者。按 API 契约和 tasks.md 的 TDD 顺序实现所有后端任务。
+
+      $vars.workspace_rules
+
+      ## API 契约
+      $vars.contract_file
+
+      ## 实现计划
+      $vars.plan_file
+
+      ## MVP Doc 目录
+      $vars.mvp_dir
+
+      ## 执行顺序
+      1. 读取每个 feature 的 tasks.md
+      2. 执行 INIT 任务（后端部分）
+      3. 按 FR-XXX 优先级执行 TDD 循环
+      4. 完成后: pnpm build + pnpm test
+
+      ## 完成后
+      构建和测试必须通过。
+
+      ## 输出
+      直接输出纯 JSON 行:
+      {"vars_update":{"conclusion":"<2-3句话>"}}
+
+  - id: frontend
+    type: agent
+    depends_on: [contract]
+    timeout: 86400
+    context: new
+    execute_when: '$vars.arch_type == "split-code"'
+    agents:
+      frontend-developer:
+        description: "前端开发者 — React/Next.js UI 实现"
+        agent_file: ".claude/agents/engineering-frontend-developer.md"
+        model: pro-max
+        tools: ["Read", "Write", "Edit", "Bash", "Grep", "Glob"]
+      ui-designer:
+        description: "UI 设计师 — 设计系统、组件库"
+        agent_file: ".claude/agents/design-ui-designer.md"
+        model: pro
+        tools: ["Read", "Write", "Edit", "Grep", "Glob"]
+    prompt: |
+      你是前端实现者。按 API 契约和 tasks.md 的 TDD 顺序实现所有前端任务。
+
+      $vars.workspace_rules
+
+      ## API 契约
+      $vars.contract_file
+
+      ## 实现计划
+      $vars.plan_file
+
+      ## MVP Doc 目录
+      $vars.mvp_dir
+
+      ## 执行顺序
+      1. 读取每个 feature 的 tasks.md 和 ui.md（如果存在）
+      2. 执行 INIT 任务（前端部分）
+      3. 按 FR-XXX 优先级执行 TDD 循环
+      4. 完成后: pnpm build 验证类型检查通过
+
+      ## 完成后
+      构建必须通过。
+
+      ## 输出
+      直接输出纯 JSON 行:
+      {"vars_update":{"conclusion":"<2-3句话>"}}
+
+  - id: integrate
+    type: agent
+    depends_on: [backend, frontend]
+    timeout: 3600
+    execute_when: '$vars.arch_type == "split-code"'
+    agents:
+      software-architect:
+        description: "软件架构师 — 验证前后端集成完整性"
+        agent_file: ".claude/agents/engineering-software-architect.md"
+        model: pro-max
+        tools: ["Bash", "Read", "Write", "Edit", "Grep", "Glob"]
+    prompt: |
+      前后端并行实现已完成。验证集成完整性。
+
+      $vars.workspace_rules
+
+      ## API 契约
+      $vars.contract_file
+
+      ## 验证清单
+      1. pnpm build — 编译通过？
+      2. pnpm test — 测试通过？
+      3. 前后端 API 签名与契约一致？
+      4. 共享类型文件完整？
+
+      ## 修复
+      发现不一致 → 分类 → 直接修复 → 重新 pnpm build + pnpm test
+
+      ## 输出
+      验证全部通过:
+      {"vars_update":{"integration_passed":"true","conclusion":"集成验证通过"}}
+
+      验证失败且无法修复:
+      {"vars_update":{"integration_passed":"false","__status":"failed","conclusion":"集成验证失败: <原因>"}}
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 3: Review + Fix
+  # ═══════════════════════════════════════════════════════════════
+  - id: review
+    type: agent
+    depends_on: [implement, integrate]
+    timeout: 7200
+    agents:
+      code-reviewer:
+        description: "独立代码审查员"
+        agent_file: ".claude/agents/engineering-code-reviewer.md"
+        model: pro-max
+        tools: ["Bash", "Read", "Grep", "Glob"]
+      security-engineer:
+        description: "安全工程师"
+        agent_file: ".claude/agents/engineering-security-engineer.md"
+        model: pro-max
+        tools: ["Bash", "Read", "Grep", "Glob"]
+      mvp-assessor:
+        description: "MVP 完整性评估员 — 对照 FR-XXX 追溯链评估"
+        prompt: |
+          对照 $vars.prd_file 和 $vars.features_file 的 MoSCoW 优先级评估实现完整度。
+
+          评估维度:
+          1. **Must Have FR 覆盖率** — 每个 Must Have FR-XXX 是否有对应 IMPL-XXX？
+          2. **Should Have FR 覆盖率** — Should Have FR-XXX 覆盖了多少？
+          3. **验收标准匹配** — 实现的代码是否能通过 Given/When/Then 验收？
+          4. **Non-Goals 遵守** — 是否误实现了 Won't Have 的内容？
+          5. **追溯链完整性** — FR→TEST→IMPL→CHK 链是否完整？
+
+          输出:
+          - MVP 完整度 0-100%
+          - 每个 FR-XXX 的覆盖状态（✅/❌）
+          - 缺失 FR 清单（具体到 FR-XXX ID 和修复方式）
+        model: pro-max
+        tools: ["Bash", "Read", "Grep", "Glob"]
+    prompt: |
+      你是审查协调者。你有 3 个子代理。
+
+      $vars.workspace_rules
+
+      ## 审查基准
+      - 实现计划: $vars.plan_file
+      - PRD: $vars.prd_file
+      - Features: $vars.features_file
+      - Code Map: $vars.readme_file
+      - 架构类型: $vars.arch_type
+
+      ## 工作流
+      1. 委派 code-reviewer: "审查代码变更，对照 $vars.plan_file"
+      2. 委派 security-engineer: "安全审查"（config-only/yaml-workflow 可跳过）
+      3. 委派 mvp-assessor: "对照 $vars.prd_file 和 $vars.features_file 评估 MVP 完整度"
+      4. 汇总报告
+
+      ## MVP Score 计算
+      - 统计 PRD 中 Must Have FR-XXX 总数
+      - 检查每个 FR 是否有对应的实现代码
+      - mvp_score = (已实现的 FR / 总 FR) × 100
+      - mvp_passed = mvp_score >= $inputs.mvp_threshold
+
+      ## 输出
+      直接输出纯 JSON 行:
+      {"vars_update":{"review_blockers":"<数量>","review_issues":"<汇总>","mvp_score":"<0-100>","mvp_passed":"<score >= threshold>","conclusion":"<2-3句话>"}}
+
+  - id: review-fix
+    type: agent
+    depends_on: [review]
+    timeout: 7200
+    context: new
+    execute_when: '$vars.review_blockers != "0"'
+    prompt: |
+      审查发现了 BLOCKER 问题，需要修复。
+
+      $vars.workspace_rules
+
+      ## 审查发现
+      $vars.review_issues
+
+      ## BLOCKER 数量
+      $vars.review_blockers
+
+      ## MVP Score
+      $vars.mvp_score%
+
+      ## 自循环（最多 3 轮）
+      1. 分析根因 → 修复 → pnpm build/test 验证
+      2. 仍有 BLOCKER → 继续（最多 3 轮）
+      3. 每轮修复后重新评估 mvp_score
+
+      ## 输出
+      直接输出纯 JSON 行:
+      {"vars_update":{"review_blockers":"<剩余>","mvp_score":"<更新后>","conclusion":"<2-3句话>"}}
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 4-5: E2E
+  # ═══════════════════════════════════════════════════════════════
+  - id: e2e-case-gen
+    type: agent
+    depends_on: [review-fix, integrate, implement]
+    timeout: 3600
+    execute_when: '$inputs.run_e2e == "true"'
+    agents:
+      api-tester:
+        description: "API 测试架构师 — 从 FR-XXX Given/When/Then 生成测试用例"
+        agent_file: ".claude/agents/testing-api-tester.md"
+        model: pro
+        tools: ["Read", "Write", "Edit", "Grep", "Glob"]
+    prompt: |
+      从 MVP 文档的 spec.md 生成结构化 E2E 测试用例，每个用例追溯到 FR-XXX。
+
+      ## Feature 目录
+      $vars.feature_dirs
+
+      ## MVP Doc 目录
+      $vars.mvp_dir
+
+      ## 实现计划
+      $vars.plan_file
+
+      ## 规则
+      - 读取每个 feature 的 `spec.md`
+      - Given → 前置条件, When → 操作步骤, Then → 断言
+      - Must Have FR → P0, Should Have FR → P1, Could Have FR → P2
+      - 每个测试用例追溯到 FR-XXX ID
+      - yaml-workflow 类型: 测试用例 = 运行 workflow + 验证输出文件
+      - config-only 类型: 无 E2E（跳过）
+      - 委派 api-tester 补充安全/边界测试
+
+      ## 测试用例格式
+      ```markdown
+      ## TC-001 (→ FR-001: <描述>)
+      - **Priority**: P0 (Must Have)
+      - **Given**: <前置条件>
+      - **When**: <操作>
+      - **Then**: <预期结果>
+      - **Evidence Required**: <需要的证据>
+      ```
+
+      ## 输出
+      保存到 `$vars.output_dir/e2e-cases.md`
+
+      直接输出纯 JSON 行:
+      {"vars_update":{"e2e_cases_file":"$vars.output_dir/e2e-cases.md","e2e_total":"<总数>","e2e_p0_count":"<P0数>","e2e_p1_count":"<P1数>","conclusion":"<2-3句话>"}}
+
+  - id: e2e-assurance
+    type: agent
+    depends_on: [e2e-case-gen, integrate, implement]
+    timeout: 86400
+    context: new
+    execute_when: '$inputs.run_e2e == "true"'
+    skills:
+      - octo-browser-vision
+      - octo-e2e-assurance
+      - systematic-debugging
+      - verification-before-completion
+    agents:
+      diagnostician:
+        description: "深度诊断分析员 — 分析测试失败根因，分类为 7 种类型"
+        agent_file: ".claude/agents/engineering-software-architect.md"
+        prompt: |
+          分析测试失败原因，判断根因类型:
+          YAML_ERROR / CODE_BUG / AGENT_TIMEOUT / PORT_CONFLICT /
+          ENVIRONMENT_CORRUPT / TEST_FLAKY / ASSERTION_ERROR
+
+          对每种根因给出:
+          1. 具体错误位置和原因
+          2. 修复方案
+          3. 是否需要 workspace rebuild
+
+          输出: {"root_cause":"<类型>","details":"<描述>","fix_plan":"<方案>","needs_rebuild":"<true/false>"}
+        model: pro
+        tools: ["Bash", "Read", "Grep", "Glob"]
+
+      vision-analyzer:
+        description: "视觉分析子代理 — 截图分析，返回纯文本结果"
+        agent_file: ".claude/agents/vision-analyzer.md"
+        prompt: |
+          分析截图: 读取 PNG 文件 → 判断页面状态 → 返回文本结果。
+          只返回文本描述，不返回图片数据。
+        model: pro
+        tools: ["Bash", "Read"]
+
+      api-tester:
+        description: "API 测试员 — 端点功能+安全+边界条件验证"
+        agent_file: ".claude/agents/testing-api-tester.md"
+        prompt: |
+          按测试用例执行 API 测试:
+          - 功能正确性: 请求/响应匹配预期
+          - 安全: OWASP API Top 10
+          - 边界条件: 空 body / 超长输入 / 非法参数
+          每个断言必须有 HTTP 响应证据。
+        model: pro
+        tools: ["Bash", "Read", "Write", "Edit", "Grep", "Glob"]
+
+      evidence-collector:
+        description: "证据收集者 — 确保每个测试结论有物理证据"
+        agent_file: ".claude/agents/testing-evidence-collector.md"
+        prompt: |
+          收集所有测试执行的证据链:
+          - API 调用: HTTP 响应码 + 响应体摘要
+          - UI 操作: screenshot 路径 + snapshot 文本
+          - CLI 命令: exit code + stdout 前 10 行
+          标记可疑信号: duration < 1s / 0 token / 无输出。
+
+          输出: {"evidence":[{id,type,evidence,suspicious}],"suspicious_count":N}
+        model: pro
+        tools: ["Bash", "Read", "Grep"]
+
+      reality-checker:
+        description: "现实检验者 — 默认 NEEDS WORK，要求压倒性证据"
+        agent_file: ".claude/agents/testing-reality-checker.md"
+        prompt: |
+          基于证据判定测试是否真实通过。
+          默认判定: NEEDS WORK
+          自动失败触发:
+            - "全部通过" 但无截图/HTTP 响应证据
+            - API 测试无实际 HTTP 响应文本
+            - CLI 测试无 exit code
+            - duration < 5 秒
+            - 0 token 使用
+          输出: PASSED / NEEDS WORK / FAILED
+        model: pro-max
+        tools: ["Bash", "Read", "Grep"]
+
+      mvp-assessor:
+        description: "MVP 完整性评估员 — FR-XXX 追溯覆盖度"
+        prompt: |
+          对照 PRD 需求文档评估实现的完整性。
+
+          评估维度:
+          1. Must Have FR-XXX 覆盖率
+          2. Should Have FR-XXX 覆盖率
+          3. 验收标准匹配（Given/When/Then）
+          4. Non-Goals 遵守
+          5. FR→TEST→IMPL→CHK 追溯链完整性
+
+          输出: 评分 0-100% + 每个 FR-XXX 状态 + 缺失项清单
+        model: pro-max
+        tools: ["Bash", "Read", "Grep", "Glob"]
+
+      code-reviewer:
+        description: "代码审查员 — 验证修复代码质量"
+        agent_file: ".claude/agents/engineering-code-reviewer.md"
+        prompt: |
+          审查本轮修复的代码变更:
+          1. 修复是否正确解决了原问题？
+          2. 修复是否引入新问题？
+          3. 代码质量是否达标？
+          严重级别: 🔴 BLOCKER / 🟡 SUGGESTION / 🔵 MINOR
+        model: pro
+        tools: ["Bash", "Read", "Grep", "Glob"]
+    prompt: |
+      你是 E2E 质量保证 Orchestrator。管理测试环境、执行测试用例、诊断修复失败、
+      验证 MVP 完整度和证据真实性。
+
+      $vars.workspace_rules
+
+      ## 环境信息
+      - 架构类型: $vars.arch_type
+      - 项目列表: $vars.projects
+      - 当前分支: $vars.branch
+      - 测试用例文档: $vars.e2e_cases_file
+      - PRD 需求文档: $vars.prd_file
+      - Features: $vars.features_file
+      - 实现计划: $vars.plan_file
+      - 最大修复轮数: $inputs.e2e_fix_rounds
+      - MVP 阈值: $inputs.mvp_threshold
+
+      ## 你有 7 个子代理可用
+      - **diagnostician**: 根因分析（7 种分类）
+      - **vision-analyzer**: 截图分析
+      - **api-tester**: API 功能+安全测试
+      - **evidence-collector**: 证据链收集
+      - **reality-checker**: 反假跑验证
+      - **mvp-assessor**: MVP 完整性评估（FR-XXX 追溯）
+      - **code-reviewer**: 修复代码审查
+
+      ## ⛔ 强制规则
+      1. 禁止跳过/模拟任何执行步骤
+      2. 每个断言必须有物理证据
+      3. 所有结论必须有证据支撑
+      4. reality-checker 默认 NEEDS WORK
+      5. 每个 Bash 命令 ≤ 120 秒
+      6. 端口从实际运行进程获取，不猜测
+      7. 子代理调用失败时，分析错误并重试（最多 2 次）
+
+      ## ⛔ 反重复规则
+      1. 严格按 Step 1→2→3→4→5→6→7 顺序线性执行
+      2. 每个 Step 只执行一次（Step 5 修复循环除外）
+      3. 通知每种类型只发一次
+      4. 如果你发现自己想"重新开始"已完成的步骤 — 停下来，进入下一步
+
+      ## 自循环工作流（7 步）
+
+      ### Step 1: 环境准备
+      检测运行上下文 → 构建项目 → 启动 Isolated Server → 健康检查
+
+      ### Step 2: 测试规划
+      读取 $vars.e2e_cases_file → 解析用例 → 按优先级排序
+
+      ### Step 3: 测试执行
+      按 P0→P1→P2 顺序执行每个测试用例:
+      - 委派 api-tester 执行 API 测试
+      - 委派 vision-analyzer 分析 UI 截图（如适用）
+      - 收集证据
+
+      ### Step 4: 证据验证
+      委派 evidence-collector 收集证据 → 委派 reality-checker 判定
+
+      ### Step 5: 诊断修复循环
+      如果有失败:
+      1. 委派 diagnostician 分析根因
+      2. 直接修复
+      3. 重新执行失败的测试
+      4. 最多 $inputs.e2e_fix_rounds 轮
+
+      ### Step 6: MVP 完整度验证
+      委派 mvp-assessor:
+      - 对照 $vars.prd_file 的 FR-XXX
+      - 每个 FR 是否有对应测试通过
+      - 评分 + 缺失项清单
+      - 最多 10 轮迭代
+
+      ### Step 7: 最终报告
+      生成 E2E 测试报告 + MVP 评估报告
+
+      ## 输出
+      直接输出纯 JSON 行:
+      {"vars_update":{"e2e_passed":"<true/false>","e2e_summary":"<摘要>","e2e_results":"<详细结果>","e2e_fail_count":"<失败数>","e2e_fix_rounds":"<修复轮数>","mvp_score":"<0-100>","mvp_rounds":"<MVP轮数>","mvp_missing":"<缺失FR列表>","conclusion":"<2-3句话>"}}
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 6: E2E Gate
+  # ═══════════════════════════════════════════════════════════════
+  - id: e2e-gate
+    type: condition
+    depends_on: [e2e-assurance]
+    cases:
+      - when: '$vars.e2e_passed == "true"'
+        then: ship
+      - when: '$inputs.run_e2e != "true"'
+        then: ship
+      - when: '$vars.e2e_total == "0"'
+        then: ship
+      - when: default
+        then: e2e-fail-notify
+
+  - id: e2e-fail-notify
+    type: bash
+    depends_on: [e2e-gate]
+    execute_when: '$vars.e2e_total != "0" && $vars.e2e_passed != "true"'
+    timeout: 30
+    bash: |
+      echo "=========================================="
+      echo "  ⚠️ E2E 测试未通过"
+      echo "=========================================="
+      echo "  总计: $vars.e2e_total"
+      echo "  失败: $vars.e2e_fail_count"
+      echo "  修复轮数: $vars.e2e_fix_rounds"
+      echo "  MVP Score: $vars.mvp_score%"
+      echo "=========================================="
+      echo "  详情: $vars.e2e_summary"
+      echo "=========================================="
+
+      hermes send -t "$vars.notify_target" -q "⚠️ ${vars.display_name:-MVP Impl} — E2E 未通过
+      📊 总计: $vars.e2e_total | 失败: $vars.e2e_fail_count
+      📊 MVP: $vars.mvp_score% | 修复轮数: $vars.e2e_fix_rounds
+      💡 $vars.e2e_summary" 2>&1 || echo "WARN: hermes send failed"
+
+      # 仍然继续到 ship（创建 PR，但标注 E2E 未通过）
+      echo '{"vars_update":{}}'
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 7: Ship — Git + Push + PR
+  # ═══════════════════════════════════════════════════════════════
+  - id: ship
+    type: agent
+    depends_on: [e2e-gate]
+    timeout: 86400
+    prompt: |
+      你是交付工程师，正在将 MVP 实现成果提交为 PR。
+
+      $vars.workspace_rules
+
+      ## 环境信息
+      - 项目列表: $vars.projects
+      - 目标分支: $inputs.base_branch
+      - 架构类型: $vars.arch_type
+      - MVP Score: $vars.mvp_score%
+      - E2E 状态: $vars.e2e_passed
+
+      ## MVP Doc 信息
+      - MVP 名称: 从 $vars.mvp_dir 提取
+      - Features: $vars.features_list
+      - FR 追溯矩阵: $vars.readme_file
+
+      ## 你的任务
+
+      ### 1. 创建特性分支
+      ```bash
+      BRANCH_NAME="feat/mvp-$(basename $vars.mvp_dir)"
+      cd <project-dir>
+      git checkout -b "$BRANCH_NAME" $inputs.base_branch
+      ```
+
+      ### 2. 提交所有变更
+      ```bash
+      git add -A
+      git commit -m "feat: implement MVP $(basename $vars.mvp_dir)
+
+      - Architecture: $vars.arch_type
+      - Features: $vars.features_list
+      - MVP Score: $vars.mvp_score%
+      - E2E: $vars.e2e_passed"
+      ```
+
+      ### 3. Push 到远端
+      ```bash
+      git push -u origin "$BRANCH_NAME"
+      ```
+
+      ### 4. 创建 PR
+      对每个有变更的项目创建 PR:
+      ```bash
+      gh pr create \
+        --title "feat: MVP $(basename $vars.mvp_dir)" \
+        --body "## MVP Implementation
+
+        **Architecture**: $vars.arch_type
+        **MVP Score**: $vars.mvp_score%
+        **E2E**: $vars.e2e_passed
+
+        ## FR Coverage
+        (从 $vars.readme_file 的追溯矩阵提取)
+
+        ## E2E Results
+        $vars.e2e_summary
+
+        ## Documentation
+        See $vars.mvp_dir/ for full MVP documentation" \
+        --base $inputs.base_branch
+      ```
+
+      ### 5. 收集 PR URLs
+      收集所有创建的 PR URL。
+
+      ## 输出
+      直接输出纯 JSON 行:
+      {"vars_update":{"pr_urls":"<PR URL 列表>","pr_count":"<数量>","conclusion":"<2-3句话: PR 创建情况>"}}
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 8: Done
+  # ═══════════════════════════════════════════════════════════════
+  - id: done
+    type: bash
+    depends_on: [ship]
+    timeout: 10
+    bash: |
+      echo "=========================================="
+      echo "  ✅ MVP Impl 完成"
+      echo "=========================================="
+      echo "  架构类型: $vars.arch_type"
+      echo "  MVP Score: $vars.mvp_score%"
+      echo "  E2E: $vars.e2e_passed"
+      echo "  PR: $vars.pr_urls"
+      echo "=========================================="

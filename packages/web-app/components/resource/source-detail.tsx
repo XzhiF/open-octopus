@@ -7,7 +7,6 @@ import { Badge } from "@/components/ui/badge"
 import { Separator } from "@/components/ui/separator"
 import { ArrowLeft, RefreshCw, FolderGit2 } from "lucide-react"
 import { getSource } from "@/lib/resource/api"
-import { useResourceOrg } from "./resource-context"
 
 interface SourceDetail {
   name: string
@@ -22,7 +21,6 @@ interface SourceDetail {
 
 export function SourceDetail() {
   const params = useParams()
-  const org = useResourceOrg()
   const name = params.name as string
 
   const [source, setSource] = useState<SourceDetail | null>(null)
@@ -31,11 +29,11 @@ export function SourceDetail() {
 
   useEffect(() => {
     if (!name) return
-    getSource(org, name)
+    getSource(name)
       .then(setSource)
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false))
-  }, [org, name])
+  }, [name])
 
   if (loading) {
     return (

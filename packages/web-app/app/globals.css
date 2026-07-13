@@ -78,6 +78,45 @@
 
   /* ── Spacing tokens ── */
   --space-section: clamp(4rem, 3rem + 5vw, 10rem);
+
+  /* ── Swarm module tokens (light) ── */
+  --swarm-primary: oklch(0.72 0.15 195);
+  --swarm-primary-hover: oklch(0.65 0.17 195);
+  --swarm-primary-active: oklch(0.58 0.18 195);
+  --swarm-primary-light: oklch(0.97 0.02 195);
+  --swarm-primary-muted: oklch(0.92 0.04 195);
+
+  --swarm-mode-review: oklch(0.70 0.14 155);
+  --swarm-mode-debate: oklch(0.68 0.18 260);
+  --swarm-mode-dispatch: oklch(0.75 0.16 55);
+  --swarm-mode-swarm: oklch(0.72 0.15 195);
+  --swarm-mode-moa: oklch(0.65 0.18 280);
+
+  --swarm-expert-running: oklch(0.78 0.13 55);
+  --swarm-expert-completed: oklch(0.72 0.19 155);
+  --swarm-expert-failed: oklch(0.63 0.22 25);
+  --swarm-expert-skipped: oklch(0.65 0 0);
+  --swarm-expert-budget-exceeded: oklch(0.75 0.16 75);
+
+  --swarm-consensus-line: oklch(0.65 0.22 260);
+  --swarm-consensus-area: oklch(0.65 0.22 260 / 0.15);
+  --swarm-threshold-line: oklch(0.63 0.22 25);
+  --swarm-consensus-dot: oklch(0.72 0.19 155);
+
+  --swarm-budget-warning: oklch(0.80 0.16 75);
+  --swarm-timeout-warning: oklch(0.75 0.16 55);
+  --swarm-context-overflow: oklch(0.63 0.22 25);
+
+  /* ── MOA-specific tokens (light) ── */
+  --moa-aggregator: oklch(0.75 0.15 80);
+  --moa-aggregator-light: oklch(0.75 0.15 80 / 0.1);
+  --moa-aggregator-foreground: oklch(0.35 0.12 80);
+
+  --moa-resolve-exact: oklch(0.72 0.19 155);
+  --moa-resolve-degraded: oklch(0.75 0.15 70);
+  --moa-resolve-degraded-light: oklch(0.75 0.15 70 / 0.1);
+  --moa-resolve-error: oklch(0.63 0.22 25);
+  --moa-resolve-error-light: oklch(0.55 0.22 25 / 0.1);
 }
 
 .dark {
@@ -143,6 +182,45 @@
   --knowledge-rule-border: oklch(0.32 0.02 180);
   --knowledge-retired: oklch(0.50 0 0);
   --knowledge-retired-bg: oklch(0.17 0 0);
+
+  /* ── Swarm module tokens (dark) ── */
+  --swarm-primary: oklch(0.78 0.13 195);
+  --swarm-primary-hover: oklch(0.82 0.11 195);
+  --swarm-primary-active: oklch(0.85 0.10 195);
+  --swarm-primary-light: oklch(0.22 0.03 195);
+  --swarm-primary-muted: oklch(0.28 0.04 195);
+
+  --swarm-mode-review: oklch(0.65 0.12 155);
+  --swarm-mode-debate: oklch(0.72 0.16 260);
+  --swarm-mode-dispatch: oklch(0.78 0.14 55);
+  --swarm-mode-swarm: oklch(0.78 0.13 195);
+  --swarm-mode-moa: oklch(0.70 0.16 280);
+
+  --swarm-expert-running: oklch(0.82 0.11 55);
+  --swarm-expert-completed: oklch(0.65 0.17 155);
+  --swarm-expert-failed: oklch(0.58 0.20 25);
+  --swarm-expert-skipped: oklch(0.55 0 0);
+  --swarm-expert-budget-exceeded: oklch(0.78 0.14 75);
+
+  --swarm-consensus-line: oklch(0.72 0.16 260);
+  --swarm-consensus-area: oklch(0.72 0.16 260 / 0.15);
+  --swarm-threshold-line: oklch(0.58 0.20 25);
+  --swarm-consensus-dot: oklch(0.65 0.17 155);
+
+  --swarm-budget-warning: oklch(0.75 0.14 75);
+  --swarm-timeout-warning: oklch(0.70 0.14 55);
+  --swarm-context-overflow: oklch(0.58 0.20 25);
+
+  /* ── MOA-specific tokens (dark) ── */
+  --moa-aggregator: oklch(0.55 0.12 80);
+  --moa-aggregator-light: oklch(0.55 0.12 80 / 0.15);
+  --moa-aggregator-foreground: oklch(0.85 0.08 80);
+
+  --moa-resolve-exact: oklch(0.65 0.17 155);
+  --moa-resolve-degraded: oklch(0.78 0.14 70);
+  --moa-resolve-degraded-light: oklch(0.78 0.14 70 / 0.1);
+  --moa-resolve-error: oklch(0.58 0.20 25);
+  --moa-resolve-error-light: oklch(0.58 0.20 25 / 0.1);
 }
 
 @theme inline {
@@ -211,6 +289,44 @@
   --color-knowledge-rule-border: var(--knowledge-rule-border);
   --color-knowledge-retired: var(--knowledge-retired);
   --color-knowledge-retired-bg: var(--knowledge-retired-bg);
+
+  /* ── Swarm colors ── */
+  --color-swarm-primary: var(--swarm-primary);
+  --color-swarm-primary-hover: var(--swarm-primary-hover);
+  --color-swarm-primary-active: var(--swarm-primary-active);
+  --color-swarm-primary-light: var(--swarm-primary-light);
+  --color-swarm-primary-muted: var(--swarm-primary-muted);
+
+  --color-swarm-mode-review: var(--swarm-mode-review);
+  --color-swarm-mode-debate: var(--swarm-mode-debate);
+  --color-swarm-mode-dispatch: var(--swarm-mode-dispatch);
+  --color-swarm-mode-swarm: var(--swarm-mode-swarm);
+  --color-swarm-mode-moa: var(--swarm-mode-moa);
+
+  --color-swarm-expert-running: var(--swarm-expert-running);
+  --color-swarm-expert-completed: var(--swarm-expert-completed);
+  --color-swarm-expert-failed: var(--swarm-expert-failed);
+  --color-swarm-expert-skipped: var(--swarm-expert-skipped);
+  --color-swarm-expert-budget-exceeded: var(--swarm-expert-budget-exceeded);
+
+  --color-swarm-consensus-line: var(--swarm-consensus-line);
+  --color-swarm-consensus-area: var(--swarm-consensus-area);
+  --color-swarm-threshold-line: var(--swarm-threshold-line);
+  --color-swarm-consensus-dot: var(--swarm-consensus-dot);
+
+  --color-swarm-budget-warning: var(--swarm-budget-warning);
+  --color-swarm-timeout-warning: var(--swarm-timeout-warning);
+  --color-swarm-context-overflow: var(--swarm-context-overflow);
+
+  /* ── MOA colors ── */
+  --color-moa-aggregator: var(--moa-aggregator);
+  --color-moa-aggregator-light: var(--moa-aggregator-light);
+  --color-moa-aggregator-foreground: var(--moa-aggregator-foreground);
+  --color-moa-resolve-exact: var(--moa-resolve-exact);
+  --color-moa-resolve-degraded: var(--moa-resolve-degraded);
+  --color-moa-resolve-degraded-light: var(--moa-resolve-degraded-light);
+  --color-moa-resolve-error: var(--moa-resolve-error);
+  --color-moa-resolve-error-light: var(--moa-resolve-error-light);
 }
 
 @layer base {

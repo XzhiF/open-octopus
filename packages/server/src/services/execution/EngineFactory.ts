@@ -9,6 +9,7 @@ import { CrossExecResolver } from "@octopus/shared"
 import { PipelineConfigLoader } from "../pipeline-config"
 import { getProvider } from "@octopus/providers"
 import { collectNodeEngines } from "@octopus/shared"
+import { getOrchestratorService } from "../agent/orchestrator-service"
 
 export class EngineFactory implements IEngineFactory {
   private knowledgeService?: KnowledgeService
@@ -64,6 +65,12 @@ export class EngineFactory implements IEngineFactory {
       ? JSON.parse(execution.input_values)
       : undefined
 
+    const orchestrator = this.ctx.org ? getOrchestratorService(this.ctx.org) : undefined
+    const agentResolver = orchestrator
+      ? (topic: string, maxExperts: number) =>
+          orchestrator.selectAndInstallAgents(topic, maxExperts, this.ctx.workspacePath)
+      : undefined
+
     return new WorkflowEngine(
       workflow, providers, this.ctx.workspacePath,
       this.ctx.org ? `${this.ctx.workspacePath}/.octopus` : undefined,
@@ -71,6 +78,7 @@ export class EngineFactory implements IEngineFactory {
       execution.name || undefined, crossExecResolver, promptInjector,
       this.knowledgeService?.createPrecomputeHook(),
       this.knowledgeService?.createInjectorFactory(),
+      agentResolver,
     )
   }
 

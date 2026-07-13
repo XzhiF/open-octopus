@@ -54,19 +54,46 @@ export class NotImplementedError extends Error {
 }
 
 // ── Active Stream Registry (M7: stop generation) ────────────────────
+// Supports multiple concurrent streams per session
 
-const activeStreams = new Map<string, { abort: () => void; startedAt: number }>()
-
-export function registerActiveStream(sessionId: string, abort: () => void): void {
-  activeStreams.set(sessionId, { abort, startedAt: Date.now() })
+interface StreamEntry {
+  streamId: string
+  abort: () => void
+  startedAt: number
 }
 
-export function unregisterActiveStream(sessionId: string): void {
-  activeStreams.delete(sessionId)
+const activeStreams = new Map<string, Map<string, StreamEntry>>()
+let streamCounter = 0
+
+export function registerActiveStream(sessionId: string, abort: () => void): string {
+  const streamId = `${sessionId}:${++streamCounter}`
+  let sessionStreams = activeStreams.get(sessionId)
+  if (!sessionStreams) {
+    sessionStreams = new Map()
+    activeStreams.set(sessionId, sessionStreams)
+  }
+  sessionStreams.set(streamId, { streamId, abort, startedAt: Date.now() })
+  return streamId
+}
+
+export function unregisterActiveStream(sessionId: string, streamId?: string): void {
+  if (!streamId) {
+    // Legacy: remove all streams for session (backward compat)
+    activeStreams.delete(sessionId)
+    return
+  }
+  const sessionStreams = activeStreams.get(sessionId)
+  if (sessionStreams) {
+    sessionStreams.delete(streamId)
+    if (sessionStreams.size === 0) {
+      activeStreams.delete(sessionId)
+    }
+  }
 }
 
 export function isStreamActive(sessionId: string): boolean {
-  return activeStreams.has(sessionId)
+  const sessionStreams = activeStreams.get(sessionId)
+  return sessionStreams !== undefined && sessionStreams.size > 0
 }
 
 // ── AgentService ─────────────────────────────────────────────────
@@ -158,9 +185,11 @@ export class AgentService {
     org: string,
     sessionId: string,
   ): Promise<{ partial_content_preserved: boolean }> {
-    const stream = activeStreams.get(sessionId)
-    if (stream) {
-      stream.abort()
+    const sessionStreams = activeStreams.get(sessionId)
+    if (sessionStreams && sessionStreams.size > 0) {
+      for (const entry of sessionStreams.values()) {
+        entry.abort()
+      }
       activeStreams.delete(sessionId)
       return { partial_content_preserved: true }
     }

@@ -557,6 +557,83 @@ ${nodes.map(n => `  - id: ${n.id}
     return chunks.join('')
   }
 
+  // ── Dynamic Agent Selection for Swarm ────────────────────────────
+
+  /**
+   * Select agents from ResourceManager based on topic relevance, install to workspace.
+   * Used by SwarmExecutor when dynamic: true and agentResolver is provided.
+   *
+   * Flow: ResourceManager index → LLM prefilter → LLM select → install → return paths
+   */
+  async selectAndInstallAgents(
+    topic: string,
+    maxExperts: number,
+    workspaceDir: string,
+  ): Promise<Array<{ role: string; agent_file: string; description: string }>> {
+    // 1. Get all installed agents from ResourceManager (lightweight frontmatter only)
+    const { getResourceRegistry } = await import('../resource-registry')
+    const manager = getResourceRegistry().get()
+    const allAgents = manager.list({ type: 'agent', installed: true })
+
+    if (!allAgents.resources || allAgents.resources.length === 0) {
+      return []
+    }
+
+    // 2. Build candidate list for LLM selection (name + description only, no body)
+    const candidates = allAgents.resources.map(a => ({
+      name: a.name,
+      description: a.description || '',
+      group: a.group || '',
+    }))
+
+    // ponytail: LLM context window limit — truncate at 50 candidates
+    const maxCandidates = 50
+    if (candidates.length > maxCandidates) {
+      console.log(`[orchestrator] Truncating agent candidates from ${candidates.length} to ${maxCandidates} (topic: "${topic.slice(0, 60)}...")`)
+    }
+
+    // 3. LLM selects best N agents for the topic
+    const prompt = `You are an expert selection agent. Given a topic, select the most relevant experts from the candidate list.
+
+Topic: ${topic}
+
+Candidates (${candidates.length} total):
+${candidates.slice(0, 50).map((c, i) => `${i + 1}. ${c.name} — ${c.description}`).join('\n')}
+
+Select exactly ${maxExperts} experts that are most relevant to the topic.
+Respond with ONLY a JSON array in this format:
+[{"name": "agent-name", "reason": "why this expert is relevant"}]`
+
+    let selected: Array<{ name: string; reason: string }> = []
+    try {
+      const response = await this.callArchiveLLM(prompt, 'You are an expert selection agent. Respond with only a JSON array.')
+      const cleaned = response.replace(/```json?\n?/g, '').replace(/```/g, '').trim()
+      const parsed = JSON.parse(cleaned)
+      if (Array.isArray(parsed)) {
+        selected = parsed.slice(0, maxExperts)
+      }
+    } catch {
+      // LLM selection failed — fall back to first N candidates
+      selected = candidates.slice(0, maxExperts).map(c => ({
+        name: c.name,
+        reason: c.description,
+      }))
+    }
+
+    // 4. Install selected agents to workspace
+    const { ResourceProvisioner } = await import('@octopus/shared')
+    const provisioner = new ResourceProvisioner(manager)
+    const missing = selected.map(s => ({ type: 'agent' as const, name: s.name }))
+    await provisioner.provision(missing, workspaceDir)
+
+    // 5. Return installed agent paths
+    return selected.map(s => ({
+      role: s.name,
+      agent_file: `.claude/agents/${s.name}.md`,
+      description: s.reason,
+    }))
+  }
+
   // ── Archive V2: 3-Phase Analysis Pipeline ────────────────────────
 
   async analyzeWorkspaceForArchive(workspaceId: string, emitter: StepEmitter = createNullEmitter()): Promise<ArchivePreview> {
@@ -596,7 +673,7 @@ ${nodes.map(n => `  - id: ${n.id}
     let autoDiscoveredSkills: Array<Record<string, unknown>> = []
     try {
       const { getResourceRegistry } = await import('../resource-registry')
-      const resourceManager = getResourceRegistry().getOrCreate(this.org)
+      const resourceManager = getResourceRegistry().get()
       const installed = resourceManager.list({ type: "skill", installed: true })
       const installedMap = new Map<string, { group: string; installPath: string }>()
       for (const entry of installed.resources ?? []) {
@@ -677,7 +754,7 @@ ${nodes.map(n => `  - id: ${n.id}
     let autoDiscoveredWorkflows: Array<Record<string, unknown>> = []
     try {
       const { getResourceRegistry } = await import('../resource-registry')
-      const resourceManager = getResourceRegistry().getOrCreate(this.org)
+      const resourceManager = getResourceRegistry().get()
       const installed = resourceManager.list({ type: "workflow", installed: true })
       const installedMap = new Map<string, { group: string; installPath: string }>()
       for (const entry of installed.resources ?? []) {
@@ -739,7 +816,7 @@ ${nodes.map(n => `  - id: ${n.id}
     let autoDiscoveredAgents: Array<Record<string, unknown>> = []
     try {
       const { getResourceRegistry } = await import('../resource-registry')
-      const resourceManager = getResourceRegistry().getOrCreate(this.org)
+      const resourceManager = getResourceRegistry().get()
       const installed = resourceManager.list({ type: "agent", installed: true })
       const installedMap = new Map<string, { group: string; installPath: string }>()
       for (const entry of installed.resources ?? []) {

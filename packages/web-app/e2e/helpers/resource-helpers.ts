@@ -11,13 +11,12 @@ function resolveApiBase(): string {
 }
 
 export async function installResourceViaApi(
-  org: string,
   ref: string,
 ): Promise<{ name: string; type: string }> {
   const ctx = await request.newContext()
   try {
     const res = await ctx.post(
-      `${resolveApiBase()}/api/resources/install?org=${encodeURIComponent(org)}`,
+      `${resolveApiBase()}/api/resources/install`,
       {
         data: { ref, scope: "org" },
         headers: { "Content-Type": "application/json" },
@@ -34,14 +33,13 @@ export async function installResourceViaApi(
 }
 
 export async function uninstallResourceViaApi(
-  org: string,
   name: string,
   type: string,
 ): Promise<void> {
   const ctx = await request.newContext()
   try {
     const res = await ctx.post(
-      `${resolveApiBase()}/api/resources/uninstall?org=${encodeURIComponent(org)}`,
+      `${resolveApiBase()}/api/resources/uninstall`,
       {
         data: { name, type },
         headers: { "Content-Type": "application/json" },
@@ -56,11 +54,11 @@ export async function uninstallResourceViaApi(
   }
 }
 
-export async function listResourcesViaApi(org: string): Promise<Array<{ name: string; type: string }>> {
+export async function listResourcesViaApi(): Promise<Array<{ name: string; type: string }>> {
   const ctx = await request.newContext()
   try {
     const res = await ctx.get(
-      `${resolveApiBase()}/api/resources?org=${encodeURIComponent(org)}`,
+      `${resolveApiBase()}/api/resources`,
     )
     if (!res.ok()) return []
     const data = await res.json() as { resources: Array<{ name: string; type: string }> }

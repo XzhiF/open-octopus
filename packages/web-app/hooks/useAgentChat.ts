@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useCallback, useRef } from 'react'
+import { useState, useCallback, useRef, useEffect } from 'react'
 import type { AgentMessage, ToolCallRecord } from '@/lib/agent/types'
 import * as api from '@/lib/agent/api'
 import { useSSEConnection, type SSEHandlers } from '@/lib/agent/sse'
@@ -24,9 +24,31 @@ export function useAgentChat(sessionId: string | null, options?: { onTitleUpdate
   const streamContentRef = useRef('')
   const streamThinkingRef = useRef('')
   const toolCallsRef = useRef<ToolCallRecord[]>([])
+  const streamingRef = useRef(false)
+  // Track the session that initiated the current stream to prevent cross-session contamination
+  const streamingSessionRef = useRef<string | null>(null)
   // Ref-based callback for title updates (avoids recreating sendMessage on every render)
   const onTitleUpdateRef = useRef(options?.onTitleUpdate)
   onTitleUpdateRef.current = options?.onTitleUpdate
+
+  // Abort any in-flight stream when session changes
+  useEffect(() => {
+    return () => {
+      disconnect()
+      streamingRef.current = false
+      streamingSessionRef.current = null
+    }
+  }, [disconnect])
+
+  // When sessionId changes while streaming, abort the old stream
+  useEffect(() => {
+    if (streamingSessionRef.current && streamingSessionRef.current !== sessionId) {
+      disconnect()
+      setStreaming(false)
+      streamingRef.current = false
+      streamingSessionRef.current = null
+    }
+  }, [sessionId, disconnect])
 
   const loadMessages = useCallback(async () => {
     if (!sessionId) return
@@ -40,6 +62,16 @@ export function useAgentChat(sessionId: string | null, options?: { onTitleUpdate
 
   const sendMessage = useCallback(async (message: string) => {
     if (!sessionId || !message.trim()) return
+    // Guard: block if already streaming
+    if (streamingRef.current) return
+
+    // Abort any lingering stream from a previous session
+    if (streamingSessionRef.current && streamingSessionRef.current !== sessionId) {
+      disconnect()
+    }
+
+    // Capture the session that owns this stream
+    streamingSessionRef.current = sessionId
 
     // Optimistic: add user message
     const userMsg: AgentMessage = {
@@ -54,6 +86,7 @@ export function useAgentChat(sessionId: string | null, options?: { onTitleUpdate
     }
     setMessages(prev => [...prev, userMsg])
     setStreaming(true)
+    streamingRef.current = true
     setStreamContent('')
     setStreamThinking('')
     setIsThinking(false)
@@ -122,6 +155,9 @@ export function useAgentChat(sessionId: string | null, options?: { onTitleUpdate
         setPendingConfirm(data)
       },
       onDone: (data) => {
+        // Guard against cross-session contamination: only process if session matches
+        if (data.session_id !== streamingSessionRef.current) return
+
         const finalToolCalls = toolCallsRef.current.length > 0 ? [...toolCallsRef.current] : undefined
         const assistantMsg: AgentMessage = {
           id: data.message_id,
@@ -137,6 +173,8 @@ export function useAgentChat(sessionId: string | null, options?: { onTitleUpdate
         }
         setMessages(prev => [...prev, assistantMsg])
         setStreaming(false)
+        streamingRef.current = false
+        streamingSessionRef.current = null
         setStreamContent('')
         setStreamThinking('')
         setIsThinking(false)
@@ -150,6 +188,8 @@ export function useAgentChat(sessionId: string | null, options?: { onTitleUpdate
       onError: (data) => {
         setError(data.message)
         setStreaming(false)
+        streamingRef.current = false
+        streamingSessionRef.current = null
       },
     }
 
@@ -162,6 +202,8 @@ export function useAgentChat(sessionId: string | null, options?: { onTitleUpdate
       await api.stopChat(sessionId)
       disconnect()
       setStreaming(false)
+      streamingRef.current = false
+      streamingSessionRef.current = null
       if (streamContentRef.current) {
         const partialMsg: AgentMessage = {
           id: `partial-${Date.now()}`,

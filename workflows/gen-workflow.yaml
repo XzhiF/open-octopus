@@ -1,0 +1,689 @@
+# yaml-language-server: $schema=./workflow-schema.json
+apiVersion: octopus/v1
+kind: Workflow
+name: gen-workflow
+description: >
+  Gen Workflow — 现代化工作流开发流程（basic-workflow-dev-flow 升级版）。
+  13 节点，使用 5 种节点类型（bash/agent/loop/condition/swarm）。
+  特性: auto DAG 并行、Swarm 动态路由审查、Loop 引擎原生测试循环、
+  execute_when 条件守卫、model 分层（opus/sonnet）、对抗式审查（可选）。
+  流程: Setup → Analyze → [Challenge] → Plan → [Challenge] → Implement
+        → Review (Swarm) → Test-Verify (Loop) → [Gate] → Ship → Done。
+
+model: "pro-max"
+engine: claude
+execution_mode: auto
+max_concurrent: 3
+timeout: 86400
+
+inputs:
+  requirement:
+    description: "工作流开发需求描述（自然语言，中文或英文）"
+    required: true
+  base_branch:
+    description: "PR 目标分支"
+    required: false
+    default: "main"
+  enable_adversarial:
+    description: "开启对抗式审查（devil-advocate 质疑分析，feasibility-reviewer 质疑计划）"
+    required: false
+    default: "false"
+  run_tests:
+    description: "是否实际部署并执行新工作流进行验证（需要 Octopus Server 运行中）"
+    required: false
+    default: "true"
+
+variables:
+  # ── 环境 ──
+  pkg_manager: "pnpm"
+  notify_target: "telegram:xzf_hermes"
+  display_name: "Gen Workflow"
+  projects: ""
+  branch: ""
+
+  # ── 文档 ──
+  spec_file: ""
+  plan_file: ""
+  conclusion: ""
+
+  # ── 测试 ──
+  test_passed: "false"
+  test_log: ""
+
+  # ── 交付 ──
+  pr_url: ""
+  ship_summary: ""
+
+auto_answers:
+  - pattern: ".*"
+    answer: "proceed"
+
+# ── Notify 子系统配置 ──
+providers:
+  hermes-cli:
+    type: hermes
+    timeout: 30
+    min_severity: info
+
+channels:
+  default:
+    provider: hermes-cli
+    target: "telegram:xzf_hermes"
+
+hooks:
+  # ── 工作流级别 hooks ──
+  on_workflow_failure:
+    - id: notify-failure
+      type: notify
+      channel: default
+      template:
+        severity: error
+        title: "❌ $vars.display_name — 工作流失败"
+        body: "🔴 失败节点: ${hook.failed_node_id | default:unknown}\n⏱️ 已运行: ${hook.total_duration_ms | duration}\n💡 错误: ${hook.error | default:Unknown error}"
+
+  on_complete:
+    - id: notify-complete
+      type: notify
+      channel: default
+      template:
+        severity: info
+        title: "🏁 $vars.display_name — 工作流完成"
+        body: "状态: $hook.final_status\n✅ 完成: $hook.completed_count / ⏭️ 跳过: $hook.skipped_count / ❌ 失败: $hook.failed_count\n⏱️ 总耗时: ${hook.total_duration_ms | duration}"
+
+  on_interrupt:
+    - id: notify-interrupt
+      type: notify
+      channel: default
+      template:
+        severity: warn
+        title: "⚡ $vars.display_name — 中断"
+        body: "工作流被中断，已完成 $hook.completed_count 个节点"
+
+  on_cancel:
+    - id: notify-cancel
+      type: notify
+      channel: default
+      template:
+        severity: warn
+        title: "🚫 $vars.display_name — 取消"
+        body: "工作流被用户取消"
+
+  # ── 节点级通知 ──
+  on_node_success:
+    - id: notify-setup
+      type: notify
+      nodes: [setup]
+      channel: default
+      template:
+        severity: info
+        title: "🚀 $vars.display_name — Setup 完成"
+        body: "📂 项目: $vars.projects\n🌿 分支: $vars.branch → $inputs.base_branch\n📦 包管理: $vars.pkg_manager\n📋 需求: $inputs.requirement"
+
+    - id: notify-analyze
+      type: notify
+      nodes: [analyze]
+      channel: default
+      template:
+        severity: info
+        title: "📝 $vars.display_name — Analyze 完成"
+        body: "📂 $vars.projects | 🌿 $vars.branch\n📄 规格: $vars.spec_file\n💡 $vars.conclusion"
+
+    - id: notify-challenge-analyze
+      type: notify
+      nodes: [challenge-analyze]
+      channel: default
+      template:
+        severity: warn
+        title: "😈 $vars.display_name — 对抗分析完成"
+        body: "💡 $vars.conclusion"
+
+    - id: notify-plan
+      type: notify
+      nodes: [plan]
+      channel: default
+      template:
+        severity: info
+        title: "📋 $vars.display_name — Plan 完成"
+        body: "📂 $vars.projects | 🌿 $vars.branch\n📄 计划: $vars.plan_file\n💡 $vars.conclusion"
+
+    - id: notify-challenge-plan
+      type: notify
+      nodes: [challenge-plan]
+      channel: default
+      template:
+        severity: warn
+        title: "🏛️ $vars.display_name — 可行性审查完成"
+        body: "💡 $vars.conclusion"
+
+    - id: notify-implement
+      type: notify
+      nodes: [implement]
+      channel: default
+      template:
+        severity: info
+        title: "⚙️ $vars.display_name — Implement 完成"
+        body: "📂 $vars.projects | 🌿 $vars.branch\n💡 $vars.conclusion"
+
+    - id: notify-review
+      type: notify
+      nodes: [review]
+      channel: default
+      template:
+        severity: info
+        title: "🔍 $vars.display_name — Swarm Review 完成"
+        body: "📂 $vars.projects | 🌿 $vars.branch\n💡 $vars.conclusion"
+
+    - id: notify-test-pass
+      type: notify
+      nodes: [test-verify-loop]
+      channel: default
+      condition: '$vars.test_passed == "true"'
+      template:
+        severity: info
+        title: "✅ $vars.display_name — Test-Verify 通过"
+        body: "📂 $vars.projects | 🌿 $vars.branch\n📝 $vars.test_log"
+
+    - id: notify-test-fail
+      type: notify
+      nodes: [test-verify-loop]
+      channel: default
+      condition: '$vars.test_passed != "true"'
+      template:
+        severity: warn
+        title: "⚠️ $vars.display_name — Test-Verify 未通过"
+        body: "📂 $vars.projects | 🌿 $vars.branch\n📝 $vars.test_log"
+
+    - id: notify-ship
+      type: notify
+      nodes: [ship]
+      channel: default
+      template:
+        severity: info
+        title: "🚢 $vars.display_name — Ship 完成"
+        body: "📂 $vars.projects | 🌿 $vars.branch → $inputs.base_branch\n🔗 PR: ${pr_url | default:none}\n📝 ${ship_summary | default:none}"
+
+nodes:
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 0: Setup — 环境准备 + Agent 安装 + 变量初始化
+  # ═══════════════════════════════════════════════════════════════
+  - id: setup
+    type: agent
+    timeout: 600
+    prompt: |
+      你正在执行 Gen Workflow 开发流程的环境准备阶段。
+
+      ## 你的任务
+
+      ### 1. 安装 superpowers-zh 技能
+      ```bash
+      npx superpowers-zh@latest --tool claude --force 2>&1 | tail -3
+      ```
+
+      ### 2. 安装 agency-agents-zh 角色库
+      ```bash
+      AGENTS_TARGET="$(pwd)/.claude/agents"
+      mkdir -p "$AGENTS_TARGET"
+
+      NEED_CLONE=false
+      for agent in engineering-software-architect engineering-code-reviewer engineering-security-engineer; do
+        if [ ! -f "$AGENTS_TARGET/$agent.md" ]; then
+          NEED_CLONE=true
+          break
+        fi
+      done
+
+      if [ "$NEED_CLONE" = "true" ]; then
+        echo "Cloning agency-agents-zh..."
+        DEPS_DIR="$(pwd)/dependencies"
+        mkdir -p "$DEPS_DIR"
+
+        if [ ! -d "$DEPS_DIR/agency-agents-zh" ]; then
+          git clone --depth 1 https://github.com/jnMetaCode/agency-agents-zh.git "$DEPS_DIR/agency-agents-zh" 2>&1
+        fi
+
+        REPO="$DEPS_DIR/agency-agents-zh"
+
+        for f in engineering-software-architect engineering-code-reviewer engineering-security-engineer; do
+          [ -f "$REPO/engineering/$f.md" ] && cp "$REPO/engineering/$f.md" "$AGENTS_TARGET/"
+        done
+
+        INSTALLED=$(ls "$AGENTS_TARGET"/engineering-*.md 2>/dev/null | wc -l)
+        echo "Installed $INSTALLED agency agents to $AGENTS_TARGET"
+      else
+        echo "All agency agents already installed, skipping clone"
+      fi
+      ```
+
+      ### 3. 安装 core-pack 内置 agents
+      ```bash
+      AGENTS_TARGET="$(pwd)/.claude/agents"
+      COREPACK_AGENTS=""
+      for d in \
+        "$(pwd)/.octopus/core-pack/agents" \
+        "$(pwd)/packages/core-pack/agents" \
+        "$(pwd)/../core-pack/agents"; do
+        if [ -f "$d/devil-advocate.md" ]; then
+          COREPACK_AGENTS="$d"
+          break
+        fi
+      done
+      if [ -n "$COREPACK_AGENTS" ]; then
+        cp "$COREPACK_AGENTS/devil-advocate.md" "$AGENTS_TARGET/"
+        [ -f "$COREPACK_AGENTS/architecture-explorer.md" ] && cp "$COREPACK_AGENTS/architecture-explorer.md" "$AGENTS_TARGET/"
+        echo "Installed core-pack agents from $COREPACK_AGENTS"
+      fi
+      ```
+
+      ### 4. 环境检测
+      ```bash
+      # 遍历 projects/ 找 git 项目
+      PROJECTS=""
+      FIRST_PROJECT=""
+      if [ -d projects ]; then
+        for dir in projects/*/; do
+          if [ -d "$dir/.git" ] || [ -f "$dir/.git" ]; then
+            name=$(basename "$dir")
+            [ -z "$FIRST_PROJECT" ] && FIRST_PROJECT="$name"
+            if [ -z "$PROJECTS" ]; then
+              PROJECTS="$name"
+            else
+              PROJECTS="$PROJECTS, $name"
+            fi
+          fi
+        done
+      fi
+
+      # 检测包管理器
+      PKG="npm"
+      if [ -n "$FIRST_PROJECT" ]; then
+        if [ -f "projects/$FIRST_PROJECT/pnpm-lock.yaml" ]; then PKG="pnpm"
+        elif [ -f "projects/$FIRST_PROJECT/yarn.lock" ]; then PKG="yarn"
+        fi
+      fi
+
+      # 获取当前分支
+      GIT_BRANCH="$inputs.base_branch"
+      if [ -n "$FIRST_PROJECT" ]; then
+        GIT_BRANCH=$(git -C "projects/$FIRST_PROJECT" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "$inputs.base_branch")
+        [ "$GIT_BRANCH" = "HEAD" ] && GIT_BRANCH="$inputs.base_branch"
+      fi
+
+      echo "Projects: $PROJECTS"
+      echo "Package Manager: $PKG"
+      echo "Branch: $GIT_BRANCH"
+      ```
+
+      ### 5. 计算 display_name
+      优先使用 `$vars.execution_name`，其次 `$vars.workflow_name`，兜底 "Gen Workflow"。
+
+      ## 输出要求
+      在回复末尾直接输出纯 JSON（不要用代码块包裹）:
+      {"vars_update":{"projects":"<项目名逗号分隔>","pkg_manager":"<包管理器>","branch":"<分支>","display_name":"<显示名称>"}}
+
+      ## 规则
+      - 无人值守模式，直接执行
+      - display_name 必须非空
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 1: Analyze — 需求分析 + 技能匹配
+  # ═══════════════════════════════════════════════════════════════
+  - id: analyze
+    type: agent
+    depends_on: [setup]
+    timeout: 86400
+    skills:
+      - brainstorming
+    prompt: |
+      你正在执行 Gen Workflow 开发流程的需求分析阶段。
+
+      ## 用户需求
+      $inputs.requirement
+
+      ## 当前环境
+      - 项目: $vars.projects
+      - 分支: $vars.branch
+      - 基础分支: $inputs.base_branch
+
+      ## 你的任务
+      1. 使用 brainstorming 深入分析需求，明确技术方向和设计方案
+      2. 这是开发 Octopus 工作流（YAML），不是普通代码
+      3. 输出规格文档到 docs/superpowers/ 目录
+
+      ## 规则
+      - 无人值守模式，跳过需要用户确认的步骤，直接给出最佳判断
+      - 中文项目使用中文输出
+      - writing-plans 技能会在下一阶段使用，不要在这一阶段使用它
+
+      完成后在回复末尾输出：
+      {"vars_update":{"spec_file":"<规格文档完整路径>","conclusion":"<2-3句话总结>"}}
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 1.5: Challenge Analyze — 可选对抗式审查
+  # ═══════════════════════════════════════════════════════════════
+  - id: challenge-analyze
+    type: agent
+    depends_on: [analyze]
+    execute_when: '$inputs.enable_adversarial == "true"'
+    timeout: 3600
+    agents:
+      devil-advocate:
+        description: "魔鬼代言人 — 质疑需求假设、识别范围蔓延、挑战技术盲点"
+        agent_file: ".claude/agents/devil-advocate.md"
+        model: "pro-max"
+        tools: ["Read", "Grep", "Glob"]
+    prompt: |
+      读取需求分析规格文档 $vars.spec_file，使用 devil-advocate 子代理对其发起挑战。
+
+      重点关注:
+      - 需求假设是否成立
+      - 是否存在范围蔓延
+      - 技术方案是否有盲点
+      - 工作流设计是否过度或不足
+
+      综合挑战结果，给出修正建议。
+
+      完成后输出：
+      {"vars_update":{"conclusion":"<对抗审查结论，2-3句话>"}}
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 2: Plan — 生成实现计划
+  # ═══════════════════════════════════════════════════════════════
+  - id: plan
+    type: agent
+    depends_on: [challenge-analyze]
+    timeout: 86400
+    skills:
+      - writing-plans
+      - octo-workflow-dev
+    prompt: |
+      你正在执行 Gen Workflow 开发流程的规划阶段。
+
+      ## 上一阶段输出
+      设计规格文档: $vars.spec_file
+      请先读取该文件，基于其中的设计方案进行规划。
+
+      ## 当前环境
+      - 项目: $vars.projects
+      - 分支: $vars.branch
+
+      ## 你的任务
+      1. 读取设计规格文档 $vars.spec_file
+      2. 使用 writing-plans 技能生成详细的实现计划
+
+      ## 规则
+      - 无人值守模式，直接生成最终计划
+
+      完成后输出：
+      {"vars_update":{"plan_file":"<计划文档完整路径>","conclusion":"<2-3句话总结>"}}
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 2.5: Challenge Plan — 可选可行性审查
+  # ═══════════════════════════════════════════════════════════════
+  - id: challenge-plan
+    type: agent
+    depends_on: [plan]
+    execute_when: '$inputs.enable_adversarial == "true"'
+    timeout: 3600
+    agents:
+      feasibility-reviewer:
+        description: "可行性审查者 — 验证实现计划的技术可行性和风险"
+        agent_file: ".claude/agents/engineering-software-architect.md"
+        model: "pro-max"
+        tools: ["Read", "Grep", "Glob"]
+    prompt: |
+      读取实现计划文档 $vars.plan_file 和设计规格 $vars.spec_file。
+
+      使用 feasibility-reviewer 子代理审查:
+      - 技术可行性
+      - 时间估算合理性
+      - 潜在风险和依赖
+      - 遗漏的关键步骤
+
+      如发现问题，直接修正计划文档。
+
+      完成后输出：
+      {"vars_update":{"conclusion":"<可行性审查结论，2-3句话>"}}
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 3: Implement — 子智能体驱动实现
+  # ═══════════════════════════════════════════════════════════════
+  - id: implement
+    type: agent
+    depends_on: [plan]
+    timeout: 86400
+    skills:
+      - subagent-driven-development
+      - octo-workflow-dev
+    agents:
+      code-quality-advisor:
+        description: "代码质量顾问 — 在实现过程中审查代码质量和最佳实践"
+        agent_file: ".claude/agents/engineering-code-reviewer.md"
+        model: pro
+        tools: ["Read", "Grep", "Glob"]
+    prompt: |
+      你正在执行 Gen Workflow 开发流程的实现阶段。
+
+      ## 上一阶段输出
+      设计规格文档: $vars.spec_file
+      实现计划文档: $vars.plan_file
+      请先读取这两个文件，理解设计规格和实现步骤后再开始执行。
+
+      ## 当前环境
+      - 项目: $vars.projects
+      - 分支: $vars.branch
+
+      ## 你的任务
+      1. 读取设计规格文档 $vars.spec_file 和实现计划 $vars.plan_file
+      2. 使用 subagent-driven-development 方法按计划执行所有任务
+      3. code-quality-advisor 子代理会在实现过程中审查代码质量
+
+      ## 关键规则
+      - 无人值守模式，所有选择使用最佳判断
+
+      完成后输出：
+      {"vars_update":{"conclusion":"<2-3句话总结：改了哪些文件、新增/修改行数、主要实现>"}}
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 4: Review — Swarm 动态路由多智能体审查
+  # ═══════════════════════════════════════════════════════════════
+  - id: review
+    type: swarm
+    depends_on: [implement]
+    timeout: 3600
+    topic: |
+      审查本次工作流开发的所有代码变更。
+      项目: $vars.projects | 分支: $vars.branch
+      原始需求: $inputs.requirement
+      设计规格: $vars.spec_file
+      实现计划: $vars.plan_file
+    mode: swarm
+    dynamic: true
+    max_experts: 4
+    context_tier: "200k"
+    output_format: structured
+    skills:
+      - octo-swarm-dev
+    host:
+      role: review-host
+      prompt: |
+        综合所有专家的审查意见，输出最终审查报告。
+        按严重程度分类：Blocker > Major > Minor。
+        给出需要修复的具体文件和行号。
+        如有 Blocker，明确指出需要修复后才能 Ship。
+
+        在报告末尾输出评估 JSON:
+        ```json
+        {"assessment": {"consensus_score": 0.0-1.0, "should_continue": true/false, "summary": "一句话总结"}}
+        ```
+    outputs:
+      conclusion: "$vars.review_synthesis"
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 5: Test-Verify — 引擎原生循环验证
+  # ═══════════════════════════════════════════════════════════════
+  - id: test-verify-loop
+    type: loop
+    depends_on: [review]
+    execute_when: '$inputs.run_tests == "true"'
+    max_iterations: 3
+    break_when: '$vars.test_passed == "true"'
+    nodes:
+      - id: test-verify-round
+        type: agent
+        timeout: 1800
+        context: new
+        model: pro
+        skills:
+          - octo-workflow-dev
+        prompt: |
+          你正在执行第 $iteration 轮工作流验证（最多 3 轮）。
+
+          ## 当前环境
+          - 项目: $vars.projects
+          - 分支: $vars.branch
+          - Octopus Server: ${OCTOPUS_SERVER_URL:-http://localhost:3001}
+
+          ## 你的任务
+
+          ### Step 1: 找到新开发的工作流文件
+          ```bash
+          cd projects/$vars.projects
+          git diff $inputs.base_branch --name-only -- '*.yaml' '*.yml'
+          ```
+          目标文件通常在 packages/core-pack/workflows/ 下。
+
+          ### Step 2: 静态验证
+          检查新工作流 YAML:
+          - YAML 语法正确
+          - 有 apiVersion/kind/name 字段
+          - nodes 数组非空
+          - 所有 depends_on 引用的节点存在
+          - 变量表达式 $vars.xxx 和 $inputs.xxx 语法正确
+
+          ### Step 3: 部署到 server
+          ```bash
+          mkdir -p ~/.octopus/workflows
+          cp <新工作流yaml> ~/.octopus/workflows/
+          ```
+
+          ### Step 4: 通过 API 触发执行
+          使用 OCTOPUS_SERVER_URL 环境变量（默认 http://localhost:3001）:
+          ```bash
+          SERVER="${OCTOPUS_SERVER_URL:-http://localhost:3001}"
+          # 获取 workspace ID
+          WS_ID=$(curl -s "$SERVER/api/workspaces" | jq -r '.[0].id')
+          # 触发执行
+          EXEC_ID=$(curl -s -X POST "$SERVER/api/workspaces/$WS_ID/executions" \
+            -H 'Content-Type: application/json' \
+            -d '{"workflow_ref":"<工作流name>","params":{}}' | jq -r '.id')
+          ```
+
+          ### Step 5: 轮询等待结果
+          每 10 秒查询一次，最多等待 5 分钟:
+          ```bash
+          curl -s "$SERVER/api/workspaces/$WS_ID/executions/$EXEC_ID"
+          ```
+
+          ### Step 6: 结果判定
+          - completed → test_passed=true
+          - failed → 读取日志分析原因，修复 YAML，同时更新 projects/ 源文件和 ~/.octopus/workflows/ 副本
+          - timeout → 记录超时，标记失败
+
+          ## 输出
+          {"vars_update":{"test_passed":"<true/false>","test_log":"<第$iteration轮：状态+关键信息>"}}
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 5.5: Test Gate — 条件路由
+  # ═══════════════════════════════════════════════════════════════
+  - id: test-gate
+    type: condition
+    depends_on: [test-verify-loop]
+    execute_when: '$inputs.run_tests == "true"'
+    cases:
+      - when: '$vars.test_passed == "true"'
+        then: ship
+      - when: default
+        then: test-fail-notify
+
+  - id: test-fail-notify
+    type: bash
+    timeout: 30
+    bash: |
+      echo "⚠️ Test-Verify 3 轮均未通过，工作流以失败状态退出"
+      echo "最后日志: $vars.test_log"
+      printf '{"vars_update":{"__status":"failed","test_passed":"false"}}\n'
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 6: Ship — 推送 + 创建 PR
+  # ═══════════════════════════════════════════════════════════════
+  - id: ship
+    type: agent
+    depends_on: [review, test-gate]
+    execute_when: '$vars.test_passed == "true" || $inputs.run_tests != "true"'
+    timeout: 3600
+    prompt: |
+      代码审查和测试验证已完成，进入最终交付阶段。
+
+      ## 环境信息
+      - 项目: $vars.projects
+      - 分支: $vars.branch
+      - 基础分支: $inputs.base_branch
+
+      ## 验证结果
+      - 测试状态: $vars.test_passed
+      - 测试日志: $vars.test_log
+
+      ## 你的任务
+
+      对 projects/ 下每一个有变更的项目，依次执行:
+
+      ### 1. 提交未保存的更改
+      ```bash
+      cd <项目目录>
+      git status --short
+      git add -A
+      git commit -m "feat: implement workflow from gen-workflow"
+      ```
+
+      ### 2. 查看提交历史
+      ```bash
+      git log $inputs.base_branch..HEAD --oneline
+      ```
+
+      ### 3. 推送分支
+      ```bash
+      git push -u origin HEAD
+      ```
+
+      ### 4. 创建 PR
+      ```bash
+      gh pr create \
+        --base "$inputs.base_branch" \
+        --title "<基于提交历史生成的标题>" \
+        --body "<中文 PR 描述，包含摘要、实现说明、测试验证情况>"
+      ```
+
+      ## 规则
+      - 无人值守模式
+      - gh pr create 失败时重试最多 2 次
+      - PR 描述中必须包含 Test-Verify 结果
+
+      完成后输出：
+      {"vars_update":{"pr_url":"<PR URL，多个用逗号分隔>","ship_summary":"<简要总结>"}}
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 7: Done — 汇总输出
+  # ═══════════════════════════════════════════════════════════════
+  - id: done
+    type: bash
+    depends_on: [ship]
+    timeout: 10
+    bash: |
+      echo "═══════════════════════════════════════"
+      echo "  ✅ Gen Workflow 开发流程完成"
+      echo "═══════════════════════════════════════"
+      echo "📂 项目: $vars.projects"
+      echo "🌿 分支: $vars.branch → $inputs.base_branch"
+      echo "🧪 测试: $vars.test_passed"
+      echo "🔗 PR:   ${pr_url:-none}"
+      echo "═══════════════════════════════════════"

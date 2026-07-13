@@ -2,7 +2,7 @@
 
 import { cn } from "@/lib/utils"
 import { Badge } from "@/components/ui/badge"
-import { Eye, MessagesSquare, Workflow, Sparkles } from "lucide-react"
+import { Eye, MessagesSquare, Workflow, Sparkles, Layers } from "lucide-react"
 import type { SwarmMode } from "@/lib/swarm-types"
 
 export interface SwarmBadgeProps {
@@ -31,6 +31,11 @@ const modeConfig: Record<SwarmMode, { icon: React.ElementType; label: string; co
     icon: Sparkles,
     label: "Swarm",
     colorClass: "text-swarm-mode-swarm border-swarm-mode-swarm/40 bg-swarm-mode-swarm/10",
+  },
+  moa: {
+    icon: Layers,
+    label: "MOA",
+    colorClass: "text-swarm-mode-moa border-swarm-mode-moa/40 bg-swarm-mode-moa/10",
   },
 }
 

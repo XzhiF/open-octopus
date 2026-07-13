@@ -9,21 +9,28 @@ import os from "os"
  * when it starts. Playwright reads this at config load time.
  */
 function resolveWebPort(): number {
-  const repoRoot = path.resolve(__dirname, "..")
+  const repoRoot = path.resolve(__dirname, "../..")
   const gitPath = path.join(repoRoot, ".git")
 
-  // Detect worktree: .git is a file
   let isWorktree = false
   try { isWorktree = fs.statSync(gitPath).isFile() } catch { /* ignore */ }
 
   if (!isWorktree) return 3000
 
+  // Read branch from worktree HEAD
   let branch = ""
   try {
-    const content = fs.readFileSync(gitPath, "utf8").trim()
-    const match = content.match(/ref: refs\/heads\/(.+)/)
-    branch = match ? match[1] : path.basename(repoRoot)
-  } catch { return 3000 }
+    const gitContent = fs.readFileSync(gitPath, "utf8").trim()
+    const gitdirMatch = gitContent.match(/^gitdir:\s*(.+)$/)
+    if (gitdirMatch) {
+      const headPath = path.join(gitdirMatch[1], "HEAD")
+      const headContent = fs.readFileSync(headPath, "utf8").trim()
+      const refMatch = headContent.match(/ref: refs\/heads\/(.+)/)
+      branch = refMatch ? refMatch[1] : path.basename(repoRoot)
+    } else {
+      branch = path.basename(repoRoot)
+    }
+  } catch { branch = path.basename(repoRoot) }
 
   const safe = branch.replace(/\//g, "-").replace(/[^a-zA-Z0-9\-_.]/g, "_")
   const portFile = path.join(os.homedir(), ".octopus", "ports", `${safe}.json`)
@@ -54,12 +61,17 @@ export default defineConfig({
     screenshot: "only-on-failure",
     video: "retain-on-failure",
   },
+  snapshotPathTemplate: "{testDir}/__screenshots__/{testFilePath}/{arg}{ext}",
+  expect: {
+    toHaveScreenshot: { maxDiffPixelRatio: 0.02 },
+  },
   projects: [
     {
       name: "chromium",
       use: { ...devices["Desktop Chrome"] },
     },
   ],
+  // H7 fix: restore webServer so E2E tests auto-start the app
   webServer: {
     command: "pnpm dev --skip-build",
     url: `http://localhost:${webPort}`,

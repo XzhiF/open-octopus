@@ -341,6 +341,7 @@ export class DiscussionStrategy extends SwarmStrategy {
     let prompt = `You are an expert with the role: ${expert.role}`
     if (expert.perspective) prompt += `\nYour perspective: ${expert.perspective}`
     if (expert.task) prompt += `\nYour task: ${expert.task}`
+    if (expert.prompt) prompt += `\n\n${expert.prompt}`
 
     prompt += `\n\n===USER TOPIC START===\n${topic}\n===USER TOPIC END===`
 

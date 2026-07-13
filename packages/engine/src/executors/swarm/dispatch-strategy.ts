@@ -260,6 +260,7 @@ export class DispatchStrategy extends SwarmStrategy {
   private buildDispatchPrompt(expert: ExpertDef, topic: string, upstreamContext: string): string {
     let prompt = `You are an expert: ${expert.role}`
     if (expert.task) prompt += `\nTask: ${expert.task}`
+    if (expert.prompt) prompt += `\n\n${expert.prompt}`
     prompt += `\n\n===USER TOPIC START===\n${topic}\n===USER TOPIC END===`
     if (upstreamContext) prompt += `\n\n## Upstream Expert Outputs\n${upstreamContext}`
 

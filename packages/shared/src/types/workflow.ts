@@ -175,26 +175,17 @@ export interface NodeDef {
   max_iterations?: number
   nodes?: NodeDef[]
 
-  // swarm
+  // swarm — ponytail: reuse ExpertDef to avoid type drift from ExpertDefSchema
   topic?: string
-  mode?: "review" | "debate" | "dispatch" | "swarm"
-  experts?: Array<{
-    role: string
-    agent_file?: string
-    prompt?: string
-    perspective?: string
-    task?: string
-    depends_on?: string[]
-    tools?: string[]
-    disallowed_tools?: string[]
-    model?: string
-  }>
+  mode?: "review" | "debate" | "dispatch" | "swarm" | "moa"
+  experts?: ExpertDef[]
   dynamic?: boolean
   max_experts?: number
   rounds?: number
   consensus_threshold?: number
   budget?: number
   host?: ExpertDef
+  aggregator?: ExpertDef
   failure_policy?: "fail_fast" | "continue_partial" | "retry_failed"
   output_format?: "summary" | "full" | "structured"
   expert_defaults?: {
@@ -257,14 +248,15 @@ export const NodeSchema: z.ZodType<NodeDef> = z.lazy(() =>
 
     // swarm
     topic: z.string().optional(),
-    mode: z.enum(["review", "debate", "dispatch", "swarm"]).optional(),
+    mode: z.enum(["review", "debate", "dispatch", "swarm", "moa"]).optional(),
     experts: z.array(ExpertDefSchema).optional(),
     dynamic: z.boolean().optional(),
     max_experts: z.number().int().positive().optional(),
-    rounds: z.number().int().positive().optional(),
+    rounds: z.number().int().nonnegative().optional(),
     consensus_threshold: z.number().min(0).max(1).optional(),
     budget: z.number().int().positive().optional(),
     host: ExpertDefSchema.optional(),
+    aggregator: ExpertDefSchema.optional(),
     failure_policy: z.enum(["fail_fast", "continue_partial", "retry_failed"]).optional(),
     output_format: OutputFormatSchema.optional(),
     expert_defaults: z.object({
