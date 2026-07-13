@@ -6,7 +6,7 @@ import { cn } from "@/lib/utils"
 import { formatDuration, formatTokenCount } from "@/lib/format"
 import { isMergedEvent, type AgentEvent, type LoopIterationSummary } from "@/lib/types"
 import { useExecutionEvents } from "@/hooks/use-execution-events"
-import { IterationGroup } from "./iteration-group"
+// IterationGroup used in loop-overview panel
 
 // ============ LogEvent (extends AgentEvent for legacy compat) ============
 
@@ -439,41 +439,37 @@ export function ExecutionLogViewer({ workspaceId, executionId, executionStatus }
     return result
   }, [rawEvents])
 
-  // Group by nodeId, with iteration sub-groups
-  interface NodeGroup {
-    nodeId: string
-    directEvents: LogEvent[]
-    iterationGroups: { iteration: number; events: LogEvent[] }[]
+  // Flat grouping: key = "{nodeId}-{iteration}" or "{nodeId}" (no iteration)
+  // Groups ordered by first event timestamp
+  interface FlatGroup {
+    key: string
+    label: string
+    events: LogEvent[]
+    firstTimestamp: string
   }
 
   const nodeGroups = useMemo(() => {
-    const map = new Map<string, NodeGroup>()
+    const map = new Map<string, FlatGroup>()
 
     for (const e of processedEvents) {
       const nodeId = e.nodeId || "(未分类)"
-      if (!map.has(nodeId)) {
-        map.set(nodeId, { nodeId, directEvents: [], iterationGroups: [] })
-      }
-      const group = map.get(nodeId)!
+      const hasIter = e.iteration != null && e.iteration > 0
+      const key = hasIter ? `${nodeId}-${e.iteration}` : nodeId
+      const label = key
 
-      if (e.iteration != null && e.iteration > 0) {
-        let iterGroup = group.iterationGroups.find(g => g.iteration === e.iteration)
-        if (!iterGroup) {
-          iterGroup = { iteration: e.iteration, events: [] }
-          group.iterationGroups.push(iterGroup)
-        }
-        iterGroup.events.push(e)
-      } else {
-        group.directEvents.push(e)
+      if (!map.has(key)) {
+        map.set(key, { key, label, events: [], firstTimestamp: e.timestamp || e.startedAt || "" })
       }
+      map.get(key)!.events.push(e)
     }
 
-    // Sort iteration groups by iteration number
-    for (const group of map.values()) {
-      group.iterationGroups.sort((a, b) => a.iteration - b.iteration)
-    }
-
-    return map
+    // Sort groups by first event timestamp (chronological)
+    const sorted = new Map(
+      Array.from(map.entries()).sort((a, b) =>
+        (a[1].firstTimestamp).localeCompare(b[1].firstTimestamp)
+      )
+    )
+    return sorted
   }, [processedEvents])
 
   // Auto-collapse: collapse old groups, expand newest
@@ -563,57 +559,27 @@ export function ExecutionLogViewer({ workspaceId, executionId, executionStatus }
       )}
       <div ref={containerRef} className="flex-1 overflow-y-auto min-h-0">
         <div className="p-2 space-y-2">
-          {Array.from(nodeGroups.entries()).map(([nodeId, group]) => {
-            const totalEvents = group.directEvents.length +
-              group.iterationGroups.reduce((s, g) => s + g.events.length, 0)
-            const totalIters = group.iterationGroups.length
-            const hasIterations = totalIters > 0
-
+          {Array.from(nodeGroups.entries()).map(([key, group]) => {
             return (
-              <div key={nodeId} className="rounded border border-border/50 overflow-hidden">
+              <div key={key} className="rounded border border-border/50 overflow-hidden">
                 <div
                   className="flex items-center gap-1.5 px-2 py-1 bg-muted/30 cursor-pointer hover:bg-muted/50 text-xs font-medium"
-                  onClick={() => toggleNode(nodeId)}
+                  onClick={() => toggleNode(key)}
                 >
-                  {collapsedNodes.has(nodeId)
+                  {collapsedNodes.has(key)
                     ? <ChevronRight className="h-3 w-3" />
                     : <ChevronDown className="h-3 w-3" />
                   }
-                  <span className="text-muted-foreground">{nodeId}</span>
+                  <span className="text-muted-foreground">{group.label}</span>
                   <span className="text-muted-foreground/40 ml-auto">
-                    {totalEvents} events{totalIters > 0 && ` · ${totalIters} iterations`}
+                    {group.events.length} events
                   </span>
                 </div>
-                {!collapsedNodes.has(nodeId) && (
+                {!collapsedNodes.has(key) && (
                   <div className="px-2 py-1 space-y-1">
-                    {/* Direct (non-iteration) events — always show */}
-                    {group.directEvents.map((entry, i) => (
-                      <ExpandableRow key={`direct-${i}`} entry={entry} />
+                    {group.events.map((entry, i) => (
+                      <ExpandableRow key={`${key}-${i}`} entry={entry} />
                     ))}
-                    {/* Iteration sub-groups: render iteration-first with per-node sub-groups */}
-                    {group.iterationGroups.map((ig, idx) => {
-                      // Group events by nodeId within this iteration
-                      const nodeEventMap = new Map<string, typeof ig.events>()
-                      for (const e of ig.events) {
-                        const key = e.nodeId || "(node)"
-                        if (!nodeEventMap.has(key)) nodeEventMap.set(key, [])
-                        nodeEventMap.get(key)!.push(e)
-                      }
-                      const iterDurationMs = ig.events.reduce((s, e) => s + (e.durationMs ?? 0), 0)
-
-                      return (
-                        <IterationGroup
-                          key={`iter-${ig.iteration}`}
-                          loopId={nodeId}
-                          iteration={ig.iteration}
-                          events={ig.events as AgentEvent[]}
-                          isLatest={idx === group.iterationGroups.length - 1}
-                          totalIterations={totalIters}
-                          nodeEventMap={nodeEventMap as Map<string, AgentEvent[]>}
-                          iterDurationMs={iterDurationMs}
-                        />
-                      )
-                    })}
                   </div>
                 )}
               </div>
