@@ -474,7 +474,9 @@ executionRoutes.get("/:executionId/agent-events", (c) => {
       // Exclude raw agent_event wrappers and branch_start/branch_end (only needed for LoopOverview)
       const jsonlEvents = svc.service.getAgentEvents(executionId, nodeId || undefined, loopId, iteration)
       const jsonlToAdd = jsonlEvents.filter((e: any) => {
-        // Include lifecycle events (start/end) — but NOT branch markers
+        // Exclude branch markers — they're metadata for LoopOverview, not display events
+        if (e.event === "branch_start" || e.event === "branch_end") return false
+        // Include lifecycle events (start/end)
         if (e.event === "start" || e.event === "end") return true
         // Include iteration-scoped events (from iteration JSONL files)
         if (e.iteration != null && e.iteration > 0) return true
@@ -491,7 +493,24 @@ executionRoutes.get("/:executionId/agent-events", (c) => {
       for (const group of jsonlByNode.values()) {
         mergedJsonl.push(...mergeAgentEvents(group))
       }
-      const merged = [...mergedSqlite, ...mergedJsonl]
+
+      // Detect loop inner nodes: nodes that have iteration-scoped events in JSONL.
+      // SQLite doesn't store iteration info, so its events for these nodes are duplicates.
+      const loopInnerNodes = new Set<string>()
+      for (const e of jsonlToAdd) {
+        if (e.iteration != null && e.iteration > 0) {
+          loopInnerNodes.add(e.nodeId)
+        }
+      }
+
+      // Filter SQLite events: remove events for loop inner nodes (JSONL has better data with iteration)
+      // Also remove raw agent_event entries (they're wrapper events, merged versions come from JSONL)
+      const filteredSqlite = mergedSqlite.filter((e: any) => {
+        if (loopInnerNodes.has(e.nodeId)) return false
+        return true
+      })
+
+      const merged = [...filteredSqlite, ...mergedJsonl]
         .sort((a: any, b: any) => ((a.timestamp ?? a.startedAt) ?? "").localeCompare((b.timestamp ?? b.startedAt) ?? ""))
 
       return c.json({ executionId, events: merged, source: 'sqlite', _degraded: false, _message: null, loopIterations })

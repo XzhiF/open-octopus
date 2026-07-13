@@ -439,7 +439,11 @@ export function ExecutionLogViewer({ workspaceId, executionId, executionStatus }
     return result
   }, [rawEvents])
 
-  // Flat grouping: key = "{nodeId}-{iteration}" or "{nodeId}" (no iteration)
+  // Flat grouping with loop-aware rendering:
+  // - Iteration events: key = "{nodeId}-{iteration}"
+  // - Loop node start/end: key = "{nodeId}-start" / "{nodeId}-end" (bookends)
+  // - Other events: key = "{nodeId}"
+  // - branch_start/branch_end: excluded (metadata for LoopOverview only)
   // Groups ordered by first event timestamp
   interface FlatGroup {
     key: string
@@ -449,13 +453,60 @@ export function ExecutionLogViewer({ workspaceId, executionId, executionStatus }
   }
 
   const nodeGroups = useMemo(() => {
+    // First pass: detect loop nodes (nodes that have iteration-scoped children)
+    const loopNodes = new Set<string>()
+    for (const e of processedEvents) {
+      if (e.iteration != null && e.iteration > 0) {
+        // Find the parent loop node — it's the node whose branch events reference this iteration
+        // Loop nodes have start/end events and their nodeId appears as a group with branch events
+        loopNodes.add(e.nodeId || "")
+      }
+    }
+    // Detect loop parent nodes: nodes that have both start and end events
+    const nodeEventTypes = new Map<string, Set<string>>()
+    for (const e of processedEvents) {
+      const nid = e.nodeId || ""
+      if (!nodeEventTypes.has(nid)) nodeEventTypes.set(nid, new Set())
+      nodeEventTypes.get(nid)!.add(e.event)
+    }
+    const loopParentNodes = new Set<string>()
+    for (const [nid, types] of nodeEventTypes) {
+      if (types.has("start") && types.has("end") && (types.has("branch_start") || types.has("branch_end"))) {
+        loopParentNodes.add(nid)
+      }
+    }
+
     const map = new Map<string, FlatGroup>()
 
     for (const e of processedEvents) {
+      // Skip branch markers — they're metadata, not display events
+      if (e.event === "branch_start" || e.event === "branch_end") continue
+
       const nodeId = e.nodeId || "(未分类)"
       const hasIter = e.iteration != null && e.iteration > 0
-      const key = hasIter ? `${nodeId}-${e.iteration}` : nodeId
-      const label = key
+
+      let key: string
+      let label: string
+
+      if (loopParentNodes.has(nodeId) && !hasIter) {
+        // Loop parent node: split into start/end bookends
+        if (e.event === "start") {
+          key = `${nodeId}-start`
+          label = `${nodeId} start`
+        } else if (e.event === "end") {
+          key = `${nodeId}-end`
+          label = `${nodeId} end`
+        } else {
+          // Skip other loop parent events (agent_event wrappers)
+          continue
+        }
+      } else if (hasIter) {
+        key = `${nodeId}-${e.iteration}`
+        label = `${nodeId}-${e.iteration}`
+      } else {
+        key = nodeId
+        label = nodeId
+      }
 
       if (!map.has(key)) {
         map.set(key, { key, label, events: [], firstTimestamp: e.timestamp || e.startedAt || "" })
