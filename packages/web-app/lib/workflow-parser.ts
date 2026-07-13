@@ -224,11 +224,11 @@ export function yamlToFlowData(parsed: WorkflowDefinition): { nodes: Node[]; edg
   const containerSizes = new Map<string, { width: number; height: number }>()
 
   // ─── Inner dagre layout constants ───
-  const INNER_LAYOUT_RANKDIR = "LR" as const
+  const INNER_LAYOUT_RANKDIR = "TB" as const
   const INNER_LAYOUT_PADDING = 20
-  const INNER_LAYOUT_NODESEP = 60
-  const INNER_LAYOUT_RANKSEP = 80
-  const CONTAINER_PADDING = 40
+  const INNER_LAYOUT_NODESEP = 40
+  const INNER_LAYOUT_RANKSEP = 60
+  const CONTAINER_PADDING = 20
 
   for (const [loopId, loopNode] of loopNodesWithInner) {
     const innerNodes = loopNode.nodes!
@@ -253,7 +253,7 @@ export function yamlToFlowData(parsed: WorkflowDefinition): { nodes: Node[]; edg
             id: `e-${dep}-${innerNode.id}`,
             source: dep,
             target: innerNode.id,
-            type: "default",
+            type: "smoothstep",
           })
         }
       }
