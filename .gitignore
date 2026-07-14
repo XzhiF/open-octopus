@@ -60,6 +60,9 @@ dist/
 .qwen/
 .agents/
 
+# sync-builtin artifact — source of truth is packages/core-pack/workflows/
+workflows/
+
 # Crash dumps
 *.stackdump
 
