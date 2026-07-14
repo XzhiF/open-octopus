@@ -310,7 +310,7 @@ nodes:
               非后端问题 → 简短表态"非我的领域，交给其他专家"。
 
           - role: security-expert
-            agent_file: ".claude/agents/security-reviewer.md"
+            agent_file: ".claude/agents/security-architect.md"
             perspective: "安全专家 — 认证/授权/数据保护/威胁建模"
             task: |
               当安全相关时参与讨论。关注: 认证授权、数据保护、输入验证、威胁建模。
@@ -619,7 +619,7 @@ nodes:
       提交、推送并创建 PR。
 
       ## 输入
-      - 项目: $vars.project_path
+      - 项目: $inputs.project_path
       - 目标分支: $inputs.base_branch
       - Spec: $vars.spec_file
       - 领域模型: $vars.context_file
