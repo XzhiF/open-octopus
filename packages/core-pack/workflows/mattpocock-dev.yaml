@@ -178,7 +178,9 @@ nodes:
       - 从 `$inputs.idea` 提取 feature-slug（kebab-case）
       - 创建 `.scratch/<feature-slug>/issues/` 目录
       - 探索项目（grilling skill: facts from environment）
-      - 检测 Context 模式：monorepo + packages 有独立 src/ → multi，否则 single
+      - Context 模式由项目结构决定，不受已有 CONTEXT 文件影响：
+        monorepo（`packages/*/package.json` 或 `pnpm-workspace.yaml`）→ multi
+        否则 → single
 
       ## 输入
       - Idea: $inputs.idea
