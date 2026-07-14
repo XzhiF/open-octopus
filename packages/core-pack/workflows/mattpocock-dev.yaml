@@ -233,7 +233,7 @@ nodes:
   - id: tdd-loop
     type: loop
     depends_on: [tickets]
-    max_iterations: 20
+    max_iterations: 100
     break_when: '$vars.all_tickets_done == "true" || $vars.ticket_status == "no_ticket"'
     nodes:
       - id: ticket-impl
@@ -310,15 +310,10 @@ nodes:
           Read CLAUDE.md / README.md（如存在），Glob 关键文件，了解现有约定。
           ⛔ 不创建重复组件 ⛔ 必须复用现有资产 ⛔ 必须使用项目现有集成方式
 
-          ## Step 1-3: TDD 循环（委派选中的工程师，按 tdd + implement skill 纪律）
+          ## Step 1-3: TDD（委派选中的工程师）
 
-          委派选中的工程师执行 SEAM → RED → GREEN → REFACTOR：
-          - **SEAM**: 确认测试边界（优先复用宿主 Seam，interface = test surface）
-          - **RED**: 写失败测试（独立真相源，禁止自证测试，禁止 mock 内部协作者）
-          - **GREEN**: 最小实现（不添加 Spec 未要求功能，禁止 TODO/FIXME/placeholder）
-          - **REFACTOR**: 按 **codebase-design** 原则改善结构（deletion test / depth check / seam validation），不添加功能，运行测试确认仍 GREEN
-
-          给工程师的指令必须包含：Ticket 描述、验收标准、Spec 相关部分、领域模型术语、宿主项目约定。
+          委派选中的工程师按 **tdd** + **implement** skill 执行。
+          给工程师的指令必须包含：Ticket 描述、验收标准、Spec 相关部分、领域模型术语。
 
           ## Step 4: VERIFY
 
@@ -331,11 +326,7 @@ nodes:
 
           ## Step 5: REVIEW（按 code-review skill — 两轴并行）
 
-          保存变更文件列表后，**同时委派两个子代理**：
-
-          **standards-reviewer**: 只看代码质量。读项目现有代码约定 + 变更文件。按 code-review skill 的 Standards 轴审查（Fowler 12-smell baseline + 违反项目约定 = BLOCKER）。
-          **spec-reviewer**: 只看需求覆盖。读 Ticket 描述 + 变更文件。按 code-review skill 的 Spec 轴审查（missing/partial = BLOCKER, scope creep = WARNING）。
-
+          保存变更文件列表后，**同时委派 standards-reviewer 和 spec-reviewer**。
           两轴独立报告，不合并不重排。
 
           ## Step 5.5: Anti-TODO 门禁
@@ -348,11 +339,8 @@ nodes:
           ## Step 6: Fix 循环 + Debug Fallback
 
           blockers > 0 → 委派同一工程师修复 → VERIFY → REVIEW。最多 3 轮。
-          3 轮后仍失败 → 按 **diagnosing-bugs** skill 执行：
-          1. Build feedback loop（核心：建立紧致 pass/fail 信号）
-          2. Reproduce + minimize → 3-5 hypotheses → targeted instrumentation
-          3. Fix at correct seam → regression test → cleanup debug markers
-          仍失败 → ticket status = "blocked"，继续下一个。
+          3 轮后仍失败 → 按 **diagnosing-bugs** skill 执行。
+          仍失败 → ticket `Status:` 改为 `blocked`，继续下一个。
 
           ## Step 7: COMMIT
           ```bash
