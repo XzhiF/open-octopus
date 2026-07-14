@@ -35,7 +35,7 @@ inputs:
     default: "false"
 
 variables:
-  output_dir: ""
+  scratch_dir: ""
   display_name: "Matt Pocock Dev"
   conclusion: ""
   # Grill
@@ -49,8 +49,6 @@ variables:
   seam_count: "0"
   user_stories_count: "0"
   # Tickets
-  tickets_queue_file: ""
-  tickets_progress_file: ""
   ticket_count: "0"
   tickets_done_count: "0"
   tickets_blocked_count: "0"
@@ -136,7 +134,7 @@ hooks:
       template:
         severity: info
         title: "🎫 Tickets 拆分完成 — $vars.ticket_count 个垂直切片"
-        body: "📄 $vars.tickets_queue_file\n💡 $vars.conclusion"
+        body: "📂 $vars.scratch_dir/issues/\n💡 $vars.conclusion"
 
     - id: notify-tdd-loop
       type: notify
@@ -179,17 +177,12 @@ nodes:
 
       ## Step 0: 准备
 
-      ### 输出目录
+      ### Scratch 目录（Matt Pocock 约定：local markdown tracker）
+      从 `$inputs.idea` 提取 feature-slug（kebab-case，如 "add rate limiting" → "add-rate-limiting"）：
       ```bash
-      OUTPUT_ROOT="./docs/mattpocock-dev"
-      mkdir -p "$OUTPUT_ROOT"
-      MAX_INDEX=0
-      for dir in "$OUTPUT_ROOT"/run-*/; do
-        [ -d "$dir" ] && INDEX=$(basename "$dir" | sed 's/run-0*//' | sed 's/^$/0/') && [ "$INDEX" -gt "$MAX_INDEX" ] 2>/dev/null && MAX_INDEX=$INDEX
-      done
-      NEW_INDEX=$((MAX_INDEX + 1))
-      OUTPUT_DIR="$OUTPUT_ROOT/run-$(printf "%03d" $NEW_INDEX)"
-      mkdir -p "$OUTPUT_DIR"
+      FEATURE_SLUG=$(echo "$inputs.idea" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g' | sed 's/--*/-/g' | sed 's/^-//' | sed 's/-$//')
+      SCRATCH_DIR=".scratch/$FEATURE_SLUG"
+      mkdir -p "$SCRATCH_DIR/issues"
       ```
 
       ### 项目探索（grilling skill: facts from environment）
@@ -231,7 +224,7 @@ nodes:
 
       ## 产出
 
-      ### 1. Grill 决策文档 → `$OUTPUT_DIR/00-brief.md`
+      ### 1. Grill 决策文档 → `$SCRATCH_DIR/brief.md`
 
       ```markdown
       # Grill Decisions
@@ -271,7 +264,7 @@ nodes:
       ```
 
       ## 输出
-      {"vars_update":{"output_dir":"$OUTPUT_DIR","brief_file":"$OUTPUT_DIR/00-brief.md","context_file":"<single: $inputs.project_path/CONTEXT.md / multi: $inputs.project_path/CONTEXT-MAP.md>","context_mode":"<single|multi>","context_packages":"<comma-separated, empty if single>","decision_count":"<数>","conclusion":"<2-3句: Idea 本质 + 关键决策 + 领域术语数 + context 模式>"}}
+      {"vars_update":{"scratch_dir":"$SCRATCH_DIR","brief_file":"$SCRATCH_DIR/brief.md","context_file":"<single: $inputs.project_path/CONTEXT.md / multi: $inputs.project_path/CONTEXT-MAP.md>","context_mode":"<single|multi>","context_packages":"<comma-separated, empty if single>","decision_count":"<数>","conclusion":"<2-3句: Idea 本质 + 关键决策 + 领域术语数 + context 模式>"}}
 
   # ═══════════════════════════════════════════════════════════════
   # Phase 2: Spec — 综合规格文档
@@ -305,10 +298,10 @@ nodes:
       - 写完自审：遗漏 story？Seam 可执行？模块深度合理？术语与 CONTEXT 一致？
 
       ## 产出
-      保存到 `$vars.output_dir/01-spec.md`
+      保存到 `$vars.scratch_dir/spec.md`
 
       ## 输出
-      {"vars_update":{"spec_file":"$vars.output_dir/01-spec.md","user_stories_count":"<数>","seam_count":"<数>","conclusion":"<2-3句>"}}
+      {"vars_update":{"spec_file":"$vars.scratch_dir/spec.md","user_stories_count":"<数>","seam_count":"<数>","conclusion":"<2-3句>"}}
 
   # ═══════════════════════════════════════════════════════════════
   # Phase 3: Tickets — 垂直切片拆分
@@ -319,7 +312,8 @@ nodes:
     timeout: 1800
     skills: [to-tickets]
     prompt: |
-      按照 **to-tickets** skill 将 Spec 拆分为垂直切片（Tracer Bullet）队列。
+      按照 **to-tickets** skill 将 Spec 拆分为垂直切片（Tracer Bullet）。
+      每个 ticket 一个独立文件，写入 `$vars.scratch_dir/issues/`。
 
       ## 输入
       - Spec: $vars.spec_file
@@ -331,25 +325,30 @@ nodes:
       - 禁止水平切片
       - 宽重构用 expand-contract 序列
 
-      ## Ticket 结构
+      ## Ticket 文件模板（一个 ticket 一个文件）
+
+      文件路径: `$vars.scratch_dir/issues/<NN>-<slug>.md`（NN 从 01 开始，按依赖顺序编号）
+
       ```markdown
-      ## T{NN} — <标题>
-      **端到端行为**: ...
-      **Blocked by**: T{XX} / None
-      **验收标准**: Given/When/Then
-      **涉及范围**: 模块/层
-      **复杂度**: low / medium / high
+      # <NN> — <Ticket title>
+
+      **What to build:** 端到端行为描述（用户视角，不是实现清单）
+
+      **Blocked by:** <依赖的 ticket 编号/标题> 或 "None — can start immediately"
+
+      **Status:** ready-for-agent
+
+      - [ ] Acceptance criterion 1 (Given/When/Then)
+      - [ ] Acceptance criterion 2
       ```
 
       ## 产出
-      - Ticket 队列: `$vars.output_dir/02-tickets-queue.md`
-      - 进度追踪: `$vars.output_dir/tickets-progress.json`
-        ```json
-        {"tickets": [{"id":"T01","title":"...","status":"pending","blocked_by":[],"round":0}]}
-        ```
+      - 每个 ticket 写入 `$vars.scratch_dir/issues/<NN>-<slug>.md`
+      - 编号从 01 开始，按依赖顺序（blockers 在前）
+      - Status 初始为 `ready-for-agent`
 
       ## 输出
-      {"vars_update":{"tickets_queue_file":"$vars.output_dir/02-tickets-queue.md","tickets_progress_file":"$vars.output_dir/tickets-progress.json","ticket_count":"<数>","conclusion":"<2-3句>"}}
+      {"vars_update":{"ticket_count":"<数>","conclusion":"<2-3句>"}}
 
   # ═══════════════════════════════════════════════════════════════
   # Phase 4: TDD Loop — 逐 Ticket TDD + 并行审查 + Debug Fallback
@@ -397,24 +396,25 @@ nodes:
             model: pro-max
             tools: ["Read", "Grep", "Glob"]
         prompt: |
-          你是 TDD 编排器。从队列取下一个 Ticket，选合适的工程师执行，按 skill 纪律验证。
+          你是 TDD 编排器。从 issues 目录取下一个 Ticket，选合适的工程师执行，按 skill 纪律验证。
 
           ## 输入
-          - Ticket 队列: $vars.tickets_queue_file
-          - 进度文件: $vars.tickets_progress_file
+          - Issues 目录: $vars.scratch_dir/issues/
           - Spec: $vars.spec_file
           - 项目路径: $inputs.project_path
           - 领域模型: $vars.context_file（multi 模式读 CONTEXT-MAP.md + 当前 Ticket 涉及的 package CONTEXT）
 
           ## Step 0: 取下一个 Ticket
 
-          读 `$vars.tickets_progress_file`，找第一个 pending 且 blocked_by 都 done 的 Ticket。
+          扫描 `$vars.scratch_dir/issues/` 下所有 `.md` 文件。
+          对每个文件读取 `Status:` 和 `Blocked by:` 字段。
+          找第一个 `Status: ready-for-agent` 且 `Blocked by:` 中列出的 ticket 都已是 `Status: done` 的文件。
           找不到 → `all_tickets_done: "true"` 或 `ticket_status: "no_ticket"`。
-          找到 → 更新 status 为 "in_progress"。
+          找到 → 更新文件 `Status:` 为 `claimed`，记录选中 ticket 的文件路径。
 
           ## Step 0.5: 路由 — 选择工程师
 
-          分析 Ticket 的 "涉及范围" 字段，选择最佳工程师：
+          分析 Ticket 的 "What to build" 内容，选择最佳工程师：
 
           | Ticket 涉及范围关键词 | 委派工程师 |
           |---------------------|----------|
@@ -483,7 +483,9 @@ nodes:
           git commit -m "feat(T{NN}): <Ticket 标题>"
           ```
 
-          ## Step 8: 更新进度
+          ## Step 8: 更新 Ticket 状态
+
+          将 ticket 文件中 `Status: claimed` 改为 `Status: done`。
 
           ## 输出
           成功: {"vars_update":{"current_ticket_id":"T{NN}","ticket_status":"done","tickets_done_count":"<数>","total_commits":"$vars.total_commits + 1","tdd_cycles":"$vars.tdd_cycles + <数>","conclusion":"T{NN} [<工程师>]: <摘要>"}}
@@ -525,7 +527,7 @@ nodes:
       委派 architecture-reviewer 子代理扫描变更文件，标记 BLOCKER/WARNING。
 
       ## 产出
-      报告 → `$vars.output_dir/03-architecture-review.md`
+      报告 → `$vars.scratch_dir/architecture-review.md`
 
       BLOCKER 条件：
       - Shallow module with >3 callers
@@ -533,7 +535,7 @@ nodes:
       - Interface ≠ test surface
 
       ## 输出
-      {"vars_update":{"arch_review_file":"$vars.output_dir/03-architecture-review.md","arch_blockers":"<数>","conclusion":"<2-3句>"}}
+      {"vars_update":{"arch_review_file":"$vars.scratch_dir/architecture-review.md","arch_blockers":"<数>","conclusion":"<2-3句>"}}
 
   # ═══════════════════════════════════════════════════════════════
   # Phase 6: Ship
@@ -588,7 +590,7 @@ nodes:
       echo "═══════════════════════════════════════"
       echo "  ✅ mattpocock-dev 完成"
       echo "═══════════════════════════════════════"
-      echo "📂 输出: $vars.output_dir"
+      echo "📂 Scratch: $vars.scratch_dir"
       echo "📋 Spec: $vars.spec_file"
       echo "📖 领域模型: $vars.context_file ($vars.context_mode)"
       echo "🎫 Tickets: $vars.tickets_done_count / $vars.ticket_count (blocked: $vars.tickets_blocked_count)"
