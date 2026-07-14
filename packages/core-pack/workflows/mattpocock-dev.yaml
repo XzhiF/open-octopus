@@ -363,12 +363,12 @@ nodes:
         agents:
           standards-reviewer:
             description: "Standards 轴审查员 — 只看代码质量（不看 Spec）"
-            agent_file: ".claude/agents/engineering-code-reviewer"
+            agent_file: ".claude/agents/engineering-code-reviewer.md"
             model: pro-max
             tools: ["Read", "Grep", "Glob"]
           spec-reviewer:
             description: "Spec 轴审查员 — 只看需求覆盖（不看代码标准）"
-            agent_file: ".claude/agents/engineering-code-reviewer"
+            agent_file: ".claude/agents/engineering-code-reviewer.md"
             model: pro-max
             tools: ["Read", "Grep", "Glob"]
         prompt: |
@@ -458,7 +458,7 @@ nodes:
     agents:
       architecture-reviewer:
         description: "架构审查员 — 扫描新代码的模块深度和 seam 质量"
-        agent_file: ".claude/agents/architecture-explorer"
+        agent_file: ".claude/agents/architecture-explorer.md"
         model: pro
         tools: ["Read", "Write", "Grep", "Glob"]
     prompt: |
