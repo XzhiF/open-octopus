@@ -17,10 +17,6 @@ inputs:
   idea:
     description: "产品 Idea 描述（自然语言，越详细越好）"
     required: true
-  interactive:
-    description: "交互模式。true=grill 阶段逐问人工确认；false=AI 自动选推荐答案（无人值守）"
-    required: false
-    default: "false"
   base_branch:
     description: "PR 目标分支"
     required: false
@@ -208,7 +204,6 @@ nodes:
       ## 输入
       - 用户 Idea: $inputs.idea
       - 项目路径: $inputs.project_path（如为空，扫描 ./projects/ 下首个项目）
-      - 交互模式: $inputs.interactive（true=逐问确认，false=自动采用推荐答案）
 
       ## 拷问维度（8-13 个问题，grilling skill 纪律：一次一个，带推荐答案，决策归人事实归环境）
 
