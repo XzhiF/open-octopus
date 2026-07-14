@@ -243,9 +243,12 @@ nodes:
       **理由**: ...
       ```
 
-      ### 2. Domain Model
+      ### 2. Domain Model（写入项目根目录，永久资产，非运行产物）
 
-      **single 模式** → 写入 `$OUTPUT_DIR/CONTEXT.md`：
+      **domain-modeling skill**: CONTEXT.md 是项目的共享词汇表，提交到 git，跨 session 持久化。
+      如果项目根目录已有 CONTEXT.md，读取并增量更新（不覆盖）。
+
+      **single 模式** → 写入 `$inputs.project_path/CONTEXT.md`：
       ```markdown
       # Domain Glossary
       | Term | Definition | Notes |
@@ -254,7 +257,9 @@ nodes:
       # ADR Candidates（三条件：hard to reverse + surprising + real trade-off）
       ```
 
-      **multi 模式** → 写入 `$OUTPUT_DIR/CONTEXT-MAP.md`（索引）+ 每个相关 package 写入 `$OUTPUT_DIR/contexts/<pkg>-CONTEXT.md`：
+      **multi 模式**：
+      - 索引 → `$inputs.project_path/CONTEXT-MAP.md`
+      - 每个相关 package → `$inputs.project_path/packages/<pkg>/CONTEXT.md`（或对应 package 根目录）
       ```markdown
       # Context Map
       ## System-wide Glossary
@@ -266,7 +271,7 @@ nodes:
       ```
 
       ## 输出
-      {"vars_update":{"output_dir":"$OUTPUT_DIR","brief_file":"$OUTPUT_DIR/00-brief.md","context_file":"<single: CONTEXT.md / multi: CONTEXT-MAP.md 路径>","context_mode":"<single|multi>","context_packages":"<comma-separated, empty if single>","decision_count":"<数>","conclusion":"<2-3句: Idea 本质 + 关键决策 + 领域术语数 + context 模式>"}}
+      {"vars_update":{"output_dir":"$OUTPUT_DIR","brief_file":"$OUTPUT_DIR/00-brief.md","context_file":"<single: $inputs.project_path/CONTEXT.md / multi: $inputs.project_path/CONTEXT-MAP.md>","context_mode":"<single|multi>","context_packages":"<comma-separated, empty if single>","decision_count":"<数>","conclusion":"<2-3句: Idea 本质 + 关键决策 + 领域术语数 + context 模式>"}}
 
   # ═══════════════════════════════════════════════════════════════
   # Phase 2: Spec — 综合规格文档
@@ -283,7 +288,7 @@ nodes:
       ## 输入
       - Grill 决策: $vars.brief_file
       - 用户 Idea: $inputs.idea
-      - 领域模型: $vars.context_file（multi 模式还读 `$vars.output_dir/contexts/` 下所有文件）
+      - 领域模型: $vars.context_file（multi 模式还读各 package 的 CONTEXT.md，路径在 CONTEXT-MAP.md 中索引）
 
       ## Spec 结构（to-spec 模板）
 
