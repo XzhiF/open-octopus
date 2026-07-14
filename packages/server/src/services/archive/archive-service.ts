@@ -174,6 +174,8 @@ export class ArchiveService {
           extracted_agents: 0,
           analysis_report: null,
           file_deleted: 0,
+          archive_path: null,
+          archive_mode: 'full',
         }
         this.archiveDAO.insertWorkspaceArchive(wsRow)
 
@@ -362,6 +364,8 @@ export class ArchiveService {
         extracted_agents: 0,
         analysis_report: null,
         file_deleted: 0,
+        archive_path: null,
+        archive_mode: 'full',
       }
 
       if (options.analysisReport) {

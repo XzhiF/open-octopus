@@ -465,6 +465,8 @@ export interface WorkspaceArchiveRow {
   extracted_agents: number
   analysis_report: string | null
   file_deleted: number
+  archive_path: string | null
+  archive_mode: string
 }
 
 export interface ArchiveStats {
