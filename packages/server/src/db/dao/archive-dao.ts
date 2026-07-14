@@ -4,6 +4,7 @@ import type {
   ExecutionArchiveRow, WorkspaceArchiveRow, ArchiveStats,
   CostTrend, WorkflowStat, LeaderboardEntry, PaginatedResult,
 } from "../types"
+import type { ArchiveMode } from "@octopus/shared"
 
 export class ArchiveDAO extends BaseDAO {
   constructor(db: Database.Database) { super(db) }
@@ -71,6 +72,12 @@ export class ArchiveDAO extends BaseDAO {
 
   findByWorkspaceId(workspaceId: string): WorkspaceArchiveRow | null {
     return (this.stmt("SELECT * FROM workspace_archive WHERE workspace_id = ?").get(workspaceId) as WorkspaceArchiveRow) ?? null
+  }
+
+  findByArchiveMode(org: string, mode: ArchiveMode): WorkspaceArchiveRow[] {
+    return this.stmt(
+      "SELECT * FROM workspace_archive WHERE org = ? AND archive_mode = ? ORDER BY archived_at DESC"
+    ).all(org, mode) as WorkspaceArchiveRow[]
   }
 
   listArchivedWorkspaces(org: string, page = 1, pageSize = 20): PaginatedResult<WorkspaceArchiveRow> {
