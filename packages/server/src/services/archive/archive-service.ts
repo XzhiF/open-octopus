@@ -7,6 +7,10 @@ import type { ExecutionArchiveRow, WorkspaceArchiveRow, ExecutionRow } from "../
 import { logError, logInfo } from "../../file-logger"
 import type { StepEmitter } from "./step-emitter"
 import { createNullEmitter } from "./step-emitter"
+import type { ArchiveMode } from "@octopus/shared"
+import { archiveWorkspaceFiles } from "./archive-workspace-files"
+import * as os from "os"
+import * as path from "path"
 
 export class ArchivePartialFailure extends Error {
   constructor(public readonly failures: Array<{ execId: string; error: string }>) {
@@ -114,14 +118,122 @@ export class ArchiveService {
     }
   }
 
-  // ── P1.2: archiveWorkspace (two-phase) ──────────────────────────────
+  // ── archiveWorkspace: overloaded dispatcher ─────────────────────────
 
+  // Overload 1: P1.2 simple archive
   async archiveWorkspace(
     workspaceId: string,
     workspaceDAO: WorkspaceDAO,
+    archiveMode?: ArchiveMode,
+  ): Promise<{ archived: boolean; execution_count: number }>
+
+  // Overload 2: P2.4 full knowledge-loop archive
+  async archiveWorkspace(
+    workspaceId: string,
+    org: string,
+    options: {
+      extractExperiences: string[]
+      installSkills: Array<{ name: string; group: string; path?: string; content?: string }>
+      installWorkflows?: Array<{ name: string; group: string; path?: string; content?: string }>
+      installAgents?: Array<{ name: string; group: string; path?: string; content?: string }>
+      analysisReport?: unknown
+      metadata?: Record<string, unknown>
+      stats?: {
+        execution_count: number
+        total_cost: number
+        total_duration_ms: number
+        success_rate: number
+        avg_cost_per_execution: number
+        avg_duration_ms: number
+        lifespan_days: number
+        workflow_count: number
+      }
+      experienceActions?: Array<{
+        id: string
+        text: string
+        action: "add" | "update" | "delete"
+        replaces_text?: string
+        confidence: number
+        category: string
+        scope?: string
+        target?: string
+      }>
+    },
+    emitter?: StepEmitter,
+  ): Promise<{
+    success: boolean
+    archivedExecutions: number
+    extractedExperiences: number
+    installedSkills: number
+    installedAgents: number
+    fileDeleted: boolean
+    error?: string
+  }>
+
+  // Implementation: runtime dispatch based on argument types
+  async archiveWorkspace(
+    workspaceId: string,
+    secondArg: WorkspaceDAO | string,
+    thirdArg?: ArchiveMode | {
+      extractExperiences: string[]
+      installSkills: Array<{ name: string; group: string; path?: string; content?: string }>
+      installWorkflows?: Array<{ name: string; group: string; path?: string; content?: string }>
+      installAgents?: Array<{ name: string; group: string; path?: string; content?: string }>
+      analysisReport?: unknown
+      metadata?: Record<string, unknown>
+      stats?: {
+        execution_count: number
+        total_cost: number
+        total_duration_ms: number
+        success_rate: number
+        avg_cost_per_execution: number
+        avg_duration_ms: number
+        lifespan_days: number
+        workflow_count: number
+      }
+      experienceActions?: Array<{
+        id: string
+        text: string
+        action: "add" | "update" | "delete"
+        replaces_text?: string
+        confidence: number
+        category: string
+        scope?: string
+        target?: string
+      }>
+    },
+    fourthArg?: StepEmitter,
+  ): Promise<any> {
+    // Dispatch: if secondArg is WorkspaceDAO → P1.2 simple, else → P2.4 full
+    if (secondArg instanceof WorkspaceDAO) {
+      return this._archiveWorkspaceSimple(workspaceId, secondArg, (thirdArg as ArchiveMode) ?? "full")
+    } else {
+      return this._archiveWorkspaceFull(workspaceId, secondArg as string, thirdArg as any, fourthArg ?? createNullEmitter())
+    }
+  }
+
+  // ── P1.2: archiveWorkspace simple (two-phase) ──────────────────────
+
+  private async _archiveWorkspaceSimple(
+    workspaceId: string,
+    workspaceDAO: WorkspaceDAO,
+    archiveMode: ArchiveMode = "full",
   ): Promise<{ archived: boolean; execution_count: number }> {
     const ws = workspaceDAO.findById(workspaceId)
     if (!ws) return { archived: false, execution_count: 0 }
+
+    // File archive (only in full mode)
+    let archivePath: string | null = null
+    if (archiveMode === "full") {
+      const archiveDir = path.join(os.homedir(), ".octopus", "orgs", ws.org, "archives", workspaceId)
+      try {
+        const result = archiveWorkspaceFiles(ws.path, archiveDir)
+        archivePath = result.success ? result.archivePath : null
+      } catch (err) {
+        logError("file archive failed, degrading to archive_path=null", err, { workspaceId })
+        archivePath = null
+      }
+    }
 
     const execRows = this.db.prepare(
       "SELECT id FROM executions WHERE workspace_id = ?",
@@ -174,8 +286,8 @@ export class ArchiveService {
           extracted_agents: 0,
           analysis_report: null,
           file_deleted: 0,
-          archive_path: null,
-          archive_mode: 'full',
+          archive_path: archivePath,
+          archive_mode: archiveMode,
         }
         this.archiveDAO.insertWorkspaceArchive(wsRow)
 
@@ -183,7 +295,7 @@ export class ArchiveService {
         workspaceDAO.setArchiveStatus(workspaceId, "archived")
       })
 
-      logInfo("workspace archived", { workspaceId, execution_count: execRows.length })
+      logInfo("workspace archived", { workspaceId, execution_count: execRows.length, archiveMode, archivePath })
       return { archived: true, execution_count: execRows.length }
     } catch (err) {
       logError("workspace archive failed", err, { workspaceId })
@@ -269,9 +381,9 @@ export class ArchiveService {
     return { archived_count: archivedCount }
   }
 
-  // ── P2.4: archiveWorkspace (full archive with knowledge loop) ────
+  // ── P2.4: _archiveWorkspaceFull (full archive with knowledge loop) ────
 
-  async archiveWorkspace(
+  private async _archiveWorkspaceFull(
     workspaceId: string,
     org: string,
     options: {

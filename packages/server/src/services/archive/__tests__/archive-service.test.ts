@@ -249,4 +249,113 @@ describe("ArchiveService", () => {
       expect(ws!.archive_status).toBe("archive_failed")
     })
   })
+
+  // ── P1.2 archiveMode (simple overload) ────────────────────────────
+
+  describe("archiveWorkspace P1.2 with archiveMode", () => {
+    const fs = require("fs")
+    const os = require("os")
+    const path = require("path")
+
+    function createTempWorkspace(): string {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "archive-test-"))
+      fs.mkdirSync(path.join(tmpDir, "state"), { recursive: true })
+      fs.mkdirSync(path.join(tmpDir, "logs"), { recursive: true })
+      fs.mkdirSync(path.join(tmpDir, "docs"), { recursive: true })
+      fs.writeFileSync(path.join(tmpDir, "state", "test.json"), '{"test":true}')
+      fs.writeFileSync(path.join(tmpDir, "logs", "test.jsonl"), '{"node":"test"}')
+      fs.writeFileSync(path.join(tmpDir, "docs", "README.md"), "# Test")
+      return tmpDir
+    }
+
+    function seedWorkspaceWithPath(db: Database.Database, id: string, wsPath: string) {
+      db.prepare(`
+        INSERT INTO workspaces (id, name, org, description, status, path, source, source_schedule_id, created_at, updated_at)
+        VALUES (?, ?, 'test-org', null, 'active', ?, 'user', null, datetime('now'), datetime('now'))
+      `).run(id, "test-ws", wsPath)
+    }
+
+    it("full mode archives files and writes archive_path to DB", async () => {
+      const tmpDir = createTempWorkspace()
+      seedWorkspaceWithPath(db, "ws-full", tmpDir)
+      seedExecution(db, "exec-full", "ws-full")
+
+      const result = await service.archiveWorkspace("ws-full", workspaceDAO, "full")
+      expect(result.archived).toBe(true)
+
+      const wsArchive = archiveDAO.findByWorkspaceId("ws-full")
+      expect(wsArchive).not.toBeNull()
+      expect(wsArchive!.archive_mode).toBe("full")
+      expect(wsArchive!.archive_path).not.toBeNull()
+      expect(wsArchive!.archive_path).toContain("ws-full")
+
+      // Verify files were actually copied
+      const archivePath = wsArchive!.archive_path!
+      expect(fs.existsSync(path.join(archivePath, "state", "test.json"))).toBe(true)
+      expect(fs.existsSync(path.join(archivePath, "logs", "test.jsonl"))).toBe(true)
+      expect(fs.existsSync(path.join(archivePath, "docs", "README.md"))).toBe(true)
+
+      // Cleanup
+      fs.rmSync(tmpDir, { recursive: true, force: true })
+      fs.rmSync(archivePath, { recursive: true, force: true })
+    })
+
+    it("cleanup mode skips file copy and sets archive_path to null", async () => {
+      const tmpDir = createTempWorkspace()
+      seedWorkspaceWithPath(db, "ws-cleanup", tmpDir)
+      seedExecution(db, "exec-cleanup", "ws-cleanup")
+
+      const result = await service.archiveWorkspace("ws-cleanup", workspaceDAO, "cleanup")
+      expect(result.archived).toBe(true)
+
+      const wsArchive = archiveDAO.findByWorkspaceId("ws-cleanup")
+      expect(wsArchive).not.toBeNull()
+      expect(wsArchive!.archive_mode).toBe("cleanup")
+      expect(wsArchive!.archive_path).toBeNull()
+
+      // execution_archive should still exist
+      const execArchive = archiveDAO.findByExecutionId("exec-cleanup")
+      expect(execArchive).not.toBeNull()
+
+      // Cleanup
+      fs.rmSync(tmpDir, { recursive: true, force: true })
+    })
+
+    it("full mode with file copy failure degrades to archive_path = null", async () => {
+      // Use non-existent path to force copy failure
+      seedWorkspaceWithPath(db, "ws-fail", "/nonexistent/path/that/does/not/exist")
+      seedExecution(db, "exec-fail", "ws-fail")
+
+      const result = await service.archiveWorkspace("ws-fail", workspaceDAO, "full")
+      expect(result.archived).toBe(true) // Should still succeed
+
+      const wsArchive = archiveDAO.findByWorkspaceId("ws-fail")
+      expect(wsArchive).not.toBeNull()
+      expect(wsArchive!.archive_mode).toBe("full")
+      expect(wsArchive!.archive_path).toBeNull() // Degraded
+
+      // execution_archive should still exist
+      const execArchive = archiveDAO.findByExecutionId("exec-fail")
+      expect(execArchive).not.toBeNull()
+    })
+
+    it("defaults to full mode when archiveMode not specified", async () => {
+      const tmpDir = createTempWorkspace()
+      seedWorkspaceWithPath(db, "ws-default", tmpDir)
+      seedExecution(db, "exec-default", "ws-default")
+
+      // Call without archiveMode param
+      const result = await service.archiveWorkspace("ws-default", workspaceDAO)
+      expect(result.archived).toBe(true)
+
+      const wsArchive = archiveDAO.findByWorkspaceId("ws-default")
+      expect(wsArchive).not.toBeNull()
+      expect(wsArchive!.archive_mode).toBe("full")
+      expect(wsArchive!.archive_path).not.toBeNull()
+
+      // Cleanup
+      fs.rmSync(tmpDir, { recursive: true, force: true })
+      fs.rmSync(wsArchive!.archive_path!, { recursive: true, force: true })
+    })
+  })
 })
