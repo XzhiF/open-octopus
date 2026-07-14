@@ -138,6 +138,7 @@ export class ArchiveService {
       installAgents?: Array<{ name: string; group: string; path?: string; content?: string }>
       analysisReport?: unknown
       metadata?: Record<string, unknown>
+      archiveMode?: ArchiveMode
       stats?: {
         execution_count: number
         total_cost: number
@@ -181,6 +182,7 @@ export class ArchiveService {
       installAgents?: Array<{ name: string; group: string; path?: string; content?: string }>
       analysisReport?: unknown
       metadata?: Record<string, unknown>
+      archiveMode?: ArchiveMode
       stats?: {
         execution_count: number
         total_cost: number
@@ -393,6 +395,7 @@ export class ArchiveService {
       installAgents?: Array<{ name: string; group: string; path?: string; content?: string }>
       analysisReport?: unknown
       metadata?: Record<string, unknown>
+      archiveMode?: ArchiveMode
       stats?: {
         execution_count: number
         total_cost: number
@@ -477,7 +480,7 @@ export class ArchiveService {
         analysis_report: null,
         file_deleted: 0,
         archive_path: null,
-        archive_mode: 'full',
+        archive_mode: options.archiveMode ?? 'full',
       }
 
       if (options.analysisReport) {
@@ -534,6 +537,32 @@ export class ArchiveService {
         installedAgents = await this.installAgentsToResources(installAgents, emitter)
       }
       await emitter.stepDone("install_agents", { count: installedAgents })
+
+      // Step 5.7: Archive workspace files (full mode only)
+      const archiveMode = options.archiveMode ?? 'full'
+      let archivePath: string | null = null
+      if (archiveMode === 'full') {
+        await emitter.stepStart("archive_files", "归档工作空间文件...")
+        try {
+          const archiveDir = path.join(os.homedir(), ".octopus", "orgs", org, "archives", workspaceId)
+          const result = archiveWorkspaceFiles(workspace.path, archiveDir)
+          if (result.success && result.archivePath) {
+            archivePath = result.archivePath
+            this.archiveDAO.setArchivePath(workspaceId, archivePath)
+            await emitter.log(`文件归档成功: ${archivePath}`)
+          } else {
+            await emitter.log("文件归档失败，跳过 archive_path")
+          }
+        } catch (err) {
+          logError("file archive failed in P2.4", err, { workspaceId })
+          await emitter.stepError("archive_files", err instanceof Error ? err.message : String(err))
+        }
+        await emitter.stepDone("archive_files", { archived: archivePath !== null })
+      } else {
+        await emitter.stepStart("archive_files", "跳过文件归档 (cleanup mode)...")
+        await emitter.log("cleanup 模式：仅归档数据库记录，不复制文件")
+        await emitter.stepDone("archive_files", { archived: false, mode: "cleanup" })
+      }
 
       // Step 6: Delete workspace files from disk
       await emitter.stepStart("delete_files", "清理工作空间文件...")
