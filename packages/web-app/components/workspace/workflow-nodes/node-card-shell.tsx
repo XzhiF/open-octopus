@@ -56,7 +56,7 @@ export function NodeCardShell({
   return (
     <div
       className={cn(
-        "rounded-lg border-2 bg-card transition-all shadow-sm hover:shadow-md w-[280px]",
+        "rounded-lg border-2 bg-card transition-all shadow-sm hover:shadow-md w-[280px] overflow-hidden",
         effectiveBorderColor,
         selected && "ring-2 ring-primary ring-offset-2",
         isCurrent && "animate-pulse border-amber-400 shadow-amber-100",

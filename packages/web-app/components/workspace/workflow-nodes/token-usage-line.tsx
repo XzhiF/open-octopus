@@ -33,7 +33,7 @@ export function TokenUsageLine({ usage, isRunning }: TokenUsageLineProps) {
 
   return (
     <div className={cn("text-xs tabular-nums flex items-center gap-1 px-3 pb-1", color)}>
-      <span className="font-medium">{usage.model}</span>
+      <span className="font-medium truncate max-w-[120px]">{usage.model}</span>
       <span className={bumpClass}>↑{formatTokenCount(usage.inputTokens)}</span>
       <span className={bumpClass}>↓{formatTokenCount(usage.outputTokens)}</span>
       {isRunning && (

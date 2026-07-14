@@ -332,6 +332,7 @@ export function mergeAgentEvents(entries: any[]): any[] {
               isError: false,
               startedAt: entry.timestamp,
               completedAt: entry.timestamp,
+              iteration: entry.iteration,
             }
           }
           if (block?.type === "tool") {
@@ -360,6 +361,7 @@ export function mergeAgentEvents(entries: any[]): any[] {
               isError: false,
               startedAt: entry.timestamp,
               completedAt: entry.timestamp,
+              iteration: entry.iteration,
             }
           }
           if (block?.type === "tool") {

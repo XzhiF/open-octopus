@@ -42,7 +42,7 @@ export function StatusShell({
   return (
     <div
       className={cn(
-        "rounded-lg border-2 bg-card transition-all shadow-sm hover:shadow-md w-[280px]",
+        "rounded-lg border-2 bg-card transition-all shadow-sm hover:shadow-md w-[280px] overflow-hidden",
         effectiveBorderColor,
         selected && "ring-2 ring-primary ring-offset-2",
         statusOverlay?.stepStatus === "running" && "border-running",

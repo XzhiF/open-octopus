@@ -308,4 +308,38 @@ describe("JSONL log compaction", () => {
     // node-d should be in plain file (no loop context)
     expect(files).toContain("node-d.jsonl")
   })
+
+  // ── Regression: iteration preserved in resilient fallback blocks ──
+
+  it("tool_input resilient fallback preserves iteration when tool_start is missing", () => {
+    const entries = [
+      { timestamp: ts(0), nodeId: "n1", event: "agent_event",
+        event_data: { type: "tool_input", tool_call_id: "tc1", tool: "Bash", input: { command: "ls" } },
+        iteration: 3 },
+      { timestamp: ts(1), nodeId: "n1", event: "agent_event",
+        event_data: { type: "tool_result", tool_call_id: "tc1", content: "ok" },
+        iteration: 3 },
+    ]
+
+    const result = invokeMerge(logger, entries)
+
+    expect(result).toHaveLength(1)
+    expect(result[0].event).toBe("tool_call")
+    expect(result[0].iteration).toBe(3)
+    expect(result[0].toolName).toBe("Bash")
+  })
+
+  it("tool_result resilient fallback preserves iteration when tool_start and tool_input are missing", () => {
+    const entries = [
+      { timestamp: ts(0), nodeId: "n1", event: "agent_event",
+        event_data: { type: "tool_result", tool_call_id: "tc1", content: "ok" },
+        iteration: 5 },
+    ]
+
+    const result = invokeMerge(logger, entries)
+
+    expect(result).toHaveLength(1)
+    expect(result[0].event).toBe("tool_call")
+    expect(result[0].iteration).toBe(5)
+  })
 })

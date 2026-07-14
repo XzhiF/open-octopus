@@ -26,14 +26,15 @@ interface WorkflowDefinition {
 const VALID_NODE_TYPES = new Set(["bash", "python", "agent", "condition", "approval", "loop", "swarm"])
 
 // Node dimensions for dagre layout
+// Heights account for header + duration + multi-model token display
 function getNodeDimensions(node: WorkflowNode): { width: number; height: number } {
   switch (node.type) {
-    case "condition": return { width: 280, height: 160 }
-    case "loop": return { width: 280, height: 160 }
-    case "agent": return { width: 280, height: 140 }
-    case "approval": return { width: 280, height: 140 }
-    case "swarm": return { width: 280, height: 160 }
-    default: return { width: 280, height: 130 }
+    case "condition": return { width: 280, height: 180 }
+    case "loop": return { width: 280, height: 180 }
+    case "agent": return { width: 280, height: 175 }
+    case "approval": return { width: 280, height: 165 }
+    case "swarm": return { width: 280, height: 180 }
+    default: return { width: 280, height: 160 }
   }
 }
 
@@ -242,12 +243,12 @@ export function yamlToFlowData(parsed: WorkflowDefinition): { nodes: Node[]; edg
       maxX = Math.max(maxX, pos.x + dim.width)
       maxY = Math.max(maxY, pos.y + dim.height)
     }
-    if (minX === Infinity) { minX = 0; minY = 0; maxX = 280; maxY = 130 }
+    if (minX === Infinity) { minX = 0; minY = 0; maxX = 280; maxY = 160 }
 
     containerSizes.set(loopId, {
       width: (maxX - minX) + CONTAINER_SIDE_PADDING * 2,
-      // Add extra height for dynamic content (model, tokens, duration)
-      height: HEADER_HEIGHT + (maxY - minY) + CONTAINER_SIDE_PADDING + 30,
+      // Extra height for dynamic content (model names, multi-model tokens, duration, error text)
+      height: HEADER_HEIGHT + (maxY - minY) + CONTAINER_SIDE_PADDING + 55,
     })
     innerLayoutData.set(loopId, { wfNodes: innerWfNodes, edges: innerEdges, positions: innerPositions })
   }

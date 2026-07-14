@@ -12,8 +12,8 @@ interface TokenDetailPopoverProps {
 }
 
 export function TokenDetailPopover({ usages, isRunning, children }: TokenDetailPopoverProps) {
-  const totalInput = usages.reduce((sum, u) => sum + u.inputTokens, 0)
-  const totalOutput = usages.reduce((sum, u) => sum + u.outputTokens, 0)
+  const totalInput = usages.reduce((sum, u) => sum + u.inputTokens + (u.cacheReadTokens ?? 0), 0)
+  const totalOutput = usages.reduce((sum, u) => sum + u.outputTokens + (u.cacheCreationTokens ?? 0), 0)
 
   return (
     <Popover>
@@ -23,7 +23,9 @@ export function TokenDetailPopover({ usages, isRunning, children }: TokenDetailP
           <h4 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
             Token 使用详情
           </h4>
-          {usages.map((u, i) => (
+          {usages.map((u, i) => {
+            const hasCache = (u.cacheReadTokens ?? 0) > 0 || (u.cacheCreationTokens ?? 0) > 0
+            return (
             <div key={`${u.model}-${i}`} className="space-y-1">
               <div className="text-xs font-medium border-b border-dashed border-border/50 pb-0.5">
                 {u.model}
@@ -32,13 +34,20 @@ export function TokenDetailPopover({ usages, isRunning, children }: TokenDetailP
                 )}
               </div>
               <div className={cn("text-xs tabular-nums pl-1", isRunning ? "text-amber-600" : "text-muted-foreground")}>
-                Input: {formatTokenCount(u.inputTokens)}
+                Input: {formatTokenCount(u.inputTokens + (u.cacheReadTokens ?? 0))}
+                {(u.cacheReadTokens ?? 0) > 0 && (
+                  <span className="text-muted-foreground/60 ml-1">(cache {formatTokenCount(u.cacheReadTokens)})</span>
+                )}
               </div>
               <div className={cn("text-xs tabular-nums pl-1", isRunning ? "text-amber-600" : "text-muted-foreground")}>
-                Output: {formatTokenCount(u.outputTokens)}
+                Output: {formatTokenCount(u.outputTokens + (u.cacheCreationTokens ?? 0))}
+                {(u.cacheCreationTokens ?? 0) > 0 && (
+                  <span className="text-muted-foreground/60 ml-1">(cache {formatTokenCount(u.cacheCreationTokens)})</span>
+                )}
               </div>
             </div>
-          ))}
+            )
+          })}
           <div className="border-t pt-1 space-y-0.5">
             <div className={cn("text-xs tabular-nums font-medium", isRunning ? "text-amber-600" : "text-muted-foreground")}>
               合计 ↑{formatTokenCount(totalInput)} ↓{formatTokenCount(totalOutput)}

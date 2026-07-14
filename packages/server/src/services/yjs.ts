@@ -52,8 +52,8 @@ export function populateFromDisk(dirPath: string, tree: Y.Map<unknown>): void {
   const files: fs.Dirent[] = []
 
   for (const entry of entries) {
-    // Skip dot dirs except .claude/.octopus (but skip their large content later)
-    if (entry.name.startsWith(".") && entry.name !== ".claude" && entry.name !== ".octopus") continue
+    // Skip dot dirs except .claude/.octopus/.scratch (but skip their large content later)
+    if (entry.name.startsWith(".") && entry.name !== ".claude" && entry.name !== ".octopus" && entry.name !== ".scratch") continue
     // Skip known heavy directories entirely
     if (entry.isDirectory() && SKIP_DIRS.has(entry.name)) continue
     if (entry.isDirectory()) dirs.push(entry)
