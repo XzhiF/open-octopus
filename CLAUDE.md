@@ -322,3 +322,17 @@ Y Combinator CEO Garry Tan 的 AI 工程技能包，提供虚拟工程团队角�
 - 浏览全部: octopus resource list
 
 <!-- /octopus-resources -->
+
+## Agent skills
+
+### Issue tracker
+
+Local markdown — issues live as files under `.scratch/<feature>/` in this repo. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Default five-role vocabulary: needs-triage, needs-info, ready-for-agent, ready-for-human, wontfix. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Multi-context — root `CONTEXT-MAP.md` pointing to per-package `CONTEXT.md` files. See `docs/agents/domain.md`.
