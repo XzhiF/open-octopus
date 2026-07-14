@@ -55,7 +55,10 @@ dist/
 .pnpm-store/
 *.tsbuildinfo
 .turbo/
+.next/
 .next/.worktrees/
+.qwen/
+.agents/
 
 # Crash dumps
 *.stackdump
