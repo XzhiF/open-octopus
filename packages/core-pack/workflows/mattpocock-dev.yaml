@@ -366,6 +366,26 @@ nodes:
         timeout: 7200
         skills: [implement, tdd, code-review, diagnosing-bugs]
         agents:
+          frontend-engineer:
+            description: "前端工程师 — UI/组件/样式/前端路由/响应式"
+            agent_file: ".claude/agents/engineering-frontend-developer.md"
+            model: pro-max
+            tools: ["Read", "Write", "Edit", "Bash", "Grep", "Glob"]
+          backend-engineer:
+            description: "后端工程师 — API/路由/中间件/业务逻辑/服务端"
+            agent_file: ".claude/agents/engineering-backend-architect.md"
+            model: pro-max
+            tools: ["Read", "Write", "Edit", "Bash", "Grep", "Glob"]
+          senior-engineer:
+            description: "全栈高级工程师 — 跨层/通用逻辑/复杂集成"
+            agent_file: ".claude/agents/engineering-senior-developer.md"
+            model: pro-max
+            tools: ["Read", "Write", "Edit", "Bash", "Grep", "Glob"]
+          database-engineer:
+            description: "数据库工程师 — Schema/Migration/查询优化/数据建模"
+            agent_file: ".claude/agents/engineering-database-optimizer.md"
+            model: pro-max
+            tools: ["Read", "Write", "Edit", "Bash", "Grep", "Glob"]
           standards-reviewer:
             description: "Standards 轴审查员 — 只看代码质量（不看 Spec）"
             agent_file: ".claude/agents/engineering-code-reviewer.md"
@@ -377,7 +397,7 @@ nodes:
             model: pro-max
             tools: ["Read", "Grep", "Glob"]
         prompt: |
-          你是 TDD 实现工程师。从队列取下一个 Ticket，按 skill 纪律执行。
+          你是 TDD 编排器。从队列取下一个 Ticket，选合适的工程师执行，按 skill 纪律验证。
 
           ## 输入
           - Ticket 队列: $vars.tickets_queue_file
@@ -392,17 +412,36 @@ nodes:
           找不到 → `all_tickets_done: "true"` 或 `ticket_status: "no_ticket"`。
           找到 → 更新 status 为 "in_progress"。
 
+          ## Step 0.5: 路由 — 选择工程师
+
+          分析 Ticket 的 "涉及范围" 字段，选择最佳工程师：
+
+          | Ticket 涉及范围关键词 | 委派工程师 |
+          |---------------------|----------|
+          | UI / 组件 / 样式 / 前端 / 响应式 / 页面 | **frontend-engineer** |
+          | API / 路由 / 中间件 / 后端 / 服务端 / Controller | **backend-engineer** |
+          | Schema / Migration / 数据库 / 查询 / 数据模型 / DB | **database-engineer** |
+          | 跨多层 / 全栈 / 集成 / 无法明确归类 | **senior-engineer** |
+
+          路由规则：
+          - 如果 ticket 涉及范围明确属于一个领域 → 选对应工程师
+          - 如果 ticket 跨多个领域 → 选 **senior-engineer**（全栈）
+          - 如果无法判断 → 默认选 **senior-engineer**（安全默认）
+          - 记录选择的工程师到 conclusion 中
+
           ## 项目探索（实现前必做）
           Read CLAUDE.md / README.md（如存在），Glob 关键文件，了解现有约定。
           ⛔ 不创建重复组件 ⛔ 必须复用现有资产 ⛔ 必须使用项目现有集成方式
 
-          ## Step 1-3: TDD 循环（按 tdd + implement skill 纪律）
+          ## Step 1-3: TDD 循环（委派选中的工程师，按 tdd + implement skill 纪律）
 
-          按 **tdd** skill 执行 SEAM → RED → GREEN → REFACTOR：
+          委派选中的工程师执行 SEAM → RED → GREEN → REFACTOR：
           - **SEAM**: 确认测试边界（优先复用宿主 Seam，interface = test surface）
           - **RED**: 写失败测试（独立真相源，禁止自证测试，禁止 mock 内部协作者）
           - **GREEN**: 最小实现（不添加 Spec 未要求功能，禁止 TODO/FIXME/placeholder）
           - **REFACTOR**: 按 **codebase-design** 原则改善结构（deletion test / depth check / seam validation），不添加功能，运行测试确认仍 GREEN
+
+          给工程师的指令必须包含：Ticket 描述、验收标准、Spec 相关部分、领域模型术语、宿主项目约定。
 
           ## Step 4: VERIFY
 
@@ -431,7 +470,7 @@ nodes:
 
           ## Step 6: Fix 循环 + Debug Fallback
 
-          blockers > 0 → 修复 → VERIFY → REVIEW。最多 3 轮。
+          blockers > 0 → 委派同一工程师修复 → VERIFY → REVIEW。最多 3 轮。
           3 轮后仍失败 → 按 **diagnosing-bugs** skill 执行：
           1. Build feedback loop（核心：建立紧致 pass/fail 信号）
           2. Reproduce + minimize → 3-5 hypotheses → targeted instrumentation
@@ -447,8 +486,8 @@ nodes:
           ## Step 8: 更新进度
 
           ## 输出
-          成功: {"vars_update":{"current_ticket_id":"T{NN}","ticket_status":"done","tickets_done_count":"<数>","total_commits":"$vars.total_commits + 1","tdd_cycles":"$vars.tdd_cycles + <数>","conclusion":"T{NN}: <摘要>"}}
-          Blocked: {"vars_update":{"current_ticket_id":"T{NN}","ticket_status":"blocked","tickets_blocked_count":"$vars.tickets_blocked_count + 1","conclusion":"T{NN}: blocked — <原因>"}}
+          成功: {"vars_update":{"current_ticket_id":"T{NN}","ticket_status":"done","tickets_done_count":"<数>","total_commits":"$vars.total_commits + 1","tdd_cycles":"$vars.tdd_cycles + <数>","conclusion":"T{NN} [<工程师>]: <摘要>"}}
+          Blocked: {"vars_update":{"current_ticket_id":"T{NN}","ticket_status":"blocked","tickets_blocked_count":"$vars.tickets_blocked_count + 1","conclusion":"T{NN} [<工程师>]: blocked — <原因>"}}
           无待处理: {"vars_update":{"all_tickets_done":"true","ticket_status":"no_ticket","conclusion":"所有 Ticket 完成或无待处理 (blocked: $vars.tickets_blocked_count)"}}
 
   # ═══════════════════════════════════════════════════════════════
