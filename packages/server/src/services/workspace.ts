@@ -7,6 +7,7 @@ import { WorkspaceDAO } from "../db/dao"
 import type { WorkspaceRow } from "../db/types"
 import { logError } from "../file-logger"
 import { getArchiveService } from "./archive/archive-service"
+import type { ArchiveMode } from "@octopus/shared"
 
 /**
  * Default pipeline.yaml template — auto-generated for new workspaces.
@@ -923,7 +924,7 @@ export class WorkspaceService {
     return this.getById(id)!
   }
 
-  async delete(id: string): Promise<boolean> {
+  async delete(id: string, archiveMode: ArchiveMode = "full"): Promise<boolean> {
     const ws = this.getById(id)
     if (!ws) return false
 
@@ -931,7 +932,7 @@ export class WorkspaceService {
     const archiveSvc = getArchiveService()
     if (archiveSvc) {
       try {
-        await archiveSvc.archiveWorkspace(id, this.dao)
+        await archiveSvc.archiveWorkspace(id, this.dao, archiveMode)
       } catch (err) {
         logError("workspace archive during delete failed", err, { workspaceId: id })
         // Don't cascade delete if archive failed — data preservation
