@@ -110,6 +110,71 @@ describe('ResourcePreFlight', () => {
       expect(preflight.analyze({}).skills).toEqual([])
       expect(preflight.analyze({ nodes: [] }).agents).toEqual([])
     })
+
+    it('recurses into nested nodes (loop/condition children)', () => {
+      const workflow = {
+        nodes: [
+          {
+            type: 'loop',
+            id: 'tdd-loop',
+            nodes: [
+              { type: 'agent', id: 'implement', skills: ['implement', 'tdd'] },
+              { type: 'agent', id: 'review', skills: ['code-review', 'diagnosing-bugs'] },
+            ],
+          },
+        ],
+      }
+      const manifest = preflight.analyze(workflow)
+      expect(manifest.skills).toContain('implement')
+      expect(manifest.skills).toContain('tdd')
+      expect(manifest.skills).toContain('code-review')
+      expect(manifest.skills).toContain('diagnosing-bugs')
+    })
+
+    it('extracts agent_file from sub-agent definitions', () => {
+      const workflow = {
+        nodes: [
+          {
+            type: 'agent',
+            id: 'arch-review',
+            agents: {
+              'architecture-reviewer': {
+                agent_file: '.claude/agents/architecture-explorer',
+                model: 'pro',
+              },
+              'code-reviewer': {
+                agent_file: '.claude/agents/engineering-code-reviewer',
+              },
+            },
+          },
+        ],
+      }
+      const manifest = preflight.analyze(workflow)
+      expect(manifest.agents).toContain('architecture-explorer')
+      expect(manifest.agents).toContain('engineering-code-reviewer')
+    })
+
+    it('recurses into nested agents with sub-agent definitions', () => {
+      const workflow = {
+        nodes: [
+          {
+            type: 'loop',
+            nodes: [
+              {
+                type: 'agent',
+                skills: ['tdd'],
+                agents: {
+                  reviewer: { agent_file: '.claude/agents/code-reviewer' },
+                },
+              },
+            ],
+          },
+        ],
+      }
+      const manifest = preflight.analyze(workflow)
+      expect(manifest.skills).toContain('tdd')
+      expect(manifest.agents).toContain('code-reviewer')
+    })
   })
 
   describe('check', () => {

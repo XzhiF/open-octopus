@@ -41,12 +41,38 @@ export class ResourcePreFlight {
     const skills = new Set<string>()
 
     const nodes = workflow.nodes ?? workflow.steps ?? []
+    this.scanNodes(nodes, agents, skills)
 
+    return {
+      agents: Array.from(agents),
+      skills: Array.from(skills),
+    }
+  }
+
+  /**
+   * Recursively scan nodes for resource references.
+   * Handles nested nodes (loop, condition, etc.) and sub-agent definitions.
+   */
+  private scanNodes(
+    nodes: any[],
+    agents: Set<string>,
+    skills: Set<string>,
+  ): void {
     for (const node of nodes) {
       // Agent 节点: 提取 agent_file
       if (node.type === 'agent' && node.agent_file) {
         const name = this.extractAgentName(node.agent_file)
         if (name) agents.add(name)
+      }
+
+      // Agent 节点: 提取 sub-agents 中的 agent_file
+      if (node.agents && typeof node.agents === 'object') {
+        for (const subAgent of Object.values(node.agents)) {
+          if (subAgent && typeof subAgent === 'object' && (subAgent as any).agent_file) {
+            const name = this.extractAgentName((subAgent as any).agent_file)
+            if (name) agents.add(name)
+          }
+        }
       }
 
       // Swarm 节点: 提取 experts 中的 agent_file
@@ -67,11 +93,11 @@ export class ResourcePreFlight {
           }
         }
       }
-    }
 
-    return {
-      agents: Array.from(agents),
-      skills: Array.from(skills),
+      // 递归扫描子节点 (loop, condition 等)
+      if (node.nodes && Array.isArray(node.nodes)) {
+        this.scanNodes(node.nodes, agents, skills)
+      }
     }
   }
 
