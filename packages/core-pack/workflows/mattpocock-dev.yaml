@@ -172,99 +172,20 @@ nodes:
     timeout: 3600
     skills: [grilling, domain-modeling]
     prompt: |
-      按照 **grilling** skill 的纪律逐个拷问用户 Idea。
-      同时按照 **domain-modeling** skill 主动构建领域模型。
+      按照 **grilling** skill 拷问用户 Idea，同时按 **domain-modeling** skill 构建领域模型。
 
-      ## Step 0: 准备
-
-      ### Scratch 目录（Matt Pocock 约定：local markdown tracker）
-      从 `$inputs.idea` 提取 feature-slug（kebab-case，如 "add rate limiting" → "add-rate-limiting"）：
-      ```bash
-      FEATURE_SLUG=$(echo "$inputs.idea" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g' | sed 's/--*/-/g' | sed 's/^-//' | sed 's/-$//')
-      SCRATCH_DIR=".scratch/$FEATURE_SLUG"
-      mkdir -p "$SCRATCH_DIR/issues"
-      ```
-
-      ### 项目探索（grilling skill: facts from environment）
-      快速扫描项目，为后续拷问提供事实依据：
-      1. Glob `package.json` / `pyproject.toml` / `Cargo.toml` / `go.mod` — 识别技术栈
-      2. Glob `*/src/{index,main,app}.{ts,js,py,go}` — 识别入口
-      3. Read CLAUDE.md / README.md（如存在）
-      4. Glob `CONTEXT-MAP.md` / `*/CONTEXT.md` / `packages/*/package.json` — Context 模式检测
-         - monorepo + packages 有独立 src/ → **multi** 模式
-         - 否则 → **single** 模式
+      ## 准备
+      - 从 `$inputs.idea` 提取 feature-slug（kebab-case）
+      - 创建 `.scratch/<feature-slug>/issues/` 目录
+      - 探索项目（grilling skill: facts from environment）
+      - 检测 Context 模式：monorepo + packages 有独立 src/ → multi，否则 single
 
       ## 输入
-      - 用户 Idea: $inputs.idea
-      - 项目路径: $inputs.project_path（如为空，扫描 ./projects/ 下首个项目）
-
-      ## 拷问维度（8-13 个问题，grilling skill 纪律：一次一个，带推荐答案，决策归人事实归环境）
-
-      1. 核心问题定义
-      2. 目标用户
-      3. MVP 边界
-      4. 技术方案偏好（基于项目探索结果推荐）
-      5. 集成约束（基于项目结构推断）
-      6. 数据模型核心
-      7. API 设计方向（基于项目现有风格）
-      8. UI 需求
-      9. 安全与权限
-      10. 性能与规模
-      11. 测试策略
-      12. 部署与运维
-      13. 核心领域概念（用 codebase-design 词汇：Module / Interface / Seam / Adapter）
-
-      ## 领域建模（domain-modeling skill 纪律贯穿 Q&A）
-
-      每个答案解决时立即：
-      - 挑战术语冲突（用户说的 vs 代码实际行为不一致）
-      - 锐化模糊语言
-      - 具体场景压力测试
-      - 即时更新术语表
-
-      ## 产出
-
-      ### 1. Grill 决策文档 → `$SCRATCH_DIR/brief.md`
-
-      ```markdown
-      # Grill Decisions
-      ## Idea
-      ## Decisions
-      ### D{N}: <标题>
-      **问题**: ...
-      **决策**: ...
-      **理由**: ...
-      ```
-
-      ### 2. Domain Model（写入项目根目录，永久资产，非运行产物）
-
-      **domain-modeling skill**: CONTEXT.md 是项目的共享词汇表，提交到 git，跨 session 持久化。
-      如果项目根目录已有 CONTEXT.md，读取并增量更新（不覆盖）。
-
-      **single 模式** → 写入 `$inputs.project_path/CONTEXT.md`：
-      ```markdown
-      # Domain Glossary
-      | Term | Definition | Notes |
-      # Key Relationships
-      # Open Questions
-      # ADR Candidates（三条件：hard to reverse + surprising + real trade-off）
-      ```
-
-      **multi 模式**：
-      - 索引 → `$inputs.project_path/CONTEXT-MAP.md`
-      - 每个相关 package → `$inputs.project_path/packages/<pkg>/CONTEXT.md`（或对应 package 根目录）
-      ```markdown
-      # Context Map
-      ## System-wide Glossary
-      | Term | Definition | Used By |
-      ## Package Contexts
-      | Package | Context File | Domain |
-      ## Cross-Package Relationships
-      ## System-wide ADR Candidates
-      ```
+      - Idea: $inputs.idea
+      - 项目: $inputs.project_path（如为空，扫描 ./projects/ 下首个项目）
 
       ## 输出
-      {"vars_update":{"scratch_dir":"$SCRATCH_DIR","brief_file":"$SCRATCH_DIR/brief.md","context_file":"<single: $inputs.project_path/CONTEXT.md / multi: $inputs.project_path/CONTEXT-MAP.md>","context_mode":"<single|multi>","context_packages":"<comma-separated, empty if single>","decision_count":"<数>","conclusion":"<2-3句: Idea 本质 + 关键决策 + 领域术语数 + context 模式>"}}
+      {"vars_update":{"scratch_dir":".scratch/<feature-slug>","brief_file":".scratch/<feature-slug>/brief.md","context_file":"<single: project_path/CONTEXT.md / multi: project_path/CONTEXT-MAP.md>","context_mode":"<single|multi>","context_packages":"<comma-separated>","decision_count":"<数>","conclusion":"<2-3句>"}}
 
   # ═══════════════════════════════════════════════════════════════
   # Phase 2: Spec — 综合规格文档
@@ -275,30 +196,13 @@ nodes:
     timeout: 3600
     skills: [to-spec, codebase-design]
     prompt: |
-      按照 **to-spec** skill 综合 Grill 决策为 Spec。不重新采访用户。
-      Implementation Decisions 和 Testing Decisions 使用 **codebase-design** skill 词汇。
+      按 **to-spec** skill 综合 Grill 决策为 Spec。不重新采访用户。
+      Implementation Decisions 使用 **codebase-design** skill 词汇。
 
       ## 输入
       - Grill 决策: $vars.brief_file
-      - 用户 Idea: $inputs.idea
-      - 领域模型: $vars.context_file（multi 模式还读各 package 的 CONTEXT.md，路径在 CONTEXT-MAP.md 中索引）
-
-      ## Spec 结构（to-spec 模板）
-
-      - **Problem Statement**: 从 D1 提取
-      - **Solution**: 从 D4-D7 综合
-      - **User Stories**: 极其详尽的编号列表（≥20 个），覆盖正常 + 边界 + 错误
-      - **Implementation Decisions**: 用 codebase-design 词汇（Module/Interface/Depth/Seam/Adapter），禁止文件路径/代码片段
-      - **Testing Decisions**: Seam 约定（interface = test surface，seam 越少越好）
-      - **Out of Scope**: 从 D3 排除项提取
-      - **Further Notes**
-
-      ## 质量规则
-      - 中文输出
-      - 写完自审：遗漏 story？Seam 可执行？模块深度合理？术语与 CONTEXT 一致？
-
-      ## 产出
-      保存到 `$vars.scratch_dir/spec.md`
+      - Idea: $inputs.idea
+      - 领域模型: $vars.context_file（multi 模式读 CONTEXT-MAP.md 索引的各 package CONTEXT）
 
       ## 输出
       {"vars_update":{"spec_file":"$vars.scratch_dir/spec.md","user_stories_count":"<数>","seam_count":"<数>","conclusion":"<2-3句>"}}
@@ -312,40 +216,13 @@ nodes:
     timeout: 1800
     skills: [to-tickets]
     prompt: |
-      按照 **to-tickets** skill 将 Spec 拆分为垂直切片（Tracer Bullet）。
-      每个 ticket 一个独立文件，写入 `$vars.scratch_dir/issues/`。
+      按 **to-tickets** skill 将 Spec 拆分为垂直切片。
+      本地 tracker：每个 ticket 一个文件，写入 `$vars.scratch_dir/issues/`。
 
       ## 输入
       - Spec: $vars.spec_file
-      - 领域模型: $vars.context_file（multi 模式读 CONTEXT-MAP.md + 相关 package CONTEXT）
+      - 领域模型: $vars.context_file
       - 最大 Ticket 数: $inputs.max_tickets
-
-      ## 硬约束
-      - 垂直切片（穿越所有层），≤3 文件变更，端到端行为描述
-      - 禁止水平切片
-      - 宽重构用 expand-contract 序列
-
-      ## Ticket 文件模板（一个 ticket 一个文件）
-
-      文件路径: `$vars.scratch_dir/issues/<NN>-<slug>.md`（NN 从 01 开始，按依赖顺序编号）
-
-      ```markdown
-      # <NN> — <Ticket title>
-
-      **What to build:** 端到端行为描述（用户视角，不是实现清单）
-
-      **Blocked by:** <依赖的 ticket 编号/标题> 或 "None — can start immediately"
-
-      **Status:** ready-for-agent
-
-      - [ ] Acceptance criterion 1 (Given/When/Then)
-      - [ ] Acceptance criterion 2
-      ```
-
-      ## 产出
-      - 每个 ticket 写入 `$vars.scratch_dir/issues/<NN>-<slug>.md`
-      - 编号从 01 开始，按依赖顺序（blockers 在前）
-      - Status 初始为 `ready-for-agent`
 
       ## 输出
       {"vars_update":{"ticket_count":"<数>","conclusion":"<2-3句>"}}
