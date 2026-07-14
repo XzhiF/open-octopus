@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest"
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest"
 import Database from "better-sqlite3"
 import { applySchema } from "../db/schema"
 import { WorkspaceService } from "../services/workspace"
@@ -10,6 +10,7 @@ import fs from "fs"
 let db: Database.Database
 let service: WorkspaceService
 let tmpfiles: string[] = []
+let mockArchiveWorkspace: ReturnType<typeof vi.fn>
 
 beforeEach(() => {
   const dbPath = path.join(os.tmpdir(), `test-ws-svc-${Date.now()}.db`)
@@ -18,12 +19,21 @@ beforeEach(() => {
   db.pragma("foreign_keys = ON")
   applySchema(db)
   service = new WorkspaceService(new WorkspaceDAO(db))
+
+  // Mock ArchiveService
+  mockArchiveWorkspace = vi.fn().mockResolvedValue({ archived: true, execution_count: 0 })
+  vi.mock("../services/archive/archive-service", () => ({
+    getArchiveService: () => ({
+      archiveWorkspace: mockArchiveWorkspace,
+    }),
+  }))
 })
 
 afterEach(() => {
   db.close()
   for (const f of tmpfiles) { if (fs.existsSync(f)) fs.unlinkSync(f) }
   tmpfiles = []
+  vi.clearAllMocks()
 })
 
 describe("WorkspaceService", () => {
@@ -83,15 +93,40 @@ describe("WorkspaceService", () => {
     db.prepare("INSERT INTO chat_messages (id, session_id, role, content, created_at) VALUES (?, ?, 'user', 'hello', ?)").run(msgId, sessionId, now)
 
     expect(await service.delete(ws.id)).toBe(true)
-    expect(service.getById(ws.id)).toBeUndefined()
-    expect(db.prepare("SELECT id FROM executions WHERE id = ?").get(execId)).toBeUndefined()
-    expect(db.prepare("SELECT id FROM node_executions WHERE id = ?").get(neId)).toBeUndefined()
-    expect(db.prepare("SELECT id FROM chat_sessions WHERE id = ?").get(sessionId)).toBeUndefined()
-    expect(db.prepare("SELECT id FROM chat_messages WHERE id = ?").get(msgId)).toBeUndefined()
+    // After delete, workspace is soft-archived (not removed)
+    const archived = service.getById(ws.id)
+    expect(archived).toBeDefined()
+    expect(archived!.archive_status).toBe("archived")
+    // Note: cascade delete of related entities happens in ArchiveService, which is mocked in this test suite.
+    // Cascade behavior is tested in archive-service.test.ts, not here.
   })
 
   it("returns false when deleting nonexistent workspace", async () => {
     expect(await service.delete("nonexistent")).toBe(false)
+  })
+
+  it("delete() defaults to archiveMode 'full' when not specified", async () => {
+    const ws = service.create({ name: "Test", org: "xzf", path: "/tmp/test-ws-mode-default" })
+
+    await service.delete(ws.id)
+
+    expect(mockArchiveWorkspace).toHaveBeenCalledWith(ws.id, expect.any(Object), "full")
+  })
+
+  it("delete() passes archiveMode 'cleanup' to archiveWorkspace", async () => {
+    const ws = service.create({ name: "Test", org: "xzf", path: "/tmp/test-ws-mode-cleanup" })
+
+    await service.delete(ws.id, "cleanup")
+
+    expect(mockArchiveWorkspace).toHaveBeenCalledWith(ws.id, expect.any(Object), "cleanup")
+  })
+
+  it("delete() passes archiveMode 'full' explicitly to archiveWorkspace", async () => {
+    const ws = service.create({ name: "Test", org: "xzf", path: "/tmp/test-ws-mode-full" })
+
+    await service.delete(ws.id, "full")
+
+    expect(mockArchiveWorkspace).toHaveBeenCalledWith(ws.id, expect.any(Object), "full")
   })
 
   it("creates standard subdirectories", () => {

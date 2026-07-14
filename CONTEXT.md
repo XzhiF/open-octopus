@@ -39,6 +39,17 @@
 | **GREEN** | TDD 循环第二步 — 最小实现让测试通过。 |
 | **Tautological Test** | 自证测试 — expected value 从被测代码推导（如 `expect(add(a,b)).toBe(a+b)`）。禁止。Expected 必须来自独立真相源。 |
 
+### Archive / Lifecycle 层
+
+| Term | Definition |
+|------|-----------|
+| **ArchiveMode** | 工作空间归档时的文件处理策略 — `full`（复制 state/logs/docs 到归档目录）或 `cleanup`（仅保留 DB 记录，直接删目录）。由调用方显式声明，禁止自动推断。 |
+| **FileArchive** | 工作空间归档时从磁盘复制的物理文件集合 — 保留原始目录结构（state/, logs/, docs/），存放于 `~/.octopus/orgs/{org}/archives/{workspace_id}/`。cleanup 模式下不存在。 |
+| **Workspace Artifact** | 工作空间生命周期中产生的所有文件产物 — 包括 state/（执行状态 JSON/YAML）、logs/（节点 JSONL 日志）、docs/（自动生成文档）。FileArchive 的内容来源。 |
+| **Archive Degradation** | 文件归档失败时的降级策略 — 文件复制失败不阻塞整体归档，标记 `archive_path = null`，保留 DB 归档记录。 |
+| **LifecycleAction** | 工作空间终态动作 — `keep`（保留）、`cleanup`（归档 DB + 删文件）、`archive`（归档 DB + 归档文件 + 删文件）。`cleanup` 和 `archive` 是 ArchiveMode 的两个值，不是独立动作。 |
+_Avoid_: "测试工作空间"（workspace 无内在测试属性，是调用方声明的归档策略）、"软归档"（含义模糊，应明确为 `status = 'archived'`）
+
 ## Anti-Patterns（禁止）
 
 | Pattern | Why Banned |

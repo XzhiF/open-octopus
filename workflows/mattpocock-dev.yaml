@@ -1,0 +1,746 @@
+# yaml-language-server: $schema=~/.octopus/workflow-schema.json
+apiVersion: octopus/v1
+kind: Workflow
+name: mattpocock-dev
+description: >
+  Matt Pocock 方法论工作流 — Grill → Spec → Tickets → TDD Loop → Ship。
+  融合 grilling（逐问决策）、to-spec（综合规格）、to-tickets（垂直切片）、
+  implement（强制 TDD）+ code-review（两轴审查）。
+  单一工作流保持推理链连续，每个 Ticket context:new 隔离上下文。
+
+model: pro-max
+engine: claude
+execution_mode: serial
+timeout: 86400
+
+inputs:
+  idea:
+    description: "产品 Idea 描述（自然语言，越详细越好）"
+    required: true
+  interactive:
+    description: "交互模式。true=grill 阶段逐问人工确认；false=AI 自动选推荐答案（无人值守）"
+    required: false
+    default: "false"
+  base_branch:
+    description: "PR 目标分支"
+    required: false
+    default: "main"
+  max_tickets:
+    description: "最大 Ticket 数量（防止拆分过细）"
+    required: false
+    default: "15"
+  project_path:
+    description: "目标项目路径（默认自动检测 ./projects/ 下首个项目）"
+    required: false
+    default: ""
+
+variables:
+  output_dir: ""
+  display_name: "Matt Pocock Dev"
+  conclusion: ""
+  # Host Audit
+  host_contract_file: ""
+  host_has_ui: "false"
+  project_type: ""
+  # Grill
+  brief_file: ""
+  decision_count: "0"
+  # Spec
+  spec_file: ""
+  seam_count: "0"
+  user_stories_count: "0"
+  # Tickets
+  tickets_queue_file: ""
+  tickets_progress_file: ""
+  ticket_count: "0"
+  tickets_done_count: "0"
+  # TDD Loop
+  current_ticket_id: ""
+  current_ticket_title: ""
+  ticket_status: ""
+  all_tickets_done: "false"
+  # Review
+  review_blockers: "0"
+  review_issues: ""
+  standards_passed: "false"
+  spec_passed: "false"
+  # Anti-TODO
+  todo_count: "0"
+  # Ship
+  pr_urls: ""
+  pr_count: "0"
+  # Stats
+  total_commits: "0"
+  tdd_cycles: "0"
+
+auto_answers:
+  - pattern: ".*"
+    answer: "proceed"
+
+providers:
+  hermes-cli:
+    type: hermes
+    timeout: 30
+    min_severity: info
+
+channels:
+  default:
+    provider: hermes-cli
+    target: "telegram:xzf_hermes"
+
+hooks:
+  on_workflow_failure:
+    - id: notify-failure
+      type: notify
+      channel: default
+      template:
+        severity: error
+        title: "❌ $vars.display_name — 工作流失败"
+        body: "🔴 失败节点: ${hook.failed_node_id | default:unknown}\n⏱️ 已运行: ${hook.total_duration_ms | duration}\n💡 ${hook.error | default:Unknown}"
+
+  on_complete:
+    - id: notify-complete
+      type: notify
+      channel: default
+      template:
+        severity: info
+        title: "{{#if $hook.final_status}}🎉{{/if}}{{#if $hook.failed_count}}😵{{/if}} $vars.display_name — 完成"
+        body: "📊 {{#if $hook.final_status}}✅{{/if}}{{#if $hook.failed_count}}❌{{/if}} $hook.final_status\n✅ $hook.completed_count / ❌ $hook.failed_count / 📊 $hook.total_count\n⏱️ ${hook.total_duration_ms | duration}"
+
+  on_node_success:
+    - id: notify-host-audit
+      type: notify
+      nodes: [host-audit]
+      channel: default
+      template:
+        severity: info
+        title: "🔍 Host Audit 完成"
+        body: "📂 $vars.project_path\n💡 $vars.conclusion"
+
+    - id: notify-grill
+      type: notify
+      nodes: [grill]
+      channel: default
+      template:
+        severity: info
+        title: "🔥 Grill 完成 — $vars.decision_count 个决策已确认"
+        body: "📄 $vars.brief_file\n💡 $vars.conclusion"
+
+    - id: notify-spec
+      type: notify
+      nodes: [spec]
+      channel: default
+      template:
+        severity: info
+        title: "📋 Spec 完成 — $vars.user_stories_count 个用户故事"
+        body: "📄 $vars.spec_file\n🧵 Seams: $vars.seam_count\n💡 $vars.conclusion"
+
+    - id: notify-tickets
+      type: notify
+      nodes: [tickets]
+      channel: default
+      template:
+        severity: info
+        title: "🎫 Tickets 拆分完成 — $vars.ticket_count 个垂直切片"
+        body: "📄 $vars.tickets_queue_file\n💡 $vars.conclusion"
+
+    - id: notify-tdd-loop
+      type: notify
+      nodes: [tdd-loop]
+      channel: default
+      template:
+        severity: info
+        title: "🔁 TDD Loop 完成 — $vars.tickets_done_count/$vars.ticket_count 通过"
+        body: "📊 Commits: $vars.total_commits | TDD cycles: $vars.tdd_cycles\n💡 $vars.conclusion"
+
+    - id: notify-ship
+      type: notify
+      nodes: [ship]
+      channel: default
+      template:
+        severity: info
+        title: "🚀 PR 已创建"
+        body: "🔗 $vars.pr_urls\n📊 PRs: $vars.pr_count\n💡 $vars.conclusion"
+
+nodes:
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 0: Host Audit — 宿主项目契约扫描
+  # ═══════════════════════════════════════════════════════════════
+  - id: host-audit
+    type: agent
+    timeout: 900
+    agents:
+      architecture-explorer:
+        description: "架构勘探员 — 提取后端架构信息"
+        agent_file: "~/.octopus/resources/installed/agents/built-in/architecture-explorer/architecture-explorer.md"
+        model: pro
+        tools: ["Read", "Write", "Grep", "Glob"]
+      ui-system-auditor:
+        description: "UI 系统审计员 — 提取前端约定"
+        agent_file: "~/.octopus/resources/installed/agents/agency-agents-zh/engineering-frontend-developer/engineering-frontend-developer.md"
+        model: pro
+        tools: ["Read", "Write", "Grep", "Glob"]
+    prompt: |
+      你是宿主项目契约生成器。扫描目标项目，产出 host-contract.md。
+      后续所有节点必须遵守此契约，防止 LLM 不看现有代码就凭空创造。
+
+      ## 项目路径
+      $inputs.project_path（如为空，扫描 ./projects/ 下首个项目）
+
+      ## 输出目录
+      创建 `$inputs.idea` 对应的输出目录：
+      ```bash
+      OUTPUT_ROOT="./docs/mattpocock-dev"
+      mkdir -p "$OUTPUT_ROOT"
+      MAX_INDEX=0
+      for dir in "$OUTPUT_ROOT"/run-*/; do
+        [ -d "$dir" ] && INDEX=$(basename "$dir" | sed 's/run-0*//' | sed 's/^$/0/') && [ "$INDEX" -gt "$MAX_INDEX" ] 2>/dev/null && MAX_INDEX=$INDEX
+      done
+      NEW_INDEX=$((MAX_INDEX + 1))
+      OUTPUT_DIR="$OUTPUT_ROOT/run-$(printf "%03d" $NEW_INDEX)"
+      mkdir -p "$OUTPUT_DIR/host-contract"
+      ```
+
+      ## ⚡ 短路检查
+      如果 `$OUTPUT_DIR/host-contract.md` 已存在且扫描时间在 24h 内，
+      直接读取并输出 vars_update，跳过扫描。
+
+      ## Phase 1: 探针（你亲自做）
+
+      用 Glob + Grep 快速建立项目地图：
+      1. 识别项目结构：Glob `package.json` / `pyproject.toml` / `Cargo.toml` / `go.mod`
+      2. 识别入口文件：Glob `*/src/{index,main,app}.{ts,js,py,go}`
+      3. 定位路由注册：Grep `"router|Router|app\.route|handler"`
+      4. 定位 API 客户端：Grep `"api-client|apiClient|fetch.*wrapper"`
+      5. 定位组件库（前端）：Glob `components/` 目录
+      6. 定位安全基线：Grep `"auth|middleware.*auth|csrf|sanitize"`
+      7. Read 关键文件（≤15 个）
+
+      ## Phase 2: 委派子代理
+
+      ### 2.1 委派 architecture-explorer
+      给具体文件路径，让它 Read 并提取：
+      - API 路径命名规则 / 错误响应格式 / 鉴权机制 / 数据库方案
+      - 用 Write 写入 `$OUTPUT_DIR/host-contract/01-architecture.md`
+      - Read 预算: ≤30 个文件
+
+      ### 2.2 委派 ui-system-auditor（仅有前端时）
+      - CSS 方案 / 组件库 / 状态管理 / HTTP 客户端封装
+      - 用 Write 写入 `$OUTPUT_DIR/host-contract/02-ui-system.md`
+      - Read 预算: ≤20 个文件
+
+      ## Phase 3: 合成 host-contract.md
+
+      读子代理产出文件，合成 `$OUTPUT_DIR/host-contract.md`：
+
+      ```markdown
+      # Host Project Contract
+      项目: <名称与路径>
+      扫描时间: <ISO>
+      是否含 UI: <true/false>
+
+      ## 必须复用的现有资产
+      | 资产类别 | 路径 | 用法 |
+
+      ## 路由 / API / 目录约定
+
+      ## 集成契约（实现节点硬门禁）
+      | 集成点 | 入口文件 | 新代码必须 |
+
+      ## 构建与启动命令
+
+      ## 强烈不建议（违反即 BLOCKER）
+      ```
+
+      ## 输出
+      {"vars_update":{"output_dir":"$OUTPUT_DIR","host_contract_file":"$OUTPUT_DIR/host-contract.md","host_has_ui":"<true/false>","project_path":"<路径>","conclusion":"<3句: 技术栈/核心资产数/UI有无>"}}
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 1: Grill — 逐问决策拷问
+  # ═══════════════════════════════════════════════════════════════
+  - id: grill
+    type: agent
+    depends_on: [host-audit]
+    timeout: 3600
+    prompt: |
+      你是决策拷问引擎。逐个问题拷问用户的 Idea，一次一个，带推荐答案。
+
+      ## 核心纪律
+      - **一次只问一个问题**
+      - 每个问题附带**推荐答案**（你的专业判断）
+      - **决策归人，事实归环境**：能从代码/文档查到的不问人
+      - 用户确认前不执行任何实现
+
+      ## 用户 Idea
+      $inputs.idea
+
+      ## 宿主契约
+      $vars.host_contract_file（读取了解项目约束）
+
+      ## 交互模式
+      $inputs.interactive
+      - `true` → 每个问题用 approval 节点等用户确认/修改
+      - `false` → 自动采用推荐答案（无人值守）
+
+      ## 拷问维度（8-12 个问题，按顺序）
+
+      ### 1. 核心问题定义
+      "这个 Idea 解决的核心问题是什么？用一句话描述。"
+      推荐：从 $inputs.idea 推断最精炼的问题陈述。
+
+      ### 2. 目标用户
+      "谁是主要用户？描述一个典型使用场景。"
+      推荐：从 Idea 上下文推断最可能的用户画像。
+
+      ### 3. MVP 边界
+      "最小可用版本包含哪些功能？排除哪些？"
+      推荐：列出 3-5 个 P0 功能 + 3-5 个明确排除项。
+
+      ### 4. 技术方案偏好
+      "有倾向的技术方案吗？有排除的方案吗？"
+      推荐：基于宿主契约的技术栈推荐最匹配的方案。
+
+      ### 5. 集成约束
+      "需要与现有系统哪些部分集成？"
+      推荐：从宿主契约的集成契约表推断。
+
+      ### 6. 数据模型核心
+      "核心数据实体有哪些？它们的关系是什么？"
+      推荐：从 Idea 提取 3-5 个核心实体 + 关系。
+
+      ### 7. API 设计方向
+      "API 风格偏好？REST/GraphQL/gRPC？"
+      推荐：基于宿主契约现有 API 风格。
+
+      ### 8. UI 需求
+      "需要 UI 吗？什么类型？"
+      推荐：基于 $vars.host_has_ui 和 Idea 推断。
+
+      ### 9. 安全与权限
+      "有特殊的认证/授权/数据保护需求吗？"
+      推荐：基于宿主契约安全基线推断。
+
+      ### 10. 性能与规模
+      "预期的数据量和并发量？"
+      推荐：合理默认值。
+
+      ### 11. 测试策略
+      "有特殊的测试需求吗？E2E？性能测试？"
+      推荐：标准单元+集成+E2E 测试组合。
+
+      ### 12. 部署与运维
+      "有特殊的部署环境要求吗？"
+      推荐：基于宿主契约推断。
+
+      ## 产出
+      将所有确认的决策写入 `$vars.output_dir/00-brief.md`，结构：
+
+      ```markdown
+      # Grill Decisions
+
+      ## Idea
+      <原始 Idea>
+
+      ## Decisions
+      ### D1: 核心问题
+      **问题**: ...
+      **决策**: ...
+      **理由**: ...
+
+      ### D2: 目标用户
+      ...（每个决策同上结构）
+      ```
+
+      ## 输出
+      {"vars_update":{"brief_file":"$vars.output_dir/00-brief.md","decision_count":"<确认的决策数>","conclusion":"<2-3句: Idea 本质 + 关键决策>"}}
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 2: Spec — 综合为单一规格文档
+  # ═══════════════════════════════════════════════════════════════
+  - id: spec
+    type: agent
+    depends_on: [grill]
+    timeout: 3600
+    prompt: |
+      你是 Spec 综合者。从 Grill 决策共识综合为单一连贯的 Spec 文档。
+      **不要重新采访用户** — 只综合已有信息。
+
+      ## 输入
+      - Grill 决策: $vars.brief_file（必读）
+      - 用户 Idea: $inputs.idea
+      - 宿主契约: $vars.host_contract_file（必读）
+      - 项目类型: $vars.project_type
+
+      ## Spec 结构（Matt Pocock /to-spec 模板）
+
+      ### Problem Statement
+      用户视角的问题描述。从 Grill D1（核心问题）提取。
+
+      ### Solution
+      用户视角的方案描述。从 Grill D4-D7（技术/集成/数据/API）综合。
+
+      ### User Stories
+      **极其详尽**的编号列表，覆盖所有行为：
+      ```
+      1. As a <actor>, I want <feature>, so that <benefit>
+      2. ...
+      ```
+      至少 20 个 story，覆盖正常流程 + 边界 + 错误处理。
+
+      ### Implementation Decisions
+      - 模块划分和接口设计
+      - 技术选型和 ADR
+      - Schema 变更
+      - API 契约
+      - **不包含具体文件路径或代码片段**（它们会很快过时）
+
+      ### Testing Decisions
+      - 什么是好的测试（只测外部行为，不测实现细节）
+      - Seam 约定（测试边界，优先复用宿主现有 Seam）
+      - Seam 数量越少越好，理想为 1
+      - 哪些模块需要测试
+      - 测试先验参考（现有类似测试）
+
+      ### Out of Scope
+      明确排除的内容。从 Grill D3（MVP 边界）的排除项提取。
+
+      ### Further Notes
+      其他备注。
+
+      ## 质量规则
+      - 中文输出
+      - User Stories 必须极其详尽
+      - Implementation Decisions 不含文件路径/代码
+      - Testing Decisions 必须有 Seam 约定
+
+      ## 跨模型审查
+      写完 Spec 后，你自己以审查者视角重新读一遍：
+      - 是否有遗漏的 User Story？
+      - Seam 约定是否清晰可执行？
+      - Out of Scope 是否足够明确？
+      发现问题就地修复。
+
+      ## 产出
+      保存到 `$vars.output_dir/01-spec.md`
+
+      ## 输出
+      {"vars_update":{"spec_file":"$vars.output_dir/01-spec.md","user_stories_count":"<story 数>","seam_count":"<seam 数>","conclusion":"<2-3句: Spec 覆盖范围 + Seam 策略>"}}
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 3: Tickets — 垂直切片拆分
+  # ═════════════════════════════════════════════════════════════
+  - id: tickets
+    type: agent
+    depends_on: [spec]
+    timeout: 1800
+    prompt: |
+      你是 Ticket 拆分工程师。将 Spec 拆分为垂直切片（Tracer Bullet）队列。
+
+      ## 输入
+      - Spec: $vars.spec_file（必读）
+      - 宿主契约: $vars.host_contract_file（必读）
+      - 最大 Ticket 数: $inputs.max_tickets
+
+      ## 垂直切片规则（硬约束）
+      - 每个切片穿越**所有层**（test + schema + API + UI）— 垂直，不是水平
+      - 完成的切片**可独立演示或验证**
+      - 每个切片适配**单个 fresh context window**（≤3 个文件变更）
+      - 描述**端到端行为**（"用户可以登录并看到 dashboard"），不是按层实现清单（"创建 User schema"）
+
+      ## 禁止
+      - 水平切片（"所有数据模型" / "所有 API" / "所有 UI"）
+      - 单个 Ticket 超过 3 个文件变更
+      - Ticket 内包含具体代码（描述行为，不描述实现）
+
+      ## 宽重构例外
+      如果 Spec 包含跨多文件的重命名/重类型，不强制垂直切片。
+      改用 expand-contract 序列：
+      1. Expand — 新旧形式并存
+      2. Migrate — 分批迁移调用点（每批一个 Ticket）
+      3. Contract — 删除旧形式
+
+      ## Ticket 结构
+
+      每个 Ticket 必须包含：
+      ```markdown
+      ## T{NN} — <标题>
+
+      **端到端行为**: 从用户视角描述这个 Ticket 使什么功能可工作。
+
+      **Blocked by**: T{XX}, T{YY}（或 "None — 可立即开始"）
+
+      **验收标准**:
+      - [ ] Given <前置条件> When <操作> Then <预期结果>
+      - [ ] ...
+
+      **涉及范围**: 大致涉及哪些模块/层（不写具体文件路径）
+
+      **复杂度**: low / medium / high
+      ```
+
+      ## 拆分流程
+      1. 读 Spec 的 User Stories
+      2. 按功能分组（一个完整用户操作 = 一个 Ticket）
+      3. 声明 blocking edges（依赖哪些其他 Ticket）
+      4. 按拓扑排序（依赖在前）
+      5. 自检：每个 Ticket ≤3 文件变更？端到端行为？无水平切片？
+
+      ## 产出
+
+      ### 1. Ticket 队列文件
+      保存到 `$vars.output_dir/02-tickets-queue.md`
+
+      ### 2. 进度追踪文件
+      保存到 `$vars.output_dir/tickets-progress.json`：
+      ```json
+      {
+        "tickets": [
+          { "id": "T01", "title": "...", "status": "pending", "blocked_by": [], "round": 0 },
+          { "id": "T02", "title": "...", "status": "pending", "blocked_by": ["T01"], "round": 0 }
+        ]
+      }
+      ```
+
+      ## 输出
+      {"vars_update":{"tickets_queue_file":"$vars.output_dir/02-tickets-queue.md","tickets_progress_file":"$vars.output_dir/tickets-progress.json","ticket_count":"<总数>","conclusion":"<2-3句: Ticket 数 + 依赖图概要>"}}
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 4: TDD Loop — 逐 Ticket TDD 实现 + 两轴审查
+  # ═══════════════════════════════════════════════════════════════
+  - id: tdd-loop
+    type: loop
+    depends_on: [tickets]
+    max_iterations: 20
+    break_when: '$vars.all_tickets_done == "true" || $vars.ticket_status == "no_ticket"'
+    nodes:
+      - id: ticket-impl
+        type: agent
+        context: new
+        timeout: 7200
+        agents:
+          code-reviewer:
+            description: "两轴代码审查员 — Standards + Spec 同时审查"
+            agent_file: "~/.octopus/resources/installed/agents/agency-agents-zh/engineering-code-reviewer/engineering-code-reviewer.md"
+            model: pro-max
+            tools: ["Read", "Grep", "Glob"]
+        prompt: |
+          你是 TDD 实现工程师。从队列中取下一个待实现的 Ticket，
+          执行完整的 SEAM → RED → GREEN → VERIFY → REVIEW → COMMIT 流程。
+
+          ## 输入
+          - Ticket 队列: $vars.tickets_queue_file
+          - 进度文件: $vars.tickets_progress_file
+          - Spec: $vars.spec_file
+          - 宿主契约: $vars.host_contract_file
+
+          ## Step 0: 取下一个 Ticket
+
+          读取 `$vars.tickets_progress_file`，找到第一个 status 为 "pending"
+          且所有 blocked_by 的 Ticket status 都为 "done" 的 Ticket。
+
+          如果找不到：
+          - 所有 Ticket 都是 "done" → 输出 `all_tickets_done: "true"`
+          - 有 pending 但都被 blocked → 输出 `ticket_status: "no_ticket"`
+
+          将选中 Ticket 的 status 更新为 "in_progress" 并写回进度文件。
+
+          ## 宿主契约（强制阅读）
+          $vars.host_contract_file
+          ⛔ 不要创建与契约重复的组件/服务
+          ⛔ 必须复用契约中列出的现有资产
+          ⛔ 必须使用契约指定的 API client / 路由注册方式
+
+          ## Step 1: SEAM — 确认测试边界
+
+          从 Ticket 描述提取测试边界：
+          - 在哪个公共接口测试？（优先复用宿主现有 Seam）
+          - 测试什么行为？（外部行为，不测实现细节）
+          - 需要什么 mock？（只 mock 系统边界：外部 API、数据库、时间、文件系统）
+
+          ## Step 2: RED — 写失败测试
+
+          根据 Ticket 的 Given/When/Then 验收标准写测试：
+          - Expected value 来自**独立真相源**（已知正确的字面量、spec 定义、worked example）
+          - **禁止**自证测试（expected 从被测代码推导）
+          - **禁止** mock 内部协作者
+          - 运行测试确认**失败**（RED）
+
+          ## Step 3: GREEN — 最小实现
+
+          写**最少代码**让测试通过：
+          - 不添加 Spec 未要求的功能
+          - 不预见未来的测试或添加投机性功能
+          - **禁止写 TODO / FIXME / placeholder / 空函数体**
+          - 运行测试确认**通过**（GREEN）
+
+          ## Step 4: VERIFY — 全量验证
+
+          ```bash
+          # 类型检查
+          pnpm tsc --noEmit 2>&1 || true
+          # 相关测试
+          pnpm test -- --testPathPattern="<相关文件>" 2>&1 || true
+          # 全量测试（最后一次）
+          pnpm test 2>&1 || true
+          ```
+
+          有失败 → 修复 → 重跑。最多 3 轮。
+
+          ## Step 5: REVIEW — 两轴代码审查
+
+          先保存变更文件列表：
+          ```bash
+          git diff --name-only main > /tmp/mattpocock-review-files.txt 2>/dev/null || git diff --name-only HEAD~1 > /tmp/mattpocock-review-files.txt
+          ```
+
+          委派 **code-reviewer** 子代理，给它以下指令：
+
+          "读取 `/tmp/mattpocock-review-files.txt` 获取变更文件列表，然后 Read 这些文件。
+           从两个独立轴审查：
+
+           **轴 1: Standards（代码质量）**
+           - 对照宿主契约 $vars.host_contract_file 检查违反
+           - 检查 12-smell baseline:
+             Mysterious Name / Duplicated Code / Feature Envy / Data Clumps /
+             Primitive Obsession / Repeated Switches / Shotgun Surgery /
+             Divergent Change / Speculative Generality / Message Chains /
+             Middle Man / Refused Bequest
+           - 宿主契约违反 = BLOCKER
+
+           **轴 2: Spec（规格符合）**
+           - 对照 Ticket 描述检查:
+             (a) 验收标准要求的行为是否都实现了？(missing/partial)
+             (b) 是否有 Spec 未要求的行为？(scope creep)
+             (c) 实现看起来是否正确？
+           - Missing/partial = BLOCKER
+
+           **分两个 section 报告，不合并不重排。**
+           每个发现标注 🚫 BLOCKER 或 ⚠️ WARNING。
+
+           最后输出 JSON:
+           ```json
+           {"standards_blockers": N, "spec_blockers": N, "total_blockers": N, "issues": "..."}
+           ```"
+
+          ## Step 5.5: Anti-TODO 门禁
+
+          ```bash
+          TODO_COUNT=$(grep -rn "TODO\|FIXME\|HACK\|XXX\|not.implemented\|throw new Error.*Not yet" \
+            $(cat /tmp/mattpocock-review-files.txt) 2>/dev/null | wc -l | tr -d ' ')
+          ```
+
+          TODO_COUNT > 0 → 每个匹配计为 BLOCKER。
+
+          ## Step 6: Fix 循环
+
+          如果 review_blockers > 0 或 todo_count > 0：
+          1. 修复所有 BLOCKER
+          2. 重新 VERIFY（Step 4）
+          3. 重新 REVIEW（Step 5）
+          最多 3 轮修复。
+
+          ## Step 7: COMMIT
+
+          ```bash
+          git add -A
+          git commit -m "feat(T{NN}): <Ticket 标题>"
+          ```
+
+          ## Step 8: 更新进度
+
+          更新 tickets-progress.json：
+          - 当前 Ticket status → "done"
+          - 记录 commit SHA
+
+          ## 输出
+
+          Ticket 成功完成：
+          {"vars_update":{"current_ticket_id":"T{NN}","current_ticket_title":"<标题>","ticket_status":"done","tickets_done_count":"<已完成数>","total_commits":"$vars.total_commits + 1","tdd_cycles":"$vars.tdd_cycles + <本轮 TDD 循环数>","conclusion":"T{NN}: <摘要>"}}
+
+          无待处理 Ticket：
+          {"vars_update":{"all_tickets_done":"true","ticket_status":"no_ticket","conclusion":"所有 Ticket 已完成或无待处理 Ticket"}}
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 5: Ship — 提交 + PR
+  # ═══════════════════════════════════════════════════════════════
+  - id: ship
+    type: agent
+    depends_on: [tdd-loop]
+    execute_when: '$vars.all_tickets_done == "true"'
+    timeout: 1800
+    prompt: |
+      你是 Ship 工程师。提交、推送并创建 PR。
+
+      ## 输入
+      - 项目: $vars.project_path
+      - 目标分支: $inputs.base_branch
+      - Spec: $vars.spec_file
+      - 完成率: $vars.tickets_done_count / $vars.ticket_count
+
+      ## PR 标题
+      ```
+      feat: <功能名> — <一句话描述>
+      ```
+      - 功能名从 Spec 的 Problem Statement 或 $inputs.idea 提取
+      - ⛔ 禁止 "Matt Pocock Dev implementation" 等泛化用语
+
+      ## PR Body
+
+      ```markdown
+      ## 🎯 功能概述
+      <2-3句: Spec Problem Statement + Solution 摘要>
+
+      ## 🏗️ 实现内容
+      <从 git log --oneline 的 commit 列表总结>
+
+      ## 📊 完成状态
+      - Tickets: $vars.tickets_done_count / $vars.ticket_count
+      - TDD Cycles: $vars.tdd_cycles
+      - Commits: $vars.total_commits
+
+      <details>
+      <summary>📋 Spec 全文</summary>
+
+      <粘贴 $vars.spec_file 内容>
+
+      </details>
+      ```
+
+      ## 步骤
+
+      1. cd 到项目目录
+      2. 检查变更: `git status --porcelain`
+      3. 如有未提交变更: `git add -A && git commit -m "chore: final cleanup"`
+      4. `git push -u origin HEAD`
+      5. 创建 PR:
+         ```bash
+         EXISTING_PR=$(gh pr list --head "$(git branch --show-current)" --json url --jq '.[0].url' 2>/dev/null)
+         if [ -n "$EXISTING_PR" ]; then
+           gh pr comment "$EXISTING_PR" --body "$PR_BODY"
+           PR_URL="$EXISTING_PR"
+         else
+           PR_URL=$(gh pr create --title "$PR_TITLE" --body "$PR_BODY" --base "$inputs.base_branch")
+         fi
+         ```
+      6. 收集 PR URL
+
+      ## 输出
+      {"vars_update":{"pr_urls":"$PR_URL","pr_count":"1","conclusion":"PR: $PR_URL"}}
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 6: Done
+  # ═══════════════════════════════════════════════════════════════
+  - id: done
+    type: bash
+    depends_on: [ship]
+    timeout: 10
+    bash: |
+      echo "═══════════════════════════════════════"
+      echo "  ✅ mattpocock-dev 完成"
+      echo "═══════════════════════════════════════"
+      echo "📂 输出: $vars.output_dir"
+      echo "📋 Spec: $vars.spec_file"
+      echo "🎫 Tickets: $vars.tickets_done_count / $vars.ticket_count"
+      echo "🔗 PRs: $vars.pr_urls"
+      echo "📊 TDD Cycles: $vars.tdd_cycles"
+      echo "═══════════════════════════════════════"

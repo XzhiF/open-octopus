@@ -2,7 +2,7 @@ import { Hono } from "hono"
 import { WorkspaceService } from "../services/workspace"
 import { WorkspaceDAO, OrgDAO } from "../db/dao"
 import { orgExists } from "../services/org"
-import { parseManifest, loadModelAliasConfig } from "@octopus/shared"
+import { parseManifest, loadModelAliasConfig, ArchiveModeSchema } from "@octopus/shared"
 import { readFileSync, existsSync, readdirSync } from "fs"
 import { join } from "path"
 import os from "os"
@@ -178,8 +178,20 @@ export function createWorkspaceRoutes(workspaceService: WorkspaceService, orgDAO
 
   workspaceRoutes.delete("/:id", async (c) => {
     const id = c.req.param("id")
+    const modeParam = c.req.query("mode")
+
+    // Validate archive mode if provided
+    let archiveMode: "full" | "cleanup" = "full"
+    if (modeParam !== undefined) {
+      const parsed = ArchiveModeSchema.safeParse(modeParam)
+      if (!parsed.success) {
+        return c.json({ error: `Invalid mode: ${modeParam}. Must be 'full' or 'cleanup'` }, 400)
+      }
+      archiveMode = parsed.data
+    }
+
     try {
-      await workspaceService.delete(id)
+      await workspaceService.delete(id, archiveMode)
       return c.json({ ok: true })
     } catch (err) {
       if (err instanceof ArchivePartialFailure) {

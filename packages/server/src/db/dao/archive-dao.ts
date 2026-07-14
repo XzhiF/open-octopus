@@ -4,6 +4,7 @@ import type {
   ExecutionArchiveRow, WorkspaceArchiveRow, ArchiveStats,
   CostTrend, WorkflowStat, LeaderboardEntry, PaginatedResult,
 } from "../types"
+import type { ArchiveMode } from "@octopus/shared"
 
 export class ArchiveDAO extends BaseDAO {
   constructor(db: Database.Database) { super(db) }
@@ -55,8 +56,9 @@ export class ArchiveDAO extends BaseDAO {
       INSERT OR IGNORE INTO workspace_archive
         (workspace_id, org, name, description, source, execution_count,
          total_cost, total_duration_ms, created_at, archived_at, metadata,
-         extracted_experiences, extracted_skills, extracted_workflows, extracted_agents, analysis_report, file_deleted)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         extracted_experiences, extracted_skills, extracted_workflows, extracted_agents, analysis_report, file_deleted,
+         archive_path, archive_mode)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       row.workspace_id, row.org, row.name, row.description, row.source,
       row.execution_count, row.total_cost, row.total_duration_ms,
@@ -64,11 +66,18 @@ export class ArchiveDAO extends BaseDAO {
       row.extracted_experiences ?? 0, row.extracted_skills ?? 0, row.extracted_workflows ?? 0,
       row.extracted_agents ?? 0,
       row.analysis_report, row.file_deleted ?? 0,
+      row.archive_path ?? null, row.archive_mode ?? 'full',
     )
   }
 
   findByWorkspaceId(workspaceId: string): WorkspaceArchiveRow | null {
     return (this.stmt("SELECT * FROM workspace_archive WHERE workspace_id = ?").get(workspaceId) as WorkspaceArchiveRow) ?? null
+  }
+
+  findByArchiveMode(org: string, mode: ArchiveMode): WorkspaceArchiveRow[] {
+    return this.stmt(
+      "SELECT * FROM workspace_archive WHERE org = ? AND archive_mode = ? ORDER BY archived_at DESC"
+    ).all(org, mode) as WorkspaceArchiveRow[]
   }
 
   listArchivedWorkspaces(org: string, page = 1, pageSize = 20): PaginatedResult<WorkspaceArchiveRow> {
@@ -177,6 +186,14 @@ export class ArchiveDAO extends BaseDAO {
       SET file_deleted = ?
       WHERE workspace_id = ?
     `).run(deleted, workspaceId)
+  }
+
+  setArchivePath(workspaceId: string, archivePath: string): void {
+    this.stmt(`
+      UPDATE workspace_archive
+      SET archive_path = ?
+      WHERE workspace_id = ?
+    `).run(archivePath, workspaceId)
   }
 
   getArchivedWorkspaces(

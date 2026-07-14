@@ -10,7 +10,7 @@ const _dirname: string =
     ? __dirname
     : path.dirname(fileURLToPath(import.meta.url))
 
-export const SCHEMA_VERSION = 26
+export const SCHEMA_VERSION = 27
 
 /**
  * Apply the complete unified schema to the given database.
@@ -102,6 +102,10 @@ function ensureColumnsForExistingTables(db: Database.Database): void {
   ensureColumn(db, 'workspace_archive', 'extracted_agents', "INTEGER DEFAULT 0")
   ensureColumn(db, 'workspace_archive', 'analysis_report', "TEXT")
   ensureColumn(db, 'workspace_archive', 'file_deleted', "INTEGER DEFAULT 0")
+
+  // Archive file preservation columns (schema version 27)
+  ensureColumn(db, 'workspace_archive', 'archive_path', "TEXT")
+  ensureColumn(db, 'workspace_archive', 'archive_mode', "TEXT DEFAULT 'full'")
 }
 
 function ensureColumn(db: Database.Database, table: string, column: string, definition: string): void {

@@ -38,6 +38,14 @@ function makeWsRow(overrides: Partial<WorkspaceArchiveRow> = {}): WorkspaceArchi
     created_at: "2026-01-01T00:00:00.000Z",
     archived_at: "2026-07-08T00:00:00.000Z",
     metadata: null,
+    extracted_experiences: 0,
+    extracted_skills: 0,
+    extracted_workflows: 0,
+    extracted_agents: 0,
+    analysis_report: null,
+    file_deleted: 0,
+    archive_path: null,
+    archive_mode: "full",
     ...overrides,
   }
 }
@@ -213,5 +221,36 @@ describe("ArchiveDAO", () => {
     expect(stats.total_workspaces).toBe(2)
     expect(stats.total_execution_count).toBe(8)
     expect(stats.total_cost).toBeCloseTo(1.5)
+  })
+
+  // ── setArchivePath ──────────────────────────────────────────────────
+
+  it("setArchivePath updates archive_path for existing row", () => {
+    dao.insertWorkspaceArchive(makeWsRow({ workspace_id: "ws-1" }))
+    dao.setArchivePath("ws-1", "/home/user/.octopus/orgs/xzf/archives/ws-1")
+    const row = dao.findByWorkspaceId("ws-1")
+    expect(row).not.toBeNull()
+    expect(row!.archive_path).toBe("/home/user/.octopus/orgs/xzf/archives/ws-1")
+  })
+
+  it("setArchivePath is no-op for nonexistent workspace", () => {
+    dao.setArchivePath("nonexistent", "/some/path")
+    expect(dao.findByWorkspaceId("nonexistent")).toBeNull()
+  })
+
+  // ── archive_mode column ─────────────────────────────────────────────
+
+  it("inserts workspace archive with cleanup mode", () => {
+    dao.insertWorkspaceArchive(makeWsRow({ workspace_id: "ws-cleanup", archive_mode: "cleanup", archive_path: null }))
+    const row = dao.findByWorkspaceId("ws-cleanup")
+    expect(row).not.toBeNull()
+    expect(row!.archive_mode).toBe("cleanup")
+    expect(row!.archive_path).toBeNull()
+  })
+
+  it("defaults archive_mode to 'full' when not specified", () => {
+    dao.insertWorkspaceArchive(makeWsRow({ workspace_id: "ws-default" }))
+    const row = dao.findByWorkspaceId("ws-default")
+    expect(row!.archive_mode).toBe("full")
   })
 })

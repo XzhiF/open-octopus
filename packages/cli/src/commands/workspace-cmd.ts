@@ -75,12 +75,18 @@ workspaceCmd.command("get <id>")
 
 workspaceCmd.command("delete <id>")
   .description("Delete a workspace")
-  .action(async (id) => {
+  .option("--cleanup", "Skip file archival, DB records only")
+  .action(async (id, options) => {
     try {
-      const res = await fetch(`${getServerUrl()}/api/workspaces/${id}`, { method: "DELETE" })
+      const url = options.cleanup
+        ? `${getServerUrl()}/api/workspaces/${id}?mode=cleanup`
+        : `${getServerUrl()}/api/workspaces/${id}`
+      const res = await fetch(url, { method: "DELETE" })
       const data = await res.json()
-      if (res.ok) console.log(chalk.green("Deleted"))
-      else console.error(chalk.red(`Error: ${data.error}`))
+      if (res.ok) {
+        const msg = options.cleanup ? "Cleaned up" : "Archived (full)"
+        console.log(chalk.green(msg))
+      } else console.error(chalk.red(`Error: ${data.error}`))
     } catch (err: any) {
       console.error(chalk.red(`Error: ${err.message}`))
     }

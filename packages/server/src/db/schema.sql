@@ -705,7 +705,9 @@ CREATE TABLE IF NOT EXISTS workspace_archive (
   extracted_workflows INTEGER DEFAULT 0,
   extracted_agents INTEGER DEFAULT 0,
   analysis_report TEXT,
-  file_deleted INTEGER DEFAULT 0
+  file_deleted INTEGER DEFAULT 0,
+  archive_path TEXT,
+  archive_mode TEXT DEFAULT 'full'
 );
 
 CREATE INDEX IF NOT EXISTS idx_workspace_archive_org ON workspace_archive(org);

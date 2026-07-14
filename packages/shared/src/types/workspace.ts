@@ -1,5 +1,8 @@
 import { z } from "zod"
 
+export const ArchiveModeSchema = z.enum(["full", "cleanup"])
+export type ArchiveMode = z.infer<typeof ArchiveModeSchema>
+
 export const WorkspaceStatusSchema = z.enum(["active", "inactive", "error"])
 export type WorkspaceStatus = z.infer<typeof WorkspaceStatusSchema>
 
