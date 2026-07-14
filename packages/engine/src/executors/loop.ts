@@ -1,5 +1,5 @@
 import { VarPool, evaluateExpression } from "@octopus/shared"
-import type { NodeDef, AutoAnswer } from "@octopus/shared"
+import type { NodeDef, AutoAnswer, ModelAliasConfig } from "@octopus/shared"
 import type { IAgentProvider } from "@octopus/providers"
 import type { NodeExecutor, NodeExecutionResult } from "./types"
 import type { AgentEvent } from "./agent-types"
@@ -29,6 +29,8 @@ export class LoopExecutor implements NodeExecutor {
     private inputs?: Record<string, any>,
     /** Workflow-level engine fallback (node.engine ?? workflow.engine ?? "claude") */
     private workflowEngine?: string,
+    /** Model alias config for resolving sub-agent tier names */
+    private modelAliasConfig?: ModelAliasConfig,
   ) {}
 
   async execute(): Promise<NodeExecutionResult> {
@@ -286,10 +288,13 @@ export class LoopExecutor implements NodeExecutor {
           node, p, runner, previousSessionId,
           this.globalAutoAnswers, this.signal,
           undefined, undefined, undefined, undefined, undefined, undefined, loopCtx,
+          undefined, // resolvedModel
+          this.modelAliasConfig,
+          providerKey,
         )
       }
       case "loop":
-        return new LoopExecutor(node, p, this.providers, this.cwd, this.globalAutoAnswers, this.signal, this.callbacks, this.logger, this.globalSessionId, this.branchSessionIds)
+        return new LoopExecutor(node, p, this.providers, this.cwd, this.globalAutoAnswers, this.signal, this.callbacks, this.logger, this.globalSessionId, this.branchSessionIds, this.inputs, this.workflowEngine, this.modelAliasConfig)
       default:
         throw new Error(`Unknown node type: ${node.type}`)
     }

@@ -1368,6 +1368,7 @@ export class WorkflowEngine {
           this.workflow.auto_answers, s, this.callbacks, this.logger,
           this.globalSessionId, this.branchSessionIds, this.inputs,
           this.workflow.engine,
+          this.modelAliasConfig,
         )
       case "agent": {
         const rawKey = node.engine ?? this.workflow.engine ?? "claude"
@@ -1402,6 +1403,8 @@ export class WorkflowEngine {
           this.crossExecResolver, this.executionId,
           undefined, // loopContext
           resolvedModel,
+          this.modelAliasConfig,
+          providerKey,
         )
       }
       case "swarm":
@@ -1647,6 +1650,12 @@ export class WorkflowEngine {
       this.promptInjector,
       undefined, // knowledgeInjector — hooks don't inject knowledge
       this.workflow.name,
+      undefined, // crossExecResolver
+      undefined, // executionId
+      undefined, // loopContext
+      undefined, // resolvedModel
+      this.modelAliasConfig,
+      providerKey,
     )
 
     await executor.execute()

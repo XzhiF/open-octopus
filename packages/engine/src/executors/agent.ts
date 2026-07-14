@@ -1,5 +1,5 @@
-import { VarPool, substituteVars, compileAutoAnswers, evaluateExpression } from "@octopus/shared"
-import type { NodeDef, AutoAnswer, SubAgentDef, CrossExecResolver } from "@octopus/shared"
+import { VarPool, substituteVars, compileAutoAnswers, evaluateExpression, resolveModelAlias } from "@octopus/shared"
+import type { NodeDef, AutoAnswer, SubAgentDef, CrossExecResolver, ModelAliasConfig } from "@octopus/shared"
 import type { NodeExecutor, NodeExecutionResult } from "./types"
 import { AgentNodeRunner } from "./agent-runner"
 import type { PromptInjector } from "../prompt-injector"
@@ -31,6 +31,10 @@ export class AgentExecutor implements NodeExecutor {
     private loopContext?: Record<string, any>,
     /** BL-6: Resolved model passed from engine (avoids node.model mutation) */
     private resolvedModel?: string,
+    /** Model alias config for resolving sub-agent tier names (pro-max → opus, etc.) */
+    private modelAliasConfig?: ModelAliasConfig,
+    /** Provider key for model alias resolution (e.g. "claude", "pi") */
+    private providerKey?: string,
   ) {}
 
   async execute(): Promise<NodeExecutionResult> {
@@ -241,9 +245,23 @@ export class AgentExecutor implements NodeExecutor {
         merged.prompt = combinedPrompt
         merged.agent_file = undefined
 
+        // Resolve tier model names (pro-max → opus, pro → sonnet, etc.)
+        if (merged.model && this.modelAliasConfig) {
+          const pk = this.providerKey ?? this.node.engine ?? "claude"
+          const resolved = resolveModelAlias(merged.model, pk, this.modelAliasConfig)
+          if (resolved) merged.model = resolved
+        }
+
         resolved[name] = merged
       } else if (agentDef.prompt) {
-        resolved[name] = agentDef
+        // Resolve tier model names for prompt-only agents too
+        const agentCopy = { ...agentDef }
+        if (agentCopy.model && this.modelAliasConfig) {
+          const pk = this.providerKey ?? this.node.engine ?? "claude"
+          const resolved = resolveModelAlias(agentCopy.model, pk, this.modelAliasConfig)
+          if (resolved) agentCopy.model = resolved
+        }
+        resolved[name] = agentCopy
       } else {
         throw new Error(`SubAgentDef "${name}": must have either "prompt" or "agent_file"`)
       }
