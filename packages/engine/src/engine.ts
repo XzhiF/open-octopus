@@ -1369,6 +1369,12 @@ export class WorkflowEngine {
           this.globalSessionId, this.branchSessionIds, this.inputs,
           this.workflow.engine,
           this.modelAliasConfig,
+          this.checkpointStore,
+          this.executionId,
+          async (event: string, context: Record<string, unknown>) => {
+            await this.executeHooks(event as keyof WorkflowHooks, context)
+          },
+          this.agentResolver,
         )
       case "agent": {
         const rawKey = node.engine ?? this.workflow.engine ?? "claude"

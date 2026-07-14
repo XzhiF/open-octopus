@@ -210,4 +210,77 @@ describe("LoopExecutor", () => {
     expect(result.logLines).not.toContain("middle")
     expect(result.logLines).toContain("last")
   })
+
+  it("does not throw the old guard error when loop contains a swarm node", async () => {
+    const node: NodeDef = {
+      id: "loop_with_swarm",
+      type: "loop",
+      max_iterations: 1,
+      while: "true",
+      nodes: [
+        {
+          id: "swarm1",
+          type: "swarm",
+          mode: "review",
+          experts: [
+            { role: "reviewer", prompt: "review code", model: "haiku" },
+          ],
+        } as any,
+      ],
+    }
+    const pool = new VarPool()
+
+    // Old behavior: createExecutor threw "swarm 节点不支持嵌套在 loop 内部"
+    // New behavior: it creates a SwarmExecutor. With no providers it will
+    // fail for a different reason (no provider), which proves the guard is gone.
+    const executor = new LoopExecutor(
+      node, pool, {}, os.tmpdir(),
+      undefined, undefined, undefined, undefined, undefined, undefined, undefined,
+      undefined, undefined,
+      // new params
+      undefined, undefined, undefined, undefined,
+    )
+
+    let caughtError: unknown
+    try {
+      await executor.execute()
+    } catch (err) {
+      caughtError = err
+    }
+
+    // If there was an error, it must NOT be the old guard message
+    if (caughtError instanceof Error) {
+      expect(caughtError.message).not.toContain("swarm 节点不支持嵌套在 loop 内部")
+    }
+  })
+
+  it("accepts checkpointStore, executionId, hookExecutor, and agentResolver params", async () => {
+    const node: NodeDef = {
+      id: "loop_params",
+      type: "loop",
+      max_iterations: 1,
+      while: "false",
+      nodes: [],
+    }
+    const pool = new VarPool()
+
+    const mockCheckpointStore = { save: vi.fn(), load: vi.fn() } as any
+    const mockHookExecutor = vi.fn() as any
+    const mockAgentResolver = vi.fn() as any
+
+    // Should not throw when constructing with new params
+    const executor = new LoopExecutor(
+      node, pool, {}, os.tmpdir(),
+      undefined, undefined, undefined, undefined, undefined, undefined, undefined,
+      undefined, undefined,
+      mockCheckpointStore,
+      "exec-test-123",
+      mockHookExecutor,
+      mockAgentResolver,
+    )
+
+    const result = await executor.execute()
+    expect(result.status).toBe("completed")
+    expect(result.iterations).toBe(0)
+  })
 })
