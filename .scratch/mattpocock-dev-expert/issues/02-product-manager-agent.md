@@ -4,9 +4,9 @@
 
 **Blocked by:** None — can start immediately.
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] 创建 `.claude/agents/product-manager.md` agent 文件
-- [ ] Agent 定义包含: 角色描述、关注维度（用户价值/MVP/优先级）、debate 行为准则
-- [ ] Agent 能读取项目 CLAUDE.md / CONTEXT.md 了解项目背景
-- [ ] 验证: agent_file 可被 resolveAgents() 正常解析（格式正确）
+- [x] 创建 `.claude/agents/product-manager.md` agent 文件
+- [x] Agent 定义包含: 角色描述、关注维度（用户价值/MVP/优先级）、debate 行为准则
+- [x] Agent 能读取项目 CLAUDE.md / CONTEXT.md 了解项目背景
+- [x] 验证: agent_file 可被 resolveAgents() 正常解析（格式正确）
