@@ -4,7 +4,6 @@
  *
  * - skills/    → .claude/skills/
  * - agents/    → .claude/agents/
- * - workflows/ → workflows/
  * - workflow-schema.json → ~/.octopus/workflow-schema.json
  *
  * Runs after pnpm build to keep local copies in sync
@@ -54,27 +53,14 @@ const agentCount = syncDir(agentsSrc, agentsDst, name => {
   return name.endsWith('.md') && !name.endsWith('.tpl')
 })
 
-// Workflows: .yaml files
-const workflowsSrc = join(corePack, 'workflows')
-const workflowsDst = join(root, 'workflows')
-const wfCount = syncDir(workflowsSrc, workflowsDst, name => {
-  return name.endsWith('.yaml')
-})
-
-// Schema: workflow-schema.json → ~/.octopus/ + workflows/
-const schemaSrc = join(workflowsSrc, 'workflow-schema.json')
+// Schema: workflow-schema.json → ~/.octopus/
+const schemaSrc = join(corePack, 'workflows', 'workflow-schema.json')
 if (existsSync(schemaSrc)) {
-  // ~/.octopus/workflow-schema.json — global reference
   const globalSchemaDst = join(homedir(), '.octopus', 'workflow-schema.json')
   mkdirSync(dirname(globalSchemaDst), { recursive: true })
   cpSync(schemaSrc, globalSchemaDst, { force: true })
-
-  // workflows/workflow-schema.json — for relative $schema=./ refs in synced YAMLs
-  const localSchemaDst = join(workflowsDst, 'workflow-schema.json')
-  mkdirSync(workflowsDst, { recursive: true })
-  cpSync(schemaSrc, localSchemaDst, { force: true })
 }
 
 console.log(
-  `[sync-builtin] skills: ${skillCount}, agents: ${agentCount}, workflows: ${wfCount}, schema: ${existsSync(schemaSrc) ? '✓' : '✗'}`
+  `[sync-builtin] skills: ${skillCount}, agents: ${agentCount}, schema: ${existsSync(schemaSrc) ? '✓' : '✗'}`
 )

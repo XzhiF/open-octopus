@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from "vitest"
 import { LoopExecutor } from "../executors/loop"
 import { VarPool } from "@octopus/shared"
 import type { NodeDef } from "@octopus/shared"
+import type { ICheckpointStore } from "../pipeline/checkpoint-types"
 import os from "os"
 
 describe("LoopExecutor", () => {
@@ -209,5 +210,75 @@ describe("LoopExecutor", () => {
     expect(result.logLines).toContain("first")
     expect(result.logLines).not.toContain("middle")
     expect(result.logLines).toContain("last")
+  })
+
+  it("creates a SwarmExecutor for swarm nodes inside a loop", async () => {
+    const node: NodeDef = {
+      id: "loop_with_swarm",
+      type: "loop",
+      max_iterations: 1,
+      while: "true",
+      nodes: [
+        {
+          id: "swarm1",
+          type: "swarm",
+          mode: "review",
+          experts: [
+            { role: "reviewer", prompt: "review code", model: "haiku" },
+          ],
+        },
+      ],
+    }
+    const pool = new VarPool()
+
+    // Swarm node inside loop creates SwarmExecutor.
+    // With no providers it fails for a different reason, proving the guard is gone.
+    const executor = new LoopExecutor(
+      node, pool, {}, os.tmpdir(),
+      undefined, undefined, undefined, undefined, undefined, undefined, undefined,
+      undefined, undefined,
+      undefined, undefined, undefined, undefined,
+    )
+
+    let caughtError: unknown
+    try {
+      await executor.execute()
+    } catch (err) {
+      caughtError = err
+    }
+
+    if (caughtError instanceof Error) {
+      expect(caughtError.message).not.toContain("swarm 节点不支持嵌套在 loop 内部")
+    }
+  })
+
+  it("accepts checkpointStore, executionId, hookExecutor, and agentResolver params", async () => {
+    const node: NodeDef = {
+      id: "loop_params",
+      type: "loop",
+      max_iterations: 1,
+      while: "false",
+      nodes: [],
+    }
+    const pool = new VarPool()
+
+    const mockCheckpointStore: ICheckpointStore = { save: vi.fn(), load: vi.fn(), cleanExpired: vi.fn() }
+    const mockHookExecutor = vi.fn<(event: string, context: Record<string, unknown>) => Promise<void>>()
+    const mockAgentResolver = vi.fn<(topic: string, maxExperts: number) => Promise<Array<{ role: string; agent_file: string; description: string }>>>()
+
+    // Should not throw when constructing with new params
+    const executor = new LoopExecutor(
+      node, pool, {}, os.tmpdir(),
+      undefined, undefined, undefined, undefined, undefined, undefined, undefined,
+      undefined, undefined,
+      mockCheckpointStore,
+      "exec-test-123",
+      mockHookExecutor,
+      mockAgentResolver,
+    )
+
+    const result = await executor.execute()
+    expect(result.status).toBe("completed")
+    expect(result.iterations).toBe(0)
   })
 })

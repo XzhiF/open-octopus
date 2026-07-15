@@ -11,6 +11,8 @@ import { PythonExecutor } from "./python"
 import { ConditionExecutor } from "./condition"
 import { ApprovalExecutor } from "./approval"
 import { AgentExecutor } from "./agent"
+import { SwarmExecutor } from "./swarm"
+import type { ICheckpointStore } from "../pipeline/checkpoint-types"
 
 export class LoopExecutor implements NodeExecutor {
   private iterations = 0
@@ -31,6 +33,14 @@ export class LoopExecutor implements NodeExecutor {
     private workflowEngine?: string,
     /** Model alias config for resolving sub-agent tier names */
     private modelAliasConfig?: ModelAliasConfig,
+    /** Checkpoint store for swarm-in-loop persistence */
+    private checkpointStore?: ICheckpointStore,
+    /** Execution ID for checkpoint correlation */
+    private executionId?: string,
+    /** Hook executor for swarm-in-loop hooks */
+    private hookExecutor?: (event: string, context: Record<string, unknown>) => Promise<void>,
+    /** Dynamic agent resolver for swarm-in-loop */
+    private agentResolver?: (topic: string, maxExperts: number) => Promise<Array<{ role: string; agent_file: string; description: string }>>,
   ) {}
 
   async execute(): Promise<NodeExecutionResult> {
@@ -251,10 +261,18 @@ export class LoopExecutor implements NodeExecutor {
   private createExecutor(node: NodeDef, pool?: VarPool): NodeExecutor {
     const p = pool ?? this.pool
     const loopCtx = { iteration: this.iterations }
-    if (node.type === "swarm") {
-      throw new Error("swarm 节点不支持嵌套在 loop 内部")
-    }
     switch (node.type) {
+      case "swarm":
+        return new SwarmExecutor(
+          node, p, this.providers, this.cwd,
+          this.callbacks, this.logger, this.signal,
+          this.checkpointStore,
+          this.executionId,
+          this.hookExecutor,
+          this.modelAliasConfig,
+          this.workflowEngine,
+          this.agentResolver,
+        )
       case "bash":
         return new BashExecutor(node, p, this.signal, (line, stream) => {
           const event = stream === "stderr" ? "bash_stderr" : "bash_log"
@@ -294,7 +312,7 @@ export class LoopExecutor implements NodeExecutor {
         )
       }
       case "loop":
-        return new LoopExecutor(node, p, this.providers, this.cwd, this.globalAutoAnswers, this.signal, this.callbacks, this.logger, this.globalSessionId, this.branchSessionIds, this.inputs, this.workflowEngine, this.modelAliasConfig)
+        return new LoopExecutor(node, p, this.providers, this.cwd, this.globalAutoAnswers, this.signal, this.callbacks, this.logger, this.globalSessionId, this.branchSessionIds, this.inputs, this.workflowEngine, this.modelAliasConfig, this.checkpointStore, this.executionId, this.hookExecutor, this.agentResolver)
       default:
         throw new Error(`Unknown node type: ${node.type}`)
     }

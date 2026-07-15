@@ -1,0 +1,671 @@
+# yaml-language-server: $schema=~/.octopus/workflow-schema.json
+apiVersion: octopus/v1
+kind: Workflow
+name: mattpocock-dev-expert
+description: >
+  Expert Grill 工作流 — 多专家 Swarm Debate 替代单人拷问。
+  grill-classify 生成问题 + 依赖分析 + 分批 → grill-loop[grill-batch(swarm debate)]
+  → grill-approval → grill-synthesize → spec → tickets → tdd-loop → architecture-review → ship。
+  3-6 个专家通过 swarm debate 对每个问题批次达成多角色共识，用户只需最终审批。
+
+model: pro-max
+engine: claude
+execution_mode: serial
+timeout: 86400
+
+inputs:
+  idea:
+    description: "产品 Idea 描述（自然语言，越详细越好）"
+    required: true
+  base_branch:
+    description: "PR 目标分支"
+    required: false
+    default: "main"
+  max_tickets:
+    description: "最大 Ticket 数量（防止拆分过细）"
+    required: false
+    default: "15"
+  project_path:
+    description: "目标项目路径（默认自动检测 ./projects/ 下首个项目）"
+    required: false
+    default: ""
+  skip_arch_review:
+    description: "跳过架构审查节点（加速但牺牲架构可见性）"
+    required: false
+    default: "false"
+  interactive:
+    description: "启用审批模式（true: 用户逐阶段审批, false: 自动通过）"
+    required: false
+    default: "false"
+
+variables:
+  scratch_dir: ""
+  display_name: "Expert Grill Dev"
+  conclusion: ""
+  # Grill
+  brief_file: ""
+  decision_count: "0"
+  context_file: ""
+  context_mode: "single"
+  context_packages: ""
+  # Expert Grill specific
+  batches_json: ""
+  batch_count: "0"
+  accumulated_decisions: ""
+  all_batches_done: "false"
+  # Spec
+  spec_file: ""
+  seam_count: "0"
+  user_stories_count: "0"
+  # Tickets
+  ticket_count: "0"
+  tickets_done_count: "0"
+  tickets_blocked_count: "0"
+  # TDD Loop
+  current_ticket_id: ""
+  current_ticket_title: ""
+  ticket_status: ""
+  all_tickets_done: "false"
+  # Review
+  review_blockers: "0"
+  review_issues: ""
+  standards_passed: "false"
+  spec_passed: "false"
+  # Anti-TODO
+  todo_count: "0"
+  # Architecture Review
+  arch_review_file: ""
+  arch_blockers: "0"
+  # Ship
+  pr_urls: ""
+  pr_count: "0"
+  # Stats
+  total_commits: "0"
+  tdd_cycles: "0"
+
+auto_answers:
+  - pattern: ".*"
+    answer: "proceed"
+
+providers:
+  hermes-cli:
+    type: hermes
+    timeout: 30
+    min_severity: info
+
+channels:
+  default:
+    provider: hermes-cli
+    target: "telegram:xzf_hermes"
+
+hooks:
+  on_workflow_failure:
+    - id: notify-failure
+      type: notify
+      channel: default
+      template:
+        severity: error
+        title: "❌ $vars.display_name — 工作流失败"
+        body: "🔴 失败节点: ${hook.failed_node_id | default:unknown}\n⏱️ 已运行: ${hook.total_duration_ms | duration}\n💡 ${hook.error | default:Unknown}"
+
+  on_complete:
+    - id: notify-complete
+      type: notify
+      channel: default
+      template:
+        severity: info
+        title: "{{#if $hook.final_status}}🎉{{/if}}{{#if $hook.failed_count}}😵{{/if}} $vars.display_name — 完成"
+        body: "📊 {{#if $hook.final_status}}✅{{/if}}{{#if $hook.failed_count}}❌{{/if}} $hook.final_status\n✅ $hook.completed_count / ❌ $hook.failed_count / 📊 $hook.total_count\n⏱️ ${hook.total_duration_ms | duration}"
+
+  on_node_success:
+    - id: notify-grill-classify
+      type: notify
+      nodes: [grill-classify]
+      channel: default
+      template:
+        severity: info
+        title: "🔍 Grill Classify 完成 — $vars.batch_count 个批次"
+        body: "📂 $vars.scratch_dir\n🧩 Context: $vars.context_mode\n💡 $vars.conclusion"
+
+    - id: notify-grill-loop
+      type: notify
+      nodes: [grill-loop]
+      channel: default
+      template:
+        severity: info
+        title: "🔥 Expert Grill 完成 — $vars.decision_count 个决策"
+        body: "📄 决策已累积\n📖 Context: $vars.context_mode\n💡 $vars.conclusion"
+
+    - id: notify-grill-synthesize
+      type: notify
+      nodes: [grill-synthesize]
+      channel: default
+      template:
+        severity: info
+        title: "📝 Grill Synthesize 完成 — Brief + Context 已生成"
+        body: "📄 $vars.brief_file\n📖 $vars.context_file ($vars.context_mode)\n💡 $vars.conclusion"
+
+    - id: notify-spec
+      type: notify
+      nodes: [spec]
+      channel: default
+      template:
+        severity: info
+        title: "📋 Spec 完成 — $vars.user_stories_count 个用户故事"
+        body: "📄 $vars.spec_file\n🧵 Seams: $vars.seam_count\n💡 $vars.conclusion"
+
+    - id: notify-tickets
+      type: notify
+      nodes: [tickets]
+      channel: default
+      template:
+        severity: info
+        title: "🎫 Tickets 拆分完成 — $vars.ticket_count 个垂直切片"
+        body: "📂 $vars.scratch_dir/issues/\n💡 $vars.conclusion"
+
+    - id: notify-tdd-loop
+      type: notify
+      nodes: [tdd-loop]
+      channel: default
+      template:
+        severity: info
+        title: "🔁 TDD Loop 完成 — $vars.tickets_done_count/$vars.ticket_count 通过"
+        body: "📊 Commits: $vars.total_commits | TDD cycles: $vars.tdd_cycles | Blocked: $vars.tickets_blocked_count\n💡 $vars.conclusion"
+
+    - id: notify-arch-review
+      type: notify
+      nodes: [architecture-review]
+      channel: default
+      template:
+        severity: info
+        title: "🏗️ 架构审查完成 — $vars.arch_blockers 个 Blockers"
+        body: "📄 $vars.arch_review_file\n💡 $vars.conclusion"
+
+    - id: notify-ship
+      type: notify
+      nodes: [ship]
+      channel: default
+      template:
+        severity: info
+        title: "🚀 PR 已创建"
+        body: "🔗 $vars.pr_urls\n📊 PRs: $vars.pr_count\n💡 $vars.conclusion"
+
+nodes:
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 1: Grill Classify — 探索项目 + 生成问题 + 分批
+  # ═══════════════════════════════════════════════════════════════
+  - id: grill-classify
+    type: agent
+    timeout: 3600
+    skills: [grilling]
+    prompt: |
+      探索项目，分析 Idea，生成 grill 问题并分批。
+
+      ## 准备
+      - 从 `$inputs.idea` 提取 feature-slug（kebab-case）
+      - 创建 `.scratch/<feature-slug>/issues/` 目录
+      - 探索项目结构（CLAUDE.md, README.md, package.json, 目录树）
+      - Context 模式检测（结构优先，不看现有 CONTEXT 文件）：
+        monorepo（`packages/*/package.json` 或 `pnpm-workspace.yaml`）→ multi
+        否则 → single
+
+      ## 输入
+      - Idea: $inputs.idea
+      - 项目: $inputs.project_path（如为空，扫描 ./projects/ 下首个项目）
+
+      ## 生成问题 + 分批
+      参考 13 个 grill 维度（目标、用户、MVP、技术栈、数据模型、API、安全、性能、错误处理、测试、部署、监控、扩展），
+      根据 Idea 生成 8-15 个关键问题。分析依赖关系，按依赖分成 2-5 个批次。
+
+      每个批次：
+      - batch_id: 从 1 开始的序号
+      - questions: [{id: "Q1", text: "问题文本", depends_on: []}]
+      - depends_on: 依赖的前序 batch_id 列表
+
+      独立问题放 batch 1，依赖前序答案的问题放后续 batch。
+
+      ## 输出
+      {"vars_update":{"scratch_dir":".scratch/<feature-slug>","brief_file":".scratch/<feature-slug>/brief.md","context_file":"<single: project_path/CONTEXT.md / multi: project_path/CONTEXT-MAP.md>","context_mode":"<single|multi>","context_packages":"<comma-separated>","batches_json":"<valid JSON array: [{batch_id, questions, depends_on}]>","batch_count":"<批次数>","conclusion":"<2-3句>"}}
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 2: Grill Loop — 逐批 Swarm Debate
+  # ═══════════════════════════════════════════════════════════════
+  - id: grill-loop
+    type: loop
+    depends_on: [grill-classify]
+    max_iterations: 10
+    break_when: '$vars.all_batches_done == "true"'
+    nodes:
+      - id: grill-batch
+        type: swarm
+        mode: debate
+        rounds: 3
+        consensus_threshold: 0.8
+        context_tier: "1m"
+        topic: |
+          Expert Grill 批次讨论。
+
+          当前迭代: $iteration
+          总批次数: $vars.batch_count
+          批次 JSON: $vars.batches_json
+
+          前序 batch decisions:
+          $vars.accumulated_decisions
+
+          规则：
+          1. 找到 batch_id == $iteration 的批次
+          2. 如该批次不存在（$iteration > batch_count），直接输出 {"vars_update":{"all_batches_done":"true","conclusion":"所有批次已完成"}}
+          3. 对该批次的每个问题进行多角色讨论
+          4. 前序 batch 的 decisions 作为已知上下文
+          5. 每个问题达成多角色共识，输出 decision
+
+        experts:
+          # ── 3 核心专家 ──
+          - role: software-architect
+            agent_file: ".claude/agents/architecture-explorer.md"
+            perspective: "资深架构师 — 技术可行性、系统集成、模块设计"
+            task: |
+              从架构视角讨论当前批次问题。关注:
+              - 技术可行性 — 现有系统能否支撑？需要多少改造？
+              - 模块设计 — 新功能如何融入现有架构？
+              - 系统集成 — 与现有模块的交互和数据流
+              - 可扩展性 — 决策是否为未来留足空间？
+              约束: 不创造不存在的需求，每个建议标注 [必须] 或 [可选]。
+
+          - role: product-manager
+            agent_file: ".claude/agents/product-manager.md"
+            perspective: "产品经理 — 用户价值守护者、MVP 边界捍卫者"
+            task: |
+              从用户价值视角讨论当前批次问题。关注:
+              - 用户价值 — 这个决策对用户的实际价值？有证据吗？
+              - MVP 边界 — 验证核心假设最少需要做什么？
+              - 优先级 — 如果只能做一件事，哪件对用户影响最大？
+              - 范围蔓延 — 是否有"顺便做了"的冲动？
+              约束: 始终问"用户真的需要这个吗？"，拒绝无用户价值的技术炫技。
+
+          - role: testing-expert
+            agent_file: ".claude/agents/testing-engineering-software-architect.md"
+            perspective: "测试架构师 — 测试策略、Seam 设计、质量保障"
+            task: |
+              从测试和质量视角讨论当前批次问题。关注:
+              - 测试可行性 — 这个决策怎么验证？Seam 在哪？
+              - 测试策略 — 单元/集成/E2E 的覆盖计划
+              - 可测试性 — 设计是否便于测试？需要哪些 adapter？
+              - 质量门禁 — 什么条件算"完成"？
+              约束: 每个 decision 必须附带验证方法。
+
+          # ── 可选专家（按项目类型参与） ──
+          - role: frontend-engineer
+            agent_file: ".claude/agents/engineering-frontend-developer.md"
+            perspective: "前端专家 — UI/UX 需求、交互设计、组件架构"
+            task: |
+              当前端相关时参与讨论。关注: UI/UX 需求、组件架构、响应式、可访问性。
+              非前端问题 → 简短表态"非我的领域，交给其他专家"。
+
+          - role: backend-engineer
+            agent_file: ".claude/agents/engineering-backend-architect.md"
+            perspective: "后端专家 — API 设计、数据模型、性能"
+            task: |
+              当后端相关时参与讨论。关注: API 设计、数据模型、性能、服务端逻辑。
+              非后端问题 → 简短表态"非我的领域，交给其他专家"。
+
+          - role: security-expert
+            agent_file: ".claude/agents/security-architect.md"
+            perspective: "安全专家 — 认证/授权/数据保护/威胁建模"
+            task: |
+              当安全相关时参与讨论。关注: 认证授权、数据保护、输入验证、威胁建模。
+              非安全问题 → 简短表态"非我的领域，交给其他专家"。
+
+        host:
+          role: grill-host
+          prompt: |
+            综合各专家对当前批次问题的讨论，输出每个问题的共识 decision。
+
+            规则:
+            1. 每个 decision 包含: 问题 ID、决策内容、理由、confidence (0-1)
+            2. 分歧严重时记录各方观点，选择多数派或 host 裁决
+            3. 关键分歧写入 decision 的"理由"字段
+
+            ## Assessment（必须输出，用于共识检测）
+            输出 JSON assessment 块：
+            {"assessment":{"consensus_score":<0-1>,"should_continue":<true|false>,"summary":"<一句话共识描述>"}}
+            - consensus_score: 专家意见一致程度（1=完全一致，0=严重分歧）
+            - should_continue: 是否需要继续讨论（true=分歧太大需要下一轮，false=已达成共识）
+
+            ## Decisions
+            {"vars_update":{"accumulated_decisions":"$vars.accumulated_decisions\n\n## Batch $iteration\n<每个问题的 decision>","decision_count":"<累计决策数>","all_batches_done":"<当 $iteration >= batch_count 时为 true，否则 false>","conclusion":"<2-3句本批摘要>"}}
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 2.5: Grill Approval — 用户审批（仅 interactive 模式）
+  # ═══════════════════════════════════════════════════════════════
+  - id: grill-approval
+    type: approval
+    depends_on: [grill-loop]
+    execute_when: '$inputs.interactive == "true"'
+    timeout: 600
+    prompt: |
+      Expert Grill 已完成所有批次讨论。以下是各批次决策摘要：
+
+      $vars.accumulated_decisions
+
+      请审批这些决策。审批后进入 Spec 阶段。
+      拒绝则工作流终止，可修改 Idea 后重新运行。
+
+      选择: approve / reject
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 2.6: Grill Synthesize — Brief + Domain Modeling
+  # ═══════════════════════════════════════════════════════════════
+  - id: grill-synthesize
+    type: agent
+    depends_on: [grill-approval]
+    timeout: 3600
+    skills: [grilling, domain-modeling]
+    prompt: |
+      综合所有 batch decisions 为 brief.md，同时按 **domain-modeling** skill 构建领域模型。
+
+      ## 输入
+      - 所有决策: $vars.accumulated_decisions
+      - Idea: $inputs.idea
+      - Scratch 目录: $vars.scratch_dir
+      - Context 模式: $vars.context_mode
+
+      ## 输出 1: brief.md
+      写入 $vars.brief_file，格式:
+      ```
+      # Brief: <功能名>
+      ## 核心决策
+      <按主题组织的决策，非按批次>
+      ## 关键分歧
+      <专家团未达成共识的点及理由>
+      ## MVP 边界
+      <明确的 in-scope 和 out-of-scope>
+      ## 后续步骤
+      <Spec → Tickets → TDD>
+      ```
+
+      ## 输出 2: Domain Model
+      按 **domain-modeling** skill 生成:
+      - single 模式: <project_path>/CONTEXT.md
+      - multi 模式: <project_path>/CONTEXT-MAP.md + 各 package CONTEXT.md
+
+      ## 输出
+      {"vars_update":{"decision_count":"<总决策数>","conclusion":"<2-3句>"}}
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 3: Spec — 综合规格文档
+  # ═══════════════════════════════════════════════════════════════
+  - id: spec
+    type: agent
+    depends_on: [grill-synthesize]
+    timeout: 3600
+    skills: [to-spec, codebase-design]
+    prompt: |
+      按 **to-spec** skill 综合 Grill 决策为 Spec。不重新采访用户。
+      Implementation Decisions 使用 **codebase-design** skill 词汇。
+
+      ## 输入
+      - Grill 决策: $vars.brief_file
+      - Idea: $inputs.idea
+      - 领域模型: $vars.context_file（multi 模式读 CONTEXT-MAP.md 索引的各 package CONTEXT）
+
+      ## 输出
+      {"vars_update":{"spec_file":"$vars.scratch_dir/spec.md","user_stories_count":"<数>","seam_count":"<数>","conclusion":"<2-3句>"}}
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 4: Tickets — 垂直切片拆分
+  # ═══════════════════════════════════════════════════════════════
+  - id: tickets
+    type: agent
+    depends_on: [spec]
+    timeout: 1800
+    skills: [to-tickets]
+    prompt: |
+      按 **to-tickets** skill 将 Spec 拆分为垂直切片。
+      本地 tracker：每个 ticket 一个文件，写入 `$vars.scratch_dir/issues/`。
+
+      ## 输入
+      - Spec: $vars.spec_file
+      - 领域模型: $vars.context_file
+      - 最大 Ticket 数: $inputs.max_tickets
+
+      ## 输出
+      {"vars_update":{"ticket_count":"<数>","conclusion":"<2-3句>"}}
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 5: TDD Loop — 逐 Ticket TDD + 并行审查 + Debug Fallback
+  # ═══════════════════════════════════════════════════════════════
+  - id: tdd-loop
+    type: loop
+    depends_on: [tickets]
+    max_iterations: 100
+    break_when: '$vars.all_tickets_done == "true" || $vars.ticket_status == "no_ticket"'
+    nodes:
+      - id: ticket-impl
+        type: agent
+        context: new
+        timeout: 7200
+        skills: [implement, tdd, code-review, diagnosing-bugs]
+        agents:
+          frontend-engineer:
+            description: "前端工程师 — UI/组件/样式/前端路由/响应式"
+            agent_file: ".claude/agents/engineering-frontend-developer.md"
+            model: pro-max
+            tools: ["Read", "Write", "Edit", "Bash", "Grep", "Glob"]
+          backend-engineer:
+            description: "后端工程师 — API/路由/中间件/业务逻辑/服务端"
+            agent_file: ".claude/agents/engineering-backend-architect.md"
+            model: pro-max
+            tools: ["Read", "Write", "Edit", "Bash", "Grep", "Glob"]
+          senior-engineer:
+            description: "全栈高级工程师 — 跨层/通用逻辑/复杂集成"
+            agent_file: ".claude/agents/engineering-senior-developer.md"
+            model: pro-max
+            tools: ["Read", "Write", "Edit", "Bash", "Grep", "Glob"]
+          database-engineer:
+            description: "数据库工程师 — Schema/Migration/查询优化/数据建模"
+            agent_file: ".claude/agents/engineering-database-optimizer.md"
+            model: pro-max
+            tools: ["Read", "Write", "Edit", "Bash", "Grep", "Glob"]
+          standards-reviewer:
+            description: "Standards 轴审查员 — 只看代码质量（不看 Spec）"
+            agent_file: ".claude/agents/engineering-code-reviewer.md"
+            model: pro-max
+            tools: ["Read", "Grep", "Glob"]
+          spec-reviewer:
+            description: "Spec 轴审查员 — 只看需求覆盖（不看代码标准）"
+            agent_file: ".claude/agents/engineering-code-reviewer.md"
+            model: pro-max
+            tools: ["Read", "Grep", "Glob"]
+        prompt: |
+          你是 TDD 编排器。从 issues 目录取下一个 Ticket，选合适的工程师执行，按 skill 纪律验证。
+
+          ## 输入
+          - Issues 目录: $vars.scratch_dir/issues/
+          - Spec: $vars.spec_file
+          - 项目路径: $inputs.project_path
+          - 领域模型: $vars.context_file（multi 模式读 CONTEXT-MAP.md + 当前 Ticket 涉及的 package CONTEXT）
+
+          ## Step 0: 取下一个 Ticket
+
+          扫描 `$vars.scratch_dir/issues/` 下所有 `.md` 文件。
+          对每个文件读取 `Status:` 和 `Blocked by:` 字段。
+          找第一个 `Status: ready-for-agent` 且 `Blocked by:` 中列出的 ticket 都已是 `Status: done` 的文件。
+          找不到 → `all_tickets_done: "true"` 或 `ticket_status: "no_ticket"`。
+          找到 → 更新文件 `Status:` 为 `claimed`，记录选中 ticket 的文件路径。
+
+          ## Step 0.5: 路由 — 选择工程师
+
+          分析 Ticket 的 "What to build" 内容，选择最佳工程师：
+
+          | Ticket 涉及范围关键词 | 委派工程师 |
+          |---------------------|----------|
+          | UI / 组件 / 样式 / 前端 / 响应式 / 页面 | **frontend-engineer** |
+          | API / 路由 / 中间件 / 后端 / 服务端 / Controller | **backend-engineer** |
+          | Schema / Migration / 数据库 / 查询 / 数据模型 / DB | **database-engineer** |
+          | 跨多层 / 全栈 / 集成 / 无法明确归类 | **senior-engineer** |
+
+          路由规则：
+          - 如果 ticket 涉及范围明确属于一个领域 → 选对应工程师
+          - 如果 ticket 跨多个领域 → 选 **senior-engineer**（全栈）
+          - 如果无法判断 → 默认选 **senior-engineer**（安全默认）
+          - 记录选择的工程师到 conclusion 中
+
+          ## 项目探索（实现前必做）
+          Read CLAUDE.md / README.md（如存在），Glob 关键文件，了解现有约定。
+          ⛔ 不创建重复组件 ⛔ 必须复用现有资产 ⛔ 必须使用项目现有集成方式
+
+          ## Step 1-3: TDD（委派选中的工程师）
+
+          委派选中的工程师按 **tdd** + **implement** skill 执行。
+          给工程师的指令必须包含：Ticket 描述、验收标准、Spec 相关部分、领域模型术语。
+
+          ## Step 4: VERIFY
+
+          ```bash
+          pnpm tsc --noEmit 2>&1 || true
+          pnpm test -- --testPathPattern="<相关文件>" 2>&1 || true
+          pnpm test 2>&1 || true
+          ```
+          有失败 → 修复 → 重跑。最多 3 轮。
+
+          ## Step 5: REVIEW（按 code-review skill — 两轴并行）
+
+          保存变更文件列表后，**同时委派 standards-reviewer 和 spec-reviewer**。
+          两轴独立报告，不合并不重排。
+
+          ## Step 5.5: Anti-TODO 门禁
+          ```bash
+          TODO_COUNT=$(grep -rn "TODO\|FIXME\|HACK\|XXX\|not.implemented\|throw new Error.*Not yet" \
+            $(cat /tmp/mattpocock-review-files.txt) 2>/dev/null | wc -l | tr -d ' ')
+          ```
+          TODO_COUNT > 0 → 每个匹配计为 BLOCKER。
+
+          ## Step 6: Fix 循环 + Debug Fallback
+
+          blockers > 0 → 委派同一工程师修复 → VERIFY → REVIEW。最多 3 轮。
+          3 轮后仍失败 → 按 **diagnosing-bugs** skill 执行。
+          仍失败 → ticket `Status:` 改为 `blocked`，继续下一个。
+
+          ## Step 7: COMMIT
+          ```bash
+          git add -A
+          git commit -m "feat(T{NN}): <Ticket 标题>"
+          ```
+
+          ## Step 8: 更新 Ticket 状态
+
+          将 ticket 文件中 `Status: claimed` 改为 `Status: done`。
+
+          ## 输出
+          成功: {"vars_update":{"current_ticket_id":"T{NN}","ticket_status":"done","tickets_done_count":"<数>","total_commits":"$vars.total_commits + 1","tdd_cycles":"$vars.tdd_cycles + <数>","conclusion":"T{NN} [<工程师>]: <摘要>"}}
+          Blocked: {"vars_update":{"current_ticket_id":"T{NN}","ticket_status":"blocked","tickets_blocked_count":"$vars.tickets_blocked_count + 1","conclusion":"T{NN} [<工程师>]: blocked — <原因>"}}
+          无待处理: {"vars_update":{"all_tickets_done":"true","ticket_status":"no_ticket","conclusion":"所有 Ticket 完成或无待处理 (blocked: $vars.tickets_blocked_count)"}}
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 6: Architecture Review
+  # ═══════════════════════════════════════════════════════════════
+  - id: architecture-review
+    type: agent
+    depends_on: [tdd-loop]
+    execute_when: '$inputs.skip_arch_review != "true"'
+    timeout: 1800
+    skills: [improve-codebase-architecture, codebase-design]
+    agents:
+      architecture-reviewer:
+        description: "架构审查员 — 扫描新代码的模块深度和 seam 质量"
+        agent_file: ".claude/agents/architecture-explorer.md"
+        model: pro
+        tools: ["Read", "Write", "Grep", "Glob"]
+    prompt: |
+      按照 **improve-codebase-architecture** skill 扫描本次工作流产生的新代码。
+      使用 **codebase-design** skill 词汇评估架构质量。
+
+      ## 输入
+      - Spec: $vars.spec_file
+      - 领域模型: $vars.context_file（multi 模式读 CONTEXT-MAP.md + per-package CONTEXT）
+      - 变更文件: `git diff --name-only $inputs.base_branch`
+
+      ## 审查维度
+
+      按 codebase-design 原则扫描：
+      1. **Shallow Module Detection**: deletion test, pass-through modules
+      2. **Missing Seam Detection**: direct instantiation without adapter, hard-coded deps
+      3. **Depth Assessment**: 每个新模块 deep/shallow 评估
+      4. **Seam Quality**: adapter pairs, interface = test surface
+
+      委派 architecture-reviewer 子代理扫描变更文件，标记 BLOCKER/WARNING。
+
+      ## 产出
+      报告 → `$vars.scratch_dir/architecture-review.md`
+
+      BLOCKER 条件：
+      - Shallow module with >3 callers
+      - Missing seam with >2 direct instantiations
+      - Interface ≠ test surface
+
+      ## 输出
+      {"vars_update":{"arch_review_file":"$vars.scratch_dir/architecture-review.md","arch_blockers":"<数>","conclusion":"<2-3句>"}}
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 7: Ship
+  # ═══════════════════════════════════════════════════════════════
+  - id: ship
+    type: agent
+    depends_on: [architecture-review]
+    execute_when: '$vars.all_tickets_done == "true" && ($inputs.skip_arch_review == "true" || $vars.arch_blockers == "0")'
+    timeout: 1800
+    prompt: |
+      提交、推送并创建 PR。
+
+      ## 输入
+      - 项目: $inputs.project_path
+      - 目标分支: $inputs.base_branch
+      - Spec: $vars.spec_file
+      - 领域模型: $vars.context_file
+      - 架构报告: $vars.arch_review_file（如存在）
+
+      ## PR 标题
+      `feat: <功能名> — <一句话描述>`
+      ⛔ 禁止泛化用语
+
+      ## PR Body
+      ```markdown
+      ## 🎯 功能概述
+      ## 🏗️ 实现内容（from git log）
+      ## 📊 完成状态
+      - Tickets / TDD Cycles / Commits / Blocked
+      ## 🏛️ 架构质量
+      <details><summary>📋 Spec 全文</summary>...</details>
+      <details><summary>📖 领域模型</summary>...</details>
+      ```
+
+      ## 步骤
+      1. `git status --porcelain`
+      2. 有未提交 → `git add -A && git commit -m "chore: final cleanup"`
+      3. `git push -u origin HEAD`
+      4. 创建 PR（检查已有 PR 则 comment）
+
+      ## 输出
+      {"vars_update":{"pr_urls":"$PR_URL","pr_count":"1","conclusion":"PR: $PR_URL"}}
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 8: Done
+  # ═══════════════════════════════════════════════════════════════
+  - id: done
+    type: bash
+    depends_on: [ship]
+    timeout: 10
+    bash: |
+      echo "═══════════════════════════════════════"
+      echo "  ✅ mattpocock-dev-expert 完成"
+      echo "═══════════════════════════════════════"
+      echo "📂 Scratch: $vars.scratch_dir"
+      echo "📄 Brief: $vars.brief_file"
+      echo "📋 Spec: $vars.spec_file"
+      echo "📖 领域模型: $vars.context_file ($vars.context_mode)"
+      echo "🎫 Tickets: $vars.tickets_done_count / $vars.ticket_count (blocked: $vars.tickets_blocked_count)"
+      echo "🏗️ 架构报告: $vars.arch_review_file"
+      echo "🔗 PRs: $vars.pr_urls"
+      echo "📊 TDD Cycles: $vars.tdd_cycles"
+      echo "═══════════════════════════════════════"
