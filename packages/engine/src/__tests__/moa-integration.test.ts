@@ -251,9 +251,7 @@ describe("MOA Integration: VarPool Auto-Outputs", () => {
     const provider = createMockProvider("moa expert output")
     const providers: Record<string, IAgentProvider> = { claude: provider }
 
-    const executor = new SwarmExecutor(
-      node as any, pool, providers, "/tmp",
-    )
+    const executor = new SwarmExecutor(node as any, pool, { providers, cwd: "/tmp" })
 
     // M2 fix: remove silent try/catch — moa mode is implemented, test should fail if it breaks
     const result = await executor.execute()
@@ -278,7 +276,7 @@ describe("MOA Integration: SSE Event Deduplication", () => {
     const provider = createMockProvider("test output")
     const providers: Record<string, IAgentProvider> = { claude: provider }
 
-    const executor = new SwarmExecutor(node as any, pool, providers, "/tmp")
+    const executor = new SwarmExecutor(node as any, pool, { providers, cwd: "/tmp" })
 
     const result = await executor.execute()
     expect(result.status).toBe("completed")

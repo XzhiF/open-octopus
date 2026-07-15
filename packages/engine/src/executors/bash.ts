@@ -3,6 +3,7 @@ import { existsSync } from "fs"
 import { VarPool, substituteVars, evaluateExpression } from "@octopus/shared"
 import type { NodeDef, CrossExecResolver } from "@octopus/shared"
 import type { NodeExecutor, NodeExecutionResult } from "./types"
+import type { BashConfig } from "./executor-config"
 import { applyVarsUpdate } from "./parse-vars-update"
 
 /**
@@ -43,16 +44,25 @@ function resolveBashPath(): string {
 const BASH_PATH = resolveBashPath()
 
 export class BashExecutor implements NodeExecutor {
+  private signal?: AbortSignal
+  private onLog?: (line: string, stream?: "stdout" | "stderr") => void
+  private cwd?: string
+  private crossExecResolver?: CrossExecResolver
+  private executionId?: string
+  private loopContext?: Record<string, any>
+
   constructor(
     private node: NodeDef,
     private pool: VarPool,
-    private signal?: AbortSignal,
-    private onLog?: (line: string, stream?: "stdout" | "stderr") => void,
-    private cwd?: string,
-    private crossExecResolver?: CrossExecResolver,
-    private executionId?: string,
-    private loopContext?: Record<string, any>,
-  ) {}
+    config?: BashConfig,
+  ) {
+    this.signal = config?.signal
+    this.onLog = config?.onLog
+    this.cwd = config?.cwd
+    this.crossExecResolver = config?.crossExecResolver
+    this.executionId = config?.executionId
+    this.loopContext = config?.loopContext
+  }
 
   async execute(): Promise<NodeExecutionResult> {
     if (this.signal?.aborted) {

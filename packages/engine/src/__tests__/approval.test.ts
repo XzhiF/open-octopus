@@ -14,7 +14,7 @@ describe("ApprovalExecutor", () => {
       ],
     }
     const pool = new VarPool()
-    const executor = new ApprovalExecutor(node, pool, "approve", "looks good")
+    const executor = new ApprovalExecutor(node, pool, { userChoice: "approve", userComment: "looks good" })
     const result = await executor.execute()
 
     expect(result.status).toBe("completed")
@@ -65,7 +65,7 @@ describe("ApprovalExecutor", () => {
       ],
     }
     const pool = new VarPool()
-    const executor = new ApprovalExecutor(node, pool, "reject")
+    const executor = new ApprovalExecutor(node, pool, { userChoice: "reject" })
     const result = await executor.execute()
 
     expect(result.status).toBe("rejected")

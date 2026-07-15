@@ -81,10 +81,7 @@ describe("Swarm Integration: SSE + JSONL + Hooks", () => {
       const provider = createMockProvider("expert output")
       const providers: Record<string, IAgentProvider> = { claude: provider }
 
-      const executor = new SwarmExecutor(
-        node, pool, providers, "/tmp",
-        mockCallbacks, mockLogger,
-      )
+      const executor = new SwarmExecutor(node, pool, { providers, cwd: "/tmp", callbacks: mockCallbacks, logger: mockLogger })
       await executor.execute()
 
       // Verify that logger.log was called with expert_spawn event
@@ -106,10 +103,7 @@ describe("Swarm Integration: SSE + JSONL + Hooks", () => {
       const provider = createMockProvider("expert output")
       const providers: Record<string, IAgentProvider> = { claude: provider }
 
-      const executor = new SwarmExecutor(
-        node, pool, providers, "/tmp",
-        mockCallbacks, mockLogger,
-      )
+      const executor = new SwarmExecutor(node, pool, { providers, cwd: "/tmp", callbacks: mockCallbacks, logger: mockLogger })
       await executor.execute()
 
       // Verify that logger.log was called with expert_complete event
@@ -137,10 +131,7 @@ describe("Swarm Integration: SSE + JSONL + Hooks", () => {
       const provider = createMockProvider("expert output")
       const providers: Record<string, IAgentProvider> = { claude: provider }
 
-      const executor = new SwarmExecutor(
-        node, pool, providers, "/tmp",
-        mockCallbacks, mockLogger,
-      )
+      const executor = new SwarmExecutor(node, pool, { providers, cwd: "/tmp", callbacks: mockCallbacks, logger: mockLogger })
       await executor.execute()
 
       // Count spawn events
@@ -160,10 +151,7 @@ describe("Swarm Integration: SSE + JSONL + Hooks", () => {
       const provider = createMockProvider("expert output")
       const providers: Record<string, IAgentProvider> = { claude: provider }
 
-      const executor = new SwarmExecutor(
-        node, pool, providers, "/tmp",
-        mockCallbacks, mockLogger,
-      )
+      const executor = new SwarmExecutor(node, pool, { providers, cwd: "/tmp", callbacks: mockCallbacks, logger: mockLogger })
       await executor.execute()
 
       // Verify logger.log was called (for both SSE and JSONL)
@@ -175,10 +163,7 @@ describe("Swarm Integration: SSE + JSONL + Hooks", () => {
       const provider = createMockProvider("expert output")
       const providers: Record<string, IAgentProvider> = { claude: provider }
 
-      const executor = new SwarmExecutor(
-        node, pool, providers, "/tmp",
-        mockCallbacks, mockLogger,
-      )
+      const executor = new SwarmExecutor(node, pool, { providers, cwd: "/tmp", callbacks: mockCallbacks, logger: mockLogger })
       await executor.execute()
 
       // emitSSE now calls onSwarmEvent callback (not logger)
@@ -198,10 +183,7 @@ describe("Swarm Integration: SSE + JSONL + Hooks", () => {
       const provider = createMockProvider("expert output")
       const providers: Record<string, IAgentProvider> = { claude: provider }
 
-      const executor = new SwarmExecutor(
-        node, pool, providers, "/tmp",
-        mockCallbacks, mockLogger,
-      )
+      const executor = new SwarmExecutor(node, pool, { providers, cwd: "/tmp", callbacks: mockCallbacks, logger: mockLogger })
       await executor.execute()
 
       // Verify onNodeLog was called with swarm start message
@@ -219,10 +201,7 @@ describe("Swarm Integration: SSE + JSONL + Hooks", () => {
       const provider = createMockProvider("expert output")
       const providers: Record<string, IAgentProvider> = { claude: provider }
 
-      const executor = new SwarmExecutor(
-        node, pool, providers, "/tmp",
-        mockCallbacks, mockLogger,
-      )
+      const executor = new SwarmExecutor(node, pool, { providers, cwd: "/tmp", callbacks: mockCallbacks, logger: mockLogger })
       await executor.execute()
 
       // Verify onNodeLog was called with swarm completion message
@@ -245,10 +224,7 @@ describe("Swarm Integration: SSE + JSONL + Hooks", () => {
       const provider = createMockProvider("expert output")
       const providers: Record<string, IAgentProvider> = { claude: provider }
 
-      const executor = new SwarmExecutor(
-        node, pool, providers, "/tmp",
-        mockCallbacks, mockLogger,
-      )
+      const executor = new SwarmExecutor(node, pool, { providers, cwd: "/tmp", callbacks: mockCallbacks, logger: mockLogger })
       await executor.execute()
 
       const logCalls = (mockCallbacks.onNodeLog as ReturnType<typeof vi.fn>).mock.calls
@@ -272,10 +248,7 @@ describe("Swarm Integration: SSE + JSONL + Hooks", () => {
       const provider = createMockProvider("debate position")
       const providers: Record<string, IAgentProvider> = { claude: provider }
 
-      const executor = new SwarmExecutor(
-        node, pool, providers, "/tmp",
-        mockCallbacks, mockLogger,
-      )
+      const executor = new SwarmExecutor(node, pool, { providers, cwd: "/tmp", callbacks: mockCallbacks, logger: mockLogger })
       await executor.execute()
 
       // Check for round_end events in logs
@@ -292,10 +265,7 @@ describe("Swarm Integration: SSE + JSONL + Hooks", () => {
       const provider = createMockProvider("expert output")
       const providers: Record<string, IAgentProvider> = { claude: provider }
 
-      const executor = new SwarmExecutor(
-        node, pool, providers, "/tmp",
-        mockCallbacks, mockLogger,
-      )
+      const executor = new SwarmExecutor(node, pool, { providers, cwd: "/tmp", callbacks: mockCallbacks, logger: mockLogger })
       await executor.execute()
 
       // Check for swarm_complete event in logs
@@ -323,10 +293,7 @@ describe("Swarm Integration: SSE + JSONL + Hooks", () => {
       const provider = createMockProvider("expert output")
       const providers: Record<string, IAgentProvider> = { claude: provider }
 
-      const executor = new SwarmExecutor(
-        node, pool, providers, "/tmp",
-        mockCallbacks, mockLogger,
-      )
+      const executor = new SwarmExecutor(node, pool, { providers, cwd: "/tmp", callbacks: mockCallbacks, logger: mockLogger })
       await executor.execute()
 
       // Verify hook_event logs were written
@@ -350,7 +317,7 @@ describe("Swarm Integration: SSE + JSONL + Hooks", () => {
       const providers: Record<string, IAgentProvider> = { claude: provider }
 
       // No callbacks, no logger - should not throw
-      const executor = new SwarmExecutor(node, pool, providers, "/tmp")
+      const executor = new SwarmExecutor(node, pool, { providers, cwd: "/tmp" })
       const result = await executor.execute()
 
       expect(result.status).toBe("completed")
@@ -361,10 +328,7 @@ describe("Swarm Integration: SSE + JSONL + Hooks", () => {
       const provider = createMockProvider("expert output")
       const providers: Record<string, IAgentProvider> = { claude: provider }
 
-      const executor = new SwarmExecutor(
-        node, pool, providers, "/tmp",
-        mockCallbacks, undefined,
-      )
+      const executor = new SwarmExecutor(node, pool, { providers, cwd: "/tmp", callbacks: mockCallbacks })
       const result = await executor.execute()
 
       expect(result.status).toBe("completed")

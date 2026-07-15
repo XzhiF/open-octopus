@@ -60,7 +60,7 @@ describe("AgentExecutor agent_file", () => {
       agents,
     }
     const pool = new VarPool()
-    const executor = new AgentExecutor(node, pool, mockRunner)
+    const executor = new AgentExecutor(node, pool, { runner: mockRunner })
 
     await executor.execute()
 
@@ -99,7 +99,7 @@ describe("AgentExecutor agent_file", () => {
       agents,
     }
     const pool = new VarPool()
-    const executor = new AgentExecutor(node, pool, mockRunner)
+    const executor = new AgentExecutor(node, pool, { runner: mockRunner })
 
     await executor.execute()
 
@@ -137,7 +137,7 @@ describe("AgentExecutor agent_file", () => {
       agents,
     }
     const pool = new VarPool()
-    const executor = new AgentExecutor(node, pool, mockRunner)
+    const executor = new AgentExecutor(node, pool, { runner: mockRunner })
 
     await executor.execute()
 
@@ -172,7 +172,7 @@ describe("AgentExecutor agent_file", () => {
       agents,
     }
     const pool = new VarPool()
-    const executor = new AgentExecutor(node, pool, mockRunner)
+    const executor = new AgentExecutor(node, pool, { runner: mockRunner })
 
     await executor.execute()
 
@@ -209,7 +209,7 @@ describe("AgentExecutor agent_file", () => {
       agents,
     }
     const pool = new VarPool({ agents_dir: agentsDir })
-    const executor = new AgentExecutor(node, pool, mockRunner)
+    const executor = new AgentExecutor(node, pool, { runner: mockRunner })
 
     await executor.execute()
 
@@ -241,7 +241,7 @@ describe("AgentExecutor agent_file", () => {
       agents,
     }
     const pool = new VarPool()
-    const executor = new AgentExecutor(node, pool, mockRunner)
+    const executor = new AgentExecutor(node, pool, { runner: mockRunner })
 
     const result = await executor.execute()
     expect(result.status).toBe("failed")
@@ -269,7 +269,7 @@ describe("AgentExecutor agent_file", () => {
       agents,
     }
     const pool = new VarPool()
-    const executor = new AgentExecutor(node, pool, mockRunner)
+    const executor = new AgentExecutor(node, pool, { runner: mockRunner })
 
     const result = await executor.execute()
     expect(result.status).toBe("failed")
@@ -299,7 +299,7 @@ describe("AgentExecutor agent_file", () => {
       agents,
     }
     const pool = new VarPool()
-    const executor = new AgentExecutor(node, pool, mockRunner)
+    const executor = new AgentExecutor(node, pool, { runner: mockRunner })
 
     await executor.execute()
 
@@ -339,7 +339,7 @@ describe("AgentExecutor agent_file", () => {
       agents,
     }
     const pool = new VarPool()
-    const executor = new AgentExecutor(node, pool, mockRunner)
+    const executor = new AgentExecutor(node, pool, { runner: mockRunner })
 
     await executor.execute()
 
@@ -379,7 +379,7 @@ describe("AgentExecutor agent_file", () => {
       agents,
     }
     const pool = new VarPool()
-    const executor = new AgentExecutor(node, pool, mockRunner)
+    const executor = new AgentExecutor(node, pool, { runner: mockRunner })
 
     await executor.execute()
 
@@ -419,7 +419,7 @@ describe("AgentExecutor agent_file", () => {
       agents,
     }
     const pool = new VarPool()
-    const executor = new AgentExecutor(node, pool, mockRunner)
+    const executor = new AgentExecutor(node, pool, { runner: mockRunner })
 
     await executor.execute()
 
@@ -467,7 +467,7 @@ describe("AgentExecutor agent_file", () => {
       agents,
     }
     const pool = new VarPool()
-    const executor = new AgentExecutor(node, pool, mockRunner)
+    const executor = new AgentExecutor(node, pool, { runner: mockRunner })
 
     await executor.execute()
 
@@ -505,7 +505,7 @@ describe("AgentExecutor agent_file", () => {
       agents,
     }
     const pool = new VarPool()
-    const executor = new AgentExecutor(node, pool, mockRunner)
+    const executor = new AgentExecutor(node, pool, { runner: mockRunner })
 
     await executor.execute()
 
@@ -541,7 +541,7 @@ describe("AgentExecutor agent_file", () => {
       agents,
     }
     const pool = new VarPool()
-    const executor = new AgentExecutor(node, pool, mockRunner)
+    const executor = new AgentExecutor(node, pool, { runner: mockRunner })
 
     await executor.execute()
 
@@ -577,7 +577,7 @@ describe("AgentExecutor agent_file", () => {
       agents,
     }
     const pool = new VarPool()
-    const executor = new AgentExecutor(node, pool, mockRunner)
+    const executor = new AgentExecutor(node, pool, { runner: mockRunner })
 
     await executor.execute()
 

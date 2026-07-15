@@ -2,15 +2,21 @@ import { spawn } from "child_process"
 import { VarPool, substituteVars, evaluateExpression } from "@octopus/shared"
 import type { NodeDef } from "@octopus/shared"
 import type { NodeExecutor, NodeExecutionResult } from "./types"
+import type { PythonConfig } from "./executor-config"
 import { applyVarsUpdate } from "./parse-vars-update"
 
 export class PythonExecutor implements NodeExecutor {
+  private signal?: AbortSignal
+  private onLog?: (line: string, stream?: "stdout" | "stderr") => void
+
   constructor(
     private node: NodeDef,
     private pool: VarPool,
-    private signal?: AbortSignal,
-    private onLog?: (line: string, stream?: "stdout" | "stderr") => void,
-  ) {}
+    config?: PythonConfig,
+  ) {
+    this.signal = config?.signal
+    this.onLog = config?.onLog
+  }
 
   async execute(): Promise<NodeExecutionResult> {
     if (this.signal?.aborted) {

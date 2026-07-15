@@ -18,7 +18,7 @@ describe("LoopExecutor", () => {
     }
     const pool = new VarPool({ counter: 0 })
 
-    const executor = new LoopExecutor(node, pool, {}, os.tmpdir())
+    const executor = new LoopExecutor(node, pool, { providers: {}, cwd: os.tmpdir() })
     const result = await executor.execute()
 
     expect(result.status).toBe("completed")
@@ -38,7 +38,7 @@ describe("LoopExecutor", () => {
     }
     const pool = new VarPool()
 
-    const executor = new LoopExecutor(node, pool, {}, os.tmpdir())
+    const executor = new LoopExecutor(node, pool, { providers: {}, cwd: os.tmpdir() })
     const result = await executor.execute()
 
     expect(result.status).toBe("completed")
@@ -57,7 +57,7 @@ describe("LoopExecutor", () => {
     }
     const pool = new VarPool({ found: true })
 
-    const executor = new LoopExecutor(node, pool, {}, os.tmpdir())
+    const executor = new LoopExecutor(node, pool, { providers: {}, cwd: os.tmpdir() })
     const result = await executor.execute()
 
     expect(result.iterations).toBeLessThanOrEqual(1)
@@ -76,7 +76,7 @@ describe("LoopExecutor", () => {
     }
     const pool = new VarPool()
 
-    const executor = new LoopExecutor(node, pool, {}, os.tmpdir())
+    const executor = new LoopExecutor(node, pool, { providers: {}, cwd: os.tmpdir() })
     const result = await executor.execute()
 
     expect(result.status).toBe("completed")
@@ -94,7 +94,7 @@ describe("LoopExecutor", () => {
     }
     const pool = new VarPool()
 
-    const executor = new LoopExecutor(node, pool, {}, os.tmpdir())
+    const executor = new LoopExecutor(node, pool, { providers: {}, cwd: os.tmpdir() })
     const result = await executor.execute()
 
     expect(result.iterations).toBe(3)
@@ -122,7 +122,7 @@ describe("LoopExecutor", () => {
     }
     const pool = new VarPool({ done: true })
 
-    const executor = new LoopExecutor(node, pool, {}, os.tmpdir())
+    const executor = new LoopExecutor(node, pool, { providers: {}, cwd: os.tmpdir() })
     const result = await executor.execute()
 
     expect(result.status).toBe("completed")
@@ -156,7 +156,7 @@ describe("LoopExecutor", () => {
       ],
     }
     const pool = new VarPool({ count: 0 })
-    const executor = new LoopExecutor(node, pool, {}, os.tmpdir())
+    const executor = new LoopExecutor(node, pool, { providers: {}, cwd: os.tmpdir() })
     const result = await executor.execute()
 
     expect(result.status).toBe("completed")
@@ -202,7 +202,7 @@ describe("LoopExecutor", () => {
     ]
 
     const pool = new VarPool()
-    const executor = new LoopExecutor(node, pool, {}, os.tmpdir())
+    const executor = new LoopExecutor(node, pool, { providers: {}, cwd: os.tmpdir() })
     const result = await executor.execute()
 
     expect(result.status).toBe("completed")
@@ -233,12 +233,7 @@ describe("LoopExecutor", () => {
 
     // Swarm node inside loop creates SwarmExecutor.
     // With no providers it fails for a different reason, proving the guard is gone.
-    const executor = new LoopExecutor(
-      node, pool, {}, os.tmpdir(),
-      undefined, undefined, undefined, undefined, undefined, undefined, undefined,
-      undefined, undefined,
-      undefined, undefined, undefined, undefined,
-    )
+    const executor = new LoopExecutor(node, pool, { providers: {}, cwd: os.tmpdir() })
 
     let caughtError: unknown
     try {
@@ -267,15 +262,14 @@ describe("LoopExecutor", () => {
     const mockAgentResolver = vi.fn<(topic: string, maxExperts: number) => Promise<Array<{ role: string; agent_file: string; description: string }>>>()
 
     // Should not throw when constructing with new params
-    const executor = new LoopExecutor(
-      node, pool, {}, os.tmpdir(),
-      undefined, undefined, undefined, undefined, undefined, undefined, undefined,
-      undefined, undefined,
-      mockCheckpointStore,
-      "exec-test-123",
-      mockHookExecutor,
-      mockAgentResolver,
-    )
+    const executor = new LoopExecutor(node, pool, {
+      providers: {},
+      cwd: os.tmpdir(),
+      checkpointStore: mockCheckpointStore,
+      executionId: "exec-test-123",
+      hookExecutor: mockHookExecutor,
+      agentResolver: mockAgentResolver,
+    })
 
     const result = await executor.execute()
     expect(result.status).toBe("completed")

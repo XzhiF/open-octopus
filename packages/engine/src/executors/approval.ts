@@ -1,18 +1,28 @@
 import { VarPool, substituteVars } from "@octopus/shared"
 import type { NodeDef, CrossExecResolver } from "@octopus/shared"
 import type { NodeExecutor, NodeExecutionResult, ApprovalMetadata } from "./types"
+import type { ApprovalConfig } from "./executor-config"
 
 export class ApprovalExecutor implements NodeExecutor {
+  private userChoice?: string
+  private userComment?: string
+  private signal?: AbortSignal
+  private loopContext?: Record<string, any>
+  private crossExecResolver?: CrossExecResolver
+  private executionId?: string
+
   constructor(
     private node: NodeDef,
     private pool: VarPool,
-    private userChoice?: string,
-    private userComment?: string,
-    private signal?: AbortSignal,
-    private loopContext?: Record<string, any>,
-    private crossExecResolver?: CrossExecResolver,
-    private executionId?: string,
-  ) {}
+    config?: ApprovalConfig,
+  ) {
+    this.userChoice = config?.userChoice
+    this.userComment = config?.userComment
+    this.signal = config?.signal
+    this.loopContext = config?.loopContext
+    this.crossExecResolver = config?.crossExecResolver
+    this.executionId = config?.executionId
+  }
 
   async execute(): Promise<NodeExecutionResult> {
     const start = Date.now()

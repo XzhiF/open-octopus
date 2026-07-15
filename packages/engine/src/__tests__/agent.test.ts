@@ -29,7 +29,7 @@ describe("AgentExecutor", () => {
       context: "new",
     }
     const pool = new VarPool({ topic: "MCP" })
-    const executor = new AgentExecutor(node, pool, mockRunner)
+    const executor = new AgentExecutor(node, pool, { runner: mockRunner })
 
     const result = await executor.execute()
 
@@ -59,7 +59,7 @@ describe("AgentExecutor", () => {
       auto_answers: [{ pattern: "请确认?", answer: "confirmed" }],
     }
     const pool = new VarPool()
-    const executor = new AgentExecutor(node, pool, mockRunner, undefined, globalAnswers)
+    const executor = new AgentExecutor(node, pool, { runner: mockRunner, globalAutoAnswers: globalAnswers })
 
     await executor.execute()
 
@@ -80,7 +80,7 @@ describe("AgentExecutor", () => {
       prompt: "test",
     }
     const pool = new VarPool()
-    const executor = new AgentExecutor(node, pool, mockRunner)
+    const executor = new AgentExecutor(node, pool, { runner: mockRunner })
 
     await executor.execute()
 
@@ -102,7 +102,7 @@ describe("AgentExecutor", () => {
     }
     const pool = new VarPool()
     // Engine resolves previousSessionId=undefined for context: "new"
-    const executor = new AgentExecutor(node, pool, mockRunner, undefined)
+    const executor = new AgentExecutor(node, pool, { runner: mockRunner })
 
     await executor.execute()
 
@@ -118,7 +118,7 @@ describe("AgentExecutor", () => {
 
     const node: NodeDef = { id: "agent5", type: "agent", prompt: "test" }
     const pool = new VarPool()
-    const executor = new AgentExecutor(node, pool, mockRunner, undefined, undefined, controller.signal)
+    const executor = new AgentExecutor(node, pool, { runner: mockRunner, signal: controller.signal })
 
     const result = await executor.execute()
     expect(result.status).toBe("cancelled")
@@ -132,7 +132,7 @@ describe("AgentExecutor", () => {
 
     const node: NodeDef = { id: "agent6", type: "agent", prompt: "test" }
     const pool = new VarPool()
-    const executor = new AgentExecutor(node, pool, mockRunner)
+    const executor = new AgentExecutor(node, pool, { runner: mockRunner })
 
     const result = await executor.execute()
     expect(result.status).toBe("failed")
@@ -147,7 +147,7 @@ describe("AgentExecutor", () => {
 
     const node: NodeDef = { id: "hb1", type: "agent", prompt: "test" }
     const pool = new VarPool()
-    const executor = new AgentExecutor(node, pool, mockRunner)
+    const executor = new AgentExecutor(node, pool, { runner: mockRunner })
 
     await executor.execute()
     expect(typeof mockRunner.getLastActivityAt).toBe("function")
@@ -174,7 +174,7 @@ describe("AgentExecutor", () => {
 
       const node: NodeDef = { id: "hb2", type: "agent", prompt: "test" }
       const pool = new VarPool()
-      const executor = new AgentExecutor(node, pool, mockRunner)
+      const executor = new AgentExecutor(node, pool, { runner: mockRunner })
 
       const execPromise = executor.execute()
       await new Promise(r => setTimeout(r, 10))
@@ -197,7 +197,7 @@ describe("AgentExecutor", () => {
 
     const node: NodeDef = { id: "agent7", type: "agent", prompt: "run e2e tests" }
     const pool = new VarPool()
-    const executor = new AgentExecutor(node, pool, mockRunner)
+    const executor = new AgentExecutor(node, pool, { runner: mockRunner })
     const result = await executor.execute()
 
     expect(result.status).toBe("failed")
@@ -213,7 +213,7 @@ describe("AgentExecutor", () => {
 
     const node: NodeDef = { id: "agent8", type: "agent", prompt: "test" }
     const pool = new VarPool()
-    const executor = new AgentExecutor(node, pool, mockRunner)
+    const executor = new AgentExecutor(node, pool, { runner: mockRunner })
     const result = await executor.execute()
 
     expect(result.status).toBe("completed")

@@ -1,4 +1,10 @@
 export * from "./executors/types"
+export type {
+  ExecutorDeps, EngineServices, CoreConfig,
+  PythonConfig, ApprovalConfig, BashConfig,
+  AgentConfig, SwarmConfig, LoopConfig, ResumeConfig,
+  EngineConfig, OnLogCallback, HookExecutor, AgentResolver,
+} from "./executors/executor-config"
 export { BashExecutor } from "./executors/bash"
 export { PythonExecutor } from "./executors/python"
 export { ConditionExecutor } from "./executors/condition"

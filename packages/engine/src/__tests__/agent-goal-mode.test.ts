@@ -54,7 +54,7 @@ describe("AgentExecutor — Goal Mode", () => {
       constraints: ["Cannot modify files", "Must complete in 5 turns"],
     })
     const pool = new VarPool({})
-    const executor = new AgentExecutor(node, pool, mockRunner)
+    const executor = new AgentExecutor(node, pool, { runner: mockRunner })
     await executor.execute()
 
     const prompt = mockRun.mock.calls[0][0].prompt
@@ -70,7 +70,7 @@ describe("AgentExecutor — Goal Mode", () => {
   it("builds standard prompt when node.prompt is set (no goal)", async () => {
     const node = makeAgentNode({ prompt: "Do this exactly" })
     const pool = new VarPool({})
-    const executor = new AgentExecutor(node, pool, mockRunner)
+    const executor = new AgentExecutor(node, pool, { runner: mockRunner })
     await executor.execute()
 
     const prompt = mockRun.mock.calls[0][0].prompt
@@ -89,7 +89,7 @@ describe("AgentExecutor — Goal Mode", () => {
       },
     })
     const pool = new VarPool({})
-    const executor = new AgentExecutor(node, pool, mockRunner)
+    const executor = new AgentExecutor(node, pool, { runner: mockRunner })
     await executor.execute()
 
     const prompt = mockRun.mock.calls[0][0].prompt
@@ -107,7 +107,7 @@ describe("AgentExecutor — Goal Mode", () => {
       planning: { verify: false },
     })
     const pool = new VarPool({})
-    const executor = new AgentExecutor(node, pool, mockRunner)
+    const executor = new AgentExecutor(node, pool, { runner: mockRunner })
     await executor.execute()
 
     const prompt = mockRun.mock.calls[0][0].prompt
@@ -121,7 +121,7 @@ describe("AgentExecutor — Goal Mode", () => {
       "build": { status: "completed", durationMs: 5000, lastOutput: "Build succeeded" },
       "test": { status: "failed", durationMs: 3000, lastOutput: "Test failed: assertion error" },
     })
-    const executor = new AgentExecutor(node, pool, mockRunner, undefined, undefined, undefined, ctx)
+    const executor = new AgentExecutor(node, pool, { runner: mockRunner, engineContext: ctx })
     await executor.execute()
 
     const prompt = mockRun.mock.calls[0][0].prompt
@@ -134,7 +134,7 @@ describe("AgentExecutor — Goal Mode", () => {
   it("injects VarPool snapshot into goal context", async () => {
     const node = makeAgentNode({ goal: "Use variables" })
     const pool = new VarPool({ issue_id: "42", branch: "main" })
-    const executor = new AgentExecutor(node, pool, mockRunner, undefined, undefined, undefined, undefined)
+    const executor = new AgentExecutor(node, pool, { runner: mockRunner })
     await executor.execute()
 
     const prompt = mockRun.mock.calls[0][0].prompt
@@ -146,7 +146,7 @@ describe("AgentExecutor — Goal Mode", () => {
   it("substitutes variables in goal text", async () => {
     const node = makeAgentNode({ goal: "Analyze issue #$vars.issue_id" })
     const pool = new VarPool({ issue_id: "42" })
-    const executor = new AgentExecutor(node, pool, mockRunner)
+    const executor = new AgentExecutor(node, pool, { runner: mockRunner })
     await executor.execute()
 
     const prompt = mockRun.mock.calls[0][0].prompt
@@ -157,7 +157,7 @@ describe("AgentExecutor — Goal Mode", () => {
     const node = makeAgentNode({ goal: "Learn from past runs" })
     const pool = new VarPool({})
     pool.set("_execution_history", "### Run 1 (2024-01-01, completed)\nAll good.")
-    const executor = new AgentExecutor(node, pool, mockRunner)
+    const executor = new AgentExecutor(node, pool, { runner: mockRunner })
     await executor.execute()
 
     const prompt = mockRun.mock.calls[0][0].prompt
@@ -169,7 +169,7 @@ describe("AgentExecutor — Goal Mode", () => {
   it("adds agent role suffix in goal mode", async () => {
     const node = makeAgentNode({ goal: "Do task", agent: "architect" })
     const pool = new VarPool({})
-    const executor = new AgentExecutor(node, pool, mockRunner)
+    const executor = new AgentExecutor(node, pool, { runner: mockRunner })
     await executor.execute()
 
     const prompt = mockRun.mock.calls[0][0].prompt
@@ -179,7 +179,7 @@ describe("AgentExecutor — Goal Mode", () => {
   it("goal mode with no constraints omits constraints section", async () => {
     const node = makeAgentNode({ goal: "Simple task" })
     const pool = new VarPool({})
-    const executor = new AgentExecutor(node, pool, mockRunner)
+    const executor = new AgentExecutor(node, pool, { runner: mockRunner })
     await executor.execute()
 
     const prompt = mockRun.mock.calls[0][0].prompt

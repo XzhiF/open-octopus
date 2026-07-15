@@ -26,6 +26,7 @@ import type { ContextTier } from "./swarm/context-tier-resolver"
 import { DEFAULT_CONTEXT_TIER } from "./swarm/swarm-constants"
 import type { EngineCallbacks } from "../engine"
 import type { JsonlLogger } from "../logger"
+import type { SwarmConfig } from "./executor-config"
 
 /**
  * SwarmExecutor — the NodeExecutor entry point for swarm-type nodes.
@@ -35,24 +36,33 @@ import type { JsonlLogger } from "../logger"
  * via the SwarmCoordinator, which implements SwarmServices.
  */
 export class SwarmExecutor implements NodeExecutor {
+  private providers: Record<string, IAgentProvider>
+  private cwd: string
+  private callbacks?: EngineCallbacks
+  private logger?: JsonlLogger
+  private checkpointStore?: ICheckpointStore
+  private executionId?: string
+  private modelAliasConfig?: ModelAliasConfig
+  private workflowEngine?: string
+  private agentResolver?: (topic: string, maxExperts: number) => Promise<Array<{ role: string; agent_file: string; description: string }>>
+  private engineHookFn?: (event: string, context: Record<string, unknown>) => Promise<void>
+
   constructor(
     private node: NodeDef,
     private pool: VarPool,
-    private providers: Record<string, IAgentProvider>,
-    private cwd: string,
-    private callbacks?: EngineCallbacks,
-    private logger?: JsonlLogger,
-    private signal?: AbortSignal,
-    private checkpointStore?: ICheckpointStore,
-    private executionId?: string,
-    private engineHookFn?: (event: string, context: Record<string, unknown>) => Promise<void>,
-    /** BL-5: Model alias config for resolving expert.model aliases */
-    private modelAliasConfig?: ModelAliasConfig,
-    /** Workflow-level engine fallback (node.engine ?? workflow.engine ?? "claude") */
-    private workflowEngine?: string,
-    /** Dynamic agent resolver: selects agents from ResourceManager and installs to workspace */
-    private agentResolver?: (topic: string, maxExperts: number) => Promise<Array<{ role: string; agent_file: string; description: string }>>,
-  ) {}
+    config: SwarmConfig,
+  ) {
+    this.providers = config.providers
+    this.cwd = config.cwd
+    this.callbacks = config.callbacks
+    this.logger = config.logger
+    this.checkpointStore = config.checkpointStore
+    this.executionId = config.executionId
+    this.modelAliasConfig = config.modelAliasConfig
+    this.workflowEngine = config.workflowEngine
+    this.agentResolver = config.agentResolver
+    this.engineHookFn = config.engineHookFn
+  }
 
   async execute(): Promise<NodeExecutionResult> {
     const start = Date.now()

@@ -324,23 +324,30 @@ export class WorkflowEngine {
         // 非 approval 节点（on_reject handler）：不需要 override，正常运行
 
         // 创建 loop executor，从目标内部节点开始
-        const loopExecutor = new LoopExecutor(
-          parentNode, this.pool, this.providers, this.cwd,
-          this.workflow.auto_answers, signal, this.callbacks, this.logger,
-          this.globalSessionId, this.branchSessionIds, this.inputs,
-          this.workflow.engine,
-          this.modelAliasConfig,
-          this.checkpointStore,
-          this.executionId,
-          async (event: string, context: Record<string, unknown>) => {
+        const loopExecutor = new LoopExecutor(parentNode, this.pool, {
+          providers: this.providers,
+          cwd: this.cwd,
+          globalAutoAnswers: this.workflow.auto_answers,
+          signal,
+          callbacks: this.callbacks,
+          logger: this.logger,
+          globalSessionId: this.globalSessionId,
+          branchSessionIds: this.branchSessionIds,
+          inputs: this.inputs,
+          workflowEngine: this.workflow.engine,
+          modelAliasConfig: this.modelAliasConfig,
+          checkpointStore: this.checkpointStore,
+          executionId: this.executionId,
+          hookExecutor: async (event: string, context: Record<string, unknown>) => {
             await this.executeHooks(event as keyof WorkflowHooks, context)
           },
-          this.agentResolver,
-          overrides.size > 0 ? overrides : undefined, // innerNodeOverrides
-          innerNode.id, // resumeFromNodeId
-          this.nodeResults, // engineNodeResults for $nodeId.output resolution
-          resumeIteration, // resumeIteration — continue from the correct iteration
-        )
+          agentResolver: this.agentResolver,
+        }, {
+          innerNodeOverrides: overrides.size > 0 ? overrides : undefined,
+          resumeFromNodeId: innerNode.id,
+          engineNodeResults: this.nodeResults,
+          resumeIteration,
+        })
 
         this.callbacks?.onNodeStart?.(parentNode.id, parentNode.type)
         const loopStart = Date.now()
@@ -384,7 +391,7 @@ export class WorkflowEngine {
     // 路径 A: approval 恢复 — 重建 approval executor 注入 userChoice
     const pauseNode = sorted[startIdx]
     if (pauseNode.type === "approval" && opts?.userChoice) {
-      const executor = new ApprovalExecutor(pauseNode, this.pool, opts.userChoice, opts.userComment, signal, undefined, this.crossExecResolver, this.executionId)
+      const executor = new ApprovalExecutor(pauseNode, this.pool, { userChoice: opts.userChoice, userComment: opts.userComment, signal, crossExecResolver: this.crossExecResolver, executionId: this.executionId })
       const result = await executor.execute()
       this.nodeResults[pauseNode.id] = result
 
@@ -1442,39 +1449,50 @@ export class WorkflowEngine {
     const s = signal ?? this.signal
     switch (node.type) {
       case "bash":
-        return new BashExecutor(node, p, s, (line, stream) => {
-          const event = stream === "stderr" ? "bash_stderr" : "bash_log"
-          this.logger?.log(node.id, event, { line })
-          this.callbacks?.onNodeLog?.(node.id, line)
-        }, this.cwd, this.crossExecResolver, this.executionId)
+        return new BashExecutor(node, p, {
+          signal: s,
+          onLog: (line, stream) => {
+            const event = stream === "stderr" ? "bash_stderr" : "bash_log"
+            this.logger?.log(node.id, event, { line })
+            this.callbacks?.onNodeLog?.(node.id, line)
+          },
+          cwd: this.cwd,
+          crossExecResolver: this.crossExecResolver,
+          executionId: this.executionId,
+        })
       case "python":
-        return new PythonExecutor(node, p, s, (line, stream) => {
-          const event = stream === "stderr" ? "python_stderr" : "python_log"
-          this.logger?.log(node.id, event, { line })
-          this.callbacks?.onNodeLog?.(node.id, line)
+        return new PythonExecutor(node, p, {
+          signal: s,
+          onLog: (line, stream) => {
+            const event = stream === "stderr" ? "python_stderr" : "python_log"
+            this.logger?.log(node.id, event, { line })
+            this.callbacks?.onNodeLog?.(node.id, line)
+          },
         })
       case "condition":
         return new ConditionExecutor(node, p)
       case "approval":
-        return new ApprovalExecutor(node, p, undefined, undefined, s, undefined, this.crossExecResolver, this.executionId)
+        return new ApprovalExecutor(node, p, { signal: s, crossExecResolver: this.crossExecResolver, executionId: this.executionId })
       case "loop":
-        return new LoopExecutor(
-          node, p, this.providers, this.cwd,
-          this.workflow.auto_answers, s, this.callbacks, this.logger,
-          this.globalSessionId, this.branchSessionIds, this.inputs,
-          this.workflow.engine,
-          this.modelAliasConfig,
-          this.checkpointStore,
-          this.executionId,
-          async (event: string, context: Record<string, unknown>) => {
+        return new LoopExecutor(node, p, {
+          providers: this.providers,
+          cwd: this.cwd,
+          globalAutoAnswers: this.workflow.auto_answers,
+          signal: s,
+          callbacks: this.callbacks,
+          logger: this.logger,
+          globalSessionId: this.globalSessionId,
+          branchSessionIds: this.branchSessionIds,
+          inputs: this.inputs,
+          workflowEngine: this.workflow.engine,
+          modelAliasConfig: this.modelAliasConfig,
+          checkpointStore: this.checkpointStore,
+          executionId: this.executionId,
+          hookExecutor: async (event: string, context: Record<string, unknown>) => {
             await this.executeHooks(event as keyof WorkflowHooks, context)
           },
-          this.agentResolver,
-          undefined, // innerNodeOverrides
-          undefined, // resumeFromNodeId
-          this.nodeResults, // engineNodeResults
-          undefined, // resumeIteration
-        )
+          agentResolver: this.agentResolver,
+        })
       case "agent": {
         const rawKey = node.engine ?? this.workflow.engine ?? "claude"
         const providerKey = rawKey === "claude-code" ? "claude" : rawKey
@@ -1500,31 +1518,37 @@ export class WorkflowEngine {
           ? this.knowledgeInjectorFactory(p)
           : undefined
 
-        return new AgentExecutor(
-          node, p, runner, previousSessionId,
-          this.workflow.auto_answers, s,
-          { nodeResults: this.nodeResults },
-          this.promptInjector, knowledgeInjector, this.workflow.name,
-          this.crossExecResolver, this.executionId,
-          undefined, // loopContext
+        return new AgentExecutor(node, p, {
+          runner,
+          previousSessionId,
+          globalAutoAnswers: this.workflow.auto_answers,
+          signal: s,
+          engineContext: { nodeResults: this.nodeResults },
+          promptInjector: this.promptInjector,
+          knowledgeInjector,
+          workflowName: this.workflow.name,
+          crossExecResolver: this.crossExecResolver,
+          executionId: this.executionId,
           resolvedModel,
-          this.modelAliasConfig,
+          modelAliasConfig: this.modelAliasConfig,
           providerKey,
-        )
+        })
       }
       case "swarm":
-        return new SwarmExecutor(
-          node, p, this.providers, this.cwd,
-          this.callbacks, this.logger, s,
-          this.checkpointStore,
-          this.executionId,
-          async (event: string, context: Record<string, unknown>) => {
+        return new SwarmExecutor(node, p, {
+          providers: this.providers,
+          cwd: this.cwd,
+          callbacks: this.callbacks,
+          logger: this.logger,
+          checkpointStore: this.checkpointStore,
+          executionId: this.executionId,
+          modelAliasConfig: this.modelAliasConfig,
+          workflowEngine: this.workflow.engine,
+          agentResolver: this.agentResolver,
+          engineHookFn: async (event: string, context: Record<string, unknown>) => {
             await this.executeHooks(event as keyof WorkflowHooks, context)
           },
-          this.modelAliasConfig,
-          this.workflow.engine,
-          this.agentResolver,
-        )
+        })
       default:
         throw new Error(`Unknown node type: ${(node as any).type}`)
     }
@@ -1717,11 +1741,13 @@ export class WorkflowEngine {
       bash: hook.bash!,
       timeout: hook.timeout ?? 60,
     }
-    const executor = new BashExecutor(
-      bashNode, this.pool, this.signal,
-      (line) => this.logger?.log("hook", "log", { line }),
-      this.cwd, this.crossExecResolver, this.executionId,
-    )
+    const executor = new BashExecutor(bashNode, this.pool, {
+      signal: this.signal,
+      onLog: (line) => this.logger?.log("hook", "log", { line }),
+      cwd: this.cwd,
+      crossExecResolver: this.crossExecResolver,
+      executionId: this.executionId,
+    })
     await executor.execute()
   }
 
@@ -1746,22 +1772,15 @@ export class WorkflowEngine {
       this.logger?.log("hook", "agent_event", { event })
     })
 
-    const executor = new AgentExecutor(
-      agentNode, this.pool, runner,
-      undefined,
-      this.workflow.auto_answers,
-      this.signal,
-      undefined, // engineContext — hooks don't need previous node results
-      this.promptInjector,
-      undefined, // knowledgeInjector — hooks don't inject knowledge
-      this.workflow.name,
-      undefined, // crossExecResolver
-      undefined, // executionId
-      undefined, // loopContext
-      undefined, // resolvedModel
-      this.modelAliasConfig,
+    const executor = new AgentExecutor(agentNode, this.pool, {
+      runner,
+      globalAutoAnswers: this.workflow.auto_answers,
+      signal: this.signal,
+      promptInjector: this.promptInjector,
+      workflowName: this.workflow.name,
+      modelAliasConfig: this.modelAliasConfig,
       providerKey,
-    )
+    })
 
     await executor.execute()
   }

@@ -1,6 +1,7 @@
 import { VarPool, substituteVars, compileAutoAnswers, evaluateExpression, resolveModelAlias } from "@octopus/shared"
 import type { NodeDef, AutoAnswer, SubAgentDef, CrossExecResolver, ModelAliasConfig } from "@octopus/shared"
 import type { NodeExecutor, NodeExecutionResult } from "./types"
+import type { AgentConfig } from "./executor-config"
 import { AgentNodeRunner } from "./agent-runner"
 import type { PromptInjector } from "../prompt-injector"
 import type { KnowledgeInjector } from "../knowledge-injector"
@@ -15,24 +16,41 @@ export interface EngineContext {
 }
 
 export class AgentExecutor implements NodeExecutor {
+  private runner: AgentNodeRunner
+  private previousSessionId?: string
+  private globalAutoAnswers?: AutoAnswer[]
+  private signal?: AbortSignal
+  private engineContext?: EngineContext
+  private promptInjector?: PromptInjector
+  private knowledgeInjector?: KnowledgeInjector
+  private workflowName?: string
+  private crossExecResolver?: CrossExecResolver
+  private executionId?: string
+  private loopContext?: Record<string, any>
+  private resolvedModel?: string
+  private modelAliasConfig?: ModelAliasConfig
+  private providerKey?: string
+
   constructor(
     private node: NodeDef,
     private pool: VarPool,
-    private runner: AgentNodeRunner,
-    private previousSessionId?: string,
-    private globalAutoAnswers?: AutoAnswer[],
-    private signal?: AbortSignal,
-    private engineContext?: EngineContext,
-    private promptInjector?: PromptInjector,
-    private knowledgeInjector?: KnowledgeInjector,
-    private workflowName?: string,
-    private crossExecResolver?: CrossExecResolver,
-    private executionId?: string,
-    private loopContext?: Record<string, any>,
-    private resolvedModel?: string,
-    private modelAliasConfig?: ModelAliasConfig,
-    private providerKey?: string,
-  ) {}
+    config: AgentConfig,
+  ) {
+    this.runner = config.runner
+    this.previousSessionId = config.previousSessionId
+    this.globalAutoAnswers = config.globalAutoAnswers
+    this.signal = config.signal
+    this.engineContext = config.engineContext
+    this.promptInjector = config.promptInjector
+    this.knowledgeInjector = config.knowledgeInjector
+    this.workflowName = config.workflowName
+    this.crossExecResolver = config.crossExecResolver
+    this.executionId = config.executionId
+    this.loopContext = config.loopContext
+    this.resolvedModel = config.resolvedModel
+    this.modelAliasConfig = config.modelAliasConfig
+    this.providerKey = config.providerKey
+  }
 
   async execute(): Promise<NodeExecutionResult> {
     if (this.signal?.aborted) {

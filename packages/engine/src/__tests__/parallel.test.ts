@@ -318,7 +318,7 @@ describe("Parallel execution", () => {
     const calls = vi.mocked(AgentExecutor).mock.calls
     const ctorB = calls.find(c => (c[0] as any).id === "agentB") ?? calls[1]
     expect(ctorB).toBeDefined()
-    const previousSessionId = ctorB![3] as string | undefined
+    const previousSessionId = (ctorB![2] as any)?.previousSessionId as string | undefined
     expect(previousSessionId).toBe("sess-global")
   })
 

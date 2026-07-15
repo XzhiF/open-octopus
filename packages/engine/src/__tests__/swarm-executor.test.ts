@@ -51,7 +51,7 @@ describe("SwarmExecutor", () => {
       const provider = createMockProvider("expert output")
       const providers: Record<string, IAgentProvider> = { claude: provider }
 
-      const executor = new SwarmExecutor(node, pool, providers, "/tmp")
+      const executor = new SwarmExecutor(node, pool, { providers, cwd: "/tmp" })
       const result = await executor.execute()
 
       expect(result.status).toBe("completed")
@@ -86,7 +86,7 @@ describe("SwarmExecutor", () => {
       }
 
       const providers: Record<string, IAgentProvider> = { claude: provider }
-      const executor = new SwarmExecutor(node, pool, providers, "/tmp")
+      const executor = new SwarmExecutor(node, pool, { providers, cwd: "/tmp" })
       const result = await executor.execute()
 
       expect(result.status).toBe("completed")
@@ -111,7 +111,7 @@ describe("SwarmExecutor", () => {
       const provider = createMockProvider("output")
       const providers: Record<string, IAgentProvider> = { claude: provider }
 
-      const executor = new SwarmExecutor(node, pool, providers, "/tmp")
+      const executor = new SwarmExecutor(node, pool, { providers, cwd: "/tmp" })
       const result = await executor.execute()
 
       expect(result.status).toBe("completed")
@@ -141,7 +141,7 @@ describe("SwarmExecutor", () => {
       }
 
       const providers: Record<string, IAgentProvider> = { claude: provider }
-      const executor = new SwarmExecutor(node, pool, providers, "/tmp")
+      const executor = new SwarmExecutor(node, pool, { providers, cwd: "/tmp" })
       await executor.execute()
 
       // Expert model "opus" should override default "haiku"
@@ -156,7 +156,7 @@ describe("SwarmExecutor", () => {
       const node = makeNode()
       const providers: Record<string, IAgentProvider> = {}
 
-      const executor = new SwarmExecutor(node, pool, providers, "/tmp")
+      const executor = new SwarmExecutor(node, pool, { providers, cwd: "/tmp" })
       const result = await executor.execute()
 
       expect(result.status).toBe("failed")
@@ -176,7 +176,7 @@ describe("SwarmExecutor", () => {
       }
 
       const providers: Record<string, IAgentProvider> = { claude: provider }
-      const executor = new SwarmExecutor(node, pool, providers, "/tmp")
+      const executor = new SwarmExecutor(node, pool, { providers, cwd: "/tmp" })
       const result = await executor.execute()
 
       // When all experts fail, strategy returns "failed" (see TC-038)
@@ -190,7 +190,7 @@ describe("SwarmExecutor", () => {
       const node = makeNode()
       const providers: Record<string, IAgentProvider> = {}
 
-      const executor = new SwarmExecutor(node, pool, providers, "/tmp")
+      const executor = new SwarmExecutor(node, pool, { providers, cwd: "/tmp" })
       const result = await executor.execute()
 
       expect(result.logLines.length).toBeGreaterThan(0)
@@ -204,7 +204,7 @@ describe("SwarmExecutor", () => {
       const provider = createMockProvider("output")
       const providers: Record<string, IAgentProvider> = { claude: provider }
 
-      const executor = new SwarmExecutor(node, pool, providers, "/tmp")
+      const executor = new SwarmExecutor(node, pool, { providers, cwd: "/tmp" })
       const result = await executor.execute()
 
       // Should resolve "claude-code" to "claude" provider
@@ -267,11 +267,7 @@ describe("SwarmExecutor", () => {
         cleanExpired: vi.fn(),
       }
 
-      const executor = new SwarmExecutor(
-        node, pool, providers, "/tmp",
-        undefined, undefined, undefined,
-        checkpointStore, "exec-123",
-      )
+      const executor = new SwarmExecutor(node, pool, { providers, cwd: "/tmp", checkpointStore, executionId: "exec-123" })
       const result = await executor.execute()
 
       expect(result.status).toBe("completed")
@@ -303,11 +299,7 @@ describe("SwarmExecutor", () => {
         cleanExpired: vi.fn(),
       }
 
-      const executor = new SwarmExecutor(
-        node, pool, providers, "/tmp",
-        undefined, undefined, undefined,
-        checkpointStore, "exec-456",
-      )
+      const executor = new SwarmExecutor(node, pool, { providers, cwd: "/tmp", checkpointStore, executionId: "exec-456" })
       const result = await executor.execute()
 
       expect(result.status).toBe("completed")
@@ -348,7 +340,7 @@ describe("SwarmExecutor", () => {
       }
       const providers: Record<string, IAgentProvider> = { claude: provider }
 
-      const executor = new SwarmExecutor(node, pool, providers, "/tmp")
+      const executor = new SwarmExecutor(node, pool, { providers, cwd: "/tmp" })
       const result = await executor.execute()
 
       expect(result.status).toBe("completed")
@@ -408,7 +400,7 @@ describe("SwarmExecutor", () => {
       fs.writeFileSync(join(agentsDir, "backend-architect.md"), "---\nname: backend-architect\ndescription: Backend architect\ncategory: engineering\n---\nRole")
       fs.writeFileSync(join(agentsDir, "code-quality.md"), "---\nname: code-quality\ndescription: Code quality expert\ncategory: engineering\n---\nRole")
 
-      const executor = new SwarmExecutor(node, pool, providers, "/tmp")
+      const executor = new SwarmExecutor(node, pool, { providers, cwd: "/tmp" })
       const result = await executor.execute()
 
       expect(result.status).toBe("completed")
@@ -444,7 +436,7 @@ describe("SwarmExecutor", () => {
       }
       const providers: Record<string, IAgentProvider> = { claude: provider }
 
-      const executor = new SwarmExecutor(node, pool, providers, "/tmp")
+      const executor = new SwarmExecutor(node, pool, { providers, cwd: "/tmp" })
       const result = await executor.execute()
 
       // Expert should fail with timeout error (coordinator checks isTimedOut before LLM call)
