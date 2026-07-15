@@ -261,22 +261,18 @@ export class LoopExecutor implements NodeExecutor {
   private createExecutor(node: NodeDef, pool?: VarPool): NodeExecutor {
     const p = pool ?? this.pool
     const loopCtx = { iteration: this.iterations }
-    if (node.type === "swarm") {
-      const rawKey = node.engine ?? this.workflowEngine ?? "claude"
-      const providerKey = rawKey === "claude-code" ? "claude" : rawKey
-
-      return new SwarmExecutor(
-        node, p, this.providers, this.cwd,
-        this.callbacks, this.logger, this.signal,
-        this.checkpointStore,
-        this.executionId,
-        this.hookExecutor,
-        this.modelAliasConfig,
-        this.workflowEngine,
-        this.agentResolver,
-      )
-    }
     switch (node.type) {
+      case "swarm":
+        return new SwarmExecutor(
+          node, p, this.providers, this.cwd,
+          this.callbacks, this.logger, this.signal,
+          this.checkpointStore,
+          this.executionId,
+          this.hookExecutor,
+          this.modelAliasConfig,
+          this.workflowEngine,
+          this.agentResolver,
+        )
       case "bash":
         return new BashExecutor(node, p, this.signal, (line, stream) => {
           const event = stream === "stderr" ? "bash_stderr" : "bash_log"

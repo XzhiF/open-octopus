@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from "vitest"
 import { LoopExecutor } from "../executors/loop"
 import { VarPool } from "@octopus/shared"
 import type { NodeDef } from "@octopus/shared"
+import type { ICheckpointStore } from "../pipeline/checkpoint-types"
 import os from "os"
 
 describe("LoopExecutor", () => {
@@ -211,7 +212,7 @@ describe("LoopExecutor", () => {
     expect(result.logLines).toContain("last")
   })
 
-  it("does not throw the old guard error when loop contains a swarm node", async () => {
+  it("creates a SwarmExecutor for swarm nodes inside a loop", async () => {
     const node: NodeDef = {
       id: "loop_with_swarm",
       type: "loop",
@@ -225,19 +226,17 @@ describe("LoopExecutor", () => {
           experts: [
             { role: "reviewer", prompt: "review code", model: "haiku" },
           ],
-        } as any,
+        },
       ],
     }
     const pool = new VarPool()
 
-    // Old behavior: createExecutor threw "swarm 节点不支持嵌套在 loop 内部"
-    // New behavior: it creates a SwarmExecutor. With no providers it will
-    // fail for a different reason (no provider), which proves the guard is gone.
+    // Swarm node inside loop creates SwarmExecutor.
+    // With no providers it fails for a different reason, proving the guard is gone.
     const executor = new LoopExecutor(
       node, pool, {}, os.tmpdir(),
       undefined, undefined, undefined, undefined, undefined, undefined, undefined,
       undefined, undefined,
-      // new params
       undefined, undefined, undefined, undefined,
     )
 
@@ -248,7 +247,6 @@ describe("LoopExecutor", () => {
       caughtError = err
     }
 
-    // If there was an error, it must NOT be the old guard message
     if (caughtError instanceof Error) {
       expect(caughtError.message).not.toContain("swarm 节点不支持嵌套在 loop 内部")
     }
@@ -264,9 +262,9 @@ describe("LoopExecutor", () => {
     }
     const pool = new VarPool()
 
-    const mockCheckpointStore = { save: vi.fn(), load: vi.fn() } as any
-    const mockHookExecutor = vi.fn() as any
-    const mockAgentResolver = vi.fn() as any
+    const mockCheckpointStore: ICheckpointStore = { save: vi.fn(), load: vi.fn(), cleanExpired: vi.fn() }
+    const mockHookExecutor = vi.fn<(event: string, context: Record<string, unknown>) => Promise<void>>()
+    const mockAgentResolver = vi.fn<(topic: string, maxExperts: number) => Promise<Array<{ role: string; agent_file: string; description: string }>>>()
 
     // Should not throw when constructing with new params
     const executor = new LoopExecutor(
