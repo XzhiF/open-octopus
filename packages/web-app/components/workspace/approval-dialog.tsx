@@ -49,7 +49,7 @@ export function ApprovalDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent onPointerDownOutside={(e) => e.preventDefault()}>
+      <DialogContent className="sm:max-w-3xl" onPointerDownOutside={(e) => e.preventDefault()}>
         <DialogHeader>
           <DialogTitle>审批确认</DialogTitle>
           <DialogDescription>
@@ -57,7 +57,7 @@ export function ApprovalDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-4">
+        <div className="space-y-4 max-h-[70vh] overflow-y-auto pr-2">
           {/* 审批提示 */}
           <div className="rounded-lg bg-muted p-4">
             <p className="text-sm font-medium">审批说明</p>
