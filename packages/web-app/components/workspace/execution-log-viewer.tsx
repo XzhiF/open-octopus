@@ -153,7 +153,8 @@ export function EventLabel({ entry }: { entry: LogEvent }) {
       case "tool_input": return <span className="text-amber-300">工具参数</span>
       case "tool_result": return (
         <span className={e.isError ? "text-red-400" : "text-amber-300"}>
-          工具结果 {e.duration && `(${e.duration})`}
+          <code className="text-xs bg-muted px-1 rounded">{e.toolName ?? "工具"}</code>
+          {" "}结果 {e.duration && `(${e.duration})`}
         </span>
       )
       case "text_delta": {

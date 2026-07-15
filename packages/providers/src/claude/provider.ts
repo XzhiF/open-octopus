@@ -198,6 +198,7 @@ export class ClaudeSDKProvider implements IAgentProvider {
         yield {
           type: 'tool_result',
           toolCallId: tr.toolCallId ?? tr.toolName,
+          toolName: tr.toolName,
           content: tr.content,
           isError: tr.isError,
         }
@@ -439,6 +440,7 @@ export class ClaudeSDKProvider implements IAgentProvider {
       yield {
         type: 'tool_result',
         toolCallId: tr.toolCallId ?? tr.toolName,
+        toolName: tr.toolName,
         content: tr.content,
         isError: tr.isError,
       }

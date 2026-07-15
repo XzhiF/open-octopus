@@ -81,6 +81,7 @@ const EVENT_MAP: Record<string, (e: any, ctx: MapperState) => MC | MC[] | null> 
     return {
       type: 'tool_result',
       toolCallId: id,
+      toolName: e.toolName ?? 'unknown',
       content: typeof output === 'string' ? output : JSON.stringify(output ?? ''),
       isError: e.isError ?? false,
       toolDuration: duration,

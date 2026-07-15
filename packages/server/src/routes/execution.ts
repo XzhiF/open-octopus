@@ -434,6 +434,7 @@ executionRoutes.get("/:executionId/agent-events", (c) => {
             try { eventData.input = JSON.parse(row.tool_input) } catch { eventData.input = row.tool_input }
           }
         } else if (row.event_type === "tool_result") {
+          if (row.tool_name) eventData.toolName = row.tool_name
           if (row.tool_result) eventData.content = row.tool_result
           if (row.tool_call_id) eventData.toolCallId = row.tool_call_id
           eventData.isError = row.tool_is_error === 1

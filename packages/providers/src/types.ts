@@ -78,7 +78,7 @@ export type MessageChunk =
   | { type: 'tool_call_start'; toolCallId: string; toolName: string; messageId: string }
   | { type: 'tool_call'; toolCallId: string; toolName: string; toolInput: unknown; messageId: string }
   | { type: 'tool_progress'; toolCallId: string; elapsedSeconds: number }
-  | { type: 'tool_result'; toolCallId: string; content: string; isError?: boolean; toolDuration?: string }
+  | { type: 'tool_result'; toolCallId: string; toolName: string; content: string; isError?: boolean; toolDuration?: string }
   | { type: 'tool_summary'; summary: string; toolCallIds: string[] }
   | { type: 'ask_user_question'; toolCallId: string; questions: unknown }
   | { type: 'local_command_output'; content: string }

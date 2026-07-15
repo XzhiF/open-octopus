@@ -140,7 +140,7 @@ export class AgentNodeRunner {
               emit({ type: "tool_input", toolCallId: chunk.toolCallId, toolName: chunk.toolName, input: chunk.toolInput, timestamp: ts })
               break
             case "tool_result":
-              emit({ type: "tool_result", toolCallId: chunk.toolCallId, content: chunk.content, isError: chunk.isError, duration: chunk.toolDuration, timestamp: ts })
+              emit({ type: "tool_result", toolCallId: chunk.toolCallId, toolName: chunk.toolName, content: chunk.content, isError: chunk.isError, duration: chunk.toolDuration, timestamp: ts })
               break
             case "text_delta":
               textBuffer += chunk.content
