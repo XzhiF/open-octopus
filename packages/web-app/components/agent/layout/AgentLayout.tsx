@@ -54,7 +54,7 @@ function AgentLayoutInner() {
   }, [])
 
   return (
-    <div className="flex flex-col h-[calc(100vh-3.5rem)]">
+    <div className="flex flex-col flex-1 min-h-0">
       <AgentTopBar />
       <AgentTabs activeTab={activeTab} onTabChange={handleTabChange} />
       <div
@@ -76,7 +76,7 @@ function AgentLayoutInner() {
 
 export function AgentLayout() {
   return (
-    <Suspense fallback={<div className="flex items-center justify-center h-[calc(100vh-3.5rem)]">Loading...</div>}>
+    <Suspense fallback={<div className="flex items-center justify-center flex-1 min-h-0">Loading...</div>}>
       <AgentLayoutInner />
     </Suspense>
   )

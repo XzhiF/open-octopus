@@ -45,7 +45,7 @@ export default function SettingsLayout({ children }: { children: React.ReactNode
   }
 
   return (
-    <div className="flex h-[calc(100vh-3.5rem)]">
+    <div className="flex flex-1 min-h-0">
       {/* Left: Sidebar menu */}
       <SettingsSidebar activeItem={activeMenuItem} onItemClick={handleMenuItemClick} />
 

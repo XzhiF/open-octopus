@@ -41,12 +41,10 @@ export default async function RootLayout({
   const serverUrl = process.env.SERVER_URL || 'http://localhost:3001'
 
   return (
-    <html lang="zh-CN" className="bg-background" data-server-url={serverUrl}>
-      <body className="font-sans antialiased">
+    <html lang="zh-CN" className="h-screen overflow-hidden bg-background" data-server-url={serverUrl}>
+      <body className="h-screen flex flex-col font-sans antialiased">
         <AppShell>
-          <div className="relative flex min-h-screen flex-col">
-            <main className="flex-1">{children}</main>
-          </div>
+          {children}
         </AppShell>
       </body>
     </html>

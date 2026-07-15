@@ -845,7 +845,7 @@ const handleOpenAsText = async (file: FileNode) => {
 
   if (loading) {
     return (
-      <div className="flex h-[calc(100vh-3.5rem)] items-center justify-center">
+      <div className="flex flex-1 min-h-0 items-center justify-center">
         <p className="text-muted-foreground">加载中...</p>
       </div>
     )
@@ -854,7 +854,7 @@ const handleOpenAsText = async (file: FileNode) => {
   if (loadError || !workspace) {
     if (!loadError && !workspace) notFound()
     return (
-      <div className="flex h-[calc(100vh-3.5rem)] flex-col items-center justify-center gap-2">
+      <div className="flex flex-1 min-h-0 flex-col items-center justify-center gap-2">
         <p className="text-destructive">{loadError ?? "工作空间不存在"}</p>
         <button className="text-sm text-primary underline" onClick={fetchWorkspaceData}>重试</button>
       </div>
@@ -862,7 +862,7 @@ const handleOpenAsText = async (file: FileNode) => {
   }
 
   return (
-    <div className="flex h-[calc(100vh-3.5rem)] flex-col">
+    <div className="flex flex-1 min-h-0 flex-col">
       {/* Workspace Header */}
       <div className="flex h-11 items-center justify-between border-b border-border px-4 bg-background">
         <div className="flex items-center gap-3">
