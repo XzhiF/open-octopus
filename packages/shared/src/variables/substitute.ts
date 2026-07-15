@@ -48,6 +48,19 @@ export function substituteVars(
       return `$${ref}`
     }
 
+    // $nodeId.output — resolve to node's primary output (lastOutput, decision, etc.)
+    const nodeOutputPrimary = ref.match(/^([a-zA-Z0-9_-]+)\.output$/)
+    if (nodeOutputPrimary) {
+      const nodeId = nodeOutputPrimary[1]
+      const nodeOut = nodeOutputs?.[nodeId]
+      if (nodeOut) {
+        const val = nodeOut["output"] ?? nodeOut["last_output"] ?? nodeOut["decision"]
+        return val !== undefined ? String(val) : `$${ref}`
+      }
+      return `$${ref}`
+    }
+
+    // $nodeId.output.key — resolve to specific output key
     const nodeMatch = ref.match(/^([a-zA-Z0-9_-]+)\.output\.([a-zA-Z0-9_.]+)$/)
     if (nodeMatch) {
       const nodeId = nodeMatch[1]

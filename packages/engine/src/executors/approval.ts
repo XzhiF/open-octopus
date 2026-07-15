@@ -1,5 +1,5 @@
-import { VarPool } from "@octopus/shared"
-import type { NodeDef } from "@octopus/shared"
+import { VarPool, substituteVars } from "@octopus/shared"
+import type { NodeDef, CrossExecResolver } from "@octopus/shared"
 import type { NodeExecutor, NodeExecutionResult, ApprovalMetadata } from "./types"
 
 export class ApprovalExecutor implements NodeExecutor {
@@ -9,6 +9,9 @@ export class ApprovalExecutor implements NodeExecutor {
     private userChoice?: string,
     private userComment?: string,
     private signal?: AbortSignal,
+    private loopContext?: Record<string, any>,
+    private crossExecResolver?: CrossExecResolver,
+    private executionId?: string,
   ) {}
 
   async execute(): Promise<NodeExecutionResult> {
@@ -42,9 +45,11 @@ export class ApprovalExecutor implements NodeExecutor {
       logLines.push(`Approval timeout: ${timeout}s`)
     }
 
-    // Build approval metadata from node definition
+    // Build approval metadata from node definition, resolving variables in prompt
+    const rawPrompt = this.node.prompt || "需要审批确认"
+    const resolvedPrompt = substituteVars(rawPrompt, this.pool, undefined, this.crossExecResolver, this.executionId, this.loopContext)
     const approvalMetadata: ApprovalMetadata = {
-      prompt: this.node.prompt || "需要审批确认",
+      prompt: resolvedPrompt,
       options: this.node.options || [
         { label: "同意", value: "approve" },
         { label: "拒绝", value: "reject" }

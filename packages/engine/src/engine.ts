@@ -310,7 +310,9 @@ export class WorkflowEngine {
       const loopInfo = this.findInnerNodeInLoop(nodeId)
       if (loopInfo) {
         const { parentNode, innerNode } = loopInfo
-        // 清除 loop 节点的旧结果
+        // 保存上次的迭代次数，再清除 loop 节点的旧结果
+        const prevLoopResult = this.nodeResults[parentNode.id]
+        const resumeIteration = prevLoopResult?.iterations ?? 0
         delete this.nodeResults[parentNode.id]
 
         // 构建 inner node overrides
@@ -336,6 +338,8 @@ export class WorkflowEngine {
           this.agentResolver,
           overrides.size > 0 ? overrides : undefined, // innerNodeOverrides
           innerNode.id, // resumeFromNodeId
+          this.nodeResults, // engineNodeResults for $nodeId.output resolution
+          resumeIteration, // resumeIteration — continue from the correct iteration
         )
 
         this.callbacks?.onNodeStart?.(parentNode.id, parentNode.type)
@@ -380,7 +384,7 @@ export class WorkflowEngine {
     // 路径 A: approval 恢复 — 重建 approval executor 注入 userChoice
     const pauseNode = sorted[startIdx]
     if (pauseNode.type === "approval" && opts?.userChoice) {
-      const executor = new ApprovalExecutor(pauseNode, this.pool, opts.userChoice, opts.userComment, signal)
+      const executor = new ApprovalExecutor(pauseNode, this.pool, opts.userChoice, opts.userComment, signal, undefined, this.crossExecResolver, this.executionId)
       const result = await executor.execute()
       this.nodeResults[pauseNode.id] = result
 
@@ -692,11 +696,14 @@ export class WorkflowEngine {
 
       const nodeResult = await executor.execute()
 
-      this.logger?.log(node.id, "end", {
-        status: nodeResult.status,
-        durationMs: nodeResult.durationMs,
-        exitCode: nodeResult.exitCode,
-      })
+      // Only log "end" for terminal states — pending_approval/paused are pauses, not endings
+      if (nodeResult.status !== "pending_approval" && nodeResult.status !== "paused") {
+        this.logger?.log(node.id, "end", {
+          status: nodeResult.status,
+          durationMs: nodeResult.durationMs,
+          exitCode: nodeResult.exitCode,
+        })
+      }
 
       this.callbacks?.onNodeEnd?.(node.id, nodeResult.status, nodeResult.durationMs, nodeResult, node.type)
 
@@ -1449,7 +1456,7 @@ export class WorkflowEngine {
       case "condition":
         return new ConditionExecutor(node, p)
       case "approval":
-        return new ApprovalExecutor(node, p, undefined, undefined, s)
+        return new ApprovalExecutor(node, p, undefined, undefined, s, undefined, this.crossExecResolver, this.executionId)
       case "loop":
         return new LoopExecutor(
           node, p, this.providers, this.cwd,
@@ -1463,6 +1470,10 @@ export class WorkflowEngine {
             await this.executeHooks(event as keyof WorkflowHooks, context)
           },
           this.agentResolver,
+          undefined, // innerNodeOverrides
+          undefined, // resumeFromNodeId
+          this.nodeResults, // engineNodeResults
+          undefined, // resumeIteration
         )
       case "agent": {
         const rawKey = node.engine ?? this.workflow.engine ?? "claude"

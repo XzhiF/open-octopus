@@ -45,6 +45,10 @@ export class LoopExecutor implements NodeExecutor {
     private innerNodeOverrides?: Map<string, InnerNodeOverride>,
     /** Start execution from this inner node (skip prior nodes) */
     private resumeFromNodeId?: string,
+    /** Engine's top-level nodeResults for $nodeId.output resolution in inner agents */
+    private engineNodeResults?: Record<string, NodeExecutionResult>,
+    /** Resume from this iteration number (instead of 0) */
+    private resumeIteration?: number,
   ) {}
 
   async execute(): Promise<NodeExecutionResult> {
@@ -52,6 +56,9 @@ export class LoopExecutor implements NodeExecutor {
     const maxIterations = this.node.max_iterations ?? 100
     const innerNodes = this.node.nodes ?? []
     const logLines: string[] = []
+    if (this.resumeIteration) {
+      this.iterations = this.resumeIteration
+    }
 
     while (this.iterations < maxIterations) {
       if (this.signal?.aborted) {
@@ -103,25 +110,33 @@ export class LoopExecutor implements NodeExecutor {
         if (override?.kind === "result") {
           // Use pre-computed result from previous iteration
           result = override.result
+          this.logger?.log(innerNode.id, "start", { type: innerNode.type })
           this.callbacks?.onNodeStart?.(innerNode.id, innerNode.type)
+          this.logger?.log(innerNode.id, "end", { status: result.status, durationMs: result.durationMs })
           this.callbacks?.onNodeEnd?.(innerNode.id, result.status, result.durationMs, result, innerNode.type)
         } else if (override?.kind === "approval") {
           // Create approval executor with user's choice
-          const approvalExec = new ApprovalExecutor(innerNode, this.pool, override.userChoice, override.userComment, this.signal)
+          const approvalExec = new ApprovalExecutor(innerNode, this.pool, override.userChoice, override.userComment, this.signal, { iteration: this.iterations })
+          this.logger?.log(innerNode.id, "start", { type: innerNode.type })
           this.callbacks?.onNodeStart?.(innerNode.id, innerNode.type)
           const innerStart = Date.now()
           result = await approvalExec.execute()
           const innerDurationMs = Date.now() - innerStart
+          this.logger?.log(innerNode.id, "end", { status: result.status, durationMs: innerDurationMs })
           this.callbacks?.onNodeEnd?.(innerNode.id, result.status, innerDurationMs, result, innerNode.type)
+          // Clear override after consumption so subsequent iterations pause again
+          this.innerNodeOverrides?.delete(innerNode.id)
         } else {
           // Normal execution
-          const executor = this.createExecutor(innerNode)
+          const executor = this.createExecutor(innerNode, undefined, completedInnerResults)
 
           // Notify engine about inner node execution (so it records to node_executions)
+          this.logger?.log(innerNode.id, "start", { type: innerNode.type })
           this.callbacks?.onNodeStart?.(innerNode.id, innerNode.type)
           const innerStart = Date.now()
           result = await executor.execute()
           const innerDurationMs = Date.now() - innerStart
+          this.logger?.log(innerNode.id, "end", { status: result.status, durationMs: innerDurationMs, exitCode: result.exitCode })
           this.callbacks?.onNodeEnd?.(innerNode.id, result.status, innerDurationMs, result, innerNode.type)
         }
 
@@ -303,7 +318,7 @@ export class LoopExecutor implements NodeExecutor {
     }
   }
 
-  private createExecutor(node: NodeDef, pool?: VarPool): NodeExecutor {
+  private createExecutor(node: NodeDef, pool?: VarPool, completedInnerResults?: Map<string, NodeExecutionResult>): NodeExecutor {
     const p = pool ?? this.pool
     const loopCtx = { iteration: this.iterations }
     switch (node.type) {
@@ -333,7 +348,7 @@ export class LoopExecutor implements NodeExecutor {
       case "condition":
         return new ConditionExecutor(node, p)
       case "approval":
-        return new ApprovalExecutor(node, p, undefined, undefined, this.signal)
+        return new ApprovalExecutor(node, p, undefined, undefined, this.signal, loopCtx)
       case "agent": {
         const rawKey = node.engine ?? this.workflowEngine ?? "claude"
         const providerKey = rawKey === "claude-code" ? "claude" : rawKey
@@ -347,17 +362,26 @@ export class LoopExecutor implements NodeExecutor {
 
         const previousSessionId = this.resolvePreviousSessionId(node)
 
+        // Build engineContext: merge engine's top-level results with loop's iteration results
+        const mergedNodeResults: Record<string, NodeExecutionResult> = { ...(this.engineNodeResults ?? {}) }
+        if (completedInnerResults) {
+          for (const [id, r] of completedInnerResults) {
+            mergedNodeResults[id] = r
+          }
+        }
+
         return new AgentExecutor(
           node, p, runner, previousSessionId,
           this.globalAutoAnswers, this.signal,
-          undefined, undefined, undefined, undefined, undefined, undefined, loopCtx,
-          undefined, // resolvedModel
+          { nodeResults: mergedNodeResults },
+          undefined, undefined, undefined, undefined, undefined, loopCtx,
+          undefined,
           this.modelAliasConfig,
           providerKey,
         )
       }
       case "loop":
-        return new LoopExecutor(node, p, this.providers, this.cwd, this.globalAutoAnswers, this.signal, this.callbacks, this.logger, this.globalSessionId, this.branchSessionIds, this.inputs, this.workflowEngine, this.modelAliasConfig, this.checkpointStore, this.executionId, this.hookExecutor, this.agentResolver)
+        return new LoopExecutor(node, p, this.providers, this.cwd, this.globalAutoAnswers, this.signal, this.callbacks, this.logger, this.globalSessionId, this.branchSessionIds, this.inputs, this.workflowEngine, this.modelAliasConfig, this.checkpointStore, this.executionId, this.hookExecutor, this.agentResolver, undefined, undefined, this.engineNodeResults, undefined)
       default:
         throw new Error(`Unknown node type: ${node.type}`)
     }

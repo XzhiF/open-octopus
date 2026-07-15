@@ -29,11 +29,8 @@ export class AgentExecutor implements NodeExecutor {
     private crossExecResolver?: CrossExecResolver,
     private executionId?: string,
     private loopContext?: Record<string, any>,
-    /** BL-6: Resolved model passed from engine (avoids node.model mutation) */
     private resolvedModel?: string,
-    /** Model alias config for resolving sub-agent tier names (pro-max → opus, etc.) */
     private modelAliasConfig?: ModelAliasConfig,
-    /** Provider key for model alias resolution (e.g. "claude", "pi") */
     private providerKey?: string,
   ) {}
 
@@ -216,7 +213,7 @@ export class AgentExecutor implements NodeExecutor {
       const agentDef = def as SubAgentDef
 
       if (agentDef.agent_file) {
-        const filePath = substituteVars(agentDef.agent_file, this.pool, undefined, this.crossExecResolver, this.executionId, this.loopContext)
+        const filePath = substituteVars(agentDef.agent_file, this.pool, this.buildNodeOutputs(), this.crossExecResolver, this.executionId, this.loopContext)
         const expanded = filePath.startsWith("~")
           ? path.join(os.homedir(), filePath.slice(1))
           : filePath
@@ -270,6 +267,18 @@ export class AgentExecutor implements NodeExecutor {
     return resolved
   }
 
+  /** Build nodeOutputs map from engineContext for $nodeId.output resolution. */
+  private buildNodeOutputs(): Record<string, Record<string, any>> | undefined {
+    if (!this.engineContext?.nodeResults) return undefined
+    const nodeOutputs: Record<string, Record<string, any>> = {}
+    for (const [id, result] of Object.entries(this.engineContext.nodeResults)) {
+      const outputs = { ...(result.outputs ?? {}) }
+      if (result.lastOutput !== undefined) outputs["output"] = result.lastOutput
+      nodeOutputs[id] = outputs
+    }
+    return nodeOutputs
+  }
+
   private buildPrompt(): string {
     // Goal mode: structured prompt with context injection
     if (this.node.goal) {
@@ -279,7 +288,7 @@ export class AgentExecutor implements NodeExecutor {
     // Standard prompt mode (existing behavior)
     let prompt = this.node.prompt ?? ""
 
-    prompt = substituteVars(prompt, this.pool, undefined, this.crossExecResolver, this.executionId, this.loopContext)
+    prompt = substituteVars(prompt, this.pool, this.buildNodeOutputs(), this.crossExecResolver, this.executionId, this.loopContext)
 
     // Inject pipeline-level prompts (global + targeted)
     if (this.promptInjector && this.workflowName) {
@@ -317,7 +326,7 @@ export class AgentExecutor implements NodeExecutor {
 
     // Goal section
     parts.push(`## Goal`)
-    parts.push(substituteVars(this.node.goal!, this.pool, undefined, this.crossExecResolver, this.executionId, this.loopContext))
+    parts.push(substituteVars(this.node.goal!, this.pool, this.buildNodeOutputs(), this.crossExecResolver, this.executionId, this.loopContext))
 
     // Constraints section
     if (this.node.constraints?.length) {
@@ -447,7 +456,7 @@ export class AgentExecutor implements NodeExecutor {
         this.pool.set(key, this.pool.get(varKey))
         outputs[key] = this.pool.get(key)
       } else if (expr.startsWith("$")) {
-        const resolved = substituteVars(expr, this.pool, undefined, this.crossExecResolver, this.executionId, this.loopContext)
+        const resolved = substituteVars(expr, this.pool, this.buildNodeOutputs(), this.crossExecResolver, this.executionId, this.loopContext)
         this.pool.set(key, resolved)
         outputs[key] = resolved
       } else {
