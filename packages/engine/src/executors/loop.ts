@@ -1,7 +1,7 @@
 import { VarPool, evaluateExpression } from "@octopus/shared"
 import type { NodeDef, AutoAnswer, ModelAliasConfig } from "@octopus/shared"
 import type { IAgentProvider } from "@octopus/providers"
-import type { NodeExecutor, NodeExecutionResult } from "./types"
+import type { NodeExecutor, NodeExecutionResult, InnerNodeOverride } from "./types"
 import type { AgentEvent } from "./agent-types"
 import { AgentNodeRunner } from "./agent-runner"
 import type { EngineCallbacks } from "../engine"
@@ -41,6 +41,10 @@ export class LoopExecutor implements NodeExecutor {
     private hookExecutor?: (event: string, context: Record<string, unknown>) => Promise<void>,
     /** Dynamic agent resolver for swarm-in-loop */
     private agentResolver?: (topic: string, maxExperts: number) => Promise<Array<{ role: string; agent_file: string; description: string }>>,
+    /** Overrides for inner nodes (used during resume from approval) */
+    private innerNodeOverrides?: Map<string, InnerNodeOverride>,
+    /** Start execution from this inner node (skip prior nodes) */
+    private resumeFromNodeId?: string,
   ) {}
 
   async execute(): Promise<NodeExecutionResult> {
@@ -77,22 +81,49 @@ export class LoopExecutor implements NodeExecutor {
       let shouldContinue = false
       let jumpToIndex = -1
       const iterationNodeResults: { nodeId: string; status: string; durationMs?: number; error?: string }[] = []
+      /** Completed inner node results in this iteration (for resume on pending_approval) */
+      const completedInnerResults = new Map<string, NodeExecutionResult>()
+
+      // On first iteration with resumeFromNodeId, skip to that node
+      const startNi = (this.iterations === 1 && this.resumeFromNodeId)
+        ? innerNodes.findIndex(n => n.id === this.resumeFromNodeId)
+        : jumpToIndex >= 0 ? jumpToIndex : 0
 
       const prevLoopContext = this.logger?.setLoopContext(this.node.id, this.iterations)
       try {
-        for (let ni = jumpToIndex >= 0 ? jumpToIndex : 0; ni < innerNodes.length; ni++) {
+        for (let ni = startNi; ni < innerNodes.length; ni++) {
         jumpToIndex = -1 // reset for this iteration of the for loop
         const innerNode = innerNodes[ni]
         if (shouldContinue) continue
 
-        const executor = this.createExecutor(innerNode)
+        // Check for inner node override (resume scenario)
+        const override = this.innerNodeOverrides?.get(innerNode.id)
+        let result: NodeExecutionResult
 
-        // Notify engine about inner node execution (so it records to node_executions)
-        this.callbacks?.onNodeStart?.(innerNode.id, innerNode.type)
-        const innerStart = Date.now()
-        const result = await executor.execute()
-        const innerDurationMs = Date.now() - innerStart
-        this.callbacks?.onNodeEnd?.(innerNode.id, result.status, innerDurationMs, result, innerNode.type)
+        if (override?.kind === "result") {
+          // Use pre-computed result from previous iteration
+          result = override.result
+          this.callbacks?.onNodeStart?.(innerNode.id, innerNode.type)
+          this.callbacks?.onNodeEnd?.(innerNode.id, result.status, result.durationMs, result, innerNode.type)
+        } else if (override?.kind === "approval") {
+          // Create approval executor with user's choice
+          const approvalExec = new ApprovalExecutor(innerNode, this.pool, override.userChoice, override.userComment, this.signal)
+          this.callbacks?.onNodeStart?.(innerNode.id, innerNode.type)
+          const innerStart = Date.now()
+          result = await approvalExec.execute()
+          const innerDurationMs = Date.now() - innerStart
+          this.callbacks?.onNodeEnd?.(innerNode.id, result.status, innerDurationMs, result, innerNode.type)
+        } else {
+          // Normal execution
+          const executor = this.createExecutor(innerNode)
+
+          // Notify engine about inner node execution (so it records to node_executions)
+          this.callbacks?.onNodeStart?.(innerNode.id, innerNode.type)
+          const innerStart = Date.now()
+          result = await executor.execute()
+          const innerDurationMs = Date.now() - innerStart
+          this.callbacks?.onNodeEnd?.(innerNode.id, result.status, innerDurationMs, result, innerNode.type)
+        }
 
         // Compact iteration-scoped JSONL after inner node completes
         if (this.logger) {
@@ -114,15 +145,29 @@ export class LoopExecutor implements NodeExecutor {
 
         this.updateSessionContext(innerNode, result)
 
-        if (result.status === "paused") {
+        // Track completed inner node result for potential resume
+        if (result.status === "completed" || result.status === "skipped" || result.status === "skipped_failed") {
+          completedInnerResults.set(innerNode.id, result)
+        }
+
+        if (result.status === "paused" || result.status === "pending_approval") {
           const durationMs = Date.now() - start
+          // Build innerNodeResults from completed nodes (for resume)
+          const innerNodeResults: Record<string, NodeExecutionResult> = {}
+          completedInnerResults.forEach((v, k) => { innerNodeResults[k] = v })
           return {
             outputs: { iterations: this.iterations },
-            status: "paused",
+            status: result.status,
             durationMs,
             logLines,
             iterations: this.iterations,
             timeout: result.timeout,
+            // Propagate approvalMetadata so the server can store it and emit SSE.
+            // The first time, the inner node's onNodeEnd already stored it,
+            // but on subsequent loop iterations the loop's onNodeEnd is the
+            // only source of the new approval info.
+            approvalMetadata: result.approvalMetadata,
+            innerNodeResults,
           }
         }
 

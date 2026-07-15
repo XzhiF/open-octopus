@@ -704,7 +704,8 @@ export class ExecutionLifecycle {
 
       if (result.status === "pending_approval") {
         this.dao.updateExecution(id, { var_pool: JSON.stringify(result.poolSnapshot) })
-        const nextPausedNodeId = Object.entries(result.nodeResults).find(([, r]) => r.status === "paused")?.[0]
+        const nextPausedEntry = Object.entries(result.nodeResults).find(([, r]) => r.status === "paused" || r.status === "pending_approval")
+        const nextPausedNodeId = nextPausedEntry?.[0]
         if (nextPausedNodeId) {
           const wf = this.getWorkflow(exec.workflow_ref)
           const nodeDef = this.findNodeDef(wf?.parsed.nodes ?? [], nextPausedNodeId)

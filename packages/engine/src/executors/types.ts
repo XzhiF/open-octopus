@@ -7,6 +7,11 @@ export interface ApprovalMetadata {
   nodeId: string
 }
 
+/** Override for inner loop nodes during resume. Either a pre-computed result or an approval choice. */
+export type InnerNodeOverride =
+  | { kind: "result"; result: NodeExecutionResult }
+  | { kind: "approval"; userChoice: string; userComment?: string }
+
 export interface NodeExecutionResult {
   lastOutput?: string
   exitCode?: number
@@ -26,6 +31,8 @@ export interface NodeExecutionResult {
   modelUsages?: ModelUsageEntry[]
   events?: AgentEvent[]
   approvalMetadata?: ApprovalMetadata
+  /** Completed inner node results from the iteration that hit pending_approval. Used for resume. */
+  innerNodeResults?: Record<string, NodeExecutionResult>
   /** True when node was skipped because execute_when evaluated to false.
    *  Downstream nodes should NOT cascade-skip from this — it's an intentional skip. */
   skippedByCondition?: boolean

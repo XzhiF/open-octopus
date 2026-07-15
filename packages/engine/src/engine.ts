@@ -2,7 +2,7 @@ import { VarPool, evaluateExpression, parsePipelineConfig, TemplateRenderer } fr
 import type { WorkflowDef, NodeDef, AutoAnswer, HookDef, WorkflowHooks } from "@octopus/shared"
 import type { IAgentProvider } from "@octopus/providers"
 import type { TokenUsage } from "@octopus/providers"
-import type { NodeExecutionResult } from "./executors/types"
+import type { NodeExecutionResult, InnerNodeOverride } from "./executors/types"
 import type { AgentEvent } from "./executors/agent-types"
 import type { SwarmSSEEvent } from "./executors/swarm/swarm-types"
 import { BashExecutor } from "./executors/bash"
@@ -303,7 +303,74 @@ export class WorkflowEngine {
 
     const sorted = this.topologicalSort(this.workflow.nodes)
     const startIdx = sorted.findIndex((n) => n.id === nodeId)
-    if (startIdx < 0) throw new Error(`Node not found: ${nodeId} (available: ${sorted.map(n => n.id).join(",")})`)
+
+    // 路径 D: loop 内部节点的 approval 恢复 / on_reject 处理
+    // 当 nodeId 不在顶层排序列表中时，搜索 loop 子节点
+    if (startIdx < 0) {
+      const loopInfo = this.findInnerNodeInLoop(nodeId)
+      if (loopInfo) {
+        const { parentNode, innerNode } = loopInfo
+        // 清除 loop 节点的旧结果
+        delete this.nodeResults[parentNode.id]
+
+        // 构建 inner node overrides
+        const overrides = new Map<string, InnerNodeOverride>()
+        if (innerNode.type === "approval" && opts?.userChoice) {
+          // Approval 恢复：注入 userChoice
+          overrides.set(innerNode.id, { kind: "approval", userChoice: opts.userChoice, userComment: opts.userComment })
+        }
+        // 非 approval 节点（on_reject handler）：不需要 override，正常运行
+
+        // 创建 loop executor，从目标内部节点开始
+        const loopExecutor = new LoopExecutor(
+          parentNode, this.pool, this.providers, this.cwd,
+          this.workflow.auto_answers, signal, this.callbacks, this.logger,
+          this.globalSessionId, this.branchSessionIds, this.inputs,
+          this.workflow.engine,
+          this.modelAliasConfig,
+          this.checkpointStore,
+          this.executionId,
+          async (event: string, context: Record<string, unknown>) => {
+            await this.executeHooks(event as keyof WorkflowHooks, context)
+          },
+          this.agentResolver,
+          overrides.size > 0 ? overrides : undefined, // innerNodeOverrides
+          innerNode.id, // resumeFromNodeId
+        )
+
+        this.callbacks?.onNodeStart?.(parentNode.id, parentNode.type)
+        const loopStart = Date.now()
+        const loopResult = await loopExecutor.execute()
+        const loopDurationMs = Date.now() - loopStart
+        this.callbacks?.onNodeEnd?.(parentNode.id, loopResult.status, loopDurationMs, loopResult, parentNode.type)
+        this.nodeResults[parentNode.id] = loopResult
+
+        if (loopResult.status === "pending_approval") {
+          this.pendingApprovalNodeId = parentNode.id
+          return { status: "pending_approval" as const, workflowName: this.workflow.name, nodeResults: this.nodeResults, poolSnapshot: this.pool.snapshot(), durationMs: loopDurationMs }
+        }
+        if (loopResult.status === "failed") {
+          return { status: "failed" as const, workflowName: this.workflow.name, nodeResults: this.nodeResults, poolSnapshot: this.pool.snapshot(), durationMs: loopDurationMs }
+        }
+        if (loopResult.status === "cancelled") {
+          return { status: "cancelled" as const, workflowName: this.workflow.name, nodeResults: this.nodeResults, poolSnapshot: this.pool.snapshot(), durationMs: loopDurationMs }
+        }
+
+        // Loop 完成，继续执行后续顶层节点
+        const parentNodeIdx = sorted.findIndex(n => n.id === parentNode.id)
+        const remainingNodes = sorted.slice(parentNodeIdx + 1)
+        const execResult = await this.executeNodes(remainingNodes, signal, true)
+        const durationMs = Date.now() - start
+        return {
+          workflowName: this.workflow.name,
+          status: execResult.status,
+          nodeResults: this.nodeResults,
+          poolSnapshot: this.pool.snapshot(),
+          durationMs,
+        }
+      }
+      throw new Error(`Node not found: ${nodeId} (available: ${sorted.map(n => n.id).join(",")})`)
+    }
 
     // ★ 清除目标节点的旧结果，确保重新执行（而非被跳过）
     // reconstructEngine 会从 DB 加载 status="paused" 的节点到 nodeResults，
@@ -500,6 +567,27 @@ export class WorkflowEngine {
     const merged = new Set(explicit)
     for (const dep of implicit) merged.add(dep)
     return Array.from(merged)
+  }
+
+  /**
+   * Search for a node ID inside loop inner nodes.
+   * Returns the parent loop node and the inner node definition if found.
+   */
+  private findInnerNodeInLoop(nodeId: string): { parentNode: NodeDef; innerNode: NodeDef } | null {
+    for (const node of this.workflow.nodes) {
+      if (node.type === "loop" && node.nodes) {
+        const inner = node.nodes.find(n => n.id === nodeId)
+        if (inner) return { parentNode: node, innerNode: inner }
+        // Also check nested loops
+        for (const innerNode of node.nodes) {
+          if (innerNode.type === "loop" && innerNode.nodes) {
+            const deepInner = innerNode.nodes.find(n => n.id === nodeId)
+            if (deepInner) return { parentNode: innerNode, innerNode: deepInner }
+          }
+        }
+      }
+    }
+    return null
   }
 
   /** DFS topological sort producing a flat linear order. Used by retryFrom() for index-based slicing. */
