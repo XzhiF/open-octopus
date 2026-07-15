@@ -3,10 +3,11 @@ apiVersion: octopus/v1
 kind: Workflow
 name: mattpocock-dev-expert
 description: >
-  Expert Grill 工作流 — 多专家 Swarm Debate 替代单人拷问。
-  grill-classify 生成问题 + 依赖分析 + 分批 → grill-loop[grill-batch(swarm debate)]
-  → grill-approval → grill-synthesize → spec → tickets → tdd-loop → architecture-review → ship。
-  3-6 个专家通过 swarm debate 对每个问题批次达成多角色共识，用户只需最终审批。
+  Expert Grill 工作流 — 动态反馈循环 + 多专家 Swarm Debate。
+  grill-classify (探索项目) → grill-loop [grill-questions → expert-debate (swarm)
+  → user-review → grill-validate] 循环直到 grill 确认所有问题解决 →
+  grill-synthesize → spec → tickets → tdd-loop → architecture-review → ship。
+  用户在每轮审批，grill 动态生成跟进问题，直到所有关切被解决。
 
 model: pro-max
 engine: claude
@@ -33,10 +34,6 @@ inputs:
     description: "跳过架构审查节点（加速但牺牲架构可见性）"
     required: false
     default: "false"
-  interactive:
-    description: "启用审批模式（true: 用户逐阶段审批, false: 自动通过）"
-    required: false
-    default: "false"
 
 variables:
   scratch_dir: ""
@@ -48,11 +45,13 @@ variables:
   context_file: ""
   context_mode: "single"
   context_packages: ""
-  # Expert Grill specific
-  batches_json: ""
-  batch_count: "0"
+  # Expert Grill Loop
+  grill_round: "0"
   accumulated_decisions: ""
-  all_batches_done: "false"
+  current_questions: ""
+  round_decisions: ""
+  user_feedback: ""
+  grill_satisfied: "false"
   # Spec
   spec_file: ""
   seam_count: "0"
@@ -124,7 +123,7 @@ hooks:
       channel: default
       template:
         severity: info
-        title: "🔍 Grill Classify 完成 — $vars.batch_count 个批次"
+        title: "🔍 Grill Classify 完成 — 项目探索就绪"
         body: "📂 $vars.scratch_dir\n🧩 Context: $vars.context_mode\n💡 $vars.conclusion"
 
     - id: notify-grill-loop
@@ -133,8 +132,17 @@ hooks:
       channel: default
       template:
         severity: info
-        title: "🔥 Expert Grill 完成 — $vars.decision_count 个决策"
+        title: "🔥 Expert Grill 完成 — $vars.decision_count 个决策 ($vars.grill_round 轮)"
         body: "📄 决策已累积\n📖 Context: $vars.context_mode\n💡 $vars.conclusion"
+
+    - id: notify-user-review
+      type: notify
+      nodes: [user-review]
+      channel: default
+      template:
+        severity: info
+        title: "👤 用户审批完成 — Round $vars.grill_round"
+        body: "💡 $vars.conclusion"
 
     - id: notify-grill-synthesize
       type: notify
@@ -192,14 +200,14 @@ hooks:
 
 nodes:
   # ═══════════════════════════════════════════════════════════════
-  # Phase 1: Grill Classify — 探索项目 + 生成问题 + 分批
+  # Phase 1: Grill Classify — 探索项目 + 建立上下文
   # ═══════════════════════════════════════════════════════════════
   - id: grill-classify
     type: agent
     timeout: 3600
     skills: [grilling]
     prompt: |
-      探索项目，分析 Idea，生成 grill 问题并分批。
+      探索项目，分析 Idea，建立 grill 上下文。问题生成在 grill-loop 中动态进行。
 
       ## 准备
       - 从 `$inputs.idea` 提取 feature-slug（kebab-case）
@@ -213,59 +221,87 @@ nodes:
       - Idea: $inputs.idea
       - 项目: $inputs.project_path（如为空，扫描 ./projects/ 下首个项目）
 
-      ## 生成问题 + 分批
-      参考 13 个 grill 维度（目标、用户、MVP、技术栈、数据模型、API、安全、性能、错误处理、测试、部署、监控、扩展），
-      根据 Idea 生成 8-15 个关键问题。分析依赖关系，按依赖分成 2-5 个批次。
-
-      每个批次：
-      - batch_id: 从 1 开始的序号
-      - questions: [{id: "Q1", text: "问题文本", depends_on: []}]
-      - depends_on: 依赖的前序 batch_id 列表
-
-      独立问题放 batch 1，依赖前序答案的问题放后续 batch。
-
       ## 输出
-      {"vars_update":{"scratch_dir":".scratch/<feature-slug>","brief_file":".scratch/<feature-slug>/brief.md","context_file":"<single: project_path/CONTEXT.md / multi: project_path/CONTEXT-MAP.md>","context_mode":"<single|multi>","context_packages":"<comma-separated>","batches_json":"<valid JSON array: [{batch_id, questions, depends_on}]>","batch_count":"<批次数>","conclusion":"<2-3句>"}}
+      {"vars_update":{"scratch_dir":".scratch/<feature-slug>","brief_file":".scratch/<feature-slug>/brief.md","context_file":"<single: project_path/CONTEXT.md / multi: project_path/CONTEXT-MAP.md>","context_mode":"<single|multi>","context_packages":"<comma-separated>","conclusion":"<2-3句项目概况>"}}
 
   # ═══════════════════════════════════════════════════════════════
-  # Phase 2: Grill Loop — 逐批 Swarm Debate
+  # Phase 2: Grill Loop — 动态问答反馈循环
   # ═══════════════════════════════════════════════════════════════
+  #
+  # 循环流程:
+  #   grill-questions → expert-debate → user-review → grill-validate
+  #                                                    ↓
+  #                                          satisfied? → exit loop
+  #                                          not yet?   → next round
+  #
   - id: grill-loop
     type: loop
     depends_on: [grill-classify]
     max_iterations: 10
-    break_when: '$vars.all_batches_done == "true"'
+    break_when: '$vars.grill_satisfied == "true"'
     nodes:
-      - id: grill-batch
+
+      # ── Step 1: Grill 生成当前轮次问题 ──
+      - id: grill-questions
+        type: agent
+        timeout: 1800
+        skills: [grilling]
+        prompt: |
+          生成当前轮次的 grill 问题。
+
+          ## 上下文
+          - Idea: $inputs.idea
+          - 项目路径: $inputs.project_path
+          - Scratch 目录: $vars.scratch_dir
+          - 领域模型: $vars.context_file ($vars.context_mode)
+          - 当前轮次: $iteration
+          - 前序轮次决策: $vars.accumulated_decisions
+          - 用户反馈: $vars.user_feedback
+
+          ## 规则
+          - Round 1: 参考 13 个 grill 维度（目标、用户、MVP、技术栈、数据模型、API、安全、
+            性能、错误处理、测试、部署、监控、扩展），生成 5-8 个核心问题
+          - Round 2+: 基于前序决策 + 用户反馈，生成跟进问题（澄清歧义、深挖盲点、
+            验证用户关切）。通常 2-5 个
+          - 如无新问题且前序决策完整 → 输出空问题列表
+
+          ## 输出
+          {"vars_update":{"grill_round":"$iteration","current_questions":"<JSON array: [{id, text, priority}]>","conclusion":"<本轮问题摘要>"}}
+
+      # ── Step 2: 专家团 Swarm Debate ──
+      - id: expert-debate
         type: swarm
+        depends_on: [grill-questions]
         mode: debate
         rounds: 3
         consensus_threshold: 0.8
         context_tier: "1m"
         topic: |
-          Expert Grill 批次讨论。
+          Expert Grill 第 $vars.grill_round 轮讨论。
 
-          当前迭代: $iteration
-          总批次数: $vars.batch_count
-          批次 JSON: $vars.batches_json
+          Idea: $inputs.idea
+          当前问题:
+          $vars.current_questions
 
-          前序 batch decisions:
+          前序决策:
           $vars.accumulated_decisions
 
+          用户反馈:
+          $vars.user_feedback
+
           规则：
-          1. 找到 batch_id == $iteration 的批次
-          2. 如该批次不存在（$iteration > batch_count），直接输出 {"vars_update":{"all_batches_done":"true","conclusion":"所有批次已完成"}}
-          3. 对该批次的每个问题进行多角色讨论
-          4. 前序 batch 的 decisions 作为已知上下文
+          1. 如果当前问题为空（[] 或空字符串），直接输出 {"vars_update":{"round_decisions":"[]","no_questions":"true","conclusion":"本轮无新问题"}}
+          2. 对每个问题进行多角色讨论
+          3. 前序决策作为已知上下文
+          4. 用户反馈作为优先级最高的约束
           5. 每个问题达成多角色共识，输出 decision
 
         experts:
-          # ── 3 核心专家 ──
           - role: software-architect
             agent_file: ".claude/agents/architecture-explorer.md"
             perspective: "资深架构师 — 技术可行性、系统集成、模块设计"
             task: |
-              从架构视角讨论当前批次问题。关注:
+              从架构视角讨论当前问题。关注:
               - 技术可行性 — 现有系统能否支撑？需要多少改造？
               - 模块设计 — 新功能如何融入现有架构？
               - 系统集成 — 与现有模块的交互和数据流
@@ -276,7 +312,7 @@ nodes:
             agent_file: ".claude/agents/product-manager.md"
             perspective: "产品经理 — 用户价值守护者、MVP 边界捍卫者"
             task: |
-              从用户价值视角讨论当前批次问题。关注:
+              从用户价值视角讨论当前问题。关注:
               - 用户价值 — 这个决策对用户的实际价值？有证据吗？
               - MVP 边界 — 验证核心假设最少需要做什么？
               - 优先级 — 如果只能做一件事，哪件对用户影响最大？
@@ -287,14 +323,13 @@ nodes:
             agent_file: ".claude/agents/testing-engineering-software-architect.md"
             perspective: "测试架构师 — 测试策略、Seam 设计、质量保障"
             task: |
-              从测试和质量视角讨论当前批次问题。关注:
+              从测试和质量视角讨论当前问题。关注:
               - 测试可行性 — 这个决策怎么验证？Seam 在哪？
               - 测试策略 — 单元/集成/E2E 的覆盖计划
               - 可测试性 — 设计是否便于测试？需要哪些 adapter？
               - 质量门禁 — 什么条件算"完成"？
               约束: 每个 decision 必须附带验证方法。
 
-          # ── 可选专家（按项目类型参与） ──
           - role: frontend-engineer
             agent_file: ".claude/agents/engineering-frontend-developer.md"
             perspective: "前端专家 — UI/UX 需求、交互设计、组件架构"
@@ -319,7 +354,7 @@ nodes:
         host:
           role: grill-host
           prompt: |
-            综合各专家对当前批次问题的讨论，输出每个问题的共识 decision。
+            综合各专家对当前问题的讨论，输出每个问题的共识 decision。
 
             规则:
             1. 每个 decision 包含: 问题 ID、决策内容、理由、confidence (0-1)
@@ -327,42 +362,86 @@ nodes:
             3. 关键分歧写入 decision 的"理由"字段
 
             ## Assessment（必须输出，用于共识检测）
-            输出 JSON assessment 块：
             {"assessment":{"consensus_score":<0-1>,"should_continue":<true|false>,"summary":"<一句话共识描述>"}}
-            - consensus_score: 专家意见一致程度（1=完全一致，0=严重分歧）
-            - should_continue: 是否需要继续讨论（true=分歧太大需要下一轮，false=已达成共识）
 
             ## Decisions
-            {"vars_update":{"accumulated_decisions":"$vars.accumulated_decisions\n\n## Batch $iteration\n<每个问题的 decision>","decision_count":"<累计决策数>","all_batches_done":"<当 $iteration >= batch_count 时为 true，否则 false>","conclusion":"<2-3句本批摘要>"}}
+            {"vars_update":{"round_decisions":"<本轮各问题的 decision JSON>","conclusion":"<2-3句本批摘要>"}}
+
+      # ── Step 3: 用户审批 ──
+      # NOTE: 当本轮无新问题时，仍需用户点击 approve 以继续。
+      # 这是 engine 限制 — approval 节点在 loop 内不支持条件跳过。
+      # TODO(engine): 添加 auto_approve_when 支持条件自动审批
+      - id: user-review
+        type: approval
+        depends_on: [expert-debate]
+        timeout: 86400
+        prompt: |
+          ═══ Expert Grill — Round $vars.grill_round ═══
+
+          本轮问题:
+          $vars.current_questions
+
+          专家团决策:
+          $vars.round_decisions
+
+          前序累积决策:
+          $vars.accumulated_decisions
+
+          ─────────────────────────────
+          请审批专家团的决策。
+
+          选项:
+          1. **approve** — 决策 OK，继续下一轮（如有跟进问题）或完成 grill
+          2. **request-changes** — 部分决策需修改，请在反馈中说明
+          3. **add-questions** — 有新问题想追问，请在反馈中列出
+
+          你的反馈（可选，输入具体意见）:
+
+      # ── Step 4: Grill 验证 — 是否全部解决？ ──
+      - id: grill-validate
+        type: agent
+        depends_on: [user-review]
+        timeout: 1800
+        skills: [grilling]
+        prompt: |
+          验证当前轮次的 grill 是否已完成所有问题的解答。
+
+          ## 输入
+          - Idea: $inputs.idea
+          - 当前轮次: $vars.grill_round
+          - 当前问题: $vars.current_questions
+          - 专家决策: $vars.round_decisions
+          - 用户审批反馈: $vars.user_feedback
+          - 累积决策: $vars.accumulated_decisions
+
+          ## 验证清单
+          1. 当前轮次的所有问题是否都有明确 decision？
+          2. 用户反馈中是否有未解决的关切？
+          3. 是否还有 grill 维度（目标、用户、MVP、技术栈、数据模型、API、
+             安全、性能、错误处理、测试、部署、监控、扩展）未被覆盖？
+          4. 已覆盖的维度是否足够支撑 Spec 编写？
+
+          ## 判断
+          - 所有问题已解决 + 用户满意 + 关键维度已覆盖 → grill_satisfied = "true"
+          - 还有未解问题 / 用户有新关切 / 关键维度遗漏 → grill_satisfied = "false"
+
+          ## 输出
+          satisfied:
+          {"vars_update":{"accumulated_decisions":"$vars.accumulated_decisions\n\n## Round $vars.grill_round\n$vars.round_decisions","grill_satisfied":"true","decision_count":"<累计决策数>","user_feedback":"","conclusion":"<grill 完成摘要>"}}
+
+          not satisfied:
+          {"vars_update":{"accumulated_decisions":"$vars.accumulated_decisions\n\n## Round $vars.grill_round\n$vars.round_decisions","grill_satisfied":"false","decision_count":"<累计决策数>","user_feedback":"<用户反馈 + grill 发现的未解问题>","conclusion":"<未解决项列表，下轮继续>"}}
 
   # ═══════════════════════════════════════════════════════════════
-  # Phase 2.5: Grill Approval — 用户审批（仅 interactive 模式）
-  # ═══════════════════════════════════════════════════════════════
-  - id: grill-approval
-    type: approval
-    depends_on: [grill-loop]
-    execute_when: '$inputs.interactive == "true"'
-    timeout: 600
-    prompt: |
-      Expert Grill 已完成所有批次讨论。以下是各批次决策摘要：
-
-      $vars.accumulated_decisions
-
-      请审批这些决策。审批后进入 Spec 阶段。
-      拒绝则工作流终止，可修改 Idea 后重新运行。
-
-      选择: approve / reject
-
-  # ═══════════════════════════════════════════════════════════════
-  # Phase 2.6: Grill Synthesize — Brief + Domain Modeling
+  # Phase 2.5: Grill Synthesize — Brief + Domain Modeling
   # ═══════════════════════════════════════════════════════════════
   - id: grill-synthesize
     type: agent
-    depends_on: [grill-approval]
+    depends_on: [grill-loop]
     timeout: 3600
     skills: [grilling, domain-modeling]
     prompt: |
-      综合所有 batch decisions 为 brief.md，同时按 **domain-modeling** skill 构建领域模型。
+      综合所有 round decisions 为 brief.md，同时按 **domain-modeling** skill 构建领域模型。
 
       ## 输入
       - 所有决策: $vars.accumulated_decisions
@@ -375,7 +454,7 @@ nodes:
       ```
       # Brief: <功能名>
       ## 核心决策
-      <按主题组织的决策，非按批次>
+      <按主题组织的决策，非按轮次>
       ## 关键分歧
       <专家团未达成共识的点及理由>
       ## MVP 边界
