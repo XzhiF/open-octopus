@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels"
-import type { Execution, StepExecution, StepExecutionStatus, Workflow, TokenUsage, LoopIterationSummary } from "@/lib/types"
+import type { Execution, StepExecution, StepExecutionStatus, Workflow, TokenUsage, LoopIterationSummary, ApprovalMetadata } from "@/lib/types"
 import { fetchAgentEvents } from "@/lib/api-client"
 import {
   Play,
@@ -28,6 +28,7 @@ import { WorkflowFlowViewerWithStatus } from "./workflow-flow-viewer-with-status
 import { TokenUsageDisplay } from "./workflow-nodes/token-usage-display"
 import { ExecutionLogViewer } from "./execution-log-viewer"
 import { InterventionDialog } from "./intervention-dialog"
+import { ApprovalDialog } from "./approval-dialog"
 import { NodeInfoDialog } from "./node-info-dialog"
 import { SwarmDetailDialog } from "@/components/swarm/organisms/swarm-detail-dialog"
 import { ArchiveDialog } from "@/components/agent/knowledge/archive/ArchiveDialog"
@@ -41,7 +42,7 @@ import { ChartErrorBoundary } from "@/components/ui/chart-error-boundary"
 import type { LLMCallData, LLMCallAggregates } from "@/lib/types"
 
 const POLL_INTERVAL_MS = 3000
-const RUNNING_STATUSES = new Set(["running", "paused"])
+const RUNNING_STATUSES = new Set(["running", "paused", "pending_approval"])
 
 function StatusBadge({ status }: { status: string }) {
   const config: Record<string, { color: string; label: string }> = {
@@ -123,6 +124,9 @@ export function WorkflowDetailPanel({ execution, workflow, workspaceId }: Workfl
   const [retryInterventionLoading, setRetryInterventionLoading] = useState(false)
   const [approvalOpen, setApprovalOpen] = useState(false)
   const [approvalLoading, setApprovalLoading] = useState(false)
+  const [liveApprovalMetadata, setLiveApprovalMetadata] = useState<ApprovalMetadata | null>(
+    execution.approvalMetadata ?? null,
+  )
   const [archiveOpen, setArchiveOpen] = useState(false)
 
   // Always poll when panel is open — ensures recovery from stale prop data
@@ -133,6 +137,7 @@ export function WorkflowDetailPanel({ execution, workflow, workspaceId }: Workfl
         if (d.status) setLiveStatus(d.status)
         if (d.steps) setLiveSteps(d.steps.map(mapRawStep))
         if (d.workflow_content && !yamlContent) setYamlContent(d.workflow_content)
+        setLiveApprovalMetadata(d.approvalMetadata ?? null)
       })
       .catch(() => {})
     // Fetch loop iterations data for NodeInfoDialog (S9/S10/S11)
@@ -153,6 +158,34 @@ export function WorkflowDetailPanel({ execution, workflow, workspaceId }: Workfl
       : setInterval(fetchStatus, 10000) // slow poll when not running (10s)
     return () => clearInterval(interval)
   }, [liveStatus, fetchStatus])
+
+  // Auto-open approval dialog when status transitions to pending_approval
+  useEffect(() => {
+    if (liveStatus === "pending_approval" && liveApprovalMetadata) {
+      setApprovalOpen(true)
+    }
+  }, [liveStatus, liveApprovalMetadata])
+
+  const handleApprove = async (value: string, comment: string) => {
+    if (!liveApprovalMetadata) return
+    setApprovalLoading(true)
+    try {
+      await fetch(`${getServerUrl()}/api/workspaces/${workspaceId}/executions/${execution.id}/approve`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          nodeId: liveApprovalMetadata.nodeId,
+          answer: value,
+          comment,
+        }),
+      })
+      setApprovalOpen(false)
+    } catch (err) {
+      console.error("Approval failed:", err)
+    } finally {
+      setApprovalLoading(false)
+    }
+  }
 
   // Action handlers
   const handleStart = async () => {
@@ -441,6 +474,18 @@ export function WorkflowDetailPanel({ execution, workflow, workspaceId }: Workfl
           loading={retryInterventionLoading}
           mode="retry"
           storageKey={`octopus:ws:${workspaceId}:intervention:${execution.id}`}
+        />
+      )}
+
+      {/* Approval Dialog */}
+      {liveApprovalMetadata && (
+        <ApprovalDialog
+          open={approvalOpen}
+          onOpenChange={setApprovalOpen}
+          approval={liveApprovalMetadata}
+          onSubmit={handleApprove}
+          loading={approvalLoading}
+          storageKey={`octopus:ws:${workspaceId}:approval:${execution.id}`}
         />
       )}
 

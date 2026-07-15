@@ -274,7 +274,9 @@ export class ExecutionLifecycle {
       if (result.status === "pending_approval") {
         this.updateStatus(id, result.status, { progress: result.progress ?? 0, var_pool: JSON.stringify(result.poolSnapshot) })
         this.syncStateJson()
-        this.sse.emit(this.workspaceId, { event: "execution_pending_approval", data: { executionId: id } })
+        const pausedNode = Object.values(result.nodeResults).find(r => r.status === "pending_approval" || r.status === "paused")
+        const approval = pausedNode?.approvalMetadata ?? undefined
+        this.sse.emit(this.workspaceId, { event: "execution_pending_approval", data: { executionId: id, approval } })
         this.enginePool.remove(id)
         return this.dao.findById(id)!
       }

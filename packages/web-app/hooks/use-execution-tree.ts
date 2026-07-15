@@ -246,7 +246,7 @@ export function useExecutionTree(
       setTreeNodes(prev => prev.map(n => n.id === executionId ? {
         ...n,
         executionStatus: 'pending_approval' as ExecutionStatus,
-        approvalMetadata: approval,
+        ...(approval ? { approvalMetadata: approval } : {}),
       } : n))
     })
     es.addEventListener("execution_progress", (e) => {
