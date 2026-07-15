@@ -1,19 +1,15 @@
 import { VarPool, evaluateExpression } from "@octopus/shared"
-import type { NodeDef, AutoAnswer, ModelAliasConfig } from "@octopus/shared"
-import type { IAgentProvider } from "@octopus/providers"
+import type { NodeDef } from "@octopus/shared"
 import type { NodeExecutor, NodeExecutionResult, InnerNodeOverride } from "./types"
 import type { LoopConfig, ResumeConfig } from "./executor-config"
 import type { AgentEvent } from "./agent-types"
 import { AgentNodeRunner } from "./agent-runner"
-import type { EngineCallbacks } from "../engine"
-import { JsonlLogger } from "../logger"
 import { BashExecutor } from "./bash"
 import { PythonExecutor } from "./python"
 import { ConditionExecutor } from "./condition"
 import { ApprovalExecutor } from "./approval"
 import { AgentExecutor } from "./agent"
 import { SwarmExecutor } from "./swarm"
-import type { ICheckpointStore } from "../pipeline/checkpoint-types"
 
 export class LoopExecutor implements NodeExecutor {
   private iterations = 0

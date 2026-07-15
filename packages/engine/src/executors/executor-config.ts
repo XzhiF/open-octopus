@@ -9,7 +9,8 @@
  */
 
 import type { IAgentProvider } from "@octopus/providers"
-import type { AutoAnswer, ModelAliasConfig, CrossExecResolver, NodeDef } from "@octopus/shared"
+import type { AutoAnswer, ModelAliasConfig, CrossExecResolver } from "@octopus/shared"
+import { VarPool } from "@octopus/shared"
 import type { EngineCallbacks } from "../engine"
 import type { JsonlLogger } from "../logger"
 import type { ICheckpointStore } from "../pipeline/checkpoint-types"
@@ -151,7 +152,7 @@ export interface EngineConfig extends CoreConfig {
   executionName?: string
   crossExecResolver?: CrossExecResolver
   promptInjector?: PromptInjector
-  precomputeHook?: (pool: any, workflowName: string, inputs: Record<string, string>) => Promise<void>
-  knowledgeInjectorFactory?: (pool: any) => KnowledgeInjector
+  precomputeHook?: (pool: VarPool, workflowName: string, inputs: Record<string, string>) => Promise<void>
+  knowledgeInjectorFactory?: (pool: VarPool) => KnowledgeInjector
   agentResolver?: AgentResolver
 }
