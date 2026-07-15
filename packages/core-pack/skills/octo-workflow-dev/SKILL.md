@@ -404,6 +404,30 @@ hook prompt / template / bash 中可用：
       prompt: "第 $iteration 次尝试部署..."
 ```
 
+> **️ Loop 子节点必须显式声明 `depends_on`**
+>
+> Loop 内的子节点**不会自动按数组顺序执行**。没有 `depends_on` 的节点在 DAG 中无边，会导致：
+> - **前端可视化**：所有子节点重叠在同一位置（dagre 无法布局）
+> - **执行语义**：节点可能并行执行而非顺序执行（`execution_mode: auto` 时）
+>
+> ```yaml
+> # ❌ 错误 — 没有 depends_on，节点关系不明确
+> nodes:
+>   - id: step-a
+>   - id: step-b
+>   - id: step-c
+>
+> # ✅ 正确 — 显式声明顺序依赖
+> nodes:
+>   - id: step-a
+>   - id: step-b
+>     depends_on: [step-a]
+>   - id: step-c
+>     depends_on: [step-b]
+> ```
+>
+> 即使工作流是 `execution_mode: serial`，loop 子节点仍需要 `depends_on` 来保证前端可视化正确。
+
 ### 5.1 Swarm — 多专家协作节点
 
 `type: swarm` 实现多专家协作编排（4 种模式：review / debate / dispatch / swarm）。完整指南见 **`octo-swarm-dev`** skill。
@@ -631,6 +655,7 @@ octopus workflow run ./deploy.yaml --org {org} --model pro-max --engine claude
 
 - 工作流必须包含 `apiVersion: octopus/v1` 与 `kind: Workflow`，并在文件头部声明 `# yaml-language-server: $schema=...workflow-schema.json`。
 - 节点 `id` 在工作流内唯一；`depends_on` 引用必须存在。
+- **Loop 子节点必须显式声明 `depends_on`** — 即使 `execution_mode: serial`，loop 内节点也需明确依赖关系，否则前端可视化会重叠、执行顺序不确定。
 - `condition.cases` 的 `when: default` 必须放最后。
 - `agent` 节点必须有 `agent` / `prompt` / `goal` / `agents` 之一；`goal` 与 `prompt` 互斥。
 - **当节点定义了 `agents`，主 prompt 只编排不执行重活；Write/Bash 由子代理负责**。
