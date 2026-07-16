@@ -90,10 +90,16 @@ export class TemplateRenderer {
   }
 }
 
-// ── Exported for use in validateTemplateSyntax ──
+// ── Exported for use in validateTemplateSyntax and executor prompt resolution ──
 export function validateTemplateSyntax(template: NotifyTemplate): string[] {
   return new TemplateRenderer().validate(template)
 }
+
+/**
+ * Process {{#if $vars.xxx}}...{{/if}} conditional blocks in text.
+ * Exported for use in node prompt resolution (agent/approval/bash/python executors).
+ */
+export { processConditionals }
 
 // ── Internal helpers ──
 

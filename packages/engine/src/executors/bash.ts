@@ -1,6 +1,6 @@
 import { spawn } from "child_process"
 import { existsSync } from "fs"
-import { VarPool, substituteVars, evaluateExpression } from "@octopus/shared"
+import { VarPool, substituteVars, substituteVarsFull, evaluateExpression } from "@octopus/shared"
 import type { NodeDef, CrossExecResolver } from "@octopus/shared"
 import type { NodeExecutor, NodeExecutionResult } from "./types"
 import type { BashConfig } from "./executor-config"
@@ -76,7 +76,7 @@ export class BashExecutor implements NodeExecutor {
     }
 
     const start = Date.now()
-    let script = substituteVars(this.node.bash!, this.pool, undefined, this.crossExecResolver, this.executionId, this.loopContext)
+    let script = substituteVarsFull(this.node.bash!, this.pool, undefined, this.crossExecResolver, this.executionId, this.loopContext)
     script = this.resolveInputs(script)
     const timeout = this.node.timeout ?? 30
 

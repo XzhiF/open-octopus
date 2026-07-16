@@ -1,5 +1,5 @@
 import { spawn } from "child_process"
-import { VarPool, substituteVars, evaluateExpression } from "@octopus/shared"
+import { VarPool, substituteVars, substituteVarsFull, evaluateExpression } from "@octopus/shared"
 import type { NodeDef } from "@octopus/shared"
 import type { NodeExecutor, NodeExecutionResult } from "./types"
 import type { PythonConfig } from "./executor-config"
@@ -30,7 +30,7 @@ export class PythonExecutor implements NodeExecutor {
     }
 
     const start = Date.now()
-    let script = substituteVars(this.node.python!, this.pool)
+    let script = substituteVarsFull(this.node.python!, this.pool)
     script = this.resolveInputs(script)
     const timeout = this.node.timeout ?? 60
 

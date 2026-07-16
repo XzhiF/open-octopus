@@ -167,14 +167,18 @@ executionRoutes.get("/:executionId", async (c) => {
     const stepTokens = perStepTokenUsages.filter(t => t.stepId === ne.node_id)
     const tokensInput = stepTokens.length > 0 ? stepTokens.reduce((s, t) => s + t.inputTokens + (t.cacheReadTokens ?? 0), 0) : undefined
     const tokensOutput = stepTokens.length > 0 ? stepTokens.reduce((s, t) => s + t.outputTokens + (t.cacheCreationTokens ?? 0), 0) : undefined
+    const parsedOutputs = ne.outputs ? JSON.parse(ne.outputs) : undefined
     return {
       stepId: ne.node_id,
       stepName: ne.node_id,
+      nodeType: ne.node_type,
       status: ne.status,
       startedAt: ne.started_at,
       completedAt: ne.completed_at,
       duration: ne.duration != null ? ne.duration / 1000 : undefined,
       error: ne.error,
+      output: parsedOutputs?.last_output ?? parsedOutputs?.decision ?? undefined,
+      outputs: parsedOutputs,
       model: stepTokens.length > 0 ? stepTokens[0].model : undefined,
       tokensInput,
       tokensOutput,
@@ -412,6 +416,55 @@ executionRoutes.get("/:executionId/agent-events", (c) => {
     if (sqliteEvents.length > 0) {
       // Transform SQLite rows to the JSONL-compatible format the frontend expects
       const transformed = sqliteEvents.map((row: any) => {
+        // Non-agent events: output as top-level events (matching JSONL format)
+        // so mergeAgentEvents can process bash_log → bash_output, etc.
+        if (row.event_type === "bash_log" || row.event_type === "python_log") {
+          return {
+            event: row.event_type,
+            nodeId: row.node_id,
+            line: row.content ?? "",
+            timestamp: new Date(row.timestamp).toISOString(),
+          }
+        }
+        if (row.event_type === "bash_stderr" || row.event_type === "python_stderr") {
+          return {
+            event: row.event_type,
+            nodeId: row.node_id,
+            line: row.content ?? "",
+            timestamp: new Date(row.timestamp).toISOString(),
+          }
+        }
+        // Already-merged block events: pass through as top-level
+        if (row.event_type === "bash_output" || row.event_type === "python_output") {
+          const lines = (row.content ?? "").split("\n").filter(Boolean)
+          return {
+            event: row.event_type,
+            nodeId: row.node_id,
+            content: row.content ?? "",
+            lines,
+            startedAt: new Date(row.timestamp).toISOString(),
+            completedAt: new Date(row.timestamp).toISOString(),
+          }
+        }
+        // Approval metadata: pass through with prompt/options/decision
+        if (row.event_type === "approval_metadata") {
+          let meta: Record<string, unknown> = {}
+          try { meta = JSON.parse(row.content ?? "{}") } catch { /* ignore parse errors */ }
+          return {
+            event: "approval_metadata",
+            nodeId: row.node_id,
+            prompt: meta.prompt ?? "",
+            options: meta.options ?? [],
+            decision: meta.decision ?? "",
+            comment: meta.comment ?? "",
+            timestamp: new Date(row.timestamp).toISOString(),
+          }
+        }
+        // start/end lifecycle events: skip from SQLite (JSONL provides authoritative copies)
+        if (row.event_type === "start" || row.event_type === "end") {
+          return null
+        }
+
         const eventData: Record<string, unknown> = { type: row.event_type }
 
         // Map flat SQLite columns → nested event_data fields
@@ -454,7 +507,7 @@ executionRoutes.get("/:executionId/agent-events", (c) => {
           event_data: eventData,
           timestamp: new Date(row.timestamp).toISOString(),
         }
-      })
+      }).filter(Boolean)
 
       // Merge legacy agent_event fragments into compact blocks (thinking_block/text_block/tool_call)
       // Group by nodeId, apply merge per group, then re-sort by timestamp

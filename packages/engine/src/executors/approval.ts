@@ -1,4 +1,4 @@
-import { VarPool, substituteVars } from "@octopus/shared"
+import { VarPool, substituteVarsFull, substituteVars, evaluateExpression } from "@octopus/shared"
 import type { NodeDef, CrossExecResolver } from "@octopus/shared"
 import type { NodeExecutor, NodeExecutionResult, ApprovalMetadata } from "./types"
 import type { ApprovalConfig } from "./executor-config"
@@ -39,8 +39,15 @@ export class ApprovalExecutor implements NodeExecutor {
     if (this.userChoice) {
       const durationMs = Date.now() - start
       const isRejected = this.userChoice === "reject" || this.userChoice.endsWith("-reject")
+      const outputs: Record<string, any> = {
+        decision: this.userChoice,
+        comment: this.userComment ?? "",
+        last_output: this.userChoice,
+      }
+      // Apply outputs mapping (e.g. "$vars.current_guess": "$last_output")
+      this.applyOutputsMapping(outputs)
       return {
-        outputs: { decision: this.userChoice, comment: this.userComment ?? "" },
+        outputs,
         status: isRejected ? "rejected" : "completed",
         durationMs,
         logLines: [`Approval decided: ${this.userChoice}${isRejected ? " (rejected)" : ""}`],
@@ -57,7 +64,7 @@ export class ApprovalExecutor implements NodeExecutor {
 
     // Build approval metadata from node definition, resolving variables in prompt
     const rawPrompt = this.node.prompt || "需要审批确认"
-    const resolvedPrompt = substituteVars(rawPrompt, this.pool, undefined, this.crossExecResolver, this.executionId, this.loopContext)
+    const resolvedPrompt = substituteVarsFull(rawPrompt, this.pool, undefined, this.crossExecResolver, this.executionId, this.loopContext)
     const approvalMetadata: ApprovalMetadata = {
       prompt: resolvedPrompt,
       options: this.node.options || [
@@ -77,6 +84,34 @@ export class ApprovalExecutor implements NodeExecutor {
       logLines,
       timeout,
       approvalMetadata,
+    }
+  }
+
+  private applyOutputsMapping(outputs: Record<string, any>) {
+    if (!this.node.outputs) return
+    for (const [key, expr] of Object.entries(this.node.outputs)) {
+      const poolKey = key.startsWith("$vars.") ? key.slice(6) : key
+
+      if (expr === "$last_output") {
+        this.pool.set(poolKey, outputs.last_output)
+        outputs[poolKey] = outputs.last_output
+      } else if (expr.startsWith("$last_output.")) {
+        const field = expr.slice(13)
+        const value = outputs.last_output?.[field] ?? outputs[field]
+        this.pool.set(poolKey, value)
+        outputs[poolKey] = value
+      } else if (/^\$vars\.\w+$/.test(expr)) {
+        const varKey = expr.slice(6)
+        this.pool.set(poolKey, this.pool.get(varKey))
+        outputs[poolKey] = this.pool.get(varKey)
+      } else if (expr.startsWith("$")) {
+        const resolved = substituteVars(expr, this.pool, undefined, this.crossExecResolver, this.executionId)
+        this.pool.set(poolKey, resolved)
+        outputs[poolKey] = resolved
+      } else {
+        this.pool.set(poolKey, expr)
+        outputs[poolKey] = expr
+      }
     }
   }
 }

@@ -25,7 +25,10 @@ export class LoopExecutor implements NodeExecutor {
     this.config = config
     this.resume = resume
     if (resume?.resumeIteration) {
-      this.iterations = resume.resumeIteration
+      // Set to resumeIteration - 1 because the while loop does this.iterations++ at the start.
+      // This ensures the resumed iteration runs at the correct number (e.g., resume at iter 2,
+      // not skip to iter 3).
+      this.iterations = resume.resumeIteration - 1
     }
   }
 
@@ -113,6 +116,16 @@ export class LoopExecutor implements NodeExecutor {
           const innerDurationMs = Date.now() - innerStart
           this.config.logger?.log(innerNode.id, "end", { status: result.status, durationMs: innerDurationMs, exitCode: result.exitCode })
           this.config.callbacks?.onNodeEnd?.(innerNode.id, result.status, innerDurationMs, result, innerNode.type)
+        }
+
+        // Log approval metadata for approval nodes (both override and normal paths)
+        if (innerNode.type === "approval" && (result.approvalMetadata || result.decision)) {
+          this.config.logger?.log(innerNode.id, "approval_metadata", {
+            prompt: result.approvalMetadata?.prompt ?? "",
+            options: result.approvalMetadata?.options ?? [],
+            decision: result.decision ?? "",
+            comment: result.comment ?? "",
+          })
         }
 
         // Compact iteration-scoped JSONL after inner node completes

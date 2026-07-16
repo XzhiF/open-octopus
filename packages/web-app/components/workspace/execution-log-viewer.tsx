@@ -22,6 +22,11 @@ export interface LogEvent extends AgentEvent {
   synthesis?: string
   source?: string
   __done?: boolean
+  // Approval metadata fields
+  prompt?: string
+  options?: Array<{ label: string; value: string }>
+  decision?: string
+  comment?: string
 }
 
 interface LogViewerProps {
@@ -44,6 +49,7 @@ export function EventIcon({ event, agentType }: { event: string; agentType?: str
     case "text_block": return <FileText className="h-3 w-3 text-blue-400 shrink-0" />
     case "tool_call": return <Wrench className="h-3 w-3 text-amber-400 shrink-0" />
     case "bash_output": return <Terminal className="h-3 w-3 text-muted-foreground shrink-0" />
+    case "approval_metadata": return <MessageSquare className="h-3 w-3 text-cyan-400 shrink-0" />
     case "python_output": return <Terminal className="h-3 w-3 text-muted-foreground shrink-0" />
     case "bash_stderr": return <X className="h-3 w-3 text-red-400 shrink-0" />
     case "python_stderr": return <X className="h-3 w-3 text-red-400 shrink-0" />
@@ -113,6 +119,12 @@ export function EventLabel({ entry }: { entry: LogEvent }) {
     case "bash_output": {
       const lineCount = entry.lines?.length ?? 0
       return <span className="text-muted-foreground">终端输出 ({lineCount} 行)</span>
+    }
+    case "approval_metadata": {
+      const decision = entry.decision ?? ""
+      return decision
+        ? <span className="text-emerald-400">用户选择: <span className="font-mono font-bold">{decision}</span></span>
+        : <span className="text-cyan-400">等待审批...</span>
     }
     case "python_output": {
       const lineCount = entry.lines?.length ?? 0
@@ -234,8 +246,9 @@ export function ExpandableRow({ entry }: { entry: LogEvent }) {
 
   const bashLine = isBashLog ? (entry.line ?? "") : ""
   const isLongLine = bashLine.length > 80
+  const isApprovalMeta = entry.event === "approval_metadata"
   const hasDetail = isMergedOutput || isMergedToolCall || isMergedThinking || isMergedText ||
-    isAgentDetail || (isBashLog && isLongLine) || isSwarmDetail
+    isAgentDetail || (isBashLog && isLongLine) || isSwarmDetail || isApprovalMeta
 
   const toggle = () => hasDetail && setExpanded(!expanded)
 
@@ -276,6 +289,36 @@ export function ExpandableRow({ entry }: { entry: LogEvent }) {
           entry.event.includes("stderr") ? "bg-red-950/20" : "bg-muted/30",
         )}>
           <code>{entry.content}</code>
+        </div>
+      )}
+
+      {/* Approval metadata detail */}
+      {expanded && entry.event === "approval_metadata" && (
+        <div className="ml-6 mt-0.5 mb-1 p-1.5 bg-cyan-950/20 rounded text-xs whitespace-pre-wrap">
+          {entry.prompt && (
+            <div className="mb-1">
+              <span className="text-cyan-400">提示:</span>{" "}
+              <span>{entry.prompt}</span>
+            </div>
+          )}
+          {entry.options && Array.isArray(entry.options) && entry.options.length > 0 && (
+            <div className="mb-1">
+              <span className="text-cyan-400">选项:</span>{" "}
+              <span>{entry.options.map((o: any) => o.label).join(", ")}</span>
+            </div>
+          )}
+          {entry.decision && (
+            <div className="mb-1">
+              <span className="text-emerald-400">决定:</span>{" "}
+              <span className="font-mono">{entry.decision}</span>
+            </div>
+          )}
+          {entry.comment && (
+            <div>
+              <span className="text-muted-foreground">备注:</span>{" "}
+              <span>{entry.comment}</span>
+            </div>
+          )}
         </div>
       )}
 

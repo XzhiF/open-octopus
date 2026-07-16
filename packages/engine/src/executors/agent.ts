@@ -1,4 +1,4 @@
-import { VarPool, substituteVars, compileAutoAnswers, evaluateExpression, resolveModelAlias } from "@octopus/shared"
+import { VarPool, substituteVars, substituteVarsFull, compileAutoAnswers, evaluateExpression, resolveModelAlias } from "@octopus/shared"
 import type { NodeDef, AutoAnswer, SubAgentDef, CrossExecResolver, ModelAliasConfig } from "@octopus/shared"
 import type { NodeExecutor, NodeExecutionResult } from "./types"
 import type { AgentConfig } from "./executor-config"
@@ -306,7 +306,7 @@ export class AgentExecutor implements NodeExecutor {
     // Standard prompt mode (existing behavior)
     let prompt = this.node.prompt ?? ""
 
-    prompt = substituteVars(prompt, this.pool, this.buildNodeOutputs(), this.crossExecResolver, this.executionId, this.loopContext)
+    prompt = substituteVarsFull(prompt, this.pool, this.buildNodeOutputs(), this.crossExecResolver, this.executionId, this.loopContext)
 
     // Inject pipeline-level prompts (global + targeted)
     if (this.promptInjector && this.workflowName) {
@@ -344,7 +344,7 @@ export class AgentExecutor implements NodeExecutor {
 
     // Goal section
     parts.push(`## Goal`)
-    parts.push(substituteVars(this.node.goal!, this.pool, this.buildNodeOutputs(), this.crossExecResolver, this.executionId, this.loopContext))
+    parts.push(substituteVarsFull(this.node.goal!, this.pool, this.buildNodeOutputs(), this.crossExecResolver, this.executionId, this.loopContext))
 
     // Constraints section
     if (this.node.constraints?.length) {

@@ -703,6 +703,16 @@ export class WorkflowEngine {
 
       const nodeResult = await executor.execute()
 
+      // Log approval metadata as a separate event so frontend can display prompt/options/decision
+      if (node.type === "approval" && (nodeResult.approvalMetadata || nodeResult.decision)) {
+        this.logger?.log(node.id, "approval_metadata", {
+          prompt: nodeResult.approvalMetadata?.prompt ?? "",
+          options: nodeResult.approvalMetadata?.options ?? [],
+          decision: nodeResult.decision ?? "",
+          comment: nodeResult.comment ?? "",
+        })
+      }
+
       // Only log "end" for terminal states — pending_approval/paused are pauses, not endings
       if (nodeResult.status !== "pending_approval" && nodeResult.status !== "paused") {
         this.logger?.log(node.id, "end", {
