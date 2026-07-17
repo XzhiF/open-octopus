@@ -76,7 +76,22 @@ priority: high
 
 ### Q-2: [问题标题]
 ...
+
+## Research 项（需要专家深入理解的内容）
+
+### R-1: Codebase Research
+- **范围**: {哪些模块/文件需要专家重点研究}
+- **目的**: {为什么需要理解这部分}
+- **用户补充**: {用户可以提供的上下文/文档链接}
+
+### R-2: 技术调研
+- **范围**: {需要调研的技术方案/第三方库}
+- **目的**: {为什么需要调研}
+- **用户补充**: {已知的参考资料/对比候选}
 ```
+
+> Research 项与功能澄清项、环境澄清项并列，不是独立阶段。用户在 approval 中一并回答。
+> Research 答案下游流入 `technical-guide.md`（技术调研结论）和对应 spec 文件（codebase 研究结论）。
 
 ### 第三步：测试环境澄清（关键）
 **必须**澄清以下 E2E 测试环境信息，否则验证阶段无法执行：
@@ -251,7 +266,10 @@ Stage 4 swarm 节点，将故事总汇拆分为 N 个 spec。
 ACTOR: {角色名}
 GOAL: {要达成什么}
 OUTCOME: {成功后的状态}
+SERVICE_CHAIN: project-web (HTTP) → project-service (RPC) → project-db
 ```
+
+> 当 spec 跨多个 workspace 项目时，`SERVICE_CHAIN` 描述完整的服务链路。单项目 spec 可省略。
 
 ### Verification Path 区块（先于实现设计）
 ```markdown
@@ -273,6 +291,7 @@ OUTCOME: {成功后的状态}
 
 ### Step N: {步骤标题}
 ACTOR: browser | server | database
+PROJECT: {project-name}  # 跨项目时标注哪个 workspace 项目处理此步骤
 ACTION: {具体操作}
 REQUEST: {如果是 API 调用}
   method: POST
@@ -320,7 +339,7 @@ Stage 5 swarm 节点，为每个 spec 生成任务计划文档。
 05-plans/spec-{NNN}-{name}/
 ├── consensus.md          # 总纲领
 ├── verify-1-1.md         # 验证方法
-├── task-1-1-backend.md   # 任务分配
+├── task-1-1-{project}-backend.md   # 任务分配（含项目归属）
 └── spec-test.md          # 完整 E2E 验证路线
 ```
 
@@ -388,16 +407,20 @@ test('{描述}', async () => {
 - [ ] 覆盖率 ≥ 80%
 ```
 
-## task-x-y-role.md — 任务分配
-X = 任务号（相同 X 可并行），Y = 子任务号：
+## task-x-y-project-role.md — 任务分配
+X = 任务号（相同 X 可并行），Y = 子任务号，project = 所属 workspace 项目：
 ```markdown
-# Task-{X}-{Y}-{Role}: {任务标题}
+# Task-{X}-{Y}-{Project}-{Role}: {任务标题}
 
 ## 任务描述
 {简要描述做什么}
 
+## 项目归属
+- Project: {project-name}
+- 工作目录: worktrees/{project-name}/
+
 ## 依赖
-- 前置任务: task-{X'}-{Y'}-{Role'} 或 none
+- 前置任务: task-{X'}-{Y'}-{Project'}-{Role'} 或 none
 - 共用文件: consensus.md 中的约定
 
 ## 实现步骤
@@ -412,6 +435,8 @@ X = 任务号（相同 X 可并行），Y = 子任务号：
 - src/xxx/yyy.ts (新增)
 - src/xxx/zzz.ts (修改)
 ```
+
+> **跨项目并行**: 同一 spec 中属于不同 project 的 task，在 consensus.md 对齐接口契约后可并行执行。
 
 ## spec-test.md — 完整 E2E 验证路线
 ```markdown

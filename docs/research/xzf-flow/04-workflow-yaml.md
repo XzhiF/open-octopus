@@ -12,8 +12,8 @@
 1. [设计概览](#1-设计概览)
 2. [完整工作流 YAML](#2-完整工作流-yaml)
 3. [变量系统详解](#3-变量系统详解)
-4. [Approval 节点与 Auto Answers](#4-approval-节点与-auto-answers)
-5. [Loop 节点与退出条件](#5-loop-节点与退出条件)
+4. [Approval 节点与显式决策](#4-approval-节点与显式决策)
+5. [Loop 节点与退出机制](#5-loop-节点与退出条件)
 6. [Swarm expert_defaults.skills 传播机制](#6-swarm-expert_defaultsskills-传播机制)
 7. [错误处理策略](#7-错误处理策略)
 8. [节点依赖图](#8-节点依赖图)
@@ -22,26 +22,27 @@
 
 ## 1. 设计概览
 
-### 8 阶段流水线
+### 9 阶段流水线
 
 | # | 阶段 | 节点类型 | 说明 |
 |---|------|---------|------|
-| 1 | **init** | bash + agent | 环境检测、分支名获取、输出目录创建 |
+| 1 | **init** | bash + agent | 环境检测、分支名获取、输出目录创建、workspace 拓扑扫描 |
 | 2 | **idea** | swarm | 6 专家团队理解需求、产出结构化 Idea 文档 |
-| 3 | **clarification-loop** | loop → swarm + approval | 循环澄清，直到用户输入 "done" |
-| 4 | **stories-loop** | loop → swarm + approval | 循环生成用户故事，直到用户确认 |
-| 5 | **spec-design** | swarm | 技术规范设计（架构 + API + 数据模型） |
-| 6 | **task-planning** | swarm | 任务拆分 + 依赖排序 + 估时 |
-| 7 | **execution** | loop → swarm + condition | 逐任务执行 + 修复循环（最多 3 次） |
+| 3 | **clarification-loop** | loop → swarm + condition + approval | 循环澄清，agent 信号驱动退出 |
+| 4 | **stories-loop** | loop → swarm + condition + approval | 循环生成用户故事，agent 信号驱动退出 |
+| 5 | **spec-design** | swarm | 技术规范设计（架构 + API + 数据模型 + 跨项目服务链） |
+| 6 | **task-planning** | swarm | 任务拆分 + 按项目分组 + 依赖排序 + 估时 |
+| 7 | **execution** | loop → agent + condition + swarm | 逐任务执行（含项目上下文）+ 修复循环（最多 3 次） |
 | 8 | **ship** | condition → bash + approval | 检测远程仓库、推送、创建 PR |
 
 ### 核心设计原则
 
 - **Agent-First**: 每个节点都由 AI Agent 驱动，bash 仅用于机械操作
 - **Swarm 一致**: 所有 swarm 节点共享相同的 6 专家配置
+- **Workspace 感知**: 所有 swarm 节点注入 workspace 拓扑上下文，理解多项目关系
 - **输出链**: 每个阶段的输出通过 `$node-id.output.*` 传递给下游
 - **故障安全**: 每个阶段有独立的 `on_error` 策略，关键阶段触发人工介入
-- **无人值守**: approval 节点通过 auto_answers 实现自动化确认
+- **显式决策**: 所有 approval 节点提供结构化选项（A/B/C），用户做明确选择
 
 ---
 
@@ -52,15 +53,16 @@
 # XZF Development Pipeline
 # 路径: packages/core-pack/workflows/xzf-pipeline.yaml
 # 版本: v1.0.0
-# 描述: 从想法到交付的 8 阶段 AI 驱动开发流水线
+# 描述: 从想法到交付的 9 阶段 AI 驱动开发流水线
 # ============================================================================
 
 name: xzf-pipeline
 version: "1.0.0"
 description: |
-  XZF 开发流水线 — 8 阶段从想法到交付的完整 AI 驱动工作流。
+  XZF 开发流水线 — 9 阶段从想法到交付的 AI 驱动工作流。
   使用 Octopus workflow engine 原语: bash, approval, loop, swarm, agent, condition。
   所有 swarm 节点共享 6 专家配置（architect, PM, test-architect, frontend, backend, security）。
+  包含 workspace 拓扑扫描、agent 信号驱动循环退出、按项目分组任务。
 
 # ----------------------------------------------------------------------------
 # 全局变量定义
@@ -92,6 +94,8 @@ variables:
   remote_url: ""
   # PR/MR 创建结果
   pr_url: ""
+  # Workspace 拓扑信息
+  workspace_topology: ""
 
 # ----------------------------------------------------------------------------
 # 全局配置
@@ -105,17 +109,6 @@ config:
   default_timeout: 600
   # 失败时默认行为
   on_error: notify_and_pause
-
-# ----------------------------------------------------------------------------
-# 全局 Auto Answers — 所有 approval 节点继承
-# ----------------------------------------------------------------------------
-auto_answers:
-  - question: "是否继续执行？"
-    answer: "yes"
-  - question: "确认进入下一阶段？"
-    answer: "yes"
-  - question: "是否批准此阶段的输出？"
-    answer: "yes, approved"
 
 # ============================================================================
 # 阶段 1: INIT — 环境检测与初始化
@@ -188,21 +181,38 @@ nodes:
   init-confirm:
     type: approval
     description: "确认环境初始化结果"
-    depends_on: [init-dirs, init-remote]
+    depends_on: [init-dirs, init-remote, init-workspace]
     prompt: |
       ## 环境初始化完成
 
       - **分支**: `$vars.branch`
       - **输出目录**: `$vars.output_dir`
       - **远程仓库**: `$vars.remote_type` ($vars.remote_url)
+      - **Workspace 拓扑**: `$vars.output_dir/workspace-topology.md`
 
-      是否继续？
-    auto_answers:
-      - question: "是否继续？"
-        answer: "yes"
+      请审查初始化结果：
+      A) 确认，继续执行
+      B) 需要修正（请说明问题）
     on_success:
       message: "初始化完成，进入 Idea 阶段"
     on_error: fail
+
+  # --- 1e. 扫描 Workspace 拓扑 ---
+  init-workspace:
+    type: agent
+    description: "扫描 workspace 项目拓扑"
+    depends_on: [init-dirs]
+    prompt: |
+      扫描当前 workspace 中所有项目：
+      - 每个项目的 repo 名称、技术栈、主要模块
+      - 项目间依赖关系和通信方式（HTTP/RPC/消息队列/共享库）
+      - 每个项目的关键约定（读取各项目 CLAUDE.md 如果存在）
+
+      输出结构化拓扑报告到 $vars.output_dir/workspace-topology.md
+    on_success:
+      write_file: "$vars.output_dir/workspace-topology.md"
+      set:
+        workspace_topology: "$last_output"
 
   # ============================================================================
   # 阶段 2: IDEA — 需求理解与结构化
@@ -215,7 +225,7 @@ nodes:
   idea:
     type: swarm
     description: "6 专家团队理解需求、产出结构化 Idea 文档"
-    depends_on: [init-confirm]
+    depends_on: [init-workspace]
     mode: review
     timeout: 300
 
@@ -273,6 +283,9 @@ nodes:
       4. **范围**: 建议的 MVP 范围
       5. **开放问题**: 需要向用户澄清的问题
 
+      Workspace 拓扑:
+      $vars.workspace_topology
+
       输出目录: $vars.output_dir/idea/
 
     on_success:
@@ -291,30 +304,26 @@ nodes:
 
       文件: `$vars.output_dir/idea/idea.md`
 
-      请查看 6 位专家的分析结果。是否满意此分析？
-      - 输入 "yes" 进入澄清阶段
-      - 输入修改意见将重新生成
-    auto_answers:
-      - question: "是否满意此分析？"
-        answer: "yes"
+      请审查 6 位专家的分析结果：
+      A) 满意，进入澄清阶段
+      B) 需要补充分析（请说明方向）
+      C) 重新生成（请说明原因）
     on_error: notify_and_pause
 
   # ============================================================================
   # 阶段 3: CLARIFICATION-LOOP — 循环澄清
   # ============================================================================
-  # 目的: 通过多轮对话澄清需求细节，直到用户输入 "done"
-  # 模式: loop → swarm (review) + approval
-  # 退出条件: 用户在 approval 节点输入 "done"
+  # 目的: 通过多轮对话澄清需求细节，直到 agent 判定需求足够清晰
+  # 模式: loop → swarm (review) + condition (signal check) + approval
+  # 退出条件: agent 输出 ===CLARIFICATION_COMPLETE=== 信号
   # 输出: {output_dir}/clarification/clarified-spec.md
   # ============================================================================
 
   clarification-loop:
     type: loop
-    description: "循环澄清需求，直到用户输入 done"
+    description: "循环澄清需求，直到 agent 判定完成"
     depends_on: [idea-confirm]
     max_iterations: 20  # 安全上限，防止无限循环
-    exit_condition: |
-      $vars.clarification_done == "true"
     on_exit:
       message: "需求澄清完成，共 $iteration 轮"
 
@@ -374,38 +383,62 @@ nodes:
           ### Idea 分析
           $idea.output.summary
 
+          ### Workspace 拓扑
+          $vars.workspace_topology
+
+          用户上轮回复: $last_approval_output
+
           $vars.clarification_history
 
-          请从你的专业角度提出需要澄清的问题。
+          请从你的专业角度提出需要澄清的问题。问题分类:
+          - **架构**: 技术栈选择、系统集成、扩展性
+          - **功能**: 用户场景、验收标准、MVP 边界
+          - **测试**: 边界条件、测试场景、质量要求
+          - **UI/UX**: 交互细节、组件设计、响应式需求
+          - **API/数据**: 数据模型、接口契约、数据流
+          - **安全**: 安全需求、合规要求、数据敏感性
+          - **Research**: 哪些 codebase 区域需要重点研究、需要调研什么技术方案、有哪些实现路径需要 POC 验证
+
           每个问题应:
           - 具体、可回答
           - 标注优先级 (P0/P1/P2)
           - 说明为什么需要澄清
 
-          如果认为需求已经足够清晰，输出 "无更多问题"。
+          如果认为需求已经足够清晰，且用户已充分回答，在输出末尾标记:
+          ===CLARIFICATION_COMPLETE===
 
           输出目录: $vars.output_dir/clarification/
 
         on_success:
           write_file: "$vars.output_dir/clarification/questions-round-$iteration.md"
 
-      # --- 3b. 用户回答澄清问题 ---
+      # --- 3b. 检查是否完成 ---
+      check-complete:
+        type: condition
+        description: "检查 agent 是否判定澄清完成"
+        depends_on: [clarification-swarm]
+        if: "$clarification-swarm.output contains '===CLARIFICATION_COMPLETE==='"
+        then: break
+        else: continue
+
+      # --- 3c. 用户回答澄清问题 ---
       clarification-approval:
         type: approval
         description: "用户回答澄清问题"
-        depends_on: [clarification-swarm]
+        depends_on: [check-complete]
         prompt: |
           ## 澄清问题 (第 $iteration 轮)
 
-          请查看以下问题并回答:
+          请审查以下问题并回复。
 
           $clarification-swarm.output.questions
 
-          ---
-          - 逐条回答问题
-          - 输入 "done" 表示需求已经足够清晰，进入下一阶段
-          - 输入修改意见继续澄清
-        auto_answers: []  # 澄清阶段不预设答案，需要用户真实输入
+          回复选项：
+          A) 逐条回答问题，继续讨论更多细节
+          B) 回答问题 + 进入下一阶段（需求已足够清晰）
+          C) 补充新的讨论话题或方向
+
+          注意：如选择 B 但部分问题未回答，将采用专家团的推荐方案。
         on_success:
           set:
             clarification_history: |
@@ -416,11 +449,6 @@ nodes:
 
               **问题**: $clarification-swarm.output.questions
               **回答**: $last_output
-          # 检测用户是否输入了 "done"
-          evaluate: |
-            if ($last_output contains "done") {
-              set clarification_done = "true"
-            }
 
   # --- 澄清输出: 生成最终澄清文档 ---
   clarification-summary:
@@ -477,17 +505,22 @@ nodes:
       ### Idea 分析
       $idea.output.summary
 
+      ### Workspace 拓扑
+      $vars.workspace_topology
+
       ### 澄清历史 ($iteration 轮)
       $vars.clarification_history
 
       请综合所有信息，产出最终的需求规格文档。
       文档应包含:
       1. **需求概述** — 一句话描述
-      2. **功能需求** — 分 Must/Should/Could
+      2. **功能需求** — 分 Must/Should/Could，按项目分组
       3. **非功能需求** — 性能、安全、可用性
       4. **约束条件** — 技术栈、时间、资源
-      5. **验收标准** — 每个功能的验收条件
-      6. **开放问题** — 仍未解决的问题
+      5. **跨项目依赖** — 涉及哪些项目间的服务链和数据流
+      6. **验收标准** — 每个功能的验收条件
+      7. **Research 项** — 需要进一步调研的技术方案（如有）
+      8. **开放问题** — 仍未解决的问题
 
       输出目录: $vars.output_dir/clarification/
 
@@ -500,19 +533,17 @@ nodes:
   # ============================================================================
   # 阶段 4: STORIES-LOOP — 用户故事生成与确认
   # ============================================================================
-  # 目的: 基于澄清后的需求生成用户故事，循环修订直到用户确认
-  # 模式: loop → swarm (debate) + approval
-  # 退出条件: 用户在 approval 节点确认 "confirmed"
+  # 目的: 基于澄清后的需求生成用户故事，循环修订直到 agent 判定完成
+  # 模式: loop → swarm (debate) + condition (signal check) + approval
+  # 退出条件: agent 输出 ===STORIES_COMPLETE=== 信号
   # 输出: {output_dir}/stories/stories.md
   # ============================================================================
 
   stories-loop:
     type: loop
-    description: "循环生成用户故事，直到用户确认"
+    description: "循环生成用户故事，直到 agent 判定完成"
     depends_on: [clarification-summary]
     max_iterations: 10
-    exit_condition: |
-      $vars.stories_confirmed == "true"
     on_exit:
       message: "用户故事确认完成，共 $iteration 轮修订"
 
@@ -571,13 +602,19 @@ nodes:
           ### 需求规格
           $clarification-summary.output.summary
 
+          ### Workspace 拓扑
+          $vars.workspace_topology
+
+          用户上轮回复: $last_approval_output
+
           $vars.stories_feedback
 
-          请生成/修订用户故事，格式:
+          请生成/修订用户故事，每个故事需标注所属项目。格式:
 
           ```markdown
           ## Story-{ID}: {标题}
 
+          **项目**: {所属项目名}
           **As a** {角色}
           **I want** {功能}
           **So that** {价值}
@@ -593,16 +630,28 @@ nodes:
           **Estimate:** {S/M/L/XL}
           ```
 
+          如果用户已充分确认所有故事，在输出末尾标记:
+          ===STORIES_COMPLETE===
+
           输出目录: $vars.output_dir/stories/
 
         on_success:
           write_file: "$vars.output_dir/stories/stories-round-$iteration.md"
 
-      # --- 4b. 用户确认故事 ---
+      # --- 4b. 检查是否完成 ---
+      stories-check-complete:
+        type: condition
+        description: "检查 agent 是否判定故事生成完成"
+        depends_on: [stories-swarm]
+        if: "$stories-swarm.output contains '===STORIES_COMPLETE==='"
+        then: break
+        else: continue
+
+      # --- 4c. 用户确认故事 ---
       stories-approval:
         type: approval
         description: "用户确认用户故事"
-        depends_on: [stories-swarm]
+        depends_on: [stories-check-complete]
         prompt: |
           ## 用户故事 (第 $iteration 轮)
 
@@ -610,18 +659,18 @@ nodes:
 
           共 $stories-swarm.output.story_count 个故事。
 
-          - 输入 "confirmed" 确认所有故事
-          - 输入修改意见继续修订
-        auto_answers: []  # 需要用户真实确认
+          请审查用户故事：
+          A) 确认所有故事，进入技术规范设计
+          B) 部分故事需要修改（请指出具体故事编号和修改意见）
+          C) 需要新增故事（请描述需求）
+
+          注意：如选择 A 但有项目维度的故事缺失，将在 task-planning 阶段补充。
         on_success:
-          evaluate: |
-            if ($last_output contains "confirmed") {
-              set stories_confirmed = "true"
-              write $vars.output_dir/stories/stories.md = $stories-swarm.output.content
-              set stories_file = "$vars.output_dir/stories/stories.md"
-            } else {
-              set stories_feedback = $last_output
-            }
+          set:
+            stories_feedback: "$last_output"
+          write_file: "$vars.output_dir/stories/stories.md"
+          set:
+            stories_file: "$vars.output_dir/stories/stories.md"
 
   # ============================================================================
   # 阶段 5: SPEC-DESIGN — 技术规范设计
@@ -693,7 +742,11 @@ nodes:
       ### 确认的故事列表
       $vars.stories_file (内容)
 
+      ### Workspace 拓扑
+      $vars.workspace_topology
+
       请从你的专业角度产出技术设计文档。
+      重点关注跨项目服务链：哪些变更涉及多个项目，接口如何协调。
       所有文档写入: $vars.output_dir/spec/
 
     on_success:
@@ -719,11 +772,11 @@ nodes:
       - 前端设计: `$vars.output_dir/spec/frontend-design.md`
       - API 设计: `$vars.output_dir/spec/api-design.md`
       - 安全评审: `$vars.output_dir/spec/security-review.md`
+      - 跨项目服务链: `$vars.output_dir/spec/cross-project-chains.md`
 
-      是否批准此技术规范？
-    auto_answers:
-      - question: "是否批准此技术规范？"
-        answer: "yes, approved"
+      请审查技术规范：
+      A) 批准，进入任务拆分
+      B) 需要调整（请说明具体问题）
     on_error: notify_and_pause
 
   # ============================================================================
@@ -787,11 +840,17 @@ nodes:
       ### 技术规范索引
       $spec-design.output.summary
 
-      请协作产出任务计划，格式:
+      ### Workspace 拓扑
+      $vars.workspace_topology
+
+      请协作产出任务计划。每个任务需标注所属项目，ID 格式为 task-{X}-{Y}-{project}-{role}.md。
+
+      格式:
 
       ```yaml
       tasks:
-        - id: task-001
+        - id: task-1-1-shared-backend
+          project: shared
           title: "搭建项目基础结构"
           type: setup
           depends_on: []
@@ -804,10 +863,11 @@ nodes:
             - "项目可以 pnpm build 成功"
             - "所有 lint 检查通过"
 
-        - id: task-002
+        - id: task-1-2-engine-backend
+          project: engine
           title: "实现用户认证 API"
           type: feature
-          depends_on: [task-001]
+          depends_on: [task-1-1-shared-backend]
           assignee: backend
           estimate: L
           files:
@@ -819,8 +879,10 @@ nodes:
 
       要求:
       - 每个任务应可独立验证
-      - 依赖关系清晰，支持拓扑排序
+      - 明确标注所属项目
+      - 跨项目依赖关系清晰，支持拓扑排序
       - 估算使用 T-shirt sizing (S/M/L/XL)
+      - consensus.md 应按项目分组列出变更
 
       输出目录: $vars.output_dir/tasks/
 
@@ -840,13 +902,12 @@ nodes:
 
       文件: `$vars.tasks_file`
 
-      共 $task-planning.output.task_count 个任务。
+      共 $task-planning.output.task_count 个任务，分布在 $task-planning.output.project_count 个项目中。
       预估总工作量: $task-planning.output.total_estimate
 
-      是否批准此任务计划并开始执行？
-    auto_answers:
-      - question: "是否批准此任务计划并开始执行？"
-        answer: "yes, start execution"
+      请审查任务计划：
+      A) 批准，开始执行
+      B) 需要调整（请说明问题）
     on_error: notify_and_pause
 
   # ============================================================================
@@ -884,6 +945,7 @@ nodes:
           if idx < len(tasks):
               t = tasks[idx]
               print(f\"id: {t['id']}\")
+              print(f\"project: {t.get('project', 'unknown')}\")
               print(f\"title: {t['title']}\")
               print(f\"type: {t['type']}\")
               print(f\"depends_on: {t.get('depends_on', [])}\")
@@ -915,6 +977,13 @@ nodes:
           ### 当前任务
           $vars.current_task
 
+          ### 所属项目
+          此任务属于项目: $vars.current_task.project
+          请先切换到该项目目录执行。
+
+          ### Workspace 拓扑
+          $vars.workspace_topology
+
           ### 技术规范
           参见: $vars.spec_file
 
@@ -922,10 +991,11 @@ nodes:
           $vars.completed_tasks
 
           请实现此任务:
-          1. 阅读相关设计文档
-          2. 实现代码
+          1. 阅读相关设计文档和项目的 CLAUDE.md
+          2. 在正确的项目目录中实现代码
           3. 编写测试
           4. 确保所有 acceptance criteria 满足
+          5. 如涉及跨项目变更，确保接口一致性
 
           完成后输出修改的文件列表和简要说明。
 
@@ -1062,15 +1132,21 @@ nodes:
           ### 失败的任务
           $vars.current_task
 
+          ### 所属项目
+          项目: $vars.current_task.project
+
           ### 验证结果
           $vars.verify_result
 
           ### 执行日志
           参见: $vars.output_dir/execution/task-$vars.current_task_index-log.md
 
+          ### Workspace 拓扑
+          $vars.workspace_topology
+
           请分析失败原因并修复:
           1. 分析错误日志，定位根因
-          2. 修复代码
+          2. 修复代码（在正确的项目目录中）
           3. 确保修复不引入新问题
           4. 重新通过所有验证
 
@@ -1091,16 +1167,16 @@ nodes:
           ## ⚠️ 修复重试已耗尽
 
           **任务**: $vars.current_task
+          **项目**: $vars.current_task.project
           **重试次数**: 3/3
           **最后错误**: $vars.verify_result
 
           此任务经过 3 次修复尝试仍然失败。需要人工介入。
 
-          选项:
-          - 输入修复指导，继续重试
-          - 输入 "skip" 跳过此任务
-          - 输入 "abort" 终止整个流水线
-        auto_answers: []  # 需要用户真实介入
+          请选择操作：
+          A) 提供修复指导，继续重试
+          B) 跳过此任务，继续下一个
+          C) 终止整个流水线
         on_success:
           evaluate: |
             if ($last_output contains "skip") {
@@ -1280,9 +1356,10 @@ nodes:
       - **产出目录**: `$vars.output_dir`
 
       所有阶段执行完毕。XZF Pipeline 完成。
-    auto_answers:
-      - question: "确认发布结果"
-        answer: "done"
+
+      请确认发布结果：
+      A) 确认完成
+      B) 需要补充操作（请说明）
     on_success:
       message: "XZF Pipeline 完成!"
 ```
@@ -1343,12 +1420,13 @@ on_success:
   set:
     branch: "$last_output"           # 使用节点输出
     output_dir: "$vars.output_base/$vars.branch"  # 使用已有变量
+    workspace_topology: "$last_output"  # agent 节点输出
 
-# 方式 2: evaluate — 条件表达式设置变量
-evaluate: |
-  if ($last_output contains "done") {
-    set clarification_done = "true"
-  }
+# 方式 2: on_success + write_file — 写入文件同时设置变量
+on_success:
+  write_file: "$vars.output_dir/spec/architecture.md"
+  set:
+    spec_file: "$vars.output_dir/spec/DESIGN-INDEX.md"
 
 # 方式 3: bash 输出 + on_success.set
 # bash 命令输出到 stdout，通过 $last_output 捕获
@@ -1356,11 +1434,11 @@ evaluate: |
 
 ---
 
-## 4. Approval 节点与 Auto Answers
+## 4. Approval 节点与显式决策
 
 ### 4.1 工作原理
 
-Approval 节点是流水线中的**门控点**（gate），暂停执行等待确认。通过 `auto_answers` 可以实现无人值守。
+Approval 节点是流水线中的**门控点**（gate），暂停执行等待用户做出明确选择。每个 approval 节点提供结构化的选项（A/B/C），引导用户做出具体决策。
 
 ```yaml
 approval-node:
@@ -1368,43 +1446,35 @@ approval-node:
   prompt: |
     ## 确认信息
     这里是展示给用户的信息...
-  auto_answers:
-    - question: "是否继续？"    # 匹配 prompt 中的问题
-      answer: "yes"             # 自动回答
+
+    请审查并选择：
+    A) 确认，继续执行
+    B) 需要修正（请说明问题）
   on_success:
     message: "已确认"
 ```
 
-### 4.2 Auto Answers 匹配规则
+### 4.2 设计哲学：显式决策优于自动批准
 
-1. **全局 auto_answers** — 定义在顶层，所有 approval 节点继承
-2. **节点级 auto_answers** — 覆盖全局定义
-3. **空 auto_answers `[]`** — 强制等待用户输入（如澄清、故事确认）
+**不使用 auto_answers**。所有 approval 节点都要求用户做出明确选择，原因：
 
-```yaml
-# 全局: 自动批准常规确认
-auto_answers:
-  - question: "是否继续执行？"
-    answer: "yes"
-
-# 节点级: 覆盖为需要真实输入
-clarification-approval:
-  type: approval
-  auto_answers: []  # 强制等待用户输入
-```
+1. **避免盲目通过**: 自动批准可能跳过需要人工审查的关键节点
+2. **用户控制权**: 用户始终可以审查每个阶段的产出
+3. **可追溯**: 每次选择都有明确的用户意图记录
+4. **安全边界**: 防止在异常情况下自动推进到下一阶段
 
 ### 4.3 本流水线的 Approval 策略
 
-| 节点 | Auto Answer | 理由 |
-|------|------------|------|
-| `init-confirm` | ✅ 自动 "yes" | 常规确认，无需人工 |
-| `idea-confirm` | ✅ 自动 "yes" | Idea 分析可直接进入澄清 |
-| `clarification-approval` | ❌ 等待用户 | 需要真实回答澄清问题 |
-| `stories-approval` | ❌ 等待用户 | 需要真实确认用户故事 |
-| `spec-confirm` | ✅ 自动 "yes, approved" | 技术规范可后续调整 |
-| `task-confirm` | ✅ 自动 "yes" | 任务计划可执行中调整 |
-| `fix-exhausted` | ❌ 等待用户 | 修复耗尽必须人工介入 |
-| `ship-confirm` | ✅ 自动 "done" | 发布结果仅通知 |
+| 节点 | 选项 | 理由 |
+|------|------|------|
+| `init-confirm` | A) 继续 / B) 修正 | 确认环境和拓扑扫描结果 |
+| `idea-confirm` | A) 进入澄清 / B) 补充 / C) 重新生成 | 审查 6 专家分析质量 |
+| `clarification-approval` | A) 继续讨论 / B) 进入下一阶段 / C) 补充话题 | 用户回答澄清问题 |
+| `stories-approval` | A) 确认 / B) 修改 / C) 新增 | 审查用户故事完整性 |
+| `spec-confirm` | A) 批准 / B) 调整 | 审查技术规范和跨项目服务链 |
+| `task-confirm` | A) 开始执行 / B) 调整 | 审查按项目分组的任务计划 |
+| `fix-exhausted` | A) 修复指导 / B) 跳过 / C) 终止 | 修复耗尽时必须人工介入 |
+| `ship-confirm` | A) 确认完成 / B) 补充操作 | 确认发布结果 |
 
 ### 4.4 Notify 集成
 
@@ -1427,71 +1497,90 @@ on_error:
 my-loop:
   type: loop
   max_iterations: 20          # 安全上限，防止无限循环
-  exit_condition: |           # 退出条件表达式
-    $vars.some_flag == "true"
   on_exit:
     message: "循环结束，共 $iteration 轮"
 
   nodes:
     # 循环体内的节点（按 depends_on 顺序执行）
-    step-a:
-      type: bash
+    step-swarm:
+      type: swarm
       ...
-    step-b:
+    check-complete:
+      type: condition
+      depends_on: [step-swarm]
+      if: "$step-swarm.output contains '===COMPLETE==='"
+      then: break
+      else: continue
+    step-approval:
       type: approval
-      depends_on: [step-a]
+      depends_on: [check-complete]
       ...
 ```
 
-### 5.2 退出条件评估时机
+### 5.2 退出机制：Agent 信号 + Condition 节点
 
-- 每轮迭代的**末尾**评估 `exit_condition`
-- 如果条件为 `true`，退出循环并执行 `on_exit`
-- 如果达到 `max_iterations`，强制退出
+循环退出采用 **agent 信号 + condition 节点** 模式，而非 `exit_condition` 表达式：
+
+1. **Swarm/Agent 节点**在判定完成时，在输出末尾插入特定信号标记（如 `===CLARIFICATION_COMPLETE===`）
+2. **Condition 节点**检查输出是否包含该信号：
+   - 包含信号 → `break`（退出循环）
+   - 未包含 → `continue`（继续到 approval 节点，获取用户输入后进入下一轮）
+3. **Approval 节点**在 condition 之后，仅在未退出时执行
+
+优势：
+- 退出决策由 AI Agent 做出，而非依赖用户输入特定关键词
+- 更智能的完成判定（Agent 可以综合多维度判断）
+- 用户始终有选择权（approval 节点提供结构化选项）
 
 ### 5.3 本流水线的循环设计
 
 #### Clarification Loop (阶段 3)
 
 ```
-┌─────────────────────────────────────────────────┐
-│  clarification-loop (max 20 轮)                  │
-│                                                  │
-│  ┌─────────────────┐    ┌──────────────────┐    │
-│  │ clarification-  │──→ │ clarification-   │    │
-│  │ swarm           │    │ approval         │    │
-│  │ (生成澄清问题)    │    │ (用户回答问题)     │    │
-│  └─────────────────┘    └──────────────────┘    │
-│                                    │             │
-│                              用户输入 "done"?     │
-│                              ├─ Yes → exit       │
-│                              └─ No  → 下一轮      │
-└─────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────┐
+│  clarification-loop (max 20 轮)                           │
+│                                                           │
+│  ┌─────────────────┐    ┌────────────────┐               │
+│  │ clarification-  │──→ │ check-complete │               │
+│  │ swarm           │    │ (condition)    │               │
+│  │ (生成澄清问题)    │    └───────┬────────┘               │
+│  │ + 完成信号判定    │         ┌───┴───┐                  │
+│  └─────────────────┘    break│       │continue           │
+│                              │  ┌────┴─────────────┐     │
+│                              │  │ clarification-   │     │
+│                              │  │ approval         │     │
+│                              │  │ (用户选择 A/B/C)   │     │
+│                              │  └──────────────────┘     │
+│                              │         → 下一轮           │
+└──────────────────────────────┴───────────────────────────┘
 ```
 
-- **退出条件**: `$vars.clarification_done == "true"`
-- **触发**: 用户在 approval 节点输入包含 "done" 的文本
+- **退出信号**: `===CLARIFICATION_COMPLETE===`
+- **判定者**: clarification-swarm（agent 综合需求清晰度判断）
 - **安全上限**: 20 轮
 
 #### Stories Loop (阶段 4)
 
 ```
-┌─────────────────────────────────────────────────┐
-│  stories-loop (max 10 轮)                        │
-│                                                  │
-│  ┌─────────────────┐    ┌──────────────────┐    │
-│  │ stories-swarm   │──→ │ stories-approval │    │
-│  │ (debate 2轮)    │    │ (用户确认故事)     │    │
-│  └─────────────────┘    └──────────────────┘    │
-│                                    │             │
-│                              用户输入 "confirmed"?│
-│                              ├─ Yes → exit       │
-│                              └─ No  → 下一轮      │
-└─────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────┐
+│  stories-loop (max 10 轮)                                 │
+│                                                           │
+│  ┌─────────────────┐    ┌────────────────┐               │
+│  │ stories-swarm   │──→ │ stories-check- │               │
+│  │ (debate 2轮)    │    │ complete       │               │
+│  │ + 完成信号判定    │    └───────┬────────┘               │
+│  └─────────────────┘         ┌───┴───┐                  │
+│                          break│       │continue           │
+│                              │  ┌────┴─────────────┐     │
+│                              │  │ stories-approval │     │
+│                              │  │ (用户选择 A/B/C)   │     │
+│                              │  └──────────────────┘     │
+│                              │         → 下一轮           │
+└──────────────────────────────┴───────────────────────────┘
 ```
 
-- **退出条件**: `$vars.stories_confirmed == "true"`
-- **触发**: 用户在 approval 节点输入包含 "confirmed" 的文本
+- **退出信号**: `===STORIES_COMPLETE===`
+- **判定者**: stories-swarm（agent 综合故事完整性和用户确认判断）
 - **安全上限**: 10 轮
 
 #### Execution Loop (阶段 7)
@@ -1502,6 +1591,8 @@ my-loop:
 │                                                               │
 │  ┌──────────┐   ┌──────────┐   ┌──────────┐                 │
 │  │ get-task │──→│ execute  │──→│ verify   │                 │
+│  │ (+project)│  │ (+project │  │ (build/  │                 │
+│  │           │   │  context) │  │  test)   │                 │
 │  └──────────┘   └──────────┘   └──────────┘                 │
 │                                       │                       │
 │                              ┌────────┴────────┐             │
@@ -1515,14 +1606,15 @@ my-loop:
 │                     │              ├─ Yes → fix-task (swarm) │
 │                     │              │    → goto verify        │
 │                     │              └─ No  → fix-exhausted   │
-│                     │                       (approval)       │
+│                     │                       (approval A/B/C) │
 └──────────────────────────────────────────────────────────────┘
 ```
 
-- **退出条件**: `$vars.current_task_index >= $vars.total_tasks`
+- **退出条件**: `$vars.current_task_index >= $vars.total_tasks`（任务计数器）
 - **触发**: 所有任务执行完毕（通过或被跳过）
 - **安全上限**: 50 个任务
 - **修复循环**: 每个任务最多 3 次修复重试
+- **项目上下文**: 每个任务标注所属项目，执行 agent 在正确目录中操作
 
 ### 5.4 Loop 内的 `$iteration` 变量
 
@@ -1689,46 +1781,48 @@ config:
 
 ```
 init-branch ──┐
-              ├── init-dirs ──┐
-init-remote ──┘               ├── init-confirm ──→ idea ──→ idea-confirm
-                              │                              │
-                              │                              ▼
-                              │                    clarification-loop
-                              │                    ├── clarification-swarm
-                              │                    └── clarification-approval (loop)
-                              │                              │
-                              │                              ▼
-                              │                    clarification-summary
-                              │                              │
-                              │                              ▼
-                              │                    stories-loop
-                              │                    ├── stories-swarm
-                              │                    └── stories-approval (loop)
-                              │                              │
-                              │                              ▼
-                              │                    spec-design ──→ spec-confirm
-                              │                                        │
-                              │                                        ▼
-                              │                    task-planning ──→ task-confirm
-                              │                                         │
-                              │                                         ▼
-                              │                    execution-loop
-                              │                    ├── get-current-task
-                              │                    ├── execute-task
-                              │                    ├── verify-task
-                              │                    ├── check-verification
-                              │                    │   ├── task-passed (PASS)
-                              │                    │   └── fix-task → verify (FAIL)
-                              │                    └── fix-exhausted (3x FAIL)
-                              │                              │
-                              │                              ▼
-                              │                    ship-detect
-                              │                    ├── ship-github
-                              │                    ├── ship-gitlab
-                              │                    └── ship-local
-                              │                              │
-                              │                              ▼
-                              └────────────────────── ship-confirm
+              ├── init-dirs ── init-workspace ──┐
+init-remote ──┘                                 ├── init-confirm ──→ idea ──→ idea-confirm
+                                                │                              │
+                                                │                              ▼
+                                                │                    clarification-loop
+                                                │                    ├── clarification-swarm
+                                                │                    ├── check-complete (break/continue)
+                                                │                    └── clarification-approval (loop)
+                                                │                              │
+                                                │                              ▼
+                                                │                    clarification-summary
+                                                │                              │
+                                                │                              ▼
+                                                │                    stories-loop
+                                                │                    ├── stories-swarm
+                                                │                    ├── stories-check-complete (break/continue)
+                                                │                    └── stories-approval (loop)
+                                                │                              │
+                                                │                              ▼
+                                                │                    spec-design ──→ spec-confirm
+                                                │                                        │
+                                                │                                        ▼
+                                                │                    task-planning ──→ task-confirm
+                                                │                                         │
+                                                │                                         ▼
+                                                │                    execution-loop
+                                                │                    ├── get-current-task (+project)
+                                                │                    ├── execute-task (+project ctx)
+                                                │                    ├── verify-task
+                                                │                    ├── check-verification
+                                                │                    │   ├── task-passed (PASS)
+                                                │                    │   └── fix-task → verify (FAIL)
+                                                │                    └── fix-exhausted (3x FAIL)
+                                                │                              │
+                                                │                              ▼
+                                                │                    ship-detect
+                                                │                    ├── ship-github
+                                                │                    ├── ship-gitlab
+                                                │                    └── ship-local
+                                                │                              │
+                                                │                              ▼
+                                                └────────────────────── ship-confirm
 ```
 
 ### 8.2 并行节点
@@ -1753,7 +1847,17 @@ check-verification (condition)
   ├── PASS → task-passed
   └── FAIL → task-failed
               ├── retry < 3 → fix-task → goto verify-task
-              └── retry ≥ 3 → fix-exhausted (approval)
+              └── retry ≥ 3 → fix-exhausted (approval A/B/C)
+
+clarification-loop 内部:
+  check-complete (condition)
+    ├── break → 退出循环，进入 clarification-summary
+    └── continue → clarification-approval → 下一轮
+
+stories-loop 内部:
+  stories-check-complete (condition)
+    ├── break → 退出循环，进入 spec-design
+    └── continue → stories-approval → 下一轮
 ```
 
 ---
@@ -1774,30 +1878,33 @@ check-verification (condition)
 
 ```
 .octopus/xzf/{branch}/
+├── workspace-topology.md               # Workspace 项目拓扑（init-workspace 产出）
 ├── idea/
 │   └── idea.md                          # 6 专家需求分析
 ├── clarification/
-│   ├── questions-round-1.md             # 第 1 轮澄清问题
+│   ├── questions-round-1.md             # 第 1 轮澄清问题（含 Research 项）
 │   ├── questions-round-2.md             # 第 2 轮澄清问题
 │   ├── ...
-│   └── clarified-spec.md               # 最终需求规格
+│   └── clarified-spec.md               # 最终需求规格（按项目分组 + 跨项目依赖）
 ├── stories/
-│   ├── stories-round-1.md              # 第 1 轮用户故事
+│   ├── stories-round-1.md              # 第 1 轮用户故事（标注所属项目）
 │   ├── stories-round-2.md              # 第 2 轮用户故事
 │   └── stories.md                      # 最终确认的用户故事
 ├── spec/
 │   ├── DESIGN-INDEX.md                 # 设计文档索引
 │   ├── architecture.md                 # 架构设计
 │   ├── functional-spec.md             # 功能规格
+│   ├── cross-project-chains.md        # 跨项目服务链
 │   ├── test-strategy.md               # 测试策略
 │   ├── frontend-design.md             # 前端设计
 │   ├── api-design.md                  # API 设计
 │   └── security-review.md             # 安全评审
 ├── tasks/
-│   └── tasks.md                        # 任务计划
+│   ├── tasks.md                        # 任务计划（按项目分组，ID: task-{X}-{Y}-{project}-{role}）
+│   └── consensus.md                    # 专家共识（按项目列出变更）
 ├── execution/
-│   ├── task-0-log.md                   # 任务 0 执行日志
-│   ├── task-1-log.md                   # 任务 1 执行日志
+│   ├── task-1-1-shared-backend-log.md  # 任务执行日志（含项目标识）
+│   ├── task-1-2-engine-backend-log.md  # 任务执行日志
 │   ├── ...
 │   └── completed.md                    # 已完成任务清单
 ├── ship/

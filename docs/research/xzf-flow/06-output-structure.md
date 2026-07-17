@@ -4,9 +4,10 @@
 
 ```
 .octopus/xzf/{branch}/
+├── workspace-topology.md
 ├── 01-idea.md
 ├── 02-clarification/
-│   └── questions.md
+│   └── questions.md                   # 含 Research 项类别
 ├── 03-stories/
 │   ├── summary.md
 │   └── technical-guide.md
@@ -18,7 +19,7 @@
 │   └── spec-{NNN}-{name}/
 │       ├── consensus.md
 │       ├── verify-{X}-{Y}.md
-│       ├── task-{X}-{Y}-{role}.md
+│       ├── task-{X}-{Y}-{project}-{role}.md
 │       └── spec-test.md
 ├── 06-execution/
 │   └── spec-{NNN}-{name}/
@@ -33,6 +34,36 @@
 ```
 
 ## 2. 各文件模板
+
+### 2.0 workspace-topology.md
+
+```markdown
+# Workspace 拓扑
+
+## 项目列表
+| 项目 | 技术栈 | 主要模块 | 端口 |
+|------|--------|---------|------|
+| project-web | Next.js 14 | 前端页面、API routes | 3000 |
+| project-service | Go + gRPC | 业务服务、RPC 接口 | 50051 |
+| shared-lib | TypeScript | 类型定义、工具函数 | - |
+
+## 项目间通信
+| 源 | 目标 | 方式 | 说明 |
+|----|------|------|------|
+| project-web | project-service | HTTP REST → gRPC gateway | 前端调用后端 |
+| project-service | shared-lib | import | 使用共享类型 |
+
+## 项目约定
+### project-web
+- 框架: Next.js 14 App Router
+- 样式: Tailwind CSS
+- 状态管理: Zustand
+
+### project-service
+- 框架: Go + gRPC
+- 数据库: PostgreSQL
+- ORM: GORM
+```
 
 ### 2.1 01-idea.md
 
@@ -93,6 +124,17 @@
 - 测试环境: {已明确/待补充}
 - 建议: {可以结束/需要继续}
 
+## Research 项（需要专家深入理解的内容）
+
+### R-1: Codebase Research
+- **范围**: {哪些模块/文件需要专家重点研究}
+- **目的**: {为什么需要理解这部分}
+- **用户补充**: {用户可以提供的上下文/文档链接}
+
+### R-2: 技术调研
+- **范围**: {需要调研的技术方案/第三方库}
+- **目的**: {为什么要调研}
+
 ---
 ## Round 2 — {date}
 {追加的澄清问题和用户回复}
@@ -115,6 +157,7 @@
 ### 故事 1: {标题}
 - **角色**: {谁}
 - **目标**: {要达成什么}
+- **服务链**: {project-web (HTTP)} → {project-service (RPC)}
 - **路径**: {从头到尾的操作流程概述}
 - **完成标准**: {怎么算完成}
 - **对应 Spec**: spec-{NNN}
@@ -146,9 +189,9 @@
 - 类型: {Redis/Memcached/无}
 - 连接: {host:port}
 
-### 项目启动
-- 前端: {command} → port {N}
-- 后端: {command} → port {N}
+### 项目启动（per project）
+- {project-web}: {command} → port {N}
+- {project-service}: {command} → port {N}
 - 环境变量: {list}
 
 ## E2E 测试方法
@@ -177,27 +220,40 @@ Refer to 05-spec-dsl.md for the complete DSL format. Just mention the reference 
 ## 概述
 {一段话描述这个 spec 要实现什么}
 
-## DB 变更
-| 操作 | 表名 | 字段/变更 | 备注 |
-|------|------|----------|------|
+## 涉及项目
+| 项目 | 职责 | 通信方式 |
+|------|------|---------|
+| {project-web} | HTTP 层、前端页面 | → project-service via REST |
+| {project-service} | 业务逻辑、RPC 接口 | ← project-web |
 
-## 文件变更
+## DB 变更
+| 项目 | 操作 | 表名 | 字段/变更 | 备注 |
+|------|------|------|----------|------|
+
+## 文件变更（per project）
+### {project-web}
 | 操作 | 文件路径 | 描述 |
 |------|---------|------|
 | 新增 | | |
 | 修改 | | |
-| 删除 | | |
+
+### {project-service}
+| 操作 | 文件路径 | 描述 |
+|------|---------|------|
+| 新增 | | |
+| 修改 | | |
 
 ## 共用约定
 - 错误码格式: {format}
 - API 响应格式: { data, error, meta }
 - 认证方式: {method}
 - 命名规范: {convention}
+- 项目间接口契约: {API/RPC interface definition}
 
 ## 并行开发边界
-- 后端独立: {files}
-- 前端独立: {files}
-- 共用契约: {API interface definition}
+- {project-web}: {独立文件列表}
+- {project-service}: {独立文件列表}
+- 共用契约: {跨项目接口定义，需先对齐}
 ```
 
 ### 2.7 05-plans/spec-{NNN}-{name}/verify-{X}-{Y}.md
@@ -241,10 +297,13 @@ test('{描述}', async () => {
 - [ ] 覆盖率 ≥ 80%
 ```
 
-### 2.8 05-plans/spec-{NNN}-{name}/task-{X}-{Y}-{role}.md
+### 2.8 05-plans/spec-{NNN}-{name}/task-{X}-{Y}-{project}-{role}.md
 
 ```markdown
-# Task-{X}-{Y}-{Role}: {标题}
+# Task-{X}-{Y}-{Project}-{Role}: {标题}
+
+## 项目
+{project-name}（工作目录: projects/{project-name}/）
 
 ## 任务描述
 {简要描述做什么}
@@ -265,7 +324,7 @@ test('{描述}', async () => {
 参照 verify-{X}-{Y}.md
 
 ## 并行说明
-{X 相同的 task 可以并行开发，说明独立性}
+{X 相同的 task 可以并行开发，不同 project 的 task 天然独立}
 ```
 
 ### 2.9 05-plans/spec-{NNN}-{name}/spec-test.md
@@ -359,7 +418,7 @@ test('{描述}', async () => {
 ## 基本信息
 - **时间**: {ISO timestamp}
 - **Spec**: spec-{NNN}-{name}
-- **Task**: task-{X}-{Y}-{role}
+- **Task**: task-{X}-{Y}-{project}-{role}
 - **Verify**: verify-{X}-{Y}
 - **重试次数**: 3/3
 

@@ -41,6 +41,18 @@ Stage 6 执行:  前端 + 后端 (agent 节点，非 swarm)
 
 ---
 
+## Workspace 拓扑感知
+
+所有专家角色在参与讨论前，必须先读取 workspace-topology.md 了解：
+- 当前 workspace 包含哪些项目
+- 各项目的技术栈和主要模块
+- 项目间通信方式（HTTP/RPC/消息队列/共享库）
+- 各项目的关键约定
+
+这确保专家在讨论时能准确引用具体项目的代码和约定，而非泛泛而谈。
+
+---
+
 ## 通用 frontmatter 格式
 
 所有 6 个角色共用以下 frontmatter 结构：
@@ -150,6 +162,9 @@ color: [颜色名或 hex 值]
 - 定义模块边界和依赖图
 - 撰写 ADR（Architecture Decision Record）
 - 评估每个 spec 对现有架构的影响范围
+- 在 Spec 设计中标注每个操作步骤的 PROJECT 归属
+- 识别跨项目的服务链（service chain）
+- 确保接口契约在项目间一致
 
 ### 计划阶段（Stage 5）
 - 撰写 consensus.md 中的技术决策部分
@@ -188,6 +203,9 @@ color: [颜色名或 hex 值]
 - 外部服务：...
 - 中间件：...
 - 第三方库：...
+
+### Codebase Research 建议
+- 需要重点研究的代码区域：[该角色视角下需要研究的项目/模块，如 project-service 的 RPC 接口定义和 project-web 的 API routes 结构]
 ```
 
 ### Spec 设计输出
@@ -314,6 +332,9 @@ module-c ← module-a（被依赖）
 - 审查每个 spec 是否覆盖了用户故事中的所有关键场景
 - 检查用户体验完整性：happy path + error path + edge case
 - 确认验收标准是否可执行
+- 在 Spec 设计中标注每个操作步骤的 PROJECT 归属
+- 识别跨项目的服务链（service chain）
+- 确保接口契约在项目间一致
 
 ### 计划阶段（Stage 5）
 - 确保任务实现顺序符合用户价值优先级
@@ -353,6 +374,9 @@ module-c ← module-a（被依赖）
 - [ ] 用户注册/登录流程完整？
 - [ ] 核心操作流程无断点？
 - [ ] 错误场景有引导？
+
+### Codebase Research 建议
+- 需要重点研究的代码区域：[该角色视角下需要研究的用户流程相关代码，如各项目的用户入口、核心业务页面路由和交互逻辑]
 ```
 
 ### 故事总汇输出
@@ -487,6 +511,9 @@ module-c ← module-a（被依赖）
 - 用 GIVEN/WHEN/THEN 格式定义断言清单
 - 确保验证覆盖 happy path + error path + edge case
 - 设计 UI 验证点（哪些页面需要截图对比）
+- 在 Spec 设计中标注每个操作步骤的 PROJECT 归属
+- 识别跨项目的服务链（service chain）
+- 确保接口契约在项目间一致
 
 ### 计划阶段（Stage 5）
 - 生成 verify-x-y.md：每个验证步骤的详细操作说明
@@ -531,6 +558,9 @@ module-c ← module-a（被依赖）
 - 测试数据：[API 创建 / DB 直接插入 / fixture]
 - 截图目录：[路径]
 - 报告格式：[HTML / JSON / ...]
+
+### Codebase Research 建议
+- 需要重点研究的代码区域：[各项目的测试框架配置、CI/CD 流水线、测试脚本和 fixture 结构]
 ```
 
 ### Spec 设计输出
@@ -668,6 +698,9 @@ module-c ← module-a（被依赖）
 - 定义交互流程：用户操作 → 系统响应 的完整映射
 - 设计组件结构：页面由哪些组件组成、组件间数据流
 - 定义状态管理：哪些状态在组件内、哪些在全局 store
+- 在 Spec 设计中标注每个操作步骤的 PROJECT 归属
+- 识别跨项目的服务链（service chain）
+- 确保接口契约在项目间一致
 
 ### 计划阶段（Stage 5）
 - 拆解前端任务：按组件/页面/状态管理粒度拆分
@@ -688,6 +721,25 @@ module-c ← module-a（被依赖）
 6. **状态最小化** — 能从 props 计算的不存 state，能用 local state 的不放全局 store
 
 ## 在本工作流中的输出规范
+
+### 澄清阶段输出
+
+```markdown
+## UI/UX 需求清单
+
+### 页面/组件需求
+| 页面/组件 | 功能描述 | 交互复杂度 |
+|---------|---------|-----------|
+| ... | ... | 低/中/高 |
+
+### 设计约束
+- UI 框架：[React/Vue/Next.js/...]
+- 移动端适配：[是/否]
+- 设计稿：[有/无]
+
+### Codebase Research 建议
+- 需要重点研究的代码区域：[各项目的前端组件结构、设计系统、状态管理方案和路由配置]
+```
 
 ### Spec 设计输出
 
@@ -843,6 +895,9 @@ module-c ← module-a（被依赖）
 - 设计 API 接口定义（method, url, request body, response）
 - 设计 DB Schema 变更（CREATE/ALTER TABLE）
 - 设计错误处理分支（每个操作的失败路径）
+- 在 Spec 设计中标注每个操作步骤的 PROJECT 归属
+- 识别跨项目的服务链（service chain）
+- 确保接口契约在项目间一致
 
 ### 计划阶段（Stage 5）
 - 拆解后端任务：按 Controller → Service → DAO → Migration 分层
@@ -863,6 +918,29 @@ module-c ← module-a（被依赖）
 6. **幂等设计** — 网络重试不应该导致数据重复。写操作要么幂等，要么用唯一约束防止重复
 
 ## 在本工作流中的输出规范
+
+### 澄清阶段输出
+
+```markdown
+## 后端需求清单
+
+### 数据模型
+| 实体 | 关系 | 说明 |
+|------|------|------|
+| ... | ... | ... |
+
+### API 需求
+| 端点 | 方法 | 说明 |
+|------|------|------|
+| ... | ... | ... |
+
+### 性能需求
+- 预期 QPS：[...]
+- P95 响应时间：[...]
+
+### Codebase Research 建议
+- 需要重点研究的代码区域：[各项目的后端服务架构、数据模型定义、API 路由和中间件配置]
+```
 
 ### Spec 设计输出
 
@@ -1048,6 +1126,9 @@ ALTER TABLE orders ADD COLUMN status VARCHAR(20) NOT NULL DEFAULT 'pending';
 - 标注信任边界：哪些地方需要输入验证、认证、授权
 - 进行 STRIDE 威胁分析
 - 建议安全控制措施
+- 在 Spec 设计中标注每个操作步骤的 PROJECT 归属
+- 识别跨项目的服务链（service chain）
+- 确保接口契约在项目间一致
 
 ### 计划阶段（Stage 5）
 - 识别安全相关任务（加密、审计日志、速率限制等）
@@ -1092,6 +1173,9 @@ ALTER TABLE orders ADD COLUMN status VARCHAR(20) NOT NULL DEFAULT 'pending';
 - [ ] GDPR（如涉及欧盟用户）
 - [ ] 等保（如涉及国内用户敏感数据）
 - [ ] PCI DSS（如涉及支付）
+
+### Codebase Research 建议
+- 需要重点研究的代码区域：[各项目的认证实现、安全中间件、权限控制逻辑和敏感数据处理代码]
 ```
 
 ### Spec 设计输出
