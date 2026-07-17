@@ -149,6 +149,73 @@ describe("SwarmExecutor", () => {
       // The model passed to sendQuery for the expert should be "opus"
       expect(expertCall?.model).toBe("opus")
     })
+
+    it("concatenates expert_defaults.skills with expert.skills", async () => {
+      const node = makeNode({
+        expert_defaults: {
+          skills: ["octo-xzf-clarify"],
+        },
+        experts: [
+          { role: "expert-1", prompt: "prompt 1", skills: ["octo-xzf-spec-designer"] },
+        ],
+      })
+
+      const capturedOptions: any[] = []
+      const provider: IAgentProvider = {
+        sendQuery: vi.fn().mockImplementation(async function* (prompt: string, cwd: string, resumeId?: string, opts?: any) {
+          capturedOptions.push(opts)
+          yield { type: "text_delta", content: "output", messageId: "msg-1" } as MessageChunk
+          yield { type: "result", content: "output", tokens: { input: 10, output: 10 }, messageId: "msg-1" } as MessageChunk
+        }),
+        getType: () => "mock",
+      }
+
+      const providers: Record<string, IAgentProvider> = { claude: provider }
+      const executor = new SwarmExecutor(node, pool, { providers, cwd: "/tmp" })
+      await executor.execute()
+
+      const expertCall = capturedOptions.find((o: any) => o.skills?.length > 0)
+      expect(expertCall?.skills).toEqual(["octo-xzf-clarify", "octo-xzf-spec-designer"])
+    })
+
+    it("passes expert_defaults.skills when expert has no skills", async () => {
+      const node = makeNode({
+        expert_defaults: {
+          skills: ["octo-xzf-clarify"],
+        },
+        experts: [
+          { role: "expert-1", prompt: "prompt 1" },
+        ],
+      })
+
+      const capturedOptions: any[] = []
+      const provider: IAgentProvider = {
+        sendQuery: vi.fn().mockImplementation(async function* (prompt: string, cwd: string, resumeId?: string, opts?: any) {
+          capturedOptions.push(opts)
+          yield { type: "text_delta", content: "output", messageId: "msg-1" } as MessageChunk
+          yield { type: "result", content: "output", tokens: { input: 10, output: 10 }, messageId: "msg-1" } as MessageChunk
+        }),
+        getType: () => "mock",
+      }
+
+      const providers: Record<string, IAgentProvider> = { claude: provider }
+      const executor = new SwarmExecutor(node, pool, { providers, cwd: "/tmp" })
+      await executor.execute()
+
+      const expertCall = capturedOptions.find((o: any) => o.skills?.length > 0)
+      expect(expertCall?.skills).toEqual(["octo-xzf-clarify"])
+    })
+
+    it("backward compatible — no skills field works as before", async () => {
+      const node = makeNode()
+
+      const provider = createMockProvider("output")
+      const providers: Record<string, IAgentProvider> = { claude: provider }
+      const executor = new SwarmExecutor(node, pool, { providers, cwd: "/tmp" })
+      const result = await executor.execute()
+
+      expect(result.status).toBe("completed")
+    })
   })
 
   describe("error handling", () => {

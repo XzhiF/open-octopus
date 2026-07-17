@@ -71,6 +71,38 @@ describe("ExpertDefSchema", () => {
       expect(result.data.engine).toBeUndefined()
     }
   })
+
+  it("validates expert with skills field", () => {
+    const result = ExpertDefSchema.safeParse({
+      role: "coder",
+      prompt: "Write code",
+      skills: ["octo-xzf-implementer"],
+    })
+    expect(result.success).toBe(true)
+    if (result.success) {
+      expect(result.data.skills).toEqual(["octo-xzf-implementer"])
+    }
+  })
+
+  it("accepts expert without skills (backward compat)", () => {
+    const result = ExpertDefSchema.safeParse({
+      role: "coder",
+      prompt: "Write code",
+    })
+    expect(result.success).toBe(true)
+    if (result.success) {
+      expect(result.data.skills).toBeUndefined()
+    }
+  })
+
+  it("rejects skills with non-string array elements", () => {
+    const result = ExpertDefSchema.safeParse({
+      role: "coder",
+      prompt: "Write code",
+      skills: [123],
+    })
+    expect(result.success).toBe(false)
+  })
 })
 
 describe("OutputFormatSchema", () => {
@@ -338,6 +370,23 @@ describe("SwarmNodeDefSchema", () => {
       expect(result.data.expert_defaults?.model).toBe("sonnet")
       expect(result.data.expert_defaults?.tools).toEqual(["Read", "Grep"])
       expect(result.data.expert_defaults?.disallowed_tools).toEqual(["Bash"])
+    }
+  })
+
+  it("validates expert_defaults with skills field", () => {
+    const result = SwarmNodeDefSchema.safeParse({
+      type: "swarm",
+      topic: "Review",
+      mode: "review",
+      experts: [{ role: "r", prompt: "review" }],
+      expert_defaults: {
+        model: "sonnet",
+        skills: ["octo-xzf-clarify"],
+      },
+    })
+    expect(result.success).toBe(true)
+    if (result.success) {
+      expect(result.data.expert_defaults?.skills).toEqual(["octo-xzf-clarify"])
     }
   })
 

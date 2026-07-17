@@ -73,6 +73,10 @@ export class SwarmExecutor implements NodeExecutor {
       const baseExperts: ExpertDef[] = (this.node.experts ?? []).map(e => ({
         ...this.node.expert_defaults,
         ...e,
+        skills: [
+          ...(this.node.expert_defaults?.skills ?? []),
+          ...(e.skills ?? []),
+        ],
       }))
 
       // Resolve agent_file content into expert.prompt for all modes
@@ -133,6 +137,7 @@ export class SwarmExecutor implements NodeExecutor {
         prompt: string,
         model?: string,
         engine?: string,
+        skills?: string[],
       ): Promise<{ text: string; model: string; tokens: number; inputTokens: number; outputTokens: number; toolsUsed: string[]; filesChanged: string[] }> => {
         // ponytail: resolve provider per-expert, then resolve tier aliases for that provider
         const p = resolveProviderForExpert(engine)
@@ -141,7 +146,7 @@ export class SwarmExecutor implements NodeExecutor {
         const resolvedModel = this.modelAliasConfig
           ? resolveModelAlias(rawModel, epk, this.modelAliasConfig) ?? rawModel
           : rawModel
-        const result = await collectFromProvider(p, prompt, this.cwd, resolvedModel)
+        const result = await collectFromProvider(p, prompt, this.cwd, resolvedModel, skills)
         budgetTracker.addUsage(result.model, result.inputTokens, result.outputTokens, result.cacheReadTokens, result.cacheCreationTokens, result.costUsd)
         return { text: result.text, model: result.model, tokens: result.tokens, inputTokens: result.inputTokens, outputTokens: result.outputTokens, toolsUsed: result.toolsUsed, filesChanged: result.filesChanged }
       }
@@ -175,6 +180,7 @@ export class SwarmExecutor implements NodeExecutor {
                   role: agent.role,
                   agent_file: undefined, // ponytail: body already loaded into prompt, no re-read
                   prompt: combined,
+                  skills: [...(this.node.expert_defaults?.skills ?? [])],
                 })
                 logLines.push(`[orchestrator] Selected expert: ${agent.role} (${agent.description})`)
               }
@@ -402,6 +408,7 @@ export class SwarmExecutor implements NodeExecutor {
           role: routerExpert.role,
           agent_file: resolved?.agent_file,
           prompt: routerExpert.match_reasoning,
+          skills: [...(this.node.expert_defaults?.skills ?? [])],
         })
         logLines.push(`Dynamic expert added: ${routerExpert.role} (score: ${routerExpert.match_score})`)
       }
@@ -498,6 +505,7 @@ async function collectFromProvider(
   prompt: string,
   cwd: string,
   model?: string,
+  skills?: string[],
 ): Promise<{
   text: string
   tokens: number
@@ -523,6 +531,7 @@ async function collectFromProvider(
   const gen = provider.sendQuery(prompt, cwd, undefined, {
     model,
     systemPrompt: "You are an expert assistant.",
+    skills,
   })
 
   for await (const chunk of gen) {

@@ -192,6 +192,7 @@ export interface NodeDef {
     model?: string
     tools?: string[]
     disallowed_tools?: string[]
+    skills?: string[]
   }
   context_window_rounds?: number
   context_token_budget?: number
@@ -263,6 +264,7 @@ export const NodeSchema: z.ZodType<NodeDef> = z.lazy(() =>
       model: z.string().optional(),
       tools: z.array(z.string()).optional(),
       disallowed_tools: z.array(z.string()).optional(),
+      skills: z.array(z.string()).optional(),
     }).optional(),
     context_window_rounds: z.number().int().positive().optional(),
     context_token_budget: z.number().int().positive().optional(),

@@ -12,6 +12,7 @@ export const ExpertDefSchema = z.object({
   disallowed_tools: z.array(z.string()).optional(),
   model: z.string().optional(),
   engine: z.string().optional(),
+  skills: z.array(z.string()).optional(),
 }).refine(
   (data) => data.agent_file || data.prompt,
   { message: "Expert must declare at least one of agent_file or prompt" }
@@ -110,6 +111,7 @@ export const SwarmNodeDefSchema = z.object({
     model: z.string().optional(),
     tools: z.array(z.string()).optional(),
     disallowed_tools: z.array(z.string()).optional(),
+    skills: z.array(z.string()).optional(),
   }).optional(),
   context_window_rounds: z.number().int().positive().optional(),
   context_token_budget: z.number().int().positive().optional(),

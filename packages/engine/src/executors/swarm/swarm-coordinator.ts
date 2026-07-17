@@ -16,7 +16,7 @@ import { SSE_EXPERT_OUTPUT_PREVIEW_CHARS } from "./swarm-constants"
  * These bridge the strategy layer with the engine infrastructure.
  */
 export interface CoordinatorDeps {
-  llmCall: (prompt: string, model?: string, engine?: string) => Promise<{ text: string; model: string; tokens: number; inputTokens: number; outputTokens: number; toolsUsed: string[]; filesChanged: string[] }>
+  llmCall: (prompt: string, model?: string, engine?: string, skills?: string[]) => Promise<{ text: string; model: string; tokens: number; inputTokens: number; outputTokens: number; toolsUsed: string[]; filesChanged: string[] }>
   hostAgent: HostAgent
   emitSSE?: (event: SwarmSSEEvent) => void
   logSwarmEvent?: (nodeId: string, event: string, data: Record<string, any>) => void
@@ -71,7 +71,7 @@ export class SwarmCoordinator implements SwarmServices {
     })
 
     try {
-      const result = await this.deps.llmCall(prompt, model, expert.engine)
+      const result = await this.deps.llmCall(prompt, model, expert.engine, expert.skills)
 
       this.emit({
         type: "expert_complete",
