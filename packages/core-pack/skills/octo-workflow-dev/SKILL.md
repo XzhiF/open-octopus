@@ -1,13 +1,11 @@
 ---
 name: octo-workflow-dev
-description: Octopus 工作流开发助手 — YAML 工作流设计、Agent-First 节点哲学、子代理委派、Notify/Hook 子系统、外部角色复用（superpowers-zh / agency-agents-zh）、变量系统、跨执行引用、无人值守模式
-category: coding-assistant
-tags: [octopus, workflow, YAML, agent, subagent, notify, hooks, goal, bash, python, condition, approval, loop, swarm, agency-agents-zh, superpowers-zh, schema]
+description: 当用户需要创建、编辑、调试 Octopus YAML 工作流时使用——包括 agent/bash/python/condition/approval/loop/swarm 节点编写、子代理委派、skills 加载、Notify/Hook 配置、变量系统、DAG 编排、Auto Answers 无人值守。
 ---
 
 # Octopus 工作流开发助手
 
-YAML DSL 工作流引擎：7 种节点类型（agent / bash / python / condition / approval / loop / swarm）+ 子代理（agents）+ Notify/Hook 生命周期，通过变量池、表达式求值与 DAG 拓扑实现自动化编排。
+YAML DSL 工作流引擎：7 种节点类型（agent / bash / python / condition / approval / loop / swarm）+ 子代理（agents）+ Skills 技能加载 + Notify/Hook 生命周期，通过变量池、表达式求值与 DAG 拓扑实现自动化编排。
 
 > **Swarm 专家团节点** (`type: swarm`) 的完整指南见 `octo-swarm-dev` skill。
 
@@ -49,21 +47,8 @@ kind: Workflow
 **第一步：查询已安装资源**
 
 ```bash
-# 列出所有已安装 agents（name + group + installPath）
-node -e "
-const d=JSON.parse(require('fs').readFileSync(
-  require('os').homedir()+'/.octopus/resources/registry.json','utf8'));
-d.resources.filter(r=>r.installed&&r.type==='agent')
-  .forEach(r=>console.log(r.group+'/'+r.name+' → '+r.installPath+'/'+r.name+'.md'))
-"
-
-# 列出所有已安装 skills
-node -e "
-const d=JSON.parse(require('fs').readFileSync(
-  require('os').homedir()+'/.octopus/resources/registry.json','utf8'));
-d.resources.filter(r=>r.installed&&r.type==='skill')
-  .forEach(r=>console.log(r.group+'/'+r.name+' → '+r.installPath+'/SKILL.md'))
-"
+# 列出已安装 agents 和 skills
+node -e "const d=JSON.parse(require('fs').readFileSync(require('os').homedir()+'/.octopus/resources/registry.json','utf8'));d.resources.filter(r=>r.installed).forEach(r=>console.log(r.type,r.group+'/'+r.name,r.installPath))"
 ```
 
 **第二步：根据任务选择角色**
@@ -77,6 +62,8 @@ d.resources.filter(r=>r.installed&&r.type==='skill')
 | `mattpocock-skills` | Matt Pocock 工程技能（TDD/调试/架构等） | 节点 skills 加载 |
 | `gstack` | YC 工程团队角色（CEO 审查/安全/QA 等） | agent_file 引用 |
 | `built-in` | Octopus 内置资源 | 直接引用 |
+
+> **agent_file vs skills**：角色卡（有 system prompt + 人格）用 `agent_file`；技能包（纯能力/规范注入）用 `skills`。两者可组合——子代理同时设 `agent_file` + `skills`。
 
 **第三步：使用 installPath 作为 agent_file**
 
@@ -130,29 +117,21 @@ agents:
 ```yaml
 - id: design
   type: agent
-  model: pro-max[1m]
+  model: pro-max
   agents:
     devil-advocate:
       description: "魔鬼代言人 — 审查方案完整性。默认立场 INCOMPLETE。"
       agent_file: "~/.octopus/resources/installed/agents/built-in/devil-advocate/devil-advocate.md"
-      model: pro-max[1m]
+      model: pro-max
       tools: ["Read", "Grep", "Write"]
       prompt: |
         审查 $vars.solution_file，使用 Write 工具直接写入
         $vars.output_dir/03-solution.challenges.devil.md。
         Write 完成后只返回 1 行确认。
-    feasibility-reviewer:
-      description: "可行性审查者 — 审查技术可行性。"
-      agent_file: "~/.octopus/resources/installed/agents/agency-agents-zh/engineering-software-architect/engineering-software-architect.md"
-      model: pro-max[1m]
-      tools: ["Read", "Grep", "Write"]
-      prompt: |
-        审查 $vars.solution_file 的工作量与单点故障，使用 Write 写入
-        $vars.output_dir/03-solution.challenges.feasibility.md。
   prompt: |
-    你是协调者。**三个子代理各自直接 Write 自己的报告文件**，你只做：
-    1. 并行委派 devil-advocate / feasibility-reviewer
-    2. 三个文件就位后，**不要重新合并三份内容**（避免冗余 token），只生成一份轻量索引
+    你是协调者。子代理直接 Write 报告文件，你只做：
+    1. 委派 devil-advocate
+    2. 文件就位后生成轻量索引（不复述正文）
 
     ## 输出 JSON（最后一行）
     {"vars_update":{"challenge_file":"$vars.output_dir/03-solution.challenges.index.md","conclusion":"<2-3 句>"}}
@@ -200,7 +179,41 @@ agents:
 
 **Goal 模式必须在 goal 末尾写明 JSON 输出格式**，否则 `outputs` 映射失败。
 
-### 2.4 Agent 输出协议（vars_update / __status）
+### 2.4 Skills — 按需加载技能包
+
+Agent 节点和子代理都支持 `skills` 字段，引擎启动时自动加载 SKILL.md 内容注入上下文。**Prompt 只需声明"用哪个 skill 做什么"，不要重复 skill 里已有的指令和细节。**
+
+```yaml
+# agent 节点加载 skills
+- id: create-skill
+  type: agent
+  skills: ["octo-skill-creator"]
+  prompt: |
+    使用 octo-skill-creator 为用户创建一个新 skill。
+    需求：$vars.skill_requirement
+
+# 子代理加载 skills
+agents:
+  doc-writer:
+    description: "文档撰写专家"
+    agent_file: "~/.octopus/resources/installed/agents/agency-agents-zh/technical-writer/technical-writer.md"
+    skills: ["chinese-documentation"]
+    prompt: |
+      使用 chinese-documentation skill 的排版规范，
+      撰写 $vars.feature_name 的技术文档，Write 到 $vars.output_dir/docs/。
+```
+
+**Prompt 与 Skill 分工纪律**：
+
+| 该写 | 不该写 |
+|------|--------|
+| "使用 {skill-name} 完成 X" | 重复 skill 内的具体步骤、规则、模板 |
+| 编排顺序（先 skill A 后 skill B） | skill 里已定义的参数、格式、约束 |
+| 业务目标 + 输入/输出约定 | skill SKILL.md 中已有的指令内容 |
+
+> **原则**：Skill 是"能力注入"，prompt 是"任务编排"。Prompt 复述 skill 内容 = token 浪费 + 指令冲突风险。
+
+### 2.5 Agent 输出协议（vars_update / __status）
 
 Agent 在回复**最后一行**输出纯 JSON（不要用代码块包裹）：
 
@@ -216,6 +229,10 @@ Agent 在回复**最后一行**输出纯 JSON（不要用代码块包裹）：
 | 不设置 | 节点正常 completed |
 
 `__status` 优先级高于 exit code，bash/agent/python 三种节点通用。**不要用 `exit 1` 标记业务失败**。
+
+### 2.6 model 字段
+
+可用：`pro-max`（最强）/ `pro`（均衡，默认）/ `se`（轻量）。自定义变体：`pro-max-{suffix}` / `pro-{suffix}`。不写继承 `--model` 参数。
 
 ---
 
@@ -269,19 +286,7 @@ hooks:
 - duration 格式化：`${hook.total_duration_ms | duration}`
 - 条件块（最多 3 层嵌套）：`{{#if challenge_count}}😈 $vars.challenge_count 条{{/if}}`
 
-### 3.4 webhook provider
-
-```yaml
-providers:
-  slack-webhook:
-    type: webhook
-    url: "https://hooks.slack.com/services/XXX"
-    method: POST                        # POST | PUT
-    headers:
-      Authorization: "Bearer $vars.slack_token"
-```
-
-> SSRF 保护：webhook URL 默认拒绝私网 IP / localhost / 云元数据端点。
+> **webhook provider**：`type: webhook` + `url` + `headers`，SSRF 保护默认拒绝私网 IP。
 
 ---
 
@@ -336,21 +341,9 @@ hooks:
         阅读 $vars.final_prd_file 的前 200 行，生成一句话发布通告。
 ```
 
-### 4.2 hook 上下文变量
+### 4.2 hook 上下文变量与过滤
 
-hook prompt / template / bash 中可用：
-
-| 变量 | 说明 |
-|------|------|
-| `$hook.failed_node_id` | on_*_failure 时的失败节点 |
-| `$hook.error` | 错误消息 |
-| `$hook.final_status` | on_complete 时的最终状态 |
-| `$hook.completed_count` / `skipped_count` / `failed_count` / `total_count` | 节点计数 |
-| `$hook.total_duration_ms` | 工作流总耗时（毫秒） |
-| `$hook.interrupt_reason` | on_interrupt 原因 |
-| `$vars.*` / `$inputs.*` | 工作流变量与输入 |
-
-### 4.3 hook 节点过滤
+hook prompt / template / bash 中可用 `$hook.*`：`failed_node_id` / `error` / `final_status` / `completed_count` / `skipped_count` / `failed_count` / `total_count` / `total_duration_ms` / `interrupt_reason`。另可访问 `$vars.*` / `$inputs.*`。
 
 `on_node_*` 事件支持 `nodes: [id1, id2]` 限定生效节点；不写则对所有节点触发。`condition` 可进一步用表达式过滤。
 
@@ -521,6 +514,36 @@ nodes:
     depends_on: [review-code, review-security]
 ```
 
+> **DAG 完整性纪律 — 不允许断裂链**
+>
+> `execution_mode: auto`（默认）下引擎按 `depends_on` 构建 DAG。**除入口节点外，每个节点必须显式声明 `depends_on`**。遗漏 = 断裂点，后果：
+>
+> | 症状 | 原因 |
+> |------|------|
+> | 节点意外并行 | 无边 → 引擎视为独立根节点，与其他根并行执行 |
+> | 前端可视化节点重叠 | dagre 布局算法无法推断层级 |
+> | 下游节点拿到空变量 | 上游还没跑完就被调度 |
+> | 执行顺序与预期不符 | 数组顺序 ≠ 执行顺序，只有 `depends_on` 才决定顺序 |
+>
+> ```yaml
+> # ❌ 断裂 — setup 和 build 没有依赖关系，会并行跑
+> nodes:
+>   - id: setup
+>   - id: build          # 缺 depends_on: [setup]
+>   - id: test
+>     depends_on: [build]
+>
+> # ✅ 完整链 — 每个非入口节点都有明确上游
+> nodes:
+>   - id: setup
+>   - id: build
+>     depends_on: [setup]
+>   - id: test
+>     depends_on: [build]
+> ```
+>
+> **自检方法**：从最后一个节点反向追溯 `depends_on`，每条路径必须能追溯到某个入口节点。任何中间断开的节点 = 断裂点。
+
 ### 7.2 execute_when — 跳过节点
 
 ```yaml
@@ -553,35 +576,7 @@ nodes:
 
 ## 9. 常用模式
 
-### 9.1 父代理编排 + 子代理写文件 + Notify 通知（推荐主架构）
-
-```yaml
-hooks:
-  on_node_success:
-    - id: notify-design
-      type: notify
-      nodes: [design]
-      channel: default
-      template:
-        severity: info
-        title: "🏗️ 设计完成"
-        body: "📄 $vars.solution_file\n💡 $vars.conclusion"
-
-nodes:
-  - id: design
-    type: agent
-    agents:
-      engineering-software-architect:
-        agent_file: "~/.octopus/resources/installed/agents/agency-agents-zh/engineering-software-architect/engineering-software-architect.md"
-        tools: [Read, Write, Grep]
-        prompt: "Write 技术方案到 $vars.output_dir/03-solution.md"
-    prompt: |
-      委派 engineering-software-architect 完成方案撰写。
-      你不要复述方案正文，仅在最后一行输出：
-      {"vars_update":{"solution_file":"$vars.output_dir/03-solution.md","conclusion":"<2-3 句>"}}
-```
-
-### 9.2 Agent 驱动验证修复循环
+### 9.1 Agent 驱动验证修复循环
 
 ```yaml
 - id: fix-loop
@@ -598,7 +593,7 @@ nodes:
         {"vars_update":{"all_passed":"<true|false>","failure_summary":"<摘要>"}}
 ```
 
-### 9.3 视觉隔离（截图分析必用子代理）
+### 9.2 视觉隔离（截图分析必用子代理）
 
 ```yaml
 - id: e2e-test
@@ -613,41 +608,21 @@ nodes:
     执行 E2E 测试。需要分析截图时委派 vision-analyzer，**只取它返回的文本结论**。
 ```
 
-### 9.4 多审查者并行 + 索引收敛（避免 token 冗余）
+### 9.3 多审查者并行 + 索引收敛（避免 token 冗余）
 
-参考 prd-forge.yaml 的 `challenge-design`：三个子代理（devil-advocate / feasibility-reviewer / architecture-explorer）各自 `Write` 自己的报告文件，父 agent 只生成一份指向三份报告的索引文件。
+参考 prd-forge.yaml 的 `challenge-design`：三个子代理各自 `Write` 自己的报告文件，父 agent 只生成一份索引文件。
 
 ---
 
 ## 10. 验证与运行
 
-### 10.1 校验
-
 ```bash
-# 推荐：内置 CLI（Zod schema + 语义规则）
-octopus workflow validate ./my-workflow.yaml
-
-# 备用：独立脚本（不依赖 CLI）
-node .claude/skills/octo-workflow-dev/scripts/validate-workflow.bundle.js ./workflows/*.yaml
-```
-
-| 错误 | 原因 | 修法 |
-|------|------|------|
-| `apiVersion must match octopus/v{number}` | 写成了 `octopus/v1.0.0` | `apiVersion: octopus/v1` |
-| `inputs.xxx: Expected object` | input 值是裸字符串 | `xxx: { description: "..." }` |
-| `agent 节点必须有 agent/prompt/agents/goal` | 缺必需字段 | 至少给一个 |
-| `goal 与 prompt 互斥` | 两个都写了 | 删一个 |
-| `condition 缺少 default 兜底` | 全部 case 都没匹配时无路径 | 末尾加 `when: default` |
-| `duplicate id` | 节点 id 重复 | 改唯一 |
-
-> 校验失败的 YAML 在 Web-App 下拉列表中**不显示**（服务端静默过滤）。线上看不到工作流时一律先跑 `octopus workflow validate`。
-
-### 10.2 运行
-
-```bash
-octopus workflow run ./deploy.yaml --org {org}
+octopus workflow validate ./my-workflow.yaml          # 校验
+octopus workflow run ./deploy.yaml --org {org}         # 运行
 octopus workflow run ./deploy.yaml --org {org} --model pro-max --engine claude
 ```
+
+> 校验失败的 YAML 在 Web-App 下拉列表中**不显示**（服务端静默过滤）。线上看不到工作流时先跑 `validate`。常见错误：`apiVersion` 格式错、`inputs` 值非对象、`goal` 与 `prompt` 互斥、`condition` 缺 `default`、节点 `id` 重复。
 
 ---
 
@@ -655,6 +630,7 @@ octopus workflow run ./deploy.yaml --org {org} --model pro-max --engine claude
 
 - 工作流必须包含 `apiVersion: octopus/v1` 与 `kind: Workflow`，并在文件头部声明 `# yaml-language-server: $schema=...workflow-schema.json`。
 - 节点 `id` 在工作流内唯一；`depends_on` 引用必须存在。
+- **DAG 链不允许断裂** — `execution_mode: auto` 下，除入口节点外每个节点必须显式声明 `depends_on`。遗漏 = 节点意外并行 + 变量空值 + 可视化重叠。写完从末节点反向追溯到入口，确认无断点。
 - **Loop 子节点必须显式声明 `depends_on`** — 即使 `execution_mode: serial`，loop 内节点也需明确依赖关系，否则前端可视化会重叠、执行顺序不确定。
 - `condition.cases` 的 `when: default` 必须放最后。
 - `agent` 节点必须有 `agent` / `prompt` / `goal` / `agents` 之一；`goal` 与 `prompt` 互斥。
@@ -665,5 +641,6 @@ octopus workflow run ./deploy.yaml --org {org} --model pro-max --engine claude
 - 字符串字面量在 outputs 中需二次引号：`"$vars.x": '"hello"'`。
 - `context: continue` 仅在前一个节点也是 agent 时有效。
 - 工作流不绑定技术栈 — 不在 YAML 中硬编码 npm/mvn/gradle，让 agent 自动检测。
+- **Prompt 不复述 Skill 内容** — `skills` 字段加载的 SKILL.md 已注入上下文，prompt 只声明"用哪个 skill + 做什么"，不重复 skill 内的步骤/规则/模板。
 - 视觉/截图分析必须用子代理隔离，防止图片数据污染主 session。
 - 任何字段不确定先查 `~/.octopus/workflow-schema.json`（源码 `packages/core-pack/workflows/workflow-schema.json`），不要凭记忆写。

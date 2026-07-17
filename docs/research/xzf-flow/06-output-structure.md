@@ -13,7 +13,8 @@
 │   └── questions.md                   # 含 Research 项类别
 ├── 04-stories/
 │   ├── summary.md
-│   └── technical-guide.md
+│   ├── technical-guide.md
+│   └── test-environment.md
 ├── 05-specs/
 │   ├── spec-001-{name}.md
 │   ├── spec-002-{name}.md
@@ -214,33 +215,57 @@
 ```markdown
 # 技术指导文档
 
-## 测试环境配置
-### 数据库
-- 类型: {SQLite/PostgreSQL/MySQL}
-- 连接: {connection string}
-- 初始化: {migration/seed commands}
-
-### 缓存服务
-- 类型: {Redis/Memcached/无}
-- 连接: {host:port}
-
-### 项目启动（per project）
-- {project-web}: {command} → port {N}
-- {project-service}: {command} → port {N}
-- 环境变量: {list}
-
-## E2E 测试方法
-- 工具: {browse/playwright/curl}
-- 截图路径: .octopus/xzf/{branch}/07-execution/.../screenshots/
-- 执行命令: {example commands}
-
-## 测试数据准备
-- 种子脚本: {path or commands}
-- 测试账号: {username/password pairs}
-
 ## 技术约束
 - {constraint 1}
 - {constraint 2}
+
+## 架构决策
+- {decision 1}: {reason}
+- {decision 2}: {reason}
+
+## 项目间通信约定
+| 源项目 | 目标项目 | 协议 | 接口 | 备注 |
+|--------|---------|------|------|------|
+```
+
+### 2.5b 04-stories/test-environment.md
+
+```markdown
+# 测试环境配置
+
+## 数据库
+| 项目 | 类型 | 连接串格式 | 种子数据 |
+|------|------|-----------|---------|
+| {project-auth} | {PostgreSQL 15} | {postgresql://user:pass@host:5432/dbname} | {migration + seed script} |
+
+## 中间件
+| 类型 | 连接信息 | 用途 | 清理策略 |
+|------|---------|------|---------|
+| {Redis} | {redis://localhost:6379} | {session/缓存} | {FLUSHDB per test} |
+
+## 项目启动（per project）
+| 项目 | 命令 | 端口 | 健康检查 |
+|------|------|------|---------|
+| {project-web} | {pnpm dev} | {3000} | {GET /api/health → 200} |
+| {project-auth} | {pnpm dev} | {3001} | {GET /health → 200} |
+
+## E2E 测试
+- 工具: {browse / playwright / curl}
+- 启动方式: {browse daemon start / npx playwright install}
+- 截图目录: .octopus/xzf/{branch}/07-execution/.../screenshots/
+- 执行模式: {headless / headed}
+
+## 测试数据准备
+- 方式: {seed script / API fixture / DB insert}
+- 脚本路径: {scripts/seed-test-data.ts}
+- 测试账号: {test@example.com / Test123!}
+
+## 环境就绪检查
+E2E 执行前必须确认:
+- [ ] 数据库已连接
+- [ ] 各项目已启动且健康检查通过
+- [ ] 测试数据已准备
+- [ ] E2E 工具可用
 ```
 
 ### 2.6 05-specs/spec-{NNN}-{name}.md

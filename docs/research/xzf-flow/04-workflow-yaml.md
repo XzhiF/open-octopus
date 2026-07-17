@@ -19,14 +19,14 @@
 - **Prompt = 编排**: workflow 中的 prompt 只负责输入/输出路径和执行顺序
 - **Skill = 方法论**: 具体执行方法、输出格式、处理逻辑在 skill 中定义
 - **Agent File = 角色**: 专家身份、专业视角、沟通风格在 agent file 中定义
-- **Swarm 例外**: swarm 节点不支持 skills，topic 需要同时包含编排和方法论
+- **Swarm Skills**: 通过 `expert_defaults.skills`（全员共享）和 `expert.skills`（per-expert 追加）注入 skill，topic 只负责编排
 
 ### 阶段总览
 
 | # | 阶段 | 节点类型 | 退出机制 |
 |---|------|---------|---------|
 | 0 | 初始化 | agent (skill: octo-xzf-init) | 顺序执行 |
-| 1 | Idea + Research | agent (skill: octo-xzf-research) | 顺序执行 |
+| 1 | Codebase 研究 | bash(预扫描) + swarm(dispatch) | 顺序执行 |
 | 2 | 澄清循环 | loop → swarm(debate) + approval | break_when 检查 approval decision |
 | 3 | 故事总汇 | loop → swarm(debate) + approval | break_when 检查 approval decision |
 | 4 | Spec 设计 | swarm(debate) + approval | 用户选择 proceed |
@@ -40,7 +40,7 @@
 |------|---------|------|
 | **loop** | `break_when`, `while`, `max_iterations`, `nodes` | 无 `items`/`exit_condition`，用 `break_when` 退出 |
 | **approval** | `prompt`, `options`, `outputs`, `approval_timeout` | 无 `auto_answers`，输出 `decision` + `comment` |
-| **swarm** | `topic`, `mode`, `experts`, `host`, `outputs` | 无 `skills`（需 Phase 1 代码变更） |
+| **swarm** | `topic`, `mode`, `experts`, `host`, `outputs` | `expert_defaults.skills` 全员共享；`expert.skills` per-expert 追加（Phase 1） |
 | **condition** | `cases: [{when, then}]` | 匹配后 `jumpTo` 目标节点，跳过中间节点 |
 | **agent** | `prompt`, `skills`, `context`, `outputs` | 支持 skills，`vars_update` JSON 设变量 |
 | **bash** | `command`, `outputs` | 执行 shell 命令 |
@@ -100,7 +100,7 @@ notify:
     message: "[xzf-pipeline] 完成: $vars.branch — PR/MR 已提交"
 
 # ============================================================
-# Stage 0: 初始化（单 agent 节点）
+# Stage 0: 初始化
 # ============================================================
 
 nodes:
@@ -110,33 +110,132 @@ nodes:
     skills:
       - octo-xzf-init
     prompt: |
-      使用 octo-xzf-init skill 初始化工作环境。
+      使用 octo-xzf-init skill 初始化 XZF Pipeline 工作环境。
       汇报：分支名、remote 类型、workspace 项目数。
 
+      输出 vars_update:
+      {"vars_update": {"branch": "{git branch}", "remote_type": "{github|gitlab}", "workspace_topology": "已生成"}}
+
 # ============================================================
-# Stage 1: Idea 处理 + Codebase 研究
+# Stage 1: Codebase 研究
 # ============================================================
 
-  # --- Stage 1: Idea 处理 + Codebase 研究 ---
-  - id: idea
-    type: agent
+  # --- 1a: 预扫描（秒级） ---
+  - id: idea-scan
+    type: bash
     depends_on: [init]
-    context: new
-    skills:
-      - octo-xzf-research
-    prompt: |
-      使用 octo-xzf-research skill 处理 Idea 并研究 codebase。
+    command: |
+      BASE=".octopus/xzf/$vars.branch/02-research/_scan"
+      mkdir -p "$BASE"
 
-      输入:
-      - Idea: .octopus/xzf/$vars.branch/01-idea.md
-      - Workspace: .octopus/xzf/$vars.branch/workspace-topology.md
+      # 文件结构概览
+      find . -type f \( -name "*.ts" -o -name "*.tsx" -o -name "*.go" -o -name "*.py" -o -name "*.vue" -o -name "*.rs" \) \
+        -not -path "*/node_modules/*" -not -path "*/.git/*" -not -path "*/dist/*" -not -path "*/build/*" \
+        | sort > "$BASE/file-tree.txt"
 
-      输出:
-      - .octopus/xzf/$vars.branch/02-research/index.md
-      - .octopus/xzf/$vars.branch/02-research/{domain}.md
+      # 项目配置摘要
+      for f in $(find . -maxdepth 3 \( -name "package.json" -o -name "go.mod" -o -name "Cargo.toml" -o -name "pyproject.toml" \) -not -path "*/node_modules/*"); do
+        echo "=== $f ===" >> "$BASE/deps.txt"
+        head -30 "$f" >> "$BASE/deps.txt"
+        echo "" >> "$BASE/deps.txt"
+      done
 
-      ⚠️ 如 01-idea.md 包含 Research 指引，优先处理指引中的方向。
-      完成后汇报: 研究领域数量和关键发现摘要。
+      # 项目文档
+      find . -maxdepth 3 -name "CLAUDE.md" -exec sh -c 'echo "=== {} ==="; cat "{}"; echo ""' \; > "$BASE/claude-mds.txt"
+
+      # 路由/API 入口
+      grep -rn "router\.\|app\.\(get\|post\|put\|delete\|patch\)\|@\(Get\|Post\|Put\|Delete\)Mapping\|\.Route(" \
+        --include="*.ts" --include="*.go" --include="*.py" --include="*.java" \
+        -l 2>/dev/null | sort > "$BASE/api-entries.txt"
+
+      # DB Schema / Migration
+      find . -type f \( -name "*.migration.*" -o -name "*schema*" -o -name "*.entity.*" -o -path "*/migrations/*" \) \
+        -not -path "*/node_modules/*" | sort > "$BASE/db-schemas.txt"
+
+      # 测试配置
+      find . -maxdepth 3 \( -name "vitest.*" -o -name "jest.*" -o -name "playwright.*" -o -name "*.test.*" -o -name "*.spec.*" \) \
+        -not -path "*/node_modules/*" -not -path "*/dist/*" \
+        | head -50 | sort > "$BASE/test-config.txt"
+
+      echo "Scan complete."
+
+  # --- 1b: 并行领域研究（swarm dispatch） ---
+  - id: idea-research
+    type: swarm
+    depends_on: [idea-scan]
+    mode: dispatch
+    rounds: 1
+    context_tier: "200k"
+    expert_defaults:
+      skills:
+        - octo-xzf-research
+      tools:
+        - Read
+        - Grep
+        - Glob
+        - Bash
+        - WebFetch
+        - WebSearch
+    topic: |
+      ═══ Codebase 领域研究 ═══
+
+      Idea: 请读取 .octopus/xzf/$vars.branch/01-idea.md
+      Workspace: 请读取 .octopus/xzf/$vars.branch/workspace-topology.md
+
+      ⚠️ 如 01-idea.md 包含「Research 指引」，按指引聚焦研究范围。
+
+      预扫描结果（用于快速定位，避免盲读）:
+      - 文件树: .octopus/xzf/$vars.branch/02-research/_scan/file-tree.txt
+      - 依赖摘要: .octopus/xzf/$vars.branch/02-research/_scan/deps.txt
+      - 项目文档: .octopus/xzf/$vars.branch/02-research/_scan/claude-mds.txt
+      - API 入口: .octopus/xzf/$vars.branch/02-research/_scan/api-entries.txt
+      - DB Schema: .octopus/xzf/$vars.branch/02-research/_scan/db-schemas.txt
+      - 测试配置: .octopus/xzf/$vars.branch/02-research/_scan/test-config.txt
+
+      每位专家将研究发现写入: .octopus/xzf/$vars.branch/02-research/{domain}.md
+      研究方法和输出格式参见 octo-xzf-research skill。
+    experts:
+      - role: senior-architect
+        agent_file: .claude/agents/octo-xzf-architect.md
+        task: |
+          研究: 整体架构、模块边界、跨项目通信、核心模式
+          写入: 02-research/architecture.md
+          额外: 如发现未覆盖领域，标记 ## GAPS
+      - role: backend-expert
+        agent_file: .claude/agents/octo-xzf-backend-expert.md
+        task: |
+          研究: 后端服务架构、DB schema、API 实现模式
+          外部: 如有外部平台 API 对接需求，使用 WebFetch 调研
+          写入: 02-research/backend.md
+        depends_on: [senior-architect]
+      - role: frontend-expert
+        agent_file: .claude/agents/octo-xzf-frontend-expert.md
+        task: |
+          研究: 前端组件结构、状态管理、路由、UI 框架
+          写入: 02-research/frontend.md
+        depends_on: [senior-architect]
+      - role: test-architect
+        agent_file: .claude/agents/octo-xzf-test-architect.md
+        task: |
+          研究: 测试框架、测试模式、CI 配置、测试数据策略
+          写入: 02-research/testing.md
+        depends_on: [senior-architect]
+      - role: security-expert
+        agent_file: .claude/agents/octo-xzf-security-expert.md
+        task: |
+          研究: 认证实现、权限模型、安全中间件、密钥管理
+          写入: 02-research/security.md
+        depends_on: [senior-architect]
+    host:
+      role: research-indexer
+      prompt: |
+        读取 02-research/ 下所有 .md 文件（不含 _scan/）。
+        仅生成 index.md 索引:
+
+        | 文件 | 领域 | 关键发现 | 与 Idea 关系 |
+        |------|------|---------|-------------|
+
+        如有 GAPS，汇总到索引末尾。不重写内容。
 
 # ============================================================
 # Stage 2: 需求澄清循环
@@ -144,7 +243,7 @@ nodes:
 
   - id: clarification-loop
     type: loop
-    depends_on: [idea]
+    depends_on: [idea-research]
     max_iterations: 10
     break_when: '$vars.user_decision == "proceed"'
     nodes:
@@ -155,6 +254,9 @@ nodes:
         mode: debate
         rounds: 2
         context_tier: "200k"
+        expert_defaults:
+          skills:
+            - octo-xzf-clarify
         topic: |
           ═══ 需求澄清 — Round $iteration ═══
 
@@ -168,9 +270,7 @@ nodes:
 
           输出: .octopus/xzf/$vars.branch/03-clarification/questions.md
 
-          ⚠️ 根据用户上轮回复更新问题清单（已回答 ✅ / 待澄清 ❓）。
-          问题分类：功能 / 环境 / 测试 / 调研。
-          每个问题提供 2-3 种方案，第 1 个为推荐。
+          澄清方法论和问题格式参见 octo-xzf-clarify skill。
         experts:
           - role: senior-architect
             agent_file: .claude/agents/octo-xzf-architect.md
@@ -189,10 +289,14 @@ nodes:
           prompt: |
             综合专家意见。
 
-            输出两部分：
+            输出三部分：
             1. 将完整问题清单写入 questions.md（含已回答 ✅ + 待澄清 ❓）
             2. 在综合输出中仅列出本轮需要用户回答的待澄清问题
                格式：编号 + 问题 + 推荐方案 + 备选方案
+            3. 测试环境状态评估（写入 VarPool 变量 env_checklist_status）：
+               逐项检查强制清单 6 项，输出:
+               - "COMPLETE" — 全部明确
+               - "INCOMPLETE: {缺失项逗号分隔}" — 有未明确项
 
       # --- 2b. 用户审批（内联显示待澄清问题） ---
       - id: brainstorm-approval
@@ -203,6 +307,8 @@ nodes:
 
           📁 完整文档: .octopus/xzf/$vars.branch/03-clarification/questions.md
 
+          📋 测试环境状态: $vars.env_checklist_status
+
           ─── 本轮需要澄清的问题 ───
 
           $brainstorm_synthesis
@@ -210,6 +316,7 @@ nodes:
           ─────────────────────────
           请在评论中回答问题。
           如部分问题未回答但选择"进入下一阶段"，将采用专家推荐方案。
+          ⚠️ 如测试环境状态为 INCOMPLETE，建议在进入下一阶段前补全。
         options:
           - label: "回答并继续讨论"
             value: "continue"
@@ -236,7 +343,11 @@ nodes:
         type: swarm
         mode: debate
         rounds: 2
+        consensus_threshold: 0.75
         context_tier: "200k"
+        expert_defaults:
+          skills:
+            - octo-xzf-story-writer
         topic: |
           ═══ 用户故事总汇 — Round $iteration ═══
 
@@ -252,9 +363,10 @@ nodes:
           输出:
           - .octopus/xzf/$vars.branch/04-stories/summary.md
           - .octopus/xzf/$vars.branch/04-stories/technical-guide.md
+          - .octopus/xzf/$vars.branch/04-stories/test-environment.md
 
           ⚠️ 每个故事标注 SERVICE_CHAIN。
-          格式：角色 / 目标 / 服务链 / 路径 / 完成标准。
+          文档结构和格式参见 octo-xzf-story-writer skill。
         experts:
           - role: senior-architect
             agent_file: .claude/agents/octo-xzf-architect.md
@@ -271,8 +383,11 @@ nodes:
         host:
           role: story-host
           prompt: |
-            综合专家意见，生成完整用户故事总汇文档和技术指导文档。
-            写入 04-stories/ 目录下两个文件。
+            综合专家意见，生成完整用户故事总汇文档、技术指导文档和测试环境配置。
+            写入 04-stories/ 目录下三个文件:
+            - summary.md（故事总汇）
+            - technical-guide.md（技术约束 + 架构决策）
+            - test-environment.md（测试环境完整配置，供 Stage 6 执行时读取）
 
             在综合输出里列出故事摘要列表：
             每个故事一行：编号 + 标题 + 角色 + 服务链
@@ -287,6 +402,7 @@ nodes:
           📁 完整文档:
           - .octopus/xzf/$vars.branch/04-stories/summary.md
           - .octopus/xzf/$vars.branch/04-stories/technical-guide.md
+          - .octopus/xzf/$vars.branch/04-stories/test-environment.md
 
           ─── 故事摘要 ───
 
@@ -315,6 +431,9 @@ nodes:
     rounds: 3
     consensus_threshold: 0.7
     context_tier: "200k"
+    expert_defaults:
+      skills:
+        - octo-xzf-spec-designer
     topic: |
       ═══ Spec 设计 ═══
 
@@ -327,8 +446,7 @@ nodes:
 
       输出: .octopus/xzf/$vars.branch/05-specs/spec-NNN-{name}.md
 
-      ⚠️ 拆分原则：从简单到复杂、首 Spec 含基础底座、每 Spec 可独立交付、松耦合。
-      Spec DSL 格式参见 octo-xzf-spec-designer skill。
+      Spec DSL 格式和拆分方法论参见 octo-xzf-spec-designer skill。
     experts:
       - role: senior-architect
         agent_file: .claude/agents/octo-xzf-architect.md
@@ -336,12 +454,16 @@ nodes:
         agent_file: .claude/agents/octo-xzf-product-manager.md
       - role: test-architect
         agent_file: .claude/agents/octo-xzf-test-architect.md
+        skills:
+          - octo-xzf-task-planner      # 验证设计需参考任务拆解格式
       - role: frontend-expert
         agent_file: .claude/agents/octo-xzf-frontend-expert.md
       - role: backend-expert
         agent_file: .claude/agents/octo-xzf-backend-expert.md
       - role: security-expert
         agent_file: .claude/agents/octo-xzf-security-expert.md
+        skills:
+          - octo-xzf-task-planner      # 安全任务需参考任务拆解格式
     host:
       role: spec-host
       prompt: |
@@ -387,6 +509,9 @@ nodes:
         type: swarm
         mode: dispatch
         context_tier: "200k"
+        expert_defaults:
+          skills:
+            - octo-xzf-task-planner
         topic: |
           ═══ 任务计划 — Spec #$iteration ═══
 
@@ -396,40 +521,17 @@ nodes:
           Research 知识: 请读取 .octopus/xzf/$vars.branch/02-research/index.md 并根据话题读取对应领域文件
           Workspace 拓扑: 请读取 .octopus/xzf/$vars.branch/workspace-topology.md
 
-          任务: 为这个 Spec 生成完整的任务计划，包含 4 类文档:
+          输出目录: .octopus/xzf/$vars.branch/06-plans/spec-{NNN}-{name}/
 
-          1. **consensus.md** — 总纲领
-             - 涉及项目 + 各项目职责
-             - DB 变更 (per project)
-             - 文件变更 (per project)
-             - 共用约定 + 项目间接口契约
-             - 并行开发边界
-
-          2. **verify-X-Y.md** — 验证方法
-             - 验证目标
-             - 验证代码示例（单元/集成/E2E）
-             - 通过标准
-
-          3. **task-X-Y-{project}-{role}.md** — 任务分配
-             - X = 任务号（相同 X 可并行）
-             - Y = 子任务号
-             - project = 所属项目
-             - role = 角色（backend/frontend/等）
-             - 包含: 项目、任务描述、依赖、实现步骤、涉及文件
-
-          4. **spec-test.md** — 完整 E2E 验证路线
-             - 前置条件（服务启动、DB 连接、测试数据）
-             - 逐步执行步骤 + 预期结果
-             - 截图/DB 验证要求
-
-          输出目录:
-          .octopus/xzf/$vars.branch/06-plans/spec-{NNN}-{name}/
+          任务拆解方法论和文档格式参见 octo-xzf-task-planner skill。
         experts:
           - role: senior-architect
             agent_file: .claude/agents/octo-xzf-architect.md
             task: "制定技术总纲领 consensus.md，确定文件变更和接口契约"
           - role: test-architect
             agent_file: .claude/agents/octo-xzf-test-architect.md
+            skills:
+              - octo-xzf-spec-designer    # 验证设计需参考 spec DSL 格式
             task: "设计验证方法 verify-*.md 和 E2E 测试路线 spec-test.md"
             depends_on: [senior-architect]
           - role: frontend-expert
@@ -442,6 +544,8 @@ nodes:
             depends_on: [senior-architect]
           - role: security-expert
             agent_file: .claude/agents/octo-xzf-security-expert.md
+            skills:
+              - octo-xzf-spec-designer    # 安全审查需参考 spec DSL 格式
             task: "审查安全相关任务，补充安全验证项"
             depends_on: [senior-architect, test-architect]
         host:
@@ -473,47 +577,20 @@ nodes:
         prompt: |
           使用 octo-xzf-executor skill 执行 Spec #$iteration。
 
-          ═══ 执行 Spec #$iteration ═══
-
-          请读取以下文件:
+          输入文件:
           - Spec: .octopus/xzf/$vars.branch/05-specs/ 目录下第 $iteration 个 spec
           - 任务计划: .octopus/xzf/$vars.branch/06-plans/ 目录下对应 spec 的所有 task 和 verify 文件
+          - 测试环境: .octopus/xzf/$vars.branch/04-stories/test-environment.md
           - Workspace 拓扑: .octopus/xzf/$vars.branch/workspace-topology.md
 
-          执行流程:
+          Phase 0（环境就绪检查）: 读取 test-environment.md 的「环境就绪检查」清单，
+          确认服务已启动、DB 已连接、E2E 工具可用。未就绪则尝试自动准备，仍失败则报告等待干预。
 
-          ## Phase 1: Task 实现
-          对每个 task-X-Y-{project}-{role}.md:
-          1. 读取任务文档，理解需求
-          2. 读取 consensus.md，遵守共用约定
-          3. 在对应项目目录下按步骤编码实现
-          4. 确保代码通过 lint 和 type check
-
-          ## Phase 2: Task 验证（verify-fix 循环）
-          对每个 verify-X-Y.md:
-          - 按文档执行验证
-          - 如通过 → 记录结果，继续
-          - 如失败 → 分析原因，修复代码，重新验证
-          - 最多重试 3 次
-
-          ## Phase 3: Spec E2E 验证
-          所有 task 验证通过后:
-          - 按 spec-test.md 逐步执行 E2E 验证
-          - 如全部通过 → spec 完成
-          - 如失败 → 修复并重试，最多 3 次
-
-          ## 验证结果记录
-          写入 .octopus/xzf/$vars.branch/07-execution/spec-{NNN}/
-
-          ## 保真要求
-          - 不允许跳过验证
-          - 不允许伪造通过
-          - 必须有真实性证明（测试输出、截图、DB 查询结果）
+          执行方法和验证流程参见 octo-xzf-executor skill。
 
           完成后输出:
           {"vars_update": {"spec_status": "passed"}}
-
-          如果失败，输出:
+          或:
           {"vars_update": {"spec_status": "failed", "failure_reason": "..."}}
         outputs:
           $vars.spec_status: "$last_output"
@@ -789,20 +866,31 @@ outputs:
 
 ## 6. Swarm 专家配置
 
-### 6.1 Expert Skills（Phase 1 依赖）
+### 6.1 Expert Skills
 
-**当前限制**: SwarmExecutor 不处理 `skills` 字段。ExpertDef skills 支持需要 Phase 1 代码变更。
+Swarm 节点通过两层 skills 注入方法论（依赖 Phase 1 代码变更 — 见 `01-expertdef-skills-extension.md`）：
 
-代码变更完成前，专家能力通过 `agent_file` 的 body 内容承载。
-代码变更完成后，可在 expert 级别配置:
+**`expert_defaults.skills`** — 全员共享，swarm 节点内所有专家自动加载：
+```yaml
+expert_defaults:
+  skills:
+    - octo-xzf-clarify    # 所有专家都加载澄清方法论
+```
 
+**`expert.skills`** — per-expert 追加，与 expert_defaults 合并：
 ```yaml
 experts:
   - role: test-architect
     agent_file: .claude/agents/octo-xzf-test-architect.md
-    skills:                    # Phase 1 后可用
+    skills:                              # 额外加载，最终 skills = [octo-xzf-task-planner, octo-xzf-spec-designer]
       - octo-xzf-spec-designer
-      - octo-xzf-executor
+```
+
+**合并策略**：
+```
+expert_defaults.skills = [A, B]
+expert.skills = [C]
+→ 最终 expert.skills = [A, B, C]
 ```
 
 ### 6.2 专家列表（所有 swarm 节点共用）
@@ -871,9 +959,9 @@ execute-spec-tasks (agent)
 ## 8. 依赖图
 
 ```
-init → idea (Idea 处理 + Codebase 研究)
+init → idea-scan (预扫描) → idea-research (并行领域研究)
 
-idea → clarification-loop
+idea-research → clarification-loop
   clarification-loop:
     brainstorm → brainstorm-approval
     break_when: user_decision == "proceed"
@@ -902,13 +990,16 @@ execution-loop → ship-summary → ship-submit → ship-confirm
 
 ## 附录 A: Skills 清单
 
-| Skill | 用途 | 使用节点 |
-|-------|------|---------|
-| `octo-xzf-init` | 初始化工作环境 | init |
-| `octo-xzf-research` | Idea 处理 + Codebase 研究 | idea |
-| `octo-xzf-spec-designer` | Spec DSL 格式参考 | spec-design (expert skills, Phase 1) |
-| `octo-xzf-executor` | 任务执行 + 验证 | execute-spec-tasks |
-| `octo-xzf-ship` | PR/MR Summary 生成 | ship-summary |
+| Skill | 用途 | 使用节点 | 加载方式 |
+|-------|------|---------|---------|
+| `octo-xzf-init` | 初始化工作环境 | init | `node.skills` |
+| `octo-xzf-research` | Codebase 领域研究 | idea-research | `expert_defaults.skills` |
+| `octo-xzf-clarify` | 需求澄清方法论 | brainstorm | `expert_defaults.skills` |
+| `octo-xzf-story-writer` | 用户故事总汇 + 测试环境文档 | story-generation | `expert_defaults.skills` |
+| `octo-xzf-spec-designer` | Spec DSL 设计 | spec-design | `expert_defaults.skills`；test-architect/security-expert 通过 `expert.skills` 在 plan-spec 追加 |
+| `octo-xzf-task-planner` | 任务拆解与文档生成 | plan-spec | `expert_defaults.skills`；test-architect/security-expert 在 spec-design 通过 `expert.skills` 追加 |
+| `octo-xzf-executor` | 任务执行 + verify-fix 循环 | execute-spec-tasks | `node.skills` |
+| `octo-xzf-ship` | PR/MR Summary 生成 | ship-summary | `node.skills` |
 
 ## 附录 B: Agent 文件清单
 
@@ -934,7 +1025,8 @@ execution-loop → ship-summary → ship-submit → ship-confirm
 │   └── questions.md
 ├── 04-stories/
 │   ├── summary.md
-│   └── technical-guide.md
+│   ├── technical-guide.md
+│   └── test-environment.md               # 测试环境完整配置（DB/中间件/启动/E2E 工具）
 ├── 05-specs/
 │   ├── spec-001-{name}.md
 │   └── spec-002-{name}.md

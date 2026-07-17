@@ -13,7 +13,7 @@ Skill 定位：为 agent 节点提供方法论和格式规范。在 swarm 节点
 - **Skill = 方法论**: skill 包含完整的执行方法、输出格式、处理逻辑
 - **Prompt = 编排**: workflow 中的 prompt 只指定输入/输出路径和执行顺序
 - **引用关系**: workflow 节点通过 `skills:` 字段加载 skill，skill 内容注入到 agent 上下文
-- **Swarm 例外**: swarm 节点不支持 skills，方法论直接写在 topic 中
+- **Swarm 注入**: swarm 节点通过 `expert_defaults.skills`（全员共享）和 `expert.skills`（per-expert 追加）注入 skill
 
 ---
 
@@ -324,6 +324,22 @@ _scan/ 目录文件用于快速定位:
 - 测试环境信息是否完整
 - 是否可以结束澄清进入下一阶段
 
+### 测试环境强制清单（退出澄清前必须全部明确）
+
+- [ ] 数据库类型 + 连接信息 + 种子数据方式
+- [ ] 中间件（Redis/MQ 等）连接信息
+- [ ] 各项目启动命令 + 端口
+- [ ] E2E 测试工具（browse/playwright/curl）+ 执行方式
+- [ ] 截图/报告保存路径
+- [ ] 测试数据准备方式（API/DB fixture/seed script）
+
+如清单未完成，必须在 questions.md 末尾标注:
+"⚠️ 环境信息不完整: {缺失项列表}"
+
+Host 综合输出中逐项检查此清单，输出 env_checklist_status:
+- "COMPLETE" — 全部明确
+- "INCOMPLETE: {缺失项逗号分隔}" — 有未明确项
+
 ## 输出规范
 - 每个澄清问题提供 2-3 种方案，第 1 个为推荐
 - 用户在下一轮 approval 中回答或追加修改
@@ -336,7 +352,7 @@ _scan/ 目录文件用于快速定位:
 
 **文件**: `packages/core-pack/skills/octo-xzf-story-writer/SKILL.md`
 
-**核心职责**: Stage 4 用户故事总汇文档生成
+**核心职责**: Stage 3 用户故事总汇文档生成
 
 **内容要点**:
 
@@ -344,11 +360,12 @@ _scan/ 目录文件用于快速定位:
 # 用户故事总汇方法论
 
 ## 触发条件
-Stage 4 swarm 节点，根据澄清后的需求生成完整用户故事文档。
+Stage 3 swarm 节点，根据澄清后的需求生成完整用户故事文档。
 
 ## 输出文件
 1. `.octopus/xzf/{branch}/04-stories/summary.md` — 故事总汇
-2. `.octopus/xzf/{branch}/04-stories/technical-guide.md` — 技术指导文档
+2. `.octopus/xzf/{branch}/04-stories/technical-guide.md` — 技术指导文档（架构决策、技术约束）
+3. `.octopus/xzf/{branch}/04-stories/test-environment.md` — 测试环境完整配置（供 Stage 6 执行读取）
 
 ## 故事总汇文档结构
 
@@ -388,32 +405,53 @@ Stage 4 swarm 节点，根据澄清后的需求生成完整用户故事文档。
 ```markdown
 # 技术指导文档
 
-## 测试环境配置
-[基于澄清阶段的测试环境信息]
-
-### 数据库配置
-- 类型: ...
-- 连接: ...
-- 初始数据: ...
-
-### 服务启动
-- 前端: ...
-- 后端: ...
-
-### E2E 测试方法
-- 工具: browse / playwright / curl
-- 执行方式: ...
-- 截图路径: ...
-
 ## 技术约束
 - 框架版本限制
 - 第三方服务依赖
 - 性能要求
 
+## 架构决策
+- {决策 1}: {原因}
+- {决策 2}: {原因}
+
+## 项目间通信约定
+- {project-web} ↔ {project-service}: {协议 + 接口}
+```
+
+## 测试环境文档结构
+
+```markdown
+# 测试环境配置
+
+## 数据库
+| 项目 | 类型 | 连接串格式 | 种子数据 |
+|------|------|-----------|---------|
+
+## 中间件
+| 类型 | 连接信息 | 用途 | 清理策略 |
+|------|---------|------|---------|
+
+## 项目启动（per project）
+| 项目 | 命令 | 端口 | 健康检查 |
+|------|------|------|---------|
+
+## E2E 测试
+- 工具: browse / playwright / curl
+- 启动方式: {如何启动/连接}
+- 截图目录: .octopus/xzf/{branch}/07-execution/.../screenshots/
+- 执行模式: headless / headed
+
 ## 测试数据准备
-- 种子数据脚本
-- 测试用户账号
-- Mock 数据策略
+- 方式: {seed script / API fixture / DB insert}
+- 脚本路径: {path}
+- 测试账号: {pairs}
+
+## 环境就绪检查
+E2E 执行前必须确认:
+- [ ] 数据库已连接
+- [ ] 各项目已启动且健康检查通过
+- [ ] 测试数据已准备
+- [ ] E2E 工具可用
 ```
 ```
 
@@ -423,7 +461,7 @@ Stage 4 swarm 节点，根据澄清后的需求生成完整用户故事文档。
 
 **文件**: `packages/core-pack/skills/octo-xzf-spec-designer/SKILL.md`
 
-**核心职责**: Stage 5 Spec DSL 设计
+**核心职责**: Stage 4 Spec DSL 设计
 
 **内容要点**:
 
@@ -431,7 +469,7 @@ Stage 4 swarm 节点，根据澄清后的需求生成完整用户故事文档。
 # Spec DSL 设计规范
 
 ## 触发条件
-Stage 5 swarm 节点，将故事总汇拆分为 N 个 spec。
+Stage 4 swarm 节点，将故事总汇拆分为 N 个 spec。
 
 ## 拆分原则
 1. 每个 spec = 一条完整用户故事线
@@ -521,7 +559,7 @@ UI: {如果需要展示 UI}
 
 **文件**: `packages/core-pack/skills/octo-xzf-task-planner/SKILL.md`
 
-**核心职责**: Stage 6 任务拆解与文档生成
+**核心职责**: Stage 5 任务拆解与文档生成
 
 **内容要点**:
 
@@ -529,7 +567,7 @@ UI: {如果需要展示 UI}
 # 任务拆解方法论
 
 ## 触发条件
-Stage 6 swarm 节点，为每个 spec 生成任务计划文档。
+Stage 5 swarm 节点，为每个 spec 生成任务计划文档。
 
 ## 输出文件（per spec）
 ```
@@ -690,7 +728,7 @@ browse click "#login-btn"
 
 **文件**: `packages/core-pack/skills/octo-xzf-executor/SKILL.md`
 
-**核心职责**: Stage 7 任务执行与 verify-fix 循环
+**核心职责**: Stage 6 任务执行与 verify-fix 循环
 
 **内容要点**:
 
@@ -698,7 +736,7 @@ browse click "#login-btn"
 # 任务执行方法论
 
 ## 触发条件
-Stage 7 agent 节点，执行 spec 的实现和验证。
+Stage 6 agent 节点，执行 spec 的实现和验证。
 
 ## 执行流程
 
@@ -901,14 +939,21 @@ glab mr create \
 | Skill | 使用节点 | 节点类型 | 加载方式 |
 |-------|---------|---------|---------|
 | `octo-xzf-init` | `init` | agent | `skills: [octo-xzf-init]` |
-| `octo-xzf-research` | `idea-research` 各专家 | swarm expert | `expert_defaults.skills` (Phase 1 后) 或 agent_file body |
-| `octo-xzf-clarify` | `brainstorm` | swarm | 不支持 (swarm) → 方法论在 topic 中 |
-| `octo-xzf-story-writer` | `story-generation` | swarm | 不支持 (swarm) → 方法论在 topic 中 |
-| `octo-xzf-spec-designer` | `spec-design` | swarm | 不支持 (swarm) → 方法论在 topic 中 |
-| `octo-xzf-task-planner` | `plan-spec` | swarm | 不支持 (swarm) → 方法论在 topic 中 |
+| `octo-xzf-research` | `idea-research` | swarm | `expert_defaults.skills: [octo-xzf-research]` |
+| `octo-xzf-clarify` | `brainstorm` | swarm | `expert_defaults.skills: [octo-xzf-clarify]` |
+| `octo-xzf-story-writer` | `story-generation` | swarm | `expert_defaults.skills: [octo-xzf-story-writer]` |
+| `octo-xzf-spec-designer` | `spec-design` | swarm | `expert_defaults.skills: [octo-xzf-spec-designer]`；test-architect/security-expert 额外通过 `expert.skills` 追加 |
+| `octo-xzf-task-planner` | `plan-spec` | swarm | `expert_defaults.skills: [octo-xzf-task-planner]`；test-architect/security-expert 额外通过 `expert.skills` 追加 `octo-xzf-spec-designer` |
 | `octo-xzf-executor` | `execute-spec-tasks` | agent | `skills: [octo-xzf-executor]` |
 | `octo-xzf-ship` | `ship-summary` | agent | `skills: [octo-xzf-ship]` |
 
-**注意**: Swarm 节点不支持 `skills` 字段（需 Phase 1 代码变更）。
-代码变更完成前，swarm 阶段的方法论直接写在 workflow YAML 的 `topic` 中。
-代码变更完成后，可将方法论提取到独立 skill 文件中。
+**Skills 合并策略**（依赖 Phase 1 代码变更 — 见 `01-expertdef-skills-extension.md`）：
+
+```
+expert_defaults.skills = [A, B]
+expert.skills = [C]
+→ 最终 expert.skills = [A, B, C]  // 合并，不覆盖
+```
+
+- `expert_defaults.skills` — 全员共享，swarm 节点内所有专家自动加载
+- `expert.skills` — per-expert 追加，用于个别专家需要额外方法论时
