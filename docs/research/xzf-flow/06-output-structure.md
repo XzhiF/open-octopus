@@ -6,30 +6,33 @@
 .octopus/xzf/{branch}/
 ├── workspace-topology.md
 ├── 01-idea.md
-├── 02-clarification/
+├── 02-research/
+│   ├── index.md
+│   └── {domain}.md
+├── 03-clarification/
 │   └── questions.md                   # 含 Research 项类别
-├── 03-stories/
+├── 04-stories/
 │   ├── summary.md
 │   └── technical-guide.md
-├── 04-specs/
+├── 05-specs/
 │   ├── spec-001-{name}.md
 │   ├── spec-002-{name}.md
 │   └── ...
-├── 05-plans/
+├── 06-plans/
 │   └── spec-{NNN}-{name}/
 │       ├── consensus.md
 │       ├── verify-{X}-{Y}.md
 │       ├── task-{X}-{Y}-{project}-{role}.md
 │       └── spec-test.md
-├── 06-execution/
+├── 07-execution/
 │   └── spec-{NNN}-{name}/
 │       ├── verify-results/
 │       │   ├── verify-{X}-{Y}.md
 │       │   └── screenshots/
 │       └── fix-log.md
-├── 07-reports/
+├── 08-reports/
 │   └── failure-{timestamp}.md
-└── 08-ship/
+└── 09-ship/
     └── summary.md
 ```
 
@@ -80,7 +83,39 @@
 {branch name}
 ```
 
-### 2.2 02-clarification/questions.md
+### 2.2 02-research/
+
+#### index.md
+
+```markdown
+# Research 索引
+
+## 研究领域
+
+| 文件 | 领域 | 关键信息 | 与 Idea 的关系 |
+|------|------|---------|---------------|
+| {domain}.md | {领域名} | {一句话摘要} | {如何关联} |
+```
+
+#### {domain}.md（每个领域一个文件）
+
+```markdown
+# {领域名}领域研究
+
+## 现有实现
+- {现有代码/模块的关键摘要}
+
+## 关键决策点
+- {影响本次开发的重要决策信息}
+
+## 对本次 Idea 的影响
+- {具体影响和建议}
+
+## 特性参考
+- {相关技术特性、最佳实践}
+```
+
+### 2.3 03-clarification/questions.md
 
 ```markdown
 # 澄清问题清单
@@ -140,7 +175,7 @@
 {追加的澄清问题和用户回复}
 ```
 
-### 2.3 03-stories/summary.md
+### 2.4 04-stories/summary.md
 
 ```markdown
 # 用户故事总汇
@@ -174,7 +209,7 @@
 - [ ] 数据生命周期完整
 ```
 
-### 2.4 03-stories/technical-guide.md
+### 2.5 04-stories/technical-guide.md
 
 ```markdown
 # 技术指导文档
@@ -196,7 +231,7 @@
 
 ## E2E 测试方法
 - 工具: {browse/playwright/curl}
-- 截图路径: .octopus/xzf/{branch}/06-execution/.../screenshots/
+- 截图路径: .octopus/xzf/{branch}/07-execution/.../screenshots/
 - 执行命令: {example commands}
 
 ## 测试数据准备
@@ -208,11 +243,11 @@
 - {constraint 2}
 ```
 
-### 2.5 04-specs/spec-{NNN}-{name}.md
+### 2.6 05-specs/spec-{NNN}-{name}.md
 
 Refer to 05-spec-dsl.md for the complete DSL format. Just mention the reference here.
 
-### 2.6 05-plans/spec-{NNN}-{name}/consensus.md
+### 2.7 06-plans/spec-{NNN}-{name}/consensus.md
 
 ```markdown
 # Spec-{NNN} 总纲领
@@ -256,7 +291,7 @@ Refer to 05-spec-dsl.md for the complete DSL format. Just mention the reference 
 - 共用契约: {跨项目接口定义，需先对齐}
 ```
 
-### 2.7 05-plans/spec-{NNN}-{name}/verify-{X}-{Y}.md
+### 2.8 06-plans/spec-{NNN}-{name}/verify-{X}-{Y}.md
 
 ```markdown
 # Verify-{X}-{Y}: {标题}
@@ -297,7 +332,7 @@ test('{描述}', async () => {
 - [ ] 覆盖率 ≥ 80%
 ```
 
-### 2.8 05-plans/spec-{NNN}-{name}/task-{X}-{Y}-{project}-{role}.md
+### 2.9 06-plans/spec-{NNN}-{name}/task-{X}-{Y}-{project}-{role}.md
 
 ```markdown
 # Task-{X}-{Y}-{Project}-{Role}: {标题}
@@ -327,7 +362,7 @@ test('{描述}', async () => {
 {X 相同的 task 可以并行开发，不同 project 的 task 天然独立}
 ```
 
-### 2.9 05-plans/spec-{NNN}-{name}/spec-test.md
+### 2.10 06-plans/spec-{NNN}-{name}/spec-test.md
 
 ```markdown
 # Spec-{NNN} E2E 验证路线
@@ -360,7 +395,7 @@ test('{描述}', async () => {
 - [ ] 无控制台错误
 ```
 
-### 2.10 06-execution/spec-{NNN}-{name}/verify-results/verify-{X}-{Y}.md
+### 2.11 07-execution/spec-{NNN}-{name}/verify-results/verify-{X}-{Y}.md
 
 ```markdown
 # Verify-{X}-{Y} 执行结果
@@ -392,7 +427,7 @@ test('{描述}', async () => {
 - 结果: {pass/fail after fix}
 ```
 
-### 2.11 06-execution/spec-{NNN}-{name}/fix-log.md
+### 2.12 07-execution/spec-{NNN}-{name}/fix-log.md
 
 ```markdown
 # Fix Log — Spec-{NNN}
@@ -410,7 +445,7 @@ test('{描述}', async () => {
 ...
 ```
 
-### 2.12 07-reports/failure-{timestamp}.md
+### 2.13 08-reports/failure-{timestamp}.md
 
 ```markdown
 # 失败报告
@@ -450,7 +485,7 @@ test('{描述}', async () => {
 ```
 ```
 
-### 2.13 08-ship/summary.md
+### 2.14 09-ship/summary.md
 
 ```markdown
 # {Feature 标题}
@@ -486,7 +521,7 @@ test('{描述}', async () => {
 ## E2E 验证结果
 | Spec | 状态 | 详情路径 |
 |------|------|---------|
-| spec-001 | ✅ | .octopus/xzf/{branch}/06-execution/spec-001/ |
+| spec-001 | ✅ | .octopus/xzf/{branch}/07-execution/spec-001/ |
 ```
 
 ## 3. Git 跟踪约定

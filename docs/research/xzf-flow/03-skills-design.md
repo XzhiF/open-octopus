@@ -2,7 +2,7 @@
 
 ## 概述
 
-6 个 skill，放置在 `packages/core-pack/skills/octo-xzf-*/SKILL.md`，运行时通过 resource 模块安装。
+8 个 skill，放置在 `packages/core-pack/skills/octo-xzf-*/SKILL.md`，运行时通过 resource 模块安装。
 
 所有 skill 使用 `octo-xzf-` 前缀，自包含，不依赖外部 skills。
 
@@ -25,9 +25,53 @@ priority: high
 
 ---
 
-## 6 个 Skill 详细设计
+## 8 个 Skill 详细设计
 
-### 1. octo-xzf-clarify
+### 0. octo-xzf-init
+
+**文件**: `packages/core-pack/skills/octo-xzf-init/SKILL.md`
+
+**核心职责**: Stage 0 初始化
+
+**内容要点**:
+
+- 获取当前 git 分支名
+- 检测 remote 类型（GitHub/GitLab/unknown）
+- 创建输出目录结构（.octopus/xzf/{branch}/01 到 09）
+- 扫描 workspace 拓扑（所有项目、技术栈、通信方式）
+- 写入 workspace-topology.md
+- 设置变量: branch, remote_type, workspace_topology
+
+---
+
+### 1. octo-xzf-research
+
+**文件**: `packages/core-pack/skills/octo-xzf-research/SKILL.md`
+
+**核心职责**: Stage 1 Idea 处理 + Codebase 研究
+
+**内容要点**:
+
+- 读取 01-idea.md（用户需求 + 可选 Research 指引）
+- 根据 idea 判断需要研究哪些领域
+- 探索 codebase：现有模块、代码结构、关键实现
+- 研究相关技术领域知识
+- 按领域生成 research 文件（决策导向，非教程）
+- 生成 index.md 索引
+
+输出:
+- .octopus/xzf/{branch}/02-research/index.md
+- .octopus/xzf/{branch}/02-research/{domain}.md
+
+Research 文件内容格式:
+- 现有实现摘要
+- 关键决策点
+- 对当前 Idea 的影响
+- 特性参考
+
+---
+
+### 2. octo-xzf-clarify
 
 **文件**: `packages/core-pack/skills/octo-xzf-clarify/SKILL.md`
 
@@ -52,7 +96,7 @@ priority: high
 - 边界端：数据量极限、并发极限、权限极限
 
 ### 第二步：澄清问题清单生成
-输出到 `.octopus/xzf/{branch}/02-clarification/questions.md`
+输出到 `.octopus/xzf/{branch}/03-clarification/questions.md`
 
 格式要求：
 ```markdown
@@ -135,11 +179,11 @@ priority: high
 
 ---
 
-### 2. octo-xzf-story-writer
+### 3. octo-xzf-story-writer
 
 **文件**: `packages/core-pack/skills/octo-xzf-story-writer/SKILL.md`
 
-**核心职责**: Stage 3 用户故事总汇文档生成
+**核心职责**: Stage 4 用户故事总汇文档生成
 
 **内容要点**:
 
@@ -147,11 +191,11 @@ priority: high
 # 用户故事总汇方法论
 
 ## 触发条件
-Stage 3 swarm 节点，根据澄清后的需求生成完整用户故事文档。
+Stage 4 swarm 节点，根据澄清后的需求生成完整用户故事文档。
 
 ## 输出文件
-1. `.octopus/xzf/{branch}/03-stories/summary.md` — 故事总汇
-2. `.octopus/xzf/{branch}/03-stories/technical-guide.md` — 技术指导文档
+1. `.octopus/xzf/{branch}/04-stories/summary.md` — 故事总汇
+2. `.octopus/xzf/{branch}/04-stories/technical-guide.md` — 技术指导文档
 
 ## 故事总汇文档结构
 
@@ -222,11 +266,11 @@ Stage 3 swarm 节点，根据澄清后的需求生成完整用户故事文档。
 
 ---
 
-### 3. octo-xzf-spec-designer
+### 4. octo-xzf-spec-designer
 
 **文件**: `packages/core-pack/skills/octo-xzf-spec-designer/SKILL.md`
 
-**核心职责**: Stage 4 Spec DSL 设计
+**核心职责**: Stage 5 Spec DSL 设计
 
 **内容要点**:
 
@@ -234,7 +278,7 @@ Stage 3 swarm 节点，根据澄清后的需求生成完整用户故事文档。
 # Spec DSL 设计规范
 
 ## 触发条件
-Stage 4 swarm 节点，将故事总汇拆分为 N 个 spec。
+Stage 5 swarm 节点，将故事总汇拆分为 N 个 spec。
 
 ## 拆分原则
 1. 每个 spec = 一条完整用户故事线
@@ -320,11 +364,11 @@ UI: {如果需要展示 UI}
 
 ---
 
-### 4. octo-xzf-task-planner
+### 5. octo-xzf-task-planner
 
 **文件**: `packages/core-pack/skills/octo-xzf-task-planner/SKILL.md`
 
-**核心职责**: Stage 5 任务拆解与文档生成
+**核心职责**: Stage 6 任务拆解与文档生成
 
 **内容要点**:
 
@@ -332,11 +376,11 @@ UI: {如果需要展示 UI}
 # 任务拆解方法论
 
 ## 触发条件
-Stage 5 swarm 节点，为每个 spec 生成任务计划文档。
+Stage 6 swarm 节点，为每个 spec 生成任务计划文档。
 
 ## 输出文件（per spec）
 ```
-05-plans/spec-{NNN}-{name}/
+06-plans/spec-{NNN}-{name}/
 ├── consensus.md          # 总纲领
 ├── verify-1-1.md         # 验证方法
 ├── task-1-1-{project}-backend.md   # 任务分配（含项目归属）
@@ -489,11 +533,11 @@ browse click "#login-btn"
 
 ---
 
-### 5. octo-xzf-executor
+### 6. octo-xzf-executor
 
 **文件**: `packages/core-pack/skills/octo-xzf-executor/SKILL.md`
 
-**核心职责**: Stage 6 任务执行与 verify-fix 循环
+**核心职责**: Stage 7 任务执行与 verify-fix 循环
 
 **内容要点**:
 
@@ -501,7 +545,7 @@ browse click "#login-btn"
 # 任务执行方法论
 
 ## 触发条件
-Stage 6 agent 节点，执行 spec 的实现和验证。
+Stage 7 agent 节点，执行 spec 的实现和验证。
 
 ## 执行流程
 
@@ -533,7 +577,7 @@ loop (max 3 times):
 ```
 
 ## 验证结果记录
-每个验证结果写入 `06-execution/spec-{NNN}-{name}/verify-results/`:
+每个验证结果写入 `07-execution/spec-{NNN}-{name}/verify-results/`:
 ```markdown
 # Verify-{X}-{Y} 结果
 
@@ -553,7 +597,7 @@ loop (max 3 times):
 ```
 
 ## 失败报告格式
-失败时写入 `07-reports/failure-{timestamp}.md`:
+失败时写入 `08-reports/failure-{timestamp}.md`:
 ```markdown
 # 失败报告
 
@@ -581,7 +625,7 @@ loop (max 3 times):
 
 ## 通知
 失败时通过 Octopus notify → hermes CLI → xzf_hermes 群：
-- 消息格式: "[xzf-pipeline] Spec-{NNN} Task-{X}-{Y} 验证失败，已生成报告: 07-reports/failure-{timestamp}.md"
+- 消息格式: "[xzf-pipeline] Spec-{NNN} Task-{X}-{Y} 验证失败，已生成报告: 08-reports/failure-{timestamp}.md"
 
 ## 保真要求
 - 不允许跳过验证
@@ -592,11 +636,11 @@ loop (max 3 times):
 
 ---
 
-### 6. octo-xzf-ship
+### 7. octo-xzf-ship
 
 **文件**: `packages/core-pack/skills/octo-xzf-ship/SKILL.md`
 
-**核心职责**: Stage 7 PR/MR 生成与提交
+**核心职责**: Stage 8 PR/MR 生成与提交
 
 **内容要点**:
 
@@ -604,7 +648,7 @@ loop (max 3 times):
 # Ship 交付方法论
 
 ## 触发条件
-Stage 7 agent 节点，所有 spec 执行完毕后生成 PR/MR。
+Stage 8 agent 节点，所有 spec 执行完毕后生成 PR/MR。
 
 ## Remote 检测
 
@@ -623,7 +667,7 @@ fi
 
 ## PR/MR Summary 生成
 
-输出到 `.octopus/xzf/{branch}/08-ship/summary.md`:
+输出到 `.octopus/xzf/{branch}/09-ship/summary.md`:
 
 ```markdown
 # {Feature 标题}
@@ -664,7 +708,7 @@ fi
 ## E2E 验证结果
 - ✅ Spec-001: 全部通过
 - ✅ Spec-002: 全部通过
-- 验证详情: `.octopus/xzf/{branch}/06-execution/`
+- 验证详情: `.octopus/xzf/{branch}/07-execution/`
 ```
 
 ## 提交命令
@@ -673,7 +717,7 @@ fi
 ```bash
 gh pr create \
   --title "{feature 标题}" \
-  --body-file ".octopus/xzf/{branch}/08-ship/summary.md" \
+  --body-file ".octopus/xzf/{branch}/09-ship/summary.md" \
   --base main
 ```
 
@@ -681,7 +725,7 @@ gh pr create \
 ```bash
 glab mr create \
   --title "{feature 标题}" \
-  --description "$(cat .octopus/xzf/{branch}/08-ship/summary.md)" \
+  --description "$(cat .octopus/xzf/{branch}/09-ship/summary.md)" \
   --target-branch main
 ```
 ```
