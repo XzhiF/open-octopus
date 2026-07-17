@@ -18,7 +18,7 @@
 
 | # | 阶段 | 节点类型 | 退出机制 |
 |---|------|---------|---------|
-| 0 | 初始化 | bash + agent | 顺序执行 |
+| 0 | 初始化 | agent (skill: octo-xzf-init) | 顺序执行 |
 | 1 | Idea 输入 | swarm(review) + approval | 用户选择 proceed |
 | 2 | 澄清循环 | loop → swarm(debate) + approval | break_when 检查 approval decision |
 | 3 | 故事总汇 | loop → swarm(debate) + approval | break_when 检查 approval decision |
@@ -82,93 +82,19 @@ notify:
     message: "[xzf-pipeline] 完成: $vars.branch — PR/MR 已提交"
 
 # ============================================================
-# Stage 0: 初始化
+# Stage 0: 初始化（单 agent 节点）
 # ============================================================
 
 nodes:
-  # --- 0a. 获取分支名 ---
-  - id: init-branch
-    type: bash
-    command: |
-      git branch --show-current
-    outputs:
-      $vars.branch: "$last_output"
-
-  # --- 0b. 检测 remote 类型 ---
-  - id: init-remote
-    type: bash
-    depends_on: [init-branch]
-    command: |
-      REMOTE=$(git remote get-url origin 2>/dev/null || echo "none")
-      if echo "$REMOTE" | grep -q "github.com"; then
-        echo "github"
-      elif echo "$REMOTE" | grep -q "gitlab"; then
-        echo "gitlab"
-      else
-        echo "unknown"
-      fi
-    outputs:
-      $vars.remote_type: "$last_output"
-
-  # --- 0c. 创建输出目录 ---
-  - id: init-dirs
-    type: bash
-    depends_on: [init-branch]
-    command: |
-      BASE=".octopus/xzf/$vars.branch"
-      mkdir -p "$BASE"/{02-clarification,03-stories,04-specs,05-plans,06-execution,07-reports,08-ship}
-
-  # --- 0d. 扫描 Workspace 拓扑 ---
-  - id: init-workspace
+  - id: init
     type: agent
-    depends_on: [init-dirs]
     context: new
+    skills:
+      - octo-xzf-init
     prompt: |
-      扫描当前 workspace 中所有项目，生成拓扑文档。
+      初始化 XZF Pipeline 工作环境。
 
-      输出到: .octopus/xzf/$vars.branch/workspace-topology.md
-
-      文档格式:
-      # Workspace 拓扑
-
-      ## 项目列表
-      | 项目 | 技术栈 | 主要模块 | 端口 |
-      |------|--------|---------|------|
-
-      ## 项目间通信
-      | 源 | 目标 | 方式 | 说明 |
-      |----|------|------|------|
-
-      ## 项目约定
-      （每个项目的 CLAUDE.md 摘要或关键约定）
-
-      扫描方法:
-      1. 查找 workspace 下所有包含 .git 目录的子目录
-      2. 读取各项目的 package.json / go.mod / Cargo.toml 等确定技术栈
-      3. 读取 CLAUDE.md（如存在）获取项目约定
-      4. 分析项目间依赖（import、RPC 定义、共享库引用）
-
-      完成后输出:
-      {"vars_update": {"workspace_topology": "已生成"}}
-
-  # --- 0e. 确认初始化 ---
-  - id: init-confirm
-    type: approval
-    depends_on: [init-workspace]
-    prompt: |
-      ═══ 初始化完成 ═══
-
-      分支: $vars.branch
-      Remote 类型: $vars.remote_type
-      输出目录: .octopus/xzf/$vars.branch/
-
-      请确认 workspace 拓扑文档内容正确。
-      如需修改，请在评论中说明。
-    options:
-      - label: "确认，开始输入 Idea"
-        value: "proceed"
-      - label: "需要修改拓扑文档"
-        value: "revise"
+      完成后简要汇报：分支名、remote 类型、workspace 项目数。
 
 # ============================================================
 # Stage 1: Idea 输入
@@ -177,7 +103,7 @@ nodes:
   # --- 1a. 用户输入 Idea ---
   - id: idea-input
     type: approval
-    depends_on: [init-confirm]
+    depends_on: [init]
     prompt: |
       ═══ Stage 1: 输入你的 Idea ═══
 
@@ -280,21 +206,22 @@ nodes:
           Idea: $vars.idea
           Workspace 拓扑: 请读取 .octopus/xzf/$vars.branch/workspace-topology.md
 
-          用户上轮反馈:
-          $vars.idea_feedback
-
-          用户上轮回复内容:
+          用户上轮回复:
           $brainstorm-approval.output.comment
 
-          请进行头脑风暴，输出澄清问题清单。
+          任务:
+          1. 读取 .octopus/xzf/$vars.branch/02-clarification/questions.md（如存在）
+          2. 结合用户上轮回复，更新问题清单：
+             - 已回答的问题标记 ✅ 并记录用户答案
+             - 未回答的问题保持待澄清 ❓
+             - 根据讨论新增问题
+          3. 重写 questions.md（完整更新，非追加）
+
           问题分为四类:
           1. **功能类**: 核心功能需求、边界条件
           2. **环境类**: 运行环境、部署目标
           3. **测试类**: E2E 测试方法、验证要求
           4. **调研类**: 需探索的代码库区域、技术选型研究
-
-          写入: .octopus/xzf/$vars.branch/02-clarification/questions.md
-          （追加模式，标记 Round $iteration）
 
           每个问题提供 2-3 种方案，第 1 个为推荐。
         experts:
@@ -313,19 +240,28 @@ nodes:
         host:
           role: clarify-host
           prompt: |
-            综合专家意见，生成结构化澄清问题清单。
-            追加到 .octopus/xzf/$vars.branch/02-clarification/questions.md
+            综合专家意见。
 
-      # --- 2b. 用户审批 ---
+            输出两部分：
+            1. 将完整问题清单写入 questions.md（含已回答 ✅ + 待澄清 ❓）
+            2. 在综合输出中仅列出本轮需要用户回答的待澄清问题
+               格式：编号 + 问题 + 推荐方案 + 备选方案
+
+      # --- 2b. 用户审批（内联显示待澄清问题） ---
       - id: brainstorm-approval
         type: approval
         depends_on: [brainstorm]
         prompt: |
-          ═══ 澄清问题清单 — Round $iteration ═══
+          ═══ 需求澄清 — Round $iteration ═══
 
-          请查看 .octopus/xzf/$vars.branch/02-clarification/questions.md
+          📁 完整文档: .octopus/xzf/$vars.branch/02-clarification/questions.md
 
-          回答需要澄清的问题后，选择下一步操作。
+          ─── 本轮需要澄清的问题 ───
+
+          $brainstorm_synthesis
+
+          ─────────────────────────
+          请在评论中回答问题。
           如部分问题未回答但选择"进入下一阶段"，将采用专家推荐方案。
         options:
           - label: "回答并继续讨论"
@@ -399,17 +335,25 @@ nodes:
             综合专家意见，生成完整用户故事总汇文档和技术指导文档。
             写入 03-stories/ 目录下两个文件。
 
-      # --- 3b. 用户审批 ---
+            在综合输出中列出故事摘要列表：
+            每个故事一行：编号 + 标题 + 角色 + 服务链
+
+      # --- 3b. 用户审批（内联显示故事摘要） ---
       - id: story-approval
         type: approval
         depends_on: [story-generation]
         prompt: |
           ═══ 用户故事总汇 — Round $iteration ═══
 
-          请查看:
+          📁 完整文档:
           - .octopus/xzf/$vars.branch/03-stories/summary.md
           - .octopus/xzf/$vars.branch/03-stories/technical-guide.md
 
+          ─── 故事摘要 ───
+
+          $story-generation_synthesis
+
+          ─────────────────
           如满意，进入 Spec 设计阶段。
           如需修改，请在评论中说明。
         options:
@@ -1012,10 +956,7 @@ execute-spec-tasks (agent)
 ## 8. 依赖图
 
 ```
-init-branch → init-remote
-init-branch → init-dirs → init-workspace → init-confirm
-
-init-confirm → idea-input → idea-review → idea-confirm
+init → idea-input → idea-review → idea-confirm
 
 idea-confirm → clarification-loop
   clarification-loop:
