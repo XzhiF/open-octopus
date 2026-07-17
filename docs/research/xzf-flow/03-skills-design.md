@@ -8,6 +8,13 @@
 
 Skill 定位：为 agent 节点提供方法论和格式规范。在 swarm 节点中通过 `expert.skills` 或 `expert_defaults.skills` 注入；在 agent 节点中通过 `node.skills` 注入。
 
+## 设计原则
+
+- **Skill = 方法论**: skill 包含完整的执行方法、输出格式、处理逻辑
+- **Prompt = 编排**: workflow 中的 prompt 只指定输入/输出路径和执行顺序
+- **引用关系**: workflow 节点通过 `skills:` 字段加载 skill，skill 内容注入到 agent 上下文
+- **Swarm 例外**: swarm 节点不支持 skills，方法论直接写在 topic 中
+
 ---
 
 ## 通用 SKILL.md frontmatter 格式
@@ -30,44 +37,190 @@ priority: high
 ### 0. octo-xzf-init
 
 **文件**: `packages/core-pack/skills/octo-xzf-init/SKILL.md`
+**使用节点**: Stage 0 `init` (agent)
+**核心职责**: Pipeline 环境初始化
 
-**核心职责**: Stage 0 初始化
+#### 执行步骤
 
-**内容要点**:
+**Step 1: 分支检测**
+获取当前 git worktree 分支名。
+设变量: `branch`
 
-- 获取当前 git 分支名
-- 检测 remote 类型（GitHub/GitLab/unknown）
-- 创建输出目录结构（.octopus/xzf/{branch}/01 到 09）
-- 扫描 workspace 拓扑（所有项目、技术栈、通信方式）
-- 写入 workspace-topology.md
-- 设置变量: branch, remote_type, workspace_topology
+**Step 2: Remote 检测**
+检测 `git remote get-url origin`:
+- `github.com` → `github`
+- `gitlab` → `gitlab`
+- 其他 → `unknown`
+
+设变量: `remote_type`
+
+**Step 3: 目录创建**
+创建 `.octopus/xzf/{branch}/` 及子目录:
+```
+02-research/_scan/, 03-clarification/, 04-stories/,
+05-specs/, 06-plans/, 07-execution/, 08-reports/, 09-ship/
+```
+
+**Step 4: Workspace 拓扑扫描**
+
+项目发现:
+```bash
+find . -maxdepth 3 -name ".git" -type d
+# 排除 .worktrees/, node_modules/
+```
+
+技术栈识别（读取 manifest）:
+- `package.json` → Node.js/TypeScript（检查 next/react/vue 等）
+- `go.mod` → Go
+- `Cargo.toml` → Rust
+- `pyproject.toml` → Python
+
+约定提取:
+- 读取各项目 `CLAUDE.md`（如存在）
+- 提取: 框架、代码风格、测试框架、关键目录
+
+项目间依赖分析:
+- workspace 级 package.json 中的 workspace 引用
+- go.mod 中的 replace 指令
+- import 路径中的跨项目引用
+
+端口检测:
+- `.env` / config 文件中的 PORT 设置
+
+**Step 5: 输出 workspace-topology.md**
+
+```markdown
+# Workspace 拓扑
+
+> 生成时间: {ISO timestamp}
+> 分支: {branch}
+
+## 项目列表
+| 项目 | 路径 | 技术栈 | 主要模块 | 端口 |
+|------|------|--------|---------|------|
+
+## 项目间通信
+| 源 | 目标 | 方式 | 说明 |
+|----|------|------|------|
+
+## 项目约定
+### {project-name}
+- 框架: ...
+- 样式: ...
+- 状态管理: ...
+- 测试: ...
+
+## 关键入口文件
+### {project-name}
+- 路由: src/app/
+- 组件: src/components/
+- API: src/app/api/
+```
+
+**Step 6: 设置变量**
+```json
+{"vars_update": {"branch": "...", "remote_type": "...", "workspace_topology": "已生成"}}
+```
 
 ---
 
 ### 1. octo-xzf-research
 
 **文件**: `packages/core-pack/skills/octo-xzf-research/SKILL.md`
+**使用节点**: Stage 1 `idea-research` (swarm dispatch, 每位专家加载)
+**核心职责**: Codebase 领域研究 + 外部调研
 
-**核心职责**: Stage 1 Idea 处理 + Codebase 研究
+#### 输入
 
-**内容要点**:
+- **Idea 文档**: `.octopus/xzf/{branch}/01-idea.md`
+- **Workspace 拓扑**: `.octopus/xzf/{branch}/workspace-topology.md`
+- **预扫描结果**: `.octopus/xzf/{branch}/02-research/_scan/`
 
-- 读取 01-idea.md（用户需求 + 可选 Research 指引）
-- 根据 idea 判断需要研究哪些领域
-- 探索 codebase：现有模块、代码结构、关键实现
-- 研究相关技术领域知识
-- 按领域生成 research 文件（决策导向，非教程）
-- 生成 index.md 索引
+#### 01-idea.md 格式
 
-输出:
-- .octopus/xzf/{branch}/02-research/index.md
-- .octopus/xzf/{branch}/02-research/{domain}.md
+```markdown
+# Idea
+## 需求描述
+{原始需求}
 
-Research 文件内容格式:
-- 现有实现摘要
-- 关键决策点
-- 对当前 Idea 的影响
-- 特性参考
+## Research 指引（可选）
+### 内部研究重点
+{codebase 中需要重点研究的模块/方向}
+
+### 外部调研
+{需要调研的外部平台/技术/库，可附 URL}
+```
+
+#### 三层研究方法论
+
+每位专家的研究文件包含三层:
+
+**1. Internal (Codebase)**
+- 现有实现摘要（关键文件、模式、约定）
+- 代码结构（入口文件、核心模块）
+- 已有能力和限制
+
+**2. External (Domain Knowledge)**
+- 相关技术知识和最佳实践
+- 外部平台 API 文档（使用 WebFetch 读取）
+- 框架特性、库用法
+
+**3. Key Decisions**
+- 对后续开发有指导意义的信息
+- 技术选型建议
+- 风险和注意事项
+
+#### Research 指引处理
+
+如有 Research 指引:
+- **内部研究重点** → 优先定位指引中的模块深入分析
+- **外部调研** + URL → 使用 WebFetch 读取文档，提取关键信息
+- **外部调研** 无 URL → 使用 WebSearch 搜索相关知识
+
+如无 Research 指引:
+- 根据 Idea 内容自行判断需要研究什么
+- 重点关注 Idea 涉及的现有模块
+
+#### 外部调研输出格式
+
+调研外部平台时，提取:
+- 认证方式
+- 核心接口列表（Method + Path + 用途）
+- 回调/webhook 机制
+- 频率限制
+- 对本次 Idea 的影响
+
+#### 研究文件输出格式
+
+写入: `.octopus/xzf/{branch}/02-research/{domain}.md`
+
+```markdown
+# {领域}研究
+
+## Internal
+{现有代码实现摘要}
+
+## External
+{外部知识/平台 API/最佳实践}
+
+## Key Decisions
+{决策信息}
+
+## GAPS（如有未覆盖领域）
+{标记 + 建议在澄清阶段补充}
+```
+
+#### 预扫描文件使用
+
+_scan/ 目录文件用于快速定位:
+- `file-tree.txt` → 项目文件结构
+- `deps.txt` → 依赖和版本
+- `claude-mds.txt` → 项目约定
+- `api-entries.txt` → API 入口文件
+- `db-schemas.txt` → 数据模型文件
+- `test-config.txt` → 测试配置
+
+先读预扫描文件定位，再 Read 目标文件深入分析。避免盲读。
 
 ---
 
@@ -740,3 +893,22 @@ glab mr create \
 4. **可追溯**: 每个阶段的输出都有明确的路径和格式
 5. **闭环验证**: 从澄清到交付，每个环节都有验证点
 6. **渐进细化**: 从 idea 到 spec 到 task，粒度逐步增加
+
+---
+
+## Skill-Node 引用关系
+
+| Skill | 使用节点 | 节点类型 | 加载方式 |
+|-------|---------|---------|---------|
+| `octo-xzf-init` | `init` | agent | `skills: [octo-xzf-init]` |
+| `octo-xzf-research` | `idea-research` 各专家 | swarm expert | `expert_defaults.skills` (Phase 1 后) 或 agent_file body |
+| `octo-xzf-clarify` | `brainstorm` | swarm | 不支持 (swarm) → 方法论在 topic 中 |
+| `octo-xzf-story-writer` | `story-generation` | swarm | 不支持 (swarm) → 方法论在 topic 中 |
+| `octo-xzf-spec-designer` | `spec-design` | swarm | 不支持 (swarm) → 方法论在 topic 中 |
+| `octo-xzf-task-planner` | `plan-spec` | swarm | 不支持 (swarm) → 方法论在 topic 中 |
+| `octo-xzf-executor` | `execute-spec-tasks` | agent | `skills: [octo-xzf-executor]` |
+| `octo-xzf-ship` | `ship-summary` | agent | `skills: [octo-xzf-ship]` |
+
+**注意**: Swarm 节点不支持 `skills` 字段（需 Phase 1 代码变更）。
+代码变更完成前，swarm 阶段的方法论直接写在 workflow YAML 的 `topic` 中。
+代码变更完成后，可将方法论提取到独立 skill 文件中。

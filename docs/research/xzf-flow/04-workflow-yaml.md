@@ -14,6 +14,13 @@
 - **Workspace 感知**: 多仓库 workspace，跨项目服务链
 - **引擎对齐**: 所有节点用法严格匹配 Octopus 引擎实际能力
 
+### 编排原则
+
+- **Prompt = 编排**: workflow 中的 prompt 只负责输入/输出路径和执行顺序
+- **Skill = 方法论**: 具体执行方法、输出格式、处理逻辑在 skill 中定义
+- **Agent File = 角色**: 专家身份、专业视角、沟通风格在 agent file 中定义
+- **Swarm 例外**: swarm 节点不支持 skills，topic 需要同时包含编排和方法论
+
 ### 阶段总览
 
 | # | 阶段 | 节点类型 | 退出机制 |
@@ -103,9 +110,8 @@ nodes:
     skills:
       - octo-xzf-init
     prompt: |
-      使用 octo-xzf-init skill 初始化 XZF Pipeline 工作环境。
-
-      完成后简要汇报：分支名、remote 类型、workspace 项目数。
+      使用 octo-xzf-init skill 初始化工作环境。
+      汇报：分支名、remote 类型、workspace 项目数。
 
 # ============================================================
 # Stage 1: Idea 处理 + Codebase 研究
@@ -119,26 +125,17 @@ nodes:
     skills:
       - octo-xzf-research
     prompt: |
-      使用 octo-xzf-research skill 处理 Idea 并探索 codebase。
+      使用 octo-xzf-research skill 处理 Idea 并研究 codebase。
 
       输入:
-      - Idea 文档: .octopus/xzf/$vars.branch/01-idea.md
-      - Workspace 拓扑: .octopus/xzf/$vars.branch/workspace-topology.md
-
-      任务:
-      1. 读取 Idea，理解需求范围
-      2. 如有 Research 指引，按指引方向重点研究
-      3. 如无指引，根据 Idea + codebase 自行判断需要研究什么：
-         - 涉及的现有模块和代码结构
-         - 相关技术领域知识
-         - 对后续决策有指导意义的关键信息
-      4. 按领域组织为 1 或多个 research 文件
-      5. 生成索引文件
+      - Idea: .octopus/xzf/$vars.branch/01-idea.md
+      - Workspace: .octopus/xzf/$vars.branch/workspace-topology.md
 
       输出:
       - .octopus/xzf/$vars.branch/02-research/index.md
       - .octopus/xzf/$vars.branch/02-research/{domain}.md
 
+      ⚠️ 如 01-idea.md 包含 Research 指引，优先处理指引中的方向。
       完成后汇报: 研究领域数量和关键发现摘要。
 
 # ============================================================
@@ -161,27 +158,18 @@ nodes:
         topic: |
           ═══ 需求澄清 — Round $iteration ═══
 
-          Idea: 请读取 .octopus/xzf/$vars.branch/01-idea.md
-          Research 知识: 请读取 .octopus/xzf/$vars.branch/02-research/index.md 并根据话题读取对应领域文件
-          Workspace 拓扑: 请读取 .octopus/xzf/$vars.branch/workspace-topology.md
+          输入:
+          - Idea: .octopus/xzf/$vars.branch/01-idea.md
+          - Research 知识: .octopus/xzf/$vars.branch/02-research/index.md
+          - Workspace: .octopus/xzf/$vars.branch/workspace-topology.md
 
           用户上轮回复:
           $brainstorm-approval.output.comment
 
-          任务:
-          1. 读取 .octopus/xzf/$vars.branch/03-clarification/questions.md（如存在）
-          2. 结合用户上轮回复，更新问题清单：
-             - 已回答的问题标记 ✅ 并记录用户答案
-             - 未回答的问题保持待澄清 ❓
-             - 根据讨论新增问题
-          3. 重写 questions.md（完整更新，非追加）
+          输出: .octopus/xzf/$vars.branch/03-clarification/questions.md
 
-          问题分为四类:
-          1. **功能类**: 核心功能需求、边界条件
-          2. **环境类**: 运行环境、部署目标
-          3. **测试类**: E2E 测试方法、验证要求
-          4. **调研类**: 需探索的代码库区域、技术选型研究
-
+          ⚠️ 根据用户上轮回复更新问题清单（已回答 ✅ / 待澄清 ❓）。
+          问题分类：功能 / 环境 / 测试 / 调研。
           每个问题提供 2-3 种方案，第 1 个为推荐。
         experts:
           - role: senior-architect
@@ -252,30 +240,21 @@ nodes:
         topic: |
           ═══ 用户故事总汇 — Round $iteration ═══
 
-          Idea: 请读取 .octopus/xzf/$vars.branch/01-idea.md
-          Research 知识: 请读取 .octopus/xzf/$vars.branch/02-research/index.md 并根据话题读取对应领域文件
-          澄清文档: 请读取 .octopus/xzf/$vars.branch/03-clarification/questions.md
-          Workspace 拓扑: 请读取 .octopus/xzf/$vars.branch/workspace-topology.md
+          输入:
+          - Idea: .octopus/xzf/$vars.branch/01-idea.md
+          - Research 知识: .octopus/xzf/$vars.branch/02-research/index.md
+          - 澄清文档: .octopus/xzf/$vars.branch/03-clarification/questions.md
+          - Workspace: .octopus/xzf/$vars.branch/workspace-topology.md
 
           用户上轮反馈:
           $story-approval.output.comment
 
-          任务:
-          1. 根据澄清后的需求，生成完整用户故事总汇
-          2. 每个故事标注跨项目服务链（SERVICE_CHAIN）
-          3. 生成技术指导文档（含测试环境配置）
-
-          输出文件:
+          输出:
           - .octopus/xzf/$vars.branch/04-stories/summary.md
           - .octopus/xzf/$vars.branch/04-stories/technical-guide.md
 
-          故事格式:
-          ### 故事 N: {标题}
-          - 角色: {谁}
-          - 目标: {要达成什么}
-          - 服务链: project-web (HTTP) → project-service (RPC)
-          - 路径: {从头到尾的操作流程}
-          - 完成标准: {怎么算完成}
+          ⚠️ 每个故事标注 SERVICE_CHAIN。
+          格式：角色 / 目标 / 服务链 / 路径 / 完成标准。
         experts:
           - role: senior-architect
             agent_file: .claude/agents/octo-xzf-architect.md
@@ -339,34 +318,17 @@ nodes:
     topic: |
       ═══ Spec 设计 ═══
 
-      Idea: 请读取 .octopus/xzf/$vars.branch/01-idea.md
-      Research 知识: 请读取 .octopus/xzf/$vars.branch/02-research/index.md 并根据话题读取对应领域文件
-      故事总汇: 请读取 .octopus/xzf/$vars.branch/04-stories/summary.md
-      技术指导: 请读取 .octopus/xzf/$vars.branch/04-stories/technical-guide.md
-      Workspace 拓扑: 请读取 .octopus/xzf/$vars.branch/workspace-topology.md
+      输入:
+      - Idea: .octopus/xzf/$vars.branch/01-idea.md
+      - Research 知识: .octopus/xzf/$vars.branch/02-research/index.md
+      - 故事总汇: .octopus/xzf/$vars.branch/04-stories/summary.md
+      - 技术指导: .octopus/xzf/$vars.branch/04-stories/technical-guide.md
+      - Workspace: .octopus/xzf/$vars.branch/workspace-topology.md
 
-      任务:
-      将用户故事拆分为 N 个 Spec，每个 Spec 是一条完整用户故事线。
+      输出: .octopus/xzf/$vars.branch/05-specs/spec-NNN-{name}.md
 
-      拆分原则:
-      1. 从简单到复杂排列
-      2. 第一份 Spec 通常包含基础底座
-      3. 每个 Spec 完成后是可交付版本
-      4. Spec 间依赖尽量松耦合
-
-      每个 Spec 使用 DSL 格式（参见 octo-xzf-spec-designer skill）:
-      - Meta: ID, Name, Projects involved, Depends
-      - Story Line: ACTOR, GOAL, OUTCOME, SERVICE_CHAIN
-      - Verification Path: 先设计验证（PRECONDITION → STEPS → ASSERT）
-      - Operation Flow: 每步标注 ACTOR + PROJECT
-      - UI Wireframe: ASCII art（如涉及 UI）
-      - Tech Requirements: DB/API/UI 变更 per project
-
-      输出:
-      .octopus/xzf/$vars.branch/05-specs/spec-NNN-{name}.md
-
-      完成后输出 spec 数量和列表:
-      {"vars_update": {"spec_count": "N", "spec_list": "spec-001-x,spec-002-y,..."}}
+      ⚠️ 拆分原则：从简单到复杂、首 Spec 含基础底座、每 Spec 可独立交付、松耦合。
+      Spec DSL 格式参见 octo-xzf-spec-designer skill。
     experts:
       - role: senior-architect
         agent_file: .claude/agents/octo-xzf-architect.md
@@ -660,27 +622,13 @@ nodes:
     prompt: |
       使用 octo-xzf-ship skill 生成 PR/MR Summary。
 
-      ═══ Ship: 生成 PR/MR Summary ═══
+      输入:
+      - Idea: .octopus/xzf/$vars.branch/01-idea.md
+      - 故事: .octopus/xzf/$vars.branch/04-stories/summary.md
+      - Specs: .octopus/xzf/$vars.branch/05-specs/
+      - 验证结果: .octopus/xzf/$vars.branch/07-execution/
 
-      请读取:
-      - .octopus/xzf/$vars.branch/01-idea.md
-      - .octopus/xzf/$vars.branch/02-research/index.md
-      - .octopus/xzf/$vars.branch/04-stories/summary.md
-      - .octopus/xzf/$vars.branch/05-specs/ 所有 spec 文件
-      - .octopus/xzf/$vars.branch/07-execution/ 所有验证结果
-
-      生成 PR/MR Summary:
-      .octopus/xzf/$vars.branch/09-ship/summary.md
-
-      内容结构:
-      ## 功能概括
-      [一段话]
-
-      ## 实现内容 (per module/project)
-      ## 用户故事 (已完成列表)
-      ## DB Schema 变更
-      ## 核心实现与约定
-      ## E2E 验证结果 (引导到 07-execution/ 目录)
+      输出: .octopus/xzf/$vars.branch/09-ship/summary.md
 
   # --- 7b. 检测 remote 并提交 ---
   - id: ship-submit
