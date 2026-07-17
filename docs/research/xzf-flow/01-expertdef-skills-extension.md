@@ -215,7 +215,7 @@ async runExpert(expert: ExpertDef, prompt: string, round: number): Promise<Exper
       agent_file: .claude/agents/octo-xzf-test-architect.md
       skills:
         - octo-xzf-spec-designer
-        - octo-xzf-executor
+        - octo-xzf-implementer
 ```
 
 ## 合并策略

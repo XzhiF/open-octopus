@@ -1,3 +1,7 @@
+> ⚠️ **SUPERSEDED** — 此文件为原始头脑风暴草稿，已被 00-overview.md ~ 06-output-structure.md 的正式设计取代。保留仅作参考。
+
+---
+
 ❯
 首先我需要创建一个工作流 yaml + skills套件的组合(octo-xzf-前缀），来实现一个正向的开发需求到提交RP/MR的octopus系统专有工作流
 我说一下，我现在希望相要的流程， 我要稍微改一下这个方法论。

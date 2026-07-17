@@ -16,6 +16,7 @@
 │   ├── technical-guide.md
 │   └── test-environment.md
 ├── 05-specs/
+│   ├── spec-index.md                    # Spec 索引（按执行顺序）
 │   ├── spec-001-{name}.md
 │   ├── spec-002-{name}.md
 │   └── ...
@@ -74,14 +75,16 @@
 ```markdown
 # Idea
 
-## 描述
+## 需求描述
 {用户输入的原始 idea 描述}
 
-## 输入时间
-{timestamp}
+## Research 指引（可选）
 
-## 分支
-{branch name}
+### 内部研究重点
+{codebase 中需要重点研究的模块/方向}
+
+### 外部调研
+{需要调研的外部平台/技术/库，可附 URL}
 ```
 
 ### 2.2 02-research/

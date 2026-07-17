@@ -2,7 +2,7 @@
 
 ## 概述
 
-8 个 skill，放置在 `packages/core-pack/skills/octo-xzf-*/SKILL.md`，运行时通过 resource 模块安装。
+9 个 skill，放置在 `packages/core-pack/skills/octo-xzf-*/SKILL.md`，运行时通过 resource 模块安装。
 
 所有 skill 使用 `octo-xzf-` 前缀，自包含，不依赖外部 skills。
 
@@ -32,7 +32,7 @@ priority: high
 
 ---
 
-## 8 个 Skill 详细设计
+## 9 个 Skill 详细设计
 
 ### 0. octo-xzf-init
 
@@ -481,6 +481,25 @@ Stage 4 swarm 节点，将故事总汇拆分为 N 个 spec。
 ## Spec 文件命名
 `spec-{NNN}-{name}.md` — 三位数字编号 + 简短英文名称
 
+## Spec 索引文件
+
+Host 在写入所有 spec 文件后，**必须**生成 `05-specs/spec-index.md`，供 Stage 5/6 按序号查找 spec 文件：
+
+```markdown
+# Spec 索引
+
+> 生成时间: {timestamp}
+> 总数: {N}
+
+| # | 文件名 | 标题 | Priority | Depends |
+|---|--------|------|----------|---------|
+| 1 | spec-001-user-login.md | 用户登录 | P0 | none |
+| 2 | spec-002-dashboard.md | 仪表盘 | P1 | spec-001 |
+| 3 | spec-003-settings.md | 用户设置 | P1 | spec-001 |
+```
+
+Stage 5/6 的 agent 读取此文件，通过 `#` 列定位第 `$iteration` 个 spec 的文件名。
+
 ## Spec DSL 格式
 
 ### Meta 区块
@@ -724,114 +743,323 @@ browse click "#login-btn"
 
 ---
 
-### 6. octo-xzf-executor
+### 6. octo-xzf-orchestrator
 
-**文件**: `packages/core-pack/skills/octo-xzf-executor/SKILL.md`
+**文件**: `packages/core-pack/skills/octo-xzf-orchestrator/SKILL.md`
 
-**核心职责**: Stage 6 任务执行与 verify-fix 循环
+**核心职责**: Stage 6 执行编排 — 协调者（父 agent）专用，**线性委派器**
+
+**加载方式**: 父 agent 通过 `skills: [octo-xzf-orchestrator]` 加载
+
+**关键设计**: 协调者只做排序 + 委派 + 检查结果。verify-fix 循环下沉到子代理（见 octo-xzf-implementer skill）
 
 **内容要点**:
 
 ```markdown
-# 任务执行方法论
+# 执行编排方法论（线性委派版）
 
 ## 触发条件
-Stage 6 agent 节点，执行 spec 的实现和验证。
+Stage 6 agent 节点（协调者），编排 subagent 执行 spec 的实现和验证。
+
+## 协调者职责（三件事）
+1. **排序**: 读取 consensus.md + 文件名，确定任务执行顺序
+2. **委派**: 按顺序 delegate_to_xxx-expert，传递文件路径
+3. **检查**: 解析子代理返回的 JSON（status: passed/failed），决定下一步
+
+⚠️ 协调者不实现代码、不运行测试、不修复 bug、不管理 verify-fix 循环。
+
+## 上下文管理
+- 不预读所有 task/verify 文件内容
+- 只读取：consensus.md（全景）+ 文件名列表（排序依据）+ test-environment.md（环境检查）
+- 委派时传递文件路径，让子代理自行 Read
 
 ## 执行流程
 
-### Phase 1: Task 实现
-对每个 task-x-y-role.md：
-1. 读取任务文档，理解需求
-2. 读取 consensus.md，遵守共用约定
-3. 按实现步骤编码
-4. 确保代码通过 lint 和 type check
+### Phase 0: 环境就绪检查
+读取 test-environment.md 的「环境就绪检查」清单：
+- 确认服务已启动、DB 已连接、E2E 工具可用
+- 未就绪则尝试自动准备（Bash 命令启动服务）
+- 仍失败则直接报告 failed，等待人工干预
 
-### Phase 2: Task 验证（verify-fix 循环）
-对每个 verify-x-y.md：
-```
-loop (max 3 times):
-  1. 按 verify 文档执行验证
-  2. IF 通过 → break, 记录结果
-  3. IF 失败 → 分析原因, 修复代码, 重新验证
-  4. IF 达到 max → 生成失败报告, 通知用户, 等待干预
-```
+### Phase 1: 实现任务（按依赖拓扑排序）
 
-### Phase 3: Spec E2E 验证
-所有 task 通过后：
-```
-loop (max 3 times):
-  1. 按 spec-test.md 逐步执行 E2E 验证
-  2. IF 全部通过 → break, spec 完成
-  3. IF 失败 → 分析失败步骤, 定位问题 task, 修复
-  4. IF 达到 max → 生成失败报告, 通知用户, 等待干预
-```
+**排序逻辑**:
+从 consensus.md 和文件名 (task-X-Y-project-role.md) 分析依赖：
+- 无依赖的 task → 第一批执行
+- 有依赖的 task → 等前置 task 完成后执行
+- X 值递增顺序执行（v1: 顺序；v2 可引入 batch 并行）
 
-## 验证结果记录
-每个验证结果写入 `07-execution/spec-{NNN}-{name}/verify-results/`:
-```markdown
-# Verify-{X}-{Y} 结果
+**委派循环（线性，非 loop 节点）**:
+```
+for each task in dependency_order:
+  1. delegate_to_{role}-expert(task: |
+     执行任务。请先 Read:
+     - 任务: 06-plans/spec-NNN/{task-file}
+     - 共识: 06-plans/spec-NNN/consensus.md
+     - 环境: 04-stories/test-environment.md
+     按 octo-xzf-implementer skill 的自治 verify-fix 流程执行。
+  )
 
-## 状态: PASS / FAIL
-## 执行时间: {timestamp}
-## 证据
-### 测试输出
-```
-{测试命令输出}
-```
-### 截图（如有）
-![](screenshot-{timestamp}.png)
-### DB 验证（如有）
-```sql
-{查询结果}
-```
+  2. 解析子代理返回 JSON
+  3. IF status == "passed":
+     - 记录通过，继续下一个 task
+  4. IF status == "failed":
+     - 记录失败原因到 fix-log.md
+     - 重新委派同一 task（携带上次失败信息，fresh attempt）
+     - 解析新返回 JSON
+     - IF 仍然 failed:
+       → 输出 spec_status: "failed"
+       → 停止执行，进入失败报告
 ```
 
-## 失败报告格式
-失败时写入 `08-reports/failure-{timestamp}.md`:
+**委派格式（传路径 + 上次失败信息）**:
+```
+# 首次委派
+delegate_to_backend-expert(task: |
+  执行任务。请先 Read:
+  - 任务: 06-plans/spec-001/task-1-2-auth-backend.md
+  - 共识: 06-plans/spec-001/consensus.md
+  - 环境: 04-stories/test-environment.md
+  按 octo-xzf-implementer skill 执行。
+)
+
+# 重试委派（携带失败信息）
+delegate_to_backend-expert(task: |
+  上次执行失败，请重新尝试。
+  上次失败信息:
+  - failure_reason: "E2E Step 3 断言失败"
+  - last_error: "Expected element not found"
+  - fix_attempts: ["修复了渲染条件", "修改了返回值"]
+  请采用不同策略重新实现。
+)
+```
+
+### Phase 2: E2E 验证
+
+所有 task 通过后，委派 test-expert 执行完整故事线验证：
+```
+1. delegate_to_test-expert(task: |
+   执行 E2E 验证。请先 Read:
+   - 测试路线: 06-plans/spec-001/spec-test.md
+   - 环境: 04-stories/test-environment.md
+   按 octo-xzf-implementer skill 的自治 E2E-fix 流程执行。
+)
+
+2. 解析返回 JSON
+3. IF status == "passed": spec 完成
+4. IF status == "failed":
+   - 重新委派 test-expert（携带上次失败信息）
+   - IF 仍然 failed → spec_status: "failed"
+```
+
+## 失败报告
+子代理返回 failed 且重试仍失败后，协调者写入 `08-reports/failure-{timestamp}.md`:
 ```markdown
 # 失败报告
 
-## 失败位置
-- Spec: spec-{NNN}-{name}
-- Task: task-{X}-{Y}-{Role}
-- Verify: verify-{X}-{Y}
+## 基本信息
+- Spec: spec-{NNN}
+- 失败 Task: {task-file}
+- 失败 Verify: verify-{X}-{Y}
 
-## 失败原因
-{详细分析}
+## 子代理报告
+{直接引用子代理返回的 failure_reason + last_error + fix_attempts}
 
 ## 已尝试的修复
-1. {修复 1}: {结果}
-2. {修复 2}: {结果}
-3. {修复 3}: {结果}
+### 子代理内部尝试（3 次）
+{fix_attempts 详情}
+### 协调者重试（1 次）
+{重试委派结果}
 
 ## 建议的人工干预方案
-{给用户的建议}
-
-## 现场保留
-- 代码变更: {git diff 摘要}
-- 日志: {相关日志路径}
-- 截图: {截图路径}
+{基于 failure_reason 的建议}
 ```
 
 ## 通知
-失败时通过 Octopus notify → hermes CLI → xzf_hermes 群：
-- 消息格式: "[xzf-pipeline] Spec-{NNN} Task-{X}-{Y} 验证失败，已生成报告: 08-reports/failure-{timestamp}.md"
+失败时通过 Octopus notify → hermes CLI → xzf_hermes 群
+
+## 完成输出
+所有验证通过:
+```json
+{"vars_update": {"spec_status": "passed"}}
+```
+失败:
+```json
+{"vars_update": {"spec_status": "failed", "failure_reason": "..."}}
+```
+
+## 重试策略总览
+
+| 层级 | 谁管理 | 次数 | 触发条件 |
+|------|--------|------|---------|
+| Layer 1 | 子代理内部 (implementer skill) | max 3 | verify 失败 |
+| Layer 2 | 协调者 (orchestrator skill) | max 1 | 子代理返回 failed |
+| Layer 3 | Workflow (human-intervention) | 用户决定 | 协调者报告 failed |
+```
+
+---
+
+### 7. octo-xzf-implementer
+
+**文件**: `packages/core-pack/skills/octo-xzf-implementer/SKILL.md`
+
+**核心职责**: Stage 6 子 agent 执行方法论 — 自治实现/验证/修复循环
+
+**加载方式**: 所有 subagent 通过 `skills: [octo-xzf-implementer]` 加载
+
+**关键设计**: verify-fix 循环下沉到子代理内部，协调者只看到最终 PASS/FAIL
+
+**内容要点**:
+
+```markdown
+# 任务执行方法论（自治版）
+
+## 触发条件
+作为 subagent 被协调者委派，执行单个 task/verify/E2E 任务。
+子代理内部自治管理 verify-fix 循环，协调者不参与循环控制。
+
+## 通用流程
+1. Read 委派消息中指定的所有文件
+2. 读取 consensus.md，遵守共用约定（错误码格式、API 响应格式、命名规范）
+3. 按任务类型执行（含自治 verify-fix 循环）
+4. 返回结构化结果
+
+## 任务类型
+
+### 实现类任务（task-X-Y-project-role.md）
+
+**自治 verify-fix 循环（最多 3 次尝试）：**
+
+```
+attempt = 1
+while attempt ≤ 3:
+  1. 按任务文件的实现步骤编码
+  2. 运行 lint + type check
+  3. 运行对应的 verify-X-Y.md 验证方法
+  4. IF 验证通过:
+     - 写入 verify-results/
+     - 返回 PASS
+  5. IF 验证失败:
+     - 分析失败原因（测试输出、错误信息）
+     - 修复代码
+     - attempt += 1
+     - 继续循环
+  6. IF attempt > 3:
+     - 写入失败详情
+     - 返回 FAIL + 原因
+```
+
+### 验证类任务（verify-X-Y.md — 独立验证）
+
+1. 读取验证文件的步骤
+2. 逐步执行（运行测试命令、E2E 操作、DB 查询）
+3. 收集证据（测试输出、截图、DB 查询结果）
+4. 报告每个断言的 PASS/FAIL 状态
+5. 将验证结果写入 07-execution/spec-{NNN}/verify-results/
+
+### E2E 验证任务（spec-test.md — 完整故事线验证）
+
+**自治 E2E-fix 循环（最多 3 次尝试）：**
+
+```
+attempt = 1
+while attempt ≤ 3:
+  1. 读取 spec-test.md + test-environment.md
+  2. 逐步执行 E2E 测试（browse/curl/playwright）
+  3. 收集证据（截图、API 响应、DB 查询）
+  4. IF 全部 Step 通过:
+     - 返回 PASS
+  5. IF 某个 Step 失败:
+     - 定位失败步骤对应的 task
+     - 分析根因（Read 相关 task 文件了解实现）
+     - 修复代码
+     - 从失败步骤重新开始（不从头执行）
+     - attempt += 1
+  6. IF attempt > 3:
+     - 返回 FAIL + 详细分析
+```
+
+### 修复类任务（协调者重新委派时）
+
+1. 读取之前的失败信息（上次返回的 failure_reason + last_error）
+2. 采用不同的修复策略（避免重复同样的修复）
+3. 执行修复 + 验证
+4. 报告：这次修了什么、为什么上次的修复没用
+
+## 返回格式
+
+子代理执行完毕后，**必须**返回结构化 JSON，供协调者解析：
+
+### PASS
+```json
+{
+  "status": "passed",
+  "attempts": 1,
+  "files_changed": ["src/xxx.ts", "src/yyy.ts"],
+  "evidence": ["verify-results/verify-1-1.md"]
+}
+```
+
+### FAIL
+```json
+{
+  "status": "failed",
+  "attempts": 3,
+  "failure_reason": "E2E Step 3 断言失败：页面未显示成功提示",
+  "last_error": "Expected element '.success-msg' not found",
+  "fix_attempts": [
+    "尝试 1: 修复了组件渲染条件，但验证仍失败",
+    "尝试 2: 修改了 API 返回值，但前端未正确处理",
+    "尝试 3: 无法定位根因，可能需要人工介入"
+  ]
+}
+```
+
+## 验证结果格式
+写入 07-execution/spec-{NNN}-{name}/verify-results/verify-{X}-{Y}.md:
+```markdown
+# Verify-{X}-{Y} 结果
+## 状态: ✅ PASS | ❌ FAIL
+## 执行时间: {timestamp}
+## 尝试次数: {N} / 3
+
+## 证据
+### 测试输出
+{测试命令输出}
+### 截图（如有）
+![](screenshot-{timestamp}.png)
+### DB 验证（如有）
+{查询结果}
+
+## 修复记录（如有）
+### 修复 1: {timestamp}
+- 问题: {what failed}
+- 原因: {why}
+- 修复: {what changed}
+- 结果: {pass/fail after fix}
+```
 
 ## 保真要求
 - 不允许跳过验证
 - 不允许伪造通过
 - 必须有真实性证明（测试输出、截图、DB 查询结果）
-- 阻塞时说明理由，等待用户干预
+- 不确定时如实报告，不猜测
+- 每次 fix attempt 都要记录到 verify-results 文件中
+
+## 关键设计原则
+- **verify-fix 循环在子代理内部完成** — 协调者只看到最终 PASS/FAIL
+- **每次 fix 后立即重新验证** — 不等协调者指令
+- **E2E 失败后从失败步骤继续** — 不从头执行，节省时间
+- **3 次尝试后如实报告** — 不无限循环，交回协调者决策
 ```
 
 ---
 
-### 7. octo-xzf-ship
+### 8. octo-xzf-ship
 
 **文件**: `packages/core-pack/skills/octo-xzf-ship/SKILL.md`
 
-**核心职责**: Stage 8 PR/MR 生成与提交
+**核心职责**: Stage 7 PR/MR 生成与提交
 
 **内容要点**:
 
@@ -839,7 +1067,7 @@ loop (max 3 times):
 # Ship 交付方法论
 
 ## 触发条件
-Stage 8 agent 节点，所有 spec 执行完毕后生成 PR/MR。
+Stage 7 agent 节点，所有 spec 执行完毕后生成 PR/MR。
 
 ## Remote 检测
 
@@ -928,9 +1156,11 @@ glab mr create \
 1. **自包含**: 每个 skill 独立可用，不依赖外部 skills
 2. **方法论驱动**: 提供"怎么做"而不是"用什么做"
 3. **格式规范**: 统一的文档结构和命名约定
-4. **可追溯**: 每个阶段的输出都有明确的路径和格式
-5. **闭环验证**: 从澄清到交付，每个环节都有验证点
-6. **渐进细化**: 从 idea 到 spec 到 task，粒度逐步增加
+4. **Host 写文件 + 短 synthesis**: swarm host 通过 Write 工具直接写入完整文件（无字数限制），synthesis 文本只放摘要摘要（受 2000 字限制，供下游 approval 显示用）
+5. **Expert 直接写文件（dispatch 模式）**: dispatch 模式下 expert 各自使用 Write 工具直接写入指定文件，host 只做一致性检查
+6. **可追溯**: 每个阶段的输出都有明确的路径和格式
+7. **闭环验证**: 从澄清到交付，每个环节都有验证点
+8. **渐进细化**: 从 idea 到 spec 到 task，粒度逐步增加
 
 ---
 
@@ -942,9 +1172,10 @@ glab mr create \
 | `octo-xzf-research` | `idea-research` | swarm | `expert_defaults.skills: [octo-xzf-research]` |
 | `octo-xzf-clarify` | `brainstorm` | swarm | `expert_defaults.skills: [octo-xzf-clarify]` |
 | `octo-xzf-story-writer` | `story-generation` | swarm | `expert_defaults.skills: [octo-xzf-story-writer]` |
-| `octo-xzf-spec-designer` | `spec-design` | swarm | `expert_defaults.skills: [octo-xzf-spec-designer]`；test-architect/security-expert 额外通过 `expert.skills` 追加 |
-| `octo-xzf-task-planner` | `plan-spec` | swarm | `expert_defaults.skills: [octo-xzf-task-planner]`；test-architect/security-expert 额外通过 `expert.skills` 追加 `octo-xzf-spec-designer` |
-| `octo-xzf-executor` | `execute-spec-tasks` | agent | `skills: [octo-xzf-executor]` |
+| `octo-xzf-spec-designer` | `spec-design` | swarm | `expert_defaults.skills: [octo-xzf-spec-designer]`；test-architect/security-expert 在 **plan-spec** 通过 `expert.skills` 追加 |
+| `octo-xzf-task-planner` | `plan-spec` | swarm | `expert_defaults.skills: [octo-xzf-task-planner]`；test-architect/security-expert 在 **spec-design** 通过 `expert.skills` 追加 |
+| `octo-xzf-orchestrator` | `execute-spec-tasks` | agent (线性委派器) | 父 agent: `skills: [octo-xzf-orchestrator]` — 只做排序+委派+检查，verify-fix 循环在子代理内部 |
+| `octo-xzf-implementer` | `execute-spec-tasks` | agent (自治子代理) | subagents: `skills: [octo-xzf-implementer]` — 自治 verify-fix 循环 (max 3)，返回结构化 JSON |
 | `octo-xzf-ship` | `ship-summary` | agent | `skills: [octo-xzf-ship]` |
 
 **Skills 合并策略**（依赖 Phase 1 代码变更 — 见 `01-expertdef-skills-extension.md`）：
