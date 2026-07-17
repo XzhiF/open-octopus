@@ -1,6 +1,6 @@
 # XZF Development Pipeline — Workflow YAML 设计
 
-> **版本**: v2.0.0-draft
+> **版本**: v2.1.0-draft
 > **日期**: 2026-07-17
 > **状态**: 设计中（基于引擎实际能力重写）
 
@@ -19,7 +19,7 @@
 | # | 阶段 | 节点类型 | 退出机制 |
 |---|------|---------|---------|
 | 0 | 初始化 | agent (skill: octo-xzf-init) | 顺序执行 |
-| 1 | Idea 输入 | swarm(review) + approval | 用户选择 proceed |
+| 1 | Idea + Research | agent (skill: octo-xzf-research) | 顺序执行 |
 | 2 | 澄清循环 | loop → swarm(debate) + approval | break_when 检查 approval decision |
 | 3 | 故事总汇 | loop → swarm(debate) + approval | break_when 检查 approval decision |
 | 4 | Spec 设计 | swarm(debate) + approval | 用户选择 proceed |
@@ -38,6 +38,18 @@
 | **agent** | `prompt`, `skills`, `context`, `outputs` | 支持 skills，`vars_update` JSON 设变量 |
 | **bash** | `command`, `outputs` | 执行 shell 命令 |
 | **所有节点** | `execute_when`, `depends_on`, `outputs` | `execute_when` 跳过时不级联下游 |
+
+### Idea 文件格式
+
+用户在运行流水线前，将 Idea 写入 `.octopus/xzf/{branch}/01-idea.md`：
+
+```markdown
+# Idea
+## 需求描述
+{原始需求}
+## Research 指引（可选）
+{特定研究方向，不填则 agent 自行判断}
+```
 
 ## 2. 完整 Workflow YAML
 
@@ -62,7 +74,6 @@ timeout: 86400          # 全局超时 24h
 # --- 变量 ---
 variables:
   branch: ""
-  idea: ""
   workspace_topology: ""
   user_decision: ""
   spec_count: "0"
@@ -92,96 +103,43 @@ nodes:
     skills:
       - octo-xzf-init
     prompt: |
-      初始化 XZF Pipeline 工作环境。
+      使用 octo-xzf-init skill 初始化 XZF Pipeline 工作环境。
 
       完成后简要汇报：分支名、remote 类型、workspace 项目数。
 
 # ============================================================
-# Stage 1: Idea 输入
+# Stage 1: Idea 处理 + Codebase 研究
 # ============================================================
 
-  # --- 1a. 用户输入 Idea ---
-  - id: idea-input
-    type: approval
+  # --- Stage 1: Idea 处理 + Codebase 研究 ---
+  - id: idea
+    type: agent
     depends_on: [init]
+    context: new
+    skills:
+      - octo-xzf-research
     prompt: |
-      ═══ Stage 1: 输入你的 Idea ═══
+      使用 octo-xzf-research skill 处理 Idea 并探索 codebase。
 
-      请描述你想要实现的功能或需求。
-      尽量包含：目标用户、核心功能、预期效果。
-    options:
-      - label: "提交 Idea"
-        value: "submitted"
-    outputs:
-      $vars.idea: "$comment"
+      输入:
+      - Idea 文档: .octopus/xzf/$vars.branch/01-idea.md
+      - Workspace 拓扑: .octopus/xzf/$vars.branch/workspace-topology.md
 
-  # --- 1b. 专家团初步评审 ---
-  - id: idea-review
-    type: swarm
-    depends_on: [idea-input]
-    mode: review
-    rounds: 1
-    context_tier: "200k"
-    topic: |
-      ═══ Idea 初步评审 ═══
+      任务:
+      1. 读取 Idea，理解需求范围
+      2. 如有 Research 指引，按指引方向重点研究
+      3. 如无指引，根据 Idea + codebase 自行判断需要研究什么：
+         - 涉及的现有模块和代码结构
+         - 相关技术领域知识
+         - 对后续决策有指导意义的关键信息
+      4. 按领域组织为 1 或多个 research 文件
+      5. 生成索引文件
 
-      Idea:
-      $vars.idea
+      输出:
+      - .octopus/xzf/$vars.branch/02-research/index.md
+      - .octopus/xzf/$vars.branch/02-research/{domain}.md
 
-      Workspace 拓扑:
-      请读取 .octopus/xzf/$vars.branch/workspace-topology.md
-
-      请从各自专业角度初步评估：
-      1. 这个 idea 涉及哪些项目？
-      2. 技术可行性初步判断
-      3. 主要风险和关注点
-
-      Host 综合后输出到:
-      .octopus/xzf/$vars.branch/01-idea.md
-
-      内容包含：
-      - 原始 idea
-      - 各专家初步意见
-      - 涉及项目列表
-      - 初步风险评估
-    experts:
-      - role: senior-architect
-        agent_file: .claude/agents/octo-xzf-architect.md
-      - role: product-manager
-        agent_file: .claude/agents/octo-xzf-product-manager.md
-      - role: test-architect
-        agent_file: .claude/agents/octo-xzf-test-architect.md
-      - role: frontend-expert
-        agent_file: .claude/agents/octo-xzf-frontend-expert.md
-      - role: backend-expert
-        agent_file: .claude/agents/octo-xzf-backend-expert.md
-      - role: security-expert
-        agent_file: .claude/agents/octo-xzf-security-expert.md
-    host:
-      role: idea-host
-      prompt: |
-        综合 6 位专家的初步意见，生成 Idea 评审文档。
-        写入 .octopus/xzf/$vars.branch/01-idea.md
-
-  # --- 1c. 确认 Idea 评审 ---
-  - id: idea-confirm
-    type: approval
-    depends_on: [idea-review]
-    prompt: |
-      ═══ Idea 评审完成 ═══
-
-      请查看 .octopus/xzf/$vars.branch/01-idea.md
-
-      如同意评审结果，进入需求澄清阶段。
-      如需补充，请在评论中说明。
-    options:
-      - label: "同意，进入澄清阶段"
-        value: "proceed"
-      - label: "需要补充 Idea"
-        value: "revise"
-    outputs:
-      $vars.user_decision: "$last_output"
-      $vars.idea_feedback: "$comment"
+      完成后汇报: 研究领域数量和关键发现摘要。
 
 # ============================================================
 # Stage 2: 需求澄清循环
@@ -189,7 +147,7 @@ nodes:
 
   - id: clarification-loop
     type: loop
-    depends_on: [idea-confirm]
+    depends_on: [idea]
     max_iterations: 10
     break_when: '$vars.user_decision == "proceed"'
     nodes:
@@ -203,14 +161,15 @@ nodes:
         topic: |
           ═══ 需求澄清 — Round $iteration ═══
 
-          Idea: $vars.idea
+          Idea: 请读取 .octopus/xzf/$vars.branch/01-idea.md
+          Research 知识: 请读取 .octopus/xzf/$vars.branch/02-research/index.md 并根据话题读取对应领域文件
           Workspace 拓扑: 请读取 .octopus/xzf/$vars.branch/workspace-topology.md
 
           用户上轮回复:
           $brainstorm-approval.output.comment
 
           任务:
-          1. 读取 .octopus/xzf/$vars.branch/02-clarification/questions.md（如存在）
+          1. 读取 .octopus/xzf/$vars.branch/03-clarification/questions.md（如存在）
           2. 结合用户上轮回复，更新问题清单：
              - 已回答的问题标记 ✅ 并记录用户答案
              - 未回答的问题保持待澄清 ❓
@@ -254,7 +213,7 @@ nodes:
         prompt: |
           ═══ 需求澄清 — Round $iteration ═══
 
-          📁 完整文档: .octopus/xzf/$vars.branch/02-clarification/questions.md
+          📁 完整文档: .octopus/xzf/$vars.branch/03-clarification/questions.md
 
           ─── 本轮需要澄清的问题 ───
 
@@ -293,8 +252,9 @@ nodes:
         topic: |
           ═══ 用户故事总汇 — Round $iteration ═══
 
-          Idea: $vars.idea
-          澄清文档: 请读取 .octopus/xzf/$vars.branch/02-clarification/questions.md
+          Idea: 请读取 .octopus/xzf/$vars.branch/01-idea.md
+          Research 知识: 请读取 .octopus/xzf/$vars.branch/02-research/index.md 并根据话题读取对应领域文件
+          澄清文档: 请读取 .octopus/xzf/$vars.branch/03-clarification/questions.md
           Workspace 拓扑: 请读取 .octopus/xzf/$vars.branch/workspace-topology.md
 
           用户上轮反馈:
@@ -306,8 +266,8 @@ nodes:
           3. 生成技术指导文档（含测试环境配置）
 
           输出文件:
-          - .octopus/xzf/$vars.branch/03-stories/summary.md
-          - .octopus/xzf/$vars.branch/03-stories/technical-guide.md
+          - .octopus/xzf/$vars.branch/04-stories/summary.md
+          - .octopus/xzf/$vars.branch/04-stories/technical-guide.md
 
           故事格式:
           ### 故事 N: {标题}
@@ -333,9 +293,9 @@ nodes:
           role: story-host
           prompt: |
             综合专家意见，生成完整用户故事总汇文档和技术指导文档。
-            写入 03-stories/ 目录下两个文件。
+            写入 04-stories/ 目录下两个文件。
 
-            在综合输出中列出故事摘要列表：
+            在综合输出里列出故事摘要列表：
             每个故事一行：编号 + 标题 + 角色 + 服务链
 
       # --- 3b. 用户审批（内联显示故事摘要） ---
@@ -346,8 +306,8 @@ nodes:
           ═══ 用户故事总汇 — Round $iteration ═══
 
           📁 完整文档:
-          - .octopus/xzf/$vars.branch/03-stories/summary.md
-          - .octopus/xzf/$vars.branch/03-stories/technical-guide.md
+          - .octopus/xzf/$vars.branch/04-stories/summary.md
+          - .octopus/xzf/$vars.branch/04-stories/technical-guide.md
 
           ─── 故事摘要 ───
 
@@ -379,9 +339,10 @@ nodes:
     topic: |
       ═══ Spec 设计 ═══
 
-      Idea: $vars.idea
-      故事总汇: 请读取 .octopus/xzf/$vars.branch/03-stories/summary.md
-      技术指导: 请读取 .octopus/xzf/$vars.branch/03-stories/technical-guide.md
+      Idea: 请读取 .octopus/xzf/$vars.branch/01-idea.md
+      Research 知识: 请读取 .octopus/xzf/$vars.branch/02-research/index.md 并根据话题读取对应领域文件
+      故事总汇: 请读取 .octopus/xzf/$vars.branch/04-stories/summary.md
+      技术指导: 请读取 .octopus/xzf/$vars.branch/04-stories/technical-guide.md
       Workspace 拓扑: 请读取 .octopus/xzf/$vars.branch/workspace-topology.md
 
       任务:
@@ -402,7 +363,7 @@ nodes:
       - Tech Requirements: DB/API/UI 变更 per project
 
       输出:
-      .octopus/xzf/$vars.branch/04-specs/spec-NNN-{name}.md
+      .octopus/xzf/$vars.branch/05-specs/spec-NNN-{name}.md
 
       完成后输出 spec 数量和列表:
       {"vars_update": {"spec_count": "N", "spec_list": "spec-001-x,spec-002-y,..."}}
@@ -423,7 +384,7 @@ nodes:
       role: spec-host
       prompt: |
         综合专家意见，确定 Spec 拆分方案。
-        写入各 spec 文件到 04-specs/ 目录。
+        写入各 spec 文件到 05-specs/ 目录。
         最终输出 vars_update JSON 包含 spec_count 和 spec_list。
 
   # --- 4b. 确认 Spec 设计 ---
@@ -436,7 +397,7 @@ nodes:
       共 $vars.spec_count 个 Spec:
       $vars.spec_list
 
-      请查看 .octopus/xzf/$vars.branch/04-specs/ 目录下的 Spec 文件。
+      请查看 .octopus/xzf/$vars.branch/05-specs/ 目录下的 Spec 文件。
 
       确认拆分方案后进入任务计划阶段。
     options:
@@ -468,8 +429,9 @@ nodes:
           ═══ 任务计划 — Spec #$iteration ═══
 
           请读取 Spec 文件:
-          .octopus/xzf/$vars.branch/04-specs/ 目录下第 $iteration 个 spec
+          .octopus/xzf/$vars.branch/05-specs/ 目录下第 $iteration 个 spec
 
+          Research 知识: 请读取 .octopus/xzf/$vars.branch/02-research/index.md 并根据话题读取对应领域文件
           Workspace 拓扑: 请读取 .octopus/xzf/$vars.branch/workspace-topology.md
 
           任务: 为这个 Spec 生成完整的任务计划，包含 4 类文档:
@@ -499,7 +461,7 @@ nodes:
              - 截图/DB 验证要求
 
           输出目录:
-          .octopus/xzf/$vars.branch/05-plans/spec-{NNN}-{name}/
+          .octopus/xzf/$vars.branch/06-plans/spec-{NNN}-{name}/
         experts:
           - role: senior-architect
             agent_file: .claude/agents/octo-xzf-architect.md
@@ -527,7 +489,7 @@ nodes:
             1. consensus.md 中接口契约一致
             2. verify 和 task 编号对齐
             3. spec-test.md 覆盖完整故事线
-            写入 05-plans/ 目录。
+            写入 06-plans/ 目录。
 
 # ============================================================
 # Stage 6: 任务执行（per spec → per task 循环）
@@ -547,11 +509,13 @@ nodes:
         skills:
           - octo-xzf-executor
         prompt: |
+          使用 octo-xzf-executor skill 执行 Spec #$iteration。
+
           ═══ 执行 Spec #$iteration ═══
 
           请读取以下文件:
-          - Spec: .octopus/xzf/$vars.branch/04-specs/ 目录下第 $iteration 个 spec
-          - 任务计划: .octopus/xzf/$vars.branch/05-plans/ 目录下对应 spec 的所有 task 和 verify 文件
+          - Spec: .octopus/xzf/$vars.branch/05-specs/ 目录下第 $iteration 个 spec
+          - 任务计划: .octopus/xzf/$vars.branch/06-plans/ 目录下对应 spec 的所有 task 和 verify 文件
           - Workspace 拓扑: .octopus/xzf/$vars.branch/workspace-topology.md
 
           执行流程:
@@ -577,7 +541,7 @@ nodes:
           - 如失败 → 修复并重试，最多 3 次
 
           ## 验证结果记录
-          写入 .octopus/xzf/$vars.branch/06-execution/spec-{NNN}/
+          写入 .octopus/xzf/$vars.branch/07-execution/spec-{NNN}/
 
           ## 保真要求
           - 不允许跳过验证
@@ -610,7 +574,7 @@ nodes:
           ═══ Spec #$iteration 执行失败 ═══
 
           生成失败报告:
-          .octopus/xzf/$vars.branch/07-reports/failure-{timestamp}.md
+          .octopus/xzf/$vars.branch/08-reports/failure-{timestamp}.md
 
           报告内容:
           - 失败位置 (Spec/Task/Verify)
@@ -630,7 +594,7 @@ nodes:
           ═══ 执行失败 — 等待人工干预 ═══
 
           Spec #$iteration 执行失败。
-          请查看失败报告: .octopus/xzf/$vars.branch/07-reports/
+          请查看失败报告: .octopus/xzf/$vars.branch/08-reports/
 
           选择下一步操作:
         options:
@@ -694,16 +658,19 @@ nodes:
     skills:
       - octo-xzf-ship
     prompt: |
+      使用 octo-xzf-ship skill 生成 PR/MR Summary。
+
       ═══ Ship: 生成 PR/MR Summary ═══
 
       请读取:
       - .octopus/xzf/$vars.branch/01-idea.md
-      - .octopus/xzf/$vars.branch/03-stories/summary.md
-      - .octopus/xzf/$vars.branch/04-specs/ 所有 spec 文件
-      - .octopus/xzf/$vars.branch/06-execution/ 所有验证结果
+      - .octopus/xzf/$vars.branch/02-research/index.md
+      - .octopus/xzf/$vars.branch/04-stories/summary.md
+      - .octopus/xzf/$vars.branch/05-specs/ 所有 spec 文件
+      - .octopus/xzf/$vars.branch/07-execution/ 所有验证结果
 
       生成 PR/MR Summary:
-      .octopus/xzf/$vars.branch/08-ship/summary.md
+      .octopus/xzf/$vars.branch/09-ship/summary.md
 
       内容结构:
       ## 功能概括
@@ -713,7 +680,7 @@ nodes:
       ## 用户故事 (已完成列表)
       ## DB Schema 变更
       ## 核心实现与约定
-      ## E2E 验证结果 (引导到 06-execution/ 目录)
+      ## E2E 验证结果 (引导到 07-execution/ 目录)
 
   # --- 7b. 检测 remote 并提交 ---
   - id: ship-submit
@@ -722,7 +689,7 @@ nodes:
     command: |
       REMOTE_TYPE="$vars.remote_type"
       BRANCH="$vars.branch"
-      SUMMARY=".octopus/xzf/$BRANCH/08-ship/summary.md"
+      SUMMARY=".octopus/xzf/$BRANCH/09-ship/summary.md"
       TITLE=$(head -1 "$SUMMARY" | sed 's/^# //')
 
       if [ "$REMOTE_TYPE" = "github" ]; then
@@ -946,7 +913,7 @@ execute-spec-tasks (agent)
 
 ### 7.3 现场保留
 
-失败时写入 `07-reports/failure-{timestamp}.md`:
+失败时写入 `08-reports/failure-{timestamp}.md`:
 - 失败位置和原因
 - 已尝试的修复
 - 代码 diff
@@ -956,9 +923,9 @@ execute-spec-tasks (agent)
 ## 8. 依赖图
 
 ```
-init → idea-input → idea-review → idea-confirm
+init → idea (Idea 处理 + Codebase 研究)
 
-idea-confirm → clarification-loop
+idea → clarification-loop
   clarification-loop:
     brainstorm → brainstorm-approval
     break_when: user_decision == "proceed"
@@ -985,7 +952,17 @@ task-planning-loop → execution-loop
 execution-loop → ship-summary → ship-submit → ship-confirm
 ```
 
-## 附录 A: Agent 文件清单
+## 附录 A: Skills 清单
+
+| Skill | 用途 | 使用节点 |
+|-------|------|---------|
+| `octo-xzf-init` | 初始化工作环境 | init |
+| `octo-xzf-research` | Idea 处理 + Codebase 研究 | idea |
+| `octo-xzf-spec-designer` | Spec DSL 格式参考 | spec-design (expert skills, Phase 1) |
+| `octo-xzf-executor` | 任务执行 + 验证 | execute-spec-tasks |
+| `octo-xzf-ship` | PR/MR Summary 生成 | ship-summary |
+
+## 附录 B: Agent 文件清单
 
 | 文件 | 角色 |
 |------|------|
@@ -996,37 +973,40 @@ execution-loop → ship-summary → ship-submit → ship-confirm
 | `.claude/agents/octo-xzf-backend-expert.md` | 后端专家 |
 | `.claude/agents/octo-xzf-security-expert.md` | 安全专家 |
 
-## 附录 B: 输出目录结构
+## 附录 C: 输出目录结构
 
 ```
 .octopus/xzf/{branch}/
 ├── workspace-topology.md
-├── 01-idea.md
-├── 02-clarification/
+├── 01-idea.md                        # 用户编写，运行前提交
+├── 02-research/                      # idea 节点生成
+│   ├── index.md
+│   └── {domain}.md
+├── 03-clarification/
 │   └── questions.md
-├── 03-stories/
+├── 04-stories/
 │   ├── summary.md
 │   └── technical-guide.md
-├── 04-specs/
+├── 05-specs/
 │   ├── spec-001-{name}.md
 │   └── spec-002-{name}.md
-├── 05-plans/
+├── 06-plans/
 │   └── spec-{NNN}-{name}/
 │       ├── consensus.md
 │       ├── verify-{X}-{Y}.md
 │       ├── task-{X}-{Y}-{project}-{role}.md
 │       └── spec-test.md
-├── 06-execution/
+├── 07-execution/
 │   └── spec-{NNN}-{name}/
 │       ├── verify-results/
 │       └── fix-log.md
-├── 07-reports/
+├── 08-reports/
 │   └── failure-{timestamp}.md
-└── 08-ship/
+└── 09-ship/
     └── summary.md
 ```
 
-## 附录 C: CLI 执行命令
+## 附录 D: CLI 执行命令
 
 ```bash
 # 执行流水线
