@@ -34,15 +34,12 @@ variables:
   branch: ""
   workspace_topology: ""
   remote_type: ""
-  user_decision: ""
+  user_guidance: ""
   spec_count: "0"
   spec_status: ""
   env_checklist_status: ""
   pending_questions: ""
   spec_feedback: ""
-  intervention_feedback: ""
-  pr_url: ""
-  pipeline_aborted: "false"
 
 # --- 通知 ---
 notify:
@@ -539,11 +536,11 @@ nodes:
   - id: execution-loop
     type: loop
     depends_on: [task-planning-loop]
-    max_iterations: 99    # break_when 是真正的退出条件，99 仅作为安全阀
-    break_when: '$iteration > $vars.spec_count || $vars.pipeline_aborted == "true"'
+    max_iterations: 99
+    break_when: '$iteration > $vars.spec_count'
     nodes:
 
-      # --- 6a. 执行当前 spec 的所有 task ---
+      # --- 6a. 执行当前 spec（含 checkpoint 恢复） ---
       - id: execute-spec-tasks
         type: agent
         context: new
@@ -567,223 +564,93 @@ nodes:
         prompt: |
           你是执行协调者（线性委派器），使用 octo-xzf-orchestrator skill 编排 Spec #$iteration。
 
+          ═══ 用户指导（上次失败后提供）═══
+          $vars.user_guidance
+
+          如有用户指导，结合指导分析上次失败原因并调整策略。
+
           ═══ 你的唯一职责：排序 + 委派 + 检查结果 ═══
           ⚠️ 你不实现代码、不运行测试、不修复 bug。
           verify-fix 循环在子代理内部完成（octo-xzf-implementer skill）。
 
-          ═══ 初始化 ═══
+          ═══ Checkpoint 恢复 ═══
           1. 读取 Spec 索引: .octopus/xzf/$vars.branch/05-specs/spec-index.md
           2. 找到第 $iteration 行对应的 spec 文件
-          3. 列出 06-plans/spec-{NNN}-{name}/ 下所有文件名（不读内容）
-          4. 读取共识文档: 06-plans/spec-{NNN}-{name}/consensus.md
-          5. 读取测试环境: .octopus/xzf/$vars.branch/04-stories/test-environment.md
+          3. 检查 checkpoint: .octopus/xzf/$vars.branch/07-execution/spec-{NNN}/checkpoint.json
+          4. IF checkpoint 存在 → 跳过已完成任务，从断点恢复
+          5. IF 不存在 → 从头开始
+
+          ═══ 执行任务 ═══
+          按 octo-xzf-orchestrator skill 的方法论执行：
+          - 按依赖顺序委派子代理
+          - 每个 task 完成后更新 checkpoint.json
+          - 全部 task 通过后执行 E2E 验证
+          - 失败时写入 checkpoint + 生成失败报告到 08-reports/
 
           ═══ 环境就绪检查 ═══
-          读取 test-environment.md 的「环境就绪检查」清单，
-          确认服务已启动、DB 已连接、E2E 工具可用。
-          未就绪则尝试自动准备（Bash 启动服务），仍失败则报告 failed。
-
-          ═══ Phase 1: 按依赖顺序委派实现任务 ═══
-          从 consensus.md 和文件名 (task-X-Y-project-role.md) 确定执行顺序：
-          1. Migration / Schema 变更 → delegate_to_backend-expert
-          2. 后端 DAO → Service → Controller → delegate_to_backend-expert
-          3. 前端组件 → 页面 → 集成 → delegate_to_frontend-expert
-
-          对每个 task:
-            a. delegate_to_{role}-expert(task: |
-               执行任务。请先 Read:
-               - 任务: 06-plans/spec-NNN/{task-file}
-               - 共识: 06-plans/spec-NNN/consensus.md
-               - 环境: 04-stories/test-environment.md
-               按 octo-xzf-implementer skill 的自治 verify-fix 流程执行。
-            )
-            b. 解析子代理返回 JSON（status: passed/failed）
-            c. IF status == "passed": 记录通过，继续下一个 task
-            d. IF status == "failed":
-               - 记录失败原因到 fix-log.md
-               - 重新委派同一 task（携带上次 failure_reason + fix_attempts）
-               - 解析新返回 JSON
-               - IF 仍然 failed → spec_status: "failed"，停止
-
-          ═══ Phase 2: E2E 验证 ═══
-          所有 task 通过后:
-            a. delegate_to_test-expert(task: |
-               执行 E2E 验证。请先 Read:
-               - 测试路线: 06-plans/spec-NNN/spec-test.md
-               - 环境: 04-stories/test-environment.md
-               按 octo-xzf-implementer skill 的自治 E2E-fix 流程执行。
-            )
-            b. 解析返回 JSON
-            c. IF status == "passed": spec 完成
-            d. IF status == "failed":
-               - 重新委派 test-expert（携带上次失败信息）
-               - 仍然 failed → spec_status: "failed"
+          读取 .octopus/xzf/$vars.branch/04-stories/test-environment.md 的清单。
 
           ═══ 完成 ═══
-          所有验证通过: {"vars_update": {"spec_status": "passed"}}
+          通过: {"vars_update": {"spec_status": "passed", "user_guidance": ""}}
           失败: {"vars_update": {"spec_status": "failed", "failure_reason": "..."}}
         outputs:
           $vars.spec_status: "$last_output"
 
-      # --- 6b. 检查执行结果 ---
-      - id: check-spec-result
-        type: condition
+      # --- 6b. 失败 → 暂停等用户指导 ---
+      - id: failure-approval
+        type: approval
         depends_on: [execute-spec-tasks]
-        cases:
-          - when: '$vars.spec_status == "failed"'
-            then: handle-failure
-          - when: "default"
-            then: spec-passed
-
-      # --- 6c. 失败处理 ---
-      - id: handle-failure
-        type: agent
         execute_when: '$vars.spec_status == "failed"'
-        depends_on: [check-spec-result]
-        context: new
         prompt: |
           ═══ Spec #$iteration 执行失败 ═══
 
-          生成失败报告:
-          .octopus/xzf/$vars.branch/08-reports/failure-{timestamp}.md
+          请查看:
+          - 失败报告: .octopus/xzf/$vars.branch/08-reports/
+          - Checkpoint: .octopus/xzf/$vars.branch/07-execution/
 
-          报告内容:
-          - 失败位置 (Spec/Task/Verify)
-          - 失败原因详细分析
-          - 已尝试的修复 (最多 3 次)
-          - 现场保留 (代码 diff、日志、截图)
-          - 建议的人工干预方案
-
-          发送通知到 xzf_hermes 群。
-
-      # --- 6d. 等待人工干预 ---
-      - id: human-intervention
-        type: approval
-        depends_on: [handle-failure]
-        approval_timeout: 86400    # 24 小时超时
-        prompt: |
-          ═══ 执行失败 — 等待人工干预 ═══
-
-          Spec #$iteration 执行失败。
-          请查看失败报告: .octopus/xzf/$vars.branch/08-reports/
-
-          选择下一步操作:
+          在评论中输入指导（修复建议、环境调整等），然后点击继续。
+          协调者会从断点恢复，结合你的指导重新尝试。
         options:
-          - label: "重试当前 Spec"
+          - label: "继续（从断点重试）"
             value: "retry"
-          - label: "跳过当前 Spec，继续下一个"
-            value: "skip"
-          - label: "终止流水线"
-            value: "abort"
         outputs:
-          $vars.user_decision: "$last_output"
-          $vars.intervention_feedback: "$last_output.comment"
-
-      # --- 6e. 处理用户干预决策 ---
-      - id: intervention-router
-        type: condition
-        depends_on: [human-intervention]
-        cases:
-          - when: '$vars.user_decision == "abort"'
-            then: execution-abort
-          - when: '$vars.user_decision == "retry"'
-            then: execute-spec-tasks
-          - when: '$vars.user_decision == "skip"'
-            then: skip-spec
-          - when: "default"
-            then: spec-passed
-
-      # --- 6f. 跳过当前 spec（记录日志） ---
-      - id: skip-spec
-        type: agent
-        execute_when: '$vars.user_decision == "skip"'
-        depends_on: [intervention-router]
-        context: new
-        prompt: |
-          ═══ 跳过 Spec #$iteration ═══
-
-          用户选择跳过当前 spec。
-          记录跳过原因到 .octopus/xzf/$vars.branch/08-reports/skip-spec-$iteration.md:
-          - 跳过的 spec 标识
-          - 用户反馈: $vars.intervention_feedback
-          - 失败报告引用
-
-          输出:
-          {"vars_update": {"spec_status": "skipped"}}
-
-      # --- 6g. Spec 通过 ---
-      - id: spec-passed
-        type: bash
-        execute_when: '$vars.spec_status != "failed"'
-        command: |
-          echo "Spec #$iteration 执行通过"
-
-      # --- 6h. 终止执行标记 ---
-      - id: execution-abort
-        type: agent
-        execute_when: '$vars.user_decision == "abort"'
-        depends_on: [intervention-router]
-        context: new
-        prompt: |
-          ═══ 流水线终止 ═══
-          用户选择终止执行。
-          输出: {"vars_update": {"pipeline_aborted": "true"}}
+          $vars.user_guidance: "$last_output.comment"
 
 # ============================================================
 # Stage 7: Ship 交付
 # ============================================================
 
-  # --- 7a. 生成 PR/MR Summary ---
-  - id: ship-summary
+  - id: ship
     type: agent
-    execute_when: '$vars.pipeline_aborted != "true"'
     depends_on: [execution-loop]
     context: new
     skills: [octo-xzf-ship]
+    tools: [Read, Bash, Grep, Glob]
     prompt: |
-      使用 octo-xzf-ship skill 生成 PR/MR Summary。
+      使用 octo-xzf-ship skill 完成 Ship 交付。
 
-      输入:
+      ═══ Step 1: 生成 PR/MR Summary ═══
+      读取以下文件，生成 summary:
       - Idea: .octopus/xzf/$vars.branch/01-idea.md
       - 故事: .octopus/xzf/$vars.branch/04-stories/summary.md
       - Specs: .octopus/xzf/$vars.branch/05-specs/
       - 验证结果: .octopus/xzf/$vars.branch/07-execution/
 
-      输出: .octopus/xzf/$vars.branch/09-ship/summary.md
+      写入: .octopus/xzf/$vars.branch/09-ship/summary.md
 
-  # --- 7b. 检测 remote 并提交 ---
-  - id: ship-submit
-    type: bash
-    depends_on: [ship-summary]
-    command: |
-      REMOTE_TYPE="$vars.remote_type"
-      BRANCH="$vars.branch"
-      SUMMARY=".octopus/xzf/$BRANCH/09-ship/summary.md"
-      TITLE=$(head -1 "$SUMMARY" | sed 's/^# //')
+      ═══ Step 2: 遍历 Workspace 所有项目提交 PR/MR ═══
+      Remote 类型: $vars.remote_type
+      分支: $vars.branch
 
-      if [ "$REMOTE_TYPE" = "github" ]; then
-        gh pr create --title "$TITLE" --body-file "$SUMMARY" --base main
-      elif [ "$REMOTE_TYPE" = "gitlab" ]; then
-        glab mr create --title "$TITLE" --description "$(cat "$SUMMARY")" --target-branch main
-      else
-        echo "Unknown remote type: $REMOTE_TYPE"
-        echo "请手动提交 PR/MR，summary 文件位于: $SUMMARY"
-      fi
-    outputs:
-      $vars.pr_url: "$last_output"
+      读取 workspace-topology.md 获取所有项目列表。
+      对每个项目:
+        1. cd 到项目目录
+        2. git diff --quiet main...HEAD → 无变更则跳过
+        3. 有变更则提交 PR/MR:
 
-  # --- 7c. 确认提交 ---
-  - id: ship-confirm
-    type: approval
-    depends_on: [ship-submit]
-    prompt: |
-      ═══ Ship 完成 ═══
+      IF remote_type == "github":
+        gh pr create --title "[{project}] {feature标题}" --body-file summary.md --base main
+      ELIF remote_type == "gitlab":
+        glab mr create --title "[{project}] {feature标题}" --description "$(cat summary.md)" --target-branch main
 
-      PR/MR: $vars.pr_url
-
-      请确认提交结果。
-    options:
-      - label: "确认完成"
-        value: "done"
-      - label: "需要修改"
-        value: "revise"
+      汇总所有 PR/MR URL，输出最终结果。

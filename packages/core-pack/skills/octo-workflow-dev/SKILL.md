@@ -612,6 +612,31 @@ nodes:
 
 参考 prd-forge.yaml 的 `challenge-design`：三个子代理各自 `Write` 自己的报告文件，父 agent 只生成一份索引文件。
 
+### 多项目 Workspace Ship 模式
+
+Octopus workspace 可包含多个 git 项目（worktree 开发空间），所有项目共享同一开发分支。Ship 阶段需要遍历所有项目，为每个有变更的项目创建 PR/MR。
+
+```yaml
+- id: ship
+  type: agent
+  depends_on: [execution-loop]
+  skills: [octo-xzf-ship]
+  tools: [Read, Bash, Grep, Glob]
+  prompt: |
+    1. 生成统一的 PR/MR Summary → 写入 09-ship/summary.md
+    2. 读取 workspace-topology.md 获取项目列表
+    3. 遍历每个项目:
+       - git diff --quiet main...HEAD → 无变更则跳过
+       - 有变更: gh pr create / glab mr create（标题带 [{project}] 前缀）
+    4. 汇总所有 PR/MR URL
+```
+
+关键点：
+- **workspace-topology.md** 在 init 阶段扫描生成，列出所有项目路径和 remote 类型
+- 每个项目独立检测变更（`git diff`），只为有改动的项目创建 PR
+- PR 标题加 `[{project}]` 前缀区分项目
+- 所有项目共用同一份 summary.md 作为 PR body
+
 ---
 
 ## 10. 验证与运行

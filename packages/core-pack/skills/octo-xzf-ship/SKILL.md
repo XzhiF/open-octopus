@@ -74,20 +74,38 @@ fi
 
 ## 提交命令
 
-### GitHub
+Workspace 包含多个 git 项目（worktree 开发空间），所有项目共享同一分支。需要遍历所有项目，为每个有变更的项目创建 PR/MR。
+
+### 流程
 
 ```bash
-gh pr create \
-  --title "{feature 标题}" \
-  --body-file ".octopus/xzf/{branch}/09-ship/summary.md" \
-  --base main
+# 1. 读取 workspace-topology.md 获取项目列表
+# 2. 对每个项目:
+
+cd {project-path}
+
+# 检查是否有变更
+if git diff --quiet main...HEAD; then
+  echo "[{project}] 无变更，跳过"
+  continue
+fi
+
+# 3. 创建 PR/MR
+if [ "$PLATFORM" = "github" ]; then
+  PR_URL=$(gh pr create \
+    --title "[{project}] {feature 标题}" \
+    --body-file "{workspace-root}/.octopus/xzf/{branch}/09-ship/summary.md" \
+    --base main)
+  echo "[{project}] PR: $PR_URL"
+elif [ "$PLATFORM" = "gitlab" ]; then
+  MR_URL=$(glab mr create \
+    --title "[{project}] {feature 标题}" \
+    --description "$(cat {workspace-root}/.octopus/xzf/{branch}/09-ship/summary.md)" \
+    --target-branch main)
+  echo "[{project}] MR: $MR_URL"
+fi
 ```
 
-### GitLab
+### 输出
 
-```bash
-glab mr create \
-  --title "{feature 标题}" \
-  --description "$(cat .octopus/xzf/{branch}/09-ship/summary.md)" \
-  --target-branch main
-```
+汇总所有项目的 PR/MR URL，作为最终输出展示给用户。

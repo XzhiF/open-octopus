@@ -134,17 +134,58 @@ delegate_to_backend-expert(task: |
 
 ## 完成输出
 
-所有验证通过:
+所有验证通过（删除 checkpoint.json）:
 
 ```json
-{"vars_update": {"spec_status": "passed"}}
+{"vars_update": {"spec_status": "passed", "user_guidance": ""}}
 ```
 
-失败:
+失败（保留 checkpoint.json 供下次恢复）:
 
 ```json
 {"vars_update": {"spec_status": "failed", "failure_reason": "..."}}
 ```
+
+## Checkpoint 机制
+
+### Checkpoint 文件
+
+路径: `.octopus/xzf/{branch}/07-execution/spec-{NNN}-{name}/checkpoint.json`
+
+```json
+{
+  "spec_id": "spec-001",
+  "tasks_completed": [
+    { "task": "task-1-1-auth-backend.md", "status": "passed", "files_changed": ["src/auth/..."] }
+  ],
+  "tasks_remaining": ["task-1-2-frontend.md", "task-1-3-e2e.md"],
+  "e2e_completed": false,
+  "failure": {
+    "task": "task-1-2-frontend.md",
+    "reason": "组件渲染失败",
+    "fix_attempts": 3,
+    "last_error": "TypeError at UserList.tsx:42"
+  },
+  "retry_count": 0
+}
+```
+
+### Checkpoint 操作
+
+**每个 task 完成后**:
+- 通过: 从 tasks_remaining 移到 tasks_completed，写入 checkpoint.json
+- 失败: 写入 failure 字段，写入 checkpoint.json
+
+**E2E 通过后**: 删除 checkpoint.json
+
+**恢复执行时**: 读取 checkpoint.json → 跳过 tasks_completed → 从 tasks_remaining 开始
+
+### User Guidance 处理
+
+当 `user_guidance` 非空时:
+1. 结合指导分析上次失败原因
+2. 调整委派策略
+3. 在委派消息中传递用户指导给子代理
 
 ## 重试策略总览
 
@@ -152,4 +193,5 @@ delegate_to_backend-expert(task: |
 |------|--------|------|---------|
 | Layer 1 | 子代理内部 (implementer skill) | max 3 | verify 失败 |
 | Layer 2 | 协调者 (orchestrator skill) | max 1 | 子代理返回 failed |
-| Layer 3 | Workflow (human-intervention) | 用户决定 | 协调者报告 failed |
+| Layer 3 | Workflow (failure-approval) | 用户决定 | 协调者报告 failed → 暂停等用户 |
+| Layer 4 | Checkpoint 恢复 | 无限 | 用户选 retry → 从断点继续 |
