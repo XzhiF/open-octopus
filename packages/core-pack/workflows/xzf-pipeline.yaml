@@ -19,6 +19,16 @@ engine: claude
 model: pro
 timeout: 86400          # 全局超时 24h
 
+# --- 输入 ---
+inputs:
+  idea:
+    description: "你的 Idea — 描述想要实现的功能或需求"
+    required: true
+  research_guidance:
+    description: "Research 指引（可选）— 指定需要重点研究的 codebase 模块或外部技术。不提供则由模型根据 Idea 语义自行判断"
+    required: false
+    default: ""
+
 # --- 变量 ---
 variables:
   branch: ""
@@ -51,11 +61,25 @@ nodes:
   - id: init
     type: agent
     context: new
-    skills:
-      - octo-xzf-init
+    skills: [octo-xzf-init]
     prompt: |
       使用 octo-xzf-init skill 初始化 XZF Pipeline 工作环境。
       汇报：分支名、remote 类型、workspace 项目数。
+
+      ═══ 写入 Idea 文件 ═══
+      初始化目录后，将用户的 Idea 写入 01-idea.md：
+
+      ```
+      # Idea
+      ## 需求描述
+      $inputs.idea
+
+      ## Research 指引
+      $inputs.research_guidance
+      ```
+
+      如 research_guidance 为空，写入：
+      "（无特定指引 — 请根据 Idea 语义自行判断需要研究的 codebase 模块和外部技术）"
 
       输出 vars_update:
       {"vars_update": {"branch": "{git branch}", "remote_type": "{github|gitlab}", "workspace_topology": "已生成"}}
@@ -111,15 +135,8 @@ nodes:
     rounds: 1
     context_tier: "200k"
     expert_defaults:
-      skills:
-        - octo-xzf-research
-      tools:
-        - Read
-        - Grep
-        - Glob
-        - Bash
-        - WebFetch
-        - WebSearch
+      skills: [octo-xzf-research]
+      tools: [Read, Grep, Glob, Bash, WebFetch, WebSearch]
     topic: |
       ═══ Codebase 领域研究 ═══
 
@@ -202,8 +219,7 @@ nodes:
         rounds: 2
         context_tier: "200k"
         expert_defaults:
-          skills:
-            - octo-xzf-clarify
+          skills: [octo-xzf-clarify]
         topic: |
           ═══ 需求澄清 — Round $iteration ═══
 
@@ -295,8 +311,7 @@ nodes:
         consensus_threshold: 0.75
         context_tier: "200k"
         expert_defaults:
-          skills:
-            - octo-xzf-story-writer
+          skills: [octo-xzf-story-writer]
         topic: |
           ═══ 用户故事总汇 — Round $iteration ═══
 
@@ -383,8 +398,7 @@ nodes:
         consensus_threshold: 0.7
         context_tier: "200k"
         expert_defaults:
-          skills:
-            - octo-xzf-spec-designer
+          skills: [octo-xzf-spec-designer]
         topic: |
           ═══ Spec 设计 ═══
 
@@ -410,16 +424,14 @@ nodes:
             agent_file: .claude/agents/octo-xzf-product-manager.md
           - role: test-architect
             agent_file: .claude/agents/octo-xzf-test-architect.md
-            skills:
-              - octo-xzf-task-planner
+            skills: [octo-xzf-task-planner]
           - role: frontend-expert
             agent_file: .claude/agents/octo-xzf-frontend-expert.md
           - role: backend-expert
             agent_file: .claude/agents/octo-xzf-backend-expert.md
           - role: security-expert
             agent_file: .claude/agents/octo-xzf-security-expert.md
-            skills:
-              - octo-xzf-task-planner
+            skills: [octo-xzf-task-planner]
         host:
           role: spec-host
           prompt: |
@@ -472,8 +484,7 @@ nodes:
         rounds: 1
         context_tier: "200k"
         expert_defaults:
-          skills:
-            - octo-xzf-task-planner
+          skills: [octo-xzf-task-planner]
         topic: |
           ═══ 任务计划 — Spec #$iteration ═══
 
@@ -494,8 +505,7 @@ nodes:
             task: "制定技术总纲领 consensus.md，确定文件变更和接口契约"
           - role: test-architect
             agent_file: .claude/agents/octo-xzf-test-architect.md
-            skills:
-              - octo-xzf-spec-designer    # 验证设计需参考 spec DSL 格式
+            skills: [octo-xzf-spec-designer]    # 验证设计需参考 spec DSL 格式
             task: "设计验证方法 verify-*.md 和 E2E 测试路线 spec-test.md"
             depends_on: [senior-architect]
           - role: frontend-expert
@@ -508,8 +518,7 @@ nodes:
             depends_on: [senior-architect]
           - role: security-expert
             agent_file: .claude/agents/octo-xzf-security-expert.md
-            skills:
-              - octo-xzf-spec-designer    # 安全审查需参考 spec DSL 格式
+            skills: [octo-xzf-spec-designer]    # 安全审查需参考 spec DSL 格式
             task: "审查安全相关任务，补充安全验证项"
             depends_on: [senior-architect, test-architect]
         host:
@@ -723,8 +732,7 @@ nodes:
     execute_when: '$vars.pipeline_aborted != "true"'
     depends_on: [execution-loop]
     context: new
-    skills:
-      - octo-xzf-ship
+    skills: [octo-xzf-ship]
     prompt: |
       使用 octo-xzf-ship skill 生成 PR/MR Summary。
 
