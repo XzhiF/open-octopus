@@ -7,7 +7,7 @@ kind: Workflow
 # Idea → PR/MR 完整开发流水线
 # ============================================================
 
-name: xzf-pipeline
+name: xzf-dev
 description: |
   从 Idea 到 PR/MR 的端到端开发流水线。
   6 位专家（架构师、产品经理、测试架构师、前端、后端、安全）通过
@@ -48,10 +48,10 @@ variables:
 notify:
   on_failure:
     channel: xzf_hermes
-    message: "[xzf-pipeline] 执行失败: $failed_node_id — $vars.branch"
+    message: "[xzf-dev] 执行失败: $failed_node_id — $vars.branch"
   on_complete:
     channel: xzf_hermes
-    message: "[xzf-pipeline] 完成: $vars.branch — PR/MR 已提交"
+    message: "[xzf-dev] 完成: $vars.branch — PR/MR 已提交"
 
 # ============================================================
 # Stage 0: 初始化
@@ -540,7 +540,7 @@ nodes:
     type: loop
     depends_on: [task-planning-loop]
     max_iterations: 99    # break_when 是真正的退出条件，99 仅作为安全阀
-    break_when: '$iteration > $vars.spec_count'
+    break_when: '$iteration > $vars.spec_count || $vars.pipeline_aborted == "true"'
     nodes:
 
       # --- 6a. 执行当前 spec 的所有 task ---
@@ -638,6 +638,8 @@ nodes:
       # --- 6c. 失败处理 ---
       - id: handle-failure
         type: agent
+        execute_when: '$vars.spec_status == "failed"'
+        depends_on: [check-spec-result]
         context: new
         prompt: |
           ═══ Spec #$iteration 执行失败 ═══
@@ -694,6 +696,8 @@ nodes:
       # --- 6f. 跳过当前 spec（记录日志） ---
       - id: skip-spec
         type: agent
+        execute_when: '$vars.user_decision == "skip"'
+        depends_on: [intervention-router]
         context: new
         prompt: |
           ═══ 跳过 Spec #$iteration ═══
@@ -710,17 +714,20 @@ nodes:
       # --- 6g. Spec 通过 ---
       - id: spec-passed
         type: bash
+        execute_when: '$vars.spec_status != "failed"'
         command: |
           echo "Spec #$iteration 执行通过"
 
-  # --- 6h. 终止执行标记 ---
-  - id: execution-abort
-    type: agent
-    context: new
-    prompt: |
-      ═══ 流水线终止 ═══
-      用户选择终止执行。
-      输出: {"vars_update": {"pipeline_aborted": "true"}}
+      # --- 6h. 终止执行标记 ---
+      - id: execution-abort
+        type: agent
+        execute_when: '$vars.user_decision == "abort"'
+        depends_on: [intervention-router]
+        context: new
+        prompt: |
+          ═══ 流水线终止 ═══
+          用户选择终止执行。
+          输出: {"vars_update": {"pipeline_aborted": "true"}}
 
 # ============================================================
 # Stage 7: Ship 交付

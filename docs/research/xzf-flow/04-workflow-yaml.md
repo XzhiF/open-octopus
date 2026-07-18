@@ -6,7 +6,7 @@
 
 ## 1. 概述
 
-完整 YAML 路径: `packages/core-pack/workflows/xzf-pipeline.yaml`
+完整 YAML 路径: `packages/core-pack/workflows/xzf-dev.yaml`
 
 ### 设计原则
 
@@ -66,7 +66,7 @@
 # Idea → PR/MR 完整开发流水线
 # ============================================================
 
-name: xzf-pipeline
+name: xzf-dev
 description: |
   从 Idea 到 PR/MR 的端到端开发流水线。
   6 位专家（架构师、产品经理、测试架构师、前端、后端、安全）通过
@@ -97,10 +97,10 @@ variables:
 notify:
   on_failure:
     channel: xzf_hermes
-    message: "[xzf-pipeline] 执行失败: $failed_node_id — $vars.branch"
+    message: "[xzf-dev] 执行失败: $failed_node_id — $vars.branch"
   on_complete:
     channel: xzf_hermes
-    message: "[xzf-pipeline] 完成: $vars.branch — PR/MR 已提交"
+    message: "[xzf-dev] 完成: $vars.branch — PR/MR 已提交"
 
 # ============================================================
 # Stage 0: 初始化
@@ -1150,11 +1150,11 @@ execution-loop → ship-summary → ship-submit → ship-confirm
 
 ```bash
 # 执行流水线
-octopus workflow run packages/core-pack/workflows/xzf-pipeline.yaml
+octopus workflow run packages/core-pack/workflows/xzf-dev.yaml
 
 # 指定模型
-octopus workflow run packages/core-pack/workflows/xzf-pipeline.yaml --model pro-max
+octopus workflow run packages/core-pack/workflows/xzf-dev.yaml --model pro-max
 
 # 验证 YAML 语法
-octopus workflow validate packages/core-pack/workflows/xzf-pipeline.yaml
+octopus workflow validate packages/core-pack/workflows/xzf-dev.yaml
 ```

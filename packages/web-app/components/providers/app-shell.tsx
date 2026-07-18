@@ -7,7 +7,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   return (
     <div className="flex flex-1 flex-col min-h-0">
       <Header />
-      <main className="flex flex-1 flex-col min-h-0">
+      <main className="flex flex-1 flex-col min-h-0 overflow-y-auto">
         {children}
       </main>
     </div>

@@ -24,7 +24,7 @@ Skill 定位：为 agent 节点提供方法论和格式规范。在 swarm 节点
 name: octo-xzf-{name}
 description: "[一句话描述]"
 category: coding-assistant
-tags: [xzf-pipeline, ...]
+tags: [xzf-dev, ...]
 version: 1.0.0
 priority: high
 ---
