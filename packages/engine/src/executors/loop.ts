@@ -153,6 +153,38 @@ export class LoopExecutor implements NodeExecutor {
           completedInnerResults.set(innerNode.id, result)
         }
 
+        // Fire hooks for inner node success/failure (ponytail: mirrors engine.ts:991-1027)
+        if (this.config.hookExecutor) {
+          if (result.status === "completed") {
+            try {
+              await this.config.hookExecutor("on_node_success", {
+                success_node_id: innerNode.id,
+                success_node_type: innerNode.type,
+                node_duration_ms: result.durationMs,
+                node_comment: result.comment ?? "",
+                node_decision: result.decision ?? "",
+              })
+            } catch (hookErr: unknown) {
+              const msg = hookErr instanceof Error ? hookErr.message : String(hookErr)
+              this.config.logger?.log("hook", "error", { event: "on_node_success", node: innerNode.id, error: msg })
+            }
+          }
+          if (result.status === "failed") {
+            try {
+              await this.config.hookExecutor("on_node_failure", {
+                failed_node_id: innerNode.id,
+                failed_node_type: innerNode.type,
+                error: result.logLines?.join("\n") ?? "Unknown error",
+                exit_code: result.exitCode,
+                node_duration_ms: result.durationMs,
+              })
+            } catch (hookErr: unknown) {
+              const msg = hookErr instanceof Error ? hookErr.message : String(hookErr)
+              this.config.logger?.log("hook", "error", { event: "on_node_failure", node: innerNode.id, error: msg })
+            }
+          }
+        }
+
         if (result.status === "paused" || result.status === "pending_approval") {
           const durationMs = Date.now() - start
           // Build innerNodeResults from completed nodes (for resume)
