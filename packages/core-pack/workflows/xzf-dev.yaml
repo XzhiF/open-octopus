@@ -252,9 +252,22 @@ nodes:
 
           澄清方法论和问题格式参见 octo-xzf-clarify skill。
           输出: .octopus/xzf/$vars.branch/03-clarification/questions.md
-          （含已回答 ✅ + 待澄清 ❓，按 Round 标记）
 
-          Synthesis = 读取刚写入的 questions.md，将「待澄清问题」部分原样输出。
+          ═══ questions.md 结构规则 ═══
+          文件分两个区域:「待澄清」和「已确认」。每个问题只出现一次。
+
+          Round 1（文件不存在时）:
+          - 分析问题，将新问题写入「待澄清」
+          - 格式: ### ❓ Dx: 标题 [优先级]\n问题描述 + 选项表 + 推荐
+
+          Round 2+（文件已存在时）:
+          1. 读取现有 questions.md
+          2. 用户回答了的问题 → 移到「已确认」，格式: ### ✅ Dx: 标题\n→ 选项 + 一行用户回答
+          3. 用户未回答的问题 → 保留在「待澄清」不动
+          4. 需要新追问的 → 追加到「待澄清」
+          5. 不重复已有问题，不重写整个文件
+
+          Synthesis = 读取刚写入的 questions.md，将「待澄清」部分原样输出。
           不要重新格式化、不要提炼、不要摘要。
 
       - id: requirements-approval
@@ -305,15 +318,27 @@ nodes:
           3. 测试数据策略
           4. CI 集成方式
 
-          逐项检查强制清单 6 项，通过 vars_update 写入:
-          env_checklist_status = "COMPLETE" 或 "INCOMPLETE: {缺失项}"
-
           输出: .octopus/xzf/$vars.branch/03-clarification/verification.md
-          （含已回答 ✅ + 待澄清 ❓，按 Round 标记）
 
-          Synthesis = 读取刚写入的 verification.md，将「待澄清问题」部分原样输出。
+          ═══ verification.md 结构规则 ═══
+          文件分两个区域:「待澄清」和「已确认」。每个问题只出现一次。
+
+          Round 1（文件不存在时）:
+          - 分析需求，将验证相关问题写入「待澄清」
+          - 格式: ### ❓ Vx: 标题 [优先级]\n问题描述 + 选项表 + 推荐
+
+          Round 2+（文件已存在时）:
+          1. 读取现有 verification.md
+          2. 用户回答了的问题 → 移到「已确认」，格式: ### ✅ Vx: 标题\n→ 选项 + 一行用户回答
+          3. 用户未回答的问题 → 保留在「待澄清」不动
+          4. 需要新追问的 → 追加到「待澄清」
+          5. 不重复已有问题，不重写整个文件
+
+          Synthesis = 读取刚写入的 verification.md，将「待澄清」部分原样输出。
           不要重新格式化、不要提炼、不要摘要。
 
+          逐项检查强制清单 6 项，通过 vars_update 写入:
+          env_checklist_status = "COMPLETE"（全部已确认）或 "INCOMPLETE: {缺失项}"
           最后输出 vars_update JSON:
           {"vars_update": {"env_checklist_status": "COMPLETE 或 INCOMPLETE: ..."}}
 
