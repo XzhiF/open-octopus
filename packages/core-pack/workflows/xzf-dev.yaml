@@ -34,6 +34,9 @@ variables:
   workspace_topology: ""
   remote_type: ""
   user_guidance: ""
+  clarify_decision: ""
+  story_decision: ""
+  spec_decision: ""
   spec_count: "0"
   spec_status: ""
   env_checklist_status: ""
@@ -231,7 +234,7 @@ nodes:
     type: loop
     depends_on: [idea-research]
     max_iterations: 99
-    break_when: '$vars.user_decision == "proceed"'
+    break_when: '$vars.clarify_decision == "proceed"'
     nodes:
       # --- 2a. 专家团头脑风暴 ---
       - id: brainstorm
@@ -323,7 +326,7 @@ nodes:
           - label: "补充新的讨论话题"
             value: "add-topics"
         outputs:
-          $vars.user_decision: "$last_output"
+          $vars.clarify_decision: "$last_output"
 
   # ============================================================
   # Stage 3: 故事总汇循环
@@ -333,7 +336,7 @@ nodes:
     type: loop
     depends_on: [clarification-loop]
     max_iterations: 99
-    break_when: '$vars.user_decision == "proceed"'
+    break_when: '$vars.story_decision == "proceed"'
     nodes:
       # --- 3a. 生成用户故事 ---
       - id: story-generation
@@ -411,7 +414,7 @@ nodes:
           - label: "需要修改"
             value: "continue"
         outputs:
-          $vars.user_decision: "$last_output"
+          $vars.story_decision: "$last_output"
 
   # ============================================================
   # Stage 4: Spec 设计
@@ -421,7 +424,7 @@ nodes:
     type: loop
     depends_on: [stories-loop]
     max_iterations: 99
-    break_when: '$vars.user_decision == "proceed"'
+    break_when: '$vars.spec_decision == "proceed"'
     nodes:
       # --- 4a. 专家团拆分 Spec ---
       - id: spec-design
@@ -498,7 +501,7 @@ nodes:
           - label: "需要调整 Spec"
             value: "revise"
         outputs:
-          $vars.user_decision: "$last_output"
+          $vars.spec_decision: "$last_output"
           $vars.spec_feedback: "$last_output.comment"
 
   # ============================================================
