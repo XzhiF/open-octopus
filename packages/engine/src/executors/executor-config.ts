@@ -81,6 +81,7 @@ export interface ApprovalConfig {
   loopContext?: Record<string, any>
   crossExecResolver?: CrossExecResolver
   executionId?: string
+  nodeOutputs?: Record<string, Record<string, any>>
 }
 
 /** BashExecutor — logging + variable resolution */
@@ -91,6 +92,7 @@ export interface BashConfig {
   loopContext?: Record<string, any>
   crossExecResolver?: CrossExecResolver
   executionId?: string
+  nodeOutputs?: Record<string, Record<string, any>>
 }
 
 /** AgentExecutor — the heaviest config, runner is required */

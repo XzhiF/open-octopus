@@ -127,6 +127,8 @@ export interface ApprovalMetadata {
   prompt: string
   options: ApprovalOption[]
   nodeId: string
+  commentLabel?: string
+  commentPlaceholder?: string
 }
 
 export interface Execution {

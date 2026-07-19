@@ -5,6 +5,8 @@ export interface ApprovalMetadata {
   prompt: string
   options: Array<{ label: string; value: string }>
   nodeId: string
+  commentLabel?: string
+  commentPlaceholder?: string
 }
 
 /** Override for inner loop nodes during resume. Either a pre-computed result or an approval choice. */

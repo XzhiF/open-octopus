@@ -460,6 +460,17 @@ executionRoutes.get("/:executionId/agent-events", (c) => {
             timestamp: new Date(row.timestamp).toISOString(),
           }
         }
+        // Swarm events: expert_spawn, expert_complete, expert_message, swarm_round_end, swarm_complete, consensus_check
+        if (row.event_type.startsWith("expert_") || row.event_type.startsWith("swarm_") || row.event_type === "consensus_check") {
+          let data: Record<string, unknown> = {}
+          try { data = JSON.parse(row.content ?? "{}") } catch { /* ignore */ }
+          return {
+            event: row.event_type,
+            nodeId: row.node_id,
+            ...data,
+            timestamp: new Date(row.timestamp).toISOString(),
+          }
+        }
         // start/end lifecycle events: skip from SQLite (JSONL provides authoritative copies)
         if (row.event_type === "start" || row.event_type === "end") {
           return null

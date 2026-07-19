@@ -66,6 +66,20 @@ export function ApprovalDialog({
             </p>
           </div>
 
+          {/* 自定义备注（显式定义时显示在选项上方） */}
+          {approval.commentLabel && (
+            <div className="space-y-2">
+              <p className="text-sm font-medium">{approval.commentLabel}</p>
+              <Textarea
+                placeholder={approval.commentPlaceholder ?? ""}
+                value={comment}
+                onChange={(e) => setComment(e.target.value)}
+                disabled={loading}
+                rows={3}
+              />
+            </div>
+          )}
+
           {/* 审批选项 */}
           <div className="space-y-2">
             <p className="text-sm font-medium">请选择</p>
@@ -84,17 +98,19 @@ export function ApprovalDialog({
             </div>
           </div>
 
-          {/* 备注 */}
-          <div className="space-y-2">
-            <p className="text-sm font-medium">备注（可选）</p>
-            <Textarea
-              placeholder="输入审批备注..."
-              value={comment}
-              onChange={(e) => setComment(e.target.value)}
-              disabled={loading}
-              rows={3}
-            />
-          </div>
+          {/* 默认备注（未显式定义时显示在选项下方） */}
+          {!approval.commentLabel && (
+            <div className="space-y-2">
+              <p className="text-sm font-medium">备注（可选）</p>
+              <Textarea
+                placeholder={approval.commentPlaceholder ?? "输入审批备注..."}
+                value={comment}
+                onChange={(e) => setComment(e.target.value)}
+                disabled={loading}
+                rows={3}
+              />
+            </div>
+          )}
         </div>
 
         <DialogFooter>

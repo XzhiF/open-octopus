@@ -323,7 +323,14 @@ export class LoopExecutor implements NodeExecutor {
           agentResolver: this.config.agentResolver,
           engineHookFn: this.config.hookExecutor,
         })
-      case "bash":
+      case "bash": {
+        // ponytail: build nodeOutputs so $nodeId.output.key works in bash scripts
+        const bashNodeOutputs: Record<string, Record<string, any>> = {}
+        if (completedInnerResults) {
+          for (const [id, r] of completedInnerResults) {
+            if (r.outputs) bashNodeOutputs[id] = r.outputs
+          }
+        }
         return new BashExecutor(node, p, {
           signal: this.config.signal,
           onLog: (line, stream) => {
@@ -333,7 +340,9 @@ export class LoopExecutor implements NodeExecutor {
           },
           cwd: this.config.cwd,
           loopContext: loopCtx,
+          nodeOutputs: bashNodeOutputs,
         })
+      }
       case "python":
         return new PythonExecutor(node, p, {
           signal: this.config.signal,
@@ -345,8 +354,16 @@ export class LoopExecutor implements NodeExecutor {
         })
       case "condition":
         return new ConditionExecutor(node, p)
-      case "approval":
-        return new ApprovalExecutor(node, p, { signal: this.config.signal, loopContext: loopCtx })
+      case "approval": {
+        // ponytail: build nodeOutputs from completed inner results so $nodeId.output.key works
+        const approvalNodeOutputs: Record<string, Record<string, any>> = {}
+        if (completedInnerResults) {
+          for (const [id, r] of completedInnerResults) {
+            if (r.outputs) approvalNodeOutputs[id] = r.outputs
+          }
+        }
+        return new ApprovalExecutor(node, p, { signal: this.config.signal, loopContext: loopCtx, nodeOutputs: approvalNodeOutputs })
+      }
       case "agent": {
         const rawKey = node.engine ?? this.config.workflowEngine ?? "claude"
         const providerKey = rawKey === "claude-code" ? "claude" : rawKey

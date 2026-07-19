@@ -167,6 +167,8 @@ export interface NodeDef {
   options?: ApprovalOption[]
   approval_timeout?: number
   on_reject?: string
+  comment_label?: string
+  comment_placeholder?: string
 
   // loop
   while?: string
@@ -220,6 +222,7 @@ export const NodeSchema: z.ZodType<NodeDef> = z.lazy(() =>
     outputs: z.record(z.string(), z.string()).optional(),
 
     bash: z.string().optional(),
+    command: z.string().optional(), // ponytail: alias for bash — common DX mistake
     python: z.string().optional(),
     inputs: z.record(z.string(), z.string()).optional(),
 
@@ -240,6 +243,8 @@ export const NodeSchema: z.ZodType<NodeDef> = z.lazy(() =>
     options: z.array(ApprovalOptionSchema).optional(),
     approval_timeout: z.number().int().positive().optional(),
     on_reject: z.string().optional(),
+    comment_label: z.string().optional(),
+    comment_placeholder: z.string().optional(),
 
     while: z.string().optional(),
     break_when: z.string().optional(),
@@ -277,6 +282,11 @@ export const NodeSchema: z.ZodType<NodeDef> = z.lazy(() =>
     }).optional(),
 
     variables: z.record(z.string(), z.unknown()).optional(),
+  }).transform((data) => {
+    // ponytail: command → bash alias — users naturally write `command:` for bash nodes
+    const { command, ...rest } = data
+    if (command && !rest.bash) rest.bash = command
+    return rest
   }).superRefine((data, ctx) => {
     // Swarm cross-field validations (only for type: "swarm")
     if (data.type !== "swarm") return

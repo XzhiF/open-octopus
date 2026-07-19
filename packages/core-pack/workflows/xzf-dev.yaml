@@ -13,11 +13,10 @@ description: |
   6 位专家（架构师、产品经理、测试架构师、前端、后端、安全）通过
   swarm debate 进行多轮讨论，故事驱动迭代，验证先行。
 version: 1.0.0
-
 # --- 全局配置 ---
 engine: claude
-model: pro
-timeout: 86400          # 全局超时 24h
+model: pro-max
+timeout: 86400 # 全局超时 24h
 
 # --- 输入 ---
 inputs:
@@ -50,6 +49,32 @@ notify:
     channel: xzf_hermes
     message: "[xzf-dev] 完成: $vars.branch — PR/MR 已提交"
 
+# --- 钩子 ---
+hooks:
+  on_node_success:
+    - id: save-approval-answer
+      nodes: [brainstorm-approval, story-approval, spec-confirm]
+      bash: |
+        case "$hook.node_id" in
+          brainstorm-approval) DIR=".octopus/xzf/$vars.branch/03-clarification" ;;
+          story-approval)      DIR=".octopus/xzf/$vars.branch/04-stories" ;;
+          spec-confirm)        DIR=".octopus/xzf/$vars.branch/05-specs" ;;
+          *)                   DIR=".octopus/xzf/$vars.branch/approval-answers" ;;
+        esac
+        mkdir -p "$DIR"
+        FILE="$DIR/$hook.node_id-$hook.timestamp.md"
+        cat > "$FILE" << 'EOF'
+        # $hook.node_id
+
+        **决策**: $hook.node_decision
+        **时间**: $hook.timestamp
+
+        ## 用户输入
+
+        $hook.node_comment
+        EOF
+        echo "Saved: $FILE"
+
 # ============================================================
 # Stage 0: 初始化
 # ============================================================
@@ -81,15 +106,15 @@ nodes:
       输出 vars_update:
       {"vars_update": {"branch": "{git branch}", "remote_type": "{github|gitlab}", "workspace_topology": "已生成"}}
 
-# ============================================================
-# Stage 1: Codebase 研究
-# ============================================================
+  # ============================================================
+  # Stage 1: Codebase 研究
+  # ============================================================
 
   # --- 1a: 预扫描（秒级） ---
   - id: idea-scan
     type: bash
     depends_on: [init]
-    command: |
+    bash: |
       BASE=".octopus/xzf/$vars.branch/02-research/_scan"
       mkdir -p "$BASE"
 
@@ -198,9 +223,9 @@ nodes:
         如有 GAPS，汇总到索引末尾。不重写内容。
         Synthesis 输出索引摘要即可。
 
-# ============================================================
-# Stage 2: 需求澄清循环
-# ============================================================
+  # ============================================================
+  # Stage 2: 需求澄清循环
+  # ============================================================
 
   - id: clarification-loop
     type: loop
@@ -208,7 +233,6 @@ nodes:
     max_iterations: 99
     break_when: '$vars.user_decision == "proceed"'
     nodes:
-
       # --- 2a. 专家团头脑风暴 ---
       - id: brainstorm
         type: swarm
@@ -253,8 +277,18 @@ nodes:
 
             1. 将完整问题清单写入 .octopus/xzf/$vars.branch/03-clarification/questions.md
                （含已回答 ✅ + 待澄清 ❓，按 Round 标记）
-            2. Synthesis 中列出本轮需要用户回答的待澄清问题：
-               编号 + 问题 + 推荐方案 + 备选方案
+            2. Synthesis 中列出本轮需要用户回答的全部待澄清问题，每个问题必须包含：
+               - 完整问题描述（含上下文）
+               - 所有选项（用表格或列表展示每个选项的描述）
+               - 推荐方案 + 推荐理由
+               格式参考：
+               ### ❓ Dx: 问题标题 [优先级]
+               问题描述...
+               | 选项 | 描述 |
+               |------|------|
+               | A — xxx | ... |
+               | B — xxx | ... |
+               **推荐**: X（理由）
             3. 测试环境状态评估（写入 VarPool 变量 env_checklist_status）：
                逐项检查强制清单 6 项，输出:
                - "COMPLETE" — 全部明确
@@ -264,6 +298,8 @@ nodes:
       - id: brainstorm-approval
         type: approval
         depends_on: [brainstorm]
+        comment_label: "澄清输入:"
+        comment_placeholder: "请在此输入您对以上问题的回答..."
         prompt: |
           ═══ 需求澄清 — Round $iteration ═══
 
@@ -273,7 +309,7 @@ nodes:
 
           ─── 本轮需要澄清的问题 ───
 
-          $brainstorm_synthesis
+          $brainstorm.output.synthesis
 
           ─────────────────────────
           请在评论中回答问题。
@@ -289,9 +325,9 @@ nodes:
         outputs:
           $vars.user_decision: "$last_output"
 
-# ============================================================
-# Stage 3: 故事总汇循环
-# ============================================================
+  # ============================================================
+  # Stage 3: 故事总汇循环
+  # ============================================================
 
   - id: stories-loop
     type: loop
@@ -299,7 +335,6 @@ nodes:
     max_iterations: 99
     break_when: '$vars.user_decision == "proceed"'
     nodes:
-
       # --- 3a. 生成用户故事 ---
       - id: story-generation
         type: swarm
@@ -353,6 +388,8 @@ nodes:
       - id: story-approval
         type: approval
         depends_on: [story-generation]
+        comment_label: "故事反馈:"
+        comment_placeholder: "请输入对用户故事的修改意见..."
         prompt: |
           ═══ 用户故事总汇 — Round $iteration ═══
 
@@ -363,7 +400,7 @@ nodes:
 
           ─── 故事摘要 ───
 
-          $story-generation_synthesis
+          $story-generation.output.synthesis
 
           ─────────────────
           如满意，进入 Spec 设计阶段。
@@ -376,9 +413,9 @@ nodes:
         outputs:
           $vars.user_decision: "$last_output"
 
-# ============================================================
-# Stage 4: Spec 设计
-# ============================================================
+  # ============================================================
+  # Stage 4: Spec 设计
+  # ============================================================
 
   - id: spec-design-loop
     type: loop
@@ -386,7 +423,6 @@ nodes:
     max_iterations: 99
     break_when: '$vars.user_decision == "proceed"'
     nodes:
-
       # --- 4a. 专家团拆分 Spec ---
       - id: spec-design
         type: swarm
@@ -445,11 +481,13 @@ nodes:
       - id: spec-confirm
         type: approval
         depends_on: [spec-design]
+        comment_label: "Spec 反馈:"
+        comment_placeholder: "请输入对技术规格的修改意见..."
         prompt: |
           ═══ Spec 设计完成 ═══
 
           共 $vars.spec_count 个 Spec:
-          $spec-design_synthesis
+          $spec-design.output.synthesis
 
           请查看 .octopus/xzf/$vars.branch/05-specs/ 目录下的 Spec 文件。
 
@@ -463,17 +501,16 @@ nodes:
           $vars.user_decision: "$last_output"
           $vars.spec_feedback: "$last_output.comment"
 
-# ============================================================
-# Stage 5: 任务计划（per spec 循环）
-# ============================================================
+  # ============================================================
+  # Stage 5: 任务计划（per spec 循环）
+  # ============================================================
 
   - id: task-planning-loop
     type: loop
     depends_on: [spec-design-loop]
-    max_iterations: 99    # break_when 是真正的退出条件，99 仅作为安全阀
-    break_when: '$iteration > $vars.spec_count'
+    max_iterations: 99 # break_when 是真正的退出条件，99 仅作为安全阀
+    break_when: "$iteration > $vars.spec_count"
     nodes:
-
       # --- 5a. 为当前 spec 生成任务计划 ---
       - id: plan-spec
         type: swarm
@@ -502,7 +539,7 @@ nodes:
             task: "制定技术总纲领 consensus.md，确定文件变更和接口契约"
           - role: test-architect
             agent_file: .claude/agents/octo-xzf-test-architect.md
-            skills: [octo-xzf-spec-designer]    # 验证设计需参考 spec DSL 格式
+            skills: [octo-xzf-spec-designer] # 验证设计需参考 spec DSL 格式
             task: "设计验证方法 verify-*.md 和 E2E 测试路线 spec-test.md"
             depends_on: [senior-architect]
           - role: frontend-expert
@@ -515,7 +552,7 @@ nodes:
             depends_on: [senior-architect]
           - role: security-expert
             agent_file: .claude/agents/octo-xzf-security-expert.md
-            skills: [octo-xzf-spec-designer]    # 安全审查需参考 spec DSL 格式
+            skills: [octo-xzf-spec-designer] # 安全审查需参考 spec DSL 格式
             task: "审查安全相关任务，补充安全验证项"
             depends_on: [senior-architect, test-architect]
         host:
@@ -529,17 +566,16 @@ nodes:
 
             所有文件内容由专家直接写入 06-plans/ 目录，host 不写文件。
 
-# ============================================================
-# Stage 6: 任务执行（per spec → per task 循环）
-# ============================================================
+  # ============================================================
+  # Stage 6: 任务执行（per spec → per task 循环）
+  # ============================================================
 
   - id: execution-loop
     type: loop
     depends_on: [task-planning-loop]
     max_iterations: 99
-    break_when: '$iteration > $vars.spec_count'
+    break_when: "$iteration > $vars.spec_count"
     nodes:
-
       # --- 6a. 执行当前 spec（含 checkpoint 恢复） ---
       - id: execute-spec-tasks
         type: agent
@@ -616,9 +652,9 @@ nodes:
         outputs:
           $vars.user_guidance: "$last_output.comment"
 
-# ============================================================
-# Stage 7: Ship 交付
-# ============================================================
+  # ============================================================
+  # Stage 7: Ship 交付
+  # ============================================================
 
   - id: ship
     type: agent

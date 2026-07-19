@@ -1819,6 +1819,28 @@ export class ExecutionLifecycle {
           event: event.type,
           data: { executionId: id, nodeId, ...(event.data ?? {}) },
         })
+        // ponytail: persist swarm events to SQLite so polling-based log viewer sees them
+        try {
+          const neId = `${id}-${nodeId}`
+          this.dao.insertAgentEvent({
+            node_execution_id: neId,
+            event_order: Date.now(), // monotonically increasing
+            turn_index: 0,
+            event_type: event.type,
+            timestamp: Date.now(),
+            content: JSON.stringify(event.data ?? {}),
+            content_length: JSON.stringify(event.data ?? {}).length,
+            tool_call_id: null,
+            tool_name: null,
+            tool_input: null,
+            tool_result: null,
+            tool_is_error: 0,
+            tool_duration_ms: null,
+            status_value: null,
+            error_code: null,
+            error_message: null,
+          })
+        } catch { /* silent — swarm event persistence is best-effort */ }
       },
       onNodeRetry: (nodeId: string, attempt: number, maxAttempts: number, delayMs: number) => {
         this.dao.updateNodeRetryInfo(id, nodeId, attempt, new Date().toISOString())

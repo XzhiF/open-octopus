@@ -10,6 +10,7 @@ export class ApprovalExecutor implements NodeExecutor {
   private loopContext?: Record<string, any>
   private crossExecResolver?: CrossExecResolver
   private executionId?: string
+  private nodeOutputs?: Record<string, Record<string, any>>
 
   constructor(
     private node: NodeDef,
@@ -22,6 +23,7 @@ export class ApprovalExecutor implements NodeExecutor {
     this.loopContext = config?.loopContext
     this.crossExecResolver = config?.crossExecResolver
     this.executionId = config?.executionId
+    this.nodeOutputs = config?.nodeOutputs
   }
 
   async execute(): Promise<NodeExecutionResult> {
@@ -64,14 +66,16 @@ export class ApprovalExecutor implements NodeExecutor {
 
     // Build approval metadata from node definition, resolving variables in prompt
     const rawPrompt = this.node.prompt || "需要审批确认"
-    const resolvedPrompt = substituteVarsFull(rawPrompt, this.pool, undefined, this.crossExecResolver, this.executionId, this.loopContext)
+    const resolvedPrompt = substituteVarsFull(rawPrompt, this.pool, this.nodeOutputs, this.crossExecResolver, this.executionId, this.loopContext)
     const approvalMetadata: ApprovalMetadata = {
       prompt: resolvedPrompt,
       options: this.node.options || [
         { label: "同意", value: "approve" },
         { label: "拒绝", value: "reject" }
       ],
-      nodeId: this.node.id
+      nodeId: this.node.id,
+      ...(this.node.comment_label ? { commentLabel: this.node.comment_label } : {}),
+      ...(this.node.comment_placeholder ? { commentPlaceholder: this.node.comment_placeholder } : {}),
     }
 
     logLines.push(`Approval prompt: ${approvalMetadata.prompt}`)

@@ -50,6 +50,7 @@ export class BashExecutor implements NodeExecutor {
   private crossExecResolver?: CrossExecResolver
   private executionId?: string
   private loopContext?: Record<string, any>
+  private nodeOutputs?: Record<string, Record<string, any>>
 
   constructor(
     private node: NodeDef,
@@ -62,6 +63,7 @@ export class BashExecutor implements NodeExecutor {
     this.crossExecResolver = config?.crossExecResolver
     this.executionId = config?.executionId
     this.loopContext = config?.loopContext
+    this.nodeOutputs = config?.nodeOutputs
   }
 
   async execute(): Promise<NodeExecutionResult> {
@@ -76,7 +78,7 @@ export class BashExecutor implements NodeExecutor {
     }
 
     const start = Date.now()
-    let script = substituteVarsFull(this.node.bash!, this.pool, undefined, this.crossExecResolver, this.executionId, this.loopContext)
+    let script = substituteVarsFull(this.node.bash!, this.pool, this.nodeOutputs, this.crossExecResolver, this.executionId, this.loopContext)
     script = this.resolveInputs(script)
     const timeout = this.node.timeout ?? 30
 

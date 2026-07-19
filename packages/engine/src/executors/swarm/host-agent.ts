@@ -89,13 +89,13 @@ export class HostAgent {
 1. Assess the consensus among experts (score 0.0-1.0)
 2. Identify key agreements and disagreements
 3. Determine if further rounds of discussion would be productive
-4. Provide a comprehensive synthesis (keep under 2000 words to avoid truncation)`
+4. Provide a comprehensive synthesis (keep under 6000 words to avoid truncation)`
     } else {
       prompt += `
 ## Your Task
 Provide a comprehensive synthesis of the expert opinions above.
 Consider all perspectives and provide a balanced analysis.
-Keep the synthesis under 2000 words to avoid output truncation.`
+Keep the synthesis under 6000 words to avoid output truncation.`
     }
 
     // Layer 2: System-enforced output format (always appended for debate/swarm)
@@ -106,7 +106,7 @@ Keep the synthesis under 2000 words to avoid output truncation.`
 ## Output Format (MANDATORY)
 You MUST respond with a single JSON object in this exact structure:
 {
-  "synthesis": "your comprehensive analysis (under 2000 words)...",
+  "synthesis": "your comprehensive analysis (under 6000 words)...",
   "assessment": {
     "consensus_score": 0.0-1.0,
     "key_agreements": ["agreement 1", ...],
@@ -125,7 +125,7 @@ Do NOT use markdown code fences around the JSON. Respond with the raw JSON objec
 
 Respond in this JSON structure:
 {
-  "synthesis": "...(under 2000 words)...",
+  "synthesis": "...(under 6000 words)...",
   "experts": [{"role": "...", "opinion": "..."}],
   "disagreements": ["..."],
   "recommendation": "...",

@@ -571,6 +571,14 @@
           "type": "string",
           "description": "[approval node] Node ID to jump to when the approval is rejected. If unset, rejection fails the node."
         },
+        "comment_label": {
+          "type": "string",
+          "description": "[approval node] Custom label for the comment input field. When defined, the comment field is displayed above the options."
+        },
+        "comment_placeholder": {
+          "type": "string",
+          "description": "[approval node] Custom placeholder text for the comment input field."
+        },
 
         "while": {
           "type": "string",

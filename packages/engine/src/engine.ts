@@ -994,6 +994,8 @@ export class WorkflowEngine {
             success_node_id: node.id,
             success_node_type: node.type,
             node_duration_ms: nodeResult.durationMs,
+            node_comment: nodeResult.comment ?? "",
+            node_decision: nodeResult.decision ?? "",
           })
         } catch (hookErr: unknown) {
           const msg = hookErr instanceof Error ? hookErr.message : String(hookErr)
@@ -1305,6 +1307,8 @@ export class WorkflowEngine {
                   success_node_id: node.id,
                   success_node_type: node.type,
                   node_duration_ms: nodeResult.durationMs,
+                  node_comment: nodeResult.comment ?? "",
+                  node_decision: nodeResult.decision ?? "",
                 })
               } catch (hookErr: unknown) {
                 const msg = hookErr instanceof Error ? hookErr.message : String(hookErr)
