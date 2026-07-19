@@ -57,7 +57,7 @@ export function ApprovalDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-4 max-h-[70vh] overflow-y-auto pr-2">
+        <div className="max-h-[50vh] overflow-y-auto pr-2">
           {/* 审批提示 */}
           <div className="rounded-lg bg-muted p-4">
             <p className="text-sm font-medium">审批说明</p>
@@ -65,53 +65,53 @@ export function ApprovalDialog({
               {approval.prompt}
             </p>
           </div>
-
-          {/* 自定义备注（显式定义时显示在选项上方） */}
-          {approval.commentLabel && (
-            <div className="space-y-2">
-              <p className="text-sm font-medium">{approval.commentLabel}</p>
-              <Textarea
-                placeholder={approval.commentPlaceholder ?? ""}
-                value={comment}
-                onChange={(e) => setComment(e.target.value)}
-                disabled={loading}
-                rows={3}
-              />
-            </div>
-          )}
-
-          {/* 审批选项 */}
-          <div className="space-y-2">
-            <p className="text-sm font-medium">请选择</p>
-            <div className="grid gap-2">
-              {approval.options.map((opt) => (
-                <Button
-                  key={opt.value}
-                  variant={selectedValue === opt.value ? "default" : "outline"}
-                  onClick={() => handleSelect(opt.value)}
-                  disabled={loading}
-                  className="justify-start"
-                >
-                  {opt.label}
-                </Button>
-              ))}
-            </div>
-          </div>
-
-          {/* 默认备注（未显式定义时显示在选项下方） */}
-          {!approval.commentLabel && (
-            <div className="space-y-2">
-              <p className="text-sm font-medium">备注（可选）</p>
-              <Textarea
-                placeholder={approval.commentPlaceholder ?? "输入审批备注..."}
-                value={comment}
-                onChange={(e) => setComment(e.target.value)}
-                disabled={loading}
-                rows={3}
-              />
-            </div>
-          )}
         </div>
+
+        {/* 自定义备注（显式定义时显示在选项上方） */}
+        {approval.commentLabel && (
+          <div className="space-y-2">
+            <p className="text-sm font-medium">{approval.commentLabel}</p>
+            <Textarea
+              placeholder={approval.commentPlaceholder ?? ""}
+              value={comment}
+              onChange={(e) => setComment(e.target.value)}
+              disabled={loading}
+              rows={3}
+            />
+          </div>
+        )}
+
+        {/* 审批选项 */}
+        <div className="space-y-2">
+          <p className="text-sm font-medium">请选择</p>
+          <div className="grid gap-2">
+            {approval.options.map((opt) => (
+              <Button
+                key={opt.value}
+                variant={selectedValue === opt.value ? "default" : "outline"}
+                onClick={() => handleSelect(opt.value)}
+                disabled={loading}
+                className="justify-start"
+              >
+                {opt.label}
+              </Button>
+            ))}
+          </div>
+        </div>
+
+        {/* 默认备注（未显式定义时显示在选项下方） */}
+        {!approval.commentLabel && (
+          <div className="space-y-2">
+            <p className="text-sm font-medium">备注（可选）</p>
+            <Textarea
+              placeholder={approval.commentPlaceholder ?? "输入审批备注..."}
+              value={comment}
+              onChange={(e) => setComment(e.target.value)}
+              disabled={loading}
+              rows={3}
+            />
+          </div>
+        )}
 
         <DialogFooter>
           <Button
