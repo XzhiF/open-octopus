@@ -263,17 +263,9 @@ nodes:
         comment_label: "澄清输入:"
         comment_placeholder: "请在此输入您对以上问题的回答..."
         prompt: |
-          ═══ 需求澄清 — Round $iteration ═══
-
-          📁 完整文档: .octopus/xzf/$vars.branch/03-clarification/questions.md
-
-          ─── 本轮需要澄清的问题 ───
-
+          Round $iteration | 📁 03-clarification/questions.md
+          未回答的问题将采用推荐方案。
           $requirements-clarify.output.synthesis
-
-          ─────────────────────────
-          请在评论中回答问题。
-          如部分问题未回答但选择"进入验证澄清"，将采用推荐方案。
         options:
           - label: "继续讨论"
             value: "continue"
@@ -331,21 +323,9 @@ nodes:
         comment_label: "澄清输入:"
         comment_placeholder: "请在此输入您对验证方式的回答..."
         prompt: |
-          ═══ 验证方式与测试环境澄清 — Round $iteration ═══
-
-          📋 环境状态: $vars.env_checklist_status
-
+          Round $iteration | 环境: $vars.env_checklist_status | 📁 03-clarification/verification.md
           ⚠️ INCOMPLETE 时必须补全才能进入下一阶段。
-
-          📁 完整文档: .octopus/xzf/$vars.branch/03-clarification/verification.md
-
-          ─── 本轮需要澄清的问题 ───
-
           $verification-clarify.output.synthesis
-
-          ─────────────────────────
-          请在评论中回答问题。
-          环境状态为 COMPLETE 后选择"确认"进入下一阶段。
         options:
           - label: "继续讨论"
             value: "continue"
@@ -422,20 +402,8 @@ nodes:
         comment_label: "故事反馈:"
         comment_placeholder: "请输入对用户故事的修改意见..."
         prompt: |
-          ═══ 用户故事总汇 — Round $iteration ═══
-
-          📁 完整文档:
-          - .octopus/xzf/$vars.branch/04-stories/summary.md
-          - .octopus/xzf/$vars.branch/04-stories/technical-guide.md
-          - .octopus/xzf/$vars.branch/04-stories/test-environment.md
-
-          ─── 故事摘要 ───
-
+          Round $iteration | 📁 04-stories/{summary,technical-guide,test-environment}.md
           $story-generation.output.synthesis
-
-          ─────────────────
-          如满意，进入 Spec 设计阶段。
-          如需修改，请在评论中说明。
         options:
           - label: "确认"
             value: "proceed"
@@ -515,14 +483,8 @@ nodes:
         comment_label: "Spec 反馈:"
         comment_placeholder: "请输入对技术规格的修改意见..."
         prompt: |
-          ═══ Spec 设计完成 ═══
-
-          共 $vars.spec_count 个 Spec:
+          共 $vars.spec_count 个 Spec | 📁 05-specs/
           $spec-design.output.synthesis
-
-          请查看 .octopus/xzf/$vars.branch/05-specs/ 目录下的 Spec 文件。
-
-          确认拆分方案后进入任务计划阶段。
         options:
           - label: "确认"
             value: "proceed"
@@ -669,14 +631,8 @@ nodes:
         depends_on: [execute-spec-tasks]
         execute_when: '$vars.spec_status == "failed"'
         prompt: |
-          ═══ Spec #$iteration 执行失败 ═══
-
-          请查看:
-          - 失败报告: .octopus/xzf/$vars.branch/08-reports/
-          - Checkpoint: .octopus/xzf/$vars.branch/07-execution/
-
-          在评论中输入指导（修复建议、环境调整等），然后点击继续。
-          协调者会从断点恢复，结合你的指导重新尝试。
+          Spec #$iteration 失败 | 📁 08-reports/ | Checkpoint: 07-execution/
+          在评论中输入修复指导，从断点恢复重试。
         options:
           - label: "重试"
             value: "retry"
