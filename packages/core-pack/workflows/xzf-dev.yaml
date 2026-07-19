@@ -305,12 +305,10 @@ nodes:
           如部分问题未回答但选择"进入下一阶段"，将采用专家推荐方案。
           ⚠️ 如测试环境状态为 INCOMPLETE，建议在进入下一阶段前补全。
         options:
-          - label: "回答并继续讨论"
+          - label: "继续讨论"
             value: "continue"
-          - label: "回答并进入下一阶段"
+          - label: "进入下一阶段"
             value: "proceed"
-          - label: "补充新的讨论话题"
-            value: "add-topics"
         outputs:
           $vars.clarify_decision: "$last_output"
 
@@ -395,9 +393,9 @@ nodes:
           如满意，进入 Spec 设计阶段。
           如需修改，请在评论中说明。
         options:
-          - label: "满意，进入 Spec 设计"
+          - label: "确认"
             value: "proceed"
-          - label: "需要修改"
+          - label: "修改"
             value: "continue"
         outputs:
           $vars.story_decision: "$last_output"
@@ -482,9 +480,9 @@ nodes:
 
           确认拆分方案后进入任务计划阶段。
         options:
-          - label: "确认，进入任务计划"
+          - label: "确认"
             value: "proceed"
-          - label: "需要调整 Spec"
+          - label: "调整"
             value: "revise"
         outputs:
           $vars.spec_decision: "$last_output"
@@ -636,7 +634,7 @@ nodes:
           在评论中输入指导（修复建议、环境调整等），然后点击继续。
           协调者会从断点恢复，结合你的指导重新尝试。
         options:
-          - label: "继续（从断点重试）"
+          - label: "重试"
             value: "retry"
         outputs:
           $vars.user_guidance: "$last_output.comment"
