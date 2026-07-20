@@ -545,66 +545,71 @@ nodes:
   # Stage 5: 任务计划（per spec 循环）
   # ============================================================
 
-  - id: task-planning-loop
-    type: loop
+  # ============================================================
+  # Stage 5: 任务计划（一次生成所有 spec 的 plans，无需 loop）
+  # ============================================================
+
+  - id: plan-spec
+    type: swarm
     depends_on: [spec-count-verify]
-    max_iterations: 99 # break_when 是真正的退出条件，99 仅作为安全阀
-    break_when: "$iteration > $vars.spec_count"
-    nodes:
-      # --- 5a. 为当前 spec 生成任务计划 ---
-      - id: plan-spec
-        type: swarm
-        mode: dispatch
-        rounds: 1
-        context_tier: "200k"
-        expert_defaults:
-          skills: [octo-xzf-task-planner]
-        topic: |
-          ═══ 任务计划 — Spec #$iteration ═══
+    mode: dispatch
+    rounds: 1
+    context_tier: "200k"
+    expert_defaults:
+      skills: [octo-xzf-task-planner]
+    topic: |
+      ═══ 任务计划 — 一次生成所有 spec 的 plans ═══
 
-          读取 Spec 索引: .octopus/xzf/$vars.branch/05-specs/spec-index.md
-          找到第 $iteration 行对应的 spec 文件，读取该 spec。
+      读取 Spec 索引: .octopus/xzf/$vars.branch/05-specs/spec-index.md
+      遍历索引中所有 spec，为每个 spec 生成完整的任务计划文档。
 
-          Research 知识: 请读取 .octopus/xzf/$vars.branch/02-research/index.md 并根据话题读取对应领域文件
-          Workspace 拓扑: 请读取 .octopus/xzf/$vars.branch/workspace-topology.md
+      Research 知识: 请读取 .octopus/xzf/$vars.branch/02-research/index.md 并根据话题读取对应领域文件
+      Workspace 拓扑: 请读取 .octopus/xzf/$vars.branch/workspace-topology.md
 
-          输出目录: .octopus/xzf/$vars.branch/06-plans/spec-{NNN}-{name}/
+      输出目录（per spec）: .octopus/xzf/$vars.branch/06-plans/spec-{NNN}-{name}/
 
-          任务拆解方法论和文档格式参见 octo-xzf-task-planner skill。
+      ⚠️ 每位专家遍历所有 spec，为每个 spec 写自己职责范围内的文件:
+      - senior-architect: 每 spec 的 consensus.md
+      - test-architect: 每 spec 的 verify-*.md + spec-test.md
+      - frontend-expert: 每 spec 的 task-*-frontend.md
+      - backend-expert: 每 spec 的 task-*-backend.md
+      - security-expert: 每 spec 的安全审查项
 
-          ⚠️ 每位专家发言控制在 1500 字以内。详细任务文档写入文件，发言只放任务分配要点和接口契约。
-        experts:
-          - role: senior-architect
-            agent_file: .claude/agents/octo-xzf-architect.md
-            task: "制定技术总纲领 consensus.md，确定文件变更和接口契约"
-          - role: test-architect
-            agent_file: .claude/agents/octo-xzf-test-architect.md
-            skills: [octo-xzf-spec-designer] # 验证设计需参考 spec DSL 格式
-            task: "设计验证方法 verify-*.md 和 E2E 测试路线 spec-test.md"
-            depends_on: [senior-architect]
-          - role: frontend-expert
-            agent_file: .claude/agents/octo-xzf-frontend-expert.md
-            task: "前端任务拆解 task-*-frontend.md"
-            depends_on: [senior-architect]
-          - role: backend-expert
-            agent_file: .claude/agents/octo-xzf-backend-expert.md
-            task: "后端任务拆解 task-*-backend.md"
-            depends_on: [senior-architect]
-          - role: security-expert
-            agent_file: .claude/agents/octo-xzf-security-expert.md
-            skills: [octo-xzf-spec-designer] # 安全审查需参考 spec DSL 格式
-            task: "审查安全相关任务，补充安全验证项"
-            depends_on: [senior-architect, test-architect]
-        host:
-          role: plan-host
-          prompt: |
-            综合各专家输出，检查一致性并作为 synthesis 输出:
-            1. consensus.md 中接口契约是否一致
-            2. verify 和 task 编号是否对齐
-            3. spec-test.md 是否覆盖完整故事线
-            4. 列出检测到的不一致（如有）
+      任务拆解方法论和文档格式参见 octo-xzf-task-planner skill。
 
-            所有文件内容由专家直接写入 06-plans/ 目录，host 不写文件。
+      ⚠️ 每位专家发言控制在 1500 字以内，只放任务分配要点和接口契约。
+    experts:
+      - role: senior-architect
+        agent_file: .claude/agents/octo-xzf-architect.md
+        task: "为每个 spec 制定技术总纲领 consensus.md，确定文件变更和接口契约"
+      - role: test-architect
+        agent_file: .claude/agents/octo-xzf-test-architect.md
+        skills: [octo-xzf-spec-designer]
+        task: "为每个 spec 设计验证方法 verify-*.md 和 E2E 测试路线 spec-test.md"
+        depends_on: [senior-architect]
+      - role: frontend-expert
+        agent_file: .claude/agents/octo-xzf-frontend-expert.md
+        task: "为每个 spec 做前端任务拆解 task-*-frontend.md"
+        depends_on: [senior-architect]
+      - role: backend-expert
+        agent_file: .claude/agents/octo-xzf-backend-expert.md
+        task: "为每个 spec 做后端任务拆解 task-*-backend.md"
+        depends_on: [senior-architect]
+      - role: security-expert
+        agent_file: .claude/agents/octo-xzf-security-expert.md
+        skills: [octo-xzf-spec-designer]
+        task: "为每个 spec 审查安全相关任务，补充安全验证项"
+        depends_on: [senior-architect, test-architect]
+    host:
+      role: plan-host
+      prompt: |
+        综合各专家输出，检查一致性并作为 synthesis 输出:
+        1. 各 spec 的 consensus.md 中接口契约是否一致
+        2. verify 和 task 编号是否对齐
+        3. spec-test.md 是否覆盖完整故事线
+        4. 列出检测到的不一致（如有）
+
+        所有文件内容由专家直接写入 06-plans/ 目录，host 不写文件。
 
   # ============================================================
   # Stage 6: 任务执行（per spec → per task 循环）
@@ -612,7 +617,7 @@ nodes:
 
   - id: execution-loop
     type: loop
-    depends_on: [task-planning-loop]
+    depends_on: [plan-spec]
     max_iterations: 99
     break_when: "$iteration > $vars.spec_count"
     nodes:
