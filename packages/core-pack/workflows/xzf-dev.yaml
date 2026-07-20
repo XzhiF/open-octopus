@@ -270,6 +270,10 @@ nodes:
           Synthesis = 读取刚写入的 questions.md，将「待澄清」部分原样输出。
           不要重新格式化、不要提炼、不要摘要。
 
+          ⚠️ 最终输出（last_output）只包含上述 Synthesis 内容。
+          Read 文件、思考过程、中间分析一律不输出到最终文本——
+          下游 approval 节点直接引用 $requirements-clarify.output.last_output 展示给用户。
+
       - id: requirements-approval
         type: approval
         depends_on: [requirements-clarify]
@@ -278,7 +282,7 @@ nodes:
         prompt: |
           Round $iteration | 📁 03-clarification/questions.md
           未回答的问题将采用推荐方案。
-          $requirements-clarify.output.synthesis
+          $requirements-clarify.output.last_output
         options:
           - label: "继续讨论"
             value: "continue"
@@ -337,6 +341,10 @@ nodes:
           Synthesis = 读取刚写入的 verification.md，将「待澄清」部分原样输出。
           不要重新格式化、不要提炼、不要摘要。
 
+          ⚠️ 最终输出（last_output）只包含上述 Synthesis 内容。
+          Read 文件、思考过程、中间分析一律不输出到最终文本——
+          下游 approval 节点直接引用 $verification-clarify.output.last_output 展示给用户。
+
           逐项检查强制清单 6 项，通过 vars_update 写入:
           env_checklist_status = "COMPLETE"（全部已确认）或 "INCOMPLETE: {缺失项}"
           最后输出 vars_update JSON:
@@ -350,7 +358,7 @@ nodes:
         prompt: |
           Round $iteration | 环境: $vars.env_checklist_status | 📁 03-clarification/verification.md
           ⚠️ INCOMPLETE 时必须补全才能进入下一阶段。
-          $verification-clarify.output.synthesis
+          $verification-clarify.output.last_output
         options:
           - label: "继续讨论"
             value: "continue"
@@ -391,15 +399,22 @@ nodes:
           用户上轮反馈:
           $story-approval.output.comment
 
-          输出:
-          - .octopus/xzf/$vars.branch/04-stories/summary.md
-          - .octopus/xzf/$vars.branch/04-stories/technical-guide.md
-          - .octopus/xzf/$vars.branch/04-stories/test-environment.md
+          ═══ 本阶段职责（专家只讨论，不写文件）═══
+          用户故事总汇是全局产物，需统一视角生成，不能按专家职责割裂。
 
-          ⚠️ 每个故事标注 SERVICE_CHAIN。
-          文档结构和格式参见 octo-xzf-story-writer skill。
+          各专家从自身视角贡献意见，讨论以下问题直到收敛：
+          1. 完整故事线列表（每个故事：角色 + 目标 + 服务链 + 完成标准）
+          2. 故事排列顺序（从简单到复杂）
+          3. 跨项目故事的 SERVICE_CHAIN 与接口契约要点
+          4. 技术约束与架构决策要点
+          5. 测试环境配置要点（基于 03-clarification/verification.md 已明确内容）
 
-          ⚠️ 每位专家发言控制在 1500 字以内。详细内容写入文件，发言只放故事线要点和服务链分歧。
+          ⚠️ 专家阶段禁止写任何故事文件（04-stories/ 目录由 host 统一写入）。
+          专家只输出故事线要点、服务链分歧、收敛建议。
+
+          每个故事标注 SERVICE_CHAIN。文档结构参见 octo-xzf-story-writer skill。
+
+          ⚠️ 每位专家发言控制在 1500 字以内，只放故事线要点和服务链分歧。
         experts:
           - role: senior-architect
             agent_file: .claude/agents/octo-xzf-architect.md
@@ -410,15 +425,27 @@ nodes:
         host:
           role: story-host
           prompt: |
-            综合专家意见，生成完整用户故事总汇文档、技术指导文档和测试环境配置。
-            直接写入 04-stories/ 目录下三个文件:
-            - summary.md（故事总汇）
-            - technical-guide.md（技术约束 + 架构决策）
-            - test-environment.md（基于 03-clarification/verification.md 已明确的内容 formalize，不做新发现）
-            - test-environment.md（测试环境完整配置，供 Stage 6 执行时读取）
+            你是故事文档唯一写入者。基于专家共识，统一写入 04-stories/ 目录下文件。
+            专家阶段已讨论收敛，你负责落盘——保证故事线完整、风格统一。
+
+            ═══ 写入步骤 ═══
+            1. 综合专家意见，确定最终故事总汇、技术指导、测试环境配置
+            2. 写入三个文件:
+               - .octopus/xzf/$vars.branch/04-stories/summary.md（故事总汇）
+               - .octopus/xzf/$vars.branch/04-stories/technical-guide.md（技术约束 + 架构决策）
+               - .octopus/xzf/$vars.branch/04-stories/test-environment.md
+                 （基于 03-clarification/verification.md 已明确内容 formalize，不做新发现；
+                 供 Stage 6 执行时读取）
+            3. 每个故事标注 SERVICE_CHAIN
+
+            文档结构参见 octo-xzf-story-writer skill。
 
             Synthesis 中列出故事摘要：
             每个故事一行：编号 + 标题 + 角色 + 服务链
+
+            ═══ assessment（debate 共识检测用）═══
+            输出 assessment 字段供引擎评估专家共识:
+            "assessment": {"consensus_score": 0.0-1.0, "should_continue": true/false, "key_agreements": [...], "key_disagreements": [...]}
 
       # --- 3b. 用户审批（内联显示故事摘要） ---
       - id: story-approval
@@ -457,7 +484,7 @@ nodes:
         expert_defaults:
           skills: [octo-xzf-spec-designer]
         topic: |
-          ═══ Spec 设计 ═══
+          ═══ Spec 设计 — 共识拆分方案 ═══
 
           输入:
           - Idea: .octopus/xzf/$vars.branch/01-idea.md
@@ -469,11 +496,22 @@ nodes:
           用户上轮反馈:
           $vars.spec_feedback
 
-          输出: .octopus/xzf/$vars.branch/05-specs/spec-NNN-{name}.md
+          ═══ 本阶段职责（专家只讨论，不写文件）═══
+          spec = 一条完整用户故事线（横向跨角色：前端+后端+DB+安全）。
+          故事线必须由全局视角统一拆分，不能按专家职责割裂。
+
+          各专家从自身视角贡献意见，讨论以下问题直到收敛：
+          1. 拆几个 spec？每个 spec 是哪条故事线？
+          2. spec 排列顺序（从简单到复杂，spec-001 含基础底座）
+          3. spec 间依赖关系
+          4. 每条故事线的 SERVICE_CHAIN、验证路径要点、关键架构决策
+
+          ⚠️ 专家阶段禁止写任何 spec 文件（05-specs/ 目录由 host 统一写入）。
+          专家只输出拆分意见、分歧点、收敛建议。
 
           Spec DSL 格式和拆分方法论参见 octo-xzf-spec-designer skill。
 
-          ⚠️ 每位专家发言控制在 2000 字以内。Spec 详细设计写入文件，发言只放拆分方案、架构决策和分歧点。
+          ⚠️ 每位专家发言控制在 2000 字以内，只放拆分方案、架构决策和分歧点。
         experts:
           - role: senior-architect
             agent_file: .claude/agents/octo-xzf-architect.md
@@ -492,19 +530,53 @@ nodes:
         host:
           role: spec-host
           prompt: |
-            综合专家意见，确定 Spec 拆分方案。
-            直接写入各 spec 文件到 05-specs/ 目录。
-            生成 05-specs/spec-index.md 索引文件（按执行顺序列出所有 spec 的文件名、标题、优先级、依赖）。
+            你是 spec 唯一写入者。基于专家共识方案，统一写入所有 spec 文件。
+            专家阶段已讨论收敛拆分方案，你负责落盘——保证编号一致、故事线完整、风格统一。
 
-            Synthesis 中列出 spec 摘要：编号 + 文件名 + 标题 + Priority
+            ═══ 写入步骤 ═══
+            1. 综合专家意见，确定最终 spec 拆分方案（编号、故事线、顺序、依赖）
+            2. 为每个 spec 按 Spec DSL 格式写入文件:
+               .octopus/xzf/$vars.branch/05-specs/spec-NNN-{name}.md
+               （NNN 三位数字递增，不重复；{name} 简短英文名）
+            3. 生成索引: .octopus/xzf/$vars.branch/05-specs/spec-index.md
+               （按执行顺序列出所有 spec 的 # | 文件名 | 标题 | Priority | Depends）
+            4. 若有上一轮遗留的旧 spec 文件（用户调整后重跑），先清空 05-specs/ 再写入
+
+            ═══ Spec DSL 要求 ═══
+            每个 spec 必须是完整故事线：Meta + Story Line + Verification Path + Operation Flow + Tech Requirements。
+            跨项目 spec 必须标注 SERVICE_CHAIN。详细格式参见 octo-xzf-spec-designer skill。
+
+            Synthesis 中列出 spec 摘要：编号 + 文件名 + 标题 + Priority。
 
             最后输出 vars_update JSON:
             {"vars_update": {"spec_count": N}}
 
-      # --- 4b. 确认 Spec 设计 ---
+            ═══ assessment（debate 共识检测用）═══
+            在上述 JSON 内附带 assessment 字段，供引擎评估专家共识:
+            "assessment": {"consensus_score": 0.0-1.0, "should_continue": true/false, "key_agreements": [...], "key_disagreements": [...]}
+
+      # --- 4b. 校验 spec_count（数实际文件，覆盖 host 输出） ---
+      # 防止 host 输错 spec_count 导致 task-planning/execution loop 越界或空退出。
+      # MSYS bash 跨平台可用（Windows 走 Git for Windows，非 cmd）。
+      - id: spec-count-verify
+        type: bash
+        depends_on: [spec-design]
+        bash: |
+          DIR=".octopus/xzf/$vars.branch/05-specs"
+          if [ ! -d "$DIR" ]; then
+            echo "ERROR: $DIR not found" >&2
+            exit 1
+          fi
+          # 数 spec-NNN-*.md，排除 spec-index.md
+          COUNT=$(find "$DIR" -maxdepth 1 -type f -name "spec-*.md" ! -name "spec-index.md" | wc -l)
+          echo "Verified spec_count = $COUNT (actual files in $DIR)"
+          # 覆盖 host 输出的 spec_count，作为后续 loop break_when 的真实依据
+          echo "{\"vars_update\": {\"spec_count\": $COUNT}}"
+
+      # --- 4c. 确认 Spec 设计 ---
       - id: spec-confirm
         type: approval
-        depends_on: [spec-design]
+        depends_on: [spec-count-verify]
         comment_label: "Spec 反馈:"
         comment_placeholder: "请输入对技术规格的修改意见..."
         prompt: |
