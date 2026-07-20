@@ -28,7 +28,7 @@ fi
 
 ## PR/MR Summary 生成
 
-输出到 `.octopus/xzf/{branch}/09-ship/summary.md`:
+输出到 `.octopus/xzf/{feature}/07-ship/summary.md`:
 
 ```markdown
 # {Feature 标题}
@@ -69,7 +69,7 @@ fi
 ## E2E 验证结果
 - ✅ Spec-001: 全部通过
 - ✅ Spec-002: 全部通过
-- 验证详情: `.octopus/xzf/{branch}/07-execution/`
+- 验证详情: `.octopus/xzf/{feature}/05-execution/`
 ```
 
 ## 提交命令
@@ -94,13 +94,13 @@ fi
 if [ "$PLATFORM" = "github" ]; then
   PR_URL=$(gh pr create \
     --title "[{project}] {feature 标题}" \
-    --body-file "{workspace-root}/.octopus/xzf/{branch}/09-ship/summary.md" \
+    --body-file "{workspace-root}/.octopus/xzf/{feature}/07-ship/summary.md" \
     --base main)
   echo "[{project}] PR: $PR_URL"
 elif [ "$PLATFORM" = "gitlab" ]; then
   MR_URL=$(glab mr create \
     --title "[{project}] {feature 标题}" \
-    --description "$(cat {workspace-root}/.octopus/xzf/{branch}/09-ship/summary.md)" \
+    --description "$(cat {workspace-root}/.octopus/xzf/{feature}/07-ship/summary.md)" \
     --target-branch main)
   echo "[{project}] MR: $MR_URL"
 fi

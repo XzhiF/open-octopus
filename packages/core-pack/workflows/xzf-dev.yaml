@@ -23,6 +23,10 @@ inputs:
   idea:
     description: "你的 Idea — 描述想要实现的功能或需求"
     required: true
+  feature:
+    description: "Feature 名称（可选）— 用于目录隔离。不提供则从 Idea 自动生成 kebab-case slug"
+    required: false
+    default: ""
   research_guidance:
     description: "Research 指引（可选）— 指定需要重点研究的 codebase 模块或外部技术。不提供则由模型根据 Idea 语义自行判断"
     required: false
@@ -31,13 +35,16 @@ inputs:
 # --- 变量 ---
 variables:
   branch: ""
+  feature: ""
   workspace_topology: ""
   remote_type: ""
   user_guidance: ""
   clarify_decision: ""
   verify_decision: ""
   spec_count: "0"
+  current_spec: "0"
   spec_status: ""
+  requirements_checklist_status: ""
   env_checklist_status: ""
   pending_questions: ""
 
@@ -45,10 +52,10 @@ variables:
 notify:
   on_failure:
     channel: xzf_hermes
-    message: "[xzf-dev] 执行失败: $failed_node_id — $vars.branch"
+    message: "[xzf-dev] 执行失败: $failed_node_id — $vars.feature @ $vars.branch"
   on_complete:
     channel: xzf_hermes
-    message: "[xzf-dev] 完成: $vars.branch — PR/MR 已提交"
+    message: "[xzf-dev] 完成: $vars.feature @ $vars.branch — PR/MR 已提交"
 
 # --- 钩子 ---
 hooks:
@@ -57,8 +64,8 @@ hooks:
       nodes: [requirements-approval, verification-approval]
       bash: |
         case "$hook.node_id" in
-          requirements-approval|verification-approval) DIR=".octopus/xzf/$vars.branch/03-clarification" ;;
-          *)                   DIR=".octopus/xzf/$vars.branch/approval-answers" ;;
+          requirements-approval|verification-approval) DIR=".octopus/xzf/$vars.feature/03-clarification" ;;
+          *)                   DIR=".octopus/xzf/$vars.feature/approval-answers" ;;
         esac
         mkdir -p "$DIR"
         FILE="$DIR/$hook.node_id-$hook.timestamp.md"
@@ -85,10 +92,21 @@ nodes:
     skills: [octo-xzf-init]
     prompt: |
       使用 octo-xzf-init skill 初始化 XZF Pipeline 工作环境。
-      汇报：分支名、remote 类型、workspace 项目数。
+
+      ═══ Feature Slug ═══
+      IF $inputs.feature 非空 → feature = "$inputs.feature"
+      ELSE → 从 $inputs.idea 提取关键词生成 kebab-case slug（max 40 chars）
+             格式: {verb}-{subject} 或 {topic}，例如 add-user-auth, fix-cart-total
+
+      ═══ 目录结构 ═══
+      基础目录: .octopus/xzf/$feature/
+      子目录: 01-idea.md, 02-research/, 03-clarification/, 04-specs/,
+              05-execution/, 06-reports/, 07-ship/
+
+      workspace-topology.md 放在 .octopus/xzf/$feature/ 目录（每个 feature 独立拓扑，因为不同 feature 可能增删项目）。
 
       ═══ 写入 Idea 文件 ═══
-      初始化目录后，将用户的 Idea 写入 01-idea.md：
+      将用户 Idea 写入 .octopus/xzf/$feature/01-idea.md：
 
       ```
       # Idea
@@ -102,8 +120,10 @@ nodes:
       如 research_guidance 为空，写入：
       "（无特定指引 — 请根据 Idea 语义自行判断需要研究的 codebase 模块和外部技术）"
 
+      汇报：分支名、feature slug、remote 类型、workspace 项目数。
+
       输出 vars_update:
-      {"vars_update": {"branch": "{git branch}", "remote_type": "{github|gitlab}", "workspace_topology": "已生成"}}
+      {"vars_update": {"branch": "{git branch}", "feature": "{feature slug}", "remote_type": "{github|gitlab}", "workspace_topology": "已生成"}}
 
   # ============================================================
   # Stage 1: Codebase 研究
@@ -114,7 +134,7 @@ nodes:
     type: bash
     depends_on: [init]
     bash: |
-      BASE=".octopus/xzf/$vars.branch/02-research/_scan"
+      BASE=".octopus/xzf/$vars.feature/02-research/_scan"
       mkdir -p "$BASE"
 
       # 文件结构概览
@@ -160,21 +180,21 @@ nodes:
     topic: |
       ═══ Codebase 领域研究 ═══
 
-      Idea: 请读取 .octopus/xzf/$vars.branch/01-idea.md
-      Workspace: 请读取 .octopus/xzf/$vars.branch/workspace-topology.md
+      Idea: 请读取 .octopus/xzf/$vars.feature/01-idea.md
+      Workspace: 请读取 .octopus/xzf/$vars.feature/workspace-topology.md
 
       ⚠️ 如 01-idea.md 包含「Research 指引」，按指引聚焦研究范围。
 
       预扫描结果（用于快速定位，避免盲读）:
-      - 文件树: .octopus/xzf/$vars.branch/02-research/_scan/file-tree.txt
-      - 依赖摘要: .octopus/xzf/$vars.branch/02-research/_scan/deps.txt
-      - 项目文档: .octopus/xzf/$vars.branch/02-research/_scan/claude-mds.txt
-      - API 入口: .octopus/xzf/$vars.branch/02-research/_scan/api-entries.txt
-      - DB Schema: .octopus/xzf/$vars.branch/02-research/_scan/db-schemas.txt
-      - 测试配置: .octopus/xzf/$vars.branch/02-research/_scan/test-config.txt
+      - 文件树: .octopus/xzf/$vars.feature/02-research/_scan/file-tree.txt
+      - 依赖摘要: .octopus/xzf/$vars.feature/02-research/_scan/deps.txt
+      - 项目文档: .octopus/xzf/$vars.feature/02-research/_scan/claude-mds.txt
+      - API 入口: .octopus/xzf/$vars.feature/02-research/_scan/api-entries.txt
+      - DB Schema: .octopus/xzf/$vars.feature/02-research/_scan/db-schemas.txt
+      - 测试配置: .octopus/xzf/$vars.feature/02-research/_scan/test-config.txt
 
       每位专家独立研究自己的领域，基于 _scan/ 预扫描数据。
-      每位专家将研究发现写入: .octopus/xzf/$vars.branch/02-research/{domain}.md
+      每位专家将研究发现写入: .octopus/xzf/$vars.feature/02-research/{domain}.md
       研究方法和输出格式参见 octo-xzf-research skill。
 
       ⚠️ 每位专家发言控制在 1500 字以内。详细分析写入指定文件，发言只放关键发现、GAPS 和决策点。
@@ -210,7 +230,7 @@ nodes:
       role: research-indexer
       prompt: |
         读取 02-research/ 下所有 .md 文件（不含 _scan/）。
-        写入 .octopus/xzf/$vars.branch/02-research/index.md 索引文件，格式：
+        写入 .octopus/xzf/$vars.feature/02-research/index.md 索引文件，格式：
 
         | 文件 | 领域 | 关键发现 | 与 Idea 关系 |
         |------|------|---------|-------------|
@@ -226,7 +246,7 @@ nodes:
     type: loop
     depends_on: [idea-research]
     max_iterations: 99
-    break_when: '$vars.clarify_decision == "proceed"'
+    break_when: '$vars.clarify_decision == "proceed" && $vars.requirements_checklist_status == "COMPLETE"'
     nodes:
       - id: requirements-clarify
         type: agent
@@ -235,9 +255,9 @@ nodes:
           ═══ 需求澄清 — Round $iteration ═══
 
           读取:
-          - Idea: .octopus/xzf/$vars.branch/01-idea.md
-          - Research: .octopus/xzf/$vars.branch/02-research/index.md
-          - Workspace: .octopus/xzf/$vars.branch/workspace-topology.md
+          - Idea: .octopus/xzf/$vars.feature/01-idea.md
+          - Research: .octopus/xzf/$vars.feature/02-research/index.md
+          - Workspace: .octopus/xzf/$vars.feature/workspace-topology.md
 
           用户上轮回复:
           $requirements-approval.output.comment
@@ -245,33 +265,19 @@ nodes:
           职责: 需求澄清 — 功能边界、优先级、用户场景、技术约束。
           不涉及测试环境和验证方式（下一阶段处理）。
 
-          澄清方法论和问题格式参见 octo-xzf-clarify skill。
-          输出: .octopus/xzf/$vars.branch/03-clarification/questions.md
+          澄清方法论、问题格式、Round 流程参见 octo-xzf-clarify skill。
+          输出: .octopus/xzf/$vars.feature/03-clarification/questions.md
 
-          ═══ questions.md 结构规则 ═══
-          文件分两个区域:「待澄清」和「已确认」。每个问题只出现一次。
+          ⚠️ 最终输出（last_output）只包含 Synthesis 内容（「待澄清」+「用户补充」原样输出）。
+          下游 approval 直接引用 $requirements-clarify.output.last_output 展示给用户。
 
-          Round 1（文件不存在时）:
-          - 分析问题，将新问题写入「待澄清」
-          - 格式: ### ❓ Dx: 标题 [优先级]\n问题描述 + 选项表 + 推荐
-
-          Round 2+（文件已存在时）:
-          1. 读取现有 questions.md
-          2. 用户回答了的问题 → 移到「已确认」，格式: ### ✅ Dx: 标题\n→ 选项 + 一行用户回答
-          3. 用户未回答的问题 → 保留在「待澄清」不动
-          4. 需要新追问的 → 追加到「待澄清」
-          5. 不重复已有问题，不重写整个文件
-
-          Synthesis = 读取刚写入的 questions.md，将「待澄清」部分原样输出。
-          不要重新格式化、不要提炼、不要摘要。
-
-          ⚠️ 最终输出（last_output）只包含上述 Synthesis 内容。
-          Read 文件、思考过程、中间分析一律不输出到最终文本——
-          下游 approval 节点直接引用 $requirements-clarify.output.last_output 展示给用户。
+          最后输出 vars_update JSON:
+          {"vars_update": {"requirements_checklist_status": "COMPLETE 或 INCOMPLETE: ..."}}
 
       - id: requirements-approval
         type: approval
         depends_on: [requirements-clarify]
+        execute_when: '$vars.clarify_decision != "proceed" || $vars.requirements_checklist_status != "COMPLETE"'
         comment_label: "澄清输入:"
         comment_placeholder: "请在此输入您对以上问题的回答..."
         prompt: |
@@ -303,10 +309,10 @@ nodes:
           ═══ 验证方式与测试环境澄清 — Round $iteration ═══
 
           读取:
-          - Idea: .octopus/xzf/$vars.branch/01-idea.md
-          - Research: .octopus/xzf/$vars.branch/02-research/index.md
-          - 已澄清需求: .octopus/xzf/$vars.branch/03-clarification/questions.md
-          - Workspace: .octopus/xzf/$vars.branch/workspace-topology.md
+          - Idea: .octopus/xzf/$vars.feature/01-idea.md
+          - Research: .octopus/xzf/$vars.feature/02-research/index.md
+          - 已澄清需求: .octopus/xzf/$vars.feature/03-clarification/questions.md
+          - Workspace: .octopus/xzf/$vars.feature/workspace-topology.md
 
           用户上轮回复:
           $verification-approval.output.comment
@@ -317,37 +323,21 @@ nodes:
           3. 测试数据策略
           4. CI 集成方式
 
-          输出: .octopus/xzf/$vars.branch/03-clarification/verification.md
+          敏感凭据强制澄清（账号/中间件连接/数据集）参见 octo-xzf-clarify skill。
 
-          ═══ verification.md 结构规则 ═══
-          文件分两个区域:「待澄清」和「已确认」。每个问题只出现一次。
+          澄清方法论、问题格式、Round 流程参见 octo-xzf-clarify skill。
+          输出: .octopus/xzf/$vars.feature/03-clarification/verification.md
 
-          Round 1（文件不存在时）:
-          - 分析需求，将验证相关问题写入「待澄清」
-          - 格式: ### ❓ Vx: 标题 [优先级]\n问题描述 + 选项表 + 推荐
+          ⚠️ 最终输出（last_output）只包含 Synthesis 内容（「待澄清」+「用户补充」原样输出）。
+          下游 approval 直接引用 $verification-clarify.output.last_output 展示给用户。
 
-          Round 2+（文件已存在时）:
-          1. 读取现有 verification.md
-          2. 用户回答了的问题 → 移到「已确认」，格式: ### ✅ Vx: 标题\n→ 选项 + 一行用户回答
-          3. 用户未回答的问题 → 保留在「待澄清」不动
-          4. 需要新追问的 → 追加到「待澄清」
-          5. 不重复已有问题，不重写整个文件
-
-          Synthesis = 读取刚写入的 verification.md，将「待澄清」部分原样输出。
-          不要重新格式化、不要提炼、不要摘要。
-
-          ⚠️ 最终输出（last_output）只包含上述 Synthesis 内容。
-          Read 文件、思考过程、中间分析一律不输出到最终文本——
-          下游 approval 节点直接引用 $verification-clarify.output.last_output 展示给用户。
-
-          逐项检查强制清单 6 项，通过 vars_update 写入:
-          env_checklist_status = "COMPLETE"（全部已确认）或 "INCOMPLETE: {缺失项}"
           最后输出 vars_update JSON:
           {"vars_update": {"env_checklist_status": "COMPLETE 或 INCOMPLETE: ..."}}
 
       - id: verification-approval
         type: approval
         depends_on: [verification-clarify]
+        execute_when: '$vars.verify_decision != "proceed" || $vars.env_checklist_status != "COMPLETE"'
         comment_label: "澄清输入:"
         comment_placeholder: "请在此输入您对验证方式的回答..."
         prompt: |
@@ -363,305 +353,119 @@ nodes:
           $vars.verify_decision: "$last_output"
 
   # ============================================================
-  # Stage 3: 故事总汇循环
+  # Stage 3: 需求简报（综合澄清结果 → brief.md）
   # ============================================================
 
-  # ============================================================
-  # Stage 3: 故事总汇（专家讨论 → host 统一写，无需审批）
-  # ============================================================
-
-  - id: story-generation
-    type: swarm
+  - id: brief-maker
+    type: agent
     depends_on: [verification-clarify-loop]
-    mode: debate
-    rounds: 2
-    consensus_threshold: 0.75
-    context_tier: "200k"
-    expert_defaults:
-      skills: [octo-xzf-story-writer]
-    topic: |
-      ═══ 用户故事总汇 ═══
+    skills: [octo-xzf-brief-maker]
+    prompt: |
+      使用 octo-xzf-brief-maker skill 生成需求简报。
 
-      输入:
-      - Idea: .octopus/xzf/$vars.branch/01-idea.md
-      - Research 知识: .octopus/xzf/$vars.branch/02-research/index.md
-      - 需求澄清: .octopus/xzf/$vars.branch/03-clarification/questions.md
-      - 验证方式: .octopus/xzf/$vars.branch/03-clarification/verification.md
-      - Workspace: .octopus/xzf/$vars.branch/workspace-topology.md
+      读取:
+      - Idea: .octopus/xzf/$vars.feature/01-idea.md
+      - 需求澄清: .octopus/xzf/$vars.feature/03-clarification/questions.md
+      - 验证方式: .octopus/xzf/$vars.feature/03-clarification/verification.md
+      - Workspace: .octopus/xzf/$vars.feature/workspace-topology.md
 
-      ═══ 本阶段职责（专家只讨论，不写文件）═══
-      用户故事总汇是全局产物，需统一视角生成，不能按专家职责割裂。
+      输出: .octopus/xzf/$vars.feature/03-clarification/brief.md
 
-      各专家从自身视角贡献意见，讨论以下问题直到收敛：
-      1. 完整故事线列表（每个故事：角色 + 目标 + 服务链 + 完成标准）
-      2. 故事排列顺序（从简单到复杂）
-      3. 跨项目故事的 SERVICE_CHAIN 与接口契约要点
-      4. 技术约束与架构决策要点
-      5. 测试环境配置要点（基于 03-clarification/verification.md 已明确内容）
-
-      ⚠️ 专家阶段禁止写任何故事文件（04-stories/ 目录由 host 统一写入）。
-      专家只输出故事线要点、服务链分歧、收敛建议。
-
-      每个故事标注 SERVICE_CHAIN。文档结构参见 octo-xzf-story-writer skill。
-
-      ⚠️ 每位专家发言控制在 1500 字以内，只放故事线要点和服务链分歧。
-    experts:
-      - role: senior-architect
-        agent_file: .claude/agents/octo-xzf-architect.md
-      - role: product-manager
-        agent_file: .claude/agents/octo-xzf-product-manager.md
-      - role: test-architect
-        agent_file: .claude/agents/octo-xzf-test-architect.md
-    host:
-      role: story-host
-      prompt: |
-        你是故事文档唯一写入者。基于专家共识，统一写入 04-stories/ 目录下文件。
-        专家阶段已讨论收敛，你负责落盘——保证故事线完整、风格统一。
-
-        ═══ 写入步骤 ═══
-        1. 综合专家意见，确定最终故事总汇、技术指导、测试环境配置
-        2. 写入三个文件:
-           - .octopus/xzf/$vars.branch/04-stories/summary.md（故事总汇）
-           - .octopus/xzf/$vars.branch/04-stories/technical-guide.md（技术约束 + 架构决策）
-           - .octopus/xzf/$vars.branch/04-stories/test-environment.md
-             （基于 03-clarification/verification.md 已明确内容 formalize，不做新发现；
-             供 Stage 6 执行时读取）
-        3. 每个故事标注 SERVICE_CHAIN
-
-        文档结构参见 octo-xzf-story-writer skill。
-
-        Synthesis 中列出故事摘要：
-        每个故事一行：编号 + 标题 + 角色 + 服务链
-
-        ═══ assessment（debate 共识检测用）═══
-        输出 assessment 字段供引擎评估专家共识:
-        "assessment": {"consensus_score": 0.0-1.0, "should_continue": true/false, "key_agreements": [...], "key_disagreements": [...]}
+      原则: 只保留结论，不保留讨论过程。下游节点只读 brief.md。
+      裁剪无内容章节。确保每个验收标准有验证方法。
 
   # ============================================================
-  # Stage 4: Spec 设计
+  # Stage 4: Spec + Task 生成（单 agent，一次完成）
   # ============================================================
 
-  # ============================================================
-  # Stage 4: Spec 设计（专家讨论 → host 统一写，无需审批）
-  # ============================================================
+  - id: spec-planner
+    type: agent
+    depends_on: [brief-maker]
+    skills: [octo-xzf-spec-designer]
+    prompt: |
+      使用 octo-xzf-spec-designer skill 生成所有 spec 和 tracer bullet tasks。
 
-  - id: spec-design
-    type: swarm
-    depends_on: [story-generation]
-    mode: debate
-    rounds: 3
-    consensus_threshold: 0.7
-    context_tier: "200k"
-    expert_defaults:
-      skills: [octo-xzf-spec-designer]
-    topic: |
-      ═══ Spec 设计 — 共识拆分方案 ═══
+      读取:
+      - 需求简报: .octopus/xzf/$vars.feature/03-clarification/brief.md
+      - Research 知识: .octopus/xzf/$vars.feature/02-research/index.md
+      - Workspace: .octopus/xzf/$vars.feature/workspace-topology.md
 
-      输入:
-      - Idea: .octopus/xzf/$vars.branch/01-idea.md
-      - Research 知识: .octopus/xzf/$vars.branch/02-research/index.md
-      - 故事总汇: .octopus/xzf/$vars.branch/04-stories/summary.md
-      - 技术指导: .octopus/xzf/$vars.branch/04-stories/technical-guide.md
-      - Workspace: .octopus/xzf/$vars.branch/workspace-topology.md
+      ═══ 输出 ═══
+      1. 每个 spec 写入:
+         .octopus/xzf/$vars.feature/04-specs/spec-NNN-{name}.md
+      2. 每个 spec 的 tracer bullets 写入子目录:
+         .octopus/xzf/$vars.feature/04-specs/spec-NNN-{name}/T-N-{name}.md
+         简单 spec（1-2 个 task）可不建子目录
+      3. 生成索引: .octopus/xzf/$vars.feature/04-specs/spec-index.md
+         （按执行顺序: # | 文件名 | 标题 | Tracer Bullets 数 | Depends）
+      4. 若有遗留文件（重跑），先清空 04-specs/ 再写入
 
-      ═══ 本阶段职责（专家只讨论，不写文件）═══
-      spec = 一条完整用户故事线（横向跨角色：前端+后端+DB+安全）。
-      故事线必须由全局视角统一拆分，不能按专家职责割裂。
+      ═══ 原则 ═══
+      - 简单需求 → 1 个 spec 即可，不强制拆分
+      - Task 用垂直切片（tracer bullet）：每个 task 横穿全栈，独立可验证
+      - Task 描述用户视角："用户能做什么"，不写"改什么文件"
+      - 不写文件路径，agent 自行决定实现方式
+      - 每个 spec 必须定义反假跑标准（区分"真通过"vs"假通过"）
+      - 格式参见 octo-xzf-spec-designer skill
 
-      各专家从自身视角贡献意见，讨论以下问题直到收敛：
-      1. 拆几个 spec？每个 spec 是哪条故事线？
-      2. spec 排列顺序（从简单到复杂，spec-001 含基础底座）
-      3. spec 间依赖关系
-      4. 每条故事线的 SERVICE_CHAIN、验证路径要点、关键架构决策
-
-      ⚠️ 专家阶段禁止写任何 spec 文件（05-specs/ 目录由 host 统一写入）。
-      专家只输出拆分意见、分歧点、收敛建议。
-
-      Spec DSL 格式和拆分方法论参见 octo-xzf-spec-designer skill。
-
-      ⚠️ 每位专家发言控制在 2000 字以内，只放拆分方案、架构决策和分歧点。
-    experts:
-      - role: senior-architect
-        agent_file: .claude/agents/octo-xzf-architect.md
-      - role: product-manager
-        agent_file: .claude/agents/octo-xzf-product-manager.md
-      - role: test-architect
-        agent_file: .claude/agents/octo-xzf-test-architect.md
-        skills: [octo-xzf-task-planner]
-      - role: frontend-expert
-        agent_file: .claude/agents/octo-xzf-frontend-expert.md
-      - role: backend-expert
-        agent_file: .claude/agents/octo-xzf-backend-expert.md
-      - role: security-expert
-        agent_file: .claude/agents/octo-xzf-security-expert.md
-        skills: [octo-xzf-task-planner]
-    host:
-      role: spec-host
-      prompt: |
-        你是 spec 唯一写入者。基于专家共识方案，统一写入所有 spec 文件。
-        专家阶段已讨论收敛拆分方案，你负责落盘——保证编号一致、故事线完整、风格统一。
-
-        ═══ 写入步骤 ═══
-        1. 综合专家意见，确定最终 spec 拆分方案（编号、故事线、顺序、依赖）
-        2. 为每个 spec 按 Spec DSL 格式写入文件:
-           .octopus/xzf/$vars.branch/05-specs/spec-NNN-{name}.md
-           （NNN 三位数字递增，不重复；{name} 简短英文名）
-        3. 生成索引: .octopus/xzf/$vars.branch/05-specs/spec-index.md
-           （按执行顺序列出所有 spec 的 # | 文件名 | 标题 | Priority | Depends）
-        4. 若有上一轮遗留的旧 spec 文件（用户调整后重跑），先清空 05-specs/ 再写入
-
-        ═══ Spec DSL 要求 ═══
-        每个 spec 必须是完整故事线：Meta + Story Line + Verification Path + Operation Flow + Tech Requirements。
-        跨项目 spec 必须标注 SERVICE_CHAIN。详细格式参见 octo-xzf-spec-designer skill。
-
-        Synthesis 中列出 spec 摘要：编号 + 文件名 + 标题 + Priority。
-
-        最后输出 vars_update JSON:
-        {"vars_update": {"spec_count": N}}
-
-        ═══ assessment（debate 共识检测用）═══
-        在上述 JSON 内附带 assessment 字段，供引擎评估专家共识:
-        "assessment": {"consensus_score": 0.0-1.0, "should_continue": true/false, "key_agreements": [...], "key_disagreements": [...]}
+      最后输出 vars_update JSON:
+      {"vars_update": {"spec_count": N}}
 
   # ============================================================
-  # Stage 5: 任务计划（一次生成所有 spec 的 plans，无需 loop）
-  # ============================================================
-
-  - id: plan-spec
-    type: swarm
-    depends_on: [spec-design]
-    mode: dispatch
-    rounds: 1
-    context_tier: "200k"
-    expert_defaults:
-      skills: [octo-xzf-task-planner]
-    topic: |
-      ═══ 任务计划 — 一次生成所有 spec 的 plans ═══
-
-      读取 Spec 索引: .octopus/xzf/$vars.branch/05-specs/spec-index.md
-      遍历索引中所有 spec，为每个 spec 生成完整的任务计划文档。
-
-      Research 知识: 请读取 .octopus/xzf/$vars.branch/02-research/index.md 并根据话题读取对应领域文件
-      Workspace 拓扑: 请读取 .octopus/xzf/$vars.branch/workspace-topology.md
-
-      输出目录（per spec）: .octopus/xzf/$vars.branch/06-plans/spec-{NNN}-{name}/
-
-      ⚠️ 每位专家遍历所有 spec，为每个 spec 写自己职责范围内的文件:
-      - senior-architect: 每 spec 的 consensus.md
-      - test-architect: 每 spec 的 verify-*.md + spec-test.md
-      - frontend-expert: 每 spec 的 task-*-frontend.md
-      - backend-expert: 每 spec 的 task-*-backend.md
-      - security-expert: 每 spec 的安全审查项
-
-      任务拆解方法论和文档格式参见 octo-xzf-task-planner skill。
-
-      ⚠️ 每位专家发言控制在 1500 字以内，只放任务分配要点和接口契约。
-    experts:
-      - role: senior-architect
-        agent_file: .claude/agents/octo-xzf-architect.md
-        task: "为每个 spec 制定技术总纲领 consensus.md，确定文件变更和接口契约"
-      - role: test-architect
-        agent_file: .claude/agents/octo-xzf-test-architect.md
-        skills: [octo-xzf-spec-designer]
-        task: "为每个 spec 设计验证方法 verify-*.md 和 E2E 测试路线 spec-test.md"
-        depends_on: [senior-architect]
-      - role: frontend-expert
-        agent_file: .claude/agents/octo-xzf-frontend-expert.md
-        task: "为每个 spec 做前端任务拆解 task-*-frontend.md"
-        depends_on: [senior-architect]
-      - role: backend-expert
-        agent_file: .claude/agents/octo-xzf-backend-expert.md
-        task: "为每个 spec 做后端任务拆解 task-*-backend.md"
-        depends_on: [senior-architect]
-      - role: security-expert
-        agent_file: .claude/agents/octo-xzf-security-expert.md
-        skills: [octo-xzf-spec-designer]
-        task: "为每个 spec 审查安全相关任务，补充安全验证项"
-        depends_on: [senior-architect, test-architect]
-    host:
-      role: plan-host
-      prompt: |
-        综合各专家输出，检查一致性并作为 synthesis 输出:
-        1. 各 spec 的 consensus.md 中接口契约是否一致
-        2. verify 和 task 编号是否对齐
-        3. spec-test.md 是否覆盖完整故事线
-        4. 列出检测到的不一致（如有）
-
-        所有文件内容由专家直接写入 06-plans/ 目录，host 不写文件。
-
-  # ============================================================
-  # Stage 6: 任务执行（per spec → per task 循环）
+  # Stage 5: 任务执行（per spec → per tracer bullet 循环）
   # ============================================================
 
   - id: execution-loop
     type: loop
-    depends_on: [plan-spec]
+    depends_on: [spec-planner]
     max_iterations: 99
-    break_when: "$iteration > $vars.spec_count"
+    break_when: "$vars.current_spec >= $vars.spec_count"
     nodes:
-      # --- 6a. 执行当前 spec（含 checkpoint 恢复） ---
       - id: execute-spec-tasks
         type: agent
         context: new
-        skills: [octo-xzf-orchestrator]
-        agents:
-          backend-expert:
-            description: "后端实现 — 自治 verify-fix (max 3)"
-            agent_file: .claude/agents/octo-xzf-backend-expert.md
-            skills: [octo-xzf-implementer]
-            tools: [Read, Write, Edit, Bash, Grep, Glob]
-          frontend-expert:
-            description: "前端实现 — 自治 verify-fix (max 3)"
-            agent_file: .claude/agents/octo-xzf-frontend-expert.md
-            skills: [octo-xzf-implementer]
-            tools: [Read, Write, Edit, Bash, Grep, Glob]
-          test-expert:
-            description: "E2E 验证 — 自治 E2E-fix (max 3)"
-            agent_file: .claude/agents/octo-xzf-test-architect.md
-            skills: [octo-xzf-implementer]
-            tools: [Read, Write, Edit, Bash, Grep, Glob]
+        skills: [octo-xzf-implementer]
+        tools: [Read, Write, Edit, Bash, Grep, Glob]
         prompt: |
-          你是执行协调者（线性委派器），使用 octo-xzf-orchestrator skill 编排 Spec #$iteration。
+          你是全栈实现者，使用 octo-xzf-implementer skill 执行当前 spec 的所有 tracer bullets。
+          当前 spec 序号: $vars.current_spec + 1（0-based，+1 后对应 spec-index 第 N 行）
 
           ═══ 用户指导（上次失败后提供）═══
           $vars.user_guidance
 
           如有用户指导，结合指导分析上次失败原因并调整策略。
 
-          ═══ 你的唯一职责：排序 + 委派 + 检查结果 ═══
-          ⚠️ 你不实现代码、不运行测试、不修复 bug。
-          verify-fix 循环在子代理内部完成（octo-xzf-implementer skill）。
+          ═══ 执行流程 ═══
+          1. 读取 Spec 索引: .octopus/xzf/$vars.feature/04-specs/spec-index.md
+          2. 找到第 ($vars.current_spec + 1) 行对应的 spec 文件
+          3. 读取 spec 文件 + 子目录下所有 T-N-*.md（tracer bullets）
+          4. 检查 checkpoint: .octopus/xzf/$vars.feature/05-execution/spec-{NNN}/checkpoint.json
+          5. IF checkpoint 存在 → 跳过已完成 task，从断点恢复
+          6. IF 不存在 → 从头开始
 
-          ═══ Checkpoint 恢复 ═══
-          1. 读取 Spec 索引: .octopus/xzf/$vars.branch/05-specs/spec-index.md
-          2. 找到第 $iteration 行对应的 spec 文件
-          3. 检查 checkpoint: .octopus/xzf/$vars.branch/07-execution/spec-{NNN}/checkpoint.json
-          4. IF checkpoint 存在 → 跳过已完成任务，从断点恢复
-          5. IF 不存在 → 从头开始
-
-          ═══ 执行任务 ═══
-          按 octo-xzf-orchestrator skill 的方法论执行：
-          - 按依赖顺序委派子代理
-          - 每个 task 完成后更新 checkpoint.json
-          - 全部 task 通过后执行 E2E 验证
-          - 失败时写入 checkpoint + 生成失败报告到 08-reports/
-
-          ═══ 环境就绪检查 ═══
-          读取 .octopus/xzf/$vars.branch/04-stories/test-environment.md 的清单。
+          ═══ 执行每个 tracer bullet ═══
+          按依赖顺序逐个执行:
+          - 读取 T-N.md 的目标和验收标准
+          - 实现（全栈：DB → API → UI → test）
+          - 验证（对照 spec 反假跑标准，确保"真通过"）
+          - 自治 verify-fix 循环（max 3 次）
+          - 通过后更新 checkpoint.json（严格按 octo-xzf-implementer skill 的 Schema）
+          - 失败时写入 checkpoint + 生成失败报告到 06-reports/
 
           ═══ 完成 ═══
-          通过: {"vars_update": {"spec_status": "passed", "user_guidance": ""}}
+          通过: {"vars_update": {"spec_status": "passed", "user_guidance": "", "current_spec": <当前值+1>}}
           失败: {"vars_update": {"spec_status": "failed", "failure_reason": "..."}}
+          ⚠️ current_spec 是 0-based 整数。通过时输出当前值 +1（如当前 0 → 输出 1）。失败时不包含 current_spec（保持原值重试）。
         outputs:
           $vars.spec_status: "$last_output"
 
-      # --- 6b. 失败 → 暂停等用户指导 ---
+      # --- 失败 → 暂停等用户指导 ---
       - id: failure-approval
         type: approval
         depends_on: [execute-spec-tasks]
         execute_when: '$vars.spec_status == "failed"'
         prompt: |
-          Spec #$iteration 失败 | 📁 08-reports/ | Checkpoint: 07-execution/
+          Spec #$iteration 失败 | 📁 06-reports/ | Checkpoint: 05-execution/
           在评论中输入修复指导，从断点恢复重试。
         options:
           - label: "重试"
@@ -670,7 +474,7 @@ nodes:
           $vars.user_guidance: "$last_output.comment"
 
   # ============================================================
-  # Stage 7: Ship 交付
+  # Stage 6: Ship 交付
   # ============================================================
 
   - id: ship
@@ -684,12 +488,11 @@ nodes:
 
       ═══ Step 1: 生成 PR/MR Summary ═══
       读取以下文件，生成 summary:
-      - Idea: .octopus/xzf/$vars.branch/01-idea.md
-      - 故事: .octopus/xzf/$vars.branch/04-stories/summary.md
-      - Specs: .octopus/xzf/$vars.branch/05-specs/
-      - 验证结果: .octopus/xzf/$vars.branch/07-execution/
+      - 需求简报: .octopus/xzf/$vars.feature/03-clarification/brief.md
+      - Specs: .octopus/xzf/$vars.feature/04-specs/
+      - 验证结果: .octopus/xzf/$vars.feature/05-execution/
 
-      写入: .octopus/xzf/$vars.branch/09-ship/summary.md
+      写入: .octopus/xzf/$vars.feature/07-ship/summary.md
 
       ═══ Step 2: 遍历 Workspace 所有项目提交 PR/MR ═══
       Remote 类型: $vars.remote_type
