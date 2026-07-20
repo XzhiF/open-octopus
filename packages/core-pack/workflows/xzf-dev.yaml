@@ -47,17 +47,38 @@ variables:
   requirements_checklist_status: ""
   env_checklist_status: ""
 
-# --- 通知 ---
-notify:
-  on_failure:
-    channel: xzf_hermes
-    message: "[xzf-dev] 执行失败: $failed_node_id — $vars.feature @ $vars.branch"
-  on_complete:
-    channel: xzf_hermes
-    message: "[xzf-dev] 完成: $vars.feature @ $vars.branch — PR/MR 已提交"
+# --- 通知提供者 ---
+providers:
+  hermes-cli:
+    type: hermes
+    timeout: 30
+    min_severity: info
+
+channels:
+  xzf_hermes:
+    provider: hermes-cli
+    target: "telegram:xzf_hermes"
 
 # --- 钩子 ---
 hooks:
+  on_workflow_failure:
+    - id: notify-failure
+      type: notify
+      channel: xzf_hermes
+      template:
+        severity: error
+        title: "❌ xzf-dev — 工作流失败"
+        body: "🌿 $vars.feature @ $vars.branch\n🔴 失败节点: ${hook.failed_node_id | default:unknown}\n⏱️ 已运行: ${hook.total_duration_ms | duration}\n\n💡 错误: ${hook.error | default:Unknown error}"
+
+  on_complete:
+    - id: notify-complete
+      type: notify
+      channel: xzf_hermes
+      template:
+        severity: info
+        title: "🏁 xzf-dev — 工作流完成"
+        body: "🌿 $vars.feature @ $vars.branch\n✅ 完成: ${hook.completed_count | default:0}\n⏱️ 总耗时: ${hook.total_duration_ms | duration}"
+
   on_node_success:
     - id: save-approval-answer
       nodes: [requirements-approval, verification-approval]
@@ -79,6 +100,69 @@ hooks:
         $hook.node_comment
         EOF
         echo "Saved: $FILE"
+
+    - id: notify-init
+      type: notify
+      nodes: [init]
+      channel: xzf_hermes
+      template:
+        severity: info
+        title: "✅ xzf-dev — 初始化完成"
+        body: "🌿 $vars.feature @ $vars.branch\n🔗 Remote: $vars.remote_type"
+
+    - id: notify-research
+      type: notify
+      nodes: [idea-research]
+      channel: xzf_hermes
+      template:
+        severity: info
+        title: "🔍 xzf-dev — Codebase 研究完成"
+        body: "🌿 $vars.feature @ $vars.branch"
+
+    - id: notify-brief
+      type: notify
+      nodes: [brief-maker]
+      channel: xzf_hermes
+      template:
+        severity: info
+        title: "📋 xzf-dev — 需求简报生成完成"
+        body: "🌿 $vars.feature"
+
+    - id: notify-spec
+      type: notify
+      nodes: [spec-planner]
+      channel: xzf_hermes
+      template:
+        severity: info
+        title: "📐 xzf-dev — Spec + Task 设计完成"
+        body: "🌿 $vars.feature\n📊 Specs: $vars.spec_count"
+
+    - id: notify-execution
+      type: notify
+      nodes: [execution-loop]
+      channel: xzf_hermes
+      template:
+        severity: info
+        title: "⚡ xzf-dev — 代码执行完成"
+        body: "🌿 $vars.feature\n📊 状态: $vars.spec_status"
+
+    - id: notify-e2e
+      type: notify
+      nodes: [e2e-verify-loop]
+      channel: xzf_hermes
+      template:
+        severity: info
+        title: "🎯 xzf-dev — E2E 验证完成"
+        body: "🌿 $vars.feature\n📊 状态: $vars.e2e_status"
+
+    - id: notify-ship
+      type: notify
+      nodes: [ship]
+      channel: xzf_hermes
+      template:
+        severity: info
+        title: "🚀 xzf-dev — 交付完成"
+        body: "🌿 $vars.feature @ $vars.branch"
 
 # ============================================================
 # Stage 0: 初始化
@@ -507,10 +591,17 @@ nodes:
         outputs:
           $vars.e2e_status: "$last_output"
 
+      # --- E2E 失败 → 通知用户处理 ---
+      - id: e2e-notify
+        type: bash
+        depends_on: [e2e-runner]
+        execute_when: '$vars.e2e_status == "failed"'
+        bash: octopus notify --channel xzf_hermes --severity warn --title "⚠️ xzf-dev — E2E 测试有失败" --body "🌿 $vars.feature | 📁 05-reports/e2e-report.md | 需要你处理：重试或跳过"
+
       # --- E2E 失败 → 用户决定重试或跳过 ---
       - id: e2e-approval
         type: approval
-        depends_on: [e2e-runner]
+        depends_on: [e2e-notify]
         execute_when: '$vars.e2e_status == "failed"'
         prompt: |
           E2E 测试仍有失败 | 📁 05-reports/e2e-report.md
