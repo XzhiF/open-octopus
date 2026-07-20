@@ -10,8 +10,7 @@ kind: Workflow
 name: xzf-dev
 description: |
   从 Idea 到 PR/MR 的端到端开发流水线。
-  6 位专家（架构师、产品经理、测试架构师、前端、后端、安全）通过
-  swarm debate 进行多轮讨论，故事驱动迭代，验证先行。
+  需求澄清 → 简报综合 → Spec + Tracer Bullet 设计 → 垂直切片执行 → E2E 全量验证 → 交付。
 version: 1.0.0
 # --- 全局配置 ---
 engine: claude
@@ -36,7 +35,6 @@ inputs:
 variables:
   branch: ""
   feature: ""
-  workspace_topology: ""
   remote_type: ""
   user_guidance: ""
   clarify_decision: ""
@@ -44,9 +42,10 @@ variables:
   spec_count: "0"
   current_spec: "0"
   spec_status: ""
+  e2e_status: ""
+  e2e_decision: ""
   requirements_checklist_status: ""
   env_checklist_status: ""
-  pending_questions: ""
 
 # --- 通知 ---
 notify:
@@ -64,7 +63,7 @@ hooks:
       nodes: [requirements-approval, verification-approval]
       bash: |
         case "$hook.node_id" in
-          requirements-approval|verification-approval) DIR=".octopus/xzf/$vars.feature/03-clarification" ;;
+          requirements-approval|verification-approval) DIR=".octopus/xzf/$vars.feature/02-clarification" ;;
           *)                   DIR=".octopus/xzf/$vars.feature/approval-answers" ;;
         esac
         mkdir -p "$DIR"
@@ -100,13 +99,11 @@ nodes:
 
       ═══ 目录结构 ═══
       基础目录: .octopus/xzf/$feature/
-      子目录: 01-idea.md, 02-research/, 03-clarification/, 04-specs/,
-              05-execution/, 06-reports/, 07-ship/
+      子目录: 00-init/, 01-research/, 02-clarification/, 03-specs/,
+              04-execution/, 05-reports/, 06-ship/
 
-      workspace-topology.md 放在 .octopus/xzf/$feature/ 目录（每个 feature 独立拓扑，因为不同 feature 可能增删项目）。
-
-      ═══ 写入 Idea 文件 ═══
-      将用户 Idea 写入 .octopus/xzf/$feature/01-idea.md：
+      ═══ 写入文件 ═══
+      将用户 Idea 写入 .octopus/xzf/$feature/00-init/idea.md：
 
       ```
       # Idea
@@ -123,7 +120,7 @@ nodes:
       汇报：分支名、feature slug、remote 类型、workspace 项目数。
 
       输出 vars_update:
-      {"vars_update": {"branch": "{git branch}", "feature": "{feature slug}", "remote_type": "{github|gitlab}", "workspace_topology": "已生成"}}
+      {"vars_update": {"branch": "{git branch}", "feature": "{feature slug}", "remote_type": "{github|gitlab}"}}
 
   # ============================================================
   # Stage 1: Codebase 研究
@@ -134,7 +131,7 @@ nodes:
     type: bash
     depends_on: [init]
     bash: |
-      BASE=".octopus/xzf/$vars.feature/02-research/_scan"
+      BASE=".octopus/xzf/$vars.feature/01-research/_scan"
       mkdir -p "$BASE"
 
       # 文件结构概览
@@ -180,21 +177,21 @@ nodes:
     topic: |
       ═══ Codebase 领域研究 ═══
 
-      Idea: 请读取 .octopus/xzf/$vars.feature/01-idea.md
-      Workspace: 请读取 .octopus/xzf/$vars.feature/workspace-topology.md
+      Idea: 请读取 .octopus/xzf/$vars.feature/00-init/idea.md
+      Workspace: 请读取 .octopus/xzf/$vars.feature/00-init/workspace-topology.md
 
-      ⚠️ 如 01-idea.md 包含「Research 指引」，按指引聚焦研究范围。
+      ⚠️ 如 00-init/idea.md 包含「Research 指引」，按指引聚焦研究范围。
 
       预扫描结果（用于快速定位，避免盲读）:
-      - 文件树: .octopus/xzf/$vars.feature/02-research/_scan/file-tree.txt
-      - 依赖摘要: .octopus/xzf/$vars.feature/02-research/_scan/deps.txt
-      - 项目文档: .octopus/xzf/$vars.feature/02-research/_scan/claude-mds.txt
-      - API 入口: .octopus/xzf/$vars.feature/02-research/_scan/api-entries.txt
-      - DB Schema: .octopus/xzf/$vars.feature/02-research/_scan/db-schemas.txt
-      - 测试配置: .octopus/xzf/$vars.feature/02-research/_scan/test-config.txt
+      - 文件树: .octopus/xzf/$vars.feature/01-research/_scan/file-tree.txt
+      - 依赖摘要: .octopus/xzf/$vars.feature/01-research/_scan/deps.txt
+      - 项目文档: .octopus/xzf/$vars.feature/01-research/_scan/claude-mds.txt
+      - API 入口: .octopus/xzf/$vars.feature/01-research/_scan/api-entries.txt
+      - DB Schema: .octopus/xzf/$vars.feature/01-research/_scan/db-schemas.txt
+      - 测试配置: .octopus/xzf/$vars.feature/01-research/_scan/test-config.txt
 
       每位专家独立研究自己的领域，基于 _scan/ 预扫描数据。
-      每位专家将研究发现写入: .octopus/xzf/$vars.feature/02-research/{domain}.md
+      每位专家将研究发现写入: .octopus/xzf/$vars.feature/01-research/{domain}.md
       研究方法和输出格式参见 octo-xzf-research skill。
 
       ⚠️ 每位专家发言控制在 1500 字以内。详细分析写入指定文件，发言只放关键发现、GAPS 和决策点。
@@ -203,34 +200,34 @@ nodes:
         agent_file: .claude/agents/octo-xzf-architect.md
         task: |
           研究: 整体架构、模块边界、跨项目通信、核心模式
-          写入: 02-research/architecture.md
+          写入: 01-research/architecture.md
           额外: 如发现未覆盖领域，标记 ## GAPS
       - role: backend-expert
         agent_file: .claude/agents/octo-xzf-backend-expert.md
         task: |
           研究: 后端服务架构、DB schema、API 实现模式
           外部: 如有外部平台 API 对接需求，使用 WebFetch 调研
-          写入: 02-research/backend.md
+          写入: 01-research/backend.md
       - role: frontend-expert
         agent_file: .claude/agents/octo-xzf-frontend-expert.md
         task: |
           研究: 前端组件结构、状态管理、路由、UI 框架
-          写入: 02-research/frontend.md
+          写入: 01-research/frontend.md
       - role: test-architect
         agent_file: .claude/agents/octo-xzf-test-architect.md
         task: |
           研究: 测试框架、测试模式、CI 配置、测试数据策略
-          写入: 02-research/testing.md
+          写入: 01-research/testing.md
       - role: security-expert
         agent_file: .claude/agents/octo-xzf-security-expert.md
         task: |
           研究: 认证实现、权限模型、安全中间件、密钥管理
-          写入: 02-research/security.md
+          写入: 01-research/security.md
     host:
       role: research-indexer
       prompt: |
-        读取 02-research/ 下所有 .md 文件（不含 _scan/）。
-        写入 .octopus/xzf/$vars.feature/02-research/index.md 索引文件，格式：
+        读取 01-research/ 下所有 .md 文件（不含 _scan/）。
+        写入 .octopus/xzf/$vars.feature/01-research/index.md 索引文件，格式：
 
         | 文件 | 领域 | 关键发现 | 与 Idea 关系 |
         |------|------|---------|-------------|
@@ -255,9 +252,9 @@ nodes:
           ═══ 需求澄清 — Round $iteration ═══
 
           读取:
-          - Idea: .octopus/xzf/$vars.feature/01-idea.md
-          - Research: .octopus/xzf/$vars.feature/02-research/index.md
-          - Workspace: .octopus/xzf/$vars.feature/workspace-topology.md
+          - Idea: .octopus/xzf/$vars.feature/00-init/idea.md
+          - Research: .octopus/xzf/$vars.feature/01-research/index.md
+          - Workspace: .octopus/xzf/$vars.feature/00-init/workspace-topology.md
 
           用户上轮回复:
           $requirements-approval.output.comment
@@ -266,7 +263,7 @@ nodes:
           不涉及测试环境和验证方式（下一阶段处理）。
 
           澄清方法论、问题格式、Round 流程参见 octo-xzf-clarify skill。
-          输出: .octopus/xzf/$vars.feature/03-clarification/questions.md
+          输出: .octopus/xzf/$vars.feature/02-clarification/questions.md
 
           ⚠️ 最终输出（last_output）只包含 Synthesis 内容（「待澄清」+「用户补充」原样输出）。
           下游 approval 直接引用 $requirements-clarify.output.last_output 展示给用户。
@@ -281,13 +278,13 @@ nodes:
         comment_label: "澄清输入:"
         comment_placeholder: "请在此输入您对以上问题的回答..."
         prompt: |
-          Round $iteration | 📁 03-clarification/questions.md
+          Round $iteration | 📁 02-clarification/questions.md
           未回答的问题将采用推荐方案。
           $requirements-clarify.output.last_output
         options:
-          - label: "继续讨论"
+          - label: "继续"
             value: "continue"
-          - label: "进入验证澄清"
+          - label: "完成"
             value: "proceed"
         outputs:
           $vars.clarify_decision: "$last_output"
@@ -309,10 +306,10 @@ nodes:
           ═══ 验证方式与测试环境澄清 — Round $iteration ═══
 
           读取:
-          - Idea: .octopus/xzf/$vars.feature/01-idea.md
-          - Research: .octopus/xzf/$vars.feature/02-research/index.md
-          - 已澄清需求: .octopus/xzf/$vars.feature/03-clarification/questions.md
-          - Workspace: .octopus/xzf/$vars.feature/workspace-topology.md
+          - Idea: .octopus/xzf/$vars.feature/00-init/idea.md
+          - Research: .octopus/xzf/$vars.feature/01-research/index.md
+          - 已澄清需求: .octopus/xzf/$vars.feature/02-clarification/questions.md
+          - Workspace: .octopus/xzf/$vars.feature/00-init/workspace-topology.md
 
           用户上轮回复:
           $verification-approval.output.comment
@@ -326,7 +323,7 @@ nodes:
           敏感凭据强制澄清（账号/中间件连接/数据集）参见 octo-xzf-clarify skill。
 
           澄清方法论、问题格式、Round 流程参见 octo-xzf-clarify skill。
-          输出: .octopus/xzf/$vars.feature/03-clarification/verification.md
+          输出: .octopus/xzf/$vars.feature/02-clarification/verification.md
 
           ⚠️ 最终输出（last_output）只包含 Synthesis 内容（「待澄清」+「用户补充」原样输出）。
           下游 approval 直接引用 $verification-clarify.output.last_output 展示给用户。
@@ -341,13 +338,13 @@ nodes:
         comment_label: "澄清输入:"
         comment_placeholder: "请在此输入您对验证方式的回答..."
         prompt: |
-          Round $iteration | 环境: $vars.env_checklist_status | 📁 03-clarification/verification.md
+          Round $iteration | 环境: $vars.env_checklist_status | 📁 02-clarification/verification.md
           ⚠️ INCOMPLETE 时必须补全才能进入下一阶段。
           $verification-clarify.output.last_output
         options:
-          - label: "继续讨论"
+          - label: "继续"
             value: "continue"
-          - label: "确认"
+          - label: "完成"
             value: "proceed"
         outputs:
           $vars.verify_decision: "$last_output"
@@ -364,12 +361,12 @@ nodes:
       使用 octo-xzf-brief-maker skill 生成需求简报。
 
       读取:
-      - Idea: .octopus/xzf/$vars.feature/01-idea.md
-      - 需求澄清: .octopus/xzf/$vars.feature/03-clarification/questions.md
-      - 验证方式: .octopus/xzf/$vars.feature/03-clarification/verification.md
-      - Workspace: .octopus/xzf/$vars.feature/workspace-topology.md
+      - Idea: .octopus/xzf/$vars.feature/00-init/idea.md
+      - 需求澄清: .octopus/xzf/$vars.feature/02-clarification/questions.md
+      - 验证方式: .octopus/xzf/$vars.feature/02-clarification/verification.md
+      - Workspace: .octopus/xzf/$vars.feature/00-init/workspace-topology.md
 
-      输出: .octopus/xzf/$vars.feature/03-clarification/brief.md
+      输出: .octopus/xzf/$vars.feature/02-clarification/brief.md
 
       原则: 只保留结论，不保留讨论过程。下游节点只读 brief.md。
       裁剪无内容章节。确保每个验收标准有验证方法。
@@ -386,19 +383,21 @@ nodes:
       使用 octo-xzf-spec-designer skill 生成所有 spec 和 tracer bullet tasks。
 
       读取:
-      - 需求简报: .octopus/xzf/$vars.feature/03-clarification/brief.md
-      - Research 知识: .octopus/xzf/$vars.feature/02-research/index.md
-      - Workspace: .octopus/xzf/$vars.feature/workspace-topology.md
+      - 需求简报: .octopus/xzf/$vars.feature/02-clarification/brief.md
+      - Research 知识: .octopus/xzf/$vars.feature/01-research/index.md
+      - Workspace: .octopus/xzf/$vars.feature/00-init/workspace-topology.md
 
       ═══ 输出 ═══
       1. 每个 spec 写入:
-         .octopus/xzf/$vars.feature/04-specs/spec-NNN-{name}.md
+         .octopus/xzf/$vars.feature/03-specs/spec-NNN-{name}.md
       2. 每个 spec 的 tracer bullets 写入子目录:
-         .octopus/xzf/$vars.feature/04-specs/spec-NNN-{name}/T-N-{name}.md
+         .octopus/xzf/$vars.feature/03-specs/spec-NNN-{name}/T-N-{name}.md
          简单 spec（1-2 个 task）可不建子目录
-      3. 生成索引: .octopus/xzf/$vars.feature/04-specs/spec-index.md
+      3. 生成索引: .octopus/xzf/$vars.feature/03-specs/spec-index.md
          （按执行顺序: # | 文件名 | 标题 | Tracer Bullets 数 | Depends）
-      4. 若有遗留文件（重跑），先清空 04-specs/ 再写入
+      4. 生成 E2E 测试计划: .octopus/xzf/$vars.feature/03-specs/e2e-test-plan.md
+         综合所有 spec 的 E2E 验证方法，按执行顺序编排为一份完整测试计划
+      5. 若有遗留文件（重跑），先清空 03-specs/ 再写入
 
       ═══ 原则 ═══
       - 简单需求 → 1 个 spec 即可，不强制拆分
@@ -412,7 +411,7 @@ nodes:
       {"vars_update": {"spec_count": N}}
 
   # ============================================================
-  # Stage 5: 任务执行（per spec → per tracer bullet 循环）
+  # Stage 5: 任务执行（per spec → per tracer bullet，基础验证）
   # ============================================================
 
   - id: execution-loop
@@ -430,16 +429,11 @@ nodes:
           你是全栈实现者，使用 octo-xzf-implementer skill 执行当前 spec 的所有 tracer bullets。
           当前 spec 序号: $vars.current_spec + 1（0-based，+1 后对应 spec-index 第 N 行）
 
-          ═══ 用户指导（上次失败后提供）═══
-          $vars.user_guidance
-
-          如有用户指导，结合指导分析上次失败原因并调整策略。
-
           ═══ 执行流程 ═══
-          1. 读取 Spec 索引: .octopus/xzf/$vars.feature/04-specs/spec-index.md
+          1. 读取 Spec 索引: .octopus/xzf/$vars.feature/03-specs/spec-index.md
           2. 找到第 ($vars.current_spec + 1) 行对应的 spec 文件
           3. 读取 spec 文件 + 子目录下所有 T-N-*.md（tracer bullets）
-          4. 检查 checkpoint: .octopus/xzf/$vars.feature/05-execution/spec-{NNN}/checkpoint.json
+          4. 检查 checkpoint: .octopus/xzf/$vars.feature/04-execution/spec-{NNN}/checkpoint.json
           5. IF checkpoint 存在 → 跳过已完成 task，从断点恢复
           6. IF 不存在 → 从头开始
 
@@ -447,39 +441,96 @@ nodes:
           按依赖顺序逐个执行:
           - 读取 T-N.md 的目标和验收标准
           - 实现（全栈：DB → API → UI → test）
-          - 验证（对照 spec 反假跑标准，确保"真通过"）
+          - 基础验证（单测 + 集成测试，对照 spec 反假跑标准）
           - 自治 verify-fix 循环（max 3 次）
           - 通过后更新 checkpoint.json（严格按 octo-xzf-implementer skill 的 Schema）
-          - 失败时写入 checkpoint + 生成失败报告到 06-reports/
+          - 3 次仍失败 → 标记 task 为 failed，记录到 checkpoint，继续下一个 task
+          ⚠️ 此阶段不跑 E2E 测试，E2E 在 Stage 6 统一执行。
 
           ═══ 完成 ═══
-          通过: {"vars_update": {"spec_status": "passed", "user_guidance": "", "current_spec": <当前值+1>}}
-          失败: {"vars_update": {"spec_status": "failed", "failure_reason": "..."}}
-          ⚠️ current_spec 是 0-based 整数。通过时输出当前值 +1（如当前 0 → 输出 1）。失败时不包含 current_spec（保持原值重试）。
+          无论全部通过或部分失败，都递增 current_spec 进入下一个 spec:
+          {"vars_update": {"spec_status": "passed|partial", "current_spec": <当前值+1>}}
+          ⚠️ current_spec 是 0-based 整数，输出当前值 +1。
+          spec_status: "passed"（全部通过）或 "partial"（有 task 失败但已记录）。
         outputs:
           $vars.spec_status: "$last_output"
 
-      # --- 失败 → 暂停等用户指导 ---
-      - id: failure-approval
-        type: approval
-        depends_on: [execute-spec-tasks]
-        execute_when: '$vars.spec_status == "failed"'
+  # ============================================================
+  # Stage 6: E2E 全量验证（完整用户流程测试 + 修复循环）
+  # ============================================================
+
+  - id: e2e-verify-loop
+    type: loop
+    depends_on: [execution-loop]
+    max_iterations: 10
+    break_when: '$vars.e2e_status == "passed" || $vars.e2e_decision == "skip"'
+    nodes:
+      - id: e2e-runner
+        type: agent
+        context: new
+        model: se
+        skills: [octo-xzf-implementer]
+        tools: [Read, Write, Edit, Bash, Grep, Glob]
         prompt: |
-          Spec #$iteration 失败 | 📁 06-reports/ | Checkpoint: 05-execution/
-          在评论中输入修复指导，从断点恢复重试。
+          你是 E2E 验证者，执行所有 spec 的全量 E2E 测试。
+
+          用户上轮指导:
+          $vars.user_guidance
+
+          如有指导，按指导调整修复策略。
+
+          ═══ 执行流程 ═══
+          1. 读取 E2E 测试计划: .octopus/xzf/$vars.feature/03-specs/e2e-test-plan.md
+          2. 按计划顺序执行 E2E 测试（浏览器操作 / curl / playwright）
+          3. 收集证据（截图、API 响应、DB 查询）
+          4. 对照反假跑标准，确认"真通过"
+
+          ═══ 文件存放 ═══
+          - 测试脚本（SQL/shell/curl）: .octopus/xzf/$vars.feature/05-reports/e2e-scripts/
+          - 截图: .octopus/xzf/$vars.feature/05-reports/e2e-screenshots/
+          - 测试报告: .octopus/xzf/$vars.feature/05-reports/e2e-report.md
+          ⚠️ 所有 E2E 产物统一放 05-reports/，不污染源码目录。
+
+          ═══ 失败修复 ═══
+          某个 E2E 失败时:
+          - 定位到具体 spec 和 tracer bullet
+          - 尝试修复（max 3 次）
+          - 修复后只重跑失败的 E2E 步骤，不从头跑
+          - 3 次仍失败 → 记录失败详情，继续下一个 spec 的 E2E
+
+          ═══ 输出 ═══
+          写入 E2E 报告: .octopus/xzf/$vars.feature/05-reports/e2e-report.md
+          格式: 每个 spec 的 E2E 结果（PASS/FAIL + 证据 + 修复记录）
+
+          全部通过: {"vars_update": {"e2e_status": "passed", "user_guidance": ""}}
+          仍有失败: {"vars_update": {"e2e_status": "failed", "user_guidance": ""}}
+        outputs:
+          $vars.e2e_status: "$last_output"
+
+      # --- E2E 失败 → 用户决定重试或跳过 ---
+      - id: e2e-approval
+        type: approval
+        depends_on: [e2e-runner]
+        execute_when: '$vars.e2e_status == "failed"'
+        prompt: |
+          E2E 测试仍有失败 | 📁 05-reports/e2e-report.md
+          在评论中输入修复指导，或选择跳过继续交付。
         options:
           - label: "重试"
             value: "retry"
+          - label: "跳过"
+            value: "skip"
         outputs:
+          $vars.e2e_decision: "$last_output"
           $vars.user_guidance: "$last_output.comment"
 
   # ============================================================
-  # Stage 6: Ship 交付
+  # Stage 7: Ship 交付
   # ============================================================
 
   - id: ship
     type: agent
-    depends_on: [execution-loop]
+    depends_on: [e2e-verify-loop]
     context: new
     skills: [octo-xzf-ship]
     tools: [Read, Bash, Grep, Glob]
@@ -488,25 +539,26 @@ nodes:
 
       ═══ Step 1: 生成 PR/MR Summary ═══
       读取以下文件，生成 summary:
-      - 需求简报: .octopus/xzf/$vars.feature/03-clarification/brief.md
-      - Specs: .octopus/xzf/$vars.feature/04-specs/
-      - 验证结果: .octopus/xzf/$vars.feature/05-execution/
+      - 需求简报: .octopus/xzf/$vars.feature/02-clarification/brief.md
+      - Specs: .octopus/xzf/$vars.feature/03-specs/
+      - 验证结果: .octopus/xzf/$vars.feature/04-execution/
+      - E2E 报告: .octopus/xzf/$vars.feature/05-reports/e2e-report.md
 
-      写入: .octopus/xzf/$vars.feature/07-ship/summary.md
+      写入: .octopus/xzf/$vars.feature/06-ship/summary.md
 
       ═══ Step 2: 遍历 Workspace 所有项目提交 PR/MR ═══
       Remote 类型: $vars.remote_type
       分支: $vars.branch
 
-      读取 workspace-topology.md 获取所有项目列表。
+      读取 .octopus/xzf/$vars.feature/00-init/workspace-topology.md 获取所有项目列表。
       对每个项目:
         1. cd 到项目目录
         2. git diff --quiet main...HEAD → 无变更则跳过
         3. 有变更则提交 PR/MR:
 
       IF remote_type == "github":
-        gh pr create --title "[{project}] {feature标题}" --body-file summary.md --base main
+        gh pr create --title "[{project}] {feature标题}" --body-file .octopus/xzf/$vars.feature/06-ship/summary.md --base main
       ELIF remote_type == "gitlab":
-        glab mr create --title "[{project}] {feature标题}" --description "$(cat summary.md)" --target-branch main
+        glab mr create --title "[{project}] {feature标题}" --description "$(cat .octopus/xzf/$vars.feature/06-ship/summary.md)" --target-branch main
 
       汇总所有 PR/MR URL，输出最终结果。

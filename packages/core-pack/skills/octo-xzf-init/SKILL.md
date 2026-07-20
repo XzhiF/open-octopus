@@ -41,7 +41,7 @@ ELSE → 从 Idea 提取关键词生成 kebab-case slug:
 创建 `.octopus/xzf/{feature}/` 及子目录:
 
 ```
-02-research/_scan/, 03-clarification/, 04-specs/, 05-execution/, 06-reports/, 07-ship/
+00-init/, 01-research/, 02-clarification/, 03-specs/, 04-execution/, 05-reports/, 06-ship/
 ```
 
 如目录已存在（同 feature 重跑）→ 复用，不覆盖已有文件。
@@ -75,7 +75,7 @@ find . -maxdepth 3 -name ".git" -type d
 
 ### Step 6: 输出 workspace-topology.md
 
-写入: `.octopus/xzf/{feature}/workspace-topology.md`（每个 feature 独立拓扑快照）
+写入: `.octopus/xzf/{feature}/00-init/workspace-topology.md`（每个 feature 独立拓扑快照）
 
 ```markdown
 # Workspace 拓扑
@@ -108,5 +108,5 @@ find . -maxdepth 3 -name ".git" -type d
 ### Step 7: 设置变量
 
 ```json
-{"vars_update": {"branch": "...", "feature": "...", "remote_type": "...", "workspace_topology": "已生成"}}
+{"vars_update": {"branch": "...", "feature": "...", "remote_type": "..."}}
 ```

@@ -16,14 +16,14 @@ Stage 3 agent 节点，在需求澄清和验证方式澄清都完成后加载。
 
 ## 输入
 
-- `.octopus/xzf/{feature}/01-idea.md` — 原始 Idea
-- `.octopus/xzf/{feature}/03-clarification/questions.md` — 需求澄清结果
-- `.octopus/xzf/{feature}/03-clarification/verification.md` — 验证方式澄清结果
-- `.octopus/xzf/{feature}/workspace-topology.md` — Workspace 拓扑
+- `.octopus/xzf/{feature}/00-init/idea.md` — 原始 Idea
+- `.octopus/xzf/{feature}/02-clarification/questions.md` — 需求澄清结果
+- `.octopus/xzf/{feature}/02-clarification/verification.md` — 验证方式澄清结果
+- `.octopus/xzf/{feature}/00-init/workspace-topology.md` — Workspace 拓扑
 
 ## 输出
 
-`.octopus/xzf/{feature}/03-clarification/brief.md`
+`.octopus/xzf/{feature}/02-clarification/brief.md`
 
 ## 生成原则
 

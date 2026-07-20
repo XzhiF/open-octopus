@@ -31,7 +31,7 @@ execution-loop 中的 agent 节点，按依赖顺序逐个执行 spec 下的 tra
 ## Checkpoint 标准
 
 ### 文件路径
-`.octopus/xzf/{feature}/05-execution/spec-{NNN}/checkpoint.json`
+`.octopus/xzf/{feature}/04-execution/spec-{NNN}/checkpoint.json`
 
 ### Schema（严格遵循，不可增删字段）
 
@@ -48,7 +48,7 @@ execution-loop 中的 agent 节点，按依赖顺序逐个执行 spec 下的 tra
       "status": "passed",
       "completed_at": "ISO-8601 timestamp",
       "attempts": 1,
-      "verify_evidence": "05-execution/spec-NNN/verify/T-1.md"
+      "verify_evidence": "04-execution/spec-NNN/verify/T-1.md"
     }
   ],
   "tasks_remaining": [
@@ -99,7 +99,7 @@ execution-loop 中的 agent 节点，按依赖顺序逐个执行 spec 下的 tra
 
 ## 验证结果文件
 
-路径: `05-execution/spec-{NNN}/verify/T-N.md`
+路径: `04-execution/spec-{NNN}/verify/T-N.md`
 
 ```markdown
 # T-N 验证结果

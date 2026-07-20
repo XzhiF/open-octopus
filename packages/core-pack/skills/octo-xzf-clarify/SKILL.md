@@ -22,7 +22,7 @@ version: 1.0.0
 - 边界端：数据量极限、并发极限、权限极限
 
 ### 第二步：澄清问题清单生成
-输出到 `.octopus/xzf/{feature}/03-clarification/questions.md`
+输出到 `.octopus/xzf/{feature}/02-clarification/questions.md`
 
 #### 文件结构（三个区域）
 
