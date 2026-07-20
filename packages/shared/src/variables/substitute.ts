@@ -20,22 +20,38 @@ export function substituteVars(
   }
 
   // 3. 再处理现有变量引用（$vars.*, $inputs.*, $hook.*, $ref:*, nodeId.output.*）
+  // ponytail: the global regex char class includes '-' and '.' so nodeIds like
+  // "requirements-clarify" and "$nodeId.output.key" match in one token. But that
+  // greedily swallows trailing separators/Extensions too (e.g. "$hook.timestamp.md"
+  // matches ref="hook.timestamp.md"). For vars/hook/inputs, keys are single
+  // identifiers — resolve the longest valid key prefix and append the unconsumed
+  // remainder (so ".md" / trailing "-" survive).
   return text.replace(/\$([a-zA-Z0-9_.:-]+)/g, (_match, ref: string) => {
     if (ref.startsWith("vars.")) {
-      const key = ref.slice(5)
-      const val = pool.get(key)
-      return val !== undefined ? String(val) : `$${ref}`
+      const key = "vars." + ref.slice(5).match(/^[a-zA-Z0-9_]+/)?.[0]
+      if (key) {
+        const val = pool.get(key.slice(5))
+        if (val !== undefined) return String(val) + ref.slice(key.length)
+      }
+      return `$${ref}`
     }
 
     if (ref.startsWith("inputs.")) {
-      const key = ref.slice(7)
-      const val = pool.get(key)
-      return val !== undefined ? String(val) : `$${ref}`
+      const key = "inputs." + ref.slice(7).match(/^[a-zA-Z0-9_]+/)?.[0]
+      if (key) {
+        const val = pool.get(key.slice(7))
+        if (val !== undefined) return String(val) + ref.slice(key.length)
+      }
+      return `$${ref}`
     }
 
     if (ref.startsWith("hook.")) {
-      const val = pool.get(ref)
-      return val !== undefined ? String(val) : `$${ref}`
+      const key = "hook." + ref.slice(5).match(/^[a-zA-Z0-9_]+/)?.[0]
+      if (key) {
+        const val = pool.get(key)
+        if (val !== undefined) return String(val) + ref.slice(key.length)
+      }
+      return `$${ref}`
     }
 
     // ★ Cross-execution reference: $ref:workflowRef.nodeId.outputKey
