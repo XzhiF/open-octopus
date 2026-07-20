@@ -235,7 +235,15 @@ export class ExecutionLifecycle {
 
       engine.setRefResolver(this.createRefResolver())
 
-      const result = await engine.run()
+      // Track the in-flight run so pause/abort can wait for it to actually settle
+      // (prevents resume from racing a still-running engine — see pause/resume bug).
+      const settleRun = this.enginePool.startRun(id)
+      let result
+      try {
+        result = await engine.run()
+      } finally {
+        settleRun()
+      }
 
       if (result.status === "completed" || result.status === "completed_with_failures" || result.status === "cancelled" || result.status === "rejected") {
         this.enginePool.remove(id)
@@ -499,7 +507,13 @@ export class ExecutionLifecycle {
         } catch { /* non-fatal */ }
       }
 
-      const result = await inst.engine.retryFrom(failedNodeId, { signal: inst.abortController.signal, intervention })
+      const settleRun = this.enginePool.startRun(id)
+      let result
+      try {
+        result = await inst.engine.retryFrom(failedNodeId, { signal: inst.abortController.signal, intervention })
+      } finally {
+        settleRun()
+      }
 
       if (result.status === "completed" || result.status === "completed_with_failures" || result.status === "cancelled" || result.status === "rejected") {
         this.enginePool.remove(id)
@@ -813,7 +827,13 @@ export class ExecutionLifecycle {
 
       const wfForHook = this.getWorkflow(exec.workflow_ref)
       try {
-        const result = await inst.engine.retryFrom(lastFailed.node_id, { signal: inst.abortController.signal })
+        const settleRun = this.enginePool.startRun(execId)
+        let result
+        try {
+          result = await inst.engine.retryFrom(lastFailed.node_id, { signal: inst.abortController.signal })
+        } finally {
+          settleRun()
+        }
 
         if (result.status === "completed" || result.status === "completed_with_failures" || result.status === "cancelled" || result.status === "rejected") {
           this.enginePool.remove(execId)
@@ -873,7 +893,13 @@ export class ExecutionLifecycle {
       const inst = this.enginePool.get(executionId)
       if (!inst) return
 
-      const result = await inst.engine.retryFrom(nodeId, { signal, intervention })
+      const settleRun = this.enginePool.startRun(executionId)
+      let result
+      try {
+        result = await inst.engine.retryFrom(nodeId, { signal, intervention })
+      } finally {
+        settleRun()
+      }
 
       if (result.status === "completed" || result.status === "completed_with_failures" || result.status === "cancelled" || result.status === "rejected") {
         this.enginePool.remove(executionId)
@@ -933,9 +959,15 @@ export class ExecutionLifecycle {
       const inst = this.enginePool.get(executionId)
       if (!inst) return
 
-      const result = await inst.engine.retryFrom(nodeId, {
-        userChoice: answer, userComment: comment, signal,
-      })
+      const settleRun = this.enginePool.startRun(executionId)
+      let result
+      try {
+        result = await inst.engine.retryFrom(nodeId, {
+          userChoice: answer, userComment: comment, signal,
+        })
+      } finally {
+        settleRun()
+      }
 
       if (result.status === "completed" || result.status === "completed_with_failures" || result.status === "cancelled" || result.status === "rejected") {
         this.enginePool.remove(executionId)
@@ -1029,9 +1061,15 @@ export class ExecutionLifecycle {
       const inst = this.enginePool.get(executionId)
       if (!inst) return
 
-      const result = await inst.engine.retryFrom(onRejectNodeId, {
-        userChoice: "reject", userComment: comment, signal,
-      })
+      const settleRun = this.enginePool.startRun(executionId)
+      let result
+      try {
+        result = await inst.engine.retryFrom(onRejectNodeId, {
+          userChoice: "reject", userComment: comment, signal,
+        })
+      } finally {
+        settleRun()
+      }
 
       if (result.status === "completed" || result.status === "completed_with_failures" || result.status === "cancelled" || result.status === "rejected") {
         this.enginePool.remove(executionId)
@@ -1150,19 +1188,19 @@ export class ExecutionLifecycle {
     return parsePipelineConfig(content)
   }
 
-  private async abortAndWait(abortController: AbortController, executionId?: string, timeoutMs = 60000): Promise<void> {
+  private async abortAndWait(abortController: AbortController, executionId?: string, timeoutMs = 300000): Promise<void> {
     if (abortController.signal.aborted) return
     abortController.abort()
 
     if (!executionId) return
 
-    const startTime = Date.now()
-    const interval = 200
-    while (Date.now() - startTime < timeoutMs) {
-      await new Promise(resolve => setTimeout(resolve, interval))
-      const status = this.dao.findExecutionStatus(executionId)
-      if (!status || status.status !== "running") return
-    }
+    // Wait for the engine's in-flight run to actually settle.
+    // This is critical for pause correctness: previously we only polled DB status,
+    // which pause() itself flips to "paused" — so abortAndWait returned immediately
+    // while engine.run() kept running in the background. A subsequent resume() then
+    // raced the still-running engine, corrupting nodeResults (cancelled node cascading
+    // to all-downstream-skipped, execution misreported as completed).
+    await this.enginePool.waitForSettled(executionId, timeoutMs)
   }
 
   private collectAllNodes(nodes: { id: string; type: string; nodes?: any[] }[]): { id: string; type: string }[] {
