@@ -95,4 +95,5 @@ export interface IAgentProvider {
   ): AsyncGenerator<MessageChunk>
   getType(): string
   getLLMCalls?(): LLMCallRecord[]
+  testConnectivity?(model?: string): Promise<{ success: boolean; latency?: number; error?: string }>
 }
