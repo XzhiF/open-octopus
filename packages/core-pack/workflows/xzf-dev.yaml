@@ -523,35 +523,13 @@ nodes:
         在上述 JSON 内附带 assessment 字段，供引擎评估专家共识:
         "assessment": {"consensus_score": 0.0-1.0, "should_continue": true/false, "key_agreements": [...], "key_disagreements": [...]}
 
-  # --- 4b. 校验 spec_count（数实际文件，覆盖 host 输出） ---
-  # 防止 host 输错 spec_count 导致 task-planning/execution loop 越界或空退出。
-  # MSYS bash 跨平台可用（Windows 走 Git for Windows，非 cmd）。
-  - id: spec-count-verify
-    type: bash
-    depends_on: [spec-design]
-    bash: |
-      DIR=".octopus/xzf/$vars.branch/05-specs"
-      if [ ! -d "$DIR" ]; then
-        echo "ERROR: $DIR not found" >&2
-        exit 1
-      fi
-      # 数 spec-NNN-*.md，排除 spec-index.md
-      COUNT=$(find "$DIR" -maxdepth 1 -type f -name "spec-*.md" ! -name "spec-index.md" | wc -l)
-      echo "Verified spec_count = $COUNT (actual files in $DIR)"
-      # 覆盖 host 输出的 spec_count，作为后续 loop break_when 的真实依据
-      echo "{\"vars_update\": {\"spec_count\": $COUNT}}"
-
-  # ============================================================
-  # Stage 5: 任务计划（per spec 循环）
-  # ============================================================
-
   # ============================================================
   # Stage 5: 任务计划（一次生成所有 spec 的 plans，无需 loop）
   # ============================================================
 
   - id: plan-spec
     type: swarm
-    depends_on: [spec-count-verify]
+    depends_on: [spec-design]
     mode: dispatch
     rounds: 1
     context_tier: "200k"
