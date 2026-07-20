@@ -1,0 +1,83 @@
+# scheduler.yaml — Scheduler 任务配置
+version: "1.0"
+
+# 全局设置
+global:
+  timezone: "Asia/Shanghai"
+  max_concurrent_tasks: 3
+  task_queue_size: 10
+
+# 任务定义
+tasks:
+  - name: knowledge-update
+    description: "每周更新 SKILL.md 过时引用"
+    cron: "0 2 * * 1"
+    workflow: knowledge-update
+    enabled: true
+    priority: high
+    retry:
+      max_attempts: 3
+      backoff: exponential
+
+  - name: workflow-optimize
+    description: "每月分析低效工作流"
+    cron: "0 3 1 * *"
+    workflow: workflow-optimize
+    enabled: true
+    priority: medium
+    params:
+      lookback_days: 30
+      top_n: 5
+
+  - name: frontier-explorer
+    description: "每月探索前沿方法论"
+    cron: "0 4 1 * *"
+    workflow: frontier-explorer
+    enabled: true
+    priority: low
+    params:
+      domains:
+        - "workflow orchestration"
+        - "AI agent frameworks"
+      top_n: 10
+
+  - name: workflow-retire
+    description: "每季度识别过时工作流"
+    cron: "0 5 1 1,4,7,10 *"
+    workflow: workflow-retire
+    enabled: true
+    priority: medium
+    params:
+      lookback_days: 90
+      usage_threshold: 0.05
+      failure_threshold: 0.5
+
+  - name: meta-evolution
+    description: "每季度探索新功能提案"
+    cron: "0 6 1 1,4,7,10 *"
+    workflow: meta-evolution
+    enabled: true
+    priority: low
+    params:
+      evolution_scope:
+        - "自动化测试"
+        - "可视化"
+        - "集成"
+      proposal_count: 5
+
+# 保护列表（不参与淘汰）
+retire_protected:
+  - prd-forge
+  - prd-impl
+  - knowledge-update
+  - workflow-optimize
+  - frontier-explorer
+  - swarm-discuss
+  - workflow-retire
+  - meta-evolution
+
+# 进化范围
+evolution_scope:
+  - "自动化测试"
+  - "可视化"
+  - "集成"

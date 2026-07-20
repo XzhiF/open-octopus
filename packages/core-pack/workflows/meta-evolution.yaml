@@ -1,0 +1,155 @@
+apiVersion: octopus/v1
+kind: Workflow
+name: meta-evolution
+description: >
+  Meta Evolution Flow — reads configured evolution_scope directions,
+  generates improvement proposals, optionally runs a swarm discussion
+  on top proposals, and creates a PR with accepted changes.
+
+model: pro-max
+engine: claude
+execution_mode: auto
+max_concurrent: 2
+timeout: 7200
+
+metadata:
+  usage_tracking:
+    enabled: true
+  category: evolution
+
+inputs:
+  proposal_count:
+    description: "Number of proposals to generate (default 3-5)"
+    required: false
+    default: "4"
+  discuss_top:
+    description: "Run swarm discussion on top proposals"
+    required: false
+    default: "false"
+  experts:
+    description: "Expert roles for swarm discussion (comma-separated, max 5)"
+    required: false
+    default: "architect,tester,reviewer"
+  base_branch:
+    description: "PR target branch"
+    required: false
+    default: "main"
+
+variables:
+  scopes: ""
+  proposals: ""
+  proposal_count_actual: "0"
+  discussion_result: ""
+  pr_url: ""
+
+nodes:
+  - id: read-scopes
+    type: agent
+    description: "Read configured evolution scope directions"
+    prompt: |
+      Read the scheduler configuration and extract the evolution_scope list.
+      Output the scopes as a JSON array:
+      ```json
+      ["scope1", "scope2", ...]
+      ```
+      If no scopes are configured, output an empty array and note that
+      "No exploration direction configured" in the error field.
+    output: $vars.scopes
+
+  - id: check-scopes
+    type: condition
+    depends_on: [read-scopes]
+    description: "Verify scopes are configured"
+    cases:
+      - when: "$vars.scopes != '[]' AND $vars.scopes != ''"
+        then: generate-proposals
+      - when: default
+        then: no-scopes
+
+  - id: generate-proposals
+    type: agent
+    depends_on: [check-scopes]
+    description: "Generate evolution proposals from scope directions"
+    prompt: |
+      Based on the evolution scope directions: $vars.scopes
+
+      Generate $vars.proposal_count improvement proposals. Each proposal should:
+      1. Identify a specific problem within the scope direction
+      2. Propose a concrete solution
+      3. Estimate feasibility (0-100 score)
+      4. Define a verification method
+
+      Output JSON:
+      ```json
+      {
+        "proposals": [
+          {"id": "uuid", "title": "...", "problem": "...", "solution": "...", "feasibilityScore": 0-100, "verificationMethod": "..."}
+        ],
+        "count": <number>
+      }
+      ```
+    output: $vars.proposals
+    vars_update:
+      proposal_count_actual: "$last_output.count"
+
+  - id: decide-discuss
+    type: condition
+    depends_on: [generate-proposals]
+    description: "Check if swarm discussion is enabled"
+    cases:
+      - when: "$vars.discuss_top == 'true'"
+        then: discuss-proposals
+      - when: default
+        then: create-pr
+
+  - id: discuss-proposals
+    type: swarm
+    depends_on: [decide-discuss]
+    description: "Run swarm discussion on top proposals"
+    mode: debate
+    dynamic: true
+    max_experts: 5
+    prompt: |
+      Review the following evolution proposals:
+      $vars.proposals
+
+      For each proposal, discuss:
+      1. Is the problem real and impactful?
+      2. Is the solution feasible?
+      3. Are there better alternatives?
+      4. What's the recommended priority?
+
+      Synthesize a ranked list with expert consensus.
+    output: $vars.discussion_result
+
+  - id: create-pr
+    type: agent
+    depends_on: [discuss-proposals]
+    description: "Create PR with accepted proposals"
+    prompt: |
+      Based on the proposals in $vars.proposals
+      $vars.discussion_result
+
+      1. Select proposals with feasibilityScore >= 60
+      2. For each accepted proposal, create a markdown document
+      3. Stage all changes, create branch "meta-evolution/$(date +%Y%m%d-%H%M%S)"
+      4. Open a PR to $vars.base_branch with the evolution report as body
+    output: $vars.pr_url
+
+  - id: done
+    type: bash
+    description: "Summary output"
+    bash: |
+      echo "=== Meta Evolution Complete ==="
+      echo "Proposals generated: $vars.proposal_count_actual"
+      if [ -n "$vars.pr_url" ]; then
+        echo "PR created: $vars.pr_url"
+      fi
+
+  - id: no-scopes
+    type: bash
+    description: "Error: no scopes configured"
+    bash: |
+      echo "Error: No evolution_scope configured in scheduler.yaml"
+      echo "Add evolution_scope to your scheduler config to enable meta-evolution."
+      exit 1

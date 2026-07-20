@@ -1,0 +1,125 @@
+apiVersion: octopus/v1
+kind: Workflow
+name: frontier-explorer
+description: >
+  Frontier Explorer Flow — scrapes GitHub trending repos and AI papers
+  for configured domains, generates a frontier analysis report with
+  landing suggestions for the organization.
+
+model: pro-max
+engine: claude
+execution_mode: auto
+max_concurrent: 2
+timeout: 3600
+
+metadata:
+  usage_tracking:
+    enabled: true
+  category: evolution
+
+inputs:
+  domains:
+    description: "Comma-separated list of domains to explore (e.g. ai,workflow,mcp)"
+    required: true
+  source:
+    description: "Scrape source: github, papers, or both"
+    required: false
+    default: "both"
+  output_dir:
+    description: "Directory for frontier report output"
+    required: false
+    default: "$vars.org_dir/frontier"
+
+variables:
+  github_results: ""
+  paper_results: ""
+  report_output: ""
+  item_count: "0"
+
+nodes:
+  - id: scrape-github
+    type: agent
+    description: "Scrape GitHub trending repos for each domain"
+    condition: "$vars.source == 'github' OR $vars.source == 'both'"
+    prompt: |
+      For each domain in "$vars.domains", search GitHub for trending repos:
+
+      Use the command:
+        gh search repos --topic=<domain> --sort=stars --limit=10 --json name,url,description,stargazersCount
+
+      For each result, compute a normalized score (0-100) based on stargazers relative to the max in the result set.
+
+      Output a JSON report:
+      ```json
+      {
+        "items": [
+          {"name": "...", "url": "...", "description": "...", "score": 0-100, "summary": "...", "landing_suggestion": "..."}
+        ],
+        "count": <total items>
+      }
+      ```
+    output: $vars.github_results
+    vars_update:
+      item_count: "$last_output.count"
+
+  - id: scrape-papers
+    type: agent
+    description: "Scrape AI paper repos for each domain"
+    depends_on: [scrape-github]
+    condition: "$vars.source == 'papers' OR $vars.source == 'both'"
+    prompt: |
+      For each domain in "$vars.domains", search GitHub for AI paper repos:
+
+      Use the command:
+        gh search repos "<domain> paper" --sort=stars --limit=10 --json name,url,description,stargazersCount
+
+      Compute normalized scores and output JSON:
+      ```json
+      {
+        "items": [
+          {"name": "...", "url": "...", "description": "...", "score": 0-100, "summary": "...", "landing_suggestion": "..."}
+        ],
+        "count": <total items>
+      }
+      ```
+    output: $vars.paper_results
+
+  - id: generate-report
+    type: agent
+    depends_on: [scrape-papers]
+    description: "Generate a consolidated frontier analysis report"
+    prompt: |
+      Combine the GitHub trending results ($vars.github_results) and AI paper results ($vars.paper_results)
+      into a single frontier analysis report.
+
+      ## Frontier Explorer Report
+      - Domains explored: $vars.domains
+      - Total items found: $vars.item_count
+      - Source: $vars.source
+
+      For each domain, list:
+      1. Top trending repos with star counts and descriptions
+      2. Relevant paper repos with summaries
+      3. Landing suggestions — what the organization should explore first
+
+      End with a prioritized action list.
+    output: $vars.report_output
+
+  - id: save-report
+    type: bash
+    depends_on: [generate-report]
+    description: "Save report to output directory"
+    bash: |
+      mkdir -p "$vars.output_dir"
+      REPORT_FILE="$vars.output_dir/frontier-$(date +%Y%m%d-%H%M%S).md"
+      echo "$vars.report_output" > "$REPORT_FILE"
+      echo "Report saved to: $REPORT_FILE"
+
+  - id: done
+    type: bash
+    depends_on: [save-report]
+    description: "Summary output"
+    bash: |
+      echo "=== Frontier Explorer Complete ==="
+      echo "Domains: $vars.domains"
+      echo "Items found: $vars.item_count"

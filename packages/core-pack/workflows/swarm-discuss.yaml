@@ -1,0 +1,121 @@
+apiVersion: octopus/v1
+kind: Workflow
+name: swarm-discuss
+description: >
+  Swarm Discussion Flow — runs a multi-expert discussion on a given topic,
+  synthesizes expert opinions into a final proposal, and optionally syncs
+  the result to the chatbot knowledge base.
+
+model: pro-max
+engine: claude
+execution_mode: auto
+max_concurrent: 1
+timeout: 3600
+
+metadata:
+  usage_tracking:
+    enabled: true
+  category: evolution
+
+inputs:
+  topic:
+    description: "Discussion topic or question"
+    required: true
+  experts:
+    description: "Comma-separated list of expert roles (max 5)"
+    required: true
+  sync_chatbot:
+    description: "Sync the final proposal to the chatbot"
+    required: false
+    default: "false"
+
+variables:
+  expert_opinions: ""
+  final_proposal: ""
+  discussion_id: ""
+  sync_result: ""
+
+nodes:
+  - id: validate-inputs
+    type: bash
+    description: "Validate expert count (max 5)"
+    bash: |
+      EXPERT_COUNT=$(echo "$vars.experts" | tr ',' '\n' | wc -l)
+      if [ "$EXPERT_COUNT" -gt 5 ]; then
+        echo "Error: Expert limit is 5, got $EXPERT_COUNT"
+        exit 1
+      fi
+      echo "Validated: $EXPERT_COUNT experts for topic: $vars.topic"
+
+  - id: run-discussion
+    type: swarm
+    depends_on: [validate-inputs]
+    description: "Run multi-expert discussion using swarm mode"
+    mode: review
+    dynamic: true
+    max_experts: 5
+    prompt: |
+      Discussion topic: $vars.topic
+
+      Each expert should provide their analysis from their domain perspective:
+      1. Key observations and concerns
+      2. Recommended approach
+      3. Potential risks and mitigations
+
+      Keep responses focused and actionable.
+    output: $vars.expert_opinions
+    vars_update:
+      final_proposal: "$last_output.synthesis"
+      discussion_id: "$last_output.id"
+
+  - id: review-proposal
+    type: agent
+    depends_on: [run-discussion]
+    description: "Host reviews and refines the synthesized proposal"
+    prompt: |
+      Review the discussion results from $vars.expert_opinions.
+
+      Synthesize a final proposal that:
+      1. Incorporates the strongest points from each expert
+      2. Resolves conflicting recommendations
+      3. Provides a clear implementation roadmap
+
+      Output the final proposal in markdown format.
+    output: $vars.final_proposal
+
+  - id: decide-sync
+    type: condition
+    depends_on: [review-proposal]
+    description: "Check if chatbot sync is enabled"
+    cases:
+      - when: "$vars.sync_chatbot == 'true'"
+        then: sync-to-chatbot
+      - when: default
+        then: done
+
+  - id: sync-to-chatbot
+    type: agent
+    depends_on: [decide-sync]
+    description: "Sync final proposal to chatbot knowledge base"
+    prompt: |
+      Sync the following proposal to the chatbot knowledge base:
+
+      Discussion ID: $vars.discussion_id
+      Topic: $vars.topic
+
+      Proposal:
+      $vars.final_proposal
+
+      POST to the configured chatbot API endpoint and report the result.
+    output: $vars.sync_result
+
+  - id: done
+    type: bash
+    description: "Summary output"
+    bash: |
+      echo "=== Swarm Discussion Complete ==="
+      echo "Topic: $vars.topic"
+      echo "Discussion ID: $vars.discussion_id"
+      if [ -n "$vars.sync_result" ]; then
+        echo "Chatbot sync: completed"
+      fi

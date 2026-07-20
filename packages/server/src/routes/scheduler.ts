@@ -13,6 +13,9 @@ import { ExportService } from '../services/scheduler/export-service'
 import { ConfigValidationError } from '../services/scheduler/config-validator'
 import { parseCronExpression, naturalLanguageToCron } from '../services/cron-utils'
 import type { CreateJobInput, UpdateJobInput } from '@octopus/shared'
+import { EvolutionConfigService } from '../services/scheduler/evolution-config'
+import { UsageTrackerService } from '../services/scheduler/usage-tracker'
+import { z } from 'zod'
 
 // ── Rate Limiter ────────────────────────────────────────────────────
 
@@ -147,6 +150,8 @@ export function createSchedulerRoutes(
   service: SchedulerService,
   dashboardService?: DashboardService,
   exportService?: ExportService,
+  evolutionService?: EvolutionConfigService,
+  usageTracker?: UsageTrackerService,
 ): Hono {
   const router = new Hono()
 
@@ -451,6 +456,135 @@ export function createSchedulerRoutes(
 
     // PDF not implemented in V1 - return error
     return c.json({ error: 'PDF export not yet available' }, 501)
+  })
+
+  // ── Evolution Config ───────────────────────────────────────────
+
+  const evolutionScopeSchema = z.object({
+    org: z.string().min(1).max(100),
+    scopes: z.array(z.string().min(1).max(200)).max(50),
+  })
+
+  const evolutionProtectedSchema = z.object({
+    org: z.string().min(1).max(100),
+    items: z.array(z.string().min(1).max(200)).max(100),
+  })
+
+  // GET /evolution/scope?org=<org>
+  router.get('/evolution/scope', rateLimitDefault, (c) => {
+    if (!evolutionService) return c.json({ error: 'Evolution service not available' }, 503)
+    const org = c.req.query('org')
+    if (!org) return c.json({ error: 'org query parameter is required' }, 400)
+    try {
+      const scopes = evolutionService.getEvolutionScope(org)
+      return c.json({ org, evolution_scope: scopes })
+    } catch (err: unknown) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status)
+    }
+  })
+
+  // PUT /evolution/scope
+  router.put('/evolution/scope', rateLimitDefault, async (c) => {
+    if (!evolutionService) return c.json({ error: 'Evolution service not available' }, 503)
+    const body = await safeJson(c)
+    if (!body) return c.json({ error: 'Invalid or missing JSON body' }, 400)
+    try {
+      const { org, scopes } = evolutionScopeSchema.parse(body)
+      evolutionService.updateEvolutionScope(org, scopes)
+      return c.json({ org, evolution_scope: scopes })
+    } catch (err: unknown) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status)
+    }
+  })
+
+  // GET /evolution/protected?org=<org>
+  router.get('/evolution/protected', rateLimitDefault, (c) => {
+    if (!evolutionService) return c.json({ error: 'Evolution service not available' }, 503)
+    const org = c.req.query('org')
+    if (!org) return c.json({ error: 'org query parameter is required' }, 400)
+    try {
+      const items = evolutionService.getRetireProtected(org)
+      return c.json({ org, retire_protected: items })
+    } catch (err: unknown) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status)
+    }
+  })
+
+  // PUT /evolution/protected
+  router.put('/evolution/protected', rateLimitDefault, async (c) => {
+    if (!evolutionService) return c.json({ error: 'Evolution service not available' }, 503)
+    const body = await safeJson(c)
+    if (!body) return c.json({ error: 'Invalid or missing JSON body' }, 400)
+    try {
+      const { org, items } = evolutionProtectedSchema.parse(body)
+      evolutionService.updateRetireProtected(org, items)
+      return c.json({ org, retire_protected: items })
+    } catch (err: unknown) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status)
+    }
+  })
+
+  // ── Usage Tracking ─────────────────────────────────────────────
+
+  // GET /usage/stats?workflow=<ref>&days=30
+  router.get('/usage/stats', rateLimitDefault, (c) => {
+    if (!usageTracker) return c.json({ error: 'Usage tracker not available' }, 503)
+    const workflow = c.req.query('workflow')
+    if (!workflow) return c.json({ error: 'workflow query parameter is required' }, 400)
+    const days = parseIntParam(c.req.query('days'), 30)
+    try {
+      const stats = usageTracker.getUsageStats(workflow, days)
+      if (!stats) return c.json({ error: 'No execution data found for workflow' }, 404)
+      return c.json(stats)
+    } catch (err: unknown) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status)
+    }
+  })
+
+  // GET /usage/low-usage?threshold=0.05&days=90
+  router.get('/usage/low-usage', rateLimitDefault, (c) => {
+    if (!usageTracker) return c.json({ error: 'Usage tracker not available' }, 503)
+    const threshold = parseFloat(c.req.query('threshold') ?? '0.05')
+    const days = parseIntParam(c.req.query('days'), 90)
+    try {
+      const items = usageTracker.getLowUsageWorkflows(threshold, days)
+      return c.json({ items, threshold, days })
+    } catch (err: unknown) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status)
+    }
+  })
+
+  // GET /usage/high-failure?threshold=0.5&days=90
+  router.get('/usage/high-failure', rateLimitDefault, (c) => {
+    if (!usageTracker) return c.json({ error: 'Usage tracker not available' }, 503)
+    const threshold = parseFloat(c.req.query('threshold') ?? '0.5')
+    const days = parseIntParam(c.req.query('days'), 90)
+    try {
+      const items = usageTracker.getHighFailureWorkflows(threshold, days)
+      return c.json({ items, threshold, days })
+    } catch (err: unknown) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status)
+    }
+  })
+
+  // GET /usage/all?days=30
+  router.get('/usage/all', rateLimitDefault, (c) => {
+    if (!usageTracker) return c.json({ error: 'Usage tracker not available' }, 503)
+    const days = parseIntParam(c.req.query('days'), 30)
+    try {
+      const items = usageTracker.listAllWorkflowStats(days)
+      return c.json({ items, days })
+    } catch (err: unknown) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status)
+    }
   })
 
   return router

@@ -10,7 +10,7 @@ const _dirname: string =
     ? __dirname
     : path.dirname(fileURLToPath(import.meta.url))
 
-export const SCHEMA_VERSION = 26
+export const SCHEMA_VERSION = 27
 
 /**
  * Apply the complete unified schema to the given database.

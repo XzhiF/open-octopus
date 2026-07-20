@@ -3,6 +3,8 @@ export * from './config-validator'
 export * from './scheduler-service'
 export * from './dashboard-service'
 export * from './export-service'
+export * from './evolution-config'
+export * from './usage-tracker'
 
 // P3 execution engine
 export * from './executors/executor-interface'

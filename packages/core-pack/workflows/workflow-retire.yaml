@@ -1,0 +1,144 @@
+apiVersion: octopus/v1
+kind: Workflow
+name: workflow-retire
+description: >
+  Workflow Retirement Flow — identifies low-usage and high-failure workflows,
+  generates retirement recommendations, and optionally archives or removes them.
+  Respects the protected workflow list from scheduler config.
+
+model: pro-max
+engine: claude
+execution_mode: auto
+max_concurrent: 2
+timeout: 3600
+
+metadata:
+  usage_tracking:
+    enabled: true
+  category: workflow-management
+
+inputs:
+  analysis_days:
+    description: "Look-back window in days"
+    required: false
+    default: "90"
+  usage_threshold:
+    description: "Max usage rate (runs/day) to qualify as low usage"
+    required: false
+    default: "0.05"
+  failure_threshold:
+    description: "Min failure rate to qualify as high failure"
+    required: false
+    default: "0.5"
+  auto_retire:
+    description: "Automatically archive candidates (moves YAML to .retired/ dir)"
+    required: false
+    default: "false"
+  base_branch:
+    description: "PR target branch"
+    required: false
+    default: "main"
+
+variables:
+  candidates: ""
+  candidate_count: "0"
+  protected_list: ""
+  report_output: ""
+  pr_url: ""
+
+nodes:
+  - id: fetch-protected
+    type: agent
+    description: "Fetch the list of protected workflows"
+    prompt: |
+      Read the retire_protected list from the scheduler configuration.
+      Output a JSON array of protected workflow IDs:
+      ```json
+      ["prd-forge", "prd-impl", ...]
+      ```
+    output: $vars.protected_list
+
+  - id: analyze-candidates
+    type: agent
+    depends_on: [fetch-protected]
+    description: "Identify workflows eligible for retirement"
+    prompt: |
+      Analyze all workflows from the last $vars.analysis_days days.
+      Exclude workflows in the protected list: $vars.protected_list
+
+      A workflow is a retirement candidate if:
+      - Usage rate < $vars.usage_threshold runs/day, OR
+      - Failure rate > $vars.failure_threshold
+
+      For each candidate output:
+      - workflowId, usageRate, failureRate
+      - Reason(s) for retirement eligibility
+      - Impact assessment (low/medium/high)
+
+      Output JSON:
+      ```json
+      {
+        "candidates": [...],
+        "count": <number>
+      }
+      ```
+    output: $vars.candidates
+    vars_update:
+      candidate_count: "$last_output.count"
+
+  - id: generate-report
+    type: agent
+    depends_on: [analyze-candidates]
+    description: "Generate retirement recommendation report"
+    prompt: |
+      Based on the candidates in $vars.candidates, generate a retirement report:
+
+      ## Workflow Retirement Report
+      - Analysis window: $vars.analysis_days days
+      - Usage threshold: $vars.usage_threshold runs/day
+      - Failure threshold: $vars.failure_threshold
+      - Candidates: $vars.candidate_count
+      - Protected workflows: $vars.protected_list
+
+      For each candidate:
+      1. Current metrics
+      2. Reason for retirement eligibility
+      3. Impact assessment
+      4. Recommendation: archive / delete / keep-monitoring
+
+      End with a summary and recommended actions.
+    output: $vars.report_output
+
+  - id: decide-retire
+    type: condition
+    depends_on: [generate-report]
+    description: "Check if auto-retire is enabled"
+    cases:
+      - when: "$vars.auto_retire == 'true' AND $vars.candidate_count > 0"
+        then: archive-workflows
+      - when: default
+        then: done
+
+  - id: archive-workflows
+    type: agent
+    depends_on: [decide-retire]
+    description: "Archive candidate workflows and create PR"
+    prompt: |
+      For each candidate in $vars.candidates with impact "low":
+      1. Move the workflow YAML to a .retired/ subdirectory
+      2. Add a comment to the file noting retirement date and reason
+
+      Create branch "workflow-retire/$(date +%Y%m%d-%H%M%S)",
+      commit changes, and open a PR to $vars.base_branch with the
+      retirement report as the body.
+    output: $vars.pr_url
+
+  - id: done
+    type: bash
+    description: "Summary output"
+    bash: |
+      echo "=== Workflow Retirement Analysis Complete ==="
+      echo "Candidates found: $vars.candidate_count"
+      if [ -n "$vars.pr_url" ]; then
+        echo "PR created: $vars.pr_url"
+      fi
