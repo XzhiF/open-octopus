@@ -194,35 +194,12 @@ nodes:
     skills: [octo-xzf-init]
     prompt: |
       使用 octo-xzf-init skill 初始化 XZF Pipeline 工作环境。
+      按 skill 定义的 Step 1-7 顺序执行全部步骤。
 
-      ═══ Feature Slug ═══
-      IF $inputs.feature 非空 → feature = "$inputs.feature"
-      ELSE → 从 $inputs.idea 提取关键词生成 kebab-case slug（max 40 chars）
-             格式: {verb}-{subject} 或 {topic}，例如 add-user-auth, fix-cart-total
-
-      ═══ 目录结构 ═══
-      基础目录: .octopus/xzf/$feature/
-      用 Bash `mkdir -p` 一次性创建所有子目录（不要依赖 Write 自动创建）:
-
-      ```bash
-      BASE=".octopus/xzf/$feature"
-      mkdir -p "$BASE"/{00-init,01-research/_scan,02-clarification,03-specs,04-execution,05-reports/{e2e-scripts,e2e-screenshots,e2e-data},06-ship}
-      ```
-
-      ═══ 写入文件 ═══
-      将用户 Idea 写入 .octopus/xzf/$feature/00-init/idea.md：
-
-      ```
-      # Idea
-      ## 需求描述
-      $inputs.idea
-
-      ## Research 指引
-      $inputs.research_guidance
-      ```
-
-      如 research_guidance 为空，写入：
-      "（无特定指引 — 请根据 Idea 语义自行判断需要研究的 codebase 模块和外部技术）"
+      ═══ 输入 ═══
+      Feature: $inputs.feature（空则从 Idea 生成 slug）
+      Idea: $inputs.idea
+      Research 指引: $inputs.research_guidance
 
       汇报：分支名、feature slug、remote 类型、workspace 项目数。
 
@@ -295,8 +272,12 @@ nodes:
     topic: |
       ═══ Codebase Research Debate ═══
 
-      Idea: 请读取 .octopus/xzf/$vars.feature/00-init/idea.md
-      Workspace: 请读取 .octopus/xzf/$vars.feature/00-init/workspace-topology.md
+      读取:
+      - 目录规范: .octopus/xzf/$vars.feature/00-init/directory-conventions.md
+      - Idea: .octopus/xzf/$vars.feature/00-init/idea.md
+      - Workspace: .octopus/xzf/$vars.feature/00-init/workspace-topology.md
+
+      ⚠️ 所有产物路径以 directory-conventions.md 为准，禁止使用源码目录。
 
       ⚠️ 如 00-init/idea.md 包含「Research 指引」，按指引聚焦研究范围。
 
@@ -324,6 +305,7 @@ nodes:
       skills: [octo-xzf-clarify]
       prompt: |
         读取所有轮次的讨论记录。综合达成共识的结论，标注仍有分歧的点。
+        产物路径以 .octopus/xzf/$vars.feature/00-init/directory-conventions.md 为准。
 
         ═══ Part 1: Research Brief ═══
         写入 .octopus/xzf/$vars.feature/01-research/research-brief.md：
@@ -398,10 +380,13 @@ nodes:
           ═══ 需求澄清 — Round $iteration ═══
 
           读取:
+          - 目录规范: .octopus/xzf/$vars.feature/00-init/directory-conventions.md
           - Idea: .octopus/xzf/$vars.feature/00-init/idea.md
           - Research: .octopus/xzf/$vars.feature/01-research/research-brief.md
           - 现有问题: .octopus/xzf/$vars.feature/02-clarification/questions.md
           - Workspace: .octopus/xzf/$vars.feature/00-init/workspace-topology.md
+
+          ⚠️ 所有产物路径以 directory-conventions.md 为准，禁止使用源码目录。
 
           用户本轮回复:
           $requirements-approval.output.comment
@@ -456,10 +441,13 @@ nodes:
           ═══ 验证策略规划 — Round $iteration ═══
 
           读取:
+          - 目录规范: .octopus/xzf/$vars.feature/00-init/directory-conventions.md
           - Idea: .octopus/xzf/$vars.feature/00-init/idea.md
           - Research: .octopus/xzf/$vars.feature/01-research/research-brief.md
           - 已澄清需求: .octopus/xzf/$vars.feature/02-clarification/questions.md
           - Workspace: .octopus/xzf/$vars.feature/00-init/workspace-topology.md
+
+          ⚠️ 所有产物路径以 directory-conventions.md 为准，禁止使用源码目录。
 
           用户本轮回复:
           $verification-approval.output.comment
@@ -486,10 +474,13 @@ nodes:
       使用 octo-xzf-brief-maker skill 生成需求简报。
 
       读取:
+      - 目录规范: .octopus/xzf/$vars.feature/00-init/directory-conventions.md
       - Idea: .octopus/xzf/$vars.feature/00-init/idea.md
       - 需求澄清: .octopus/xzf/$vars.feature/02-clarification/questions.md
       - 验证方式: .octopus/xzf/$vars.feature/02-clarification/verification.md
       - Workspace: .octopus/xzf/$vars.feature/00-init/workspace-topology.md
+
+      ⚠️ 所有产物路径以 directory-conventions.md 为准，禁止使用源码目录。
 
       输出: .octopus/xzf/$vars.feature/02-clarification/brief.md
 
@@ -508,9 +499,12 @@ nodes:
       使用 octo-xzf-spec-designer skill 生成所有 spec 和 tracer bullet tasks。
 
       读取:
+      - 目录规范: .octopus/xzf/$vars.feature/00-init/directory-conventions.md
       - 需求简报: .octopus/xzf/$vars.feature/02-clarification/brief.md
       - Research 知识: .octopus/xzf/$vars.feature/01-research/research-brief.md
       - Workspace: .octopus/xzf/$vars.feature/00-init/workspace-topology.md
+
+      ⚠️ 所有产物路径以 directory-conventions.md 为准，禁止使用源码目录。
 
       ═══ 输出 ═══
       1. 每个 spec 写入:
