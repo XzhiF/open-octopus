@@ -202,8 +202,12 @@ nodes:
 
       ═══ 目录结构 ═══
       基础目录: .octopus/xzf/$feature/
-      子目录: 00-init/, 01-research/, 02-clarification/, 03-specs/,
-              04-execution/, 05-reports/, 06-ship/
+      用 Bash `mkdir -p` 一次性创建所有子目录（不要依赖 Write 自动创建）:
+
+      ```bash
+      BASE=".octopus/xzf/$feature"
+      mkdir -p "$BASE"/{00-init,01-research/_scan,02-clarification,03-specs,04-execution,05-reports/{e2e-scripts,e2e-screenshots,e2e-data},06-ship}
+      ```
 
       ═══ 写入文件 ═══
       将用户 Idea 写入 .octopus/xzf/$feature/00-init/idea.md：
@@ -375,7 +379,8 @@ nodes:
           澄清方法论、问题格式、Round 流程参见 octo-xzf-clarify skill。
           输出: .octopus/xzf/$vars.feature/02-clarification/questions.md
 
-          ⚠️ 最终输出（last_output）只包含 Synthesis 内容（「待澄清」+「用户补充」原样输出）。
+          ⚠️ 最终输出（last_output）包含 Synthesis 三部分：「待澄清」+「用户补充」+「已确认摘要」。
+          「已确认摘要」始终输出（已确认决策概览），让用户审阅自确认项。
           下游 approval 直接引用 $requirements-clarify.output.last_output 展示给用户。
 
           最后输出 vars_update JSON:
@@ -427,7 +432,8 @@ nodes:
           验证策略方法论参见 octo-xzf-verification skill。
           输出: .octopus/xzf/$vars.feature/02-clarification/verification.md
 
-          ⚠️ 最终输出（last_output）只包含 Synthesis 内容（「待确认」+「用户补充」原样输出）。
+          ⚠️ 最终输出（last_output）包含 Synthesis 三部分：「待确认」+「用户补充」+「推荐验证方案」。
+          「推荐验证方案」始终输出（测试环境、验收条件概览、E2E 场景列表），这是 agent 推荐的测试策略，用户可审阅纠正。
           下游 approval 直接引用 $verification-clarify.output.last_output 展示给用户。
 
           最后输出 vars_update JSON:
@@ -494,7 +500,7 @@ nodes:
          .octopus/xzf/$vars.feature/03-specs/spec-NNN-{name}.md
       2. 每个 spec 的 tracer bullets 写入子目录:
          .octopus/xzf/$vars.feature/03-specs/spec-NNN-{name}/T-N-{name}.md
-         简单 spec（1-2 个 task）可不建子目录
+         ⚠️ 所有 spec 必须建子目录（即使只有 1 个 task），下游执行循环靠子目录中的 T-N 文件发现任务
       3. 生成索引: .octopus/xzf/$vars.feature/03-specs/spec-index.md
          （按执行顺序: # | 文件名 | 标题 | Tracer Bullets 数 | Depends）
       4. 生成 E2E 测试计划: .octopus/xzf/$vars.feature/03-specs/e2e-test-plan.md
@@ -590,6 +596,7 @@ nodes:
           ═══ 文件存放 ═══
           - 测试脚本（SQL/shell/curl）: .octopus/xzf/$vars.feature/05-reports/e2e-scripts/
           - 截图: .octopus/xzf/$vars.feature/05-reports/e2e-screenshots/
+          - 临时数据（mock 数据、API 响应文本、fixture 等）: .octopus/xzf/$vars.feature/05-reports/e2e-data/
           - 测试报告: .octopus/xzf/$vars.feature/05-reports/e2e-report.md
           ⚠️ 所有 E2E 产物统一放 05-reports/，不污染源码目录。
 

@@ -103,7 +103,7 @@ Stage 4 agent 节点，读取 brief.md，一次生成所有 spec 和 tracer bull
 每个 tracer bullet 写入独立文件，放在 spec 子目录下：
 `03-specs/spec-NNN-{name}/T-N-{name}.md`
 
-简单 spec（1-2 个 task）可不建子目录。
+⚠️ 所有 spec 必须建子目录（即使只有 1 个 task），下游执行循环靠子目录中的 T-N 文件发现任务。
 
 ```markdown
 # T-N: {标题}

@@ -38,11 +38,21 @@ ELSE → 从 Idea 提取关键词生成 kebab-case slug:
 设变量: `remote_type`
 
 ### Step 4: 目录创建
-创建 `.octopus/xzf/{feature}/` 及子目录:
+用 Bash `mkdir -p` 一次性创建所有目录（不依赖 Write 自动创建）:
 
+```bash
+BASE=".octopus/xzf/{feature}"
+mkdir -p "$BASE"/{00-init,01-research/_scan,02-clarification,03-specs,04-execution,05-reports/{e2e-scripts,e2e-screenshots,e2e-data},06-ship}
 ```
-00-init/, 01-research/, 02-clarification/, 03-specs/, 04-execution/, 05-reports/, 06-ship/
-```
+
+目录说明:
+- `00-init/` — Idea + workspace 拓扑
+- `01-research/_scan/` — 自动预扫描产物（underscore = 生成物）
+- `02-clarification/` — 需求澄清 + 验证策略 + 简报 + 审批回复
+- `03-specs/` — Spec 文件 + tracer bullets + E2E 测试计划
+- `04-execution/` — 执行 checkpoint（按 spec 子目录）
+- `05-reports/` — E2E 报告 + 脚本 + 截图 + 临时数据
+- `06-ship/` — PR/MR Summary
 
 如目录已存在（同 feature 重跑）→ 复用，不覆盖已有文件。
 

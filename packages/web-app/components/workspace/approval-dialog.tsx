@@ -50,7 +50,7 @@ export function ApprovalDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
-        className="sm:max-w-3xl flex flex-col h-[95vh] max-h-[95vh] overflow-hidden gap-4"
+        className="sm:max-w-5xl flex flex-col h-[95vh] max-h-[95vh] overflow-hidden gap-4"
         onPointerDownOutside={(e) => e.preventDefault()}
       >
         <DialogHeader className="flex-shrink-0">
