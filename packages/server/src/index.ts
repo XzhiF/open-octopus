@@ -73,6 +73,7 @@ import { SecretMasker } from "./services/actuator/secret-masker"
 import { EventLoopMonitor } from "./services/actuator/event-loop-monitor"
 import { createActuatorRoutes } from "./routes/actuator"
 import { createSystemRoutes } from "./routes/system"
+import { createReposRoutes } from "./routes/repos"
 import { getRecoveryService } from "./services/agent/recovery-service"
 import { initArchiveService } from "./services/archive/archive-service"
 import { ArchiveScheduler } from "./services/archive/archive-scheduler"
@@ -396,6 +397,9 @@ try {
 
 // ── System management: model config + connectivity test ─────────────
 app.route("/api/system", createSystemRoutes())
+
+// ── Repos management: read manifest data for org ─────────────────────
+app.route("/api/repos", createReposRoutes())
 
 app.onError(errorHandler)
 
