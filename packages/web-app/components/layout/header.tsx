@@ -14,6 +14,7 @@ import {
   Activity,
   BrainCircuit,
   Package,
+  Sliders,
 } from "lucide-react"
 
 const navigation = [
@@ -23,6 +24,7 @@ const navigation = [
   { name: "系统调度", href: "/scheduler", icon: Clock },
   { name: "Agent", href: "/agent", icon: BrainCircuit },
   { name: "资源", href: "/resources", icon: Package },
+  { name: "系统管理", href: "/system/models", icon: Sliders },
 ]
 
 export function Header() {

@@ -72,6 +72,7 @@ import { ActuatorService } from "./services/actuator/actuator-service"
 import { SecretMasker } from "./services/actuator/secret-masker"
 import { EventLoopMonitor } from "./services/actuator/event-loop-monitor"
 import { createActuatorRoutes } from "./routes/actuator"
+import { createSystemRoutes } from "./routes/system"
 import { getRecoveryService } from "./services/agent/recovery-service"
 import { initArchiveService } from "./services/archive/archive-service"
 import { ArchiveScheduler } from "./services/archive/archive-scheduler"
@@ -392,6 +393,9 @@ try {
     console.warn(`[server] Actuator setup failed: ${msg}`)
   }
 }
+
+// ── System management: model config + connectivity test ─────────────
+app.route("/api/system", createSystemRoutes())
 
 app.onError(errorHandler)
 
