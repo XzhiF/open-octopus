@@ -89,14 +89,14 @@ export function ApprovalDialog({
         {/* 审批选项 */}
         <div className="space-y-2 flex-shrink-0">
           <p className="text-sm font-medium">请选择</p>
-          <div className="grid gap-2">
+          <div className="grid gap-2" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(0, 1fr))" }}>
             {approval.options.map((opt) => (
               <Button
                 key={opt.value}
                 variant={selectedValue === opt.value ? "default" : "outline"}
                 onClick={() => handleSelect(opt.value)}
                 disabled={loading}
-                className="justify-start"
+                className="justify-center truncate"
               >
                 {opt.label}
               </Button>
