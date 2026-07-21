@@ -13,9 +13,9 @@ import { LoopExecutor } from "./executors/loop"
 import { AgentExecutor } from "./executors/agent"
 import { SwarmExecutor } from "./executors/swarm"
 import { AgentNodeRunner } from "./executors/agent-runner"
-import { JsonlLogger } from "./logger"
+import { JsonlLogger, sanitizeId } from "./logger"
 import { join } from "path"
-import { mkdirSync, writeFileSync, appendFileSync, existsSync, readFileSync, unlinkSync } from "fs"
+import { mkdirSync, writeFileSync, appendFileSync, existsSync, readFileSync, unlinkSync, readdirSync } from "fs"
 import { tmpdir } from "os"
 import type { CrossExecResolver } from "@octopus/shared"
 import { resolveModelAlias, loadModelAliasConfig } from "@octopus/shared"
@@ -312,7 +312,9 @@ export class WorkflowEngine {
         const { parentNode, innerNode } = loopInfo
         // 保存上次的迭代次数，再清除 loop 节点的旧结果
         const prevLoopResult = this.nodeResults[parentNode.id]
-        const resumeIteration = prevLoopResult?.iterations ?? 0
+        const resumeIteration = prevLoopResult?.iterations
+          ?? this.inferIterationFromLogs(parentNode.id)
+          ?? 0
         delete this.nodeResults[parentNode.id]
 
         // 构建 inner node overrides
@@ -599,6 +601,24 @@ export class WorkflowEngine {
       }
     }
     return null
+  }
+
+  /** Infer the last iteration number from existing JSONL log files. Used as fallback when nodeResults are lost (server restart). */
+  private inferIterationFromLogs(loopNodeId: string): number | undefined {
+    if (!this.orgDir || !this.executionId) return undefined
+    const logDir = join(this.orgDir, "logs", this.executionId)
+    if (!existsSync(logDir)) return undefined
+    try {
+      const prefix = `${sanitizeId(loopNodeId)}-iter-`
+      const files = readdirSync(logDir)
+      const iters = files
+        .filter(f => f.startsWith(prefix))
+        .map(f => parseInt(f.slice(prefix.length)))
+        .filter(n => !isNaN(n))
+      return iters.length > 0 ? Math.max(...iters) : undefined
+    } catch {
+      return undefined
+    }
   }
 
   /** DFS topological sort producing a flat linear order. Used by retryFrom() for index-based slicing. */
