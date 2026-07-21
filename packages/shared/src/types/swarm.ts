@@ -42,6 +42,7 @@ export function validateSwarmConstraints(
     mode?: string
     dynamic?: boolean
     experts?: Array<{ role: string; depends_on?: string[] }>
+    expert_pool?: Array<{ role: string; depends_on?: string[] }>
     max_experts?: number
     rounds?: number
     aggregator?: unknown
@@ -88,6 +89,19 @@ export function validateSwarmConstraints(
   if (data.dynamic && !data.max_experts) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, message: "dynamic mode requires max_experts" })
   }
+  // expert_pool constraints
+  if (data.expert_pool) {
+    const poolLen = data.expert_pool.length
+    if (poolLen < 2) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "expert_pool requires at least 2 experts" })
+    }
+    if (data.max_experts && data.max_experts > poolLen) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: `max_experts (${data.max_experts}) cannot exceed expert_pool size (${poolLen})` })
+    }
+    if (data.experts && data.experts.length > 0) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "expert_pool and experts are mutually exclusive — use expert_pool for dynamic selection, experts for fixed roster" })
+    }
+  }
 }
 
 // SwarmNodeDefSchema
@@ -96,6 +110,7 @@ export const SwarmNodeDefSchema = z.object({
   topic: z.string(),
   mode: z.enum(["review", "debate", "dispatch", "swarm", "moa"]),
   experts: z.array(ExpertDefSchema).optional(),
+  expert_pool: z.array(ExpertDefSchema).optional(),
   dynamic: z.boolean().optional(),
   max_experts: z.number().int().positive().optional(),
   rounds: z.number().int().nonnegative().optional(),

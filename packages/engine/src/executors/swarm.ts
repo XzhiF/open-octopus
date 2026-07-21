@@ -163,8 +163,43 @@ export class SwarmExecutor implements NodeExecutor {
       let routerDecision: RouterDecision | undefined
 
       if (this.node.dynamic) {
-        // Prefer OrchestratorService agent resolver (selects from ResourceManager, installs to workspace)
-        if (this.agentResolver) {
+        // Priority 1: expert_pool — select K from N declared experts in YAML
+        if (this.node.expert_pool) {
+          const pool = this.node.expert_pool
+          const poolResult = await this.selectFromPool(
+            resolvedTopic,
+            pool,
+            this.node.max_experts ?? 3,
+            llmCall,
+            logLines,
+          )
+          // Process selected pool experts through same enrichment pipeline
+          const poolWithDefaults: ExpertDef[] = poolResult.selected.map(e => ({
+            ...this.node.expert_defaults,
+            ...e,
+            skills: [
+              ...(this.node.expert_defaults?.skills ?? []),
+              ...(e.skills ?? []),
+            ],
+          }))
+          const poolEnriched = poolWithDefaults.map(expert => {
+            if (!expert.agent_file) return expert
+            const combined = combineAgentPrompt(expert.agent_file, expert.prompt, this.cwd)
+            return combined ? { ...expert, prompt: combined } : expert
+          })
+          const poolResolved = this.modelAliasConfig
+            ? poolEnriched.map(expert => {
+                if (!expert.model) return expert
+                const epk = resolveExpertProviderKey(expert)
+                const resolved = resolveModelAlias(expert.model, epk, this.modelAliasConfig!)
+                return resolved ? { ...expert, model: resolved } : expert
+              })
+            : poolEnriched
+          effectiveExperts = poolResolved
+          logLines.push(`[pool] Selected ${poolResolved.length} from ${pool.length} pool experts`)
+        }
+        // Priority 2: OrchestratorService agent resolver
+        else if (this.agentResolver) {
           try {
             const selected = await this.agentResolver(resolvedTopic, this.node.max_experts ?? 3)
             const predefinedRoles = new Set(experts.map(e => e.role))
@@ -421,6 +456,62 @@ export class SwarmExecutor implements NodeExecutor {
     const rawKey = this.node.engine ?? this.workflowEngine ?? "claude"
     const providerKey = rawKey === "claude-code" ? "claude" : rawKey
     return this.providers[providerKey] ?? this.providers["claude"]
+  }
+
+  /**
+   * Select K experts from a declared pool based on topic relevance.
+   * Uses LLM to analyze the topic and pick the most relevant experts.
+   */
+  private async selectFromPool(
+    topic: string,
+    pool: ExpertDef[],
+    maxExperts: number,
+    llmCall: (prompt: string, model?: string, engine?: string, skills?: string[]) => Promise<{ text: string }>,
+    logLines: string[],
+  ): Promise<{ selected: ExpertDef[] }> {
+    const k = Math.min(maxExperts, pool.length)
+
+    // Build candidate list — show role + task/prompt snippet for LLM to judge
+    const candidateList = pool.map((e, i) => {
+      const desc = e.task ?? e.perspective ?? (e.prompt ? e.prompt.slice(0, 150) : e.role)
+      return `${i + 1}. **${e.role}**: ${desc}`
+    }).join("\n")
+
+    const prompt = `You are a router that selects the most relevant experts for a given topic.
+
+## Topic
+${topic}
+
+## Expert Pool
+${candidateList}
+
+## Instructions
+Select exactly ${k} expert${k > 1 ? "s" : ""} from the pool above who are most relevant to this topic.
+Consider: which experts' domains are directly affected by this topic?
+
+Respond ONLY with a JSON array of role names, ordered by relevance:
+["role1", "role2"]`
+
+    try {
+      const result = await llmCall(prompt)
+      // Parse JSON array from response — handle markdown code fences
+      const cleaned = result.text.replace(/```json?\s*/g, "").replace(/```/g, "").trim()
+      const selectedRoles: string[] = JSON.parse(cleaned)
+
+      const selected = pool.filter(e => selectedRoles.includes(e.role))
+      if (selected.length === 0) {
+        logLines.push(`[pool] LLM returned no valid roles, falling back to first ${k} experts`)
+        return { selected: pool.slice(0, k) }
+      }
+
+      for (const expert of selected) {
+        logLines.push(`[pool] Selected: ${expert.role}`)
+      }
+      return { selected }
+    } catch (err) {
+      logLines.push(`[pool] Selection failed: ${err instanceof Error ? err.message : String(err)}, using first ${k} experts`)
+      return { selected: pool.slice(0, k) }
+    }
   }
 
   private getScanPaths(): string[] {

@@ -119,6 +119,24 @@ hooks:
         title: "🔍 xzf-dev — Codebase 研究完成"
         body: "🌿 $vars.feature @ $vars.branch"
 
+    - id: notify-clarify
+      type: notify
+      nodes: [requirements-clarify-loop]
+      channel: xzf_hermes
+      template:
+        severity: info
+        title: "💬 xzf-dev — 需求澄清完成"
+        body: "🌿 $vars.feature"
+
+    - id: notify-verify
+      type: notify
+      nodes: [verification-clarify-loop]
+      channel: xzf_hermes
+      template:
+        severity: info
+        title: "🧪 xzf-dev — 验证方式澄清完成"
+        body: "🌿 $vars.feature"
+
     - id: notify-brief
       type: notify
       nodes: [brief-maker]
@@ -249,17 +267,28 @@ nodes:
 
       echo "Scan complete."
 
-  # --- 1b: 并行领域研究（swarm review） ---
+  # --- 1b: 聚焦研究辩论（swarm debate + expert_pool 动态选择） ---
   - id: idea-research
     type: swarm
     depends_on: [idea-scan]
-    mode: review
+    mode: debate
+    dynamic: true
+    max_experts: 3
+    rounds: 2
+    consensus_threshold: 0.7
     context_tier: "200k"
     expert_defaults:
       skills: [octo-xzf-research]
       tools: [Read, Grep, Glob, Bash, WebFetch, WebSearch]
+    expert_pool:
+      - role: codebase-architect
+        agent_file: .claude/agents/octo-xzf-codebase-architect.md
+      - role: external-researcher
+        agent_file: .claude/agents/octo-xzf-external-researcher.md
+      - role: risk-analyst
+        agent_file: .claude/agents/octo-xzf-risk-analyst.md
     topic: |
-      ═══ Codebase 领域研究 ═══
+      ═══ Codebase Research Debate ═══
 
       Idea: 请读取 .octopus/xzf/$vars.feature/00-init/idea.md
       Workspace: 请读取 .octopus/xzf/$vars.feature/00-init/workspace-topology.md
@@ -274,50 +303,46 @@ nodes:
       - DB Schema: .octopus/xzf/$vars.feature/01-research/_scan/db-schemas.txt
       - 测试配置: .octopus/xzf/$vars.feature/01-research/_scan/test-config.txt
 
-      每位专家独立研究自己的领域，基于 _scan/ 预扫描数据。
-      每位专家将研究发现写入: .octopus/xzf/$vars.feature/01-research/{domain}.md
-      研究方法和输出格式参见 octo-xzf-research skill。
+      ═══ 辩论焦点 ═══
+      围绕这个 Idea 进行聚焦讨论，不要写通用 domain overview：
 
-      ⚠️ 每位专家发言控制在 1500 字以内。详细分析写入指定文件，发言只放关键发现、GAPS 和决策点。
-    experts:
-      - role: senior-architect
-        agent_file: .claude/agents/octo-xzf-architect.md
-        task: |
-          研究: 整体架构、模块边界、跨项目通信、核心模式
-          写入: 01-research/architecture.md
-          额外: 如发现未覆盖领域，标记 ## GAPS
-      - role: backend-expert
-        agent_file: .claude/agents/octo-xzf-backend-expert.md
-        task: |
-          研究: 后端服务架构、DB schema、API 实现模式
-          外部: 如有外部平台 API 对接需求，使用 WebFetch 调研
-          写入: 01-research/backend.md
-      - role: frontend-expert
-        agent_file: .claude/agents/octo-xzf-frontend-expert.md
-        task: |
-          研究: 前端组件结构、状态管理、路由、UI 框架
-          写入: 01-research/frontend.md
-      - role: test-architect
-        agent_file: .claude/agents/octo-xzf-test-architect.md
-        task: |
-          研究: 测试框架、测试模式、CI 配置、测试数据策略
-          写入: 01-research/testing.md
-      - role: security-expert
-        agent_file: .claude/agents/octo-xzf-security-expert.md
-        task: |
-          研究: 认证实现、权限模型、安全中间件、密钥管理
-          写入: 01-research/security.md
+      1. 这个 Idea 涉及哪些模块？证据是什么？（引用 _scan/ 中的具体文件）
+      2. 现有模式哪些可复用？哪些需要新建或改造？
+      3. 有什么约束和风险？（技术债、性能、兼容性）
+      4. 需要外部调研吗？（仅在 Idea 涉及外部 API/技术时用 WebFetch/WebSearch）
+
+      ⚠️ 互相挑战对方的假设。例：architect 说"改 X 模块" → 其他专家质疑"X 的 schema/API 能支撑吗？"
+      ⚠️ 每位专家发言控制在 1000 字以内。聚焦结论和分歧点，不写冗长分析。
+      ⚠️ 如果某位专家的领域与这个 Idea 无关，直接说"本领域无重大影响"，不要硬凑内容。
     host:
-      role: research-indexer
+      role: research-synthesizer
       prompt: |
-        读取 01-research/ 下所有 .md 文件（不含 _scan/）。
-        写入 .octopus/xzf/$vars.feature/01-research/index.md 索引文件，格式：
+        读取所有轮次的讨论记录。综合达成共识的结论，标注仍有分歧的点。
 
-        | 文件 | 领域 | 关键发现 | 与 Idea 关系 |
-        |------|------|---------|-------------|
+        写入 .octopus/xzf/$vars.feature/01-research/research-brief.md：
 
-        如有 GAPS，汇总到索引末尾。不重写内容。
-        Synthesis 输出索引摘要即可。
+        ```markdown
+        # Research Brief
+
+        ## Affected Modules
+        | 模块/包 | 影响类型 | 现有代码定位 | 证据 |
+        |---------|---------|-------------|------|
+
+        ## Existing Patterns to Reuse
+        - {pattern}: {在哪里} → {本 Idea 如何复用}
+
+        ## Constraints & Risks
+        - {constraint}: {原因} → {对实现的影响}
+
+        ## External Knowledge
+        {仅在涉及外部技术时有此节，否则删除}
+
+        ## Open Questions
+        {专家间仍有分歧的点，需在澄清阶段确认}
+        ```
+
+        ⚠️ 只保留有价值的结论。不填充无内容的章节。
+        Synthesis 输出 brief 摘要即可。
 
   # ============================================================
   # Stage 2a: 需求澄清循环
@@ -337,7 +362,7 @@ nodes:
 
           读取:
           - Idea: .octopus/xzf/$vars.feature/00-init/idea.md
-          - Research: .octopus/xzf/$vars.feature/01-research/index.md
+          - Research: .octopus/xzf/$vars.feature/01-research/research-brief.md
           - Workspace: .octopus/xzf/$vars.feature/00-init/workspace-topology.md
 
           用户上轮回复:
@@ -391,7 +416,7 @@ nodes:
 
           读取:
           - Idea: .octopus/xzf/$vars.feature/00-init/idea.md
-          - Research: .octopus/xzf/$vars.feature/01-research/index.md
+          - Research: .octopus/xzf/$vars.feature/01-research/research-brief.md
           - 已澄清需求: .octopus/xzf/$vars.feature/02-clarification/questions.md
           - Workspace: .octopus/xzf/$vars.feature/00-init/workspace-topology.md
 
@@ -460,7 +485,7 @@ nodes:
 
       读取:
       - 需求简报: .octopus/xzf/$vars.feature/02-clarification/brief.md
-      - Research 知识: .octopus/xzf/$vars.feature/01-research/index.md
+      - Research 知识: .octopus/xzf/$vars.feature/01-research/research-brief.md
       - Workspace: .octopus/xzf/$vars.feature/00-init/workspace-topology.md
 
       ═══ 输出 ═══
@@ -518,7 +543,7 @@ nodes:
           - 读取 T-N.md 的目标和验收标准
           - 实现（全栈：DB → API → UI → test）
           - 基础验证（单测 + 集成测试，对照 spec 反假跑标准）
-          - 自治 verify-fix 循环（max 3 次）
+          - 自治 verify-fix 循环（max 3 次，含 code smell 检查，详见 skill）
           - 通过后更新 checkpoint.json（严格按 octo-xzf-implementer skill 的 Schema）
           - 3 次仍失败 → 标记 task 为 failed，记录到 checkpoint，继续下一个 task
           ⚠️ 此阶段不跑 E2E 测试，E2E 在 Stage 6 统一执行。

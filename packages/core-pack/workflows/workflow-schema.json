@@ -612,12 +612,19 @@
         },
         "mode": {
           "type": "string",
-          "enum": ["review", "debate", "dispatch", "swarm"],
-          "description": "[swarm node] Orchestration mode. review: single-round parallel expert review. debate: multi-round discussion with consensus checks. dispatch: DAG-based task execution with dependencies. swarm: meta-mode where Router auto-selects mode and experts."
+          "enum": ["review", "debate", "dispatch", "swarm", "moa"],
+          "description": "[swarm node] Orchestration mode. review: single-round parallel expert review. debate: multi-round discussion with consensus checks. dispatch: DAG-based task execution with dependencies. swarm: meta-mode where Router auto-selects mode and experts. moa: Mixture of Agents with aggregator."
         },
         "experts": {
           "type": "array",
           "description": "[swarm node] Predefined expert definitions. Each expert participates in the discussion with their own role and perspective.",
+          "items": {
+            "$ref": "#/$defs/ExpertDef"
+          }
+        },
+        "expert_pool": {
+          "type": "array",
+          "description": "[swarm node] Expert pool for dynamic selection. When dynamic: true, Router selects max_experts from this pool instead of scanning filesystem. Mutually exclusive with experts.",
           "items": {
             "$ref": "#/$defs/ExpertDef"
           }

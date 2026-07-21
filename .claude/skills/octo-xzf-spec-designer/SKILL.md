@@ -3,7 +3,7 @@ name: octo-xzf-spec-designer
 description: "Spec + Tracer Bullet 设计规范 — 目标驱动、垂直切片、验证优先"
 category: coding-assistant
 tags: [xzf-dev]
-version: 2.0.0
+version: 2.1.0
 ---
 
 # Spec + Tracer Bullet 设计规范
@@ -189,3 +189,45 @@ e2e-runner 直接读取此文件执行，不需要遍历各 spec 文件。
 6. e2e-test-plan.md 是否覆盖所有有 E2E 验证的 spec？
 7. 是否避免了文件路径和实现细节？
 8. spec-index.md 是否完整？
+
+## 领域术语对齐
+
+设计 spec 前读取项目已有领域知识：
+
+```
+{project}/CONTEXT.md 或 CONTEXT-MAP.md   ← 领域术语
+{project}/docs/adr/                      ← 已有架构决策
+```
+
+- Spec 中必须使用 CONTEXT.md 已有的术语，不造新概念
+- 如果需要用新概念，标到 spec 的约束节，等 clarify 阶段确认
+
+## 架构决策记录（ADR）
+
+当 spec 涉及满足以下**三个条件**的决策时，写入 ADR：
+
+1. **难逆转** — 后续改动成本高（数据库选型、通信协议、认证方案）
+2. **无上下文时会惊讶** — 未来读者会问"为什么这样做"
+3. **真实权衡** — 有替代方案但选了当前方案
+
+三个条件缺一个就不写。容易逆转的跳过，不意外的跳过，没有替代方案的跳过。
+
+**ADR 格式（兼容 domain-modeling）：**
+
+```markdown
+# {决策标题}
+
+{1-3 句话：上下文、决定、原因。}
+```
+
+就这么短。ADR 的价值在于记录**做了什么决定**和**为什么**。
+
+**可选章节**（仅在真正增值时添加）：
+- **Considered Options** — 被否决的替代方案值得记住时
+- **Consequences** — 非显而易见的下游影响需要指出时
+
+**写入规则：**
+- 路径：`{project}/docs/adr/NNNN-slug.md`
+- 扫描 docs/adr/ 已有编号，递增 1
+- 目录不存在则创建（lazy creation）
+- 一次 spec 设计最多写 1-2 个 ADR，不滥用

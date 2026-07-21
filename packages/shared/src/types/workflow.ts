@@ -181,6 +181,7 @@ export interface NodeDef {
   topic?: string
   mode?: "review" | "debate" | "dispatch" | "swarm" | "moa"
   experts?: ExpertDef[]
+  expert_pool?: ExpertDef[]
   dynamic?: boolean
   max_experts?: number
   rounds?: number
@@ -256,6 +257,7 @@ export const NodeSchema: z.ZodType<NodeDef> = z.lazy(() =>
     topic: z.string().optional(),
     mode: z.enum(["review", "debate", "dispatch", "swarm", "moa"]).optional(),
     experts: z.array(ExpertDefSchema).optional(),
+    expert_pool: z.array(ExpertDefSchema).optional(),
     dynamic: z.boolean().optional(),
     max_experts: z.number().int().positive().optional(),
     rounds: z.number().int().nonnegative().optional(),

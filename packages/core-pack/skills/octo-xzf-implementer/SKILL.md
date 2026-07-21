@@ -3,7 +3,7 @@ name: octo-xzf-implementer
 description: "Tracer Bullet 执行方法论 — 全栈实现 + 自治 verify-fix + checkpoint 标准"
 category: coding-assistant
 tags: [xzf-dev]
-version: 2.0.0
+version: 2.1.0
 ---
 
 # Tracer Bullet 执行方法论
@@ -12,6 +12,14 @@ version: 2.0.0
 execution-loop 中的 agent 节点，按依赖顺序逐个执行 spec 下的 tracer bullets。
 
 ## 执行流程
+
+### 准备工作
+
+开始实现前，读取项目领域知识：
+```
+{project}/CONTEXT.md 或 CONTEXT-MAP.md   ← 领域术语
+```
+变量、函数、类、模块命名必须使用 CONTEXT.md 中已有的术语。如术语不存在于 CONTEXT.md，按 codebase 现有命名约定保持一致。
 
 ### 每个 Tracer Bullet
 
@@ -22,9 +30,12 @@ execution-loop 中的 agent 节点，按依赖顺序逐个执行 spec 下的 tra
 4. 自治 verify-fix 循环（max 3）:
    a. 运行 T-N.md 中定义的验证方式
    b. 对照 spec 反假跑标准，确认"真通过"
-   c. IF 通过 → 更新 checkpoint → 下一个 task
-   d. IF 失败 → 分析原因 → 修复 → 重试
-   e. IF 3 次仍失败 → 写入 checkpoint failure → 报告
+   c. Code smell 检查:
+      grep -rn "TODO\|FIXME\|HACK\|XXX\|console\.log\|debugger" {变更文件}
+      发现遗留 → 清理（算入 fix 次数）
+   d. IF 全部通过（测试 + 反假跑 + smell 清理）→ 更新 checkpoint → 下一个 task
+   e. IF 失败 → 分析原因 → 修复 → 重试
+   f. IF 3 次仍失败 → 写入 checkpoint failure → 报告
 5. 所有 task 完成后，更新 checkpoint 为 completed
 ```
 
