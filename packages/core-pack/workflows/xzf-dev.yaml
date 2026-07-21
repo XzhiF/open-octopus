@@ -582,6 +582,7 @@ nodes:
         type: agent
         context: new
         model: se
+        timeout: 1800 # 30min — E2E 测试可能涉及浏览器操作/长请求，给足时间
         skills: [octo-xzf-implementer]
         tools: [Read, Write, Edit, Bash, Grep, Glob]
         prompt: |
