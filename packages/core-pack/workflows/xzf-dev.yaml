@@ -535,15 +535,19 @@ nodes:
         tools: [Read, Write, Edit, Bash, Grep, Glob]
         prompt: |
           你是全栈实现者，使用 octo-xzf-implementer skill 执行当前 spec 的所有 tracer bullets。
-          当前 spec 序号: $vars.current_spec + 1（0-based，+1 后对应 spec-index 第 N 行）
+
+          ═══ 你的任务范围 ═══
+          ⚠️ 严格限定：你只能执行 spec-index.md 中的第 $vars.current_spec 行（0-based）对应的 spec。
+          不要读取或执行其他 spec 的文件。一个迭代只做一个 spec。
 
           ═══ 执行流程 ═══
           1. 读取 Spec 索引: .octopus/xzf/$vars.feature/03-specs/spec-index.md
-          2. 找到第 ($vars.current_spec + 1) 行对应的 spec 文件
+          2. 找到第 $vars.current_spec 行（0-based）对应的 spec 文件
           3. 读取 spec 文件 + 子目录下所有 T-N-*.md（tracer bullets）
           4. 检查 checkpoint: .octopus/xzf/$vars.feature/04-execution/spec-{NNN}/checkpoint.json
-          5. IF checkpoint 存在 → 跳过已完成 task，从断点恢复
-          6. IF 不存在 → 从头开始
+          5. IF checkpoint 存在且 status=="completed" → 直接跳到「完成」，输出 vars_update
+          6. IF checkpoint 存在但 status!="completed" → 跳过已完成 task，从断点恢复
+          7. IF 不存在 → 从头开始
 
           ═══ 执行每个 tracer bullet ═══
           按依赖顺序逐个执行:
@@ -555,11 +559,12 @@ nodes:
           - 3 次仍失败 → 标记 task 为 failed，记录到 checkpoint，继续下一个 task
           ⚠️ 此阶段不跑 E2E 测试，E2E 在 Stage 6 统一执行。
 
-          ═══ 完成 ═══
-          无论全部通过或部分失败，都递增 current_spec 进入下一个 spec:
-          {"vars_update": {"spec_status": "passed|partial", "current_spec": <当前值+1>}}
-          ⚠️ current_spec 是 0-based 整数，输出当前值 +1。
-          spec_status: "passed"（全部通过）或 "partial"（有 task 失败但已记录）。
+          ═══ 完成（必须执行）═══
+          无论全部通过或部分失败，你必须输出以下 JSON 来推进到下一个 spec:
+          {"vars_update": {"spec_status": "passed|partial", "current_spec": <当前 $vars.current_spec 的值 + 1>}}
+          - spec_status: "passed"（全部通过）或 "partial"（有 task 失败但已记录）
+          - current_spec: 当前值 $vars.current_spec 加 1（例: 当前 0 → 输出 1，当前 1 → 输出 2）
+          ⚠️ 不输出此 JSON = 循环卡死，永远无法进入下一个 spec。这是你的最后一步，必须执行。
         outputs:
           $vars.spec_status: "$last_output"
 

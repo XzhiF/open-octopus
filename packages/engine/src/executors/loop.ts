@@ -10,6 +10,7 @@ import { ConditionExecutor } from "./condition"
 import { ApprovalExecutor } from "./approval"
 import { AgentExecutor } from "./agent"
 import { SwarmExecutor } from "./swarm"
+import { extractBreakWhenVars, forceAdvanceLoopVars } from "./loop-fallback"
 
 export class LoopExecutor implements NodeExecutor {
   private iterations = 0
@@ -114,6 +115,20 @@ export class LoopExecutor implements NodeExecutor {
           // Clear override after consumption so subsequent iterations pause again
           this.resume?.innerNodeOverrides?.delete(innerNode.id)
         } else {
+          // ── Snapshot loop-condition vars BEFORE agent execution ──
+          const loopConditionExprs = [
+            this.node.break_when,
+            this.node.while,
+            innerNode.break_when,
+          ].filter(Boolean) as string[]
+          const loopConditionVars = innerNode.type === "agent"
+            ? [...new Set(loopConditionExprs.flatMap(extractBreakWhenVars))]
+            : []
+          const snapshotBefore = new Map<string, unknown>()
+          for (const key of loopConditionVars) {
+            snapshotBefore.set(key, this.pool.get(key))
+          }
+
           // Normal execution
           const executor = this.createExecutor(innerNode, undefined, completedInnerResults)
 
@@ -125,6 +140,32 @@ export class LoopExecutor implements NodeExecutor {
           const innerDurationMs = Date.now() - innerStart
           this.config.logger?.log(innerNode.id, "end", { status: result.status, durationMs: innerDurationMs, exitCode: result.exitCode })
           this.config.callbacks?.onNodeEnd?.(innerNode.id, result.status, innerDurationMs, result, innerNode.type)
+
+          // ── Loop fallback: force-advance if agent completed without updating loop vars ──
+          if (innerNode.type === "agent" && result.status === "completed" && loopConditionVars.length > 0) {
+            const fallbackResult = forceAdvanceLoopVars(this.pool, loopConditionVars, snapshotBefore)
+            if (fallbackResult.applied) {
+              const changesDesc = fallbackResult.changes
+                .map(c => `${c.key}: ${JSON.stringify(c.oldVal)} → ${JSON.stringify(c.newVal)}`)
+                .join(", ")
+              const warnMsg = `[loop-fallback] Agent "${innerNode.id}" completed without vars_update; force-advanced: ${changesDesc}`
+              logLines.push(warnMsg)
+              this.config.logger?.log(this.node.id, "loop_fallback", {
+                agentNodeId: innerNode.id,
+                iteration: this.iterations,
+                changes: fallbackResult.changes,
+              })
+            }
+            if (fallbackResult.skippedVars.length > 0) {
+              const warnMsg = `[loop-fallback] Non-numeric loop vars not advanced: ${fallbackResult.skippedVars.join(", ")} — loop relies on max_iterations`
+              logLines.push(warnMsg)
+              this.config.logger?.log(this.node.id, "loop_fallback_skipped", {
+                agentNodeId: innerNode.id,
+                iteration: this.iterations,
+                skippedVars: fallbackResult.skippedVars,
+              })
+            }
+          }
         }
 
         // Log approval metadata for approval nodes (both override and normal paths)
