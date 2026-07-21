@@ -470,12 +470,23 @@ nodes:
               $vars.e2e_decision: "$last_output"
               $vars.user_guidance: "$last_output.comment"
 
-      # --- 3g: Feature 完成 → 进入下一个 ---
+      # --- 3g: Feature 完成 → commit → 进入下一个 ---
       - id: feature-next
         type: bash
         depends_on: [feature-e2e-loop]
         bash: |
           echo "Feature F$vars.current_feature 完成: spec_status=$vars.spec_status, e2e_status=$vars.e2e_status"
+
+          # Per-feature git commit — 追踪每个 Feature 的源码变更
+          FEATURE_NAME=$(head -1 ".octopus/xzf/$vars.feature/02-clarification/features/F$vars.current_feature-scope.md" 2>/dev/null | sed 's/^# F[0-9]*: //')
+          git add -A
+          if ! git diff --cached --quiet 2>/dev/null; then
+            git commit -m "feat(F$vars.current_feature): ${FEATURE_NAME:-feature-$vars.current_feature}"
+            echo "✅ Committed: feat(F$vars.current_feature): ${FEATURE_NAME:-feature-$vars.current_feature}"
+          else
+            echo "ℹ️ 无源码变更，跳过 commit"
+          fi
+
           echo "进入下一个 Feature..."
           # 重置 per-feature 变量
           echo '{"vars_update": {"current_feature": '"$(($vars.current_feature + 1))"', "clarify_decision": "", "verify_decision": "", "spec_count": "0", "current_spec": "0", "spec_status": "", "e2e_status": "", "e2e_decision": "", "user_guidance": "", "requirements_checklist_status": "", "env_checklist_status": "", "feature_status": "completed"}}'
@@ -504,6 +515,7 @@ nodes:
       Summary 结构:
       - 全局功能概述
       - 各 Feature 完成状态表
+      - Per-Feature commit 历史: `git log --oneline --grep="^feat(F"`
       - 全局 E2E 结果
       - 技术决策（ADR 列表）
 
