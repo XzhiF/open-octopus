@@ -321,9 +321,11 @@ nodes:
       ⚠️ 如果某位专家的领域与这个 Idea 无关，直接说"本领域无重大影响"，不要硬凑内容。
     host:
       role: research-synthesizer
+      skills: [octo-xzf-clarify]
       prompt: |
         读取所有轮次的讨论记录。综合达成共识的结论，标注仍有分歧的点。
 
+        ═══ Part 1: Research Brief ═══
         写入 .octopus/xzf/$vars.feature/01-research/research-brief.md：
 
         ```markdown
@@ -347,7 +349,18 @@ nodes:
         ```
 
         ⚠️ 只保留有价值的结论。不填充无内容的章节。
-        Synthesis 输出 brief 摘要即可。
+
+        ═══ Part 2: 初始澄清问题 ═══
+        基于 research 结果，按 octo-xzf-clarify skill 方法论生成 Round 1 澄清问题。
+        重点关注 Open Questions 和需要用户决策的设计点。不涉及测试环境和验证方式（下一阶段处理）。
+
+        写入: .octopus/xzf/$vars.feature/02-clarification/questions.md（Round 1 格式）
+
+        ═══ last_output ═══
+        按 skill 定义的 Synthesis 格式输出，下游 approval 直接展示给用户。
+
+        最后输出 vars_update JSON:
+        {"vars_update": {"requirements_checklist_status": "INCOMPLETE: {缺失项}"}}
 
   # ============================================================
   # Stage 2a: 需求澄清循环
@@ -359,43 +372,16 @@ nodes:
     max_iterations: 10
     break_when: '$vars.clarify_decision == "proceed" && $vars.requirements_checklist_status == "COMPLETE"'
     nodes:
-      - id: requirements-clarify
-        type: agent
-        skills: [octo-xzf-clarify]
-        prompt: |
-          ═══ 需求澄清 — Round $iteration ═══
-
-          读取:
-          - Idea: .octopus/xzf/$vars.feature/00-init/idea.md
-          - Research: .octopus/xzf/$vars.feature/01-research/research-brief.md
-          - Workspace: .octopus/xzf/$vars.feature/00-init/workspace-topology.md
-
-          用户上轮回复:
-          $requirements-approval.output.comment
-
-          职责: 需求澄清 — 功能边界、优先级、用户场景、技术约束。
-          不涉及测试环境和验证方式（下一阶段处理）。
-
-          澄清方法论、问题格式、Round 流程参见 octo-xzf-clarify skill。
-          输出: .octopus/xzf/$vars.feature/02-clarification/questions.md
-
-          ⚠️ 最终输出（last_output）包含 Synthesis 三部分：「待澄清」+「用户补充」+「已确认摘要」。
-          「已确认摘要」始终输出（已确认决策概览），让用户审阅自确认项。
-          下游 approval 直接引用 $requirements-clarify.output.last_output 展示给用户。
-
-          最后输出 vars_update JSON:
-          {"vars_update": {"requirements_checklist_status": "COMPLETE 或 INCOMPLETE: ..."}}
-
       - id: requirements-approval
         type: approval
-        depends_on: [requirements-clarify]
         execute_when: '$vars.clarify_decision != "proceed" || $vars.requirements_checklist_status != "COMPLETE"'
         comment_label: "澄清输入:"
         comment_placeholder: "请在此输入您对以上问题的回答..."
         prompt: |
           Round $iteration | 📁 02-clarification/questions.md
           未回答的问题将采用推荐方案。
-          $requirements-clarify.output.last_output
+          {{#if $requirements-clarify.output.last_output}}$requirements-clarify.output.last_output{{/if}}
+          {{#if !$requirements-clarify.output.last_output}}$idea-research.output.last_output{{/if}}
         options:
           - label: "继续"
             value: "continue"
@@ -403,6 +389,33 @@ nodes:
             value: "proceed"
         outputs:
           $vars.clarify_decision: "$last_output"
+
+      - id: requirements-clarify
+        type: agent
+        depends_on: [requirements-approval]
+        skills: [octo-xzf-clarify]
+        prompt: |
+          ═══ 需求澄清 — Round $iteration ═══
+
+          读取:
+          - Idea: .octopus/xzf/$vars.feature/00-init/idea.md
+          - Research: .octopus/xzf/$vars.feature/01-research/research-brief.md
+          - 现有问题: .octopus/xzf/$vars.feature/02-clarification/questions.md
+          - Workspace: .octopus/xzf/$vars.feature/00-init/workspace-topology.md
+
+          用户本轮回复:
+          $requirements-approval.output.comment
+
+          职责: 需求澄清 — 功能边界、优先级、用户场景、技术约束。
+          不涉及测试环境和验证方式（下一阶段处理）。
+
+          澄清方法论、问题格式、Round 流程、Synthesis 输出格式参见 octo-xzf-clarify skill。
+          输出: .octopus/xzf/$vars.feature/02-clarification/questions.md
+          下游 approval 直接引用 $requirements-clarify.output.last_output 展示给用户。
+          checklist 完成时按 skill 的阶段衔接指引准备下游验证问题。
+
+          最后输出 vars_update JSON:
+          {"vars_update": {"requirements_checklist_status": "COMPLETE 或 INCOMPLETE: ..."}}
 
   # ============================================================
   # Stage 2b: 验证方式与测试环境澄清循环
@@ -414,8 +427,30 @@ nodes:
     max_iterations: 10
     break_when: '$vars.verify_decision == "proceed" && $vars.env_checklist_status == "COMPLETE"'
     nodes:
+      - id: verification-approval
+        type: approval
+        execute_when: '$vars.verify_decision != "proceed" || $vars.env_checklist_status != "COMPLETE"'
+        comment_label: "补充/修正:"
+        comment_placeholder: "请在此补充或修正验证策略..."
+        prompt: |
+          Round $iteration | 环境: $vars.env_checklist_status | 📁 02-clarification/verification.md
+          ⚠️ INCOMPLETE 时必须补全才能进入下一阶段。
+          {{#if $verification-clarify.output.last_output}}$verification-clarify.output.last_output{{/if}}
+          {{#if !$verification-clarify.output.last_output}}
+          {{#if $requirements-clarify.output.last_output}}$requirements-clarify.output.last_output{{/if}}
+          {{#if !$requirements-clarify.output.last_output}}$idea-research.output.last_output{{/if}}
+          {{/if}}
+        options:
+          - label: "继续"
+            value: "continue"
+          - label: "完成"
+            value: "proceed"
+        outputs:
+          $vars.verify_decision: "$last_output"
+
       - id: verification-clarify
         type: agent
+        depends_on: [verification-approval]
         skills: [octo-xzf-verification]
         prompt: |
           ═══ 验证策略规划 — Round $iteration ═══
@@ -426,7 +461,7 @@ nodes:
           - 已澄清需求: .octopus/xzf/$vars.feature/02-clarification/questions.md
           - Workspace: .octopus/xzf/$vars.feature/00-init/workspace-topology.md
 
-          用户上轮回复:
+          用户本轮回复:
           $verification-approval.output.comment
 
           验证策略方法论参见 octo-xzf-verification skill。
@@ -438,24 +473,6 @@ nodes:
 
           最后输出 vars_update JSON:
           {"vars_update": {"env_checklist_status": "COMPLETE 或 INCOMPLETE: ..."}}
-
-      - id: verification-approval
-        type: approval
-        depends_on: [verification-clarify]
-        execute_when: '$vars.verify_decision != "proceed" || $vars.env_checklist_status != "COMPLETE"'
-        comment_label: "补充/修正:"
-        comment_placeholder: "请在此补充或修正验证策略..."
-        prompt: |
-          Round $iteration | 环境: $vars.env_checklist_status | 📁 02-clarification/verification.md
-          ⚠️ INCOMPLETE 时必须补全才能进入下一阶段。
-          $verification-clarify.output.last_output
-        options:
-          - label: "继续"
-            value: "continue"
-          - label: "完成"
-            value: "proceed"
-        outputs:
-          $vars.verify_decision: "$last_output"
 
   # ============================================================
   # Stage 3: 需求简报（综合澄清结果 → brief.md）

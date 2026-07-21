@@ -126,9 +126,11 @@ function processConditionals(
       break
     }
 
-    const [, condition, content] = match
-    const value = resolveVarRef(condition.trim(), pool, nodeOutputs)
-    const isTruthy = isTruthyValue(value)
+    const [, rawCondition, content] = match
+    const isNegated = rawCondition.trim().startsWith("!")
+    const condition = isNegated ? rawCondition.trim().slice(1).trim() : rawCondition.trim()
+    const value = resolveVarRef(condition, pool, nodeOutputs)
+    const isTruthy = isTruthyValue(value) !== isNegated
 
     result = result.replace(match[0], isTruthy ? content : "")
   }

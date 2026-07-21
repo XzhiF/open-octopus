@@ -169,6 +169,50 @@ describe("TemplateRenderer", () => {
       )
       expect(msg.body).toBe("✅ $hook.completed_count / ⏭️ 2")
     })
+
+    it("renders negated conditional — shows when falsy", () => {
+      const pool = new VarPool({})
+      const msg = renderer.render(
+        { severity: "info", title: "{{#if !$vars.missing}}fallback{{/if}}" },
+        pool
+      )
+      expect(msg.title).toBe("fallback")
+    })
+
+    it("renders negated conditional — hides when truthy", () => {
+      const pool = new VarPool({ status: "done" })
+      const msg = renderer.render(
+        { severity: "info", title: "{{#if !$vars.status}}fallback{{/if}}end" },
+        pool
+      )
+      expect(msg.title).toBe("end")
+    })
+
+    it("renders complementary if/if-not pair (round 1 vs round 2+)", () => {
+      const pool = new VarPool({})
+      const nodeOutputs = { "clarify": { last_output: "clarify result" } }
+      // Round 2+: clarify has output
+      const withOutput = renderer.render(
+        {
+          severity: "info",
+          title: "{{#if $clarify.output.last_output}}$clarify.output.last_output{{/if}}{{#if !$clarify.output.last_output}}idea-research output{{/if}}"
+        },
+        pool,
+        nodeOutputs
+      )
+      expect(withOutput.title).toBe("clarify result")
+
+      // Round 1: clarify has no output
+      const withoutOutput = renderer.render(
+        {
+          severity: "info",
+          title: "{{#if $clarify.output.last_output}}$clarify.output.last_output{{/if}}{{#if !$clarify.output.last_output}}idea-research output{{/if}}"
+        },
+        pool,
+        {}
+      )
+      expect(withoutOutput.title).toBe("idea-research output")
+    })
   })
 
   describe("nested default filter expressions", () => {
