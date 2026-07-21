@@ -1,9 +1,9 @@
 ---
 name: octo-xzf-ship
-description: "Ship 交付方法论 — PR/MR Summary 生成 + 提交"
+description: "Ship 交付方法论 — PR/MR Summary 生成 + 提交 + Feature 归档"
 category: coding-assistant
 tags: [xzf-dev]
-version: 1.0.0
+version: 1.1.0
 ---
 
 # Ship 交付方法论
@@ -109,3 +109,89 @@ fi
 ### 输出
 
 汇总所有项目的 PR/MR URL，作为最终输出展示给用户。
+
+## Feature 归档（项目级迭代记录）
+
+PR/MR 提交完毕后，将本次迭代的完整产物归档到 workspace 每个项目的 `.octopus/xzf/` 目录下。
+
+目的：每个项目维护自己的迭代历史，方便后续回溯需求背景、设计决策和验证结果。
+
+### 归档流程
+
+```bash
+# 对 workspace-topology.md 中的每个项目:
+
+FEATURE_SLUG="{feature}"
+PROJECT_PATH="{project-path}"
+XZF_DIR="$PROJECT_PATH/.octopus/xzf"
+mkdir -p "$XZF_DIR"
+
+# 1. 解决命名冲突
+ARCHIVE_SLUG="$FEATURE_SLUG"
+if [ -d "$XZF_DIR/$ARCHIVE_SLUG" ]; then
+  SUFFIX=1
+  while [ -d "$XZF_DIR/${FEATURE_SLUG}-v${SUFFIX}" ]; do
+    SUFFIX=$((SUFFIX + 1))
+  done
+  ARCHIVE_SLUG="${FEATURE_SLUG}-v${SUFFIX}"
+fi
+
+# 2. 拷贝整个 feature 目录
+cp -r ".octopus/xzf/$FEATURE_SLUG" "$XZF_DIR/$ARCHIVE_SLUG"
+
+# 3. 维护 index.md
+INDEX_FILE="$XZF_DIR/index.md"
+if [ ! -f "$INDEX_FILE" ]; then
+  cat > "$INDEX_FILE" << 'EOF'
+# Iteration Archive
+
+| # | Date | Branch | Feature Slug | Archive |
+|---|------|--------|-------------|---------|
+EOF
+fi
+
+# 解析已有最大序号
+LAST_NUM=$(grep -oP '^\| \K\d+' "$INDEX_FILE" | sort -n | tail -1)
+NEXT_NUM=$(( ${LAST_NUM:-0} + 1 ))
+TODAY=$(date +%Y-%m-%d)
+
+echo "| $NEXT_NUM | $TODAY | $BRANCH | $FEATURE_SLUG | $ARCHIVE_SLUG |" >> "$INDEX_FILE"
+
+echo "[{project}] 归档完成: .octopus/xzf/$ARCHIVE_SLUG (序号 #$NEXT_NUM)"
+```
+
+### index.md 格式
+
+每个项目的 `.octopus/xzf/index.md` 记录所有迭代历史：
+
+```markdown
+# Iteration Archive
+
+| # | Date | Branch | Feature Slug | Archive |
+|---|------|--------|-------------|---------|
+| 1 | 2025-01-15 | feat/user-auth | add-user-auth | add-user-auth |
+| 2 | 2025-01-20 | feat/cart-v2 | add-cart-discount | add-cart-discount |
+| 3 | 2025-01-25 | feat/user-auth | add-user-auth | add-user-auth-v1 |
+```
+
+### 命名冲突规则
+
+- 首次归档：使用原始 feature-slug（如 `add-user-auth`）
+- 冲突时：追加 `-v1`、`-v2`...（如 `add-user-auth-v1`）
+- Archive 列记录实际使用的目录名，Feature Slug 列始终记录原始值
+
+### 输出
+
+汇总所有项目的归档路径，与 PR/MR URL 一起输出：
+
+```
+🚀 Ship 完成！
+
+PR/MR:
+- [project-a] https://github.com/.../pull/42
+- [project-b] https://github.com/.../pull/17
+
+归档:
+- [project-a] .octopus/xzf/add-user-auth (#3)
+- [project-b] .octopus/xzf/add-user-auth (#1)
+```

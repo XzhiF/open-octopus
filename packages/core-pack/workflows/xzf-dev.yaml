@@ -656,31 +656,13 @@ nodes:
     skills: [octo-xzf-ship]
     tools: [Read, Bash, Grep, Glob]
     prompt: |
-      使用 octo-xzf-ship skill 完成 Ship 交付。
+      使用 octo-xzf-ship skill 完成 Ship 交付（PR/MR 提交 + Feature 归档）。
 
-      ═══ Step 1: 生成 PR/MR Summary ═══
-      读取以下文件，生成 summary:
-      - 需求简报: .octopus/xzf/$vars.feature/02-clarification/brief.md
-      - Specs: .octopus/xzf/$vars.feature/03-specs/
-      - 验证结果: .octopus/xzf/$vars.feature/04-execution/
-      - E2E 报告: .octopus/xzf/$vars.feature/05-reports/e2e-report.md
+      运行时上下文:
+      - Feature slug: $vars.feature
+      - 分支: $vars.branch
+      - Remote 类型: $vars.remote_type
+      - 产物目录: .octopus/xzf/$vars.feature/
+      - Workspace 拓扑: .octopus/xzf/$vars.feature/00-init/workspace-topology.md
 
-      写入: .octopus/xzf/$vars.feature/06-ship/summary.md
-
-      ═══ Step 2: 遍历 Workspace 所有项目提交 PR/MR ═══
-      Remote 类型: $vars.remote_type
-      分支: $vars.branch
-
-      读取 .octopus/xzf/$vars.feature/00-init/workspace-topology.md 获取所有项目列表和默认分支。
-      对每个项目:
-        1. cd 到项目目录
-        2. 从 workspace-topology.md 读取该项目的「默认分支」列值作为 BASE_BRANCH
-        3. git diff --quiet $BASE_BRANCH...HEAD → 无变更则跳过
-        4. 有变更则提交 PR/MR:
-
-      IF remote_type == "github":
-        gh pr create --title "[{project}] {feature标题}" --body-file .octopus/xzf/$vars.feature/06-ship/summary.md --base $BASE_BRANCH
-      ELIF remote_type == "gitlab":
-        glab mr create --title "[{project}] {feature标题}" --description "$(cat .octopus/xzf/$vars.feature/06-ship/summary.md)" --target-branch $BASE_BRANCH
-
-      汇总所有 PR/MR URL，输出最终结果。
+      按 skill 定义的 Step 1 → Step 2 → Step 3 顺序执行。
