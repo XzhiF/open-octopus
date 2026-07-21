@@ -1,0 +1,514 @@
+# yaml-language-server: $schema=./workflow-schema.json
+apiVersion: octopus/v1
+kind: Workflow
+
+# ============================================================
+# XZF Genesis — 大需求创世流水线
+# 全局研究 → Feature 分解 → 逐 Feature 澄清/设计/实现/验证 → 统一交付
+# ============================================================
+
+name: xzf-genesis
+description: |
+  大需求 MVP 流水线。
+  全局研究 → Feature 分解 → 逐 Feature 走 xzf-dev pipeline（澄清→简报→Spec→执行→E2E）→ 统一交付。
+version: 1.0.0
+# --- 全局配置 ---
+engine: claude
+model: pro-max
+timeout: 172800 # 全局超时 48h（大需求需要更长时间）
+execution_mode: serial
+
+# --- 输入 ---
+inputs:
+  idea:
+    description: "你的大需求 — 描述整个 MVP 或系统级功能"
+    required: true
+  feature:
+    description: "Feature 名称（可选）— 用于目录隔离。不提供则从 Idea 自动生成 kebab-case slug"
+    required: false
+    default: ""
+  research_guidance:
+    description: "Research 指引（可选）— 指定需要重点研究的 codebase 模块或外部技术"
+    required: false
+    default: ""
+
+# --- 变量 ---
+variables:
+  branch: ""
+  feature: ""
+  remote_type: ""
+  feature_count: "0"
+  current_feature: "0"
+  feature_status: ""
+  clarify_decision: ""
+  verify_decision: ""
+  spec_count: "0"
+  current_spec: "0"
+  spec_status: ""
+  e2e_status: ""
+  e2e_decision: ""
+  user_guidance: ""
+  requirements_checklist_status: ""
+  env_checklist_status: ""
+
+# --- 通知提供者 ---
+providers:
+  hermes-cli:
+    type: hermes
+    timeout: 30
+    min_severity: info
+
+channels:
+  xzf_hermes:
+    provider: hermes-cli
+    target: "telegram:xzf_hermes"
+
+# --- 钩子 ---
+hooks:
+  on_workflow_failure:
+    - id: notify-failure
+      type: notify
+      channel: xzf_hermes
+      template:
+        severity: error
+        title: "❌ xzf-genesis — 工作流失败"
+        body: "🌿 $vars.feature @ $vars.branch\n🔴 失败节点: ${hook.failed_node_id | default:unknown}\n⏱️ 已运行: ${hook.total_duration_ms | duration}\n\n💡 错误: ${hook.error | default:Unknown error}"
+
+  on_complete:
+    - id: notify-complete
+      type: notify
+      channel: xzf_hermes
+      template:
+        severity: info
+        title: "🏁 xzf-genesis — 工作流完成"
+        body: "🌿 $vars.feature @ $vars.branch\n✅ Features: $vars.current_feature / $vars.feature_count\n⏱️ 总耗时: ${hook.total_duration_ms | duration}"
+
+  on_node_success:
+    - id: notify-init
+      type: notify
+      nodes: [init]
+      channel: xzf_hermes
+      template:
+        severity: info
+        title: "✅ xzf-genesis — 初始化完成"
+        body: "🌿 $vars.feature @ $vars.branch"
+
+    - id: notify-research
+      type: notify
+      nodes: [idea-research]
+      channel: xzf_hermes
+      template:
+        severity: info
+        title: "🔍 xzf-genesis — 全局研究完成"
+        body: "🌿 $vars.feature"
+
+    - id: notify-decompose
+      type: notify
+      nodes: [feature-decomposition]
+      channel: xzf_hermes
+      template:
+        severity: info
+        title: "🗺️ xzf-genesis — Feature 分解完成"
+        body: "🌿 $vars.feature\n📊 Features: $vars.feature_count"
+
+    - id: notify-feature-done
+      type: notify
+      nodes: [feature-loop]
+      channel: xzf_hermes
+      template:
+        severity: info
+        title: "⚡ xzf-genesis — Feature 完成"
+        body: "🌿 $vars.feature\n📊 进度: $vars.current_feature / $vars.feature_count\n📋 状态: $vars.feature_status"
+
+    - id: notify-ship
+      type: notify
+      nodes: [ship]
+      channel: xzf_hermes
+      template:
+        severity: info
+        title: "🚀 xzf-genesis — 全部交付完成"
+        body: "🌿 $vars.feature @ $vars.branch\n📊 Features: $vars.feature_count"
+
+# ============================================================
+# Stage 0: 初始化（同 xzf-dev）
+# ============================================================
+
+nodes:
+  - id: init
+    type: agent
+    context: new
+    skills: [octo-xzf-init]
+    prompt: |
+      使用 octo-xzf-init skill 初始化 Pipeline 工作环境。
+
+      ═══ Feature Slug ═══
+      IF $inputs.feature 非空 → feature = "$inputs.feature"
+      ELSE → 从 $inputs.idea 提取关键词生成 kebab-case slug
+
+      ═══ 目录结构 ═══
+      基础目录: .octopus/xzf/$feature/
+      子目录: 00-init/, 01-research/, 02-clarification/, 02-clarification/features/,
+              03-specs/, 04-execution/, 05-reports/, 06-ship/
+
+      ═══ 写入文件 ═══
+      将用户 Idea 写入 .octopus/xzf/$feature/00-init/idea.md
+
+      汇报：分支名、feature slug、remote 类型、workspace 项目数。
+
+      输出 vars_update:
+      {"vars_update": {"branch": "{git branch}", "feature": "{feature slug}", "remote_type": "{github|gitlab}"}}
+
+  # ============================================================
+  # Stage 1: 全局 Codebase 研究（同 xzf-dev）
+  # ============================================================
+
+  - id: idea-scan
+    type: bash
+    depends_on: [init]
+    bash: |
+      BASE=".octopus/xzf/$vars.feature/01-research/_scan"
+      mkdir -p "$BASE"
+      find . -type f \( -name "*.ts" -o -name "*.tsx" -o -name "*.go" -o -name "*.py" -o -name "*.vue" -o -name "*.rs" \) \
+        -not -path "*/node_modules/*" -not -path "*/.git/*" -not -path "*/dist/*" -not -path "*/build/*" \
+        | sort > "$BASE/file-tree.txt"
+      for f in $(find . -maxdepth 3 \( -name "package.json" -o -name "go.mod" -o -name "Cargo.toml" -o -name "pyproject.toml" \) -not -path "*/node_modules/*"); do
+        echo "=== $f ===" >> "$BASE/deps.txt"
+        head -30 "$f" >> "$BASE/deps.txt"
+        echo "" >> "$BASE/deps.txt"
+      done
+      find . -maxdepth 3 -name "CLAUDE.md" -exec sh -c 'echo "=== {} ==="; cat "{}"; echo ""' \; > "$BASE/claude-mds.txt"
+      grep -rn "router\.\|app\.\(get\|post\|put\|delete\|patch\)\|@\(Get\|Post\|Put\|Delete\)Mapping\|\.Route(" \
+        --include="*.ts" --include="*.go" --include="*.py" --include="*.java" \
+        -l 2>/dev/null | sort > "$BASE/api-entries.txt"
+      find . -type f \( -name "*.migration.*" -o -name "*schema*" -o -name "*.entity.*" -o -path "*/migrations/*" \) \
+        -not -path "*/node_modules/*" | sort > "$BASE/db-schemas.txt"
+      find . -maxdepth 3 \( -name "vitest.*" -o -name "jest.*" -o -name "playwright.*" -o -name "*.test.*" -o -name "*.spec.*" \) \
+        -not -path "*/node_modules/*" -not -path "*/dist/*" \
+        | head -50 | sort > "$BASE/test-config.txt"
+      echo "Scan complete."
+
+  - id: idea-research
+    type: swarm
+    depends_on: [idea-scan]
+    mode: debate
+    dynamic: true
+    max_experts: 3
+    rounds: 2
+    consensus_threshold: 0.7
+    context_tier: "200k"
+    expert_defaults:
+      skills: [octo-xzf-research]
+      tools: [Read, Grep, Glob, Bash, WebFetch, WebSearch]
+    expert_pool:
+      - role: codebase-architect
+        agent_file: .claude/agents/octo-xzf-codebase-architect.md
+      - role: external-researcher
+        agent_file: .claude/agents/octo-xzf-external-researcher.md
+      - role: risk-analyst
+        agent_file: .claude/agents/octo-xzf-risk-analyst.md
+    topic: |
+      ═══ Codebase Research Debate（全局研究）═══
+
+      Idea: 请读取 .octopus/xzf/$vars.feature/00-init/idea.md
+      Workspace: 请读取 .octopus/xzf/$vars.feature/00-init/workspace-topology.md
+
+      ⚠️ 这是大需求全局研究，需要理解整个 codebase 架构，为后续 Feature 分解提供基础。
+
+      预扫描结果:
+      - 文件树: .octopus/xzf/$vars.feature/01-research/_scan/file-tree.txt
+      - 依赖摘要: .octopus/xzf/$vars.feature/01-research/_scan/deps.txt
+      - 项目文档: .octopus/xzf/$vars.feature/01-research/_scan/claude-mds.txt
+      - API 入口: .octopus/xzf/$vars.feature/01-research/_scan/api-entries.txt
+      - DB Schema: .octopus/xzf/$vars.feature/01-research/_scan/db-schemas.txt
+      - 测试配置: .octopus/xzf/$vars.feature/01-research/_scan/test-config.txt
+
+      ═══ 辩论焦点 ═══
+      1. 整个 codebase 的架构全景：模块、边界、通信方式
+      2. 现有能力 vs 大需求需要的能力差距
+      3. 共享基础设施现状（认证、类型、CI 等）
+      4. 技术债和风险点
+
+      ⚠️ 互相挑战假设。聚焦结论和分歧点。
+    host:
+      role: research-synthesizer
+      prompt: |
+        读取所有轮次讨论。综合共识，标注分歧。
+
+        写入 .octopus/xzf/$vars.feature/01-research/research-brief.md
+
+        按 octo-xzf-research skill 的 Host 综合输出格式。
+        同时按 skill 的领域知识读写规则更新项目 CONTEXT.md。
+
+  # ============================================================
+  # Stage 2: Feature 分解（xzf-genesis 独有）
+  # ============================================================
+
+  - id: feature-decomposition
+    type: agent
+    depends_on: [idea-research]
+    skills: [octo-xzf-decomposer]
+    prompt: |
+      使用 octo-xzf-decomposer skill 将大需求分解为有序 Feature Map。
+
+      读取:
+      - Idea: .octopus/xzf/$vars.feature/00-init/idea.md
+      - Research: .octopus/xzf/$vars.feature/01-research/research-brief.md
+      - Workspace: .octopus/xzf/$vars.feature/00-init/workspace-topology.md
+
+      输出:
+      1. Feature Map: .octopus/xzf/$vars.feature/02-clarification/feature-map.md
+      2. 每个 Feature 的范围文件: .octopus/xzf/$vars.feature/02-clarification/features/F{N}-scope.md
+
+      按 octo-xzf-decomposer skill 的方法论执行分解。
+
+      最后输出 vars_update JSON:
+      {"vars_update": {"feature_count": N}}
+
+  # ============================================================
+  # Stage 3: Per-Feature 循环（每个 Feature 走完整 xzf-dev 子流水线）
+  # ============================================================
+
+  - id: feature-loop
+    type: loop
+    depends_on: [feature-decomposition]
+    max_iterations: 20
+    break_when: "$vars.current_feature >= $vars.feature_count"
+    nodes:
+
+      # --- 3a: 准备当前 Feature 范围 ---
+      - id: feature-prepare
+        type: agent
+        prompt: |
+          准备当前 Feature 的执行上下文。
+
+          当前 Feature 序号: $vars.current_feature（0-based）
+
+          读取:
+          - Feature Map: .octopus/xzf/$vars.feature/02-clarification/feature-map.md
+          - 当前 Feature 范围: .octopus/xzf/$vars.feature/02-clarification/features/F$vars.current_feature-scope.md
+
+          将当前 Feature 的范围信息写入临时上下文文件:
+          .octopus/xzf/$vars.feature/02-clarification/current-feature-context.md
+
+          内容包含:
+          - Feature 名称和范围
+          - 不包含的范围
+          - 依赖的前置 Feature 及其接口
+          - 本 Feature 需提供的接口
+          - 验收标准
+
+          这个文件将被下游 clarify/spec/execute 节点读取，代替完整的 idea.md。
+
+      # --- 3b: 需求澄清（per-feature） ---
+      - id: feature-clarify-loop
+        type: loop
+        depends_on: [feature-prepare]
+        max_iterations: 10
+        break_when: '$vars.clarify_decision == "proceed" && $vars.requirements_checklist_status == "COMPLETE"'
+        nodes:
+          - id: feature-clarify
+            type: agent
+            skills: [octo-xzf-clarify]
+            prompt: |
+              ═══ Feature F$vars.current_feature 需求澄清 — Round $iteration ═══
+
+              读取:
+              - 当前 Feature 上下文: .octopus/xzf/$vars.feature/02-clarification/current-feature-context.md
+              - Research: .octopus/xzf/$vars.feature/01-research/research-brief.md
+              - Workspace: .octopus/xzf/$vars.feature/00-init/workspace-topology.md
+
+              ⚠️ 只澄清当前 Feature 的范围，不涉及其他 Feature。
+              前置 Feature 已实现的接口视为已知条件，不需要重新确认。
+
+              用户上轮回复:
+              $feature-approval.output.comment
+
+              按 octo-xzf-clarify skill 执行。
+              如 Feature 涉及 UI，生成 ASCII wireframe。
+
+              输出: .octopus/xzf/$vars.feature/02-clarification/features/F$vars.current_feature-questions.md
+
+              最后输出 vars_update JSON:
+              {"vars_update": {"requirements_checklist_status": "COMPLETE 或 INCOMPLETE: ..."}}
+
+          - id: feature-approval
+            type: approval
+            depends_on: [feature-clarify]
+            execute_when: '$vars.clarify_decision != "proceed" || $vars.requirements_checklist_status != "COMPLETE"'
+            comment_label: "澄清输入:"
+            comment_placeholder: "请在此输入您对 F$vars.current_feature 问题的回答..."
+            prompt: |
+              Feature F$vars.current_feature | Round $iteration
+              📁 features/F$vars.current_feature-questions.md
+              $feature-clarify.output.last_output
+            options:
+              - label: "继续"
+                value: "continue"
+              - label: "完成"
+                value: "proceed"
+            outputs:
+              $vars.clarify_decision: "$last_output"
+
+      # --- 3c: 简报（per-feature） ---
+      - id: feature-brief
+        type: agent
+        depends_on: [feature-clarify-loop]
+        skills: [octo-xzf-brief-maker]
+        prompt: |
+          使用 octo-xzf-brief-maker skill 生成当前 Feature 的需求简报。
+
+          读取:
+          - 当前 Feature 上下文: .octopus/xzf/$vars.feature/02-clarification/current-feature-context.md
+          - 澄清结果: .octopus/xzf/$vars.feature/02-clarification/features/F$vars.current_feature-questions.md
+          - Research: .octopus/xzf/$vars.feature/01-research/research-brief.md
+
+          输出: .octopus/xzf/$vars.feature/02-clarification/features/F$vars.current_feature-brief.md
+
+      # --- 3d: Spec + Tasks（per-feature） ---
+      - id: feature-spec
+        type: agent
+        depends_on: [feature-brief]
+        skills: [octo-xzf-spec-designer]
+        prompt: |
+          使用 octo-xzf-spec-designer skill 生成当前 Feature 的所有 spec 和 tracer bullets。
+
+          读取:
+          - 当前 Feature Brief: .octopus/xzf/$vars.feature/02-clarification/features/F$vars.current_feature-brief.md
+          - Research: .octopus/xzf/$vars.feature/01-research/research-brief.md
+          - Workspace: .octopus/xzf/$vars.feature/00-init/workspace-topology.md
+
+          ═══ 输出 ═══
+          Spec 文件写入: .octopus/xzf/$vars.feature/03-specs/F$vars.current_feature/
+          索引写入: .octopus/xzf/$vars.feature/03-specs/F$vars.current_feature/spec-index.md
+          E2E 计划: .octopus/xzf/$vars.feature/03-specs/F$vars.current_feature/e2e-test-plan.md
+
+          ⚠️ Spec 编号从 F{N}-001 开始，避免和其他 Feature 的 spec 冲突。
+
+          最后输出 vars_update JSON:
+          {"vars_update": {"spec_count": N, "current_spec": "0"}}
+
+      # --- 3e: 执行（per-feature） ---
+      - id: feature-execute-loop
+        type: loop
+        depends_on: [feature-spec]
+        max_iterations: 99
+        break_when: "$vars.current_spec >= $vars.spec_count"
+        nodes:
+          - id: feature-execute
+            type: agent
+            context: new
+            skills: [octo-xzf-implementer]
+            tools: [Read, Write, Edit, Bash, Grep, Glob]
+            prompt: |
+              你是全栈实现者，使用 octo-xzf-implementer skill 执行当前 Feature 的当前 spec。
+
+              当前 Feature: F$vars.current_feature
+              当前 Spec 序号: $vars.current_spec + 1
+
+              ═══ 执行流程 ═══
+              1. 读取 Spec 索引: .octopus/xzf/$vars.feature/03-specs/F$vars.current_feature/spec-index.md
+              2. 找到当前 spec 文件
+              3. 读取 spec + tracer bullets
+              4. 检查 checkpoint
+              5. 逐个执行 tracer bullets（含 code smell 检查，详见 skill）
+              6. 更新 checkpoint
+
+              完成后递增 current_spec:
+              {"vars_update": {"spec_status": "passed|partial", "current_spec": <当前值+1>}}
+            outputs:
+              $vars.spec_status: "$last_output"
+
+      # --- 3f: E2E 验证（per-feature 增量） ---
+      - id: feature-e2e-loop
+        type: loop
+        depends_on: [feature-execute-loop]
+        max_iterations: 10
+        break_when: '$vars.e2e_status == "passed" || $vars.e2e_decision == "skip"'
+        nodes:
+          - id: feature-e2e
+            type: agent
+            context: new
+            model: se
+            skills: [octo-xzf-implementer]
+            tools: [Read, Write, Edit, Bash, Grep, Glob]
+            prompt: |
+              执行当前 Feature F$vars.current_feature 的 E2E 测试。
+
+              用户上轮指导: $vars.user_guidance
+
+              读取 E2E 测试计划:
+              .octopus/xzf/$vars.feature/03-specs/F$vars.current_feature/e2e-test-plan.md
+
+              按计划执行，收集证据（截图、API 响应、DB 查询）。
+              失败时尝试修复（max 3 次），只重跑失败步骤。
+
+              写入报告: .octopus/xzf/$vars.feature/05-reports/F$vars.current_feature-e2e-report.md
+
+              全部通过: {"vars_update": {"e2e_status": "passed", "user_guidance": ""}}
+              仍有失败: {"vars_update": {"e2e_status": "failed", "user_guidance": ""}}
+            outputs:
+              $vars.e2e_status: "$last_output"
+
+          - id: feature-e2e-notify
+            type: bash
+            depends_on: [feature-e2e]
+            execute_when: '$vars.e2e_status == "failed"'
+            bash: octopus notify --channel xzf_hermes --severity warn --title "⚠️ Feature F$vars.current_feature E2E 失败" --body "📁 05-reports/F$vars.current_feature-e2e-report.md"
+
+          - id: feature-e2e-approval
+            type: approval
+            depends_on: [feature-e2e-notify]
+            execute_when: '$vars.e2e_status == "failed"'
+            prompt: |
+              Feature F$vars.current_feature E2E 仍有失败 | 📁 05-reports/F$vars.current_feature-e2e-report.md
+            options:
+              - label: "重试"
+                value: "retry"
+              - label: "跳过"
+                value: "skip"
+            outputs:
+              $vars.e2e_decision: "$last_output"
+              $vars.user_guidance: "$last_output.comment"
+
+      # --- 3g: Feature 完成 → 进入下一个 ---
+      - id: feature-next
+        type: bash
+        depends_on: [feature-e2e-loop]
+        bash: |
+          echo "Feature F$vars.current_feature 完成: spec_status=$vars.spec_status, e2e_status=$vars.e2e_status"
+          echo "进入下一个 Feature..."
+          # 重置 per-feature 变量
+          echo '{"vars_update": {"current_feature": '"$(($vars.current_feature + 1))"', "clarify_decision": "", "verify_decision": "", "spec_count": "0", "current_spec": "0", "spec_status": "", "e2e_status": "", "e2e_decision": "", "user_guidance": "", "requirements_checklist_status": "", "env_checklist_status": "", "feature_status": "completed"}}'
+
+  # ============================================================
+  # Stage 4: 统一交付
+  # ============================================================
+
+  - id: ship
+    type: agent
+    depends_on: [feature-loop]
+    context: new
+    skills: [octo-xzf-ship]
+    tools: [Read, Bash, Grep, Glob]
+    prompt: |
+      使用 octo-xzf-ship skill 完成统一交付。
+
+      ═══ Step 1: 生成全局 PR/MR Summary ═══
+      读取所有 Feature 的产出:
+      - Feature Map: .octopus/xzf/$vars.feature/02-clarification/feature-map.md
+      - 各 Feature Brief: .octopus/xzf/$vars.feature/02-clarification/features/F*-brief.md
+      - 各 Feature E2E 报告: .octopus/xzf/$vars.feature/05-reports/F*-e2e-report.md
+
+      写入: .octopus/xzf/$vars.feature/06-ship/summary.md
+
+      Summary 结构:
+      - 全局功能概述
+      - 各 Feature 完成状态表
+      - 全局 E2E 结果
+      - 技术决策（ADR 列表）
+
+      ═══ Step 2: 遍历 Workspace 提交 PR/MR ═══
+      读取 workspace-topology.md 获取所有项目和默认分支。
+      对每个有变更的项目提交 PR/MR。
+
+      汇总所有 PR/MR URL，输出最终结果。
