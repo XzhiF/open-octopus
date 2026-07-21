@@ -1,5 +1,5 @@
-export { parseManifest, writeManifest, findManifestEntry, findManifestGroup, type ManifestEntry } from "./manifest"
-export { parseIndex, generateIndex, parseIndexLocalPaths, parseIndexBranches, type IndexEntry, type ProjectInfo, type KnowledgeInfoForIndex } from "./index-file"
+export { parseManifest, writeManifest, parseManifestJson, writeManifestJson, findManifestEntry, findManifestGroup, type ManifestEntry, type ManifestJsonData } from "./manifest"
+export { parseIndex, generateIndex, parseIndexLocalPaths, parseIndexBranches, parseIndexJson, writeIndexJson, type IndexEntry, type ProjectInfo, type KnowledgeInfoForIndex } from "./index-file"
 export { inferAutoTags, AUTO_TAG_MAP } from "./tags"
 export { detectKnowledge, createKnowledgeInfo, extractRepowikiDesc, extractAgentMdDesc, extractDescFromMdContent, findAgentMd, getLastCommitTime, type KnowledgeInfo } from "./knowledge"
 export { resolveReposConfig, type ReposConfig } from "./repos-config"

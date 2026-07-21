@@ -2,7 +2,7 @@ import { Hono } from "hono"
 import { WorkspaceService } from "../services/workspace"
 import { WorkspaceDAO, OrgDAO } from "../db/dao"
 import { orgExists } from "../services/org"
-import { parseManifest, loadModelAliasConfig } from "@octopus/shared"
+import { parseManifest, parseManifestJson, loadModelAliasConfig } from "@octopus/shared"
 import { readFileSync, existsSync, readdirSync } from "fs"
 import { join } from "path"
 import os from "os"
@@ -19,12 +19,18 @@ export function createWorkspaceRoutes(workspaceService: WorkspaceService, orgDAO
 
   workspaceRoutes.get("/repos", (c) => {
     const org = c.req.query("org") || "xzf"
-    const manifestPath = join(os.homedir(), ".octopus", "orgs", org, "repos", "manifest.md")
-    if (!existsSync(manifestPath)) {
-      return c.json({ error: `manifest.md not found for org '${org}'` }, 404)
+    const reposDir = join(os.homedir(), ".octopus", "orgs", org, "repos")
+    const jsonPath = join(reposDir, "manifest.json")
+    const mdPath = join(reposDir, "manifest.md")
+
+    let groups: Record<string, any[]>
+    if (existsSync(jsonPath)) {
+      groups = parseManifestJson(readFileSync(jsonPath, "utf-8"))
+    } else if (existsSync(mdPath)) {
+      groups = parseManifest(readFileSync(mdPath, "utf-8"))
+    } else {
+      return c.json({ groups: {}, org })
     }
-    const content = readFileSync(manifestPath, "utf-8")
-    const groups = parseManifest(content)
     return c.json({ groups, org })
   })
 

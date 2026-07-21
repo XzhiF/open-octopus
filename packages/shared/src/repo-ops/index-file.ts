@@ -242,3 +242,63 @@ export function parseIndexBranches(
 
   return result
 }
+
+export function parseIndexJson(content: string): IndexEntry[] {
+  if (!content || !content.trim()) {
+    return []
+  }
+
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(content)
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    throw new Error(`Invalid index JSON: ${msg}`)
+  }
+
+  if (!Array.isArray(parsed)) {
+    // Support { entries: [...] } wrapper
+    if (typeof parsed === "object" && parsed !== null) {
+      const data = parsed as Record<string, unknown>
+      if (Array.isArray(data.entries)) {
+        parsed = data.entries
+      } else {
+        return []
+      }
+    } else {
+      return []
+    }
+  }
+
+  const entries: IndexEntry[] = []
+  for (const raw of parsed as unknown[]) {
+    if (typeof raw !== "object" || raw === null) {
+      continue
+    }
+    const obj = raw as Record<string, unknown>
+    const name = typeof obj.name === "string" ? obj.name : ""
+    if (!name) {
+      throw new Error("Index entry missing required field 'name'")
+    }
+
+    entries.push({
+      name,
+      git_url: typeof obj.git_url === "string" ? obj.git_url : "",
+      branch: typeof obj.branch === "string" ? obj.branch : "master",
+      tags: Array.isArray(obj.tags)
+        ? obj.tags.filter((t): t is string => typeof t === "string")
+        : [],
+      tag_source: typeof obj.tag_source === "string" ? obj.tag_source : "",
+      description: typeof obj.description === "string" ? obj.description : "",
+      desc_source: typeof obj.desc_source === "string" ? obj.desc_source : "",
+      local_path: typeof obj.local_path === "string" ? obj.local_path : null,
+      knowledge_line: typeof obj.knowledge_line === "string" ? obj.knowledge_line : "",
+    })
+  }
+
+  return entries
+}
+
+export function writeIndexJson(entries: IndexEntry[]): string {
+  return JSON.stringify(entries, null, 2) + "\n"
+}

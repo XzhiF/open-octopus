@@ -1,5 +1,6 @@
 import { join } from "path"
 import { homedir } from "os"
+import { existsSync } from "fs"
 import { loadOrgConfig, resolveOrgDir } from "../config/loader"
 
 export interface ReposConfig {
@@ -34,8 +35,18 @@ export function resolveReposConfig(
     ? cloneBaseOverride.replace(/^~/, homedir())
     : (orgConfig.clone_base ?? join(orgDir, "repos", "projects"))
 
-  const manifestPath = manifestOverride || join(orgDir, "repos", "manifest.md")
-  const outputPath = outputOverride || join(orgDir, "repos", "index.md")
+  // Prefer manifest.json, fall back to manifest.md for backward compatibility
+  let manifestPath: string
+  if (manifestOverride) {
+    manifestPath = manifestOverride
+  } else {
+    const jsonPath = join(orgDir, "repos", "manifest.json")
+    const mdPath = join(orgDir, "repos", "manifest.md")
+    manifestPath = existsSync(jsonPath) ? jsonPath : mdPath
+  }
+
+  // Output to index.json by default
+  const outputPath = outputOverride || join(orgDir, "repos", "index.json")
 
   return {
     cloneBase,

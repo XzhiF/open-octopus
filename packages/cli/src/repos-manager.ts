@@ -3,9 +3,12 @@ import { dirname } from "path"
 import type { ReposConfig, ManifestEntry } from "@octopus/shared"
 import {
   parseManifest,
+  parseManifestJson,
   generateIndex,
   parseIndexLocalPaths,
   parseIndexBranches,
+  parseIndexJson,
+  writeIndexJson,
   findManifestEntry,
   findManifestGroup,
   findLocalRepo,
@@ -47,6 +50,25 @@ export interface CloneResult {
 
 export class ReposManager {
   constructor(private config: ReposConfig) {}
+
+  async list(): Promise<void> {
+    const manifest = this.parseManifestFile()
+
+    let totalCount = 0
+    for (const [group, entries] of Object.entries(manifest)) {
+      console.log(`\n## ${group} (${entries.length} repos)`)
+      for (const entry of entries) {
+        const tags = entry.manual_tags.length > 0 ? ` {${entry.manual_tags.join(", ")}}` : ""
+        const branch = entry.branch !== "master" ? ` [${entry.branch}]` : ""
+        console.log(`  - ${entry.name}${branch}${tags}`)
+        if (entry.git_url) {
+          console.log(`    ${entry.git_url}`)
+        }
+        totalCount++
+      }
+    }
+    console.log(`\nTotal: ${totalCount} repos in ${Object.keys(manifest).length} groups`)
+  }
 
   async update(scanDirs?: string[], cloneMissing?: boolean, aiDescCli?: string): Promise<void> {
     const manifest = this.parseManifestFile()
@@ -278,12 +300,32 @@ export class ReposManager {
 
   private parseManifestFile(): Record<string, ManifestEntry[]> {
     const content = readFileSync(this.config.manifestPath, "utf-8")
+    // Detect format based on file extension
+    if (this.config.manifestPath.endsWith(".json")) {
+      return parseManifestJson(content)
+    }
     return parseManifest(content)
   }
 
   private parseIndexData(): { paths: Record<string, string>; branches: Record<string, string> } {
     if (!existsSync(this.config.outputPath)) return { paths: {}, branches: {} }
     const content = readFileSync(this.config.outputPath, "utf-8")
+
+    // JSON format: extract paths and branches from structured data
+    if (this.config.outputPath.endsWith(".json")) {
+      const entries = parseIndexJson(content)
+      const paths: Record<string, string> = {}
+      const branches: Record<string, string> = {}
+      for (const entry of entries) {
+        if (entry.local_path) {
+          paths[entry.name] = entry.local_path
+        }
+        branches[entry.name] = entry.branch
+      }
+      return { paths, branches }
+    }
+
+    // Markdown format: use legacy parsers
     return {
       paths: parseIndexLocalPaths(content),
       branches: parseIndexBranches(content),
@@ -297,9 +339,22 @@ export class ReposManager {
   ): void {
     console.log(`Scanning local clones in: ${this.config.cloneBase}`)
 
-    const existingPaths = existsSync(this.config.outputPath)
-      ? parseIndexLocalPaths(readFileSync(this.config.outputPath, "utf-8"))
-      : undefined
+    // Read existing paths from either JSON or markdown format
+    let existingPaths: Record<string, string> | undefined
+    if (existsSync(this.config.outputPath)) {
+      const content = readFileSync(this.config.outputPath, "utf-8")
+      if (this.config.outputPath.endsWith(".json")) {
+        const entries = parseIndexJson(content)
+        existingPaths = {}
+        for (const entry of entries) {
+          if (entry.local_path) {
+            existingPaths[entry.name] = entry.local_path
+          }
+        }
+      } else {
+        existingPaths = parseIndexLocalPaths(content)
+      }
+    }
 
     const projectInfos = buildProjectInfos(
       manifest,
@@ -314,11 +369,39 @@ export class ReposManager {
       applyAiDesc(projectInfos, aiDescCli)
     }
 
-    const content = generateIndex(projectInfos)
-
     const outputDir = dirname(this.config.outputPath)
     mkdirSync(outputDir, { recursive: true })
-    writeFileSync(this.config.outputPath, content, "utf-8")
+
+    // Output to JSON or markdown based on path extension
+    if (this.config.outputPath.endsWith(".json")) {
+      const entries = this.projectInfosToIndexEntries(projectInfos)
+      writeFileSync(this.config.outputPath, writeIndexJson(entries), "utf-8")
+    } else {
+      const content = generateIndex(projectInfos)
+      writeFileSync(this.config.outputPath, content, "utf-8")
+    }
     console.log(`Index written to: ${this.config.outputPath}`)
+  }
+
+  private projectInfosToIndexEntries(
+    projectInfos: Record<string, import("@octopus/shared").ProjectInfoFull[]>
+  ): import("@octopus/shared").IndexEntry[] {
+    const entries: import("@octopus/shared").IndexEntry[] = []
+    for (const projects of Object.values(projectInfos)) {
+      for (const p of projects) {
+        entries.push({
+          name: p.name,
+          git_url: p.git_url,
+          branch: p.branch,
+          tags: p.tags,
+          tag_source: p.tag_source,
+          description: p.description,
+          desc_source: p.desc_source,
+          local_path: p.local_path,
+          knowledge_line: p.knowledge.formatLine(),
+        })
+      }
+    }
+    return entries
   }
 }
