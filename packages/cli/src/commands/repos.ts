@@ -23,8 +23,19 @@ function initManager(options: { org?: string; groups?: string; cloneBase?: strin
 }
 
 reposCmd
+  .command("list")
+  .description("列出 manifest 中的所有仓库")
+  .option("--org <org>", "组织名")
+  .option("--groups <groups>", "覆盖 groups（逗号分隔）")
+  .option("--clone-base <dir>", "覆盖 clone_base 目录")
+  .action(async (options: { org?: string; groups?: string; cloneBase?: string }) => {
+    const manager = initManager(options)
+    await manager.list()
+  })
+
+reposCmd
   .command("update")
-  .description("扫描 manifest 并更新 index.md")
+  .description("扫描 manifest 并更新 index")
   .option("--org <org>", "组织名")
   .option("--scan-dirs <dirs>", "额外扫描目录（逗号分隔）")
   .option("--clone-missing", "克隆缺失项目")
@@ -147,13 +158,15 @@ reposCmd
 
 function ensureOrgDir(org: string): void {
   const orgDir = resolveOrgDir(org)
-  const manifestPath = join(orgDir, "repos", "manifest.md")
+  const jsonPath = join(orgDir, "repos", "manifest.json")
+  const mdPath = join(orgDir, "repos", "manifest.md")
 
   if (!existsSync(orgDir)) {
     throw new ReposError(`Org directory not found: ${orgDir}. Run: octopus setup --org ${org}`)
   }
 
-  if (!existsSync(manifestPath)) {
-    throw new ReposError(`Manifest not found: ${manifestPath}. Run: octopus setup --org ${org}`)
+  // Accept either manifest.json or manifest.md
+  if (!existsSync(jsonPath) && !existsSync(mdPath)) {
+    throw new ReposError(`Manifest not found: ${jsonPath}. Run: octopus setup --org ${org}`)
   }
 }

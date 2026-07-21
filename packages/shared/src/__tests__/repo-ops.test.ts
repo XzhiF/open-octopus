@@ -622,8 +622,10 @@ describe("resolveReposConfig", () => {
     const config = resolveReposConfig("testorg")
     expect(config.groups).toEqual(["xzf", "xzf3.0"])
     expect(config.cloneBase).toBe(`${tmpDir}/projects`)
+    // Falls back to manifest.md when manifest.json doesn't exist
     expect(config.manifestPath).toBe(join(orgDir, "repos", "manifest.md"))
-    expect(config.outputPath).toBe(join(orgDir, "repos", "index.md"))
+    // Default output is now index.json
+    expect(config.outputPath).toBe(join(orgDir, "repos", "index.json"))
 
     process.env.OCTOPUS_HOME = origOctopus ?? ""
     if (origHome) process.env.HOME = origHome
