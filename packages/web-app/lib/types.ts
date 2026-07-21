@@ -257,7 +257,7 @@ export interface ExecutionNodeData {
 }
 
 // ============ Editor Tab ============
-export type EditorTabType = "execution" | "detail" | "workflow-editor" | "text-editor" | "schedule"
+export type EditorTabType = "execution" | "detail" | "workflow-editor" | "text-editor" | "schedule" | "image-viewer"
 
 export interface EditorTab {
   id: string

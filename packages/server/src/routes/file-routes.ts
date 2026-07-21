@@ -98,6 +98,25 @@ export function createFileRoutes(workspaceDAO: WorkspaceDAO): Hono {
     }
   })
 
+  fileRoutes.get("/raw", (c) => {
+    const fsvc = getFileService(c)
+    if (!fsvc) return c.json({ error: "Workspace not found" }, 404)
+
+    const filePath = c.req.query("path")
+    if (!filePath) return c.json({ error: "path query required" }, 400)
+
+    try {
+      const { buffer, mimeType, size } = fsvc.readFileRaw(filePath)
+      c.header("Content-Type", mimeType)
+      c.header("Content-Length", String(size))
+      // Cache for 1 minute for performance; immutable content can cache longer
+      c.header("Cache-Control", "private, max-age=60")
+      return c.body(buffer)
+    } catch (err: any) {
+      return c.json({ error: err.message }, 404)
+    }
+  })
+
   fileRoutes.patch("/", async (c) => {
     const fsvc = getFileService(c)
     if (!fsvc) return c.json({ error: "Workspace not found" }, 404)

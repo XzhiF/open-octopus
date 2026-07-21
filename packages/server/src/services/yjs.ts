@@ -3,6 +3,7 @@ import fs from "fs"
 import path from "path"
 import os from "os"
 import { watch, FSWatcher } from "chokidar"
+import { BINARY_EXTENSIONS } from "./file-service"
 
 const watchers = new Map<string, FSWatcher>()
 
@@ -72,15 +73,16 @@ export function populateFromDisk(dirPath: string, tree: Y.Map<unknown>): void {
   for (const file of files) {
     const fullPath = path.join(dirPath, file.name)
     const stat = fs.statSync(fullPath)
-    const ext = file.name.includes(".") ? file.name.split(".").pop() : undefined
+    const ext = file.name.includes(".") ? file.name.split(".").pop()!.toLowerCase() : undefined
     const meta = new Y.Map()
-    if (stat.size <= MAX_FILE_SIZE) {
+    const isBinary = ext ? BINARY_EXTENSIONS.has(ext) : false
+    if (!isBinary && stat.size <= MAX_FILE_SIZE) {
       const ytext = new Y.Text()
       try {
         const content = fs.readFileSync(fullPath, "utf-8")
         ytext.insert(0, content)
       } catch {
-        // binary file
+        // truly unreadable file — skip content
       }
       meta.set("content", ytext)
     }
@@ -115,15 +117,16 @@ export function startWatch(workspaceId: string, workspacePath: string, doc: Y.Do
           parentMap.set(baseName, childMap)
           populateFromDisk(filePath, childMap)
         } else {
-          const ext = baseName.includes(".") ? baseName.split(".").pop() : undefined
+          const ext = baseName.includes(".") ? baseName.split(".").pop()!.toLowerCase() : undefined
+          const isBinary = ext ? BINARY_EXTENSIONS.has(ext) : false
           const meta = new Y.Map()
-          if (stat.size <= MAX_FILE_SIZE) {
+          if (!isBinary && stat.size <= MAX_FILE_SIZE) {
             const ytext = new Y.Text()
             try {
               const content = fs.readFileSync(filePath, "utf-8")
               ytext.insert(0, content)
             } catch {
-              // binary file
+              // truly unreadable file — skip content
             }
             meta.set("content", ytext)
           }
@@ -141,12 +144,16 @@ export function startWatch(workspaceId: string, workspacePath: string, doc: Y.Do
     if (segs.some(s => SKIP_DIRS.has(s))) return
     const dirSegs = segs.slice(0, -1)
     const baseName = segs[segs.length - 1]
+    const ext = baseName.includes(".") ? baseName.split(".").pop()!.toLowerCase() : undefined
+    const isBinary = ext ? BINARY_EXTENSIONS.has(ext) : false
     const parentMap = dirSegs.length > 0 ? findNestedMap(tree, dirSegs) : tree
     const stat = safeStat(filePath)
     if (!stat) return
     if (parentMap && parentMap.has(baseName)) {
       const node = parentMap.get(baseName) as Y.Map<unknown>
       node.set("size", stat.size)
+      // Skip content updates for binary files
+      if (isBinary) return
       const ytext = node.get("content") as Y.Text
       if (ytext instanceof Y.Text && stat.size <= MAX_FILE_SIZE) {
         try {
@@ -157,7 +164,7 @@ export function startWatch(workspaceId: string, workspacePath: string, doc: Y.Do
             ytext.insert(0, content)
           })
         } catch {
-          // binary file — remove content from YDoc
+          // truly unreadable file — remove content from YDoc
           doc.transact(() => {
             if (node.get("content")) node.delete("content")
           })

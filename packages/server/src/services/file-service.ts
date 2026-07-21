@@ -2,6 +2,59 @@ import fs from "fs"
 import path from "path"
 import os from "os"
 
+const MIME_TYPES: Record<string, string> = {
+  // Images
+  png: "image/png",
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  gif: "image/gif",
+  webp: "image/webp",
+  ico: "image/x-icon",
+  bmp: "image/bmp",
+  tiff: "image/tiff",
+  tif: "image/tiff",
+  svg: "image/svg+xml",
+  avif: "image/avif",
+  // Fonts
+  woff: "font/woff",
+  woff2: "font/woff2",
+  ttf: "font/ttf",
+  eot: "application/vnd.ms-fontobject",
+  otf: "font/otf",
+  // Media
+  mp3: "audio/mpeg",
+  wav: "audio/wav",
+  mp4: "video/mp4",
+  webm: "video/webm",
+  avi: "video/x-msvideo",
+  mov: "video/quicktime",
+  // Documents
+  pdf: "application/pdf",
+  // Archives
+  zip: "application/zip",
+  tar: "application/x-tar",
+  gz: "application/gzip",
+  // Data
+  json: "application/json",
+  xml: "application/xml",
+  wasm: "application/wasm",
+}
+
+export const BINARY_EXTENSIONS = new Set([
+  "png", "jpg", "jpeg", "gif", "webp", "ico", "bmp", "tiff", "tif", "avif",
+  "svg",
+  "woff", "woff2", "ttf", "eot", "otf",
+  "mp3", "wav", "mp4", "webm", "avi", "mov",
+  "pdf",
+  "zip", "tar", "gz",
+  "class", "jar", "war", "ear", "o", "so", "dll", "exe", "pyc", "rbc", "beam", "node", "wasm",
+])
+
+export function getMimeType(filename: string): string {
+  const ext = filename.includes(".") ? filename.split(".").pop()!.toLowerCase() : ""
+  return MIME_TYPES[ext] ?? "application/octet-stream"
+}
+
 export class FileService {
   private workspacePath: string
 
@@ -80,5 +133,19 @@ export class FileService {
       path: relPath,
       content: fs.readFileSync(fullPath, "utf-8"),
     }
+  }
+
+  readFileRaw(relPath: string): { buffer: Buffer; mimeType: string; size: number } {
+    const fullPath = this.resolve(relPath)
+    if (!fs.existsSync(fullPath)) {
+      throw new Error("File not found")
+    }
+    const stat = fs.statSync(fullPath)
+    if (stat.isDirectory()) {
+      throw new Error("Cannot read directory as binary")
+    }
+    const buffer = fs.readFileSync(fullPath)
+    const mimeType = getMimeType(path.basename(fullPath))
+    return { buffer, mimeType, size: stat.size }
   }
 }

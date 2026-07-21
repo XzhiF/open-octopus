@@ -10,6 +10,7 @@ import { WorkflowFlowPanel } from "@/components/workspace/workflow-flow-panel"
 import { WorkflowDetailPanel } from "@/components/workspace/workflow-detail-panel"
 import { WorkflowEditorTab } from "@/components/workspace/workflow-editor-tab"
 import { TextEditorTab, getYText, INTERNAL_ORIGIN } from "@/components/workspace/text-editor-tab"
+import { ImageViewerTab } from "@/components/workspace/image-viewer-tab"
 import { ConflictDialog } from "@/components/workspace/conflict-dialog"
 import { ScheduleTab } from "@/components/schedules/schedule-tab"
 import {
@@ -179,6 +180,7 @@ import {
   X,
   GitBranch,
   FileCode,
+  FileImage,
   Save,
   Trash2,
   Clock,
@@ -522,6 +524,25 @@ const handleOpenAsText = async (file: FileNode) => {
       id: `txt-${file.id}`,
       name: file.name,
       type: "text-editor",
+      closable: true,
+      filePath: file.path,
+      fileName: file.name,
+      extension: file.extension ?? file.name.split(".").pop() ?? "",
+    }
+    setTabs(prev => [...prev.slice(0, 1), newTab, ...prev.slice(1)])
+    setActiveTabId(newTab.id)
+  }
+
+  const handleOpenAsImage = (file: FileNode) => {
+    const existingTab = tabs.find(t => t.filePath === file.path && t.type === "image-viewer")
+    if (existingTab) {
+      setActiveTabId(existingTab.id)
+      return
+    }
+    const newTab: EditorTab = {
+      id: `img-${file.id}`,
+      name: file.name,
+      type: "image-viewer",
       closable: true,
       filePath: file.path,
       fileName: file.name,
@@ -905,6 +926,7 @@ const handleOpenAsText = async (file: FileNode) => {
                   selectedPath={selectedFile?.path}
                   onOpenAsWorkflow={handleOpenAsWorkflow}
                   onOpenAsText={handleOpenAsText}
+                  onOpenAsImage={handleOpenAsImage}
                   fileContents={savedContents}
                   onCreateEntryConfirm={handleCreateEntry}
                   onDeleteConfirm={handleDeleteEntry}
@@ -961,6 +983,7 @@ const handleOpenAsText = async (file: FileNode) => {
                         {tab.type === "detail" && <Play className="h-4 w-4" />}
                         {tab.type === "workflow-editor" && <GitBranch className="h-4 w-4 text-violet-500" />}
                         {tab.type === "text-editor" && <FileCode className="h-4 w-4" />}
+                        {tab.type === "image-viewer" && <FileImage className="h-4 w-4 text-emerald-500" />}
                         {tab.type === "schedule" && <Clock className="h-4 w-4 text-blue-500" />}
                         <span title={tab.name}>{getTabDisplayName(tab, tabs)}</span>
                         {tab.filePath && isDirty(tab.filePath) && (
@@ -1050,6 +1073,13 @@ const handleOpenAsText = async (file: FileNode) => {
                 />
               ) : activeTab.type === "schedule" ? (
                 <ScheduleTab workspaceId={id} />
+              ) : activeTab.type === "image-viewer" ? (
+                <ImageViewerTab
+                  key={activeTab.filePath}
+                  filePath={activeTab.filePath!}
+                  fileName={activeTab.fileName!}
+                  workspaceId={id}
+                />
               ) : activeExecution ? (
                 <WorkflowDetailPanel
                   execution={activeExecution}

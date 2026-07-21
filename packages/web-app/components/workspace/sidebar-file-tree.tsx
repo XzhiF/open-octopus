@@ -16,6 +16,7 @@ import {
   FileCode,
   FileJson,
   FileText,
+  FileImage,
   RefreshCw,
   Plus,
   GitBranch,
@@ -47,6 +48,7 @@ interface SidebarFileTreeProps {
   selectedPath?: string
   onOpenAsWorkflow?: (file: FileNode) => void
   onOpenAsText?: (file: FileNode) => void
+  onOpenAsImage?: (file: FileNode) => void
   fileContents?: Record<string, string>
   onCreateEntryConfirm?: (parentPath: string, entryName: string, entryType: "file" | "directory") => void
   onDeleteConfirm?: (node: FileNode) => void
@@ -65,6 +67,15 @@ const fileIconMap: Record<string, React.ElementType> = {
   yaml: FileText,
   yml: FileText,
   md: FileText,
+  png: FileImage,
+  jpg: FileImage,
+  jpeg: FileImage,
+  gif: FileImage,
+  webp: FileImage,
+  svg: FileImage,
+  ico: FileImage,
+  bmp: FileImage,
+  avif: FileImage,
 }
 
 function fuzzyMatch(name: string, query: string): boolean {
@@ -148,6 +159,7 @@ function FileTreeNode({
   selectedPath,
   onOpenAsWorkflow,
   onOpenAsText,
+  onOpenAsImage,
   fileContents,
   creatingInDir,
   onStartCreating,
@@ -166,6 +178,7 @@ function FileTreeNode({
   selectedPath?: string
   onOpenAsWorkflow?: (file: FileNode) => void
   onOpenAsText?: (file: FileNode) => void
+  onOpenAsImage?: (file: FileNode) => void
   fileContents?: Record<string, string>
   creatingInDir?: { parentPath: string; type: "file" | "directory" } | null
   onStartCreating?: (parentPath: string, type: "file" | "directory") => void
@@ -189,6 +202,8 @@ function FileTreeNode({
   const isRenaming = renamingNode?.node.path === node.path
   const FileIcon = node.extension ? fileIconMap[node.extension] || File : File
 
+  const IMAGE_EXTENSIONS = new Set(["png", "jpg", "jpeg", "gif", "webp", "svg", "ico", "bmp", "avif", "tiff", "tif"])
+
   const handleClick = async () => {
     if (isDirectory) {
       const willExpand = !isExpanded
@@ -200,7 +215,9 @@ function FileTreeNode({
         setLoadingChildren(false)
       }
     } else {
-      if (node.extension === "yaml" || node.extension === "yml") {
+      if (node.extension && IMAGE_EXTENSIONS.has(node.extension) && onOpenAsImage) {
+        onOpenAsImage(node)
+      } else if (node.extension === "yaml" || node.extension === "yml") {
         const content = fileContents?.[node.path] || ""
         const isWf = isWorkflowYaml(content)
         if (isWf && onOpenAsWorkflow) {
@@ -310,6 +327,12 @@ function FileTreeNode({
                 Workflow 编辑器
               </DropdownMenuItem>
             )}
+            {contextMenu.node.type === "file" && contextMenu.node.extension && IMAGE_EXTENSIONS.has(contextMenu.node.extension) && (
+              <DropdownMenuItem onClick={() => { onOpenAsImage?.(contextMenu.node); setContextMenu(null) }}>
+                <FileImage className="mr-2 h-4 w-4" />
+                图片查看器
+              </DropdownMenuItem>
+            )}
             {contextMenu.node.type === "file" && (
               <DropdownMenuItem onClick={() => { onOpenAsText?.(contextMenu.node); setContextMenu(null) }}>
                 <FileCode className="mr-2 h-4 w-4" />
@@ -405,6 +428,7 @@ function FileTreeNode({
               selectedPath={selectedPath}
               onOpenAsWorkflow={onOpenAsWorkflow}
               onOpenAsText={onOpenAsText}
+              onOpenAsImage={onOpenAsImage}
               fileContents={fileContents}
               creatingInDir={creatingInDir}
               onStartCreating={onStartCreating}
@@ -424,7 +448,7 @@ function FileTreeNode({
   )
 }
 
-export function SidebarFileTree({ files, doc, connected, workspacePath, onFileSelect, selectedPath, onOpenAsWorkflow, onOpenAsText, fileContents, onCreateEntryConfirm, onDeleteConfirm, onRenameConfirm, onExpand, onRefresh, externalChanges }: SidebarFileTreeProps) {
+export function SidebarFileTree({ files, doc, connected, workspacePath, onFileSelect, selectedPath, onOpenAsWorkflow, onOpenAsText, onOpenAsImage, fileContents, onCreateEntryConfirm, onDeleteConfirm, onRenameConfirm, onExpand, onRefresh, externalChanges }: SidebarFileTreeProps) {
   const [creatingInDir, setCreatingInDir] = useState<{ parentPath: string; type: "file" | "directory" } | null>(null)
   const [renamingNode, setRenamingNode] = useState<{ node: FileNode } | null>(null)
   const [searchQuery, setSearchQuery] = useState("")
@@ -556,6 +580,7 @@ export function SidebarFileTree({ files, doc, connected, workspacePath, onFileSe
               selectedPath={selectedPath}
               onOpenAsWorkflow={onOpenAsWorkflow}
               onOpenAsText={onOpenAsText}
+              onOpenAsImage={onOpenAsImage}
               fileContents={fileContents}
               creatingInDir={!hasSearch ? creatingInDir : null}
               onStartCreating={(parentPath, type) => setCreatingInDir({ parentPath, type })}
