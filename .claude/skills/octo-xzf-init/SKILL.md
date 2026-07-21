@@ -3,7 +3,7 @@ name: octo-xzf-init
 description: "Pipeline 环境初始化 — 分支检测、feature slug 生成、目录创建、workspace 拓扑扫描"
 category: coding-assistant
 tags: [xzf-dev]
-version: 1.0.0
+version: 1.1.0
 ---
 
 # Pipeline 环境初始化方法论
@@ -73,6 +73,14 @@ find . -maxdepth 3 -name ".git" -type d
 **端口检测:**
 - `.env` / config 文件中的 PORT 设置
 
+**默认分支检测（per project）:**
+```bash
+# 方法 1: 读 remote HEAD（最可靠）
+git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@'
+# 方法 2: fallback 检测常见分支
+for b in main master develop; do git rev-parse --verify $b >/dev/null 2>&1 && echo $b && break; done
+```
+
 ### Step 6: 输出 workspace-topology.md
 
 写入: `.octopus/xzf/{feature}/00-init/workspace-topology.md`（每个 feature 独立拓扑快照）
@@ -84,8 +92,8 @@ find . -maxdepth 3 -name ".git" -type d
 > 分支: {branch}
 
 ## 项目列表
-| 项目 | 路径 | 技术栈 | 主要模块 | 端口 |
-|------|------|--------|---------|------|
+| 项目 | 路径 | 技术栈 | 默认分支 | 主要模块 | 端口 |
+|------|------|--------|---------|---------|------|
 
 ## 项目间通信
 | 源 | 目标 | 方式 | 说明 |

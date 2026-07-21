@@ -16,6 +16,7 @@ version: 1.0.0
 engine: claude
 model: pro-max
 timeout: 86400 # 全局超时 24h
+execution_mode: serial
 
 # --- 输入 ---
 inputs:
@@ -351,7 +352,7 @@ nodes:
   - id: requirements-clarify-loop
     type: loop
     depends_on: [idea-research]
-    max_iterations: 99
+    max_iterations: 10
     break_when: '$vars.clarify_decision == "proceed" && $vars.requirements_checklist_status == "COMPLETE"'
     nodes:
       - id: requirements-clarify
@@ -405,7 +406,7 @@ nodes:
   - id: verification-clarify-loop
     type: loop
     depends_on: [requirements-clarify-loop]
-    max_iterations: 99
+    max_iterations: 10
     break_when: '$vars.verify_decision == "proceed" && $vars.env_checklist_status == "COMPLETE"'
     nodes:
       - id: verification-clarify
@@ -658,15 +659,16 @@ nodes:
       Remote 类型: $vars.remote_type
       分支: $vars.branch
 
-      读取 .octopus/xzf/$vars.feature/00-init/workspace-topology.md 获取所有项目列表。
+      读取 .octopus/xzf/$vars.feature/00-init/workspace-topology.md 获取所有项目列表和默认分支。
       对每个项目:
         1. cd 到项目目录
-        2. git diff --quiet main...HEAD → 无变更则跳过
-        3. 有变更则提交 PR/MR:
+        2. 从 workspace-topology.md 读取该项目的「默认分支」列值作为 BASE_BRANCH
+        3. git diff --quiet $BASE_BRANCH...HEAD → 无变更则跳过
+        4. 有变更则提交 PR/MR:
 
       IF remote_type == "github":
-        gh pr create --title "[{project}] {feature标题}" --body-file .octopus/xzf/$vars.feature/06-ship/summary.md --base main
+        gh pr create --title "[{project}] {feature标题}" --body-file .octopus/xzf/$vars.feature/06-ship/summary.md --base $BASE_BRANCH
       ELIF remote_type == "gitlab":
-        glab mr create --title "[{project}] {feature标题}" --description "$(cat .octopus/xzf/$vars.feature/06-ship/summary.md)" --target-branch main
+        glab mr create --title "[{project}] {feature标题}" --description "$(cat .octopus/xzf/$vars.feature/06-ship/summary.md)" --target-branch $BASE_BRANCH
 
       汇总所有 PR/MR URL，输出最终结果。
