@@ -385,9 +385,9 @@ nodes:
     nodes:
       - id: verification-clarify
         type: agent
-        skills: [octo-xzf-clarify]
+        skills: [octo-xzf-verification]
         prompt: |
-          ═══ 验证方式与测试环境澄清 — Round $iteration ═══
+          ═══ 验证策略规划 — Round $iteration ═══
 
           读取:
           - Idea: .octopus/xzf/$vars.feature/00-init/idea.md
@@ -398,18 +398,10 @@ nodes:
           用户上轮回复:
           $verification-approval.output.comment
 
-          职责: 验证方式与测试环境澄清。必须明确以下内容:
-          1. 测试环境配置（DB、端口、依赖服务、mock 策略）
-          2. 验证方法（单元测试、E2E、手动验证标准）
-          3. 测试数据策略
-          4. CI 集成方式
-
-          敏感凭据强制澄清（账号/中间件连接/数据集）参见 octo-xzf-clarify skill。
-
-          澄清方法论、问题格式、Round 流程参见 octo-xzf-clarify skill。
+          验证策略方法论参见 octo-xzf-verification skill。
           输出: .octopus/xzf/$vars.feature/02-clarification/verification.md
 
-          ⚠️ 最终输出（last_output）只包含 Synthesis 内容（「待澄清」+「用户补充」原样输出）。
+          ⚠️ 最终输出（last_output）只包含 Synthesis 内容（「待确认」+「用户补充」原样输出）。
           下游 approval 直接引用 $verification-clarify.output.last_output 展示给用户。
 
           最后输出 vars_update JSON:
@@ -419,8 +411,8 @@ nodes:
         type: approval
         depends_on: [verification-clarify]
         execute_when: '$vars.verify_decision != "proceed" || $vars.env_checklist_status != "COMPLETE"'
-        comment_label: "澄清输入:"
-        comment_placeholder: "请在此输入您对验证方式的回答..."
+        comment_label: "补充/修正:"
+        comment_placeholder: "请在此补充或修正验证策略..."
         prompt: |
           Round $iteration | 环境: $vars.env_checklist_status | 📁 02-clarification/verification.md
           ⚠️ INCOMPLETE 时必须补全才能进入下一阶段。

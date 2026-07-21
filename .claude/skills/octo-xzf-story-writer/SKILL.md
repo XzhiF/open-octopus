@@ -1,22 +1,27 @@
 ---
 name: octo-xzf-story-writer
-description: "用户故事总汇 + 技术指导文档 + 测试环境配置"
+description: "[DEPRECATED] 用户故事总汇 — 已合并入 octo-xzf-brief-maker（brief.md 综合简报）"
 category: coding-assistant
-tags: [xzf-dev]
+tags: [xzf-dev, deprecated]
 version: 1.0.0
+deprecated: true
 ---
 
 # 用户故事总汇方法论
 
+> **⚠️ DEPRECATED** — 用户故事总汇已合并入 `octo-xzf-brief-maker` skill。
+> brief.md 综合了需求澄清 + 验证方式 + 故事线，不再需要独立的 story-writer 阶段。
+
 ## 触发条件
 Stage 3 swarm 节点，根据澄清后的需求生成完整用户故事文档。
 
-## 输出文件
-1. `.octopus/xzf/{branch}/04-stories/summary.md` — 故事总汇
-2. `.octopus/xzf/{branch}/04-stories/technical-guide.md` — 技术指导文档（架构决策、技术约束）
-3. `.octopus/xzf/{branch}/04-stories/test-environment.md` — 测试环境完整配置（供 Stage 6 执行读取）
+## 输出内容
+输出写入 `.octopus/xzf/{feature}/04-specs/` 下的 spec 文件，以下三部分作为每个 spec 文件的章节（而非独立文件）：
+1. **故事总汇章节** — 用户故事、角色定义、故事线、功能闭环检查
+2. **技术指导章节** — 架构决策、技术约束、项目间通信约定
+3. **测试环境章节** — 数据库/中间件配置、项目启动、E2E 测试配置（供 Stage 6 执行读取）
 
-## 故事总汇文档结构
+## 故事总汇章节结构
 
 ```markdown
 # 用户故事总汇
@@ -49,7 +54,7 @@ Stage 3 swarm 节点，根据澄清后的需求生成完整用户故事文档。
 - [ ] 数据生命周期完整（创建→读取→更新→删除）
 ```
 
-## 技术指导文档结构
+## 技术指导章节结构
 
 ```markdown
 # 技术指导文档
@@ -67,7 +72,7 @@ Stage 3 swarm 节点，根据澄清后的需求生成完整用户故事文档。
 - {project-web} ↔ {project-service}: {协议 + 接口}
 ```
 
-## 测试环境文档结构
+## 测试环境章节结构
 
 ```markdown
 # 测试环境配置
@@ -87,7 +92,7 @@ Stage 3 swarm 节点，根据澄清后的需求生成完整用户故事文档。
 ## E2E 测试
 - 工具: browse / playwright / curl
 - 启动方式: {如何启动/连接}
-- 截图目录: .octopus/xzf/{branch}/07-execution/.../screenshots/
+- 截图目录: .octopus/xzf/{feature}/05-execution/.../screenshots/
 - 执行模式: headless / headed
 
 ## 测试数据准备

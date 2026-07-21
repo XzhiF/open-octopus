@@ -1,12 +1,16 @@
 ---
 name: octo-xzf-task-planner
-description: "任务拆解方法论 — consensus + verify + task + spec-test 文档生成"
+description: "[DEPRECATED] 任务拆解方法论 — 已合并入 octo-xzf-spec-designer（tracer bullet 垂直切片）"
 category: coding-assistant
-tags: [xzf-dev]
+tags: [xzf-dev, deprecated]
 version: 1.0.0
+deprecated: true
 ---
 
 # 任务拆解方法论
+
+> **⚠️ DEPRECATED** — 任务拆解已合并入 `octo-xzf-spec-designer` skill。
+> Spec 生成时直接产出 tracer bullet tasks，不再需要独立的 task-planner 阶段。
 
 ## 触发条件
 Stage 5 swarm 节点，为每个 spec 生成任务计划文档。
@@ -14,7 +18,7 @@ Stage 5 swarm 节点，为每个 spec 生成任务计划文档。
 ## 输出文件（per spec）
 
 ```
-06-plans/spec-{NNN}-{name}/
+04-specs/spec-{NNN}-{name}/
 ├── consensus.md          # 总纲领
 ├── verify-1-1.md         # 验证方法
 ├── task-1-1-{project}-backend.md   # 任务分配（含项目归属）

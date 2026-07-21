@@ -623,7 +623,7 @@ Octopus workspace 可包含多个 git 项目（worktree 开发空间），所有
   skills: [octo-xzf-ship]
   tools: [Read, Bash, Grep, Glob]
   prompt: |
-    1. 生成统一的 PR/MR Summary → 写入 09-ship/summary.md
+    1. 生成统一的 PR/MR Summary → 写入 06-ship/summary.md
     2. 读取 workspace-topology.md 获取项目列表
     3. 遍历每个项目:
        - git diff --quiet main...HEAD → 无变更则跳过

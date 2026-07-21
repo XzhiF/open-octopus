@@ -1,4 +1,4 @@
-import { VarPool, evaluateExpression } from "@octopus/shared"
+import { VarPool, evaluateExpression, resolveModelAlias } from "@octopus/shared"
 import type { NodeDef } from "@octopus/shared"
 import type { NodeExecutor, NodeExecutionResult, InnerNodeOverride } from "./types"
 import type { LoopConfig, ResumeConfig } from "./executor-config"
@@ -15,6 +15,8 @@ export class LoopExecutor implements NodeExecutor {
   private iterations = 0
   private config: LoopConfig
   private resume?: ResumeConfig
+  /** Carry forward previous iteration's inner node results for $nodeId.output resolution */
+  private prevIterationResults = new Map<string, NodeExecutionResult>()
 
   constructor(
     private node: NodeDef,
@@ -68,6 +70,13 @@ export class LoopExecutor implements NodeExecutor {
       const iterationNodeResults: { nodeId: string; status: string; durationMs?: number; error?: string }[] = []
       /** Completed inner node results in this iteration (for resume on pending_approval) */
       const completedInnerResults = new Map<string, NodeExecutionResult>()
+      // Seed with previous iteration's results so $nodeId.output references resolve
+      // across iterations (e.g., $requirements-approval.output.comment in round 2)
+      if (this.iterations > 0) {
+        for (const [id, r] of this.prevIterationResults) {
+          completedInnerResults.set(id, r)
+        }
+      }
 
       // On first iteration with resumeFromNodeId, skip to that node
       const startNi = (this.iterations === 1 && this.resume?.resumeFromNodeId)
@@ -269,6 +278,9 @@ export class LoopExecutor implements NodeExecutor {
         this.config.logger?.restoreLoopContext(prevLoopContext ?? { loopNodeId: undefined, iteration: undefined })
       }
 
+      // Save this iteration's results for the next iteration's $nodeId.output resolution
+      this.prevIterationResults = new Map(completedInnerResults)
+
       this.config.logger?.log(this.node.id, 'branch_end', { iteration: this.iterations, status: "completed", nodeResults: iterationNodeResults })
       this.config.callbacks?.onBranchEnd?.(`${this.node.id}-iter-${this.iterations}`, this.iterations, "completed", iterationNodeResults)
 
@@ -402,6 +414,13 @@ export class LoopExecutor implements NodeExecutor {
         const provider = this.config.providers[providerKey]
         if (!provider) throw new Error(`Unknown provider: ${rawKey}`)
 
+        // Resolve model alias (se → haiku, pro → sonnet, etc.)
+        let resolvedModel = node.model
+        if (resolvedModel && this.config.modelAliasConfig) {
+          const resolved = resolveModelAlias(resolvedModel, providerKey, this.config.modelAliasConfig)
+          if (resolved) resolvedModel = resolved
+        }
+
         const runner = new AgentNodeRunner(provider, this.config.cwd, (event: AgentEvent) => {
           this.config.logger?.log(node.id, "agent_event", { event_data: event })
           this.config.callbacks?.onAgentEvent?.(node.id, event)
@@ -424,6 +443,7 @@ export class LoopExecutor implements NodeExecutor {
           signal: this.config.signal,
           engineContext: { nodeResults: mergedNodeResults },
           loopContext: loopCtx,
+          resolvedModel,
           modelAliasConfig: this.config.modelAliasConfig,
           providerKey,
         })

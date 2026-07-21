@@ -1,6 +1,6 @@
 ---
 name: octo-xzf-clarify
-description: "需求澄清方法论 — 头脑风暴、问题清单、测试环境澄清"
+description: "需求澄清方法论 — 功能完整性分析、问题清单、Round 迭代"
 category: coding-assistant
 tags: [xzf-dev]
 version: 1.0.0
@@ -88,68 +88,13 @@ version: 1.0.0
 > Research 项与功能澄清项、环境澄清项并列，不是独立阶段。用户在 approval 中一并回答。
 > Research 答案下游流入 `technical-guide.md`（技术调研结论）和对应 spec 文件（codebase 研究结论）。
 
-### 第三步：测试环境澄清（关键）
-**必须**澄清以下 E2E 测试环境信息，否则验证阶段无法执行：
-
-1. **数据库**
-   - 类型（SQLite/PostgreSQL/MySQL）
-   - 连接信息（host, port, database, user, password）
-   - 初始 Schema 和种子数据
-   - 测试隔离策略（事务回滚/独立数据库/表前缀）
-
-2. **缓存服务**
-   - Redis/Memcached 连接信息
-   - 如果项目需要但没有，是否需要安装
-
-3. **项目启动**
-   - 启动命令（pnpm dev / npm start / 等）
-   - 端口分配（前端、后端）
-   - 环境变量配置
-
-4. **测试执行**
-   - 如何运行 E2E 测试（browse CLI / playwright / curl）
-   - 测试数据准备方式
-   - 截图保存路径
-
-5. **依赖安装**
-   - 已安装的依赖列表
-   - 需要安装但尚未安装的依赖
-   - 安装命令提示
-
-### 敏感凭据强制澄清
-
-如分析涉及以下内容，**必须**生成问题让用户提供，agent 无法自行推断:
-
-- 登录账号/密码、API Key、Token
-- 测试环境中间件连接信息（Redis/MySQL/MQ/第三方服务地址+凭据）
-- 特定数据集（种子数据文件路径、fixture、mock 数据源）
-
-格式: `### ❓ Vx: [凭据] 标题 [CRITICAL]`
-
-缺少凭据会阻塞 Stage 6 执行。这类问题优先级始终为 CRITICAL。
-
-### 第四步：充分性评估
+### 第三步：充分性评估
 每轮澄清后评估：
 - 是否所有核心功能都有对应澄清项
-- 测试环境信息是否完整
 - 是否可以结束澄清进入下一阶段
 
-### 测试环境强制清单（退出澄清前必须全部明确）
-
-- [ ] 数据库类型 + 连接信息 + 种子数据方式
-- [ ] 中间件（Redis/MQ 等）连接信息
-- [ ] 各项目启动命令 + 端口
-- [ ] E2E 测试工具（browse/playwright/curl）+ 执行方式
-- [ ] 截图/报告保存路径
-- [ ] 测试数据准备方式（API/DB fixture/seed script）
-- [ ] 敏感凭据（账号密码/API Key/Token）已提供
-- [ ] 「用户补充」区已清空（所有补充问题已处理）
-
-如清单未完成，必须在文件末尾标注:
-"⚠️ 环境信息不完整: {缺失项列表}"
-
 checklist_status 判定:
-- 「待澄清」+「用户补充」都已清空 + 强制清单全部通过 → `"COMPLETE"`
+- 「待澄清」+「用户补充」都已清空 → `"COMPLETE"`
 - 有未处理项 → `"INCOMPLETE: {缺失项逗号分隔}"`
 
 ## 输出规范
