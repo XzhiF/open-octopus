@@ -10,7 +10,7 @@ import type { ErrorTracker } from "../error-tracker"
 import type { KnowledgeService } from "../knowledge"
 import type { HookDef, NodeDef, WorkflowDef, WorkflowHooks, PipelineConfig, ExecutionLookup } from "@octopus/shared"
 import type { EngineCallbacks } from "@octopus/engine"
-import { WorkflowEngine, BashExecutor, AgentExecutor, AgentNodeRunner, FilesystemCheckpointStore } from "@octopus/engine"
+import { WorkflowEngine, BashExecutor, AgentExecutor, AgentNodeRunner, FilesystemCheckpointStore, EngineInitPhase } from "@octopus/engine"
 import { getProvider } from "@octopus/providers"
 import { parseWorkflow, VarPool, evaluateExpression, parsePipelineConfig, CrossExecResolver, collectNodeEngines, WorkflowRef } from "@octopus/shared"
 import { gitOps } from "../git-ops"
@@ -81,7 +81,7 @@ export class ExecutionLifecycle {
 
   // ==================== Start ====================
 
-  async start(id: string, inputValues?: Record<string, string>): Promise<ExecutionRow> {
+  async start(id: string, inputValues?: Record<string, string>, syncMainBranch?: boolean): Promise<ExecutionRow> {
     const exec = this.dao.findById(id)
     if (!exec) throw Object.assign(new Error("Execution not found"), { status: 404 })
     if (exec.status !== "pending") throw Object.assign(new Error("Execution is not pending"), { status: 400 })
@@ -153,29 +153,6 @@ export class ExecutionLifecycle {
     const repoNames = resolveAllProjectNames(this.workspacePath)
     this.knowledgeService?.setExecutionContext(repoNames, wf.parsed.name)
 
-    // Resource pre-flight: check and provision missing agents/skills
-    try {
-      const preflight = new ResourcePreFlight()
-      const manifest = preflight.analyze(wf.parsed)
-      if (manifest.agents.length > 0 || manifest.skills.length > 0) {
-        const check = preflight.check(manifest, this.workspacePath)
-        if (check.missing.length > 0) {
-          const manager = getResourceRegistry().get()
-          const provisioner = new ResourceProvisioner(manager)
-          const result = await provisioner.provision(check.missing, this.workspacePath)
-          if (result.provisioned > 0) {
-            process.stdout.write(`[preflight] Provisioned ${result.provisioned} resource(s) to workspace\n`)
-          }
-          if (result.failed.length > 0) {
-            process.stderr.write(`[preflight] Failed to provision: ${result.failed.join(", ")}\n`)
-          }
-        }
-      }
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err)
-      process.stderr.write(`[preflight] Resource pre-flight failed (non-fatal): ${msg}\n`)
-    }
-
     // Dynamic agent resolver: delegates swarm agent selection to OrchestratorService
     const orchestrator = getOrchestratorService(this.org)
     const agentResolver = (topic: string, maxExperts: number) =>
@@ -234,6 +211,40 @@ export class ExecutionLifecycle {
       } catch { /* best-effort */ }
 
       engine.setRefResolver(this.createRefResolver())
+
+      // ── engine_init virtual phase ──────────────────────────
+      // Injects a virtual node that copies skills/agents and optionally syncs git
+      // before the real workflow nodes execute. Reuses existing EngineCallbacks.
+      const initNodeExecutionId = `${id}-__engine_init__`
+      this.dao.insertNodeExecutionOrIgnore({
+        id: initNodeExecutionId,
+        execution_id: id,
+        node_id: "__engine_init__",
+        node_type: "bash",
+        status: "pending",
+      })
+
+      const initPhase = new EngineInitPhase()
+      const initResult = await initPhase.run({
+        workspacePath: this.workspacePath,
+        workflow: wf.parsed,
+        callbacks: this.buildCallbacks(id),
+        syncMainBranch: syncMainBranch ?? true,
+        gitOps,
+        resourcePreflight: new ResourcePreFlight(),
+        resourceProvisioner: new ResourceProvisioner(getResourceRegistry().get()),
+      })
+
+      if (initResult.status === "failed") {
+        this.updateStatus(id, "failed", { completed_at: new Date().toISOString() })
+        this.syncStateJson()
+        this.sse.emit(this.workspaceId, {
+          event: "error",
+          data: { executionId: id, nodeId: "__engine_init__", error: "engine_init phase failed" },
+        })
+        this.enginePool.remove(id)
+        return this.dao.findById(id)!
+      }
 
       // Track the in-flight run so pause/abort can wait for it to actually settle
       // (prevents resume from racing a still-running engine — see pause/resume bug).
@@ -1805,6 +1816,32 @@ export class ExecutionLifecycle {
       },
       onNodeLog: (nodeId, logLine) => {
         this.sse.emit(this.workspaceId, { event: "node_log", data: { executionId: id, nodeId, logLine } })
+        // Virtual nodes (e.g. __engine_init__) bypass the JSONL logger → compact → persist pipeline.
+        // Persist their log lines directly to agent_events so the polling-based frontend can see them.
+        // Use "bash_log" event_type so the API transform outputs the correct format for the frontend.
+        if (nodeId.startsWith("__")) {
+          try {
+            const neId = `${id}-${nodeId}`
+            this.dao.insertAgentEvent({
+              node_execution_id: neId,
+              event_order: Date.now(),
+              turn_index: 0,
+              event_type: "bash_log",
+              timestamp: Date.now(),
+              content: logLine,
+              content_length: logLine.length,
+              tool_call_id: null,
+              tool_name: null,
+              tool_input: null,
+              tool_result: null,
+              tool_is_error: 0,
+              tool_duration_ms: null,
+              status_value: null,
+              error_code: null,
+              error_message: null,
+            })
+          } catch { /* best-effort persistence for virtual node logs */ }
+        }
       },
       onNodeCompacted: (nodeId, mergedEvents) => {
         // Sync compacted JSONL events to SQLite agent_events table

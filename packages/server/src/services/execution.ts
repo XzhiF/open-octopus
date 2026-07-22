@@ -101,8 +101,8 @@ export class ExecutionService {
 
   // ==================== Lifecycle ====================
 
-  async start(id: string, inputValues?: Record<string, string>): Promise<ExecutionRow> {
-    return this.lifecycle.start(id, inputValues)
+  async start(id: string, inputValues?: Record<string, string>, syncMainBranch?: boolean): Promise<ExecutionRow> {
+    return this.lifecycle.start(id, inputValues, syncMainBranch)
   }
 
   async cancel(id: string): Promise<ExecutionRow> {

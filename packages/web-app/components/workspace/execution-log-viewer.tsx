@@ -40,6 +40,9 @@ function formatTime(iso?: string) {
   try { return new Date(iso).toLocaleTimeString() } catch { return iso }
 }
 
+/** Maximum events rendered per node group. Real count shown in header. */
+const MAX_RENDERED_EVENTS = 100
+
 // ============ EventIcon ============
 
 export function EventIcon({ event, agentType }: { event: string; agentType?: string }) {
@@ -657,9 +660,17 @@ export function ExecutionLogViewer({ workspaceId, executionId, executionStatus }
                 </div>
                 {!collapsedNodes.has(key) && (
                   <div className="px-2 py-1 space-y-1">
-                    {group.events.map((entry, i) => (
-                      <ExpandableRow key={`${key}-${i}`} entry={entry} />
-                    ))}
+                    {group.events.length > MAX_RENDERED_EVENTS && (
+                      <div className="text-[10px] text-muted-foreground/60 text-center py-0.5">
+                        显示最新 {MAX_RENDERED_EVENTS} 条（共 {group.events.length} 条）
+                      </div>
+                    )}
+                    {group.events
+                      .slice(-MAX_RENDERED_EVENTS)
+                      .map((entry, i) => (
+                        <ExpandableRow key={`${key}-${i}`} entry={entry} />
+                      ))
+                    }
                   </div>
                 )}
               </div>

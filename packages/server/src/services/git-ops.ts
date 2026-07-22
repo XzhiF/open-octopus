@@ -158,6 +158,15 @@ export class GitOps {
       return 0
     }
   }
+
+  /** Fetch from origin and merge the default branch. Returns new HEAD commit SHA. Throws on conflict. */
+  async pullLatest(projectPath: string): Promise<string> {
+    await runGit(projectPath, ["fetch", "origin"])
+    const { stdout: defaultBranch } = await runGit(projectPath, ["symbolic-ref", "refs/remotes/origin/HEAD"])
+    const branch = defaultBranch.replace("refs/remotes/origin/", "")
+    await runGit(projectPath, ["merge", `origin/${branch}`, "--no-edit"])
+    return this.getHeadCommit(projectPath)
+  }
 }
 
 export const gitOps = new GitOps()

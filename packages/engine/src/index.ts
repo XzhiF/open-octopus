@@ -21,6 +21,13 @@ export type { AgentEvent, AgentRunResult } from "./executors/agent-types"
 export { WorkflowEngine } from "./engine"
 export type { ExecutionResult, EngineCallbacks } from "./engine"
 
+export { EngineInitPhase } from "./engine-init"
+export type {
+  EngineInitOptions, EngineInitResult, GitSyncResult,
+  GitOpsLike, ResourcePreFlightLike, ResourceProvisionerLike,
+  ResourceManifestLike, ResourceCheckResultLike, ResourceProvisionResultLike,
+} from "./engine-init"
+
 export { KnowledgeInjector } from "./knowledge-injector"
 
 export { JsonlLogger, sanitizeId, parseLogFilename, isMergedEvent, MERGED_EVENT_TYPES, mergeAgentEvents } from "./logger"

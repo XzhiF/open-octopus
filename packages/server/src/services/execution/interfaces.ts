@@ -3,7 +3,7 @@ import type { ExecutionRow } from "./types"
 
 // ExecutionLifecycle 接口（Task 8）
 export interface IExecutionLifecycle {
-  start(executionId: string, inputValues?: Record<string, string>): Promise<ExecutionRow>
+  start(executionId: string, inputValues?: Record<string, string>, syncMainBranch?: boolean): Promise<ExecutionRow>
   cancel(executionId: string): Promise<ExecutionRow>
   retry(executionId: string, failedNodeId: string, inputValues?: Record<string, string>, intervention?: string): Promise<ExecutionRow>
   approve(executionId: string, nodeId: string, answer: string, comment?: string): Promise<ExecutionRow>

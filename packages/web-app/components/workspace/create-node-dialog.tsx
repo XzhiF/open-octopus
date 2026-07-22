@@ -47,6 +47,7 @@ const defaultFormData = (): CreateNodeFormData => ({
   workflowRef: "",
   name: "",
   rollbackOnError: false,
+  syncMainBranch: true,
   inputValues: {},
 })
 
@@ -248,6 +249,21 @@ export function CreateNodeDialog({
               })}
             </div>
           )}
+          <div className="flex items-center justify-between rounded-lg border p-3">
+            <div className="space-y-0.5">
+              <Label htmlFor="sync-main-switch">同步主分支</Label>
+              <p className="text-xs text-muted-foreground">
+                执行前拉取所有项目的最新主分支代码
+              </p>
+            </div>
+            <Switch
+              id="sync-main-switch"
+              checked={formData.syncMainBranch}
+              onCheckedChange={(checked) =>
+                setFormData((prev) => ({ ...prev, syncMainBranch: checked }))
+              }
+            />
+          </div>
           <div className="flex items-center justify-between rounded-lg border p-3">
             <div className="space-y-0.5">
               <Label htmlFor="rollback-switch">回滚</Label>
