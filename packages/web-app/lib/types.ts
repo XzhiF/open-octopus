@@ -165,6 +165,7 @@ export interface CreateNodeFormData {
   workflowRef: string
   name: string
   rollbackOnError: boolean
+  syncMainBranch: boolean
   inputValues: Record<string, string>
 }
 
@@ -179,6 +180,7 @@ export interface WorkflowInputDef {
 export interface ExecuteNodeFormData {
   inputValues: Record<string, string>
   rollbackOnError: boolean
+  syncMainBranch: boolean
 }
 
 // ============ Execution Tree (for flow panel) ============

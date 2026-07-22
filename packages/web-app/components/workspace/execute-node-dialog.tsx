@@ -48,6 +48,7 @@ export function ExecuteNodeDialog({
   // Persist form state so it survives tab switches and screen navigation
   const inputKey = `octopus:ws:${workspaceId}:execute:${nodeId}:${mode}:inputs`
   const rollbackKey = `octopus:ws:${workspaceId}:execute:${nodeId}:${mode}:rollback`
+  const syncMainBranchKey = `octopus:ws:${workspaceId}:execute:${nodeId}:${mode}:syncMainBranch`
 
   const [inputValues, setInputValues, clearInputs] = usePersistedState<Record<string, string>>(
     inputKey,
@@ -56,6 +57,10 @@ export function ExecuteNodeDialog({
   const [rollbackOnError, setRollbackOnError, clearRollback] = usePersistedState<boolean>(
     rollbackKey,
     initialRollbackOnError,
+  )
+  const [syncMainBranch, setSyncMainBranch, clearSyncMainBranch] = usePersistedState<boolean>(
+    syncMainBranchKey,
+    true, // default checked
   )
   const [localWorkflowInputs, setLocalWorkflowInputs] = useState<Record<string, WorkflowInputDef> | undefined>(undefined)
 
@@ -104,10 +109,11 @@ export function ExecuteNodeDialog({
 
   const handleConfirm = () => {
     if (!isFormValid) return
-    onConfirm(nodeId, { inputValues, rollbackOnError })
+    onConfirm(nodeId, { inputValues, rollbackOnError, syncMainBranch })
     // Clear persisted draft after successful submission
     clearInputs()
     clearRollback()
+    clearSyncMainBranch()
   }
 
   const handleCancel = () => {
@@ -167,6 +173,19 @@ export function ExecuteNodeDialog({
               id="rollback-switch"
               checked={rollbackOnError}
               onCheckedChange={(checked) => setRollbackOnError(checked)}
+            />
+          </div>
+          <div className="flex items-center justify-between rounded-lg border p-3">
+            <div className="space-y-0.5">
+              <Label htmlFor="sync-main-branch">同步主分支</Label>
+              <p className="text-xs text-muted-foreground">
+                执行前拉取所有项目的最新主分支代码
+              </p>
+            </div>
+            <Switch
+              id="sync-main-branch"
+              checked={syncMainBranch}
+              onCheckedChange={(checked) => setSyncMainBranch(checked)}
             />
           </div>
         </div>

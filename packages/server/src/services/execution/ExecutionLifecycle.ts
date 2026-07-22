@@ -10,7 +10,7 @@ import type { ErrorTracker } from "../error-tracker"
 import type { KnowledgeService } from "../knowledge"
 import type { HookDef, NodeDef, WorkflowDef, WorkflowHooks, PipelineConfig, ExecutionLookup } from "@octopus/shared"
 import type { EngineCallbacks } from "@octopus/engine"
-import { WorkflowEngine, BashExecutor, AgentExecutor, AgentNodeRunner, FilesystemCheckpointStore } from "@octopus/engine"
+import { WorkflowEngine, BashExecutor, AgentExecutor, AgentNodeRunner, FilesystemCheckpointStore, EngineInitPhase } from "@octopus/engine"
 import { getProvider } from "@octopus/providers"
 import { parseWorkflow, VarPool, evaluateExpression, parsePipelineConfig, CrossExecResolver, collectNodeEngines, WorkflowRef } from "@octopus/shared"
 import { gitOps } from "../git-ops"
@@ -81,7 +81,7 @@ export class ExecutionLifecycle {
 
   // ==================== Start ====================
 
-  async start(id: string, inputValues?: Record<string, string>): Promise<ExecutionRow> {
+  async start(id: string, inputValues?: Record<string, string>, syncMainBranch?: boolean): Promise<ExecutionRow> {
     const exec = this.dao.findById(id)
     if (!exec) throw Object.assign(new Error("Execution not found"), { status: 404 })
     if (exec.status !== "pending") throw Object.assign(new Error("Execution is not pending"), { status: 400 })
@@ -153,27 +153,24 @@ export class ExecutionLifecycle {
     const repoNames = resolveAllProjectNames(this.workspacePath)
     this.knowledgeService?.setExecutionContext(repoNames, wf.parsed.name)
 
-    // Resource pre-flight: check and provision missing agents/skills
+    // Engine init phase: virtual node for resource provisioning and git sync
+    const callbacks = this.buildCallbacks(id)
+    const initPhase = new EngineInitPhase()
     try {
-      const preflight = new ResourcePreFlight()
-      const manifest = preflight.analyze(wf.parsed)
-      if (manifest.agents.length > 0 || manifest.skills.length > 0) {
-        const check = preflight.check(manifest, this.workspacePath)
-        if (check.missing.length > 0) {
-          const manager = getResourceRegistry().get()
-          const provisioner = new ResourceProvisioner(manager)
-          const result = await provisioner.provision(check.missing, this.workspacePath)
-          if (result.provisioned > 0) {
-            process.stdout.write(`[preflight] Provisioned ${result.provisioned} resource(s) to workspace\n`)
-          }
-          if (result.failed.length > 0) {
-            process.stderr.write(`[preflight] Failed to provision: ${result.failed.join(", ")}\n`)
-          }
-        }
-      }
+      await initPhase.run({
+        workspacePath: this.workspacePath,
+        workflow: wf.parsed,
+        callbacks,
+        syncMainBranch: syncMainBranch ?? true,
+        gitOps,
+        resourcePreflight: new ResourcePreFlight(),
+        resourceProvisioner: new ResourceProvisioner(getResourceRegistry().get()),
+      })
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err)
-      process.stderr.write(`[preflight] Resource pre-flight failed (non-fatal): ${msg}\n`)
+      this.updateStatus(id, "failed", { completed_at: new Date().toISOString() })
+      this.sse.emit(this.workspaceId, { event: "error", data: { executionId: id, error: msg } })
+      return this.dao.findById(id)!
     }
 
     // Dynamic agent resolver: delegates swarm agent selection to OrchestratorService
@@ -234,6 +231,40 @@ export class ExecutionLifecycle {
       } catch { /* best-effort */ }
 
       engine.setRefResolver(this.createRefResolver())
+
+      // ── engine_init virtual phase ──────────────────────────
+      // Injects a virtual node that copies skills/agents and optionally syncs git
+      // before the real workflow nodes execute. Reuses existing EngineCallbacks.
+      const initNodeExecutionId = `${id}-__engine_init__`
+      this.dao.insertNodeExecutionOrIgnore({
+        id: initNodeExecutionId,
+        execution_id: id,
+        node_id: "__engine_init__",
+        node_type: "bash",
+        status: "pending",
+      })
+
+      const initPhase = new EngineInitPhase()
+      const initResult = await initPhase.run({
+        workspacePath: this.workspacePath,
+        workflow: wf.parsed,
+        callbacks: this.buildCallbacks(id),
+        syncMainBranch: syncMainBranch ?? true,
+        gitOps,
+        resourcePreflight: new ResourcePreFlight(),
+        resourceProvisioner: new ResourceProvisioner(getResourceRegistry().get()),
+      })
+
+      if (initResult.status === "failed") {
+        this.updateStatus(id, "failed", { completed_at: new Date().toISOString() })
+        this.syncStateJson()
+        this.sse.emit(this.workspaceId, {
+          event: "error",
+          data: { executionId: id, nodeId: "__engine_init__", error: "engine_init phase failed" },
+        })
+        this.enginePool.remove(id)
+        return this.dao.findById(id)!
+      }
 
       // Track the in-flight run so pause/abort can wait for it to actually settle
       // (prevents resume from racing a still-running engine — see pause/resume bug).

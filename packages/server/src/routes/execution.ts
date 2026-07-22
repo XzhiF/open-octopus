@@ -221,10 +221,10 @@ executionRoutes.post("/:executionId/start", async (c) => {
   const executionId = getExecutionId(c)
   const svc = getService(workspaceId)
   if (!svc) return c.json({ error: "workspace not found" }, 404)
-  const body = await c.req.json<{ inputValues?: Record<string, string> }>().catch(() => ({}))
+  const body = await c.req.json<{ inputValues?: Record<string, string>; syncMainBranch?: boolean }>().catch(() => ({}))
 
   try {
-    const result = await svc.service.start(executionId, body.inputValues)
+    const result = await svc.service.start(executionId, body.inputValues, body.syncMainBranch)
 
     // Auto-start chain if auto_execute is enabled
     const exec = svc.service.getById(executionId)
