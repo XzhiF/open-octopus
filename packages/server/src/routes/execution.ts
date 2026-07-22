@@ -11,6 +11,7 @@ import { ExecutionDAO } from "../db/dao"
 import { initExecutionServiceRegistry, getService } from "../services/execution-service-registry"
 export { getService } from "../services/execution-service-registry"
 import { mergeAgentEvents } from "@octopus/engine"
+import repairRoutes, { setRepairDependencies } from "./repair"
 import os from "os"
 
 const executionRoutes = new Hono()
@@ -20,6 +21,7 @@ export function setExecutionDependencies(sse: SSEService, obs: ObservabilityServ
   _executionDAO = execDAO ?? null
   if (execDAO) {
     initExecutionServiceRegistry(execDAO as any, sse, obs)
+    setRepairDependencies(execDAO, sse, getService)
   }
 }
 
@@ -681,5 +683,8 @@ executionRoutes.get("/:executionId/logs", (c) => {
     stream.writeSSE({ event: "complete", data: JSON.stringify({ executionId, message: "stream ended" }) })
   })
 })
+
+// ── Repair sub-router ─────────────────────────────────────────────
+executionRoutes.route("/:executionId/repair", repairRoutes)
 
 export default executionRoutes
