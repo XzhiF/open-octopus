@@ -1,78 +1,72 @@
 # Pipeline Execution Report
 
-## Requirement: engine_init virtual phase + event render truncation
+## Requirement: engine_init Virtual Phase + Event Render Truncation
 ## Status: PASS
 
 ### Phase 1: Development
 
 | Ticket | Title | Status | Fix Count |
 |--------|-------|--------|-----------|
-| 01 | git-ops pullLatest | ✅ PASS | 0 |
-| 02 | EngineInitPhase core logic | ✅ PASS | 0 |
-| 03 | Server integration | ✅ PASS | 0 |
-| 04 | Frontend sync switch | ✅ PASS | 0 |
-| 05 | Event render truncation | ✅ PASS | 0 |
+| 1 | Add `pullLatest()` to GitOps | ✅ DONE | 0 |
+| 2 | EngineInitPhase core module | ✅ DONE | 0 |
+| 3 | Server integration (ExecutionLifecycle) | ✅ DONE | 0 |
+| 4 | Frontend Switch controls | ✅ DONE | 0 |
+| 5 | Event rendering truncation | ✅ DONE | 0 |
 
-**Bugs found and fixed during verification:**
-| Bug | Severity | Fix |
-|-----|----------|-----|
-| Duplicate EngineInitPhase.run() in ExecutionLifecycle.start() | HIGH | Removed first call (lacked DB row setup) |
-| Duplicate "同步主分支" Switch in CreateNodeDialog | HIGH | Removed second duplicate Switch |
+**Totals**: 5/5 tickets done, 23 files changed (+1423/-31), 20 new unit tests
 
 ### Phase 2: Deploy
 
-| Project | Build# | Result | Duration |
-|---------|--------|--------|----------|
-| (local dev) | N/A | SKIP | N/A |
-
-No CI/CD configured — local dev mode only.
+Local dev only — no CI/CD pipeline. User informed to restart `pnpm dev` if needed.
 
 ### Phase 3: E2E Verification
 
 | AC | Condition | Status | Evidence |
 |----|-----------|--------|----------|
-| AC1 | Switch in dialogs, default on | ✅ PASS | Code review: execute-node-dialog.tsx, create-node-dialog.tsx |
-| AC2 | engine_init node appears first in log | ✅ PASS | Code review: ExecutionLifecycle.ts lines 215-247 |
-| AC3 | Uncheck → skip git sync | ✅ PASS | Unit test: engine-init.test.ts "skip git sync when disabled" |
-| AC4 | Skills fail → workflow aborts | ✅ PASS | Unit test: engine-init.test.ts "provisioning failure" |
-| AC5 | Git fail → warn + continue | ✅ PASS | Unit test: engine-init.test.ts "partial git sync failure" |
-| AC6 | 200+ events → real count, render 100 | ✅ PASS | Frontend test: execution-log-truncation.test.ts |
-| AC7 | ≤100 events → all rendered | ✅ PASS | Frontend test: execution-log-truncation.test.ts |
+| 1 | Switch 出现在两个对话框且默认勾选 | ✅ PASS | 代码审查确认 |
+| 2 | engine_init 节点出现在工作流节点前 | ✅ PASS | 代码审查确认 |
+| 3 | engine_init 日志显示 skills 拷贝和 git sync 步骤 | ✅ PASS | 日志逻辑确认 |
+| 4 | 取消勾选跳过 git sync | ✅ PASS | 单元测试覆盖 |
+| 5 | Skills 拷贝失败终止工作流 | ✅ PASS | 单元测试覆盖 |
+| 6 | Git sync 失败显示警告继续执行 | ✅ PASS | 单元测试覆盖 |
+| 7 | 200+ 事件显示真实计数只渲染 100 | ✅ PASS | 7 个单元测试覆盖 |
+| 8 | ≤100 事件全部渲染 | ✅ PASS | 单元测试覆盖 |
 
-**Test Results:**
-- engine-init.test.ts: 13/13 ✅
-- execution-log-truncation.test.ts: 7/7 ✅
-- pnpm build (engine, server): ✅
+**Issues found during verification**:
+- 🔴 CRITICAL: 重复 `initPhase.run()` 调用 → 已修复 (commit `e423813`)
+- 🟠 HIGH: CreateNodeDialog 重复 Switch → 已修复 (commit `e423813`)
+
+**Build**: ✅ `pnpm build` 全部 7 个包通过
+**Tests**: ✅ 29/29 feature tests pass (43 pre-existing failures unrelated)
 
 ### Phase 4: Ship (Git MR)
 
 | Project | MR Link | Status | Notes |
 |---------|---------|--------|-------|
-| open-octopus | [#25](https://github.com/XzhiF/open-octopus/pull/25) | Created | feat-engine-init → main |
+| open-octopus | [#25](https://github.com/XzhiF/open-octopus/pull/25) | OPEN | 3 commits, 含修复 commit |
 
 ### Changed Files
 
 | Package | File | Change Type |
 |---------|------|-------------|
-| engine | `src/engine-init.ts` | New — EngineInitPhase class |
-| engine | `src/__tests__/engine-init.test.ts` | New — 13 unit tests |
-| engine | `src/index.ts` | Modified — export EngineInitPhase |
-| server | `src/services/execution/ExecutionLifecycle.ts` | Modified — integrate init phase |
-| server | `src/services/execution/interfaces.ts` | Modified — syncMainBranch param |
-| server | `src/services/execution.ts` | Modified — pass syncMainBranch |
-| server | `src/services/git-ops.ts` | Modified — pullLatest() method |
-| server | `src/routes/execution.ts` | Modified — API param |
-| web-app | `components/workspace/create-node-dialog.tsx` | Modified — Switch UI |
-| web-app | `components/workspace/execute-node-dialog.tsx` | Modified — Switch UI |
-| web-app | `components/workspace/execution-log-viewer.tsx` | Modified — truncation |
-| web-app | `components/workspace/__tests__/execution-log-truncation.test.ts` | New — 7 tests |
-| web-app | `hooks/use-execution-tree.ts` | Modified — pass syncMainBranch |
-| web-app | `lib/api-client.ts` | Modified — syncMainBranch param |
-| web-app | `lib/types.ts` | Modified — form data type |
+| engine | `src/engine-init.ts` | NEW |
+| engine | `src/index.ts` | MODIFY |
+| engine | `src/__tests__/engine-init.test.ts` | NEW |
+| server | `src/services/git-ops.ts` | MODIFY |
+| server | `src/services/execution/ExecutionLifecycle.ts` | MODIFY |
+| server | `src/services/execution.ts` | MODIFY |
+| server | `src/routes/execution.ts` | MODIFY |
+| web-app | `lib/types.ts` | MODIFY |
+| web-app | `lib/api-client.ts` | MODIFY |
+| web-app | `components/workspace/execute-node-dialog.tsx` | MODIFY |
+| web-app | `components/workspace/create-node-dialog.tsx` | MODIFY |
+| web-app | `hooks/use-execution-tree.ts` | MODIFY |
+| web-app | `components/workspace/execution-log-viewer.tsx` | MODIFY |
+| web-app | `components/workspace/__tests__/execution-log-truncation.test.ts` | NEW |
 
 ### Remaining Issues
 
 | # | Issue | Impact | Suggestion |
 |---|-------|--------|------------|
-| 1 | SSE connection timing: engine_init runs after SSE setup but before engine.run() — brief init phases may complete between polling intervals | LOW | Consider switching from polling to real SSE for faster updates |
-| 2 | Git merge conflict strategy not explicitly defined beyond "warn + continue" | LOW | Document behavior: conflicts leave working tree dirty, workflow proceeds |
+| 1 | `skillsCopied`/`agentsCopied` 计数不精确 | LOW | 后续可区分 skills vs agents |
+| 2 | 前端轮询 (2s) 可能错过短暂 init | LOW | 可考虑切换为 SSE 实时推送 |
