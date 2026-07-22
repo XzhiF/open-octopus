@@ -23,6 +23,7 @@ import {
   Loader2,
   X,
   Archive as ArchiveIcon,
+  ShieldCheck,
 } from "lucide-react"
 import { WorkflowFlowViewerWithStatus } from "./workflow-flow-viewer-with-status"
 import { TokenUsageDisplay } from "./workflow-nodes/token-usage-display"
@@ -159,12 +160,18 @@ export function WorkflowDetailPanel({ execution, workflow, workspaceId }: Workfl
     return () => clearInterval(interval)
   }, [liveStatus, fetchStatus])
 
-  // Auto-open approval dialog when status transitions to pending_approval
+  // Auto-open approval dialog when status transitions to pending_approval (not on every poll)
+  const approvalShownRef = useRef<string | null>(null)
   useEffect(() => {
     if (liveStatus === "pending_approval" && liveApprovalMetadata) {
-      setApprovalOpen(true)
+      if (approvalShownRef.current !== liveApprovalMetadata.nodeId) {
+        approvalShownRef.current = liveApprovalMetadata.nodeId
+        setApprovalOpen(true)
+      }
+    } else if (liveStatus !== "pending_approval") {
+      approvalShownRef.current = null
     }
-  }, [liveStatus, liveApprovalMetadata])
+  }, [liveStatus, liveApprovalMetadata?.nodeId])
 
   const handleApprove = async (value: string, comment: string) => {
     if (!liveApprovalMetadata) return
@@ -398,6 +405,22 @@ export function WorkflowDetailPanel({ execution, workflow, workspaceId }: Workfl
           )}
         </div>
       </div>
+
+      {/* Inline Approval Prompt */}
+      {liveStatus === "pending_approval" && liveApprovalMetadata && (
+        <div className="flex items-center gap-2 border-b border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/30 px-3 py-1.5">
+          <ShieldCheck className="h-4 w-4 flex-shrink-0 text-amber-600 dark:text-amber-400" />
+          <span className="text-sm text-amber-800 dark:text-amber-200">工作流已暂停，等待审批确认</span>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => setApprovalOpen(true)}
+            className="ml-auto h-6 text-xs border-amber-400 text-amber-700 dark:text-amber-300 hover:bg-amber-100 dark:hover:bg-amber-900/40"
+          >
+            打开审批
+          </Button>
+        </div>
+      )}
 
       {/* Content */}
       <PanelGroup direction="horizontal" className="flex-1 overflow-hidden">

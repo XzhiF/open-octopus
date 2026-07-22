@@ -133,6 +133,8 @@ export interface LoopConfig extends CoreConfig {
   globalSessionId?: string
   branchSessionIds?: Map<string, string>
   inputs?: Record<string, any>
+  /** Pre-loop node results from engine — enables $nodeId.output resolution for outer nodes */
+  engineNodeResults?: Record<string, NodeExecutionResult>
 }
 
 /** ResumeConfig — used alongside LoopConfig for resume-from-approval flows */

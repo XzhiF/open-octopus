@@ -340,6 +340,7 @@ export class WorkflowEngine {
           modelAliasConfig: this.modelAliasConfig,
           checkpointStore: this.checkpointStore,
           executionId: this.executionId,
+          engineNodeResults: this.nodeResults,
           hookExecutor: async (event: string, context: Record<string, unknown>) => {
             await this.executeHooks(event as keyof WorkflowHooks, context)
           },
@@ -1522,6 +1523,7 @@ export class WorkflowEngine {
           modelAliasConfig: this.modelAliasConfig,
           checkpointStore: this.checkpointStore,
           executionId: this.executionId,
+          engineNodeResults: this.nodeResults,
           hookExecutor: async (event: string, context: Record<string, unknown>) => {
             await this.executeHooks(event as keyof WorkflowHooks, context)
           },

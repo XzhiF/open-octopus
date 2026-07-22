@@ -440,14 +440,20 @@ export class LoopExecutor implements NodeExecutor {
       case "condition":
         return new ConditionExecutor(node, p)
       case "approval": {
-        // ponytail: build nodeOutputs from completed inner results so $nodeId.output.key works
+        // ponytail: merge engine's outer node results with loop's inner results
+        // so $nodeId.output references resolve for both pre-loop and in-loop nodes
         const approvalNodeOutputs: Record<string, Record<string, any>> = {}
+        if (this.config.engineNodeResults) {
+          for (const [id, r] of Object.entries(this.config.engineNodeResults)) {
+            if (r.outputs) approvalNodeOutputs[id] = r.outputs
+          }
+        }
         if (completedInnerResults) {
           for (const [id, r] of completedInnerResults) {
             if (r.outputs) approvalNodeOutputs[id] = r.outputs
           }
         }
-        return new ApprovalExecutor(node, p, { signal: this.config.signal, loopContext: loopCtx, nodeOutputs: approvalNodeOutputs })
+        return new ApprovalExecutor(node, p, { signal: this.config.signal, loopContext: loopCtx, nodeOutputs: approvalNodeOutputs, executionId: this.config.executionId })
       }
       case "agent": {
         const rawKey = node.engine ?? this.config.workflowEngine ?? "claude"
@@ -469,8 +475,11 @@ export class LoopExecutor implements NodeExecutor {
 
         const previousSessionId = this.resolvePreviousSessionId(node)
 
-        // Build engineContext: merge engine's top-level results with loop's iteration results
-        const mergedNodeResults: Record<string, NodeExecutionResult> = { ...(this.resume?.engineNodeResults ?? {}) }
+        // Build engineContext: merge engine's outer results + resume results + loop's inner results
+        const mergedNodeResults: Record<string, NodeExecutionResult> = {
+          ...(this.config.engineNodeResults ?? {}),
+          ...(this.resume?.engineNodeResults ?? {}),
+        }
         if (completedInnerResults) {
           for (const [id, r] of completedInnerResults) {
             mergedNodeResults[id] = r

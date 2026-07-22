@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
 import { cn } from "@/lib/utils"
 import { formatDuration } from "@/lib/format"
 import { Button } from "@/components/ui/button"
@@ -160,12 +160,18 @@ export function ExecutionPanel({ execution, workspaceId, onStop, onRollback, onR
   const [retryInterventionDialog, setRetryInterventionDialog] = useState(false)
   const [retryInterventionLoading, setRetryInterventionLoading] = useState(false)
 
-  // Use useEffect to detect pending_approval status and open approval dialog
+  // Track last shown approval to avoid re-opening on every poll cycle
+  const approvalShownRef = useRef<string | null>(null)
   useEffect(() => {
     if (execution?.status === "pending_approval" && execution.approvalMetadata) {
-      setApprovalOpen(true)
+      if (approvalShownRef.current !== execution.approvalMetadata.nodeId) {
+        approvalShownRef.current = execution.approvalMetadata.nodeId
+        setApprovalOpen(true)
+      }
+    } else if (execution?.status !== "pending_approval") {
+      approvalShownRef.current = null
     }
-  }, [execution?.status, execution?.approvalMetadata])
+  }, [execution?.status, execution?.approvalMetadata?.nodeId])
 
   if (!execution) {
     return (
@@ -391,35 +397,17 @@ export function ExecutionPanel({ execution, workspaceId, onStop, onRollback, onR
 
       {/* Inline Approval Prompt */}
       {isPendingApproval && execution.approvalMetadata && (
-        <div className="border-b border-border bg-violet-50 dark:bg-violet-950/20 p-3">
-          <div className="flex items-start gap-2">
-            <div className="mt-0.5 flex h-5 w-5 items-center justify-center rounded-full bg-violet-500/10">
-              <Clock className="h-3 w-3 text-violet-600 dark:text-violet-400" />
-            </div>
-            <div className="flex-1 space-y-2">
-              <div>
-                <p className="text-sm font-medium text-violet-900 dark:text-violet-100">
-                  等待审批
-                </p>
-                <p className="mt-1 text-xs text-violet-700 dark:text-violet-300 line-clamp-2">
-                  {execution.approvalMetadata.prompt}
-                </p>
-              </div>
-              <div className="flex items-center gap-2">
-                <Button
-                  size="sm"
-                  variant="default"
-                  onClick={() => setApprovalOpen(true)}
-                  className="h-7 text-xs"
-                >
-                  审批
-                </Button>
-                <span className="text-xs text-muted-foreground">
-                  {execution.approvalMetadata.options.length} 个选项
-                </span>
-              </div>
-            </div>
-          </div>
+        <div className="flex items-center gap-2 border-b border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/30 px-3 py-1.5">
+          <ShieldCheck className="h-4 w-4 flex-shrink-0 text-amber-600 dark:text-amber-400" />
+          <span className="text-sm text-amber-800 dark:text-amber-200">工作流已暂停，等待审批确认</span>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => setApprovalOpen(true)}
+            className="ml-auto h-6 text-xs border-amber-400 text-amber-700 dark:text-amber-300 hover:bg-amber-100 dark:hover:bg-amber-900/40"
+          >
+            打开审批
+          </Button>
         </div>
       )}
 
