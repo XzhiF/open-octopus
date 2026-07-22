@@ -125,6 +125,8 @@ export interface SwarmConfig {
   workflowEngine?: string
   agentResolver?: AgentResolver
   engineHookFn?: HookExecutor
+  /** Workflow's global session ID — host agent continues this session */
+  globalSessionId?: string
   // Note: signal removed (was DEAD — 0 refs, accessed only as this.signal which doesn't exist)
 }
 

@@ -46,6 +46,7 @@ export class SwarmExecutor implements NodeExecutor {
   private workflowEngine?: string
   private agentResolver?: (topic: string, maxExperts: number) => Promise<Array<{ role: string; agent_file: string; description: string }>>
   private engineHookFn?: (event: string, context: Record<string, unknown>) => Promise<void>
+  private globalSessionId?: string
 
   constructor(
     private node: NodeDef,
@@ -62,6 +63,7 @@ export class SwarmExecutor implements NodeExecutor {
     this.workflowEngine = config.workflowEngine
     this.agentResolver = config.agentResolver
     this.engineHookFn = config.engineHookFn
+    this.globalSessionId = config.globalSessionId
   }
 
   async execute(): Promise<NodeExecutionResult> {
@@ -151,9 +153,18 @@ export class SwarmExecutor implements NodeExecutor {
         return { text: result.text, model: result.model, tokens: result.tokens, inputTokens: result.inputTokens, outputTokens: result.outputTokens, toolsUsed: result.toolsUsed, filesChanged: result.filesChanged }
       }
 
-      // Setup HostAgent
+      // Setup HostAgent — host continues the workflow's global session chain
+      let hostSessionId: string | undefined
       const hostAgent = new HostAgent(async (prompt, model) => {
-        const result = await llmCall(prompt, model ?? this.node.host?.model)
+        const p = resolveProviderForExpert(this.node.host?.engine)
+        const rawModel = model ?? this.node.host?.model ?? this.node.model
+        const epk = this.node.host?.engine ? (this.node.host.engine === "claude-code" ? "claude" : this.node.host.engine) : providerKey
+        const resolvedModel = this.modelAliasConfig
+          ? resolveModelAlias(rawModel, epk, this.modelAliasConfig) ?? rawModel
+          : rawModel
+        const result = await collectFromProvider(p, prompt, this.cwd, resolvedModel, undefined, hostSessionId ?? this.globalSessionId)
+        budgetTracker.addUsage(result.model, result.inputTokens, result.outputTokens, result.cacheReadTokens, result.cacheCreationTokens, result.costUsd)
+        if (result.sessionId) hostSessionId = result.sessionId
         return result.text
       })
 
@@ -386,6 +397,7 @@ export class SwarmExecutor implements NodeExecutor {
         status: result.status === "completed" ? "completed" : "failed",
         durationMs,
         logLines,
+        sessionId: hostSessionId,
         tokens: budgetTracker.getTokenUsage(),
         modelUsages: budgetTracker.getModelUsages(),
       }
@@ -597,6 +609,7 @@ async function collectFromProvider(
   cwd: string,
   model?: string,
   skills?: string[],
+  resumeSessionId?: string,
 ): Promise<{
   text: string
   tokens: number
@@ -608,6 +621,7 @@ async function collectFromProvider(
   costUsd?: number
   toolsUsed: string[]
   filesChanged: string[]
+  sessionId?: string
 }> {
   let text = ""
   let inputTokens = 0
@@ -616,10 +630,11 @@ async function collectFromProvider(
   let cacheCreationTokens = 0
   let resolvedModel = model ?? "unknown"
   let costUsd: number | undefined
+  let sessionId: string | undefined
   const toolsUsed: string[] = []
   const filesChanged: string[] = []
 
-  const gen = provider.sendQuery(prompt, cwd, undefined, {
+  const gen = provider.sendQuery(prompt, cwd, resumeSessionId, {
     model,
     systemPrompt: "You are an expert assistant.",
     skills,
@@ -634,6 +649,7 @@ async function collectFromProvider(
       cacheReadTokens = (chunk as any).tokens?.cache_read ?? 0
       cacheCreationTokens = (chunk as any).tokens?.cache_creation ?? 0
       costUsd = chunk.costUsd
+      sessionId = chunk.sessionId
       if (chunk.modelUsages && chunk.modelUsages.length > 0) {
         resolvedModel = chunk.modelUsages[0].model
         inputTokens = chunk.modelUsages[0].inputTokens || inputTokens
@@ -663,5 +679,6 @@ async function collectFromProvider(
     costUsd,
     toolsUsed,
     filesChanged,
+    sessionId,
   }
 }

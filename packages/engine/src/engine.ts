@@ -1581,6 +1581,7 @@ export class WorkflowEngine {
           modelAliasConfig: this.modelAliasConfig,
           workflowEngine: this.workflow.engine,
           agentResolver: this.agentResolver,
+          globalSessionId: this.globalSessionId,
           engineHookFn: async (event: string, context: Record<string, unknown>) => {
             await this.executeHooks(event as keyof WorkflowHooks, context)
           },
@@ -1605,9 +1606,9 @@ export class WorkflowEngine {
     return undefined
   }
 
-  /** Update session tracking after an agent node completes. */
+  /** Update session tracking after an agent or swarm node completes. */
   private updateSessionContext(node: NodeDef, result: NodeExecutionResult): void {
-    if (node.type !== "agent" || !result.sessionId) return
+    if ((node.type !== "agent" && node.type !== "swarm") || !result.sessionId) return
 
     // Don't update globalSessionId with failed node's session —
     // we want to retry from the last SUCCESSFUL session, not the failed attempt.
