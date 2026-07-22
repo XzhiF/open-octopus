@@ -91,15 +91,9 @@ export function ImageViewerTab({ filePath, fileName, workspaceId }: ImageViewerT
   }, [])
 
   const fitToScreen = useCallback(() => {
-    if (!imageSize || !containerRef.current) return
-    const container = containerRef.current.getBoundingClientRect()
-    const padding = 48
-    const scaleX = (container.width - padding) / imageSize.w
-    const scaleY = (container.height - padding) / imageSize.h
-    const newScale = Math.min(scaleX, scaleY, 1)
-    setScale(newScale)
+    setScale(1)
     setPosition({ x: 0, y: 0 })
-  }, [imageSize])
+  }, [])
 
   const zoomIn = useCallback(() => {
     setScale(prev => Math.min(prev + 0.25, 10))
@@ -202,15 +196,13 @@ export function ImageViewerTab({ filePath, fileName, workspaceId }: ImageViewerT
           style={{
             transform: `translate(${position.x}px, ${position.y}px) scale(${scale})`,
             transformOrigin: "center center",
-            transition: isDragging ? "none" : "transform 0.15s ease-out",
           }}
         >
           <img
             ref={imgRef}
             src={imageUrl}
             alt={fileName}
-            className="max-w-none"
-            style={{ maxWidth: isVector ? "80%" : "none", maxHeight: isVector ? "80%" : "none" }}
+            className="max-w-full max-h-full"
             onLoad={handleImageLoad}
             onError={handleError}
             draggable={false}
