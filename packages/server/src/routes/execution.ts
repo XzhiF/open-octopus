@@ -221,10 +221,10 @@ executionRoutes.post("/:executionId/start", async (c) => {
   const executionId = getExecutionId(c)
   const svc = getService(workspaceId)
   if (!svc) return c.json({ error: "workspace not found" }, 404)
-  const body = await c.req.json<{ inputValues?: Record<string, string> }>().catch(() => ({}))
+  const body = await c.req.json<{ inputValues?: Record<string, string>; syncMainBranch?: boolean }>().catch(() => ({}))
 
   try {
-    const result = await svc.service.start(executionId, body.inputValues)
+    const result = await svc.service.start(executionId, body.inputValues, { syncMainBranch: body.syncMainBranch ?? false })
 
     // Auto-start chain if auto_execute is enabled
     const exec = svc.service.getById(executionId)
@@ -536,6 +536,7 @@ executionRoutes.get("/:executionId/agent-events", (c) => {
       // Merge with JSONL events that SQLite doesn't capture:
       // 1. Iteration-scoped events (carry iteration field that SQLite doesn't store)
       // 2. Lifecycle events (start/end) for all nodes
+      // 3. engine_init pre-phase events (not stored in SQLite)
       // Exclude raw agent_event wrappers and branch_start/branch_end (only needed for LoopOverview)
       const jsonlEvents = svc.service.getAgentEvents(executionId, nodeId || undefined, loopId, iteration)
       const jsonlToAdd = jsonlEvents.filter((e: any) => {
@@ -545,6 +546,8 @@ executionRoutes.get("/:executionId/agent-events", (c) => {
         if (e.event === "start" || e.event === "end") return true
         // Include iteration-scoped events (from iteration JSONL files)
         if (e.iteration != null && e.iteration > 0) return true
+        // Include engine_init pre-phase events
+        if (typeof e.event === "string" && e.event.startsWith("engine_init_")) return true
         return false
       })
       // Merge JSONL supplemental events by nodeId

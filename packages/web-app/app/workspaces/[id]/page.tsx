@@ -1018,6 +1018,7 @@ const handleOpenAsText = async (file: FileNode) => {
                   executions={executions}
                   workflowOptions={workflowOptions}
                   org={workspace?.org ?? "default"}
+                  projectCount={workspace?.projectCount ?? 0}
                   onNodeClick={handleNodeClick}
                   onRefresh={fetchWorkspaceData}
                 />

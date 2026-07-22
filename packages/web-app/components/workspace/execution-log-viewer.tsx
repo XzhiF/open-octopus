@@ -81,6 +81,13 @@ export function EventIcon({ event, agentType }: { event: string; agentType?: str
     case "swarm_round_end": return <RotateCcw className="h-3 w-3 text-purple-400 shrink-0" />
     case "swarm_complete": return <Award className="h-3 w-3 text-yellow-400 shrink-0" />
     case "consensus_check": return <Award className="h-3 w-3 text-purple-400 shrink-0" />
+    case "engine_init_start": return <Play className="h-3 w-3 text-cyan-400 shrink-0" />
+    case "engine_init_skills": return <Wrench className="h-3 w-3 text-cyan-400 shrink-0" />
+    case "engine_init_agents": return <Users className="h-3 w-3 text-cyan-400 shrink-0" />
+    case "engine_init_pull": return <Check className="h-3 w-3 text-emerald-400 shrink-0" />
+    case "engine_init_info": return <MessageSquare className="h-3 w-3 text-blue-400 shrink-0" />
+    case "engine_init_warning": return <X className="h-3 w-3 text-yellow-400 shrink-0" />
+    case "engine_init_complete": return <Check className="h-3 w-3 text-emerald-400 shrink-0" />
     default: return <Clock className="h-3 w-3 text-muted-foreground shrink-0" />
   }
 }
@@ -223,6 +230,29 @@ export function EventLabel({ entry }: { entry: LogEvent }) {
       </span>
     case "consensus_check":
       return <span className="text-purple-400">共识检测 第{entry.round}轮</span>
+    case "engine_init_start":
+      return <span className="text-cyan-400">准备阶段开始</span>
+    case "engine_init_skills":
+      return <span className="text-cyan-400">Skills 拷贝 {entry.status === "success" ? `(${entry.fileCount ?? 0} 文件)` : (entry.status ?? "")}</span>
+    case "engine_init_agents":
+      return <span className="text-cyan-400">Agents 拷贝 {entry.status === "success" ? `(${entry.fileCount ?? 0} 文件)` : (entry.status ?? "")}</span>
+    case "engine_init_pull": {
+      const projectName = entry.projectName ?? ""
+      const branch = entry.branch ?? ""
+      return <span className="text-emerald-400">同步成功 <code className="text-xs bg-muted px-1 rounded">{projectName}</code>{branch && <span className="text-muted-foreground/60 ml-1">({branch})</span>}</span>
+    }
+    case "engine_init_info": {
+      const projectName = entry.projectName ?? ""
+      const message = entry.message ?? ""
+      return <span className="text-blue-400">同步信息 <code className="text-xs bg-muted px-1 rounded">{projectName}</code>{message && <span className="text-muted-foreground/60 ml-1">{message}</span>}</span>
+    }
+    case "engine_init_warning": {
+      const projectName = entry.projectName ?? ""
+      const errorMessage = entry.errorMessage ?? entry.reason ?? ""
+      return <span className="text-yellow-400">同步警告 <code className="text-xs bg-muted px-1 rounded">{projectName}</code>{errorMessage && <span className="text-muted-foreground/60 ml-1">{errorMessage}</span>}</span>
+    }
+    case "engine_init_complete":
+      return <span className="text-emerald-400">准备阶段完成</span>
     default: return <span className="text-muted-foreground">{entry.event}</span>
   }
 }
@@ -409,7 +439,7 @@ export function ExpandableRow({ entry }: { entry: LogEvent }) {
 // ============ Main Component ============
 
 export function ExecutionLogViewer({ workspaceId, executionId, executionStatus }: LogViewerProps) {
-  const { events: rawEvents, loopIterations, loading, error } = useExecutionEvents(
+  const { events: rawEvents, loopIterations, totalCount, isTrimmed, loading, error } = useExecutionEvents(
     workspaceId, executionId, executionStatus,
   )
   const [collapsedNodes, setCollapsedNodes] = useState<Set<string>>(new Set())
@@ -617,6 +647,11 @@ export function ExecutionLogViewer({ workspaceId, executionId, executionStatus }
 
   return (
     <div className="h-full flex flex-col">
+      {isTrimmed && (
+        <div className="px-2 py-1.5 bg-yellow-500/10 border-b border-yellow-500/30 text-[11px] text-yellow-400 shrink-0">
+          显示最新 100 / 共 {totalCount} 条事件
+        </div>
+      )}
       {nodeGroups.size > 1 && (
         <div className="flex items-center gap-1 px-2 py-1 border-b border-border/30 shrink-0">
           <button

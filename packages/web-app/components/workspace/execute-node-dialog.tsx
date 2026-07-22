@@ -29,6 +29,8 @@ interface ExecuteNodeDialogProps {
   workflowOptions: WorkflowOption[]
   initialInputValues: Record<string, string>
   initialRollbackOnError: boolean
+  /** If workspace has git projects, show the sync checkbox */
+  hasGitProjects?: boolean
   onConfirm: (nodeId: string, formData: ExecuteNodeFormData) => void
 }
 
@@ -43,11 +45,13 @@ export function ExecuteNodeDialog({
   workflowOptions,
   initialInputValues,
   initialRollbackOnError,
+  hasGitProjects = false,
   onConfirm,
 }: ExecuteNodeDialogProps) {
   // Persist form state so it survives tab switches and screen navigation
   const inputKey = `octopus:ws:${workspaceId}:execute:${nodeId}:${mode}:inputs`
   const rollbackKey = `octopus:ws:${workspaceId}:execute:${nodeId}:${mode}:rollback`
+  const syncKey = `octopus:ws:${workspaceId}:execute:${nodeId}:${mode}:sync`
 
   const [inputValues, setInputValues, clearInputs] = usePersistedState<Record<string, string>>(
     inputKey,
@@ -56,6 +60,10 @@ export function ExecuteNodeDialog({
   const [rollbackOnError, setRollbackOnError, clearRollback] = usePersistedState<boolean>(
     rollbackKey,
     initialRollbackOnError,
+  )
+  const [syncMainBranch, setSyncMainBranch, clearSync] = usePersistedState<boolean>(
+    syncKey,
+    true,
   )
   const [localWorkflowInputs, setLocalWorkflowInputs] = useState<Record<string, WorkflowInputDef> | undefined>(undefined)
 
@@ -104,10 +112,11 @@ export function ExecuteNodeDialog({
 
   const handleConfirm = () => {
     if (!isFormValid) return
-    onConfirm(nodeId, { inputValues, rollbackOnError })
+    onConfirm(nodeId, { inputValues, rollbackOnError, syncMainBranch })
     // Clear persisted draft after successful submission
     clearInputs()
     clearRollback()
+    clearSync()
   }
 
   const handleCancel = () => {
@@ -154,6 +163,21 @@ export function ExecuteNodeDialog({
                     </div>
                   )
                 })}
+            </div>
+          )}
+          {hasGitProjects && (
+            <div className="flex items-center justify-between rounded-lg border p-3">
+              <div className="space-y-0.5">
+                <Label htmlFor="sync-main-branch-switch">同步主分支</Label>
+                <p className="text-xs text-muted-foreground">
+                  开启后，各项目自动 git fetch + merge origin/main（或 master），失败不阻断执行
+                </p>
+              </div>
+              <Switch
+                id="sync-main-branch-switch"
+                checked={syncMainBranch}
+                onCheckedChange={(checked) => setSyncMainBranch(checked)}
+              />
             </div>
           )}
           <div className="flex items-center justify-between rounded-lg border p-3">

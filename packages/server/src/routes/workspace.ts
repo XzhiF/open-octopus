@@ -3,17 +3,39 @@ import { WorkspaceService } from "../services/workspace"
 import { WorkspaceDAO, OrgDAO } from "../db/dao"
 import { orgExists } from "../services/org"
 import { parseManifest, parseManifestJson, loadModelAliasConfig } from "@octopus/shared"
-import { readFileSync, existsSync, readdirSync } from "fs"
+import { readFileSync, existsSync, readdirSync, statSync } from "fs"
 import { join } from "path"
 import os from "os"
 import { getArchiveService, ArchivePartialFailure } from "../services/archive/archive-service"
+
+/** Count git project worktrees under <workspacePath>/projects/ */
+function countProjects(workspacePath: string): number {
+  const projectsDir = join(workspacePath.replace(/^~/, os.homedir()), "projects")
+  try {
+    let count = 0
+    for (const entry of readdirSync(projectsDir, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue
+      // A valid project worktree has a .git file (worktree) or .git directory
+      const gitPath = join(projectsDir, entry.name, ".git")
+      if (existsSync(gitPath)) count++
+    }
+    return count
+  } catch {
+    return 0
+  }
+}
+
+function enrichWorkspace(w: Record<string, unknown>) {
+  const resolvedPath = (w.path as string).replace(/^~/, os.homedir())
+  return { ...w, path: resolvedPath, projectCount: countProjects(resolvedPath) }
+}
 
 export function createWorkspaceRoutes(workspaceService: WorkspaceService, orgDAO: OrgDAO, workspaceDAO: WorkspaceDAO): Hono {
   const workspaceRoutes = new Hono()
 
   workspaceRoutes.get("/", (c) => {
     const workspaces = workspaceService.list()
-    const resolved = workspaces.map(w => ({ ...w, path: w.path.replace(/^~/, os.homedir()) }))
+    const resolved = workspaces.map(w => enrichWorkspace(w as unknown as Record<string, unknown>))
     return c.json(resolved)
   })
 
@@ -171,7 +193,7 @@ export function createWorkspaceRoutes(workspaceService: WorkspaceService, orgDAO
     const id = c.req.param("id")
     const workspace = workspaceService.getById(id)
     if (!workspace) return c.json({ error: "not found" }, 404)
-    return c.json({ ...workspace, path: workspace.path.replace(/^~/, os.homedir()) })
+    return c.json(enrichWorkspace(workspace as unknown as Record<string, unknown>))
   })
 
   workspaceRoutes.put("/:id", async (c) => {

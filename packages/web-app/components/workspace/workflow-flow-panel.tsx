@@ -53,6 +53,7 @@ interface WorkflowFlowPanelProps {
   executions: Execution[]
   workflowOptions: WorkflowOption[]
   org: string
+  projectCount?: number
   onNodeClick?: (execution: Execution) => void
   onRefresh?: () => void
 }
@@ -65,6 +66,7 @@ export function WorkflowFlowPanel({
   executions,
   workflowOptions,
   org,
+  projectCount = 0,
   onNodeClick,
   onRefresh,
 }: WorkflowFlowPanelProps) {
@@ -522,6 +524,7 @@ export function WorkflowFlowPanel({
               )
             }
             initialRollbackOnError={executeNodeData.rollbackOnError}
+            hasGitProjects={projectCount > 0}
             onConfirm={(nodeId, formData: ExecuteNodeFormData) => {
               executeNode(nodeId, formData)
               setExecuteNodeDialog(null)
