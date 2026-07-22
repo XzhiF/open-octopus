@@ -224,6 +224,12 @@ export class ExecutionDAO extends BaseDAO {
     return this.stmt("DELETE FROM agent_events WHERE node_execution_id = ?").run(nodeExecutionId)
   }
 
+  /** Event types produced by the compaction merge — stored as full JSON for round-trip fidelity. */
+  private static MERGED_EVENT_TYPES = new Set([
+    "thinking_block", "text_block", "tool_call",
+    "bash_output", "bash_stderr", "python_output", "python_stderr",
+  ])
+
   /** Replace all agent events for a node with merged (compacted) events. */
   replaceMergedEvents(executionId: string, nodeId: string, mergedEvents: any[]): void {
     this.transaction(() => {
@@ -241,7 +247,12 @@ export class ExecutionDAO extends BaseDAO {
       for (let i = 0; i < mergedEvents.length; i++) {
         const e = mergedEvents[i]
         const ts = e.startedAt || e.timestamp || new Date().toISOString()
-        const content = e.content ?? (e.lines ? e.lines.join("\n") : null)
+        // For merged block types, store the full event as JSON so the read path
+        // can round-trip without losing startedAt/completedAt/toolName/etc.
+        const isMergedType = ExecutionDAO.MERGED_EVENT_TYPES.has(e.event)
+        const content = isMergedType
+          ? JSON.stringify(e)
+          : (e.content ?? (e.lines ? e.lines.join("\n") : null))
         insert.run(
           neId, i, e.turnIndex ?? 1, e.event, ts,
           content, content ? content.length : 0,

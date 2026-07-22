@@ -27,7 +27,7 @@ color: amber
 
 ## 工作方法
 
-1. 读 _scan/ 预扫描数据了解现有测试和安全配置
+1. 用 Grep/Glob/Read 探索源码，了解现有测试和安全配置
 2. Read 关键文件评估风险（如 db-schemas.txt、test-config.txt）
 3. 识别高风险改动点
 4. 输出风险评估（严重程度 + 缓解方案）

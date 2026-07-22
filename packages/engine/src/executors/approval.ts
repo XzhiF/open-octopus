@@ -2,6 +2,8 @@ import { VarPool, substituteVarsFull, substituteVars, evaluateExpression } from 
 import type { NodeDef, CrossExecResolver } from "@octopus/shared"
 import type { NodeExecutor, NodeExecutionResult, ApprovalMetadata } from "./types"
 import type { ApprovalConfig } from "./executor-config"
+import { readFileSync, existsSync } from "fs"
+import { resolve } from "path"
 
 export class ApprovalExecutor implements NodeExecutor {
   private userChoice?: string
@@ -11,6 +13,7 @@ export class ApprovalExecutor implements NodeExecutor {
   private crossExecResolver?: CrossExecResolver
   private executionId?: string
   private nodeOutputs?: Record<string, Record<string, any>>
+  private cwd?: string
 
   constructor(
     private node: NodeDef,
@@ -24,6 +27,7 @@ export class ApprovalExecutor implements NodeExecutor {
     this.crossExecResolver = config?.crossExecResolver
     this.executionId = config?.executionId
     this.nodeOutputs = config?.nodeOutputs
+    this.cwd = config?.cwd
   }
 
   async execute(): Promise<NodeExecutionResult> {
@@ -66,7 +70,24 @@ export class ApprovalExecutor implements NodeExecutor {
 
     // Build approval metadata from node definition, resolving variables in prompt
     const rawPrompt = this.node.prompt || "需要审批确认"
-    const resolvedPrompt = substituteVarsFull(rawPrompt, this.pool, this.nodeOutputs, this.crossExecResolver, this.executionId, this.loopContext)
+
+    // Pre-process: resolve $file:path references by reading file contents directly.
+    // This runs BEFORE substituteVarsFull so file paths can contain $vars references.
+    let promptWithFiles = rawPrompt.replace(/\$file:([^\s\n]+)/g, (_match, rawPath: string) => {
+      // Resolve variables in the path first (e.g. $vars.feature → "engine-init-sync")
+      const resolvedPath = substituteVars(rawPath, this.pool, this.nodeOutputs, this.crossExecResolver, this.executionId, this.loopContext)
+      const fullPath = this.cwd ? resolve(this.cwd, resolvedPath) : resolvedPath
+      try {
+        if (existsSync(fullPath)) {
+          return readFileSync(fullPath, "utf8").trimEnd()
+        }
+        return `[file not found: ${resolvedPath}]`
+      } catch {
+        return `[error reading: ${resolvedPath}]`
+      }
+    })
+
+    const resolvedPrompt = substituteVarsFull(promptWithFiles, this.pool, this.nodeOutputs, this.crossExecResolver, this.executionId, this.loopContext)
     const approvalMetadata: ApprovalMetadata = {
       prompt: resolvedPrompt,
       options: this.node.options || [

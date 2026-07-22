@@ -1,15 +1,20 @@
 ---
 name: octo-xzf-implementer
-description: "Tracer Bullet 执行方法论 — 全栈实现 + 自治 verify-fix + checkpoint 标准"
+description: "Tracer Bullet 执行方法论 — 全栈实现 + checkpoint 标准"
 category: coding-assistant
 tags: [xzf-dev]
-version: 2.1.0
+version: 3.0.0
 ---
 
 # Tracer Bullet 执行方法论
 
 ## 触发条件
 execution-loop 中的 agent 节点，按依赖顺序逐个执行 spec 下的 tracer bullets。
+
+## 核心理念
+
+**实现优先，轻量验证。** 每个 tracer bullet 写完代码后跑单测确认基本正确，
+不做深度集成验证和反假跑检查——这些由 Stage 6 E2E 统一覆盖。
 
 ## 执行流程
 
@@ -24,20 +29,30 @@ execution-loop 中的 agent 节点，按依赖顺序逐个执行 spec 下的 tra
 ### 每个 Tracer Bullet
 
 ```
-1. 读取 T-N.md（目标 + 验收标准 + 验证方式 + 依赖）
-2. 读取 spec 文件（反假跑标准）
-3. 实现（全栈：DB → API → UI → test）
-4. 自治 verify-fix 循环（max 3）:
-   a. 运行 T-N.md 中定义的验证方式
-   b. 对照 spec 反假跑标准，确认"真通过"
-   c. Code smell 检查:
+1. 读取 T-N.md（目标 + 验收标准 + 依赖）
+2. 实现（全栈：DB → API → UI）
+3. 写关键单测（覆盖核心逻辑路径，不追求覆盖率）
+4. 验证:
+   a. 编译通过（tsc --noEmit / pnpm build / 对应语言的编译检查）
+   b. 单测通过（仅跑当前变更相关的测试，不跑全量）
+   c. Code smell 扫描:
       grep -rn "TODO\|FIXME\|HACK\|XXX\|console\.log\|debugger" {变更文件}
-      发现遗留 → 清理（算入 fix 次数）
-   d. IF 全部通过（测试 + 反假跑 + smell 清理）→ 更新 checkpoint → 下一个 task
-   e. IF 失败 → 分析原因 → 修复 → 重试
-   f. IF 3 次仍失败 → 写入 checkpoint failure → 报告
-5. 所有 task 完成后，更新 checkpoint 为 completed
+      发现遗留 → 清理
+5. IF 全部通过 → 更新 checkpoint → 下一个 task
+6. IF 失败 → 修复 → 重试（max 2 次）
+7. IF 2 次仍失败 → 写入 checkpoint failure → 继续下一个 task
+8. 所有 task 完成后，更新 checkpoint 为 completed
 ```
+
+### 验证边界（做什么 / 不做什么）
+
+| ✅ 做 | ❌ 不做 |
+|--------|---------|
+| 核心逻辑的单测 | 追求覆盖率 |
+| 编译/构建检查 | 全量测试套件 |
+| Code smell 清理 | 集成测试（E2E 覆盖） |
+| 当前变更相关的测试 | 反假跑检查 |
+| | 验证证据文件 |
 
 ## Checkpoint 标准
 
@@ -58,8 +73,7 @@ execution-loop 中的 agent 节点，按依赖顺序逐个执行 spec 下的 tra
       "task": "T-1-{name}.md",
       "status": "passed",
       "completed_at": "ISO-8601 timestamp",
-      "attempts": 1,
-      "verify_evidence": "04-execution/spec-NNN/verify/T-1.md"
+      "attempts": 1
     }
   ],
   "tasks_remaining": [
@@ -76,14 +90,9 @@ execution-loop 中的 agent 节点，按依赖顺序逐个执行 spec 下的 tra
 {
   "failure": {
     "task": "T-2-{name}.md",
-    "reason": "验收标准未满足：...",
-    "attempts": 3,
+    "reason": "编译失败: ...",
+    "attempts": 2,
     "last_error": "具体错误信息",
-    "fix_log": [
-      "尝试 1: {做了什么} → {结果}",
-      "尝试 2: {做了什么} → {结果}",
-      "尝试 3: {做了什么} → {结果}"
-    ],
     "failed_at": "ISO-8601 timestamp"
   }
 }
@@ -95,8 +104,8 @@ execution-loop 中的 agent 节点，按依赖顺序逐个执行 spec 下的 tra
 |------|------|
 | spec 开始执行 | 创建 checkpoint，status="in_progress"，所有 task 在 tasks_remaining |
 | 每个 task 通过 | 从 tasks_remaining 移到 tasks_completed，更新 updated_at |
-| task 失败（3 次） | status="failed"，写入 failure 字段 |
-| 所有 task 通过 | status="completed"，保留 checkpoint 作为执行记录 |
+| task 失败（2 次） | 记录到 failure，继续下一个 task（不阻断整个 spec） |
+| 所有 task 完成 | status="completed"（含部分失败也标 completed，failure 字段记录详情） |
 | 恢复执行 | 读 checkpoint → 跳过 tasks_completed → 从 tasks_remaining 开始 |
 
 ### 字段约束
@@ -108,55 +117,14 @@ execution-loop 中的 agent 节点，按依赖顺序逐个执行 spec 下的 tra
 - 所有时间字段必须是 ISO-8601 格式
 - 每次写入 checkpoint 必须同时更新 `updated_at`
 
-## 验证结果文件
-
-路径: `04-execution/spec-{NNN}/verify/T-N.md`
-
-```markdown
-# T-N 验证结果
-
-## 状态: ✅ PASS | ❌ FAIL
-## 完成时间: {ISO-8601}
-## 尝试次数: {N} / 3
-
-## 验收标准检查
-- [x|空] {条件 1} — {证据}
-- [x|空] {条件 2} — {证据}
-
-## 反假跑检查
-- [x|空] {反假跑条件} — {真实证据}
-
-## 证据
-### 测试输出
-{命令输出}
-### 截图（如有）
-![](screenshot-{timestamp}.png)
-### DB 验证（如有）
-{查询结果}
-
-## 修复记录（如有）
-### 修复 {N}:
-- 问题: {什么失败}
-- 修复: {改了什么}
-- 结果: {pass/fail}
-```
-
-## 保真要求
-- 不允许跳过验证
-- 不允许伪造通过
-- 必须对照反假跑标准确认真通过
-- 必须有真实性证明（测试输出、截图、DB 查询结果）
-- 不确定时如实报告，不猜测
-- 每次 fix attempt 都记录到验证结果文件
-
 ## 完成输出
 
-spec 全部 task 通过后:
+spec 全部 task 完成后:
 ```json
-{"vars_update": {"spec_status": "passed", "user_guidance": ""}}
+{"vars_update": {"spec_status": "passed", "current_spec": "<当前值+1>"}}
 ```
 
-失败时:
+有 task 失败但未阻断时:
 ```json
-{"vars_update": {"spec_status": "failed", "failure_reason": "T-N 失败: ..."}}
+{"vars_update": {"spec_status": "partial", "current_spec": "<当前值+1>"}}
 ```

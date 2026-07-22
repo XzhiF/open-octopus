@@ -122,6 +122,13 @@ export interface ConsensusCheckEvent {
   shouldContinue: boolean
 }
 
+export interface HostReportEvent {
+  nodeId: string
+  round: number
+  content: string
+  degraded: boolean
+}
+
 export interface SwarmRoundEndEvent {
   nodeId: string
   round: number
@@ -176,6 +183,7 @@ export type SwarmSSEEvent =
   | { type: "expert_message"; data: ExpertMessageEvent }
   | { type: "expert_complete"; data: ExpertCompleteEvent }
   | { type: "consensus_check"; data: ConsensusCheckEvent }
+  | { type: "host_report"; data: HostReportEvent }
   | { type: "swarm_round_end"; data: SwarmRoundEndEvent }
   | { type: "swarm_complete"; data: SwarmCompleteEvent }
   | { type: "moa_expert_complete"; data: MoaExpertCompleteEvent }

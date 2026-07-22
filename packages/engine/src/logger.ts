@@ -224,10 +224,16 @@ export function mergeAgentEvents(entries: any[]): any[] {
       }
 
       // Pass-through: already-merged block-shaped events (idempotent)
-      // Note: bash_stderr/python_stderr are NOT here — they are also raw top-level events
+      // Note: bash_stderr/python_stderr are also raw top-level events,
+      // but after compaction they arrive as merged blocks (detected by startedAt field)
       if (topEvent === "thinking_block" || topEvent === "text_block" ||
           topEvent === "tool_call" || topEvent === "bash_output" ||
           topEvent === "python_output") {
+        closeBlock()
+        results.push(entry)
+        continue
+      }
+      if ((topEvent === "bash_stderr" || topEvent === "python_stderr") && entry.startedAt) {
         closeBlock()
         results.push(entry)
         continue

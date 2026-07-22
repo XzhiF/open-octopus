@@ -15,7 +15,6 @@ Stage 1 `idea-research` swarm debate 节点，每位专家加载此 skill 参与
 
 - **Idea 文档**: `.octopus/xzf/{feature}/00-init/idea.md`
 - **Workspace 拓扑**: `.octopus/xzf/{feature}/00-init/workspace-topology.md`
-- **预扫描结果**: `.octopus/xzf/{feature}/01-research/_scan/`
 
 ## 00-init/idea.md 格式
 
@@ -38,7 +37,7 @@ Stage 1 `idea-research` swarm debate 节点，每位专家加载此 skill 参与
 
 ### 1. 聚焦 Idea，不写通用概览
 - 只研究与这个 Idea **直接相关**的内容
-- 引用 _scan/ 中的具体文件作为证据
+- 引用具体源码文件和行号作为证据
 - 不说"我们用了 React"，要说"Idea 影响 web-app/src/components/X，它用了 Y 模式"
 
 ### 2. 对抗式讨论
@@ -76,7 +75,7 @@ Stage 1 `idea-research` swarm debate 节点，每位专家加载此 skill 参与
 ## {你的领域} — 对 Idea 的影响
 
 ### Affected Modules
-- {模块}: {影响类型} — 证据: {_scan/ 中的文件或 Read 的关键代码}
+- {模块}: {影响类型} — 证据: {具体源码文件和行号}
 
 ### Patterns to Reuse
 - {pattern}: {在哪里} → {本 Idea 如何复用}
@@ -93,17 +92,9 @@ Stage 1 `idea-research` swarm debate 节点，每位专家加载此 skill 参与
 
 ⚠️ 发言控制在 **1000 字以内**。聚焦结论和分歧点。
 
-## 预扫描文件使用
+## Codebase 探索策略
 
-_scan/ 目录文件用于快速定位:
-- `file-tree.txt` → 项目文件结构
-- `deps.txt` → 依赖和版本
-- `claude-mds.txt` → 项目约定
-- `api-entries.txt` → API 入口文件
-- `db-schemas.txt` → 数据模型文件
-- `test-config.txt` → 测试配置
-
-先读预扫描文件定位，再 Read 目标文件深入分析。避免盲读。
+使用 Grep/Glob/Read 按需探索源码。先从 workspace-topology.md 了解项目结构，再聚焦 Idea 相关的模块深入分析。引用具体文件路径和行号作为证据。
 
 ## 领域知识读写
 

@@ -7,6 +7,7 @@ import {
   DialogDescription, DialogFooter
 } from "@/components/ui/dialog"
 import { usePersistedState } from "@/hooks/use-persisted-state"
+import { MarkdownPreview } from "@/components/resource/MarkdownPreview"
 import type { ApprovalMetadata } from "@/lib/types"
 
 interface ApprovalDialogProps {
@@ -64,11 +65,12 @@ export function ApprovalDialog({
             overflow-hidden on DialogContent + flex-1 min-h-0 here 让长文本时
             prompt 区收缩滚动，footer 始终留在弹窗内可见。 */}
         <div className="flex-1 min-h-0 overflow-y-auto pr-2">
-          <div className="rounded-lg bg-muted p-4">
-            <p className="text-sm font-medium">审批说明</p>
-            <p className="mt-1 text-sm text-muted-foreground whitespace-pre-wrap">
-              {approval.prompt}
-            </p>
+          <div className="rounded-lg bg-muted p-5">
+            <p className="text-sm font-semibold mb-3">审批说明</p>
+            <MarkdownPreview
+              content={approval.prompt}
+              className="[&_*]:text-[13px] [&_h4]:text-sm [&_h4]:mt-2 [&_h4]:mb-0.5 [&_p]:my-0.5 [&_hr]:my-1.5"
+            />
           </div>
         </div>
 

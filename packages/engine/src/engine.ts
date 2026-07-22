@@ -394,7 +394,13 @@ export class WorkflowEngine {
     // 路径 A: approval 恢复 — 重建 approval executor 注入 userChoice
     const pauseNode = sorted[startIdx]
     if (pauseNode.type === "approval" && opts?.userChoice) {
-      const executor = new ApprovalExecutor(pauseNode, this.pool, { userChoice: opts.userChoice, userComment: opts.userComment, signal, crossExecResolver: this.crossExecResolver, executionId: this.executionId })
+      const nodeOutputs: Record<string, Record<string, any>> = {}
+      for (const [id, result] of Object.entries(this.nodeResults)) {
+        const outputs = { ...(result.outputs ?? {}) }
+        if (result.lastOutput !== undefined) outputs["output"] = result.lastOutput
+        nodeOutputs[id] = outputs
+      }
+      const executor = new ApprovalExecutor(pauseNode, this.pool, { userChoice: opts.userChoice, userComment: opts.userComment, signal, crossExecResolver: this.crossExecResolver, executionId: this.executionId, nodeOutputs, cwd: this.cwd })
       const result = await executor.execute()
       this.nodeResults[pauseNode.id] = result
 
@@ -1482,6 +1488,18 @@ export class WorkflowEngine {
   private createExecutor(node: NodeDef, pool?: VarPool, signal?: AbortSignal) {
     const p = pool ?? this.pool
     const s = signal ?? this.signal
+
+    // Build nodeOutputs from engine results for $nodeId.output.xxx resolution
+    const buildNodeOutputs = (): Record<string, Record<string, any>> => {
+      const nodeOutputs: Record<string, Record<string, any>> = {}
+      for (const [id, result] of Object.entries(this.nodeResults)) {
+        const outputs = { ...(result.outputs ?? {}) }
+        if (result.lastOutput !== undefined) outputs["output"] = result.lastOutput
+        nodeOutputs[id] = outputs
+      }
+      return nodeOutputs
+    }
+
     switch (node.type) {
       case "bash":
         return new BashExecutor(node, p, {
@@ -1494,6 +1512,7 @@ export class WorkflowEngine {
           cwd: this.cwd,
           crossExecResolver: this.crossExecResolver,
           executionId: this.executionId,
+          nodeOutputs: buildNodeOutputs(),
         })
       case "python":
         return new PythonExecutor(node, p, {
@@ -1503,11 +1522,18 @@ export class WorkflowEngine {
             this.logger?.log(node.id, event, { line })
             this.callbacks?.onNodeLog?.(node.id, line)
           },
+          nodeOutputs: buildNodeOutputs(),
         })
       case "condition":
         return new ConditionExecutor(node, p)
       case "approval":
-        return new ApprovalExecutor(node, p, { signal: s, crossExecResolver: this.crossExecResolver, executionId: this.executionId })
+        return new ApprovalExecutor(node, p, {
+          signal: s,
+          crossExecResolver: this.crossExecResolver,
+          executionId: this.executionId,
+          nodeOutputs: buildNodeOutputs(),
+          cwd: this.cwd,
+        })
       case "loop":
         return new LoopExecutor(node, p, {
           providers: this.providers,

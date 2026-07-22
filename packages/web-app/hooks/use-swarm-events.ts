@@ -15,6 +15,12 @@ import type {
   FileConflict,
 } from "@/lib/swarm-types"
 
+export interface HostRoundReport {
+  round: number
+  content: string
+  degraded: boolean
+}
+
 interface SwarmState {
   status: SwarmStatus
   mode: SwarmMode | null
@@ -26,6 +32,7 @@ interface SwarmState {
   routerDecision: RouterDecision | null
   taskBreakdown: TaskBreakdown | null
   hostReport: string | null
+  hostReports: HostRoundReport[]
   hostDegraded: boolean
   fileConflicts: FileConflict[]
   finalResult: SwarmCompleteEvent["result"] | null
@@ -58,7 +65,7 @@ type SwarmAction =
   | { type: "router_decision"; payload: RouterDecision }
   | { type: "task_breakdown"; payload: TaskBreakdown }
   | { type: "file_conflict"; payload: FileConflict }
-  | { type: "host_report"; payload: { content: string; degraded: boolean } }
+  | { type: "host_report"; payload: { round: number; content: string; degraded: boolean } }
   | { type: "moa_expert_complete"; payload: { role: string; model: string; status: "completed" | "failed"; outputPreview: string; durationMs: number; degraded: boolean; degradationChain?: string[] } }
   | { type: "moa_aggregator_start"; payload: { round: number; totalRounds: number; model: string; inputExpertCount: number } }
   | { type: "moa_aggregator_complete"; payload: { round: number; totalRounds: number; model: string; inputExpertCount: number } }
@@ -75,6 +82,7 @@ const initialState: SwarmState = {
   routerDecision: null,
   taskBreakdown: null,
   hostReport: null,
+  hostReports: [],
   hostDegraded: false,
   fileConflicts: [],
   finalResult: null,
@@ -196,10 +204,25 @@ function swarmReducer(state: SwarmState, action: SwarmAction): SwarmState {
 
     case "swarm_complete": {
       const { status, synthesis, result } = action.payload
+      // Add final synthesis to per-round reports (labeled as final round)
+      const finalRound = result.rounds_used
+      const finalReport: HostRoundReport = {
+        round: finalRound,
+        content: synthesis,
+        degraded: result.host_degraded,
+      }
+      const existingFinal = state.hostReports.findIndex(r => r.round === finalRound)
+      const nextReports = [...state.hostReports]
+      if (existingFinal >= 0) {
+        nextReports[existingFinal] = finalReport
+      } else {
+        nextReports.push(finalReport)
+      }
       return {
         ...state,
         status: status === "completed" ? "completed" : "failed",
         hostReport: synthesis,
+        hostReports: nextReports,
         finalResult: result,
         budgetExhausted: result.budget_exhausted,
         timeoutExceeded: result.timeout_exceeded,
@@ -216,12 +239,26 @@ function swarmReducer(state: SwarmState, action: SwarmAction): SwarmState {
     case "file_conflict":
       return { ...state, fileConflicts: [...state.fileConflicts, action.payload] }
 
-    case "host_report":
+    case "host_report": {
+      const report: HostRoundReport = {
+        round: action.payload.round,
+        content: action.payload.content,
+        degraded: action.payload.degraded,
+      }
+      const existing = state.hostReports.findIndex(r => r.round === report.round)
+      const nextReports = [...state.hostReports]
+      if (existing >= 0) {
+        nextReports[existing] = report
+      } else {
+        nextReports.push(report)
+      }
       return {
         ...state,
         hostReport: action.payload.content,
+        hostReports: nextReports,
         hostDegraded: action.payload.degraded,
       }
+    }
 
     case "moa_expert_complete": {
       const result = action.payload
@@ -265,6 +302,7 @@ export interface UseSwarmEventsResult {
   routerDecision: RouterDecision | null
   taskBreakdown: TaskBreakdown | null
   hostReport: string | null
+  hostReports: HostRoundReport[]
   hostDegraded: boolean
   fileConflicts: FileConflict[]
   finalResult: SwarmCompleteEvent["result"] | null
@@ -354,6 +392,17 @@ function replayHistoricalEvents(
             round: (data.round as number) ?? 1,
             score: (data.score as number) ?? 0,
             shouldContinue: (data.shouldContinue as boolean) ?? true,
+          },
+        })
+        break
+
+      case "host_report":
+        dispatch({
+          type: "host_report",
+          payload: {
+            round: (data.round as number) ?? 0,
+            content: (data.content as string) ?? "",
+            degraded: (data.degraded as boolean) ?? false,
           },
         })
         break
@@ -630,7 +679,7 @@ export function useSwarmEvents(
         if (!isEventForNode(data)) return
         dispatch({
           type: "host_report",
-          payload: { content: data.content, degraded: data.degraded ?? false },
+          payload: { round: data.round ?? 0, content: data.content, degraded: data.degraded ?? false },
         })
       } catch { /* skip */ }
     })
@@ -695,6 +744,7 @@ export function useSwarmEvents(
     routerDecision: state.routerDecision,
     taskBreakdown: state.taskBreakdown,
     hostReport: state.hostReport,
+    hostReports: state.hostReports,
     hostDegraded: state.hostDegraded,
     fileConflicts: state.fileConflicts,
     finalResult: state.finalResult,

@@ -71,6 +71,7 @@ export type CoreConfig = ExecutorDeps & EngineServices
 export interface PythonConfig {
   signal?: AbortSignal
   onLog?: OnLogCallback
+  nodeOutputs?: Record<string, Record<string, any>>
 }
 
 /** ApprovalExecutor — user choice + variable resolution */
@@ -82,6 +83,7 @@ export interface ApprovalConfig {
   crossExecResolver?: CrossExecResolver
   executionId?: string
   nodeOutputs?: Record<string, Record<string, any>>
+  cwd?: string
 }
 
 /** BashExecutor — logging + variable resolution */

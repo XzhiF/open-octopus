@@ -42,12 +42,12 @@ ELSE → 从 Idea 提取关键词生成 kebab-case slug:
 
 ```bash
 BASE=".octopus/xzf/{feature}"
-mkdir -p "$BASE"/{00-init,01-research/_scan,02-clarification,03-specs,04-execution,05-reports/{e2e-scripts,e2e-screenshots,e2e-data},06-ship}
+mkdir -p "$BASE"/{00-init,01-research,02-clarification,03-specs,04-execution,05-reports/{e2e-scripts,e2e-screenshots,e2e-data},06-ship}
 ```
 
 目录说明:
 - `00-init/` — Idea + workspace 拓扑 + 目录规范
-- `01-research/_scan/` — 自动预扫描产物（underscore = 生成物）
+- `01-research/` — 研究简报 + 澄清问题
 - `02-clarification/` — 需求澄清 + 验证策略 + 简报 + 审批回复
 - `03-specs/` — Spec 文件 + tracer bullets + E2E 测试计划
 - `04-execution/` — 执行 checkpoint（按 spec 子目录）
@@ -68,8 +68,7 @@ mkdir -p "$BASE"/{00-init,01-research/_scan,02-clarification,03-specs,04-executi
 | 阶段 | 目录 | 产物 |
 |------|------|------|
 | 初始化 | `00-init/` | idea.md, workspace-topology.md, directory-conventions.md |
-| 研究 | `01-research/` | research-brief.md |
-| 研究 | `01-research/_scan/` | 预扫描文件（自动，只读） |
+| 研究 | `01-research/` | research-brief.md, questions.md |
 | 澄清 | `02-clarification/` | questions.md, verification.md, brief.md |
 | 设计 | `03-specs/` | spec-NNN.md, spec-index.md, e2e-test-plan.md |
 | 设计 | `03-specs/spec-NNN-{name}/` | T-N-*.md（tracer bullets） |

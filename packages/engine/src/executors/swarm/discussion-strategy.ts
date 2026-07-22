@@ -214,6 +214,17 @@ export class DiscussionStrategy extends SwarmStrategy {
             },
           })
 
+          // Emit host synthesis so UI can show intermediate report
+          this.services.emit({
+            type: "host_report",
+            data: {
+              nodeId: this.config.nodeId,
+              round,
+              content: hostOutput.synthesis,
+              degraded: !hostOutput.assessment,
+            },
+          })
+
           // Hook: consensus
           this.services.triggerHook("on_swarm_consensus", {
             nodeId: this.config.nodeId,

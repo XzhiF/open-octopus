@@ -28,10 +28,10 @@ export function ConsensusChartTab({ data, threshold = 0.8 }: ConsensusChartTabPr
     }))
   }, [data])
 
-  if (data.length < 2) {
+  if (data.length < 1) {
     return (
       <div className="flex items-center justify-center py-12 text-muted-foreground text-sm">
-        需要至少 2 轮共识数据才能绘制图表
+        等待共识数据...
       </div>
     )
   }

@@ -8,6 +8,7 @@ import { applyVarsUpdate } from "./parse-vars-update"
 export class PythonExecutor implements NodeExecutor {
   private signal?: AbortSignal
   private onLog?: (line: string, stream?: "stdout" | "stderr") => void
+  private nodeOutputs?: Record<string, Record<string, any>>
 
   constructor(
     private node: NodeDef,
@@ -16,6 +17,7 @@ export class PythonExecutor implements NodeExecutor {
   ) {
     this.signal = config?.signal
     this.onLog = config?.onLog
+    this.nodeOutputs = config?.nodeOutputs
   }
 
   async execute(): Promise<NodeExecutionResult> {
@@ -30,7 +32,7 @@ export class PythonExecutor implements NodeExecutor {
     }
 
     const start = Date.now()
-    let script = substituteVarsFull(this.node.python!, this.pool)
+    let script = substituteVarsFull(this.node.python!, this.pool, this.nodeOutputs)
     script = this.resolveInputs(script)
     const timeout = this.node.timeout ?? 60
 

@@ -209,49 +209,10 @@ nodes:
   # Stage 1: Codebase 研究
   # ============================================================
 
-  # --- 1a: 预扫描（秒级） ---
-  - id: idea-scan
-    type: bash
-    depends_on: [init]
-    bash: |
-      BASE=".octopus/xzf/$vars.feature/01-research/_scan"
-      mkdir -p "$BASE"
-
-      # 文件结构概览
-      find . -type f \( -name "*.ts" -o -name "*.tsx" -o -name "*.go" -o -name "*.py" -o -name "*.vue" -o -name "*.rs" \) \
-        -not -path "*/node_modules/*" -not -path "*/.git/*" -not -path "*/dist/*" -not -path "*/build/*" \
-        | sort > "$BASE/file-tree.txt"
-
-      # 项目配置摘要
-      for f in $(find . -maxdepth 3 \( -name "package.json" -o -name "go.mod" -o -name "Cargo.toml" -o -name "pyproject.toml" \) -not -path "*/node_modules/*"); do
-        echo "=== $f ===" >> "$BASE/deps.txt"
-        head -30 "$f" >> "$BASE/deps.txt"
-        echo "" >> "$BASE/deps.txt"
-      done
-
-      # 项目文档
-      find . -maxdepth 3 -name "CLAUDE.md" -exec sh -c 'echo "=== {} ==="; cat "{}"; echo ""' \; > "$BASE/claude-mds.txt"
-
-      # 路由/API 入口
-      grep -rn "router\.\|app\.\(get\|post\|put\|delete\|patch\)\|@\(Get\|Post\|Put\|Delete\)Mapping\|\.Route(" \
-        --include="*.ts" --include="*.go" --include="*.py" --include="*.java" \
-        -l 2>/dev/null | sort > "$BASE/api-entries.txt"
-
-      # DB Schema / Migration
-      find . -type f \( -name "*.migration.*" -o -name "*schema*" -o -name "*.entity.*" -o -path "*/migrations/*" \) \
-        -not -path "*/node_modules/*" | sort > "$BASE/db-schemas.txt"
-
-      # 测试配置
-      find . -maxdepth 3 \( -name "vitest.*" -o -name "jest.*" -o -name "playwright.*" -o -name "*.test.*" -o -name "*.spec.*" \) \
-        -not -path "*/node_modules/*" -not -path "*/dist/*" \
-        | head -50 | sort > "$BASE/test-config.txt"
-
-      echo "Scan complete."
-
-  # --- 1b: 聚焦研究辩论（swarm debate + expert_pool 动态选择） ---
+  # --- 1: 聚焦研究辩论（swarm debate + expert_pool 动态选择） ---
   - id: idea-research
     type: swarm
-    depends_on: [idea-scan]
+    depends_on: [init]
     mode: debate
     dynamic: true
     max_experts: 3
@@ -280,18 +241,10 @@ nodes:
 
       ⚠️ 如 00-init/idea.md 包含「Research 指引」，按指引聚焦研究范围。
 
-      预扫描结果（用于快速定位，避免盲读）:
-      - 文件树: .octopus/xzf/$vars.feature/01-research/_scan/file-tree.txt
-      - 依赖摘要: .octopus/xzf/$vars.feature/01-research/_scan/deps.txt
-      - 项目文档: .octopus/xzf/$vars.feature/01-research/_scan/claude-mds.txt
-      - API 入口: .octopus/xzf/$vars.feature/01-research/_scan/api-entries.txt
-      - DB Schema: .octopus/xzf/$vars.feature/01-research/_scan/db-schemas.txt
-      - 测试配置: .octopus/xzf/$vars.feature/01-research/_scan/test-config.txt
-
       ═══ 辩论焦点 ═══
       围绕这个 Idea 进行聚焦讨论，不要写通用 domain overview：
 
-      1. 这个 Idea 涉及哪些模块？证据是什么？（引用 _scan/ 中的具体文件）
+      1. 这个 Idea 涉及哪些模块？证据是什么？（引用具体源码文件和行号）
       2. 现有模式哪些可复用？哪些需要新建或改造？
       3. 有什么约束和风险？（技术债、性能、兼容性）
       4. 需要外部调研吗？（仅在 Idea 涉及外部 API/技术时用 WebFetch/WebSearch）
@@ -338,7 +291,8 @@ nodes:
         写入: .octopus/xzf/$vars.feature/02-clarification/questions.md（Round 1 格式）
 
         ═══ last_output ═══
-        按 skill 定义的 Synthesis 格式输出，下游 approval 直接展示给用户。
+        简要总结研究结论和待澄清问题数量（1-2 句话即可）。
+        详细问题已写入 questions.md，审批节点会直接读取该文件展示给用户。
 
         最后输出 vars_update JSON:
         {"vars_update": {"requirements_checklist_status": "INCOMPLETE: {缺失项}"}}
@@ -359,10 +313,9 @@ nodes:
         comment_label: "澄清输入:"
         comment_placeholder: "请在此输入您对以上问题的回答..."
         prompt: |
-          Round $iteration | 📁 02-clarification/questions.md
-          未回答的问题将采用推荐方案。
-          {{#if $requirements-clarify.output.last_output}}$requirements-clarify.output.last_output{{/if}}
-          {{#if !$requirements-clarify.output.last_output}}$idea-research.output.last_output{{/if}}
+          Round $iteration | 未回答的问题将采用推荐方案。
+
+          $file:.octopus/xzf/$vars.feature/02-clarification/questions.md
         options:
           - label: "继续"
             value: "continue"
@@ -414,13 +367,10 @@ nodes:
         comment_label: "补充/修正:"
         comment_placeholder: "请在此补充或修正验证策略..."
         prompt: |
-          Round $iteration | 环境: $vars.env_checklist_status | 📁 02-clarification/verification.md
+          Round $iteration | 环境: $vars.env_checklist_status
           ⚠️ INCOMPLETE 时必须补全才能进入下一阶段。
-          {{#if $verification-clarify.output.last_output}}$verification-clarify.output.last_output{{/if}}
-          {{#if !$verification-clarify.output.last_output}}
-          {{#if $requirements-clarify.output.last_output}}$requirements-clarify.output.last_output{{/if}}
-          {{#if !$requirements-clarify.output.last_output}}$idea-research.output.last_output{{/if}}
-          {{/if}}
+
+          $file:.octopus/xzf/$vars.feature/02-clarification/verification.md
         options:
           - label: "继续"
             value: "continue"
@@ -529,7 +479,6 @@ nodes:
     nodes:
       - id: execute-spec-tasks
         type: agent
-        context: new
         skills: [octo-xzf-implementer]
         tools: [Read, Write, Edit, Bash, Grep, Glob]
         prompt: |
@@ -539,14 +488,17 @@ nodes:
           ⚠️ 严格限定：你只能执行 spec-index.md 中的第 $vars.current_spec 行（0-based）对应的 spec。
           不要读取或执行其他 spec 的文件。一个迭代只做一个 spec。
 
+          ═══ 上下文说明 ═══
+          你续接了 spec-planner 的 session，spec-index.md、spec 文件、brief、topology 等上游产物已在对话上下文中。
+          直接引用已知内容，仅在需要确认具体源码时才 Read/Grep 项目文件。
+
           ═══ 执行流程 ═══
-          1. 读取 Spec 索引: .octopus/xzf/$vars.feature/03-specs/spec-index.md
-          2. 找到第 $vars.current_spec 行（0-based）对应的 spec 文件
-          3. 读取 spec 文件 + 子目录下所有 T-N-*.md（tracer bullets）
-          4. 检查 checkpoint: .octopus/xzf/$vars.feature/04-execution/spec-{NNN}/checkpoint.json
-          5. IF checkpoint 存在且 status=="completed" → 直接跳到「完成」，输出 vars_update
-          6. IF checkpoint 存在但 status!="completed" → 跳过已完成 task，从断点恢复
-          7. IF 不存在 → 从头开始
+          1. 从上下文中找到 spec-index.md 第 $vars.current_spec 行（0-based）对应的 spec
+          2. 确认 spec 内容和 tracer bullets（已在上下文中，无需重读）
+          3. 检查 checkpoint: .octopus/xzf/$vars.feature/04-execution/spec-{NNN}/checkpoint.json
+          4. IF checkpoint 存在且 status=="completed" → 直接跳到「完成」，输出 vars_update
+          5. IF checkpoint 存在但 status!="completed" → 跳过已完成 task，从断点恢复
+          6. IF 不存在 → 从头开始
 
           ═══ 执行每个 tracer bullet ═══
           按依赖顺序逐个执行:
@@ -579,7 +531,6 @@ nodes:
     nodes:
       - id: e2e-runner
         type: agent
-        context: new
         model: se
         timeout: 1800 # 30min — E2E 测试可能涉及浏览器操作/长请求，给足时间
         skills: [octo-xzf-implementer]
@@ -652,7 +603,6 @@ nodes:
   - id: ship
     type: agent
     depends_on: [e2e-verify-loop]
-    context: new
     skills: [octo-xzf-ship]
     tools: [Read, Bash, Grep, Glob]
     prompt: |

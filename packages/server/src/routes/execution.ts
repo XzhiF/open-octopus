@@ -414,8 +414,62 @@ executionRoutes.get("/:executionId/agent-events", (c) => {
     const dao = _executionDAO!
     const sqliteEvents = dao.findAgentEventsWithNode(executionId, nodeId || undefined)
     if (sqliteEvents.length > 0) {
+      // Event types produced by compaction merge — pass through as top-level, not agent_event
+      const MERGED_BLOCK_TYPES = new Set([
+        "thinking_block", "text_block", "tool_call",
+        "bash_output", "bash_stderr", "python_output", "python_stderr",
+      ])
       // Transform SQLite rows to the JSONL-compatible format the frontend expects
       const transformed = sqliteEvents.map((row: any) => {
+        // Already-merged block events from compaction: pass through as top-level.
+        // New format stores full event JSON in content; old format needs field reconstruction.
+        // MUST be checked before raw bash_stderr/python_stderr handler below.
+        if (MERGED_BLOCK_TYPES.has(row.event_type)) {
+          // Try new format: content is JSON-encoded full event
+          if (row.content && typeof row.content === "string" && row.content.startsWith("{")) {
+            try {
+              const parsed = JSON.parse(row.content)
+              // Ensure nodeId is set from the row (JSON may or may not contain it)
+              parsed.nodeId = parsed.nodeId ?? row.node_id
+              return parsed
+            } catch { /* fall through to legacy reconstruction */ }
+          }
+          // Legacy reconstruction for old SQLite rows (pre-JSON-content format)
+          if (row.event_type === "tool_call") {
+            let input: unknown = row.tool_input
+            if (typeof input === "string") { try { input = JSON.parse(input) } catch { /* keep string */ } }
+            return {
+              event: "tool_call",
+              nodeId: row.node_id,
+              toolCallId: row.tool_call_id ?? "",
+              toolName: row.tool_name ?? "",
+              input: input ?? "",
+              result: row.tool_result ?? null,
+              isError: row.tool_is_error === 1,
+              startedAt: new Date(row.timestamp).toISOString(),
+              completedAt: new Date(row.timestamp).toISOString(),
+            }
+          }
+          if (row.event_type === "bash_output" || row.event_type === "python_output") {
+            const lines = (row.content ?? "").split("\n").filter(Boolean)
+            return {
+              event: row.event_type,
+              nodeId: row.node_id,
+              content: row.content ?? "",
+              lines,
+              startedAt: new Date(row.timestamp).toISOString(),
+              completedAt: new Date(row.timestamp).toISOString(),
+            }
+          }
+          // thinking_block, text_block, bash_stderr, python_stderr — content is the text
+          return {
+            event: row.event_type,
+            nodeId: row.node_id,
+            content: row.content ?? "",
+            startedAt: new Date(row.timestamp).toISOString(),
+            completedAt: new Date(row.timestamp).toISOString(),
+          }
+        }
         // Non-agent events: output as top-level events (matching JSONL format)
         // so mergeAgentEvents can process bash_log → bash_output, etc.
         if (row.event_type === "bash_log" || row.event_type === "python_log") {
@@ -426,24 +480,13 @@ executionRoutes.get("/:executionId/agent-events", (c) => {
             timestamp: new Date(row.timestamp).toISOString(),
           }
         }
+        // Raw bash_stderr/python_stderr (pre-compaction): output as raw events for mergeAgentEvents
         if (row.event_type === "bash_stderr" || row.event_type === "python_stderr") {
           return {
             event: row.event_type,
             nodeId: row.node_id,
             line: row.content ?? "",
             timestamp: new Date(row.timestamp).toISOString(),
-          }
-        }
-        // Already-merged block events: pass through as top-level
-        if (row.event_type === "bash_output" || row.event_type === "python_output") {
-          const lines = (row.content ?? "").split("\n").filter(Boolean)
-          return {
-            event: row.event_type,
-            nodeId: row.node_id,
-            content: row.content ?? "",
-            lines,
-            startedAt: new Date(row.timestamp).toISOString(),
-            completedAt: new Date(row.timestamp).toISOString(),
           }
         }
         // Approval metadata: pass through with prompt/options/decision
@@ -545,6 +588,8 @@ executionRoutes.get("/:executionId/agent-events", (c) => {
         if (e.event === "start" || e.event === "end") return true
         // Include iteration-scoped events (from iteration JSONL files)
         if (e.iteration != null && e.iteration > 0) return true
+        // Swarm events (expert_spawn, expert_complete, etc.) are already persisted
+        // to SQLite via onSwarmEvent → insertAgentEvent, so do NOT include from JSONL
         return false
       })
       // Merge JSONL supplemental events by nodeId

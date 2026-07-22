@@ -19,6 +19,37 @@ export class LoopExecutor implements NodeExecutor {
   /** Carry forward previous iteration's inner node results for $nodeId.output resolution */
   private prevIterationResults = new Map<string, NodeExecutionResult>()
 
+  /**
+   * Build nodeOutputs map from engine results + inner loop results.
+   * Maps lastOutput → "output" and "last_output" keys so $nodeId.output.last_output resolves.
+   */
+  private buildInnerNodeOutputs(
+    completedInnerResults?: Map<string, NodeExecutionResult>,
+  ): Record<string, Record<string, any>> {
+    const nodeOutputs: Record<string, Record<string, any>> = {}
+    if (this.config.engineNodeResults) {
+      for (const [id, r] of Object.entries(this.config.engineNodeResults)) {
+        const outputs = { ...(r.outputs ?? {}) }
+        if (r.lastOutput !== undefined) {
+          outputs["output"] = r.lastOutput
+          outputs["last_output"] = r.lastOutput
+        }
+        nodeOutputs[id] = outputs
+      }
+    }
+    if (completedInnerResults) {
+      for (const [id, r] of completedInnerResults) {
+        const outputs = { ...(r.outputs ?? {}) }
+        if (r.lastOutput !== undefined) {
+          outputs["output"] = r.lastOutput
+          outputs["last_output"] = r.lastOutput
+        }
+        nodeOutputs[id] = outputs
+      }
+    }
+    return nodeOutputs
+  }
+
   constructor(
     private node: NodeDef,
     private pool: VarPool,
@@ -104,7 +135,14 @@ export class LoopExecutor implements NodeExecutor {
           this.config.callbacks?.onNodeEnd?.(innerNode.id, result.status, result.durationMs, result, innerNode.type)
         } else if (override?.kind === "approval") {
           // Create approval executor with user's choice
-          const approvalExec = new ApprovalExecutor(innerNode, this.pool, { userChoice: override.userChoice, userComment: override.userComment, signal: this.config.signal, loopContext: { iteration: this.iterations } })
+          const approvalExec = new ApprovalExecutor(innerNode, this.pool, {
+            userChoice: override.userChoice,
+            userComment: override.userComment,
+            signal: this.config.signal,
+            loopContext: { iteration: this.iterations },
+            nodeOutputs: this.buildInnerNodeOutputs(completedInnerResults),
+            cwd: this.config.cwd,
+          })
           this.config.logger?.log(innerNode.id, "start", { type: innerNode.type })
           this.config.callbacks?.onNodeStart?.(innerNode.id, innerNode.type)
           const innerStart = Date.now()
@@ -408,14 +446,7 @@ export class LoopExecutor implements NodeExecutor {
           agentResolver: this.config.agentResolver,
           engineHookFn: this.config.hookExecutor,
         })
-      case "bash": {
-        // ponytail: build nodeOutputs so $nodeId.output.key works in bash scripts
-        const bashNodeOutputs: Record<string, Record<string, any>> = {}
-        if (completedInnerResults) {
-          for (const [id, r] of completedInnerResults) {
-            if (r.outputs) bashNodeOutputs[id] = r.outputs
-          }
-        }
+      case "bash":
         return new BashExecutor(node, p, {
           signal: this.config.signal,
           onLog: (line, stream) => {
@@ -425,9 +456,8 @@ export class LoopExecutor implements NodeExecutor {
           },
           cwd: this.config.cwd,
           loopContext: loopCtx,
-          nodeOutputs: bashNodeOutputs,
+          nodeOutputs: this.buildInnerNodeOutputs(completedInnerResults),
         })
-      }
       case "python":
         return new PythonExecutor(node, p, {
           signal: this.config.signal,
@@ -436,25 +466,18 @@ export class LoopExecutor implements NodeExecutor {
             this.config.logger?.log(node.id, event, { line })
             this.config.callbacks?.onNodeLog?.(node.id, line)
           },
+          nodeOutputs: this.buildInnerNodeOutputs(completedInnerResults),
         })
       case "condition":
         return new ConditionExecutor(node, p)
-      case "approval": {
-        // ponytail: merge engine's outer node results with loop's inner results
-        // so $nodeId.output references resolve for both pre-loop and in-loop nodes
-        const approvalNodeOutputs: Record<string, Record<string, any>> = {}
-        if (this.config.engineNodeResults) {
-          for (const [id, r] of Object.entries(this.config.engineNodeResults)) {
-            if (r.outputs) approvalNodeOutputs[id] = r.outputs
-          }
-        }
-        if (completedInnerResults) {
-          for (const [id, r] of completedInnerResults) {
-            if (r.outputs) approvalNodeOutputs[id] = r.outputs
-          }
-        }
-        return new ApprovalExecutor(node, p, { signal: this.config.signal, loopContext: loopCtx, nodeOutputs: approvalNodeOutputs, executionId: this.config.executionId })
-      }
+      case "approval":
+        return new ApprovalExecutor(node, p, {
+          signal: this.config.signal,
+          loopContext: loopCtx,
+          nodeOutputs: this.buildInnerNodeOutputs(completedInnerResults),
+          executionId: this.config.executionId,
+          cwd: this.config.cwd,
+        })
       case "agent": {
         const rawKey = node.engine ?? this.config.workflowEngine ?? "claude"
         const providerKey = rawKey === "claude-code" ? "claude" : rawKey

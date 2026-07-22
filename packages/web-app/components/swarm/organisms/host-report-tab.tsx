@@ -1,14 +1,16 @@
 "use client"
 
-import { useMemo } from "react"
+import { useMemo, useState } from "react"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
 import rehypeSanitize from "rehype-sanitize"
 import { AlertBanner } from "../atoms/alert-banner"
+import type { HostRoundReport } from "@/hooks/use-swarm-events"
 
 export interface HostReportTabProps {
   report: string | null
   hostDegraded: boolean
+  hostReports?: HostRoundReport[]
 }
 
 function isJson(str: string): boolean {
@@ -72,30 +74,22 @@ function JsonTreeView({ data, depth = 0 }: { data: unknown; depth?: number }) {
   )
 }
 
-export function HostReportTab({ report, hostDegraded }: HostReportTabProps) {
+function ReportContent({ content, degraded }: { content: string; degraded: boolean }) {
   const parsedJson = useMemo(() => {
-    if (!report) return null
-    if (isJson(report)) {
+    if (!content) return null
+    if (isJson(content)) {
       try {
-        return JSON.parse(report)
+        return JSON.parse(content)
       } catch {
         return null
       }
     }
     return null
-  }, [report])
-
-  if (!report) {
-    return (
-      <div className="flex items-center justify-center py-12 text-muted-foreground text-sm">
-        等待 Host 综合报告...
-      </div>
-    )
-  }
+  }, [content])
 
   return (
     <div className="space-y-3">
-      {hostDegraded && (
+      {degraded && (
         <AlertBanner
           type="warning"
           message="Host 降级模式"
@@ -113,9 +107,62 @@ export function HostReportTab({ report, hostDegraded }: HostReportTabProps) {
       ) : (
         <div className="prose prose-sm dark:prose-invert max-w-none rounded-lg border border-border bg-card p-4">
           <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeSanitize]}>
-            {report}
+            {content}
           </ReactMarkdown>
         </div>
+      )}
+    </div>
+  )
+}
+
+export function HostReportTab({ report, hostDegraded, hostReports }: HostReportTabProps) {
+  const hasMultiRound = hostReports && hostReports.length > 1
+  const [selectedRound, setSelectedRound] = useState<number | null>(null)
+
+  // Default to latest report
+  const activeRound = selectedRound ?? (hostReports?.length ? hostReports[hostReports.length - 1].round : null)
+  const activeReport = hostReports?.find(r => r.round === activeRound)
+
+  if (!report && (!hostReports || hostReports.length === 0)) {
+    return (
+      <div className="flex items-center justify-center py-12 text-muted-foreground text-sm">
+        等待 Host 综合报告...
+      </div>
+    )
+  }
+
+  if (!hasMultiRound) {
+    // Single report — no round selector needed
+    const content = activeReport?.content ?? report ?? ""
+    const degraded = activeReport?.degraded ?? hostDegraded
+    return <ReportContent content={content} degraded={degraded} />
+  }
+
+  return (
+    <div className="space-y-3">
+      {/* Round selector */}
+      <div className="flex items-center gap-2 flex-wrap">
+        <span className="text-xs text-muted-foreground">轮次:</span>
+        {hostReports!.map((r) => (
+          <button
+            key={r.round}
+            onClick={() => setSelectedRound(r.round)}
+            className={`px-2.5 py-1 text-xs rounded-md border transition-colors ${
+              activeRound === r.round
+                ? "bg-primary text-primary-foreground border-primary"
+                : "bg-background hover:bg-muted border-border"
+            }`}
+          >
+            第 {r.round} 轮
+          </button>
+        ))}
+      </div>
+
+      {/* Active round report */}
+      {activeReport ? (
+        <ReportContent content={activeReport.content} degraded={activeReport.degraded} />
+      ) : (
+        <ReportContent content={report ?? ""} degraded={hostDegraded} />
       )}
     </div>
   )

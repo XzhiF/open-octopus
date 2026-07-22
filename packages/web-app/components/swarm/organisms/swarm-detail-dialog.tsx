@@ -54,6 +54,7 @@ export function SwarmDetailDialog({
     routerDecision,
     taskBreakdown,
     hostReport,
+    hostReports,
     hostDegraded,
     finalResult,
     budgetExhausted,
@@ -193,7 +194,7 @@ export function SwarmDetailDialog({
           )}
 
           <TabsContent value="report" className="mt-3 flex-1 overflow-y-auto min-h-0">
-            <HostReportTab report={hostReport} hostDegraded={hostDegraded} />
+            <HostReportTab report={hostReport} hostDegraded={hostDegraded} hostReports={hostReports} />
           </TabsContent>
         </Tabs>
       </DialogContent>

@@ -159,37 +159,12 @@ nodes:
       {"vars_update": {"branch": "{git branch}", "feature": "{feature slug}", "remote_type": "{github|gitlab}"}}
 
   # ============================================================
-  # Stage 1: 全局 Codebase 研究（同 xzf-dev）
+  # Stage 1: 全局 Codebase 研究
   # ============================================================
-
-  - id: idea-scan
-    type: bash
-    depends_on: [init]
-    bash: |
-      BASE=".octopus/xzf/$vars.feature/01-research/_scan"
-      mkdir -p "$BASE"
-      find . -type f \( -name "*.ts" -o -name "*.tsx" -o -name "*.go" -o -name "*.py" -o -name "*.vue" -o -name "*.rs" \) \
-        -not -path "*/node_modules/*" -not -path "*/.git/*" -not -path "*/dist/*" -not -path "*/build/*" \
-        | sort > "$BASE/file-tree.txt"
-      for f in $(find . -maxdepth 3 \( -name "package.json" -o -name "go.mod" -o -name "Cargo.toml" -o -name "pyproject.toml" \) -not -path "*/node_modules/*"); do
-        echo "=== $f ===" >> "$BASE/deps.txt"
-        head -30 "$f" >> "$BASE/deps.txt"
-        echo "" >> "$BASE/deps.txt"
-      done
-      find . -maxdepth 3 -name "CLAUDE.md" -exec sh -c 'echo "=== {} ==="; cat "{}"; echo ""' \; > "$BASE/claude-mds.txt"
-      grep -rn "router\.\|app\.\(get\|post\|put\|delete\|patch\)\|@\(Get\|Post\|Put\|Delete\)Mapping\|\.Route(" \
-        --include="*.ts" --include="*.go" --include="*.py" --include="*.java" \
-        -l 2>/dev/null | sort > "$BASE/api-entries.txt"
-      find . -type f \( -name "*.migration.*" -o -name "*schema*" -o -name "*.entity.*" -o -path "*/migrations/*" \) \
-        -not -path "*/node_modules/*" | sort > "$BASE/db-schemas.txt"
-      find . -maxdepth 3 \( -name "vitest.*" -o -name "jest.*" -o -name "playwright.*" -o -name "*.test.*" -o -name "*.spec.*" \) \
-        -not -path "*/node_modules/*" -not -path "*/dist/*" \
-        | head -50 | sort > "$BASE/test-config.txt"
-      echo "Scan complete."
 
   - id: idea-research
     type: swarm
-    depends_on: [idea-scan]
+    depends_on: [init]
     mode: debate
     dynamic: true
     max_experts: 3
@@ -213,14 +188,6 @@ nodes:
       Workspace: 请读取 .octopus/xzf/$vars.feature/00-init/workspace-topology.md
 
       ⚠️ 这是大需求全局研究，需要理解整个 codebase 架构，为后续 Feature 分解提供基础。
-
-      预扫描结果:
-      - 文件树: .octopus/xzf/$vars.feature/01-research/_scan/file-tree.txt
-      - 依赖摘要: .octopus/xzf/$vars.feature/01-research/_scan/deps.txt
-      - 项目文档: .octopus/xzf/$vars.feature/01-research/_scan/claude-mds.txt
-      - API 入口: .octopus/xzf/$vars.feature/01-research/_scan/api-entries.txt
-      - DB Schema: .octopus/xzf/$vars.feature/01-research/_scan/db-schemas.txt
-      - 测试配置: .octopus/xzf/$vars.feature/01-research/_scan/test-config.txt
 
       ═══ 辩论焦点 ═══
       1. 整个 codebase 的架构全景：模块、边界、通信方式
