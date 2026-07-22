@@ -6,6 +6,7 @@ import { isMergedEvent, type AgentEvent, type LoopIterationSummary } from "@/lib
 
 const POLL_INTERVAL_MS = 2000
 const RUNNING_STATUSES = new Set(["running", "paused"])
+const MAX_DISPLAY_EVENTS = 100
 
 export interface EventGroup {
   key: string
@@ -18,6 +19,10 @@ interface UseExecutionEventsResult {
   events: AgentEvent[]
   loopIterations: Record<string, LoopIterationSummary>
   groups: EventGroup[]
+  /** Total count of events before trimming (for "显示最新 100 / 共 N 条事件" display) */
+  totalCount: number
+  /** Whether the rendered events are trimmed to the latest MAX_DISPLAY_EVENTS */
+  isTrimmed: boolean
   loading: boolean
   error: string | null
 }
@@ -67,11 +72,19 @@ export function useExecutionEvents(
     prevStatusRef.current = executionStatus
   }, [executionStatus, doFetch])
 
+  // Trim to latest MAX_DISPLAY_EVENTS when over threshold
+  const totalCount = events.length
+  const isTrimmed = totalCount > MAX_DISPLAY_EVENTS
+  const trimmedEvents = useMemo(() => {
+    if (!isTrimmed) return events
+    return events.slice(totalCount - MAX_DISPLAY_EVENTS)
+  }, [events, isTrimmed, totalCount])
+
   // Group events by nodeId + iteration
   const groups = useMemo(() => {
     const map = new Map<string, EventGroup>()
 
-    for (const e of events) {
+    for (const e of trimmedEvents) {
       // Skip merged events that belong to an iteration — they'll be in iteration groups
       const hasIteration = e.iteration != null && e.iteration > 0
       const key = hasIteration
@@ -90,7 +103,7 @@ export function useExecutionEvents(
     }
 
     return Array.from(map.values())
-  }, [events])
+  }, [trimmedEvents])
 
-  return { events, loopIterations, groups, loading, error }
+  return { events: trimmedEvents, loopIterations, groups, totalCount, isTrimmed, loading, error }
 }

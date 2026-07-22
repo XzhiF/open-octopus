@@ -418,7 +418,7 @@ export function useExecutionTree(
 
   const executeNode = useCallback(async (nodeId: string, formData: ExecuteNodeFormData) => {
     setTreeNodes(prev => prev.map(n => n.id === nodeId ? { ...n, executionStatus: 'running' as ExecutionStatus, inputValues: formData.inputValues, rollbackOnError: formData.rollbackOnError, rollback: formData.rollbackOnError ? 'git-revert' : 'none' } : n))
-    try { await startExecution(workspaceId, nodeId, { inputValues: formData.inputValues }) } catch { setTreeNodes(prev => prev.map(n => n.id === nodeId ? { ...n, executionStatus: 'failed' as ExecutionStatus } : n)) }
+    try { await startExecution(workspaceId, nodeId, { inputValues: formData.inputValues, syncMainBranch: formData.syncMainBranch }) } catch { setTreeNodes(prev => prev.map(n => n.id === nodeId ? { ...n, executionStatus: 'failed' as ExecutionStatus } : n)) }
   }, [workspaceId])
 
   const retryNode = useCallback(async (nodeId: string, formData: ExecuteNodeFormData) => {

@@ -28,6 +28,7 @@ import type { ParsedLogFilename } from "@octopus/engine"
 import { ResourcePreFlight } from "../resource-preflight"
 import { ResourceProvisioner } from "../resource-provisioner"
 import { getResourceRegistry } from "../resource-registry"
+import { engineInitPhase, ENGINE_INIT_JSONL } from "./EngineInitPhase"
 
 export class ExecutionLifecycle {
   private enginePool: EnginePool
@@ -81,7 +82,7 @@ export class ExecutionLifecycle {
 
   // ==================== Start ====================
 
-  async start(id: string, inputValues?: Record<string, string>): Promise<ExecutionRow> {
+  async start(id: string, inputValues?: Record<string, string>, options?: { syncMainBranch?: boolean }): Promise<ExecutionRow> {
     const exec = this.dao.findById(id)
     if (!exec) throw Object.assign(new Error("Execution not found"), { status: 404 })
     if (exec.status !== "pending") throw Object.assign(new Error("Execution is not pending"), { status: 400 })
@@ -234,6 +235,24 @@ export class ExecutionLifecycle {
       } catch { /* best-effort */ }
 
       engine.setRefResolver(this.createRefResolver())
+
+      // ── engine_init pre-phase: skills/agents copy + optional git sync ──
+      // Failures emit engine_init_warning but never block engine.run().
+      try {
+        await engineInitPhase.run({
+          workspacePath: this.workspacePath,
+          workspaceId: this.workspaceId,
+          executionId: id,
+          syncMainBranch: options?.syncMainBranch ?? false,
+          sse: this.sse,
+        })
+      } catch (initErr: unknown) {
+        const msg = initErr instanceof Error ? initErr.message : String(initErr)
+        this.sse.emit(this.workspaceId, {
+          event: "engine_init_warning",
+          data: { event: "engine_init_warning", timestamp: new Date().toISOString(), errorMessage: msg },
+        })
+      }
 
       // Track the in-flight run so pause/abort can wait for it to actually settle
       // (prevents resume from racing a still-running engine — see pause/resume bug).
@@ -1375,6 +1394,19 @@ export class ExecutionLifecycle {
     const events: any[] = []
     const files = readdirSync(logDir).filter(f => f.endsWith(".jsonl"))
     for (const file of files) {
+      // engine_init events: always include, no nodeId filter
+      if (file === ENGINE_INIT_JSONL) {
+        const content = readFileSync(join(logDir, file), "utf-8")
+        for (const line of content.split("\n")) {
+          if (!line.trim()) continue
+          try {
+            const entry = JSON.parse(line)
+            events.push(entry)
+          } catch { /* skip malformed lines */ }
+        }
+        continue
+      }
+
       const parsed = parseLogFilename(file)
 
       // If loopId filter is set, skip files not belonging to that loop

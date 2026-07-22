@@ -207,7 +207,7 @@ export async function createExecution(workspaceId: string, data: {
   return handleResponse(res)
 }
 
-export async function startExecution(workspaceId: string, executionId: string, body?: { inputValues?: Record<string, string> }) {
+export async function startExecution(workspaceId: string, executionId: string, body?: { inputValues?: Record<string, string>; syncMainBranch?: boolean }) {
   const res = await apiFetch(`${getServerUrl()}/api/workspaces/${workspaceId}/executions/${executionId}/start`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },

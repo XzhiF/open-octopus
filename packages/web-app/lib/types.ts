@@ -179,6 +179,7 @@ export interface WorkflowInputDef {
 export interface ExecuteNodeFormData {
   inputValues: Record<string, string>
   rollbackOnError: boolean
+  syncMainBranch: boolean
 }
 
 // ============ Execution Tree (for flow panel) ============
