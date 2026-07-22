@@ -190,7 +190,6 @@ hooks:
 nodes:
   - id: init
     type: agent
-    context: new
     skills: [octo-xzf-init]
     prompt: |
       使用 octo-xzf-init skill 初始化 XZF Pipeline 工作环境。
@@ -381,10 +380,7 @@ nodes:
 
           读取:
           - 目录规范: .octopus/xzf/$vars.feature/00-init/directory-conventions.md
-          - Idea: .octopus/xzf/$vars.feature/00-init/idea.md
-          - Research: .octopus/xzf/$vars.feature/01-research/research-brief.md
-          - 现有问题: .octopus/xzf/$vars.feature/02-clarification/questions.md
-          - Workspace: .octopus/xzf/$vars.feature/00-init/workspace-topology.md
+          （idea.md、research-brief.md、questions.md、workspace-topology.md 已在上游 session 中，无需重读）
 
           ⚠️ 所有产物路径以 directory-conventions.md 为准，禁止使用源码目录。
 
@@ -442,10 +438,7 @@ nodes:
 
           读取:
           - 目录规范: .octopus/xzf/$vars.feature/00-init/directory-conventions.md
-          - Idea: .octopus/xzf/$vars.feature/00-init/idea.md
-          - Research: .octopus/xzf/$vars.feature/01-research/research-brief.md
-          - 已澄清需求: .octopus/xzf/$vars.feature/02-clarification/questions.md
-          - Workspace: .octopus/xzf/$vars.feature/00-init/workspace-topology.md
+          （idea.md、research-brief.md、questions.md、workspace-topology.md 已在上游 session 中，无需重读）
 
           ⚠️ 所有产物路径以 directory-conventions.md 为准，禁止使用源码目录。
 
@@ -475,10 +468,7 @@ nodes:
 
       读取:
       - 目录规范: .octopus/xzf/$vars.feature/00-init/directory-conventions.md
-      - Idea: .octopus/xzf/$vars.feature/00-init/idea.md
-      - 需求澄清: .octopus/xzf/$vars.feature/02-clarification/questions.md
-      - 验证方式: .octopus/xzf/$vars.feature/02-clarification/verification.md
-      - Workspace: .octopus/xzf/$vars.feature/00-init/workspace-topology.md
+      （idea.md、questions.md、verification.md、workspace-topology.md 已在上游 session 中，无需重读）
 
       ⚠️ 所有产物路径以 directory-conventions.md 为准，禁止使用源码目录。
 
@@ -500,9 +490,7 @@ nodes:
 
       读取:
       - 目录规范: .octopus/xzf/$vars.feature/00-init/directory-conventions.md
-      - 需求简报: .octopus/xzf/$vars.feature/02-clarification/brief.md
-      - Research 知识: .octopus/xzf/$vars.feature/01-research/research-brief.md
-      - Workspace: .octopus/xzf/$vars.feature/00-init/workspace-topology.md
+      （brief.md、research-brief.md、workspace-topology.md 已在上游 session 中，无需重读）
 
       ⚠️ 所有产物路径以 directory-conventions.md 为准，禁止使用源码目录。
 
