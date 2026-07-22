@@ -153,26 +153,6 @@ export class ExecutionLifecycle {
     const repoNames = resolveAllProjectNames(this.workspacePath)
     this.knowledgeService?.setExecutionContext(repoNames, wf.parsed.name)
 
-    // Engine init phase: virtual node for resource provisioning and git sync
-    const callbacks = this.buildCallbacks(id)
-    const initPhase = new EngineInitPhase()
-    try {
-      await initPhase.run({
-        workspacePath: this.workspacePath,
-        workflow: wf.parsed,
-        callbacks,
-        syncMainBranch: syncMainBranch ?? true,
-        gitOps,
-        resourcePreflight: new ResourcePreFlight(),
-        resourceProvisioner: new ResourceProvisioner(getResourceRegistry().get()),
-      })
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err)
-      this.updateStatus(id, "failed", { completed_at: new Date().toISOString() })
-      this.sse.emit(this.workspaceId, { event: "error", data: { executionId: id, error: msg } })
-      return this.dao.findById(id)!
-    }
-
     // Dynamic agent resolver: delegates swarm agent selection to OrchestratorService
     const orchestrator = getOrchestratorService(this.org)
     const agentResolver = (topic: string, maxExperts: number) =>

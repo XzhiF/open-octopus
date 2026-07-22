@@ -279,21 +279,6 @@ export function CreateNodeDialog({
               }
             />
           </div>
-          <div className="flex items-center justify-between rounded-lg border p-3">
-            <div className="space-y-0.5">
-              <Label htmlFor="sync-main-branch">同步主分支</Label>
-              <p className="text-xs text-muted-foreground">
-                执行前拉取所有项目的最新主分支代码
-              </p>
-            </div>
-            <Switch
-              id="sync-main-branch"
-              checked={formData.syncMainBranch}
-              onCheckedChange={(checked) =>
-                setFormData((prev) => ({ ...prev, syncMainBranch: checked }))
-              }
-            />
-          </div>
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={handleCancel}>
