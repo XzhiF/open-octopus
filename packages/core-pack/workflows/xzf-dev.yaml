@@ -40,8 +40,6 @@ variables:
   user_guidance: ""
   clarify_decision: ""
   verify_decision: ""
-  spec_count: "0"
-  current_spec: "0"
   spec_status: ""
   e2e_status: ""
   e2e_decision: ""
@@ -154,11 +152,11 @@ hooks:
       template:
         severity: info
         title: "📐 xzf-dev — Spec + Task 设计完成"
-        body: "🌿 $vars.feature\n📊 Specs: $vars.spec_count"
+        body: "🌿 $vars.feature\n📊 Spec + Task 设计完成"
 
     - id: notify-execution
       type: notify
-      nodes: [execution-loop]
+      nodes: [execution]
       channel: xzf_hermes
       template:
         severity: info
@@ -464,60 +462,51 @@ nodes:
       - 每个 spec 必须定义反假跑标准（区分"真通过"vs"假通过"）
       - 格式参见 octo-xzf-spec-designer skill
 
-      最后输出 vars_update JSON:
-      {"vars_update": {"spec_count": N}}
-
   # ============================================================
   # Stage 5: 任务执行（per spec → per tracer bullet，基础验证）
   # ============================================================
 
-  - id: execution-loop
-    type: loop
+  - id: execution
+    type: agent
     depends_on: [spec-planner]
-    max_iterations: 99
-    break_when: "$vars.current_spec >= $vars.spec_count"
-    nodes:
-      - id: execute-spec-tasks
-        type: agent
+    agents:
+      implementer:
+        description: "全栈实现者 — 执行单个 spec 的所有 tracer bullets"
         skills: [octo-xzf-implementer]
-        tools: [Read, Write, Edit, Bash, Grep, Glob]
         prompt: |
-          你是全栈实现者，使用 octo-xzf-implementer skill 执行当前 spec 的所有 tracer bullets。
+          使用 octo-xzf-implementer skill 执行指定 spec 的所有 tracer bullets。
 
-          ═══ 你的任务范围 ═══
-          ⚠️ 严格限定：你只能执行 spec-index.md 中的第 $vars.current_spec 行（0-based）对应的 spec。
-          不要读取或执行其他 spec 的文件。一个迭代只做一个 spec。
+          执行流程:
+          1. 读取 spec 文件和其子目录下的 tracer bullet tasks
+          2. 检查 checkpoint: .octopus/xzf/{feature}/04-execution/spec-{NNN}/checkpoint.json
+             - 存在且 completed → 跳过
+             - 存在但未完成 → 从断点恢复
+             - 不存在 → 从头执行
+          3. 按依赖顺序逐个执行 tracer bullet:
+             - 实现（全栈：DB → API → UI → test）
+             - 基础验证（单测 + 集成测试，对照反假跑标准）
+             - 自治 verify-fix 循环（max 3 次）
+             - 通过后更新 checkpoint.json
+             - 3 次仍失败 → 标记 failed，继续下一个
+          ⚠️ 此阶段不跑 E2E 测试。
+          完成后汇报: 通过/失败的 task 数量。
+    prompt: |
+      你是执行调度者，负责按 spec-index.md 顺序完成所有 spec 的 tracer bullets。
 
-          ═══ 上下文说明 ═══
-          你续接了 spec-planner 的 session，spec-index.md、spec 文件、brief、topology 等上游产物已在对话上下文中。
-          直接引用已知内容，仅在需要确认具体源码时才 Read/Grep 项目文件。
+      ═══ 执行策略 ═══
+      1. 读取 spec 索引: .octopus/xzf/$vars.feature/03-specs/spec-index.md
+      2. 按索引顺序，对每个 spec 委派 implementer 子 agent 执行：
+         - 在 prompt 中传入 spec 文件路径和 feature slug
+         - 等待子 agent 完成后再启动下一个
+      3. 所有 spec 执行完毕后，汇总结果
 
-          ═══ 执行流程 ═══
-          1. 从上下文中找到 spec-index.md 第 $vars.current_spec 行（0-based）对应的 spec
-          2. 确认 spec 内容和 tracer bullets（已在上下文中，无需重读）
-          3. 检查 checkpoint: .octopus/xzf/$vars.feature/04-execution/spec-{NNN}/checkpoint.json
-          4. IF checkpoint 存在且 status=="completed" → 直接跳到「完成」，输出 vars_update
-          5. IF checkpoint 存在但 status!="completed" → 跳过已完成 task，从断点恢复
-          6. IF 不存在 → 从头开始
-
-          ═══ 执行每个 tracer bullet ═══
-          按依赖顺序逐个执行:
-          - 读取 T-N.md 的目标和验收标准
-          - 实现（全栈：DB → API → UI → test）
-          - 基础验证（单测 + 集成测试，对照 spec 反假跑标准）
-          - 自治 verify-fix 循环（max 3 次，含 code smell 检查，详见 skill）
-          - 通过后更新 checkpoint.json（严格按 octo-xzf-implementer skill 的 Schema）
-          - 3 次仍失败 → 标记 task 为 failed，记录到 checkpoint，继续下一个 task
-          ⚠️ 此阶段不跑 E2E 测试，E2E 在 Stage 6 统一执行。
-
-          ═══ 完成（必须执行）═══
-          无论全部通过或部分失败，你必须输出以下 JSON 来推进到下一个 spec:
-          {"vars_update": {"spec_status": "passed|partial", "current_spec": <当前 $vars.current_spec 的值 + 1>}}
-          - spec_status: "passed"（全部通过）或 "partial"（有 task 失败但已记录）
-          - current_spec: 当前值 $vars.current_spec 加 1（例: 当前 0 → 输出 1，当前 1 → 输出 2）
-          ⚠️ 不输出此 JSON = 循环卡死，永远无法进入下一个 spec。这是你的最后一步，必须执行。
-        outputs:
-          $vars.spec_status: "$last_output"
+      ═══ 完成 ═══
+      输出 vars_update:
+      {"vars_update": {"spec_status": "passed|partial"}}
+      - "passed": 所有 spec 的全部 task 通过
+      - "partial": 有 task 失败但已记录到 checkpoint
+    outputs:
+      $vars.spec_status: "$last_output"
 
   # ============================================================
   # Stage 6: E2E 全量验证（完整用户流程测试 + 修复循环）
@@ -525,48 +514,59 @@ nodes:
 
   - id: e2e-verify-loop
     type: loop
-    depends_on: [execution-loop]
+    depends_on: [execution]
     max_iterations: 10
     break_when: '$vars.e2e_status == "passed" || $vars.e2e_decision == "skip"'
     nodes:
       - id: e2e-runner
         type: agent
-        model: se
         timeout: 1800 # 30min — E2E 测试可能涉及浏览器操作/长请求，给足时间
-        skills: [octo-xzf-implementer]
-        tools: [Read, Write, Edit, Bash, Grep, Glob]
+        agents:
+          e2e-tester:
+            description: "E2E 测试执行者 — 执行全量 E2E 测试并修复失败用例"
+            model: se
+            skills: [octo-xzf-implementer]
+            prompt: |
+              执行所有 spec 的全量 E2E 测试。
+
+              ═══ 执行流程 ═══
+              1. 读取 E2E 测试计划: .octopus/xzf/{feature}/03-specs/e2e-test-plan.md
+              2. 按计划顺序执行 E2E 测试（浏览器操作 / curl / playwright）
+              3. 收集证据（截图、API 响应、DB 查询）
+              4. 对照反假跑标准，确认"真通过"
+
+              ═══ 文件存放 ═══
+              - 测试脚本（SQL/shell/curl）: .octopus/xzf/{feature}/05-reports/e2e-scripts/
+              - 截图: .octopus/xzf/{feature}/05-reports/e2e-screenshots/
+              - 临时数据（mock 数据、API 响应文本、fixture 等）: .octopus/xzf/{feature}/05-reports/e2e-data/
+              - 测试报告: .octopus/xzf/{feature}/05-reports/e2e-report.md
+              ⚠️ 所有 E2E 产物统一放 05-reports/，不污染源码目录。
+
+              ═══ 失败修复 ═══
+              某个 E2E 失败时:
+              - 定位到具体 spec 和 tracer bullet
+              - 尝试修复（max 3 次）
+              - 修复后只重跑失败的 E2E 步骤，不从头跑
+              - 3 次仍失败 → 记录失败详情，继续下一个 spec 的 E2E
+
+              ═══ 输出 ═══
+              写入 E2E 报告: .octopus/xzf/{feature}/05-reports/e2e-report.md
+              格式: 每个 spec 的 E2E 结果（PASS/FAIL + 证据 + 修复记录）
+              完成后汇报: 全部通过 / 仍有失败。
         prompt: |
-          你是 E2E 验证者，执行所有 spec 的全量 E2E 测试。
+          你是 E2E 验证调度者，委派 e2e-tester 子 agent 执行全量 E2E 测试。
 
           用户上轮指导:
           $vars.user_guidance
 
-          如有指导，按指导调整修复策略。
+          如有指导，在委派 prompt 中传入修复策略指导。
 
-          ═══ 执行流程 ═══
-          1. 读取 E2E 测试计划: .octopus/xzf/$vars.feature/03-specs/e2e-test-plan.md
-          2. 按计划顺序执行 E2E 测试（浏览器操作 / curl / playwright）
-          3. 收集证据（截图、API 响应、DB 查询）
-          4. 对照反假跑标准，确认"真通过"
+          ═══ 执行策略 ═══
+          1. 委派 e2e-tester 子 agent，在 prompt 中传入 feature slug
+          2. 等待子 agent 完成，获取测试结果
 
-          ═══ 文件存放 ═══
-          - 测试脚本（SQL/shell/curl）: .octopus/xzf/$vars.feature/05-reports/e2e-scripts/
-          - 截图: .octopus/xzf/$vars.feature/05-reports/e2e-screenshots/
-          - 临时数据（mock 数据、API 响应文本、fixture 等）: .octopus/xzf/$vars.feature/05-reports/e2e-data/
-          - 测试报告: .octopus/xzf/$vars.feature/05-reports/e2e-report.md
-          ⚠️ 所有 E2E 产物统一放 05-reports/，不污染源码目录。
-
-          ═══ 失败修复 ═══
-          某个 E2E 失败时:
-          - 定位到具体 spec 和 tracer bullet
-          - 尝试修复（max 3 次）
-          - 修复后只重跑失败的 E2E 步骤，不从头跑
-          - 3 次仍失败 → 记录失败详情，继续下一个 spec 的 E2E
-
-          ═══ 输出 ═══
-          写入 E2E 报告: .octopus/xzf/$vars.feature/05-reports/e2e-report.md
-          格式: 每个 spec 的 E2E 结果（PASS/FAIL + 证据 + 修复记录）
-
+          ═══ 完成 ═══
+          根据子 agent 汇报输出 vars_update:
           全部通过: {"vars_update": {"e2e_status": "passed", "user_guidance": ""}}
           仍有失败: {"vars_update": {"e2e_status": "failed", "user_guidance": ""}}
         outputs:
