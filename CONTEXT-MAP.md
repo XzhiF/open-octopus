@@ -20,6 +20,12 @@
 | **RED** | TDD 循环第一步 — 写一个失败测试。 | core-pack |
 | **GREEN** | TDD 循环第二步 — 最小实现让测试通过。 | core-pack |
 | **Tautological Test** | 自证测试 — expected value 从被测代码推导。禁止。Expected 必须来自独立真相源。 | core-pack |
+| **Restore Point** | 工作流中一个已完成节点的时间点标记，包含该时刻的 VarPool 快照和节点结果。用于恢复点重跑。 | engine, server |
+| **Intervention** | 向正在运行的节点注入额外的指导消息，引导 agent 改变行为方向。 | engine, server |
+| **Hot Reload** | 工作流执行过程中修改 YAML 定义，后续未执行节点使用新定义。正在执行的节点不受影响。 | engine, server |
+| **False Completion** | Agent 节点返回 completed 状态但实际工作未完成。通过诊断发现，通过节点重置修复。 | server |
+| **Diagnose Report** | 对执行现场的结构化分析，包含节点状态、异常识别（stuck/exhausted/false_completion/infinite_retry）、修复建议。 | server |
+| **Output Injection** | 人工提供节点的输出数据，替代自动执行的结果。用于跳过故障节点继续执行。 | server |
 
 ## Anti-Patterns（禁止）
 
