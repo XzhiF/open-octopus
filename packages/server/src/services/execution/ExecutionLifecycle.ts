@@ -1816,6 +1816,32 @@ export class ExecutionLifecycle {
       },
       onNodeLog: (nodeId, logLine) => {
         this.sse.emit(this.workspaceId, { event: "node_log", data: { executionId: id, nodeId, logLine } })
+        // Virtual nodes (e.g. __engine_init__) bypass the JSONL logger → compact → persist pipeline.
+        // Persist their log lines directly to agent_events so the polling-based frontend can see them.
+        // Use "bash_log" event_type so the API transform outputs the correct format for the frontend.
+        if (nodeId.startsWith("__")) {
+          try {
+            const neId = `${id}-${nodeId}`
+            this.dao.insertAgentEvent({
+              node_execution_id: neId,
+              event_order: Date.now(),
+              turn_index: 0,
+              event_type: "bash_log",
+              timestamp: Date.now(),
+              content: logLine,
+              content_length: logLine.length,
+              tool_call_id: null,
+              tool_name: null,
+              tool_input: null,
+              tool_result: null,
+              tool_is_error: 0,
+              tool_duration_ms: null,
+              status_value: null,
+              error_code: null,
+              error_message: null,
+            })
+          } catch { /* best-effort persistence for virtual node logs */ }
+        }
       },
       onNodeCompacted: (nodeId, mergedEvents) => {
         // Sync compacted JSONL events to SQLite agent_events table
