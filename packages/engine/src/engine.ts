@@ -13,12 +13,14 @@ import { LoopExecutor } from "./executors/loop"
 import { AgentExecutor } from "./executors/agent"
 import { SwarmExecutor } from "./executors/swarm"
 import { AgentNodeRunner } from "./executors/agent-runner"
+import { topologicalSort, computeExecutionLevels, detectCycles, buildConditionTargetDeps, getEffectiveDeps } from "./graph-utils"
+import { ExecutorFactory } from "./executor-factory"
 import { JsonlLogger, sanitizeId } from "./logger"
 import { join } from "path"
 import { mkdirSync, writeFileSync, appendFileSync, existsSync, readFileSync, unlinkSync, readdirSync } from "fs"
 import { tmpdir } from "os"
 import type { CrossExecResolver } from "@octopus/shared"
-import { resolveModelAlias, loadModelAliasConfig } from "@octopus/shared"
+import { loadModelAliasConfig } from "@octopus/shared"
 import type { ModelAliasConfig } from "@octopus/shared"
 import { PromptInjector } from "./prompt-injector"
 import type { KnowledgeInjector } from "./knowledge-injector"
@@ -102,6 +104,8 @@ export class WorkflowEngine {
   private pipelinePath?: string
   // Runtime node tracking (Upgrade 3)
   private runtimeNodeIds: Set<string> = new Set()
+  // Executor factory (extracted to reduce engine.ts size)
+  private executorFactory: ExecutorFactory
 
   constructor(
     private workflow: WorkflowDef,
@@ -185,6 +189,31 @@ export class WorkflowEngine {
     // Initialize notify system
     registerBuiltinProviders()
     this.notifyDispatcher = new NotifyDispatcher(new ProviderRegistry(), new TemplateRenderer())
+
+    // Initialize executor factory
+    this.executorFactory = new ExecutorFactory({
+      pool: this.pool,
+      signal: this.signal,
+      nodeResults: this.nodeResults,
+      logger: this.logger,
+      callbacks: this.callbacks,
+      cwd: this.cwd,
+      crossExecResolver: this.crossExecResolver,
+      executionId: this.executionId,
+      providers: this.providers,
+      workflow: this.workflow,
+      workflowDefaultModel: this.workflowDefaultModel,
+      globalSessionId: this.globalSessionId,
+      branchSessionIds: this.branchSessionIds,
+      inputs: this.inputs,
+      modelAliasConfig: this.modelAliasConfig,
+      checkpointStore: this.checkpointStore,
+      agentResolver: this.agentResolver,
+      knowledgeInjectorFactory: this.knowledgeInjectorFactory,
+      promptInjector: this.promptInjector,
+      resolvePreviousSessionId: (node) => this.resolvePreviousSessionId(node),
+      executeHooks: (event, context) => this.executeHooks(event, context),
+    })
   }
 
   updateVarPool(data: Record<string, string>): void {
@@ -566,27 +595,11 @@ export class WorkflowEngine {
    * ponytail: engine-level safety net — YAML authors shouldn't need to know about this.
    */
   private buildConditionTargetDeps(nodes: NodeDef[]): Map<string, Set<string>> {
-    const implicitDeps = new Map<string, Set<string>>()
-    for (const node of nodes) {
-      if (node.type === "condition" && node.cases) {
-        for (const c of node.cases) {
-          if (c.then && c.then !== "default") {
-            if (!implicitDeps.has(c.then)) implicitDeps.set(c.then, new Set())
-            implicitDeps.get(c.then)!.add(node.id)
-          }
-        }
-      }
-    }
-    return implicitDeps
+    return buildConditionTargetDeps(nodes)
   }
 
   private getEffectiveDeps(node: NodeDef, implicitDeps: Map<string, Set<string>>): string[] {
-    const explicit = node.depends_on ?? []
-    const implicit = implicitDeps.get(node.id)
-    if (!implicit || implicit.size === 0) return explicit
-    const merged = new Set(explicit)
-    for (const dep of implicit) merged.add(dep)
-    return Array.from(merged)
+    return getEffectiveDeps(node, implicitDeps)
   }
 
   /**
@@ -630,88 +643,17 @@ export class WorkflowEngine {
 
   /** DFS topological sort producing a flat linear order. Used by retryFrom() for index-based slicing. */
   private topologicalSort(nodes: NodeDef[]): NodeDef[] {
-    const nodeMap = new Map(nodes.map(n => [n.id, n]))
-    const implicitDeps = this.buildConditionTargetDeps(nodes)
-    const sorted: NodeDef[] = []
-    const visited = new Set<string>()
-    const visiting = new Set<string>()
-
-    const visit = (id: string) => {
-      if (visited.has(id)) return
-      if (visiting.has(id)) throw new Error(`Circular dependency detected: ${id}`)
-      visiting.add(id)
-      const node = nodeMap.get(id)
-      if (!node) throw new Error(`Node not found: ${id} (available: ${Array.from(nodeMap.keys()).join(",")})`)
-      for (const dep of this.getEffectiveDeps(node, implicitDeps)) {
-        visit(dep)
-      }
-      visiting.delete(id)
-      visited.add(id)
-      sorted.push(node)
-    }
-
-    for (const node of nodes) {
-      visit(node.id)
-    }
-
-    return sorted
+    return topologicalSort(nodes)
   }
 
   /** Kahn's algorithm: compute DAG execution levels — sets of nodes that can run concurrently. */
   private computeExecutionLevels(nodes: NodeDef[]): NodeDef[][] {
-    this.detectCycles(nodes)
-
-    const nodeMap = new Map(nodes.map(n => [n.id, n]))
-    const implicitDeps = this.buildConditionTargetDeps(nodes)
-    const levels: NodeDef[][] = []
-    const completed = new Set<string>()
-    const remaining = new Set(nodes.map(n => n.id))
-
-    while (remaining.size > 0) {
-      const level: NodeDef[] = []
-      for (const id of remaining) {
-        const node = nodeMap.get(id)!
-        const deps = this.getEffectiveDeps(node, implicitDeps)
-        if (deps.every(d => completed.has(d))) {
-          level.push(node)
-        }
-      }
-      if (level.length === 0) {
-        throw new Error(`Deadlock: remaining nodes have unsatisfied dependencies: ${Array.from(remaining).join(",")}`)
-      }
-      levels.push(level)
-      for (const node of level) {
-        completed.add(node.id)
-        remaining.delete(node.id)
-      }
-    }
-
-    return levels
+    return computeExecutionLevels(nodes)
   }
 
   /** Detect circular dependencies via DFS. Throws on cycle. */
   private detectCycles(nodes: NodeDef[]): void {
-    const nodeMap = new Map(nodes.map(n => [n.id, n]))
-    const implicitDeps = this.buildConditionTargetDeps(nodes)
-    const visited = new Set<string>()
-    const visiting = new Set<string>()
-
-    const visit = (id: string) => {
-      if (visited.has(id)) return
-      if (visiting.has(id)) throw new Error(`Circular dependency detected: ${id}`)
-      visiting.add(id)
-      const node = nodeMap.get(id)
-      if (!node) throw new Error(`Node not found: ${id} (available: ${Array.from(nodeMap.keys()).join(",")})`)
-      for (const dep of this.getEffectiveDeps(node, implicitDeps)) {
-        visit(dep)
-      }
-      visiting.delete(id)
-      visited.add(id)
-    }
-
-    for (const node of nodes) {
-      visit(node.id)
-    }
+    detectCycles(nodes)
   }
 
   // ── Execution ─────────────────────────────────────────────
@@ -1486,135 +1428,7 @@ export class WorkflowEngine {
   // ── Executor factory ──────────────────────────────────────
 
   private createExecutor(node: NodeDef, pool?: VarPool, signal?: AbortSignal) {
-    const p = pool ?? this.pool
-    const s = signal ?? this.signal
-
-    // Build nodeOutputs from engine results for $nodeId.output.xxx resolution
-    const buildNodeOutputs = (): Record<string, Record<string, any>> => {
-      const nodeOutputs: Record<string, Record<string, any>> = {}
-      for (const [id, result] of Object.entries(this.nodeResults)) {
-        const outputs = { ...(result.outputs ?? {}) }
-        if (result.lastOutput !== undefined) outputs["output"] = result.lastOutput
-        nodeOutputs[id] = outputs
-      }
-      return nodeOutputs
-    }
-
-    switch (node.type) {
-      case "bash":
-        return new BashExecutor(node, p, {
-          signal: s,
-          onLog: (line, stream) => {
-            const event = stream === "stderr" ? "bash_stderr" : "bash_log"
-            this.logger?.log(node.id, event, { line })
-            this.callbacks?.onNodeLog?.(node.id, line)
-          },
-          cwd: this.cwd,
-          crossExecResolver: this.crossExecResolver,
-          executionId: this.executionId,
-          nodeOutputs: buildNodeOutputs(),
-        })
-      case "python":
-        return new PythonExecutor(node, p, {
-          signal: s,
-          onLog: (line, stream) => {
-            const event = stream === "stderr" ? "python_stderr" : "python_log"
-            this.logger?.log(node.id, event, { line })
-            this.callbacks?.onNodeLog?.(node.id, line)
-          },
-          nodeOutputs: buildNodeOutputs(),
-        })
-      case "condition":
-        return new ConditionExecutor(node, p)
-      case "approval":
-        return new ApprovalExecutor(node, p, {
-          signal: s,
-          crossExecResolver: this.crossExecResolver,
-          executionId: this.executionId,
-          nodeOutputs: buildNodeOutputs(),
-          cwd: this.cwd,
-        })
-      case "loop":
-        return new LoopExecutor(node, p, {
-          providers: this.providers,
-          cwd: this.cwd,
-          globalAutoAnswers: this.workflow.auto_answers,
-          signal: s,
-          callbacks: this.callbacks,
-          logger: this.logger,
-          globalSessionId: this.globalSessionId,
-          branchSessionIds: this.branchSessionIds,
-          inputs: this.inputs,
-          workflowEngine: this.workflow.engine,
-          modelAliasConfig: this.modelAliasConfig,
-          checkpointStore: this.checkpointStore,
-          executionId: this.executionId,
-          engineNodeResults: this.nodeResults,
-          hookExecutor: async (event: string, context: Record<string, unknown>) => {
-            await this.executeHooks(event as keyof WorkflowHooks, context)
-          },
-          agentResolver: this.agentResolver,
-        })
-      case "agent": {
-        const rawKey = node.engine ?? this.workflow.engine ?? "claude"
-        const providerKey = rawKey === "claude-code" ? "claude" : rawKey
-        const provider = this.providers[providerKey]
-        if (!provider) throw new Error(`Unknown provider: ${rawKey}`)
-
-        // P0-2 + BL-6: Resolve model alias without mutating node.model
-        // Priority: node.model > workflow default model
-        const rawModel = node.model ?? this.workflowDefaultModel
-        let resolvedModel = rawModel
-        if (rawModel) {
-          const resolved = resolveModelAlias(rawModel, providerKey, this.modelAliasConfig)
-          if (resolved) resolvedModel = resolved
-        }
-
-        const runner = new AgentNodeRunner(provider, this.cwd, (event: AgentEvent) => {
-          this.logger?.log(node.id, "agent_event", { event_data: event })
-          this.callbacks?.onAgentEvent?.(node.id, event)
-        })
-
-        const previousSessionId = this.resolvePreviousSessionId(node)
-        const knowledgeInjector = this.knowledgeInjectorFactory
-          ? this.knowledgeInjectorFactory(p)
-          : undefined
-
-        return new AgentExecutor(node, p, {
-          runner,
-          previousSessionId,
-          globalAutoAnswers: this.workflow.auto_answers,
-          signal: s,
-          engineContext: { nodeResults: this.nodeResults },
-          promptInjector: this.promptInjector,
-          knowledgeInjector,
-          workflowName: this.workflow.name,
-          crossExecResolver: this.crossExecResolver,
-          executionId: this.executionId,
-          resolvedModel,
-          modelAliasConfig: this.modelAliasConfig,
-          providerKey,
-        })
-      }
-      case "swarm":
-        return new SwarmExecutor(node, p, {
-          providers: this.providers,
-          cwd: this.cwd,
-          callbacks: this.callbacks,
-          logger: this.logger,
-          checkpointStore: this.checkpointStore,
-          executionId: this.executionId,
-          modelAliasConfig: this.modelAliasConfig,
-          workflowEngine: this.workflow.engine,
-          agentResolver: this.agentResolver,
-          globalSessionId: this.globalSessionId,
-          engineHookFn: async (event: string, context: Record<string, unknown>) => {
-            await this.executeHooks(event as keyof WorkflowHooks, context)
-          },
-        })
-      default:
-        throw new Error(`Unknown node type: ${(node as any).type}`)
-    }
+    return this.executorFactory.createExecutor(node, pool, signal)
   }
 
   /** Resolve previousSessionId for an agent node based on context and resume_from. */
