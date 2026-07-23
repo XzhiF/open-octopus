@@ -83,8 +83,8 @@ hooks:
       nodes: [requirements-approval, verification-approval]
       bash: |
         case "$hook.node_id" in
-          requirements-approval|verification-approval) DIR=".octopus/xzf/$vars.feature/02-clarification" ;;
-          *)                   DIR=".octopus/xzf/$vars.feature/approval-answers" ;;
+          requirements-approval|verification-approval) DIR=".scratch/$vars.feature/02-clarification" ;;
+          *)                   DIR=".scratch/$vars.feature/approval-answers" ;;
         esac
         mkdir -p "$DIR"
         FILE="$DIR/$hook.node_id-$hook.timestamp.md"
@@ -231,9 +231,9 @@ nodes:
       ═══ Codebase Research Debate ═══
 
       读取:
-      - 目录规范: .octopus/xzf/$vars.feature/00-init/directory-conventions.md
-      - Idea: .octopus/xzf/$vars.feature/00-init/idea.md
-      - Workspace: .octopus/xzf/$vars.feature/00-init/workspace-topology.md
+      - 目录规范: .scratch/$vars.feature/00-init/directory-conventions.md
+      - Idea: .scratch/$vars.feature/00-init/idea.md
+      - Workspace: .scratch/$vars.feature/00-init/workspace-topology.md
 
       ⚠️ 所有产物路径以 directory-conventions.md 为准，禁止使用源码目录。
 
@@ -255,10 +255,10 @@ nodes:
       skills: [octo-xzf-clarify]
       prompt: |
         读取所有轮次的讨论记录。综合达成共识的结论，标注仍有分歧的点。
-        产物路径以 .octopus/xzf/$vars.feature/00-init/directory-conventions.md 为准。
+        产物路径以 .scratch/$vars.feature/00-init/directory-conventions.md 为准。
 
         ═══ Part 1: Research Brief ═══
-        写入 .octopus/xzf/$vars.feature/01-research/research-brief.md：
+        写入 .scratch/$vars.feature/01-research/research-brief.md：
 
         ```markdown
         # Research Brief
@@ -286,7 +286,7 @@ nodes:
         基于 research 结果，按 octo-xzf-clarify skill 方法论生成 Round 1 澄清问题。
         重点关注 Open Questions 和需要用户决策的设计点。不涉及测试环境和验证方式（下一阶段处理）。
 
-        写入: .octopus/xzf/$vars.feature/02-clarification/questions.md（Round 1 格式）
+        写入: .scratch/$vars.feature/02-clarification/questions.md（Round 1 格式）
 
         ═══ last_output ═══
         简要总结研究结论和待澄清问题数量（1-2 句话即可）。
@@ -313,7 +313,7 @@ nodes:
         prompt: |
           Round $iteration | 未回答的问题将采用推荐方案。
 
-          $file:.octopus/xzf/$vars.feature/02-clarification/questions.md
+          $file:.scratch/$vars.feature/02-clarification/questions.md
         options:
           - label: "继续"
             value: "continue"
@@ -330,7 +330,7 @@ nodes:
           ═══ 需求澄清 — Round $iteration ═══
 
           读取:
-          - 目录规范: .octopus/xzf/$vars.feature/00-init/directory-conventions.md
+          - 目录规范: .scratch/$vars.feature/00-init/directory-conventions.md
           （idea.md、research-brief.md、questions.md、workspace-topology.md 已在上游 session 中，无需重读）
 
           ⚠️ 所有产物路径以 directory-conventions.md 为准，禁止使用源码目录。
@@ -342,7 +342,7 @@ nodes:
           不涉及测试环境和验证方式（下一阶段处理）。
 
           澄清方法论、问题格式、Round 流程、Synthesis 输出格式参见 octo-xzf-clarify skill。
-          输出: .octopus/xzf/$vars.feature/02-clarification/questions.md
+          输出: .scratch/$vars.feature/02-clarification/questions.md
           下游 approval 直接引用 $requirements-clarify.output.last_output 展示给用户。
           checklist 完成时按 skill 的阶段衔接指引准备下游验证问题。
 
@@ -368,7 +368,7 @@ nodes:
           Round $iteration | 环境: $vars.env_checklist_status
           ⚠️ INCOMPLETE 时必须补全才能进入下一阶段。
 
-          $file:.octopus/xzf/$vars.feature/02-clarification/verification.md
+          $file:.scratch/$vars.feature/02-clarification/verification.md
         options:
           - label: "继续"
             value: "continue"
@@ -385,7 +385,7 @@ nodes:
           ═══ 验证策略规划 — Round $iteration ═══
 
           读取:
-          - 目录规范: .octopus/xzf/$vars.feature/00-init/directory-conventions.md
+          - 目录规范: .scratch/$vars.feature/00-init/directory-conventions.md
           （idea.md、research-brief.md、questions.md、workspace-topology.md 已在上游 session 中，无需重读）
 
           ⚠️ 所有产物路径以 directory-conventions.md 为准，禁止使用源码目录。
@@ -394,7 +394,7 @@ nodes:
           $verification-approval.output.comment
 
           验证策略方法论参见 octo-xzf-verification skill。
-          输出: .octopus/xzf/$vars.feature/02-clarification/verification.md
+          输出: .scratch/$vars.feature/02-clarification/verification.md
 
           ⚠️ 最终输出（last_output）包含 Synthesis 三部分：「待确认」+「用户补充」+「推荐验证方案」。
           「推荐验证方案」始终输出（测试环境、验收条件概览、E2E 场景列表），这是 agent 推荐的测试策略，用户可审阅纠正。
@@ -415,12 +415,12 @@ nodes:
       使用 octo-xzf-brief-maker skill 生成需求简报。
 
       读取:
-      - 目录规范: .octopus/xzf/$vars.feature/00-init/directory-conventions.md
+      - 目录规范: .scratch/$vars.feature/00-init/directory-conventions.md
       （idea.md、questions.md、verification.md、workspace-topology.md 已在上游 session 中，无需重读）
 
       ⚠️ 所有产物路径以 directory-conventions.md 为准，禁止使用源码目录。
 
-      输出: .octopus/xzf/$vars.feature/02-clarification/brief.md
+      输出: .scratch/$vars.feature/02-clarification/brief.md
 
       原则: 只保留结论，不保留讨论过程。下游节点只读 brief.md。
       裁剪无内容章节。确保每个验收标准有验证方法。
@@ -437,20 +437,20 @@ nodes:
       使用 octo-xzf-spec-designer skill 生成所有 spec 和 tracer bullet tasks。
 
       读取:
-      - 目录规范: .octopus/xzf/$vars.feature/00-init/directory-conventions.md
+      - 目录规范: .scratch/$vars.feature/00-init/directory-conventions.md
       （brief.md、research-brief.md、workspace-topology.md 已在上游 session 中，无需重读）
 
       ⚠️ 所有产物路径以 directory-conventions.md 为准，禁止使用源码目录。
 
       ═══ 输出 ═══
       1. 每个 spec 写入:
-         .octopus/xzf/$vars.feature/03-specs/spec-NNN-{name}.md
+         .scratch/$vars.feature/03-specs/spec-NNN-{name}.md
       2. 每个 spec 的 tracer bullets 写入子目录:
-         .octopus/xzf/$vars.feature/03-specs/spec-NNN-{name}/T-N-{name}.md
+         .scratch/$vars.feature/03-specs/spec-NNN-{name}/T-N-{name}.md
          ⚠️ 所有 spec 必须建子目录（即使只有 1 个 task），下游执行循环靠子目录中的 T-N 文件发现任务
-      3. 生成索引: .octopus/xzf/$vars.feature/03-specs/spec-index.md
+      3. 生成索引: .scratch/$vars.feature/03-specs/spec-index.md
          （按执行顺序: # | 文件名 | 标题 | Tracer Bullets 数 | Depends）
-      4. 生成 E2E 测试计划: .octopus/xzf/$vars.feature/03-specs/e2e-test-plan.md
+      4. 生成 E2E 测试计划: .scratch/$vars.feature/03-specs/e2e-test-plan.md
          综合所有 spec 的 E2E 验证方法，按执行顺序编排为一份完整测试计划
       5. 若有遗留文件（重跑），先清空 03-specs/ 再写入
 
@@ -478,7 +478,7 @@ nodes:
 
           执行流程:
           1. 读取 spec 文件和其子目录下的 tracer bullet tasks
-          2. 检查 checkpoint: .octopus/xzf/{feature}/04-execution/spec-{NNN}/checkpoint.json
+          2. 检查 checkpoint: .scratch/{feature}/04-execution/spec-{NNN}/checkpoint.json
              - 存在且 completed → 跳过
              - 存在但未完成 → 从断点恢复
              - 不存在 → 从头执行
@@ -494,7 +494,7 @@ nodes:
       你是执行调度者，负责按 spec-index.md 顺序完成所有 spec 的 tracer bullets。
 
       ═══ 执行策略 ═══
-      1. 读取 spec 索引: .octopus/xzf/$vars.feature/03-specs/spec-index.md
+      1. 读取 spec 索引: .scratch/$vars.feature/03-specs/spec-index.md
       2. 按索引顺序，对每个 spec 委派 implementer 子 agent 执行：
          - 在 prompt 中传入 spec 文件路径和 feature slug
          - 等待子 agent 完成后再启动下一个
@@ -530,16 +530,16 @@ nodes:
               执行所有 spec 的全量 E2E 测试。
 
               ═══ 执行流程 ═══
-              1. 读取 E2E 测试计划: .octopus/xzf/{feature}/03-specs/e2e-test-plan.md
+              1. 读取 E2E 测试计划: .scratch/{feature}/03-specs/e2e-test-plan.md
               2. 按计划顺序执行 E2E 测试（浏览器操作 / curl / playwright）
               3. 收集证据（截图、API 响应、DB 查询）
               4. 对照反假跑标准，确认"真通过"
 
               ═══ 文件存放 ═══
-              - 测试脚本（SQL/shell/curl）: .octopus/xzf/{feature}/05-reports/e2e-scripts/
-              - 截图: .octopus/xzf/{feature}/05-reports/e2e-screenshots/
-              - 临时数据（mock 数据、API 响应文本、fixture 等）: .octopus/xzf/{feature}/05-reports/e2e-data/
-              - 测试报告: .octopus/xzf/{feature}/05-reports/e2e-report.md
+              - 测试脚本（SQL/shell/curl）: .scratch/{feature}/05-reports/e2e-scripts/
+              - 截图: .scratch/{feature}/05-reports/e2e-screenshots/
+              - 临时数据（mock 数据、API 响应文本、fixture 等）: .scratch/{feature}/05-reports/e2e-data/
+              - 测试报告: .scratch/{feature}/05-reports/e2e-report.md
               ⚠️ 所有 E2E 产物统一放 05-reports/，不污染源码目录。
 
               ═══ 失败修复 ═══
@@ -550,7 +550,7 @@ nodes:
               - 3 次仍失败 → 记录失败详情，继续下一个 spec 的 E2E
 
               ═══ 输出 ═══
-              写入 E2E 报告: .octopus/xzf/{feature}/05-reports/e2e-report.md
+              写入 E2E 报告: .scratch/{feature}/05-reports/e2e-report.md
               格式: 每个 spec 的 E2E 结果（PASS/FAIL + 证据 + 修复记录）
               完成后汇报: 全部通过 / 仍有失败。
         prompt: |
@@ -612,7 +612,7 @@ nodes:
       - Feature slug: $vars.feature
       - 分支: $vars.branch
       - Remote 类型: $vars.remote_type
-      - 产物目录: .octopus/xzf/$vars.feature/
-      - Workspace 拓扑: .octopus/xzf/$vars.feature/00-init/workspace-topology.md
+      - 产物目录: .scratch/$vars.feature/
+      - Workspace 拓扑: .scratch/$vars.feature/00-init/workspace-topology.md
 
       按 skill 定义的 Step 1 → Step 2 → Step 3 顺序执行。

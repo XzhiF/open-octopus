@@ -41,7 +41,7 @@ ELSE → 从 Idea 提取关键词生成 kebab-case slug:
 用 Bash `mkdir -p` 一次性创建所有目录（不依赖 Write 自动创建）:
 
 ```bash
-BASE=".octopus/xzf/{feature}"
+BASE=".scratch/{feature}"
 mkdir -p "$BASE"/{00-init,01-research,02-clarification,03-specs,04-execution,05-reports/{e2e-scripts,e2e-screenshots,e2e-data},06-ship}
 ```
 
@@ -56,6 +56,22 @@ mkdir -p "$BASE"/{00-init,01-research,02-clarification,03-specs,04-execution,05-
 
 如目录已存在（同 feature 重跑）→ 复用，不覆盖已有文件。
 
+### Step 4b: 写共享 index.md
+
+向 `.scratch/index.md` 注册当前 feature（与 matt 系统共享同一个 index）:
+
+```
+IF .scratch/index.md 不存在 → 创建表头:
+  # Features Index
+  | # | feature-slug | Created | Branch | Status |
+  |---|-------------|---------|--------|--------|
+
+读取现有最大 # → NEXT_NUM = MAX + 1
+追加一行: | NEXT_NUM | {feature} | {date} | {branch} | pending |
+```
+
+### Step 4c: 写 directory-conventions.md
+
 写入 `00-init/directory-conventions.md`（产物目录规范，供所有下游节点引用）：
 
 ```markdown
@@ -63,7 +79,7 @@ mkdir -p "$BASE"/{00-init,01-research,02-clarification,03-specs,04-execution,05-
 
 > ⚠️ 所有工作流产物必须写入以下目录，禁止使用源码目录。
 
-基础路径: `.octopus/xzf/{feature}/`
+基础路径: `.scratch/{feature}/`
 
 | 阶段 | 目录 | 产物 |
 |------|------|------|
@@ -117,7 +133,7 @@ for b in main master develop; do git rev-parse --verify $b >/dev/null 2>&1 && ec
 
 ### Step 6: 输出 workspace-topology.md
 
-写入: `.octopus/xzf/{feature}/00-init/workspace-topology.md`（每个 feature 独立拓扑快照）
+写入: `.scratch/{feature}/00-init/workspace-topology.md`（每个 feature 独立拓扑快照）
 
 ⚠️ 行数限制：单项目不超过 80 行，总计不超过 150 行。项目少时可详细，项目多时精简为关键信息。
 

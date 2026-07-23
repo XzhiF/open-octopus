@@ -49,7 +49,7 @@ version: 2.5.0
 - 不涉及 UI 的 Idea 跳过此步骤
 
 ### 第二步：澄清问题清单生成
-输出到 `.octopus/xzf/{feature}/02-clarification/questions.md`
+输出到 `.scratch/{feature}/02-clarification/questions.md`
 
 #### 文件结构（三个区域）
 

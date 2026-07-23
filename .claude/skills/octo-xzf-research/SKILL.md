@@ -13,8 +13,8 @@ Stage 1 `idea-research` swarm debate 节点，每位专家加载此 skill 参与
 
 ## 输入
 
-- **Idea 文档**: `.octopus/xzf/{feature}/00-init/idea.md`
-- **Workspace 拓扑**: `.octopus/xzf/{feature}/00-init/workspace-topology.md`
+- **Idea 文档**: `.scratch/{feature}/00-init/idea.md`
+- **Workspace 拓扑**: `.scratch/{feature}/00-init/workspace-topology.md`
 
 ## 00-init/idea.md 格式
 

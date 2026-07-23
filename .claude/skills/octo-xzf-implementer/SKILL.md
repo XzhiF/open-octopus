@@ -57,7 +57,7 @@ execution-loop 中的 agent 节点，按依赖顺序逐个执行 spec 下的 tra
 ## Checkpoint 标准
 
 ### 文件路径
-`.octopus/xzf/{feature}/04-execution/spec-{NNN}/checkpoint.json`
+`.scratch/{feature}/04-execution/spec-{NNN}/checkpoint.json`
 
 ### Schema（严格遵循，不可增删字段）
 

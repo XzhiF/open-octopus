@@ -94,7 +94,7 @@ version: 1.0.0
 
 ## 输出文件
 
-输出到 `.octopus/xzf/{feature}/02-clarification/verification.md`
+输出到 `.scratch/{feature}/02-clarification/verification.md`
 
 ### 文件结构
 
