@@ -4,6 +4,7 @@ import path from 'path'
 /**
  * Global agent directory utilities.
  * Agent data is stored at ~/.octopus/agent/ — shared across all orgs.
+ * Supports per-agent isolation via agentId parameter.
  */
 
 /** Get Octopus home dir — function for test isolation (B7 fix) */
@@ -11,14 +12,21 @@ function getHome(): string {
   return process.env.OCTOPUS_HOME ?? path.join(os.homedir(), '.octopus')
 }
 
-/** Root agent directory: ~/.octopus/agent */
-export function getAgentDir(): string {
-  return path.join(getHome(), 'agent')
+/**
+ * Root agent directory: ~/.octopus/agent or ~/.octopus/agent/{agentId}
+ * @param agentId - Optional agent identifier for per-agent isolation
+ */
+export function getAgentDir(agentId?: string): string {
+  const base = path.join(getHome(), 'agent')
+  return agentId ? path.join(base, agentId) : base
 }
 
-/** Agent memory directory: ~/.octopus/agent/memory */
-export function getAgentMemoryDir(): string {
-  return path.join(getAgentDir(), 'memory')
+/**
+ * Agent memory directory: ~/.octopus/agent/memory or ~/.octopus/agent/{agentId}/memory
+ * @param agentId - Optional agent identifier for per-agent isolation
+ */
+export function getAgentMemoryDir(agentId?: string): string {
+  return path.join(getAgentDir(agentId), 'memory')
 }
 
 /** Agent clones directory: ~/.octopus/agent/clones */
@@ -31,19 +39,28 @@ export function getCloneDir(name: string): string {
   return path.join(getClonesDir(), name)
 }
 
-/** Agent skills directory: ~/.octopus/agent/skills */
-export function getAgentSkillsDir(): string {
-  return path.join(getAgentDir(), 'skills')
+/**
+ * Agent skills directory: ~/.octopus/agent/skills or ~/.octopus/agent/{agentId}/skills
+ * @param agentId - Optional agent identifier for per-agent isolation
+ */
+export function getAgentSkillsDir(agentId?: string): string {
+  return path.join(getAgentDir(agentId), 'skills')
 }
 
-/** Agent persona file: ~/.octopus/agent/persona.md */
-export function getPersonaPath(): string {
-  return path.join(getAgentDir(), 'persona.md')
+/**
+ * Agent persona file: ~/.octopus/agent/persona.md or ~/.octopus/agent/{agentId}/persona.md
+ * @param agentId - Optional agent identifier for per-agent isolation
+ */
+export function getPersonaPath(agentId?: string): string {
+  return path.join(getAgentDir(agentId), 'persona.md')
 }
 
-/** Agent config file: ~/.octopus/agent/config.yaml */
-export function getAgentConfigPath(): string {
-  return path.join(getAgentDir(), 'config.yaml')
+/**
+ * Agent config file: ~/.octopus/agent/config.yaml or ~/.octopus/agent/{agentId}/config.yaml
+ * @param agentId - Optional agent identifier for per-agent isolation
+ */
+export function getAgentConfigPath(agentId?: string): string {
+  return path.join(getAgentDir(agentId), 'config.yaml')
 }
 
 /** Agent reports directory: ~/.octopus/agent/reports */
@@ -61,14 +78,20 @@ export function getExperiencesDir(): string {
   return path.join(getAgentDir(), 'evolution', 'experiences')
 }
 
-/** Agent daily memory directory: ~/.octopus/agent/memory/daily */
-export function getDailyMemoryDir(): string {
-  return path.join(getAgentMemoryDir(), 'daily')
+/**
+ * Agent daily memory directory: ~/.octopus/agent/memory/daily or ~/.octopus/agent/{agentId}/memory/daily
+ * @param agentId - Optional agent identifier for per-agent isolation
+ */
+export function getDailyMemoryDir(agentId?: string): string {
+  return path.join(getAgentMemoryDir(agentId), 'daily')
 }
 
-/** Agent long-term memory file: ~/.octopus/agent/memory/long-term.md */
-export function getLongTermMemoryPath(): string {
-  return path.join(getAgentMemoryDir(), 'long-term.md')
+/**
+ * Agent long-term memory file: ~/.octopus/agent/memory/long-term.md or ~/.octopus/agent/{agentId}/memory/long-term.md
+ * @param agentId - Optional agent identifier for per-agent isolation
+ */
+export function getLongTermMemoryPath(agentId?: string): string {
+  return path.join(getAgentMemoryDir(agentId), 'long-term.md')
 }
 
 /** Agent notification queue directory: ~/.octopus/agent/notification-queue */

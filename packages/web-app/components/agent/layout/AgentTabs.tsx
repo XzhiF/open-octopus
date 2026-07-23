@@ -1,6 +1,6 @@
 'use client'
 
-import { MessageSquare, Brain, Zap, Users, ClipboardList, Settings } from 'lucide-react'
+import { MessageSquare, Brain, Zap, Users, Bot, ClipboardList, Settings } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 const TAB_CONFIG = [
@@ -8,6 +8,7 @@ const TAB_CONFIG = [
   { id: 'memory', label: '记忆', icon: Brain },
   { id: 'skill', label: 'SKILL', icon: Zap },
   { id: 'clone', label: '分身', icon: Users },
+  { id: 'agents', label: 'Agents', icon: Bot },
   { id: 'task', label: '任务', icon: ClipboardList },
   { id: 'config', label: '配置', icon: Settings },
 ] as const

@@ -265,6 +265,60 @@ export function createAgentRoutes(deps: AgentRouteDeps): Hono {
     }
   })
 
+  // ── Agent Registry API (spec-004) ─────────────────────────────────
+  agent.get('/agents', (c) => {
+    try {
+      const org = c.req.header('X-Octopus-Org') || (c.get('org') as string)
+      if (!org) return c.json(createAgentError('ORG_NOT_FOUND', 'Organization not resolved'), 403)
+
+      const { getAgentRegistry } = require('../../services/agent/agent-registry')
+      const registry = getAgentRegistry()
+      const agents = registry.list()
+
+      return c.json({
+        items: agents.map(a => ({
+          id: a.id,
+          displayName: a.displayName,
+          description: a.description,
+          handlesIntents: a.handlesIntents,
+          isBuiltin: a.isBuiltin,
+          deletable: !a.isBuiltin,
+        })),
+        total: agents.length,
+      })
+    } catch (err: unknown) {
+      const error = err instanceof Error ? err : new Error(String(err))
+      return c.json(createAgentError('INTERNAL_ERROR', error.message), 500)
+    }
+  })
+
+  agent.delete('/agents/:id', (c) => {
+    try {
+      const org = c.req.header('X-Octopus-Org') || (c.get('org') as string)
+      if (!org) return c.json(createAgentError('ORG_NOT_FOUND', 'Organization not resolved'), 403)
+
+      const agentId = c.req.param('id')
+      const { getAgentRegistry } = require('../../services/agent/agent-registry')
+      const { isBuiltinAgent } = require('../../services/agent/builtin-agents')
+      const registry = getAgentRegistry()
+
+      const agent = registry.get(agentId)
+      if (!agent) {
+        return c.json(createAgentError('NOT_FOUND', `Agent ${agentId} not found`), 404)
+      }
+
+      if (isBuiltinAgent(agentId)) {
+        return c.json(createAgentError('BUILTIN_AGENT_PROTECTED', '内置 Agent 不可删除'), 403)
+      }
+
+      registry.unregister(agentId)
+      return c.json({ ok: true, deleted: agentId })
+    } catch (err: unknown) {
+      const error = err instanceof Error ? err : new Error(String(err))
+      return c.json(createAgentError('INTERNAL_ERROR', error.message), 500)
+    }
+  })
+
   // ── Implemented route groups ─────────────────────────────────
   agent.route('/', createPersonaRoutes())
   agent.route('/', createConfigRoutes())
