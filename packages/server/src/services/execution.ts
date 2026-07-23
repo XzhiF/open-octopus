@@ -59,6 +59,10 @@ export class ExecutionService {
     this.lifecycle.destroyResumeListener()
   }
 
+  getEnginePool() {
+    return this.lifecycle.getEnginePool()
+  }
+
   registerExternalCallbacks(callbacks: Partial<EngineCallbacks>, executionId?: string): void {
     this.lifecycle.registerExternalCallbacks(callbacks, executionId)
   }
