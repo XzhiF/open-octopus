@@ -15,8 +15,10 @@ export interface IExecutionLifecycle {
 
 // EngineFactory 接口（Task 9）
 export interface IEngineFactory {
-  createEngine(execution: ExecutionRow, workflow: any): any  // 返回 WorkflowEngine
-  reconstructEngine(execution: ExecutionRow): any
+  createEngine(execution: ExecutionRow, workflow: any, callbacks?: any, signal?: AbortSignal): any
+  reconstructEngine(execution: ExecutionRow, callbacks: any, signal: AbortSignal): any
+  resolveProviders(workflow: any): Record<string, any>
+  resolveWorkflowWithSnapshot(executionId: string, workflowRef: string): { parsed: any; content: string } | undefined
 }
 
 // EngineCallbacks 接口（Task 10）

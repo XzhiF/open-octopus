@@ -1,18 +1,26 @@
 // packages/server/src/services/execution/ExecutionLifecycle.ts
 import type { ExecutionDAO } from "../../db/dao/execution-dao"
 import type { ExecutionRow, NodeExecutionRow } from "../../db/types"
+import type Database from "better-sqlite3"
 import { EnginePool } from "./EnginePool"
+import { EngineFactory } from "./EngineFactory"
+import { EngineCallbacks as EngineCallbacksBuilder } from "./EngineCallbacks"
+import { HookExecutor } from "./HookExecutor"
+import { GitOperations } from "./GitOperations"
+import { StateFileManager } from "./StateFileManager"
+import { ExecutionQueryService } from "./ExecutionQueryService"
+import { ExecutionRunner } from "./ExecutionRunner"
+import { collectAllNodes, findNodeDef, findPausedNode, findFailedNode, findFailedNodeError, isWorkflowNodeId, ensureNodeExecutions, ensureNodeEdges } from "./NodeHelper"
 import type { SSEService } from "../sse"
 import type { WorkflowService } from "../workflow"
 import type { BuiltInWorkflowService } from "../builtin-workflow"
 import type { ObservabilityService } from "../observability"
 import type { ErrorTracker } from "../error-tracker"
 import type { KnowledgeService } from "../knowledge"
-import type { HookDef, NodeDef, WorkflowDef, WorkflowHooks, PipelineConfig, ExecutionLookup } from "@octopus/shared"
+import type { HookDef, WorkflowDef, WorkflowHooks, PipelineConfig, ExecutionLookup } from "@octopus/shared"
 import type { EngineCallbacks } from "@octopus/engine"
-import { WorkflowEngine, BashExecutor, AgentExecutor, AgentNodeRunner, FilesystemCheckpointStore, EngineInitPhase } from "@octopus/engine"
-import { getProvider } from "@octopus/providers"
-import { parseWorkflow, VarPool, evaluateExpression, parsePipelineConfig, CrossExecResolver, collectNodeEngines, WorkflowRef } from "@octopus/shared"
+import { WorkflowEngine, FilesystemCheckpointStore, EngineInitPhase } from "@octopus/engine"
+import { parseWorkflow, VarPool, parsePipelineConfig, CrossExecResolver, WorkflowRef } from "@octopus/shared"
 import { gitOps } from "../git-ops"
 import { ObservabilityService as ObsSvc } from "../observability"
 import { PrivacyFilter } from "../privacy-filter"
@@ -21,16 +29,22 @@ import { generateSummary, formatDuration } from "../execution-summary"
 import { getOrchestratorService } from "../agent/orchestrator-service"
 import { resolveAllProjectNames } from "../knowledge/repo-resolver"
 import { join } from "path"
-import { existsSync, readdirSync, readFileSync, writeFileSync, mkdirSync } from "fs"
+import { existsSync, readFileSync, writeFileSync, mkdirSync } from "fs"
 import { randomUUID } from "crypto"
-import { parseLogFilename } from "@octopus/engine"
-import type { ParsedLogFilename } from "@octopus/engine"
 import { ResourcePreFlight } from "../resource-preflight"
 import { ResourceProvisioner } from "../resource-provisioner"
 import { getResourceRegistry } from "../resource-registry"
+import { PipelineConfigLoader } from "../pipeline-config"
 
 export class ExecutionLifecycle {
   private enginePool: EnginePool
+  private engineFactory: EngineFactory
+  private callbacksBuilder: EngineCallbacksBuilder
+  private hookExecutor: HookExecutor
+  private gitOps: GitOperations
+  private stateManager: StateFileManager
+  private queryService: ExecutionQueryService
+  private runner: ExecutionRunner
   private _externalCallbacks = new Map<string, Partial<EngineCallbacks>>()
   private knowledgeService?: KnowledgeService
   // Throttle retireStaleRules — only run at most once per RETIRE_INTERVAL_MS
@@ -43,6 +57,7 @@ export class ExecutionLifecycle {
   )
 
   constructor(
+    private db: Database.Database,
     private dao: ExecutionDAO,
     private sse: SSEService,
     private workflowService: WorkflowService,
@@ -55,6 +70,47 @@ export class ExecutionLifecycle {
     private errorTracker?: ErrorTracker,
   ) {
     this.enginePool = new EnginePool()
+    this.engineFactory = new EngineFactory(
+      { db, sse, workflowService, builtInWorkflowService, org, workspacePath, workspaceDbId },
+      dao,
+      new PipelineConfigLoader(workspacePath),
+      workspacePath,
+    )
+    this.gitOps = new GitOperations(workspacePath)
+    this.stateManager = new StateFileManager(workspacePath, workspaceDbId, dao)
+    this.queryService = new ExecutionQueryService({
+      dao, sse, workflowService, builtInWorkflowService, workspacePath, workspaceId,
+    })
+    this.callbacksBuilder = new EngineCallbacksBuilder({
+      ctx: { db, sse, workflowService, builtInWorkflowService, org, workspacePath, workspaceDbId },
+      dao,
+      enginePool: this.enginePool,
+      observability,
+      workspaceId,
+      org,
+      workspaceDbId,
+      externalCallbacks: this._externalCallbacks,
+      syncStateJson: () => this.syncStateJson(),
+    })
+    this.hookExecutor = new HookExecutor(
+      { db, sse, workflowService, builtInWorkflowService, org, workspacePath, workspaceDbId },
+      dao,
+    )
+    this.gitOps = new GitOperations(workspacePath)
+    this.runner = new ExecutionRunner({
+      dao, enginePool: this.enginePool, sse, workspaceId,
+      updateStatus: (id, status, extra) => this.updateStatus(id, status, extra),
+      cleanupOrphanedNodes: (id, fs) => this.cleanupOrphanedNodes(id, fs),
+      executeWorkflowHooks: (event, ctx, wf, eid) => this.executeWorkflowHooks(event, ctx, wf, eid),
+      getWorkflow: (ref) => this.getWorkflow(ref),
+      findFailedNode: (eid) => this.findFailedNode(eid),
+      findFailedNodeError: (eid) => this.findFailedNodeError(eid),
+      findNodeDef: (nodes, nid) => this.findNodeDef(nodes, nid),
+      syncStateJson: () => this.syncStateJson(),
+      approve: (id, nid, ans, cmt) => this.approve(id, nid, ans, cmt),
+      recordEndCommits: () => this.recordEndCommits(),
+      abortAndWait: (ac, eid, t) => this.abortAndWait(ac, eid, t),
+    })
   }
 
   /**
@@ -111,8 +167,8 @@ export class ExecutionLifecycle {
     const snapshotName = `${id}-${WorkflowRef.sanitize(exec.workflow_ref)}`
     writeFileSync(join(stateDir, snapshotName), wf.content, "utf-8")
 
-    this.ensureNodeExecutions(id, wf.parsed)
-    this.ensureNodeEdges(id, wf.parsed)
+    ensureNodeExecutions(this.dao, id, wf.parsed)
+    ensureNodeEdges(this.dao, id, wf.parsed)
 
     const abortController = new AbortController()
 
@@ -153,26 +209,14 @@ export class ExecutionLifecycle {
     const repoNames = resolveAllProjectNames(this.workspacePath)
     this.knowledgeService?.setExecutionContext(repoNames, wf.parsed.name)
 
-    // Dynamic agent resolver: delegates swarm agent selection to OrchestratorService
-    const orchestrator = getOrchestratorService(this.org)
-    const agentResolver = (topic: string, maxExperts: number) =>
-      orchestrator.selectAndInstallAgents(topic, maxExperts, this.workspacePath)
+    // Update input_values in DB before creating engine (factory reads from exec row)
+    if (resolvedInputValues) {
+      this.dao.updateExecution(id, { input_values: JSON.stringify(resolvedInputValues) })
+    }
+    const updatedExec = this.dao.findById(id)!
 
-    const engine = new WorkflowEngine(
-      wf.parsed,
-      this.resolveProviders(wf.parsed),
-      this.workspacePath,
-      this.workspacePath,
-      this.buildCallbacks(id),
-      abortController.signal,
-      id,
-      resolvedInputValues,
-      exec.name,
-      undefined, // crossExecResolver
-      undefined, // promptInjector
-      this.knowledgeService?.createPrecomputeHook(),
-      this.knowledgeService?.createInjectorFactory(),
-      agentResolver,
+    const engine = this.engineFactory.createEngine(
+      updatedExec as any, wf.parsed, this.buildCallbacks(id), abortController.signal,
     )
 
     this.enginePool.create(id, engine, abortController)
@@ -808,17 +852,17 @@ export class ExecutionLifecycle {
         continue
       }
 
-      const contextVars: Record<string, string> = {
-        "hook.event": "interrupt", "hook.workflow_name": wf.parsed.name,
-        "hook.execution_id": row.id, "hook.timestamp": new Date().toISOString(),
-        "hook.last_status": "running", "hook.interrupt_reason": "服务重启中断",
-      }
-
-      for (const hook of hooks) {
-        try { await this.executeAgentHookServer(hook, wf.parsed, {}, contextVars) } catch (err: unknown) {
-          const msg = err instanceof Error ? err.message : String(err)
-          process.stderr.write(`[DrainPendingHooks] Hook ${hook.id ?? "anonymous"} failed for ${row.id}: ${msg}\n`)
-        }
+      // Construct a synthetic workflow with the pending hooks as on_interrupt handlers
+      const syntheticWf = { parsed: { ...wf.parsed, hooks: { on_interrupt: hooks } as any } }
+      try {
+        await this.hookExecutor.executeWorkflowHooks(
+          "on_interrupt", {
+            last_status: "running", interrupt_reason: "服务重启中断",
+          }, syntheticWf, row.id,
+        )
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err)
+        process.stderr.write(`[DrainPendingHooks] Hook execution failed for ${row.id}: ${msg}\n`)
       }
 
       this.dao.updateExecution(row.id, { pending_hooks: "[]" })
@@ -900,260 +944,24 @@ export class ExecutionLifecycle {
     executionId: string, nodeId: string, signal: AbortSignal,
     intervention: string | undefined, workflowRef: string,
   ): Promise<void> {
-    try {
-      const inst = this.enginePool.get(executionId)
-      if (!inst) return
-
-      const settleRun = this.enginePool.startRun(executionId)
-      let result
-      try {
-        result = await inst.engine.retryFrom(nodeId, { signal, intervention })
-      } finally {
-        settleRun()
-      }
-
-      if (result.status === "completed" || result.status === "completed_with_failures" || result.status === "cancelled" || result.status === "rejected") {
-        this.enginePool.remove(executionId)
-      }
-
-      if (result.status === "pending_approval") {
-        this.dao.updateExecution(executionId, { var_pool: JSON.stringify(result.poolSnapshot) })
-        const nextPausedNodeId = Object.entries(result.nodeResults).find(([, r]) => r.status === "paused")?.[0]
-        if (nextPausedNodeId) {
-          const wf = this.getWorkflow(workflowRef)
-          const nodeDef = this.findNodeDef(wf?.parsed.nodes ?? [], nextPausedNodeId)
-          const timeout = nodeDef?.approval_timeout
-          if (timeout && timeout > 0) {
-            const timer = setTimeout(async () => {
-              console.log(`[ExecutionLifecycle] Approval timeout for ${executionId}/${nextPausedNodeId}`)
-              try { await this.approve(executionId, nextPausedNodeId, "timeout", "Auto-rejected by timeout") } catch (e) {
-                console.error(`[ExecutionLifecycle] Timeout approval failed for ${executionId}`, e)
-              }
-            }, timeout * 1000)
-            this.enginePool.setApprovalTimer(executionId, timer)
-          }
-        }
-      }
-
-      this.updateStatus(executionId, result.status, {
-        completed_at: new Date().toISOString(), duration: result.durationMs, progress: 100,
-        var_pool: JSON.stringify(result.poolSnapshot),
-        gate_status: result.status === "pending_approval" ? "pending" : (result.status === "completed" ? "open" : "closed"),
-      })
-
-      this.cleanupOrphanedNodes(executionId, result.status)
-
-      const wfForHook = this.getWorkflow(workflowRef)
-      if (wfForHook) {
-        if (result.status === "failed") {
-          await this.executeWorkflowHooks("on_workflow_failure", {
-            failed_node_id: this.findFailedNode(executionId), error: this.findFailedNodeError(executionId), duration_ms: result.durationMs,
-          }, wfForHook, executionId)
-        }
-        if (result.status === "completed") {
-          await this.executeWorkflowHooks("on_complete", { final_status: "completed" }, wfForHook, executionId)
-        }
-      }
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err)
-      console.error(`[ExecutionLifecycle] Resume failed for ${executionId}:`, msg)
-      this.dao.updateExecution(executionId, { status: "failed", var_pool: JSON.stringify({ error: msg }) })
-      this.enginePool.remove(executionId)
-    }
+    return this.runner.runResumeInBackground(executionId, nodeId, signal, intervention, workflowRef)
   }
 
   private async runApproveInBackground(
     executionId: string, nodeId: string, signal: AbortSignal,
     answer: string, comment: string | undefined, workflowRef: string,
   ): Promise<void> {
-    try {
-      const inst = this.enginePool.get(executionId)
-      if (!inst) return
-
-      const settleRun = this.enginePool.startRun(executionId)
-      let result
-      try {
-        result = await inst.engine.retryFrom(nodeId, {
-          userChoice: answer, userComment: comment, signal,
-        })
-      } finally {
-        settleRun()
-      }
-
-      if (result.status === "completed" || result.status === "completed_with_failures" || result.status === "cancelled" || result.status === "rejected") {
-        this.enginePool.remove(executionId)
-      }
-
-      if (result.status === "pending_approval") {
-        this.dao.updateExecution(executionId, { var_pool: JSON.stringify(result.poolSnapshot) })
-        const nextPausedEntry = Object.entries(result.nodeResults).find(([, r]) => r.status === "paused" || r.status === "pending_approval")
-        const nextPausedNodeId = nextPausedEntry?.[0]
-        if (nextPausedNodeId) {
-          const wf = this.getWorkflow(workflowRef)
-          const nodeDef = this.findNodeDef(wf?.parsed.nodes ?? [], nextPausedNodeId)
-          const timeout = nodeDef?.approval_timeout
-          if (timeout && timeout > 0) {
-            const timer = setTimeout(async () => {
-              console.log(`[ExecutionLifecycle] Approval timeout for ${executionId}/${nextPausedNodeId}`)
-              try { await this.approve(executionId, nextPausedNodeId, "timeout", "Auto-rejected by timeout") } catch (e) {
-                console.error(`[ExecutionLifecycle] Timeout approval failed for ${executionId}`, e)
-              }
-            }, timeout * 1000)
-            this.enginePool.setApprovalTimer(executionId, timer)
-          }
-        }
-      }
-
-      const currentExec = this.dao.findById(executionId)
-      if (currentExec?.status === "paused") {
-        const nodeStats = this.dao.findNodeStatsForExecution(executionId)
-        if (nodeStats.running_or_pending === 0) {
-          console.log(`[ExecutionLifecycle] Execution ${executionId} was paused but all nodes completed during approve, updating to ${result.status}`)
-        } else {
-          console.log(`[ExecutionLifecycle] Execution ${executionId} was paused and ${nodeStats.running_or_pending} nodes still running/pending during approve, keeping paused status`)
-          this.syncStateJson()
-          return
-        }
-      }
-
-      const endCommitId = await this.recordEndCommits()
-      this.dao.updateExecution(executionId, { end_commit_id: endCommitId })
-
-      this.updateStatus(executionId, result.status, {
-        completed_at: new Date().toISOString(), duration: result.durationMs, progress: 100,
-        var_pool: JSON.stringify(result.poolSnapshot),
-        gate_status: result.status === "completed" ? "open" : "closed",
-      })
-
-      this.cleanupOrphanedNodes(executionId, result.status)
-
-      const wfForHook = this.getWorkflow(workflowRef)
-      if (wfForHook) {
-        if (result.status === "failed") {
-          await this.executeWorkflowHooks("on_workflow_failure", {
-            failed_node_id: this.findFailedNode(executionId), error: this.findFailedNodeError(executionId), duration_ms: result.durationMs,
-          }, wfForHook, executionId)
-        }
-        if (result.status === "completed") {
-          await this.executeWorkflowHooks("on_success", { duration_ms: result.durationMs }, wfForHook, executionId)
-        }
-        await this.executeWorkflowHooks("on_complete", { final_status: result.status, duration_ms: result.durationMs }, wfForHook, executionId)
-      }
-
-      this.syncStateJson()
-      this.sse.emit(this.workspaceId, { event: "complete", data: { executionId, finalStatus: result.status } })
-    } catch (err: any) {
-      const msg = err instanceof Error ? err.message : String(err)
-      console.error(`[ExecutionLifecycle] Approve continuation failed for ${executionId}:`, msg)
-      this.enginePool.remove(executionId)
-
-      this.updateStatus(executionId, "failed", { completed_at: new Date().toISOString() })
-      this.dao.updateNodeExecutionsByStatus(executionId, "failed", ["running", "pending"], { error: `Approve failed: ${msg}` })
-      this.syncStateJson()
-
-      try {
-        const wfForHook = this.getWorkflow(workflowRef)
-        if (wfForHook) {
-          await this.executeWorkflowHooks("on_workflow_failure", { failed_node_id: this.findFailedNode(executionId), error: msg }, wfForHook, executionId)
-          await this.executeWorkflowHooks("on_complete", { final_status: "failed" }, wfForHook, executionId)
-        }
-      } catch { /* non-fatal */ }
-
-      this.sse.emit(this.workspaceId, { event: "complete", data: { executionId, finalStatus: "failed", error: msg } })
-    }
+    return this.runner.runApproveInBackground(executionId, nodeId, signal, answer, comment, workflowRef)
   }
 
   private async runRejectInBackground(
     executionId: string, approvalNodeId: string, onRejectNodeId: string,
     signal: AbortSignal, comment: string | undefined, workflowRef: string,
   ): Promise<void> {
-    const wf = this.getWorkflow(workflowRef)
-    try {
-      const inst = this.enginePool.get(executionId)
-      if (!inst) return
-
-      const settleRun = this.enginePool.startRun(executionId)
-      let result
-      try {
-        result = await inst.engine.retryFrom(onRejectNodeId, {
-          userChoice: "reject", userComment: comment, signal,
-        })
-      } finally {
-        settleRun()
-      }
-
-      if (result.status === "completed" || result.status === "completed_with_failures" || result.status === "cancelled" || result.status === "rejected") {
-        this.enginePool.remove(executionId)
-      }
-
-      const endCommitId = await this.recordEndCommits()
-      this.dao.updateExecution(executionId, { end_commit_id: endCommitId })
-
-      const finalStatus = result.status === "failed" ? "failed" : "rejected"
-
-      this.updateStatus(executionId, finalStatus, {
-        completed_at: new Date().toISOString(), duration: result.durationMs, progress: 100,
-        var_pool: JSON.stringify(result.poolSnapshot),
-        gate_status: finalStatus === "completed" ? "open" : "closed",
-      })
-
-      this.cleanupOrphanedNodes(executionId, result.status)
-
-      if (wf) {
-        try {
-          if (finalStatus === "failed") {
-            await this.executeWorkflowHooks("on_workflow_failure", {
-              failed_node_id: approvalNodeId, error: "Rejected by user (on_reject handler failed)", duration_ms: result.durationMs ?? 0,
-            }, wf, executionId)
-          }
-          await this.executeWorkflowHooks("on_complete", { final_status: finalStatus }, wf, executionId)
-        } catch { /* non-fatal */ }
-      }
-
-      this.syncStateJson()
-      this.sse.emit(this.workspaceId, { event: "complete", data: { executionId, finalStatus } })
-    } catch (err: any) {
-      const msg = err instanceof Error ? err.message : String(err)
-      console.error(`[ExecutionLifecycle] on_reject handler failed for ${executionId}:`, msg)
-      this.enginePool.remove(executionId)
-      this.updateStatus(executionId, "failed", { completed_at: new Date().toISOString() })
-      this.dao.updateNodeExecutionsByStatus(executionId, "failed", ["running", "pending", "paused"])
-      if (wf) {
-        try {
-          await this.executeWorkflowHooks("on_workflow_failure", { failed_node_id: approvalNodeId, error: msg, duration_ms: 0 }, wf, executionId)
-          await this.executeWorkflowHooks("on_complete", { final_status: "failed" }, wf, executionId)
-        } catch { /* non-fatal */ }
-      }
-      this.syncStateJson()
-      this.sse.emit(this.workspaceId, { event: "complete", data: { executionId, finalStatus: "failed", error: msg } })
-    }
+    return this.runner.runRejectInBackground(executionId, approvalNodeId, onRejectNodeId, signal, comment, workflowRef)
   }
 
   // ==================== Helpers ====================
-
-  /**
-   * Resolve providers for a workflow by scanning all node engines.
-   * Falls back to { "claude": getProvider("claude") } if no engines found.
-   */
-  private resolveProviders(workflow: WorkflowDef): Record<string, any> {
-    const providers: Record<string, any> = {}
-    const engineKeys = collectNodeEngines(workflow.nodes ?? [])
-    // Include workflow-level engine (nodes inherit it when node.engine is unset)
-    if (workflow.engine && !engineKeys.includes(workflow.engine)) {
-      engineKeys.push(workflow.engine)
-    }
-    for (const key of engineKeys) {
-      try {
-        providers[key] = getProvider(key)
-      } catch {
-        // Provider not registered — skip silently
-      }
-    }
-    if (Object.keys(providers).length === 0) {
-      try { providers["claude"] = getProvider("claude") } catch { /* no providers at all */ }
-    }
-    return providers
-  }
 
   private updateStatus(id: string, status: string, extra: Record<string, unknown> = {}): void {
     try {
@@ -1200,121 +1008,31 @@ export class ExecutionLifecycle {
   }
 
   private async abortAndWait(abortController: AbortController, executionId?: string, timeoutMs = 300000): Promise<void> {
-    if (abortController.signal.aborted) return
-    abortController.abort()
-
-    if (!executionId) return
-
-    // Wait for the engine's in-flight run to actually settle.
-    // This is critical for pause correctness: previously we only polled DB status,
-    // which pause() itself flips to "paused" — so abortAndWait returned immediately
-    // while engine.run() kept running in the background. A subsequent resume() then
-    // raced the still-running engine, corrupting nodeResults (cancelled node cascading
-    // to all-downstream-skipped, execution misreported as completed).
-    await this.enginePool.waitForSettled(executionId, timeoutMs)
-  }
-
-  private collectAllNodes(nodes: { id: string; type: string; nodes?: any[] }[]): { id: string; type: string }[] {
-    const result: { id: string; type: string }[] = []
-    for (const node of nodes) {
-      result.push({ id: node.id, type: node.type })
-      if (node.nodes) result.push(...this.collectAllNodes(node.nodes))
-    }
-    return result
-  }
-
-  private ensureNodeExecutions(executionId: string, wf: { nodes: any[] }): void {
-    for (const node of this.collectAllNodes(wf.nodes)) {
-      this.dao.insertNodeExecutionOrIgnore({
-        id: `${executionId}-${node.id}`, execution_id: executionId,
-        node_id: node.id, node_type: node.type, status: "pending",
-      })
-    }
-  }
-
-  private ensureNodeEdges(
-    executionId: string,
-    wf: { nodes: { id: string; type: string; depends_on?: string[]; cases?: { when: string; then: string }[] }[] }
-  ): void {
-    for (const node of wf.nodes) {
-      if (node.depends_on) {
-        for (const dep of node.depends_on) {
-          this.dao.insertNodeEdgeOrIgnore({
-            id: randomUUID(), execution_id: executionId,
-            from_node_id: dep, to_node_id: node.id, edge_type: "dependency",
-          })
-        }
-      }
-      if (node.type === "condition" && node.cases) {
-        for (const c of node.cases) {
-          this.dao.insertNodeEdgeOrIgnore({
-            id: randomUUID(), execution_id: executionId,
-            from_node_id: node.id, to_node_id: c.then, edge_type: "condition_true", label: c.then,
-          })
-        }
-      }
-    }
+    return this.runner.abortAndWait(abortController, executionId, timeoutMs)
   }
 
   private findPausedNode(executionId: string): string | null {
-    const row = this.dao.findFirstNodeByStatus(executionId, "paused")
-    return row?.node_id ?? null
+    return findPausedNode(this.dao, executionId)
   }
 
   private findFailedNode(executionId: string): string {
-    const row = this.dao.findFirstNodeByStatus(executionId, "failed")
-    return row?.node_id ?? "unknown"
+    return findFailedNode(this.dao, executionId)
   }
 
   private findFailedNodeError(executionId: string): string {
-    const row = this.dao.findFirstNodeErrorByStatus(executionId, "failed")
-    return row?.error ?? "Unknown error"
+    return findFailedNodeError(this.dao, executionId)
   }
 
   private findNodeDef(nodes: any[], nodeId: string): any | null {
-    for (const node of nodes) {
-      if (node.id === nodeId) return node
-      if (node.nodes) {
-        const found = this.findNodeDef(node.nodes, nodeId)
-        if (found) return found
-      }
-    }
-    return null
+    return findNodeDef(nodes, nodeId)
   }
 
   private isWorkflowNodeId(workflowRef: string, nodeId: string): boolean {
-    const wf = this.getWorkflow(workflowRef)
-    if (!wf) return false
-    const allNodeIds = this.collectAllNodes(wf.parsed.nodes).map(n => n.id)
-    return allNodeIds.includes(nodeId)
+    return isWorkflowNodeId((ref) => this.getWorkflow(ref), workflowRef, nodeId)
   }
 
   syncStateJson(): void {
-    const stateDir = join(this.workspacePath, "state")
-    if (!existsSync(stateDir)) mkdirSync(stateDir, { recursive: true })
-
-    const rows = this.dao.findExecutionsForStateSync(this.workspaceDbId)
-
-    const safeJsonParse = (v: string | null | undefined): Record<string, string> | null => {
-      if (!v) return null
-      try { return JSON.parse(v) } catch { return null }
-    }
-
-    const state = {
-      workspace_id: this.workspaceDbId,
-      updated_at: new Date().toISOString(),
-      executions: rows.map(r => ({
-        execution_id: r.id, parent_id: r.parent_id,
-        node_type: r.node_type ?? "normal", branch: r.branch,
-        status: r.status, workflow_ref: r.workflow_ref, workflow_name: r.workflow_name,
-        input_values: safeJsonParse(r.input_values),
-        start_commit_id: safeJsonParse(r.start_commit_id),
-        end_commit_id: safeJsonParse(r.end_commit_id),
-        started_at: r.started_at, completed_at: r.completed_at,
-      })),
-    }
-
-    writeFileSync(join(stateDir, "executions.json"), JSON.stringify(state, null, 2), "utf-8")
+    this.stateManager.syncStateJson()
   }
 
   // ==================== CRUD delegation (from Facade) ====================
@@ -1371,157 +1089,27 @@ export class ExecutionLifecycle {
   // ==================== Logs / Events delegation (from Facade) ====================
 
   getLogEvents(executionId: string): { type: string; timestamp: string; data: Record<string, unknown> }[] {
-    const nodeExecs = this.dao.findNodeExecutions(executionId)
-    return nodeExecs.map(ne => ({
-      type: ne.status === "completed" ? "node_end" : "node_start",
-      timestamp: ne.started_at ?? "",
-      data: { nodeId: ne.node_id, nodeType: ne.node_type, status: ne.status, exitCode: ne.exit_code },
-    }))
+    return this.queryService.getLogEvents(executionId)
   }
 
   getAgentEvents(executionId: string, nodeId?: string, loopId?: string, iteration?: number): any[] {
-    const logDir = join(this.workspacePath, "logs", executionId)
-    if (!existsSync(logDir)) return []
-
-    const events: any[] = []
-    const files = readdirSync(logDir).filter(f => f.endsWith(".jsonl"))
-    for (const file of files) {
-      const parsed = parseLogFilename(file)
-
-      // If loopId filter is set, skip files not belonging to that loop
-      if (loopId && parsed.loopId && parsed.loopId !== loopId) continue
-      // If iteration filter is set, skip files not matching
-      if (iteration !== undefined && parsed.iteration !== undefined && parsed.iteration !== iteration) continue
-
-      // For non-iteration files, apply nodeId filter
-      const fileNodeId = parsed.nodeId
-      if (nodeId && !parsed.loopId && fileNodeId !== nodeId) continue
-
-      const content = readFileSync(join(logDir, file), "utf-8")
-      for (const line of content.split("\n")) {
-        if (!line.trim()) continue
-        try {
-          const entry = JSON.parse(line)
-          events.push({
-            ...entry,
-            nodeId: entry.nodeId ?? fileNodeId,
-            ...(parsed.loopId ? { loopId: parsed.loopId, iteration: parsed.iteration } : {}),
-          })
-        } catch { /* skip malformed lines */ }
-      }
-    }
-    return events.sort((a, b) => (a.timestamp ?? "").localeCompare(b.timestamp ?? ""))
+    return this.queryService.getAgentEvents(executionId, nodeId, loopId, iteration)
   }
 
-  /** Compute loop iteration summary from JSONL branch events.
-   *  Returns Record<loopNodeId, LoopIterationSummary> matching frontend contract. */
   getLoopIterationSummary(executionId: string): Record<string, any> {
-    const logDir = join(this.workspacePath, "logs", executionId)
-    if (!existsSync(logDir)) return {}
-
-    const files = readdirSync(logDir).filter(f => f.endsWith(".jsonl"))
-    const raw: Record<string, any[]> = {}
-
-    for (const file of files) {
-      const parsed = parseLogFilename(file)
-      if (parsed.loopId) continue // skip iteration files — read from loop's own file
-
-      const content = readFileSync(join(logDir, file), "utf-8")
-      for (const line of content.split("\n")) {
-        if (!line.trim()) continue
-        try {
-          const entry = JSON.parse(line)
-          if (entry.event !== "branch_start" && entry.event !== "branch_end") continue
-
-          const nodeId = entry.nodeId ?? parsed.nodeId
-          if (!raw[nodeId]) raw[nodeId] = []
-
-          const iter = entry.iteration
-          if (iter === undefined) continue
-
-          let iterEntry = raw[nodeId].find((e: any) => e.iteration === iter)
-          if (!iterEntry) {
-            iterEntry = { iteration: iter, status: "running", startedAt: null, completedAt: null, durationMs: null, nodes: [] }
-            raw[nodeId].push(iterEntry)
-          }
-
-          if (entry.event === "branch_start") {
-            iterEntry.startedAt = entry.timestamp
-          } else if (entry.event === "branch_end") {
-            iterEntry.status = entry.status ?? "completed"
-            iterEntry.completedAt = entry.timestamp
-            if (iterEntry.startedAt) {
-              iterEntry.durationMs = new Date(entry.timestamp).getTime() - new Date(iterEntry.startedAt).getTime()
-            }
-            // Capture nodeResults from branch_end (passed by LoopExecutor via SSE)
-            if (Array.isArray(entry.nodeResults)) {
-              iterEntry.nodes = entry.nodeResults
-            }
-          }
-        } catch { /* skip */ }
-      }
-    }
-
-    // Build LoopIterationSummary wrapper with aggregates
-    const summary: Record<string, any> = {}
-    for (const [loopNodeId, iterations] of Object.entries(raw)) {
-      iterations.sort((a: any, b: any) => a.iteration - b.iteration)
-      const completed = iterations.filter((i: any) => i.status === "completed").length
-      const failed = iterations.filter((i: any) => i.status === "failed").length
-      const running = iterations.find((i: any) => i.status === "running")
-
-      // ponytail: mode detection heuristic — if all iterations completed with no max_iterations
-      // signal, treat as "dynamic" (while-loop). Fixed mode needs workflow YAML inspection,
-      // deferred until needed. Frontend renders correctly with either mode.
-      summary[loopNodeId] = {
-        total: undefined, // dynamic mode — unknown until loop exits
-        completed,
-        failed,
-        current: running?.iteration,
-        mode: "dynamic" as const,
-        iterations,
-      }
-    }
-
-    return summary
+    return this.queryService.getLoopIterationSummary(executionId)
   }
 
   getWorkflowContent(executionId: string): string | null {
-    const exec = this.dao.findById(executionId)
-    if (!exec) return null
-
-    const snapshotPath = join(this.workspacePath, "state", `${executionId}-${WorkflowRef.sanitize(exec.workflow_ref)}`)
-    if (existsSync(snapshotPath)) return readFileSync(snapshotPath, "utf-8")
-
-    const local = this.workflowService.get(this.workspacePath, exec.workflow_ref)
-    if (local) return local.content
-    const builtIn = this.builtInWorkflowService.get(exec.workflow_ref)
-    return builtIn?.content ?? null
+    return this.queryService.getWorkflowContent(executionId)
   }
 
   getStateJson(executionId: string): Record<string, unknown> | null {
-    const stateFile = join(this.workspacePath, "state", `${executionId}.json`)
-    if (!existsSync(stateFile)) return null
-    try { return JSON.parse(readFileSync(stateFile, "utf-8")) } catch { return null }
+    return this.stateManager.getStateJson(executionId)
   }
 
   streamEvents(req: Request): Response {
-    const { readable, writable } = new TransformStream()
-    const writer = writable.getWriter()
-    const encoder = new TextEncoder()
-
-    const unsubscribe = this.sse.subscribe(this.workspaceId, (event) => {
-      writer.write(encoder.encode(`event: ${event.event}\ndata: ${JSON.stringify(event.data)}\n\n`))
-    })
-
-    req.signal.addEventListener("abort", () => {
-      unsubscribe()
-      writer.close()
-    })
-
-    return new Response(readable, {
-      headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", "Connection": "keep-alive" },
-    })
+    return this.queryService.streamEvents(req)
   }
 
   // ==================== Resume listener ====================
@@ -1548,96 +1136,38 @@ export class ExecutionLifecycle {
   // ==================== Git operations ====================
 
   private async ensureCleanWorkspace(): Promise<Record<string, string>> {
-    const commits: Record<string, string> = {}
-    await gitOps.allProjectsAction(this.workspacePath, async (projectPath, projectName) => {
-      const hasChanges = await gitOps.hasUncommittedChanges(projectPath)
-      if (hasChanges) {
-        const sha = await gitOps.autoCommit(projectPath, "chore: fork前自动提交")
-        commits[projectName] = sha
-      }
-    })
-    return commits
+    return this.gitOps.ensureCleanWorkspace()
   }
 
   private async createForkBranch(branchName: string, baseCommit: Record<string, string>): Promise<void> {
-    await gitOps.allProjectsAction(this.workspacePath, async (projectPath, projectName) => {
-      const base = baseCommit[projectName]
-      if (base) await gitOps.createBranch(projectPath, branchName, base)
-    })
+    return this.gitOps.createForkBranch(branchName, baseCommit)
   }
 
   private async switchToExecutionBranch(branch: string): Promise<void> {
-    await gitOps.allProjectsAction(this.workspacePath, async (projectPath) => {
-      await gitOps.createOrSwitchBranch(projectPath, branch)
-    })
+    return this.gitOps.switchToExecutionBranch(branch)
   }
 
   private async recordStartCommits(): Promise<string> {
-    const commits: Record<string, string> = {}
-    await gitOps.allProjectsAction(this.workspacePath, async (projectPath, projectName) => {
-      commits[projectName] = await gitOps.getHeadCommit(projectPath)
-    })
-    return JSON.stringify(commits)
+    return this.gitOps.recordStartCommits()
   }
 
   private async recordEndCommits(): Promise<string> {
-    return this.recordStartCommits()
+    return this.gitOps.recordEndCommits()
   }
 
   private async rollbackToStart(startCommitId: string): Promise<void> {
-    const commits: Record<string, string> = JSON.parse(startCommitId)
-    await gitOps.allProjectsAction(this.workspacePath, async (projectPath, projectName) => {
-      const commit = commits[projectName]
-      if (commit) {
-        await gitOps.resetHard(projectPath, commit)
-        await gitOps.cleanForce(projectPath)
-      }
-    })
+    return this.gitOps.rollbackToStart(startCommitId)
   }
 
   // ==================== Engine reconstruction ====================
 
   private reconstructEngine(exec: ExecutionRow): { engine: WorkflowEngine; abortController: AbortController } {
-    const snapshotPath = join(this.workspacePath, "state", `${exec.id}-${WorkflowRef.sanitize(exec.workflow_ref)}`)
-    let wf: { ref: string; content: string; parsed: any } | undefined
-    if (existsSync(snapshotPath)) {
-      const content = readFileSync(snapshotPath, "utf-8")
-      try {
-        const parsed = parseWorkflow(content)
-        wf = { ref: exec.workflow_ref, content, parsed }
-      } catch (e: any) {
-        console.error(`[ExecutionLifecycle] reconstructEngine: snapshot parse failed: ${e.message}`)
-      }
-    }
-    if (!wf) {
-      wf = this.getWorkflow(exec.workflow_ref)
-    }
-    if (!wf) throw new Error(`Workflow not found: ${exec.workflow_ref}`)
-
-    const inputValues = JSON.parse(exec.input_values || "{}")
-    const poolSnapshot = JSON.parse(exec.var_pool || "{}")
     const abortController = new AbortController()
+    const callbacks = this.buildCallbacks(exec.id)
+    const engine = this.engineFactory.reconstructEngine(exec, callbacks, abortController.signal)
 
-    // Resume path: create engine with agent resolver for dynamic swarm routing
-    const resumeOrchestrator = getOrchestratorService(this.org)
-    const resumeAgentResolver = (topic: string, maxExperts: number) =>
-      resumeOrchestrator.selectAndInstallAgents(topic, maxExperts, this.workspacePath)
-
-    const engine = new WorkflowEngine(
-      wf.parsed,
-      this.resolveProviders(wf.parsed),
-      this.workspacePath, this.workspacePath,
-      this.buildCallbacks(exec.id),
-      abortController.signal, exec.id, inputValues,
-      undefined, // executionName
-      undefined, // crossExecResolver
-      undefined, // promptInjector
-      undefined, // precomputeHook
-      undefined, // knowledgeInjectorFactory
-      resumeAgentResolver,
-    )
-
-    engine.updateVarPool(poolSnapshot)
+    const wf = this.engineFactory.resolveWorkflowWithSnapshot(exec.id, exec.workflow_ref)
+    if (!wf) throw new Error(`Workflow not found: ${exec.workflow_ref}`)
 
     const completedNodes = this.dao.findCompletedNodeExecutions(exec.id)
     for (const node of completedNodes) {
@@ -1660,7 +1190,7 @@ export class ExecutionLifecycle {
 
     if (sessionNodes.length > 0) {
       const nodeContextMap = new Map<string, "continue" | "new">()
-      for (const n of this.collectAllNodes(wf.parsed.nodes)) {
+      for (const n of collectAllNodes(wf.parsed.nodes)) {
         const nodeDef = this.findNodeDef(wf.parsed.nodes, n.id)
         if (nodeDef && nodeDef.type === "agent") {
           nodeContextMap.set(n.id, nodeDef.context ?? "continue")
@@ -1721,255 +1251,17 @@ export class ExecutionLifecycle {
   // ==================== Engine callbacks ====================
 
   buildCallbacks(executionId: string): EngineCallbacks {
-    const id = executionId
-    // Track branch start times for durationMs computation
-    const branchStartTimes = new Map<string, number>()
-    return {
-      onNodeStart: (nodeId, nodeType) => {
-        const neId = `${id}-${nodeId}`
-        // Clear old agent events for this node to prevent PRIMARY KEY collision
-        // on event_order when retrying/restarting a node (e.g. after server restart).
-        try { this.dao.deleteAgentEventsByNode(neId) } catch { /* non-fatal */ }
-        // Reset degraded state so the observability buffer resumes writing
-        this.observability.resetDegraded()
-        this.updateNodeStatus(neId, "running", { started_at: new Date().toISOString() })
-        this.sse.emit(this.workspaceId, {
-          event: "node_start", data: { executionId: id, nodeId, nodeType, executorType: nodeType },
-        })
-        this.syncStateJson()
-      },
-      onNodeEnd: (nodeId, status, durationMs, result, nodeType) => {
-        this.updateNodeStatus(`${id}-${nodeId}`, status, {
-          completed_at: new Date().toISOString(), duration: durationMs,
-          ...(result?.sessionId ? { session_id: result.sessionId } : {}),
-          ...(status === "completed" ? { error: null } : {}),
-          ...(result?.outputs ? { outputs: JSON.stringify(result.outputs) } : {}),
-        })
-        const inst = this.enginePool.get(id)
-        const globalSid = inst?.engine.getGlobalSessionId()
-        if (globalSid) this.dao.updateExecution(id, { global_session_id: globalSid })
-
-        if (result?.modelUsages && result.modelUsages.length > 0) {
-          const neId = `${id}-${nodeId}`
-          const now = new Date().toISOString()
-          for (const mu of result.modelUsages) {
-            this.dao.insertNodeTokenUsage(
-              `${neId}-token-${mu.model}`, neId, mu.model,
-              mu.inputTokens, mu.outputTokens, mu.costUsd ?? null,
-              mu.cacheReadInputTokens ?? 0, mu.cacheCreationInputTokens ?? 0, now,
-            )
-          }
-        }
-
-        if (status === "pending_approval" && result?.approvalMetadata) {
-          this.dao.updateExecution(id, { approval_metadata: JSON.stringify(result.approvalMetadata) })
-          this.sse.emit(this.workspaceId, {
-            event: "execution_pending_approval",
-            data: { executionId: id, nodeId, approval: result.approvalMetadata },
-          })
-        }
-
-        const finalInput = result?.tokens?.input ?? 0
-        const finalOutput = result?.tokens?.output ?? 0
-        const hasTokens = finalInput > 0 || finalOutput > 0
-
-        const neId = `${id}-${nodeId}`
-        this.observability.flushNode(neId)
-
-        const llmCalls = result?.llmCalls ?? []
-        const modelUsages = result?.modelUsages ?? []
-        // Compute cost from llmCalls (agent) or modelUsages (swarm/dispatch)
-        const costUsd = llmCalls.length > 0
-          ? llmCalls.reduce((sum: number, c: any) => sum + (c.costUsd ?? 0), 0)
-          : modelUsages.reduce((sum: number, mu: any) => sum + (mu.costUsd ?? 0), 0)
-        const turnCount = new Set(llmCalls.map((c: any) => c.turnIndex ?? 1)).size
-        const toolCount = new Set(llmCalls.filter((c: any) => c.stopReason === "tool_use").map((c: any) => c.toolName)).size
-
-        if (getFlag("llm_calls_persist") && result?.llmCalls && result.llmCalls.length > 0) {
-          try {
-            const exec = this.dao.findById(id)
-            const calls = result.llmCalls.map((call: any, i: number) => ({ ...call, turnIndex: call.turnIndex || 1 }))
-            this.observability.persistLLMCalls(neId, id, calls, exec?.instance_id ?? `inst-${process.env.PORT ?? "3001"}-${exec?.branch ?? "main"}`)
-          } catch { /* silent */ }
-        }
-
-        this.sse.emit(this.workspaceId, {
-          event: "node_end",
-          data: {
-            executionId: id, nodeId, status, durationMs, executorType: nodeType,
-            costUsd: costUsd > 0 ? costUsd : undefined,
-            turnCount: turnCount > 0 ? turnCount : undefined,
-            toolCount: toolCount > 0 ? toolCount : undefined,
-            ...(hasTokens ? { tokens: { input: finalInput, output: finalOutput } } : {}),
-            ...(result?.modelUsages?.length ? {
-              tokenUsages: result.modelUsages.map((mu: any) => ({
-                model: mu.model,
-                inputTokens: mu.inputTokens,
-                outputTokens: mu.outputTokens,
-                cacheReadTokens: mu.cacheReadInputTokens ?? 0,
-                cacheCreationTokens: mu.cacheCreationInputTokens ?? 0,
-              })),
-            } : {}),
-          },
-        })
-        this.syncStateJson()
-      },
-      onNodeLog: (nodeId, logLine) => {
-        this.sse.emit(this.workspaceId, { event: "node_log", data: { executionId: id, nodeId, logLine } })
-        // Virtual nodes (e.g. __engine_init__) bypass the JSONL logger → compact → persist pipeline.
-        // Persist their log lines directly to agent_events so the polling-based frontend can see them.
-        // Use "bash_log" event_type so the API transform outputs the correct format for the frontend.
-        if (nodeId.startsWith("__")) {
-          try {
-            const neId = `${id}-${nodeId}`
-            this.dao.insertAgentEvent({
-              node_execution_id: neId,
-              event_order: Date.now(),
-              turn_index: 0,
-              event_type: "bash_log",
-              timestamp: Date.now(),
-              content: logLine,
-              content_length: logLine.length,
-              tool_call_id: null,
-              tool_name: null,
-              tool_input: null,
-              tool_result: null,
-              tool_is_error: 0,
-              tool_duration_ms: null,
-              status_value: null,
-              error_code: null,
-              error_message: null,
-            })
-          } catch { /* best-effort persistence for virtual node logs */ }
-        }
-      },
-      onNodeCompacted: (nodeId, mergedEvents) => {
-        // Sync compacted JSONL events to SQLite agent_events table
-        try { this.dao.replaceMergedEvents(id, nodeId, mergedEvents) } catch { /* non-fatal */ }
-      },
-      onStatusChange: (status, progress) => {
-        this.dao.updateExecutionProgress(id, progress)
-        this.sse.emit(this.workspaceId, { event: "execution_progress", data: { executionId: id, progress } })
-        this.syncStateJson()
-      },
-      onError: (nodeId, error) => {
-        this.updateNodeStatus(`${id}-${nodeId}`, "failed", { error })
-        this.sse.emit(this.workspaceId, { event: "error", data: { executionId: id, nodeId, error } })
-        this.syncStateJson()
-      },
-      onComplete: () => {
-        const ext = this._externalCallbacks.get(id) ?? this._externalCallbacks.get("__default__")
-        if (ext?.onComplete) {
-          try { ext.onComplete() } catch (err) {
-            console.error("[ExecutionLifecycle] External onComplete failed:", err)
-          }
-          this._externalCallbacks.delete(id)
-        }
-      },
-      onBranchStart: (neId, iteration) => {
-        branchStartTimes.set(neId, Date.now())
-        this.sse.emit(this.workspaceId, { event: "branch_start", data: { executionId: id, nodeExecutionId: neId, iteration } })
-      },
-      onBranchEnd: (neId, iteration, status, nodeResults) => {
-        const startMs = branchStartTimes.get(neId)
-        const durationMs = startMs ? Date.now() - startMs : undefined
-        branchStartTimes.delete(neId)
-        this.sse.emit(this.workspaceId, { event: "branch_end", data: { executionId: id, nodeExecutionId: neId, iteration, status, durationMs, nodeResults } })
-      },
-      onAgentEvent: (nodeId, event) => {
-        this.sse.emit(this.workspaceId, { event: "agent_event", data: { executionId: id, nodeId, event } })
-        if (getFlag("agent_events_persist")) {
-          try {
-            const neId = `${id}-${nodeId}`
-            const exec = this.dao.findById(id)
-            this.observability.bufferEvent(neId, event, {
-              executionId: id, nodeId, org: this.org,
-              workspaceId: this.workspaceDbId, workflowRef: exec?.workflow_ref ?? "unknown",
-            })
-          } catch { /* silent */ }
-        }
-      },
-      onSwarmEvent: (nodeId, event) => {
-        this.sse.emit(this.workspaceId, {
-          event: event.type,
-          data: { executionId: id, nodeId, ...(event.data ?? {}) },
-        })
-        // ponytail: persist swarm events to SQLite so polling-based log viewer sees them
-        try {
-          const neId = `${id}-${nodeId}`
-          this.dao.insertAgentEvent({
-            node_execution_id: neId,
-            event_order: Date.now(), // monotonically increasing
-            turn_index: 0,
-            event_type: event.type,
-            timestamp: Date.now(),
-            content: JSON.stringify(event.data ?? {}),
-            content_length: JSON.stringify(event.data ?? {}).length,
-            tool_call_id: null,
-            tool_name: null,
-            tool_input: null,
-            tool_result: null,
-            tool_is_error: 0,
-            tool_duration_ms: null,
-            status_value: null,
-            error_code: null,
-            error_message: null,
-          })
-        } catch { /* silent — swarm event persistence is best-effort */ }
-      },
-      onNodeRetry: (nodeId: string, attempt: number, maxAttempts: number, delayMs: number) => {
-        this.dao.updateNodeRetryInfo(id, nodeId, attempt, new Date().toISOString())
-        this.sse.emit(this.workspaceId, {
-          event: "node_retry", data: { executionId: id, nodeId, attempt, maxAttempts, delayMs },
-        })
-      },
-      onPipelineReloaded: (config: PipelineConfig) => {
-        this.sse.emit(this.workspaceId, { event: "pipeline_reloaded", data: { executionId: id, config } })
-      },
-      onRuntimeNodeAdded: (nodeId: string, nodeType: string) => {
-        const neId = `${id}-${nodeId}`
-        this.dao.insertNodeExecutionOrIgnore({
-          id: neId, execution_id: id, node_id: nodeId, node_type: nodeType,
-          status: "pending", started_at: new Date().toISOString(),
-        })
-        this.sse.emit(this.workspaceId, { event: "runtime_node_added", data: { executionId: id, nodeId, nodeType } })
-      },
-    }
+    return this.callbacksBuilder.buildCallbacks(executionId)
   }
 
   // ==================== Token usages ====================
 
-  getTokenUsagesPerStep(executionId: string): Array<{ stepId?: string; model: string; inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheCreationTokens: number }> {
-    const dbRows = this.dao.findNodeTokenUsages(executionId)
-    return dbRows.map(r => ({
-      stepId: r.node_id, model: r.model,
-      inputTokens: r.input_tokens, outputTokens: r.output_tokens,
-      cacheReadTokens: r.cache_read_tokens ?? 0, cacheCreationTokens: r.cache_creation_tokens ?? 0,
-    }))
+  getTokenUsagesPerStep(executionId: string) {
+    return this.queryService.getTokenUsagesPerStep(executionId)
   }
 
-  getTokenUsagesForExecution(executionId: string): Array<{ model: string; inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheCreationTokens: number }> {
-    const perStep = this.getTokenUsagesPerStep(executionId)
-    const modelTotals = new Map<string, { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheCreationTokens: number }>()
-    for (const entry of perStep) {
-      const existing = modelTotals.get(entry.model)
-      if (existing) {
-        modelTotals.set(entry.model, {
-          inputTokens: existing.inputTokens + entry.inputTokens,
-          outputTokens: existing.outputTokens + entry.outputTokens,
-          cacheReadTokens: existing.cacheReadTokens + (entry.cacheReadTokens ?? 0),
-          cacheCreationTokens: existing.cacheCreationTokens + (entry.cacheCreationTokens ?? 0),
-        })
-      } else {
-        modelTotals.set(entry.model, {
-          inputTokens: entry.inputTokens, outputTokens: entry.outputTokens,
-          cacheReadTokens: entry.cacheReadTokens ?? 0, cacheCreationTokens: entry.cacheCreationTokens ?? 0,
-        })
-      }
-    }
-    return Array.from(modelTotals.entries())
-      .map(([model, totals]) => ({ model, ...totals }))
-      .filter(u => u.inputTokens > 0 || u.outputTokens > 0)
+  getTokenUsagesForExecution(executionId: string) {
+    return this.queryService.getTokenUsagesForExecution(executionId)
   }
 
   // ==================== Lifecycle hooks ====================
@@ -1978,70 +1270,6 @@ export class ExecutionLifecycle {
     event: keyof WorkflowHooks, context: Record<string, unknown>,
     wf: { parsed: WorkflowDef }, executionId: string,
   ): Promise<void> {
-    const hooks = wf.parsed.hooks?.[event]
-    if (!hooks || hooks.length === 0) return
-
-    const exec = this.dao.findById(executionId)
-    let poolSnapshot: Record<string, string> = {}
-    if (exec?.var_pool) {
-      try { poolSnapshot = JSON.parse(exec.var_pool) } catch { /* use empty pool */ }
-    }
-
-    for (const hook of hooks) {
-      if (hook.condition) {
-        const tempPool = new VarPool({ ...poolSnapshot })
-        const shouldRun = evaluateExpression(hook.condition, tempPool, {})
-        if (!shouldRun) continue
-      }
-
-      const hookVars: Record<string, string> = {
-        "hook.event": event.replace("on_", ""),
-        "hook.workflow_name": wf.parsed.name,
-        "hook.execution_id": executionId,
-        "hook.timestamp": new Date().toISOString(),
-        ...Object.fromEntries(Object.entries(context).map(([k, v]) => [`hook.${k}`, String(v ?? "")])),
-      }
-
-      try {
-        if (hook.type === "bash" || hook.bash) {
-          await this.executeBashHookServer(hook, poolSnapshot, hookVars)
-        } else {
-          await this.executeAgentHookServer(hook, wf.parsed, poolSnapshot, hookVars)
-        }
-      } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : String(err)
-        process.stderr.write(`[Hook] ${event}/${hook.id ?? "anonymous"} failed: ${msg}\n`)
-      }
-    }
-  }
-
-  private async executeBashHookServer(hook: HookDef, poolSnapshot: Record<string, string>, hookVars: Record<string, string>): Promise<void> {
-    const pool = new VarPool({ ...poolSnapshot })
-    pool.update(hookVars)
-    const bashNode: NodeDef = {
-      id: hook.id ?? `hook-bash-${Date.now()}`, type: "bash",
-      bash: hook.bash!, timeout: hook.timeout ?? 60,
-    }
-    const executor = new BashExecutor(bashNode, pool, undefined,
-      (line, stream) => {
-        const label = `[Hook:${hook.id ?? "bash"}${stream === "stderr" ? ":err" : ""}]`
-        process.stderr.write(`${label} ${line}\n`)
-      }, this.workspacePath)
-    await executor.execute()
-  }
-
-  private async executeAgentHookServer(hook: HookDef, wf: WorkflowDef, poolSnapshot: Record<string, string>, hookVars: Record<string, string>): Promise<void> {
-    const pool = new VarPool({ ...poolSnapshot })
-    pool.update(hookVars)
-    const providerKey = hook.engine ?? wf.engine ?? "claude"
-    const provider = getProvider(providerKey)
-    const agentNode: NodeDef = {
-      id: hook.id ?? `hook-agent-${Date.now()}`, type: "agent",
-      prompt: hook.prompt!, model: hook.model ?? wf.model,
-      timeout: hook.timeout ?? 120, context: "new",
-    }
-    const runner = new AgentNodeRunner(provider, this.workspacePath, () => {})
-    const executor = new AgentExecutor(agentNode, pool, runner, undefined, wf.auto_answers, undefined)
-    await executor.execute()
+    return this.hookExecutor.executeWorkflowHooks(event, context, wf, executionId)
   }
 }

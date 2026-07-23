@@ -48,7 +48,7 @@ export class ExecutionService {
     const workspaceId = org + ":" + workspacePath
 
     this.lifecycle = new ExecutionLifecycle(
-      this.dao, sse, workflowService, builtInWorkflowService,
+      db, this.dao, sse, workflowService, builtInWorkflowService,
       org, workspacePath, workspaceDbId, workspaceId, obs, globalErrorTracker,
     )
 
