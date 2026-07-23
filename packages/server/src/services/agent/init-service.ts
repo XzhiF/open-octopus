@@ -2,6 +2,7 @@ import fs from 'fs'
 import path from 'path'
 import yaml from 'js-yaml'
 import { getAgentDir, getPersonaPath, getLongTermMemoryPath, getAgentConfigPath, getAgentSkillsDir } from './paths'
+import { registerBuiltinAgents } from './builtin-agents'
 
 /**
  * Directory tree to create during agent initialization.
@@ -157,6 +158,9 @@ export class InitService {
 
     // 6. Copy core-pack SKILL files to agent/skills/ (skip existing)
     result.skillsCopied = this.copyBuiltinSkills(baseDir)
+
+    // 7. Register built-in agents to AgentRegistry and initialize per-agent directories
+    registerBuiltinAgents()
 
     return result
   }

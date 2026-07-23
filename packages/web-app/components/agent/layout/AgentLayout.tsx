@@ -10,10 +10,11 @@ import { SkillTab } from '../skill/SkillTab'
 import { CloneTab } from '../clone/CloneTab'
 import { TaskTab } from '../task/TaskTab'
 import { ConfigTab } from '../config/ConfigTab'
+import { AgentListPanel } from '../AgentListPanel'
 import { OnboardingCard } from '../shared/OnboardingCard'
 import * as api from '@/lib/agent/api'
 
-const TABS = ['chat', 'memory', 'skill', 'clone', 'task', 'config'] as const
+const TABS = ['chat', 'memory', 'skill', 'clone', 'agents', 'task', 'config'] as const
 type TabId = typeof TABS[number]
 
 function TabContent({ tab }: { tab: TabId }) {
@@ -22,6 +23,7 @@ function TabContent({ tab }: { tab: TabId }) {
     case 'memory': return <MemoryTab />
     case 'skill': return <SkillTab />
     case 'clone': return <CloneTab />
+    case 'agents': return <AgentListPanel />
     case 'task': return <TaskTab />
     case 'config': return <ConfigTab />
     default: return <ChatTab />

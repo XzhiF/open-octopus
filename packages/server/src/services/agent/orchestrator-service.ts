@@ -7,17 +7,21 @@ import { SystemPromptAssembler } from './system-prompt-assembler'
 import { getMemoryService } from './memory-service'
 import { getNotificationService } from './notification-service'
 import { getAgentDir } from './paths'
+import { getHybridRouter, type RouterDecision } from './hybrid-router'
+import { getAgentRegistry } from './agent-registry'
 import type { StepEmitter } from '../archive/step-emitter'
 import { createNullEmitter } from '../archive/step-emitter'
 
 // ── Types ──────────────────────────────────────────────────────────
 
-export type IntentType = 'single_task' | 'scheduled_task' | 'info_query' | 'clone_management' | 'general_chat'
+export type IntentType = 'single_task' | 'scheduled_task' | 'info_query' | 'clone_management' | 'archive_analysis' | 'general_chat'
 
 export interface IntentClassification {
   intent: IntentType
   confidence: number
   reasoning: string
+  layer?: 'regex' | 'llm'
+  agentId?: string
 }
 
 export interface WorkflowMatch {
@@ -72,78 +76,68 @@ export class OrchestratorService {
   }
 
   /**
-   * Classify user intent from a natural language message.
-   * Uses SKILL-guided classification rules embedded in the orchestrator SKILL.
+   * Classify user intent using HybridIntentRouter (regex fast-path + LLM fallback).
    */
-  classifyIntent(message: string): IntentClassification {
+  async classifyIntent(message: string): Promise<IntentClassification> {
+    const router = getHybridRouter()
+    const decision = await router.route(message)
+
+    return {
+      intent: decision.intent as IntentType,
+      confidence: decision.confidence,
+      reasoning: decision.reasoning,
+      layer: decision.layer,
+      agentId: decision.agent?.id,
+    }
+  }
+
+  /**
+   * Legacy sync wrapper for backward compatibility.
+   */
+  classifyIntentSync(message: string): IntentClassification {
     const lowerMsg = message.toLowerCase()
 
-    // Scheduled task patterns (Story E1)
     const scheduledPatterns = [
       /每天|每日|定时|cron|定期|每周|每月|凌晨|上午\d+点|下午\d+点|\d+点/,
       /schedule|periodic|recurring|interval/,
     ]
     for (const pattern of scheduledPatterns) {
       if (pattern.test(message) || pattern.test(lowerMsg)) {
-        return {
-          intent: 'scheduled_task',
-          confidence: 0.9,
-          reasoning: `消息匹配定时任务模式: ${pattern.source}`,
-        }
+        return { intent: 'scheduled_task', confidence: 0.9, reasoning: `消息匹配定时任务模式: ${pattern.source}`, layer: 'regex' }
       }
     }
 
-    // Clone management patterns (Story D1-D7)
     const clonePatterns = [
       /分身|clone|创建分身|委派|delegate|merge.*分身|合并分身/,
       /前端分身|后端分身|parallel.*task/,
     ]
     for (const pattern of clonePatterns) {
       if (pattern.test(message) || pattern.test(lowerMsg)) {
-        return {
-          intent: 'clone_management',
-          confidence: 0.85,
-          reasoning: `消息匹配分身管理模式: ${pattern.source}`,
-        }
+        return { intent: 'clone_management', confidence: 0.85, reasoning: `消息匹配分身管理模式: ${pattern.source}`, layer: 'regex' }
       }
     }
 
-    // Information query patterns (Story C1)
     const queryPatterns = [
       /昨天做了什么|上次|历史|查看.*记录|搜索|回忆|之前|最近.*做了/,
       /what did|history|search|recall|previously/,
     ]
     for (const pattern of queryPatterns) {
       if (pattern.test(message) || pattern.test(lowerMsg)) {
-        return {
-          intent: 'info_query',
-          confidence: 0.85,
-          reasoning: `消息匹配信息查询模式: ${pattern.source}`,
-        }
+        return { intent: 'info_query', confidence: 0.85, reasoning: `消息匹配信息查询模式: ${pattern.source}`, layer: 'regex' }
       }
     }
 
-    // Single task patterns (Story B1)
     const taskPatterns = [
       /给.*加|添加|创建|实现|开发|修复|重构|部署|配置/,
       /add|create|implement|develop|fix|refactor|deploy|build/,
     ]
     for (const pattern of taskPatterns) {
       if (pattern.test(message) || pattern.test(lowerMsg)) {
-        return {
-          intent: 'single_task',
-          confidence: 0.8,
-          reasoning: `消息匹配单次任务模式: ${pattern.source}`,
-        }
+        return { intent: 'single_task', confidence: 0.8, reasoning: `消息匹配单次任务模式: ${pattern.source}`, layer: 'regex' }
       }
     }
 
-    // Default: general chat
-    return {
-      intent: 'general_chat',
-      confidence: 0.7,
-      reasoning: '未匹配特定模式，归类为通用对话',
-    }
+    return { intent: 'general_chat', confidence: 0.7, reasoning: '未匹配特定模式，归类为通用对话', layer: 'regex' }
   }
 
   /**
@@ -387,8 +381,8 @@ ${nodes.map(n => `  - id: ${n.id}
       onEvent?.({ type, data, timestamp: new Date().toISOString() })
     }
 
-    // Step 1: Classify intent
-    const intent = this.classifyIntent(message)
+    // Step 1: Classify intent using HybridIntentRouter
+    const intent = await this.classifyIntent(message)
     emitEvent('intent_classified', intent)
 
     // Step 2: Select workflow (for single_task and scheduled_task)
