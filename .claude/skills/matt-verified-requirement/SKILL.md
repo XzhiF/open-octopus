@@ -241,6 +241,6 @@ Once the brief is confirmed and written to `<artifacts.dir>/<feature-slug>/brief
 >
 > You have two options to proceed:
 >
-> 1. **`matt-dev-runner`** — Development only. Invoke the agent to synthesize spec, split tickets, and run implement-verify loops. You handle deploy and MR yourself.
+> 1. **`matt-dev-runner`** — Development only. Invoke the agent to synthesize spec, split tickets, and run implement-verify loops. You handle deploy and PR yourself.
 >
-> 2. **`matt-dev-pipeline`** — Full pipeline. Orchestrate development → CI/CD deploy → E2E verification → Git MR delivery, all in one flow.
+> 2. **`matt-dev-pipeline`** — Full pipeline. Orchestrate development → CI/CD deploy → E2E verification → Git PR delivery, all in one flow.

@@ -50,6 +50,11 @@ For each test:
 - Cross-validate: API <-> DB <-> Cache
 - Collect evidence (response body, DB results, screenshots)
 
+**Output directories** (under `<artifacts.dir>/<feature-slug>/`):
+- `e2e-scripts/` — save all test scripts (Playwright .mjs, curl .sh, etc.)
+- `e2e-screenshots/` — save all browser screenshots
+- `e2e-data/` — save test data files and fixtures
+
 ### Step 4: Anti-Fake-Run Check
 
 Verify each test against R1-R8. Flag any test that doesn't satisfy all criteria.

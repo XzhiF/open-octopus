@@ -46,6 +46,8 @@ For each ticket:
 4. PASS -> resolve ticket, move to next
 5. FAIL -> fix and retry (max 3 times), then mark SKIP
 
+**Manual execution scripts**: If development produces SQL migrations, data fixes, or operational scripts that need manual execution, save them to `<project-root>/docs/scripts/{branch_name}/<feature-slug>/` with sequential numbering (`001-xxx.sql`, `002-xxx.sh`, etc.).
+
 ### Output
 
 Generate an execution report with ticket summary, changed files, and remaining issues.
