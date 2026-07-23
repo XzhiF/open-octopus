@@ -42,7 +42,11 @@ export interface ForceAdvanceResult {
  * Strategy:
  *   - Numeric (number type): increment by 1
  *   - Numeric string (e.g., "3"): parse, increment, store back as string
- *   - undefined/null: treat as 0 → advance to 1
+ *   - undefined/null/"": skip — agent should explicitly initialize via vars_update.
+ *     Auto-initializing to 1 corrupts non-numeric status vars (e.g.,
+ *     requirements_checklist_status would become "1" instead of "COMPLETE").
+ *     Empty string "" is also skipped because Number("") === 0 in JS,
+ *     which would auto-increment to "1" and corrupt string-typed decision vars.
  *   - Non-numeric / already-changed: skip (returned in skippedVars)
  */
 export function forceAdvanceLoopVars(
@@ -60,10 +64,14 @@ export function forceAdvanceLoopVars(
     // Agent DID update this variable — no fallback needed
     if (currentVal !== beforeVal) continue
 
-    // undefined/null → treat as 0, advance to 1
-    if (currentVal === undefined || currentVal === null) {
-      pool.set(key, 1)
-      changes.push({ key, oldVal: currentVal, newVal: 1 })
+  // undefined / null / "" — skip instead of auto-initializing.
+    // Auto-init corrupts non-numeric status variables like
+    // requirements_checklist_status that should be "COMPLETE" not "1".
+    // Empty string "" is also skipped because Number("") === 0 in JS,
+    // causing auto-increment to "1" which corrupts string-typed decision vars
+    // like e2e_decision ("skip"/"retry") or clarify_decision ("proceed"/"revise").
+    if (currentVal === undefined || currentVal === null || currentVal === "") {
+      skippedVars.push(key)
       continue
     }
 

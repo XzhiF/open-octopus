@@ -25,12 +25,13 @@ export interface ResourceCheckResult {
  *
  * 支持的模式：
  * - agent 节点: agent_file 字段引用 .md 文件
- * - swarm 节点: experts 数组中的 agent_file 引用
+ * - agent 节点: sub-agents (agents 字段) 中的 agent_file 引用
+ * - swarm 节点: experts / expert_pool / host / aggregator 中的 agent_file 引用
  * - 所有节点: skills 数组引用 skill 名称
+ * - 递归扫描: loop / condition 等容器的子节点
  *
  * 限制：
  * - 变量引用（$vars.xxx）在预检阶段无法展开，跳过
- * - 动态 swarm 的 experts 由 LLM 运行时选择，预检无法预知
  */
 export class ResourcePreFlight {
   /**
@@ -75,13 +76,21 @@ export class ResourcePreFlight {
         }
       }
 
-      // Swarm 节点: 提取 experts 中的 agent_file
-      if (node.type === 'swarm' && node.experts) {
-        for (const expert of node.experts) {
-          if (expert.agent_file) {
-            const name = this.extractAgentName(expert.agent_file)
-            if (name) agents.add(name)
-          }
+      // Swarm 节点: 提取 experts / expert_pool / host / aggregator 中的 agent_file
+      if (node.type === 'swarm') {
+        // 静态模式 experts
+        this.collectAgentFiles(node.experts, agents)
+        // 动态模式 expert_pool
+        this.collectAgentFiles(node.expert_pool, agents)
+        // host agent（可选）
+        if (node.host?.agent_file) {
+          const name = this.extractAgentName(node.host.agent_file)
+          if (name) agents.add(name)
+        }
+        // aggregator agent（MOA 模式，可选）
+        if (node.aggregator?.agent_file) {
+          const name = this.extractAgentName(node.aggregator.agent_file)
+          if (name) agents.add(name)
         }
       }
 
@@ -129,6 +138,22 @@ export class ResourcePreFlight {
     }
 
     return { available, missing }
+  }
+
+  /**
+   * 从 expert 数组中批量提取 agent_file 引用
+   */
+  private collectAgentFiles(
+    experts: any[] | undefined,
+    agents: Set<string>,
+  ): void {
+    if (!experts || !Array.isArray(experts)) return
+    for (const expert of experts) {
+      if (expert.agent_file) {
+        const name = this.extractAgentName(expert.agent_file)
+        if (name) agents.add(name)
+      }
+    }
   }
 
   /**

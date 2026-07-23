@@ -1539,8 +1539,12 @@ export class WorkflowEngine {
       }
       writeFileSync(this.getNotifyContextPath(), JSON.stringify(ctx))
       process.env.OCTOPUS_NOTIFY_CONTEXT_PATH = this.getNotifyContextPath()
-    } catch {
-      // Non-fatal: octopus notify simply won't work from within bash/agent nodes
+    } catch (err) {
+      // Non-fatal: octopus notify simply won't work from within bash/agent nodes.
+      // Log the error for debugging — silent failures here lead to confusing
+      // "OCTOPUS_NOTIFY_CONTEXT_PATH not set" errors in child processes.
+      const msg = err instanceof Error ? err.message : String(err)
+      this.logger?.log("notify", "warn", { msg: `Failed to write notify context file: ${msg}` })
     }
   }
 

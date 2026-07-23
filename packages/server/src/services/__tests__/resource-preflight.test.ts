@@ -111,6 +111,61 @@ describe('ResourcePreFlight', () => {
       expect(preflight.analyze({ nodes: [] }).agents).toEqual([])
     })
 
+    it('extracts agent_file from swarm expert_pool (dynamic mode)', () => {
+      const workflow = {
+        nodes: [
+          {
+            type: 'swarm',
+            mode: 'debate',
+            dynamic: true,
+            expert_pool: [
+              { role: 'architect', agent_file: 'agents/dynamic-expert-a.md' },
+              { role: 'researcher', agent_file: 'agents/dynamic-expert-b.md' },
+            ],
+          },
+        ],
+      }
+      const manifest = preflight.analyze(workflow)
+      expect(manifest.agents).toContain('dynamic-expert-a')
+      expect(manifest.agents).toContain('dynamic-expert-b')
+    })
+
+    it('extracts agent_file from swarm host agent', () => {
+      const workflow = {
+        nodes: [
+          {
+            type: 'swarm',
+            mode: 'debate',
+            dynamic: true,
+            expert_pool: [],
+            host: {
+              role: 'synthesizer',
+              agent_file: 'agents/host-synthesizer.md',
+            },
+          },
+        ],
+      }
+      const manifest = preflight.analyze(workflow)
+      expect(manifest.agents).toContain('host-synthesizer')
+    })
+
+    it('extracts agent_file from swarm aggregator (MOA mode)', () => {
+      const workflow = {
+        nodes: [
+          {
+            type: 'swarm',
+            mode: 'moa',
+            aggregator: {
+              role: 'judge',
+              agent_file: 'agents/moa-aggregator.md',
+            },
+          },
+        ],
+      }
+      const manifest = preflight.analyze(workflow)
+      expect(manifest.agents).toContain('moa-aggregator')
+    })
+
     it('recurses into nested nodes (loop/condition children)', () => {
       const workflow = {
         nodes: [

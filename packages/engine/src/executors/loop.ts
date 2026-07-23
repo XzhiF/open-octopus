@@ -167,6 +167,36 @@ export class LoopExecutor implements NodeExecutor {
             snapshotBefore.set(key, this.pool.get(key))
           }
 
+          // Check execute_when before executing (mirrors engine.ts:866)
+          if (innerNode.execute_when) {
+            const nodeOutputs = this.buildInnerNodeOutputs(completedInnerResults)
+            const shouldRun = evaluateExpression(innerNode.execute_when, this.pool, nodeOutputs)
+            if (!shouldRun) {
+              result = {
+                status: "skipped",
+                outputs: {},
+                durationMs: 0,
+                logLines: [`Skipped: execute_when "${innerNode.execute_when}" evaluated false`],
+                skippedByCondition: true,
+              }
+              this.config.logger?.log(innerNode.id, "start", { type: innerNode.type })
+              this.config.callbacks?.onNodeStart?.(innerNode.id, innerNode.type)
+              this.config.logger?.log(innerNode.id, "end", { status: "skipped" })
+              this.config.callbacks?.onNodeEnd?.(innerNode.id, "skipped", 0, result, innerNode.type)
+              // Still track as completed so later nodes can reference it
+              completedInnerResults.set(innerNode.id, result)
+              // Collect log lines & update session context
+              logLines.push(...result.logLines)
+              iterationNodeResults.push({
+                nodeId: innerNode.id,
+                status: result.status,
+                durationMs: 0,
+              })
+              this.updateSessionContext(innerNode, result)
+              continue
+            }
+          }
+
           // Normal execution
           const executor = this.createExecutor(innerNode, undefined, completedInnerResults)
 

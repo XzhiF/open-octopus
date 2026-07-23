@@ -67,12 +67,22 @@ describe("forceAdvanceLoopVars", () => {
     expect(typeof pool.get("index")).toBe("string")
   })
 
-  it("handles undefined variable (treats as 0 → 1)", () => {
+  it("skips undefined variable (no auto-init to 1)", () => {
     const pool = new VarPool({})
     const snapshot = new Map<string, unknown>([["counter", undefined]])
     const result = forceAdvanceLoopVars(pool, ["counter"], snapshot)
-    expect(result.applied).toBe(true)
-    expect(pool.get("counter")).toBe(1)
+    expect(result.applied).toBe(false)
+    expect(result.skippedVars).toEqual(["counter"])
+    expect(pool.get("counter")).toBeUndefined()
+  })
+
+  it("skips empty string variable (Number(\"\") === 0 guard)", () => {
+    const pool = new VarPool({ decision: "" })
+    const snapshot = new Map<string, unknown>([["decision", ""]])
+    const result = forceAdvanceLoopVars(pool, ["decision"], snapshot)
+    expect(result.applied).toBe(false)
+    expect(result.skippedVars).toEqual(["decision"])
+    expect(pool.get("decision")).toBe("")
   })
 
   it("skips non-numeric string variable", () => {
