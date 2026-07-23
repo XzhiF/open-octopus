@@ -345,7 +345,7 @@ function copySkills(wsDir) {
   if (!corePackDir) return;
   const skillsDir = path.join(wsDir, ".claude", "skills");
   fs.mkdirSync(skillsDir, { recursive: true });
-  const coreSkills = ["octo-dev-copilot", "octo-workflow-dev", "octo-swarm-dev", "octo-browser-debug", "octo-browser-vision", "octo-e2e-assurance"];
+  const coreSkills = ["octo-dev-copilot", "octo-workflow-dev", "octo-swarm-dev"];
   for (const skillName of coreSkills) {
     const dest = path.join(skillsDir, skillName);
     const src = path.join(corePackDir, skillName);

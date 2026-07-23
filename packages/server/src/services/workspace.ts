@@ -708,7 +708,7 @@ export class WorkspaceService {
     const skillsDir = path.join(workspacePath, ".claude", "skills")
     fs.mkdirSync(skillsDir, { recursive: true })
     // Copy all core skills to workspace
-    const coreSkills = ["octo-dev-copilot", "octo-workflow-dev", "octo-swarm-dev", "octo-browser-debug", "octo-browser-vision", "octo-e2e-tester", "octo-resource-manager", "octo-source-analyzer"]
+    const coreSkills = ["octo-dev-copilot", "octo-workflow-dev", "octo-swarm-dev", "octo-resource-manager", "octo-source-analyzer"]
     for (const skillName of coreSkills) {
       const dest = path.join(skillsDir, skillName)
       if (fs.existsSync(dest)) continue
@@ -740,7 +740,7 @@ export class WorkspaceService {
     fs.mkdirSync(agentsDir, { recursive: true })
 
     // Copy all .md files (not .md.tpl templates) from core-pack/agents/
-    const coreAgents = ["devil-advocate.md", "architecture-explorer.md", "vision-analyzer.md", "testing-qa-engineer.md"]
+    const coreAgents = ["devil-advocate.md", "architecture-explorer.md", "vision-analyzer.md"]
     for (const agentFile of coreAgents) {
       const dest = path.join(agentsDir, agentFile)
       if (fs.existsSync(dest)) continue
