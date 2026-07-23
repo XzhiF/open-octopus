@@ -122,7 +122,8 @@ matt-e2e-tester will:
 
 **Pass criteria**: All AC verified (or SKIP with reason).
 
-**Post-verification**: Update `<artifacts.dir>/index.md` status to `done`.
+**Post-verification**: Update `<artifacts.dir>/index.md` — set current feature-slug status to `done`.
+Note: index.md tracks all feature-slugs across all branches. Phase 4 will read it to build iteration history.
 
 ---
 
@@ -145,40 +146,71 @@ changed_files=$(git diff --name-only origin/<git.mr_target>...HEAD)
 # If changed_files is non-empty, this project has changes
 ```
 
-### 4.2 Write Pipeline Report
+### 4.2 Collect Iteration Context
+
+从 `<artifacts.dir>/index.md` 收集当前分支的所有 feature-slug，构建迭代历史。
+
+```
+读取 index.md → 筛选 Branch 列 == 当前分支的所有行 → 按 # 排序
+```
+
+得到迭代列表：
+
+| # | feature-slug | Created | Status |
+|---|-------------|---------|--------|
+| 1 | engine-init-v1 | 07-22 | done |
+| 2 | engine-init-v2 | 07-22 | done |
+| 3 | event-optimization | 07-23 | done |
+
+对每个 feature-slug，读取：
+- `<artifacts.dir>/<slug>/spec.md` → 提取标题和摘要（前 5 行）
+- `<artifacts.dir>/<slug>/issues/` → 统计 ticket 数量和完成情况
+- `<artifacts.dir>/<slug>/pipeline-report.md` → 如存在，提取 E2E 结果
+
+### 4.3 Write Pipeline Report
 
 Write `<artifacts.dir>/<feature-slug>/pipeline-report.md` **before** committing, so it is included in the PR.
 
 ```markdown
 # Pipeline Execution Report
 
-## Requirement: [title]
+## Requirement: [当前 feature-slug 标题]
 ## Status: PASS / PARTIAL / FAIL
 
-### Phase 1: Development
+### Development Iterations
+| # | Feature Slug | Date | Tickets | Notes |
+|---|-------------|------|---------|-------|
+| 1 | engine-init-v1 | 07-22 | 5/5 done | 初始实现 |
+| 2 | engine-init-v2 | 07-22 | 5/5 done | 重做，修正方向 |
+| 3 | event-optimization | 07-23 | 3/3 done | 事件渲染优化 |
+
+> 注：仅当前 feature-slug 为 active，其余为同分支历史迭代。
+> 单迭代时此 section 省略。
+
+### Phase 1: Development（当前迭代）
 | Ticket | Title | Status | Fix Count |
 |--------|-------|--------|-----------|
 
 ### Phase 2: Deploy
-| Project | Build# | Result | Duration |
-|---------|--------|--------|----------|
+| Project | Build# | Result |
+|---------|--------|--------|
 
-### Phase 3: E2E Verification
+### Phase 3: E2E Verification（当前迭代）
 | AC | Condition | Status | Evidence |
 |----|-----------|--------|----------|
 
 ### Phase 4: Ship (Git PR)
-_(PR links will be amended after creation in step 4.5)_
+_(PR links amended after step 4.6)_
 
-### Changed Files
-| Project | File | Change Type |
+### Changed Files（git diff 实时生成）
+| Package | File | Change Type |
 |---------|------|-------------|
 
 ### Remaining Issues
 | # | Issue | Impact | Suggestion |
 ```
 
-### 4.3 Ensure Code is Pushed
+### 4.4 Ensure Code is Pushed
 
 For each changed project:
 
@@ -193,37 +225,94 @@ fi
 git push origin $branch
 ```
 
-### 4.4 Check Existing PR
+### 4.5 Generate PR Body
 
-```bash
-gh pr list --head <branch> --state open
+根据 4.2 收集的迭代上下文生成 PR body 文件 `pr-body.md`。
+
+**单迭代（分支只有一个 feature-slug）**：
+
+```markdown
+## <feature 标题>
+
+<spec.md 摘要，2-3 句话>
+
+### E2E Verification
+| AC | Condition | Status |
+|----|-----------|--------|
+
+### Changed Files
+（git diff --stat 输出）
+
+<!-- MANUAL-START -->
+<!-- MANUAL-END -->
 ```
 
-- **PR exists** -> confirm code pushed, record PR number, skip creation
-- **No PR** -> create new PR
+**多迭代（分支有多个 feature-slug）**：
 
-### 4.5 Create PR
+```markdown
+## <最新 feature-slug 标题>
 
-```bash
-gh pr create \
-  --base <git.mr_target> \
-  --title "feat(<scope>): <one-line description>" \
-  --body "## Changes\n\nRequirement: <feature-slug>\n\n### Changed files\n<file-list>"
+<最新 spec.md 摘要>
+
+### Development Iterations
+| # | Feature | Date | Tickets |
+|---|---------|------|---------|
+| 1 | engine-init-v1 | 07-22 | 5 |
+| 2 | engine-init-v2 | 07-22 | 5 (redo) |
+| 3 | event-optimization | 07-23 | 3 |
+
+### E2E Verification（latest）
+| AC | Condition | Status |
+|----|-----------|--------|
+
+### Changed Files
+（git diff --stat 输出）
+
+<!-- MANUAL-START -->
+<!-- MANUAL-END -->
 ```
 
-### 4.6 Collect PR Links
+### 4.6 Create or Update PR
+
+```bash
+existing_pr=$(gh pr list --head <branch> --state open --json number -q '.[0].number')
+
+if [ -n "$existing_pr" ]; then
+    # --- 更新已有 PR ---
+    # 1. 读取现有 body
+    current_body=$(gh pr view $existing_pr --json body -q '.body')
+
+    # 2. 提取 MANUAL 区块（如果有内容）
+    manual_section=$(echo "$current_body" | sed -n '/<!-- MANUAL-START -->/,/<!-- MANUAL-END -->/p')
+
+    # 3. 生成新 body，插入保留的 manual 区块
+    #    如果 manual_section 有实质内容（非空标记），替换新 body 中的空标记
+    #    如果 manual_section 为空标记，保持原样
+
+    # 4. 更新 PR
+    echo "$new_body" | gh pr edit $existing_pr --body-file -
+else
+    # --- 创建新 PR ---
+    gh pr create \
+      --base <git.mr_target> \
+      --title "feat(<scope>): <description>" \
+      --body-file pr-body.md
+fi
+```
+
+### 4.7 Collect PR Links
 
 Record each project's PR status:
 
 | Project | Branch | PR# | Action |
 |---------|--------|-----|--------|
-| backend | feat/xxx | #123 | Created/Existing |
-| frontend | feat/xxx | #456 | Created/Existing |
+| backend | feat/xxx | #123 | Created/Updated |
+| frontend | feat/xxx | #456 | Created/Updated |
 | mobile | -- | -- | No changes, skipped |
 
-### 4.7 Amend PR Links into Report
+### 4.8 Amend PR Links into Report
 
-After PR creation, update `pipeline-report.md` Phase 4 section with actual PR links, then amend and force-push:
+After PR creation/update, update `pipeline-report.md` Phase 4 section with actual PR links, then amend and force-push:
 
 ```bash
 # Update pipeline-report.md with PR links
@@ -233,7 +322,7 @@ git commit --amend --no-edit
 git push --force-with-lease origin $branch
 ```
 
-**Phase 4 pass criteria**: All changed projects have PR created or confirmed open, code fully pushed, pipeline artifacts included in PR.
+**Phase 4 pass criteria**: All changed projects have PR created or updated, code fully pushed, pipeline artifacts included in PR.
 
 ---
 
@@ -245,3 +334,6 @@ git push --force-with-lease origin $branch
 4. **PR precision**: Only create PRs for projects with actual code changes vs target branch
 5. **Artifact ownership**: All intermediates go to `<artifacts.dir>/<feature-slug>/`, never pollute source dirs
 6. **Artifacts in PR**: pipeline-report.md and index.md must be committed before PR creation so they appear in the PR diff
+7. **PR smart overwrite**: 已有 PR 时更新 body 而非跳过；用 `<!-- MANUAL-START/END -->` 保护人工编辑内容
+8. **Iteration awareness**: Phase 4 始终读取 index.md 全量迭代记录，PR body 反映分支完整历史
+9. **Git diff is truth**: Changed Files 永远从 `git diff` 实时生成，不依赖任何 feature-slug 的记录
