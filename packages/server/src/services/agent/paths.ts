@@ -80,3 +80,18 @@ export function getNotificationQueueDir(): string {
 export function getOctopusHome(): string {
   return getHome()
 }
+
+/** Built-in clones directory: ~/.octopus/agent/built-in */
+export function getBuiltInClonesDir(): string {
+  return path.join(getAgentDir(), 'built-in')
+}
+
+/** Specific built-in clone directory: ~/.octopus/agent/built-in/{name} */
+export function getBuiltInCloneDir(name: string): string {
+  return path.join(getBuiltInClonesDir(), name)
+}
+
+/** Built-in clone memory directory: ~/.octopus/agent/built-in/{name}/memory */
+export function getBuiltInCloneMemoryDir(name: string): string {
+  return path.join(getBuiltInCloneDir(name), 'memory')
+}

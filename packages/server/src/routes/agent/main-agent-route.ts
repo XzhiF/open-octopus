@@ -1,0 +1,293 @@
+// packages/server/src/routes/agent/main-agent-route.ts
+//
+// Main Agent unified entry route — POST /api/agent/chat
+// The LLM itself decides delegation via tool-calling (no OrchestratorService).
+//
+import { Hono } from 'hono'
+import { streamSSE } from 'hono/streaming'
+import crypto from 'crypto'
+import type { MessageChunk } from '@octopus/providers'
+import { getProvider } from '@octopus/providers'
+import type { AgentSessionDAO, CloneDAO } from '../../db/dao'
+import { CloneRuntime } from '../../services/agent/clone-runtime'
+import { getBuiltinCloneDef, isBuiltinClone } from '../../services/agent/builtin-clones'
+import { SystemPromptAssembler } from '../../services/agent/system-prompt-assembler'
+import { registerActiveStream, unregisterActiveStream } from '../../services/agent/agent-service'
+import { getAgentDir } from '../../services/agent/paths'
+
+// ── Route deps ─────────────────────────────────────────────────────
+
+export interface MainAgentRouteDeps {
+  sessionDAO: AgentSessionDAO
+  cloneDAO: CloneDAO
+}
+
+// ── Delegation tool definitions ────────────────────────────────────
+
+const DELEGATION_TOOLS_PROMPT = `
+## Available Delegation Targets
+
+You can delegate tasks to specialized clones using the following tools:
+
+- **delegate_to_workspace**: Delegate a development task to the workspace clone (full-stack dev assistant)
+- **delegate_to_scheduler**: Create or manage a scheduled task (cron jobs, periodic tasks)
+- **delegate_to_archive**: Analyze a workspace for archival (execution history, knowledge extraction)
+- **delegate_to_resource**: Execute a resource operation (install/update skills, agents, workflows)
+
+When a task clearly falls into one of these domains, delegate it. Otherwise, respond directly.
+`
+
+// ── Route factory ──────────────────────────────────────────────────
+
+export function createMainAgentRoute(deps: MainAgentRouteDeps): Hono {
+  const { sessionDAO, cloneDAO } = deps
+  const app = new Hono()
+
+  app.post('/chat', async (c) => {
+    const org = c.req.header('X-Octopus-Org') || (c.get('org') as string) || 'default'
+
+    let body: { message?: string; session_id?: string }
+    try {
+      body = await c.req.json()
+    } catch {
+      return c.json({ error: { code: 'INVALID_PARAM', message: 'Invalid JSON body' } }, 400)
+    }
+
+    if (!body.message) {
+      return c.json({ error: { code: 'INVALID_PARAM', message: 'message is required' } }, 400)
+    }
+
+    // Resolve or create session
+    let sessionId = body.session_id
+    if (!sessionId) {
+      sessionId = crypto.randomUUID()
+      const now = new Date().toISOString()
+      sessionDAO.insertSession({
+        id: sessionId,
+        org,
+        title: 'Main Agent 会话',
+        clone_name: null,
+        session_type: 'main',
+        created_at: now,
+        updated_at: now,
+      })
+    } else {
+      const existing = sessionDAO.findById(sessionId)
+      if (!existing || existing.is_deleted) {
+        return c.json({ error: { code: 'NOT_FOUND', message: `Session ${sessionId} not found` } }, 404)
+      }
+    }
+
+    // Store user message
+    const userMsgId = crypto.randomUUID()
+    const now = new Date().toISOString()
+    sessionDAO.insertMessage({
+      id: userMsgId, session_id: sessionId, role: 'user',
+      content: body.message, created_at: now,
+    })
+    sessionDAO.updateLastMessageAt(sessionId, now)
+
+    // Assemble system prompt with delegation instructions
+    const assembler = new SystemPromptAssembler(org)
+    const baseSystemPrompt = assembler.assemble()
+    const systemPrompt = `${baseSystemPrompt}\n\n${DELEGATION_TOOLS_PROMPT}`
+
+    return streamSSE(c, async (stream) => {
+      let aborted = false
+      const abortStream = () => { aborted = true }
+      const streamId = registerActiveStream(sessionId!, abortStream)
+
+      try {
+        const provider = getProvider('claude')
+        const cwd = getAgentDir()
+
+        const chunks = provider.sendQuery(body.message!, cwd, undefined, {
+          systemPrompt: { type: 'preset', preset: 'claude_code', append: systemPrompt },
+        })
+
+        let fullContent = ''
+        let fullThinking = ''
+        let delegationDetected: { cloneName: string; task: string } | null = null
+        const toolCalls: Array<{
+          id: string; name: string; input?: unknown; result?: unknown; isError?: boolean
+        }> = []
+
+        for await (const chunk of chunks) {
+          if (aborted || (stream as any)._aborted) break
+
+          switch (chunk.type) {
+            case 'text_delta':
+              fullContent += chunk.content
+              await stream.writeSSE({ event: 'text_delta', data: JSON.stringify({ delta: chunk.content, content: fullContent }) })
+              break
+            case 'thinking_start':
+              await stream.writeSSE({ event: 'thinking_start', data: '{}' })
+              break
+            case 'thinking':
+              fullThinking += chunk.content
+              await stream.writeSSE({ event: 'thinking', data: JSON.stringify({ delta: chunk.content }) })
+              break
+            case 'thinking_done':
+              await stream.writeSSE({ event: 'thinking_done', data: '{}' })
+              break
+            case 'tool_call_start':
+              toolCalls.push({ id: chunk.toolCallId, name: chunk.toolName })
+              await stream.writeSSE({ event: 'tool_call', data: JSON.stringify({ type: 'start', tool_call_id: chunk.toolCallId, tool_name: chunk.toolName }) })
+
+              // Check for delegation tool calls
+              if (chunk.toolName.startsWith('delegate_to_')) {
+                const cloneName = chunk.toolName.replace('delegate_to_', '')
+                delegationDetected = { cloneName, task: '' }
+              }
+              break
+            case 'tool_call': {
+              const tc = toolCalls.find(t => t.id === chunk.toolCallId)
+              if (tc) {
+                tc.input = chunk.toolInput
+                // Extract task from delegation tool input
+                if (tc.name.startsWith('delegate_to_') && delegationDetected) {
+                  const input = chunk.toolInput as Record<string, unknown>
+                  delegationDetected.task = String(input.task || input.prompt || body.message!)
+                }
+              }
+              await stream.writeSSE({ event: 'tool_call', data: JSON.stringify({ type: 'input', tool_call_id: chunk.toolCallId, tool_name: chunk.toolName, input: chunk.toolInput }) })
+              break
+            }
+            case 'tool_result': {
+              const tc = toolCalls.find(t => t.id === chunk.toolCallId)
+              if (tc) { tc.result = chunk.content; tc.isError = chunk.isError }
+              await stream.writeSSE({ event: 'tool_call', data: JSON.stringify({ type: 'result', tool_call_id: chunk.toolCallId, content: chunk.content, is_error: chunk.isError }) })
+              break
+            }
+            case 'status':
+              await stream.writeSSE({ event: 'status', data: JSON.stringify({ status: chunk.status }) })
+              break
+            case 'result':
+              break
+            case 'error':
+              await stream.writeSSE({ event: 'error', data: JSON.stringify({ code: chunk.code, message: chunk.message }) })
+              break
+          }
+        }
+
+        // If delegation was detected, execute via CloneRuntime
+        if (delegationDetected && !aborted) {
+          await executeDelegation(
+            delegationDetected, sessionId!, org, stream, cloneDAO,
+          )
+        }
+
+        // Store assistant message
+        if (fullContent) {
+          const assistantMsgId = crypto.randomUUID()
+          const assistantNow = new Date().toISOString()
+          const metadata = JSON.stringify({
+            thinking: fullThinking || undefined,
+            tool_calls: toolCalls.length > 0 ? toolCalls : undefined,
+            delegation: delegationDetected,
+          })
+
+          sessionDAO.insertMessage({
+            id: assistantMsgId, session_id: sessionId!, role: 'assistant',
+            content: fullContent, metadata, created_at: assistantNow,
+          })
+          sessionDAO.updateLastMessageAt(sessionId!, assistantNow)
+
+          // Auto-generate title
+          const sessionRow = sessionDAO.findById(sessionId!)
+          if (sessionRow && (sessionRow.title === 'Main Agent 会话' || sessionRow.title === '新会话')) {
+            const autoTitle = body.message!.slice(0, 40).replace(/\n/g, ' ').trim() || 'Main Agent 会话'
+            sessionDAO.updateSession(sessionId!, { title: autoTitle })
+          }
+
+          await stream.writeSSE({
+            event: 'done',
+            data: JSON.stringify({
+              session_id: sessionId,
+              message_id: assistantMsgId,
+              session_title: sessionDAO.findById(sessionId!)?.title,
+            }),
+          })
+        }
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err)
+        await stream.writeSSE({ event: 'error', data: JSON.stringify({ code: 'STREAM_ERROR', message: msg }) })
+      } finally {
+        unregisterActiveStream(sessionId!, streamId)
+      }
+    })
+  })
+
+  return app
+}
+
+// ── Delegation execution ───────────────────────────────────────────
+
+async function executeDelegation(
+  delegation: { cloneName: string; task: string },
+  sessionId: string,
+  org: string,
+  stream: any,
+  cloneDAO: CloneDAO,
+): Promise<void> {
+  const cloneName = delegation.cloneName
+
+  // Resolve clone definition
+  let cloneDef = isBuiltinClone(cloneName)
+    ? getBuiltinCloneDef(cloneName)
+    : null
+
+  if (!cloneDef) {
+    const row = cloneDAO.findByName(cloneName)
+    if (row) {
+      cloneDef = {
+        name: row.name,
+        type: (row.type as 'built-in' | 'user') ?? 'user',
+        persona: row.persona,
+        skills: JSON.parse(row.skills || '[]'),
+        memoryScope: (row.memory_scope as 'shared' | 'isolated') ?? 'isolated',
+        config: {},
+      }
+    }
+  }
+
+  if (!cloneDef) {
+    await stream.writeSSE({
+      event: 'tool_call',
+      data: JSON.stringify({
+        type: 'result', tool_name: `delegate_to_${cloneName}`,
+        content: `Clone "${cloneName}" not found`,
+        is_error: true,
+      }),
+    })
+    return
+  }
+
+  // Execute via CloneRuntime
+  const runtime = new CloneRuntime(cloneDef, org)
+  const cwd = getAgentDir()
+
+  await stream.writeSSE({
+    event: 'status',
+    data: JSON.stringify({ status: `Delegating to ${cloneName} clone...` }),
+  })
+
+  try {
+    let delegateContent = ''
+    for await (const chunk of runtime.chat(delegation.task, sessionId, null, cwd)) {
+      if (chunk.type === 'text_delta') {
+        delegateContent += chunk.content
+        await stream.writeSSE({
+          event: 'text_delta',
+          data: JSON.stringify({ delta: chunk.content, content: delegateContent, source: cloneName }),
+        })
+      }
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    await stream.writeSSE({
+      event: 'error',
+      data: JSON.stringify({ code: 'DELEGATION_ERROR', message: `Delegation to ${cloneName} failed: ${msg}` }),
+    })
+  }
+}

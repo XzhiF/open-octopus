@@ -39,6 +39,7 @@ import chainRoutes from "./routes/chain-routes"
 import scheduleRoutes, { setScheduleService } from "./routes/schedule"
 import { createSchedulerRoutes } from "./routes/scheduler"
 import { createAgentRoutes } from "./routes/agent"
+import { createCloneSessionRoutes } from "./routes/clone"
 import cronRoutes from "./routes/cron"
 import { SSEService } from "./services/sse"
 import { migrateOrgDirs, syncOrgsFromFilesystem } from "./services/org"
@@ -154,7 +155,6 @@ if (db) {
     console.warn(`[server] Agent auto-init failed: ${msg}`)
   }
 }
-
 const sse = new SSEService()
 let observability: ObservabilityService | undefined
 
@@ -187,6 +187,20 @@ if (!process.env.VITEST && daos) {
   initRecoveryService(daos.agentSession, daos.execution)
   initSessionCompressService(daos.agentSession)
   initAgentService(daos.agentSession, daos.safety)
+
+  // Auto-init built-in clones (filesystem + DB registration)
+  try {
+    const { getCloneInitService } = require('./services/agent/clone-init-service')
+    const cloneInitService = getCloneInitService()
+    const defaultOrg = daos.org.findAll()[0]?.name ?? 'default'
+    const initResult = cloneInitService.initBuiltInClones(defaultOrg, daos.clone)
+    if (initResult.dirsCreated.length > 0 || initResult.dbRegistered.length > 0) {
+      console.log(`[server] Built-in clones initialized: ${initResult.dbRegistered.length} registered, ${initResult.dirsCreated.length} dirs created`)
+    }
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err)
+    console.warn(`[server] Built-in clone init failed: ${msg}`)
+  }
 
   // Initialize archive service singleton
   initArchiveService(daos.archive, daos.execution, db, getDomainEventBus())
@@ -316,8 +330,16 @@ app.route("/api/agent", createAgentRoutes({
   safetyDAO: d.safety,
   scheduleConfigDAO: d.scheduleConfig,
   executionDAO: d.execution,
+  cloneDAO: d.clone,
   schedulerService: schedSvc,
 }))
+
+// Clone session routes — direct entry for Web UI pages
+app.route("/api/clones", createCloneSessionRoutes({
+  sessionDAO: d.agentSession,
+  cloneDAO: d.clone,
+}))
+
 app.route("/api/workflows/built-in", createBuiltInWorkflowRoutes(() => resourceRegistry.get()))
 
 // Knowledge system routes — org is resolved per-request from the query

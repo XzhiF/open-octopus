@@ -331,6 +331,8 @@ export interface SessionRow {
   session_type: string
   is_active: number
   is_deleted: number
+  scope_id: string | null
+  provider_session_id: string | null
   last_message_at: string | null
   created_at: string
   updated_at: string
@@ -341,6 +343,8 @@ export interface MessageRow {
   session_id: string
   role: string
   content: string
+  type: string           // 'text' | 'thinking' | 'tool_call' | 'tool_result' | 'error'
+  metadata: string | null  // JSON metadata
   tool_calls: string | null
   is_summary: number
   is_compressed: number
@@ -351,6 +355,7 @@ export interface MessageRow {
 export interface CloneRow {
   name: string
   org: string
+  type: string           // 'built-in' | 'user'
   status: string
   persona: string
   skills: string

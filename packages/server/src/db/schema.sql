@@ -371,6 +371,8 @@ CREATE TABLE IF NOT EXISTS sessions (
   session_type TEXT NOT NULL DEFAULT 'main',
   is_active INTEGER NOT NULL DEFAULT 1,
   is_deleted INTEGER NOT NULL DEFAULT 0,
+  scope_id TEXT,
+  provider_session_id TEXT,
   last_message_at TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
@@ -382,6 +384,8 @@ CREATE TABLE IF NOT EXISTS messages (
   session_id TEXT NOT NULL,
   role TEXT NOT NULL,
   content TEXT NOT NULL,
+  type TEXT NOT NULL DEFAULT 'text',
+  metadata TEXT,
   tool_calls TEXT,
   is_summary INTEGER NOT NULL DEFAULT 0,
   is_compressed INTEGER NOT NULL DEFAULT 0,
@@ -394,6 +398,7 @@ CREATE TABLE IF NOT EXISTS messages (
 CREATE TABLE IF NOT EXISTS clones (
   name TEXT PRIMARY KEY,
   org TEXT NOT NULL,
+  type TEXT NOT NULL DEFAULT 'user',
   status TEXT NOT NULL DEFAULT 'active',
   persona TEXT NOT NULL,
   skills TEXT NOT NULL DEFAULT '[]',

@@ -21,12 +21,12 @@ export class CloneDAO extends BaseDAO {
     return this.stmt("SELECT * FROM clones ORDER BY name ASC").all() as CloneRow[]
   }
 
-  insert(row: CloneRow): Database.RunResult {
+  insert(row: Omit<CloneRow, "type"> & { type?: string }): Database.RunResult {
     return this.stmt(`
-      INSERT INTO clones (name, org, status, persona, skills, workspace_ref, memory_scope, last_active_at, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO clones (name, org, type, status, persona, skills, workspace_ref, memory_scope, last_active_at, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
-      row.name, row.org, row.status, row.persona,
+      row.name, row.org, row.type ?? 'user', row.status, row.persona,
       row.skills, row.workspace_ref, row.memory_scope,
       row.last_active_at, row.created_at, row.updated_at,
     )

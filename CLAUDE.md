@@ -96,3 +96,16 @@ octopus repos update/pull/clone/rebuild-index
 - Issue tracker: `.scratch/<feature>/` 目录下的 markdown 文件
 - Triage labels: needs-triage / needs-info / ready-for-agent / ready-for-human / wontfix
 - Domain docs: root `CONTEXT-MAP.md` → per-package `CONTEXT.md`
+
+
+## 可用资源 (Octopus 资源库)
+<!-- octopus-resources -->
+
+### Skills
+- test-skill (built-in)
+
+### 使用方式
+- 搜索更多: 使用 octo-resource-manager skill
+- 浏览全部: octopus resource list
+
+<!-- /octopus-resources -->

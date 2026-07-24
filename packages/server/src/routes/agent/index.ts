@@ -14,11 +14,12 @@ import { createSafetyRoutes } from './safety'
 import { createChatRoutes } from './chat-routes'
 import { createTaskRoutes } from './task-routes'
 import { createCloneRoutes } from './clone-routes'
+import { createMainAgentRoute } from './main-agent-route'
 import { createEvolutionRoutes } from './evolution-routes'
 import { createSkillRoutes } from './skill-routes'
 import { createScheduleRoutes } from './schedule-routes'
 import { createMiscRoutes } from './misc-routes'
-import { WorkspaceDAO, AgentSessionDAO, EvolutionDAO, SafetyDAO, ScheduleConfigDAO, ExecutionDAO } from '../../db/dao'
+import { WorkspaceDAO, AgentSessionDAO, EvolutionDAO, SafetyDAO, ScheduleConfigDAO, ExecutionDAO, CloneDAO } from '../../db/dao'
 import { SchedulerService } from '../../services/scheduler/scheduler-service'
 import fs from 'fs'
 import path from 'path'
@@ -31,12 +32,13 @@ interface AgentRouteDeps {
   safetyDAO: SafetyDAO
   scheduleConfigDAO: ScheduleConfigDAO
   executionDAO: ExecutionDAO
+  cloneDAO: CloneDAO
   schedulerService: SchedulerService
 }
 
 export function createAgentRoutes(deps: AgentRouteDeps): Hono {
   const {
-    sessionDAO, safetyDAO, scheduleConfigDAO, evolutionDAO,
+    sessionDAO, safetyDAO, scheduleConfigDAO, evolutionDAO, cloneDAO,
   } = deps
 
   const agent = new Hono()
@@ -85,6 +87,9 @@ export function createAgentRoutes(deps: AgentRouteDeps): Hono {
   // New extractions
   agent.route('/', createCloneRoutes({ safetyDAO }))
   agent.route('/', createTaskRoutes(deps))
+
+  // Main Agent unified entry (LLM router with clone delegation)
+  agent.route('/', createMainAgentRoute({ sessionDAO, cloneDAO }))
 
   return agent
 }

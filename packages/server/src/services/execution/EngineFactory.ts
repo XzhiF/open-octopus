@@ -8,7 +8,7 @@ import { WorkflowEngine, PromptInjector } from "@octopus/engine"
 import { CrossExecResolver, collectNodeEngines, parseWorkflow, WorkflowRef } from "@octopus/shared"
 import { PipelineConfigLoader } from "../pipeline-config"
 import { getProvider } from "@octopus/providers"
-import { getOrchestratorService } from "../agent/orchestrator-service"
+import { selectAndInstallAgents } from "../resource-agent-service"
 import { existsSync, readFileSync } from "fs"
 import { join } from "path"
 
@@ -81,10 +81,9 @@ export class EngineFactory implements IEngineFactory {
       ? JSON.parse(execution.input_values)
       : undefined
 
-    const orchestrator = this.ctx.org ? getOrchestratorService(this.ctx.org) : undefined
-    const agentResolver = orchestrator
+    const agentResolver = this.ctx.org
       ? (topic: string, maxExperts: number) =>
-          orchestrator.selectAndInstallAgents(topic, maxExperts, this.ctx.workspacePath)
+          selectAndInstallAgents(topic, maxExperts, this.ctx.workspacePath)
       : undefined
 
     return new WorkflowEngine(

@@ -4,139 +4,17 @@
  * Maps to PRD P5.11: E2E agent-specific tests.
  *
  * These tests verify the full API flow:
- * 1. First-run onboarding (health → init → onboarding)
- * 2. Session lifecycle (create → chat → stop → delete)
- * 3. Memory operations (add → search → archive)
- * 4. Task management (tasks → progress → history → reports)
- * 5. Observability (tracer → metrics → events)
+ * 1. Domain event bus (emit → receive → history)
+ * 2. Tracer (spans → traces → stats)
+ * 3. Metrics (counters → gauges → histograms)
+ * 4. Combined observability flow
  */
-import { describe, it, expect, beforeAll } from 'vitest'
-import { getOrchestratorService, type IntentClassification } from '../services/agent/orchestrator-service'
+import { describe, it, expect } from 'vitest'
 import { getDomainEventBus } from '../services/agent/domain-event-bus'
 import { getTracer } from '../services/agent/tracer'
 import { getMetrics } from '../services/agent/metrics'
 
-// ── Journey 1: Intent Classification ────────────────────────────────
-
-describe('Agent Journey: Intent Classification', () => {
-  const org = 'test-org'
-
-  it('classifies single task intent from Chinese message', () => {
-    const service = getOrchestratorService(org)
-    const result = service.classifyIntent('给项目添加一个暗色模式功能')
-    expect(result.intent).toBe('single_task')
-    expect(result.confidence).toBeGreaterThan(0.5)
-  })
-
-  it('classifies scheduled task intent', () => {
-    const service = getOrchestratorService(org)
-    const result = service.classifyIntent('每天早上9点检查代码质量')
-    expect(result.intent).toBe('scheduled_task')
-    expect(result.confidence).toBeGreaterThan(0.5)
-  })
-
-  it('classifies info query intent', () => {
-    const service = getOrchestratorService(org)
-    const result = service.classifyIntent('昨天做了什么任务？查看历史记录')
-    expect(result.intent).toBe('info_query')
-    expect(result.confidence).toBeGreaterThan(0.5)
-  })
-
-  it('classifies clone management intent', () => {
-    const service = getOrchestratorService(org)
-    const result = service.classifyIntent('创建一个前端分身来处理UI任务')
-    expect(result.intent).toBe('clone_management')
-    expect(result.confidence).toBeGreaterThan(0.5)
-  })
-
-  it('classifies general chat as default', () => {
-    const service = getOrchestratorService(org)
-    const result = service.classifyIntent('你好')
-    expect(result.intent).toBe('general_chat')
-    expect(result.confidence).toBeGreaterThan(0.5)
-  })
-})
-
-// ── Journey 2: Workflow Orchestration ────────────────────────────────
-
-describe('Agent Journey: Workflow Orchestration', () => {
-  const org = 'test-org'
-
-  it('organizes inputs with target scope extraction', () => {
-    const service = getOrchestratorService(org)
-    const intent: IntentClassification = {
-      intent: 'single_task',
-      confidence: 0.8,
-      reasoning: 'test',
-    }
-    const inputs = service.organizeInputs('给项目添加单元测试', intent)
-    expect(inputs.requirement).toBe('给项目添加单元测试')
-    expect(inputs.intent_type).toBe('single_task')
-  })
-
-  it('generates dynamic workflow YAML for single task', () => {
-    const service = getOrchestratorService(org)
-    const intent: IntentClassification = {
-      intent: 'single_task',
-      confidence: 0.8,
-      reasoning: 'test',
-    }
-    const result = service.generateWorkflow('实现新功能', intent)
-
-    expect(result.valid).toBe(true)
-    expect(result.workflow_name).toBeTruthy()
-    expect(result.yaml).toContain('nodes:')
-    expect(result.yaml).toContain('analyze')
-    expect(result.yaml).toContain('implement')
-    expect(result.yaml).toContain('verify')
-  })
-
-  it('generates scheduled task workflow nodes', () => {
-    const service = getOrchestratorService(org)
-    const intent: IntentClassification = {
-      intent: 'scheduled_task',
-      confidence: 0.9,
-      reasoning: 'test',
-    }
-    const result = service.generateWorkflow('每天检查代码', intent)
-
-    expect(result.valid).toBe(true)
-    expect(result.yaml).toContain('design_schedule')
-    expect(result.yaml).toContain('register_job')
-  })
-
-  it('generates clone management workflow nodes', () => {
-    const service = getOrchestratorService(org)
-    const intent: IntentClassification = {
-      intent: 'clone_management',
-      confidence: 0.85,
-      reasoning: 'test',
-    }
-    const result = service.generateWorkflow('创建前端分身', intent)
-
-    expect(result.valid).toBe(true)
-    expect(result.yaml).toContain('analyze_clones')
-    expect(result.yaml).toContain('execute_clone_ops')
-  })
-
-  it('selects workflow from available files', () => {
-    const service = getOrchestratorService(org)
-    const intent: IntentClassification = {
-      intent: 'single_task',
-      confidence: 0.8,
-      reasoning: 'test',
-    }
-    // May or may not find a match depending on filesystem state
-    const result = service.selectWorkflow(intent, '实现新功能')
-    // Result can be null (no workflows dir) or a match
-    if (result) {
-      expect(result.workflow_name).toBeTruthy()
-      expect(result.score).toBeGreaterThan(0)
-    }
-  })
-})
-
-// ── Journey 3: Domain Event Bus ──────────────────────────────────────
+// ── Journey 1: Domain Event Bus ──────────────────────────────────────
 
 describe('Agent Journey: Domain Event Bus', () => {
   it('emits and receives events', async () => {
@@ -215,7 +93,7 @@ describe('Agent Journey: Domain Event Bus', () => {
   })
 })
 
-// ── Journey 4: Tracer ───────────────────────────────────────────────
+// ── Journey 2: Tracer ───────────────────────────────────────────────
 
 describe('Agent Journey: Tracer', () => {
   it('creates and finishes spans', () => {
@@ -270,7 +148,6 @@ describe('Agent Journey: Tracer', () => {
     const summaries = tracer.getTraceSummaries(5)
 
     expect(Array.isArray(summaries)).toBe(true)
-    // Should have at least the traces from previous tests
     expect(summaries.length).toBeGreaterThan(0)
   })
 
@@ -284,7 +161,7 @@ describe('Agent Journey: Tracer', () => {
   })
 })
 
-// ── Journey 5: Metrics ──────────────────────────────────────────────
+// ── Journey 3: Metrics ──────────────────────────────────────────────
 
 describe('Agent Journey: Metrics', () => {
   it('increments counters', () => {
@@ -351,35 +228,35 @@ describe('Agent Journey: Metrics', () => {
   })
 })
 
-// ── Journey 6: Combined Observability Flow ───────────────────────────
+// ── Journey 4: Combined Observability Flow ───────────────────────────
 
 describe('Agent Journey: Combined Observability', () => {
-  it('orchestrator flow emits events and creates spans', async () => {
+  it('event + span + metric integration', async () => {
     const bus = getDomainEventBus()
     const tracer = getTracer()
     const metrics = getMetrics()
 
     const received: string[] = []
-    const unsub = bus.on('orchestration.intent_classified', () => {
-      received.push('intent_classified')
+    const unsub = bus.on('agent.action_completed', () => {
+      received.push('action_completed')
     })
 
-    // Simulate an orchestration flow with observability
-    await tracer.withSpan('orchestrate', async (span) => {
-      span.setTag('intent', 'single_task')
-      metrics.increment('orchestration_requests_total')
+    // Simulate an agent action with observability
+    await tracer.withSpan('agent-action', async (span) => {
+      span.setTag('action', 'test')
+      metrics.increment('agent_actions_total')
 
-      await bus.emit('orchestration.intent_classified', {
-        intent: 'single_task',
-        confidence: 0.9,
-      }, { source: 'orchestrator' })
+      await bus.emit('agent.action_completed', {
+        action: 'test',
+        result: 'success',
+      }, { source: 'agent' })
 
-      span.addEvent('intent_classified')
-      metrics.observe('orchestration_duration', 100)
+      span.addEvent('action_completed')
+      metrics.observe('agent_action_duration', 100)
     })
 
-    expect(received).toContain('intent_classified')
-    expect(metrics.getCounter('orchestration_requests_total')).toBeGreaterThan(0)
+    expect(received).toContain('action_completed')
+    expect(metrics.getCounter('agent_actions_total')).toBeGreaterThan(0)
 
     unsub()
   })
