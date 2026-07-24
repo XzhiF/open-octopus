@@ -134,6 +134,64 @@ export interface CreateCloneRequest {
   memory_scope: string[]
 }
 
+// ===== Clone System Types (Refactor) =====
+
+/**
+ * CloneDef — Runtime clone definition (filesystem + DB backed).
+ * Defines a clone's persona, skills, memory scope, and configuration.
+ */
+export interface CloneDef {
+  name: string                    // 'workspace' | 'scheduler' | 'archive' | 'resource' | user-defined
+  type: 'built-in' | 'user'
+  persona: string                 // persona.md content
+  skills: string[]                // skill names
+  memoryScope: 'shared' | 'isolated'
+  workspaceRef?: { name: string; path: string; branch: string }
+  config: {
+    model?: string
+    maxTurns?: number
+    tools?: string[]
+  }
+}
+
+/**
+ * CloneSession — Session with clone context.
+ * Extends SessionRow with clone-specific fields.
+ */
+export interface CloneSession {
+  id: string
+  org: string
+  title: string
+  clone_name: string              // Required for clone sessions
+  perspective_clone_name: string | null
+  session_type: string
+  is_active: number
+  is_deleted: number
+  last_message_at: string | null
+  scope_id: string | null
+  provider_session_id: string | null
+  created_at: string
+  updated_at: string
+}
+
+/**
+ * CloneMessage — Message with type + metadata.
+ * Extends MessageRow with typed message support.
+ */
+export interface CloneMessage {
+  id: string
+  session_id: string
+  role: string
+  type: string                    // 'thinking' | 'text' | 'tool_call' | 'tool_result' | 'error'
+  content: string
+  metadata: string | null         // JSON: { tokens, cost, toolDetails, thinkingDuration }
+  tool_calls: string | null
+  is_summary: number
+  is_compressed: number
+  is_edited: number
+  created_at: string
+}
+
 // ===== Skills / Evolution =====
 
 export interface SkillInfo {

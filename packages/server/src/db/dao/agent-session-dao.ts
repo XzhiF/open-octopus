@@ -33,16 +33,19 @@ export class AgentSessionDAO extends BaseDAO {
     return { items, has_more: hasMore, next_cursor: hasMore ? items[items.length - 1].created_at : null }
   }
 
-  insertSession(row: Omit<SessionRow, "is_active" | "is_deleted" | "perspective_clone_name" | "last_message_at"> & {
-    is_active?: number; is_deleted?: number; perspective_clone_name?: string | null
+  insertSession(row: Omit<SessionRow, "is_active" | "is_deleted" | "perspective_clone_name" | "last_message_at" | "scope_id" | "provider_session_id"> & {
+    is_active?: number; is_deleted?: number; perspective_clone_name?: string | null;
+    scope_id?: string | null; provider_session_id?: string | null
   }): Database.RunResult {
     return this.stmt(`
-      INSERT INTO sessions (id, org, title, clone_name, perspective_clone_name, session_type, is_active, is_deleted, last_message_at, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO sessions (id, org, title, clone_name, perspective_clone_name, session_type, is_active, is_deleted, scope_id, provider_session_id, last_message_at, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       row.id, row.org, row.title, row.clone_name,
       row.perspective_clone_name ?? null, row.session_type,
-      row.is_active ?? 1, row.is_deleted ?? 0, null,
+      row.is_active ?? 1, row.is_deleted ?? 0,
+      row.scope_id ?? null, row.provider_session_id ?? null,
+      null,
       row.created_at, row.updated_at,
     )
   }
@@ -105,14 +108,16 @@ export class AgentSessionDAO extends BaseDAO {
     ).get(sessionId) as { count: number }).count
   }
 
-  insertMessage(row: Omit<MessageRow, "is_summary" | "is_compressed" | "is_edited" | "tool_calls"> & {
-    is_summary?: number; is_compressed?: number; is_edited?: number; tool_calls?: string | null
+  insertMessage(row: Omit<MessageRow, "is_summary" | "is_compressed" | "is_edited" | "tool_calls" | "type" | "metadata"> & {
+    is_summary?: number; is_compressed?: number; is_edited?: number; tool_calls?: string | null;
+    type?: string; metadata?: string | null
   }): Database.RunResult {
     return this.stmt(`
-      INSERT INTO messages (id, session_id, role, content, tool_calls, is_summary, is_compressed, is_edited, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO messages (id, session_id, role, content, type, metadata, tool_calls, is_summary, is_compressed, is_edited, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       row.id, row.session_id, row.role, row.content,
+      row.type ?? 'text', row.metadata ?? null,
       row.tool_calls ?? null, row.is_summary ?? 0,
       row.is_compressed ?? 0, row.is_edited ?? 0, row.created_at,
     )
@@ -243,6 +248,7 @@ export class AgentSessionDAO extends BaseDAO {
 
   findMessagesBySessionWithCursor(sessionId: string, limit: number, cursor?: string): Array<{
     id: string; session_id: string; role: string; content: string;
+    type: string; metadata: string | null;
     tool_calls: string | null; is_summary: number; is_compressed: number; created_at: string;
   }> {
     let sql = `SELECT * FROM messages WHERE session_id = ?`
@@ -252,6 +258,7 @@ export class AgentSessionDAO extends BaseDAO {
     params.push(limit)
     return this.stmt(sql).all(...params) as Array<{
       id: string; session_id: string; role: string; content: string;
+      type: string; metadata: string | null;
       tool_calls: string | null; is_summary: number; is_compressed: number; created_at: string;
     }>
   }
