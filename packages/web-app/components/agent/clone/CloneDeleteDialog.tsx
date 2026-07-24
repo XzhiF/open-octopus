@@ -2,8 +2,6 @@
 
 import { useState } from 'react'
 import { toast } from 'sonner'
-import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
-import { Label } from '@/components/ui/label'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -24,15 +22,19 @@ interface CloneDeleteDialogProps {
 }
 
 export function CloneDeleteDialog({ clone, onClose, onDeleted }: CloneDeleteDialogProps) {
-  const [keepWorkspace, setKeepWorkspace] = useState(true)
   const [loading, setLoading] = useState(false)
+
+  // Guard: built-in clones cannot be deleted
+  if (clone?.type === 'built-in') {
+    return null
+  }
 
   const handleDelete = async () => {
     if (!clone) return
     setLoading(true)
     try {
-      await api.deleteClone(clone.name, keepWorkspace)
-      toast.success(`已删除分身 "${clone.name}"`)
+      await api.deleteClone(clone.name)
+      toast.success(`已删除分身 "${clone.display_name}"`)
       onDeleted()
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : '删除失败')
@@ -45,23 +47,13 @@ export function CloneDeleteDialog({ clone, onClose, onDeleted }: CloneDeleteDial
     <AlertDialog open={!!clone} onOpenChange={(open) => { if (!open) onClose() }}>
       <AlertDialogContent>
         <AlertDialogHeader>
-          <AlertDialogTitle>删除分身 {clone?.name}</AlertDialogTitle>
+          <AlertDialogTitle>删除分身 {clone?.display_name}</AlertDialogTitle>
           <AlertDialogDescription asChild>
             <div>
-              <p className="mb-3">删除分身<strong>不会归档记忆</strong>（区别于合并操作），分身的经验将丢失。确认？</p>
-              <div className="space-y-2 mt-4">
-                <Label>Workspace 处理:</Label>
-                <RadioGroup value={keepWorkspace ? 'keep' : 'delete'} onValueChange={(v) => setKeepWorkspace(v === 'keep')}>
-                  <div className="flex items-center gap-2">
-                    <RadioGroupItem value="keep" id="keep" />
-                    <Label htmlFor="keep" className="text-sm font-normal">保留 Workspace</Label>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <RadioGroupItem value="delete" id="delete" />
-                    <Label htmlFor="delete" className="text-sm font-normal">同时删除 Workspace</Label>
-                  </div>
-                </RadioGroup>
-              </div>
+              <p className="mb-3">
+                确认删除分身 <strong>{clone?.display_name}</strong> ({clone?.name})？
+                分身的文件和记忆将被永久删除。
+              </p>
             </div>
           </AlertDialogDescription>
         </AlertDialogHeader>

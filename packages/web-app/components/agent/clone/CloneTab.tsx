@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import { Users, Plus } from 'lucide-react'
+import { Users, Plus, Cpu, User } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { useAgentClones } from '@/hooks/useAgentClones'
 import { CloneCardGrid } from './CloneCardGrid'
@@ -29,6 +29,9 @@ export function CloneTab() {
     )
   }
 
+  const systemClones = clones.filter(c => c.type === 'built-in')
+  const userClones = clones.filter(c => c.type === 'user')
+
   if (!loading && clones.length === 0 && !showWizard) {
     return (
       <AgentEmptyState
@@ -46,14 +49,6 @@ export function CloneTab() {
       {/* Toolbar */}
       <div className="flex items-center justify-between px-4 py-2 border-b border-agent-divider bg-agent-surface-raised">
         <h2 className="text-sm font-medium">分身管理 ({clones.length})</h2>
-        <Button
-          onClick={() => setShowWizard(true)}
-          size="sm"
-          className="gap-1.5 bg-agent-primary hover:bg-agent-primary-hover text-agent-primary-foreground"
-        >
-          <Plus className="h-4 w-4" />
-          创建分身
-        </Button>
       </div>
 
       {error && (
@@ -62,15 +57,58 @@ export function CloneTab() {
         </div>
       )}
 
-      {/* Clone grid */}
-      <div className="flex-1 overflow-auto p-4">
-        <CloneCardGrid
-          clones={clones}
-          loading={loading}
-          onMerge={setMergeTarget}
-          onDelete={setDeleteTarget}
-          onEnterChat={setActiveChatClone}
-        />
+      {/* Clone sections */}
+      <div className="flex-1 overflow-auto p-4 space-y-6">
+        {/* System clones section */}
+        <section>
+          <div className="flex items-center gap-2 mb-3">
+            <Cpu className="h-4 w-4 text-muted-foreground" />
+            <h3 className="text-sm font-medium text-muted-foreground">
+              系统分身 ({systemClones.length})
+            </h3>
+          </div>
+          <CloneCardGrid
+            clones={systemClones}
+            loading={loading}
+            showActions={false}
+            onMerge={setMergeTarget}
+            onDelete={setDeleteTarget}
+            onEnterChat={setActiveChatClone}
+          />
+        </section>
+
+        {/* User clones section */}
+        <section>
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <User className="h-4 w-4 text-muted-foreground" />
+              <h3 className="text-sm font-medium text-muted-foreground">
+                用户分身 ({userClones.length})
+              </h3>
+            </div>
+            <Button
+              onClick={() => setShowWizard(true)}
+              size="sm"
+              className="gap-1.5 bg-agent-primary hover:bg-agent-primary-hover text-agent-primary-foreground"
+            >
+              <Plus className="h-4 w-4" />
+              创建分身
+            </Button>
+          </div>
+          <CloneCardGrid
+            clones={userClones}
+            loading={loading}
+            showActions={true}
+            onMerge={setMergeTarget}
+            onDelete={setDeleteTarget}
+            onEnterChat={setActiveChatClone}
+          />
+          {!loading && userClones.length === 0 && (
+            <div className="text-center py-8 text-sm text-muted-foreground border border-dashed border-agent-divider rounded-lg">
+              还没有用户分身，点击上方按钮创建
+            </div>
+          )}
+        </section>
       </div>
 
       {/* Wizard */}

@@ -1,22 +1,25 @@
 'use client'
 
-import { MoreHorizontal, Merge, Trash2, AlertTriangle } from 'lucide-react'
+import { MoreHorizontal, Merge, Trash2, FileText } from 'lucide-react'
 import type { CloneInfo } from '@/lib/agent/types'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
+import { Badge } from '@/components/ui/badge'
 import { CloneStatusBadge } from './CloneStatusBadge'
 import { cn } from '@/lib/utils'
 
 interface CloneCardGridProps {
   clones: CloneInfo[]
   loading: boolean
+  showActions?: boolean
   onMerge: (clone: CloneInfo) => void
   onDelete: (clone: CloneInfo) => void
   onEnterChat?: (clone: CloneInfo) => void
+  onManageFiles?: (clone: CloneInfo) => void
 }
 
-export function CloneCardGrid({ clones, loading, onMerge, onDelete, onEnterChat }: CloneCardGridProps) {
+export function CloneCardGrid({ clones, loading, showActions = true, onMerge, onDelete, onEnterChat, onManageFiles }: CloneCardGridProps) {
   if (loading) {
     return (
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -27,6 +30,10 @@ export function CloneCardGrid({ clones, loading, onMerge, onDelete, onEnterChat 
     )
   }
 
+  if (clones.length === 0) {
+    return null
+  }
+
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
       {clones.map((clone) => (
@@ -35,68 +42,85 @@ export function CloneCardGrid({ clones, loading, onMerge, onDelete, onEnterChat 
           className={cn(
             'rounded-xl border bg-agent-surface-raised p-4 transition-shadow hover:shadow-md',
             onEnterChat ? 'cursor-pointer' : '',
-            !clone.workspace_exists
-              ? 'border-agent-warn/50'
-              : 'border-agent-divider'
+            'border-agent-divider'
           )}
           role="article"
-          aria-label={`分身: ${clone.name}, 状态: ${clone.status}`}
+          aria-label={`分身: ${clone.display_name}, 状态: ${clone.status}`}
           onClick={() => onEnterChat?.(clone)}
         >
           {/* Header */}
           <div className="flex items-start justify-between mb-3">
-            <div>
-              <h3 className="font-semibold text-sm">{clone.name}</h3>
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2">
+                <h3 className="font-semibold text-sm truncate">{clone.display_name}</h3>
+                <Badge
+                  variant={clone.type === 'built-in' ? 'secondary' : 'outline'}
+                  className="text-[10px] px-1.5 py-0 h-4 shrink-0"
+                >
+                  {clone.type === 'built-in' ? '系统' : '用户'}
+                </Badge>
+              </div>
+              <p className="text-xs text-muted-foreground font-mono mt-0.5">{clone.name}</p>
               <CloneStatusBadge status={clone.status} />
             </div>
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-7 w-7"
-                  onClick={(e) => e.stopPropagation()}
-                >
-                  <MoreHorizontal className="h-4 w-4" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
-                <DropdownMenuItem onClick={() => onMerge(clone)} disabled={clone.status === 'executing'}>
-                  <Merge className="mr-2 h-3.5 w-3.5" />
-                  合并
-                </DropdownMenuItem>
-                <DropdownMenuItem className="text-destructive" onClick={() => onDelete(clone)} disabled={clone.status === 'executing'}>
-                  <Trash2 className="mr-2 h-3.5 w-3.5" />
-                  删除
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
+            {showActions && (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-7 w-7 shrink-0"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <MoreHorizontal className="h-4 w-4" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
+                  {onManageFiles && (
+                    <DropdownMenuItem onClick={() => onManageFiles(clone)}>
+                      <FileText className="mr-2 h-3.5 w-3.5" />
+                      文件管理
+                    </DropdownMenuItem>
+                  )}
+                  <DropdownMenuItem onClick={() => onMerge(clone)} disabled={clone.status === 'executing'}>
+                    <Merge className="mr-2 h-3.5 w-3.5" />
+                    合并
+                  </DropdownMenuItem>
+                  <DropdownMenuItem className="text-destructive" onClick={() => onDelete(clone)} disabled={clone.status === 'executing'}>
+                    <Trash2 className="mr-2 h-3.5 w-3.5" />
+                    删除
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            )}
+            {!showActions && onManageFiles && (
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-7 w-7 shrink-0"
+                onClick={(e) => { e.stopPropagation(); onManageFiles(clone) }}
+              >
+                <FileText className="h-4 w-4" />
+              </Button>
+            )}
           </div>
 
-          {/* Workspace warning */}
-          {!clone.workspace_exists && (
-            <div className="flex items-center gap-1.5 mb-2 text-xs text-agent-warn">
-              <AlertTriangle className="h-3.5 w-3.5" />
-              Workspace 丢失
+          {/* Skills count */}
+          {clone.skills.length > 0 && (
+            <div className="flex items-center gap-1 mb-2">
+              <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4">
+                {clone.skills.length} 技能
+              </Badge>
+              <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4">
+                {clone.memory_scope === 'shared' ? '共享记忆' : '独立记忆'}
+              </Badge>
             </div>
           )}
 
-          {/* Details */}
-          <div className="space-y-1.5 text-xs text-muted-foreground">
-            <div className="flex justify-between">
-              <span>工作空间</span>
-              <span className="font-mono">{clone.workspace_ref.workspace_name}</span>
-            </div>
-            <div className="flex justify-between">
-              <span>最后活跃</span>
-              <span>{new Date(clone.last_active_at).toLocaleString('zh-CN', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
-            </div>
-          </div>
-
           {/* Persona summary */}
-          {clone.persona_summary && (
-            <p className="mt-3 text-xs text-muted-foreground line-clamp-2 border-t border-agent-divider pt-2">
-              {clone.persona_summary}
+          {clone.persona && (
+            <p className="mt-2 text-xs text-muted-foreground line-clamp-2 border-t border-agent-divider pt-2">
+              {clone.persona.replace(/^#\s+.+\n*/, '').trim()}
             </p>
           )}
         </div>
