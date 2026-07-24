@@ -6,4 +6,4 @@
 | 2 | workflow-repair | 2026-07-23 | feat-repiare-workflow | done |
 | 3 | agent-clone-system-refactor | 2026-07-24 | feat-builit-in-engines | done |
 | 4 | clone-mgmt-enhancement | 2026-07-24 | feat-agent-clone-ehancement | done |
-| 5 | workspace-scheduler-clone-chat | 2026-07-25 | feat-clone-chat-migration | in-progress |
+| 5 | workspace-scheduler-clone-chat | 2026-07-25 | feat-agent-clone-optimze | done |
