@@ -154,7 +154,6 @@ if (db) {
     console.warn(`[server] Agent auto-init failed: ${msg}`)
   }
 }
-
 const sse = new SSEService()
 let observability: ObservabilityService | undefined
 
@@ -187,6 +186,20 @@ if (!process.env.VITEST && daos) {
   initRecoveryService(daos.agentSession, daos.execution)
   initSessionCompressService(daos.agentSession)
   initAgentService(daos.agentSession, daos.safety)
+
+  // Auto-init built-in clones (filesystem + DB registration)
+  try {
+    const { getCloneInitService } = require('./services/agent/clone-init-service')
+    const cloneInitService = getCloneInitService()
+    const defaultOrg = daos.org.findAll()[0]?.name ?? 'default'
+    const initResult = cloneInitService.initBuiltInClones(defaultOrg, daos.clone)
+    if (initResult.dirsCreated.length > 0 || initResult.dbRegistered.length > 0) {
+      console.log(`[server] Built-in clones initialized: ${initResult.dbRegistered.length} registered, ${initResult.dirsCreated.length} dirs created`)
+    }
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err)
+    console.warn(`[server] Built-in clone init failed: ${msg}`)
+  }
 
   // Initialize archive service singleton
   initArchiveService(daos.archive, daos.execution, db, getDomainEventBus())

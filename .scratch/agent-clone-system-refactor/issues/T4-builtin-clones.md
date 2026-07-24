@@ -1,6 +1,6 @@
 # T4: Built-in Clone Definitions + Auto-Initialization
 
-**Status:** pending
+**Status:** done ✓
 **Depends on:** T1, T2, T3
 **Blocks:** T5, T6
 
