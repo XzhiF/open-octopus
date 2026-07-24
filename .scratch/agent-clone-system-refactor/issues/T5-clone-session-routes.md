@@ -1,6 +1,6 @@
 # T5: Clone Session API Routes (Direct Entry)
 
-**Status:** pending
+**Status:** done ✓
 **Depends on:** T1, T2, T3, T4
 **Blocks:** T8
 

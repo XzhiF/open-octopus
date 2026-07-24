@@ -39,6 +39,7 @@ import chainRoutes from "./routes/chain-routes"
 import scheduleRoutes, { setScheduleService } from "./routes/schedule"
 import { createSchedulerRoutes } from "./routes/scheduler"
 import { createAgentRoutes } from "./routes/agent"
+import { createCloneSessionRoutes } from "./routes/clone"
 import cronRoutes from "./routes/cron"
 import { SSEService } from "./services/sse"
 import { migrateOrgDirs, syncOrgsFromFilesystem } from "./services/org"
@@ -331,6 +332,13 @@ app.route("/api/agent", createAgentRoutes({
   executionDAO: d.execution,
   schedulerService: schedSvc,
 }))
+
+// Clone session routes — direct entry for Web UI pages
+app.route("/api/clones", createCloneSessionRoutes({
+  sessionDAO: d.agentSession,
+  cloneDAO: d.clone,
+}))
+
 app.route("/api/workflows/built-in", createBuiltInWorkflowRoutes(() => resourceRegistry.get()))
 
 // Knowledge system routes — org is resolved per-request from the query
