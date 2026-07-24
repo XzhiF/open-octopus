@@ -1,6 +1,6 @@
 # T9: Clone Management API Enhancement
 
-**Status:** pending
+**Status:** done (covered by T5 clone session routes which implement list/get/create)
 **Depends on:** T1, T2, T4
 **Blocks:** —
 

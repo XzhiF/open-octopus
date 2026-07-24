@@ -1,6 +1,6 @@
 # T8: Frontend API Path Switch (Workspace/Scheduler Chat → Clone API)
 
-**Status:** pending
+**Status:** deferred (out of scope — web-app excluded from this spec iteration)
 **Depends on:** T5
 **Blocks:** —
 
