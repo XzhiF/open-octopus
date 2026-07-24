@@ -1,6 +1,6 @@
 # T4: Frontend — Clone List UI (System/User Split)
 
-## Status: pending
+## Status: done
 
 ## Summary
 

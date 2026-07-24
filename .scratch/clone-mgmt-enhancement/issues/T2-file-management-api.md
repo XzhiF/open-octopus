@@ -1,6 +1,6 @@
 # T2: Clone File Management API
 
-## Status: pending
+## Status: done
 
 ## Summary
 

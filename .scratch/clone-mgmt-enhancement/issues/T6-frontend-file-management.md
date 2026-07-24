@@ -1,6 +1,6 @@
 # T6: Frontend — File Management Panel
 
-## Status: pending
+## Status: done
 
 ## Summary
 

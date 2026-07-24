@@ -1,6 +1,6 @@
 # T5: Frontend — Creation Wizard (2-Step + Dynamic Skills)
 
-## Status: pending
+## Status: done
 
 ## Summary
 

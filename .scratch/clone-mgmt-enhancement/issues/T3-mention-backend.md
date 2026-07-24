@@ -1,6 +1,6 @@
 # T3: @@mention Backend — delegate_to in Agent Chat
 
-## Status: pending
+## Status: done
 
 ## Summary
 

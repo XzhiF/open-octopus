@@ -1,6 +1,6 @@
 # T7: Frontend — @@mention Autocomplete + Delegation
 
-## Status: pending
+## Status: done
 
 ## Summary
 
