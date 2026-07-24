@@ -1,6 +1,6 @@
 # T7: OrchestratorService Decomposition — Redistribute Methods, Delete Class
 
-**Status:** pending
+**Status:** done ✓
 **Depends on:** T5, T6
 **Blocks:** T9
 

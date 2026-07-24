@@ -1,6 +1,118 @@
 import type { ResourceManager } from '@octopus/shared'
 import type { ResourceAuditCaller } from '@octopus/shared'
-import { getOrchestratorService } from './agent/orchestrator-service'
+import fs from 'fs'
+import path from 'path'
+import os from 'os'
+import { getProvider } from '@octopus/providers'
+import { getAgentDir } from './agent/paths'
+
+/**
+ * Execute a task via AI agent with skill guidance.
+ * Standalone function extracted from OrchestratorService.
+ */
+async function executeTaskWithAgent(
+  task: string,
+  skills: string[] = [],
+  context?: Record<string, unknown>,
+): Promise<string> {
+  const provider = getProvider('claude')
+  const agentDir = getAgentDir()
+
+  const skillSegments = skills.map((skillName) => {
+    const skillPath = path.join(agentDir, 'skills', skillName, 'SKILL.md')
+    if (fs.existsSync(skillPath)) {
+      return `# Skill: ${skillName}\n\n${fs.readFileSync(skillPath, 'utf-8')}`
+    }
+    return null
+  }).filter(Boolean)
+
+  const contextStr = context ? `\n\n## Context\n\n\`\`\`json\n${JSON.stringify(context, null, 2)}\n\`\`\`` : ''
+
+  const systemPrompt = [
+    '你是 Octopus 平台的资源管理 Agent。你的职责是执行资源操作任务（安装、同步、预配等）。',
+    '严格按照 Skill 指导执行操作，确保每一步都有审计记录。',
+    '如果遇到异常，智能处理并报告结果。',
+    '',
+    ...skillSegments,
+  ].join('\n\n')
+
+  const prompt = `${task}${contextStr}`
+  const cwd = path.join(os.homedir(), '.octopus', 'resources')
+
+  const chunks: string[] = []
+  try {
+    const stream = provider.sendQuery(prompt, cwd, undefined, {
+      systemPrompt: systemPrompt as any,
+      skills,
+    })
+    for await (const chunk of stream) {
+      if (chunk.type === 'text_delta') chunks.push(chunk.content)
+      else if (chunk.type === 'error') throw new Error(`Agent error: ${chunk.message}`)
+    }
+  } catch (err: any) {
+    throw new Error(`executeTask failed: ${err.message}`)
+  }
+
+  return chunks.join('')
+}
+
+/**
+ * Select agents from ResourceManager by topic relevance, install to workspace.
+ * Standalone function extracted from OrchestratorService.
+ */
+export async function selectAndInstallAgents(
+  topic: string,
+  maxExperts: number,
+  workspaceDir: string,
+): Promise<Array<{ role: string; agent_file: string; description: string }>> {
+  const { getResourceRegistry } = await import('./resource-registry')
+  const manager = getResourceRegistry().get()
+  const allAgents = manager.list({ type: 'agent', installed: true })
+
+  if (!allAgents.resources || allAgents.resources.length === 0) return []
+
+  const candidates = allAgents.resources.map(a => ({
+    name: a.name, description: a.description || '', group: a.group || '',
+  }))
+
+  const maxCandidates = 50
+  const prompt = `You are an expert selection agent. Given a topic, select the most relevant experts.
+
+Topic: ${topic}
+
+Candidates (${candidates.length} total):
+${candidates.slice(0, maxCandidates).map((c, i) => `${i + 1}. ${c.name} — ${c.description}`).join('\n')}
+
+Select exactly ${maxExperts} experts. Respond with ONLY a JSON array:
+[{"name": "agent-name", "reason": "why this expert is relevant"}]`
+
+  let selected: Array<{ name: string; reason: string }> = []
+  try {
+    const provider = getProvider('claude')
+    const chunks: string[] = []
+    const stream = provider.sendQuery(prompt, process.cwd(), undefined, {
+      systemPrompt: 'You are an expert selection agent. Respond with only a JSON array.',
+    })
+    for await (const chunk of stream) {
+      if (chunk.type === 'text_delta') chunks.push(chunk.content)
+    }
+    const response = chunks.join('')
+    const cleaned = response.replace(/```json?\n?/g, '').replace(/```/g, '').trim()
+    const parsed = JSON.parse(cleaned)
+    if (Array.isArray(parsed)) selected = parsed.slice(0, maxExperts)
+  } catch {
+    selected = candidates.slice(0, maxExperts).map(c => ({ name: c.name, reason: c.description }))
+  }
+
+  const { ResourceProvisioner } = await import('@octopus/shared')
+  const provisioner = new ResourceProvisioner(manager)
+  const missing = selected.map(s => ({ type: 'agent' as const, name: s.name }))
+  await provisioner.provision(missing, workspaceDir)
+
+  return selected.map(s => ({
+    role: s.name, agent_file: `.claude/agents/${s.name}.md`, description: s.reason,
+  }))
+}
 
 /**
  * ResourceAgentService — 所有资源操作统一委托 Orchestrator Agent。
@@ -61,9 +173,8 @@ export class ResourceAgentService {
         `最后报告安装结果（installed/skipped/errors 数量）。`
 
     // ponytail: orchestrator org is for workspace scanning, not resources. "default" is fine.
-    const orchestrator = getOrchestratorService("default")
     try {
-      const agentLog = await orchestrator.executeTask(
+      const agentLog = await executeTaskWithAgent(
         task,
         ['octo-resource-manager'],
         context,
@@ -115,10 +226,9 @@ export class ResourceAgentService {
       `6. 检测删除 — 标记为 orphan，不删除文件\n` +
       `7. 报告结果（updated/added/removed/unchanged 数量）`
 
-    // ponytail: orchestrator org is for workspace scanning, not resources. "default" is fine.
-    const orchestrator = getOrchestratorService("default")
+    // ponytail: resource operations don't need org context
     try {
-      const agentLog = await orchestrator.executeTask(
+      const agentLog = await executeTaskWithAgent(
         task,
         ['octo-source-analyzer', 'octo-resource-manager'],
         context,

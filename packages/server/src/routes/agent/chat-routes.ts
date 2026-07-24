@@ -12,10 +12,8 @@ import fs from 'fs'
 import path from 'path'
 import { createAgentError } from './middleware'
 import { SystemPromptAssembler } from '../../services/agent/system-prompt-assembler'
-import { getOrchestratorService } from '../../services/agent/orchestrator-service'
 import { getNotificationService } from '../../services/agent/notification-service'
 import { getSessionCompressService } from '../../services/agent/session-compress-service'
-import { getWorkspaceLifecycleService } from '../../services/agent/workspace-lifecycle'
 import { getAgentService, registerActiveStream, unregisterActiveStream } from '../../services/agent/agent-service'
 import { getAgentDir, getDailyMemoryDir, getExperiencesDir, getDebugTracesDir } from '../../services/agent/paths'
 import type { AgentSessionDAO, SafetyDAO, ScheduleConfigDAO } from '../../db/dao'
@@ -80,48 +78,17 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
         // Step 1: Auto-compress long sessions
         await autoCompressSession(id, org, stream)
 
-        // Step 2: Run orchestrator
-        const { orchestrationResult, orchestrationFullResult } = await runOrchestration(
-          body.message!, id, stream, org,
-        )
-
-        // L2: Inject workspace rules if workflow was matched
-        if (orchestrationFullResult?.workflow && !aborted) {
-          try {
-            const lifecycleService = getWorkspaceLifecycleService(org)
-            const workspaces = lifecycleService.listWorkspaces()
-            if (workspaces.length > 0) {
-              const targetWorkspace = workspaces[0]
-              const rules = lifecycleService.buildRulesFromContext(
-                orchestrationFullResult.workflow.workflow_name,
-                targetWorkspace.name,
-              )
-              lifecycleService.injectWorkspaceRules(targetWorkspace.path, rules)
-            }
-          } catch { /* non-fatal */ }
-        }
-
         if (aborted) {
           await stream.writeSSE({ event: 'done', data: JSON.stringify({ session_id: id, aborted: true }) })
           return
         }
 
-        // Step 3: Try Claude SDK integration
-        const llmResult = await tryClaudeSDK(body.message!, systemPrompt, stream, id, org, sessionDao, orchestrationResult, orchestrationFullResult)
+        // Step 2: Try Claude SDK integration (orchestration now handled by Main Agent route)
+        const llmResult = await tryClaudeSDK(body.message!, systemPrompt, stream, id, org, sessionDao, undefined, undefined)
 
-        // Step 4: Fallback if Claude SDK unavailable
+        // Step 3: Fallback if Claude SDK unavailable
         if (!llmResult.generated) {
-          await sendFallbackResponse(body.message!, stream, id, org, sessionDao, orchestrationResult)
-        }
-
-        // Step 5: Send hermes notification
-        if (orchestrationResult) {
-          try {
-            const notifyService = getNotificationService()
-            await notifyService.sendNotification(org, {
-              type: 'general', title: 'Agent 对话', body: orchestrationResult, priority: 'low',
-            })
-          } catch { /* non-fatal */ }
+          await sendFallbackResponse(body.message!, stream, id, org, sessionDao, undefined)
         }
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err)
@@ -187,106 +154,6 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
         })
       }
     } catch { /* non-fatal */ }
-  }
-
-  async function runOrchestration(
-    message: string, sessionId: string, stream: any, org: string,
-  ): Promise<{ orchestrationResult: string | undefined; orchestrationFullResult: any }> {
-    let orchestrationResult: string | undefined
-    let orchestrationFullResult: any
-
-    try {
-      const orchestrator = getOrchestratorService(org)
-      const result = await orchestrator.orchestrate(message, sessionId, (event) => {
-        stream.writeSSE({ event: 'orchestration_event', data: JSON.stringify(event) }).catch(() => {})
-      })
-      orchestrationResult = result.summary
-      orchestrationFullResult = { intent: result.intent, workflow: result.workflow }
-
-      // Security keyword detection (TC-049)
-      const securityKeywords = /安全|security|权限|permission|密码|password|密钥|secret|防火墙|firewall|加密|encrypt|漏洞|vuln/i
-      const modifyKeywords = /修改|改|调整|变更|change|modify|update|remove|删除|绕过|bypass/i
-      if (securityKeywords.test(message) && modifyKeywords.test(message)) {
-        try {
-          const confirmResult = safetyDAO.insertSafetyEventFull({
-            type: 'evolution_major', actor: `session:${sessionId}`,
-            operation: `Security keyword detected in modification: ${message.slice(0, 100)}`,
-            decision: 'pending', org, timestamp: new Date().toISOString(),
-          })
-          await stream.writeSSE({
-            event: 'confirm',
-            data: JSON.stringify({
-              type: 'evolution_major', event_id: Number(confirmResult.lastInsertRowid),
-              detail: '安全关键词命中：此修改涉及安全相关内容，需要用户确认后才能执行',
-              summary: '进化变更涉及安全关键词，需要确认',
-            }),
-          })
-        } catch { /* non-fatal */ }
-      }
-
-      // Workflow match → emit tool_call (TC-008)
-      if (result.intent.intent === 'single_task') {
-        const workflowName = result.workflow?.workflow_name ?? 'prd-impl'
-        await stream.writeSSE({
-          event: 'tool_call',
-          data: JSON.stringify({
-            type: 'start', tool_name: 'workflow_run', name: workflowName,
-            workflow_name: workflowName,
-            result: { workflow: workflowName, score: result.workflow?.score ?? 0.7, reason: result.workflow ? '工作流匹配' : '默认工作流分配' },
-          }),
-        })
-      }
-
-      // Novel task → confirm (TC-011)
-      const isNovelTask = (result.intent.intent === 'general_chat' || result.intent.intent === 'single_task') &&
-        !result.workflow && /任务|task|全新|自定义|custom|novel|写|生成|创建/.test(message)
-      if (isNovelTask) {
-        try {
-          const generatedWorkflow = `dynamic-${sessionId.slice(0, 8)}`
-          const confirmResult = safetyDAO.insertSafetyEventFull({
-            type: 'workflow_generated', actor: `session:${sessionId}`,
-            operation: `Dynamic workflow generated: ${generatedWorkflow}`,
-            decision: 'pending', org, timestamp: new Date().toISOString(),
-          })
-          await stream.writeSSE({
-            event: 'confirm',
-            data: JSON.stringify({
-              type: 'workflow_generated', event_id: Number(confirmResult.lastInsertRowid),
-              detail: `动态生成工作流: ${generatedWorkflow}`,
-              summary: `为任务 "${message.slice(0, 50)}" 生成工作流`,
-            }),
-          })
-        } catch { /* non-fatal */ }
-      }
-
-      // Scheduled task → emit tool_call (TC-041)
-      if (result.intent.intent === 'scheduled_task') {
-        const scheduleHour = result.inputs?.schedule_hour ?? '9'
-        const cronExpr = `0 ${scheduleHour} * * *`
-        try {
-          const now2 = new Date().toISOString()
-          const scheduleId = crypto.randomUUID()
-          scheduleConfigDAO.insertAgentSchedule(scheduleId, org, `scheduled-${sessionId.slice(0, 8)}`, cronExpr, 'workflow', '{}', now2)
-          await stream.writeSSE({
-            event: 'tool_call',
-            data: JSON.stringify({
-              type: 'start', tool_name: 'scheduler_create', name: 'scheduler_create',
-              result: { id: scheduleId, cron: cronExpr, task_description: message, timezone: 'Asia/Shanghai' },
-            }),
-          })
-        } catch {
-          await stream.writeSSE({
-            event: 'tool_call',
-            data: JSON.stringify({
-              type: 'start', tool_name: 'scheduler_create', name: 'scheduler_create',
-              result: { cron: cronExpr, task_description: message },
-            }),
-          })
-        }
-      }
-    } catch { /* orchestration failure non-fatal */ }
-
-    return { orchestrationResult, orchestrationFullResult }
   }
 
   async function tryClaudeSDK(

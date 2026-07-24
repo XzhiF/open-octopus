@@ -158,11 +158,11 @@ export function createArchiveRoutes(
       const emitter = createStepEmitter(stream)
 
       try {
-        const { getOrchestratorService } = await import("../services/agent/orchestrator-service")
+        const { getArchiveAnalysisService } = await import("../services/archive/archive-analysis-service")
         const org = c.req.query("org") || "default"
-        const orchestratorService = getOrchestratorService(org)
+        const analysisService = getArchiveAnalysisService(org)
 
-        const preview = await orchestratorService.analyzeWorkspaceForArchive(id, emitter)
+        const preview = await analysisService.analyzeWorkspaceForArchive(id, emitter)
 
         await stream.writeSSE({
           event: "preview",
