@@ -68,10 +68,18 @@ export interface AgentSSEConnection {
   abort: () => void
 }
 
-export function chatStream(id: string, message: string, opts?: { debug?: boolean }): AgentSSEConnection {
+export function chatStream(id: string, message: string, opts?: { debug?: boolean; delegate_to?: string }): AgentSSEConnection {
   const controller = new AbortController()
-  const url = `${BASE()}/sessions/${id}/chat`
-  const body = JSON.stringify({ message, debug: opts?.debug })
+  // When delegate_to is present, use main agent chat endpoint
+  const url = opts?.delegate_to
+    ? `${BASE()}/chat`
+    : `${BASE()}/sessions/${id}/chat`
+  const body = JSON.stringify({
+    message,
+    debug: opts?.debug,
+    session_id: id,
+    delegate_to: opts?.delegate_to,
+  })
 
   const streamPromise = fetch(url, {
     method: 'POST',
@@ -135,15 +143,48 @@ export function triggerArchive(date?: string) {
   })
 }
 
-// Clones
+// Clones (unified API at /api/clones)
+const CLONE_BASE = () => `${getServerUrl()}/api/clones`
+
+async function cloneRequest<T>(url: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(`${CLONE_BASE()}${url}`, {
+    ...init,
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': AUTH_HEADER,
+      ...init?.headers,
+    },
+  })
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: { code: 'UNKNOWN', message: res.statusText } }))
+    const err = new Error(body.error?.message ?? res.statusText) as Error & { code?: string; status?: number }
+    err.code = body.error?.code
+    err.status = res.status
+    throw err
+  }
+  if (res.status === 204 || res.headers.get('content-length') === '0') return undefined as T
+  return res.json() as Promise<T>
+}
+
 export function createClone(data: CreateCloneRequest) {
-  return request<CloneInfo>('/clones', { method: 'POST', body: JSON.stringify(data) })
+  return cloneRequest<CloneInfo>('', { method: 'POST', body: JSON.stringify(data) })
 }
 export function listClones() {
-  return request<{ clones: CloneInfo[] }>('/clones')
+  return cloneRequest<{ clones: CloneInfo[]; total: number }>('')
 }
-export function deleteClone(name: string, keepWorkspace = true) {
-  return request<{ ok: boolean; workspace_kept: boolean }>(`/clones/${name}?keep_workspace=${keepWorkspace}`, { method: 'DELETE' })
+export function getClone(name: string) {
+  return cloneRequest<{ clone: CloneInfo }>(`/${name}`)
+}
+export function deleteClone(name: string) {
+  return cloneRequest<{ ok: true }>(`/${name}`, { method: 'DELETE' })
+}
+export function getCloneFile(name: string, filePath: string) {
+  return cloneRequest<{ content: string; path: string; size: number }>(`/${name}/files/${encodeURIComponent(filePath)}`)
+}
+export function updateCloneFile(name: string, filePath: string, content: string) {
+  return cloneRequest<{ ok: true }>(`/${name}/files/${encodeURIComponent(filePath)}`, {
+    method: 'PUT', body: JSON.stringify({ content }),
+  })
 }
 export function mergeClone(name: string) {
   return request<{ ok: boolean; archived_lessons: number; clone_removed: boolean }>(`/clones/${name}/merge`, { method: 'POST' })

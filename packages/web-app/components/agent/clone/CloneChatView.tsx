@@ -110,10 +110,10 @@ export function CloneChatView({ clone, onBack }: CloneChatViewProps) {
           <div className="mt-2 px-1">
             <div className="flex items-center gap-2">
               <div className="h-2 w-2 rounded-full bg-agent-primary" />
-              <span className="text-sm font-medium truncate">{clone.name}</span>
+              <span className="text-sm font-medium truncate">{clone.display_name || clone.name}</span>
             </div>
             <p className="text-xs text-muted-foreground mt-0.5 truncate">
-              {clone.persona_summary || '分身对话'}
+              {clone.persona?.slice(0, 60) || '分身对话'}
             </p>
           </div>
         </div>
@@ -184,7 +184,7 @@ export function CloneChatView({ clone, onBack }: CloneChatViewProps) {
               <PanelLeftOpen className="h-5 w-5" />
             </Button>
             <span className="ml-2 text-sm font-medium truncate">
-              {clone.name} — {sessions.find(s => s.id === activeSessionId)?.title ?? '对话'}
+              {clone.display_name || clone.name} — {sessions.find(s => s.id === activeSessionId)?.title ?? '对话'}
             </span>
           </div>
           <div className="hidden md:flex items-center gap-2 text-xs text-muted-foreground">
@@ -209,6 +209,7 @@ export function CloneChatView({ clone, onBack }: CloneChatViewProps) {
           onStop={stopGenerate}
           onConfirm={handleConfirm}
           hasSession={!!activeSessionId}
+          currentCloneName={clone.name}
         />
       </div>
 

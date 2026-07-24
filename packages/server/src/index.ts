@@ -337,7 +337,6 @@ app.route("/api/agent", createAgentRoutes({
 // Clone session routes — direct entry for Web UI pages
 app.route("/api/clones", createCloneSessionRoutes({
   sessionDAO: d.agentSession,
-  cloneDAO: d.clone,
 }))
 
 app.route("/api/workflows/built-in", createBuiltInWorkflowRoutes(() => resourceRegistry.get()))

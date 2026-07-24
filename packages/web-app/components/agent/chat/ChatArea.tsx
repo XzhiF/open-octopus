@@ -5,6 +5,7 @@ import { Send, Square, MessageSquare } from 'lucide-react'
 import type { AgentMessage, ToolCallRecord } from '@/lib/agent/types'
 import { AutoResizeTextarea } from '@/components/ui/auto-resize-textarea'
 import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
 import { cn } from '@/lib/utils'
 import { ChatBubble } from './ChatBubble'
 import { ToolCallCard } from './ToolCallCard'
@@ -13,6 +14,7 @@ import { DangerConfirmCard } from './DangerConfirmCard'
 import { EvolutionConfirmCard } from './EvolutionConfirmCard'
 import { AgentEmptyState } from '../shared/AgentEmptyState'
 import { ReviewCard } from '../knowledge/cards/ReviewCard'
+import { MentionAutocomplete, parseMention } from './MentionAutocomplete'
 
 interface ChatAreaProps {
   messages: AgentMessage[]
@@ -29,10 +31,14 @@ interface ChatAreaProps {
   } | null
   error: string | null
   statusMessage: string
-  onSend: (message: string) => void
+  onSend: (message: string, opts?: { delegate_to?: string }) => void
   onStop: () => void
   onConfirm: (eventId: string, decision: 'accept' | 'reject') => void
   hasSession: boolean
+  /** Current clone name for self-reference detection in @@mention */
+  currentCloneName?: string | null
+  /** Source badge for delegation responses */
+  streamSource?: string | null
   reviewItems?: Array<{
     id: string
     type: 'rule'
@@ -49,7 +55,7 @@ interface ChatAreaProps {
 
 export function ChatArea({
   messages, streaming, streamContent, streamThinking, isThinking, toolCalls, pendingConfirm,
-  error, statusMessage, onSend, onStop, onConfirm, hasSession,
+  error, statusMessage, onSend, onStop, onConfirm, hasSession, currentCloneName, streamSource,
   reviewItems, onReviewAction,
 }: ChatAreaProps) {
   const [input, setInput] = useState('')
@@ -63,8 +69,28 @@ export function ChatArea({
 
   const handleSend = () => {
     if (!input.trim() || streaming) return
-    onSend(input.trim())
+    const text = input.trim()
+
+    // Parse @@mention
+    const mention = parseMention(text)
+    if (mention) {
+      // Self-reference check
+      if (mention.delegate_to === currentCloneName) {
+        // Self-reference: send as normal message
+        onSend(text)
+      } else {
+        // Delegation: send clean message with delegate_to
+        onSend(mention.cleanMessage, { delegate_to: mention.delegate_to })
+      }
+    } else {
+      onSend(text)
+    }
     setInput('')
+  }
+
+  const handleMentionSelect = (cloneName: string) => {
+    // Replace @@partial with @@clone-name
+    setInput(prev => prev.replace(/@@[a-z0-9-]*$/, `@@${cloneName} `))
   }
 
   return (
@@ -106,18 +132,27 @@ export function ChatArea({
 
             {/* Streaming: text response last */}
             {streaming && streamContent && (
-              <ChatBubble
-                message={{
-                  id: 'streaming',
-                  session_id: '',
-                  role: 'assistant',
-                  content: streamContent,
-                  created_at: new Date().toISOString(),
-                  is_summary: false,
-                  is_compressed: false,
-                  is_edited: false,
-                }}
-              />
+              <div>
+                {streamSource && (
+                  <div className="flex items-center gap-1.5 mb-1">
+                    <Badge variant="secondary" className="text-[10px] px-1.5 py-0 h-4 bg-agent-primary/10 text-agent-primary border-agent-primary/20">
+                      {streamSource}
+                    </Badge>
+                  </div>
+                )}
+                <ChatBubble
+                  message={{
+                    id: 'streaming',
+                    session_id: '',
+                    role: 'assistant',
+                    content: streamContent,
+                    created_at: new Date().toISOString(),
+                    is_summary: false,
+                    is_compressed: false,
+                    is_edited: false,
+                  }}
+                />
+              </div>
             )}
 
             {/* Status message */}
@@ -172,7 +207,15 @@ export function ChatArea({
 
       {/* Input area — always visible */}
       <div className="border-t border-agent-divider bg-agent-surface-raised p-4">
-        <div className="max-w-3xl mx-auto">
+        <div className="max-w-3xl mx-auto relative">
+          {/* @@mention autocomplete */}
+          <MentionAutocomplete
+            inputValue={input}
+            onSelect={handleMentionSelect}
+            textareaRef={null}
+            currentCloneName={currentCloneName}
+          />
+
           <div className="flex items-end gap-2">
             <AutoResizeTextarea
               value={input}
@@ -183,7 +226,7 @@ export function ChatArea({
                   handleSend()
                 }
               }}
-              placeholder={streaming ? 'Agent 正在回复中...' : '输入消息，Enter 发送，Shift+Enter 换行'}
+              placeholder={streaming ? 'Agent 正在回复中...' : '输入消息，@@ 委托分身，Enter 发送'}
               disabled={streaming || !!pendingConfirm}
               className="min-h-[44px] max-h-[200px] resize-none rounded-lg border-agent-divider bg-agent-surface-inset focus-visible:ring-agent-primary"
             />
@@ -212,3 +255,4 @@ export function ChatArea({
     </div>
   )
 }
+

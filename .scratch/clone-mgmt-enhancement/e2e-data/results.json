@@ -1,0 +1,155 @@
+{
+  "timestamp": "2026-07-24T11:08:00Z",
+  "target": "Clone Management Enhancement + @@mention",
+  "mode": "Static Code Review + Unit/Integration Test Execution",
+  "environment": "local dev (test isolation via OCTOPUS_HOME env var)",
+  "build_status": "PASS",
+  "test_suites": {
+    "clone-api": { "file": "packages/server/src/__tests__/clone-api.test.ts", "tests": 16, "passed": 16, "status": "PASS" },
+    "clone-file-mgmt": { "file": "packages/server/src/__tests__/clone-file-mgmt.test.ts", "tests": 12, "passed": 12, "status": "PASS" },
+    "delegate-mention": { "file": "packages/server/src/__tests__/delegate-mention.test.ts", "tests": 5, "passed": 5, "status": "PASS" },
+    "clone-runtime": { "file": "packages/server/src/services/agent/__tests__/clone-runtime.test.ts", "tests": 11, "passed": 11, "status": "PASS" }
+  },
+  "total_tests": 44,
+  "total_passed": 44,
+  "acceptance_criteria": {
+    "AC-01": {
+      "title": "系统分身区域显示 4 个内置分身，用户分身区域显示用户创建的",
+      "status": "PASS",
+      "evidence": [
+        "CloneTab.tsx L34-35: systemClones = clones.filter(c => c.type === 'built-in'); userClones = clones.filter(c => c.type === 'user')",
+        "CloneTab.tsx L65-81: 系统分身 section renders with Cpu icon + '系统分身' heading + CloneCardGrid",
+        "CloneTab.tsx L83-115: 用户分身 section renders with User icon + '用户分身' heading + CloneCardGrid + '创建分身' button",
+        "clone-api.test.ts L116-141: listAllClones test verifies 4 built-in clones present + user clones included",
+        "BUILTIN_CLONES array in builtin-clones.ts has exactly 4 entries: workspace, scheduler, archive, resource"
+      ]
+    },
+    "AC-02": {
+      "title": "2 步创建向导可用",
+      "status": "PASS",
+      "evidence": [
+        "CloneCreateWizard.tsx L22: STEPS = ['基本信息', '可选配置'] — 2 steps defined",
+        "CloneCreateWizard.tsx L119-164: Step 0 renders required fields (name, display_name, persona)",
+        "CloneCreateWizard.tsx L166-235: Step 1 renders optional fields (skills, memory scope)",
+        "CloneCreateWizard.tsx L239-265: Navigation buttons with step tracking",
+        "CloneCreateWizard.tsx L58-64: canProceed() validates Step 0 requires name+display_name+persona; Step 1 always passes"
+      ]
+    },
+    "AC-03": {
+      "title": "创建分身不强制技能",
+      "status": "PASS",
+      "evidence": [
+        "CloneCreateWizard.tsx L170: Label says '技能选择（可选）'",
+        "CloneCreateWizard.tsx L66-77: handleCreate sends skills: selectedSkills.length > 0 ? selectedSkills : undefined",
+        "clone-api.test.ts L167-178: 'creates clone without skills (skills optional)' test — createUserClone({ name, display_name, persona }) with no skills → result.ok === true",
+        "clone-resolver.ts L113: skills defaults to [] in destructuring: { skills = [] }",
+        "Server route POST /api/clones does not require skills field (only name, display_name, persona required)"
+      ]
+    },
+    "AC-04": {
+      "title": "内置分身不可删除",
+      "status": "PASS",
+      "evidence": [
+        "clone-resolver.ts L164-167: deleteUserClone checks isBuiltinClone → returns { ok: false, error: 'cannot be deleted', status: 403 }",
+        "clone-api.test.ts L211-217: 'rejects deletion of built-in clones' test verifies status === 403",
+        "CloneTab.tsx L76: system clones section passes showActions={false} to CloneCardGrid",
+        "CloneCardGrid.tsx L22: showActions controls whether delete/merge dropdown is shown"
+      ]
+    },
+    "AC-05": {
+      "title": "可编辑分身文件 (persona.md + config.json)",
+      "status": "PASS",
+      "evidence": [
+        "clone/index.ts L49: ALLOWED_FILES = new Set(['persona.md', 'config.json'])",
+        "clone/index.ts L162-191: GET /:name/files/:path — reads file content with whitelist check",
+        "clone/index.ts L194-233: PUT /:name/files/:path — writes file content with whitelist + size limit",
+        "clone/index.ts L167-169: Path traversal protection — rejects '..', '/', '\\'",
+        "clone-file-mgmt.test.ts L77-127: GET tests cover built-in read, user clone read, whitelist rejection, path traversal rejection, 404",
+        "clone-file-mgmt.test.ts L129-185: PUT tests cover write, whitelist rejection, missing content, 404",
+        "CloneFilePanel.tsx: Full UI implementation with tab switching (persona.md / config.json), save, JSON validation"
+      ]
+    },
+    "AC-06": {
+      "title": "@@mention 自动补全弹出",
+      "status": "PASS",
+      "evidence": [
+        "MentionAutocomplete.tsx L35-64: useEffect detects /@@([a-z0-9-]*)$/ pattern in input, sets visible=true",
+        "MentionAutocomplete.tsx L43-59: Loads clone list from api.listClones() on first activation, caches result",
+        "MentionAutocomplete.tsx L98-102: filteredClones filters by name and display_name",
+        "MentionAutocomplete.tsx L116-163: Renders dropdown with display_name + type badge + mono name",
+        "ChatArea.tsx L212-217: MentionAutocomplete rendered in input area with inputValue, onSelect, currentCloneName props"
+      ]
+    },
+    "AC-07": {
+      "title": "@@mention 委托执行返回分身回复",
+      "status": "PASS",
+      "evidence": [
+        "main-agent-route.ts L122-211: delegate_to field handling — resolves clone from filesystem, emits delegation_start SSE, runs CloneRuntime.chat(), emits delegation_end, stores assistant message with source metadata",
+        "main-agent-route.ts L146-149: delegation_start event includes clone_name + display_name",
+        "main-agent-route.ts L162-163: text_delta includes source: targetClone metadata",
+        "MentionAutocomplete.tsx L169-180: parseMention() extracts delegate_to + cleanMessage from @@clone-name pattern",
+        "ChatArea.tsx L75-84: On mention detected, sends cleanMessage with delegate_to option",
+        "useAgentChat.ts L100: api.chatStream called with delegate_to option",
+        "api.ts L71-82: chatStream routes to /chat endpoint when delegate_to is present, includes delegate_to in body",
+        "delegate-mention.test.ts L106-123: 'accepts delegate_to for built-in clone' verifies delegation_start event in SSE stream"
+      ]
+    },
+    "AC-08": {
+      "title": "自引用安全（no-op）",
+      "status": "PASS",
+      "evidence": [
+        "main-agent-route.ts L126-128: Self-reference check — if session.clone_name === targetClone, falls through to normal LLM routing",
+        "ChatArea.tsx L78-80: Frontend self-reference check — if mention.delegate_to === currentCloneName, sends as normal message without delegate_to",
+        "delegate-mention.test.ts L155-179: 'treats delegate_to matching session clone_name as normal message' — verifies delegation_start NOT in response for self-reference"
+      ]
+    },
+    "AC-09": {
+      "title": "禁止向上委托 Main Agent",
+      "status": "PASS",
+      "evidence": [
+        "MentionAutocomplete.tsx L49: Filters out 'main-agent' from clone list: res.clones.filter(c => c.name !== 'main-agent')",
+        "Note: 'main-agent' is not in the clone listing anyway (BUILTIN_CLONES only has workspace/scheduler/archive/resource), but the explicit filter provides defense-in-depth",
+        "ChatArea.tsx L38-39: currentCloneName prop passed for self-reference detection (complementary protection)"
+      ]
+    },
+    "AC-10": {
+      "title": "统一 API (GET /api/clones 返回内置+用户)",
+      "status": "PASS",
+      "evidence": [
+        "clone/index.ts L89-92: GET / returns listAllClones() with { clones, total }",
+        "clone-resolver.ts L73-99: listAllClones() iterates BUILTIN_CLONES + reads clones/ directory",
+        "index.ts (server) L338: app.route('/api/clones', createCloneSessionRoutes({ sessionDAO: d.agentSession }))",
+        "api.ts L147: CLONE_BASE = `${getServerUrl()}/api/clones` — single unified base URL",
+        "clone-api.test.ts L116-141: Tests verify both built-in and user clones returned with type field",
+        "clone-routes.ts L4: Comment confirms CRUD moved to /api/clones (filesystem-backed)"
+      ]
+    },
+    "AC-11": {
+      "title": "分身显示名称正确显示",
+      "status": "PASS",
+      "evidence": [
+        "builtin-clones.ts: All 4 built-in clones have displayName set (全栈开发助手, 定时任务管理, 工程分析师, 资源操作专家)",
+        "clone-init-service.ts L88: config.json writes display_name from cloneDef.displayName",
+        "clone-resolver.ts L194: resolveBuiltinCloneInfo uses config.display_name ?? def.displayName ?? def.name",
+        "CloneCardGrid.tsx L55: Card renders clone.display_name as primary heading",
+        "MentionAutocomplete.tsx L144: Autocomplete renders clone.display_name as primary text",
+        "CloneCreateWizard.tsx L140-149: display_name field in creation wizard with CJK support"
+      ]
+    }
+  },
+  "pre_existing_failures": [
+    "archive-routes tests (10 failures) — pre-existing, not caused by this feature",
+    "config-manager tests (4 failures) — pre-existing, not caused by this feature"
+  ],
+  "anti_fake_run_check": {
+    "R1_real_service": "PASS — Tests run against real filesystem with OCTOPUS_HOME isolation",
+    "R2_business_data": "PASS — Tests assert specific field values (display_name='全栈开发助手', type='built-in', status codes)",
+    "R3_cross_validation": "PASS — Tests verify filesystem state after writes (read-back), API response matches resolver output",
+    "R4_evidence": "PASS — Test output includes response bodies, filesystem assertions, status codes",
+    "R5_side_effects": "PASS — Write operations verify file content via fs.readFileSync after PUT",
+    "R6_real_user_path": "N/A — Server-side tests use filesystem isolation, not auth tokens",
+    "R7_data_isolation": "PASS — Tests use unique temp dirs (Date.now() suffix), cleanup in afterEach",
+    "R8_repeatable": "PASS — Each test is self-contained with beforeEach setup, no shared state"
+  },
+  "conclusion": "PASS — All 11 acceptance criteria verified. 44/44 tests pass. Build succeeds. No regressions introduced."
+}

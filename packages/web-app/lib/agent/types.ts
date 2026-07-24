@@ -90,24 +90,24 @@ export interface CloneWorkspaceRef {
 
 export interface CloneInfo {
   name: string
-  status: CloneStatus
-  workspace_ref: CloneWorkspaceRef
-  persona_summary: string
-  last_active_at: string
-  created_at: string
-  workspace_exists: boolean
+  display_name: string
+  type: 'built-in' | 'user'
+  persona: string
+  skills: string[]
+  memory_scope: 'shared' | 'isolated'
+  workspace?: { name: string; path: string }
+  status: 'active' | 'idle' | 'executing'
+  created_at?: string
+  last_active?: string
 }
 
 export interface CreateCloneRequest {
   name: string
+  display_name: string
   persona: string
-  skills: string[]
-  workspace_config: {
-    name?: string
-    projects: string[]
-    branch?: string
-  }
-  memory_scope: string[]
+  skills?: string[]
+  workspace?: { name?: string; path?: string }
+  memory_scope?: 'shared' | 'isolated'
 }
 
 // ===== Skills =====

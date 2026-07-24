@@ -85,11 +85,11 @@ export function createAgentRoutes(deps: AgentRouteDeps): Hono {
   agent.route('/', createChatRoutes({ sessionDAO, safetyDAO, scheduleConfigDAO }))
 
   // New extractions
-  agent.route('/', createCloneRoutes({ safetyDAO }))
+  agent.route('/', createCloneRoutes({}))
   agent.route('/', createTaskRoutes(deps))
 
   // Main Agent unified entry (LLM router with clone delegation)
-  agent.route('/', createMainAgentRoute({ sessionDAO, cloneDAO }))
+  agent.route('/', createMainAgentRoute({ sessionDAO }))
 
   return agent
 }

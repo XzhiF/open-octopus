@@ -16,6 +16,7 @@ function setOctopusHome(): void {
 function createTestCloneDef(overrides?: Partial<CloneDef>): CloneDef {
   return {
     name: 'workspace',
+    displayName: '全栈开发助手',
     type: 'built-in',
     persona: 'Test persona for workspace clone',
     skills: [],
