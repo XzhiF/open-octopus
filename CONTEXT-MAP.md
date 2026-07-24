@@ -26,6 +26,15 @@
 | **False Completion** | Agent 节点返回 completed 状态但实际工作未完成。通过诊断发现，通过节点重置修复。 | server |
 | **Diagnose Report** | 对执行现场的结构化分析，包含节点状态、异常识别（stuck/exhausted/false_completion/infinite_retry）、修复建议。 | server |
 | **Output Injection** | 人工提供节点的输出数据，替代自动执行的结果。用于跳过故障节点继续执行。 | server |
+| **分身 (Clone)** | 拥有独立记忆/技能/人格的 Agent 实例。不是角色换皮，是完整的 Agent 身份。4 个内置：workspace / scheduler / archive / resource。 | server, shared |
+| **内置分身 (Built-in Clone)** | 系统预定义的 4 个分身，存储于 `~/.octopus/agent/built-in/{name}/`。不可删除。 | server |
+| **CloneRuntime** | 所有分身共享的基础设施层 — 上下文组装（persona + memory + skills append）、Provider 调用封装（resume + append）、错误恢复。替代原 OrchestratorService。 | server |
+| **双路径架构 (Dual-Path)** | 统一入口（CLI/API → Main Agent tool-calling 委托分身）+ 直接入口（Web UI 页面直连对应分身，零路由延迟）。 | server, web-app |
+| **Main Agent** | 统一入口的"主分身"，通过 LLM tool-calling 自行决定委托哪个分身处理。仅在 CLI/API 统一入口时使用。 | server, cli |
+| **记忆读共享/写隔离** | 分身能读取全局记忆（long-term + daily，只读），但写入自己独立的记忆空间（built-in/{name}/memory/）。Archive 分身负责定期提炼。 | server |
+| **技能叠加** | 分身继承全局 skills + 自己专属 skills（built-in/{name}/skills/），按优先级排序。 | server |
+| **人格替换** | 分身用自己的 persona.md，完全替换主 Agent 的 persona。每个分身有独立人格。 | server |
+| **provider_session_id** | Claude Code SDK 的 resume 会话 ID。统一后所有分身都使用 resume 省 token。存储在 SessionRow 上。 | server, providers |
 
 ## Anti-Patterns（禁止）
 
