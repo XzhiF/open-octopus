@@ -95,3 +95,14 @@ export function getBuiltInCloneDir(name: string): string {
 export function getBuiltInCloneMemoryDir(name: string): string {
   return path.join(getBuiltInCloneDir(name), 'memory')
 }
+
+/** Clone-specific skills directory.
+ *  built-in: ~/.octopus/agent/built-in/{name}/skills
+ *  user:     ~/.octopus/agent/clones/{name}/skills
+ */
+export function getCloneSkillsDir(name: string, type: 'built-in' | 'user'): string {
+  if (type === 'built-in') {
+    return path.join(getBuiltInCloneDir(name), 'skills')
+  }
+  return path.join(getCloneDir(name), 'skills')
+}

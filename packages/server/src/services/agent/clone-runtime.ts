@@ -12,16 +12,22 @@ import type { MessageChunk } from '@octopus/providers'
 import { getProvider } from '@octopus/providers'
 import type { CloneDef } from '@octopus/shared'
 import {
-  getAgentDir,
   getAgentSkillsDir,
   getLongTermMemoryPath,
   getDailyMemoryDir,
   getBuiltInCloneDir,
   getBuiltInCloneMemoryDir,
+  getCloneDir,
+  getCloneSkillsDir,
 } from './paths'
-import { getSkillLoader } from './skill-loader'
 
 // ── Types ──────────────────────────────────────────────────────────
+
+/** Internal skill entry from directory scanning. */
+interface SkillEntry {
+  name: string
+  description: string
+}
 
 export interface CloneChatResult {
   content: string
@@ -151,6 +157,20 @@ export class CloneRuntime {
     }
   }
 
+  // ── CWD Strategy ───────────────────────────────────────────────
+
+  /**
+   * Get the default CWD for this clone — its own directory.
+   * built-in: ~/.octopus/agent/built-in/{name}/
+   * user:     ~/.octopus/agent/clones/{name}/
+   * Callers (e.g. workspace chat) can override by passing their own cwd.
+   */
+  getDefaultCwd(): string {
+    return this.cloneDef.type === 'built-in'
+      ? getBuiltInCloneDir(this.cloneDef.name)
+      : getCloneDir(this.cloneDef.name)
+  }
+
   // ── Provider Call Encapsulation ─────────────────────────────────
 
   /**
@@ -165,8 +185,7 @@ export class CloneRuntime {
     abortSignal?: AbortSignal,
   ): AsyncGenerator<MessageChunk> {
     const cloneSystemPrompt = this.assembleContext()
-    const agentDir = getAgentDir()
-    const effectiveCwd = cwd || agentDir
+    const effectiveCwd = cwd || this.getDefaultCwd()
 
     // First attempt: use resume if available
     try {
@@ -260,17 +279,143 @@ export class CloneRuntime {
   }
 
   /**
-   * Load skills: global skills + clone-specific skills.
+   * Load skills using the two-tier model (ADR-005).
+   *
+   * Tier 1 (shared): ~/.octopus/agent/skills/ — global, all clones inherit
+   * Tier 2 (clone):  built-in/{name}/skills/ or clones/{name}/skills/ — clone-specific
+   *
+   * Same-name priority: clone > shared.
+   * Filtering: cloneDef.skills [] = no filter (include all); non-empty = whitelist.
+   *
+   * Output: base directory declaration + grouped list (name + description).
    */
   private loadSkills(): string {
     try {
-      const loader = getSkillLoader(this.org)
-      const { content } = loader.buildPromptSegment(this.cloneDef.skills)
-      return content
+      const sharedDir = getAgentSkillsDir()
+      const cloneDir = getCloneSkillsDir(this.cloneDef.name, this.cloneDef.type)
+      const filter = this.cloneDef.skills
+
+      // Scan shared skills (Tier 1)
+      const sharedSkills = this.scanSkillDirectory(sharedDir)
+
+      // Scan clone-specific skills (Tier 2)
+      const cloneSkills = this.scanSkillDirectory(cloneDir)
+
+      // Same-name dedup: clone overrides shared
+      const mergedShared = new Map<string, SkillEntry>()
+      for (const skill of sharedSkills) {
+        // Skip if clone has same-named skill (clone wins)
+        if (cloneSkills.some(cs => cs.name === skill.name)) continue
+        mergedShared.set(skill.name, skill)
+      }
+
+      const mergedClone = new Map<string, SkillEntry>()
+      for (const skill of cloneSkills) {
+        mergedClone.set(skill.name, skill)
+      }
+
+      // Apply filter: empty array = no filter; non-empty = whitelist
+      const filterSet = filter.length > 0 ? new Set(filter) : null
+
+      const filteredShared = filterSet
+        ? [...mergedShared.values()].filter(s => filterSet.has(s.name))
+        : [...mergedShared.values()]
+
+      const filteredClone = filterSet
+        ? [...mergedClone.values()].filter(s => filterSet.has(s.name))
+        : [...mergedClone.values()]
+
+      // Sort each group alphabetically
+      filteredShared.sort((a, b) => a.name.localeCompare(b.name))
+      filteredClone.sort((a, b) => a.name.localeCompare(b.name))
+
+      // Build output: base directory declaration + grouped list
+      if (filteredShared.length === 0 && filteredClone.length === 0) {
+        return ''
+      }
+
+      const lines: string[] = [
+        '# Available Skills',
+        'When you need a skill, use the Read tool to read {base_directory}/{skill_name}/SKILL.md',
+        '',
+      ]
+
+      if (filteredShared.length > 0) {
+        lines.push(`Shared: ${sharedDir}`)
+        for (const skill of filteredShared) {
+          lines.push(`- **${skill.name}**: ${skill.description}`)
+        }
+        lines.push('')
+      }
+
+      if (filteredClone.length > 0) {
+        lines.push(`Clone: ${cloneDir}`)
+        for (const skill of filteredClone) {
+          lines.push(`- **${skill.name}**: ${skill.description}`)
+        }
+      }
+
+      return lines.join('\n').trim()
     } catch {
       // Skill loading failure is non-fatal
       return ''
     }
+  }
+
+  /**
+   * Scan a directory for skills (subdirectories with SKILL.md).
+   */
+  private scanSkillDirectory(dir: string): SkillEntry[] {
+    if (!fs.existsSync(dir)) return []
+
+    try {
+      const entries = fs.readdirSync(dir, { withFileTypes: true })
+      const skills: SkillEntry[] = []
+
+      for (const entry of entries) {
+        if (!entry.isDirectory()) continue
+        const skillFile = path.join(dir, entry.name, 'SKILL.md')
+        if (!fs.existsSync(skillFile)) continue
+
+        try {
+          const content = fs.readFileSync(skillFile, 'utf-8')
+          skills.push({
+            name: entry.name,
+            description: this.extractSkillDescription(content),
+          })
+        } catch {
+          // Skip unreadable skills
+        }
+      }
+
+      return skills
+    } catch {
+      return []
+    }
+  }
+
+  /**
+   * Extract a short description from SKILL.md content.
+   * Looks for the first meaningful line after frontmatter.
+   */
+  private extractSkillDescription(content: string): string {
+    const lines = content.split('\n')
+    let inFrontmatter = false
+
+    for (const line of lines) {
+      if (line.trim() === '---') {
+        inFrontmatter = !inFrontmatter
+        continue
+      }
+      if (inFrontmatter) continue
+
+      const trimmed = line.trim()
+      if (!trimmed || trimmed.startsWith('#')) continue
+
+      return trimmed.slice(0, 120)
+    }
+
+    return content.slice(0, 120).replace(/\n/g, ' ').trim()
   }
 
   /**

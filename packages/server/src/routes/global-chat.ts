@@ -3,6 +3,9 @@ import { streamSSE } from "hono/streaming"
 import { ChatService } from "../services/chat"
 import { SSEService } from "../services/sse"
 import { getProvider, type TokenUsage } from "@octopus/providers"
+import { CloneRuntime } from "../services/agent/clone-runtime"
+import { getBuiltinCloneDef } from "../services/agent/builtin-clones"
+import { getBuiltInCloneDir } from "../services/agent/paths"
 import fs from "fs"
 import path from "path"
 
@@ -98,8 +101,8 @@ export function globalChatRoutes(sseService: SSEService, chatService: ChatServic
     const session = chatService.getSession(sessionId)
     if (!session) return c.json({ error: 'session not found' }, 404)
 
-    // Global scope: cwd is process.cwd() (scheduler API is localhost)
-    const cwd = process.cwd()
+    // Scheduler clone CWD: its own directory (~/.octopus/agent/built-in/scheduler/)
+    const cwd = getBuiltInCloneDir('scheduler')
 
     // Store user message
     chatService.addMessage(sessionId, {
@@ -110,6 +113,18 @@ export function globalChatRoutes(sseService: SSEService, chatService: ChatServic
 
     const provider = session.provider ?? 'claude'
     const agent = getProvider(provider)
+
+    // Assemble scheduler clone system prompt (persona + memory + skills)
+    // Falls back to static SYSTEM_PROMPT if clone assembly fails.
+    let schedulerClonePrompt = SYSTEM_PROMPT
+    try {
+      const cloneDef = getBuiltinCloneDef('scheduler')
+      if (cloneDef) {
+        schedulerClonePrompt = new CloneRuntime(cloneDef, 'default').assembleContext()
+      }
+    } catch {
+      // Fallback to SYSTEM_PROMPT (already set as default)
+    }
 
     let fullText = ''
     let sdkMessageId = ''
@@ -138,12 +153,10 @@ export function globalChatRoutes(sseService: SSEService, chatService: ChatServic
       })
 
       try {
-        // Key: use claude_code preset + append scheduler skill content.
-        // Previously passed raw string which REPLACED the entire preset,
-        // causing the agent to lose all built-in tool instructions
-        // (Bash, Read, Write, etc.) — it knew the API spec but couldn't act.
+        // Use scheduler clone persona as system prompt append.
+        // Falls back to static skill file if clone assembly failed above.
         const chunkStream = agent.sendQuery(body.content, cwd, session.providerSessionId ?? undefined, {
-          systemPrompt: { type: 'preset', preset: 'claude_code', append: SYSTEM_PROMPT },
+          systemPrompt: { type: 'preset', preset: 'claude_code', append: schedulerClonePrompt },
           abortSignal: abortController.signal,
         })
 

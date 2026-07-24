@@ -175,4 +175,161 @@ describe('CloneRuntime', () => {
       vi.restoreAllMocks()
     })
   })
+
+  describe('loadSkills (two-tier model)', () => {
+    it('scans shared skills from agent/skills directory', () => {
+      // Create shared skill
+      const sharedSkillDir = path.join(TEST_DIR, 'agent', 'skills', 'octo-agent-memory')
+      fs.mkdirSync(sharedSkillDir, { recursive: true })
+      fs.writeFileSync(
+        path.join(sharedSkillDir, 'SKILL.md'),
+        '---\nname: octo-agent-memory\n---\nSearch and manage agent memory layers.',
+        'utf-8',
+      )
+
+      const cloneDef = createTestCloneDef({ skills: [] })
+      const runtime = new CloneRuntime(cloneDef, 'test-org')
+      const context = runtime.assembleContext()
+
+      expect(context).toContain('octo-agent-memory')
+      expect(context).toContain('Search and manage agent memory layers')
+      expect(context).toContain('Shared:')
+    })
+
+    it('scans clone-specific skills from built-in clone directory', () => {
+      // Create clone skill
+      const cloneSkillDir = path.join(TEST_DIR, 'agent', 'built-in', 'scheduler', 'skills', 'octo-scheduler')
+      fs.mkdirSync(cloneSkillDir, { recursive: true })
+      fs.writeFileSync(
+        path.join(cloneSkillDir, 'SKILL.md'),
+        '---\nname: octo-scheduler\n---\nOctopus Scheduler API helper.',
+        'utf-8',
+      )
+
+      const cloneDef = createTestCloneDef({
+        name: 'scheduler',
+        skills: ['octo-scheduler'],
+      })
+      const runtime = new CloneRuntime(cloneDef, 'test-org')
+      const context = runtime.assembleContext()
+
+      expect(context).toContain('octo-scheduler')
+      expect(context).toContain('Octopus Scheduler API helper')
+      expect(context).toContain('Clone:')
+    })
+
+    it('clone skills override shared skills with same name', () => {
+      // Create shared skill
+      const sharedSkillDir = path.join(TEST_DIR, 'agent', 'skills', 'octo-scheduler')
+      fs.mkdirSync(sharedSkillDir, { recursive: true })
+      fs.writeFileSync(
+        path.join(sharedSkillDir, 'SKILL.md'),
+        '---\nname: octo-scheduler\n---\nShared version of scheduler.',
+        'utf-8',
+      )
+
+      // Create clone skill (same name)
+      const cloneSkillDir = path.join(TEST_DIR, 'agent', 'built-in', 'scheduler', 'skills', 'octo-scheduler')
+      fs.mkdirSync(cloneSkillDir, { recursive: true })
+      fs.writeFileSync(
+        path.join(cloneSkillDir, 'SKILL.md'),
+        '---\nname: octo-scheduler\n---\nClone-specific version of scheduler.',
+        'utf-8',
+      )
+
+      const cloneDef = createTestCloneDef({
+        name: 'scheduler',
+        skills: ['octo-scheduler'],
+      })
+      const runtime = new CloneRuntime(cloneDef, 'test-org')
+      const context = runtime.assembleContext()
+
+      // Clone version should appear
+      expect(context).toContain('Clone-specific version of scheduler')
+      // Shared version should NOT appear (clone wins)
+      expect(context).not.toContain('Shared version of scheduler')
+    })
+
+    it('filters skills by cloneDef.skills whitelist', () => {
+      // Create multiple shared skills
+      const skill1Dir = path.join(TEST_DIR, 'agent', 'skills', 'octo-alpha')
+      fs.mkdirSync(skill1Dir, { recursive: true })
+      fs.writeFileSync(path.join(skill1Dir, 'SKILL.md'), '---\n---\nAlpha skill.', 'utf-8')
+
+      const skill2Dir = path.join(TEST_DIR, 'agent', 'skills', 'octo-beta')
+      fs.mkdirSync(skill2Dir, { recursive: true })
+      fs.writeFileSync(path.join(skill2Dir, 'SKILL.md'), '---\n---\nBeta skill.', 'utf-8')
+
+      // Filter to only alpha
+      const cloneDef = createTestCloneDef({ skills: ['octo-alpha'] })
+      const runtime = new CloneRuntime(cloneDef, 'test-org')
+      const context = runtime.assembleContext()
+
+      expect(context).toContain('octo-alpha')
+      expect(context).toContain('Alpha skill')
+      expect(context).not.toContain('octo-beta')
+      expect(context).not.toContain('Beta skill')
+    })
+
+    it('empty skills array includes all found skills (no filtering)', () => {
+      // Create multiple shared skills
+      const skill1Dir = path.join(TEST_DIR, 'agent', 'skills', 'octo-alpha')
+      fs.mkdirSync(skill1Dir, { recursive: true })
+      fs.writeFileSync(path.join(skill1Dir, 'SKILL.md'), '---\n---\nAlpha skill.', 'utf-8')
+
+      const skill2Dir = path.join(TEST_DIR, 'agent', 'skills', 'octo-beta')
+      fs.mkdirSync(skill2Dir, { recursive: true })
+      fs.writeFileSync(path.join(skill2Dir, 'SKILL.md'), '---\n---\nBeta skill.', 'utf-8')
+
+      const cloneDef = createTestCloneDef({ skills: [] })
+      const runtime = new CloneRuntime(cloneDef, 'test-org')
+      const context = runtime.assembleContext()
+
+      expect(context).toContain('octo-alpha')
+      expect(context).toContain('octo-beta')
+    })
+
+    it('output includes base directory declaration', () => {
+      const sharedSkillDir = path.join(TEST_DIR, 'agent', 'skills', 'octo-test')
+      fs.mkdirSync(sharedSkillDir, { recursive: true })
+      fs.writeFileSync(path.join(sharedSkillDir, 'SKILL.md'), '---\n---\nTest skill.', 'utf-8')
+
+      const cloneDef = createTestCloneDef({ skills: [] })
+      const runtime = new CloneRuntime(cloneDef, 'test-org')
+      const context = runtime.assembleContext()
+
+      expect(context).toContain('# Available Skills')
+      expect(context).toContain('Read tool')
+      expect(context).toContain('{base_directory}/{skill_name}/SKILL.md')
+    })
+
+    it('returns empty skills section when no skills found', () => {
+      const cloneDef = createTestCloneDef({ skills: [] })
+      const runtime = new CloneRuntime(cloneDef, 'test-org')
+      const context = runtime.assembleContext()
+
+      // Skills section should not appear at all
+      expect(context).not.toContain('# Available Skills')
+    })
+  })
+
+  describe('getDefaultCwd', () => {
+    it('returns built-in clone directory for built-in clones', () => {
+      const cloneDef = createTestCloneDef({ name: 'workspace', type: 'built-in' })
+      const runtime = new CloneRuntime(cloneDef, 'test-org')
+
+      expect(runtime.getDefaultCwd()).toBe(
+        path.join(TEST_DIR, 'agent', 'built-in', 'workspace'),
+      )
+    })
+
+    it('returns clones directory for user clones', () => {
+      const cloneDef = createTestCloneDef({ name: 'my-clone', type: 'user' })
+      const runtime = new CloneRuntime(cloneDef, 'test-org')
+
+      expect(runtime.getDefaultCwd()).toBe(
+        path.join(TEST_DIR, 'agent', 'clones', 'my-clone'),
+      )
+    })
+  })
 })

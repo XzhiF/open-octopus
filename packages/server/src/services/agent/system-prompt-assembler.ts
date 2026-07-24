@@ -63,6 +63,11 @@ export class SystemPromptAssembler {
 
   /**
    * Assemble for a specific clone with clone-specific context.
+   *
+   * @deprecated Use `CloneRuntime.assembleContext()` instead.
+   * This method uses the old SystemPromptAssembler pipeline which does not
+   * support the two-tier skill model (ADR-005) or clone-specific CWD.
+   * Kept for backward compatibility with callers that have not yet migrated.
    */
   assembleForClone(cloneName: string, options: AssembleOptions = {}): string {
     const merged = { ...options, clone_name: cloneName }
