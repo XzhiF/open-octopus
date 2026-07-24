@@ -39,15 +39,26 @@ export function CloneChatView({ clone, onBack }: CloneChatViewProps) {
 
   const [showToolPanel, setShowToolPanel] = useState(false)
 
-  // Fetch clone-specific sessions
+  // Fetch clone-specific sessions; auto-create one if none exist (fix: silent no-op on first send)
   const fetchSessions = useCallback(async () => {
     try {
       setSessionsLoading(true)
       const res = await api.listSessions({ clone: clone.name, limit: 50 })
       setSessions(res.items)
-      // Auto-select first session if none active
-      if (res.items.length > 0 && !activeSessionId) {
-        setActiveSessionId(res.items[0].id)
+      if (res.items.length > 0) {
+        // Auto-select first session if none active
+        if (!activeSessionId) {
+          setActiveSessionId(res.items[0].id)
+        }
+      } else if (!activeSessionId) {
+        // No sessions exist — auto-create so sendMessage doesn't silently no-op
+        try {
+          const session = await api.createSession({ clone_name: clone.name })
+          setSessions([session])
+          setActiveSessionId(session.id)
+        } catch {
+          // Non-fatal — user can still manually create via "开始对话" button
+        }
       }
     } catch {
       // Non-fatal — show empty state
