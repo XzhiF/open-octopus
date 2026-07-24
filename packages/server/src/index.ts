@@ -330,6 +330,7 @@ app.route("/api/agent", createAgentRoutes({
   safetyDAO: d.safety,
   scheduleConfigDAO: d.scheduleConfig,
   executionDAO: d.execution,
+  cloneDAO: d.clone,
   schedulerService: schedSvc,
 }))
 

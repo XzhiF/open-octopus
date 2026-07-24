@@ -1,6 +1,6 @@
 # T6: Main Agent Unified Entry Route (Tool-Calling Delegation)
 
-**Status:** pending
+**Status:** done ✓
 **Depends on:** T3, T4, T5
 **Blocks:** T7
 
