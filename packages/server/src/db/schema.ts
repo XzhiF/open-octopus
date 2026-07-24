@@ -10,7 +10,7 @@ const _dirname: string =
     ? __dirname
     : path.dirname(fileURLToPath(import.meta.url))
 
-export const SCHEMA_VERSION = 26
+export const SCHEMA_VERSION = 27
 
 /**
  * Apply the complete unified schema to the given database.
@@ -86,6 +86,17 @@ function ensureColumnsForExistingTables(db: Database.Database): void {
 
   // Archive status column for workspaces
   ensureColumn(db, 'workspaces', 'archive_status', "TEXT DEFAULT NULL")
+
+  // Clone system columns for sessions
+  ensureColumn(db, 'sessions', 'scope_id', "TEXT")
+  ensureColumn(db, 'sessions', 'provider_session_id', "TEXT")
+
+  // Clone system columns for messages
+  ensureColumn(db, 'messages', 'type', "TEXT NOT NULL DEFAULT 'text'")
+  ensureColumn(db, 'messages', 'metadata', "TEXT")
+
+  // Clone system columns for clones
+  ensureColumn(db, 'clones', 'type', "TEXT NOT NULL DEFAULT 'user'")
 
   // Archive V2 columns for workspace_archive
   ensureColumn(db, 'workspace_archive', 'name', "TEXT NOT NULL DEFAULT ''")

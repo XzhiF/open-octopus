@@ -1,6 +1,6 @@
 # T2: DB Schema Migration — ALTER TABLE for Clone Support
 
-**Status:** pending
+**Status:** done ✓
 **Depends on:** T1
 **Blocks:** T3, T8
 

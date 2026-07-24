@@ -1,6 +1,6 @@
 # T1: Shared Types — CloneDef + SessionRow/MessageRow Extensions
 
-**Status:** pending
+**Status:** done ✓
 **Depends on:** —
 **Blocks:** T2, T3, T5, T6, T8, T9
 
