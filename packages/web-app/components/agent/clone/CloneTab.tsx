@@ -9,6 +9,7 @@ import { CloneCreateWizard } from './CloneCreateWizard'
 import { CloneMergeDialog } from './CloneMergeDialog'
 import { CloneDeleteDialog } from './CloneDeleteDialog'
 import { CloneChatView } from './CloneChatView'
+import { CloneFilePanel } from './CloneFilePanel'
 import { AgentEmptyState } from '../shared/AgentEmptyState'
 import type { CloneInfo } from '@/lib/agent/types'
 
@@ -18,6 +19,7 @@ export function CloneTab() {
   const [mergeTarget, setMergeTarget] = useState<CloneInfo | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<CloneInfo | null>(null)
   const [activeChatClone, setActiveChatClone] = useState<CloneInfo | null>(null)
+  const [fileMgmtClone, setFileMgmtClone] = useState<CloneInfo | null>(null)
 
   // D3: Click clone → enter multi-session chat view
   if (activeChatClone) {
@@ -74,6 +76,7 @@ export function CloneTab() {
             onMerge={setMergeTarget}
             onDelete={setDeleteTarget}
             onEnterChat={setActiveChatClone}
+            onManageFiles={setFileMgmtClone}
           />
         </section>
 
@@ -102,6 +105,7 @@ export function CloneTab() {
             onMerge={setMergeTarget}
             onDelete={setDeleteTarget}
             onEnterChat={setActiveChatClone}
+            onManageFiles={setFileMgmtClone}
           />
           {!loading && userClones.length === 0 && (
             <div className="text-center py-8 text-sm text-muted-foreground border border-dashed border-agent-divider rounded-lg">
@@ -131,6 +135,12 @@ export function CloneTab() {
         clone={deleteTarget}
         onClose={() => setDeleteTarget(null)}
         onDeleted={() => { setDeleteTarget(null); refetch() }}
+      />
+
+      {/* File management panel */}
+      <CloneFilePanel
+        clone={fileMgmtClone}
+        onClose={() => setFileMgmtClone(null)}
       />
     </div>
   )
