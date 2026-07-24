@@ -35,6 +35,11 @@
 | **技能叠加** | 分身继承全局 skills + 自己专属 skills（built-in/{name}/skills/），按优先级排序。 | server |
 | **人格替换** | 分身用自己的 persona.md，完全替换主 Agent 的 persona。每个分身有独立人格。 | server |
 | **provider_session_id** | Claude Code SDK 的 resume 会话 ID。统一后所有分身都使用 resume 省 token。存储在 SessionRow 上。 | server, providers |
+| **@@mention** | 用户在聊天中输入 `@@分身代号` 触发委托调用的语法。前端拦截解析，后端通过 `delegate_to` 字段直接调 CloneRuntime。 | server, web-app |
+| **委托 (Delegation)** | 当前聊天 Agent 将消息转发给指定分身处理。前端解析 @@mention → POST `{ delegate_to }` → 后端调 CloneRuntime → 分身回复内联显示。 | server, web-app |
+| **分身文件白名单** | 分身文件管理 API 允许读写的路径列表（persona.md / config.json / memory/*），防止目录穿越攻击。 | server |
+| **英文代号 (name)** | 分身唯一标识，`/^[a-z0-9-]+$/`，用于文件路径和 API 路由。与 display_name 分离。 | shared |
+| **显示名称 (display_name)** | 分身在 UI 和 @@补全中展示的名称，支持中文。存储在 config.json 中。 | server, web-app |
 
 ## Anti-Patterns（禁止）
 

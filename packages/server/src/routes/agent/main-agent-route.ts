@@ -1,25 +1,30 @@
 // packages/server/src/routes/agent/main-agent-route.ts
 //
 // Main Agent unified entry route — POST /api/agent/chat
-// The LLM itself decides delegation via tool-calling (no OrchestratorService).
+// Supports:
+//   1. LLM routing with tool-based delegation (default)
+//   2. Deterministic @@mention delegation via delegate_to field
 //
 import { Hono } from 'hono'
 import { streamSSE } from 'hono/streaming'
 import crypto from 'crypto'
 import type { MessageChunk } from '@octopus/providers'
 import { getProvider } from '@octopus/providers'
-import type { AgentSessionDAO, CloneDAO } from '../../db/dao'
+import type { AgentSessionDAO } from '../../db/dao'
 import { CloneRuntime } from '../../services/agent/clone-runtime'
-import { getBuiltinCloneDef, isBuiltinClone } from '../../services/agent/builtin-clones'
 import { SystemPromptAssembler } from '../../services/agent/system-prompt-assembler'
 import { registerActiveStream, unregisterActiveStream } from '../../services/agent/agent-service'
-import { getAgentDir } from '../../services/agent/paths'
+import { getAgentDir, getBuiltInCloneDir, getCloneDir } from '../../services/agent/paths'
+import { resolveCloneInfo } from '../../services/agent/clone-resolver'
+import { isBuiltinClone } from '../../services/agent/builtin-clones'
+import type { CloneDef } from '@octopus/shared'
+import fs from 'fs'
+import path from 'path'
 
 // ── Route deps ─────────────────────────────────────────────────────
 
 export interface MainAgentRouteDeps {
   sessionDAO: AgentSessionDAO
-  cloneDAO: CloneDAO
 }
 
 // ── Delegation tool definitions ────────────────────────────────────
@@ -37,16 +42,40 @@ You can delegate tasks to specialized clones using the following tools:
 When a task clearly falls into one of these domains, delegate it. Otherwise, respond directly.
 `
 
+// ── Clone resolution helper ────────────────────────────────────────
+
+function resolveCloneDefFromFs(name: string): CloneDef | null {
+  const info = resolveCloneInfo(name)
+  if (!info) return null
+
+  const cloneDir = info.type === 'built-in' ? getBuiltInCloneDir(name) : getCloneDir(name)
+  let persona = info.persona
+  const personaPath = path.join(cloneDir, 'persona.md')
+  if (fs.existsSync(personaPath)) {
+    try { persona = fs.readFileSync(personaPath, 'utf-8') } catch { /* use info.persona */ }
+  }
+
+  return {
+    name: info.name,
+    displayName: info.display_name,
+    type: info.type,
+    persona,
+    skills: info.skills,
+    memoryScope: info.memory_scope,
+    config: {},
+  }
+}
+
 // ── Route factory ──────────────────────────────────────────────────
 
 export function createMainAgentRoute(deps: MainAgentRouteDeps): Hono {
-  const { sessionDAO, cloneDAO } = deps
+  const { sessionDAO } = deps
   const app = new Hono()
 
   app.post('/chat', async (c) => {
     const org = c.req.header('X-Octopus-Org') || (c.get('org') as string) || 'default'
 
-    let body: { message?: string; session_id?: string }
+    let body: { message?: string; session_id?: string; delegate_to?: string }
     try {
       body = await c.req.json()
     } catch {
@@ -87,7 +116,103 @@ export function createMainAgentRoute(deps: MainAgentRouteDeps): Hono {
     })
     sessionDAO.updateLastMessageAt(sessionId, now)
 
-    // Assemble system prompt with delegation instructions
+    // ══════════════════════════════════════════════════════════════
+    // Deterministic delegation (@@mention)
+    // ══════════════════════════════════════════════════════════════
+    if (body.delegate_to) {
+      const targetClone = body.delegate_to
+
+      // Self-reference check: if session belongs to same clone, treat as normal message
+      const session = sessionDAO.findById(sessionId)
+      if (session?.clone_name === targetClone) {
+        // Self-reference → fall through to normal LLM routing
+      } else {
+        // Resolve clone from filesystem
+        const cloneDef = resolveCloneDefFromFs(targetClone)
+        if (!cloneDef) {
+          return streamSSE(c, async (stream) => {
+            await stream.writeSSE({
+              event: 'error',
+              data: JSON.stringify({ code: 'CLONE_NOT_FOUND', message: `Clone "${targetClone}" not found` }),
+            })
+          })
+        }
+
+        return streamSSE(c, async (stream) => {
+          const abortStream = () => {}
+          const streamId = registerActiveStream(sessionId!, abortStream)
+
+          try {
+            // Signal delegation start
+            await stream.writeSSE({
+              event: 'delegation_start',
+              data: JSON.stringify({ clone_name: targetClone, display_name: cloneDef.displayName }),
+            })
+
+            const runtime = new CloneRuntime(cloneDef, org)
+            const cwd = getAgentDir()
+            let fullContent = ''
+
+            for await (const chunk of runtime.chat(body.message!, sessionId!, null, cwd)) {
+              if ((stream as any)._aborted) break
+
+              if (chunk.type === 'text_delta') {
+                fullContent += chunk.content
+                await stream.writeSSE({
+                  event: 'text_delta',
+                  data: JSON.stringify({ delta: chunk.content, content: fullContent, source: targetClone }),
+                })
+              } else if (chunk.type === 'error') {
+                await stream.writeSSE({
+                  event: 'error',
+                  data: JSON.stringify({ code: chunk.code, message: chunk.message }),
+                })
+              }
+            }
+
+            // Signal delegation end
+            await stream.writeSSE({
+              event: 'delegation_end',
+              data: JSON.stringify({ clone_name: targetClone }),
+            })
+
+            // Store assistant message with source metadata
+            if (fullContent) {
+              const assistantMsgId = crypto.randomUUID()
+              const assistantNow = new Date().toISOString()
+              const metadata = JSON.stringify({ source: targetClone, delegation: true })
+
+              sessionDAO.insertMessage({
+                id: assistantMsgId, session_id: sessionId!, role: 'assistant',
+                content: fullContent, metadata, created_at: assistantNow,
+              })
+              sessionDAO.updateLastMessageAt(sessionId!, assistantNow)
+
+              await stream.writeSSE({
+                event: 'done',
+                data: JSON.stringify({
+                  session_id: sessionId,
+                  message_id: assistantMsgId,
+                  session_title: sessionDAO.findById(sessionId!)?.title,
+                }),
+              })
+            }
+          } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err)
+            await stream.writeSSE({
+              event: 'error',
+              data: JSON.stringify({ code: 'DELEGATION_ERROR', message: `Delegation to ${targetClone} failed: ${msg}` }),
+            })
+          } finally {
+            unregisterActiveStream(sessionId!, streamId)
+          }
+        })
+      }
+    }
+
+    // ══════════════════════════════════════════════════════════════
+    // Normal LLM routing (with optional tool-based delegation)
+    // ══════════════════════════════════════════════════════════════
     const assembler = new SystemPromptAssembler(org)
     const baseSystemPrompt = assembler.assemble()
     const systemPrompt = `${baseSystemPrompt}\n\n${DELEGATION_TOOLS_PROMPT}`
@@ -173,7 +298,7 @@ export function createMainAgentRoute(deps: MainAgentRouteDeps): Hono {
         // If delegation was detected, execute via CloneRuntime
         if (delegationDetected && !aborted) {
           await executeDelegation(
-            delegationDetected, sessionId!, org, stream, cloneDAO,
+            delegationDetected, sessionId!, org, stream,
           )
         }
 
@@ -228,28 +353,10 @@ async function executeDelegation(
   sessionId: string,
   org: string,
   stream: any,
-  cloneDAO: CloneDAO,
 ): Promise<void> {
   const cloneName = delegation.cloneName
 
-  // Resolve clone definition
-  let cloneDef = isBuiltinClone(cloneName)
-    ? getBuiltinCloneDef(cloneName)
-    : null
-
-  if (!cloneDef) {
-    const row = cloneDAO.findByName(cloneName)
-    if (row) {
-      cloneDef = {
-        name: row.name,
-        type: (row.type as 'built-in' | 'user') ?? 'user',
-        persona: row.persona,
-        skills: JSON.parse(row.skills || '[]'),
-        memoryScope: (row.memory_scope as 'shared' | 'isolated') ?? 'isolated',
-        config: {},
-      }
-    }
-  }
+  const cloneDef = resolveCloneDefFromFs(cloneName)
 
   if (!cloneDef) {
     await stream.writeSSE({

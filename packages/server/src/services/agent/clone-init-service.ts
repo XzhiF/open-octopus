@@ -85,6 +85,7 @@ export class CloneInitService {
     if (!fs.existsSync(configPath)) {
       const config = {
         name: cloneDef.name,
+        display_name: cloneDef.displayName ?? cloneDef.name,
         type: cloneDef.type,
         skills: cloneDef.skills,
         memoryScope: cloneDef.memoryScope,

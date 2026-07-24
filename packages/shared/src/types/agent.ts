@@ -142,6 +142,7 @@ export interface CreateCloneRequest {
  */
 export interface CloneDef {
   name: string                    // 'workspace' | 'scheduler' | 'archive' | 'resource' | user-defined
+  displayName: string             // Human-readable display name (supports CJK)
   type: 'built-in' | 'user'
   persona: string                 // persona.md content
   skills: string[]                // skill names

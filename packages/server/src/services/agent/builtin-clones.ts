@@ -79,6 +79,7 @@ const RESOURCE_PERSONA = `# Resource 分身
 export const BUILTIN_CLONES: CloneDef[] = [
   {
     name: 'workspace',
+    displayName: '全栈开发助手',
     type: 'built-in',
     persona: WORKSPACE_PERSONA,
     skills: [], // All global skills (empty = use all)
@@ -87,6 +88,7 @@ export const BUILTIN_CLONES: CloneDef[] = [
   },
   {
     name: 'scheduler',
+    displayName: '定时任务管理',
     type: 'built-in',
     persona: SCHEDULER_PERSONA,
     skills: ['octo-schedule-manager'],
@@ -95,6 +97,7 @@ export const BUILTIN_CLONES: CloneDef[] = [
   },
   {
     name: 'archive',
+    displayName: '工程分析师',
     type: 'built-in',
     persona: ARCHIVE_PERSONA,
     skills: ['octo-archive-analyst'],
@@ -103,6 +106,7 @@ export const BUILTIN_CLONES: CloneDef[] = [
   },
   {
     name: 'resource',
+    displayName: '资源操作专家',
     type: 'built-in',
     persona: RESOURCE_PERSONA,
     skills: ['octo-resource-manager'],

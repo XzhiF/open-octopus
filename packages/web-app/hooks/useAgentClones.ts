@@ -44,9 +44,9 @@ export function useAgentClones() {
     }
   }, [])
 
-  const remove = useCallback(async (name: string, keepWorkspace = true) => {
+  const remove = useCallback(async (name: string) => {
     try {
-      await api.deleteClone(name, keepWorkspace)
+      await api.deleteClone(name)
       setClones(prev => prev.filter(c => c.name !== name))
       return true
     } catch (err: unknown) {

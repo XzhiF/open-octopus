@@ -1,45 +1,76 @@
 // packages/server/src/routes/clone/index.ts
 //
-// Clone session routes — direct entry for Web UI pages connecting to specific clones.
-// Mounts on /api/clones/:name/sessions/* and /api/clones (management).
+// Unified clone routes — filesystem-backed clone management + DB-backed sessions.
+// Mounts on /api/clones.
+//
+// Clone management (filesystem):
+//   GET    /api/clones              — list all clones (built-in + user)
+//   POST   /api/clones              — create user clone
+//   GET    /api/clones/:name        — get clone details
+//   DELETE /api/clones/:name        — delete user clone
+//   GET    /api/clones/:name/files/:path — read clone file
+//   PUT    /api/clones/:name/files/:path — write clone file
+//
+// Session management (DB-backed, unchanged):
+//   POST   /api/clones/:name/sessions          — create session
+//   GET    /api/clones/:name/sessions          — list sessions
+//   GET    /api/clones/:name/sessions/:id      — get session + messages
+//   POST   /api/clones/:name/sessions/:id/chat — SSE chat
+//   POST   /api/clones/:name/sessions/:id/stop — stop generation
 //
 import { Hono } from 'hono'
 import { streamSSE } from 'hono/streaming'
 import crypto from 'crypto'
+import fs from 'fs'
+import path from 'path'
 import type { CloneDef } from '@octopus/shared'
-import type { AgentSessionDAO, CloneDAO } from '../../db/dao'
+import type { AgentSessionDAO } from '../../db/dao'
 import { CloneRuntime } from '../../services/agent/clone-runtime'
-import { getBuiltinCloneDef, isBuiltinClone, BUILTIN_CLONES } from '../../services/agent/builtin-clones'
+import { isBuiltinClone } from '../../services/agent/builtin-clones'
+import {
+  listAllClones,
+  resolveCloneInfo,
+  createUserClone,
+  deleteUserClone,
+  isValidCloneName,
+} from '../../services/agent/clone-resolver'
 import {
   registerActiveStream,
   unregisterActiveStream,
 } from '../../services/agent/agent-service'
-import { getAgentDir } from '../../services/agent/paths'
+import { getAgentDir, getBuiltInCloneDir, getCloneDir } from '../../services/agent/paths'
 
 // ── Route deps ─────────────────────────────────────────────────────
 
 export interface CloneSessionRouteDeps {
   sessionDAO: AgentSessionDAO
-  cloneDAO: CloneDAO
 }
+
+// ── File whitelist ─────────────────────────────────────────────────
+
+const ALLOWED_FILES = new Set(['persona.md', 'config.json'])
+const MAX_FILE_SIZE = 100 * 1024 // 100KB
 
 // ── Helpers ────────────────────────────────────────────────────────
 
-function resolveCloneDef(name: string, cloneDAO: CloneDAO): CloneDef | null {
-  // Built-in clone: use static definition
-  if (isBuiltinClone(name)) {
-    return getBuiltinCloneDef(name)
+function resolveCloneDefFromFs(name: string): CloneDef | null {
+  const info = resolveCloneInfo(name)
+  if (!info) return null
+
+  const cloneDir = info.type === 'built-in' ? getBuiltInCloneDir(name) : getCloneDir(name)
+  let persona = info.persona
+  const personaPath = path.join(cloneDir, 'persona.md')
+  if (fs.existsSync(personaPath)) {
+    try { persona = fs.readFileSync(personaPath, 'utf-8') } catch { /* use info.persona */ }
   }
-  // User clone: read from DB
-  const row = cloneDAO.findByName(name)
-  if (!row) return null
+
   return {
-    name: row.name,
-    type: (row.type as 'built-in' | 'user') ?? 'user',
-    persona: row.persona,
-    skills: JSON.parse(row.skills || '[]'),
-    memoryScope: (row.memory_scope as 'shared' | 'isolated') ?? 'isolated',
-    workspaceRef: row.workspace_ref ? JSON.parse(row.workspace_ref) : undefined,
+    name: info.name,
+    displayName: info.display_name,
+    type: info.type,
+    persona,
+    skills: info.skills,
+    memoryScope: info.memory_scope,
     config: {},
   }
 }
@@ -47,45 +78,163 @@ function resolveCloneDef(name: string, cloneDAO: CloneDAO): CloneDef | null {
 // ── Route factory ──────────────────────────────────────────────────
 
 export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
-  const { sessionDAO, cloneDAO } = deps
+  const { sessionDAO } = deps
   const app = new Hono()
+
+  // ══════════════════════════════════════════════════════════════════
+  // Clone Management (filesystem-backed)
+  // ══════════════════════════════════════════════════════════════════
 
   // ── List all clones ──────────────────────────────────────────────
   app.get('/', (c) => {
-    const org = c.req.header('X-Octopus-Org') || (c.get('org') as string) || 'default'
-    const clones: CloneDef[] = [...BUILTIN_CLONES]
-
-    // Add user clones from DB
-    try {
-      const userClones = cloneDAO.listByOrg(org)
-      for (const row of userClones) {
-        if (!clones.some(c => c.name === row.name)) {
-          clones.push({
-            name: row.name,
-            type: (row.type as 'built-in' | 'user') ?? 'user',
-            persona: row.persona,
-            skills: JSON.parse(row.skills || '[]'),
-            memoryScope: (row.memory_scope as 'shared' | 'isolated') ?? 'isolated',
-            config: {},
-          })
-        }
-      }
-    } catch {
-      // DB read failure is non-fatal
-    }
-
+    const clones = listAllClones()
     return c.json({ clones, total: clones.length })
+  })
+
+  // ── Create user clone ────────────────────────────────────────────
+  app.post('/', async (c) => {
+    try {
+      const body = await c.req.json<{
+        name: string
+        display_name: string
+        persona: string
+        skills?: string[]
+        workspace?: { name?: string; path?: string }
+        memory_scope?: 'shared' | 'isolated'
+      }>()
+
+      if (!body.name) {
+        return c.json({ error: { code: 'INVALID_PARAM', message: 'name is required' } }, 400)
+      }
+      if (!body.display_name) {
+        return c.json({ error: { code: 'INVALID_PARAM', message: 'display_name is required' } }, 400)
+      }
+      if (!body.persona) {
+        return c.json({ error: { code: 'INVALID_PARAM', message: 'persona is required' } }, 400)
+      }
+
+      const result = createUserClone({
+        name: body.name,
+        display_name: body.display_name,
+        persona: body.persona,
+        skills: body.skills,
+        workspace: body.workspace,
+        memory_scope: body.memory_scope,
+      })
+
+      if (!result.ok) {
+        const status = result.error.includes('already exists') ? 409 : 400
+        return c.json({ error: { code: 'CLONE_ERROR', message: result.error } }, status)
+      }
+
+      return c.json({ clone: result.clone }, 201)
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err)
+      return c.json({ error: { code: 'INTERNAL_ERROR', message: msg } }, 500)
+    }
   })
 
   // ── Get clone details ────────────────────────────────────────────
   app.get('/:name', (c) => {
     const name = c.req.param('name')
-    const cloneDef = resolveCloneDef(name, cloneDAO)
-    if (!cloneDef) {
+    const info = resolveCloneInfo(name)
+    if (!info) {
       return c.json({ error: { code: 'NOT_FOUND', message: `Clone "${name}" not found` } }, 404)
     }
-    return c.json(cloneDef)
+    return c.json({ clone: info })
   })
+
+  // ── Delete user clone ────────────────────────────────────────────
+  app.delete('/:name', (c) => {
+    const name = c.req.param('name')
+    if (!isValidCloneName(name) && !isBuiltinClone(name)) {
+      return c.json({ error: { code: 'INVALID_PARAM', message: 'Invalid clone name' } }, 400)
+    }
+
+    const result = deleteUserClone(name)
+    if (!result.ok) {
+      return c.json({ error: { code: 'CLONE_ERROR', message: result.error } }, result.status ?? 400)
+    }
+    return c.json({ ok: true })
+  })
+
+  // ── Read clone file ──────────────────────────────────────────────
+  app.get('/:name/files/:path', (c) => {
+    const name = c.req.param('name')
+    const filePath = decodeURIComponent(c.req.param('path'))
+
+    // Path whitelist check
+    if (!ALLOWED_FILES.has(filePath) || filePath.includes('..') || filePath.includes('/') || filePath.includes('\\')) {
+      return c.json({ error: { code: 'FORBIDDEN', message: `File "${filePath}" is not accessible` } }, 403)
+    }
+
+    const info = resolveCloneInfo(name)
+    if (!info) {
+      return c.json({ error: { code: 'NOT_FOUND', message: `Clone "${name}" not found` } }, 404)
+    }
+
+    const cloneDir = info.type === 'built-in' ? getBuiltInCloneDir(name) : getCloneDir(name)
+    const fullPath = path.join(cloneDir, filePath)
+
+    if (!fs.existsSync(fullPath)) {
+      return c.json({ error: { code: 'NOT_FOUND', message: `File "${filePath}" not found` } }, 404)
+    }
+
+    try {
+      const content = fs.readFileSync(fullPath, 'utf-8')
+      const stat = fs.statSync(fullPath)
+      return c.json({ content, path: filePath, size: stat.size })
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      return c.json({ error: { code: 'READ_ERROR', message: msg } }, 500)
+    }
+  })
+
+  // ── Write clone file ─────────────────────────────────────────────
+  app.put('/:name/files/:path', async (c) => {
+    const name = c.req.param('name')
+    const filePath = decodeURIComponent(c.req.param('path'))
+
+    // Path whitelist check
+    if (!ALLOWED_FILES.has(filePath) || filePath.includes('..') || filePath.includes('/') || filePath.includes('\\')) {
+      return c.json({ error: { code: 'FORBIDDEN', message: `File "${filePath}" is not accessible` } }, 403)
+    }
+
+    const info = resolveCloneInfo(name)
+    if (!info) {
+      return c.json({ error: { code: 'NOT_FOUND', message: `Clone "${name}" not found` } }, 404)
+    }
+
+    let body: { content?: string }
+    try {
+      body = await c.req.json()
+    } catch {
+      return c.json({ error: { code: 'INVALID_PARAM', message: 'Invalid JSON body' } }, 400)
+    }
+
+    if (typeof body.content !== 'string') {
+      return c.json({ error: { code: 'INVALID_PARAM', message: 'content is required and must be a string' } }, 400)
+    }
+
+    if (Buffer.byteLength(body.content, 'utf-8') > MAX_FILE_SIZE) {
+      return c.json({ error: { code: 'INVALID_PARAM', message: `File content exceeds ${MAX_FILE_SIZE / 1024}KB limit` } }, 400)
+    }
+
+    const cloneDir = info.type === 'built-in' ? getBuiltInCloneDir(name) : getCloneDir(name)
+    const fullPath = path.join(cloneDir, filePath)
+
+    try {
+      fs.writeFileSync(fullPath, body.content, 'utf-8')
+      return c.json({ ok: true })
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      return c.json({ error: { code: 'WRITE_ERROR', message: msg } }, 500)
+    }
+  })
+
+  // ══════════════════════════════════════════════════════════════════
+  // Session Management (DB-backed, unchanged)
+  // ══════════════════════════════════════════════════════════════════
 
   // ── Create clone session ─────────────────────────────────────────
   app.post('/:name/sessions', async (c) => {
@@ -93,7 +242,7 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
     const cloneName = c.req.param('name')
 
     // Verify clone exists
-    const cloneDef = resolveCloneDef(cloneName, cloneDAO)
+    const cloneDef = resolveCloneDefFromFs(cloneName)
     if (!cloneDef) {
       return c.json({ error: { code: 'NOT_FOUND', message: `Clone "${cloneName}" not found` } }, 404)
     }
@@ -191,8 +340,8 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
       return c.json({ error: { code: 'NOT_FOUND', message: `Session ${sessionId} not found` } }, 404)
     }
 
-    // Resolve clone definition
-    const cloneDef = resolveCloneDef(cloneName, cloneDAO)
+    // Resolve clone definition from filesystem
+    const cloneDef = resolveCloneDefFromFs(cloneName)
     if (!cloneDef) {
       return c.json({ error: { code: 'NOT_FOUND', message: `Clone "${cloneName}" not found` } }, 404)
     }
