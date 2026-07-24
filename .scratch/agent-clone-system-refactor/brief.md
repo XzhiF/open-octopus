@@ -55,7 +55,7 @@
 |-------|-----------|---------|
 | `messages` | ADD COLUMN | `type TEXT` — 消息类型（thinking/text/tool_call/tool_result/error） |
 | `messages` | ADD COLUMN | `metadata TEXT` — JSON 元数据（token 用量、成本、工具详情、thinking 耗时） |
-| `sessions` | ADD COLUMN | `workspace_id TEXT` — 关联 workspace（可为 null） |
+| `sessions` | ADD COLUMN | `scope_id TEXT` — 通用作用域 ID（Workspace 分身关联 workspace_id，其他分身可为空或关联其他实体） |
 | `sessions` | ADD COLUMN | `provider_session_id TEXT` — SDK resume 会话 ID |
 | `chat_sessions` | DEPRECATE | 迁移后废弃（本次不做数据迁移） |
 | `chat_messages` | DEPRECATE | 迁移后废弃 |
@@ -87,7 +87,7 @@ interface CloneDef {
 ```typescript
 interface CloneSession extends SessionRow {
   clone_name: string              // 分身名称（必填）
-  workspace_id: string | null     // workspace 关联
+  scope_id: string | null         // 通用作用域 ID（如 workspace_id）
   provider_session_id: string | null  // SDK resume ID
 }
 ```
