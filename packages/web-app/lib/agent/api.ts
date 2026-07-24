@@ -68,10 +68,18 @@ export interface AgentSSEConnection {
   abort: () => void
 }
 
-export function chatStream(id: string, message: string, opts?: { debug?: boolean }): AgentSSEConnection {
+export function chatStream(id: string, message: string, opts?: { debug?: boolean; delegate_to?: string }): AgentSSEConnection {
   const controller = new AbortController()
-  const url = `${BASE()}/sessions/${id}/chat`
-  const body = JSON.stringify({ message, debug: opts?.debug })
+  // When delegate_to is present, use main agent chat endpoint
+  const url = opts?.delegate_to
+    ? `${BASE()}/chat`
+    : `${BASE()}/sessions/${id}/chat`
+  const body = JSON.stringify({
+    message,
+    debug: opts?.debug,
+    session_id: id,
+    delegate_to: opts?.delegate_to,
+  })
 
   const streamPromise = fetch(url, {
     method: 'POST',

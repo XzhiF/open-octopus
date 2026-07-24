@@ -60,7 +60,7 @@ export function useAgentChat(sessionId: string | null, options?: { onTitleUpdate
     }
   }, [sessionId])
 
-  const sendMessage = useCallback(async (message: string) => {
+  const sendMessage = useCallback(async (message: string, opts?: { delegate_to?: string }) => {
     if (!sessionId || !message.trim()) return
     // Guard: block if already streaming
     if (streamingRef.current) return
@@ -73,7 +73,7 @@ export function useAgentChat(sessionId: string | null, options?: { onTitleUpdate
     // Capture the session that owns this stream
     streamingSessionRef.current = sessionId
 
-    // Optimistic: add user message
+    // Optimistic: add user message (preserve original @@syntax for display)
     const userMsg: AgentMessage = {
       id: `temp-${Date.now()}`,
       session_id: sessionId,
@@ -97,7 +97,7 @@ export function useAgentChat(sessionId: string | null, options?: { onTitleUpdate
     streamThinkingRef.current = ''
     toolCallsRef.current = []
 
-    const source = api.chatStream(sessionId, message)
+    const source = api.chatStream(sessionId, message, { delegate_to: opts?.delegate_to })
 
     const handlers: SSEHandlers = {
       onTextDelta: (content) => {

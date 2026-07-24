@@ -209,6 +209,7 @@ export function CloneChatView({ clone, onBack }: CloneChatViewProps) {
           onStop={stopGenerate}
           onConfirm={handleConfirm}
           hasSession={!!activeSessionId}
+          currentCloneName={clone.name}
         />
       </div>
 
