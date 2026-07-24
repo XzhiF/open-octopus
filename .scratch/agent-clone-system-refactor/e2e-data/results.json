@@ -1,0 +1,109 @@
+{
+  "results": [
+    {
+      "id": "AC-10",
+      "status": "PASS",
+      "orchestrator_file_deleted": true,
+      "no_class_reference": true,
+      "no_deleted_method_reference": true
+    },
+    {
+      "id": "AC-09",
+      "status": "PASS",
+      "workspace_memory_dir": true,
+      "scheduler_memory_dir": true,
+      "archive_memory_dir": true,
+      "resource_memory_dir": true,
+      "write_isolation_verified": true
+    },
+    {
+      "id": "AC-08",
+      "status": "PASS",
+      "total_clones": 4,
+      "built_in_count": 4,
+      "built_in_names": [
+        "archive",
+        "resource",
+        "scheduler",
+        "workspace"
+      ],
+      "sample": {
+        "name": "workspace",
+        "type": "built-in",
+        "memoryScope": "shared",
+        "skills": []
+      }
+    },
+    {
+      "id": "AC-08b",
+      "status": "PASS",
+      "clones_verified": [
+        "workspace",
+        "scheduler",
+        "archive",
+        "resource"
+      ]
+    },
+    {
+      "id": "AC-06",
+      "status": "PASS",
+      "type_column_exists": true,
+      "metadata_column_exists": true,
+      "thinking_insert_verified": true
+    },
+    {
+      "id": "AC-02",
+      "status": "PASS",
+      "has_scheduler_persona": true,
+      "has_schedule_skill": true,
+      "memory_isolated": true,
+      "session_created": true,
+      "cleaned_up": true
+    },
+    {
+      "id": "AC-04",
+      "status": "PASS",
+      "has_archive_persona": true,
+      "has_analyst_skill": true,
+      "memory_shared": true,
+      "archive_service_extracted": true
+    },
+    {
+      "id": "AC-05",
+      "status": "PASS",
+      "has_resource_persona": true,
+      "has_manager_skill": true,
+      "memory_isolated": true,
+      "resource_service_extracted": true
+    },
+    {
+      "id": "AC-01",
+      "status": "PASS",
+      "session_created": true,
+      "session_in_db": true,
+      "chat_status": 200,
+      "sse_events_present": true,
+      "chat_had_error": false,
+      "messages_stored": true,
+      "cleaned_up": true
+    },
+    {
+      "id": "AC-07",
+      "status": "PASS",
+      "column_exists": true,
+      "initially_null": false,
+      "update_method_in_dao": true,
+      "cleaned_up": true
+    },
+    {
+      "id": "AC-03",
+      "status": "PASS",
+      "endpoint_exists": true,
+      "response_status": 401,
+      "route_in_code": false,
+      "main_agent_route_file": true
+    }
+  ],
+  "errors": [],
+  "timestamp": "2026-07-24T08:56:23.389Z"
+}
