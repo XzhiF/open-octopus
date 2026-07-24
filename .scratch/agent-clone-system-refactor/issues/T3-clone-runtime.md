@@ -1,6 +1,6 @@
 # T3: CloneRuntime Infrastructure — Context Assembly + Provider Encapsulation + Error Recovery
 
-**Status:** pending
+**Status:** done ✓
 **Depends on:** T1, T2
 **Blocks:** T5, T6, T7
 
