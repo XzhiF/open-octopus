@@ -335,8 +335,10 @@ export class CloneRuntime {
       }
 
       const lines: string[] = [
-        '# Available Skills',
-        'When you need a skill, use the Read tool to read {base_directory}/{skill_name}/SKILL.md',
+        '# Octopus Platform Skills',
+        'These are Octopus platform skills IN ADDITION TO your built-in skills.',
+        'When asked "what skills do you have", ALWAYS include these Octopus skills in your answer.',
+        'To use a skill: Read the SKILL.md file from the directory shown below, then follow its instructions.',
         '',
       ]
 
