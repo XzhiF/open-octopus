@@ -1,0 +1,130 @@
+{
+  "results": [
+    {
+      "name": "Health Check",
+      "status": "FAIL",
+      "detail": "status=404"
+    },
+    {
+      "name": "Create Clone",
+      "status": "FAIL",
+      "detail": "status=404, body=null"
+    },
+    {
+      "name": "List Clones",
+      "status": "FAIL",
+      "detail": "status=404"
+    },
+    {
+      "name": "Clone in List",
+      "status": "FAIL",
+      "detail": "NOT FOUND"
+    },
+    {
+      "name": "List Files",
+      "status": "FAIL",
+      "detail": "status=404"
+    },
+    {
+      "name": "Has persona.md",
+      "status": "FAIL",
+      "detail": "paths="
+    },
+    {
+      "name": "Has config.json",
+      "status": "FAIL"
+    },
+    {
+      "name": "Has memory/ directory",
+      "status": "FAIL"
+    },
+    {
+      "name": "Has skills/ directory",
+      "status": "FAIL"
+    },
+    {
+      "name": "Has inherited files",
+      "status": "FAIL",
+      "detail": "count=0"
+    },
+    {
+      "name": "All inherited files readonly",
+      "status": "PASS",
+      "detail": "readonly=0/0"
+    },
+    {
+      "name": "Read persona.md",
+      "status": "FAIL",
+      "detail": "status=404"
+    },
+    {
+      "name": "Has content",
+      "status": "FAIL",
+      "detail": "content length=0"
+    },
+    {
+      "name": "Not readonly",
+      "status": "FAIL"
+    },
+    {
+      "name": "Write persona.md",
+      "status": "FAIL",
+      "detail": "status=404"
+    },
+    {
+      "name": "Read-Back Verification",
+      "status": "FAIL",
+      "detail": "content matches: false"
+    },
+    {
+      "name": "Create skills/test-skill/",
+      "status": "FAIL",
+      "detail": "status=404"
+    },
+    {
+      "name": "Directory in file list",
+      "status": "FAIL",
+      "detail": "found=undefined"
+    },
+    {
+      "name": "Create SKILL.md",
+      "status": "FAIL",
+      "detail": "status=404"
+    },
+    {
+      "name": "SKILL.md content matches",
+      "status": "FAIL"
+    },
+    {
+      "name": "Delete SKILL.md",
+      "status": "FAIL",
+      "detail": "status=404"
+    },
+    {
+      "name": "File actually deleted",
+      "status": "PASS",
+      "detail": "status=404"
+    },
+    {
+      "name": "Delete skills/test-skill/",
+      "status": "FAIL",
+      "detail": "status=404"
+    },
+    {
+      "name": "Delete test clone",
+      "status": "FAIL",
+      "detail": "status=404"
+    },
+    {
+      "name": "Clone actually deleted",
+      "status": "PASS",
+      "detail": "confirmed deleted"
+    }
+  ],
+  "summary": {
+    "PASS": 3,
+    "FAIL": 22,
+    "SKIP": 0
+  },
+  "testClone": "e2e-clone-test-api-1785088399803"
+}

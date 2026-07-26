@@ -157,7 +157,8 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
     const filePath = decodeURIComponent(c.req.param('path'))
 
     // Path whitelist check
-    if (!ALLOWED_FILES.has(filePath) || filePath.includes('..') || filePath.includes('/') || filePath.includes('\\')) {
+    // Path traversal protection only (allow nested paths)
+    if (filePath.includes('..') || filePath.startsWith('/') || filePath.startsWith('\\')) {
       return c.json({ error: { code: 'FORBIDDEN', message: `File "${filePath}" is not accessible` } }, 403)
     }
 
@@ -176,7 +177,7 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
     try {
       const content = fs.readFileSync(fullPath, 'utf-8')
       const stat = fs.statSync(fullPath)
-      return c.json({ content, path: filePath, size: stat.size })
+      return c.json({ content, path: filePath, size: stat.size, readonly: false })
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       return c.json({ error: { code: 'READ_ERROR', message: msg } }, 500)
@@ -188,8 +189,8 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
     const name = c.req.param('name')
     const filePath = decodeURIComponent(c.req.param('path'))
 
-    // Path whitelist check
-    if (!ALLOWED_FILES.has(filePath) || filePath.includes('..') || filePath.includes('/') || filePath.includes('\\')) {
+    // Path traversal protection only (allow nested paths)
+    if (filePath.includes('..') || filePath.startsWith('/') || filePath.startsWith('\\')) {
       return c.json({ error: { code: 'FORBIDDEN', message: `File "${filePath}" is not accessible` } }, 403)
     }
 

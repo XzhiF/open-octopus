@@ -8,7 +8,7 @@ import { CloneCardGrid } from './CloneCardGrid'
 import { CloneCreateWizard } from './CloneCreateWizard'
 import { CloneMergeDialog } from './CloneMergeDialog'
 import { CloneDeleteDialog } from './CloneDeleteDialog'
-import { CloneChatView } from './CloneChatView'
+import { CloneDetailView } from './CloneDetailView'
 import { CloneFilePanel } from './CloneFilePanel'
 import { AgentEmptyState } from '../shared/AgentEmptyState'
 import type { CloneInfo } from '@/lib/agent/types'
@@ -21,10 +21,10 @@ export function CloneTab() {
   const [activeChatClone, setActiveChatClone] = useState<CloneInfo | null>(null)
   const [fileMgmtClone, setFileMgmtClone] = useState<CloneInfo | null>(null)
 
-  // D3: Click clone → enter multi-session chat view
+  // D3: Click clone → enter three-column detail view
   if (activeChatClone) {
     return (
-      <CloneChatView
+      <CloneDetailView
         clone={activeChatClone}
         onBack={() => setActiveChatClone(null)}
       />

@@ -1,0 +1,167 @@
+{
+  "results": [
+    {
+      "name": "Health Check",
+      "status": "PASS",
+      "detail": "status=ok"
+    },
+    {
+      "name": "Create Clone",
+      "status": "PASS",
+      "detail": "status=201, body={\"clone\":{\"name\":\"e2e-clone-test-api-1785089749877\",\"display_name\":\"E2E API Test Clone\",\"type\":\"user\",\"persona\":\"# 分身: E2E API Test Clone\\n\\n（请在 Chat 中描述你希望这个分身具备的特质）\\n\",\"skills\":[],\"memory_scope\":\"is"
+    },
+    {
+      "name": "Clone Name Match",
+      "status": "PASS",
+      "detail": "name=e2e-clone-test-api-1785089749877"
+    },
+    {
+      "name": "Display Name Match",
+      "status": "PASS",
+      "detail": "display_name=E2E API Test Clone"
+    },
+    {
+      "name": "Memory Scope Default",
+      "status": "PASS",
+      "detail": "memory_scope=isolated"
+    },
+    {
+      "name": "Has Status",
+      "status": "PASS",
+      "detail": "status=idle"
+    },
+    {
+      "name": "Has Created At",
+      "status": "PASS",
+      "detail": "created_at=2026-07-26T18:15:49.926Z"
+    },
+    {
+      "name": "List Clones",
+      "status": "PASS",
+      "detail": "status=200"
+    },
+    {
+      "name": "Clone in List",
+      "status": "PASS",
+      "detail": "found in 6 clones"
+    },
+    {
+      "name": "List Files",
+      "status": "PASS",
+      "detail": "status=200"
+    },
+    {
+      "name": "Has persona.md",
+      "status": "PASS",
+      "detail": "paths=config.json,memory,persona.md,skills"
+    },
+    {
+      "name": "Has config.json",
+      "status": "PASS"
+    },
+    {
+      "name": "Has memory/ directory",
+      "status": "PASS"
+    },
+    {
+      "name": "Has skills/ directory",
+      "status": "PASS"
+    },
+    {
+      "name": "File has size",
+      "status": "PASS",
+      "detail": "size=94"
+    },
+    {
+      "name": "File has modified",
+      "status": "PASS",
+      "detail": "modified=2026-07-26T18:15:49.927Z"
+    },
+    {
+      "name": "Own file not readonly",
+      "status": "PASS",
+      "detail": "readonly=false"
+    },
+    {
+      "name": "Has inherited files",
+      "status": "PASS",
+      "detail": "count=20"
+    },
+    {
+      "name": "All inherited files readonly",
+      "status": "PASS",
+      "detail": "readonly=20/20"
+    },
+    {
+      "name": "Read persona.md",
+      "status": "PASS",
+      "detail": "status=200"
+    },
+    {
+      "name": "Has content",
+      "status": "PASS",
+      "detail": "content length=52"
+    },
+    {
+      "name": "GET file returns readonly field (SPEC)",
+      "status": "FAIL",
+      "detail": "BUG: readonly field missing from GET response"
+    },
+    {
+      "name": "Write persona.md",
+      "status": "PASS",
+      "detail": "status=200"
+    },
+    {
+      "name": "Read-Back Verification",
+      "status": "PASS",
+      "detail": "content matches: true"
+    },
+    {
+      "name": "Create skills/test-skill/ via POST",
+      "status": "FAIL",
+      "detail": "status=500 (BUG: wildcard param undefined)"
+    },
+    {
+      "name": "Create SKILL.md via PUT",
+      "status": "FAIL",
+      "detail": "status=403 (BUG: whitelist rejects paths with slashes)"
+    },
+    {
+      "name": "Inherited files marked readonly in tree",
+      "status": "PASS",
+      "detail": "readonly=true"
+    },
+    {
+      "name": "Cannot write to readonly file",
+      "status": "PASS",
+      "detail": "status=404"
+    },
+    {
+      "name": "Delete SKILL.md",
+      "status": "FAIL",
+      "detail": "status=500"
+    },
+    {
+      "name": "Delete directory",
+      "status": "FAIL",
+      "detail": "status=500"
+    },
+    {
+      "name": "Delete test clone",
+      "status": "PASS",
+      "detail": "status=200"
+    },
+    {
+      "name": "Clone actually deleted",
+      "status": "PASS",
+      "detail": "confirmed deleted"
+    }
+  ],
+  "summary": {
+    "PASS": 27,
+    "FAIL": 5,
+    "SKIP": 0
+  },
+  "testClone": "e2e-clone-test-api-1785089749877"
+}

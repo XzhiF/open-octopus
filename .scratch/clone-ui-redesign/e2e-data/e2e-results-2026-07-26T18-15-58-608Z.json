@@ -1,0 +1,147 @@
+{
+  "results": [
+    {
+      "ac": 7,
+      "name": "Card Fields",
+      "status": "PASS",
+      "evidence": {
+        "count": 5
+      },
+      "details": "Found 5 cards. display_name=true, name=true, status_in_aria=true, memory_scope=false",
+      "timestamp": "2026-07-26T18:16:02.351Z"
+    },
+    {
+      "ac": 7,
+      "name": "Last Active",
+      "status": "FAIL",
+      "evidence": {
+        "hasLastActive": false
+      },
+      "details": "No relative time (last_active field not displayed on cards)",
+      "timestamp": "2026-07-26T18:16:02.351Z"
+    },
+    {
+      "ac": 8,
+      "name": "Wizard Opens",
+      "status": "PASS",
+      "evidence": {
+        "wizardOpen": true
+      },
+      "details": "Create wizard dialog visible",
+      "timestamp": "2026-07-26T18:16:03.006Z"
+    },
+    {
+      "ac": 8,
+      "name": "Wizard Steps (Spec: 1)",
+      "status": "FAIL",
+      "evidence": {
+        "stepCount": 5
+      },
+      "details": "Spec says 1 step. Implementation has 5 step indicators (2 steps: basic info + optional config).",
+      "timestamp": "2026-07-26T18:16:03.007Z"
+    },
+    {
+      "ac": 1,
+      "name": "Three-Column Layout",
+      "status": "FAIL",
+      "evidence": {
+        "isDetailView": false,
+        "isChatView": true,
+        "hasChatViewBack": true,
+        "hasDetailViewBack": false,
+        "hasChatInput": false,
+        "hasSessionList": true,
+        "hasFileTree": false,
+        "hasPanelToggles": false
+      },
+      "details": "CloneChatView active (2-col: sessions | chat). CloneDetailView exists in code but is NOT wired into CloneTab navigation. This is a spec deviation.",
+      "timestamp": "2026-07-26T18:16:08.856Z"
+    },
+    {
+      "ac": 8,
+      "name": "Agent Proactive Question",
+      "status": "FAIL",
+      "evidence": {
+        "hasAgentProactive": false,
+        "createdClone": true
+      },
+      "details": "Agent did NOT ask proactive question (spec requirement)",
+      "timestamp": "2026-07-26T18:16:08.857Z"
+    },
+    {
+      "ac": 5,
+      "name": "Chat Input",
+      "status": "PASS",
+      "evidence": {
+        "found": true,
+        "placeholder": "输入消息，@@ 委托分身，Enter 发送"
+      },
+      "details": "Chat input found: \"输入消息，@@ 委托分身，Enter 发送\"",
+      "timestamp": "2026-07-26T18:16:08.858Z"
+    },
+    {
+      "ac": 5,
+      "name": "Chat Response",
+      "status": "PASS",
+      "evidence": {
+        "hasResponse": true
+      },
+      "details": "Chat received response",
+      "timestamp": "2026-07-26T18:16:24.253Z"
+    },
+    {
+      "ac": 2,
+      "name": "File Management Files",
+      "status": "PASS",
+      "evidence": {
+        "hasPersona": true,
+        "hasConfig": true,
+        "hasMemory": false,
+        "hasSkills": false,
+        "hasFilePanel": true
+      },
+      "details": "CloneFilePanel shows persona.md + config.json tabs. Does NOT show full file tree (skills/, memory/). Spec requires full tree with 4 items.",
+      "timestamp": "2026-07-26T18:16:28.066Z"
+    },
+    {
+      "ac": 3,
+      "name": "Inherited Section",
+      "status": "FAIL",
+      "evidence": {
+        "hasInherited": false
+      },
+      "details": "CloneFilePanel does NOT show \"继承自 Main Agent\" section. That section exists in CloneFileTree (DetailView) but DetailView is not wired into navigation.",
+      "timestamp": "2026-07-26T18:16:28.067Z"
+    },
+    {
+      "ac": 4,
+      "name": "File Edit & Save",
+      "status": "PASS",
+      "evidence": {
+        "saveSuccess": true
+      },
+      "details": "File saved via CloneFilePanel (shows 无更改)",
+      "timestamp": "2026-07-26T18:16:32.540Z"
+    },
+    {
+      "ac": 6,
+      "name": "Skill Dir Creation",
+      "status": "FAIL",
+      "evidence": {
+        "status": 500,
+        "ok": false,
+        "body": {
+          "error": "The \"path\" argument must be of type string. Received undefined"
+        }
+      },
+      "details": "BUG: POST /clones/:name/files/* wildcard param (*) returns undefined. Hono wildcard routing issue in clone-files.ts.",
+      "timestamp": "2026-07-26T18:16:33.953Z"
+    }
+  ],
+  "summary": {
+    "PASS": 6,
+    "FAIL": 6,
+    "SKIP": 0
+  },
+  "timestamp": "2026-07-26T18:16:45.514Z"
+}

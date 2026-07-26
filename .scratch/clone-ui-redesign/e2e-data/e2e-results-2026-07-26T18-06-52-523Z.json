@@ -1,0 +1,170 @@
+{
+  "results": [
+    {
+      "ac": 7,
+      "name": "Card Fields",
+      "status": "PASS",
+      "evidence": {
+        "cardInfo": [
+          {
+            "ariaLabel": "分身: 全栈开发助手, 状态: active",
+            "displayName": "全栈开发助手",
+            "name": "workspace",
+            "badges": [],
+            "hasStatus": true
+          },
+          {
+            "ariaLabel": "分身: 定时任务管理, 状态: active",
+            "displayName": "定时任务管理",
+            "name": "scheduler",
+            "badges": [],
+            "hasStatus": true
+          },
+          {
+            "ariaLabel": "分身: 工程分析师, 状态: active",
+            "displayName": "工程分析师",
+            "name": "archive",
+            "badges": [],
+            "hasStatus": true
+          },
+          {
+            "ariaLabel": "分身: 资源操作专家, 状态: active",
+            "displayName": "资源操作专家",
+            "name": "resource",
+            "badges": [],
+            "hasStatus": true
+          },
+          {
+            "ariaLabel": "分身: 前段开发助手, 状态: idle",
+            "displayName": "前段开发助手",
+            "name": "frontend-dev",
+            "badges": [],
+            "hasStatus": true
+          }
+        ]
+      },
+      "details": "display_name=true, name=true, status_in_aria=true, memory_scope=false",
+      "timestamp": "2026-07-26T18:06:56.234Z"
+    },
+    {
+      "ac": 7,
+      "name": "Last Active",
+      "status": "FAIL",
+      "evidence": {
+        "hasLastActive": false
+      },
+      "details": "No relative time indicators found",
+      "timestamp": "2026-07-26T18:06:56.234Z"
+    },
+    {
+      "ac": 8,
+      "name": "Wizard Opens",
+      "status": "PASS",
+      "evidence": {
+        "wizardOpen": true
+      },
+      "details": "Create wizard dialog is visible",
+      "timestamp": "2026-07-26T18:06:57.856Z"
+    },
+    {
+      "ac": 8,
+      "name": "Wizard Steps (Spec: 1)",
+      "status": "FAIL",
+      "evidence": {
+        "stepCount": 5
+      },
+      "details": "Implementation has 5 step indicator(s). Spec says 1 step.",
+      "timestamp": "2026-07-26T18:06:57.857Z"
+    },
+    {
+      "ac": 1,
+      "name": "Three-Column Layout",
+      "status": "PASS",
+      "evidence": {
+        "hasFileTree": true,
+        "hasChatArea": true,
+        "hasFileContent": true,
+        "hasBackButton": true,
+        "hasPanelToggles": true
+      },
+      "details": "File tree + Chat panel visible after entering clone",
+      "timestamp": "2026-07-26T18:07:03.773Z"
+    },
+    {
+      "ac": 2,
+      "name": "File Tree Items",
+      "status": "FAIL",
+      "evidence": {
+        "hasPersona": false,
+        "hasConfig": false,
+        "hasMemory": false,
+        "hasSkills": false
+      },
+      "details": "persona=false, config=false, memory=false, skills=false",
+      "timestamp": "2026-07-26T18:07:03.805Z"
+    },
+    {
+      "ac": 3,
+      "name": "Inherited Section",
+      "status": "FAIL",
+      "evidence": {
+        "hasInheritedLabel": false,
+        "hasLockIcons": true,
+        "readonlyCount": 8
+      },
+      "details": "Inherited section label not found",
+      "timestamp": "2026-07-26T18:07:03.836Z"
+    },
+    {
+      "ac": 4,
+      "name": "Persona.md",
+      "status": "SKIP",
+      "evidence": {},
+      "details": "persona.md not visible in file tree",
+      "timestamp": "2026-07-26T18:07:03.860Z"
+    },
+    {
+      "ac": 5,
+      "name": "Chat Input",
+      "status": "PASS",
+      "evidence": {
+        "found": true,
+        "placeholder": "输入消息，@@ 委托分身，Enter 发送"
+      },
+      "details": "Chat input found: \"输入消息，@@ 委托分身，Enter 发送\"",
+      "timestamp": "2026-07-26T18:07:03.861Z"
+    },
+    {
+      "ac": 5,
+      "name": "Chat Response",
+      "status": "PASS",
+      "evidence": {
+        "hasResponse": true
+      },
+      "details": "Chat received a response",
+      "timestamp": "2026-07-26T18:07:07.244Z"
+    },
+    {
+      "ac": 6,
+      "name": "Skill Directory Creation",
+      "status": "FAIL",
+      "evidence": {
+        "createDirResult": {
+          "status": 500,
+          "ok": false,
+          "body": {
+            "error": "The \"path\" argument must be of type string. Received undefined"
+          }
+        }
+      },
+      "details": "Directory creation failed: {\"status\":500,\"ok\":false,\"body\":{\"error\":\"The \\\"path\\\" argument must be of type string. Received undefined\"}}",
+      "timestamp": "2026-07-26T18:07:07.275Z"
+    }
+  ],
+  "summary": {
+    "PASS": 5,
+    "FAIL": 5,
+    "SKIP": 1
+  },
+  "timestamp": "2026-07-26T18:07:07.358Z"
+}

@@ -1,25 +1,22 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
-import { Check, ChevronLeft, ChevronRight, X, Loader2 } from 'lucide-react'
+import { useState } from 'react'
+import { Check, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { Textarea } from '@/components/ui/textarea'
 import { Input } from '@/components/ui/input'
-import { Checkbox } from '@/components/ui/checkbox'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Label } from '@/components/ui/label'
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import { toast } from 'sonner'
-import { cn } from '@/lib/utils'
 import * as api from '@/lib/agent/api'
-import type { CreateCloneRequest, SkillInfo } from '@/lib/agent/types'
+import type { CreateCloneRequest } from '@/lib/agent/types'
 
 interface CloneCreateWizardProps {
   onClose: () => void
   onCreated: () => void
 }
 
-const STEPS = ['基本信息', '可选配置']
+const STEPS = ['创建分身']
 
 export function CloneCreateWizard({ onClose, onCreated }: CloneCreateWizardProps) {
   const [step, setStep] = useState(0)
@@ -53,10 +50,7 @@ export function CloneCreateWizard({ onClose, onCreated }: CloneCreateWizardProps
   // Name validation
   const nameValid = /^[a-z0-9-]+$/.test(name) && name.length > 0 && name.length <= 50
   const canProceed = () => {
-    if (step === 0) {
-      return nameValid && displayName.trim().length > 0
-    }
-    return true
+    return nameValid && displayName.trim().length > 0
   }
 
   const handleCreate = async () => {
@@ -109,110 +103,90 @@ export function CloneCreateWizard({ onClose, onCreated }: CloneCreateWizardProps
           ))}
         </div>
 
-        {/* Step content */}
+        {/* Form content */}
         <div className="flex-1 overflow-auto space-y-4">
-          {step === 0 && (
-            <>
-              <div>
-                <Label htmlFor="clone-name">英文代号</Label>
-                <Input
-                  id="clone-name"
-                  value={name}
-                  onChange={(e) => setName(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ''))}
-                  placeholder="例如: frontend-dev"
-                  className="mt-1 bg-agent-surface-inset border-agent-divider font-mono"
-                  maxLength={50}
-                />
-                <p className="text-xs text-muted-foreground mt-1">
-                  {name.length}/50 字符，只允许小写字母、数字和横线
-                  {name.length > 0 && !nameValid && (
-                    <span className="text-agent-error ml-1">格式不正确</span>
-                  )}
-                </p>
-              </div>
-              <div>
-                <Label htmlFor="clone-display-name">显示名称</Label>
-                <Input
-                  id="clone-display-name"
-                  value={displayName}
-                  onChange={(e) => setDisplayName(e.target.value)}
-                  placeholder="例如: 前端开发助手"
-                  className="mt-1 bg-agent-surface-inset border-agent-divider"
-                  maxLength={64}
-                />
-                <p className="text-xs text-muted-foreground mt-1">支持中文，在 UI 和 @@补全中显示</p>
-              </div>
-              <div className="p-4 bg-agent-surface-inset rounded-md border border-agent-divider">
-                <p className="text-sm text-muted-foreground">
-                  💡 创建后，分身会自动生成空的 persona.md 文件。你可以在 Chat 中描述你希望这个分身具备的特质，Agent 会自动帮你完善人格设定。
-                </p>
-              </div>
-            </>
-          )}
+          <div>
+            <Label htmlFor="clone-name">英文代号</Label>
+            <Input
+              id="clone-name"
+              value={name}
+              onChange={(e) => setName(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ''))}
+              placeholder="例如: frontend-dev"
+              className="mt-1 bg-agent-surface-inset border-agent-divider font-mono"
+              maxLength={50}
+            />
+            <p className="text-xs text-muted-foreground mt-1">
+              {name.length}/50 字符，只允许小写字母、数字和横线
+              {name.length > 0 && !nameValid && (
+                <span className="text-agent-error ml-1">格式不正确</span>
+              )}
+            </p>
+          </div>
+          <div>
+            <Label htmlFor="clone-display-name">显示名称</Label>
+            <Input
+              id="clone-display-name"
+              value={displayName}
+              onChange={(e) => setDisplayName(e.target.value)}
+              placeholder="例如: 前端开发助手"
+              className="mt-1 bg-agent-surface-inset border-agent-divider"
+              maxLength={64}
+            />
+            <p className="text-xs text-muted-foreground mt-1">支持中文，在 UI 和 @@补全中显示</p>
+          </div>
 
-          {step === 1 && (
-            <>
-              {/* Memory scope */}
-              <div>
-                <Label>记忆范围</Label>
-                <p className="text-xs text-muted-foreground mt-1 mb-3">
-                  共享：可读取主 Agent 长期记忆；独立：完全隔离
-                </p>
-                <RadioGroup
-                  value={memoryScope}
-                  onValueChange={(v) => setMemoryScope(v as 'shared' | 'isolated')}
-                >
-                  <div className="flex items-center gap-2">
-                    <RadioGroupItem value="isolated" id="mem-isolated" />
-                    <Label htmlFor="mem-isolated" className="text-sm font-normal cursor-pointer">
-                      独立记忆（推荐）
-                    </Label>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <RadioGroupItem value="shared" id="mem-shared" />
-                    <Label htmlFor="mem-shared" className="text-sm font-normal cursor-pointer">
-                      共享记忆
-                    </Label>
-                  </div>
-                </RadioGroup>
+          {/* Memory scope */}
+          <div>
+            <Label>记忆范围</Label>
+            <p className="text-xs text-muted-foreground mt-1 mb-3">
+              共享：可读取主 Agent 长期记忆；独立：完全隔离
+            </p>
+            <RadioGroup
+              value={memoryScope}
+              onValueChange={(v) => setMemoryScope(v as 'shared' | 'isolated')}
+            >
+              <div className="flex items-center gap-2">
+                <RadioGroupItem value="isolated" id="mem-isolated" />
+                <Label htmlFor="mem-isolated" className="text-sm font-normal cursor-pointer">
+                  独立记忆（推荐）
+                </Label>
               </div>
+              <div className="flex items-center gap-2">
+                <RadioGroupItem value="shared" id="mem-shared" />
+                <Label htmlFor="mem-shared" className="text-sm font-normal cursor-pointer">
+                  共享记忆
+                </Label>
+              </div>
+            </RadioGroup>
+          </div>
 
-              <div className="p-4 bg-agent-surface-inset rounded-md border border-agent-divider">
-                <p className="text-sm text-muted-foreground">
-                  💡 技能管理：创建后，你可以在 Chat 中让 Agent 自主安装和管理技能，无需手动选择。
-                </p>
-              </div>
-            </>
-          )}
+          <div className="p-4 bg-agent-surface-inset rounded-md border border-agent-divider space-y-2">
+            <p className="text-sm text-muted-foreground">
+              💡 <strong>人格设定</strong>：创建后，分身会自动生成空的 persona.md 文件。你可以在 Chat 中描述你希望这个分身具备的特质，Agent 会自动帮你完善。
+            </p>
+            <p className="text-sm text-muted-foreground">
+              💡 <strong>技能管理</strong>：创建后，你可以在 Chat 中让 Agent 自主安装和管理技能，无需手动选择。
+            </p>
+          </div>
         </div>
 
-        {/* Navigation buttons */}
+        {/* Action buttons */}
         <div className="flex items-center justify-between pt-4 border-t border-agent-divider">
           <Button
             variant="ghost"
-            onClick={() => step > 0 ? setStep(step - 1) : onClose()}
+            onClick={onClose}
             className="gap-1"
           >
-            {step > 0 ? <><ChevronLeft className="h-4 w-4" /> 上一步</> : <><X className="h-4 w-4" /> 取消</>}
+            <X className="h-4 w-4" /> 取消
           </Button>
-          {step < STEPS.length - 1 ? (
-            <Button
-              onClick={() => setStep(step + 1)}
-              disabled={!canProceed()}
-              className="gap-1 bg-agent-primary hover:bg-agent-primary-hover text-agent-primary-foreground"
-            >
-              下一步 <ChevronRight className="h-4 w-4" />
-            </Button>
-          ) : (
-            <Button
-              onClick={handleCreate}
-              disabled={!canProceed() || loading}
-              className="gap-1 bg-agent-primary hover:bg-agent-primary-hover text-agent-primary-foreground"
-            >
-              <Check className="h-4 w-4" />
-              {loading ? '创建中...' : '创建'}
-            </Button>
-          )}
+          <Button
+            onClick={handleCreate}
+            disabled={!canProceed() || loading}
+            className="gap-1 bg-agent-primary hover:bg-agent-primary-hover text-agent-primary-foreground"
+          >
+            <Check className="h-4 w-4" />
+            {loading ? '创建中...' : '创建'}
+          </Button>
         </div>
       </DialogContent>
     </Dialog>

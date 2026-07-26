@@ -60,10 +60,10 @@ export function createCloneFilesRoutes(): Hono {
     return c.json({ files })
   })
 
-  // GET /clones/:name/files/* — get single file content with readonly flag
-  app.get('/clones/:name/files/*', (c) => {
+  // GET /clones/:name/files/:path — get single file content with readonly flag
+  app.get('/clones/:name/files/:path{.+}', (c) => {
     const name = c.req.param('name')
-    const filePath = c.req.param('*')
+    const filePath = c.req.param('path')
 
     const targetPath = resolveFilePath(name, filePath)
     if (!targetPath) {
@@ -85,10 +85,10 @@ export function createCloneFilesRoutes(): Hono {
     })
   })
 
-  // POST /clones/:name/files/* — create file or directory
-  app.post('/clones/:name/files/*', async (c) => {
+  // POST /clones/:name/files/:path — create file or directory
+  app.post('/clones/:name/files/:path{.+}', async (c) => {
     const name = c.req.param('name')
-    const filePath = c.req.param('*')
+    const filePath = c.req.param('path')
 
     let body: { type?: string; content?: string } = {}
     try {
@@ -122,10 +122,10 @@ export function createCloneFilesRoutes(): Hono {
     return c.json({ success: true, path: filePath })
   })
 
-  // DELETE /clones/:name/files/* — delete file or directory
-  app.delete('/clones/:name/files/*', (c) => {
+  // DELETE /clones/:name/files/:path — delete file or directory
+  app.delete('/clones/:name/files/:path{.+}', (c) => {
     const name = c.req.param('name')
-    const filePath = c.req.param('*')
+    const filePath = c.req.param('path')
 
     const cloneDir = getCloneDirectory(name)
     const targetPath = path.join(cloneDir, filePath)
