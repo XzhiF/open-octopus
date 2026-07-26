@@ -99,6 +99,15 @@ export interface CreateCloneRequest {
   memory_scope?: 'shared' | 'isolated'
 }
 
+export interface FileInfo {
+  path: string
+  name: string
+  type: 'file' | 'directory'
+  size: number
+  modified: string
+  readonly: boolean
+}
+
 // ===== Skills =====
 export interface SkillInfo {
   name: string

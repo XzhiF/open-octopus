@@ -28,37 +28,33 @@ export function CloneCreateWizard({ onClose, onCreated }: CloneCreateWizardProps
   // Step 1: Required fields
   const [name, setName] = useState('')
   const [displayName, setDisplayName] = useState('')
-  const [persona, setPersona] = useState('')
 
   // Step 2: Optional fields
-  const [selectedSkills, setSelectedSkills] = useState<string[]>([])
-  const [availableSkills, setAvailableSkills] = useState<SkillInfo[]>([])
-  const [skillsLoading, setSkillsLoading] = useState(false)
   const [memoryScope, setMemoryScope] = useState<'shared' | 'isolated'>('isolated')
 
-  // Load skills dynamically
-  const loadSkills = useCallback(async () => {
-    setSkillsLoading(true)
-    try {
-      const res = await api.listSkills()
-      const skills = res.skills ?? res.items ?? []
-      setAvailableSkills(skills)
-    } catch {
-      // Non-fatal — show empty list
-    } finally {
-      setSkillsLoading(false)
-    }
-  }, [])
+  // Load skills dynamically (kept for future use)
+  // const loadSkills = useCallback(async () => {
+  //   setSkillsLoading(true)
+  //   try {
+  //     const res = await api.listSkills()
+  //     const skills = res.skills ?? res.items ?? []
+  //     setAvailableSkills(skills)
+  //   } catch {
+  //     // Non-fatal — show empty list
+  //   } finally {
+  //     setSkillsLoading(false)
+  //   }
+  // }, [])
 
-  useEffect(() => {
-    loadSkills()
-  }, [loadSkills])
+  // useEffect(() => {
+  //   loadSkills()
+  // }, [loadSkills])
 
   // Name validation
   const nameValid = /^[a-z0-9-]+$/.test(name) && name.length > 0 && name.length <= 50
   const canProceed = () => {
     if (step === 0) {
-      return nameValid && displayName.trim().length > 0 && persona.trim().length > 0
+      return nameValid && displayName.trim().length > 0
     }
     return true
   }
@@ -69,12 +65,10 @@ export function CloneCreateWizard({ onClose, onCreated }: CloneCreateWizardProps
       const req: CreateCloneRequest = {
         name: name.trim(),
         display_name: displayName.trim(),
-        persona: persona.trim(),
-        skills: selectedSkills.length > 0 ? selectedSkills : undefined,
         memory_scope: memoryScope,
       }
       await api.createClone(req)
-      toast.success('分身创建成功')
+      toast.success('分身创建成功！请在 Chat 中描述你希望这个分身具备的特质。')
       onCreated()
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : '创建失败')
@@ -148,65 +142,16 @@ export function CloneCreateWizard({ onClose, onCreated }: CloneCreateWizardProps
                 />
                 <p className="text-xs text-muted-foreground mt-1">支持中文，在 UI 和 @@补全中显示</p>
               </div>
-              <div>
-                <Label htmlFor="clone-persona">人格设定</Label>
-                <Textarea
-                  id="clone-persona"
-                  value={persona}
-                  onChange={(e) => setPersona(e.target.value)}
-                  placeholder="描述这个分身的性格、专长和工作方式..."
-                  className="mt-1 min-h-[120px] bg-agent-surface-inset border-agent-divider"
-                  maxLength={2000}
-                />
-                <p className="text-xs text-muted-foreground mt-1">{persona.length} / 2000 字符</p>
+              <div className="p-4 bg-agent-surface-inset rounded-md border border-agent-divider">
+                <p className="text-sm text-muted-foreground">
+                  💡 创建后，分身会自动生成空的 persona.md 文件。你可以在 Chat 中描述你希望这个分身具备的特质，Agent 会自动帮你完善人格设定。
+                </p>
               </div>
             </>
           )}
 
           {step === 1 && (
             <>
-              {/* Skills (dynamic loading) */}
-              <div>
-                <Label>技能选择（可选）</Label>
-                <p className="text-xs text-muted-foreground mt-1 mb-3">
-                  从可用技能中选择，留空则不分配技能
-                </p>
-                {skillsLoading ? (
-                  <div className="flex items-center gap-2 text-sm text-muted-foreground py-4">
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                    加载技能列表...
-                  </div>
-                ) : availableSkills.length === 0 ? (
-                  <div className="text-sm text-muted-foreground py-4 text-center border border-dashed border-agent-divider rounded-md">
-                    暂无可用技能
-                  </div>
-                ) : (
-                  <div className="space-y-2 max-h-48 overflow-auto">
-                    {availableSkills.map((skill) => (
-                      <div key={skill.name} className="flex items-center gap-2">
-                        <Checkbox
-                          id={`skill-${skill.name}`}
-                          checked={selectedSkills.includes(skill.name)}
-                          onCheckedChange={(checked) => {
-                            if (checked) {
-                              setSelectedSkills(prev => [...prev, skill.name])
-                            } else {
-                              setSelectedSkills(prev => prev.filter(s => s !== skill.name))
-                            }
-                          }}
-                        />
-                        <label htmlFor={`skill-${skill.name}`} className="text-sm font-mono cursor-pointer flex-1">
-                          {skill.name}
-                        </label>
-                        {skill.token_count > 0 && (
-                          <span className="text-xs text-muted-foreground">{skill.token_count} tok</span>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-
               {/* Memory scope */}
               <div>
                 <Label>记忆范围</Label>
@@ -230,6 +175,12 @@ export function CloneCreateWizard({ onClose, onCreated }: CloneCreateWizardProps
                     </Label>
                   </div>
                 </RadioGroup>
+              </div>
+
+              <div className="p-4 bg-agent-surface-inset rounded-md border border-agent-divider">
+                <p className="text-sm text-muted-foreground">
+                  💡 技能管理：创建后，你可以在 Chat 中让 Agent 自主安装和管理技能，无需手动选择。
+                </p>
               </div>
             </>
           )}

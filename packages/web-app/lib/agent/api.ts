@@ -179,11 +179,25 @@ export function deleteClone(name: string) {
   return cloneRequest<{ ok: true }>(`/${name}`, { method: 'DELETE' })
 }
 export function getCloneFile(name: string, filePath: string) {
-  return cloneRequest<{ content: string; path: string; size: number }>(`/${name}/files/${encodeURIComponent(filePath)}`)
+  return cloneRequest<{ content: string; path: string; size: number; readonly: boolean }>(`/${name}/files/${encodeURIComponent(filePath)}`)
 }
-export function updateCloneFile(name: string, filePath: string, content: string) {
+export function updateCloneFile(name: string, filePath: string, data: { content: string }) {
   return cloneRequest<{ ok: true }>(`/${name}/files/${encodeURIComponent(filePath)}`, {
-    method: 'PUT', body: JSON.stringify({ content }),
+    method: 'PUT', body: JSON.stringify(data),
+  })
+}
+export function listCloneFiles(name: string, recursive?: boolean) {
+  const qs = recursive ? '?recursive=true' : ''
+  return cloneRequest<{ files: import('./types').FileInfo[] }>(`/${name}/files${qs}`)
+}
+export function createCloneDirectory(name: string, dirPath: string) {
+  return cloneRequest<{ success: boolean }>(`/${name}/files/${encodeURIComponent(dirPath)}`, {
+    method: 'POST', body: JSON.stringify({ type: 'directory' }),
+  })
+}
+export function deleteCloneFile(name: string, filePath: string) {
+  return cloneRequest<{ success: boolean }>(`/${name}/files/${encodeURIComponent(filePath)}`, {
+    method: 'DELETE',
   })
 }
 export function mergeClone(name: string) {
