@@ -81,13 +81,6 @@ export interface MemorySearchResult {
 }
 
 // ===== Clones =====
-export interface CloneWorkspaceRef {
-  workspace_name: string
-  workspace_path: string
-  branch: string
-  projects: string[]
-}
-
 export interface CloneInfo {
   name: string
   display_name: string
@@ -95,7 +88,6 @@ export interface CloneInfo {
   persona: string
   skills: string[]
   memory_scope: 'shared' | 'isolated'
-  workspace?: { name: string; path: string }
   status: 'active' | 'idle' | 'executing'
   created_at?: string
   last_active?: string
@@ -104,9 +96,6 @@ export interface CloneInfo {
 export interface CreateCloneRequest {
   name: string
   display_name: string
-  persona: string
-  skills?: string[]
-  workspace?: { name?: string; path?: string }
   memory_scope?: 'shared' | 'isolated'
 }
 

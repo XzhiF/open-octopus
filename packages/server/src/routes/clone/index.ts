@@ -97,9 +97,6 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
       const body = await c.req.json<{
         name: string
         display_name: string
-        persona: string
-        skills?: string[]
-        workspace?: { name?: string; path?: string }
         memory_scope?: 'shared' | 'isolated'
       }>()
 
@@ -109,17 +106,13 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
       if (!body.display_name) {
         return c.json({ error: { code: 'INVALID_PARAM', message: 'display_name is required' } }, 400)
       }
-      if (!body.persona) {
-        return c.json({ error: { code: 'INVALID_PARAM', message: 'persona is required' } }, 400)
-      }
 
       const result = createUserClone({
         name: body.name,
         display_name: body.display_name,
-        persona: body.persona,
-        skills: body.skills,
-        workspace: body.workspace,
-        memory_scope: body.memory_scope,
+        persona: `# 分身: ${body.display_name}\n\n（请在 Chat 中描述你希望这个分身具备的特质）\n`,
+        skills: [],
+        memory_scope: body.memory_scope ?? 'isolated',
       })
 
       if (!result.ok) {

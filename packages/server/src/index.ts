@@ -40,6 +40,7 @@ import scheduleRoutes, { setScheduleService } from "./routes/schedule"
 import { createSchedulerRoutes } from "./routes/scheduler"
 import { createAgentRoutes } from "./routes/agent"
 import { createCloneSessionRoutes } from "./routes/clone"
+import { createCloneFilesRoutes } from "./routes/agent/clone-files"
 import cronRoutes from "./routes/cron"
 import { SSEService } from "./services/sse"
 import { migrateOrgDirs, syncOrgsFromFilesystem } from "./services/org"
@@ -338,6 +339,9 @@ app.route("/api/agent", createAgentRoutes({
 app.route("/api/clones", createCloneSessionRoutes({
   sessionDAO: d.agentSession,
 }))
+
+// Clone file tree and operations API
+app.route("/api", createCloneFilesRoutes())
 
 app.route("/api/workflows/built-in", createBuiltInWorkflowRoutes(() => resourceRegistry.get()))
 
