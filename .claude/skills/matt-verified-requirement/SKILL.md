@@ -35,6 +35,8 @@ Create an ADR when a decision meets ALL three criteria:
 
 Skip ADR when any criterion is not met.
 
+**ADR storage**: ADRs are **project-level permanent records**, NOT feature artifacts. Always write ADRs to `docs/adr/NNNN-slug.md` (following `domain-modeling`'s ADR-FORMAT.md). Never put ADRs in `<artifacts.dir>/` — that directory is for ephemeral delivery artifacts (brief, spec, tickets).
+
 ## Path Selection
 
 After 2-3 initial questions, determine:
@@ -140,6 +142,8 @@ On exit, create `<artifacts.dir>/<feature-slug>/` and write the brief:
     ├── 01-xxx.md         <- Verified Ticket (matt-dev-runner Step 2 output)
     └── ...
 ```
+
+**ADR 不在此目录** — ADR 写入 `docs/adr/NNNN-slug.md`，见上方 ADR 规则。
 
 **Naming**: `<feature-slug>` uses lowercase English + hyphens, e.g., `user-profile-edit`.
 

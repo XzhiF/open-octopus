@@ -1,4 +1,4 @@
-# ADR-006: Plugin-Based Skill Discovery
+# Plugin-Based Skill Discovery
 
 ## 状态
 Accepted
