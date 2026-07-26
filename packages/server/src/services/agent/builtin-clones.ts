@@ -91,7 +91,7 @@ export const BUILTIN_CLONES: CloneDef[] = [
     displayName: '定时任务管理',
     type: 'built-in',
     persona: SCHEDULER_PERSONA,
-    skills: ['octo-schedule-manager'],
+    skills: ['octo-scheduler'],
     memoryScope: 'isolated',
     config: {},
   },

@@ -175,4 +175,77 @@ describe('CloneRuntime', () => {
       vi.restoreAllMocks()
     })
   })
+
+  describe('assembleContext (plugin-based skill discovery)', () => {
+    it('does not include skill text in assembled context (ADR-006)', () => {
+      // Create shared skill — should NOT appear in assembleContext output
+      const sharedSkillDir = path.join(TEST_DIR, 'agent', 'skills', 'octo-agent-memory')
+      fs.mkdirSync(sharedSkillDir, { recursive: true })
+      fs.writeFileSync(
+        path.join(sharedSkillDir, 'SKILL.md'),
+        '---\nname: octo-agent-memory\n---\nSearch and manage agent memory layers.',
+        'utf-8',
+      )
+
+      const cloneDef = createTestCloneDef({ skills: [] })
+      const runtime = new CloneRuntime(cloneDef, 'test-org')
+      const context = runtime.assembleContext()
+
+      // Skills are discovered by SDK via plugins, not injected as prompt text
+      expect(context).not.toContain('octo-agent-memory')
+      expect(context).not.toContain('Octopus Platform Skills')
+      expect(context).not.toContain('Shared:')
+      expect(context).not.toContain('Clone:')
+    })
+  })
+
+  describe('getPlugins', () => {
+    it('returns main plugin and built-in clone plugin', () => {
+      const cloneDef = createTestCloneDef({ name: 'workspace', type: 'built-in' })
+      const runtime = new CloneRuntime(cloneDef, 'test-org')
+      const plugins = runtime.getPlugins()
+
+      expect(plugins).toHaveLength(2)
+      expect(plugins[0]).toEqual({ type: 'local', path: path.join(TEST_DIR, 'agent') })
+      expect(plugins[1]).toEqual({ type: 'local', path: path.join(TEST_DIR, 'agent', 'built-in', 'workspace') })
+    })
+
+    it('returns main plugin and user clone plugin for user clones', () => {
+      const cloneDef = createTestCloneDef({ name: 'my-clone', type: 'user' })
+      const runtime = new CloneRuntime(cloneDef, 'test-org')
+      const plugins = runtime.getPlugins()
+
+      expect(plugins).toHaveLength(2)
+      expect(plugins[0]).toEqual({ type: 'local', path: path.join(TEST_DIR, 'agent') })
+      expect(plugins[1]).toEqual({ type: 'local', path: path.join(TEST_DIR, 'agent', 'clones', 'my-clone') })
+    })
+
+    it('always includes the main agent directory as first plugin', () => {
+      const cloneDef = createTestCloneDef({ name: 'scheduler', type: 'built-in' })
+      const runtime = new CloneRuntime(cloneDef, 'test-org')
+      const plugins = runtime.getPlugins()
+
+      expect(plugins[0].path).toBe(path.join(TEST_DIR, 'agent'))
+    })
+  })
+
+  describe('getDefaultCwd', () => {
+    it('returns built-in clone directory for built-in clones', () => {
+      const cloneDef = createTestCloneDef({ name: 'workspace', type: 'built-in' })
+      const runtime = new CloneRuntime(cloneDef, 'test-org')
+
+      expect(runtime.getDefaultCwd()).toBe(
+        path.join(TEST_DIR, 'agent', 'built-in', 'workspace'),
+      )
+    })
+
+    it('returns clones directory for user clones', () => {
+      const cloneDef = createTestCloneDef({ name: 'my-clone', type: 'user' })
+      const runtime = new CloneRuntime(cloneDef, 'test-org')
+
+      expect(runtime.getDefaultCwd()).toBe(
+        path.join(TEST_DIR, 'agent', 'clones', 'my-clone'),
+      )
+    })
+  })
 })

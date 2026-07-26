@@ -4,6 +4,9 @@ import { ChatService } from "../services/chat"
 import { WorkspaceService } from "../services/workspace"
 import { SSEService } from "../services/sse"
 import { getProvider, type TokenUsage } from "@octopus/providers"
+import { CloneRuntime } from "../services/agent/clone-runtime"
+import { getBuiltinCloneDef } from "../services/agent/builtin-clones"
+import { getAgentDir } from "../services/agent/paths"
 import os from "os"
 
 export function chatRoutes(sseService: SSEService, chatService: ChatService, workspaceService: WorkspaceService): Hono {
@@ -84,6 +87,17 @@ export function chatRoutes(sseService: SSEService, chatService: ChatService, wor
     const provider = session.provider ?? "claude"
     const agent = getProvider(provider)
 
+    // Assemble workspace clone system prompt (persona + memory + skills)
+    let workspaceClonePrompt = ''
+    try {
+      const cloneDef = getBuiltinCloneDef('workspace')
+      if (cloneDef) {
+        workspaceClonePrompt = new CloneRuntime(cloneDef, 'default').assembleContext()
+      }
+    } catch {
+      // Non-fatal — proceed with empty clone prompt (pure claude_code preset)
+    }
+
     let fullText = ""
     let sdkMessageId = ""
     let currentTokens: TokenUsage | undefined
@@ -112,8 +126,9 @@ export function chatRoutes(sseService: SSEService, chatService: ChatService, wor
 
       try {
         const chunkStream = agent.sendQuery(body.content, cwd, session.providerSessionId ?? undefined, {
-          systemPrompt: { type: 'preset', preset: 'claude_code' },
+          systemPrompt: { type: 'preset', preset: 'claude_code', append: workspaceClonePrompt || undefined },
           abortSignal: abortController.signal,
+          plugins: [{ type: 'local', path: getAgentDir() }],
         })
 
         for await (const chunk of chunkStream) {
