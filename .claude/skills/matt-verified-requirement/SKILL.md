@@ -63,16 +63,103 @@ Ask one question at a time across these dimensions, each with your recommended a
 
 ### Wayfinder Path (large / ambiguous)
 
+Use when: 2+ projects involved, unknown decisions ahead, or effort too large for one grilling session.
+
+#### Step 1: Name the Destination
+
+One or two lines: what does reaching the end look like? The destination fixes scope — everything beyond it is out of scope.
+
+#### Step 2: Breadth-First Grill
+
+Fan out across the whole decision space (don't go deep on any one thread). Use `/grilling` + `/domain-modeling` to surface:
+- Decisions already made → **Decisions so far**
+- Questions you can ask precisely → **Decision Tickets**
+- Questions you can sense but can't yet phrase → **Not yet specified** (fog of war)
+
+#### Step 3: Create the Map
+
+Write `<artifacts.dir>/<feature-slug>/map.md`:
+
+```markdown
+## Destination
+<what reaching the end looks like>
+
+## Notes
+<domain context from CONTEXT-MAP.md, relevant ADRs, standing preferences>
+
+## Decisions so far
+<!-- one line per closed ticket: [ticket-title](link) — gist of the answer -->
+
+## Not yet specified
+<!-- fog of war: suspected questions, areas to revisit. In scope but not sharp enough to ticket. -->
+
+## Out of scope
+<!-- work beyond the destination, consciously ruled out -->
 ```
-1. Clarify destination: What does this requirement ultimately achieve?
-2. Breadth scan: What decisions need to be made? Known vs unknown?
-3. Create decision map:
-   - Decided -> Decisions so far
-   - Can ask but unresolved -> Decision Tickets
-   - Unclear, can't even ask -> Not yet specified (fog of war)
-4. Resolve tickets one by one, pushing back the fog
-5. All tickets closed = map complete
+
+#### Decision Tickets
+
+**Storage**: `<artifacts.dir>/<feature-slug>/decisions/NN-<slug>.md` — separate from `issues/` (which is for downstream implementation tickets).
+
+**Four types** (aligned with original `/wayfinder`):
+
+| Type | Mode | Description |
+|------|------|-------------|
+| `research` | AFK | Investigate facts — docs, APIs, codebase. Can fire `/research` sub-agent. |
+| `prototype` | HITL | Build a throwaway artifact to react to — outline, stub, UI mockup. Keep the answer, delete the code. |
+| `grilling` | HITL | One-question-at-a-time decision interview. **Default type.** |
+| `task` | HITL/AFK | Manual prerequisite — sign up for a service, provision access, gather data. |
+
+**Ticket template**:
+
+```markdown
+# NN — <Question>
+
+Type: research | prototype | grilling | task
+Status: open
+Blocked by: NN, NN (or "None")
+
+## Question
+
+<the decision or investigation this ticket resolves>
 ```
+
+**Blocking edges**: A ticket is unblocked when every ticket in its `Blocked by` list is `resolved`. Wire blocking in a second pass (tickets need numbers before they can reference each other).
+
+#### Fog of War
+
+The map is deliberately incomplete. Beyond the live tickets lies **fog** — decisions you can tell are coming but can't yet pin down.
+
+- **Fog or ticket?** The test is whether you can state the question precisely now — not whether you can answer it.
+  - Can phrase it → create a ticket
+  - Can't phrase it yet → write in "Not yet specified"
+- **Graduation**: resolving a ticket may clear fog ahead of it — graduate specifiable fog into new tickets, clear each graduated patch from the section.
+- **Out of scope ≠ fog**: scope decisions go to "Out of scope". Fog is about sharpness, not scope.
+
+#### Frontier
+
+The **frontier** = open + unblocked + unclaimed tickets. Select by number (lowest first).
+
+#### Resolving Tickets (4-step loop)
+
+1. **Claim**: set `Status: claimed`, save the file
+2. **Execute** by type:
+   - `research` → fire `/research` sub-agent, or investigate yourself; record findings
+   - `prototype` → build a quick prototype, record the conclusion (code is throwaway)
+   - `grilling` → use `/grilling` + `/domain-modeling`, one question at a time
+   - `task` → do the manual work, record results (credentials location, URLs, data shape)
+3. **Record**: append `## Answer` section to the ticket file, set `Status: resolved`
+4. **Update map**:
+   - Append one-line gist to **Decisions so far**
+   - Graduate any fog now specifiable → create new tickets
+   - Clear graduated fog from **Not yet specified**
+   - If a ticket turns out to sit beyond the destination → close it, move to **Out of scope**
+
+**Never resolve more than one non-research ticket per session** (research tickets can run in parallel via sub-agents).
+
+#### Wayfinder Exit
+
+All decision tickets resolved + map clear (no ungraduated fog) → write the **brief** (see Artifact Output below). The brief synthesizes all decisions + verification strategy.
 
 ## Verification Strategy Questions (both paths MUST cover)
 
@@ -125,23 +212,49 @@ What needs to be ready before verification?
 
 ## Exit Conditions
 
+### Grilling Path
 - User says "confirmed" or "hand to agent"
 - All verification dimensions explored
-- Max 15 rounds (grilling) or 10 tickets (wayfinder)
+- Max 15 rounds
+
+### Wayfinder Path
+- All decision tickets resolved
+- Map clear — no ungraduated fog in "Not yet specified"
+- All verification dimensions explored (both paths must cover these)
+- Max 20 decision tickets (if more, consider splitting into multiple wayfinder efforts)
 
 ## Artifact Output
 
-On exit, create `<artifacts.dir>/<feature-slug>/` and write the brief:
+On exit, create `<artifacts.dir>/<feature-slug>/` and write the brief.
+
+### Grilling Path Output
 
 ```
 <artifacts.dir>/<feature-slug>/
 ├── brief.md              <- Requirement brief (this skill's output)
-├── map.md                <- Decision map (wayfinder path only)
-├── spec.md               <- Verified Spec (matt-dev-runner Step 1 output)
-└── issues/
-    ├── 01-xxx.md         <- Verified Ticket (matt-dev-runner Step 2 output)
+├── spec.md               <- Verified Spec (downstream: matt-dev-runner Step 1)
+└── issues/               <- Implementation tickets (downstream: matt-dev-runner Step 2)
+    ├── 01-xxx.md
     └── ...
 ```
+
+### Wayfinder Path Output
+
+```
+<artifacts.dir>/<feature-slug>/
+├── brief.md              <- Requirement brief (written AFTER all decision tickets resolved)
+├── map.md                <- Decision map (wayfinder core artifact)
+├── decisions/            <- Decision tickets (wayfinder stage only)
+│   ├── 01-research-sdk-plugin.md
+│   ├── 02-prototype-prompt-length.md
+│   └── 03-grilling-discovery.md
+├── spec.md               <- Verified Spec (downstream: matt-dev-runner Step 1)
+└── issues/               <- Implementation tickets (downstream: matt-dev-runner Step 2)
+    ├── 01-schema.md
+    └── ...
+```
+
+**`decisions/` vs `issues/`**: Decision tickets (what to build and why) live in `decisions/`. Implementation tickets (how to build it) live in `issues/`. They never conflict — `decisions/` is written by this skill during wayfinder, `issues/` is written later by `matt-verified-tickets`.
 
 **ADR 不在此目录** — ADR 写入 `docs/adr/NNNN-slug.md`，见上方 ADR 规则。
 
@@ -150,7 +263,7 @@ On exit, create `<artifacts.dir>/<feature-slug>/` and write the brief:
 **Steps**:
 1. Create directory `<artifacts.dir>/<feature-slug>/`
 2. Write `<artifacts.dir>/<feature-slug>/brief.md`
-3. For wayfinder path, also write `map.md`
+3. For wayfinder path, `map.md` and `decisions/` were already created during the wayfinder process
 4. **Update `<artifacts.dir>/index.md`** (append new record, auto-increment number)
 5. Tell the user the brief path, as parameter for calling matt-dev-runner
 
@@ -186,6 +299,14 @@ On exit, create `<artifacts.dir>/<feature-slug>/` and write the brief:
 ## Key Decisions
 | # | Decision | Conclusion | Reason |
 |---|---------|-----------|--------|
+
+## Decision Map Summary (wayfinder path only)
+<!-- Only include when wayfinder path was used. Synthesize all resolved decision tickets. -->
+
+| # | Ticket | Type | Decision |
+|---|--------|------|----------|
+
+Map: [map.md](./map.md)
 
 ## Data Model Changes
 | Table | Operation | Details |
@@ -234,7 +355,7 @@ On exit, create `<artifacts.dir>/<feature-slug>/` and write the brief:
 |---------------|-------------------------|
 | `grilling` | Reuses its one-question-at-a-time mode |
 | `grill-with-docs` | **Replaces** — grilling + domain-modeling built in, plus verification strategy |
-| `wayfinder` | Reuses its decision map mode (for large requirements) |
+| `wayfinder` | **Implements** its core protocol (map, decision tickets, fog of war, frontier) adapted for single-entry flow. Use original `/wayfinder` for multi-session multi-agent collaboration. |
 | `domain-modeling` | **Reuses** — updates CONTEXT.md and creates ADRs inline |
 
 ## Next Steps
