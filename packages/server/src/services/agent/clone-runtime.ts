@@ -12,6 +12,7 @@ import type { MessageChunk } from '@octopus/providers'
 import { getProvider } from '@octopus/providers'
 import type { CloneDef } from '@octopus/shared'
 import {
+  getAgentDir,
   getAgentSkillsDir,
   getLongTermMemoryPath,
   getDailyMemoryDir,
@@ -83,11 +84,9 @@ export class CloneRuntime {
       segments.push(isolatedMemory)
     }
 
-    // 4. Skills (global + clone-specific)
-    const skills = this.loadSkills()
-    if (skills) {
-      segments.push(skills)
-    }
+    // Skills are no longer included as prompt text.
+    // The Claude Agent SDK discovers skills natively via the `plugins` option
+    // (see getPlugins() + sendWithProvider()). See ADR-006.
 
     return segments.filter(Boolean).join('\n\n')
   }
@@ -171,6 +170,28 @@ export class CloneRuntime {
       : getCloneDir(this.cloneDef.name)
   }
 
+  // ── Plugin Discovery (ADR-006) ──────────────────────────────────
+
+  /**
+   * Build the plugins array for Claude Agent SDK skill discovery.
+   *
+   * Main plugin: ~/.octopus/agent/ — shared skills in skills/
+   * Clone plugin: built-in/{name}/ or clones/{name}/ — clone-specific skills
+   *
+   * The SDK scans each plugin's direct skills/ subdirectory (non-recursive)
+   * and injects discovered skills into the system prompt automatically.
+   */
+  getPlugins(): Array<{ type: 'local'; path: string }> {
+    const clonePath = this.cloneDef.type === 'built-in'
+      ? getBuiltInCloneDir(this.cloneDef.name)
+      : getCloneDir(this.cloneDef.name)
+
+    return [
+      { type: 'local', path: getAgentDir() },
+      { type: 'local', path: clonePath },
+    ]
+  }
+
   // ── Provider Call Encapsulation ─────────────────────────────────
 
   /**
@@ -231,7 +252,7 @@ export class CloneRuntime {
   // ── Private Helpers ─────────────────────────────────────────────
 
   /**
-   * Send query via provider with clone context appended.
+   * Send query via provider with clone context and plugin-based skill discovery.
    */
   private sendWithProvider(
     message: string,
@@ -250,7 +271,7 @@ export class CloneRuntime {
       },
       abortSignal,
       model: this.cloneDef.config.model,
-      skills: this.cloneDef.skills,
+      plugins: this.getPlugins(),
     })
   }
 

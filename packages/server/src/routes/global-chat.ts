@@ -5,7 +5,7 @@ import { SSEService } from "../services/sse"
 import { getProvider, type TokenUsage } from "@octopus/providers"
 import { CloneRuntime } from "../services/agent/clone-runtime"
 import { getBuiltinCloneDef } from "../services/agent/builtin-clones"
-import { getBuiltInCloneDir } from "../services/agent/paths"
+import { getAgentDir, getBuiltInCloneDir } from "../services/agent/paths"
 import fs from "fs"
 import path from "path"
 
@@ -158,6 +158,10 @@ export function globalChatRoutes(sseService: SSEService, chatService: ChatServic
         const chunkStream = agent.sendQuery(body.content, cwd, session.providerSessionId ?? undefined, {
           systemPrompt: { type: 'preset', preset: 'claude_code', append: schedulerClonePrompt },
           abortSignal: abortController.signal,
+          plugins: [
+            { type: 'local', path: getAgentDir() },
+            { type: 'local', path: getBuiltInCloneDir('scheduler') },
+          ],
         })
 
         for await (const chunk of chunkStream) {
