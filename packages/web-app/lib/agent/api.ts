@@ -10,6 +10,25 @@ import type {
 } from './types'
 import { getServerUrl } from '@/lib/server-config'
 
+/**
+ * Parse metadata JSON from a message and extract thinking/tool_calls
+ * to top-level properties. The backend stores these as a JSON string
+ * in the metadata column: { thinking?: string, tool_calls?: ToolCallRecord[] }
+ */
+function parseMessageMetadata(msg: any): AgentMessage {
+  if (!msg.metadata || typeof msg.metadata !== 'string') return msg
+  try {
+    const meta = JSON.parse(msg.metadata)
+    return {
+      ...msg,
+      thinking: meta.thinking ?? msg.thinking,
+      tool_calls: meta.tool_calls ?? msg.tool_calls,
+    }
+  } catch {
+    return msg
+  }
+}
+
 const BASE = () => `${getServerUrl()}/api/agent`
 const AUTH_HEADER = 'Bearer agent'
 
@@ -230,9 +249,11 @@ export function getCloneSession(cloneName: string, sessionId: string, query?: { 
     `/${cloneName}/sessions/${sessionId}${qs ? `?${qs}` : ''}`
   ).then(raw => {
     const msgs = Array.isArray(raw.messages) ? raw.messages : (raw.messages as any).items ?? []
+    // Parse metadata JSON string → extract thinking/tool_calls to top-level props
+    const parsed = msgs.map(parseMessageMetadata)
     return {
       ...raw,
-      messages: { items: msgs, has_more: raw.has_more ?? false, next_cursor: null, total: msgs.length },
+      messages: { items: parsed, has_more: raw.has_more ?? false, next_cursor: null, total: parsed.length },
     }
   })
 }

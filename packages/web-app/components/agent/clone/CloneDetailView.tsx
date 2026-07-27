@@ -1,11 +1,12 @@
 'use client'
 
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { PanelLeft, PanelRight } from 'lucide-react'
+import { PanelLeft, PanelRight, Plus } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { CloneFileTree } from './CloneFileTree'
 import { CloneFileContent } from './CloneFileContent'
 import { ChatArea } from '../chat/ChatArea'
+import { SessionList } from '../chat/SessionList'
 import { useAgentChat, type UseAgentChatApiOverride } from '@/hooks/useAgentChat'
 import {
   listCloneFiles,
@@ -32,7 +33,7 @@ export function CloneDetailView({ clone, onBack }: CloneDetailViewProps) {
   const [showFileTree, setShowFileTree] = useState(true)
   const [showChat, setShowChat] = useState(true)
 
-  // ── Clone-scoped session state (replaces useAgentSessions) ──
+  // ── Clone-scoped session state ──
   const [sessions, setSessions] = useState<AgentSession[]>([])
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null)
   const [sessionsLoading, setSessionsLoading] = useState(true)
@@ -46,6 +47,10 @@ export function CloneDetailView({ clone, onBack }: CloneDetailViewProps) {
     chatStream: (id, message) => cloneChatStream(cloneName, id, message),
     stopChat: (id) => stopCloneChat(cloneName, id),
   }
+
+  const handleTitleUpdate = useCallback((sessionId: string, title: string) => {
+    setSessions(prev => prev.map(s => s.id === sessionId ? { ...s, title } : s))
+  }, [])
 
   const {
     messages,
@@ -61,7 +66,7 @@ export function CloneDetailView({ clone, onBack }: CloneDetailViewProps) {
     stopGenerate,
     handleConfirm,
     loadMessages,
-  } = useAgentChat(activeSessionId, { api: chatApiOverrides })
+  } = useAgentChat(activeSessionId, { api: chatApiOverrides, onTitleUpdate: handleTitleUpdate })
 
   // ── Load file tree ──
   const loadFiles = useCallback(async () => {
@@ -87,7 +92,6 @@ export function CloneDetailView({ clone, onBack }: CloneDetailViewProps) {
       if (items.length > 0 && !activeSessionIdRef.current) {
         setActiveSessionId(items[0].id)
       } else if (items.length === 0 && !activeSessionIdRef.current) {
-        // Auto-create first session
         const session = await createCloneSession(clone.name)
         setSessions([session])
         setActiveSessionId(session.id)
@@ -107,6 +111,39 @@ export function CloneDetailView({ clone, onBack }: CloneDetailViewProps) {
   useEffect(() => {
     if (activeSessionId) loadMessages()
   }, [activeSessionId, loadMessages])
+
+  // ── Session CRUD ──
+  const handleCreateSession = useCallback(async () => {
+    try {
+      const session = await createCloneSession(clone.name)
+      setSessions(prev => [session, ...prev])
+      setActiveSessionId(session.id)
+    } catch {
+      // Non-fatal
+    }
+  }, [clone.name])
+
+  const handleSelectSession = useCallback((id: string) => {
+    setActiveSessionId(id)
+  }, [])
+
+  const handleRenameSession = useCallback(async (id: string, title: string) => {
+    // Clone sessions don't have a rename API yet — local only
+    setSessions(prev => prev.map(s => s.id === id ? { ...s, title } : s))
+  }, [])
+
+  const handleDeleteSession = useCallback(async (id: string) => {
+    try {
+      // Clone sessions don't have a delete API yet — remove from local list
+      setSessions(prev => prev.filter(s => s.id !== id))
+      if (activeSessionId === id) {
+        const remaining = sessions.filter(s => s.id !== id)
+        setActiveSessionId(remaining.length > 0 ? remaining[0].id : null)
+      }
+    } catch {
+      // Non-fatal
+    }
+  }, [activeSessionId, sessions])
 
   // ── File operations ──
   const handleCreateFile = async (parentPath: string) => {
@@ -132,16 +169,6 @@ export function CloneDetailView({ clone, onBack }: CloneDetailViewProps) {
       setSelectedFile(null)
     }
     loadFiles()
-  }
-
-  const handleCreateSession = async () => {
-    try {
-      const session = await createCloneSession(clone.name)
-      setSessions(prev => [session, ...prev])
-      setActiveSessionId(session.id)
-    } catch {
-      // Non-fatal
-    }
   }
 
   return (
@@ -197,25 +224,40 @@ export function CloneDetailView({ clone, onBack }: CloneDetailViewProps) {
           />
         </div>
 
-        {/* Chat Panel */}
+        {/* Chat Panel: Session List + ChatArea */}
         {showChat && (
-          <div className="w-96 border-l border-agent-divider overflow-hidden flex flex-col">
-            <ChatArea
-              messages={messages}
-              streaming={streaming}
-              streamContent={streamContent}
-              streamThinking={streamThinking}
-              isThinking={isThinking}
-              toolCalls={toolCalls}
-              pendingConfirm={pendingConfirm}
-              error={chatError}
-              statusMessage={statusMessage}
-              onSend={sendMessage}
-              onStop={stopGenerate}
-              onConfirm={handleConfirm}
-              hasSession={!!activeSessionId}
-              currentCloneName={clone.name}
-            />
+          <div className="w-[500px] border-l border-agent-divider overflow-hidden flex">
+            {/* Session list sidebar */}
+            <div className="w-48 border-r border-agent-divider bg-agent-surface-raised flex flex-col overflow-hidden">
+              <SessionList
+                sessions={sessions}
+                activeId={activeSessionId}
+                loading={sessionsLoading}
+                onSelect={handleSelectSession}
+                onCreate={handleCreateSession}
+                onRename={handleRenameSession}
+                onDelete={handleDeleteSession}
+              />
+            </div>
+            {/* Chat area */}
+            <div className="flex-1 flex flex-col overflow-hidden">
+              <ChatArea
+                messages={messages}
+                streaming={streaming}
+                streamContent={streamContent}
+                streamThinking={streamThinking}
+                isThinking={isThinking}
+                toolCalls={toolCalls}
+                pendingConfirm={pendingConfirm}
+                error={chatError}
+                statusMessage={statusMessage}
+                onSend={sendMessage}
+                onStop={stopGenerate}
+                onConfirm={handleConfirm}
+                hasSession={!!activeSessionId}
+                currentCloneName={clone.name}
+              />
+            </div>
           </div>
         )}
       </div>

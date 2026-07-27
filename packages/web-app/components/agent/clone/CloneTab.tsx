@@ -1,6 +1,7 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect, useCallback } from 'react'
+import { useSearchParams, useRouter } from 'next/navigation'
 import { Users, Plus, Cpu, User } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { useAgentClones } from '@/hooks/useAgentClones'
@@ -14,19 +15,37 @@ import { AgentEmptyState } from '../shared/AgentEmptyState'
 import type { CloneInfo } from '@/lib/agent/types'
 
 export function CloneTab() {
+  const searchParams = useSearchParams()
+  const router = useRouter()
   const { clones, loading, error, refetch } = useAgentClones()
   const [showWizard, setShowWizard] = useState(false)
   const [mergeTarget, setMergeTarget] = useState<CloneInfo | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<CloneInfo | null>(null)
-  const [activeChatClone, setActiveChatClone] = useState<CloneInfo | null>(null)
   const [fileMgmtClone, setFileMgmtClone] = useState<CloneInfo | null>(null)
 
-  // D3: Click clone → enter three-column detail view
+  // ── URL-persisted clone selection ──
+  const cloneParam = searchParams.get('clone')
+
+  const activeChatClone = clones.find(c => c.name === cloneParam) ?? null
+
+  const enterClone = useCallback((clone: CloneInfo) => {
+    const url = new URL(window.location.href)
+    url.searchParams.set('clone', clone.name)
+    router.replace(url.toString())
+  }, [router])
+
+  const exitClone = useCallback(() => {
+    const url = new URL(window.location.href)
+    url.searchParams.delete('clone')
+    router.replace(url.toString())
+  }, [router])
+
+  // D3: Click clone → enter three-column detail view (URL-persisted)
   if (activeChatClone) {
     return (
       <CloneDetailView
         clone={activeChatClone}
-        onBack={() => setActiveChatClone(null)}
+        onBack={exitClone}
       />
     )
   }
@@ -75,7 +94,7 @@ export function CloneTab() {
             showActions={false}
             onMerge={setMergeTarget}
             onDelete={setDeleteTarget}
-            onEnterChat={setActiveChatClone}
+            onEnterChat={enterClone}
             onManageFiles={setFileMgmtClone}
           />
         </section>
@@ -104,7 +123,7 @@ export function CloneTab() {
             showActions={true}
             onMerge={setMergeTarget}
             onDelete={setDeleteTarget}
-            onEnterChat={setActiveChatClone}
+            onEnterChat={enterClone}
             onManageFiles={setFileMgmtClone}
           />
           {!loading && userClones.length === 0 && (
