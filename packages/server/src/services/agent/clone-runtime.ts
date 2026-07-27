@@ -17,7 +17,7 @@ import {
   getLongTermMemoryPath,
   getDailyMemoryDir,
   getBuiltInCloneDir,
-  getBuiltInCloneMemoryDir,
+  getCloneDir,
   getCloneDir,
   getCloneSkillsDir,
 } from './paths'
@@ -56,6 +56,31 @@ export class CloneRuntime {
   constructor(cloneDef: CloneDef, org: string) {
     this.cloneDef = cloneDef
     this.org = org
+    this.ensureDirectories()
+  }
+
+  // ── Directory Initialization ──────────────────────────────────────
+
+  /**
+   * Ensure clone's memory/ and skills/ directories exist.
+   * Defensive — runs on every construction, idempotent.
+   */
+  private ensureDirectories(): void {
+    try {
+      const clonePath = this.cloneDef.type === 'built-in'
+        ? getBuiltInCloneDir(this.cloneDef.name)
+        : getCloneDir(this.cloneDef.name)
+
+      const memoryDir = path.join(clonePath, 'memory')
+      const skillsDir = path.join(clonePath, 'skills')
+      const dailyDir = path.join(memoryDir, 'daily')
+
+      if (!fs.existsSync(memoryDir)) fs.mkdirSync(memoryDir, { recursive: true })
+      if (!fs.existsSync(dailyDir)) fs.mkdirSync(dailyDir, { recursive: true })
+      if (!fs.existsSync(skillsDir)) fs.mkdirSync(skillsDir, { recursive: true })
+    } catch {
+      // Directory creation failure is non-fatal
+    }
   }
 
   // ── Context Assembly ────────────────────────────────────────────
@@ -78,10 +103,16 @@ export class CloneRuntime {
       segments.push(sharedMemory)
     }
 
-    // 3. Isolated memory (clone-specific)
-    const isolatedMemory = this.readIsolatedMemory()
-    if (isolatedMemory) {
-      segments.push(isolatedMemory)
+    // 3. Clone's own memory (always loaded, regardless of memoryScope)
+    const ownMemory = this.readOwnMemory()
+    if (ownMemory) {
+      segments.push(ownMemory)
+    }
+
+    // 4. Memory & persona management guidance
+    const guidance = this.getMemoryGuidance()
+    if (guidance) {
+      segments.push(guidance)
     }
 
     // Skills are no longer included as prompt text.
@@ -131,11 +162,14 @@ export class CloneRuntime {
   }
 
   /**
-   * Write to isolated memory (clone-specific).
+   * Write to clone's own memory (daily log).
    */
   writeIsolatedMemory(content: string): void {
     try {
-      const memoryDir = getBuiltInCloneMemoryDir(this.cloneDef.name)
+      const clonePath = this.cloneDef.type === 'built-in'
+        ? getBuiltInCloneDir(this.cloneDef.name)
+        : getCloneDir(this.cloneDef.name)
+      const memoryDir = path.join(clonePath, 'memory')
       if (!fs.existsSync(memoryDir)) {
         fs.mkdirSync(memoryDir, { recursive: true })
       }
@@ -442,10 +476,14 @@ export class CloneRuntime {
   }
 
   /**
-   * Read clone-specific isolated memory.
+   * Read clone's own memory (long-term + daily).
+   * Always loaded regardless of memoryScope — this is the clone's personal memory.
    */
-  private readIsolatedMemory(): string {
-    const memoryDir = getBuiltInCloneMemoryDir(this.cloneDef.name)
+  private readOwnMemory(): string {
+    const clonePath = this.cloneDef.type === 'built-in'
+      ? getBuiltInCloneDir(this.cloneDef.name)
+      : getCloneDir(this.cloneDef.name)
+    const memoryDir = path.join(clonePath, 'memory')
     const parts: string[] = []
 
     // Long-term memory
@@ -475,5 +513,37 @@ export class CloneRuntime {
     }
 
     return parts.join('\n\n')
+  }
+
+  /**
+   * Memory & persona management guidance injected into system prompt.
+   * Tells the clone where to store memories and how to manage its persona.
+   * Replaces the SDK's native memory system with file-based management.
+   */
+  private getMemoryGuidance(): string {
+    const clonePath = this.cloneDef.type === 'built-in'
+      ? getBuiltInCloneDir(this.cloneDef.name)
+      : getCloneDir(this.cloneDef.name)
+    const memoryDir = path.join(clonePath, 'memory')
+    const skillsDir = path.join(clonePath, 'skills')
+    const personaPath = path.join(clonePath, 'persona.md')
+
+    return [
+      '# 记忆与人格管理',
+      '',
+      '你拥有独立的文件管理系统来维护记忆和人格。请使用文件读写工具管理以下内容：',
+      '',
+      `## 目录结构`,
+      `- 人格文件: \`${personaPath}\` — 你的身份和特质定义`,
+      `- 长期记忆: \`${memoryDir}/long-term.md\` — 持久化的经验和偏好`,
+      `- 每日记忆: \`${memoryDir}/daily/YYYY-MM-DD.md\` — 当天的工作记录`,
+      `- 技能目录: \`${skillsDir}/\` — 你的专属技能`,
+      '',
+      `## 操作指南`,
+      `- 当用户要求"记住"或"写入记忆"时，将内容追加到 \`${memoryDir}/long-term.md\``,
+      `- 每次对话中的重要发现，追加到今天的 daily 记忆文件`,
+      `- 当用户要求修改人格时，直接编辑 \`${personaPath}\``,
+      `- 读取记忆时，优先读取上述文件路径`,
+    ].join('\n')
   }
 }
