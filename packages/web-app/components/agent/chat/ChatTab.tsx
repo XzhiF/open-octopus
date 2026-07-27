@@ -6,7 +6,6 @@ import { useAgentChat } from '@/hooks/useAgentChat'
 import { SessionList } from './SessionList'
 import { ChatArea } from './ChatArea'
 import { ToolCallPanel } from './ToolCallPanel'
-import { AgentChatBoundary } from './AgentChatBoundary'
 import { PerspectiveIndicator } from './PerspectiveIndicator'
 import { Sheet, SheetContent } from '@/components/ui/sheet'
 import { Button } from '@/components/ui/button'
@@ -122,9 +121,6 @@ export function ChatTab() {
             onSelectClone={setActiveClone}
           />
         </div>
-
-        {/* Agent/Workspace boundary description */}
-        <AgentChatBoundary context="agent" />
 
         <ChatArea
           messages={messages}
