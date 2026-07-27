@@ -6,8 +6,6 @@ import { useAgentChat } from '@/hooks/useAgentChat'
 import { SessionList } from './SessionList'
 import { ChatArea } from './ChatArea'
 import { ToolCallPanel } from './ToolCallPanel'
-import { AgentChatBoundary } from './AgentChatBoundary'
-import { PerspectiveIndicator } from './PerspectiveIndicator'
 import { Sheet, SheetContent } from '@/components/ui/sheet'
 import { Button } from '@/components/ui/button'
 import { PanelLeftOpen } from 'lucide-react'
@@ -32,7 +30,6 @@ export function ChatTab() {
 
   const [showToolPanel, setShowToolPanel] = useState(false)
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false)
-  const [activeClone, setActiveClone] = useState<string | null>(null)
 
   // Pending message when auto-creating a session
   const pendingMessageRef = useRef<string | null>(null)
@@ -117,14 +114,7 @@ export function ChatTab() {
             </span>
           </div>
           <div className="hidden md:flex items-center" />
-          <PerspectiveIndicator
-            activeClone={activeClone}
-            onSelectClone={setActiveClone}
-          />
         </div>
-
-        {/* Agent/Workspace boundary description */}
-        <AgentChatBoundary context="agent" />
 
         <ChatArea
           messages={messages}

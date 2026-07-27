@@ -5,7 +5,19 @@ import type { AgentMessage, ToolCallRecord } from '@/lib/agent/types'
 import * as api from '@/lib/agent/api'
 import { useSSEConnection, type SSEHandlers } from '@/lib/agent/sse'
 
-export function useAgentChat(sessionId: string | null, options?: { onTitleUpdate?: (sessionId: string, title: string) => void }) {
+export interface UseAgentChatApiOverride {
+  /** Load session messages. Returns { messages: PaginatedResponse<AgentMessage> } */
+  getSession?: (id: string, query?: { limit?: number; cursor?: string }) => Promise<{
+    session: import('@/lib/agent/types').AgentSession
+    messages: import('@/lib/agent/types').PaginatedResponse<import('@/lib/agent/types').AgentMessage>
+  }>
+  /** Create SSE stream for chat. Returns { reader, abort } */
+  chatStream?: (id: string, message: string, opts?: { debug?: boolean; delegate_to?: string }) => import('@/lib/agent/api').AgentSSEConnection
+  /** Stop an in-progress chat stream */
+  stopChat?: (id: string) => Promise<unknown>
+}
+
+export function useAgentChat(sessionId: string | null, options?: { onTitleUpdate?: (sessionId: string, title: string) => void; api?: UseAgentChatApiOverride }) {
   const [messages, setMessages] = useState<AgentMessage[]>([])
   const [streaming, setStreaming] = useState(false)
   const [streamContent, setStreamContent] = useState('')
@@ -30,6 +42,9 @@ export function useAgentChat(sessionId: string | null, options?: { onTitleUpdate
   // Ref-based callback for title updates (avoids recreating sendMessage on every render)
   const onTitleUpdateRef = useRef(options?.onTitleUpdate)
   onTitleUpdateRef.current = options?.onTitleUpdate
+  // Ref-based API overrides (avoids recreating callbacks when overrides change identity)
+  const apiOverrideRef = useRef(options?.api)
+  apiOverrideRef.current = options?.api
 
   // Abort any in-flight stream when session changes
   useEffect(() => {
@@ -53,7 +68,8 @@ export function useAgentChat(sessionId: string | null, options?: { onTitleUpdate
   const loadMessages = useCallback(async () => {
     if (!sessionId) return
     try {
-      const res = await api.getSession(sessionId, { limit: 50 })
+      const getSessionFn = apiOverrideRef.current?.getSession ?? api.getSession
+      const res = await getSessionFn(sessionId, { limit: 50 })
       setMessages(res.messages.items)
     } catch {
       setError('Failed to load messages')
@@ -97,7 +113,8 @@ export function useAgentChat(sessionId: string | null, options?: { onTitleUpdate
     streamThinkingRef.current = ''
     toolCallsRef.current = []
 
-    const source = api.chatStream(sessionId, message, { delegate_to: opts?.delegate_to })
+    const chatStreamFn = apiOverrideRef.current?.chatStream ?? api.chatStream
+    const source = chatStreamFn(sessionId, message, { delegate_to: opts?.delegate_to })
 
     const handlers: SSEHandlers = {
       onTextDelta: (content) => {
@@ -199,7 +216,8 @@ export function useAgentChat(sessionId: string | null, options?: { onTitleUpdate
   const stopGenerate = useCallback(async () => {
     if (!sessionId) return
     try {
-      await api.stopChat(sessionId)
+      const stopChatFn = apiOverrideRef.current?.stopChat ?? api.stopChat
+      await stopChatFn(sessionId)
       disconnect()
       setStreaming(false)
       streamingRef.current = false

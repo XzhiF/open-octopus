@@ -6,7 +6,6 @@ import { Button } from '@/components/ui/button'
 import { SessionList } from '../chat/SessionList'
 import { ChatArea } from '../chat/ChatArea'
 import { ToolCallPanel } from '../chat/ToolCallPanel'
-import { AgentChatBoundary } from '../chat/AgentChatBoundary'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Sheet, SheetContent } from '@/components/ui/sheet'
 import { PanelLeftOpen } from 'lucide-react'
@@ -32,7 +31,7 @@ export function CloneChatView({ clone, onBack }: CloneChatViewProps) {
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false)
 
   const {
-    messages, streaming, streamContent, toolCalls, pendingConfirm,
+    messages, streaming, streamContent, streamThinking, isThinking, toolCalls, pendingConfirm,
     error: chatError, statusMessage,
     sendMessage, stopGenerate, handleConfirm, loadMessages,
   } = useAgentChat(activeSessionId)
@@ -206,12 +205,12 @@ export function CloneChatView({ clone, onBack }: CloneChatViewProps) {
           <div />
         </div>
 
-        <AgentChatBoundary context="agent" />
-
         <ChatArea
           messages={messages}
           streaming={streaming}
           streamContent={streamContent}
+          streamThinking={streamThinking}
+          isThinking={isThinking}
           toolCalls={toolCalls}
           pendingConfirm={pendingConfirm}
           error={chatError}

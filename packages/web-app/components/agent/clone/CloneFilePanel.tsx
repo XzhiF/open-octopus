@@ -63,7 +63,7 @@ export function CloneFilePanel({ clone, onClose }: CloneFilePanelProps) {
 
     setSaving(true)
     try {
-      await api.updateCloneFile(clone.name, activeTab, content)
+      await api.updateCloneFile(clone.name, activeTab, { content })
       setOriginalContent(content)
       toast.success(`${activeTab} 已保存`)
     } catch (err) {

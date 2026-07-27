@@ -150,7 +150,7 @@ export function createMainAgentRoute(deps: MainAgentRouteDeps): Hono {
             })
 
             const runtime = new CloneRuntime(cloneDef, org)
-            const cwd = getAgentDir()
+            const cwd = runtime.getDefaultCwd()
             let fullContent = ''
 
             for await (const chunk of runtime.chat(body.message!, sessionId!, null, cwd)) {
@@ -372,7 +372,7 @@ async function executeDelegation(
 
   // Execute via CloneRuntime
   const runtime = new CloneRuntime(cloneDef, org)
-  const cwd = getAgentDir()
+  const cwd = runtime.getDefaultCwd()
 
   await stream.writeSSE({
     event: 'status',

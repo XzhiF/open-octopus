@@ -1,6 +1,8 @@
 'use client'
 
 import { MoreHorizontal, Merge, Trash2, FileText } from 'lucide-react'
+import { formatDistanceToNow } from 'date-fns'
+import { zhCN } from 'date-fns/locale'
 import type { CloneInfo } from '@/lib/agent/types'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -105,17 +107,17 @@ export function CloneCardGrid({ clones, loading, showActions = true, onMerge, on
             )}
           </div>
 
-          {/* Skills count */}
-          {clone.skills.length > 0 && (
-            <div className="flex items-center gap-1 mb-2">
-              <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4">
-                {clone.skills.length} 技能
-              </Badge>
-              <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4">
-                {clone.memory_scope === 'shared' ? '共享记忆' : '独立记忆'}
-              </Badge>
-            </div>
-          )}
+          {/* Badges */}
+          <div className="flex items-center gap-1 mb-2 flex-wrap">
+            <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4">
+              {clone.memory_scope === 'shared' ? '共享记忆' : '独立记忆'}
+            </Badge>
+            {clone.last_active && (
+              <span className="text-[10px] text-muted-foreground">
+                {formatDistanceToNow(new Date(clone.last_active), { addSuffix: true, locale: zhCN })}
+              </span>
+            )}
+          </div>
 
           {/* Persona summary */}
           {clone.persona && (

@@ -21,7 +21,6 @@ export interface CloneInfo {
   persona: string           // Persona excerpt (first 200 chars)
   skills: string[]
   memory_scope: 'shared' | 'isolated'
-  workspace?: { name: string; path: string }
   status: 'active' | 'idle' | 'executing'
   created_at?: string
   last_active?: string
@@ -37,7 +36,6 @@ export interface CloneConfig {
   skills?: string[]
   memoryScope?: 'shared' | 'isolated'
   config?: Record<string, unknown>
-  workspace?: { name?: string; path?: string }
   created_at?: string
   last_active?: string
 }
@@ -131,6 +129,7 @@ export function createUserClone(params: {
   // Create directory structure
   try {
     fs.mkdirSync(cloneDir, { recursive: true })
+    fs.mkdirSync(path.join(cloneDir, 'skills'), { recursive: true })
     fs.mkdirSync(path.join(cloneDir, 'memory'), { recursive: true })
 
     // Write config.json
@@ -141,7 +140,6 @@ export function createUserClone(params: {
       skills,
       memoryScope: memory_scope,
       config: {},
-      workspace: workspace ? { name: workspace.name, path: workspace.path } : undefined,
       created_at: new Date().toISOString(),
     }
     fs.writeFileSync(path.join(cloneDir, 'config.json'), JSON.stringify(config, null, 2), 'utf-8')

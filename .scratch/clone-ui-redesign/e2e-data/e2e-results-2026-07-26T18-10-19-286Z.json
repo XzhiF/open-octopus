@@ -1,0 +1,176 @@
+{
+  "results": [
+    {
+      "ac": 7,
+      "name": "Card Fields",
+      "status": "PASS",
+      "evidence": {
+        "cardInfo": [
+          {
+            "ariaLabel": "分身: 全栈开发助手, 状态: active",
+            "displayName": "全栈开发助手",
+            "name": "workspace",
+            "badges": [],
+            "hasStatus": true
+          },
+          {
+            "ariaLabel": "分身: 定时任务管理, 状态: active",
+            "displayName": "定时任务管理",
+            "name": "scheduler",
+            "badges": [],
+            "hasStatus": true
+          },
+          {
+            "ariaLabel": "分身: 工程分析师, 状态: active",
+            "displayName": "工程分析师",
+            "name": "archive",
+            "badges": [],
+            "hasStatus": true
+          },
+          {
+            "ariaLabel": "分身: 资源操作专家, 状态: active",
+            "displayName": "资源操作专家",
+            "name": "resource",
+            "badges": [],
+            "hasStatus": true
+          },
+          {
+            "ariaLabel": "分身: 前段开发助手, 状态: idle",
+            "displayName": "前段开发助手",
+            "name": "frontend-dev",
+            "badges": [],
+            "hasStatus": true
+          }
+        ]
+      },
+      "details": "display_name=true, name=true, status_in_aria=true, memory_scope=false",
+      "timestamp": "2026-07-26T18:10:22.973Z"
+    },
+    {
+      "ac": 7,
+      "name": "Last Active",
+      "status": "FAIL",
+      "evidence": {
+        "hasLastActive": false
+      },
+      "details": "No relative time indicators found",
+      "timestamp": "2026-07-26T18:10:22.974Z"
+    },
+    {
+      "ac": 8,
+      "name": "Wizard Opens",
+      "status": "PASS",
+      "evidence": {
+        "wizardOpen": true
+      },
+      "details": "Create wizard dialog is visible",
+      "timestamp": "2026-07-26T18:10:23.647Z"
+    },
+    {
+      "ac": 8,
+      "name": "Wizard Steps (Spec: 1)",
+      "status": "FAIL",
+      "evidence": {
+        "stepCount": 5
+      },
+      "details": "Implementation has 5 step indicator(s). Spec says 1 step.",
+      "timestamp": "2026-07-26T18:10:23.648Z"
+    },
+    {
+      "ac": 1,
+      "name": "Three-Column Layout (DetailView)",
+      "status": "FAIL",
+      "evidence": {
+        "isDetailView": false,
+        "isChatView": true,
+        "hasChatInput": true,
+        "hasFileTree": false,
+        "hasFileContent": false,
+        "hasDetailViewBack": false,
+        "hasChatViewBack": true,
+        "hasPanelToggles": false,
+        "bodyLength": 331
+      },
+      "details": "Implementation uses CloneChatView (2-col: sessions | chat). CloneDetailView is not wired into navigation. Layout detected: ChatView=true",
+      "timestamp": "2026-07-26T18:10:29.576Z"
+    },
+    {
+      "ac": 8,
+      "name": "Agent Proactive Question",
+      "status": "FAIL",
+      "evidence": {
+        "hasAgentProactive": false
+      },
+      "details": "Agent did not ask proactive question (spec requirement)",
+      "timestamp": "2026-07-26T18:10:29.577Z"
+    },
+    {
+      "ac": 2,
+      "name": "File Tree Items",
+      "status": "FAIL",
+      "evidence": {
+        "hasPersona": true,
+        "hasConfig": true,
+        "hasMemory": false,
+        "hasSkills": false,
+        "hasFilePanel": true
+      },
+      "details": "persona=true, config=true, memory=false, skills=false",
+      "timestamp": "2026-07-26T18:10:33.354Z"
+    },
+    {
+      "ac": 3,
+      "name": "Inherited Section",
+      "status": "FAIL",
+      "evidence": {
+        "hasInheritedLabel": false,
+        "hasReadonlyBadge": false
+      },
+      "details": "Inherited section requires CloneDetailView (file tree panel). CloneFilePanel only shows persona.md + config.json.",
+      "timestamp": "2026-07-26T18:10:33.394Z"
+    },
+    {
+      "ac": 4,
+      "name": "File Edit & Save (FilePanel)",
+      "status": "FAIL",
+      "evidence": {
+        "savedIndicator": false,
+        "saveEnabled": true
+      },
+      "details": "Save confirmation not visible",
+      "timestamp": "2026-07-26T18:10:37.114Z"
+    },
+    {
+      "ac": 5,
+      "name": "Chat Input",
+      "status": "FAIL",
+      "evidence": {
+        "found": false
+      },
+      "details": "Chat input not found",
+      "timestamp": "2026-07-26T18:10:38.208Z"
+    },
+    {
+      "ac": 6,
+      "name": "Skill Directory Creation",
+      "status": "FAIL",
+      "evidence": {
+        "createDirResult": {
+          "status": 500,
+          "ok": false,
+          "body": {
+            "error": "The \"path\" argument must be of type string. Received undefined"
+          }
+        }
+      },
+      "details": "Directory creation failed: {\"status\":500,\"ok\":false,\"body\":{\"error\":\"The \\\"path\\\" argument must be of type string. Received undefined\"}}",
+      "timestamp": "2026-07-26T18:10:38.246Z"
+    }
+  ],
+  "summary": {
+    "PASS": 2,
+    "FAIL": 9,
+    "SKIP": 0
+  },
+  "timestamp": "2026-07-26T18:10:38.330Z"
+}

@@ -38,7 +38,7 @@ import {
   registerActiveStream,
   unregisterActiveStream,
 } from '../../services/agent/agent-service'
-import { getAgentDir, getBuiltInCloneDir, getCloneDir } from '../../services/agent/paths'
+import { getBuiltInCloneDir, getCloneDir } from '../../services/agent/paths'
 
 // ── Route deps ─────────────────────────────────────────────────────
 
@@ -46,10 +46,7 @@ export interface CloneSessionRouteDeps {
   sessionDAO: AgentSessionDAO
 }
 
-// ── File whitelist ─────────────────────────────────────────────────
-
-const ALLOWED_FILES = new Set(['persona.md', 'config.json'])
-const MAX_FILE_SIZE = 100 * 1024 // 100KB
+// ── File route constants removed — file ops now in clone-files.ts ──
 
 // ── Helpers ────────────────────────────────────────────────────────
 
@@ -97,9 +94,6 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
       const body = await c.req.json<{
         name: string
         display_name: string
-        persona: string
-        skills?: string[]
-        workspace?: { name?: string; path?: string }
         memory_scope?: 'shared' | 'isolated'
       }>()
 
@@ -109,17 +103,13 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
       if (!body.display_name) {
         return c.json({ error: { code: 'INVALID_PARAM', message: 'display_name is required' } }, 400)
       }
-      if (!body.persona) {
-        return c.json({ error: { code: 'INVALID_PARAM', message: 'persona is required' } }, 400)
-      }
 
       const result = createUserClone({
         name: body.name,
         display_name: body.display_name,
-        persona: body.persona,
-        skills: body.skills,
-        workspace: body.workspace,
-        memory_scope: body.memory_scope,
+        persona: `# 分身: ${body.display_name}\n\n（请在 Chat 中描述你希望这个分身具备的特质）\n`,
+        skills: [],
+        memory_scope: body.memory_scope ?? 'isolated',
       })
 
       if (!result.ok) {
@@ -158,79 +148,8 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
     return c.json({ ok: true })
   })
 
-  // ── Read clone file ──────────────────────────────────────────────
-  app.get('/:name/files/:path', (c) => {
-    const name = c.req.param('name')
-    const filePath = decodeURIComponent(c.req.param('path'))
-
-    // Path whitelist check
-    if (!ALLOWED_FILES.has(filePath) || filePath.includes('..') || filePath.includes('/') || filePath.includes('\\')) {
-      return c.json({ error: { code: 'FORBIDDEN', message: `File "${filePath}" is not accessible` } }, 403)
-    }
-
-    const info = resolveCloneInfo(name)
-    if (!info) {
-      return c.json({ error: { code: 'NOT_FOUND', message: `Clone "${name}" not found` } }, 404)
-    }
-
-    const cloneDir = info.type === 'built-in' ? getBuiltInCloneDir(name) : getCloneDir(name)
-    const fullPath = path.join(cloneDir, filePath)
-
-    if (!fs.existsSync(fullPath)) {
-      return c.json({ error: { code: 'NOT_FOUND', message: `File "${filePath}" not found` } }, 404)
-    }
-
-    try {
-      const content = fs.readFileSync(fullPath, 'utf-8')
-      const stat = fs.statSync(fullPath)
-      return c.json({ content, path: filePath, size: stat.size })
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err)
-      return c.json({ error: { code: 'READ_ERROR', message: msg } }, 500)
-    }
-  })
-
-  // ── Write clone file ─────────────────────────────────────────────
-  app.put('/:name/files/:path', async (c) => {
-    const name = c.req.param('name')
-    const filePath = decodeURIComponent(c.req.param('path'))
-
-    // Path whitelist check
-    if (!ALLOWED_FILES.has(filePath) || filePath.includes('..') || filePath.includes('/') || filePath.includes('\\')) {
-      return c.json({ error: { code: 'FORBIDDEN', message: `File "${filePath}" is not accessible` } }, 403)
-    }
-
-    const info = resolveCloneInfo(name)
-    if (!info) {
-      return c.json({ error: { code: 'NOT_FOUND', message: `Clone "${name}" not found` } }, 404)
-    }
-
-    let body: { content?: string }
-    try {
-      body = await c.req.json()
-    } catch {
-      return c.json({ error: { code: 'INVALID_PARAM', message: 'Invalid JSON body' } }, 400)
-    }
-
-    if (typeof body.content !== 'string') {
-      return c.json({ error: { code: 'INVALID_PARAM', message: 'content is required and must be a string' } }, 400)
-    }
-
-    if (Buffer.byteLength(body.content, 'utf-8') > MAX_FILE_SIZE) {
-      return c.json({ error: { code: 'INVALID_PARAM', message: `File content exceeds ${MAX_FILE_SIZE / 1024}KB limit` } }, 400)
-    }
-
-    const cloneDir = info.type === 'built-in' ? getBuiltInCloneDir(name) : getCloneDir(name)
-    const fullPath = path.join(cloneDir, filePath)
-
-    try {
-      fs.writeFileSync(fullPath, body.content, 'utf-8')
-      return c.json({ ok: true })
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err)
-      return c.json({ error: { code: 'WRITE_ERROR', message: msg } }, 500)
-    }
-  })
+  // File routes (GET/PUT/POST/DELETE /:name/files/:path) moved to clone-files.ts
+  // which supports __inherited__/ virtual paths for shared skills and memory.
 
   // ══════════════════════════════════════════════════════════════════
   // Session Management (DB-backed, unchanged)
@@ -357,7 +276,7 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
 
     // Instantiate CloneRuntime
     const runtime = new CloneRuntime(cloneDef, org)
-    const cwd = getAgentDir()
+    const cwd = runtime.getDefaultCwd()
     const providerSessionId = session.provider_session_id ?? null
 
     return streamSSE(c, async (stream) => {
