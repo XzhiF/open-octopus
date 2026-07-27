@@ -1,8 +1,9 @@
 'use client'
 
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { PanelLeft, PanelRight, Plus } from 'lucide-react'
+import { PanelLeft, PanelRight } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from '@/components/ui/resizable'
 import { CloneFileTree } from './CloneFileTree'
 import { CloneFileContent } from './CloneFileContent'
 import { ChatArea } from '../chat/ChatArea'
@@ -199,68 +200,92 @@ export function CloneDetailView({ clone, onBack }: CloneDetailViewProps) {
         </div>
       </div>
 
-      {/* Three-column layout */}
-      <div className="flex-1 flex overflow-hidden">
+      {/* Resizable three-column layout */}
+      <ResizablePanelGroup direction="horizontal" className="flex-1">
         {/* File Tree */}
         {showFileTree && (
-          <div className="w-60 border-r border-agent-divider overflow-hidden flex flex-col">
-            <CloneFileTree
-              files={files}
-              selectedFile={selectedFile}
-              onSelectFile={setSelectedFile}
-              onCreateFile={handleCreateFile}
-              onCreateDirectory={handleCreateDirectory}
-              onDeleteFile={handleDeleteFile}
-            />
-          </div>
+          <>
+            <ResizablePanel
+              defaultSize={20}
+              minSize={10}
+              maxSize={40}
+              collapsible
+              collapsedSize={0}
+            >
+              <div className="h-full overflow-hidden flex flex-col">
+                <CloneFileTree
+                  files={files}
+                  selectedFile={selectedFile}
+                  onSelectFile={setSelectedFile}
+                  onCreateFile={handleCreateFile}
+                  onCreateDirectory={handleCreateDirectory}
+                  onDeleteFile={handleDeleteFile}
+                />
+              </div>
+            </ResizablePanel>
+            <ResizableHandle withHandle className="border-agent-divider" />
+          </>
         )}
 
         {/* File Content */}
-        <div className="flex-1 overflow-hidden">
-          <CloneFileContent
-            cloneName={clone.name}
-            file={selectedFile}
-            onSaved={loadFiles}
-          />
-        </div>
+        <ResizablePanel defaultSize={showChat ? 45 : 80} minSize={20}>
+          <div className="h-full overflow-hidden">
+            <CloneFileContent
+              cloneName={clone.name}
+              file={selectedFile}
+              onSaved={loadFiles}
+            />
+          </div>
+        </ResizablePanel>
 
         {/* Chat Panel: Session List + ChatArea */}
         {showChat && (
-          <div className="w-[500px] border-l border-agent-divider overflow-hidden flex">
-            {/* Session list sidebar */}
-            <div className="w-48 border-r border-agent-divider bg-agent-surface-raised flex flex-col overflow-hidden">
-              <SessionList
-                sessions={sessions}
-                activeId={activeSessionId}
-                loading={sessionsLoading}
-                onSelect={handleSelectSession}
-                onCreate={handleCreateSession}
-                onRename={handleRenameSession}
-                onDelete={handleDeleteSession}
-              />
-            </div>
-            {/* Chat area */}
-            <div className="flex-1 flex flex-col overflow-hidden">
-              <ChatArea
-                messages={messages}
-                streaming={streaming}
-                streamContent={streamContent}
-                streamThinking={streamThinking}
-                isThinking={isThinking}
-                toolCalls={toolCalls}
-                pendingConfirm={pendingConfirm}
-                error={chatError}
-                statusMessage={statusMessage}
-                onSend={sendMessage}
-                onStop={stopGenerate}
-                onConfirm={handleConfirm}
-                hasSession={!!activeSessionId}
-                currentCloneName={clone.name}
-              />
-            </div>
-          </div>
+          <>
+            <ResizableHandle withHandle className="border-agent-divider" />
+            <ResizablePanel
+              defaultSize={35}
+              minSize={20}
+              maxSize={60}
+              collapsible
+              collapsedSize={0}
+            >
+              <div className="h-full overflow-hidden flex">
+                {/* Session list sidebar */}
+                <div className="w-44 shrink-0 border-r border-agent-divider bg-agent-surface-raised flex flex-col overflow-hidden">
+                  <SessionList
+                    sessions={sessions}
+                    activeId={activeSessionId}
+                    loading={sessionsLoading}
+                    onSelect={handleSelectSession}
+                    onCreate={handleCreateSession}
+                    onRename={handleRenameSession}
+                    onDelete={handleDeleteSession}
+                  />
+                </div>
+                {/* Chat area */}
+                <div className="flex-1 flex flex-col overflow-hidden min-w-0">
+                  <ChatArea
+                    messages={messages}
+                    streaming={streaming}
+                    streamContent={streamContent}
+                    streamThinking={streamThinking}
+                    isThinking={isThinking}
+                    toolCalls={toolCalls}
+                    pendingConfirm={pendingConfirm}
+                    error={chatError}
+                    statusMessage={statusMessage}
+                    onSend={sendMessage}
+                    onStop={stopGenerate}
+                    onConfirm={handleConfirm}
+                    hasSession={!!activeSessionId}
+                    currentCloneName={clone.name}
+                  />
+                </div>
+              </div>
+            </ResizablePanel>
+          </>
         )}
-      </div>
+      </ResizablePanelGroup>
     </div>
   )
 }
