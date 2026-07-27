@@ -200,6 +200,87 @@ export function deleteCloneFile(name: string, filePath: string) {
     method: 'DELETE',
   })
 }
+
+// ── Clone Session & Chat (scoped to /api/clones/:name/sessions) ─────
+
+export function createCloneSession(cloneName: string, body?: { title?: string; scope_id?: string }) {
+  return cloneRequest<AgentSession>(`/${cloneName}/sessions`, {
+    method: 'POST',
+    body: JSON.stringify(body ?? {}),
+  })
+}
+
+export function listCloneSessions(cloneName: string, query?: { limit?: number; cursor?: string }) {
+  const params = new URLSearchParams()
+  if (query?.limit) params.set('limit', String(query.limit))
+  if (query?.cursor) params.set('cursor', query.cursor)
+  const qs = params.toString()
+  return cloneRequest<{ sessions: AgentSession[]; has_more: boolean; next_cursor: string | null }>(
+    `/${cloneName}/sessions${qs ? `?${qs}` : ''}`
+  )
+}
+
+export function getCloneSession(cloneName: string, sessionId: string, query?: { limit?: number; cursor?: string }) {
+  const params = new URLSearchParams()
+  if (query?.limit) params.set('limit', String(query.limit))
+  if (query?.cursor) params.set('cursor', query.cursor)
+  const qs = params.toString()
+  // Normalize response to match main agent format: { session, messages: { items: [...] } }
+  return cloneRequest<{ session: AgentSession; messages: PaginatedResponse<AgentMessage>; has_more: boolean }>(
+    `/${cloneName}/sessions/${sessionId}${qs ? `?${qs}` : ''}`
+  ).then(raw => {
+    const msgs = Array.isArray(raw.messages) ? raw.messages : (raw.messages as any).items ?? []
+    return {
+      ...raw,
+      messages: { items: msgs, has_more: raw.has_more ?? false, next_cursor: null, total: msgs.length },
+    }
+  })
+}
+
+export function cloneChatStream(cloneName: string, sessionId: string, message: string): AgentSSEConnection {
+  const controller = new AbortController()
+  const url = `${CLONE_BASE()}/${cloneName}/sessions/${sessionId}/chat`
+  const body = JSON.stringify({ message })
+
+  const streamPromise = fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': AUTH_HEADER },
+    body,
+    signal: controller.signal,
+  })
+
+  const readable = new ReadableStream<Uint8Array>({
+    async start(ctrl) {
+      try {
+        const response = await streamPromise
+        if (!response.ok || !response.body) {
+          ctrl.error(new Error(`SSE connection failed: ${response.status}`))
+          return
+        }
+        const reader = response.body.getReader()
+        while (true) {
+          const { done, value } = await reader.read()
+          if (done) break
+          ctrl.enqueue(value)
+        }
+        ctrl.close()
+      } catch (err) {
+        if ((err as Error).name !== 'AbortError') {
+          ctrl.error(err)
+        }
+      }
+    },
+  })
+
+  return { reader: readable.getReader(), abort: () => controller.abort() }
+}
+
+export function stopCloneChat(cloneName: string, sessionId: string) {
+  return cloneRequest<{ success: boolean }>(`/${cloneName}/sessions/${sessionId}/stop`, {
+    method: 'POST',
+  })
+}
+
 export function mergeClone(name: string) {
   return request<{ ok: boolean; archived_lessons: number; clone_removed: boolean }>(`/clones/${name}/merge`, { method: 'POST' })
 }

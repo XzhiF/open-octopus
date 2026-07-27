@@ -1,21 +1,24 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { PanelLeft, PanelRight } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { CloneFileTree } from './CloneFileTree'
 import { CloneFileContent } from './CloneFileContent'
 import { ChatArea } from '../chat/ChatArea'
-import { useAgentChat } from '@/hooks/useAgentChat'
-import { useAgentSessions } from '@/hooks/useAgentSessions'
+import { useAgentChat, type UseAgentChatApiOverride } from '@/hooks/useAgentChat'
 import {
   listCloneFiles,
   updateCloneFile,
   createCloneDirectory,
   deleteCloneFile,
-  createSession as createCloneSession,
+  listCloneSessions,
+  createCloneSession,
+  getCloneSession,
+  cloneChatStream,
+  stopCloneChat,
 } from '@/lib/agent/api'
-import type { CloneInfo, FileInfo } from '@/lib/agent/types'
+import type { CloneInfo, FileInfo, AgentSession } from '@/lib/agent/types'
 
 interface CloneDetailViewProps {
   clone: CloneInfo
@@ -23,17 +26,26 @@ interface CloneDetailViewProps {
 }
 
 export function CloneDetailView({ clone, onBack }: CloneDetailViewProps) {
+  // ── File tree state ──
   const [files, setFiles] = useState<FileInfo[]>([])
   const [selectedFile, setSelectedFile] = useState<FileInfo | null>(null)
   const [showFileTree, setShowFileTree] = useState(true)
   const [showChat, setShowChat] = useState(true)
 
-  const {
-    sessions,
-    activeSessionId,
-    setActiveSessionId,
-    loading: sessionsLoading,
-  } = useAgentSessions()
+  // ── Clone-scoped session state (replaces useAgentSessions) ──
+  const [sessions, setSessions] = useState<AgentSession[]>([])
+  const [activeSessionId, setActiveSessionId] = useState<string | null>(null)
+  const [sessionsLoading, setSessionsLoading] = useState(true)
+  const activeSessionIdRef = useRef(activeSessionId)
+  activeSessionIdRef.current = activeSessionId
+
+  // ── Clone-specific API overrides for useAgentChat ──
+  const cloneName = clone.name
+  const chatApiOverrides: UseAgentChatApiOverride = {
+    getSession: (id, query) => getCloneSession(cloneName, id, query),
+    chatStream: (id, message) => cloneChatStream(cloneName, id, message),
+    stopChat: (id) => stopCloneChat(cloneName, id),
+  }
 
   const {
     messages,
@@ -43,12 +55,15 @@ export function CloneDetailView({ clone, onBack }: CloneDetailViewProps) {
     isThinking,
     toolCalls,
     pendingConfirm,
+    error: chatError,
+    statusMessage,
     sendMessage,
     stopGenerate,
     handleConfirm,
-  } = useAgentChat(activeSessionId)
+    loadMessages,
+  } = useAgentChat(activeSessionId, { api: chatApiOverrides })
 
-  // Load file tree
+  // ── Load file tree ──
   const loadFiles = useCallback(async () => {
     try {
       const res = await listCloneFiles(clone.name, true)
@@ -62,15 +77,38 @@ export function CloneDetailView({ clone, onBack }: CloneDetailViewProps) {
     loadFiles()
   }, [loadFiles])
 
-  // Auto-create session if none
-  useEffect(() => {
-    if (!sessionsLoading && sessions.length === 0) {
-      createCloneSession({ clone_name: clone.name })
-    } else if (!sessionsLoading && sessions.length > 0 && !activeSessionId) {
-      setActiveSessionId(sessions[0].id)
+  // ── Fetch clone-specific sessions; auto-create if none exist ──
+  const fetchSessions = useCallback(async () => {
+    try {
+      setSessionsLoading(true)
+      const res = await listCloneSessions(clone.name, { limit: 50 })
+      const items = res.sessions ?? []
+      setSessions(items)
+      if (items.length > 0 && !activeSessionIdRef.current) {
+        setActiveSessionId(items[0].id)
+      } else if (items.length === 0 && !activeSessionIdRef.current) {
+        // Auto-create first session
+        const session = await createCloneSession(clone.name)
+        setSessions([session])
+        setActiveSessionId(session.id)
+      }
+    } catch {
+      // Non-fatal
+    } finally {
+      setSessionsLoading(false)
     }
-  }, [sessions, sessionsLoading, activeSessionId, clone.name, setActiveSessionId])
+  }, [clone.name])
 
+  useEffect(() => {
+    fetchSessions()
+  }, [fetchSessions])
+
+  // ── Load messages when session changes ──
+  useEffect(() => {
+    if (activeSessionId) loadMessages()
+  }, [activeSessionId, loadMessages])
+
+  // ── File operations ──
   const handleCreateFile = async (parentPath: string) => {
     const name = prompt('文件名：')
     if (!name) return
@@ -94,6 +132,16 @@ export function CloneDetailView({ clone, onBack }: CloneDetailViewProps) {
       setSelectedFile(null)
     }
     loadFiles()
+  }
+
+  const handleCreateSession = async () => {
+    try {
+      const session = await createCloneSession(clone.name)
+      setSessions(prev => [session, ...prev])
+      setActiveSessionId(session.id)
+    } catch {
+      // Non-fatal
+    }
   }
 
   return (
@@ -160,12 +208,13 @@ export function CloneDetailView({ clone, onBack }: CloneDetailViewProps) {
               isThinking={isThinking}
               toolCalls={toolCalls}
               pendingConfirm={pendingConfirm}
+              error={chatError}
+              statusMessage={statusMessage}
               onSend={sendMessage}
               onStop={stopGenerate}
               onConfirm={handleConfirm}
-              sessions={sessions}
-              activeSessionId={activeSessionId}
-              onSelectSession={setActiveSessionId}
+              hasSession={!!activeSessionId}
+              currentCloneName={clone.name}
             />
           </div>
         )}
