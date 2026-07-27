@@ -7,7 +7,7 @@ import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from '@/componen
 import { CloneFileTree } from './CloneFileTree'
 import { CloneFileContent } from './CloneFileContent'
 import { ChatArea } from '../chat/ChatArea'
-import { SessionList } from '../chat/SessionList'
+import { SessionHeader } from './SessionHeader'
 import { useAgentChat, type UseAgentChatApiOverride } from '@/hooks/useAgentChat'
 import {
   listCloneFiles,
@@ -249,20 +249,15 @@ export function CloneDetailView({ clone, onBack }: CloneDetailViewProps) {
               collapsible
               collapsedSize={0}
             >
-              <div className="h-full overflow-hidden flex">
-                {/* Session list sidebar */}
-                <div className="w-44 shrink-0 border-r border-agent-divider bg-agent-surface-raised flex flex-col overflow-hidden">
-                  <SessionList
-                    sessions={sessions}
-                    activeId={activeSessionId}
-                    loading={sessionsLoading}
-                    onSelect={handleSelectSession}
-                    onCreate={handleCreateSession}
-                    onRename={handleRenameSession}
-                    onDelete={handleDeleteSession}
-                  />
-                </div>
-                {/* Chat area */}
+              <div className="h-full overflow-hidden flex flex-col">
+                <SessionHeader
+                  sessions={sessions}
+                  activeSessionId={activeSessionId}
+                  onNewSession={handleCreateSession}
+                  onSelectSession={handleSelectSession}
+                  onRenameSession={handleRenameSession}
+                  onDeleteSession={handleDeleteSession}
+                />
                 <div className="flex-1 flex flex-col overflow-hidden min-w-0">
                   <ChatArea
                     messages={messages}
