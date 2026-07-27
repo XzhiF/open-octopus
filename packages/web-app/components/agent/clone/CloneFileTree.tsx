@@ -82,25 +82,29 @@ export function CloneFileTree({
           ))}
       </div>
 
-      {/* Inherited resources */}
+      {/* Inherited resources — split into Skills and Memory */}
       {files.some(f => f.path.startsWith('__inherited__/')) && (
         <div className="border-t border-agent-divider">
-          <div className="px-3 py-2 text-xs text-muted-foreground font-medium">
-            继承自 Main Agent（只读）
-          </div>
-          {tree
-            .filter(n => n.path.startsWith('__inherited__/'))
-            .map((node) => (
-              <TreeNodeItem
-                key={node.path}
-                node={node}
-                expanded={expanded}
-                selectedFile={selectedFile}
-                onToggle={toggleExpand}
-                onSelect={onSelectFile}
-                onContextMenu={handleContextMenu}
-              />
-            ))}
+          <InheritedGroup
+            label="Skills"
+            files={files.filter(f => f.path.startsWith('__inherited__/skills/'))}
+            tree={tree}
+            expanded={expanded}
+            selectedFile={selectedFile}
+            onToggle={toggleExpand}
+            onSelect={onSelectFile}
+            onContextMenu={handleContextMenu}
+          />
+          <InheritedGroup
+            label="Memory"
+            files={files.filter(f => f.path.startsWith('__inherited__/memory/'))}
+            tree={tree}
+            expanded={expanded}
+            selectedFile={selectedFile}
+            onToggle={toggleExpand}
+            onSelect={onSelectFile}
+            onContextMenu={handleContextMenu}
+          />
         </div>
       )}
 
@@ -180,6 +184,73 @@ function buildTree(files: FileInfo[]): TreeNode[] {
   }
 
   return roots
+}
+
+// Helper: collapsible inherited group
+function InheritedGroup({
+  label,
+  files,
+  tree,
+  expanded,
+  selectedFile,
+  onToggle,
+  onSelect,
+  onContextMenu,
+}: {
+  label: string
+  files: FileInfo[]
+  tree: TreeNode[]
+  expanded: Set<string>
+  selectedFile: FileInfo | null
+  onToggle: (path: string) => void
+  onSelect: (file: FileInfo) => void
+  onContextMenu: (e: React.MouseEvent, file: FileInfo) => void
+}) {
+  const groupKey = `__inherited_group__${label}`
+  const isExpanded = expanded.has(groupKey)
+  const count = files.filter(f => f.type === 'file').length
+
+  if (files.length === 0) return null
+
+  // Get top-level nodes for this group (children of the prefix path)
+  const prefix = label === 'Skills' ? '__inherited__/skills/' : '__inherited__/memory/'
+  const groupNodes = tree.filter(n => {
+    // A node is top-level in this group if its path starts with prefix
+    // and its parent (one level up) is NOT in the file list (i.e., it's a root in the group)
+    if (!n.path.startsWith(prefix)) return false
+    const relative = n.path.slice(prefix.length)
+    // Top-level = no slashes in relative path (direct child of the group root)
+    return !relative.includes('/')
+  })
+
+  return (
+    <div>
+      <div
+        className="flex items-center gap-1 px-2 py-1.5 cursor-pointer hover:bg-agent-hover text-xs text-muted-foreground font-medium"
+        onClick={() => onToggle(groupKey)}
+      >
+        {isExpanded ? (
+          <ChevronDown className="h-3 w-3" />
+        ) : (
+          <ChevronRight className="h-3 w-3" />
+        )}
+        <Lock className="h-3 w-3" />
+        <span className="flex-1">继承 {label}</span>
+        <span className="text-[10px] opacity-60">{count}</span>
+      </div>
+      {isExpanded && groupNodes.map((node) => (
+        <TreeNodeItem
+          key={node.path}
+          node={node}
+          expanded={expanded}
+          selectedFile={selectedFile}
+          onToggle={onToggle}
+          onSelect={onSelect}
+          onContextMenu={onContextMenu}
+        />
+      ))}
+    </div>
+  )
 }
 
 // Helper: render tree node

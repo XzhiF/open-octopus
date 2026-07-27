@@ -41,7 +41,7 @@ export function createCloneFilesRoutes(): Hono {
 
     const files = scanDirectory(cloneDir, cloneDir, recursive, false)
 
-    // Add inherited resources (shared skills from main agent)
+    // Add inherited resources (shared skills + memory from main agent)
     const agentSkillsDir = getAgentSkillsDir()
     if (fs.existsSync(agentSkillsDir)) {
       const inheritedSkills = scanDirectory(
@@ -50,11 +50,26 @@ export function createCloneFilesRoutes(): Hono {
         recursive,
         true
       )
-      // Prefix paths with __inherited__/skills/ to distinguish from clone files
       inheritedSkills.forEach(f => {
         f.path = `__inherited__/skills/${f.path}`
       })
       files.push(...inheritedSkills)
+    }
+
+    // Inherited memory (shared from main agent)
+    const agentDir = getAgentDir()
+    const agentMemoryDir = path.join(agentDir, 'memory')
+    if (fs.existsSync(agentMemoryDir)) {
+      const inheritedMemory = scanDirectory(
+        agentMemoryDir,
+        agentMemoryDir,
+        recursive,
+        true
+      )
+      inheritedMemory.forEach(f => {
+        f.path = `__inherited__/memory/${f.path}`
+      })
+      files.push(...inheritedMemory)
     }
 
     return c.json({ files })
@@ -207,6 +222,23 @@ function getCloneDirectory(name: string): string {
 }
 
 function resolveFilePath(name: string, filePath: string): string | null {
+  // Handle __inherited__/ virtual paths → resolve to main agent shared dirs
+  if (filePath.startsWith('__inherited__/skills/')) {
+    const relative = filePath.replace('__inherited__/skills/', '')
+    const skillsDir = getAgentSkillsDir()
+    const targetPath = path.join(skillsDir, relative)
+    if (!targetPath.startsWith(skillsDir)) return null // traversal guard
+    return targetPath
+  }
+  if (filePath.startsWith('__inherited__/memory/')) {
+    const relative = filePath.replace('__inherited__/memory/', '')
+    const agentDir = getAgentDir()
+    const memoryDir = path.join(agentDir, 'memory')
+    const targetPath = path.join(memoryDir, relative)
+    if (!targetPath.startsWith(memoryDir)) return null
+    return targetPath
+  }
+
   const cloneDir = getCloneDirectory(name)
   const targetPath = path.join(cloneDir, filePath)
 
