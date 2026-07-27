@@ -38,7 +38,7 @@ import {
   registerActiveStream,
   unregisterActiveStream,
 } from '../../services/agent/agent-service'
-import { getAgentDir, getBuiltInCloneDir, getCloneDir } from '../../services/agent/paths'
+import { getBuiltInCloneDir, getCloneDir } from '../../services/agent/paths'
 
 // ── Route deps ─────────────────────────────────────────────────────
 
@@ -351,7 +351,7 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
 
     // Instantiate CloneRuntime
     const runtime = new CloneRuntime(cloneDef, org)
-    const cwd = getAgentDir()
+    const cwd = runtime.getDefaultCwd()
     const providerSessionId = session.provider_session_id ?? null
 
     return streamSSE(c, async (stream) => {
