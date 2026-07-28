@@ -387,6 +387,16 @@ export interface ExperienceRow {
   created_at: string
 }
 
+export interface InsightMarkRow {
+  id: number
+  skill_name: string
+  insight: string
+  session_id: string | null
+  org: string
+  marked_at: string
+  processed: number
+}
+
 export interface SafetyEventRow {
   id: number
   type: string

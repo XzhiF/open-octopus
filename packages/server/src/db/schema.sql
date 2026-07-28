@@ -574,6 +574,24 @@ CREATE INDEX IF NOT EXISTS idx_sje_started ON scheduled_job_executions(started_a
 CREATE INDEX IF NOT EXISTS idx_sje_status ON scheduled_job_executions(status);
 
 -- =============================================================================
+-- Insight Marks (evolution pipeline — immediate marking + batch processing)
+-- =============================================================================
+
+CREATE TABLE IF NOT EXISTS insight_marks (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  skill_name TEXT NOT NULL,
+  insight TEXT NOT NULL,
+  session_id TEXT,
+  org TEXT NOT NULL,
+  marked_at TEXT NOT NULL DEFAULT (datetime('now')),
+  processed INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS idx_insight_marks_org ON insight_marks(org);
+CREATE INDEX IF NOT EXISTS idx_insight_marks_processed ON insight_marks(processed);
+CREATE INDEX IF NOT EXISTS idx_insight_marks_marked_at ON insight_marks(marked_at DESC);
+
+-- =============================================================================
 -- Triggers
 -- =============================================================================
 

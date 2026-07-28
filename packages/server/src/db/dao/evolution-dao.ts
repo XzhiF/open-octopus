@@ -1,6 +1,6 @@
 import type Database from "better-sqlite3"
 import { BaseDAO } from "./base"
-import type { EvolutionLogRow, ExperienceRow } from "../types"
+import type { EvolutionLogRow, ExperienceRow, InsightMarkRow } from "../types"
 
 /**
  * EvolutionDAO — skill evolution and experience management.
@@ -133,5 +133,41 @@ export class EvolutionDAO extends BaseDAO {
       // FTS insert failure is non-fatal
     }
     return result
+  }
+
+  // ── insight_marks ──────────────────────────────────────────────────
+
+  insertMark(row: { skill_name: string; insight: string; session_id?: string; org: string }): Database.RunResult {
+    const now = new Date().toISOString()
+    return this.stmt(`
+      INSERT INTO insight_marks (skill_name, insight, session_id, org, marked_at, processed)
+      VALUES (?, ?, ?, ?, ?, 0)
+    `).run(row.skill_name, row.insight, row.session_id ?? null, row.org, now)
+  }
+
+  listUnprocessedMarks(org: string, limit: number = 50): InsightMarkRow[] {
+    return this.stmt(`
+      SELECT * FROM insight_marks
+      WHERE org = ? AND processed = 0
+      ORDER BY marked_at ASC
+      LIMIT ?
+    `).all(org, limit) as InsightMarkRow[]
+  }
+
+  markProcessed(id: number): Database.RunResult {
+    return this.stmt("UPDATE insight_marks SET processed = 1 WHERE id = ?").run(id)
+  }
+
+  listAllMarks(org: string, filters?: { processed?: number; limit?: number }): InsightMarkRow[] {
+    const limit = Math.min(filters?.limit ?? 50, 200)
+    let sql = `SELECT * FROM insight_marks WHERE org = ?`
+    const params: unknown[] = [org]
+    if (filters?.processed !== undefined) {
+      sql += ` AND processed = ?`
+      params.push(filters.processed)
+    }
+    sql += ` ORDER BY marked_at DESC LIMIT ?`
+    params.push(limit)
+    return this.stmt(sql).all(...params) as InsightMarkRow[]
   }
 }
