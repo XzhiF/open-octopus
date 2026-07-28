@@ -104,6 +104,23 @@ export function createEvolutionRoutes(deps: EvolutionRouteDeps): Hono {
       const org = c.req.header('X-Octopus-Org') || (c.get('org') as string)
       if (!org) return c.json(createAgentError('ORG_NOT_FOUND', 'Organization not resolved'), 403)
       const skill = c.req.query('skill')
+      const q = c.req.query('q')
+
+      // When search query provided, use FTS search; otherwise list
+      if (q) {
+        const limit = Math.min(parseInt(c.req.query('limit') ?? '20', 10), 50)
+        const searchResults = evolutionDAO.searchExperiences(q, limit)
+        const items = searchResults.map((r, i) => ({
+          id: -(i + 1), // FTS results don't have stable IDs
+          skill_name: r.skill_name,
+          content: r.content,
+          source_session_id: null,
+          org,
+          created_at: '',
+        }))
+        return c.json({ items, total: items.length })
+      }
+
       const items = getEvolutionService().listExperiences(org, skill)
       return c.json({ items, total: items.length })
     } catch (err: unknown) {
