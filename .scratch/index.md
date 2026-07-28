@@ -9,4 +9,4 @@
 | 5 | workspace-scheduler-clone-chat | 2026-07-25 | feat-agent-clone-optimze | done |
 | 6 | plugin-skill-discovery | 2026-07-25 | feat-agent-clone-optimze | done |
 | 7 | clone-ui-redesign | 2026-07-27 | feat/clone-ui-optimization | done |
-| 8 | main-agent-optimization | 2026-07-29 | feat/main-agent-optimization | in-progress |
+| 8 | main-agent-optimization | 2026-07-29 | feat/main-agent-optimization | done |
