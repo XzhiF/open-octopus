@@ -5,6 +5,7 @@ import { Zap, History, BookOpen } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAgentSkills } from '@/hooks/useAgentSkills'
 import { SkillList } from './SkillList'
+import { SkillDetailView } from './SkillDetailView'
 import { ChangelogTimeline } from './ChangelogTimeline'
 import { ExperienceList } from './ExperienceList'
 import { AgentEmptyState } from '../shared/AgentEmptyState'
@@ -17,7 +18,18 @@ const SUB_VIEWS = [
 
 export function SkillTab() {
   const [activeView, setActiveView] = useState('changelog')
-  const { skills, changelog, experiences, loading, error, fetchExperiences, rollback, revertToBuiltin } = useAgentSkills()
+  const [showDetail, setShowDetail] = useState(false)
+  const { skills, changelog, experiences, loading, error, fetchExperiences, rollback, revertToBuiltin, refetch } = useAgentSkills()
+
+  if (showDetail) {
+    return (
+      <SkillDetailView
+        skills={skills}
+        onBack={() => setShowDetail(false)}
+        onRefresh={refetch}
+      />
+    )
+  }
 
   if (!loading && (skills?.length ?? 0) === 0 && (changelog?.length ?? 0) === 0) {
     return (
@@ -62,7 +74,12 @@ export function SkillTab() {
       {/* Content */}
       <div className="flex-1 overflow-auto">
         {activeView === 'skills' && (
-          <SkillList skills={skills} loading={loading} onRevertBuiltin={revertToBuiltin} />
+          <SkillList
+            skills={skills}
+            loading={loading}
+            onRevertBuiltin={revertToBuiltin}
+            onSelectSkill={() => setShowDetail(true)}
+          />
         )}
         {activeView === 'changelog' && (
           <ChangelogTimeline entries={changelog} loading={loading} onRollback={rollback} />
