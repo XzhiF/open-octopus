@@ -14,7 +14,8 @@ import type { AgentSessionDAO } from '../../db/dao'
 import { CloneRuntime } from '../../services/agent/clone-runtime'
 import { SystemPromptAssembler } from '../../services/agent/system-prompt-assembler'
 import { registerActiveStream, unregisterActiveStream } from '../../services/agent/agent-service'
-import { getAgentDir, getBuiltInCloneDir, getCloneDir } from '../../services/agent/paths'
+import { getAgentDir, getBuiltInCloneDir, getCloneDir, getAgentSkillsDir } from '../../services/agent/paths'
+import { getEvolutionService } from '../../services/agent/evolution-service'
 import { resolveCloneInfo } from '../../services/agent/clone-resolver'
 import { isBuiltinClone } from '../../services/agent/builtin-clones'
 import type { CloneDef } from '@octopus/shared'
@@ -40,6 +41,21 @@ You can delegate tasks to specialized clones using the following tools:
 - **delegate_to_resource**: Execute a resource operation (install/update skills, agents, workflows)
 
 When a task clearly falls into one of these domains, delegate it. Otherwise, respond directly.
+`
+
+const EVOLUTION_TOOLS_PROMPT = `
+## Self-Evolution Tools
+
+You can autonomously improve your skills through these evolution operations:
+
+- **mark_insight**: Record a lightweight "this could be improved" signal during conversation. Use when you notice a skill could be better but don't want to modify it right now. Input: { skill_name: string, insight: string }
+- **evolve_skill**: Directly modify a SKILL.md file with an improvement. Use for minor wording/step fixes. Input: { skill_name: string, summary: string, new_content: string }
+- **create_experience**: Record a valuable lesson learned from this session. Input: { skill_name: string, content: string }
+- **merge_skills**: Combine overlapping or related skills into one. Input: { source_skills: string[], target_skill: string }
+- **archive_skill**: Archive a skill that is no longer useful. Input: { skill_name: string, reason: string }
+
+Use mark_insight liberally (it's cheap). Use evolve_skill sparingly (only for clear improvements).
+At the end of a productive session, consider using create_experience to capture lessons.
 `
 
 // ── Clone resolution helper ────────────────────────────────────────
@@ -215,7 +231,7 @@ export function createMainAgentRoute(deps: MainAgentRouteDeps): Hono {
     // ══════════════════════════════════════════════════════════════
     const assembler = new SystemPromptAssembler(org)
     const baseSystemPrompt = assembler.assemble()
-    const systemPrompt = `${baseSystemPrompt}\n\n${DELEGATION_TOOLS_PROMPT}`
+    const systemPrompt = `${baseSystemPrompt}\n\n${DELEGATION_TOOLS_PROMPT}\n\n${EVOLUTION_TOOLS_PROMPT}`
 
     return streamSSE(c, async (stream) => {
       let aborted = false
@@ -233,6 +249,7 @@ export function createMainAgentRoute(deps: MainAgentRouteDeps): Hono {
         let fullContent = ''
         let fullThinking = ''
         let delegationDetected: { cloneName: string; task: string } | null = null
+        const evolutionToolCalls: Array<{ id: string; name: string; input?: Record<string, unknown> }> = []
         const toolCalls: Array<{
           id: string; name: string; input?: unknown; result?: unknown; isError?: boolean
         }> = []
@@ -274,6 +291,10 @@ export function createMainAgentRoute(deps: MainAgentRouteDeps): Hono {
                   const input = chunk.toolInput as Record<string, unknown>
                   delegationDetected.task = String(input.task || input.prompt || body.message!)
                 }
+                // Track evolution tool calls
+                if (EVOLUTION_TOOL_NAMES.includes(tc.name)) {
+                  evolutionToolCalls.push({ id: tc.id, name: tc.name, input: chunk.toolInput as Record<string, unknown> })
+                }
               }
               await stream.writeSSE({ event: 'tool_call', data: JSON.stringify({ type: 'input', tool_call_id: chunk.toolCallId, tool_name: chunk.toolName, input: chunk.toolInput }) })
               break
@@ -300,6 +321,11 @@ export function createMainAgentRoute(deps: MainAgentRouteDeps): Hono {
           await executeDelegation(
             delegationDetected, sessionId!, org, stream,
           )
+        }
+
+        // Execute evolution tool calls
+        if (evolutionToolCalls.length > 0 && !aborted) {
+          await executeEvolutionTools(evolutionToolCalls, org, sessionId!, stream)
         }
 
         // Store assistant message
@@ -344,6 +370,141 @@ export function createMainAgentRoute(deps: MainAgentRouteDeps): Hono {
   })
 
   return app
+}
+
+const EVOLUTION_TOOL_NAMES = ['mark_insight', 'evolve_skill', 'create_experience', 'merge_skills', 'archive_skill']
+
+// ── Evolution tool execution ──────────────────────────────────────
+
+async function executeEvolutionTools(
+  toolCalls: Array<{ id: string; name: string; input?: Record<string, unknown> }>,
+  org: string,
+  sessionId: string,
+  stream: any,
+): Promise<void> {
+  for (const tc of toolCalls) {
+    try {
+      const input = tc.input ?? {}
+      let resultContent = ''
+
+      switch (tc.name) {
+        case 'mark_insight': {
+          const skillName = String(input.skill_name ?? '')
+          const insight = String(input.insight ?? '')
+          if (!skillName || !insight) {
+            resultContent = 'Error: skill_name and insight are required'
+            break
+          }
+          try {
+            const evolutionService = getEvolutionService()
+            const dao = (evolutionService as unknown as { dao: import('../../db/dao/evolution-dao').EvolutionDAO }).dao
+            const markResult = dao.insertMark({ skill_name: skillName, insight, session_id: sessionId, org })
+            resultContent = `Insight marked (id: ${markResult.lastInsertRowid}) for skill "${skillName}"`
+          } catch {
+            resultContent = `Failed to mark insight for "${skillName}"`
+          }
+          break
+        }
+
+        case 'evolve_skill': {
+          const skillName = String(input.skill_name ?? '')
+          const summary = String(input.summary ?? '')
+          const newContent = String(input.new_content ?? '')
+          if (!skillName || !summary) {
+            resultContent = 'Error: skill_name and summary are required'
+            break
+          }
+          try {
+            const evolutionService = getEvolutionService()
+            const skillPath = path.join(getAgentSkillsDir(), skillName, 'SKILL.md')
+            const skillDir = path.dirname(skillPath)
+            if (!fs.existsSync(skillDir)) fs.mkdirSync(skillDir, { recursive: true })
+            if (fs.existsSync(skillPath)) {
+              const bakPath = skillPath + '.bak'
+              if (!fs.existsSync(bakPath)) fs.copyFileSync(skillPath, bakPath)
+            }
+            if (newContent) {
+              fs.writeFileSync(skillPath, newContent, 'utf-8')
+            } else {
+              const current = fs.existsSync(skillPath) ? fs.readFileSync(skillPath, 'utf-8') : ''
+              fs.writeFileSync(skillPath, current + `\n\n> Evolution (${new Date().toISOString().split('T')[0]}): ${summary}`, 'utf-8')
+            }
+            evolutionService.recordEvolution(org, {
+              skill_name: skillName, change_type: 'minor', level: 'minor', summary,
+            })
+            resultContent = `Skill "${skillName}" evolved: ${summary}`
+          } catch (e) {
+            resultContent = `Failed to evolve skill "${skillName}": ${e instanceof Error ? e.message : String(e)}`
+          }
+          break
+        }
+
+        case 'create_experience': {
+          const skillName = String(input.skill_name ?? '')
+          const content = String(input.content ?? '')
+          if (!skillName || !content) {
+            resultContent = 'Error: skill_name and content are required'
+            break
+          }
+          try {
+            const evolutionService = getEvolutionService()
+            const result = evolutionService.recordExperience(org, {
+              skill_name: skillName, content, session_id: sessionId,
+            })
+            resultContent = `Experience recorded (id: ${result.id}) for skill "${skillName}"`
+          } catch {
+            resultContent = `Failed to record experience for "${skillName}"`
+          }
+          break
+        }
+
+        case 'merge_skills': {
+          resultContent = 'merge_skills: skill merging is not yet implemented. Please use evolve_skill to manually consolidate content.'
+          break
+        }
+
+        case 'archive_skill': {
+          const skillName = String(input.skill_name ?? '')
+          const reason = String(input.reason ?? 'archived by agent')
+          if (!skillName) {
+            resultContent = 'Error: skill_name is required'
+            break
+          }
+          try {
+            const evolutionService = getEvolutionService()
+            evolutionService.recordEvolution(org, {
+              skill_name: skillName, change_type: 'major', level: 'major',
+              summary: `Archived: ${reason}`,
+            })
+            resultContent = `Skill "${skillName}" archived: ${reason}`
+          } catch {
+            resultContent = `Failed to archive skill "${skillName}"`
+          }
+          break
+        }
+
+        default:
+          resultContent = `Unknown evolution tool: ${tc.name}`
+      }
+
+      await stream.writeSSE({
+        event: 'tool_call',
+        data: JSON.stringify({
+          type: 'result', tool_call_id: tc.id, tool_name: tc.name,
+          content: resultContent, is_error: resultContent.startsWith('Error') || resultContent.startsWith('Failed'),
+        }),
+      })
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      await stream.writeSSE({
+        event: 'tool_call',
+        data: JSON.stringify({
+          type: 'result', tool_call_id: tc.id, tool_name: tc.name,
+          content: `Evolution tool error: ${msg}`, is_error: true,
+        }),
+      })
+    }
+  }
 }
 
 // ── Delegation execution ───────────────────────────────────────────
