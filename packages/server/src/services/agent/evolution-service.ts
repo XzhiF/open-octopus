@@ -1,4 +1,7 @@
 import { EvolutionDAO } from '../../db/dao'
+import { getAgentSkillsDir, backupFile } from '../../services/agent/paths'
+import fs from 'fs'
+import path from 'path'
 import type { ExperienceRow } from '../../db/types'
 
 // ── Types ──────────────────────────────────────────────────────
@@ -308,6 +311,24 @@ export class EvolutionService {
   }
 
   /**
+   * Record an insight mark for a skill (I4 encapsulation — replaces direct DAO access).
+   */
+  markInsight(
+    skillName: string,
+    insight: string,
+    sessionId: string,
+    org: string,
+  ): { id: number } {
+    const result = this.dao.insertMark({
+      skill_name: skillName,
+      insight,
+      session_id: sessionId,
+      org,
+    })
+    return { id: result.lastInsertRowid as number }
+  }
+
+  /**
    * Record an experience for a skill (I4 file-level reuse).
    */
   recordExperience(
@@ -339,6 +360,79 @@ export class EvolutionService {
     created_at: string
   }> {
     return this.dao.listExperiences(org, skillName)
+  }
+
+  /**
+   * Process unprocessed insight marks — reflect on each, optionally evolve skills.
+   * Called automatically at session end (P4 auto-trigger).
+   */
+  processUnprocessedMarks(
+    org: string,
+    sessionId?: string,
+  ): { processed: number; total: number; results: Array<{ skill_name: string; identified: boolean; level: string; mark_id: number }> } {
+    const marks = this.dao.listUnprocessedMarks(org, 50)
+    if (marks.length === 0) {
+      return { processed: 0, total: 0, results: [] }
+    }
+
+    const results: Array<{ skill_name: string; identified: boolean; level: string; mark_id: number }> = []
+
+    for (const mark of marks) {
+      try {
+        const reflection = this.reflect(org, {
+          type: 'user_feedback',
+          skill_name: mark.skill_name,
+          content: mark.insight,
+          session_id: sessionId ?? mark.session_id ?? undefined,
+        })
+
+        if (reflection.identified && reflection.candidate) {
+          this.recordExperience(org, {
+            skill_name: mark.skill_name,
+            content: `Insight: ${mark.insight}`,
+            session_id: sessionId ?? mark.session_id ?? undefined,
+          })
+
+          if (reflection.level === 'minor') {
+            const skillPath = path.join(getAgentSkillsDir(), mark.skill_name, 'SKILL.md')
+            if (fs.existsSync(skillPath)) {
+              backupFile(skillPath)
+              const current = fs.readFileSync(skillPath, 'utf-8')
+              fs.writeFileSync(
+                skillPath,
+                current + `\n\n> Insight (${new Date().toISOString().split('T')[0]}): ${mark.insight.slice(0, 200)}`,
+                'utf-8',
+              )
+            }
+            this.recordEvolution(org, {
+              skill_name: mark.skill_name,
+              change_type: 'minor',
+              level: 'minor',
+              summary: `Batch insight: ${mark.insight.slice(0, 200)}`,
+            })
+          }
+        }
+
+        results.push({
+          skill_name: mark.skill_name,
+          identified: reflection.identified,
+          level: reflection.level,
+          mark_id: mark.id,
+        })
+
+        this.dao.markProcessed(mark.id)
+      } catch {
+        // Individual mark failure is non-fatal — continue processing
+        results.push({
+          skill_name: mark.skill_name,
+          identified: false,
+          level: 'minor',
+          mark_id: mark.id,
+        })
+      }
+    }
+
+    return { processed: results.filter(r => r.identified).length, total: marks.length, results }
   }
 }
 

@@ -2,6 +2,9 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { ArrowLeft, Pencil, Check, X, GitCompare, Save, RotateCcw } from 'lucide-react'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
+import rehypeSanitize from 'rehype-sanitize'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Badge } from '@/components/ui/badge'
@@ -219,7 +222,9 @@ export function SkillDetailView({ skills, onBack, onRefresh }: SkillDetailViewPr
               />
             ) : content ? (
               <div className="prose prose-sm dark:prose-invert max-w-none">
-                <pre className="whitespace-pre-wrap font-mono text-sm leading-relaxed">{content}</pre>
+                <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeSanitize]}>
+                  {content}
+                </ReactMarkdown>
               </div>
             ) : (
               <p className="text-sm text-muted-foreground text-center py-8">

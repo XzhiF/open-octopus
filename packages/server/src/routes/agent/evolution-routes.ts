@@ -8,7 +8,7 @@ import fs from 'fs'
 import path from 'path'
 import { createAgentError } from './middleware'
 import { getEvolutionService } from '../../services/agent/evolution-service'
-import { getAgentSkillsDir } from '../../services/agent/paths'
+import { getAgentSkillsDir, backupFile } from '../../services/agent/paths'
 import type { EvolutionDAO } from '../../db/dao'
 
 export interface EvolutionRouteDeps {
@@ -42,7 +42,7 @@ export function createEvolutionRoutes(deps: EvolutionRouteDeps): Hono {
         if (reflection.level === 'minor') {
           const skillPath = path.join(getAgentSkillsDir(), reflection.candidate.skill_name, 'SKILL.md')
           if (fs.existsSync(skillPath)) {
-            fs.copyFileSync(skillPath, skillPath + '.bak')
+            backupFile(skillPath)
             const current = fs.readFileSync(skillPath, 'utf-8')
             fs.writeFileSync(skillPath, current + `\n\n> 改进 (${new Date().toISOString().split('T')[0]}): ${body.content.slice(0, 200)}`, 'utf-8')
           }
@@ -274,74 +274,9 @@ export function createEvolutionRoutes(deps: EvolutionRouteDeps): Hono {
       const body = await c.req.json<{ session_id?: string }>().catch(() => ({}))
       const evolutionService = getEvolutionService()
 
-      // Fetch all unprocessed marks
-      const marks = evolutionDAO.listUnprocessedMarks(org, 50)
-      if (marks.length === 0) {
-        return c.json({ processed: 0, results: [] })
-      }
+      const result = evolutionService.processUnprocessedMarks(org, body.session_id)
 
-      const results: Array<{ skill_name: string; identified: boolean; level: string; mark_id: number }> = []
-
-      for (const mark of marks) {
-        try {
-          // Reflect on the insight
-          const reflection = evolutionService.reflect(org, {
-            type: 'user_feedback',
-            skill_name: mark.skill_name,
-            content: mark.insight,
-            session_id: body.session_id ?? mark.session_id ?? undefined,
-          })
-
-          if (reflection.identified && reflection.candidate) {
-            // Record experience from the insight
-            evolutionService.recordExperience(org, {
-              skill_name: mark.skill_name,
-              content: `Insight: ${mark.insight}`,
-              session_id: body.session_id ?? mark.session_id ?? undefined,
-            })
-
-            // Record evolution if minor
-            if (reflection.level === 'minor') {
-              const skillPath = path.join(getAgentSkillsDir(), mark.skill_name, 'SKILL.md')
-              if (fs.existsSync(skillPath)) {
-                fs.copyFileSync(skillPath, skillPath + '.bak')
-                const current = fs.readFileSync(skillPath, 'utf-8')
-                fs.writeFileSync(
-                  skillPath,
-                  current + `\n\n> Insight (${new Date().toISOString().split('T')[0]}): ${mark.insight.slice(0, 200)}`,
-                  'utf-8'
-                )
-              }
-              evolutionService.recordEvolution(org, {
-                skill_name: mark.skill_name,
-                change_type: 'minor',
-                level: 'minor',
-                summary: `Batch insight: ${mark.insight.slice(0, 200)}`,
-              })
-            }
-          }
-
-          results.push({
-            skill_name: mark.skill_name,
-            identified: reflection.identified,
-            level: reflection.level,
-            mark_id: mark.id,
-          })
-
-          // Mark as processed
-          evolutionDAO.markProcessed(mark.id)
-        } catch {
-          // Individual mark failure is non-fatal — continue processing
-          results.push({
-            skill_name: mark.skill_name,
-            identified: false,
-            level: 'minor',
-            mark_id: mark.id,
-          })
-        }
-      }
-
-      return c.json({ processed: results.filter(r => r.identified).length, total: marks.length, results })
+      return c.json(result)
     } catch (err: unknown) {
       const error = err instanceof Error ? err : new Error(String(err))
       return c.json(createAgentError('INTERNAL_ERROR', error.message), 500)

@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { Search } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
@@ -16,10 +16,20 @@ interface ExperienceListProps {
 
 export function ExperienceList({ experiences, loading, onSearch }: ExperienceListProps) {
   const [query, setQuery] = useState('')
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const onSearchRef = useRef(onSearch)
+  onSearchRef.current = onSearch
 
-  const handleSearch = () => {
-    onSearch(query)
-  }
+  // Debounced auto-search (300ms)
+  useEffect(() => {
+    if (debounceRef.current) clearTimeout(debounceRef.current)
+    debounceRef.current = setTimeout(() => {
+      onSearchRef.current(query)
+    }, 300)
+    return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current)
+    }
+  }, [query])
 
   return (
     <div className="flex flex-col h-full">
@@ -30,7 +40,6 @@ export function ExperienceList({ experiences, loading, onSearch }: ExperienceLis
           <Input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter') handleSearch() }}
             placeholder="搜索经验库..."
             className="pl-9 bg-agent-surface-inset border-agent-divider focus-visible:ring-agent-primary"
           />

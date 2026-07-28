@@ -7,6 +7,7 @@
 //
 import { Hono } from 'hono'
 import { streamSSE } from 'hono/streaming'
+import type { SSEStreamingApi } from 'hono/streaming'
 import crypto from 'crypto'
 import type { MessageChunk } from '@octopus/providers'
 import { getProvider } from '@octopus/providers'
@@ -14,7 +15,7 @@ import type { AgentSessionDAO } from '../../db/dao'
 import { CloneRuntime } from '../../services/agent/clone-runtime'
 import { SystemPromptAssembler } from '../../services/agent/system-prompt-assembler'
 import { registerActiveStream, unregisterActiveStream } from '../../services/agent/agent-service'
-import { getAgentDir, getBuiltInCloneDir, getCloneDir, getAgentSkillsDir } from '../../services/agent/paths'
+import { getAgentDir, getBuiltInCloneDir, getCloneDir, getAgentSkillsDir, backupFile } from '../../services/agent/paths'
 import { getEvolutionService } from '../../services/agent/evolution-service'
 import { resolveCloneInfo } from '../../services/agent/clone-resolver'
 import { isBuiltinClone } from '../../services/agent/builtin-clones'
@@ -49,10 +50,10 @@ const EVOLUTION_TOOLS_PROMPT = `
 You can autonomously improve your skills through these evolution operations:
 
 - **mark_insight**: Record a lightweight "this could be improved" signal during conversation. Use when you notice a skill could be better but don't want to modify it right now. Input: { skill_name: string, insight: string }
-- **evolve_skill**: Directly modify a SKILL.md file with an improvement. Use for minor wording/step fixes. Input: { skill_name: string, summary: string, new_content: string }
+- **evolve_skill**: Directly modify a SKILL.md file with an improvement. Use for minor wording/step fixes. Input: { skill_name: string, summary: string, new_content?: string, change_type?: 'minor' | 'major', level?: 'minor' | 'major' }
 - **create_experience**: Record a valuable lesson learned from this session. Input: { skill_name: string, content: string }
-- **merge_skills**: Combine overlapping or related skills into one. Input: { source_skills: string[], target_skill: string }
-- **archive_skill**: Archive a skill that is no longer useful. Input: { skill_name: string, reason: string }
+- **merge_skills**: Combine overlapping or related skills into one. The source skill content is appended to the target, and the source is archived. Input: { source_skill: string, target_skill: string }
+- **note_skill_issue**: Record a note or issue about a skill that needs attention later (e.g., outdated content, confusing steps). Input: { skill_name: string, reason: string }
 
 Use mark_insight liberally (it's cheap). Use evolve_skill sparingly (only for clear improvements).
 At the end of a productive session, consider using create_experience to capture lessons.
@@ -212,6 +213,14 @@ export function createMainAgentRoute(deps: MainAgentRouteDeps): Hono {
                   session_title: sessionDAO.findById(sessionId!)?.title,
                 }),
               })
+
+              // P4: Auto-trigger process-marks after delegation response
+              try {
+                const evolutionService = getEvolutionService()
+                evolutionService.processUnprocessedMarks(org, sessionId!)
+              } catch {
+                // process-marks failure is non-fatal
+              }
             }
           } catch (err: unknown) {
             const msg = err instanceof Error ? err.message : String(err)
@@ -359,6 +368,14 @@ export function createMainAgentRoute(deps: MainAgentRouteDeps): Hono {
               session_title: sessionDAO.findById(sessionId!)?.title,
             }),
           })
+
+          // P4: Auto-trigger process-marks after chat response
+          try {
+            const evolutionService = getEvolutionService()
+            evolutionService.processUnprocessedMarks(org, sessionId!)
+          } catch {
+            // process-marks failure is non-fatal — don't disrupt the response
+          }
         }
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err)
@@ -372,7 +389,7 @@ export function createMainAgentRoute(deps: MainAgentRouteDeps): Hono {
   return app
 }
 
-const EVOLUTION_TOOL_NAMES = ['mark_insight', 'evolve_skill', 'create_experience', 'merge_skills', 'archive_skill']
+const EVOLUTION_TOOL_NAMES = ['mark_insight', 'evolve_skill', 'create_experience', 'merge_skills', 'note_skill_issue']
 
 // ── Evolution tool execution ──────────────────────────────────────
 
@@ -380,7 +397,7 @@ async function executeEvolutionTools(
   toolCalls: Array<{ id: string; name: string; input?: Record<string, unknown> }>,
   org: string,
   sessionId: string,
-  stream: any,
+  stream: SSEStreamingApi,
 ): Promise<void> {
   for (const tc of toolCalls) {
     try {
@@ -397,9 +414,8 @@ async function executeEvolutionTools(
           }
           try {
             const evolutionService = getEvolutionService()
-            const dao = (evolutionService as unknown as { dao: import('../../db/dao/evolution-dao').EvolutionDAO }).dao
-            const markResult = dao.insertMark({ skill_name: skillName, insight, session_id: sessionId, org })
-            resultContent = `Insight marked (id: ${markResult.lastInsertRowid}) for skill "${skillName}"`
+            const markResult = evolutionService.markInsight(skillName, insight, sessionId, org)
+            resultContent = `Insight marked (id: ${markResult.id}) for skill "${skillName}"`
           } catch {
             resultContent = `Failed to mark insight for "${skillName}"`
           }
@@ -410,6 +426,8 @@ async function executeEvolutionTools(
           const skillName = String(input.skill_name ?? '')
           const summary = String(input.summary ?? '')
           const newContent = String(input.new_content ?? '')
+          const changeType = (input.change_type === 'major' ? 'major' : 'minor') as 'minor' | 'major'
+          const level = (input.level === 'major' ? 'major' : 'minor') as 'minor' | 'major'
           if (!skillName || !summary) {
             resultContent = 'Error: skill_name and summary are required'
             break
@@ -420,8 +438,7 @@ async function executeEvolutionTools(
             const skillDir = path.dirname(skillPath)
             if (!fs.existsSync(skillDir)) fs.mkdirSync(skillDir, { recursive: true })
             if (fs.existsSync(skillPath)) {
-              const bakPath = skillPath + '.bak'
-              if (!fs.existsSync(bakPath)) fs.copyFileSync(skillPath, bakPath)
+              backupFile(skillPath)
             }
             if (newContent) {
               fs.writeFileSync(skillPath, newContent, 'utf-8')
@@ -430,9 +447,9 @@ async function executeEvolutionTools(
               fs.writeFileSync(skillPath, current + `\n\n> Evolution (${new Date().toISOString().split('T')[0]}): ${summary}`, 'utf-8')
             }
             evolutionService.recordEvolution(org, {
-              skill_name: skillName, change_type: 'minor', level: 'minor', summary,
+              skill_name: skillName, change_type: changeType, level, summary,
             })
-            resultContent = `Skill "${skillName}" evolved: ${summary}`
+            resultContent = `Skill "${skillName}" evolved (${changeType}): ${summary}`
           } catch (e) {
             resultContent = `Failed to evolve skill "${skillName}": ${e instanceof Error ? e.message : String(e)}`
           }
@@ -459,26 +476,92 @@ async function executeEvolutionTools(
         }
 
         case 'merge_skills': {
-          resultContent = 'merge_skills: skill merging is not yet implemented. Please use evolve_skill to manually consolidate content.'
+          const sourceSkill = String(input.source_skill ?? '')
+          const targetSkill = String(input.target_skill ?? '')
+          if (!sourceSkill || !targetSkill) {
+            resultContent = 'Error: source_skill and target_skill are required'
+            break
+          }
+          if (sourceSkill === targetSkill) {
+            resultContent = 'Error: source_skill and target_skill must be different'
+            break
+          }
+          try {
+            const evolutionService = getEvolutionService()
+            const sourcePath = path.join(getAgentSkillsDir(), sourceSkill, 'SKILL.md')
+            const targetPath = path.join(getAgentSkillsDir(), targetSkill, 'SKILL.md')
+            const sourceDir = path.join(getAgentSkillsDir(), sourceSkill)
+            const archivedDir = path.join(getAgentSkillsDir(), `${sourceSkill}.archived`)
+
+            // Read source content
+            const sourceContent = fs.existsSync(sourcePath)
+              ? fs.readFileSync(sourcePath, 'utf-8')
+              : ''
+
+            // Backup target before modifying
+            if (fs.existsSync(targetPath)) {
+              backupFile(targetPath)
+            } else {
+              // Create target dir if missing
+              const targetDir = path.dirname(targetPath)
+              if (!fs.existsSync(targetDir)) fs.mkdirSync(targetDir, { recursive: true })
+            }
+
+            // Append source content to target with merge marker
+            const targetContent = fs.existsSync(targetPath)
+              ? fs.readFileSync(targetPath, 'utf-8')
+              : `# ${targetSkill}\n`
+            const mergedContent = `${targetContent}\n\n## Merged from ${sourceSkill}\n\n${sourceContent}`
+            fs.writeFileSync(targetPath, mergedContent, 'utf-8')
+
+            // Archive source directory
+            if (fs.existsSync(sourceDir) && !fs.existsSync(archivedDir)) {
+              fs.renameSync(sourceDir, archivedDir)
+            }
+
+            // Record evolution log
+            evolutionService.recordEvolution(org, {
+              skill_name: targetSkill,
+              change_type: 'major',
+              level: 'major',
+              summary: `Merged skill "${sourceSkill}" into "${targetSkill}". Source archived as ${sourceSkill}.archived.`,
+            })
+
+            // Record experience
+            evolutionService.recordExperience(org, {
+              skill_name: targetSkill,
+              content: `Skill merge: "${sourceSkill}" merged into "${targetSkill}" — source content integrated, original archived.`,
+              session_id: sessionId,
+            })
+
+            resultContent = `Skill "${sourceSkill}" merged into "${targetSkill}". Source archived as ${sourceSkill}.archived.`
+          } catch (e) {
+            resultContent = `Failed to merge skills: ${e instanceof Error ? e.message : String(e)}`
+          }
           break
         }
 
-        case 'archive_skill': {
+        case 'note_skill_issue': {
           const skillName = String(input.skill_name ?? '')
-          const reason = String(input.reason ?? 'archived by agent')
-          if (!skillName) {
-            resultContent = 'Error: skill_name is required'
+          const reason = String(input.reason ?? '')
+          if (!skillName || !reason) {
+            resultContent = 'Error: skill_name and reason are required'
             break
           }
           try {
             const evolutionService = getEvolutionService()
             evolutionService.recordEvolution(org, {
-              skill_name: skillName, change_type: 'major', level: 'major',
-              summary: `Archived: ${reason}`,
+              skill_name: skillName, change_type: 'minor', level: 'minor',
+              summary: `Issue noted: ${reason}`,
             })
-            resultContent = `Skill "${skillName}" archived: ${reason}`
+            evolutionService.recordExperience(org, {
+              skill_name: skillName,
+              content: `Skill issue flagged: ${reason}`,
+              session_id: sessionId,
+            })
+            resultContent = `Issue noted for skill "${skillName}": ${reason}`
           } catch {
-            resultContent = `Failed to archive skill "${skillName}"`
+            resultContent = `Failed to note issue for skill "${skillName}"`
           }
           break
         }
@@ -513,7 +596,7 @@ async function executeDelegation(
   delegation: { cloneName: string; task: string },
   sessionId: string,
   org: string,
-  stream: any,
+  stream: SSEStreamingApi,
 ): Promise<void> {
   const cloneName = delegation.cloneName
 

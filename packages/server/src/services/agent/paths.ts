@@ -1,5 +1,6 @@
 import os from 'os'
 import path from 'path'
+import fs from 'fs'
 
 /**
  * Global agent directory utilities.
@@ -105,4 +106,19 @@ export function getCloneSkillsDir(name: string, type: 'built-in' | 'user'): stri
     return path.join(getBuiltInCloneDir(name), 'skills')
   }
   return path.join(getCloneDir(name), 'skills')
+}
+
+// ── File utilities ─────────────────────────────────────────────────
+
+/**
+ * Create a `.bak` backup of a file if it exists and no backup already exists.
+ * Returns the backup path, or `null` if no backup was created.
+ */
+export function backupFile(filePath: string): string | null {
+  if (!fs.existsSync(filePath)) return null
+  const bakPath = filePath + '.bak'
+  if (!fs.existsSync(bakPath)) {
+    fs.copyFileSync(filePath, bakPath)
+  }
+  return bakPath
 }

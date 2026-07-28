@@ -5,9 +5,11 @@
 //
 import { Hono } from 'hono'
 import fs from 'fs'
+import os from 'node:os'
 import path from 'path'
+import { execSync } from 'node:child_process'
 import { createAgentError, mapErrorToStatus } from './middleware'
-import { getAgentSkillsDir } from '../../services/agent/paths'
+import { getAgentSkillsDir, backupFile } from '../../services/agent/paths'
 import { getSubsystemAdapter } from '../../services/agent/subsystem-adapter'
 
 // ── Path traversal guard ─────────────────────────────────────────
@@ -171,9 +173,7 @@ export function createSkillRoutes(_deps: SkillRouteDeps = {}): Hono {
       let diffText: string | null = null
       if (hasDiff) {
         try {
-          const { execSync } = require('child_process') as typeof import('child_process')
           // Write temp files for diff
-          const os = require('os') as typeof import('os')
           const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'octopus-diff-'))
           const tmpBuiltin = path.join(tmpDir, 'builtin.md')
           const tmpLocal = path.join(tmpDir, 'local.md')
@@ -230,10 +230,7 @@ export function createSkillRoutes(_deps: SkillRouteDeps = {}): Hono {
 
       // Backup existing content before overwriting
       if (fs.existsSync(localPath)) {
-        const bakPath = localPath + '.bak'
-        if (!fs.existsSync(bakPath)) {
-          fs.copyFileSync(localPath, bakPath)
-        }
+        backupFile(localPath)
       }
 
       fs.writeFileSync(localPath, body.content, 'utf-8')
