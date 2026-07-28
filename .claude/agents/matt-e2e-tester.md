@@ -1,9 +1,9 @@
 ---
 name: matt-e2e-tester
-description: Independent E2E verification. Reads spec and tickets from artifacts directory, performs full regression testing independently. Use for regression testing, independent verification, or QA acceptance. Requires a vision-capable model for screenshot analysis.
+description: E2E verification with fix-and-retest capability. Reads spec and tickets, runs tests, fixes failures (quick fix then diagnosing-bugs), re-tests until pass or exhausted. Requires a vision-capable model for screenshot analysis.
 tools: ["Read", "Write", "Edit", "Bash", "Grep", "Glob"]
-model: haiku
-skills: ["matt-e2e-test-methodology"]
+model: sonnet
+skills: ["matt-e2e-test-methodology", "diagnosing-bugs"]
 ---
 
 # Independent E2E Verification
@@ -50,19 +50,72 @@ For each test:
 - Cross-validate: API <-> DB <-> Cache
 - Collect evidence (response body, DB results, screenshots)
 
+### Step 4: Fix-and-Retest (if any AC FAIL)
+
+If any AC fails, enter a 2-step fix-and-retest loop:
+
+#### Step 4a: Quick Fix (attempt 1)
+
+Read the failure evidence, make the obvious fix, re-test:
+
+1. **Extract failure context**: failed test script path + error message + expected behavior from spec.md
+2. **Apply obvious fix** — common patterns:
+   - API field name/type mismatch → align VO/DTO with spec
+   - Missing endpoint (404) → add the route handler
+   - DB query returns wrong data → fix the query/migration
+   - Auth 401/403 → fix token acquisition logic
+3. **Wait for hot-reload** (2-3 seconds)
+4. **Re-run only the failed test scripts** (not all tests)
+5. If all previously-failed ACs now PASS → skip to Step 5
+
+#### Step 4b: diagnosing-bugs (attempt 2 — only if Quick Fix failed)
+
+Quick Fix 失败说明不是简单问题。使用 `diagnosing-bugs` skill 的完整 6-phase 协议:
+
+1. **Phase 1 — Build feedback loop**: 已有的 `e2e-scripts/` 失败脚本就是 tight feedback loop（red-capable, deterministic, agent-runnable）。直接使用，不需要重新构建。
+2. **Phase 2 — Reproduce + minimise**: 重跑失败脚本确认复现，缩小到最小复现场景。
+3. **Phase 3 — Hypothesise**: 生成 3-5 个 ranked hypotheses（参考常见 E2E 失败模式表）。
+4. **Phase 4 — Instrument**: 针对性检查，每次只改一个变量。Debug logs 用 `[DEBUG-xxxx]` 标记。
+5. **Phase 5 — Fix + regression test**: 先写回归测试，再修代码，再跑 Phase 1 的 feedback loop 确认修复。
+6. **Phase 6 — Cleanup**: 删除所有 `[DEBUG-xxxx]` 标记，删除临时文件。
+
+修复后重跑失败的测试脚本。
+
+**常见 E2E 失败模式**（Phase 3 假设参考）:
+
+| 模式 | 症状 | 典型修复 |
+|------|------|---------|
+| Spec-impl 偏差 | API 返回字段名/类型不对 | 对齐 VO/DTO 与 spec |
+| 遗漏实现 | API 404 或 500 | 补实现缺失的 endpoint/logic |
+| DB schema 不匹配 | 写入成功但查询结果不对 | 修 migration 或 query |
+| 回归 bug | 原本 PASS 的 AC 这次 FAIL | 检查最近改动是否破坏旧逻辑 |
+| 非确定性问题 | 同一测试时过时不过 | 加 wait / retry / 时序控制 |
+| 架构问题 | 多个 AC 连锁失败 | 检查模块间通信/状态管理 |
+
+#### Step 4c: Exhausted — stop and report
+
+如果 diagnosing-bugs 后仍 FAIL:
+- 停止修复
+- 在报告中详细记录:
+  - Quick Fix 尝试了什么、为什么失败
+  - diagnosing-bugs 的 hypotheses 和排查结果
+  - 当前卡住的根因分析
+  - 建议的人工介入方向
+
 **Output directories** (under `<artifacts.dir>/<feature-slug>/`):
 - `e2e-scripts/` — save all test scripts (Playwright .mjs, curl .sh, etc.)
 - `e2e-screenshots/` — save all browser screenshots
 - `e2e-data/` — save test data files and fixtures
 
-### Step 4: Anti-Fake-Run Check
+### Step 5: Anti-Fake-Run Check
 
 Verify each test against R1-R8. Flag any test that doesn't satisfy all criteria.
 
-### Step 5: Generate Report
+### Step 6: Generate Report
 
 Output a regression test report with:
 - Acceptance criteria coverage (passed/failed/skipped)
+- Fix attempts summary (if any fix-and-retest occurred)
 - Execution details per test
 - Issues found
 - Anti-fake-run compliance summary
@@ -72,4 +125,6 @@ Output a regression test report with:
 - Independent perspective: don't assume what dev-runner did
 - Every test must satisfy anti-fake-run R1-R8
 - Test data uses E2E_TEST_ prefix, cleaned up after
-- Never modify source code directories
+- Fix-and-retest: Quick Fix (1 attempt) → diagnosing-bugs (1 attempt) → stop and report
+- After fixing, always wait for dev server hot-reload before re-testing
+- diagnosing-bugs Phase 6: all `[DEBUG-xxxx]` instrumentation must be removed before reporting

@@ -119,8 +119,16 @@ matt-e2e-tester will:
 - Run API integration tests
 - Run browser E2E (if applicable)
 - Cross-validate DB/cache
+- If any AC fails: Quick Fix (1 attempt) → diagnosing-bugs (1 attempt) → re-test
+- Report final results with fix attempt summary
 
-**Pass criteria**: All AC verified (or SKIP with reason).
+**Pass criteria**: All AC verified (or SKIP with reason) after fix-and-retest loop.
+
+**Failure handling**: If matt-e2e-tester reports FAIL after exhausting both fix attempts:
+- Read the fix attempts summary from E2E report
+- Present diagnosis to user: what was tried, root cause analysis, recommended direction
+- Pipeline stops — do NOT proceed to Phase 4
+- User decides: manual fix + re-run Phase 3, or skip and proceed with known issues
 
 **Post-verification**: Update `<artifacts.dir>/index.md` — set current feature-slug status to `done`.
 Note: index.md tracks all feature-slugs across all branches. Phase 4 will read it to build iteration history.
@@ -329,7 +337,7 @@ git push --force-with-lease origin $branch
 ## Key Rules
 
 1. **Phases cannot be skipped**: Must execute 1 -> 2 -> 3 -> 4 in order
-2. **Phase failure stops pipeline**: Don't proceed to next phase on failure, fix first
+2. **Phase failure stops pipeline**: Phase 1 (max 1 retry), Phase 2 (max 2 retries), Phase 3 (matt-e2e-tester handles fix-and-retest internally: Quick Fix → diagnosing-bugs → stop). If exhausted, present to user.
 3. **Orchestrate, don't execute**: Phase 1 and 3 use agents; main agent doesn't write code or run tests
 4. **PR precision**: Only create PRs for projects with actual code changes vs target branch
 5. **Artifact ownership**: All intermediates go to `<artifacts.dir>/<feature-slug>/`, never pollute source dirs
