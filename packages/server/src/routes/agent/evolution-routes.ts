@@ -237,5 +237,116 @@ export function createEvolutionRoutes(deps: EvolutionRouteDeps): Hono {
     }
   })
 
+  // ── Insight marks: create ──────────────────────────────────────────
+  app.post('/evolution/mark-insight', async (c) => {
+    try {
+      const org = c.req.header('X-Octopus-Org') || (c.get('org') as string)
+      if (!org) return c.json(createAgentError('ORG_NOT_FOUND', 'Organization not resolved'), 403)
+
+      const body = await c.req.json<{
+        skill_name: string; insight: string; session_id?: string
+      }>().catch(() => ({} as { skill_name: string; insight: string; session_id?: string }))
+
+      if (!body.skill_name || !body.insight) {
+        return c.json(createAgentError('INVALID_PARAM', 'skill_name and insight are required'), 400)
+      }
+
+      const result = evolutionDAO.insertMark({
+        skill_name: body.skill_name,
+        insight: body.insight,
+        session_id: body.session_id,
+        org,
+      })
+
+      return c.json({ ok: true, id: result.lastInsertRowid })
+    } catch (err: unknown) {
+      const error = err instanceof Error ? err : new Error(String(err))
+      return c.json(createAgentError('INTERNAL_ERROR', error.message), 500)
+    }
+  })
+
+  // ── Insight marks: batch process ───────────────────────────────────
+  app.post('/evolution/process-marks', async (c) => {
+    try {
+      const org = c.req.header('X-Octopus-Org') || (c.get('org') as string)
+      if (!org) return c.json(createAgentError('ORG_NOT_FOUND', 'Organization not resolved'), 403)
+
+      const body = await c.req.json<{ session_id?: string }>().catch(() => ({}))
+      const evolutionService = getEvolutionService()
+
+      // Fetch all unprocessed marks
+      const marks = evolutionDAO.listUnprocessedMarks(org, 50)
+      if (marks.length === 0) {
+        return c.json({ processed: 0, results: [] })
+      }
+
+      const results: Array<{ skill_name: string; identified: boolean; level: string; mark_id: number }> = []
+
+      for (const mark of marks) {
+        try {
+          // Reflect on the insight
+          const reflection = evolutionService.reflect(org, {
+            type: 'user_feedback',
+            skill_name: mark.skill_name,
+            content: mark.insight,
+            session_id: body.session_id ?? mark.session_id ?? undefined,
+          })
+
+          if (reflection.identified && reflection.candidate) {
+            // Record experience from the insight
+            evolutionService.recordExperience(org, {
+              skill_name: mark.skill_name,
+              content: `Insight: ${mark.insight}`,
+              session_id: body.session_id ?? mark.session_id ?? undefined,
+            })
+
+            // Record evolution if minor
+            if (reflection.level === 'minor') {
+              const skillPath = path.join(getAgentSkillsDir(), mark.skill_name, 'SKILL.md')
+              if (fs.existsSync(skillPath)) {
+                fs.copyFileSync(skillPath, skillPath + '.bak')
+                const current = fs.readFileSync(skillPath, 'utf-8')
+                fs.writeFileSync(
+                  skillPath,
+                  current + `\n\n> Insight (${new Date().toISOString().split('T')[0]}): ${mark.insight.slice(0, 200)}`,
+                  'utf-8'
+                )
+              }
+              evolutionService.recordEvolution(org, {
+                skill_name: mark.skill_name,
+                change_type: 'minor',
+                level: 'minor',
+                summary: `Batch insight: ${mark.insight.slice(0, 200)}`,
+              })
+            }
+          }
+
+          results.push({
+            skill_name: mark.skill_name,
+            identified: reflection.identified,
+            level: reflection.level,
+            mark_id: mark.id,
+          })
+
+          // Mark as processed
+          evolutionDAO.markProcessed(mark.id)
+        } catch {
+          // Individual mark failure is non-fatal — continue processing
+          results.push({
+            skill_name: mark.skill_name,
+            identified: false,
+            level: 'minor',
+            mark_id: mark.id,
+          })
+        }
+      }
+
+      return c.json({ processed: results.filter(r => r.identified).length, total: marks.length, results })
+    } catch (err: unknown) {
+      const error = err instanceof Error ? err : new Error(String(err))
+      return c.json(createAgentError('INTERNAL_ERROR', error.message), 500)
+    }
+  })
+
   return app
 }
