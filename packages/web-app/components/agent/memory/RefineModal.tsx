@@ -16,28 +16,18 @@ export function RefineModal({ currentContent, onRefined, onClose }: RefineModalP
   const [refining, setRefining] = useState(false)
   const [refinedContent, setRefinedContent] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [serverBeforeTokens, setServerBeforeTokens] = useState<number>(0)
+  const [serverAfterTokens, setServerAfterTokens] = useState<number>(0)
 
   const handleRefine = async () => {
     setRefining(true)
     setError(null)
 
     try {
-      // Simulate refinement — in production this would call an LLM API
-      // For now, perform basic structural refinement: remove redundant lines
-      const lines = currentContent.split('\n')
-      const seen = new Set<string>()
-      const refinedLines: string[] = []
-
-      for (const line of lines) {
-        const trimmed = line.trim()
-        if (trimmed === '' || !seen.has(trimmed)) {
-          refinedLines.push(line)
-          if (trimmed !== '') seen.add(trimmed)
-        }
-      }
-
-      const refined = refinedLines.join('\n')
-      setRefinedContent(refined)
+      const result = await api.refineMemory()
+      setRefinedContent(result.refined)
+      setServerBeforeTokens(result.before_tokens)
+      setServerAfterTokens(result.after_tokens)
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : '精炼失败')
     } finally {
@@ -49,8 +39,7 @@ export function RefineModal({ currentContent, onRefined, onClose }: RefineModalP
     if (!refinedContent) return
 
     try {
-      // Save refined content — the server creates .bak automatically
-      await api.addMemory({ layer: 'long-term', content: refinedContent })
+      // Server already refined and saved — just notify parent and close
       onRefined(refinedContent)
       toast.success('精炼完成，原内容已备份为 long-term.md.bak')
       onClose()
@@ -59,8 +48,8 @@ export function RefineModal({ currentContent, onRefined, onClose }: RefineModalP
     }
   }
 
-  const beforeTokenCount = Math.ceil(currentContent.length / 3)
-  const afterTokenCount = refinedContent ? Math.ceil(refinedContent.length / 3) : 0
+  const beforeTokenCount = serverBeforeTokens || Math.ceil(currentContent.length / 3)
+  const afterTokenCount = serverAfterTokens || (refinedContent ? Math.ceil(refinedContent.length / 3) : 0)
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">

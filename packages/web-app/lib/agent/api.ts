@@ -156,6 +156,12 @@ export function searchMemory(q: string, limit?: number) {
 export function rebuildFts() {
   return request<{ ok: boolean; indexed_count: number }>('/memory/rebuild-fts', { method: 'POST' })
 }
+export function refineMemory() {
+  return request<{
+    ok: boolean; refined: string; before_tokens: number; after_tokens: number;
+    backup_path: string; saved_tokens: number
+  }>('/memory/refine', { method: 'POST' })
+}
 export function triggerArchive(date?: string) {
   return request<{ ok: boolean; archived_date: string; essence_summary: string }>('/memory/archive', {
     method: 'POST', body: JSON.stringify({ date })
@@ -365,6 +371,11 @@ export function getSkill(name: string) {
 export function getSkillDiff(name: string) {
   return request<{ has_diff: boolean; diff: string | null; local_version: string | null; builtin_version: string | null }>(`/skills/${name}/diff-builtin`)
 }
+export function saveSkill(name: string, content: string) {
+  return request<{ ok: boolean; token_count: number }>(`/skills/${name}`, {
+    method: 'PUT', body: JSON.stringify({ content }),
+  })
+}
 export function revertToBuiltin(name: string) {
   return request<{ ok: boolean; reverted_to: string; backup_created: string }>(`/skills/${name}/local`, { method: 'DELETE' })
 }
@@ -387,6 +398,14 @@ export function getExperiences(query?: { skill?: string; q?: string }) {
 }
 export function rollbackEvolution(id: number) {
   return request<{ ok: boolean; rolled_back_skill: string; new_changelog_id: number }>(`/evolution/rollback/${id}`, { method: 'POST' })
+}
+export function markInsight(data: { skill_name: string; insight: string; session_id?: string }) {
+  return request<{ id: number }>('/evolution/mark-insight', { method: 'POST', body: JSON.stringify(data) })
+}
+export function processMarks(sessionId?: string) {
+  return request<{ processed: number; results: Array<{ skill_name: string; identified: boolean; level: string }> }>('/evolution/process-marks', {
+    method: 'POST', body: JSON.stringify({ session_id: sessionId }),
+  })
 }
 
 // Tasks
