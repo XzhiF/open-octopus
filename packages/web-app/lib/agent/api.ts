@@ -497,13 +497,16 @@ export function disableSafeMode() {
 }
 
 // Debug
-export function getDebugLog(query?: { session_id?: string; limit?: number; cursor?: string }) {
+export function getDebugLog(query?: { session_id?: string; limit?: number; cursor?: string; search?: string; start_date?: string; end_date?: string }) {
   const params = new URLSearchParams()
   if (query?.session_id) params.set('session_id', query.session_id)
   if (query?.limit) params.set('limit', String(query.limit))
   if (query?.cursor) params.set('cursor', query.cursor)
+  if (query?.search) params.set('search', query.search)
+  if (query?.start_date) params.set('start_date', query.start_date)
+  if (query?.end_date) params.set('end_date', query.end_date)
   const qs = params.toString()
-  return request<PaginatedResponse<DebugLogEntry>>(`/debug/log${qs ? `?${qs}` : ''}`)
+  return request<PaginatedResponse<DebugLogEntry> & { has_more: boolean }>(`/debug/log${qs ? `?${qs}` : ''}`)
 }
 export function getAssembleDetail(chatId: string) {
   return request<DebugLogEntry>(`/debug/assemble/${chatId}`)

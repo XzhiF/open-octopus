@@ -465,11 +465,17 @@ nodes:
       const org = c.req.header('X-Octopus-Org') || (c.get('org') as string)
       if (!org) return c.json(createAgentError('ORG_NOT_FOUND', 'Organization not resolved'), 403)
 
-      const limit = Math.min(parseInt(c.req.query('limit') ?? '100', 10), 500)
+      const limit = Math.min(parseInt(c.req.query('limit') ?? '20', 10), 100)
       const sessionId = c.req.query('session_id') ?? undefined
+      const cursor = c.req.query('cursor') ?? undefined
+      const search = c.req.query('search') ?? undefined
+      const startDate = c.req.query('start_date') ?? undefined
+      const endDate = c.req.query('end_date') ?? undefined
 
       const agentService = getAgentService()
-      const result = await agentService.getDebugLog(org, { limit, session_id: sessionId })
+      const result = await agentService.getDebugLog(org, {
+        limit, session_id: sessionId, cursor, search, start_date: startDate, end_date: endDate,
+      })
       return c.json(result)
     } catch (err: unknown) {
       const error = err instanceof Error ? err : new Error(String(err))

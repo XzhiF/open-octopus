@@ -652,21 +652,24 @@ export class AgentService {
 
   // ── Debug ─────────────────────────────────────────────────────
 
-  async getDebugLog(org: string, query?: { session_id?: string; limit?: number; cursor?: string }): Promise<AgentPaginatedResponse<{
+  async getDebugLog(org: string, query?: {
+    session_id?: string; limit?: number; cursor?: string;
+    search?: string; start_date?: string; end_date?: string
+  }): Promise<AgentPaginatedResponse<{
     id: string; session_id: string; chat_id: string; timestamp: string; summary: string
   }>> {
     const debugDir = getDebugTracesDir()
-    const items: Array<{ id: string; session_id: string; chat_id: string; timestamp: string; summary: string }> = []
+    const allEntries: Array<{ id: string; session_id: string; chat_id: string; timestamp: string; summary: string }> = []
 
     if (fs.existsSync(debugDir)) {
-      const files = fs.readdirSync(debugDir).filter(f => f.endsWith('.jsonl')).sort().reverse().slice(0, 5)
+      const files = fs.readdirSync(debugDir).filter(f => f.endsWith('.jsonl')).sort().reverse()
       for (const file of files) {
         try {
           const content = fs.readFileSync(path.join(debugDir, file), 'utf-8')
           for (const line of content.split('\n').filter(Boolean)) {
             try {
               const entry = JSON.parse(line)
-              items.push({
+              allEntries.push({
                 id: entry.chat_id ?? crypto.randomUUID(),
                 session_id: entry.session_id ?? '',
                 chat_id: entry.chat_id ?? '',
@@ -679,7 +682,45 @@ export class AgentService {
       }
     }
 
-    return { items, total: items.length, has_more: false, next_cursor: null }
+    // Sort by timestamp descending (newest first)
+    allEntries.sort((a, b) => (b.timestamp > a.timestamp ? 1 : b.timestamp < a.timestamp ? -1 : 0))
+
+    // Apply filters
+    let filtered = allEntries
+
+    if (query?.session_id) {
+      filtered = filtered.filter(e => e.session_id === query.session_id)
+    }
+
+    if (query?.search) {
+      const searchLower = query.search.toLowerCase()
+      filtered = filtered.filter(e => e.summary.toLowerCase().includes(searchLower))
+    }
+
+    if (query?.start_date) {
+      filtered = filtered.filter(e => e.timestamp >= query.start_date!)
+    }
+
+    if (query?.end_date) {
+      filtered = filtered.filter(e => e.timestamp <= query.end_date!)
+    }
+
+    // Apply cursor-based pagination (cursor = timestamp, return entries before cursor)
+    if (query?.cursor) {
+      filtered = filtered.filter(e => e.timestamp < query.cursor!)
+    }
+
+    const limit = Math.min(query?.limit ?? 20, 100)
+    const items = filtered.slice(0, limit)
+    const hasMore = filtered.length > limit
+    const nextCursor = hasMore ? items[items.length - 1]?.timestamp : null
+
+    return {
+      items,
+      total: filtered.length,
+      has_more: hasMore,
+      next_cursor: nextCursor,
+    }
   }
 
   async getAssembleDetail(org: string, chatId: string): Promise<DebugLogEntry> {
