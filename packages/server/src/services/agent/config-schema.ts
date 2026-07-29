@@ -1,12 +1,19 @@
 import { z } from 'zod'
 import { KnowledgeConfigSchema } from '@octopus/shared'
 
-// Allowed model list
+// Allowed model list (bare identifiers for legacy/flat format)
 export const ALLOWED_MODELS = [
   'pro-max', 'pro', 'se',
   'claude-opus-4-20250514', 'claude-sonnet-4-20250514',
   'claude-haiku-4-5-20251001'
 ] as const
+
+// Accept both bare identifiers and engine/alias format (e.g. "claude/pro")
+const MODEL_PATTERN = /^(?:[a-z][a-z0-9-]*\/)?[a-z][a-z0-9._-]*$/i
+function isValidModel(v: string): boolean {
+  if (ALLOWED_MODELS.includes(v as any)) return true
+  return MODEL_PATTERN.test(v) && v.includes('/')
+}
 
 // IANA timezone validation (simplified — checks common formats)
 const ianaTimezoneRegex = /^[A-Z][a-z]+\/[A-Z][a-z_]+(?:\/[A-Z][a-z_]+)?$/
@@ -14,8 +21,8 @@ const ianaTimezoneRegex = /^[A-Z][a-z]+\/[A-Z][a-z_]+(?:\/[A-Z][a-z_]+)?$/
 export const notificationProviderSchema = z.enum(['hermes', 'telegram', 'slack', 'email', 'none'])
 
 export const agentConfigSchema = z.object({
-  model: z.string().refine(v => ALLOWED_MODELS.includes(v as any), {
-    message: `model must be one of: ${ALLOWED_MODELS.join(', ')}`
+  model: z.string().refine(isValidModel, {
+    message: `model must be one of: ${ALLOWED_MODELS.join(', ')} or engine/alias format (e.g. claude/pro)`
   }).default('pro-max'),
   timeout: z.number().int().min(30).max(1800).default(300),
   max_clones: z.number().int().min(1).max(20).default(5),
