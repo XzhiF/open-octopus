@@ -390,6 +390,7 @@ CREATE TABLE IF NOT EXISTS messages (
   is_summary INTEGER NOT NULL DEFAULT 0,
   is_compressed INTEGER NOT NULL DEFAULT 0,
   is_edited INTEGER NOT NULL DEFAULT 0,
+  source TEXT NOT NULL DEFAULT 'main',
   created_at TEXT NOT NULL,
   FOREIGN KEY (session_id) REFERENCES sessions(id)
 );
@@ -479,7 +480,8 @@ CREATE VIRTUAL TABLE IF NOT EXISTS session_memory_fts USING fts5(
   session_id,
   summary,
   session_title,
-  created_at
+  created_at,
+  source
 );
 
 CREATE VIRTUAL TABLE IF NOT EXISTS experiences_fts USING fts5(
@@ -574,6 +576,24 @@ CREATE INDEX IF NOT EXISTS idx_sje_started ON scheduled_job_executions(started_a
 CREATE INDEX IF NOT EXISTS idx_sje_status ON scheduled_job_executions(status);
 
 -- =============================================================================
+-- Insight Marks (evolution pipeline — immediate marking + batch processing)
+-- =============================================================================
+
+CREATE TABLE IF NOT EXISTS insight_marks (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  skill_name TEXT NOT NULL,
+  insight TEXT NOT NULL,
+  session_id TEXT,
+  org TEXT NOT NULL,
+  marked_at TEXT NOT NULL DEFAULT (datetime('now')),
+  processed INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS idx_insight_marks_org ON insight_marks(org);
+CREATE INDEX IF NOT EXISTS idx_insight_marks_processed ON insight_marks(processed);
+CREATE INDEX IF NOT EXISTS idx_insight_marks_marked_at ON insight_marks(marked_at DESC);
+
+-- =============================================================================
 -- Triggers
 -- =============================================================================
 
@@ -600,10 +620,11 @@ CREATE TRIGGER IF NOT EXISTS messages_after_insert
 AFTER INSERT ON messages
 WHEN NEW.is_summary = 1
 BEGIN
-  INSERT INTO session_memory_fts(rowid, session_id, summary, session_title, created_at)
+  INSERT INTO session_memory_fts(rowid, session_id, summary, session_title, created_at, source)
   VALUES (NEW.rowid, NEW.session_id, NEW.content,
     (SELECT title FROM sessions WHERE id = NEW.session_id),
-    NEW.created_at);
+    NEW.created_at,
+    COALESCE(NEW.source, 'main'));
 END;
 
 CREATE TRIGGER IF NOT EXISTS messages_after_delete

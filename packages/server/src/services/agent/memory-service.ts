@@ -1,5 +1,6 @@
 import fs from 'fs'
 import path from 'path'
+import crypto from 'crypto'
 import type { MemoryContent, MemorySearchResult } from '@octopus/shared'
 import { getAgentDir, getDailyMemoryDir, getLongTermMemoryPath, getAgentMemoryDir } from './paths'
 import { AgentSessionDAO } from '../../db/dao'
@@ -66,6 +67,67 @@ export class MemoryService {
   }
 
   /**
+   * Record a daily memory entry with linked session summary.
+   * Called by the Agent via `record_daily` tool — writes to daily file AND
+   * inserts a summary message into the messages table for FTS searchability.
+   *
+   * @param cloneDir Optional clone directory. If provided, writes to clone's
+   *   memory/daily/ directory instead of main agent's. Source field is derived
+   *   from the clone directory name.
+   */
+  recordDaily(org: string, content: string, sessionId: string, cloneDir?: string): { ok: boolean; date: string } {
+    const today = new Date().toISOString().split('T')[0]
+    const dailyDir = cloneDir
+      ? path.join(cloneDir, 'memory', 'daily')
+      : this.getDailyDir()
+    const filePath = path.join(dailyDir, `${today}.md`)
+    const dir = path.dirname(filePath)
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
+
+    // 1. Append to daily file
+    const existing = fs.existsSync(filePath) ? fs.readFileSync(filePath, 'utf-8') : ''
+    const time = new Date().toTimeString().split(' ')[0]
+    const appended = existing + `\n### ${time}\n${content}\n`
+    fs.writeFileSync(filePath, appended, 'utf-8')
+
+    // 2. Insert summary message into messages table (for FTS search)
+    //    Source: clone name (from dir basename) or 'main'
+    const source = cloneDir ? path.basename(cloneDir) : 'main'
+    try {
+      const summaryId = crypto.randomUUID()
+      const now = new Date().toISOString()
+      this.dao.insertSummaryMessage(summaryId, sessionId, content, now, source)
+
+      // 3. Rebuild FTS index to include the new summary
+      try {
+        this.dao.rebuildFtsIndex()
+      } catch {
+        // FTS rebuild failure is non-fatal — daily file is the primary store
+      }
+    } catch {
+      // DB insert failure is non-fatal — daily file is the primary store
+    }
+
+    return { ok: true, date: today }
+  }
+
+  /**
+   * Count unarchived daily memory files.
+   * Used by SystemPromptAssembler to detect when archiving is needed.
+   */
+  countDailyFiles(): number {
+    const dailyDir = this.getDailyDir()
+    if (!fs.existsSync(dailyDir)) return 0
+    try {
+      return fs.readdirSync(dailyDir)
+        .filter(f => f.endsWith('.md'))
+        .length
+    } catch {
+      return 0
+    }
+  }
+
+  /**
    * Append to daily memory (today's file).
    */
   appendDaily(org: string, content: string): MemoryWriteResult {
@@ -86,20 +148,25 @@ export class MemoryService {
    * Search across memory layers.
    * - Session memory: FTS5 search via session_memory_fts with LIKE fallback (PRD C3)
    * - Long-term + daily: text search with snippet extraction
+   *
+   * @param source Optional source filter. When provided, only returns results
+   *   from the specified source ('main' or clone-name).
    */
-  searchMemory(org: string, query: string, topK: number = 3): MemorySearchResult[] {
+  searchMemory(org: string, query: string, topK: number = 3, source?: string): MemorySearchResult[] {
     const results: MemorySearchResult[] = []
 
     // ── 1. FTS5 search on session_memory_fts (PRD C3) ────────────
     try {
-      const ftsRows = this.dao.searchSessionMemory(query, topK)
+      const ftsRows = this.dao.searchSessionMemory(query, topK, source)
 
       for (const row of ftsRows) {
         results.push({
           session_id: row.session_id,
           summary: row.summary,
+          score: 0,
           session_title: row.session_title,
           created_at: row.created_at,
+          source: row.source,
         })
       }
     } catch {
@@ -107,37 +174,96 @@ export class MemoryService {
     }
 
     // ── 2. Text search on long-term + daily memory files ─────────
-    const baseDir = getAgentDir()
-    if (!fs.existsSync(baseDir)) return results
+    // When source filter is provided, only search the corresponding directory
+    const dirsToSearch: Array<{ dir: string; label: string; source: string }> = []
 
-    // Search long-term
-    const longTermPath = this.getMemoryPath('long-term')
-    if (fs.existsSync(longTermPath)) {
-      const content = fs.readFileSync(longTermPath, 'utf-8')
-      if (content.toLowerCase().includes(query.toLowerCase())) {
-        results.push({
-          session_id: 'long-term',
-          summary: this.extractMatchingSnippet(content, query),
-          session_title: '长期记忆',
-          created_at: fs.statSync(longTermPath).mtime.toISOString(),
-        })
+    if (!source || source === 'main') {
+      dirsToSearch.push({
+        dir: getAgentDir(),
+        label: 'main',
+        source: 'main',
+      })
+    }
+
+    // If no source filter or source is a clone name, search clone directories
+    if (source && source !== 'main') {
+      // Search specific clone directory
+      const { getCloneDir: getUserCloneDir, getBuiltInCloneDir } = require('./paths')
+      const cloneDirs = [
+        getUserCloneDir(source),
+        getBuiltInCloneDir(source),
+      ]
+      for (const cloneDir of cloneDirs) {
+        if (require('fs').existsSync(cloneDir)) {
+          dirsToSearch.push({ dir: cloneDir, label: source, source })
+        }
+      }
+    } else if (!source) {
+      // No source filter: search all clone directories too
+      const { getClonesDir, getBuiltInClonesDir } = require('./paths')
+      const fs = require('fs')
+      for (const baseDirFn of [getClonesDir, getBuiltInClonesDir]) {
+        const baseDir = baseDirFn()
+        if (!fs.existsSync(baseDir)) continue
+        try {
+          const clones = fs.readdirSync(baseDir, { withFileTypes: true })
+            .filter((d: { isDirectory: () => boolean }) => d.isDirectory())
+            .map((d: { name: string }) => d.name)
+          for (const cloneName of clones) {
+            dirsToSearch.push({
+              dir: path.join(baseDir, cloneName),
+              label: cloneName,
+              source: cloneName,
+            })
+          }
+        } catch { /* skip */ }
       }
     }
 
-    // Search daily files
-    const dailyDir = this.getDailyDir()
-    if (fs.existsSync(dailyDir)) {
-      const files = fs.readdirSync(dailyDir).filter((f) => f.endsWith('.md'))
-      for (const file of files) {
-        const filePath = path.join(dailyDir, file)
-        const content = fs.readFileSync(filePath, 'utf-8')
+    for (const { dir: baseDir, source: dirSource } of dirsToSearch) {
+      if (!fs.existsSync(baseDir)) continue
+
+      // Determine memory paths for this directory
+      const ltPath = dirSource === 'main'
+        ? this.getMemoryPath('long-term')
+        : path.join(baseDir, 'memory', 'long-term.md')
+      const dailyDir = dirSource === 'main'
+        ? this.getDailyDir()
+        : path.join(baseDir, 'memory', 'daily')
+
+      // Search long-term
+      if (fs.existsSync(ltPath)) {
+        const content = fs.readFileSync(ltPath, 'utf-8')
         if (content.toLowerCase().includes(query.toLowerCase())) {
           results.push({
-            session_id: `daily-${file}`,
+            session_id: `long-term-${dirSource}`,
             summary: this.extractMatchingSnippet(content, query),
-            session_title: `工作记忆 (${file.replace('.md', '')})`,
-            created_at: fs.statSync(filePath).mtime.toISOString(),
+            score: 0,
+            session_title: dirSource === 'main' ? '长期记忆' : `${dirSource} 长期记忆`,
+            created_at: fs.statSync(ltPath).mtime.toISOString(),
+            source: dirSource,
           })
+        }
+      }
+
+      // Search daily files
+      if (fs.existsSync(dailyDir)) {
+        const files = fs.readdirSync(dailyDir).filter((f) => f.endsWith('.md'))
+        for (const file of files) {
+          const filePath = path.join(dailyDir, file)
+          const content = fs.readFileSync(filePath, 'utf-8')
+          if (content.toLowerCase().includes(query.toLowerCase())) {
+            results.push({
+              session_id: `daily-${dirSource}-${file}`,
+              summary: this.extractMatchingSnippet(content, query),
+              score: 0,
+              session_title: dirSource === 'main'
+                ? `工作记忆 (${file.replace('.md', '')})`
+                : `${dirSource} 工作记忆 (${file.replace('.md', '')})`,
+              created_at: fs.statSync(filePath).mtime.toISOString(),
+              source: dirSource,
+            })
+          }
         }
       }
     }
@@ -209,9 +335,14 @@ export class MemoryService {
   /**
    * Refine long-term memory: consolidate redundant entries, trim to budget.
    * Backs up before modifying (PRD J5).
+   *
+   * @param cloneDir Optional clone directory. If provided, refines the clone's
+   *   long-term memory instead of main agent's.
    */
-  refineLongTerm(org: string): { refined: boolean; before_tokens: number; after_tokens: number; backup_path: string } {
-    const filePath = this.getMemoryPath('long-term')
+  refineLongTerm(org: string, cloneDir?: string): { refined: boolean; before_tokens: number; after_tokens: number; backup_path: string } {
+    const filePath = cloneDir
+      ? path.join(cloneDir, 'memory', 'long-term.md')
+      : this.getMemoryPath('long-term')
     if (!fs.existsSync(filePath)) {
       return { refined: false, before_tokens: 0, after_tokens: 0, backup_path: '' }
     }
@@ -289,6 +420,32 @@ export class MemoryService {
       last_active: lastActive,
       days_inactive: daysSince,
     }
+  }
+
+  /**
+   * Read all daily memory files (newest first), each with a date field.
+   */
+  readDailyAll(org: string): MemoryContent[] {
+    const dailyDir = this.getDailyDir()
+    if (!fs.existsSync(dailyDir)) return []
+
+    const files = fs.readdirSync(dailyDir)
+      .filter(f => f.endsWith('.md'))
+      .sort()
+      .reverse()
+
+    return files.map(file => {
+      const filePath = path.join(dailyDir, file)
+      const content = fs.readFileSync(filePath, 'utf-8')
+      const stat = fs.statSync(filePath)
+      return {
+        content,
+        layer: 'daily' as MemoryLayer,
+        date: file.replace('.md', ''),
+        token_count: this.estimateTokens(content),
+        last_modified: stat.mtime.toISOString(),
+      }
+    }).filter(item => item.content.trim().length > 0)
   }
 
   // ── Private helpers ─────────────────────────────────────────

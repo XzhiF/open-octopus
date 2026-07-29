@@ -4,6 +4,7 @@ import { parseExpression } from 'cron-parser'
 import { randomUUID } from 'crypto'
 import { WorkspaceScheduleService } from '../schedule'
 import { NotificationService } from '../notification'
+import { getConfigManager } from '../agent/config-manager'
 import { Semaphore } from './semaphore'
 import { CircuitBreaker, CircuitBreakerOpenError } from './circuit-breaker'
 import { ConsecutiveFailureTracker } from './consecutive-failure-tracker'
@@ -169,6 +170,16 @@ export class SchedulerEngine {
     if (this.isDstGap(schedule.cron_expression, schedule.timezone)) {
       console.log(
         `[SchedulerEngine] Skipping DST gap trigger for schedule ${schedule.id}`,
+      )
+      return
+    }
+
+    // Safe mode: skip dispatch and log
+    const configManager = getConfigManager()
+    const config = configManager.getConfig(schedule.org)
+    if (config.safe_mode.enabled) {
+      console.log(
+        `[SchedulerEngine] Skipping trigger for schedule ${schedule.id}: safe_mode enabled`,
       )
       return
     }

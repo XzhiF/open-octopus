@@ -14,7 +14,7 @@ export interface NotificationRequest {
 
 export interface NotificationResult {
   sent: boolean
-  provider: string
+  platform: string
   target: string
   error?: string
   retries: number
@@ -44,7 +44,7 @@ const FAILED_QUEUE_MAX = 100
  */
 export class NotificationService {
   private failedQueues = new Map<string, FailedNotification[]>()
-  private configCache = new Map<string, { provider: string; target: string }>()
+  private configCache = new Map<string, { platform: string; target: string }>()
 
   /**
    * Send a notification to the configured target.
@@ -62,11 +62,11 @@ export class NotificationService {
       }
 
       try {
-        const sent = this.sendViaHermes(config.target, request)
+        const sent = this.sendViaHermes(config.platform, config.target, request)
         if (sent) {
           return {
             sent: true,
-            provider: config.provider,
+            platform: config.platform,
             target: config.target,
             retries: attempt,
           }
@@ -82,7 +82,7 @@ export class NotificationService {
 
     return {
       sent: false,
-      provider: config.provider,
+      platform: config.platform,
       target: config.target,
       error: lastError,
       retries: MAX_RETRIES,
@@ -91,19 +91,19 @@ export class NotificationService {
 
   /**
    * Send notification via hermes CLI.
+   * hermes send uses: hermes send -t "platform:target" "message"
+   * e.g. hermes send -t "telegram:xzf_hermes" "hello"
    */
-  private sendViaHermes(target: string, request: NotificationRequest): boolean {
+  private sendViaHermes(platform: string, target: string, request: NotificationRequest): boolean {
     if (!target) return false
 
-    // Parse target format: "telegram:xzf_hermes" or "discord:channel_name"
-    const [provider, channel] = target.split(':')
-    if (!provider || !channel) return false
+    // Construct hermes target: "platform:target" or just "target" if already contains ':'
+    const hermesTarget = target.includes(':') ? target : `${platform}:${target}`
 
     try {
       const message = this.formatMessage(request)
-      // Use hermes CLI to send — non-blocking with timeout
       execSync(
-        `hermes send --provider ${provider} --channel ${channel} --message ${JSON.stringify(message)}`,
+        `hermes send -t ${JSON.stringify(hermesTarget)} ${JSON.stringify(message)}`,
         {
           timeout: 30000,
           stdio: 'pipe',
@@ -125,31 +125,27 @@ export class NotificationService {
   }
 
   /**
-   * Get notification config for an org (provider + target).
+   * Get notification config for an org (platform + target).
+   * Reads from ConfigManager (the single source of truth for agent config).
    */
-  private getConfig(org: string): { provider: string; target: string } {
+  private getConfig(org: string): { platform: string; target: string } {
     const cached = this.configCache.get(org)
     if (cached) return cached
 
-    const configPath = getAgentConfigPath()
-    let provider = 'hermes-cli'
-    let target = 'telegram:xzf_hermes'
-
-    if (fs.existsSync(configPath)) {
-      try {
-        const content = fs.readFileSync(configPath, 'utf-8')
-        const providerMatch = content.match(/provider:\s*(.+)/)
-        const targetMatch = content.match(/target:\s*(.+)/)
-        if (providerMatch) provider = providerMatch[1].trim()
-        if (targetMatch) target = targetMatch[1].trim()
-      } catch {
-        // Use defaults on read failure
+    try {
+      const { getConfigManager } = require('../../services/agent/config-manager')
+      const configManager = getConfigManager()
+      const config = configManager.getConfig(org)
+      const result = {
+        platform: config.notification?.platform ?? 'telegram',
+        target: config.notification?.target ?? '',
       }
+      this.configCache.set(org, result)
+      return result
+    } catch {
+      // Fallback on ConfigManager failure
+      return { platform: 'telegram', target: '' }
     }
-
-    const config = { provider, target }
-    this.configCache.set(org, config)
-    return config
   }
 
   /**

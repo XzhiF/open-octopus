@@ -349,6 +349,7 @@ export interface MessageRow {
   is_summary: number
   is_compressed: number
   is_edited: number
+  source: string         // 'main' | clone-name (memory source for FTS)
   created_at: string
 }
 
@@ -385,6 +386,16 @@ export interface ExperienceRow {
   source_session_id: string | null
   org: string
   created_at: string
+}
+
+export interface InsightMarkRow {
+  id: number
+  skill_name: string
+  insight: string
+  session_id: string | null
+  org: string
+  marked_at: string
+  processed: number
 }
 
 export interface SafetyEventRow {

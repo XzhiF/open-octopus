@@ -19,6 +19,10 @@ export class ScheduleConfigDAO extends BaseDAO {
     return (this.stmt("SELECT * FROM schedules WHERE id = ?").get(id) as ScheduleRow) ?? null
   }
 
+  findByName(name: string): ScheduleRow | null {
+    return (this.stmt("SELECT * FROM schedules WHERE name = ? AND deleted_at IS NULL").get(name) as ScheduleRow) ?? null
+  }
+
   listByWorkspace(workspaceId: string, filters?: { search?: string; status?: string }): ScheduleRow[] {
     let sql = "SELECT * FROM schedules WHERE workspace_id = ? AND deleted_at IS NULL AND (job_type = 'workflow' OR job_type IS NULL)"
     const params: unknown[] = [workspaceId]

@@ -113,6 +113,7 @@ export interface SkillInfo {
   name: string
   source: SkillSource
   token_count: number
+  file_size: number
   last_modified: string | null
   has_local_backup: boolean
 }
@@ -153,13 +154,12 @@ export interface AgentConfig {
   timeout: number
   max_clones: number
   notification: {
-    provider: string
+    platform: string
     target: string
     timezone: string
   }
   memory: {
     session_retention_days: number
-    archive_cron_hour: number
     long_term_refine_trigger_days: number
     session_compress_threshold_messages: number
   }
@@ -222,6 +222,7 @@ export interface DebugSegment {
   budget: number
   degraded: boolean
   content_preview: string
+  content: string
 }
 
 export interface DebugLogEntry {

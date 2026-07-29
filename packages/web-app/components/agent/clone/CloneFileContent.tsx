@@ -122,15 +122,14 @@ export function CloneFileContent({ cloneName, file, onSaved }: CloneFileContentP
       </div>
 
       {/* Content */}
-      <div className="flex-1 overflow-auto">
+      <div className="flex-1 overflow-hidden flex flex-col">
         {isMarkdown && mode === 'preview' ? (
-          <div
-            className="p-4 prose prose-sm max-w-none"
+          <div className="flex-1 overflow-auto p-4 prose prose-xs max-w-none"
             dangerouslySetInnerHTML={{ __html: renderMarkdown(content) }}
           />
         ) : (
           <textarea
-            className={`w-full h-full p-4 font-mono text-sm bg-transparent resize-none focus:outline-none ${
+            className={`flex-1 w-full p-4 font-mono text-sm leading-relaxed bg-transparent resize-none focus:outline-none ${
               isJson ? 'text-yellow-500' : ''
             } ${file.readonly ? 'opacity-60' : ''}`}
             value={content}

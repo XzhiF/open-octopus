@@ -162,10 +162,11 @@ function buildTree(files: FileInfo[]): TreeNode[] {
   const map = new Map<string, TreeNode>()
   const roots: TreeNode[] = []
 
-  // Sort: directories first, then alphabetically
+  // Process directories first so parents exist when children are processed,
+  // then sort children within each parent for proper nesting.
   const sorted = [...files].sort((a, b) => {
     if (a.type !== b.type) return a.type === 'directory' ? -1 : 1
-    return a.name.localeCompare(b.name)
+    return a.path.localeCompare(b.path)
   })
 
   for (const file of sorted) {
@@ -182,6 +183,16 @@ function buildTree(files: FileInfo[]): TreeNode[] {
       roots.push(node)
     }
   }
+
+  // Sort children within each parent: directories first, then alphabetical
+  function sortChildren(nodes: TreeNode[]) {
+    nodes.sort((a, b) => {
+      if (a.type !== b.type) return a.type === 'directory' ? -1 : 1
+      return a.name.localeCompare(b.name)
+    })
+    nodes.forEach(n => sortChildren(n.children))
+  }
+  sortChildren(roots)
 
   return roots
 }

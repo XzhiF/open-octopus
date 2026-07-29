@@ -10,7 +10,7 @@ const _dirname: string =
     ? __dirname
     : path.dirname(fileURLToPath(import.meta.url))
 
-export const SCHEMA_VERSION = 27
+export const SCHEMA_VERSION = 29
 
 /**
  * Apply the complete unified schema to the given database.
@@ -62,6 +62,9 @@ function handleSchemaMigrations(db: Database.Database): void {
 
   // Add missing columns for existing tables
   ensureColumnsForExistingTables(db)
+
+  // Migrate FTS table to include source column (schema version 29)
+  migrateFtsTableWithSource(db)
 }
 
 function ensureColumnsForExistingTables(db: Database.Database): void {
@@ -95,6 +98,9 @@ function ensureColumnsForExistingTables(db: Database.Database): void {
   ensureColumn(db, 'messages', 'type', "TEXT NOT NULL DEFAULT 'text'")
   ensureColumn(db, 'messages', 'metadata', "TEXT")
 
+  // Source column for memory FTS (clone memory alignment — iteration #10)
+  ensureColumn(db, 'messages', 'source', "TEXT NOT NULL DEFAULT 'main'")
+
   // Clone system columns for clones
   ensureColumn(db, 'clones', 'type', "TEXT NOT NULL DEFAULT 'user'")
 
@@ -123,5 +129,30 @@ function ensureColumn(db: Database.Database, table: string, column: string, defi
   const cols = db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]
   if (!cols.some(c => c.name === column)) {
     db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`)
+  }
+}
+
+/**
+ * Migrate session_memory_fts to include source column.
+ * FTS5 virtual tables don't support ALTER TABLE, so we drop and recreate.
+ * Schema.sql will recreate the table with the new schema (IF NOT EXISTS).
+ */
+function migrateFtsTableWithSource(db: Database.Database): void {
+  try {
+    // Check if the FTS table exists
+    const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='session_memory_fts'").all()
+    if (tables.length === 0) return // Will be created by schema.sql
+
+    // Check if source column exists by trying to query it
+    try {
+      db.prepare("SELECT source FROM session_memory_fts LIMIT 1").get()
+      return // Already has source column
+    } catch {
+      // Source column missing — drop table, schema.sql will recreate it
+      db.exec("DROP TABLE IF EXISTS session_memory_fts")
+      console.log("[schema] Dropped old session_memory_fts (missing source column), will recreate")
+    }
+  } catch (err) {
+    console.warn("[schema] FTS migration check failed:", err instanceof Error ? err.message : String(err))
   }
 }

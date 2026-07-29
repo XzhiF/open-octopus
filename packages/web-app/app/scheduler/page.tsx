@@ -5,7 +5,7 @@ import { Plus, Download } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { useSchedulerJobs } from "@/hooks/use-scheduler-jobs"
 import { useSchedulerDashboard } from "@/hooks/use-scheduler-dashboard"
-import { toast } from "@/hooks/use-toast"
+import { toast } from "sonner"
 import {
   deleteJob as apiDeleteJob,
   triggerJob as apiTriggerJob,
@@ -120,11 +120,7 @@ export default function SchedulerPage() {
       try {
         await toggleJob(job.id)
       } catch {
-        toast({
-          title: "操作失败",
-          description: "无法切换任务状态",
-          variant: "destructive",
-        })
+        toast.error("操作失败", { description: "无法切换任务状态" })
       }
     },
     [toggleJob]
@@ -148,20 +144,13 @@ export default function SchedulerPage() {
     setDeleteLoading(true)
     try {
       await apiDeleteJob(deleteJobTarget.id)
-      toast({
-        title: "已删除",
-        description: `任务 "${deleteJobTarget.name}" 已成功删除`,
-      })
+      toast.success("已删除", { description: `任务 "${deleteJobTarget.name}" 已成功删除` })
       setDeleteDialogOpen(false)
       setDeleteJobTarget(null)
       refetch()
       fetchDashboard()
     } catch {
-      toast({
-        title: "删除失败",
-        description: "无法删除任务，请稍后重试",
-        variant: "destructive",
-      })
+      toast.error("删除失败", { description: "无法删除任务，请稍后重试" })
     } finally {
       setDeleteLoading(false)
     }
@@ -170,26 +159,11 @@ export default function SchedulerPage() {
   const handleTrigger = useCallback(async (job: SchedulerJob) => {
     try {
       await apiTriggerJob(job.id)
-      toast({
-        title: "已触发",
-        description: (
-          <span>
-            任务 &quot;{job.name}&quot; 已手动触发 →{" "}
-            <a
-              href={`/scheduler/jobs/${job.id}`}
-              className="underline text-scheduler-primary"
-            >
-              查看执行详情
-            </a>
-          </span>
-        ),
+      toast.success("已触发", {
+        description: `任务 "${job.name}" 已手动触发`,
       })
     } catch {
-      toast({
-        title: "触发失败",
-        description: "无法触发任务，请稍后重试",
-        variant: "destructive",
-      })
+      toast.error("触发失败", { description: "无法触发任务，请稍后重试" })
     }
   }, [])
 

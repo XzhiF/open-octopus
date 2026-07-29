@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useCallback } from "react"
-import { useToast } from "@/hooks/use-toast"
+import { toast } from "sonner"
 import {
   createJob,
   updateJob,
@@ -43,7 +43,6 @@ export function useSchedulerSubmit({
   onSuccess,
   onClose,
 }: UseSchedulerSubmitOptions) {
-  const { toast } = useToast()
   const [submitting, setSubmitting] = useState(false)
   const [configError, setConfigError] = useState<string | null>(null)
 
@@ -84,7 +83,7 @@ export function useSchedulerSubmit({
               },
               editingJob.version
             )
-            toast({ title: "调度任务已更新" })
+            toast.success("调度任务已更新")
           } else {
             await createJob({
               name: data.name,
@@ -96,7 +95,7 @@ export function useSchedulerSubmit({
               parallel_policy: (data.parallel_policy ?? "skip") as ParallelPolicy,
               description: data.description || undefined,
             })
-            toast({ title: "调度任务已创建" })
+            toast.success("调度任务已创建")
           }
         } else {
           const config: AgentConfig = {
@@ -129,7 +128,7 @@ export function useSchedulerSubmit({
               },
               editingJob.version
             )
-            toast({ title: "调度任务已更新" })
+            toast.success("调度任务已更新")
           } else {
             await createJob({
               name: data.name,
@@ -139,7 +138,7 @@ export function useSchedulerSubmit({
               config,
               description: data.description || undefined,
             })
-            toast({ title: "调度任务已创建" })
+            toast.success("调度任务已创建")
           }
         }
 
@@ -147,16 +146,12 @@ export function useSchedulerSubmit({
         onClose()
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : "操作失败"
-        toast({
-          title: isEdit ? "更新失败" : "创建失败",
-          description: msg,
-          variant: "destructive",
-        })
+        toast.error(isEdit ? "更新失败" : "创建失败", { description: msg })
       } finally {
         setSubmitting(false)
       }
     },
-    [jobType, isEdit, editingJob, onSuccess, onClose, toast]
+    [jobType, isEdit, editingJob, onSuccess, onClose]
   )
 
   return { submit, submitting, configError }

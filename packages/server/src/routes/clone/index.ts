@@ -39,6 +39,7 @@ import {
   unregisterActiveStream,
 } from '../../services/agent/agent-service'
 import { getBuiltInCloneDir, getCloneDir } from '../../services/agent/paths'
+import { getMemoryService } from '../../services/agent/memory-service'
 
 // ── Route deps ─────────────────────────────────────────────────────
 
@@ -291,6 +292,8 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
         const toolCalls: Array<{
           id: string; name: string; input?: unknown; result?: unknown; isError?: boolean
         }> = []
+        const memoryToolCalls: Array<{ id: string; name: string; input?: Record<string, unknown> }> = []
+        const MEMORY_TOOL_NAMES = ['record_daily']
 
         for await (const chunk of runtime.chat(body.message!, sessionId, providerSessionId, cwd)) {
           if (aborted || (stream as any)._aborted) break
@@ -316,7 +319,13 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
               break
             case 'tool_call': {
               const tc = toolCalls.find(t => t.id === chunk.toolCallId)
-              if (tc) tc.input = chunk.toolInput
+              if (tc) {
+                tc.input = chunk.toolInput
+                // Track memory tool calls (record_daily)
+                if (MEMORY_TOOL_NAMES.includes(tc.name)) {
+                  memoryToolCalls.push({ id: tc.id, name: tc.name, input: chunk.toolInput as Record<string, unknown> })
+                }
+              }
               await stream.writeSSE({ event: 'tool_call', data: JSON.stringify({ type: 'input', tool_call_id: chunk.toolCallId, tool_name: chunk.toolName, input: chunk.toolInput }) })
               break
             }
@@ -335,6 +344,37 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
             case 'error':
               await stream.writeSSE({ event: 'error', data: JSON.stringify({ code: chunk.code, message: chunk.message }) })
               break
+          }
+        }
+
+        // Execute memory tool calls (record_daily) with clone context
+        if (memoryToolCalls.length > 0 && !aborted) {
+          for (const tc of memoryToolCalls) {
+            const content = String(tc.input?.content ?? '')
+            if (!content) continue
+            try {
+              const memoryService = getMemoryService()
+              // Determine clone directory from clone name + type
+              const cloneDir = cloneDef.type === 'built-in'
+                ? getBuiltInCloneDir(cloneName)
+                : getCloneDir(cloneName)
+              const result = memoryService.recordDaily(org, content, sessionId, cloneDir)
+              await stream.writeSSE({
+                event: 'tool_call',
+                data: JSON.stringify({
+                  type: 'result', tool_call_id: tc.id, tool_name: tc.name,
+                  content: JSON.stringify(result), is_error: false,
+                }),
+              })
+            } catch (e) {
+              await stream.writeSSE({
+                event: 'tool_call',
+                data: JSON.stringify({
+                  type: 'result', tool_call_id: tc.id, tool_name: tc.name,
+                  content: `Memory tool error: ${e instanceof Error ? e.message : String(e)}`, is_error: true,
+                }),
+              })
+            }
           }
         }
 

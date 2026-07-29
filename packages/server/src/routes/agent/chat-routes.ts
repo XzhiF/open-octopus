@@ -15,6 +15,7 @@ import { SystemPromptAssembler } from '../../services/agent/system-prompt-assemb
 import { getNotificationService } from '../../services/agent/notification-service'
 import { getSessionCompressService } from '../../services/agent/session-compress-service'
 import { getAgentService, registerActiveStream, unregisterActiveStream } from '../../services/agent/agent-service'
+import { getSafetyInterceptor } from '../../services/agent/safety-interceptor'
 import { getAgentDir, getDailyMemoryDir, getExperiencesDir, getDebugTracesDir } from '../../services/agent/paths'
 import type { AgentSessionDAO, SafetyDAO, ScheduleConfigDAO } from '../../db/dao'
 
@@ -60,6 +61,25 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
       content: body.message, created_at: now,
     })
     sessionDao.updateLastMessageAt(id, now)
+
+    // ── Safety: detect dangerous commands in user message (B5 fix) ────
+    try {
+      const interceptor = getSafetyInterceptor()
+      if (interceptor.isDangerousCommand(body.message)) {
+        const reason = interceptor.getDangerReason(body.message)
+        safetyDAO.insertSafetyEvent({
+          type: 'dangerous_command',
+          operation: body.message.slice(0, 200),
+          decision: 'intercept',
+          actor: 'user',
+          context: JSON.stringify({ reason, session_id: id }),
+          org,
+          timestamp: now,
+        })
+      }
+    } catch {
+      // Safety check failure is non-fatal — proceed with chat
+    }
 
     // Assemble system prompt
     const assembler = new SystemPromptAssembler(org)
@@ -294,6 +314,11 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
     source: string, orchestration: string | undefined, orchestrationFullResult: any,
   ): void {
     try {
+      // Check debug.enabled config — skip if disabled
+      const { getConfigManager } = require('../../services/agent/config-manager')
+      const config = getConfigManager().getConfig(org)
+      if (!config.debug?.enabled) return
+
       const debugDir = getDebugTracesDir()
       if (!fs.existsSync(debugDir)) fs.mkdirSync(debugDir, { recursive: true })
       const debugEntry = {

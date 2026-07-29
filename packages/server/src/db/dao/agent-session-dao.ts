@@ -108,18 +108,18 @@ export class AgentSessionDAO extends BaseDAO {
     ).get(sessionId) as { count: number }).count
   }
 
-  insertMessage(row: Omit<MessageRow, "is_summary" | "is_compressed" | "is_edited" | "tool_calls" | "type" | "metadata"> & {
+  insertMessage(row: Omit<MessageRow, "is_summary" | "is_compressed" | "is_edited" | "tool_calls" | "type" | "metadata" | "source"> & {
     is_summary?: number; is_compressed?: number; is_edited?: number; tool_calls?: string | null;
-    type?: string; metadata?: string | null
+    type?: string; metadata?: string | null; source?: string
   }): Database.RunResult {
     return this.stmt(`
-      INSERT INTO messages (id, session_id, role, content, type, metadata, tool_calls, is_summary, is_compressed, is_edited, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO messages (id, session_id, role, content, type, metadata, tool_calls, is_summary, is_compressed, is_edited, source, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       row.id, row.session_id, row.role, row.content,
       row.type ?? 'text', row.metadata ?? null,
       row.tool_calls ?? null, row.is_summary ?? 0,
-      row.is_compressed ?? 0, row.is_edited ?? 0, row.created_at,
+      row.is_compressed ?? 0, row.is_edited ?? 0, row.source ?? 'main', row.created_at,
     )
   }
 
@@ -138,25 +138,39 @@ export class AgentSessionDAO extends BaseDAO {
 
   // ── session_memory_fts ──────────────────────────────────────────
 
-  searchSessionMemory(query: string, limit: number = 3): Array<{
-    session_id: string; summary: string; session_title: string; created_at: string
+  searchSessionMemory(query: string, limit: number = 3, source?: string): Array<{
+    session_id: string; summary: string; session_title: string; created_at: string; source: string
   }> {
     try {
-      return this.stmt(`
-        SELECT session_id, summary, session_title, created_at
-        FROM session_memory_fts WHERE session_memory_fts MATCH ?
-        ORDER BY rank LIMIT ?
-      `).all(query, limit) as Array<{
-        session_id: string; summary: string; session_title: string; created_at: string
+      let sql = `SELECT session_id, summary, session_title, created_at, source FROM session_memory_fts WHERE session_memory_fts MATCH ?`
+      const params: unknown[] = [query]
+
+      if (source) {
+        sql += ` AND source = ?`
+        params.push(source)
+      }
+
+      sql += ` ORDER BY rank LIMIT ?`
+      params.push(limit)
+
+      return this.stmt(sql).all(...params) as Array<{
+        session_id: string; summary: string; session_title: string; created_at: string; source: string
       }>
     } catch {
       // FTS degraded: fallback to LIKE
-      return this.stmt(`
-        SELECT session_id, summary, session_title, created_at
-        FROM session_memory_fts WHERE summary LIKE ?
-        LIMIT ?
-      `).all(`%${query}%`, limit) as Array<{
-        session_id: string; summary: string; session_title: string; created_at: string
+      let sql = `SELECT session_id, summary, session_title, created_at, source FROM session_memory_fts WHERE summary LIKE ?`
+      const params: unknown[] = [`%${query}%`]
+
+      if (source) {
+        sql += ` AND source = ?`
+        params.push(source)
+      }
+
+      sql += ` LIMIT ?`
+      params.push(limit)
+
+      return this.stmt(sql).all(...params) as Array<{
+        session_id: string; summary: string; session_title: string; created_at: string; source: string
       }>
     }
   }
@@ -164,17 +178,17 @@ export class AgentSessionDAO extends BaseDAO {
   rebuildFtsIndex(): number {
     this.stmt("DELETE FROM session_memory_fts").run()
     const summaryMessages = this.stmt(`
-      SELECT m.rowid, m.session_id, m.content, m.created_at, s.title
+      SELECT m.rowid, m.session_id, m.content, m.created_at, m.source, s.title
       FROM messages m JOIN sessions s ON s.id = m.session_id
       WHERE m.is_summary = 1
       ORDER BY m.created_at
-    `).all() as Array<{ rowid: number; session_id: string; content: string; created_at: string; title: string }>
+    `).all() as Array<{ rowid: number; session_id: string; content: string; created_at: string; source: string; title: string }>
 
     const insertFts = this.stmt(
-      "INSERT INTO session_memory_fts (session_id, summary, session_title, created_at) VALUES (?, ?, ?, ?)"
+      "INSERT INTO session_memory_fts (session_id, summary, session_title, created_at, source) VALUES (?, ?, ?, ?, ?)"
     )
     for (const msg of summaryMessages) {
-      insertFts.run(msg.session_id, msg.content, msg.title, msg.created_at)
+      insertFts.run(msg.session_id, msg.content, msg.title, msg.created_at, msg.source || 'main')
     }
     return summaryMessages.length
   }
@@ -213,11 +227,11 @@ export class AgentSessionDAO extends BaseDAO {
     `).run(...ids)
   }
 
-  insertSummaryMessage(id: string, sessionId: string, content: string, createdAt: string): Database.RunResult {
+  insertSummaryMessage(id: string, sessionId: string, content: string, createdAt: string, source: string = 'main'): Database.RunResult {
     return this.stmt(`
-      INSERT INTO messages (id, session_id, role, content, created_at, is_summary, is_compressed)
-      VALUES (?, ?, 'system', ?, ?, 1, 0)
-    `).run(id, sessionId, content, createdAt)
+      INSERT INTO messages (id, session_id, role, content, created_at, is_summary, is_compressed, source)
+      VALUES (?, ?, 'system', ?, ?, 1, 0, ?)
+    `).run(id, sessionId, content, createdAt, source)
   }
 
   findSummaryMessage(sessionId: string): { content: string } | null {

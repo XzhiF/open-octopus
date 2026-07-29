@@ -8,7 +8,8 @@ import fs from 'fs'
 import path from 'path'
 import { createAgentError } from './middleware'
 import { getEvolutionService } from '../../services/agent/evolution-service'
-import { getAgentSkillsDir } from '../../services/agent/paths'
+import { getConfigManager } from '../../services/agent/config-manager'
+import { getAgentSkillsDir, backupFile } from '../../services/agent/paths'
 import type { EvolutionDAO } from '../../db/dao'
 
 export interface EvolutionRouteDeps {
@@ -24,6 +25,16 @@ export function createEvolutionRoutes(deps: EvolutionRouteDeps): Hono {
     try {
       const org = c.req.header('X-Octopus-Org') || (c.get('org') as string)
       if (!org) return c.json(createAgentError('ORG_NOT_FOUND', 'Organization not resolved'), 403)
+
+      // Safe mode blocks evolution feedback
+      const configManager = getConfigManager()
+      const config = configManager.getConfig(org)
+      if (config.safe_mode.enabled) {
+        return c.json(
+          createAgentError('SAFE_MODE_READONLY', 'Safe mode is enabled. Evolution is paused.'),
+          409,
+        )
+      }
 
       const body = await c.req.json<{
         content: string; skill_name?: string; session_id?: string; type?: string
@@ -42,7 +53,7 @@ export function createEvolutionRoutes(deps: EvolutionRouteDeps): Hono {
         if (reflection.level === 'minor') {
           const skillPath = path.join(getAgentSkillsDir(), reflection.candidate.skill_name, 'SKILL.md')
           if (fs.existsSync(skillPath)) {
-            fs.copyFileSync(skillPath, skillPath + '.bak')
+            backupFile(skillPath)
             const current = fs.readFileSync(skillPath, 'utf-8')
             fs.writeFileSync(skillPath, current + `\n\n> 改进 (${new Date().toISOString().split('T')[0]}): ${body.content.slice(0, 200)}`, 'utf-8')
           }
@@ -65,6 +76,16 @@ export function createEvolutionRoutes(deps: EvolutionRouteDeps): Hono {
     try {
       const org = c.req.header('X-Octopus-Org') || (c.get('org') as string)
       if (!org) return c.json(createAgentError('ORG_NOT_FOUND', 'Organization not resolved'), 403)
+
+      // Safe mode blocks self-check evolution
+      const configManager = getConfigManager()
+      const config = configManager.getConfig(org)
+      if (config.safe_mode.enabled) {
+        return c.json(
+          createAgentError('SAFE_MODE_READONLY', 'Safe mode is enabled. Evolution is paused.'),
+          409,
+        )
+      }
 
       const evolutionService = getEvolutionService()
       const reflection = evolutionService.reflect(org, { type: 'self_check', content: 'Periodic self-check triggered' })
@@ -104,6 +125,23 @@ export function createEvolutionRoutes(deps: EvolutionRouteDeps): Hono {
       const org = c.req.header('X-Octopus-Org') || (c.get('org') as string)
       if (!org) return c.json(createAgentError('ORG_NOT_FOUND', 'Organization not resolved'), 403)
       const skill = c.req.query('skill')
+      const q = c.req.query('q')
+
+      // When search query provided, use FTS search; otherwise list
+      if (q) {
+        const limit = Math.min(parseInt(c.req.query('limit') ?? '20', 10), 50)
+        const searchResults = evolutionDAO.searchExperiences(q, limit)
+        const items = searchResults.map((r, i) => ({
+          id: -(i + 1), // FTS results don't have stable IDs
+          skill_name: r.skill_name,
+          content: r.content,
+          source_session_id: null,
+          org,
+          created_at: '',
+        }))
+        return c.json({ items, total: items.length })
+      }
+
       const items = getEvolutionService().listExperiences(org, skill)
       return c.json({ items, total: items.length })
     } catch (err: unknown) {
@@ -214,6 +252,62 @@ export function createEvolutionRoutes(deps: EvolutionRouteDeps): Hono {
           created_at: now,
         },
       })
+    } catch (err: unknown) {
+      const error = err instanceof Error ? err : new Error(String(err))
+      return c.json(createAgentError('INTERNAL_ERROR', error.message), 500)
+    }
+  })
+
+  // ── Insight marks: create ──────────────────────────────────────────
+  app.post('/evolution/mark-insight', async (c) => {
+    try {
+      const org = c.req.header('X-Octopus-Org') || (c.get('org') as string)
+      if (!org) return c.json(createAgentError('ORG_NOT_FOUND', 'Organization not resolved'), 403)
+
+      const body = await c.req.json<{
+        skill_name: string; insight: string; session_id?: string
+      }>().catch(() => ({} as { skill_name: string; insight: string; session_id?: string }))
+
+      if (!body.skill_name || !body.insight) {
+        return c.json(createAgentError('INVALID_PARAM', 'skill_name and insight are required'), 400)
+      }
+
+      const result = evolutionDAO.insertMark({
+        skill_name: body.skill_name,
+        insight: body.insight,
+        session_id: body.session_id,
+        org,
+      })
+
+      return c.json({ ok: true, id: result.lastInsertRowid })
+    } catch (err: unknown) {
+      const error = err instanceof Error ? err : new Error(String(err))
+      return c.json(createAgentError('INTERNAL_ERROR', error.message), 500)
+    }
+  })
+
+  // ── Insight marks: batch process ───────────────────────────────────
+  app.post('/evolution/process-marks', async (c) => {
+    try {
+      const org = c.req.header('X-Octopus-Org') || (c.get('org') as string)
+      if (!org) return c.json(createAgentError('ORG_NOT_FOUND', 'Organization not resolved'), 403)
+
+      // Safe mode blocks process-marks
+      const configManager = getConfigManager()
+      const config = configManager.getConfig(org)
+      if (config.safe_mode.enabled) {
+        return c.json(
+          createAgentError('SAFE_MODE_READONLY', 'Safe mode is enabled. Evolution is paused.'),
+          409,
+        )
+      }
+
+      const body = await c.req.json<{ session_id?: string }>().catch(() => ({}))
+      const evolutionService = getEvolutionService()
+
+      const result = evolutionService.processUnprocessedMarks(org, body.session_id)
+
+      return c.json(result)
     } catch (err: unknown) {
       const error = err instanceof Error ? err : new Error(String(err))
       return c.json(createAgentError('INTERNAL_ERROR', error.message), 500)

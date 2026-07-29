@@ -25,16 +25,17 @@ export function createMemoryRoutes(): Hono {
       }
 
       // FTS5 search with LIKE fallback (PRD C3 §FTS降级)
+      const source = c.req.query('source') // Optional: 'main' | clone-name
       let results: unknown[]
       let degraded = false
       try {
-        results = getMemoryService().searchMemory(org, query, parseInt(c.req.query('top_k') ?? '3', 10))
+        results = getMemoryService().searchMemory(org, query, parseInt(c.req.query('top_k') ?? '3', 10), source)
       } catch {
         // FTS index may be corrupted — auto-trigger rebuild and retry with LIKE
         degraded = true
         try {
           getMemoryService().rebuildFtsIndex(org)
-          results = getMemoryService().searchMemory(org, query, parseInt(c.req.query('top_k') ?? '3', 10))
+          results = getMemoryService().searchMemory(org, query, parseInt(c.req.query('top_k') ?? '3', 10), source)
         } catch {
           results = []
         }
@@ -63,6 +64,12 @@ export function createMemoryRoutes(): Hono {
           createAgentError('INVALID_PARAM', `Invalid layer. Must be one of: ${VALID_LAYERS.join(', ')}`),
           400,
         )
+      }
+
+      // Daily layer returns all daily files as an array
+      if (layer === 'daily') {
+        const items = getMemoryService().readDailyAll(org)
+        return c.json(items)
       }
 
       const result = getMemoryService().readMemory(org, layer)
@@ -206,12 +213,28 @@ export function createMemoryRoutes(): Hono {
       const archivedFilename = `${targetDate}.md`
       fs.renameSync(dailyFile, path.join(archiveDir, archivedFilename))
 
+      // Auto-refine long-term memory after archive (Issue 4: closed-loop)
+      let refineResult: { refined: boolean; before_tokens: number; after_tokens: number; backup_path: string } | null = null
+      let refineFailed = false
+      try {
+        refineResult = getMemoryService().refineLongTerm(org)
+      } catch {
+        refineFailed = true
+      }
+
       return c.json({
         ok: true,
         archived: true,
         archived_date: targetDate,
         archived_filename: archivedFilename,
         merge_failed: mergeFailed,
+        refine: refineResult ? {
+          refined: refineResult.refined,
+          before_tokens: refineResult.before_tokens,
+          after_tokens: refineResult.after_tokens,
+          backup_path: refineResult.backup_path,
+        } : undefined,
+        refine_failed: refineFailed,
       })
     } catch (err: unknown) {
       const error = err instanceof Error ? err : new Error(String(err))

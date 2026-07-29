@@ -4,10 +4,9 @@ import { useState } from 'react'
 import { Zap, History, BookOpen } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAgentSkills } from '@/hooks/useAgentSkills'
-import { SkillList } from './SkillList'
+import { SkillDetailView } from './SkillDetailView'
 import { ChangelogTimeline } from './ChangelogTimeline'
 import { ExperienceList } from './ExperienceList'
-import { AgentEmptyState } from '../shared/AgentEmptyState'
 
 const SUB_VIEWS = [
   { id: 'skills', label: 'SKILL 列表', icon: Zap },
@@ -16,18 +15,8 @@ const SUB_VIEWS = [
 ] as const
 
 export function SkillTab() {
-  const [activeView, setActiveView] = useState('changelog')
-  const { skills, changelog, experiences, loading, error, fetchExperiences, rollback, revertToBuiltin } = useAgentSkills()
-
-  if (!loading && (skills?.length ?? 0) === 0 && (changelog?.length ?? 0) === 0) {
-    return (
-      <AgentEmptyState
-        icon={Zap}
-        title="尚未发生进化"
-        description="Agent 的 SKILL 会在日常使用中自动改进。内置 SKILL 将作为进化基础。"
-      />
-    )
-  }
+  const [activeView, setActiveView] = useState('skills')
+  const { skills, changelog, experiences, loading, error, fetchExperiences, rollback, refetch } = useAgentSkills()
 
   return (
     <div className="h-full flex flex-col">
@@ -60,15 +49,23 @@ export function SkillTab() {
       )}
 
       {/* Content */}
-      <div className="flex-1 overflow-auto">
+      <div className="flex-1 overflow-hidden">
         {activeView === 'skills' && (
-          <SkillList skills={skills} loading={loading} onRevertBuiltin={revertToBuiltin} />
+          <SkillDetailView
+            skills={skills}
+            loading={loading}
+            onRefresh={refetch}
+          />
         )}
         {activeView === 'changelog' && (
-          <ChangelogTimeline entries={changelog} loading={loading} onRollback={rollback} />
+          <div className="h-full overflow-auto">
+            <ChangelogTimeline entries={changelog} loading={loading} onRollback={rollback} />
+          </div>
         )}
         {activeView === 'experiences' && (
-          <ExperienceList experiences={experiences} loading={loading} onSearch={(q) => fetchExperiences({ q })} />
+          <div className="h-full overflow-auto">
+            <ExperienceList experiences={experiences} loading={loading} onSearch={(q) => fetchExperiences({ q })} />
+          </div>
         )}
       </div>
     </div>

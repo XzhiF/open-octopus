@@ -78,7 +78,6 @@ import { createSystemRoutes } from "./routes/system"
 import { createReposRoutes } from "./routes/repos"
 import { getRecoveryService } from "./services/agent/recovery-service"
 import { initArchiveService } from "./services/archive/archive-service"
-import { ArchiveScheduler } from "./services/archive/archive-scheduler"
 import { getDomainEventBus } from "./services/agent/domain-event-bus"
 
 // Install global error handlers early — catches uncaughtException / unhandledRejection
@@ -206,12 +205,57 @@ if (!process.env.VITEST && daos) {
   // Initialize archive service singleton
   initArchiveService(daos.archive, daos.execution, db, getDomainEventBus())
 
-  // Initialize archive scheduler — periodic memory archival across all orgs
-  const archiveScheduler = new ArchiveScheduler(
-    () => daos ? daos.org.findAll().map(o => o.name) : [],
-  )
-  const stopArchiveScheduler = archiveScheduler.start()
-  ;(global as any).__octopus_stopArchiveScheduler = stopArchiveScheduler
+  // ── Scheduler seed: auto-create system:daily-archive task ────────────
+  // Idempotent — only inserts if no schedule named 'system:daily-archive' exists.
+  try {
+    const existingSeed = daos.scheduleConfig.findByName('system:daily-archive')
+    if (!existingSeed) {
+      daos.scheduleConfig.insertSchedule({
+        id: 'system:daily-archive',
+        org: 'system',
+        name: 'system:daily-archive',
+        cron_expression: '0 3 * * *',
+        timezone: 'Asia/Shanghai',
+        job_type: 'agent',
+        config: JSON.stringify({
+          prompt: 'Archive yesterday daily memory and refine long-term memory',
+        }),
+        enabled: 1,
+        description: 'System-seeded daily archive task (auto-created on server startup)',
+      })
+      console.log('[server] Scheduler seed: system:daily-archive task created')
+    }
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err)
+    console.warn(`[server] Scheduler seed failed: ${msg}`)
+  }
+
+  // One-time migration: if config.yaml has archive_cron_hour != 3 (default),
+  // update the system:daily-archive cron expression
+  try {
+    const fs = require('fs')
+    const yaml = require('js-yaml')
+    const { getAgentConfigPath } = require('./services/agent/paths')
+    const configPath = getAgentConfigPath()
+    if (fs.existsSync(configPath)) {
+      const raw = yaml.load(fs.readFileSync(configPath, 'utf-8'), { schema: yaml.JSON_SCHEMA }) as any
+      const archiveHour = raw?.memory?.archive_cron_hour
+      if (archiveHour !== undefined && archiveHour !== 3) {
+        const existingJob = daos.scheduleConfig.findByName('system:daily-archive')
+        if (existingJob) {
+          const newCron = `0 ${archiveHour} * * *`
+          daos.scheduleConfig.updateSchedule(existingJob.id, {
+            cron_expression: newCron,
+            version: existingJob.version + 1,
+          })
+          console.log(`[migration] Updated system:daily-archive cron to "${newCron}" from config.yaml archive_cron_hour`)
+        }
+      }
+    }
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err)
+    console.warn(`[server] archive_cron_hour migration failed: ${msg}`)
+  }
 
   // Set DAOs for middleware and yjs-ws
   setAgentAuthOrgDAO(daos.org)
@@ -608,9 +652,6 @@ if (shouldServe) {
       scheduler?.stop()
       if ((global as any).__octopus_cleanupRetention) {
         ;(global as any).__octopus_cleanupRetention()
-      }
-      if ((global as any).__octopus_stopArchiveScheduler) {
-        ;(global as any).__octopus_stopArchiveScheduler()
       }
       server.close(() => {
         console.log(`[server] HTTP server closed.`)

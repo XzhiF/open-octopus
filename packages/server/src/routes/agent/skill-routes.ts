@@ -5,14 +5,21 @@
 //
 import { Hono } from 'hono'
 import fs from 'fs'
+import os from 'node:os'
 import path from 'path'
+import { execSync } from 'node:child_process'
 import { createAgentError, mapErrorToStatus } from './middleware'
-import { getAgentSkillsDir } from '../../services/agent/paths'
+import { getAgentSkillsDir, backupFile } from '../../services/agent/paths'
 import { getSubsystemAdapter } from '../../services/agent/subsystem-adapter'
 
 // ── Path traversal guard ─────────────────────────────────────────
 const SAFE_NAME_RE = /^[a-zA-Z0-9_-]+$/
 const validateNameParam = (name: string): boolean => SAFE_NAME_RE.test(name) && name.length <= 200
+
+// ── Diff helper ────────────────────────────────────────────────────
+function escapeRegex(str: string): string {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
 
 export interface SkillRouteDeps {
   // No DAO deps needed — skill routes are filesystem-based
@@ -65,7 +72,7 @@ export function createSkillRoutes(_deps: SkillRouteDeps = {}): Hono {
       if (!org) return c.json(createAgentError('ORG_NOT_FOUND', 'Organization not resolved'), 403)
 
       const skillsDir = getAgentSkillsDir()
-      const items: Array<{ name: string; source: string; has_backup: boolean }> = []
+      const items: Array<{ name: string; source: string; has_backup: boolean; token_count: number; file_size: number; last_modified: string | null }> = []
 
       if (fs.existsSync(skillsDir)) {
         const entries = fs.readdirSync(skillsDir, { withFileTypes: true })
@@ -74,10 +81,15 @@ export function createSkillRoutes(_deps: SkillRouteDeps = {}): Hono {
             const skillFile = path.join(skillsDir, entry.name, 'SKILL.md')
             const bakFile = path.join(skillsDir, entry.name, 'SKILL.md.bak')
             if (fs.existsSync(skillFile)) {
+              const content = fs.readFileSync(skillFile, 'utf-8')
+              const stat = fs.statSync(skillFile)
               items.push({
                 name: entry.name,
                 source: fs.existsSync(bakFile) ? 'local_evolved' : 'builtin',
                 has_backup: fs.existsSync(bakFile),
+                token_count: Math.ceil(content.length / 4),
+                file_size: stat.size,
+                last_modified: stat.mtime.toISOString(),
               })
             }
           }
@@ -91,7 +103,16 @@ export function createSkillRoutes(_deps: SkillRouteDeps = {}): Hono {
           if (entry.isDirectory() && !items.find((i) => i.name === entry.name)) {
             const skillFile = path.join(corePackDir, entry.name, 'SKILL.md')
             if (fs.existsSync(skillFile)) {
-              items.push({ name: entry.name, source: 'builtin', has_backup: false })
+              const content = fs.readFileSync(skillFile, 'utf-8')
+              const stat = fs.statSync(skillFile)
+              items.push({
+                name: entry.name,
+                source: 'builtin',
+                has_backup: false,
+                token_count: Math.ceil(content.length / 4),
+                file_size: stat.size,
+                last_modified: null,
+              })
             }
           }
         }
@@ -152,11 +173,84 @@ export function createSkillRoutes(_deps: SkillRouteDeps = {}): Hono {
         return c.json(createAgentError('BUILTIN_MISSING', `No builtin version for skill "${name}"`), 409)
       }
       if (!fs.existsSync(localPath)) {
-        return c.json({ name, has_diff: false, builtin_length: fs.readFileSync(builtinPath, 'utf-8').length, local_length: 0 })
+        return c.json({
+          name, has_diff: false, diff: null,
+          builtin_version: fs.readFileSync(builtinPath, 'utf-8'),
+          local_version: null,
+        })
       }
       const builtin = fs.readFileSync(builtinPath, 'utf-8')
       const local = fs.readFileSync(localPath, 'utf-8')
-      return c.json({ name, has_diff: builtin !== local, builtin_length: builtin.length, local_length: local.length })
+      const hasDiff = builtin !== local
+
+      // Compute unified diff using system diff command
+      let diffText: string | null = null
+      if (hasDiff) {
+        try {
+          // Write temp files for diff
+          const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'octopus-diff-'))
+          const tmpBuiltin = path.join(tmpDir, 'builtin.md')
+          const tmpLocal = path.join(tmpDir, 'local.md')
+          fs.writeFileSync(tmpBuiltin, builtin, 'utf-8')
+          fs.writeFileSync(tmpLocal, local, 'utf-8')
+          try {
+            diffText = execSync(`diff -u "${tmpBuiltin}" "${tmpLocal}" || true`, { encoding: 'utf-8', timeout: 5000 })
+            // Replace temp paths with readable labels
+            diffText = diffText.replace(new RegExp(escapeRegex(tmpBuiltin), 'g'), 'a/SKILL.md (builtin)')
+            diffText = diffText.replace(new RegExp(escapeRegex(tmpLocal), 'g'), 'b/SKILL.md (local)')
+          } finally {
+            // Cleanup temp files
+            try { fs.unlinkSync(tmpBuiltin) } catch { /* non-fatal */ }
+            try { fs.unlinkSync(tmpLocal) } catch { /* non-fatal */ }
+            try { fs.rmdirSync(tmpDir) } catch { /* non-fatal */ }
+          }
+        } catch {
+          // Fallback: simple line-by-line diff indication
+          diffText = `--- a/SKILL.md (builtin)\n+++ b/SKILL.md (local)\n@@ changes detected @@\n`
+        }
+      }
+
+      return c.json({
+        name, has_diff: hasDiff, diff: diffText,
+        builtin_version: builtin,
+        local_version: local,
+      })
+    } catch (err: unknown) {
+      const error = err instanceof Error ? err : new Error(String(err))
+      return c.json(createAgentError('INTERNAL_ERROR', error.message), 500)
+    }
+  })
+
+  // ── Skills — save/update content ──────────────────────────────────
+  app.put('/skills/:name', async (c) => {
+    try {
+      const org = c.req.header('X-Octopus-Org') || (c.get('org') as string)
+      if (!org) return c.json(createAgentError('ORG_NOT_FOUND', 'Organization not resolved'), 403)
+      const name = c.req.param('name')
+      if (!validateNameParam(name)) return c.json(createAgentError('INVALID_PARAM', 'Invalid name parameter'), 400)
+
+      const body = await c.req.json<{ content?: string }>().catch(() => ({}))
+      if (typeof body.content !== 'string') {
+        return c.json(createAgentError('INVALID_PARAM', 'content is required'), 400)
+      }
+
+      const localPath = path.join(getAgentSkillsDir(), name, 'SKILL.md')
+      const skillDir = path.dirname(localPath)
+
+      // Create directory if needed
+      if (!fs.existsSync(skillDir)) {
+        fs.mkdirSync(skillDir, { recursive: true })
+      }
+
+      // Backup existing content before overwriting
+      if (fs.existsSync(localPath)) {
+        backupFile(localPath)
+      }
+
+      fs.writeFileSync(localPath, body.content, 'utf-8')
+      const tokenCount = Math.ceil(body.content.length / 3)
+
+      return c.json({ ok: true, token_count: tokenCount })
     } catch (err: unknown) {
       const error = err instanceof Error ? err : new Error(String(err))
       return c.json(createAgentError('INTERNAL_ERROR', error.message), 500)

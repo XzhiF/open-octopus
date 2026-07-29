@@ -156,6 +156,12 @@ export function searchMemory(q: string, limit?: number) {
 export function rebuildFts() {
   return request<{ ok: boolean; indexed_count: number }>('/memory/rebuild-fts', { method: 'POST' })
 }
+export function refineMemory() {
+  return request<{
+    ok: boolean; refined: string; before_tokens: number; after_tokens: number;
+    backup_path: string; saved_tokens: number
+  }>('/memory/refine', { method: 'POST' })
+}
 export function triggerArchive(date?: string) {
   return request<{ ok: boolean; archived_date: string; essence_summary: string }>('/memory/archive', {
     method: 'POST', body: JSON.stringify({ date })
@@ -365,6 +371,11 @@ export function getSkill(name: string) {
 export function getSkillDiff(name: string) {
   return request<{ has_diff: boolean; diff: string | null; local_version: string | null; builtin_version: string | null }>(`/skills/${name}/diff-builtin`)
 }
+export function saveSkill(name: string, content: string) {
+  return request<{ ok: boolean; token_count: number }>(`/skills/${name}`, {
+    method: 'PUT', body: JSON.stringify({ content }),
+  })
+}
 export function revertToBuiltin(name: string) {
   return request<{ ok: boolean; reverted_to: string; backup_created: string }>(`/skills/${name}/local`, { method: 'DELETE' })
 }
@@ -387,6 +398,14 @@ export function getExperiences(query?: { skill?: string; q?: string }) {
 }
 export function rollbackEvolution(id: number) {
   return request<{ ok: boolean; rolled_back_skill: string; new_changelog_id: number }>(`/evolution/rollback/${id}`, { method: 'POST' })
+}
+export function markInsight(data: { skill_name: string; insight: string; session_id?: string }) {
+  return request<{ id: number }>('/evolution/mark-insight', { method: 'POST', body: JSON.stringify(data) })
+}
+export function processMarks(sessionId?: string) {
+  return request<{ processed: number; results: Array<{ skill_name: string; identified: boolean; level: string }> }>('/evolution/process-marks', {
+    method: 'POST', body: JSON.stringify({ session_id: sessionId }),
+  })
 }
 
 // Tasks
@@ -439,6 +458,12 @@ export function getConfig() {
 export function updateConfig(data: Partial<AgentConfig>) {
   return request<{ ok: boolean; config_degraded: boolean }>('/config', { method: 'PUT', body: JSON.stringify(data) })
 }
+export function testNotification(message?: string) {
+  return request<{ ok: boolean; detail: string }>('/config/test-notification', {
+    method: 'POST',
+    body: JSON.stringify({ message }),
+  })
+}
 export function getPersona() {
   return request<{ content: string; token_count: number }>('/config/persona')
 }
@@ -472,13 +497,16 @@ export function disableSafeMode() {
 }
 
 // Debug
-export function getDebugLog(query?: { session_id?: string; limit?: number; cursor?: string }) {
+export function getDebugLog(query?: { session_id?: string; limit?: number; cursor?: string; search?: string; start_date?: string; end_date?: string }) {
   const params = new URLSearchParams()
   if (query?.session_id) params.set('session_id', query.session_id)
   if (query?.limit) params.set('limit', String(query.limit))
   if (query?.cursor) params.set('cursor', query.cursor)
+  if (query?.search) params.set('search', query.search)
+  if (query?.start_date) params.set('start_date', query.start_date)
+  if (query?.end_date) params.set('end_date', query.end_date)
   const qs = params.toString()
-  return request<PaginatedResponse<DebugLogEntry>>(`/debug/log${qs ? `?${qs}` : ''}`)
+  return request<PaginatedResponse<DebugLogEntry> & { has_more: boolean }>(`/debug/log${qs ? `?${qs}` : ''}`)
 }
 export function getAssembleDetail(chatId: string) {
   return request<DebugLogEntry>(`/debug/assemble/${chatId}`)
@@ -491,4 +519,66 @@ export function getObservability(view?: string, opts?: Record<string, string>) {
   if (opts) Object.entries(opts).forEach(([k, v]) => params.set(k, v))
   const qs = params.toString()
   return request<unknown>(`/observability${qs ? `?${qs}` : ''}`)
+}
+
+// ── Scheduler (for cron-based archive config) ───────────────────────
+
+const SCHEDULER_BASE = () => `${getServerUrl()}/api/scheduler`
+
+async function schedulerRequest<T>(url: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(`${SCHEDULER_BASE()}${url}`, {
+    ...init,
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': AUTH_HEADER,
+      ...init?.headers,
+    },
+  })
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: { code: 'UNKNOWN', message: res.statusText } }))
+    const err = new Error(body.error?.message ?? res.statusText) as Error & { code?: string; status?: number }
+    err.code = body.error?.code
+    err.status = res.status
+    throw err
+  }
+  if (res.status === 204 || res.headers.get('content-length') === '0') return undefined as T
+  return res.json() as Promise<T>
+}
+
+export interface SchedulerJob {
+  id: string
+  name: string
+  cron_expression: string
+  timezone: string
+  version: number
+  enabled: number
+  [key: string]: unknown
+}
+
+export interface CronParseResult {
+  valid: boolean
+  description: string
+  next_executions: string[]
+  is_high_frequency: boolean
+  dst_notes: string[]
+}
+
+export function getSchedulerJob(id: string) {
+  return schedulerRequest<SchedulerJob>(`/jobs/${encodeURIComponent(id)}`)
+}
+
+export function updateSchedulerJob(id: string, data: { cron_expression: string }, version: number) {
+  return schedulerRequest<SchedulerJob>(`/jobs/${encodeURIComponent(id)}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', 'If-Match': String(version) },
+    body: JSON.stringify(data),
+  })
+}
+
+export function parseCronExpression(expression: string, timezone: string) {
+  return schedulerRequest<CronParseResult>('/cron/parse', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ expression, timezone }),
+  })
 }

@@ -15,6 +15,7 @@ interface SkillListProps {
   skills: SkillInfo[]
   loading: boolean
   onRevertBuiltin: (name: string) => Promise<boolean>
+  onSelectSkill?: (name: string) => void
 }
 
 const sourceLabels: Record<string, { label: string; className: string }> = {
@@ -23,7 +24,7 @@ const sourceLabels: Record<string, { label: string; className: string }> = {
   prod: { label: '生产版', className: 'bg-agent-success-light text-agent-success-foreground border-agent-success/20' },
 }
 
-export function SkillList({ skills, loading, onRevertBuiltin }: SkillListProps) {
+export function SkillList({ skills, loading, onRevertBuiltin, onSelectSkill }: SkillListProps) {
   const [revertTarget, setRevertTarget] = useState<string | null>(null)
   const [reverting, setReverting] = useState(false)
   const [diffTarget, setDiffTarget] = useState<string | null>(null)
@@ -55,7 +56,8 @@ export function SkillList({ skills, loading, onRevertBuiltin }: SkillListProps) 
             return (
               <div
                 key={skill.name}
-                className="flex items-center gap-3 rounded-lg border border-agent-divider bg-agent-surface-raised p-4 hover:shadow-sm transition-shadow"
+                className="flex items-center gap-3 rounded-lg border border-agent-divider bg-agent-surface-raised p-4 hover:shadow-sm transition-shadow cursor-pointer"
+                onClick={() => onSelectSkill?.(skill.name)}
               >
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2">
@@ -74,7 +76,7 @@ export function SkillList({ skills, loading, onRevertBuiltin }: SkillListProps) 
                     )}
                   </div>
                 </div>
-                <div className="flex items-center gap-1.5 shrink-0">
+                <div className="flex items-center gap-1.5 shrink-0" onClick={(e) => e.stopPropagation()}>
                   {skill.source === 'local_evolved' && (
                     <>
                       <Button variant="ghost" size="sm" className="gap-1 text-xs" onClick={() => setDiffTarget(skill.name)}>

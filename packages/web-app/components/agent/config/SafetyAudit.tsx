@@ -17,9 +17,16 @@ const typeStyles: Record<string, string> = {
 }
 
 const decisionLabels: Record<string, string> = {
-  intercept: '拦截',
+  intercept: '已记录',
   confirm_accept: '用户确认',
   confirm_reject: '用户拒绝',
+}
+
+function formatContext(context: unknown): string {
+  if (typeof context === 'string') {
+    try { return JSON.stringify(JSON.parse(context), null, 2) } catch { return context }
+  }
+  return JSON.stringify(context, null, 2)
 }
 
 export function SafetyAudit({ events }: SafetyAuditProps) {
@@ -28,7 +35,7 @@ export function SafetyAudit({ events }: SafetyAuditProps) {
       <div className="px-5 py-4 border-b border-agent-divider">
         <h3 className="text-sm font-semibold flex items-center gap-2">
           <Shield className="h-4 w-4" />
-          安全审计
+          操作审计
         </h3>
       </div>
       {events.length === 0 ? (
@@ -39,17 +46,29 @@ export function SafetyAudit({ events }: SafetyAuditProps) {
         <ScrollArea className="max-h-[300px]">
           <div className="divide-y divide-agent-divider">
             {events.map((event) => (
-              <div key={event.id} className="px-5 py-3 flex items-center gap-3">
-                <Badge variant="outline" className={cn('text-xs shrink-0', typeStyles[event.type] ?? '')}>
-                  {event.type}
-                </Badge>
-                <span className="text-sm flex-1 truncate">{event.operation}</span>
-                <span className="text-xs text-muted-foreground shrink-0">
-                  {decisionLabels[event.decision] ?? event.decision}
-                </span>
-                <span className="text-xs text-muted-foreground shrink-0">
-                  {new Date(event.timestamp).toLocaleString('zh-CN', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
-                </span>
+              <div key={event.id} className="px-5 py-3">
+                <div className="flex items-center gap-3">
+                  <Badge variant="outline" className={cn('text-xs shrink-0', typeStyles[event.type] ?? '')}>
+                    {event.type}
+                  </Badge>
+                  <span className="text-sm flex-1 truncate" title={event.operation}>{event.operation}</span>
+                  <span className="text-xs text-muted-foreground shrink-0">
+                    {decisionLabels[event.decision] ?? event.decision}
+                  </span>
+                  <span className="text-xs text-muted-foreground shrink-0">
+                    {new Date(event.timestamp).toLocaleString('zh-CN', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                  </span>
+                </div>
+                {event.context != null && (
+                  <details className="mt-2 ml-[calc(theme(spacing.5)+theme(spacing.3))]">
+                    <summary className="text-xs text-muted-foreground cursor-pointer hover:text-foreground transition-colors">
+                      查看详情
+                    </summary>
+                    <pre className="mt-1 text-xs font-mono text-muted-foreground whitespace-pre-wrap bg-agent-surface p-2 rounded-md max-h-32 overflow-auto">
+                      {formatContext(event.context)}
+                    </pre>
+                  </details>
+                )}
               </div>
             ))}
           </div>

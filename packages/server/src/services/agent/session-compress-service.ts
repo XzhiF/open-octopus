@@ -261,7 +261,12 @@ export function getSessionCompressService(org: string): SessionCompressService {
   }
   let instance = instances.get(org)
   if (!instance) {
-    instance = new SessionCompressService(org, _dao)
+    // Read config dynamically when creating the instance
+    const { getConfigManager } = require('./config-manager')
+    const config = getConfigManager().getConfig(org)
+    instance = new SessionCompressService(org, _dao, {
+      threshold_messages: config.memory.session_compress_threshold_messages,
+    })
     instances.set(org, instance)
   }
   return instance

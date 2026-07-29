@@ -101,6 +101,7 @@ export interface MemorySearchResult {
   score: number
   session_title: string
   created_at: string
+  source?: string  // 'main' | clone-name (memory source for FTS filtering)
 }
 
 // ===== Clones =====
@@ -241,13 +242,12 @@ export interface AgentRuntimeConfig {
   timeout: number
   max_clones: number
   notification: {
-    provider: string
+    platform: string
     target: string
     timezone: string
   }
   memory: {
     session_retention_days: number
-    archive_cron_hour: number
     long_term_refine_trigger_days: number
     session_compress_threshold_messages: number
   }
@@ -323,6 +323,7 @@ export interface DebugSegment {
   budget: number
   degraded: boolean
   content_preview: string
+  content: string
 }
 
 // ===== Health =====
