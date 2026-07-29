@@ -242,7 +242,7 @@ export interface AgentRuntimeConfig {
   timeout: number
   max_clones: number
   notification: {
-    provider: string
+    platform: string
     target: string
     timezone: string
   }

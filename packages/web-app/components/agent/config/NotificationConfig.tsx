@@ -16,7 +16,7 @@ interface NotificationConfigProps {
   saving: boolean
 }
 
-const PROVIDERS = [
+const PLATFORMS = [
   { value: 'telegram', label: 'Telegram' },
   { value: 'discord', label: 'Discord' },
   { value: 'slack', label: 'Slack' },
@@ -30,7 +30,7 @@ const TIMEZONES = [
 ]
 
 export function NotificationConfig({ config, onSave, saving }: NotificationConfigProps) {
-  const [provider, setProvider] = useState(config?.notification?.provider ?? 'telegram')
+  const [platform, setPlatform] = useState(config?.notification?.platform ?? 'telegram')
   const [target, setTarget] = useState(config?.notification?.target ?? '')
   const [timezone, setTimezone] = useState(config?.notification?.timezone ?? 'Asia/Shanghai')
   const [testing, setTesting] = useState(false)
@@ -38,12 +38,12 @@ export function NotificationConfig({ config, onSave, saving }: NotificationConfi
 
   const handleSave = async () => {
     const ok = await onSave({
-      notification: { provider, target, timezone },
+      notification: { platform, target, timezone },
     })
     if (ok) {
       toast.success('通知配置已保存')
     } else {
-      toast.error('保存失败，请检查 provider 值是否合法')
+      toast.error('保存失败，请检查 platform 值是否合法')
     }
   }
 
@@ -74,12 +74,12 @@ export function NotificationConfig({ config, onSave, saving }: NotificationConfi
       <div className="space-y-3">
         <div>
           <Label>通知平台</Label>
-          <Select value={provider} onValueChange={setProvider}>
+          <Select value={platform} onValueChange={setPlatform}>
             <SelectTrigger className="mt-1 bg-agent-surface-inset border-agent-divider">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              {PROVIDERS.map((p) => (
+              {PLATFORMS.map((p) => (
                 <SelectItem key={p.value} value={p.value}>{p.label}</SelectItem>
               ))}
             </SelectContent>

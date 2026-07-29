@@ -71,7 +71,7 @@ const DEFAULT_CONFIG = {
   timeout: 300,
   max_clones: 5,
   notification: {
-    provider: 'hermes',
+    platform: 'hermes',
     target: '',
     timezone: 'Asia/Shanghai',
   },

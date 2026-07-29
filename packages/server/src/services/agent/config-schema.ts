@@ -18,7 +18,7 @@ function isValidModel(v: string): boolean {
 // IANA timezone validation (simplified — checks common formats)
 const ianaTimezoneRegex = /^[A-Z][a-z]+\/[A-Z][a-z_]+(?:\/[A-Z][a-z_]+)?$/
 
-export const notificationProviderSchema = z.enum(['telegram', 'discord', 'slack', 'signal', 'email', 'none'])
+export const notificationPlatformSchema = z.enum(['telegram', 'discord', 'slack', 'signal', 'email', 'none'])
 
 export const agentConfigSchema = z.object({
   model: z.string().refine(isValidModel, {
@@ -27,13 +27,13 @@ export const agentConfigSchema = z.object({
   timeout: z.number().int().min(30).max(1800).default(300),
   max_clones: z.number().int().min(1).default(5),
   notification: z.object({
-    provider: notificationProviderSchema.default('telegram'),
+    platform: notificationPlatformSchema.default('telegram'),
     target: z.string().default(''),
     timezone: z.string().regex(ianaTimezoneRegex, 'Must be a valid IANA timezone').default('Asia/Shanghai'),
   }).default({}).superRefine((notification, ctx) => {
-    // When provider is not 'none', validate target format if non-empty
-    if (notification.provider !== 'none' && notification.target && notification.target.trim() !== '') {
-      if (notification.provider === 'email') {
+    // When platform is not 'none', validate target format if non-empty
+    if (notification.platform !== 'none' && notification.target && notification.target.trim() !== '') {
+      if (notification.platform === 'email') {
         if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(notification.target)) {
           ctx.addIssue({
             code: z.ZodIssueCode.custom,
@@ -41,7 +41,7 @@ export const agentConfigSchema = z.object({
             path: ['target'],
           })
         }
-      } else if (notification.provider === 'telegram') {
+      } else if (notification.platform === 'telegram') {
         // Accept numeric chat ID or hermes group/channel name
         if (!/^-?\d+$/.test(notification.target) && !/^[a-zA-Z0-9_-]+$/.test(notification.target)) {
           ctx.addIssue({
@@ -50,7 +50,7 @@ export const agentConfigSchema = z.object({
             path: ['target'],
           })
         }
-      } else if (notification.provider === 'slack') {
+      } else if (notification.platform === 'slack') {
         if (!/^[C#][A-Z0-9]+$/.test(notification.target)) {
           ctx.addIssue({
             code: z.ZodIssueCode.custom,
@@ -59,14 +59,14 @@ export const agentConfigSchema = z.object({
           })
         }
       } else {
-        // For other providers: target must be provider:id format or a qualified identifier
+        // For other platforms: target must be platform:id format or a qualified identifier
         const providerPrefixRe = /^(telegram|slack|email|discord|signal|webhook):.+$/
         // Bare identifiers must contain at least one separator (_, -, .) to avoid ambiguity
         const qualifiedIdRe = /^[a-zA-Z0-9][a-zA-Z0-9_.:-]*[_.:-][a-zA-Z0-9_.:-]*$/
         if (!providerPrefixRe.test(notification.target) && !qualifiedIdRe.test(notification.target)) {
           ctx.addIssue({
             code: z.ZodIssueCode.custom,
-            message: 'Notification target must use provider:id format (e.g., telegram:12345) or a qualified identifier',
+            message: 'Notification target must use platform:id format (e.g., telegram:12345) or a qualified identifier',
             path: ['target'],
           })
         }

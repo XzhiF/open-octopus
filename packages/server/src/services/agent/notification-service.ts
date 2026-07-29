@@ -14,7 +14,7 @@ export interface NotificationRequest {
 
 export interface NotificationResult {
   sent: boolean
-  provider: string
+  platform: string
   target: string
   error?: string
   retries: number
@@ -44,7 +44,7 @@ const FAILED_QUEUE_MAX = 100
  */
 export class NotificationService {
   private failedQueues = new Map<string, FailedNotification[]>()
-  private configCache = new Map<string, { provider: string; target: string }>()
+  private configCache = new Map<string, { platform: string; target: string }>()
 
   /**
    * Send a notification to the configured target.
@@ -62,11 +62,11 @@ export class NotificationService {
       }
 
       try {
-        const sent = this.sendViaHermes(config.provider, config.target, request)
+        const sent = this.sendViaHermes(config.platform, config.target, request)
         if (sent) {
           return {
             sent: true,
-            provider: config.provider,
+            platform: config.platform,
             target: config.target,
             retries: attempt,
           }
@@ -82,7 +82,7 @@ export class NotificationService {
 
     return {
       sent: false,
-      provider: config.provider,
+      platform: config.platform,
       target: config.target,
       error: lastError,
       retries: MAX_RETRIES,
@@ -94,11 +94,11 @@ export class NotificationService {
    * hermes send uses: hermes send -t "platform:target" "message"
    * e.g. hermes send -t "telegram:xzf_hermes" "hello"
    */
-  private sendViaHermes(provider: string, target: string, request: NotificationRequest): boolean {
+  private sendViaHermes(platform: string, target: string, request: NotificationRequest): boolean {
     if (!target) return false
 
     // Construct hermes target: "platform:target" or just "target" if already contains ':'
-    const hermesTarget = target.includes(':') ? target : `${provider}:${target}`
+    const hermesTarget = target.includes(':') ? target : `${platform}:${target}`
 
     try {
       const message = this.formatMessage(request)
@@ -125,10 +125,10 @@ export class NotificationService {
   }
 
   /**
-   * Get notification config for an org (provider + target).
+   * Get notification config for an org (platform + target).
    * Reads from ConfigManager (the single source of truth for agent config).
    */
-  private getConfig(org: string): { provider: string; target: string } {
+  private getConfig(org: string): { platform: string; target: string } {
     const cached = this.configCache.get(org)
     if (cached) return cached
 
@@ -137,14 +137,14 @@ export class NotificationService {
       const configManager = getConfigManager()
       const config = configManager.getConfig(org)
       const result = {
-        provider: config.notification?.provider ?? 'hermes',
+        platform: config.notification?.platform ?? 'hermes',
         target: config.notification?.target ?? '',
       }
       this.configCache.set(org, result)
       return result
     } catch {
       // Fallback on ConfigManager failure
-      return { provider: 'hermes', target: '' }
+      return { platform: 'hermes', target: '' }
     }
   }
 

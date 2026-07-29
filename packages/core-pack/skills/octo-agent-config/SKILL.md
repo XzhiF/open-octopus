@@ -35,7 +35,7 @@ model: pro
 timeout: 300
 max_clones: 5
 notification:
-  provider: slack
+  platform: slack
   target: "#agent-alerts"
   timezone: Asia/Shanghai
 memory:

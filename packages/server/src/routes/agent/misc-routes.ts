@@ -647,11 +647,11 @@ nodes:
       const configManager = getConfigManager()
       const config = configManager.getConfig(org)
 
-      const provider = config.notification?.provider
+      const platform = config.notification?.platform
       const target = config.notification?.target
 
-      if (!provider || provider === 'none') {
-        return c.json({ ok: false, detail: '通知未配置或已禁用 (provider=none)' })
+      if (!platform || platform === 'none') {
+        return c.json({ ok: false, detail: '通知未配置或已禁用 (platform=none)' })
       }
 
       if (!target) {
@@ -672,7 +672,7 @@ nodes:
       return c.json({
         ok: result.sent,
         detail: result.sent
-          ? `通知已发送至 ${result.provider}:${result.target}`
+          ? `通知已发送至 ${result.platform}:${result.target}`
           : `通知发送失败: ${result.error ?? '未知错误'}`,
       })
     } catch (err: unknown) {
