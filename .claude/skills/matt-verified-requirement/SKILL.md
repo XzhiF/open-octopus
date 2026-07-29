@@ -1,7 +1,7 @@
 ---
 name: matt-verified-requirement
 description: Verification-driven requirement clarification. Multi-turn dialogue using grilling or wayfinder paths. Clarifies requirements, defines verification strategies and acceptance criteria. Outputs a structured brief for agent execution. Uses domain-modeling to maintain project glossary and ADRs. Use when proposing new features, refactors, or discussing verification approaches.
-dependencies: domain-modeling, grilling, wayfinder
+dependencies: domain-modeling, grilling, wayfinder, research
 ---
 
 # Verification-Driven Requirement Clarification
@@ -22,8 +22,11 @@ You are a **relentless challenger** of requirements, not a compliant executor. Y
 When new terms emerge or term meanings are clarified:
 
 1. **Challenge vague language**: "When you say 'account', do you mean Member or User? They're different concepts."
-2. **Cross-validate code**: Check existing CONTEXT.md and code for inconsistencies; raise contradictions proactively
-3. **Write to CONTEXT.md immediately**: Update the relevant project's CONTEXT.md once a term is settled
+2. **Cross-validate**: Check existing CONTEXT-MAP.md, per-package CONTEXT.md, and code for inconsistencies; raise contradictions proactively
+3. **Write to the right CONTEXT.md immediately**:
+   - **System-wide terms** (cross-cutting, used by 3+ packages) → update CONTEXT-MAP.md glossary
+   - **Package-specific terms** → update `packages/<name>/CONTEXT.md` (create if doesn't exist, using CONTEXT-FORMAT.md)
+   - If CONTEXT-MAP.md exists, the repo has multiple contexts; infer which context the current topic relates to
 
 ### Architecture Decision Records (ADR)
 
@@ -39,12 +42,18 @@ Skip ADR when any criterion is not met.
 
 ## Path Selection
 
-After 2-3 initial questions, determine:
+After 2-3 initial questions, determine which path fits:
 
-| Characteristics | Path | Expected rounds |
-|----------------|------|----------------|
-| 1 project, clear scope | **Grilling path** | 5-10 rounds |
-| 2+ projects, unknown decisions | **Wayfinder path** | Map first, then resolve |
+| Signal | Grilling Path | Wayfinder Path |
+|--------|--------------|----------------|
+| Scope | 1 package, clear boundaries | 2+ packages, or boundaries unclear |
+| Decisions | All decision branches visible | Fog — can sense decisions but can't phrase them all yet |
+| Session fit | ~10 rounds can cover | Needs structured map to track progress |
+| Parallelism | Single-threaded interview OK | Benefits from parallel research sub-agents |
+
+**Default to Grilling** — faster and lighter. Escalate to Wayfinder when the surface keeps expanding.
+
+**Mid-flight escalation**: If grilling discovers unexpected fog (suspected decisions it can't yet phrase), pause and propose switching to the wayfinder path. Get user confirmation before switching paths.
 
 ### Grilling Path (small to medium)
 
@@ -99,7 +108,7 @@ Write `<artifacts.dir>/<feature-slug>/map.md`:
 
 #### Decision Tickets
 
-**Storage**: `<artifacts.dir>/<feature-slug>/decisions/NN-<slug>.md` — separate from `issues/` (which is for downstream implementation tickets).
+**Storage**: `<artifacts.dir>/<feature-slug>/decisions/NN-<slug>.md` — separate from `issues/` (which is for implementation tickets created later by `matt-dev-runner`).
 
 **Four types** (aligned with original `/wayfinder`):
 
@@ -126,6 +135,19 @@ Blocked by: NN, NN (or "None")
 
 **Blocking edges**: A ticket is unblocked when every ticket in its `Blocked by` list is `resolved`. Wire blocking in a second pass (tickets need numbers before they can reference each other).
 
+#### Sub-Agent Parallel Research
+
+Research tickets are AFK — they don't need the human. Fire them in parallel using the Agent tool:
+
+For each research ticket on the frontier:
+1. Claim it (set `Status: claimed`, save file)
+2. Spawn a sub-agent via the Agent tool:
+   - Prompt: "Research: <ticket question>. Write findings to <ticket-path> under `## Answer`. Set `Status: resolved`. Use primary sources — official docs, source code, specs."
+3. Continue with the next HITL ticket while research sub-agents run
+4. When a research sub-agent completes: read answer → update map's **Decisions so far** → graduate any fog it cleared
+
+**Rule**: Never resolve more than one non-research HITL ticket per main session. Research sub-agents can run in parallel.
+
 #### Fog of War
 
 The map is deliberately incomplete. Beyond the live tickets lies **fog** — decisions you can tell are coming but can't yet pin down.
@@ -144,7 +166,7 @@ The **frontier** = open + unblocked + unclaimed tickets. Select by number (lowes
 
 1. **Claim**: set `Status: claimed`, save the file
 2. **Execute** by type:
-   - `research` → fire `/research` sub-agent, or investigate yourself; record findings
+   - `research` → fire a research sub-agent (see "Sub-Agent Parallel Research" above); record findings
    - `prototype` → build a quick prototype, record the conclusion (code is throwaway)
    - `grilling` → use `/grilling` + `/domain-modeling`, one question at a time
    - `task` → do the manual work, record results (credentials location, URLs, data shape)
@@ -231,30 +253,33 @@ On exit, create `<artifacts.dir>/<feature-slug>/` and write the brief.
 
 ```
 <artifacts.dir>/<feature-slug>/
-├── brief.md              <- Requirement brief (this skill's output)
-├── spec.md               <- Verified Spec (downstream: matt-dev-runner Step 1)
-└── issues/               <- Implementation tickets (downstream: matt-dev-runner Step 2)
-    ├── 01-xxx.md
-    └── ...
+└── brief.md              ← Requirement brief (this skill's ONLY output)
 ```
 
 ### Wayfinder Path Output
 
 ```
 <artifacts.dir>/<feature-slug>/
-├── brief.md              <- Requirement brief (written AFTER all decision tickets resolved)
-├── map.md                <- Decision map (wayfinder core artifact)
-├── decisions/            <- Decision tickets (wayfinder stage only)
+├── brief.md              ← Requirement brief (written AFTER all decision tickets resolved)
+├── map.md                ← Decision map (wayfinder core artifact)
+├── decisions/            ← Decision tickets (resolved during wayfinder stage)
 │   ├── 01-research-sdk-plugin.md
 │   ├── 02-prototype-prompt-length.md
 │   └── 03-grilling-discovery.md
-├── spec.md               <- Verified Spec (downstream: matt-dev-runner Step 1)
-└── issues/               <- Implementation tickets (downstream: matt-dev-runner Step 2)
-    ├── 01-schema.md
-    └── ...
 ```
 
-**`decisions/` vs `issues/`**: Decision tickets (what to build and why) live in `decisions/`. Implementation tickets (how to build it) live in `issues/`. They never conflict — `decisions/` is written by this skill during wayfinder, `issues/` is written later by `matt-verified-tickets`.
+### What This Skill Does NOT Produce
+
+The following artifacts are created **later** by downstream agents — this skill must **never** create them:
+
+| Artifact | Created By | When |
+|----------|-----------|------|
+| `spec.md` | `matt-dev-runner` Step 1 (matt-verified-spec) | After brief is confirmed |
+| `issues/` | `matt-dev-runner` Step 2 (matt-verified-tickets) | After spec is written |
+| `pipeline-report.md` | `matt-dev-pipeline` Phase 4 | After E2E verification |
+| `e2e-*` directories | `matt-e2e-tester` | During E2E verification |
+
+**Pipeline order**: brief → spec → issues → implement → deploy → E2E → PR. Each phase owns its artifacts.
 
 **ADR 不在此目录** — ADR 写入 `docs/adr/NNNN-slug.md`，见上方 ADR 规则。
 
@@ -265,7 +290,7 @@ On exit, create `<artifacts.dir>/<feature-slug>/` and write the brief.
 2. Write `<artifacts.dir>/<feature-slug>/brief.md`
 3. For wayfinder path, `map.md` and `decisions/` were already created during the wayfinder process
 4. **Update `<artifacts.dir>/index.md`** (append new record, auto-increment number)
-5. Tell the user the brief path, as parameter for calling matt-dev-runner
+5. Tell the user the brief path and how to proceed (see Next Steps)
 
 ### Index File Maintenance
 
@@ -355,7 +380,7 @@ Map: [map.md](./map.md)
 |---------------|-------------------------|
 | `grilling` | Reuses its one-question-at-a-time mode |
 | `grill-with-docs` | **Replaces** — grilling + domain-modeling built in, plus verification strategy |
-| `wayfinder` | **Implements** its core protocol (map, decision tickets, fog of war, frontier) adapted for single-entry flow. Use original `/wayfinder` for multi-session multi-agent collaboration. |
+| `wayfinder` | **Adapts** its core protocol (map, decision tickets, fog of war, frontier) for single-entry flow with verification strategy. The standalone `/wayfinder` remains available for efforts outside this pipeline. |
 | `domain-modeling` | **Reuses** — updates CONTEXT.md and creates ADRs inline |
 
 ## Next Steps
