@@ -394,6 +394,15 @@ workflowCmd
         const icon = simResult.passed ? "✔" : "✖"
         console.log(`${icon} Scenario "${simResult.scenarioName}" (${simResult.durationMs}ms)`)
 
+        // Show syntax pre-check errors (if any)
+        if (simResult.syntaxErrors && simResult.syntaxErrors.length > 0) {
+          console.log(`  ⚠ Syntax pre-check: ${simResult.syntaxErrors.length} error(s)`)
+          for (const se of simResult.syntaxErrors) {
+            const loc = se.line ? ` (line ${se.line})` : ""
+            console.log(`    ✖ ${se.nodeType} node "${se.nodeId}"${loc}: ${se.error.split("\n")[0]}`)
+          }
+        }
+
         if (options.verbose) {
           for (const entry of simResult.executionTrace) {
             const mode = entry.mocked ? "mocked" : "real"
