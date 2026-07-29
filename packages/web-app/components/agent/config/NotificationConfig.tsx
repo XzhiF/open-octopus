@@ -35,6 +35,7 @@ export function NotificationConfig({ config, onSave, saving }: NotificationConfi
   const [timezone, setTimezone] = useState(config?.notification?.timezone ?? 'Asia/Shanghai')
   const [testing, setTesting] = useState(false)
   const [testMessage, setTestMessage] = useState('')
+  const [testResult, setTestResult] = useState<{ ok: boolean; detail: string } | null>(null)
 
   const handleSave = async () => {
     const ok = await onSave({
@@ -49,8 +50,10 @@ export function NotificationConfig({ config, onSave, saving }: NotificationConfi
 
   const handleTest = async () => {
     setTesting(true)
+    setTestResult(null)
     try {
       const result = await testNotification(testMessage || undefined)
+      setTestResult(result)
       if (result.ok) {
         toast.success(result.detail)
       } else {
@@ -58,6 +61,7 @@ export function NotificationConfig({ config, onSave, saving }: NotificationConfi
       }
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : '测试失败'
+      setTestResult({ ok: false, detail: message })
       toast.error(message)
     } finally {
       setTesting(false)
@@ -124,6 +128,15 @@ export function NotificationConfig({ config, onSave, saving }: NotificationConfi
         >
           {testing ? '测试中...' : '测试通知'}
         </Button>
+        {testResult && (
+          <div className={`text-xs px-3 py-2 rounded-md ${
+            testResult.ok
+              ? 'bg-agent-success-light text-agent-success-foreground'
+              : 'bg-agent-error-light text-agent-error-foreground'
+          }`}>
+            {testResult.ok ? '✓' : '✗'} {testResult.detail}
+          </div>
+        )}
       </div>
     </ConfigSection>
   )
