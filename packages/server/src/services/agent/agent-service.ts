@@ -755,6 +755,7 @@ export class AgentService {
         budget,
         degraded,
         content_preview: seg.content.slice(0, 200),
+        content: seg.content,
       }
     })
 

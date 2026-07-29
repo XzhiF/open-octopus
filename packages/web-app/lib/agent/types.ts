@@ -222,6 +222,7 @@ export interface DebugSegment {
   budget: number
   degraded: boolean
   content_preview: string
+  content: string
 }
 
 export interface DebugLogEntry {

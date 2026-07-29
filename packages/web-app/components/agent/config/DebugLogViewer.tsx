@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { Bug, Search, ChevronDown } from 'lucide-react'
+import { Bug, Search, ChevronDown, ChevronRight } from 'lucide-react'
 import { Switch } from '@/components/ui/switch'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
@@ -36,6 +36,7 @@ export function DebugLogViewer({ config, onSave }: DebugLogViewerProps) {
   const [searchTerm, setSearchTerm] = useState('')
   const [cursor, setCursor] = useState<string | undefined>(undefined)
   const [hasMore, setHasMore] = useState(false)
+  const [expandedSegments, setExpandedSegments] = useState<Set<number>>(new Set())
   const debounceRef = useRef<ReturnType<typeof setTimeout>>()
 
   // Sync debugEnabled when config changes externally
@@ -122,6 +123,7 @@ export function DebugLogViewer({ config, onSave }: DebugLogViewerProps) {
 
   const handleSelect = async (chatId: string) => {
     setLoading(true)
+    setExpandedSegments(new Set())
     try {
       const detail = await api.getAssembleDetail(chatId)
       setSelectedLog(detail)
@@ -130,6 +132,18 @@ export function DebugLogViewer({ config, onSave }: DebugLogViewerProps) {
     } finally {
       setLoading(false)
     }
+  }
+
+  const toggleSegment = (index: number) => {
+    setExpandedSegments(prev => {
+      const next = new Set(prev)
+      if (next.has(index)) {
+        next.delete(index)
+      } else {
+        next.add(index)
+      }
+      return next
+    })
   }
 
   return (
@@ -232,23 +246,46 @@ export function DebugLogViewer({ config, onSave }: DebugLogViewerProps) {
                 <div className="p-4">
                   <h4 className="text-sm font-semibold mb-3">System Prompt 组装详情</h4>
                   <div className="space-y-3">
-                    {selectedLog.segments.map((seg) => (
-                      <div key={seg.index} className="rounded-lg border border-agent-divider p-3">
-                        <div className="flex items-center justify-between mb-1">
-                          <span className="text-sm font-medium">{seg.name}</span>
-                          <span className={cn(
-                            'text-xs',
-                            seg.degraded ? 'text-agent-warn' : 'text-muted-foreground'
-                          )}>
-                            {seg.token_count} / {seg.budget} tokens
-                            {seg.degraded && ' (已降级)'}
-                          </span>
+                    {selectedLog.segments.map((seg) => {
+                      const isExpanded = expandedSegments.has(seg.index)
+                      return (
+                        <div key={seg.index} className="rounded-lg border border-agent-divider overflow-hidden">
+                          <button
+                            onClick={() => toggleSegment(seg.index)}
+                            className="w-full flex items-center justify-between p-3 hover:bg-accent/50 transition-colors"
+                          >
+                            <div className="flex items-center gap-2">
+                              {isExpanded ? (
+                                <ChevronDown className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                              ) : (
+                                <ChevronRight className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                              )}
+                              <span className="text-sm font-medium">{seg.name}</span>
+                            </div>
+                            <span className={cn(
+                              'text-xs shrink-0',
+                              seg.degraded ? 'text-agent-warn' : 'text-muted-foreground'
+                            )}>
+                              {seg.token_count} / {seg.budget} tokens
+                              {seg.degraded && ' (已降级)'}
+                            </span>
+                          </button>
+                          {isExpanded ? (
+                            <div className="px-3 pb-3 border-t border-agent-divider">
+                              <pre className="text-xs font-mono text-muted-foreground whitespace-pre-wrap mt-2 max-h-[400px] overflow-auto">
+                                {seg.content || '(empty)'}
+                              </pre>
+                            </div>
+                          ) : (
+                            <div className="px-3 pb-3">
+                              <pre className="text-xs font-mono text-muted-foreground whitespace-pre-wrap line-clamp-3">
+                                {seg.content_preview}
+                              </pre>
+                            </div>
+                          )}
                         </div>
-                        <pre className="text-xs font-mono text-muted-foreground whitespace-pre-wrap">
-                          {seg.content_preview}
-                        </pre>
-                      </div>
-                    ))}
+                      )
+                    })}
                   </div>
                   {Object.keys(selectedLog.skill_sources ?? {}).length > 0 && (
                     <div className="mt-4">
