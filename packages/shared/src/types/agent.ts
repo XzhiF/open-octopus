@@ -101,6 +101,7 @@ export interface MemorySearchResult {
   score: number
   session_title: string
   created_at: string
+  source?: string  // 'main' | clone-name (memory source for FTS filtering)
 }
 
 // ===== Clones =====

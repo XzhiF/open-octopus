@@ -228,6 +228,116 @@ describe('MemoryService', () => {
     })
   })
 
+  // ── recordDaily clone routing (CMA-02) ─────────────────────
+
+  describe('recordDaily with cloneDir', () => {
+    it('writes to main agent daily dir when cloneDir omitted', () => {
+      // Create a session first (for FTS foreign key)
+      const db = getDb()
+      db.exec(`CREATE TABLE IF NOT EXISTS sessions (
+        id TEXT PRIMARY KEY, org TEXT, title TEXT, clone_name TEXT,
+        perspective_clone_name TEXT, session_type TEXT, is_active INTEGER DEFAULT 1,
+        is_deleted INTEGER DEFAULT 0, scope_id TEXT, provider_session_id TEXT,
+        last_message_at TEXT, created_at TEXT, updated_at TEXT
+      )`)
+      db.exec(`CREATE TABLE IF NOT EXISTS messages (
+        id TEXT PRIMARY KEY, session_id TEXT, role TEXT, content TEXT,
+        type TEXT DEFAULT 'text', metadata TEXT, tool_calls TEXT,
+        is_summary INTEGER DEFAULT 0, is_compressed INTEGER DEFAULT 0,
+        is_edited INTEGER DEFAULT 0, source TEXT DEFAULT 'main', created_at TEXT
+      )`)
+      db.exec(`CREATE VIRTUAL TABLE IF NOT EXISTS session_memory_fts USING fts5(
+        session_id, summary, session_title, created_at, source
+      )`)
+
+      db.prepare("INSERT INTO sessions (id, org, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?)").run(
+        'sess-1', TEST_ORG, 'Test', new Date().toISOString(), new Date().toISOString()
+      )
+
+      const result = service.recordDaily(TEST_ORG, 'Main agent memory', 'sess-1')
+      expect(result.ok).toBe(true)
+
+      const today = new Date().toISOString().split('T')[0]
+      const mainDailyPath = path.join(memDir, 'daily', `${today}.md`)
+      expect(fs.existsSync(mainDailyPath)).toBe(true)
+      expect(fs.readFileSync(mainDailyPath, 'utf-8')).toContain('Main agent memory')
+    })
+
+    it('writes to clone daily dir when cloneDir provided', () => {
+      const db = getDb()
+      db.exec(`CREATE TABLE IF NOT EXISTS sessions (
+        id TEXT PRIMARY KEY, org TEXT, title TEXT, clone_name TEXT,
+        perspective_clone_name TEXT, session_type TEXT, is_active INTEGER DEFAULT 1,
+        is_deleted INTEGER DEFAULT 0, scope_id TEXT, provider_session_id TEXT,
+        last_message_at TEXT, created_at TEXT, updated_at TEXT
+      )`)
+      db.exec(`CREATE TABLE IF NOT EXISTS messages (
+        id TEXT PRIMARY KEY, session_id TEXT, role TEXT, content TEXT,
+        type TEXT DEFAULT 'text', metadata TEXT, tool_calls TEXT,
+        is_summary INTEGER DEFAULT 0, is_compressed INTEGER DEFAULT 0,
+        is_edited INTEGER DEFAULT 0, source TEXT DEFAULT 'main', created_at TEXT
+      )`)
+      db.exec(`CREATE VIRTUAL TABLE IF NOT EXISTS session_memory_fts USING fts5(
+        session_id, summary, session_title, created_at, source
+      )`)
+
+      db.prepare("INSERT INTO sessions (id, org, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?)").run(
+        'sess-2', TEST_ORG, 'Clone Session', new Date().toISOString(), new Date().toISOString()
+      )
+
+      const cloneDir = path.join(MOCK_AGENT_DIR, 'clones', 'test-clone')
+      const result = service.recordDaily(TEST_ORG, 'Clone memory entry', 'sess-2', cloneDir)
+      expect(result.ok).toBe(true)
+
+      const today = new Date().toISOString().split('T')[0]
+      const cloneDailyPath = path.join(cloneDir, 'memory', 'daily', `${today}.md`)
+      expect(fs.existsSync(cloneDailyPath)).toBe(true)
+      expect(fs.readFileSync(cloneDailyPath, 'utf-8')).toContain('Clone memory entry')
+
+      // Verify main agent daily dir does NOT contain the clone entry
+      const mainDailyPath = path.join(memDir, 'daily', `${today}.md`)
+      if (fs.existsSync(mainDailyPath)) {
+        expect(fs.readFileSync(mainDailyPath, 'utf-8')).not.toContain('Clone memory entry')
+      }
+
+      // Verify FTS source is clone name
+      const ftsRows = db.prepare("SELECT source FROM session_memory_fts WHERE summary MATCH 'Clone'").all() as Array<{ source: string }>
+      expect(ftsRows.length).toBeGreaterThan(0)
+      expect(ftsRows[0].source).toBe('test-clone')
+    })
+
+    it('creates clone daily directory if not exists', () => {
+      const db = getDb()
+      db.exec(`CREATE TABLE IF NOT EXISTS sessions (
+        id TEXT PRIMARY KEY, org TEXT, title TEXT, clone_name TEXT,
+        perspective_clone_name TEXT, session_type TEXT, is_active INTEGER DEFAULT 1,
+        is_deleted INTEGER DEFAULT 0, scope_id TEXT, provider_session_id TEXT,
+        last_message_at TEXT, created_at TEXT, updated_at TEXT
+      )`)
+      db.exec(`CREATE TABLE IF NOT EXISTS messages (
+        id TEXT PRIMARY KEY, session_id TEXT, role TEXT, content TEXT,
+        type TEXT DEFAULT 'text', metadata TEXT, tool_calls TEXT,
+        is_summary INTEGER DEFAULT 0, is_compressed INTEGER DEFAULT 0,
+        is_edited INTEGER DEFAULT 0, source TEXT DEFAULT 'main', created_at TEXT
+      )`)
+      db.exec(`CREATE VIRTUAL TABLE IF NOT EXISTS session_memory_fts USING fts5(
+        session_id, summary, session_title, created_at, source
+      )`)
+
+      db.prepare("INSERT INTO sessions (id, org, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?)").run(
+        'sess-3', TEST_ORG, 'Session', new Date().toISOString(), new Date().toISOString()
+      )
+
+      const cloneDir = path.join(MOCK_AGENT_DIR, 'clones', 'new-clone')
+      expect(fs.existsSync(cloneDir)).toBe(false)
+
+      service.recordDaily(TEST_ORG, 'New clone memory', 'sess-3', cloneDir)
+
+      const today = new Date().toISOString().split('T')[0]
+      expect(fs.existsSync(path.join(cloneDir, 'memory', 'daily', `${today}.md`))).toBe(true)
+    })
+  })
+
   // ── refineLongTerm (PRD J5) ─────────────────────────────────
 
   describe('refineLongTerm', () => {
@@ -265,6 +375,31 @@ describe('MemoryService', () => {
       const lines = refined.split('\n').filter(l => l.trim().startsWith('-'))
       const uniqueLines = [...new Set(lines.map(l => l.trim()))]
       expect(lines.length).toBe(uniqueLines.length)
+    })
+
+    it('refines clone long-term memory when cloneDir provided (CMA-06)', () => {
+      const cloneDir = path.join(MOCK_AGENT_DIR, 'clones', 'refine-clone')
+      const cloneMemDir = path.join(cloneDir, 'memory')
+      fs.mkdirSync(cloneMemDir, { recursive: true })
+
+      const cloneLtPath = path.join(cloneMemDir, 'long-term.md')
+      const content = `## 偏好
+- 使用 TypeScript
+- 使用 TypeScript
+- 偏好函数式编程`
+      fs.writeFileSync(cloneLtPath, content, 'utf-8')
+
+      const result = service.refineLongTerm(TEST_ORG, cloneDir)
+      expect(result.refined).toBe(true)
+      expect(result.backup_path).toBe(`${cloneLtPath}.bak`)
+      expect(fs.existsSync(result.backup_path)).toBe(true)
+
+      // Verify refined content at clone path
+      const refined = fs.readFileSync(cloneLtPath, 'utf-8')
+      expect(refined).toContain('使用 TypeScript')
+      // Verify deduplication worked
+      const typeScriptLines = refined.split('\n').filter(l => l.includes('TypeScript'))
+      expect(typeScriptLines.length).toBe(1)
     })
   })
 

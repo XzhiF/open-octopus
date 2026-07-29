@@ -25,16 +25,17 @@ export function createMemoryRoutes(): Hono {
       }
 
       // FTS5 search with LIKE fallback (PRD C3 §FTS降级)
+      const source = c.req.query('source') // Optional: 'main' | clone-name
       let results: unknown[]
       let degraded = false
       try {
-        results = getMemoryService().searchMemory(org, query, parseInt(c.req.query('top_k') ?? '3', 10))
+        results = getMemoryService().searchMemory(org, query, parseInt(c.req.query('top_k') ?? '3', 10), source)
       } catch {
         // FTS index may be corrupted — auto-trigger rebuild and retry with LIKE
         degraded = true
         try {
           getMemoryService().rebuildFtsIndex(org)
-          results = getMemoryService().searchMemory(org, query, parseInt(c.req.query('top_k') ?? '3', 10))
+          results = getMemoryService().searchMemory(org, query, parseInt(c.req.query('top_k') ?? '3', 10), source)
         } catch {
           results = []
         }

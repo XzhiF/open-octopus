@@ -248,4 +248,73 @@ describe('CloneRuntime', () => {
       )
     })
   })
+
+  // ── writeIsolatedMemory conflict detection (CMA-07) ──────────────
+
+  describe('writeIsolatedMemory conflict detection', () => {
+    it('writes successfully without expectedLastModified', () => {
+      const cloneDef = createTestCloneDef({ name: 'conflict-test', type: 'user' })
+      const runtime = new CloneRuntime(cloneDef, 'test-org')
+
+      // Should not throw
+      expect(() => runtime.writeIsolatedMemory('Test memory entry')).not.toThrow()
+
+      // Verify file exists
+      const today = new Date().toISOString().slice(0, 10)
+      const filePath = path.join(TEST_DIR, 'agent', 'clones', 'conflict-test', 'memory', 'daily', `${today}.md`)
+      expect(fs.existsSync(filePath)).toBe(true)
+      expect(fs.readFileSync(filePath, 'utf-8')).toContain('Test memory entry')
+    })
+
+    it('throws MEMORY_CONFLICT when expectedLastModified is stale', () => {
+      const cloneDef = createTestCloneDef({ name: 'conflict-test2', type: 'user' })
+      const runtime = new CloneRuntime(cloneDef, 'test-org')
+
+      // Write initial entry
+      runtime.writeIsolatedMemory('Initial entry')
+
+      // Read the file mtime
+      const today = new Date().toISOString().slice(0, 10)
+      const filePath = path.join(TEST_DIR, 'agent', 'clones', 'conflict-test2', 'memory', 'daily', `${today}.md`)
+      const stat = fs.statSync(filePath)
+      const currentMtime = stat.mtime.toISOString()
+
+      // Simulate a stale timestamp (1 hour before current)
+      const staleMtime = new Date(Date.now() - 3600000).toISOString()
+
+      // Should throw MEMORY_CONFLICT
+      try {
+        runtime.writeIsolatedMemory('Conflicting entry', staleMtime)
+        expect(true).toBe(false) // Should not reach here
+      } catch (err) {
+        expect((err as { code?: string }).code).toBe('MEMORY_CONFLICT')
+      }
+
+      // Verify the stale entry was not written
+      const content = fs.readFileSync(filePath, 'utf-8')
+      expect(content).not.toContain('Conflicting entry')
+    })
+
+    it('succeeds when expectedLastModified is current', () => {
+      const cloneDef = createTestCloneDef({ name: 'conflict-test3', type: 'user' })
+      const runtime = new CloneRuntime(cloneDef, 'test-org')
+
+      // Write initial entry
+      runtime.writeIsolatedMemory('First entry')
+
+      // Read the file mtime
+      const today = new Date().toISOString().slice(0, 10)
+      const filePath = path.join(TEST_DIR, 'agent', 'clones', 'conflict-test3', 'memory', 'daily', `${today}.md`)
+      const stat = fs.statSync(filePath)
+      const currentMtime = stat.mtime.toISOString()
+
+      // Write with current mtime should succeed
+      expect(() => runtime.writeIsolatedMemory('Second entry', currentMtime)).not.toThrow()
+
+      // Verify both entries exist
+      const content = fs.readFileSync(filePath, 'utf-8')
+      expect(content).toContain('First entry')
+      expect(content).toContain('Second entry')
+    })
+  })
 })

@@ -163,8 +163,13 @@ export class CloneRuntime {
 
   /**
    * Write to clone's own memory (daily log).
+   * Supports optional mtime-based conflict detection (same pattern as main agent's writeMemory).
+   *
+   * @param content Memory content to append
+   * @param expectedLastModified Optional ISO timestamp. If provided and the file has been
+   *   modified since this timestamp, throws MEMORY_CONFLICT.
    */
-  writeIsolatedMemory(content: string): void {
+  writeIsolatedMemory(content: string, expectedLastModified?: string): void {
     try {
       const clonePath = this.cloneDef.type === 'built-in'
         ? getBuiltInCloneDir(this.cloneDef.name)
@@ -181,10 +186,24 @@ export class CloneRuntime {
         fs.mkdirSync(dailyDir, { recursive: true })
       }
 
+      // Conflict detection: check if file was modified since client last read it
+      if (expectedLastModified && fs.existsSync(filePath)) {
+        const stat = fs.statSync(filePath)
+        const serverModified = stat.mtime.toISOString()
+        if (new Date(serverModified).getTime() > new Date(expectedLastModified).getTime()) {
+          const err = new Error('Memory was modified by another process. Please reload and try again.') as Error & { code: string }
+          err.code = 'MEMORY_CONFLICT'
+          throw err
+        }
+      }
+
       const existing = fs.existsSync(filePath) ? fs.readFileSync(filePath, 'utf-8') : ''
       const time = new Date().toTimeString().split(' ')[0]
       fs.writeFileSync(filePath, `${existing}\n### ${time}\n${content}\n`, 'utf-8')
     } catch (err) {
+      if ((err as { code?: string }).code === 'MEMORY_CONFLICT') {
+        throw err  // Re-throw conflict errors to caller
+      }
       // Memory write failure is non-fatal — log only
       console.warn(`[CloneRuntime] Memory write failed for ${this.cloneDef.name}:`, err instanceof Error ? err.message : String(err))
     }
@@ -543,6 +562,21 @@ export class CloneRuntime {
       `- 当用户要求"记住"或"写入记忆"时，将内容追加到 \`${memoryDir}/long-term.md\``,
       `- 每次对话中的重要发现，追加到今天的 daily 记忆文件`,
       `- 读取记忆时，优先读取上述文件路径`,
+      '',
+      '## record_daily 工具',
+      '',
+      '你可以使用 **record_daily** 工具记录重要的每日记忆。输入: { content: string }',
+      '',
+      '### 何时使用 record_daily (✅)',
+      '- 用户揭示了偏好或工作模式',
+      '- 做出了重要的决策或发现',
+      '- 识别出了反复出现的问题模式',
+      '- 建立了有效的工作流程',
+      '',
+      '### 何时不使用 record_daily (❌)',
+      '- 简单的问候或寒暄',
+      '- 没有持久价值的事实问答',
+      '- 已经在记忆中的重复内容',
       '',
       `## 人格修改流程（重要）`,
       `当用户要求修改人格、角色、身份设定时，**必须按以下流程操作**：`,

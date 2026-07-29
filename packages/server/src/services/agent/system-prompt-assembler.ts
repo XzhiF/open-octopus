@@ -1,7 +1,7 @@
 import fs from 'fs'
 import path from 'path'
 import { getSkillLoader } from './skill-loader'
-import { getAgentDir, getPersonaPath, getLongTermMemoryPath, getDailyMemoryDir, getReportsDir, getOctopusHome, getClonesDir } from './paths'
+import { getAgentDir, getPersonaPath, getLongTermMemoryPath, getDailyMemoryDir, getReportsDir, getOctopusHome, getClonesDir, getBuiltInCloneDir, getCloneDir } from './paths'
 
 // ── Types ──────────────────────────────────────────────────────
 
@@ -62,16 +62,131 @@ export class SystemPromptAssembler {
   }
 
   /**
-   * Assemble for a specific clone with clone-specific context.
+   * Assemble system prompt for a clone with full priority-based budget truncation.
+   * Builds clone-specific segments (persona, memory, daily) and applies the same
+   * degradation rules as the main agent assembler.
    *
-   * @deprecated Use `CloneRuntime.assembleContext()` instead.
-   * This method uses the old SystemPromptAssembler pipeline which does not
-   * support the two-tier skill model (ADR-005) or clone-specific CWD.
-   * Kept for backward compatibility with callers that have not yet migrated.
+   * Priority order: persona (0) > memory (1) > daily_memory (2) > skills (3) > context (4)
    */
   assembleForClone(cloneName: string, options: AssembleOptions = {}): string {
-    const merged = { ...options, clone_name: cloneName }
-    return this.assemble(merged)
+    const cloneDir = this.resolveCloneDir(cloneName)
+    if (!cloneDir) {
+      // Fallback to main agent assembly if clone not found
+      return this.assemble({ ...options, clone_name: cloneName })
+    }
+
+    const segments = this.getCloneSegments(cloneName, cloneDir, options)
+    const maxTokens = options.max_tokens ?? DEFAULT_MAX_TOKENS
+
+    const truncated = this.truncateToBudget(segments, maxTokens)
+    return truncated.map(seg => seg.content).join('\n\n')
+  }
+
+  private resolveCloneDir(cloneName: string): string | null {
+    // Try built-in first
+    const builtInDir = getBuiltInCloneDir(cloneName)
+    if (fs.existsSync(builtInDir)) return builtInDir
+
+    // Try user clone
+    const userDir = getCloneDir(cloneName)
+    if (fs.existsSync(userDir)) return userDir
+
+    return null
+  }
+
+  private getCloneSegments(cloneName: string, cloneDir: string, options: AssembleOptions): PromptSegment[] {
+    const segments: PromptSegment[] = []
+
+    // 1. Clone persona (priority 0 — never dropped)
+    segments.push(this.buildClonePersonaSegment(cloneDir, cloneName))
+
+    // 2. Clone long-term memory (priority 1)
+    segments.push(this.buildCloneMemorySegment(cloneDir))
+
+    // 3. Clone daily memory (priority 2)
+    segments.push(this.buildCloneDailyMemorySegment(cloneDir))
+
+    // 4. Core identity (priority 3)
+    segments.push({
+      name: 'core_identity',
+      content: `你是分身 "${cloneName}"，正在以该身份与用户交互。`,
+      tokenEstimate: 20,
+      priority: 3,
+      source: 'core',
+    })
+
+    return segments.sort((a, b) => a.priority - b.priority)
+  }
+
+  private buildClonePersonaSegment(cloneDir: string, cloneName: string): PromptSegment {
+    const personaPath = path.join(cloneDir, 'persona.md')
+    let content = ''
+
+    if (fs.existsSync(personaPath)) {
+      try {
+        content = fs.readFileSync(personaPath, 'utf-8')
+      } catch {
+        content = `# 分身: ${cloneName}\n\n你是 ${cloneName} 分身。`
+      }
+    } else {
+      content = `# 分身: ${cloneName}\n\n你是 ${cloneName} 分身。`
+    }
+
+    return {
+      name: 'clone_persona',
+      content,
+      tokenEstimate: Math.ceil(content.length / CHARS_PER_TOKEN),
+      priority: 0,
+      source: 'persona',
+    }
+  }
+
+  private buildCloneMemorySegment(cloneDir: string): PromptSegment {
+    const ltPath = path.join(cloneDir, 'memory', 'long-term.md')
+    let content = ''
+
+    if (fs.existsSync(ltPath)) {
+      try {
+        const raw = fs.readFileSync(ltPath, 'utf-8')
+        content = `# 分身长期记忆\n\n${raw}`
+      } catch {
+        content = ''
+      }
+    }
+
+    return {
+      name: 'clone_memory',
+      content,
+      tokenEstimate: Math.ceil(content.length / CHARS_PER_TOKEN),
+      priority: 1,
+      source: 'memory',
+    }
+  }
+
+  private buildCloneDailyMemorySegment(cloneDir: string): PromptSegment {
+    const dailyDir = path.join(cloneDir, 'memory', 'daily')
+    let content = ''
+
+    if (fs.existsSync(dailyDir)) {
+      try {
+        const today = new Date().toISOString().slice(0, 10)
+        const todayFile = path.join(dailyDir, `${today}.md`)
+        if (fs.existsSync(todayFile)) {
+          const raw = fs.readFileSync(todayFile, 'utf-8')
+          content = `# 分身工作记忆\n\n${raw}`
+        }
+      } catch {
+        content = ''
+      }
+    }
+
+    return {
+      name: 'clone_daily_memory',
+      content,
+      tokenEstimate: Math.ceil(content.length / CHARS_PER_TOKEN),
+      priority: 2,
+      source: 'daily_memory',
+    }
   }
 
   /**

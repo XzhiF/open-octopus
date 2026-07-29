@@ -349,6 +349,7 @@ export interface MessageRow {
   is_summary: number
   is_compressed: number
   is_edited: number
+  source: string         // 'main' | clone-name (memory source for FTS)
   created_at: string
 }
 

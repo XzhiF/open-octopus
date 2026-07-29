@@ -633,6 +633,7 @@ async function executeMemoryTools(
   org: string,
   sessionId: string,
   stream: SSEStreamingApi,
+  cloneName?: string,
 ): Promise<void> {
   for (const tc of toolCalls) {
     try {
@@ -648,7 +649,19 @@ async function executeMemoryTools(
           }
           try {
             const memoryService = getMemoryService()
-            const result = memoryService.recordDaily(org, content, sessionId)
+
+            // Resolve clone directory if clone context exists
+            let cloneDir: string | undefined
+            if (cloneName) {
+              const cloneDef = resolveCloneDefFromFs(cloneName)
+              if (cloneDef) {
+                cloneDir = cloneDef.type === 'built-in'
+                  ? getBuiltInCloneDir(cloneName)
+                  : getCloneDir(cloneName)
+              }
+            }
+
+            const result = memoryService.recordDaily(org, content, sessionId, cloneDir)
             resultContent = JSON.stringify(result)
           } catch (e) {
             resultContent = `Failed to record daily memory: ${e instanceof Error ? e.message : String(e)}`

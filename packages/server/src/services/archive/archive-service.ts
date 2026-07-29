@@ -240,7 +240,7 @@ export class ArchiveService {
       throw err
     }
 
-    // 2. Check long-term memory refine trigger
+    // 2. Check long-term memory refine trigger (main agent)
     try {
       const { getMemoryService } = await import('../agent/memory-service')
       const { getLongTermMemoryPath } = await import('../agent/paths')
@@ -262,6 +262,85 @@ export class ArchiveService {
     } catch (err) {
       logError('long-term refine check failed', err, { org })
       throw err
+    }
+
+    // 3. Scan and archive clone directories (CMA-04)
+    try {
+      const { getClonesDir, getBuiltInClonesDir } = await import('../agent/paths')
+      const { getMemoryService } = await import('../agent/memory-service')
+      const fs = await import('fs')
+      const path = await import('path')
+
+      const cloneBaseDirs = [getClonesDir(), getBuiltInClonesDir()]
+
+      for (const baseDir of cloneBaseDirs) {
+        if (!fs.existsSync(baseDir)) continue
+
+        let clones: string[]
+        try {
+          clones = fs.readdirSync(baseDir, { withFileTypes: true })
+            .filter((d: { isDirectory: () => boolean }) => d.isDirectory())
+            .map((d: { name: string }) => d.name)
+        } catch {
+          continue
+        }
+
+        for (const cloneName of clones) {
+          const cloneDir = path.join(baseDir, cloneName)
+          const cloneDailyDir = path.join(cloneDir, 'memory', 'daily')
+
+          // Archive clone daily files
+          if (fs.existsSync(cloneDailyDir)) {
+            let files: string[]
+            try {
+              files = fs.readdirSync(cloneDailyDir).filter((f: string) => f.endsWith('.md'))
+            } catch {
+              continue
+            }
+
+            const retentionCutoff = new Date()
+            retentionCutoff.setDate(retentionCutoff.getDate() - config.session_retention_days)
+
+            for (const file of files) {
+              const dateMatch = file.match(/^(\d{4}-\d{2}-\d{2})\.md$/)
+              if (!dateMatch) continue
+              const fileDate = new Date(dateMatch[1])
+              if (fileDate >= retentionCutoff) continue
+
+              try {
+                const archiveDir = path.join(cloneDailyDir, 'archive')
+                if (!fs.existsSync(archiveDir)) fs.mkdirSync(archiveDir, { recursive: true })
+                fs.renameSync(
+                  path.join(cloneDailyDir, file),
+                  path.join(archiveDir, file),
+                )
+                archivedCount++
+                this.emitArchived(`${cloneName}-${dateMatch[1]}`, 'clone_daily_memory', new Date().toISOString())
+              } catch (err) {
+                logError('failed to archive clone daily memory', err, { org, clone: cloneName, date: dateMatch[1] })
+              }
+            }
+          }
+
+          // Trigger refine for clone long-term memory
+          const cloneLtPath = path.join(cloneDir, 'memory', 'long-term.md')
+          if (fs.existsSync(cloneLtPath)) {
+            try {
+              const stat = fs.statSync(cloneLtPath)
+              const daysSinceModified = (Date.now() - stat.mtimeMs) / (1000 * 60 * 60 * 24)
+              if (daysSinceModified >= config.long_term_refine_trigger_days) {
+                const memoryService = getMemoryService()
+                memoryService.refineLongTerm(org, cloneDir)
+              }
+            } catch (err) {
+              logError('clone long-term refine failed', err, { org, clone: cloneName })
+            }
+          }
+        }
+      }
+    } catch (err) {
+      logError('archiveMemoryBatch clone scan failed', err, { org })
+      // Non-fatal: clone scan failure doesn't block main agent archive
     }
 
     return { archived_count: archivedCount }
