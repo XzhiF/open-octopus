@@ -18,7 +18,7 @@ function isValidModel(v: string): boolean {
 // IANA timezone validation (simplified — checks common formats)
 const ianaTimezoneRegex = /^[A-Z][a-z]+\/[A-Z][a-z_]+(?:\/[A-Z][a-z_]+)?$/
 
-export const notificationProviderSchema = z.enum(['hermes', 'telegram', 'slack', 'email', 'none'])
+export const notificationProviderSchema = z.enum(['telegram', 'discord', 'slack', 'signal', 'email', 'none'])
 
 export const agentConfigSchema = z.object({
   model: z.string().refine(isValidModel, {
@@ -27,7 +27,7 @@ export const agentConfigSchema = z.object({
   timeout: z.number().int().min(30).max(1800).default(300),
   max_clones: z.number().int().min(1).default(5),
   notification: z.object({
-    provider: notificationProviderSchema.default('hermes'),
+    provider: notificationProviderSchema.default('telegram'),
     target: z.string().default(''),
     timezone: z.string().regex(ianaTimezoneRegex, 'Must be a valid IANA timezone').default('Asia/Shanghai'),
   }).default({}).superRefine((notification, ctx) => {
@@ -42,10 +42,11 @@ export const agentConfigSchema = z.object({
           })
         }
       } else if (notification.provider === 'telegram') {
-        if (!/^-?\d+$/.test(notification.target)) {
+        // Accept numeric chat ID or hermes group/channel name
+        if (!/^-?\d+$/.test(notification.target) && !/^[a-zA-Z0-9_-]+$/.test(notification.target)) {
           ctx.addIssue({
             code: z.ZodIssueCode.custom,
-            message: 'Telegram target must be a numeric chat ID',
+            message: 'Telegram target must be a numeric chat ID or a hermes target name',
             path: ['target'],
           })
         }
@@ -58,8 +59,8 @@ export const agentConfigSchema = z.object({
           })
         }
       } else {
-        // For hermes/other providers: target must be provider:id format or a qualified identifier
-        const providerPrefixRe = /^(telegram|slack|email|hermes|webhook):.+$/
+        // For other providers: target must be provider:id format or a qualified identifier
+        const providerPrefixRe = /^(telegram|slack|email|discord|signal|webhook):.+$/
         // Bare identifiers must contain at least one separator (_, -, .) to avoid ambiguity
         const qualifiedIdRe = /^[a-zA-Z0-9][a-zA-Z0-9_.:-]*[_.:-][a-zA-Z0-9_.:-]*$/
         if (!providerPrefixRe.test(notification.target) && !qualifiedIdRe.test(notification.target)) {

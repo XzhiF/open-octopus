@@ -62,7 +62,7 @@ export class NotificationService {
       }
 
       try {
-        const sent = this.sendViaHermes(config.target, request)
+        const sent = this.sendViaHermes(config.provider, config.target, request)
         if (sent) {
           return {
             sent: true,
@@ -91,16 +91,19 @@ export class NotificationService {
 
   /**
    * Send notification via hermes CLI.
-   * hermes send uses: hermes send -t TARGET "message"
-   * where TARGET is a hermes-configured target name (e.g. "xzf_hermes").
+   * hermes send uses: hermes send -t "platform:target" "message"
+   * e.g. hermes send -t "telegram:xzf_hermes" "hello"
    */
-  private sendViaHermes(target: string, request: NotificationRequest): boolean {
+  private sendViaHermes(provider: string, target: string, request: NotificationRequest): boolean {
     if (!target) return false
+
+    // Construct hermes target: "platform:target" or just "target" if already contains ':'
+    const hermesTarget = target.includes(':') ? target : `${provider}:${target}`
 
     try {
       const message = this.formatMessage(request)
       execSync(
-        `hermes send -t ${target} ${JSON.stringify(message)}`,
+        `hermes send -t ${JSON.stringify(hermesTarget)} ${JSON.stringify(message)}`,
         {
           timeout: 30000,
           stdio: 'pipe',

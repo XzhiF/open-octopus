@@ -16,13 +16,21 @@ interface NotificationConfigProps {
   saving: boolean
 }
 
+const PROVIDERS = [
+  { value: 'telegram', label: 'Telegram' },
+  { value: 'discord', label: 'Discord' },
+  { value: 'slack', label: 'Slack' },
+  { value: 'signal', label: 'Signal' },
+  { value: 'none', label: '禁用' },
+]
+
 const TIMEZONES = [
   'Asia/Shanghai', 'Asia/Tokyo', 'Asia/Singapore', 'America/New_York',
   'America/Los_Angeles', 'Europe/London', 'Europe/Berlin', 'UTC',
 ]
 
 export function NotificationConfig({ config, onSave, saving }: NotificationConfigProps) {
-  const [provider, setProvider] = useState(config?.notification?.provider ?? 'hermes')
+  const [provider, setProvider] = useState(config?.notification?.provider ?? 'telegram')
   const [target, setTarget] = useState(config?.notification?.target ?? '')
   const [timezone, setTimezone] = useState(config?.notification?.timezone ?? 'Asia/Shanghai')
   const [testing, setTesting] = useState(false)
@@ -65,12 +73,17 @@ export function NotificationConfig({ config, onSave, saving }: NotificationConfi
     >
       <div className="space-y-3">
         <div>
-          <Label>Provider</Label>
-          <Input
-            value={provider}
-            onChange={(e) => setProvider(e.target.value)}
-            className="mt-1 bg-agent-surface-inset border-agent-divider"
-          />
+          <Label>通知平台</Label>
+          <Select value={provider} onValueChange={setProvider}>
+            <SelectTrigger className="mt-1 bg-agent-surface-inset border-agent-divider">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {PROVIDERS.map((p) => (
+                <SelectItem key={p.value} value={p.value}>{p.label}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
         <div>
           <Label>通知目标</Label>
