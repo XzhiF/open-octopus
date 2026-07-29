@@ -51,7 +51,7 @@ export function ConfigTab() {
         <NotificationConfig config={config} onSave={saveConfig} saving={saving} />
         <MemoryStrategyConfig config={config} onSave={saveConfig} saving={saving} />
         <SafetyAudit events={safetyEvents} />
-        <DebugLogViewer />
+        <DebugLogViewer config={config} onSave={saveConfig} />
       </div>
     </ScrollArea>
   )

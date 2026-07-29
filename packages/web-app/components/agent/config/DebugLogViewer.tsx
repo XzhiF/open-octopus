@@ -1,17 +1,33 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { Bug } from 'lucide-react'
+import { Switch } from '@/components/ui/switch'
+import { Label } from '@/components/ui/label'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/lib/utils'
+import { toast } from 'sonner'
 import * as api from '@/lib/agent/api'
-import type { DebugLogEntry } from '@/lib/agent/types'
+import type { AgentConfig, DebugLogEntry } from '@/lib/agent/types'
 
-export function DebugLogViewer() {
+interface DebugLogViewerProps {
+  config: (AgentConfig & { config_degraded: boolean }) | null
+  onSave: (data: Partial<AgentConfig>) => Promise<boolean>
+}
+
+export function DebugLogViewer({ config, onSave }: DebugLogViewerProps) {
+  const [debugEnabled, setDebugEnabled] = useState(config?.debug?.enabled ?? false)
   const [logs, setLogs] = useState<{ id: string; session_id: string; timestamp: string; summary: string; chat_id: string }[]>([])
   const [selectedLog, setSelectedLog] = useState<DebugLogEntry | null>(null)
   const [loading, setLoading] = useState(false)
+
+  // Sync debugEnabled when config changes externally
+  useEffect(() => {
+    if (config?.debug?.enabled !== undefined) {
+      setDebugEnabled(config.debug.enabled)
+    }
+  }, [config?.debug?.enabled])
 
   useEffect(() => {
     api.getDebugLog({ limit: 20 }).then((res) => {
@@ -24,6 +40,17 @@ export function DebugLogViewer() {
       })))
     }).catch(() => {})
   }, [])
+
+  const handleToggleDebug = useCallback(async (enabled: boolean) => {
+    setDebugEnabled(enabled)
+    const ok = await onSave({ debug: { enabled } })
+    if (ok) {
+      toast.success(enabled ? '调试模式已开启' : '调试模式已关闭')
+    } else {
+      setDebugEnabled(!enabled)
+      toast.error('保存失败')
+    }
+  }, [onSave])
 
   const handleSelect = async (chatId: string) => {
     setLoading(true)
@@ -40,15 +67,24 @@ export function DebugLogViewer() {
   return (
     <section className="rounded-xl border border-agent-divider bg-agent-surface-raised overflow-hidden">
       <div className="px-5 py-4 border-b border-agent-divider">
-        <h3 className="text-sm font-semibold flex items-center gap-2">
-          <Bug className="h-4 w-4" />
-          调试日志
-        </h3>
+        <div className="flex items-center justify-between">
+          <div>
+            <h3 className="text-sm font-semibold flex items-center gap-2">
+              <Bug className="h-4 w-4" />
+              调试日志
+            </h3>
+            <p className="text-xs text-muted-foreground mt-1">开启后将记录 Agent 决策日志</p>
+          </div>
+          <Switch
+            checked={debugEnabled}
+            onCheckedChange={handleToggleDebug}
+          />
+        </div>
       </div>
 
       {logs.length === 0 ? (
         <div className="px-5 py-8 text-sm text-muted-foreground text-center">
-          开启调试模式后将记录 Agent 决策日志
+          {debugEnabled ? '暂无调试日志，进行一次 Agent 对话后将自动记录' : '开启调试模式后将记录 Agent 决策日志'}
         </div>
       ) : (
         <div className="flex">

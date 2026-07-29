@@ -3,7 +3,6 @@
 import { useState } from 'react'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Switch } from '@/components/ui/switch'
 import { toast } from 'sonner'
 import type { AgentConfig } from '@/lib/agent/types'
 import { ConfigSection } from './ConfigSection'
@@ -19,7 +18,6 @@ export function GeneralConfig({ config, onSave, saving }: GeneralConfigProps) {
   const [model, setModel] = useState(config?.model ?? 'claude/pro')
   const [timeout, setTimeout] = useState(config?.timeout ?? 300)
   const [maxClones, setMaxClones] = useState(config?.max_clones ?? 5)
-  const [debugEnabled, setDebugEnabled] = useState(config?.debug?.enabled ?? false)
 
   const handleSave = async () => {
     // Validate ranges
@@ -36,7 +34,6 @@ export function GeneralConfig({ config, onSave, saving }: GeneralConfigProps) {
       model,
       timeout,
       max_clones: maxClones,
-      debug: { enabled: debugEnabled },
     })
     if (ok) {
       toast.success('通用配置已保存')
@@ -48,7 +45,7 @@ export function GeneralConfig({ config, onSave, saving }: GeneralConfigProps) {
   return (
     <ConfigSection
       title="通用配置"
-      description="配置 Agent 的模型、超时、分身数量上限和调试模式。"
+      description="配置 Agent 的模型、超时和分身数量上限。"
       saving={saving}
       onSave={handleSave}
     >
@@ -81,17 +78,6 @@ export function GeneralConfig({ config, onSave, saving }: GeneralConfigProps) {
             className="mt-1 bg-agent-surface-inset border-agent-divider"
           />
           <p className="text-xs text-muted-foreground mt-1">范围: 1–20，默认 5</p>
-        </div>
-
-        <div className="flex items-center justify-between">
-          <div>
-            <Label>Debug Mode</Label>
-            <p className="text-xs text-muted-foreground mt-1">开启后将记录 Agent 决策日志</p>
-          </div>
-          <Switch
-            checked={debugEnabled}
-            onCheckedChange={setDebugEnabled}
-          />
         </div>
       </div>
     </ConfigSection>
