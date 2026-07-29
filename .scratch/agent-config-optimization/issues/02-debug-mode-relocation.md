@@ -1,6 +1,6 @@
 # Ticket 02 — Debug Mode Relocation
 
-Status: pending
+Status: done (commit 173baac)
 Priority: P1
 Packages: web-app
 

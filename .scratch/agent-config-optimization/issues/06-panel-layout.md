@@ -1,6 +1,6 @@
 # Ticket 06 — Panel Layout Reorder
 
-Status: pending
+Status: done (commit 9f0a7d7)
 Priority: P2
 Blocked by: 02 (debug mode relocation changes DebugLogViewer props)
 Packages: web-app

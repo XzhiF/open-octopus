@@ -1,6 +1,6 @@
 # Ticket 04 — Prompt Detail Collapsible
 
-Status: pending
+Status: done (commit 65d3671)
 Priority: P2
 Packages: server, shared, web-app
 

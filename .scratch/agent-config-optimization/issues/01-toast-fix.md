@@ -1,6 +1,6 @@
 # Ticket 01 — Toast System Fix
 
-Status: pending
+Status: done (commit c6de813)
 Priority: P0 (blocks all save feedback)
 Packages: web-app
 

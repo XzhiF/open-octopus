@@ -1,6 +1,6 @@
 # Ticket 05 — octo-notify Skill
 
-Status: pending
+Status: done (commit 882bd1b)
 Priority: P2
 Packages: core-pack
 

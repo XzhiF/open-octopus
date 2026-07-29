@@ -1,6 +1,6 @@
 # Ticket 03 — Debug Log Enhancement (Pagination + Search)
 
-Status: pending
+Status: done (commit 2175372)
 Priority: P1
 Packages: server, shared, web-app
 
