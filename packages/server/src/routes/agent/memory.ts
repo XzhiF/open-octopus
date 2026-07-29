@@ -65,6 +65,12 @@ export function createMemoryRoutes(): Hono {
         )
       }
 
+      // Daily layer returns all daily files as an array
+      if (layer === 'daily') {
+        const items = getMemoryService().readDailyAll(org)
+        return c.json(items)
+      }
+
       const result = getMemoryService().readMemory(org, layer)
       return c.json(result)
     } catch (err: unknown) {
@@ -206,12 +212,28 @@ export function createMemoryRoutes(): Hono {
       const archivedFilename = `${targetDate}.md`
       fs.renameSync(dailyFile, path.join(archiveDir, archivedFilename))
 
+      // Auto-refine long-term memory after archive (Issue 4: closed-loop)
+      let refineResult: { refined: boolean; before_tokens: number; after_tokens: number; backup_path: string } | null = null
+      let refineFailed = false
+      try {
+        refineResult = getMemoryService().refineLongTerm(org)
+      } catch {
+        refineFailed = true
+      }
+
       return c.json({
         ok: true,
         archived: true,
         archived_date: targetDate,
         archived_filename: archivedFilename,
         merge_failed: mergeFailed,
+        refine: refineResult ? {
+          refined: refineResult.refined,
+          before_tokens: refineResult.before_tokens,
+          after_tokens: refineResult.after_tokens,
+          backup_path: refineResult.backup_path,
+        } : undefined,
+        refine_failed: refineFailed,
       })
     } catch (err: unknown) {
       const error = err instanceof Error ? err : new Error(String(err))

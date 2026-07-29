@@ -1,5 +1,6 @@
 import fs from 'fs'
 import path from 'path'
+import crypto from 'crypto'
 import type { MemoryContent, MemorySearchResult } from '@octopus/shared'
 import { getAgentDir, getDailyMemoryDir, getLongTermMemoryPath, getAgentMemoryDir } from './paths'
 import { AgentSessionDAO } from '../../db/dao'
@@ -63,6 +64,58 @@ export class MemoryService {
 
     fs.writeFileSync(filePath, content, 'utf-8')
     return { ok: true, token_count: this.estimateTokens(content) }
+  }
+
+  /**
+   * Record a daily memory entry with linked session summary.
+   * Called by the Agent via `record_daily` tool — writes to daily file AND
+   * inserts a summary message into the messages table for FTS searchability.
+   */
+  recordDaily(org: string, content: string, sessionId: string): { ok: boolean; date: string } {
+    const today = new Date().toISOString().split('T')[0]
+    const filePath = path.join(this.getDailyDir(), `${today}.md`)
+    const dir = path.dirname(filePath)
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
+
+    // 1. Append to daily file
+    const existing = fs.existsSync(filePath) ? fs.readFileSync(filePath, 'utf-8') : ''
+    const time = new Date().toTimeString().split(' ')[0]
+    const appended = existing + `\n### ${time}\n${content}\n`
+    fs.writeFileSync(filePath, appended, 'utf-8')
+
+    // 2. Insert summary message into messages table (for FTS search)
+    try {
+      const summaryId = crypto.randomUUID()
+      const now = new Date().toISOString()
+      this.dao.insertSummaryMessage(summaryId, sessionId, content, now)
+
+      // 3. Rebuild FTS index to include the new summary
+      try {
+        this.dao.rebuildFtsIndex()
+      } catch {
+        // FTS rebuild failure is non-fatal — daily file is the primary store
+      }
+    } catch {
+      // DB insert failure is non-fatal — daily file is the primary store
+    }
+
+    return { ok: true, date: today }
+  }
+
+  /**
+   * Count unarchived daily memory files.
+   * Used by SystemPromptAssembler to detect when archiving is needed.
+   */
+  countDailyFiles(): number {
+    const dailyDir = this.getDailyDir()
+    if (!fs.existsSync(dailyDir)) return 0
+    try {
+      return fs.readdirSync(dailyDir)
+        .filter(f => f.endsWith('.md'))
+        .length
+    } catch {
+      return 0
+    }
   }
 
   /**
@@ -289,6 +342,32 @@ export class MemoryService {
       last_active: lastActive,
       days_inactive: daysSince,
     }
+  }
+
+  /**
+   * Read all daily memory files (newest first), each with a date field.
+   */
+  readDailyAll(org: string): MemoryContent[] {
+    const dailyDir = this.getDailyDir()
+    if (!fs.existsSync(dailyDir)) return []
+
+    const files = fs.readdirSync(dailyDir)
+      .filter(f => f.endsWith('.md'))
+      .sort()
+      .reverse()
+
+    return files.map(file => {
+      const filePath = path.join(dailyDir, file)
+      const content = fs.readFileSync(filePath, 'utf-8')
+      const stat = fs.statSync(filePath)
+      return {
+        content,
+        layer: 'daily' as MemoryLayer,
+        date: file.replace('.md', ''),
+        token_count: this.estimateTokens(content),
+        last_modified: stat.mtime.toISOString(),
+      }
+    }).filter(item => item.content.trim().length > 0)
   }
 
   // ── Private helpers ─────────────────────────────────────────

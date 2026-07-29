@@ -213,6 +213,31 @@ if (!process.env.VITEST && daos) {
   const stopArchiveScheduler = archiveScheduler.start()
   ;(global as any).__octopus_stopArchiveScheduler = stopArchiveScheduler
 
+  // ── Scheduler seed: auto-create system:daily-archive task ────────────
+  // Idempotent — only inserts if no schedule named 'system:daily-archive' exists.
+  try {
+    const existingSeed = daos.scheduleConfig.findByName('system:daily-archive')
+    if (!existingSeed) {
+      daos.scheduleConfig.insertSchedule({
+        id: 'system:daily-archive',
+        org: 'system',
+        name: 'system:daily-archive',
+        cron_expression: '0 3 * * *',
+        timezone: 'Asia/Shanghai',
+        job_type: 'agent',
+        config: JSON.stringify({
+          prompt: 'Archive yesterday daily memory and refine long-term memory',
+        }),
+        enabled: 1,
+        description: 'System-seeded daily archive task (auto-created on server startup)',
+      })
+      console.log('[server] Scheduler seed: system:daily-archive task created')
+    }
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err)
+    console.warn(`[server] Scheduler seed failed: ${msg}`)
+  }
+
   // Set DAOs for middleware and yjs-ws
   setAgentAuthOrgDAO(daos.org)
   setYjsWorkspaceDAO(daos.workspace)

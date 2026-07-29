@@ -215,6 +215,13 @@ export class SystemPromptAssembler {
           const raw = fs.readFileSync(todayFile, 'utf-8')
           content = `# 工作记忆\n\n${raw}`
         }
+
+        // Archive reminder: count unarchived daily files (>3 triggers reminder)
+        const dailyFiles = fs.readdirSync(dailyDir).filter(f => f.endsWith('.md'))
+        if (dailyFiles.length > 3) {
+          const reminder = `\n\n⚠️ 有 ${dailyFiles.length} 个未归档的每日记忆文件。建议在合适的时机提醒用户执行归档操作（POST /memory/archive）。`
+          content += reminder
+        }
       } catch {
         content = ''
       }

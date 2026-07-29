@@ -17,6 +17,7 @@ import { SystemPromptAssembler } from '../../services/agent/system-prompt-assemb
 import { registerActiveStream, unregisterActiveStream } from '../../services/agent/agent-service'
 import { getAgentDir, getBuiltInCloneDir, getCloneDir, getAgentSkillsDir, backupFile } from '../../services/agent/paths'
 import { getEvolutionService } from '../../services/agent/evolution-service'
+import { getMemoryService } from '../../services/agent/memory-service'
 import { resolveCloneInfo } from '../../services/agent/clone-resolver'
 import { isBuiltinClone } from '../../services/agent/builtin-clones'
 import type { CloneDef } from '@octopus/shared'
@@ -57,6 +58,30 @@ You can autonomously improve your skills through these evolution operations:
 
 Use mark_insight liberally (it's cheap). Use evolve_skill sparingly (only for clear improvements).
 At the end of a productive session, consider using create_experience to capture lessons.
+`
+
+const RECORD_DAILY_TOOLS_PROMPT = `
+## Memory Recording Tool
+
+You can record valuable insights to your daily working memory using:
+
+- **record_daily**: Record an important insight, decision, or observation to your daily memory. This also creates a searchable session summary. Input: { content: string }
+
+### When to use record_daily (✅ positive examples)
+- User reveals a preference or workflow pattern ("User prefers TypeScript strict mode")
+- An important architectural decision is made ("Chose SQLite over PostgreSQL for local-first")
+- A non-obvious fact is discovered that future sessions would benefit from
+- A recurring problem pattern is identified
+- A productive workflow or shortcut is established
+
+### When NOT to use record_daily (❌ negative examples)
+- Simple greetings or pleasantries ("Hello", "Thanks")
+- Factual Q&A with no lasting value ("What's the capital of France?")
+- One-time lookups or transient operations
+- Routine task execution without novel insights
+- Content that duplicates what's already in memory
+
+Write concisely in markdown. Focus on **why** something matters, not just **what** happened.
 `
 
 // ── Clone resolution helper ────────────────────────────────────────
@@ -240,7 +265,7 @@ export function createMainAgentRoute(deps: MainAgentRouteDeps): Hono {
     // ══════════════════════════════════════════════════════════════
     const assembler = new SystemPromptAssembler(org)
     const baseSystemPrompt = assembler.assemble()
-    const systemPrompt = `${baseSystemPrompt}\n\n${DELEGATION_TOOLS_PROMPT}\n\n${EVOLUTION_TOOLS_PROMPT}`
+    const systemPrompt = `${baseSystemPrompt}\n\n${DELEGATION_TOOLS_PROMPT}\n\n${EVOLUTION_TOOLS_PROMPT}\n\n${RECORD_DAILY_TOOLS_PROMPT}`
 
     return streamSSE(c, async (stream) => {
       let aborted = false
@@ -259,6 +284,7 @@ export function createMainAgentRoute(deps: MainAgentRouteDeps): Hono {
         let fullThinking = ''
         let delegationDetected: { cloneName: string; task: string } | null = null
         const evolutionToolCalls: Array<{ id: string; name: string; input?: Record<string, unknown> }> = []
+        const memoryToolCalls: Array<{ id: string; name: string; input?: Record<string, unknown> }> = []
         const toolCalls: Array<{
           id: string; name: string; input?: unknown; result?: unknown; isError?: boolean
         }> = []
@@ -304,6 +330,10 @@ export function createMainAgentRoute(deps: MainAgentRouteDeps): Hono {
                 if (EVOLUTION_TOOL_NAMES.includes(tc.name)) {
                   evolutionToolCalls.push({ id: tc.id, name: tc.name, input: chunk.toolInput as Record<string, unknown> })
                 }
+                // Track memory tool calls (record_daily)
+                if (MEMORY_TOOL_NAMES.includes(tc.name)) {
+                  memoryToolCalls.push({ id: tc.id, name: tc.name, input: chunk.toolInput as Record<string, unknown> })
+                }
               }
               await stream.writeSSE({ event: 'tool_call', data: JSON.stringify({ type: 'input', tool_call_id: chunk.toolCallId, tool_name: chunk.toolName, input: chunk.toolInput }) })
               break
@@ -335,6 +365,11 @@ export function createMainAgentRoute(deps: MainAgentRouteDeps): Hono {
         // Execute evolution tool calls
         if (evolutionToolCalls.length > 0 && !aborted) {
           await executeEvolutionTools(evolutionToolCalls, org, sessionId!, stream)
+        }
+
+        // Execute memory tool calls (record_daily)
+        if (memoryToolCalls.length > 0 && !aborted) {
+          await executeMemoryTools(memoryToolCalls, org, sessionId!, stream)
         }
 
         // Store assistant message
@@ -390,6 +425,7 @@ export function createMainAgentRoute(deps: MainAgentRouteDeps): Hono {
 }
 
 const EVOLUTION_TOOL_NAMES = ['mark_insight', 'evolve_skill', 'create_experience', 'merge_skills', 'note_skill_issue']
+const MEMORY_TOOL_NAMES = ['record_daily']
 
 // ── Evolution tool execution ──────────────────────────────────────
 
@@ -584,6 +620,59 @@ async function executeEvolutionTools(
         data: JSON.stringify({
           type: 'result', tool_call_id: tc.id, tool_name: tc.name,
           content: `Evolution tool error: ${msg}`, is_error: true,
+        }),
+      })
+    }
+  }
+}
+
+// ── Memory tool execution ─────────────────────────────────────────
+
+async function executeMemoryTools(
+  toolCalls: Array<{ id: string; name: string; input?: Record<string, unknown> }>,
+  org: string,
+  sessionId: string,
+  stream: SSEStreamingApi,
+): Promise<void> {
+  for (const tc of toolCalls) {
+    try {
+      const input = tc.input ?? {}
+      let resultContent = ''
+
+      switch (tc.name) {
+        case 'record_daily': {
+          const content = String(input.content ?? '')
+          if (!content) {
+            resultContent = 'Error: content is required'
+            break
+          }
+          try {
+            const memoryService = getMemoryService()
+            const result = memoryService.recordDaily(org, content, sessionId)
+            resultContent = JSON.stringify(result)
+          } catch (e) {
+            resultContent = `Failed to record daily memory: ${e instanceof Error ? e.message : String(e)}`
+          }
+          break
+        }
+        default:
+          resultContent = `Unknown memory tool: ${tc.name}`
+      }
+
+      await stream.writeSSE({
+        event: 'tool_call',
+        data: JSON.stringify({
+          type: 'result', tool_call_id: tc.id, tool_name: tc.name,
+          content: resultContent, is_error: resultContent.startsWith('Error') || resultContent.startsWith('Failed'),
+        }),
+      })
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      await stream.writeSSE({
+        event: 'tool_call',
+        data: JSON.stringify({
+          type: 'result', tool_call_id: tc.id, tool_name: tc.name,
+          content: `Memory tool error: ${msg}`, is_error: true,
         }),
       })
     }
