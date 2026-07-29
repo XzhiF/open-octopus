@@ -1,0 +1,42 @@
+{
+  "items": [
+    {
+      "id": "969e25bf-0a26-4e60-b979-975fa17f361a",
+      "session_id": "bde7a8fa-c417-4d89-b8eb-b8b10502890f",
+      "chat_id": "969e25bf-0a26-4e60-b979-975fa17f361a",
+      "timestamp": "2026-07-24T18:16:12.513Z",
+      "summary": "Chat completed: 27 chars"
+    },
+    {
+      "id": "444623e5-d292-436b-980d-d02eaa866ca7",
+      "session_id": "bde7a8fa-c417-4d89-b8eb-b8b10502890f",
+      "chat_id": "444623e5-d292-436b-980d-d02eaa866ca7",
+      "timestamp": "2026-07-24T16:34:23.258Z",
+      "summary": "Chat completed: 32 chars"
+    },
+    {
+      "id": "e1a4f1b2-fbf9-4551-8149-db4ff5383237",
+      "session_id": "bde7a8fa-c417-4d89-b8eb-b8b10502890f",
+      "chat_id": "e1a4f1b2-fbf9-4551-8149-db4ff5383237",
+      "timestamp": "2026-07-24T16:33:56.121Z",
+      "summary": "Chat completed: 242 chars"
+    },
+    {
+      "id": "c266cc7d-6ddc-430e-9812-afe29b94c67d",
+      "session_id": "bde7a8fa-c417-4d89-b8eb-b8b10502890f",
+      "chat_id": "c266cc7d-6ddc-430e-9812-afe29b94c67d",
+      "timestamp": "2026-07-24T16:33:27.481Z",
+      "summary": "Chat completed: 16 chars"
+    },
+    {
+      "id": "2fb4ecae-1cb2-4747-9df9-5b9566e50b4c",
+      "session_id": "ad2292b9-604d-4c8d-a19d-46c943be8b4d",
+      "chat_id": "2fb4ecae-1cb2-4747-9df9-5b9566e50b4c",
+      "timestamp": "2026-07-24T16:29:49.048Z",
+      "summary": "Chat completed: 12 chars"
+    }
+  ],
+  "total": 19,
+  "has_more": true,
+  "next_cursor": "2026-07-24T16:29:49.048Z"
+}
