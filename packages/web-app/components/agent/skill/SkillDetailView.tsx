@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback, useMemo } from 'react'
-import { Pencil, X, GitCompare, Save, RotateCcw, Search } from 'lucide-react'
+import { Pencil, X, GitCompare, Save, RotateCcw, Search, FileText, Tag, Fingerprint, Wrench } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import rehypeSanitize from 'rehype-sanitize'
@@ -41,10 +41,89 @@ function fuzzyMatch(text: string, query: string): number[] | null {
   return qi === q.length ? indices : null
 }
 
+/** Parse YAML frontmatter from markdown content, returns metadata + body */
+function parseFrontmatter(raw: string): { meta: Record<string, string>; body: string } {
+  const match = raw.match(/^---\s*\n([\s\S]*?)\n---\s*\n([\s\S]*)$/)
+  if (!match) return { meta: {}, body: raw }
+
+  const yamlBlock = match[1]
+  const body = match[2]
+  const meta: Record<string, string> = {}
+
+  for (const line of yamlBlock.split('\n')) {
+    const sep = line.indexOf(':')
+    if (sep < 0) continue
+    const key = line.slice(0, sep).trim()
+    const val = line.slice(sep + 1).trim().replace(/^['"]|['"]$/g, '')
+    if (key) meta[key] = val
+  }
+
+  return { meta, body }
+}
+
+/** Standard SKILL frontmatter fields */
+const FRONTMATTER_DISPLAY: Record<string, { label: string; icon: typeof Tag; color: string }> = {
+  name:        { label: '名称',   icon: Fingerprint, color: 'text-agent-primary' },
+  version:     { label: '版本',   icon: Tag,         color: 'text-agent-info' },
+  description: { label: '描述',   icon: FileText,    color: 'text-agent-success' },
+  tools:       { label: '工具',   icon: Wrench,      color: 'text-agent-accent' },
+}
+
 const sourceLabels: Record<string, { label: string; className: string }> = {
   local_evolved: { label: '进化版', className: 'bg-agent-accent-light text-agent-accent border-agent-accent/20' },
   builtin: { label: '内置版', className: 'bg-muted text-muted-foreground' },
   prod: { label: '生产版', className: 'bg-agent-success-light text-agent-success-foreground border-agent-success/20' },
+}
+
+/** Renders frontmatter as a styled metadata card + remaining markdown */
+function FrontmatterContent({ content }: { content: string }) {
+  const { meta, body } = parseFrontmatter(content)
+  const metaEntries = Object.entries(meta)
+
+  return (
+    <div className="space-y-4">
+      {/* Frontmatter card */}
+      {metaEntries.length > 0 && (
+        <div className="rounded-lg border border-agent-divider bg-agent-surface-raised overflow-hidden">
+          {/* Header bar */}
+          <div className="flex items-center gap-2 px-3 py-1.5 border-b border-agent-divider bg-agent-surface-inset/50">
+            <FileText className="h-3.5 w-3.5 text-agent-primary" />
+            <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Frontmatter</span>
+          </div>
+          {/* Key-value rows */}
+          <div className="divide-y divide-agent-divider">
+            {metaEntries.map(([key, value]) => {
+              const display = FRONTMATTER_DISPLAY[key]
+              const Icon = display?.icon ?? Tag
+              const labelColor = display?.color ?? 'text-muted-foreground'
+              const label = display?.label ?? key
+
+              return (
+                <div key={key} className="flex items-start gap-3 px-3 py-2">
+                  <div className={cn('flex items-center gap-1.5 min-w-[72px] text-sm', labelColor)}>
+                    <Icon className="h-3 w-3 flex-shrink-0" />
+                    <span className="font-medium">{label}</span>
+                  </div>
+                  <div className="flex-1 text-sm text-foreground leading-relaxed break-words font-mono">
+                    {value}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Markdown body */}
+      {body.trim() && (
+        <div className="prose prose-sm dark:prose-invert max-w-none prose-headings:font-semibold prose-headings:tracking-tight prose-h1:text-lg prose-h1:mb-4 prose-h1:border-b prose-h1:border-agent-divider prose-h1:pb-2 prose-h2:text-base prose-h2:mt-6 prose-h2:mb-3 prose-h3:text-sm prose-h3:mt-4 prose-h3:mb-2 prose-p:leading-relaxed prose-p:my-2 prose-li:my-0.5 prose-code:text-agent-info prose-code:bg-agent-surface-inset prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-code:text-sm prose-pre:bg-agent-surface-inset prose-pre:border prose-pre:border-agent-divider">
+          <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeSanitize]}>
+            {body}
+          </ReactMarkdown>
+        </div>
+      )}
+    </div>
+  )
 }
 
 export function SkillDetailView({ skills, loading: skillsLoading, onRefresh }: SkillDetailViewProps) {
@@ -289,7 +368,7 @@ export function SkillDetailView({ skills, loading: skillsLoading, onRefresh }: S
                 )}
               </div>
               {searchQuery && (
-                <div className="text-[10px] text-muted-foreground mt-1 px-1">
+                <div className="text-xs text-muted-foreground mt-1 px-1">
                   {filteredSkills.length} / {skills.length} 个匹配
                 </div>
               )}
@@ -309,7 +388,7 @@ export function SkillDetailView({ skills, loading: skillsLoading, onRefresh }: S
                         : 'hover:bg-accent text-foreground'
                     )}
                   >
-                    <div className="font-mono text-xs truncate">
+                    <div className="font-mono text-sm truncate">
                       {matchIndices ? (
                         renderHighlighted(skill.name, matchIndices)
                       ) : (
@@ -317,10 +396,10 @@ export function SkillDetailView({ skills, loading: skillsLoading, onRefresh }: S
                       )}
                     </div>
                     <div className="flex items-center gap-2 mt-0.5">
-                      <Badge variant="outline" className={cn('text-[10px] px-1', srcInfo.className)}>
+                      <Badge variant="outline" className={cn('text-xs px-1', srcInfo.className)}>
                         {srcInfo.label}
                       </Badge>
-                      <span className="text-[10px] text-muted-foreground">{formatSize(skill.file_size ?? 0)}</span>
+                      <span className="text-xs text-muted-foreground">{formatSize(skill.file_size ?? 0)}</span>
                     </div>
                   </button>
                 )
@@ -348,11 +427,7 @@ export function SkillDetailView({ skills, loading: skillsLoading, onRefresh }: S
                 className="w-full h-full min-h-[60vh] rounded-lg border border-agent-divider bg-agent-surface-inset p-4 font-mono text-sm resize-none focus:outline-none focus:ring-2 focus:ring-agent-primary/50"
               />
             ) : content ? (
-              <div className="prose prose-sm dark:prose-invert max-w-none">
-                <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeSanitize]}>
-                  {content}
-                </ReactMarkdown>
-              </div>
+              <FrontmatterContent content={content} />
             ) : (
               <p className="text-sm text-muted-foreground text-center py-8">
                 选择一个 SKILL 查看内容
