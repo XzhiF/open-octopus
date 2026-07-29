@@ -190,7 +190,7 @@ function scanDirectory(
       try {
         const stats = fs.statSync(fullPath)
         const info: FileInfo = {
-          path: relativePath,
+          path: relativePath.replace(/\\/g, '/'),
           name: entry.name,
           type: entry.isDirectory() ? 'directory' : 'file',
           size: entry.isDirectory() ? 0 : stats.size,
