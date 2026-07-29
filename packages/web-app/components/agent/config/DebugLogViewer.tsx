@@ -50,6 +50,7 @@ export function DebugLogViewer({ config, onSave }: DebugLogViewerProps) {
     if (opts.append) {
       setLoadingMore(true)
     } else {
+      setLoading(true)
       setLogs([])
       setSelectedLog(null)
     }
@@ -78,6 +79,7 @@ export function DebugLogViewer({ config, onSave }: DebugLogViewerProps) {
     } catch {
       // Silently fail — debug log is non-critical
     } finally {
+      setLoading(false)
       setLoadingMore(false)
     }
   }, [])
