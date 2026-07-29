@@ -46,6 +46,13 @@ const skillCount = syncDir(skillsSrc, skillsDst, name => {
     existsSync(join(skillsSrc, name, 'SKILL.md'))
 })
 
+// Also sync skills to ~/.octopus/agent/skills/ for server clone-runtime discovery
+const agentSkillsDst = join(homedir(), '.octopus', 'agent', 'skills')
+syncDir(skillsSrc, agentSkillsDst, name => {
+  return statSync(join(skillsSrc, name)).isDirectory() &&
+    existsSync(join(skillsSrc, name, 'SKILL.md'))
+})
+
 // Agents: .md files (role cards)
 const agentsSrc = join(corePack, 'agents')
 const agentsDst = join(root, '.claude', 'agents')
