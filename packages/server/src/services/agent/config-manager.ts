@@ -112,7 +112,22 @@ export class ConfigManager {
    */
   updateConfig(org: string, partial: Partial<AgentConfigYaml>): ConfigLoadResult {
     const current = this.getConfig(org)
-    const merged = { ...current, ...partial }
+    const merged = {
+      ...current,
+      ...partial,
+      notification: partial.notification
+        ? { ...current.notification, ...partial.notification }
+        : current.notification,
+      memory: partial.memory
+        ? { ...current.memory, ...partial.memory }
+        : current.memory,
+      safe_mode: partial.safe_mode
+        ? { ...current.safe_mode, ...partial.safe_mode }
+        : current.safe_mode,
+      debug: partial.debug
+        ? { ...current.debug, ...partial.debug }
+        : current.debug,
+    }
 
     // Validate merged config
     const zodResult = agentConfigSchema.safeParse(merged)

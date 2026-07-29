@@ -18,9 +18,8 @@ export function createConfigRoutes(): Hono {
       const manager = getConfigManager()
       const result = manager.loadConfig(org)
       return c.json({
-        config: result.config,
-        degraded: result.degraded,
-        warnings: result.warnings,
+        ...result.config,
+        config_degraded: result.degraded,
       })
     } catch (err: unknown) {
       const error = err instanceof Error ? err : new Error(String(err))
@@ -51,9 +50,8 @@ export function createConfigRoutes(): Hono {
       const result = manager.updateConfig(org, body as Record<string, unknown>)
       return c.json({
         ok: true,
-        config: result.config,
-        degraded: result.degraded,
-        warnings: result.warnings,
+        ...result.config,
+        config_degraded: result.degraded,
       })
     } catch (err: unknown) {
       const error = err instanceof Error ? err : new Error(String(err))

@@ -3,9 +3,11 @@
 import { useState } from 'react'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { toast } from 'sonner'
 import type { AgentConfig } from '@/lib/agent/types'
+import { testNotification } from '@/lib/agent/api'
 import { ConfigSection } from './ConfigSection'
 
 interface NotificationConfigProps {
@@ -20,15 +22,34 @@ const TIMEZONES = [
 ]
 
 export function NotificationConfig({ config, onSave, saving }: NotificationConfigProps) {
-  const [provider, setProvider] = useState(config?.notification?.provider ?? 'hermes-cli')
+  const [provider, setProvider] = useState(config?.notification?.provider ?? 'hermes')
   const [target, setTarget] = useState(config?.notification?.target ?? '')
   const [timezone, setTimezone] = useState(config?.notification?.timezone ?? 'Asia/Shanghai')
+  const [testing, setTesting] = useState(false)
+  const [testMessage, setTestMessage] = useState('')
 
   const handleSave = async () => {
     const ok = await onSave({
       notification: { provider, target, timezone },
     })
     if (ok) toast.success('通知配置已保存')
+  }
+
+  const handleTest = async () => {
+    setTesting(true)
+    try {
+      const result = await testNotification(testMessage || undefined)
+      if (result.ok) {
+        toast.success(result.detail)
+      } else {
+        toast.error(result.detail)
+      }
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : '测试失败'
+      toast.error(message)
+    } finally {
+      setTesting(false)
+    }
   }
 
   return (
@@ -69,6 +90,23 @@ export function NotificationConfig({ config, onSave, saving }: NotificationConfi
             </SelectContent>
           </Select>
         </div>
+        <div>
+          <Label>测试消息 (可选)</Label>
+          <Input
+            value={testMessage}
+            onChange={(e) => setTestMessage(e.target.value)}
+            placeholder="留空使用默认消息"
+            className="mt-1 bg-agent-surface-inset border-agent-divider"
+          />
+        </div>
+        <Button
+          variant="outline"
+          onClick={handleTest}
+          disabled={testing}
+          className="w-full"
+        >
+          {testing ? '测试中...' : '测试通知'}
+        </Button>
       </div>
     </ConfigSection>
   )

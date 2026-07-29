@@ -25,7 +25,7 @@ export const agentConfigSchema = z.object({
     message: `model must be one of: ${ALLOWED_MODELS.join(', ')} or engine/alias format (e.g. claude/pro)`
   }).default('pro-max'),
   timeout: z.number().int().min(30).max(1800).default(300),
-  max_clones: z.number().int().min(1).max(20).default(5),
+  max_clones: z.number().int().min(1).default(5),
   notification: z.object({
     provider: notificationProviderSchema.default('hermes'),
     target: z.string().default(''),

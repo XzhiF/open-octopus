@@ -458,6 +458,12 @@ export function getConfig() {
 export function updateConfig(data: Partial<AgentConfig>) {
   return request<{ ok: boolean; config_degraded: boolean }>('/config', { method: 'PUT', body: JSON.stringify(data) })
 }
+export function testNotification(message?: string) {
+  return request<{ ok: boolean; detail: string }>('/config/test-notification', {
+    method: 'POST',
+    body: JSON.stringify({ message }),
+  })
+}
 export function getPersona() {
   return request<{ content: string; token_count: number }>('/config/persona')
 }

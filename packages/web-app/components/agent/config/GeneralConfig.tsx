@@ -27,8 +27,8 @@ export function GeneralConfig({ config, onSave, saving }: GeneralConfigProps) {
       toast.error('Timeout 必须在 30–1800 秒之间')
       return
     }
-    if (maxClones < 1 || maxClones > 20) {
-      toast.error('Max Clones 必须在 1–20 之间')
+    if (maxClones < 1) {
+      toast.error('Max Clones 必须至少为 1')
       return
     }
 

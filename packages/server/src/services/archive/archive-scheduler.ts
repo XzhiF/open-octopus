@@ -8,13 +8,13 @@ export class ArchiveScheduler {
 
   constructor(
     private orgLister: () => string[],
-    private intervalHours: number = 2,
   ) {}
 
   start(): () => void {
-    const intervalMs = this.intervalHours * 60 * 60 * 1000
+    // Run every hour — check each org's config for the target hour
+    const intervalMs = 60 * 60 * 1000
     this.timer = setInterval(() => this.run(), intervalMs)
-    logInfo('archive scheduler started', { intervalHours: this.intervalHours })
+    logInfo('archive scheduler started', { checkIntervalHours: 1 })
     return () => this.stop()
   }
 
@@ -31,12 +31,20 @@ export class ArchiveScheduler {
     this.isRunning = true
     try {
       const orgs = this.orgLister()
+      const currentHour = new Date().getHours()
       let totalArchived = 0
+
       for (const org of orgs) {
         try {
+          const config = getConfigManager().getConfig(org)
+          const targetHour = config.memory.archive_cron_hour
+
+          // Only run archive for orgs whose configured hour matches current hour
+          if (currentHour !== targetHour) continue
+
           const archiveService = getArchiveService()
           if (!archiveService) continue
-          const config = getConfigManager().getConfig(org)
+
           const result = await archiveService.archiveMemoryBatch(org, config.memory as { session_retention_days: number; long_term_refine_trigger_days: number })
           totalArchived += result.archived_count
         } catch (err) {

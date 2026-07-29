@@ -637,5 +637,49 @@ nodes:
     }
   })
 
+  // ── Notification test ──────────────────────────────────────────
+  app.post('/config/test-notification', async (c) => {
+    try {
+      const org = c.req.header('X-Octopus-Org') || (c.get('org') as string)
+      if (!org) return c.json(createAgentError('ORG_NOT_FOUND', 'Organization not resolved'), 403)
+
+      const { getConfigManager } = await import('../../services/agent/config-manager')
+      const configManager = getConfigManager()
+      const config = configManager.getConfig(org)
+
+      const provider = config.notification?.provider
+      const target = config.notification?.target
+
+      if (!provider || provider === 'none') {
+        return c.json({ ok: false, detail: '通知未配置或已禁用 (provider=none)' })
+      }
+
+      if (!target) {
+        return c.json({ ok: false, detail: '通知目标未配置' })
+      }
+
+      const body = await c.req.json<{ message?: string }>().catch(() => ({}))
+      const message = body.message ?? '通知测试成功'
+
+      const notifyService = getNotificationService()
+      const result = await notifyService.sendNotification(org, {
+        type: 'general',
+        title: 'Octopus 通知测试',
+        body: message,
+        priority: 'normal',
+      })
+
+      return c.json({
+        ok: result.sent,
+        detail: result.sent
+          ? `通知已发送至 ${result.provider}:${result.target}`
+          : `通知发送失败: ${result.error ?? '未知错误'}`,
+      })
+    } catch (err: unknown) {
+      const error = err instanceof Error ? err : new Error(String(err))
+      return c.json(createAgentError('INTERNAL_ERROR', error.message), 500)
+    }
+  })
+
   return app
 }
