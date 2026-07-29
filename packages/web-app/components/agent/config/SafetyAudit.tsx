@@ -17,7 +17,7 @@ const typeStyles: Record<string, string> = {
 }
 
 const decisionLabels: Record<string, string> = {
-  intercept: '拦截',
+  intercept: '已记录',
   confirm_accept: '用户确认',
   confirm_reject: '用户拒绝',
 }
@@ -35,7 +35,7 @@ export function SafetyAudit({ events }: SafetyAuditProps) {
       <div className="px-5 py-4 border-b border-agent-divider">
         <h3 className="text-sm font-semibold flex items-center gap-2">
           <Shield className="h-4 w-4" />
-          安全审计
+          操作审计
         </h3>
       </div>
       {events.length === 0 ? (
