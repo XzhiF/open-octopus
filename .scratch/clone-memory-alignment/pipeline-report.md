@@ -55,6 +55,5 @@ PR: [#34](https://github.com/XzhiF/open-octopus/pull/34) — Updated
 ### Remaining Issues
 | # | Issue | Impact | Suggestion |
 |---|-------|--------|------------|
-| 1 | merge_skills tool 是 stub（历史遗留） | Low | 后续迭代实现 |
-| 2 | Claude SDK 不可用时 record_daily 无法触发 | Low | fallback 模式本身功能有限 |
-| 3 | archive-service.test.ts 1个 pre-existing failure | Low | archiveWorkspace 事务回滚问题，与 CMA 无关 |
+| 1 | Claude SDK 不可用时 record_daily 无法触发 | Low | fallback 模式本身功能有限 |
+| 2 | archive-service.test.ts 1个 pre-existing failure | Low | archiveWorkspace 事务回滚问题，与 CMA 无关 |

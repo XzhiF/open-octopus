@@ -1,6 +1,6 @@
 ---
 name: matt-dev-pipeline
-description: Full pipeline orchestration skill. Guides the main agent to sequentially invoke matt-dev-runner (development) -> CI/CD deploy -> matt-e2e-tester (E2E verification) -> Git PR delivery. Use when a requirement is clarified and needs end-to-end development + deployment + verification + delivery.
+description: Full pipeline orchestration skill. Guides the main agent to sequentially invoke matt-dev-runner (development) -> independent code review -> CI/CD deploy -> matt-e2e-tester (E2E verification) -> Git PR delivery. Use when a requirement is clarified and needs end-to-end development + deployment + verification + delivery.
 ---
 
 # Full Development Pipeline
@@ -22,11 +22,13 @@ Input: <artifacts.dir>/<feature-slug>/brief.md
     |
 Phase 1: Development -> invoke matt-dev-runner agent
     |
-Phase 2: Deploy -> local dev only, skip CI/CD
+Phase 2: Code Review -> independent sub-agent reviews diff (裁判 ≠ 球员)
     |
-Phase 3: E2E Verification -> invoke matt-e2e-tester agent
+Phase 3: Deploy -> local dev only, skip CI/CD
     |
-Phase 4: Ship (Git PR) -> main agent executes directly
+Phase 4: E2E Verification -> invoke matt-e2e-tester agent
+    |
+Phase 5: Ship (Git PR) -> main agent executes directly
     |
 Output: <artifacts.dir>/<feature-slug>/pipeline-report.md
 ```
@@ -35,7 +37,7 @@ Output: <artifacts.dir>/<feature-slug>/pipeline-report.md
 
 ## Directory Conventions
 
-### E2E Test Artifacts (Phase 3, under `<artifacts.dir>/<feature-slug>/`)
+### E2E Test Artifacts (Phase 4, under `<artifacts.dir>/<feature-slug>/`)
 
 | Directory | Contents |
 |-----------|----------|
@@ -74,7 +76,45 @@ matt-dev-runner will:
 
 ---
 
-## Phase 2: Deploy
+## Phase 2: Code Review (独立审查)
+
+**Design principle**: 裁判 ≠ 球员。matt-dev-runner 写了代码，不能自己审查自己。Pipeline 作为编排者，spawn 独立 sub-agent 审查全量 diff。
+
+**Dispatch**: Spawn a sub-agent via the Agent tool to run `code-review` skill:
+
+```
+Prompt: "Review the diff between the branch base and HEAD.
+  Spec path: <artifacts.dir>/<feature-slug>/spec.md
+  Base ref: main (or the branch point)
+  Run code-review skill — both axes (Standards + Spec).
+  Return findings as structured list with severity:
+  🔴 Must fix / 🟡 Should fix / 🔵 Note"
+```
+
+**Why sub-agent, not inline**: The sub-agent has **fresh context** — it didn't write the code, didn't make the same design decisions, and has no attachment to the implementation. This is the independence that makes review meaningful.
+
+**Evaluate findings**:
+
+| Severity | Action |
+|----------|--------|
+| 🔴 Must fix | Dispatch `matt-dev-runner` to fix → re-run `pnpm test` → re-review |
+| 🟡 Should fix | Dispatch `matt-dev-runner` to fix → re-run `pnpm test` |
+| 🔵 Note | Log in pipeline-report, no action |
+
+**Fix-verify cycle** (if 🔴 or 🟡 findings exist):
+
+1. Spawn `matt-dev-runner` agent with prompt: "Fix these code review findings: <findings list>. After fixing, run `pnpm test` and confirm all pass."
+2. If tests FAIL → revert fix, try alternative (max 2 fix attempts per finding)
+3. If tests PASS → spawn code-review sub-agent again to confirm findings resolved
+4. Max 2 review-fix cycles total
+
+**Pass criteria**: No 🔴 findings remain. 🟡 findings either fixed or explicitly accepted.
+
+**Failure handling**: If after 2 cycles 🔴 findings persist, log them in pipeline-report and present to user. Pipeline continues — don't block on stubborn review issues.
+
+---
+
+## Phase 3: Deploy
 
 **Dispatch**: This project uses local dev only (`pnpm dev --isolated`), no CI/CD. Skip deployment — inform user to restart dev server if needed.
 
@@ -103,7 +143,7 @@ Wait 30s between polls
 
 ---
 
-## Phase 3: E2E Verification
+## Phase 4: E2E Verification
 
 **Dispatch**: Invoke the `matt-e2e-tester` agent.
 
@@ -127,15 +167,15 @@ matt-e2e-tester will:
 **Failure handling**: If matt-e2e-tester reports FAIL after exhausting both fix attempts:
 - Read the fix attempts summary from E2E report
 - Present diagnosis to user: what was tried, root cause analysis, recommended direction
-- Pipeline stops — do NOT proceed to Phase 4
-- User decides: manual fix + re-run Phase 3, or skip and proceed with known issues
+- Pipeline stops — do NOT proceed to Phase 5
+- User decides: manual fix + re-run Phase 4, or skip and proceed with known issues
 
 **Post-verification**: Update `<artifacts.dir>/index.md` — set current feature-slug status to `done`.
-Note: index.md tracks all feature-slugs across all branches. Phase 4 will read it to build iteration history.
+Note: index.md tracks all feature-slugs across all branches. Phase 5 will read it to build iteration history.
 
 ---
 
-## Phase 4: Ship (Git PR)
+## Phase 5: Ship (Git PR)
 
 **Dispatch**: Main agent executes directly using Git CLI.
 
@@ -199,15 +239,19 @@ Write `<artifacts.dir>/<feature-slug>/pipeline-report.md` **before** committing,
 | Ticket | Title | Status | Fix Count |
 |--------|-------|--------|-----------|
 
-### Phase 2: Deploy
+### Phase 2: Code Review
+| Axis | Findings | Fixed | Noted | Cycles |
+|------|----------|-------|-------|--------|
+
+### Phase 3: Deploy
 | Project | Build# | Result |
 |---------|--------|--------|
 
-### Phase 3: E2E Verification（当前迭代）
+### Phase 4: E2E Verification（当前迭代）
 | AC | Condition | Status | Evidence |
 |----|-----------|--------|----------|
 
-### Phase 4: Ship (Git PR)
+### Phase 5: Ship (Git PR)
 _(PR links amended after step 4.6)_
 
 ### Changed Files（git diff 实时生成）
@@ -320,7 +364,7 @@ Record each project's PR status:
 
 ### 4.8 Amend PR Links into Report
 
-After PR creation/update, update `pipeline-report.md` Phase 4 section with actual PR links, then amend and force-push:
+After PR creation/update, update `pipeline-report.md` Phase 5 section with actual PR links, then amend and force-push:
 
 ```bash
 # Update pipeline-report.md with PR links
@@ -330,18 +374,19 @@ git commit --amend --no-edit
 git push --force-with-lease origin $branch
 ```
 
-**Phase 4 pass criteria**: All changed projects have PR created or updated, code fully pushed, pipeline artifacts included in PR.
+**Phase 5 pass criteria**: All changed projects have PR created or updated, code fully pushed, pipeline artifacts included in PR.
 
 ---
 
 ## Key Rules
 
-1. **Phases cannot be skipped**: Must execute 1 -> 2 -> 3 -> 4 in order
-2. **Phase failure stops pipeline**: Phase 1 (max 1 retry), Phase 2 (max 2 retries), Phase 3 (matt-e2e-tester handles fix-and-retest internally: Quick Fix → diagnosing-bugs → stop). If exhausted, present to user.
-3. **Orchestrate, don't execute**: Phase 1 and 3 use agents; main agent doesn't write code or run tests
+1. **Phases cannot be skipped**: Must execute 1 → 2 → 3 → 4 → 5 in order
+2. **Phase failure stops pipeline**: Phase 1 (max 1 retry), Phase 2 (max 2 review-fix cycles), Phase 3 (max 2 retries), Phase 4 (matt-e2e-tester handles fix-and-retest internally: Quick Fix → diagnosing-bugs → stop). If exhausted, present to user.
+3. **Orchestrate, don't execute**: Phase 1, 2, and 4 use agents/sub-agents; main agent doesn't write code, review code, or run tests
+4. **裁判 ≠ 球员**: Phase 2 code review runs in an independent sub-agent, NOT in matt-dev-runner. The agent that wrote the code cannot review its own work.
 4. **PR precision**: Only create PRs for projects with actual code changes vs target branch
 5. **Artifact ownership**: All intermediates go to `<artifacts.dir>/<feature-slug>/`, never pollute source dirs
 6. **Artifacts in PR**: pipeline-report.md and index.md must be committed before PR creation so they appear in the PR diff
 7. **PR smart overwrite**: 已有 PR 时更新 body 而非跳过；用 `<!-- MANUAL-START/END -->` 保护人工编辑内容
-8. **Iteration awareness**: Phase 4 始终读取 index.md 全量迭代记录，PR body 反映分支完整历史
+8. **Iteration awareness**: Phase 5 始终读取 index.md 全量迭代记录，PR body 反映分支完整历史
 9. **Git diff is truth**: Changed Files 永远从 `git diff` 实时生成，不依赖任何 feature-slug 的记录
