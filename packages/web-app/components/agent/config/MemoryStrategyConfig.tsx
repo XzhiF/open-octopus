@@ -100,7 +100,11 @@ export function MemoryStrategyConfig({ config, onSave, saving }: MemoryStrategyC
       }
     }
 
-    if (configOk && cronOk) toast.success('记忆策略已保存')
+    if (configOk && cronOk) {
+      toast.success('记忆策略已保存')
+    } else if (!configOk) {
+      toast.error('配置保存失败')
+    }
   }
 
   const isSaving = saving || cronSaving

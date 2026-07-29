@@ -38,7 +38,11 @@ export function GeneralConfig({ config, onSave, saving }: GeneralConfigProps) {
       max_clones: maxClones,
       debug: { enabled: debugEnabled },
     })
-    if (ok) toast.success('通用配置已保存')
+    if (ok) {
+      toast.success('通用配置已保存')
+    } else {
+      toast.error('保存失败')
+    }
   }
 
   return (

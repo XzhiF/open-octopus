@@ -48,6 +48,13 @@ export function createConfigRoutes(): Hono {
 
       const manager = getConfigManager()
       const result = manager.updateConfig(org, body as Record<string, unknown>)
+
+      // Invalidate notification service config cache so it picks up new values
+      try {
+        const { getNotificationService } = require('../../services/agent/notification-service')
+        getNotificationService().invalidateConfig(org)
+      } catch { /* non-fatal */ }
+
       return c.json({
         ok: true,
         ...result.config,

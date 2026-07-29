@@ -1,5 +1,6 @@
 import { Button } from '@/components/ui/button'
 import { Separator } from '@/components/ui/separator'
+import { Save } from 'lucide-react'
 
 interface ConfigSectionProps {
   title: string
@@ -27,8 +28,9 @@ export function ConfigSection({ title, description, saving, onSave, children }: 
               onClick={onSave}
               disabled={saving}
               size="sm"
-              className="bg-agent-primary hover:bg-agent-primary-hover text-agent-primary-foreground"
+              className="bg-agent-primary hover:bg-agent-primary-hover text-agent-primary-foreground gap-1.5"
             >
+              <Save className="h-3.5 w-3.5" />
               {saving ? '保存中...' : '保存'}
             </Button>
           </div>

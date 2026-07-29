@@ -32,7 +32,11 @@ export function NotificationConfig({ config, onSave, saving }: NotificationConfi
     const ok = await onSave({
       notification: { provider, target, timezone },
     })
-    if (ok) toast.success('通知配置已保存')
+    if (ok) {
+      toast.success('通知配置已保存')
+    } else {
+      toast.error('保存失败，请检查 provider 值是否合法')
+    }
   }
 
   const handleTest = async () => {

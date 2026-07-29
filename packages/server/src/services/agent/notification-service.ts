@@ -91,19 +91,16 @@ export class NotificationService {
 
   /**
    * Send notification via hermes CLI.
+   * hermes send uses: hermes send -t TARGET "message"
+   * where TARGET is a hermes-configured target name (e.g. "xzf_hermes").
    */
   private sendViaHermes(target: string, request: NotificationRequest): boolean {
     if (!target) return false
 
-    // Parse target format: "telegram:xzf_hermes" or "discord:channel_name"
-    const [provider, channel] = target.split(':')
-    if (!provider || !channel) return false
-
     try {
       const message = this.formatMessage(request)
-      // Use hermes CLI to send — non-blocking with timeout
       execSync(
-        `hermes send --provider ${provider} --channel ${channel} --message ${JSON.stringify(message)}`,
+        `hermes send -t ${target} ${JSON.stringify(message)}`,
         {
           timeout: 30000,
           stdio: 'pipe',
@@ -126,30 +123,26 @@ export class NotificationService {
 
   /**
    * Get notification config for an org (provider + target).
+   * Reads from ConfigManager (the single source of truth for agent config).
    */
   private getConfig(org: string): { provider: string; target: string } {
     const cached = this.configCache.get(org)
     if (cached) return cached
 
-    const configPath = getAgentConfigPath()
-    let provider = 'hermes-cli'
-    let target = 'telegram:xzf_hermes'
-
-    if (fs.existsSync(configPath)) {
-      try {
-        const content = fs.readFileSync(configPath, 'utf-8')
-        const providerMatch = content.match(/provider:\s*(.+)/)
-        const targetMatch = content.match(/target:\s*(.+)/)
-        if (providerMatch) provider = providerMatch[1].trim()
-        if (targetMatch) target = targetMatch[1].trim()
-      } catch {
-        // Use defaults on read failure
+    try {
+      const { getConfigManager } = require('../../services/agent/config-manager')
+      const configManager = getConfigManager()
+      const config = configManager.getConfig(org)
+      const result = {
+        provider: config.notification?.provider ?? 'hermes',
+        target: config.notification?.target ?? '',
       }
+      this.configCache.set(org, result)
+      return result
+    } catch {
+      // Fallback on ConfigManager failure
+      return { provider: 'hermes', target: '' }
     }
-
-    const config = { provider, target }
-    this.configCache.set(org, config)
-    return config
   }
 
   /**
