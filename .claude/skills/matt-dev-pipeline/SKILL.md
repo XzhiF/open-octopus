@@ -103,8 +103,9 @@ code-review 内部 spawn 两个并行 sub-agent：
 
 1. **主 Agent 直接修复**: 用 Edit/Write 工具对具体文件做 targeted fix。**不要重新 spawn matt-dev-runner** — 它会重跑 spec→tickets→implement 全流程，不是 targeted fixer。
 2. **验证**: 运行 `pnpm test`，确认修复没有引入回归
-3. **再审查**: 如果 tests PASS，主 Agent 再跑一次 `/code-review` 确认 findings 已解决
-4. **Max 2 review-fix cycles** total（防止无限循环）
+3. **Commit + push**: `git add -A && git commit -m "fix: address code review findings" && git push`
+4. **再审查**: 主 Agent 再跑一次 `/code-review` 确认 findings 已解决
+5. **Max 2 review-fix cycles** total（防止无限循环）
 
 **Pass criteria**: No 🔴 findings remain. 🟡 findings either fixed or explicitly accepted.
 
