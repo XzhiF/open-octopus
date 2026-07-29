@@ -314,6 +314,11 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
     source: string, orchestration: string | undefined, orchestrationFullResult: any,
   ): void {
     try {
+      // Check debug.enabled config — skip if disabled
+      const { getConfigManager } = require('../../services/agent/config-manager')
+      const config = getConfigManager().getConfig(org)
+      if (!config.debug?.enabled) return
+
       const debugDir = getDebugTracesDir()
       if (!fs.existsSync(debugDir)) fs.mkdirSync(debugDir, { recursive: true })
       const debugEntry = {

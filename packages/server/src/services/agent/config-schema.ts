@@ -84,7 +84,7 @@ export const agentConfigSchema = z.object({
     inactive_days_threshold: z.number().int().min(7).max(90).default(14),
   }).default({}),
   debug: z.object({
-    enabled: z.boolean().default(false),
+    enabled: z.boolean().default(true),
   }).default({}),
   onboarding_completed: z.boolean().default(false),
   default_org: z.string().default(''),
