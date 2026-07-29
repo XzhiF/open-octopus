@@ -1,9 +1,9 @@
 import { Hono } from 'hono'
 import { getConfigManager } from '../../services/agent/config-manager'
-import { AgentSessionDAO } from '../../db/dao'
+import { AgentSessionDAO, SafetyDAO } from '../../db/dao'
 import { createAgentError, mapErrorToStatus } from './middleware'
 
-export function createSafeModeRoutes(sessionDAO: AgentSessionDAO): Hono {
+export function createSafeModeRoutes(sessionDAO: AgentSessionDAO, safetyDAO?: SafetyDAO): Hono {
   const safeMode = new Hono()
 
   /**
@@ -85,6 +85,21 @@ export function createSafeModeRoutes(sessionDAO: AgentSessionDAO): Hono {
         // Notification failure is non-fatal
       }
 
+      // ── Record safety event (B5 fix) ──────────────────────────
+      try {
+        safetyDAO?.insertSafetyEvent({
+          type: 'safe_mode_toggle',
+          operation: 'Enable safe mode',
+          decision: 'intercept',
+          actor: 'system',
+          context: null,
+          org,
+          timestamp: new Date().toISOString(),
+        })
+      } catch {
+        // Safety event write failure is non-fatal
+      }
+
       return c.json({
         ok: true,
         safe_mode: {
@@ -114,6 +129,22 @@ export function createSafeModeRoutes(sessionDAO: AgentSessionDAO): Hono {
       const result = manager.updateConfig(org, {
         safe_mode: { enabled: false, inactive_days_threshold: manager.getConfig(org).safe_mode.inactive_days_threshold },
       })
+
+      // ── Record safety event (B5 fix) ──────────────────────────
+      try {
+        safetyDAO?.insertSafetyEvent({
+          type: 'safe_mode_toggle',
+          operation: 'Disable safe mode',
+          decision: 'intercept',
+          actor: 'system',
+          context: null,
+          org,
+          timestamp: new Date().toISOString(),
+        })
+      } catch {
+        // Safety event write failure is non-fatal
+      }
+
       return c.json({
         ok: true,
         safe_mode: {

@@ -1,6 +1,7 @@
 'use client'
 
 import { useAgentConfig } from '@/hooks/useAgentConfig'
+import { GeneralConfig } from './GeneralConfig'
 import { PersonaEditor } from './PersonaEditor'
 import { NotificationConfig } from './NotificationConfig'
 import { MemoryStrategyConfig } from './MemoryStrategyConfig'
@@ -44,6 +45,7 @@ export function ConfigTab() {
           </div>
         )}
 
+        <GeneralConfig config={config} onSave={saveConfig} saving={saving} />
         <SafeModePanel safeMode={safeMode} onToggle={toggleSafeMode} />
         <PersonaEditor onSave={savePersona} saving={saving} />
         <NotificationConfig config={config} onSave={saveConfig} saving={saving} />

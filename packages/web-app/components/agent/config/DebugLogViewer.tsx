@@ -61,7 +61,7 @@ export function DebugLogViewer() {
                   onClick={() => handleSelect(log.chat_id ?? log.id)}
                   className={cn(
                     'w-full text-left px-4 py-3 hover:bg-accent transition-colors',
-                    selectedLog?.id === log.id && 'bg-agent-primary-light'
+                    selectedLog?.chat_id === log.chat_id && 'bg-agent-primary-light'
                   )}
                 >
                   <p className="text-sm truncate">{log.summary}</p>
@@ -102,11 +102,11 @@ export function DebugLogViewer() {
                     </div>
                   ))}
                 </div>
-                {Object.keys(selectedLog.skill_sources).length > 0 && (
+                {Object.keys(selectedLog.skill_sources ?? {}).length > 0 && (
                   <div className="mt-4">
                     <h5 className="text-xs font-semibold mb-2">SKILL 来源</h5>
                     <div className="space-y-1">
-                      {Object.entries(selectedLog.skill_sources).map(([name, source]) => (
+                      {Object.entries(selectedLog.skill_sources ?? {}).map(([name, source]) => (
                         <div key={name} className="flex items-center gap-2 text-xs">
                           <span className="font-mono">{name}</span>
                           <span className="text-muted-foreground">→</span>

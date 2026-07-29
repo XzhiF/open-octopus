@@ -685,16 +685,48 @@ export class AgentService {
   async getAssembleDetail(org: string, chatId: string): Promise<DebugLogEntry> {
     const { SystemPromptAssembler } = await import('./system-prompt-assembler')
     const assembler = new SystemPromptAssembler(org)
-    const segments = assembler.getSegments({ clone_name: undefined })
-    return {
-      chat_id: chatId,
-      segments: segments.map((seg, idx) => ({
+    const rawSegments = assembler.getSegments({ clone_name: undefined })
+    const maxTokens = 8000
+    const truncatedSegments = assembler.truncateToBudget(rawSegments, maxTokens)
+
+    // Build a lookup of truncated segments by name for comparison
+    const truncatedByName = new Map<string, { tokenEstimate: number }>()
+    for (const seg of truncatedSegments) {
+      truncatedByName.set(seg.name, { tokenEstimate: seg.tokenEstimate })
+    }
+
+    // Per-source budget thresholds (mirrors system-prompt-assembler BUDGET)
+    const SOURCE_BUDGET: Record<string, number> = {
+      memory: 1500,
+      skills: 2000,
+      daily_memory: 500,
+      context: 500,
+    }
+
+    const segments = rawSegments.map((seg, idx) => {
+      const truncated = truncatedByName.get(seg.name)
+      const budget = SOURCE_BUDGET[seg.source] ?? seg.tokenEstimate
+      const degraded = !truncated || truncated.tokenEstimate < seg.tokenEstimate
+      return {
         index: idx,
         name: seg.name,
         token_count: seg.tokenEstimate,
-        content: seg.content,
-      })),
-      total_tokens: segments.reduce((sum, seg) => sum + seg.tokenEstimate, 0),
+        budget,
+        degraded,
+        content_preview: seg.content.slice(0, 200),
+      }
+    })
+
+    return {
+      chat_id: chatId,
+      id: chatId,
+      session_id: '',
+      timestamp: new Date().toISOString(),
+      system_prompt: '',
+      segments,
+      total_tokens: rawSegments.reduce((sum, seg) => sum + seg.tokenEstimate, 0),
+      skill_sources: {},
+      decisions: [],
     } as unknown as DebugLogEntry
   }
 

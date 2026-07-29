@@ -78,7 +78,7 @@ export function createAgentRoutes(deps: AgentRouteDeps): Hono {
   // Existing sub-modules
   agent.route('/', createPersonaRoutes())
   agent.route('/', createConfigRoutes())
-  agent.route('/', createSafeModeRoutes(sessionDAO))
+  agent.route('/', createSafeModeRoutes(sessionDAO, safetyDAO))
   agent.route('/', createSessionRoutes(sessionDAO))
   agent.route('/', createMemoryRoutes())
   agent.route('/', createSafetyRoutes(safetyDAO))

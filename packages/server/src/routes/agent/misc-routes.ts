@@ -20,7 +20,7 @@ import {
   getDailyMemoryDir,
   getExperiencesDir,
 } from '../../services/agent/paths'
-import { SystemPromptAssembler } from '../../services/agent/system-prompt-assembler'
+import { getAgentService } from '../../services/agent/agent-service'
 import type { SafetyDAO } from '../../db/dao'
 
 // ── 501 stub for unimplemented routes ────────────────────────
@@ -460,41 +460,17 @@ nodes:
   })
 
   // ── Debug — log retrieval ──────────────────────────────────────────
-  app.get('/debug/log', (c) => {
+  app.get('/debug/log', async (c) => {
     try {
       const org = c.req.header('X-Octopus-Org') || (c.get('org') as string)
       if (!org) return c.json(createAgentError('ORG_NOT_FOUND', 'Organization not resolved'), 403)
 
       const limit = Math.min(parseInt(c.req.query('limit') ?? '100', 10), 500)
-      const level = c.req.query('level') ?? 'all'
-      const debugDir = path.join(getAgentDir(), 'debug')
+      const sessionId = c.req.query('session_id') ?? undefined
 
-      if (!fs.existsSync(debugDir)) {
-        fs.mkdirSync(debugDir, { recursive: true })
-      }
-
-      // Read trace files from debug/traces/
-      const tracesDir = path.join(debugDir, 'traces')
-      const items: Array<{ timestamp: string; level: string; message: string; source?: string }> = []
-
-      if (fs.existsSync(tracesDir)) {
-        const files = fs.readdirSync(tracesDir).filter(f => f.endsWith('.jsonl')).sort().reverse().slice(0, limit)
-        for (const file of files) {
-          try {
-            const content = fs.readFileSync(path.join(tracesDir, file), 'utf-8')
-            for (const line of content.split('\n').filter(Boolean)) {
-              try {
-                const entry = JSON.parse(line)
-                if (level === 'all' || entry.level === level) {
-                  items.push(entry)
-                }
-              } catch { /* skip malformed lines */ }
-            }
-          } catch { /* skip unreadable files */ }
-        }
-      }
-
-      return c.json({ items: items.slice(0, limit), total: items.length })
+      const agentService = getAgentService()
+      const result = await agentService.getDebugLog(org, { limit, session_id: sessionId })
+      return c.json(result)
     } catch (err: unknown) {
       const error = err instanceof Error ? err : new Error(String(err))
       return c.json(createAgentError('INTERNAL_ERROR', error.message), 500)
@@ -502,27 +478,15 @@ nodes:
   })
 
   // ── Debug — prompt assembly inspection ─────────────────────────────
-  app.get('/debug/assemble/:chat_id', (c) => {
+  app.get('/debug/assemble/:chat_id', async (c) => {
     try {
       const org = c.req.header('X-Octopus-Org') || (c.get('org') as string)
       if (!org) return c.json(createAgentError('ORG_NOT_FOUND', 'Organization not resolved'), 403)
 
       const chatId = c.req.param('chat_id')
-      const assembler = new SystemPromptAssembler(org)
-      const segments = assembler.getSegments({ clone_name: undefined })
-      const assembled = assembler.assemble({ clone_name: undefined })
-
-      return c.json({
-        chat_id: chatId,
-        segments: segments.map((seg, idx) => ({
-          index: idx,
-          name: seg.name,
-          token_count: seg.tokenEstimate,
-          content_preview: seg.content.slice(0, 200),
-        })),
-        total_tokens: segments.reduce((sum, seg) => sum + seg.tokenEstimate, 0),
-        assembled_length: assembled.length,
-      })
+      const agentService = getAgentService()
+      const detail = await agentService.getAssembleDetail(org, chatId)
+      return c.json(detail)
     } catch (err: unknown) {
       const error = err instanceof Error ? err : new Error(String(err))
       return c.json(createAgentError('INTERNAL_ERROR', error.message), 500)
