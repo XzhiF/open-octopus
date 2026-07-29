@@ -12,7 +12,7 @@ import {
   AlertDialogCancel,
   AlertDialogAction,
 } from "@/components/ui/alert-dialog"
-import { toast } from "@/hooks/use-toast"
+import { toast } from "sonner"
 import { Loader2 } from "lucide-react"
 
 interface ToggleSwitchProps {
@@ -37,17 +37,12 @@ export function ToggleSwitch({
     setLoading(true)
     try {
       await onToggle()
-      toast({
-        title: `任务已${enabled ? "暂停" : "启用"}`,
+      toast.success(`任务已${enabled ? "暂停" : "启用"}`, {
         description: `"${jobName}" 已成功${enabled ? "暂停" : "启用"}`,
       })
       setDialogOpen(false)
     } catch {
-      toast({
-        title: "操作失败",
-        description: "无法切换任务状态，请稍后重试",
-        variant: "destructive",
-      })
+      toast.error("操作失败", { description: "无法切换任务状态，请稍后重试" })
     } finally {
       setLoading(false)
     }

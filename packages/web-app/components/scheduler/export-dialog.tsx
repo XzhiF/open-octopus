@@ -11,7 +11,7 @@ import {
 import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
-import { useToast } from "@/hooks/use-toast"
+import { toast } from "sonner"
 import { cn } from "@/lib/utils"
 import { exportDashboard } from "@/lib/scheduler-api"
 import { Loader2, Download } from "lucide-react"
@@ -32,7 +32,6 @@ const TIME_RANGES: { value: TimeRange; label: string }[] = [
 ]
 
 export function ExportDialog({ open, onOpenChange }: ExportDialogProps) {
-  const { toast } = useToast()
   const [format, setFormat] = useState<ExportFormat>("csv")
   const [timeRange, setTimeRange] = useState<TimeRange>("7d")
   const [scope, setScope] = useState<DataScope>("all")
@@ -57,19 +56,15 @@ export function ExportDialog({ open, onOpenChange }: ExportDialogProps) {
       document.body.removeChild(a)
       URL.revokeObjectURL(url)
 
-      toast({ title: "导出成功" })
+      toast.success("导出成功")
       onOpenChange(false)
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "导出失败"
-      toast({
-        title: "导出失败",
-        description: msg,
-        variant: "destructive",
-      })
+      toast.error("导出失败", { description: msg })
     } finally {
       setExporting(false)
     }
-  }, [format, timeRange, scope, toast, onOpenChange])
+  }, [format, timeRange, scope, onOpenChange])
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>

@@ -25,6 +25,7 @@ export function PersonaEditor({ onSave, saving }: PersonaEditorProps) {
   const handleSave = async () => {
     const ok = await onSave(content)
     if (ok) toast.success('人格设定已更新')
+    else toast.error('保存失败')
   }
 
   return (

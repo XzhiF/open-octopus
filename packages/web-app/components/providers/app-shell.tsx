@@ -2,6 +2,7 @@
 "use client"
 
 import { Header } from "@/components/layout/header"
+import { Toaster } from "@/components/ui/sonner"
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   return (
@@ -10,6 +11,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       <main className="flex flex-1 flex-col min-h-0 overflow-y-auto">
         {children}
       </main>
+      <Toaster position="top-right" richColors closeButton />
     </div>
   )
 }

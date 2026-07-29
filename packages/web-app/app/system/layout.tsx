@@ -4,7 +4,6 @@ import Link from "next/link"
 import { usePathname } from "next/navigation"
 import { cn } from "@/lib/utils"
 import { Boxes, Database } from "lucide-react"
-import { Toaster } from "@/components/ui/sonner"
 
 const MENU = [
   { label: "模型管理", href: "/system/models", icon: Boxes },
@@ -45,7 +44,6 @@ export default function SystemLayout({ children }: { children: React.ReactNode }
         {children}
       </div>
 
-      <Toaster position="top-right" />
     </div>
   )
 }

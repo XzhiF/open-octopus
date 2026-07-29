@@ -3,7 +3,6 @@
 import { usePathname, useRouter, useSearchParams } from "next/navigation"
 import { cn } from "@/lib/utils"
 import { Package, ScrollText, FolderOpen, FolderGit2 } from "lucide-react"
-import { Toaster } from "@/components/ui/sonner"
 
 const TABS = [
   { id: "list", label: "资源列表", icon: Package },
@@ -74,7 +73,6 @@ export function ResourceLayout({ children }: { children: React.ReactNode }) {
         </div>
       </div>
 
-      <Toaster position="top-right" />
     </>
   )
 }
