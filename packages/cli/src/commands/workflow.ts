@@ -1,4 +1,5 @@
 import { Command } from "commander"
+import chalk from "chalk"
 import { readFileSync, writeFileSync, existsSync, readdirSync, mkdirSync, copyFileSync, statSync, rmSync, chmodSync } from "fs"
 import { resolve, join } from "path"
 import { parseWorkflow, validateWorkflow, resolveOrgDir, PipelineConfigSchema, PipelineConfigV1Schema, ResourcePreFlight, ResourceProvisioner, ResourceManager } from "@octopus/shared"
@@ -430,6 +431,128 @@ workflowCmd
     }
 
     if (!result.passed) {
+      process.exit(1)
+    }
+  })
+
+// ── Test Command (Phase 2) ────────────────────────────────────
+
+function getTestServerUrl(): string {
+  return process.env.OCTOPUS_SERVER_URL ?? "http://localhost:3001"
+}
+
+function testAgentHeaders(org?: string): Record<string, string> {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    "Accept": "text/event-stream",
+    "Authorization": process.env.OCTOPUS_AGENT_TOKEN
+      ? `Bearer ${process.env.OCTOPUS_AGENT_TOKEN}` : "Bearer agent",
+  }
+  if (org) headers["X-Octopus-Org"] = org
+  return headers
+}
+
+workflowCmd
+  .command("test")
+  .description("智能测试工作流（workspace clone 生成 fixture + 运行模拟）")
+  .argument("<yaml-path>", "工作流 YAML 文件路径")
+  .option("--org <org>", "组织名")
+  .action(async (yamlPath: string, options: { org?: string }) => {
+    const absPath = resolve(yamlPath)
+    if (!existsSync(absPath)) {
+      console.error(`Error: Workflow file not found: ${absPath}`)
+      process.exit(1)
+    }
+
+    const serverUrl = getTestServerUrl()
+    const org = options.org || resolveCurrentOrg()
+
+    console.log(`Testing: ${yamlPath}`)
+    console.log(`${"━".repeat(50)}`)
+    console.log()
+
+    try {
+      const res = await fetch(`${serverUrl}/api/agent/chat`, {
+        method: "POST",
+        headers: testAgentHeaders(org),
+        body: JSON.stringify({
+          message: `使用 octo-workflow-test skill 测试 ${absPath}`,
+          delegate_to: "workspace",
+        }),
+      })
+
+      if (!res.ok) {
+        const errText = await res.text()
+        console.error(chalk.red(`Server error (${res.status}): ${errText}`))
+        process.exit(1)
+      }
+
+      // Read SSE stream
+      const reader = res.body?.getReader()
+      if (!reader) {
+        console.error(chalk.red("No response stream"))
+        process.exit(1)
+      }
+
+      const decoder = new TextDecoder()
+      let fullContent = ""
+      let buffer = ""
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+
+        buffer += decoder.decode(value, { stream: true })
+        const lines = buffer.split("\n")
+        buffer = lines.pop() ?? ""
+
+        for (const line of lines) {
+          if (line.startsWith("event: delegation_start")) {
+            continue
+          }
+          if (line.startsWith("event: delegation_end")) {
+            continue
+          }
+          if (line.startsWith("event: text_delta")) continue
+          if (line.startsWith("data: ")) {
+            try {
+              const payload = JSON.parse(line.slice(6))
+              if (payload.content) {
+                fullContent = payload.content
+              } else if (payload.delta) {
+                fullContent += payload.delta
+              }
+            } catch { /* skip malformed */ }
+          }
+          if (line.startsWith("event: error")) continue
+        }
+      }
+
+      // Print the final content from the workspace clone
+      if (fullContent) {
+        console.log(fullContent)
+      } else {
+        console.log(chalk.yellow("No output received from workspace clone."))
+      }
+
+      console.log()
+      console.log(`${"━".repeat(50)}`)
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err)
+
+      // Connection refused → server not running
+      if (msg.includes("ECONNREFUSED") || msg.includes("fetch failed")) {
+        console.error(chalk.red("Error: Cannot connect to Octopus server."))
+        console.error()
+        console.error("The server must be running for 'workflow test' to work.")
+        console.error("Start it with:")
+        console.error(`  ${chalk.cyan("pnpm dev")}`)
+        console.error()
+        console.error("Or use Claude Code directly with the octo-workflow-test skill:")
+        console.error(`  ${chalk.cyan("使用 octo-workflow-test skill 测试 " + yamlPath)}`)
+      } else {
+        console.error(chalk.red(`Error: ${msg}`))
+      }
       process.exit(1)
     }
   })
