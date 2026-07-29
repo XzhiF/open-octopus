@@ -73,11 +73,12 @@ function checkPythonSyntax(nodeId: string, script: string): SyntaxError | null {
   if (!script.trim()) return null
 
   try {
-    // Use Python compile() to check syntax without executing
-    const escapedScript = script.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "\\n")
+    // Use Python compile() to check syntax without executing.
+    // Pass script via stdin to avoid shell escaping issues (matches bash -n approach).
     execSync(
-      `python3 -c "compile(\\"${escapedScript}\\", '<string>', 'exec')"`,
+      `python3 -c "import sys; compile(sys.stdin.read(), '<string>', 'exec')"`,
       {
+        input: script,
         stdio: ["pipe", "pipe", "pipe"],
         timeout: 5000,
       },
