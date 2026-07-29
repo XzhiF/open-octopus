@@ -268,8 +268,8 @@ export function SkillDetailView({ skills, loading: skillsLoading, onRefresh }: S
               ))}
             </div>
           </ResizablePanel>
-          <ResizableHandle withHandle className="border-agent-divider" />
-          <ResizablePanel defaultSize={80} minSize={20}>
+          <ResizableHandle className="border-agent-divider" />
+          <ResizablePanel defaultSize={80} minSize={20} className="overflow-hidden">
             <div className="p-6 space-y-3">
               <Skeleton className="h-6 w-1/3" />
               <Skeleton className="h-4 w-full" />
@@ -345,7 +345,7 @@ export function SkillDetailView({ skills, loading: skillsLoading, onRefresh }: S
       {/* Resizable three-column layout */}
       <ResizablePanelGroup direction="horizontal" className="flex-1">
         {/* Skill List Panel */}
-        <ResizablePanel defaultSize={20} minSize={10} maxSize={35} collapsible collapsedSize={0}>
+        <ResizablePanel defaultSize={20} minSize={10} maxSize={35} collapsible collapsedSize={0} className="overflow-hidden">
           <div className="h-full flex flex-col border-r border-agent-divider">
             {/* Search input */}
             <div className="p-2 border-b border-agent-divider">
@@ -408,10 +408,10 @@ export function SkillDetailView({ skills, loading: skillsLoading, onRefresh }: S
           </div>
         </ResizablePanel>
 
-        <ResizableHandle withHandle className="border-agent-divider" />
+        <ResizableHandle className="border-agent-divider" />
 
         {/* Content Panel */}
-        <ResizablePanel defaultSize={showDiff ? 45 : 80} minSize={20}>
+        <ResizablePanel defaultSize={showDiff ? 45 : 80} minSize={20} className="overflow-hidden">
           <div className="h-full overflow-auto p-6">
             {loading ? (
               <div className="space-y-3">
@@ -439,8 +439,8 @@ export function SkillDetailView({ skills, loading: skillsLoading, onRefresh }: S
         {/* Diff Panel */}
         {showDiff && (
           <>
-            <ResizableHandle withHandle className="border-agent-divider" />
-            <ResizablePanel defaultSize={35} minSize={20} maxSize={60}>
+            <ResizableHandle className="border-agent-divider" />
+            <ResizablePanel defaultSize={35} minSize={20} maxSize={60} className="overflow-hidden">
               <div className="h-full overflow-auto p-4">
                 <div className="flex items-center gap-2 mb-3">
                   <GitCompare className="h-4 w-4 text-agent-info" />
