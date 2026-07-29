@@ -35,3 +35,6 @@ export type { ModelAliasConfig, CustomProviderDef, CustomProvidersMap } from './
 export { resolveModelAlias, loadModelAliasConfig, collectNodeEngines } from './config/model-alias'
 export { resolveMoaModel } from './config/moa-model-resolver'
 export type { MoaModelResolution } from './config/moa-model-resolver'
+
+// Simulator test fixture schemas
+export * from './simulator/schemas'
