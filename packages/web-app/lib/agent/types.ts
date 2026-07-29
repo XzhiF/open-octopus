@@ -160,7 +160,6 @@ export interface AgentConfig {
   }
   memory: {
     session_retention_days: number
-    archive_cron_hour: number
     long_term_refine_trigger_days: number
     session_compress_threshold_messages: number
   }

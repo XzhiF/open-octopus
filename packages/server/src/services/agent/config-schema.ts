@@ -74,7 +74,6 @@ export const agentConfigSchema = z.object({
   }),
   memory: z.object({
     session_retention_days: z.number().int().min(30).max(365).default(90),
-    archive_cron_hour: z.number().int().min(0).max(23).default(3),
     long_term_refine_trigger_days: z.number().int().min(1).max(30).default(7),
     session_compress_threshold_messages: z.number().int().min(10).max(500).default(50),
   }).default({}),

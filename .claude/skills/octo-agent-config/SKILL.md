@@ -40,7 +40,6 @@ notification:
   timezone: Asia/Shanghai
 memory:
   session_retention_days: 30
-  archive_cron_hour: 3
   long_term_refine_trigger_days: 7
   session_compress_threshold_messages: 50
 safe_mode:

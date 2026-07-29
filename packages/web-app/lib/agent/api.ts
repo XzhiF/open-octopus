@@ -517,3 +517,65 @@ export function getObservability(view?: string, opts?: Record<string, string>) {
   const qs = params.toString()
   return request<unknown>(`/observability${qs ? `?${qs}` : ''}`)
 }
+
+// ── Scheduler (for cron-based archive config) ───────────────────────
+
+const SCHEDULER_BASE = () => `${getServerUrl()}/api/scheduler`
+
+async function schedulerRequest<T>(url: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(`${SCHEDULER_BASE()}${url}`, {
+    ...init,
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': AUTH_HEADER,
+      ...init?.headers,
+    },
+  })
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: { code: 'UNKNOWN', message: res.statusText } }))
+    const err = new Error(body.error?.message ?? res.statusText) as Error & { code?: string; status?: number }
+    err.code = body.error?.code
+    err.status = res.status
+    throw err
+  }
+  if (res.status === 204 || res.headers.get('content-length') === '0') return undefined as T
+  return res.json() as Promise<T>
+}
+
+export interface SchedulerJob {
+  id: string
+  name: string
+  cron_expression: string
+  timezone: string
+  version: number
+  enabled: number
+  [key: string]: unknown
+}
+
+export interface CronParseResult {
+  valid: boolean
+  description: string
+  next_executions: string[]
+  is_high_frequency: boolean
+  dst_notes: string[]
+}
+
+export function getSchedulerJob(id: string) {
+  return schedulerRequest<SchedulerJob>(`/jobs/${encodeURIComponent(id)}`)
+}
+
+export function updateSchedulerJob(id: string, data: { cron_expression: string }, version: number) {
+  return schedulerRequest<SchedulerJob>(`/jobs/${encodeURIComponent(id)}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', 'If-Match': String(version) },
+    body: JSON.stringify(data),
+  })
+}
+
+export function parseCronExpression(expression: string, timezone: string) {
+  return schedulerRequest<CronParseResult>('/cron/parse', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ expression, timezone }),
+  })
+}
