@@ -78,7 +78,7 @@ matt-dev-runner will:
 
 ## Phase 2: Code Review (独立审查)
 
-**Design principle**: 裁判 ≠ 球员。matt-dev-runner（子代理）写了代码，主 Agent 从没看过实现过程 — 主 Agent 天然独立，直接审查即可，不需要再开子代理。
+**Design principle**: 裁判 ≠ 球员。matt-dev-runner（子代理）写了代码，主 Agent 从没看过实现过程 — 主 Agent 天然独立，直接审查。
 
 **Dispatch**: 主 Agent 直接调用 `code-review` skill：
 
@@ -87,24 +87,24 @@ matt-dev-runner will:
 Spec path: <artifacts.dir>/<feature-slug>/spec.md
 ```
 
-code-review 内部会 spawn 两个并行 sub-agent（Standards axis + Spec axis），这是 skill 自身的并行机制，不需要 pipeline 额外包一层。
+code-review 内部 spawn 两个并行 sub-agent：
+- **Standards axis**: diff 对照编码规范 + Fowler code smells → 报告
+- **Spec axis**: diff 对照 spec → 遗漏需求 / 范围蔓延 / 实现偏差 → 报告
 
-**Why main agent directly, not another sub-agent**: 代码是在 Phase 1 的 matt-dev-runner 子代理中写的，主 Agent 的 context 里没有实现细节。主 Agent 调用 code-review 时只看 diff + spec + standards — 这已经是独立的审查视角。再开子代理是多余的一层。
-
-**Evaluate findings**:
+**Evaluate findings**: 主 Agent 读取报告，按严重度分类：
 
 | Severity | Action |
 |----------|--------|
-| 🔴 Must fix | 重新 spawn `matt-dev-runner` 修复 → `pnpm test` 验证 → 再 `/code-review` 确认 |
-| 🟡 Should fix | 重新 spawn `matt-dev-runner` 修复 → `pnpm test` 验证 |
+| 🔴 Must fix | 主 Agent 直接 Edit 修复 → `pnpm test` 验证 → 再 `/code-review` 确认 |
+| 🟡 Should fix | 主 Agent 直接 Edit 修复 → `pnpm test` 验证 |
 | 🔵 Note | 记入 pipeline-report，不修复 |
 
 **Fix-verify cycle** (if 🔴 or 🟡 findings exist):
 
-1. Spawn `matt-dev-runner` agent with prompt: "Fix these code review findings: <findings list>. After fixing, run `pnpm test` and confirm all pass."
-2. If tests FAIL → 让 dev-runner 换方案重试 (max 2 fix attempts per finding)
-3. If tests PASS → 主 Agent 再跑一次 `/code-review` 确认 findings 已解决
-4. Max 2 review-fix cycles total
+1. **主 Agent 直接修复**: 用 Edit/Write 工具对具体文件做 targeted fix。**不要重新 spawn matt-dev-runner** — 它会重跑 spec→tickets→implement 全流程，不是 targeted fixer。
+2. **验证**: 运行 `pnpm test`，确认修复没有引入回归
+3. **再审查**: 如果 tests PASS，主 Agent 再跑一次 `/code-review` 确认 findings 已解决
+4. **Max 2 review-fix cycles** total（防止无限循环）
 
 **Pass criteria**: No 🔴 findings remain. 🟡 findings either fixed or explicitly accepted.
 
@@ -381,7 +381,7 @@ git push --force-with-lease origin $branch
 1. **Phases cannot be skipped**: Must execute 1 → 2 → 3 → 4 → 5 in order
 2. **Phase failure stops pipeline**: Phase 1 (max 1 retry), Phase 2 (max 2 review-fix cycles), Phase 3 (max 2 retries), Phase 4 (matt-e2e-tester handles fix-and-retest internally: Quick Fix → diagnosing-bugs → stop). If exhausted, present to user.
 3. **Orchestrate, don't execute**: Phase 1 and 4 use agents; Phase 2 主 Agent 直接调用 code-review skill（主 Agent 天然独立于实现代码）; main agent doesn't write code or run tests
-4. **裁判 ≠ 球员**: Phase 2 code-review 由主 Agent 直接执行（它从没看过实现代码），NOT 由 matt-dev-runner 执行。修复时重新 spawn dev-runner。
+4. **裁判 ≠ 球员**: Phase 2 code-review 由主 Agent 直接执行（它从没看过实现代码）。修复也由主 Agent 直接 Edit — **不要重新 spawn matt-dev-runner**（它会重跑 spec→tickets→implement 全流程，不是 targeted fixer）。
 4. **PR precision**: Only create PRs for projects with actual code changes vs target branch
 5. **Artifact ownership**: All intermediates go to `<artifacts.dir>/<feature-slug>/`, never pollute source dirs
 6. **Artifacts in PR**: pipeline-report.md and index.md must be committed before PR creation so they appear in the PR diff
