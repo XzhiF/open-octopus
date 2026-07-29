@@ -369,7 +369,8 @@ export function createMainAgentRoute(deps: MainAgentRouteDeps): Hono {
 
         // Execute memory tool calls (record_daily)
         if (memoryToolCalls.length > 0 && !aborted) {
-          await executeMemoryTools(memoryToolCalls, org, sessionId!, stream)
+          const cloneName = c.req.header('X-Clone-Name')
+          await executeMemoryTools(memoryToolCalls, org, sessionId!, stream, cloneName)
         }
 
         // Store assistant message
