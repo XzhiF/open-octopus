@@ -314,3 +314,113 @@ function listTemplates(templatesDir: string): void {
     console.log(`  ${name.padEnd(20)} ${desc}`)
   }
 }
+
+// ── Simulate Command ──────────────────────────────────────────
+
+workflowCmd
+  .command("simulate")
+  .description("模拟执行工作流（无 LLM 调用，副作用节点全部 mock）")
+  .argument("<yaml-path>", "工作流 YAML 文件路径")
+  .option("--test <path>", "测试 fixture 路径（默认自动发现 <name>.test.yaml）")
+  .option("--scenario <name>", "运行指定场景（默认运行全部）")
+  .option("--strict", "所有副作用节点必须有 mock 定义（默认开启）", true)
+  .option("--no-strict", "无 mock 的节点自动通过")
+  .option("--verbose", "显示详细执行日志")
+  .option("--json", "输出 JSON 格式结果")
+  .option("--real <node-ids...>", "指定 bash/python 节点真实执行")
+  .action(async (yamlPath: string, options: {
+    test?: string
+    scenario?: string
+    strict?: boolean
+    verbose?: boolean
+    json?: boolean
+    real?: string[]
+  }) => {
+    const { loadWorkflow, loadTestFixture, discoverTestFixture, runTestSuite } = await import("@octopus/engine")
+
+    const absPath = resolve(yamlPath)
+    if (!existsSync(absPath)) {
+      console.error(`Error: Workflow file not found: ${absPath}`)
+      process.exit(1)
+    }
+
+    // Load workflow
+    let workflow
+    try {
+      workflow = loadWorkflow(absPath)
+    } catch (err: any) {
+      console.error(`Error: Failed to load workflow: ${err.message}`)
+      process.exit(1)
+    }
+
+    // Discover or load test fixture
+    let fixturePath = options.test ? resolve(options.test) : null
+    if (!fixturePath) {
+      fixturePath = discoverTestFixture(absPath)
+      if (!fixturePath) {
+        console.error(`Error: No test fixture found.`)
+        console.error(`Create a test fixture file: ${absPath.replace(/\.ya?ml$/, ".test.yaml")}`)
+        process.exit(1)
+      }
+    }
+
+    let fixture
+    try {
+      fixture = loadTestFixture(fixturePath)
+    } catch (err: any) {
+      console.error(`Error: ${err.message}`)
+      process.exit(1)
+    }
+
+    if (!options.json) {
+      console.log(`Simulating: ${yamlPath}`)
+      console.log(`━`.repeat(50))
+      console.log()
+    }
+
+    // Run simulation
+    const result = await runTestSuite(workflow, fixture, {
+      strict: options.strict !== false,
+      verbose: options.verbose,
+      realExecution: options.real,
+      scenarioFilter: options.scenario,
+    })
+
+    // Output results
+    if (options.json) {
+      console.log(JSON.stringify(result, null, 2))
+    } else {
+      for (const simResult of result.results) {
+        const icon = simResult.passed ? "✔" : "✖"
+        console.log(`${icon} Scenario "${simResult.scenarioName}" (${simResult.durationMs}ms)`)
+
+        if (options.verbose) {
+          for (const entry of simResult.executionTrace) {
+            const mode = entry.mocked ? "mocked" : "real"
+            const nodeIcon = ["skipped", "skipped_failed"].includes(entry.status) ? "○" :
+              entry.status === "failed" ? "✖" : "✔"
+            console.log(`  ${nodeIcon} ${entry.nodeId}: ${entry.status} [${mode}]`)
+          }
+        }
+
+        // Show assertion results
+        if (simResult.assertionReport.results.length > 0) {
+          const assertIcon = simResult.assertionReport.passed ? "✔" : "✖"
+          console.log(`  ${assertIcon} Assertions:`)
+          for (const ar of simResult.assertionReport.results) {
+            const arIcon = ar.passed ? "✔" : "✖"
+            console.log(`    ${arIcon} ${ar.message}`)
+          }
+        }
+        console.log()
+      }
+
+      console.log(`━`.repeat(50))
+      const totalIcon = result.passed ? "✔" : "✖"
+      console.log(`${totalIcon} Results: ${result.passedCount} passed, ${result.failedCount} failed (${result.results.length} scenarios, ${result.totalDurationMs}ms total)`)
+    }
+
+    if (!result.passed) {
+      process.exit(1)
+    }
+  })
