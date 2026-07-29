@@ -8,6 +8,14 @@ export class ValueError extends Error {
   }
 }
 
+/**
+ * Parse raw YAML string into a JavaScript object.
+ * Uses js-yaml JSON_SCHEMA for safe parsing.
+ */
+export function parseYaml(content: string): unknown {
+  return yaml.load(content, { schema: yaml.JSON_SCHEMA })
+}
+
 export function parseWorkflow(yamlDictOrString: string | Record<string, unknown>): WorkflowDef {
   const raw = typeof yamlDictOrString === "string"
     ? yaml.load(yamlDictOrString, { schema: yaml.JSON_SCHEMA }) as Record<string, unknown>
