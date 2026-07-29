@@ -126,10 +126,8 @@ export async function runTestSuite(
     )
 
     result.assertionReport = report
-    result.passed = report.passed && result.status !== "failed" || (
-      scenario.assertions.status === "failed" && result.status === "failed" && report.passed
-    )
-    // Simplified: passed if assertions pass
+    // Passed if all assertions pass (the assertions define what "success" looks like,
+    // including expected failures via assertions.status: "failed")
     result.passed = report.passed
 
     results.push(result)

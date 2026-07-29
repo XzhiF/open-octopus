@@ -162,26 +162,59 @@ export async function simulateScenario(
 
     // Handle condition jumpTo
     if (node.type === "condition" && nodeResult.jumpTo) {
-      const jumpIdx = sorted.findIndex((n) => n.id === nodeResult.jumpTo)
-      if (jumpIdx > i) {
-        for (let j = i + 1; j < jumpIdx; j++) {
-          const skippedNode = sorted[j]
-          nodeResults[skippedNode.id] = {
+      const jumpTarget = nodeResult.jumpTo
+
+      // Skip non-target nodes that depend directly on this condition node
+      for (const otherNode of sorted) {
+        if (otherNode.id === node.id || otherNode.id === jumpTarget) continue
+        if (nodeResults[otherNode.id]) continue
+        if (otherNode.depends_on?.includes(node.id)) {
+          nodeResults[otherNode.id] = {
             outputs: {},
             status: "skipped",
             durationMs: 0,
-            logLines: [`Skipped: condition jump to "${nodeResult.jumpTo}"`],
+            logLines: [`Skipped: condition "${node.id}" jumped to "${jumpTarget}"`],
+            skippedByCondition: true,
           }
-          executionTrace.push(makeTraceEntry(skippedNode, "skipped", nodeResults[skippedNode.id]))
+          executionTrace.push(makeTraceEntry(otherNode, "skipped", nodeResults[otherNode.id]))
+        }
+      }
+
+      // Skip all nodes between condition and jump target
+      const jumpIdx = sorted.findIndex((n) => n.id === jumpTarget)
+      if (jumpIdx > i) {
+        for (let j = i + 1; j < jumpIdx; j++) {
+          const skippedNode = sorted[j]
+          if (!nodeResults[skippedNode.id]) {
+            nodeResults[skippedNode.id] = {
+              outputs: {},
+              status: "skipped",
+              durationMs: 0,
+              logLines: [`Skipped: condition jump to "${jumpTarget}"`],
+            }
+            executionTrace.push(makeTraceEntry(skippedNode, "skipped", nodeResults[skippedNode.id]))
+          }
         }
         i = jumpIdx - 1
         continue
       }
     }
 
-    // Handle failure
+    // Handle failure — mark remaining nodes as skipped
     if (nodeResult.status === "failed") {
       workflowStatus = "failed"
+      for (let j = i + 1; j < sorted.length; j++) {
+        const remainingNode = sorted[j]
+        if (!nodeResults[remainingNode.id]) {
+          nodeResults[remainingNode.id] = {
+            outputs: {},
+            status: "skipped",
+            durationMs: 0,
+            logLines: [`Skipped: upstream "${node.id}" failed`],
+          }
+          executionTrace.push(makeTraceEntry(remainingNode, "skipped", nodeResults[remainingNode.id]))
+        }
+      }
       break
     }
   }
