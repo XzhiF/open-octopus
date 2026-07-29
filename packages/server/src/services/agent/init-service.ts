@@ -71,7 +71,7 @@ const DEFAULT_CONFIG = {
   timeout: 300,
   max_clones: 5,
   notification: {
-    platform: 'hermes',
+    platform: 'telegram',
     target: '',
     timezone: 'Asia/Shanghai',
   },

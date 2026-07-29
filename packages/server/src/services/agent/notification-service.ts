@@ -137,14 +137,14 @@ export class NotificationService {
       const configManager = getConfigManager()
       const config = configManager.getConfig(org)
       const result = {
-        platform: config.notification?.platform ?? 'hermes',
+        platform: config.notification?.platform ?? 'telegram',
         target: config.notification?.target ?? '',
       }
       this.configCache.set(org, result)
       return result
     } catch {
       // Fallback on ConfigManager failure
-      return { platform: 'hermes', target: '' }
+      return { platform: 'telegram', target: '' }
     }
   }
 
