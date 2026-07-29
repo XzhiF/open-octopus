@@ -211,6 +211,7 @@ export function CloneDetailView({ clone, onBack }: CloneDetailViewProps) {
               maxSize={40}
               collapsible
               collapsedSize={0}
+              className="overflow-hidden"
             >
               <div className="h-full overflow-hidden flex flex-col">
                 <CloneFileTree
@@ -223,12 +224,12 @@ export function CloneDetailView({ clone, onBack }: CloneDetailViewProps) {
                 />
               </div>
             </ResizablePanel>
-            <ResizableHandle withHandle className="border-agent-divider" />
+            <ResizableHandle className="border-agent-divider" />
           </>
         )}
 
         {/* File Content */}
-        <ResizablePanel defaultSize={showChat ? 45 : 80} minSize={20}>
+        <ResizablePanel defaultSize={showChat ? 45 : 80} minSize={20} className="overflow-hidden">
           <div className="h-full overflow-hidden">
             <CloneFileContent
               cloneName={clone.name}
@@ -241,13 +242,14 @@ export function CloneDetailView({ clone, onBack }: CloneDetailViewProps) {
         {/* Chat Panel: Session List + ChatArea */}
         {showChat && (
           <>
-            <ResizableHandle withHandle className="border-agent-divider" />
+            <ResizableHandle className="border-agent-divider" />
             <ResizablePanel
               defaultSize={35}
               minSize={20}
               maxSize={60}
               collapsible
               collapsedSize={0}
+              className="overflow-hidden"
             >
               <div className="h-full overflow-hidden flex flex-col">
                 <SessionHeader
