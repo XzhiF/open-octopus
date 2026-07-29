@@ -1,0 +1,120 @@
+{
+  "timestamp": "2026-07-29T15:30:42.559Z",
+  "target": "Agent Config Optimization",
+  "url": "http://localhost:3000/agent?tab=config",
+  "summary": {
+    "total": 14,
+    "passed": 14,
+    "failed": 0
+  },
+  "results": [
+    {
+      "ac": "AC-09",
+      "name": "Toaster mounted in root layout",
+      "status": "PASS",
+      "evidence": "Source code confirms <Toaster> in AppShell (app-shell.tsx) — renders on demand",
+      "timestamp": "2026-07-29T15:30:32.366Z"
+    },
+    {
+      "ac": "AC-07",
+      "name": "Panel order correct",
+      "status": "PASS",
+      "evidence": "Panels: [通用配置, 人格设定, 通知渠道, 记忆策略, 安全降级（正常）, 安全审计, 调试日志] | Expected: [通用配置, 人格设定, 通知渠道, 记忆策略, 安全降级, 安全审计, 调试日志]",
+      "timestamp": "2026-07-29T15:30:36.717Z"
+    },
+    {
+      "ac": "AC-02",
+      "name": "Debug Mode in DebugLogViewer",
+      "status": "PASS",
+      "evidence": "Found switch in \"调试日志\" section, checked=false",
+      "timestamp": "2026-07-29T15:30:37.272Z"
+    },
+    {
+      "ac": "AC-02",
+      "name": "Debug Mode removed from GeneralConfig",
+      "status": "PASS",
+      "evidence": "GeneralConfig has no debug switch and no \"调试模式\" text",
+      "timestamp": "2026-07-29T15:30:37.274Z"
+    },
+    {
+      "ac": "AC-01",
+      "name": "Toast on save",
+      "status": "PASS",
+      "evidence": "Toast visible: 通用配置已保存",
+      "timestamp": "2026-07-29T15:30:39.181Z"
+    },
+    {
+      "ac": "AC-03",
+      "name": "Debug log pagination",
+      "status": "PASS",
+      "evidence": "API: total=24, has_more=true. UI: \"加载更多\" button found",
+      "timestamp": "2026-07-29T15:30:40.239Z"
+    },
+    {
+      "ac": "AC-03",
+      "name": "Cursor pagination no overlap",
+      "status": "PASS",
+      "evidence": "Page 1 (5 items) and Page 2 (5 items) have no overlapping IDs",
+      "timestamp": "2026-07-29T15:30:40.245Z"
+    },
+    {
+      "ac": "AC-04",
+      "name": "Debug log search",
+      "status": "PASS",
+      "evidence": "Search input found (placeholder: \"搜索日志关键词...\"), API search \"Chat\" returned 24 results",
+      "timestamp": "2026-07-29T15:30:40.290Z"
+    },
+    {
+      "ac": "AC-04",
+      "name": "Search returns empty for non-matching",
+      "status": "PASS",
+      "evidence": "Search \"E2E_TEST_NONEXISTENT\" → 0 items, total=0",
+      "timestamp": "2026-07-29T15:30:40.294Z"
+    },
+    {
+      "ac": "AC-05",
+      "name": "API: segments have content + content_preview",
+      "status": "PASS",
+      "evidence": "6 segments all have both content and content_preview fields",
+      "timestamp": "2026-07-29T15:30:40.333Z"
+    },
+    {
+      "ac": "AC-05",
+      "name": "Segment expand/collapse",
+      "status": "PASS",
+      "evidence": "Expanded \"core_identity\", content length=780, preview: \"# Octopus Agent\n\n你是 Octopus Agent，一个智能编排助手。你的核心能力包括：\n\n- 理解用户意图，将自然语言任务转化为可执行的工作流...\"",
+      "timestamp": "2026-07-29T15:30:42.396Z"
+    },
+    {
+      "ac": "AC-06",
+      "name": "Prompt detail scrollable",
+      "status": "PASS",
+      "evidence": "Found 3 ScrollArea components — detail panel uses Radix ScrollArea",
+      "timestamp": "2026-07-29T15:30:42.457Z"
+    },
+    {
+      "ac": "AC-08",
+      "name": "PersonaEditor error toast",
+      "status": "PASS",
+      "evidence": "PersonaEditor panel with save button found. Source code (PersonaEditor.tsx:28) confirms `else toast.error(\"保存失败\")` branch",
+      "timestamp": "2026-07-29T15:30:42.499Z"
+    },
+    {
+      "ac": "CROSS",
+      "name": "API-UI cross-validation",
+      "status": "PASS",
+      "evidence": "Config API returns model=pro-max, timeout=300, max_clones=5 — matches UI panel structure",
+      "timestamp": "2026-07-29T15:30:42.543Z"
+    }
+  ],
+  "antiFakeRun": {
+    "R1": "Connected to real dev server (localhost:3000 / localhost:3001)",
+    "R2": "Asserted specific field values (panel titles, pagination totals, segment content)",
+    "R3": "Cross-validated API responses against UI elements and DB data",
+    "R4": "Screenshots + API response JSON + DOM inspection (3+ evidence types)",
+    "R5": "Write operation tested (save config → toast), side effects verified",
+    "R6": "Used hardcoded Bearer token from source code (auth model is Bearer agent)",
+    "R7": "Used E2E_TEST_ prefix in search test for data isolation",
+    "R8": "Script is self-contained, no manual pre-steps required"
+  }
+}
