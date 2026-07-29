@@ -8,6 +8,7 @@ import fs from 'fs'
 import path from 'path'
 import { createAgentError } from './middleware'
 import { getEvolutionService } from '../../services/agent/evolution-service'
+import { getConfigManager } from '../../services/agent/config-manager'
 import { getAgentSkillsDir, backupFile } from '../../services/agent/paths'
 import type { EvolutionDAO } from '../../db/dao'
 
@@ -24,6 +25,16 @@ export function createEvolutionRoutes(deps: EvolutionRouteDeps): Hono {
     try {
       const org = c.req.header('X-Octopus-Org') || (c.get('org') as string)
       if (!org) return c.json(createAgentError('ORG_NOT_FOUND', 'Organization not resolved'), 403)
+
+      // Safe mode blocks evolution feedback
+      const configManager = getConfigManager()
+      const config = configManager.getConfig(org)
+      if (config.safe_mode.enabled) {
+        return c.json(
+          createAgentError('SAFE_MODE_READONLY', 'Safe mode is enabled. Evolution is paused.'),
+          409,
+        )
+      }
 
       const body = await c.req.json<{
         content: string; skill_name?: string; session_id?: string; type?: string
@@ -65,6 +76,16 @@ export function createEvolutionRoutes(deps: EvolutionRouteDeps): Hono {
     try {
       const org = c.req.header('X-Octopus-Org') || (c.get('org') as string)
       if (!org) return c.json(createAgentError('ORG_NOT_FOUND', 'Organization not resolved'), 403)
+
+      // Safe mode blocks self-check evolution
+      const configManager = getConfigManager()
+      const config = configManager.getConfig(org)
+      if (config.safe_mode.enabled) {
+        return c.json(
+          createAgentError('SAFE_MODE_READONLY', 'Safe mode is enabled. Evolution is paused.'),
+          409,
+        )
+      }
 
       const evolutionService = getEvolutionService()
       const reflection = evolutionService.reflect(org, { type: 'self_check', content: 'Periodic self-check triggered' })
@@ -270,6 +291,16 @@ export function createEvolutionRoutes(deps: EvolutionRouteDeps): Hono {
     try {
       const org = c.req.header('X-Octopus-Org') || (c.get('org') as string)
       if (!org) return c.json(createAgentError('ORG_NOT_FOUND', 'Organization not resolved'), 403)
+
+      // Safe mode blocks process-marks
+      const configManager = getConfigManager()
+      const config = configManager.getConfig(org)
+      if (config.safe_mode.enabled) {
+        return c.json(
+          createAgentError('SAFE_MODE_READONLY', 'Safe mode is enabled. Evolution is paused.'),
+          409,
+        )
+      }
 
       const body = await c.req.json<{ session_id?: string }>().catch(() => ({}))
       const evolutionService = getEvolutionService()
