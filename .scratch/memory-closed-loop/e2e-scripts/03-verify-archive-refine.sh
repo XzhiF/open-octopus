@@ -1,9 +1,11 @@
 #!/bin/bash
 # E2E Test 3: Verify archive + auto-refine pipeline
-# Prerequisite: Server running on port 3001, at least one daily file exists
+# Prerequisite: Server running on port 3001
 
 set -e
 BASE_URL="http://localhost:3001/api"
+AUTH="Authorization: Bearer e2e-test-token"
+ORG="X-Octopus-Org: xzf"
 DAILY_DIR="$HOME/.octopus/agent/memory/daily"
 LONG_TERM="$HOME/.octopus/agent/memory/long-term.md"
 ARCHIVE_DIR="$DAILY_DIR/archive"
@@ -16,66 +18,69 @@ TEST_FILE="$DAILY_DIR/$YESTERDAY.md"
 
 if [ ! -f "$TEST_FILE" ]; then
   echo "  Creating test daily file for $YESTERDAY..."
-  echo "### 10:00:00\nTest entry for archive verification\n### 14:00:00\nAnother test entry about project decisions" > "$TEST_FILE"
-  echo "✓ Test daily file created"
+  mkdir -p "$DAILY_DIR"
+  printf "### 10:00:00\nE2E_TEST archive verification entry\n### 14:00:00\nAnother test entry about project decisions\n" > "$TEST_FILE"
+  echo "PASS: Test daily file created at $TEST_FILE"
+else
+  echo "  Daily file for $YESTERDAY already exists"
 fi
 
 # Step 1: Get long-term file state before archive
-LT_BEFORE=""
+LT_BEFORE_SIZE=0
 if [ -f "$LONG_TERM" ]; then
-  LT_BEFORE=$(cat "$LONG_TERM")
+  LT_BEFORE_SIZE=$(wc -c < "$LONG_TERM")
 fi
-LT_BEFORE_SIZE=${#LT_BEFORE}
-echo "  Long-term memory size before: $LT_BEFORE_SIZE chars"
+echo "  Long-term memory size before: $LT_BEFORE_SIZE bytes"
 
 # Step 2: Trigger archive
-echo "  Triggering archive for $YESTERDAY..."
+echo "  Triggering archive for $YESTERDAY via POST /api/agent/memory/archive..."
 RESPONSE=$(curl -s -X POST "$BASE_URL/agent/memory/archive" \
   -H "Content-Type: application/json" \
-  -H "X-Octopus-Org: default" \
+  -H "$AUTH" -H "$ORG" \
   -d "{\"date\": \"$YESTERDAY\"}")
 
-echo "  Archive response: $(echo "$RESPONSE" | head -c 300)"
+echo "  Archive response: $(echo "$RESPONSE" | head -c 500)"
 
 # Step 3: Verify archive succeeded
 if echo "$RESPONSE" | grep -q '"archived":true'; then
-  echo "✓ PASS: Archive succeeded"
+  echo "PASS: Archive succeeded"
 else
-  echo "⚠ Archive did not report success (may already be archived)"
+  echo "WARN: Archive did not report archived:true (may already be archived)"
 fi
 
 # Step 4: Verify daily file was moved to archive/
 if [ -f "$ARCHIVE_DIR/$YESTERDAY.md" ]; then
-  echo "✓ PASS: Daily file moved to archive/"
+  echo "PASS: Daily file moved to archive/"
 else
-  echo "⚠ INFO: Daily file not in archive/ (may have been moved already)"
+  echo "WARN: Daily file not in archive/ (may have been moved already)"
 fi
 
 # Step 5: Verify long-term was updated
-LT_AFTER=""
+LT_AFTER_SIZE=0
 if [ -f "$LONG_TERM" ]; then
-  LT_AFTER=$(cat "$LONG_TERM")
+  LT_AFTER_SIZE=$(wc -c < "$LONG_TERM")
 fi
-LT_AFTER_SIZE=${#LT_AFTER}
-echo "  Long-term memory size after: $LT_AFTER_SIZE chars"
+echo "  Long-term memory size after: $LT_AFTER_SIZE bytes"
 
 if [ "$LT_AFTER_SIZE" -gt "$LT_BEFORE_SIZE" ]; then
-  echo "✓ PASS: Long-term memory was updated (grew by $((LT_AFTER_SIZE - LT_BEFORE_SIZE)) chars)"
+  echo "PASS: Long-term memory was updated (grew by $((LT_AFTER_SIZE - LT_BEFORE_SIZE)) bytes)"
+else
+  echo "WARN: Long-term memory did not grow (may already contain archived content)"
 fi
 
 # Step 6: Verify .bak backup exists (auto-refine creates backup)
 BAK_FILE="$LONG_TERM.bak"
 if [ -f "$BAK_FILE" ]; then
-  echo "✓ PASS: Backup file exists (long-term.md.bak)"
+  echo "PASS: Backup file exists (long-term.md.bak)"
 else
-  echo "⚠ INFO: No .bak file (refine may not have run or wasn't needed)"
+  echo "WARN: No .bak file (refine may not have run or wasn't needed)"
 fi
 
 # Step 7: Verify refine result in response
 if echo "$RESPONSE" | grep -q '"refine"'; then
-  echo "✓ PASS: Refine result included in archive response"
+  echo "PASS: Refine result included in archive response"
 else
-  echo "⚠ INFO: Refine result not in response"
+  echo "WARN: Refine result not in response"
 fi
 
 echo ""

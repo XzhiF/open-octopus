@@ -1,7 +1,7 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
-import { ArrowLeft, Pencil, Check, X, GitCompare, Save, RotateCcw } from 'lucide-react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
+import { Pencil, X, GitCompare, Save, RotateCcw, Search } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import rehypeSanitize from 'rehype-sanitize'
@@ -16,8 +16,29 @@ import type { SkillInfo, SkillSource } from '@/lib/agent/types'
 
 interface SkillDetailViewProps {
   skills: SkillInfo[]
-  onBack: () => void
+  loading?: boolean
   onRefresh: () => void
+}
+
+function formatSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes}B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)}MB`
+}
+
+/** Fuzzy match: returns matched character indices, or null if no match */
+function fuzzyMatch(text: string, query: string): number[] | null {
+  const lower = text.toLowerCase()
+  const q = query.toLowerCase()
+  const indices: number[] = []
+  let qi = 0
+  for (let ti = 0; ti < lower.length && qi < q.length; ti++) {
+    if (lower[ti] === q[qi]) {
+      indices.push(ti)
+      qi++
+    }
+  }
+  return qi === q.length ? indices : null
 }
 
 const sourceLabels: Record<string, { label: string; className: string }> = {
@@ -26,7 +47,7 @@ const sourceLabels: Record<string, { label: string; className: string }> = {
   prod: { label: '生产版', className: 'bg-agent-success-light text-agent-success-foreground border-agent-success/20' },
 }
 
-export function SkillDetailView({ skills, onBack, onRefresh }: SkillDetailViewProps) {
+export function SkillDetailView({ skills, loading: skillsLoading, onRefresh }: SkillDetailViewProps) {
   const [selectedSkill, setSelectedSkill] = useState<string | null>(null)
   const [content, setContent] = useState<string | null>(null)
   const [editContent, setEditContent] = useState('')
@@ -37,6 +58,7 @@ export function SkillDetailView({ skills, onBack, onRefresh }: SkillDetailViewPr
   const [diffLoading, setDiffLoading] = useState(false)
   const [showDiff, setShowDiff] = useState(false)
   const [skillSource, setSkillSource] = useState<SkillSource>('builtin')
+  const [searchQuery, setSearchQuery] = useState('')
 
   // Load skill content when selected
   const loadSkillContent = useCallback(async (name: string) => {
@@ -117,15 +139,87 @@ export function SkillDetailView({ skills, onBack, onRefresh }: SkillDetailViewPr
     }
   }
 
+  // Fuzzy filtered skills
+  const filteredSkills = useMemo(() => {
+    if (!searchQuery.trim()) return skills.map((s) => ({ skill: s, matchIndices: null as number[] | null }))
+    return skills
+      .map((s) => ({ skill: s, matchIndices: fuzzyMatch(s.name, searchQuery) }))
+      .filter((r) => r.matchIndices !== null)
+  }, [skills, searchQuery])
+
+  // Render skill name with matched characters highlighted
+  function renderHighlighted(name: string, indices: number[]) {
+    const set = new Set(indices)
+    const parts: { text: string; highlight: boolean }[] = []
+    let current = ''
+    let currentHighlight = set.has(0)
+
+    for (let i = 0; i < name.length; i++) {
+      const isHighlight = set.has(i)
+      if (isHighlight !== currentHighlight) {
+        if (current) parts.push({ text: current, highlight: currentHighlight })
+        current = name[i]
+        currentHighlight = isHighlight
+      } else {
+        current += name[i]
+      }
+    }
+    if (current) parts.push({ text: current, highlight: currentHighlight })
+
+    return parts.map((part, i) =>
+      part.highlight
+        ? <span key={i} className="text-red-500">{part.text}</span>
+        : <span key={i}>{part.text}</span>
+    )
+  }
+
+  // Show loading skeleton while skills are being fetched
+  if (skillsLoading) {
+    return (
+      <div className="h-full flex flex-col">
+        <div className="flex items-center gap-2 px-4 py-2 border-b border-agent-divider bg-agent-surface-raised">
+          <Skeleton className="h-5 w-32" />
+          <Skeleton className="h-5 w-16" />
+        </div>
+        <ResizablePanelGroup direction="horizontal" className="flex-1">
+          <ResizablePanel defaultSize={20} minSize={10} maxSize={35}>
+            <div className="p-2 space-y-2">
+              {Array.from({ length: 5 }).map((_, i) => (
+                <Skeleton key={i} className="h-12 w-full" />
+              ))}
+            </div>
+          </ResizablePanel>
+          <ResizableHandle withHandle className="border-agent-divider" />
+          <ResizablePanel defaultSize={80} minSize={20}>
+            <div className="p-6 space-y-3">
+              <Skeleton className="h-6 w-1/3" />
+              <Skeleton className="h-4 w-full" />
+              <Skeleton className="h-4 w-5/6" />
+              <Skeleton className="h-4 w-4/6" />
+            </div>
+          </ResizablePanel>
+        </ResizablePanelGroup>
+      </div>
+    )
+  }
+
+  // Empty state when no skills
+  if (skills.length === 0) {
+    return (
+      <div className="flex items-center justify-center h-full text-muted-foreground">
+        <div className="text-center">
+          <p className="text-sm">暂无 SKILL</p>
+          <p className="text-xs mt-1">SKILL 会在日常使用中自动积累</p>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="h-full flex flex-col">
       {/* Toolbar */}
       <div className="flex items-center justify-between px-4 py-2 border-b border-agent-divider bg-agent-surface-raised">
         <div className="flex items-center gap-2">
-          <Button variant="ghost" size="sm" onClick={onBack}>
-            <ArrowLeft className="h-4 w-4 mr-1" />
-            返回列表
-          </Button>
           {selectedSkill && (
             <span className="text-sm font-medium font-mono">{selectedSkill}</span>
           )}
@@ -173,9 +267,36 @@ export function SkillDetailView({ skills, onBack, onRefresh }: SkillDetailViewPr
       <ResizablePanelGroup direction="horizontal" className="flex-1">
         {/* Skill List Panel */}
         <ResizablePanel defaultSize={20} minSize={10} maxSize={35} collapsible collapsedSize={0}>
-          <div className="h-full overflow-auto border-r border-agent-divider">
-            <div className="p-2 space-y-1">
-              {skills.map((skill) => {
+          <div className="h-full flex flex-col border-r border-agent-divider">
+            {/* Search input */}
+            <div className="p-2 border-b border-agent-divider">
+              <div className="relative">
+                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="搜索 SKILL..."
+                  className="w-full pl-8 pr-8 py-1.5 rounded-md text-xs border border-agent-divider bg-agent-surface-inset focus:outline-none focus:ring-1 focus:ring-agent-primary/50 placeholder:text-muted-foreground/60"
+                />
+                {searchQuery && (
+                  <button
+                    onClick={() => setSearchQuery('')}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                )}
+              </div>
+              {searchQuery && (
+                <div className="text-[10px] text-muted-foreground mt-1 px-1">
+                  {filteredSkills.length} / {skills.length} 个匹配
+                </div>
+              )}
+            </div>
+            {/* Skill list */}
+            <div className="flex-1 overflow-auto p-2 space-y-1">
+              {filteredSkills.map(({ skill, matchIndices }) => {
                 const srcInfo = sourceLabels[skill.source] ?? sourceLabels.builtin
                 return (
                   <button
@@ -188,12 +309,18 @@ export function SkillDetailView({ skills, onBack, onRefresh }: SkillDetailViewPr
                         : 'hover:bg-accent text-foreground'
                     )}
                   >
-                    <div className="font-mono text-xs truncate">{skill.name}</div>
+                    <div className="font-mono text-xs truncate">
+                      {matchIndices ? (
+                        renderHighlighted(skill.name, matchIndices)
+                      ) : (
+                        skill.name
+                      )}
+                    </div>
                     <div className="flex items-center gap-2 mt-0.5">
                       <Badge variant="outline" className={cn('text-[10px] px-1', srcInfo.className)}>
                         {srcInfo.label}
                       </Badge>
-                      <span className="text-[10px] text-muted-foreground">{skill.token_count}t</span>
+                      <span className="text-[10px] text-muted-foreground">{formatSize(skill.file_size ?? 0)}</span>
                     </div>
                   </button>
                 )

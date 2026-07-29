@@ -113,6 +113,7 @@ export interface SkillInfo {
   name: string
   source: SkillSource
   token_count: number
+  file_size: number
   last_modified: string | null
   has_local_backup: boolean
 }

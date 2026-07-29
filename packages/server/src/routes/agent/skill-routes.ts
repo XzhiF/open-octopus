@@ -72,7 +72,7 @@ export function createSkillRoutes(_deps: SkillRouteDeps = {}): Hono {
       if (!org) return c.json(createAgentError('ORG_NOT_FOUND', 'Organization not resolved'), 403)
 
       const skillsDir = getAgentSkillsDir()
-      const items: Array<{ name: string; source: string; has_backup: boolean }> = []
+      const items: Array<{ name: string; source: string; has_backup: boolean; token_count: number; file_size: number; last_modified: string | null }> = []
 
       if (fs.existsSync(skillsDir)) {
         const entries = fs.readdirSync(skillsDir, { withFileTypes: true })
@@ -81,10 +81,15 @@ export function createSkillRoutes(_deps: SkillRouteDeps = {}): Hono {
             const skillFile = path.join(skillsDir, entry.name, 'SKILL.md')
             const bakFile = path.join(skillsDir, entry.name, 'SKILL.md.bak')
             if (fs.existsSync(skillFile)) {
+              const content = fs.readFileSync(skillFile, 'utf-8')
+              const stat = fs.statSync(skillFile)
               items.push({
                 name: entry.name,
                 source: fs.existsSync(bakFile) ? 'local_evolved' : 'builtin',
                 has_backup: fs.existsSync(bakFile),
+                token_count: Math.ceil(content.length / 4),
+                file_size: stat.size,
+                last_modified: stat.mtime.toISOString(),
               })
             }
           }
@@ -98,7 +103,16 @@ export function createSkillRoutes(_deps: SkillRouteDeps = {}): Hono {
           if (entry.isDirectory() && !items.find((i) => i.name === entry.name)) {
             const skillFile = path.join(corePackDir, entry.name, 'SKILL.md')
             if (fs.existsSync(skillFile)) {
-              items.push({ name: entry.name, source: 'builtin', has_backup: false })
+              const content = fs.readFileSync(skillFile, 'utf-8')
+              const stat = fs.statSync(skillFile)
+              items.push({
+                name: entry.name,
+                source: 'builtin',
+                has_backup: false,
+                token_count: Math.ceil(content.length / 4),
+                file_size: stat.size,
+                last_modified: null,
+              })
             }
           }
         }
