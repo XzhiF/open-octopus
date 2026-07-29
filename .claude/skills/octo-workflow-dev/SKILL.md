@@ -649,6 +649,31 @@ octopus workflow run ./deploy.yaml --org {org} --model pro-max --engine claude
 
 > 校验失败的 YAML 在 Web-App 下拉列表中**不显示**（服务端静默过滤）。线上看不到工作流时先跑 `validate`。常见错误：`apiVersion` 格式错、`inputs` 值非对象、`goal` 与 `prompt` 互斥、`condition` 缺 `default`、节点 `id` 重复。
 
+### 10.1 测试（Simulator）
+
+工作流测试使用 `octo-workflow-test` skill，实现无 LLM 调用的闭环验证：
+
+```bash
+octopus workflow simulate ./my-workflow.yaml           # 自动发现 .test.yaml
+octopus workflow simulate ./deploy.yaml --verbose      # 显示详细执行日志
+octopus workflow simulate ./deploy.yaml --json         # JSON 输出
+```
+
+**测试生命周期**:
+
+1. **创建 workflow** → 用 octo-workflow-dev 编写 YAML
+2. **生成 fixture** → 使用 `octo-workflow-test` skill 分析工作流结构，智能生成 `{name}.test.yaml`
+3. **运行模拟** → `octopus workflow simulate {wf.yaml}` 自动发现 fixture
+4. **迭代修复** → 失败时 skill 自动修改 fixture 并重试（最多 3 轮）
+
+**快速开始** — 让 workspace clone 自动生成测试：
+
+```
+使用 octo-workflow-test skill 为 workflows/my-flow.yaml 生成测试 fixture 并运行模拟
+```
+
+详见 `octo-workflow-test` skill（完整的 mock 生成规则、变量系统知识、断言语法）。
+
 ---
 
 ## Constraints（硬性纪律）

@@ -16,3 +16,4 @@
 | 12 | agent-config-optimization | 2026-07-29 | feat/main-agent-optimization | done |
 | 13 | safety-system-redesign | 2026-07-30 | feat/main-agent-optimization | done |
 | 14 | workflow-simulator | 2026-07-30 | feat/workflow-simulator | done |
+| 15 | workflow-simulator-v2 | 2026-07-30 | feat/workflow-simulator | done |
