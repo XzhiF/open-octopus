@@ -46,10 +46,10 @@ export function ConfigTab() {
         )}
 
         <GeneralConfig config={config} onSave={saveConfig} saving={saving} />
-        <SafeModePanel safeMode={safeMode} onToggle={toggleSafeMode} />
         <PersonaEditor onSave={savePersona} saving={saving} />
         <NotificationConfig config={config} onSave={saveConfig} saving={saving} />
         <MemoryStrategyConfig config={config} onSave={saveConfig} saving={saving} />
+        <SafeModePanel safeMode={safeMode} onToggle={toggleSafeMode} />
         <SafetyAudit events={safetyEvents} />
         <DebugLogViewer config={config} onSave={saveConfig} />
       </div>
