@@ -12,7 +12,7 @@ import { applyVarsUpdate } from "./parse-vars-update"
  * - Windows 上优先 MSYS bash（Git for Windows），避免 WSL bash 的路径映射问题
  * - macOS/Linux 使用系统 bash
  */
-function resolveBashPath(): string {
+export function resolveBashPath(): string {
   // 1. 用户显式覆盖
   const envPath = process.env.OCTOPUS_BASH_PATH
   if (envPath && existsSync(envPath)) {

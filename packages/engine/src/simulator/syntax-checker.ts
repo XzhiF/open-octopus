@@ -6,6 +6,7 @@
 
 import { execSync } from "child_process"
 import type { SyntaxError } from "./types"
+import { resolveBashPath } from "../executors/bash"
 
 export interface SyntaxCheckResult {
   passed: boolean
@@ -46,10 +47,12 @@ function checkBashSyntax(nodeId: string, script: string): SyntaxError | null {
   // Empty script is valid
   if (!script.trim()) return null
 
+  const bashPath = resolveBashPath()
+
   try {
     // Use bash -n to check syntax without executing
     // Pass script via stdin to avoid shell escaping issues
-    execSync(`bash -n`, {
+    execSync(`"${bashPath}" -n`, {
       input: script,
       stdio: ["pipe", "pipe", "pipe"],
       timeout: 5000,
