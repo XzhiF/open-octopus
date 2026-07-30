@@ -1,4 +1,4 @@
-import { VarPool, substituteVarsFull, substituteVars, evaluateExpression } from "@octopus/shared"
+import { VarPool, substituteVarsFull, substituteVars, applyOutputsMapping } from "@octopus/shared"
 import type { NodeDef, CrossExecResolver } from "@octopus/shared"
 import type { NodeExecutor, NodeExecutionResult, ApprovalMetadata } from "./types"
 import type { ApprovalConfig } from "./executor-config"
@@ -114,29 +114,6 @@ export class ApprovalExecutor implements NodeExecutor {
 
   private applyOutputsMapping(outputs: Record<string, any>) {
     if (!this.node.outputs) return
-    for (const [key, expr] of Object.entries(this.node.outputs)) {
-      const poolKey = key.startsWith("$vars.") ? key.slice(6) : key
-
-      if (expr === "$last_output") {
-        this.pool.set(poolKey, outputs.last_output)
-        outputs[poolKey] = outputs.last_output
-      } else if (expr.startsWith("$last_output.")) {
-        const field = expr.slice(13)
-        const value = outputs.last_output?.[field] ?? outputs[field]
-        this.pool.set(poolKey, value)
-        outputs[poolKey] = value
-      } else if (/^\$vars\.\w+$/.test(expr)) {
-        const varKey = expr.slice(6)
-        this.pool.set(poolKey, this.pool.get(varKey))
-        outputs[poolKey] = this.pool.get(varKey)
-      } else if (expr.startsWith("$")) {
-        const resolved = substituteVars(expr, this.pool, undefined, this.crossExecResolver, this.executionId)
-        this.pool.set(poolKey, resolved)
-        outputs[poolKey] = resolved
-      } else {
-        this.pool.set(poolKey, expr)
-        outputs[poolKey] = expr
-      }
-    }
+    applyOutputsMapping(this.node.outputs, outputs, this.pool, outputs.last_output, undefined)
   }
 }

@@ -33,14 +33,17 @@ export const ApprovalMockDefSchema = z.object({
 })
 
 // Forward reference for recursive loop mock
+// IMPORTANT: LoopMockDefSchema (required `nodes`) and ApprovalMockDefSchema (required `choice`)
+// must come BEFORE the permissive BaseMockDef variants, otherwise AgentMockDefSchema (all-optional)
+// matches first and Zod's strip mode silently drops `nodes`/`iterations`/`choice` fields.
 export const MockDefSchema: z.ZodType<any> = z.lazy(() =>
   z.union([
-    AgentMockDefSchema,
-    SwarmMockDefSchema,
+    LoopMockDefSchema,
+    ApprovalMockDefSchema,
     BashMockDefSchema,
     PythonMockDefSchema,
-    ApprovalMockDefSchema,
-    LoopMockDefSchema,
+    AgentMockDefSchema,
+    SwarmMockDefSchema,
   ])
 )
 

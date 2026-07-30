@@ -8,6 +8,8 @@ import type { NodeDef } from "@octopus/shared"
 import { VarPool } from "@octopus/shared"
 import type { NodeExecutor, NodeExecutionResult } from "../executors/types"
 import { ConditionExecutor } from "../executors/condition"
+import { BashExecutor } from "../executors/bash"
+import { PythonExecutor } from "../executors/python"
 import {
   MockAgentExecutor,
   MockSwarmExecutor,
@@ -22,6 +24,12 @@ export interface MockFactoryOptions {
   realExecution?: string[]
   /** If true, fail when a side-effect node has no mock definition */
   strict?: boolean
+  /** AbortSignal for real executors */
+  signal?: AbortSignal
+  /** Log callback for real executors */
+  onLog?: (line: string, stream?: "stdout" | "stderr") => void
+  /** Working directory for real executors */
+  cwd?: string
 }
 
 /**
@@ -54,11 +62,18 @@ export class SimulatorExecutorFactory {
 
     // Check if this node should execute for real
     if (realExecution.includes(node.id)) {
-      if (node.type === "bash" || node.type === "python") {
-        throw new Error(
-          `Real execution for node "${node.id}" is not yet supported in mock factory. ` +
-          `Use SimulatorEngine's real execution path instead.`,
-        )
+      if (node.type === "bash") {
+        return new BashExecutor(node, this.pool, {
+          signal: this.options.signal,
+          onLog: this.options.onLog,
+          cwd: this.options.cwd,
+        })
+      }
+      if (node.type === "python") {
+        return new PythonExecutor(node, this.pool, {
+          signal: this.options.signal,
+          onLog: this.options.onLog,
+        })
       }
       // Only bash/python can be executed for real
       throw new Error(

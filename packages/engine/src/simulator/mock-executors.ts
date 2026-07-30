@@ -233,6 +233,7 @@ export class MockApprovalExecutor implements NodeExecutor {
 
     if (isRejected) {
       return {
+        lastOutput: this.mockDef.choice,
         outputs: { choice: this.mockDef.choice },
         status: "rejected",
         durationMs: Date.now() - start,
@@ -246,6 +247,7 @@ export class MockApprovalExecutor implements NodeExecutor {
     this.pool.set("approval_choice", this.mockDef.choice)
 
     return {
+      lastOutput: this.mockDef.choice,
       outputs: { choice: this.mockDef.choice },
       status: "completed",
       durationMs: Date.now() - start,

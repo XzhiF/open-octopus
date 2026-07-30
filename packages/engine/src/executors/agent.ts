@@ -1,4 +1,4 @@
-import { VarPool, substituteVars, substituteVarsFull, compileAutoAnswers, evaluateExpression, resolveModelAlias } from "@octopus/shared"
+import { VarPool, substituteVars, substituteVarsFull, compileAutoAnswers, resolveModelAlias, applyOutputsMapping } from "@octopus/shared"
 import type { NodeDef, AutoAnswer, SubAgentDef, CrossExecResolver, ModelAliasConfig } from "@octopus/shared"
 import type { NodeExecutor, NodeExecutionResult } from "./types"
 import type { AgentConfig } from "./executor-config"
@@ -454,33 +454,6 @@ export class AgentExecutor implements NodeExecutor {
 
   private applyOutputsMapping(outputs: Record<string, any>) {
     if (!this.node.outputs) return
-    for (const [key, expr] of Object.entries(this.node.outputs)) {
-      const VARS_ASSIGN_RE = /^\$vars\.(\w+)\s*=\s*(.+)$/
-      const assignMatch = expr.match(VARS_ASSIGN_RE)
-      if (assignMatch) {
-        const varKey = assignMatch[1]
-        const rhs = assignMatch[2].trim()
-        const resolved = evaluateExpression(rhs, this.pool)
-        this.pool.set(varKey, resolved)
-        outputs[key] = resolved
-        continue
-      }
-
-      if (expr === "$last_output") {
-        this.pool.set(key, outputs.last_output)
-        outputs[key] = outputs.last_output
-      } else if (expr.startsWith("$vars.")) {
-        const varKey = expr.slice(6)
-        this.pool.set(key, this.pool.get(varKey))
-        outputs[key] = this.pool.get(key)
-      } else if (expr.startsWith("$")) {
-        const resolved = substituteVars(expr, this.pool, this.buildNodeOutputs(), this.crossExecResolver, this.executionId, this.loopContext)
-        this.pool.set(key, resolved)
-        outputs[key] = resolved
-      } else {
-        this.pool.set(key, expr)
-        outputs[key] = expr
-      }
-    }
+    applyOutputsMapping(this.node.outputs, outputs, this.pool, outputs.last_output, undefined)
   }
 }

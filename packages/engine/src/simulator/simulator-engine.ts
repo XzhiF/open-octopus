@@ -6,7 +6,7 @@
 // execution loop to avoid needing real providers.
 
 import type { NodeDef, WorkflowDef } from "@octopus/shared"
-import { VarPool, evaluateExpression, substituteVars } from "@octopus/shared"
+import { VarPool, evaluateExpression, applyOutputsMapping } from "@octopus/shared"
 import type { NodeExecutionResult } from "../executors/types"
 import { ConditionExecutor } from "../executors/condition"
 import { topologicalSort } from "../graph-utils"
@@ -301,6 +301,14 @@ async function executeLoopNode(
       const innerKey = `${loopNode.id}.${innerNode.id}.iter${iter}`
       nodeResults[innerKey] = innerResult
 
+      // Add inner node to execution trace (needed for node_trace assertions)
+      executionTrace.push(makeTraceEntry(innerNode, innerResult.status, innerResult))
+
+      // Apply outputs mapping for inner node (mirrors engine.ts behavior)
+      if (innerNode.outputs && innerResult.status === "completed") {
+        applyNodeOutputsMapping(innerNode, innerResult, pool, nodeResults)
+      }
+
       if (innerResult.status === "failed") {
         return {
           outputs: {},
@@ -338,6 +346,26 @@ async function executeInnerNode(
   // Logic nodes inside loops still execute for real
   if (node.type === "condition") {
     return new ConditionExecutor(node, pool).execute()
+  }
+
+  // Check execute_when before executing (mirrors loop.ts behavior)
+  if (node.execute_when) {
+    const nodeOutputs: Record<string, Record<string, any>> = {}
+    for (const [id, r] of Object.entries(nodeResults)) {
+      const outputs = { ...(r.outputs ?? {}) }
+      if (r.lastOutput !== undefined) outputs["output"] = r.lastOutput
+      nodeOutputs[id] = outputs
+    }
+    const shouldRun = evaluateExpression(node.execute_when, pool, nodeOutputs)
+    if (!shouldRun) {
+      return {
+        outputs: {},
+        status: "skipped",
+        durationMs: 0,
+        logLines: [`Skipped: execute_when "${node.execute_when}" evaluated false`],
+        skippedByCondition: true,
+      }
+    }
   }
 
   // Find mock for this inner node
@@ -425,23 +453,16 @@ function applyNodeOutputsMapping(
   node: NodeDef,
   result: NodeExecutionResult,
   pool: VarPool,
-  nodeResults: Record<string, NodeExecutionResult>,
+  _nodeResults: Record<string, NodeExecutionResult>,
 ): void {
   if (!node.outputs) return
 
-  for (const [varName, expr] of Object.entries(node.outputs)) {
-    const nodeOutputs: Record<string, Record<string, any>> = {}
-    for (const [id, r] of Object.entries(nodeResults)) {
-      const outputs = { ...(r.outputs ?? {}) }
-      if (r.lastOutput !== undefined) outputs["output"] = r.lastOutput
-      nodeOutputs[id] = outputs
-    }
-
-    if (expr === "$last_output") {
-      pool.set(varName, result.lastOutput)
-    } else {
-      const resolved = substituteVars(expr, pool, nodeOutputs)
-      pool.set(varName, resolved)
-    }
+  // Build outputs record matching real executor format
+  const outputs: Record<string, any> = {
+    ...(result.outputs ?? {}),
+    last_output: result.lastOutput,
+    exit_code: result.exitCode,
   }
+
+  applyOutputsMapping(node.outputs, outputs, pool, result.lastOutput, result.exitCode)
 }

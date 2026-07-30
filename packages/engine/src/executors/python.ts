@@ -1,5 +1,5 @@
 import { spawn } from "child_process"
-import { VarPool, substituteVars, substituteVarsFull, evaluateExpression } from "@octopus/shared"
+import { VarPool, substituteVars, substituteVarsFull, applyOutputsMapping } from "@octopus/shared"
 import type { NodeDef } from "@octopus/shared"
 import type { NodeExecutor, NodeExecutionResult } from "./types"
 import type { PythonConfig } from "./executor-config"
@@ -98,47 +98,7 @@ export class PythonExecutor implements NodeExecutor {
 
   private applyOutputsMapping(outputs: Record<string, any>) {
     if (!this.node.outputs) return
-    for (const [key, expr] of Object.entries(this.node.outputs)) {
-      const poolKey = key.startsWith("$vars.") ? key.slice(6) : key
-
-      // 变量赋值语法: $vars.xxx = expression
-      const VARS_ASSIGN_RE = /^\$vars\.(\w+)\s*=\s*(.+)$/
-      const assignMatch = expr.match(VARS_ASSIGN_RE)
-      if (assignMatch) {
-        const varKey = assignMatch[1]
-        const rhs = assignMatch[2].trim()
-        const resolved = evaluateExpression(rhs, this.pool)
-        this.pool.set(varKey, resolved)
-        outputs[poolKey] = resolved
-        continue
-      }
-
-      if (expr === "$last_output") {
-        this.pool.set(poolKey, outputs.last_output)
-        outputs[poolKey] = outputs.last_output
-      } else if (expr.startsWith("$last_output.")) {
-        const field = expr.slice(13)
-        let obj: any = outputs.last_output
-        try { obj = JSON.parse(outputs.last_output) } catch { /* stdout 非 JSON */ }
-        const value = obj?.[field]
-        this.pool.set(poolKey, value)
-        outputs[poolKey] = value
-      } else if (expr === "$exit_code") {
-        this.pool.set(poolKey, outputs.exit_code)
-        outputs[poolKey] = outputs.exit_code
-      } else if (/^\$vars\.\w+$/.test(expr)) {
-        const varKey = expr.slice(6)
-        this.pool.set(poolKey, this.pool.get(varKey))
-        outputs[poolKey] = this.pool.get(varKey)
-      } else if (expr.startsWith("$")) {
-        const resolved = substituteVars(expr, this.pool)
-        this.pool.set(poolKey, resolved)
-        outputs[poolKey] = resolved
-      } else {
-        this.pool.set(poolKey, expr)
-        outputs[poolKey] = expr
-      }
-    }
+    applyOutputsMapping(this.node.outputs, outputs, this.pool, outputs.last_output, outputs.exit_code)
   }
 
   private runPython(script: string, timeoutSec: number): Promise<{
