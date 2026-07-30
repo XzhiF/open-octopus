@@ -1096,7 +1096,7 @@ export class SetupRunner {
     if (!existsSync(wsRoot)) return
 
     // Only sync workspace-specific skills (not all core-pack skills)
-    const workspaceSkills = ["octo-dev-copilot", "octo-workflow-dev", "octo-swarm-dev"]
+    const workspaceSkills = ["octo-dev-copilot", "octo-workflow-dev", "octo-swarm-dev", "octo-workflow-test"]
 
     for (const wsName of readdirSync(wsRoot)) {
       const wsDir = join(wsRoot, wsName)

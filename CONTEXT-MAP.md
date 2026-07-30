@@ -40,6 +40,12 @@
 | **分身文件白名单** | 分身文件管理 API 允许读写的路径列表（persona.md / config.json / memory/*），防止目录穿越攻击。 | server |
 | **英文代号 (name)** | 分身唯一标识，`/^[a-z0-9-]+$/`，用于文件路径和 API 路由。与 display_name 分离。 | shared |
 | **显示名称 (display_name)** | 分身在 UI 和 @@补全中展示的名称，支持中文。存储在 config.json 中。 | server, web-app |
+| **SimulatorExecutorFactory** | 模拟执行工厂 — 替代 ExecutorFactory，对副作用节点（agent/swarm/bash/python/approval）返回 MockExecutor，对逻辑节点（condition/loop）返回真实 Executor。VarPool 操作始终真实。 | engine |
+| **MockDef** | 模拟定义 — 测试 fixture 中描述节点在模拟模式下行为的配置：status、output、outputs、update_vars、error。 | engine, shared |
+| **TestScenario** | 测试场景 — 一个完整的测试用例：inputs + mocks + assertions，验证工作流的一条执行路径。 | engine |
+| **TestFixture** | 测试 fixture — `.test.yaml` 文件，包含一个或多个 TestScenario，与 workflow.yaml 配对。 | engine |
+| **Syntax Pre-check** | 语法预检查 — 在模拟执行前对所有 bash/python 节点运行 `bash -n` / `python compile()` 检查语法错误，不执行脚本。 | engine |
+| **Per-iteration Mock** | 按迭代 mock — loop 内部节点的 mock 数据以数组形式定义，索引对应迭代次数。对象值则所有迭代复用。 | engine |
 
 ## Anti-Patterns（禁止）
 

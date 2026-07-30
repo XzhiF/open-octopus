@@ -38,3 +38,6 @@ export * from "./pipeline"
 // Notify modules
 export { registerBuiltinProviders, ProviderRegistry, HermesProvider, WebhookProvider, NotifyDispatcher } from "./notify/index"
 export type { DispatchContext } from "./notify/index"
+
+// Simulator module
+export * from "./simulator"

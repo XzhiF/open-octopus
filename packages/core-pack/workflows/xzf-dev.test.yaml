@@ -1,0 +1,200 @@
+# yaml-language-server: $schema=~/.octopus/test-fixture-schema.json
+scenarios:
+  # =============================================================
+  # Scenario 1: Happy Path — 全流程顺畅，所有循环一次通过
+  # =============================================================
+  - name: "happy path — all stages complete"
+    inputs:
+      idea: "添加用户认证功能"
+      feature: "user-auth"
+      research_guidance: ""
+    mocks:
+      # --- Stage 0: Init ---
+      init:
+        output: "初始化完成。分支: feat/user-auth, feature: user-auth, remote: github"
+        update_vars:
+          branch: "feat/user-auth"
+          feature: "user-auth"
+          remote_type: "github"
+
+      # --- Stage 1: Codebase Research (Swarm Debate) ---
+      idea-research:
+        output: "研究完成。影响模块: auth, user。待澄清问题: 3"
+        update_vars:
+          requirements_checklist_status: "INCOMPLETE: 待澄清"
+
+      # --- Stage 2a: Requirements Clarify Loop ---
+      requirements-clarify-loop:
+        iterations: 1
+        nodes:
+          requirements-approval:
+            choice: "proceed"
+            comment: "需求已明确，无需补充"
+          requirements-clarify:
+            output: "需求澄清完成。checklist 全部完成。"
+            update_vars:
+              requirements_checklist_status: "COMPLETE"
+
+      # --- Stage 2b: Verification Clarify Loop ---
+      verification-clarify-loop:
+        iterations: 1
+        nodes:
+          verification-approval:
+            choice: "proceed"
+            comment: "验证方案已确认"
+          verification-clarify:
+            output: "验证策略规划完成。环境 checklist 全部完成。"
+            update_vars:
+              env_checklist_status: "COMPLETE"
+
+      # --- Stage 3: Brief Maker ---
+      brief-maker:
+        output: "需求简报已生成: .scratch/user-auth/02-clarification/brief.md"
+
+      # --- Stage 4: Spec Planner ---
+      spec-planner:
+        output: "Spec 和 Tracer Bullet 设计完成。2 个 spec，5 个 task。"
+
+      # --- Stage 5: Execution ---
+      execution:
+        output: "passed"
+        update_vars:
+          spec_status: "passed"
+
+      # --- Stage 6: E2E Verify Loop ---
+      e2e-verify-loop:
+        iterations: 1
+        nodes:
+          e2e-runner:
+            output: "passed"
+            update_vars:
+              e2e_status: "passed"
+          e2e-notify:
+            output: ""
+          e2e-approval:
+            choice: "retry"
+            comment: ""
+
+      # --- Stage 7: Ship ---
+      ship:
+        output: "PR 已提交: https://github.com/org/repo/pull/123"
+
+    assertions:
+      status: "completed"
+      vars:
+        branch: "feat/user-auth"
+        feature: "user-auth"
+        remote_type: "github"
+        requirements_checklist_status: "COMPLETE"
+        clarify_decision: "proceed"
+        env_checklist_status: "COMPLETE"
+        verify_decision: "proceed"
+        spec_status: "passed"
+        e2e_status: "passed"
+      node_trace:
+        executed:
+          - init
+          - idea-research
+          - requirements-clarify-loop
+          - verification-clarify-loop
+          - brief-maker
+          - spec-planner
+          - execution
+          - e2e-verify-loop
+          - ship
+        skipped:
+          - e2e-notify
+          - e2e-approval
+
+  # =============================================================
+  # Scenario 2: E2E Failure + Skip — E2E 失败后用户选择跳过
+  # =============================================================
+  - name: "e2e failure then skip"
+    inputs:
+      idea: "添加搜索功能"
+      feature: "search"
+      research_guidance: ""
+    mocks:
+      init:
+        output: "初始化完成。分支: feat/search, feature: search, remote: github"
+        update_vars:
+          branch: "feat/search"
+          feature: "search"
+          remote_type: "github"
+
+      idea-research:
+        output: "研究完成。影响模块: search, api。"
+        update_vars:
+          requirements_checklist_status: "INCOMPLETE: 待澄清"
+
+      requirements-clarify-loop:
+        iterations: 1
+        nodes:
+          requirements-approval:
+            choice: "proceed"
+            comment: "需求已明确"
+          requirements-clarify:
+            output: "需求澄清完成。"
+            update_vars:
+              requirements_checklist_status: "COMPLETE"
+
+      verification-clarify-loop:
+        iterations: 1
+        nodes:
+          verification-approval:
+            choice: "proceed"
+            comment: "验证方案确认"
+          verification-clarify:
+            output: "验证策略规划完成。"
+            update_vars:
+              env_checklist_status: "COMPLETE"
+
+      brief-maker:
+        output: "需求简报已生成"
+
+      spec-planner:
+        output: "Spec 设计完成。1 个 spec，3 个 task。"
+
+      execution:
+        output: "passed"
+        update_vars:
+          spec_status: "passed"
+
+      # E2E 第一轮失败，用户选择跳过
+      e2e-verify-loop:
+        iterations: 2
+        nodes:
+          e2e-runner:
+            - output: "failed"
+              update_vars:
+                e2e_status: "failed"
+            - output: "failed"
+              update_vars:
+                e2e_status: "failed"
+          e2e-notify:
+            output: "通知已发送"
+          e2e-approval:
+            - choice: "retry"
+              comment: "再试一次"
+            - choice: "skip"
+              comment: "跳过 E2E 继续交付"
+
+      ship:
+        output: "PR 已提交: https://github.com/org/repo/pull/456"
+
+    assertions:
+      status: "completed"
+      vars:
+        branch: "feat/search"
+        feature: "search"
+        spec_status: "passed"
+        e2e_decision: "skip"
+      node_trace:
+        executed:
+          - init
+          - idea-research
+          - brief-maker
+          - spec-planner
+          - execution
+          - e2e-verify-loop
+          - ship

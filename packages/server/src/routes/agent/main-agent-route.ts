@@ -108,6 +108,47 @@ function resolveCloneDefFromFs(name: string): CloneDef | null {
   }
 }
 
+// ── SSE event forwarding filter ─────────────────────────────────────
+
+/**
+ * Determine which MessageChunk types should be forwarded to SSE consumers
+ * during delegation. Filters out noisy events (thinking, message boundaries)
+ * and forwards actionable events (text, tool calls/results, errors).
+ */
+export function shouldForwardEvent(type: string): boolean {
+  return [
+    'text_delta',
+    'tool_call_start',
+    'tool_call',
+    'tool_result',
+    'error',
+  ].includes(type)
+}
+
+/**
+ * Build an SSE event payload for a forwardable delegation chunk.
+ * Returns null if the chunk type should not be forwarded.
+ * Uses shouldForwardEvent() as the single source of truth for filtering.
+ */
+function forwardableSSEEvent(chunk: MessageChunk, accumulatedContent: string, source: string): { event: string; data: string } | null {
+  if (!shouldForwardEvent(chunk.type)) return null
+
+  switch (chunk.type) {
+    case 'text_delta':
+      return { event: 'text_delta', data: JSON.stringify({ delta: chunk.content, content: accumulatedContent, source }) }
+    case 'tool_call_start':
+      return { event: 'tool_call', data: JSON.stringify({ type: 'start', tool_call_id: chunk.toolCallId, tool_name: chunk.toolName }) }
+    case 'tool_call':
+      return { event: 'tool_call', data: JSON.stringify({ type: 'input', tool_call_id: chunk.toolCallId, tool_name: chunk.toolName, input: chunk.toolInput }) }
+    case 'tool_result':
+      return { event: 'tool_result', data: JSON.stringify({ tool_call_id: chunk.toolCallId, tool_name: chunk.toolName, content: chunk.content, is_error: chunk.isError }) }
+    case 'error':
+      return { event: 'error', data: JSON.stringify({ code: chunk.code, message: chunk.message }) }
+    default:
+      return null
+  }
+}
+
 // ── Route factory ──────────────────────────────────────────────────
 
 export function createMainAgentRoute(deps: MainAgentRouteDeps): Hono {
@@ -198,18 +239,9 @@ export function createMainAgentRoute(deps: MainAgentRouteDeps): Hono {
             for await (const chunk of runtime.chat(body.message!, sessionId!, null, cwd)) {
               if ((stream as any)._aborted) break
 
-              if (chunk.type === 'text_delta') {
-                fullContent += chunk.content
-                await stream.writeSSE({
-                  event: 'text_delta',
-                  data: JSON.stringify({ delta: chunk.content, content: fullContent, source: targetClone }),
-                })
-              } else if (chunk.type === 'error') {
-                await stream.writeSSE({
-                  event: 'error',
-                  data: JSON.stringify({ code: chunk.code, message: chunk.message }),
-                })
-              }
+              if (chunk.type === 'text_delta') fullContent += chunk.content
+              const sseEvent = forwardableSSEEvent(chunk, fullContent, targetClone)
+              if (sseEvent) await stream.writeSSE(sseEvent)
             }
 
             // Signal delegation end
@@ -729,13 +761,9 @@ async function executeDelegation(
   try {
     let delegateContent = ''
     for await (const chunk of runtime.chat(delegation.task, sessionId, null, cwd)) {
-      if (chunk.type === 'text_delta') {
-        delegateContent += chunk.content
-        await stream.writeSSE({
-          event: 'text_delta',
-          data: JSON.stringify({ delta: chunk.content, content: delegateContent, source: cloneName }),
-        })
-      }
+      if (chunk.type === 'text_delta') delegateContent += chunk.content
+      const sseEvent = forwardableSSEEvent(chunk, delegateContent, cloneName)
+      if (sseEvent) await stream.writeSSE(sseEvent)
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
