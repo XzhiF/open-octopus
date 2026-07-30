@@ -487,7 +487,7 @@ workflowCmd
         process.exit(1)
       }
 
-      // Read SSE stream
+      // Read SSE stream — print text_delta in real-time for progress visibility
       const reader = res.body?.getReader()
       if (!reader) {
         console.error(chalk.red("No response stream"))
@@ -497,6 +497,8 @@ workflowCmd
       const decoder = new TextDecoder()
       let fullContent = ""
       let buffer = ""
+      let lastPrinted = ""
+      let currentEvent = ""
 
       while (true) {
         const { done, value } = await reader.read()
@@ -507,13 +509,13 @@ workflowCmd
         buffer = lines.pop() ?? ""
 
         for (const line of lines) {
-          if (line.startsWith("event: delegation_start")) {
+          if (line.startsWith("event: ")) {
+            currentEvent = line.slice(7).trim()
+            if (currentEvent === "delegation_start") {
+              console.log(chalk.dim("⏳ Workspace clone is analyzing workflow..."))
+            }
             continue
           }
-          if (line.startsWith("event: delegation_end")) {
-            continue
-          }
-          if (line.startsWith("event: text_delta")) continue
           if (line.startsWith("data: ")) {
             try {
               const payload = JSON.parse(line.slice(6))
@@ -522,17 +524,26 @@ workflowCmd
               } else if (payload.delta) {
                 fullContent += payload.delta
               }
+              // Show tool calls in real-time
+              if (currentEvent === "tool_call" && payload.name) {
+                const args = payload.input ? ` ${JSON.stringify(payload.input).slice(0, 80)}` : ""
+                console.log(chalk.dim(`\n🔧 ${payload.name}${args}`))
+              }
+              // Stream new text content to stdout in real-time
+              if (fullContent.length > lastPrinted.length) {
+                const newPart = fullContent.slice(lastPrinted.length)
+                process.stdout.write(newPart)
+                lastPrinted = fullContent
+              }
             } catch { /* skip malformed */ }
+            currentEvent = ""
           }
-          if (line.startsWith("event: error")) continue
         }
       }
 
-      // Print the final content from the workspace clone
-      if (fullContent) {
-        console.log(fullContent)
-      } else {
-        console.log(chalk.yellow("No output received from workspace clone."))
+      // Ensure final newline
+      if (fullContent && !fullContent.endsWith("\n")) {
+        console.log()
       }
 
       console.log()
