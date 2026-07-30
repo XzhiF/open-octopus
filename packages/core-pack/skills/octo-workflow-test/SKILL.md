@@ -218,6 +218,46 @@ swarm-node-id:
 
 节点 id 为 `idea-research` → auto-var 为 `$vars.idea-research_synthesis`、`$vars.idea-research_consensus_score` 等。
 
+**⚠️ Auto-var 约束求解（生成 Swarm mock 的必做步骤）**：
+
+Swarm 节点的 auto-vars 由真实引擎自动写入 VarPool，但模拟器中 `MockSwarmExecutor` 不会自动填充。你必须：
+
+1. **扫描下游引用**：对每个 swarm 节点，搜索整个工作流中引用了 `$vars.{nodeId}_xxx` 的所有位置：
+   - `execute_when` 表达式
+   - `condition.cases[].when` 表达式
+   - `loop.while` / `loop.break_when` 表达式
+   - 下游节点的 `outputs:` 映射
+   - 下游节点的 `prompt` / `bash` / `python` 脚本内容
+
+2. **为被引用的 auto-vars 填充 mock 值**：在 swarm mock 的 `update_vars` 中显式设置每个被引用的 auto-var：
+
+```yaml
+# 示例：下游节点引用了 $vars.idea-research_synthesis 和 $vars.idea-research_consensus_score
+idea-research:
+  status: "completed"
+  output: "需求分析报告：3 个核心需求已识别"
+  update_vars:
+    idea-research_synthesis: "需求分析报告：3 个核心需求已识别"
+    idea-research_consensus_score: "0.85"
+    idea-research_rounds_used: "2"
+    idea-research_expert_count: "3"
+    idea-research_experts: '["产品经理", "架构师", "安全专家"]'
+    idea-research_budget_exhausted: "false"
+    idea-research_timeout_exceeded: "false"
+```
+
+3. **按 swarm mode 设置合理默认值**：
+
+| Mode | 关键 auto-vars | 建议默认值 |
+|------|---------------|-----------|
+| **review** | `_synthesis` | mock output 内容 |
+| **debate** | `_synthesis`, `_consensus_score`, `_rounds_used` | score=0.8+, rounds=2 |
+| **dispatch** | `_synthesis`, `_task_breakdown`, `_expert_outputs` | 分解 JSON + 各专家输出 |
+| **swarm** | `_synthesis`, `_expert_count` | 动态路由结果 |
+| **moa** | `_synthesis`, `_expert_outputs` | 聚合器综合结果 |
+
+**规则：如果下游引用了某个 auto-var 但 mock 中没有设置，模拟器会产生空值 → 断言失败。宁可多设置几个 auto-var，也不要遗漏。**
+
 ### 5.5 Approval 节点
 
 默认 choice = 第一个 option。如果需要测试拒绝路径，生成第二个 scenario。
