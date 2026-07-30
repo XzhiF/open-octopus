@@ -3,7 +3,7 @@ import chalk from "chalk"
 import { readFileSync, writeFileSync, existsSync, readdirSync, mkdirSync, copyFileSync, statSync, rmSync, chmodSync } from "fs"
 import { resolve, join } from "path"
 import { parseWorkflow, validateWorkflow, resolveOrgDir, PipelineConfigSchema, PipelineConfigV1Schema, ResourcePreFlight, ResourceProvisioner, ResourceManager } from "@octopus/shared"
-import { WorkflowEngine, registerBuiltinProviders } from "@octopus/engine"
+import { WorkflowEngine, registerBuiltinProviders, type TestRunnerResult } from "@octopus/engine"
 import { registerProvider, ClaudeSDKProvider, PiAgentProvider, getProviderAsync } from "@octopus/providers"
 import { resolveCurrentOrg, resolveBuiltinWorkflowsDir } from "../utils/path"
 import { load as yamlLoad, JSON_SCHEMA } from "js-yaml"
@@ -489,7 +489,7 @@ async function runDirectTest(workflowPath: string, fixturePath: string, displayP
   }
 }
 
-function renderDirectTestResult(result: { results: Array<{ scenarioName: string; passed: boolean; durationMs: number; status: string; executionTrace: Array<{ nodeId: string; nodeType: string; status: string; durationMs: number; mocked: boolean }>; assertionReport: { passed: boolean; results: Array<{ passed: boolean; message?: string; name: string }> }; syntaxErrors?: Array<{ nodeId: string; nodeType: string; error: string; line?: number }> }>; totalDurationMs: number; passed: boolean; passedCount: number; failedCount: number }): void {
+function renderDirectTestResult(result: TestRunnerResult): void {
   // Collect all unique node IDs across scenarios for syntax check
   const allNodeIds = new Set<string>()
   const syntaxErrorMap = new Map<string, { error: string; line?: number }>()
@@ -632,7 +632,7 @@ async function runAgentTest(absPath: string, displayPath: string, options: { org
             }
             // Show tool results
             if (currentEvent === "tool_result" && payload.tool_name) {
-              const short = (payload.content || "").slice(0, 120).replace(/\n/g, " ")
+              const short = (payload.content || "").slice(0, 100).replace(/\n/g, " ")
               console.log(chalk.dim(`  → ${short}`))
             }
             // Stream new text content to stdout in real-time
