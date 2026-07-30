@@ -147,6 +147,8 @@ export interface ResumeConfig {
   resumeFromNodeId?: string
   resumeIteration?: number
   engineNodeResults?: Record<string, NodeExecutionResult>
+  /** Inner node results from the iteration that paused — preserves $nodeId.output across resume */
+  prevIterationResults?: Record<string, NodeExecutionResult>
 }
 
 // ============================================================

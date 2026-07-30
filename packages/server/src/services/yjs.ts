@@ -197,7 +197,7 @@ export function startWatch(workspaceId: string, workspacePath: string, doc: Y.Do
   })
 
   const watcher = watch(workspacePath, {
-    ignored: /(^|[\/\\])(\.(?!claude|octopus)|node_modules|target|dist|build|\.next|\.nuxt|\.output|\.cache|coverage|__pycache__|vendor|bower_components|\.worktrees)|\.(class|jar|war|ear|o|so|dll|exe|pyc|rbc|beam|node|wasm)$/,
+    ignored: /(^|[\/\\])(\.(?!claude|octopus|scratch)|node_modules|target|dist|build|\.next|\.nuxt|\.output|\.cache|coverage|__pycache__|vendor|bower_components|\.worktrees)|\.(class|jar|war|ear|o|so|dll|exe|pyc|rbc|beam|node|wasm)$/,
     persistent: true,
     ignoreInitial: true,
     depth: 22,

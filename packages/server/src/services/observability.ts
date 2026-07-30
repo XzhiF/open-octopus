@@ -275,6 +275,7 @@ export class ObservabilityService {
         break
       case 'tool_result': {
         base.toolCallId = event.toolCallId
+        base.toolName = event.toolName
         const filtered = this.privacyFilter.filterToolResult(event.content)
         base.toolResult = filtered
         base.toolIsError = event.isError ?? false

@@ -379,6 +379,7 @@ export class WorkflowEngine {
           resumeFromNodeId: innerNode.id,
           engineNodeResults: this.nodeResults,
           resumeIteration,
+          prevIterationResults: prevLoopResult?.innerNodeResults,
         })
 
         this.callbacks?.onNodeStart?.(parentNode.id, parentNode.type)

@@ -3,7 +3,7 @@ name: octo-xzf-init
 description: "Pipeline 环境初始化 — 分支检测、feature slug 生成、目录创建、workspace 拓扑扫描"
 category: coding-assistant
 tags: [xzf-dev]
-version: 1.2.0
+version: 1.3.0
 ---
 
 # Pipeline 环境初始化方法论
@@ -95,6 +95,22 @@ IF .scratch/index.md 不存在 → 创建表头:
 | 报告 | `05-reports/` | e2e-report.md |
 | 交付 | `06-ship/` | PR/MR Summary |
 ```
+
+### Step 4d: 写 idea.md
+
+写入 `.scratch/{feature}/00-init/idea.md`（需求原始记录，供所有下游节点引用）：
+
+```markdown
+# Idea
+
+## 需求描述
+{用户提供的 Idea 原文}
+
+## Research 指引
+{用户提供的 Research 指引，如为空则写：（无特定指引 — 请根据 Idea 语义自行判断需要研究的 codebase 模块和外部技术）}
+```
+
+⚠️ 此步骤不可跳过。下游 swarm 专家和澄清节点均依赖此文件。
 
 ### Step 5: Workspace 拓扑扫描
 

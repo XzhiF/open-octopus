@@ -191,7 +191,8 @@ nodes:
     skills: [octo-xzf-init]
     prompt: |
       使用 octo-xzf-init skill 初始化 XZF Pipeline 工作环境。
-      按 skill 定义的 Step 1-7 顺序执行全部步骤。
+      按 skill 定义的所有步骤执行（Step 1-7，含 4b/4c/4d）。
+      ⚠️ Step 4d（idea.md）不可跳过，下游 swarm 专家依赖此文件。
 
       ═══ 输入 ═══
       Feature: $inputs.feature（空则从 Idea 生成 slug）
@@ -284,16 +285,27 @@ nodes:
 
         ═══ Part 2: 初始澄清问题 ═══
         基于 research 结果，按 octo-xzf-clarify skill 方法论生成 Round 1 澄清问题。
-        重点关注 Open Questions 和需要用户决策的设计点。不涉及测试环境和验证方式（下一阶段处理）。
+        重点关注 Open Questions 和需要用户决策的设计点。
 
         写入: .scratch/$vars.feature/02-clarification/questions.md（Round 1 格式）
 
+        ═══ Part 3: 初始验证策略 ═══
+        基于 research 结果（特别是 Constraints & Risks），生成初始验证策略草案。
+        参考 octo-xzf-verification skill 方法论，输出：
+        - 测试环境建议（哪些服务需要启动、mock 策略）
+        - 核心验收条件（每个 Affected Module 至少一条）
+        - E2E 场景列表（基于 Idea 的用户流程）
+
+        写入: .scratch/$vars.feature/02-clarification/verification.md
+
+        ⚠️ 此为初始草案，用户可在 verification-clarify-loop 中修正补充。
+
         ═══ last_output ═══
-        简要总结研究结论和待澄清问题数量（1-2 句话即可）。
-        详细问题已写入 questions.md，审批节点会直接读取该文件展示给用户。
+        简要总结研究结论、待澄清问题数量和验证策略要点（2-3 句话即可）。
+        详细内容已分别写入 research-brief.md、questions.md、verification.md。
 
         最后输出 vars_update JSON:
-        {"vars_update": {"requirements_checklist_status": "INCOMPLETE: {缺失项}"}}
+        {"vars_update": {"requirements_checklist_status": "INCOMPLETE: {缺失项}", "env_checklist_status": "PENDING_REVIEW"}}
 
   # ============================================================
   # Stage 2a: 需求澄清循环
@@ -495,10 +507,27 @@ nodes:
 
       ═══ 执行策略 ═══
       1. 读取 spec 索引: .scratch/$vars.feature/03-specs/spec-index.md
-      2. 按索引顺序，对每个 spec 委派 implementer 子 agent 执行：
-         - 在 prompt 中传入 spec 文件路径和 feature slug
-         - 等待子 agent 完成后再启动下一个
-      3. 所有 spec 执行完毕后，汇总结果
+      2. 按索引顺序，对每个 spec 执行其子目录下的所有 tracer bullets:
+         - 逐个实现（全栈：DB → API → UI → test）
+         - 基础验证（编译 + 单测，对照反假跑标准）
+         - 自治 verify-fix 循环（max 3 次）
+         - ⚠️ 此阶段不跑 E2E 测试
+
+      ═══ Checkpoint（必须写入） ═══
+      路径: .scratch/$vars.feature/04-execution/spec-{NNN}/checkpoint.json
+
+      每个 spec 开始执行时:
+      1. mkdir -p .scratch/$vars.feature/04-execution/spec-{NNN}/
+      2. 创建 checkpoint.json (status="in_progress", 所有 task 在 tasks_remaining)
+
+      每个 task 通过后:
+      3. 更新 checkpoint.json (task 从 tasks_remaining 移到 tasks_completed)
+
+      spec 所有 task 完成后:
+      4. 更新 checkpoint.json (status="completed")
+
+      ⚠️ checkpoint 是下游 E2E 和 Ship 阶段的进度依据，不写则视为未完成。
+      Schema 严格遵循 octo-xzf-implementer skill 定义。
 
       ═══ 完成 ═══
       输出 vars_update:

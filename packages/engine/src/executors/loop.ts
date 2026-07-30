@@ -64,6 +64,13 @@ export class LoopExecutor implements NodeExecutor {
       // not skip to iter 3).
       this.iterations = resume.resumeIteration - 1
     }
+    // Restore inner node results from the iteration that paused,
+    // so $nodeId.output references resolve correctly in subsequent iterations.
+    if (resume?.prevIterationResults) {
+      for (const [id, r] of Object.entries(resume.prevIterationResults)) {
+        this.prevIterationResults.set(id, r)
+      }
+    }
   }
 
   async execute(): Promise<NodeExecutionResult> {

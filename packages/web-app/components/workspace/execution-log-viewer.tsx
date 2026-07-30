@@ -213,11 +213,17 @@ export function EventLabel({ entry }: { entry: LogEvent }) {
         {entry.tokens != null && <span className="text-muted-foreground/60 ml-1">({formatTokenCount(entry.tokens)})</span>}
         {entry.status === "failed" && " — 失败"}
       </span>
-    case "expert_message":
-      return <span className="text-blue-400">
-        专家消息 <code className="text-xs bg-muted px-1 rounded">{entry.role}</code>
-        <span className="text-muted-foreground/60 ml-1">第{entry.round ?? "?"}轮</span>
+    case "expert_message": {
+      const meta: string[] = []
+      if (entry.tokens != null) meta.push(formatTokenCount(entry.tokens))
+      if (entry.round != null) meta.push(`第${entry.round}轮`)
+      const metaStr = meta.length > 0 ? ` (${meta.join(", ")})` : ""
+      return <span className={entry.status === "failed" ? "text-red-400" : "text-blue-400"}>
+        专家 <code className="text-xs bg-muted px-1 rounded">{entry.role}</code>
+        <span className="text-muted-foreground/60 ml-1">{metaStr}</span>
+        {entry.status === "failed" && " — 失败"}
       </span>
+    }
     case "swarm_round_end":
       return <span className="text-purple-400">轮次结束 第{entry.round}轮 ({entry.expertCount} 专家)</span>
     case "swarm_complete":
@@ -385,8 +391,13 @@ export function ExpandableRow({ entry }: { entry: LogEvent }) {
       {/* Legacy swarm detail */}
       {expanded && isSwarmDetail && (
         <div className="ml-6 mt-0.5 mb-1 p-1.5 bg-muted/30 rounded text-xs whitespace-pre-wrap break-all max-h-[300px] overflow-y-auto">
-          {entry.event === "expert_message" && entry.content && (
-            <div className="font-mono"><code>{entry.content}</code></div>
+          {entry.event === "expert_message" && (entry.content || entry.output) && (
+            <div>
+              <div className="text-muted-foreground mb-1">
+                角色: {entry.role} | 状态: {entry.status ?? "completed"} | Tokens: {entry.tokens ?? "?"}
+              </div>
+              <div className="font-mono"><code>{entry.content ?? entry.output}</code></div>
+            </div>
           )}
           {entry.event === "expert_complete" && entry.output && (
             <div>
@@ -483,7 +494,42 @@ export function ExecutionLogViewer({ workspaceId, executionId, executionStatus }
     }
 
     flushThinking()
-    return result
+
+    // Second pass: merge expert_complete + expert_message pairs
+    // They carry identical content and arrive in chronological order (1:1 per expert per round).
+    // Must work even when SQLite drops the content column (role/tokens missing from expert_complete).
+    const completeQueue: LogEvent[] = []
+    for (const e of result) {
+      if (e.event === "expert_complete") completeQueue.push(e)
+    }
+    const consumedComplete = new Set<LogEvent>()
+    const mergedResult: LogEvent[] = []
+    let completeIdx = 0
+    for (const e of result) {
+      if (e.event === "expert_message") {
+        // Pair with the next unconsumed expert_complete (FIFO — same chronological order)
+        while (completeIdx < completeQueue.length && consumedComplete.has(completeQueue[completeIdx])) {
+          completeIdx++
+        }
+        if (completeIdx < completeQueue.length) {
+          const complete = completeQueue[completeIdx++]
+          // Absorb metadata from both sides (either may have the data depending on storage)
+          e.role = e.role ?? complete.role
+          e.status = complete.status ?? e.status
+          e.output = complete.output ?? e.output
+          e.tokens = e.tokens ?? complete.tokens
+          e.model = e.model ?? complete.model
+          consumedComplete.add(complete)
+        }
+        mergedResult.push(e)
+      } else if (e.event === "expert_complete" && consumedComplete.has(e)) {
+        // Skip — already merged into expert_message
+      } else {
+        mergedResult.push(e)
+      }
+    }
+
+    return mergedResult
   }, [rawEvents])
 
   // Flat grouping with loop-aware rendering:

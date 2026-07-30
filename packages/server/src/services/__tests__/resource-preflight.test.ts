@@ -230,6 +230,71 @@ describe('ResourcePreFlight', () => {
       expect(manifest.skills).toContain('tdd')
       expect(manifest.agents).toContain('code-reviewer')
     })
+
+    it('extracts skills from sub-agent definitions (agents.{name}.skills)', () => {
+      const workflow = {
+        nodes: [
+          {
+            type: 'agent',
+            id: 'execution',
+            agents: {
+              implementer: {
+                skills: ['octo-xzf-implementer'],
+              },
+              reviewer: {
+                skills: ['code-review', 'octo-xzf-implementer'],
+              },
+            },
+          },
+        ],
+      }
+      const manifest = preflight.analyze(workflow)
+      expect(manifest.skills).toContain('octo-xzf-implementer')
+      expect(manifest.skills).toContain('code-review')
+      // Should deduplicate
+      expect(manifest.skills.filter(s => s === 'octo-xzf-implementer').length).toBe(1)
+    })
+
+    it('extracts skills from swarm expert_defaults.skills', () => {
+      const workflow = {
+        nodes: [
+          {
+            type: 'swarm',
+            id: 'idea-research',
+            expert_defaults: {
+              skills: ['octo-xzf-research'],
+              tools: ['Read', 'Grep'],
+            },
+            expert_pool: [
+              { role: 'architect', agent_file: '.claude/agents/codebase-architect.md' },
+            ],
+          },
+        ],
+      }
+      const manifest = preflight.analyze(workflow)
+      expect(manifest.skills).toContain('octo-xzf-research')
+      expect(manifest.agents).toContain('codebase-architect')
+    })
+
+    it('combines node-level skills with sub-agent skills', () => {
+      const workflow = {
+        nodes: [
+          {
+            type: 'agent',
+            id: 'executor',
+            skills: ['octo-xzf-init'],
+            agents: {
+              worker: {
+                skills: ['octo-xzf-implementer'],
+              },
+            },
+          },
+        ],
+      }
+      const manifest = preflight.analyze(workflow)
+      expect(manifest.skills).toContain('octo-xzf-init')
+      expect(manifest.skills).toContain('octo-xzf-implementer')
+    })
   })
 
   describe('check', () => {

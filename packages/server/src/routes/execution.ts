@@ -590,8 +590,9 @@ executionRoutes.get("/:executionId/agent-events", (c) => {
         if (e.event === "start" || e.event === "end") return true
         // Include iteration-scoped events (from iteration JSONL files)
         if (e.iteration != null && e.iteration > 0) return true
-        // Swarm events (expert_spawn, expert_complete, etc.) are already persisted
-        // to SQLite via onSwarmEvent → insertAgentEvent, so do NOT include from JSONL
+        // Include swarm events from JSONL — SQLite storage may have empty content
+        // for expert_spawn/expert_complete (onSwarmEvent persistence bug)
+        if (e.event?.startsWith("expert_") || e.event?.startsWith("swarm_") || e.event === "consensus_check") return true
         return false
       })
       // Merge JSONL supplemental events by nodeId
@@ -616,9 +617,11 @@ executionRoutes.get("/:executionId/agent-events", (c) => {
       }
 
       // Filter SQLite events: remove events for loop inner nodes (JSONL has better data with iteration)
-      // Also remove raw agent_event entries (they're wrapper events, merged versions come from JSONL)
+      // Also remove swarm events (JSONL has authoritative data — SQLite may have empty content)
       const filteredSqlite = mergedSqlite.filter((e: any) => {
         if (loopInnerNodes.has(e.nodeId)) return false
+        // Skip SQLite swarm events — JSONL is the authoritative source
+        if (e.event?.startsWith("expert_") || e.event?.startsWith("swarm_") || e.event === "consensus_check") return false
         return true
       })
 

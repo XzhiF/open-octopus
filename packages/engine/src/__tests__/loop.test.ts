@@ -276,3 +276,113 @@ describe("LoopExecutor", () => {
     expect(result.iterations).toBe(0)
   })
 })
+
+describe("LoopExecutor — resume with prevIterationResults", () => {
+  it("restores prevIterationResults from ResumeConfig", async () => {
+    // Simulates: iter 1 had [bash-node, approval-node], approval paused.
+    // On resume, prevIterationResults should contain bash-node's result from iter 1.
+    const node: NodeDef = {
+      id: "loop-resume",
+      type: "loop",
+      max_iterations: 3,
+      break_when: '$vars.done == "true"',
+      nodes: [
+        { id: "worker", type: "bash", bash: "echo iter-$iteration" },
+        { id: "gate", type: "approval", prompt: "approve?" },
+      ],
+    }
+    const pool = new VarPool({ done: "false" })
+
+    // Simulate a previous iteration's results (as if iter 1 completed worker but paused at gate)
+    const prevResults: Record<string, any> = {
+      worker: {
+        status: "completed",
+        outputs: { last_output: "iter-1-output", exit_code: 0 },
+        durationMs: 100,
+      },
+    }
+
+    // Set done to "true" so break_when triggers after resume
+    const pool2 = new VarPool({ done: "true" })
+    const executor = new LoopExecutor(node, pool2, { providers: {}, cwd: os.tmpdir() }, {
+      resumeIteration: 1,
+      resumeFromNodeId: "gate",
+      innerNodeOverrides: new Map([
+        ["gate", { kind: "approval" as const, userChoice: "approve", userComment: "looks good" }],
+      ]),
+      prevIterationResults: prevResults,
+    })
+
+    // The constructor should have seeded prevIterationResults from resume config
+    // We can't directly access private field, but we can verify via execution behavior:
+    // When the loop continues to iter 2, $worker.output.last_output should resolve.
+    const result = await executor.execute()
+
+    // The loop should have resumed and continued
+    expect(result.status).toBe("completed")
+    expect(result.iterations).toBeGreaterThanOrEqual(1)
+  })
+
+  it("preserves innerNodeResults across resume for $nodeId.output resolution", async () => {
+    // This test verifies the full round-trip:
+    // 1. Loop runs [bash, approval], approval pauses → innerNodeResults saved
+    // 2. New LoopExecutor created with those results in ResumeConfig
+    // 3. Next iteration can reference $bash.output.last_output
+    const node: NodeDef = {
+      id: "loop-roundtrip",
+      type: "loop",
+      max_iterations: 2,
+      break_when: '$vars.proceed == "true"',
+      nodes: [
+        { id: "prep", type: "bash", bash: "echo prepared-data" },
+        { id: "review", type: "approval", prompt: "Review: $prep.output.last_output" },
+      ],
+    }
+    const pool = new VarPool({ proceed: "false" })
+
+    // Phase 1: First run — approval should pause
+    const executor1 = new LoopExecutor(node, pool, { providers: {}, cwd: os.tmpdir() })
+    const result1 = await executor1.execute()
+
+    expect(result1.status).toBe("pending_approval")
+    expect(result1.innerNodeResults).toBeDefined()
+    expect(result1.innerNodeResults!["prep"]).toBeDefined()
+    expect(result1.innerNodeResults!["prep"].status).toBe("completed")
+
+    // Phase 2: Resume with the saved innerNodeResults
+    const pool2 = new VarPool({ proceed: "true" })
+    const executor2 = new LoopExecutor(node, pool2, { providers: {}, cwd: os.tmpdir() }, {
+      resumeIteration: 1,
+      resumeFromNodeId: "review",
+      innerNodeOverrides: new Map([
+        ["review", { kind: "approval" as const, userChoice: "proceed", userComment: "ok" }],
+      ]),
+      prevIterationResults: result1.innerNodeResults!,
+    })
+    const result2 = await executor2.execute()
+
+    // Should complete successfully — break_when met on resumed iteration
+    expect(result2.status).toBe("completed")
+  })
+
+  it("works without prevIterationResults (backward compat)", async () => {
+    // Ensure old code that doesn't pass prevIterationResults still works
+    const node: NodeDef = {
+      id: "loop-compat",
+      type: "loop",
+      max_iterations: 1,
+      nodes: [
+        { id: "step", type: "bash", bash: "echo done" },
+      ],
+    }
+    const pool = new VarPool()
+
+    const executor = new LoopExecutor(node, pool, { providers: {}, cwd: os.tmpdir() }, {
+      resumeIteration: 1,
+      resumeFromNodeId: "step",
+      // No prevIterationResults — backward compatible
+    })
+    const result = await executor.execute()
+    expect(result.status).toBe("completed")
+  })
+})

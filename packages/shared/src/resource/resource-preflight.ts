@@ -103,6 +103,31 @@ export class ResourcePreFlight {
         }
       }
 
+      // Agent sub-agents: 提取 agents.{name}.skills
+      if (node.agents && typeof node.agents === 'object') {
+        for (const subAgent of Object.values(node.agents)) {
+          if (subAgent && typeof subAgent === 'object') {
+            const sa = subAgent as Record<string, unknown>
+            if (Array.isArray(sa.skills)) {
+              for (const skill of sa.skills) {
+                if (typeof skill === 'string' && !skill.includes('$')) {
+                  skills.add(skill)
+                }
+              }
+            }
+          }
+        }
+      }
+
+      // Swarm expert_defaults.skills (applied to all experts)
+      if (node.type === 'swarm' && node.expert_defaults?.skills && Array.isArray(node.expert_defaults.skills)) {
+        for (const skill of node.expert_defaults.skills) {
+          if (typeof skill === 'string' && !skill.includes('$')) {
+            skills.add(skill)
+          }
+        }
+      }
+
       // 递归扫描子节点 (loop, condition 等)
       if (node.nodes && Array.isArray(node.nodes)) {
         this.scanNodes(node.nodes, agents, skills)
