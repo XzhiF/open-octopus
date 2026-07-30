@@ -435,7 +435,7 @@ workflowCmd
     }
   })
 
-// ── Test Command (Phase 2) ────────────────────────────────────
+// ── Test Command (Phase 2 — Direct Run + Agent Delegation) ─────────
 
 function getTestServerUrl(): string {
   return process.env.OCTOPUS_SERVER_URL ?? "http://localhost:3001"
@@ -452,118 +452,250 @@ function testAgentHeaders(org?: string): Record<string, string> {
   return headers
 }
 
+// ── Direct Run: run simulator locally without Server ────────────────
+
+async function runDirectTest(workflowPath: string, fixturePath: string, displayPath: string): Promise<void> {
+  const { loadWorkflow, loadTestFixture, runTestSuite } = await import("@octopus/engine")
+
+  let workflow
+  try {
+    workflow = loadWorkflow(workflowPath)
+  } catch (err: any) {
+    console.error(`Error: Failed to load workflow: ${err.message}`)
+    process.exit(1)
+  }
+
+  let fixture
+  try {
+    fixture = loadTestFixture(fixturePath)
+  } catch (err: any) {
+    console.error(`Error: ${err.message}`)
+    process.exit(1)
+  }
+
+  console.log(`Testing: ${displayPath}`)
+  console.log(`${"━".repeat(50)}`)
+  console.log()
+
+  const result = await runTestSuite(workflow, fixture, { strict: true })
+  renderDirectTestResult(result)
+
+  console.log()
+  console.log(`${"━".repeat(50)}`)
+
+  if (!result.passed) {
+    console.log(chalk.yellow(`\n💡 Run with --fix to auto-fix via AI agent`))
+    process.exit(1)
+  }
+}
+
+function renderDirectTestResult(result: { results: Array<{ scenarioName: string; passed: boolean; durationMs: number; status: string; executionTrace: Array<{ nodeId: string; nodeType: string; status: string; durationMs: number; mocked: boolean }>; assertionReport: { passed: boolean; results: Array<{ passed: boolean; message?: string; name: string }> }; syntaxErrors?: Array<{ nodeId: string; nodeType: string; error: string; line?: number }> }>; totalDurationMs: number; passed: boolean; passedCount: number; failedCount: number }): void {
+  // Collect all unique node IDs across scenarios for syntax check
+  const allNodeIds = new Set<string>()
+  const syntaxErrorMap = new Map<string, { error: string; line?: number }>()
+
+  for (const simResult of result.results) {
+    for (const entry of simResult.executionTrace) {
+      allNodeIds.add(entry.nodeId)
+    }
+    if (simResult.syntaxErrors) {
+      for (const se of simResult.syntaxErrors) {
+        syntaxErrorMap.set(se.nodeId, { error: se.error, line: se.line })
+      }
+    }
+  }
+
+  // Phase 1: Syntax Check
+  console.log(chalk.bold("📋 Phase 1: Syntax Check"))
+  if (syntaxErrorMap.size === 0) {
+    for (const nodeId of allNodeIds) {
+      console.log(`  ${chalk.green("✔")} ${nodeId}: syntax OK`)
+    }
+  } else {
+    for (const nodeId of allNodeIds) {
+      const se = syntaxErrorMap.get(nodeId)
+      if (se) {
+        const loc = se.line ? ` (line ${se.line})` : ""
+        console.log(`  ${chalk.red("✖")} ${nodeId}${loc}: ${se.error.split("\n")[0]}`)
+      } else {
+        console.log(`  ${chalk.green("✔")} ${nodeId}: syntax OK`)
+      }
+    }
+  }
+  console.log()
+
+  // Phase 2: Simulation
+  console.log(chalk.bold("⚙️  Phase 2: Simulation"))
+  for (const simResult of result.results) {
+    const scenarioIcon = simResult.passed ? chalk.green("✔") : chalk.red("✖")
+    console.log(`  ${scenarioIcon} Scenario "${simResult.scenarioName}"`)
+
+    for (const entry of simResult.executionTrace) {
+      const nodeIcon = ["skipped", "skipped_failed"].includes(entry.status)
+        ? chalk.dim("○")
+        : entry.status === "failed"
+          ? chalk.red("✖")
+          : chalk.green("✔")
+      const mode = entry.mocked ? "mocked" : "real"
+      const duration = entry.durationMs > 0 ? `, ${entry.durationMs}ms` : ""
+      console.log(`    ${nodeIcon} ${entry.nodeId}: ${entry.status} [${mode}${duration}]`)
+    }
+    console.log()
+  }
+
+  // Phase 3: Assertions
+  console.log(chalk.bold("✅ Phase 3: Assertions"))
+  for (const simResult of result.results) {
+    if (simResult.assertionReport.results.length > 0) {
+      for (const ar of simResult.assertionReport.results) {
+        const arIcon = ar.passed ? chalk.green("✔") : chalk.red("✖")
+        console.log(`  ${arIcon} ${ar.message || ar.name}`)
+      }
+    } else {
+      console.log(`  ${chalk.dim("○")} No assertions defined`)
+    }
+  }
+  console.log()
+
+  // Summary
+  const totalIcon = result.passed ? chalk.green("✔") : chalk.red("✖")
+  console.log(`${totalIcon} Results: ${result.passedCount} passed, ${result.failedCount} failed (${result.results.length} scenario${result.results.length !== 1 ? "s" : ""}, ${result.totalDurationMs}ms)`)
+}
+
+// ── Agent Path: delegate to Server workspace clone ─────────────────
+
+async function runAgentTest(absPath: string, displayPath: string, options: { org?: string }): Promise<void> {
+  const serverUrl = getTestServerUrl()
+  const org = options.org || resolveCurrentOrg()
+
+  console.log(`Testing: ${displayPath}`)
+  console.log(`${"━".repeat(50)}`)
+  console.log()
+
+  try {
+    const res = await fetch(`${serverUrl}/api/agent/chat`, {
+      method: "POST",
+      headers: testAgentHeaders(org),
+      body: JSON.stringify({
+        message: `使用 octo-workflow-test skill 测试 ${absPath}`,
+        delegate_to: "workspace",
+      }),
+    })
+
+    if (!res.ok) {
+      const errText = await res.text()
+      console.error(chalk.red(`Server error (${res.status}): ${errText}`))
+      process.exit(1)
+    }
+
+    // Read SSE stream — print text_delta in real-time for progress visibility
+    const reader = res.body?.getReader()
+    if (!reader) {
+      console.error(chalk.red("No response stream"))
+      process.exit(1)
+    }
+
+    const decoder = new TextDecoder()
+    let fullContent = ""
+    let buffer = ""
+    let lastPrinted = ""
+    let currentEvent = ""
+
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+
+      buffer += decoder.decode(value, { stream: true })
+      const lines = buffer.split("\n")
+      buffer = lines.pop() ?? ""
+
+      for (const line of lines) {
+        if (line.startsWith("event: ")) {
+          currentEvent = line.slice(7).trim()
+          if (currentEvent === "delegation_start") {
+            console.log(chalk.dim("⏳ Workspace clone is analyzing workflow..."))
+          }
+          continue
+        }
+        if (line.startsWith("data: ")) {
+          try {
+            const payload = JSON.parse(line.slice(6))
+            if (payload.content) {
+              fullContent = payload.content
+            } else if (payload.delta) {
+              fullContent += payload.delta
+            }
+            // Show tool calls in real-time
+            if (currentEvent === "tool_call" && payload.name) {
+              const args = payload.input ? ` ${JSON.stringify(payload.input).slice(0, 80)}` : ""
+              console.log(chalk.dim(`\n🔧 ${payload.name}${args}`))
+            }
+            // Show tool results
+            if (currentEvent === "tool_result" && payload.tool_name) {
+              const short = (payload.content || "").slice(0, 120).replace(/\n/g, " ")
+              console.log(chalk.dim(`  → ${short}`))
+            }
+            // Stream new text content to stdout in real-time
+            if (fullContent.length > lastPrinted.length) {
+              const newPart = fullContent.slice(lastPrinted.length)
+              process.stdout.write(newPart)
+              lastPrinted = fullContent
+            }
+          } catch { /* skip malformed */ }
+          currentEvent = ""
+        }
+      }
+    }
+
+    // Ensure final newline
+    if (fullContent && !fullContent.endsWith("\n")) {
+      console.log()
+    }
+
+    console.log()
+    console.log(`${"━".repeat(50)}`)
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err)
+
+    // Connection refused → server not running
+    if (msg.includes("ECONNREFUSED") || msg.includes("fetch failed")) {
+      console.error(chalk.red("Error: Cannot connect to Octopus server."))
+      console.error()
+      console.error("The server must be running for 'workflow test' to work.")
+      console.error("Start it with:")
+      console.error(`  ${chalk.cyan("pnpm dev")}`)
+      console.error()
+      console.error("Or use Claude Code directly with the octo-workflow-test skill:")
+      console.error(`  ${chalk.cyan("使用 octo-workflow-test skill 测试 " + displayPath)}`)
+    } else {
+      console.error(chalk.red(`Error: ${msg}`))
+    }
+    process.exit(1)
+  }
+}
+
 workflowCmd
   .command("test")
-  .description("智能测试工作流（workspace clone 生成 fixture + 运行模拟）")
+  .description("智能测试工作流（有 fixture 直跑模拟器，无 fixture 走 agent）")
   .argument("<yaml-path>", "工作流 YAML 文件路径")
   .option("--org <org>", "组织名")
-  .action(async (yamlPath: string, options: { org?: string }) => {
+  .option("--fix", "强制走 agent 路径，智能修复/生成 fixture")
+  .action(async (yamlPath: string, options: { org?: string; fix?: boolean }) => {
     const absPath = resolve(yamlPath)
     if (!existsSync(absPath)) {
       console.error(`Error: Workflow file not found: ${absPath}`)
       process.exit(1)
     }
 
-    const serverUrl = getTestServerUrl()
-    const org = options.org || resolveCurrentOrg()
+    // Determine execution path
+    const { discoverTestFixture } = await import("@octopus/engine")
+    const fixturePath = options.fix ? null : discoverTestFixture(absPath)
 
-    console.log(`Testing: ${yamlPath}`)
-    console.log(`${"━".repeat(50)}`)
-    console.log()
-
-    try {
-      const res = await fetch(`${serverUrl}/api/agent/chat`, {
-        method: "POST",
-        headers: testAgentHeaders(org),
-        body: JSON.stringify({
-          message: `使用 octo-workflow-test skill 测试 ${absPath}`,
-          delegate_to: "workspace",
-        }),
-      })
-
-      if (!res.ok) {
-        const errText = await res.text()
-        console.error(chalk.red(`Server error (${res.status}): ${errText}`))
-        process.exit(1)
-      }
-
-      // Read SSE stream — print text_delta in real-time for progress visibility
-      const reader = res.body?.getReader()
-      if (!reader) {
-        console.error(chalk.red("No response stream"))
-        process.exit(1)
-      }
-
-      const decoder = new TextDecoder()
-      let fullContent = ""
-      let buffer = ""
-      let lastPrinted = ""
-      let currentEvent = ""
-
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
-
-        buffer += decoder.decode(value, { stream: true })
-        const lines = buffer.split("\n")
-        buffer = lines.pop() ?? ""
-
-        for (const line of lines) {
-          if (line.startsWith("event: ")) {
-            currentEvent = line.slice(7).trim()
-            if (currentEvent === "delegation_start") {
-              console.log(chalk.dim("⏳ Workspace clone is analyzing workflow..."))
-            }
-            continue
-          }
-          if (line.startsWith("data: ")) {
-            try {
-              const payload = JSON.parse(line.slice(6))
-              if (payload.content) {
-                fullContent = payload.content
-              } else if (payload.delta) {
-                fullContent += payload.delta
-              }
-              // Show tool calls in real-time
-              if (currentEvent === "tool_call" && payload.name) {
-                const args = payload.input ? ` ${JSON.stringify(payload.input).slice(0, 80)}` : ""
-                console.log(chalk.dim(`\n🔧 ${payload.name}${args}`))
-              }
-              // Stream new text content to stdout in real-time
-              if (fullContent.length > lastPrinted.length) {
-                const newPart = fullContent.slice(lastPrinted.length)
-                process.stdout.write(newPart)
-                lastPrinted = fullContent
-              }
-            } catch { /* skip malformed */ }
-            currentEvent = ""
-          }
-        }
-      }
-
-      // Ensure final newline
-      if (fullContent && !fullContent.endsWith("\n")) {
-        console.log()
-      }
-
-      console.log()
-      console.log(`${"━".repeat(50)}`)
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err)
-
-      // Connection refused → server not running
-      if (msg.includes("ECONNREFUSED") || msg.includes("fetch failed")) {
-        console.error(chalk.red("Error: Cannot connect to Octopus server."))
-        console.error()
-        console.error("The server must be running for 'workflow test' to work.")
-        console.error("Start it with:")
-        console.error(`  ${chalk.cyan("pnpm dev")}`)
-        console.error()
-        console.error("Or use Claude Code directly with the octo-workflow-test skill:")
-        console.error(`  ${chalk.cyan("使用 octo-workflow-test skill 测试 " + yamlPath)}`)
-      } else {
-        console.error(chalk.red(`Error: ${msg}`))
-      }
-      process.exit(1)
+    if (fixturePath) {
+      // Direct run: simulator locally, no Server needed
+      await runDirectTest(absPath, fixturePath, yamlPath)
+    } else {
+      // Agent path: delegate to workspace clone via Server
+      await runAgentTest(absPath, yamlPath, options)
     }
   })

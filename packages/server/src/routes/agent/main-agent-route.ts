@@ -108,6 +108,23 @@ function resolveCloneDefFromFs(name: string): CloneDef | null {
   }
 }
 
+// ── SSE event forwarding filter ─────────────────────────────────────
+
+/**
+ * Determine which MessageChunk types should be forwarded to SSE consumers
+ * during delegation. Filters out noisy events (thinking, message boundaries)
+ * and forwards actionable events (text, tool calls/results, errors).
+ */
+export function shouldForwardEvent(type: string): boolean {
+  return [
+    'text_delta',
+    'tool_call_start',
+    'tool_call',
+    'tool_result',
+    'error',
+  ].includes(type)
+}
+
 // ── Route factory ──────────────────────────────────────────────────
 
 export function createMainAgentRoute(deps: MainAgentRouteDeps): Hono {
@@ -203,6 +220,21 @@ export function createMainAgentRoute(deps: MainAgentRouteDeps): Hono {
                 await stream.writeSSE({
                   event: 'text_delta',
                   data: JSON.stringify({ delta: chunk.content, content: fullContent, source: targetClone }),
+                })
+              } else if (chunk.type === 'tool_call_start') {
+                await stream.writeSSE({
+                  event: 'tool_call',
+                  data: JSON.stringify({ type: 'start', tool_call_id: chunk.toolCallId, tool_name: chunk.toolName }),
+                })
+              } else if (chunk.type === 'tool_call') {
+                await stream.writeSSE({
+                  event: 'tool_call',
+                  data: JSON.stringify({ type: 'input', tool_call_id: chunk.toolCallId, tool_name: chunk.toolName, input: chunk.toolInput }),
+                })
+              } else if (chunk.type === 'tool_result') {
+                await stream.writeSSE({
+                  event: 'tool_result',
+                  data: JSON.stringify({ tool_call_id: chunk.toolCallId, tool_name: chunk.toolName, content: chunk.content, is_error: chunk.isError }),
                 })
               } else if (chunk.type === 'error') {
                 await stream.writeSSE({
@@ -734,6 +766,26 @@ async function executeDelegation(
         await stream.writeSSE({
           event: 'text_delta',
           data: JSON.stringify({ delta: chunk.content, content: delegateContent, source: cloneName }),
+        })
+      } else if (chunk.type === 'tool_call_start') {
+        await stream.writeSSE({
+          event: 'tool_call',
+          data: JSON.stringify({ type: 'start', tool_call_id: chunk.toolCallId, tool_name: chunk.toolName }),
+        })
+      } else if (chunk.type === 'tool_call') {
+        await stream.writeSSE({
+          event: 'tool_call',
+          data: JSON.stringify({ type: 'input', tool_call_id: chunk.toolCallId, tool_name: chunk.toolName, input: chunk.toolInput }),
+        })
+      } else if (chunk.type === 'tool_result') {
+        await stream.writeSSE({
+          event: 'tool_result',
+          data: JSON.stringify({ tool_call_id: chunk.toolCallId, tool_name: chunk.toolName, content: chunk.content, is_error: chunk.isError }),
+        })
+      } else if (chunk.type === 'error') {
+        await stream.writeSSE({
+          event: 'error',
+          data: JSON.stringify({ code: chunk.code, message: chunk.message }),
         })
       }
     }
