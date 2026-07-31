@@ -782,7 +782,7 @@ export class ExecutionLifecycle {
     const nodeDef = workflowDef ? findNodeDef(workflowDef, nodeId) : null
     const display = nodeDef?.interaction_display ?? "modal"
 
-    const chatDAO = new ChatDAO(this.db)
+    const chatDAO = new ChatDAO(this.dao.getDb())
     const chatBridge = new ChatBridge(chatDAO)
 
     const session = chatBridge.createInteractionSession({
