@@ -3,12 +3,14 @@ export type {
   ExecutorDeps, EngineServices, CoreConfig,
   PythonConfig, ApprovalConfig, BashConfig,
   AgentConfig, SwarmConfig, LoopConfig, ResumeConfig,
-  EngineConfig, OnLogCallback, HookExecutor, AgentResolver,
+  InteractionConfig, EngineConfig, OnLogCallback, HookExecutor, AgentResolver,
 } from "./executors/executor-config"
 export { BashExecutor } from "./executors/bash"
 export { PythonExecutor } from "./executors/python"
 export { ConditionExecutor } from "./executors/condition"
 export { ApprovalExecutor } from "./executors/approval"
+export { InteractionExecutor } from "./executors/interaction"
+export type { InteractionCompletionData } from "./executors/interaction"
 export { LoopExecutor } from "./executors/loop"
 export { AgentExecutor } from "./executors/agent"
 export { AgentNodeRunner } from "./executors/agent-runner"
