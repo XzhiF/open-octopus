@@ -6,6 +6,7 @@ import {
   ShieldCheck,
   Repeat,
   Network,
+  MessageCircle,
   type LucideIcon,
 } from "lucide-react"
 
@@ -66,5 +67,12 @@ export const nodeIconConfigs: Record<string, NodeIconConfig> = {
     bgColor: "bg-cyan-50",
     borderColor: "border-cyan-200",
     label: "Swarm",
+  },
+  interaction: {
+    icon: MessageCircle,
+    color: "text-purple-600",
+    bgColor: "bg-purple-50",
+    borderColor: "border-purple-200",
+    label: "Interaction",
   },
 }

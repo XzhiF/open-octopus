@@ -87,11 +87,11 @@ export interface TokenUsage {
 }
 
 // ============ Execution ============
-export type ExecutionStatus = "pending" | "running" | "completed" | "completed_with_failures" | "failed" | "cancelled" | "paused" | "skipped" | "rejected" | "pending_approval" | "pending_resume"
+export type ExecutionStatus = "pending" | "running" | "completed" | "completed_with_failures" | "failed" | "cancelled" | "paused" | "skipped" | "rejected" | "pending_approval" | "pending_interaction" | "pending_resume"
 
 export type GateStatus = "open" | "closed" | "bypassed"
 
-export type StepExecutionStatus = "pending" | "running" | "completed" | "failed" | "skipped" | "cancelled" | "paused" | "rejected" | "pending_approval"
+export type StepExecutionStatus = "pending" | "running" | "completed" | "failed" | "skipped" | "cancelled" | "paused" | "rejected" | "pending_approval" | "pending_interaction"
 
 export interface StatusOverlay {
   stepStatus: StepExecutionStatus
