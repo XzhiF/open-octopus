@@ -155,6 +155,7 @@ export function ChatPanel({
 
   const scrollRef = useRef<HTMLDivElement>(null)
   const userScrolledUpRef = useRef(false)
+  const lastMessageCountRef = useRef(0)
 
   // Detect user scrolling up — pause auto-scroll so they can read history
   const handleScroll = useCallback(() => {
@@ -164,12 +165,15 @@ export function ChatPanel({
     userScrolledUpRef.current = !atBottom
   }, [])
 
-  // Auto-scroll to bottom when messages arrive (skip if user is reading up)
+  // Auto-scroll to bottom ONLY when new messages are added (not on every re-render)
   useEffect(() => {
     const el = scrollRef.current
     if (!el || userScrolledUpRef.current) return
+    // Only scroll if message count actually increased
+    if (messages.length <= lastMessageCountRef.current) return
+    lastMessageCountRef.current = messages.length
     el.scrollTop = el.scrollHeight
-  }, [messages, isStreaming])
+  }, [messages.length])
 
   return (
     <div className="flex flex-col h-full bg-background">
@@ -198,12 +202,9 @@ export function ChatPanel({
         )}
         {messages.map((msg, idx) => {
           if (shouldHideAfterCard(msg, idx, answeringState)) return null
-          const uniqueKey = messages.some((other, otherIdx) => otherIdx < idx && other.id === msg.id)
-            ? `${msg.id}-${idx}`
-            : msg.id
           return (
             <MessageBubble
-              key={uniqueKey}
+              key={msg.id}
               message={msg}
               isStreaming={isStreaming && (
                 msg.displayType === "text" && msg.id === messages[messages.length - 1]?.id
