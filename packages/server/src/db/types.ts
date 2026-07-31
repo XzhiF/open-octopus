@@ -439,6 +439,19 @@ export interface ScheduledJobExecutionRow {
   metadata: string | null
 }
 
+// ── Interaction Messages ─────────────────────────────────────────────
+
+export interface InteractionMessageRow {
+  id: string
+  execution_id: string
+  node_id: string
+  role: "user" | "assistant" | "system"
+  type: "text" | "thinking" | "tool_call" | "ask_user_question"
+  content: string
+  metadata: string | null
+  created_at: string
+}
+
 // ── Pagination ──────────────────────────────────────────────────────
 
 export interface PaginatedResult<T> {

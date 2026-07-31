@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach } from 'vitest'
 import Database from 'better-sqlite3'
-import { applySchema } from '../db/schema'
+import { applySchema, SCHEMA_VERSION } from '../db/schema'
 
 describe('Unified Schema (applySchema)', () => {
   let db: Database.Database
@@ -132,7 +132,7 @@ describe('Unified Schema (applySchema)', () => {
     applySchema(testDb)
 
     const rows = testDb.pragma('user_version') as Array<{ user_version: number }>
-    expect(rows[0].user_version).toBe(29)
+    expect(rows[0].user_version).toBe(SCHEMA_VERSION)
   })
 
   it('is idempotent — running twice does not error', () => {
@@ -141,7 +141,7 @@ describe('Unified Schema (applySchema)', () => {
     expect(() => applySchema(testDb)).not.toThrow()
 
     const rows = testDb.pragma('user_version') as Array<{ user_version: number }>
-    expect(rows[0].user_version).toBe(29)
+    expect(rows[0].user_version).toBe(SCHEMA_VERSION)
   })
 
   it('seeds default org', () => {
