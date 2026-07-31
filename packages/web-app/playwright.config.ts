@@ -4,7 +4,7 @@ import path from "path"
 import os from "os"
 
 /**
- * Read the allocated web port for the current worktree.
+ * Read the allocated web port for the current worktree or workspace.
  * dev.mjs writes port info to ~/.octopus/ports/{branch-safe-name}.json
  * when it starts. Playwright reads this at config load time.
  */
@@ -15,26 +15,41 @@ function resolveWebPort(): number {
   let isWorktree = false
   try { isWorktree = fs.statSync(gitPath).isFile() } catch { /* ignore */ }
 
-  if (!isWorktree) return 3000
-
-  // Read branch from worktree HEAD
-  let branch = ""
+  // Check if inside Octopus workspace (projects/{name}/ → workspaces/{name}/)
+  let workspaceName: string | null = null
   try {
-    const gitContent = fs.readFileSync(gitPath, "utf8").trim()
-    const gitdirMatch = gitContent.match(/^gitdir:\s*(.+)$/)
-    if (gitdirMatch) {
-      const headPath = path.join(gitdirMatch[1], "HEAD")
-      const headContent = fs.readFileSync(headPath, "utf8").trim()
-      const refMatch = headContent.match(/ref: refs\/heads\/(.+)/)
-      branch = refMatch ? refMatch[1] : path.basename(repoRoot)
-    } else {
-      branch = path.basename(repoRoot)
+    const parts = repoRoot.split(/[\\/]/)
+    const projectsIdx = parts.lastIndexOf("projects")
+    if (projectsIdx >= 3 && parts[projectsIdx - 2] === "workspaces") {
+      workspaceName = parts[projectsIdx - 1]
     }
-  } catch { branch = path.basename(repoRoot) }
+  } catch { /* ignore */ }
 
-  const safe = branch.replace(/\//g, "-").replace(/[^a-zA-Z0-9\-_.]/g, "_")
+  // Main repo (not worktree, not workspace) → default 3000
+  if (!isWorktree && !workspaceName) return 3000
+
+  // Derive port file key
+  let safe = ""
+  if (isWorktree) {
+    try {
+      const gitContent = fs.readFileSync(gitPath, "utf8").trim()
+      const gitdirMatch = gitContent.match(/^gitdir:\s*(.+)$/)
+      if (gitdirMatch) {
+        const headPath = path.join(gitdirMatch[1], "HEAD")
+        const headContent = fs.readFileSync(headPath, "utf8").trim()
+        const refMatch = headContent.match(/ref: refs\/heads\/(.+)/)
+        safe = (refMatch ? refMatch[1] : path.basename(repoRoot))
+          .replace(/\//g, "-").replace(/[^a-zA-Z0-9\-_.]/g, "_")
+      } else {
+        safe = path.basename(repoRoot).replace(/[^a-zA-Z0-9\-_.]/g, "_")
+      }
+    } catch { safe = path.basename(repoRoot).replace(/[^a-zA-Z0-9\-_.]/g, "_") }
+  } else if (workspaceName) {
+    safe = workspaceName.replace(/[^a-zA-Z0-9\-_.]/g, "_")
+  }
+
+  // Try port file (written by dev.mjs)
   const portFile = path.join(os.homedir(), ".octopus", "ports", `${safe}.json`)
-
   if (fs.existsSync(portFile)) {
     try {
       const data = JSON.parse(fs.readFileSync(portFile, "utf8"))
@@ -42,7 +57,10 @@ function resolveWebPort(): number {
     } catch { /* fall through */ }
   }
 
-  return 3000
+  // Fallback: deterministic port in 3500-3598 range (avoids main 3000/3001 and dev.mjs 3100+)
+  const { createHash } = require("crypto")
+  const hash = createHash("sha1").update(safe).digest().readUInt16BE(0)
+  return 3500 + (hash % 50) * 2
 }
 
 const webPort = resolveWebPort()
@@ -72,8 +90,9 @@ export default defineConfig({
     },
   ],
   // H7 fix: restore webServer so E2E tests auto-start the app
+  // Use `npx next dev` directly to bypass pnpm predev hook (which kills port 3000)
   webServer: {
-    command: "pnpm dev --skip-build",
+    command: "npx next dev --port " + webPort,
     url: `http://localhost:${webPort}`,
     reuseExistingServer: !process.env.CI,
     timeout: 180_000,
