@@ -21,22 +21,16 @@ export class ChatDAO extends BaseDAO {
     ).all(workspaceId) as ChatSessionRow[]
   }
 
-  insertSession(row: Omit<ChatSessionRow, "is_active" | "provider" | "provider_session_id" | "linked_execution_id" | "linked_node_id" | "interaction_mode" | "interaction_status"> & {
+  insertSession(row: Omit<ChatSessionRow, "is_active" | "provider" | "provider_session_id"> & {
     is_active?: number; provider?: string; provider_session_id?: string | null
-    linked_execution_id?: string | null; linked_node_id?: string | null
-    interaction_mode?: string | null; interaction_status?: string | null
   }): Database.RunResult {
     return this.stmt(`
-      INSERT INTO chat_sessions (id, workspace_id, title, is_active, created_at, updated_at, provider, provider_session_id, linked_execution_id, linked_node_id, interaction_mode, interaction_status)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO chat_sessions (id, workspace_id, title, is_active, created_at, updated_at, provider, provider_session_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       row.id, row.workspace_id, row.title, row.is_active ?? 1,
       row.created_at, row.updated_at, row.provider ?? "claude",
       row.provider_session_id ?? null,
-      row.linked_execution_id ?? null,
-      row.linked_node_id ?? null,
-      row.interaction_mode ?? null,
-      row.interaction_status ?? null,
     )
   }
 
@@ -115,19 +109,5 @@ export class ChatDAO extends BaseDAO {
 
   deleteMessagesBySession(sessionId: string): Database.RunResult {
     return this.stmt("DELETE FROM chat_messages WHERE session_id = ?").run(sessionId)
-  }
-
-  // ── interaction session helpers ───────────────────────────────────
-
-  findInteractionSession(executionId: string, nodeId: string): ChatSessionRow | null {
-    return (this.stmt(
-      "SELECT * FROM chat_sessions WHERE linked_execution_id = ? AND linked_node_id = ? AND interaction_status = 'active'"
-    ).get(executionId, nodeId) as ChatSessionRow) ?? null
-  }
-
-  updateInteractionStatus(sessionId: string, status: string): Database.RunResult {
-    return this.stmt(
-      "UPDATE chat_sessions SET interaction_status = ?, updated_at = ? WHERE id = ?"
-    ).run(status, new Date().toISOString(), sessionId)
   }
 }

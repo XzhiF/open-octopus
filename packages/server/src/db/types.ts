@@ -202,10 +202,6 @@ export interface ChatSessionRow {
   updated_at: string
   provider: string
   provider_session_id: string | null
-  linked_execution_id: string | null
-  linked_node_id: string | null
-  interaction_mode: string | null
-  interaction_status: string | null
 }
 
 export interface ChatMessageRow {

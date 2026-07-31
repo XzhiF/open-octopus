@@ -4,11 +4,9 @@ import { ChatService } from "../services/chat"
 import { WorkspaceService } from "../services/workspace"
 import { SSEService } from "../services/sse"
 import { getProvider, type TokenUsage } from "@octopus/providers"
-import { extractInteractionCompletion } from "@octopus/engine"
 import { CloneRuntime } from "../services/agent/clone-runtime"
 import { getBuiltinCloneDef } from "../services/agent/builtin-clones"
 import { getAgentDir } from "../services/agent/paths"
-import { getService as getExecutionService } from "../services/execution-service-registry"
 import os from "os"
 
 export function chatRoutes(sseService: SSEService, chatService: ChatService, workspaceService: WorkspaceService): Hono {
@@ -89,63 +87,15 @@ export function chatRoutes(sseService: SSEService, chatService: ChatService, wor
     const provider = session.provider ?? "claude"
     const agent = getProvider(provider)
 
-    // Check if this is an interaction session BEFORE assembling workspace context.
-    // Interaction sessions must NOT load workspace clone memory (persona + shared memory + daily)
-    // to prevent cross-contamination between interaction sessions.
-    const isInteractionSession = !!session.linkedExecutionId && !!session.linkedNodeId
-
     // Assemble workspace clone system prompt (persona + memory + skills)
-    // Skipped for interaction sessions to ensure clean, isolated conversation context.
     let workspaceClonePrompt = ''
-    if (!isInteractionSession) {
-      try {
-        const cloneDef = getBuiltinCloneDef('workspace')
-        if (cloneDef) {
-          workspaceClonePrompt = new CloneRuntime(cloneDef, 'default').assembleContext()
-        }
-      } catch {
-        // Non-fatal — proceed with empty clone prompt (pure claude_code preset)
+    try {
+      const cloneDef = getBuiltinCloneDef('workspace')
+      if (cloneDef) {
+        workspaceClonePrompt = new CloneRuntime(cloneDef, 'default').assembleContext()
       }
-    }
-
-    // For interaction sessions, use only the interaction protocol as system prompt
-    if (isInteractionSession) {
-      workspaceClonePrompt = `
-
-## Interaction Node — Your Role
-
-You are an interactive workflow agent running inside a conversation node. Your job is to have a multi-turn conversation with the user to gather information, clarify requirements, or collect feedback.
-
-IMPORTANT RULES:
-- Ask questions ONE AT A TIME using plain text, wait for the user to answer, then continue
-- Present options as a numbered list in your text message (e.g. "1. 红色 2. 蓝色 3. 绿色")
-- Do NOT output the completion data immediately — first engage in conversation
-
-## Completion — How to End the Interaction
-
-When you have collected all needed information, your LAST message must include a JSON object at the end.
-This is the SAME format used by all workflow agent nodes — just output it at the end of your final reply.
-
-Format (place this at the END of your last message):
-
-\`\`\`json
-{"summary": "one-line summary of the interaction result", "vars_update": {"variable_name": "value"}}
-\`\`\`
-
-Rules:
-- "summary" (string, required): one-line description of what was collected or decided
-- "vars_update" (object, required): key-value pairs to write to the workflow variable pool
-- Place this JSON at the very END of your last message, inside a \`\`\`json code block
-- You may write a brief confirmation sentence before the JSON block
-
-EXAMPLE — user chose 蓝色, variable is favorite_color:
-
-好的，已记录你的选择！
-
-\`\`\`json
-{"summary": "用户选择了蓝色", "vars_update": {"favorite_color": "蓝色"}}
-\`\`\`
-`
+    } catch {
+      // Non-fatal — proceed with empty clone prompt (pure claude_code preset)
     }
 
     let fullText = ""
@@ -179,7 +129,6 @@ EXAMPLE — user chose 蓝色, variable is favorite_color:
           systemPrompt: { type: 'preset', preset: 'claude_code', append: workspaceClonePrompt || undefined },
           abortSignal: abortController.signal,
           plugins: [{ type: 'local', path: getAgentDir() }],
-          interactionSession: isInteractionSession,
         })
 
         for await (const chunk of chunkStream) {
@@ -282,70 +231,12 @@ EXAMPLE — user chose 蓝色, variable is favorite_color:
             }
           }
 
-          if (chunk.type === 'ask_user_question') {
-            const entry = toolCallMap.get(chunk.toolCallId)
-            if (entry && entry.dbMessageId) {
-              entry.toolStatus = "done"
-              chatService.updateMessageMetadata(entry.dbMessageId, JSON.stringify({
-                displayType: "ask_user_question",
-                toolCallId: entry.toolCallId,
-                toolName: entry.toolName,
-                toolInput: (chunk as { questions: unknown }).questions ?? entry.toolInput,
-                toolStatus: "done",
-              }))
-            }
-          }
-
-          if (chunk.type === 'complete_interaction') {
-            const completion = chunk as { summary: string; vars_update?: Record<string, any> }
-            const linkedExecId = session.linkedExecutionId
-            const linkedNodeId = session.linkedNodeId
-            if (linkedExecId && linkedNodeId) {
-              try {
-                const execSvc = getExecutionService(session.workspaceId)
-                if (execSvc) {
-                  console.log(`[chat] Triggering interaction complete: exec=${linkedExecId}, node=${linkedNodeId}`)
-                  await execSvc.service.completeInteraction(linkedExecId, linkedNodeId, completion.summary, completion.vars_update)
-                  console.log(`[chat] Interaction complete succeeded`)
-                } else {
-                  console.error(`[chat] ExecutionService not found for workspace ${session.workspaceId}`)
-                }
-              } catch (err) {
-                console.error('[chat] Failed to complete interaction:', err)
-              }
-            }
-          }
-
           if (chunk.type === 'result') {
             if (chunk.sessionId) {
               chatService.updateProviderSession(sessionId, chunk.sessionId)
             }
             currentTokens = chunk.tokens
             currentCostUsd = chunk.costUsd
-
-            // Detect interaction completion using the same parser as AgentExecutor.
-            // Supports single-line JSON, code-fenced JSON, and multi-line JSON — all from text end.
-            if (isInteractionSession && chunk.content) {
-              const completionData = extractInteractionCompletion(chunk.content)
-              if (completionData) {
-                const linkedExecId = session.linkedExecutionId
-                const linkedNodeId = session.linkedNodeId
-                console.log(`[chat] Detected interaction completion: exec=${linkedExecId}, node=${linkedNodeId}`)
-                if (linkedExecId && linkedNodeId) {
-                  const execSvc = getExecutionService(session.workspaceId)
-                  if (execSvc) {
-                    await execSvc.service.completeInteraction(
-                      linkedExecId, linkedNodeId,
-                      completionData.summary || 'Interaction completed',
-                      completionData.vars_update,
-                    )
-                    console.log(`[chat] Interaction complete triggered successfully`)
-                  } else {
-                    console.error(`[chat] ExecutionService not found for workspace ${session.workspaceId}`)
-                  }
-                }
-              }
-            }
           }
 
           const sseExtras: Record<string, unknown> = {}

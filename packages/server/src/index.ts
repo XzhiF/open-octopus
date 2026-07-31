@@ -44,6 +44,7 @@ import { createCloneSessionRoutes } from "./routes/clone"
 import { createCloneFilesRoutes } from "./routes/agent/clone-files"
 import cronRoutes from "./routes/cron"
 import { createInteractionRoutes } from "./routes/interaction"
+import { createWorkflowOpsRoutes } from "./routes/workflow-ops"
 import { InteractionService } from "./services/interaction"
 import { SSEService } from "./services/sse"
 import { migrateOrgDirs, syncOrgsFromFilesystem } from "./services/org"
@@ -363,6 +364,7 @@ app.route("/api/orgs", createOrgRoutes(d.org))
 app.route("/api/workspaces", createWorkspaceRoutes(wsSvc, d.org, d.workspace))
 app.route("/api/workspaces/:id/workflows", createWorkflowRoutes(d.workspace, () => resourceRegistry.get()))
 app.route("/api/workspaces/:id/executions", executionRoutes)
+app.route("/api/workspaces/:id/workflows/ops", createWorkflowOpsRoutes(d.workspace))
 app.route("/api/workspaces/:id/analytics", createAnalyticsLogRoutes(d.workspace, getLogAnalysisService({ tokenDao: d.tokenUsage, execDao: d.execution }) ?? new (require('./services/log-analysis').LogAnalysisService)(d.tokenUsage, d.execution)))
 app.route("/api/dashboard", createDashboardRoutes(wsSvc, lbSvc, d.execution, d.tokenUsage, d.archive))
 app.route("/api/workspaces/:id/chat", chatRoutes(sse, chatSvc, wsSvc))

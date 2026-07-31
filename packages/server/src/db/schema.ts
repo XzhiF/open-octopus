@@ -120,12 +120,6 @@ function ensureColumnsForExistingTables(db: Database.Database): void {
   ensureColumn(db, 'workspace_archive', 'analysis_report', "TEXT")
   ensureColumn(db, 'workspace_archive', 'file_deleted', "INTEGER DEFAULT 0")
 
-  // Interaction node columns for chat_sessions
-  ensureColumn(db, 'chat_sessions', 'linked_execution_id', "TEXT")
-  ensureColumn(db, 'chat_sessions', 'linked_node_id', "TEXT")
-  ensureColumn(db, 'chat_sessions', 'interaction_mode', "TEXT")
-  ensureColumn(db, 'chat_sessions', 'interaction_status', "TEXT")
-
   // Interaction metadata for executions
   ensureColumn(db, 'executions', 'interaction_metadata', "TEXT")
 }

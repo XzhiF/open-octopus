@@ -15,10 +15,6 @@ export interface ChatSession {
   updatedAt: string
   messages: ChatMessage[]
   totalMessageCount: number
-  linkedExecutionId?: string | null
-  linkedNodeId?: string | null
-  interactionMode?: string | null
-  interactionStatus?: string | null
 }
 
 export interface ChatMessage {
@@ -43,10 +39,6 @@ function toSession(row: ChatSessionRow, messages: ChatMessage[] = [], totalMessa
     updatedAt: row.updated_at,
     messages,
     totalMessageCount,
-    linkedExecutionId: row.linked_execution_id,
-    linkedNodeId: row.linked_node_id,
-    interactionMode: row.interaction_mode,
-    interactionStatus: row.interaction_status,
   }
 }
 
