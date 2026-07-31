@@ -32,6 +32,13 @@ export interface ApprovalMockDef {
   comment?: string
 }
 
+export interface InteractionMockDef {
+  summary: string
+  rounds?: number
+  vars_update?: Record<string, any>
+  outputs?: Record<string, any>
+}
+
 /** Loop mock: contains inner node mocks, supports per-iteration arrays. */
 export interface LoopMockDef {
   iterations?: number
@@ -45,6 +52,7 @@ export type MockDef =
   | BashMockDef
   | PythonMockDef
   | ApprovalMockDef
+  | InteractionMockDef
   | LoopMockDef
 
 // ── Assertion Definitions ────────────────────────────────────
