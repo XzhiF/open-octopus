@@ -278,6 +278,10 @@ The following artifacts are created **later** by downstream agents — this skil
 | `issues/` | `matt-dev-runner` Step 2 (matt-verified-tickets) | After spec is written |
 | `pipeline-report.md` | `matt-dev-pipeline` Phase 4 | After E2E verification |
 | `e2e-*` directories | `matt-e2e-tester` | During E2E verification |
+| `verification-report.md` | `matt-verification-report` | After pipeline completes (standalone or within loop) |
+| `loop-state.json` | `matt-pipeline-loop` | During iterative pipeline |
+| `loop-summary.md` | `matt-pipeline-loop` | When loop converges or exits |
+| `<feature>-rN/` directories | `matt-pipeline-loop` | Each gap-fix iteration |
 
 **Pipeline order**: brief → spec → issues → implement → deploy → E2E → PR. Each phase owns its artifacts.
 
@@ -382,6 +386,10 @@ Map: [map.md](./map.md)
 | `grill-with-docs` | **Replaces** — grilling + domain-modeling built in, plus verification strategy |
 | `wayfinder` | **Adapts** its core protocol (map, decision tickets, fog of war, frontier) for single-entry flow with verification strategy. The standalone `/wayfinder` remains available for efforts outside this pipeline. |
 | `domain-modeling` | **Reuses** — updates CONTEXT.md and creates ADRs inline |
+| `matt-dev-runner` | **Downstream** — receives the brief for development execution |
+| `matt-dev-pipeline` | **Downstream** — receives the brief for full pipeline execution |
+| `matt-pipeline-loop` | **Downstream** — receives the brief for iterative pipeline with verification loop |
+| `matt-verification-report` | **Indirect** — loop uses it to audit each iteration's results |
 
 ## Next Steps
 
@@ -389,8 +397,10 @@ Once the brief is confirmed and written to `<artifacts.dir>/<feature-slug>/brief
 
 > Requirement brief is ready at `<artifacts.dir>/<feature-slug>/brief.md`.
 >
-> You have two options to proceed:
+> You have three options to proceed:
 >
 > 1. **`matt-dev-runner`** — Development only. Invoke the agent to synthesize spec, split tickets, and run implement-verify loops. You handle deploy and PR yourself.
 >
 > 2. **`matt-dev-pipeline`** — Full pipeline. Orchestrate development → CI/CD deploy → E2E verification → Git PR delivery, all in one flow.
+>
+> 3. **`matt-pipeline-loop`** — Iterative pipeline with verification. Runs the full pipeline, then audits the result with `matt-verification-report`. If confidence < 85, auto-generates a gap-focused brief and re-runs. Loops until the feature is truly deliverable. Best for features with complex UI or high delivery standards.

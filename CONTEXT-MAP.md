@@ -56,6 +56,11 @@
 | **Mutation Spot Check** | Targeted code mutation on critical paths to verify tests can detect real bugs. | core-pack |
 | **Orphan Test** | Test with no traceable requirement (gold-plating detection). | core-pack |
 | **Verification Report** | Evidence-based audit of implementation truth, distinct from pipeline-report.md (which is a claim). | core-pack |
+| **Pipeline Loop** | Verification-driven iteration orchestrator — reads verification-report, generates gap brief, re-runs pipeline until confidence ≥ 85. | core-pack |
+| **Gap Brief** | 聚焦上一次验证失败的 brief — 不包含已工作的部分，只包含需要修复的 gaps。每轮迭代生成一个。 | core-pack |
+| **Loop State** | JSON 文件跟踪循环中所有迭代的分数、门禁结果和 gap 历史。存储于 root feature 目录下。 | core-pack |
+| **Convergence** | 循环终止条件 — 置信度分数达到 ≥ 85 (GO) 阈值。 | core-pack |
+| **Stall Detection** | 连续 2 轮迭代分数提升 < 5 分 → 检测为停滞，循环退出避免无限循环。 | core-pack |
 
 ## Anti-Patterns（禁止）
 
