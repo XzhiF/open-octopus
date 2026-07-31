@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useRef, useCallback } from "react"
+import { useState, useRef, useCallback, useEffect } from "react"
 import type { ChatMessage } from "@/lib/types"
 import { toast } from "sonner"
 import { getServerUrl } from "@/lib/server-config"
@@ -198,6 +198,14 @@ export function useInteractionStream({
       // Non-fatal — history loading failure is not critical
     }
   }, [apiBase, syntheticSessionId])
+
+  // Auto-load latest messages on mount (e.g., page refresh)
+  const loadedRef = useRef(false)
+  useEffect(() => {
+    if (loadedRef.current) return
+    loadedRef.current = true
+    loadMoreMessages()
+  }, [loadMoreMessages])
 
   return {
     messages,
