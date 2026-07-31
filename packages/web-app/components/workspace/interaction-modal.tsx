@@ -14,7 +14,7 @@ import { Button } from "@/components/ui/button"
 import { MessageCircle, CheckCircle2 } from "lucide-react"
 import { getServerUrl } from "@/lib/server-config"
 import { toast } from "sonner"
-import { useChatStream } from "./chat/use-chat-stream"
+import { useInteractionStream } from "./interaction/use-interaction-stream"
 import { ChatPanel } from "./chat/chat-panel"
 
 interface InteractionModalProps {
@@ -28,9 +28,11 @@ interface InteractionModalProps {
 }
 
 /**
- * InteractionModal — embeds the full ChatPanel inside a Dialog for interaction nodes.
- * Reuses useChatStream for all SSE handling (ask_user_question, tool_call, thinking, etc.)
+ * InteractionModal — embeds the full ChatPanel for interaction node conversations.
+ * Uses useInteractionStream for SSE handling (ask_user_question, tool_call, thinking, etc.)
  * and ChatPanel for rich message rendering (QuestionCard, ToolCard, etc.)
+ *
+ * Data flow: interaction route API (not chat API) → interaction_messages table.
  */
 export function InteractionModal({
   open,
@@ -41,14 +43,14 @@ export function InteractionModal({
   display = "modal",
   onComplete,
 }: InteractionModalProps) {
-  const [sessionId, setSessionId] = useState<string | null>(null)
+  const [sessionReady, setSessionReady] = useState(false)
   const [initialPrompt, setInitialPrompt] = useState<string | null>(null)
   const [forceCompleting, setForceCompleting] = useState(false)
   const [confirmOpen, setConfirmOpen] = useState(false)
   const sessionCreatedRef = useRef<string | null>(null)
 
-  // Use the full chat stream hook — handles all SSE chunk types
-  const chat = useChatStream(workspaceId, sessionId)
+  // Use the interaction stream hook — handles all SSE chunk types
+  const interaction = useInteractionStream({ workspaceId, executionId, nodeId })
 
   // Create interaction session when modal opens (only once per execution+node)
   useEffect(() => {
@@ -59,15 +61,19 @@ export function InteractionModal({
 
     const startSession = async () => {
       try {
-        const res = await fetch(`${getServerUrl()}/api/workspaces/${workspaceId}/executions/${executionId}/interaction/${nodeId}/start`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-        })
+        const res = await fetch(
+          `${getServerUrl()}/api/workspaces/${workspaceId}/interactions/${executionId}/${nodeId}/start`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ display }),
+          },
+        )
         if (!res.ok) throw new Error("Failed to start interaction session")
         const data = await res.json()
         if (!cancelled) {
           sessionCreatedRef.current = key
-          setSessionId(data.sessionId)
+          setSessionReady(true)
           setInitialPrompt(data.initialPrompt ?? null)
         }
       } catch (err) {
@@ -77,21 +83,22 @@ export function InteractionModal({
 
     startSession()
     return () => { cancelled = true }
-  }, [open, executionId, nodeId, workspaceId])
+  }, [open, executionId, nodeId, workspaceId, display])
 
-  // Send initial prompt once session is ready and messages are loaded
+  // Send initial prompt once session is ready and not streaming
   const promptSentRef = useRef<string | null>(null)
   useEffect(() => {
-    if (!sessionId || !initialPrompt) return
-    if (promptSentRef.current === sessionId) return
-    if (chat.isStreaming) return // wait for idle
+    if (!sessionReady || !initialPrompt) return
+    const promptKey = `${executionId}-${nodeId}`
+    if (promptSentRef.current === promptKey) return
+    if (interaction.isStreaming) return
 
-    promptSentRef.current = sessionId
+    promptSentRef.current = promptKey
     const messageContent = `[系统指令 - 以下是你在本次交互中的角色和任务]\n\n${initialPrompt}\n\n[请根据以上指令开始与用户对话]`
-    chat.sendMessage(messageContent).catch(() => {
+    interaction.sendMessage(messageContent).catch(() => {
       toast.error("Failed to start agent conversation")
     })
-  }, [sessionId, initialPrompt, chat.isStreaming])
+  }, [sessionReady, initialPrompt, executionId, nodeId, interaction.isStreaming, interaction.sendMessage])
 
   // Listen for interaction completion via workspace SSE
   useEffect(() => {
@@ -112,24 +119,17 @@ export function InteractionModal({
     return () => eventSource.close()
   }, [open, workspaceId, executionId, nodeId, onOpenChange, onComplete])
 
-  // Reset state when modal closes
-  useEffect(() => {
-    if (!open) {
-      // Don't reset sessionId — keep the session alive for re-opening
-    }
-  }, [open])
-
   const handleCreateSession = useCallback(async () => {
-    return sessionId ?? ""
-  }, [sessionId])
+    return `${executionId}-${nodeId}`
+  }, [executionId, nodeId])
 
-  // Force complete the interaction (fallback when agent doesn't signal completion)
+  // Force complete the interaction
   const handleForceComplete = useCallback(async () => {
     if (forceCompleting) return
     setForceCompleting(true)
     try {
       const res = await fetch(
-        `${getServerUrl()}/api/workspaces/${workspaceId}/executions/${executionId}/interaction/${nodeId}/complete`,
+        `${getServerUrl()}/api/workspaces/${workspaceId}/interactions/${executionId}/${nodeId}/complete`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -152,21 +152,21 @@ export function InteractionModal({
   }, [forceCompleting, workspaceId, executionId, nodeId, onOpenChange, onComplete])
 
   // Chat content (shared between modal and panel modes)
-  const chatContent = sessionId ? (
+  const chatContent = sessionReady ? (
     <ChatPanel
-      messages={chat.messages}
-      sessions={chat.sessions}
-      activeSessionId={sessionId}
-      isStreaming={chat.isStreaming}
-      status={chat.status}
-      streamStartMs={chat.streamStartMs}
-      streamEndState={chat.streamEndState}
-      hasMoreMessages={chat.hasMoreMessages}
-      onLoadMoreMessages={chat.loadMoreMessages}
+      messages={interaction.messages}
+      sessions={[]}
+      activeSessionId={`${executionId}-${nodeId}`}
+      isStreaming={interaction.isStreaming}
+      status={interaction.status}
+      streamStartMs={interaction.streamStartMs}
+      streamEndState={interaction.streamEndState}
+      hasMoreMessages={interaction.hasMoreMessages}
+      onLoadMoreMessages={interaction.loadMoreMessages}
       onSendMessage={async (content: string) => {
-        await chat.sendMessage(content)
+        await interaction.sendMessage(content)
       }}
-      onAbort={() => chat.abort()}
+      onAbort={() => interaction.abort()}
       onCreateSession={handleCreateSession}
       onSelectSession={() => {}}
       onDeleteSession={() => {}}
@@ -192,7 +192,7 @@ export function InteractionModal({
     )
   }
 
-  // Modal mode (default) — same size as approval dialog
+  // Modal mode (default)
   return (
     <>
     <Dialog open={open} onOpenChange={onOpenChange}>
