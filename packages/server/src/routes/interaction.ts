@@ -29,10 +29,17 @@ export function createInteractionRoutes(
     const workspaceId = c.req.param("id")
     const { execId, nodeId } = c.req.param()
 
+    // Resolve workspace path for YAML reading
+    const ws = workspaceDao.findById(workspaceId)
+    if (!ws) {
+      return c.json({ error: "Workspace not found" }, 404)
+    }
+
     try {
       const body = await c.req.json().catch(() => ({})) as Record<string, unknown>
       const result = interactionService.startInteraction({
         workspaceId,
+        workspacePath: ws.path,
         executionId: execId,
         nodeId,
         display: (body.display as "modal" | "panel") ?? "modal",

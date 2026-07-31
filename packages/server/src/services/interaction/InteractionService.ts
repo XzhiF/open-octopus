@@ -5,6 +5,8 @@
 // Claude SDK provider, stores messages in interaction_messages table.
 
 import { randomUUID } from "crypto"
+import { existsSync, readFileSync } from "fs"
+import { join } from "path"
 import type { IAgentProvider, MessageChunk, TokenUsage } from "@octopus/providers"
 import { getProvider } from "@octopus/providers"
 import { extractInteractionCompletion } from "@octopus/engine"
@@ -50,6 +52,7 @@ export interface InteractionSSEEvent {
 /** Start interaction parameters. */
 interface StartParams {
   workspaceId: string
+  workspacePath: string
   executionId: string
   nodeId: string
   display?: "modal" | "panel"
@@ -121,25 +124,39 @@ export class InteractionService {
     // Return existing session if already tracked (e.g., page refresh)
     const existing = this.sessions.get(k)
     if (existing) {
-      return { sessionId: existing.sessionId, initialPrompt: existing.initialPrompt }
+      return { sessionId: existing.sessionId }
     }
 
     // Look up the real node execution ID from DB
     const nodeExecRow = this.execDao.findNodeExecution(params.executionId, params.nodeId)
     const nodeExecId = nodeExecRow?.id ?? `${params.executionId}-${params.nodeId}`
 
+    // Extract initial prompt from workflow YAML if not provided
+    let initialPrompt = params.initialPrompt
+    let maxRounds = params.maxRounds ?? 20
+    let display = params.display ?? "modal"
+
+    if (!initialPrompt) {
+      const extracted = this.extractPromptFromWorkflow(params.workspacePath, params.executionId, params.nodeId)
+      if (extracted) {
+        initialPrompt = extracted.prompt
+        if (extracted.maxRounds) maxRounds = extracted.maxRounds
+        if (extracted.display) display = extracted.display
+      }
+    }
+
     const session: InteractionSessionInfo = {
       sessionId: randomUUID(),
       executionId: params.executionId,
       nodeId: params.nodeId,
       workspaceId: params.workspaceId,
-      display: params.display ?? "modal",
-      maxRounds: params.maxRounds ?? 20,
+      display,
+      maxRounds,
       currentRound: 0,
       nodeExecutionId: nodeExecId,
       startedAt: Date.now(),
       timeout: params.timeout,
-      initialPrompt: params.initialPrompt,
+      initialPrompt,
     }
 
     this.sessions.set(k, session)
@@ -150,7 +167,70 @@ export class InteractionService {
       maxRounds: session.maxRounds,
     })
 
-    return { sessionId: session.sessionId, initialPrompt: params.initialPrompt }
+    return { sessionId: session.sessionId, initialPrompt }
+  }
+
+  /**
+   * Extract interaction_agent.prompt from the workflow YAML file.
+   * Performs variable substitution for $inputs.* and $vars.* references.
+   */
+  private extractPromptFromWorkflow(
+    workspacePath: string,
+    executionId: string,
+    nodeId: string,
+  ): { prompt?: string; maxRounds?: number; display?: string } | null {
+    const exec = this.execDao.findById(executionId)
+    if (!exec) return null
+
+    // Read workflow YAML from disk
+    const workflowPath = join(workspacePath.replace(/^~/, process.env.HOME ?? "~"), "workflows", exec.workflow_ref)
+    if (!existsSync(workflowPath)) return null
+
+    try {
+      const content = readFileSync(workflowPath, "utf-8")
+      // Dynamic import not needed — js-yaml is a server dependency
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const yaml = require("js-yaml")
+      const workflow = yaml.load(content) as any
+      if (!workflow?.nodes) return null
+
+      const nodeDef = workflow.nodes.find((n: any) => n.id === nodeId)
+      if (!nodeDef) return null
+
+      const result: { prompt?: string; maxRounds?: number; display?: string } = {}
+      result.display = nodeDef.interaction_display ?? "modal"
+      result.maxRounds = nodeDef.interaction_max_rounds
+
+      if (nodeDef.interaction_agent?.prompt) {
+        let prompt = nodeDef.interaction_agent.prompt as string
+
+        // Variable substitution: $inputs.*
+        if (exec.input_values) {
+          try {
+            const inputs = JSON.parse(exec.input_values)
+            for (const [key, val] of Object.entries(inputs)) {
+              prompt = prompt.replace(new RegExp(`\\$inputs\\.${key}`, "g"), String(val))
+            }
+          } catch { /* ignore */ }
+        }
+
+        // Variable substitution: $vars.*
+        if (exec.var_pool) {
+          try {
+            const vars = JSON.parse(exec.var_pool)
+            for (const [key, val] of Object.entries(vars)) {
+              prompt = prompt.replace(new RegExp(`\\$vars\\.${key}`, "g"), String(val))
+            }
+          } catch { /* ignore */ }
+        }
+
+        result.prompt = prompt
+      }
+
+      return result
+    } catch {
+      return null
+    }
   }
 
   /**
