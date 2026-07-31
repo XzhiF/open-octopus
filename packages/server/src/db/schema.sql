@@ -51,6 +51,7 @@ CREATE TABLE IF NOT EXISTS executions (
   retry_count INTEGER DEFAULT 0,
   pending_hooks TEXT DEFAULT '[]',
   approval_metadata TEXT,
+  interaction_metadata TEXT,
   resume_attempts INTEGER DEFAULT 0,
   pipeline_config TEXT DEFAULT '{}',
   chain_retry_count INTEGER DEFAULT 0,

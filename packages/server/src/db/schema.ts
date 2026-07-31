@@ -125,6 +125,9 @@ function ensureColumnsForExistingTables(db: Database.Database): void {
   ensureColumn(db, 'chat_sessions', 'linked_node_id', "TEXT")
   ensureColumn(db, 'chat_sessions', 'interaction_mode', "TEXT")
   ensureColumn(db, 'chat_sessions', 'interaction_status', "TEXT")
+
+  // Interaction metadata for executions
+  ensureColumn(db, 'executions', 'interaction_metadata', "TEXT")
 }
 
 function ensureColumn(db: Database.Database, table: string, column: string, definition: string): void {

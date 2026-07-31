@@ -825,6 +825,9 @@ export class ExecutionLifecycle {
 
     this.enginePool.clearApprovalTimer(id) // reuse approval timer mechanism
 
+    // Clear interaction metadata from DB (same pattern as approval_metadata clearing)
+    this.dao.updateExecution(id, { interaction_metadata: null as any })
+
     let inst = this.enginePool.get(id)
     if (!inst) {
       inst = this.reconstructEngine(exec)

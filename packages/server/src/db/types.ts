@@ -42,6 +42,7 @@ export interface ExecutionRow {
   retry_count: number
   pending_hooks: string
   approval_metadata: string | null
+  interaction_metadata: string | null
   resume_attempts: number
   pipeline_config: string
   chain_retry_count: number

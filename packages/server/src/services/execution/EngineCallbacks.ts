@@ -106,6 +106,10 @@ export class EngineCallbacks implements IEngineCallbacks {
           })
         }
 
+        if (status === "pending_interaction" && result?.interactionMetadata) {
+          dao.updateExecution(id, { interaction_metadata: JSON.stringify(result.interactionMetadata) })
+        }
+
         const finalInput = result?.tokens?.input ?? 0
         const finalOutput = result?.tokens?.output ?? 0
         const hasTokens = finalInput > 0 || finalOutput > 0

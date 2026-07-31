@@ -116,6 +116,9 @@ executionRoutes.get("/tree", (c) => {
     const approvalMetadata = e.approval_metadata
       ? JSON.parse(e.approval_metadata)
       : null
+    const interactionMetadata = e.interaction_metadata
+      ? JSON.parse(e.interaction_metadata)
+      : null
     return {
       id: e.id,
       parent_id: e.parent_id ?? "0",
@@ -141,6 +144,7 @@ executionRoutes.get("/tree", (c) => {
       is_leaf: children.length === 0,
       token_usages: tokenUsages.length > 0 ? tokenUsages : undefined,
       approval_metadata: approvalMetadata,
+      interaction_metadata: interactionMetadata,
     }
   })
   return c.json({ workspace_id: workspaceId, nodes })
@@ -199,11 +203,17 @@ executionRoutes.get("/:executionId", async (c) => {
     ? JSON.parse(execution.approval_metadata)
     : null
 
+  // Parse interaction metadata if present
+  const interactionMetadata = execution.interaction_metadata
+    ? JSON.parse(execution.interaction_metadata)
+    : null
+
   return c.json({
     ...execution,
     steps,
     workflow_content: workflowContent,
     approvalMetadata,
+    interactionMetadata,
     is_partial_failure: execution.status === "completed_with_failures",
   })
 })
