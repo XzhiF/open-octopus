@@ -321,6 +321,26 @@ export class ExecutionLifecycle {
         }
       }
 
+      if (result.status === "pending_interaction") {
+        this.dao.updateExecution(id, { var_pool: JSON.stringify(result.poolSnapshot) })
+        const pausedNodeId = this.findPausedNode(id)
+        if (pausedNodeId) {
+          const nodeDef = this.findNodeDef(wf.parsed.nodes, pausedNodeId)
+          const timeout = nodeDef?.interaction_timeout
+          if (timeout && timeout > 0) {
+            const timer = setTimeout(async () => {
+              console.log(`[ExecutionLifecycle] Interaction timeout for ${id}/${pausedNodeId}`)
+              try {
+                await this.completeInteraction(id, pausedNodeId, "[interaction timed out]", {})
+              } catch (e) {
+                console.error(`[ExecutionLifecycle] Timeout interaction failed for ${id}`, e)
+              }
+            }, timeout * 1000)
+            this.enginePool.setApprovalTimer(id, timer) // reuse approval timer mechanism
+          }
+        }
+      }
+
       if (abortController.signal.aborted) {
         return this.dao.findById(id)!
       }
@@ -339,6 +359,25 @@ export class ExecutionLifecycle {
         const pausedNode = Object.values(result.nodeResults).find(r => r.status === "pending_approval" || r.status === "paused")
         const approval = pausedNode?.approvalMetadata ?? undefined
         this.sse.emit(this.workspaceId, { event: "execution_pending_approval", data: { executionId: id, approval } })
+        this.enginePool.remove(id)
+        return this.dao.findById(id)!
+      }
+
+      if (result.status === "pending_interaction") {
+        this.updateStatus(id, result.status, { progress: result.progress ?? 0, var_pool: JSON.stringify(result.poolSnapshot) })
+        this.syncStateJson()
+        const pausedNode = Object.values(result.nodeResults).find(r => r.status === "pending_interaction")
+        const interactionMeta = pausedNode?.interactionMetadata
+        this.sse.emit(this.workspaceId, {
+          event: "execution_interaction_started",
+          data: {
+            executionId: id,
+            nodeId: interactionMeta?.nodeId,
+            sessionId: interactionMeta?.sessionId,
+            display: interactionMeta?.display ?? "modal",
+            maxRounds: interactionMeta?.maxRounds,
+          },
+        })
         this.enginePool.remove(id)
         return this.dao.findById(id)!
       }
@@ -484,7 +523,7 @@ export class ExecutionLifecycle {
   async cancel(id: string): Promise<ExecutionRow> {
     const exec = this.dao.findById(id)
     if (!exec) throw Object.assign(new Error("Execution not found"), { status: 404 })
-    if (!["running", "paused", "pending_approval", "pending_resume"].includes(exec.status))
+    if (!["running", "paused", "pending_approval", "pending_interaction", "pending_resume"].includes(exec.status))
       throw Object.assign(new Error("Cannot cancel in current status"), { status: 400 })
 
     const now = new Date().toISOString()
@@ -719,6 +758,87 @@ export class ExecutionLifecycle {
     this.runApproveInBackground(id, nodeId, inst.abortController.signal, answer, comment, exec.workflow_ref)
 
     return this.dao.findById(id)!
+  }
+
+  // ==================== Interaction Complete ====================
+
+  async completeInteraction(
+    id: string,
+    nodeId: string,
+    summary: string,
+    varsUpdate?: Record<string, any>,
+  ): Promise<ExecutionRow> {
+    const exec = this.dao.findById(id)
+    if (!exec) throw Object.assign(new Error("Execution not found"), { status: 404 })
+    if (exec.status !== "pending_interaction") throw Object.assign(new Error("执行不在交互状态"), { status: 400 })
+
+    const neId = `${id}-${nodeId}`
+    const ne = this.dao.findNodeExecutionById(neId)
+    if (!ne) throw Object.assign(new Error("Node execution not found"), { status: 404 })
+
+    this.enginePool.clearApprovalTimer(id) // reuse approval timer mechanism
+
+    let inst = this.enginePool.get(id)
+    if (!inst) {
+      inst = this.reconstructEngine(exec)
+      this.enginePool.create(id, inst.engine, inst.abortController)
+    }
+
+    this.updateNodeStatus(neId, "completed", { completed_at: new Date().toISOString() })
+    this.updateStatus(id, "running")
+
+    this.sse.emit(this.workspaceId, {
+      event: "execution_interaction_completed",
+      data: { executionId: id, nodeId, summary, vars_update: varsUpdate },
+    })
+    this.sse.emit(this.workspaceId, { event: "execution_status", data: { executionId: id, status: "running" } })
+
+    this.runInteractionCompleteInBackground(id, nodeId, inst.abortController.signal, summary, varsUpdate, exec.workflow_ref)
+
+    return this.dao.findById(id)!
+  }
+
+  private runInteractionCompleteInBackground(
+    executionId: string,
+    nodeId: string,
+    signal: AbortSignal,
+    summary: string,
+    varsUpdate: Record<string, any> | undefined,
+    workflowRef: string,
+  ): void {
+    setImmediate(async () => {
+      try {
+        const inst = this.enginePool.get(executionId)
+        if (!inst) return
+
+        const result = await inst.engine.retryFrom(nodeId, {
+          signal,
+          interactionCompletion: { summary, vars_update: varsUpdate },
+        })
+
+        if (signal.aborted) return
+
+        // Process the result similar to normal execution completion
+        const currentExec = this.dao.findById(executionId)
+        if (currentExec?.status === "paused") {
+          this.syncStateJson()
+          return
+        }
+
+        this.updateStatus(executionId, result.status, {
+          completed_at: new Date().toISOString(),
+          duration: Date.now() - (currentExec?.started_at ? new Date(currentExec.started_at).getTime() : Date.now()),
+          var_pool: JSON.stringify(result.poolSnapshot),
+        })
+
+        this.syncStateJson()
+        this.sse.emit(this.workspaceId, { event: "complete", data: { executionId, finalStatus: result.status } })
+        this.enginePool.remove(executionId)
+      } catch (err) {
+        console.error(`[ExecutionLifecycle] Interaction complete failed for ${executionId}/${nodeId}`, err)
+        this.updateStatus(executionId, "failed", { error: `Interaction complete failed: ${err instanceof Error ? err.message : String(err)}` })
+      }
+    })
   }
 
   // ==================== Pause / Resume ====================

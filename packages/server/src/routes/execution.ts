@@ -354,6 +354,43 @@ executionRoutes.post("/:executionId/approve", async (c) => {
   }
 })
 
+executionRoutes.post("/:executionId/interaction/:nodeId/complete", async (c) => {
+  const workspaceId = getWorkspaceId(c)
+  const executionId = getExecutionId(c)
+  const nodeId = c.req.param("nodeId")
+  const svc = getService(workspaceId)
+  if (!svc) return c.json({ error: "workspace not found" }, 404)
+
+  const body = await c.req.json<{ summary: string; vars_update?: Record<string, any> }>()
+  try {
+    const result = await svc.service.completeInteraction(executionId, nodeId, body.summary, body.vars_update)
+    return c.json(result)
+  } catch (err: unknown) {
+    return handleError(err)
+  }
+})
+
+executionRoutes.get("/:executionId/interaction/:nodeId/status", async (c) => {
+  const workspaceId = getWorkspaceId(c)
+  const executionId = getExecutionId(c)
+  const nodeId = c.req.param("nodeId")
+  const svc = getService(workspaceId)
+  if (!svc) return c.json({ error: "workspace not found" }, 404)
+
+  const exec = svc.service.getById(executionId)
+  if (!exec) return c.json({ error: "execution not found" }, 404)
+
+  const neId = `${executionId}-${nodeId}`
+  const steps = svc.service.getByIdWithSteps(executionId)
+  const ne = steps?.steps?.find((s: any) => s.id === neId)
+  return c.json({
+    status: exec.status,
+    nodeStatus: ne?.status,
+    nodeId,
+    executionId,
+  })
+})
+
 executionRoutes.post("/:executionId/pause", async (c) => {
   const workspaceId = getWorkspaceId(c)
   const executionId = getExecutionId(c)

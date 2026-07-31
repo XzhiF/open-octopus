@@ -121,6 +121,10 @@ export class ExecutionService {
     return this.lifecycle.approve(id, nodeId, answer, comment)
   }
 
+  async completeInteraction(id: string, nodeId: string, summary: string, varsUpdate?: Record<string, any>): Promise<ExecutionRow> {
+    return this.lifecycle.completeInteraction(id, nodeId, summary, varsUpdate)
+  }
+
   async pause(executionId: string): Promise<{ success: boolean; error?: string }> {
     return this.lifecycle.pause(executionId)
   }
