@@ -10,7 +10,7 @@ const _dirname: string =
     ? __dirname
     : path.dirname(fileURLToPath(import.meta.url))
 
-export const SCHEMA_VERSION = 29
+export const SCHEMA_VERSION = 30
 
 /**
  * Apply the complete unified schema to the given database.
@@ -119,6 +119,12 @@ function ensureColumnsForExistingTables(db: Database.Database): void {
   ensureColumn(db, 'workspace_archive', 'extracted_agents', "INTEGER DEFAULT 0")
   ensureColumn(db, 'workspace_archive', 'analysis_report', "TEXT")
   ensureColumn(db, 'workspace_archive', 'file_deleted', "INTEGER DEFAULT 0")
+
+  // Interaction node columns for chat_sessions
+  ensureColumn(db, 'chat_sessions', 'linked_execution_id', "TEXT")
+  ensureColumn(db, 'chat_sessions', 'linked_node_id', "TEXT")
+  ensureColumn(db, 'chat_sessions', 'interaction_mode', "TEXT")
+  ensureColumn(db, 'chat_sessions', 'interaction_status', "TEXT")
 }
 
 function ensureColumn(db: Database.Database, table: string, column: string, definition: string): void {

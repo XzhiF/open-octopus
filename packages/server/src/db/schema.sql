@@ -118,7 +118,11 @@ CREATE TABLE IF NOT EXISTS chat_sessions (
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   provider TEXT DEFAULT 'claude',
-  provider_session_id TEXT
+  provider_session_id TEXT,
+  linked_execution_id TEXT,
+  linked_node_id TEXT,
+  interaction_mode TEXT,
+  interaction_status TEXT
 );
 
 -- 7. Chat Messages

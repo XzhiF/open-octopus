@@ -15,6 +15,10 @@ export interface ChatSession {
   updatedAt: string
   messages: ChatMessage[]
   totalMessageCount: number
+  linkedExecutionId?: string | null
+  linkedNodeId?: string | null
+  interactionMode?: string | null
+  interactionStatus?: string | null
 }
 
 export interface ChatMessage {
@@ -39,6 +43,10 @@ function toSession(row: ChatSessionRow, messages: ChatMessage[] = [], totalMessa
     updatedAt: row.updated_at,
     messages,
     totalMessageCount,
+    linkedExecutionId: row.linked_execution_id,
+    linkedNodeId: row.linked_node_id,
+    interactionMode: row.interaction_mode,
+    interactionStatus: row.interaction_status,
   }
 }
 
@@ -153,5 +161,41 @@ return toMessage(msg)
   deleteSession(sessionId: string): void {
     this.dao.deleteMessagesBySession(sessionId)
     this.dao.deleteSession(sessionId)
+  }
+
+  // ── Interaction session methods ───────────────────────────────────
+
+  createInteractionSession(
+    workspaceId: string,
+    opts: {
+      title?: string
+      executionId: string
+      nodeId: string
+      display?: "modal" | "panel"
+    },
+  ): ChatSession {
+    const id = randomUUID()
+    const now = new Date().toISOString()
+    this.dao.insertSession({
+      id, workspace_id: workspaceId,
+      title: opts.title ?? `Interaction: ${opts.nodeId}`,
+      created_at: now, updated_at: now,
+      linked_execution_id: opts.executionId,
+      linked_node_id: opts.nodeId,
+      interaction_mode: opts.display ?? "modal",
+      interaction_status: "active",
+    })
+    return this.getSession(id)!
+  }
+
+  findInteractionSession(executionId: string, nodeId: string): ChatSession | undefined {
+    const row = this.dao.findInteractionSession(executionId, nodeId)
+    if (!row) return undefined
+    return toSession(row)
+  }
+
+  completeInteractionSession(sessionId: string, status: "completed" | "timeout" = "completed"): void {
+    this.dao.updateInteractionStatus(sessionId, status)
+    this.dao.updateSession(sessionId, { is_active: 0 })
   }
 }
