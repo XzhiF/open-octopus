@@ -917,7 +917,8 @@ export class ExecutionLifecycle {
           completed_at: new Date().toISOString(),
           duration: Date.now() - (currentExec?.started_at ? new Date(currentExec.started_at).getTime() : Date.now()),
           var_pool: JSON.stringify(result.poolSnapshot),
-        })
+          gate_status: result.status === "completed" ? "open" : "closed",
+        } as any)
 
         this.syncStateJson()
         this.sse.emit(this.workspaceId, { event: "complete", data: { executionId, finalStatus: result.status } })
