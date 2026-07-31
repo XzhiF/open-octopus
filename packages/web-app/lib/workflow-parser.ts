@@ -23,7 +23,7 @@ interface WorkflowDefinition {
   [key: string]: unknown
 }
 
-const VALID_NODE_TYPES = new Set(["bash", "python", "agent", "condition", "approval", "loop", "swarm"])
+const VALID_NODE_TYPES = new Set(["bash", "python", "agent", "condition", "approval", "loop", "swarm", "interaction"])
 
 // Node dimensions for dagre layout
 // Heights account for header + duration + multi-model token display

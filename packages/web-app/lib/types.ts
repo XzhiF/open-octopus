@@ -218,7 +218,8 @@ export interface ExecutionTreeNode {
   endCommitId?: Record<string, string>
   tokenUsages?: TokenUsage[]
   approvalMetadata?: ApprovalMetadata | null
-  executorType?: "agent" | "bash" | "python" | "condition" | "approval" | "loop"
+  interactionMetadata?: { nodeId: string; sessionId?: string; display: string; maxRounds?: number } | null
+  executorType?: "agent" | "bash" | "python" | "condition" | "approval" | "loop" | "interaction"
   costUsd?: number
   turnCount?: number
   toolCount?: number
