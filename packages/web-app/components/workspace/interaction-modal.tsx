@@ -118,15 +118,16 @@ export function InteractionModal({
   // Send the initial prompt as the first message to the chat session
   const sendInitialPrompt = async (sid: string, prompt: string) => {
     setStreaming(true)
-    // Add a system-like message showing the prompt context
     setMessages([{ role: "assistant", content: "正在启动对话..." }])
 
     abortRef.current = new AbortController()
     try {
+      // Wrap the prompt as agent instructions, not as a user question
+      const messageContent = `[系统指令 - 以下是你在本次交互中的角色和任务]\n\n${prompt}\n\n[请根据以上指令开始与用户对话]`
       const res = await fetch(`${getServerUrl()}/api/workspaces/${workspaceId}/chat/sessions/${sid}/messages`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ content: prompt }),
+        body: JSON.stringify({ content: messageContent }),
         signal: abortRef.current.signal,
       })
 

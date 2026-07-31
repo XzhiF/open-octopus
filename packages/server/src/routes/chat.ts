@@ -99,27 +99,33 @@ export function chatRoutes(sseService: SSEService, chatService: ChatService, wor
       // Non-fatal — proceed with empty clone prompt (pure claude_code preset)
     }
 
-    // For interaction sessions, append complete_interaction instructions
+    // For interaction sessions, append agent prompt + completion protocol to system prompt
     const isInteractionSession = !!session.linkedExecutionId && !!session.linkedNodeId
     if (isInteractionSession) {
       workspaceClonePrompt += `
 
-## Interaction Node — Completion Protocol
+## Interaction Node — Your Role
 
-You are running inside a workflow interaction node. When you have gathered enough information and the interaction should end, you MUST signal completion by outputting the following JSON block on its own line:
+You are an interactive workflow agent running inside a conversation node. Your job is to have a multi-turn conversation with the user to gather information, clarify requirements, or collect feedback.
+
+IMPORTANT RULES:
+- DO NOT output the completion signal immediately — you must first engage in conversation
+- Ask questions ONE AT A TIME, wait for the user to answer, then continue
+- Use AskUserQuestion tool for structured questions when appropriate
+- Only signal completion when you have gathered ALL needed information AND the user indicates satisfaction
+
+## Completion Protocol
+
+When the interaction is truly done (user says "可以了", "没问题了", "done", or you've collected all needed info), output this block:
 
 \`\`\`interaction_complete
 {"summary": "描述交互结果的摘要", "vars_update": {"key": "value"}}
 \`\`\`
 
-Rules:
-- "summary" (string, required): A summary of what was decided/collected
+- "summary" (string, required): Summary of what was decided/collected
 - "vars_update" (object, optional): Key-value pairs to write to the workflow variable pool
-- Output this block ONLY when you are truly done and the workflow should continue
-- Do NOT output this block if you still need more information from the user
+- Output this block ONLY at the very end, after the conversation is complete
 - After outputting this block, do not say anything else
-
-IMPORTANT: When the user indicates they are satisfied (e.g., "可以结束了", "好的没问题了", "done") or you have gathered all needed information, you MUST output the completion block. Do NOT just say goodbye.
 `
     }
 
@@ -272,14 +278,17 @@ IMPORTANT: When the user indicates they are satisfied (e.g., "可以结束了", 
 
           if (chunk.type === 'complete_interaction') {
             const completion = chunk as { summary: string; vars_update?: Record<string, any> }
-            // Trigger interaction completion via ExecutionService
             const linkedExecId = session.linkedExecutionId
             const linkedNodeId = session.linkedNodeId
             if (linkedExecId && linkedNodeId) {
               try {
                 const execSvc = getExecutionService(session.workspaceId)
                 if (execSvc) {
+                  console.log(`[chat] Triggering interaction complete: exec=${linkedExecId}, node=${linkedNodeId}`)
                   await execSvc.service.completeInteraction(linkedExecId, linkedNodeId, completion.summary, completion.vars_update)
+                  console.log(`[chat] Interaction complete succeeded`)
+                } else {
+                  console.error(`[chat] ExecutionService not found for workspace ${session.workspaceId}`)
                 }
               } catch (err) {
                 console.error('[chat] Failed to complete interaction:', err)
@@ -302,6 +311,7 @@ IMPORTANT: When the user indicates they are satisfied (e.g., "可以结束了", 
                   const completionData = JSON.parse(match[1])
                   const linkedExecId = session.linkedExecutionId
                   const linkedNodeId = session.linkedNodeId
+                  console.log(`[chat] Detected interaction_complete pattern: exec=${linkedExecId}, node=${linkedNodeId}`)
                   if (linkedExecId && linkedNodeId) {
                     const execSvc = getExecutionService(session.workspaceId)
                     if (execSvc) {
@@ -310,6 +320,9 @@ IMPORTANT: When the user indicates they are satisfied (e.g., "可以结束了", 
                         completionData.summary ?? 'Interaction completed',
                         completionData.vars_update,
                       )
+                      console.log(`[chat] Interaction complete triggered successfully`)
+                    } else {
+                      console.error(`[chat] ExecutionService not found for workspace ${session.workspaceId}`)
                     }
                   }
                 } catch (err) {
