@@ -257,6 +257,15 @@ export function useExecutionTree(
         interactionMetadata: { nodeId, sessionId, display, maxRounds },
       } : n))
     })
+    es.addEventListener("execution_interaction_completed", (e) => {
+      const { executionId } = JSON.parse(e.data)
+      // Mark execution as running (workflow continues after interaction)
+      setTreeNodes(prev => prev.map(n => n.id === executionId ? { ...n, executionStatus: 'running' as ExecutionStatus } : n))
+      // Reload tree after delays to catch subsequent node executions
+      setTimeout(() => loadTree(), 1000)
+      setTimeout(() => loadTree(), 3000)
+      setTimeout(() => loadTree(), 8000)
+    })
     es.addEventListener("execution_progress", (e) => {
       const { executionId, progress } = JSON.parse(e.data)
       setTreeNodes(prev => prev.map(n => n.id === executionId ? { ...n, progress } : n))
