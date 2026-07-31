@@ -46,6 +46,20 @@ export function useInteractionStream({
   const abortRef = useRef<AbortController | null>(null)
   const oldestCreatedAtRef = useRef<string | null>(null)
 
+  // Reset all state when switching to a different node/execution
+  const loadedRef = useRef<string | null>(null)
+  useEffect(() => {
+    if (loadedRef.current === syntheticSessionId) return
+    loadedRef.current = syntheticSessionId
+    setMessages([])
+    setIsStreaming(false)
+    setStatus(null)
+    setStreamStartMs(null)
+    setStreamEndState(null)
+    setHasMoreMessages(true)
+    oldestCreatedAtRef.current = null
+  }, [syntheticSessionId])
+
   const apiBase = `${getServerUrl()}/api/workspaces/${workspaceId}/interactions/${executionId}/${nodeId}`
 
   const applyChunk = useCallback((chunk: Record<string, unknown>) => {
@@ -216,11 +230,8 @@ export function useInteractionStream({
     }
   }, [apiBase, syntheticSessionId])
 
-  // Auto-load latest messages on mount (e.g., page refresh)
-  const loadedRef = useRef(false)
+  // Auto-load latest messages on mount and when session changes
   useEffect(() => {
-    if (loadedRef.current) return
-    loadedRef.current = true
     loadMoreMessages()
   }, [loadMoreMessages])
 

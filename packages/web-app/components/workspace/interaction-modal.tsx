@@ -49,6 +49,13 @@ export function InteractionModal({
   const [confirmOpen, setConfirmOpen] = useState(false)
   const sessionCreatedRef = useRef<string | null>(null)
 
+  // Reset modal state when switching to a different node
+  const nodeKey = `${executionId}-${nodeId}`
+  useEffect(() => {
+    setSessionReady(false)
+    setInitialPrompt(null)
+  }, [nodeKey])
+
   // Use the interaction stream hook — handles all SSE chunk types
   const interaction = useInteractionStream({ workspaceId, executionId, nodeId })
 
