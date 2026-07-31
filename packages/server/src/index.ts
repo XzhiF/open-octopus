@@ -15,6 +15,7 @@ import {
   PendingReviewDAO, KnowledgeEffectivenessDAO, ArchiveDAO,
 } from "./db/dao"
 import { ArchiveDraftDAO } from "./db/dao/archive-draft-dao"
+import { InteractionMessageDAO } from "./db/dao/interaction-message-dao"
 import { createKnowledgeRoutes } from "./routes/knowledge"
 import { createReviewRoutes } from "./routes/review"
 import { createArchiveRoutes } from "./routes/archive"
@@ -42,6 +43,8 @@ import { createAgentRoutes } from "./routes/agent"
 import { createCloneSessionRoutes } from "./routes/clone"
 import { createCloneFilesRoutes } from "./routes/agent/clone-files"
 import cronRoutes from "./routes/cron"
+import { createInteractionRoutes } from "./routes/interaction"
+import { InteractionService } from "./services/interaction"
 import { SSEService } from "./services/sse"
 import { migrateOrgDirs, syncOrgsFromFilesystem } from "./services/org"
 import { ExecutionService } from "./services/execution"
@@ -102,6 +105,7 @@ interface AllDAOs {
   knowledgeEffectiveness: KnowledgeEffectivenessDAO
   archive: ArchiveDAO
   archiveDraft: ArchiveDraftDAO
+  interactionMessage: InteractionMessageDAO
 }
 
 function createAllDAOs(db: ReturnType<typeof initDb>): AllDAOs {
@@ -121,6 +125,7 @@ function createAllDAOs(db: ReturnType<typeof initDb>): AllDAOs {
     knowledgeEffectiveness: new KnowledgeEffectivenessDAO(db),
     archive: new ArchiveDAO(db),
     archiveDraft: new ArchiveDraftDAO(db),
+    interactionMessage: new InteractionMessageDAO(db),
   }
 }
 
@@ -330,12 +335,14 @@ const d = daos ?? {
   knowledgeEffectiveness: lazyDAO(KnowledgeEffectivenessDAO),
   archive: lazyDAO(ArchiveDAO),
   archiveDraft: lazyDAO(ArchiveDraftDAO),
+  interactionMessage: lazyDAO(InteractionMessageDAO),
 }
 
 const wsSvc = workspaceService ?? new WorkspaceService(d.workspace)
 const chatSvc = chatService ?? new ChatService(d.chat, sse)
 const lbSvc = leaderboardService ?? new LeaderboardService(d.tokenUsage)
 const schedSvc = new SchedulerService(d.scheduleConfig, d.scheduleRun)
+const interactionSvc = new InteractionService(getDb(), d.interactionMessage, d.tokenUsage, d.execution, sse)
 
 // In test mode, also initialize agent singletons with lazy proxy DAOs
 if (!daos) {
@@ -360,6 +367,7 @@ app.route("/api/workspaces/:id/analytics", createAnalyticsLogRoutes(d.workspace,
 app.route("/api/dashboard", createDashboardRoutes(wsSvc, lbSvc, d.execution, d.tokenUsage, d.archive))
 app.route("/api/workspaces/:id/chat", chatRoutes(sse, chatSvc, wsSvc))
 app.route("/api/chat/global", globalChatRoutes(sse, chatSvc))
+app.route("/api/workspaces/:id/interactions", createInteractionRoutes(interactionSvc, d.workspace))
 app.route("/api/workspaces/:id/files", createFileRoutes(d.workspace))
 app.route("/api/workspaces/:id/events", eventRoutes(sse))
 app.route("/api/workspaces", createPipelineRoutes(d.workspace))
