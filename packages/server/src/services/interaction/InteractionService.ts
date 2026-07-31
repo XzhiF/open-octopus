@@ -74,6 +74,9 @@ class StreamAccumulator {
   completionDetected: { summary: string; vars_update?: Record<string, unknown> } | null = null
   llmCallStartTime = Date.now()
   toolCallMap = new Map<string, { dbId: string; toolName: string; startTime: number }>()
+  /** Round 1 guard: buffer text deltas until we know if AskUserQuestion was called. */
+  textBuffer: Array<{ type: string; content: string; sessionId: string }> = []
+  askUserQuestionCalled = false
 
   constructor() {
     this.assistantMessageId = randomUUID()
@@ -314,6 +317,15 @@ export class InteractionService {
     this.writeTokenUsage(acc, session)
     this.writeLlmCall(acc, session)
 
+    // Round 1 buffer flush: if AskUserQuestion was NOT called, yield buffered text now.
+    // If it WAS called, buffer was already cleared in handleAskUserQuestion.
+    if (session.currentRound === 1 && acc.textBuffer.length > 0) {
+      for (const event of acc.textBuffer) {
+        yield event as InteractionSSEEvent
+      }
+      acc.textBuffer = []
+    }
+
     // Yield final result event
     yield {
       type: "result",
@@ -323,7 +335,11 @@ export class InteractionService {
     }
 
     // Check for completion (tool call path or text fallback)
-    const completion = acc.completionDetected ?? this.tryExtractCompletion(acc.fullText)
+    // Guard: round 1 is always the agent's initial question — user hasn't answered yet.
+    // Never complete on round 1 to prevent premature interaction ending.
+    const completion = session.currentRound > 1
+      ? (acc.completionDetected ?? this.tryExtractCompletion(acc.fullText))
+      : null
     if (completion) {
       // Record interaction_completed event
       this.insertAgentEvent(session.nodeExecutionId, "interaction_completed", {
@@ -456,6 +472,19 @@ export class InteractionService {
     session: InteractionSessionInfo,
     acc: StreamAccumulator,
   ): InteractionSSEEvent[] {
+    // Round 1: buffer text deltas. If AskUserQuestion is called later in this
+    // turn, we'll discard the buffer (prevents hallucinated answers reaching UI).
+    // Also suppress text AFTER AskUserQuestion was called (SDK agentic loop
+    // continues after deny, generating hallucinated follow-up text).
+    if (session.currentRound === 1) {
+      if (acc.askUserQuestionCalled) {
+        // AskUserQuestion already called — discard all subsequent text entirely
+        return []
+      }
+      acc.fullText += chunk.content
+      acc.textBuffer.push({ type: "text_delta", content: chunk.content, sessionId: session.sessionId })
+      return [] // Don't yield yet
+    }
     acc.fullText += chunk.content
     return [{ type: "text_delta", content: chunk.content, sessionId: session.sessionId }]
   }
@@ -598,6 +627,12 @@ export class InteractionService {
     this.insertAgentEvent(session.nodeExecutionId, "interaction_ask_user_question", {
       questions: chunk.questions,
     })
+    acc.askUserQuestionCalled = true
+    // Round 1: AskUserQuestion called — discard buffered text (hallucinated answers)
+    if (session.currentRound === 1) {
+      acc.textBuffer = []
+      acc.fullText = ""
+    }
     return [{ type: "ask_user_question", toolCallId: chunk.toolCallId, questions: chunk.questions, sessionId: session.sessionId }]
   }
 

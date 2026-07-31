@@ -82,23 +82,21 @@ function buildToolCaptureHooks(
       hooks: [async (input: unknown) => {
         const inp = input as Record<string, unknown>
         if (inp.tool_name === 'AskUserQuestion') {
-          // Capture question data for SSE events, but do NOT deny here.
-          // Denying via PreToolUse hook causes the SDK to return a hardcoded
-          // "Error: Answer questions?" tool result that the model misinterprets.
-          // The actual deny is handled by canUseTool callback which provides
-          // a custom message via the `message` field of PermissionResult.
+          // Capture question data for SSE events
           pendingQuestions.push({
             toolCallId: inp.tool_use_id as string,
             questions: inp.tool_input,
           })
+          // Deny via PreToolUse hook — this works even with bypassPermissions.
+          // The permissionDecisionReason becomes the tool result the model sees.
           return {
             hookEventName: 'PreToolUse',
-            permissionDecision: 'allow' as const,
+            permissionDecision: 'deny' as const,
+            permissionDecisionReason: 'STOP. The question has been displayed to the user. The user has NOT answered yet. Do NOT output any text or guess any answer. Your turn is over — wait for the next user message.',
           }
         }
         if (inp.tool_name === 'complete_interaction') {
-          // Same pattern: capture data in hook, deny via canUseTool for
-          // a clear tool result message instead of SDK's hardcoded error.
+          // Capture completion data for processing
           const toolInput = (inp.tool_input ?? {}) as Record<string, any>
           pendingCompletions.push({
             toolCallId: inp.tool_use_id as string,
@@ -107,7 +105,8 @@ function buildToolCaptureHooks(
           })
           return {
             hookEventName: 'PreToolUse',
-            permissionDecision: 'allow' as const,
+            permissionDecision: 'deny' as const,
+            permissionDecisionReason: 'Interaction completion captured and forwarded to workflow engine. The interaction is now complete. Do not output anything else.',
           }
         }
         return { continue: true }
@@ -202,7 +201,7 @@ export class ClaudeSDKProvider implements IAgentProvider {
           if (toolName === 'AskUserQuestion') {
             return {
               behavior: 'deny' as const,
-              message: 'The question has been sent to the user in a web UI modal. The user is now looking at the question and will type their answer in the chat. You MUST: (1) NOT fabricate or guess any user answer, (2) NOT assume the user selected any option, (3) NOT call complete_interaction yet, (4) simply reply to the user saying you are waiting for their response and then STOP. Any answer you invent will be WRONG and cause data corruption. The user has NOT answered yet.',
+              message: 'STOP. Question sent to user. User has NOT answered yet. Do NOT output any text. Do NOT guess any answer. Wait for the next user message.',
               toolUseID: cbOptions.toolUseID,
             }
           }
