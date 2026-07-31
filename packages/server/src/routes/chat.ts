@@ -7,6 +7,7 @@ import { getProvider, type TokenUsage } from "@octopus/providers"
 import { CloneRuntime } from "../services/agent/clone-runtime"
 import { getBuiltinCloneDef } from "../services/agent/builtin-clones"
 import { getAgentDir } from "../services/agent/paths"
+import { getService as getExecutionService } from "../services/execution-service-registry"
 import os from "os"
 
 export function chatRoutes(sseService: SSEService, chatService: ChatService, workspaceService: WorkspaceService): Hono {
@@ -96,6 +97,30 @@ export function chatRoutes(sseService: SSEService, chatService: ChatService, wor
       }
     } catch {
       // Non-fatal — proceed with empty clone prompt (pure claude_code preset)
+    }
+
+    // For interaction sessions, append complete_interaction instructions
+    const isInteractionSession = !!session.linkedExecutionId && !!session.linkedNodeId
+    if (isInteractionSession) {
+      workspaceClonePrompt += `
+
+## Interaction Node — Completion Protocol
+
+You are running inside a workflow interaction node. When you have gathered enough information and the interaction should end, you MUST signal completion by outputting the following JSON block on its own line:
+
+\`\`\`interaction_complete
+{"summary": "描述交互结果的摘要", "vars_update": {"key": "value"}}
+\`\`\`
+
+Rules:
+- "summary" (string, required): A summary of what was decided/collected
+- "vars_update" (object, optional): Key-value pairs to write to the workflow variable pool
+- Output this block ONLY when you are truly done and the workflow should continue
+- Do NOT output this block if you still need more information from the user
+- After outputting this block, do not say anything else
+
+IMPORTANT: When the user indicates they are satisfied (e.g., "可以结束了", "好的没问题了", "done") or you have gathered all needed information, you MUST output the completion block. Do NOT just say goodbye.
+`
     }
 
     let fullText = ""
@@ -245,12 +270,53 @@ export function chatRoutes(sseService: SSEService, chatService: ChatService, wor
             }
           }
 
+          if (chunk.type === 'complete_interaction') {
+            const completion = chunk as { summary: string; vars_update?: Record<string, any> }
+            // Trigger interaction completion via ExecutionService
+            const linkedExecId = session.linkedExecutionId
+            const linkedNodeId = session.linkedNodeId
+            if (linkedExecId && linkedNodeId) {
+              try {
+                const execSvc = getExecutionService(session.workspaceId)
+                if (execSvc) {
+                  await execSvc.service.completeInteraction(linkedExecId, linkedNodeId, completion.summary, completion.vars_update)
+                }
+              } catch (err) {
+                console.error('[chat] Failed to complete interaction:', err)
+              }
+            }
+          }
+
           if (chunk.type === 'result') {
             if (chunk.sessionId) {
               chatService.updateProviderSession(sessionId, chunk.sessionId)
             }
             currentTokens = chunk.tokens
             currentCostUsd = chunk.costUsd
+
+            // Detect interaction_complete pattern in result text
+            if (isInteractionSession && chunk.content) {
+              const match = chunk.content.match(/```interaction_complete\s*\n([\s\S]*?)\n```/)
+              if (match) {
+                try {
+                  const completionData = JSON.parse(match[1])
+                  const linkedExecId = session.linkedExecutionId
+                  const linkedNodeId = session.linkedNodeId
+                  if (linkedExecId && linkedNodeId) {
+                    const execSvc = getExecutionService(session.workspaceId)
+                    if (execSvc) {
+                      await execSvc.service.completeInteraction(
+                        linkedExecId, linkedNodeId,
+                        completionData.summary ?? 'Interaction completed',
+                        completionData.vars_update,
+                      )
+                    }
+                  }
+                } catch (err) {
+                  console.error('[chat] Failed to parse/complete interaction:', err)
+                }
+              }
+            }
           }
 
           const sseExtras: Record<string, unknown> = {}

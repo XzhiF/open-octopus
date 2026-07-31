@@ -32,6 +32,12 @@ interface PendingQuestion {
   questions: unknown
 }
 
+interface PendingCompletion {
+  toolCallId: string
+  summary: string
+  vars_update?: Record<string, any>
+}
+
 function loadClaudeSettingsEnv(): Record<string, string> {
   const settingsPath = path.join(os.homedir(), '.claude', 'settings.json')
   try {
@@ -66,7 +72,11 @@ function normalizeUsage(usage?: {
   return { input: usage.input_tokens, output: usage.output_tokens, total: usage.input_tokens + usage.output_tokens }
 }
 
-function buildToolCaptureHooks(toolResultQueue: ToolResultEntry[], pendingQuestions: PendingQuestion[]): Options['hooks'] {
+function buildToolCaptureHooks(
+  toolResultQueue: ToolResultEntry[],
+  pendingQuestions: PendingQuestion[],
+  pendingCompletions: PendingCompletion[],
+): Options['hooks'] {
   return {
     PreToolUse: [{
       hooks: [async (input: unknown) => {
@@ -80,6 +90,19 @@ function buildToolCaptureHooks(toolResultQueue: ToolResultEntry[], pendingQuesti
             hookEventName: 'PreToolUse',
             permissionDecision: 'deny' as const,
             permissionDecisionReason: 'Questions forwarded to web UI.',
+          }
+        }
+        if (inp.tool_name === 'complete_interaction') {
+          const toolInput = (inp.tool_input ?? {}) as Record<string, any>
+          pendingCompletions.push({
+            toolCallId: inp.tool_use_id as string,
+            summary: toolInput.summary ?? '',
+            vars_update: toolInput.vars_update,
+          })
+          return {
+            hookEventName: 'PreToolUse',
+            permissionDecision: 'deny' as const,
+            permissionDecisionReason: 'Interaction completion captured.',
           }
         }
         return { continue: true }
@@ -101,7 +124,7 @@ function buildToolCaptureHooks(toolResultQueue: ToolResultEntry[], pendingQuesti
     PostToolUseFailure: [{
       hooks: [async (input: unknown) => {
         const inp = input as Record<string, unknown>
-        if (inp.tool_name === 'AskUserQuestion') {
+        if (inp.tool_name === 'AskUserQuestion' || inp.tool_name === 'complete_interaction') {
           return { continue: true }
         }
         toolResultQueue.push({
@@ -157,6 +180,7 @@ export class ClaudeSDKProvider implements IAgentProvider {
   ): AsyncGenerator<MessageChunk> {
     const toolResultQueue: ToolResultEntry[] = []
     const pendingQuestions: PendingQuestion[] = []
+    const pendingCompletions: PendingCompletion[] = []
     let currentMessageId = ""
     const blockTypes = new Map<number, 'thinking' | 'text' | 'tool_use'>()
     const pendingToolCalls = new Map<number, PendingToolCall>()
@@ -171,7 +195,7 @@ export class ClaudeSDKProvider implements IAgentProvider {
       allowDangerouslySkipPermissions: true,
       settingSources: ['project', 'user'],
       includePartialMessages: true,
-      hooks: buildToolCaptureHooks(toolResultQueue, pendingQuestions),
+      hooks: buildToolCaptureHooks(toolResultQueue, pendingQuestions, pendingCompletions),
       env: buildSubprocessEnv(options?.env as Record<string, string> | undefined),
       agent: options?.agent,
       skills: options?.skills,
@@ -210,6 +234,16 @@ export class ClaudeSDKProvider implements IAgentProvider {
           type: 'ask_user_question',
           toolCallId: pq.toolCallId,
           questions: pq.questions,
+        }
+      }
+
+      while (pendingCompletions.length > 0) {
+        const pc = pendingCompletions.shift()!
+        yield {
+          type: 'complete_interaction',
+          toolCallId: pc.toolCallId,
+          summary: pc.summary,
+          vars_update: pc.vars_update,
         }
       }
 
