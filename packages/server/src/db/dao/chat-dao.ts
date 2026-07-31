@@ -121,7 +121,7 @@ export class ChatDAO extends BaseDAO {
 
   findInteractionSession(executionId: string, nodeId: string): ChatSessionRow | null {
     return (this.stmt(
-      "SELECT * FROM chat_sessions WHERE linked_execution_id = ? AND linked_node_id = ?"
+      "SELECT * FROM chat_sessions WHERE linked_execution_id = ? AND linked_node_id = ? AND interaction_status = 'active'"
     ).get(executionId, nodeId) as ChatSessionRow) ?? null
   }
 

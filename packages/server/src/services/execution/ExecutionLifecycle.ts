@@ -818,6 +818,23 @@ export class ExecutionLifecycle {
     const chatDAO = new ChatDAO(this.dao.getDb())
     const chatBridge = new ChatBridge(chatDAO)
 
+    // Find existing active session — reuse on page refresh instead of creating a new one
+    const existing = chatBridge.findActiveSession(id, nodeId)
+    if (existing) {
+      // Re-track in memory (round counting state is lost on server restart, acceptable)
+      chatBridge.trackSession({
+        sessionId: existing.id,
+        executionId: id,
+        nodeId,
+        display: (existing.interaction_mode as "modal" | "panel") ?? display,
+        maxRounds: nodeDef?.interaction_max_rounds ?? 20,
+        exitWhen: nodeDef?.interaction_exit_when,
+        timeout: nodeDef?.interaction_timeout,
+      })
+      // Return existing session WITHOUT initialPrompt — frontend won't re-send it
+      return { sessionId: existing.id, display: existing.interaction_mode ?? display }
+    }
+
     const session = chatBridge.createInteractionSession({
       workspaceId,
       executionId: id,

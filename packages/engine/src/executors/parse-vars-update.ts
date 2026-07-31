@@ -107,3 +107,41 @@ function extractVarsUpdateJson(text: string): string | null {
 
   return null
 }
+
+/**
+ * Pure extraction: extract { summary, vars_update } from agent output text.
+ * Used by the chat route for interaction completion — no VarPool needed.
+ * Same battle-tested parsing logic as applyVarsUpdate.
+ */
+export function extractInteractionCompletion(text: string): {
+  summary: string
+  vars_update?: Record<string, any>
+} | null {
+  // Strategy 1: single-line JSON from the end
+  const lines = text.split("\n")
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i].trim()
+    if (!line) continue
+    const parsed = tryParse(line)
+    if (parsed?.vars_update || parsed?.summary) {
+      return {
+        summary: parsed.summary ?? "",
+        vars_update: parsed.vars_update,
+      }
+    }
+  }
+
+  // Strategy 2: multi-line JSON extraction
+  const extracted = extractVarsUpdateJson(text)
+  if (extracted) {
+    const parsed = tryParse(extracted)
+    if (parsed?.vars_update || parsed?.summary) {
+      return {
+        summary: parsed.summary ?? "",
+        vars_update: parsed.vars_update,
+      }
+    }
+  }
+
+  return null
+}

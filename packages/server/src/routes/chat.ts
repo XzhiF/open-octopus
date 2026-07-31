@@ -4,6 +4,7 @@ import { ChatService } from "../services/chat"
 import { WorkspaceService } from "../services/workspace"
 import { SSEService } from "../services/sse"
 import { getProvider, type TokenUsage } from "@octopus/providers"
+import { extractInteractionCompletion } from "@octopus/engine"
 import { CloneRuntime } from "../services/agent/clone-runtime"
 import { getBuiltinCloneDef } from "../services/agent/builtin-clones"
 import { getAgentDir } from "../services/agent/paths"
@@ -116,28 +117,34 @@ export function chatRoutes(sseService: SSEService, chatService: ChatService, wor
 You are an interactive workflow agent running inside a conversation node. Your job is to have a multi-turn conversation with the user to gather information, clarify requirements, or collect feedback.
 
 IMPORTANT RULES:
-- DO NOT output the completion signal immediately — you must first engage in conversation
 - Ask questions ONE AT A TIME using plain text, wait for the user to answer, then continue
 - Present options as a numbered list in your text message (e.g. "1. 红色 2. 蓝色 3. 绿色")
-- Only signal completion when you have gathered ALL needed information AND the user indicates satisfaction
+- Do NOT output the completion data immediately — first engage in conversation
 
-## Completion Protocol
+## Completion — How to End the Interaction
 
-When the interaction is truly done (user says "可以了", "没问题了", "done", or you've collected all needed info), you MUST output EXACTLY this format — a fenced code block with the language tag \`interaction_complete\`:
+When you have collected all needed information, your LAST message must include a JSON object at the end.
+This is the SAME format used by all workflow agent nodes — just output it at the end of your final reply.
 
-\`\`\`interaction_complete
-{"summary": "描述交互结果的摘要", "vars_update": {"key": "value"}}
+Format (place this at the END of your last message):
+
+\`\`\`json
+{"summary": "one-line summary of the interaction result", "vars_update": {"variable_name": "value"}}
 \`\`\`
 
-CRITICAL FORMATTING RULES:
-- The code block MUST start with three backticks followed by "interaction_complete" (no space)
-- The JSON must be on the next line
-- The code block MUST end with three backticks on a new line
-- "summary" (string, required): Summary of what was decided/collected
-- "vars_update" (object, optional): Key-value pairs to write to the workflow variable pool
-- Output this block ONLY at the very end, after the conversation is complete
-- After outputting this block, do not say anything else
-- Do NOT write "interaction_complete" as plain text — it MUST be inside a code block
+Rules:
+- "summary" (string, required): one-line description of what was collected or decided
+- "vars_update" (object, required): key-value pairs to write to the workflow variable pool
+- Place this JSON at the very END of your last message, inside a \`\`\`json code block
+- You may write a brief confirmation sentence before the JSON block
+
+EXAMPLE — user chose 蓝色, variable is favorite_color:
+
+好的，已记录你的选择！
+
+\`\`\`json
+{"summary": "用户选择了蓝色", "vars_update": {"favorite_color": "蓝色"}}
+\`\`\`
 `
     }
 
@@ -316,33 +323,26 @@ CRITICAL FORMATTING RULES:
             currentTokens = chunk.tokens
             currentCostUsd = chunk.costUsd
 
-            // Detect interaction_complete pattern in result text
-            // Supports both code block format (```interaction_complete ... ```) and plain text
+            // Detect interaction completion using the same parser as AgentExecutor.
+            // Supports single-line JSON, code-fenced JSON, and multi-line JSON — all from text end.
             if (isInteractionSession && chunk.content) {
-              const codeBlockMatch = chunk.content.match(/```interaction_complete\s*\n([\s\S]*?)\n```/)
-              const plainTextMatch = chunk.content.match(/interaction_complete\s*\n(\{[\s\S]*?\})/)
-              const match = codeBlockMatch ?? plainTextMatch
-              if (match) {
-                try {
-                  const completionData = JSON.parse(match[1])
-                  const linkedExecId = session.linkedExecutionId
-                  const linkedNodeId = session.linkedNodeId
-                  console.log(`[chat] Detected interaction_complete pattern: exec=${linkedExecId}, node=${linkedNodeId}`)
-                  if (linkedExecId && linkedNodeId) {
-                    const execSvc = getExecutionService(session.workspaceId)
-                    if (execSvc) {
-                      await execSvc.service.completeInteraction(
-                        linkedExecId, linkedNodeId,
-                        completionData.summary ?? 'Interaction completed',
-                        completionData.vars_update,
-                      )
-                      console.log(`[chat] Interaction complete triggered successfully`)
-                    } else {
-                      console.error(`[chat] ExecutionService not found for workspace ${session.workspaceId}`)
-                    }
+              const completionData = extractInteractionCompletion(chunk.content)
+              if (completionData) {
+                const linkedExecId = session.linkedExecutionId
+                const linkedNodeId = session.linkedNodeId
+                console.log(`[chat] Detected interaction completion: exec=${linkedExecId}, node=${linkedNodeId}`)
+                if (linkedExecId && linkedNodeId) {
+                  const execSvc = getExecutionService(session.workspaceId)
+                  if (execSvc) {
+                    await execSvc.service.completeInteraction(
+                      linkedExecId, linkedNodeId,
+                      completionData.summary || 'Interaction completed',
+                      completionData.vars_update,
+                    )
+                    console.log(`[chat] Interaction complete triggered successfully`)
+                  } else {
+                    console.error(`[chat] ExecutionService not found for workspace ${session.workspaceId}`)
                   }
-                } catch (err) {
-                  console.error('[chat] Failed to parse/complete interaction:', err)
                 }
               }
             }

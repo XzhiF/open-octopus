@@ -5,6 +5,11 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
   DialogDescription,
 } from "@/components/ui/dialog"
+import {
+  AlertDialog, AlertDialogContent, AlertDialogHeader,
+  AlertDialogTitle, AlertDialogDescription, AlertDialogFooter,
+  AlertDialogCancel, AlertDialogAction,
+} from "@/components/ui/alert-dialog"
 import { Button } from "@/components/ui/button"
 import { MessageCircle, CheckCircle2 } from "lucide-react"
 import { getServerUrl } from "@/lib/server-config"
@@ -39,6 +44,7 @@ export function InteractionModal({
   const [sessionId, setSessionId] = useState<string | null>(null)
   const [initialPrompt, setInitialPrompt] = useState<string | null>(null)
   const [forceCompleting, setForceCompleting] = useState(false)
+  const [confirmOpen, setConfirmOpen] = useState(false)
   const sessionCreatedRef = useRef<string | null>(null)
 
   // Use the full chat stream hook — handles all SSE chunk types
@@ -120,8 +126,6 @@ export function InteractionModal({
   // Force complete the interaction (fallback when agent doesn't signal completion)
   const handleForceComplete = useCallback(async () => {
     if (forceCompleting) return
-    const confirmed = window.confirm("确定要强制结束交互吗？工作流将继续执行下一步。")
-    if (!confirmed) return
     setForceCompleting(true)
     try {
       const res = await fetch(
@@ -136,9 +140,10 @@ export function InteractionModal({
         const err = await res.json().catch(() => ({ error: "Force complete failed" }))
         throw new Error(err.error ?? "Force complete failed")
       }
+      setConfirmOpen(false)
       onOpenChange(false)
       onComplete("用户手动结束交互")
-      toast.success("Interaction force completed")
+      toast.success("交互已结束")
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to force complete interaction")
     } finally {
@@ -189,13 +194,14 @@ export function InteractionModal({
 
   // Modal mode (default) — same size as approval dialog
   return (
+    <>
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
         className="sm:max-w-5xl flex flex-col h-[95vh] max-h-[95vh] overflow-hidden gap-0 p-0"
         onPointerDownOutside={(e) => e.preventDefault()}
       >
         <DialogHeader className="flex-shrink-0 px-6 pt-4 pb-2">
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between pr-8">
             <DialogTitle className="flex items-center gap-2">
               <MessageCircle className="h-5 w-5 text-purple-500" />
               Interaction: {nodeId}
@@ -203,16 +209,16 @@ export function InteractionModal({
             <Button
               variant="outline"
               size="sm"
-              onClick={handleForceComplete}
+              onClick={() => setConfirmOpen(true)}
               disabled={forceCompleting}
               className="text-amber-600 border-amber-300 hover:bg-amber-50"
             >
               <CheckCircle2 className="h-3.5 w-3.5 mr-1.5" />
-              {forceCompleting ? "Completing..." : "Force Complete"}
+              {forceCompleting ? "结束中..." : "结束交互"}
             </Button>
           </div>
           <DialogDescription>
-            Chat with the agent. Ask questions, provide feedback. The interaction completes automatically when the agent signals completion. Use "Force Complete" if the agent doesn't respond correctly.
+            与 Agent 对话，完成后自动关闭。
           </DialogDescription>
         </DialogHeader>
         <div className="flex-1 min-h-0 overflow-hidden">
@@ -220,5 +226,26 @@ export function InteractionModal({
         </div>
       </DialogContent>
     </Dialog>
+
+    <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>结束交互</AlertDialogTitle>
+          <AlertDialogDescription>
+            确定要结束当前交互吗？工作流将继续执行下一步。
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>取消</AlertDialogCancel>
+          <AlertDialogAction
+            onClick={handleForceComplete}
+            className="bg-amber-600 text-white hover:bg-amber-700"
+          >
+            {forceCompleting ? "结束中..." : "确认结束"}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+    </>
   )
 }
