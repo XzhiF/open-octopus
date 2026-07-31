@@ -1443,10 +1443,7 @@ export class WorkflowEngine {
 
         const hasPendingApproval = results.some((r, i) => r.status === "fulfilled" && (r.value as NodeExecutionResult).status === "pending_approval")
         if (hasPendingApproval) {
-          const pendingNode = batch.find((node, i) => {
-            const r = results[i]
-            return r.status === "fulfilled" && (r.value as NodeExecutionResult).status === "pending_approval"
-          })
+          const pendingNode = this.findPendingNodeByStatus(batch, results, "pending_approval")
           if (pendingNode) {
             this.pendingApprovalNodeId = pendingNode.id
           }
@@ -1455,10 +1452,7 @@ export class WorkflowEngine {
 
         const hasPendingInteraction = results.some((r, i) => r.status === "fulfilled" && (r.value as NodeExecutionResult).status === "pending_interaction")
         if (hasPendingInteraction) {
-          const pendingNode = batch.find((node, i) => {
-            const r = results[i]
-            return r.status === "fulfilled" && (r.value as NodeExecutionResult).status === "pending_interaction"
-          })
+          const pendingNode = this.findPendingNodeByStatus(batch, results, "pending_interaction")
           if (pendingNode) {
             this.pendingInteractionNodeId = pendingNode.id
           }
@@ -1476,6 +1470,18 @@ export class WorkflowEngine {
       return { status: "completed_with_failures" as const }
     }
     return { status: "completed" }
+  }
+
+  /** Find the first node in a batch whose result has the given status. */
+  private findPendingNodeByStatus(
+    batch: NodeDef[],
+    results: PromiseSettledResult<NodeExecutionResult>[],
+    status: string,
+  ): NodeDef | undefined {
+    return batch.find((_, i) => {
+      const r = results[i]
+      return r.status === "fulfilled" && (r.value as NodeExecutionResult).status === status
+    })
   }
 
   /** Split a level's runnable nodes into batches respecting maxConcurrent. */

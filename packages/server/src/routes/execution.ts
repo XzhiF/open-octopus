@@ -354,6 +354,21 @@ executionRoutes.post("/:executionId/approve", async (c) => {
   }
 })
 
+executionRoutes.post("/:executionId/interaction/:nodeId/start", async (c) => {
+  const workspaceId = getWorkspaceId(c)
+  const executionId = getExecutionId(c)
+  const nodeId = c.req.param("nodeId")
+  const svc = getService(workspaceId)
+  if (!svc) return c.json({ error: "workspace not found" }, 404)
+
+  try {
+    const result = await svc.service.startInteraction(executionId, nodeId!, workspaceId)
+    return c.json(result, 201)
+  } catch (err: unknown) {
+    return handleError(err)
+  }
+})
+
 executionRoutes.post("/:executionId/interaction/:nodeId/complete", async (c) => {
   const workspaceId = getWorkspaceId(c)
   const executionId = getExecutionId(c)

@@ -3,8 +3,13 @@
 // Chat Bridge — connects WorkflowEngine execution context with ChatService sessions.
 // Responsible for creating interaction sessions, monitoring completion signals,
 // and constructing NodeExecutionResult when interaction completes.
+//
+// NOTE: ChatBridge uses ChatDAO directly for interaction-specific operations,
+// keeping ChatService untouched (separation of concerns).
 
-import type { ChatService, ChatSession } from "./chat"
+import type { ChatDAO } from "../db/dao/chat-dao"
+import type { ChatSessionRow } from "../db/types"
+import { randomUUID } from "crypto"
 
 /** Tool definition for complete_interaction, registered with the Agent SDK. */
 export const COMPLETE_INTERACTION_TOOL = {
@@ -39,11 +44,14 @@ export interface CreateInteractionOptions {
   nodeId: string
   display?: "modal" | "panel"
   title?: string
+  /** Initial prompt to send as the first message in the chat session. */
+  initialPrompt?: string
 }
 
 /**
  * ChatBridge manages the lifecycle of interaction sessions.
  * It creates sessions, tracks their state, and detects completion signals.
+ * Uses ChatDAO directly — does NOT modify ChatService.
  */
 export class ChatBridge {
   private activeSessions = new Map<string, {
@@ -59,21 +67,37 @@ export class ChatBridge {
   }>()
 
   constructor(
-    private chatService: ChatService,
+    private dao: ChatDAO,
   ) {}
 
   /**
    * Create a new interaction session linked to a workflow execution.
+   * Uses ChatDAO directly to avoid modifying ChatService.
    */
-  createInteractionSession(opts: CreateInteractionOptions): ChatSession {
-    const session = this.chatService.createInteractionSession(opts.workspaceId, {
+  createInteractionSession(opts: CreateInteractionOptions): ChatSessionRow {
+    const id = randomUUID()
+    const now = new Date().toISOString()
+
+    this.dao.insertSession({
+      id,
+      workspace_id: opts.workspaceId,
       title: opts.title ?? `Interaction: ${opts.nodeId}`,
-      executionId: opts.executionId,
-      nodeId: opts.nodeId,
-      display: opts.display ?? "modal",
+      created_at: now,
+      updated_at: now,
+      linked_execution_id: opts.executionId,
+      linked_node_id: opts.nodeId,
+      interaction_mode: opts.display ?? "modal",
+      interaction_status: "active",
     })
 
-    return session
+    return this.dao.findSessionById(id)!
+  }
+
+  /**
+   * Find an active interaction session by execution and node.
+   */
+  findActiveSession(executionId: string, nodeId: string): ChatSessionRow | null {
+    return this.dao.findInteractionSession(executionId, nodeId)
   }
 
   /**
@@ -134,7 +158,8 @@ export class ChatBridge {
    * Mark an interaction session as complete.
    */
   completeSession(sessionId: string, status: "completed" | "timeout" = "completed"): void {
-    this.chatService.completeInteractionSession(sessionId, status)
+    this.dao.updateInteractionStatus(sessionId, status)
+    this.dao.updateSession(sessionId, { is_active: 0 })
     this.activeSessions.delete(sessionId)
   }
 
@@ -146,13 +171,6 @@ export class ChatBridge {
   }
 
   /**
-   * Find active interaction session by execution and node.
-   */
-  findActiveSession(executionId: string, nodeId: string): ChatSession | undefined {
-    return this.chatService.findInteractionSession(executionId, nodeId)
-  }
-
-  /**
    * Force complete an interaction session (admin/timeout intervention).
    */
   forceComplete(
@@ -161,7 +179,7 @@ export class ChatBridge {
     summary: string,
     varsUpdate?: Record<string, any>,
   ): InteractionCompletionData {
-    const session = this.chatService.findInteractionSession(executionId, nodeId)
+    const session = this.dao.findInteractionSession(executionId, nodeId)
     if (session) {
       this.completeSession(session.id)
     }

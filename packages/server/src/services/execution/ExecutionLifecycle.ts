@@ -34,6 +34,8 @@ import { ResourcePreFlight } from "../resource-preflight"
 import { ResourceProvisioner } from "../resource-provisioner"
 import { getResourceRegistry } from "../resource-registry"
 import { PipelineConfigLoader } from "../pipeline-config"
+import { ChatBridge } from "../chat-bridge"
+import { ChatDAO } from "../../db/dao/chat-dao"
 
 export class ExecutionLifecycle {
   private enginePool: EnginePool
@@ -758,6 +760,51 @@ export class ExecutionLifecycle {
     this.runApproveInBackground(id, nodeId, inst.abortController.signal, answer, comment, exec.workflow_ref)
 
     return this.dao.findById(id)!
+  }
+
+  // ==================== Interaction Start ====================
+
+  /**
+   * Start an interaction session for a pending_interaction node.
+   * Creates a chat session linked to the execution, sends the initial prompt.
+   */
+  async startInteraction(
+    id: string,
+    nodeId: string,
+    workspaceId: string,
+  ): Promise<{ sessionId: string; display: string }> {
+    const exec = this.dao.findById(id)
+    if (!exec) throw Object.assign(new Error("Execution not found"), { status: 404 })
+    if (exec.status !== "pending_interaction") throw Object.assign(new Error("执行不在交互状态"), { status: 400 })
+
+    // Find the interaction node definition from the workflow
+    const workflowDef = exec.workflow_def ? JSON.parse(exec.workflow_def) : null
+    const nodeDef = workflowDef ? findNodeDef(workflowDef, nodeId) : null
+    const display = nodeDef?.interaction_display ?? "modal"
+
+    const chatDAO = new ChatDAO(this.db)
+    const chatBridge = new ChatBridge(chatDAO)
+
+    const session = chatBridge.createInteractionSession({
+      workspaceId,
+      executionId: id,
+      nodeId,
+      display,
+      title: `Interaction: ${nodeId}`,
+    })
+
+    // Track the session for round counting and timeout
+    chatBridge.trackSession({
+      sessionId: session.id,
+      executionId: id,
+      nodeId,
+      display,
+      maxRounds: nodeDef?.interaction_max_rounds ?? 20,
+      exitWhen: nodeDef?.interaction_exit_when,
+      timeout: nodeDef?.interaction_timeout,
+    })
+
+    return { sessionId: session.id, display }
   }
 
   // ==================== Interaction Complete ====================
