@@ -501,6 +501,12 @@ export class InteractionService {
     session: InteractionSessionInfo,
     acc: StreamAccumulator,
   ): InteractionSSEEvent[] {
+    // Suppress duplicate thinking after AskUserQuestion on round 1
+    // (SDK agentic loop retries cause multiple thinking blocks)
+    if (session.currentRound === 1 && acc.askUserQuestionCalled) {
+      acc.thinkingMessageId = ""
+      return []
+    }
     acc.thinkingStartTime = Date.now()
     acc.thinkingMessageId = randomUUID()
     this.messageDao.insertMessage({
@@ -521,6 +527,7 @@ export class InteractionService {
     session: InteractionSessionInfo,
     acc: StreamAccumulator,
   ): InteractionSSEEvent[] {
+    if (!acc.thinkingMessageId) return [] // Suppressed (duplicate after AskUserQuestion)
     acc.thinkingContent += chunk.content
     return [{ type: "thinking", content: chunk.content, sessionId: session.sessionId }]
   }
@@ -530,6 +537,7 @@ export class InteractionService {
     session: InteractionSessionInfo,
     acc: StreamAccumulator,
   ): InteractionSSEEvent[] {
+    if (!acc.thinkingMessageId) return [] // Suppressed
     const duration = chunk.thinkingDuration ?? `${Date.now() - acc.thinkingStartTime}ms`
     if (acc.thinkingMessageId && acc.thinkingContent) {
       this.messageDao.updateMessageContentAndMetadata(
@@ -546,6 +554,12 @@ export class InteractionService {
     session: InteractionSessionInfo,
     acc: StreamAccumulator,
   ): InteractionSSEEvent[] {
+    // Suppress duplicate AskUserQuestion tool calls from SDK agentic loop retries
+    if (chunk.toolName === 'AskUserQuestion' && acc.askUserQuestionCalled) {
+      // Still track in toolCallMap (handleAskUserQuestion won't fire, so no double-processing)
+      acc.toolCallMap.set(chunk.toolCallId, { dbId: '', toolName: chunk.toolName, startTime: Date.now() })
+      return []
+    }
     const toolDbId = randomUUID()
     acc.toolCallMap.set(chunk.toolCallId, { dbId: toolDbId, toolName: chunk.toolName, startTime: Date.now() })
     this.messageDao.insertMessage({
@@ -611,6 +625,12 @@ export class InteractionService {
     session: InteractionSessionInfo,
     acc: StreamAccumulator,
   ): InteractionSSEEvent[] {
+    // SDK agentic loop may retry AskUserQuestion after PreToolUse deny.
+    // Only process the FIRST call — subsequent retries are duplicates.
+    if (acc.askUserQuestionCalled) {
+      return [] // Skip duplicate
+    }
+
     const info = acc.toolCallMap.get(chunk.toolCallId)
     if (info) {
       const existing = this.messageDao.findMessageById(info.dbId)
