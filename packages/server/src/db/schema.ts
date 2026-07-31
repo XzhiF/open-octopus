@@ -60,11 +60,38 @@ function handleSchemaMigrations(db: Database.Database): void {
     }
   }
 
+  // Drop legacy linked_* columns from chat_sessions (removed in interaction-node feature)
+  dropLegacyColumnsFromChatSessions(db)
+
   // Add missing columns for existing tables
   ensureColumnsForExistingTables(db)
 
   // Migrate FTS table to include source column (schema version 29)
   migrateFtsTableWithSource(db)
+}
+
+/**
+ * Drop legacy linked_* columns from chat_sessions.
+ * These columns were part of an earlier interaction design that has been replaced
+ * by the interaction_messages table. SQLite 3.35.0+ supports ALTER TABLE DROP COLUMN.
+ */
+function dropLegacyColumnsFromChatSessions(db: Database.Database): void {
+  const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='chat_sessions'").all()
+  if (tables.length === 0) return
+
+  const cols = db.prepare("PRAGMA table_info(chat_sessions)").all() as { name: string }[]
+  const legacyColumns = ["linked_execution_id", "linked_node_id", "interaction_mode", "interaction_status"]
+
+  for (const column of legacyColumns) {
+    if (cols.some(c => c.name === column)) {
+      try {
+        db.exec(`ALTER TABLE chat_sessions DROP COLUMN ${column}`)
+      } catch (err) {
+        // SQLite < 3.35.0 doesn't support DROP COLUMN — log and continue
+        console.warn(`[schema] Failed to drop chat_sessions.${column}: ${err instanceof Error ? err.message : String(err)}`)
+      }
+    }
+  }
 }
 
 function ensureColumnsForExistingTables(db: Database.Database): void {

@@ -15,17 +15,18 @@ describe("DB Schema", () => {
     db?.close()
   })
 
-  it("creates all 32 tables", () => {
+  it("creates all 35 tables", () => {
     db = createTestDb()
     applySchema(db)
     const rows = db.prepare(
-      "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '%_fts%' ORDER BY name"
+      "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND instr(name, '_fts') = 0 ORDER BY name"
     ).all() as { name: string }[]
     const names = rows.map(r => r.name).sort()
     expect(names).toEqual([
-      // Core tables (29)
-      "agent_events", "branch_executions", "chat_messages", "chat_sessions",
+      // Core tables (35)
+      "agent_events", "archive_drafts", "branch_executions", "chat_messages", "chat_sessions",
       "clones", "evolution_log", "execution_archive", "execution_summaries", "executions", "experiences",
+      "insight_marks", "interaction_messages",
       // Knowledge tables (1)
       "knowledge_effectiveness",
       "llm_calls", "messages", "node_edges", "node_executions", "node_token_usages",
@@ -43,8 +44,8 @@ describe("DB Schema", () => {
     const rows = db.prepare(
       "SELECT name FROM sqlite_master WHERE type='index' AND name LIKE 'idx_%'"
     ).all() as { name: string }[]
-    // 38 core indexes + 23 agent indexes + 4 knowledge indexes + 6 archive indexes = 71
-    expect(rows.length).toBe(71)
+    // 40 core indexes + 23 agent indexes + 4 knowledge indexes + 6 archive indexes + 2 unique indexes = 75
+    expect(rows.length).toBe(75)
   })
 
   it("workspaces table has correct columns", () => {
