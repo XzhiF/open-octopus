@@ -50,6 +50,12 @@
 | **Chat Bridge** | 聊天桥接 — Server 层组件，连接 WorkflowEngine 执行上下文与 ChatService session，管理交互 session 的创建、监控和完成信号检测。 | server |
 | **complete_interaction** | 交互完成工具 — 注册给 interaction 节点的 Agent 的特殊工具，Agent 认为信息充足时主动调用以结束节点。携带 summary 和 vars_update。 | engine |
 | **Interaction Session** | 交互会话 — 与工作流执行关联的 chat session（有 linked_execution_id + linked_node_id），生命周期由 interaction 节点管理。 | server |
+| **Traceability Matrix** | Bidirectional link: requirement ↔ code ↔ test, proving implementation completeness. | core-pack |
+| **Assertion Density** | Assertions per line of test code (≥ 0.22 is healthy, < 0.15 is suspicious). | core-pack |
+| **Confidence Score** | Weighted composite of verification dimensions, producing GO/NO-GO/REVIEW decision. | core-pack |
+| **Mutation Spot Check** | Targeted code mutation on critical paths to verify tests can detect real bugs. | core-pack |
+| **Orphan Test** | Test with no traceable requirement (gold-plating detection). | core-pack |
+| **Verification Report** | Evidence-based audit of implementation truth, distinct from pipeline-report.md (which is a claim). | core-pack |
 
 ## Anti-Patterns（禁止）
 
