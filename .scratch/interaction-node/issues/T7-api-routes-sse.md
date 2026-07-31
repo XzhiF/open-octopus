@@ -1,6 +1,6 @@
 # T7: Server API Routes + SSE Events
 
-## Status: pending
+## Status: done
 
 ## Scope
 Add interaction-specific API routes and SSE events:

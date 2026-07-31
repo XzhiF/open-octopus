@@ -1,6 +1,6 @@
 # T10: Web App — Interaction Node UI
 
-## Status: pending
+## Status: done
 
 ## Scope
 Add frontend support for interaction nodes:

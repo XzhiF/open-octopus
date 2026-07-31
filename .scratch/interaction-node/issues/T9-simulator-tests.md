@@ -1,6 +1,6 @@
 # T9: Simulator Integration Tests
 
-## Status: pending
+## Status: done
 
 ## Scope
 Create simulator test fixtures for interaction nodes:

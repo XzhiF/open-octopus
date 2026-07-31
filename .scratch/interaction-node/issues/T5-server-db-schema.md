@@ -1,6 +1,6 @@
 # T5: Server DB Schema + DAO Extension
 
-## Status: pending
+## Status: done
 
 ## Scope
 Extend the database schema for interaction sessions:

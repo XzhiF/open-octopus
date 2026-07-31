@@ -1,6 +1,6 @@
 # T6: Chat Bridge Service
 
-## Status: pending
+## Status: done
 
 ## Scope
 Create the Chat Bridge service that connects WorkflowEngine with ChatService:

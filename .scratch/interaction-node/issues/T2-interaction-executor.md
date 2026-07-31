@@ -1,6 +1,6 @@
 # T2: InteractionExecutor — Core Engine Executor
 
-## Status: pending
+## Status: done
 
 ## Scope
 Create the `InteractionExecutor` class in `packages/engine/src/executors/interaction.ts`:

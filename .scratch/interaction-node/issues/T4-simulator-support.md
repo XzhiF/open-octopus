@@ -1,6 +1,6 @@
 # T4: Simulator Support — MockInteractionExecutor
 
-## Status: pending
+## Status: done
 
 ## Scope
 Add interaction node support to the workflow simulator:

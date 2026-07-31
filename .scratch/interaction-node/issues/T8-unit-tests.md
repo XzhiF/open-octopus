@@ -1,6 +1,6 @@
 # T8: Unit Tests — InteractionExecutor + Schema
 
-## Status: pending
+## Status: done
 
 ## Scope
 Write comprehensive unit tests:

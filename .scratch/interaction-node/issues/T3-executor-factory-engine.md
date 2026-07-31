@@ -1,6 +1,6 @@
 # T3: Executor Factory + Engine Integration
 
-## Status: pending
+## Status: done
 
 ## Scope
 Wire InteractionExecutor into the ExecutorFactory and WorkflowEngine:

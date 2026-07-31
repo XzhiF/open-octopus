@@ -1,6 +1,6 @@
 # T1: Shared Types — NodeDef Schema + NodeExecutionResult Extension
 
-## Status: pending
+## Status: done
 
 ## Scope
 Extend `@octopus/shared` with interaction node type definitions:
