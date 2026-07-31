@@ -88,21 +88,28 @@ export function chatRoutes(sseService: SSEService, chatService: ChatService, wor
     const provider = session.provider ?? "claude"
     const agent = getProvider(provider)
 
+    // Check if this is an interaction session BEFORE assembling workspace context.
+    // Interaction sessions must NOT load workspace clone memory (persona + shared memory + daily)
+    // to prevent cross-contamination between interaction sessions.
+    const isInteractionSession = !!session.linkedExecutionId && !!session.linkedNodeId
+
     // Assemble workspace clone system prompt (persona + memory + skills)
+    // Skipped for interaction sessions to ensure clean, isolated conversation context.
     let workspaceClonePrompt = ''
-    try {
-      const cloneDef = getBuiltinCloneDef('workspace')
-      if (cloneDef) {
-        workspaceClonePrompt = new CloneRuntime(cloneDef, 'default').assembleContext()
+    if (!isInteractionSession) {
+      try {
+        const cloneDef = getBuiltinCloneDef('workspace')
+        if (cloneDef) {
+          workspaceClonePrompt = new CloneRuntime(cloneDef, 'default').assembleContext()
+        }
+      } catch {
+        // Non-fatal — proceed with empty clone prompt (pure claude_code preset)
       }
-    } catch {
-      // Non-fatal — proceed with empty clone prompt (pure claude_code preset)
     }
 
-    // For interaction sessions, append agent prompt + completion protocol to system prompt
-    const isInteractionSession = !!session.linkedExecutionId && !!session.linkedNodeId
+    // For interaction sessions, use only the interaction protocol as system prompt
     if (isInteractionSession) {
-      workspaceClonePrompt += `
+      workspaceClonePrompt = `
 
 ## Interaction Node — Your Role
 
@@ -110,22 +117,27 @@ You are an interactive workflow agent running inside a conversation node. Your j
 
 IMPORTANT RULES:
 - DO NOT output the completion signal immediately — you must first engage in conversation
-- Ask questions ONE AT A TIME, wait for the user to answer, then continue
-- Use AskUserQuestion tool for structured questions when appropriate
+- Ask questions ONE AT A TIME using plain text, wait for the user to answer, then continue
+- Present options as a numbered list in your text message (e.g. "1. 红色 2. 蓝色 3. 绿色")
 - Only signal completion when you have gathered ALL needed information AND the user indicates satisfaction
 
 ## Completion Protocol
 
-When the interaction is truly done (user says "可以了", "没问题了", "done", or you've collected all needed info), output this block:
+When the interaction is truly done (user says "可以了", "没问题了", "done", or you've collected all needed info), you MUST output EXACTLY this format — a fenced code block with the language tag \`interaction_complete\`:
 
 \`\`\`interaction_complete
 {"summary": "描述交互结果的摘要", "vars_update": {"key": "value"}}
 \`\`\`
 
+CRITICAL FORMATTING RULES:
+- The code block MUST start with three backticks followed by "interaction_complete" (no space)
+- The JSON must be on the next line
+- The code block MUST end with three backticks on a new line
 - "summary" (string, required): Summary of what was decided/collected
 - "vars_update" (object, optional): Key-value pairs to write to the workflow variable pool
 - Output this block ONLY at the very end, after the conversation is complete
 - After outputting this block, do not say anything else
+- Do NOT write "interaction_complete" as plain text — it MUST be inside a code block
 `
     }
 
@@ -160,6 +172,7 @@ When the interaction is truly done (user says "可以了", "没问题了", "done
           systemPrompt: { type: 'preset', preset: 'claude_code', append: workspaceClonePrompt || undefined },
           abortSignal: abortController.signal,
           plugins: [{ type: 'local', path: getAgentDir() }],
+          interactionSession: isInteractionSession,
         })
 
         for await (const chunk of chunkStream) {
@@ -304,8 +317,11 @@ When the interaction is truly done (user says "可以了", "没问题了", "done
             currentCostUsd = chunk.costUsd
 
             // Detect interaction_complete pattern in result text
+            // Supports both code block format (```interaction_complete ... ```) and plain text
             if (isInteractionSession && chunk.content) {
-              const match = chunk.content.match(/```interaction_complete\s*\n([\s\S]*?)\n```/)
+              const codeBlockMatch = chunk.content.match(/```interaction_complete\s*\n([\s\S]*?)\n```/)
+              const plainTextMatch = chunk.content.match(/interaction_complete\s*\n(\{[\s\S]*?\})/)
+              const match = codeBlockMatch ?? plainTextMatch
               if (match) {
                 try {
                   const completionData = JSON.parse(match[1])

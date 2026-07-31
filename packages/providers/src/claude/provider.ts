@@ -1,4 +1,4 @@
-import { query, type Options, type AgentDefinition } from '@anthropic-ai/claude-agent-sdk'
+import { query, type Options, type AgentDefinition, type CanUseTool } from '@anthropic-ai/claude-agent-sdk'
 import type { IAgentProvider, SendQueryOptions, MessageChunk, TokenUsage, ModelUsageEntry, OctopusAgentDef } from '../types'
 import { LLMCallTracker } from '../llm-call-tracker'
 import { getPluginSdkConfigs } from '@octopus/shared'
@@ -82,17 +82,23 @@ function buildToolCaptureHooks(
       hooks: [async (input: unknown) => {
         const inp = input as Record<string, unknown>
         if (inp.tool_name === 'AskUserQuestion') {
+          // Capture question data for SSE events, but do NOT deny here.
+          // Denying via PreToolUse hook causes the SDK to return a hardcoded
+          // "Error: Answer questions?" tool result that the model misinterprets.
+          // The actual deny is handled by canUseTool callback which provides
+          // a custom message via the `message` field of PermissionResult.
           pendingQuestions.push({
             toolCallId: inp.tool_use_id as string,
             questions: inp.tool_input,
           })
           return {
             hookEventName: 'PreToolUse',
-            permissionDecision: 'deny' as const,
-            permissionDecisionReason: 'Questions forwarded to web UI.',
+            permissionDecision: 'allow' as const,
           }
         }
         if (inp.tool_name === 'complete_interaction') {
+          // Same pattern: capture data in hook, deny via canUseTool for
+          // a clear tool result message instead of SDK's hardcoded error.
           const toolInput = (inp.tool_input ?? {}) as Record<string, any>
           pendingCompletions.push({
             toolCallId: inp.tool_use_id as string,
@@ -101,8 +107,7 @@ function buildToolCaptureHooks(
           })
           return {
             hookEventName: 'PreToolUse',
-            permissionDecision: 'deny' as const,
-            permissionDecisionReason: 'Interaction completion captured.',
+            permissionDecision: 'allow' as const,
           }
         }
         return { continue: true }
@@ -187,6 +192,31 @@ export class ClaudeSDKProvider implements IAgentProvider {
     const modelName = options?.model ?? 'sonnet'
     this._llmTracker.reset()
 
+    // Build canUseTool callback for interaction sessions.
+    // This replaces PreToolUse hook deny which returns a hardcoded
+    // "Error: Answer questions?" tool result that the model misinterprets.
+    // canUseTool's `message` field is sent as the tool result content,
+    // giving us full control over what the model sees.
+    const canUseTool: CanUseTool | undefined = options?.interactionSession
+      ? async (toolName, input, cbOptions) => {
+          if (toolName === 'AskUserQuestion') {
+            return {
+              behavior: 'deny' as const,
+              message: 'The question has been sent to the user in a web UI modal. The user is now looking at the question and will type their answer in the chat. You MUST: (1) NOT fabricate or guess any user answer, (2) NOT assume the user selected any option, (3) NOT call complete_interaction yet, (4) simply reply to the user saying you are waiting for their response and then STOP. Any answer you invent will be WRONG and cause data corruption. The user has NOT answered yet.',
+              toolUseID: cbOptions.toolUseID,
+            }
+          }
+          if (toolName === 'complete_interaction') {
+            return {
+              behavior: 'deny' as const,
+              message: 'Interaction completion has been captured and forwarded to the workflow engine. The interaction is now complete. Do not output anything else.',
+              toolUseID: cbOptions.toolUseID,
+            }
+          }
+          return { behavior: 'allow' as const, toolUseID: cbOptions.toolUseID }
+        }
+      : undefined
+
     const sdkOptions: Options = {
       cwd,
       model: options?.model ?? 'sonnet',
@@ -205,6 +235,8 @@ export class ClaudeSDKProvider implements IAgentProvider {
           )
         : undefined,
       plugins: resolvePlugins(options),
+      disallowedTools: options?.disallowedTools,
+      canUseTool,
       ...(options?.abortSignal ? { abortController: new AbortController() } : {}),
       ...(resumeSessionId ? { resume: resumeSessionId } : {}),
     }

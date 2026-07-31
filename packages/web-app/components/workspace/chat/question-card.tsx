@@ -111,7 +111,8 @@ export function QuestionCard({ message, onAnswer, disabled }: QuestionCardProps)
   const handleMultiSelect = (qIndex: number, optionLabel: string) => {
     if (phase !== "ready") return
     setAnswers(prev => {
-      const current = (prev[qIndex] as string[]) ?? []
+      const raw = prev[qIndex]
+      const current = Array.isArray(raw) ? raw : []
       const next = current.includes(optionLabel)
         ? current.filter(v => v !== optionLabel)
         : [...current, optionLabel]
@@ -124,7 +125,8 @@ export function QuestionCard({ message, onAnswer, disabled }: QuestionCardProps)
     const key = `${qIndex}-${optionLabel}`
     setOtherInputs(prev => ({ ...prev, [key]: value }))
     setAnswers(prev => {
-      const current = (prev[qIndex] as string[]) ?? []
+      const raw = prev[qIndex]
+      const current = Array.isArray(raw) ? raw : []
       const cleaned = current.filter(v => !v.startsWith(optionLabel + ": "))
       if (value.trim()) {
         return { ...prev, [qIndex]: [...cleaned, `${optionLabel}: ${value.trim()}`] }

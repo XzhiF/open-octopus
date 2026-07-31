@@ -5,7 +5,8 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
   DialogDescription,
 } from "@/components/ui/dialog"
-import { MessageCircle } from "lucide-react"
+import { Button } from "@/components/ui/button"
+import { MessageCircle, CheckCircle2 } from "lucide-react"
 import { getServerUrl } from "@/lib/server-config"
 import { toast } from "sonner"
 import { useChatStream } from "./chat/use-chat-stream"
@@ -37,6 +38,7 @@ export function InteractionModal({
 }: InteractionModalProps) {
   const [sessionId, setSessionId] = useState<string | null>(null)
   const [initialPrompt, setInitialPrompt] = useState<string | null>(null)
+  const [forceCompleting, setForceCompleting] = useState(false)
   const sessionCreatedRef = useRef<string | null>(null)
 
   // Use the full chat stream hook — handles all SSE chunk types
@@ -115,6 +117,35 @@ export function InteractionModal({
     return sessionId ?? ""
   }, [sessionId])
 
+  // Force complete the interaction (fallback when agent doesn't signal completion)
+  const handleForceComplete = useCallback(async () => {
+    if (forceCompleting) return
+    const confirmed = window.confirm("确定要强制结束交互吗？工作流将继续执行下一步。")
+    if (!confirmed) return
+    setForceCompleting(true)
+    try {
+      const res = await fetch(
+        `${getServerUrl()}/api/workspaces/${workspaceId}/executions/${executionId}/interaction/${nodeId}/complete`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ summary: "用户手动结束交互" }),
+        },
+      )
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: "Force complete failed" }))
+        throw new Error(err.error ?? "Force complete failed")
+      }
+      onOpenChange(false)
+      onComplete("用户手动结束交互")
+      toast.success("Interaction force completed")
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to force complete interaction")
+    } finally {
+      setForceCompleting(false)
+    }
+  }, [forceCompleting, workspaceId, executionId, nodeId, onOpenChange, onComplete])
+
   // Chat content (shared between modal and panel modes)
   const chatContent = sessionId ? (
     <ChatPanel
@@ -164,12 +195,24 @@ export function InteractionModal({
         onPointerDownOutside={(e) => e.preventDefault()}
       >
         <DialogHeader className="flex-shrink-0 px-6 pt-4 pb-2">
-          <DialogTitle className="flex items-center gap-2">
-            <MessageCircle className="h-5 w-5 text-purple-500" />
-            Interaction: {nodeId}
-          </DialogTitle>
+          <div className="flex items-center justify-between">
+            <DialogTitle className="flex items-center gap-2">
+              <MessageCircle className="h-5 w-5 text-purple-500" />
+              Interaction: {nodeId}
+            </DialogTitle>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleForceComplete}
+              disabled={forceCompleting}
+              className="text-amber-600 border-amber-300 hover:bg-amber-50"
+            >
+              <CheckCircle2 className="h-3.5 w-3.5 mr-1.5" />
+              {forceCompleting ? "Completing..." : "Force Complete"}
+            </Button>
+          </div>
           <DialogDescription>
-            Chat with the agent. Ask questions, provide feedback. The interaction completes automatically when the agent signals completion.
+            Chat with the agent. Ask questions, provide feedback. The interaction completes automatically when the agent signals completion. Use "Force Complete" if the agent doesn't respond correctly.
           </DialogDescription>
         </DialogHeader>
         <div className="flex-1 min-h-0 overflow-hidden">

@@ -534,7 +534,7 @@ export function useChatStream(
     let wasAborted = false
 
     try {
-      const res = await fetch(
+      let res = await fetch(
         `${getServerUrl()}${apiBase}/sessions/${resolvedSessionId}/messages`,
         {
           method: "POST",
@@ -543,6 +543,32 @@ export function useChatStream(
           signal: controller.signal,
         }
       )
+
+      if (!res.ok && res.status === 404) {
+        // Session was deleted (e.g. DB cleared) — create a new one and retry
+        const newRes = await fetch(`${getServerUrl()}${apiBase}/sessions`, { method: "POST" })
+        const newSession = await newRes.json()
+        const newId = newSession.id as string
+        setSessions(prev => [...prev.filter(s => s.id !== resolvedSessionId), {
+          id: newId,
+          workspaceId: workspaceId ?? '',
+          title: (newSession.title as string) ?? `会话 ${sessions.length + 1}`,
+          messages: [],
+          createdAt: (newSession.created_at as string) ?? new Date().toISOString(),
+          updatedAt: (newSession.updated_at as string) ?? new Date().toISOString(),
+          isActive: true,
+        }])
+        options?.onSessionCreated?.(newId)
+        res = await fetch(
+          `${getServerUrl()}${apiBase}/sessions/${newId}/messages`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ content }),
+            signal: controller.signal,
+          }
+        )
+      }
 
       if (!res.ok) {
         const errData = await res.json().catch(() => ({ error: "请求失败" }))

@@ -823,7 +823,7 @@ export class ExecutionLifecycle {
       executionId: id,
       nodeId,
       display,
-      title: `Interaction: ${nodeId}`,
+      title: `#${id.slice(0, 4)} Interaction: ${nodeId}`,
     })
 
     // Track the session for round counting and timeout
@@ -841,6 +841,9 @@ export class ExecutionLifecycle {
     this.dao.updateExecution(id, {
       interaction_metadata: JSON.stringify({ nodeId, sessionId: session.id, display, maxRounds: nodeDef?.interaction_max_rounds ?? 20 }),
     })
+
+    // Notify chatbot panel to reload sessions (interaction session was just created)
+    this.sse.emit(this.workspaceId, { event: "session_created", data: { sessionId: session.id } })
 
     return { sessionId: session.id, display, initialPrompt }
   }
