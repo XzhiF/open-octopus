@@ -166,18 +166,18 @@ export function createInteractionRoutes(
       const summary = (body.summary as string) ?? "User manually ended interaction"
       const varsUpdate = body.vars_update as Record<string, unknown> | undefined
 
-      // Clean up in-memory session
-      interactionService.forceComplete({
+      // Force complete: persist completion data and clean up session
+      const result = interactionService.forceComplete({
         executionId: execId,
         nodeId,
         summary,
         varsUpdate,
       })
 
-      // Trigger workflow completion
+      // Trigger workflow completion via ExecutionService
       const execSvc = getExecutionService(workspaceId)
       if (execSvc) {
-        await execSvc.service.completeInteraction(execId, nodeId, summary, varsUpdate)
+        await execSvc.service.completeInteraction(execId, nodeId, result.summary, result.vars_update)
       }
 
       return c.json({ ok: true })

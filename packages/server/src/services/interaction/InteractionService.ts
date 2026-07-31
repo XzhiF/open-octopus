@@ -8,14 +8,22 @@ import { randomUUID } from "crypto"
 import type { IAgentProvider, MessageChunk, TokenUsage } from "@octopus/providers"
 import { getProvider } from "@octopus/providers"
 import { extractInteractionCompletion } from "@octopus/engine"
-import type Database from "better-sqlite3"
 import { InteractionMessageDAO } from "../../db/dao/interaction-message-dao"
 import { TokenUsageDAO } from "../../db/dao/token-usage-dao"
 import { ExecutionDAO } from "../../db/dao/execution-dao"
-import type { InteractionMessageRow, AgentEventRow } from "../../db/types"
+import type { InteractionMessageRow, AgentEventRow, LlmCallRow } from "../../db/types"
 import { SSEService } from "../sse"
 import { getAgentDir } from "../agent/paths"
 import { INTERACTION_SYSTEM_PROMPT } from "./prompts"
+
+/** Callback to trigger workflow completion via ExecutionLifecycle. */
+export type CompleteInteractionFn = (
+  workspaceId: string,
+  executionId: string,
+  nodeId: string,
+  summary: string,
+  varsUpdate?: Record<string, unknown>,
+) => Promise<void>
 
 /** In-memory tracking for an active interaction session. */
 interface InteractionSessionInfo {
@@ -51,6 +59,30 @@ interface StartParams {
   timeout?: number
 }
 
+/** Accumulator for stream processing state. */
+class StreamAccumulator {
+  fullText = ""
+  assistantMessageId: string
+  thinkingContent = ""
+  thinkingMessageId = ""
+  thinkingStartTime = 0
+  tokens?: TokenUsage
+  costUsd?: number
+  completionDetected: { summary: string; vars_update?: Record<string, unknown> } | null = null
+  llmCallStartTime = Date.now()
+  toolCallMap = new Map<string, { dbId: string; toolName: string; startTime: number }>()
+
+  constructor() {
+    this.assistantMessageId = randomUUID()
+  }
+}
+
+/** Merge JSON metadata updates into an existing metadata string. */
+function mergeMetadata(existing: string | null, updates: Record<string, unknown>): string {
+  const meta = JSON.parse(existing ?? "{}")
+  return JSON.stringify({ ...meta, ...updates })
+}
+
 /**
  * InteractionService manages workflow interaction node conversations.
  *
@@ -66,11 +98,11 @@ export class InteractionService {
   private sessions = new Map<string, InteractionSessionInfo>()
 
   constructor(
-    private db: Database.Database,
     private messageDao: InteractionMessageDAO,
     private tokenDao: TokenUsageDAO,
     private execDao: ExecutionDAO,
     private sse: SSEService,
+    private onCompleteInteraction: CompleteInteractionFn,
   ) {}
 
   /** Build session key from execution + node IDs. */
@@ -92,8 +124,9 @@ export class InteractionService {
       return { sessionId: existing.sessionId, initialPrompt: existing.initialPrompt }
     }
 
-    // Find the node execution row to get nodeExecutionId
-    const nodeExecId = `${params.executionId}-${params.nodeId}`
+    // Look up the real node execution ID from DB
+    const nodeExecRow = this.execDao.findNodeExecution(params.executionId, params.nodeId)
+    const nodeExecId = nodeExecRow?.id ?? `${params.executionId}-${params.nodeId}`
 
     const session: InteractionSessionInfo = {
       sessionId: randomUUID(),
@@ -137,14 +170,12 @@ export class InteractionService {
       return
     }
 
-    // Check max rounds
+    // Check max round
     session.currentRound++
     if (session.currentRound > session.maxRounds) {
       yield { type: "error", code: "MAX_ROUNDS", message: "Maximum conversation rounds reached" }
       return
     }
-
-    const now = new Date().toISOString()
 
     // Save user message
     this.messageDao.insertMessage({
@@ -155,28 +186,14 @@ export class InteractionService {
       type: "text",
       content: params.content,
       metadata: JSON.stringify({ displayType: "user" }),
-      created_at: now,
+      created_at: new Date().toISOString(),
     })
 
-    // Get the provider
-    const agent: IAgentProvider = getProvider("claude")
-    const agentDir = getAgentDir()
-
-    // Build send options
-    let fullText = ""
-    let assistantMessageId = ""
-    let thinkingContent = ""
-    let thinkingMessageId = ""
-    let thinkingStartTime = 0
-    let currentTokens: TokenUsage | undefined
-    let currentCostUsd: number | undefined
-    const toolCallMap = new Map<string, { dbId: string; toolName: string; startTime: number }>()
-    let completionDetected: { summary: string; vars_update?: Record<string, unknown> } | null = null
+    const acc = new StreamAccumulator()
 
     // Create assistant message placeholder
-    assistantMessageId = randomUUID()
     this.messageDao.insertMessage({
-      id: assistantMessageId,
+      id: acc.assistantMessageId,
       execution_id: params.executionId,
       node_id: params.nodeId,
       role: "assistant",
@@ -186,6 +203,10 @@ export class InteractionService {
       created_at: new Date().toISOString(),
     })
 
+    // Get the provider and start streaming
+    const agent: IAgentProvider = getProvider("claude")
+    const agentDir = getAgentDir()
+
     try {
       const chunkStream = agent.sendQuery(params.content, params.cwd, session.providerSessionId, {
         systemPrompt: { type: "preset", preset: "claude_code", append: INTERACTION_SYSTEM_PROMPT },
@@ -194,24 +215,7 @@ export class InteractionService {
       })
 
       for await (const chunk of chunkStream) {
-        const events = this.processChunk(chunk, {
-          session,
-          getFullText: () => fullText,
-          setFullText: (v: string) => { fullText = v },
-          getAssistantMessageId: () => assistantMessageId,
-          getThinkingContent: () => thinkingContent,
-          setThinkingContent: (v: string) => { thinkingContent = v },
-          getThinkingMessageId: () => thinkingMessageId,
-          setThinkingMessageId: (v: string) => { thinkingMessageId = v },
-          getThinkingStartTime: () => thinkingStartTime,
-          setThinkingStartTime: (v: number) => { thinkingStartTime = v },
-          toolCallMap,
-          setCompletion: (c: { summary: string; vars_update?: Record<string, unknown> }) => { completionDetected = c },
-          setProviderSessionId: (id: string) => { session.providerSessionId = id },
-          setTokens: (t: TokenUsage) => { currentTokens = t },
-          setCost: (c: number) => { currentCostUsd = c },
-        })
-
+        const events = this.processChunk(chunk, session, acc)
         for (const event of events) {
           yield event
         }
@@ -225,242 +229,46 @@ export class InteractionService {
       return
     }
 
-    // Save final assistant text if non-empty
-    if (fullText) {
-      this.db.prepare(
-        "UPDATE interaction_messages SET content = ?, metadata = ? WHERE id = ?"
-      ).run(fullText, JSON.stringify({
-        displayType: "text",
-        tokens: currentTokens,
-        costUsd: currentCostUsd,
-      }), assistantMessageId)
-    }
-
-    // Write token usage
-    if (currentTokens) {
-      this.tokenDao.insert({
-        id: randomUUID(),
-        node_execution_id: session.nodeExecutionId,
-        model: "claude-sonnet-4-20250514",
-        input_tokens: currentTokens.input ?? 0,
-        output_tokens: currentTokens.output ?? 0,
-        cost_usd: currentCostUsd ?? null,
-        cache_read_tokens: currentTokens.cacheRead ?? 0,
-        cache_creation_tokens: currentTokens.cacheCreation ?? 0,
-        created_at: new Date().toISOString(),
-      })
-    }
+    // Finalize: save assistant text, write token usage + llm_calls
+    this.finalizeAssistantMessage(acc, session)
+    this.writeTokenUsage(acc, session)
+    this.writeLlmCall(acc, session)
 
     // Yield final result event
     yield {
       type: "result",
       sessionId: session.sessionId,
-      tokens: currentTokens,
-      costUsd: currentCostUsd,
+      tokens: acc.tokens,
+      costUsd: acc.costUsd,
     }
 
     // Check for completion (tool call path or text fallback)
-    if (completionDetected) {
+    const completion = acc.completionDetected ?? this.tryExtractCompletion(acc.fullText)
+    if (completion) {
       // Record interaction_completed event
       this.insertAgentEvent(session.nodeExecutionId, "interaction_completed", {
-        summary: completionDetected.summary,
+        summary: completion.summary,
       })
 
-      // Trigger workflow completion
-      yield { type: "interaction_complete", summary: completionDetected.summary, vars_update: completionDetected.vars_update }
+      yield { type: "interaction_complete", summary: completion.summary, vars_update: completion.vars_update }
 
       // Clean up session
       this.sessions.delete(k)
 
-      // Call ExecutionLifecycle.completeInteraction via SSE to trigger engine resume
-      // The route handler will catch this and call the lifecycle method
-    } else if (fullText) {
-      // Fallback: try to extract completion from text
-      const extracted = extractInteractionCompletion(fullText)
-      if (extracted) {
-        this.insertAgentEvent(session.nodeExecutionId, "interaction_completed", {
-          summary: extracted.summary,
-        })
-        yield { type: "interaction_complete", summary: extracted.summary, vars_update: extracted.vars_update }
-        this.sessions.delete(k)
+      // Call ExecutionLifecycle.completeInteraction via the injected callback
+      try {
+        await this.onCompleteInteraction(
+          session.workspaceId,
+          session.executionId,
+          session.nodeId,
+          completion.summary,
+          completion.vars_update,
+        )
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.error("[interaction] completeInteraction failed:", err)
       }
     }
-  }
-
-  /**
-   * Process a single MessageChunk into SSE events and side effects.
-   */
-  private processChunk(
-    chunk: MessageChunk,
-    ctx: {
-      session: InteractionSessionInfo
-      getFullText: () => string
-      setFullText: (v: string) => void
-      getAssistantMessageId: () => string
-      getThinkingContent: () => string
-      setThinkingContent: (v: string) => void
-      getThinkingMessageId: () => string
-      setThinkingMessageId: (v: string) => void
-      getThinkingStartTime: () => number
-      setThinkingStartTime: (v: number) => void
-      toolCallMap: Map<string, { dbId: string; toolName: string; startTime: number }>
-      setCompletion: (c: { summary: string; vars_update?: Record<string, unknown> }) => void
-      setProviderSessionId: (id: string) => void
-      setTokens: (t: TokenUsage) => void
-      setCost: (c: number) => void
-    },
-  ): InteractionSSEEvent[] {
-    const events: InteractionSSEEvent[] = []
-    const { session } = ctx
-
-    switch (chunk.type) {
-      case "text_delta":
-        ctx.setFullText(ctx.getFullText() + chunk.content)
-        events.push({ type: "text_delta", content: chunk.content, sessionId: session.sessionId })
-        break
-
-      case "message_start":
-        events.push({ type: "message_start", messageId: chunk.messageId, sessionId: session.sessionId })
-        break
-
-      case "thinking_start":
-        ctx.setThinkingStartTime(Date.now())
-        ctx.setThinkingMessageId(randomUUID())
-        // Save thinking message placeholder
-        this.messageDao.insertMessage({
-          id: ctx.getThinkingMessageId(),
-          execution_id: session.executionId,
-          node_id: session.nodeId,
-          role: "assistant",
-          type: "thinking",
-          content: "",
-          metadata: null,
-          created_at: new Date().toISOString(),
-        })
-        events.push({ type: "thinking_start", sessionId: session.sessionId })
-        break
-
-      case "thinking":
-        ctx.setThinkingContent(ctx.getThinkingContent() + chunk.content)
-        events.push({ type: "thinking", content: chunk.content, sessionId: session.sessionId })
-        break
-
-      case "thinking_done": {
-        const duration = chunk.thinkingDuration ?? `${Date.now() - ctx.getThinkingStartTime()}ms`
-        if (ctx.getThinkingMessageId() && ctx.getThinkingContent()) {
-          this.db.prepare(
-            "UPDATE interaction_messages SET content = ?, metadata = ? WHERE id = ?"
-          ).run(ctx.getThinkingContent(), JSON.stringify({ thinkingDuration: duration }), ctx.getThinkingMessageId())
-        }
-        events.push({ type: "thinking_done", thinkingDuration: duration, sessionId: session.sessionId })
-        break
-      }
-
-      case "tool_call_start": {
-        const toolDbId = randomUUID()
-        ctx.toolCallMap.set(chunk.toolCallId, { dbId: toolDbId, toolName: chunk.toolName, startTime: Date.now() })
-        this.messageDao.insertMessage({
-          id: toolDbId,
-          execution_id: session.executionId,
-          node_id: session.nodeId,
-          role: "assistant",
-          type: "tool_call",
-          content: chunk.toolName,
-          metadata: JSON.stringify({
-            toolCallId: chunk.toolCallId,
-            toolName: chunk.toolName,
-            toolStatus: "running",
-            displayType: "tool_call",
-          }),
-          created_at: new Date().toISOString(),
-        })
-        events.push({ type: "tool_call_start", toolCallId: chunk.toolCallId, toolName: chunk.toolName, sessionId: session.sessionId })
-        break
-      }
-
-      case "tool_call": {
-        const info = ctx.toolCallMap.get(chunk.toolCallId)
-        if (info) {
-          const existing = this.messageDao.findMessageById(info.dbId)
-          if (existing) {
-            const meta = JSON.parse(existing.metadata ?? "{}")
-            meta.toolInput = chunk.toolInput
-            this.messageDao.updateMessageMetadata(info.dbId, JSON.stringify(meta))
-          }
-        }
-        events.push({ type: "tool_call", toolCallId: chunk.toolCallId, toolInput: chunk.toolInput, sessionId: session.sessionId })
-        break
-      }
-
-      case "tool_result": {
-        const info = ctx.toolCallMap.get(chunk.toolCallId)
-        if (info) {
-          const existing = this.messageDao.findMessageById(info.dbId)
-          if (existing) {
-            const meta = JSON.parse(existing.metadata ?? "{}")
-            meta.toolStatus = chunk.isError ? "error" : "done"
-            meta.toolResult = chunk.result
-            meta.toolDuration = `${Date.now() - info.startTime}ms`
-            this.messageDao.updateMessageMetadata(info.dbId, JSON.stringify(meta))
-          }
-        }
-        events.push({ type: "tool_result", toolCallId: chunk.toolCallId, result: chunk.result, isError: chunk.isError, sessionId: session.sessionId })
-        break
-      }
-
-      case "ask_user_question": {
-        // Update the tool_call message with question data
-        const info = ctx.toolCallMap.get(chunk.toolCallId)
-        if (info) {
-          const existing = this.messageDao.findMessageById(info.dbId)
-          if (existing) {
-            const meta = JSON.parse(existing.metadata ?? "{}")
-            meta.displayType = "ask_user_question"
-            meta.questions = chunk.questions
-            this.messageDao.updateMessageMetadata(info.dbId, JSON.stringify(meta))
-          }
-        }
-        // Record event
-        this.insertAgentEvent(session.nodeExecutionId, "interaction_ask_user_question", {
-          questions: chunk.questions,
-        })
-        events.push({ type: "ask_user_question", toolCallId: chunk.toolCallId, questions: chunk.questions, sessionId: session.sessionId })
-        break
-      }
-
-      case "complete_interaction": {
-        ctx.setCompletion({
-          summary: chunk.summary,
-          vars_update: chunk.vars_update,
-        })
-        events.push({ type: "complete_interaction", summary: chunk.summary, sessionId: session.sessionId })
-        break
-      }
-
-      case "result": {
-        if (chunk.sessionId) ctx.setProviderSessionId(chunk.sessionId)
-        if (chunk.tokens) ctx.setTokens(chunk.tokens)
-        if (chunk.costUsd !== undefined) ctx.setCost(chunk.costUsd)
-        // Don't yield result here — we yield it after the loop
-        break
-      }
-
-      case "error":
-        events.push({ type: "error", code: chunk.code, message: chunk.message, sessionId: session.sessionId })
-        break
-
-      case "local_command_output":
-        ctx.setFullText(ctx.getFullText() + chunk.content + "\n")
-        events.push({ type: "local_command_output", content: chunk.content, sessionId: session.sessionId })
-        break
-
-      default:
-        // Pass through other chunk types
-        events.push({ type: chunk.type, sessionId: session.sessionId, ...chunk } as InteractionSSEEvent)
-        break
-    }
-
-    return events
   }
 
   /**
@@ -487,16 +295,42 @@ export class InteractionService {
 
   /**
    * Force complete an interaction (admin/timeout).
+   * Persists a completion message, writes an agent event, and returns
+   * completion data for the route handler to call completeInteraction.
    */
   forceComplete(params: {
     executionId: string
     nodeId: string
     summary: string
     varsUpdate?: Record<string, unknown>
-  }): { ok: boolean } {
+  }): { ok: boolean; summary: string; vars_update?: Record<string, unknown> } {
     const k = this.key(params.executionId, params.nodeId)
+    const session = this.sessions.get(k)
+    const nodeExecId = session?.nodeExecutionId ?? `${params.executionId}-${params.nodeId}`
+
+    // Persist completion message to interaction_messages
+    this.messageDao.insertMessage({
+      id: randomUUID(),
+      execution_id: params.executionId,
+      node_id: params.nodeId,
+      role: "system",
+      type: "text",
+      content: params.summary,
+      metadata: JSON.stringify({ displayType: "force_complete", vars_update: params.varsUpdate }),
+      created_at: new Date().toISOString(),
+    })
+
+    // Write agent event for the completion
+    this.insertAgentEvent(nodeExecId, "interaction_completed", {
+      summary: params.summary,
+      vars_update: params.varsUpdate,
+      source: "force_complete",
+    })
+
+    // Clean up in-memory session
     this.sessions.delete(k)
-    return { ok: true }
+
+    return { ok: true, summary: params.summary, vars_update: params.varsUpdate }
   }
 
   /**
@@ -506,17 +340,318 @@ export class InteractionService {
     this.sessions.delete(this.key(executionId, nodeId))
   }
 
-  /** Helper: insert an agent event for interaction milestones. */
+  // ── Private: Stream chunk dispatch ────────────────────────────────
+
+  /**
+   * Process a single MessageChunk into SSE events and side effects.
+   * Dispatches to type-specific handler methods.
+   */
+  private processChunk(
+    chunk: MessageChunk,
+    session: InteractionSessionInfo,
+    acc: StreamAccumulator,
+  ): InteractionSSEEvent[] {
+    switch (chunk.type) {
+      case "text_delta":       return this.handleTextDelta(chunk, session, acc)
+      case "message_start":    return this.handleMessageStart(chunk, session)
+      case "thinking_start":   return this.handleThinkingStart(chunk, session, acc)
+      case "thinking":         return this.handleThinking(chunk, session, acc)
+      case "thinking_done":    return this.handleThinkingDone(chunk, session, acc)
+      case "tool_call_start":  return this.handleToolCallStart(chunk, session, acc)
+      case "tool_call":        return this.handleToolCall(chunk, session, acc)
+      case "tool_result":      return this.handleToolResult(chunk, session, acc)
+      case "ask_user_question": return this.handleAskUserQuestion(chunk, session, acc)
+      case "complete_interaction": return this.handleCompleteInteraction(chunk, session, acc)
+      case "result":           return this.handleResult(chunk, session, acc)
+      case "error":            return this.handleError(chunk, session)
+      case "local_command_output": return this.handleLocalCommandOutput(chunk, session, acc)
+      default:                 return this.handleDefault(chunk, session)
+    }
+  }
+
+  // ── Private: Chunk type handlers ──────────────────────────────────
+
+  private handleTextDelta(
+    chunk: MessageChunk,
+    session: InteractionSessionInfo,
+    acc: StreamAccumulator,
+  ): InteractionSSEEvent[] {
+    acc.fullText += chunk.content
+    return [{ type: "text_delta", content: chunk.content, sessionId: session.sessionId }]
+  }
+
+  private handleMessageStart(
+    chunk: MessageChunk,
+    session: InteractionSessionInfo,
+  ): InteractionSSEEvent[] {
+    return [{ type: "message_start", messageId: chunk.messageId, sessionId: session.sessionId }]
+  }
+
+  private handleThinkingStart(
+    _chunk: MessageChunk,
+    session: InteractionSessionInfo,
+    acc: StreamAccumulator,
+  ): InteractionSSEEvent[] {
+    acc.thinkingStartTime = Date.now()
+    acc.thinkingMessageId = randomUUID()
+    this.messageDao.insertMessage({
+      id: acc.thinkingMessageId,
+      execution_id: session.executionId,
+      node_id: session.nodeId,
+      role: "assistant",
+      type: "thinking",
+      content: "",
+      metadata: null,
+      created_at: new Date().toISOString(),
+    })
+    return [{ type: "thinking_start", sessionId: session.sessionId }]
+  }
+
+  private handleThinking(
+    chunk: MessageChunk,
+    session: InteractionSessionInfo,
+    acc: StreamAccumulator,
+  ): InteractionSSEEvent[] {
+    acc.thinkingContent += chunk.content
+    return [{ type: "thinking", content: chunk.content, sessionId: session.sessionId }]
+  }
+
+  private handleThinkingDone(
+    chunk: MessageChunk,
+    session: InteractionSessionInfo,
+    acc: StreamAccumulator,
+  ): InteractionSSEEvent[] {
+    const duration = chunk.thinkingDuration ?? `${Date.now() - acc.thinkingStartTime}ms`
+    if (acc.thinkingMessageId && acc.thinkingContent) {
+      this.messageDao.updateMessageContentAndMetadata(
+        acc.thinkingMessageId,
+        acc.thinkingContent,
+        JSON.stringify({ thinkingDuration: duration }),
+      )
+    }
+    return [{ type: "thinking_done", thinkingDuration: duration, sessionId: session.sessionId }]
+  }
+
+  private handleToolCallStart(
+    chunk: MessageChunk,
+    session: InteractionSessionInfo,
+    acc: StreamAccumulator,
+  ): InteractionSSEEvent[] {
+    const toolDbId = randomUUID()
+    acc.toolCallMap.set(chunk.toolCallId, { dbId: toolDbId, toolName: chunk.toolName, startTime: Date.now() })
+    this.messageDao.insertMessage({
+      id: toolDbId,
+      execution_id: session.executionId,
+      node_id: session.nodeId,
+      role: "assistant",
+      type: "tool_call",
+      content: chunk.toolName,
+      metadata: JSON.stringify({
+        toolCallId: chunk.toolCallId,
+        toolName: chunk.toolName,
+        toolStatus: "running",
+        displayType: "tool_call",
+      }),
+      created_at: new Date().toISOString(),
+    })
+    return [{ type: "tool_call_start", toolCallId: chunk.toolCallId, toolName: chunk.toolName, sessionId: session.sessionId }]
+  }
+
+  private handleToolCall(
+    chunk: MessageChunk,
+    _session: InteractionSessionInfo,
+    acc: StreamAccumulator,
+  ): InteractionSSEEvent[] {
+    const info = acc.toolCallMap.get(chunk.toolCallId)
+    if (info) {
+      const existing = this.messageDao.findMessageById(info.dbId)
+      if (existing) {
+        this.messageDao.updateMessageMetadata(
+          info.dbId,
+          mergeMetadata(existing.metadata, { toolInput: chunk.toolInput }),
+        )
+      }
+    }
+    return [{ type: "tool_call", toolCallId: chunk.toolCallId, toolInput: chunk.toolInput, sessionId: _session.sessionId }]
+  }
+
+  private handleToolResult(
+    chunk: MessageChunk,
+    _session: InteractionSessionInfo,
+    acc: StreamAccumulator,
+  ): InteractionSSEEvent[] {
+    const info = acc.toolCallMap.get(chunk.toolCallId)
+    if (info) {
+      const existing = this.messageDao.findMessageById(info.dbId)
+      if (existing) {
+        this.messageDao.updateMessageMetadata(
+          info.dbId,
+          mergeMetadata(existing.metadata, {
+            toolStatus: chunk.isError ? "error" : "done",
+            toolResult: chunk.result,
+            toolDuration: `${Date.now() - info.startTime}ms`,
+          }),
+        )
+      }
+    }
+    return [{ type: "tool_result", toolCallId: chunk.toolCallId, result: chunk.result, isError: chunk.isError, sessionId: _session.sessionId }]
+  }
+
+  private handleAskUserQuestion(
+    chunk: MessageChunk,
+    session: InteractionSessionInfo,
+    acc: StreamAccumulator,
+  ): InteractionSSEEvent[] {
+    const info = acc.toolCallMap.get(chunk.toolCallId)
+    if (info) {
+      const existing = this.messageDao.findMessageById(info.dbId)
+      if (existing) {
+        this.messageDao.updateMessageMetadata(
+          info.dbId,
+          mergeMetadata(existing.metadata, {
+            displayType: "ask_user_question",
+            questions: chunk.questions,
+          }),
+        )
+      }
+    }
+    this.insertAgentEvent(session.nodeExecutionId, "interaction_ask_user_question", {
+      questions: chunk.questions,
+    })
+    return [{ type: "ask_user_question", toolCallId: chunk.toolCallId, questions: chunk.questions, sessionId: session.sessionId }]
+  }
+
+  private handleCompleteInteraction(
+    chunk: MessageChunk,
+    session: InteractionSessionInfo,
+    acc: StreamAccumulator,
+  ): InteractionSSEEvent[] {
+    acc.completionDetected = {
+      summary: chunk.summary,
+      vars_update: chunk.vars_update,
+    }
+    return [{ type: "complete_interaction", summary: chunk.summary, sessionId: session.sessionId }]
+  }
+
+  private handleResult(
+    chunk: MessageChunk,
+    _session: InteractionSessionInfo,
+    acc: StreamAccumulator,
+  ): InteractionSSEEvent[] {
+    if (chunk.sessionId) _session.providerSessionId = chunk.sessionId
+    if (chunk.tokens) acc.tokens = chunk.tokens
+    if (chunk.costUsd !== undefined) acc.costUsd = chunk.costUsd
+    // Don't yield result here — we yield it after the loop in sendMessage
+    return []
+  }
+
+  private handleError(
+    chunk: MessageChunk,
+    session: InteractionSessionInfo,
+  ): InteractionSSEEvent[] {
+    return [{ type: "error", code: chunk.code, message: chunk.message, sessionId: session.sessionId }]
+  }
+
+  private handleLocalCommandOutput(
+    chunk: MessageChunk,
+    session: InteractionSessionInfo,
+    acc: StreamAccumulator,
+  ): InteractionSSEEvent[] {
+    acc.fullText += chunk.content + "\n"
+    return [{ type: "local_command_output", content: chunk.content, sessionId: session.sessionId }]
+  }
+
+  private handleDefault(
+    chunk: MessageChunk,
+    session: InteractionSessionInfo,
+  ): InteractionSSEEvent[] {
+    return [{ type: chunk.type, sessionId: session.sessionId, ...chunk } as InteractionSSEEvent]
+  }
+
+  // ── Private: Finalization helpers ─────────────────────────────────
+
+  /** Save the final assistant text if non-empty. */
+  private finalizeAssistantMessage(acc: StreamAccumulator, _session: InteractionSessionInfo): void {
+    if (acc.fullText) {
+      this.messageDao.updateMessageContentAndMetadata(
+        acc.assistantMessageId,
+        acc.fullText,
+        JSON.stringify({
+          displayType: "text",
+          tokens: acc.tokens,
+          costUsd: acc.costUsd,
+        }),
+      )
+    }
+  }
+
+  /** Write aggregated token usage to node_token_usages. */
+  private writeTokenUsage(acc: StreamAccumulator, session: InteractionSessionInfo): void {
+    if (!acc.tokens) return
+    this.tokenDao.insert({
+      id: randomUUID(),
+      node_execution_id: session.nodeExecutionId,
+      model: "claude-sonnet-4-20250514",
+      input_tokens: acc.tokens.input ?? 0,
+      output_tokens: acc.tokens.output ?? 0,
+      cost_usd: acc.costUsd ?? null,
+      cache_read_tokens: acc.tokens.cacheRead ?? 0,
+      cache_creation_tokens: acc.tokens.cacheCreation ?? 0,
+      created_at: new Date().toISOString(),
+    })
+  }
+
+  /** Write per-call details to llm_calls table. */
+  private writeLlmCall(acc: StreamAccumulator, session: InteractionSessionInfo): void {
+    if (!acc.tokens) return
+    const now = Date.now()
+    const llmCallRow: LlmCallRow = {
+      id: randomUUID(),
+      node_execution_id: session.nodeExecutionId,
+      execution_id: session.executionId,
+      turn_index: session.currentRound,
+      call_index: 0,
+      message_id: acc.assistantMessageId,
+      model: "claude-sonnet-4-20250514",
+      stop_reason: acc.completionDetected ? "end_turn" : null,
+      timestamp: acc.llmCallStartTime,
+      duration_ms: now - acc.llmCallStartTime,
+      ttft_ms: null,
+      input_tokens: acc.tokens.input ?? 0,
+      output_tokens: acc.tokens.output ?? 0,
+      cache_read_tokens: acc.tokens.cacheRead ?? 0,
+      cache_creation_tokens: acc.tokens.cacheCreation ?? 0,
+      cost_usd: acc.costUsd ?? null,
+      org: null,
+      workspace_id: session.workspaceId,
+      workflow_ref: null,
+      node_id: session.nodeId,
+      session_id: session.providerSessionId ?? null,
+      instance_id: null,
+    }
+    this.tokenDao.insertLlmCall(llmCallRow)
+  }
+
+  /** Try to extract completion from full text as a fallback. */
+  private tryExtractCompletion(fullText: string): { summary: string; vars_update?: Record<string, unknown> } | null {
+    if (!fullText) return null
+    return extractInteractionCompletion(fullText) ?? null
+  }
+
+  // ── Private: Agent event helper ───────────────────────────────────
+
+  /** Insert an agent event for interaction milestones. */
   private insertAgentEvent(nodeExecutionId: string, eventType: string, content: unknown): void {
     try {
+      const contentStr = JSON.stringify(content)
       const row: AgentEventRow = {
         node_execution_id: nodeExecutionId,
         event_order: Date.now(),
         turn_index: 0,
         event_type: eventType,
         timestamp: Date.now(),
-        content: JSON.stringify(content),
-        content_length: JSON.stringify(content).length,
+        content: contentStr,
+        content_length: contentStr.length,
         tool_call_id: null,
         tool_name: null,
         tool_input: null,

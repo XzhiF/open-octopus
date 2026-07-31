@@ -11,14 +11,14 @@ Query and control workflow executions via the Workflow Ops API.
 
 ## API Base URL
 
-All endpoints are relative to: `/api/workspaces/{workspaceId}/workflows/ops`
+All endpoints are relative to: `/api/workspaces/{workspaceId}/workflows`
 
 ## Endpoints
 
 ### List Executions
 
 ```
-GET /api/workspaces/{workspaceId}/workflows/ops/executions
+GET /api/workspaces/{workspaceId}/workflows/executions
 Query: ?status=running|completed|failed|pending_interaction|cancelled
 Response: { "executions": [...] }
 ```
@@ -28,7 +28,7 @@ Returns all executions for the workspace. Filter by status to see only running o
 ### Get Execution Status
 
 ```
-GET /api/workspaces/{workspaceId}/workflows/ops/executions/{executionId}/status
+GET /api/workspaces/{workspaceId}/workflows/executions/{executionId}/status
 Response: {
   "status": "running" | "completed" | "failed" | "pending_interaction" | ...,
   "progress": 0-100,
@@ -44,7 +44,7 @@ Response: {
 ### Abort Execution
 
 ```
-POST /api/workspaces/{workspaceId}/workflows/ops/executions/{executionId}/abort
+POST /api/workspaces/{workspaceId}/workflows/executions/{executionId}/abort
 Response: { "ok": true }
 ```
 
@@ -53,7 +53,7 @@ Stops a running execution. Returns error if execution is already terminal.
 ### Get Node Events
 
 ```
-GET /api/workspaces/{workspaceId}/workflows/ops/executions/{executionId}/nodes/{nodeId}/events
+GET /api/workspaces/{workspaceId}/workflows/executions/{executionId}/nodes/{nodeId}/events
 Response: { "events": [...] }
 ```
 

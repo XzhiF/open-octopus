@@ -66,6 +66,13 @@ export class InteractionMessageDAO extends BaseDAO {
   }
 
   /**
+   * Update message content and metadata together.
+   */
+  updateMessageContentAndMetadata(id: string, content: string, metadata: string): Database.RunResult {
+    return this.stmt("UPDATE interaction_messages SET content = ?, metadata = ? WHERE id = ?").run(content, metadata, id)
+  }
+
+  /**
    * Update message metadata (JSON string).
    */
   updateMessageMetadata(id: string, metadata: string): Database.RunResult {

@@ -103,6 +103,12 @@ export class ExecutionDAO extends BaseDAO {
     return this.stmt("SELECT * FROM node_executions WHERE execution_id = ? ORDER BY id").all(executionId) as NodeExecutionRow[]
   }
 
+  findNodeExecution(executionId: string, nodeId: string): NodeExecutionRow | null {
+    return (this.stmt(
+      "SELECT * FROM node_executions WHERE execution_id = ? AND node_id = ? LIMIT 1"
+    ).get(executionId, nodeId) as NodeExecutionRow) ?? null
+  }
+
   findNodeOutputs(executionId: string, nodeId: string): Record<string, unknown> | null {
     const row = this.stmt(
       "SELECT outputs FROM node_executions WHERE execution_id = ? AND node_id = ? AND status = 'completed' ORDER BY completed_at DESC LIMIT 1"
