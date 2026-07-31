@@ -188,11 +188,28 @@ export function useInteractionStream({
         oldestCreatedAtRef.current = dbMessages[0].timestamp
       }
 
-      // Prepend older messages (avoid duplicates by id)
+      // Prepend older messages (avoid duplicates by id, and deduplicate
+      // optimistic user messages that match DB user messages by content)
       setMessages(prev => {
         const existingIds = new Set(prev.map(m => m.id))
-        const newMessages = dbMessages.filter(m => !existingIds.has(m.id))
-        return [...newMessages, ...prev]
+        const optimisticUserContents = new Set(
+          prev.filter(m => m.id.startsWith("user-")).map(m => m.content)
+        )
+        const newMessages = dbMessages.filter(m => {
+          if (existingIds.has(m.id)) return false
+          // Replace optimistic user message with DB version
+          if (m.role === "user" && optimisticUserContents.has(m.content)) {
+            optimisticUserContents.delete(m.content) // only remove one
+            return false
+          }
+          return true
+        })
+        // Remove optimistic user messages that have DB equivalents
+        const cleanedPrev = prev.filter(m => {
+          if (!m.id.startsWith("user-")) return true
+          return !dbMessages.some(db => db.role === "user" && db.content === m.content)
+        })
+        return [...newMessages, ...cleanedPrev]
       })
     } catch {
       // Non-fatal — history loading failure is not critical
