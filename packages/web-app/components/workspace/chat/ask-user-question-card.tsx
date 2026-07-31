@@ -30,14 +30,23 @@ function parseQuestions(input: unknown): QuestionItem[] {
   return questions as QuestionItem[]
 }
 
-function formatAnswerContent(questions: QuestionItem[], answers: Record<number, string | string[]>): string {
+function formatAnswerContent(questions: QuestionItem[], answers: Record<number, string | string[]>, otherInputs: Record<string, string>): string {
   const lines: string[] = ["用户回答了以下问题：", ""]
   questions.forEach((q, i) => {
     const answer = answers[i]
     if (!answer || (Array.isArray(answer) && answer.length === 0)) return
     const header = q.header
     const question = q.question
-    const value = Array.isArray(answer) ? answer.join(", ") : answer
+    let value: string
+    if (Array.isArray(answer)) {
+      value = answer.join(", ")
+    } else if (answer === "其他") {
+      // Single-select "Other": get text from otherInputs
+      const otherText = otherInputs[`${i}-其他`] ?? ""
+      value = otherText || "其他"
+    } else {
+      value = answer
+    }
     lines.push(`${i + 1}. [${header}] ${question}`)
     lines.push(`   → ${value}`)
     lines.push("")
@@ -61,10 +70,15 @@ export function AskUserQuestionCard({ message, onAnswer, disabled }: AskUserQues
     )
   }
 
-  const allAnswered = questions.every((_, i) => {
+  const allAnswered = questions.every((q, i) => {
     const ans = answers[i]
     if (!ans) return false
     if (Array.isArray(ans)) return ans.length > 0
+    // Single-select "Other" requires text input
+    if (ans === "其他") {
+      const otherText = otherInputs[`${i}-其他`] ?? ""
+      return otherText.trim().length > 0
+    }
     return ans.length > 0
   })
 
@@ -89,9 +103,15 @@ export function AskUserQuestionCard({ message, onAnswer, disabled }: AskUserQues
     if (submitted || disabled) return
     const key = `${qIndex}-${optionLabel}`
     setOtherInputs(prev => ({ ...prev, [key]: value }))
+    // For single-select: answers[qIndex] stays as "其他" (the radio selection).
+    // The text is stored only in otherInputs. Modifying answers here would change
+    // the RadioGroup value from "其他" to an array, unmounting the Input and
+    // causing focus loss on every keystroke.
+    // For multi-select: append/update the text in the array (existing behavior).
+    const raw = answers[qIndex]
+    if (!Array.isArray(raw)) return // single-select: no answers mutation needed
     setAnswers(prev => {
-      const raw = prev[qIndex]
-      const current = Array.isArray(raw) ? raw : []
+      const current = Array.isArray(prev[qIndex]) ? prev[qIndex] as string[] : []
       const cleaned = current.filter(v => !v.startsWith(optionLabel + ": "))
       if (value.trim()) {
         return { ...prev, [qIndex]: [...cleaned, `${optionLabel}: ${value.trim()}`] }
@@ -102,7 +122,7 @@ export function AskUserQuestionCard({ message, onAnswer, disabled }: AskUserQues
 
   const handleSubmit = () => {
     if (!allAnswered || submitted || disabled) return
-    const content = formatAnswerContent(questions, answers)
+    const content = formatAnswerContent(questions, answers, otherInputs)
     setSubmitted(true)
     onAnswer(content)
   }

@@ -34,13 +34,22 @@ function parseQuestions(input: unknown): QuestionItem[] {
 
 function formatAnswerContent(
   questions: QuestionItem[],
-  answers: Record<number, string | string[]>
+  answers: Record<number, string | string[]>,
+  otherInputs: Record<string, string>
 ): string {
   const lines: string[] = ["用户回答了以下问题：", ""]
   questions.forEach((q, i) => {
     const answer = answers[i]
     if (!answer || (Array.isArray(answer) && answer.length === 0)) return
-    const value = Array.isArray(answer) ? answer.join(", ") : answer
+    let value: string
+    if (Array.isArray(answer)) {
+      value = answer.join(", ")
+    } else if (answer === "其他") {
+      const otherText = otherInputs[`${i}-其他`] ?? ""
+      value = otherText || "其他"
+    } else {
+      value = answer
+    }
     lines.push(`${i + 1}. [${q.header}] ${q.question}`)
     lines.push(`   → ${value}`)
     lines.push("")
@@ -96,10 +105,14 @@ export function QuestionCard({ message, onAnswer, disabled }: QuestionCardProps)
     )
   }
 
-  const allAnswered = questions.every((_, i) => {
+  const allAnswered = questions.every((q, i) => {
     const ans = answers[i]
     if (!ans) return false
     if (Array.isArray(ans)) return ans.length > 0
+    if (ans === "其他") {
+      const otherText = otherInputs[`${i}-其他`] ?? ""
+      return otherText.trim().length > 0
+    }
     return true
   })
 
@@ -124,9 +137,14 @@ export function QuestionCard({ message, onAnswer, disabled }: QuestionCardProps)
     if (phase !== "ready") return
     const key = `${qIndex}-${optionLabel}`
     setOtherInputs(prev => ({ ...prev, [key]: value }))
+    // For single-select: answers[qIndex] stays as the radio selection value.
+    // The text is stored only in otherInputs. Modifying answers here would change
+    // the RadioGroup value, unmounting the Input and causing focus loss.
+    // For multi-select: append/update the text in the array (existing behavior).
+    const raw = answers[qIndex]
+    if (!Array.isArray(raw)) return
     setAnswers(prev => {
-      const raw = prev[qIndex]
-      const current = Array.isArray(raw) ? raw : []
+      const current = Array.isArray(prev[qIndex]) ? prev[qIndex] as string[] : []
       const cleaned = current.filter(v => !v.startsWith(optionLabel + ": "))
       if (value.trim()) {
         return { ...prev, [qIndex]: [...cleaned, `${optionLabel}: ${value.trim()}`] }
@@ -137,7 +155,7 @@ export function QuestionCard({ message, onAnswer, disabled }: QuestionCardProps)
 
   const handleSubmit = () => {
     if (!allAnswered || phase !== "ready") return
-    const content = formatAnswerContent(questions, answers)
+    const content = formatAnswerContent(questions, answers, otherInputs)
     setSubmitted(true)
     onAnswer(content)
   }
