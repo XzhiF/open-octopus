@@ -772,15 +772,48 @@ export class ExecutionLifecycle {
     id: string,
     nodeId: string,
     workspaceId: string,
-  ): Promise<{ sessionId: string; display: string }> {
+  ): Promise<{ sessionId: string; display: string; initialPrompt?: string }> {
     const exec = this.dao.findById(id)
     if (!exec) throw Object.assign(new Error("Execution not found"), { status: 404 })
     if (exec.status !== "pending_interaction") throw Object.assign(new Error("执行不在交互状态"), { status: 400 })
 
-    // Find the interaction node definition from the workflow
-    const workflowDef = exec.workflow_def ? JSON.parse(exec.workflow_def) : null
-    const nodeDef = workflowDef ? findNodeDef(workflowDef, nodeId) : null
+    // Read workflow YAML and find the interaction node's prompt
+    const workflowContent = this.getWorkflowContent(id)
+    let nodeDef: any = null
+    let initialPrompt: string | undefined
+    if (workflowContent) {
+      try {
+        const yaml = await import("js-yaml")
+        const workflow = yaml.load(workflowContent) as any
+        if (workflow?.nodes) {
+          nodeDef = workflow.nodes.find((n: any) => n.id === nodeId)
+        }
+      } catch { /* ignore parse errors */ }
+    }
+
     const display = nodeDef?.interaction_display ?? "modal"
+
+    // Resolve the initial prompt with variable substitution
+    if (nodeDef?.interaction_agent?.prompt) {
+      initialPrompt = nodeDef.interaction_agent.prompt
+      // Basic variable substitution for $inputs.* and $vars.*
+      if (exec.input_values) {
+        try {
+          const inputs = JSON.parse(exec.input_values)
+          for (const [k, v] of Object.entries(inputs)) {
+            initialPrompt = initialPrompt.replace(new RegExp(`\\$inputs\\.${k}`, "g"), String(v))
+          }
+        } catch { /* ignore */ }
+      }
+      if (exec.var_pool) {
+        try {
+          const vars = JSON.parse(exec.var_pool)
+          for (const [k, v] of Object.entries(vars)) {
+            initialPrompt = initialPrompt.replace(new RegExp(`\\$vars\\.${k}`, "g"), String(v))
+          }
+        } catch { /* ignore */ }
+      }
+    }
 
     const chatDAO = new ChatDAO(this.dao.getDb())
     const chatBridge = new ChatBridge(chatDAO)
@@ -804,7 +837,12 @@ export class ExecutionLifecycle {
       timeout: nodeDef?.interaction_timeout,
     })
 
-    return { sessionId: session.id, display }
+    // Persist interaction metadata for frontend polling
+    this.dao.updateExecution(id, {
+      interaction_metadata: JSON.stringify({ nodeId, sessionId: session.id, display, maxRounds: nodeDef?.interaction_max_rounds ?? 20 }),
+    })
+
+    return { sessionId: session.id, display, initialPrompt }
   }
 
   // ==================== Interaction Complete ====================

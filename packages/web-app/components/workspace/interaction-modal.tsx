@@ -101,6 +101,10 @@ export function InteractionModal({
         const data = await res.json()
         if (!cancelled) {
           setSessionId(data.sessionId)
+          // Auto-send the initial prompt to kick off the agent conversation
+          if (data.initialPrompt && data.sessionId) {
+            sendInitialPrompt(data.sessionId, data.initialPrompt)
+          }
         }
       } catch (err) {
         toast.error("Failed to start interaction session")
@@ -110,6 +114,61 @@ export function InteractionModal({
     startSession()
     return () => { cancelled = true }
   }, [open, executionId, nodeId, workspaceId])
+
+  // Send the initial prompt as the first message to the chat session
+  const sendInitialPrompt = async (sid: string, prompt: string) => {
+    setStreaming(true)
+    // Add a system-like message showing the prompt context
+    setMessages([{ role: "assistant", content: "正在启动对话..." }])
+
+    abortRef.current = new AbortController()
+    try {
+      const res = await fetch(`${getServerUrl()}/api/workspaces/${workspaceId}/chat/sessions/${sid}/messages`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content: prompt }),
+        signal: abortRef.current.signal,
+      })
+
+      if (!res.ok || !res.body) throw new Error("Failed to send initial message")
+
+      // Parse SSE stream for assistant response
+      const reader = res.body.getReader()
+      const decoder = new TextDecoder()
+      let assistantText = ""
+      // Replace placeholder with real assistant message
+      setMessages([{ role: "assistant", content: "" }])
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        const chunk = decoder.decode(value, { stream: true })
+        const lines = chunk.split("\n")
+        for (const line of lines) {
+          if (line.startsWith("data: ")) {
+            try {
+              const d = JSON.parse(line.slice(6))
+              if (d.type === "text_delta" && d.content) {
+                assistantText += d.content
+                setMessages([{ role: "assistant", content: assistantText }])
+              }
+              if (d.type === "result" && d.content) {
+                assistantText = d.content
+                setMessages([{ role: "assistant", content: assistantText }])
+              }
+            } catch { /* ignore */ }
+          }
+        }
+      }
+    } catch (err) {
+      if (err instanceof Error && err.name !== "AbortError") {
+        toast.error("Failed to start agent conversation")
+      }
+    } finally {
+      setStreaming(false)
+      abortRef.current = null
+    }
+  }
 
   // Listen for interaction completion via workspace SSE
   useEffect(() => {
