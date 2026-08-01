@@ -477,8 +477,10 @@ export function useChatStream(
 
   const sendMessage = useCallback(async (content: string): Promise<string> => {
     let sessionId: string | null = activeSessionId
+    let isNewSession = false
 
     if (!sessionId) {
+      isNewSession = true
       const res = await fetch(`${getServerUrl()}${apiBase}/sessions`, { method: "POST" })
       const session = await res.json()
       sessionId = session.id as string
@@ -614,11 +616,11 @@ export function useChatStream(
         }
       }
 
-      // Use ref to avoid stale closure — sessions state may not reflect
-      // the session we just created inside this callback.
-      const session = sessionsRef.current.find(s => s.id === resolvedSessionId)
-      if (session && !session.title) {
-        fetch(`${getServerUrl()}${apiBase}/sessions/${resolvedSessionId}/generate-title`, { method: "POST" })
+      // Generate title for new sessions (first message).
+      // Delay slightly to ensure server has persisted the assistant message.
+      if (isNewSession) {
+        setTimeout(() => {
+          fetch(`${getServerUrl()}${apiBase}/sessions/${resolvedSessionId}/generate-title`, { method: "POST" })
           .then(r => r.json())
           .then(d => {
             if (d.title) {
@@ -628,6 +630,7 @@ export function useChatStream(
             }
           })
           .catch(() => {})
+        }, 1000)
       }
       return resolvedSessionId
     } catch (err) {

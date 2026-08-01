@@ -204,7 +204,7 @@ export function ChatPanel({
           if (shouldHideAfterCard(msg, idx, answeringState)) return null
           return (
             <MessageBubble
-              key={msg.id}
+              key={`${msg.id}-${msg.displayType}`}
               message={msg}
               isStreaming={isStreaming && (
                 msg.displayType === "text" && msg.id === messages[messages.length - 1]?.id
