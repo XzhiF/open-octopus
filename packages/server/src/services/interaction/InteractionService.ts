@@ -132,7 +132,7 @@ export class InteractionService {
     // Return existing session if already tracked (e.g., page refresh)
     const existing = this.sessions.get(k)
     if (existing) {
-      return { sessionId: existing.sessionId }
+      return { sessionId: existing.sessionId, initialPrompt: existing.initialPrompt }
     }
 
     // Look up the real node execution ID from DB
