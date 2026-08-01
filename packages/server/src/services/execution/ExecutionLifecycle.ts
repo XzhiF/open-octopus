@@ -853,7 +853,10 @@ export class ExecutionLifecycle {
       this.enginePool.create(id, inst.engine, inst.abortController)
     }
 
-    this.updateNodeStatus(neId, "completed", { completed_at: new Date().toISOString() })
+    // Compute duration from started_at to now
+    const startedAt = ne.started_at ? new Date(ne.started_at).getTime() : Date.now()
+    const durationMs = Date.now() - startedAt
+    this.updateNodeStatus(neId, "completed", { completed_at: new Date().toISOString(), duration: durationMs })
     this.updateStatus(id, "running")
 
     this.sse.emit(this.workspaceId, {

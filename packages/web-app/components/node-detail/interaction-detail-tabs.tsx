@@ -41,9 +41,9 @@ export function InteractionDetailTabs({
   const [loading, setLoading] = useState(false)
   const [activeTab, setActiveTab] = useState("conversation")
 
-  // Load messages when conversation tab is active
+  // Load messages when conversation or result tab is active
   useEffect(() => {
-    if (activeTab !== "conversation" || !nodeId) return
+    if ((activeTab !== "conversation" && activeTab !== "result") || !nodeId) return
     let cancelled = false
 
     const load = async () => {
@@ -56,7 +56,9 @@ export function InteractionDetailTabs({
         const rows: InteractionMessageRow[] = await res.json()
         if (cancelled) return
 
-        const converted: ChatMessage[] = rows.map(row => {
+        const converted: ChatMessage[] = rows
+          .filter(row => !(row.role === "assistant" && row.type === "text" && !row.content))
+          .map(row => {
           let meta: Record<string, unknown> = {}
           try { meta = JSON.parse(row.metadata ?? "{}") } catch { /* ignore */ }
 
@@ -93,12 +95,12 @@ export function InteractionDetailTabs({
     return () => { cancelled = true }
   }, [activeTab, nodeId, workspaceId, executionId])
 
-  // Parse result data from step output
-  const resultData = parseResultData(step?.output)
+  // Parse result data from step output or last assistant message
+  const resultData = parseResultData(step?.output, messages)
 
   return (
-    <Tabs value={activeTab} onValueChange={setActiveTab}>
-      <TabsList className="w-full rounded-none h-8 bg-transparent border-b px-2">
+    <Tabs value={activeTab} onValueChange={setActiveTab} className="flex flex-col h-full">
+      <TabsList className="w-full rounded-none h-8 bg-transparent border-b px-2 shrink-0">
         <TabsTrigger value="conversation" className="text-xs">
           对话记录 {messages.length > 0 && `(${messages.length})`}
         </TabsTrigger>
@@ -111,7 +113,7 @@ export function InteractionDetailTabs({
       </TabsList>
 
       {/* Tab 1: Conversation */}
-      <TabsContent value="conversation" className="m-0 flex-1 overflow-auto p-3">
+      <TabsContent value="conversation" className="m-0 flex-1 min-h-0 overflow-auto p-3">
         {loading ? (
           <div className="text-xs text-muted-foreground text-center py-8">加载中...</div>
         ) : messages.length === 0 ? (
@@ -131,7 +133,7 @@ export function InteractionDetailTabs({
       </TabsContent>
 
       {/* Tab 2: Trace */}
-      <TabsContent value="trace" className="m-0 p-3">
+      <TabsContent value="trace" className="m-0 flex-1 min-h-0 overflow-auto p-3">
         <div className="space-y-3">
           {step?.tokenUsages && step.tokenUsages.length > 0 ? (
             <div>
@@ -141,11 +143,11 @@ export function InteractionDetailTabs({
                   <div key={idx} className="bg-muted rounded p-2 text-xs">
                     <div className="font-medium">{usage.model ?? "unknown"}</div>
                     <div className="text-muted-foreground">
-                      Input: {usage.input?.toLocaleString() ?? 0} · Output: {usage.output?.toLocaleString() ?? 0}
+                      Input: {(usage.inputTokens ?? 0).toLocaleString()} · Output: {(usage.outputTokens ?? 0).toLocaleString()}
                     </div>
-                    {usage.cacheRead ? (
+                    {usage.cacheReadTokens ? (
                       <div className="text-muted-foreground">
-                        Cache Read: {usage.cacheRead.toLocaleString()}
+                        Cache Read: {usage.cacheReadTokens.toLocaleString()}
                       </div>
                     ) : null}
                   </div>
@@ -170,17 +172,24 @@ export function InteractionDetailTabs({
               )}
             </div>
           )}
-          {step?.duration !== undefined && (
-            <div className="bg-muted rounded p-2 text-xs">
-              <div className="text-muted-foreground">Duration</div>
-              <div className="font-medium">{step.duration.toFixed(1)}s</div>
-            </div>
-          )}
+          {(() => {
+            const dur = step?.duration && step.duration > 0
+              ? step.duration
+              : step?.startedAt && step?.completedAt
+                ? (new Date(step.completedAt).getTime() - new Date(step.startedAt).getTime()) / 1000
+                : null
+            return dur != null && dur > 0 ? (
+              <div className="bg-muted rounded p-2 text-xs">
+                <div className="text-muted-foreground">Duration</div>
+                <div className="font-medium">{dur.toFixed(1)}s</div>
+              </div>
+            ) : null
+          })()}
         </div>
       </TabsContent>
 
       {/* Tab 3: Result */}
-      <TabsContent value="result" className="m-0 p-3">
+      <TabsContent value="result" className="m-0 flex-1 min-h-0 overflow-auto p-3">
         <div className="space-y-3">
           {resultData.summary ? (
             <div>
@@ -221,37 +230,51 @@ export function InteractionDetailTabs({
   )
 }
 
-/** Parse result data from step output (may contain JSON with summary + vars_update). */
-function parseResultData(output?: string): {
+/** Parse result data from step output or last assistant message containing completion JSON. */
+function parseResultData(output?: string, messages?: ChatMessage[]): {
   summary?: string
   varsUpdate?: Record<string, unknown>
 } {
-  if (!output) return {}
+  // Try step output first
+  if (output) {
+    const fromOutput = extractCompletionJson(output)
+    if (fromOutput) return fromOutput
+  }
 
-  // Try to find JSON with summary/vars_update
-  const jsonMatch = output.match(/```json\s*([\s\S]*?)\s*```/)
+  // Fall back to last assistant message with completion JSON
+  if (messages) {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const msg = messages[i]
+      if (msg.role === "assistant" && msg.content) {
+        const fromMsg = extractCompletionJson(msg.content)
+        if (fromMsg) return fromMsg
+      }
+    }
+  }
+
+  return {}
+}
+
+/** Extract summary/vars_update from text containing JSON code fence or direct JSON. */
+function extractCompletionJson(text: string): { summary?: string; varsUpdate?: Record<string, unknown> } | null {
+  // Try code fence
+  const jsonMatch = text.match(/```json\s*([\s\S]*?)\s*```/)
   if (jsonMatch) {
     try {
       const parsed = JSON.parse(jsonMatch[1])
       if (parsed.summary || parsed.vars_update) {
-        return {
-          summary: parsed.summary,
-          varsUpdate: parsed.vars_update,
-        }
+        return { summary: parsed.summary, varsUpdate: parsed.vars_update }
       }
     } catch { /* ignore */ }
   }
 
   // Try direct JSON parse
   try {
-    const parsed = JSON.parse(output)
+    const parsed = JSON.parse(text)
     if (parsed.summary || parsed.vars_update) {
-      return {
-        summary: parsed.summary,
-        varsUpdate: parsed.vars_update,
-      }
+      return { summary: parsed.summary, varsUpdate: parsed.vars_update }
     }
   } catch { /* ignore */ }
 
-  return {}
+  return null
 }

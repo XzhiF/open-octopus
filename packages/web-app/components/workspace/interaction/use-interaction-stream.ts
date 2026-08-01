@@ -179,8 +179,10 @@ export function useInteractionStream({
         setHasMoreMessages(false)
       }
 
-      // Convert DB rows to ChatMessage
-      const dbMessages: ChatMessage[] = rows.map(row => {
+      // Convert DB rows to ChatMessage (filter out empty assistant placeholders)
+      const dbMessages: ChatMessage[] = rows
+        .filter(row => !(row.role === "assistant" && row.type === "text" && !row.content))
+        .map(row => {
         let meta: Record<string, unknown> = {}
         try { meta = JSON.parse(row.metadata ?? "{}") } catch { /* ignore */ }
 

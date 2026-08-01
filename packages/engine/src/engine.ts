@@ -493,6 +493,9 @@ export class WorkflowEngine {
       const result = await executor.execute()
       this.nodeResults[pauseNode.id] = result
 
+      // Fire onNodeEnd callback so outputs/tokens are persisted to DB
+      this.callbacks?.onNodeEnd?.(pauseNode.id, result.status, result.durationMs ?? 0, result, pauseNode.type)
+
       if (result.status !== "completed") {
         const durationMs = Date.now() - start
         return {

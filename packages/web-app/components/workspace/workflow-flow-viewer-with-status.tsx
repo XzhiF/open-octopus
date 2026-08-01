@@ -139,10 +139,16 @@ export function WorkflowFlowViewerWithStatus({
         }
       }
 
+      // Compute duration: prefer step.duration, fall back to startedAt/completedAt
+      let effectiveDuration = step?.duration
+      if (step && (!effectiveDuration || effectiveDuration <= 0) && step.startedAt && step.completedAt) {
+        effectiveDuration = (new Date(step.completedAt).getTime() - new Date(step.startedAt).getTime()) / 1000
+      }
+
       const statusOverlay: StatusOverlay | undefined = step
         ? {
             stepStatus: step.status,
-            duration: step.duration,
+            duration: effectiveDuration,
             startedAt: step.startedAt,
             error: step.error,
             tokenUsage: ((step.tokensInput ?? 0) > 0 || (step.tokensOutput ?? 0) > 0)

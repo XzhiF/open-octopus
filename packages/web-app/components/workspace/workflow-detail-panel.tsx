@@ -286,6 +286,7 @@ export function WorkflowDetailPanel({ execution, workflow, workspaceId }: Workfl
   function getExecutorType(step: StepExecution | undefined, nodeType?: string): string | undefined {
     if (!step) return undefined
     if (nodeType === "swarm") return "swarm"
+    if (nodeType === "interaction") return "interaction"
     if (step.model) return "agent"
     const name = step.stepName?.toLowerCase() ?? ""
     if (name.includes("bash")) return "bash"
