@@ -10,6 +10,8 @@ interface UseInteractionStreamOptions {
   workspaceId: string
   executionId: string
   nodeId: string
+  /** Gate: only reset+load when the backend session is created. */
+  ready?: boolean
 }
 
 interface UseInteractionStreamReturn {
@@ -33,6 +35,7 @@ export function useInteractionStream({
   workspaceId,
   executionId,
   nodeId,
+  ready = true,
 }: UseInteractionStreamOptions): UseInteractionStreamReturn {
   const syntheticSessionId = `${executionId}-${nodeId}`
 
@@ -216,9 +219,11 @@ export function useInteractionStream({
     }
   }, [apiBase, syntheticSessionId])
 
-  // Reset all state and reload when switching to a different node/execution
+  // Reset all state and reload when switching to a different node/execution.
+  // Only fires after the backend session is created (ready=true).
   const loadedRef = useRef<string | null>(null)
   useEffect(() => {
+    if (!ready) return
     loadedRef.current = syntheticSessionId
     setMessages([])
     setIsStreaming(false)
@@ -229,7 +234,7 @@ export function useInteractionStream({
     oldestCreatedAtRef.current = null
     // Load messages for the new session (after reset, guaranteed order)
     loadMoreMessages()
-  }, [syntheticSessionId, loadMoreMessages])
+  }, [syntheticSessionId, loadMoreMessages, ready])
 
   return {
     messages,

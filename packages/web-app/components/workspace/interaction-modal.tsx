@@ -57,7 +57,8 @@ export function InteractionModal({
   }, [nodeKey])
 
   // Use the interaction stream hook — handles all SSE chunk types
-  const interaction = useInteractionStream({ workspaceId, executionId, nodeId })
+  // Only activate after backend session is created (sessionReady=true)
+  const interaction = useInteractionStream({ workspaceId, executionId, nodeId, ready: sessionReady })
 
   // Create interaction session when modal opens (only once per execution+node)
   useEffect(() => {
