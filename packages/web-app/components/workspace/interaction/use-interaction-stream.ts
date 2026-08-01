@@ -46,10 +46,9 @@ export function useInteractionStream({
   const abortRef = useRef<AbortController | null>(null)
   const oldestCreatedAtRef = useRef<string | null>(null)
 
-  // Reset all state when switching to a different node/execution
+  // Reset all state and reload when switching to a different node/execution
   const loadedRef = useRef<string | null>(null)
   useEffect(() => {
-    if (loadedRef.current === syntheticSessionId) return
     loadedRef.current = syntheticSessionId
     setMessages([])
     setIsStreaming(false)
@@ -58,7 +57,9 @@ export function useInteractionStream({
     setStreamEndState(null)
     setHasMoreMessages(true)
     oldestCreatedAtRef.current = null
-  }, [syntheticSessionId])
+    // Load messages for the new session (after reset, same effect = guaranteed order)
+    loadMoreMessages()
+  }, [syntheticSessionId, loadMoreMessages])
 
   const apiBase = `${getServerUrl()}/api/workspaces/${workspaceId}/interactions/${executionId}/${nodeId}`
 
@@ -229,11 +230,6 @@ export function useInteractionStream({
       // Non-fatal — history loading failure is not critical
     }
   }, [apiBase, syntheticSessionId])
-
-  // Auto-load latest messages on mount and when session changes
-  useEffect(() => {
-    loadMoreMessages()
-  }, [loadMoreMessages])
 
   return {
     messages,
