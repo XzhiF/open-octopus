@@ -46,21 +46,6 @@ export function useInteractionStream({
   const abortRef = useRef<AbortController | null>(null)
   const oldestCreatedAtRef = useRef<string | null>(null)
 
-  // Reset all state and reload when switching to a different node/execution
-  const loadedRef = useRef<string | null>(null)
-  useEffect(() => {
-    loadedRef.current = syntheticSessionId
-    setMessages([])
-    setIsStreaming(false)
-    setStatus(null)
-    setStreamStartMs(null)
-    setStreamEndState(null)
-    setHasMoreMessages(true)
-    oldestCreatedAtRef.current = null
-    // Load messages for the new session (after reset, same effect = guaranteed order)
-    loadMoreMessages()
-  }, [syntheticSessionId, loadMoreMessages])
-
   const apiBase = `${getServerUrl()}/api/workspaces/${workspaceId}/interactions/${executionId}/${nodeId}`
 
   const applyChunk = useCallback((chunk: Record<string, unknown>) => {
@@ -230,6 +215,21 @@ export function useInteractionStream({
       // Non-fatal — history loading failure is not critical
     }
   }, [apiBase, syntheticSessionId])
+
+  // Reset all state and reload when switching to a different node/execution
+  const loadedRef = useRef<string | null>(null)
+  useEffect(() => {
+    loadedRef.current = syntheticSessionId
+    setMessages([])
+    setIsStreaming(false)
+    setStatus(null)
+    setStreamStartMs(null)
+    setStreamEndState(null)
+    setHasMoreMessages(true)
+    oldestCreatedAtRef.current = null
+    // Load messages for the new session (after reset, guaranteed order)
+    loadMoreMessages()
+  }, [syntheticSessionId, loadMoreMessages])
 
   return {
     messages,
