@@ -39,6 +39,12 @@ export function useInteractionStream({
 }: UseInteractionStreamOptions): UseInteractionStreamReturn {
   const syntheticSessionId = `${executionId}-${nodeId}`
 
+  // Ref to track current session ID for use in async guards
+  const syntheticSessionIdRef = useRef(syntheticSessionId)
+  useEffect(() => {
+    syntheticSessionIdRef.current = syntheticSessionId
+  }, [syntheticSessionId])
+
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [isStreaming, setIsStreaming] = useState(false)
   const [status, setStatus] = useState<"compacting" | "requesting" | null>(null)
@@ -78,10 +84,13 @@ export function useInteractionStream({
     const controller = new AbortController()
     abortRef.current = controller
 
+    // Capture session ID at call time — if it changes (node switch), ignore chunks
+    const callSessionId = syntheticSessionId
+
     // Optimistically add user message
     const userMsg: ChatMessage = {
       id: `user-${Date.now()}`,
-      sessionId: syntheticSessionId,
+      sessionId: callSessionId,
       role: "user",
       displayType: "user",
       content,
@@ -94,6 +103,12 @@ export function useInteractionStream({
     setStatus("requesting")
 
     let wasAborted = false
+
+    // Wrap applyChunk with session guard — ignore chunks from stale streams
+    const guardedApplyChunk = (chunk: Record<string, unknown>) => {
+      if (callSessionId !== syntheticSessionIdRef.current) return
+      applyChunk(chunk)
+    }
 
     try {
       const res = await fetch(`${apiBase}/messages`, {
@@ -112,7 +127,7 @@ export function useInteractionStream({
       if (!reader) throw new Error("无法读取响应流")
 
       setStatus(null)
-      await parseSSEStream(reader, applyChunk)
+      await parseSSEStream(reader, guardedApplyChunk)
     } catch (err) {
       if ((err as Error).name === "AbortError") {
         wasAborted = true
@@ -120,17 +135,20 @@ export function useInteractionStream({
         toast.error(err instanceof Error ? err.message : "发送消息失败")
       }
     } finally {
-      // Convert AskUserQuestion tool_calls to ask_user_question display type
-      setMessages(prev => prev.map(m => {
-        if (m.displayType === "tool_call" && m.toolName === "AskUserQuestion" && m.toolStatus === "done") {
-          return { ...m, displayType: "ask_user_question" as const }
-        }
-        return m
-      }))
+      // Only update state if we're still on the same session
+      if (callSessionId === syntheticSessionIdRef.current) {
+        // Convert AskUserQuestion tool_calls to ask_user_question display type
+        setMessages(prev => prev.map(m => {
+          if (m.displayType === "tool_call" && m.toolName === "AskUserQuestion" && m.toolStatus === "done") {
+            return { ...m, displayType: "ask_user_question" as const }
+          }
+          return m
+        }))
 
-      setIsStreaming(false)
-      setStatus(null)
-      setStreamEndState(wasAborted ? "aborted" : "done")
+        setIsStreaming(false)
+        setStatus(null)
+        setStreamEndState(wasAborted ? "aborted" : "done")
+      }
       abortRef.current = null
     }
   }, [isStreaming, syntheticSessionId, apiBase, applyChunk])
@@ -221,8 +239,10 @@ export function useInteractionStream({
 
   // Reset all state when switching to a different node/execution.
   // Triggers on syntheticSessionId change — the definitive signal for a new node.
-  // Messages are loaded separately via loadMoreMessages after session is ready.
+  // Also aborts any in-flight stream from the previous node.
   useEffect(() => {
+    // Abort previous stream to prevent old node's chunks polluting new node's messages
+    abortRef.current?.abort()
     setMessages([])
     setIsStreaming(false)
     setStatus(null)
