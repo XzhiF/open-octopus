@@ -219,12 +219,10 @@ export function useInteractionStream({
     }
   }, [apiBase, syntheticSessionId])
 
-  // Reset all state and reload when switching to a different node/execution.
-  // Only fires after the backend session is created (ready=true).
-  const loadedRef = useRef<string | null>(null)
+  // Reset all state when switching to a different node/execution.
+  // Triggers on syntheticSessionId change — the definitive signal for a new node.
+  // Messages are loaded separately via loadMoreMessages after session is ready.
   useEffect(() => {
-    if (!ready) return
-    loadedRef.current = syntheticSessionId
     setMessages([])
     setIsStreaming(false)
     setStatus(null)
@@ -232,9 +230,14 @@ export function useInteractionStream({
     setStreamEndState(null)
     setHasMoreMessages(true)
     oldestCreatedAtRef.current = null
-    // Load messages for the new session (after reset, guaranteed order)
+  }, [syntheticSessionId])
+
+  // Load messages from DB when session becomes ready (after /start completes).
+  // Separate from reset to avoid overwriting optimistic messages from sendMessage.
+  useEffect(() => {
+    if (!ready) return
     loadMoreMessages()
-  }, [syntheticSessionId, loadMoreMessages, ready])
+  }, [ready, loadMoreMessages])
 
   return {
     messages,
