@@ -343,9 +343,15 @@ const wsSvc = workspaceService ?? new WorkspaceService(d.workspace)
 const chatSvc = chatService ?? new ChatService(d.chat, sse)
 const lbSvc = leaderboardService ?? new LeaderboardService(d.tokenUsage)
 const schedSvc = new SchedulerService(d.scheduleConfig, d.scheduleRun)
-const interactionSvc = new InteractionService(d.interactionMessage, d.tokenUsage, d.execution, sse, async (workspaceId, execId, nodeId, summary, varsUpdate) => {
+const interactionSvc = new InteractionService(d.interactionMessage, d.tokenUsage, d.execution, sse, async (workspaceId, execId, nodeId, summary, varsUpdate, providerSessionId) => {
   const entry = getExecutionService(workspaceId)
-  if (entry) await entry.service.completeInteraction(execId, nodeId, summary, varsUpdate)
+  if (entry) {
+    // Save provider session ID to execution's global_session_id for context continuity
+    if (providerSessionId) {
+      d.execution.updateExecution(execId, { global_session_id: providerSessionId } as any)
+    }
+    await entry.service.completeInteraction(execId, nodeId, summary, varsUpdate)
+  }
 })
 
 // In test mode, also initialize agent singletons with lazy proxy DAOs
@@ -372,7 +378,7 @@ app.route("/api/workspaces/:id/analytics", createAnalyticsLogRoutes(d.workspace,
 app.route("/api/dashboard", createDashboardRoutes(wsSvc, lbSvc, d.execution, d.tokenUsage, d.archive))
 app.route("/api/workspaces/:id/chat", chatRoutes(sse, chatSvc, wsSvc))
 app.route("/api/chat/global", globalChatRoutes(sse, chatSvc))
-app.route("/api/workspaces/:id/interactions", createInteractionRoutes(interactionSvc, d.workspace))
+app.route("/api/workspaces/:id/interactions", createInteractionRoutes(interactionSvc, d.workspace, d.execution))
 app.route("/api/workspaces/:id/files", createFileRoutes(d.workspace))
 app.route("/api/workspaces/:id/events", eventRoutes(sse))
 app.route("/api/workspaces", createPipelineRoutes(d.workspace))

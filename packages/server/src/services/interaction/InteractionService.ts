@@ -25,6 +25,7 @@ export type CompleteInteractionFn = (
   nodeId: string,
   summary: string,
   varsUpdate?: Record<string, unknown>,
+  providerSessionId?: string,
 ) => Promise<void>
 
 /** In-memory tracking for an active interaction session. */
@@ -60,6 +61,10 @@ interface StartParams {
   initialPrompt?: string
   maxRounds?: number
   timeout?: number
+  /** Shared workflow session for context continuity across nodes. */
+  globalSessionId?: string
+  /** "continue" (default) = reuse globalSessionId; "new" = fresh provider session. */
+  context?: "continue" | "new"
 }
 
 /** Accumulator for stream processing state. */
@@ -145,8 +150,16 @@ export class InteractionService {
         initialPrompt = extracted.prompt
         if (extracted.maxRounds) maxRounds = extracted.maxRounds
         if (extracted.display) display = extracted.display
+        if (extracted.context) params.context = extracted.context
       }
     }
+
+    // Determine provider session: "continue" (default) shares the workflow's
+    // global session for context continuity; "new" creates a fresh session.
+    const context = params.context ?? "continue"
+    const providerSessionId = (context !== "new" && params.globalSessionId)
+      ? params.globalSessionId
+      : undefined
 
     const session: InteractionSessionInfo = {
       sessionId: randomUUID(),
@@ -156,6 +169,7 @@ export class InteractionService {
       display,
       maxRounds,
       currentRound: 0,
+      providerSessionId,
       nodeExecutionId: nodeExecId,
       startedAt: Date.now(),
       timeout: params.timeout,
@@ -181,7 +195,7 @@ export class InteractionService {
     workspacePath: string,
     executionId: string,
     nodeId: string,
-  ): { prompt?: string; maxRounds?: number; display?: string } | null {
+  ): { prompt?: string; maxRounds?: number; display?: string; context?: "continue" | "new" } | null {
     const exec = this.execDao.findById(executionId)
     if (!exec) return null
 
@@ -200,9 +214,10 @@ export class InteractionService {
       const nodeDef = workflow.nodes.find((n: any) => n.id === nodeId)
       if (!nodeDef) return null
 
-      const result: { prompt?: string; maxRounds?: number; display?: string } = {}
+      const result: { prompt?: string; maxRounds?: number; display?: string; context?: "continue" | "new" } = {}
       result.display = nodeDef.interaction_display ?? "modal"
       result.maxRounds = nodeDef.interaction_max_rounds
+      result.context = nodeDef.context ?? "continue"
 
       if (nodeDef.interaction_agent?.prompt) {
         let prompt = nodeDef.interaction_agent.prompt as string
@@ -359,6 +374,7 @@ export class InteractionService {
           session.nodeId,
           completion.summary,
           completion.vars_update,
+          session.providerSessionId,
         )
       } catch (err) {
         // eslint-disable-next-line no-console

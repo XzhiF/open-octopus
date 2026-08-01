@@ -10,6 +10,7 @@ import os from "os"
 import type { InteractionService } from "../services/interaction/InteractionService"
 import { getExecutionService } from "../services/execution-service-registry"
 import { WorkspaceDAO } from "../db/dao/workspace-dao"
+import { ExecutionDAO } from "../db/dao/execution-dao"
 
 /**
  * Create interaction route factory.
@@ -18,6 +19,7 @@ import { WorkspaceDAO } from "../db/dao/workspace-dao"
 export function createInteractionRoutes(
   interactionService: InteractionService,
   workspaceDao: WorkspaceDAO,
+  executionDao: ExecutionDAO,
 ): Hono {
   const router = new Hono()
 
@@ -35,6 +37,10 @@ export function createInteractionRoutes(
       return c.json({ error: "Workspace not found" }, 404)
     }
 
+    // Look up execution for globalSessionId
+    const exec = executionDao.findById(execId)
+    const globalSessionId = exec?.global_session_id ?? undefined
+
     try {
       const body = await c.req.json().catch(() => ({})) as Record<string, unknown>
       const result = interactionService.startInteraction({
@@ -46,6 +52,8 @@ export function createInteractionRoutes(
         initialPrompt: body.initialPrompt as string | undefined,
         maxRounds: body.maxRounds as number | undefined,
         timeout: body.timeout as number | undefined,
+        globalSessionId,
+        context: (body.context as "continue" | "new") ?? undefined,
       })
 
       return c.json({ sessionId: result.sessionId, initialPrompt: result.initialPrompt }, 201)
