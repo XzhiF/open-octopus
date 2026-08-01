@@ -83,7 +83,6 @@ export function InteractionModal({
         )
         if (!res.ok) throw new Error("Failed to start interaction session")
         const data = await res.json()
-        console.log('[DEBUG-b7c3] /start response:', { hasSessionId: !!data.sessionId, hasPrompt: !!data.initialPrompt, promptLen: data.initialPrompt?.length })
         if (!cancelled) {
           sessionCreatedRef.current = key
           setSessionReady(true)
@@ -101,14 +100,12 @@ export function InteractionModal({
   // Send initial prompt once session is ready and not streaming
   const promptSentRef = useRef<string | null>(null)
   useEffect(() => {
-    console.log('[DEBUG-b7c3] prompt effect:', { sessionReady, hasPrompt: !!initialPrompt, promptKey: `${executionId}-${nodeId}`, sentRef: promptSentRef.current, isStreaming: interaction.isStreaming })
     if (!sessionReady || !initialPrompt) return
     const promptKey = `${executionId}-${nodeId}`
     if (promptSentRef.current === promptKey) return
     if (interaction.isStreaming) return
 
     promptSentRef.current = promptKey
-    console.log('[DEBUG-b7c3] SENDING prompt for', promptKey)
     const messageContent = `[系统指令 - 以下是你在本次交互中的角色和任务]\n\n${initialPrompt}\n\n[请根据以上指令开始与用户对话]`
     interaction.sendMessage(messageContent).catch(() => {
       toast.error("Failed to start agent conversation")
