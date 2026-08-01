@@ -49,12 +49,16 @@ export function InteractionModal({
   const [confirmOpen, setConfirmOpen] = useState(false)
   const sessionCreatedRef = useRef<string | null>(null)
 
-  // Reset modal state when switching to a different node
+  // CRITICAL: Reset sessionReady synchronously during render when node changes.
+  // This prevents the prompt send effect from firing with stale sessionReady=true
+  // before the async useEffect reset has a chance to run.
   const nodeKey = `${executionId}-${nodeId}`
-  useEffect(() => {
+  const prevNodeKeyRef = useRef(nodeKey)
+  if (prevNodeKeyRef.current !== nodeKey) {
+    prevNodeKeyRef.current = nodeKey
     setSessionReady(false)
     setInitialPrompt(null)
-  }, [nodeKey])
+  }
 
   // Use the interaction stream hook — handles all SSE chunk types
   // Only activate after backend session is created (sessionReady=true)
