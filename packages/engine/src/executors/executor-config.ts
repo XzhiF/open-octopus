@@ -164,6 +164,9 @@ export interface SubWorkflowConfig extends CoreConfig {
   workflowResolver?: (name: string) => { parsed: import("@octopus/shared").WorkflowDef; content: string } | undefined
   /** Visited workflow names for recursion detection */
   visitedWorkflows?: Set<string>
+  /** Creates a separate execution record for linked-mode child workflows.
+   *  Returns the new execution ID. If not provided, linked mode falls back to inline with a warning. */
+  createChildExecution?: (workflowName: string, parentExecutionId: string) => Promise<{ executionId: string }>
 }
 
 /** ResumeConfig — used alongside LoopConfig for resume-from-approval flows */

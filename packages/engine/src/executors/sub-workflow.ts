@@ -75,6 +75,23 @@ export class SubWorkflowExecutor implements NodeExecutor {
 
     logLines.push(`Resolved sub-workflow: ${workflowName} (${executionMode} mode)`)
 
+    // Linked mode: create a separate execution record for independent audit trails
+    let linkedExecutionId: string | undefined
+    if (executionMode === "linked") {
+      if (this.config.createChildExecution && this.config.executionId) {
+        try {
+          const linked = await this.config.createChildExecution(workflowName, this.config.executionId)
+          linkedExecutionId = linked.executionId
+          logLines.push(`Linked mode: created child execution ${linkedExecutionId}`)
+        } catch (err: unknown) {
+          const msg = err instanceof Error ? err.message : String(err)
+          logLines.push(`Linked mode: createChildExecution failed — ${msg}, falling back to inline`)
+        }
+      } else {
+        logLines.push("Linked mode: createChildExecution not available, falling back to inline mode")
+      }
+    }
+
     // Create scoped child VarPool
     const childPool = new VarPool()
 
@@ -135,7 +152,7 @@ export class SubWorkflowExecutor implements NodeExecutor {
         this.config.cwd, // orgDir
         childCallbacks,
         this.config.signal,
-        this.config.executionId ? `${this.config.executionId}-${workflowName}` : undefined,
+        linkedExecutionId ?? (this.config.executionId ? `${this.config.executionId}-${workflowName}` : undefined),
         this.config.inputs,
         undefined, // executionName
         undefined, // crossExecResolver — child does not inherit parent's cross-exec resolver
@@ -249,11 +266,17 @@ export class SubWorkflowExecutor implements NodeExecutor {
     const prefix = `[${workflowName}]`
     return {
       onNodeStart: (nodeId: string, nodeType: string) => {
+        const prefixedId = `${workflowName}:${nodeId}`
         logLines.push(`${prefix} node_start: ${nodeId} (${nodeType})`)
+        // Propagate to parent SSE layer with prefixed node ID so event panel shows {name}:{node}
+        this.config.callbacks?.onNodeStart?.(prefixedId, nodeType)
         this.config.callbacks?.onNodeLog?.(this.node.id, `${prefix} node_start: ${nodeId} (${nodeType})`)
       },
-      onNodeEnd: (nodeId: string, status: string, durationMs: number) => {
+      onNodeEnd: (nodeId: string, status: string, durationMs: number, result?: NodeExecutionResult, nodeType?: string) => {
+        const prefixedId = `${workflowName}:${nodeId}`
         logLines.push(`${prefix} node_end: ${nodeId} ${status} (${durationMs}ms)`)
+        // Propagate to parent SSE layer with prefixed node ID
+        this.config.callbacks?.onNodeEnd?.(prefixedId, status, durationMs, result, nodeType)
         this.config.callbacks?.onNodeLog?.(this.node.id, `${prefix} node_end: ${nodeId} ${status} (${durationMs}ms)`)
       },
       onNodeLog: (_nodeId: string, logLine: string) => {

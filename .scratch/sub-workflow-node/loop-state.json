@@ -1,8 +1,25 @@
 {
   "root_feature": "sub-workflow-node",
   "branch": "feat/sub-workflow-node",
-  "iterations": [],
+  "iterations": [
+    {
+      "round": 1,
+      "feature_slug": "sub-workflow-node",
+      "score": 72,
+      "decision": "REVIEW",
+      "gates_passed": 6,
+      "gates_total": 9,
+      "top_gaps": [
+        "Linked execution_mode not implemented (inline only)",
+        "create-node-dialog missing sub_workflow visual creation",
+        "Error scenario E2E tests missing (on_error: fail/continue)"
+      ],
+      "pr_url": "https://github.com/XzhiF/open-octopus/pull/37",
+      "e2e_results": "22/22 PASS, 2 runs"
+    }
+  ],
   "max_iterations": 5,
   "convergence_threshold": 85,
-  "status": "running"
+  "status": "running",
+  "notes": "Core inline sub_workflow functionality fully verified. Gaps are secondary features (linked mode, visual creation, error paths)."
 }
