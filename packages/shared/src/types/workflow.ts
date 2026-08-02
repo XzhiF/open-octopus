@@ -129,9 +129,27 @@ export const PlanningSchema = z.object({
   disallowed_tools: z.array(z.string()).optional(),
 })
 
+export interface InteractionAgentDef {
+  skills?: string[]
+  prompt?: string
+  model?: string
+  context?: "new" | "continue"
+  goal?: string
+  constraints?: string[]
+}
+
+export const InteractionAgentSchema = z.object({
+  skills: z.array(z.string()).optional(),
+  prompt: z.string().optional(),
+  model: z.string().optional(),
+  context: z.enum(["new", "continue"]).optional(),
+  goal: z.string().optional(),
+  constraints: z.array(z.string()).optional(),
+})
+
 export interface NodeDef {
   id: string
-  type: "bash" | "python" | "agent" | "condition" | "approval" | "loop" | "swarm"
+  type: "bash" | "python" | "agent" | "condition" | "approval" | "loop" | "swarm" | "interaction"
   model?: string
   engine?: string
   timeout?: number
@@ -201,6 +219,13 @@ export interface NodeDef {
   context_token_budget?: number
   context_tier?: "200k" | "1m"
 
+  // interaction
+  interaction_display?: "modal" | "panel"
+  interaction_max_rounds?: number
+  interaction_exit_when?: string
+  interaction_timeout?: number
+  interaction_agent?: InteractionAgentDef
+
   // knowledge
   knowledge_scope?: {
     projects?: string[]
@@ -214,7 +239,7 @@ export interface NodeDef {
 export const NodeSchema: z.ZodType<NodeDef> = z.lazy(() =>
   z.object({
     id: z.string(),
-    type: z.enum(["bash", "python", "agent", "condition", "approval", "loop", "swarm"]),
+    type: z.enum(["bash", "python", "agent", "condition", "approval", "loop", "swarm", "interaction"]),
     model: z.string().optional(),
     engine: z.string().optional(),
     timeout: z.number().int().positive().optional(),
@@ -276,6 +301,13 @@ export const NodeSchema: z.ZodType<NodeDef> = z.lazy(() =>
     context_window_rounds: z.number().int().positive().optional(),
     context_token_budget: z.number().int().positive().optional(),
     context_tier: z.enum(["200k", "1m"]).optional(),
+
+    // interaction
+    interaction_display: z.enum(["modal", "panel"]).optional(),
+    interaction_max_rounds: z.number().int().positive().optional(),
+    interaction_exit_when: z.string().optional(),
+    interaction_timeout: z.number().int().positive().optional(),
+    interaction_agent: InteractionAgentSchema.optional(),
 
     // knowledge
     knowledge_scope: z.object({

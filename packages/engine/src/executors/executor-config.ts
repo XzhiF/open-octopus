@@ -18,7 +18,7 @@ import type { PromptInjector } from "../prompt-injector"
 import type { KnowledgeInjector } from "../knowledge-injector"
 import type { AgentNodeRunner } from "./agent-runner"
 import type { EngineContext } from "./agent"
-import type { InnerNodeOverride, NodeExecutionResult } from "./types"
+import type { InnerNodeOverride, NodeExecutionResult, InteractionMetadata } from "./types"
 
 // ============================================================
 // Callback type aliases (inline function types used across executors)
@@ -84,6 +84,19 @@ export interface ApprovalConfig {
   executionId?: string
   nodeOutputs?: Record<string, Record<string, any>>
   cwd?: string
+}
+
+/** InteractionExecutor — chat-based multi-turn interaction */
+export interface InteractionConfig {
+  completionData?: { summary: string; vars_update?: Record<string, any> }
+  signal?: AbortSignal
+  loopContext?: Record<string, any>
+  crossExecResolver?: CrossExecResolver
+  executionId?: string
+  nodeOutputs?: Record<string, Record<string, any>>
+  cwd?: string
+  sessionId?: string
+  currentRound?: number
 }
 
 /** BashExecutor — logging + variable resolution */

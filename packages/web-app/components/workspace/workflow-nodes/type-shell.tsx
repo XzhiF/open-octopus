@@ -27,6 +27,7 @@ const statusVisualConfig: Record<StepExecutionStatus, { color: string; bgColor: 
   paused: { color: "text-violet-600", bgColor: "bg-violet-50", borderColor: "border-violet-200", label: "已暂停" },
   rejected: { color: "text-orange-600", bgColor: "bg-orange-50", borderColor: "border-orange-200", label: "已拒绝" },
   pending_approval: { color: "text-amber-600", bgColor: "bg-amber-50", borderColor: "border-amber-300", label: "待审批" },
+  pending_interaction: { color: "text-purple-600", bgColor: "bg-purple-50", borderColor: "border-purple-300", label: "交互中" },
 }
 
 const typeTints: Record<string, string> = {
@@ -35,6 +36,7 @@ const typeTints: Record<string, string> = {
   agent: "rgba(168,85,247,0.08)",
   condition: "rgba(245,158,11,0.08)",
   approval: "rgba(16,185,129,0.08)",
+  interaction: "rgba(147,51,234,0.08)",
   loop: "rgba(249,115,22,0.08)",
 }
 

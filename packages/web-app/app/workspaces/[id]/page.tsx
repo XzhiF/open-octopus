@@ -288,7 +288,12 @@ export default function WorkspaceDetailPage({ params }: WorkspaceDetailPageProps
     deleteSession,
     renameSession,
     loadMoreMessages,
-  } = useChatStream(id, activeSessionId)
+  } = useChatStream(id, activeSessionId, {
+    onSessionCreated: (sessionId) => {
+      setActiveSessionId(sessionId)
+      localStorage.setItem(`octopus:ws:${id}:activeSession`, sessionId)
+    },
+  })
   const [showFileTree, setShowFileTree] = useState(true)
   const [showChat, setShowChat] = useState(true)
   const [selectedFile, setSelectedFile] = useState<FileNode | null>(null)

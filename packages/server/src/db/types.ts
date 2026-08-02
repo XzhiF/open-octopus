@@ -42,6 +42,7 @@ export interface ExecutionRow {
   retry_count: number
   pending_hooks: string
   approval_metadata: string | null
+  interaction_metadata: string | null
   resume_attempts: number
   pipeline_config: string
   chain_retry_count: number
@@ -432,6 +433,19 @@ export interface ScheduledJobExecutionRow {
   trigger_type: string
   org: string
   metadata: string | null
+}
+
+// ── Interaction Messages ─────────────────────────────────────────────
+
+export interface InteractionMessageRow {
+  id: string
+  execution_id: string
+  node_id: string
+  role: "user" | "assistant" | "system"
+  type: "text" | "thinking" | "tool_call" | "ask_user_question"
+  content: string
+  metadata: string | null
+  created_at: string
 }
 
 // ── Pagination ──────────────────────────────────────────────────────

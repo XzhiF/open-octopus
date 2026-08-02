@@ -9,6 +9,7 @@ import { BashExecutor } from "./executors/bash"
 import { PythonExecutor } from "./executors/python"
 import { ConditionExecutor } from "./executors/condition"
 import { ApprovalExecutor } from "./executors/approval"
+import { InteractionExecutor } from "./executors/interaction"
 import { LoopExecutor } from "./executors/loop"
 import { AgentExecutor } from "./executors/agent"
 import { SwarmExecutor } from "./executors/swarm"
@@ -35,7 +36,7 @@ import type { PipelineConfig } from "@octopus/shared"
 
 export interface ExecutionResult {
   workflowName: string
-  status: "completed" | "completed_with_failures" | "failed" | "paused" | "cancelled" | "rejected" | "pending_approval"
+  status: "completed" | "completed_with_failures" | "failed" | "paused" | "cancelled" | "rejected" | "pending_approval" | "pending_interaction"
   nodeResults: Record<string, NodeExecutionResult>
   poolSnapshot: Record<string, any>
   durationMs: number
@@ -67,6 +68,7 @@ export class WorkflowEngine {
   private executionId: string
   private pausedAt?: string
   private pendingApprovalNodeId?: string
+  private pendingInteractionNodeId?: string
   private executionMode: "auto" | "serial"
   private maxConcurrent: number | undefined
   // globalSessionId: the workflow's main conversation thread.
@@ -322,9 +324,12 @@ export class WorkflowEngine {
       userComment?: string
       signal?: AbortSignal
       intervention?: string
+      interactionCompletion?: { summary: string; vars_update?: Record<string, any> }
+      interactionSessionId?: string
     }
   ): Promise<ExecutionResult> {
     this.pendingApprovalNodeId = undefined
+    this.pendingInteractionNodeId = undefined
     this.pausedAt = undefined  // ★ 清除暂停状态，允许继续执行
     const start = Date.now()
 
@@ -444,6 +449,52 @@ export class WorkflowEngine {
           durationMs,
         }
       }
+
+      if (result.status !== "completed") {
+        const durationMs = Date.now() - start
+        return {
+          workflowName: this.workflow.name,
+          status: "failed",
+          nodeResults: this.nodeResults,
+          poolSnapshot: this.pool.snapshot(),
+          durationMs,
+        }
+      }
+
+      const remainingNodes = sorted.slice(startIdx + 1)
+      const execResult = await this.executeNodes(remainingNodes, signal, true)
+      const durationMs = Date.now() - start
+      return {
+        workflowName: this.workflow.name,
+        status: execResult.status,
+        nodeResults: this.nodeResults,
+        poolSnapshot: this.pool.snapshot(),
+        durationMs,
+      }
+    }
+
+    // 路径 A2: interaction 恢复 — 重建 interaction executor 注入 completion data
+    if (pauseNode.type === "interaction" && opts?.interactionCompletion) {
+      const nodeOutputs: Record<string, Record<string, any>> = {}
+      for (const [id, result] of Object.entries(this.nodeResults)) {
+        const outputs = { ...(result.outputs ?? {}) }
+        if (result.lastOutput !== undefined) outputs["output"] = result.lastOutput
+        nodeOutputs[id] = outputs
+      }
+      const executor = new InteractionExecutor(pauseNode, this.pool, {
+        completionData: opts.interactionCompletion,
+        signal,
+        crossExecResolver: this.crossExecResolver,
+        executionId: this.executionId,
+        nodeOutputs,
+        cwd: this.cwd,
+        sessionId: opts.interactionSessionId,
+      })
+      const result = await executor.execute()
+      this.nodeResults[pauseNode.id] = result
+
+      // Fire onNodeEnd callback so outputs/tokens are persisted to DB
+      this.callbacks?.onNodeEnd?.(pauseNode.id, result.status, result.durationMs ?? 0, result, pauseNode.type)
 
       if (result.status !== "completed") {
         const durationMs = Date.now() - start
@@ -683,8 +734,8 @@ export class WorkflowEngine {
         })
       }
 
-      // Only log "end" for terminal states — pending_approval/paused are pauses, not endings
-      if (nodeResult.status !== "pending_approval" && nodeResult.status !== "paused") {
+      // Only log "end" for terminal states — pending_approval/pending_interaction/paused are pauses, not endings
+      if (nodeResult.status !== "pending_approval" && nodeResult.status !== "pending_interaction" && nodeResult.status !== "paused") {
         this.logger?.log(node.id, "end", {
           status: nodeResult.status,
           durationMs: nodeResult.durationMs,
@@ -795,7 +846,7 @@ export class WorkflowEngine {
     nodes: NodeDef[],
     signal?: AbortSignal,
     preSorted?: boolean,
-  ): Promise<{ status: "completed" | "completed_with_failures" | "failed" | "paused" | "cancelled" | "pending_approval" }> {
+  ): Promise<{ status: "completed" | "completed_with_failures" | "failed" | "paused" | "cancelled" | "pending_approval" | "pending_interaction" }> {
     // Serial mode: preserve existing sequential behavior exactly
     if (this.executionMode === "serial" || preSorted) {
       return this.executeNodesSequential(nodes, signal, preSorted)
@@ -810,7 +861,7 @@ export class WorkflowEngine {
     nodes: NodeDef[],
     signal?: AbortSignal,
     preSorted?: boolean,
-  ): Promise<{ status: "completed" | "completed_with_failures" | "failed" | "paused" | "cancelled" | "pending_approval" }> {
+  ): Promise<{ status: "completed" | "completed_with_failures" | "failed" | "paused" | "cancelled" | "pending_approval" | "pending_interaction" }> {
     const sorted = preSorted ? nodes : this.topologicalSort(nodes)
     const totalNodes = sorted.length
 
@@ -819,7 +870,7 @@ export class WorkflowEngine {
 
       // Skip nodes that already have a terminal result
       const existingResult = this.nodeResults[node.id]
-      if (existingResult && ["completed", "failed", "skipped", "skipped_failed", "rejected", "cancelled", "paused", "pending_approval"].includes(existingResult.status)) {
+      if (existingResult && ["completed", "failed", "skipped", "skipped_failed", "rejected", "cancelled", "paused", "pending_approval", "pending_interaction"].includes(existingResult.status)) {
         continue
       }
 
@@ -1019,6 +1070,11 @@ export class WorkflowEngine {
         return { status: "pending_approval" as const }
       }
 
+      if (nodeResult.status === "pending_interaction") {
+        this.pendingInteractionNodeId = node.id
+        return { status: "pending_interaction" as const }
+      }
+
       // Condition jumpTo: 跳过中间节点，跳到目标节点
       if (node.type === "condition" && nodeResult.jumpTo) {
         const jumpIdx = sorted.findIndex((n) => n.id === nodeResult.jumpTo)
@@ -1052,7 +1108,7 @@ export class WorkflowEngine {
   private async executeNodesParallel(
     nodes: NodeDef[],
     signal?: AbortSignal,
-  ): Promise<{ status: "completed" | "completed_with_failures" | "failed" | "paused" | "cancelled" | "pending_approval" }> {
+  ): Promise<{ status: "completed" | "completed_with_failures" | "failed" | "paused" | "cancelled" | "pending_approval" | "pending_interaction" }> {
     const levels = this.computeExecutionLevels(nodes)
     const totalNodes = nodes.length
     let completedCount = 0
@@ -1119,7 +1175,7 @@ export class WorkflowEngine {
       for (const node of level) {
         // Skip nodes that already have a terminal result (from previous execution or reconstruction)
         const existingResult = this.nodeResults[node.id]
-        if (existingResult && ["completed", "failed", "skipped", "rejected", "cancelled", "paused", "pending_approval"].includes(existingResult.status)) {
+        if (existingResult && ["completed", "failed", "skipped", "rejected", "cancelled", "paused", "pending_approval", "pending_interaction"].includes(existingResult.status)) {
           completedCount++
           continue
         }
@@ -1390,14 +1446,20 @@ export class WorkflowEngine {
 
         const hasPendingApproval = results.some((r, i) => r.status === "fulfilled" && (r.value as NodeExecutionResult).status === "pending_approval")
         if (hasPendingApproval) {
-          const pendingNode = batch.find((node, i) => {
-            const r = results[i]
-            return r.status === "fulfilled" && (r.value as NodeExecutionResult).status === "pending_approval"
-          })
+          const pendingNode = this.findPendingNodeByStatus(batch, results, "pending_approval")
           if (pendingNode) {
             this.pendingApprovalNodeId = pendingNode.id
           }
           return { status: "pending_approval" as const }
+        }
+
+        const hasPendingInteraction = results.some((r, i) => r.status === "fulfilled" && (r.value as NodeExecutionResult).status === "pending_interaction")
+        if (hasPendingInteraction) {
+          const pendingNode = this.findPendingNodeByStatus(batch, results, "pending_interaction")
+          if (pendingNode) {
+            this.pendingInteractionNodeId = pendingNode.id
+          }
+          return { status: "pending_interaction" as const }
         }
 
         // Condition jumpTo: set target for subsequent level skipping
@@ -1411,6 +1473,18 @@ export class WorkflowEngine {
       return { status: "completed_with_failures" as const }
     }
     return { status: "completed" }
+  }
+
+  /** Find the first node in a batch whose result has the given status. */
+  private findPendingNodeByStatus(
+    batch: NodeDef[],
+    results: PromiseSettledResult<NodeExecutionResult>[],
+    status: string,
+  ): NodeDef | undefined {
+    return batch.find((_, i) => {
+      const r = results[i]
+      return r.status === "fulfilled" && (r.value as NodeExecutionResult).status === status
+    })
   }
 
   /** Split a level's runnable nodes into batches respecting maxConcurrent. */

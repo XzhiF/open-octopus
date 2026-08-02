@@ -154,4 +154,5 @@ return toMessage(msg)
     this.dao.deleteMessagesBySession(sessionId)
     this.dao.deleteSession(sessionId)
   }
+
 }

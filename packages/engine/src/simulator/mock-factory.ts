@@ -16,8 +16,9 @@ import {
   MockBashExecutor,
   MockPythonExecutor,
   MockApprovalExecutor,
+  MockInteractionExecutor,
 } from "./mock-executors"
-import type { MockDef, LoopMockDef, ApprovalMockDef } from "./types"
+import type { MockDef, LoopMockDef, ApprovalMockDef, InteractionMockDef } from "./types"
 
 export interface MockFactoryOptions {
   /** Node IDs that should execute for real (bash/python only) */
@@ -111,6 +112,8 @@ export class SimulatorExecutorFactory {
         return new MockPythonExecutor(node, this.pool, mockDef as any)
       case "approval":
         return new MockApprovalExecutor(node, this.pool, mockDef as ApprovalMockDef)
+      case "interaction":
+        return new MockInteractionExecutor(node, this.pool, mockDef as InteractionMockDef)
       default:
         throw new Error(`Unknown node type: ${node.type}`)
     }

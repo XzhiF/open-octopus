@@ -44,8 +44,8 @@ export class ExecutionDAO extends BaseDAO {
         status, gate_status, rollback, rollback_on_error, input_values, var_pool,
         progress, triggered_by, started_at, completed_at, duration, org,
         created_at, updated_at, node_type, branch, start_commit_id, end_commit_id,
-        name, global_session_id, approval_metadata, chain_retry_count, preset_inputs
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        name, global_session_id, approval_metadata, interaction_metadata, chain_retry_count, preset_inputs
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       row.id, row.workspace_id, row.parent_id ?? "0", row.child_index ?? 0,
       row.workflow_ref ?? "", row.workflow_name ?? "",
@@ -58,7 +58,8 @@ export class ExecutionDAO extends BaseDAO {
       row.node_type ?? "normal", row.branch ?? null,
       row.start_commit_id ?? null, row.end_commit_id ?? null,
       row.name ?? null, row.global_session_id ?? null,
-      row.approval_metadata ?? null, row.chain_retry_count ?? 0,
+      row.approval_metadata ?? null, row.interaction_metadata ?? null,
+      row.chain_retry_count ?? 0,
       row.preset_inputs ?? null,
     )
   }
@@ -66,7 +67,7 @@ export class ExecutionDAO extends BaseDAO {
   updateExecution(id: string, fields: Partial<ExecutionRow>): Database.RunResult {
     const allowed = new Set([
       "status", "gate_status", "var_pool", "progress", "started_at", "completed_at",
-      "duration", "global_session_id", "approval_metadata", "chain_retry_count",
+      "duration", "global_session_id", "approval_metadata", "interaction_metadata", "chain_retry_count",
       "preset_inputs", "name", "branch", "start_commit_id", "end_commit_id",
       "pipeline_config", "retry_count", "pending_hooks", "resume_attempts",
       "instance_id", "input_values",
@@ -100,6 +101,12 @@ export class ExecutionDAO extends BaseDAO {
 
   findNodeExecutions(executionId: string): NodeExecutionRow[] {
     return this.stmt("SELECT * FROM node_executions WHERE execution_id = ? ORDER BY id").all(executionId) as NodeExecutionRow[]
+  }
+
+  findNodeExecution(executionId: string, nodeId: string): NodeExecutionRow | null {
+    return (this.stmt(
+      "SELECT * FROM node_executions WHERE execution_id = ? AND node_id = ? LIMIT 1"
+    ).get(executionId, nodeId) as NodeExecutionRow) ?? null
   }
 
   findNodeOutputs(executionId: string, nodeId: string): Record<string, unknown> | null {

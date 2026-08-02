@@ -477,8 +477,10 @@ export function useChatStream(
 
   const sendMessage = useCallback(async (content: string): Promise<string> => {
     let sessionId: string | null = activeSessionId
+    let isNewSession = false
 
     if (!sessionId) {
+      isNewSession = true
       const res = await fetch(`${getServerUrl()}${apiBase}/sessions`, { method: "POST" })
       const session = await res.json()
       sessionId = session.id as string
@@ -534,7 +536,7 @@ export function useChatStream(
     let wasAborted = false
 
     try {
-      const res = await fetch(
+      let res = await fetch(
         `${getServerUrl()}${apiBase}/sessions/${resolvedSessionId}/messages`,
         {
           method: "POST",
@@ -543,6 +545,32 @@ export function useChatStream(
           signal: controller.signal,
         }
       )
+
+      if (!res.ok && res.status === 404) {
+        // Session was deleted (e.g. DB cleared) — create a new one and retry
+        const newRes = await fetch(`${getServerUrl()}${apiBase}/sessions`, { method: "POST" })
+        const newSession = await newRes.json()
+        const newId = newSession.id as string
+        setSessions(prev => [...prev.filter(s => s.id !== resolvedSessionId), {
+          id: newId,
+          workspaceId: workspaceId ?? '',
+          title: (newSession.title as string) ?? `会话 ${sessions.length + 1}`,
+          messages: [],
+          createdAt: (newSession.created_at as string) ?? new Date().toISOString(),
+          updatedAt: (newSession.updated_at as string) ?? new Date().toISOString(),
+          isActive: true,
+        }])
+        options?.onSessionCreated?.(newId)
+        res = await fetch(
+          `${getServerUrl()}${apiBase}/sessions/${newId}/messages`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ content }),
+            signal: controller.signal,
+          }
+        )
+      }
 
       if (!res.ok) {
         const errData = await res.json().catch(() => ({ error: "请求失败" }))
@@ -588,11 +616,11 @@ export function useChatStream(
         }
       }
 
-      // Use ref to avoid stale closure — sessions state may not reflect
-      // the session we just created inside this callback.
-      const session = sessionsRef.current.find(s => s.id === resolvedSessionId)
-      if (session && !session.title) {
-        fetch(`${getServerUrl()}${apiBase}/sessions/${resolvedSessionId}/generate-title`, { method: "POST" })
+      // Generate title for new sessions (first message).
+      // Delay slightly to ensure server has persisted the assistant message.
+      if (isNewSession) {
+        setTimeout(() => {
+          fetch(`${getServerUrl()}${apiBase}/sessions/${resolvedSessionId}/generate-title`, { method: "POST" })
           .then(r => r.json())
           .then(d => {
             if (d.title) {
@@ -602,6 +630,7 @@ export function useChatStream(
             }
           })
           .catch(() => {})
+        }, 1000)
       }
       return resolvedSessionId
     } catch (err) {

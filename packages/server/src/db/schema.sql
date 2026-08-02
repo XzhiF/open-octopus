@@ -51,6 +51,7 @@ CREATE TABLE IF NOT EXISTS executions (
   retry_count INTEGER DEFAULT 0,
   pending_hooks TEXT DEFAULT '[]',
   approval_metadata TEXT,
+  interaction_metadata TEXT,
   resume_attempts INTEGER DEFAULT 0,
   pipeline_config TEXT DEFAULT '{}',
   chain_retry_count INTEGER DEFAULT 0,
@@ -574,6 +575,26 @@ CREATE INDEX IF NOT EXISTS idx_sje_org ON scheduled_job_executions(org);
 CREATE INDEX IF NOT EXISTS idx_sje_job ON scheduled_job_executions(job_name);
 CREATE INDEX IF NOT EXISTS idx_sje_started ON scheduled_job_executions(started_at DESC);
 CREATE INDEX IF NOT EXISTS idx_sje_status ON scheduled_job_executions(status);
+
+-- =============================================================================
+-- Interaction Messages (schema version 31)
+-- =============================================================================
+
+-- 29. Interaction Messages
+CREATE TABLE IF NOT EXISTS interaction_messages (
+  id TEXT PRIMARY KEY,
+  execution_id TEXT NOT NULL,
+  node_id TEXT NOT NULL,
+  role TEXT NOT NULL,
+  type TEXT NOT NULL DEFAULT 'text',
+  content TEXT NOT NULL,
+  metadata TEXT,
+  created_at TEXT NOT NULL,
+  FOREIGN KEY (execution_id) REFERENCES executions(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_interaction_msgs_exec_node
+  ON interaction_messages(execution_id, node_id, created_at ASC);
 
 -- =============================================================================
 -- Insight Marks (evolution pipeline — immediate marking + batch processing)

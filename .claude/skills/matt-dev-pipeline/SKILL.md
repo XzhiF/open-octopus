@@ -178,6 +178,8 @@ Note: index.md tracks all feature-slugs across all branches. Phase 5 will read i
 
 **Dispatch**: Main agent executes directly using Git CLI.
 
+> **Optional quality gate**: Before creating the PR, the orchestrator MAY invoke `/matt-verification-report <artifacts.dir>/<feature-slug>/` (or `--deep` for high-risk changes) to produce an independent confidence score. If the report returns NO-GO, present findings to the user and let them decide whether to proceed or fix before shipping.
+
 Only create PRs for projects that have **actual code changes** relative to the target branch. Skip projects with no changes.
 
 **Important**: All pipeline artifacts (pipeline-report.md, index.md) must be committed and pushed **before** creating the PR, so they are included in the PR diff.

@@ -9,6 +9,11 @@ export abstract class BaseDAO {
 
   constructor(protected readonly db: Database.Database) {}
 
+  /** Expose the underlying Database instance for cross-DAO usage. */
+  getDb(): Database.Database {
+    return this.db
+  }
+
   /**
    * Get or prepare a cached SQL statement.
    */

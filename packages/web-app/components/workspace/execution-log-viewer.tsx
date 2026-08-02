@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect, useRef, useCallback, useMemo } from "react"
-import { ChevronDown, ChevronRight, ChevronUp, ChevronsDown, Terminal, Brain, Wrench, FileText, Play, Check, X, Clock, Users, MessageSquare, Award, RotateCcw } from "lucide-react"
+import { ChevronDown, ChevronRight, ChevronUp, ChevronsDown, Terminal, Brain, Wrench, FileText, Play, Check, X, Clock, Users, MessageSquare, Award, RotateCcw, MessageCircle, HelpCircle, CheckCircle2 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { formatDuration, formatTokenCount } from "@/lib/format"
 import { isMergedEvent, type AgentEvent, type LoopIterationSummary } from "@/lib/types"
@@ -84,6 +84,10 @@ export function EventIcon({ event, agentType }: { event: string; agentType?: str
     case "swarm_round_end": return <RotateCcw className="h-3 w-3 text-purple-400 shrink-0" />
     case "swarm_complete": return <Award className="h-3 w-3 text-yellow-400 shrink-0" />
     case "consensus_check": return <Award className="h-3 w-3 text-purple-400 shrink-0" />
+    // Interaction milestone events
+    case "interaction_started": return <MessageCircle className="h-3 w-3 text-purple-400 shrink-0" />
+    case "interaction_ask_user_question": return <HelpCircle className="h-3 w-3 text-amber-400 shrink-0" />
+    case "interaction_completed": return <CheckCircle2 className="h-3 w-3 text-emerald-400 shrink-0" />
     default: return <Clock className="h-3 w-3 text-muted-foreground shrink-0" />
   }
 }
@@ -232,6 +236,13 @@ export function EventLabel({ entry }: { entry: LogEvent }) {
       </span>
     case "consensus_check":
       return <span className="text-purple-400">共识检测 第{entry.round}轮</span>
+    // Interaction milestone events
+    case "interaction_started":
+      return <span className="text-purple-400">交互开始</span>
+    case "interaction_ask_user_question":
+      return <span className="text-amber-400">等待用户回答</span>
+    case "interaction_completed":
+      return <span className="text-emerald-400">交互完成</span>
     default: return <span className="text-muted-foreground">{entry.event}</span>
   }
 }

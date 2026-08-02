@@ -12,6 +12,7 @@ import { BashExecutor } from "./executors/bash"
 import { PythonExecutor } from "./executors/python"
 import { ConditionExecutor } from "./executors/condition"
 import { ApprovalExecutor } from "./executors/approval"
+import { InteractionExecutor } from "./executors/interaction"
 import { LoopExecutor } from "./executors/loop"
 import { AgentExecutor } from "./executors/agent"
 import { SwarmExecutor } from "./executors/swarm"
@@ -45,6 +46,10 @@ export interface ExecutorFactoryContext {
   // Callbacks to engine methods
   resolvePreviousSessionId: (node: NodeDef) => string | undefined
   executeHooks: (event: keyof WorkflowHooks, context: Record<string, unknown>) => Promise<void>
+  // Interaction support
+  interactionCompletionData?: { summary: string; vars_update?: Record<string, any> }
+  interactionSessionId?: string
+  interactionCurrentRound?: number
 }
 
 export class ExecutorFactory {
@@ -173,6 +178,17 @@ export class ExecutorFactory {
           engineHookFn: async (event: string, context: Record<string, unknown>) => {
             await this.ctx.executeHooks(event as keyof WorkflowHooks, context)
           },
+        })
+      case "interaction":
+        return new InteractionExecutor(node, p, {
+          completionData: this.ctx.interactionCompletionData,
+          signal: s,
+          crossExecResolver: this.ctx.crossExecResolver,
+          executionId: this.ctx.executionId,
+          nodeOutputs: buildNodeOutputs(),
+          cwd: this.ctx.cwd,
+          sessionId: this.ctx.interactionSessionId,
+          currentRound: this.ctx.interactionCurrentRound,
         })
       default:
         throw new Error(`Unknown node type: ${(node as any).type}`)
