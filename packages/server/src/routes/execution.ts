@@ -484,7 +484,7 @@ executionRoutes.get("/:executionId/agent-events", (c) => {
         }
         // Non-agent events: output as top-level events (matching JSONL format)
         // so mergeAgentEvents can process bash_log → bash_output, etc.
-        if (row.event_type === "bash_log" || row.event_type === "python_log") {
+        if (row.event_type === "bash_log" || row.event_type === "python_log" || row.event_type === "node_log") {
           return {
             event: row.event_type,
             nodeId: row.node_id,

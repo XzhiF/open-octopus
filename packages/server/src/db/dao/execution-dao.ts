@@ -259,7 +259,7 @@ export class ExecutionDAO extends BaseDAO {
         const isMergedType = ExecutionDAO.MERGED_EVENT_TYPES.has(e.event)
         const content = isMergedType
           ? JSON.stringify(e)
-          : (e.content ?? (e.lines ? e.lines.join("\n") : null))
+          : (e.content ?? e.line ?? (e.lines ? e.lines.join("\n") : null))
         insert.run(
           neId, i, e.turnIndex ?? 1, e.event, ts,
           content, content ? content.length : 0,

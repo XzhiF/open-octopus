@@ -289,30 +289,35 @@ export class SubWorkflowExecutor implements NodeExecutor {
     logLines: string[],
     workflowName: string,
   ) {
-    const prefix = `[${workflowName}]`
+    // Format: {sub_workflow_name}:{event_name} — matches the design spec for event panel display
+    const fmt = (event: string, detail: string) => `${workflowName}:${event} ${detail}`
     return {
       onNodeStart: (nodeId: string, nodeType: string) => {
-        const prefixedId = `${workflowName}:${nodeId}`
-        logLines.push(`${prefix} node_start: ${nodeId} (${nodeType})`)
-        // Propagate to parent SSE layer with prefixed node ID so event panel shows {name}:{node}
-        this.config.callbacks?.onNodeStart?.(prefixedId, nodeType)
-        this.config.callbacks?.onNodeLog?.(this.node.id, `${prefix} node_start: ${nodeId} (${nodeType})`)
+        const msg = fmt("node_start", `${nodeId} (${nodeType})`)
+        logLines.push(msg)
+        // Write to JSONL logger so compaction persists these events to agent_events DB
+        this.config.logger?.log(this.node.id, "node_log", { line: msg })
+        this.config.callbacks?.onNodeLog?.(this.node.id, msg)
       },
-      onNodeEnd: (nodeId: string, status: string, durationMs: number, result?: NodeExecutionResult, nodeType?: string) => {
-        const prefixedId = `${workflowName}:${nodeId}`
-        logLines.push(`${prefix} node_end: ${nodeId} ${status} (${durationMs}ms)`)
-        // Propagate to parent SSE layer with prefixed node ID
-        this.config.callbacks?.onNodeEnd?.(prefixedId, status, durationMs, result, nodeType)
-        this.config.callbacks?.onNodeLog?.(this.node.id, `${prefix} node_end: ${nodeId} ${status} (${durationMs}ms)`)
+      onNodeEnd: (nodeId: string, status: string, durationMs: number, _result?: NodeExecutionResult, _nodeType?: string) => {
+        const msg = fmt("node_end", `${nodeId} ${status} (${durationMs}ms)`)
+        logLines.push(msg)
+        this.config.logger?.log(this.node.id, "node_log", { line: msg })
+        this.config.callbacks?.onNodeLog?.(this.node.id, msg)
       },
-      onNodeLog: (_nodeId: string, logLine: string) => {
-        this.config.callbacks?.onNodeLog?.(this.node.id, `${prefix} ${logLine}`)
+      onNodeLog: (nodeId: string, logLine: string) => {
+        const msg = fmt("log", `[${nodeId}] ${logLine}`)
+        this.config.logger?.log(this.node.id, "node_log", { line: msg })
+        this.config.callbacks?.onNodeLog?.(this.node.id, msg)
       },
       onStatusChange: (status: string, progress: number) => {
-        logLines.push(`${prefix} status: ${status} (${progress}%)`)
+        logLines.push(fmt("status", `${status} (${progress}%)`))
       },
       onError: (nodeId: string, error: string) => {
-        logLines.push(`${prefix} error: ${nodeId}: ${error}`)
+        const msg = fmt("error", `${nodeId}: ${error}`)
+        logLines.push(msg)
+        this.config.logger?.log(this.node.id, "node_log", { line: msg })
+        this.config.callbacks?.onNodeLog?.(this.node.id, msg)
       },
     }
   }
