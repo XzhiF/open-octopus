@@ -1,6 +1,6 @@
 # Ticket 4: Web-App — Flow Parser + Container Node + Registration
 
-## Status: READY
+## Status: DONE
 ## Priority: P0
 ## Depends on: Ticket 1
 ## Verification: `pnpm build` passes

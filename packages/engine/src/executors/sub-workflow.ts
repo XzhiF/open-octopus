@@ -24,6 +24,7 @@ export class SubWorkflowExecutor implements NodeExecutor {
     const logLines: string[] = []
     const workflowName = this.node.workflow
     const onError = this.node.on_error ?? "fail"
+    // execution_mode: "inline" (default) runs child in-process; "linked" is reserved for future concurrent support
     const executionMode = this.node.execution_mode ?? "inline"
 
     // Validate required fields

@@ -1,6 +1,6 @@
 # Ticket 5: Full Build Verification + Integration Test
 
-## Status: READY
+## Status: DONE
 ## Priority: P0
 ## Depends on: Tickets 1-4
 ## Verification: `pnpm build` + `pnpm test` both pass

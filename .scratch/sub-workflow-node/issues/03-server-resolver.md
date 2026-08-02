@@ -1,6 +1,6 @@
 # Ticket 3: Server — Pass workflowResolver to Engine
 
-## Status: READY
+## Status: DONE
 ## Priority: P0
 ## Depends on: Ticket 2
 ## Verification: `pnpm build` passes

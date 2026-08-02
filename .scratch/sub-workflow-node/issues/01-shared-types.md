@@ -1,6 +1,6 @@
 # Ticket 1: Shared Types — Add `sub_workflow` to NodeDef and NodeTypeSchema
 
-## Status: READY
+## Status: DONE
 ## Priority: P0 (blocks all other tickets)
 ## Verification: `pnpm build` passes
 

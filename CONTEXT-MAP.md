@@ -61,6 +61,11 @@
 | **Loop State** | JSON 文件跟踪循环中所有迭代的分数、门禁结果和 gap 历史。存储于 root feature 目录下。 | core-pack |
 | **Convergence** | 循环终止条件 — 置信度分数达到 ≥ 85 (GO) 阈值。 | core-pack |
 | **Stall Detection** | 连续 2 轮迭代分数提升 < 5 分 → 检测为停滞，循环退出避免无限循环。 | core-pack |
+| **Sub-workflow Node** | 引用并执行同工作空间下另一个工作流的节点类型（`type: sub_workflow`）。通过名称引用，变量通过 I/O mapping 传递。 | engine, shared |
+| **Execution Mode (inline/linked)** | sub_workflow 节点的执行策略。inline 在父执行上下文内运行（共享执行记录）；linked 创建独立子执行（新 execution_id + parent_execution_id 关联）。 | engine, server |
+| **Input Mapping** | 子工作流启动前，将父工作流 VarPool 中的变量映射到子工作流独立 VarPool 的配置。格式：`{ child_var: "$vars.parent_var" }`。 | engine |
+| **Output Mapping** | 子工作流完成后，将子工作流 VarPool 中的变量映射回父工作流 VarPool 的配置。格式：`{ parent_var: "child_var_name" }`。 | engine |
+| **Sub-workflow Container** | UI 流程图中用于展示子工作流内部节点的容器框（`SubWorkflowContainerNode`），视觉风格类似 LoopContainerNode。 | web-app |
 
 ## Anti-Patterns（禁止）
 

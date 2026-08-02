@@ -1,6 +1,6 @@
 # Ticket 2: Engine — SubWorkflowExecutor + Config + Factory Registration
 
-## Status: READY
+## Status: DONE
 ## Priority: P0 (blocks server + UI)
 ## Depends on: Ticket 1
 ## Verification: `pnpm build` passes

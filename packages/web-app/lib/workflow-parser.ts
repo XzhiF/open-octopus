@@ -329,13 +329,23 @@ export function yamlToFlowData(parsed: WorkflowDefinition): { nodes: Node[]; edg
 
   // ─── Build final nodes array ───
   const nodes: Node[] = topWorkflowNodes.map((node) => {
-    const isContainer = containerNodesWithInner.has(node.id)
+    const isContainerWithInner = containerNodesWithInner.has(node.id)
     const containerSize = containerSizes.get(node.id)
 
-    // Determine container type: loop → "loop-container", sub_workflow → "sub-workflow-container"
-    const containerType = isContainer
-      ? node.type === "sub_workflow" ? "sub-workflow-container" : "loop-container"
-      : node.type
+    // Determine node type for ReactFlow rendering:
+    // - loop with inner nodes → "loop-container"
+    // - sub_workflow (always) → "sub-workflow-container" (even without inner nodes)
+    // - everything else → original type
+    const isSubWorkflow = node.type === "sub_workflow"
+    const containerType = isContainerWithInner
+      ? isSubWorkflow ? "sub-workflow-container" : "loop-container"
+      : isSubWorkflow
+        ? "sub-workflow-container"
+        : node.type
+
+    // Default dimensions for sub_workflow without inner nodes
+    const defaultSubWfWidth = 280
+    const defaultSubWfHeight = 120
 
     const baseNode: Node = {
       id: node.id,
@@ -353,7 +363,7 @@ export function yamlToFlowData(parsed: WorkflowDefinition): { nodes: Node[]; edg
         loop_body: node.loop_body,
         cases: node.cases,
         // sub_workflow specific data
-        ...(node.type === "sub_workflow" ? {
+        ...(isSubWorkflow ? {
           workflow: (node as Record<string, unknown>).workflow,
           execution_mode: (node as Record<string, unknown>).execution_mode ?? "inline",
           input_mapping: (node as Record<string, unknown>).input_mapping,
@@ -369,46 +379,24 @@ export function yamlToFlowData(parsed: WorkflowDefinition): { nodes: Node[]; edg
           consensusScore: null,
           status: "pending",
         } : {}),
-        ...(isContainer && containerSize ? {
+        ...(isContainerWithInner && containerSize ? {
           containerWidth: containerSize.width,
           containerHeight: containerSize.height,
         } : {}),
       },
-      ...(isContainer && containerSize ? {
+      ...(isContainerWithInner && containerSize ? {
         style: {
           width: containerSize.width,
           height: containerSize.height,
         },
+      } : isSubWorkflow ? {
+        // sub_workflow without inner nodes — use default dimensions
+        style: { width: defaultSubWfWidth, height: defaultSubWfHeight },
       } : {}),
     }
 
     return baseNode
   })
-
-  // Also handle sub_workflow nodes without inner nodes (no fetched child workflow)
-  // These still need to render as containers, just with empty bodies
-  for (const node of topWorkflowNodes) {
-    if (node.type === "sub_workflow" && !containerNodesWithInner.has(node.id)) {
-      // Find the node in the array and update its type
-      const idx = nodes.findIndex(n => n.id === node.id)
-      if (idx >= 0) {
-        nodes[idx] = {
-          ...nodes[idx],
-          type: "sub-workflow-container",
-          data: {
-            ...nodes[idx].data,
-            type: "sub-workflow-container",
-            workflow: (node as Record<string, unknown>).workflow,
-            execution_mode: (node as Record<string, unknown>).execution_mode ?? "inline",
-            input_mapping: (node as Record<string, unknown>).input_mapping,
-            output_mapping: (node as Record<string, unknown>).output_mapping,
-            on_error: (node as Record<string, unknown>).on_error ?? "fail",
-          },
-          style: { width: 280, height: 120 },
-        }
-      }
-    }
-  }
 
   nodes.push(...allInnerNodes)
 
