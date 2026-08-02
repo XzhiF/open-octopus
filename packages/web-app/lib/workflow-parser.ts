@@ -166,7 +166,10 @@ function dagreLayout(
   return result
 }
 
-export function yamlToFlowData(parsed: WorkflowDefinition): { nodes: Node[]; edges: Edge[] } | null {
+export function yamlToFlowData(
+  parsed: WorkflowDefinition,
+  subWorkflowNodes?: Record<string, WorkflowNode[]>,
+): { nodes: Node[]; edges: Edge[] } | null {
   if (!parsed || !parsed.nodes || !Array.isArray(parsed.nodes)) return null
   if (parsed.nodes.length === 0) return null
 
@@ -178,9 +181,19 @@ export function yamlToFlowData(parsed: WorkflowDefinition): { nodes: Node[]; edg
   const topWorkflowNodes: WorkflowNode[] = []
 
   for (const node of workflowNodes) {
-    if ((node.type === "loop" || node.type === "sub_workflow") && Array.isArray(node.nodes) && node.nodes.length > 0) {
+    if (node.type === "loop" && Array.isArray(node.nodes) && node.nodes.length > 0) {
       containerNodesWithInner.set(node.id, node)
       topWorkflowNodes.push(node) // keep as placeholder for outer layout
+    } else if (node.type === "sub_workflow") {
+      // For sub_workflow: use inline nodes if present, otherwise look up from subWorkflowNodes map
+      const workflowRef = (node as Record<string, unknown>).workflow as string | undefined
+      const childNodes = node.nodes ?? (workflowRef ? subWorkflowNodes?.[workflowRef] : undefined)
+      if (childNodes && childNodes.length > 0) {
+        // Create a synthetic node with the resolved child nodes for container rendering
+        const enrichedNode = { ...node, nodes: childNodes }
+        containerNodesWithInner.set(node.id, enrichedNode)
+      }
+      topWorkflowNodes.push(node)
     } else {
       topWorkflowNodes.push(node)
     }

@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useState } from "react"
 import {
   ReactFlow,
   Background,
@@ -29,6 +29,7 @@ import { WorkflowStepEdge } from "./workflow-edges/workflow-step-edge"
 
 import { parseYaml } from "@/lib/yaml-utils"
 import { yamlToFlowData } from "@/lib/workflow-parser"
+import { getServerUrl } from "@/lib/server-config"
 import type { StepExecution, StatusOverlay, TokenUsage, LoopIterationSummary } from "@/lib/types"
 
 interface WorkflowFlowViewerWithStatusProps {
@@ -89,10 +90,40 @@ export function WorkflowFlowViewerWithStatus({
     return map
   }, [executionSteps])
 
+  // Pre-fetch sub-workflow child nodes for container rendering
+  const [subWorkflowNodes, setSubWorkflowNodes] = useState<Record<string, any[]>>({})
+  useEffect(() => {
+    const parsed = parseYaml(yamlContent)
+    if (!parsed?.nodes) return
+    const refs = (parsed.nodes as Array<Record<string, unknown>>)
+      .filter((n: Record<string, unknown>) => n.type === "sub_workflow" && n.workflow)
+      .map((n: Record<string, unknown>) => n.workflow as string)
+    if (refs.length === 0 || !workspaceId) return
+
+    const fetchAll = async () => {
+      const results: Record<string, any[]> = {}
+      await Promise.all(
+        refs.map(async (ref: string) => {
+          try {
+            const res = await fetch(`${getServerUrl()}/api/workspaces/${workspaceId}/workflows/${encodeURIComponent(ref)}`)
+            if (res.ok) {
+              const data = await res.json()
+              if (data.parsed?.nodes) {
+                results[ref] = data.parsed.nodes
+              }
+            }
+          } catch { /* non-fatal: container will render empty */ }
+        }),
+      )
+      setSubWorkflowNodes(results)
+    }
+    fetchAll()
+  }, [yamlContent, workspaceId])
+
   const flowData = useMemo(() => {
     const parsed = parseYaml(yamlContent)
     if (!parsed) return null
-    const data = yamlToFlowData(parsed)
+    const data = yamlToFlowData(parsed, subWorkflowNodes)
     if (!data) return null
 
     const enrichedNodes: Node[] = data.nodes.map((node) => {
@@ -192,7 +223,7 @@ export function WorkflowFlowViewerWithStatus({
     })
 
     return { nodes: enrichedNodes, edges: enrichedEdges }
-  }, [yamlContent, stepMap, activeStepId, currentStepId, workspaceId, executionId, loopIterationsMap])
+  }, [yamlContent, stepMap, activeStepId, currentStepId, workspaceId, executionId, loopIterationsMap, subWorkflowNodes])
 
   const onInit = useCallback((instance: unknown) => {
     setTimeout(() => {
