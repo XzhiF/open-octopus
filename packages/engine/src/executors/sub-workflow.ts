@@ -3,7 +3,7 @@
 // SubWorkflowExecutor — resolves and executes a child workflow by name,
 // with scoped VarPool and explicit I/O mapping between parent and child.
 //
-import { VarPool, evaluateExpression } from "@octopus/shared"
+import { VarPool, evaluateExpression, substituteVars } from "@octopus/shared"
 import type { NodeDef, WorkflowDef } from "@octopus/shared"
 import type { NodeExecutor, NodeExecutionResult } from "./types"
 import type { SubWorkflowConfig } from "./executor-config"
@@ -95,12 +95,12 @@ export class SubWorkflowExecutor implements NodeExecutor {
     // Create scoped child VarPool
     const childPool = new VarPool()
 
-    // Apply input_mapping: evaluate expressions against parent pool → set in child pool
+    // Apply input_mapping: resolve values from parent pool → set in child pool
     if (this.node.input_mapping) {
       const parentOutputs = this.buildParentNodeOutputs()
       for (const [childVar, expr] of Object.entries(this.node.input_mapping)) {
         try {
-          const value = evaluateExpression(expr, this.pool, parentOutputs, this.config.inputs)
+          const value = this.resolveMappingValue(expr, parentOutputs)
           childPool.set(childVar, value)
           logLines.push(`input_mapping: ${childVar} = ${JSON.stringify(value)}`)
         } catch (err: unknown) {
@@ -242,6 +242,32 @@ export class SubWorkflowExecutor implements NodeExecutor {
         logLines.push(`output_mapping: ${parentVar} ← ${childVar} (not found in child pool)`)
       }
     }
+  }
+
+  /**
+   * Resolve a mapping expression to its actual value (not boolean).
+   * - Pure `$vars.key` → returns pool.get(key) preserving type
+   * - Pure `$nodeId.output.key` → returns node output value
+   * - Templates or literals → substituteVars (string result)
+   */
+  private resolveMappingValue(
+    expr: string,
+    nodeOutputs: Record<string, Record<string, any>>,
+  ): unknown {
+    // Pure $vars.xxx reference — return raw value preserving type
+    const varsMatch = expr.match(/^\$vars\.([a-zA-Z0-9_]+)$/)
+    if (varsMatch) {
+      return this.pool.get(varsMatch[1])
+    }
+
+    // Pure $nodeId.output.key reference — return raw output value
+    const outputMatch = expr.match(/^\$([a-zA-Z0-9_-]+)\.output\.([a-zA-Z0-9_]+)$/)
+    if (outputMatch) {
+      return nodeOutputs[outputMatch[1]]?.[outputMatch[2]]
+    }
+
+    // Template string or literal — use substituteVars for string interpolation
+    return substituteVars(expr, this.pool, nodeOutputs)
   }
 
   private buildParentNodeOutputs(): Record<string, Record<string, any>> {

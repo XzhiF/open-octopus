@@ -22,6 +22,7 @@ import { ApprovalNode } from "./workflow-nodes/approval-node"
 import { InteractionNode } from "./workflow-nodes/interaction-node"
 import { LoopNode } from "./workflow-nodes/loop-node"
 import { LoopContainerNode } from "./workflow-nodes/loop-container-node"
+import { SubWorkflowContainerNode } from "./workflow-nodes/sub-workflow-container-node"
 import { SwarmNode } from "@/components/swarm/organisms/swarm-node"
 import { ConditionEdge } from "./workflow-edges/condition-edge"
 import { WorkflowStepEdge } from "./workflow-edges/workflow-step-edge"
@@ -51,6 +52,7 @@ const nodeTypes = {
   approval: ApprovalNode,
   interaction: InteractionNode,
   "loop-container": LoopContainerNode,
+  "sub-workflow-container": SubWorkflowContainerNode,
   loop: LoopNode,
   swarm: SwarmNode,
 }

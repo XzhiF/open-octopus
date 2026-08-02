@@ -132,6 +132,30 @@ export function NodeInfoDialog({
               executionId={executionId}
             />
           )}
+          {executorType === "sub_workflow" && (
+            <div className="overflow-auto h-full p-4 text-xs space-y-3">
+              <div className="grid grid-cols-2 gap-x-4 gap-y-1.5">
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">子工作流:</span>
+                  <span className="font-mono">{(step.outputs as Record<string, unknown>)?.workflow ?? "-"}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">子状态:</span>
+                  <span>{(step.outputs as Record<string, unknown>)?.childStatus ?? "-"}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">子耗时:</span>
+                  <span>{(step.outputs as Record<string, unknown>)?.childDurationMs ? `${(step.outputs as Record<string, unknown>).childDurationMs}ms` : "-"}</span>
+                </div>
+              </div>
+              {step.output && (
+                <div>
+                  <span className="text-muted-foreground block mb-1">日志:</span>
+                  <pre className="bg-muted rounded p-2 text-[11px] overflow-auto max-h-[200px] whitespace-pre-wrap">{step.output}</pre>
+                </div>
+              )}
+            </div>
+          )}
           {!executorType && (
             <div className="overflow-auto h-full p-4 text-xs">
               <div className="grid grid-cols-2 gap-x-4 gap-y-1.5">
