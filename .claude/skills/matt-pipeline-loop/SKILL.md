@@ -38,6 +38,7 @@ description: >
 3. **Gap-focused** — each iteration's brief targets ONLY what failed, not the entire feature
 4. **Progress on disk** — iteration state lives in `.scratch/` directories and git, not in conversation memory
 5. **Bounded** — max iterations + no-progress detection + budget ceiling prevent infinite loops
+6. **Auto-continue** — when score < convergence threshold, IMMEDIATELY generate gap brief and launch next iteration. Do NOT ask the user whether to continue. Only stop and present to user when: converged (GO), max reached, stalled, or regression detected.
 
 ## Theoretical Foundations
 
@@ -123,6 +124,8 @@ Parse the report to extract:
 - Risk factors (top 3)
 
 ### Step 3: Check Convergence
+
+**IMPORTANT**: Do NOT ask the user whether to continue. This is a fully autonomous loop — proceed to the next iteration immediately unless one of the exit conditions is met.
 
 ```
 IF score ≥ 85:
