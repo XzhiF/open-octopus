@@ -23,7 +23,7 @@ interface WorkflowDefinition {
   [key: string]: unknown
 }
 
-const VALID_NODE_TYPES = new Set(["bash", "python", "agent", "condition", "approval", "loop", "swarm", "interaction"])
+const VALID_NODE_TYPES = new Set(["bash", "python", "agent", "condition", "approval", "loop", "swarm", "interaction", "sub_workflow"])
 
 // Node dimensions for dagre layout
 // Heights account for header + duration + multi-model token display
@@ -34,6 +34,7 @@ function getNodeDimensions(node: WorkflowNode): { width: number; height: number 
     case "agent": return { width: 280, height: 175 }
     case "approval": return { width: 280, height: 165 }
     case "swarm": return { width: 280, height: 180 }
+    case "sub_workflow": return { width: 280, height: 180 }
     default: return { width: 280, height: 160 }
   }
 }
@@ -172,13 +173,13 @@ export function yamlToFlowData(parsed: WorkflowDefinition): { nodes: Node[]; edg
   const workflowNodes = parsed.nodes as WorkflowNode[]
   if (!workflowNodes.every((n) => VALID_NODE_TYPES.has(n.type))) return null
 
-  // ─── Separate loop nodes with inner nodes from top-level nodes ───
-  const loopNodesWithInner = new Map<string, WorkflowNode>()
+  // ─── Separate container nodes (loop + sub_workflow) with inner nodes from top-level nodes ───
+  const containerNodesWithInner = new Map<string, WorkflowNode>()
   const topWorkflowNodes: WorkflowNode[] = []
 
   for (const node of workflowNodes) {
-    if (node.type === "loop" && Array.isArray(node.nodes) && node.nodes.length > 0) {
-      loopNodesWithInner.set(node.id, node)
+    if ((node.type === "loop" || node.type === "sub_workflow") && Array.isArray(node.nodes) && node.nodes.length > 0) {
+      containerNodesWithInner.set(node.id, node)
       topWorkflowNodes.push(node) // keep as placeholder for outer layout
     } else {
       topWorkflowNodes.push(node)
@@ -201,7 +202,7 @@ export function yamlToFlowData(parsed: WorkflowDefinition): { nodes: Node[]; edg
     positions: Record<string, { x: number; y: number }>
   }>()
 
-  for (const [loopId, loopNode] of loopNodesWithInner) {
+  for (const [loopId, loopNode] of containerNodesWithInner) {
     const innerNodes = loopNode.nodes!
     if (!innerNodes.every((n: WorkflowNode) => VALID_NODE_TYPES.has(n.type))) return null
 
@@ -301,7 +302,7 @@ export function yamlToFlowData(parsed: WorkflowDefinition): { nodes: Node[]; edg
       const rawPos = data.positions[innerWfNode.id] ?? { x: 0, y: 0 }
       // Find original node data
       const origId = innerWfNode.id.slice(loopId.length + 1)
-      const origNode = loopNodesWithInner.get(loopId)!.nodes!.find((n: any) => n.id === origId) as WorkflowNode | undefined
+      const origNode = containerNodesWithInner.get(loopId)!.nodes!.find((n: any) => n.id === origId) as WorkflowNode | undefined
 
       allInnerNodes.push({
         id: innerWfNode.id,
@@ -328,16 +329,21 @@ export function yamlToFlowData(parsed: WorkflowDefinition): { nodes: Node[]; edg
 
   // ─── Build final nodes array ───
   const nodes: Node[] = topWorkflowNodes.map((node) => {
-    const isLoopContainer = loopNodesWithInner.has(node.id)
+    const isContainer = containerNodesWithInner.has(node.id)
     const containerSize = containerSizes.get(node.id)
+
+    // Determine container type: loop → "loop-container", sub_workflow → "sub-workflow-container"
+    const containerType = isContainer
+      ? node.type === "sub_workflow" ? "sub-workflow-container" : "loop-container"
+      : node.type
 
     const baseNode: Node = {
       id: node.id,
-      type: isLoopContainer ? "loop-container" : node.type,
+      type: containerType,
       position: topPositions[node.id] || { x: 0, y: 0 },
       data: {
         id: node.id,
-        type: isLoopContainer ? "loop-container" : node.type,
+        type: containerType,
         name: node.description || node.id,
         command: node.command,
         script: node.script,
@@ -346,6 +352,14 @@ export function yamlToFlowData(parsed: WorkflowDefinition): { nodes: Node[]; edg
         iterations: node.iterations,
         loop_body: node.loop_body,
         cases: node.cases,
+        // sub_workflow specific data
+        ...(node.type === "sub_workflow" ? {
+          workflow: (node as Record<string, unknown>).workflow,
+          execution_mode: (node as Record<string, unknown>).execution_mode ?? "inline",
+          input_mapping: (node as Record<string, unknown>).input_mapping,
+          output_mapping: (node as Record<string, unknown>).output_mapping,
+          on_error: (node as Record<string, unknown>).on_error ?? "fail",
+        } : {}),
         ...(node.type === "swarm" ? {
           mode: (node as Record<string, unknown>).mode,
           topic: (node as Record<string, unknown>).topic,
@@ -355,12 +369,12 @@ export function yamlToFlowData(parsed: WorkflowDefinition): { nodes: Node[]; edg
           consensusScore: null,
           status: "pending",
         } : {}),
-        ...(isLoopContainer && containerSize ? {
+        ...(isContainer && containerSize ? {
           containerWidth: containerSize.width,
           containerHeight: containerSize.height,
         } : {}),
       },
-      ...(isLoopContainer && containerSize ? {
+      ...(isContainer && containerSize ? {
         style: {
           width: containerSize.width,
           height: containerSize.height,
@@ -370,6 +384,31 @@ export function yamlToFlowData(parsed: WorkflowDefinition): { nodes: Node[]; edg
 
     return baseNode
   })
+
+  // Also handle sub_workflow nodes without inner nodes (no fetched child workflow)
+  // These still need to render as containers, just with empty bodies
+  for (const node of topWorkflowNodes) {
+    if (node.type === "sub_workflow" && !containerNodesWithInner.has(node.id)) {
+      // Find the node in the array and update its type
+      const idx = nodes.findIndex(n => n.id === node.id)
+      if (idx >= 0) {
+        nodes[idx] = {
+          ...nodes[idx],
+          type: "sub-workflow-container",
+          data: {
+            ...nodes[idx].data,
+            type: "sub-workflow-container",
+            workflow: (node as Record<string, unknown>).workflow,
+            execution_mode: (node as Record<string, unknown>).execution_mode ?? "inline",
+            input_mapping: (node as Record<string, unknown>).input_mapping,
+            output_mapping: (node as Record<string, unknown>).output_mapping,
+            on_error: (node as Record<string, unknown>).on_error ?? "fail",
+          },
+          style: { width: 280, height: 120 },
+        }
+      }
+    }
+  }
 
   nodes.push(...allInnerNodes)
 

@@ -6,6 +6,7 @@ import type { KnowledgeService } from "../knowledge"
 import type { EngineCallbacks } from "@octopus/engine"
 import { WorkflowEngine, PromptInjector } from "@octopus/engine"
 import { CrossExecResolver, collectNodeEngines, parseWorkflow, WorkflowRef } from "@octopus/shared"
+import type { WorkflowDef } from "@octopus/shared"
 import { PipelineConfigLoader } from "../pipeline-config"
 import { getProvider } from "@octopus/providers"
 import { selectAndInstallAgents } from "../resource-agent-service"
@@ -86,7 +87,7 @@ export class EngineFactory implements IEngineFactory {
           selectAndInstallAgents(topic, maxExperts, this.ctx.workspacePath)
       : undefined
 
-    return new WorkflowEngine(
+    const engine = new WorkflowEngine(
       workflow, providers, this.ctx.workspacePath,
       this.ctx.workspacePath,
       callbacks, signal,
@@ -96,6 +97,18 @@ export class EngineFactory implements IEngineFactory {
       this.knowledgeService?.createInjectorFactory(),
       agentResolver,
     )
+
+    // Set workflow resolver for sub_workflow nodes
+    const workflowResolver = (name: string): { parsed: WorkflowDef; content: string } | undefined => {
+      const local = this.ctx.workflowService.get(this.workspacePath, name)
+      if (local) return { parsed: local.parsed, content: local.content }
+      const builtIn = this.ctx.builtInWorkflowService.get(name)
+      if (builtIn) return { parsed: builtIn.parsed, content: builtIn.content }
+      return undefined
+    }
+    engine.setWorkflowResolver(workflowResolver)
+
+    return engine
   }
 
   /**

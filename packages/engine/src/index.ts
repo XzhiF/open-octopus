@@ -3,7 +3,7 @@ export type {
   ExecutorDeps, EngineServices, CoreConfig,
   PythonConfig, ApprovalConfig, BashConfig,
   AgentConfig, SwarmConfig, LoopConfig, ResumeConfig,
-  InteractionConfig, EngineConfig, OnLogCallback, HookExecutor, AgentResolver,
+  InteractionConfig, SubWorkflowConfig, EngineConfig, OnLogCallback, HookExecutor, AgentResolver,
 } from "./executors/executor-config"
 export { BashExecutor } from "./executors/bash"
 export { PythonExecutor } from "./executors/python"
@@ -16,6 +16,7 @@ export { AgentExecutor } from "./executors/agent"
 export { applyVarsUpdate, extractInteractionCompletion } from "./executors/parse-vars-update"
 export { AgentNodeRunner } from "./executors/agent-runner"
 export { SwarmExecutor } from "./executors/swarm"
+export { SubWorkflowExecutor } from "./executors/sub-workflow"
 export { RoleRegistry } from "./executors/swarm/role-registry"
 export type { RoleDef } from "./executors/swarm/role-registry"
 export type { SwarmSSEEvent } from "./executors/swarm/swarm-types"

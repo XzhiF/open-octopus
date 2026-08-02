@@ -108,6 +108,10 @@ export class WorkflowEngine {
   private runtimeNodeIds: Set<string> = new Set()
   // Executor factory (extracted to reduce engine.ts size)
   private executorFactory: ExecutorFactory
+  // Workflow resolver for sub_workflow nodes
+  private workflowResolver?: (name: string) => { parsed: WorkflowDef; content: string } | undefined
+  // Visited workflows for recursion detection
+  private visitedWorkflows?: Set<string>
 
   constructor(
     private workflow: WorkflowDef,
@@ -215,6 +219,8 @@ export class WorkflowEngine {
       promptInjector: this.promptInjector,
       resolvePreviousSessionId: (node) => this.resolvePreviousSessionId(node),
       executeHooks: (event, context) => this.executeHooks(event, context),
+      workflowResolver: this.workflowResolver,
+      visitedWorkflows: this.visitedWorkflows,
     })
   }
 
@@ -229,6 +235,44 @@ export class WorkflowEngine {
    */
   setRefResolver(resolver: (refPath: string) => any): void {
     this.pool.setRefResolver(resolver)
+  }
+
+  /**
+   * Set the workflow resolver for sub_workflow nodes.
+   * Called by ExecutionService/EngineFactory to enable child workflow resolution.
+   */
+  setWorkflowResolver(
+    resolver: (name: string) => { parsed: WorkflowDef; content: string } | undefined,
+    visitedWorkflows?: Set<string>,
+  ): void {
+    this.workflowResolver = resolver
+    this.visitedWorkflows = visitedWorkflows
+    // Update the executor factory context
+    this.executorFactory = new ExecutorFactory({
+      pool: this.pool,
+      signal: this.signal,
+      nodeResults: this.nodeResults,
+      logger: this.logger,
+      callbacks: this.callbacks,
+      cwd: this.cwd,
+      crossExecResolver: this.crossExecResolver,
+      executionId: this.executionId,
+      providers: this.providers,
+      workflow: this.workflow,
+      workflowDefaultModel: this.workflowDefaultModel,
+      globalSessionId: this.globalSessionId,
+      branchSessionIds: this.branchSessionIds,
+      inputs: this.inputs,
+      modelAliasConfig: this.modelAliasConfig,
+      checkpointStore: this.checkpointStore,
+      agentResolver: this.agentResolver,
+      knowledgeInjectorFactory: this.knowledgeInjectorFactory,
+      promptInjector: this.promptInjector,
+      resolvePreviousSessionId: (node) => this.resolvePreviousSessionId(node),
+      executeHooks: (event, context) => this.executeHooks(event, context),
+      workflowResolver: resolver,
+      visitedWorkflows,
+    })
   }
 
   setNodeResult(nodeId: string, result: NodeExecutionResult): void {

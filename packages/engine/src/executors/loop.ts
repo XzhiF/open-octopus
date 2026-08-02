@@ -10,6 +10,7 @@ import { ConditionExecutor } from "./condition"
 import { ApprovalExecutor } from "./approval"
 import { AgentExecutor } from "./agent"
 import { SwarmExecutor } from "./swarm"
+import { SubWorkflowExecutor } from "./sub-workflow"
 import { extractBreakWhenVars, forceAdvanceLoopVars } from "./loop-fallback"
 
 export class LoopExecutor implements NodeExecutor {
@@ -560,6 +561,23 @@ export class LoopExecutor implements NodeExecutor {
       }
       case "loop":
         return new LoopExecutor(node, p, this.config, { engineNodeResults: this.resume?.engineNodeResults })
+      case "sub_workflow":
+        return new SubWorkflowExecutor(node, p, {
+          providers: this.config.providers,
+          cwd: this.config.cwd,
+          signal: this.config.signal,
+          callbacks: this.config.callbacks,
+          logger: this.config.logger,
+          executionId: this.config.executionId,
+          modelAliasConfig: this.config.modelAliasConfig,
+          workflowEngine: this.config.workflowEngine,
+          globalSessionId: this.config.globalSessionId,
+          branchSessionIds: this.config.branchSessionIds,
+          inputs: this.config.inputs,
+          engineNodeResults: this.config.engineNodeResults,
+          workflowResolver: (this.config as any).workflowResolver,
+          visitedWorkflows: (this.config as any).visitedWorkflows,
+        })
       default:
         throw new Error(`Unknown node type: ${node.type}`)
     }

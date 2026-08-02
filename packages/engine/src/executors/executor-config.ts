@@ -154,6 +154,18 @@ export interface LoopConfig extends CoreConfig {
   engineNodeResults?: Record<string, NodeExecutionResult>
 }
 
+/** SubWorkflowExecutor — child workflow execution with scoped VarPool */
+export interface SubWorkflowConfig extends CoreConfig {
+  globalSessionId?: string
+  branchSessionIds?: Map<string, string>
+  inputs?: Record<string, any>
+  engineNodeResults?: Record<string, NodeExecutionResult>
+  /** Resolves a workflow by name → parsed definition + raw content */
+  workflowResolver?: (name: string) => { parsed: import("@octopus/shared").WorkflowDef; content: string } | undefined
+  /** Visited workflow names for recursion detection */
+  visitedWorkflows?: Set<string>
+}
+
 /** ResumeConfig — used alongside LoopConfig for resume-from-approval flows */
 export interface ResumeConfig {
   innerNodeOverrides?: Map<string, InnerNodeOverride>
