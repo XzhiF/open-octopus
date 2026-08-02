@@ -1,4 +1,4 @@
-import { query, type Options, type AgentDefinition } from '@anthropic-ai/claude-agent-sdk'
+import { query, type Options, type AgentDefinition, type CanUseTool } from '@anthropic-ai/claude-agent-sdk'
 import type { IAgentProvider, SendQueryOptions, MessageChunk, TokenUsage, ModelUsageEntry, OctopusAgentDef } from '../types'
 import { LLMCallTracker } from '../llm-call-tracker'
 import { getPluginSdkConfigs } from '@octopus/shared'
@@ -30,6 +30,12 @@ interface PendingToolCall {
 interface PendingQuestion {
   toolCallId: string
   questions: unknown
+}
+
+interface PendingCompletion {
+  toolCallId: string
+  summary: string
+  vars_update?: Record<string, any>
 }
 
 function loadClaudeSettingsEnv(): Record<string, string> {
@@ -66,20 +72,41 @@ function normalizeUsage(usage?: {
   return { input: usage.input_tokens, output: usage.output_tokens, total: usage.input_tokens + usage.output_tokens }
 }
 
-function buildToolCaptureHooks(toolResultQueue: ToolResultEntry[], pendingQuestions: PendingQuestion[]): Options['hooks'] {
+function buildToolCaptureHooks(
+  toolResultQueue: ToolResultEntry[],
+  pendingQuestions: PendingQuestion[],
+  pendingCompletions: PendingCompletion[],
+): Options['hooks'] {
   return {
     PreToolUse: [{
       hooks: [async (input: unknown) => {
         const inp = input as Record<string, unknown>
         if (inp.tool_name === 'AskUserQuestion') {
+          // Capture question data for SSE events
           pendingQuestions.push({
             toolCallId: inp.tool_use_id as string,
             questions: inp.tool_input,
           })
+          // Deny via PreToolUse hook — this works even with bypassPermissions.
+          // The permissionDecisionReason becomes the tool result the model sees.
           return {
             hookEventName: 'PreToolUse',
             permissionDecision: 'deny' as const,
-            permissionDecisionReason: 'Questions forwarded to web UI.',
+            permissionDecisionReason: 'STOP. The question has been displayed to the user. The user has NOT answered yet. Do NOT output any text or guess any answer. Your turn is over — wait for the next user message.',
+          }
+        }
+        if (inp.tool_name === 'complete_interaction') {
+          // Capture completion data for processing
+          const toolInput = (inp.tool_input ?? {}) as Record<string, any>
+          pendingCompletions.push({
+            toolCallId: inp.tool_use_id as string,
+            summary: toolInput.summary ?? '',
+            vars_update: toolInput.vars_update,
+          })
+          return {
+            hookEventName: 'PreToolUse',
+            permissionDecision: 'deny' as const,
+            permissionDecisionReason: 'Interaction completion captured and forwarded to workflow engine. The interaction is now complete. Do not output anything else.',
           }
         }
         return { continue: true }
@@ -101,7 +128,7 @@ function buildToolCaptureHooks(toolResultQueue: ToolResultEntry[], pendingQuesti
     PostToolUseFailure: [{
       hooks: [async (input: unknown) => {
         const inp = input as Record<string, unknown>
-        if (inp.tool_name === 'AskUserQuestion') {
+        if (inp.tool_name === 'AskUserQuestion' || inp.tool_name === 'complete_interaction') {
           return { continue: true }
         }
         toolResultQueue.push({
@@ -157,11 +184,37 @@ export class ClaudeSDKProvider implements IAgentProvider {
   ): AsyncGenerator<MessageChunk> {
     const toolResultQueue: ToolResultEntry[] = []
     const pendingQuestions: PendingQuestion[] = []
+    const pendingCompletions: PendingCompletion[] = []
     let currentMessageId = ""
     const blockTypes = new Map<number, 'thinking' | 'text' | 'tool_use'>()
     const pendingToolCalls = new Map<number, PendingToolCall>()
     const modelName = options?.model ?? 'sonnet'
     this._llmTracker.reset()
+
+    // Build canUseTool callback for interaction sessions.
+    // This replaces PreToolUse hook deny which returns a hardcoded
+    // "Error: Answer questions?" tool result that the model misinterprets.
+    // canUseTool's `message` field is sent as the tool result content,
+    // giving us full control over what the model sees.
+    const canUseTool: CanUseTool | undefined = options?.interactionSession
+      ? async (toolName, input, cbOptions) => {
+          if (toolName === 'AskUserQuestion') {
+            return {
+              behavior: 'deny' as const,
+              message: 'STOP. Question sent to user. User has NOT answered yet. Do NOT output any text. Do NOT guess any answer. Wait for the next user message.',
+              toolUseID: cbOptions.toolUseID,
+            }
+          }
+          if (toolName === 'complete_interaction') {
+            return {
+              behavior: 'deny' as const,
+              message: 'Interaction completion has been captured and forwarded to the workflow engine. The interaction is now complete. Do not output anything else.',
+              toolUseID: cbOptions.toolUseID,
+            }
+          }
+          return { behavior: 'allow' as const, toolUseID: cbOptions.toolUseID }
+        }
+      : undefined
 
     const sdkOptions: Options = {
       cwd,
@@ -171,7 +224,7 @@ export class ClaudeSDKProvider implements IAgentProvider {
       allowDangerouslySkipPermissions: true,
       settingSources: ['project', 'user'],
       includePartialMessages: true,
-      hooks: buildToolCaptureHooks(toolResultQueue, pendingQuestions),
+      hooks: buildToolCaptureHooks(toolResultQueue, pendingQuestions, pendingCompletions),
       env: buildSubprocessEnv(options?.env as Record<string, string> | undefined),
       agent: options?.agent,
       skills: options?.skills,
@@ -181,6 +234,8 @@ export class ClaudeSDKProvider implements IAgentProvider {
           )
         : undefined,
       plugins: resolvePlugins(options),
+      disallowedTools: options?.disallowedTools,
+      canUseTool,
       ...(options?.abortSignal ? { abortController: new AbortController() } : {}),
       ...(resumeSessionId ? { resume: resumeSessionId } : {}),
     }
@@ -210,6 +265,16 @@ export class ClaudeSDKProvider implements IAgentProvider {
           type: 'ask_user_question',
           toolCallId: pq.toolCallId,
           questions: pq.questions,
+        }
+      }
+
+      while (pendingCompletions.length > 0) {
+        const pc = pendingCompletions.shift()!
+        yield {
+          type: 'complete_interaction',
+          toolCallId: pc.toolCallId,
+          summary: pc.summary,
+          vars_update: pc.vars_update,
         }
       }
 

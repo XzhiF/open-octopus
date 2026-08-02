@@ -153,6 +153,28 @@ export function ChatPanel({
     }
   }, [messages])
 
+  const scrollRef = useRef<HTMLDivElement>(null)
+  const userScrolledUpRef = useRef(false)
+  const lastMessageCountRef = useRef(0)
+
+  // Detect user scrolling up — pause auto-scroll so they can read history
+  const handleScroll = useCallback(() => {
+    const el = scrollRef.current
+    if (!el) return
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 50
+    userScrolledUpRef.current = !atBottom
+  }, [])
+
+  // Auto-scroll to bottom ONLY when new messages are added (not on every re-render)
+  useEffect(() => {
+    const el = scrollRef.current
+    if (!el || userScrolledUpRef.current) return
+    // Only scroll if message count actually increased
+    if (messages.length <= lastMessageCountRef.current) return
+    lastMessageCountRef.current = messages.length
+    el.scrollTop = el.scrollHeight
+  }, [messages.length])
+
   return (
     <div className="flex flex-col h-full bg-background">
       <SessionTabs
@@ -164,22 +186,25 @@ export function ChatPanel({
         onRenameSession={onRenameSession}
       />
 
-      <div className="flex-1 overflow-y-auto p-4 flex flex-col-reverse">
+      <div ref={scrollRef} onScroll={handleScroll} className="flex-1 overflow-y-auto p-4 flex flex-col">
         {messages.length === 0 && (
           <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
             开始对话 — 发送消息即可与 AI 助手交互
           </div>
         )}
-        {/* Render messages in reverse order for flex-col-reverse: newest at bottom */}
-        {[...messages].reverse().map((msg, reverseIdx) => {
-          const idx = messages.length - 1 - reverseIdx
+        {hasMoreMessages && (
+          <button
+            onClick={onLoadMoreMessages}
+            className="mb-3 w-full text-xs text-muted-foreground hover:text-foreground py-1.5 border border-border/50 rounded-md transition-colors"
+          >
+            加载更多消息
+          </button>
+        )}
+        {messages.map((msg, idx) => {
           if (shouldHideAfterCard(msg, idx, answeringState)) return null
-          const uniqueKey = messages.some((other, otherIdx) => otherIdx < idx && other.id === msg.id)
-            ? `${msg.id}-${idx}`
-            : msg.id
           return (
             <MessageBubble
-              key={uniqueKey}
+              key={`${msg.id}-${msg.displayType}`}
               message={msg}
               isStreaming={isStreaming && (
                 msg.displayType === "text" && msg.id === messages[messages.length - 1]?.id
@@ -189,14 +214,6 @@ export function ChatPanel({
             />
           )
         })}
-        {hasMoreMessages && (
-          <button
-            onClick={onLoadMoreMessages}
-            className="mt-3 w-full text-xs text-muted-foreground hover:text-foreground py-1.5 border border-border/50 rounded-md transition-colors"
-          >
-            加载更多消息
-          </button>
-        )}
       </div>
 
       <StreamingStatusBar isStreaming={isStreaming} streamStartMs={streamStartMs} streamEndState={streamEndState} />

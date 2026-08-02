@@ -15,6 +15,7 @@ import {
   PendingReviewDAO, KnowledgeEffectivenessDAO, ArchiveDAO,
 } from "./db/dao"
 import { ArchiveDraftDAO } from "./db/dao/archive-draft-dao"
+import { InteractionMessageDAO } from "./db/dao/interaction-message-dao"
 import { createKnowledgeRoutes } from "./routes/knowledge"
 import { createReviewRoutes } from "./routes/review"
 import { createArchiveRoutes } from "./routes/archive"
@@ -42,6 +43,9 @@ import { createAgentRoutes } from "./routes/agent"
 import { createCloneSessionRoutes } from "./routes/clone"
 import { createCloneFilesRoutes } from "./routes/agent/clone-files"
 import cronRoutes from "./routes/cron"
+import { createInteractionRoutes } from "./routes/interaction"
+import { createWorkflowOpsRoutes } from "./routes/workflow-ops"
+import { InteractionService } from "./services/interaction"
 import { SSEService } from "./services/sse"
 import { migrateOrgDirs, syncOrgsFromFilesystem } from "./services/org"
 import { ExecutionService } from "./services/execution"
@@ -51,7 +55,7 @@ import { installGlobalErrorHandlers, logInfo, getLogFilePath } from "./file-logg
 import { registerProvider, ClaudeSDKProvider, PiAgentProvider } from "@octopus/providers"
 import { isPortInUse, findPidOnPort, killPid, waitForPort } from "./port-utils"
 import { globalErrorTracker, setupDataRetention } from "./services/error-tracker"
-import { initExecutionServiceRegistry } from "./services/execution-service-registry"
+import { initExecutionServiceRegistry, getExecutionService } from "./services/execution-service-registry"
 import { WorkspaceScheduleService } from "./services/schedule"
 import { SchedulerService } from "./services/scheduler/scheduler-service"
 import { SchedulerEngine } from "./services/scheduler/scheduler-engine"
@@ -102,6 +106,7 @@ interface AllDAOs {
   knowledgeEffectiveness: KnowledgeEffectivenessDAO
   archive: ArchiveDAO
   archiveDraft: ArchiveDraftDAO
+  interactionMessage: InteractionMessageDAO
 }
 
 function createAllDAOs(db: ReturnType<typeof initDb>): AllDAOs {
@@ -121,6 +126,7 @@ function createAllDAOs(db: ReturnType<typeof initDb>): AllDAOs {
     knowledgeEffectiveness: new KnowledgeEffectivenessDAO(db),
     archive: new ArchiveDAO(db),
     archiveDraft: new ArchiveDraftDAO(db),
+    interactionMessage: new InteractionMessageDAO(db),
   }
 }
 
@@ -330,12 +336,23 @@ const d = daos ?? {
   knowledgeEffectiveness: lazyDAO(KnowledgeEffectivenessDAO),
   archive: lazyDAO(ArchiveDAO),
   archiveDraft: lazyDAO(ArchiveDraftDAO),
+  interactionMessage: lazyDAO(InteractionMessageDAO),
 }
 
 const wsSvc = workspaceService ?? new WorkspaceService(d.workspace)
 const chatSvc = chatService ?? new ChatService(d.chat, sse)
 const lbSvc = leaderboardService ?? new LeaderboardService(d.tokenUsage)
 const schedSvc = new SchedulerService(d.scheduleConfig, d.scheduleRun)
+const interactionSvc = new InteractionService(d.interactionMessage, d.tokenUsage, d.execution, sse, async (workspaceId, execId, nodeId, summary, varsUpdate, providerSessionId) => {
+  const entry = getExecutionService(workspaceId)
+  if (entry) {
+    // Save provider session ID to execution's global_session_id for context continuity
+    if (providerSessionId) {
+      d.execution.updateExecution(execId, { global_session_id: providerSessionId } as any)
+    }
+    await entry.service.completeInteraction(execId, nodeId, summary, varsUpdate)
+  }
+})
 
 // In test mode, also initialize agent singletons with lazy proxy DAOs
 if (!daos) {
@@ -354,12 +371,14 @@ if (!daos) {
 
 app.route("/api/orgs", createOrgRoutes(d.org))
 app.route("/api/workspaces", createWorkspaceRoutes(wsSvc, d.org, d.workspace))
+app.route("/api/workspaces/:id/workflows", createWorkflowOpsRoutes(d.workspace))
 app.route("/api/workspaces/:id/workflows", createWorkflowRoutes(d.workspace, () => resourceRegistry.get()))
 app.route("/api/workspaces/:id/executions", executionRoutes)
 app.route("/api/workspaces/:id/analytics", createAnalyticsLogRoutes(d.workspace, getLogAnalysisService({ tokenDao: d.tokenUsage, execDao: d.execution }) ?? new (require('./services/log-analysis').LogAnalysisService)(d.tokenUsage, d.execution)))
 app.route("/api/dashboard", createDashboardRoutes(wsSvc, lbSvc, d.execution, d.tokenUsage, d.archive))
 app.route("/api/workspaces/:id/chat", chatRoutes(sse, chatSvc, wsSvc))
 app.route("/api/chat/global", globalChatRoutes(sse, chatSvc))
+app.route("/api/workspaces/:id/interactions", createInteractionRoutes(interactionSvc, d.workspace, d.execution))
 app.route("/api/workspaces/:id/files", createFileRoutes(d.workspace))
 app.route("/api/workspaces/:id/events", eventRoutes(sse))
 app.route("/api/workspaces", createPipelineRoutes(d.workspace))

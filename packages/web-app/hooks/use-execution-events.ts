@@ -6,6 +6,9 @@ import { isMergedEvent, type AgentEvent, type LoopIterationSummary } from "@/lib
 
 const POLL_INTERVAL_MS = 2000
 const RUNNING_STATUSES = new Set(["running", "paused"])
+// Includes pending_interaction for terminal transition detection
+// (running → pending_interaction → completed would otherwise skip the final fetch)
+const ACTIVE_STATUSES = new Set(["running", "paused", "pending_interaction"])
 
 export interface EventGroup {
   key: string
@@ -59,9 +62,9 @@ export function useExecutionEvents(
 
   // Final fetch on transition to terminal
   useEffect(() => {
-    const wasRunning = RUNNING_STATUSES.has(prevStatusRef.current ?? "")
-    const isDone = !RUNNING_STATUSES.has(executionStatus ?? "")
-    if (wasRunning && isDone) {
+    const wasActive = ACTIVE_STATUSES.has(prevStatusRef.current ?? "")
+    const isDone = !RUNNING_STATUSES.has(executionStatus ?? "") && executionStatus !== "pending_interaction"
+    if (wasActive && isDone) {
       doFetch()
     }
     prevStatusRef.current = executionStatus

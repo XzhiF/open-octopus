@@ -19,3 +19,6 @@
 | 15 | workflow-simulator-v2 | 2026-07-30 | feat/workflow-simulator | done |
 | 16 | workflow-test-optimization | 2026-07-30 | feat/workflow-simulator | done |
 | 17 | simulator-outputs-and-real | 2026-07-30 | feat/workflow-simulator | done |
+| 18 | interaction-node | 2026-07-31 | feat/interaction-node | done |
+| 19 | chatbot-workflow-design | 2026-08-01 | feat/interaction-node | done |
+| 20 | interaction-node-detail-fix | 2026-08-01 | feat/interaction-node | done |

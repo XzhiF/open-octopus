@@ -14,11 +14,19 @@ export type InnerNodeOverride =
   | { kind: "result"; result: NodeExecutionResult }
   | { kind: "approval"; userChoice: string; userComment?: string }
 
+export interface InteractionMetadata {
+  sessionId: string
+  display: "modal" | "panel"
+  nodeId: string
+  maxRounds?: number
+  timeout?: number
+}
+
 export interface NodeExecutionResult {
   lastOutput?: string
   exitCode?: number
   outputs: Record<string, any>
-  status: "pending" | "running" | "completed" | "failed" | "skipped" | "skipped_failed" | "cancelled" | "paused" | "rejected" | "pending_approval"
+  status: "pending" | "running" | "completed" | "failed" | "skipped" | "skipped_failed" | "cancelled" | "paused" | "rejected" | "pending_approval" | "pending_interaction"
   durationMs: number
   logLines: string[]
   error?: string
@@ -33,6 +41,7 @@ export interface NodeExecutionResult {
   modelUsages?: ModelUsageEntry[]
   events?: AgentEvent[]
   approvalMetadata?: ApprovalMetadata
+  interactionMetadata?: InteractionMetadata
   /** Completed inner node results from the iteration that hit pending_approval. Used for resume. */
   innerNodeResults?: Record<string, NodeExecutionResult>
   /** True when node was skipped because execute_when evaluated to false.

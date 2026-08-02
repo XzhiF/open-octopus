@@ -231,20 +231,6 @@ export function chatRoutes(sseService: SSEService, chatService: ChatService, wor
             }
           }
 
-          if (chunk.type === 'ask_user_question') {
-            const entry = toolCallMap.get(chunk.toolCallId)
-            if (entry && entry.dbMessageId) {
-              entry.toolStatus = "done"
-              chatService.updateMessageMetadata(entry.dbMessageId, JSON.stringify({
-                displayType: "ask_user_question",
-                toolCallId: entry.toolCallId,
-                toolName: entry.toolName,
-                toolInput: (chunk as { questions: unknown }).questions ?? entry.toolInput,
-                toolStatus: "done",
-              }))
-            }
-          }
-
           if (chunk.type === 'result') {
             if (chunk.sessionId) {
               chatService.updateProviderSession(sessionId, chunk.sessionId)

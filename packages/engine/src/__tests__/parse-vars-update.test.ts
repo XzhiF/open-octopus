@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest"
 import { VarPool } from "@octopus/shared"
-import { applyVarsUpdate } from "../executors/parse-vars-update"
+import { applyVarsUpdate, extractInteractionCompletion } from "../executors/parse-vars-update"
 
 describe("applyVarsUpdate", () => {
   function makePool(): VarPool {
@@ -100,5 +100,76 @@ some text
 {"vars_update":{"version":"second"}}`
     applyVarsUpdate(text, pool, outputs)
     expect(pool.get("version")).toBe("second")
+  })
+})
+
+describe("extractInteractionCompletion", () => {
+  it("extracts from last code fence (agent real output)", () => {
+    const text = `已记录：红色。
+
+\`\`\`json
+{"summary": "用户选择了红色", "vars_update": {"favorite_color": "红色"}}
+\`\`\``
+    const result = extractInteractionCompletion(text)
+    expect(result).not.toBeNull()
+    expect(result!.summary).toBe("用户选择了红色")
+    expect(result!.vars_update).toEqual({ favorite_color: "红色" })
+  })
+
+  it("ignores example JSON in earlier code fences", () => {
+    const text = `Here's the format you should use:
+
+\`\`\`json
+{"summary": "example", "vars_update": {"example_key": "example_value"}}
+\`\`\`
+
+Now let me ask you a question.
+
+\`\`\`json
+{"summary": "用户选择了蓝色", "vars_update": {"favorite_color": "蓝色"}}
+\`\`\``
+    const result = extractInteractionCompletion(text)
+    expect(result).not.toBeNull()
+    expect(result!.vars_update).toEqual({ favorite_color: "蓝色" })
+  })
+
+  it("extracts from plain text without code fences", () => {
+    const text = `好的，已记录你的选择！
+{"summary": "用户选择了绿色", "vars_update": {"favorite_color": "绿色"}}`
+    const result = extractInteractionCompletion(text)
+    expect(result).not.toBeNull()
+    expect(result!.summary).toBe("用户选择了绿色")
+    expect(result!.vars_update).toEqual({ favorite_color: "绿色" })
+  })
+
+  it("returns null when no vars_update found", () => {
+    const text = "Just some conversational text, no JSON here."
+    const result = extractInteractionCompletion(text)
+    expect(result).toBeNull()
+  })
+
+  it("ignores system prompt examples when only examples exist", () => {
+    // Round 1: agent just asks a question, outputs some text with no completion JSON
+    // The system prompt examples are in code fences and should be ignored
+    const text = `问题已发送，等待你的回答。`
+    const result = extractInteractionCompletion(text)
+    expect(result).toBeNull()
+  })
+
+  it("handles multi-line JSON in code fence", () => {
+    const text = `确认选择。
+
+\`\`\`json
+{
+  "summary": "用户选择了其他：紫色",
+  "vars_update": {
+    "favorite_color": "紫色"
+  }
+}
+\`\`\``
+    const result = extractInteractionCompletion(text)
+    expect(result).not.toBeNull()
+    expect(result!.summary).toBe("用户选择了其他：紫色")
+    expect(result!.vars_update).toEqual({ favorite_color: "紫色" })
   })
 })

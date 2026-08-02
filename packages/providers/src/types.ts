@@ -50,6 +50,13 @@ export interface SendQueryOptions {
   agents?: Record<string, OctopusAgentDef>
   plugins?: Array<{ type: 'local'; path: string }>
   disablePlugins?: string[]
+  disallowedTools?: string[]
+  /**
+   * When true, AskUserQuestion tool calls are intercepted via canUseTool callback.
+   * The deny message tells the model the question was forwarded to the web UI,
+   * preventing the SDK's hardcoded "Error: Answer questions?" tool result.
+   */
+  interactionSession?: boolean
   varsUpdate?: boolean
   customProviders?: Record<string, {
     base_url: string
@@ -81,6 +88,7 @@ export type MessageChunk =
   | { type: 'tool_result'; toolCallId: string; toolName: string; content: string; isError?: boolean; toolDuration?: string }
   | { type: 'tool_summary'; summary: string; toolCallIds: string[] }
   | { type: 'ask_user_question'; toolCallId: string; questions: unknown }
+  | { type: 'complete_interaction'; toolCallId: string; summary: string; vars_update?: Record<string, any> }
   | { type: 'local_command_output'; content: string }
   | { type: 'status'; status: 'compacting' | 'requesting' | null; varsUpdate?: Record<string, unknown> }
   | { type: 'result'; content?: string; sessionId?: string; tokens?: TokenUsage; costUsd?: number; modelUsages?: ModelUsageEntry[] }

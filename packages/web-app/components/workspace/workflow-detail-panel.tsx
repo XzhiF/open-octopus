@@ -24,12 +24,14 @@ import {
   X,
   Archive as ArchiveIcon,
   ShieldCheck,
+  MessageCircle,
 } from "lucide-react"
 import { WorkflowFlowViewerWithStatus } from "./workflow-flow-viewer-with-status"
 import { TokenUsageDisplay } from "./workflow-nodes/token-usage-display"
 import { ExecutionLogViewer } from "./execution-log-viewer"
 import { InterventionDialog } from "./intervention-dialog"
 import { ApprovalDialog } from "./approval-dialog"
+import { InteractionModal } from "./interaction-modal"
 import { NodeInfoDialog } from "./node-info-dialog"
 import { SwarmDetailDialog } from "@/components/swarm/organisms/swarm-detail-dialog"
 import { ArchiveDialog } from "@/components/agent/knowledge/archive/ArchiveDialog"
@@ -43,7 +45,7 @@ import { ChartErrorBoundary } from "@/components/ui/chart-error-boundary"
 import type { LLMCallData, LLMCallAggregates } from "@/lib/types"
 
 const POLL_INTERVAL_MS = 3000
-const RUNNING_STATUSES = new Set(["running", "paused", "pending_approval"])
+const RUNNING_STATUSES = new Set(["running", "paused", "pending_approval", "pending_interaction"])
 
 function StatusBadge({ status }: { status: string }) {
   const config: Record<string, { color: string; label: string }> = {
@@ -53,6 +55,7 @@ function StatusBadge({ status }: { status: string }) {
     failed: { color: "bg-red-500", label: "失败" },
     pending: { color: "bg-blue-500", label: "待开始" },
     pending_approval: { color: "bg-amber-500", label: "待审批" },
+    pending_interaction: { color: "bg-purple-500", label: "交互中" },
     cancelled: { color: "bg-gray-500", label: "已取消" },
     rejected: { color: "bg-orange-500", label: "已拒绝" },
   }
@@ -128,6 +131,8 @@ export function WorkflowDetailPanel({ execution, workflow, workspaceId }: Workfl
   const [liveApprovalMetadata, setLiveApprovalMetadata] = useState<ApprovalMetadata | null>(
     execution.approvalMetadata ?? null,
   )
+  const [interactionOpen, setInteractionOpen] = useState(false)
+  const [liveInteractionMeta, setLiveInteractionMeta] = useState<{ nodeId: string; sessionId?: string; display: string; maxRounds?: number } | null>(null)
   const [archiveOpen, setArchiveOpen] = useState(false)
 
   // Always poll when panel is open — ensures recovery from stale prop data
@@ -139,6 +144,7 @@ export function WorkflowDetailPanel({ execution, workflow, workspaceId }: Workfl
         if (d.steps) setLiveSteps(d.steps.map(mapRawStep))
         if (d.workflow_content && !yamlContent) setYamlContent(d.workflow_content)
         setLiveApprovalMetadata(d.approvalMetadata ?? null)
+        setLiveInteractionMeta(d.interactionMetadata ?? null)
       })
       .catch(() => {})
     // Fetch loop iterations data for NodeInfoDialog (S9/S10/S11)
@@ -172,6 +178,19 @@ export function WorkflowDetailPanel({ execution, workflow, workspaceId }: Workfl
       approvalShownRef.current = null
     }
   }, [liveStatus, liveApprovalMetadata?.nodeId])
+
+  // Auto-open interaction modal when status transitions to pending_interaction
+  const interactionShownRef = useRef<string | null>(null)
+  useEffect(() => {
+    if (liveStatus === "pending_interaction" && liveInteractionMeta) {
+      if (interactionShownRef.current !== liveInteractionMeta.nodeId) {
+        interactionShownRef.current = liveInteractionMeta.nodeId
+        setInteractionOpen(true)
+      }
+    } else if (liveStatus !== "pending_interaction") {
+      interactionShownRef.current = null
+    }
+  }, [liveStatus, liveInteractionMeta?.nodeId])
 
   const handleApprove = async (value: string, comment: string) => {
     if (!liveApprovalMetadata) return
@@ -267,6 +286,7 @@ export function WorkflowDetailPanel({ execution, workflow, workspaceId }: Workfl
   function getExecutorType(step: StepExecution | undefined, nodeType?: string): string | undefined {
     if (!step) return undefined
     if (nodeType === "swarm") return "swarm"
+    if (nodeType === "interaction") return "interaction"
     if (step.model) return "agent"
     const name = step.stepName?.toLowerCase() ?? ""
     if (name.includes("bash")) return "bash"
@@ -392,6 +412,18 @@ export function WorkflowDetailPanel({ execution, workflow, workspaceId }: Workfl
             </Button>
           )}
 
+          {liveStatus === "pending_interaction" && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7 text-purple-500"
+              onClick={() => setInteractionOpen(true)}
+              title="交互"
+            >
+              <MessageCircle className="h-3.5 w-3.5" />
+            </Button>
+          )}
+
           {(liveStatus === "completed" || liveStatus === "failed") && (
             <Button
               variant="ghost"
@@ -509,6 +541,22 @@ export function WorkflowDetailPanel({ execution, workflow, workspaceId }: Workfl
           onSubmit={handleApprove}
           loading={approvalLoading}
           storageKey={`octopus:ws:${workspaceId}:approval:${execution.id}`}
+        />
+      )}
+
+      {/* Interaction Modal */}
+      {liveInteractionMeta && (
+        <InteractionModal
+          open={interactionOpen}
+          onOpenChange={setInteractionOpen}
+          executionId={execution.id}
+          nodeId={liveInteractionMeta.nodeId}
+          workspaceId={workspaceId}
+          display={liveInteractionMeta.display as "modal" | "panel"}
+          onComplete={() => {
+            setInteractionOpen(false)
+            fetchStatus()
+          }}
         />
       )}
 

@@ -19,6 +19,7 @@ import { PythonNode } from "./workflow-nodes/python-node"
 import { AgentNode } from "./workflow-nodes/agent-node"
 import { ConditionNode } from "./workflow-nodes/condition-node"
 import { ApprovalNode } from "./workflow-nodes/approval-node"
+import { InteractionNode } from "./workflow-nodes/interaction-node"
 import { LoopNode } from "./workflow-nodes/loop-node"
 import { LoopContainerNode } from "./workflow-nodes/loop-container-node"
 import { SwarmNode } from "@/components/swarm/organisms/swarm-node"
@@ -48,6 +49,7 @@ const nodeTypes = {
   agent: AgentNode,
   condition: ConditionNode,
   approval: ApprovalNode,
+  interaction: InteractionNode,
   "loop-container": LoopContainerNode,
   loop: LoopNode,
   swarm: SwarmNode,
@@ -137,10 +139,16 @@ export function WorkflowFlowViewerWithStatus({
         }
       }
 
+      // Compute duration: prefer step.duration, fall back to startedAt/completedAt
+      let effectiveDuration = step?.duration
+      if (step && (!effectiveDuration || effectiveDuration <= 0) && step.startedAt && step.completedAt) {
+        effectiveDuration = (new Date(step.completedAt).getTime() - new Date(step.startedAt).getTime()) / 1000
+      }
+
       const statusOverlay: StatusOverlay | undefined = step
         ? {
             stepStatus: step.status,
-            duration: step.duration,
+            duration: effectiveDuration,
             startedAt: step.startedAt,
             error: step.error,
             tokenUsage: ((step.tokensInput ?? 0) > 0 || (step.tokensOutput ?? 0) > 0)

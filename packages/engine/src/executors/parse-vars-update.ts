@@ -107,3 +107,90 @@ function extractVarsUpdateJson(text: string): string | null {
 
   return null
 }
+
+/**
+ * Pure extraction: extract { summary, vars_update } from agent output text.
+ * Used by the chat route for interaction completion — no VarPool needed.
+ * Same battle-tested parsing logic as applyVarsUpdate.
+ */
+export function extractInteractionCompletion(text: string): {
+  summary: string
+  vars_update?: Record<string, any>
+} | null {
+  // Extract all code-fenced blocks
+  const fences = extractAllCodeFences(text)
+
+  // Strategy 1: Check the LAST code fence first — the agent's real completion
+  // JSON is always in the final ```json ... ``` block. Earlier fences contain
+  // examples from the system prompt or workflow YAML.
+  for (let i = fences.length - 1; i >= 0; i--) {
+    const parsed = tryParse(fences[i].trim())
+    if (parsed?.vars_update || parsed?.summary) {
+      return {
+        summary: parsed.summary ?? "",
+        vars_update: parsed.vars_update,
+      }
+    }
+    // Try multi-line JSON extraction inside this fence
+    const extracted = extractVarsUpdateJson(fences[i])
+    if (extracted) {
+      const inner = tryParse(extracted)
+      if (inner?.vars_update || inner?.summary) {
+        return {
+          summary: inner.summary ?? "",
+          vars_update: inner.vars_update,
+        }
+      }
+    }
+  }
+
+  // Strategy 2: Check plain text (outside code fences) for bare JSON
+  const stripped = stripCodeFences(text)
+  const lines = stripped.split("\n")
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i].trim()
+    if (!line) continue
+    const parsed = tryParse(line)
+    if (parsed?.vars_update || parsed?.summary) {
+      return {
+        summary: parsed.summary ?? "",
+        vars_update: parsed.vars_update,
+      }
+    }
+  }
+
+  // Strategy 3: Multi-line JSON extraction on stripped text
+  const extracted = extractVarsUpdateJson(stripped)
+  if (extracted) {
+    const parsed = tryParse(extracted)
+    if (parsed?.vars_update || parsed?.summary) {
+      return {
+        summary: parsed.summary ?? "",
+        vars_update: parsed.vars_update,
+      }
+    }
+  }
+
+  return null
+}
+
+/**
+ * Extract content of all code-fenced blocks from text.
+ * Returns an array of the text inside each ``` ... ``` block.
+ */
+function extractAllCodeFences(text: string): string[] {
+  const results: string[] = []
+  const regex = /```[^\n]*\n([\s\S]*?)```/g
+  let match: RegExpExecArray | null
+  while ((match = regex.exec(text)) !== null) {
+    results.push(match[1])
+  }
+  return results
+}
+
+/**
+ * Remove all code-fenced blocks from text.
+ */
+function stripCodeFences(text: string): string {
+  return text.replace(/```[\s\S]*?```/g, "")
+}

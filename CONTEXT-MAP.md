@@ -11,7 +11,7 @@
 | **Vertical Slice** | Ticket 的结构约束 — 切片穿越所有层（schema → API → UI → test）。 | core-pack |
 | **Blocking Edge** | Ticket 间依赖声明 — 引擎通过 `depends_on` 实现拓扑排序。 | engine |
 | **Tracer Bullet** | Ticket 的执行模式 — 从测试到实现到验证的完整路径。 | core-pack |
-| **Node** | YAML 中的一个执行单元（agent / bash / python / condition / approval / loop / swarm）。 | engine |
+| **Node** | YAML 中的一个执行单元（agent / bash / python / condition / approval / loop / swarm / interaction）。 | engine |
 | **VarPool** | 全局变量池 — `$vars.xxx` 语法访问。节点通过 `vars_update` JSON 写入。 | engine, shared |
 | **context: new** | agent 节点属性 — 在全新 context window 中执行，不继承父 agent 上下文。 | engine |
 | **Two-Axis Review** | 两轴并行审查 — Standards 和 Spec 作为独立 sub-agent 并行执行，报告不合并不重排。 | engine, core-pack |
@@ -46,6 +46,21 @@
 | **TestFixture** | 测试 fixture — `.test.yaml` 文件，包含一个或多个 TestScenario，与 workflow.yaml 配对。 | engine |
 | **Syntax Pre-check** | 语法预检查 — 在模拟执行前对所有 bash/python 节点运行 `bash -n` / `python compile()` 检查语法错误，不执行脚本。 | engine |
 | **Per-iteration Mock** | 按迭代 mock — loop 内部节点的 mock 数据以数组形式定义，索引对应迭代次数。对象值则所有迭代复用。 | engine |
+| **Interaction Node** | 多轮人机交互节点 — 基于 Chatbot UI 的 `interaction` 类型工作流节点，替代 loop+approval+agent 三件套。Agent 驱动动态提问，支持结构化问题和自由文本。 | engine, server |
+| **Chat Bridge** | 聊天桥接 — Server 层组件，连接 WorkflowEngine 执行上下文与 ChatService session，管理交互 session 的创建、监控和完成信号检测。 | server |
+| **complete_interaction** | 交互完成工具 — 注册给 interaction 节点的 Agent 的特殊工具，Agent 认为信息充足时主动调用以结束节点。携带 summary 和 vars_update。 | engine |
+| **Interaction Session** | 交互会话 — 与工作流执行关联的 chat session（有 linked_execution_id + linked_node_id），生命周期由 interaction 节点管理。 | server |
+| **Traceability Matrix** | Bidirectional link: requirement ↔ code ↔ test, proving implementation completeness. | core-pack |
+| **Assertion Density** | Assertions per line of test code (≥ 0.22 is healthy, < 0.15 is suspicious). | core-pack |
+| **Confidence Score** | Weighted composite of verification dimensions, producing GO/NO-GO/REVIEW decision. | core-pack |
+| **Mutation Spot Check** | Targeted code mutation on critical paths to verify tests can detect real bugs. | core-pack |
+| **Orphan Test** | Test with no traceable requirement (gold-plating detection). | core-pack |
+| **Verification Report** | Evidence-based audit of implementation truth, distinct from pipeline-report.md (which is a claim). | core-pack |
+| **Pipeline Loop** | Verification-driven iteration orchestrator — reads verification-report, generates gap brief, re-runs pipeline until confidence ≥ 85. | core-pack |
+| **Gap Brief** | 聚焦上一次验证失败的 brief — 不包含已工作的部分，只包含需要修复的 gaps。每轮迭代生成一个。 | core-pack |
+| **Loop State** | JSON 文件跟踪循环中所有迭代的分数、门禁结果和 gap 历史。存储于 root feature 目录下。 | core-pack |
+| **Convergence** | 循环终止条件 — 置信度分数达到 ≥ 85 (GO) 阈值。 | core-pack |
+| **Stall Detection** | 连续 2 轮迭代分数提升 < 5 分 → 检测为停滞，循环退出避免无限循环。 | core-pack |
 
 ## Anti-Patterns（禁止）
 

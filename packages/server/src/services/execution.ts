@@ -29,7 +29,7 @@ export class ExecutionService {
   static readonly ALLOWED_EXECUTION_COLUMNS = new Set([
     "status", "started_at", "completed_at", "duration", "progress", "var_pool",
     "gate_status", "input_values", "start_commit_id", "end_commit_id",
-    "pipeline_config", "global_session_id", "approval_metadata", "pending_hooks", "retry_count",
+    "pipeline_config", "global_session_id", "approval_metadata", "interaction_metadata", "pending_hooks", "retry_count",
   ])
 
   constructor(
@@ -119,6 +119,14 @@ export class ExecutionService {
 
   async approve(id: string, nodeId: string, answer: string, comment?: string): Promise<ExecutionRow> {
     return this.lifecycle.approve(id, nodeId, answer, comment)
+  }
+
+  async startInteraction(id: string, nodeId: string, workspaceId: string): Promise<{ sessionId: string; display: string }> {
+    return this.lifecycle.startInteraction(id, nodeId, workspaceId)
+  }
+
+  async completeInteraction(id: string, nodeId: string, summary: string, varsUpdate?: Record<string, any>): Promise<ExecutionRow> {
+    return this.lifecycle.completeInteraction(id, nodeId, summary, varsUpdate)
   }
 
   async pause(executionId: string): Promise<{ success: boolean; error?: string }> {

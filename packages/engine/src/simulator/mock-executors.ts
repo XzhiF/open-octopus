@@ -13,6 +13,7 @@ import type {
   BashMockDef,
   PythonMockDef,
   ApprovalMockDef,
+  InteractionMockDef,
 } from "./types"
 
 // ── Shared helper ─────────────────────────────────────────────
@@ -254,6 +255,59 @@ export class MockApprovalExecutor implements NodeExecutor {
       logLines: [...logLines, "[mock] approval completed"],
       decision: this.mockDef.choice,
       comment: this.mockDef.comment,
+    }
+  }
+}
+
+// ── MockInteractionExecutor ────────────────────────────────────
+
+export class MockInteractionExecutor implements NodeExecutor {
+  constructor(
+    private node: NodeDef,
+    private pool: VarPool,
+    private mockDef: InteractionMockDef,
+  ) {}
+
+  async execute(): Promise<NodeExecutionResult> {
+    const start = Date.now()
+    const logLines: string[] = [`[mock] interaction summary: ${this.mockDef.summary}`]
+
+    if (this.mockDef.rounds !== undefined) {
+      logLines.push(`[mock] interaction rounds: ${this.mockDef.rounds}`)
+    }
+
+    const outputs: Record<string, any> = {
+      last_output: this.mockDef.summary,
+      summary: this.mockDef.summary,
+    }
+
+    // Apply vars_update to VarPool
+    if (this.mockDef.vars_update) {
+      for (const [key, val] of Object.entries(this.mockDef.vars_update)) {
+        const resolved = typeof val === "string" ? substituteVars(val, this.pool) : val
+        this.pool.set(key, resolved)
+        logLines.push(`[mock] interaction vars_update: ${key} = ${JSON.stringify(resolved)}`)
+      }
+      outputs.vars_update = this.mockDef.vars_update
+    }
+
+    // Apply outputs mapping
+    if (this.mockDef.outputs) {
+      for (const [key, val] of Object.entries(this.mockDef.outputs)) {
+        if (typeof val === "string") {
+          outputs[key] = substituteVars(val, this.pool)
+        } else {
+          outputs[key] = val
+        }
+      }
+    }
+
+    return {
+      lastOutput: this.mockDef.summary,
+      outputs,
+      status: "completed",
+      durationMs: Date.now() - start,
+      logLines: [...logLines, "[mock] interaction completed"],
     }
   }
 }

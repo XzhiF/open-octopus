@@ -18,6 +18,7 @@ import { ConditionDetailTabs } from "@/components/node-detail/condition-detail-t
 import { ApprovalDetailTabs } from "@/components/node-detail/approval-detail-tabs"
 import { LoopDetailTabs } from "@/components/node-detail/loop-detail-tabs"
 import { SwarmDetailTabs } from "@/components/node-detail/swarm-detail-tabs"
+import { InteractionDetailTabs } from "@/components/node-detail/interaction-detail-tabs"
 import { TokenUsageDisplay } from "./workflow-nodes/token-usage-display"
 import { useLiveTimer } from "@/hooks/use-live-timer"
 
@@ -121,6 +122,14 @@ export function NodeInfoDialog({
               workspaceId={workspaceId}
               isRunning={isRunning}
               onOpenSwarmDialog={onOpenSwarmDialog}
+            />
+          )}
+          {executorType === "interaction" && (
+            <InteractionDetailTabs
+              step={step}
+              isRunning={isRunning}
+              workspaceId={workspaceId}
+              executionId={executionId}
             />
           )}
           {!executorType && (
