@@ -40,6 +40,7 @@ const nodeTypes = {
   swarm: SwarmNode,
   "sub-workflow-container": SubWorkflowContainerNode,
   sub_workflow: SubWorkflowContainerNode,
+  dynamic_sub_workflow: SubWorkflowContainerNode,
 }
 
 const edgeTypes = {

@@ -1,6 +1,6 @@
 # Node Patterns Reference
 
-Typical usage patterns and working YAML examples for each of the 9 node types.
+Typical usage patterns and working YAML examples for each of the 10 node types.
 
 ---
 
@@ -457,3 +457,52 @@ nodes:
     Run E2E tests. When screenshot analysis needed, delegate vision-analyzer.
     Only take text conclusions from it.
 ```
+
+---
+
+## 10. `dynamic_sub_workflow` — Dynamic DAG Orchestration
+
+### Ticket pipeline (analyze → plan → execute in parallel)
+```yaml
+- id: to-tickets
+  type: agent
+  prompt: "Analyze the requirements and split into tickets. Output JSON array."
+  skills: [octo-workflow-dev]
+
+- id: plan-and-execute
+  type: dynamic_sub_workflow
+  workflow: ticket-dag
+  prompt: |
+    Use the tickets from $to-tickets.output to plan an execution DAG.
+    Each ticket becomes an agent node. Identify dependencies.
+    Output ONLY the JSON DAG object.
+  skills: [octo-workflow-dev, octo-workflow-test]
+  depends_on: [to-tickets]
+```
+
+### Multi-role task dispatch
+```yaml
+- id: analyze
+  type: agent
+  prompt: "Analyze the codebase and identify areas needing refactoring."
+
+- id: dispatch-tasks
+  type: dynamic_sub_workflow
+  prompt: |
+    Based on $analyze.output, create parallel agent tasks for each
+    refactoring area. Each agent should fix one area.
+  depends_on: [analyze]
+  on_error: continue
+```
+
+### Inside a loop (per-iteration DAG)
+```yaml
+- id: iterate-sprints
+  type: loop
+  max_iterations: 3
+  nodes:
+    - id: sprint-plan
+      type: dynamic_sub_workflow
+      prompt: "Plan tasks for sprint $iteration based on $vars.backlog"
+```
+Each iteration generates a separate file: `sprint-plan-iter0.yaml`, `sprint-plan-iter1.yaml`, etc.

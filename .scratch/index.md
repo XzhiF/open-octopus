@@ -27,3 +27,4 @@
 | 23 | e2e-harness-system | 2026-08-03 | feat/sub-workflow-node | in-progress |
 | 24 | subworkflow-loop-nesting | 2026-08-03 | feat/sub-workflow-node | done |
 | 25 | skill-workflow-dev-v2 | 2026-08-03 | feat/skill-workflow-dev-v2 | done |
+| 26 | dynamic-sub-workflow | 2026-08-03 | feat/dynamic-sub-workflow | in-progress |
