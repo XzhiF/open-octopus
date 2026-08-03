@@ -283,7 +283,11 @@ export function subscribeEvents(
   return session.subscribe(callback)
 }
 
-export async function promptSession(session: any, prompt: string, options?: { model?: any; thinkingLevel?: string }): Promise<void> {
+export async function promptSession(
+  session: any,
+  prompt: string,
+  options?: { model?: any; thinkingLevel?: string },
+): Promise<void> {
   await session.prompt(prompt, options)
 }
 
