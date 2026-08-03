@@ -146,9 +146,15 @@ export class SubWorkflowExecutor implements NodeExecutor {
       const childCallbacks = this.createChildCallbacks(logLines, workflowName)
 
       // Pre-create DB records for child nodes with scoped IDs so onNodeStart/onNodeEnd can update them
+      // Include iteration suffix when inside a loop to create per-iteration records
       if (this.config.ensureNodeExecution && resolved.parsed.nodes) {
+        const iterSuffix = this.config.iterationIndex != null ? `-iter${this.config.iterationIndex}` : ""
         for (const childNode of resolved.parsed.nodes) {
-          this.config.ensureNodeExecution(`${this.node.id}:${childNode.id}`, childNode.type, { parentNodeId: this.node.id })
+          this.config.ensureNodeExecution(
+            `${this.node.id}:${childNode.id}${iterSuffix}`,
+            childNode.type,
+            { parentNodeId: this.node.id, iterationIndex: this.config.iterationIndex },
+          )
         }
       }
 
@@ -297,7 +303,8 @@ export class SubWorkflowExecutor implements NodeExecutor {
     workflowName: string,
   ) {
     const fmt = (event: string, detail: string) => `${workflowName}:${event} ${detail}`
-    const scoped = (childNodeId: string) => `${this.node.id}:${childNodeId}`
+    const iterSuffix = this.config.iterationIndex != null ? `-iter${this.config.iterationIndex}` : ""
+    const scoped = (childNodeId: string) => `${this.node.id}:${childNodeId}${iterSuffix}`
     return {
       onNodeStart: (nodeId: string, nodeType: string) => {
         const msg = fmt("node_start", `${nodeId} (${nodeType})`)
@@ -324,6 +331,14 @@ export class SubWorkflowExecutor implements NodeExecutor {
         const scopedId = scoped(nodeId)
         this.config.callbacks?.onNodeLog?.(scopedId, logLine)
         this.config.logger?.log(scopedId, "node_log", { line: logLine })
+      },
+      onRuntimeNodeAdded: (nodeId: string, nodeType: string, meta?: { parentNodeId?: string; iterationIndex?: number }) => {
+        // Forward grandchild node registration with scoped ID so DB records are created
+        // for dynamically discovered nodes (e.g., sub-workflow children of the child workflow)
+        this.config.callbacks?.onRuntimeNodeAdded?.(scoped(nodeId), nodeType, {
+          ...meta,
+          parentNodeId: meta?.parentNodeId ? `${this.node.id}:${meta.parentNodeId}${iterSuffix}` : this.node.id,
+        })
       },
       onStatusChange: (status: string, progress: number) => {
         logLines.push(fmt("status", `${status} (${progress}%)`))

@@ -583,6 +583,7 @@ export class LoopExecutor implements NodeExecutor {
           engineNodeResults: this.config.engineNodeResults,
           workflowResolver: (this.config as any).workflowResolver,
           visitedWorkflows: (this.config as any).visitedWorkflows,
+          iterationIndex: this.iterations - 1, // 0-based iteration index
           ensureNodeExecution: (scopedNodeId, nodeType, meta) => {
             // Inject iteration context from this loop (0-based iteration index)
             this.config.ensureNodeExecution?.(scopedNodeId, nodeType, {

@@ -178,6 +178,9 @@ export interface SubWorkflowConfig extends CoreConfig {
    *  Called before child engine runs so onNodeStart/onNodeEnd updates find existing rows.
    *  Optional meta carries parent_node_id and iteration_index for nested hierarchy tracking. */
   ensureNodeExecution?: (scopedNodeId: string, nodeType: string, meta?: RuntimeNodeMeta) => void
+  /** Current loop iteration index (0-based) — set by LoopExecutor when this sub-workflow is inside a loop.
+   *  Used to scope child node IDs per iteration, preventing DB record collisions across iterations. */
+  iterationIndex?: number
 }
 
 /** ResumeConfig — used alongside LoopConfig for resume-from-approval flows */
