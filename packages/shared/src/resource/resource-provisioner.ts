@@ -66,12 +66,15 @@ export class ResourceProvisioner {
     }
 
     const sourcePath = entry.installPath
+    // Use entry.name (plain name from registry) for path construction,
+    // since `name` parameter may be group-qualified (e.g. "built-in/vision-analyzer")
+    const plainName = entry.name
     const destBase = path.join(workspaceDir, '.claude')
 
     if (type === 'agent') {
-      const sourceFile = path.join(sourcePath, `${name}.md`)
+      const sourceFile = path.join(sourcePath, `${plainName}.md`)
       const destDir = path.join(destBase, 'agents')
-      const destFile = path.join(destDir, `${name}.md`)
+      const destFile = path.join(destDir, `${plainName}.md`)
 
       if (!fs.existsSync(sourceFile)) {
         throw new Error(`Agent file not found: ${sourceFile}`)
@@ -81,7 +84,7 @@ export class ResourceProvisioner {
       fs.copyFileSync(sourceFile, destFile)
     } else {
       const destDir = path.join(destBase, 'skills')
-      const destPath = path.join(destDir, name)
+      const destPath = path.join(destDir, plainName)
 
       if (!fs.existsSync(sourcePath)) {
         throw new Error(`Skill directory not found: ${sourcePath}`)

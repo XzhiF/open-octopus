@@ -137,6 +137,9 @@ export class ResourcePreFlight {
 
   /**
    * 检查 workspace 中是否已有 manifest 中的资源
+   *
+   * 支持 group-qualified 名称: "group/name" 会被解析为纯名称用于路径检查。
+   * 例: "built-in/vision-analyzer" → 检查 .claude/agents/vision-analyzer.md
    */
   check(manifest: ResourceManifest, workspaceDir: string): ResourceCheckResult {
     const available: Array<{ type: 'agent' | 'skill'; name: string }> = []
@@ -144,7 +147,8 @@ export class ResourcePreFlight {
 
     // 检查 agents
     for (const agent of manifest.agents) {
-      const agentPath = path.join(workspaceDir, '.claude', 'agents', `${agent}.md`)
+      const plainName = agent.replace(/\.md$/, '')
+      const agentPath = path.join(workspaceDir, '.claude', 'agents', `${plainName}.md`)
       if (fs.existsSync(agentPath)) {
         available.push({ type: 'agent', name: agent })
       } else {
@@ -152,9 +156,10 @@ export class ResourcePreFlight {
       }
     }
 
-    // 检查 skills
+    // 检查 skills — stripGroup extracts plain name from "group/name"
     for (const skill of manifest.skills) {
-      const skillPath = path.join(workspaceDir, '.claude', 'skills', skill)
+      const plainName = stripGroup(skill)
+      const skillPath = path.join(workspaceDir, '.claude', 'skills', plainName)
       if (fs.existsSync(skillPath)) {
         available.push({ type: 'skill', name: skill })
       } else {
@@ -184,6 +189,7 @@ export class ResourcePreFlight {
   /**
    * 从 agent_file 路径中提取 agent 名称
    * 跳过变量引用（$vars.xxx）
+   * 支持 group-qualified 路径: "built-in/vision-analyzer.md" → "vision-analyzer"
    */
   private extractAgentName(agentFile: string): string | null {
     if (typeof agentFile !== 'string') return null
@@ -192,4 +198,14 @@ export class ResourcePreFlight {
     const basename = path.basename(agentFile)
     return basename.replace(/\.md$/, '')
   }
+}
+
+/**
+ * Strip group prefix from "group/name" format → "name".
+ * "superpowers-zh/test-driven-development" → "test-driven-development"
+ * "test-driven-development" → "test-driven-development"
+ */
+function stripGroup(qualifiedName: string): string {
+  const idx = qualifiedName.lastIndexOf('/')
+  return idx >= 0 ? qualifiedName.slice(idx + 1) : qualifiedName
 }

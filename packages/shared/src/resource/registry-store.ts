@@ -58,6 +58,14 @@ export class RegistryStore {
 
   get(type: ResourceType, name: string): ResourceEntry | undefined {
     const data = this.load()
+    // Support group-qualified names: "group/name" matches {group, name}
+    const slashIdx = name.indexOf("/")
+    if (slashIdx >= 0) {
+      const group = name.slice(0, slashIdx)
+      const plainName = name.slice(slashIdx + 1)
+      return data.resources.find((r) => r.type === type && r.name === plainName && r.group === group)
+    }
+    // Plain name — first match wins (callers should use group/name to disambiguate)
     return data.resources.find((r) => r.type === type && r.name === name)
   }
 

@@ -236,9 +236,19 @@ export class AgentExecutor implements NodeExecutor {
         const expanded = filePath.startsWith("~")
           ? path.join(os.homedir(), filePath.slice(1))
           : filePath
-        const absolutePath = path.isAbsolute(expanded)
+        let absolutePath = path.isAbsolute(expanded)
           ? expanded
           : path.resolve(cwd, expanded)
+
+        // Fallback: group/name.md → .claude/agents/name.md
+        // Provisioner stores files at .claude/agents/{basename}.md (no group prefix)
+        if (!fs.existsSync(absolutePath)) {
+          const basename = path.basename(filePath).replace(/\.md$/, "")
+          const fallback = path.join(cwd, ".claude", "agents", `${basename}.md`)
+          if (fs.existsSync(fallback)) {
+            absolutePath = fallback
+          }
+        }
 
         const rawContent = fs.readFileSync(absolutePath, "utf-8")
         const frontmatter = this.parseFrontmatter(rawContent)
