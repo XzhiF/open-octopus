@@ -237,13 +237,25 @@ What needs to be ready before verification?
 ### Grilling Path
 - User says "confirmed" or "hand to agent"
 - All verification dimensions explored
+- **Story Walk-Through completed** (see below)
 - Max 15 rounds
 
 ### Wayfinder Path
 - All decision tickets resolved
 - Map clear — no ungraduated fog in "Not yet specified"
 - All verification dimensions explored (both paths must cover these)
+- **Story Walk-Through completed** (see below)
 - Max 20 decision tickets (if more, consider splitting into multiple wayfinder efforts)
+
+## Story Walk-Through Analysis (MANDATORY before brief)
+
+After all decisions are collected but BEFORE writing the brief, perform a **Story Walk-Through** to validate the design forms a complete closed-loop system.
+
+**Protocol** → See [references/story-walkthrough.md](references/story-walkthrough.md)
+
+**Summary**: Select 1–3 core user stories → trace step-by-step with `[UI]` `[API]` `[Data]` `[Exec]` `[Event]` annotations → identify break points (CRITICAL/HIGH must fix) → design fixes → re-trace until clean. Append full traces to brief as Appendix.
+
+**Watch for 6 anti-patterns**: Magic Bridge, Orphan Field, Silent Failure, Missing Trigger, Unversioned State, Unconnected Feedback.
 
 ## Artifact Output
 
@@ -376,6 +388,19 @@ Map: [map.md](./map.md)
 ## Glossary (new domain terms)
 | Term | Meaning |
 |------|---------|
+
+## Appendix: Core User Stories（闭环验证）
+
+以下 N 个故事追踪完整用户旅程，验证 UI → API → 数据 → 执行的每一步都连通。
+
+### Story 1: [标题]
+[Step-by-step trace with [UI]/[API]/[Data]/[Exec]/[Event] annotations]
+
+### Story 2: [标题]
+[...]
+
+### Story 3: [标题]
+[...]
 ```
 
 ## Relationship to Original Skills
