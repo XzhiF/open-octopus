@@ -348,10 +348,13 @@ export function yamlToFlowData(
     }
     if (minX === Infinity) { minX = 0; minY = 0; maxX = 280; maxY = 160 }
 
+    // Sub-workflow containers have taller headers (badges)
+    const loopContainerHeaderHeight = loopNode.type === "sub_workflow" ? 65 : HEADER_HEIGHT
+
     containerSizes.set(loopId, {
       width: (maxX - minX) + CONTAINER_SIDE_PADDING * 2,
       // Extra height for dynamic content (model names, multi-model tokens, duration, error text)
-      height: HEADER_HEIGHT + (maxY - minY) + CONTAINER_SIDE_PADDING + 55,
+      height: loopContainerHeaderHeight + (maxY - minY) + CONTAINER_SIDE_PADDING + 55,
     })
     innerLayoutData.set(loopId, { wfNodes: innerWfNodes, edges: innerEdges, positions: innerPositions, nestedSubWfLayouts })
   }
@@ -400,6 +403,11 @@ export function yamlToFlowData(
     const containerPos = topPositions[loopId] ?? { x: 0, y: 0 }
     const containerSize = containerSizes.get(loopId)!
 
+    // Detect if this container is a sub_workflow (taller header with badges)
+    const containerOrigNode = containerNodesWithInner.get(loopId)
+    const isSubWorkflowContainer = containerOrigNode?.type === "sub_workflow"
+    const containerHeaderHeight = isSubWorkflowContainer ? 65 : HEADER_HEIGHT
+
     for (const innerWfNode of data.wfNodes) {
       const rawPos = data.positions[innerWfNode.id] ?? { x: 0, y: 0 }
       // Find original node data
@@ -420,7 +428,7 @@ export function yamlToFlowData(
         // Absolute position: center horizontally within container, stack vertically
         position: {
           x: containerPos.x + (containerSize.width - actualWidth) / 2,
-          y: containerPos.y + HEADER_HEIGHT + rawPos.y,
+          y: containerPos.y + containerHeaderHeight + rawPos.y,
         },
         data: {
           id: innerWfNode.id,
