@@ -29,4 +29,4 @@
 | 25 | skill-workflow-dev-v2 | 2026-08-03 | feat/skill-workflow-dev-v2 | done |
 | 26 | dynamic-sub-workflow | 2026-08-03 | feat/dynamic-sub-workflow | done (converged: 85→91) |
 | 27 | dynamic-sub-workflow-r2 | 2026-08-03 | feat/dynamic-sub-workflow | done (gap-fix: integration tests + density) |
-| 28 | workflow-requires-effort | 2026-08-03 | feat/workflow-requires-effort | in-progress |
+| 28 | workflow-requires-effort | 2026-08-03 | feat/workflow-requires-effort | done (PR #41) |
