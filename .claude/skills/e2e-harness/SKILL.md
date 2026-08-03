@@ -122,6 +122,7 @@ Modules follow a two-state lifecycle:
 
 Rules:
 - New modules start as DRAFT
+- To modify a STABLE module, create a `{name}_draft.mjs` copy first — never edit STABLE directly
 - STABLE modules must not have breaking API changes without a migration path
 - Deprecation: mark as `DEPRECATED` in `index.md` for one cycle, then remove
 

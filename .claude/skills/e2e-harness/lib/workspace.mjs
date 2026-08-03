@@ -137,11 +137,8 @@ export async function cleanupAllTestWorkspaces() {
   const all = await listWorkspaces()
   const testWorkspaces = all.filter((ws) => ws.name?.startsWith(TEST_PREFIX))
 
-  let deleted = 0
-  for (const ws of testWorkspaces) {
-    const ok = await cleanupWorkspace(ws.id)
-    if (ok) deleted++
-  }
-
-  return deleted
+  const results = await Promise.all(
+    testWorkspaces.map((ws) => cleanupWorkspace(ws.id))
+  )
+  return results.filter(Boolean).length
 }

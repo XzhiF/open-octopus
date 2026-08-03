@@ -22,6 +22,9 @@ import os from "node:os"
 const PORTS_DIR = path.join(os.homedir(), ".octopus", "ports")
 const DEFAULT_SERVER = 3001
 const DEFAULT_WEB = 3000
+const WORKTREE_PORT_BASE = 3100
+const WORKTREE_PORT_STRIDE = 2
+const WORKTREE_PORT_RANGE = 250
 
 function getRepoRoot() {
   try {
@@ -65,7 +68,7 @@ function getBranchName() {
   return "main"
 }
 
-function safeName(branch) {
+export function safeName(branch) {
   return branch.replace(/\//g, "-").replace(/[^a-zA-Z0-9\-_.]/g, "_")
 }
 
@@ -92,7 +95,7 @@ function readPortFile(branch) {
 
 function hashPortOffset(branch) {
   const hash = createHash("sha1").update(branch).digest()
-  return hash.readUInt16BE(0) % 250
+  return hash.readUInt16BE(0) % WORKTREE_PORT_RANGE
 }
 
 /**
@@ -104,8 +107,10 @@ export function resolvePorts() {
   const envApi = process.env.OCTOPUS_API_URL
   const envWeb = process.env.OCTOPUS_WEB_URL
   if (envApi && envWeb) {
-    const serverPort = new URL(envApi).port ? parseInt(new URL(envApi).port) : DEFAULT_SERVER
-    const webPort = new URL(envWeb).port ? parseInt(new URL(envWeb).port) : DEFAULT_WEB
+    const apiUrl = new URL(envApi)
+    const webUrl = new URL(envWeb)
+    const serverPort = apiUrl.port ? parseInt(apiUrl.port, 10) : DEFAULT_SERVER
+    const webPort = webUrl.port ? parseInt(webUrl.port, 10) : DEFAULT_WEB
     return { server: serverPort, web: webPort }
   }
 
@@ -123,7 +128,7 @@ export function resolvePorts() {
 
   // 4. Hash-based fallback
   const offset = hashPortOffset(branch)
-  const server = 3100 + offset * 2
+  const server = WORKTREE_PORT_BASE + offset * WORKTREE_PORT_STRIDE
   const web = server + 1
   return { server, web }
 }
@@ -193,7 +198,10 @@ export async function fetchJSON(urlOrPath, options = {}) {
 export async function healthCheck(apiUrl) {
   const base = apiUrl || resolveApiUrl()
   try {
-    const result = await fetchJSON(`${base}/api/health`)
+    // Try actuator health endpoint first (production path), fall back to /api/health
+    let result = await fetchJSON(`${base}/api/actuator/health`)
+    if (result.ok) return true
+    result = await fetchJSON(`${base}/api/health`)
     return result.ok
   } catch {
     return false
