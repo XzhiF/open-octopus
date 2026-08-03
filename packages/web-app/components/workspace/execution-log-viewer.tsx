@@ -582,6 +582,20 @@ export function ExecutionLogViewer({ workspaceId, executionId, executionStatus }
       return null
     }
 
+    // Detect sub_workflow parent nodes: nodes that have node_log events with child references
+    const subWorkflowParents = new Set<string>()
+    for (const e of processedEvents) {
+      if (e.event === "node_log") {
+        const line = e.line ?? e.content ?? ""
+        if (extractSubWorkflowChild(line)) {
+          subWorkflowParents.add(e.nodeId || "")
+        }
+      }
+    }
+
+    // Container parents = loop parents + sub_workflow parents (both use start/end bookends)
+    const containerParentNodes = new Set([...loopParentNodes, ...subWorkflowParents])
+
     const map = new Map<string, FlatGroup>()
 
     for (const e of processedEvents) {
@@ -594,7 +608,7 @@ export function ExecutionLogViewer({ workspaceId, executionId, executionStatus }
       let key: string
       let label: string
 
-      // Sub-workflow: split node_log events into per-child-node groups
+      // Sub-workflow child events: group by parent:childNodeId
       if (e.event === "node_log") {
         const line = e.line ?? e.content ?? ""
         const childNode = extractSubWorkflowChild(line)
@@ -605,8 +619,8 @@ export function ExecutionLogViewer({ workspaceId, executionId, executionStatus }
           key = `${nodeId}:meta`
           label = `${nodeId} (meta)`
         }
-      } else if (loopParentNodes.has(nodeId) && !hasIter) {
-        // Loop parent node: split into start/end bookends
+      } else if (containerParentNodes.has(nodeId) && !hasIter) {
+        // Container parent node (loop or sub_workflow): split into start/end bookends
         if (e.event === "start") {
           key = `${nodeId}-start`
           label = `${nodeId} start`
@@ -614,7 +628,7 @@ export function ExecutionLogViewer({ workspaceId, executionId, executionStatus }
           key = `${nodeId}-end`
           label = `${nodeId} end`
         } else {
-          // Skip other loop parent events (agent_event wrappers)
+          // Skip other container parent events
           continue
         }
       } else if (hasIter) {
