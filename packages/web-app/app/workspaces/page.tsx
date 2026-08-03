@@ -28,7 +28,7 @@ export default function WorkspacesPage() {
   }, [fetchData])
 
   return (
-    <div className="container mx-auto px-4 py-6 lg:px-6">
+    <div className="container mx-auto px-4 py-6 lg:px-6" data-testid="workspaces-page">
       {/* Page Header */}
       <div className="mb-6">
         <h1 className="text-2xl font-bold tracking-tight">工作空间</h1>
@@ -38,15 +38,16 @@ export default function WorkspacesPage() {
       </div>
 
       {loading ? (
-        <div className="flex items-center justify-center py-12">
+        <div className="flex items-center justify-center py-12" data-testid="workspace-list-loading">
           <p className="text-muted-foreground">加载中...</p>
         </div>
       ) : error ? (
-        <div className="flex flex-col items-center justify-center rounded-lg border border-dashed py-12 text-center">
+        <div className="flex flex-col items-center justify-center rounded-lg border border-dashed py-12 text-center" data-testid="workspace-list-error">
           <p className="text-destructive">{error}</p>
           <button
             className="mt-4 text-sm text-primary underline"
             onClick={fetchData}
+            data-testid="workspace-list-retry"
           >
             重试
           </button>

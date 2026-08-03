@@ -3,7 +3,7 @@ name: matt-e2e-tester
 description: E2E verification with fix-and-retest capability. Reads spec and tickets, runs tests, fixes failures (quick fix then diagnosing-bugs), re-tests until pass or exhausted. Requires a vision-capable model for screenshot analysis.
 tools: ["Read", "Write", "Edit", "Bash", "Grep", "Glob"]
 model: sonnet
-skills: ["matt-e2e-test-methodology", "diagnosing-bugs"]
+skills: ["matt-e2e-test-methodology", "diagnosing-bugs", "e2e-harness"]
 ---
 
 # Independent E2E Verification
@@ -41,6 +41,27 @@ Load `spec.md` and `issues/*.md` from the artifacts directory. Extract:
 ### Step 2: Create Test Plan
 
 Map each User Story's acceptance criteria to test modes (API Integration / Browser E2E / Contract).
+
+### Step 2.5: Load E2E Harness
+
+Before writing any E2E script, check if `.claude/skills/e2e-harness/` exists. If yes:
+
+1. **Read `index.md`** to discover available STABLE modules
+2. **Import relevant modules** in test scripts instead of writing helpers from scratch:
+   ```js
+   // Always prefer harness modules over inline helpers
+   import { createWorkspace, cleanupWorkspace } from './.claude/skills/e2e-harness/lib/workspace.mjs'
+   import { createExecution, startExecution, pollExecution } from './.claude/skills/e2e-harness/lib/execution.mjs'
+   import { launchBrowser, takeScreenshot, captureConsole, closeBrowser } from './.claude/skills/e2e-harness/lib/browser.mjs'
+   import { createResults, record, exitWithResults } from './.claude/skills/e2e-harness/lib/reporter.mjs'
+   import { resolveApiUrl, resolveWebUrl } from './.claude/skills/e2e-harness/lib/api.mjs'
+   ```
+3. **Follow pattern guides** in `.claude/skills/e2e-harness/patterns/` for common scenarios
+4. **Use `data-testid` selectors** documented in patterns — prefer these over text/role selectors
+5. **Use `E2E_HARNESS_TEST_` prefix** for all test data (workspace names, workflow names, etc.)
+6. **If a STABLE module is missing a needed function**: check if a `_draft` version exists. If not, extend the module following the Evolution Protocol in SKILL.md.
+
+If `.claude/skills/e2e-harness/` does NOT exist, proceed with inline helpers (legacy mode).
 
 ### Step 3: Execute Tests
 
