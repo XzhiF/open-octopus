@@ -123,6 +123,8 @@ export class ExecutorFactory {
           checkpointStore: this.ctx.checkpointStore,
           executionId: this.ctx.executionId,
           engineNodeResults: this.ctx.nodeResults,
+          workflowResolver: this.ctx.workflowResolver,
+          visitedWorkflows: this.ctx.visitedWorkflows,
           hookExecutor: async (event: string, context: Record<string, unknown>) => {
             await this.ctx.executeHooks(event as keyof WorkflowHooks, context)
           },

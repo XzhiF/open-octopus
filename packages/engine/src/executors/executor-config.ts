@@ -152,6 +152,10 @@ export interface LoopConfig extends CoreConfig {
   inputs?: Record<string, any>
   /** Pre-loop node results from engine — enables $nodeId.output resolution for outer nodes */
   engineNodeResults?: Record<string, NodeExecutionResult>
+  /** Resolves a workflow by name → parsed definition + raw content (passed to inner sub-workflow executors) */
+  workflowResolver?: (name: string) => { parsed: import("@octopus/shared").WorkflowDef; content: string } | undefined
+  /** Visited workflow names for recursion detection (passed to inner sub-workflow executors) */
+  visitedWorkflows?: Set<string>
   /** Pre-creates a node_execution DB record for dynamically discovered nodes (e.g., sub-workflow children).
    *  Carries optional meta for nested execution hierarchy tracking (parent_node_id, iteration_index). */
   ensureNodeExecution?: (scopedNodeId: string, nodeType: string, meta?: RuntimeNodeMeta) => void

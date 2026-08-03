@@ -1,0 +1,56 @@
+{
+  "generatedAt": "2026-08-03T06:55:46.046Z",
+  "total": 8,
+  "passed": 7,
+  "failed": 1,
+  "results": [
+    {
+      "step": "setup-execute",
+      "pass": true,
+      "detail": "status=completed, execId=cac58e13-0189-4f55-a8e4-e976365a529f",
+      "timestamp": "2026-08-03T06:55:37.965Z"
+    },
+    {
+      "step": "UI-screenshot-overview",
+      "pass": true,
+      "detail": "Screenshot: C:\\xzf\\ai\\open-octopus\\.scratch\\subworkflow-loop-nesting\\e2e-screenshots\\execution-detail-overview.png",
+      "timestamp": "2026-08-03T06:55:43.295Z"
+    },
+    {
+      "step": "UI-log-viewer-exists",
+      "pass": false,
+      "detail": "Not found",
+      "timestamp": "2026-08-03T06:55:43.312Z"
+    },
+    {
+      "step": "AC3-call-analysis-visible",
+      "pass": true,
+      "detail": "call-analysis sub-workflow children visible in UI",
+      "timestamp": "2026-08-03T06:55:43.319Z"
+    },
+    {
+      "step": "UI-screenshot-full",
+      "pass": true,
+      "detail": "Screenshot: C:\\xzf\\ai\\open-octopus\\.scratch\\subworkflow-loop-nesting\\e2e-screenshots\\execution-detail-full.png",
+      "timestamp": "2026-08-03T06:55:43.372Z"
+    },
+    {
+      "step": "UI-no-js-errors",
+      "pass": true,
+      "detail": "No console errors",
+      "timestamp": "2026-08-03T06:55:43.372Z"
+    },
+    {
+      "step": "UI-screenshot-expanded",
+      "pass": true,
+      "detail": "Screenshot: C:\\xzf\\ai\\open-octopus\\.scratch\\subworkflow-loop-nesting\\e2e-screenshots\\execution-detail-expanded.png",
+      "timestamp": "2026-08-03T06:55:45.439Z"
+    },
+    {
+      "step": "cleanup",
+      "pass": true,
+      "detail": "Deleted 0401f992-526c-4fe5-bd09-85f41ed978c6",
+      "timestamp": "2026-08-03T06:55:46.045Z"
+    }
+  ]
+}

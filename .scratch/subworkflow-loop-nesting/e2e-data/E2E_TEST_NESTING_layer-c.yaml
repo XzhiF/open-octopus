@@ -1,0 +1,20 @@
+# yaml-language-server: $schema=~/.octopus/workflow-schema.json
+apiVersion: octopus/v1
+kind: Workflow
+
+name: E2E_TEST_NESTING_layer-c
+description: |
+  Layer C — deepest layer in 3-layer nesting test
+version: 1.0.0
+engine: claude
+model: sonnet
+timeout: 60
+execution_mode: serial
+
+variables: {}
+
+nodes:
+  - id: deep-work
+    type: bash
+    bash: |
+      echo "layer-c: deep work done"

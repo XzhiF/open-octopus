@@ -1,0 +1,36 @@
+# yaml-language-server: $schema=~/.octopus/workflow-schema.json
+apiVersion: octopus/v1
+kind: Workflow
+
+name: E2E_TEST_NESTING_loop-subwf
+description: |
+  Scenario 1: Loop containing sub-workflow — 3 iterations, each calling a sub-workflow
+version: 1.0.0
+engine: claude
+model: sonnet
+timeout: 120
+execution_mode: serial
+
+variables: {}
+
+nodes:
+  - id: greet
+    type: bash
+    bash: |
+      echo "Starting loop-subwf test"
+
+  - id: review-loop
+    type: loop
+    depends_on: [greet]
+    max_iterations: 3
+    nodes:
+      - id: prep
+        type: bash
+        bash: |
+          echo "prep iteration $iteration"
+
+      - id: call-analysis
+        type: sub_workflow
+        depends_on: [prep]
+        workflow: E2E_TEST_NESTING_child-analysis
+        execution_mode: inline
