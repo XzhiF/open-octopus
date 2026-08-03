@@ -85,6 +85,13 @@
 | **effort** | LLM 推理深度控制参数 — 值域 `low/medium/high/xhigh/max`。NodeDef 顶层和 SubAgentDef 都支持，通过 provider 层传递到 Claude SDK (`Options.effort`) 和 Pi SDK (`setThinkingLevel`)。 | shared, providers |
 | **Skill Filter（运行时过滤）** | 节点级 `skills: string[]` 在运行时作为白名单过滤 workspace 已安装的 skills。与 `requires.skills`（依赖声明/provision）不同。Pi SDK 显式 filter，Claude SDK 直接传递。 | providers, engine |
 | **agent_files** | `.claude/agents/*.md` 文件的资源级引用名称（不含扩展名）。在 `requires.agent_files` 中声明，`_engine_init_` 负责 provision。 | shared, engine |
+| **system_agent** | 工作流节点类型，引用 Main Agent 或 Clone 执行任务，支持 5 维度自主进化 | engine |
+| **EvolutionRuntime** | 独立于 CloneRuntime 的进化生命周期管理器，负责 read → diagnose → patch → gate → apply/rollback 流程 | server |
+| **evolution dimension** | 可进化的 5 个维度：persona、skills、prompt、system_prompt、memory | shared |
+| **evolution patch** | 一次进化产生的最小化修改（old_str → new_str diff），可被 review、apply、rollback | server |
+| **adversarial review** | 由另一个 system_agent 以对立视角审查进化补丁的验证机制，拒绝则反馈重做 | server |
+| **retention set** | 进化验证中必须保持通过的案例集（回归保护） | server |
+| **boundary set** | 进化验证中当前失败、需要改进的案例集 | server |
 
 ## Anti-Patterns（禁止）
 

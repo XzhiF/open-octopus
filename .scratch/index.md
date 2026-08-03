@@ -30,3 +30,4 @@
 | 26 | dynamic-sub-workflow | 2026-08-03 | feat/dynamic-sub-workflow | done (converged: 85→91) |
 | 27 | dynamic-sub-workflow-r2 | 2026-08-03 | feat/dynamic-sub-workflow | done (gap-fix: integration tests + density) |
 | 28 | workflow-requires-effort | 2026-08-03 | feat/workflow-requires-effort | done (PR #41) |
+| 29 | agent-evolution-nodes | 2026-08-04 | feat/agent-evolution-nodes | in-progress |
