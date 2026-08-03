@@ -278,13 +278,15 @@ export class EngineCallbacks implements IEngineCallbacks {
         sse.emit(wsId, { event: "pipeline_reloaded", data: { executionId: id, config } })
       },
 
-      onRuntimeNodeAdded: (nodeId: string, nodeType: string) => {
+      onRuntimeNodeAdded: (nodeId: string, nodeType: string, meta?: { parentNodeId?: string; iterationIndex?: number }) => {
         const neId = `${id}-${nodeId}`
         dao.insertNodeExecutionOrIgnore({
           id: neId, execution_id: id, node_id: nodeId, node_type: nodeType,
           status: "pending", started_at: new Date().toISOString(),
+          parent_node_id: meta?.parentNodeId ?? null,
+          iteration_index: meta?.iterationIndex ?? null,
         })
-        sse.emit(wsId, { event: "runtime_node_added", data: { executionId: id, nodeId, nodeType } })
+        sse.emit(wsId, { event: "runtime_node_added", data: { executionId: id, nodeId, nodeType, parentNodeId: meta?.parentNodeId, iterationIndex: meta?.iterationIndex } })
       },
     }
   }

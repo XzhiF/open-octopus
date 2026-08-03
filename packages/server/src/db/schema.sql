@@ -82,6 +82,8 @@ CREATE TABLE IF NOT EXISTS node_executions (
   session_id TEXT,
   retry_count INTEGER DEFAULT 0,
   last_retry_at TEXT,
+  parent_node_id TEXT,
+  iteration_index INTEGER,
   FOREIGN KEY (execution_id) REFERENCES executions(id)
 );
 

@@ -18,7 +18,7 @@ import { AgentExecutor } from "./executors/agent"
 import { SwarmExecutor } from "./executors/swarm"
 import { SubWorkflowExecutor } from "./executors/sub-workflow"
 import { AgentNodeRunner } from "./executors/agent-runner"
-import type { EngineCallbacks } from "./engine"
+import type { EngineCallbacks, RuntimeNodeMeta } from "./engine"
 import type { JsonlLogger } from "./logger"
 import type { CrossExecResolver } from "@octopus/shared"
 import type { ICheckpointStore } from "./pipeline/checkpoint-types"
@@ -127,6 +127,9 @@ export class ExecutorFactory {
             await this.ctx.executeHooks(event as keyof WorkflowHooks, context)
           },
           agentResolver: this.ctx.agentResolver,
+          ensureNodeExecution: (scopedNodeId, nodeType, meta) => {
+            this.ctx.callbacks?.onRuntimeNodeAdded?.(scopedNodeId, nodeType, meta)
+          },
         })
       case "agent": {
         const rawKey = node.engine ?? this.ctx.workflow.engine ?? "claude"
@@ -210,8 +213,8 @@ export class ExecutorFactory {
           engineNodeResults: this.ctx.nodeResults,
           workflowResolver: this.ctx.workflowResolver,
           visitedWorkflows: this.ctx.visitedWorkflows,
-          ensureNodeExecution: (scopedNodeId: string, nodeType: string) => {
-            this.ctx.callbacks?.onRuntimeNodeAdded?.(scopedNodeId, nodeType)
+          ensureNodeExecution: (scopedNodeId: string, nodeType: string, meta?: RuntimeNodeMeta) => {
+            this.ctx.callbacks?.onRuntimeNodeAdded?.(scopedNodeId, nodeType, meta)
           },
         })
       default:

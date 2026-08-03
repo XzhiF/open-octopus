@@ -11,7 +11,7 @@
 import type { IAgentProvider } from "@octopus/providers"
 import type { AutoAnswer, ModelAliasConfig, CrossExecResolver } from "@octopus/shared"
 import { VarPool } from "@octopus/shared"
-import type { EngineCallbacks } from "../engine"
+import type { EngineCallbacks, RuntimeNodeMeta } from "../engine"
 import type { JsonlLogger } from "../logger"
 import type { ICheckpointStore } from "../pipeline/checkpoint-types"
 import type { PromptInjector } from "../prompt-injector"
@@ -152,6 +152,9 @@ export interface LoopConfig extends CoreConfig {
   inputs?: Record<string, any>
   /** Pre-loop node results from engine — enables $nodeId.output resolution for outer nodes */
   engineNodeResults?: Record<string, NodeExecutionResult>
+  /** Pre-creates a node_execution DB record for dynamically discovered nodes (e.g., sub-workflow children).
+   *  Carries optional meta for nested execution hierarchy tracking (parent_node_id, iteration_index). */
+  ensureNodeExecution?: (scopedNodeId: string, nodeType: string, meta?: RuntimeNodeMeta) => void
 }
 
 /** SubWorkflowExecutor — child workflow execution with scoped VarPool */
@@ -168,8 +171,9 @@ export interface SubWorkflowConfig extends CoreConfig {
    *  Returns the new execution ID. If not provided, linked mode falls back to inline with a warning. */
   createChildExecution?: (workflowName: string, parentExecutionId: string) => Promise<{ executionId: string }>
   /** Pre-creates a node_execution DB record for a child node (scoped ID).
-   *  Called before child engine runs so onNodeStart/onNodeEnd updates find existing rows. */
-  ensureNodeExecution?: (scopedNodeId: string, nodeType: string) => void
+   *  Called before child engine runs so onNodeStart/onNodeEnd updates find existing rows.
+   *  Optional meta carries parent_node_id and iteration_index for nested hierarchy tracking. */
+  ensureNodeExecution?: (scopedNodeId: string, nodeType: string, meta?: RuntimeNodeMeta) => void
 }
 
 /** ResumeConfig — used alongside LoopConfig for resume-from-approval flows */

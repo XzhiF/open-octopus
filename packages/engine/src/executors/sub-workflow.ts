@@ -148,7 +148,7 @@ export class SubWorkflowExecutor implements NodeExecutor {
       // Pre-create DB records for child nodes with scoped IDs so onNodeStart/onNodeEnd can update them
       if (this.config.ensureNodeExecution && resolved.parsed.nodes) {
         for (const childNode of resolved.parsed.nodes) {
-          this.config.ensureNodeExecution(`${this.node.id}:${childNode.id}`, childNode.type)
+          this.config.ensureNodeExecution(`${this.node.id}:${childNode.id}`, childNode.type, { parentNodeId: this.node.id })
         }
       }
 
@@ -304,6 +304,8 @@ export class SubWorkflowExecutor implements NodeExecutor {
         logLines.push(msg)
         // Forward structured event to child node's own DB record + SSE
         this.config.callbacks?.onNodeStart?.(scoped(nodeId), nodeType)
+        // Write node_log to JSONL so iteration context is preserved when inside a loop
+        this.config.logger?.log(scoped(nodeId), "node_log", { line: msg })
         // Brief summary in parent node's event panel
         this.config.callbacks?.onNodeLog?.(this.node.id, msg)
       },
@@ -312,12 +314,16 @@ export class SubWorkflowExecutor implements NodeExecutor {
         logLines.push(msg)
         // Forward structured event (includes result for token recording)
         this.config.callbacks?.onNodeEnd?.(scoped(nodeId), status, durationMs, result, nodeType)
+        // Write node_log to JSONL so iteration context is preserved when inside a loop
+        this.config.logger?.log(scoped(nodeId), "node_log", { line: msg })
         // Brief summary in parent node's event panel
         this.config.callbacks?.onNodeLog?.(this.node.id, msg)
       },
       onNodeLog: (nodeId: string, logLine: string) => {
-        // Route log to child node's own event panel
-        this.config.callbacks?.onNodeLog?.(scoped(nodeId), logLine)
+        // Route log to child node's own event panel + JSONL (for iteration context)
+        const scopedId = scoped(nodeId)
+        this.config.callbacks?.onNodeLog?.(scopedId, logLine)
+        this.config.logger?.log(scopedId, "node_log", { line: logLine })
       },
       onStatusChange: (status: string, progress: number) => {
         logLines.push(fmt("status", `${status} (${progress}%)`))

@@ -195,6 +195,8 @@ executionRoutes.get("/:executionId", async (c) => {
         cacheReadTokens: t.cacheReadTokens,
         cacheCreationTokens: t.cacheCreationTokens,
       })) : undefined,
+      parentNodeId: ne.parent_node_id ?? undefined,
+      iterationIndex: ne.iteration_index ?? undefined,
     }
   })
 
@@ -627,9 +629,11 @@ executionRoutes.get("/:executionId/agent-events", (c) => {
       }
 
       // Filter SQLite events: remove events for loop inner nodes (JSONL has better data with iteration)
+      // Exception: keep sub-workflow child events (scoped nodeIds containing ':') — their raw output
+      // is not captured in JSONL, only their structured node_log events are.
       // Also remove swarm events (JSONL has authoritative data — SQLite may have empty content)
       const filteredSqlite = mergedSqlite.filter((e: any) => {
-        if (loopInnerNodes.has(e.nodeId)) return false
+        if (loopInnerNodes.has(e.nodeId) && !e.nodeId?.includes(":")) return false
         // Skip SQLite swarm events — JSONL is the authoritative source
         if (e.event?.startsWith("expert_") || e.event?.startsWith("swarm_") || e.event === "consensus_check") return false
         return true

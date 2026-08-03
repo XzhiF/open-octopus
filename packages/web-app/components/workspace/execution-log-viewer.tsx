@@ -608,13 +608,14 @@ export function ExecutionLogViewer({ workspaceId, executionId, executionStatus }
       let key: string
       let label: string
 
-      // Sub-workflow child events: group by parent:childNodeId
+      // Sub-workflow child events: group by parent:childNodeId (with iteration suffix when inside a loop)
       if (e.event === "node_log") {
         const line = e.line ?? e.content ?? ""
         const childNode = extractSubWorkflowChild(line)
         if (childNode) {
-          key = `${nodeId}:${childNode}`
-          label = `${nodeId}:${childNode}`
+          const iterSuffix = e.iteration != null && e.iteration > 0 ? `-iter${e.iteration}` : ""
+          key = `${nodeId}:${childNode}${iterSuffix}`
+          label = `${nodeId}:${childNode}${iterSuffix}`
         } else {
           key = `${nodeId}:meta`
           label = `${nodeId} (meta)`

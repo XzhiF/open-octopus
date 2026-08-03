@@ -560,7 +560,13 @@ export class LoopExecutor implements NodeExecutor {
         })
       }
       case "loop":
-        return new LoopExecutor(node, p, this.config, { engineNodeResults: this.resume?.engineNodeResults })
+        return new LoopExecutor(node, p, {
+          ...this.config,
+          ensureNodeExecution: (scopedNodeId, nodeType, meta) => {
+            // Outer loop passes through; inner loop will override iterationIndex when it runs
+            this.config.ensureNodeExecution?.(scopedNodeId, nodeType, meta)
+          },
+        }, { engineNodeResults: this.resume?.engineNodeResults })
       case "sub_workflow":
         return new SubWorkflowExecutor(node, p, {
           providers: this.config.providers,
@@ -577,6 +583,13 @@ export class LoopExecutor implements NodeExecutor {
           engineNodeResults: this.config.engineNodeResults,
           workflowResolver: (this.config as any).workflowResolver,
           visitedWorkflows: (this.config as any).visitedWorkflows,
+          ensureNodeExecution: (scopedNodeId, nodeType, meta) => {
+            // Inject iteration context from this loop (0-based iteration index)
+            this.config.ensureNodeExecution?.(scopedNodeId, nodeType, {
+              ...meta,
+              iterationIndex: meta?.iterationIndex ?? (this.iterations - 1),
+            })
+          },
         })
       default:
         throw new Error(`Unknown node type: ${node.type}`)

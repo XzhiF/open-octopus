@@ -42,6 +42,11 @@ export interface ExecutionResult {
   durationMs: number
 }
 
+export interface RuntimeNodeMeta {
+  parentNodeId?: string
+  iterationIndex?: number
+}
+
 export interface EngineCallbacks {
   onNodeStart?: (nodeId: string, nodeType: string) => void
   onNodeEnd?: (nodeId: string, status: string, durationMs: number, result?: NodeExecutionResult, nodeType?: string) => void
@@ -57,7 +62,7 @@ export interface EngineCallbacks {
   onNodeCompacted?: (nodeId: string, mergedEvents: any[]) => void
   onCheckpoint?: (checkpoint: unknown) => void
   onPipelineReloaded?: (config: PipelineConfig) => void
-  onRuntimeNodeAdded?: (nodeId: string, nodeType: string) => void
+  onRuntimeNodeAdded?: (nodeId: string, nodeType: string, meta?: RuntimeNodeMeta) => void
 }
 
 export class WorkflowEngine {
