@@ -1,6 +1,6 @@
 # Node Schema Reference
 
-Field definitions for all 9 Octopus workflow node types. Source of truth: `packages/shared/src/types/workflow.ts`.
+Field definitions for all 10 Octopus workflow node types. Source of truth: `packages/shared/src/types/workflow.ts`.
 
 ---
 
@@ -9,7 +9,7 @@ Field definitions for all 9 Octopus workflow node types. Source of truth: `packa
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `id` | string | ✅ | Unique node identifier within the workflow |
-| `type` | enum | ✅ | One of: `bash`, `python`, `agent`, `condition`, `approval`, `loop`, `swarm`, `interaction`, `sub_workflow` |
+| `type` | enum | ✅ | One of: `bash`, `python`, `agent`, `condition`, `approval`, `loop`, `swarm`, `interaction`, `sub_workflow`, `dynamic_sub_workflow` |
 | `depends_on` | string[] | — | IDs of upstream nodes this node depends on |
 | `execute_when` | string | — | Expression; falsy → node is skipped |
 | `outputs` | Record<string, string> | — | Map VarPool keys to expressions |
@@ -303,6 +303,80 @@ Inside a sub_workflow's child workflow, these special variable references are av
     test_status: "$vars.e2e_status"
   on_error: continue
 ```
+
+---
+
+## 10. `dynamic_sub_workflow` — Dynamic DAG Generation
+
+An LLM agent dynamically generates a DAG of parallel/serial agent nodes at runtime, validates the output through a 3-layer harness, persists as YAML, and executes it.
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `prompt` | string | ✅ | DAG generation instruction for the agent |
+| `model` | string | — | Model override for the generation agent |
+| `skills` | string[] | — | Skills to inject into the generation agent |
+| `workflow` | string | — | Pre-defined output file name (auto-generated if omitted) |
+| `on_error` | enum | — | `"fail"` (default) or `"continue"` |
+
+### How It Works
+
+1. **Generation**: Agent receives the prompt + upstream data, outputs a JSON DAG
+2. **Validation**: 3-layer harness (L1 structure → L2 graph → L3 semantics) with up to 3 correction rounds
+3. **Persistence**: Generated DAG saved as `{workflow}.yaml` + `{workflow}.meta.json` in `workflows/`
+4. **Execution**: Generated DAG executed as a child workflow (same as sub_workflow)
+
+### Constraints
+
+- Generated DAG nodes must ALL be type `agent`
+- No circular dependencies in generated DAG
+- No nested `sub_workflow` or `dynamic_sub_workflow` in generated DAG
+
+### Agent Output Format (JSON contract)
+
+```json
+{
+  "nodes": [
+    {
+      "id": "task-a",
+      "type": "agent",
+      "prompt": "Implement feature A",
+      "skills": ["frontend-dev"],
+      "depends_on": []
+    },
+    {
+      "id": "task-b",
+      "type": "agent",
+      "prompt": "Implement feature B",
+      "depends_on": ["task-a"]
+    }
+  ]
+}
+```
+
+### Example
+
+```yaml
+- id: plan-and-execute
+  type: dynamic_sub_workflow
+  workflow: ticket-dag
+  prompt: |
+    Analyze $vars.tickets and plan an execution DAG.
+    Each ticket should be a separate agent node.
+    Identify dependencies between tickets.
+  model: claude-sonnet-4-20250514
+  skills: [octo-workflow-dev, octo-workflow-test]
+  depends_on: [to-tickets]
+```
+
+### Context-Aware Rerun
+
+When re-executing with the same upstream input, the engine compares the input hash against the stored meta.json. If unchanged, the existing DAG is reused without calling the agent. If changed, a new DAG is generated.
+
+### File Naming
+
+- Default: `{parentWorkflow}__{nodeId}.yaml`
+- Custom: `{workflow}.yaml` (when `workflow` field is set)
+- Inside loop: `{name}-iter{N}.yaml`
 
 ---
 

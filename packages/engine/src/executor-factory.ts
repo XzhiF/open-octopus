@@ -17,12 +17,14 @@ import { LoopExecutor } from "./executors/loop"
 import { AgentExecutor } from "./executors/agent"
 import { SwarmExecutor } from "./executors/swarm"
 import { SubWorkflowExecutor } from "./executors/sub-workflow"
+import { DynamicSubWorkflowExecutor } from "./executors/dynamic-sub-workflow"
 import { AgentNodeRunner } from "./executors/agent-runner"
 import type { EngineCallbacks, RuntimeNodeMeta } from "./engine"
 import type { JsonlLogger } from "./logger"
 import type { CrossExecResolver } from "@octopus/shared"
 import type { ICheckpointStore } from "./pipeline/checkpoint-types"
 import type { PromptInjector } from "./prompt-injector"
+import { join } from "path"
 
 export interface ExecutorFactoryContext {
   pool: VarPool
@@ -218,6 +220,28 @@ export class ExecutorFactory {
           ensureNodeExecution: (scopedNodeId: string, nodeType: string, meta?: RuntimeNodeMeta) => {
             this.ctx.callbacks?.onRuntimeNodeAdded?.(scopedNodeId, nodeType, meta)
           },
+        })
+      case "dynamic_sub_workflow":
+        return new DynamicSubWorkflowExecutor(node, p, {
+          providers: this.ctx.providers,
+          cwd: this.ctx.cwd,
+          signal: s,
+          callbacks: this.ctx.callbacks,
+          logger: this.ctx.logger,
+          executionId: this.ctx.executionId,
+          modelAliasConfig: this.ctx.modelAliasConfig,
+          workflowEngine: this.ctx.workflow.engine,
+          globalSessionId: this.ctx.globalSessionId,
+          branchSessionIds: this.ctx.branchSessionIds,
+          inputs: this.ctx.inputs,
+          engineNodeResults: this.ctx.nodeResults,
+          workflowResolver: this.ctx.workflowResolver,
+          visitedWorkflows: this.ctx.visitedWorkflows,
+          ensureNodeExecution: (scopedNodeId: string, nodeType: string, meta?: RuntimeNodeMeta) => {
+            this.ctx.callbacks?.onRuntimeNodeAdded?.(scopedNodeId, nodeType, meta)
+          },
+          outputDir: join(this.ctx.cwd, "workflows"),
+          workflow: this.ctx.workflow,
         })
       default:
         throw new Error(`Unknown node type: ${(node as any).type}`)

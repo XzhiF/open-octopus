@@ -66,6 +66,10 @@
 | **Input Mapping** | 子工作流启动前，将父工作流 VarPool 中的变量映射到子工作流独立 VarPool 的配置。格式：`{ child_var: "$vars.parent_var" }`。 | engine |
 | **Output Mapping** | 子工作流完成后，将子工作流 VarPool 中的变量映射回父工作流 VarPool 的配置。格式：`{ parent_var: "child_var_name" }`。 | engine |
 | **Sub-workflow Container** | UI 流程图中用于展示子工作流内部节点的容器框（`SubWorkflowContainerNode`），视觉风格类似 LoopContainerNode。 | web-app |
+| **Dynamic Sub-Workflow** | 运行时由 Agent 动态生成的 DAG 子工作流（`type: dynamic_sub_workflow`）。Agent 根据上游数据生成 nodes JSON，通过三层验证 Harness 后执行。 | engine, shared |
+| **Validation Harness** | 三层验证 + 自动纠错循环 — L1 结构（JSON/字段）→ L2 图（循环/引用）→ L3 语义（type/skills）。最多 3 轮纠错。 | engine |
+| **Generated Workflow** | 引擎执行 dynamic_sub_workflow 节点后生成的 YAML 文件 + meta.json，存储在 workspace/workflows/ 目录。 | engine, server |
+| **Input Hash** | 上游输入数据的哈希值，用于重跑时检测上下文是否变化（hash 相同复用已有 DAG，不同则重新生成）。 | engine |
 | **E2E Harness** | 混合 Skill — 预写好的可复用 lib/ 模块 + patterns/ 指南 + recipes/ 模板，解决 E2E 脚本重复和脆弱性问题。 | skills |
 | **STABLE Module** | 经过 self-test 验证的 E2E Harness lib/ 模块，标记为只读。matt-e2e-tester 默认 import STABLE 版本。 | skills |
 | **DRAFT Module** | 正在调试中的 lib/ 模块副本（`_draft` 后缀）。self-test 通过后，交付报告中询问用户是否替换 STABLE。 | skills |

@@ -183,6 +183,28 @@ export interface SubWorkflowConfig extends CoreConfig {
   iterationIndex?: number
 }
 
+/** DynamicSubWorkflowExecutor — agent-generated DAG with validation harness */
+export interface DynamicSubWorkflowConfig extends CoreConfig {
+  globalSessionId?: string
+  branchSessionIds?: Map<string, string>
+  inputs?: Record<string, any>
+  engineNodeResults?: Record<string, NodeExecutionResult>
+  /** Resolves a workflow by name → parsed definition + raw content */
+  workflowResolver?: (name: string) => { parsed: import("@octopus/shared").WorkflowDef; content: string } | undefined
+  /** Visited workflow names for recursion detection */
+  visitedWorkflows?: Set<string>
+  /** Pre-creates a node_execution DB record for a child node (scoped ID). */
+  ensureNodeExecution?: (scopedNodeId: string, nodeType: string, meta?: RuntimeNodeMeta) => void
+  /** Current loop iteration index (0-based) */
+  iterationIndex?: number
+  /** Directory for generated YAML files (defaults to {cwd}/workflows/) */
+  outputDir?: string
+  /** Maximum validation correction rounds (defaults to 3) */
+  maxCorrectionRounds?: number
+  /** Parent workflow metadata (used for default file naming) */
+  workflow?: { name: string; engine?: string; model?: string }
+}
+
 /** ResumeConfig — used alongside LoopConfig for resume-from-approval flows */
 export interface ResumeConfig {
   innerNodeOverrides?: Map<string, InnerNodeOverride>

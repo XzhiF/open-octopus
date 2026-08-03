@@ -203,6 +203,33 @@ nodes:
     prompt: "Deploy if tests passed"
 ```
 
+### Dynamic Sub-Workflow Constraints
+
+When using `dynamic_sub_workflow`:
+
+1. **Agent-only DAGs** — Generated nodes must ALL be type `agent`. No `bash`, `python`, `sub_workflow`, or other types.
+2. **No nesting** — Generated DAG cannot contain `sub_workflow` or `dynamic_sub_workflow` nodes.
+3. **Acyclic** — The generated DAG must be acyclic (no circular dependencies).
+4. **Skills injection** — Always declare relevant skills so the generation agent has domain knowledge.
+5. **Prompt specificity** — Be explicit about the expected output format and constraints in the prompt.
+
+```yaml
+# ✅ Good: specific prompt with constraints
+- id: plan-tasks
+  type: dynamic_sub_workflow
+  prompt: |
+    Analyze the tickets in $vars.tickets.
+    Create a DAG where each ticket is an agent node.
+    Group related tickets with dependencies.
+    Max 10 nodes. Output JSON only.
+  skills: [octo-workflow-dev]
+
+# ❌ Bad: vague prompt, no constraints
+- id: plan-tasks
+  type: dynamic_sub_workflow
+  prompt: "plan stuff"
+```
+
 ---
 
 ## Resource Discovery — Before Writing Workflows

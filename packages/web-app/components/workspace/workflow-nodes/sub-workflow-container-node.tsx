@@ -22,6 +22,10 @@ interface SubWorkflowContainerData {
   isActive?: boolean
   /** Child workflow node IDs (resolved from workflow YAML) */
   childNodeIds?: string[]
+  /** True when type is dynamic_sub_workflow */
+  is_dynamic?: boolean
+  /** Name of generated workflow (from outputs) */
+  generated_workflow?: string
   [key: string]: unknown
 }
 
@@ -89,6 +93,8 @@ export function SubWorkflowContainerNode({ data, selected }: NodeProps) {
   const tokens = aggregateTokens(swData.statusOverlay)
   const statusConfig = swData.statusOverlay ? statusVisualConfig[swData.statusOverlay.stepStatus] : null
   const execMode = swData.execution_mode ?? "inline"
+  const isDynamic = swData.is_dynamic || swData.type === "dynamic_sub_workflow"
+  const hasChildNodes = swData.childNodeIds && swData.childNodeIds.length > 0
 
   return (
     <>
@@ -148,6 +154,12 @@ export function SubWorkflowContainerNode({ data, selected }: NodeProps) {
             子工作流
           </Badge>
 
+          {isDynamic && !hasChildNodes && (
+            <Badge variant="outline" className="text-xs border-amber-300 text-amber-600 bg-amber-50 shrink-0">
+              ⚡ Dynamic
+            </Badge>
+          )}
+
           {statusConfig && (
             <Badge variant="outline" className={cn("text-xs", statusConfig.color, "shrink-0")}>
               {statusConfig.label}
@@ -159,13 +171,17 @@ export function SubWorkflowContainerNode({ data, selected }: NodeProps) {
 
         {/* Body — child nodes rendered by flow-viewer, or show summary */}
         <div className="p-2 min-h-[60px]">
-          {swData.childNodeIds && swData.childNodeIds.length > 0 ? (
+          {hasChildNodes ? (
             <div className="flex flex-wrap gap-1">
-              {swData.childNodeIds.map((childId) => (
+              {swData.childNodeIds!.map((childId) => (
                 <Badge key={childId} variant="secondary" className="text-[10px] px-1.5 py-0">
                   {childId}
                 </Badge>
               ))}
+            </div>
+          ) : isDynamic ? (
+            <div className="flex items-center justify-center h-full text-xs text-amber-600">
+              ⚡ 运行时生成
             </div>
           ) : !swData.workflow ? (
             <div className="flex items-center justify-center h-full text-xs text-muted-foreground">
