@@ -178,6 +178,9 @@ export interface NodeDef {
   constraints?: string[]
   planning?: PlanningDef
 
+  // effort — LLM reasoning depth control
+  effort?: "low" | "medium" | "high" | "xhigh" | "max" | number
+
   // condition
   cases?: CaseDef[]
 
@@ -270,6 +273,8 @@ export const NodeSchema: z.ZodType<NodeDef> = z.lazy(() =>
     goal: z.string().optional(),
     constraints: z.array(z.string()).optional(),
     planning: PlanningSchema.optional(),
+
+    effort: z.union([z.enum(["low", "medium", "high", "xhigh", "max"]), z.number()]).optional(),
 
     cases: z.array(CaseSchema).optional(),
 
@@ -364,6 +369,10 @@ export const WorkflowSchema = z.object({
   hooks: WorkflowHooksSchema.optional(),
   providers: z.record(z.string(), NotifyProviderConfigSchema).optional(),
   channels: z.record(z.string(), ChannelProfileSchema).optional(),
+  requires: z.object({
+    skills: z.array(z.string()).optional(),
+    agent_files: z.array(z.string()).optional(),
+  }).optional(),
   nodes: z.array(NodeSchema),
 })
 
