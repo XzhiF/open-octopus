@@ -31,7 +31,7 @@ const PROVIDER_ENV_MAP: Record<string, string> = {
  * Map Octopus effort levels to Pi SDK thinkingLevel values.
  * Numeric effort values are passed as-is.
  */
-function effortToThinkingLevel(effort: "low" | "medium" | "high" | "xhigh" | "max" | number | undefined): string | undefined {
+export function effortToThinkingLevel(effort: "low" | "medium" | "high" | "xhigh" | "max" | number | undefined): string | undefined {
   if (effort === undefined) return undefined
   if (typeof effort === 'number') return String(effort)
   const map: Record<string, string> = {

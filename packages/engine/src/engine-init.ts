@@ -123,8 +123,10 @@ export class EngineInitPhase {
           )
 
           const result = await resourceProvisioner.provision(requiresCheck.missing, workspacePath)
-          skillsCopied += result.provisioned
-          agentsCopied += result.provisioned
+          const missingSkills = requiresCheck.missing.filter(m => m.type === "skill").length
+          const missingAgents = requiresCheck.missing.filter(m => m.type === "agent").length
+          skillsCopied += missingSkills
+          agentsCopied += missingAgents
 
           if (result.failed.length > 0) {
             const errorMsg = `Failed to provision resources: ${result.failed.join(", ")}`
@@ -173,8 +175,10 @@ export class EngineInitPhase {
             )
 
             const result = await resourceProvisioner.provision(check.missing, workspacePath)
-            skillsCopied += result.provisioned
-            agentsCopied += result.provisioned
+            const scanMissingSkills = check.missing.filter(m => m.type === "skill").length
+            const scanMissingAgents = check.missing.filter(m => m.type === "agent").length
+            skillsCopied += scanMissingSkills
+            agentsCopied += scanMissingAgents
 
             if (result.failed.length > 0) {
               const errorMsg = `Failed to provision resources: ${result.failed.join(", ")}`
@@ -201,7 +205,7 @@ export class EngineInitPhase {
         } else {
           callbacks.onNodeLog?.(INIT_NODE_ID, "No skills/agents references found in workflow")
         }
-      } else if (!hasRequires) {
+      } else if (!resourcePreflight || !resourceProvisioner) {
         callbacks.onNodeLog?.(INIT_NODE_ID, "Resource preflight not configured, skipping")
       }
 

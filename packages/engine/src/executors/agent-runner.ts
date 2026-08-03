@@ -1,4 +1,5 @@
 import type { IAgentProvider, TokenUsage, ModelUsageEntry, SystemPromptInput } from "@octopus/providers"
+import type { EffortLevel } from "@octopus/shared"
 import type { AgentEvent, AgentRunResult } from "./agent-types"
 
 const RESUME_PROMPT = "Your previous session was interrupted mid-execution. Do NOT restart from the beginning. Review what has already been done and continue from the exact point of interruption. If the task appears complete, output your final result."
@@ -34,7 +35,7 @@ export class AgentNodeRunner {
     onActivity?: () => void
     agents?: Record<string, any>
     maxRetries?: number
-    effort?: "low" | "medium" | "high" | "xhigh" | "max" | number
+    effort?: EffortLevel
     /** Optional external system prompt (assembled by AgentService).
      *  When provided, overrides the default preset system prompt.
      *  Enables scheduled agent jobs and clone delegation to inject

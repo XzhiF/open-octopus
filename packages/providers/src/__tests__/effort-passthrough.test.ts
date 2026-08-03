@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { ClaudeSDKProvider } from '../claude/provider'
+import { effortToThinkingLevel } from '../pi/provider'
 
 const mockQuery = vi.fn()
 vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
@@ -75,33 +76,31 @@ describe('effort passthrough', () => {
 })
 
 describe('effort → thinkingLevel mapping (Pi SDK)', () => {
-  // Test the mapping function directly
-  // The mapping is: low→minimal, medium→low, high→medium, xhigh→high, max→maximum
-  const effortMap: Record<string, string> = {
-    low: 'minimal',
-    medium: 'low',
-    high: 'medium',
-    xhigh: 'high',
-    max: 'maximum',
-  }
-
   it('maps low effort to minimal thinkingLevel', () => {
-    expect(effortMap['low']).toBe('minimal')
+    expect(effortToThinkingLevel('low')).toBe('minimal')
   })
 
   it('maps medium effort to low thinkingLevel', () => {
-    expect(effortMap['medium']).toBe('low')
+    expect(effortToThinkingLevel('medium')).toBe('low')
   })
 
   it('maps high effort to medium thinkingLevel', () => {
-    expect(effortMap['high']).toBe('medium')
+    expect(effortToThinkingLevel('high')).toBe('medium')
   })
 
   it('maps xhigh effort to high thinkingLevel', () => {
-    expect(effortMap['xhigh']).toBe('high')
+    expect(effortToThinkingLevel('xhigh')).toBe('high')
   })
 
   it('maps max effort to maximum thinkingLevel', () => {
-    expect(effortMap['max']).toBe('maximum')
+    expect(effortToThinkingLevel('max')).toBe('maximum')
+  })
+
+  it('returns undefined for undefined effort', () => {
+    expect(effortToThinkingLevel(undefined)).toBeUndefined()
+  })
+
+  it('converts numeric effort to string', () => {
+    expect(effortToThinkingLevel(42)).toBe('42')
   })
 })

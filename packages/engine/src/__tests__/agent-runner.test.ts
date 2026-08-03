@@ -251,7 +251,7 @@ describe("AgentNodeRunner", () => {
     const runner = new AgentNodeRunner(provider, "/tmp/test")
     await runner.run({ prompt: "test", context: "new" })
 
-    const optionsArg = (provider.sendQuery as any).mock.calls[0][3]
+    const optionsArg = vi.mocked(provider.sendQuery).mock.calls[0][3]
     expect(optionsArg.effort).toBeUndefined()
   })
 })
