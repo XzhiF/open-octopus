@@ -91,7 +91,7 @@ export function WorkspaceList({ workspaces, onRefresh }: WorkspaceListProps) {
   }, [workspaces, search, statusFilter, archiveTab, sortBy])
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6" data-testid="workspace-list">
       {/* Archive Tabs */}
       <Tabs value={archiveTab} onValueChange={(v) => setArchiveTab(v as "active" | "archived")}>
         <TabsList>
@@ -176,11 +176,11 @@ export function WorkspaceList({ workspaces, onRefresh }: WorkspaceListProps) {
               <span className="sr-only">列表视图</span>
             </Button>
           </div>
-          <Button variant="outline" onClick={() => setIsImportOpen(true)}>
+          <Button variant="outline" onClick={() => setIsImportOpen(true)} data-testid="btn-import-workspace">
             <FolderInput className="mr-2 h-4 w-4" />
             导入
           </Button>
-          <Button onClick={() => setIsCreateOpen(true)}>
+          <Button onClick={() => setIsCreateOpen(true)} data-testid="btn-create-workspace">
             <Plus className="mr-2 h-4 w-4" />
             新建工作空间
           </Button>
@@ -241,8 +241,8 @@ export function WorkspaceList({ workspaces, onRefresh }: WorkspaceListProps) {
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={deleting}>取消</AlertDialogCancel>
-            <AlertDialogAction onClick={handleDelete} disabled={deleting} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+            <AlertDialogCancel disabled={deleting} data-testid="btn-delete-cancel">取消</AlertDialogCancel>
+            <AlertDialogAction onClick={handleDelete} disabled={deleting} className="bg-destructive text-destructive-foreground hover:bg-destructive/90" data-testid="btn-delete-confirm">
               {deleting ? "删除中..." : "删除"}
             </AlertDialogAction>
           </AlertDialogFooter>

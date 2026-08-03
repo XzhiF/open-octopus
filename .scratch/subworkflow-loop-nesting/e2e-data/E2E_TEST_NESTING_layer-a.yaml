@@ -1,0 +1,26 @@
+# yaml-language-server: $schema=~/.octopus/workflow-schema.json
+apiVersion: octopus/v1
+kind: Workflow
+
+name: E2E_TEST_NESTING_layer-a
+description: |
+  Scenario 2: 3-layer nesting — A calls B calls C
+version: 1.0.0
+engine: claude
+model: sonnet
+timeout: 120
+execution_mode: serial
+
+variables: {}
+
+nodes:
+  - id: top-work
+    type: bash
+    bash: |
+      echo "layer-a: top work done"
+
+  - id: call-b
+    type: sub_workflow
+    depends_on: [top-work]
+    workflow: E2E_TEST_NESTING_layer-b
+    execution_mode: inline

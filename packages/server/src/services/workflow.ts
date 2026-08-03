@@ -39,11 +39,33 @@ export class WorkflowService {
   }
 
   get(workspacePath: string, ref: string): WorkflowDetail | undefined {
-    const filePath = WorkflowRef.toPath(this.workflowsDir(workspacePath), ref)
-    if (!fs.existsSync(filePath)) return undefined
-    const content = fs.readFileSync(filePath, "utf-8")
-    const parsed = parseWorkflow(content)
-    return { ref, content, parsed }
+    const dir = this.workflowsDir(workspacePath)
+    const filePath = WorkflowRef.toPath(dir, ref)
+
+    // Try exact path first
+    if (fs.existsSync(filePath)) {
+      const content = fs.readFileSync(filePath, "utf-8")
+      const parsed = parseWorkflow(content)
+      return { ref, content, parsed }
+    }
+
+    // Extension fallback: "child-basic" → try "child-basic.yaml", then "child-basic.yml"
+    const parsed = WorkflowRef.parse(ref)
+    if (!parsed.name.endsWith(".yaml") && !parsed.name.endsWith(".yml")) {
+      for (const ext of [".yaml", ".yml"]) {
+        const fallbackRef = parsed.group
+          ? `${parsed.group}/${parsed.name}${ext}`
+          : `${parsed.name}${ext}`
+        const fallbackPath = WorkflowRef.toPath(dir, fallbackRef)
+        if (fs.existsSync(fallbackPath)) {
+          const content = fs.readFileSync(fallbackPath, "utf-8")
+          const parsedWf = parseWorkflow(content)
+          return { ref: fallbackRef, content, parsed: parsedWf }
+        }
+      }
+    }
+
+    return undefined
   }
 
   create(workspacePath: string, ref: string, content: string): WorkflowDetail {

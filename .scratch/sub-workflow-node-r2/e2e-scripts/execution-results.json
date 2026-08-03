@@ -1,0 +1,191 @@
+{
+  "g1_fail": {
+    "id": "513ded2b-4e3b-4b43-81a0-6f4c69c636e0",
+    "workspace_id": "e48541a1-8ae7-4411-a5d3-581a6116d687",
+    "parent_id": "0",
+    "child_index": 0,
+    "workflow_ref": "E2E_SUBWF_R2_parent_fail.yaml",
+    "workflow_name": "E2E_SUBWF_R2_parent_fail",
+    "status": "failed",
+    "gate_status": "closed",
+    "rollback": "none",
+    "rollback_on_error": 0,
+    "input_values": "{}",
+    "var_pool": "{\"execution_name\":\"E2E_TEST_R2_on_error_fail\",\"workflow_name\":\"E2E_SUBWF_R2_parent_fail\"}",
+    "progress": 100,
+    "triggered_by": "manual",
+    "node_type": "normal",
+    "branch": "E2E_SUBWF_R2_ws1",
+    "start_commit_id": "{}",
+    "end_commit_id": "{}",
+    "name": "E2E_TEST_R2_on_error_fail",
+    "instance_id": null,
+    "global_session_id": null,
+    "retry_count": 0,
+    "pending_hooks": "[]",
+    "approval_metadata": null,
+    "resume_attempts": 0,
+    "pipeline_config": "{\"apiVersion\":\"octopus/v2\",\"kind\":\"Pipeline\",\"chain\":{\"auto_execute\":true,\"failure_strategy\":\"stop\",\"on_success\":\"continue\",\"config_change_strategy\":\"snapshot\"},\"execution\":{\"failure_strategy\":\"fail_fast\",\"timeout\":86400,\"max_concurrent\":0,\"resume_on_interrupt\":\"manual\",\"auto_resume_max_attempts\":3,\"auto_resume_delay\":10,\"pending_resume_timeout\":600},\"retry\":{\"default\":{\"max_attempts\":3,\"backoff\":{\"type\":\"exponential\",\"initial_delay\":5,\"multiplier\":2,\"increment\":5,\"max_delay\":300},\"max_total_duration\":0,\"retry_on\":[\"exit_code_nonzero\",\"timeout\",\"agent_stream_error\",\"transient_error\"],\"never_retry_on\":[\"approval_rejected\",\"user_cancelled\",\"config_error\"]},\"overrides\":{}},\"fork\":{\"path_strategy\":\"all\",\"merge_strategy\":\"wait_all\",\"failure_handling\":\"fail_all\"},\"checkpoint\":{\"enabled\":true,\"save_on\":\"per-node\",\"max_checkpoints\":10,\"ttl\":86400,\"max_size_bytes\":1048576},\"runtime_nodes\":[],\"providers\":{},\"channels\":{}}",
+    "chain_retry_count": 0,
+    "preset_inputs": null,
+    "started_at": "2026-08-02T15:02:17.169Z",
+    "completed_at": "2026-08-02T15:02:32.250Z",
+    "duration": 15041,
+    "org": "xzf",
+    "created_at": "2026-08-02T15:02:17.167Z",
+    "updated_at": "2026-08-02T15:02:32.250Z",
+    "interaction_metadata": null,
+    "steps": [
+      {
+        "stepId": "__engine_init__",
+        "stepName": "__engine_init__",
+        "nodeType": "bash",
+        "status": "completed",
+        "startedAt": "2026-08-02T15:02:17.208Z",
+        "completedAt": "2026-08-02T15:02:17.208Z",
+        "duration": 0,
+        "error": null
+      },
+      {
+        "stepId": "after-child",
+        "stepName": "after-child",
+        "nodeType": "bash",
+        "status": "failed",
+        "startedAt": null,
+        "completedAt": null,
+        "error": null
+      },
+      {
+        "stepId": "prepare",
+        "stepName": "prepare",
+        "nodeType": "bash",
+        "status": "completed",
+        "startedAt": "2026-08-02T15:02:17.209Z",
+        "completedAt": "2026-08-02T15:02:17.213Z",
+        "duration": 0.004,
+        "error": null,
+        "output": "preparing",
+        "outputs": {
+          "last_output": "preparing",
+          "exit_code": 0
+        }
+      },
+      {
+        "stepId": "run-child",
+        "stepName": "run-child",
+        "nodeType": "sub_workflow",
+        "status": "failed",
+        "startedAt": "2026-08-02T15:02:32.238Z",
+        "completedAt": "2026-08-02T15:02:32.249Z",
+        "duration": 0.011,
+        "error": "Resolved sub-workflow: E2E_SUBWF_R2_failing_child.yaml (inline mode)\n[E2E_SUBWF_R2_failing_child.yaml] node_start: step1 (bash)\n[E2E_SUBWF_R2_failing_child.yaml] node_end: step1 completed (5ms)\n[E2E_SUBWF_R2_failing_child.yaml] status: running (50%)\n[E2E_SUBWF_R2_failing_child.yaml] node_start: fail-step (bash)\n[E2E_SUBWF_R2_failing_child.yaml] node_end: fail-step failed (3ms)\n[E2E_SUBWF_R2_failing_child.yaml] status: running (100%)\n[E2E_SUBWF_R2_failing_child.yaml] error: fail-step: \nChild workflow \"E2E_SUBWF_R2_failing_child.yaml\" failed",
+        "outputs": {
+          "workflow": "E2E_SUBWF_R2_failing_child.yaml",
+          "childStatus": "failed"
+        }
+      }
+    ],
+    "workflow_content": "apiVersion: octopus/v1\nkind: Workflow\nname: E2E_SUBWF_R2_parent_fail\nnodes:\n  - id: prepare\n    type: bash\n    bash: echo \"preparing\"\n  - id: run-child\n    type: sub_workflow\n    workflow: E2E_SUBWF_R2_failing_child.yaml\n    depends_on: [prepare]\n    on_error: fail\n  - id: after-child\n    type: bash\n    bash: echo \"this should not run\"\n    depends_on: [run-child]\n",
+    "approvalMetadata": null,
+    "interactionMetadata": null,
+    "is_partial_failure": false
+  },
+  "g2_continue": {
+    "id": "9e1f8a85-c096-4178-a35a-811f97a63722",
+    "workspace_id": "8e967bcb-4ef4-4ffb-a68e-c7f99017a176",
+    "parent_id": "0",
+    "child_index": 0,
+    "workflow_ref": "E2E_SUBWF_R2_parent_continue.yaml",
+    "workflow_name": "E2E_SUBWF_R2_parent_continue",
+    "status": "completed",
+    "gate_status": "open",
+    "rollback": "none",
+    "rollback_on_error": 0,
+    "input_values": "{}",
+    "var_pool": "{\"execution_name\":\"E2E_TEST_R2_on_error_continue\",\"workflow_name\":\"E2E_SUBWF_R2_parent_continue\"}",
+    "progress": 100,
+    "triggered_by": "manual",
+    "node_type": "normal",
+    "branch": "E2E_SUBWF_R2_ws2",
+    "start_commit_id": "{}",
+    "end_commit_id": "{}",
+    "name": "E2E_TEST_R2_on_error_continue",
+    "instance_id": null,
+    "global_session_id": null,
+    "retry_count": 0,
+    "pending_hooks": "[]",
+    "approval_metadata": null,
+    "resume_attempts": 0,
+    "pipeline_config": "{\"apiVersion\":\"octopus/v2\",\"kind\":\"Pipeline\",\"chain\":{\"auto_execute\":true,\"failure_strategy\":\"stop\",\"on_success\":\"continue\",\"config_change_strategy\":\"snapshot\"},\"execution\":{\"failure_strategy\":\"fail_fast\",\"timeout\":86400,\"max_concurrent\":0,\"resume_on_interrupt\":\"manual\",\"auto_resume_max_attempts\":3,\"auto_resume_delay\":10,\"pending_resume_timeout\":600},\"retry\":{\"default\":{\"max_attempts\":3,\"backoff\":{\"type\":\"exponential\",\"initial_delay\":5,\"multiplier\":2,\"increment\":5,\"max_delay\":300},\"max_total_duration\":0,\"retry_on\":[\"exit_code_nonzero\",\"timeout\",\"agent_stream_error\",\"transient_error\"],\"never_retry_on\":[\"approval_rejected\",\"user_cancelled\",\"config_error\"]},\"overrides\":{}},\"fork\":{\"path_strategy\":\"all\",\"merge_strategy\":\"wait_all\",\"failure_handling\":\"fail_all\"},\"checkpoint\":{\"enabled\":true,\"save_on\":\"per-node\",\"max_checkpoints\":10,\"ttl\":86400,\"max_size_bytes\":1048576},\"runtime_nodes\":[],\"providers\":{},\"channels\":{}}",
+    "chain_retry_count": 0,
+    "preset_inputs": null,
+    "started_at": "2026-08-02T15:02:32.266Z",
+    "completed_at": "2026-08-02T15:02:32.323Z",
+    "duration": 19,
+    "org": "xzf",
+    "created_at": "2026-08-02T15:02:32.264Z",
+    "updated_at": "2026-08-02T15:02:32.323Z",
+    "interaction_metadata": null,
+    "steps": [
+      {
+        "stepId": "__engine_init__",
+        "stepName": "__engine_init__",
+        "nodeType": "bash",
+        "status": "completed",
+        "startedAt": "2026-08-02T15:02:32.303Z",
+        "completedAt": "2026-08-02T15:02:32.304Z",
+        "duration": 0.001,
+        "error": null
+      },
+      {
+        "stepId": "after-child",
+        "stepName": "after-child",
+        "nodeType": "bash",
+        "status": "completed",
+        "startedAt": "2026-08-02T15:02:32.319Z",
+        "completedAt": "2026-08-02T15:02:32.322Z",
+        "duration": 0.003,
+        "error": null,
+        "output": "after-child ran successfully",
+        "outputs": {
+          "last_output": "after-child ran successfully",
+          "exit_code": 0
+        }
+      },
+      {
+        "stepId": "prepare",
+        "stepName": "prepare",
+        "nodeType": "bash",
+        "status": "completed",
+        "startedAt": "2026-08-02T15:02:32.304Z",
+        "completedAt": "2026-08-02T15:02:32.307Z",
+        "duration": 0.003,
+        "error": null,
+        "output": "preparing",
+        "outputs": {
+          "last_output": "preparing",
+          "exit_code": 0
+        }
+      },
+      {
+        "stepId": "run-child",
+        "stepName": "run-child",
+        "nodeType": "sub_workflow",
+        "status": "completed",
+        "startedAt": "2026-08-02T15:02:32.309Z",
+        "completedAt": "2026-08-02T15:02:32.318Z",
+        "duration": 0.009,
+        "error": null,
+        "outputs": {
+          "workflow": "E2E_SUBWF_R2_failing_child.yaml",
+          "childStatus": "failed",
+          "childDurationMs": 8
+        }
+      }
+    ],
+    "workflow_content": "apiVersion: octopus/v1\nkind: Workflow\nname: E2E_SUBWF_R2_parent_continue\nnodes:\n  - id: prepare\n    type: bash\n    bash: echo \"preparing\"\n  - id: run-child\n    type: sub_workflow\n    workflow: E2E_SUBWF_R2_failing_child.yaml\n    depends_on: [prepare]\n    on_error: continue\n  - id: after-child\n    type: bash\n    bash: echo \"after-child ran successfully\"\n    depends_on: [run-child]\n",
+    "approvalMetadata": null,
+    "interactionMetadata": null,
+    "is_partial_failure": false
+  }
+}

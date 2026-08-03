@@ -41,10 +41,40 @@ Read the spec, split into vertical-slice tickets in `<artifacts.dir>/<feature-sl
 
 For each ticket:
 1. Claim it (update Status in ticket file)
-2. Implement using TDD where applicable
-3. Run the ticket's Verification Method
-4. PASS -> resolve ticket, move to next
-5. FAIL -> fix and retry (max 3 times), then mark SKIP
+2. **Explore analogous code** (mandatory — before any code changes)
+3. Implement using TDD where applicable
+4. Run the ticket's Verification Method
+5. PASS -> resolve ticket, move to next
+6. FAIL -> fix and retry (max 3 times), then mark SKIP
+
+#### Step 2 Detail: Explore Analogous Code
+
+Before writing ANY code, study how the closest existing feature handles the same concern.
+
+**a) Identify the analog** — What existing feature is most similar?
+- New node type? → closest existing node type (e.g., loop, approval)
+- New API endpoint? → similar existing endpoint
+- New UI component? → most similar existing component
+
+**b) Trace the analog's files** — Grep the analog's name across all packages:
+```bash
+grep -rn "<analog-name>" packages/ --include="*.ts" --include="*.tsx" -l
+```
+List every file. For each: "Does my new feature need a corresponding entry here?"
+
+**c) Study data flow** — For cross-package concerns, trace how data flows from origin
+to user-visible output in the analog. Note every file in the chain.
+
+**d) Name specific functions** — When the ticket references operations like "evaluate",
+"resolve", "persist": grep for these terms. If multiple candidates exist, read each
+signature and return type. Record: "Use X() because [reason], do NOT use Y() because [reason]".
+
+**Output**: Append an `## Exploration` section to the ticket's issue file documenting:
+analog studied, files needing modification, specific functions chosen.
+This is consumed by Code Review in Phase 2.
+
+**Time budget**: Max 15 minutes per ticket. If exploration reveals complexity beyond
+scope, flag it and move on.
 
 **Manual execution scripts**: If development produces SQL migrations, data fixes, or operational scripts that need manual execution, save them to `<project-root>/docs/scripts/{branch_name}/<feature-slug>/` with sequential numbering (`001-xxx.sql`, `002-xxx.sh`, etc.).
 

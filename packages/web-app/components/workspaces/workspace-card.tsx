@@ -63,7 +63,7 @@ export function WorkspaceCard({ workspace, onDelete, onArchive, onViewArchive }:
     : `/workspaces/${workspace.id}`
 
   return (
-    <Card className={`group relative transition-shadow hover:shadow-md ${isArchived ? "opacity-75" : ""}`}>
+    <Card className={`group relative transition-shadow hover:shadow-md ${isArchived ? "opacity-75" : ""}`} data-testid="workspace-card">
       <CardHeader className="py-2 pb-0">
         <div className="flex items-start justify-between">
           <div className="flex items-center gap-3">
@@ -89,6 +89,7 @@ export function WorkspaceCard({ workspace, onDelete, onArchive, onViewArchive }:
                   variant="ghost"
                   size="icon"
                   className="h-8 w-8 opacity-0 transition-opacity group-hover:opacity-100"
+                  data-testid="workspace-action-menu"
                 >
                   <MoreHorizontal className="h-4 w-4" />
                   <span className="sr-only">更多操作</span>
@@ -101,7 +102,7 @@ export function WorkspaceCard({ workspace, onDelete, onArchive, onViewArchive }:
                     打开工作空间
                   </Link>
                 </DropdownMenuItem>
-                <DropdownMenuItem>
+                <DropdownMenuItem data-testid="workspace-action-settings">
                   <Settings className="mr-2 h-4 w-4" />
                   设置
                 </DropdownMenuItem>
@@ -110,7 +111,7 @@ export function WorkspaceCard({ workspace, onDelete, onArchive, onViewArchive }:
                   <Archive className="mr-2 h-4 w-4" />
                   归档
                 </DropdownMenuItem>
-                <DropdownMenuItem className="text-destructive" onClick={() => onDelete?.(workspace.id)}>
+                <DropdownMenuItem className="text-destructive" onClick={() => onDelete?.(workspace.id)} data-testid="workspace-action-delete">
                   <Trash2 className="mr-2 h-4 w-4" />
                   删除
                 </DropdownMenuItem>
@@ -141,7 +142,7 @@ export function WorkspaceCard({ workspace, onDelete, onArchive, onViewArchive }:
         {/* Footer */}
         <div className="mt-4 flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <Badge variant={config.variant}>{config.label}</Badge>
+            <Badge variant={config.variant} data-testid="workspace-status-badge">{config.label}</Badge>
             {isArchived && (
               <Badge variant="secondary" className="text-xs">
                 <Archive className="mr-1 h-3 w-3" />
@@ -159,7 +160,7 @@ export function WorkspaceCard({ workspace, onDelete, onArchive, onViewArchive }:
               <ArrowRight className="h-3.5 w-3.5" />
             </Button>
           ) : (
-            <Button variant="ghost" size="sm" asChild className="gap-1">
+            <Button variant="ghost" size="sm" asChild className="gap-1" data-testid="workspace-action-enter">
               <Link href={cardHref}>
                 进入
                 <ArrowRight className="h-3.5 w-3.5" />

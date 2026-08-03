@@ -1,0 +1,26 @@
+# yaml-language-server: $schema=~/.octopus/workflow-schema.json
+apiVersion: octopus/v1
+kind: Workflow
+
+name: E2E_TEST_NESTING_simple
+description: |
+  Scenario 6: Simple non-nested workflow for regression test
+version: 1.0.0
+engine: claude
+model: sonnet
+timeout: 60
+execution_mode: serial
+
+variables: {}
+
+nodes:
+  - id: hello
+    type: bash
+    bash: |
+      echo "hello world"
+
+  - id: goodbye
+    type: bash
+    depends_on: [hello]
+    bash: |
+      echo "goodbye world"

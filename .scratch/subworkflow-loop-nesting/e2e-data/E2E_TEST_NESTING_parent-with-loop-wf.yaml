@@ -1,0 +1,26 @@
+# yaml-language-server: $schema=~/.octopus/workflow-schema.json
+apiVersion: octopus/v1
+kind: Workflow
+
+name: E2E_TEST_NESTING_parent-with-loop-wf
+description: |
+  Scenario 3: Sub-workflow containing loop — parent calls child-with-loop
+version: 1.0.0
+engine: claude
+model: sonnet
+timeout: 120
+execution_mode: serial
+
+variables: {}
+
+nodes:
+  - id: init
+    type: bash
+    bash: |
+      echo "parent: starting"
+
+  - id: call-loop-wf
+    type: sub_workflow
+    depends_on: [init]
+    workflow: E2E_TEST_NESTING_child-with-loop
+    execution_mode: inline

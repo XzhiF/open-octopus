@@ -1,0 +1,92 @@
+{
+  "generatedAt": "2026-08-03T06:53:29.032Z",
+  "total": 14,
+  "passed": 12,
+  "failed": 2,
+  "results": [
+    {
+      "step": "S1-execute",
+      "pass": true,
+      "detail": "status=completed, duration=439ms, iterations=3",
+      "timestamp": "2026-08-03T06:53:28.108Z"
+    },
+    {
+      "step": "AC1-parent_node_id",
+      "pass": true,
+      "detail": "2 children: call-analysis:prep→call-analysis, call-analysis:analyze→call-analysis",
+      "timestamp": "2026-08-03T06:53:28.139Z"
+    },
+    {
+      "step": "AC2-iteration_index",
+      "pass": true,
+      "detail": "2/2 children have iteration_index: 0,0",
+      "timestamp": "2026-08-03T06:53:28.139Z"
+    },
+    {
+      "step": "S1-API-crossval",
+      "pass": true,
+      "detail": "2 steps expose parent/iteration metadata: call-analysis:analyze(p=call-analysis,i=0), call-analysis:prep(p=call-analysis,i=0)",
+      "timestamp": "2026-08-03T06:53:28.139Z"
+    },
+    {
+      "step": "S2-execute",
+      "pass": true,
+      "detail": "status=completed, duration=140ms",
+      "timestamp": "2026-08-03T06:53:28.412Z"
+    },
+    {
+      "step": "AC4-layer-b",
+      "pass": true,
+      "detail": "2 layer-b children: call-b:mid-work→call-b, call-b:call-c→call-b",
+      "timestamp": "2026-08-03T06:53:28.441Z"
+    },
+    {
+      "step": "AC4-layer-c",
+      "pass": false,
+      "detail": "deep-work nodes: ",
+      "timestamp": "2026-08-03T06:53:28.441Z"
+    },
+    {
+      "step": "AC4-full-chain",
+      "pass": true,
+      "detail": "All scoped nodes have parent_node_id: true",
+      "timestamp": "2026-08-03T06:53:28.441Z"
+    },
+    {
+      "step": "S3-execute",
+      "pass": true,
+      "detail": "status=completed, duration=204ms",
+      "timestamp": "2026-08-03T06:53:28.758Z"
+    },
+    {
+      "step": "AC5-swf-children",
+      "pass": true,
+      "detail": "2 child-wf nodes: call-loop-wf:setup→call-loop-wf, call-loop-wf:inner-loop→call-loop-wf",
+      "timestamp": "2026-08-03T06:53:28.792Z"
+    },
+    {
+      "step": "AC5-loop-steps",
+      "pass": false,
+      "detail": "step nodes found: ",
+      "timestamp": "2026-08-03T06:53:28.792Z"
+    },
+    {
+      "step": "S4-execute",
+      "pass": true,
+      "detail": "status=completed, duration=88ms",
+      "timestamp": "2026-08-03T06:53:28.992Z"
+    },
+    {
+      "step": "AC6-regression",
+      "pass": true,
+      "detail": "3 nodes, all null: true",
+      "timestamp": "2026-08-03T06:53:29.021Z"
+    },
+    {
+      "step": "cleanup",
+      "pass": true,
+      "detail": "4 workspaces cleaned up",
+      "timestamp": "2026-08-03T06:53:29.031Z"
+    }
+  ]
+}

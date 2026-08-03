@@ -122,14 +122,16 @@ export class ExecutionDAO extends BaseDAO {
       INSERT INTO node_executions (
         id, execution_id, node_id, node_type, status,
         started_at, completed_at, duration, exit_code, error,
-        vars_snapshot, outputs, session_id
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        vars_snapshot, outputs, session_id,
+        parent_node_id, iteration_index
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       row.id, row.execution_id, row.node_id,
       row.node_type ?? "unknown", row.status ?? "pending",
       row.started_at ?? null, row.completed_at ?? null,
       row.duration ?? null, row.exit_code ?? null, row.error ?? null,
       row.vars_snapshot ?? null, row.outputs ?? null, row.session_id ?? null,
+      row.parent_node_id ?? null, row.iteration_index ?? null,
     )
   }
 
@@ -137,6 +139,7 @@ export class ExecutionDAO extends BaseDAO {
     const allowed = new Set([
       "status", "started_at", "completed_at", "duration", "exit_code", "error",
       "vars_snapshot", "outputs", "session_id", "retry_count", "last_retry_at",
+      "parent_node_id", "iteration_index",
     ])
     const sets: string[] = []
     const vals: unknown[] = []
@@ -259,7 +262,7 @@ export class ExecutionDAO extends BaseDAO {
         const isMergedType = ExecutionDAO.MERGED_EVENT_TYPES.has(e.event)
         const content = isMergedType
           ? JSON.stringify(e)
-          : (e.content ?? (e.lines ? e.lines.join("\n") : null))
+          : (e.content ?? e.line ?? (e.lines ? e.lines.join("\n") : null))
         insert.run(
           neId, i, e.turnIndex ?? 1, e.event, ts,
           content, content ? content.length : 0,
@@ -677,14 +680,16 @@ export class ExecutionDAO extends BaseDAO {
       INSERT OR IGNORE INTO node_executions (
         id, execution_id, node_id, node_type, status,
         started_at, completed_at, duration, exit_code, error,
-        vars_snapshot, outputs, session_id
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        vars_snapshot, outputs, session_id,
+        parent_node_id, iteration_index
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       row.id, row.execution_id, row.node_id,
       row.node_type ?? "unknown", row.status ?? "pending",
       row.started_at ?? null, row.completed_at ?? null,
       row.duration ?? null, row.exit_code ?? null, row.error ?? null,
       row.vars_snapshot ?? null, row.outputs ?? null, row.session_id ?? null,
+      row.parent_node_id ?? null, row.iteration_index ?? null,
     )
   }
 

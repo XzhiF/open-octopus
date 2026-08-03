@@ -16,8 +16,9 @@ import { InteractionExecutor } from "./executors/interaction"
 import { LoopExecutor } from "./executors/loop"
 import { AgentExecutor } from "./executors/agent"
 import { SwarmExecutor } from "./executors/swarm"
+import { SubWorkflowExecutor } from "./executors/sub-workflow"
 import { AgentNodeRunner } from "./executors/agent-runner"
-import type { EngineCallbacks } from "./engine"
+import type { EngineCallbacks, RuntimeNodeMeta } from "./engine"
 import type { JsonlLogger } from "./logger"
 import type { CrossExecResolver } from "@octopus/shared"
 import type { ICheckpointStore } from "./pipeline/checkpoint-types"
@@ -50,6 +51,9 @@ export interface ExecutorFactoryContext {
   interactionCompletionData?: { summary: string; vars_update?: Record<string, any> }
   interactionSessionId?: string
   interactionCurrentRound?: number
+  // Sub-workflow support
+  workflowResolver?: (name: string) => { parsed: import("@octopus/shared").WorkflowDef; content: string } | undefined
+  visitedWorkflows?: Set<string>
 }
 
 export class ExecutorFactory {
@@ -119,10 +123,15 @@ export class ExecutorFactory {
           checkpointStore: this.ctx.checkpointStore,
           executionId: this.ctx.executionId,
           engineNodeResults: this.ctx.nodeResults,
+          workflowResolver: this.ctx.workflowResolver,
+          visitedWorkflows: this.ctx.visitedWorkflows,
           hookExecutor: async (event: string, context: Record<string, unknown>) => {
             await this.ctx.executeHooks(event as keyof WorkflowHooks, context)
           },
           agentResolver: this.ctx.agentResolver,
+          ensureNodeExecution: (scopedNodeId, nodeType, meta) => {
+            this.ctx.callbacks?.onRuntimeNodeAdded?.(scopedNodeId, nodeType, meta)
+          },
         })
       case "agent": {
         const rawKey = node.engine ?? this.ctx.workflow.engine ?? "claude"
@@ -189,6 +198,26 @@ export class ExecutorFactory {
           cwd: this.ctx.cwd,
           sessionId: this.ctx.interactionSessionId,
           currentRound: this.ctx.interactionCurrentRound,
+        })
+      case "sub_workflow":
+        return new SubWorkflowExecutor(node, p, {
+          providers: this.ctx.providers,
+          cwd: this.ctx.cwd,
+          signal: s,
+          callbacks: this.ctx.callbacks,
+          logger: this.ctx.logger,
+          executionId: this.ctx.executionId,
+          modelAliasConfig: this.ctx.modelAliasConfig,
+          workflowEngine: this.ctx.workflow.engine,
+          globalSessionId: this.ctx.globalSessionId,
+          branchSessionIds: this.ctx.branchSessionIds,
+          inputs: this.ctx.inputs,
+          engineNodeResults: this.ctx.nodeResults,
+          workflowResolver: this.ctx.workflowResolver,
+          visitedWorkflows: this.ctx.visitedWorkflows,
+          ensureNodeExecution: (scopedNodeId: string, nodeType: string, meta?: RuntimeNodeMeta) => {
+            this.ctx.callbacks?.onRuntimeNodeAdded?.(scopedNodeId, nodeType, meta)
+          },
         })
       default:
         throw new Error(`Unknown node type: ${(node as any).type}`)

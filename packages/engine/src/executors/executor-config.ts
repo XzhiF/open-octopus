@@ -11,7 +11,7 @@
 import type { IAgentProvider } from "@octopus/providers"
 import type { AutoAnswer, ModelAliasConfig, CrossExecResolver } from "@octopus/shared"
 import { VarPool } from "@octopus/shared"
-import type { EngineCallbacks } from "../engine"
+import type { EngineCallbacks, RuntimeNodeMeta } from "../engine"
 import type { JsonlLogger } from "../logger"
 import type { ICheckpointStore } from "../pipeline/checkpoint-types"
 import type { PromptInjector } from "../prompt-injector"
@@ -152,6 +152,35 @@ export interface LoopConfig extends CoreConfig {
   inputs?: Record<string, any>
   /** Pre-loop node results from engine — enables $nodeId.output resolution for outer nodes */
   engineNodeResults?: Record<string, NodeExecutionResult>
+  /** Resolves a workflow by name → parsed definition + raw content (passed to inner sub-workflow executors) */
+  workflowResolver?: (name: string) => { parsed: import("@octopus/shared").WorkflowDef; content: string } | undefined
+  /** Visited workflow names for recursion detection (passed to inner sub-workflow executors) */
+  visitedWorkflows?: Set<string>
+  /** Pre-creates a node_execution DB record for dynamically discovered nodes (e.g., sub-workflow children).
+   *  Carries optional meta for nested execution hierarchy tracking (parent_node_id, iteration_index). */
+  ensureNodeExecution?: (scopedNodeId: string, nodeType: string, meta?: RuntimeNodeMeta) => void
+}
+
+/** SubWorkflowExecutor — child workflow execution with scoped VarPool */
+export interface SubWorkflowConfig extends CoreConfig {
+  globalSessionId?: string
+  branchSessionIds?: Map<string, string>
+  inputs?: Record<string, any>
+  engineNodeResults?: Record<string, NodeExecutionResult>
+  /** Resolves a workflow by name → parsed definition + raw content */
+  workflowResolver?: (name: string) => { parsed: import("@octopus/shared").WorkflowDef; content: string } | undefined
+  /** Visited workflow names for recursion detection */
+  visitedWorkflows?: Set<string>
+  /** Creates a separate execution record for linked-mode child workflows.
+   *  Returns the new execution ID. If not provided, linked mode falls back to inline with a warning. */
+  createChildExecution?: (workflowName: string, parentExecutionId: string) => Promise<{ executionId: string }>
+  /** Pre-creates a node_execution DB record for a child node (scoped ID).
+   *  Called before child engine runs so onNodeStart/onNodeEnd updates find existing rows.
+   *  Optional meta carries parent_node_id and iteration_index for nested hierarchy tracking. */
+  ensureNodeExecution?: (scopedNodeId: string, nodeType: string, meta?: RuntimeNodeMeta) => void
+  /** Current loop iteration index (0-based) — set by LoopExecutor when this sub-workflow is inside a loop.
+   *  Used to scope child node IDs per iteration, preventing DB record collisions across iterations. */
+  iterationIndex?: number
 }
 
 /** ResumeConfig — used alongside LoopConfig for resume-from-approval flows */

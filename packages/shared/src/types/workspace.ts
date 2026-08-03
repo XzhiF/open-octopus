@@ -77,7 +77,7 @@ export const CreateExecutionSchema = z.object({
 })
 
 export const NodeTypeSchema = z.enum([
-  "bash", "python", "agent", "condition", "approval", "loop", "swarm",
+  "bash", "python", "agent", "condition", "approval", "loop", "swarm", "sub_workflow",
 ])
 export type NodeType = z.infer<typeof NodeTypeSchema>
 

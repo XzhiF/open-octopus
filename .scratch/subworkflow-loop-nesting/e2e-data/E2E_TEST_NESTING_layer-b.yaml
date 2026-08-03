@@ -1,0 +1,26 @@
+# yaml-language-server: $schema=~/.octopus/workflow-schema.json
+apiVersion: octopus/v1
+kind: Workflow
+
+name: E2E_TEST_NESTING_layer-b
+description: |
+  Layer B — middle layer in 3-layer nesting test, calls layer-c
+version: 1.0.0
+engine: claude
+model: sonnet
+timeout: 60
+execution_mode: serial
+
+variables: {}
+
+nodes:
+  - id: mid-work
+    type: bash
+    bash: |
+      echo "layer-b: mid work done"
+
+  - id: call-c
+    type: sub_workflow
+    depends_on: [mid-work]
+    workflow: E2E_TEST_NESTING_layer-c
+    execution_mode: inline

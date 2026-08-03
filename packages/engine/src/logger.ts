@@ -217,7 +217,8 @@ export function mergeAgentEvents(entries: any[]): any[] {
 
       // Pass-through: lifecycle markers
       if (topEvent === "start" || topEvent === "end" ||
-          topEvent === "branch_start" || topEvent === "branch_end") {
+          topEvent === "branch_start" || topEvent === "branch_end" ||
+          topEvent === "node_log") {
         closeBlock()
         results.push(entry)
         continue

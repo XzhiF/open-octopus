@@ -61,6 +61,17 @@
 | **Loop State** | JSON 文件跟踪循环中所有迭代的分数、门禁结果和 gap 历史。存储于 root feature 目录下。 | core-pack |
 | **Convergence** | 循环终止条件 — 置信度分数达到 ≥ 85 (GO) 阈值。 | core-pack |
 | **Stall Detection** | 连续 2 轮迭代分数提升 < 5 分 → 检测为停滞，循环退出避免无限循环。 | core-pack |
+| **Sub-workflow Node** | 引用并执行同工作空间下另一个工作流的节点类型（`type: sub_workflow`）。通过名称引用，变量通过 I/O mapping 传递。 | engine, shared |
+| **Execution Mode (inline/linked)** | sub_workflow 节点的执行策略。inline 在父执行上下文内运行（共享执行记录）；linked 创建独立子执行（新 execution_id + parent_execution_id 关联）。 | engine, server |
+| **Input Mapping** | 子工作流启动前，将父工作流 VarPool 中的变量映射到子工作流独立 VarPool 的配置。格式：`{ child_var: "$vars.parent_var" }`。 | engine |
+| **Output Mapping** | 子工作流完成后，将子工作流 VarPool 中的变量映射回父工作流 VarPool 的配置。格式：`{ parent_var: "child_var_name" }`。 | engine |
+| **Sub-workflow Container** | UI 流程图中用于展示子工作流内部节点的容器框（`SubWorkflowContainerNode`），视觉风格类似 LoopContainerNode。 | web-app |
+| **E2E Harness** | 混合 Skill — 预写好的可复用 lib/ 模块 + patterns/ 指南 + recipes/ 模板，解决 E2E 脚本重复和脆弱性问题。 | skills |
+| **STABLE Module** | 经过 self-test 验证的 E2E Harness lib/ 模块，标记为只读。matt-e2e-tester 默认 import STABLE 版本。 | skills |
+| **DRAFT Module** | 正在调试中的 lib/ 模块副本（`_draft` 后缀）。self-test 通过后，交付报告中询问用户是否替换 STABLE。 | skills |
+| **Self-Test** | 每个 lib/ 模块配套的验证脚本（`.self-test.mjs`），验证模块核心功能正常。 | skills |
+| **Pattern Guide** | `patterns/` 目录下的 Markdown 指南，描述特定 E2E 场景（弹窗交互、Tab 切换等）的最佳实践和代码模板。 | skills |
+| **Recipe** | `recipes/` 目录下的完整可执行脚本模板，组合多个 lib/ 模块。可直接运行或作为新脚本的起点。 | skills |
 
 ## Anti-Patterns（禁止）
 

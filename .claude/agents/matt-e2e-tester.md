@@ -3,7 +3,7 @@ name: matt-e2e-tester
 description: E2E verification with fix-and-retest capability. Reads spec and tickets, runs tests, fixes failures (quick fix then diagnosing-bugs), re-tests until pass or exhausted. Requires a vision-capable model for screenshot analysis.
 tools: ["Read", "Write", "Edit", "Bash", "Grep", "Glob"]
 model: sonnet
-skills: ["matt-e2e-test-methodology", "diagnosing-bugs"]
+skills: ["matt-e2e-test-methodology", "diagnosing-bugs", "e2e-harness"]
 ---
 
 # Independent E2E Verification
@@ -41,6 +41,37 @@ Load `spec.md` and `issues/*.md` from the artifacts directory. Extract:
 ### Step 2: Create Test Plan
 
 Map each User Story's acceptance criteria to test modes (API Integration / Browser E2E / Contract).
+
+### Step 2.5: Load E2E Harness
+
+Before writing any E2E script, check if `.claude/skills/e2e-harness/` exists. If yes:
+
+1. **Read `index.md`** to discover available STABLE modules
+2. **Import relevant modules** in test scripts instead of writing helpers from scratch:
+   ```js
+   // Always prefer harness modules over inline helpers
+   import { createWorkspace, cleanupWorkspace } from './.claude/skills/e2e-harness/lib/workspace.mjs'
+   import { createExecution, startExecution, pollExecution } from './.claude/skills/e2e-harness/lib/execution.mjs'
+   import { launchBrowser, takeScreenshot, captureConsole, closeBrowser } from './.claude/skills/e2e-harness/lib/browser.mjs'
+   import { createResults, record, exitWithResults } from './.claude/skills/e2e-harness/lib/reporter.mjs'
+   import { resolveApiUrl, resolveWebUrl } from './.claude/skills/e2e-harness/lib/api.mjs'
+   ```
+3. **Follow pattern guides** in `.claude/skills/e2e-harness/patterns/` for common scenarios
+4. **Use `data-testid` selectors** documented in patterns — prefer these over text/role selectors
+5. **Use `E2E_HARNESS_TEST_` prefix** for all test data (workspace names, workflow names, etc.)
+6. **If a STABLE module is missing a needed function**: check if a `_draft` version exists. If not, extend the module following the Evolution Protocol in SKILL.md.
+
+If `.claude/skills/e2e-harness/` does NOT exist, proceed with inline helpers (legacy mode).
+
+### Step 2.6: Load Project-Specific E2E Standards
+
+Before executing tests, scan loaded skill directories for project adaptation files:
+
+1. In each loaded skill directory (e.g., `.claude/skills/matt-e2e-test-methodology/`), look for files matching `*-STANDARDS.md`, `OCTO-*.md`, or `PROJECT-*.md`
+2. If found: read them — they define project-specific cross-validation layers, DB tables to check, SSE events to capture, UI elements to assert
+3. If not found: use the skill's generic R3 defaults (API ↔ DB ↔ Cache)
+
+Project-specific standards OVERRIDE the generic R3 layer definitions.
 
 ### Step 3: Execute Tests
 
@@ -119,6 +150,19 @@ Output a regression test report with:
 - Execution details per test
 - Issues found
 - Anti-fake-run compliance summary
+
+#### Cross-Validation Evidence (mandatory for every AC)
+
+For each AC, fill the cross-validation evidence table per the project's E2E standards (loaded in Step 2.6). If no project-specific standards exist, use the generic R3 layers (API ↔ DB ↔ Cache).
+
+| AC | API Evidence | DB Evidence | SSE Evidence | UI Evidence | Layers Verified |
+|----|-------------|-------------|-------------|-------------|----------------|
+| AC-1 | ... | ... | ... | ... | ... |
+
+Rules:
+- An AC with evidence from only 1 layer is marked **PARTIAL**, not PASS
+- An AC with no DB/side-effect evidence for execution-related features is marked **SKIP**
+- "—" in a column means not applicable or skipped (must state reason)
 
 ## Key Rules
 

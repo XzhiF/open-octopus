@@ -13,7 +13,7 @@ const BaseMockDefSchema = z.object({
   outputs: z.record(z.string(), z.any()).optional(),
   update_vars: z.record(z.string(), z.any()).optional(),
   error: z.string().optional(),
-})
+}).strict()
 
 export const AgentMockDefSchema = BaseMockDefSchema
 
