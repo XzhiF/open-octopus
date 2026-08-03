@@ -139,6 +139,116 @@ describe("EngineInitPhase", () => {
         "Resource preflight not configured, skipping",
       )
     })
+
+    describe("requires declaration", () => {
+      it("provisions requires resources first, then scans", async () => {
+        workflow = {
+          ...workflow,
+          requires: {
+            skills: ["declared-skill"],
+            agent_files: ["declared-agent.md"],
+          },
+        } as WorkflowDef
+
+        // First call: requires check (declared resources)
+        // Second call: scan check (scanned resources)
+        vi.mocked(resourcePreflight.analyze).mockReturnValue({
+          agents: ["scanned-agent"],
+          skills: ["scanned-skill"],
+        })
+        vi.mocked(resourcePreflight.check)
+          .mockReturnValueOnce({
+            missing: [{ name: "declared-skill", type: "skill" }, { name: "declared-agent", type: "agent" }],
+            available: [],
+          })
+          .mockReturnValueOnce({
+            missing: [{ name: "scanned-skill", type: "skill" }],
+            available: [{ name: "scanned-agent", type: "agent" }],
+          })
+        vi.mocked(resourceProvisioner.provision).mockResolvedValue({ provisioned: 2, failed: [] })
+
+        await phase.run(createOptions({ workflow }))
+
+        // Verify log order: requires first, then scan
+        const logCalls = vi.mocked(callbacks.onNodeLog).mock.calls.map(c => c[1])
+        const requiresIdx = logCalls.findIndex(l => l.includes("Provisioning from requires"))
+        const scanIdx = logCalls.findIndex(l => l.includes("Scanning for additional resources"))
+        expect(requiresIdx).toBeGreaterThan(-1)
+        expect(scanIdx).toBeGreaterThan(-1)
+        expect(requiresIdx).toBeLessThan(scanIdx)
+      })
+
+      it("deduplicates requires and scanned resources", async () => {
+        workflow = {
+          ...workflow,
+          requires: {
+            skills: ["shared-skill"],
+            agent_files: [],
+          },
+        } as WorkflowDef
+
+        vi.mocked(resourcePreflight.analyze).mockReturnValue({
+          agents: [],
+          skills: ["shared-skill"], // same as requires
+        })
+        vi.mocked(resourcePreflight.check)
+          .mockReturnValueOnce({
+            missing: [{ name: "shared-skill", type: "skill" }],
+            available: [],
+          })
+          .mockReturnValueOnce({
+            // After requires provisioned shared-skill, scan finds nothing missing
+            missing: [],
+            available: [{ name: "shared-skill", type: "skill" }],
+          })
+        vi.mocked(resourceProvisioner.provision).mockResolvedValue({ provisioned: 1, failed: [] })
+
+        await phase.run(createOptions({ workflow }))
+
+        // Provision called only once for requires, not again for scan
+        expect(resourceProvisioner.provision).toHaveBeenCalledTimes(1)
+      })
+
+      it("works without requires (backward compatible)", async () => {
+        // workflow has no requires field
+        vi.mocked(resourcePreflight.analyze).mockReturnValue({ agents: [], skills: ["skill1"] })
+        vi.mocked(resourcePreflight.check).mockReturnValue({
+          missing: [{ name: "skill1", type: "skill" }],
+          available: [],
+        })
+        vi.mocked(resourceProvisioner.provision).mockResolvedValue({ provisioned: 1, failed: [] })
+
+        const result = await phase.run(createOptions())
+
+        expect(result.status).toBe("completed")
+        // Should NOT log "Provisioning from requires"
+        const logCalls = vi.mocked(callbacks.onNodeLog).mock.calls.map(c => c[1])
+        expect(logCalls.some(l => l.includes("Provisioning from requires"))).toBe(false)
+      })
+
+      it("logs requires counts correctly", async () => {
+        workflow = {
+          ...workflow,
+          requires: {
+            skills: ["s1", "s2"],
+            agent_files: ["a1.md", "a2.md", "a3.md"],
+          },
+        } as WorkflowDef
+
+        vi.mocked(resourcePreflight.analyze).mockReturnValue({ agents: [], skills: [] })
+        vi.mocked(resourcePreflight.check)
+          .mockReturnValueOnce({ missing: [], available: [] })
+          .mockReturnValueOnce({ missing: [], available: [] })
+        vi.mocked(resourceProvisioner.provision).mockResolvedValue({ provisioned: 0, failed: [] })
+
+        await phase.run(createOptions({ workflow }))
+
+        expect(callbacks.onNodeLog).toHaveBeenCalledWith(
+          "__engine_init__",
+          expect.stringContaining("Provisioning from requires: 2 skills, 3 agents"),
+        )
+      })
+    })
   })
 
   describe("git sync", () => {

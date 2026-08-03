@@ -27,6 +27,23 @@ const PROVIDER_ENV_MAP: Record<string, string> = {
   fireworks: 'FIREWORKS_API_KEY',
 }
 
+/**
+ * Map Octopus effort levels to Pi SDK thinkingLevel values.
+ * Numeric effort values are passed as-is.
+ */
+export function effortToThinkingLevel(effort: "low" | "medium" | "high" | "xhigh" | "max" | number | undefined): string | undefined {
+  if (effort === undefined) return undefined
+  if (typeof effort === 'number') return String(effort)
+  const map: Record<string, string> = {
+    low: 'minimal',
+    medium: 'low',
+    high: 'medium',
+    xhigh: 'high',
+    max: 'maximum',
+  }
+  return map[effort] ?? undefined
+}
+
 function extractProvider(model: string | undefined): string | undefined {
   if (!model) return undefined
   const slash = model.indexOf('/')
@@ -280,6 +297,7 @@ export class PiAgentProvider implements IAgentProvider {
       // Step 3: Fire-and-forget prompt (ADR-1: parallel with bridge consumer)
       PiSdk.promptSession(sr.session, effectivePrompt, {
         model: resolvedModel,
+        thinkingLevel: effortToThinkingLevel(options?.effort),
       }).then(
         () => { unsub(); bridge.end() },
         (err: unknown) => { unsub(); bridge.fail(err instanceof Error ? err : new Error(String(err))) },

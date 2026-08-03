@@ -61,8 +61,10 @@ Field definitions for all 10 Octopus workflow node types. Source of truth: `pack
 |-------|------|----------|-------------|
 | `prompt` | string | * | Agent instructions (mutually exclusive with `goal`) |
 | `agent` | string | * | Agent identifier |
+| `agent_file` | string | — | Path to installed agent (`group/name.md` short path) |
 | `agents` | Record<string, SubAgentDef> | * | Sub-agent definitions for delegation |
-| `skills` | string[] | — | Skill names to inject into context |
+| `skills` | string[] | — | Skill names to inject into context (plain names, runtime filter) |
+| `effort` | EffortLevel | — | Reasoning depth: `low` \| `medium` \| `high` \| `xhigh` \| `max` \| number |
 | `context` | `"new"` \| `"continue"` | — | Context mode (continue only if previous node is agent) |
 | `resume_from` | string | — | Resume from a specific checkpoint |
 | `auto_answers` | AutoAnswer[] | — | Pattern-answer pairs for unattended mode |
@@ -88,7 +90,7 @@ Field definitions for all 10 Octopus workflow node types. Source of truth: `pack
 |-------|------|----------|-------------|
 | `description` | string | ✅ | Sub-agent role description |
 | `prompt` | string | — | Sub-agent instructions |
-| `agent_file` | string | — | Path to installed agent resource |
+| `agent_file` | string | — | Path to installed agent resource (`group/name.md` short path) |
 | `tools` | string[] | — | Allowed tools whitelist |
 | `disallowed_tools` | string[] | — | Disallowed tools |
 | `model` | string | — | Model override |
@@ -104,7 +106,7 @@ Field definitions for all 10 Octopus workflow node types. Source of truth: `pack
   agents:
     devil-advocate:
       description: "Devil's advocate — reviews solution completeness."
-      agent_file: "~/.octopus/resources/installed/agents/built-in/devil-advocate/devil-advocate.md"
+      agent_file: "built-in/devil-advocate.md"
       tools: ["Read", "Grep", "Write"]
       prompt: "Review $vars.solution_file"
   prompt: |
@@ -399,7 +401,17 @@ When re-executing with the same upstream input, the engine compares the input ha
 | `hooks` | WorkflowHooks | — | Lifecycle hooks |
 | `providers` | Record<string, NotifyProviderConfig> | — | Notification providers |
 | `channels` | Record<string, ChannelProfile> | — | Notification channels |
+| `requires` | RequiresDef | — | Explicit resource dependency declaration (provisioned by `__engine_init__`) |
 | `nodes` | NodeDef[] | ✅ | Node definitions |
+
+### RequiresDef
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `skills` | string[] | — | Skill dependencies (`group/name` format, e.g. `superpowers-zh/test-driven-development`) |
+| `agent_files` | string[] | — | Agent file dependencies (`group/name.md` format, e.g. `built-in/vision-analyzer.md`) |
+
+> See `references/requires-and-effort.md` for full documentation on `requires` and `effort`.
 
 ### WorkflowInput
 

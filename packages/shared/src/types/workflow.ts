@@ -4,6 +4,16 @@ import type { NotifyTemplate, NotifyRetryConfig } from "./notify"
 import { ExpertDefSchema, OutputFormatSchema, validateSwarmConstraints } from "./swarm"
 import type { ExpertDef } from "./swarm"
 
+/**
+ * EffortLevel — LLM reasoning depth control.
+ * Shared across NodeDef, SubAgentDef, SendQueryOptions, and OctopusAgentDef.
+ */
+export type EffortLevel = "low" | "medium" | "high" | "xhigh" | "max" | number
+
+export const EffortLevelSchema = z.union([
+  z.enum(["low", "medium", "high", "xhigh", "max"]),
+  z.number(),
+])
 
 export const AutoAnswerSchema = z.object({
   pattern: z.string(),
@@ -20,7 +30,7 @@ export interface SubAgentDef {
   skills?: string[]
   maxTurns?: number
   background?: boolean
-  effort?: "low" | "medium" | "high" | "xhigh" | "max" | number
+  effort?: EffortLevel
 }
 
 export const SubAgentDefSchema = z.object({
@@ -33,7 +43,7 @@ export const SubAgentDefSchema = z.object({
   skills: z.array(z.string()).optional(),
   maxTurns: z.number().int().positive().optional(),
   background: z.boolean().optional(),
-  effort: z.union([z.enum(["low", "medium", "high", "xhigh", "max"]), z.number()]).optional(),
+  effort: EffortLevelSchema.optional(),
 })
 
 export const CaseSchema = z.object({
@@ -178,6 +188,9 @@ export interface NodeDef {
   constraints?: string[]
   planning?: PlanningDef
 
+  // effort — LLM reasoning depth control
+  effort?: EffortLevel
+
   // condition
   cases?: CaseDef[]
 
@@ -270,6 +283,8 @@ export const NodeSchema: z.ZodType<NodeDef> = z.lazy(() =>
     goal: z.string().optional(),
     constraints: z.array(z.string()).optional(),
     planning: PlanningSchema.optional(),
+
+    effort: EffortLevelSchema.optional(),
 
     cases: z.array(CaseSchema).optional(),
 
@@ -364,6 +379,10 @@ export const WorkflowSchema = z.object({
   hooks: WorkflowHooksSchema.optional(),
   providers: z.record(z.string(), NotifyProviderConfigSchema).optional(),
   channels: z.record(z.string(), ChannelProfileSchema).optional(),
+  requires: z.object({
+    skills: z.array(z.string()).optional(),
+    agent_files: z.array(z.string()).optional(),
+  }).optional(),
   nodes: z.array(NodeSchema),
 })
 

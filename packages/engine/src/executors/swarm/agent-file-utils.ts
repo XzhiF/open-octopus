@@ -87,11 +87,21 @@ export function loadAgentFile(
     const expanded = agentFile.startsWith("~")
       ? path.join(os.homedir(), agentFile.slice(1))
       : agentFile
-    const absolutePath = path.isAbsolute(expanded)
+    let absolutePath = path.isAbsolute(expanded)
       ? expanded
       : path.resolve(cwd, expanded)
 
-    if (!fs.existsSync(absolutePath)) return null
+    // Fallback: group/name.md → .claude/agents/name.md
+    // Provisioner stores files at .claude/agents/{basename}.md (no group prefix)
+    if (!fs.existsSync(absolutePath)) {
+      const basename = path.basename(agentFile).replace(/\.md$/, "")
+      const fallback = path.join(cwd, ".claude", "agents", `${basename}.md`)
+      if (fs.existsSync(fallback)) {
+        absolutePath = fallback
+      } else {
+        return null
+      }
+    }
 
     const rawContent = fs.readFileSync(absolutePath, "utf-8")
     const metadata = parseFrontmatter(rawContent)
