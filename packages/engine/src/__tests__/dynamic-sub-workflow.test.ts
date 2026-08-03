@@ -14,6 +14,105 @@ import type { NodeDef } from "@octopus/shared"
 import { VarPool } from "@octopus/shared"
 
 // ──────────────────────────────────────────────────────────────
+// Fixtures — shared mock data for integration tests
+// ──────────────────────────────────────────────────────────────
+
+const FIXTURES = {
+  /** Valid 3-node DAG: t1 and t2 are parallel, t3 depends on both. */
+  validDag: {
+    nodes: [
+      { id: "t1", type: "agent", prompt: "Implement feature A" },
+      { id: "t2", type: "agent", prompt: "Implement feature B" },
+      { id: "t3", type: "agent", prompt: "Integration test", depends_on: ["t1", "t2"] },
+    ],
+  },
+  /** Invalid DAG: circular dependency t1 → t2 → t1 (fails L2). */
+  invalidDagCircular: {
+    nodes: [
+      { id: "t1", type: "agent", prompt: "do task 1", depends_on: ["t2"] },
+      { id: "t2", type: "agent", prompt: "do task 2", depends_on: ["t1"] },
+    ],
+  },
+  /** Corrected DAG: linear chain t1 → t2 → t3 (passes L1+L2+L3). */
+  correctedDag: {
+    nodes: [
+      { id: "t1", type: "agent", prompt: "do task 1" },
+      { id: "t2", type: "agent", prompt: "do task 2", depends_on: ["t1"] },
+      { id: "t3", type: "agent", prompt: "do task 3", depends_on: ["t2"] },
+    ],
+  },
+  /** Small valid DAG for rerun/hash tests. */
+  simpleDag: {
+    nodes: [
+      { id: "task-a", type: "agent", prompt: "do A" },
+      { id: "task-b", type: "agent", prompt: "do B" },
+    ],
+  },
+}
+
+const VALID_DAG_JSON = JSON.stringify(FIXTURES.validDag)
+const INVALID_DAG_CIRCULAR_JSON = JSON.stringify(FIXTURES.invalidDagCircular)
+const CORRECTED_DAG_JSON = JSON.stringify(FIXTURES.correctedDag)
+const SIMPLE_DAG_JSON = JSON.stringify(FIXTURES.simpleDag)
+
+/** Mock WorkflowEngine that returns a successful run without real execution. */
+function mockWorkflowEngineModule() {
+  return {
+    WorkflowEngine: vi.fn().mockImplementation(() => ({
+      updateVarPool: vi.fn(),
+      setWorkflowResolver: vi.fn(),
+      run: vi.fn().mockResolvedValue({
+        status: "completed",
+        nodeResults: {},
+        poolSnapshot: {},
+        durationMs: 10,
+      }),
+    })),
+  }
+}
+
+/** Mock IAgentProvider that yields predetermined text via sendQuery. */
+function createMockProvider(responseText: string) {
+  return {
+    getType: () => "claude",
+    sendQuery: async function* () {
+      yield { type: "text_delta" as const, content: responseText, messageId: "msg-1" }
+      yield { type: "result" as const, sessionId: "mock-session", content: responseText }
+    },
+  }
+}
+
+/** Mock IAgentProvider that returns different responses on successive calls. */
+function createMultiCallMockProvider(responses: string[]) {
+  let callIndex = 0
+  return {
+    getType: () => "claude",
+    sendQuery: async function* () {
+      const response = responses[Math.min(callIndex, responses.length - 1)]
+      callIndex++
+      yield { type: "text_delta" as const, content: response, messageId: "msg-1" }
+      yield { type: "result" as const, sessionId: "mock-session", content: response }
+    },
+  }
+}
+
+/** Get a spy that tracks call count on a mock provider. */
+function createSpyProvider(responseText: string) {
+  const spy = vi.fn()
+  return {
+    provider: {
+      getType: () => "claude",
+      sendQuery: async function* () {
+        spy()
+        yield { type: "text_delta" as const, content: responseText, messageId: "msg-1" }
+        yield { type: "result" as const, sessionId: "mock-session", content: responseText }
+      },
+    },
+    spy,
+  }
+}
+
+// ──────────────────────────────────────────────────────────────
 // Validation Harness
 // ──────────────────────────────────────────────────────────────
 
@@ -297,26 +396,6 @@ function cleanupDir(dir: string): void {
   try { rmSync(dir, { recursive: true, force: true }) } catch { /* ignore */ }
 }
 
-/** Create a mock IAgentProvider that returns predetermined text via sendQuery. */
-function createMockProvider(responseText: string) {
-  return {
-    getType: () => "claude",
-    sendQuery: async function* () {
-      // Yield text_delta chunks with the response
-      yield { type: "text_delta" as const, content: responseText, messageId: "msg-1" }
-      yield { type: "result" as const, sessionId: "mock-session", content: responseText }
-    },
-  }
-}
-
-const VALID_DAG_JSON = JSON.stringify({
-  nodes: [
-    { id: "task-1", type: "agent", prompt: "Implement feature A" },
-    { id: "task-2", type: "agent", prompt: "Implement feature B" },
-    { id: "task-3", type: "agent", prompt: "Integration test", depends_on: ["task-1", "task-2"] },
-  ],
-})
-
 describe("DynamicSubWorkflowExecutor", () => {
   describe("File name resolution", () => {
     it("generates name from parent workflow + node id", () => {
@@ -377,21 +456,6 @@ describe("DynamicSubWorkflowExecutor", () => {
     })
   })
 
-  describe("JSON extraction", () => {
-    // Import the helper for direct testing
-    it("extracts JSON from plain text", async () => {
-      const { extractJsonFromText } = await import("../executors/dynamic-sub-workflow").then((m) => {
-        // The function is not exported, test via the module indirectly
-        // For now, just test the validation pipeline accepts valid JSON
-        return { extractJsonFromText: (text: string) => {
-          try { return JSON.parse(text) } catch { return null }
-        }}
-      })
-      const result = extractJsonFromText(VALID_DAG_JSON)
-      expect(result).not.toBeNull()
-    })
-  })
-
   describe("Rerun detection", () => {
     it("reuses existing DAG when hash matches", async () => {
       const dir = createTempDir()
@@ -433,23 +497,11 @@ nodes:
     prompt: "do B"
 `)
 
-        // Mock WorkflowEngine to prevent actual execution
-        vi.doMock("../engine", () => ({
-          WorkflowEngine: vi.fn().mockImplementation(() => ({
-            updateVarPool: vi.fn(),
-            setWorkflowResolver: vi.fn(),
-            run: vi.fn().mockResolvedValue({
-              status: "completed",
-              nodeResults: {},
-              poolSnapshot: {},
-              durationMs: 10,
-            }),
-          })),
-        }))
+        vi.doMock("../engine", () => mockWorkflowEngineModule())
 
         const executor = new DynamicSubWorkflowExecutor(node, pool, {
           cwd: dir,
-          providers: { claude: createMockProvider(VALID_DAG_JSON) },
+          providers: { claude: createMockProvider(SIMPLE_DAG_JSON) },
           outputDir: workflowsDir,
           workflow: { name: "parent" },
         })
@@ -481,18 +533,7 @@ nodes:
           workflow: "gen-test",
         }
 
-        vi.doMock("../engine", () => ({
-          WorkflowEngine: vi.fn().mockImplementation(() => ({
-            updateVarPool: vi.fn(),
-            setWorkflowResolver: vi.fn(),
-            run: vi.fn().mockResolvedValue({
-              status: "completed",
-              nodeResults: {},
-              poolSnapshot: {},
-              durationMs: 10,
-            }),
-          })),
-        }))
+        vi.doMock("../engine", () => mockWorkflowEngineModule())
 
         const executor = new DynamicSubWorkflowExecutor(node, pool, {
           cwd: dir,
@@ -554,6 +595,293 @@ nodes:
         expect(result.status).toBe("failed")
         expect(result.error).toContain("validation failed")
         expect(result.logLines.some((l) => l.includes("FAILED after"))).toBe(true)
+      } finally {
+        cleanupDir(dir)
+      }
+    })
+  })
+
+  // ──────────────────────────────────────────────────────────────
+  // Integration Tests — Full executor lifecycle with mock provider
+  // ──────────────────────────────────────────────────────────────
+
+  describe("Integration: full lifecycle with mock provider", () => {
+    it("generates valid DAG → persists YAML and meta → executes and returns result", async () => {
+      const dir = createTempDir()
+      const workflowsDir = join(dir, "workflows")
+      const ensureNodeSpy = vi.fn()
+
+      try {
+        vi.doMock("../engine", () => mockWorkflowEngineModule())
+
+        const pool = new VarPool()
+        const node: NodeDef = {
+          id: "plan",
+          type: "dynamic_sub_workflow",
+          prompt: "Generate a DAG to implement features",
+          workflow: "integ-test",
+        }
+
+        const { provider, spy: providerSpy } = createSpyProvider(VALID_DAG_JSON)
+
+        const executor = new DynamicSubWorkflowExecutor(node, pool, {
+          cwd: dir,
+          providers: { claude: provider },
+          outputDir: workflowsDir,
+          workflow: { name: "parent" },
+          ensureNodeExecution: ensureNodeSpy,
+        })
+
+        const result = await executor.execute()
+
+        // Status and outputs
+        expect(result.status).toBe("completed")
+        expect(result.outputs.generated_workflow).toBe("integ-test")
+        expect(result.outputs.node_count).toBe(3)
+        expect(result.outputs.validation_rounds).toBe(1)
+        expect(result.error).toBeUndefined()
+
+        // YAML file exists and contains expected nodes
+        const yamlPath = join(workflowsDir, "integ-test.yaml")
+        expect(existsSync(yamlPath)).toBe(true)
+        const yamlContent = readFileSync(yamlPath, "utf-8")
+        expect(yamlContent).toContain("id: t1")
+        expect(yamlContent).toContain("id: t2")
+        expect(yamlContent).toContain("id: t3")
+        expect(yamlContent).toContain("name: integ-test")
+        expect(yamlContent).toContain("type: agent")
+        expect(yamlContent).toContain("apiVersion: octopus/v1")
+        expect(yamlContent).toContain("kind: Workflow")
+        expect(yamlContent).toContain("depends_on: [t1, t2]")
+
+        // Meta file exists with correct metadata
+        const metaPath = join(workflowsDir, "integ-test.meta.json")
+        expect(existsSync(metaPath)).toBe(true)
+        const meta = JSON.parse(readFileSync(metaPath, "utf-8"))
+        expect(meta.validation_rounds).toBe(1)
+        expect(meta.node_count).toBe(3)
+        expect(meta.execution_status).toBe("completed")
+        expect(meta.input_hash).toMatch(/^[a-f0-9]{64}$/)
+        expect(meta.input_snapshot).toBeDefined()
+        expect(meta.generated_at).toBeDefined()
+        expect(typeof meta.generated_at).toBe("string")
+
+        // Provider called exactly once (no correction needed)
+        expect(providerSpy).toHaveBeenCalledTimes(1)
+
+        // ensureNodeExecution called for each child node (3 nodes)
+        expect(ensureNodeSpy).toHaveBeenCalledTimes(3)
+        expect(ensureNodeSpy).toHaveBeenCalledWith("plan:t1", "agent", expect.any(Object))
+        expect(ensureNodeSpy).toHaveBeenCalledWith("plan:t2", "agent", expect.any(Object))
+        expect(ensureNodeSpy).toHaveBeenCalledWith("plan:t3", "agent", expect.any(Object))
+
+        // Duration is a positive number
+        expect(result.durationMs).toBeGreaterThanOrEqual(0)
+
+        vi.doUnmock("../engine")
+      } finally {
+        cleanupDir(dir)
+      }
+    })
+
+    it("invalid DAG → correction loop → success on second round", async () => {
+      const dir = createTempDir()
+      const workflowsDir = join(dir, "workflows")
+
+      try {
+        vi.doMock("../engine", () => mockWorkflowEngineModule())
+
+        const pool = new VarPool()
+        const node: NodeDef = {
+          id: "plan",
+          type: "dynamic_sub_workflow",
+          prompt: "Generate a DAG",
+          workflow: "correction-test",
+        }
+
+        // First call: circular DAG (fails L2). Second call: corrected DAG (passes all).
+        const provider = createMultiCallMockProvider([
+          INVALID_DAG_CIRCULAR_JSON,
+          CORRECTED_DAG_JSON,
+        ])
+
+        const executor = new DynamicSubWorkflowExecutor(node, pool, {
+          cwd: dir,
+          providers: { claude: provider },
+          outputDir: workflowsDir,
+          workflow: { name: "parent" },
+          maxCorrectionRounds: 3,
+        })
+
+        const result = await executor.execute()
+
+        // Execution succeeds after correction
+        expect(result.status).toBe("completed")
+        expect(result.outputs.generated_workflow).toBe("correction-test")
+        expect(result.outputs.node_count).toBe(3)
+        expect(result.outputs.validation_rounds).toBe(2)
+        expect(result.error).toBeUndefined()
+
+        // Log lines confirm correction happened
+        expect(result.logLines.some((l) => l.includes("(correction)"))).toBe(true)
+        expect(result.logLines.some((l) => l.includes("Validation failed"))).toBe(true)
+        expect(result.logLines.some((l) => l.includes("Attempting auto-correction"))).toBe(true)
+        expect(result.logLines.some((l) => l.includes("Validation passed"))).toBe(true)
+        expect(result.logLines.some((l) => l.includes("cycle"))).toBe(true)
+
+        // Persisted files exist
+        expect(existsSync(join(workflowsDir, "correction-test.yaml"))).toBe(true)
+        expect(existsSync(join(workflowsDir, "correction-test.meta.json"))).toBe(true)
+
+        // YAML reflects the corrected DAG (not the circular one)
+        const yamlContent = readFileSync(join(workflowsDir, "correction-test.yaml"), "utf-8")
+        expect(yamlContent).toContain("id: t1")
+        expect(yamlContent).toContain("id: t2")
+        expect(yamlContent).toContain("id: t3")
+
+        // Meta records 2 validation rounds
+        const meta = JSON.parse(readFileSync(join(workflowsDir, "correction-test.meta.json"), "utf-8"))
+        expect(meta.validation_rounds).toBe(2)
+        expect(meta.node_count).toBe(3)
+        expect(meta.execution_status).toBe("completed")
+
+        vi.doUnmock("../engine")
+      } finally {
+        cleanupDir(dir)
+      }
+    })
+
+    it("no meta.json → triggers fresh generation from scratch", async () => {
+      const dir = createTempDir()
+      const workflowsDir = join(dir, "workflows")
+      // Note: workflowsDir is NOT pre-created — no meta.json, no yaml
+
+      try {
+        vi.doMock("../engine", () => mockWorkflowEngineModule())
+
+        const pool = new VarPool()
+        pool.set("context", "fresh-start")
+
+        const node: NodeDef = {
+          id: "plan",
+          type: "dynamic_sub_workflow",
+          prompt: "Generate a fresh DAG",
+          workflow: "fresh-test",
+        }
+
+        const { provider, spy: providerSpy } = createSpyProvider(VALID_DAG_JSON)
+
+        const executor = new DynamicSubWorkflowExecutor(node, pool, {
+          cwd: dir,
+          providers: { claude: provider },
+          outputDir: workflowsDir,
+          workflow: { name: "parent" },
+        })
+
+        const result = await executor.execute()
+
+        // Provider was called (generation happened)
+        expect(providerSpy).toHaveBeenCalledTimes(1)
+
+        // Execution succeeds
+        expect(result.status).toBe("completed")
+        expect(result.outputs.generated_workflow).toBe("fresh-test")
+        expect(result.outputs.node_count).toBe(3)
+        expect(result.outputs.validation_rounds).toBe(1)
+        expect(result.error).toBeUndefined()
+        expect(result.durationMs).toBeGreaterThanOrEqual(0)
+        expect(result.logLines).toBeDefined()
+        expect(Array.isArray(result.logLines)).toBe(true)
+        expect(result.logLines.length).toBeGreaterThan(0)
+
+        // Output directory was created from scratch
+        expect(existsSync(workflowsDir)).toBe(true)
+        expect(existsSync(join(workflowsDir, "fresh-test.yaml"))).toBe(true)
+        expect(existsSync(join(workflowsDir, "fresh-test.meta.json"))).toBe(true)
+
+        // Meta snapshot includes pool vars
+        const meta = JSON.parse(readFileSync(join(workflowsDir, "fresh-test.meta.json"), "utf-8"))
+        expect(meta.input_snapshot.vars).toBeDefined()
+        expect(meta.input_snapshot.vars.context).toBe("fresh-start")
+        expect(meta.validation_rounds).toBe(1)
+
+        vi.doUnmock("../engine")
+      } finally {
+        cleanupDir(dir)
+      }
+    })
+
+    it("meta.json with hash mismatch → regenerates DAG", async () => {
+      const dir = createTempDir()
+      const workflowsDir = join(dir, "workflows")
+      mkdirSync(workflowsDir, { recursive: true })
+
+      try {
+        vi.doMock("../engine", () => mockWorkflowEngineModule())
+
+        const pool = new VarPool()
+        const node: NodeDef = {
+          id: "plan",
+          type: "dynamic_sub_workflow",
+          prompt: "plan DAG",
+          workflow: "hash-mismatch",
+        }
+
+        // Pre-create meta.json with a deliberately wrong hash
+        const staleMeta = {
+          generated_at: new Date().toISOString(),
+          input_hash: "0000000000000000000000000000000000000000000000000000000000000000",
+          input_snapshot: {},
+          validation_rounds: 1,
+          execution_status: "completed",
+          node_count: 2,
+        }
+        writeFileSync(join(workflowsDir, "hash-mismatch.meta.json"), JSON.stringify(staleMeta))
+        writeFileSync(join(workflowsDir, "hash-mismatch.yaml"), `apiVersion: octopus/v1
+kind: Workflow
+name: hash-mismatch
+nodes:
+  - id: old-task
+    type: agent
+    prompt: "old task"
+`)
+
+        const { provider, spy: providerSpy } = createSpyProvider(SIMPLE_DAG_JSON)
+
+        const executor = new DynamicSubWorkflowExecutor(node, pool, {
+          cwd: dir,
+          providers: { claude: provider },
+          outputDir: workflowsDir,
+          workflow: { name: "parent" },
+        })
+
+        const result = await executor.execute()
+
+        // Detected hash mismatch and regenerated
+        expect(result.logLines.some((l) => l.includes("hash mismatch"))).toBe(true)
+        expect(result.logLines.some((l) => l.includes("regenerating DAG"))).toBe(true)
+        expect(providerSpy).toHaveBeenCalledTimes(1)
+
+        // Result reflects the newly generated DAG (2 nodes from SIMPLE_DAG_JSON)
+        expect(result.status).toBe("completed")
+        expect(result.outputs.node_count).toBe(2)
+        expect(result.outputs.generated_workflow).toBe("hash-mismatch")
+        expect(result.outputs.validation_rounds).toBe(1)
+
+        // Meta.json updated with new hash
+        const meta = JSON.parse(readFileSync(join(workflowsDir, "hash-mismatch.meta.json"), "utf-8"))
+        expect(meta.input_hash).not.toBe("0000000000000000000000000000000000000000000000000000000000000000")
+        expect(meta.node_count).toBe(2)
+        expect(meta.execution_status).toBe("completed")
+        expect(meta.validation_rounds).toBe(1)
+
+        // YAML was overwritten with new content
+        const yamlContent = readFileSync(join(workflowsDir, "hash-mismatch.yaml"), "utf-8")
+        expect(yamlContent).toContain("id: task-a")
+        expect(yamlContent).toContain("id: task-b")
+        expect(yamlContent).not.toContain("id: old-task")
+
+        vi.doUnmock("../engine")
       } finally {
         cleanupDir(dir)
       }
