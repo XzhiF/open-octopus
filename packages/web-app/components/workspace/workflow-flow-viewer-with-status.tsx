@@ -54,6 +54,8 @@ const nodeTypes = {
   interaction: InteractionNode,
   "loop-container": LoopContainerNode,
   "sub-workflow-container": SubWorkflowContainerNode,
+  sub_workflow: SubWorkflowContainerNode,
+  dynamic_sub_workflow: SubWorkflowContainerNode,
   loop: LoopNode,
   swarm: SwarmNode,
 }
@@ -114,11 +116,14 @@ export function WorkflowFlowViewerWithStatus({
     const parsed = parseYaml(yamlContent)
     if (!parsed?.nodes) return
 
-    // Recursively collect all sub_workflow references
+    // Recursively collect all sub_workflow references (including dynamic_sub_workflow)
     const collectRefs = (nodes: Array<Record<string, unknown>>): string[] => {
       const refs: string[] = []
       for (const n of nodes) {
         if (n.type === "sub_workflow" && n.workflow) {
+          refs.push(n.workflow as string)
+        }
+        if (n.type === "dynamic_sub_workflow" && n.workflow) {
           refs.push(n.workflow as string)
         }
         if (Array.isArray(n.nodes)) {

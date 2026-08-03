@@ -1,0 +1,28 @@
+{
+  "root_feature": "dynamic-sub-workflow",
+  "branch": "feat/dynamic-sub-workflow",
+  "iterations": [
+    {
+      "round": 1,
+      "feature_slug": "dynamic-sub-workflow",
+      "score": 85,
+      "decision": "GO",
+      "gates_passed": 5,
+      "gates_total": 6,
+      "top_gaps": ["Integration test with mock provider (AC-2)", "Test assertion density (0.105)"]
+    },
+    {
+      "round": 2,
+      "feature_slug": "dynamic-sub-workflow-r2",
+      "score": 91,
+      "decision": "GO",
+      "gates_passed": 6,
+      "gates_total": 6,
+      "top_gaps": []
+    }
+  ],
+  "final_score": 91,
+  "final_decision": "GO",
+  "total_iterations": 2,
+  "status": "converged"
+}
