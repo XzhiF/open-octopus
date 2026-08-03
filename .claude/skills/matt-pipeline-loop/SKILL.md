@@ -129,6 +129,10 @@ Parse the report to extract:
 
 ```
 IF score ≥ 85:
+  → Parse pipeline-report.md AC table:
+    a) Any AC with status "SKIP" → do NOT converge
+       SKIP ACs become P1 gap targets in the next iteration's gap brief
+    b) All ACs are PASS or explicitly "N/A (out of scope)" → proceed
   → Set status = "converged"
   → Write final summary
   → EXIT with GO

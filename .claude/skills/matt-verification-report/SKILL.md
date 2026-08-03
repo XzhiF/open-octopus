@@ -192,7 +192,12 @@ Scan for common test smells:
 For each script in e2e-scripts/:
   1. Check: Does it make real HTTP requests? (not just echo/print)
   2. Check: Does it verify response body? (not just status code)
-  3. Check: Does it cross-validate? (API response ↔ DB state ↔ cache)
+  3. Check: Does it cross-validate across multiple layers?
+     - Look for project-specific E2E standards files (OCTO-*.md, *-STANDARDS.md)
+       in loaded skill directories. If found, use those layer definitions.
+     - Otherwise: API response ↔ DB state ↔ Cache (generic R3)
+     - Tests verifying ONLY the API layer score 0.0 for cross-validation
+     - Tests verifying API + at least one other layer score proportionally
   4. Check: Does it test error scenarios? (not just happy path)
   5. Check: Does it have real assertions? (grep -c "assert\|expect\|should")
 

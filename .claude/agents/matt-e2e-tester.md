@@ -63,6 +63,16 @@ Before writing any E2E script, check if `.claude/skills/e2e-harness/` exists. If
 
 If `.claude/skills/e2e-harness/` does NOT exist, proceed with inline helpers (legacy mode).
 
+### Step 2.6: Load Project-Specific E2E Standards
+
+Before executing tests, scan loaded skill directories for project adaptation files:
+
+1. In each loaded skill directory (e.g., `.claude/skills/matt-e2e-test-methodology/`), look for files matching `*-STANDARDS.md`, `OCTO-*.md`, or `PROJECT-*.md`
+2. If found: read them — they define project-specific cross-validation layers, DB tables to check, SSE events to capture, UI elements to assert
+3. If not found: use the skill's generic R3 defaults (API ↔ DB ↔ Cache)
+
+Project-specific standards OVERRIDE the generic R3 layer definitions.
+
 ### Step 3: Execute Tests
 
 For each test:
@@ -140,6 +150,19 @@ Output a regression test report with:
 - Execution details per test
 - Issues found
 - Anti-fake-run compliance summary
+
+#### Cross-Validation Evidence (mandatory for every AC)
+
+For each AC, fill the cross-validation evidence table per the project's E2E standards (loaded in Step 2.6). If no project-specific standards exist, use the generic R3 layers (API ↔ DB ↔ Cache).
+
+| AC | API Evidence | DB Evidence | SSE Evidence | UI Evidence | Layers Verified |
+|----|-------------|-------------|-------------|-------------|----------------|
+| AC-1 | ... | ... | ... | ... | ... |
+
+Rules:
+- An AC with evidence from only 1 layer is marked **PARTIAL**, not PASS
+- An AC with no DB/side-effect evidence for execution-related features is marked **SKIP**
+- "—" in a column means not applicable or skipped (must state reason)
 
 ## Key Rules
 
