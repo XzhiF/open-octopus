@@ -198,7 +198,10 @@ export async function fetchJSON(urlOrPath, options = {}) {
 export async function healthCheck(apiUrl) {
   const base = apiUrl || resolveApiUrl()
   try {
-    const result = await fetchJSON(`${base}/api/health`)
+    // Try actuator health endpoint first (production path), fall back to /api/health
+    let result = await fetchJSON(`${base}/api/actuator/health`)
+    if (result.ok) return true
+    result = await fetchJSON(`${base}/api/health`)
     return result.ok
   } catch {
     return false
