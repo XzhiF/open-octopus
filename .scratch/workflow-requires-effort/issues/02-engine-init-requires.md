@@ -1,6 +1,6 @@
 # Ticket 2: EngineInitPhase Uses `requires` First, Scan as Fallback
 
-## Status: Ready
+## Status: Done
 
 ## Summary
 

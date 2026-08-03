@@ -1,6 +1,6 @@
 # Ticket 1: Add `requires` Field to WorkflowSchema
 
-## Status: Ready
+## Status: Done
 
 ## Summary
 

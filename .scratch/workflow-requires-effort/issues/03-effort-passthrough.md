@@ -1,6 +1,6 @@
 # Ticket 3: `effort` Passthrough to Both SDKs
 
-## Status: Ready
+## Status: Done
 
 ## Summary
 
