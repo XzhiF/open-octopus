@@ -91,8 +91,71 @@ export class EngineInitPhase {
     callbacks.onNodeStart?.(INIT_NODE_ID, INIT_NODE_TYPE)
 
     try {
-      // Step 1: Analyze and provision skills/agents
+      // Step 1: Provision declared requires resources first
+      const requiresSkills = workflow.requires?.skills ?? []
+      const requiresAgentFiles = workflow.requires?.agent_files ?? []
+      const hasRequires = requiresSkills.length > 0 || requiresAgentFiles.length > 0
+
+      if (hasRequires && resourcePreflight && resourceProvisioner) {
+        // Build manifest from requires declaration
+        const requiresAgentNames = requiresAgentFiles
+          .filter(f => typeof f === "string" && !f.includes("$"))
+          .map(f => {
+            const basename = f.split("/").pop() ?? f
+            return basename.replace(/\.md$/, "")
+          })
+        const requiresManifest: ResourceManifestLike = {
+          agents: requiresAgentNames,
+          skills: requiresSkills,
+        }
+
+        callbacks.onNodeLog?.(
+          INIT_NODE_ID,
+          `Provisioning from requires: ${requiresManifest.skills.length} skills, ${requiresManifest.agents.length} agents`,
+        )
+
+        const requiresCheck = resourcePreflight.check(requiresManifest, workspacePath)
+
+        if (requiresCheck.missing.length > 0) {
+          callbacks.onNodeLog?.(
+            INIT_NODE_ID,
+            `Provisioning ${requiresCheck.missing.length} missing resource(s) from requires: ${requiresCheck.missing.map(m => `${m.type}:${m.name}`).join(", ")}`,
+          )
+
+          const result = await resourceProvisioner.provision(requiresCheck.missing, workspacePath)
+          skillsCopied += result.provisioned
+          agentsCopied += result.provisioned
+
+          if (result.failed.length > 0) {
+            const errorMsg = `Failed to provision resources: ${result.failed.join(", ")}`
+            callbacks.onNodeLog?.(INIT_NODE_ID, `[ERROR] ${errorMsg}`)
+            const durationMs = Date.now() - startTime
+            callbacks.onNodeEnd?.(INIT_NODE_ID, "failed", durationMs)
+            nodeEndEmitted = true
+            return {
+              status: "failed",
+              durationMs,
+              skillsCopied,
+              agentsCopied,
+              gitSyncResults,
+            }
+          }
+
+          callbacks.onNodeLog?.(
+            INIT_NODE_ID,
+            `Provisioned ${result.provisioned} resource(s) from requires successfully`,
+          )
+        } else {
+          callbacks.onNodeLog?.(INIT_NODE_ID, "All requires resources already present")
+        }
+      }
+
+      // Step 2: Scan for additional resources (fallback)
       if (resourcePreflight && resourceProvisioner) {
+        if (hasRequires) {
+          callbacks.onNodeLog?.(INIT_NODE_ID, "Scanning for additional resources...")
+        }
+
         const manifest = resourcePreflight.analyze(workflow)
         const totalResources = manifest.skills.length + manifest.agents.length
         callbacks.onNodeLog?.(
@@ -110,8 +173,8 @@ export class EngineInitPhase {
             )
 
             const result = await resourceProvisioner.provision(check.missing, workspacePath)
-            skillsCopied = result.provisioned
-            agentsCopied = result.provisioned
+            skillsCopied += result.provisioned
+            agentsCopied += result.provisioned
 
             if (result.failed.length > 0) {
               const errorMsg = `Failed to provision resources: ${result.failed.join(", ")}`
@@ -138,7 +201,7 @@ export class EngineInitPhase {
         } else {
           callbacks.onNodeLog?.(INIT_NODE_ID, "No skills/agents references found in workflow")
         }
-      } else {
+      } else if (!hasRequires) {
         callbacks.onNodeLog?.(INIT_NODE_ID, "Resource preflight not configured, skipping")
       }
 
