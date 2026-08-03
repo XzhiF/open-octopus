@@ -39,6 +39,7 @@ description: >
 4. **Progress on disk** — iteration state lives in `.scratch/` directories and git, not in conversation memory
 5. **Bounded** — max iterations + no-progress detection + budget ceiling prevent infinite loops
 6. **Auto-continue** — when score < convergence threshold, IMMEDIATELY generate gap brief and launch next iteration. Do NOT ask the user whether to continue. Only stop and present to user when: converged (GO), max reached, stalled, or regression detected.
+7. **Context hygiene** — compact between iterations, not during. Write protected context to disk before compact, re-read after. The smart zone (~120k tokens) is the ceiling; don't let accumulated implementation details degrade reasoning quality.
 
 ## Theoretical Foundations
 
@@ -50,6 +51,7 @@ description: >
 | Ralph Loop | Fixed anchor files, one task per iteration, BLOCKED detection | Gap brief = one focused task per iteration |
 | Walking Skeleton | End-to-end thin slice first, then thicken | Iteration 1 = full stack skeleton; later iterations thicken weak layers |
 | Vibe Coding Research | "80-90% fast, last 10% hard" + context momentum | Gap brief breaks context momentum by forcing fresh scope |
+| Smart Zone / Context Hygiene | ~120k token ceiling for sharp reasoning; compact between phases | Step 6.5 compact + handoff prevents context degradation across iterations |
 
 ## Execution Flow
 
@@ -70,7 +72,13 @@ INPUT: .scratch/<feature-slug>/  (must have pipeline-report.md or verification-r
 │                                                  │
 │  4. Generate gap brief for next iteration         │
 │  5. Invoke matt-dev-pipeline on gap brief         │
-│  6. Go to step 1                                  │
+│  6. Record iteration results                      │
+│  6.5 Context hygiene:                            │
+│     ├── Write iteration-handoff.md               │
+│     ├── Commit artifacts                         │
+│     ├── /compact (summarize conversation)         │
+│     └── Re-read loop-state + gap-brief + handoff │
+│  7. Go to step 1                                  │
 │                                                  │
 └─────────────────────────────────────────────────┘
     │
@@ -246,6 +254,105 @@ After the pipeline completes:
 3. Update `<artifacts.dir>/index.md` with the new feature-slug
 4. Check convergence (Step 3)
 
+### Step 6.5: Context Hygiene (Post-Iteration Compact)
+
+**When**: After every completed iteration (Step 6), BEFORE starting the next loop cycle.
+**Why**: Each iteration accumulates ~50-80k tokens of implementation details (sub-agent results, code-review reports, E2E logs, file reads). After 2-3 iterations the context approaches the smart zone ceiling and reasoning quality degrades. Compacting between iterations resets this — safely, because all essential state is already on disk.
+**Rule**: Compact BETWEEN iterations, never DURING. Mid-iteration compact loses implementation context the agent needs to finish the current pipeline.
+
+#### 6.5.1 Write Iteration Handoff
+
+Write `<artifacts.dir>/<current-feature-slug>/iteration-handoff.md`. This file captures context that `/compact` would lose but the next iteration needs:
+
+```markdown
+# Iteration Handoff — <feature-slug> Round <N>
+
+## Loop Position
+- Round: <N> / <max>
+- Score: <score>/100 (<decision>)
+- Next feature-slug: <root-feature>-r<N+1>
+- Branch: <branch-name>
+
+## Protected Architecture Decisions
+<!-- These MUST survive compact — the gap-fix iteration must not contradict them -->
+
+| # | Decision | Conclusion | Source |
+|---|---------|-----------|--------|
+| A1 | <e.g. Data model> | <e.g. SQLite with JSON columns> | <root-brief path> |
+| A2 | <e.g. API contract> | <e.g. REST + SSE, no WebSocket> | <spec.md path> |
+| A3 | <e.g. State management> | <e.g. Zustand, not Redux> | <ADR path if any> |
+
+## Confirmed Interfaces (Do NOT Change)
+<!-- Interfaces that passed verification — gap-fix must not break these -->
+
+| Interface | Location | Verified In |
+|-----------|----------|-------------|
+| <e.g. GET /api/workflows> | <file:line> | Round <N> verification |
+| <e.g. WorkflowNode type> | <file:line> | Round <N> code-review |
+
+## Gap Targets for Next Iteration
+<!-- Extracted from verification-report section 6 -->
+
+1. <gap-1>: <one-line description>
+2. <gap-2>: <one-line description>
+
+## BLOCKED Gaps (Excluded from Next Iteration)
+<!-- Gaps that persisted 2+ rounds without improvement -->
+
+- <blocked-gap>: <reason it's blocked>
+
+## Key File Paths
+- Root brief: <path>
+- Current gap brief: <path>
+- Loop state: <path>
+- Verification report: <path>
+- Pipeline report: <path>
+
+## What Worked (Do Not Re-implement)
+<!-- Components that passed verification — next iteration must NOT touch these -->
+
+- <component-1>: <why it's stable>
+- <component-2>: <why it's stable>
+```
+
+#### 6.5.2 Commit Artifacts
+
+Ensure all iteration artifacts are on disk and committed before compacting:
+
+```bash
+git add <artifacts.dir>/
+git commit -m "chore: iteration <N> artifacts + handoff"
+```
+
+#### 6.5.3 Invoke Compact
+
+```
+/compact
+```
+
+This summarizes the conversation, discarding implementation details from the completed iteration.
+
+#### 6.5.4 Re-read Essential Context
+
+After compact, immediately re-read these files to restore working context:
+
+1. `loop-state.json` — current loop position and score history
+2. Latest `iteration-handoff.md` — protected decisions and interfaces
+3. Next iteration's `gap-brief.md` — work instructions for the next round
+4. Root `brief.md` — original requirements (for reference)
+
+#### 6.5.5 Verify Context Restoration
+
+Print a 3-line sanity check confirming the agent is oriented:
+
+```
+📍 Round <N+1>/<max> | Score: <prev-score>/100 | Branch: <branch>
+🎯 Gap targets: <gap-1>, <gap-2>, <gap-3>
+📂 Artifacts: <artifacts.dir>/<next-feature-slug>/
+```
+
+If the sanity check reveals missing context (e.g. gap targets don't match verification-report), re-read the relevant files before proceeding.
+
 ## Gap Classification and Priority
 
 Not all gaps are equal. The loop prioritizes gaps by impact:
@@ -392,6 +499,8 @@ matt-verified-requirement → brief.md (initial)
 4. **Blindly trusting previous reports** — each verification-report must be a fresh analysis
 5. **Changing branches** — all iterations must stay on the same git branch
 6. **Skipping verification** — never skip the verification-report between pipeline runs
+7. **Compacting mid-iteration** — never `/compact` while a pipeline phase is running. The agent loses implementation context and can't finish the current iteration. Compact ONLY between iterations (Step 6.5)
+8. **Compacting without handoff** — never `/compact` without first writing `iteration-handoff.md`. Compact without protected context = amnesia about architecture decisions and confirmed interfaces
 
 ## Glossary
 
@@ -404,6 +513,8 @@ matt-verified-requirement → brief.md (initial)
 | Regression | Score decreasing between rounds (something got worse) |
 | Loop State | JSON file tracking all iteration results and metadata |
 | Root Feature | The original feature-slug that started the loop |
+| Iteration Handoff | Markdown file capturing protected context (decisions, interfaces, paths) before compact |
+| Context Hygiene | Discipline of compacting between iterations with handoff write → compact → re-read cycle |
 
 ## Relationship to Other Skills
 
@@ -414,3 +525,15 @@ matt-verified-requirement → brief.md (initial)
 | matt-verification-report | Gate — called after each iteration to score |
 | matt-dev-runner | Indirect — called by pipeline within each iteration |
 | matt-e2e-tester | Indirect — called by pipeline within each iteration |
+
+## Artifacts Produced Per Iteration
+
+| Artifact | Path | Purpose |
+|----------|------|---------|
+| `loop-state.json` | `<root-feature>/` | Loop control state (rounds, scores, gaps) |
+| `brief.md` | `<feature-rN>/` | Gap-focused brief for this iteration |
+| `spec.md` | `<feature-rN>/` | Synthesized spec (by matt-dev-runner) |
+| `pipeline-report.md` | `<feature-rN>/` | 5-phase execution report |
+| `verification-report.md` | `<feature-rN>/` | Confidence score + gap analysis |
+| `iteration-handoff.md` | `<feature-rN>/` | Protected context for post-compact re-read |
+| `loop-summary.md` | `<root-feature>/` | Final summary (only on loop exit) |
