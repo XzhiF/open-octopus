@@ -157,12 +157,12 @@ export class EngineCallbacks implements IEngineCallbacks {
 
       onNodeLog: (nodeId, logLine) => {
         sse.emit(wsId, { event: "node_log", data: { executionId: id, nodeId, logLine } })
-        // Virtual nodes (e.g. __engine_init__) bypass the JSONL logger → compact → persist pipeline.
-        // Sub-workflow child callbacks also send prefixed log lines ([workflow-name] ...) via onNodeLog.
-        // Persist these to agent_events so the polling-based frontend can display them.
+        // Persist logs that bypass the JSONL logger → compact → persist pipeline:
+        // - Virtual nodes (e.g. __engine_init__)
+        // - Sub-workflow child nodes (scoped IDs like "run-child:print-result")
         const isVirtualNode = nodeId.startsWith("__")
-        const isSubWorkflowLog = logLine.startsWith("[")
-        if (isVirtualNode || isSubWorkflowLog) {
+        const isSubWorkflowChild = nodeId.includes(":")
+        if (isVirtualNode || isSubWorkflowChild) {
           try {
             const neId = `${id}-${nodeId}`
             dao.insertAgentEvent({

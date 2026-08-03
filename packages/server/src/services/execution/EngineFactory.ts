@@ -99,9 +99,30 @@ export class EngineFactory implements IEngineFactory {
     )
 
     // Set workflow resolver for sub_workflow nodes
+    // Resolution order: exact ref → append .yaml/.yml → match by workflow name
     const workflowResolver = (name: string): { parsed: WorkflowDef; content: string } | undefined => {
+      // 1. Try exact ref (e.g. "child-basic.yaml" or "group/name")
       const local = this.ctx.workflowService.get(this.workspacePath, name)
       if (local) return { parsed: local.parsed, content: local.content }
+
+      // 2. Try appending .yaml / .yml (e.g. "child-basic" → "child-basic.yaml")
+      if (!name.endsWith(".yaml") && !name.endsWith(".yml")) {
+        for (const ext of [".yaml", ".yml"]) {
+          const withExt = this.ctx.workflowService.get(this.workspacePath, name + ext)
+          if (withExt) return { parsed: withExt.parsed, content: withExt.content }
+        }
+      }
+
+      // 3. Search by workflow name (scan all workflows in workspace)
+      const allWorkflows = this.ctx.workflowService.list(this.workspacePath)
+      for (const wf of allWorkflows) {
+        if (wf.name === name) {
+          const found = this.ctx.workflowService.get(this.workspacePath, wf.ref)
+          if (found) return { parsed: found.parsed, content: found.content }
+        }
+      }
+
+      // 4. Fall back to built-in workflows
       const builtIn = this.ctx.builtInWorkflowService.get(name)
       if (builtIn) return { parsed: builtIn.parsed, content: builtIn.content }
       return undefined

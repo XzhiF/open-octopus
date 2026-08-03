@@ -167,6 +167,9 @@ export interface SubWorkflowConfig extends CoreConfig {
   /** Creates a separate execution record for linked-mode child workflows.
    *  Returns the new execution ID. If not provided, linked mode falls back to inline with a warning. */
   createChildExecution?: (workflowName: string, parentExecutionId: string) => Promise<{ executionId: string }>
+  /** Pre-creates a node_execution DB record for a child node (scoped ID).
+   *  Called before child engine runs so onNodeStart/onNodeEnd updates find existing rows. */
+  ensureNodeExecution?: (scopedNodeId: string, nodeType: string) => void
 }
 
 /** ResumeConfig — used alongside LoopConfig for resume-from-approval flows */

@@ -145,6 +145,13 @@ export class SubWorkflowExecutor implements NodeExecutor {
       // Create child callbacks that prefix events with sub-workflow name
       const childCallbacks = this.createChildCallbacks(logLines, workflowName)
 
+      // Pre-create DB records for child nodes with scoped IDs so onNodeStart/onNodeEnd can update them
+      if (this.config.ensureNodeExecution && resolved.parsed.nodes) {
+        for (const childNode of resolved.parsed.nodes) {
+          this.config.ensureNodeExecution(`${this.node.id}:${childNode.id}`, childNode.type)
+        }
+      }
+
       const childEngine = new WorkflowEngine(
         resolved.parsed,
         this.config.providers,
@@ -289,26 +296,28 @@ export class SubWorkflowExecutor implements NodeExecutor {
     logLines: string[],
     workflowName: string,
   ) {
-    // Format: {sub_workflow_name}:{event_name} — matches the design spec for event panel display
     const fmt = (event: string, detail: string) => `${workflowName}:${event} ${detail}`
+    const scoped = (childNodeId: string) => `${this.node.id}:${childNodeId}`
     return {
       onNodeStart: (nodeId: string, nodeType: string) => {
         const msg = fmt("node_start", `${nodeId} (${nodeType})`)
         logLines.push(msg)
-        // Write to JSONL logger so compaction persists these events to agent_events DB
-        this.config.logger?.log(this.node.id, "node_log", { line: msg })
+        // Forward structured event to child node's own DB record + SSE
+        this.config.callbacks?.onNodeStart?.(scoped(nodeId), nodeType)
+        // Brief summary in parent node's event panel
         this.config.callbacks?.onNodeLog?.(this.node.id, msg)
       },
-      onNodeEnd: (nodeId: string, status: string, durationMs: number, _result?: NodeExecutionResult, _nodeType?: string) => {
+      onNodeEnd: (nodeId: string, status: string, durationMs: number, result?: NodeExecutionResult, nodeType?: string) => {
         const msg = fmt("node_end", `${nodeId} ${status} (${durationMs}ms)`)
         logLines.push(msg)
-        this.config.logger?.log(this.node.id, "node_log", { line: msg })
+        // Forward structured event (includes result for token recording)
+        this.config.callbacks?.onNodeEnd?.(scoped(nodeId), status, durationMs, result, nodeType)
+        // Brief summary in parent node's event panel
         this.config.callbacks?.onNodeLog?.(this.node.id, msg)
       },
       onNodeLog: (nodeId: string, logLine: string) => {
-        const msg = fmt("log", `[${nodeId}] ${logLine}`)
-        this.config.logger?.log(this.node.id, "node_log", { line: msg })
-        this.config.callbacks?.onNodeLog?.(this.node.id, msg)
+        // Route log to child node's own event panel
+        this.config.callbacks?.onNodeLog?.(scoped(nodeId), logLine)
       },
       onStatusChange: (status: string, progress: number) => {
         logLines.push(fmt("status", `${status} (${progress}%)`))
@@ -316,8 +325,11 @@ export class SubWorkflowExecutor implements NodeExecutor {
       onError: (nodeId: string, error: string) => {
         const msg = fmt("error", `${nodeId}: ${error}`)
         logLines.push(msg)
-        this.config.logger?.log(this.node.id, "node_log", { line: msg })
+        this.config.callbacks?.onError?.(scoped(nodeId), error)
         this.config.callbacks?.onNodeLog?.(this.node.id, msg)
+      },
+      onAgentEvent: (nodeId: string, event: any) => {
+        this.config.callbacks?.onAgentEvent?.(scoped(nodeId), event)
       },
     }
   }

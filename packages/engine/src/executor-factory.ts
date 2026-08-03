@@ -210,6 +210,9 @@ export class ExecutorFactory {
           engineNodeResults: this.ctx.nodeResults,
           workflowResolver: this.ctx.workflowResolver,
           visitedWorkflows: this.ctx.visitedWorkflows,
+          ensureNodeExecution: (scopedNodeId: string, nodeType: string) => {
+            this.ctx.callbacks?.onRuntimeNodeAdded?.(scopedNodeId, nodeType)
+          },
         })
       default:
         throw new Error(`Unknown node type: ${(node as any).type}`)
