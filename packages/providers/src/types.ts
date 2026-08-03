@@ -31,6 +31,7 @@ export interface OctopusAgentDef {
   skills?: string[]
   maxTurns?: number
   background?: boolean
+  effort?: "low" | "medium" | "high" | "xhigh" | "max" | number
 }
 
 export interface ProviderPolicy {
@@ -51,6 +52,7 @@ export interface SendQueryOptions {
   plugins?: Array<{ type: 'local'; path: string }>
   disablePlugins?: string[]
   disallowedTools?: string[]
+  effort?: "low" | "medium" | "high" | "xhigh" | "max" | number
   /**
    * When true, AskUserQuestion tool calls are intercepted via canUseTool callback.
    * The deny message tells the model the question was forwarded to the web UI,

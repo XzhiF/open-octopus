@@ -109,6 +109,7 @@ export class AgentExecutor implements NodeExecutor {
         previousSessionId: this.previousSessionId,
         signal: timeoutAc.signal,
         onActivity: resetActivityTimer,
+        effort: this.node.effort,
       })
 
       clearTimeout(activityTimer)

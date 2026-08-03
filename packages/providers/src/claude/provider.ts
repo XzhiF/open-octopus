@@ -162,6 +162,7 @@ function toClaudeAgentDef(def: OctopusAgentDef): AgentDefinition {
     prompt: def.prompt,
     tools: def.tools,
     model: def.model,
+    effort: def.effort,
   } as AgentDefinition
 }
 
@@ -235,6 +236,7 @@ export class ClaudeSDKProvider implements IAgentProvider {
         : undefined,
       plugins: resolvePlugins(options),
       disallowedTools: options?.disallowedTools,
+      ...(typeof options?.effort === 'string' ? { effort: options.effort as Options['effort'] } : {}),
       canUseTool,
       ...(options?.abortSignal ? { abortController: new AbortController() } : {}),
       ...(resumeSessionId ? { resume: resumeSessionId } : {}),

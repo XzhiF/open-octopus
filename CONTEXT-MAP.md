@@ -81,6 +81,10 @@
 | **L1 结构验证** | Schema 验证第一层 — YAML 可解析、必填字段存在、类型正确。 | skills |
 | **L2 交叉约束** | Schema 验证第二层 — 字段间逻辑约束（互斥、依赖、拓扑完整性）。 | skills |
 | **L3 语义检查** | Schema 验证第三层 — 引用完整性（depends_on 目标存在、变量语法合法、表达式可解析）。 | skills |
+| **requires** | Workflow 顶层资源依赖声明 — `requires.skills` + `requires.agent_files`，显式声明工作流需要的资源。`_engine_init_` 优先 provision 声明的资源，扫描作为兜底。 | shared, engine |
+| **effort** | LLM 推理深度控制参数 — 值域 `low/medium/high/xhigh/max`。NodeDef 顶层和 SubAgentDef 都支持，通过 provider 层传递到 Claude SDK (`Options.effort`) 和 Pi SDK (`setThinkingLevel`)。 | shared, providers |
+| **Skill Filter（运行时过滤）** | 节点级 `skills: string[]` 在运行时作为白名单过滤 workspace 已安装的 skills。与 `requires.skills`（依赖声明/provision）不同。Pi SDK 显式 filter，Claude SDK 直接传递。 | providers, engine |
+| **agent_files** | `.claude/agents/*.md` 文件的资源级引用名称（不含扩展名）。在 `requires.agent_files` 中声明，`_engine_init_` 负责 provision。 | shared, engine |
 
 ## Anti-Patterns（禁止）
 

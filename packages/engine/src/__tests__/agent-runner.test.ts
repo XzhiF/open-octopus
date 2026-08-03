@@ -222,4 +222,36 @@ describe("AgentNodeRunner", () => {
     ).rejects.toThrow("stream fracture")
     expect(callCount).toBe(2) // original + 1 retry
   })
+
+  it("passes effort from run options to provider sendQuery", async () => {
+    const provider: IAgentProvider = {
+      getType: () => "claude",
+      sendQuery: vi.fn(async function* () {
+        yield { type: "result", sessionId: "s1" }
+      }),
+    }
+
+    const runner = new AgentNodeRunner(provider, "/tmp/test")
+    await runner.run({ prompt: "test", context: "new", effort: "high" })
+
+    expect(provider.sendQuery).toHaveBeenCalledWith(
+      "test", "/tmp/test", undefined,
+      expect.objectContaining({ effort: "high" }),
+    )
+  })
+
+  it("does not pass effort when not provided", async () => {
+    const provider: IAgentProvider = {
+      getType: () => "claude",
+      sendQuery: vi.fn(async function* () {
+        yield { type: "result", sessionId: "s1" }
+      }),
+    }
+
+    const runner = new AgentNodeRunner(provider, "/tmp/test")
+    await runner.run({ prompt: "test", context: "new" })
+
+    const optionsArg = (provider.sendQuery as any).mock.calls[0][3]
+    expect(optionsArg.effort).toBeUndefined()
+  })
 })

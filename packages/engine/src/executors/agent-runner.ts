@@ -34,6 +34,7 @@ export class AgentNodeRunner {
     onActivity?: () => void
     agents?: Record<string, any>
     maxRetries?: number
+    effort?: "low" | "medium" | "high" | "xhigh" | "max" | number
     /** Optional external system prompt (assembled by AgentService).
      *  When provided, overrides the default preset system prompt.
      *  Enables scheduled agent jobs and clone delegation to inject
@@ -112,6 +113,7 @@ export class AgentNodeRunner {
             agent: opts.agent,
             skills: opts.skills,
             agents: opts.agents,
+            effort: opts.effort,
             systemPrompt: opts.systemPrompt ?? { type: "preset", preset: "claude_code" },
             abortSignal: localAbort.signal,
           },
