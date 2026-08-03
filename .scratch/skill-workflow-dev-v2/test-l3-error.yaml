@@ -1,0 +1,18 @@
+# L3 error test: semantic violations
+apiVersion: octopus/v1
+kind: Workflow
+name: "l3-error-test"
+nodes:
+  - id: init
+    type: bash
+    bash: "echo init"
+
+  - id: build
+    type: bash
+    depends_on: [init, nonexistent-node]
+    bash: "echo build"
+
+  - id: deploy
+    type: bash
+    depends_on: [build]
+    bash: "echo deploy"
