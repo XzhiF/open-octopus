@@ -1,4 +1,4 @@
-# octo-workflow-test — REFERENCE.md
+# Testing Mock Patterns Reference
 
 Detailed mock data examples and patterns extracted from real workflow analysis.
 Use as a lookup when generating fixtures for complex workflows.
@@ -13,13 +13,13 @@ Use as a lookup when generating fixtures for complex workflows.
 ```yaml
 - id: init
   type: agent
-  prompt: "初始化: 检测分支、feature slug、remote 类型"
+  prompt: "Initialize: detect branch, feature slug, remote type"
 ```
 
 **Mock data**:
 ```yaml
 init:
-  output: "初始化完成。分支: feat/engine-init-sync, feature: engine-init-sync, remote: github"
+  output: "Initialized. Branch: feat/engine-init-sync, feature: engine-init-sync, remote: github"
   update_vars:
     branch: "feat/engine-init-sync"
     feature: "engine-init-sync"
@@ -35,7 +35,7 @@ init:
 
 | Auto-var key | Example value |
 |-------------|---------------|
-| `idea-research_synthesis` | "研究结论: 涉及 engine 和 shared 两个包，无重大风险。3 个待澄清问题。" |
+| `idea-research_synthesis` | "Research conclusion: involves engine and shared packages, no major risks. 3 questions pending." |
 | `idea-research_consensus_score` | `0.85` |
 | `idea-research_rounds_used` | `2` |
 | `idea-research_expert_count` | `3` |
@@ -56,33 +56,12 @@ outputs:
 **Host extra output via vars_update**:
 ```yaml
 idea-research:
-  output: "研究结论: 涉及 engine 和 shared 两个包，无重大风险。3 个待澄清问题。"
+  output: "Research conclusion: involves engine and shared packages, no major risks. 3 questions pending."
   update_vars:
-    requirements_checklist_status: "INCOMPLETE: 缺少验证策略"
+    requirements_checklist_status: "INCOMPLETE: Missing verification strategy"
 ```
 
 ### Stage 2a: requirements-clarify-loop (loop)
-
-**Loop definition**:
-```yaml
-- id: requirements-clarify-loop
-  type: loop
-  break_when: '$vars.clarify_decision == "proceed" && $vars.requirements_checklist_status == "COMPLETE"'
-  max_iterations: 5
-  nodes:
-    - id: requirements-approval
-      type: approval
-      options:
-        - { label: "继续", value: "continue" }
-        - { label: "完成", value: "proceed" }
-      outputs:
-        "$vars.clarify_decision": "$last_output"
-    - id: requirements-clarify
-      type: agent
-      depends_on: [requirements-approval]
-      execute_when: '$vars.clarify_decision != "proceed" || $vars.requirements_checklist_status != "COMPLETE"'
-      prompt: "根据 $requirements-approval.output.comment 补充需求..."
-```
 
 **Mock for happy path (1 iteration, immediate proceed)**:
 ```yaml
@@ -91,9 +70,9 @@ requirements-clarify-loop:
   nodes:
     requirements-approval:
       choice: "proceed"
-      comment: "需求已明确"
+      comment: "Requirements clear"
     requirements-clarify:
-      output: "需求检查完成"
+      output: "Requirements check complete"
       update_vars:
         requirements_checklist_status: "COMPLETE"
 ```
@@ -105,14 +84,14 @@ requirements-clarify-loop:
   nodes:
     requirements-approval:
       - choice: "continue"
-        comment: "需要补充验证策略"
+        comment: "Need to add verification strategy"
       - choice: "proceed"
-        comment: "已补充完成"
+        comment: "Supplemented"
     requirements-clarify:
-      - output: "补充验证策略中..."
+      - output: "Adding verification strategy..."
         update_vars:
-          requirements_checklist_status: "INCOMPLETE: 验证策略待完善"
-      - output: "需求全部完成"
+          requirements_checklist_status: "INCOMPLETE: Verification strategy pending"
+      - output: "Requirements complete"
         update_vars:
           requirements_checklist_status: "COMPLETE"
 ```
@@ -121,57 +100,7 @@ requirements-clarify-loop:
 - `clarify_decision == "proceed"` (from approval mock)
 - `requirements_checklist_status == "COMPLETE"` (from agent update_vars)
 
-### Stage 2b: verification-clarify-loop (loop)
-
-Same structure as 2a, different variable names:
-- `$vars.verify_decision` (approval choice)
-- `$vars.env_checklist_status` (agent vars_update)
-- `break_when: '$vars.verify_decision == "proceed" && $vars.env_checklist_status == "COMPLETE"'`
-
-### Stage 5: execution (agent with sub-agents)
-
-```yaml
-- id: execution
-  type: agent
-  outputs:
-    "$vars.spec_status": "$last_output"
-```
-
-**Mock data**:
-```yaml
-execution:
-  output: "所有 spec 执行完毕: 3/3 passed"
-  update_vars:
-    spec_status: "passed"
-```
-
 ### Stage 6: e2e-verify-loop (loop)
-
-**Loop definition**:
-```yaml
-- id: e2e-verify-loop
-  type: loop
-  break_when: '$vars.e2e_status == "passed" || $vars.e2e_decision == "skip"'
-  max_iterations: 3
-  nodes:
-    - id: e2e-runner
-      type: agent
-      # sets $vars.e2e_status
-    - id: e2e-notify
-      type: bash
-      depends_on: [e2e-runner]
-      execute_when: '$vars.e2e_status == "failed"'
-    - id: e2e-approval
-      type: approval
-      depends_on: [e2e-notify]
-      execute_when: '$vars.e2e_status == "failed"'
-      options:
-        - { label: "重试", value: "retry" }
-        - { label: "跳过", value: "skip" }
-      outputs:
-        "$vars.e2e_decision": "$last_output"
-        "$vars.user_guidance": "$last_output.comment"
-```
 
 **Scenario A — Happy path (e2e passes first try)**:
 ```yaml
@@ -179,11 +108,11 @@ e2e-verify-loop:
   iterations: 1
   nodes:
     e2e-runner:
-      output: "E2E 测试全部通过"
+      output: "E2E tests all passed"
       update_vars:
         e2e_status: "passed"
     e2e-notify:
-      output: "通知已发送"
+      output: "Notification sent"
     e2e-approval:
       choice: "retry"
 ```
@@ -195,18 +124,18 @@ e2e-verify-loop:
   iterations: 2
   nodes:
     e2e-runner:
-      - output: "E2E 失败: 3 个 case 不通过"
+      - output: "E2E failed: 3 cases not passing"
         update_vars:
           e2e_status: "failed"
-      - output: "E2E 全部通过"
+      - output: "E2E all passed"
         update_vars:
           e2e_status: "passed"
     e2e-notify:
-      - output: "已通知开发者"
-      - output: "已通知开发者"
+      - output: "Notified developer"
+      - output: "Notified developer"
     e2e-approval:
       - choice: "retry"
-        comment: "请修复 case #3, #7, #12"
+        comment: "Fix case #3, #7, #12"
       - choice: "retry"
         comment: ""
 ```
@@ -217,21 +146,14 @@ e2e-verify-loop:
   iterations: 1
   nodes:
     e2e-runner:
-      output: "E2E 失败: 无法修复"
+      output: "E2E failed: cannot fix"
       update_vars:
         e2e_status: "failed"
     e2e-notify:
-      output: "已通知"
+      output: "Notified"
     e2e-approval:
       choice: "skip"
-      comment: "已知问题，后续修复"
-```
-
-### Stage 7: ship (agent)
-
-```yaml
-ship:
-  output: "PR 已创建: https://github.com/XzhiF/octopus/pull/42"
+      comment: "Known issue, fix later"
 ```
 
 ---
@@ -252,9 +174,9 @@ outputs:
 **Mock**:
 ```yaml
 decision:
-  output: "技术选型结论: 采用 PostgreSQL + Drizzle ORM"
+  output: "Tech selection conclusion: adopt PostgreSQL + Drizzle ORM"
   update_vars:
-    decision: "采用 PostgreSQL + Drizzle ORM"
+    decision: "Adopt PostgreSQL + Drizzle ORM"
     consensus: 0.85
 ```
 
@@ -267,7 +189,7 @@ decision:
 **Mock**:
 ```yaml
 implement:
-  output: "全栈开发完成。Frontend: React + Next.js; Backend: Hono + SQLite"
+  output: "Full-stack development complete. Frontend: React + Next.js; Backend: Hono + SQLite"
   update_vars:
     implement_status: "completed"
 ```
@@ -278,12 +200,12 @@ implement:
 
 ```yaml
 review:
-  output: "代码审查完成。无严重问题，3 个建议项。"
+  output: "Code review complete. No serious issues, 3 suggestion items."
 ```
 
 ---
 
-## 3. Golden Fixture Examples (from V1 test suite)
+## 3. Golden Fixture Examples
 
 ### Linear Workflow
 
@@ -375,15 +297,15 @@ scenarios:
   - name: "swarm review"
     mocks:
       agent-prepare:
-        output: "代码片段已准备"
+        output: "Code snippet prepared"
         update_vars:
           code: "function hello() { return 'world' }"
       swarm-review:
-        output: "审查结论: 代码质量良好，建议添加类型注解"
+        output: "Review conclusion: code quality good, suggest adding type annotations"
         update_vars:
           review_result: "approved"
       bash-notify:
-        output: "通知已发送"
+        output: "Notification sent"
     assertions:
       status: "completed"
       vars:
@@ -452,13 +374,13 @@ When downstream node references `$approval-node.output.comment`:
 # Approval mock MUST provide comment
 requirements-approval:
   choice: "continue"
-  comment: "需要补充 API 安全设计章节"
+  comment: "Need to add API security design section"
 
 # Downstream agent receives comment via $requirements-approval.output.comment
 requirements-clarify:
-  output: "已补充 API 安全设计"
+  output: "Supplemented API security design"
   update_vars:
-    requirements_checklist_status: "INCOMPLETE: 安全章节待审"
+    requirements_checklist_status: "INCOMPLETE: Security section pending review"
 ```
 
 ### Swarm Auto-Vars Assertion
@@ -466,7 +388,7 @@ requirements-clarify:
 ```yaml
 assertions:
   vars:
-    idea-research_synthesis: "研究结论..."
+    idea-research_synthesis: "Research conclusion..."
     idea-research_expert_count: 3
     idea-research_rounds_used: 2
 ```
@@ -492,7 +414,7 @@ scenarios:
 
 ```yaml
 build:
-  output: "编译失败: 3 个类型错误"
+  output: "Compilation failed: 3 type errors"
   update_vars:
     __status: "failed"
     error_detail: "3 type errors"

@@ -1,35 +1,32 @@
 #!/usr/bin/env node
 /**
- * Octopus 工作流校验脚本
+ * Octopus Workflow Validation Script — L1 + L2 + L3
  *
- * 用法:
+ * Usage:
  *   node validate-workflow.js ./my-workflow.yaml
- *   node validate-workflow.js ./my-workflow.yaml --json    (JSON 输出)
- *   node validate-workflow.js ./workflows/*.yaml           (批量校验)
+ *   node validate-workflow.js ./my-workflow.yaml --json
+ *   node validate-workflow.js ./workflows/*.yaml
  *
- * 校验链:
- *   1. apiVersion 格式 (octopus/v{N})
- *   2. kind === "Workflow"
- *   3. inputs 值必须是对象而非裸字符串
- *   4. type: agent 必须有 agent 字段
- *   5. type: bash/python 必须有对应内容字段
- *   6. type: condition 必须有 cases
- *   7. type: loop 必须有 max_iterations
- *   8. 节点 id 唯一性
+ * Validation Levels:
+ *   L1 (Structure): YAML parseable, required fields present, types correct
+ *   L2 (Cross-constraints): Swarm mutual exclusions, goal/prompt exclusivity, condition default order
+ *   L3 (Semantic): depends_on references exist, variable syntax, expression syntax
  *
- * 退出码: 0 = 全部通过, 1 = 存在失败
+ * Hard Checks (Warnings):
+ *   - Non-first top-level nodes without depends_on
+ *   - Loop sub-nodes without depends_on
+ *
+ * Exit codes: 0 = all pass, 1 = errors found, 2 = warnings only (no errors)
  */
 
 const fs = require('fs')
 const path = require('path')
 
-// ── 模块解析 ───────────────────────────────────────────────────────────────────
+// ── YAML Loading ──────────────────────────────────────────────────────────────
 
 function tryRequireYaml() {
-  // 1. 直接 require — 在 bundle 版中 js-yaml 已内联，在非 bundle 版中从 node_modules 加载
   try { return require('js-yaml') } catch { /* continue */ }
 
-  // 2. 向上走到 monorepo 根或 octopus 安装目录
   const os = require('os')
   let root = __dirname
   for (let i = 0; i < 10; i++) {
@@ -42,7 +39,6 @@ function tryRequireYaml() {
     }
   }
 
-  // 3. 搜索候选目录
   const searchDirs = [root, process.cwd(), __dirname, os.homedir()]
   const packagesDir = path.join(root, 'packages')
   if (fs.existsSync(packagesDir)) {
@@ -58,164 +54,422 @@ function tryRequireYaml() {
     } catch { /* continue */ }
   }
 
-  throw new Error('js-yaml not found — ensure octopus packages are installed')
+  throw new Error('js-yaml not found — run pnpm install or npm install js-yaml')
 }
 
-// ── 辅助 ──────────────────────────────────────────────────────────────────────
+// ── Result Helpers ─────────────────────────────────────────────────────────────
 
-function fail(file, msg) {
-  return { file, ok: false, error: msg }
-}
-
-function pass(file, info) {
-  return { file, ok: true, info }
-}
-
-// ── 内联校验（不依赖 @octopus/shared）──────────────────────────────────────────
-
-function validateInline(filePath) {
-  const content = fs.readFileSync(filePath, 'utf-8')
-
-  let yaml
-  try {
-    yaml = tryRequireYaml().load(content)
-  } catch (e) {
-    return fail(filePath, `无法加载 js-yaml: ${e.message}`)
+class ValidationResult {
+  constructor(file) {
+    this.file = file
+    this.errors = []    // L1, L2, L3 errors
+    this.warnings = []  // Hard checks (non-fatal)
   }
 
-  if (!yaml || typeof yaml !== 'object') {
-    return fail(filePath, 'YAML 内容为空或非对象')
+  addError(level, message, nodeId) {
+    this.errors.push({ level, message, nodeId: nodeId || null })
   }
 
-  // 1. apiVersion
+  addWarning(message, nodeId) {
+    this.warnings.push({ message, nodeId: nodeId || null })
+  }
+
+  get ok() { return this.errors.length === 0 }
+  get hasWarnings() { return this.warnings.length > 0 }
+}
+
+// ── L1: Structure Validation ───────────────────────────────────────────────────
+
+function validateL1(yaml, result) {
+  // apiVersion
   if (typeof yaml.apiVersion !== 'string' || !/^octopus\/v\d+$/.test(yaml.apiVersion)) {
-    return fail(filePath, `apiVersion 格式错误: "${yaml.apiVersion}"，正确格式如 "octopus/v1"`)
+    result.addError('L1', `apiVersion format error: "${yaml.apiVersion}", expected "octopus/v{N}" (e.g., "octopus/v1")`)
   }
 
-  // 2. kind
+  // kind
   if (yaml.kind !== 'Workflow') {
-    return fail(filePath, `kind 必须为 "Workflow"，实际: "${yaml.kind}"`)
+    result.addError('L1', `kind must be "Workflow", got: "${yaml.kind}"`)
   }
 
-  // 3. name
+  // name
   if (typeof yaml.name !== 'string' || !yaml.name) {
-    return fail(filePath, '缺少 name 字段')
+    result.addError('L1', 'Missing required field: name')
   }
 
-  // 4. inputs — 值必须是对象
+  // inputs — values must be objects
   if (yaml.inputs && typeof yaml.inputs === 'object') {
     for (const [key, val] of Object.entries(yaml.inputs)) {
       if (val === null || typeof val !== 'object') {
-        return fail(filePath, `inputs.${key} 必须是对象 { description, required?, default? }，不能是裸值`)
-      }
-      if (typeof val.description !== 'string') {
-        return fail(filePath, `inputs.${key} 缺少必填的 description 字段`)
+        result.addError('L1', `inputs.${key} must be an object { description, required?, default? }, not a bare value`)
+      } else if (typeof val.description !== 'string') {
+        result.addError('L1', `inputs.${key} missing required description field`)
       }
     }
   }
 
-  // 5. nodes
+  // nodes
   if (!Array.isArray(yaml.nodes) || yaml.nodes.length === 0) {
-    return fail(filePath, 'nodes 必须是非空数组')
+    result.addError('L1', 'nodes must be a non-empty array')
+    return
   }
 
+  // Node ID uniqueness (recursive)
   const ids = new Set()
-  const collectIds = (nodes) => {
+  const collectIds = (nodes, prefix) => {
     for (const n of nodes) {
       if (!n.id || typeof n.id !== 'string') {
-        return fail(filePath, '每个节点必须有 id 字段')
+        result.addError('L1', 'Each node must have a string id field', prefix)
+        continue
       }
+      const fullId = prefix ? `${prefix}/${n.id}` : n.id
       if (ids.has(n.id)) {
-        return fail(filePath, `节点 id "${n.id}" 重复`)
+        result.addError('L1', `Duplicate node id: "${n.id}"`, n.id)
       }
       ids.add(n.id)
-      if (n.nodes) collectIds(n.nodes)
+      if (n.nodes) collectIds(n.nodes, fullId)
     }
   }
-  const dupErr = collectIds(yaml.nodes)
-  if (dupErr) return dupErr
+  collectIds(yaml.nodes, '')
 
-  const validateNode = (n) => {
-    switch (n.type) {
+  // Per-type required fields (recursive)
+  const validateNodeFields = (node) => {
+    switch (node.type) {
       case 'bash':
-        if (!n.bash) return fail(filePath, `节点 "${n.id}": type=bash 必须有 bash 字段`)
+        if (!node.bash) {
+          result.addError('L1', `type=bash requires bash field`, node.id)
+        }
         break
       case 'python':
-        if (!n.python) return fail(filePath, `节点 "${n.id}": type=python 必须有 python 字段`)
+        if (!node.python) {
+          result.addError('L1', `type=python requires python field`, node.id)
+        }
         break
       case 'agent':
-        if (!n.agent && !n.prompt && !n.agents) return fail(filePath, `节点 "${n.id}": type=agent 必须有 agent、prompt 或 agents 字段`)
+        if (!node.agent && !node.prompt && !node.goal && !node.agents) {
+          result.addError('L1', `type=agent requires at least one of: agent, prompt, goal, agents`, node.id)
+        }
         break
       case 'condition':
-        if (!n.cases || n.cases.length === 0)
-          return fail(filePath, `节点 "${n.id}": type=condition 必须有 cases 字段`)
-        break
-      case 'loop':
-        if (!n.max_iterations)
-          return fail(filePath, `节点 "${n.id}": type=loop 必须有 max_iterations 字段`)
-        if (n.nodes) {
-          for (const inner of n.nodes) {
-            const err = validateNode(inner)
-            if (err) return err
-          }
+        if (!node.cases || !Array.isArray(node.cases) || node.cases.length === 0) {
+          result.addError('L1', `type=condition requires non-empty cases array`, node.id)
         }
         break
       case 'approval':
+        // No special required fields
+        break
+      case 'loop':
+        if (!node.max_iterations) {
+          result.addError('L1', `type=loop requires max_iterations field`, node.id)
+        }
+        if (node.nodes) {
+          for (const inner of node.nodes) {
+            validateNodeFields(inner)
+          }
+        }
         break
       case 'swarm':
-        if (!n.topic)
-          return fail(filePath, `节点 "${n.id}": type=swarm 必须有 topic 字段`)
-        if (!n.mode)
-          return fail(filePath, `节点 "${n.id}": type=swarm 必须有 mode 字段`)
+        if (!node.topic) {
+          result.addError('L1', `type=swarm requires topic field`, node.id)
+        }
+        if (!node.mode) {
+          result.addError('L1', `type=swarm requires mode field`, node.id)
+        }
+        if (node.mode && !['review', 'debate', 'dispatch', 'swarm', 'moa'].includes(node.mode)) {
+          result.addError('L1', `type=swarm mode must be one of: review, debate, dispatch, swarm, moa. Got: "${node.mode}"`, node.id)
+        }
+        break
+      case 'interaction':
+        if (!node.interaction_agent && !node.interaction_exit_when) {
+          result.addError('L1', `type=interaction requires at least one of: interaction_agent, interaction_exit_when`, node.id)
+        }
+        break
+      case 'sub_workflow':
+        if (!node.workflow) {
+          result.addError('L1', `type=sub_workflow requires workflow field`, node.id)
+        }
         break
       default:
-        return fail(filePath, `节点 "${n.id}": 未知类型 "${n.type}"`)
+        if (node.type) {
+          result.addError('L1', `Unknown node type: "${node.type}"`, node.id)
+        } else {
+          result.addError('L1', `Node missing type field`, node.id)
+        }
     }
   }
 
   for (const node of yaml.nodes) {
-    const err = validateNode(node)
-    if (err) return err
+    validateNodeFields(node)
   }
-
-  const inputCount = yaml.inputs ? Object.keys(yaml.inputs).length : 0
-  return pass(filePath, `${yaml.name}: ${yaml.nodes.length} nodes, ${inputCount} inputs`)
 }
 
-// ── 完整校验（使用 @octopus/shared）────────────────────────────────────────────
+// ── L2: Cross-Constraint Validation ───────────────────────────────────────────
 
-function validateFull(filePath) {
-  let shared
+function validateL2(yaml, result) {
+  const validateNode = (node) => {
+    // Agent: goal and prompt mutual exclusion
+    if (node.type === 'agent' && node.goal && node.prompt) {
+      result.addError('L2', `agent node cannot have both goal and prompt (mutually exclusive)`, node.id)
+    }
+
+    // Condition: default must be last
+    if (node.type === 'condition' && node.cases && Array.isArray(node.cases)) {
+      const defaultIdx = node.cases.findIndex(c => c.when === 'default')
+      if (defaultIdx >= 0 && defaultIdx !== node.cases.length - 1) {
+        result.addError('L2', `condition case "when: default" must be the last case (found at position ${defaultIdx + 1} of ${node.cases.length})`, node.id)
+      }
+    }
+
+    // Swarm cross-constraints
+    if (node.type === 'swarm') {
+      // expert_pool and experts mutually exclusive
+      if (node.expert_pool && node.experts && node.experts.length > 0) {
+        result.addError('L2', `expert_pool and experts are mutually exclusive — use expert_pool for dynamic selection, experts for fixed roster`, node.id)
+      }
+
+      // moa requires aggregator
+      if (node.mode === 'moa' && !node.aggregator) {
+        result.addError('L2', `mode: moa requires aggregator field`, node.id)
+      }
+
+      // moa requires experts >= 2
+      if (node.mode === 'moa' && !node.dynamic && node.experts && node.experts.length < 2) {
+        result.addError('L2', `mode: moa requires at least 2 experts, got ${node.experts.length}`, node.id)
+      }
+
+      // debate requires experts >= 2
+      if (node.mode === 'debate' && !node.dynamic && node.experts && node.experts.length < 2) {
+        result.addError('L2', `mode: debate requires at least 2 experts, got ${node.experts.length}`, node.id)
+      }
+
+      // review requires experts >= 1
+      if (node.mode === 'review' && !node.dynamic && (!node.experts || node.experts.length < 1)) {
+        result.addError('L2', `mode: review requires at least 1 expert`, node.id)
+      }
+
+      // moa rounds 0-5
+      if (node.mode === 'moa' && node.rounds !== undefined && (node.rounds < 0 || node.rounds > 5)) {
+        result.addError('L2', `mode: moa rounds must be 0-5, got ${node.rounds}`, node.id)
+      }
+
+      // debate/review rounds >= 1
+      if ((node.mode === 'debate' || node.mode === 'review') && node.rounds !== undefined && node.rounds < 1) {
+        result.addError('L2', `mode: ${node.mode} rounds must be >= 1, got ${node.rounds}`, node.id)
+      }
+
+      // dynamic requires max_experts
+      if (node.dynamic && !node.max_experts) {
+        result.addError('L2', `dynamic: true requires max_experts field`, node.id)
+      }
+
+      // expert_pool constraints
+      if (node.expert_pool) {
+        if (node.expert_pool.length < 2) {
+          result.addError('L2', `expert_pool requires at least 2 experts, got ${node.expert_pool.length}`, node.id)
+        }
+        if (node.max_experts && node.max_experts > node.expert_pool.length) {
+          result.addError('L2', `max_experts (${node.max_experts}) cannot exceed expert_pool size (${node.expert_pool.length})`, node.id)
+        }
+      }
+
+      // Expert depends_on reference validation
+      if (node.experts) {
+        const roles = new Set(node.experts.map(e => e.role))
+        for (const expert of node.experts) {
+          if (expert.depends_on) {
+            for (const dep of expert.depends_on) {
+              if (!roles.has(dep)) {
+                result.addError('L2', `swarm expert depends_on references non-existent role "${dep}", available: [${[...roles].join(', ')}]`, node.id)
+              }
+            }
+          }
+        }
+      }
+    }
+
+    // Recurse into loop sub-nodes
+    if (node.nodes) {
+      for (const inner of node.nodes) {
+        validateNode(inner)
+      }
+    }
+  }
+
+  for (const node of yaml.nodes) {
+    validateNode(node)
+  }
+}
+
+// ── L3: Semantic Validation ───────────────────────────────────────────────────
+
+function validateL3(yaml, result) {
+  // Collect all node IDs (recursive)
+  const allIds = new Set()
+  const collectIds = (nodes) => {
+    for (const n of nodes) {
+      if (n.id) allIds.add(n.id)
+      if (n.nodes) collectIds(n.nodes)
+    }
+  }
+  collectIds(yaml.nodes)
+
+  // Validate depends_on references (recursive)
+  const validateDependsOn = (nodes, context) => {
+    for (const node of nodes) {
+      if (node.depends_on) {
+        for (const dep of node.depends_on) {
+          if (!allIds.has(dep)) {
+            result.addError('L3', `depends_on references non-existent node "${dep}"`, node.id)
+          }
+        }
+      }
+      if (node.nodes) {
+        validateDependsOn(node.nodes, context + '/' + node.id)
+      }
+    }
+  }
+  validateDependsOn(yaml.nodes, '')
+
+  // Variable reference syntax validation
+  const varPattern = /\$([a-zA-Z_][a-zA-Z0-9_-]*)/g
+  const validVarPrefixes = ['vars.', 'inputs.', 'last_output', 'iteration', 'parent.', 'ancestor[']
+  const nodeRefPattern = /\$([a-zA-Z_][a-zA-Z0-9_-]*)\.output(\.[a-zA-Z_][a-zA-Z0-9_-]*)?/g
+  const refPattern = /\$ref:[a-zA-Z_][a-zA-Z0-9_.-]*/g
+
+  const validateExpression = (expr, nodeId, fieldName) => {
+    if (!expr || typeof expr !== 'string') return
+    if (expr === 'default') return // condition default case
+
+    // Check for common syntax errors
+    // Unquoted string comparison
+    const unquotedCompare = /==\s*([a-zA-Z][a-zA-Z0-9_-]*)(?!\s*")/
+    if (unquotedCompare.test(expr) && !expr.includes('"') && !expr.includes("'")) {
+      result.addWarning(`Possible unquoted string in ${fieldName}: "${expr}". String comparisons need quotes: == "value"`, nodeId)
+    }
+  }
+
+  const validateNodeExpressions = (node) => {
+    // execute_when
+    validateExpression(node.execute_when, node.id, 'execute_when')
+
+    // outputs values
+    if (node.outputs) {
+      for (const [key, val] of Object.entries(node.outputs)) {
+        validateExpression(val, node.id, `outputs.${key}`)
+      }
+    }
+
+    // condition cases
+    if (node.type === 'condition' && node.cases) {
+      for (const c of node.cases) {
+        validateExpression(c.when, node.id, 'condition.cases.when')
+      }
+    }
+
+    // loop expressions
+    if (node.type === 'loop') {
+      validateExpression(node.while, node.id, 'loop.while')
+      validateExpression(node.break_when, node.id, 'loop.break_when')
+      validateExpression(node.continue_when, node.id, 'loop.continue_when')
+    }
+
+    // interaction_exit_when
+    if (node.type === 'interaction') {
+      validateExpression(node.interaction_exit_when, node.id, 'interaction_exit_when')
+    }
+
+    // Recurse into loop sub-nodes
+    if (node.nodes) {
+      for (const inner of node.nodes) {
+        validateNodeExpressions(inner)
+      }
+    }
+  }
+
+  for (const node of yaml.nodes) {
+    validateNodeExpressions(node)
+  }
+}
+
+// ── Hard Checks (Warnings) ────────────────────────────────────────────────────
+
+function validateHardChecks(yaml, result) {
+  // depends_on completeness: non-first top-level nodes without depends_on
+  if (yaml.nodes && yaml.nodes.length > 1) {
+    for (let i = 1; i < yaml.nodes.length; i++) {
+      const node = yaml.nodes[i]
+      if (!node.depends_on || node.depends_on.length === 0) {
+        result.addWarning(
+          `Node "${node.id}" (position ${i + 1}) has no depends_on — will execute as independent root in auto mode. Add depends_on for correct DAG ordering.`,
+          node.id
+        )
+      }
+    }
+  }
+
+  // Loop sub-nodes without depends_on
+  const checkLoopSubNodes = (node) => {
+    if (node.type === 'loop' && node.nodes && node.nodes.length > 1) {
+      for (let i = 1; i < node.nodes.length; i++) {
+        const inner = node.nodes[i]
+        if (!inner.depends_on || inner.depends_on.length === 0) {
+          result.addWarning(
+            `Loop sub-node "${inner.id}" (position ${i + 1} in loop "${node.id}") has no depends_on — visualization may overlap, execution order may be incorrect`,
+            inner.id
+          )
+        }
+      }
+    }
+    if (node.nodes) {
+      for (const inner of node.nodes) {
+        checkLoopSubNodes(inner)
+      }
+    }
+  }
+
+  for (const node of yaml.nodes) {
+    checkLoopSubNodes(node)
+  }
+}
+
+// ── Main Validation Entry ─────────────────────────────────────────────────────
+
+function validateFile(filePath) {
+  const result = new ValidationResult(filePath)
+
+  let yamlLib
   try {
-    shared = require('@octopus/shared')
-  } catch {
-    return null // fallback to inline
+    yamlLib = tryRequireYaml()
+  } catch (e) {
+    result.addError('L1', `Cannot load js-yaml: ${e.message}`)
+    return result
   }
 
   const content = fs.readFileSync(filePath, 'utf-8')
 
-  if (!shared.isOctopusWorkflow(content)) {
-    return fail(filePath, '不是有效的 Octopus 工作流 (apiVersion/kind 不符)')
-  }
-
-  let parsed
+  let yaml
   try {
-    parsed = shared.parseWorkflow(content)
+    yaml = yamlLib.load(content)
   } catch (e) {
-    return fail(filePath, e.message)
+    result.addError('L1', `YAML parse error: ${e.message}`)
+    return result
   }
 
-  try {
-    shared.validateWorkflow(parsed)
-  } catch (e) {
-    return fail(filePath, e.message)
+  if (!yaml || typeof yaml !== 'object') {
+    result.addError('L1', 'YAML content is empty or not an object')
+    return result
   }
 
-  const inputCount = parsed.inputs ? Object.keys(parsed.inputs).length : 0
-  return pass(filePath, `${parsed.name}: ${parsed.nodes.length} nodes, ${inputCount} inputs`)
+  validateL1(yaml, result)
+  if (!result.ok) return result // Stop early on L1 errors
+
+  validateL2(yaml, result)
+  validateL3(yaml, result)
+  validateHardChecks(yaml, result)
+
+  return result
 }
 
-// ── 主入口 ─────────────────────────────────────────────────────────────────────
+// ── CLI Entry Point ───────────────────────────────────────────────────────────
 
 function main() {
   const args = process.argv.slice(2)
@@ -223,19 +477,20 @@ function main() {
   const files = args.filter(a => !a.startsWith('--'))
 
   if (files.length === 0) {
-    console.error('用法: node validate-workflow.js <yaml-file> [--json]')
+    console.error('Usage: node validate-workflow.js <yaml-file> [--json]')
+    console.error('       node validate-workflow.js ./workflows/*.yaml')
     process.exit(2)
   }
 
-  // glob 展开
+  // Glob expansion
   const allFiles = []
   for (const f of files) {
     if (f.includes('*')) {
-      const { globSync } = require('glob') || {}
-      if (globSync) {
+      try {
+        const { globSync } = require('glob')
         allFiles.push(...globSync(f))
-      } else {
-        // 简单通配符展开
+      } catch {
+        // Simple glob fallback
         const dir = path.dirname(f)
         const pat = path.basename(f).replace(/\*/g, '(.*)')
         if (fs.existsSync(dir)) {
@@ -245,7 +500,7 @@ function main() {
       }
     } else {
       if (!fs.existsSync(f)) {
-        console.error(`文件不存在: ${f}`)
+        console.error(`File not found: ${f}`)
         continue
       }
       allFiles.push(f)
@@ -253,38 +508,62 @@ function main() {
   }
 
   const results = []
-  for (const f of allFiles) {
-    if (f !== '/dev/stdin' && !f.endsWith('.yaml') && !f.endsWith('.yml')) continue
+  let hasErrors = false
+  let hasWarningsOnly = false
 
-    // 优先用完整校验
-    let result = validateFull(f)
-    if (result === null) {
-      result = validateInline(f)
-    }
+  for (const f of allFiles) {
+    if (!f.endsWith('.yaml') && !f.endsWith('.yml')) continue
+    const result = validateFile(f)
     results.push(result)
+    if (!result.ok) hasErrors = true
+    else if (result.hasWarnings) hasWarningsOnly = true
   }
 
-  // 输出
+  // Output
   if (jsonMode) {
-    console.log(JSON.stringify(results, null, 2))
+    const output = results.map(r => ({
+      file: r.file,
+      ok: r.ok,
+      errors: r.errors,
+      warnings: r.warnings,
+    }))
+    console.log(JSON.stringify(output, null, 2))
   } else {
-    let passed = 0
-    let failed = 0
+    let passedCount = 0
+    let failedCount = 0
+    let warningCount = 0
+
     for (const r of results) {
       if (r.ok) {
         console.log(`✓ ${r.file}`)
-        console.log(`  ${r.info}`)
-        passed++
+        passedCount++
       } else {
         console.log(`✗ ${r.file}`)
-        console.log(`  ${r.error}`)
-        failed++
+        for (const err of r.errors) {
+          const nodeId = err.nodeId ? ` [${err.nodeId}]` : ''
+          console.log(`  ${err.level} ERROR${nodeId}: ${err.message}`)
+        }
+        failedCount++
+      }
+
+      if (r.warnings.length > 0) {
+        for (const w of r.warnings) {
+          const nodeId = w.nodeId ? ` [${w.nodeId}]` : ''
+          console.log(`  ⚠ WARNING${nodeId}: ${w.message}`)
+        }
+        warningCount += r.warnings.length
       }
     }
-    console.log(`\n${passed} passed, ${failed} failed`)
 
-    if (failed > 0) process.exit(1)
+    console.log(`\n${passedCount} passed, ${failedCount} failed`)
+    if (warningCount > 0) {
+      console.log(`${warningCount} warning(s)`)
+    }
   }
+
+  if (hasErrors) process.exit(1)
+  if (hasWarningsOnly) process.exit(0) // Warnings don't fail the build
+  process.exit(0)
 }
 
 main()
