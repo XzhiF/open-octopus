@@ -1,8 +1,19 @@
 {
   "root_feature": "skill-workflow-dev-v2",
   "branch": "feat/skill-workflow-dev-v2",
-  "iterations": [],
-  "max_iterations": 5,
-  "convergence_threshold": 85,
-  "status": "running"
+  "iterations": [
+    {
+      "round": 1,
+      "feature_slug": "skill-workflow-dev-v2",
+      "score": 91,
+      "decision": "GO",
+      "gates_passed": 6,
+      "gates_total": 6,
+      "top_gaps": []
+    }
+  ],
+  "final_score": 91,
+  "final_decision": "GO",
+  "total_iterations": 1,
+  "status": "converged"
 }
