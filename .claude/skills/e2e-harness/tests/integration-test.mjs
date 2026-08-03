@@ -6,7 +6,7 @@
  * Requires: dev server running (pnpm dev), Playwright installed
  */
 
-import { createResults, record, printReport, saveResults, exitWithResults } from "../lib/reporter.mjs"
+import { createResults, record, saveResults, exitWithResults } from "../lib/reporter.mjs"
 import { healthCheck, resolveApiUrl, resolveWebUrl, fetchJSON } from "../lib/api.mjs"
 import { createWorkspace, cleanupWorkspace, getWorkspace, listWorkspaces } from "../lib/workspace.mjs"
 import { createWorkflow, createExecution, startExecution, pollExecution } from "../lib/execution.mjs"

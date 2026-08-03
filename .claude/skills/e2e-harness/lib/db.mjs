@@ -13,12 +13,15 @@
  * Uses a single approach: node:child_process + sqlite3 CLI.
  */
 
-import { execSync } from "node:child_process"
+import { execFileSync } from "node:child_process"
 import fs from "node:fs"
 import path from "node:path"
 import os from "node:os"
+import { safeName } from "./api.mjs"
 
 const DEFAULT_DB_DIR = path.join(os.homedir(), ".octopus", "db")
+const SQLITE_TIMEOUT = 10000
+const SQLITE_MAX_BUFFER = 10 * 1024 * 1024 // 10MB
 
 /**
  * Resolve the SQLite database path.
@@ -48,11 +51,11 @@ export function resolveDbPath(dbPath, mode) {
   if (mode === "worktree") {
     // Try to get branch name for worktree DB
     try {
-      const branch = execSync("git rev-parse --abbrev-ref HEAD", {
+      const branch = execFileSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], {
         encoding: "utf8",
         timeout: 3000,
       }).trim()
-      const safe = branch.replace(/\//g, "-").replace(/[^a-zA-Z0-9\-_.]/g, "_")
+      const safe = safeName(branch)
       const wtPath = path.join(DEFAULT_DB_DIR, `octopus-${safe}.db`)
       if (fs.existsSync(wtPath)) return wtPath
     } catch { /* fall through */ }
@@ -60,6 +63,34 @@ export function resolveDbPath(dbPath, mode) {
 
   // 4. Default
   return path.join(DEFAULT_DB_DIR, "octopus.db")
+}
+
+// ─── Internal Helper ──────────────────────────────────────────────
+
+/**
+ * Run a sqlite3 command with arguments (no shell interpretation).
+ *
+ * @param {string[]} flags - sqlite3 flags (e.g. ["-header", "-column"] or ["-json"])
+ * @param {string} sql - SQL statement
+ * @param {string} [dbPath] - Explicit DB path override
+ * @param {object} [options] - Execution options
+ * @returns {{ output: string, ok: boolean, error: string | null }}
+ */
+function runSqlite(flags, sql, dbPath, options = {}) {
+  const db = resolveDbPath(dbPath, options.mode)
+  if (!fs.existsSync(db)) {
+    return { output: "", ok: false, error: `Database not found: ${db}` }
+  }
+  try {
+    const output = execFileSync("sqlite3", [...flags, db, sql], {
+      encoding: "utf8",
+      timeout: options.timeout || SQLITE_TIMEOUT,
+      maxBuffer: SQLITE_MAX_BUFFER,
+    })
+    return { output: output.trim(), ok: true, error: null }
+  } catch (err) {
+    return { output: "", ok: false, error: err instanceof Error ? err.message : String(err) }
+  }
 }
 
 /**
@@ -73,37 +104,11 @@ export function resolveDbPath(dbPath, mode) {
  * @returns {{ rows: string, ok: boolean, error: string | null }}
  */
 export function executeSQL(sql, dbPath, options = {}) {
-  const db = resolveDbPath(dbPath, options.mode)
-
-  if (!fs.existsSync(db)) {
-    return {
-      rows: "",
-      ok: false,
-      error: `Database not found: ${db}`,
-    }
-  }
-
-  try {
-    const rows = execSync(
-      `sqlite3 -header -column "${db}" ${JSON.stringify(sql)}`,
-      {
-        encoding: "utf8",
-        timeout: options.timeout || 10000,
-        maxBuffer: 10 * 1024 * 1024, // 10MB
-      },
-    )
-
-    return {
-      rows: rows.trim(),
-      ok: true,
-      error: null,
-    }
-  } catch (err) {
-    return {
-      rows: "",
-      ok: false,
-      error: err instanceof Error ? err.message : String(err),
-    }
+  const result = runSqlite(["-header", "-column"], sql, dbPath, options)
+  return {
+    rows: result.output,
+    ok: result.ok,
+    error: result.error,
   }
 }
 
@@ -117,33 +122,16 @@ export function executeSQL(sql, dbPath, options = {}) {
  * @returns {{ data: any[], ok: boolean, error: string | null }}
  */
 export function querySQL(sql, dbPath, options = {}) {
-  const db = resolveDbPath(dbPath, options.mode)
+  const result = runSqlite(["-json"], sql, dbPath, options)
+  if (!result.ok) return { data: [], ok: false, error: result.error }
 
-  if (!fs.existsSync(db)) {
-    return { data: [], ok: false, error: `Database not found: ${db}` }
-  }
+  if (!result.output) return { data: [], ok: true, error: null }
 
   try {
-    const output = execSync(
-      `sqlite3 -json "${db}" ${JSON.stringify(sql)}`,
-      {
-        encoding: "utf8",
-        timeout: options.timeout || 10000,
-        maxBuffer: 10 * 1024 * 1024,
-      },
-    )
-
-    const trimmed = output.trim()
-    if (!trimmed) return { data: [], ok: true, error: null }
-
-    const data = JSON.parse(trimmed)
+    const data = JSON.parse(result.output)
     return { data: Array.isArray(data) ? data : [data], ok: true, error: null }
   } catch (err) {
-    return {
-      data: [],
-      ok: false,
-      error: err instanceof Error ? err.message : String(err),
-    }
+    return { data: [], ok: false, error: `JSON parse error: ${err.message}` }
   }
 }
 

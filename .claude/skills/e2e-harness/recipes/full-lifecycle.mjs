@@ -18,7 +18,7 @@
  *   8. Print report
  */
 
-import { createResults, record, printReport, saveResults, exitWithResults } from "../lib/reporter.mjs"
+import { createResults, record, saveResults, exitWithResults } from "../lib/reporter.mjs"
 import { healthCheck, resolveApiUrl, resolveWebUrl } from "../lib/api.mjs"
 import { createWorkspace, cleanupWorkspace } from "../lib/workspace.mjs"
 import { createWorkflow, createExecution, startExecution, pollExecution } from "../lib/execution.mjs"
