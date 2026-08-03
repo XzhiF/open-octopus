@@ -20,6 +20,8 @@ interface SubWorkflowContainerData {
   statusOverlay?: StatusOverlay
   isCurrent?: boolean
   isActive?: boolean
+  /** Child workflow node IDs (resolved from workflow YAML) */
+  childNodeIds?: string[]
   [key: string]: unknown
 }
 
@@ -155,13 +157,21 @@ export function SubWorkflowContainerNode({ data, selected }: NodeProps) {
           {tokens && <TokenSummary input={tokens.input} output={tokens.output} />}
         </div>
 
-        {/* Body — React Flow renders child nodes here via parentId */}
-        <div className="p-2 min-h-[80px]">
-          {!swData.workflow && (
+        {/* Body — child nodes rendered by flow-viewer, or show summary */}
+        <div className="p-2 min-h-[60px]">
+          {swData.childNodeIds && swData.childNodeIds.length > 0 ? (
+            <div className="flex flex-wrap gap-1">
+              {swData.childNodeIds.map((childId) => (
+                <Badge key={childId} variant="secondary" className="text-[10px] px-1.5 py-0">
+                  {childId}
+                </Badge>
+              ))}
+            </div>
+          ) : !swData.workflow ? (
             <div className="flex items-center justify-center h-full text-xs text-muted-foreground">
               未指定子工作流
             </div>
-          )}
+          ) : null}
         </div>
         <Handle type="source" position={Position.Bottom} className="!bg-muted-foreground !w-3 !h-3" />
       </div>

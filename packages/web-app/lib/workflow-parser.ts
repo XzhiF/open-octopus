@@ -213,13 +213,32 @@ export function yamlToFlowData(
     wfNodes: WorkflowNode[]
     edges: Edge[]
     positions: Record<string, { x: number; y: number }>
+    nestedSubWfLayouts?: Map<string, {
+      childNodes: WorkflowNode[]
+      positions: Record<string, { x: number; y: number }>
+      edges: Edge[]
+      containerWidth: number
+      containerHeight: number
+    }>
   }>()
 
   for (const [loopId, loopNode] of containerNodesWithInner) {
     const innerNodes = loopNode.nodes!
     if (!innerNodes.every((n: WorkflowNode) => VALID_NODE_TYPES.has(n.type))) return null
 
-    const innerWfNodes: WorkflowNode[] = innerNodes.map((n) => ({
+    // Resolve sub_workflow children nested inside this loop
+    const resolvedInnerNodes: WorkflowNode[] = innerNodes.map((n) => {
+      if (n.type === "sub_workflow") {
+        const workflowRef = (n as Record<string, unknown>).workflow as string | undefined
+        const childNodes = n.nodes ?? (workflowRef ? subWorkflowNodes?.[workflowRef] : undefined)
+        if (childNodes && childNodes.length > 0) {
+          return { ...n, nodes: childNodes }
+        }
+      }
+      return n
+    })
+
+    const innerWfNodes: WorkflowNode[] = resolvedInnerNodes.map((n) => ({
       ...n,
       id: `${loopId}:${n.id}`,
       depends_on: n.depends_on?.map((dep) => `${loopId}:${dep}`),
@@ -239,19 +258,89 @@ export function yamlToFlowData(
       }
     }
 
+    // ─── Nested sub-workflow layout: compute child layouts BEFORE dagre ───
+    // so dagre uses actual sub-workflow container dimensions (not default 280x180)
+    const nestedSubWfLayouts = new Map<string, {
+      childNodes: WorkflowNode[]
+      positions: Record<string, { x: number; y: number }>
+      edges: Edge[]
+      containerWidth: number
+      containerHeight: number
+    }>()
+
+    for (const innerWfNode of innerWfNodes) {
+      if (innerWfNode.type !== "sub_workflow") continue
+      const origId = innerWfNode.id.slice(loopId.length + 1)
+      const origNode = resolvedInnerNodes.find((n) => n.id === origId)
+      const childNodes = (origNode as any)?.nodes as WorkflowNode[] | undefined
+      if (!childNodes || childNodes.length === 0) continue
+
+      const subWfPrefix = innerWfNode.id
+      const childWfNodes: WorkflowNode[] = childNodes.map((c) => ({
+        ...c,
+        id: `${subWfPrefix}:${c.id}`,
+        depends_on: c.depends_on?.map((dep) => `${subWfPrefix}:${dep}`),
+      }))
+      const childEdges: Edge[] = []
+      for (const child of childWfNodes) {
+        if (child.depends_on) {
+          for (const dep of child.depends_on) {
+            childEdges.push({ id: `e-${dep}-${child.id}`, source: dep, target: child.id, type: "smoothstep" })
+          }
+        }
+      }
+      const childPositions = dagreLayout(childWfNodes, childEdges, {
+        rankdir: INNER_LAYOUT_RANKDIR,
+        padding: INNER_LAYOUT_PADDING,
+        nodesep: INNER_LAYOUT_NODESEP,
+        ranksep: INNER_LAYOUT_RANKSEP,
+      })
+
+      let cMinX = Infinity, cMinY = Infinity, cMaxX = -Infinity, cMaxY = -Infinity
+      for (const cw of childWfNodes) {
+        const p = childPositions[cw.id]
+        if (!p) continue
+        const d = getNodeDimensions(cw)
+        cMinX = Math.min(cMinX, p.x); cMinY = Math.min(cMinY, p.y)
+        cMaxX = Math.max(cMaxX, p.x + d.width); cMaxY = Math.max(cMaxY, p.y + d.height)
+      }
+      if (cMinX === Infinity) { cMinX = 0; cMinY = 0; cMaxX = 280; cMaxY = 160 }
+      const swWidth = (cMaxX - cMinX) + CONTAINER_SIDE_PADDING * 2
+      const swHeight = 65 + (cMaxY - cMinY) + CONTAINER_SIDE_PADDING + 30
+
+      nestedSubWfLayouts.set(innerWfNode.id, {
+        childNodes: childWfNodes,
+        positions: childPositions,
+        edges: childEdges,
+        containerWidth: swWidth,
+        containerHeight: swHeight,
+      })
+    }
+
+    // Build dimension overrides so dagre uses actual sub-workflow container sizes
+    const dimOverrides = new Map<string, { width: number; height: number }>()
+    for (const [nodeId, layout] of nestedSubWfLayouts) {
+      dimOverrides.set(nodeId, { width: layout.containerWidth, height: layout.containerHeight })
+    }
+
     const innerPositions = dagreLayout(innerWfNodes, innerEdges, {
       rankdir: INNER_LAYOUT_RANKDIR,
       padding: INNER_LAYOUT_PADDING,
       nodesep: INNER_LAYOUT_NODESEP,
       ranksep: INNER_LAYOUT_RANKSEP,
-    })
+    }, dimOverrides)
 
     // Compute container size
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
+
     for (const innerWfNode of innerWfNodes) {
       const pos = innerPositions[innerWfNode.id]
       if (!pos) continue
-      const dim = getNodeDimensions(innerWfNode)
+      // Use nested layout dimensions for sub_workflow containers with children
+      const nestedLayout = nestedSubWfLayouts.get(innerWfNode.id)
+      const dim = nestedLayout
+        ? { width: nestedLayout.containerWidth, height: nestedLayout.containerHeight }
+        : getNodeDimensions(innerWfNode)
       minX = Math.min(minX, pos.x)
       minY = Math.min(minY, pos.y)
       maxX = Math.max(maxX, pos.x + dim.width)
@@ -264,7 +353,7 @@ export function yamlToFlowData(
       // Extra height for dynamic content (model names, multi-model tokens, duration, error text)
       height: HEADER_HEIGHT + (maxY - minY) + CONTAINER_SIDE_PADDING + 55,
     })
-    innerLayoutData.set(loopId, { wfNodes: innerWfNodes, edges: innerEdges, positions: innerPositions })
+    innerLayoutData.set(loopId, { wfNodes: innerWfNodes, edges: innerEdges, positions: innerPositions, nestedSubWfLayouts })
   }
 
   // ─── Build outer edges (top-level graph) ───
@@ -317,24 +406,78 @@ export function yamlToFlowData(
       const origId = innerWfNode.id.slice(loopId.length + 1)
       const origNode = containerNodesWithInner.get(loopId)!.nodes!.find((n: any) => n.id === origId) as WorkflowNode | undefined
 
+      // sub_workflow inside a loop: render as sub-workflow-container (same as top-level)
+      const isInnerSubWorkflow = innerWfNode.type === "sub_workflow"
+      const nodeType = isInnerSubWorkflow ? "sub-workflow-container" : innerWfNode.type
+      const nestedLayout = data.nestedSubWfLayouts?.get(innerWfNode.id)
+
+      // Use actual dimensions for sub_workflow containers with nested layouts
+      const actualWidth = nestedLayout ? nestedLayout.containerWidth : getNodeDimensions(innerWfNode).width
+
       allInnerNodes.push({
         id: innerWfNode.id,
-        type: innerWfNode.type,
+        type: nodeType,
         // Absolute position: center horizontally within container, stack vertically
         position: {
-          x: containerPos.x + (containerSize.width - getNodeDimensions(innerWfNode).width) / 2,
+          x: containerPos.x + (containerSize.width - actualWidth) / 2,
           y: containerPos.y + HEADER_HEIGHT + rawPos.y,
         },
         data: {
           id: innerWfNode.id,
-          type: innerWfNode.type,
+          type: nodeType,
           name: origNode?.description || origId,
           command: origNode?.command,
           script: origNode?.script,
           prompt: origNode?.prompt,
           risk_level: origNode?.risk_level,
+          // sub_workflow specific data (needed by SubWorkflowContainerNode)
+          ...(isInnerSubWorkflow ? {
+            workflow: (origNode as Record<string, unknown>)?.workflow,
+            execution_mode: (origNode as Record<string, unknown>)?.execution_mode ?? "inline",
+            input_mapping: (origNode as Record<string, unknown>)?.input_mapping,
+            output_mapping: (origNode as Record<string, unknown>)?.output_mapping,
+            on_error: (origNode as Record<string, unknown>)?.on_error ?? "fail",
+            childNodeIds: (origNode as any)?.nodes?.map((n: any) => n.id) ?? [],
+          } : {}),
         },
+        ...(isInnerSubWorkflow ? {
+          style: nestedLayout
+            ? { width: nestedLayout.containerWidth, height: nestedLayout.containerHeight }
+            : { width: 280, height: 120 },
+        } : {}),
       })
+
+      // Create nested child nodes for sub_workflow containers with resolved children
+      if (nestedLayout) {
+        // Sub-workflow header is taller than loop header (has badges), use larger offset
+        const SUB_WF_HEADER_HEIGHT = 65
+        const swContainerPos = {
+          x: containerPos.x + (containerSize.width - nestedLayout.containerWidth) / 2,
+          y: containerPos.y + HEADER_HEIGHT + rawPos.y,
+        }
+        for (const childWfNode of nestedLayout.childNodes) {
+          const childPos = nestedLayout.positions[childWfNode.id] ?? { x: 0, y: 0 }
+          const childOrigId = childWfNode.id.slice(innerWfNode.id.length + 1)
+          allInnerNodes.push({
+            id: childWfNode.id,
+            type: childWfNode.type,
+            position: {
+              x: swContainerPos.x + (nestedLayout.containerWidth - getNodeDimensions(childWfNode).width) / 2,
+              y: swContainerPos.y + SUB_WF_HEADER_HEIGHT + childPos.y,
+            },
+            data: {
+              id: childWfNode.id,
+              type: childWfNode.type,
+              name: childOrigId,
+              command: childWfNode.command,
+              script: childWfNode.script,
+              prompt: childWfNode.prompt,
+              risk_level: childWfNode.risk_level,
+            },
+          })
+        }
+        allInnerEdges.push(...nestedLayout.edges)
+      }
     }
 
     allInnerEdges.push(...data.edges)

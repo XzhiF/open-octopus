@@ -86,18 +86,49 @@ export function WorkflowFlowViewerWithStatus({
     const map = new Map<string, StepExecution>()
     for (const step of executionSteps ?? []) {
       map.set(step.stepId, step)
+
+      // For iteration-suffixed steps (e.g., "call-analysis:prepare-iter0"),
+      // also map to the base ID ("call-analysis:prepare") so flow-viewer can
+      // find status overlays for per-iteration DB records.
+      // Aggregate: running > failed > last-completed
+      const iterMatch = step.stepId.match(/^(.+)-iter\d+$/)
+      if (iterMatch) {
+        const baseId = iterMatch[1]
+        const existing = map.get(baseId)
+        if (!existing || existing.status === "completed" || existing.status === "pending") {
+          map.set(baseId, step)
+        } else if (existing.status === "running" && step.status !== "running") {
+          // Keep "running" over completed — at least one iteration is still active
+        } else if (step.status === "running" || step.status === "failed") {
+          map.set(baseId, step)
+        }
+      }
     }
     return map
   }, [executionSteps])
 
   // Pre-fetch sub-workflow child nodes for container rendering
+  // Recursively scans all nodes including those nested inside loops
   const [subWorkflowNodes, setSubWorkflowNodes] = useState<Record<string, any[]>>({})
   useEffect(() => {
     const parsed = parseYaml(yamlContent)
     if (!parsed?.nodes) return
-    const refs = (parsed.nodes as Array<Record<string, unknown>>)
-      .filter((n: Record<string, unknown>) => n.type === "sub_workflow" && n.workflow)
-      .map((n: Record<string, unknown>) => n.workflow as string)
+
+    // Recursively collect all sub_workflow references
+    const collectRefs = (nodes: Array<Record<string, unknown>>): string[] => {
+      const refs: string[] = []
+      for (const n of nodes) {
+        if (n.type === "sub_workflow" && n.workflow) {
+          refs.push(n.workflow as string)
+        }
+        if (Array.isArray(n.nodes)) {
+          refs.push(...collectRefs(n.nodes as Array<Record<string, unknown>>))
+        }
+      }
+      return refs
+    }
+
+    const refs = collectRefs(parsed.nodes as Array<Record<string, unknown>>)
     if (refs.length === 0 || !workspaceId) return
 
     const fetchAll = async () => {
