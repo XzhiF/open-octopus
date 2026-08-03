@@ -26,4 +26,4 @@
 | 22 | sub-workflow-node-r2 | 2026-08-02 | feat/sub-workflow-node | done (gap-fix: error E2E + SSE prefix + linked stub) |
 | 23 | e2e-harness-system | 2026-08-03 | feat/sub-workflow-node | in-progress |
 | 24 | subworkflow-loop-nesting | 2026-08-03 | feat/sub-workflow-node | done |
-| 25 | skill-workflow-dev-v2 | 2026-08-03 | feat/skill-workflow-dev-v2 | in-progress |
+| 25 | skill-workflow-dev-v2 | 2026-08-03 | feat/skill-workflow-dev-v2 | done |
