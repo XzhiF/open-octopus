@@ -1,0 +1,30 @@
+# yaml-language-server: $schema=~/.octopus/workflow-schema.json
+apiVersion: octopus/v1
+kind: Workflow
+
+name: E2E_TEST_NESTING_child-with-loop
+description: |
+  Child workflow containing a loop — used in scenario 3
+version: 1.0.0
+engine: claude
+model: sonnet
+timeout: 120
+execution_mode: serial
+
+variables: {}
+
+nodes:
+  - id: setup
+    type: bash
+    bash: |
+      echo "child-with-loop: setup"
+
+  - id: inner-loop
+    type: loop
+    depends_on: [setup]
+    max_iterations: 2
+    nodes:
+      - id: step
+        type: bash
+        bash: |
+          echo "child-with-loop: step iteration $iteration"

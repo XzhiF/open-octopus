@@ -87,9 +87,15 @@ matt-dev-runner will:
 Spec path: <artifacts.dir>/<feature-slug>/spec.md
 ```
 
-code-review 内部 spawn 两个并行 sub-agent：
+code-review 内部 spawn 三个并行 sub-agent：
 - **Standards axis**: diff 对照编码规范 + Fowler code smells → 报告
 - **Spec axis**: diff 对照 spec → 遗漏需求 / 范围蔓延 / 实现偏差 → 报告
+- **Completeness axis (新增)**: diff 对照同类现有实现 → 遗漏文件 / 数据流断链 / 需求裁剪 → 报告
+
+Completeness axis 审查要点：
+1. **同类覆盖**: 读取每个 ticket 的 `## Exploration` 记录。diff 是否修改了同类特性涉及的所有文件？如果同类特性涉及 15 个文件而本次只改了 8 个，剩余的是 intentional skip 还是遗漏？
+2. **数据流完整性**: 跨 package 的数据流 (trigger → persist → transport → render)，每一级都有代码改动吗？任何一级无改动 = 潜在断链。
+3. **需求裁剪检测**: diff 中是否有 "TODO"、"for now"、空 render body 等暗示 brief 需求被静默跳过的模式？
 
 **Evaluate findings**: 主 Agent 读取报告，按严重度分类：
 

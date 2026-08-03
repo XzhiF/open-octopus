@@ -162,5 +162,6 @@ Additional notes.
 1. **Every User Story MUST have a verification method** — no verification = incomplete story
 2. **Verification methods must be executable** — not "test the API" but "POST /api/xxx, assert response.data.field == expected"
 3. **Use project domain terminology** — consistent with CONTEXT.md and ADR
-4. **No code snippets** — only decisions and interface definitions; code goes stale
+4. **No implementation code** — the spec describes decisions, interfaces, and data flows, not implementation code. Exception: name specific existing functions when the codebase has multiple candidates for an operation (e.g., "Use `resolveMappingValue()`, not `evaluateExpression()`")
 5. **Verification environment info must be complete** — MCP connections, test accounts, data strategy
+6. **No scope reduction** — the spec MUST NOT silently reduce brief requirements using phrases like "for the initial implementation", "for now", "future iteration", "body: empty for now", "can be added later". If the brief requires it, the spec must design it. If a technical constraint prevents full implementation, state the constraint explicitly and propose a solution path — do NOT skip

@@ -1,0 +1,38 @@
+{
+  "root_feature": "sub-workflow-node",
+  "branch": "feat/sub-workflow-node",
+  "iterations": [
+    {
+      "round": 1,
+      "feature_slug": "sub-workflow-node",
+      "score": 72,
+      "decision": "REVIEW",
+      "gates_passed": 6,
+      "gates_total": 9,
+      "top_gaps": [
+        "Linked execution_mode not implemented",
+        "create-node-dialog missing sub_workflow",
+        "Error scenario E2E tests missing"
+      ],
+      "pr_url": "https://github.com/XzhiF/open-octopus/pull/37",
+      "e2e_results": "22/22 PASS, 2 runs"
+    },
+    {
+      "round": 2,
+      "feature_slug": "sub-workflow-node-r2",
+      "score": 88,
+      "decision": "GO",
+      "gates_passed": 8,
+      "gates_total": 9,
+      "top_gaps": [
+        "create-node-dialog visual creation (deferred to future)"
+      ],
+      "pr_url": "https://github.com/XzhiF/open-octopus/pull/37",
+      "e2e_results": "10/10 PASS (error scenarios)"
+    }
+  ],
+  "final_score": 88,
+  "final_decision": "GO",
+  "total_iterations": 2,
+  "status": "converged"
+}

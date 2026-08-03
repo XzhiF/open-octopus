@@ -58,6 +58,7 @@ export function EventIcon({ event, agentType }: { event: string; agentType?: str
     case "python_stderr": return <X className="h-3 w-3 text-red-400 shrink-0" />
     case "branch_start": return <Play className="h-3 w-3 text-emerald-400 shrink-0" />
     case "branch_end": return <Check className="h-3 w-3 text-emerald-400 shrink-0" />
+    case "node_log": return <FileText className="h-3 w-3 text-indigo-400 shrink-0" />
   }
 
   // Legacy agent_event sub-types
@@ -126,6 +127,10 @@ export function EventLabel({ entry }: { entry: LogEvent }) {
     case "bash_output": {
       const lineCount = entry.lines?.length ?? 0
       return <span className="text-muted-foreground">终端输出 ({lineCount} 行)</span>
+    }
+    case "node_log": {
+      const line = entry.line ?? entry.content ?? ""
+      return <span className="text-indigo-400 font-mono text-[11px] truncate max-w-[300px]">{line}</span>
     }
     case "approval_metadata": {
       const decision = entry.decision ?? ""
@@ -565,6 +570,32 @@ export function ExecutionLogViewer({ workspaceId, executionId, executionStatus }
       }
     }
 
+    // Helper: extract child node ID from sub_workflow node_log line
+    // Formats: "wf-name:node_start greet (bash)" or "wf-name:log [greet] ..."
+    function extractSubWorkflowChild(line: string): string | null {
+      // Match "{wf}:node_start {childId} ..." or "{wf}:node_end {childId} ..."
+      const nodeMatch = line.match(/^[^:]+:(?:node_start|node_end)\s+(\S+)/)
+      if (nodeMatch) return nodeMatch[1]
+      // Match "{wf}:log [{childId}] ..."
+      const logMatch = line.match(/^[^:]+:log\s+\[([^\]]+)\]/)
+      if (logMatch) return logMatch[1]
+      return null
+    }
+
+    // Detect sub_workflow parent nodes: nodes that have node_log events with child references
+    const subWorkflowParents = new Set<string>()
+    for (const e of processedEvents) {
+      if (e.event === "node_log") {
+        const line = e.line ?? e.content ?? ""
+        if (extractSubWorkflowChild(line)) {
+          subWorkflowParents.add(e.nodeId || "")
+        }
+      }
+    }
+
+    // Container parents = loop parents + sub_workflow parents (both use start/end bookends)
+    const containerParentNodes = new Set([...loopParentNodes, ...subWorkflowParents])
+
     const map = new Map<string, FlatGroup>()
 
     for (const e of processedEvents) {
@@ -577,8 +608,20 @@ export function ExecutionLogViewer({ workspaceId, executionId, executionStatus }
       let key: string
       let label: string
 
-      if (loopParentNodes.has(nodeId) && !hasIter) {
-        // Loop parent node: split into start/end bookends
+      // Sub-workflow child events: group by parent:childNodeId (with iteration suffix when inside a loop)
+      if (e.event === "node_log") {
+        const line = e.line ?? e.content ?? ""
+        const childNode = extractSubWorkflowChild(line)
+        if (childNode) {
+          const iterSuffix = e.iteration != null && e.iteration > 0 ? `-iter${e.iteration}` : ""
+          key = `${nodeId}:${childNode}${iterSuffix}`
+          label = `${nodeId}:${childNode}${iterSuffix}`
+        } else {
+          key = `${nodeId}:meta`
+          label = `${nodeId} (meta)`
+        }
+      } else if (containerParentNodes.has(nodeId) && !hasIter) {
+        // Container parent node (loop or sub_workflow): split into start/end bookends
         if (e.event === "start") {
           key = `${nodeId}-start`
           label = `${nodeId} start`
@@ -586,7 +629,7 @@ export function ExecutionLogViewer({ workspaceId, executionId, executionStatus }
           key = `${nodeId}-end`
           label = `${nodeId} end`
         } else {
-          // Skip other loop parent events (agent_event wrappers)
+          // Skip other container parent events
           continue
         }
       } else if (hasIter) {

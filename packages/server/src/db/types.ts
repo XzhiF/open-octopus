@@ -71,6 +71,8 @@ export interface NodeExecutionRow {
   session_id: string | null
   retry_count: number
   last_retry_at: string | null
+  parent_node_id: string | null
+  iteration_index: number | null
 }
 
 export interface NodeEdgeRow {

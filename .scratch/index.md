@@ -22,3 +22,10 @@
 | 18 | interaction-node | 2026-07-31 | feat/interaction-node | done |
 | 19 | chatbot-workflow-design | 2026-08-01 | feat/interaction-node | done |
 | 20 | interaction-node-detail-fix | 2026-08-01 | feat/interaction-node | done |
+| 21 | sub-workflow-node | 2026-08-02 | feat/sub-workflow-node | done |
+| 22 | sub-workflow-node-r2 | 2026-08-02 | feat/sub-workflow-node | done (gap-fix: error E2E + SSE prefix + linked stub) |
+| 23 | e2e-harness-system | 2026-08-03 | feat/sub-workflow-node | done |
+| 24 | subworkflow-loop-nesting | 2026-08-03 | feat/sub-workflow-node | done |
+| 25 | skill-workflow-dev-v2 | 2026-08-03 | feat/skill-workflow-dev-v2 | done |
+| 26 | dynamic-sub-workflow | 2026-08-03 | feat/dynamic-sub-workflow | done (converged: 85→91) |
+| 27 | dynamic-sub-workflow-r2 | 2026-08-03 | feat/dynamic-sub-workflow | done (gap-fix: integration tests + density) |

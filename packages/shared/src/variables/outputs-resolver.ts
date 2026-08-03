@@ -79,8 +79,8 @@ export function resolveOutputsExpression(
     return pool.get(refMatch[1])
   }
 
-  // 6. Other $-prefixed expressions — substituteVars
-  if (expr.startsWith("$")) {
+  // 6. Expressions containing $-references — substituteVars for template interpolation
+  if (expr.includes("$")) {
     return substituteVars(expr, pool)
   }
 

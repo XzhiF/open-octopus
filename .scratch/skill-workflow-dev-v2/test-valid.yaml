@@ -1,0 +1,108 @@
+# yaml-language-server: $schema=~/.octopus/workflow-schema.json
+apiVersion: octopus/v1
+kind: Workflow
+name: "all-node-types-test"
+description: "Test workflow covering all 9 node types"
+
+variables:
+  build_status: ""
+  deploy_status: ""
+
+inputs:
+  project_name:
+    description: "Name of the project"
+    required: true
+    default: "my-project"
+
+nodes:
+  - id: init
+    type: bash
+    bash: "echo 'Initializing $inputs.project_name'"
+    outputs:
+      "$vars.build_status": '"ready"'
+
+  - id: analyze
+    type: agent
+    depends_on: [init]
+    prompt: |
+      Analyze the project $inputs.project_name.
+      Last line: {"vars_update":{"severity":"high"}}
+
+  - id: compute
+    type: python
+    depends_on: [analyze]
+    inputs:
+      threshold: "0.8"
+    python: |
+      import os
+      print(float(os.environ["threshold"]))
+
+  - id: route
+    type: condition
+    depends_on: [compute]
+    cases:
+      - when: '$vars.severity == "high"'
+        then: review
+      - when: default
+        then: deploy
+
+  - id: review
+    type: swarm
+    topic: "Review project: $inputs.project_name"
+    mode: review
+    experts:
+      - role: security-engineer
+        perspective: "Security focus"
+        prompt: "Review security"
+      - role: code-reviewer
+        perspective: "Code quality"
+        prompt: "Review quality"
+
+  - id: user-check
+    type: approval
+    depends_on: [review]
+    options:
+      - { label: "Approve", value: "approved" }
+      - { label: "Reject", value: "rejected" }
+    approval_timeout: 3600
+
+  - id: retry-loop
+    type: loop
+    depends_on: [user-check]
+    max_iterations: 3
+    break_when: '$vars.deploy_status == "success"'
+    nodes:
+      - id: try-deploy
+        type: agent
+        prompt: "Attempt $iteration: deploy..."
+        outputs:
+          "$vars.deploy_status": '"success"'
+      - id: check-status
+        type: bash
+        depends_on: [try-deploy]
+        bash: "echo checking"
+
+  - id: user-feedback
+    type: interaction
+    depends_on: [retry-loop]
+    interaction_display: modal
+    interaction_max_rounds: 5
+    interaction_exit_when: '$vars.user_satisfied == "true"'
+    interaction_agent:
+      prompt: "Ask user for feedback"
+      model: pro
+
+  - id: run-tests
+    type: sub_workflow
+    depends_on: [user-feedback]
+    workflow: "workflows/test-suite.yaml"
+    execution_mode: linked
+    input_mapping:
+      target: "$inputs.project_name"
+    output_mapping:
+      results: "$vars.test_results"
+    on_error: continue
+
+  - id: deploy
+    type: agent
+    prompt: "Deploy the project"

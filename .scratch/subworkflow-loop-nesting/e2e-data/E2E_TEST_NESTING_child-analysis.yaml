@@ -1,0 +1,26 @@
+# yaml-language-server: $schema=~/.octopus/workflow-schema.json
+apiVersion: octopus/v1
+kind: Workflow
+
+name: E2E_TEST_NESTING_child-analysis
+description: |
+  Simple child workflow for nesting tests — 2 bash nodes
+version: 1.0.0
+engine: claude
+model: sonnet
+timeout: 60
+execution_mode: serial
+
+variables: {}
+
+nodes:
+  - id: prep
+    type: bash
+    bash: |
+      echo "child-analysis: preparing data"
+
+  - id: analyze
+    type: bash
+    depends_on: [prep]
+    bash: |
+      echo "child-analysis: analysis complete"

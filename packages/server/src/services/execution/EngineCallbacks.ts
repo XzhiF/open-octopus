@@ -157,9 +157,12 @@ export class EngineCallbacks implements IEngineCallbacks {
 
       onNodeLog: (nodeId, logLine) => {
         sse.emit(wsId, { event: "node_log", data: { executionId: id, nodeId, logLine } })
-        // Virtual nodes (e.g. __engine_init__) bypass the JSONL logger → compact → persist pipeline.
-        // Persist their log lines directly to agent_events so the polling-based frontend can see them.
-        if (nodeId.startsWith("__")) {
+        // Persist logs that bypass the JSONL logger → compact → persist pipeline:
+        // - Virtual nodes (e.g. __engine_init__)
+        // - Sub-workflow child nodes (scoped IDs like "run-child:print-result")
+        const isVirtualNode = nodeId.startsWith("__")
+        const isSubWorkflowChild = nodeId.includes(":")
+        if (isVirtualNode || isSubWorkflowChild) {
           try {
             const neId = `${id}-${nodeId}`
             dao.insertAgentEvent({
@@ -180,7 +183,7 @@ export class EngineCallbacks implements IEngineCallbacks {
               error_code: null,
               error_message: null,
             })
-          } catch { /* best-effort persistence for virtual node logs */ }
+          } catch { /* best-effort persistence */ }
         }
       },
 
@@ -275,13 +278,15 @@ export class EngineCallbacks implements IEngineCallbacks {
         sse.emit(wsId, { event: "pipeline_reloaded", data: { executionId: id, config } })
       },
 
-      onRuntimeNodeAdded: (nodeId: string, nodeType: string) => {
+      onRuntimeNodeAdded: (nodeId: string, nodeType: string, meta?: { parentNodeId?: string; iterationIndex?: number }) => {
         const neId = `${id}-${nodeId}`
         dao.insertNodeExecutionOrIgnore({
           id: neId, execution_id: id, node_id: nodeId, node_type: nodeType,
           status: "pending", started_at: new Date().toISOString(),
+          parent_node_id: meta?.parentNodeId ?? null,
+          iteration_index: meta?.iterationIndex ?? null,
         })
-        sse.emit(wsId, { event: "runtime_node_added", data: { executionId: id, nodeId, nodeType } })
+        sse.emit(wsId, { event: "runtime_node_added", data: { executionId: id, nodeId, nodeType, parentNodeId: meta?.parentNodeId, iterationIndex: meta?.iterationIndex } })
       },
     }
   }

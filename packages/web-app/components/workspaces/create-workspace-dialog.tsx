@@ -193,7 +193,7 @@ export function CreateWorkspaceDialog({ open, onOpenChange, onCreated }: CreateW
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[600px] max-h-[85vh] overflow-hidden flex flex-col">
+      <DialogContent className="sm:max-w-[600px] max-h-[85vh] overflow-hidden flex flex-col" data-testid="create-workspace-dialog">
         <DialogHeader>
           <DialogTitle>新建工作空间</DialogTitle>
           <DialogDescription>
@@ -211,6 +211,7 @@ export function CreateWorkspaceDialog({ open, onOpenChange, onCreated }: CreateW
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 required
+                data-testid="workspace-name-input"
               />
               {nameError ? (
                 <p className="text-xs text-destructive">{nameError}</p>
@@ -231,6 +232,7 @@ export function CreateWorkspaceDialog({ open, onOpenChange, onCreated }: CreateW
                 className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
                 disabled={loadingOrgs}
                 required
+                data-testid="workspace-org-select"
               >
                 {loadingOrgs && <option>加载中...</option>}
                 {orgs.map(o => (
@@ -420,10 +422,11 @@ export function CreateWorkspaceDialog({ open, onOpenChange, onCreated }: CreateW
               variant="outline"
               onClick={() => onOpenChange(false)}
               disabled={isLoading}
+              data-testid="btn-cancel-workspace"
             >
               取消
             </Button>
-            <Button type="submit" disabled={isLoading || !name || !!nameError}>
+            <Button type="submit" disabled={isLoading || !name || !!nameError} data-testid="btn-submit-workspace">
               {isLoading ? "创建中..." : "创建工作空间"}
             </Button>
           </DialogFooter>

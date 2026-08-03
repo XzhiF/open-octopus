@@ -149,7 +149,7 @@ export const InteractionAgentSchema = z.object({
 
 export interface NodeDef {
   id: string
-  type: "bash" | "python" | "agent" | "condition" | "approval" | "loop" | "swarm" | "interaction"
+  type: "bash" | "python" | "agent" | "condition" | "approval" | "loop" | "swarm" | "interaction" | "sub_workflow" | "dynamic_sub_workflow"
   model?: string
   engine?: string
   timeout?: number
@@ -232,6 +232,13 @@ export interface NodeDef {
     workflows?: string[]
   }
 
+  // sub_workflow
+  workflow?: string
+  execution_mode?: "inline" | "linked"
+  input_mapping?: Record<string, string>
+  output_mapping?: Record<string, string>
+  on_error?: "fail" | "continue"
+
   // 通用桶 — 不属于上述分类的任意数据
   variables?: Record<string, unknown>
 }
@@ -239,7 +246,7 @@ export interface NodeDef {
 export const NodeSchema: z.ZodType<NodeDef> = z.lazy(() =>
   z.object({
     id: z.string(),
-    type: z.enum(["bash", "python", "agent", "condition", "approval", "loop", "swarm", "interaction"]),
+    type: z.enum(["bash", "python", "agent", "condition", "approval", "loop", "swarm", "interaction", "sub_workflow", "dynamic_sub_workflow"]),
     model: z.string().optional(),
     engine: z.string().optional(),
     timeout: z.number().int().positive().optional(),
@@ -314,6 +321,13 @@ export const NodeSchema: z.ZodType<NodeDef> = z.lazy(() =>
       projects: z.array(z.string()).optional(),
       workflows: z.array(z.string()).optional(),
     }).optional(),
+
+    // sub_workflow
+    workflow: z.string().optional(),
+    execution_mode: z.enum(["inline", "linked"]).optional(),
+    input_mapping: z.record(z.string(), z.string()).optional(),
+    output_mapping: z.record(z.string(), z.string()).optional(),
+    on_error: z.enum(["fail", "continue"]).optional(),
 
     variables: z.record(z.string(), z.unknown()).optional(),
   }).transform((data) => {

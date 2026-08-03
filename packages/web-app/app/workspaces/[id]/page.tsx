@@ -888,9 +888,9 @@ const handleOpenAsText = async (file: FileNode) => {
   }
 
   return (
-    <div className="flex flex-1 min-h-0 flex-col">
+    <div className="flex flex-1 min-h-0 flex-col" data-testid="workspace-detail">
       {/* Workspace Header */}
-      <div className="flex h-11 items-center justify-between border-b border-border px-4 bg-background">
+      <div className="flex h-11 items-center justify-between border-b border-border px-4 bg-background" data-testid="workspace-header">
         <div className="flex items-center gap-3">
           <h1 className="font-semibold">{workspaceName}</h1>
           <Badge variant={workspaceStatus === "active" ? "default" : "secondary"}>
@@ -900,11 +900,11 @@ const handleOpenAsText = async (file: FileNode) => {
           <span className="text-xs text-muted-foreground">{workspace.path}</span>
         </div>
         <div className="flex items-center gap-2">
-          <Button variant="ghost" size="sm" onClick={() => setShowFileTree(!showFileTree)}>
+          <Button variant="ghost" size="sm" onClick={() => setShowFileTree(!showFileTree)} data-testid="file-tree-toggle">
             <PanelLeftClose className="h-4 w-4" />
             <span className="sr-only">切换文件树</span>
           </Button>
-          <Button variant="ghost" size="sm" onClick={() => setShowChat(!showChat)}>
+          <Button variant="ghost" size="sm" onClick={() => setShowChat(!showChat)} data-testid="chat-toggle">
             <PanelRightClose className="h-4 w-4" />
             <span className="sr-only">切换聊天</span>
           </Button>
@@ -973,7 +973,7 @@ const handleOpenAsText = async (file: FileNode) => {
             <ContextMenu>
               <ContextMenuTrigger asChild>
                 <div className="flex items-center border-b border-border bg-background">
-                  <div className="flex flex-1 overflow-x-auto">
+                  <div className="flex flex-1 overflow-x-auto" data-testid="tab-bar">
                     {tabs.map((tab) => (
                       <button
                         key={tab.id}
@@ -1087,6 +1087,7 @@ const handleOpenAsText = async (file: FileNode) => {
                 />
               ) : activeExecution ? (
                 <WorkflowDetailPanel
+                  key={activeExecution.id}
                   execution={activeExecution}
                   workflow={activeWorkflow}
                   workspaceId={id}
@@ -1175,8 +1176,8 @@ const handleOpenAsText = async (file: FileNode) => {
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel onClick={handleCancelDelete}>取消</AlertDialogCancel>
-            <AlertDialogAction onClick={handleConfirmDelete} className="bg-destructive text-white hover:bg-destructive/90">
+            <AlertDialogCancel onClick={handleCancelDelete} data-testid="btn-cancel-delete">取消</AlertDialogCancel>
+            <AlertDialogAction onClick={handleConfirmDelete} className="bg-destructive text-white hover:bg-destructive/90" data-testid="btn-confirm-delete">
               确认删除
             </AlertDialogAction>
           </AlertDialogFooter>

@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useState } from "react"
 import {
   ReactFlow,
   Background,
@@ -22,12 +22,14 @@ import { ApprovalNode } from "./workflow-nodes/approval-node"
 import { InteractionNode } from "./workflow-nodes/interaction-node"
 import { LoopNode } from "./workflow-nodes/loop-node"
 import { LoopContainerNode } from "./workflow-nodes/loop-container-node"
+import { SubWorkflowContainerNode } from "./workflow-nodes/sub-workflow-container-node"
 import { SwarmNode } from "@/components/swarm/organisms/swarm-node"
 import { ConditionEdge } from "./workflow-edges/condition-edge"
 import { WorkflowStepEdge } from "./workflow-edges/workflow-step-edge"
 
 import { parseYaml } from "@/lib/yaml-utils"
 import { yamlToFlowData } from "@/lib/workflow-parser"
+import { getServerUrl } from "@/lib/server-config"
 import type { StepExecution, StatusOverlay, TokenUsage, LoopIterationSummary } from "@/lib/types"
 
 interface WorkflowFlowViewerWithStatusProps {
@@ -51,6 +53,9 @@ const nodeTypes = {
   approval: ApprovalNode,
   interaction: InteractionNode,
   "loop-container": LoopContainerNode,
+  "sub-workflow-container": SubWorkflowContainerNode,
+  sub_workflow: SubWorkflowContainerNode,
+  dynamic_sub_workflow: SubWorkflowContainerNode,
   loop: LoopNode,
   swarm: SwarmNode,
 }
@@ -83,14 +88,78 @@ export function WorkflowFlowViewerWithStatus({
     const map = new Map<string, StepExecution>()
     for (const step of executionSteps ?? []) {
       map.set(step.stepId, step)
+
+      // For iteration-suffixed steps (e.g., "call-analysis:prepare-iter0"),
+      // also map to the base ID ("call-analysis:prepare") so flow-viewer can
+      // find status overlays for per-iteration DB records.
+      // Aggregate: running > failed > last-completed
+      const iterMatch = step.stepId.match(/^(.+)-iter\d+$/)
+      if (iterMatch) {
+        const baseId = iterMatch[1]
+        const existing = map.get(baseId)
+        if (!existing || existing.status === "completed" || existing.status === "pending") {
+          map.set(baseId, step)
+        } else if (existing.status === "running" && step.status !== "running") {
+          // Keep "running" over completed — at least one iteration is still active
+        } else if (step.status === "running" || step.status === "failed") {
+          map.set(baseId, step)
+        }
+      }
     }
     return map
   }, [executionSteps])
 
+  // Pre-fetch sub-workflow child nodes for container rendering
+  // Recursively scans all nodes including those nested inside loops
+  const [subWorkflowNodes, setSubWorkflowNodes] = useState<Record<string, any[]>>({})
+  useEffect(() => {
+    const parsed = parseYaml(yamlContent)
+    if (!parsed?.nodes) return
+
+    // Recursively collect all sub_workflow references (including dynamic_sub_workflow)
+    const collectRefs = (nodes: Array<Record<string, unknown>>): string[] => {
+      const refs: string[] = []
+      for (const n of nodes) {
+        if (n.type === "sub_workflow" && n.workflow) {
+          refs.push(n.workflow as string)
+        }
+        if (n.type === "dynamic_sub_workflow" && n.workflow) {
+          refs.push(n.workflow as string)
+        }
+        if (Array.isArray(n.nodes)) {
+          refs.push(...collectRefs(n.nodes as Array<Record<string, unknown>>))
+        }
+      }
+      return refs
+    }
+
+    const refs = collectRefs(parsed.nodes as Array<Record<string, unknown>>)
+    if (refs.length === 0 || !workspaceId) return
+
+    const fetchAll = async () => {
+      const results: Record<string, any[]> = {}
+      await Promise.all(
+        refs.map(async (ref: string) => {
+          try {
+            const res = await fetch(`${getServerUrl()}/api/workspaces/${workspaceId}/workflows/${encodeURIComponent(ref)}`)
+            if (res.ok) {
+              const data = await res.json()
+              if (data.parsed?.nodes) {
+                results[ref] = data.parsed.nodes
+              }
+            }
+          } catch { /* non-fatal: container will render empty */ }
+        }),
+      )
+      setSubWorkflowNodes(results)
+    }
+    fetchAll()
+  }, [yamlContent, workspaceId])
+
   const flowData = useMemo(() => {
     const parsed = parseYaml(yamlContent)
     if (!parsed) return null
-    const data = yamlToFlowData(parsed)
+    const data = yamlToFlowData(parsed, subWorkflowNodes)
     if (!data) return null
 
     const enrichedNodes: Node[] = data.nodes.map((node) => {
@@ -190,7 +259,7 @@ export function WorkflowFlowViewerWithStatus({
     })
 
     return { nodes: enrichedNodes, edges: enrichedEdges }
-  }, [yamlContent, stepMap, activeStepId, currentStepId, workspaceId, executionId, loopIterationsMap])
+  }, [yamlContent, stepMap, activeStepId, currentStepId, workspaceId, executionId, loopIterationsMap, subWorkflowNodes])
 
   const onInit = useCallback((instance: unknown) => {
     setTimeout(() => {
