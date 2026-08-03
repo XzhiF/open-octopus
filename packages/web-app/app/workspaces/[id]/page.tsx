@@ -1087,6 +1087,7 @@ const handleOpenAsText = async (file: FileNode) => {
                 />
               ) : activeExecution ? (
                 <WorkflowDetailPanel
+                  key={activeExecution.id}
                   execution={activeExecution}
                   workflow={activeWorkflow}
                   workspaceId={id}
