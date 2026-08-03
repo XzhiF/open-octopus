@@ -1,0 +1,43 @@
+# L2 error test: cross-constraint violations
+apiVersion: octopus/v1
+kind: Workflow
+name: "l2-error-test"
+nodes:
+  - id: broken-agent
+    type: agent
+    goal: "Do something"
+    prompt: "Do something else"
+
+  - id: broken-condition
+    type: condition
+    depends_on: [broken-agent]
+    cases:
+      - when: default
+        then: some-node
+      - when: '$vars.x == "y"'
+        then: other-node
+
+  - id: broken-moa
+    type: swarm
+    depends_on: [broken-condition]
+    topic: "Test"
+    mode: moa
+    experts:
+      - role: expert1
+        prompt: "test"
+    # Missing aggregator (required for moa)
+    # Only 1 expert (moa requires >= 2)
+
+  - id: broken-swarm
+    type: swarm
+    depends_on: [broken-moa]
+    topic: "Test"
+    mode: review
+    experts:
+      - role: a
+        prompt: "a"
+    expert_pool:
+      - role: b
+        prompt: "b"
+      - role: c
+        prompt: "c"

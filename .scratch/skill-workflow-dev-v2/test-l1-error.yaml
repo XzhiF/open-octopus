@@ -1,0 +1,13 @@
+# L1 error test: missing required fields
+apiVersion: octopus/v1.0.0
+kind: Workflow
+name: "l1-error-test"
+nodes:
+  - id: broken-bash
+    type: bash
+  - id: broken-agent
+    type: agent
+  - id: broken-condition
+    type: condition
+  - id: broken-loop
+    type: loop

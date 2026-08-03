@@ -9,7 +9,7 @@ Complete guide for the 5 swarm collaboration modes.
 | Scenario | Recommended Mode | Reason |
 |----------|-----------------|--------|
 | Code review, security audit | **review** | Multi-perspective parallel review, 1 round |
-| Tech selection, architecture decisions | **debate** | Multi-round discussion to converge分歧 |
+| Tech selection, architecture decisions | **debate** | Multi-round discussion to reach consensus |
 | Full-stack development, multi-step tasks | **dispatch** | Tasks have dependencies, need DAG scheduling |
 | Open-ended problems, incident diagnosis | **swarm** | Router auto-selects mode and experts |
 | Multi-model analysis, cross-provider | **moa** | Fan-out + Aggregator, supports mixed AI engines |

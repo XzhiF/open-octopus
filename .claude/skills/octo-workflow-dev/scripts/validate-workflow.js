@@ -9,8 +9,8 @@
  *
  * Validation Levels:
  *   L1 (Structure): YAML parseable, required fields present, types correct
- *   L2 (Cross-constraints): Swarm mutual exclusions, goal/prompt exclusivity, condition default order
- *   L3 (Semantic): depends_on references exist, variable syntax, expression syntax
+ *   L2 (Cross-constraints): Swarm mutual exclusions, goal/prompt exclusivity, condition default order, depends_on references exist
+ *   L3 (Semantic): Variable syntax, expression syntax, interaction_exit_when syntax
  *
  * Hard Checks (Warnings):
  *   - Non-first top-level nodes without depends_on
@@ -294,15 +294,7 @@ function validateL2(yaml, result) {
     }
   }
 
-  for (const node of yaml.nodes) {
-    validateNode(node)
-  }
-}
-
-// ── L3: Semantic Validation ───────────────────────────────────────────────────
-
-function validateL3(yaml, result) {
-  // Collect all node IDs (recursive)
+  // depends_on reference validation (all nodes, recursive)
   const allIds = new Set()
   const collectIds = (nodes) => {
     for (const n of nodes) {
@@ -312,29 +304,29 @@ function validateL3(yaml, result) {
   }
   collectIds(yaml.nodes)
 
-  // Validate depends_on references (recursive)
-  const validateDependsOn = (nodes, context) => {
+  const validateDependsOn = (nodes) => {
     for (const node of nodes) {
       if (node.depends_on) {
         for (const dep of node.depends_on) {
           if (!allIds.has(dep)) {
-            result.addError('L3', `depends_on references non-existent node "${dep}"`, node.id)
+            result.addError('L2', `depends_on references non-existent node "${dep}"`, node.id)
           }
         }
       }
-      if (node.nodes) {
-        validateDependsOn(node.nodes, context + '/' + node.id)
-      }
+      if (node.nodes) validateDependsOn(node.nodes)
     }
   }
-  validateDependsOn(yaml.nodes, '')
+  validateDependsOn(yaml.nodes)
 
-  // Variable reference syntax validation
-  const varPattern = /\$([a-zA-Z_][a-zA-Z0-9_-]*)/g
-  const validVarPrefixes = ['vars.', 'inputs.', 'last_output', 'iteration', 'parent.', 'ancestor[']
-  const nodeRefPattern = /\$([a-zA-Z_][a-zA-Z0-9_-]*)\.output(\.[a-zA-Z_][a-zA-Z0-9_-]*)?/g
-  const refPattern = /\$ref:[a-zA-Z_][a-zA-Z0-9_.-]*/g
+  for (const node of yaml.nodes) {
+    validateNode(node)
+  }
+}
 
+// ── L3: Semantic Validation ───────────────────────────────────────────────────
+
+function validateL3(yaml, result) {
+  // Expression syntax validation
   const validateExpression = (expr, nodeId, fieldName) => {
     if (!expr || typeof expr !== 'string') return
     if (expr === 'default') return // condition default case
@@ -444,7 +436,13 @@ function validateFile(filePath) {
     return result
   }
 
-  const content = fs.readFileSync(filePath, 'utf-8')
+  let content
+  try {
+    content = fs.readFileSync(filePath, 'utf-8')
+  } catch (e) {
+    result.addError('L1', `Cannot read file "${filePath}": ${e.message}`)
+    return result
+  }
 
   let yaml
   try {
@@ -479,24 +477,19 @@ function main() {
   if (files.length === 0) {
     console.error('Usage: node validate-workflow.js <yaml-file> [--json]')
     console.error('       node validate-workflow.js ./workflows/*.yaml')
-    process.exit(2)
+    process.exit(1)
   }
 
   // Glob expansion
   const allFiles = []
   for (const f of files) {
     if (f.includes('*')) {
-      try {
-        const { globSync } = require('glob')
-        allFiles.push(...globSync(f))
-      } catch {
-        // Simple glob fallback
-        const dir = path.dirname(f)
-        const pat = path.basename(f).replace(/\*/g, '(.*)')
-        if (fs.existsSync(dir)) {
-          const regex = new RegExp('^' + pat + '$')
-          allFiles.push(...fs.readdirSync(dir).filter(fn => regex.test(fn)).map(fn => path.join(dir, fn)))
-        }
+      // Simple glob expansion (no external dependencies)
+      const dir = path.dirname(f)
+      const pat = path.basename(f).replace(/\*/g, '(.*)')
+      if (fs.existsSync(dir)) {
+        const regex = new RegExp('^' + pat + '$')
+        allFiles.push(...fs.readdirSync(dir).filter(fn => regex.test(fn)).map(fn => path.join(dir, fn)))
       }
     } else {
       if (!fs.existsSync(f)) {
@@ -562,7 +555,7 @@ function main() {
   }
 
   if (hasErrors) process.exit(1)
-  if (hasWarningsOnly) process.exit(0) // Warnings don't fail the build
+  if (hasWarningsOnly) process.exit(2) // 2 = warnings only (no errors)
   process.exit(0)
 }
 

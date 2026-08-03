@@ -26,10 +26,10 @@ Field definitions for all 9 Octopus workflow node types. Source of truth: `packa
 | `bash` | string | ✅ | Shell script content |
 
 ```yaml
-- id: cleanup
+- id: build
   type: bash
-  bash: rm -rf $vars.tmp_dir
-  timeout: 15
+  bash: npm run build
+  timeout: 60
 ```
 
 ---

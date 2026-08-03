@@ -72,6 +72,11 @@
 | **Self-Test** | 每个 lib/ 模块配套的验证脚本（`.self-test.mjs`），验证模块核心功能正常。 | skills |
 | **Pattern Guide** | `patterns/` 目录下的 Markdown 指南，描述特定 E2E 场景（弹窗交互、Tab 切换等）的最佳实践和代码模板。 | skills |
 | **Recipe** | `recipes/` 目录下的完整可执行脚本模板，组合多个 lib/ 模块。可直接运行或作为新脚本的起点。 | skills |
+| **向导流程编排器** | SKILL.md 的分步引导结构 — AI agent 按 Step 1→N 顺序执行，每步有明确产出和 reference 引用。替代大文档堆砌。 | skills |
+| **快速路径 (Quick Path)** | Skill 向导的简短路 — 复杂度 ≤3 简单节点时自动触发，跳过需求深挖直接生成+验证。 | skills |
+| **L1 结构验证** | Schema 验证第一层 — YAML 可解析、必填字段存在、类型正确。 | skills |
+| **L2 交叉约束** | Schema 验证第二层 — 字段间逻辑约束（互斥、依赖、拓扑完整性）。 | skills |
+| **L3 语义检查** | Schema 验证第三层 — 引用完整性（depends_on 目标存在、变量语法合法、表达式可解析）。 | skills |
 
 ## Anti-Patterns（禁止）
 
