@@ -276,6 +276,7 @@ export class ExecutionLifecycle {
         gitOps,
         resourcePreflight: new ResourcePreFlight(),
         resourceProvisioner: new ResourceProvisioner(getResourceRegistry().get()),
+        logger: engine.getLogger(),
       })
 
       if (initResult.status === "failed") {

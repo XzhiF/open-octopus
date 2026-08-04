@@ -1,5 +1,6 @@
 import type { EngineCallbacks } from "./engine"
 import type { WorkflowDef } from "@octopus/shared"
+import type { JsonlLogger } from "./logger"
 
 // ── Dependency interfaces (injected for testability) ──
 
@@ -47,6 +48,7 @@ export interface EngineInitOptions {
   gitOps?: GitOpsLike
   resourceProvisioner?: ResourceProvisionerLike
   resourcePreflight?: ResourcePreFlightLike
+  logger?: JsonlLogger
 }
 
 export interface GitSyncResult {
@@ -88,6 +90,14 @@ function agentFileToName(filePath: string): string | undefined {
 
 export class EngineInitPhase {
   /**
+   * Helper to log a message to both the callback and the JSONL logger.
+   */
+  private logMessage(logger: JsonlLogger | undefined, callbacks: EngineCallbacks, message: string): void {
+    callbacks.onNodeLog?.(INIT_NODE_ID, message)
+    logger?.log(INIT_NODE_ID, "node_log", { line: message })
+  }
+
+  /**
    * Provision missing resources and update counters.
    * Returns updated context with incremented counts and failure flag.
    */
@@ -98,11 +108,9 @@ export class EngineInitPhase {
     callbacks: EngineCallbacks,
     source: string,
     current: ProvisionContext,
+    logger?: JsonlLogger,
   ): Promise<ProvisionContext> {
-    callbacks.onNodeLog?.(
-      INIT_NODE_ID,
-      `Provisioning ${missing.length} missing resource(s) from ${source}: ${missing.map(m => `${m.type}:${m.name}`).join(", ")}`,
-    )
+    this.logMessage(logger, callbacks, `Provisioning ${missing.length} missing resource(s) from ${source}: ${missing.map(m => `${m.type}:${m.name}`).join(", ")}`)
 
     const result = await provisioner.provision(missing, workspacePath)
 
@@ -121,15 +129,9 @@ export class EngineInitPhase {
     }
 
     if (updated.failed) {
-      callbacks.onNodeLog?.(
-        INIT_NODE_ID,
-        `[ERROR] Failed to provision resources: ${result.failed.join(", ")}`,
-      )
+      this.logMessage(logger, callbacks, `[ERROR] Failed to provision resources: ${result.failed.join(", ")}`)
     } else {
-      callbacks.onNodeLog?.(
-        INIT_NODE_ID,
-        `Provisioned ${result.provisioned} resource(s) from ${source} successfully`,
-      )
+      this.logMessage(logger, callbacks, `Provisioned ${result.provisioned} resource(s) from ${source} successfully`)
     }
 
     return updated
@@ -144,10 +146,14 @@ export class EngineInitPhase {
       gitOps,
       resourceProvisioner,
       resourcePreflight,
+      logger,
     } = options
 
     const startTime = Date.now()
     const ctx: ProvisionContext = { skillsCopied: 0, agentsCopied: 0, failed: false }
+
+    // Write start event to JSONL log
+    logger?.log(INIT_NODE_ID, "start", { type: INIT_NODE_TYPE })
 
     callbacks.onNodeStart?.(INIT_NODE_ID, INIT_NODE_TYPE)
 
@@ -158,10 +164,7 @@ export class EngineInitPhase {
       const hasRequires = requiresSkills.length > 0 || requiresAgentFiles.length > 0
 
       if (hasRequires && !resourcePreflight) {
-        callbacks.onNodeLog?.(
-          INIT_NODE_ID,
-          `[WARN] requires declared but resource preflight not configured — skipping provision`,
-        )
+        this.logMessage(logger, callbacks, `[WARN] requires declared but resource preflight not configured — skipping provision`)
       }
 
       if (hasRequires && resourcePreflight && resourceProvisioner) {
@@ -173,23 +176,20 @@ export class EngineInitPhase {
           skills: requiresSkills,
         }
 
-        callbacks.onNodeLog?.(
-          INIT_NODE_ID,
-          `Provisioning from requires: ${requiresManifest.skills.length} skills, ${requiresManifest.agents.length} agents`,
-        )
+        this.logMessage(logger, callbacks, `Provisioning from requires: ${requiresManifest.skills.length} skills, ${requiresManifest.agents.length} agents`)
 
         const requiresCheck = resourcePreflight.check(requiresManifest, workspacePath)
 
         if (requiresCheck.missing.length > 0) {
           const result = await this.provisionMissing(
             requiresCheck.missing, workspacePath, resourceProvisioner,
-            callbacks, "requires", ctx,
+            callbacks, "requires", ctx, logger,
           )
           ctx.skillsCopied = result.skillsCopied
           ctx.agentsCopied = result.agentsCopied
           ctx.failed = result.failed
         } else {
-          callbacks.onNodeLog?.(INIT_NODE_ID, "All requires resources already present")
+          this.logMessage(logger, callbacks, "All requires resources already present")
         }
       }
 
@@ -197,31 +197,34 @@ export class EngineInitPhase {
       if (resourcePreflight && resourceProvisioner) {
         const scanResult = await this.runScanPhase(
           workflow, workspacePath, resourcePreflight, resourceProvisioner,
-          callbacks, hasRequires, ctx,
+          callbacks, hasRequires, ctx, logger,
         )
         ctx.skillsCopied = scanResult.skillsCopied
         ctx.agentsCopied = scanResult.agentsCopied
         if (scanResult.failed) ctx.failed = true
       } else if (!resourcePreflight || !resourceProvisioner) {
-        callbacks.onNodeLog?.(INIT_NODE_ID, "Resource preflight not configured, skipping")
+        this.logMessage(logger, callbacks, "Resource preflight not configured, skipping")
       }
 
       // Early return on provision failure
       if (ctx.failed) {
         const durationMs = Date.now() - startTime
+        logger?.log(INIT_NODE_ID, "end", { status: "failed", durationMs })
         callbacks.onNodeEnd?.(INIT_NODE_ID, "failed", durationMs)
         return { status: "failed", durationMs, skillsCopied: ctx.skillsCopied, agentsCopied: ctx.agentsCopied, gitSyncResults: [] }
       }
 
       // Step 3: Optional git sync
-      const syncResults = await this.runGitSyncPhase(syncMainBranch, gitOps, workspacePath, callbacks)
+      const syncResults = await this.runGitSyncPhase(syncMainBranch, gitOps, workspacePath, callbacks, logger)
 
       const durationMs = Date.now() - startTime
+      logger?.log(INIT_NODE_ID, "end", { status: "completed", durationMs })
       callbacks.onNodeEnd?.(INIT_NODE_ID, "completed", durationMs)
 
       return { status: "completed", durationMs, skillsCopied: ctx.skillsCopied, agentsCopied: ctx.agentsCopied, gitSyncResults: syncResults }
     } catch {
       const durationMs = Date.now() - startTime
+      logger?.log(INIT_NODE_ID, "end", { status: "failed", durationMs })
       callbacks.onNodeEnd?.(INIT_NODE_ID, "failed", durationMs)
       return { status: "failed", durationMs, skillsCopied: ctx.skillsCopied, agentsCopied: ctx.agentsCopied, gitSyncResults: [] }
     }
@@ -236,31 +239,29 @@ export class EngineInitPhase {
     callbacks: EngineCallbacks,
     hasRequires: boolean,
     ctx: ProvisionContext,
+    logger?: JsonlLogger,
   ): Promise<ProvisionContext> {
     if (hasRequires) {
-      callbacks.onNodeLog?.(INIT_NODE_ID, "Scanning for additional resources...")
+      this.logMessage(logger, callbacks, "Scanning for additional resources...")
     }
 
     const manifest = preflight.analyze(workflow)
-    callbacks.onNodeLog?.(
-      INIT_NODE_ID,
-      `Analyzing resources: ${manifest.skills.length} skills, ${manifest.agents.length} agents`,
-    )
+    this.logMessage(logger, callbacks, `Analyzing resources: ${manifest.skills.length} skills, ${manifest.agents.length} agents`)
 
     const totalResources = manifest.skills.length + manifest.agents.length
     if (totalResources === 0) {
-      callbacks.onNodeLog?.(INIT_NODE_ID, "No skills/agents references found in workflow")
+      this.logMessage(logger, callbacks, "No skills/agents references found in workflow")
       return ctx
     }
 
     const check = preflight.check(manifest, workspacePath)
     if (check.missing.length === 0) {
-      callbacks.onNodeLog?.(INIT_NODE_ID, "All required resources already present")
+      this.logMessage(logger, callbacks, "All required resources already present")
       return ctx
     }
 
     return this.provisionMissing(
-      check.missing, workspacePath, provisioner, callbacks, "scan", ctx,
+      check.missing, workspacePath, provisioner, callbacks, "scan", ctx, logger,
     )
   }
 
@@ -270,28 +271,29 @@ export class EngineInitPhase {
     gitOps: GitOpsLike | undefined,
     workspacePath: string,
     callbacks: EngineCallbacks,
+    logger?: JsonlLogger,
   ): Promise<GitSyncResult[]> {
     if (!syncMainBranch) {
-      callbacks.onNodeLog?.(INIT_NODE_ID, "Git sync skipped (disabled)")
+      this.logMessage(logger, callbacks, "Git sync skipped (disabled)")
       return []
     }
     if (!gitOps) {
-      callbacks.onNodeLog?.(INIT_NODE_ID, "Git sync requested but gitOps not configured")
+      this.logMessage(logger, callbacks, "Git sync requested but gitOps not configured")
       return []
     }
 
-    callbacks.onNodeLog?.(INIT_NODE_ID, "Syncing main branch for workspace projects")
+    this.logMessage(logger, callbacks, "Syncing main branch for workspace projects")
 
     const results = await gitOps.allProjectsAction(
       workspacePath,
       async (projectPath: string, projectName: string) => {
         try {
           const sha = await gitOps.pullLatest(projectPath)
-          callbacks.onNodeLog?.(INIT_NODE_ID, `✓ ${projectName} synced to ${sha.slice(0, 8)}`)
+          this.logMessage(logger, callbacks, `✓ ${projectName} synced to ${sha.slice(0, 8)}`)
           return { project: projectName, success: true } as GitSyncResult
         } catch (err: unknown) {
           const errorMsg = err instanceof Error ? err.message : String(err)
-          callbacks.onNodeLog?.(INIT_NODE_ID, `⚠ ${projectName} sync failed: ${errorMsg}`)
+          this.logMessage(logger, callbacks, `⚠ ${projectName} sync failed: ${errorMsg}`)
           return { project: projectName, success: false, error: errorMsg } as GitSyncResult
         }
       },
@@ -300,10 +302,7 @@ export class EngineInitPhase {
     const gitSyncResults = Object.values(results)
     const syncFailures = gitSyncResults.filter((r) => !r.success)
     if (syncFailures.length > 0) {
-      callbacks.onNodeLog?.(
-        INIT_NODE_ID,
-        `${syncFailures.length} project(s) failed to sync (continuing anyway)`,
-      )
+      this.logMessage(logger, callbacks, `${syncFailures.length} project(s) failed to sync (continuing anyway)`)
     }
 
     return gitSyncResults

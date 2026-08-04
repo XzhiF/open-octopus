@@ -293,8 +293,9 @@ export class DynamicSubWorkflowExecutor implements NodeExecutor {
 
   private resolveWorkflowName(): string {
     const baseName = this.node.workflow ?? `${this.config.workflow?.name ?? "workflow"}__${this.node.id}`
+    const execSuffix = this.config.executionId ? `-${this.config.executionId}` : ""
     const iterSuffix = this.config.iterationIndex != null ? `-iter${this.config.iterationIndex}` : ""
-    return `${baseName}${iterSuffix}`
+    return `${baseName}${execSuffix}${iterSuffix}`
   }
 
   private async generateAndValidateDAG(
@@ -432,6 +433,24 @@ export class DynamicSubWorkflowExecutor implements NodeExecutor {
     }
     writeFileSync(metaPath, JSON.stringify(meta, null, 2), "utf-8")
     logLines.push(`Written: ${metaPath}`)
+
+    // Write execution-scoped snapshot (prevents overwrites on repeated executions)
+    // Use base workflow name (without executionId) so API can find it by ref
+    if (this.config.executionId) {
+      const snapshotDir = join(this.config.cwd, "state", "dynamic-workflows", this.config.executionId)
+      mkdirSync(snapshotDir, { recursive: true })
+
+      const baseName = this.node.workflow ?? `${this.config.workflow?.name ?? "workflow"}__${this.node.id}`
+      const iterSuffix = this.config.iterationIndex != null ? `-iter${this.config.iterationIndex}` : ""
+      const snapshotName = `${baseName}${iterSuffix}`
+
+      const snapshotYamlPath = join(snapshotDir, `${snapshotName}.yaml`)
+      const snapshotMetaPath = join(snapshotDir, `${snapshotName}.meta.json`)
+
+      writeFileSync(snapshotYamlPath, yamlContent, "utf-8")
+      writeFileSync(snapshotMetaPath, JSON.stringify(meta, null, 2), "utf-8")
+      logLines.push(`Written execution snapshot: ${snapshotYamlPath}`)
+    }
   }
 
   private parseYamlToDag(yamlContent: string, logLines: string[]): GeneratedDAG | undefined {

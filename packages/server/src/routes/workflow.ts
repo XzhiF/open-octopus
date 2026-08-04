@@ -1,5 +1,6 @@
 import { Hono } from "hono"
 import os from "os"
+import fs from "fs"
 import { WorkflowService } from "../services/workflow"
 import { BuiltInWorkflowService } from "../services/builtin-workflow"
 import { WorkspaceDAO } from "../db/dao"
@@ -48,8 +49,29 @@ export function createWorkflowRoutes(
     if (!ws) return c.json({ error: "workspace not found" }, 404)
 
     const ref = c.req.param("ref")
-    const local = service.get(ws.path, ref)
-    if (local) return c.json(local)
+    const executionId = c.req.query("executionId")
+    const isDynamic = c.req.query("isDynamic") === "true"
+
+    const local = service.get(ws.path, ref, executionId)
+
+    // For dynamic_sub_workflow: only use execution-scoped snapshot
+    // If snapshot doesn't exist, return 404 (don't fall back to workflows/)
+    if (local) {
+      if (isDynamic && !executionId) {
+        // Dynamic workflow without execution context - shouldn't happen
+        return c.json({ error: "not found" }, 404)
+      }
+      // Check if this came from snapshot or workflows/
+      // If isDynamic and we have executionId, verify it's from snapshot
+      if (isDynamic && executionId) {
+        const snapshotPath = `${ws.path}/state/dynamic-workflows/${executionId}/${ref}.yaml`
+        if (!fs.existsSync(snapshotPath)) {
+          // Snapshot doesn't exist yet (node hasn't run) - return empty
+          return c.json({ error: "not found" }, 404)
+        }
+      }
+      return c.json(local)
+    }
 
     const builtIn = new BuiltInWorkflowService(getManager()).get(ref)
     if (builtIn) return c.json(builtIn)
