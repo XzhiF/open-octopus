@@ -25,6 +25,11 @@ describe("HeartbeatHandler", () => {
     handler.onAgentEvent({ type: "tool_result", toolCallId: "3", toolName: "Edit", content: "updated", timestamp: Date.now() })
 
     expect(handler.getStepCount()).toBe(3)
+    // No heartbeat should fire at step 3 with interval 3 (fires ON the 3rd step)
+    expect(onEvent).toHaveBeenCalledTimes(1)
+    expect(onEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "heartbeat" }),
+    )
   })
 
   it("emits heartbeat every N steps (heartbeat_interval)", () => {
@@ -64,6 +69,9 @@ describe("HeartbeatHandler", () => {
         type: "heartbeat",
         data: expect.objectContaining({
           step: 4,
+          tokens_used: 0,
+          confidence: -1,
+          issues: [],
         }),
       }),
     )
@@ -85,9 +93,12 @@ describe("HeartbeatHandler", () => {
         type: "heartbeat",
         data: expect.objectContaining({
           step: 3,
+          tokens_used: 0,
+          confidence: -1,
         }),
       }),
     )
+    expect(handler.getStepCount()).toBe(3)
   })
 
   it("includes tokens_used in heartbeat", () => {
@@ -109,9 +120,12 @@ describe("HeartbeatHandler", () => {
         type: "heartbeat",
         data: expect.objectContaining({
           tokens_used: 1500,
+          step: 1,
         }),
       }),
     )
+    // Verify exact token breakdown is reflected
+    expect(onEvent).toHaveBeenCalledTimes(1)
   })
 
   it("includes tokens_budget in heartbeat when budget specified", () => {
@@ -131,9 +145,12 @@ describe("HeartbeatHandler", () => {
         type: "heartbeat",
         data: expect.objectContaining({
           tokens_budget: 50000,
+          step: 1,
+          tokens_used: 0,
         }),
       }),
     )
+    expect(onEvent).toHaveBeenCalledTimes(1)
   })
 
   it("sets confidence to -1 (v1 placeholder)", () => {
@@ -152,9 +169,13 @@ describe("HeartbeatHandler", () => {
         type: "heartbeat",
         data: expect.objectContaining({
           confidence: -1,
+          step: 1,
         }),
       }),
     )
+    // Confidence must be exactly -1, not any other negative number
+    const callData = onEvent.mock.calls[0][0]
+    expect(callData.data.confidence).toBe(-1)
   })
 
   it("sets issues to empty array (v1 placeholder)", () => {
@@ -173,9 +194,14 @@ describe("HeartbeatHandler", () => {
         type: "heartbeat",
         data: expect.objectContaining({
           issues: [],
+          step: 1,
         }),
       }),
     )
+    // Issues must be an empty array, not undefined or non-empty
+    const callData = onEvent.mock.calls[0][0]
+    expect(callData.data.issues).toEqual([])
+    expect(callData.data.issues).toHaveLength(0)
   })
 
   it("emits harness_directive abort when auto_abort_on_budget and tokens exceeded", () => {
@@ -194,6 +220,16 @@ describe("HeartbeatHandler", () => {
     handler.onAgentEvent({ type: "tool_result", toolCallId: "1", toolName: "Read", content: "", timestamp: Date.now() })
 
     // Should emit both heartbeat and harness_directive
+    expect(onEvent).toHaveBeenCalledTimes(2)
+    expect(onEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "heartbeat",
+        data: expect.objectContaining({
+          tokens_used: 1300,
+          tokens_budget: 1000,
+        }),
+      }),
+    )
     expect(onEvent).toHaveBeenCalledWith(
       expect.objectContaining({
         type: "harness_directive",
@@ -204,6 +240,9 @@ describe("HeartbeatHandler", () => {
         }),
       }),
     )
+    // Verify directive has a timestamp
+    const directiveCall = onEvent.mock.calls.find((c: any[]) => c[0].type === "harness_directive")
+    expect(directiveCall[0].data.timestamp).toBeGreaterThan(0)
   })
 
   it("does not emit abort when auto_abort_on_budget is false", () => {
@@ -222,9 +261,14 @@ describe("HeartbeatHandler", () => {
     handler.onAgentEvent({ type: "tool_result", toolCallId: "1", toolName: "Read", content: "", timestamp: Date.now() })
 
     // Should emit heartbeat but not harness_directive
+    expect(onEvent).toHaveBeenCalledTimes(1)
     expect(onEvent).toHaveBeenCalledWith(
       expect.objectContaining({
         type: "heartbeat",
+        data: expect.objectContaining({
+          tokens_used: 1300,
+          tokens_budget: 1000,
+        }),
       }),
     )
     expect(onEvent).not.toHaveBeenCalledWith(
@@ -248,14 +292,21 @@ describe("HeartbeatHandler", () => {
 
     handler.onAgentEvent({ type: "tool_result", toolCallId: "1", toolName: "Read", content: "", timestamp: Date.now() })
 
+    expect(onEvent).toHaveBeenCalledTimes(1)
     expect(onEvent).toHaveBeenCalledWith(
       expect.objectContaining({
         type: "heartbeat",
         data: expect.objectContaining({
           artifacts: ["src/api.ts", "src/tests.ts"],
+          step: 1,
         }),
       }),
     )
+    // Verify artifacts array length and exact contents
+    const callData = onEvent.mock.calls[0][0]
+    expect(callData.data.artifacts).toHaveLength(2)
+    expect(callData.data.artifacts[0]).toBe("src/api.ts")
+    expect(callData.data.artifacts[1]).toBe("src/tests.ts")
   })
 
   it("updates current_activity on text_delta events", () => {
@@ -270,14 +321,19 @@ describe("HeartbeatHandler", () => {
     handler.onAgentEvent({ type: "text_delta", content: "Analyzing the requirements", timestamp: Date.now() })
     handler.onAgentEvent({ type: "tool_result", toolCallId: "1", toolName: "Read", content: "", timestamp: Date.now() })
 
+    expect(onEvent).toHaveBeenCalledTimes(1)
     expect(onEvent).toHaveBeenCalledWith(
       expect.objectContaining({
         type: "heartbeat",
         data: expect.objectContaining({
           current_activity: expect.stringContaining("Analyzing"),
+          step: 1,
         }),
       }),
     )
+    // Verify current_activity captures the text delta content
+    const callData = onEvent.mock.calls[0][0]
+    expect(callData.data.current_activity).toBe("Analyzing the requirements")
   })
 
   it("ignores non-tool_result events for step counting", () => {
@@ -297,6 +353,8 @@ describe("HeartbeatHandler", () => {
 
     expect(handler.getStepCount()).toBe(0)
     expect(onEvent).not.toHaveBeenCalled()
+    // Verify none of the non-step events triggered any callback
+    expect(onEvent).toHaveBeenCalledTimes(0)
   })
 
   it("updates lastActivityAt on any event", () => {
@@ -309,12 +367,14 @@ describe("HeartbeatHandler", () => {
 
     const before = handler.getLastActivityAt()
     expect(before).toBeGreaterThan(0)
+    expect(typeof before).toBe("number")
 
     // Wait a bit and emit an event
     handler.onAgentEvent({ type: "text_delta", content: "test", timestamp: Date.now() })
 
     const after = handler.getLastActivityAt()
     expect(after).toBeGreaterThanOrEqual(before)
+    expect(typeof after).toBe("number")
   })
 
   it("detects stall when no events within heartbeat_timeout", () => {
@@ -334,6 +394,8 @@ describe("HeartbeatHandler", () => {
       setTimeout(() => {
         const isStalled = handler.checkStall()
         expect(isStalled).toBe(true)
+        // Step count should still be 1 from the initial event
+        expect(handler.getStepCount()).toBe(1)
         resolve()
       }, 1100) // 1.1 seconds
     })
@@ -353,5 +415,8 @@ describe("HeartbeatHandler", () => {
 
     const isStalled = handler.checkStall()
     expect(isStalled).toBe(false)
+    // Verify the handler still tracks the step
+    expect(handler.getStepCount()).toBe(1)
+    expect(handler.getLastActivityAt()).toBeGreaterThan(0)
   })
 })

@@ -61,6 +61,8 @@ describe("harnessIntervene", () => {
     })
     expect(result.success).toBe(false)
     expect(result.error).toMatch(/not found/i)
+    expect(result.error).toBe("Execution not found")
+    expect(result.directive_applied).toBeUndefined()
   })
 
   it("returns error when execution is not in an intervenable state", async () => {
@@ -72,6 +74,8 @@ describe("harnessIntervene", () => {
     })
     expect(result.success).toBe(false)
     expect(result.error).toBeTruthy()
+    expect(result.error).toContain("pending")
+    expect(result.directive_applied).toBeUndefined()
   })
 
   it("applies abort directive by cancelling the execution", async () => {
@@ -86,6 +90,8 @@ describe("harnessIntervene", () => {
 
     expect(result.success).toBe(true)
     expect(result.directive_applied).toBe("abort")
+    expect(result.error).toBeUndefined()
+    expect(typeof result.directive_applied).toBe("string")
 
     const updated = db.prepare("SELECT status FROM executions WHERE id = ?").get(exec.id) as any
     expect(updated.status).toBe("cancelled")
@@ -103,5 +109,10 @@ describe("harnessIntervene", () => {
 
     expect(result.success).toBe(true)
     expect(result.directive_applied).toBe("pause")
+    expect(result.error).toBeUndefined()
+
+    // Verify DB status changed to paused
+    const updated = db.prepare("SELECT status FROM executions WHERE id = ?").get(exec.id) as any
+    expect(updated.status).toBe("paused")
   })
 })
