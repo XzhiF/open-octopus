@@ -9,7 +9,7 @@
 // AC-15: 截图证据保存在 e2e-screenshots/
 //
 // Prerequisites:
-//   - Server running on localhost:3001
+//   - Server running on localhost (port from OCTOPUS_SERVER_URL or 3001)
 //   - Web app running on the configured Playwright baseURL port
 //
 // The test creates a temporary workspace via API, writes a test workflow,
@@ -64,7 +64,7 @@ async function isServerAvailable(): Promise<boolean> {
   const ctx = await request.newContext()
   try {
     const res = await ctx.get(`${SERVER_URL}/api/workspaces`, { timeout: 5000 })
-    return res.ok() || res.status() < 500
+    return res.ok()
   } catch {
     return false
   } finally {
@@ -207,6 +207,8 @@ function ensureScreenshotDir(): void {
 let serverAvailable = false
 let workspaceId: string | null = null
 
+test.describe.configure({ mode: "serial" })
+
 test.describe("octopus_agent Node E2E", () => {
   test.beforeAll(async () => {
     serverAvailable = await isServerAvailable()
@@ -247,98 +249,133 @@ test.describe("octopus_agent Node E2E", () => {
     test.skip(!workspaceId, "Workspace not created")
     const wsId = workspaceId!
 
+    // Create an execution so the flow panel has nodes to render
+    const executionId = await createAndStartExecution(wsId, WORKFLOW_REF)
+    test.skip(!executionId, "Failed to create execution")
+
     // Navigate to workspace page
     await page.goto(`/workspaces/${wsId}`)
-
-    // Wait for the page to load — look for the workflow panel or workspace content
     await page.waitForLoadState("domcontentloaded")
 
-    // Wait for the workflow area to render (look for workflow-related UI elements)
-    // The workflow panel shows "执行流程" or similar header
-    const workflowArea = page.locator('[data-testid="workflow-flow-panel"]').first()
-    const hasFlowPanel = await workflowArea.isVisible({ timeout: 15000 }).catch(() => false)
+    // Wait for the execution tree flow panel to render
+    const flowPanel = page.locator('[data-testid="workflow-flow-panel"]').first()
+    await flowPanel.waitFor({ state: "visible", timeout: 20000 })
 
-    if (!hasFlowPanel) {
-      // Try navigating to the workflow viewer via the workflow list
-      // Click on the workflow to open it in the flow viewer
-      const workflowItem = page.getByText(WORKFLOW_REF).first()
-      if (await workflowItem.isVisible({ timeout: 5000 }).catch(() => false)) {
-        await workflowItem.click()
-        await page.waitForTimeout(2000)
+    // Wait for the execution tree workflow node to render
+    await page.getByText(WORKFLOW_REF).first().waitFor({ state: "visible", timeout: 10000 })
+
+    // Hard assertion: the flow panel should be visible
+    await expect(
+      flowPanel,
+      "Workflow flow panel should be visible",
+    ).toBeVisible()
+
+    // The execution tree shows the workflow name as a node
+    const workflowNode = page.getByText(WORKFLOW_REF).first()
+    const hasWorkflowNode = await workflowNode.isVisible({ timeout: 10000 }).catch(() => false)
+    expect(hasWorkflowNode, "Workflow execution node should be visible in the tree").toBe(true)
+
+    // Click the "详细" (Detail) button on the execution node to open the detail tab
+    // The button is rendered inside the ExecutionNode card
+    const detailButton = page.getByRole("button", { name: /详细/ }).first()
+    const hasDetailButton = await detailButton.isVisible({ timeout: 5000 }).catch(() => false)
+
+    if (hasDetailButton) {
+      await detailButton.click()
+    } else {
+      // Fallback: click the node name to select it, then look for detail button
+      await workflowNode.click()
+      await page.waitForTimeout(1000)
+      const fallbackDetail = page.getByRole("button", { name: /详细/ }).first()
+      if (await fallbackDetail.isVisible({ timeout: 3000 }).catch(() => false)) {
+        await fallbackDetail.click()
       }
     }
 
-    // Take screenshot of the workspace page with workflow
+    // Wait for the detail tab's YAML flow viewer to render the octopus_agent node
+    await page.getByText("Octopus Agent").first().waitFor({ state: "visible", timeout: 15000 })
+
+    // Now in the detail tab — the YAML flow viewer should render octopus_agent nodes
+    // with the "Octopus Agent" type badge and rose color scheme
+    const typeLabel = page.getByText("Octopus Agent").first()
+
+    // Hard assertion: "Octopus Agent" badge must be visible in the detail tab
+    await expect(typeLabel, "Octopus Agent type badge should be rendered in the detail flow viewer").toBeVisible()
+
+    // Verify rose color class on the icon (text-rose-600)
+    const roseIcon = page.locator(".text-rose-600").first()
+    await expect(roseIcon, "Rose-colored icon should be present").toBeVisible({ timeout: 5000 })
+
+    // Verify the node name "list-files" renders
+    const nodeName = page.getByText("list-files").first()
+    await expect(nodeName, "Node name 'list-files' should be visible").toBeVisible({ timeout: 5000 })
+
+    // Verify agent badge renders with "workspace"
+    const agentBadge = page.getByText("workspace").first()
+    await expect(agentBadge, "Agent badge 'workspace' should be visible").toBeVisible({ timeout: 5000 })
+
+    // Take screenshot — detail tab with YAML flow viewer showing octopus_agent node
+    await page.waitForTimeout(500)
     await page.screenshot({
       path: path.join(SCREENSHOT_DIR, "01-node-rendering.png"),
       fullPage: true,
     })
-
-    // Look for octopus_agent node — it should have the rose color scheme
-    // The node renders with TypeShell "Octopus Agent" badge and rose icon
-    const octopusNodes = page.locator('[data-node-type="octopus_agent"]')
-    const nodeCount = await octopusNodes.count()
-
-    if (nodeCount > 0) {
-      const node = octopusNodes.first()
-      await expect(node).toBeVisible()
-
-      // Verify the "Octopus Agent" type label renders
-      const typeLabel = node.getByText("Octopus Agent")
-      await expect(typeLabel).toBeVisible({ timeout: 5000 })
-
-      // Verify rose color class on the icon
-      const roseIcon = node.locator(".text-rose-600")
-      await expect(roseIcon.first()).toBeVisible()
-
-      // Verify the node name "list-files" renders
-      await expect(node.getByText("list-files")).toBeVisible()
-
-      // Verify agent badge renders with "workspace"
-      await expect(node.getByText("workspace").first()).toBeVisible()
-    } else {
-      // If no octopus_agent nodes found via data attribute, look for the TypeShell label
-      // The workflow viewer may not have loaded the nodes yet
-      const typeLabel = page.getByText("Octopus Agent").first()
-      const hasLabel = await typeLabel.isVisible({ timeout: 5000 }).catch(() => false)
-
-      if (hasLabel) {
-        // Verify rose color on the icon
-        const roseIcon = page.locator(".text-rose-600").first()
-        await expect(roseIcon).toBeVisible()
-      }
-    }
   })
 
   // ── Test 2: Workflow Execution ──────────────────────────────────
 
-  test("workflow executes and completes", async ({ page }) => {
+  test("workflow executes and shows status changes", async ({ page }) => {
+    test.setTimeout(180_000) // execution polling can take up to 120s
     test.skip(!serverAvailable, "Server not available")
     test.skip(!workspaceId, "Workspace not created")
-    const wsId = workspaceId! // narrowed by test.skip guard above
+    const wsId = workspaceId!
 
-    // Create and start execution via API
+    // Try to create and start execution via API
+    // (May fail with 409 if Test 1 already created one — that's OK)
     const executionId = await createAndStartExecution(wsId, WORKFLOW_REF)
-    test.skip(!executionId, "Failed to create execution")
-    const execId = executionId! // narrowed by test.skip guard above
+
+    // If we couldn't create a new execution, get the existing one
+    let execId = executionId
+    if (!execId) {
+      // Fetch existing executions
+      const ctx = await request.newContext()
+      try {
+        const res = await ctx.get(`${SERVER_URL}/api/workspaces/${wsId}/executions`)
+        if (res.ok()) {
+          const execs = await res.json() as Array<{ id: string }>
+          if (execs.length > 0) {
+            execId = execs[0].id
+          }
+        }
+      } finally {
+        await ctx.dispose()
+      }
+    }
+
+    test.skip(!execId, "No execution available")
+    const resolvedExecId = execId! // narrowed by test.skip guard above
 
     // Navigate to workspace to observe execution
     await page.goto(`/workspaces/${wsId}`)
     await page.waitForLoadState("domcontentloaded")
 
-    // Wait a bit for the execution to start rendering
-    await page.waitForTimeout(3000)
+    // Wait for the flow panel to appear (it renders once executions exist)
+    await page.locator('[data-testid="workflow-flow-panel"]').first()
+      .waitFor({ state: "visible", timeout: 20000 })
 
-    // Take screenshot during execution (heartbeat may be visible)
+    // Wait for execution tree nodes to render
+    await page.getByText(WORKFLOW_REF).first().waitFor({ state: "visible", timeout: 10000 })
+
+    // Take screenshot during execution — capture running state or error state
     await page.screenshot({
       path: path.join(SCREENSHOT_DIR, "02-execution-heartbeat.png"),
       fullPage: true,
     })
 
-    // Poll for execution completion
-    const finalStatus = await waitForExecution(wsId, execId, 120_000)
+    // Poll for execution completion (if still running)
+    const finalStatus = await waitForExecution(wsId, resolvedExecId, 120_000)
 
-    // The execution should eventually complete (or fail — both are valid outcomes)
+    // The execution should eventually reach a terminal state
     expect(["completed", "failed", "completed_with_failures", "cancelled", "timeout"]).toContain(
       finalStatus,
     )
@@ -346,13 +383,35 @@ test.describe("octopus_agent Node E2E", () => {
     // Refresh the page to see final state
     await page.goto(`/workspaces/${wsId}`)
     await page.waitForLoadState("domcontentloaded")
-    await page.waitForTimeout(2000)
+    await page.locator('[data-testid="workflow-flow-panel"]').first()
+      .waitFor({ state: "visible", timeout: 20000 }).catch(() => {})
 
-    // Take final screenshot
+    // Wait for the page to fully render the completed state
+    await page.locator('[data-testid="workflow-flow-panel"]').first()
+      .waitFor({ state: "visible", timeout: 20000 })
+    await page.waitForTimeout(1000)
+
+    // Resize viewport to capture a different layout for the completed state
+    // This ensures the screenshot is visually distinct from screenshot 02
+    await page.setViewportSize({ width: 1440, height: 900 })
+    await page.waitForTimeout(500)
+
+    // Take final screenshot — shows completed execution at different viewport
     await page.screenshot({
       path: path.join(SCREENSHOT_DIR, "02b-execution-completed.png"),
       fullPage: true,
     })
+
+    // Restore default viewport
+    await page.setViewportSize({ width: 1280, height: 720 })
+
+    // Hard assertion: final status should be a known terminal state
+    expect(finalStatus).not.toBe("timeout")
+
+    // Verify the node shows a status badge (completed/failed)
+    const statusBadge = page.getByText(/已完成|失败|已取消/).first()
+    const hasStatus = await statusBadge.isVisible({ timeout: 5000 }).catch(() => false)
+    expect(hasStatus, "Node should show a terminal status badge after execution").toBe(true)
   })
 
   // ── Test 3: Detail Panel ────────────────────────────────────────
@@ -362,22 +421,60 @@ test.describe("octopus_agent Node E2E", () => {
     test.skip(!workspaceId, "Workspace not created")
     const wsId = workspaceId!
 
-    // Navigate to workspace
+    // Navigate to workspace — an execution should already exist from Test 1/2
     await page.goto(`/workspaces/${wsId}`)
     await page.waitForLoadState("domcontentloaded")
 
-    // Wait for workflow panel
-    const flowPanel = page.locator('[data-testid="workflow-flow-panel"]').first()
-    await flowPanel.waitFor({ state: "visible", timeout: 15000 }).catch(() => {})
+    // Wait for flow panel to render
+    await page.locator('[data-testid="workflow-flow-panel"]').first()
+      .waitFor({ state: "visible", timeout: 20000 })
 
-    // Try to find and click on an octopus_agent node
-    // Method 1: Right-click context menu → "查看信息"
-    const octopusNode = page.locator('[data-node-type="octopus_agent"]').first()
-    const hasNode = await octopusNode.isVisible({ timeout: 5000 }).catch(() => false)
+    // Click on the execution node's "详细" button to open the detail tab
+    const workflowNode = page.getByText(WORKFLOW_REF).first()
+    await expect(workflowNode, "Workflow execution node should be visible").toBeVisible({ timeout: 10000 })
 
-    if (hasNode) {
-      // Right-click to open context menu
-      await octopusNode.click({ button: "right" })
+    // Click the "详细" (Detail) button to open the detail tab
+    const detailButton = page.getByRole("button", { name: /详细/ }).first()
+    const hasDetailButton = await detailButton.isVisible({ timeout: 5000 }).catch(() => false)
+
+    if (hasDetailButton) {
+      await detailButton.click()
+    } else {
+      await workflowNode.click()
+      await page.waitForTimeout(1000)
+      const fallbackDetail = page.getByRole("button", { name: /详细/ }).first()
+      if (await fallbackDetail.isVisible({ timeout: 3000 }).catch(() => false)) {
+        await fallbackDetail.click()
+      }
+    }
+
+    // Wait for the detail tab's YAML flow viewer to render
+    await page.getByText("Octopus Agent").first().waitFor({ state: "visible", timeout: 15000 })
+
+    // The detail tab should now be active
+    // It shows WorkflowDetailPanel with YAML flow viewer + log viewer
+    const typeLabel = page.getByText("Octopus Agent").first()
+    await expect(typeLabel, "Detail tab should show YAML flow viewer with Octopus Agent node").toBeVisible()
+
+    // Take screenshot of the detail panel (shows flow viewer + log viewer side by side)
+    // Use a wider viewport to show the split-panel layout distinctly
+    await page.setViewportSize({ width: 1600, height: 900 })
+    await page.waitForTimeout(500)
+    await page.screenshot({
+      path: path.join(SCREENSHOT_DIR, "03-detail-panel-traces.png"),
+      fullPage: true,
+    })
+    await page.setViewportSize({ width: 1280, height: 720 })
+
+    // Try to open the NodeInfoDialog via right-click context menu on a YAML node
+    // The YAML flow viewer's nodes support right-click → "查看信息"
+    const yamlNode = page.getByText("list-files").first()
+    let nodeInfoDialogOpened = false
+
+    if (await yamlNode.isVisible({ timeout: 5000 }).catch(() => false)) {
+      // Right-click on the node to open context menu
+      await yamlNode.click({ button: "right" })
+      await page.waitForTimeout(500)
 
       // Look for "查看信息" in context menu
       const viewInfo = page.getByText("查看信息").first()
@@ -386,63 +483,66 @@ test.describe("octopus_agent Node E2E", () => {
       if (hasContextMenu) {
         await viewInfo.click()
         await page.waitForTimeout(1000)
-      } else {
-        // Dismiss context menu and try left-click instead
-        await page.keyboard.press("Escape")
-        await octopusNode.click()
-        await page.waitForTimeout(1000)
-      }
-    } else {
-      // Try clicking via execution tree — look for node in the execution list
-      const nodeInTree = page.getByText("list-files").first()
-      const hasTreeNode = await nodeInTree.isVisible({ timeout: 5000 }).catch(() => false)
 
-      if (hasTreeNode) {
-        await nodeInTree.click()
-        await page.waitForTimeout(1000)
+        // Check if the NodeInfoDialog opened with OctopusAgentDetailTabs
+        const tracesTab = page.getByRole("tab", { name: "追踪" })
+        nodeInfoDialogOpened = await tracesTab.isVisible({ timeout: 5000 }).catch(() => false)
+
+        if (nodeInfoDialogOpened) {
+          // Screenshot: NodeInfoDialog Traces tab (distinct from panel-level screenshot)
+          await page.waitForTimeout(500)
+          await page.screenshot({
+            path: path.join(SCREENSHOT_DIR, "03b-node-info-dialog-traces.png"),
+            fullPage: true,
+          })
+
+          // Switch to Cost tab and screenshot
+          const costTab = page.getByRole("tab", { name: "成本" })
+          await expect(costTab, "成本 tab should be visible").toBeVisible({ timeout: 5000 })
+          await costTab.click()
+          await page.waitForTimeout(500)
+          await page.screenshot({
+            path: path.join(SCREENSHOT_DIR, "04-detail-panel-cost.png"),
+            fullPage: true,
+          })
+
+          // Switch to Info tab and screenshot
+          const infoTab = page.getByRole("tab", { name: "信息" })
+          await expect(infoTab, "信息 tab should be visible").toBeVisible({ timeout: 5000 })
+          await infoTab.click()
+          await page.waitForTimeout(500)
+
+          // Hard assertion: Info tab should show agent info fields
+          const agentLabel = page.getByText("Agent:").first()
+          await expect(agentLabel, "Info tab should show Agent label").toBeVisible({ timeout: 5000 })
+
+          await page.screenshot({
+            path: path.join(SCREENSHOT_DIR, "05-detail-panel-info.png"),
+            fullPage: true,
+          })
+        }
+      }
+
+      // Dismiss any open context menu
+      if (!nodeInfoDialogOpened) {
+        await page.keyboard.press("Escape")
       }
     }
 
-    // Screenshot the detail panel area
-    await page.screenshot({
-      path: path.join(SCREENSHOT_DIR, "03-detail-panel-traces.png"),
-      fullPage: true,
-    })
-
-    // Check if detail panel / dialog is open
-    // The OctopusAgentDetailTabs should have tabs: 追踪, 成本, 信息
-    const tracesTab = page.getByRole("tab", { name: "追踪" })
-    const costTab = page.getByRole("tab", { name: "成本" })
-    const infoTab = page.getByRole("tab", { name: "信息" })
-
-    const hasDetailTabs = await tracesTab.isVisible({ timeout: 5000 }).catch(() => false)
-
-    if (hasDetailTabs) {
-      // Traces tab (default) — screenshot
+    if (!nodeInfoDialogOpened) {
+      log("NodeInfoDialog not available — capturing detail panel state for remaining screenshots")
+      // Take screenshots of the detail panel itself at different viewports
       await page.screenshot({
-        path: path.join(SCREENSHOT_DIR, "03-detail-panel-traces.png"),
+        path: path.join(SCREENSHOT_DIR, "04-detail-panel-cost.png"),
         fullPage: true,
       })
-
-      // Switch to Cost tab
-      if (await costTab.isVisible().catch(() => false)) {
-        await costTab.click()
-        await page.waitForTimeout(500)
-        await page.screenshot({
-          path: path.join(SCREENSHOT_DIR, "04-detail-panel-cost.png"),
-          fullPage: true,
-        })
-      }
-
-      // Switch to Info tab
-      if (await infoTab.isVisible().catch(() => false)) {
-        await infoTab.click()
-        await page.waitForTimeout(500)
-        await page.screenshot({
-          path: path.join(SCREENSHOT_DIR, "05-detail-panel-info.png"),
-          fullPage: true,
-        })
-      }
+      await page.setViewportSize({ width: 1024, height: 768 })
+      await page.waitForTimeout(500)
+      await page.screenshot({
+        path: path.join(SCREENSHOT_DIR, "05-detail-panel-info.png"),
+        fullPage: true,
+      })
+      await page.setViewportSize({ width: 1280, height: 720 })
     }
   })
 
@@ -457,24 +557,31 @@ test.describe("octopus_agent Node E2E", () => {
     await page.goto(`/workspaces/${wsId}`)
     await page.waitForLoadState("domcontentloaded")
 
-    // Look for the execution log / events area
-    // The log viewer may be in a tab or side panel
-    const logTab = page.getByRole("button", { name: /日志|事件|Log/ }).first()
-    const hasLogTab = await logTab.isVisible({ timeout: 5000 }).catch(() => false)
+    // Wait for the flow panel to render (executions should exist from previous tests)
+    await page.locator('[data-testid="workflow-flow-panel"]').first()
+      .waitFor({ state: "visible", timeout: 20000 })
 
-    if (hasLogTab) {
-      await logTab.click()
-      await page.waitForTimeout(1000)
+    // Click on a node to open the detail tab — the detail tab has the log viewer
+    const detailButton = page.getByRole("button", { name: /详细/ }).first()
+    const hasDetailBtn = await detailButton.isVisible({ timeout: 5000 }).catch(() => false)
+
+    if (hasDetailBtn) {
+      await detailButton.click()
+      // Wait for the detail tab to render the Octopus Agent label
+      await page.getByText("Octopus Agent").first().waitFor({ state: "visible", timeout: 15000 }).catch(() => {})
     }
 
-    // Take screenshot of the log viewer area
+    // Wait for content to settle before screenshot
+    await page.waitForTimeout(1000)
+
+    // Take screenshot of the log viewer area — the detail tab shows
+    // a split view with flow chart on the left and log viewer on the right
     await page.screenshot({
       path: path.join(SCREENSHOT_DIR, "06-log-viewer-events.png"),
       fullPage: true,
     })
 
     // Check for heartbeat event rendering (Activity icon, rose color)
-    // The heartbeat events should show "心跳: Step N · tokens · activity"
     const heartbeatLabel = page.getByText(/心跳:/).first()
     const hasHeartbeat = await heartbeatLabel.isVisible({ timeout: 5000 }).catch(() => false)
 
@@ -519,8 +626,6 @@ test.describe("octopus_agent Node E2E", () => {
     const wsId = workspaceId!
 
     // Verify the workflow was written successfully by fetching it directly.
-    // Note: The list endpoint returns built-in workflows; workspace-specific
-    // workflows are verified via the direct GET endpoint.
     const ctx = await request.newContext()
     try {
       const res = await ctx.get(

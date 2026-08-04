@@ -384,37 +384,49 @@ When re-executing with the same upstream input, the engine compares the input ha
 
 ## 11. `octopus_agent` — Delegate Agent
 
-Delegates a task to a system-defined agent (clone) via a structured protocol with heartbeat monitoring.
+Delegates work to a pre-configured Octopus agent (clone) with structured task definition, heartbeat monitoring, and multi-step execution tracking.
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `agent` | string | ✅ | Clone name or `__main__` |
-| `version` | string | — | Specific version (e.g., `"1.2.0"`) |
-| `min_stage` | enum | — | `alpha` \| `beta` \| `rc` \| `stable` |
-| `task.brief` | string | ✅ | One-line task description |
-| `task.context` | string[] | — | Additional context strings |
-| `task.constraints` | string[] | — | Constraints for the delegate |
-| `task.expected_output` | object | — | Expected output schema |
-| `task.sop` | string | — | SOP reference |
-| `task.budget` | object | — | `max_tokens`, `max_duration`, `max_cost_usd` |
-| `harness.heartbeat_interval` | number | — | Heartbeat every N steps (default: 3) |
-| `harness.heartbeat_timeout` | number | — | Stall timeout in seconds |
-| `harness.auto_abort_on_budget` | boolean | — | Auto-abort on budget exceeded |
+| `agent` | string | ✅ | Agent identifier (clone name or `__main__`) |
+| `task.brief` | string | ✅ | Task description / instruction for the agent |
+| `task.constraints` | string[] | — | Natural language constraints the agent must follow |
+| `task.context` | string | — | Additional context to inject into the agent's prompt |
+| `version` | string | — | Agent version to use |
+| `model` | string | — | Model override for the agent |
 
-**Inherited**: `model`, `engine`, `effort`, `timeout` are supported. `skills` is NOT supported (clone uses its own).
+### Validation Rules
+
+- `agent` field is **required** — must specify a clone name or `__main__`
+- `task.brief` field is **required** — must provide task instructions
+- At runtime, the engine resolves the agent clone and injects task context
+
+### Heartbeat Protocol
+
+The octopus_agent executor emits structured heartbeat events during execution:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `step` | number | Current step number |
+| `total_steps` | number | Total expected steps (optional) |
+| `tokens_used` | number | Tokens consumed so far |
+| `tokens_budget` | number | Token budget limit (optional) |
+| `artifacts` | string[] | List of produced artifacts |
+| `issues` | string[] | List of encountered issues |
+| `confidence` | number | Execution confidence (0.0–1.0) |
+| `current_activity` | string | Description of current activity |
 
 ```yaml
-- id: code-review
+- id: list-files
   type: octopus_agent
   agent: workspace
-  model: pro-max
-  effort: high
   task:
-    brief: "Review the latest commit for security vulnerabilities"
-    budget:
-      max_tokens: 50000
-  harness:
-    heartbeat_interval: 5
+    brief: "List all files in the current directory and report back the file names and sizes."
+    constraints:
+      - "Do not modify any files"
+      - "Return results as a simple list"
+  outputs:
+    result: "$last_output"
 ```
 
 ---
@@ -445,11 +457,11 @@ Delegates a task to a system-defined agent (clone) via a structured protocol wit
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `skills` | string[] | — | Skill dependencies (`group/name`) |
-| `agent_files` | string[] | — | Agent file dependencies (`group/name.md`) |
-| `commands` | string[] | — | Command dependencies (provisioned to `.claude/commands/`) |
-| `rules` | string[] | — | Rule dependencies (provisioned to `.claude/rules/`) |
-| `clones` | string[] | — | Clone dependencies (**hard-fail gate** — must be pre-installed) |
+| `skills` | string[] | — | Skill dependencies (`group/name` format, e.g. `superpowers-zh/test-driven-development`) |
+| `agent_files` | string[] | — | Agent file dependencies (`group/name.md` format, e.g. `built-in/vision-analyzer.md`) |
+| `commands` | string[] | — | Command dependencies (`group/name` format, e.g. `built-in/octopus-resource-manager`) |
+| `rules` | string[] | — | Rule dependencies (`group/name` format) |
+| `clones` | string[] | — | Clone (agent) dependencies (`group/name` format, e.g. `built-in/workspace`) |
 
 > See `references/requires-and-effort.md` for full documentation on `requires` and `effort`.
 

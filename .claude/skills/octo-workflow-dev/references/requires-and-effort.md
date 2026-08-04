@@ -6,7 +6,7 @@
 
 ## `requires` — 工作流级资源依赖声明
 
-在工作流 YAML 顶层声明所有依赖的资源。`__engine_init__` 虚拟节点在执行前**优先 provision** 这些资源到 workspace。
+在工作流 YAML 顶层声明所有依赖的 skills 和 agent_files。`__engine_init__` 虚拟节点在执行前**优先 provision** 这些资源到 workspace。
 
 ```yaml
 apiVersion: octopus/v1
@@ -15,15 +15,18 @@ name: "my-workflow"
 
 requires:
   skills:
-    - superpowers-zh/test-driven-development    # group/name 格式
+    - superpowers-zh/test-driven-development    # group/name 格式（避免重名）
+    - superpowers-zh/systematic-debugging
+    - built-in/octo-workflow-dev
   agent_files:
     - built-in/vision-analyzer.md               # group/name.md 格式
+    - agency-agents-zh/engineering-code-reviewer.md
   commands:
-    - cmd-review                                # 命令名
+    - built-in/octopus-resource-manager         # 命令依赖
   rules:
-    - code-style                                # 规则名
+    - built-in/typescript-strict                # 规则依赖
   clones:
-    - workspace                                 # clone 名（必须预安装）
+    - built-in/workspace                        # Clone (agent) 依赖
 
 nodes:
   # ... 工作流节点
@@ -31,15 +34,13 @@ nodes:
 
 ### 字段格式
 
-| 字段 | 格式 | Provision 目标 | 说明 |
-|------|------|---------------|------|
-| `requires.skills` | `group/name` | `.claude/skills/` | 技能依赖 |
-| `requires.agent_files` | `group/name.md` | `.claude/agents/` | Agent 文件依赖 |
-| `requires.commands` | 命令名 | `.claude/commands/` | 命令依赖 |
-| `requires.rules` | 规则名 | `.claude/rules/` | 规则依赖 |
-| `requires.clones` | clone 名 | ❌ 不自动 provision | **硬失败门控** — 必须预安装 |
-
-> **⚠️ clones 是硬失败门控**: 缺失的 clone 会导致工作流**立即失败**。通过 `octopus resource install` 预先安装。
+| 字段 | 格式 | 说明 | 示例 |
+|------|------|------|------|
+| `requires.skills` | `group/name` | 技能依赖，带分组避免重名 | `superpowers-zh/test-driven-development` |
+| `requires.agent_files` | `group/name.md` | Agent 文件依赖 | `built-in/vision-analyzer.md` |
+| `requires.commands` | `group/name` | 命令依赖 | `built-in/octopus-resource-manager` |
+| `requires.rules` | `group/name` | 规则依赖 | `built-in/typescript-strict` |
+| `requires.clones` | `group/name` | Clone (agent) 依赖 | `built-in/workspace` |
 
 > **没有指定分组时**，引擎按注册表顺序匹配第一个同名资源。建议始终带分组以避免歧义。
 
@@ -57,6 +58,9 @@ nodes:
 | 节点 `skills` | **运行时过滤** | 纯名称 | ❌ 白名单过滤已加载技能 |
 | `requires.agent_files` | **依赖声明** | `group/name.md` | ✅ `__engine_init__` 优先安装 |
 | 节点 `agent_file` | **运行时引用** | `group/name.md` | ❌ 引用已安装文件 |
+| `requires.commands` | **依赖声明** | `group/name` | ✅ `__engine_init__` 优先安装 |
+| `requires.rules` | **依赖声明** | `group/name` | ✅ `__engine_init__` 优先安装 |
+| `requires.clones` | **依赖声明** | `group/name` | ✅ `__engine_init__` 优先安装 |
 
 ### 不写 requires 也行吗？
 

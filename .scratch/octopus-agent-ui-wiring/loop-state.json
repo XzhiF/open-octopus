@@ -1,7 +1,18 @@
 {
   "root_feature": "octopus-agent-ui-wiring",
   "branch": "feat/agent-workflow-integration",
-  "iterations": [],
+  "iterations": [
+    {
+      "round": 1,
+      "score": 63.86,
+      "adjusted_score": 63.86,
+      "decision": "NO-GO",
+      "carryover_in": [],
+      "carryover_out": ["AC-1", "AC-2"],
+      "pipeline_complete": true,
+      "e2e_executed": true
+    }
+  ],
   "max_iterations": 5,
   "convergence_threshold": 85,
   "status": "running"
