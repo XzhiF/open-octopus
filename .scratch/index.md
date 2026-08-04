@@ -33,4 +33,4 @@
 | 29 | resource-module-enhancement | 2026-08-04 | feat/resource-module-enhancement | done (E2E: 11 PASS, 5 SKIP) |
 | 30 | resource-module-enhancement-r2 | 2026-08-04 | feat/resource-module-enhancement | done (gap-fix: clone lifecycle 13 tests + Playwright 14 tests) |
 | 31 | workflow-requires-clones-rules-commands | 2026-08-04 | feat/workflow-requires-enhancement | done (86 tests, 18/18 ACs PASS) |
-| 32 | agent-workflow-integration | 2026-08-04 | feat/agent-workflow-integration | in-progress |
+| 32 | agent-workflow-integration | 2026-08-04 | feat/agent-workflow-integration | done (PR #44, 163 tests, 6/6 tickets) |
