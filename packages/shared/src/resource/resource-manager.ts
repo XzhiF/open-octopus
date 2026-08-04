@@ -8,7 +8,7 @@ import { RegistryStore } from "./registry-store"
 import { LockManager } from "./lock-manager"
 import { BuiltinProvider } from "./builtin-provider"
 import { LocalProvider } from "./local-provider"
-import { isPathWithinBase, listFilesRecursive, generateFileHash } from "./fs-utils"
+import { isPathWithinBase, listFilesRecursive, generateFileHash, copyDirSync } from "./fs-utils"
 import { PostInstallVerifier, PostUninstallVerifier } from "./verifier"
 import { AuditWriter } from "./audit-writer"
 import { SourceManager } from "./source-manager"
@@ -23,6 +23,8 @@ import {
   type VerifyResult,
   type BuiltinCatalogEntry,
   type ResourceAuditCaller,
+  type ActivateResponse,
+  type DeactivateResponse,
   SAFE_NAME_RE,
 } from "./types"
 
@@ -366,6 +368,14 @@ export class ResourceManager extends EventEmitter {
       throw new ResourceError("RESOURCE_NOT_FOUND", `Resource ${type}/${name} not found`)
     }
 
+    // Guard: block uninstall if activated
+    if (entry.activated) {
+      throw new ResourceError(
+        "UNINSTALL_BLOCKED",
+        `Resource ${type}/${name} is activated. Deactivate first before uninstalling.`,
+      )
+    }
+
     // Check reverse dependencies
     const dependents = this.registry.findDependents(type, name)
     if (dependents.length > 0) {
@@ -377,9 +387,16 @@ export class ResourceManager extends EventEmitter {
     }
 
     const installPath = entry.installPath
+    let backupPath: string | undefined
+
+    // Backup if requested (for clone type)
+    if (req.keepBackup && fs.existsSync(installPath)) {
+      backupPath = this.createBackup(name, type, installPath)
+    }
 
     // Audit-first
-    this.audit.append("uninstall", { name, type, source: entry.source }, req.caller)
+    this.audit.append("uninstall", { name, type, source: entry.source }, req.caller,
+      backupPath ? { backupPath } : undefined)
 
     // Delete files
     try {
@@ -412,7 +429,143 @@ export class ResourceManager extends EventEmitter {
       type,
       status: "uninstalled" as const,
       verified: verifyResult.passed,
+      backupPath,
     }
+  }
+
+  // ── Activate ──────────────────────────────────────────────────
+
+  async activate(
+    name: string,
+    type: ResourceType,
+    caller: ResourceAuditCaller,
+    workspaceDir?: string,
+  ): Promise<ActivateResponse> {
+    if (!SAFE_NAME_RE.test(name)) {
+      throw new ResourceError("INVALID_NAME", `Invalid resource name: ${name}`)
+    }
+
+    // Only rule, command, clone support activation
+    if (type !== "rule" && type !== "command" && type !== "clone") {
+      throw new ResourceError(
+        "INVALID_TYPE",
+        `Type ${type} does not support activation. Only rule, command, and clone can be activated.`,
+      )
+    }
+
+    const entry = this.registry.get(type, name)
+    if (!entry) {
+      throw new ResourceError("RESOURCE_NOT_FOUND", `Resource ${type}/${name} not found`)
+    }
+
+    if (!entry.installed) {
+      throw new ResourceError("ACTIVATION_BLOCKED", `Resource ${type}/${name} is not installed`)
+    }
+
+    if (entry.activated) {
+      throw new ResourceError(
+        "ACTIVATION_BLOCKED",
+        `Resource ${type}/${name} is already activated at ${entry.activatedTo}`,
+      )
+    }
+
+    // Resolve activation target path
+    const activatedTo = this.getActivationTarget(type, name, workspaceDir)
+
+    // Copy files to activation target
+    try {
+      if (type === "rule" || type === "command") {
+        // Single .md file — ensure parent dir exists, copy file
+        const targetDir = path.dirname(activatedTo)
+        fs.mkdirSync(targetDir, { recursive: true })
+        const sourceFile = this.findMdFile(entry.installPath)
+        if (!sourceFile) {
+          throw new ResourceError("FILE_COPY_FAILED", `No .md file found in ${entry.installPath}`)
+        }
+        fs.copyFileSync(sourceFile, activatedTo)
+      } else if (type === "clone") {
+        // Full directory copy
+        fs.mkdirSync(activatedTo, { recursive: true })
+        copyDirSync(entry.installPath, activatedTo)
+      }
+    } catch (err: any) {
+      if (err instanceof ResourceError) throw err
+      throw new ResourceError("FILE_COPY_FAILED", `Failed to activate ${name}: ${err.message}`)
+    }
+
+    // Update registry
+    const updated: ResourceEntry = {
+      ...entry,
+      activated: true,
+      activatedAt: new Date().toISOString(),
+      activatedTo,
+    }
+    this.registry.upsert(updated)
+
+    // Audit
+    this.audit.append("activate", { name, type, source: entry.source }, caller, { activatedTo })
+
+    this.emit("activate", { name, type, activatedTo })
+
+    return { name, type, activatedTo }
+  }
+
+  // ── Deactivate ────────────────────────────────────────────────
+
+  async deactivate(
+    name: string,
+    type: ResourceType,
+    caller: ResourceAuditCaller,
+  ): Promise<DeactivateResponse> {
+    if (!SAFE_NAME_RE.test(name)) {
+      throw new ResourceError("INVALID_NAME", `Invalid resource name: ${name}`)
+    }
+
+    const entry = this.registry.get(type, name)
+    if (!entry) {
+      throw new ResourceError("RESOURCE_NOT_FOUND", `Resource ${type}/${name} not found`)
+    }
+
+    if (!entry.activated) {
+      throw new ResourceError(
+        "DEACTIVATION_BLOCKED",
+        `Resource ${type}/${name} is not currently activated`,
+      )
+    }
+
+    // Remove files from activation target
+    const activatedTo = entry.activatedTo
+    if (activatedTo) {
+      try {
+        if (type === "rule" || type === "command") {
+          if (fs.existsSync(activatedTo)) {
+            fs.unlinkSync(activatedTo)
+          }
+        } else if (type === "clone") {
+          if (fs.existsSync(activatedTo)) {
+            fs.rmSync(activatedTo, { recursive: true, force: true })
+          }
+        }
+      } catch (err: any) {
+        throw new ResourceError("FILE_DELETE_FAILED", `Failed to deactivate ${name}: ${err.message}`)
+      }
+    }
+
+    // Update registry
+    const updated: ResourceEntry = {
+      ...entry,
+      activated: false,
+      activatedAt: undefined,
+      activatedTo: undefined,
+    }
+    this.registry.upsert(updated)
+
+    // Audit
+    this.audit.append("deactivate", { name, type, source: entry.source }, caller)
+
+    this.emit("deactivate", { name, type })
+
+    return { name, type }
   }
 
   // ── List ──────────────────────────────────────────────────────
@@ -742,6 +895,50 @@ export class ResourceManager extends EventEmitter {
 
     // For local: default to skill
     return "skill"
+  }
+
+  /** Resolve the activation target path based on resource type */
+  private getActivationTarget(type: ResourceType, name: string, workspaceDir?: string): string {
+    const workspace = workspaceDir ?? process.cwd()
+    if (type === "rule") {
+      return path.join(workspace, ".claude", "rules", `${name}.md`)
+    }
+    if (type === "command") {
+      return path.join(workspace, ".claude", "commands", `${name}.md`)
+    }
+    if (type === "clone") {
+      return path.join(os.homedir(), ".octopus", "agent", "clones", name)
+    }
+    throw new ResourceError("INVALID_TYPE", `Type ${type} does not support activation`)
+  }
+
+  /** Find the first .md file in an installed resource directory */
+  private findMdFile(dirPath: string): string | null {
+    if (!fs.existsSync(dirPath)) return null
+    const items = fs.readdirSync(dirPath)
+    for (const item of items) {
+      if (item.endsWith(".md")) {
+        return path.join(dirPath, item)
+      }
+    }
+    return null
+  }
+
+  /** Create a backup of an installed resource before uninstall */
+  private createBackup(name: string, type: ResourceType, installPath: string): string {
+    const timestamp = new Date().toISOString().replace(/[:.]/g, "")
+    const backupDir = path.join(this.basePath, "backups", type === "clone" ? "clones" : type === "rule" ? "rules" : "commands")
+    const backupPath = path.join(backupDir, `${name}-${timestamp}`)
+
+    fs.mkdirSync(backupPath, { recursive: true })
+
+    try {
+      copyDirSync(installPath, backupPath)
+    } catch (err: any) {
+      throw new ResourceError("FILE_COPY_FAILED", `Failed to create backup: ${err.message}`)
+    }
+
+    return backupPath
   }
 
   // ── CLAUDE.md Auto-Update ──────────────────────────────────

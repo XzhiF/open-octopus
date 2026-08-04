@@ -685,6 +685,264 @@ describe("ResourceManager", () => {
   })
 })
 
+// ── T2: ResourceManager Activate/Deactivate + Uninstall Guard ──
+
+describe("ResourceManager activate/deactivate", () => {
+  let tmpDir: string
+  let corePackDir: string
+  let workspaceDir: string
+  let manager: ResourceManager
+
+  beforeEach(() => {
+    tmpDir = createTempDir()
+    corePackDir = createTempDir()
+    workspaceDir = createTempDir()
+
+    // Create fake core-pack with rules and commands
+    const rulesDir = path.join(corePackDir, "rules")
+    fs.mkdirSync(rulesDir, { recursive: true })
+    fs.writeFileSync(path.join(rulesDir, "code-style.md"), "# Code Style Rule\nUse TypeScript", "utf-8")
+
+    const commandsDir = path.join(corePackDir, "commands")
+    fs.mkdirSync(commandsDir, { recursive: true })
+    fs.writeFileSync(path.join(commandsDir, "cmd-review.md"), "# Review Command\n/review the code", "utf-8")
+
+    // Skills for existing functionality
+    const skillDir = path.join(corePackDir, "skills", "test-skill")
+    fs.mkdirSync(skillDir, { recursive: true })
+    fs.writeFileSync(path.join(skillDir, "SKILL.md"), "# Test Skill", "utf-8")
+
+    manager = new ResourceManager({
+      basePath: tmpDir,
+      corePackBase: corePackDir,
+    })
+  })
+
+  afterEach(() => {
+    cleanupDir(tmpDir)
+    cleanupDir(corePackDir)
+    cleanupDir(workspaceDir)
+  })
+
+  it("install rule sets activated=false", async () => {
+    const result = await manager.install({ ref: "builtin:code-style", type: "rule", caller: "cli" })
+    expect(result.type).toBe("rule")
+
+    const entry = manager.get("rule", "code-style")
+    expect(entry).toBeDefined()
+    expect(entry?.activated).toBe(false)
+  })
+
+  it("activate rule copies file to workspace .claude/rules/", async () => {
+    await manager.install({ ref: "builtin:code-style", type: "rule", caller: "cli" })
+
+    const result = await manager.activate("code-style", "rule", "cli", workspaceDir)
+    expect(result.activatedTo).toContain(path.join(".claude", "rules", "code-style.md"))
+    expect(fs.existsSync(result.activatedTo)).toBe(true)
+
+    // Registry updated
+    const entry = manager.get("rule", "code-style")
+    expect(entry?.activated).toBe(true)
+    expect(entry?.activatedAt).toBeDefined()
+    expect(entry?.activatedTo).toBe(result.activatedTo)
+  })
+
+  it("activate command copies file to workspace .claude/commands/", async () => {
+    await manager.install({ ref: "builtin:cmd-review", type: "command", caller: "cli" })
+
+    const result = await manager.activate("cmd-review", "command", "cli", workspaceDir)
+    expect(result.activatedTo).toContain(path.join(".claude", "commands", "cmd-review.md"))
+    expect(fs.existsSync(result.activatedTo)).toBe(true)
+  })
+
+  it("activate clone copies full bundle to ~/.octopus/agent/clones/", async () => {
+    // Create a clone source manually
+    const cloneSourceDir = path.join(tmpDir, "installed", "clones", "built-in", "test-clone")
+    fs.mkdirSync(cloneSourceDir, { recursive: true })
+    fs.writeFileSync(path.join(cloneSourceDir, "persona.md"), "# Test Clone Persona", "utf-8")
+    fs.writeFileSync(path.join(cloneSourceDir, "config.json"), "{}", "utf-8")
+
+    // Register it in the registry
+    const { RegistryStore } = await import("../resource")
+    const registry = new RegistryStore(tmpDir)
+    registry.upsert({
+      name: "test-clone",
+      type: "clone",
+      source: "builtin",
+      ref: "builtin:test-clone",
+      group: "built-in",
+      installed: true,
+      verified: true,
+      status: "installed",
+      installedAt: new Date().toISOString(),
+      installPath: cloneSourceDir,
+      dependsOn: [],
+      activated: false,
+    })
+
+    const result = await manager.activate("test-clone", "clone", "cli")
+    expect(result.activatedTo).toContain(path.join(".octopus", "agent", "clones", "test-clone"))
+    expect(fs.existsSync(result.activatedTo)).toBe(true)
+
+    // Cleanup the clone activation target
+    cleanupDir(result.activatedTo)
+  })
+
+  it("activate already-activated resource throws ACTIVATION_BLOCKED", async () => {
+    await manager.install({ ref: "builtin:code-style", type: "rule", caller: "cli" })
+    await manager.activate("code-style", "rule", "cli", workspaceDir)
+
+    await expect(
+      manager.activate("code-style", "rule", "cli", workspaceDir),
+    ).rejects.toThrow(ResourceError)
+
+    // Cleanup
+    const entry = manager.get("rule", "code-style")
+    if (entry?.activatedTo) {
+      try { fs.unlinkSync(entry.activatedTo) } catch { /* ignore */ }
+    }
+  })
+
+  it("activate skill/agent/workflow throws INVALID_TYPE", async () => {
+    await manager.install({ ref: "builtin:test-skill", caller: "cli" })
+
+    await expect(
+      manager.activate("test-skill", "skill", "cli"),
+    ).rejects.toThrow(ResourceError)
+  })
+
+  it("activate non-installed resource throws RESOURCE_NOT_FOUND", async () => {
+    await expect(
+      manager.activate("nonexistent", "rule", "cli"),
+    ).rejects.toThrow(ResourceError)
+  })
+
+  it("deactivate rule removes file from workspace", async () => {
+    await manager.install({ ref: "builtin:code-style", type: "rule", caller: "cli" })
+    const actResult = await manager.activate("code-style", "rule", "cli", workspaceDir)
+    expect(fs.existsSync(actResult.activatedTo)).toBe(true)
+
+    await manager.deactivate("code-style", "rule", "cli")
+
+    expect(fs.existsSync(actResult.activatedTo)).toBe(false)
+
+    const entry = manager.get("rule", "code-style")
+    expect(entry?.activated).toBe(false)
+    expect(entry?.activatedAt).toBeUndefined()
+    expect(entry?.activatedTo).toBeUndefined()
+  })
+
+  it("deactivate non-activated resource throws DEACTIVATION_BLOCKED", async () => {
+    await manager.install({ ref: "builtin:code-style", type: "rule", caller: "cli" })
+
+    await expect(
+      manager.deactivate("code-style", "rule", "cli"),
+    ).rejects.toThrow(ResourceError)
+  })
+
+  it("uninstall activated resource throws UNINSTALL_BLOCKED", async () => {
+    await manager.install({ ref: "builtin:code-style", type: "rule", caller: "cli" })
+    await manager.activate("code-style", "rule", "cli", workspaceDir)
+
+    await expect(
+      manager.uninstall({ name: "code-style", type: "rule", caller: "cli", keepBackup: false }),
+    ).rejects.toThrow(ResourceError)
+
+    // Cleanup
+    await manager.deactivate("code-style", "rule", "cli")
+  })
+
+  it("uninstall clone with keepBackup creates backup", async () => {
+    // Create a clone manually
+    const cloneSourceDir = path.join(tmpDir, "installed", "clones", "built-in", "backup-test")
+    fs.mkdirSync(cloneSourceDir, { recursive: true })
+    fs.writeFileSync(path.join(cloneSourceDir, "persona.md"), "# Backup Test", "utf-8")
+
+    const { RegistryStore } = await import("../resource")
+    const registry = new RegistryStore(tmpDir)
+    registry.upsert({
+      name: "backup-test",
+      type: "clone",
+      source: "builtin",
+      ref: "builtin:backup-test",
+      group: "built-in",
+      installed: true,
+      verified: true,
+      status: "installed",
+      installedAt: new Date().toISOString(),
+      installPath: cloneSourceDir,
+      dependsOn: [],
+      activated: false,
+    })
+
+    const result = await manager.uninstall({
+      name: "backup-test",
+      type: "clone",
+      caller: "cli",
+      keepBackup: true,
+    })
+
+    expect(result.status).toBe("uninstalled")
+    expect(result.backupPath).toBeDefined()
+    expect(result.backupPath).toContain(path.join("backups", "clones", "backup-test"))
+    expect(fs.existsSync(result.backupPath!)).toBe(true)
+  })
+
+  it("uninstall clone without keepBackup performs clean removal", async () => {
+    // Create a clone manually
+    const cloneSourceDir = path.join(tmpDir, "installed", "clones", "built-in", "clean-test")
+    fs.mkdirSync(cloneSourceDir, { recursive: true })
+    fs.writeFileSync(path.join(cloneSourceDir, "persona.md"), "# Clean Test", "utf-8")
+
+    const { RegistryStore } = await import("../resource")
+    const registry = new RegistryStore(tmpDir)
+    registry.upsert({
+      name: "clean-test",
+      type: "clone",
+      source: "builtin",
+      ref: "builtin:clean-test",
+      group: "built-in",
+      installed: true,
+      verified: true,
+      status: "installed",
+      installedAt: new Date().toISOString(),
+      installPath: cloneSourceDir,
+      dependsOn: [],
+      activated: false,
+    })
+
+    const result = await manager.uninstall({
+      name: "clean-test",
+      type: "clone",
+      caller: "cli",
+      keepBackup: false,
+    })
+
+    expect(result.status).toBe("uninstalled")
+    expect(result.backupPath).toBeUndefined()
+  })
+
+  it("activate writes audit record", async () => {
+    await manager.install({ ref: "builtin:code-style", type: "rule", caller: "cli" })
+    await manager.activate("code-style", "rule", "cli", workspaceDir)
+
+    const audit = manager.auditQuery()
+    expect(audit.find((r: any) => r.action === "activate")).toBeDefined()
+
+    // Cleanup
+    await manager.deactivate("code-style", "rule", "cli")
+  })
+
+  it("deactivate writes audit record", async () => {
+    await manager.install({ ref: "builtin:code-style", type: "rule", caller: "cli" })
+    await manager.activate("code-style", "rule", "cli", workspaceDir)
+    await manager.deactivate("code-style", "rule", "cli")
+
+    const audit = manager.auditQuery()
+    expect(audit.find((r: any) => r.action === "deactivate")).toBeDefined()
+  })
+})
+
 // ── isPathWithinBase ─────────────────────────────────────────────
 
 describe("isPathWithinBase", () => {

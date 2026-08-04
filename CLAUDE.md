@@ -101,9 +101,6 @@ octopus repos update/pull/clone/rebuild-index
 ## 可用资源 (Octopus 资源库)
 <!-- octopus-resources -->
 
-### Skills
-- test-skill (built-in)
-
 ### 使用方式
 - 搜索更多: 使用 octo-resource-manager skill
 - 浏览全部: octopus resource list

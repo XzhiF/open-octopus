@@ -1,0 +1,8 @@
+{
+  "root_feature": "resource-module-enhancement",
+  "branch": "feat/resource-module-enhancement",
+  "iterations": [],
+  "max_iterations": 5,
+  "convergence_threshold": 85,
+  "status": "running"
+}
