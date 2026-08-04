@@ -560,6 +560,17 @@ executionRoutes.get("/:executionId/agent-events", (c) => {
             timestamp: new Date(row.timestamp).toISOString(),
           }
         }
+        // Heartbeat and harness events: deserialize JSON content and pass through
+        if (row.event_type === "heartbeat" || row.event_type === "harness_directive" || row.event_type === "heartbeat_stall") {
+          let data: Record<string, unknown> = {}
+          try { data = JSON.parse(row.content ?? "{}") } catch { /* ignore */ }
+          return {
+            event: row.event_type,
+            nodeId: row.node_id,
+            data,
+            timestamp: new Date(row.timestamp).toISOString(),
+          }
+        }
         // start/end lifecycle events: skip from SQLite (JSONL provides authoritative copies)
         if (row.event_type === "start" || row.event_type === "end") {
           return null
@@ -682,7 +693,17 @@ executionRoutes.get("/:executionId/agent-events", (c) => {
         ((a.timestamp ?? a.startedAt) ?? "").localeCompare((b.timestamp ?? b.startedAt) ?? "")
       )
 
-      return c.json({ executionId, events: merged, source: 'sqlite', _degraded: false, _message: null, loopIterations })
+      // Extract latest heartbeat snapshot from the events
+      let heartbeat: unknown = undefined
+      for (let i = merged.length - 1; i >= 0; i--) {
+        const e = merged[i]
+        if (e.event === "heartbeat" && e.data) {
+          heartbeat = e.data
+          break
+        }
+      }
+
+      return c.json({ executionId, events: merged, heartbeat, source: 'sqlite', _degraded: false, _message: null, loopIterations })
     }
   } catch {
     // SQLite query failed — fall through to JSONL
@@ -701,7 +722,18 @@ executionRoutes.get("/:executionId/agent-events", (c) => {
   for (const group of byNodeJsonl.values()) {
     events.push(...mergeAgentEvents(group))
   }
-  return c.json({ executionId, events, source: 'jsonl', _degraded: true, _message: '从 JSONL 日志读取', loopIterations })
+
+  // Extract latest heartbeat snapshot from the events (JSONL path)
+  let heartbeatJsonl: unknown = undefined
+  for (let i = events.length - 1; i >= 0; i--) {
+    const e = events[i]
+    if (e.event === "heartbeat" && e.data) {
+      heartbeatJsonl = e.data
+      break
+    }
+  }
+
+  return c.json({ executionId, events, heartbeat: heartbeatJsonl, source: 'jsonl', _degraded: true, _message: '从 JSONL 日志读取', loopIterations })
 })
 
 executionRoutes.get("/:executionId/branches", async (c) => {

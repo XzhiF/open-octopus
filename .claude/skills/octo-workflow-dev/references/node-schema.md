@@ -1,6 +1,6 @@
 # Node Schema Reference
 
-Field definitions for all 10 Octopus workflow node types. Source of truth: `packages/shared/src/types/workflow.ts`.
+Field definitions for all 11 Octopus workflow node types. Source of truth: `packages/shared/src/types/workflow.ts`.
 
 ---
 
@@ -9,7 +9,7 @@ Field definitions for all 10 Octopus workflow node types. Source of truth: `pack
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `id` | string | ✅ | Unique node identifier within the workflow |
-| `type` | enum | ✅ | One of: `bash`, `python`, `agent`, `condition`, `approval`, `loop`, `swarm`, `interaction`, `sub_workflow`, `dynamic_sub_workflow` |
+| `type` | enum | ✅ | One of: `bash`, `python`, `agent`, `condition`, `approval`, `loop`, `swarm`, `interaction`, `sub_workflow`, `dynamic_sub_workflow`, `octopus_agent` |
 | `depends_on` | string[] | — | IDs of upstream nodes this node depends on |
 | `execute_when` | string | — | Expression; falsy → node is skipped |
 | `outputs` | Record<string, string> | — | Map VarPool keys to expressions |
@@ -382,6 +382,77 @@ When re-executing with the same upstream input, the engine compares the input ha
 
 ---
 
+## 11. `octopus_agent` — Delegate Agent
+
+Delegates a task to a system-defined agent (clone) via a structured protocol with heartbeat monitoring and harness constraints.
+
+### Octopus-Agent-Specific Fields
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `agent` | string | ✅ | Clone name or `__main__` (the main agent) |
+| `version` | string | — | Specific version to use (e.g., `"1.2.0"`) |
+| `min_stage` | enum | — | Minimum version stage: `alpha` \| `beta` \| `rc` \| `stable` |
+| `task.brief` | string | ✅ | One-line task description for the delegate agent |
+| `task.context` | string[] | — | Additional context strings for the task |
+| `task.constraints` | string[] | — | Constraints the delegate must follow |
+| `task.expected_output` | object | — | Expected output schema (`type` + `schema`) |
+| `task.sop` | string | — | Standard Operating Procedure reference |
+| `task.budget` | object | — | Resource limits: `max_tokens`, `max_duration` (seconds), `max_cost_usd` |
+| `harness.heartbeat_interval` | number | — | Emit heartbeat every N steps (default: 3) |
+| `harness.heartbeat_timeout` | number | — | Stall detection timeout in seconds |
+| `harness.auto_abort_on_budget` | boolean | — | Auto-abort when token budget exceeded |
+
+### Inherited Common Fields
+
+| Field | Supported | Notes |
+|-------|:---------:|-------|
+| `model` | ✅ | Overrides the clone's default model (`pro-max`, `pro`, `se`) |
+| `engine` | ✅ | Overrides the AI provider engine (`claude`, `pi`) |
+| `effort` | ✅ | Controls reasoning depth (`low`–`max` or number) |
+| `timeout` | ✅ | Execution timeout in seconds |
+| `skills` | ❌ | **Not supported** — the clone uses its own configured skills |
+
+### How It Works
+
+1. **Version Resolution**: Resolves the specified clone version (exact or minimum stage)
+2. **Task Prompt Building**: Converts `task.brief` + context/constraints into a structured prompt
+3. **Delegate Session**: Creates a delegate session for version tracking
+4. **Agent Execution**: Delegates to `AgentExecutor` internally (composition pattern)
+5. **Heartbeat Monitoring**: `HeartbeatHandler` counts tool calls as steps, emits heartbeat events
+6. **Budget Enforcement**: Auto-aborts if `task.budget.max_tokens` is exceeded
+7. **Result Parsing**: Extracts structured result from agent output
+
+### Example
+
+```yaml
+- id: code-review
+  type: octopus_agent
+  agent: workspace
+  version: "1.0.0"
+  min_stage: beta
+  model: pro-max
+  effort: high
+  task:
+    brief: "Review the latest commit for security vulnerabilities"
+    context:
+      - "Focus on authentication and authorization code"
+      - "Check for SQL injection patterns"
+    constraints:
+      - "Do not modify any files"
+      - "Report findings in markdown format"
+    budget:
+      max_tokens: 50000
+      max_duration: 300
+  harness:
+    heartbeat_interval: 5
+    heartbeat_timeout: 120
+    auto_abort_on_budget: true
+  depends_on: [build]
+```
+
+---
+
 ## Workflow-Level Fields
 
 | Field | Type | Required | Description |
@@ -410,6 +481,9 @@ When re-executing with the same upstream input, the engine compares the input ha
 |-------|------|----------|-------------|
 | `skills` | string[] | — | Skill dependencies (`group/name` format, e.g. `superpowers-zh/test-driven-development`) |
 | `agent_files` | string[] | — | Agent file dependencies (`group/name.md` format, e.g. `built-in/vision-analyzer.md`) |
+| `commands` | string[] | — | Command dependencies (e.g. `cmd-review`). Provisioned to `.claude/commands/` |
+| `rules` | string[] | — | Rule dependencies (e.g. `code-style`). Provisioned to `.claude/rules/` |
+| `clones` | string[] | — | Clone dependencies (e.g. `workspace`). **Hard-fail gate** — must be pre-installed, NOT auto-provisioned |
 
 > See `references/requires-and-effort.md` for full documentation on `requires` and `effort`.
 

@@ -244,11 +244,14 @@ export class ObservabilityService {
   }
 
   private filterEvent(event: AgentEvent, turnIndex: number): FilteredAgentEvent | null {
-    // Heartbeat and harness events don't carry timestamps and are not persisted
-    // through the observability pipeline — they're handled separately via SSE
-    // and JSONL in EngineCallbacks.
+    // Heartbeat and harness events don't carry timestamps — use current time
     if (event.type === "heartbeat" || event.type === "harness_directive" || event.type === "heartbeat_stall") {
-      return null
+      return {
+        type: event.type,
+        timestamp: Date.now(),
+        content: JSON.stringify(event.data),
+        turnIndex,
+      }
     }
 
     const base: FilteredAgentEvent = {

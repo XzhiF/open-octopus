@@ -1,0 +1,8 @@
+{
+  "root_feature": "octopus-agent-ui-wiring",
+  "branch": "feat/agent-workflow-integration",
+  "iterations": [],
+  "max_iterations": 5,
+  "convergence_threshold": 85,
+  "status": "running"
+}
