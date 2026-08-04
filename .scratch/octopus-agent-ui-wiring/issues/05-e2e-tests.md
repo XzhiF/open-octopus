@@ -34,7 +34,7 @@ Save all screenshots to `.scratch/octopus-agent-ui-wiring/e2e-screenshots/`:
 Ticket 04 (all UI components must be implemented first)
 
 ## Status
-ready-for-agent
+done
 
 ## Acceptance Criteria
 - [ ] AC-14: Playwright 测试可重复执行 (连续 2 次执行均 PASS)
