@@ -92,6 +92,11 @@ export class WorkflowEngine {
   private knowledgeInjectorFactory?: (pool: VarPool) => KnowledgeInjector
   // Model alias config for tier resolution (P0-2)
   private modelAliasConfig: ModelAliasConfig
+
+  /** Expose logger for virtual phases (e.g. __engine_init__) */
+  getLogger(): JsonlLogger | undefined {
+    return this.logger
+  }
   // BL-6: Workflow-level default model (replaces propagateModel mutation)
   private workflowDefaultModel?: string
   // Precompute hook: runs before node execution to populate VarPool with knowledge data

@@ -112,19 +112,46 @@ export function WorkflowFlowViewerWithStatus({
   // Pre-fetch sub-workflow child nodes for container rendering
   // Recursively scans all nodes including those nested inside loops
   const [subWorkflowNodes, setSubWorkflowNodes] = useState<Record<string, any[]>>({})
+
+  // Track how many sub-workflows we've successfully resolved — re-fetch when
+  // executionSteps change and some dynamic sub-workflows are still unresolved
+  // (the child YAML is generated at runtime by dynamic_sub_workflow executor)
+  const stepCountKey = executionSteps.length
+
+  // Bump a counter when SSE runtime_node_added fires for this execution
+  // so we refetch dynamic sub-workflow YAMLs immediately (not waiting for poll)
+  const [runtimeNodeVersion, setRuntimeNodeVersion] = useState(0)
+  useEffect(() => {
+    if (!workspaceId || !executionId) return
+    const es = new EventSource(`${getServerUrl()}/api/workspaces/${workspaceId}/executions/events`)
+    es.addEventListener("runtime_node_added", (e) => {
+      try {
+        const data = JSON.parse(e.data)
+        if (data.executionId === executionId) {
+          setRuntimeNodeVersion(v => v + 1)
+        }
+      } catch { /* ignore */ }
+    })
+    return () => es.close()
+  }, [workspaceId, executionId])
+
   useEffect(() => {
     const parsed = parseYaml(yamlContent)
     if (!parsed?.nodes) return
 
-    // Recursively collect all sub_workflow references (including dynamic_sub_workflow)
-    const collectRefs = (nodes: Array<Record<string, unknown>>): string[] => {
-      const refs: string[] = []
+    // Recursively collect all sub_workflow references
+    // Track which refs are dynamic (generated at runtime) vs static
+    // Note: dynamic_sub_workflow generated files have executionId in filename,
+    // so only fetch them when executionId is available (not in preview mode)
+    const collectRefs = (nodes: Array<Record<string, unknown>>): Array<{ ref: string; isDynamic: boolean }> => {
+      const refs: Array<{ ref: string; isDynamic: boolean }> = []
       for (const n of nodes) {
         if (n.type === "sub_workflow" && n.workflow) {
-          refs.push(n.workflow as string)
+          refs.push({ ref: n.workflow as string, isDynamic: false })
         }
-        if (n.type === "dynamic_sub_workflow" && n.workflow) {
-          refs.push(n.workflow as string)
+        // Only collect dynamic_sub_workflow refs when we have an executionId
+        if (n.type === "dynamic_sub_workflow" && n.workflow && executionId) {
+          refs.push({ ref: n.workflow as string, isDynamic: true })
         }
         if (Array.isArray(n.nodes)) {
           refs.push(...collectRefs(n.nodes as Array<Record<string, unknown>>))
@@ -133,28 +160,41 @@ export function WorkflowFlowViewerWithStatus({
       return refs
     }
 
-    const refs = collectRefs(parsed.nodes as Array<Record<string, unknown>>)
-    if (refs.length === 0 || !workspaceId) return
+    const refInfos = collectRefs(parsed.nodes as Array<Record<string, unknown>>)
+    if (refInfos.length === 0 || !workspaceId) return
+
+    // Skip refs we already resolved successfully
+    const unresolvedRefs = refInfos.filter(info => !subWorkflowNodes[info.ref])
+    if (unresolvedRefs.length === 0 && stepCountKey === (subWorkflowNodes.__stepCount as number ?? -1)) return
 
     const fetchAll = async () => {
-      const results: Record<string, any[]> = {}
+      const results: Record<string, any[]> = { ...subWorkflowNodes }
       await Promise.all(
-        refs.map(async (ref: string) => {
+        refInfos.map(async (info) => {
           try {
-            const res = await fetch(`${getServerUrl()}/api/workspaces/${workspaceId}/workflows/${encodeURIComponent(ref)}`)
+            // For dynamic_sub_workflow, add isDynamic=true to prevent fallback to workflows/
+            // (should only use execution-scoped snapshot, return empty if not yet generated)
+            const params = new URLSearchParams()
+            if (executionId) params.set("executionId", executionId)
+            if (info.isDynamic) params.set("isDynamic", "true")
+            const queryString = params.toString()
+            const url = `${getServerUrl()}/api/workspaces/${workspaceId}/workflows/${encodeURIComponent(info.ref)}${queryString ? `?${queryString}` : ""}`
+
+            const res = await fetch(url)
             if (res.ok) {
               const data = await res.json()
               if (data.parsed?.nodes) {
-                results[ref] = data.parsed.nodes
+                results[info.ref] = data.parsed.nodes
               }
             }
           } catch { /* non-fatal: container will render empty */ }
         }),
       )
+      results.__stepCount = stepCountKey as any
       setSubWorkflowNodes(results)
     }
     fetchAll()
-  }, [yamlContent, workspaceId])
+  }, [yamlContent, workspaceId, stepCountKey, runtimeNodeVersion])
 
   const flowData = useMemo(() => {
     const parsed = parseYaml(yamlContent)
@@ -301,6 +341,7 @@ export function WorkflowFlowViewerWithStatus({
   return (
     <div className="h-full w-full" onContextMenu={(e) => e.preventDefault()}>
       <ReactFlow
+        key={`rf-${flowData.nodes.length}`}
         nodes={flowData.nodes}
         edges={flowData.edges}
         nodeTypes={nodeTypes}

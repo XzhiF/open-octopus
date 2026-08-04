@@ -1,6 +1,6 @@
 import yaml from "js-yaml"
 
-const VALID_NODE_TYPES = new Set(["bash", "python", "agent", "condition", "approval", "loop", "swarm", "interaction"])
+const VALID_NODE_TYPES = new Set(["bash", "python", "agent", "condition", "approval", "loop", "swarm", "interaction", "sub_workflow", "dynamic_sub_workflow"])
 
 export function parseYaml(content: string): Record<string, unknown> | null {
   try {

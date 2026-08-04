@@ -23,7 +23,7 @@ interface WorkflowDefinition {
   [key: string]: unknown
 }
 
-const VALID_NODE_TYPES = new Set(["bash", "python", "agent", "condition", "approval", "loop", "swarm", "interaction", "sub_workflow"])
+const VALID_NODE_TYPES = new Set(["bash", "python", "agent", "condition", "approval", "loop", "swarm", "interaction", "sub_workflow", "dynamic_sub_workflow"])
 
 // Node dimensions for dagre layout
 // Heights account for header + duration + multi-model token display
@@ -35,6 +35,7 @@ function getNodeDimensions(node: WorkflowNode): { width: number; height: number 
     case "approval": return { width: 280, height: 165 }
     case "swarm": return { width: 280, height: 180 }
     case "sub_workflow": return { width: 280, height: 180 }
+    case "dynamic_sub_workflow": return { width: 280, height: 180 }
     default: return { width: 280, height: 160 }
   }
 }
@@ -150,16 +151,15 @@ function dagreLayout(
     }
   }
 
-  // Normalize: use first node's position as anchor (don't collapse all to x=0)
-  const firstNode = workflowNodes[0]
-  const anchorX = positions.get(firstNode.id)?.x ?? 0
-  const anchorY = Math.min(...Array.from(positions.values()).map(p => p.y))
+  // Normalize: shift so leftmost node is at x=padding, topmost at y=padding
+  const minX = Math.min(...Array.from(positions.values()).map(p => p.x))
+  const minY = Math.min(...Array.from(positions.values()).map(p => p.y))
 
   const result: Record<string, { x: number; y: number }> = {}
   for (const [id, data] of positions) {
     result[id] = {
-      x: data.x - anchorX + padding,
-      y: data.y - anchorY + padding,
+      x: data.x - minX + padding,
+      y: data.y - minY + padding,
     }
   }
 
@@ -184,8 +184,8 @@ export function yamlToFlowData(
     if (node.type === "loop" && Array.isArray(node.nodes) && node.nodes.length > 0) {
       containerNodesWithInner.set(node.id, node)
       topWorkflowNodes.push(node) // keep as placeholder for outer layout
-    } else if (node.type === "sub_workflow") {
-      // For sub_workflow: use inline nodes if present, otherwise look up from subWorkflowNodes map
+    } else if (node.type === "sub_workflow" || node.type === "dynamic_sub_workflow") {
+      // For sub_workflow / dynamic_sub_workflow: use inline nodes if present, otherwise look up from subWorkflowNodes map
       const workflowRef = (node as Record<string, unknown>).workflow as string | undefined
       const childNodes = node.nodes ?? (workflowRef ? subWorkflowNodes?.[workflowRef] : undefined)
       if (childNodes && childNodes.length > 0) {
@@ -228,7 +228,7 @@ export function yamlToFlowData(
 
     // Resolve sub_workflow children nested inside this loop
     const resolvedInnerNodes: WorkflowNode[] = innerNodes.map((n) => {
-      if (n.type === "sub_workflow") {
+      if (n.type === "sub_workflow" || n.type === "dynamic_sub_workflow") {
         const workflowRef = (n as Record<string, unknown>).workflow as string | undefined
         const childNodes = n.nodes ?? (workflowRef ? subWorkflowNodes?.[workflowRef] : undefined)
         if (childNodes && childNodes.length > 0) {
@@ -269,7 +269,7 @@ export function yamlToFlowData(
     }>()
 
     for (const innerWfNode of innerWfNodes) {
-      if (innerWfNode.type !== "sub_workflow") continue
+      if (innerWfNode.type !== "sub_workflow" && innerWfNode.type !== "dynamic_sub_workflow") continue
       const origId = innerWfNode.id.slice(loopId.length + 1)
       const origNode = resolvedInnerNodes.find((n) => n.id === origId)
       const childNodes = (origNode as any)?.nodes as WorkflowNode[] | undefined
@@ -349,7 +349,7 @@ export function yamlToFlowData(
     if (minX === Infinity) { minX = 0; minY = 0; maxX = 280; maxY = 160 }
 
     // Sub-workflow containers have taller headers (badges)
-    const loopContainerHeaderHeight = loopNode.type === "sub_workflow" ? 65 : HEADER_HEIGHT
+    const loopContainerHeaderHeight = (loopNode.type === "sub_workflow" || loopNode.type === "dynamic_sub_workflow") ? 65 : HEADER_HEIGHT
 
     containerSizes.set(loopId, {
       width: (maxX - minX) + CONTAINER_SIDE_PADDING * 2,
@@ -405,7 +405,7 @@ export function yamlToFlowData(
 
     // Detect if this container is a sub_workflow (taller header with badges)
     const containerOrigNode = containerNodesWithInner.get(loopId)
-    const isSubWorkflowContainer = containerOrigNode?.type === "sub_workflow"
+    const isSubWorkflowContainer = containerOrigNode?.type === "sub_workflow" || containerOrigNode?.type === "dynamic_sub_workflow"
     const containerHeaderHeight = isSubWorkflowContainer ? 65 : HEADER_HEIGHT
 
     for (const innerWfNode of data.wfNodes) {
@@ -415,7 +415,7 @@ export function yamlToFlowData(
       const origNode = containerNodesWithInner.get(loopId)!.nodes!.find((n: any) => n.id === origId) as WorkflowNode | undefined
 
       // sub_workflow inside a loop: render as sub-workflow-container (same as top-level)
-      const isInnerSubWorkflow = innerWfNode.type === "sub_workflow"
+      const isInnerSubWorkflow = innerWfNode.type === "sub_workflow" || innerWfNode.type === "dynamic_sub_workflow"
       const nodeType = isInnerSubWorkflow ? "sub-workflow-container" : innerWfNode.type
       const nestedLayout = data.nestedSubWfLayouts?.get(innerWfNode.id)
 
@@ -425,9 +425,9 @@ export function yamlToFlowData(
       allInnerNodes.push({
         id: innerWfNode.id,
         type: nodeType,
-        // Absolute position: center horizontally within container, stack vertically
+        // Position: use dagre-computed rawPos directly (not centering, which destroys horizontal spread)
         position: {
-          x: containerPos.x + (containerSize.width - actualWidth) / 2,
+          x: containerPos.x + rawPos.x,
           y: containerPos.y + containerHeaderHeight + rawPos.y,
         },
         data: {
@@ -445,7 +445,6 @@ export function yamlToFlowData(
             input_mapping: (origNode as Record<string, unknown>)?.input_mapping,
             output_mapping: (origNode as Record<string, unknown>)?.output_mapping,
             on_error: (origNode as Record<string, unknown>)?.on_error ?? "fail",
-            childNodeIds: (origNode as any)?.nodes?.map((n: any) => n.id) ?? [],
           } : {}),
         },
         ...(isInnerSubWorkflow ? {
@@ -470,7 +469,7 @@ export function yamlToFlowData(
             id: childWfNode.id,
             type: childWfNode.type,
             position: {
-              x: swContainerPos.x + (nestedLayout.containerWidth - getNodeDimensions(childWfNode).width) / 2,
+              x: swContainerPos.x + childPos.x,
               y: swContainerPos.y + SUB_WF_HEADER_HEIGHT + childPos.y,
             },
             data: {
@@ -498,9 +497,9 @@ export function yamlToFlowData(
 
     // Determine node type for ReactFlow rendering:
     // - loop with inner nodes → "loop-container"
-    // - sub_workflow (always) → "sub-workflow-container" (even without inner nodes)
+    // - sub_workflow / dynamic_sub_workflow (always) → "sub-workflow-container" (even without inner nodes)
     // - everything else → original type
-    const isSubWorkflow = node.type === "sub_workflow"
+    const isSubWorkflow = node.type === "sub_workflow" || node.type === "dynamic_sub_workflow"
     const containerType = isContainerWithInner
       ? isSubWorkflow ? "sub-workflow-container" : "loop-container"
       : isSubWorkflow
@@ -533,6 +532,7 @@ export function yamlToFlowData(
           input_mapping: (node as Record<string, unknown>).input_mapping,
           output_mapping: (node as Record<string, unknown>).output_mapping,
           on_error: (node as Record<string, unknown>).on_error ?? "fail",
+          is_dynamic: node.type === "dynamic_sub_workflow",
         } : {}),
         ...(node.type === "swarm" ? {
           mode: (node as Record<string, unknown>).mode,

@@ -7,6 +7,8 @@ import {
   Repeat,
   Network,
   MessageCircle,
+  Workflow,
+  Sparkles,
   type LucideIcon,
 } from "lucide-react"
 
@@ -74,5 +76,19 @@ export const nodeIconConfigs: Record<string, NodeIconConfig> = {
     bgColor: "bg-purple-50",
     borderColor: "border-purple-200",
     label: "Interaction",
+  },
+  sub_workflow: {
+    icon: Workflow,
+    color: "text-indigo-600",
+    bgColor: "bg-indigo-50",
+    borderColor: "border-indigo-200",
+    label: "Sub Workflow",
+  },
+  dynamic_sub_workflow: {
+    icon: Sparkles,
+    color: "text-violet-600",
+    bgColor: "bg-violet-50",
+    borderColor: "border-violet-200",
+    label: "Dynamic DAG",
   },
 }

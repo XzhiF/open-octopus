@@ -38,7 +38,38 @@ export class WorkflowService {
       .filter((item): item is WorkflowInfo => item !== null)
   }
 
-  get(workspacePath: string, ref: string): WorkflowDetail | undefined {
+  get(workspacePath: string, ref: string, executionId?: string): WorkflowDetail | undefined {
+    const resolvedWorkspacePath = this.resolve(workspacePath)
+
+    // Try execution-scoped snapshot first (for dynamic sub-workflows)
+    if (executionId) {
+      const snapshotDir = path.join(resolvedWorkspacePath, "state", "dynamic-workflows", executionId)
+      const snapshotPath = WorkflowRef.toPath(snapshotDir, ref)
+
+      if (fs.existsSync(snapshotPath)) {
+        const content = fs.readFileSync(snapshotPath, "utf-8")
+        const parsed = parseWorkflow(content)
+        return { ref, content, parsed }
+      }
+
+      // Extension fallback for snapshots
+      const parsedRef = WorkflowRef.parse(ref)
+      if (!parsedRef.name.endsWith(".yaml") && !parsedRef.name.endsWith(".yml")) {
+        for (const ext of [".yaml", ".yml"]) {
+          const fallbackRef = parsedRef.group
+            ? `${parsedRef.group}/${parsedRef.name}${ext}`
+            : `${parsedRef.name}${ext}`
+          const fallbackPath = WorkflowRef.toPath(snapshotDir, fallbackRef)
+          if (fs.existsSync(fallbackPath)) {
+            const content = fs.readFileSync(fallbackPath, "utf-8")
+            const parsedWf = parseWorkflow(content)
+            return { ref: fallbackRef, content, parsed: parsedWf }
+          }
+        }
+      }
+    }
+
+    // Fall back to workflows/ directory
     const dir = this.workflowsDir(workspacePath)
     const filePath = WorkflowRef.toPath(dir, ref)
 
