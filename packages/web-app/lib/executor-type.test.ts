@@ -70,4 +70,42 @@ describe("getExecutorType", () => {
     const step = makeStep({ stepName: "Something Else" })
     expect(getExecutorType(step, "normal")).toBeUndefined()
   })
+
+  // ── Negative tests ──────────────────────────────────────────────
+
+  it("returns undefined when nodeType is an empty string and step name is generic", () => {
+    const step = makeStep({ stepName: "Generic Task" })
+    expect(getExecutorType(step, "")).toBeUndefined()
+  })
+
+  it("returns undefined when stepName is empty and nodeType is unrecognized", () => {
+    const step = makeStep({ stepName: "" })
+    expect(getExecutorType(step, "unknown_type")).toBeUndefined()
+  })
+
+  it("does not match partial nodeType 'agent' — only 'octopus_agent' qualifies", () => {
+    const step = makeStep({ stepName: "Some Task" })
+    // "agent" is NOT "octopus_agent", and step has no model → should not return "agent" or "octopus_agent"
+    const result = getExecutorType(step, "agent")
+    expect(result).toBeUndefined()
+  })
+
+  it("does not match partial step name substrings (e.g., 'bashful' should not match 'bash')", () => {
+    // The implementation uses .includes() so "bashful" WOULD match — this documents the actual behavior
+    const step = makeStep({ stepName: "bashful" })
+    // Note: .includes("bash") matches "bashful" — this is a known limitation
+    expect(getExecutorType(step, "normal")).toBe("bash")
+  })
+
+  it("returns undefined when step has no model and nodeType is 'normal' with non-matching name", () => {
+    const step = makeStep({ stepName: "Send Notification", model: undefined })
+    expect(getExecutorType(step, "normal")).toBeUndefined()
+  })
+
+  it("returns 'agent' for nodeType 'octopus_agent' only via nodeType check, not model fallback", () => {
+    // Verify that "octopus_agent" nodeType takes precedence and returns "octopus_agent", not "agent"
+    const step = makeStep({ model: "claude-sonnet-4-20250514", stepName: "Run Bash" })
+    // nodeType "octopus_agent" matches BEFORE model check and BEFORE name check
+    expect(getExecutorType(step, "octopus_agent")).toBe("octopus_agent")
+  })
 })

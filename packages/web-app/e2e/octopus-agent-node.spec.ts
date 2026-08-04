@@ -518,15 +518,18 @@ test.describe("octopus_agent Node E2E", () => {
     test.skip(!workspaceId, "Workspace not created")
     const wsId = workspaceId!
 
-    // Verify the workflow was written successfully by listing workflows
+    // Verify the workflow was written successfully by fetching it directly.
+    // Note: The list endpoint returns built-in workflows; workspace-specific
+    // workflows are verified via the direct GET endpoint.
     const ctx = await request.newContext()
     try {
-      const res = await ctx.get(`${SERVER_URL}/api/workspaces/${wsId}/workflows`)
+      const res = await ctx.get(
+        `${SERVER_URL}/api/workspaces/${wsId}/workflows/${WORKFLOW_REF}`,
+      )
       expect(res.ok()).toBe(true)
 
-      const workflows = await res.json() as Array<{ ref: string; name?: string }>
-      const testWorkflow = workflows.find((w) => w.ref === WORKFLOW_REF || w.name === WORKFLOW_REF)
-      expect(testWorkflow).toBeDefined()
+      const workflow = await res.json() as { ref: string; parsed?: { name?: string } }
+      expect(workflow.ref).toBe(WORKFLOW_REF)
     } finally {
       await ctx.dispose()
     }

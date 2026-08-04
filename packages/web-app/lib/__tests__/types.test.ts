@@ -144,4 +144,98 @@ describe("AgentEvent typed variants", () => {
     expect(event.directivePayload).toBeUndefined()
     expect(event.stallPayload).toBeUndefined()
   })
+
+  // ── Edge case tests ───────────────────────────────────────────
+
+  it("StatusOverlay is valid with heartbeat explicitly undefined", () => {
+    const overlay: StatusOverlay = {
+      stepStatus: "pending",
+      heartbeat: undefined,
+      duration: undefined,
+      startedAt: undefined,
+      error: undefined,
+    }
+
+    expect(overlay.stepStatus).toBe("pending")
+    expect(overlay.heartbeat).toBeUndefined()
+    expect(overlay.duration).toBeUndefined()
+    expect(overlay.error).toBeUndefined()
+  })
+
+  it("AgentEventsResponse handles empty events array gracefully", () => {
+    const response: AgentEventsResponse = {
+      executionId: "exec-empty",
+      events: [],
+      source: "sqlite",
+      _degraded: false,
+      _message: null,
+      heartbeat: undefined,
+      loopIterations: {},
+    }
+
+    expect(response.events).toHaveLength(0)
+    expect(response.loopIterations).toEqual({})
+    expect(response.heartbeat).toBeUndefined()
+    expect(response._degraded).toBe(false)
+  })
+
+  it("AgentEvent supports all typed payloads simultaneously undefined", () => {
+    const event: AgentEvent = {
+      nodeId: "node-minimal",
+      event: "unknown_event",
+    }
+
+    expect(event.nodeId).toBe("node-minimal")
+    expect(event.event).toBe("unknown_event")
+    expect(event.timestamp).toBeUndefined()
+    expect(event.iteration).toBeUndefined()
+    expect(event.heartbeatPayload).toBeUndefined()
+    expect(event.directivePayload).toBeUndefined()
+    expect(event.stallPayload).toBeUndefined()
+    expect(event.content).toBeUndefined()
+    expect(event.toolCallId).toBeUndefined()
+  })
+
+  it("AgentHeartbeat accepts zero values and empty arrays", () => {
+    const heartbeat: AgentHeartbeat = {
+      step: 0,
+      total_steps: 0,
+      tokens_used: 0,
+      tokens_budget: 0,
+      artifacts: [],
+      issues: [],
+      confidence: 0,
+      current_activity: "",
+    }
+
+    expect(heartbeat.step).toBe(0)
+    expect(heartbeat.total_steps).toBe(0)
+    expect(heartbeat.tokens_used).toBe(0)
+    expect(heartbeat.artifacts).toHaveLength(0)
+    expect(heartbeat.issues).toHaveLength(0)
+    expect(heartbeat.confidence).toBe(0)
+    expect(heartbeat.current_activity).toBe("")
+  })
+
+  it("AgentEvent heartbeat payload with missing optional fields", () => {
+    // AgentHeartbeat requires certain fields; test with minimal required shape
+    const event: AgentEvent = {
+      nodeId: "node-1",
+      event: "heartbeat",
+      heartbeatPayload: {
+        step: 1,
+        total_steps: 1,
+        tokens_used: 100,
+        artifacts: [],
+        issues: [],
+        confidence: 1,
+        current_activity: "Done",
+      },
+    }
+
+    expect(event.heartbeatPayload).toBeDefined()
+    expect(event.heartbeatPayload!.step).toBe(1)
+    // Optional field tokens_budget should be undefined when not provided
+    expect((event.heartbeatPayload as any).tokens_budget).toBeUndefined()
+  })
 })

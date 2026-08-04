@@ -137,4 +137,65 @@ describe("useExecutionEvents", () => {
     expect(result.current.heartbeat?.step).toBe(3)
     expect(result.current.heartbeat?.tokens_used).toBe(1500)
   })
+
+  // ── Error path tests ────────────────────────────────────────────
+
+  it("sets error state when API call fails", async () => {
+    mockedFetch.mockRejectedValue(new Error("Network error"))
+
+    const { result } = renderHook(() =>
+      useExecutionEvents("ws-1", "exec-fail", "completed")
+    )
+
+    await waitFor(() => {
+      expect(result.current.loading).toBe(false)
+    })
+
+    expect(result.current.error).toBe("Network error")
+    expect(result.current.events).toEqual([])
+    expect(result.current.groups).toEqual([])
+    expect(result.current.heartbeat).toBeUndefined()
+    expect(result.current.loopIterations).toEqual({})
+  })
+
+  it("handles empty events array without error", async () => {
+    mockedFetch.mockResolvedValue({
+      executionId: "exec-empty",
+      events: [],
+      source: "sqlite",
+      _degraded: false,
+      _message: null,
+    } as AgentEventsResponse)
+
+    const { result } = renderHook(() =>
+      useExecutionEvents("ws-1", "exec-empty", "completed")
+    )
+
+    await waitFor(() => {
+      expect(result.current.loading).toBe(false)
+    })
+
+    expect(result.current.error).toBeNull()
+    expect(result.current.events).toEqual([])
+    expect(result.current.groups).toEqual([])
+    expect(result.current.heartbeat).toBeUndefined()
+    expect(result.current.loopIterations).toEqual({})
+  })
+
+  it("sets error as string when API throws non-Error value", async () => {
+    mockedFetch.mockRejectedValue("string error")
+
+    const { result } = renderHook(() =>
+      useExecutionEvents("ws-1", "exec-str", "completed")
+    )
+
+    await waitFor(() => {
+      expect(result.current.loading).toBe(false)
+    })
+
+    expect(result.current.error).toBe("string error")
+    expect(result.current.events).toEqual([])
+    expect(result.current.groups).toEqual([])
+    expect(result.current.heartbeat).toBeUndefined()
+  })
 })
