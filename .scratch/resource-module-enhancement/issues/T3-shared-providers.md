@@ -1,6 +1,6 @@
 # T3: Shared Providers — BuiltinProvider Rules/Commands + SourceDiscovery New Patterns
 
-## Status: in_progress
+## Status: done
 
 ## Problem
 

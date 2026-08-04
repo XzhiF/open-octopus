@@ -121,10 +121,10 @@ export class BuiltinProvider {
     this.scanWorkflowFiles(entries)
 
     // Rules: scan .md files in rules/
-    this.scanRuleFiles(entries)
+    this.scanMarkdownDir("rules", "rule", entries)
 
     // Commands: scan .md files in commands/
-    this.scanCommandFiles(entries)
+    this.scanMarkdownDir("commands", "command", entries)
 
     return entries
   }
@@ -207,8 +207,8 @@ export class BuiltinProvider {
     }
   }
 
-  private scanRuleFiles(entries: BuiltinCatalogEntry[]): void {
-    const dirPath = path.join(this.base, "rules")
+  private scanMarkdownDir(subdir: string, type: "rule" | "command", entries: BuiltinCatalogEntry[]): void {
+    const dirPath = path.join(this.base, subdir)
     if (!fs.existsSync(dirPath)) return
 
     const items = fs.readdirSync(dirPath, { withFileTypes: true })
@@ -218,25 +218,7 @@ export class BuiltinProvider {
       const name = item.name.replace(/\.md$/, "")
       entries.push({
         name,
-        type: "rule",
-        description: "",
-        sourcePath: path.join(dirPath, item.name),
-      })
-    }
-  }
-
-  private scanCommandFiles(entries: BuiltinCatalogEntry[]): void {
-    const dirPath = path.join(this.base, "commands")
-    if (!fs.existsSync(dirPath)) return
-
-    const items = fs.readdirSync(dirPath, { withFileTypes: true })
-    for (const item of items) {
-      if (!item.isFile()) continue
-      if (!item.name.endsWith(".md")) continue
-      const name = item.name.replace(/\.md$/, "")
-      entries.push({
-        name,
-        type: "command",
+        type,
         description: "",
         sourcePath: path.join(dirPath, item.name),
       })

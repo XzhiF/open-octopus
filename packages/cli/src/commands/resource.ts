@@ -112,8 +112,7 @@ resourceCmd
     const result = await apiRequest<{ name: string; type: string; activatedTo: string }>(
       "POST", "/activate", { name, type: options.type },
     )
-    console.log(chalk.green(`✓ Activated ${result.name} (${result.type})`))
-    console.log(chalk.dim(`  Target: ${result.activatedTo}`))
+    console.log(chalk.green(`✓ Activated ${result.name} → ${result.activatedTo}`))
   })
 
 // --- deactivate ---

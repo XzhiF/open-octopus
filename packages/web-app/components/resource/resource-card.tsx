@@ -32,7 +32,7 @@ const typeBadge = cva("text-xs font-medium", {
 
 interface ResourceCardProps {
   entry: ResourceEntry
-  onUninstall?: (name: string, type: ResourceType) => void
+  onUninstall?: (name: string, type: ResourceType, activated: boolean) => void
   onActivate?: (name: string, type: ResourceType) => void
   onDeactivate?: (name: string, type: ResourceType) => void
 }
@@ -41,7 +41,7 @@ const ACTIVATABLE_TYPES = new Set(["rule", "command", "clone"])
 
 export function ResourceCard({ entry, onUninstall, onActivate, onDeactivate }: ResourceCardProps) {
   const Icon = typeIcon[entry.type as ResourceType] ?? BrainCircuit
-  const isActivated = (entry as any).activated === true
+  const isActivated = entry.activated === true
   const canActivate = ACTIVATABLE_TYPES.has(entry.type) && !isActivated
   const canDeactivate = isActivated
 
@@ -111,7 +111,7 @@ export function ResourceCard({ entry, onUninstall, onActivate, onDeactivate }: R
             <Button
               variant="ghost"
               size="icon"
-              onClick={() => onUninstall(entry.name, entry.type as ResourceType)}
+              onClick={() => onUninstall(entry.name, entry.type as ResourceType, isActivated)}
               disabled={isActivated}
               title={isActivated ? "请先停用再卸载" : "卸载"}
             >

@@ -1,6 +1,6 @@
 # T2: Shared Manager — Activate/Deactivate + Uninstall Guard + Backup
 
-## Status: in_progress
+## Status: done
 
 ## Problem
 

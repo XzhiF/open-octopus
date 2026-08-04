@@ -1,6 +1,6 @@
 # T6: Web UI — Type Filters + Activate/Deactivate + Badges + Uninstall Flow
 
-## Status: in_progress
+## Status: done
 
 ## Problem
 

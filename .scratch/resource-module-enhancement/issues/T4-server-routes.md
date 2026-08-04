@@ -1,6 +1,6 @@
 # T4: Server Routes — Activate/Deactivate Endpoints + Modified Uninstall + Middleware
 
-## Status: in_progress
+## Status: done
 
 ## Problem
 

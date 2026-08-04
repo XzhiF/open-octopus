@@ -64,7 +64,7 @@ export function ResourceList() {
   const [query, setQuery] = useState(DEFAULT_STATE.query)
   const [selectedGroups, setSelectedGroups] = useState<Set<string> | null>(null)
   const [groupsExpanded, setGroupsExpanded] = useState(false)
-  const [uninstallTarget, setUninstallTarget] = useState<{ name: string; type: ResourceType } | null>(null)
+  const [uninstallTarget, setUninstallTarget] = useState<{ name: string; type: ResourceType; activated?: boolean } | null>(null)
   const [uninstalling, setUninstalling] = useState(false)
   const [page, setPage] = useState(DEFAULT_STATE.page)
   const [hydrated, setHydrated] = useState(false)
@@ -322,7 +322,7 @@ export function ResourceList() {
               <ResourceCard
                 key={`${entry.type}:${(entry as any).group ?? ""}:${entry.name}`}
                 entry={entry}
-                onUninstall={(name, type) => setUninstallTarget({ name, type })}
+                onUninstall={(name, type, activated) => setUninstallTarget({ name, type, activated })}
                 onActivate={handleActivate}
                 onDeactivate={handleDeactivate}
               />
@@ -399,7 +399,7 @@ export function ResourceList() {
         onOpenChange={(open) => !open && setUninstallTarget(null)}
         name={uninstallTarget?.name || ""}
         type={uninstallTarget?.type || "skill"}
-        activated={uninstallTarget ? allEntries.find(e => e.name === uninstallTarget.name && e.type === uninstallTarget.type && (e as any).activated) !== undefined : false}
+        activated={uninstallTarget?.activated ?? false}
         onConfirm={handleUninstallConfirm}
         loading={uninstalling}
       />
