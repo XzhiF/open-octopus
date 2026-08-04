@@ -17,6 +17,16 @@ import {
   RegistryFileSchema,
   LockFileSchema,
   isPathWithinBase,
+  ResourceType,
+  ResourceEntrySchema,
+  ResourceAuditAction,
+  UninstallRequestSchema,
+  UninstallResponseSchema,
+  ActivateRequestSchema,
+  ActivateResponseSchema,
+  DeactivateRequestSchema,
+  DeactivateResponseSchema,
+  ResourceCountSchema,
   type ResourceEntry,
 } from "../resource"
 
@@ -43,9 +53,9 @@ function makeEntry(overrides: Partial<ResourceEntry> = {}): ResourceEntry {
     verified: true,
     status: "installed",
     installedAt: new Date().toISOString(),
-    scope: "org",
     installPath: "/tmp/test",
     dependsOn: [],
+    activated: false,
     ...overrides,
   }
 }
@@ -504,9 +514,10 @@ describe("ResourceManager", () => {
     fs.mkdirSync(skillDir, { recursive: true })
     fs.writeFileSync(path.join(skillDir, "SKILL.md"), "# Test Skill\nHello world", "utf-8")
 
-    const agentDir = path.join(corePackDir, "agents", "test-agent")
-    fs.mkdirSync(agentDir, { recursive: true })
-    fs.writeFileSync(path.join(agentDir, "AGENT.md"), "# Test Agent", "utf-8")
+    // Agents are .md files directly in agents/ directory
+    const agentsDir = path.join(corePackDir, "agents")
+    fs.mkdirSync(agentsDir, { recursive: true })
+    fs.writeFileSync(path.join(agentsDir, "test-agent.md"), "# Test Agent", "utf-8")
 
     manager = new ResourceManager({
       basePath: tmpDir,
@@ -535,7 +546,6 @@ describe("ResourceManager", () => {
   it("install builtin skill", async () => {
     const result = await manager.install({
       ref: "builtin:test-skill",
-      scope: "org",
       caller: "cli",
     })
 
@@ -560,23 +570,23 @@ describe("ResourceManager", () => {
   })
 
   it("install duplicate throws RESOURCE_ALREADY_EXISTS", async () => {
-    await manager.install({ ref: "builtin:test-skill", scope: "org", caller: "cli" })
+    await manager.install({ ref: "builtin:test-skill", caller: "cli" })
 
     await expect(
-      manager.install({ ref: "builtin:test-skill", scope: "org", caller: "cli" }),
+      manager.install({ ref: "builtin:test-skill", caller: "cli" }),
     ).rejects.toThrow(ResourceError)
   })
 
   it("install non-existent builtin throws BUILTIN_NOT_FOUND", async () => {
     await expect(
-      manager.install({ ref: "builtin:nonexistent-skill", scope: "org", caller: "cli" }),
+      manager.install({ ref: "builtin:nonexistent-skill", caller: "cli" }),
     ).rejects.toThrow()
   })
 
   it("uninstall removes resource", async () => {
-    await manager.install({ ref: "builtin:test-skill", scope: "org", caller: "cli" })
+    await manager.install({ ref: "builtin:test-skill", caller: "cli" })
 
-    const result = await manager.uninstall({ name: "test-skill", type: "skill", caller: "cli" })
+    const result = await manager.uninstall({ name: "test-skill", type: "skill", caller: "cli", keepBackup: false })
     expect(result.status).toBe("uninstalled")
     expect(result.verified).toBe(true)
 
@@ -591,19 +601,19 @@ describe("ResourceManager", () => {
 
   it("uninstall non-existent throws RESOURCE_NOT_FOUND", async () => {
     await expect(
-      manager.uninstall({ name: "nope", type: "skill", caller: "cli" }),
+      manager.uninstall({ name: "nope", type: "skill", caller: "cli", keepBackup: false }),
     ).rejects.toThrow(ResourceError)
   })
 
   it("uninstall blocked by dependency", async () => {
-    await manager.install({ ref: "builtin:test-skill", scope: "org", caller: "cli" })
+    await manager.install({ ref: "builtin:test-skill", caller: "cli" })
 
     // Manually add dependent entry
     const list = manager.list()
     // We need to add a dependent — access registry store through a second manager on same path
     const manager2 = new ResourceManager({ basePath: tmpDir, corePackBase: corePackDir })
     // Hack: install another skill then modify its dependsOn
-    await manager2.install({ ref: "builtin:test-agent", scope: "org", caller: "cli" })
+    await manager2.install({ ref: "builtin:test-agent", caller: "cli" })
 
     // Directly modify registry to add dependency
     const registryPath = path.join(tmpDir, "registry.json")
@@ -616,12 +626,12 @@ describe("ResourceManager", () => {
 
     // Now try uninstalling test-skill — should be blocked
     await expect(
-      manager.uninstall({ name: "test-skill", type: "skill", caller: "cli" }),
+      manager.uninstall({ name: "test-skill", type: "skill", caller: "cli", keepBackup: false }),
     ).rejects.toThrow(ResourceError)
   })
 
   it("list returns installed resources", async () => {
-    await manager.install({ ref: "builtin:test-skill", scope: "org", caller: "cli" })
+    await manager.install({ ref: "builtin:test-skill", caller: "cli" })
 
     const result = manager.list()
     expect(result.total).toBe(1)
@@ -629,23 +639,23 @@ describe("ResourceManager", () => {
   })
 
   it("list with type filter", async () => {
-    await manager.install({ ref: "builtin:test-skill", scope: "org", caller: "cli" })
-    await manager.install({ ref: "builtin:test-agent", scope: "org", caller: "cli" })
+    await manager.install({ ref: "builtin:test-skill", caller: "cli" })
+    await manager.install({ ref: "builtin:test-agent", caller: "cli" })
 
     const skills = manager.list({ type: "skill" })
     expect(skills.total).toBe(1)
   })
 
   it("verify returns result for installed resource", async () => {
-    await manager.install({ ref: "builtin:test-skill", scope: "org", caller: "cli" })
+    await manager.install({ ref: "builtin:test-skill", caller: "cli" })
 
     const result = manager.verify("skill", "test-skill")
     expect(result.passed).toBe(true)
   })
 
   it("stats returns correct counts", async () => {
-    await manager.install({ ref: "builtin:test-skill", scope: "org", caller: "cli" })
-    await manager.install({ ref: "builtin:test-agent", scope: "org", caller: "cli" })
+    await manager.install({ ref: "builtin:test-skill", caller: "cli" })
+    await manager.install({ ref: "builtin:test-agent", caller: "cli" })
 
     const stats = manager.stats()
     expect(stats.total).toBe(2)
@@ -653,21 +663,21 @@ describe("ResourceManager", () => {
   })
 
   it("listFiles returns installed resource files", async () => {
-    await manager.install({ ref: "builtin:test-skill", scope: "org", caller: "cli" })
+    await manager.install({ ref: "builtin:test-skill", caller: "cli" })
 
     const files = manager.listFiles("skill", "test-skill")
     expect(files).toContain("SKILL.md")
   })
 
   it("readFile returns file content", async () => {
-    await manager.install({ ref: "builtin:test-skill", scope: "org", caller: "cli" })
+    await manager.install({ ref: "builtin:test-skill", caller: "cli" })
 
     const content = manager.readFile("skill", "test-skill", "SKILL.md")
     expect(content).toContain("Test Skill")
   })
 
   it("readFile blocks path traversal", async () => {
-    await manager.install({ ref: "builtin:test-skill", scope: "org", caller: "cli" })
+    await manager.install({ ref: "builtin:test-skill", caller: "cli" })
 
     expect(() =>
       manager.readFile("skill", "test-skill", "../../etc/passwd"),
@@ -688,5 +698,234 @@ describe("isPathWithinBase", () => {
 
   it("returns false for path traversal", () => {
     expect(isPathWithinBase("/home/user/project/../../etc/passwd", "/home/user/project")).toBe(false)
+  })
+})
+
+// ── T1: ResourceType Expansion (6 values) ──────────────────────
+
+describe("ResourceType expansion", () => {
+  it("accepts all 6 resource types", () => {
+    expect(ResourceType.parse("skill")).toBe("skill")
+    expect(ResourceType.parse("agent")).toBe("agent")
+    expect(ResourceType.parse("workflow")).toBe("workflow")
+    expect(ResourceType.parse("rule")).toBe("rule")
+    expect(ResourceType.parse("command")).toBe("command")
+    expect(ResourceType.parse("clone")).toBe("clone")
+  })
+
+  it("rejects unknown types", () => {
+    expect(() => ResourceType.parse("plugin")).toThrow()
+    expect(() => ResourceType.parse("")).toThrow()
+  })
+})
+
+// ── T1: ResourceEntry activated fields ──────────────────────────
+
+describe("ResourceEntry activated fields", () => {
+  it("parses entry with activated=false by default", () => {
+    const entry = ResourceEntrySchema.parse({
+      name: "test-rule",
+      type: "rule",
+      source: "builtin",
+      ref: "builtin:test-rule",
+      group: "built-in",
+      installed: true,
+      verified: true,
+      status: "installed",
+      installedAt: new Date().toISOString(),
+      installPath: "/tmp/test",
+      dependsOn: [],
+    })
+    expect(entry.activated).toBe(false)
+    expect(entry.activatedAt).toBeUndefined()
+    expect(entry.activatedTo).toBeUndefined()
+  })
+
+  it("parses entry with activated=true and metadata", () => {
+    const now = new Date().toISOString()
+    const entry = ResourceEntrySchema.parse({
+      name: "test-rule",
+      type: "rule",
+      source: "builtin",
+      ref: "builtin:test-rule",
+      group: "built-in",
+      installed: true,
+      verified: true,
+      status: "installed",
+      installedAt: now,
+      installPath: "/tmp/test",
+      dependsOn: [],
+      activated: true,
+      activatedAt: now,
+      activatedTo: "/workspace/.claude/rules/test-rule.md",
+    })
+    expect(entry.activated).toBe(true)
+    expect(entry.activatedAt).toBe(now)
+    expect(entry.activatedTo).toBe("/workspace/.claude/rules/test-rule.md")
+  })
+})
+
+// ── T1: ResourceAuditAction new actions ─────────────────────────
+
+describe("ResourceAuditAction expansion", () => {
+  it("accepts activate and deactivate actions", () => {
+    expect(ResourceAuditAction.parse("activate")).toBe("activate")
+    expect(ResourceAuditAction.parse("deactivate")).toBe("deactivate")
+  })
+
+  it("still accepts existing actions", () => {
+    expect(ResourceAuditAction.parse("install")).toBe("install")
+    expect(ResourceAuditAction.parse("uninstall")).toBe("uninstall")
+  })
+})
+
+// ── T1: UninstallRequest keepBackup ─────────────────────────────
+
+describe("UninstallRequest keepBackup", () => {
+  it("parses without keepBackup (defaults to false)", () => {
+    const req = UninstallRequestSchema.parse({
+      name: "test-clone",
+      type: "clone",
+    })
+    expect(req.keepBackup).toBe(false)
+  })
+
+  it("parses with keepBackup=true", () => {
+    const req = UninstallRequestSchema.parse({
+      name: "test-clone",
+      type: "clone",
+      keepBackup: true,
+    })
+    expect(req.keepBackup).toBe(true)
+  })
+})
+
+// ── T1: UninstallResponse backupPath ────────────────────────────
+
+describe("UninstallResponse backupPath", () => {
+  it("parses without backupPath", () => {
+    const res = UninstallResponseSchema.parse({
+      name: "test-rule",
+      type: "rule",
+      status: "uninstalled",
+      verified: true,
+    })
+    expect(res.backupPath).toBeUndefined()
+  })
+
+  it("parses with backupPath", () => {
+    const res = UninstallResponseSchema.parse({
+      name: "test-clone",
+      type: "clone",
+      status: "uninstalled",
+      verified: true,
+      backupPath: "/home/user/.octopus/resources/backups/clones/test-clone-20260804T100000",
+    })
+    expect(res.backupPath).toContain("backups/clones")
+  })
+})
+
+// ── T1: ActivateRequest / ActivateResponse schemas ─────────────
+
+describe("ActivateRequest / ActivateResponse", () => {
+  it("ActivateRequest validates correctly", () => {
+    const req = ActivateRequestSchema.parse({
+      name: "my-rule",
+      type: "rule",
+    })
+    expect(req.name).toBe("my-rule")
+    expect(req.type).toBe("rule")
+    expect(req.caller).toBe("cli") // default
+  })
+
+  it("ActivateRequest rejects invalid name", () => {
+    expect(() => ActivateRequestSchema.parse({
+      name: "",
+      type: "rule",
+    })).toThrow()
+  })
+
+  it("ActivateResponse validates correctly", () => {
+    const res = ActivateResponseSchema.parse({
+      name: "my-rule",
+      type: "rule",
+      activatedTo: "/workspace/.claude/rules/my-rule.md",
+    })
+    expect(res.activatedTo).toContain(".claude/rules")
+  })
+})
+
+// ── T1: DeactivateRequest / DeactivateResponse schemas ─────────
+
+describe("DeactivateRequest / DeactivateResponse", () => {
+  it("DeactivateRequest validates correctly", () => {
+    const req = DeactivateRequestSchema.parse({
+      name: "my-cmd",
+      type: "command",
+      caller: "ui",
+    })
+    expect(req.name).toBe("my-cmd")
+    expect(req.type).toBe("command")
+    expect(req.caller).toBe("ui")
+  })
+
+  it("DeactivateResponse validates correctly", () => {
+    const res = DeactivateResponseSchema.parse({
+      name: "my-cmd",
+      type: "command",
+    })
+    expect(res.name).toBe("my-cmd")
+    expect(res.type).toBe("command")
+  })
+})
+
+// ── T1: ResourceCountSchema expansion ──────────────────────────
+
+describe("ResourceCountSchema expansion", () => {
+  it("includes new type counts", () => {
+    const counts = ResourceCountSchema.parse({
+      skills: 5,
+      agents: 3,
+      workflows: 2,
+      rules: 4,
+      commands: 1,
+      clones: 0,
+    })
+    expect(counts.rules).toBe(4)
+    expect(counts.commands).toBe(1)
+    expect(counts.clones).toBe(0)
+  })
+
+  it("rejects negative counts", () => {
+    expect(() => ResourceCountSchema.parse({
+      skills: -1,
+      agents: 0,
+      workflows: 0,
+      rules: 0,
+      commands: 0,
+      clones: 0,
+    })).toThrow()
+  })
+})
+
+// ── T1: New error codes ────────────────────────────────────────
+
+describe("new activation error codes", () => {
+  it("ACTIVATION_BLOCKED has status 409", () => {
+    const err = new ResourceError("ACTIVATION_BLOCKED", "already activated")
+    expect(err.code).toBe("ACTIVATION_BLOCKED")
+    expect(err.status).toBe(409)
+  })
+
+  it("DEACTIVATION_BLOCKED has status 409", () => {
+    const err = new ResourceError("DEACTIVATION_BLOCKED", "not activated")
+    expect(err.code).toBe("DEACTIVATION_BLOCKED")
+    expect(err.status).toBe(409)
+  })
+
+  it("UNINSTALL_BLOCKED has status 409", () => {
+    const err = new ResourceError("UNINSTALL_BLOCKED", "deactivate first")
+    expect(err.code).toBe("UNINSTALL_BLOCKED")
+    expect(err.status).toBe(409)
   })
 })

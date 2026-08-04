@@ -32,7 +32,7 @@ function getCorePackBase(): string {
   ]
 
   for (const c of candidates) {
-    if (fs.existsSync(path.join(c, "skills"))) {
+    if (fs.existsSync(path.join(c, "skills")) || fs.existsSync(path.join(c, "rules")) || fs.existsSync(path.join(c, "commands"))) {
       return c
     }
   }
@@ -52,6 +52,9 @@ function typeToSubdir(type: ResourceType): string {
     case "skill": return "skills"
     case "agent": return "agents"
     case "workflow": return "workflows"
+    case "rule": return "rules"
+    case "command": return "commands"
+    case "clone": return "clones"
   }
 }
 
@@ -84,11 +87,11 @@ export class BuiltinProvider {
 
     let fileCount = 0
     try {
-      if (type === "skill") {
-        // Skills are directories, copy entire directory
+      if (type === "skill" || type === "clone") {
+        // Skills and clones are directories, copy entire directory
         fileCount = copyDirSync(sourcePath, installPath)
       } else {
-        // Agents and workflows are single files
+        // Agents, workflows, rules, commands are single files
         const fileName = path.basename(sourcePath)
         const destPath = path.join(installPath, fileName)
         fs.copyFileSync(sourcePath, destPath)
@@ -117,6 +120,12 @@ export class BuiltinProvider {
     // Workflows: scan .yaml files in workflows/
     this.scanWorkflowFiles(entries)
 
+    // Rules: scan .md files in rules/
+    this.scanRuleFiles(entries)
+
+    // Commands: scan .md files in commands/
+    this.scanCommandFiles(entries)
+
     return entries
   }
 
@@ -129,10 +138,14 @@ export class BuiltinProvider {
       // Skills are directories
       const dirPath = path.join(basePath, name)
       return fs.existsSync(dirPath) ? dirPath : null
-    } else if (type === "agent") {
-      // Agents are .md files
+    } else if (type === "agent" || type === "rule" || type === "command") {
+      // Agents, rules, and commands are .md files
       const filePath = path.join(basePath, `${name}.md`)
       return fs.existsSync(filePath) ? filePath : null
+    } else if (type === "clone") {
+      // Clones are directories (not available as builtin)
+      const dirPath = path.join(basePath, name)
+      return fs.existsSync(dirPath) ? dirPath : null
     } else {
       // Workflows are .yaml files
       const yamlPath = path.join(basePath, `${name}.yaml`)
@@ -188,6 +201,42 @@ export class BuiltinProvider {
       entries.push({
         name,
         type: "workflow",
+        description: "",
+        sourcePath: path.join(dirPath, item.name),
+      })
+    }
+  }
+
+  private scanRuleFiles(entries: BuiltinCatalogEntry[]): void {
+    const dirPath = path.join(this.base, "rules")
+    if (!fs.existsSync(dirPath)) return
+
+    const items = fs.readdirSync(dirPath, { withFileTypes: true })
+    for (const item of items) {
+      if (!item.isFile()) continue
+      if (!item.name.endsWith(".md")) continue
+      const name = item.name.replace(/\.md$/, "")
+      entries.push({
+        name,
+        type: "rule",
+        description: "",
+        sourcePath: path.join(dirPath, item.name),
+      })
+    }
+  }
+
+  private scanCommandFiles(entries: BuiltinCatalogEntry[]): void {
+    const dirPath = path.join(this.base, "commands")
+    if (!fs.existsSync(dirPath)) return
+
+    const items = fs.readdirSync(dirPath, { withFileTypes: true })
+    for (const item of items) {
+      if (!item.isFile()) continue
+      if (!item.name.endsWith(".md")) continue
+      const name = item.name.replace(/\.md$/, "")
+      entries.push({
+        name,
+        type: "command",
         description: "",
         sourcePath: path.join(dirPath, item.name),
       })

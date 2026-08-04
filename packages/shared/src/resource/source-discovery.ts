@@ -19,7 +19,7 @@ export interface DiscoveredResource {
 
 const ManifestResourceSchema = z.object({
   name: z.string(),
-  type: z.enum(["skill", "agent", "workflow"]),
+  type: z.enum(["skill", "agent", "workflow", "rule", "command", "clone"]),
   path: z.string(),
 })
 

@@ -2,7 +2,7 @@ import { z } from "zod"
 
 // ── Resource Types ──────────────────────────────────────────────
 
-export const ResourceType = z.enum(["skill", "agent", "workflow"])
+export const ResourceType = z.enum(["skill", "agent", "workflow", "rule", "command", "clone"])
 export type ResourceType = z.infer<typeof ResourceType>
 
 export const ResourceSource = z.enum(["builtin", "local", "git"])
@@ -35,6 +35,9 @@ export const ResourceEntrySchema = z.object({
   dependsOn: z.array(z.string()).default([]),
   sourceHash: z.string().optional(),
   syncedAt: z.string().optional(),
+  activated: z.boolean().default(false),
+  activatedAt: z.string().optional(),
+  activatedTo: z.string().optional(),
 })
 
 export type ResourceEntry = z.infer<typeof ResourceEntrySchema>
@@ -63,6 +66,8 @@ export const ResourceAuditAction = z.enum([
   "source_install",
   "source_sync",
   "install_or_upgrade",
+  "activate",
+  "deactivate",
 ])
 export type ResourceAuditAction = z.infer<typeof ResourceAuditAction>
 
@@ -112,6 +117,7 @@ export const UninstallRequestSchema = z.object({
   name: z.string().regex(SAFE_NAME_RE, "Invalid resource name"),
   type: ResourceType,
   caller: ResourceAuditCaller.default("cli"),
+  keepBackup: z.boolean().default(false),
 })
 
 export type UninstallRequest = z.infer<typeof UninstallRequestSchema>
@@ -132,9 +138,43 @@ export const UninstallResponseSchema = z.object({
   type: ResourceType,
   status: z.literal("uninstalled"),
   verified: z.boolean(),
+  backupPath: z.string().optional(),
 })
 
 export type UninstallResponse = z.infer<typeof UninstallResponseSchema>
+
+// ── Activate / Deactivate Schemas ────────────────────────────────
+
+export const ActivateRequestSchema = z.object({
+  name: z.string().regex(SAFE_NAME_RE, "Invalid resource name"),
+  type: ResourceType,
+  caller: ResourceAuditCaller.default("cli"),
+})
+
+export type ActivateRequest = z.infer<typeof ActivateRequestSchema>
+
+export const ActivateResponseSchema = z.object({
+  name: z.string(),
+  type: ResourceType,
+  activatedTo: z.string(),
+})
+
+export type ActivateResponse = z.infer<typeof ActivateResponseSchema>
+
+export const DeactivateRequestSchema = z.object({
+  name: z.string().regex(SAFE_NAME_RE, "Invalid resource name"),
+  type: ResourceType,
+  caller: ResourceAuditCaller.default("cli"),
+})
+
+export type DeactivateRequest = z.infer<typeof DeactivateRequestSchema>
+
+export const DeactivateResponseSchema = z.object({
+  name: z.string(),
+  type: ResourceType,
+})
+
+export type DeactivateResponse = z.infer<typeof DeactivateResponseSchema>
 
 export const ResourceListResponseSchema = z.object({
   resources: z.array(ResourceEntrySchema),
@@ -171,6 +211,9 @@ export const ResourceCountSchema = z.object({
   skills: z.number().int().nonnegative(),
   agents: z.number().int().nonnegative(),
   workflows: z.number().int().nonnegative(),
+  rules: z.number().int().nonnegative(),
+  commands: z.number().int().nonnegative(),
+  clones: z.number().int().nonnegative(),
 })
 
 export const SourceEntrySchema = z.object({

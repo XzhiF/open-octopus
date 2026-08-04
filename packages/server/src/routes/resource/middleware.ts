@@ -17,12 +17,12 @@ export async function requireJsonContentType(c: Context, next: Next): Promise<vo
 // ── validateResourceParams ──────────────────────────────────────────────────
 // URL params :type and :name must pass SAFE_NAME_RE / type enum.
 
-const VALID_TYPES = new Set(["skill", "agent", "workflow"])
+const VALID_TYPES = new Set(["skill", "agent", "workflow", "rule", "command", "clone"])
 
 export function validateTypeParam(type: string): void {
   if (!VALID_TYPES.has(type)) {
     throw new ResourceError("INVALID_TYPE", `Invalid type: ${type}`, {
-      suggestion: "Type must be one of: skill, agent, workflow",
+      suggestion: "Type must be one of: skill, agent, workflow, rule, command, clone",
     })
   }
 }

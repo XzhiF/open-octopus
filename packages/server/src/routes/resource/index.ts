@@ -68,7 +68,7 @@ export function createResourceRoutes(
     const installedParam = c.req.query("installed") as string | undefined
 
     const filter: { type?: ResourceType; query?: string; installed?: boolean } = {}
-    if (type && ["skill", "agent", "workflow"].includes(type)) filter.type = type
+    if (type && ["skill", "agent", "workflow", "rule", "command", "clone"].includes(type)) filter.type = type
     if (query) filter.query = query
     if (installedParam !== undefined) filter.installed = installedParam === "true"
 

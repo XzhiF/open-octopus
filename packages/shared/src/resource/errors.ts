@@ -33,6 +33,9 @@ export type ResourceErrorCode =
   | "SOURCE_ALREADY_EXISTS"
   | "SOURCE_NOT_TRUSTED"
   | "SOURCE_SYNC_FAILED"
+  | "ACTIVATION_BLOCKED"
+  | "DEACTIVATION_BLOCKED"
+  | "UNINSTALL_BLOCKED"
 
 const STATUS_MAP: Record<ResourceErrorCode, number> = {
   RESOURCE_NOT_FOUND: 404,
@@ -67,6 +70,9 @@ const STATUS_MAP: Record<ResourceErrorCode, number> = {
   SOURCE_ALREADY_EXISTS: 409,
   SOURCE_NOT_TRUSTED: 403,
   SOURCE_SYNC_FAILED: 500,
+  ACTIVATION_BLOCKED: 409,
+  DEACTIVATION_BLOCKED: 409,
+  UNINSTALL_BLOCKED: 409,
 }
 
 const DEFAULT_SUGGESTIONS: Record<ResourceErrorCode, string> = {
@@ -74,7 +80,7 @@ const DEFAULT_SUGGESTIONS: Record<ResourceErrorCode, string> = {
   RESOURCE_ALREADY_EXISTS: "Resource is already installed. Uninstall first or use a different name.",
   INVALID_REF: "Use format: builtin:{name} or local:{path}",
   INVALID_NAME: "Name must match: ^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$",
-  INVALID_TYPE: "Type must be one of: skill, agent, workflow",
+  INVALID_TYPE: "Type must be one of: skill, agent, workflow, rule, command, clone",
   INVALID_SOURCE: "Source must be one of: builtin, local, git",
   REGISTRY_CORRUPT: "Registry file is corrupted. Check ~/.octopus/resources/registry.json",
   LOCK_CORRUPT: "Lock file is corrupted. Check ~/.octopus/resources/resources.lock",
@@ -102,6 +108,9 @@ const DEFAULT_SUGGESTIONS: Record<ResourceErrorCode, string> = {
   SOURCE_ALREADY_EXISTS: "Source already added. Use 'octopus resource source update' to refresh.",
   SOURCE_NOT_TRUSTED: "Source not in allowlist. Use 'octopus resource source add' to trust.",
   SOURCE_SYNC_FAILED: "Failed to sync source. Check network connectivity and repository status.",
+  ACTIVATION_BLOCKED: "Resource cannot be activated. It may already be activated or not properly installed.",
+  DEACTIVATION_BLOCKED: "Resource cannot be deactivated. It may not be currently activated.",
+  UNINSTALL_BLOCKED: "Resource is activated. Deactivate it first before uninstalling.",
 }
 
 export class ResourceError extends Error {

@@ -150,6 +150,7 @@ export class ResourceManager extends EventEmitter {
       installPath,
       dependsOn: [],
       sourceHash: hash,
+      activated: false,
     }
     this.registry.upsert(entry)
 
@@ -268,6 +269,7 @@ export class ResourceManager extends EventEmitter {
       installPath,
       dependsOn: [],
       sourceHash: hash,
+      activated: false,
     }
     this.registry.upsert(entry)
 
@@ -344,6 +346,7 @@ export class ResourceManager extends EventEmitter {
       installPath,
       dependsOn: [],
       sourceHash: hash,
+      activated: false,
     }
     this.registry.upsert(entry)
     return entry
@@ -589,6 +592,7 @@ export class ResourceManager extends EventEmitter {
         installPath,
         dependsOn: [],
         sourceHash: hash,
+        activated: false,
       })
       pendingLocks.push({
         name: res.name,
@@ -711,7 +715,15 @@ export class ResourceManager extends EventEmitter {
   private getInstallPath(type: ResourceType, name: string, group: string): string {
     // Centralized: all installed resources under resources/installed/{type}s/{group}/{name}/
     // Keeps registry, lock, audit, and installed files co-located.
-    const subdir = type === "skill" ? "skills" : type === "agent" ? "agents" : "workflows"
+    const subdirMap: Record<ResourceType, string> = {
+      skill: "skills",
+      agent: "agents",
+      workflow: "workflows",
+      rule: "rules",
+      command: "commands",
+      clone: "clones",
+    }
+    const subdir = subdirMap[type]
     return path.join(this.basePath, "installed", subdir, group, name)
   }
 
@@ -723,7 +735,9 @@ export class ResourceManager extends EventEmitter {
     if (source === "builtin") {
       if (this.builtin.exists(name, "skill")) return "skill"
       if (this.builtin.exists(name, "agent")) return "agent"
-      throw new ResourceError("BUILTIN_NOT_FOUND", `Builtin resource '${name}' not found in skills or agents`)
+      if (this.builtin.exists(name, "rule")) return "rule"
+      if (this.builtin.exists(name, "command")) return "command"
+      throw new ResourceError("BUILTIN_NOT_FOUND", `Builtin resource '${name}' not found in skills, agents, rules, or commands`)
     }
 
     // For local: default to skill
@@ -814,6 +828,7 @@ export class ResourceManager extends EventEmitter {
         installedAt: new Date().toISOString(),
         installPath,
         dependsOn: [],
+        activated: false,
       }
       this.registry.upsert(registryEntry)
       registered++
