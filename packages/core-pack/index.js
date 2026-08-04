@@ -9,4 +9,6 @@ module.exports = {
   templatesDir: path.join(ROOT, "templates"),
   presetsDir: path.join(ROOT, "presets"),
   configDir: path.join(ROOT, "config"),
+  rulesDir: path.join(ROOT, "rules"),
+  commandsDir: path.join(ROOT, "commands"),
 }

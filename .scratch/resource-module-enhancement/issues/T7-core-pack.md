@@ -1,6 +1,6 @@
 # T7: Core-Pack — rules/ and commands/ Directories + Sample Resources
 
-## Status: pending
+## Status: in_progress
 
 ## Problem
 
