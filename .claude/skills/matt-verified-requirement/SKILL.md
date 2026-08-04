@@ -312,15 +312,13 @@ On exit, create `<artifacts.dir>/<feature-slug>/` and write all artifacts.
 
 ### brief.md — Lightweight Core Info (for human review)
 
-brief.md is a **one-pager** (一页纸) for the user to quickly review. Contains:
+brief.md is a **minimal one-pager** (一页纸) for the user to quickly review. Contains:
 - Overview (one sentence)
-- Feature Scope (Do/Don't)
-- Key Decisions table
-- Acceptance Criteria summary (table: # | Story | AC — no verification detail)
-- Risks & Notes
-- Link: "Full spec: [spec.md](./spec.md)"
+- Summary (decision count + AC count + story count, with links to spec.md)
+- Risks
+- Link to spec.md
 
-It does NOT contain detailed data models, API contracts, or verification methods — those live in spec.md.
+It does NOT contain detailed tables — all details live in spec.md.
 
 ### spec.md — Single Source of Truth (for agents)
 
@@ -375,27 +373,17 @@ The following artifacts are created **later** by downstream agents — this skil
 ## Overview
 [One sentence description]
 
-## Feature Scope
-**Do:**
-- [Feature 1]
+## Summary
+- [N] key decisions → [spec.md § Key Decisions](./spec.md)
+- [N] acceptance criteria → [spec.md § Acceptance Criteria](./spec.md)
+- [N] core stories verified → [spec.md § Appendix](./spec.md)
 
-**Don't:**
-- [Exclusion 1]
-
-## Key Decisions
-| # | Decision | Conclusion | Reason |
-|---|---------|-----------|--------|
-
-## Acceptance Criteria
-| # | User Story | AC |
-|---|-----------|----|
-| AC-1 | As a... | [condition] |
-
-## Risks & Notes
+## Risks
 - R1: [risk]
+- R2: [risk]
 
 ## Full Spec
-For detailed data models, API contracts, verification strategy, and implementation decisions: [spec.md](./spec.md)
+[spec.md](./spec.md)
 ```
 
 ## Spec Template (single source of truth)
