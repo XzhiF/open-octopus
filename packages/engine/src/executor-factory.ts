@@ -25,6 +25,7 @@ import type { JsonlLogger } from "./logger"
 import type { CrossExecResolver } from "@octopus/shared"
 import type { ICheckpointStore } from "./pipeline/checkpoint-types"
 import type { PromptInjector } from "./prompt-injector"
+import type { CreateSessionFn } from "./executors/octopus-agent/session"
 import { join } from "path"
 
 export interface ExecutorFactoryContext {
@@ -59,6 +60,7 @@ export interface ExecutorFactoryContext {
   visitedWorkflows?: Set<string>
   // Octopus agent support
   versionResolver?: VersionResolver
+  createSessionFn?: import("./executors/octopus-agent/session").CreateSessionFn
 }
 
 export class ExecutorFactory {
@@ -275,6 +277,7 @@ export class ExecutorFactory {
         return new OctopusAgentExecutor(node, p, {
           runner,
           versionResolver: this.ctx.versionResolver,
+          createSessionFn: this.ctx.createSessionFn,
           engineContext: { nodeResults: this.ctx.nodeResults },
           loopContext: undefined,
           providerKey,

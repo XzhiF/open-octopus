@@ -21,6 +21,7 @@ import type { EngineContext } from "./agent"
 import type { InnerNodeOverride, NodeExecutionResult, InteractionMetadata } from "./types"
 import type { VersionResolver } from "@octopus/shared"
 import type { CreateSessionFn } from "./octopus-agent/session"
+import type { SystemPromptInput } from "@octopus/providers"
 
 // ============================================================
 // Callback type aliases (inline function types used across executors)
@@ -128,12 +129,18 @@ export interface AgentConfig {
   executionId?: string
   resolvedModel?: string
   modelAliasConfig?: ModelAliasConfig
+  /** Optional system prompt override (e.g. from persona.md). When provided,
+   *  overrides the default preset system prompt in the agent runner. */
+  systemPrompt?: SystemPromptInput
 }
 
 /** OctopusAgentExecutor — wraps AgentExecutor with version resolution + heartbeat */
 export interface OctopusAgentConfig {
   runner: AgentNodeRunner
   versionResolver: VersionResolver
+  /** Optional DB-backed session creator. When provided, the delegate session
+   *  is persisted via SessionService; otherwise an in-memory UUID is generated.
+   *  The ExecutorFactory should inject this from the server's SessionService. */
   createSessionFn?: CreateSessionFn
   engineContext?: EngineContext
   loopContext?: Record<string, any>

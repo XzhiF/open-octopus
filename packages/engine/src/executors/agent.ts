@@ -2,6 +2,7 @@ import { VarPool, substituteVars, substituteVarsFull, compileAutoAnswers, resolv
 import type { NodeDef, AutoAnswer, SubAgentDef, CrossExecResolver, ModelAliasConfig } from "@octopus/shared"
 import type { NodeExecutor, NodeExecutionResult } from "./types"
 import type { AgentConfig } from "./executor-config"
+import type { SystemPromptInput } from "@octopus/providers"
 import { AgentNodeRunner } from "./agent-runner"
 import type { PromptInjector } from "../prompt-injector"
 import type { KnowledgeInjector } from "../knowledge-injector"
@@ -30,6 +31,7 @@ export class AgentExecutor implements NodeExecutor {
   private resolvedModel?: string
   private modelAliasConfig?: ModelAliasConfig
   private providerKey?: string
+  private systemPrompt?: SystemPromptInput
 
   constructor(
     private node: NodeDef,
@@ -50,6 +52,7 @@ export class AgentExecutor implements NodeExecutor {
     this.resolvedModel = config.resolvedModel
     this.modelAliasConfig = config.modelAliasConfig
     this.providerKey = config.providerKey
+    this.systemPrompt = config.systemPrompt
   }
 
   async execute(): Promise<NodeExecutionResult> {
@@ -110,6 +113,7 @@ export class AgentExecutor implements NodeExecutor {
         signal: timeoutAc.signal,
         onActivity: resetActivityTimer,
         effort: this.node.effort,
+        systemPrompt: this.systemPrompt,
       })
 
       clearTimeout(activityTimer)

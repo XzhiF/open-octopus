@@ -13,7 +13,7 @@ export class AgentNodeRunner {
   constructor(
     private provider: IAgentProvider,
     private cwd: string,
-    private onEvent?: (event: AgentEvent) => void,
+    readonly onEvent?: (event: AgentEvent) => void,
   ) {}
 
   getLastActivityAt(): number {

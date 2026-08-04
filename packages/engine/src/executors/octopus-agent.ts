@@ -104,17 +104,42 @@ export class OctopusAgentExecutor implements NodeExecutor {
     const taskPrompt = buildTaskPrompt(
       this.node.task,
       this.pool,
-      nodeOutputs,
+      nodeOutputs as Record<string, Record<string, any>> | undefined,
       this.node.harness,
     )
 
     // 4. Setup Heartbeat handler
+    let abortRequested = false
     const heartbeatHandler = new HeartbeatHandler(
       this.node.id,
       this.node.harness ?? {},
       this.node.task.budget,
       (event: AgentEvent) => {
-        this.config.runner.onEvent?.(event)
+        // Fix 5: Intercept harness_directive abort to stop execution
+        if (
+          event.type === "harness_directive" &&
+          (event.data as { type?: string }).type === "abort" &&
+          this.config.signal &&
+          !this.config.signal.aborted
+        ) {
+          // AbortController not available on raw AbortSignal; use internal abort via a flag
+          // The signal is read-only, so we set a local flag checked after agent execution
+          abortRequested = true
+        }
+
+        // Fix 3: Enrich heartbeat events with agent_name and version for SSE
+        if (event.type === "heartbeat") {
+          this.config.runner.onEvent?.({
+            type: "heartbeat",
+            data: {
+              ...event.data,
+              agent_name: this.node.agent,
+              version: resolved.version,
+            },
+          } as AgentEvent)
+        } else {
+          this.config.runner.onEvent?.(event)
+        }
       },
     )
 
@@ -134,6 +159,8 @@ export class OctopusAgentExecutor implements NodeExecutor {
       executionId: this.config.executionId,
       resolvedModel: this.config.resolvedModel,
       modelAliasConfig: this.config.modelAliasConfig,
+      // Fix 6: Inject persona.md content as system prompt when available
+      systemPrompt: resolved.snapshot.persona || undefined,
     }
 
     // Create a modified node with the task prompt as the prompt field
@@ -163,20 +190,38 @@ export class OctopusAgentExecutor implements NodeExecutor {
       }
     }
 
+    // Fix 5: Process agent events through heartbeat handler post-execution.
+    // This enables step counting, heartbeat emission, and budget directive detection.
+    if (agentResult.events) {
+      for (const event of agentResult.events) {
+        heartbeatHandler.onAgentEvent(event)
+      }
+    }
+    if (agentResult.tokens) {
+      heartbeatHandler.updateTokens({
+        input: agentResult.tokens.input,
+        output: agentResult.tokens.output,
+        total: agentResult.tokens.total ?? (agentResult.tokens.input + agentResult.tokens.output),
+      })
+    }
+
     // 7. Parse structured result from agent output
     const structured = parseStructuredResult(agentResult.lastOutput ?? "")
 
-    // 8. Build final outputs
-    const outputs: Record<string, any> = {
+    // 8. Build final outputs (Fix 2: use unknown instead of any where possible)
+    let outputs: Record<string, unknown> = {
       last_output: agentResult.lastOutput,
       session_id: session.id,
       agent_version: resolved.version,
     }
 
+    // Track final status without mutating agentResult (Fix 1: immutability)
+    let finalStatus = agentResult.status
+
     // If structured result found, merge its outputs and vars_update
     if (structured) {
-      // Merge structured output fields
-      Object.assign(outputs, structured.output)
+      // Merge structured output fields (Fix 1: spread instead of Object.assign)
+      outputs = { ...outputs, ...structured.output }
 
       // Apply vars_update to pool and outputs
       if (structured.vars_update) {
@@ -186,20 +231,25 @@ export class OctopusAgentExecutor implements NodeExecutor {
 
       // Update status based on structured result status
       if (structured.status === "failed" || structured.status === "aborted" || structured.status === "budget_exceeded") {
-        agentResult.status = "failed"
+        finalStatus = "failed"
       }
     } else {
       // Fallback: apply vars_update from raw text (existing AgentExecutor behavior)
       if (agentResult.lastOutput) {
-        applyVarsUpdate(agentResult.lastOutput, this.pool, outputs)
+        applyVarsUpdate(agentResult.lastOutput, this.pool, outputs as Record<string, any>)
       }
+    }
+
+    // Fix 5: Check if heartbeat handler requested abort (budget exceeded)
+    if (abortRequested && finalStatus !== "failed") {
+      finalStatus = "failed"
     }
 
     // 9. Apply outputs mapping (from node.outputs)
     if (this.node.outputs) {
       applyOutputsMapping(
         this.node.outputs,
-        outputs,
+        outputs as Record<string, any>,
         this.pool,
         agentResult.lastOutput,
         undefined,
@@ -209,7 +259,7 @@ export class OctopusAgentExecutor implements NodeExecutor {
     // 10. Return final result
     return {
       ...agentResult,
-      status: agentResult.status,
+      status: finalStatus,
       outputs,
       sessionId: session.id,
       durationMs: Date.now() - start,
@@ -218,6 +268,7 @@ export class OctopusAgentExecutor implements NodeExecutor {
         `Delegate session: ${session.id}`,
         `Agent version: ${resolved.version} (${resolved.stage})`,
         structured ? `Structured result: ${structured.status}` : "No structured result found",
+        ...(abortRequested ? ["Budget abort requested by harness"] : []),
       ],
     }
   }
@@ -225,9 +276,9 @@ export class OctopusAgentExecutor implements NodeExecutor {
   /**
    * Build nodeOutputs map from engineContext for $nodeId.output resolution.
    */
-  private buildNodeOutputs(): Record<string, Record<string, any>> | undefined {
+  private buildNodeOutputs(): Record<string, Record<string, unknown>> | undefined {
     if (!this.config.engineContext?.nodeResults) return undefined
-    const nodeOutputs: Record<string, Record<string, any>> = {}
+    const nodeOutputs: Record<string, Record<string, unknown>> = {}
     for (const [id, result] of Object.entries(this.config.engineContext.nodeResults)) {
       const outputs = { ...(result.outputs ?? {}) }
       if (result.lastOutput !== undefined) outputs["output"] = result.lastOutput
