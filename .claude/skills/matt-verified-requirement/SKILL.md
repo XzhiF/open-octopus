@@ -265,8 +265,15 @@ After the draft spec.md is written (see Artifact Output below), spawn a **Story 
    Story Walk-Through analysis.
    Protocol: .claude/skills/matt-verified-requirement/references/story-walkthrough.md
    Explore the codebase freely to verify each story step.
-   Return: structured break points with severity (CRITICAL/HIGH/MEDIUM/LOW),
-   full story traces, and recommended fixes. Do NOT modify spec.md."
+   
+   Output TWO things:
+   1. Write <artifacts.dir>/<feature-slug>/story-walkthrough.md — a human-readable
+      report with full story traces, break points, and recommendations.
+      This file is for human review only, not consumed by the pipeline.
+   2. Return structured break points with severity (CRITICAL/HIGH/MEDIUM/LOW)
+      and recommended fixes to the parent agent.
+   
+   Do NOT modify spec.md."
    ```
 3. Read sub-agent's findings
 4. Fix all CRITICAL and HIGH break points in spec.md:
@@ -275,6 +282,8 @@ After the draft spec.md is written (see Artifact Output below), spawn a **Story 
    - Update Key Decisions with "Story Gap Fixes"
 5. Re-trace if needed (spawn again if major structural changes)
 6. Append story traces to spec.md Appendix
+
+**Human-readable report**: The sub-agent writes `story-walkthrough.md` as a standalone artifact for human review. It is NOT consumed by downstream pipeline steps — purely for the user to understand what gaps were found and how the design was validated.
 
 **Protocol details** → See [references/story-walkthrough.md](references/story-walkthrough.md)
 
@@ -290,6 +299,7 @@ On exit, create `<artifacts.dir>/<feature-slug>/` and write all artifacts.
 <artifacts.dir>/<feature-slug>/
 ├── brief.md              ← Lightweight core info summary (for human review)
 ├── spec.md               ← Full verified spec (single source of truth for agents)
+├── story-walkthrough.md  ← Human-readable walkthrough report (review only, not consumed by pipeline)
 └── issues/               ← DAG tickets with blocked-by + verification
     ├── 01-<slug>.md
     ├── 02-<slug>.md
