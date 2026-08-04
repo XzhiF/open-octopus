@@ -31,6 +31,7 @@ import { WorkflowStepEdge } from "./workflow-edges/workflow-step-edge"
 import { parseYaml } from "@/lib/yaml-utils"
 import { yamlToFlowData } from "@/lib/workflow-parser"
 import { getServerUrl } from "@/lib/server-config"
+import { useExecutionEvents } from "@/hooks/use-execution-events"
 import type { StepExecution, StatusOverlay, TokenUsage, LoopIterationSummary } from "@/lib/types"
 
 interface WorkflowFlowViewerWithStatusProps {
@@ -85,6 +86,20 @@ export function WorkflowFlowViewerWithStatus({
     x: number
     y: number
   } | null>(null)
+
+  // Derive execution status from steps for heartbeat polling
+  const derivedStatus = useMemo(() => {
+    if (executionSteps.some(s => s.status === "running")) return "running"
+    if (executionSteps.some(s => s.status === "paused")) return "paused"
+    return "completed"
+  }, [executionSteps])
+
+  // Poll agent-events for heartbeat data (used to inject into octopus_agent statusOverlay)
+  const { heartbeat: polledHeartbeat } = useExecutionEvents(
+    workspaceId ?? "",
+    executionId ?? "",
+    derivedStatus,
+  )
 
   const stepMap = useMemo(() => {
     const map = new Map<string, StepExecution>()
@@ -272,6 +287,8 @@ export function WorkflowFlowViewerWithStatus({
             tokenUsages: step.tokenUsages && step.tokenUsages.length > 0
               ? step.tokenUsages
               : undefined,
+            // Inject heartbeat for octopus_agent nodes from polled agent-events
+            heartbeat: node.type === "octopus_agent" ? polledHeartbeat : undefined,
           }
         : undefined
 
@@ -301,7 +318,7 @@ export function WorkflowFlowViewerWithStatus({
     })
 
     return { nodes: enrichedNodes, edges: enrichedEdges }
-  }, [yamlContent, stepMap, activeStepId, currentStepId, workspaceId, executionId, loopIterationsMap, subWorkflowNodes])
+  }, [yamlContent, stepMap, activeStepId, currentStepId, workspaceId, executionId, loopIterationsMap, subWorkflowNodes, polledHeartbeat])
 
   const onInit = useCallback((instance: unknown) => {
     setTimeout(() => {

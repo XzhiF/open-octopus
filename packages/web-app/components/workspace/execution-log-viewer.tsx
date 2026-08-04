@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect, useRef, useCallback, useMemo } from "react"
-import { ChevronDown, ChevronRight, ChevronUp, ChevronsDown, Terminal, Brain, Wrench, FileText, Play, Check, X, Clock, Users, MessageSquare, Award, RotateCcw, MessageCircle, HelpCircle, CheckCircle2 } from "lucide-react"
+import { ChevronDown, ChevronRight, ChevronUp, ChevronsDown, Terminal, Brain, Wrench, FileText, Play, Check, X, Clock, Users, MessageSquare, Award, RotateCcw, MessageCircle, HelpCircle, CheckCircle2, Activity, AlertTriangle } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { formatDuration, formatTokenCount } from "@/lib/format"
 import { isMergedEvent, type AgentEvent, type LoopIterationSummary } from "@/lib/types"
@@ -89,6 +89,9 @@ export function EventIcon({ event, agentType }: { event: string; agentType?: str
     case "interaction_started": return <MessageCircle className="h-3 w-3 text-purple-400 shrink-0" />
     case "interaction_ask_user_question": return <HelpCircle className="h-3 w-3 text-amber-400 shrink-0" />
     case "interaction_completed": return <CheckCircle2 className="h-3 w-3 text-emerald-400 shrink-0" />
+    case "heartbeat": return <Activity className="h-3 w-3 text-rose-500 shrink-0" />
+    case "harness_directive": return <AlertTriangle className="h-3 w-3 text-red-500 shrink-0" />
+    case "heartbeat_stall": return <AlertTriangle className="h-3 w-3 text-orange-500 shrink-0" />
     default: return <Clock className="h-3 w-3 text-muted-foreground shrink-0" />
   }
 }
@@ -248,6 +251,28 @@ export function EventLabel({ entry }: { entry: LogEvent }) {
       return <span className="text-amber-400">等待用户回答</span>
     case "interaction_completed":
       return <span className="text-emerald-400">交互完成</span>
+    case "heartbeat": {
+      const hb = entry.heartbeatPayload
+      if (!hb) return <span className="text-rose-500">心跳</span>
+      const tokens = hb.tokens_used?.toLocaleString() ?? "0"
+      const activity = hb.current_activity ? ` · ${hb.current_activity}` : ""
+      return <span className="text-rose-500">心跳: Step {hb.step} · {tokens} tokens{activity}</span>
+    }
+    case "harness_directive": {
+      const dir = entry.directivePayload
+      if (!dir) return <span className="text-red-500">指令</span>
+      const isAbort = dir.type === "abort"
+      return (
+        <span className={isAbort ? "text-red-500" : "text-amber-500"}>
+          指令: {dir.type} — {dir.reason}
+        </span>
+      )
+    }
+    case "heartbeat_stall": {
+      const stall = entry.stallPayload
+      const timeout = stall?.timeout_seconds ?? "?"
+      return <span className="text-orange-500">停滞检测: 超过 {timeout}s 无心跳</span>
+    }
     default: return <span className="text-muted-foreground">{entry.event}</span>
   }
 }
@@ -272,8 +297,9 @@ export function ExpandableRow({ entry }: { entry: LogEvent }) {
   const bashLine = isBashLog ? (entry.line ?? "") : ""
   const isLongLine = bashLine.length > 80
   const isApprovalMeta = entry.event === "approval_metadata"
+  const isOctopusEvent = ["heartbeat", "harness_directive", "heartbeat_stall"].includes(entry.event)
   const hasDetail = isMergedOutput || isMergedToolCall || isMergedThinking || isMergedText ||
-    isAgentDetail || (isBashLog && isLongLine) || isSwarmDetail || isApprovalMeta
+    isAgentDetail || (isBashLog && isLongLine) || isSwarmDetail || isApprovalMeta || isOctopusEvent
 
   const toggle = () => hasDetail && setExpanded(!expanded)
 
@@ -344,6 +370,68 @@ export function ExpandableRow({ entry }: { entry: LogEvent }) {
               <span>{entry.comment}</span>
             </div>
           )}
+        </div>
+      )}
+
+      {/* Octopus agent event detail: heartbeat */}
+      {expanded && entry.event === "heartbeat" && entry.heartbeatPayload && (
+        <div className="ml-6 mt-0.5 mb-1 p-1.5 bg-rose-950/20 rounded text-xs whitespace-pre-wrap">
+          <div className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5">
+            <span className="text-muted-foreground">步骤:</span>
+            <span>{entry.heartbeatPayload.step}{entry.heartbeatPayload.total_steps ? ` / ${entry.heartbeatPayload.total_steps}` : ""}</span>
+            <span className="text-muted-foreground">Token:</span>
+            <span className="tabular-nums">{entry.heartbeatPayload.tokens_used.toLocaleString()}{entry.heartbeatPayload.tokens_budget ? ` / ${entry.heartbeatPayload.tokens_budget.toLocaleString()}` : ""}</span>
+            <span className="text-muted-foreground">置信度:</span>
+            <span>{(entry.heartbeatPayload.confidence * 100).toFixed(0)}%</span>
+            {entry.heartbeatPayload.current_activity && (
+              <>
+                <span className="text-muted-foreground">活动:</span>
+                <span>{entry.heartbeatPayload.current_activity}</span>
+              </>
+            )}
+            {entry.heartbeatPayload.artifacts.length > 0 && (
+              <>
+                <span className="text-muted-foreground">产出物:</span>
+                <span>{entry.heartbeatPayload.artifacts.join(", ")}</span>
+              </>
+            )}
+            {entry.heartbeatPayload.issues.length > 0 && (
+              <>
+                <span className="text-muted-foreground">问题:</span>
+                <span className="text-amber-400">{entry.heartbeatPayload.issues.join(", ")}</span>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Octopus agent event detail: harness_directive */}
+      {expanded && entry.event === "harness_directive" && entry.directivePayload && (
+        <div className={`ml-6 mt-0.5 mb-1 p-1.5 rounded text-xs whitespace-pre-wrap ${entry.directivePayload.type === "abort" ? "bg-red-950/20" : "bg-amber-950/20"}`}>
+          <div className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5">
+            <span className="text-muted-foreground">类型:</span>
+            <span className={entry.directivePayload.type === "abort" ? "text-red-400 font-semibold" : "text-amber-400 font-semibold"}>{entry.directivePayload.type}</span>
+            <span className="text-muted-foreground">原因:</span>
+            <span>{entry.directivePayload.reason}</span>
+            <span className="text-muted-foreground">发起者:</span>
+            <span>{entry.directivePayload.issued_by}</span>
+          </div>
+        </div>
+      )}
+
+      {/* Octopus agent event detail: heartbeat_stall */}
+      {expanded && entry.event === "heartbeat_stall" && entry.stallPayload && (
+        <div className="ml-6 mt-0.5 mb-1 p-1.5 bg-orange-950/20 rounded text-xs whitespace-pre-wrap">
+          <div className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5">
+            <span className="text-muted-foreground">超时阈值:</span>
+            <span>{entry.stallPayload.timeout_seconds}s</span>
+            {entry.stallPayload.last_heartbeat_at && (
+              <>
+                <span className="text-muted-foreground">最后心跳:</span>
+                <span>{entry.stallPayload.last_heartbeat_at}</span>
+              </>
+            )}
+          </div>
         </div>
       )}
 

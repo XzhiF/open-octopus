@@ -39,7 +39,7 @@ When building `statusOverlay` for octopus_agent nodes, extract the latest heartb
 Ticket 03 (types and hooks must be in place first)
 
 ## Status
-ready-for-agent
+done
 
 ## Acceptance Criteria
 - [ ] AC-6: 点击节点打开 OctopusAgentDetailTabs
