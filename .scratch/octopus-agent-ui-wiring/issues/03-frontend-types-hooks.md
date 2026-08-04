@@ -21,13 +21,13 @@ Extend frontend types and hooks to support heartbeat data flow:
 Ticket 01 (server must return heartbeat data for the hook to extract it)
 
 ## Status
-ready-for-agent
+done
 
 ## Acceptance Criteria
-- [ ] StatusOverlay interface has `heartbeat?: AgentHeartbeat` field
-- [ ] AgentEventsResponse interface has `heartbeat?: AgentHeartbeat` field
-- [ ] AgentEvent union includes heartbeat/harness_directive/heartbeat_stall variants
-- [ ] useExecutionEvents returns heartbeat data from API response
+- [x] StatusOverlay interface has `heartbeat?: AgentHeartbeat` field
+- [x] AgentEventsResponse interface has `heartbeat?: AgentHeartbeat` field
+- [x] AgentEvent union includes heartbeat/harness_directive/heartbeat_stall variants
+- [x] useExecutionEvents returns heartbeat data from API response
 
 ## Verification Method
 **Verification type**: Unit test + type check

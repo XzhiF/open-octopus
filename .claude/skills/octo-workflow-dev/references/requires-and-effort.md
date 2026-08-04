@@ -15,20 +15,15 @@ name: "my-workflow"
 
 requires:
   skills:
-    - superpowers-zh/test-driven-development    # group/name 格式（避免重名）
-    - superpowers-zh/systematic-debugging
-    - built-in/octo-workflow-dev
+    - superpowers-zh/test-driven-development    # group/name 格式
   agent_files:
     - built-in/vision-analyzer.md               # group/name.md 格式
-    - agency-agents-zh/engineering-code-reviewer.md
   commands:
     - cmd-review                                # 命令名
-    - cmd-deploy
   rules:
     - code-style                                # 规则名
-    - testing-standards
   clones:
-    - workspace                                 # clone 名（必须预安装，不自动 provision）
+    - workspace                                 # clone 名（必须预安装）
 
 nodes:
   # ... 工作流节点
@@ -36,24 +31,23 @@ nodes:
 
 ### 字段格式
 
-| 字段 | 格式 | Provision 目标 | 说明 | 示例 |
-|------|------|---------------|------|------|
-| `requires.skills` | `group/name` | `.claude/skills/` | 技能依赖，带分组避免重名 | `superpowers-zh/test-driven-development` |
-| `requires.agent_files` | `group/name.md` | `.claude/agents/` | Agent 文件依赖 | `built-in/vision-analyzer.md` |
-| `requires.commands` | 命令名 | `.claude/commands/` | 命令依赖（单 .md 文件） | `cmd-review` |
-| `requires.rules` | 规则名 | `.claude/rules/` | 规则依赖（单 .md 文件） | `code-style` |
-| `requires.clones` | clone 名 | ❌ 不自动 provision | **硬失败门控** — 必须预安装到 `~/.octopus/agent/clones/` 或 `~/.octopus/agent/built-in/` | `workspace` |
+| 字段 | 格式 | Provision 目标 | 说明 |
+|------|------|---------------|------|
+| `requires.skills` | `group/name` | `.claude/skills/` | 技能依赖 |
+| `requires.agent_files` | `group/name.md` | `.claude/agents/` | Agent 文件依赖 |
+| `requires.commands` | 命令名 | `.claude/commands/` | 命令依赖 |
+| `requires.rules` | 规则名 | `.claude/rules/` | 规则依赖 |
+| `requires.clones` | clone 名 | ❌ 不自动 provision | **硬失败门控** — 必须预安装 |
+
+> **⚠️ clones 是硬失败门控**: 缺失的 clone 会导致工作流**立即失败**。通过 `octopus resource install` 预先安装。
 
 > **没有指定分组时**，引擎按注册表顺序匹配第一个同名资源。建议始终带分组以避免歧义。
 
-> **⚠️ clones 是硬失败门控**: 与其他资源类型不同，clones **不会被自动 provision**。如果 `requires.clones` 中声明的 clone 不存在，工作流会**立即失败**。clones 必须通过 `octopus resource install` 预先安装。
-
 ### Provision 流程
 
-1. `__engine_init__` 先检查 `requires.clones` → 缺失则**立即失败**（硬门控）
-2. 然后处理 `requires.skills`、`agent_files`、`commands`、`rules` → 直接 provision 到 `.claude/` 目录
-3. 最后扫描所有节点引用 → 兜底 provision 遗漏的资源（仅 skills 和 agents）
-4. 已 provision 的资源不会重复安装
+1. `__engine_init__` 先处理 `requires` 声明 → 直接 provision
+2. 然后扫描所有节点引用 → 兜底 provision 遗漏的资源
+3. 已 provision 的资源不会重复安装
 
 ### 与节点级引用的区别
 
