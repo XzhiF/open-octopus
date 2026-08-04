@@ -81,43 +81,11 @@ export class ResourceProvisioner {
     const destBase = path.join(workspaceDir, '.claude')
 
     switch (type) {
-      case 'agent': {
-        const sourceFile = path.join(sourcePath, `${plainName}.md`)
-        const destDir = path.join(destBase, 'agents')
-        const destFile = path.join(destDir, `${plainName}.md`)
-
-        if (!fs.existsSync(sourceFile)) {
-          throw new Error(`Agent file not found: ${sourceFile}`)
-        }
-
-        fs.mkdirSync(destDir, { recursive: true })
-        fs.copyFileSync(sourceFile, destFile)
-        break
-      }
-      case 'command': {
-        const sourceFile = path.join(sourcePath, `${plainName}.md`)
-        const destDir = path.join(destBase, 'commands')
-        const destFile = path.join(destDir, `${plainName}.md`)
-
-        if (!fs.existsSync(sourceFile)) {
-          throw new Error(`Command file not found: ${sourceFile}`)
-        }
-
-        fs.mkdirSync(destDir, { recursive: true })
-        fs.copyFileSync(sourceFile, destFile)
-        break
-      }
+      case 'agent':
+      case 'command':
       case 'rule': {
-        const sourceFile = path.join(sourcePath, `${plainName}.md`)
-        const destDir = path.join(destBase, 'rules')
-        const destFile = path.join(destDir, `${plainName}.md`)
-
-        if (!fs.existsSync(sourceFile)) {
-          throw new Error(`Rule file not found: ${sourceFile}`)
-        }
-
-        fs.mkdirSync(destDir, { recursive: true })
-        fs.copyFileSync(sourceFile, destFile)
+        const subdir = type === 'agent' ? 'agents' : type === 'command' ? 'commands' : 'rules'
+        this.copyMdResource(type, plainName, sourcePath, destBase, subdir)
         break
       }
       case 'skill': {
@@ -146,5 +114,28 @@ export class ResourceProvisioner {
         }
       }
     }
+  }
+
+  /**
+   * Copy a single .md resource file to the workspace .claude/{subdir}/ directory.
+   * Shared by agent, command, and rule types.
+   */
+  private copyMdResource(
+    type: string,
+    plainName: string,
+    sourcePath: string,
+    destBase: string,
+    subdir: string,
+  ): void {
+    const sourceFile = path.join(sourcePath, `${plainName}.md`)
+    const destDir = path.join(destBase, subdir)
+    const destFile = path.join(destDir, `${plainName}.md`)
+
+    if (!fs.existsSync(sourceFile)) {
+      throw new Error(`${type} file not found: ${sourceFile}`)
+    }
+
+    fs.mkdirSync(destDir, { recursive: true })
+    fs.copyFileSync(sourceFile, destFile)
   }
 }

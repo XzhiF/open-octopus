@@ -111,6 +111,23 @@ export class EngineInitPhase {
   }
 
   /**
+   * Build a consistent EngineInitResult from the current ProvisionContext.
+   */
+  private buildResult(
+    ctx: ProvisionContext,
+    status: "completed" | "failed",
+    durationMs: number,
+    syncResults: GitSyncResult[] = [],
+  ): EngineInitResult {
+    return {
+      status, durationMs,
+      skillsCopied: ctx.skillsCopied, agentsCopied: ctx.agentsCopied,
+      commandsCopied: ctx.commandsCopied, rulesCopied: ctx.rulesCopied,
+      cloneErrors: ctx.cloneErrors, gitSyncResults: syncResults,
+    }
+  }
+
+  /**
    * Provision missing resources and update counters.
    * Returns updated context with incremented counts and failure flag.
    */
@@ -159,7 +176,10 @@ export class EngineInitPhase {
     } = options
 
     const startTime = Date.now()
-    const ctx: ProvisionContext = { skillsCopied: 0, agentsCopied: 0, commandsCopied: 0, rulesCopied: 0, cloneErrors: [], failed: false }
+    const ctx: ProvisionContext = {
+      skillsCopied: 0, agentsCopied: 0, commandsCopied: 0, rulesCopied: 0,
+      cloneErrors: [], failed: false,
+    }
 
     // Write start event to JSONL log
     logger?.log(INIT_NODE_ID, "start", { type: INIT_NODE_TYPE })
@@ -193,12 +213,7 @@ export class EngineInitPhase {
           const durationMs = Date.now() - startTime
           logger?.log(INIT_NODE_ID, "end", { status: "failed", durationMs })
           callbacks.onNodeEnd?.(INIT_NODE_ID, "failed", durationMs)
-          return {
-            status: "failed", durationMs,
-            skillsCopied: ctx.skillsCopied, agentsCopied: ctx.agentsCopied,
-            commandsCopied: ctx.commandsCopied, rulesCopied: ctx.rulesCopied,
-            cloneErrors: ctx.cloneErrors, gitSyncResults: [],
-          }
+          return this.buildResult(ctx, "failed", durationMs)
         }
       }
 
@@ -252,8 +267,7 @@ export class EngineInitPhase {
         )
         ctx.skillsCopied = scanResult.skillsCopied
         ctx.agentsCopied = scanResult.agentsCopied
-        ctx.commandsCopied = scanResult.commandsCopied
-        ctx.rulesCopied = scanResult.rulesCopied
+        // Note: commandsCopied/rulesCopied unchanged — scan only produces skills+agents
         if (scanResult.failed) ctx.failed = true
       } else if (!resourcePreflight || !resourceProvisioner) {
         this.logMessage(logger, callbacks, "Resource preflight not configured, skipping")
@@ -264,12 +278,7 @@ export class EngineInitPhase {
         const durationMs = Date.now() - startTime
         logger?.log(INIT_NODE_ID, "end", { status: "failed", durationMs })
         callbacks.onNodeEnd?.(INIT_NODE_ID, "failed", durationMs)
-        return {
-          status: "failed", durationMs,
-          skillsCopied: ctx.skillsCopied, agentsCopied: ctx.agentsCopied,
-          commandsCopied: ctx.commandsCopied, rulesCopied: ctx.rulesCopied,
-          cloneErrors: ctx.cloneErrors, gitSyncResults: [],
-        }
+        return this.buildResult(ctx, "failed", durationMs)
       }
 
       // Step 3: Optional git sync
@@ -279,24 +288,14 @@ export class EngineInitPhase {
       logger?.log(INIT_NODE_ID, "end", { status: "completed", durationMs })
       callbacks.onNodeEnd?.(INIT_NODE_ID, "completed", durationMs)
 
-      return {
-        status: "completed", durationMs,
-        skillsCopied: ctx.skillsCopied, agentsCopied: ctx.agentsCopied,
-        commandsCopied: ctx.commandsCopied, rulesCopied: ctx.rulesCopied,
-        cloneErrors: ctx.cloneErrors, gitSyncResults: syncResults,
-      }
+      return this.buildResult(ctx, "completed", durationMs, syncResults)
     } catch (err: unknown) {
       const errorMsg = err instanceof Error ? err.message : String(err)
       this.logMessage(logger, callbacks, `[ERROR] Engine init failed with unexpected error: ${errorMsg}`)
       const durationMs = Date.now() - startTime
       logger?.log(INIT_NODE_ID, "end", { status: "failed", durationMs, error: errorMsg })
       callbacks.onNodeEnd?.(INIT_NODE_ID, "failed", durationMs)
-      return {
-        status: "failed", durationMs,
-        skillsCopied: ctx.skillsCopied, agentsCopied: ctx.agentsCopied,
-        commandsCopied: ctx.commandsCopied, rulesCopied: ctx.rulesCopied,
-        cloneErrors: ctx.cloneErrors, gitSyncResults: [],
-      }
+      return this.buildResult(ctx, "failed", durationMs)
     }
   }
 
