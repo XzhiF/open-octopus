@@ -349,10 +349,13 @@ The following artifacts are created **later** by downstream agents — this skil
 
 **Steps**:
 1. Create directory `<artifacts.dir>/<feature-slug>/`
-2. Write `<artifacts.dir>/<feature-slug>/brief.md`
-3. For wayfinder path, `map.md` and `decisions/` were already created during the wayfinder process
-4. **Update `<artifacts.dir>/index.md`** (append new record, auto-increment number)
-5. Tell the user the brief path and how to proceed (see Next Steps)
+2. Write `<artifacts.dir>/<feature-slug>/brief.md` (lightweight core info)
+3. Write `<artifacts.dir>/<feature-slug>/spec.md` (using `matt-verified-spec` skill as methodology reference)
+4. Spawn story-walkthrough sub-agent → read findings → fix spec.md
+5. Write `<artifacts.dir>/<feature-slug>/issues/` (using `matt-verified-tickets` skill as methodology reference)
+6. For wayfinder path, `map.md` and `decisions/` were already created during the wayfinder process
+7. **Update `<artifacts.dir>/index.md`** (append new record, auto-increment number)
+8. Tell the user the output paths and how to proceed (see Next Steps)
 
 ### Index File Maintenance
 
@@ -364,17 +367,13 @@ The following artifacts are created **later** by downstream agents — this skil
 | N | <feature-slug> | YYYY-MM-DD | feat/<branch> | in-progress |
 ```
 
-## Brief Template
+## Brief Template (lightweight core info)
 
 ```markdown
-# Requirement Brief
+# Brief: [Feature Title]
 
 ## Overview
 [One sentence description]
-
-## Projects Involved
-- [ ] [project-1] ([role])
-- [ ] [project-2] ([role])
 
 ## Feature Scope
 **Do:**
@@ -387,13 +386,58 @@ The following artifacts are created **later** by downstream agents — this skil
 | # | Decision | Conclusion | Reason |
 |---|---------|-----------|--------|
 
-## Decision Map Summary (wayfinder path only)
-<!-- Only include when wayfinder path was used. Synthesize all resolved decision tickets. -->
+## Acceptance Criteria
+| # | User Story | AC |
+|---|-----------|----|
+| AC-1 | As a... | [condition] |
 
+## Risks & Notes
+- R1: [risk]
+
+## Full Spec
+For detailed data models, API contracts, verification strategy, and implementation decisions: [spec.md](./spec.md)
+```
+
+## Spec Template (single source of truth)
+
+See `matt-verified-spec` skill (enhancement of `to-spec`) for verification strategy additions and writing rules.
+
+```markdown
+# Spec: [Feature Title]
+
+## Problem Statement
+The problem users face, described from the user's perspective.
+
+## Solution
+The solution, described from the user's perspective.
+
+## Projects Involved
+- [ ] [project-1] ([role])
+- [ ] [project-2] ([role])
+
+## Feature Scope
+**Do:** / **Don't:**
+
+## Key Decisions
+| # | Decision | Conclusion | Reason |
+|---|---------|-----------|--------|
+
+## Decision Map Summary (wayfinder path only)
 | # | Ticket | Type | Decision |
 |---|--------|------|----------|
-
 Map: [map.md](./map.md)
+
+## User Stories
+1. As a [role], I want [capability], so that [benefit]
+(Exhaustive list covering all aspects of the feature)
+
+## Implementation Decisions
+- Modules involved (new / modified)
+- Inter-module interface definitions
+- Data model changes (tables, fields, indexes)
+- API contracts (paths, methods, params, response)
+- Caching strategy
+- Architecture decisions
 
 ## Data Model Changes
 | Table | Operation | Details |
@@ -407,23 +451,45 @@ Map: [map.md](./map.md)
 - Figma link: [URL or "none"]
 - Fidelity: [pixel-perfect 1:1 / rough alignment]
 
-## Acceptance Criteria
-| # | User Story | AC | Verification Method |
-|---|-----------|----|-------------------|
-
 ## Verification Strategy
 
-### Global Config
-- Environment: [UAT / local]
-- Test user: [account info]
-- Data prefix: [e.g., "E2E_TEST_"]
+### Verification Environment
+| Item | Value |
+|------|-------|
+| Environment | [local dev: `pnpm dev`] |
+| API prefix | `/api/` |
+| Database | SQLite: `~/.octopus/db/octopus.db` |
+| Admin UI | `http://localhost:3000` |
 
-### Per-layer Methods
+### Test Users & Data
+| Item | Value |
+|------|-------|
+| Test account | [admin / regular user] |
+| Data prefix | E2E_TEST_ |
+| Cleanup | DELETE after test |
+
+### AC to Verification Method Mapping
+| US# | User Story | AC | Verification Level | Verification Method |
+|-----|-----------|-----|-------------------|---------------------|
+
+### Verification Methods Detail
 #### Unit Tests
 #### Integration Tests
 #### Browser E2E
 #### Contract Tests
 #### Manual Checklist
+
+### Anti-Fake-Run Standards (R1-R8)
+| # | Criterion | Description |
+|---|-----------|-------------|
+| R1 | Real service | Use real address, not mock |
+| R2 | Business data | Assert specific field values |
+| R3 | Cross-validation | API ↔ DB, at least two-way |
+| R4 | Evidence | Response body + DB query |
+| R5 | Side effects | Write ops verify DB change |
+| R6 | Real user path | Obtain token through login |
+| R7 | Data isolation | E2E_TEST_ prefix |
+| R8 | Repeatable | No manual pre-steps |
 
 ### Prerequisites
 - [ ] [Prerequisite 1]
@@ -436,18 +502,71 @@ Map: [map.md](./map.md)
 |------|---------|
 
 ## Appendix: Core User Stories（闭环验证）
-
-以下 N 个故事追踪完整用户旅程，验证 UI → API → 数据 → 执行的每一步都连通。
-
 ### Story 1: [标题]
 [Step-by-step trace with [UI]/[API]/[Data]/[Exec]/[Event] annotations]
-
 ### Story 2: [标题]
 [...]
-
-### Story 3: [标题]
-[...]
 ```
+
+**Spec writing rules** (from `matt-verified-spec`):
+1. Every User Story MUST have a verification method
+2. Verification methods must be executable (specific commands, not "test the API")
+3. Use project domain terminology (consistent with CONTEXT.md)
+4. No implementation code (describe decisions, not code)
+5. No scope reduction ("for now", "for the initial implementation" forbidden)
+
+## Issues Writing (DAG Tickets)
+
+After spec.md is finalized (including story walk-through fixes), write implementation tickets to `<artifacts.dir>/<feature-slug>/issues/`.
+
+See `matt-verified-tickets` skill (enhancement of `to-tickets`) for verification method additions and DAG rules.
+
+### Process
+1. Gather context (read spec.md, explore codebase)
+2. Split into vertical slices (tracer bullet principles)
+3. Order by dependency: DB → Entity → Service → Controller → Frontend API → Frontend pages → E2E
+4. Bind verification method to each ticket
+5. Declare blocking edges (`Blocked by` field — this creates the DAG)
+6. Write to files: one per ticket, numbered from `01-<slug>.md`
+
+### Ticket Template
+
+```markdown
+# <NN> — <Ticket Title>
+
+## What to build
+Describe the end-to-end behavior this ticket implements, from the user's perspective.
+
+## Blocked by
+Prerequisite ticket numbers/titles, or "None — can start immediately".
+
+## Status
+ready-for-agent
+
+## Acceptance Criteria
+- [ ] AC1: [specific verifiable condition]
+- [ ] AC2: [specific verifiable condition]
+
+## Verification Method
+**Verification type**: [unit test / integration test / browser E2E / contract test / manual checklist]
+
+**Verification steps**:
+[Specific commands, SQL, assertions]
+
+**Pass criteria**: All verification steps PASS
+**Failure handling**: Max 3 fix attempts, then mark SKIP with reason
+```
+
+**Status field convention**: The value under `## Status` heading is plain text. Valid values: `ready-for-agent` (initial), `in-progress` (claimed), `done` (verified), `skip` (failed after retries). Both matt-dev-runner and matt-dev-pipeline read this field to track progress.
+
+### Issues Writing Rules
+1. Every ticket MUST have a Verification Method
+2. Vertical Slice — each ticket is a complete narrow path
+3. Independently verifiable — each ticket can be verified on its own
+4. Clear dependencies — `Blocked by` explicitly declares prerequisites
+5. Executable verification — specific commands, specific SQL, specific assertions
+6. One session size — each ticket fits in one agent call
+7. DAG structure — tickets without mutual blockers can run concurrently in the same stage
 
 ## Relationship to Original Skills
 
@@ -457,21 +576,24 @@ Map: [map.md](./map.md)
 | `grill-with-docs` | **Replaces** — grilling + domain-modeling built in, plus verification strategy |
 | `wayfinder` | **Adapts** its core protocol (map, decision tickets, fog of war, frontier) for single-entry flow with verification strategy. The standalone `/wayfinder` remains available for efforts outside this pipeline. |
 | `domain-modeling` | **Reuses** — updates CONTEXT.md and creates ADRs inline |
-| `matt-dev-runner` | **Downstream** — receives the brief for development execution |
-| `matt-dev-pipeline` | **Downstream** — receives the brief for full pipeline execution |
-| `matt-pipeline-loop` | **Downstream** — receives the brief for iterative pipeline with verification loop |
+| `matt-verified-spec` | **Enhancement of `to-spec`** — adds verification strategy block (environment, AC mapping, methods detail, anti-fake-run R1-R8) |
+| `matt-verified-tickets` | **Enhancement of `to-tickets`** — adds verification method binding per ticket (executable steps, DAG structure) |
+| `matt-dev-runner` | **Simplified** — now a single-ticket implementer, spawned concurrently by pipeline per DAG stage |
+| `matt-dev-pipeline` | **Downstream** — receives spec.md + issues/ for DAG-based concurrent execution |
+| `matt-pipeline-loop` | **Downstream** — receives spec.md + issues/ for iterative pipeline with verification loop |
 | `matt-verification-report` | **Indirect** — loop uses it to audit each iteration's results |
 
 ## Next Steps
 
-Once the brief is confirmed and written to `<artifacts.dir>/<feature-slug>/brief.md`, tell the user:
+Once all artifacts are written, tell the user:
 
-> Requirement brief is ready at `<artifacts.dir>/<feature-slug>/brief.md`.
+> Verified spec and tickets are ready:
+> - Brief (core info): `<artifacts.dir>/<feature-slug>/brief.md`
+> - Spec: `<artifacts.dir>/<feature-slug>/spec.md`
+> - Tickets: `<artifacts.dir>/<feature-slug>/issues/` (N tickets, M stages)
 >
-> You have three options to proceed:
+> Two options to proceed:
 >
-> 1. **`matt-dev-runner`** — Development only. Invoke the agent to synthesize spec, split tickets, and run implement-verify loops. You handle deploy and PR yourself.
+> 1. **`matt-dev-pipeline`** — Full pipeline. DAG-based concurrent development → code review → deploy → E2E verification → Git PR delivery.
 >
-> 2. **`matt-dev-pipeline`** — Full pipeline. Orchestrate development → CI/CD deploy → E2E verification → Git PR delivery, all in one flow.
->
-> 3. **`matt-pipeline-loop`** — Iterative pipeline with verification. Runs the full pipeline, then audits the result with `matt-verification-report`. If confidence < 85, auto-generates a gap-focused brief and re-runs. Loops until the feature is truly deliverable. Best for features with complex UI or high delivery standards.
+> 2. **`matt-pipeline-loop`** — Iterative pipeline with verification. Runs the full pipeline, then audits with `matt-verification-report`. If confidence < 85, auto-generates a gap-focused brief and re-runs. Loops until the feature is truly deliverable.
