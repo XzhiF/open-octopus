@@ -19,6 +19,7 @@ import { InteractionNode } from "./workflow-nodes/interaction-node"
 import { LoopNode } from "./workflow-nodes/loop-node"
 import { LoopContainerNode } from "./workflow-nodes/loop-container-node"
 import { SubWorkflowContainerNode } from "./workflow-nodes/sub-workflow-container-node"
+import { OctopusAgentNode } from "./workflow-nodes/octopus-agent-node"
 import { SwarmNode } from "@/components/swarm/organisms/swarm-node"
 import { ConditionEdge } from "./workflow-edges/condition-edge"
 
@@ -41,6 +42,7 @@ const nodeTypes = {
   "sub-workflow-container": SubWorkflowContainerNode,
   sub_workflow: SubWorkflowContainerNode,
   dynamic_sub_workflow: SubWorkflowContainerNode,
+  octopus_agent: OctopusAgentNode,
 }
 
 const edgeTypes = {

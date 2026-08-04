@@ -19,6 +19,8 @@ import type { KnowledgeInjector } from "../knowledge-injector"
 import type { AgentNodeRunner } from "./agent-runner"
 import type { EngineContext } from "./agent"
 import type { InnerNodeOverride, NodeExecutionResult, InteractionMetadata } from "./types"
+import type { VersionResolver } from "@octopus/shared"
+import type { CreateSessionFn } from "./octopus-agent/session"
 
 // ============================================================
 // Callback type aliases (inline function types used across executors)
@@ -117,6 +119,25 @@ export interface AgentConfig {
   loopContext?: Record<string, any>
   providerKey?: string
   previousSessionId?: string
+  signal?: AbortSignal
+  globalAutoAnswers?: AutoAnswer[]
+  promptInjector?: PromptInjector
+  knowledgeInjector?: KnowledgeInjector
+  workflowName?: string
+  crossExecResolver?: CrossExecResolver
+  executionId?: string
+  resolvedModel?: string
+  modelAliasConfig?: ModelAliasConfig
+}
+
+/** OctopusAgentExecutor — wraps AgentExecutor with version resolution + heartbeat */
+export interface OctopusAgentConfig {
+  runner: AgentNodeRunner
+  versionResolver: VersionResolver
+  createSessionFn?: CreateSessionFn
+  engineContext?: EngineContext
+  loopContext?: Record<string, any>
+  providerKey?: string
   signal?: AbortSignal
   globalAutoAnswers?: AutoAnswer[]
   promptInjector?: PromptInjector

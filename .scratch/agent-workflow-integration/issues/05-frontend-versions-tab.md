@@ -8,7 +8,7 @@
 02 — Shared Types + Registration (需要 node-icon-config 和类型定义)
 
 ## Status
-ready-for-agent
+done
 
 ## Acceptance Criteria
 - [ ] AC1: CloneDetailView 新增 "Versions" Tab，与现有 File Tree / File Content / Chat Tab 并列

@@ -38,6 +38,7 @@ const typeTints: Record<string, string> = {
   approval: "rgba(16,185,129,0.08)",
   interaction: "rgba(147,51,234,0.08)",
   loop: "rgba(249,115,22,0.08)",
+  octopus_agent: "rgba(244,63,94,0.08)",
 }
 
 export function TypeShell({ nodeType, name, statusOverlay, children }: TypeShellProps) {

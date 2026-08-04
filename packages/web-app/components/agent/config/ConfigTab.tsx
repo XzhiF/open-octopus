@@ -8,6 +8,7 @@ import { MemoryStrategyConfig } from './MemoryStrategyConfig'
 import { SafeModePanel } from './SafeModePanel'
 import { SafetyAudit } from './SafetyAudit'
 import { DebugLogViewer } from './DebugLogViewer'
+import { MainAgentVersionsSection } from './MainAgentVersionsSection'
 import { Skeleton } from '@/components/ui/skeleton'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { AlertTriangle } from 'lucide-react'
@@ -52,6 +53,7 @@ export function ConfigTab() {
         <SafeModePanel safeMode={safeMode} onToggle={toggleSafeMode} />
         <SafetyAudit events={safetyEvents} />
         <DebugLogViewer config={config} onSave={saveConfig} />
+        <MainAgentVersionsSection />
       </div>
     </ScrollArea>
   )

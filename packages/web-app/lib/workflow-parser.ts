@@ -23,7 +23,7 @@ interface WorkflowDefinition {
   [key: string]: unknown
 }
 
-const VALID_NODE_TYPES = new Set(["bash", "python", "agent", "condition", "approval", "loop", "swarm", "interaction", "sub_workflow", "dynamic_sub_workflow"])
+const VALID_NODE_TYPES = new Set(["bash", "python", "agent", "condition", "approval", "loop", "swarm", "interaction", "sub_workflow", "dynamic_sub_workflow", "octopus_agent"])
 
 // Node dimensions for dagre layout
 // Heights account for header + duration + multi-model token display
@@ -36,6 +36,7 @@ function getNodeDimensions(node: WorkflowNode): { width: number; height: number 
     case "swarm": return { width: 280, height: 180 }
     case "sub_workflow": return { width: 280, height: 180 }
     case "dynamic_sub_workflow": return { width: 280, height: 180 }
+    case "octopus_agent": return { width: 280, height: 200 }
     default: return { width: 280, height: 160 }
   }
 }
@@ -542,6 +543,11 @@ export function yamlToFlowData(
             : ((node as Record<string, unknown>).max_experts as number) ?? 0,
           consensusScore: null,
           status: "pending",
+        } : {}),
+        ...(node.type === "octopus_agent" ? {
+          agent: (node as Record<string, unknown>).agent,
+          version: (node as Record<string, unknown>).version,
+          task_brief: ((node as Record<string, unknown>).task as Record<string, unknown> | undefined)?.brief,
         } : {}),
         ...(isContainerWithInner && containerSize ? {
           containerWidth: containerSize.width,

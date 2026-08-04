@@ -245,6 +245,48 @@ export type AgentSSEEvent =
   | { event: 'done'; data: { session_id: string; message_id: string; session_title?: string; token_usage?: { input: number; output: number } } }
   | { event: 'error'; data: { code: string; message: string } }
 
+// ===== Agent Versions =====
+export type VersionStage = 'alpha' | 'beta' | 'rc' | 'stable'
+export type AgentVersionStatus = 'draft' | 'published' | 'archived'
+
+export interface AgentSnapshot {
+  persona: string
+  config: Record<string, unknown>
+  skills: string[]
+}
+
+export interface AgentVersionInfo {
+  id: string
+  agent_name: string
+  version: string
+  major: number
+  minor: number
+  patch: number
+  stage: VersionStage
+  status: AgentVersionStatus
+  snapshot: string  // JSON string of AgentSnapshot
+  changelog?: string
+  published_at?: string
+  published_by?: string
+  created_at: string
+}
+
+export interface VersionListResponse {
+  versions: AgentVersionInfo[]
+  total: number
+}
+
+export interface VersionDiffResponse {
+  persona_diff: string
+  config_diff: string
+  skills_diff: string
+}
+
+export interface RollbackResponse {
+  success: boolean
+  previous_version: string
+}
+
 // ===== Error =====
 export interface AgentErrorResponse {
   error: {
