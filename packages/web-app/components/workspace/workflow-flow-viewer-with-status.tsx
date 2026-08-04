@@ -112,6 +112,29 @@ export function WorkflowFlowViewerWithStatus({
   // Pre-fetch sub-workflow child nodes for container rendering
   // Recursively scans all nodes including those nested inside loops
   const [subWorkflowNodes, setSubWorkflowNodes] = useState<Record<string, any[]>>({})
+
+  // Track how many sub-workflows we've successfully resolved — re-fetch when
+  // executionSteps change and some dynamic sub-workflows are still unresolved
+  // (the child YAML is generated at runtime by dynamic_sub_workflow executor)
+  const stepCountKey = executionSteps.length
+
+  // Bump a counter when SSE runtime_node_added fires for this execution
+  // so we refetch dynamic sub-workflow YAMLs immediately (not waiting for poll)
+  const [runtimeNodeVersion, setRuntimeNodeVersion] = useState(0)
+  useEffect(() => {
+    if (!workspaceId || !executionId) return
+    const es = new EventSource(`${getServerUrl()}/api/workspaces/${workspaceId}/executions/events`)
+    es.addEventListener("runtime_node_added", (e) => {
+      try {
+        const data = JSON.parse(e.data)
+        if (data.executionId === executionId) {
+          setRuntimeNodeVersion(v => v + 1)
+        }
+      } catch { /* ignore */ }
+    })
+    return () => es.close()
+  }, [workspaceId, executionId])
+
   useEffect(() => {
     const parsed = parseYaml(yamlContent)
     if (!parsed?.nodes) return
@@ -136,8 +159,12 @@ export function WorkflowFlowViewerWithStatus({
     const refs = collectRefs(parsed.nodes as Array<Record<string, unknown>>)
     if (refs.length === 0 || !workspaceId) return
 
+    // Skip refs we already resolved successfully
+    const unresolvedRefs = refs.filter(ref => !subWorkflowNodes[ref])
+    if (unresolvedRefs.length === 0 && stepCountKey === (subWorkflowNodes.__stepCount as number ?? -1)) return
+
     const fetchAll = async () => {
-      const results: Record<string, any[]> = {}
+      const results: Record<string, any[]> = { ...subWorkflowNodes }
       await Promise.all(
         refs.map(async (ref: string) => {
           try {
@@ -151,10 +178,11 @@ export function WorkflowFlowViewerWithStatus({
           } catch { /* non-fatal: container will render empty */ }
         }),
       )
+      results.__stepCount = stepCountKey as any
       setSubWorkflowNodes(results)
     }
     fetchAll()
-  }, [yamlContent, workspaceId])
+  }, [yamlContent, workspaceId, stepCountKey, runtimeNodeVersion])
 
   const flowData = useMemo(() => {
     const parsed = parseYaml(yamlContent)
@@ -301,6 +329,7 @@ export function WorkflowFlowViewerWithStatus({
   return (
     <div className="h-full w-full" onContextMenu={(e) => e.preventDefault()}>
       <ReactFlow
+        key={`rf-${flowData.nodes.length}`}
         nodes={flowData.nodes}
         edges={flowData.edges}
         nodeTypes={nodeTypes}

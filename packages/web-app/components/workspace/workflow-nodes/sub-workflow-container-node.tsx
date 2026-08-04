@@ -154,7 +154,7 @@ export function SubWorkflowContainerNode({ data, selected }: NodeProps) {
             子工作流
           </Badge>
 
-          {isDynamic && !hasChildNodes && (
+          {isDynamic && (
             <Badge variant="outline" className="text-xs border-amber-300 text-amber-600 bg-amber-50 shrink-0">
               ⚡ Dynamic
             </Badge>
