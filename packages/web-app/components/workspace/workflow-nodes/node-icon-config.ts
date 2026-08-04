@@ -91,4 +91,11 @@ export const nodeIconConfigs: Record<string, NodeIconConfig> = {
     borderColor: "border-violet-200",
     label: "Dynamic DAG",
   },
+  octopus_agent: {
+    icon: Bot,
+    color: "text-rose-600",
+    bgColor: "bg-rose-50",
+    borderColor: "border-rose-200",
+    label: "Octopus Agent",
+  },
 }

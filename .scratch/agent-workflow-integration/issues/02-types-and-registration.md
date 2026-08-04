@@ -7,7 +7,7 @@
 01 — Version Management Foundation (需要 VersionResolver 依赖 agent_versions 表)
 
 ## Status
-ready-for-agent
+done
 
 ## Acceptance Criteria
 - [ ] AC1: `packages/shared/src/types/octopus-agent.ts` 定义: OctopusAgentNodeDef, TaskContract, StructuredResult, AgentHeartbeat, HarnessDirective, BudgetConfig, HarnessConfig, OutputSchema, Artifact, VersionStage

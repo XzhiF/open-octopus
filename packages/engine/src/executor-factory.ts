@@ -18,6 +18,7 @@ import { AgentExecutor } from "./executors/agent"
 import { SwarmExecutor } from "./executors/swarm"
 import { SubWorkflowExecutor } from "./executors/sub-workflow"
 import { DynamicSubWorkflowExecutor } from "./executors/dynamic-sub-workflow"
+import { OctopusAgentExecutor } from "./executors/octopus-agent"
 import { AgentNodeRunner } from "./executors/agent-runner"
 import type { EngineCallbacks, RuntimeNodeMeta } from "./engine"
 import type { JsonlLogger } from "./logger"
@@ -242,6 +243,12 @@ export class ExecutorFactory {
           },
           outputDir: join(this.ctx.cwd, "workflows"),
           workflow: this.ctx.workflow,
+        })
+      case "octopus_agent":
+        return new OctopusAgentExecutor(node, p, {
+          signal: s,
+          cwd: this.ctx.cwd,
+          executionId: this.ctx.executionId,
         })
       default:
         throw new Error(`Unknown node type: ${(node as any).type}`)

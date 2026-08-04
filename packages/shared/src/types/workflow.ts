@@ -159,7 +159,7 @@ export const InteractionAgentSchema = z.object({
 
 export interface NodeDef {
   id: string
-  type: "bash" | "python" | "agent" | "condition" | "approval" | "loop" | "swarm" | "interaction" | "sub_workflow" | "dynamic_sub_workflow"
+  type: "bash" | "python" | "agent" | "condition" | "approval" | "loop" | "swarm" | "interaction" | "sub_workflow" | "dynamic_sub_workflow" | "octopus_agent"
   model?: string
   engine?: string
   timeout?: number
@@ -252,6 +252,23 @@ export interface NodeDef {
   output_mapping?: Record<string, string>
   on_error?: "fail" | "continue"
 
+  // octopus_agent
+  version?: string
+  min_stage?: "alpha" | "beta" | "rc" | "stable"
+  task?: {
+    brief: string
+    context?: string[]
+    constraints?: string[]
+    expected_output?: { type?: string; schema?: Record<string, unknown> }
+    sop?: string
+    budget?: { max_tokens?: number; max_duration?: number; max_cost_usd?: number }
+  }
+  harness?: {
+    heartbeat_interval?: number
+    heartbeat_timeout?: number
+    auto_abort_on_budget?: boolean
+  }
+
   // 通用桶 — 不属于上述分类的任意数据
   variables?: Record<string, unknown>
 }
@@ -259,7 +276,7 @@ export interface NodeDef {
 export const NodeSchema: z.ZodType<NodeDef> = z.lazy(() =>
   z.object({
     id: z.string(),
-    type: z.enum(["bash", "python", "agent", "condition", "approval", "loop", "swarm", "interaction", "sub_workflow", "dynamic_sub_workflow"]),
+    type: z.enum(["bash", "python", "agent", "condition", "approval", "loop", "swarm", "interaction", "sub_workflow", "dynamic_sub_workflow", "octopus_agent"]),
     model: z.string().optional(),
     engine: z.string().optional(),
     timeout: z.number().int().positive().optional(),
@@ -344,6 +361,30 @@ export const NodeSchema: z.ZodType<NodeDef> = z.lazy(() =>
     output_mapping: z.record(z.string(), z.string()).optional(),
     on_error: z.enum(["fail", "continue"]).optional(),
 
+    // octopus_agent
+    version: z.string().optional(),
+    min_stage: z.enum(["alpha", "beta", "rc", "stable"]).optional(),
+    task: z.object({
+      brief: z.string(),
+      context: z.array(z.string()).optional(),
+      constraints: z.array(z.string()).optional(),
+      expected_output: z.object({
+        type: z.string().optional(),
+        schema: z.record(z.any()).optional(),
+      }).optional(),
+      sop: z.string().optional(),
+      budget: z.object({
+        max_tokens: z.number().optional(),
+        max_duration: z.number().optional(),
+        max_cost_usd: z.number().optional(),
+      }).optional(),
+    }).optional(),
+    harness: z.object({
+      heartbeat_interval: z.number().optional(),
+      heartbeat_timeout: z.number().optional(),
+      auto_abort_on_budget: z.boolean().optional(),
+    }).optional(),
+
     variables: z.record(z.string(), z.unknown()).optional(),
   }).transform((data) => {
     // ponytail: command → bash alias — users naturally write `command:` for bash nodes
@@ -352,8 +393,27 @@ export const NodeSchema: z.ZodType<NodeDef> = z.lazy(() =>
     return rest
   }).superRefine((data, ctx) => {
     // Swarm cross-field validations (only for type: "swarm")
-    if (data.type !== "swarm") return
-    validateSwarmConstraints(data, ctx)
+    if (data.type === "swarm") {
+      validateSwarmConstraints(data, ctx)
+    }
+
+    // OctopusAgent cross-field validations
+    if (data.type === "octopus_agent") {
+      if (!data.agent || data.agent.trim().length === 0) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "octopus_agent nodes require an 'agent' field (clone name or '__main__')",
+          path: ["agent"],
+        })
+      }
+      if (!data.task?.brief || data.task.brief.trim().length === 0) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "octopus_agent nodes require a 'task.brief' field",
+          path: ["task", "brief"],
+        })
+      }
+    }
   })
 )
 

@@ -7,7 +7,7 @@
 None — can start immediately.
 
 ## Status
-ready-for-agent
+done
 
 ## Acceptance Criteria
 - [ ] AC1: `agent_versions` 表存在于 SQLite，含 id, agent_name, version, major, minor, patch, stage, status, snapshot(JSON), changelog, published_at, published_by, created_at
