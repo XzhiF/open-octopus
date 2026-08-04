@@ -30,4 +30,4 @@
 | 26 | dynamic-sub-workflow | 2026-08-03 | feat/dynamic-sub-workflow | done (converged: 85→91) |
 | 27 | dynamic-sub-workflow-r2 | 2026-08-03 | feat/dynamic-sub-workflow | done (gap-fix: integration tests + density) |
 | 28 | workflow-requires-effort | 2026-08-03 | feat/workflow-requires-effort | done (PR #41) |
-| 29 | resource-module-enhancement | 2026-08-04 | feat/resource-module-enhancement | in-progress |
+| 29 | resource-module-enhancement | 2026-08-04 | feat/resource-module-enhancement | done (E2E: 11 PASS, 5 SKIP) |
