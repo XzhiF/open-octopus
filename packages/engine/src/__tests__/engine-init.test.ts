@@ -27,7 +27,7 @@ describe("EngineInitPhase", () => {
     }
 
     resourcePreflight = {
-      analyze: vi.fn().mockReturnValue({ agents: [], skills: [] }),
+      analyze: vi.fn().mockReturnValue({ agents: [], skills: [], commands: [], rules: [] }),
       check: vi.fn().mockReturnValue({ missing: [], available: [] }),
     }
 
@@ -69,7 +69,7 @@ describe("EngineInitPhase", () => {
 
   describe("resource provisioning", () => {
     it("provisions missing resources", async () => {
-      vi.mocked(resourcePreflight.analyze).mockReturnValue({ agents: ["agent1"], skills: ["skill1"] })
+      vi.mocked(resourcePreflight.analyze).mockReturnValue({ agents: ["agent1"], skills: ["skill1"], commands: [], rules: [] })
       vi.mocked(resourcePreflight.check).mockReturnValue({
         missing: [{ name: "skill1", type: "skill" }],
         available: [{ name: "agent1", type: "agent" }],
@@ -90,7 +90,7 @@ describe("EngineInitPhase", () => {
     })
 
     it("logs success when all resources are present", async () => {
-      vi.mocked(resourcePreflight.analyze).mockReturnValue({ agents: ["agent1"], skills: [] })
+      vi.mocked(resourcePreflight.analyze).mockReturnValue({ agents: ["agent1"], skills: [], commands: [], rules: [] })
       vi.mocked(resourcePreflight.check).mockReturnValue({
         missing: [],
         available: [{ name: "agent1", type: "agent" }],
@@ -106,7 +106,7 @@ describe("EngineInitPhase", () => {
     })
 
     it("fails and throws when provisioning fails", async () => {
-      vi.mocked(resourcePreflight.analyze).mockReturnValue({ agents: [], skills: ["skill1"] })
+      vi.mocked(resourcePreflight.analyze).mockReturnValue({ agents: [], skills: ["skill1"], commands: [], rules: [] })
       vi.mocked(resourcePreflight.check).mockReturnValue({
         missing: [{ name: "skill1", type: "skill" }],
         available: [],
@@ -211,7 +211,7 @@ describe("EngineInitPhase", () => {
 
       it("works without requires (backward compatible)", async () => {
         // workflow has no requires field
-        vi.mocked(resourcePreflight.analyze).mockReturnValue({ agents: [], skills: ["skill1"] })
+        vi.mocked(resourcePreflight.analyze).mockReturnValue({ agents: [], skills: ["skill1"], commands: [], rules: [] })
         vi.mocked(resourcePreflight.check).mockReturnValue({
           missing: [{ name: "skill1", type: "skill" }],
           available: [],
@@ -235,7 +235,7 @@ describe("EngineInitPhase", () => {
           },
         } as WorkflowDef
 
-        vi.mocked(resourcePreflight.analyze).mockReturnValue({ agents: [], skills: [] })
+        vi.mocked(resourcePreflight.analyze).mockReturnValue({ agents: [], skills: [], commands: [], rules: [] })
         vi.mocked(resourcePreflight.check)
           .mockReturnValueOnce({ missing: [], available: [] })
           .mockReturnValueOnce({ missing: [], available: [] })

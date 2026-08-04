@@ -382,6 +382,9 @@ export const WorkflowSchema = z.object({
   requires: z.object({
     skills: z.array(z.string()).optional(),
     agent_files: z.array(z.string()).optional(),
+    commands: z.array(z.string()).optional(),
+    rules: z.array(z.string()).optional(),
+    clones: z.array(z.string()).optional(),
   }).optional(),
   nodes: z.array(NodeSchema),
 })

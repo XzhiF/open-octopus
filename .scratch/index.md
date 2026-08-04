@@ -32,3 +32,4 @@
 | 28 | workflow-requires-effort | 2026-08-03 | feat/workflow-requires-effort | done (PR #41) |
 | 29 | resource-module-enhancement | 2026-08-04 | feat/resource-module-enhancement | done (E2E: 11 PASS, 5 SKIP) |
 | 30 | resource-module-enhancement-r2 | 2026-08-04 | feat/resource-module-enhancement | done (gap-fix: clone lifecycle 13 tests + Playwright 14 tests) |
+| 31 | workflow-requires-clones-rules-commands | 2026-08-04 | feat/workflow-requires-enhancement | in-progress |

@@ -1,5 +1,11 @@
 import path from 'path'
 import fs from 'fs'
+import os from 'os'
+
+/**
+ * ResourceItemType — 资源类型联合
+ */
+export type ResourceItemType = 'agent' | 'skill' | 'command' | 'rule' | 'clone'
 
 /**
  * ResourceManifest — 工作流所需的资源清单
@@ -7,14 +13,17 @@ import fs from 'fs'
 export interface ResourceManifest {
   agents: string[]   // agent 名称列表（不含 .md 后缀）
   skills: string[]   // skill 目录名称列表
+  commands: string[] // command 名称列表（不含 .md 后缀）
+  rules: string[]    // rule 名称列表（不含 .md 后缀）
+  // Note: clones NOT included — checked by separate hard-fail gate in engine-init
 }
 
 /**
  * ResourceCheckResult — 资源可用性检查结果
  */
 export interface ResourceCheckResult {
-  available: Array<{ type: 'agent' | 'skill'; name: string }>
-  missing: Array<{ type: 'agent' | 'skill'; name: string }>
+  available: Array<{ type: ResourceItemType; name: string }>
+  missing: Array<{ type: ResourceItemType; name: string }>
 }
 
 /**
@@ -47,6 +56,8 @@ export class ResourcePreFlight {
     return {
       agents: Array.from(agents),
       skills: Array.from(skills),
+      commands: [],
+      rules: [],
     }
   }
 
@@ -142,8 +153,8 @@ export class ResourcePreFlight {
    * 例: "built-in/vision-analyzer" → 检查 .claude/agents/vision-analyzer.md
    */
   check(manifest: ResourceManifest, workspaceDir: string): ResourceCheckResult {
-    const available: Array<{ type: 'agent' | 'skill'; name: string }> = []
-    const missing: Array<{ type: 'agent' | 'skill'; name: string }> = []
+    const available: Array<{ type: ResourceItemType; name: string }> = []
+    const missing: Array<{ type: ResourceItemType; name: string }> = []
 
     // 检查 agents
     for (const agent of manifest.agents) {
@@ -164,6 +175,56 @@ export class ResourcePreFlight {
         available.push({ type: 'skill', name: skill })
       } else {
         missing.push({ type: 'skill', name: skill })
+      }
+    }
+
+    // 检查 commands — .claude/commands/{name}.md
+    for (const command of manifest.commands) {
+      const plainName = command.replace(/\.md$/, '')
+      const commandPath = path.join(workspaceDir, '.claude', 'commands', `${plainName}.md`)
+      if (fs.existsSync(commandPath)) {
+        available.push({ type: 'command', name: command })
+      } else {
+        missing.push({ type: 'command', name: command })
+      }
+    }
+
+    // 检查 rules — .claude/rules/{name}.md
+    for (const rule of manifest.rules) {
+      const plainName = rule.replace(/\.md$/, '')
+      const rulePath = path.join(workspaceDir, '.claude', 'rules', `${plainName}.md`)
+      if (fs.existsSync(rulePath)) {
+        available.push({ type: 'rule', name: rule })
+      } else {
+        missing.push({ type: 'rule', name: rule })
+      }
+    }
+
+    return { available, missing }
+  }
+
+  /**
+   * 检查 clone 是否已安装（hard-fail gate，独立于 check()）
+   *
+   * 检查两个路径:
+   * - ~/.octopus/agent/clones/{name}/
+   * - ~/.octopus/agent/built-in/{name}/
+   *
+   * 任一存在即视为 available。
+   */
+  checkClones(cloneNames: string[]): ResourceCheckResult {
+    const available: Array<{ type: ResourceItemType; name: string }> = []
+    const missing: Array<{ type: ResourceItemType; name: string }> = []
+
+    for (const name of cloneNames) {
+      const clonePaths = [
+        path.join(os.homedir(), '.octopus', 'agent', 'clones', name),
+        path.join(os.homedir(), '.octopus', 'agent', 'built-in', name),
+      ]
+      if (clonePaths.some(p => fs.existsSync(p))) {
+        available.push({ type: 'clone', name })
+      } else {
+        missing.push({ type: 'clone', name })
       }
     }
 

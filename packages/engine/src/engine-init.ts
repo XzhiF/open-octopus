@@ -7,6 +7,9 @@ import type { JsonlLogger } from "./logger"
 export interface ResourceManifestLike {
   agents: string[]
   skills: string[]
+  commands: string[]
+  rules: string[]
+  // Note: clones NOT included — checked by separate hard-fail gate
 }
 
 export interface ResourceCheckResultLike {
@@ -161,7 +164,10 @@ export class EngineInitPhase {
       // Step 1: Provision declared requires resources first
       const requiresSkills = workflow.requires?.skills ?? []
       const requiresAgentFiles = workflow.requires?.agent_files ?? []
+      const requiresCommands = workflow.requires?.commands ?? []
+      const requiresRules = workflow.requires?.rules ?? []
       const hasRequires = requiresSkills.length > 0 || requiresAgentFiles.length > 0
+        || requiresCommands.length > 0 || requiresRules.length > 0
 
       if (hasRequires && !resourcePreflight) {
         this.logMessage(logger, callbacks, `[WARN] requires declared but resource preflight not configured — skipping provision`)
@@ -174,6 +180,8 @@ export class EngineInitPhase {
         const requiresManifest: ResourceManifestLike = {
           agents: requiresAgentNames,
           skills: requiresSkills,
+          commands: requiresCommands,
+          rules: requiresRules,
         }
 
         this.logMessage(logger, callbacks, `Provisioning from requires: ${requiresManifest.skills.length} skills, ${requiresManifest.agents.length} agents`)

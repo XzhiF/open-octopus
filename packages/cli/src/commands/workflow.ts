@@ -78,7 +78,11 @@ workflowCmd
           const manager = new ResourceManager()
           manager.registerBuiltins()
           const provisioner = new ResourceProvisioner(manager)
-          const result = await provisioner.provision(check.missing, workspaceDir)
+          const provisionable = check.missing.filter(
+            (m): m is { type: 'agent' | 'skill'; name: string } =>
+              m.type === 'agent' || m.type === 'skill',
+          )
+          const result = await provisioner.provision(provisionable, workspaceDir)
           if (result.provisioned > 0) {
             console.log(`[preflight] Provisioned ${result.provisioned} resource(s) to ${workspaceDir}`)
           }
