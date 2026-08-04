@@ -139,7 +139,7 @@ export class RegistryStore {
     installed: number
   } {
     const data = this.load()
-    const byType: Record<string, number> = {}
+    const byType: Record<string, number> = { skill: 0, agent: 0, workflow: 0, rule: 0, command: 0, clone: 0 }
     const bySource: Record<string, number> = {}
     const byStatus: Record<string, number> = {}
     let installed = 0
