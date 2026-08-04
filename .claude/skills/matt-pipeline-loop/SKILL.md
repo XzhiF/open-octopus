@@ -471,22 +471,40 @@ git commit -m "chore: iteration <N> artifacts + handoff"
 
 This summarizes the conversation, discarding implementation details from the completed iteration.
 
-#### 6.5.4 Re-read Essential Context
+#### 6.5.4 Selective Context Re-load
 
-After compact, immediately re-read these files to restore working context:
+After compact, re-read ONLY what the next iteration needs. **Do NOT re-read the full spec.md or pipeline-report.md** — they are large files that waste context.
 
-1. `loop-state.json` — current loop position and score history
-2. Latest `iteration-handoff.md` — protected decisions and interfaces
-3. Next iteration's `gap-brief.md` — work instructions for the next round
-4. Root `spec.md` — original requirements (for reference)
+**Always load** (~20k tokens total):
+
+| File | Purpose | Size |
+|------|---------|------|
+| `loop-state.json` | Current round, scores, carryover | ~1k |
+| Latest `iteration-handoff.md` | Protected decisions, confirmed interfaces | ~3k |
+| `carryover.md` | Which ACs still not PASS from previous rounds | ~1k |
+| Next iteration's gap brief/spec | Scope of work for next round | ~5k |
+| Root `spec.md` — **relevant sections only** | Only the sections that relate to gap ACs | ~10k |
+
+**How to load spec.md selectively**:
+Instead of reading the full spec, read only:
+1. The `## Acceptance Criteria` table (to know all ACs)
+2. The `## Verification Strategy` section (to know how to verify)
+3. Any `## Implementation Decisions` or `## API Contracts` sections that relate to the gap ACs
+
+**Do NOT load** (waste context):
+- Full `pipeline-report.md` from previous rounds (hundreds of lines of test output)
+- Previous rounds' `issues/` tickets (already implemented, no longer needed)
+- E2E screenshots or test logs (evidence is summarized in verification-report)
+- Code review findings from previous rounds (already addressed)
 
 #### 6.5.5 Verify Context Restoration
 
-Print a 3-line sanity check confirming the agent is oriented:
+Print a 4-line sanity check confirming the agent is oriented:
 
 ```
 📍 Round <N+1>/<max> | Score: <prev-score>/100 (adjusted: <adjusted-score>) | Branch: <branch>
 🎯 Gap targets: <gap-1>, <gap-2>, <gap-3>
+🔄 Carryover: <N> ACs still not PASS (<AC-14>, <AC-15>, ...)
 📂 Artifacts: <artifacts.dir>/<next-feature-slug>/
 ```
 
