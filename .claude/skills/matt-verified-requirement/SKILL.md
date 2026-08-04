@@ -185,7 +185,13 @@ All decision tickets resolved + map clear (no ungraduated fog) → write the **s
 
 ## Verification Strategy Questions (both paths MUST cover)
 
-This is the **core difference** from the original grilling skill. These dimensions must be fully explored:
+This is the **core difference** from the original grilling skill. These dimensions must be fully explored.
+
+> **⚠️ MANDATORY GATE**: Before writing spec.md, you MUST create a dedicated decision ticket
+> (e.g., "NN-grilling-verification-strategy") that covers ALL 6 dimensions below.
+> This ticket MUST be resolved before the spec exit. If you skip it, the spec is INVALID.
+> In the Wayfinder path, this ticket is created during Breadth-First Grill and resolved
+> before writing the map's exit. In the Grilling path, this is the LAST question before Exit Conditions.
 
 ### 1. Verification Levels
 
