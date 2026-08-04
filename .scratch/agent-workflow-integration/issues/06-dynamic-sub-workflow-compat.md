@@ -8,17 +8,17 @@
 03 — OctopusAgentExecutor (需要 executor 可用以执行动态生成的节点)
 
 ## Status
-ready-for-agent
+done
 
 ## Acceptance Criteria
-- [ ] AC1: L3 验证 `ALLOWED_TYPES` 从 `new Set(["agent"])` 扩展为 `new Set(["agent", "octopus_agent"])`
-- [ ] AC2: L1 结构验证: 对 `octopus_agent` 类型节点，不要求 `prompt` 字段，改为验证 `task.brief` 字段存在
-- [ ] AC3: LLM 生成 prompt 更新: 约束从 "ALL nodes must have type: agent" 改为 "nodes can have type: agent or octopus_agent"
-- [ ] AC4: 生成 prompt 中包含 octopus_agent 节点的示例 YAML（含 agent, version, task.brief, task.context）
-- [ ] AC5: L2 DAG 依赖验证: octopus_agent 节点的 depends_on 正确处理
-- [ ] AC6: 端到端测试: dynamic_sub_workflow 生成的 DAG 包含 octopus_agent 节点并成功执行
-- [ ] AC7: octopus_agent 节点在子 workflow 中的 VarPool 作用域正确（input_mapping/output_mapping 工作）
-- [ ] AC8: 子 workflow 中的 octopus_agent 节点 Heartbeat 事件冒泡到父 execution 的 SSE 流
+- [x] AC1: L3 验证 `ALLOWED_TYPES` 从 `new Set(["agent"])` 扩展为 `new Set(["agent", "octopus_agent"])`
+- [x] AC2: L1 结构验证: 对 `octopus_agent` 类型节点，不要求 `prompt` 字段，改为验证 `task.brief` 字段存在
+- [x] AC3: LLM 生成 prompt 更新: 约束从 "ALL nodes must have type: agent" 改为 "nodes can have type: agent or octopus_agent"
+- [x] AC4: 生成 prompt 中包含 octopus_agent 节点的示例 YAML（含 agent, version, task.brief, task.context）
+- [x] AC5: L2 DAG 依赖验证: octopus_agent 节点的 depends_on 正确处理
+- [x] AC6: 端到端测试: dynamic_sub_workflow 生成的 DAG 包含 octopus_agent 节点并成功执行
+- [x] AC7: octopus_agent 节点在子 workflow 中的 VarPool 作用域正确（input_mapping/output_mapping 工作）
+- [x] AC8: 子 workflow 中的 octopus_agent 节点 Heartbeat 事件冒泡到父 execution 的 SSE 流
 
 ## Verification Method
 **Verification type**: integration test + E2E workflow execution

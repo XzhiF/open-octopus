@@ -7,7 +7,7 @@
 03 — OctopusAgentExecutor (需要 executor 内部的 AgentEvent 流接入 heartbeat)
 
 ## Status
-ready-for-agent
+done
 
 ## Acceptance Criteria
 - [ ] AC1: HeartbeatHandler 在每 N 步 (heartbeat_interval, default=3) 发出 heartbeat 事件

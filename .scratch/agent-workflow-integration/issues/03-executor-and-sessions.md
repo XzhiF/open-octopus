@@ -7,7 +7,7 @@
 02 — Shared Types + Version Resolver + octopus_agent Registration (需要类型定义和版本解析器)
 
 ## Status
-ready-for-agent
+done
 
 ## Acceptance Criteria
 - [ ] AC1: `packages/engine/src/executors/octopus-agent.ts` 实现 OctopusAgentExecutor，使用组合模式持有 AgentExecutor 实例

@@ -379,6 +379,38 @@ executionRoutes.post("/:executionId/pause", async (c) => {
   return c.json({ success: true })
 })
 
+executionRoutes.post("/:executionId/harness-intervene", async (c) => {
+  const workspaceId = getWorkspaceId(c)
+  const executionId = getExecutionId(c)
+  const svc = getService(workspaceId)
+  if (!svc) return c.json({ error: "workspace not found" }, 404)
+
+  let body: { nodeId: string; directive: { type: "abort" | "pause"; reason: string; issued_by: string } }
+  try {
+    body = await c.req.json()
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400)
+  }
+
+  if (!body.nodeId || !body.directive?.type) {
+    return c.json({ error: "nodeId and directive.type are required" }, 400)
+  }
+  if (!["abort", "pause"].includes(body.directive.type)) {
+    return c.json({ error: "directive.type must be 'abort' or 'pause'" }, 400)
+  }
+
+  try {
+    const result = await svc.service.harnessIntervene(executionId, body)
+    if (!result.success) {
+      const status = result.error === "Execution not found" ? 404 : 400
+      return c.json(result, status)
+    }
+    return c.json(result)
+  } catch (err: unknown) {
+    return handleError(err)
+  }
+})
+
 executionRoutes.post("/:executionId/resume", async (c) => {
   const workspaceId = getWorkspaceId(c)
   const executionId = getExecutionId(c)
