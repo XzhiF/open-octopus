@@ -120,12 +120,23 @@ export interface StepExecution {
   completedAt?: string
   duration?: number // in seconds
   output?: string
+  outputs?: Record<string, unknown>
   error?: string
   model?: string
   tokensInput?: number
   tokensOutput?: number
   tokenUsages?: TokenUsage[]
+  nodeType?: string
+  parentNodeId?: string
+  iterationIndex?: number
+  // octopus_agent node fields
+  agentName?: string
+  agentVersion?: string
+  taskBrief?: string
 }
+
+/** Event types emitted by the Octopus agent harness. */
+export const OCTOPUS_EVENT_TYPES = ["heartbeat", "harness_directive", "heartbeat_stall"] as const
 
 // ============ Approval Metadata ============
 export interface ApprovalOption {

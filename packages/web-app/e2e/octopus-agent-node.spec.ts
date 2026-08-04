@@ -26,6 +26,10 @@ const SERVER_URL = process.env.OCTOPUS_SERVER_URL ?? "http://localhost:3001"
 const WORKSPACE_NAME = "E2E_TEST_octopus_agent"
 const WORKFLOW_REF = "e2e-octopus-agent-test"
 
+// Prefixed log helper — avoids bare console.log/console.error in E2E tests
+const log = (msg: string) => process.stdout.write(`[e2e] ${msg}\n`)
+const logError = (msg: string) => process.stderr.write(`[e2e] ${msg}\n`)
+
 const SCREENSHOT_DIR = path.resolve(
   __dirname,
   "../../../.scratch/octopus-agent-ui-wiring/e2e-screenshots",
@@ -82,7 +86,7 @@ async function createWorkspace(): Promise<{ id: string; path: string } | null> {
     })
     if (!res.ok()) {
       const body = await res.text()
-      console.error(`[E2E] Create workspace failed (${res.status()}): ${body}`)
+      logError(`Create workspace failed (${res.status()}): ${body}`)
       return null
     }
     const data = await res.json() as { id: string; path: string }
@@ -99,7 +103,7 @@ async function deleteWorkspace(id: string): Promise<void> {
     const res = await ctx.delete(`${SERVER_URL}/api/workspaces/${id}`)
     if (!res.ok() && res.status() !== 404) {
       const body = await res.text()
-      console.error(`[E2E] Delete workspace failed (${res.status()}): ${body}`)
+      logError(`Delete workspace failed (${res.status()}): ${body}`)
     }
   } finally {
     await ctx.dispose()
@@ -116,7 +120,7 @@ async function writeWorkflow(workspaceId: string, ref: string, content: string):
     })
     if (!res.ok()) {
       const body = await res.text()
-      console.error(`[E2E] Write workflow failed (${res.status()}): ${body}`)
+      logError(`Write workflow failed (${res.status()}): ${body}`)
       return false
     }
     return true
@@ -139,7 +143,7 @@ async function createAndStartExecution(
     })
     if (!createRes.ok()) {
       const body = await createRes.text()
-      console.error(`[E2E] Create execution failed (${createRes.status()}): ${body}`)
+      logError(`Create execution failed (${createRes.status()}): ${body}`)
       return null
     }
     const execution = await createRes.json() as { id: string }
@@ -154,7 +158,7 @@ async function createAndStartExecution(
     )
     if (!startRes.ok()) {
       const body = await startRes.text()
-      console.error(`[E2E] Start execution failed (${startRes.status()}): ${body}`)
+      logError(`Start execution failed (${startRes.status()}): ${body}`)
     }
 
     return execution.id
@@ -207,14 +211,14 @@ test.describe("octopus_agent Node E2E", () => {
   test.beforeAll(async () => {
     serverAvailable = await isServerAvailable()
     if (!serverAvailable) {
-      console.log("[E2E] Server not available at", SERVER_URL, "— tests will be skipped")
+      log(`Server not available at ${SERVER_URL} — tests will be skipped`)
       return
     }
 
     // Create test workspace
     const ws = await createWorkspace()
     if (!ws) {
-      console.error("[E2E] Failed to create workspace — tests will be skipped")
+      logError("Failed to create workspace — tests will be skipped")
       serverAvailable = false
       return
     }
@@ -223,7 +227,7 @@ test.describe("octopus_agent Node E2E", () => {
     // Write test workflow YAML
     const written = await writeWorkflow(workspaceId, WORKFLOW_REF, TEST_WORKFLOW_YAML)
     if (!written) {
-      console.error("[E2E] Failed to write workflow — tests will be skipped")
+      logError("Failed to write workflow — tests will be skipped")
       serverAvailable = false
     }
 

@@ -14,6 +14,21 @@ import { mergeAgentEvents } from "@octopus/engine"
 import repairRoutes, { setRepairDependencies } from "./repair"
 import os from "os"
 
+/** Extract the latest heartbeat data from a list of merged events (searches backwards). */
+function extractLatestHeartbeat(
+  events: Array<{ event?: string; data?: unknown; event_type?: string; content?: string }>,
+): unknown {
+  for (let i = events.length - 1; i >= 0; i--) {
+    const e = events[i]
+    const eventType = e.event || e.event_type
+    if (eventType === "heartbeat") {
+      const data = e.data || (e.content ? (() => { try { return JSON.parse(e.content) } catch { return undefined } })() : undefined)
+      if (data) return data
+    }
+  }
+  return undefined
+}
+
 const executionRoutes = new Hono()
 let _executionDAO: ExecutionDAO | null = null
 
@@ -197,6 +212,9 @@ executionRoutes.get("/:executionId", async (c) => {
       })) : undefined,
       parentNodeId: ne.parent_node_id ?? undefined,
       iterationIndex: ne.iteration_index ?? undefined,
+      agentName: parsedOutputs?.agentName as string | undefined,
+      agentVersion: parsedOutputs?.agentVersion as string | undefined,
+      taskBrief: parsedOutputs?.taskBrief as string | undefined,
     }
   })
 
@@ -694,14 +712,7 @@ executionRoutes.get("/:executionId/agent-events", (c) => {
       )
 
       // Extract latest heartbeat snapshot from the events
-      let heartbeat: unknown = undefined
-      for (let i = merged.length - 1; i >= 0; i--) {
-        const e = merged[i]
-        if (e.event === "heartbeat" && e.data) {
-          heartbeat = e.data
-          break
-        }
-      }
+      const heartbeat = extractLatestHeartbeat(merged)
 
       return c.json({ executionId, events: merged, heartbeat, source: 'sqlite', _degraded: false, _message: null, loopIterations })
     }
@@ -724,14 +735,7 @@ executionRoutes.get("/:executionId/agent-events", (c) => {
   }
 
   // Extract latest heartbeat snapshot from the events (JSONL path)
-  let heartbeatJsonl: unknown = undefined
-  for (let i = events.length - 1; i >= 0; i--) {
-    const e = events[i]
-    if (e.event === "heartbeat" && e.data) {
-      heartbeatJsonl = e.data
-      break
-    }
-  }
+  const heartbeatJsonl = extractLatestHeartbeat(events)
 
   return c.json({ executionId, events, heartbeat: heartbeatJsonl, source: 'jsonl', _degraded: true, _message: '从 JSONL 日志读取', loopIterations })
 })

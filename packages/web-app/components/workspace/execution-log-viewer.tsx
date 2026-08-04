@@ -4,7 +4,7 @@ import { useState, useEffect, useRef, useCallback, useMemo } from "react"
 import { ChevronDown, ChevronRight, ChevronUp, ChevronsDown, Terminal, Brain, Wrench, FileText, Play, Check, X, Clock, Users, MessageSquare, Award, RotateCcw, MessageCircle, HelpCircle, CheckCircle2, Activity, AlertTriangle } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { formatDuration, formatTokenCount } from "@/lib/format"
-import { isMergedEvent, type AgentEvent, type LoopIterationSummary } from "@/lib/types"
+import { isMergedEvent, OCTOPUS_EVENT_TYPES, type AgentEvent, type LoopIterationSummary } from "@/lib/types"
 import { useExecutionEvents } from "@/hooks/use-execution-events"
 // IterationGroup used in loop-overview panel
 
@@ -297,7 +297,7 @@ export function ExpandableRow({ entry }: { entry: LogEvent }) {
   const bashLine = isBashLog ? (entry.line ?? "") : ""
   const isLongLine = bashLine.length > 80
   const isApprovalMeta = entry.event === "approval_metadata"
-  const isOctopusEvent = ["heartbeat", "harness_directive", "heartbeat_stall"].includes(entry.event)
+  const isOctopusEvent = (OCTOPUS_EVENT_TYPES as readonly string[]).includes(entry.event)
   const hasDetail = isMergedOutput || isMergedToolCall || isMergedThinking || isMergedText ||
     isAgentDetail || (isBashLog && isLongLine) || isSwarmDetail || isApprovalMeta || isOctopusEvent
 

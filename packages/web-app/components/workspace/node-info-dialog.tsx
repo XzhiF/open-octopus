@@ -137,9 +137,9 @@ export function NodeInfoDialog({
             <OctopusAgentDetailTabs
               executionId={executionId}
               nodeId={step.stepId}
-              agentName={(step as unknown as Record<string, unknown>).agentName as string | undefined}
-              version={(step as unknown as Record<string, unknown>).agentVersion as string | undefined}
-              taskBrief={(step as unknown as Record<string, unknown>).taskBrief as string | undefined}
+              agentName={step.agentName}
+              version={step.agentVersion}
+              taskBrief={step.taskBrief}
               workspaceId={workspaceId}
               isRunning={isRunning}
             />
