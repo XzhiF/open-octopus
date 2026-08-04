@@ -283,9 +283,16 @@ export class ExecutionLifecycle {
       if (initResult.status === "failed") {
         this.updateStatus(id, "failed", { completed_at: new Date().toISOString() })
         this.syncStateJson()
+
+        // Build detailed error message for SSE event
+        let errorDetail = "engine_init phase failed"
+        if (initResult.cloneErrors && initResult.cloneErrors.length > 0) {
+          errorDetail = `engine_init failed: ${initResult.cloneErrors.join("; ")}`
+        }
+
         this.sse.emit(this.workspaceId, {
           event: "error",
-          data: { executionId: id, nodeId: "__engine_init__", error: "engine_init phase failed" },
+          data: { executionId: id, nodeId: "__engine_init__", error: errorDetail, cloneErrors: initResult.cloneErrors },
         })
         this.enginePool.remove(id)
         return this.dao.findById(id)!

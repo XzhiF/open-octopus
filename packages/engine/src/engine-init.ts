@@ -1,6 +1,9 @@
 import type { EngineCallbacks } from "./engine"
 import type { WorkflowDef } from "@octopus/shared"
 import type { JsonlLogger } from "./logger"
+import os from "os"
+import path from "path"
+import fs from "fs"
 
 // ── Dependency interfaces (injected for testability) ──
 
@@ -24,6 +27,7 @@ export interface ResourcePreFlightLike {
 export interface ResourceProvisionResultLike {
   provisioned: number
   failed: string[]
+  byType: Record<string, number>
 }
 
 export interface ResourceProvisionerLike {
@@ -65,6 +69,9 @@ export interface EngineInitResult {
   durationMs: number
   skillsCopied: number
   agentsCopied: number
+  commandsCopied: number
+  rulesCopied: number
+  cloneErrors: string[]
   gitSyncResults: GitSyncResult[]
 }
 
@@ -78,6 +85,9 @@ const INIT_NODE_TYPE = "bash"
 interface ProvisionContext {
   skillsCopied: number
   agentsCopied: number
+  commandsCopied: number
+  rulesCopied: number
+  cloneErrors: string[]
   failed: boolean
 }
 
@@ -117,17 +127,13 @@ export class EngineInitPhase {
 
     const result = await provisioner.provision(missing, workspacePath)
 
-    // Count by type from result.provisioned ratio (not from missing, which may partially fail)
-    const missingSkills = missing.filter(m => m.type === "skill").length
-    const missingAgents = missing.filter(m => m.type === "agent").length
-    const totalMissing = missingSkills + missingAgents
-    const provisionedRatio = totalMissing > 0 ? result.provisioned / totalMissing : 1
-    const skillsProvisioned = Math.round(missingSkills * provisionedRatio)
-    const agentsProvisioned = Math.round(missingAgents * provisionedRatio)
-
+    // Use exact per-type counts from provisioner result (replaces fragile ratio estimation)
     const updated: ProvisionContext = {
-      skillsCopied: current.skillsCopied + skillsProvisioned,
-      agentsCopied: current.agentsCopied + agentsProvisioned,
+      skillsCopied: current.skillsCopied + (result.byType.skill ?? 0),
+      agentsCopied: current.agentsCopied + (result.byType.agent ?? 0),
+      commandsCopied: current.commandsCopied + (result.byType.command ?? 0),
+      rulesCopied: current.rulesCopied + (result.byType.rule ?? 0),
+      cloneErrors: current.cloneErrors,
       failed: result.failed.length > 0,
     }
 
@@ -153,7 +159,7 @@ export class EngineInitPhase {
     } = options
 
     const startTime = Date.now()
-    const ctx: ProvisionContext = { skillsCopied: 0, agentsCopied: 0, failed: false }
+    const ctx: ProvisionContext = { skillsCopied: 0, agentsCopied: 0, commandsCopied: 0, rulesCopied: 0, cloneErrors: [], failed: false }
 
     // Write start event to JSONL log
     logger?.log(INIT_NODE_ID, "start", { type: INIT_NODE_TYPE })
@@ -161,6 +167,41 @@ export class EngineInitPhase {
     callbacks.onNodeStart?.(INIT_NODE_ID, INIT_NODE_TYPE)
 
     try {
+      // Step 0: Clone hard-fail gate — check BEFORE provisioning
+      const requiresClones = workflow.requires?.clones ?? []
+      if (requiresClones.length > 0) {
+        const homeDir = os.homedir()
+        const missingClones: string[] = []
+
+        for (const cloneName of requiresClones) {
+          const clonePath = path.join(homeDir, '.octopus', 'agent', 'clones', cloneName)
+          const builtInPath = path.join(homeDir, '.octopus', 'agent', 'built-in', cloneName)
+
+          if (!fs.existsSync(clonePath) && !fs.existsSync(builtInPath)) {
+            missingClones.push(cloneName)
+          }
+        }
+
+        if (missingClones.length > 0) {
+          for (const cloneName of missingClones) {
+            const errorMsg = `Clone '${cloneName}' is not installed. Install it with: octopus resource install builtin:${cloneName} --type clone`
+            this.logMessage(logger, callbacks, `[ERROR] ${errorMsg}`)
+            ctx.cloneErrors.push(errorMsg)
+          }
+          ctx.failed = true
+
+          const durationMs = Date.now() - startTime
+          logger?.log(INIT_NODE_ID, "end", { status: "failed", durationMs })
+          callbacks.onNodeEnd?.(INIT_NODE_ID, "failed", durationMs)
+          return {
+            status: "failed", durationMs,
+            skillsCopied: ctx.skillsCopied, agentsCopied: ctx.agentsCopied,
+            commandsCopied: ctx.commandsCopied, rulesCopied: ctx.rulesCopied,
+            cloneErrors: ctx.cloneErrors, gitSyncResults: [],
+          }
+        }
+      }
+
       // Step 1: Provision declared requires resources first
       const requiresSkills = workflow.requires?.skills ?? []
       const requiresAgentFiles = workflow.requires?.agent_files ?? []
@@ -195,6 +236,8 @@ export class EngineInitPhase {
           )
           ctx.skillsCopied = result.skillsCopied
           ctx.agentsCopied = result.agentsCopied
+          ctx.commandsCopied = result.commandsCopied
+          ctx.rulesCopied = result.rulesCopied
           ctx.failed = result.failed
         } else {
           this.logMessage(logger, callbacks, "All requires resources already present")
@@ -209,6 +252,8 @@ export class EngineInitPhase {
         )
         ctx.skillsCopied = scanResult.skillsCopied
         ctx.agentsCopied = scanResult.agentsCopied
+        ctx.commandsCopied = scanResult.commandsCopied
+        ctx.rulesCopied = scanResult.rulesCopied
         if (scanResult.failed) ctx.failed = true
       } else if (!resourcePreflight || !resourceProvisioner) {
         this.logMessage(logger, callbacks, "Resource preflight not configured, skipping")
@@ -219,7 +264,12 @@ export class EngineInitPhase {
         const durationMs = Date.now() - startTime
         logger?.log(INIT_NODE_ID, "end", { status: "failed", durationMs })
         callbacks.onNodeEnd?.(INIT_NODE_ID, "failed", durationMs)
-        return { status: "failed", durationMs, skillsCopied: ctx.skillsCopied, agentsCopied: ctx.agentsCopied, gitSyncResults: [] }
+        return {
+          status: "failed", durationMs,
+          skillsCopied: ctx.skillsCopied, agentsCopied: ctx.agentsCopied,
+          commandsCopied: ctx.commandsCopied, rulesCopied: ctx.rulesCopied,
+          cloneErrors: ctx.cloneErrors, gitSyncResults: [],
+        }
       }
 
       // Step 3: Optional git sync
@@ -229,12 +279,24 @@ export class EngineInitPhase {
       logger?.log(INIT_NODE_ID, "end", { status: "completed", durationMs })
       callbacks.onNodeEnd?.(INIT_NODE_ID, "completed", durationMs)
 
-      return { status: "completed", durationMs, skillsCopied: ctx.skillsCopied, agentsCopied: ctx.agentsCopied, gitSyncResults: syncResults }
-    } catch {
+      return {
+        status: "completed", durationMs,
+        skillsCopied: ctx.skillsCopied, agentsCopied: ctx.agentsCopied,
+        commandsCopied: ctx.commandsCopied, rulesCopied: ctx.rulesCopied,
+        cloneErrors: ctx.cloneErrors, gitSyncResults: syncResults,
+      }
+    } catch (err: unknown) {
+      const errorMsg = err instanceof Error ? err.message : String(err)
+      this.logMessage(logger, callbacks, `[ERROR] Engine init failed with unexpected error: ${errorMsg}`)
       const durationMs = Date.now() - startTime
-      logger?.log(INIT_NODE_ID, "end", { status: "failed", durationMs })
+      logger?.log(INIT_NODE_ID, "end", { status: "failed", durationMs, error: errorMsg })
       callbacks.onNodeEnd?.(INIT_NODE_ID, "failed", durationMs)
-      return { status: "failed", durationMs, skillsCopied: ctx.skillsCopied, agentsCopied: ctx.agentsCopied, gitSyncResults: [] }
+      return {
+        status: "failed", durationMs,
+        skillsCopied: ctx.skillsCopied, agentsCopied: ctx.agentsCopied,
+        commandsCopied: ctx.commandsCopied, rulesCopied: ctx.rulesCopied,
+        cloneErrors: ctx.cloneErrors, gitSyncResults: [],
+      }
     }
   }
 

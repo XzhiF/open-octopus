@@ -79,8 +79,8 @@ workflowCmd
           manager.registerBuiltins()
           const provisioner = new ResourceProvisioner(manager)
           const provisionable = check.missing.filter(
-            (m): m is { type: 'agent' | 'skill'; name: string } =>
-              m.type === 'agent' || m.type === 'skill',
+            (m): m is { type: 'agent' | 'skill' | 'command' | 'rule'; name: string } =>
+              m.type === 'agent' || m.type === 'skill' || m.type === 'command' || m.type === 'rule',
           )
           const result = await provisioner.provision(provisionable, workspaceDir)
           if (result.provisioned > 0) {

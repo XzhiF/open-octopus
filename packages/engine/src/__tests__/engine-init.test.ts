@@ -32,7 +32,7 @@ describe("EngineInitPhase", () => {
     }
 
     resourceProvisioner = {
-      provision: vi.fn().mockResolvedValue({ provisioned: 0, failed: [] }),
+      provision: vi.fn().mockResolvedValue({ provisioned: 0, failed: [], byType: {} }),
     }
 
     workflow = {
@@ -74,7 +74,7 @@ describe("EngineInitPhase", () => {
         missing: [{ name: "skill1", type: "skill" }],
         available: [{ name: "agent1", type: "agent" }],
       })
-      vi.mocked(resourceProvisioner.provision).mockResolvedValue({ provisioned: 1, failed: [] })
+      vi.mocked(resourceProvisioner.provision).mockResolvedValue({ provisioned: 1, failed: [], byType: { skill: 1 } })
 
       const result = await phase.run(createOptions())
 
@@ -114,6 +114,7 @@ describe("EngineInitPhase", () => {
       vi.mocked(resourceProvisioner.provision).mockResolvedValue({
         provisioned: 0,
         failed: ["skill1"],
+        byType: {},
       })
 
       const result = await phase.run(createOptions())
@@ -155,6 +156,8 @@ describe("EngineInitPhase", () => {
         vi.mocked(resourcePreflight.analyze).mockReturnValue({
           agents: ["scanned-agent"],
           skills: ["scanned-skill"],
+          commands: [],
+          rules: [],
         })
         vi.mocked(resourcePreflight.check)
           .mockReturnValueOnce({
@@ -165,7 +168,11 @@ describe("EngineInitPhase", () => {
             missing: [{ name: "scanned-skill", type: "skill" }],
             available: [{ name: "scanned-agent", type: "agent" }],
           })
-        vi.mocked(resourceProvisioner.provision).mockResolvedValue({ provisioned: 2, failed: [] })
+        vi.mocked(resourceProvisioner.provision).mockResolvedValue({
+          provisioned: 2,
+          failed: [],
+          byType: { skill: 1, agent: 1 },
+        })
 
         await phase.run(createOptions({ workflow }))
 
@@ -190,6 +197,8 @@ describe("EngineInitPhase", () => {
         vi.mocked(resourcePreflight.analyze).mockReturnValue({
           agents: [],
           skills: ["shared-skill"], // same as requires
+          commands: [],
+          rules: [],
         })
         vi.mocked(resourcePreflight.check)
           .mockReturnValueOnce({
@@ -201,7 +210,11 @@ describe("EngineInitPhase", () => {
             missing: [],
             available: [{ name: "shared-skill", type: "skill" }],
           })
-        vi.mocked(resourceProvisioner.provision).mockResolvedValue({ provisioned: 1, failed: [] })
+        vi.mocked(resourceProvisioner.provision).mockResolvedValue({
+          provisioned: 1,
+          failed: [],
+          byType: { skill: 1 },
+        })
 
         await phase.run(createOptions({ workflow }))
 
@@ -216,7 +229,11 @@ describe("EngineInitPhase", () => {
           missing: [{ name: "skill1", type: "skill" }],
           available: [],
         })
-        vi.mocked(resourceProvisioner.provision).mockResolvedValue({ provisioned: 1, failed: [] })
+        vi.mocked(resourceProvisioner.provision).mockResolvedValue({
+          provisioned: 1,
+          failed: [],
+          byType: { skill: 1 },
+        })
 
         const result = await phase.run(createOptions())
 
@@ -239,7 +256,7 @@ describe("EngineInitPhase", () => {
         vi.mocked(resourcePreflight.check)
           .mockReturnValueOnce({ missing: [], available: [] })
           .mockReturnValueOnce({ missing: [], available: [] })
-        vi.mocked(resourceProvisioner.provision).mockResolvedValue({ provisioned: 0, failed: [] })
+        vi.mocked(resourceProvisioner.provision).mockResolvedValue({ provisioned: 0, failed: [], byType: {} })
 
         await phase.run(createOptions({ workflow }))
 
@@ -345,6 +362,261 @@ describe("EngineInitPhase", () => {
         "completed",
         expect.any(Number),
       )
+    })
+  })
+
+  describe("clone hard-fail gate", () => {
+    it("fails with cloneErrors when a required clone is not installed", async () => {
+      workflow = {
+        ...workflow,
+        requires: {
+          clones: ["missing-clone"],
+        },
+      } as WorkflowDef
+
+      const result = await phase.run(createOptions({ workflow }))
+
+      expect(result.status).toBe("failed")
+      expect(result.cloneErrors).toHaveLength(1)
+      expect(result.cloneErrors[0]).toContain("missing-clone")
+      expect(result.cloneErrors[0]).toContain("is not installed")
+      expect(result.cloneErrors[0]).toContain("octopus resource install builtin:missing-clone --type clone")
+    })
+
+    it("fails with multiple cloneErrors for multiple missing clones", async () => {
+      workflow = {
+        ...workflow,
+        requires: {
+          clones: ["clone-a", "clone-b"],
+        },
+      } as WorkflowDef
+
+      const result = await phase.run(createOptions({ workflow }))
+
+      expect(result.status).toBe("failed")
+      expect(result.cloneErrors).toHaveLength(2)
+      expect(result.cloneErrors[0]).toContain("clone-a")
+      expect(result.cloneErrors[1]).toContain("clone-b")
+    })
+
+    it("logs error messages for missing clones", async () => {
+      workflow = {
+        ...workflow,
+        requires: {
+          clones: ["bad-clone"],
+        },
+      } as WorkflowDef
+
+      await phase.run(createOptions({ workflow }))
+
+      expect(callbacks.onNodeLog).toHaveBeenCalledWith(
+        "__engine_init__",
+        expect.stringContaining("[ERROR] Clone 'bad-clone' is not installed"),
+      )
+    })
+
+    it("blocks provisioning when clone gate fails (no provisioner called)", async () => {
+      workflow = {
+        ...workflow,
+        requires: {
+          clones: ["missing-clone"],
+          skills: ["some-skill"],
+        },
+      } as WorkflowDef
+
+      await phase.run(createOptions({ workflow }))
+
+      // Provisioner should NOT be called — clone gate blocks everything
+      expect(resourceProvisioner.provision).not.toHaveBeenCalled()
+    })
+
+    it("proceeds when no clones are declared", async () => {
+      workflow = {
+        ...workflow,
+        requires: {
+          skills: ["some-skill"],
+        },
+      } as WorkflowDef
+
+      vi.mocked(resourcePreflight.check).mockReturnValue({
+        missing: [],
+        available: [{ name: "some-skill", type: "skill" }],
+      })
+
+      const result = await phase.run(createOptions({ workflow }))
+
+      expect(result.status).toBe("completed")
+      expect(result.cloneErrors).toHaveLength(0)
+    })
+  })
+
+  describe("command and rule provisioning", () => {
+    it("provisions missing commands from requires", async () => {
+      workflow = {
+        ...workflow,
+        requires: {
+          commands: ["cmd-review"],
+        },
+      } as WorkflowDef
+
+      vi.mocked(resourcePreflight.check).mockReturnValue({
+        missing: [{ name: "cmd-review", type: "command" }],
+        available: [],
+      })
+      vi.mocked(resourceProvisioner.provision).mockResolvedValue({
+        provisioned: 1,
+        failed: [],
+        byType: { command: 1 },
+      })
+
+      const result = await phase.run(createOptions({ workflow }))
+
+      expect(resourceProvisioner.provision).toHaveBeenCalledWith(
+        [{ name: "cmd-review", type: "command" }],
+        "/workspace",
+      )
+      expect(result.commandsCopied).toBe(1)
+      expect(result.status).toBe("completed")
+    })
+
+    it("provisions missing rules from requires", async () => {
+      workflow = {
+        ...workflow,
+        requires: {
+          rules: ["code-style"],
+        },
+      } as WorkflowDef
+
+      vi.mocked(resourcePreflight.check).mockReturnValue({
+        missing: [{ name: "code-style", type: "rule" }],
+        available: [],
+      })
+      vi.mocked(resourceProvisioner.provision).mockResolvedValue({
+        provisioned: 1,
+        failed: [],
+        byType: { rule: 1 },
+      })
+
+      const result = await phase.run(createOptions({ workflow }))
+
+      expect(resourceProvisioner.provision).toHaveBeenCalledWith(
+        [{ name: "code-style", type: "rule" }],
+        "/workspace",
+      )
+      expect(result.rulesCopied).toBe(1)
+      expect(result.status).toBe("completed")
+    })
+
+    it("handles mixed requires with all 5 types — clone gate first, then provisioning", async () => {
+      // Create a temp directory to simulate an installed clone
+      const os = await import("os")
+      const path = await import("path")
+      const fs = await import("fs")
+      const homeDir = os.homedir()
+      const cloneDir = path.join(homeDir, '.octopus', 'agent', 'built-in', 'workspace')
+
+      // Create the clone directory temporarily
+      fs.mkdirSync(cloneDir, { recursive: true })
+
+      try {
+        workflow = {
+          ...workflow,
+          requires: {
+            skills: ["s1"],
+            agent_files: ["a1.md"],
+            commands: ["cmd1"],
+            rules: ["rule1"],
+            clones: ["workspace"],
+          },
+        } as WorkflowDef
+
+        vi.mocked(resourcePreflight.check).mockReturnValue({
+          missing: [
+            { name: "s1", type: "skill" },
+            { name: "a1", type: "agent" },
+            { name: "cmd1", type: "command" },
+            { name: "rule1", type: "rule" },
+          ],
+          available: [],
+        })
+        vi.mocked(resourceProvisioner.provision).mockResolvedValue({
+          provisioned: 4,
+          failed: [],
+          byType: { skill: 1, agent: 1, command: 1, rule: 1 },
+        })
+
+        const result = await phase.run(createOptions({ workflow }))
+
+        expect(result.status).toBe("completed")
+        expect(result.cloneErrors).toHaveLength(0)
+        expect(result.skillsCopied).toBe(1)
+        expect(result.agentsCopied).toBe(1)
+        expect(result.commandsCopied).toBe(1)
+        expect(result.rulesCopied).toBe(1)
+      } finally {
+        // Clean up
+        try { fs.rmSync(cloneDir, { recursive: true, force: true }) } catch { /* ignore */ }
+      }
+    })
+  })
+
+  describe("byType counter usage", () => {
+    it("uses byType from provisioner result instead of ratio estimation", async () => {
+      vi.mocked(resourcePreflight.analyze).mockReturnValue({
+        agents: ["a1"],
+        skills: ["s1"],
+        commands: [],
+        rules: [],
+      })
+      vi.mocked(resourcePreflight.check).mockReturnValue({
+        missing: [
+          { name: "s1", type: "skill" },
+          { name: "a1", type: "agent" },
+        ],
+        available: [],
+      })
+      // byType says only 1 skill succeeded, agent failed
+      vi.mocked(resourceProvisioner.provision).mockResolvedValue({
+        provisioned: 1,
+        failed: ["agent:a1 — not found"],
+        byType: { skill: 1 },
+      })
+
+      const result = await phase.run(createOptions())
+
+      expect(result.skillsCopied).toBe(1)
+      expect(result.agentsCopied).toBe(0) // not estimated from ratio
+      expect(result.status).toBe("failed") // provision had failures
+    })
+  })
+
+  describe("error logging", () => {
+    it("captures and logs error message from unexpected exceptions", async () => {
+      // Force an unexpected error in the provisioning path
+      vi.mocked(resourcePreflight.analyze).mockImplementation(() => {
+        throw new Error("unexpected permission denied")
+      })
+
+      const result = await phase.run(createOptions())
+
+      expect(result.status).toBe("failed")
+      expect(callbacks.onNodeLog).toHaveBeenCalledWith(
+        "__engine_init__",
+        expect.stringContaining("unexpected permission denied"),
+      )
+    })
+  })
+
+  describe("EngineInitResult shape", () => {
+    it("includes commandsCopied, rulesCopied, and cloneErrors in result", async () => {
+      const result = await phase.run(createOptions())
+
+      expect(result).toHaveProperty("commandsCopied")
+      expect(result).toHaveProperty("rulesCopied")
+      expect(result).toHaveProperty("cloneErrors")
+      expect(result.commandsCopied).toBe(0)
+      expect(result.rulesCopied).toBe(0)
+      expect(result.cloneErrors).toEqual([])
     })
   })
 })

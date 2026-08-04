@@ -13,7 +13,7 @@
 T1 — Schema + Type Expansion + Preflight Check (provides the expanded types that T2 consumes)
 
 ## Status
-ready-for-agent
+done
 
 ## Exploration
 - `packages/shared/src/resource/resource-provisioner.ts:23-109` — provision() and directCopy() (only agent|skill)
