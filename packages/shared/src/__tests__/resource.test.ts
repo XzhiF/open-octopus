@@ -1164,6 +1164,21 @@ describe("ResourceCountSchema expansion", () => {
       clones: 0,
     })).toThrow()
   })
+
+  it("backward compatible — defaults new fields to 0 when missing", () => {
+    // Existing sources.json data only has skills/agents/workflows
+    const counts = ResourceCountSchema.parse({
+      skills: 10,
+      agents: 5,
+      workflows: 3,
+    })
+    expect(counts.skills).toBe(10)
+    expect(counts.agents).toBe(5)
+    expect(counts.workflows).toBe(3)
+    expect(counts.rules).toBe(0)
+    expect(counts.commands).toBe(0)
+    expect(counts.clones).toBe(0)
+  })
 })
 
 // ── T1: New error codes ────────────────────────────────────────

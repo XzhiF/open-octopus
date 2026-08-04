@@ -211,9 +211,9 @@ export const ResourceCountSchema = z.object({
   skills: z.number().int().nonnegative(),
   agents: z.number().int().nonnegative(),
   workflows: z.number().int().nonnegative(),
-  rules: z.number().int().nonnegative(),
-  commands: z.number().int().nonnegative(),
-  clones: z.number().int().nonnegative(),
+  rules: z.number().int().nonnegative().default(0),
+  commands: z.number().int().nonnegative().default(0),
+  clones: z.number().int().nonnegative().default(0),
 })
 
 export const SourceEntrySchema = z.object({
