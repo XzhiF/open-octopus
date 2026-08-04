@@ -15,7 +15,7 @@ import repairRoutes, { setRepairDependencies } from "./repair"
 import os from "os"
 
 /** Extract the latest heartbeat data from a list of merged events (searches backwards). */
-function extractLatestHeartbeat(
+export function extractLatestHeartbeat(
   events: Array<{ event?: string; data?: unknown; event_type?: string; content?: string }>,
 ): unknown {
   for (let i = events.length - 1; i >= 0; i--) {

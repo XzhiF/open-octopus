@@ -21,12 +21,6 @@ requires:
   agent_files:
     - built-in/vision-analyzer.md               # group/name.md 格式
     - agency-agents-zh/engineering-code-reviewer.md
-  commands:
-    - built-in/octopus-resource-manager         # 命令依赖
-  rules:
-    - built-in/typescript-strict                # 规则依赖
-  clones:
-    - built-in/workspace                        # Clone (agent) 依赖
 
 nodes:
   # ... 工作流节点
@@ -38,9 +32,6 @@ nodes:
 |------|------|------|------|
 | `requires.skills` | `group/name` | 技能依赖，带分组避免重名 | `superpowers-zh/test-driven-development` |
 | `requires.agent_files` | `group/name.md` | Agent 文件依赖 | `built-in/vision-analyzer.md` |
-| `requires.commands` | `group/name` | 命令依赖 | `built-in/octopus-resource-manager` |
-| `requires.rules` | `group/name` | 规则依赖 | `built-in/typescript-strict` |
-| `requires.clones` | `group/name` | Clone (agent) 依赖 | `built-in/workspace` |
 
 > **没有指定分组时**，引擎按注册表顺序匹配第一个同名资源。建议始终带分组以避免歧义。
 
@@ -58,9 +49,6 @@ nodes:
 | 节点 `skills` | **运行时过滤** | 纯名称 | ❌ 白名单过滤已加载技能 |
 | `requires.agent_files` | **依赖声明** | `group/name.md` | ✅ `__engine_init__` 优先安装 |
 | 节点 `agent_file` | **运行时引用** | `group/name.md` | ❌ 引用已安装文件 |
-| `requires.commands` | **依赖声明** | `group/name` | ✅ `__engine_init__` 优先安装 |
-| `requires.rules` | **依赖声明** | `group/name` | ✅ `__engine_init__` 优先安装 |
-| `requires.clones` | **依赖声明** | `group/name` | ✅ `__engine_init__` 优先安装 |
 
 ### 不写 requires 也行吗？
 

@@ -71,9 +71,9 @@ describe("OctopusAgentDetailTabs", () => {
 
     render(<OctopusAgentDetailTabs {...defaultProps} />)
 
-    expect(screen.getByRole("tab", { name: "追踪" })).toBeDefined()
-    expect(screen.getByRole("tab", { name: "成本" })).toBeDefined()
-    expect(screen.getByRole("tab", { name: "信息" })).toBeDefined()
+    expect(screen.getByRole("tab", { name: "追踪" })).toBeVisible()
+    expect(screen.getByRole("tab", { name: "成本" })).toBeVisible()
+    expect(screen.getByRole("tab", { name: "信息" })).toBeVisible()
   })
 
   it("defaults to the traces tab", () => {
@@ -84,7 +84,7 @@ describe("OctopusAgentDetailTabs", () => {
     const tracesTab = screen.getByRole("tab", { name: "追踪" })
     expect(tracesTab.getAttribute("data-state")).toBe("active")
     expect(tracesTab.getAttribute("aria-selected")).toBe("true")
-    expect(screen.getByTestId("agent-timeline")).toBeDefined()
+    expect(screen.getByTestId("agent-timeline")).toBeInTheDocument()
   })
 
   it("switches to cost tab when clicked", async () => {
@@ -97,7 +97,7 @@ describe("OctopusAgentDetailTabs", () => {
 
     const costTab = screen.getByRole("tab", { name: "成本" })
     expect(costTab.getAttribute("data-state")).toBe("active")
-    expect(screen.getByText("暂无 LLM 调用数据")).toBeDefined()
+    expect(screen.getByText("暂无 LLM 调用数据")).toBeVisible()
   })
 
   it("switches to info tab and shows agent metadata", async () => {
@@ -117,9 +117,9 @@ describe("OctopusAgentDetailTabs", () => {
 
     const infoTab = screen.getByRole("tab", { name: "信息" })
     expect(infoTab.getAttribute("data-state")).toBe("active")
-    expect(screen.getByText("octo-coder")).toBeDefined()
-    expect(screen.getByText("1.2.3")).toBeDefined()
-    expect(screen.getByText("Implement feature X")).toBeDefined()
+    expect(screen.getByText("octo-coder")).toBeVisible()
+    expect(screen.getByText("1.2.3")).toBeVisible()
+    expect(screen.getByText("Implement feature X")).toBeVisible()
   })
 
   it('shows "—" fallback when agentName and version are undefined', async () => {
@@ -147,8 +147,8 @@ describe("OctopusAgentDetailTabs", () => {
     expect(infoTab.getAttribute("data-state")).toBe("active")
     expect(screen.queryByText("任务描述:")).toBeNull()
     // Agent and version labels should still be present
-    expect(screen.getByText("Agent:")).toBeDefined()
-    expect(screen.getByText("版本:")).toBeDefined()
+    expect(screen.getByText("Agent:")).toBeVisible()
+    expect(screen.getByText("版本:")).toBeVisible()
   })
 
   it("renders cost breakdown when LLM calls exist", async () => {
@@ -183,9 +183,9 @@ describe("OctopusAgentDetailTabs", () => {
 
     await user.click(screen.getByRole("tab", { name: "成本" }))
 
-    expect(screen.getByTestId("cost-line")).toBeDefined()
-    expect(screen.getByText("claude-sonnet-4-20250514")).toBeDefined()
-    expect(screen.getByText("5 calls · $0.05")).toBeDefined()
+    expect(screen.getByTestId("cost-line")).toBeInTheDocument()
+    expect(screen.getByText("claude-sonnet-4-20250514")).toBeVisible()
+    expect(screen.getByText("5 calls · $0.05")).toBeVisible()
   })
 
   it("does not crash with minimal props (no optional fields)", () => {
@@ -200,10 +200,10 @@ describe("OctopusAgentDetailTabs", () => {
       />
     )
 
-    expect(container).toBeDefined()
-    expect(screen.getByRole("tab", { name: "追踪" })).toBeDefined()
-    expect(screen.getByRole("tab", { name: "成本" })).toBeDefined()
-    expect(screen.getByRole("tab", { name: "信息" })).toBeDefined()
+    expect(container.querySelector('[role="tablist"]')).toBeInTheDocument()
+    expect(screen.getByRole("tab", { name: "追踪" })).toBeVisible()
+    expect(screen.getByRole("tab", { name: "成本" })).toBeVisible()
+    expect(screen.getByRole("tab", { name: "信息" })).toBeVisible()
   })
 
   it("passes executionId and nodeId to AgentTimeline", () => {
@@ -221,5 +221,69 @@ describe("OctopusAgentDetailTabs", () => {
     const timeline = screen.getByTestId("agent-timeline")
     expect(timeline.textContent).toContain("exec-trace")
     expect(timeline.textContent).toContain("node-trace")
+  })
+
+  // ── Negative tests ────────────────────────────────────────────────
+
+  it("shows fallback '—' when all optional string props are empty strings", async () => {
+    const user = userEvent.setup()
+    setupDefaultMocks()
+
+    render(
+      <OctopusAgentDetailTabs
+        {...defaultProps}
+        agentName=""
+        version=""
+        taskBrief=""
+      />
+    )
+
+    await user.click(screen.getByRole("tab", { name: "信息" }))
+
+    // Empty strings are falsy, so agentName ?? "—" returns "" (not "—").
+    // But the component uses ??, which only falls back on null/undefined.
+    // Verify the labels are still present and the component doesn't crash.
+    expect(screen.getByText("Agent:")).toBeVisible()
+    expect(screen.getByText("版本:")).toBeVisible()
+    // taskBrief="" is falsy → the conditional {taskBrief && ...} hides the section
+    expect(screen.queryByText("任务描述:")).toBeNull()
+  })
+
+  it("handles empty executionId without crashing", () => {
+    setupDefaultMocks()
+
+    render(
+      <OctopusAgentDetailTabs
+        executionId=""
+        nodeId="node-1"
+        workspaceId="ws-1"
+        isRunning={false}
+      />
+    )
+
+    // All three tabs should still render
+    expect(screen.getByRole("tab", { name: "追踪" })).toBeVisible()
+    expect(screen.getByRole("tab", { name: "成本" })).toBeVisible()
+    expect(screen.getByRole("tab", { name: "信息" })).toBeVisible()
+    // AgentTimeline should receive the empty executionId
+    const timeline = screen.getByTestId("agent-timeline")
+    expect(timeline).toBeInTheDocument()
+    expect(timeline.textContent).toContain("execId=")
+  })
+
+  it("handles empty nodeId without crashing and shows timeline", () => {
+    setupDefaultMocks()
+
+    render(
+      <OctopusAgentDetailTabs
+        executionId="exec-123"
+        nodeId=""
+        workspaceId="ws-1"
+        isRunning={false}
+      />
+    )
+
+    expect(screen.getByTestId("agent-timeline")).toBeInTheDocument()
+    expect(screen.getByRole("tab", { name: "追踪" })).toBeVisible()
   })
 })

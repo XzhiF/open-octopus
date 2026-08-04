@@ -1,6 +1,6 @@
 # Node Schema Reference
 
-Field definitions for all 11 Octopus workflow node types. Source of truth: `packages/shared/src/types/workflow.ts`.
+Field definitions for all 10 Octopus workflow node types. Source of truth: `packages/shared/src/types/workflow.ts`.
 
 ---
 
@@ -9,7 +9,7 @@ Field definitions for all 11 Octopus workflow node types. Source of truth: `pack
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `id` | string | ✅ | Unique node identifier within the workflow |
-| `type` | enum | ✅ | One of: `bash`, `python`, `agent`, `condition`, `approval`, `loop`, `swarm`, `interaction`, `sub_workflow`, `dynamic_sub_workflow`, `octopus_agent` |
+| `type` | enum | ✅ | One of: `bash`, `python`, `agent`, `condition`, `approval`, `loop`, `swarm`, `interaction`, `sub_workflow`, `dynamic_sub_workflow` |
 | `depends_on` | string[] | — | IDs of upstream nodes this node depends on |
 | `execute_when` | string | — | Expression; falsy → node is skipped |
 | `outputs` | Record<string, string> | — | Map VarPool keys to expressions |
@@ -382,55 +382,6 @@ When re-executing with the same upstream input, the engine compares the input ha
 
 ---
 
-## 11. `octopus_agent` — Delegate Agent
-
-Delegates work to a pre-configured Octopus agent (clone) with structured task definition, heartbeat monitoring, and multi-step execution tracking.
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `agent` | string | ✅ | Agent identifier (clone name or `__main__`) |
-| `task.brief` | string | ✅ | Task description / instruction for the agent |
-| `task.constraints` | string[] | — | Natural language constraints the agent must follow |
-| `task.context` | string | — | Additional context to inject into the agent's prompt |
-| `version` | string | — | Agent version to use |
-| `model` | string | — | Model override for the agent |
-
-### Validation Rules
-
-- `agent` field is **required** — must specify a clone name or `__main__`
-- `task.brief` field is **required** — must provide task instructions
-- At runtime, the engine resolves the agent clone and injects task context
-
-### Heartbeat Protocol
-
-The octopus_agent executor emits structured heartbeat events during execution:
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `step` | number | Current step number |
-| `total_steps` | number | Total expected steps (optional) |
-| `tokens_used` | number | Tokens consumed so far |
-| `tokens_budget` | number | Token budget limit (optional) |
-| `artifacts` | string[] | List of produced artifacts |
-| `issues` | string[] | List of encountered issues |
-| `confidence` | number | Execution confidence (0.0–1.0) |
-| `current_activity` | string | Description of current activity |
-
-```yaml
-- id: list-files
-  type: octopus_agent
-  agent: workspace
-  task:
-    brief: "List all files in the current directory and report back the file names and sizes."
-    constraints:
-      - "Do not modify any files"
-      - "Return results as a simple list"
-  outputs:
-    result: "$last_output"
-```
-
----
-
 ## Workflow-Level Fields
 
 | Field | Type | Required | Description |
@@ -459,9 +410,6 @@ The octopus_agent executor emits structured heartbeat events during execution:
 |-------|------|----------|-------------|
 | `skills` | string[] | — | Skill dependencies (`group/name` format, e.g. `superpowers-zh/test-driven-development`) |
 | `agent_files` | string[] | — | Agent file dependencies (`group/name.md` format, e.g. `built-in/vision-analyzer.md`) |
-| `commands` | string[] | — | Command dependencies (`group/name` format, e.g. `built-in/octopus-resource-manager`) |
-| `rules` | string[] | — | Rule dependencies (`group/name` format) |
-| `clones` | string[] | — | Clone (agent) dependencies (`group/name` format, e.g. `built-in/workspace`) |
 
 > See `references/requires-and-effort.md` for full documentation on `requires` and `effort`.
 
