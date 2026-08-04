@@ -265,8 +265,15 @@ After the draft spec.md is written (see Artifact Output below), spawn a **Story 
    Story Walk-Through analysis.
    Protocol: .claude/skills/matt-verified-requirement/references/story-walkthrough.md
    Explore the codebase freely to verify each story step.
-   Return: structured break points with severity (CRITICAL/HIGH/MEDIUM/LOW),
-   full story traces, and recommended fixes. Do NOT modify spec.md."
+   
+   Output TWO things:
+   1. Write <artifacts.dir>/<feature-slug>/story-walkthrough.md — a human-readable
+      report with full story traces, break points, and recommendations.
+      This file is for human review only, not consumed by the pipeline.
+   2. Return structured break points with severity (CRITICAL/HIGH/MEDIUM/LOW)
+      and recommended fixes to the parent agent.
+   
+   Do NOT modify spec.md."
    ```
 3. Read sub-agent's findings
 4. Fix all CRITICAL and HIGH break points in spec.md:
@@ -275,6 +282,8 @@ After the draft spec.md is written (see Artifact Output below), spawn a **Story 
    - Update Key Decisions with "Story Gap Fixes"
 5. Re-trace if needed (spawn again if major structural changes)
 6. Append story traces to spec.md Appendix
+
+**Human-readable report**: The sub-agent writes `story-walkthrough.md` as a standalone artifact for human review. It is NOT consumed by downstream pipeline steps — purely for the user to understand what gaps were found and how the design was validated.
 
 **Protocol details** → See [references/story-walkthrough.md](references/story-walkthrough.md)
 
@@ -290,6 +299,7 @@ On exit, create `<artifacts.dir>/<feature-slug>/` and write all artifacts.
 <artifacts.dir>/<feature-slug>/
 ├── brief.md              ← Lightweight core info summary (for human review)
 ├── spec.md               ← Full verified spec (single source of truth for agents)
+├── story-walkthrough.md  ← Human-readable walkthrough report (review only, not consumed by pipeline)
 └── issues/               ← DAG tickets with blocked-by + verification
     ├── 01-<slug>.md
     ├── 02-<slug>.md
@@ -312,15 +322,13 @@ On exit, create `<artifacts.dir>/<feature-slug>/` and write all artifacts.
 
 ### brief.md — Lightweight Core Info (for human review)
 
-brief.md is a **one-pager** (一页纸) for the user to quickly review. Contains:
+brief.md is a **minimal one-pager** (一页纸) for the user to quickly review. Contains:
 - Overview (one sentence)
-- Feature Scope (Do/Don't)
-- Key Decisions table
-- Acceptance Criteria summary (table: # | Story | AC — no verification detail)
-- Risks & Notes
-- Link: "Full spec: [spec.md](./spec.md)"
+- Summary (decision count + AC count + story count, with links to spec.md)
+- Risks
+- Link to spec.md
 
-It does NOT contain detailed data models, API contracts, or verification methods — those live in spec.md.
+It does NOT contain detailed tables — all details live in spec.md.
 
 ### spec.md — Single Source of Truth (for agents)
 
@@ -375,27 +383,17 @@ The following artifacts are created **later** by downstream agents — this skil
 ## Overview
 [One sentence description]
 
-## Feature Scope
-**Do:**
-- [Feature 1]
+## Summary
+- [N] key decisions → [spec.md § Key Decisions](./spec.md)
+- [N] acceptance criteria → [spec.md § Acceptance Criteria](./spec.md)
+- [N] core stories verified → [spec.md § Appendix](./spec.md)
 
-**Don't:**
-- [Exclusion 1]
-
-## Key Decisions
-| # | Decision | Conclusion | Reason |
-|---|---------|-----------|--------|
-
-## Acceptance Criteria
-| # | User Story | AC |
-|---|-----------|----|
-| AC-1 | As a... | [condition] |
-
-## Risks & Notes
+## Risks
 - R1: [risk]
+- R2: [risk]
 
 ## Full Spec
-For detailed data models, API contracts, verification strategy, and implementation decisions: [spec.md](./spec.md)
+[spec.md](./spec.md)
 ```
 
 ## Spec Template (single source of truth)

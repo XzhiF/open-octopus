@@ -2,7 +2,7 @@ import { Command } from "commander"
 import chalk from "chalk"
 import { readFileSync, writeFileSync, existsSync, readdirSync, mkdirSync, copyFileSync, statSync, rmSync, chmodSync } from "fs"
 import { resolve, join } from "path"
-import { parseWorkflow, validateWorkflow, resolveOrgDir, PipelineConfigSchema, PipelineConfigV1Schema, ResourcePreFlight, ResourceProvisioner, ResourceManager } from "@octopus/shared"
+import { parseWorkflow, validateWorkflow, resolveOrgDir, PipelineConfigSchema, PipelineConfigV1Schema, ResourcePreFlight, ResourceProvisioner, ResourceManager, type ProvisionableType } from "@octopus/shared"
 import { WorkflowEngine, registerBuiltinProviders, type TestRunnerResult } from "@octopus/engine"
 import { registerProvider, ClaudeSDKProvider, PiAgentProvider, getProviderAsync } from "@octopus/providers"
 import { resolveCurrentOrg, resolveBuiltinWorkflowsDir } from "../utils/path"
@@ -78,7 +78,11 @@ workflowCmd
           const manager = new ResourceManager()
           manager.registerBuiltins()
           const provisioner = new ResourceProvisioner(manager)
-          const result = await provisioner.provision(check.missing, workspaceDir)
+          const provisionable = check.missing.filter(
+            (m): m is { type: ProvisionableType; name: string } =>
+              m.type === 'agent' || m.type === 'skill' || m.type === 'command' || m.type === 'rule',
+          )
+          const result = await provisioner.provision(provisionable, workspaceDir)
           if (result.provisioned > 0) {
             console.log(`[preflight] Provisioned ${result.provisioned} resource(s) to ${workspaceDir}`)
           }
