@@ -1,6 +1,6 @@
 # T5: CLI Commands — activate/deactivate Subcommands + Updated list/info
 
-## Status: pending
+## Status: in_progress
 
 ## Problem
 

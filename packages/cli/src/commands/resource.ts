@@ -67,7 +67,7 @@ function formatDate(iso: string): string {
 }
 
 export const resourceCmd = new Command("resource")
-  .description("统一资源管理 (skill/agent/workflow)")
+  .description("统一资源管理 (skill/agent/workflow/rule/command/clone)")
   .option("--org <org>", "组织名")
 
 // --- install ---
@@ -92,17 +92,46 @@ resourceCmd
   .command("uninstall")
   .description("卸载资源")
   .argument("<name>", "资源名称")
-  .requiredOption("--type <type>", "资源类型 (skill/agent/workflow)")
-  .action(async (name: string, options: { type: string }) => {
-    await apiRequest("POST", "/uninstall", { name, type: options.type })
+  .requiredOption("--type <type>", "资源类型 (skill/agent/workflow/rule/command/clone)")
+  .option("--keep-backup", "保留备份 (仅 clone 类型)", false)
+  .action(async (name: string, options: { type: string; keepBackup: boolean }) => {
+    await apiRequest("POST", "/uninstall", { name, type: options.type, keepBackup: options.keepBackup })
     console.log(chalk.green(`✓ Uninstalled ${name} (${options.type})`))
+    if (options.keepBackup) {
+      console.log(chalk.dim(`  Backup saved for future restore`))
+    }
+  })
+
+// --- activate ---
+resourceCmd
+  .command("activate")
+  .description("激活资源 (rule/command/clone)")
+  .argument("<name>", "资源名称")
+  .requiredOption("--type <type>", "资源类型 (rule/command/clone)")
+  .action(async (name: string, options: { type: string }) => {
+    const result = await apiRequest<{ name: string; type: string; activatedTo: string }>(
+      "POST", "/activate", { name, type: options.type },
+    )
+    console.log(chalk.green(`✓ Activated ${result.name} (${result.type})`))
+    console.log(chalk.dim(`  Target: ${result.activatedTo}`))
+  })
+
+// --- deactivate ---
+resourceCmd
+  .command("deactivate")
+  .description("停用资源 (rule/command/clone)")
+  .argument("<name>", "资源名称")
+  .requiredOption("--type <type>", "资源类型 (rule/command/clone)")
+  .action(async (name: string, options: { type: string }) => {
+    await apiRequest("POST", "/deactivate", { name, type: options.type })
+    console.log(chalk.green(`✓ Deactivated ${name} (${options.type})`))
   })
 
 // --- list ---
 resourceCmd
   .command("list")
   .description("列出已安装资源")
-  .option("--type <type>", "按类型过滤 (skill/agent/workflow)")
+  .option("--type <type>", "按类型过滤 (skill/agent/workflow/rule/command/clone)")
   .option("--query <q>", "按名称搜索")
   .action(async (options: { type?: string; query?: string }) => {
     let path = ""
@@ -113,7 +142,7 @@ resourceCmd
     if (qs) path += `?${qs}`
 
     const data = await apiRequest<{
-      resources: Array<{ name: string; type: string; source: string; status: string; installedAt?: string }>
+      resources: Array<{ name: string; type: string; source: string; status: string; activated?: boolean; installedAt?: string }>
     }>("GET", path)
 
     if (!data.resources?.length) {
@@ -121,15 +150,16 @@ resourceCmd
       return
     }
 
-    const cols = { name: 24, type: 10, source: 14, status: 18, time: 20 }
+    const cols = { name: 24, type: 10, source: 14, status: 18, activated: 10, time: 20 }
     console.log(
       chalk.dim(
-        `${pad("NAME", cols.name)}${pad("TYPE", cols.type)}${pad("SOURCE", cols.source)}${pad("STATUS", cols.status)}${pad("INSTALLED", cols.time)}`,
+        `${pad("NAME", cols.name)}${pad("TYPE", cols.type)}${pad("SOURCE", cols.source)}${pad("STATUS", cols.status)}${pad("ACTIVATED", cols.activated)}${pad("INSTALLED", cols.time)}`,
       ),
     )
     for (const r of data.resources) {
+      const activatedStr = r.activated ? chalk.green("yes") : chalk.dim("-")
       console.log(
-        `${pad(r.name, cols.name)}${pad(r.type, cols.type)}${pad(r.source, cols.source)}${pad(r.status, cols.status)}${pad(r.installedAt ? formatDate(r.installedAt) : "-", cols.time)}`,
+        `${pad(r.name, cols.name)}${pad(r.type, cols.type)}${pad(r.source, cols.source)}${pad(r.status, cols.status)}${pad(activatedStr, cols.activated)}${pad(r.installedAt ? formatDate(r.installedAt) : "-", cols.time)}`,
       )
     }
   })
@@ -141,8 +171,8 @@ resourceCmd
   .argument("<name>", "资源名称")
   .option("--type <type>", "资源类型 (可选，自动检测)")
   .action(async (name: string, options: { type?: string }) => {
-    const types = options.type ? [options.type] : ["skill", "agent", "workflow"]
-    let detail: { name: string; type: string; source: string; status: string; installedAt?: string; installPath?: string; dependsOn?: string[] } | undefined
+    const types = options.type ? [options.type] : ["skill", "agent", "workflow", "rule", "command", "clone"]
+    let detail: { name: string; type: string; source: string; status: string; installedAt?: string; installPath?: string; dependsOn?: string[]; activated?: boolean; activatedAt?: string; activatedTo?: string } | undefined
 
     for (const t of types) {
       try {
@@ -165,6 +195,11 @@ resourceCmd
     if (detail.installPath) console.log(chalk.bold(`Install Path:`) + detail.installPath)
     if (detail.installedAt) console.log(chalk.bold(`Installed At:`) + formatDate(detail.installedAt))
     if (detail.dependsOn?.length) console.log(chalk.bold(`Dependencies:`) + detail.dependsOn.join(", "))
+    if (detail.activated !== undefined) {
+      console.log(chalk.bold(`Activated:   `) + (detail.activated ? chalk.green("yes") : chalk.dim("no")))
+    }
+    if (detail.activatedAt) console.log(chalk.bold(`Activated At:`) + formatDate(detail.activatedAt))
+    if (detail.activatedTo) console.log(chalk.bold(`Activated To:`) + detail.activatedTo)
   })
 
 // --- audit ---
@@ -204,7 +239,7 @@ resourceCmd
   .command("search")
   .description("搜索可安装的 builtin 资源")
   .argument("<query>", "搜索关键词 (匹配名称/描述)")
-  .option("--type <type>", "按类型过滤 (skill/agent/workflow)")
+  .option("--type <type>", "按类型过滤 (skill/agent/workflow/rule/command/clone)")
   .action(async (query: string, options: { type?: string }) => {
     const data = await apiRequest<{
       resources: Array<{ name: string; type: string; description?: string; installed: boolean }>
@@ -282,13 +317,13 @@ sourceCmd
   .action(async (url: string, options: { name?: string; branch: string }) => {
     const result = await apiRequest<{
       name: string; url: string
-      resourceCount: { skills: number; agents: number; workflows: number }
+      resourceCount: { skills: number; agents: number; workflows: number; rules: number; commands: number; clones: number }
     }>("POST", "/source/add", { url, name: options.name, branch: options.branch })
 
     console.log(chalk.green(`✓ Added source: ${result.name}`))
     console.log(chalk.dim(`  URL: ${result.url}`))
-    const { skills, agents, workflows } = result.resourceCount
-    console.log(chalk.dim(`  Resources: ${skills} skills, ${agents} agents, ${workflows} workflows`))
+    const { skills, agents, workflows, rules, commands, clones } = result.resourceCount
+    console.log(chalk.dim(`  Resources: ${skills} skills, ${agents} agents, ${workflows} workflows, ${rules} rules, ${commands} commands, ${clones} clones`))
     console.log(chalk.dim(`  Install: octopus resource install git:${result.name}/<resource-path>`))
   })
 
@@ -298,7 +333,7 @@ sourceCmd
   .description("列出已添加的集合源")
   .action(async () => {
     const data = await apiRequest<{
-      sources: Array<{ name: string; url: string; resourceCount: { skills: number; agents: number; workflows: number }; lastUpdated: string; trusted: boolean }>
+      sources: Array<{ name: string; url: string; resourceCount: { skills: number; agents: number; workflows: number; rules: number; commands: number; clones: number }; lastUpdated: string; trusted: boolean }>
     }>("GET", "/source/list")
 
     if (!data.sources?.length) {
@@ -313,7 +348,7 @@ sourceCmd
       ),
     )
     for (const s of data.sources) {
-      const r = `${s.resourceCount.agents}a ${s.resourceCount.skills}s`
+      const r = `${s.resourceCount.agents}a ${s.resourceCount.skills}s ${s.resourceCount.rules}r`
       const t = s.trusted ? chalk.green("yes") : chalk.red("no")
       console.log(
         `${pad(s.name, cols.name)}${pad(s.url, cols.url)}${pad(r, cols.resources)}${pad(formatDate(s.lastUpdated), cols.updated)}${pad(t, cols.trusted)}`,
@@ -328,12 +363,12 @@ sourceCmd
   .argument("<name>", "源名称")
   .action(async (name: string) => {
     const result = await apiRequest<{
-      name: string; resourceCount: { skills: number; agents: number; workflows: number }
+      name: string; resourceCount: { skills: number; agents: number; workflows: number; rules: number; commands: number; clones: number }
     }>("POST", "/source/update", { name })
 
     console.log(chalk.green(`✓ Updated: ${result.name}`))
-    const { skills, agents, workflows } = result.resourceCount
-    console.log(chalk.dim(`  ${skills} skills, ${agents} agents, ${workflows} workflows`))
+    const { skills, agents, workflows, rules, commands, clones } = result.resourceCount
+    console.log(chalk.dim(`  ${skills} skills, ${agents} agents, ${workflows} workflows, ${rules} rules, ${commands} commands, ${clones} clones`))
   })
 
 // --- source remove ---
@@ -381,7 +416,7 @@ sourceCmd
     const s = await apiRequest<{
       name: string; url: string; branch: string; addedAt: string; lastUpdated: string
       cachePath: string; trusted: boolean
-      resourceCount: { skills: number; agents: number; workflows: number }
+      resourceCount: { skills: number; agents: number; workflows: number; rules: number; commands: number; clones: number }
     }>("GET", `/source/${encodeURIComponent(name)}`)
 
     console.log(chalk.bold("Name:         ") + s.name)
@@ -394,6 +429,9 @@ sourceCmd
     console.log(chalk.bold("Skills:       ") + s.resourceCount.skills)
     console.log(chalk.bold("Agents:       ") + s.resourceCount.agents)
     console.log(chalk.bold("Workflows:    ") + s.resourceCount.workflows)
+    console.log(chalk.bold("Rules:        ") + s.resourceCount.rules)
+    console.log(chalk.bold("Commands:     ") + s.resourceCount.commands)
+    console.log(chalk.bold("Clones:       ") + s.resourceCount.clones)
   })
 
 // --- source install ---
