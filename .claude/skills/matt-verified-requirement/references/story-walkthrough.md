@@ -1,5 +1,10 @@
 # Story Walk-Through Analysis
 
+> **Execution context**: This protocol runs as a **spawned sub-agent**, not inline in the main session.
+> The parent agent spawns this sub-agent via the Agent tool after writing the draft spec.md.
+> The sub-agent reads spec.md, performs the walk-through against the current codebase, and returns break points as structured output.
+> The parent agent then fixes spec.md based on the findings.
+
 ## Why This Matters
 
 Decision-by-decision grilling produces individually sound choices, but does NOT guarantee they connect end-to-end. A design can have perfect schemas, perfect APIs, and perfect ACs — yet still have stories that break mid-flow because a UI component doesn't exist, a data field is missing, or a package boundary blocks execution.
@@ -73,9 +78,9 @@ Categorize each break point:
 
 | Severity | Meaning | Action |
 |----------|---------|--------|
-| **CRITICAL** | Story cannot proceed — execution blocks | Must fix before brief is written |
-| **HIGH** | Story proceeds but produces wrong/incomplete results | Must fix before brief is written |
-| **MEDIUM** | Story works but UX is degraded (missing feedback, no loading state) | Document in brief, fix during implementation |
+| **CRITICAL** | Story cannot proceed — execution blocks | Must fix before spec is finalized |
+| **HIGH** | Story proceeds but produces wrong/incomplete results | Must fix before spec is finalized |
+| **MEDIUM** | Story works but UX is degraded (missing feedback, no loading state) | Document in spec, fix during implementation |
 | **LOW** | Cosmetic or convenience issue | Note in Risks section |
 
 For each CRITICAL and HIGH break point:
@@ -88,13 +93,15 @@ For each CRITICAL and HIGH break point:
 
 After fixes, re-trace the stories to verify all break points are resolved. If new break points emerge from the fixes, iterate until clean.
 
-## Output
+## Output (returned to parent agent)
 
-Append to the brief:
-1. **Core Stories** section (Appendix) with full step-by-step traces
-2. Break points discovered → added to Key Decisions as "Story Gap Fixes"
-3. New ACs for each fix
-4. New types/schemas/APIs needed to close the gaps
+The sub-agent returns a structured report containing:
+1. **Core Stories** with full step-by-step traces (parent appends to spec.md as Appendix)
+2. **Break points discovered** → parent adds to Key Decisions as "Story Gap Fixes"
+3. **New ACs** needed for each fix → parent adds to spec.md Acceptance Criteria
+4. **New types/schemas/APIs** needed to close the gaps → parent adds to spec.md Implementation Decisions
+
+**Important**: The sub-agent does NOT modify spec.md directly. It returns findings; the parent agent decides how to incorporate them.
 
 ## Example (abbreviated)
 

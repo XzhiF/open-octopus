@@ -1,8 +1,28 @@
 {
   "root_feature": "resource-module-enhancement",
   "branch": "feat/resource-module-enhancement",
-  "iterations": [],
-  "max_iterations": 5,
-  "convergence_threshold": 85,
-  "status": "running"
+  "iterations": [
+    {
+      "round": 1,
+      "feature_slug": "resource-module-enhancement",
+      "score": 81,
+      "decision": "REVIEW",
+      "gates_passed": 3,
+      "gates_total": 5,
+      "top_gaps": ["Browser E2E not executed (AC-14-17)", "Clone git lifecycle not tested (AC-6,7,9,10,13)"]
+    },
+    {
+      "round": 2,
+      "feature_slug": "resource-module-enhancement-r2",
+      "score": 88,
+      "decision": "GO",
+      "gates_passed": 5,
+      "gates_total": 5,
+      "top_gaps": []
+    }
+  ],
+  "final_score": 88,
+  "final_decision": "GO",
+  "total_iterations": 2,
+  "status": "converged"
 }
