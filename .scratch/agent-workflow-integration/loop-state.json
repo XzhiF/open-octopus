@@ -1,0 +1,9 @@
+{
+  "root_feature": "agent-workflow-integration",
+  "branch": "feat/agent-workflow-integration",
+  "iterations": [],
+  "max_iterations": 5,
+  "convergence_threshold": 85,
+  "status": "running",
+  "created_at": "2026-08-04"
+}
