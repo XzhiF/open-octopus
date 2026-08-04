@@ -465,11 +465,15 @@ git commit -m "chore: iteration <N> artifacts + handoff"
 
 #### 6.5.3 Invoke Compact
 
+> ⚠️ **CHECKPOINT — You MUST invoke `/compact` now.**
+> Do NOT skip this step. Do NOT proceed to the next iteration without compacting.
+> The handoff file (6.5.1) and git commit (6.5.2) are already done — it is safe to compact.
+
 ```
 /compact
 ```
 
-This summarizes the conversation, discarding implementation details from the completed iteration.
+This summarizes the conversation, discarding implementation details from the completed iteration. The handoff file preserves all critical context.
 
 #### 6.5.4 Selective Context Re-load
 
