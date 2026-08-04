@@ -3,7 +3,7 @@ name: matt-dev-runner
 description: Single-ticket implementation executor. Receives a spec + ticket, explores analogous code, implements using TDD, verifies, and commits. Spawned by matt-dev-pipeline for concurrent DAG execution.
 tools: ["Read", "Write", "Edit", "Bash", "Grep", "Glob", "Agent"]
 model: sonnet
-skills: ["implement", "code-review", "tdd"]
+skills: ["implement", "tdd"]
 ---
 
 # Single-Ticket Implementation Executor
@@ -69,12 +69,11 @@ List every file. For each: "Does my new feature need a corresponding entry here?
 
 ### Step 4: Verify
 Run the ticket's Verification Method as described in the ticket file.
-- PASS → update ticket `## Status` value to `done`, proceed to Step 5
+- PASS → update ticket `## Status` value to `done`
 - FAIL → fix and retry (max 3 times), then set `## Status` to `skip` with reason
 
-### Step 5: Review
-1. Run `/code-review` on your changes
-2. Do NOT commit — the pipeline commits per stage after integration gate passes
+Do NOT commit — the pipeline commits per stage after integration gate passes.
+Do NOT run code-review — the pipeline Phase 2 handles independent code review (裁判 ≠ 球员).
 
 ## Key Rules
 
