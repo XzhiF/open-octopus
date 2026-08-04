@@ -117,6 +117,7 @@ export class ExecutionLifecycle {
    */
   setKnowledgeService(service: KnowledgeService): void {
     this.knowledgeService = service
+    this.engineFactory.setKnowledgeService(service)
   }
 
   getEnginePool(): EnginePool { return this.enginePool }

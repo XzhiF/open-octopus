@@ -26,7 +26,7 @@ export type {
 
 // Web-app specific query params (not in shared — UI concern)
 export interface ListQuery {
-  type?: "skill" | "agent" | "workflow"
+  type?: "skill" | "agent" | "workflow" | "rule" | "command" | "clone"
   query?: string
   installed?: boolean
 }

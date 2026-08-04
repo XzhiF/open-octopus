@@ -19,7 +19,7 @@ export interface DiscoveredResource {
 
 const ManifestResourceSchema = z.object({
   name: z.string(),
-  type: z.enum(["skill", "agent", "workflow"]),
+  type: z.enum(["skill", "agent", "workflow", "rule", "command", "clone"]),
   path: z.string(),
 })
 
@@ -30,6 +30,9 @@ const ManifestSchema = z.object({
   skills: z.array(z.string()).optional(),
   agents: z.array(z.string()).optional(),
   workflows: z.array(z.string()).optional(),
+  rules: z.array(z.string()).optional(),
+  commands: z.array(z.string()).optional(),
+  clones: z.array(z.string()).optional(),
 })
 
 /** Meta files to skip during convention scan */
@@ -86,6 +89,21 @@ export class SourceDiscovery {
           resources.push({ name: path.basename(p).replace(/\.(yaml|yml)$/, ""), type: "workflow", path: p })
         }
       }
+      if (parsed.rules) {
+        for (const p of parsed.rules) {
+          resources.push({ name: path.basename(p).replace(/\.md$/, ""), type: "rule", path: p })
+        }
+      }
+      if (parsed.commands) {
+        for (const p of parsed.commands) {
+          resources.push({ name: path.basename(p).replace(/\.md$/, ""), type: "command", path: p })
+        }
+      }
+      if (parsed.clones) {
+        for (const p of parsed.clones) {
+          resources.push({ name: path.basename(p), type: "clone", path: p })
+        }
+      }
 
       return resources
     } catch {
@@ -100,6 +118,9 @@ export class SourceDiscovery {
     this.scanSkills(dir, resources)
     this.scanAgents(dir, resources)
     this.scanWorkflows(dir, resources)
+    this.scanRules(dir, resources)
+    this.scanCommands(dir, resources)
+    this.scanClones(dir, resources)
 
     // Fallback: if no agents found under agents/, scan root-level category dirs
     // (repos like agency-agents-zh put agents in engineering/, design/, etc.)
@@ -226,7 +247,8 @@ export class SourceDiscovery {
   private scanRootCategories(dir: string, resources: DiscoveredResource[]): void {
     // Directories to skip at root level (not agent categories)
     const skipDirs = new Set([
-      "skills", "agents", "workflows", "examples", "integrations",
+      "skills", "agents", "workflows", "rules", "commands", "clones",
+      "examples", "integrations",
       "scripts", "assets", "strategy", "node_modules", ".git",
       "test", "tests", "__tests__", "docs",
     ])
@@ -254,6 +276,54 @@ export class SourceDiscovery {
           name: file.replace(/\.(yaml|yml)$/, ""),
           type: "workflow",
           path: `workflows/${file}`,
+        })
+      }
+    }
+  }
+
+  private scanRules(dir: string, resources: DiscoveredResource[]): void {
+    const rulesDir = path.join(dir, "rules")
+    if (!fs.existsSync(rulesDir)) return
+
+    for (const file of fs.readdirSync(rulesDir)) {
+      if (file.endsWith(".md") && !this.isMetaFile(file)) {
+        resources.push({
+          name: file.replace(/\.md$/, ""),
+          type: "rule",
+          path: `rules/${file}`,
+        })
+      }
+    }
+  }
+
+  private scanCommands(dir: string, resources: DiscoveredResource[]): void {
+    const commandsDir = path.join(dir, "commands")
+    if (!fs.existsSync(commandsDir)) return
+
+    for (const file of fs.readdirSync(commandsDir)) {
+      if (file.endsWith(".md") && !this.isMetaFile(file)) {
+        resources.push({
+          name: file.replace(/\.md$/, ""),
+          type: "command",
+          path: `commands/${file}`,
+        })
+      }
+    }
+  }
+
+  private scanClones(dir: string, resources: DiscoveredResource[]): void {
+    const clonesDir = path.join(dir, "clones")
+    if (!fs.existsSync(clonesDir)) return
+
+    for (const item of fs.readdirSync(clonesDir, { withFileTypes: true })) {
+      if (!item.isDirectory() || item.isSymbolicLink()) continue
+      // A clone is a directory containing a persona.md file
+      const personaPath = path.join(clonesDir, item.name, "persona.md")
+      if (fs.existsSync(personaPath)) {
+        resources.push({
+          name: item.name,
+          type: "clone",
+          path: `clones/${item.name}`,
         })
       }
     }

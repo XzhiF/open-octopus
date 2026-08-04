@@ -7,6 +7,9 @@ import { BuiltInWorkflowService } from "./builtin-workflow"
 import { ObservabilityService } from "./observability"
 import { PrivacyFilter } from "./privacy-filter"
 import { ExecutionDAO } from "../db/dao/execution-dao"
+import { KnowledgeEffectivenessDAO } from "../db/dao/knowledge-effectiveness-dao"
+import { PendingReviewDAO } from "../db/dao/pending-review-dao"
+import { createKnowledgeService } from "./knowledge"
 import { ExecutionLifecycle } from "./execution/ExecutionLifecycle"
 import { RecoveryManager } from "./execution/RecoveryManager"
 import { globalErrorTracker } from "./error-tracker"
@@ -51,6 +54,16 @@ export class ExecutionService {
       db, this.dao, sse, workflowService, builtInWorkflowService,
       org, workspacePath, workspaceDbId, workspaceId, obs, globalErrorTracker,
     )
+
+    // Wire up knowledge injection pipeline
+    try {
+      const effectivenessDAO = new KnowledgeEffectivenessDAO(db)
+      const pendingReviewDAO = new PendingReviewDAO(db)
+      const knowledgeService = createKnowledgeService(effectivenessDAO, pendingReviewDAO, org)
+      this.lifecycle.setKnowledgeService(knowledgeService)
+    } catch (err) {
+      console.warn("[ExecutionService] Knowledge service initialization failed:", err)
+    }
 
     this.lifecycle.setupResumeListener()
   }
