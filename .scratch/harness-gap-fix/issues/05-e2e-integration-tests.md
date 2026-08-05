@@ -10,14 +10,14 @@
 - 04 (harness_blocked event) — blocked 事件验证
 
 ## Status
-ready-for-agent
+done
 
 ## Acceptance Criteria
-- [ ] AC1: Playwright 测试：运行 harness_test workflow → 面板出现并显示 harness_diagnosis 事件
-- [ ] AC2: Playwright 测试：面板显示 harness_intervention 事件（harnessHint 被注入）
-- [ ] AC3: Playwright 测试：chatbot 发送 inject 指令 → mock 返回 200 → 面板显示成功消息
-- [ ] AC4: Playwright 测试：totalExtraTokens 在面板中显示（当事件包含 token 信息时）
-- [ ] AC5: 所有现有 harness E2E 测试继续通过
+- [x] AC1: Playwright 测试：运行 harness_test workflow → 面板出现并显示 harness_diagnosis 事件
+- [x] AC2: Playwright 测试：面板显示 harness_intervention 事件（harnessHint 被注入）
+- [x] AC3: Playwright 测试：chatbot 发送 inject 指令 → mock 返回 200 → 面板显示成功消息
+- [x] AC4: Playwright 测试：totalExtraTokens 在面板中显示（当事件包含 token 信息时）
+- [x] AC5: 所有现有 harness E2E 测试继续通过
 
 ## Verification Method
 **Verification type**: browser E2E

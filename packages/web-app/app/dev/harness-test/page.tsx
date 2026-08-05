@@ -59,6 +59,7 @@ export default function HarnessTestPage() {
           workspaceId={WORKSPACE_ID}
           executionId={EXECUTION_ID}
           executionStatus="running"
+          currentNodeId="bash-build"
         />
       </div>
 
