@@ -7,16 +7,16 @@
 02 (engine callbacks), 03 (harness controller), 05 (process isolation), 06 (DB migration)
 
 ## Status
-ready-for-agent
+done
 
 ## Acceptance Criteria
-- [ ] AC1: `ExecutionLifecycle.start()` 中用 HarnessController 包装 EngineCallbacks
-- [ ] AC2: 每个 execution 创建独立的 HarnessController 实例 + 检测器实例
-- [ ] AC3: execution 完成/失败时调用 HarnessController.destroy() 清理检测器
-- [ ] AC4: 端到端测试 workflow: harness_test_stupid_retry — 验证完整傻重试纠正流程
-- [ ] AC5: 端到端测试 workflow: harness_test_process_conflict — 验证进程冲突阻断
-- [ ] AC6: 端到端测试 workflow: harness_test_model_mismatch — 验证模型自动切换
-- [ ] AC7: 端到端测试: harness_events 表记录完整 + SSE 事件正确推送 + 节点状态正确
+- [x] AC1: `ExecutionLifecycle.start()` 中用 HarnessController 包装 EngineCallbacks
+- [x] AC2: 每个 execution 创建独立的 HarnessController 实例 + 检测器实例
+- [x] AC3: execution 完成/失败时调用 HarnessController.destroy() 清理检测器
+- [x] AC4: 端到端测试 workflow: harness_test_stupid_retry — 验证完整傻重试纠正流程
+- [x] AC5: 端到端测试 workflow: harness_test_process_conflict — 验证进程冲突阻断
+- [x] AC6: 端到端测试 workflow: harness_test_model_mismatch — 验证模型自动切换
+- [x] AC7: 端到端测试: harness_events 表记录完整 + SSE 事件正确推送 + 节点状态正确
 
 ## Verification Method
 **Verification type**: integration test (full stack)

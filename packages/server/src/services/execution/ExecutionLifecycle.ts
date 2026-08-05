@@ -34,6 +34,9 @@ import { ResourcePreFlight } from "../resource-preflight"
 import { ResourceProvisioner } from "../resource-provisioner"
 import { getResourceRegistry } from "../resource-registry"
 import { PipelineConfigLoader } from "../pipeline-config"
+import { HarnessController } from "../harness/harness-controller"
+import { HarnessConfigService } from "../harness/config-service"
+import { HarnessDAO } from "../../db/dao/harness-dao"
 
 export class ExecutionLifecycle {
   private enginePool: EnginePool
@@ -46,6 +49,7 @@ export class ExecutionLifecycle {
   private runner: ExecutionRunner
   private _externalCallbacks = new Map<string, Partial<EngineCallbacks>>()
   private knowledgeService?: KnowledgeService
+  private harnessController?: HarnessController
   // Throttle retireStaleRules — only run at most once per RETIRE_INTERVAL_MS
   // across all executions. retireStaleRules scans the DB and rewrites
   // knowledge files for every stale rule, so calling it on every on_complete
@@ -110,6 +114,19 @@ export class ExecutionLifecycle {
       recordEndCommits: () => this.recordEndCommits(),
       abortAndWait: (ac, eid, t) => this.abortAndWait(ac, eid, t),
     })
+
+    // Initialize HarnessController for agentic supervision
+    try {
+      const harnessDAO = new HarnessDAO(db)
+      const harnessConfigService = new HarnessConfigService(harnessDAO)
+      this.harnessController = new HarnessController({
+        dao: harnessDAO,
+        sse,
+        configService: harnessConfigService,
+      })
+    } catch (err) {
+      console.warn("[ExecutionLifecycle] HarnessController initialization failed (non-fatal):", err)
+    }
   }
 
   /**
@@ -121,6 +138,8 @@ export class ExecutionLifecycle {
   }
 
   getEnginePool(): EnginePool { return this.enginePool }
+
+  getHarnessController(): HarnessController | undefined { return this.harnessController }
 
   registerExternalCallbacks(callbacks: Partial<EngineCallbacks>, executionId?: string): void {
     if (executionId) {
@@ -215,8 +234,18 @@ export class ExecutionLifecycle {
     }
     const updatedExec = this.dao.findById(id)!
 
+    // Build callbacks and optionally wrap through HarnessController
+    let callbacks = this.buildCallbacks(id)
+    if (this.harnessController) {
+      try {
+        callbacks = this.harnessController.onExecutionStart(id, this.workspaceId, callbacks)
+      } catch (err) {
+        console.warn("[ExecutionLifecycle] Harness onExecutionStart failed (non-fatal):", err)
+      }
+    }
+
     const engine = this.engineFactory.createEngine(
-      updatedExec as any, wf.parsed, this.buildCallbacks(id), abortController.signal,
+      updatedExec as any, wf.parsed, callbacks, abortController.signal,
     )
 
     this.enginePool.create(id, engine, abortController)
@@ -485,6 +514,15 @@ export class ExecutionLifecycle {
 
       this.syncStateJson()
       this.sse.emit(this.workspaceId, { event: "complete", data: { executionId: id, finalStatus: result.status } })
+
+      // Clean up harness detectors for this execution
+      if (this.harnessController) {
+        try {
+          this.harnessController.onExecutionEnd(id)
+        } catch (err) {
+          console.warn("[ExecutionLifecycle] Harness onExecutionEnd failed (non-fatal):", err)
+        }
+      }
     } catch (err: any) {
       this.errorTracker?.capture('execution', err.message ?? 'execution error', {
         execution_id: id, node_id: this.findFailedNode(id) ?? undefined, workflow_name: exec.workflow_name,
@@ -522,6 +560,15 @@ export class ExecutionLifecycle {
         }, wf, id)
         await this.executeWorkflowHooks("on_complete", { final_status: "failed" }, wf, id)
       } catch { /* hook errors silently ignored */ }
+
+      // Clean up harness detectors for this execution (error path)
+      if (this.harnessController) {
+        try {
+          this.harnessController.onExecutionEnd(id)
+        } catch (harnessErr) {
+          console.warn("[ExecutionLifecycle] Harness cleanup failed in error path (non-fatal):", harnessErr)
+        }
+      }
     }
 
     return this.dao.findById(id)!
@@ -552,6 +599,15 @@ export class ExecutionLifecycle {
         await this.executeWorkflowHooks("on_cancel", {}, wf, id)
         await this.executeWorkflowHooks("on_complete", { final_status: "cancelled" }, wf, id)
       } catch { /* non-fatal */ }
+    }
+
+    // Clean up harness detectors for this execution (cancel path)
+    if (this.harnessController) {
+      try {
+        this.harnessController.onExecutionEnd(id)
+      } catch (err) {
+        console.warn("[ExecutionLifecycle] Harness cleanup failed in cancel path (non-fatal):", err)
+      }
     }
 
     const children = this.dao.findChildren(id).filter(
@@ -663,6 +719,15 @@ export class ExecutionLifecycle {
 
         this.syncStateJson()
         this.sse.emit(this.workspaceId, { event: "complete", data: { executionId: id, finalStatus: result.status } })
+
+        // Clean up harness detectors for this execution (retry completion path)
+        if (this.harnessController) {
+          try {
+            this.harnessController.onExecutionEnd(id)
+          } catch (err) {
+            console.warn("[ExecutionLifecycle] Harness cleanup failed in retry completion (non-fatal):", err)
+          }
+        }
       }
     } catch (err: any) {
       this.enginePool.remove(id)
@@ -695,6 +760,15 @@ export class ExecutionLifecycle {
           await this.executeWorkflowHooks("on_complete", { final_status: "failed" }, wfForHook, id)
         }
       } catch { /* non-fatal */ }
+
+      // Clean up harness detectors for this execution (retry error path)
+      if (this.harnessController) {
+        try {
+          this.harnessController.onExecutionEnd(id)
+        } catch (harnessErr) {
+          console.warn("[ExecutionLifecycle] Harness cleanup failed in retry error path (non-fatal):", harnessErr)
+        }
+      }
     }
 
     return this.dao.findById(id)!
@@ -1364,7 +1438,17 @@ export class ExecutionLifecycle {
 
   private reconstructEngine(exec: ExecutionRow): { engine: WorkflowEngine; abortController: AbortController } {
     const abortController = new AbortController()
-    const callbacks = this.buildCallbacks(exec.id)
+
+    // Build callbacks and optionally wrap through HarnessController
+    let callbacks = this.buildCallbacks(exec.id)
+    if (this.harnessController) {
+      try {
+        callbacks = this.harnessController.onExecutionStart(exec.id, this.workspaceId, callbacks)
+      } catch (err) {
+        console.warn("[ExecutionLifecycle] Harness onExecutionStart in reconstruct failed (non-fatal):", err)
+      }
+    }
+
     const engine = this.engineFactory.reconstructEngine(exec, callbacks, abortController.signal)
 
     const wf = this.engineFactory.resolveWorkflowWithSnapshot(exec.id, exec.workflow_ref)

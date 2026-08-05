@@ -16,6 +16,7 @@ import type { HarnessDAO } from "../../db/dao/harness-dao"
 import type { SSEService } from "../sse"
 import type { RepairService } from "../repair"
 import type { InterventionResult, ActionContext } from "./action-types"
+import type { AgentDelegationService } from "./agent-delegation"
 import { ActionRegistry } from "./action-registry"
 
 /** Severity levels ordered from lowest to highest. */
@@ -31,6 +32,7 @@ export interface StrategyEngineDeps {
   sse: SSEService
   workspaceId: string
   repairService?: RepairService
+  agentDelegationService?: AgentDelegationService
 }
 
 /**
@@ -52,6 +54,7 @@ export class StrategyEngine {
   private workspaceId: string
   private repairService?: RepairService
   private registry: ActionRegistry
+  private agentDelegationService?: AgentDelegationService
 
   constructor(deps: StrategyEngineDeps) {
     this.strategies = deps.strategies
@@ -60,6 +63,7 @@ export class StrategyEngine {
     this.workspaceId = deps.workspaceId
     this.repairService = deps.repairService
     this.registry = new ActionRegistry()
+    this.agentDelegationService = deps.agentDelegationService
   }
 
   /**
@@ -119,25 +123,94 @@ export class StrategyEngine {
   /**
    * High-level method: match strategy, execute actions, determine delegation.
    * This is the primary entry point for the HarnessController/DetectorPipeline.
+   *
+   * When delegation is needed (no match or delegate_to_agent: true), calls
+   * the AgentDelegationService (Layer 3) if available.
    */
   async handleReport(report: DiagnosisReport): Promise<StrategyEngineResult> {
     const matchedStrategy = this.matchStrategy(report)
 
     if (!matchedStrategy) {
       // No strategy matched → delegate to Layer 3
+      const delegationResult = await this.tryDelegate(report)
       return {
         delegate: true,
         matchedStrategy: null,
-        actionResults: [],
+        actionResults: delegationResult
+          ? [delegationResult]
+          : [],
       }
     }
 
     const actionResults = await this.executeActions(report, matchedStrategy)
 
+    // Check if delegation is also needed after executing strategy actions
+    if (matchedStrategy.delegate_to_agent === true) {
+      const delegationResult = await this.tryDelegate(report)
+      if (delegationResult) {
+        actionResults.push(delegationResult)
+      }
+    }
+
     return {
       delegate: matchedStrategy.delegate_to_agent === true,
       matchedStrategy,
       actionResults,
+    }
+  }
+
+  /**
+   * Attempt Layer 3 delegation via AgentDelegationService.
+   * Returns an InterventionResult or null if delegation service is unavailable.
+   */
+  private async tryDelegate(
+    report: DiagnosisReport,
+  ): Promise<InterventionResult | null> {
+    if (!this.agentDelegationService) {
+      return null
+    }
+
+    try {
+      const delegationResult = await this.agentDelegationService.delegate({
+        executionId: report.executionId,
+        nodeId: report.nodeId,
+        report,
+        context: {
+          recentEvents: [],
+          varpoolSnapshot: {},
+          nodeConfig: null,
+          workflowContent: "",
+        },
+      })
+
+      if (!delegationResult.success) {
+        return {
+          success: false,
+          action: "agent_delegation",
+          message: `Agent delegation failed: ${delegationResult.reasoning}`,
+          delegate: true,
+        }
+      }
+
+      return {
+        success: true,
+        action: "agent_delegation",
+        message: `Agent delegation: ${delegationResult.interventionType} — ${delegationResult.reasoning.slice(0, 100)}`,
+        delegate: true,
+        details: {
+          interventionType: delegationResult.interventionType,
+          interventionData: delegationResult.interventionData,
+          tokenUsage: delegationResult.tokenUsage,
+        },
+      }
+    } catch (err) {
+      console.error("[StrategyEngine] Agent delegation error:", err)
+      return {
+        success: false,
+        action: "agent_delegation",
+        message: `Agent delegation error: ${err instanceof Error ? err.message : String(err)}`,
+        delegate: true,
+      }
     }
   }
 

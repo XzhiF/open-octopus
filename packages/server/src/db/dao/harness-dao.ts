@@ -116,4 +116,40 @@ export class HarnessDAO extends BaseDAO {
 
     return { id, config_yaml: configYaml, updated_at: now, version: newVersion }
   }
+
+  // ── Token tracking for harness agent delegations ─────────────────
+
+  /**
+   * Record token usage for a harness agent delegation.
+   * Uses the node_token_usages table with source='harness'.
+   */
+  insertHarnessTokenUsage(params: {
+    id: string
+    nodeExecutionId: string
+    model: string
+    inputTokens: number
+    outputTokens: number
+    costUsd: number | null
+    createdAt: string
+  }): void {
+    this.stmt(`
+      INSERT INTO node_token_usages
+        (id, node_execution_id, model, input_tokens, output_tokens, cost_usd,
+         cache_read_tokens, cache_creation_tokens, source, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, 0, 0, 'harness', ?)
+      ON CONFLICT(id) DO UPDATE SET
+        input_tokens = input_tokens + excluded.input_tokens,
+        output_tokens = output_tokens + excluded.output_tokens,
+        cost_usd = COALESCE(cost_usd, 0) + COALESCE(excluded.cost_usd, 0),
+        created_at = excluded.created_at
+    `).run(
+      params.id,
+      params.nodeExecutionId,
+      params.model,
+      params.inputTokens,
+      params.outputTokens,
+      params.costUsd,
+      params.createdAt,
+    )
+  }
 }

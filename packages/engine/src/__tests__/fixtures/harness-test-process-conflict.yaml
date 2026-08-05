@@ -1,0 +1,16 @@
+apiVersion: octopus/v1
+kind: Workflow
+name: Harness Test - Process Conflict
+description: Tests that harness detects and blocks attempts to kill the host process
+
+nodes:
+  - id: bash-kill-host
+    type: bash
+    script: |
+      echo "Attempting to kill host process"
+      echo "Host PID is: $OCTOPUS_HOST_PID"
+      # This should be blocked by the harness wrapper
+      if [ -n "$OCTOPUS_HOST_PID" ]; then
+        kill $OCTOPUS_HOST_PID 2>/dev/null || echo "kill command failed (expected)"
+      fi
+      echo "Script completed"

@@ -3,9 +3,7 @@
 // HarnessController — orchestrates the 3-layer Harness architecture:
 //   Layer 1: DetectorPipeline (detect anomalies)
 //   Layer 2: StrategyEngine (match strategies → actions)
-//   Layer 3: AgentDelegation (complex scenarios) [future ticket]
-//
-// Currently implements Layers 1 and 2. Layer 3 is a stub for ticket 05.
+//   Layer 3: AgentDelegation (complex scenarios)
 
 import type { HarnessSystemConfigParsed } from "@octopus/shared"
 import type { EngineCallbacks } from "@octopus/engine"
@@ -15,6 +13,7 @@ import type { RepairService } from "../repair"
 import { HarnessConfigService } from "./config-service"
 import { DetectorPipeline } from "./detector-pipeline"
 import { StrategyEngine } from "./strategy-engine"
+import { AgentDelegationService } from "./agent-delegation"
 
 export interface HarnessControllerDeps {
   dao: HarnessDAO
@@ -65,6 +64,13 @@ export class HarnessController {
 
     const config = this.configService.loadMergedConfig()
 
+    // Create the AgentDelegationService (Layer 3) for this execution
+    const agentDelegationService = new AgentDelegationService({
+      dao: this.dao,
+      sse: this.sse,
+      workspaceId,
+    })
+
     // Create a per-execution StrategyEngine with the current strategies
     const strategyEngine = new StrategyEngine({
       strategies: config.strategies,
@@ -72,6 +78,7 @@ export class HarnessController {
       sse: this.sse,
       workspaceId,
       repairService: this.repairService,
+      agentDelegationService,
     })
 
     const pipeline = new DetectorPipeline({

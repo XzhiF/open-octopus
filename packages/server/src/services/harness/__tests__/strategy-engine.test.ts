@@ -488,7 +488,8 @@ describe("agent_takeover action", () => {
 
     expect(result.success).toBe(true)
     expect(result.action).toBe("agent_takeover")
-    expect(result.message).toContain("stub")
+    expect(result.message).toContain("takeover")
+    expect(result.delegate).toBe(true)
   })
 })
 
