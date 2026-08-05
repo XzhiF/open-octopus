@@ -824,7 +824,7 @@ export function ExecutionLogViewer({ workspaceId, executionId, executionStatus }
     )
   }
 
-  if (nodeGroups.size === 0) {
+  if (nodeGroups.size === 0 && !harnessOnly) {
     return (
       <div className="flex items-center justify-center h-full text-xs text-muted-foreground">
         暂无日志
@@ -834,7 +834,7 @@ export function ExecutionLogViewer({ workspaceId, executionId, executionStatus }
 
   return (
     <div className="h-full flex flex-col">
-      {nodeGroups.size > 1 && (
+      {(nodeGroups.size > 1 || harnessOnly) && (
         <div className="flex items-center gap-1 px-2 py-1 border-b border-border/30 shrink-0">
           <button
             onClick={expandAll}
@@ -865,6 +865,11 @@ export function ExecutionLogViewer({ workspaceId, executionId, executionStatus }
           >
             🛡️ {harnessOnly ? "Harness Only" : "All Events"}
           </button>
+        </div>
+      )}
+      {harnessOnly && nodeGroups.size === 0 && (
+        <div className="flex items-center justify-center h-full text-xs text-muted-foreground">
+          暂无 Harness 事件，点击 🛡️ 切回全部日志
         </div>
       )}
       <div ref={containerRef} className="flex-1 overflow-y-auto min-h-0">
