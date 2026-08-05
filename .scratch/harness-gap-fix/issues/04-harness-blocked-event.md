@@ -7,7 +7,7 @@
 - 01 (Proxy decision callbacks) — harness_blocked 的 onBeforeNode skip 逻辑需要与 pendingActions 机制协调
 
 ## Status
-ready-for-agent
+done
 
 ## Acceptance Criteria
 - [ ] AC1: process_conflict + abort 策略执行时，SSE 发出 `harness_blocked` 事件

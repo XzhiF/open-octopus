@@ -298,6 +298,130 @@ describe("StrategyEngine — executeActions", () => {
   })
 })
 
+// ─── harness_blocked event ────────────────────────────────────────────────
+
+describe("StrategyEngine — harness_blocked event", () => {
+  let mockDao: any
+  let mockSse: any
+
+  beforeEach(() => {
+    mockDao = { insertEvent: vi.fn(), findEvents: vi.fn().mockReturnValue([]) }
+    mockSse = { emit: vi.fn() }
+  })
+
+  it("emits harness_blocked SSE when process_conflict + critical + abort", async () => {
+    const engine = new StrategyEngine({
+      strategies,
+      dao: mockDao,
+      sse: mockSse,
+      workspaceId: "ws-1",
+    })
+
+    const report = makeReport({
+      detector: "process_conflict",
+      severity: "critical",
+      executionId: "exec-42",
+      nodeId: "bash-test",
+    })
+    const result = await engine.handleReport(report)
+
+    expect(result.matchedStrategy).not.toBeNull()
+    expect(result.matchedStrategy!.match).toBe("process_conflict")
+
+    // Verify harness_blocked SSE was emitted
+    const blockedSseCalls = mockSse.emit.mock.calls.filter(
+      (call: any[]) => call[1].event === "harness_blocked",
+    )
+    expect(blockedSseCalls).toHaveLength(1)
+
+    const blockedData = blockedSseCalls[0][1].data
+    expect(blockedData.executionId).toBe("exec-42")
+    expect(blockedData.nodeId).toBe("bash-test")
+    expect(blockedData.reason).toBe("Blocked by harness: process conflict")
+    expect(blockedData.pattern).toBe("process_conflict")
+  })
+
+  it("persists harness_blocked event to harness_events table", async () => {
+    const engine = new StrategyEngine({
+      strategies,
+      dao: mockDao,
+      sse: mockSse,
+      workspaceId: "ws-1",
+    })
+
+    const report = makeReport({
+      detector: "process_conflict",
+      severity: "critical",
+    })
+    await engine.handleReport(report)
+
+    // Find the blocked event in insertEvent calls
+    const blockedInsertCalls = mockDao.insertEvent.mock.calls.filter(
+      (call: any[]) => call[0].event_type === "blocked",
+    )
+    expect(blockedInsertCalls).toHaveLength(1)
+
+    const blockedRow = blockedInsertCalls[0][0]
+    expect(blockedRow.event_type).toBe("blocked")
+    expect(blockedRow.execution_id).toBe("exec-1")
+    expect(blockedRow.node_id).toBe("bash-build")
+    expect(blockedRow.detector).toBe("process_conflict")
+    expect(blockedRow.severity).toBe("critical")
+
+    const resultData = JSON.parse(blockedRow.result_json)
+    expect(resultData.pattern).toBe("process_conflict")
+    expect(resultData.reason).toBe("Blocked by harness: process conflict")
+  })
+
+  it("does NOT emit harness_blocked for non-process_conflict abort", async () => {
+    // Strategy with abort for a different detector
+    const customStrategies: StrategyConfig[] = [
+      {
+        match: "custom_detector",
+        actions: [{ type: "abort", reason: "Custom abort" }],
+      },
+    ]
+    const engine = new StrategyEngine({
+      strategies: customStrategies,
+      dao: mockDao,
+      sse: mockSse,
+      workspaceId: "ws-1",
+    })
+
+    const report = makeReport({
+      detector: "custom_detector",
+      severity: "critical",
+    })
+    await engine.handleReport(report)
+
+    const blockedSseCalls = mockSse.emit.mock.calls.filter(
+      (call: any[]) => call[1].event === "harness_blocked",
+    )
+    expect(blockedSseCalls).toHaveLength(0)
+  })
+
+  it("does NOT emit harness_blocked for process_conflict with non-critical severity", async () => {
+    const engine = new StrategyEngine({
+      strategies,
+      dao: mockDao,
+      sse: mockSse,
+      workspaceId: "ws-1",
+    })
+
+    // process_conflict with warning severity falls through to wildcard (no abort)
+    const report = makeReport({
+      detector: "process_conflict",
+      severity: "warning",
+    })
+    await engine.handleReport(report)
+
+    const blockedSseCalls = mockSse.emit.mock.calls.filter(
+      (call: any[]) => call[1].event === "harness_blocked",
+    )
+    expect(blockedSseCalls).toHaveLength(0)
+  })
+})
+
 // ─── Delegation fallback ────────────────────────────────────────────────────
 
 describe("StrategyEngine — delegation fallback", () => {

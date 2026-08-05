@@ -154,6 +154,9 @@ export class StrategyEngine {
 
     const actionResults = await this.executeActions(report, matchedStrategy)
 
+    // Emit harness_blocked when process_conflict + critical triggers abort
+    this.emitBlockedIfNeeded(report, matchedStrategy, actionResults)
+
     // Check if delegation is also needed after executing strategy actions
     if (matchedStrategy.delegate_to_agent === true) {
       const delegationResult = await this.tryDelegate(report)
@@ -311,6 +314,67 @@ export class StrategyEngine {
       })
     } catch (err) {
       console.error("[StrategyEngine] Failed to emit SSE event:", err)
+    }
+  }
+
+  /**
+   * Emit harness_blocked SSE event and persist to harness_events when
+   * a process_conflict diagnosis at critical severity executes an abort action.
+   */
+  private emitBlockedIfNeeded(
+    report: DiagnosisReport,
+    strategy: StrategyConfig,
+    actionResults: InterventionResult[],
+  ): void {
+    const isProcessConflict = report.detector === "process_conflict"
+    const isCritical = report.severity === "critical"
+    const hasAbortAction = strategy.actions.some((a) => a.type === "abort")
+    const abortSucceeded = actionResults.some(
+      (r) => r.action === "abort" && r.success,
+    )
+
+    if (!isProcessConflict || !isCritical || !hasAbortAction || !abortSucceeded) {
+      return
+    }
+
+    const blockedData = {
+      executionId: report.executionId,
+      nodeId: report.nodeId,
+      reason: "Blocked by harness: process conflict",
+      pattern: "process_conflict",
+    }
+
+    // Emit SSE harness_blocked event
+    try {
+      this.sse.emit(this.workspaceId, {
+        event: "harness_blocked",
+        data: blockedData,
+      })
+    } catch (err) {
+      console.error("[StrategyEngine] Failed to emit harness_blocked SSE:", err)
+    }
+
+    // Persist blocked event to harness_events table
+    try {
+      const eventId = `blocked-${report.id}-${Date.now()}`
+      const row: HarnessEvent = {
+        id: eventId,
+        execution_id: report.executionId,
+        node_id: report.nodeId,
+        timestamp: Date.now(),
+        event_type: "blocked",
+        detector: report.detector,
+        severity: report.severity,
+        report_json: JSON.stringify(report),
+        action_json: null,
+        result_json: JSON.stringify(blockedData),
+        token_usage_json: null,
+        created_at: Math.floor(Date.now() / 1000),
+      }
+
+      this.dao.insertEvent(row)
+    } catch (err) {
+      console.error("[StrategyEngine] Failed to persist blocked event:", err)
     }
   }
 }

@@ -119,18 +119,6 @@ export class HarnessController {
   }
 
   /**
-   * Get the wrapped callbacks for an active execution.
-   * Returns undefined if no pipeline exists for the execution.
-   */
-  getWrappedCallbacks(executionId: string): EngineCallbacks | undefined {
-    const pipeline = this.pipelines.get(executionId)
-    return pipeline ? undefined : undefined
-    // The wrapped callbacks are returned from onExecutionStart.
-    // This method exists for potential future use cases where
-    // the controller needs to access an execution's pipeline.
-  }
-
-  /**
    * Get the pipeline for an active execution.
    * Useful for testing and for Layer 2/3 integration.
    */
