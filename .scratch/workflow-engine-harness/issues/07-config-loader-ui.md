@@ -7,7 +7,7 @@ ConfigLoader 加载 + 合并 harness 配置。系统管理页面新增 Harness �
 01 (config schema), 06 (API routes)
 
 ## Status
-ready-for-agent
+done
 
 ## Acceptance Criteria
 - [ ] AC1: `ConfigLoader` 加载顺序: workflow pipeline.harness (不存在) → ~/.octopus/harness.yaml → 内置 defaults

@@ -66,7 +66,10 @@ describe("BashExecutor", () => {
     const result = await executor.execute()
 
     expect(result.status).toBe("completed")
-    expect(vi.mocked(spawn)).toHaveBeenCalledWith(expect.any(String), ["-c", "echo value_is_foo"], expect.anything())
+    // Script now includes harness wrapper prefix; verify user script is present
+    const spawnArgs = vi.mocked(spawn).mock.calls[0][1] as string[]
+    expect(spawnArgs[0]).toBe("-c")
+    expect(spawnArgs[1]).toContain("echo value_is_foo")
   })
 
   it("applies vars_update from JSON stdout", async () => {

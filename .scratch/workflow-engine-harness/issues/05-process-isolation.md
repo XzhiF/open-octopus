@@ -7,7 +7,7 @@
 02 (engine callbacks for onBeforeNode)
 
 ## Status
-ready-for-agent
+done
 
 ## Acceptance Criteria
 - [ ] AC1: BashExecutor 注入 `OCTOPUS_HOST_PID` 和 `OCTOPUS_HOST_PORTS` 环境变量
