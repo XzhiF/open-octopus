@@ -310,9 +310,6 @@ export function HarnessFloatingPanel({
     [position],
   )
 
-  // Don't render if execution is done, no events, and not still loading
-  if (!isRunning && !loading && events.length === 0) return null
-
   if (!expanded) {
     return (
       <div
