@@ -16,6 +16,7 @@ import { StupidRetryDetector } from "./detectors/stupid-retry"
 import { ModelMismatchDetector } from "./detectors/model-mismatch"
 import { ProcessConflictDetector } from "./detectors/process-conflict"
 import { TimeoutCascadeDetector } from "./detectors/timeout-cascade"
+import type { StrategyEngine } from "./strategy-engine"
 import type { EngineCallbacks } from "@octopus/engine"
 
 export interface DetectorPipelineDeps {
@@ -26,6 +27,7 @@ export interface DetectorPipelineDeps {
   sse: SSEService
   hostPid?: string
   hostPorts?: string[]
+  strategyEngine?: StrategyEngine
 }
 
 export class DetectorPipeline {
@@ -34,14 +36,24 @@ export class DetectorPipeline {
   private workspaceId: string
   private dao: HarnessDAO
   private sse: SSEService
+  private strategyEngine?: StrategyEngine
 
   constructor(deps: DetectorPipelineDeps) {
     this.executionId = deps.executionId
     this.workspaceId = deps.workspaceId
     this.dao = deps.dao
     this.sse = deps.sse
+    this.strategyEngine = deps.strategyEngine
 
     this.detectors = this.createDetectors(deps.config, deps.hostPid, deps.hostPorts)
+  }
+
+  /**
+   * Set or replace the StrategyEngine for this pipeline.
+   * Called by HarnessController when integrating Layer 2.
+   */
+  setStrategyEngine(engine: StrategyEngine): void {
+    this.strategyEngine = engine
   }
 
   /**
@@ -120,6 +132,7 @@ export class DetectorPipeline {
 
   /**
    * Persist a DiagnosisReport to harness_events and emit SSE.
+   * Then route the report to the StrategyEngine (Layer 2) if available.
    */
   private handleDiagnosis(report: DiagnosisReport): void {
     // Persist to DB
@@ -155,6 +168,13 @@ export class DetectorPipeline {
       })
     } catch (err) {
       console.error("[DetectorPipeline] Failed to emit SSE event:", err)
+    }
+
+    // Route to StrategyEngine (Layer 2) if available
+    if (this.strategyEngine) {
+      this.strategyEngine.handleReport(report).catch((err) => {
+        console.error("[DetectorPipeline] StrategyEngine error:", err)
+      })
     }
   }
 

@@ -7,8 +7,8 @@ import { cn } from "@/lib/utils"
 import { Badge } from "@/components/ui/badge"
 import { ExecutionButtonBar } from "./execution-button-bar"
 import { useExecutionNodeCallbacks } from "./execution-node-context"
-import type { ExecutionNodeData, ExecutionStatus, GateStatus } from "@/lib/types"
-import { CheckCircle2, XCircle, Clock, Loader2, SkipForward, ShieldOff, Undo2, PauseCircle, PlayCircle, Timer, Webhook, MessageSquare, Hourglass, Ban } from "lucide-react"
+import type { ExecutionNodeData, ExecutionStatus, GateStatus, HarnessNodeStatus } from "@/lib/types"
+import { CheckCircle2, XCircle, Clock, Loader2, SkipForward, ShieldOff, Undo2, PauseCircle, PlayCircle, Timer, Webhook, MessageSquare, Hourglass, Ban, ShieldCheck, Bot } from "lucide-react"
 import { formatDuration } from "@/lib/format"
 import { useLiveTimer } from "@/hooks/use-live-timer"
 import { TokenUsageDisplay } from "./token-usage-display"
@@ -41,6 +41,32 @@ function triggeredByLabel(triggeredBy: string): string {
     case "webhook": return "webhook"
     case "chat": return "chat"
     default: return triggeredBy
+  }
+}
+
+function HarnessStatusIndicator({ status }: { status: HarnessNodeStatus }) {
+  switch (status) {
+    case "harness_intervening":
+      return (
+        <span title="Harness 正在干预" className="inline-flex items-center">
+          <ShieldCheck className="h-4 w-4 text-violet-500 animate-pulse" />
+        </span>
+      )
+    case "harness_modified":
+      return (
+        <span title="Harness 已修改并重试" className="inline-flex items-center gap-0.5">
+          <ShieldCheck className="h-4 w-4 text-violet-500" />
+          <CheckCircle2 className="h-3 w-3 text-emerald-500" />
+        </span>
+      )
+    case "harness_executed":
+      return (
+        <span title="Harness Agent 接管执行" className="inline-flex items-center">
+          <Bot className="h-4 w-4 text-rose-500" />
+        </span>
+      )
+    default:
+      return null
   }
 }
 
@@ -92,6 +118,9 @@ function ExecutionNodeInner({ data: rawData, selected }: NodeProps) {
           <h4 className="truncate text-sm font-medium">{data.name || data.workflowName}</h4>
         </div>
         <Badge variant={badgeVariant} className={cn("text-xs", badgeClasses)}>{badgeLabel}{gateLabel}</Badge>
+        {data.harnessStatus && (
+          <HarnessStatusIndicator status={data.harnessStatus} />
+        )}
         {data.gateStatus === "bypassed" && (
           <ShieldOff className="h-4 w-4 text-gray-400" />
         )}

@@ -36,6 +36,7 @@ import { InteractionModal } from "./interaction-modal"
 import { NodeInfoDialog } from "./node-info-dialog"
 import { SwarmDetailDialog } from "@/components/swarm/organisms/swarm-detail-dialog"
 import { ArchiveDialog } from "@/components/agent/knowledge/archive/ArchiveDialog"
+import { HarnessFloatingPanel } from "./harness-floating-panel"
 import { useLiveTimer } from "@/hooks/use-live-timer"
 import { getServerUrl } from "@/lib/server-config"
 import { useAgentTraces } from "@/hooks/use-agent-traces"
@@ -91,6 +92,7 @@ interface RawStepRow {
   agentName?: string
   agentVersion?: string
   taskBrief?: string
+  harnessStatus?: string
 }
 
 function mapRawStep(raw: RawStepRow): StepExecution {
@@ -114,6 +116,7 @@ function mapRawStep(raw: RawStepRow): StepExecution {
     agentName: raw.agentName,
     agentVersion: raw.agentVersion,
     taskBrief: raw.taskBrief,
+    harnessStatus: raw.harnessStatus as StepExecution["harnessStatus"],
   }
 }
 
@@ -569,6 +572,13 @@ export function WorkflowDetailPanel({ execution, workflow, workspaceId }: Workfl
         executionId={execution.id}
         org={workspaceId}
         onArchiveComplete={() => setArchiveOpen(false)}
+      />
+
+      {/* Harness Floating Panel */}
+      <HarnessFloatingPanel
+        workspaceId={workspaceId}
+        executionId={execution.id}
+        executionStatus={liveStatus}
       />
     </div>
   )

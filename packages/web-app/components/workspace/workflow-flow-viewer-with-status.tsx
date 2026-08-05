@@ -289,6 +289,8 @@ export function WorkflowFlowViewerWithStatus({
               : undefined,
             // Inject heartbeat for octopus_agent nodes from polled agent-events
             heartbeat: node.type === "octopus_agent" ? polledHeartbeat : undefined,
+            // Harness status from step data
+            harnessStatus: step.harnessStatus,
           }
         : undefined
 

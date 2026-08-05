@@ -3,12 +3,12 @@
 import { cn } from "@/lib/utils"
 import { Badge } from "@/components/ui/badge"
 import { nodeIconConfigs } from "./node-icon-config"
-import type { StatusOverlay, StepExecutionStatus } from "@/lib/types"
+import type { StatusOverlay, StepExecutionStatus, HarnessNodeStatus } from "@/lib/types"
 import { formatDuration } from "@/lib/format"
 import { useLiveTimer } from "@/hooks/use-live-timer"
 import { TokenUsageLine } from "./token-usage-line"
 import { TokenUsageDisplay } from "./token-usage-display"
-import { Clock, Loader2, CheckCircle2, XCircle, SkipForward, PauseCircle, Timer } from "lucide-react"
+import { Clock, Loader2, CheckCircle2, XCircle, SkipForward, PauseCircle, Timer, ShieldCheck, Bot } from "lucide-react"
 
 interface TypeShellProps {
   nodeType: string
@@ -41,6 +41,32 @@ const typeTints: Record<string, string> = {
   octopus_agent: "rgba(244,63,94,0.08)",
 }
 
+function HarnessBadge({ status }: { status: HarnessNodeStatus }) {
+  switch (status) {
+    case "harness_intervening":
+      return (
+        <span title="Harness 正在干预" className="inline-flex items-center ml-1">
+          <ShieldCheck className="h-3.5 w-3.5 text-violet-500 animate-pulse" />
+        </span>
+      )
+    case "harness_modified":
+      return (
+        <span title="Harness 已修改" className="inline-flex items-center gap-0.5 ml-1">
+          <ShieldCheck className="h-3.5 w-3.5 text-violet-500" />
+          <CheckCircle2 className="h-2.5 w-2.5 text-emerald-500" />
+        </span>
+      )
+    case "harness_executed":
+      return (
+        <span title="Harness Agent 接管" className="inline-flex items-center ml-1">
+          <Bot className="h-3.5 w-3.5 text-rose-500" />
+        </span>
+      )
+    default:
+      return null
+  }
+}
+
 export function TypeShell({ nodeType, name, statusOverlay, children }: TypeShellProps) {
   const config = nodeIconConfigs[nodeType]
   const Icon = config.icon
@@ -65,6 +91,9 @@ export function TypeShell({ nodeType, name, statusOverlay, children }: TypeShell
           <Badge variant="outline" className={cn("text-xs ml-1", statusConfig.color)}>
             {statusConfig.label}
           </Badge>
+        )}
+        {statusOverlay?.harnessStatus && (
+          <HarnessBadge status={statusOverlay.harnessStatus} />
         )}
       </div>
       {children && <div className="p-3">{children}</div>}

@@ -2,23 +2,25 @@
 //
 // HarnessController — orchestrates the 3-layer Harness architecture:
 //   Layer 1: DetectorPipeline (detect anomalies)
-//   Layer 2: StrategyEngine (match strategies → actions) [future ticket]
+//   Layer 2: StrategyEngine (match strategies → actions)
 //   Layer 3: AgentDelegation (complex scenarios) [future ticket]
 //
-// Currently implements Layer 1. Layers 2 and 3 are stubs that will be
-// filled in by subsequent tickets (04-strategy-engine, 05-agent-delegation).
+// Currently implements Layers 1 and 2. Layer 3 is a stub for ticket 05.
 
 import type { HarnessSystemConfigParsed } from "@octopus/shared"
 import type { EngineCallbacks } from "@octopus/engine"
 import type { HarnessDAO } from "../../db/dao/harness-dao"
 import type { SSEService } from "../sse"
+import type { RepairService } from "../repair"
 import { HarnessConfigService } from "./config-service"
 import { DetectorPipeline } from "./detector-pipeline"
+import { StrategyEngine } from "./strategy-engine"
 
 export interface HarnessControllerDeps {
   dao: HarnessDAO
   sse: SSEService
   configService: HarnessConfigService
+  repairService?: RepairService
 }
 
 /**
@@ -28,6 +30,7 @@ export class HarnessController {
   private dao: HarnessDAO
   private sse: SSEService
   private configService: HarnessConfigService
+  private repairService?: RepairService
 
   /**
    * Active pipelines keyed by executionId.
@@ -39,6 +42,7 @@ export class HarnessController {
     this.dao = deps.dao
     this.sse = deps.sse
     this.configService = deps.configService
+    this.repairService = deps.repairService
   }
 
   /**
@@ -61,6 +65,15 @@ export class HarnessController {
 
     const config = this.configService.loadMergedConfig()
 
+    // Create a per-execution StrategyEngine with the current strategies
+    const strategyEngine = new StrategyEngine({
+      strategies: config.strategies,
+      dao: this.dao,
+      sse: this.sse,
+      workspaceId,
+      repairService: this.repairService,
+    })
+
     const pipeline = new DetectorPipeline({
       config,
       executionId,
@@ -69,6 +82,7 @@ export class HarnessController {
       sse: this.sse,
       hostPid: opts?.hostPid ?? String(process.pid),
       hostPorts: opts?.hostPorts ?? [],
+      strategyEngine,
     })
 
     this.pipelines.set(executionId, pipeline)

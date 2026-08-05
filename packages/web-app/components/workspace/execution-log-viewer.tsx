@@ -262,9 +262,13 @@ export function EventLabel({ entry }: { entry: LogEvent }) {
       const dir = entry.directivePayload
       if (!dir) return <span className="text-red-500">指令</span>
       const isAbort = dir.type === "abort"
+      const isInject = dir.type === "inject"
       return (
-        <span className={isAbort ? "text-red-500" : "text-amber-500"}>
-          指令: {dir.type} — {dir.reason}
+        <span className={isAbort ? "text-red-500" : isInject ? "text-violet-500" : "text-amber-500"}>
+          {isInject ? "🛡️ 注入" : isAbort ? "🚫 终止" : "⏸️ 暂停"}: {dir.reason}
+          {isInject && dir.message && (
+            <span className="text-muted-foreground ml-1">→ {dir.message.slice(0, 40)}{dir.message.length > 40 ? "..." : ""}</span>
+          )}
         </span>
       )
     }
@@ -407,14 +411,26 @@ export function ExpandableRow({ entry }: { entry: LogEvent }) {
 
       {/* Octopus agent event detail: harness_directive */}
       {expanded && entry.event === "harness_directive" && entry.directivePayload && (
-        <div className={`ml-6 mt-0.5 mb-1 p-1.5 rounded text-xs whitespace-pre-wrap ${entry.directivePayload.type === "abort" ? "bg-red-950/20" : "bg-amber-950/20"}`}>
+        <div className={`ml-6 mt-0.5 mb-1 p-1.5 rounded text-xs whitespace-pre-wrap ${entry.directivePayload.type === "abort" ? "bg-red-950/20" : entry.directivePayload.type === "inject" ? "bg-violet-950/20" : "bg-amber-950/20"}`}>
           <div className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5">
             <span className="text-muted-foreground">类型:</span>
-            <span className={entry.directivePayload.type === "abort" ? "text-red-400 font-semibold" : "text-amber-400 font-semibold"}>{entry.directivePayload.type}</span>
+            <span className={entry.directivePayload.type === "abort" ? "text-red-400 font-semibold" : entry.directivePayload.type === "inject" ? "text-violet-400 font-semibold" : "text-amber-400 font-semibold"}>{entry.directivePayload.type}</span>
             <span className="text-muted-foreground">原因:</span>
             <span>{entry.directivePayload.reason}</span>
             <span className="text-muted-foreground">发起者:</span>
             <span>{entry.directivePayload.issued_by}</span>
+            {entry.directivePayload.type === "inject" && entry.directivePayload.message && (
+              <>
+                <span className="text-muted-foreground">消息:</span>
+                <span className="text-violet-300 font-mono">{entry.directivePayload.message}</span>
+              </>
+            )}
+            {entry.directivePayload.type === "inject" && entry.directivePayload.nodeId && (
+              <>
+                <span className="text-muted-foreground">目标节点:</span>
+                <span className="font-mono">{entry.directivePayload.nodeId}</span>
+              </>
+            )}
           </div>
         </div>
       )}
@@ -531,6 +547,7 @@ export function ExecutionLogViewer({ workspaceId, executionId, executionStatus }
     workspaceId, executionId, executionStatus,
   )
   const [collapsedNodes, setCollapsedNodes] = useState<Set<string>>(new Set())
+  const [harnessOnly, setHarnessOnly] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
   const prevCountRef = useRef(0)
   const prevGroupKeysRef = useRef("")
@@ -636,6 +653,15 @@ export function ExecutionLogViewer({ workspaceId, executionId, executionStatus }
     return mergedResult
   }, [rawEvents])
 
+  // Filter events when "Harness Only" mode is active
+  const HARNESS_EVENT_PREFIXES = ["harness_directive", "harness_diagnosis", "harness_intervention", "harness_blocked"]
+  const filteredEvents = useMemo(() => {
+    if (!harnessOnly) return processedEvents
+    return processedEvents.filter((e) =>
+      HARNESS_EVENT_PREFIXES.some((prefix) => e.event === prefix || e.event.startsWith("harness_")),
+    )
+  }, [processedEvents, harnessOnly])
+
   // Flat grouping with loop-aware rendering:
   // - Iteration events: key = "{nodeId}-{iteration}"
   // - Loop node start/end: key = "{nodeId}-start" / "{nodeId}-end" (bookends)
@@ -672,7 +698,7 @@ export function ExecutionLogViewer({ workspaceId, executionId, executionStatus }
 
     // Detect sub_workflow parent nodes: nodes that have node_log events with child references
     const subWorkflowParents = new Set<string>()
-    for (const e of processedEvents) {
+    for (const e of filteredEvents) {
       if (e.event === "node_log") {
         const line = e.line ?? e.content ?? ""
         if (extractSubWorkflowChild(line)) {
@@ -686,7 +712,7 @@ export function ExecutionLogViewer({ workspaceId, executionId, executionStatus }
 
     const map = new Map<string, FlatGroup>()
 
-    for (const e of processedEvents) {
+    for (const e of filteredEvents) {
       // Skip branch markers — they're metadata, not display events
       if (e.event === "branch_start" || e.event === "branch_end") continue
 
@@ -741,7 +767,7 @@ export function ExecutionLogViewer({ workspaceId, executionId, executionStatus }
       )
     )
     return sorted
-  }, [processedEvents, loopIterations])
+  }, [filteredEvents, loopIterations])
 
   // Auto-collapse: collapse old groups, expand newest
   const groupKeys = useMemo(() => Array.from(nodeGroups.keys()).join(","), [nodeGroups])
@@ -825,6 +851,19 @@ export function ExecutionLogViewer({ workspaceId, executionId, executionStatus }
           >
             <ChevronUp className="h-3 w-3" />
             折叠
+          </button>
+          <span className="text-muted-foreground/30">|</span>
+          <button
+            onClick={() => setHarnessOnly(!harnessOnly)}
+            className={cn(
+              "flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] transition-colors",
+              harnessOnly
+                ? "bg-violet-600/20 text-violet-400 border border-violet-500/30"
+                : "text-muted-foreground hover:bg-muted/50 hover:text-foreground",
+            )}
+            title={harnessOnly ? "显示所有事件" : "仅显示 Harness 事件"}
+          >
+            🛡️ {harnessOnly ? "Harness Only" : "All Events"}
           </button>
         </div>
       )}

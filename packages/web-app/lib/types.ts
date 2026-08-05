@@ -22,6 +22,11 @@ export type {
   AgentHeartbeat,
   HarnessDirective,
   HarnessDirectiveType,
+  // Harness types for floating panel + SSE events
+  DiagnosisReport,
+  InterventionAction,
+  HarnessSSEEvent,
+  HarnessEvent,
 } from "@octopus/shared"
 
 import type {
@@ -102,6 +107,8 @@ export type GateStatus = "open" | "closed" | "bypassed"
 
 export type StepExecutionStatus = "pending" | "running" | "completed" | "failed" | "skipped" | "cancelled" | "paused" | "rejected" | "pending_approval" | "pending_interaction"
 
+export type HarnessNodeStatus = "harness_intervening" | "harness_modified" | "harness_executed"
+
 export interface StatusOverlay {
   stepStatus: StepExecutionStatus
   duration?: number
@@ -110,6 +117,7 @@ export interface StatusOverlay {
   tokenUsage?: TokenUsage
   tokenUsages?: TokenUsage[]
   heartbeat?: AgentHeartbeat
+  harnessStatus?: HarnessNodeStatus
 }
 
 export interface StepExecution {
@@ -133,6 +141,8 @@ export interface StepExecution {
   agentName?: string
   agentVersion?: string
   taskBrief?: string
+  // harness status
+  harnessStatus?: HarnessNodeStatus
 }
 
 /** Event types emitted by the Octopus agent harness. */
@@ -278,6 +288,7 @@ export interface ExecutionNodeData {
   costUsd?: number
   turnCount?: number
   toolCount?: number
+  harnessStatus?: HarnessNodeStatus
 }
 
 // ============ Editor Tab ============
