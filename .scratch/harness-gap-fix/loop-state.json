@@ -1,8 +1,20 @@
 {
   "root_feature": "harness-gap-fix",
   "branch": "feat/workflow-engine-harness",
-  "iterations": [],
+  "iterations": [
+    {
+      "round": 1,
+      "score": 90,
+      "adjusted_score": 80,
+      "decision": "REVIEW",
+      "carryover_in": [],
+      "carryover_out": [],
+      "pipeline_complete": true,
+      "e2e_executed": false,
+      "notes": "All 6 gaps fixed. 34 new unit tests + 7 Playwright tests registered. E2E not browser-executed (no browser in env). Score adjusted per Layer 4 rule."
+    }
+  ],
   "max_iterations": 5,
   "convergence_threshold": 85,
-  "status": "running"
+  "status": "complete_needs_e2e"
 }
