@@ -45,6 +45,15 @@ export class HarnessController {
   }
 
   /**
+   * Set or replace the repair service after construction.
+   * Used to break the circular dependency: ExecutionService → ExecutionLifecycle
+   * → HarnessController → RepairService → ExecutionService.
+   */
+  setRepairService(service: RepairService): void {
+    this.repairService = service
+  }
+
+  /**
    * Called when a workflow execution starts.
    * Creates a fresh DetectorPipeline for the execution.
    *

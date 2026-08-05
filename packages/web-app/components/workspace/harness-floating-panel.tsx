@@ -15,6 +15,7 @@ interface HarnessFloatingPanelProps {
   workspaceId: string
   executionId: string
   executionStatus?: string
+  currentNodeId?: string
 }
 
 // ============ Collapsed Panel ============
@@ -247,6 +248,7 @@ export function HarnessFloatingPanel({
   workspaceId,
   executionId,
   executionStatus,
+  currentNodeId,
 }: HarnessFloatingPanelProps) {
   const [expanded, setExpanded] = useState(false)
   const [position, setPosition] = useState({ x: 0, y: 0 }) // offset from default position
@@ -377,6 +379,7 @@ export function HarnessFloatingPanel({
             workspaceId={workspaceId}
             executionId={executionId}
             isRunning={isRunning}
+            currentNodeId={currentNodeId}
           />
         </TabsContent>
       </Tabs>

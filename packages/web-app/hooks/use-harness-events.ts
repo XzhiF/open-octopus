@@ -29,6 +29,8 @@ export interface ParsedHarnessEvent {
   // blocked fields
   reason?: string
   pattern?: string
+  // token usage (from delegation or intervention events)
+  tokenUsage?: { inputTokens?: number; outputTokens?: number }
 }
 
 interface UseHarnessEventsResult {
@@ -45,6 +47,14 @@ function parseSSEEvent(eventType: string, raw: Record<string, unknown>): ParsedH
   const id = `harness-${++eventCounter}-${Date.now()}`
   const timestamp = Date.now()
   const executionId = (raw.executionId as string) ?? ""
+
+  // Extract token usage from SSE payload — may be at top-level or nested in result
+  const rawTokenUsage =
+    (raw.tokenUsage as Record<string, number> | undefined) ??
+    ((raw.result as Record<string, unknown> | undefined)?.tokenUsage as Record<string, number> | undefined)
+  const tokenUsage = rawTokenUsage
+    ? { inputTokens: rawTokenUsage.inputTokens, outputTokens: rawTokenUsage.outputTokens }
+    : undefined
 
   switch (eventType) {
     case "harness_diagnosis":
@@ -65,6 +75,7 @@ function parseSSEEvent(eventType: string, raw: Record<string, unknown>): ParsedH
         nodeId: raw.nodeId as string | undefined,
         action: raw.action as InterventionAction,
         result: raw.result as string | undefined,
+        tokenUsage,
       }
     case "harness_delegation":
       return {
@@ -75,6 +86,7 @@ function parseSSEEvent(eventType: string, raw: Record<string, unknown>): ParsedH
         nodeId: raw.nodeId as string | undefined,
         agentSessionId: raw.agentSessionId as string | undefined,
         status: raw.status as string | undefined,
+        tokenUsage,
       }
     case "harness_blocked":
       return {
@@ -125,6 +137,9 @@ export function useHarnessEvents(
             const report = row.report_json ? JSON.parse(row.report_json as string) : undefined
             const action = row.action_json ? JSON.parse(row.action_json as string) : undefined
             const result = row.result_json ? JSON.parse(row.result_json as string) : undefined
+            const tokenUsage = row.token_usage_json
+              ? JSON.parse(row.token_usage_json as string) as { inputTokens?: number; outputTokens?: number }
+              : undefined
             return {
               id: row.id as string,
               type: `harness_${eventType}` as HarnessEventType,
@@ -134,6 +149,7 @@ export function useHarnessEvents(
               report,
               action,
               result: typeof result === "string" ? result : undefined,
+              tokenUsage,
             }
           })
           setEvents(parsed)
@@ -198,9 +214,8 @@ export function useHarnessEvents(
   ).length
 
   const totalExtraTokens = events.reduce((sum, e) => {
-    if (e.report?.context?.nodeDurationMs) {
-      // Rough token estimate from harness agent delegation events
-      return sum
+    if (e.tokenUsage) {
+      return sum + (e.tokenUsage.inputTokens ?? 0) + (e.tokenUsage.outputTokens ?? 0)
     }
     return sum
   }, 0)
