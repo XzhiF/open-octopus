@@ -23,11 +23,13 @@ interface HarnessFloatingPanelProps {
 function CollapsedPanel({
   interventionCount,
   isIntervening,
+  isRunning,
   extraTokens,
   onExpand,
 }: {
   interventionCount: number
   isIntervening: boolean
+  isRunning: boolean
   extraTokens: number
   onExpand: () => void
 }) {
@@ -41,8 +43,16 @@ function CollapsedPanel({
         <span>🛡️</span>
         <span>{interventionCount}</span>
         <span className="text-muted-foreground">|</span>
-        <span className={isIntervening ? "text-amber-500" : "text-emerald-500"}>
-          {isIntervening ? "干预中" : "监控中"}
+        <span
+          className={
+            !isRunning
+              ? "text-muted-foreground"
+              : isIntervening
+                ? "text-amber-500"
+                : "text-emerald-500"
+          }
+        >
+          {!isRunning ? "已完成" : isIntervening ? "干预中" : "监控中"}
         </span>
       </div>
       {extraTokens > 0 && (
@@ -300,19 +310,20 @@ export function HarnessFloatingPanel({
     [position],
   )
 
-  // Don't render if execution is done and no events
-  if (!isRunning && events.length === 0) return null
+  // Don't render if execution is done, no events, and not still loading
+  if (!isRunning && !loading && events.length === 0) return null
 
   if (!expanded) {
     return (
       <div
         className="fixed z-50"
-        style={{ right: 24, top: 80 }}
+        style={{ right: 140, top: 56 }}
         data-testid="harness-floating-panel"
       >
         <CollapsedPanel
           interventionCount={interventionCount}
           isIntervening={isIntervening}
+          isRunning={isRunning}
           extraTokens={totalExtraTokens}
           onExpand={() => setExpanded(true)}
         />
@@ -325,8 +336,8 @@ export function HarnessFloatingPanel({
       ref={panelRef}
       className="fixed z-50 flex flex-col rounded-lg border border-border bg-card shadow-xl"
       style={{
-        right: 24 - position.x,
-        top: 80 + position.y,
+        right: 140 - position.x,
+        top: 56 + position.y,
         width: 400,
         height: 500,
         resize: "both",
