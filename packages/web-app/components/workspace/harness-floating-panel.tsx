@@ -314,7 +314,7 @@ export function HarnessFloatingPanel({
     return (
       <div
         className="fixed z-50"
-        style={{ right: 140, top: 56 }}
+        style={{ right: 240, top: 56 }}
         data-testid="harness-floating-panel"
       >
         <CollapsedPanel
@@ -333,7 +333,7 @@ export function HarnessFloatingPanel({
       ref={panelRef}
       className="fixed z-50 flex flex-col rounded-lg border border-border bg-card shadow-xl"
       style={{
-        right: 140 - position.x,
+        right: 240 - position.x,
         top: 56 + position.y,
         width: 400,
         height: 500,
