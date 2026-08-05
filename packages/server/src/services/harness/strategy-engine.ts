@@ -107,14 +107,24 @@ export class StrategyEngine {
     const results: InterventionResult[] = []
 
     for (const actionDef of strategy.actions) {
-      const result = await this.executeOneAction(report, actionDef)
-      results.push(result)
+      try {
+        const result = await this.executeOneAction(report, actionDef)
+        results.push(result)
 
-      // Persist intervention event
-      this.persistIntervention(report, actionDef, result)
+        // Persist intervention event
+        this.persistIntervention(report, actionDef, result)
 
-      // Emit SSE event
-      this.emitInterventionSSE(report, actionDef, result)
+        // Emit SSE event
+        this.emitInterventionSSE(report, actionDef, result)
+      } catch (err) {
+        // One action failing should not crash the entire strategy
+        const errorResult: InterventionResult = {
+          success: false,
+          action: typeof actionDef === 'string' ? actionDef : actionDef.type,
+          error: err instanceof Error ? err.message : String(err),
+        }
+        results.push(errorResult)
+      }
     }
 
     return results

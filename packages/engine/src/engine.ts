@@ -917,6 +917,7 @@ export class WorkflowEngine {
       return this.executeSingleNode(node, pool, signal)
     }
 
+    let effectiveNode = node  // Local copy for harness model overrides
     const nodeStartTime = Date.now()
     let nodeAbort: AbortController | undefined
     let nodeTimer: ReturnType<typeof setTimeout> | undefined
@@ -940,7 +941,7 @@ export class WorkflowEngine {
         }
       }
       try {
-        const result = await this.executeSingleNode(node, pool, effectiveSignal)
+        const result = await this.executeSingleNode(effectiveNode, pool, effectiveSignal)
         if (result.status !== "failed") {
           if (nodeTimer) clearTimeout(nodeTimer)
           return { ...result, retryCount: attempt - 1 }
@@ -981,8 +982,9 @@ export class WorkflowEngine {
           if (retryDecision.harnessHint) {
             pool.set("harness_hint", retryDecision.harnessHint)
           }
-          if (retryDecision.modelOverride && node.type === "agent") {
-            node.model = retryDecision.modelOverride
+          if (retryDecision.modelOverride && effectiveNode.type === "agent") {
+            // Shallow copy to avoid mutating shared NodeDef across executions
+            effectiveNode = { ...effectiveNode, model: retryDecision.modelOverride }
           }
         }
         let delayMs = calculateBackoff(policy.backoff, attempt) * 1000
