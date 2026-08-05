@@ -386,7 +386,11 @@ export class ExecutionLifecycle {
       if (result.status === "paused") {
         this.updateStatus(id, result.status, { progress: result.progress ?? 0, var_pool: JSON.stringify(result.poolSnapshot) })
         this.syncStateJson()
-        this.sse.emit(this.workspaceId, { event: "execution_paused", data: { executionId: id } })
+        if (result.pauseReason === "harness_delegate") {
+          this.sse.emit(this.workspaceId, { event: "harness_delegation", data: { executionId: id, source: "harness_delegate" } })
+        } else {
+          this.sse.emit(this.workspaceId, { event: "execution_paused", data: { executionId: id } })
+        }
         this.enginePool.remove(id)
         return this.dao.findById(id)!
       }
@@ -990,9 +994,27 @@ export class ExecutionLifecycle {
         this.syncStateJson()
         this.sse.emit(this.workspaceId, { event: "complete", data: { executionId, finalStatus: result.status } })
         this.enginePool.remove(executionId)
+
+        // Clean up harness detectors for this execution (interaction completion path)
+        if (this.harnessController) {
+          try {
+            this.harnessController.onExecutionEnd(executionId)
+          } catch (err) {
+            console.warn("[ExecutionLifecycle] Harness cleanup failed in interaction completion (non-fatal):", err)
+          }
+        }
       } catch (err) {
         console.error(`[ExecutionLifecycle] Interaction complete failed for ${executionId}/${nodeId}`, err)
         this.updateStatus(executionId, "failed", { error: `Interaction complete failed: ${err instanceof Error ? err.message : String(err)}` })
+
+        // Clean up harness detectors for this execution (interaction completion error path)
+        if (this.harnessController) {
+          try {
+            this.harnessController.onExecutionEnd(executionId)
+          } catch (harnessErr) {
+            console.warn("[ExecutionLifecycle] Harness cleanup failed in interaction error path (non-fatal):", harnessErr)
+          }
+        }
       }
     })
   }
@@ -1191,12 +1213,30 @@ export class ExecutionLifecycle {
 
         this.syncStateJson()
         this.sse.emit(this.workspaceId, { event: "complete", data: { executionId: execId, finalStatus: result.status } })
+
+        // Clean up harness detectors for this execution (autoResume completion path)
+        if (this.harnessController) {
+          try {
+            this.harnessController.onExecutionEnd(execId)
+          } catch (err) {
+            console.warn("[ExecutionLifecycle] Harness cleanup failed in autoResume completion (non-fatal):", err)
+          }
+        }
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err)
         this.enginePool.remove(execId)
         this.dao.updateExecution(execId, { status: "failed" })
         this.dao.updateNodeExecutionsByStatus(execId, "failed", ["running", "pending"], { error: `Auto-resume failed: ${msg}` })
         console.error(`[Recovery] Auto-resume execution failed for ${execId}: ${msg}`)
+
+        // Clean up harness detectors for this execution (autoResume error path)
+        if (this.harnessController) {
+          try {
+            this.harnessController.onExecutionEnd(execId)
+          } catch (harnessErr) {
+            console.warn("[ExecutionLifecycle] Harness cleanup failed in autoResume error path (non-fatal):", harnessErr)
+          }
+        }
       }
     } else {
       const lastRunning = this.dao.findFirstNodeByStatus(execId, "running") ||

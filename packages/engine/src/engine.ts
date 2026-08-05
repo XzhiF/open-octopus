@@ -41,6 +41,8 @@ export interface ExecutionResult {
   nodeResults: Record<string, NodeExecutionResult>
   poolSnapshot: Record<string, any>
   durationMs: number
+  /** Distinguishes harness-initiated pause from user-initiated pause */
+  pauseReason?: "user_pause" | "harness_delegate"
 }
 
 export interface RuntimeNodeMeta {
@@ -437,6 +439,7 @@ export class WorkflowEngine {
       nodeResults: this.nodeResults,
       poolSnapshot: this.pool.snapshot(),
       durationMs,
+      ...(result.pauseReason ? { pauseReason: result.pauseReason } : {}),
     }
   }
 
@@ -539,6 +542,7 @@ export class WorkflowEngine {
           nodeResults: this.nodeResults,
           poolSnapshot: this.pool.snapshot(),
           durationMs,
+          ...(execResult.pauseReason ? { pauseReason: execResult.pauseReason } : {}),
         }
       }
       throw new Error(`Node not found: ${nodeId} (available: ${sorted.map(n => n.id).join(",")})`)
@@ -1012,7 +1016,7 @@ export class WorkflowEngine {
     nodes: NodeDef[],
     signal?: AbortSignal,
     preSorted?: boolean,
-  ): Promise<{ status: "completed" | "completed_with_failures" | "failed" | "paused" | "cancelled" | "pending_approval" | "pending_interaction" }> {
+  ): Promise<{ status: "completed" | "completed_with_failures" | "failed" | "paused" | "cancelled" | "pending_approval" | "pending_interaction"; pauseReason?: "user_pause" | "harness_delegate" }> {
     // Serial mode: preserve existing sequential behavior exactly
     if (this.executionMode === "serial" || preSorted) {
       return this.executeNodesSequential(nodes, signal, preSorted)
@@ -1027,7 +1031,7 @@ export class WorkflowEngine {
     nodes: NodeDef[],
     signal?: AbortSignal,
     preSorted?: boolean,
-  ): Promise<{ status: "completed" | "completed_with_failures" | "failed" | "paused" | "cancelled" | "pending_approval" | "pending_interaction" }> {
+  ): Promise<{ status: "completed" | "completed_with_failures" | "failed" | "paused" | "cancelled" | "pending_approval" | "pending_interaction"; pauseReason?: "user_pause" | "harness_delegate" }> {
     const sorted = preSorted ? nodes : this.topologicalSort(nodes)
     const totalNodes = sorted.length
 
@@ -1047,7 +1051,7 @@ export class WorkflowEngine {
           logLines: ["Paused by user"],
         }
         this.callbacks?.onNodeEnd?.(node.id, "paused", 0)
-        return { status: "paused" }
+        return { status: "paused", pauseReason: "user_pause" }
       }
 
       // AbortSignal 检查 (only if not paused)
@@ -1120,7 +1124,7 @@ export class WorkflowEngine {
             logLines: [`Execution paused by user`, `Node interrupted: ${errMsg}`],
           }
           this.callbacks?.onNodeEnd?.(node.id, "paused", 0, this.nodeResults[node.id], node.type)
-          return { status: "paused" }
+          return { status: "paused", pauseReason: "user_pause" }
         }
         // 不是 pause 导致的，重新抛出异常
         throw err
@@ -1141,7 +1145,7 @@ export class WorkflowEngine {
           this.nodeResults[node.id] = nodeResult
         }
         this.callbacks?.onNodeEnd?.(node.id, "paused", nodeResult.durationMs, this.nodeResults[node.id], node.type)
-        return { status: "paused" }
+        return { status: "paused", pauseReason: "user_pause" }
       }
 
       this.nodeResults[node.id] = nodeResult
@@ -1225,7 +1229,7 @@ export class WorkflowEngine {
           if (failureDecision.action === "delegate") {
             this.pausedAt = node.id
             this.callbacks?.onError?.(node.id, nodeResult.logLines?.join("\n") ?? "Unknown error")
-            return { status: "paused" }
+            return { status: "paused", pauseReason: "harness_delegate" }
           }
         }
         if (strategy === "fail_fast") {
@@ -1244,7 +1248,7 @@ export class WorkflowEngine {
 
       if (nodeResult.status === "paused") {
         this.pausedAt = node.id
-        return { status: "paused" }
+        return { status: "paused", pauseReason: "user_pause" }
       }
 
       if (nodeResult.status === "pending_approval") {
@@ -1290,7 +1294,7 @@ export class WorkflowEngine {
   private async executeNodesParallel(
     nodes: NodeDef[],
     signal?: AbortSignal,
-  ): Promise<{ status: "completed" | "completed_with_failures" | "failed" | "paused" | "cancelled" | "pending_approval" | "pending_interaction" }> {
+  ): Promise<{ status: "completed" | "completed_with_failures" | "failed" | "paused" | "cancelled" | "pending_approval" | "pending_interaction"; pauseReason?: "user_pause" | "harness_delegate" }> {
     const levels = this.computeExecutionLevels(nodes)
     const totalNodes = nodes.length
     let completedCount = 0
@@ -1316,7 +1320,7 @@ export class WorkflowEngine {
             }
           }
         }
-        return { status: "paused" }
+        return { status: "paused", pauseReason: "user_pause" }
       }
 
       // AbortSignal 检查 (only if not paused)
@@ -1623,7 +1627,7 @@ export class WorkflowEngine {
 
         if (hasPaused) {
           this.pausedAt = pausedNodeId
-          return { status: "paused" }
+          return { status: "paused", pauseReason: "user_pause" }
         }
 
         const hasPendingApproval = results.some((r, i) => r.status === "fulfilled" && (r.value as NodeExecutionResult).status === "pending_approval")
