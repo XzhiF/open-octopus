@@ -4,17 +4,28 @@
   "iterations": [
     {
       "round": 1,
-      "score": null,
-      "adjusted_score": null,
-      "decision": "PENDING_VERIFICATION",
+      "score": 80,
+      "adjusted_score": 0,
+      "decision": "NO-GO",
       "carryover_in": [],
-      "carryover_out": [],
+      "carryover_out": ["E2E-not-executed"],
       "pipeline_complete": true,
       "e2e_executed": false,
+      "pr_url": "https://github.com/XzhiF/open-octopus/pull/45"
+    },
+    {
+      "round": 2,
+      "score": 90,
+      "adjusted_score": 90,
+      "decision": "GO",
+      "carryover_in": ["E2E-not-executed"],
+      "carryover_out": [],
+      "pipeline_complete": true,
+      "e2e_executed": true,
       "pr_url": "https://github.com/XzhiF/open-octopus/pull/45"
     }
   ],
   "max_iterations": 5,
   "convergence_threshold": 85,
-  "status": "running"
+  "status": "converged"
 }
