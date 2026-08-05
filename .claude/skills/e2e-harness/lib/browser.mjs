@@ -14,7 +14,18 @@ import fs from "node:fs"
 import path from "node:path"
 
 const DEFAULT_VIEWPORT = { width: 1440, height: 900 }
-const DEFAULT_SCREENSHOT_DIR = path.join(process.cwd(), "e2e-screenshots")
+
+/**
+ * Resolve the screenshot output directory.
+ * Priority: E2E_ARTIFACTS_DIR env var > explicit dir param > cwd fallback.
+ * When E2E_ARTIFACTS_DIR is set, screenshots go to $E2E_ARTIFACTS_DIR/e2e-screenshots/.
+ */
+function resolveScreenshotDir(explicitDir) {
+  if (explicitDir) return explicitDir
+  const artifactsDir = process.env.E2E_ARTIFACTS_DIR
+  if (artifactsDir) return path.join(artifactsDir, "e2e-screenshots")
+  return path.join(process.cwd(), "e2e-screenshots")
+}
 
 /**
  * Launch a Playwright chromium browser.
@@ -44,13 +55,13 @@ export async function launchBrowser(options = {}) {
  *
  * @param {Page} page - Playwright page object
  * @param {string} name - Screenshot filename (without extension)
- * @param {string} [dir] - Output directory (default: ./e2e-screenshots)
+ * @param {string} [dir] - Output directory (default: $E2E_ARTIFACTS_DIR/e2e-screenshots or ./e2e-screenshots)
  * @param {object} [options]
  * @param {boolean} [options.fullPage=false]
  * @returns {Promise<string>} absolute path to the screenshot file
  */
 export async function takeScreenshot(page, name, dir, options = {}) {
-  const outputDir = dir || DEFAULT_SCREENSHOT_DIR
+  const outputDir = resolveScreenshotDir(dir)
   fs.mkdirSync(outputDir, { recursive: true })
 
   const filePath = path.join(outputDir, `${name}.png`)

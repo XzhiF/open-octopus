@@ -197,6 +197,20 @@ Browser E2E tests (if any exist in the spec) have execution evidence:
 - Playwright ran against a real browser (screenshots or test output logs)
 - NOT just "tests written" (code existence ≠ verification)
 
+**Mandatory check** — run this command to verify evidence exists:
+```bash
+ARTIFACTS_DIR="<artifacts.dir>/<feature-slug>"
+SCREENSHOT_COUNT=$(find "$ARTIFACTS_DIR/e2e-screenshots" -name "*.png" 2>/dev/null | wc -l | tr -d ' ')
+echo "E2E screenshots found: $SCREENSHOT_COUNT"
+```
+
+**Layer 4 passes** when:
+- Spec has browser E2E ACs AND `$SCREENSHOT_COUNT > 0`, OR
+- Spec has NO browser E2E ACs (API-only feature)
+
+**Layer 4 fails** when:
+- Spec has browser E2E ACs AND `$SCREENSHOT_COUNT == 0` — E2E was never executed in a browser
+
 #### Layer 5: Score Threshold
 Confidence score ≥ 85 (after applying scoring overrides, see below).
 

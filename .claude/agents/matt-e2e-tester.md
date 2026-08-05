@@ -46,7 +46,14 @@ Map each User Story's acceptance criteria to test modes (API Integration / Brows
 
 Before writing any E2E script, check if `.claude/skills/e2e-harness/` exists. If yes:
 
-1. **Read `index.md`** to discover available STABLE modules
+1. **Set E2E_ARTIFACTS_DIR environment variable** (MANDATORY — do this FIRST):
+   ```bash
+   export E2E_ARTIFACTS_DIR="<absolute-path-to-artifacts.dir>/<feature-slug>"
+   mkdir -p "$E2E_ARTIFACTS_DIR/e2e-screenshots" "$E2E_ARTIFACTS_DIR/e2e-scripts" "$E2E_ARTIFACTS_DIR/e2e-data"
+   ```
+   This env var is read by both `browser.mjs` (screenshot output) and `playwright.config.ts` (test artifacts outputDir). Without it, screenshots land in the wrong directory.
+
+2. **Read `index.md`** to discover available STABLE modules
 2. **Import relevant modules** in test scripts instead of writing helpers from scratch:
    ```js
    // Always prefer harness modules over inline helpers
