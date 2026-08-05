@@ -459,6 +459,24 @@ export interface PaginatedResult<T> {
   pageSize: number
 }
 
+// ── Agent Version Tables ────────────────────────────────────────────
+
+export interface AgentVersionRow {
+  id: string
+  agent_name: string
+  version: string
+  major: number
+  minor: number
+  patch: number
+  stage: string            // 'alpha' | 'beta' | 'rc' | 'stable'
+  status: string           // 'draft' | 'published' | 'archived'
+  snapshot: string         // JSON: { persona: string, config: object, skills: string[] }
+  changelog: string | null
+  published_at: string | null
+  published_by: string | null
+  created_at: string
+}
+
 // ── Archive Tables ──────────────────────────────────────────────────
 
 export interface ExecutionArchiveRow {

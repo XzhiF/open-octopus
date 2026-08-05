@@ -7,6 +7,7 @@ import type {
   TaskInfo, ScheduledJob, ReportInfo,
   AgentConfig, SafeModeStatus,
   SafetyEvent, DebugLogEntry,
+  AgentVersionInfo, VersionListResponse, VersionDiffResponse, RollbackResponse,
 } from './types'
 import { getServerUrl } from '@/lib/server-config'
 
@@ -581,4 +582,106 @@ export function parseCronExpression(expression: string, timezone: string) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ expression, timezone }),
   })
+}
+
+// ── Agent Version Management ───────────────────────────────────────
+
+// Clone versions (base: /api/clones)
+export function listCloneVersions(name: string, query?: { status?: string; stage?: string; limit?: number }) {
+  const params = new URLSearchParams()
+  if (query?.status) params.set('status', query.status)
+  if (query?.stage) params.set('stage', query.stage)
+  if (query?.limit) params.set('limit', String(query.limit))
+  const qs = params.toString()
+  return cloneRequest<VersionListResponse>(`/${name}/versions${qs ? `?${qs}` : ''}`)
+}
+
+export function getCloneVersion(name: string, version: string) {
+  return cloneRequest<{ version: AgentVersionInfo }>(`/${name}/versions/${encodeURIComponent(version)}`)
+}
+
+export function publishCloneVersion(name: string, data: { version: string; stage?: string; changelog?: string }) {
+  return cloneRequest<{ version: AgentVersionInfo }>(`/${name}/versions`, {
+    method: 'POST',
+    body: JSON.stringify(data),
+  })
+}
+
+export function archiveCloneVersion(name: string, version: string) {
+  return cloneRequest<{ version: AgentVersionInfo }>(`/${name}/versions/${encodeURIComponent(version)}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ status: 'archived' }),
+  })
+}
+
+export function rollbackCloneVersion(name: string, version: string) {
+  return cloneRequest<RollbackResponse>(`/${name}/versions/${encodeURIComponent(version)}/rollback`, {
+    method: 'POST',
+  })
+}
+
+export function diffCloneVersions(name: string, from: string, to: string) {
+  const params = new URLSearchParams({ from, to })
+  return cloneRequest<VersionDiffResponse>(`/${name}/versions/diff?${params}`)
+}
+
+// Main Agent versions (base: /api/agents/main)
+const MAIN_AGENT_BASE = () => `${getServerUrl()}/api/agents/main`
+
+async function mainAgentRequest<T>(url: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(`${MAIN_AGENT_BASE()}${url}`, {
+    ...init,
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': AUTH_HEADER,
+      ...init?.headers,
+    },
+  })
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: { code: 'UNKNOWN', message: res.statusText } }))
+    const err = new Error(body.error?.message ?? res.statusText) as Error & { code?: string; status?: number }
+    err.code = body.error?.code
+    err.status = res.status
+    throw err
+  }
+  if (res.status === 204 || res.headers.get('content-length') === '0') return undefined as T
+  return res.json() as Promise<T>
+}
+
+export function listMainAgentVersions(query?: { status?: string; stage?: string; limit?: number }) {
+  const params = new URLSearchParams()
+  if (query?.status) params.set('status', query.status)
+  if (query?.stage) params.set('stage', query.stage)
+  if (query?.limit) params.set('limit', String(query.limit))
+  const qs = params.toString()
+  return mainAgentRequest<VersionListResponse>(`/versions${qs ? `?${qs}` : ''}`)
+}
+
+export function getMainAgentVersion(version: string) {
+  return mainAgentRequest<{ version: AgentVersionInfo }>(`/versions/${encodeURIComponent(version)}`)
+}
+
+export function publishMainAgentVersion(data: { version: string; stage?: string; changelog?: string }) {
+  return mainAgentRequest<{ version: AgentVersionInfo }>('/versions', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  })
+}
+
+export function archiveMainAgentVersion(version: string) {
+  return mainAgentRequest<{ version: AgentVersionInfo }>(`/versions/${encodeURIComponent(version)}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ status: 'archived' }),
+  })
+}
+
+export function rollbackMainAgentVersion(version: string) {
+  return mainAgentRequest<RollbackResponse>(`/versions/${encodeURIComponent(version)}/rollback`, {
+    method: 'POST',
+  })
+}
+
+export function diffMainAgentVersions(from: string, to: string) {
+  const params = new URLSearchParams({ from, to })
+  return mainAgentRequest<VersionDiffResponse>(`/versions/diff?${params}`)
 }

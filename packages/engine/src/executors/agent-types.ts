@@ -1,4 +1,5 @@
 import type { TokenUsage, ModelUsageEntry, LLMCallRecord } from "@octopus/providers"
+import type { AgentHeartbeat, HarnessDirective } from "@octopus/shared"
 
 export type AgentEvent =
   | { type: "thinking_start"; timestamp: number }
@@ -10,6 +11,9 @@ export type AgentEvent =
   | { type: "text_delta"; content: string; timestamp: number }
   | { type: "status"; status: "compacting" | "requesting" | "resuming_after_crash" | null; timestamp: number }
   | { type: "error"; code: string; message: string; timestamp: number }
+  | { type: "heartbeat"; data: AgentHeartbeat }
+  | { type: "harness_directive"; data: HarnessDirective }
+  | { type: "heartbeat_stall"; data: { nodeId: string } }
 
 export interface AgentRunResult {
   finalText: string

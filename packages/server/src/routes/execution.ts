@@ -14,6 +14,21 @@ import { mergeAgentEvents } from "@octopus/engine"
 import repairRoutes, { setRepairDependencies } from "./repair"
 import os from "os"
 
+/** Extract the latest heartbeat data from a list of merged events (searches backwards). */
+export function extractLatestHeartbeat(
+  events: Array<{ event?: string; data?: unknown; event_type?: string; content?: string }>,
+): unknown {
+  for (let i = events.length - 1; i >= 0; i--) {
+    const e = events[i]
+    const eventType = e.event || e.event_type
+    if (eventType === "heartbeat") {
+      const data = e.data || (e.content ? (() => { try { return JSON.parse(e.content) } catch { return undefined } })() : undefined)
+      if (data) return data
+    }
+  }
+  return undefined
+}
+
 const executionRoutes = new Hono()
 let _executionDAO: ExecutionDAO | null = null
 
@@ -197,6 +212,9 @@ executionRoutes.get("/:executionId", async (c) => {
       })) : undefined,
       parentNodeId: ne.parent_node_id ?? undefined,
       iterationIndex: ne.iteration_index ?? undefined,
+      agentName: (parsedOutputs?.agent_name ?? parsedOutputs?.agentName) as string | undefined,
+      agentVersion: (parsedOutputs?.agent_version ?? parsedOutputs?.agentVersion) as string | undefined,
+      taskBrief: (parsedOutputs?.task_brief ?? parsedOutputs?.taskBrief) as string | undefined,
     }
   })
 
@@ -379,6 +397,38 @@ executionRoutes.post("/:executionId/pause", async (c) => {
   return c.json({ success: true })
 })
 
+executionRoutes.post("/:executionId/harness-intervene", async (c) => {
+  const workspaceId = getWorkspaceId(c)
+  const executionId = getExecutionId(c)
+  const svc = getService(workspaceId)
+  if (!svc) return c.json({ error: "workspace not found" }, 404)
+
+  let body: { nodeId: string; directive: { type: "abort" | "pause"; reason: string; issued_by: string } }
+  try {
+    body = await c.req.json()
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400)
+  }
+
+  if (!body.nodeId || !body.directive?.type) {
+    return c.json({ error: "nodeId and directive.type are required" }, 400)
+  }
+  if (!["abort", "pause"].includes(body.directive.type)) {
+    return c.json({ error: "directive.type must be 'abort' or 'pause'" }, 400)
+  }
+
+  try {
+    const result = await svc.service.harnessIntervene(executionId, body)
+    if (!result.success) {
+      const status = result.error === "Execution not found" ? 404 : 400
+      return c.json(result, status)
+    }
+    return c.json(result)
+  } catch (err: unknown) {
+    return handleError(err)
+  }
+})
+
 executionRoutes.post("/:executionId/resume", async (c) => {
   const workspaceId = getWorkspaceId(c)
   const executionId = getExecutionId(c)
@@ -528,6 +578,17 @@ executionRoutes.get("/:executionId/agent-events", (c) => {
             timestamp: new Date(row.timestamp).toISOString(),
           }
         }
+        // Heartbeat and harness events: deserialize JSON content and pass through
+        if (row.event_type === "heartbeat" || row.event_type === "harness_directive" || row.event_type === "heartbeat_stall") {
+          let data: Record<string, unknown> = {}
+          try { data = JSON.parse(row.content ?? "{}") } catch { /* ignore */ }
+          return {
+            event: row.event_type,
+            nodeId: row.node_id,
+            data,
+            timestamp: new Date(row.timestamp).toISOString(),
+          }
+        }
         // start/end lifecycle events: skip from SQLite (JSONL provides authoritative copies)
         if (row.event_type === "start" || row.event_type === "end") {
           return null
@@ -650,7 +711,10 @@ executionRoutes.get("/:executionId/agent-events", (c) => {
         ((a.timestamp ?? a.startedAt) ?? "").localeCompare((b.timestamp ?? b.startedAt) ?? "")
       )
 
-      return c.json({ executionId, events: merged, source: 'sqlite', _degraded: false, _message: null, loopIterations })
+      // Extract latest heartbeat snapshot from the events
+      const heartbeat = extractLatestHeartbeat(merged)
+
+      return c.json({ executionId, events: merged, heartbeat, source: 'sqlite', _degraded: false, _message: null, loopIterations })
     }
   } catch {
     // SQLite query failed — fall through to JSONL
@@ -669,7 +733,11 @@ executionRoutes.get("/:executionId/agent-events", (c) => {
   for (const group of byNodeJsonl.values()) {
     events.push(...mergeAgentEvents(group))
   }
-  return c.json({ executionId, events, source: 'jsonl', _degraded: true, _message: '从 JSONL 日志读取', loopIterations })
+
+  // Extract latest heartbeat snapshot from the events (JSONL path)
+  const heartbeatJsonl = extractLatestHeartbeat(events)
+
+  return c.json({ executionId, events, heartbeat: heartbeatJsonl, source: 'jsonl', _degraded: true, _message: '从 JSONL 日志读取', loopIterations })
 })
 
 executionRoutes.get("/:executionId/branches", async (c) => {

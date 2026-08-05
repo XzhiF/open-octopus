@@ -48,12 +48,21 @@ const FIXTURES = {
       { id: "task-b", type: "agent", prompt: "do B" },
     ],
   },
+  /** DAG with mixed agent and octopus_agent nodes. */
+  mixedDag: {
+    nodes: [
+      { id: "analyze", type: "agent", prompt: "Analyze the requirements" },
+      { id: "impl", type: "octopus_agent", agent: "workspace", version: "latest", task: { brief: "Implement the login endpoint", context: ["Use the API spec"], constraints: ["Use Express.js"] }, depends_on: ["analyze"] },
+      { id: "test", type: "agent", prompt: "Write tests for the login endpoint", depends_on: ["impl"] },
+    ],
+  },
 }
 
 const VALID_DAG_JSON = JSON.stringify(FIXTURES.validDag)
 const INVALID_DAG_CIRCULAR_JSON = JSON.stringify(FIXTURES.invalidDagCircular)
 const CORRECTED_DAG_JSON = JSON.stringify(FIXTURES.correctedDag)
 const SIMPLE_DAG_JSON = JSON.stringify(FIXTURES.simpleDag)
+const MIXED_DAG_JSON = JSON.stringify(FIXTURES.mixedDag)
 
 /** Mock WorkflowEngine that returns a successful run without real execution. */
 function mockWorkflowEngineModule() {
@@ -172,6 +181,50 @@ describe("Validation Harness", () => {
       const result = validateL1Structure(json)
       expect(result.valid).toBe(true)
     })
+
+    it("octopus_agent node with task.brief → valid", () => {
+      const json = {
+        nodes: [
+          { id: "impl", type: "octopus_agent", agent: "workspace", task: { brief: "Implement feature X" } },
+        ],
+      }
+      const result = validateL1Structure(json)
+      expect(result.valid).toBe(true)
+      expect(result.errors).toHaveLength(0)
+    })
+
+    it("octopus_agent node without task.brief → invalid", () => {
+      const json = {
+        nodes: [
+          { id: "impl", type: "octopus_agent", agent: "workspace" },
+        ],
+      }
+      const result = validateL1Structure(json)
+      expect(result.valid).toBe(false)
+      expect(result.errors.some((e) => e.includes("task.brief"))).toBe(true)
+    })
+
+    it("octopus_agent node with empty task.brief → invalid", () => {
+      const json = {
+        nodes: [
+          { id: "impl", type: "octopus_agent", agent: "workspace", task: { brief: "" } },
+        ],
+      }
+      const result = validateL1Structure(json)
+      expect(result.valid).toBe(false)
+      expect(result.errors.some((e) => e.includes("task.brief"))).toBe(true)
+    })
+
+    it("octopus_agent node without prompt but with task.brief → valid (no prompt required)", () => {
+      const json = {
+        nodes: [
+          { id: "a", type: "agent", prompt: "do something" },
+          { id: "b", type: "octopus_agent", agent: "workspace", task: { brief: "delegate to workspace" }, depends_on: ["a"] },
+        ],
+      }
+      const result = validateL1Structure(json)
+      expect(result.valid).toBe(true)
+    })
   })
 
   // ── L2: Graph ────────────────────────────────────────────────
@@ -223,6 +276,34 @@ describe("Validation Harness", () => {
       const result = validateL2Graph(nodes)
       expect(result.valid).toBe(true)
     })
+
+    it("octopus_agent depends_on existing nodes → valid", () => {
+      const nodes: NodeDef[] = [
+        { id: "design", type: "agent", prompt: "design the feature" },
+        { id: "impl", type: "octopus_agent", task: { brief: "implement" } as any, depends_on: ["design"] },
+      ]
+      const result = validateL2Graph(nodes)
+      expect(result.valid).toBe(true)
+    })
+
+    it("octopus_agent depends_on non-existent node → invalid", () => {
+      const nodes: NodeDef[] = [
+        { id: "impl", type: "octopus_agent", task: { brief: "implement" } as any, depends_on: ["missing-design"] },
+      ]
+      const result = validateL2Graph(nodes)
+      expect(result.valid).toBe(false)
+      expect(result.errors.some((e) => e.includes("missing-design"))).toBe(true)
+    })
+
+    it("mixed agent and octopus_agent DAG with valid deps → valid", () => {
+      const nodes: NodeDef[] = [
+        { id: "a", type: "agent", prompt: "analyze" },
+        { id: "b", type: "octopus_agent", task: { brief: "design" } as any, depends_on: ["a"] },
+        { id: "c", type: "agent", prompt: "test", depends_on: ["b"] },
+      ]
+      const result = validateL2Graph(nodes)
+      expect(result.valid).toBe(true)
+    })
   })
 
   // ── L3: Semantics ────────────────────────────────────────────
@@ -266,6 +347,40 @@ describe("Validation Harness", () => {
     it("missing prompt field → invalid", () => {
       const nodes: NodeDef[] = [
         { id: "a", type: "agent" },
+      ]
+      const result = validateL3Semantics(nodes)
+      expect(result.valid).toBe(false)
+    })
+
+    it("octopus_agent with task.brief → valid", () => {
+      const nodes: NodeDef[] = [
+        { id: "impl", type: "octopus_agent", task: { brief: "Implement the login page" } as any },
+      ]
+      const result = validateL3Semantics(nodes)
+      expect(result.valid).toBe(true)
+    })
+
+    it("octopus_agent without task.brief → invalid", () => {
+      const nodes: NodeDef[] = [
+        { id: "impl", type: "octopus_agent" },
+      ]
+      const result = validateL3Semantics(nodes)
+      expect(result.valid).toBe(false)
+      expect(result.errors.some((e) => e.includes("task.brief"))).toBe(true)
+    })
+
+    it("mixed agent and octopus_agent nodes → valid", () => {
+      const nodes: NodeDef[] = [
+        { id: "analyze", type: "agent", prompt: "Analyze the requirements" },
+        { id: "impl", type: "octopus_agent", task: { brief: "Implement" } as any },
+      ]
+      const result = validateL3Semantics(nodes)
+      expect(result.valid).toBe(true)
+    })
+
+    it("octopus_agent with empty task.brief → invalid", () => {
+      const nodes: NodeDef[] = [
+        { id: "impl", type: "octopus_agent", task: { brief: "  " } as any },
       ]
       const result = validateL3Semantics(nodes)
       expect(result.valid).toBe(false)
@@ -317,6 +432,59 @@ describe("Validation Harness", () => {
       expect(result.result.valid).toBe(false)
       expect(result.result.errors.some((e) => e.includes("agent"))).toBe(true)
     })
+
+    it("octopus_agent node with task.brief passes all layers", () => {
+      const json = {
+        nodes: [
+          { id: "design", type: "agent", prompt: "Design the feature" },
+          { id: "impl", type: "octopus_agent", agent: "workspace", task: { brief: "Implement the feature" }, depends_on: ["design"] },
+        ],
+      }
+      const result = runValidationPipeline(json)
+      expect(result.result.valid).toBe(true)
+      expect(result.result.errors).toHaveLength(0)
+    })
+
+    it("octopus_agent without task.brief fails L1", () => {
+      const json = {
+        nodes: [
+          { id: "impl", type: "octopus_agent", agent: "workspace" },
+        ],
+      }
+      const result = runValidationPipeline(json)
+      expect(result.result.valid).toBe(false)
+      expect(result.errors.some((e) => e.includes("L1") && e.includes("task.brief"))).toBe(true)
+    })
+  })
+})
+
+// ──────────────────────────────────────────────────────────────
+// Generation Prompt
+// ──────────────────────────────────────────────────────────────
+
+describe("Generation Prompt", () => {
+  it("includes both agent and octopus_agent types in constraints", async () => {
+    const { buildGenerationPrompt } = await import("../executors/dynamic-sub-workflow")
+    const prompt = buildGenerationPrompt("Build a login feature", { tickets: ["T1"] })
+
+    // Should mention both types
+    expect(prompt).toContain("agent")
+    expect(prompt).toContain("octopus_agent")
+
+    // Should NOT say ALL nodes must be agent
+    expect(prompt).not.toContain('ALL nodes must have type: "agent"')
+
+    // Should say nodes can be either type
+    expect(prompt).toContain('Nodes can have type: "agent" or "octopus_agent"')
+
+    // Should include octopus_agent example with task.brief
+    expect(prompt).toContain("task")
+    expect(prompt).toContain("brief")
+    expect(prompt).toContain('"octopus_agent"')
+
+    // Should explain the difference
+    expect(prompt).toContain("task.brief")
+    expect(prompt).toContain("prompt")
   })
 })
 
@@ -882,6 +1050,124 @@ nodes:
         expect(yamlContent).not.toContain("id: old-task")
 
         vi.doUnmock("../engine")
+      } finally {
+        cleanupDir(dir)
+      }
+    })
+
+    it("mixed DAG with agent and octopus_agent → validation passes → YAML serialized correctly", async () => {
+      const dir = createTempDir()
+      const workflowsDir = join(dir, "workflows")
+      const ensureNodeSpy = vi.fn()
+
+      try {
+        vi.doMock("../engine", () => mockWorkflowEngineModule())
+
+        const pool = new VarPool()
+        const node: NodeDef = {
+          id: "plan",
+          type: "dynamic_sub_workflow",
+          prompt: "Generate a DAG with octopus_agent",
+          workflow: "mixed-test",
+        }
+
+        const { provider, spy: providerSpy } = createSpyProvider(MIXED_DAG_JSON)
+
+        const executor = new DynamicSubWorkflowExecutor(node, pool, {
+          cwd: dir,
+          providers: { claude: provider },
+          outputDir: workflowsDir,
+          workflow: { name: "parent" },
+          ensureNodeExecution: ensureNodeSpy,
+        })
+
+        const result = await executor.execute()
+
+        // Status and outputs
+        expect(result.status).toBe("completed")
+        expect(result.outputs.generated_workflow).toBe("mixed-test")
+        expect(result.outputs.node_count).toBe(3)
+        expect(result.outputs.validation_rounds).toBe(1)
+        expect(result.error).toBeUndefined()
+
+        // Provider called once (no correction needed)
+        expect(providerSpy).toHaveBeenCalledTimes(1)
+
+        // ensureNodeExecution called for all 3 child nodes
+        expect(ensureNodeSpy).toHaveBeenCalledTimes(3)
+        expect(ensureNodeSpy).toHaveBeenCalledWith("plan:analyze", "agent", expect.any(Object))
+        expect(ensureNodeSpy).toHaveBeenCalledWith("plan:impl", "octopus_agent", expect.any(Object))
+        expect(ensureNodeSpy).toHaveBeenCalledWith("plan:test", "agent", expect.any(Object))
+
+        // YAML file contains both node types
+        const yamlPath = join(workflowsDir, "mixed-test.yaml")
+        expect(existsSync(yamlPath)).toBe(true)
+        const yamlContent = readFileSync(yamlPath, "utf-8")
+        expect(yamlContent).toContain("id: analyze")
+        expect(yamlContent).toContain("type: agent")
+        expect(yamlContent).toContain("id: impl")
+        expect(yamlContent).toContain("type: octopus_agent")
+        expect(yamlContent).toContain("agent: workspace")
+        expect(yamlContent).toContain("brief:")
+        expect(yamlContent).toContain("Implement the login endpoint")
+        expect(yamlContent).toContain("depends_on: [impl]")
+        expect(yamlContent).toContain("id: test")
+
+        // Meta file
+        const metaPath = join(workflowsDir, "mixed-test.meta.json")
+        expect(existsSync(metaPath)).toBe(true)
+        const meta = JSON.parse(readFileSync(metaPath, "utf-8"))
+        expect(meta.node_count).toBe(3)
+        expect(meta.validation_rounds).toBe(1)
+        expect(meta.execution_status).toBe("completed")
+
+        vi.doUnmock("../engine")
+      } finally {
+        cleanupDir(dir)
+      }
+    })
+
+    it("child callbacks forward onAgentEvent with scoped node ID for octopus_agent", async () => {
+      const dir = createTempDir()
+      const workflowsDir = join(dir, "workflows")
+
+      try {
+        // We test the createChildCallbacks method directly to verify event forwarding
+        const pool = new VarPool()
+        const node: NodeDef = {
+          id: "plan",
+          type: "dynamic_sub_workflow",
+          prompt: "Generate a DAG",
+          workflow: "cb-test",
+        }
+
+        const executor = new DynamicSubWorkflowExecutor(node, pool, {
+          cwd: dir,
+          providers: {},
+          outputDir: workflowsDir,
+          workflow: { name: "parent" },
+        })
+
+        // Access private method for testing
+        const logLines: string[] = []
+        const childCallbacks = (executor as any).createChildCallbacks(logLines, "test-wf")
+
+        // Verify onAgentEvent forwards with scoped node ID
+        const agentEventSpy = vi.fn()
+        executor["config"] = {
+          ...executor["config"],
+          callbacks: { onAgentEvent: agentEventSpy },
+        }
+
+        // Recreate callbacks with the spy
+        const callbacksWithSpy = (executor as any).createChildCallbacks(logLines, "test-wf")
+        callbacksWithSpy.onAgentEvent("impl-node", { type: "heartbeat", data: { step: 3 } })
+
+        // Verify the parent callback was called with scoped ID
+        expect(agentEventSpy).toHaveBeenCalledWith(
+          "plan:impl-node",
+          { type: "heartbeat", data: { step: 3 } },
+        )
       } finally {
         cleanupDir(dir)
       }

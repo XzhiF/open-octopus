@@ -1,0 +1,32 @@
+# yaml-language-server: $schema=./workflow-schema.json
+apiVersion: octopus/v1
+kind: Workflow
+
+# ============================================================
+# E2E Test: octopus_agent Node UI Verification
+# Minimal workflow for Playwright E2E testing of the
+# octopus_agent node rendering, execution, detail panel,
+# and log viewer.
+# ============================================================
+
+name: e2e-octopus-agent-test
+description: |
+  Minimal octopus_agent workflow for E2E UI testing.
+  Single node that lists files in the current directory.
+version: 0.1.0
+
+engine: claude
+model: se
+timeout: 300
+
+nodes:
+  - id: list-files
+    type: octopus_agent
+    agent: workspace
+    task:
+      brief: "List all files in the current directory and report back the file names and sizes."
+      constraints:
+        - "Do not modify any files"
+        - "Return results as a simple list"
+    outputs:
+      result: "$last_output"

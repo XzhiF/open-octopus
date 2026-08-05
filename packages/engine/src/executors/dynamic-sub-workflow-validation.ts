@@ -14,7 +14,7 @@ export interface ValidationResult {
  * L1: Validate the raw JSON structure.
  * - Must be a non-null object
  * - Must have a `nodes` array
- * - Each node must have `id` (string), `type` (string), `prompt` (string)
+ * - Each node must have `id` (string), `type` (string), `prompt` (string) or `task.brief` (for octopus_agent)
  */
 export function validateL1Structure(json: unknown): ValidationResult {
   const errors: string[] = []
@@ -43,8 +43,16 @@ export function validateL1Structure(json: unknown): ValidationResult {
     if (typeof n.type !== "string" || n.type.length === 0) {
       errors.push(`L1: nodes[${i}] missing or invalid 'type'`)
     }
-    if (typeof n.prompt !== "string" || n.prompt.length === 0) {
-      errors.push(`L1: nodes[${i}] missing or invalid 'prompt'`)
+    // octopus_agent uses task.brief instead of prompt
+    if (n.type === "octopus_agent") {
+      const task = n.task as Record<string, unknown> | undefined
+      if (!task || typeof task.brief !== "string" || task.brief.length === 0) {
+        errors.push(`L1: nodes[${i}] (octopus_agent) missing or invalid 'task.brief'`)
+      }
+    } else {
+      if (typeof n.prompt !== "string" || n.prompt.length === 0) {
+        errors.push(`L1: nodes[${i}] missing or invalid 'prompt'`)
+      }
     }
   }
 
@@ -109,19 +117,27 @@ export function validateL2Graph(nodes: NodeDef[]): ValidationResult {
 
 /**
  * L3: Validate semantic constraints.
- * - All nodes must be type "agent" (whitelist)
- * - All prompts must be non-empty strings
+ * - All nodes must be type "agent" or "octopus_agent" (whitelist)
+ * - All prompts must be non-empty strings (or task.brief for octopus_agent)
  */
 export function validateL3Semantics(nodes: NodeDef[]): ValidationResult {
   const errors: string[] = []
-  const ALLOWED_TYPES = new Set(["agent"])
+  const ALLOWED_TYPES = new Set(["agent", "octopus_agent"])
 
   for (const node of nodes) {
     if (!ALLOWED_TYPES.has(node.type)) {
-      errors.push(`L3: node "${node.id}" has disallowed type "${node.type}" — only "agent" is permitted in dynamic sub-workflow DAGs`)
+      errors.push(`L3: node "${node.id}" has disallowed type "${node.type}" — only "agent" and "octopus_agent" are permitted in dynamic sub-workflow DAGs`)
     }
-    if (!node.prompt || node.prompt.trim().length === 0) {
-      errors.push(`L3: node "${node.id}" has empty or missing prompt`)
+    // octopus_agent uses task.brief instead of prompt
+    if (node.type === "octopus_agent") {
+      const task = (node as any).task as { brief?: string } | undefined
+      if (!task?.brief || task.brief.trim().length === 0) {
+        errors.push(`L3: node "${node.id}" (octopus_agent) has empty or missing task.brief`)
+      }
+    } else {
+      if (!node.prompt || node.prompt.trim().length === 0) {
+        errors.push(`L3: node "${node.id}" has empty or missing prompt`)
+      }
     }
   }
 
@@ -146,6 +162,8 @@ export function runValidationPipeline(json: unknown): { result: ValidationResult
     type: n.type as NodeDef["type"],
     prompt: n.prompt as string | undefined,
     depends_on: n.depends_on as string[] | undefined,
+    // Pass through task for octopus_agent L3 validation
+    ...(n.type === "octopus_agent" ? { task: n.task } : {}),
   }))
 
   // L2

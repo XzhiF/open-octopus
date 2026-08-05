@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef, useCallback } from "react"
 import { cn } from "@/lib/utils"
 import { formatDuration, formatTokenCount } from "@/lib/format"
+import { getExecutorType } from "@/lib/executor-type"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
@@ -77,12 +78,19 @@ interface RawStepRow {
   completedAt?: string
   duration?: number
   output?: string
+  outputs?: Record<string, unknown>
   error?: string
   model?: string
   tokensInput?: number
   tokensOutput?: number
   tokenUsages?: TokenUsage[]
   token_usages?: { model: string; inputTokens: number; outputTokens: number }[]
+  nodeType?: string
+  parentNodeId?: string
+  iterationIndex?: number
+  agentName?: string
+  agentVersion?: string
+  taskBrief?: string
 }
 
 function mapRawStep(raw: RawStepRow): StepExecution {
@@ -94,11 +102,18 @@ function mapRawStep(raw: RawStepRow): StepExecution {
     completedAt: raw.completedAt,
     duration: raw.duration,
     output: raw.output,
+    outputs: raw.outputs,
     error: raw.error,
     model: raw.model,
     tokensInput: raw.tokensInput,
     tokensOutput: raw.tokensOutput,
     tokenUsages: raw.tokenUsages ?? raw.token_usages,
+    nodeType: raw.nodeType,
+    parentNodeId: raw.parentNodeId,
+    iterationIndex: raw.iterationIndex,
+    agentName: raw.agentName,
+    agentVersion: raw.agentVersion,
+    taskBrief: raw.taskBrief,
   }
 }
 
@@ -282,21 +297,7 @@ export function WorkflowDetailPanel({ execution, workflow, workspaceId }: Workfl
 
   const showObservabilityTabs = isAgentNode && !!agentNodeId
 
-  // Determine executor type from step data + node type from YAML
-  function getExecutorType(step: StepExecution | undefined, nodeType?: string): string | undefined {
-    if (!step) return undefined
-    if (nodeType === "swarm") return "swarm"
-    if (nodeType === "interaction") return "interaction"
-    if (nodeType === "sub_workflow") return "sub_workflow"
-    if (step.model) return "agent"
-    const name = step.stepName?.toLowerCase() ?? ""
-    if (name.includes("bash")) return "bash"
-    if (name.includes("python")) return "python"
-    if (name.includes("condition")) return "condition"
-    if (name.includes("approval")) return "approval"
-    if (name.includes("loop")) return "loop"
-    return undefined
-  }
+  // Determine executor type from step data + node type from YAML (extracted to lib/executor-type.ts)
 
   // Right-click "查看信息" handler
   const handleNodeContextMenu = useCallback((stepId: string, nodeType: string) => {

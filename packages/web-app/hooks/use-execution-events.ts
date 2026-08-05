@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback, useMemo } from "react"
 import { fetchAgentEvents } from "@/lib/api-client"
-import { isMergedEvent, type AgentEvent, type LoopIterationSummary } from "@/lib/types"
+import { isMergedEvent, type AgentEvent, type AgentHeartbeat, type LoopIterationSummary } from "@/lib/types"
 
 const POLL_INTERVAL_MS = 2000
 const RUNNING_STATUSES = new Set(["running", "paused"])
@@ -21,6 +21,7 @@ interface UseExecutionEventsResult {
   events: AgentEvent[]
   loopIterations: Record<string, LoopIterationSummary>
   groups: EventGroup[]
+  heartbeat: AgentHeartbeat | undefined
   loading: boolean
   error: string | null
 }
@@ -32,6 +33,7 @@ export function useExecutionEvents(
 ): UseExecutionEventsResult {
   const [events, setEvents] = useState<AgentEvent[]>([])
   const [loopIterations, setLoopIterations] = useState<Record<string, LoopIterationSummary>>({})
+  const [heartbeat, setHeartbeat] = useState<AgentHeartbeat | undefined>(undefined)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const prevStatusRef = useRef(executionStatus)
@@ -41,6 +43,7 @@ export function useExecutionEvents(
       const data = await fetchAgentEvents(workspaceId, executionId)
       setEvents(data.events ?? [])
       setLoopIterations(data.loopIterations ?? {})
+      setHeartbeat(data.heartbeat)
       setError(null)
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : String(err))
@@ -95,5 +98,5 @@ export function useExecutionEvents(
     return Array.from(map.values())
   }, [events])
 
-  return { events, loopIterations, groups, loading, error }
+  return { events, loopIterations, groups, heartbeat, loading, error }
 }

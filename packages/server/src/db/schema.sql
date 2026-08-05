@@ -617,6 +617,33 @@ CREATE INDEX IF NOT EXISTS idx_insight_marks_processed ON insight_marks(processe
 CREATE INDEX IF NOT EXISTS idx_insight_marks_marked_at ON insight_marks(marked_at DESC);
 
 -- =============================================================================
+-- Agent Version Management (schema version 33)
+-- =============================================================================
+
+-- 30. Agent Versions
+CREATE TABLE IF NOT EXISTS agent_versions (
+  id TEXT PRIMARY KEY,
+  agent_name TEXT NOT NULL,
+  version TEXT NOT NULL,
+  major INTEGER NOT NULL,
+  minor INTEGER NOT NULL,
+  patch INTEGER NOT NULL,
+  stage TEXT NOT NULL DEFAULT 'stable',
+  status TEXT NOT NULL DEFAULT 'draft',
+  snapshot TEXT NOT NULL,
+  changelog TEXT,
+  published_at TEXT,
+  published_by TEXT,
+  created_at TEXT NOT NULL,
+  UNIQUE(agent_name, version)
+);
+
+CREATE INDEX IF NOT EXISTS idx_agent_versions_name_status
+  ON agent_versions(agent_name, status);
+CREATE INDEX IF NOT EXISTS idx_agent_versions_name_stage
+  ON agent_versions(agent_name, stage, published_at DESC);
+
+-- =============================================================================
 -- Triggers
 -- =============================================================================
 

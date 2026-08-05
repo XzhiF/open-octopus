@@ -25,6 +25,7 @@ export * from "./types/scheduler-audit"
 export * from "./types/scheduler-common"
 export * from "./types/schedule-workspace"
 export * from "./types/agent"
+export * from "./types/octopus-agent"
 export * from "./types/swarm"
 export * from "./plugin/detector"
 export * from "./plugin/types"
@@ -39,3 +40,4 @@ export type { MoaModelResolution } from './config/moa-model-resolver'
 
 // Simulator test fixture schemas
 export * from './simulator/schemas'
+export * from './version/version-resolver'

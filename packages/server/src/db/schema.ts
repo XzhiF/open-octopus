@@ -10,7 +10,7 @@ const _dirname: string =
     ? __dirname
     : path.dirname(fileURLToPath(import.meta.url))
 
-export const SCHEMA_VERSION = 32
+export const SCHEMA_VERSION = 33
 
 /**
  * Apply the complete unified schema to the given database.
@@ -153,6 +153,9 @@ function ensureColumnsForExistingTables(db: Database.Database): void {
   // Nested execution hierarchy (sub-workflow parent tracking + loop iteration tracking)
   ensureColumn(db, 'node_executions', 'parent_node_id', "TEXT")
   ensureColumn(db, 'node_executions', 'iteration_index', "INTEGER")
+
+  // Agent version tracking (schema version 33)
+  ensureColumn(db, 'clones', 'current_version_id', "TEXT")
 }
 
 function ensureColumn(db: Database.Database, table: string, column: string, definition: string): void {
