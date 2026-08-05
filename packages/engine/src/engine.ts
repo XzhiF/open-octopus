@@ -64,6 +64,35 @@ export interface EngineCallbacks {
   onCheckpoint?: (checkpoint: unknown) => void
   onPipelineReloaded?: (config: PipelineConfig) => void
   onRuntimeNodeAdded?: (nodeId: string, nodeType: string, meta?: RuntimeNodeMeta) => void
+
+  // ★ Harness callbacks — all optional, backward compatible
+  onBeforeNode?: (
+    nodeId: string,
+    nodeType: string,
+    nodeConfig: NodeDef,
+  ) => Promise<{
+    action: "proceed" | "skip" | "override"
+    overrideResult?: NodeExecutionResult
+  }>
+
+  onBeforeRetry?: (
+    nodeId: string,
+    attempt: number,
+    lastResult: NodeExecutionResult,
+  ) => Promise<{
+    action: "retry" | "skip" | "abort" | "override"
+    overrideResult?: NodeExecutionResult
+    harnessHint?: string
+    modelOverride?: string
+  }>
+
+  onFailureDecision?: (
+    nodeId: string,
+    error: string,
+    currentStrategy: string,
+  ) => Promise<{
+    action: "continue" | "abort" | "delegate"
+  }>
 }
 
 export class WorkflowEngine {
@@ -816,6 +845,25 @@ export class WorkflowEngine {
       this.logger?.log(node.id, "start", { type: node.type })
       this.callbacks?.onNodeStart?.(node.id, node.type)
 
+      // ★ Harness: onBeforeNode hook — allows harness to skip or override node execution
+      if (this.callbacks?.onBeforeNode) {
+        const decision = await this.callbacks.onBeforeNode(node.id, node.type, node)
+        if (decision.action === "skip") {
+          const skippedResult: NodeExecutionResult = {
+            outputs: {}, status: "skipped", durationMs: 0,
+            logLines: ["Skipped by harness"],
+          }
+          this.logger?.log(node.id, "end", { status: "skipped", durationMs: 0 })
+          this.callbacks?.onNodeEnd?.(node.id, "skipped", 0, skippedResult, node.type)
+          return skippedResult
+        }
+        if (decision.action === "override" && decision.overrideResult) {
+          this.logger?.log(node.id, "end", { status: decision.overrideResult.status, durationMs: decision.overrideResult.durationMs })
+          this.callbacks?.onNodeEnd?.(node.id, decision.overrideResult.status, decision.overrideResult.durationMs, decision.overrideResult, node.type)
+          return decision.overrideResult
+        }
+      }
+
       const nodeResult = await executor.execute()
 
       // Log approval metadata as a separate event so frontend can display prompt/options/decision
@@ -914,6 +962,28 @@ export class WorkflowEngine {
         if (attempt >= policy.max_attempts) {
           if (nodeTimer) clearTimeout(nodeTimer)
           return { ...result, retryCount: attempt - 1 }
+        }
+        // ★ Harness: onBeforeRetry hook — allows harness to skip/abort/override/inject hint/change model
+        if (this.callbacks?.onBeforeRetry) {
+          const retryDecision = await this.callbacks.onBeforeRetry(node.id, attempt, result)
+          if (retryDecision.action === "skip") {
+            if (nodeTimer) clearTimeout(nodeTimer)
+            return { ...result, status: "skipped", retryCount: attempt - 1 }
+          }
+          if (retryDecision.action === "abort") {
+            if (nodeTimer) clearTimeout(nodeTimer)
+            return { ...result, status: "failed", retryCount: attempt - 1 }
+          }
+          if (retryDecision.action === "override" && retryDecision.overrideResult) {
+            if (nodeTimer) clearTimeout(nodeTimer)
+            return retryDecision.overrideResult
+          }
+          if (retryDecision.harnessHint) {
+            pool.set("harness_hint", retryDecision.harnessHint)
+          }
+          if (retryDecision.modelOverride && node.type === "agent") {
+            node.model = retryDecision.modelOverride
+          }
         }
         let delayMs = calculateBackoff(policy.backoff, attempt) * 1000
         if (policy.max_total_duration > 0) {
@@ -1140,6 +1210,22 @@ export class WorkflowEngine {
           this.logger?.log("hook", "error", { event: "on_node_failure", error: msg })
         }
         const strategy = this.pipelineConfig?.execution.failure_strategy ?? "fail_fast"
+        // ★ Harness: onFailureDecision hook — allows harness to continue/abort/delegate
+        if (this.callbacks?.onFailureDecision) {
+          const failureDecision = await this.callbacks.onFailureDecision(
+            node.id, nodeResult.logLines?.join("\n") ?? "Unknown error", strategy
+          )
+          if (failureDecision.action === "continue") {
+            this.hasPartialFailure = true
+            this.callbacks?.onError?.(node.id, nodeResult.logLines?.join("\n") ?? "Unknown error")
+            continue
+          }
+          if (failureDecision.action === "delegate") {
+            this.pausedAt = node.id
+            this.callbacks?.onError?.(node.id, nodeResult.logLines?.join("\n") ?? "Unknown error")
+            return { status: "paused" }
+          }
+        }
         if (strategy === "fail_fast") {
           this.pausedAt = node.id
           this.callbacks?.onError?.(node.id, nodeResult.logLines?.join("\n") ?? "Unknown error")

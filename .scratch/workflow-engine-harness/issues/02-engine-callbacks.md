@@ -7,14 +7,14 @@
 01 (需要 shared 类型定义)
 
 ## Status
-ready-for-agent
+done
 
 ## Acceptance Criteria
-- [ ] AC1: `EngineCallbacks` 接口新增 `onBeforeNode`、`onBeforeRetry`、`onFailureDecision` 三个可选字段
-- [ ] AC2: `onBeforeNode` 在 `executeSingleNode()` 的 `executor.execute()` 之前调用，返回 skip/override 时跳过执行
-- [ ] AC3: `onBeforeRetry` 在 `executeSingleNodeWithRetry()` 的 retry delay 之前调用，支持 harnessHint 注入 VarPool + modelOverride 修改节点模型
-- [ ] AC4: `onFailureDecision` 在 `executeNodesSequential()` 的 failure strategy 决策处调用，返回 delegate 时暂停引擎
-- [ ] AC5: 不传新回调时引擎行为完全不变（向后兼容测试）
+- [x] AC1: `EngineCallbacks` 接口新增 `onBeforeNode`、`onBeforeRetry`、`onFailureDecision` 三个可选字段
+- [x] AC2: `onBeforeNode` 在 `executeSingleNode()` 的 `executor.execute()` 之前调用，返回 skip/override 时跳过执行
+- [x] AC3: `onBeforeRetry` 在 `executeSingleNodeWithRetry()` 的 retry delay 之前调用，支持 harnessHint 注入 VarPool + modelOverride 修改节点模型
+- [x] AC4: `onFailureDecision` 在 `executeNodesSequential()` 的 failure strategy 决策处调用，返回 delegate 时暂停引擎
+- [x] AC5: 不传新回调时引擎行为完全不变（向后兼容测试）
 
 ## Verification Method
 **Verification type**: unit test + integration test

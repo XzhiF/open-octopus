@@ -17,6 +17,7 @@ import {
 import { ArchiveDraftDAO } from "./db/dao/archive-draft-dao"
 import { InteractionMessageDAO } from "./db/dao/interaction-message-dao"
 import { AgentVersionDAO } from "./db/dao/agent-version-dao"
+import { HarnessDAO } from "./db/dao/harness-dao"
 import { createKnowledgeRoutes } from "./routes/knowledge"
 import { createReviewRoutes } from "./routes/review"
 import { createArchiveRoutes } from "./routes/archive"
@@ -28,6 +29,7 @@ import { PrivacyFilter } from "./services/privacy-filter"
 import { createWorkspaceRoutes } from "./routes/workspace"
 import { createWorkflowRoutes } from "./routes/workflow"
 import executionRoutes, { setExecutionDependencies } from "./routes/execution"
+import harnessRoutes, { setHarnessDependencies } from "./routes/harness"
 import { createDashboardRoutes } from "./routes/dashboard"
 import { chatRoutes } from "./routes/chat"
 import { globalChatRoutes } from "./routes/global-chat"
@@ -111,6 +113,7 @@ interface AllDAOs {
   archiveDraft: ArchiveDraftDAO
   interactionMessage: InteractionMessageDAO
   agentVersion: AgentVersionDAO
+  harness: HarnessDAO
 }
 
 function createAllDAOs(db: ReturnType<typeof initDb>): AllDAOs {
@@ -132,6 +135,7 @@ function createAllDAOs(db: ReturnType<typeof initDb>): AllDAOs {
     archiveDraft: new ArchiveDraftDAO(db),
     interactionMessage: new InteractionMessageDAO(db),
     agentVersion: new AgentVersionDAO(db),
+    harness: new HarnessDAO(db),
   }
 }
 
@@ -182,6 +186,7 @@ if (!process.env.VITEST && daos) {
 
   observability = new ObservabilityService(daos.execution, daos.tokenUsage, new PrivacyFilter())
   setExecutionDependencies(sse, observability, daos.execution)
+  setHarnessDependencies(daos.harness)
   initExecutionServiceRegistry(daos.execution as any, sse, observability, {
     executionDAO: daos.execution,
     workspaceDAO: daos.workspace,
@@ -346,6 +351,7 @@ const d = daos ?? {
   archiveDraft: lazyDAO(ArchiveDraftDAO),
   interactionMessage: lazyDAO(InteractionMessageDAO),
   agentVersion: lazyDAO(AgentVersionDAO),
+  harness: lazyDAO(HarnessDAO),
 }
 
 const wsSvc = workspaceService ?? new WorkspaceService(d.workspace)
@@ -376,6 +382,7 @@ if (!daos) {
     setAgentAuthOrgDAO(d.org)
     setYjsWorkspaceDAO(d.workspace)
     try { initArchiveService(d.archive, d.execution, getDb(), getDomainEventBus()) } catch { /* db not ready yet */ }
+    try { setHarnessDependencies(d.harness) } catch { /* db not ready yet */ }
   } catch { /* ignore */ }
 }
 
@@ -384,6 +391,7 @@ app.route("/api/workspaces", createWorkspaceRoutes(wsSvc, d.org, d.workspace))
 app.route("/api/workspaces/:id/workflows", createWorkflowOpsRoutes(d.workspace))
 app.route("/api/workspaces/:id/workflows", createWorkflowRoutes(d.workspace, () => resourceRegistry.get()))
 app.route("/api/workspaces/:id/executions", executionRoutes)
+app.route("/api/workspaces/:id/harness", harnessRoutes)
 app.route("/api/workspaces/:id/analytics", createAnalyticsLogRoutes(d.workspace, getLogAnalysisService({ tokenDao: d.tokenUsage, execDao: d.execution }) ?? new (require('./services/log-analysis').LogAnalysisService)(d.tokenUsage, d.execution)))
 app.route("/api/dashboard", createDashboardRoutes(wsSvc, lbSvc, d.execution, d.tokenUsage, d.archive))
 app.route("/api/workspaces/:id/chat", chatRoutes(sse, chatSvc, wsSvc))

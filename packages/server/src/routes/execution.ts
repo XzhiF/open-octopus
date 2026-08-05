@@ -11,7 +11,7 @@ import { ExecutionDAO } from "../db/dao"
 import { initExecutionServiceRegistry, getService } from "../services/execution-service-registry"
 export { getService } from "../services/execution-service-registry"
 import { mergeAgentEvents } from "@octopus/engine"
-import repairRoutes, { setRepairDependencies } from "./repair"
+import repairRoutes, { setRepairDependencies, createRepairServiceForWorkspace } from "./repair"
 import os from "os"
 
 /** Extract the latest heartbeat data from a list of merged events (searches backwards). */
@@ -403,7 +403,16 @@ executionRoutes.post("/:executionId/harness-intervene", async (c) => {
   const svc = getService(workspaceId)
   if (!svc) return c.json({ error: "workspace not found" }, 404)
 
-  let body: { nodeId: string; directive: { type: "abort" | "pause"; reason: string; issued_by: string } }
+  let body: {
+    nodeId: string
+    directive: {
+      type: "abort" | "pause" | "inject"
+      reason: string
+      issued_by: string
+      nodeId?: string
+      message?: string
+    }
+  }
   try {
     body = await c.req.json()
   } catch {
@@ -413,12 +422,29 @@ executionRoutes.post("/:executionId/harness-intervene", async (c) => {
   if (!body.nodeId || !body.directive?.type) {
     return c.json({ error: "nodeId and directive.type are required" }, 400)
   }
-  if (!["abort", "pause"].includes(body.directive.type)) {
-    return c.json({ error: "directive.type must be 'abort' or 'pause'" }, 400)
+  if (!["abort", "pause", "inject"].includes(body.directive.type)) {
+    return c.json({ error: "directive.type must be 'abort', 'pause', or 'inject'" }, 400)
+  }
+
+  // "inject" delegates to RepairService.intervene()
+  if (body.directive.type === "inject") {
+    if (!body.directive.message) {
+      return c.json({ error: "inject directive requires 'message'" }, 400)
+    }
+    try {
+      const repairService = createRepairServiceForWorkspace(workspaceId)
+      if (!repairService) {
+        return c.json({ error: "repair service not available" }, 503)
+      }
+      const result = await repairService.intervene(executionId, body.nodeId, body.directive.message)
+      return c.json({ success: true, directive_applied: "inject", ...result })
+    } catch (err: unknown) {
+      return handleError(err)
+    }
   }
 
   try {
-    const result = await svc.service.harnessIntervene(executionId, body)
+    const result = await svc.service.harnessIntervene(executionId, body as any)
     if (!result.success) {
       const status = result.error === "Execution not found" ? 404 : 400
       return c.json(result, status)

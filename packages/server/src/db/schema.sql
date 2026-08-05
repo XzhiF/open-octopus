@@ -84,6 +84,8 @@ CREATE TABLE IF NOT EXISTS node_executions (
   last_retry_at TEXT,
   parent_node_id TEXT,
   iteration_index INTEGER,
+  harness_status TEXT,
+  harness_interventions TEXT,
   FOREIGN KEY (execution_id) REFERENCES executions(id)
 );
 
@@ -153,6 +155,7 @@ CREATE TABLE IF NOT EXISTS node_token_usages (
   cost_usd REAL,
   cache_read_tokens INTEGER NOT NULL DEFAULT 0,
   cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
+  source TEXT DEFAULT 'node',
   created_at TEXT NOT NULL,
   FOREIGN KEY (node_execution_id) REFERENCES node_executions(id)
 );
@@ -683,6 +686,39 @@ WHEN OLD.is_summary = 1
 BEGIN
   DELETE FROM session_memory_fts WHERE rowid = OLD.rowid;
 END;
+
+-- =============================================================================
+-- Harness Tables (schema version 34)
+-- =============================================================================
+
+-- 31. Harness Events — records every detector diagnosis, strategy intervention,
+--     agent delegation, and blocked event during workflow execution.
+CREATE TABLE IF NOT EXISTS harness_events (
+  id TEXT PRIMARY KEY,
+  execution_id TEXT NOT NULL,
+  node_id TEXT,
+  timestamp INTEGER NOT NULL,
+  event_type TEXT NOT NULL,
+  detector TEXT,
+  severity TEXT,
+  report_json TEXT,
+  action_json TEXT,
+  result_json TEXT,
+  token_usage_json TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_harness_events_exec ON harness_events(execution_id);
+CREATE INDEX IF NOT EXISTS idx_harness_events_time ON harness_events(timestamp);
+
+-- 32. Harness Config — per-workspace harness.yaml overrides.
+--     Singleton row (id='default'); version bumped on each save.
+CREATE TABLE IF NOT EXISTS harness_config (
+  id TEXT PRIMARY KEY DEFAULT 'default',
+  config_yaml TEXT NOT NULL,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  version INTEGER NOT NULL DEFAULT 1
+);
 
 -- =============================================================================
 -- Seed Data

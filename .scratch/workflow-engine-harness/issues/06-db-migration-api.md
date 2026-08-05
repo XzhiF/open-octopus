@@ -7,16 +7,16 @@
 01 (shared types for config schema)
 
 ## Status
-ready-for-agent
+done
 
 ## Acceptance Criteria
-- [ ] AC1: `schema.sql` 新增 `harness_events` 和 `harness_config` 表
-- [ ] AC2: `schema.ts` 中 `ensureColumn` 为 `node_executions` 新增 `harness_status` + `harness_interventions` 列
-- [ ] AC3: `ensureColumn` 为 `node_token_usages` 新增 `source` 列 (DEFAULT 'node')
-- [ ] AC4: `GET /harness/config` 返回 YAML 配置内容
-- [ ] AC5: `PUT /harness/config` 验证 YAML + 保存 + 版本控制
-- [ ] AC6: `GET /harness/events/:execId` 返回 harness_events 列表（支持 type/severity 过滤）
-- [ ] AC7: `harness-intervene` API 扩展支持 `type: "inject"`，内部委托 RepairService.intervene()
+- [x] AC1: `schema.sql` 新增 `harness_events` 和 `harness_config` 表
+- [x] AC2: `schema.ts` 中 `ensureColumn` 为 `node_executions` 新增 `harness_status` + `harness_interventions` 列
+- [x] AC3: `ensureColumn` 为 `node_token_usages` 新增 `source` 列 (DEFAULT 'node')
+- [x] AC4: `GET /harness/config` 返回 YAML 配置内容
+- [x] AC5: `PUT /harness/config` 验证 YAML + 保存 + 版本控制
+- [x] AC6: `GET /harness/events/:execId` 返回 harness_events 列表（支持 type/severity 过滤）
+- [x] AC7: `harness-intervene` API 扩展支持 `type: "inject"`，内部委托 RepairService.intervene()
 
 ## Verification Method
 **Verification type**: integration test + API test
