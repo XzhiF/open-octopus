@@ -1,13 +1,15 @@
 'use client'
 
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { PanelLeft, PanelRight } from 'lucide-react'
+import { PanelLeft, PanelRight, History } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from '@/components/ui/resizable'
 import { CloneFileTree } from './CloneFileTree'
 import { CloneFileContent } from './CloneFileContent'
 import { ChatArea } from '../chat/ChatArea'
 import { SessionHeader } from './SessionHeader'
+import { CloneVersionsTab } from './CloneVersionsTab'
 import { useAgentChat, type UseAgentChatApiOverride } from '@/hooks/useAgentChat'
 import {
   listCloneFiles,
@@ -28,6 +30,9 @@ interface CloneDetailViewProps {
 }
 
 export function CloneDetailView({ clone, onBack }: CloneDetailViewProps) {
+  // ── Active tab ──
+  const [activeTab, setActiveTab] = useState<'files' | 'versions'>('files')
+
   // ── File tree state ──
   const [files, setFiles] = useState<FileInfo[]>([])
   const [selectedFile, setSelectedFile] = useState<FileInfo | null>(null)
@@ -174,115 +179,126 @@ export function CloneDetailView({ clone, onBack }: CloneDetailViewProps) {
 
   return (
     <div className="h-full flex flex-col">
-      {/* Toolbar */}
-      <div className="flex items-center justify-between px-4 py-2 border-b border-agent-divider bg-agent-surface-raised">
-        <div className="flex items-center gap-2">
-          <Button variant="ghost" size="sm" onClick={onBack}>
-            ← 返回
-          </Button>
-          <span className="text-sm font-medium">{clone.display_name}</span>
-        </div>
-        <div className="flex items-center gap-1">
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => setShowFileTree(!showFileTree)}
-          >
-            <PanelLeft className={`h-4 w-4 ${showFileTree ? '' : 'opacity-50'}`} />
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => setShowChat(!showChat)}
-          >
-            <PanelRight className={`h-4 w-4 ${showChat ? '' : 'opacity-50'}`} />
-          </Button>
-        </div>
-      </div>
-
-      {/* Resizable three-column layout */}
-      <ResizablePanelGroup direction="horizontal" className="flex-1">
-        {/* File Tree */}
-        {showFileTree && (
-          <>
-            <ResizablePanel
-              defaultSize={20}
-              minSize={10}
-              maxSize={40}
-              collapsible
-              collapsedSize={0}
-              className="overflow-hidden"
-            >
-              <div className="h-full overflow-hidden flex flex-col">
-                <CloneFileTree
-                  files={files}
-                  selectedFile={selectedFile}
-                  onSelectFile={setSelectedFile}
-                  onCreateFile={handleCreateFile}
-                  onCreateDirectory={handleCreateDirectory}
-                  onDeleteFile={handleDeleteFile}
-                />
-              </div>
-            </ResizablePanel>
-            <ResizableHandle className="border-agent-divider" />
-          </>
-        )}
-
-        {/* File Content */}
-        <ResizablePanel defaultSize={showChat ? 45 : 80} minSize={20} className="overflow-hidden">
-          <div className="h-full overflow-hidden">
-            <CloneFileContent
-              cloneName={clone.name}
-              file={selectedFile}
-              onSaved={loadFiles}
-            />
+      <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as 'files' | 'versions')} className="flex-1 flex flex-col overflow-hidden">
+        {/* Toolbar */}
+        <div className="flex items-center justify-between px-4 py-2 border-b border-agent-divider bg-agent-surface-raised">
+          <div className="flex items-center gap-2">
+            <Button variant="ghost" size="sm" onClick={onBack}>
+              ← 返回
+            </Button>
+            <span className="text-sm font-medium">{clone.display_name}</span>
           </div>
-        </ResizablePanel>
+          <div className="flex items-center gap-2">
+            {activeTab === 'files' && (
+              <div className="flex items-center gap-1">
+                <Button variant="ghost" size="sm" onClick={() => setShowFileTree(!showFileTree)}>
+                  <PanelLeft className={`h-4 w-4 ${showFileTree ? '' : 'opacity-50'}`} />
+                </Button>
+                <Button variant="ghost" size="sm" onClick={() => setShowChat(!showChat)}>
+                  <PanelRight className={`h-4 w-4 ${showChat ? '' : 'opacity-50'}`} />
+                </Button>
+              </div>
+            )}
+            <TabsList className="h-8">
+              <TabsTrigger value="files" className="text-xs px-3 h-6">文件 / 对话</TabsTrigger>
+              <TabsTrigger value="versions" className="text-xs px-3 h-6 gap-1">
+                <History className="h-3 w-3" />
+                版本
+              </TabsTrigger>
+            </TabsList>
+          </div>
+        </div>
 
-        {/* Chat Panel: Session List + ChatArea */}
-        {showChat && (
-          <>
-            <ResizableHandle className="border-agent-divider" />
-            <ResizablePanel
-              defaultSize={35}
-              minSize={20}
-              maxSize={60}
-              collapsible
-              collapsedSize={0}
-              className="overflow-hidden"
-            >
-              <div className="h-full overflow-hidden flex flex-col">
-                <SessionHeader
-                  sessions={sessions}
-                  activeSessionId={activeSessionId}
-                  onNewSession={handleCreateSession}
-                  onSelectSession={handleSelectSession}
-                  onRenameSession={handleRenameSession}
-                  onDeleteSession={handleDeleteSession}
+        <TabsContent value="files" className="flex-1 overflow-hidden mt-0">
+          {/* Resizable three-column layout */}
+          <ResizablePanelGroup direction="horizontal" className="flex-1">
+            {/* File Tree */}
+            {showFileTree && (
+              <>
+                <ResizablePanel
+                  defaultSize={20}
+                  minSize={10}
+                  maxSize={40}
+                  collapsible
+                  collapsedSize={0}
+                  className="overflow-hidden"
+                >
+                  <div className="h-full overflow-hidden flex flex-col">
+                    <CloneFileTree
+                      files={files}
+                      selectedFile={selectedFile}
+                      onSelectFile={setSelectedFile}
+                      onCreateFile={handleCreateFile}
+                      onCreateDirectory={handleCreateDirectory}
+                      onDeleteFile={handleDeleteFile}
+                    />
+                  </div>
+                </ResizablePanel>
+                <ResizableHandle className="border-agent-divider" />
+              </>
+            )}
+
+            {/* File Content */}
+            <ResizablePanel defaultSize={showChat ? 45 : 80} minSize={20} className="overflow-hidden">
+              <div className="h-full overflow-hidden">
+                <CloneFileContent
+                  cloneName={clone.name}
+                  file={selectedFile}
+                  onSaved={loadFiles}
                 />
-                <div className="flex-1 flex flex-col overflow-hidden min-w-0">
-                  <ChatArea
-                    messages={messages}
-                    streaming={streaming}
-                    streamContent={streamContent}
-                    streamThinking={streamThinking}
-                    isThinking={isThinking}
-                    toolCalls={toolCalls}
-                    pendingConfirm={pendingConfirm}
-                    error={chatError}
-                    statusMessage={statusMessage}
-                    onSend={sendMessage}
-                    onStop={stopGenerate}
-                    onConfirm={handleConfirm}
-                    hasSession={!!activeSessionId}
-                    currentCloneName={clone.name}
-                  />
-                </div>
               </div>
             </ResizablePanel>
-          </>
-        )}
-      </ResizablePanelGroup>
+
+            {/* Chat Panel: Session List + ChatArea */}
+            {showChat && (
+              <>
+                <ResizableHandle className="border-agent-divider" />
+                <ResizablePanel
+                  defaultSize={35}
+                  minSize={20}
+                  maxSize={60}
+                  collapsible
+                  collapsedSize={0}
+                  className="overflow-hidden"
+                >
+                  <div className="h-full overflow-hidden flex flex-col">
+                    <SessionHeader
+                      sessions={sessions}
+                      activeSessionId={activeSessionId}
+                      onNewSession={handleCreateSession}
+                      onSelectSession={handleSelectSession}
+                      onRenameSession={handleRenameSession}
+                      onDeleteSession={handleDeleteSession}
+                    />
+                    <div className="flex-1 flex flex-col overflow-hidden min-w-0">
+                      <ChatArea
+                        messages={messages}
+                        streaming={streaming}
+                        streamContent={streamContent}
+                        streamThinking={streamThinking}
+                        isThinking={isThinking}
+                        toolCalls={toolCalls}
+                        pendingConfirm={pendingConfirm}
+                        error={chatError}
+                        statusMessage={statusMessage}
+                        onSend={sendMessage}
+                        onStop={stopGenerate}
+                        onConfirm={handleConfirm}
+                        hasSession={!!activeSessionId}
+                        currentCloneName={clone.name}
+                      />
+                    </div>
+                  </div>
+                </ResizablePanel>
+              </>
+            )}
+          </ResizablePanelGroup>
+        </TabsContent>
+
+        <TabsContent value="versions" className="flex-1 overflow-hidden mt-0">
+          <CloneVersionsTab agentName={clone.name} />
+        </TabsContent>
+      </Tabs>
     </div>
   )
 }

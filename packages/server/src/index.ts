@@ -16,6 +16,7 @@ import {
 } from "./db/dao"
 import { ArchiveDraftDAO } from "./db/dao/archive-draft-dao"
 import { InteractionMessageDAO } from "./db/dao/interaction-message-dao"
+import { AgentVersionDAO } from "./db/dao/agent-version-dao"
 import { createKnowledgeRoutes } from "./routes/knowledge"
 import { createReviewRoutes } from "./routes/review"
 import { createArchiveRoutes } from "./routes/archive"
@@ -42,6 +43,7 @@ import { createSchedulerRoutes } from "./routes/scheduler"
 import { createAgentRoutes } from "./routes/agent"
 import { createCloneSessionRoutes } from "./routes/clone"
 import { createCloneFilesRoutes } from "./routes/agent/clone-files"
+import { createVersionRoutes, createMainAgentVersionRoutes } from "./routes/agent/version-routes"
 import cronRoutes from "./routes/cron"
 import { createInteractionRoutes } from "./routes/interaction"
 import { createWorkflowOpsRoutes } from "./routes/workflow-ops"
@@ -73,6 +75,7 @@ import { initEvolutionService } from "./services/agent/evolution-service"
 import { initRecoveryService } from "./services/agent/recovery-service"
 import { initSessionCompressService } from "./services/agent/session-compress-service"
 import { initAgentService, getAgentService } from "./services/agent/agent-service"
+import { initAgentVersionService } from "./services/agent/agent-version-service"
 import { getFlag } from "./config/feature-flags"
 import { ActuatorService } from "./services/actuator/actuator-service"
 import { SecretMasker } from "./services/actuator/secret-masker"
@@ -107,6 +110,7 @@ interface AllDAOs {
   archive: ArchiveDAO
   archiveDraft: ArchiveDraftDAO
   interactionMessage: InteractionMessageDAO
+  agentVersion: AgentVersionDAO
 }
 
 function createAllDAOs(db: ReturnType<typeof initDb>): AllDAOs {
@@ -127,6 +131,7 @@ function createAllDAOs(db: ReturnType<typeof initDb>): AllDAOs {
     archive: new ArchiveDAO(db),
     archiveDraft: new ArchiveDraftDAO(db),
     interactionMessage: new InteractionMessageDAO(db),
+    agentVersion: new AgentVersionDAO(db),
   }
 }
 
@@ -193,6 +198,9 @@ if (!process.env.VITEST && daos) {
   initRecoveryService(daos.agentSession, daos.execution)
   initSessionCompressService(daos.agentSession)
   initAgentService(daos.agentSession, daos.safety)
+
+  // Initialize agent version service
+  initAgentVersionService(daos.agentVersion)
 
   // Auto-init built-in clones (filesystem + DB registration)
   try {
@@ -337,6 +345,7 @@ const d = daos ?? {
   archive: lazyDAO(ArchiveDAO),
   archiveDraft: lazyDAO(ArchiveDraftDAO),
   interactionMessage: lazyDAO(InteractionMessageDAO),
+  agentVersion: lazyDAO(AgentVersionDAO),
 }
 
 const wsSvc = workspaceService ?? new WorkspaceService(d.workspace)
@@ -363,6 +372,7 @@ if (!daos) {
     initRecoveryService(d.agentSession, d.execution)
     initSessionCompressService(d.agentSession)
     initAgentService(d.agentSession, d.safety)
+    try { initAgentVersionService(d.agentVersion) } catch { /* ignore */ }
     setAgentAuthOrgDAO(d.org)
     setYjsWorkspaceDAO(d.workspace)
     try { initArchiveService(d.archive, d.execution, getDb(), getDomainEventBus()) } catch { /* db not ready yet */ }
@@ -405,6 +415,10 @@ app.route("/api/clones", createCloneSessionRoutes({
 
 // Clone file tree and operations API
 app.route("/api", createCloneFilesRoutes())
+
+// Agent version management API
+app.route("/api/clones", createVersionRoutes())
+app.route("/api/agents/main", createMainAgentVersionRoutes())
 
 app.route("/api/workflows/built-in", createBuiltInWorkflowRoutes(() => resourceRegistry.get()))
 

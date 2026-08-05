@@ -18,6 +18,15 @@ export type {
   GateStatus as SharedGateStatus,
   NodeType as SharedNodeType,
   TokenUsage as SharedTokenUsage,
+  // Octopus agent types for heartbeat/directive data flow
+  AgentHeartbeat,
+  HarnessDirective,
+  HarnessDirectiveType,
+} from "@octopus/shared"
+
+import type {
+  AgentHeartbeat,
+  HarnessDirective,
 } from "@octopus/shared"
 
 // ============ Workspace ============
@@ -100,6 +109,7 @@ export interface StatusOverlay {
   error?: string
   tokenUsage?: TokenUsage
   tokenUsages?: TokenUsage[]
+  heartbeat?: AgentHeartbeat
 }
 
 export interface StepExecution {
@@ -110,12 +120,23 @@ export interface StepExecution {
   completedAt?: string
   duration?: number // in seconds
   output?: string
+  outputs?: Record<string, unknown>
   error?: string
   model?: string
   tokensInput?: number
   tokensOutput?: number
   tokenUsages?: TokenUsage[]
+  nodeType?: string
+  parentNodeId?: string
+  iterationIndex?: number
+  // octopus_agent node fields
+  agentName?: string
+  agentVersion?: string
+  taskBrief?: string
 }
+
+/** Event types emitted by the Octopus agent harness. */
+export const OCTOPUS_EVENT_TYPES = ["heartbeat", "harness_directive", "heartbeat_stall"] as const
 
 // ============ Approval Metadata ============
 export interface ApprovalOption {
@@ -727,6 +748,10 @@ export interface AgentEvent {
   input?: unknown
   result?: string
   isError?: boolean
+  // Typed payloads for octopus_agent event variants
+  heartbeatPayload?: AgentHeartbeat
+  directivePayload?: HarnessDirective
+  stallPayload?: HeartbeatStallPayload
   // Legacy compat
   type?: string
   line?: string
@@ -747,6 +772,12 @@ export interface AgentEvent {
   }
 }
 
+/** Payload for heartbeat_stall events — emitted when no heartbeat is received within timeout */
+export interface HeartbeatStallPayload {
+  timeout_seconds: number
+  last_heartbeat_at?: string
+}
+
 export interface AgentEventsResponse {
   executionId: string
   events: AgentEvent[]
@@ -754,6 +785,7 @@ export interface AgentEventsResponse {
   _degraded: boolean
   _message: string | null
   loopIterations?: Record<string, LoopIterationSummary>
+  heartbeat?: AgentHeartbeat
 }
 
 export interface LoopIterationSummary {

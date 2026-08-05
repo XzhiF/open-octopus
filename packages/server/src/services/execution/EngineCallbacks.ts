@@ -12,6 +12,8 @@ import type { PipelineConfig } from "@octopus/shared"
 import type { EnginePool } from "./EnginePool"
 import type { ObservabilityService } from "../observability"
 import { getFlag } from "../../config/feature-flags"
+import { appendFileSync, mkdirSync, existsSync } from "fs"
+import { join } from "path"
 
 export interface EngineCallbacksDeps {
   ctx: ServiceContext
@@ -227,6 +229,56 @@ export class EngineCallbacks implements IEngineCallbacks {
 
       onAgentEvent: (nodeId, event) => {
         sse.emit(wsId, { event: "agent_event", data: { executionId: id, nodeId, event } })
+
+        // ── Heartbeat Observation: emit dedicated SSE events ────────────────
+        if (event.type === "heartbeat") {
+          sse.emit(wsId, {
+            event: "agent_heartbeat",
+            data: {
+              executionId: id,
+              nodeId,
+              agent_name: (event.data as any).agent_name,
+              version: (event.data as any).version,
+              heartbeat: event.data,
+            },
+          })
+          // Persist heartbeat to JSONL alongside agent events
+          try {
+            const logDir = join(this.ctx.workspacePath, "logs", id)
+            if (!existsSync(logDir)) mkdirSync(logDir, { recursive: true })
+            const line = JSON.stringify({
+              timestamp: new Date().toISOString(),
+              node_id: nodeId,
+              step: (event.data as any).step,
+              tokens_used: (event.data as any).tokens_used,
+              tokens_budget: (event.data as any).tokens_budget,
+              artifacts: (event.data as any).artifacts ?? [],
+              issues: (event.data as any).issues ?? [],
+              confidence: (event.data as any).confidence ?? -1,
+              current_activity: (event.data as any).current_activity,
+            })
+            appendFileSync(join(logDir, "heartbeats.jsonl"), line + "\n")
+          } catch { /* best-effort JSONL persistence */ }
+        }
+
+        if (event.type === "heartbeat_stall") {
+          sse.emit(wsId, {
+            event: "heartbeat_stall",
+            data: { executionId: id, nodeId },
+          })
+        }
+
+        if (event.type === "harness_directive") {
+          sse.emit(wsId, {
+            event: "harness_directive",
+            data: {
+              executionId: id,
+              nodeId,
+              directive: event.data,
+            },
+          })
+        }
+
         if (getFlag("agent_events_persist")) {
           try {
             const neId = `${id}-${nodeId}`

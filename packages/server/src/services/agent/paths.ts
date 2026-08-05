@@ -97,6 +97,31 @@ export function getBuiltInCloneMemoryDir(name: string): string {
   return path.join(getBuiltInCloneDir(name), 'memory')
 }
 
+/** Agent versions base directory: ~/.octopus/agent/versions */
+export function getVersionsBaseDir(): string {
+  return path.join(getAgentDir(), 'versions')
+}
+
+/** Specific agent version directory: ~/.octopus/agent/versions/{name}/{version} */
+export function getVersionDir(agentName: string, version: string): string {
+  return path.join(getVersionsBaseDir(), agentName, version)
+}
+
+/** Version persona file: ~/.octopus/agent/versions/{name}/{version}/persona.md */
+export function getVersionPersonaPath(agentName: string, version: string): string {
+  return path.join(getVersionDir(agentName, version), 'persona.md')
+}
+
+/** Version config file: ~/.octopus/agent/versions/{name}/{version}/config.json */
+export function getVersionConfigPath(agentName: string, version: string): string {
+  return path.join(getVersionDir(agentName, version), 'config.json')
+}
+
+/** Version skills directory: ~/.octopus/agent/versions/{name}/{version}/skills */
+export function getVersionSkillsDir(agentName: string, version: string): string {
+  return path.join(getVersionDir(agentName, version), 'skills')
+}
+
 /** Clone-specific skills directory.
  *  built-in: ~/.octopus/agent/built-in/{name}/skills
  *  user:     ~/.octopus/agent/clones/{name}/skills

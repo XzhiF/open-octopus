@@ -18,9 +18,11 @@ const AGENT_EVENT_COLORS: Record<string, { text: string; bg: string }> = {
 
 function getTurnDuration(turn: TurnGroup): number {
   if (turn.events.length === 0) return 0
-  const first = turn.events[0].timestamp
-  const last = turn.events[turn.events.length - 1].timestamp
-  return last - first
+  const firstRaw = turn.events[0].timestamp
+  const lastRaw = turn.events[turn.events.length - 1].timestamp
+  const first = typeof firstRaw === "string" ? new Date(firstRaw).getTime() : (firstRaw ?? 0)
+  const last = typeof lastRaw === "string" ? new Date(lastRaw).getTime() : (lastRaw ?? 0)
+  return (last > 0 && first > 0) ? last - first : 0
 }
 
 function getTurnSummary(turn: TurnGroup): string {

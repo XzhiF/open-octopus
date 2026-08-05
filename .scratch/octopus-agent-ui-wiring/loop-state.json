@@ -1,0 +1,40 @@
+{
+  "root_feature": "octopus-agent-ui-wiring",
+  "branch": "feat/agent-workflow-integration",
+  "iterations": [
+    {
+      "round": 1,
+      "score": 63.86,
+      "adjusted_score": 63.86,
+      "decision": "NO-GO",
+      "carryover_in": [],
+      "carryover_out": ["AC-1", "AC-2"],
+      "pipeline_complete": true,
+      "e2e_executed": true
+    },
+    {
+      "round": 2,
+      "score": 71.9,
+      "adjusted_score": 71.9,
+      "decision": "REVIEW",
+      "carryover_in": ["AC-1", "AC-2"],
+      "carryover_out": ["AC-1", "AC-2"],
+      "pipeline_complete": true,
+      "e2e_executed": true
+    },
+    {
+      "round": 3,
+      "score": 77.1,
+      "adjusted_score": 77.1,
+      "decision": "REVIEW",
+      "carryover_in": ["AC-1", "AC-2"],
+      "carryover_out": [],
+      "pipeline_complete": true,
+      "e2e_executed": true
+    }
+  ],
+  "max_iterations": 5,
+  "convergence_threshold": 85,
+  "status": "review",
+  "exit_reason": "BLOCKED — score structurally capped at ~82 by change risk factor (133 files)"
+}

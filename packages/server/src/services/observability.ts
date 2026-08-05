@@ -130,7 +130,7 @@ export class ObservabilityService {
     buf.turnIndex = computeTurnIndex(event.type, buf.turnIndex)
 
     const filtered = this.filterEvent(event, buf.turnIndex)
-    buf.events.push(filtered)
+    if (filtered) buf.events.push(filtered)
 
     if (buf.events.length >= 50) {
       this.flushNode(nodeExecId)
@@ -243,7 +243,17 @@ export class ObservabilityService {
     }
   }
 
-  private filterEvent(event: AgentEvent, turnIndex: number): FilteredAgentEvent {
+  private filterEvent(event: AgentEvent, turnIndex: number): FilteredAgentEvent | null {
+    // Heartbeat and harness events don't carry timestamps — use current time
+    if (event.type === "heartbeat" || event.type === "harness_directive" || event.type === "heartbeat_stall") {
+      return {
+        type: event.type,
+        timestamp: Date.now(),
+        content: JSON.stringify(event.data),
+        turnIndex,
+      }
+    }
+
     const base: FilteredAgentEvent = {
       type: event.type,
       timestamp: event.timestamp,

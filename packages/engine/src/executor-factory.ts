@@ -3,7 +3,7 @@
 // Factory for creating type-specific executors from node definitions.
 // Extracted from WorkflowEngine.createExecutor() to reduce engine.ts size.
 //
-import type { NodeDef, WorkflowHooks } from "@octopus/shared"
+import type { NodeDef, WorkflowHooks, VersionResolver } from "@octopus/shared"
 import { VarPool, resolveModelAlias } from "@octopus/shared"
 import type { NodeExecutionResult } from "./executors/types"
 import type { AgentEvent } from "./executors/agent-types"
@@ -18,12 +18,14 @@ import { AgentExecutor } from "./executors/agent"
 import { SwarmExecutor } from "./executors/swarm"
 import { SubWorkflowExecutor } from "./executors/sub-workflow"
 import { DynamicSubWorkflowExecutor } from "./executors/dynamic-sub-workflow"
+import { OctopusAgentExecutor } from "./executors/octopus-agent"
 import { AgentNodeRunner } from "./executors/agent-runner"
 import type { EngineCallbacks, RuntimeNodeMeta } from "./engine"
 import type { JsonlLogger } from "./logger"
 import type { CrossExecResolver } from "@octopus/shared"
 import type { ICheckpointStore } from "./pipeline/checkpoint-types"
 import type { PromptInjector } from "./prompt-injector"
+import type { CreateSessionFn } from "./executors/octopus-agent/session"
 import { join } from "path"
 
 export interface ExecutorFactoryContext {
@@ -56,6 +58,9 @@ export interface ExecutorFactoryContext {
   // Sub-workflow support
   workflowResolver?: (name: string) => { parsed: import("@octopus/shared").WorkflowDef; content: string } | undefined
   visitedWorkflows?: Set<string>
+  // Octopus agent support
+  versionResolver?: VersionResolver
+  createSessionFn?: import("./executors/octopus-agent/session").CreateSessionFn
 }
 
 export class ExecutorFactory {
@@ -243,6 +248,50 @@ export class ExecutorFactory {
           outputDir: join(this.ctx.cwd, "workflows"),
           workflow: this.ctx.workflow,
         })
+      case "octopus_agent": {
+        const rawKey = node.engine ?? this.ctx.workflow.engine ?? "claude"
+        const providerKey = rawKey === "claude-code" ? "claude" : rawKey
+        const provider = this.ctx.providers[providerKey]
+        if (!provider) throw new Error(`Unknown provider: ${rawKey}`)
+
+        const rawModel = node.model ?? this.ctx.workflowDefaultModel
+        let resolvedModel = rawModel
+        if (rawModel) {
+          const resolved = resolveModelAlias(rawModel, providerKey, this.ctx.modelAliasConfig)
+          if (resolved) resolvedModel = resolved
+        }
+
+        const runner = new AgentNodeRunner(provider, this.ctx.cwd, (event: AgentEvent) => {
+          this.ctx.logger?.log(node.id, "agent_event", { event_data: event })
+          this.ctx.callbacks?.onAgentEvent?.(node.id, event)
+        })
+
+        const knowledgeInjector = this.ctx.knowledgeInjectorFactory
+          ? this.ctx.knowledgeInjectorFactory(p)
+          : undefined
+
+        if (!this.ctx.versionResolver) {
+          throw new Error("OctopusAgentExecutor requires versionResolver in ExecutorFactoryContext")
+        }
+
+        return new OctopusAgentExecutor(node, p, {
+          runner,
+          versionResolver: this.ctx.versionResolver,
+          createSessionFn: this.ctx.createSessionFn,
+          engineContext: { nodeResults: this.ctx.nodeResults },
+          loopContext: undefined,
+          providerKey,
+          signal: s,
+          globalAutoAnswers: this.ctx.workflow.auto_answers,
+          promptInjector: this.ctx.promptInjector,
+          knowledgeInjector,
+          workflowName: this.ctx.workflow.name,
+          crossExecResolver: this.ctx.crossExecResolver,
+          executionId: this.ctx.executionId,
+          resolvedModel,
+          modelAliasConfig: this.ctx.modelAliasConfig,
+        })
+      }
       default:
         throw new Error(`Unknown node type: ${(node as any).type}`)
     }

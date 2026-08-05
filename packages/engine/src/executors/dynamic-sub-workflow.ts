@@ -26,15 +26,33 @@ interface MetaFile {
   node_count: number
 }
 
+interface GeneratedAgentNode {
+  id: string
+  type: "agent"
+  prompt: string
+  skills?: string[]
+  depends_on?: string[]
+  model?: string
+}
+
+interface GeneratedOctopusAgentNode {
+  id: string
+  type: "octopus_agent"
+  agent: string
+  version?: string
+  task: {
+    brief: string
+    context?: string[]
+    constraints?: string[]
+  }
+  depends_on?: string[]
+  model?: string
+}
+
+type GeneratedDAGNode = GeneratedAgentNode | GeneratedOctopusAgentNode
+
 interface GeneratedDAG {
-  nodes: Array<{
-    id: string
-    type: "agent"
-    prompt: string
-    skills?: string[]
-    depends_on?: string[]
-    model?: string
-  }>
+  nodes: GeneratedDAGNode[]
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -66,7 +84,7 @@ function extractJsonFromText(text: string): unknown {
 }
 
 /** Build the DAG generation prompt for the agent. */
-function buildGenerationPrompt(
+export function buildGenerationPrompt(
   userPrompt: string,
   inputSnapshot: Record<string, unknown>,
   correctionErrors?: string[],
@@ -75,24 +93,50 @@ function buildGenerationPrompt(
 
   parts.push("You are a DAG planner for a workflow engine. Generate a JSON object describing a directed acyclic graph of agent nodes.")
   parts.push("")
+  parts.push("## Node Types")
+  parts.push("You may use two types of nodes:")
+  parts.push("")
+  parts.push("### 1. `agent` — raw LLM agent (use for general-purpose tasks)")
+  parts.push('```json')
+  parts.push('{')
+  parts.push('  "id": "unique-node-id",')
+  parts.push('  "type": "agent",')
+  parts.push('  "prompt": "What this agent should do",')
+  parts.push('  "skills": ["optional-skill-name"],')
+  parts.push('  "depends_on": ["other-node-id"]')
+  parts.push('}')
+  parts.push('```')
+  parts.push("")
+  parts.push("### 2. `octopus_agent` — versioned Octopus agent (use for tasks that need a specific agent's expertise)")
+  parts.push('```json')
+  parts.push('{')
+  parts.push('  "id": "impl-agent",')
+  parts.push('  "type": "octopus_agent",')
+  parts.push('  "agent": "workspace",')
+  parts.push('  "version": "latest",')
+  parts.push('  "task": {')
+  parts.push('    "brief": "Implement the login endpoint per spec",')
+  parts.push('    "context": ["Use the API spec from input data"],')
+  parts.push('    "constraints": ["Use Express.js"]')
+  parts.push('  },')
+  parts.push('  "depends_on": ["design-node"]')
+  parts.push('}')
+  parts.push('```')
+  parts.push("")
   parts.push("## Output Format (STRICT JSON)")
   parts.push('```json')
   parts.push('{')
   parts.push('  "nodes": [')
-  parts.push('    {')
-  parts.push('      "id": "unique-node-id",')
-  parts.push('      "type": "agent",')
-  parts.push('      "prompt": "What this agent should do",')
-  parts.push('      "skills": ["optional-skill-name"],')
-  parts.push('      "depends_on": ["other-node-id"]')
-  parts.push('    }')
+  parts.push('    { "id": "...", "type": "agent", "prompt": "...", ... },')
+  parts.push('    { "id": "...", "type": "octopus_agent", "agent": "...", "task": { "brief": "..." }, ... }')
   parts.push('  ]')
   parts.push('}')
   parts.push('```')
   parts.push("")
   parts.push("## Constraints")
-  parts.push("- ALL nodes must have type: \"agent\"")
-  parts.push("- ALL nodes must have a non-empty prompt")
+  parts.push("- Nodes can have type: \"agent\" or \"octopus_agent\"")
+  parts.push("- `agent` nodes must have a non-empty `prompt` field")
+  parts.push("- `octopus_agent` nodes must have a non-empty `task.brief` field, plus an `agent` field specifying the agent name")
   parts.push("- depends_on must reference existing node IDs")
   parts.push("- No circular dependencies allowed")
   parts.push("- Output ONLY the JSON object, no explanation")
@@ -125,14 +169,27 @@ function dagToWorkflowDef(dag: GeneratedDAG, workflowName: string, parentModel?:
     name: workflowName,
     execution_mode: "auto",
     model: parentModel,
-    nodes: dag.nodes.map((n) => ({
-      id: n.id,
-      type: "agent" as const,
-      prompt: n.prompt,
-      skills: n.skills,
-      depends_on: n.depends_on,
-      model: n.model ?? parentModel,
-    })),
+    nodes: dag.nodes.map((n) => {
+      if (n.type === "octopus_agent") {
+        return {
+          id: n.id,
+          type: "octopus_agent" as const,
+          agent: n.agent,
+          version: n.version,
+          task: n.task,
+          depends_on: n.depends_on,
+          model: n.model ?? parentModel,
+        }
+      }
+      return {
+        id: n.id,
+        type: "agent" as const,
+        prompt: n.prompt,
+        skills: n.skills,
+        depends_on: n.depends_on,
+        model: n.model ?? parentModel,
+      }
+    }),
   }
 }
 
@@ -148,15 +205,33 @@ function workflowDefToYaml(wf: WorkflowDef): string {
   for (const node of wf.nodes) {
     lines.push(`  - id: ${node.id}`)
     lines.push(`    type: ${node.type}`)
-    if (node.prompt) {
-      const promptLines = node.prompt.split("\n")
-      if (promptLines.length > 1) {
-        lines.push("    prompt: |")
-        for (const pl of promptLines) {
-          lines.push(`      ${pl}`)
+    if (node.type === "octopus_agent") {
+      const oaNode = node as any
+      if (oaNode.agent) lines.push(`    agent: ${oaNode.agent}`)
+      if (oaNode.version) lines.push(`    version: "${oaNode.version}"`)
+      if (oaNode.task) {
+        lines.push("    task:")
+        if (oaNode.task.brief) {
+          lines.push(`      brief: "${oaNode.task.brief.replace(/"/g, '\\"')}"`)
         }
-      } else {
-        lines.push(`    prompt: "${node.prompt.replace(/"/g, '\\"')}"`)
+        if (oaNode.task.context && oaNode.task.context.length > 0) {
+          lines.push(`      context: [${oaNode.task.context.map((c: string) => `"${c.replace(/"/g, '\\"')}"`).join(", ")}]`)
+        }
+        if (oaNode.task.constraints && oaNode.task.constraints.length > 0) {
+          lines.push(`      constraints: [${oaNode.task.constraints.map((c: string) => `"${c.replace(/"/g, '\\"')}"`).join(", ")}]`)
+        }
+      }
+    } else {
+      if (node.prompt) {
+        const promptLines = node.prompt.split("\n")
+        if (promptLines.length > 1) {
+          lines.push("    prompt: |")
+          for (const pl of promptLines) {
+            lines.push(`      ${pl}`)
+          }
+        } else {
+          lines.push(`    prompt: "${node.prompt.replace(/"/g, '\\"')}"`)
+        }
       }
     }
     if (node.model) lines.push(`    model: ${node.model}`)
@@ -458,21 +533,42 @@ export class DynamicSubWorkflowExecutor implements NodeExecutor {
     try {
       // Dynamic import to avoid hard dependency on yaml parser
       // Use regex-based parsing since we control the output format
-      const nodes: GeneratedDAG["nodes"] = []
+      const nodes: GeneratedDAGNode[] = []
       const nodeBlocks = yamlContent.split(/\n  - /).slice(1) // skip header
 
       for (const block of nodeBlocks) {
         const id = block.match(/id:\s*(.+)/)?.[1]?.trim()
         const type = block.match(/type:\s*(.+)/)?.[1]?.trim()
-        const promptMatch = block.match(/prompt:\s*(?:"([^"]+)"|([\s\S]+?)(?=\n\s+\w+:|$))/)
-        const prompt = promptMatch?.[1] ?? promptMatch?.[2]?.trim()
-        const skillsMatch = block.match(/skills:\s*\[([^\]]*)\]/)?.[1]
-        const skills = skillsMatch ? skillsMatch.split(",").map((s) => s.trim()) : undefined
+        const model = block.match(/model:\s*(.+)/)?.[1]?.trim()
         const depsMatch = block.match(/depends_on:\s*\[([^\]]*)\]/)?.[1]
         const depends_on = depsMatch ? depsMatch.split(",").map((s) => s.trim()) : undefined
-        const model = block.match(/model:\s*(.+)/)?.[1]?.trim()
 
-        if (id && type === "agent") {
+        if (id && type === "octopus_agent") {
+          const agent = block.match(/agent:\s*(.+)/)?.[1]?.trim()
+          const version = block.match(/version:\s*"([^"]+)"/)?.[1]?.trim()
+          const brief = block.match(/brief:\s*"([^"]+)"/)?.[1]?.trim()
+          const contextMatch = block.match(/context:\s*\[([^\]]*)\]/)?.[1]
+          const context = contextMatch ? contextMatch.split(",").map((s) => s.trim().replace(/^"|"$/g, "")) : undefined
+          const constraintsMatch = block.match(/constraints:\s*\[([^\]]*)\]/)?.[1]
+          const constraints = constraintsMatch ? constraintsMatch.split(",").map((s) => s.trim().replace(/^"|"$/g, "")) : undefined
+
+          if (agent && brief) {
+            nodes.push({
+              id,
+              type: "octopus_agent",
+              agent,
+              version,
+              task: { brief, context, constraints },
+              depends_on,
+              model,
+            })
+          }
+        } else if (id && type === "agent") {
+          const promptMatch = block.match(/prompt:\s*(?:"([^"]+)"|([\s\S]+?)(?=\n\s+\w+:|$))/)
+          const prompt = promptMatch?.[1] ?? promptMatch?.[2]?.trim()
+          const skillsMatch = block.match(/skills:\s*\[([^\]]*)\]/)?.[1]
+          const skills = skillsMatch ? skillsMatch.split(",").map((s) => s.trim()) : undefined
+
           nodes.push({
             id,
             type: "agent",

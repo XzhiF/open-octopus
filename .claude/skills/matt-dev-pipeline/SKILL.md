@@ -212,6 +212,12 @@ Wait 30s between polls
 
 ## Phase 4: E2E Verification
 
+> **⚠️ MANDATORY**: You MUST spawn the `matt-e2e-tester` sub-agent via the Agent tool.
+> Do NOT skip this phase. Do NOT substitute with unit tests. Do NOT self-execute E2E tests.
+> Running unit tests and calling it "E2E verification" is INVALID.
+> If Playwright is not configured, the e2e-tester agent will set it up or report SKIP with reason.
+> "Tests written but not executed by matt-e2e-tester = Phase 4 NOT DONE."
+
 **Dispatch**: Invoke the `matt-e2e-tester` agent.
 
 ```

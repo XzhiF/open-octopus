@@ -19,6 +19,7 @@ import { ApprovalDetailTabs } from "@/components/node-detail/approval-detail-tab
 import { LoopDetailTabs } from "@/components/node-detail/loop-detail-tabs"
 import { SwarmDetailTabs } from "@/components/node-detail/swarm-detail-tabs"
 import { InteractionDetailTabs } from "@/components/node-detail/interaction-detail-tabs"
+import { OctopusAgentDetailTabs } from "@/components/node-detail/octopus-agent-detail-tabs"
 import { TokenUsageDisplay } from "./workflow-nodes/token-usage-display"
 import { useLiveTimer } from "@/hooks/use-live-timer"
 
@@ -130,6 +131,17 @@ export function NodeInfoDialog({
               isRunning={isRunning}
               workspaceId={workspaceId}
               executionId={executionId}
+            />
+          )}
+          {executorType === "octopus_agent" && (
+            <OctopusAgentDetailTabs
+              executionId={executionId}
+              nodeId={step.stepId}
+              agentName={step.agentName}
+              version={step.agentVersion}
+              taskBrief={step.taskBrief}
+              workspaceId={workspaceId}
+              isRunning={isRunning}
             />
           )}
           {executorType === "sub_workflow" && (

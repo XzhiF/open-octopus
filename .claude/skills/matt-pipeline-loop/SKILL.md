@@ -40,8 +40,8 @@ description: >
 3. **Gap-focused** — each iteration's brief targets ONLY what failed, not the entire feature
 4. **Progress on disk** — iteration state lives in `.scratch/` directories and git, not in conversation memory
 5. **Bounded** — max iterations + no-progress detection + budget ceiling prevent infinite loops
-6. **Auto-continue** — when score < convergence threshold, IMMEDIATELY generate gap brief and launch next iteration. Do NOT ask the user whether to continue. Only stop and present to user when: converged (GO), max reached, stalled, or regression detected.
-7. **Context hygiene** — compact between iterations, not during. Write protected context to disk before compact, re-read after. The smart zone (~120k tokens) is the ceiling; don't let accumulated implementation details degrade reasoning quality.
+6. **Auto-continue** — when score < convergence threshold, IMMEDIATELY generate gap brief and launch next iteration. Do NOT ask the user whether to continue. Do NOT present options. Do NOT stop and wait. Only stop and present to user when: converged (GO), max reached, stalled, or regression detected. If none of these exit conditions are met, the loop MUST continue automatically.
+7. **Context hygiene** — write iteration-handoff.md between iterations. Use `--autocompact auto` at session start for automatic context management. The handoff file ensures critical context survives any autocompact.
 8. **No partial credit** — tests written but not executed = 0% for that AC. "Written" ≠ "verified." Only execution evidence counts.
 9. **Full pipeline mandatory** — each iteration must produce spec.md + issues/ + pipeline-report.md. A round with only brief.md + verification-report.md is INVALID.
 10. **SKIP = hard block** — any AC with status SKIP blocks convergence, regardless of score. SKIP ACs become P0 targets.
@@ -80,7 +80,7 @@ regardless of score.
 | Ralph Loop | Fixed anchor files, one task per iteration, BLOCKED detection | Gap brief = one focused task per iteration |
 | Walking Skeleton | End-to-end thin slice first, then thicken | Iteration 1 = full stack skeleton; later iterations thicken weak layers |
 | Vibe Coding Research | "80-90% fast, last 10% hard" + context momentum | Gap brief breaks context momentum by forcing fresh scope |
-| Smart Zone / Context Hygiene | ~120k token ceiling for sharp reasoning; compact between phases | Step 6.5 compact + handoff prevents context degradation across iterations |
+| Smart Zone / Context Hygiene | Handoff files preserve critical context across autocompact cycles | Step 6.5 handoff + `--autocompact auto` ensures context quality |
 
 ## Execution Flow
 
@@ -111,8 +111,7 @@ INPUT: .scratch/<feature-slug>/  (must have pipeline-report.md or verification-r
 │  6.5 Context hygiene:                            │
 │     ├── Write iteration-handoff.md               │
 │     ├── Commit artifacts                         │
-│     ├── /compact (summarize conversation)         │
-│     └── Re-read loop-state + gap-brief + handoff │
+│     └── Selective re-read for next iteration     │
 │  7. Go to step 1                                  │
 │                                                  │
 └─────────────────────────────────────────────────┘
@@ -206,7 +205,7 @@ Confidence score ≥ 85 (after applying scoring overrides, see below).
 |-----------|--------|
 | All 5 layers pass | **GO** — loop ends successfully |
 | Layer 1-4 fail | **NO-GO** — generate gap brief targeting failures |
-| Layer 5 fail but 1-4 pass | **REVIEW** — present to user with report |
+| Layer 5 fail but 1-4 pass | **CONTINUE** — auto-generate gap brief and launch next iteration (do NOT present to user) |
 | iteration ≥ max (default 5) | **MAX_REACHED** — present to user with full report |
 | 2 consecutive rounds < 5pt improvement | **STALLED** — present to user |
 | Score decreases from previous round | **REGRESSION** — present to user immediately |
@@ -369,15 +368,15 @@ After the pipeline completes:
 3. Update `<artifacts.dir>/index.md` with the new feature-slug
 4. Check convergence (Step 3)
 
-### Step 6.5: Context Hygiene (Post-Iteration Compact)
+### Step 6.5: Context Hygiene (Post-Iteration Handoff)
 
 **When**: After every completed iteration (Step 6), BEFORE starting the next loop cycle.
-**Why**: Each iteration accumulates ~50-80k tokens of implementation details (sub-agent results, code-review reports, E2E logs, file reads). After 2-3 iterations the context approaches the smart zone ceiling and reasoning quality degrades. Compacting between iterations resets this — safely, because all essential state is already on disk.
-**Rule**: Compact BETWEEN iterations, never DURING. Mid-iteration compact loses implementation context the agent needs to finish the current pipeline.
+**Why**: Each iteration accumulates ~50-80k tokens of implementation details. Writing a handoff file preserves critical context and enables focused re-orientation for the next iteration.
+**Autocompact**: If the session was started with `--autocompact auto`, compaction happens automatically. No manual `/compact` needed.
 
 #### 6.5.1 Write Iteration Handoff
 
-Write `<artifacts.dir>/<current-feature-slug>/iteration-handoff.md`. This file captures context that `/compact` would lose but the next iteration needs:
+Write `<artifacts.dir>/<current-feature-slug>/iteration-handoff.md`. This file captures critical context that the next iteration needs:
 
 ```markdown
 # Iteration Handoff — <feature-slug> Round <N>
@@ -389,7 +388,7 @@ Write `<artifacts.dir>/<current-feature-slug>/iteration-handoff.md`. This file c
 - Branch: <branch-name>
 
 ## Protected Architecture Decisions
-<!-- These MUST survive compact — the gap-fix iteration must not contradict them -->
+<!-- The gap-fix iteration must not contradict these -->
 
 | # | Decision | Conclusion | Source |
 |---|---------|-----------|--------|
@@ -456,28 +455,16 @@ The handoff file must also include:
 
 #### 6.5.2 Commit Artifacts
 
-Ensure all iteration artifacts are on disk and committed before compacting:
+Ensure all iteration artifacts are on disk and committed:
 
 ```bash
 git add <artifacts.dir>/
 git commit -m "chore: iteration <N> artifacts + handoff"
 ```
 
-#### 6.5.3 Invoke Compact
+#### 6.5.3 Selective Context for Next Iteration
 
-> ⚠️ **CHECKPOINT — You MUST invoke `/compact` now.**
-> Do NOT skip this step. Do NOT proceed to the next iteration without compacting.
-> The handoff file (6.5.1) and git commit (6.5.2) are already done — it is safe to compact.
-
-```
-/compact
-```
-
-This summarizes the conversation, discarding implementation details from the completed iteration. The handoff file preserves all critical context.
-
-#### 6.5.4 Selective Context Re-load
-
-After compact, re-read ONLY what the next iteration needs. **Do NOT re-read the full spec.md or pipeline-report.md** — they are large files that waste context.
+Before generating the next gap brief, re-read ONLY what the next iteration needs. **Do NOT re-read the full spec.md or pipeline-report.md** — they are large files that waste context.
 
 **Always load** (~20k tokens total):
 
@@ -501,7 +488,7 @@ Instead of reading the full spec, read only:
 - E2E screenshots or test logs (evidence is summarized in verification-report)
 - Code review findings from previous rounds (already addressed)
 
-#### 6.5.5 Verify Context Restoration
+#### 6.5.4 Verify Context Orientation
 
 Print a 4-line sanity check confirming the agent is oriented:
 
@@ -674,8 +661,8 @@ matt-verified-requirement → spec.md (initial)
 4. **Blindly trusting previous reports** — each verification-report must be a fresh analysis
 5. **Changing branches** — all iterations must stay on the same git branch
 6. **Skipping verification** — never skip the verification-report between pipeline runs
-7. **Compacting mid-iteration** — never `/compact` while a pipeline phase is running. The agent loses implementation context and can't finish the current iteration. Compact ONLY between iterations (Step 6.5)
-8. **Compacting without handoff** — never `/compact` without first writing `iteration-handoff.md`. Compact without protected context = amnesia about architecture decisions and confirmed interfaces
+7. **Compact mid-iteration** — never `/compact` while a pipeline phase is running. If autocompact triggers, the handoff file (6.5.1) ensures critical context survives.
+8. **Skipping handoff** — always write `iteration-handoff.md` before moving to the next iteration. Without it, the next iteration loses architecture decisions and confirmed interfaces.
 9. **Fake convergence** — never accept a score at face value without checking all 5 convergence layers. A score of 88 with SKIP ACs or unexecuted E2E tests is NOT a GO
 10. **Partial credit for unexecuted tests** — tests written but not run = 0%. Code existence is not verification evidence
 11. **Incomplete pipeline runs** — an iteration that produces only brief.md + verification-report.md without spec.md + issues/ + pipeline-report.md is INVALID
@@ -694,7 +681,7 @@ matt-verified-requirement → spec.md (initial)
 | Loop State | JSON file tracking all iteration results and metadata |
 | Root Feature | The original feature-slug that started the loop |
 | Iteration Handoff | Markdown file capturing protected context (decisions, interfaces, paths) before compact |
-| Context Hygiene | Discipline of compacting between iterations with handoff write → compact → re-read cycle |
+| Context Hygiene | Discipline of writing iteration-handoff.md between iterations to preserve critical context across autocompact cycles |
 | Fake Convergence | When a loop appears to converge (high score) but underlying gaps are masked by partial credit or skipped phases |
 
 ## Relationship to Other Skills

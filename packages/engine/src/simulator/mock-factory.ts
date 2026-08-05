@@ -114,6 +114,9 @@ export class SimulatorExecutorFactory {
         return new MockApprovalExecutor(node, this.pool, mockDef as ApprovalMockDef)
       case "interaction":
         return new MockInteractionExecutor(node, this.pool, mockDef as InteractionMockDef)
+      case "octopus_agent":
+        // octopus_agent uses same mock semantics as agent (output + status + update_vars)
+        return new MockAgentExecutor(node, this.pool, mockDef as any)
       default:
         throw new Error(`Unknown node type: ${node.type}`)
     }

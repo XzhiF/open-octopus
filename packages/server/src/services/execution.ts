@@ -154,6 +154,36 @@ export class ExecutionService {
     return this.lifecycle.skip(id)
   }
 
+  /**
+   * Harness intervention: apply an abort or pause directive to a running execution.
+   * v1: both operations are execution-level (not node-level).
+   */
+  async harnessIntervene(
+    executionId: string,
+    input: { nodeId: string; directive: { type: "abort" | "pause"; reason: string; issued_by: string } },
+  ): Promise<{ success: boolean; directive_applied?: string; error?: string }> {
+    const exec = this.dao.findById(executionId)
+    if (!exec) return { success: false, error: "Execution not found" }
+
+    const intervenableStatuses = ["running", "paused", "pending_approval", "pending_interaction", "pending_resume"]
+    if (!intervenableStatuses.includes(exec.status)) {
+      return { success: false, error: `Cannot intervene in status "${exec.status}"` }
+    }
+
+    if (input.directive.type === "abort") {
+      await this.lifecycle.cancel(executionId)
+      return { success: true, directive_applied: "abort" }
+    }
+
+    if (input.directive.type === "pause") {
+      const pauseResult = await this.lifecycle.pause(executionId)
+      if (!pauseResult.success) return { success: false, error: pauseResult.error }
+      return { success: true, directive_applied: "pause" }
+    }
+
+    return { success: false, error: `Unknown directive type: ${(input.directive as any).type}` }
+  }
+
   delete(id: string): boolean {
     return this.lifecycle.delete(id)
   }

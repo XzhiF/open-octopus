@@ -6,10 +6,11 @@ type SSEEvent = {
 type Listener = (event: SSEEvent) => void
 
 // High-frequency events that would flood the console — skip logging for these
-const SILENT_EVENTS = new Set([
+export const SILENT_EVENTS = new Set([
   "agent_event", "node_log", "execution_progress",
   "expert_spawn", "expert_message", "expert_complete",
   "consensus_check", "swarm_round_end", "swarm_complete",
+  "agent_heartbeat", "heartbeat_stall",
 ])
 
 export class SSEService {
