@@ -36,3 +36,4 @@
 | 32 | agent-workflow-integration | 2026-08-04 | feat/agent-workflow-integration | done (PR #44, 163 tests, 6/6 tickets) |
 | 33 | agent-workflow-integration-r2 | 2026-08-05 | feat/agent-workflow-integration | done (gap-fix: E2E 13 tests + assertion density) |
 | 34 | octopus-agent-ui-wiring | 2026-08-05 | feat/agent-workflow-integration | done (PR #44 updated, 29 tests) |
+| 35 | workflow-engine-harness | 2026-08-05 | feat/workflow-engine-harness | in-progress (spec + 10 tickets ready) |
