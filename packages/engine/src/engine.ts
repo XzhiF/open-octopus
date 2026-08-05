@@ -25,6 +25,7 @@ import { loadModelAliasConfig } from "@octopus/shared"
 import type { ModelAliasConfig } from "@octopus/shared"
 import { PromptInjector } from "./prompt-injector"
 import type { KnowledgeInjector } from "./knowledge-injector"
+import type { VersionResolver } from "@octopus/shared"
 import { RetryPolicyResolver } from "./pipeline/retry-resolver"
 import { FailureClassifier } from "./pipeline/failure-classifier"
 import { NotifyDispatcher } from "./notify/dispatcher"
@@ -122,6 +123,8 @@ export class WorkflowEngine {
   private workflowResolver?: (name: string) => { parsed: WorkflowDef; content: string } | undefined
   // Visited workflows for recursion detection
   private visitedWorkflows?: Set<string>
+  // Version resolver for octopus_agent nodes
+  private versionResolver?: VersionResolver
 
   constructor(
     private workflow: WorkflowDef,
@@ -231,6 +234,7 @@ export class WorkflowEngine {
       executeHooks: (event, context) => this.executeHooks(event, context),
       workflowResolver: this.workflowResolver,
       visitedWorkflows: this.visitedWorkflows,
+      versionResolver: this.versionResolver,
     })
   }
 
@@ -282,6 +286,42 @@ export class WorkflowEngine {
       executeHooks: (event, context) => this.executeHooks(event, context),
       workflowResolver: resolver,
       visitedWorkflows,
+      versionResolver: this.versionResolver,
+    })
+  }
+
+  /**
+   * Set the version resolver for octopus_agent nodes.
+   * Called by ExecutionService/EngineFactory to enable agent version resolution.
+   */
+  setVersionResolver(resolver: VersionResolver): void {
+    this.versionResolver = resolver
+    // Rebuild executor factory with versionResolver
+    this.executorFactory = new ExecutorFactory({
+      pool: this.pool,
+      signal: this.signal,
+      nodeResults: this.nodeResults,
+      logger: this.logger,
+      callbacks: this.callbacks,
+      cwd: this.cwd,
+      crossExecResolver: this.crossExecResolver,
+      executionId: this.executionId,
+      providers: this.providers,
+      workflow: this.workflow,
+      workflowDefaultModel: this.workflowDefaultModel,
+      globalSessionId: this.globalSessionId,
+      branchSessionIds: this.branchSessionIds,
+      inputs: this.inputs,
+      modelAliasConfig: this.modelAliasConfig,
+      checkpointStore: this.checkpointStore,
+      agentResolver: this.agentResolver,
+      knowledgeInjectorFactory: this.knowledgeInjectorFactory,
+      promptInjector: this.promptInjector,
+      resolvePreviousSessionId: (node) => this.resolvePreviousSessionId(node),
+      executeHooks: (event, context) => this.executeHooks(event, context),
+      workflowResolver: this.workflowResolver,
+      visitedWorkflows: this.visitedWorkflows,
+      versionResolver: resolver,
     })
   }
 

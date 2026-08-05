@@ -83,6 +83,16 @@ export class AgentVersionDAO extends BaseDAO {
     return this.stmt("DELETE FROM agent_versions WHERE id = ?").run(id)
   }
 
+  /**
+   * List all published versions across all agents.
+   * Used by EngineFactory to build a VersionResolver for octopus_agent nodes.
+   */
+  listAllPublished(): AgentVersionRow[] {
+    return this.stmt(
+      `SELECT * FROM agent_versions WHERE status = 'published' ORDER BY agent_name, major DESC, minor DESC, patch DESC`
+    ).all() as AgentVersionRow[]
+  }
+
   updateCloneVersionId(cloneName: string, versionId: string | null): Database.RunResult {
     return this.stmt(
       "UPDATE clones SET current_version_id = ?, updated_at = ? WHERE name = ?"

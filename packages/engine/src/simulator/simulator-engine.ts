@@ -420,6 +420,10 @@ function createAndExecuteMock(
     case "approval":
       executor = new MockApprovalExecutor(node, pool, mockDef as ApprovalMockDef)
       break
+    case "octopus_agent":
+      // octopus_agent uses same mock semantics as agent
+      executor = new MockAgentExecutor(node, pool, mockDef as any)
+      break
     default:
       return Promise.resolve({
         outputs: {},

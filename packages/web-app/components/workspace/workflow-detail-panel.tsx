@@ -78,12 +78,19 @@ interface RawStepRow {
   completedAt?: string
   duration?: number
   output?: string
+  outputs?: Record<string, unknown>
   error?: string
   model?: string
   tokensInput?: number
   tokensOutput?: number
   tokenUsages?: TokenUsage[]
   token_usages?: { model: string; inputTokens: number; outputTokens: number }[]
+  nodeType?: string
+  parentNodeId?: string
+  iterationIndex?: number
+  agentName?: string
+  agentVersion?: string
+  taskBrief?: string
 }
 
 function mapRawStep(raw: RawStepRow): StepExecution {
@@ -95,11 +102,18 @@ function mapRawStep(raw: RawStepRow): StepExecution {
     completedAt: raw.completedAt,
     duration: raw.duration,
     output: raw.output,
+    outputs: raw.outputs,
     error: raw.error,
     model: raw.model,
     tokensInput: raw.tokensInput,
     tokensOutput: raw.tokensOutput,
     tokenUsages: raw.tokenUsages ?? raw.token_usages,
+    nodeType: raw.nodeType,
+    parentNodeId: raw.parentNodeId,
+    iterationIndex: raw.iterationIndex,
+    agentName: raw.agentName,
+    agentVersion: raw.agentVersion,
+    taskBrief: raw.taskBrief,
   }
 }
 

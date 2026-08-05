@@ -21,6 +21,9 @@ import { HeartbeatHandler } from "./octopus-agent/heartbeat"
 import { createDelegateSession, type CreateSessionFn, type DelegateSession } from "./octopus-agent/session"
 import { applyVarsUpdate } from "./parse-vars-update"
 import type { AgentEvent } from "./agent-types"
+import { existsSync, readFileSync, readdirSync } from "fs"
+import { join } from "path"
+import { homedir } from "os"
 
 /**
  * OctopusAgentExecutor — delegates tasks to versioned Octopus agents.
@@ -61,15 +64,21 @@ export class OctopusAgentExecutor implements NodeExecutor {
         versionSpec,
         this.node.min_stage,
       )
-    } catch (err: unknown) {
-      const errorMessage = err instanceof Error ? err.message : String(err)
-      return {
-        status: "failed",
-        lastOutput: undefined,
-        outputs: {},
-        durationMs: Date.now() - start,
-        logLines: [`Version resolution failed: ${errorMessage}`],
-        error: `Version resolution failed: ${errorMessage}`,
+    } catch (versionErr: unknown) {
+      // Fallback: if no published versions exist, use current clone config from filesystem
+      const fallback = this.resolveFallback(this.node.agent)
+      if (fallback) {
+        resolved = fallback
+      } else {
+        const errorMessage = versionErr instanceof Error ? versionErr.message : String(versionErr)
+        return {
+          status: "failed",
+          lastOutput: undefined,
+          outputs: {},
+          durationMs: Date.now() - start,
+          logLines: [`Version resolution failed: ${errorMessage}`],
+          error: `Version resolution failed: ${errorMessage}`,
+        }
       }
     }
 
@@ -149,7 +158,9 @@ export class OctopusAgentExecutor implements NodeExecutor {
       engineContext: this.config.engineContext,
       loopContext: this.config.loopContext,
       providerKey: this.config.providerKey,
-      previousSessionId: session.id, // Use delegate session as previousSessionId
+      // Delegate session is newly created — don't use as previousSessionId
+      // (Claude SDK requires previousSessionId to have existing conversation)
+      previousSessionId: this.config.previousSessionId,
       signal: this.config.signal,
       globalAutoAnswers: this.config.globalAutoAnswers,
       promptInjector: this.config.promptInjector,
@@ -213,6 +224,8 @@ export class OctopusAgentExecutor implements NodeExecutor {
       last_output: agentResult.lastOutput,
       session_id: session.id,
       agent_version: resolved.version,
+      agent_name: this.node.agent,
+      task_brief: this.node.task?.brief,
     }
 
     // Track final status without mutating agentResult (Fix 1: immutability)
@@ -285,6 +298,44 @@ export class OctopusAgentExecutor implements NodeExecutor {
       nodeOutputs[id] = outputs
     }
     return nodeOutputs
+  }
+
+  /**
+   * Fallback version resolution: reads current clone config from filesystem
+   * when no published versions exist. Uses ~/.octopus/agent/clones/{name}/ directory.
+   */
+  private resolveFallback(agentName: string): ResolvedVersion | null {
+    try {
+      const cloneDir = join(homedir(), ".octopus", "agent", "clones", agentName)
+      if (!existsSync(cloneDir)) return null
+
+      // Read persona.md
+      const personaPath = join(cloneDir, "persona.md")
+      const persona = existsSync(personaPath) ? readFileSync(personaPath, "utf-8") : ""
+
+      // Read config.json
+      const configPath = join(cloneDir, "config.json")
+      let config: Record<string, unknown> = {}
+      if (existsSync(configPath)) {
+        try { config = JSON.parse(readFileSync(configPath, "utf-8")) } catch { /* empty */ }
+      }
+
+      // List skills
+      const skillsDir = join(cloneDir, "skills")
+      let skills: string[] = []
+      if (existsSync(skillsDir)) {
+        skills = readdirSync(skillsDir).filter((f) => !f.startsWith("."))
+      }
+
+      return {
+        version: "current",
+        stage: "stable",
+        snapshot: { persona, config, skills },
+        fsPath: cloneDir,
+      }
+    } catch {
+      return null
+    }
   }
 }
 

@@ -2,11 +2,12 @@
 import type { IEngineFactory } from "./interfaces"
 import type { ServiceContext, ExecutionRow } from "./types"
 import type { ExecutionDAO } from "../../db/dao/execution-dao"
+import { AgentVersionDAO } from "../../db/dao/agent-version-dao"
 import type { KnowledgeService } from "../knowledge"
 import type { EngineCallbacks } from "@octopus/engine"
 import { WorkflowEngine, PromptInjector } from "@octopus/engine"
-import { CrossExecResolver, collectNodeEngines, parseWorkflow, WorkflowRef } from "@octopus/shared"
-import type { WorkflowDef } from "@octopus/shared"
+import { CrossExecResolver, collectNodeEngines, parseWorkflow, WorkflowRef, VersionResolver } from "@octopus/shared"
+import type { WorkflowDef, AgentVersionInfo } from "@octopus/shared"
 import { PipelineConfigLoader } from "../pipeline-config"
 import { getProvider } from "@octopus/providers"
 import { selectAndInstallAgents } from "../resource-agent-service"
@@ -128,6 +129,29 @@ export class EngineFactory implements IEngineFactory {
       return undefined
     }
     engine.setWorkflowResolver(workflowResolver)
+
+    // Set version resolver for octopus_agent nodes
+    try {
+      const versionDao = new AgentVersionDAO(this.ctx.db)
+      const rows = versionDao.listAllPublished()
+      const versions: AgentVersionInfo[] = rows.map((r) => ({
+        id: r.id,
+        agent_name: r.agent_name,
+        version: r.version,
+        stage: r.stage as AgentVersionInfo["stage"],
+        status: r.status as AgentVersionInfo["status"],
+        snapshot: r.snapshot,
+        changelog: r.changelog ?? undefined,
+        published_at: r.published_at ?? undefined,
+        created_at: r.created_at,
+      }))
+      engine.setVersionResolver(new VersionResolver(versions))
+      console.log(`[EngineFactory] VersionResolver set: ${versions.length} published versions`)
+    } catch (err) {
+      // agent_versions table may not exist yet (pre-migration) — create empty resolver as fallback
+      console.warn(`[EngineFactory] VersionResolver fallback (empty): ${err instanceof Error ? err.message : err}`)
+      engine.setVersionResolver(new VersionResolver([]))
+    }
 
     return engine
   }
