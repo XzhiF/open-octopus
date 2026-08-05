@@ -1,0 +1,393 @@
+{
+  "timestamp": "2026-08-04T09:34:27.787Z",
+  "total": 55,
+  "passed": 54,
+  "failed": 1,
+  "results": [
+    {
+      "ac": "AC-20",
+      "step": "GET /stats responds 200",
+      "pass": true,
+      "detail": "ok=true",
+      "timestamp": "2026-08-04T09:34:27.698Z"
+    },
+    {
+      "ac": "AC-20",
+      "step": "byType has 'rule'",
+      "pass": true,
+      "detail": "rule=1",
+      "timestamp": "2026-08-04T09:34:27.698Z"
+    },
+    {
+      "ac": "AC-20",
+      "step": "byType has 'command'",
+      "pass": true,
+      "detail": "command=1",
+      "timestamp": "2026-08-04T09:34:27.698Z"
+    },
+    {
+      "ac": "AC-20",
+      "step": "byType has 'clone'",
+      "pass": false,
+      "detail": "clone=ABSENT (0 count types omitted)",
+      "timestamp": "2026-08-04T09:34:27.698Z"
+    },
+    {
+      "ac": "AC-20",
+      "step": "rule count >= 1",
+      "pass": true,
+      "detail": "count=1",
+      "timestamp": "2026-08-04T09:34:27.698Z"
+    },
+    {
+      "ac": "AC-20",
+      "step": "command count >= 1",
+      "pass": true,
+      "detail": "count=1",
+      "timestamp": "2026-08-04T09:34:27.698Z"
+    },
+    {
+      "ac": "AC-11",
+      "step": "GET ?type=rule responds",
+      "pass": true,
+      "detail": "status=200, total=1",
+      "timestamp": "2026-08-04T09:34:27.701Z"
+    },
+    {
+      "ac": "AC-11",
+      "step": "All items are type=rule",
+      "pass": true,
+      "detail": "count=1",
+      "timestamp": "2026-08-04T09:34:27.712Z"
+    },
+    {
+      "ac": "AC-11",
+      "step": "Rule entries have 'activated' field",
+      "pass": true,
+      "detail": "activated=false",
+      "timestamp": "2026-08-04T09:34:27.712Z"
+    },
+    {
+      "ac": "AC-11",
+      "step": "GET ?type=command responds",
+      "pass": true,
+      "detail": "status=200, total=1",
+      "timestamp": "2026-08-04T09:34:27.715Z"
+    },
+    {
+      "ac": "AC-11",
+      "step": "All items are type=command",
+      "pass": true,
+      "detail": "count=1",
+      "timestamp": "2026-08-04T09:34:27.715Z"
+    },
+    {
+      "ac": "AC-11",
+      "step": "GET ?type=clone responds",
+      "pass": true,
+      "detail": "status=200, total=0",
+      "timestamp": "2026-08-04T09:34:27.717Z"
+    },
+    {
+      "ac": "AC-builtin",
+      "step": "GET /builtin responds",
+      "pass": true,
+      "detail": "total=41",
+      "timestamp": "2026-08-04T09:34:27.721Z"
+    },
+    {
+      "ac": "AC-builtin",
+      "step": "Has rule(s)",
+      "pass": true,
+      "detail": "names=code-style",
+      "timestamp": "2026-08-04T09:34:27.721Z"
+    },
+    {
+      "ac": "AC-builtin",
+      "step": "Has command(s)",
+      "pass": true,
+      "detail": "names=cmd-review",
+      "timestamp": "2026-08-04T09:34:27.721Z"
+    },
+    {
+      "ac": "AC-builtin",
+      "step": "Rule has sourcePath",
+      "pass": true,
+      "detail": "C:\\xzf\\ai\\open-octopus\\packages\\core-pack\\rules\\code-style.md",
+      "timestamp": "2026-08-04T09:34:27.721Z"
+    },
+    {
+      "ac": "AC-1",
+      "step": "Rule already installed (verify fields)",
+      "pass": true,
+      "detail": "type=rule, activated=false",
+      "timestamp": "2026-08-04T09:34:27.722Z"
+    },
+    {
+      "ac": "AC-1",
+      "step": "type=rule",
+      "pass": true,
+      "detail": "actual=rule",
+      "timestamp": "2026-08-04T09:34:27.723Z"
+    },
+    {
+      "ac": "AC-1",
+      "step": "has 'activated' field",
+      "pass": true,
+      "detail": "activated=false",
+      "timestamp": "2026-08-04T09:34:27.723Z"
+    },
+    {
+      "ac": "AC-4",
+      "step": "Command already installed (verify fields)",
+      "pass": true,
+      "detail": "type=command, activated=false",
+      "timestamp": "2026-08-04T09:34:27.724Z"
+    },
+    {
+      "ac": "AC-4",
+      "step": "type=command",
+      "pass": true,
+      "detail": "actual=command",
+      "timestamp": "2026-08-04T09:34:27.724Z"
+    },
+    {
+      "ac": "AC-4",
+      "step": "has 'activated' field",
+      "pass": true,
+      "detail": "activated=false",
+      "timestamp": "2026-08-04T09:34:27.724Z"
+    },
+    {
+      "ac": "AC-2",
+      "step": "POST /activate returns success",
+      "pass": true,
+      "detail": "status=200",
+      "timestamp": "2026-08-04T09:34:27.732Z"
+    },
+    {
+      "ac": "AC-2",
+      "step": "Has activatedTo",
+      "pass": true,
+      "detail": "path=C:\\xzf\\ai\\open-octopus\\.claude\\rules\\code-style.md",
+      "timestamp": "2026-08-04T09:34:27.732Z"
+    },
+    {
+      "ac": "AC-2",
+      "step": "Path includes .claude/rules/",
+      "pass": true,
+      "detail": "path=C:\\xzf\\ai\\open-octopus\\.claude\\rules\\code-style.md",
+      "timestamp": "2026-08-04T09:34:27.732Z"
+    },
+    {
+      "ac": "AC-2",
+      "step": "File exists at target",
+      "pass": true,
+      "detail": "path=C:\\xzf\\ai\\open-octopus\\.claude\\rules\\code-style.md",
+      "timestamp": "2026-08-04T09:34:27.734Z"
+    },
+    {
+      "ac": "AC-2",
+      "step": "Registry activated=true",
+      "pass": true,
+      "detail": "activated=true",
+      "timestamp": "2026-08-04T09:34:27.735Z"
+    },
+    {
+      "ac": "AC-2",
+      "step": "Registry has activatedAt",
+      "pass": true,
+      "detail": "activatedAt=2026-08-04T09:34:27.729Z",
+      "timestamp": "2026-08-04T09:34:27.735Z"
+    },
+    {
+      "ac": "AC-2",
+      "step": "Registry has activatedTo",
+      "pass": true,
+      "detail": "activatedTo=C:\\xzf\\ai\\open-octopus\\.claude\\rules\\code-style.md",
+      "timestamp": "2026-08-04T09:34:27.735Z"
+    },
+    {
+      "ac": "AC-5",
+      "step": "POST /activate command succeeds",
+      "pass": true,
+      "detail": "status=200",
+      "timestamp": "2026-08-04T09:34:27.742Z"
+    },
+    {
+      "ac": "AC-5",
+      "step": "Path includes .claude/commands/",
+      "pass": true,
+      "detail": "path=C:\\xzf\\ai\\open-octopus\\.claude\\commands\\cmd-review.md",
+      "timestamp": "2026-08-04T09:34:27.742Z"
+    },
+    {
+      "ac": "AC-5",
+      "step": "File exists at target",
+      "pass": true,
+      "detail": "path=C:\\xzf\\ai\\open-octopus\\.claude\\commands\\cmd-review.md",
+      "timestamp": "2026-08-04T09:34:27.742Z"
+    },
+    {
+      "ac": "AC-5",
+      "step": "POST /deactivate command succeeds",
+      "pass": true,
+      "detail": "status=200",
+      "timestamp": "2026-08-04T09:34:27.747Z"
+    },
+    {
+      "ac": "AC-5",
+      "step": "File removed after deactivation",
+      "pass": true,
+      "detail": "path=C:\\xzf\\ai\\open-octopus\\.claude\\commands\\cmd-review.md",
+      "timestamp": "2026-08-04T09:34:27.747Z"
+    },
+    {
+      "ac": "AC-3",
+      "step": "POST /deactivate succeeds",
+      "pass": true,
+      "detail": "status=200",
+      "timestamp": "2026-08-04T09:34:27.753Z"
+    },
+    {
+      "ac": "AC-3",
+      "step": "Registry activated=false",
+      "pass": true,
+      "detail": "activated=false",
+      "timestamp": "2026-08-04T09:34:27.754Z"
+    },
+    {
+      "ac": "AC-3",
+      "step": "File removed from target",
+      "pass": true,
+      "detail": "path=C:\\xzf\\ai\\open-octopus\\.claude\\rules\\code-style.md",
+      "timestamp": "2026-08-04T09:34:27.755Z"
+    },
+    {
+      "ac": "AC-8",
+      "step": "Uninstall returns error",
+      "pass": true,
+      "detail": "ok=false, status=409",
+      "timestamp": "2026-08-04T09:34:27.762Z"
+    },
+    {
+      "ac": "AC-8",
+      "step": "Status is 409",
+      "pass": true,
+      "detail": "status=409",
+      "timestamp": "2026-08-04T09:34:27.762Z"
+    },
+    {
+      "ac": "AC-8",
+      "step": "Error code is UNINSTALL_BLOCKED",
+      "pass": true,
+      "detail": "code=UNINSTALL_BLOCKED",
+      "timestamp": "2026-08-04T09:34:27.762Z"
+    },
+    {
+      "ac": "AC-8",
+      "step": "Message mentions deactivate",
+      "pass": true,
+      "detail": "msg=Resource rule/code-style is activated. Deactivate first before uninstalling.",
+      "timestamp": "2026-08-04T09:34:27.762Z"
+    },
+    {
+      "ac": "AC-18",
+      "step": "GET /audit responds",
+      "pass": true,
+      "detail": "status=200",
+      "timestamp": "2026-08-04T09:34:27.764Z"
+    },
+    {
+      "ac": "AC-18",
+      "step": "Has activate records",
+      "pass": true,
+      "detail": "count=9",
+      "timestamp": "2026-08-04T09:34:27.764Z"
+    },
+    {
+      "ac": "AC-18",
+      "step": "Has deactivate records",
+      "pass": true,
+      "detail": "count=9",
+      "timestamp": "2026-08-04T09:34:27.764Z"
+    },
+    {
+      "ac": "AC-18",
+      "step": "Activate record has details",
+      "pass": true,
+      "detail": "name=code-style, type=rule, to=C:\\xzf\\ai\\open-octopus\\.claude\\rules\\code-style.md",
+      "timestamp": "2026-08-04T09:34:27.764Z"
+    },
+    {
+      "ac": "AC-19",
+      "step": "Rule verify responds",
+      "pass": true,
+      "detail": "status=200, verify=installed",
+      "timestamp": "2026-08-04T09:34:27.766Z"
+    },
+    {
+      "ac": "AC-19",
+      "step": "Rule verify has steps",
+      "pass": true,
+      "detail": "steps=3",
+      "timestamp": "2026-08-04T09:34:27.766Z"
+    },
+    {
+      "ac": "AC-19",
+      "step": "Command verify responds",
+      "pass": true,
+      "detail": "status=200, verify=installed",
+      "timestamp": "2026-08-04T09:34:27.767Z"
+    },
+    {
+      "ac": "AC-12",
+      "step": "GET /rule/code-style responds",
+      "pass": true,
+      "detail": "status=200",
+      "timestamp": "2026-08-04T09:34:27.768Z"
+    },
+    {
+      "ac": "AC-12",
+      "step": "Has 'activated' field",
+      "pass": true,
+      "detail": "activated=true",
+      "timestamp": "2026-08-04T09:34:27.768Z"
+    },
+    {
+      "ac": "AC-12",
+      "step": "Has 'type' field",
+      "pass": true,
+      "detail": "type=rule",
+      "timestamp": "2026-08-04T09:34:27.768Z"
+    },
+    {
+      "ac": "AC-12",
+      "step": "Has 'installPath'",
+      "pass": true,
+      "detail": "path=C:\\Users\\EDY\\.octopus\\resources\\installed\\rules\\built-in\\code-style",
+      "timestamp": "2026-08-04T09:34:27.768Z"
+    },
+    {
+      "ac": "AC-edge",
+      "step": "Deactivate non-activated → DEACTIVATION_BLOCKED",
+      "pass": true,
+      "detail": "status=409, code=DEACTIVATION_BLOCKED",
+      "timestamp": "2026-08-04T09:34:27.773Z"
+    },
+    {
+      "ac": "AC-edge",
+      "step": "Activate skill → INVALID_TYPE",
+      "pass": true,
+      "detail": "status=400, code=INVALID_TYPE",
+      "timestamp": "2026-08-04T09:34:27.775Z"
+    },
+    {
+      "ac": "AC-edge",
+      "step": "Double activation → ACTIVATION_BLOCKED",
+      "pass": true,
+      "detail": "status=409, code=ACTIVATION_BLOCKED",
+      "timestamp": "2026-08-04T09:34:27.780Z"
+    }
+  ]
+}

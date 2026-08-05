@@ -1,66 +1,28 @@
 ---
 name: matt-verified-spec
-description: Enhanced to-spec. Synthesizes a requirement brief into a full spec document where every user story has a bound verification strategy. Auto-invoked by matt-dev-runner agent, not user-triggered.
-disable-model-invocation: true
+description: Enhancement of to-spec. Adds verification strategy block — every user story gets a concrete, executable verification method. Used as a guide by the main session during matt-verified-requirement.
+reference-only: true
 ---
 
-# Verified Spec
+# Verified Spec — Enhancement of `to-spec`
 
-This skill is auto-invoked by the `matt-dev-runner` agent. It reads a requirement brief and produces a full specification document. **The core enhancement is the Verification Strategy block** — every user story must have a concrete, executable verification method.
+> **This skill enhances `to-spec`.** Follow `to-spec` for the base process and template, then add the verification enhancements below.
+> It is a methodology reference — the main session reads it when writing spec.md during `matt-verified-requirement`. NOT auto-invoked by any agent.
 
-## Input
+## Base Skill
 
-Read `<artifacts.dir>/<feature-slug>/brief.md` (from `matt-verified-requirement`).
+Follow `to-spec` for:
+- **Process**: Explore repo → Identify seams → Synthesize spec
+- **Template sections**: Problem Statement, Solution, User Stories (exhaustive), Implementation Decisions, Testing Decisions, Out of Scope, Further Notes
 
-Read `CLAUDE.md` to understand the project structure (TypeScript monorepo, pnpm, SQLite, Hono API).
+## Enhancements (补充 Verification Methods)
 
-## Output
+The core enhancement: replace `to-spec`'s **Testing Decisions** section with a comprehensive **Verification Strategy** block.
 
-Write `<artifacts.dir>/<feature-slug>/spec.md` (Verified Spec).
-
-## Process
-
-1. **Load domain model**: Read each project's `CONTEXT.md` (glossary) and `docs/adr/` (existing decisions). Ensure the spec uses the project's ubiquitous language.
-2. **Explore codebase**: Read relevant module code to understand the current state.
-3. **Identify seams**: Find the best places to test. Prefer existing seams; minimize new ones.
-4. **Synthesize spec**: Use the template below. Write to `<artifacts.dir>/<feature-slug>/spec.md`.
-
-## Spec Template
+### Add after Implementation Decisions:
 
 ```markdown
-# Spec: [Requirement Title]
-
-## Problem Statement
-
-The problem users face, described from the user's perspective.
-
-## Solution
-
-The solution, described from the user's perspective.
-
-## User Stories
-
-Numbered list:
-
-1. As a [role], I want [capability], so that [benefit]
-
-The list should be **exhaustive**, covering all aspects of the feature.
-
-## Implementation Decisions
-
-- Modules involved (new / modified)
-- Inter-module interface definitions
-- Data model changes (tables, fields, indexes)
-- API contracts (paths, methods, params, response)
-- Caching strategy
-- Architecture decisions
-
-Do NOT include specific file paths or code snippets (they become stale).
-Exception: If a prototype produced something more precise than prose (state machines, reducers, schemas, type shapes), inline it.
-
 ## Verification Strategy
-
-**This is the core difference from the original to-spec.**
 
 ### Verification Environment
 
@@ -147,21 +109,11 @@ Every integration/E2E test must satisfy ALL criteria:
 | R6 | Real user path | Obtain token through login |
 | R7 | Data isolation | Use E2E_TEST_ prefix, clean up after test |
 | R8 | Repeatable | No manual pre-steps, script is self-contained |
-
-## Out of Scope
-
-Work not in scope for this requirement.
-
-## Further Notes
-
-Additional notes.
 ```
 
-## Key Rules
+## Additional Rules (beyond `to-spec`)
 
 1. **Every User Story MUST have a verification method** — no verification = incomplete story
 2. **Verification methods must be executable** — not "test the API" but "POST /api/xxx, assert response.data.field == expected"
-3. **Use project domain terminology** — consistent with CONTEXT.md and ADR
-4. **No implementation code** — the spec describes decisions, interfaces, and data flows, not implementation code. Exception: name specific existing functions when the codebase has multiple candidates for an operation (e.g., "Use `resolveMappingValue()`, not `evaluateExpression()`")
-5. **Verification environment info must be complete** — MCP connections, test accounts, data strategy
-6. **No scope reduction** — the spec MUST NOT silently reduce brief requirements using phrases like "for the initial implementation", "for now", "future iteration", "body: empty for now", "can be added later". If the brief requires it, the spec must design it. If a technical constraint prevents full implementation, state the constraint explicitly and propose a solution path — do NOT skip
+3. **Verification environment info must be complete** — MCP connections, test accounts, data strategy
+4. **No scope reduction** — the spec MUST NOT silently reduce requirements using phrases like "for the initial implementation", "for now", "future iteration", "body: empty for now", "can be added later". If the brief requires it, the spec must design it. If a technical constraint prevents full implementation, state the constraint explicitly and propose a solution path — do NOT skip

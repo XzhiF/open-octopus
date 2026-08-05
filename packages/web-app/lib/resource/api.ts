@@ -69,13 +69,35 @@ export async function installResource(ref: string): Promise<InstallResponse> {
   return handleResponse<InstallResponse>(res)
 }
 
-export async function uninstallResource(name: string, type: string): Promise<UninstallResponse> {
+export async function uninstallResource(name: string, type: string, keepBackup?: boolean): Promise<UninstallResponse> {
   const res = await apiFetch(`${base()}/uninstall`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name, type, caller: "ui", keepBackup: keepBackup ?? false }),
+  })
+  return handleResponse<UninstallResponse>(res)
+}
+
+export async function activateResource(name: string, type: string): Promise<{
+  name: string; type: string; activatedTo: string
+}> {
+  const res = await apiFetch(`${base()}/activate`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ name, type, caller: "ui" }),
   })
-  return handleResponse<UninstallResponse>(res)
+  return handleResponse(res)
+}
+
+export async function deactivateResource(name: string, type: string): Promise<{
+  name: string; type: string
+}> {
+  const res = await apiFetch(`${base()}/deactivate`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name, type, caller: "ui" }),
+  })
+  return handleResponse(res)
 }
 
 // ============ Builtin ============

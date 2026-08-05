@@ -5,6 +5,8 @@ import {
   ResourceError,
   InstallRequestSchema,
   UninstallRequestSchema,
+  ActivateRequestSchema,
+  DeactivateRequestSchema,
   SourceAddRequestSchema,
   SourceUpdateRequestSchema,
   SourceInstallRequestSchema,
@@ -43,6 +45,9 @@ export function createResourceRoutes(
   /** Translate ResourceManager error codes to API-contract codes.
    * - RESOURCE_ALREADY_EXISTS → ALREADY_INSTALLED (409)
    * - LOCK_BUSY               → RESOURCE_LOCKED   (409)
+   * - UNINSTALL_BLOCKED       → pass through (409)
+   * - ACTIVATION_BLOCKED      → pass through (409)
+   * - DEACTIVATION_BLOCKED    → pass through (409)
    */
   function mapError(err: unknown): never {
     if (err instanceof ResourceError) {
@@ -68,7 +73,7 @@ export function createResourceRoutes(
     const installedParam = c.req.query("installed") as string | undefined
 
     const filter: { type?: ResourceType; query?: string; installed?: boolean } = {}
-    if (type && ["skill", "agent", "workflow"].includes(type)) filter.type = type
+    if (type && ["skill", "agent", "workflow", "rule", "command", "clone"].includes(type)) filter.type = type
     if (query) filter.query = query
     if (installedParam !== undefined) filter.installed = installedParam === "true"
 
@@ -87,7 +92,7 @@ export function createResourceRoutes(
     const lastParam = c.req.query("last") as string | undefined
     const last = lastParam ? parseInt(lastParam, 10) : undefined
 
-    const VALID_ACTIONS = new Set(["install", "uninstall", "verify", "install_blocked", "verify_warn", "verify_fail"])
+    const VALID_ACTIONS = new Set(["install", "uninstall", "verify", "install_blocked", "verify_warn", "verify_fail", "activate", "deactivate"])
     const filter: { action?: string; last?: number } = {}
     if (action && VALID_ACTIONS.has(action)) filter.action = action
     if (last && last > 0 && last <= 1000) filter.last = last
@@ -143,6 +148,48 @@ export function createResourceRoutes(
     const result = await withResourceLock(parsed.data.name, async () => {
       try {
         return await manager.uninstall(parsed.data)
+      } catch (err) { mapError(err) }
+    })
+
+    return c.json(result)
+  }))
+
+  // ── POST /activate — Activate resource ───────────────────────────────────
+  app.post("/activate", withErrorCatch(async (c) => {
+    const manager = getManager()
+
+    const body = await c.req.json()
+    const parsed = ActivateRequestSchema.safeParse(body)
+    if (!parsed.success) {
+      throw new ResourceError("INVALID_NAME", parsed.error.issues[0]?.message ?? "Invalid request", {
+        suggestion: "Provide valid name and type (rule, command, or clone)",
+      })
+    }
+
+    const result = await withResourceLock(parsed.data.name, async () => {
+      try {
+        return await manager.activate(parsed.data.name, parsed.data.type, parsed.data.caller)
+      } catch (err) { mapError(err) }
+    })
+
+    return c.json(result)
+  }))
+
+  // ── POST /deactivate — Deactivate resource ───────────────────────────────
+  app.post("/deactivate", withErrorCatch(async (c) => {
+    const manager = getManager()
+
+    const body = await c.req.json()
+    const parsed = DeactivateRequestSchema.safeParse(body)
+    if (!parsed.success) {
+      throw new ResourceError("INVALID_NAME", parsed.error.issues[0]?.message ?? "Invalid request", {
+        suggestion: "Provide valid name and type",
+      })
+    }
+
+    const result = await withResourceLock(parsed.data.name, async () => {
+      try {
+        return await manager.deactivate(parsed.data.name, parsed.data.type, parsed.data.caller)
       } catch (err) { mapError(err) }
     })
 

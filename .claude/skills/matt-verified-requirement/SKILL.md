@@ -1,6 +1,6 @@
 ---
 name: matt-verified-requirement
-description: Verification-driven requirement clarification. Multi-turn dialogue using grilling or wayfinder paths. Clarifies requirements, defines verification strategies and acceptance criteria. Outputs a structured brief for agent execution. Uses domain-modeling to maintain project glossary and ADRs. Use when proposing new features, refactors, or discussing verification approaches.
+description: Verification-driven requirement clarification. Multi-turn dialogue using grilling or wayfinder paths. Clarifies requirements, defines verification strategies and acceptance criteria. Outputs a verified spec.md and DAG-structured issues/ for pipeline execution. Spawns story-walkthrough sub-agent for design validation. Uses domain-modeling to maintain project glossary and ADRs. Use when proposing new features, refactors, or discussing verification approaches.
 dependencies: domain-modeling, grilling, wayfinder, research
 ---
 
@@ -181,7 +181,7 @@ The **frontier** = open + unblocked + unclaimed tickets. Select by number (lowes
 
 #### Wayfinder Exit
 
-All decision tickets resolved + map clear (no ungraduated fog) → write the **brief** (see Artifact Output below). The brief synthesizes all decisions + verification strategy.
+All decision tickets resolved + map clear (no ungraduated fog) → write the **spec.md** (see Artifact Output below), spawn story-walkthrough sub-agent, fix spec with findings, then write **issues/** (DAG tickets).
 
 ## Verification Strategy Questions (both paths MUST cover)
 
@@ -237,42 +237,82 @@ What needs to be ready before verification?
 ### Grilling Path
 - User says "confirmed" or "hand to agent"
 - All verification dimensions explored
-- **Story Walk-Through completed** (see below)
+- **spec.md written** (see Artifact Output)
+- **Story Walk-Through sub-agent completed** and findings incorporated
+- **issues/ written** with DAG tickets
 - Max 15 rounds
 
 ### Wayfinder Path
 - All decision tickets resolved
 - Map clear — no ungraduated fog in "Not yet specified"
 - All verification dimensions explored (both paths must cover these)
-- **Story Walk-Through completed** (see below)
+- **spec.md written** (see Artifact Output)
+- **Story Walk-Through sub-agent completed** and findings incorporated
+- **issues/ written** with DAG tickets
 - Max 20 decision tickets (if more, consider splitting into multiple wayfinder efforts)
 
-## Story Walk-Through Analysis (MANDATORY before brief)
+## Story Walk-Through Analysis (MANDATORY, sub-agent)
 
-After all decisions are collected but BEFORE writing the brief, perform a **Story Walk-Through** to validate the design forms a complete closed-loop system.
+After the draft spec.md is written (see Artifact Output below), spawn a **Story Walk-Through sub-agent** to validate the design forms a complete closed-loop system.
 
-**Protocol** → See [references/story-walkthrough.md](references/story-walkthrough.md)
+**Why sub-agent**: 裁判 ≠ 球员 — the spec author cannot reliably find gaps in their own spec. An independent reader catches what the writer missed.
 
-**Summary**: Select 1–3 core user stories → trace step-by-step with `[UI]` `[API]` `[Data]` `[Exec]` `[Event]` annotations → identify break points (CRITICAL/HIGH must fix) → design fixes → re-trace until clean. Append full traces to brief as Appendix.
+**Execution**:
+1. Write draft `spec.md` (see Spec Template below)
+2. Spawn sub-agent via Agent tool:
+   ```
+   Prompt: "Read the spec at <artifacts.dir>/<feature-slug>/spec.md and perform a
+   Story Walk-Through analysis.
+   Protocol: .claude/skills/matt-verified-requirement/references/story-walkthrough.md
+   Explore the codebase freely to verify each story step.
+   
+   Output TWO things:
+   1. Write <artifacts.dir>/<feature-slug>/story-walkthrough.md — a human-readable
+      report with full story traces, break points, and recommendations.
+      This file is for human review only, not consumed by the pipeline.
+   2. Return structured break points with severity (CRITICAL/HIGH/MEDIUM/LOW)
+      and recommended fixes to the parent agent.
+   
+   Do NOT modify spec.md."
+   ```
+3. Read sub-agent's findings
+4. Fix all CRITICAL and HIGH break points in spec.md:
+   - Add missing types/schemas/APIs to Implementation Decisions
+   - Add new ACs for each fix
+   - Update Key Decisions with "Story Gap Fixes"
+5. Re-trace if needed (spawn again if major structural changes)
+6. Append story traces to spec.md Appendix
+
+**Human-readable report**: The sub-agent writes `story-walkthrough.md` as a standalone artifact for human review. It is NOT consumed by downstream pipeline steps — purely for the user to understand what gaps were found and how the design was validated.
+
+**Protocol details** → See [references/story-walkthrough.md](references/story-walkthrough.md)
 
 **Watch for 6 anti-patterns**: Magic Bridge, Orphan Field, Silent Failure, Missing Trigger, Unversioned State, Unconnected Feedback.
 
 ## Artifact Output
 
-On exit, create `<artifacts.dir>/<feature-slug>/` and write the brief.
+On exit, create `<artifacts.dir>/<feature-slug>/` and write all artifacts.
 
 ### Grilling Path Output
 
 ```
 <artifacts.dir>/<feature-slug>/
-└── brief.md              ← Requirement brief (this skill's ONLY output)
+├── brief.md              ← Lightweight core info summary (for human review)
+├── spec.md               ← Full verified spec (single source of truth for agents)
+├── story-walkthrough.md  ← Human-readable walkthrough report (review only, not consumed by pipeline)
+└── issues/               ← DAG tickets with blocked-by + verification
+    ├── 01-<slug>.md
+    ├── 02-<slug>.md
+    └── ...
 ```
 
 ### Wayfinder Path Output
 
 ```
 <artifacts.dir>/<feature-slug>/
-├── brief.md              ← Requirement brief (written AFTER all decision tickets resolved)
+├── brief.md              ← Lightweight core info summary (for human review)
+├── spec.md               ← Full verified spec (written AFTER story walkthrough)
+├── issues/               ← DAG tickets with blocked-by + verification
 ├── map.md                ← Decision map (wayfinder core artifact)
 ├── decisions/            ← Decision tickets (resolved during wayfinder stage)
 │   ├── 01-research-sdk-plugin.md
@@ -280,14 +320,28 @@ On exit, create `<artifacts.dir>/<feature-slug>/` and write the brief.
 │   └── 03-grilling-discovery.md
 ```
 
+### brief.md — Lightweight Core Info (for human review)
+
+brief.md is a **minimal one-pager** (一页纸) for the user to quickly review. Contains:
+- Overview (one sentence)
+- Summary (decision count + AC count + story count, with links to spec.md)
+- Risks
+- Link to spec.md
+
+It does NOT contain detailed tables — all details live in spec.md.
+
+### spec.md — Single Source of Truth (for agents)
+
+spec.md is the main technical document that downstream agents consume (matt-dev-runner sub-agents, matt-dev-pipeline, code-review). It contains everything needed to implement and verify the feature.
+
 ### What This Skill Does NOT Produce
+
+Note: `spec.md` and `issues/` are now produced by **THIS skill** (see Artifact Output above). They were previously created by `matt-dev-runner` — that agent is now simplified to single-ticket implementation only. `brief.md` is a lightweight summary for human review.
 
 The following artifacts are created **later** by downstream agents — this skill must **never** create them:
 
 | Artifact | Created By | When |
 |----------|-----------|------|
-| `spec.md` | `matt-dev-runner` Step 1 (matt-verified-spec) | After brief is confirmed |
-| `issues/` | `matt-dev-runner` Step 2 (matt-verified-tickets) | After spec is written |
 | `pipeline-report.md` | `matt-dev-pipeline` Phase 4 | After E2E verification |
 | `e2e-*` directories | `matt-e2e-tester` | During E2E verification |
 | `verification-report.md` | `matt-verification-report` | After pipeline completes (standalone or within loop) |
@@ -295,7 +349,7 @@ The following artifacts are created **later** by downstream agents — this skil
 | `loop-summary.md` | `matt-pipeline-loop` | When loop converges or exits |
 | `<feature>-rN/` directories | `matt-pipeline-loop` | Each gap-fix iteration |
 
-**Pipeline order**: brief → spec → issues → implement → deploy → E2E → PR. Each phase owns its artifacts.
+**Pipeline order**: brief + spec + issues → implement (DAG stages) → deploy → E2E → PR. Each phase owns its artifacts.
 
 **ADR 不在此目录** — ADR 写入 `docs/adr/NNNN-slug.md`，见上方 ADR 规则。
 
@@ -303,10 +357,13 @@ The following artifacts are created **later** by downstream agents — this skil
 
 **Steps**:
 1. Create directory `<artifacts.dir>/<feature-slug>/`
-2. Write `<artifacts.dir>/<feature-slug>/brief.md`
-3. For wayfinder path, `map.md` and `decisions/` were already created during the wayfinder process
-4. **Update `<artifacts.dir>/index.md`** (append new record, auto-increment number)
-5. Tell the user the brief path and how to proceed (see Next Steps)
+2. Write `<artifacts.dir>/<feature-slug>/brief.md` (lightweight core info)
+3. Write `<artifacts.dir>/<feature-slug>/spec.md` (using `matt-verified-spec` skill as methodology reference)
+4. Spawn story-walkthrough sub-agent → read findings → fix spec.md
+5. Write `<artifacts.dir>/<feature-slug>/issues/` (using `matt-verified-tickets` skill as methodology reference)
+6. For wayfinder path, `map.md` and `decisions/` were already created during the wayfinder process
+7. **Update `<artifacts.dir>/index.md`** (append new record, auto-increment number)
+8. Tell the user the output paths and how to proceed (see Next Steps)
 
 ### Index File Maintenance
 
@@ -318,36 +375,67 @@ The following artifacts are created **later** by downstream agents — this skil
 | N | <feature-slug> | YYYY-MM-DD | feat/<branch> | in-progress |
 ```
 
-## Brief Template
+## Brief Template (lightweight core info)
 
 ```markdown
-# Requirement Brief
+# Brief: [Feature Title]
 
 ## Overview
 [One sentence description]
+
+## Summary
+- [N] key decisions → [spec.md § Key Decisions](./spec.md)
+- [N] acceptance criteria → [spec.md § Acceptance Criteria](./spec.md)
+- [N] core stories verified → [spec.md § Appendix](./spec.md)
+
+## Risks
+- R1: [risk]
+- R2: [risk]
+
+## Full Spec
+[spec.md](./spec.md)
+```
+
+## Spec Template (single source of truth)
+
+See `matt-verified-spec` skill (enhancement of `to-spec`) for verification strategy additions and writing rules.
+
+```markdown
+# Spec: [Feature Title]
+
+## Problem Statement
+The problem users face, described from the user's perspective.
+
+## Solution
+The solution, described from the user's perspective.
 
 ## Projects Involved
 - [ ] [project-1] ([role])
 - [ ] [project-2] ([role])
 
 ## Feature Scope
-**Do:**
-- [Feature 1]
-
-**Don't:**
-- [Exclusion 1]
+**Do:** / **Don't:**
 
 ## Key Decisions
 | # | Decision | Conclusion | Reason |
 |---|---------|-----------|--------|
 
 ## Decision Map Summary (wayfinder path only)
-<!-- Only include when wayfinder path was used. Synthesize all resolved decision tickets. -->
-
 | # | Ticket | Type | Decision |
 |---|--------|------|----------|
-
 Map: [map.md](./map.md)
+
+## User Stories
+1. As a [role], I want [capability], so that [benefit]
+(Exhaustive list covering all aspects of the feature)
+
+## Implementation Decisions
+- Modules involved (new / modified)
+- Inter-module interface definitions
+- Data model changes (tables, fields, indexes)
+- API contracts (paths, methods, params, response)
+- Caching strategy
+- Architecture decisions
 
 ## Data Model Changes
 | Table | Operation | Details |
@@ -361,23 +449,45 @@ Map: [map.md](./map.md)
 - Figma link: [URL or "none"]
 - Fidelity: [pixel-perfect 1:1 / rough alignment]
 
-## Acceptance Criteria
-| # | User Story | AC | Verification Method |
-|---|-----------|----|-------------------|
-
 ## Verification Strategy
 
-### Global Config
-- Environment: [UAT / local]
-- Test user: [account info]
-- Data prefix: [e.g., "E2E_TEST_"]
+### Verification Environment
+| Item | Value |
+|------|-------|
+| Environment | [local dev: `pnpm dev`] |
+| API prefix | `/api/` |
+| Database | SQLite: `~/.octopus/db/octopus.db` |
+| Admin UI | `http://localhost:3000` |
 
-### Per-layer Methods
+### Test Users & Data
+| Item | Value |
+|------|-------|
+| Test account | [admin / regular user] |
+| Data prefix | E2E_TEST_ |
+| Cleanup | DELETE after test |
+
+### AC to Verification Method Mapping
+| US# | User Story | AC | Verification Level | Verification Method |
+|-----|-----------|-----|-------------------|---------------------|
+
+### Verification Methods Detail
 #### Unit Tests
 #### Integration Tests
 #### Browser E2E
 #### Contract Tests
 #### Manual Checklist
+
+### Anti-Fake-Run Standards (R1-R8)
+| # | Criterion | Description |
+|---|-----------|-------------|
+| R1 | Real service | Use real address, not mock |
+| R2 | Business data | Assert specific field values |
+| R3 | Cross-validation | API ↔ DB, at least two-way |
+| R4 | Evidence | Response body + DB query |
+| R5 | Side effects | Write ops verify DB change |
+| R6 | Real user path | Obtain token through login |
+| R7 | Data isolation | E2E_TEST_ prefix |
+| R8 | Repeatable | No manual pre-steps |
 
 ### Prerequisites
 - [ ] [Prerequisite 1]
@@ -390,18 +500,71 @@ Map: [map.md](./map.md)
 |------|---------|
 
 ## Appendix: Core User Stories（闭环验证）
-
-以下 N 个故事追踪完整用户旅程，验证 UI → API → 数据 → 执行的每一步都连通。
-
 ### Story 1: [标题]
 [Step-by-step trace with [UI]/[API]/[Data]/[Exec]/[Event] annotations]
-
 ### Story 2: [标题]
 [...]
-
-### Story 3: [标题]
-[...]
 ```
+
+**Spec writing rules** (from `matt-verified-spec`):
+1. Every User Story MUST have a verification method
+2. Verification methods must be executable (specific commands, not "test the API")
+3. Use project domain terminology (consistent with CONTEXT.md)
+4. No implementation code (describe decisions, not code)
+5. No scope reduction ("for now", "for the initial implementation" forbidden)
+
+## Issues Writing (DAG Tickets)
+
+After spec.md is finalized (including story walk-through fixes), write implementation tickets to `<artifacts.dir>/<feature-slug>/issues/`.
+
+See `matt-verified-tickets` skill (enhancement of `to-tickets`) for verification method additions and DAG rules.
+
+### Process
+1. Gather context (read spec.md, explore codebase)
+2. Split into vertical slices (tracer bullet principles)
+3. Order by dependency: DB → Entity → Service → Controller → Frontend API → Frontend pages → E2E
+4. Bind verification method to each ticket
+5. Declare blocking edges (`Blocked by` field — this creates the DAG)
+6. Write to files: one per ticket, numbered from `01-<slug>.md`
+
+### Ticket Template
+
+```markdown
+# <NN> — <Ticket Title>
+
+## What to build
+Describe the end-to-end behavior this ticket implements, from the user's perspective.
+
+## Blocked by
+Prerequisite ticket numbers/titles, or "None — can start immediately".
+
+## Status
+ready-for-agent
+
+## Acceptance Criteria
+- [ ] AC1: [specific verifiable condition]
+- [ ] AC2: [specific verifiable condition]
+
+## Verification Method
+**Verification type**: [unit test / integration test / browser E2E / contract test / manual checklist]
+
+**Verification steps**:
+[Specific commands, SQL, assertions]
+
+**Pass criteria**: All verification steps PASS
+**Failure handling**: Max 3 fix attempts, then mark SKIP with reason
+```
+
+**Status field convention**: The value under `## Status` heading is plain text. Valid values: `ready-for-agent` (initial), `in-progress` (claimed), `done` (verified), `skip` (failed after retries). Both matt-dev-runner and matt-dev-pipeline read this field to track progress.
+
+### Issues Writing Rules
+1. Every ticket MUST have a Verification Method
+2. Vertical Slice — each ticket is a complete narrow path
+3. Independently verifiable — each ticket can be verified on its own
+4. Clear dependencies — `Blocked by` explicitly declares prerequisites
+5. Executable verification — specific commands, specific SQL, specific assertions
+6. One session size — each ticket fits in one agent call
+7. DAG structure — tickets without mutual blockers can run concurrently in the same stage
 
 ## Relationship to Original Skills
 
@@ -411,21 +574,24 @@ Map: [map.md](./map.md)
 | `grill-with-docs` | **Replaces** — grilling + domain-modeling built in, plus verification strategy |
 | `wayfinder` | **Adapts** its core protocol (map, decision tickets, fog of war, frontier) for single-entry flow with verification strategy. The standalone `/wayfinder` remains available for efforts outside this pipeline. |
 | `domain-modeling` | **Reuses** — updates CONTEXT.md and creates ADRs inline |
-| `matt-dev-runner` | **Downstream** — receives the brief for development execution |
-| `matt-dev-pipeline` | **Downstream** — receives the brief for full pipeline execution |
-| `matt-pipeline-loop` | **Downstream** — receives the brief for iterative pipeline with verification loop |
+| `matt-verified-spec` | **Enhancement of `to-spec`** — adds verification strategy block (environment, AC mapping, methods detail, anti-fake-run R1-R8) |
+| `matt-verified-tickets` | **Enhancement of `to-tickets`** — adds verification method binding per ticket (executable steps, DAG structure) |
+| `matt-dev-runner` | **Simplified** — now a single-ticket implementer, spawned concurrently by pipeline per DAG stage |
+| `matt-dev-pipeline` | **Downstream** — receives spec.md + issues/ for DAG-based concurrent execution |
+| `matt-pipeline-loop` | **Downstream** — receives spec.md + issues/ for iterative pipeline with verification loop |
 | `matt-verification-report` | **Indirect** — loop uses it to audit each iteration's results |
 
 ## Next Steps
 
-Once the brief is confirmed and written to `<artifacts.dir>/<feature-slug>/brief.md`, tell the user:
+Once all artifacts are written, tell the user:
 
-> Requirement brief is ready at `<artifacts.dir>/<feature-slug>/brief.md`.
+> Verified spec and tickets are ready:
+> - Brief (core info): `<artifacts.dir>/<feature-slug>/brief.md`
+> - Spec: `<artifacts.dir>/<feature-slug>/spec.md`
+> - Tickets: `<artifacts.dir>/<feature-slug>/issues/` (N tickets, M stages)
 >
-> You have three options to proceed:
+> Two options to proceed:
 >
-> 1. **`matt-dev-runner`** — Development only. Invoke the agent to synthesize spec, split tickets, and run implement-verify loops. You handle deploy and PR yourself.
+> 1. **`matt-dev-pipeline`** — Full pipeline. DAG-based concurrent development → code review → deploy → E2E verification → Git PR delivery.
 >
-> 2. **`matt-dev-pipeline`** — Full pipeline. Orchestrate development → CI/CD deploy → E2E verification → Git PR delivery, all in one flow.
->
-> 3. **`matt-pipeline-loop`** — Iterative pipeline with verification. Runs the full pipeline, then audits the result with `matt-verification-report`. If confidence < 85, auto-generates a gap-focused brief and re-runs. Loops until the feature is truly deliverable. Best for features with complex UI or high delivery standards.
+> 2. **`matt-pipeline-loop`** — Iterative pipeline with verification. Runs the full pipeline, then audits with `matt-verification-report`. If confidence < 85, auto-generates a gap-focused brief and re-runs. Loops until the feature is truly deliverable.

@@ -304,7 +304,7 @@ describe('ResourcePreFlight', () => {
       fs.writeFileSync(path.join(agentsDir, 'existing-agent.md'), '# Agent', 'utf-8')
 
       const result = preflight.check(
-        { agents: ['existing-agent', 'missing-agent'], skills: [] },
+        { agents: ['existing-agent', 'missing-agent'], skills: [], commands: [], rules: [] },
         tmpDir,
       )
 
@@ -318,7 +318,7 @@ describe('ResourcePreFlight', () => {
       fs.writeFileSync(path.join(skillsDir, 'SKILL.md'), '# Skill', 'utf-8')
 
       const result = preflight.check(
-        { agents: [], skills: ['my-skill', 'no-skill'] },
+        { agents: [], skills: ['my-skill', 'no-skill'], commands: [], rules: [] },
         tmpDir,
       )
 
@@ -328,7 +328,7 @@ describe('ResourcePreFlight', () => {
 
     it('all missing when workspace has no .claude dir', () => {
       const result = preflight.check(
-        { agents: ['a'], skills: ['s'] },
+        { agents: ['a'], skills: ['s'], commands: [], rules: [] },
         tmpDir,
       )
       expect(result.available.length).toBe(0)
@@ -343,11 +343,146 @@ describe('ResourcePreFlight', () => {
       fs.mkdirSync(skillDir, { recursive: true })
 
       const result = preflight.check(
-        { agents: ['a'], skills: ['s'] },
+        { agents: ['a'], skills: ['s'], commands: [], rules: [] },
         tmpDir,
       )
       expect(result.available.length).toBe(2)
       expect(result.missing.length).toBe(0)
+    })
+
+    it('detects available commands at .claude/commands/{name}.md', () => {
+      const commandsDir = path.join(tmpDir, '.claude', 'commands')
+      fs.mkdirSync(commandsDir, { recursive: true })
+      fs.writeFileSync(path.join(commandsDir, 'cmd-review.md'), '# Command', 'utf-8')
+
+      const result = preflight.check(
+        { agents: [], skills: [], commands: ['cmd-review', 'missing-cmd'], rules: [] },
+        tmpDir,
+      )
+
+      expect(result.available).toContainEqual({ type: 'command', name: 'cmd-review' })
+      expect(result.missing).toContainEqual({ type: 'command', name: 'missing-cmd' })
+    })
+
+    it('detects available rules at .claude/rules/{name}.md', () => {
+      const rulesDir = path.join(tmpDir, '.claude', 'rules')
+      fs.mkdirSync(rulesDir, { recursive: true })
+      fs.writeFileSync(path.join(rulesDir, 'code-style.md'), '# Rule', 'utf-8')
+
+      const result = preflight.check(
+        { agents: [], skills: [], commands: [], rules: ['code-style', 'missing-rule'] },
+        tmpDir,
+      )
+
+      expect(result.available).toContainEqual({ type: 'rule', name: 'code-style' })
+      expect(result.missing).toContainEqual({ type: 'rule', name: 'missing-rule' })
+    })
+
+    it('strips .md suffix from command names when checking', () => {
+      const commandsDir = path.join(tmpDir, '.claude', 'commands')
+      fs.mkdirSync(commandsDir, { recursive: true })
+      fs.writeFileSync(path.join(commandsDir, 'deploy.md'), '# Deploy', 'utf-8')
+
+      const result = preflight.check(
+        { agents: [], skills: [], commands: ['deploy.md'], rules: [] },
+        tmpDir,
+      )
+
+      expect(result.available).toContainEqual({ type: 'command', name: 'deploy.md' })
+    })
+
+    it('strips .md suffix from rule names when checking', () => {
+      const rulesDir = path.join(tmpDir, '.claude', 'rules')
+      fs.mkdirSync(rulesDir, { recursive: true })
+      fs.writeFileSync(path.join(rulesDir, 'lint.md'), '# Lint', 'utf-8')
+
+      const result = preflight.check(
+        { agents: [], skills: [], commands: [], rules: ['lint.md'] },
+        tmpDir,
+      )
+
+      expect(result.available).toContainEqual({ type: 'rule', name: 'lint.md' })
+    })
+  })
+
+  describe('checkClones', () => {
+    let origHome: string
+    let fakeHome: string
+
+    beforeEach(() => {
+      fakeHome = createTempDir()
+      origHome = os.homedir()
+      // Override homedir via env — os.homedir() reads USERPROFILE on Windows, HOME on Unix
+      if (process.platform === 'win32') {
+        process.env.USERPROFILE = fakeHome
+      } else {
+        process.env.HOME = fakeHome
+      }
+    })
+
+    afterEach(() => {
+      // Restore original homedir
+      if (process.platform === 'win32') {
+        process.env.USERPROFILE = origHome
+      } else {
+        process.env.HOME = origHome
+      }
+      cleanupDir(fakeHome)
+    })
+
+    it('detects clone available at ~/.octopus/agent/clones/{name}/', () => {
+      const cloneDir = path.join(fakeHome, '.octopus', 'agent', 'clones', 'my-clone')
+      fs.mkdirSync(cloneDir, { recursive: true })
+
+      const result = preflight.checkClones(['my-clone'])
+      expect(result.available).toContainEqual({ type: 'clone', name: 'my-clone' })
+      expect(result.missing.length).toBe(0)
+    })
+
+    it('detects clone available at ~/.octopus/agent/built-in/{name}/', () => {
+      const builtinDir = path.join(fakeHome, '.octopus', 'agent', 'built-in', 'workspace')
+      fs.mkdirSync(builtinDir, { recursive: true })
+
+      const result = preflight.checkClones(['workspace'])
+      expect(result.available).toContainEqual({ type: 'clone', name: 'workspace' })
+      expect(result.missing.length).toBe(0)
+    })
+
+    it('detects clone missing when neither path exists', () => {
+      const result = preflight.checkClones(['nonexistent-clone'])
+      expect(result.available.length).toBe(0)
+      expect(result.missing).toContainEqual({ type: 'clone', name: 'nonexistent-clone' })
+    })
+
+    it('handles mixed available and missing clones', () => {
+      const cloneDir = path.join(fakeHome, '.octopus', 'agent', 'clones', 'installed')
+      fs.mkdirSync(cloneDir, { recursive: true })
+
+      const result = preflight.checkClones(['installed', 'not-installed'])
+      expect(result.available).toContainEqual({ type: 'clone', name: 'installed' })
+      expect(result.missing).toContainEqual({ type: 'clone', name: 'not-installed' })
+    })
+
+    it('returns empty results for empty input', () => {
+      const result = preflight.checkClones([])
+      expect(result.available.length).toBe(0)
+      expect(result.missing.length).toBe(0)
+    })
+  })
+
+  describe('analyze — new fields', () => {
+    it('returns empty commands and rules arrays (no scanning from nodes)', () => {
+      const workflow = {
+        nodes: [
+          { type: 'agent', agent_file: 'agents/test.md', skills: ['skill-a'] },
+        ],
+      }
+      const manifest = preflight.analyze(workflow)
+      expect(manifest.commands).toEqual([])
+      expect(manifest.rules).toEqual([])
+      // Existing fields still work
+      expect(manifest.agents).toContain('test')
+      expect(manifest.skills).toContain('skill-a')
     })
   })
 })

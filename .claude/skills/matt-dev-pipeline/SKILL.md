@@ -1,6 +1,6 @@
 ---
 name: matt-dev-pipeline
-description: Full pipeline orchestration skill. Guides the main agent to sequentially invoke matt-dev-runner (development) -> independent code review -> CI/CD deploy -> matt-e2e-tester (E2E verification) -> Git PR delivery. Use when a requirement is clarified and needs end-to-end development + deployment + verification + delivery.
+description: Full pipeline orchestration skill. DAG-based concurrent development with matt-dev-runner sub-agents -> independent code review -> deploy -> matt-e2e-tester (E2E verification) -> Git PR delivery. Use when a requirement is clarified and needs end-to-end development + deployment + verification + delivery.
 ---
 
 # Full Development Pipeline
@@ -11,7 +11,7 @@ You are an **orchestrator**. You don't write code or run tests yourself. Instead
 
 ## Input
 
-Receive `<artifacts.dir>/<feature-slug>/brief.md` file path.
+Receive `<artifacts.dir>/<feature-slug>/spec.md` and `<artifacts.dir>/<feature-slug>/issues/` paths.
 
 Read `CLAUDE.md` at the start to understand the project structure (TypeScript monorepo, pnpm, SQLite).
 
@@ -20,7 +20,7 @@ Read `CLAUDE.md` at the start to understand the project structure (TypeScript mo
 ```
 Input: <artifacts.dir>/<feature-slug>/brief.md
     |
-Phase 1: Development -> invoke matt-dev-runner agent
+Phase 1: DAG Orchestration -> parse issues/, identify stages, spawn concurrent matt-dev-runner sub-agents
     |
 Phase 2: Code Review -> independent sub-agent reviews diff (裁判 ≠ 球员)
     |
@@ -60,25 +60,87 @@ docs/scripts/feat-my-feature/my-feature/
 
 ---
 
-## Phase 1: Development
+## Phase 1: DAG Orchestration
 
-**Dispatch**: Invoke the `matt-dev-runner` agent, passing the brief.md path.
+**Dispatch**: Main session orchestrates directly — no single matt-dev-runner agent. Instead, parse the DAG and spawn concurrent matt-dev-runner sub-agents per stage.
 
-matt-dev-runner will:
-1. Synthesize Verified Spec -> spec.md
-2. Split Verified Tickets -> issues/
-3. Implement-verify loop per ticket
-4. Git commit + push
+### 1.1 Parse DAG
 
-**Pass criteria**: matt-dev-runner returns success, all tickets resolved or skip, code pushed.
+Read all ticket files from `<artifacts.dir>/<feature-slug>/issues/`. Extract:
+- Ticket number + title
+- `Blocked by` field (dependency edges)
+- `Status` field
 
-**Failure handling**: If matt-dev-runner returns failure, analyze and decide whether to retry. Max 1 retry.
+Build a dependency graph:
+```
+{ 01: [], 02: [01], 03: [01], 04: [02], 05: [04], 06: [] }
+```
+
+### 1.2 Identify Stages
+
+Topological sort into stages:
+- **Stage 0** = tickets with no blockers (can start immediately)
+- **Stage N** = tickets whose blockers are all in stages < N
+- Same-stage tickets have NO mutual dependencies → run concurrently
+
+Example:
+```
+Stage 0: [01, 06]          — no blockers
+Stage 1: [02, 03]          — depend on 01
+Stage 2: [04]              — depends on 02
+Stage 3: [05]              — depends on 04
+```
+
+### 1.3 Execute Stages
+
+For each stage in order:
+
+**a) Spawn concurrent matt-dev-runner sub-agents** (one per ticket, parallel Agent tool calls in a single message):
+```
+Each sub-agent prompt:
+"You are matt-dev-runner. Implementing ticket <NN> for <feature-slug>.
+
+Spec: <artifacts.dir>/<feature-slug>/spec.md
+Ticket: <artifacts.dir>/<feature-slug>/issues/<NN>-<slug>.md
+
+Follow your standard execution flow (Read Context → Explore → Implement → Verify → Review).
+Do NOT commit — the pipeline commits per stage after integration gate.
+
+You are one of potentially several concurrent implementers.
+Focus ONLY on your assigned ticket. Do NOT modify files owned by other tickets."
+```
+
+**b) Wait for all sub-agents in stage to complete**
+
+**c) Integration gate**: Run `pnpm build && pnpm test`
+- PASS → proceed to step (c.5)
+- FAIL → diagnose the failure, spawn a fix sub-agent to address build/test errors, max 2 fix attempts
+
+**c.5) Stage commit**: After integration gate passes, commit all changes from this stage:
+```bash
+git add -A
+git commit -m "feat(<feature-slug>): stage <N> — <ticket-numbers>"
+```
+
+**d) Confirm ticket status updated** — read each ticket file, verify the value under `## Status` heading is `done` or `skip`
+
+### 1.4 Final push
+
+After all stages complete:
+```bash
+# Push all stage commits
+git push origin $branch
+```
+
+**Pass criteria**: All tickets done/skip + build passes + tests pass + code pushed.
+
+**Failure handling**: Stage gate fails after 2 fix attempts → log in pipeline-report, present to user, pipeline stops.
 
 ---
 
 ## Phase 2: Code Review (独立审查)
 
-**Design principle**: 裁判 ≠ 球员。matt-dev-runner（子代理）写了代码，主 Agent 从没看过实现过程 — 主 Agent 天然独立，直接审查。
+**Design principle**: 裁判 ≠ 球员。implementer sub-agents (matt-dev-runner) wrote code，主 Agent 从没看过实现过程 — 主 Agent 天然独立，直接审查。
 
 **Dispatch**: 主 Agent 直接调用 `code-review` skill：
 
@@ -107,7 +169,7 @@ Completeness axis 审查要点：
 
 **Fix-verify cycle** (if 🔴 or 🟡 findings exist):
 
-1. **主 Agent 直接修复**: 用 Edit/Write 工具对具体文件做 targeted fix。**不要重新 spawn matt-dev-runner** — 它会重跑 spec→tickets→implement 全流程，不是 targeted fixer。
+1. **主 Agent 直接修复**: 用 Edit/Write 工具对具体文件做 targeted fix。**不要重新 spawn implementer sub-agents** — 它会重跑 spec→tickets→implement 全流程，不是 targeted fixer。
 2. **验证**: 运行 `pnpm test`，确认修复没有引入回归
 3. **Commit + push**: `git add -A && git commit -m "fix: address code review findings" && git push`
 4. **再审查**: 主 Agent 再跑一次 `/code-review` 确认 findings 已解决
@@ -242,9 +304,9 @@ Write `<artifacts.dir>/<feature-slug>/pipeline-report.md` **before** committing,
 > 注：仅当前 feature-slug 为 active，其余为同分支历史迭代。
 > 单迭代时此 section 省略。
 
-### Phase 1: Development（当前迭代）
-| Ticket | Title | Status | Fix Count |
-|--------|-------|--------|-----------|
+### Phase 1: DAG Orchestration
+| Stage | Tickets | Status | Integration Gate | Commit |
+|-------|---------|--------|-----------------|--------|
 
 ### Phase 2: Code Review
 | Axis | Findings | Fixed | Noted | Cycles |
@@ -389,8 +451,8 @@ git push --force-with-lease origin $branch
 
 1. **Phases cannot be skipped**: Must execute 1 → 2 → 3 → 4 → 5 in order
 2. **Phase failure stops pipeline**: Phase 1 (max 1 retry), Phase 2 (max 2 review-fix cycles), Phase 3 (max 2 retries), Phase 4 (matt-e2e-tester handles fix-and-retest internally: Quick Fix → diagnosing-bugs → stop). If exhausted, present to user.
-3. **Orchestrate, don't execute**: Phase 1 and 4 use agents; Phase 2 主 Agent 直接调用 code-review skill（主 Agent 天然独立于实现代码）; main agent doesn't write code or run tests
-4. **裁判 ≠ 球员**: Phase 2 code-review 由主 Agent 直接执行（它从没看过实现代码）。修复也由主 Agent 直接 Edit — **不要重新 spawn matt-dev-runner**（它会重跑 spec→tickets→implement 全流程，不是 targeted fixer）。
+3. **Orchestrate, don't execute**: Phase 1 spawns concurrent matt-dev-runner sub-agents per DAG stage; Phase 2 主 Agent 直接调用 code-review skill（主 Agent 天然独立于实现代码）; main agent doesn't write code or run tests
+4. **裁判 ≠ 球员**: Phase 2 code-review 由主 Agent 直接执行（它从没看过实现代码）。修复也由主 Agent 直接 Edit — **不要重新 spawn Phase 1 implementer sub-agents**（它们会重跑 ticket 全流程，不是 targeted fixer）。
 4. **PR precision**: Only create PRs for projects with actual code changes vs target branch
 5. **Artifact ownership**: All intermediates go to `<artifacts.dir>/<feature-slug>/`, never pollute source dirs
 6. **Artifacts in PR**: pipeline-report.md and index.md must be committed before PR creation so they appear in the PR diff

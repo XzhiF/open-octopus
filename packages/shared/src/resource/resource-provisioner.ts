@@ -3,7 +3,12 @@ import fs from 'fs'
 import path from 'path'
 
 /**
- * ResourceProvisioner — 将工作流所需资源（agent/skill）预配到 workspace。
+ * Provisionable resource type — clone is excluded (never auto-provisioned).
+ */
+export type ProvisionableType = 'agent' | 'skill' | 'command' | 'rule'
+
+/**
+ * ResourceProvisioner — 将工作流所需资源（agent/skill/command/rule）预配到 workspace。
  *
  * 通过 ResourcePreFlight 分析出精确的缺失列表，直接从全局资源库复制。
  */
@@ -19,11 +24,13 @@ export class ResourceProvisioner {
    *
    * missing 列表已包含精确的 {type, name}，manager registry 有 installPath，
    * 无需委托 LLM agent。直接复制比 agent 调用快 3-4 个数量级。
+   *
+   * clone type is rejected — clones must be installed manually.
    */
   async provision(
-    missing: Array<{ type: 'agent' | 'skill'; name: string }>,
+    missing: Array<{ type: ProvisionableType; name: string }>,
     workspaceDir: string,
-  ): Promise<{ provisioned: number; failed: string[] }> {
+  ): Promise<{ provisioned: number; failed: string[]; byType: Record<string, number> }> {
     return this.directProvision(missing, workspaceDir)
   }
 
@@ -31,29 +38,31 @@ export class ResourceProvisioner {
    * 直接复制资源到 workspace
    */
   private directProvision(
-    missing: Array<{ type: 'agent' | 'skill'; name: string }>,
+    missing: Array<{ type: ProvisionableType; name: string }>,
     workspaceDir: string,
-  ): Promise<{ provisioned: number; failed: string[] }> {
+  ): Promise<{ provisioned: number; failed: string[]; byType: Record<string, number> }> {
     const failed: string[] = []
     let provisioned = 0
+    const byType: Record<string, number> = {}
 
     for (const item of missing) {
       try {
         this.directCopy(item.type, item.name, workspaceDir)
         provisioned++
+        byType[item.type] = (byType[item.type] ?? 0) + 1
       } catch (err: any) {
         failed.push(`${item.type}:${item.name} — ${err.message}`)
       }
     }
 
-    return Promise.resolve({ provisioned, failed })
+    return Promise.resolve({ provisioned, failed, byType })
   }
 
   /**
    * 复制单个资源到 workspace
    */
   private directCopy(
-    type: 'agent' | 'skill',
+    type: ProvisionableType,
     name: string,
     workspaceDir: string,
   ): void {
@@ -71,26 +80,25 @@ export class ResourceProvisioner {
     const plainName = entry.name
     const destBase = path.join(workspaceDir, '.claude')
 
-    if (type === 'agent') {
-      const sourceFile = path.join(sourcePath, `${plainName}.md`)
-      const destDir = path.join(destBase, 'agents')
-      const destFile = path.join(destDir, `${plainName}.md`)
-
-      if (!fs.existsSync(sourceFile)) {
-        throw new Error(`Agent file not found: ${sourceFile}`)
+    switch (type) {
+      case 'agent':
+      case 'command':
+      case 'rule': {
+        const subdir = type === 'agent' ? 'agents' : type === 'command' ? 'commands' : 'rules'
+        this.copyMdResource(type, plainName, sourcePath, destBase, subdir)
+        break
       }
+      case 'skill': {
+        const destDir = path.join(destBase, 'skills')
+        const destPath = path.join(destDir, plainName)
 
-      fs.mkdirSync(destDir, { recursive: true })
-      fs.copyFileSync(sourceFile, destFile)
-    } else {
-      const destDir = path.join(destBase, 'skills')
-      const destPath = path.join(destDir, plainName)
+        if (!fs.existsSync(sourcePath)) {
+          throw new Error(`Skill directory not found: ${sourcePath}`)
+        }
 
-      if (!fs.existsSync(sourcePath)) {
-        throw new Error(`Skill directory not found: ${sourcePath}`)
+        fs.cpSync(sourcePath, destPath, { recursive: true })
+        break
       }
-
-      fs.cpSync(sourcePath, destPath, { recursive: true })
     }
 
     // 复制依赖的 skills
@@ -106,5 +114,28 @@ export class ResourceProvisioner {
         }
       }
     }
+  }
+
+  /**
+   * Copy a single .md resource file to the workspace .claude/{subdir}/ directory.
+   * Shared by agent, command, and rule types.
+   */
+  private copyMdResource(
+    type: string,
+    plainName: string,
+    sourcePath: string,
+    destBase: string,
+    subdir: string,
+  ): void {
+    const sourceFile = path.join(sourcePath, `${plainName}.md`)
+    const destDir = path.join(destBase, subdir)
+    const destFile = path.join(destDir, `${plainName}.md`)
+
+    if (!fs.existsSync(sourceFile)) {
+      throw new Error(`${type} file not found: ${sourceFile}`)
+    }
+
+    fs.mkdirSync(destDir, { recursive: true })
+    fs.copyFileSync(sourceFile, destFile)
   }
 }

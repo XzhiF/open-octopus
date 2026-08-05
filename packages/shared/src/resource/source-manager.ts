@@ -241,17 +241,26 @@ export class SourceManager {
     skills: number
     agents: number
     workflows: number
+    rules: number
+    commands: number
+    clones: number
   } {
     return {
       skills: resources.filter((r) => r.type === "skill").length,
       agents: resources.filter((r) => r.type === "agent").length,
       workflows: resources.filter((r) => r.type === "workflow").length,
+      rules: resources.filter((r) => r.type === "rule").length,
+      commands: resources.filter((r) => r.type === "command").length,
+      clones: resources.filter((r) => r.type === "clone").length,
     }
   }
 
   private detectTypeFromPath(resourcePath: string): ResourceType {
     if (resourcePath.startsWith("skills/")) return "skill"
     if (resourcePath.startsWith("workflows/")) return "workflow"
+    if (resourcePath.startsWith("rules/")) return "rule"
+    if (resourcePath.startsWith("commands/")) return "command"
+    if (resourcePath.startsWith("clones/")) return "clone"
     return "agent"
   }
 }

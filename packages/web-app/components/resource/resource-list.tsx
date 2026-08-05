@@ -10,7 +10,7 @@ import { Search, RefreshCw, ChevronDown, ChevronUp } from "lucide-react"
 import { ResourceCard } from "./resource-card"
 import { PageState } from "./PageState"
 import { UninstallConfirm } from "./UninstallConfirm"
-import { uninstallResource } from "@/lib/resource/api"
+import { uninstallResource, activateResource, deactivateResource } from "@/lib/resource/api"
 import type { ResourceType } from "@/lib/resource/types"
 import { useResourceList } from "@/hooks/use-resource-list"
 
@@ -19,6 +19,9 @@ const TYPE_FILTERS: Array<{ label: string; value: ResourceType | "all" }> = [
   { label: "Skills", value: "skill" },
   { label: "Agents", value: "agent" },
   { label: "Workflows", value: "workflow" },
+  { label: "Rules", value: "rule" },
+  { label: "Commands", value: "command" },
+  { label: "Clones", value: "clone" },
 ]
 
 const STORAGE_KEY = "resource-list-state"
@@ -61,7 +64,7 @@ export function ResourceList() {
   const [query, setQuery] = useState(DEFAULT_STATE.query)
   const [selectedGroups, setSelectedGroups] = useState<Set<string> | null>(null)
   const [groupsExpanded, setGroupsExpanded] = useState(false)
-  const [uninstallTarget, setUninstallTarget] = useState<{ name: string; type: ResourceType } | null>(null)
+  const [uninstallTarget, setUninstallTarget] = useState<{ name: string; type: ResourceType; activated?: boolean } | null>(null)
   const [uninstalling, setUninstalling] = useState(false)
   const [page, setPage] = useState(DEFAULT_STATE.page)
   const [hydrated, setHydrated] = useState(false)
@@ -98,6 +101,9 @@ export function ResourceList() {
     skill: allEntries.filter((e) => e.type === "skill").length,
     agent: allEntries.filter((e) => e.type === "agent").length,
     workflow: allEntries.filter((e) => e.type === "workflow").length,
+    rule: allEntries.filter((e) => e.type === "rule").length,
+    command: allEntries.filter((e) => e.type === "command").length,
+    clone: allEntries.filter((e) => e.type === "clone").length,
   }), [allEntries])
 
   // Apply type filter
@@ -167,17 +173,35 @@ export function ResourceList() {
     setPage(1)
   }
 
-  const handleUninstallConfirm = async () => {
+  const handleUninstallConfirm = async (keepBackup?: boolean) => {
     if (!uninstallTarget) return
     setUninstalling(true)
     try {
-      await uninstallResource(uninstallTarget.name, uninstallTarget.type)
+      await uninstallResource(uninstallTarget.name, uninstallTarget.type, keepBackup)
       setUninstallTarget(null)
       refresh()
     } catch {
       // Error handled by PageState on next fetch
     } finally {
       setUninstalling(false)
+    }
+  }
+
+  const handleActivate = async (name: string, type: ResourceType) => {
+    try {
+      await activateResource(name, type)
+      refresh()
+    } catch {
+      // Error handled by PageState on next fetch
+    }
+  }
+
+  const handleDeactivate = async (name: string, type: ResourceType) => {
+    try {
+      await deactivateResource(name, type)
+      refresh()
+    } catch {
+      // Error handled by PageState on next fetch
     }
   }
 
@@ -288,7 +312,7 @@ export function ResourceList() {
         <PageState
           status="empty"
           title={entries.length === 0 ? "暂无资源" : "无匹配资源"}
-          description={entries.length === 0 ? "安装第一个 Skill、Agent 或 Workflow 开始使用" : "尝试切换组或修改搜索条件"}
+          description={entries.length === 0 ? "安装第一个资源开始使用" : "尝试切换组或修改搜索条件"}
           icon={Search}
         />
       ) : (
@@ -298,7 +322,9 @@ export function ResourceList() {
               <ResourceCard
                 key={`${entry.type}:${(entry as any).group ?? ""}:${entry.name}`}
                 entry={entry}
-                onUninstall={(name, type) => setUninstallTarget({ name, type })}
+                onUninstall={(name, type, activated) => setUninstallTarget({ name, type, activated })}
+                onActivate={handleActivate}
+                onDeactivate={handleDeactivate}
               />
             ))}
           </div>
@@ -373,6 +399,7 @@ export function ResourceList() {
         onOpenChange={(open) => !open && setUninstallTarget(null)}
         name={uninstallTarget?.name || ""}
         type={uninstallTarget?.type || "skill"}
+        activated={uninstallTarget?.activated ?? false}
         onConfirm={handleUninstallConfirm}
         loading={uninstalling}
       />

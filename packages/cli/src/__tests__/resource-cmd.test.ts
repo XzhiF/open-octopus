@@ -20,7 +20,7 @@ describe("resource command — error handling", () => {
     const { resourceCmd } = await import("../commands/resource")
     expect(resourceCmd.name()).toBe("resource")
     const subcmds = resourceCmd.commands.map((c) => c.name())
-    expect(subcmds).toEqual(["install", "uninstall", "list", "info", "audit", "search", "stats"])
+    expect(subcmds).toEqual(["install", "uninstall", "activate", "deactivate", "list", "info", "audit", "search", "stats", "source"])
   })
 
   it("resource install sends POST to /api/resources/install", async () => {
@@ -60,7 +60,7 @@ describe("resource command — error handling", () => {
     logSpy.mockRestore()
 
     expect(mockFetch).toHaveBeenCalledWith(
-      expect.stringContaining("/api/resources/?org="),
+      expect.stringContaining("/api/resources"),
       expect.objectContaining({ method: "GET" }),
     )
   })

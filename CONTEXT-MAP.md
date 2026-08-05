@@ -85,6 +85,13 @@
 | **effort** | LLM 推理深度控制参数 — 值域 `low/medium/high/xhigh/max`。NodeDef 顶层和 SubAgentDef 都支持，通过 provider 层传递到 Claude SDK (`Options.effort`) 和 Pi SDK (`setThinkingLevel`)。 | shared, providers |
 | **Skill Filter（运行时过滤）** | 节点级 `skills: string[]` 在运行时作为白名单过滤 workspace 已安装的 skills。与 `requires.skills`（依赖声明/provision）不同。Pi SDK 显式 filter，Claude SDK 直接传递。 | providers, engine |
 | **agent_files** | `.claude/agents/*.md` 文件的资源级引用名称（不含扩展名）。在 `requires.agent_files` 中声明，`_engine_init_` 负责 provision。 | shared, engine |
+| **Activation (激活)** | 将已安装资源从 registry 复制到运行时目标目录的操作。仅适用于 rule / command / clone 三种新类型。 | shared, server |
+| **Deactivation (停用)** | 从运行时目标目录移除已激活资源的操作。资源回到 installed 但未激活状态。 | shared, server |
+| **Rule (规则资源)** | Claude Code `.claude/rules/*.md` 文件 — 模块化、路径范围的指令文件。资源模块可安装/激活/卸载。 | shared, server |
+| **Command (命令资源)** | Claude Code `.claude/commands/*.md` 文件 — 自定义斜杠命令定义。资源模块可安装/激活/卸载。 | shared, server |
+| **Clone Resource (分身资源)** | 用户创建的 Agent 分身定义包（persona + config + skills + memory），通过资源模块安装/激活。区别于内置分身。 | shared, server |
+| **activated** | ResourceEntry 上的布尔字段 — 标识资源是否已激活到运行时目录。与 status（文件完整性）分离。 | shared |
+| **Resource Backup (资源备份)** | 卸载分身时可选保留的备份，存储于 `~/.octopus/resources/backups/{type}/{name}-{timestamp}/`。 | shared |
 
 ## Anti-Patterns（禁止）
 
