@@ -126,14 +126,28 @@ function TimelineItem({ event }: { event: ParsedHarnessEvent }) {
       const decision = dr?.decision ? (decisionLabel[dr.decision] ?? dr.decision) : "委托"
       const reason = dr?.blockReason ?? dr?.reasoning ?? ""
       label = reason
-        ? `${decision} ${event.nodeId ?? ""}: ${reason.slice(0, 60)}`
+        ? `${decision} ${event.nodeId ?? ""}`
         : `${decision} ${event.nodeId ?? ""}`
       colorClass = dr?.success
         ? dr.decision === "block_node"
           ? "text-red-400"
           : "text-violet-400"
         : "text-muted-foreground"
-      break
+      // Delegation gets a two-line layout: title + reasoning
+      return (
+        <div className="flex items-start gap-1.5 text-xs py-0.5">
+          <span className="text-muted-foreground/60 shrink-0 tabular-nums">{time}</span>
+          <span className="shrink-0">{icon}</span>
+          <div className="min-w-0 flex-1">
+            <div className={cn(colorClass)}>{label}</div>
+            {reason && (
+              <div className="text-muted-foreground whitespace-pre-wrap break-words mt-0.5 text-[11px]">
+                {reason}
+              </div>
+            )}
+          </div>
+        </div>
+      )
     }
     case "harness_blocked":
       icon = "🚨"
