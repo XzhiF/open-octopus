@@ -468,34 +468,17 @@ export class ExecutionLifecycle {
       const endCommitId = await this.recordEndCommits()
       this.dao.updateExecution(id, { end_commit_id: endCommitId })
 
-      // ── Harness status adjustment ──
-      // If all real nodes were skipped/blocked by harness, the execution
-      // should show "blocked" instead of "completed".
-      let finalStatus = result.status
-      if (result.status === "completed") {
-        const nodeResults = result.nodeResults ?? {}
-        const realNodes = Object.entries(nodeResults).filter(
-          ([nodeId]) => !nodeId.startsWith("__"),
-        )
-        if (realNodes.length > 0) {
-          const allSkipped = realNodes.every(([, r]) => r.status === "skipped")
-          if (allSkipped) {
-            finalStatus = "blocked"
-          }
-        }
-      }
-
-      this.updateStatus(id, finalStatus, {
+      this.updateStatus(id, result.status, {
         completed_at: new Date().toISOString(),
         duration: result.durationMs,
         progress: 100,
         var_pool: JSON.stringify(result.poolSnapshot),
-        gate_status: finalStatus === "completed" ? "open" : "closed",
+        gate_status: result.status === "completed" ? "open" : "closed",
       })
 
-      this.cleanupOrphanedNodes(id, finalStatus)
+      this.cleanupOrphanedNodes(id, result.status)
 
-      if (finalStatus === "failed") {
+      if (result.status === "failed") {
         this.errorTracker?.capture('execution', this.findFailedNodeError(id) ?? 'workflow execution failed', {
           execution_id: id, node_id: this.findFailedNode(id) ?? undefined, workflow_name: wf.parsed.name,
         })
@@ -505,10 +488,10 @@ export class ExecutionLifecycle {
           duration_ms: result.durationMs,
         }, wf, id)
       }
-      if (finalStatus === "completed") {
+      if (result.status === "completed") {
         await this.executeWorkflowHooks("on_success", { duration_ms: result.durationMs }, wf, id)
       }
-      await this.executeWorkflowHooks("on_complete", { final_status: finalStatus, duration_ms: result.durationMs }, wf, id)
+      await this.executeWorkflowHooks("on_complete", { final_status: result.status, duration_ms: result.durationMs }, wf, id)
 
       // Track knowledge effectiveness after execution completes
       if (this.knowledgeService) {
@@ -563,7 +546,7 @@ export class ExecutionLifecycle {
       }
 
       this.syncStateJson()
-      this.sse.emit(this.workspaceId, { event: "complete", data: { executionId: id, finalStatus } })
+      this.sse.emit(this.workspaceId, { event: "complete", data: { executionId: id, finalStatus: result.status } })
 
       // Clean up harness detectors for this execution
       if (this.harnessController) {
@@ -730,7 +713,7 @@ export class ExecutionLifecycle {
       if (result.status === "pending_approval") {
         this.updateStatus(id, result.status, { var_pool: JSON.stringify(result.poolSnapshot) })
         this.syncStateJson()
-        this.sse.emit(this.workspaceId, { event: "complete", data: { executionId: id, finalStatus } })
+        this.sse.emit(this.workspaceId, { event: "complete", data: { executionId: id, finalStatus: result.status } })
       } else {
         const currentExec = this.dao.findById(id)
         if (currentExec?.status === "paused") {
@@ -768,7 +751,7 @@ export class ExecutionLifecycle {
         }
 
         this.syncStateJson()
-        this.sse.emit(this.workspaceId, { event: "complete", data: { executionId: id, finalStatus } })
+        this.sse.emit(this.workspaceId, { event: "complete", data: { executionId: id, finalStatus: result.status } })
 
         // Clean up harness detectors for this execution (retry completion path)
         if (this.harnessController) {

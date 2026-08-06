@@ -239,9 +239,9 @@ export function useHarnessEvents(
     }
   }, [workspaceId, executionId, fetchHistorical])
 
-  // Compute derived stats
+  // Compute derived stats — count both legacy intervention and new delegation events
   const interventionCount = events.filter(
-    (e) => e.type === "harness_intervention",
+    (e) => e.type === "harness_intervention" || e.type === "harness_delegation",
   ).length
 
   const totalExtraTokens = events.reduce((sum, e) => {

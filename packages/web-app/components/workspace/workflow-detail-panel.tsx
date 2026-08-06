@@ -350,6 +350,25 @@ export function WorkflowDetailPanel({ execution, workflow, workspaceId }: Workfl
             #{execution.id.slice(-4)}
           </Badge>
           <StatusBadge status={liveStatus} />
+          {execution.harnessStatus && (
+            <span
+              className={cn(
+                "inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-xs text-white",
+                execution.harnessStatus === "blocked"
+                  ? "bg-red-500"
+                  : execution.harnessStatus === "delegated"
+                    ? "bg-violet-500"
+                    : "bg-amber-500",
+              )}
+            >
+              🛡️{" "}
+              {execution.harnessStatus === "blocked"
+                ? "已阻断"
+                : execution.harnessStatus === "delegated"
+                  ? "已接管"
+                  : "已干预"}
+            </span>
+          )}
         </div>
         <div className="flex items-center gap-1">
           {liveStatus === "pending" && (
