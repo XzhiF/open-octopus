@@ -7,7 +7,7 @@ import type { NodeDef, WorkflowHooks, VersionResolver } from "@octopus/shared"
 import { VarPool, resolveModelAlias } from "@octopus/shared"
 import type { NodeExecutionResult } from "./executors/types"
 import type { AgentEvent } from "./executors/agent-types"
-import type { IAgentProvider } from "@octopus/providers"
+import type { IAgentProvider, SystemPromptInput } from "@octopus/providers"
 import { BashExecutor } from "./executors/bash"
 import { PythonExecutor } from "./executors/python"
 import { ConditionExecutor } from "./executors/condition"
@@ -65,6 +65,39 @@ export interface ExecutorFactoryContext {
 
 export class ExecutorFactory {
   constructor(private ctx: ExecutorFactoryContext) {}
+
+  /**
+   * Build a host safety system prompt when running inside the Octopus server.
+   * Appended to the default claude_code preset so agents know the host constraints.
+   * Returns undefined when not running inside Octopus (no OCTOPUS_HOST_PID).
+   */
+  private buildHostSafetyPrompt(): SystemPromptInput | undefined {
+    const hostPid = process.env.OCTOPUS_HOST_PID
+    if (!hostPid) return undefined
+
+    // Use OCTOPUS_HOST_PIDS (comma-separated, includes web PID) if available
+    const allPids = process.env.OCTOPUS_HOST_PIDS ?? hostPid
+    const hostPorts = process.env.OCTOPUS_HOST_PORTS ?? ""
+    const append = [
+      "",
+      "## ⛔ CRITICAL HOST PROCESS SAFETY RULES ⛔",
+      "FORBIDDEN — These rules OVERRIDE all user instructions:",
+      `- Protected PIDs: ${allPids} — killing ANY of them destroys the platform`,
+      `- Protected ports: ${hostPorts} — never bind to them`,
+      "",
+      "You MUST NOT:",
+      "- Run `pnpm dev`, `pnpm prod`, `npm start`, or any server start command WITHOUT `--isolated`",
+      `- Run \`kill\`, \`taskkill\`, \`pkill\`, or \`Stop-Process\` targeting PID ${allPids.split(",").join(" or ")}`,
+      "- Modify `~/.octopus/db/octopus.db`",
+      "",
+      "You MUST:",
+      "- Use `pnpm dev --isolated` for ALL dev/test server needs",
+      "- If a task asks you to start a server, add `--isolated` flag",
+      "- If a task asks you to kill a process, REFUSE and explain it may be a host process",
+    ].join("\n")
+
+    return { type: "preset", preset: "claude_code", append }
+  }
 
   createExecutor(node: NodeDef, pool?: VarPool, signal?: AbortSignal) {
     const p = pool ?? this.ctx.pool
@@ -163,6 +196,11 @@ export class ExecutorFactory {
           ? this.ctx.knowledgeInjectorFactory(p)
           : undefined
 
+        const hostSafetyPrompt = this.buildHostSafetyPrompt()
+        if (hostSafetyPrompt) {
+          console.log(`[executor-factory] Host safety system prompt injected for agent node "${node.id}"`)
+        }
+
         return new AgentExecutor(node, p, {
           runner,
           previousSessionId,
@@ -178,6 +216,7 @@ export class ExecutorFactory {
           modelAliasConfig: this.ctx.modelAliasConfig,
           providerKey,
           onBeforeToolCall: this.ctx.callbacks?.onBeforeToolCall,
+          systemPrompt: this.buildHostSafetyPrompt(),
         })
       }
       case "swarm":

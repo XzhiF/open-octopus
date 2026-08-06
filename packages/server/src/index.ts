@@ -3,6 +3,7 @@ import { cors } from "hono/cors"
 import { logger } from "hono/logger"
 import { bodyLimit } from "hono/body-limit"
 import http from "http"
+import fs from "fs"
 import os from "os"
 import path from "path"
 import { createYjsWebSocketServer, setYjsWorkspaceDAO } from "./routes/yjs-ws"
@@ -92,6 +93,18 @@ import { getDomainEventBus } from "./services/agent/domain-event-bus"
 // Install global error handlers early — catches uncaughtException / unhandledRejection
 if (!process.env.VITEST) {
   installGlobalErrorHandlers()
+}
+
+// ── Host Isolation: inject OCTOPUS_HOST_PID + OCTOPUS_HOST_PORTS ─────
+// These must be on process.env so that Claude SDK tool calls (Bash, etc.)
+// inherit them. buildHostEnv() in @octopus/engine handles direct bash/python
+// spawns, but agent nodes run via the provider SDK which reads process.env.
+if (!process.env.OCTOPUS_HOST_PID) {
+  process.env.OCTOPUS_HOST_PID = String(process.pid)
+}
+if (!process.env.OCTOPUS_HOST_PORTS) {
+  const _serverPort = parseInt(process.env.PORT ?? "3001", 10)
+  process.env.OCTOPUS_HOST_PORTS = `${_serverPort},${_serverPort - 1}`
 }
 
 // ── DAO Factory: Create all 11 DAOs from DB connection ─────────────────────
@@ -622,6 +635,20 @@ if (shouldServe) {
         branch: process.env.OCTOPUS_BRANCH ?? "main",
         dbPath: getDbPath(),
       })
+
+      // Read host PIDs file written by dev.mjs (contains server + web + dev.mjs parent PIDs)
+      try {
+        const pidFile = path.join(os.homedir(), ".octopus", "host-pids.json")
+        if (fs.existsSync(pidFile)) {
+          const data = JSON.parse(fs.readFileSync(pidFile, "utf-8"))
+          if (Array.isArray(data.pids) && data.pids.length > 0) {
+            process.env.OCTOPUS_HOST_PIDS = data.pids.join(",")
+            console.log(`[server] Host PIDs: ${data.pids.join(", ")} (from ${pidFile})`)
+          }
+        }
+      } catch {
+        // PID file not available (e.g. prod mode, direct start) — fall back to own PID only
+      }
 
       // Consume deferred agent hooks now that providers are fully initialized
       ExecutionService.consumePendingHooks(db).catch((err: unknown) => {

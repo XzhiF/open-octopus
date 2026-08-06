@@ -583,10 +583,11 @@ export class DetectorPipeline {
                 : ""
 
             // Use DangerousPatternMatcher to check for dangerous patterns
-            const matcher = new DangerousPatternMatcher(
-              pipeline.hostPid ?? String(process.pid),
-              pipeline.hostPorts ?? [],
-            )
+            const matcher = new DangerousPatternMatcher({
+              hostPid: pipeline.hostPid ?? String(process.pid),
+              hostPids: process.env.OCTOPUS_HOST_PIDS,
+              hostPorts: pipeline.hostPorts ?? [],
+            })
             const match = matcher.check(command)
 
             if (match.dangerous) {

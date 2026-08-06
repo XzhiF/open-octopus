@@ -254,7 +254,20 @@ export class ExecutionLifecycle {
     let callbacks = this.buildCallbacks(id)
     if (this.harnessController) {
       try {
-        callbacks = this.harnessController.onExecutionStart(id, this.workspaceId, callbacks)
+        // Build session context for HarnessAgentSession (workflow content + node metadata)
+        const nodeList = (wf.parsed.nodes ?? []).map((n: any) => ({ id: n.id, type: n.type ?? "bash" }))
+        const dependencyGraph: Record<string, string[]> = {}
+        for (const n of (wf.parsed.nodes ?? [])) {
+          dependencyGraph[n.id] = n.depends_on ?? []
+        }
+        callbacks = this.harnessController.onExecutionStart(id, this.workspaceId, callbacks, {
+          hostPid: process.env.OCTOPUS_HOST_PID,
+          hostPorts: (process.env.OCTOPUS_HOST_PORTS ?? "").split(",").filter(Boolean),
+          workflowContent: wf.content,
+          nodeList,
+          dependencyGraph,
+          varpoolSnapshot: resolvedInputValues ?? undefined,
+        })
       } catch (err) {
         console.warn("[ExecutionLifecycle] Harness onExecutionStart failed (non-fatal):", err)
       }
@@ -1495,20 +1508,31 @@ export class ExecutionLifecycle {
   private reconstructEngine(exec: ExecutionRow): { engine: WorkflowEngine; abortController: AbortController } {
     const abortController = new AbortController()
 
+    const wf = this.engineFactory.resolveWorkflowWithSnapshot(exec.id, exec.workflow_ref)
+    if (!wf) throw new Error(`Workflow not found: ${exec.workflow_ref}`)
+
     // Build callbacks and optionally wrap through HarnessController
     let callbacks = this.buildCallbacks(exec.id)
     if (this.harnessController) {
       try {
-        callbacks = this.harnessController.onExecutionStart(exec.id, this.workspaceId, callbacks)
+        const nodeList = (wf.parsed.nodes ?? []).map((n: any) => ({ id: n.id, type: n.type ?? "bash" }))
+        const dependencyGraph: Record<string, string[]> = {}
+        for (const n of (wf.parsed.nodes ?? [])) {
+          dependencyGraph[n.id] = n.depends_on ?? []
+        }
+        callbacks = this.harnessController.onExecutionStart(exec.id, this.workspaceId, callbacks, {
+          hostPid: process.env.OCTOPUS_HOST_PID,
+          hostPorts: (process.env.OCTOPUS_HOST_PORTS ?? "").split(",").filter(Boolean),
+          workflowContent: wf.content,
+          nodeList,
+          dependencyGraph,
+        })
       } catch (err) {
         console.warn("[ExecutionLifecycle] Harness onExecutionStart in reconstruct failed (non-fatal):", err)
       }
     }
 
     const engine = this.engineFactory.reconstructEngine(exec, callbacks, abortController.signal)
-
-    const wf = this.engineFactory.resolveWorkflowWithSnapshot(exec.id, exec.workflow_ref)
-    if (!wf) throw new Error(`Workflow not found: ${exec.workflow_ref}`)
 
     const completedNodes = this.dao.findCompletedNodeExecutions(exec.id)
     for (const node of completedNodes) {

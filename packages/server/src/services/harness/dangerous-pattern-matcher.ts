@@ -6,6 +6,8 @@
 
 export interface DangerousPatternConfig {
   hostPid: string
+  /** Comma-separated list of all protected PIDs (server + web + dev.mjs parent). */
+  hostPids?: string
   hostPorts: string[]
 }
 
@@ -16,22 +18,34 @@ export interface DangerousPatternMatch {
 }
 
 function escapeRegex(str: string): string {
-  return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+  return str.replace(/[.*+?${}()|[\]\\]/g, "\\$&")
 }
 
 /**
  * Build regex patterns for PID-based conflict detection.
+ * Checks all protected PIDs (server + web + any other host processes).
  */
-function buildPidPatterns(hostPid: string): Array<{ pattern: RegExp; description: string }> {
+function buildPidPatterns(hostPid: string, allPids: string[]): Array<{ pattern: RegExp; description: string }> {
   const patterns: Array<{ pattern: RegExp; description: string }> = []
 
-  if (hostPid) {
-    // Direct PID references
+  // Build patterns for ALL protected PIDs
+  for (const pid of allPids) {
+    if (!pid) continue
     patterns.push({
-      pattern: new RegExp(`(?:kill|taskkill|pkill)\\b.*\\b${escapeRegex(hostPid)}\\b`, "i"),
-      description: `kill targeting host PID ${hostPid}`,
+      pattern: new RegExp(`(?:kill|taskkill|pkill)\\b.*\\b${escapeRegex(pid)}\\b`, "i"),
+      description: `kill targeting host PID ${pid}`,
     })
+    patterns.push({
+      pattern: new RegExp(`os\\.kill\\s*\\(\\s*${escapeRegex(pid)}`, "i"),
+      description: `os.kill targeting host PID ${pid}`,
+    })
+    patterns.push({
+      pattern: new RegExp(`taskkill\\b.*\\/PID\\s+${escapeRegex(pid)}\\b`, "i"),
+      description: `taskkill targeting host PID ${pid}`,
+    })
+  }
 
+  if (hostPid) {
     // Variable references to OCTOPUS_HOST_PID in kill commands
     patterns.push({
       pattern: /(?:kill|taskkill|pkill)\b.*\$OCTOPUS_HOST_PID/i,
@@ -43,12 +57,6 @@ function buildPidPatterns(hostPid: string): Array<{ pattern: RegExp; description
       pattern: /kill\b.*OCTOPUS_HOST_PID/i,
       description: "kill referencing OCTOPUS_HOST_PID",
     })
-
-    // Python os.kill with host PID
-    patterns.push({
-      pattern: new RegExp(`os\\.kill\\s*\\(\\s*${escapeRegex(hostPid)}`, "i"),
-      description: `os.kill targeting host PID ${hostPid}`,
-    })
   }
 
   // Python os.kill with OCTOPUS_HOST_PID variable
@@ -56,14 +64,6 @@ function buildPidPatterns(hostPid: string): Array<{ pattern: RegExp; description
     pattern: /os\.kill\s*\(.*OCTOPUS_HOST_PID/i,
     description: "os.kill targeting OCTOPUS_HOST_PID",
   })
-
-  // taskkill /PID with host PID reference
-  if (hostPid) {
-    patterns.push({
-      pattern: new RegExp(`taskkill\\b.*\\/PID\\s+${escapeRegex(hostPid)}\\b`, "i"),
-      description: "taskkill targeting host PID",
-    })
-  }
 
   return patterns
 }
@@ -106,7 +106,10 @@ export class DangerousPatternMatcher {
   private portPatterns: Array<{ pattern: RegExp; description: string }>
 
   constructor(config: DangerousPatternConfig) {
-    this.pidPatterns = buildPidPatterns(config.hostPid)
+    // Resolve all protected PIDs: prefer OCTOPUS_HOST_PIDS (comma-separated), fallback to hostPid
+    const allPidsStr = config.hostPids ?? config.hostPid
+    const allPids = allPidsStr.split(",").map(s => s.trim()).filter(Boolean)
+    this.pidPatterns = buildPidPatterns(config.hostPid, allPids)
     this.portPatterns = buildPortPatterns(config.hostPorts)
   }
 
@@ -150,6 +153,18 @@ export class DangerousPatternMatcher {
     }
 
     return null
+  }
+
+  /**
+   * Convenience wrapper used by DetectorPipeline.
+   * Returns { dangerous, pattern } compatible with the pipeline's interception flow.
+   */
+  check(command: string): { dangerous: boolean; pattern?: string } {
+    const result = this.match(command)
+    if (result) {
+      return { dangerous: true, pattern: `${result.subtype}:${result.description}` }
+    }
+    return { dangerous: false }
   }
 
   /**

@@ -1,6 +1,6 @@
 // packages/server/src/services/harness/tool-interceptor.ts
 //
-// ToolInterceptor — intercepts bash tool calls in agent nodes,
+// ToolInterceptor — intercepts shell tool calls (Bash, PowerShell) in agent nodes,
 // scans commands for dangerous patterns (kill/pkill/port binding),
 // blocks execution and generates DiagnosisReport on match.
 //
@@ -10,6 +10,9 @@
 import type { DiagnosisReport } from "@octopus/shared"
 import { DangerousPatternMatcher } from "./dangerous-pattern-matcher"
 import type { DangerousPatternMatch } from "./dangerous-pattern-matcher"
+
+/** Tool names that execute shell commands and should be intercepted. */
+const SHELL_TOOLS = new Set(["Bash", "PowerShell"])
 
 export interface ToolInterceptorContext {
   executionId: string
@@ -26,10 +29,10 @@ export interface ToolBlockResult {
 }
 
 /**
- * ToolInterceptor checks bash tool calls for dangerous patterns.
+ * ToolInterceptor checks shell tool calls for dangerous patterns.
  *
  * AC1: Registered as an onBeforeToolCall hook in the agent executor.
- * AC2: Receives tool name + input (bash command string).
+ * AC2: Receives tool name + input (command string). Intercepts Bash and PowerShell.
  * AC3: Reuses DangerousPatternMatcher (extracted from ProcessConflictDetector).
  * AC4: Match → block tool execution + generate DiagnosisReport.
  * AC5: Block result includes guidance for injection into agent session.
@@ -49,8 +52,8 @@ export class ToolInterceptor {
    * Returns a block result if dangerous, null if safe.
    */
   checkToolCall(toolName: string, toolInput: unknown): ToolBlockResult | null {
-    // AC2: only intercept Bash tool calls
-    if (toolName !== "Bash") return null
+    // AC2: intercept shell command tools (Bash, PowerShell)
+    if (!SHELL_TOOLS.has(toolName)) return null
 
     // Extract command string from tool input
     const command = this.extractCommand(toolInput)
@@ -61,7 +64,7 @@ export class ToolInterceptor {
     if (!match) return null
 
     // AC4: Block + generate DiagnosisReport
-    const report = this.buildReport(match, command)
+    const report = this.buildReport(match, command, toolName)
 
     // AC5: Generate guidance for injection
     const guidance = this.buildGuidance(match)
@@ -98,8 +101,8 @@ export class ToolInterceptor {
   }
 
   /**
-   * Extract the command string from a Bash tool input.
-   * The Claude SDK Bash tool uses { command: string } format.
+   * Extract the command string from a shell tool input.
+   * Both Bash and PowerShell tools use { command: string } format.
    */
   private extractCommand(toolInput: unknown): string | null {
     if (!toolInput || typeof toolInput !== "object") return null
@@ -112,7 +115,7 @@ export class ToolInterceptor {
   /**
    * Build a DiagnosisReport for a blocked tool call.
    */
-  private buildReport(match: DangerousPatternMatch, command: string): DiagnosisReport {
+  private buildReport(match: DangerousPatternMatch, command: string, toolName: string): DiagnosisReport {
     return {
       id: `diagnosis-tool_interceptor-${this.context.nodeId}-${Date.now()}`,
       timestamp: Date.now(),
@@ -126,7 +129,7 @@ export class ToolInterceptor {
         {
           errorMessage: match.description,
           scriptSnippet: match.snippet,
-          toolName: "Bash",
+          toolName,
           command: command.substring(0, 500),
         },
       ],
