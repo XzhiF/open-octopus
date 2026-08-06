@@ -61,7 +61,7 @@ export interface EngineCallbacks {
   onBranchEnd?: (nodeExecutionId: string, iteration: number, status: string, nodeResults?: { nodeId: string; status: string; durationMs?: number; error?: string }[]) => void
   onAgentEvent?: (nodeId: string, event: AgentEvent) => void
   onSwarmEvent?: (nodeId: string, event: SwarmSSEEvent) => void
-  onNodeRetry?: (nodeId: string, attempt: number, maxAttempts: number, delayMs: number) => void
+  onNodeRetry?: (nodeId: string, attempt: number, maxAttempts: number, delayMs: number, result?: NodeExecutionResult) => void
   onNodeCompacted?: (nodeId: string, mergedEvents: any[]) => void
   onCheckpoint?: (checkpoint: unknown) => void
   onPipelineReloaded?: (config: PipelineConfig) => void
@@ -1005,7 +1005,7 @@ export class WorkflowEngine {
           const remaining = (policy.max_total_duration - (Date.now() - nodeStartTime) / 1000) * 1000
           delayMs = Math.min(delayMs, Math.max(0, remaining))
         }
-        this.callbacks?.onNodeRetry?.(node.id, attempt, policy.max_attempts, delayMs)
+        this.callbacks?.onNodeRetry?.(node.id, attempt, policy.max_attempts, delayMs, lastResult)
         await this.sleepWithAbort(delayMs, effectiveSignal)
       } catch (err: unknown) {
         if (signal?.aborted) { if (nodeTimer) clearTimeout(nodeTimer); throw err }

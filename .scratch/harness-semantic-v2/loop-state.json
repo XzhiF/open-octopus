@@ -1,7 +1,19 @@
 {
   "root_feature": "harness-semantic-v2",
   "branch": "feat/workflow-engine-harness",
-  "iterations": [],
+  "iterations": [
+    {
+      "round": 1,
+      "score": 75,
+      "adjusted_score": 60,
+      "decision": "REVIEW",
+      "carryover_in": [],
+      "carryover_out": ["AC-2", "AC-3", "AC-4", "AC-7"],
+      "pipeline_complete": true,
+      "e2e_executed": false,
+      "notes": "AC2-4,AC7 SKIP because they require live LLM for Harness Agent calls. AC1,AC5,AC6 PASS. E2E fix applied for execution harness_status sync domain."
+    }
+  ],
   "max_iterations": 5,
   "convergence_threshold": 85,
   "status": "running"
