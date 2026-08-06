@@ -29,6 +29,7 @@ function CollapsedPanel({
   interventionCount,
   isIntervening,
   isRunning,
+  hasActivity,
   inputTokens,
   outputTokens,
   onExpand,
@@ -37,6 +38,7 @@ function CollapsedPanel({
   interventionCount: number
   isIntervening: boolean
   isRunning: boolean
+  hasActivity: boolean
   inputTokens: number
   outputTokens: number
   onExpand: () => void
@@ -58,8 +60,6 @@ function CollapsedPanel({
       onExpand()
     }
   }
-
-  const hasActivity = interventionCount > 0
 
   return (
     <div
@@ -493,6 +493,7 @@ export function HarnessFloatingPanel({
           interventionCount={interventionCount}
           isIntervening={isIntervening}
           isRunning={isRunning}
+          hasActivity={isRunning && events.length > 0}
           inputTokens={totalInputTokens}
           outputTokens={totalOutputTokens}
           onExpand={() => setExpanded(true)}
