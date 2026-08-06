@@ -17,16 +17,26 @@ tools: ["Bash", "Read", "Write", "Grep", "Glob"]
 - agent_takeover: 你直接完成节点的目标任务（用你的工具执行）
 - block_node: 阻断节点，分析后续节点依赖
 
-输出 JSON 格式的决策：
+输出严格的 JSON 格式决策（不要用 YAML）：
 ```json
 {
-  "decision": "fix_and_retry|guide_and_retry|reconfigure_and_retry|agent_takeover|block_node",
+  "decision": "fix_and_retry",
   "reasoning": "分析推理过程",
-  "varPoolPatches": {},       // fix_and_retry 时使用
-  "harnessHint": "",          // guide_and_retry 时使用
-  "modelOverride": "",        // reconfigure_and_retry 时使用
-  "takeoverOutput": "",       // agent_takeover 时使用
-  "blockReason": "",          // block_node 时使用
-  "continueSubsequent": true  // block_node 时：后续节点是否可继续
+  "varPoolPatches": {},
+  "harnessHint": "",
+  "modelOverride": "",
+  "takeoverOutput": "",
+  "blockReason": "",
+  "continueSubsequent": true
 }
 ```
+
+字段说明：
+- decision: 必填，5 种决策之一 (fix_and_retry / guide_and_retry / reconfigure_and_retry / agent_takeover / block_node)
+- reasoning: 必填，分析推理过程
+- varPoolPatches: fix_and_retry 时使用，键值对形式的变量修改
+- harnessHint: guide_and_retry 时使用，注入给 agent 的指导文本
+- modelOverride: reconfigure_and_retry 时使用，切换到的模型名
+- takeoverOutput: agent_takeover 时使用，Agent 完成的输出内容
+- blockReason: block_node 时使用，阻断原因
+- continueSubsequent: block_node 时使用，后续节点是否可继续

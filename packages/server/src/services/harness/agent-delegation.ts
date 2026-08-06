@@ -22,6 +22,7 @@ import type {
 import type { HarnessDAO } from "../../db/dao/harness-dao"
 import type { SSEService } from "../sse"
 import type { HarnessAgentSession } from "./harness-agent-session"
+import yaml from "js-yaml"
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -248,35 +249,72 @@ export function parseDelegationResponse(rawText: string): DelegationResult {
 
   // Try to extract JSON from the response
   let jsonStr: string | null = null
+  let parsed: any = null
 
-  // 1. Try markdown code block first
-  const codeBlockMatch = rawText.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/)
-  if (codeBlockMatch) {
-    jsonStr = codeBlockMatch[1].trim()
+  // 1. Try ```json code block first (explicit JSON marker)
+  const jsonBlockMatch = rawText.match(/```json\s*\n?([\s\S]*?)\n?```/)
+  if (jsonBlockMatch) {
+    jsonStr = jsonBlockMatch[1].trim()
   }
 
-  // 2. Try to find JSON object in the text
+  // 2. Try untagged code block (no language specifier) — skip yaml/yml blocks
   if (!jsonStr) {
-    const jsonMatch = rawText.match(/\{[\s\S]*\}/)
-    if (jsonMatch) {
-      jsonStr = jsonMatch[0]
+    const untaggedMatch = rawText.match(/```(?![a-zA-Z])\s*\n?([\s\S]*?)\n?```/)
+    if (untaggedMatch) {
+      jsonStr = untaggedMatch[1].trim()
     }
   }
 
+  // 3. Try to find JSON object in the text
   if (!jsonStr) {
+    const jsonObjMatch = rawText.match(/\{[\s\S]*\}/)
+    if (jsonObjMatch) {
+      jsonStr = jsonObjMatch[0]
+    }
+  }
+
+  // 4. YAML fallback — try ```yaml / ```yml code blocks
+  if (!jsonStr) {
+    const yamlBlockMatch = rawText.match(/```(?:ya?ml)\s*\n?([\s\S]*?)\n?```/)
+    if (yamlBlockMatch) {
+      try {
+        const yamlParsed = yaml.load(yamlBlockMatch[1].trim())
+        if (yamlParsed && typeof yamlParsed === "object") {
+          parsed = yamlParsed as Record<string, unknown>
+        }
+      } catch {
+        // YAML parse failed, fall through to JSON error handling
+      }
+    }
+  }
+
+  if (!jsonStr && !parsed) {
     return failureResult(
-      "Failed to parse agent response: no JSON found in response",
+      "Failed to parse agent response: no JSON or YAML found in response",
     )
   }
 
-  // Parse the JSON
-  let parsed: any
-  try {
-    parsed = JSON.parse(jsonStr)
-  } catch (err) {
-    return failureResult(
-      `Failed to parse agent response: invalid JSON — ${err instanceof Error ? err.message : String(err)}`,
-    )
+  // Parse the JSON (skip if already parsed via YAML fallback)
+  if (!parsed && jsonStr) {
+    try {
+      parsed = JSON.parse(jsonStr)
+    } catch (err) {
+      // JSON parse failed — try YAML as last resort on the same string
+      try {
+        const yamlFallback = yaml.load(jsonStr)
+        if (yamlFallback && typeof yamlFallback === "object") {
+          parsed = yamlFallback as Record<string, unknown>
+        }
+      } catch {
+        // YAML also failed
+      }
+
+      if (!parsed) {
+        return failureResult(
+          `Failed to parse agent response: invalid JSON — ${err instanceof Error ? err.message : String(err)}`,
+        )
+      }
+    }
   }
 
   // ── New format: decision field ──────────────────────────────────

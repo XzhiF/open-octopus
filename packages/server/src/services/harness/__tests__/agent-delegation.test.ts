@@ -346,7 +346,9 @@ This should fix it.`
     const result = parseDelegationResponse(rawText)
 
     expect(result.success).toBe(false)
-    expect(result.reasoning).toContain("invalid JSON")
+    // YAML fallback may parse loose JSON-like strings; the key assertion
+    // is that it still fails because there's no valid decision field.
+    expect(result.reasoning).toMatch(/invalid JSON|missing.*decision/)
   })
 })
 
