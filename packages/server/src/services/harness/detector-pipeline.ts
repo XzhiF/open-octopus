@@ -303,6 +303,8 @@ export class DetectorPipeline {
       })
       // Mark the node as harness_blocked in DB + insert agent_event
       this.updateNodeHarnessStatus(nodeId, "harness_blocked", report)
+      // Update execution-level harness_status
+      this.updateExecutionHarnessStatus("blocked")
     }
   }
 
