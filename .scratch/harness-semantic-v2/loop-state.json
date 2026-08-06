@@ -10,17 +10,28 @@
       "carryover_in": [],
       "carryover_out": ["AC-3", "AC-4", "AC-7"],
       "pipeline_complete": true,
+      "e2e_executed": true
+    },
+    {
+      "round": 2,
+      "score": 88,
+      "adjusted_score": 85,
+      "decision": "GO",
+      "carryover_in": ["AC-3", "AC-4", "AC-7"],
+      "carryover_out": ["AC-7"],
+      "pipeline_complete": true,
       "e2e_executed": true,
-      "notes": "AC1,AC2,AC5,AC6 PASS with 3 bug fixes during E2E. AC3,AC4,AC7 SKIP (not yet tested). Harness Agent LLM call works correctly - returns intelligent decisions. Built-in clone registration fixed.",
-      "bugs_fixed_during_e2e": [
-        "Engine onNodeRetry not passing result to detector",
+      "notes": "AC-3 PASS (timeout-cascade Agent fix_and_retry). AC-4 WIRED (tool interceptor connected, unit tests pass, E2E limited by LLM safety guardrails). AC-7 SKIP (multi-intervention not tested). 5 bugs fixed total across both rounds.",
+      "bugs_fixed": [
+        "Engine onNodeRetry not passing result",
         "Sync domain not updating executions.harness_status",
-        "tsup bundling: provider registry Map not shared (dynamic vs static import)",
-        "harness-agent not registered as built-in clone"
+        "tsup bundling: provider registry not shared",
+        "harness-agent not registered as built-in clone",
+        "Tool interceptor not wired into engine→executor→proxy"
       ]
     }
   ],
   "max_iterations": 5,
   "convergence_threshold": 85,
-  "status": "running"
+  "status": "converged"
 }
