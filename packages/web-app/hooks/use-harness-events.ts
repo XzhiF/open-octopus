@@ -38,7 +38,7 @@ export interface ParsedHarnessEvent {
   reason?: string
   pattern?: string
   // token usage (from delegation or intervention events)
-  tokenUsage?: { inputTokens?: number; outputTokens?: number }
+  tokenUsage?: { inputTokens?: number; outputTokens?: number; model?: string }
 }
 
 interface UseHarnessEventsResult {
@@ -57,11 +57,16 @@ function parseSSEEvent(eventType: string, raw: Record<string, unknown>): ParsedH
   const executionId = (raw.executionId as string) ?? ""
 
   // Extract token usage from SSE payload — may be at top-level or nested in result
+  // Server uses { input, output, model }; legacy may use { inputTokens, outputTokens }
   const rawTokenUsage =
-    (raw.tokenUsage as Record<string, number> | undefined) ??
-    ((raw.result as Record<string, unknown> | undefined)?.tokenUsage as Record<string, number> | undefined)
+    (raw.tokenUsage as Record<string, unknown> | undefined) ??
+    ((raw.result as Record<string, unknown> | undefined)?.tokenUsage as Record<string, unknown> | undefined)
   const tokenUsage = rawTokenUsage
-    ? { inputTokens: rawTokenUsage.inputTokens, outputTokens: rawTokenUsage.outputTokens }
+    ? {
+        inputTokens: (rawTokenUsage.inputTokens as number) ?? (rawTokenUsage.input as number),
+        outputTokens: (rawTokenUsage.outputTokens as number) ?? (rawTokenUsage.output as number),
+        model: rawTokenUsage.model as string | undefined,
+      }
     : undefined
 
   switch (eventType) {
@@ -157,8 +162,15 @@ export function useHarnessEvents(
             const report = row.report_json ? JSON.parse(row.report_json as string) : undefined
             const action = row.action_json ? JSON.parse(row.action_json as string) : undefined
             const result = row.result_json ? JSON.parse(row.result_json as string) : undefined
-            const tokenUsage = row.token_usage_json
-              ? JSON.parse(row.token_usage_json as string) as { inputTokens?: number; outputTokens?: number }
+            const rawTu = row.token_usage_json
+              ? JSON.parse(row.token_usage_json as string) as Record<string, unknown>
+              : undefined
+            const tokenUsage = rawTu
+              ? {
+                  inputTokens: (rawTu.inputTokens as number) ?? (rawTu.input as number),
+                  outputTokens: (rawTu.outputTokens as number) ?? (rawTu.output as number),
+                  model: rawTu.model as string | undefined,
+                }
               : undefined
             return {
               id: row.id as string,

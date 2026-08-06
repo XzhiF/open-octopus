@@ -8,6 +8,8 @@
 
 import type { DiagnosisReport, HarnessSystemConfigParsed, DelegationResult, HarnessDecisionType } from "@octopus/shared"
 import type { HarnessEvent, StrategyAction } from "@octopus/shared"
+import { appendFileSync, mkdirSync, existsSync } from "fs"
+import { join } from "path"
 import type { HarnessDAO } from "../../db/dao/harness-dao"
 import type { SSEService } from "../sse"
 import { BaseDetector } from "./base-detector"
@@ -67,6 +69,7 @@ export interface DetectorPipelineDeps {
   config: HarnessSystemConfigParsed
   executionId: string
   workspaceId: string
+  workspacePath?: string
   dao: HarnessDAO
   sse: SSEService
   hostPid?: string
@@ -78,6 +81,7 @@ export class DetectorPipeline {
   private detectors: BaseDetector[] = []
   private executionId: string
   private workspaceId: string
+  private workspacePath: string
   private dao: HarnessDAO
   private sse: SSEService
   private hostPid: string = ""
@@ -106,6 +110,7 @@ export class DetectorPipeline {
   constructor(deps: DetectorPipelineDeps) {
     this.executionId = deps.executionId
     this.workspaceId = deps.workspaceId
+    this.workspacePath = deps.workspacePath ?? ""
     this.dao = deps.dao
     this.sse = deps.sse
     this.strategyEngine = deps.strategyEngine
@@ -249,6 +254,9 @@ export class DetectorPipeline {
       console.error("[DetectorPipeline] Failed to emit SSE event:", err)
     }
 
+    // Write to workspace logs
+    this.writeHarnessLog({ type: "diagnosis", report })
+
     // Route to StrategyEngine (Layer 2) if available
     // skipStrategy = true when caller (onBeforeNode) handles delegation directly
     if (!skipStrategy && this.strategyEngine) {
@@ -345,6 +353,16 @@ export class DetectorPipeline {
    */
   processDecision(report: DiagnosisReport, result: DelegationResult): void {
     const nodeId = report.nodeId
+
+    // Write delegation decision to workspace logs
+    this.writeHarnessLog({
+      type: "delegation",
+      nodeId,
+      success: result.success,
+      decision: result.decision,
+      reasoning: result.reasoning,
+      tokenUsage: result.tokenUsage,
+    })
 
     if (!result.success) {
       // Failed delegation: treat as block_node (safe default)
@@ -481,6 +499,21 @@ export class DetectorPipeline {
   }
 
   /**
+   * Write harness event to workspace logs/<executionId>/harness.jsonl
+   */
+  private writeHarnessLog(event: { type: string; [key: string]: unknown }): void {
+    if (!this.workspacePath) return
+    try {
+      const logDir = join(this.workspacePath, "logs", this.executionId)
+      if (!existsSync(logDir)) mkdirSync(logDir, { recursive: true })
+      const line = JSON.stringify({ ts: Date.now(), ...event }) + "\n"
+      appendFileSync(join(logDir, "harness.jsonl"), line, "utf-8")
+    } catch {
+      // Non-fatal: log file writing failure should not break the pipeline
+    }
+  }
+
+  /**
    * Wrap EngineCallbacks with a Proxy that intercepts relevant callbacks,
    * routes events to detectors, and then calls the original callback.
    *
@@ -561,6 +594,12 @@ export class DetectorPipeline {
                 const strategyResult = await pipeline.strategyEngine.handleReport(report)
                 if (strategyResult.delegationResult) {
                   const dr = strategyResult.delegationResult
+                  // Log delegation to workspace logs
+                  pipeline.writeHarnessLog({
+                    type: "delegation", nodeId,
+                    success: dr.success, decision: dr.decision,
+                    reasoning: dr.reasoning, tokenUsage: dr.tokenUsage,
+                  })
                   // Agent decided to block → return skip
                   if (dr.decision === "block_node") {
                     pipeline.updateNodeHarnessStatus(nodeId, "harness_blocked", report)

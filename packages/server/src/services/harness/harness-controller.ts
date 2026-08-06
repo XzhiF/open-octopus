@@ -76,6 +76,7 @@ export class HarnessController {
     opts?: {
       hostPid?: string
       hostPorts?: string[]
+      workspacePath?: string
       workflowContent?: string
       nodeList?: Array<{ id: string; type: string }>
       dependencyGraph?: Record<string, string[]>
@@ -126,6 +127,7 @@ export class HarnessController {
       config,
       executionId,
       workspaceId,
+      workspacePath: opts?.workspacePath,
       dao: this.dao,
       sse: this.sse,
       hostPid: opts?.hostPid ?? String(process.pid),

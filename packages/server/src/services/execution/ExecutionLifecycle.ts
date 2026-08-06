@@ -263,6 +263,7 @@ export class ExecutionLifecycle {
         callbacks = this.harnessController.onExecutionStart(id, this.workspaceId, callbacks, {
           hostPid: process.env.OCTOPUS_HOST_PID,
           hostPorts: (process.env.OCTOPUS_HOST_PORTS ?? "").split(",").filter(Boolean),
+          workspacePath: this.workspacePath,
           workflowContent: wf.content,
           nodeList,
           dependencyGraph,
@@ -1540,6 +1541,7 @@ export class ExecutionLifecycle {
         callbacks = this.harnessController.onExecutionStart(exec.id, this.workspaceId, callbacks, {
           hostPid: process.env.OCTOPUS_HOST_PID,
           hostPorts: (process.env.OCTOPUS_HOST_PORTS ?? "").split(",").filter(Boolean),
+          workspacePath: this.workspacePath,
           workflowContent: wf.content,
           nodeList,
           dependencyGraph,

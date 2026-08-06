@@ -56,13 +56,25 @@ function CollapsedPanel({
     }
   }
 
+  const hasActivity = isRunning && interventionCount > 0
+
   return (
     <div
-      className="w-[120px] h-[48px] rounded-lg border border-border bg-card shadow-lg cursor-grab active:cursor-grabbing flex flex-col items-center justify-center gap-0.5 opacity-70 hover:opacity-100 transition-opacity select-none"
+      className={cn(
+        "w-[120px] h-[48px] rounded-lg border border-border bg-card shadow-lg cursor-grab active:cursor-grabbing flex flex-col items-center justify-center gap-0.5 opacity-70 hover:opacity-100 transition-opacity select-none",
+        hasActivity && "border-violet-400/60",
+      )}
+      style={hasActivity ? { animation: "harness-pulse 3s ease-in-out infinite" } : undefined}
       onMouseDown={handleMouseDown}
       onMouseUp={handleMouseUp}
       data-testid="harness-panel-collapsed"
     >
+      <style>{`
+        @keyframes harness-pulse {
+          0%, 100% { box-shadow: 0 0 0 0 rgba(139, 92, 246, 0); }
+          50% { box-shadow: 0 0 12px 2px rgba(139, 92, 246, 0.3); }
+        }
+      `}</style>
       <div className="flex items-center gap-1 text-xs font-medium pointer-events-none">
         <span>🛡️</span>
         <span>{interventionCount}</span>
@@ -176,7 +188,22 @@ function MonitorTab({ events }: { events: ParsedHarnessEvent[] }) {
     const interventions = events.filter((e) => e.type === "harness_intervention").length
     const diagnoses = events.filter((e) => e.type === "harness_diagnosis").length
     const blocks = events.filter((e) => e.type === "harness_blocked").length
-    return { interventions, diagnoses, blocks }
+    // Aggregate token usage across all events
+    let totalInput = 0
+    let totalOutput = 0
+    const models = new Set<string>()
+    for (const e of events) {
+      if (e.tokenUsage) {
+        totalInput += e.tokenUsage.inputTokens ?? 0
+        totalOutput += e.tokenUsage.outputTokens ?? 0
+        if (e.tokenUsage.model) models.add(e.tokenUsage.model)
+      }
+      // Also check delegation result's token usage from nested result
+      if (e.type === "harness_delegation" && e.delegationResult) {
+        // delegationResult doesn't have tokenUsage directly, but event.tokenUsage captures it
+      }
+    }
+    return { interventions, diagnoses, blocks, totalInput, totalOutput, models: Array.from(models) }
   }, [events])
 
   if (events.length === 0) {
@@ -197,10 +224,22 @@ function MonitorTab({ events }: { events: ParsedHarnessEvent[] }) {
       </div>
 
       {/* Stats footer */}
-      <div className="shrink-0 border-t border-border/50 px-2 py-1.5 flex items-center gap-3 text-[10px] text-muted-foreground">
-        <span>干预 {stats.interventions}次</span>
-        <span>诊断 {stats.diagnoses}次</span>
-        {stats.blocks > 0 && <span className="text-red-400">阻断 {stats.blocks}次</span>}
+      <div className="shrink-0 border-t border-border/50 px-2 py-1.5 space-y-1">
+        <div className="flex items-center gap-3 text-[10px] text-muted-foreground">
+          <span>干预 {stats.interventions}次</span>
+          <span>诊断 {stats.diagnoses}次</span>
+          {stats.blocks > 0 && <span className="text-red-400">阻断 {stats.blocks}次</span>}
+        </div>
+        {(stats.totalInput > 0 || stats.totalOutput > 0) && (
+          <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
+            <span>🤖 {stats.models.length > 0 ? stats.models.map(m => m.length > 20 ? m.slice(0, 20) + "…" : m).join(", ") : "unknown"}</span>
+            <span className="text-muted-foreground/60">|</span>
+            <span>📥 {stats.totalInput.toLocaleString()}</span>
+            <span>📤 {stats.totalOutput.toLocaleString()}</span>
+            <span className="text-muted-foreground/60">=</span>
+            <span className="font-medium">{(stats.totalInput + stats.totalOutput).toLocaleString()} tok</span>
+          </div>
+        )}
       </div>
     </div>
   )
@@ -317,6 +356,7 @@ export function HarnessFloatingPanel({
 }: HarnessFloatingPanelProps) {
   const [expanded, setExpanded] = useState(false)
   const [pos, setPos] = useState<{ left: number; top: number } | null>(null)
+  const [size, setSize] = useState<{ width: number; height: number }>({ width: 400, height: 500 })
   const [activeTab, setActiveTab] = useState("monitor")
   const panelRef = useRef<HTMLDivElement>(null)
   const dragRef = useRef<{
@@ -324,6 +364,12 @@ export function HarnessFloatingPanel({
     startY: number
     origLeft: number
     origTop: number
+  } | null>(null)
+  const resizeRef = useRef<{
+    startX: number
+    startY: number
+    origWidth: number
+    origHeight: number
   } | null>(null)
 
   const { events, loading, interventionCount, totalExtraTokens } = useHarnessEvents(
@@ -378,6 +424,37 @@ export function HarnessFloatingPanel({
     [pos],
   )
 
+  // Resize handler — drag from bottom-right corner
+  const handleResizeStart = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault()
+      e.stopPropagation()
+      resizeRef.current = {
+        startX: e.clientX,
+        startY: e.clientY,
+        origWidth: size.width,
+        origHeight: size.height,
+      }
+
+      const handleResizeMove = (me: MouseEvent) => {
+        if (!resizeRef.current) return
+        const newWidth = Math.max(280, resizeRef.current.origWidth + (me.clientX - resizeRef.current.startX))
+        const newHeight = Math.max(300, resizeRef.current.origHeight + (me.clientY - resizeRef.current.startY))
+        setSize({ width: newWidth, height: newHeight })
+      }
+
+      const handleResizeEnd = () => {
+        resizeRef.current = null
+        window.removeEventListener("mousemove", handleResizeMove)
+        window.removeEventListener("mouseup", handleResizeEnd)
+      }
+
+      window.addEventListener("mousemove", handleResizeMove)
+      window.addEventListener("mouseup", handleResizeEnd)
+    },
+    [size],
+  )
+
   // Don't render until position is computed
   if (!pos) return null
 
@@ -407,11 +484,10 @@ export function HarnessFloatingPanel({
       style={{
         left: pos.left,
         top: pos.top,
-        width: 400,
-        height: 500,
+        width: size.width,
+        height: size.height,
         minWidth: 280,
         minHeight: 300,
-        resize: "both",
         overflow: "hidden",
       }}
       data-testid="harness-floating-panel"
@@ -465,6 +541,18 @@ export function HarnessFloatingPanel({
           />
         </TabsContent>
       </Tabs>
+
+      {/* Resize handle — bottom-right corner */}
+      <div
+        className="absolute bottom-0 right-0 w-4 h-4 cursor-se-resize flex items-end justify-end"
+        onMouseDown={handleResizeStart}
+        title="调整大小"
+      >
+        <svg width="10" height="10" viewBox="0 0 10 10" className="text-muted-foreground/40">
+          <line x1="9" y1="1" x2="1" y2="9" stroke="currentColor" strokeWidth="1" />
+          <line x1="9" y1="5" x2="5" y2="9" stroke="currentColor" strokeWidth="1" />
+        </svg>
+      </div>
     </div>
   )
 }
