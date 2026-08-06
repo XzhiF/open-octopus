@@ -256,7 +256,7 @@ function ExecutionNodeInner({ data: rawData, selected }: NodeProps) {
   )
 
   if (isRunning) {
-    const marchColor = data.harnessStatus === "harness_intervening" ? "#8b5cf6" : "#f59e0b"
+    const marchColor = isHarnessIntervening ? "#8b5cf6" : "#f59e0b"
     return (
       <div
         className="border-march rounded-lg p-0.5 min-w-[300px] max-w-[340px]"

@@ -384,6 +384,33 @@ export function useExecutionTree(
       const { executionId, gateStatus } = JSON.parse(e.data)
       setTreeNodes(prev => prev.map(n => n.id === executionId ? { ...n, gateStatus: gateStatus as GateStatus } : n))
     })
+    // ---- Harness SSE events → update execution-level harnessStatus ----
+    es.addEventListener("harness_diagnosis", (e) => {
+      try {
+        const { executionId, report } = JSON.parse(e.data)
+        if (report?.severity === "critical") {
+          setTreeNodes(prev => prev.map(n => n.id === executionId ? { ...n, harnessStatus: "intervened" as HarnessExecutionStatus } : n))
+        }
+      } catch { /* skip */ }
+    })
+    es.addEventListener("harness_delegation", (e) => {
+      try {
+        const { executionId, status, result } = JSON.parse(e.data)
+        if (status === "complete" && result?.decision) {
+          const nextStatus = result.decision === "block_node" ? "blocked"
+            : result.decision === "agent_takeover" ? "delegated"
+            : "intervened"
+          setTreeNodes(prev => prev.map(n => n.id === executionId ? { ...n, harnessStatus: nextStatus as HarnessExecutionStatus } : n))
+        }
+      } catch { /* skip */ }
+    })
+    es.addEventListener("harness_blocked", (e) => {
+      try {
+        const { executionId } = JSON.parse(e.data)
+        setTreeNodes(prev => prev.map(n => n.id === executionId ? { ...n, harnessStatus: "blocked" as HarnessExecutionStatus } : n))
+      } catch { /* skip */ }
+    })
+
     es.addEventListener("execution_deleted", (e) => {
       const data = JSON.parse(e.data)
       const deletedId = data.executionId
