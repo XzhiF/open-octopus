@@ -18,3 +18,10 @@ export const formatDuration = (ms: number): string =>
 
 /** 百分比格式化：76.5% */
 export const formatPercent = (value: number): string => `${value}%`
+
+/** Token 数量紧凑格式化：< 1K 原值，< 1M 显示 K，≥ 1M 显示 M */
+export const formatTokenCount = (n: number): string => {
+  if (n < 1000) return String(n)
+  if (n < 1_000_000) return `${(n / 1000).toFixed(1)}K`
+  return `${(n / 1_000_000).toFixed(1)}M`
+}

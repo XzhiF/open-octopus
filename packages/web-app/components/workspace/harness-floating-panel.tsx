@@ -7,6 +7,7 @@ import { Minus, GripHorizontal } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { useHarnessEvents, type ParsedHarnessEvent } from "@/hooks/use-harness-events"
 import { HarnessChatbot } from "./harness-chatbot"
+import { formatTokenCount } from "@/lib/analytics-format"
 
 // ============ Types ============
 
@@ -92,7 +93,7 @@ function CollapsedPanel({
         </span>
       </div>
       {extraTokens > 0 && (
-        <span className="text-[10px] text-muted-foreground pointer-events-none">+{extraTokens} tok</span>
+        <span className="text-[10px] text-muted-foreground pointer-events-none">+{formatTokenCount(extraTokens)}</span>
       )}
     </div>
   )
@@ -234,10 +235,10 @@ function MonitorTab({ events }: { events: ParsedHarnessEvent[] }) {
           <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
             <span>🤖 {stats.models.length > 0 ? stats.models.map(m => m.length > 20 ? m.slice(0, 20) + "…" : m).join(", ") : "unknown"}</span>
             <span className="text-muted-foreground/60">|</span>
-            <span>📥 {stats.totalInput.toLocaleString()}</span>
-            <span>📤 {stats.totalOutput.toLocaleString()}</span>
+            <span>📥 {formatTokenCount(stats.totalInput)}</span>
+            <span>📤 {formatTokenCount(stats.totalOutput)}</span>
             <span className="text-muted-foreground/60">=</span>
-            <span className="font-medium">{(stats.totalInput + stats.totalOutput).toLocaleString()} tok</span>
+            <span className="font-medium">{formatTokenCount(stats.totalInput + stats.totalOutput)}</span>
           </div>
         )}
       </div>
