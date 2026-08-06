@@ -39,4 +39,4 @@
 | 35 | workflow-engine-harness | 2026-08-05 | feat/workflow-engine-harness | done (converged: GO, PR #45, 2 iterations) |
 | 36 | workflow-engine-harness-r2 | 2026-08-05 | feat/workflow-engine-harness | done (E2E Playwright + code review fixes) |
 | 37 | harness-gap-fix | 2026-08-06 | feat/workflow-engine-harness | done (6 gaps fixed, 34 unit + 7 E2E tests, PR #45 updated) |
-| 38 | harness-semantic-v2 | 2026-08-06 | feat/workflow-engine-harness | in-progress (spec + 8 tickets ready) |
+| 38 | harness-semantic-v2 | 2026-08-06 | feat/workflow-engine-harness | done (10 tickets, 4 stages, E2E: 3 PASS 4 SKIP) |
