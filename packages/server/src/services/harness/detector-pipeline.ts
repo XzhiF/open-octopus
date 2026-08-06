@@ -383,6 +383,38 @@ export class DetectorPipeline {
           }
         }
 
+        // ── onBeforeNode: always intercept (even if target lacks it) ──
+        // The ProcessConflictDetector needs beforeNode events for static
+        // script scanning. buildCallbacks() does NOT provide onBeforeNode,
+        // so the Proxy must synthesise one to route events to detectors.
+        if (prop === "onBeforeNode") {
+          return async function (
+            nodeId: string,
+            nodeType: string,
+            nodeConfig: any,
+          ) {
+            const reports = pipeline.routeEvent({
+              type: "beforeNode",
+              nodeId,
+              nodeType,
+              nodeConfig,
+            })
+            // BP-5: Synchronously check for CRITICAL reports with abort strategies.
+            for (const report of reports) {
+              pipeline.synchronouslyStorePendingAction(report)
+            }
+            const blockAction = pipeline.pendingBlockActions.get(nodeId)
+            if (blockAction) {
+              pipeline.pendingBlockActions.delete(nodeId)
+              return blockAction
+            }
+            if (typeof original === "function") {
+              return original.call(target, nodeId, nodeType, nodeConfig)
+            }
+            return { action: "proceed" as const }
+          }
+        }
+
         // ── Observation callbacks: only intercept when target provides them ──
         if (typeof original !== "function") return original
 
@@ -445,31 +477,6 @@ export class DetectorPipeline {
             return function (nodeId: string, event: any) {
               pipeline.routeEvent({ type: "agentEvent", nodeId, event })
               return original.call(target, nodeId, event)
-            }
-
-          case "onBeforeNode":
-            return async function (
-              nodeId: string,
-              nodeType: string,
-              nodeConfig: any,
-            ) {
-              const reports = pipeline.routeEvent({
-                type: "beforeNode",
-                nodeId,
-                nodeType,
-                nodeConfig,
-              })
-              // BP-5: Synchronously check for CRITICAL reports with abort strategies.
-              // If found, store block decision and return skip immediately.
-              for (const report of reports) {
-                pipeline.synchronouslyStorePendingAction(report)
-              }
-              const blockAction = pipeline.pendingBlockActions.get(nodeId)
-              if (blockAction) {
-                pipeline.pendingBlockActions.delete(nodeId)
-                return blockAction
-              }
-              return original.call(target, nodeId, nodeType, nodeConfig)
             }
 
           case "onError":
