@@ -364,6 +364,8 @@ export interface AgentDelegationServiceDeps {
   timeoutMs?: number
   /** Harness agent session for context accumulation across interventions (ticket 10). */
   session?: HarnessAgentSession
+  /** Provider getter function — injected to avoid tsup bundling issues with dynamic import. */
+  getProvider?: (id: string) => { sendQuery: (...args: any[]) => any }
 }
 
 /**
@@ -381,6 +383,7 @@ export class AgentDelegationService {
   private llmCall?: DelegationLLMCall
   private timeoutMs: number
   private session?: HarnessAgentSession
+  private getProvider?: (id: string) => { sendQuery: (...args: any[]) => any }
 
   constructor(deps: AgentDelegationServiceDeps) {
     this.dao = deps.dao
@@ -390,6 +393,7 @@ export class AgentDelegationService {
     this.llmCall = deps.llmCall
     this.timeoutMs = deps.timeoutMs ?? 5 * 60 * 1000 // 5 minutes default
     this.session = deps.session
+    this.getProvider = deps.getProvider
   }
 
   /**
@@ -627,9 +631,12 @@ export class AgentDelegationService {
           )
         }
 
-        // Dynamic import to avoid hard dependency on providers package
-        const { getProvider } = await import("@octopus/providers")
-        const provider = getProvider("claude")
+        // Use injected getProvider to avoid tsup bundling issues with dynamic import
+        const getProviderFn = this.getProvider
+        if (!getProviderFn) {
+          throw new Error("No provider getter configured in AgentDelegationService")
+        }
+        const provider = getProviderFn("claude")
 
         let text = ""
         let tokenUsage:

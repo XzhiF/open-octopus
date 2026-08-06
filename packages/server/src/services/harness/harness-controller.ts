@@ -15,6 +15,7 @@ import { DetectorPipeline } from "./detector-pipeline"
 import { StrategyEngine } from "./strategy-engine"
 import { AgentDelegationService } from "./agent-delegation"
 import { HarnessAgentSession, type HarnessSessionContext } from "./harness-agent-session"
+import { getProvider as _getProvider } from "@octopus/providers"
 
 export interface HarnessControllerDeps {
   dao: HarnessDAO
@@ -108,6 +109,7 @@ export class HarnessController {
       sse: this.sse,
       workspaceId,
       session, // Pass session for context accumulation (AC3, AC4)
+      getProvider: (id: string) => _getProvider(id),
     })
 
     // Create a per-execution StrategyEngine with the current strategies
