@@ -3,8 +3,7 @@
 import { useState, useRef, useCallback, useEffect, useMemo } from "react"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { Button } from "@/components/ui/button"
-import { Badge } from "@/components/ui/badge"
-import { X, Minus, Maximize2, GripHorizontal } from "lucide-react"
+import { Minus, GripHorizontal } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { useHarnessEvents, type ParsedHarnessEvent } from "@/hooks/use-harness-events"
 import { HarnessChatbot } from "./harness-chatbot"
@@ -15,37 +14,73 @@ interface HarnessFloatingPanelProps {
   workspaceId: string
   executionId: string
   executionStatus?: string
+  currentNodeId?: string
 }
+
+// Default positions (absolute left/top)
+const COLLAPSED_DEFAULT = { left: -1, top: 56 } // -1 = computed on mount
+const EXPANDED_DEFAULT = { left: -1, top: 56 }
+const DRAG_THRESHOLD = 4 // px — below this, treat as click
 
 // ============ Collapsed Panel ============
 
 function CollapsedPanel({
   interventionCount,
   isIntervening,
+  isRunning,
   extraTokens,
   onExpand,
+  onDragStart,
 }: {
   interventionCount: number
   isIntervening: boolean
+  isRunning: boolean
   extraTokens: number
   onExpand: () => void
+  onDragStart: (e: React.MouseEvent) => void
 }) {
+  const mouseDownPos = useRef<{ x: number; y: number } | null>(null)
+
+  const handleMouseDown = (e: React.MouseEvent) => {
+    mouseDownPos.current = { x: e.clientX, y: e.clientY }
+    onDragStart(e)
+  }
+
+  const handleMouseUp = (e: React.MouseEvent) => {
+    if (!mouseDownPos.current) return
+    const dx = Math.abs(e.clientX - mouseDownPos.current.x)
+    const dy = Math.abs(e.clientY - mouseDownPos.current.y)
+    mouseDownPos.current = null
+    if (dx < DRAG_THRESHOLD && dy < DRAG_THRESHOLD) {
+      onExpand()
+    }
+  }
+
   return (
     <div
-      className="w-[120px] h-[48px] rounded-lg border border-border bg-card shadow-lg cursor-pointer flex flex-col items-center justify-center gap-0.5 opacity-70 hover:opacity-100 transition-opacity"
-      onClick={onExpand}
+      className="w-[120px] h-[48px] rounded-lg border border-border bg-card shadow-lg cursor-grab active:cursor-grabbing flex flex-col items-center justify-center gap-0.5 opacity-70 hover:opacity-100 transition-opacity select-none"
+      onMouseDown={handleMouseDown}
+      onMouseUp={handleMouseUp}
       data-testid="harness-panel-collapsed"
     >
-      <div className="flex items-center gap-1 text-xs font-medium">
+      <div className="flex items-center gap-1 text-xs font-medium pointer-events-none">
         <span>🛡️</span>
         <span>{interventionCount}</span>
         <span className="text-muted-foreground">|</span>
-        <span className={isIntervening ? "text-amber-500" : "text-emerald-500"}>
-          {isIntervening ? "干预中" : "监控中"}
+        <span
+          className={
+            !isRunning
+              ? "text-muted-foreground"
+              : isIntervening
+                ? "text-amber-500"
+                : "text-emerald-500"
+          }
+        >
+          {!isRunning ? "已完成" : isIntervening ? "干预中" : "监控中"}
         </span>
       </div>
       {extraTokens > 0 && (
-        <span className="text-[10px] text-muted-foreground">+{extraTokens} tok</span>
+        <span className="text-[10px] text-muted-foreground pointer-events-none">+{extraTokens} tok</span>
       )}
     </div>
   )
@@ -247,12 +282,18 @@ export function HarnessFloatingPanel({
   workspaceId,
   executionId,
   executionStatus,
+  currentNodeId,
 }: HarnessFloatingPanelProps) {
   const [expanded, setExpanded] = useState(false)
-  const [position, setPosition] = useState({ x: 0, y: 0 }) // offset from default position
+  const [pos, setPos] = useState<{ left: number; top: number } | null>(null)
   const [activeTab, setActiveTab] = useState("monitor")
   const panelRef = useRef<HTMLDivElement>(null)
-  const dragRef = useRef<{ startX: number; startY: number; origX: number; origY: number } | null>(null)
+  const dragRef = useRef<{
+    startX: number
+    startY: number
+    origLeft: number
+    origTop: number
+  } | null>(null)
 
   const { events, loading, interventionCount, totalExtraTokens } = useHarnessEvents(
     workspaceId,
@@ -265,25 +306,33 @@ export function HarnessFloatingPanel({
     (e) => e.type === "harness_intervention" && Date.now() - e.timestamp < 10000,
   )
 
-  // Dragging support
+  // Compute default position on first mount (right side of viewport)
+  useEffect(() => {
+    if (pos === null) {
+      const defaultLeft = Math.max(window.innerWidth - 400, 200)
+      setPos({ left: defaultLeft, top: 56 })
+    }
+  }, [pos])
+
+  // Shared drag handler — works for both collapsed and expanded
   const handleDragStart = useCallback(
     (e: React.MouseEvent) => {
+      if (!pos) return
       e.preventDefault()
       dragRef.current = {
         startX: e.clientX,
         startY: e.clientY,
-        origX: position.x,
-        origY: position.y,
+        origLeft: pos.left,
+        origTop: pos.top,
       }
 
       const handleDragMove = (me: MouseEvent) => {
         if (!dragRef.current) return
-        const dx = me.clientX - dragRef.current.startX
-        const dy = me.clientY - dragRef.current.startY
-        setPosition({
-          x: dragRef.current.origX + dx,
-          y: dragRef.current.origY + dy,
-        })
+        const newLeft = dragRef.current.origLeft + (me.clientX - dragRef.current.startX)
+        const newTop = dragRef.current.origTop + (me.clientY - dragRef.current.startY)
+        const clampedLeft = Math.max(0, Math.min(window.innerWidth - 120, newLeft))
+        const clampedTop = Math.max(0, Math.min(window.innerHeight - 48, newTop))
+        setPos({ left: clampedLeft, top: clampedTop })
       }
 
       const handleDragEnd = () => {
@@ -295,24 +344,26 @@ export function HarnessFloatingPanel({
       window.addEventListener("mousemove", handleDragMove)
       window.addEventListener("mouseup", handleDragEnd)
     },
-    [position],
+    [pos],
   )
 
-  // Don't render if execution is done and no events
-  if (!isRunning && events.length === 0) return null
+  // Don't render until position is computed
+  if (!pos) return null
 
   if (!expanded) {
     return (
       <div
         className="fixed z-50"
-        style={{ right: 24, top: 80 }}
+        style={{ left: pos.left, top: pos.top }}
         data-testid="harness-floating-panel"
       >
         <CollapsedPanel
           interventionCount={interventionCount}
           isIntervening={isIntervening}
+          isRunning={isRunning}
           extraTokens={totalExtraTokens}
           onExpand={() => setExpanded(true)}
+          onDragStart={handleDragStart}
         />
       </div>
     )
@@ -323,10 +374,12 @@ export function HarnessFloatingPanel({
       ref={panelRef}
       className="fixed z-50 flex flex-col rounded-lg border border-border bg-card shadow-xl"
       style={{
-        right: 24 - position.x,
-        top: 80 + position.y,
+        left: pos.left,
+        top: pos.top,
         width: 400,
         height: 500,
+        minWidth: 280,
+        minHeight: 300,
         resize: "both",
         overflow: "hidden",
       }}
@@ -338,7 +391,7 @@ export function HarnessFloatingPanel({
         onMouseDown={handleDragStart}
       >
         <GripHorizontal className="h-3.5 w-3.5 text-muted-foreground/60" />
-        <span className="text-xs font-medium flex-1">🛡️ Harness 监控</span>
+        <span className="text-xs font-medium flex-1 select-none">🛡️ Harness 监控</span>
         <Button
           variant="ghost"
           size="icon"
@@ -377,6 +430,7 @@ export function HarnessFloatingPanel({
             workspaceId={workspaceId}
             executionId={executionId}
             isRunning={isRunning}
+            currentNodeId={currentNodeId}
           />
         </TabsContent>
       </Tabs>

@@ -45,6 +45,15 @@ export class HarnessController {
   }
 
   /**
+   * Set or replace the repair service after construction.
+   * Used to break the circular dependency: ExecutionService → ExecutionLifecycle
+   * → HarnessController → RepairService → ExecutionService.
+   */
+  setRepairService(service: RepairService): void {
+    this.repairService = service
+  }
+
+  /**
    * Called when a workflow execution starts.
    * Creates a fresh DetectorPipeline for the execution.
    *
@@ -107,18 +116,6 @@ export class HarnessController {
       pipeline.destroy()
       this.pipelines.delete(executionId)
     }
-  }
-
-  /**
-   * Get the wrapped callbacks for an active execution.
-   * Returns undefined if no pipeline exists for the execution.
-   */
-  getWrappedCallbacks(executionId: string): EngineCallbacks | undefined {
-    const pipeline = this.pipelines.get(executionId)
-    return pipeline ? undefined : undefined
-    // The wrapped callbacks are returned from onExecutionStart.
-    // This method exists for potential future use cases where
-    // the controller needs to access an execution's pipeline.
   }
 
   /**

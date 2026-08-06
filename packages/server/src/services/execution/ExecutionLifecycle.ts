@@ -17,6 +17,7 @@ import type { BuiltInWorkflowService } from "../builtin-workflow"
 import type { ObservabilityService } from "../observability"
 import type { ErrorTracker } from "../error-tracker"
 import type { KnowledgeService } from "../knowledge"
+import type { RepairService } from "../repair"
 import type { HookDef, WorkflowDef, WorkflowHooks, PipelineConfig, ExecutionLookup } from "@octopus/shared"
 import type { EngineCallbacks } from "@octopus/engine"
 import { WorkflowEngine, FilesystemCheckpointStore, EngineInitPhase } from "@octopus/engine"
@@ -135,6 +136,17 @@ export class ExecutionLifecycle {
   setKnowledgeService(service: KnowledgeService): void {
     this.knowledgeService = service
     this.engineFactory.setKnowledgeService(service)
+  }
+
+  /**
+   * Set the repair service for harness inject_message actions.
+   * Called after construction to break the circular dependency between
+   * ExecutionService → ExecutionLifecycle → HarnessController → RepairService → ExecutionService.
+   */
+  setRepairService(service: RepairService): void {
+    if (this.harnessController) {
+      this.harnessController.setRepairService(service)
+    }
   }
 
   getEnginePool(): EnginePool { return this.enginePool }

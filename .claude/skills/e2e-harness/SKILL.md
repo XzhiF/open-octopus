@@ -109,7 +109,7 @@ See `index.md` for the full module registry with exports and self-test paths.
 
 - **Test prefix**: `E2E_HARNESS_TEST_` — auto-applied to workspace names by `workspace.mjs`
 - **Port resolution**: reads `~/.octopus/ports/{branch-safe}.json` (written by `dev.mjs`), falls back to hash-based offset from 3100
-- **Screenshots**: saved to `./e2e-screenshots/` by default (configurable per call)
+- **Screenshots**: saved to `$E2E_ARTIFACTS_DIR/e2e-screenshots/` when env var is set, otherwise `./e2e-screenshots/` (configurable per call via `dir` param)
 - **DB path**: `~/.octopus/db/octopus.db` (dev), `octopus-{branch}.db` (worktree), `octopus-prod.db` (prod)
 - **Execution names**: `E2E_HARNESS_TEST_exec_{timestamp}` when no name is provided
 

@@ -307,3 +307,209 @@ test.describe("AC5: DAG node harness markers", () => {
     await page.screenshot({ path: "e2e/__screenshots__/harness-e2e/dag-markers.png", fullPage: true })
   })
 })
+
+// ─── Gap AC1: Panel shows harness_diagnosis events in timeline ──────
+
+test.describe("Gap-AC1: Diagnosis events in timeline", () => {
+  test.beforeEach(async ({ page }) => {
+    await installApiMocks(page)
+    await page.goto(TEST_PAGE)
+    await expect(page.getByTestId("harness-test-title")).toBeVisible({ timeout: 30_000 })
+  })
+
+  test("diagnosis event appears in monitor timeline with detector and node", async ({ page }) => {
+    // Expand the panel
+    await page.getByTestId("harness-panel-collapsed").click()
+
+    // Monitor tab is default — timeline should show the diagnosis event
+    // Diagnosis renders: ⚠️ stale-output bash-build (severity=warning)
+    await expect(page.getByText(/stale-output/)).toBeVisible({ timeout: 5_000 })
+    await expect(page.getByText(/bash-build/)).toBeVisible({ timeout: 5_000 })
+
+    // Stats footer shows diagnosis count
+    await expect(page.getByText("诊断 1次")).toBeVisible({ timeout: 5_000 })
+  })
+
+  test("diagnosis event icon is ⚠️ for warning severity", async ({ page }) => {
+    // Expand the panel
+    await page.getByTestId("harness-panel-collapsed").click()
+
+    // The warning icon should be present in the timeline
+    const timeline = page.locator(".flex-1.overflow-y-auto").first()
+    await expect(timeline.getByText("⚠️")).toBeVisible({ timeout: 5_000 })
+  })
+})
+
+// ─── Gap AC2: Panel shows harness_intervention events ──────────────
+
+test.describe("Gap-AC2: Intervention events in timeline", () => {
+  test.beforeEach(async ({ page }) => {
+    await installApiMocks(page)
+    await page.goto(TEST_PAGE)
+    await expect(page.getByTestId("harness-test-title")).toBeVisible({ timeout: 30_000 })
+  })
+
+  test("intervention events appear with action type and node id", async ({ page }) => {
+    // Expand the panel
+    await page.getByTestId("harness-panel-collapsed").click()
+
+    // Intervention renders: 🔄 retry bash-build
+    await expect(page.getByText(/retry/)).toBeVisible({ timeout: 5_000 })
+
+    // Second intervention: 🔄 inject python-test
+    await expect(page.getByText(/inject/)).toBeVisible({ timeout: 5_000 })
+
+    // Stats footer shows intervention count
+    await expect(page.getByText("干预 2次")).toBeVisible({ timeout: 5_000 })
+  })
+
+  test("intervention with harnessHint renders hint text in detail tab", async ({ page }) => {
+    // Expand the panel
+    await page.getByTestId("harness-panel-collapsed").click()
+
+    // Switch to detail tab
+    await page.getByRole("tab", { name: "明细" }).click()
+
+    // Click the first intervention event to see details
+    const interventionItem = page.getByText(/harness_intervention/)
+    await interventionItem.first().click()
+
+    // Detail view should show the action type and node
+    await expect(page.getByText("干预动作")).toBeVisible({ timeout: 5_000 })
+    await expect(page.getByText(/retry/)).toBeVisible({ timeout: 5_000 })
+  })
+})
+
+// ─── Gap AC3: Chatbot inject includes nodeId and succeeds ──────────
+
+test.describe("Gap-AC3: Chatbot inject with nodeId", () => {
+  test("POST body includes nodeId field and mock returns 200", async ({ page }) => {
+    let capturedBody: Record<string, unknown> | null = null
+
+    // Install standard mocks
+    await installApiMocks(page)
+
+    // Override the intervene mock to capture the request body
+    await page.route(
+      "**/api/workspaces/test-workspace-harness/executions/test-exec-harness-001/harness-intervene",
+      async (route) => {
+        const request = route.request()
+        if (request.method() === "POST") {
+          capturedBody = JSON.parse(request.postData() || "{}")
+          await route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify({
+              success: true,
+              message: `已注入指令: ${(capturedBody as any).directive?.message ?? ""}`,
+            }),
+          })
+        } else {
+          await route.continue()
+        }
+      },
+    )
+
+    await page.goto(TEST_PAGE)
+    await expect(page.getByTestId("harness-test-title")).toBeVisible({ timeout: 30_000 })
+
+    // Expand → Chatbot tab
+    await page.getByTestId("harness-panel-collapsed").click()
+    await page.getByRole("tab", { name: "Chatbot" }).click()
+
+    const input = page.getByPlaceholder("输入干预指令...")
+    await expect(input).toBeVisible({ timeout: 5_000 })
+
+    // Type and send
+    const testMessage = "请跳过这个步骤"
+    await input.fill(testMessage)
+    await input.press("Enter")
+
+    // Wait for system response
+    await expect(page.getByText(/已注入指令/)).toBeVisible({ timeout: 10_000 })
+
+    // Verify the captured body includes nodeId
+    expect(capturedBody).not.toBeNull()
+    expect(capturedBody).toHaveProperty("nodeId")
+    // currentNodeId is "bash-build" on the test page
+    expect((capturedBody as any).nodeId).toBe("bash-build")
+
+    // Verify directive structure
+    expect((capturedBody as any).directive).toMatchObject({
+      type: "inject",
+      reason: testMessage,
+      issued_by: "user",
+      message: testMessage,
+    })
+
+    await page.screenshot({
+      path: "e2e/__screenshots__/harness-e2e/chatbot-nodeid-inject.png",
+      fullPage: true,
+    })
+  })
+})
+
+// ─── Gap AC4: totalExtraTokens displays in collapsed panel ─────────
+
+test.describe("Gap-AC4: Token usage display in collapsed panel", () => {
+  test("collapsed panel shows token count when events include tokenUsage", async ({ page }) => {
+    // Mock events with token_usage_json data
+    const eventsWithTokens = [
+      {
+        id: "he-tok-001",
+        event_type: "intervention",
+        execution_id: "test-exec-harness-001",
+        node_id: "bash-build",
+        timestamp: Date.now() - 20_000,
+        report_json: null,
+        action_json: JSON.stringify({ type: "retry", reason: "Token-heavy retry" }),
+        result_json: JSON.stringify("success"),
+        severity: null,
+        token_usage_json: JSON.stringify({ inputTokens: 500, outputTokens: 700 }),
+      },
+    ]
+
+    await page.route(
+      "**/api/workspaces/test-workspace-harness/harness/events/test-exec-harness-001*",
+      async (route) => {
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({ events: eventsWithTokens }),
+        })
+      },
+    )
+
+    // Abort SSE
+    await page.route("**/api/workspaces/test-workspace-harness/executions/events*", async (route) => {
+      await route.abort()
+    })
+
+    await page.goto(TEST_PAGE)
+    await expect(page.getByTestId("harness-test-title")).toBeVisible({ timeout: 30_000 })
+
+    // Collapsed panel should show token count: 500 + 700 = 1200
+    const collapsed = page.getByTestId("harness-panel-collapsed")
+    await expect(collapsed).toBeVisible({ timeout: 10_000 })
+
+    // Verify token display: "+1200 tok"
+    await expect(collapsed.getByText("+1200 tok")).toBeVisible({ timeout: 5_000 })
+
+    await page.screenshot({
+      path: "e2e/__screenshots__/harness-e2e/collapsed-tokens.png",
+      fullPage: true,
+    })
+  })
+
+  test("collapsed panel hides token count when no tokenUsage in events", async ({ page }) => {
+    await installApiMocks(page)
+    await page.goto(TEST_PAGE)
+    await expect(page.getByTestId("harness-test-title")).toBeVisible({ timeout: 30_000 })
+
+    const collapsed = page.getByTestId("harness-panel-collapsed")
+    await expect(collapsed).toBeVisible({ timeout: 10_000 })
+
+    // No "tok" text should appear since mock events have no token_usage_json
+    await expect(collapsed.getByText(/tok/)).toHaveCount(0)
+  })
+})

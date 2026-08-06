@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useRef, useCallback } from "react"
+import { useState, useEffect, useRef, useCallback, useMemo } from "react"
 import { cn } from "@/lib/utils"
 import { formatDuration, formatTokenCount } from "@/lib/format"
 import { getExecutorType } from "@/lib/executor-type"
@@ -321,6 +321,22 @@ export function WorkflowDetailPanel({ execution, workflow, workspaceId }: Workfl
     ? liveSteps?.find(s => s.stepId === nodeInfoDialog.stepId) ?? null
     : null
 
+  // Compute the currently active node ID for harness chatbot interventions.
+  // Prefer a running step; fall back to the most recently failed step.
+  const activeNodeId = useMemo(() => {
+    if (!liveSteps) return undefined
+    const running = liveSteps.find(s => s.status === "running")
+    if (running) return running.stepId
+    const failed = [...liveSteps]
+      .filter(s => s.status === "failed")
+      .sort((a, b) => {
+        const aTime = a.completedAt ? new Date(a.completedAt).getTime() : 0
+        const bTime = b.completedAt ? new Date(b.completedAt).getTime() : 0
+        return bTime - aTime
+      })[0]
+    return failed?.stepId ?? undefined
+  }, [liveSteps])
+
   return (
     <div className="flex h-full flex-col">
       {/* Header */}
@@ -579,6 +595,7 @@ export function WorkflowDetailPanel({ execution, workflow, workspaceId }: Workfl
         workspaceId={workspaceId}
         executionId={execution.id}
         executionStatus={liveStatus}
+        currentNodeId={activeNodeId}
       />
     </div>
   )

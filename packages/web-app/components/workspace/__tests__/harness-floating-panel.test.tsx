@@ -22,7 +22,9 @@ vi.mock("sonner", () => ({
 }))
 
 import { HarnessFloatingPanel } from "../harness-floating-panel"
+import { HarnessChatbot } from "../harness-chatbot"
 import { useHarnessEvents } from "@/hooks/use-harness-events"
+import type { ParsedHarnessEvent } from "@/hooks/use-harness-events"
 
 const mockUseHarnessEvents = vi.mocked(useHarnessEvents)
 
@@ -220,5 +222,180 @@ describe("HarnessFloatingPanel", () => {
     for (const status of validStatuses) {
       expect(["harness_intervening", "harness_modified", "harness_executed"]).toContain(status)
     }
+  })
+
+  // ── nodeId in chatbot POST body ──────────────────────────────────
+
+  it("includes currentNodeId in chatbot POST body when sending an inject directive", async () => {
+    render(
+      <HarnessChatbot
+        workspaceId="ws-1"
+        executionId="exec-1"
+        isRunning={true}
+        currentNodeId="bash-build"
+      />,
+    )
+
+    // Type a message
+    const input = screen.getByPlaceholderText("输入干预指令...")
+    fireEvent.change(input, { target: { value: "fix the retry logic" } })
+
+    // Click send button (the Send icon button)
+    const sendButton = screen.getByRole("button", { name: "" })
+    const buttons = screen.getAllByRole("button")
+    fireEvent.click(buttons[buttons.length - 1])
+
+    await waitFor(() => {
+      expect(mockFetch).toHaveBeenCalled()
+    })
+
+    // Verify fetch was called with nodeId in body
+    const lastCall = mockFetch.mock.calls[mockFetch.mock.calls.length - 1]
+    const body = JSON.parse(lastCall[1].body as string)
+    expect(body.nodeId).toBe("bash-build")
+    expect(body.directive).toEqual({
+      type: "inject",
+      reason: "fix the retry logic",
+      issued_by: "user",
+      message: "fix the retry logic",
+    })
+  })
+
+  it("sends empty string nodeId when no currentNodeId is provided", async () => {
+    render(
+      <HarnessChatbot
+        workspaceId="ws-1"
+        executionId="exec-1"
+        isRunning={true}
+        // No currentNodeId provided
+      />,
+    )
+
+    // Type and send
+    const input = screen.getByPlaceholderText("输入干预指令...")
+    fireEvent.change(input, { target: { value: "hello" } })
+
+    const buttons = screen.getAllByRole("button")
+    fireEvent.click(buttons[buttons.length - 1])
+
+    await waitFor(() => {
+      expect(mockFetch).toHaveBeenCalled()
+    })
+
+    const lastCall = mockFetch.mock.calls[mockFetch.mock.calls.length - 1]
+    const body = JSON.parse(lastCall[1].body as string)
+    expect(body.nodeId).toBe("")
+  })
+
+  // ── totalExtraTokens computation ──────────────────────────────────
+
+  it("computes totalExtraTokens correctly from events with tokenUsage", () => {
+    // Test the reduce logic that sums inputTokens + outputTokens from tokenUsage
+    const events: ParsedHarnessEvent[] = [
+      {
+        id: "e1",
+        type: "harness_delegation",
+        timestamp: Date.now(),
+        executionId: "exec-1",
+        tokenUsage: { inputTokens: 100, outputTokens: 50 },
+      },
+      {
+        id: "e2",
+        type: "harness_intervention",
+        timestamp: Date.now(),
+        executionId: "exec-1",
+        tokenUsage: { inputTokens: 200, outputTokens: 80 },
+      },
+      {
+        id: "e3",
+        type: "harness_diagnosis",
+        timestamp: Date.now(),
+        executionId: "exec-1",
+        // no tokenUsage
+      },
+    ]
+
+    const totalExtraTokens = events.reduce((sum, e) => {
+      if (e.tokenUsage) {
+        return sum + (e.tokenUsage.inputTokens ?? 0) + (e.tokenUsage.outputTokens ?? 0)
+      }
+      return sum
+    }, 0)
+
+    expect(totalExtraTokens).toBe(430) // 100+50+200+80
+  })
+
+  it("returns 0 for totalExtraTokens when no events have tokenUsage", () => {
+    const events: ParsedHarnessEvent[] = [
+      { id: "e1", type: "harness_diagnosis", timestamp: Date.now(), executionId: "exec-1" },
+      { id: "e2", type: "harness_blocked", timestamp: Date.now(), executionId: "exec-1" },
+    ]
+
+    const totalExtraTokens = events.reduce((sum, e) => {
+      if (e.tokenUsage) {
+        return sum + (e.tokenUsage.inputTokens ?? 0) + (e.tokenUsage.outputTokens ?? 0)
+      }
+      return sum
+    }, 0)
+
+    expect(totalExtraTokens).toBe(0)
+  })
+
+  it("handles partial tokenUsage (only inputTokens or only outputTokens)", () => {
+    const events: ParsedHarnessEvent[] = [
+      {
+        id: "e1",
+        type: "harness_delegation",
+        timestamp: Date.now(),
+        executionId: "exec-1",
+        tokenUsage: { inputTokens: 150 },
+      },
+      {
+        id: "e2",
+        type: "harness_intervention",
+        timestamp: Date.now(),
+        executionId: "exec-1",
+        tokenUsage: { outputTokens: 75 },
+      },
+    ]
+
+    const totalExtraTokens = events.reduce((sum, e) => {
+      if (e.tokenUsage) {
+        return sum + (e.tokenUsage.inputTokens ?? 0) + (e.tokenUsage.outputTokens ?? 0)
+      }
+      return sum
+    }, 0)
+
+    expect(totalExtraTokens).toBe(225) // 150+75
+  })
+
+  // ── totalExtraTokens display in collapsed panel ───────────────────
+
+  it("shows extra token count in collapsed panel when totalExtraTokens > 0", () => {
+    mockUseHarnessEvents.mockReturnValue(makeHookReturn({ totalExtraTokens: 430 }))
+
+    render(
+      <HarnessFloatingPanel
+        workspaceId="ws-1"
+        executionId="exec-1"
+        executionStatus="running"
+      />,
+    )
+
+    expect(screen.getByText("+430 tok")).toBeDefined()
+  })
+
+  it("does not show token count in collapsed panel when totalExtraTokens is 0", () => {
+    mockUseHarnessEvents.mockReturnValue(makeHookReturn({ totalExtraTokens: 0 }))
+
+    render(
+      <HarnessFloatingPanel
+        workspaceId="ws-1"
+        executionId="exec-1"
+        executionStatus="running"
+      />,
+    )
+
+    expect(screen.queryByText(/\+\d+ tok/)).toBeNull()
   })
 })

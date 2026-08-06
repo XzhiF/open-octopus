@@ -19,11 +19,12 @@ interface HarnessChatbotProps {
   workspaceId: string
   executionId: string
   isRunning?: boolean
+  currentNodeId?: string
 }
 
 let msgCounter = 0
 
-export function HarnessChatbot({ workspaceId, executionId, isRunning }: HarnessChatbotProps) {
+export function HarnessChatbot({ workspaceId, executionId, isRunning, currentNodeId }: HarnessChatbotProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [input, setInput] = useState("")
   const [sending, setSending] = useState(false)
@@ -61,6 +62,7 @@ export function HarnessChatbot({ workspaceId, executionId, isRunning }: HarnessC
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
+            nodeId: currentNodeId || "",
             directive: {
               type: "inject",
               reason: text,
@@ -127,7 +129,7 @@ export function HarnessChatbot({ workspaceId, executionId, isRunning }: HarnessC
       setSending(false)
       setDelegating(false)
     }
-  }, [input, sending, workspaceId, executionId])
+  }, [input, sending, workspaceId, executionId, currentNodeId])
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
