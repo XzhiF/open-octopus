@@ -121,6 +121,7 @@ function ExecutionNodeInner({ data: rawData, selected }: NodeProps) {
   const badgeLabel = isLast ? "最近完成" : displayLabel
   const badgeClasses = isLast ? "bg-emerald-600 text-white border-emerald-600" : config.color
   const isRunning = data.executionStatus === "running"
+  const isHarnessIntervening = data.harnessStatus === "harness_intervening"
   const elapsedSeconds = useLiveTimer(isRunning ? data.startedAt : undefined)
   const showRollback = (data.executionStatus === "running" || data.executionStatus === "failed") && (data.rollbackOnError || data.rollback === "git-revert")
   const gateLabel = gateLabelMap[data.gateStatus]
@@ -253,8 +254,10 @@ function ExecutionNodeInner({ data: rawData, selected }: NodeProps) {
   )
 
   if (isRunning) {
+    const borderColor = isHarnessIntervening ? "#8b5cf6" : "#f59e0b"
+    const borderClass = isHarnessIntervening ? "border-harness" : "border-running"
     return (
-      <div className="border-running rounded-lg p-0.5 min-w-[300px] max-w-[340px]">
+      <div className={cn(`${borderClass} rounded-lg p-0.5 min-w-[300px] max-w-[340px]`)}>
         <style>{`
           @keyframes border-march {
             to {
@@ -265,13 +268,13 @@ function ExecutionNodeInner({ data: rawData, selected }: NodeProps) {
                 100% -12px; /* right: dash flow down */
             }
           }
-          .border-running {
+          .border-running, .border-harness {
             border-color: transparent;
             background:
-              repeating-linear-gradient(90deg, #f59e0b 0 6px, transparent 6px 12px) top    / 100% 2px no-repeat,
-              repeating-linear-gradient(90deg, #f59e0b 0 6px, transparent 6px 12px) bottom / 100% 2px no-repeat,
-              repeating-linear-gradient(0deg, #f59e0b 0 6px, transparent 6px 12px) left   / 2px 100% no-repeat,
-              repeating-linear-gradient(0deg, #f59e0b 0 6px, transparent 6px 12px) right  / 2px 100% no-repeat;
+              repeating-linear-gradient(90deg, ${borderColor} 0 6px, transparent 6px 12px) top    / 100% 2px no-repeat,
+              repeating-linear-gradient(90deg, ${borderColor} 0 6px, transparent 6px 12px) bottom / 100% 2px no-repeat,
+              repeating-linear-gradient(0deg, ${borderColor} 0 6px, transparent 6px 12px) left   / 2px 100% no-repeat,
+              repeating-linear-gradient(0deg, ${borderColor} 0 6px, transparent 6px 12px) right  / 2px 100% no-repeat;
             animation: border-march 0.6s linear infinite;
           }
         `}</style>
