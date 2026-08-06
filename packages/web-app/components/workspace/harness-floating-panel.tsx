@@ -113,11 +113,28 @@ function TimelineItem({ event }: { event: ParsedHarnessEvent }) {
         : `干预 ${event.nodeId ?? ""}`
       colorClass = "text-blue-400"
       break
-    case "harness_delegation":
-      icon = "🤖"
-      label = `Agent 委托 ${event.nodeId ?? ""}`
-      colorClass = "text-violet-400"
+    case "harness_delegation": {
+      const dr = event.delegationResult
+      const decisionLabel: Record<string, string> = {
+        block_node: "阻断",
+        fix_and_retry: "修复重试",
+        guide_and_retry: "指导重试",
+        reconfigure_and_retry: "换配置重试",
+        agent_takeover: "Agent 接管",
+      }
+      icon = dr?.success ? "🤖" : "🤖❌"
+      const decision = dr?.decision ? (decisionLabel[dr.decision] ?? dr.decision) : "委托"
+      const reason = dr?.blockReason ?? dr?.reasoning ?? ""
+      label = reason
+        ? `${decision} ${event.nodeId ?? ""}: ${reason.slice(0, 60)}`
+        : `${decision} ${event.nodeId ?? ""}`
+      colorClass = dr?.success
+        ? dr.decision === "block_node"
+          ? "text-red-400"
+          : "text-violet-400"
+        : "text-muted-foreground"
       break
+    }
     case "harness_blocked":
       icon = "🚨"
       label = `阻断 ${event.nodeId ?? ""}: ${event.reason ?? ""}`

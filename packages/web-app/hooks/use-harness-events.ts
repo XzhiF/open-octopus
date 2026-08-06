@@ -26,6 +26,14 @@ export interface ParsedHarnessEvent {
   // delegation fields
   agentSessionId?: string
   status?: string
+  delegationResult?: {
+    success: boolean
+    decision?: string
+    reasoning?: string
+    blockReason?: string
+    harnessHint?: string
+    modelOverride?: string
+  }
   // blocked fields
   reason?: string
   pattern?: string
@@ -77,7 +85,8 @@ function parseSSEEvent(eventType: string, raw: Record<string, unknown>): ParsedH
         result: raw.result as string | undefined,
         tokenUsage,
       }
-    case "harness_delegation":
+    case "harness_delegation": {
+      const rawResult = raw.result as Record<string, unknown> | undefined
       return {
         id,
         type: "harness_delegation",
@@ -86,8 +95,19 @@ function parseSSEEvent(eventType: string, raw: Record<string, unknown>): ParsedH
         nodeId: raw.nodeId as string | undefined,
         agentSessionId: raw.agentSessionId as string | undefined,
         status: raw.status as string | undefined,
+        delegationResult: rawResult
+          ? {
+              success: rawResult.success as boolean,
+              decision: rawResult.decision as string | undefined,
+              reasoning: rawResult.reasoning as string | undefined,
+              blockReason: rawResult.blockReason as string | undefined,
+              harnessHint: rawResult.harnessHint as string | undefined,
+              modelOverride: rawResult.modelOverride as string | undefined,
+            }
+          : undefined,
         tokenUsage,
       }
+    }
     case "harness_blocked":
       return {
         id,
@@ -149,6 +169,17 @@ export function useHarnessEvents(
               report,
               action,
               result: typeof result === "string" ? result : undefined,
+              delegationResult:
+                eventType === "delegation" && result && typeof result === "object"
+                  ? {
+                      success: (result as Record<string, unknown>).success as boolean,
+                      decision: (result as Record<string, unknown>).decision as string | undefined,
+                      reasoning: (result as Record<string, unknown>).reasoning as string | undefined,
+                      blockReason: (result as Record<string, unknown>).blockReason as string | undefined,
+                      harnessHint: (result as Record<string, unknown>).harnessHint as string | undefined,
+                      modelOverride: (result as Record<string, unknown>).modelOverride as string | undefined,
+                    }
+                  : undefined,
               tokenUsage,
             }
           })
