@@ -45,27 +45,28 @@ function HarnessBadge({ status }: { status: HarnessNodeStatus }) {
   switch (status) {
     case "harness_intervening":
       return (
-        <span title="Harness 正在干预" className="inline-flex items-center ml-1">
-          <ShieldCheck className="h-3.5 w-3.5 text-violet-500 animate-pulse" />
+        <span title="Harness 正在干预" className="inline-flex items-center ml-1 animate-pulse">
+          <span className="text-sm leading-none">🛡️</span>
         </span>
       )
     case "harness_modified":
       return (
         <span title="Harness 已修改" className="inline-flex items-center gap-0.5 ml-1">
-          <ShieldCheck className="h-3.5 w-3.5 text-violet-500" />
+          <span className="text-sm leading-none">🛡️</span>
           <CheckCircle2 className="h-2.5 w-2.5 text-emerald-500" />
         </span>
       )
     case "harness_executed":
       return (
         <span title="Harness Agent 接管" className="inline-flex items-center ml-1">
-          <Bot className="h-3.5 w-3.5 text-rose-500" />
+          <span className="text-sm leading-none">🤖</span>
         </span>
       )
     case "harness_blocked":
       return (
-        <span title="Harness 已阻断" className="inline-flex items-center ml-1">
-          <ShieldX className="h-3.5 w-3.5 text-red-500" />
+        <span title="Harness 已阻断" className="inline-flex items-center gap-0.5 ml-1">
+          <span className="text-sm leading-none">🛡️</span>
+          <XCircle className="h-2.5 w-2.5 text-red-500" />
         </span>
       )
     default:
