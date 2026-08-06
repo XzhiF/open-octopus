@@ -16,6 +16,7 @@ import { StupidRetryDetector } from "./detectors/stupid-retry"
 import { ModelMismatchDetector } from "./detectors/model-mismatch"
 import { ProcessConflictDetector } from "./detectors/process-conflict"
 import { TimeoutCascadeDetector } from "./detectors/timeout-cascade"
+import { DangerousPatternMatcher } from "./dangerous-pattern-matcher"
 import type { StrategyEngine } from "./strategy-engine"
 import type { EngineCallbacks } from "@octopus/engine"
 
@@ -79,6 +80,8 @@ export class DetectorPipeline {
   private workspaceId: string
   private dao: HarnessDAO
   private sse: SSEService
+  private hostPid: string = ""
+  private hostPorts: string[] = []
   private strategyEngine?: StrategyEngine
 
   /**
@@ -106,8 +109,10 @@ export class DetectorPipeline {
     this.dao = deps.dao
     this.sse = deps.sse
     this.strategyEngine = deps.strategyEngine
+    this.hostPid = deps.hostPid ?? String(process.pid)
+    this.hostPorts = deps.hostPorts ?? []
 
-    this.detectors = this.createDetectors(deps.config, deps.hostPid, deps.hostPorts)
+    this.detectors = this.createDetectors(deps.config, this.hostPid, this.hostPorts)
   }
 
   /**
@@ -551,6 +556,69 @@ export class DetectorPipeline {
               return original.call(target, nodeId, nodeType, nodeConfig)
             }
             return { action: "proceed" as const }
+          }
+        }
+
+        // ── onBeforeToolCall: always intercept (agent tool interceptor) ──
+        // Scans bash tool calls for dangerous patterns (kill/port binding).
+        // Blocks dangerous calls, injects guidance, and resumes the agent session.
+        if (prop === "onBeforeToolCall") {
+          return async function (
+            toolName: string,
+            input: unknown,
+          ): Promise<{ allow: boolean; reason?: string } | undefined> {
+            // Only intercept bash tool calls
+            if (toolName !== "Bash" && toolName !== "bash") {
+              if (typeof original === "function") {
+                return original.call(target, toolName, input)
+              }
+              return undefined
+            }
+
+            // Extract command string from input
+            const command = typeof input === "string"
+              ? input
+              : typeof input === "object" && input !== null
+                ? (input as any).command ?? (input as any).cmd ?? String(input)
+                : ""
+
+            // Use DangerousPatternMatcher to check for dangerous patterns
+            const matcher = new DangerousPatternMatcher(
+              pipeline.hostPid ?? String(process.pid),
+              pipeline.hostPorts ?? [],
+            )
+            const match = matcher.check(command)
+
+            if (match.dangerous) {
+              // Block the tool call and emit a diagnosis
+              const report: DiagnosisReport = {
+                id: `diagnosis-tool_interceptor-${Date.now()}`,
+                timestamp: Date.now(),
+                detector: "tool_interceptor",
+                severity: "critical",
+                executionId: pipeline.executionId,
+                nodeId: "", // unknown at this point
+                nodeType: "agent",
+                pattern: match.pattern ?? "dangerous_command",
+                evidence: [{ command, matchedPattern: match.pattern }],
+                context: { retryCount: 0, nodeDurationMs: 0, workflowProgress: 0 },
+              }
+              pipeline.handleDiagnosis(report)
+
+              // Return block with guidance
+              return {
+                allow: false,
+                reason: `Blocked by harness tool interceptor: ${match.pattern}. ` +
+                  `Do NOT kill host processes or bind to host ports. ` +
+                  `Use --isolated mode for starting services, and never target $OCTOPUS_HOST_PID.`,
+              }
+            }
+
+            // Safe command — pass through
+            if (typeof original === "function") {
+              return original.call(target, toolName, input)
+            }
+            return undefined
           }
         }
 

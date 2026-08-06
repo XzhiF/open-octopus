@@ -4,14 +4,20 @@
   "iterations": [
     {
       "round": 1,
-      "score": 75,
-      "adjusted_score": 60,
+      "score": 82,
+      "adjusted_score": 72,
       "decision": "REVIEW",
       "carryover_in": [],
-      "carryover_out": ["AC-2", "AC-3", "AC-4", "AC-7"],
+      "carryover_out": ["AC-3", "AC-4", "AC-7"],
       "pipeline_complete": true,
-      "e2e_executed": false,
-      "notes": "AC2-4,AC7 SKIP because they require live LLM for Harness Agent calls. AC1,AC5,AC6 PASS. E2E fix applied for execution harness_status sync domain."
+      "e2e_executed": true,
+      "notes": "AC1,AC2,AC5,AC6 PASS with 3 bug fixes during E2E. AC3,AC4,AC7 SKIP (not yet tested). Harness Agent LLM call works correctly - returns intelligent decisions. Built-in clone registration fixed.",
+      "bugs_fixed_during_e2e": [
+        "Engine onNodeRetry not passing result to detector",
+        "Sync domain not updating executions.harness_status",
+        "tsup bundling: provider registry Map not shared (dynamic vs static import)",
+        "harness-agent not registered as built-in clone"
+      ]
     }
   ],
   "max_iterations": 5,

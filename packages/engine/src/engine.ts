@@ -66,6 +66,8 @@ export interface EngineCallbacks {
   onCheckpoint?: (checkpoint: unknown) => void
   onPipelineReloaded?: (config: PipelineConfig) => void
   onRuntimeNodeAdded?: (nodeId: string, nodeType: string, meta?: RuntimeNodeMeta) => void
+  /** Tool interceptor hook — called before agent tool execution. Return { allow: false } to block. */
+  onBeforeToolCall?: (toolName: string, input: unknown) => Promise<{ allow: boolean; reason?: string } | undefined>
 
   // ★ Harness callbacks — all optional, backward compatible
   onBeforeNode?: (

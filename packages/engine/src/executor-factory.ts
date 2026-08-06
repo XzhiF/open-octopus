@@ -177,6 +177,7 @@ export class ExecutorFactory {
           resolvedModel,
           modelAliasConfig: this.ctx.modelAliasConfig,
           providerKey,
+          onBeforeToolCall: this.ctx.callbacks?.onBeforeToolCall,
         })
       }
       case "swarm":
