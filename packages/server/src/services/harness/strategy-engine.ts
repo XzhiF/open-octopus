@@ -11,6 +11,7 @@ import type {
   StrategyConfig,
   StrategyAction,
   HarnessEvent,
+  DelegationResult,
 } from "@octopus/shared"
 import type { HarnessDAO } from "../../db/dao/harness-dao"
 import type { SSEService } from "../sse"
@@ -50,6 +51,8 @@ export interface StrategyEngineResult {
   matchedStrategy: StrategyConfig | null
   /** Results from executing each action in the matched strategy. */
   actionResults: InterventionResult[]
+  /** Delegation result from Layer 3 (Harness Agent) if delegation occurred. */
+  delegationResult?: DelegationResult
 }
 
 export class StrategyEngine {
@@ -159,9 +162,23 @@ export class StrategyEngine {
       }
 
       // Delegate to agent in parallel (async audit)
+      let delegationResult: DelegationResult | undefined
       if (this.agentDelegationService) {
-        const delegationResult = await this.tryDelegate(report)
-        if (delegationResult) actionResults.push(delegationResult)
+        const result = await this.tryDelegate(report)
+        if (result?.details) {
+          // Build DelegationResult from InterventionResult.details
+          delegationResult = {
+            success: result.success,
+            decision: result.details.decision ?? "block_node",
+            varPoolPatches: result.details.varPoolPatches,
+            harnessHint: result.details.harnessHint,
+            modelOverride: result.details.modelOverride,
+            takeoverOutput: result.details.takeoverOutput,
+            blockReason: result.details.blockReason,
+            reasoning: result.message ?? "",
+            tokenUsage: result.details.tokenUsage,
+          }
+        }
       }
 
       return {
@@ -169,14 +186,34 @@ export class StrategyEngine {
         synchronousBlock: true,
         matchedStrategy,
         actionResults,
+        delegationResult,
       }
     }
 
     // ── Async / pause domain: everything else → delegate ─────────────────
+    let delegationResult: DelegationResult | undefined
+    if (this.agentDelegationService) {
+      const result = await this.tryDelegate(report)
+      if (result?.details) {
+        delegationResult = {
+          success: result.success,
+          decision: result.details.decision ?? "block_node",
+          varPoolPatches: result.details.varPoolPatches,
+          harnessHint: result.details.harnessHint,
+          modelOverride: result.details.modelOverride,
+          takeoverOutput: result.details.takeoverOutput,
+          blockReason: result.details.blockReason,
+          reasoning: result.message ?? "",
+          tokenUsage: result.details.tokenUsage,
+        }
+      }
+    }
+
     return {
       delegate: true,
       matchedStrategy: this.matchStrategy(report),
       actionResults: [],
+      delegationResult,
     }
   }
 

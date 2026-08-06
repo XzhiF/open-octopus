@@ -8,7 +8,7 @@
 04 — AgentDelegationService Core-Pack Integration
 
 ## Status
-ready-for-agent
+done
 
 ## Acceptance Criteria
 - [ ] AC1: HarnessController.onExecutionStart() 创建 Harness Agent session（clone harness-agent）

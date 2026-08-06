@@ -21,6 +21,7 @@ import type {
 } from "@octopus/shared"
 import type { HarnessDAO } from "../../db/dao/harness-dao"
 import type { SSEService } from "../sse"
+import type { HarnessAgentSession } from "./harness-agent-session"
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -361,6 +362,8 @@ export interface AgentDelegationServiceDeps {
   llmCall?: DelegationLLMCall
   /** Timeout in milliseconds. Default: 300000 (5 minutes). */
   timeoutMs?: number
+  /** Harness agent session for context accumulation across interventions (ticket 10). */
+  session?: HarnessAgentSession
 }
 
 /**
@@ -377,6 +380,7 @@ export class AgentDelegationService {
   private agentSessionRunner?: AgentSessionRunner
   private llmCall?: DelegationLLMCall
   private timeoutMs: number
+  private session?: HarnessAgentSession
 
   constructor(deps: AgentDelegationServiceDeps) {
     this.dao = deps.dao
@@ -385,20 +389,23 @@ export class AgentDelegationService {
     this.agentSessionRunner = deps.agentSessionRunner
     this.llmCall = deps.llmCall
     this.timeoutMs = deps.timeoutMs ?? 5 * 60 * 1000 // 5 minutes default
+    this.session = deps.session
   }
 
   /**
    * Delegate a DiagnosisReport to the harness-agent for analysis and decision.
    *
    * Flow:
-   * 1. Emit SSE harness_delegation start event
-   * 2. Build delegation prompt from report + context
-   * 3. Run agent session (or LLM call) with timeout protection
-   * 4. Parse the response into a DelegationResult (5 decision types)
-   * 5. Record token usage with source="harness"
-   * 6. Persist delegation event to harness_events
-   * 7. Emit SSE harness_delegation complete/fail event
-   * 8. Return the result
+   * 1. Append DiagnosisReport to session (if available) for context accumulation (AC3)
+   * 2. Emit SSE harness_delegation start event
+   * 3. Build delegation prompt from report + context (+ conversation history if session exists)
+   * 4. Run agent session (or LLM call) with timeout protection
+   * 5. Parse the response into a DelegationResult (5 decision types)
+   * 6. Record decision to session and append assistant response (AC4)
+   * 7. Record token usage with source="harness"
+   * 8. Persist delegation event to harness_events
+   * 9. Emit SSE harness_delegation complete/fail event
+   * 10. Return the result
    */
   async delegate(params: {
     executionId: string
@@ -409,11 +416,18 @@ export class AgentDelegationService {
     const { executionId, nodeId, report, context } = params
     const delegationId = `harness-${executionId}-${nodeId}-${Date.now()}`
 
+    // Append DiagnosisReport to session for context accumulation (AC3)
+    if (this.session && !this.session.isClosed) {
+      this.session.appendIntervention(report, {
+        varpoolSnapshot: context.varpoolSnapshot,
+      })
+    }
+
     // Emit SSE start event
     this.emitDelegationSSE(executionId, nodeId, delegationId, "start")
 
-    // Build the prompt
-    const prompt = buildDelegationPrompt(report, context)
+    // Build the prompt (includes conversation history if session exists)
+    const prompt = this.buildPromptWithHistory(report, context)
 
     // Execute the agent session / LLM call with timeout
     let responseText: string
@@ -458,6 +472,12 @@ export class AgentDelegationService {
       parsed.tokenUsage = tokenInfo
     }
 
+    // Record decision to session and append assistant response (AC4)
+    if (this.session && !this.session.isClosed) {
+      this.session.recordDecision(nodeId, parsed)
+      this.session.appendAssistantResponse(responseText)
+    }
+
     // Record token usage with source="harness"
     if (tokenInfo && tokenInfo.input + tokenInfo.output > 0) {
       this.recordTokenUsage(delegationId, executionId, nodeId, tokenInfo)
@@ -481,6 +501,44 @@ export class AgentDelegationService {
     )
 
     return parsed
+  }
+
+  /**
+   * Build the delegation prompt, incorporating conversation history from the session.
+   * If a session exists, uses the accumulated messages to provide context across interventions.
+   * Otherwise, falls back to the standard buildDelegationPrompt.
+   */
+  private buildPromptWithHistory(
+    report: DiagnosisReport,
+    context: DelegationContext,
+  ): string {
+    // If no session, use the standard prompt builder
+    if (!this.session) {
+      return buildDelegationPrompt(report, context)
+    }
+
+    // Get the conversation history from the session
+    const messages = this.session.getMessages()
+
+    // Build the prompt by concatenating all messages
+    // The session already has:
+    // - system message (initial workflow context)
+    // - user messages (previous interventions)
+    // - assistant messages (previous decisions)
+    // - current user message (this intervention, just appended)
+    //
+    // We format them as a conversation for the LLM
+    const promptParts = messages.map((msg) => {
+      if (msg.role === "system") {
+        return msg.content
+      } else if (msg.role === "user") {
+        return `\n\n用户: ${msg.content}`
+      } else {
+        return `\n\n助手: ${msg.content}`
+      }
+    })
+
+    return promptParts.join("")
   }
 
   /**

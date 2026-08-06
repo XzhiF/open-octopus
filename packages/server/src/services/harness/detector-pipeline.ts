@@ -6,7 +6,7 @@
 // When a detector produces a DiagnosisReport, it is persisted to harness_events
 // and emitted as an SSE event.
 
-import type { DiagnosisReport, HarnessSystemConfigParsed } from "@octopus/shared"
+import type { DiagnosisReport, HarnessSystemConfigParsed, DelegationResult, HarnessDecisionType } from "@octopus/shared"
 import type { HarnessEvent, StrategyAction } from "@octopus/shared"
 import type { HarnessDAO } from "../../db/dao/harness-dao"
 import type { SSEService } from "../sse"
@@ -26,6 +26,7 @@ import type { EngineCallbacks } from "@octopus/engine"
 export interface PendingRetryAction {
   harnessHint?: string
   modelOverride?: string
+  varPoolPatches?: Record<string, string>
   action: "retry" | "skip" | "abort" | "override"
   overrideResult?: any
 }
@@ -35,7 +36,8 @@ export interface PendingRetryAction {
  * Consumed (deleted) on the next onFailureDecision invocation for that node.
  */
 export interface PendingFailureAction {
-  action: "continue" | "abort" | "delegate"
+  action: "continue" | "abort" | "delegate" | "override"
+  overrideResult?: any
 }
 
 /**
@@ -239,7 +241,13 @@ export class DetectorPipeline {
     // Route to StrategyEngine (Layer 2) if available
     if (this.strategyEngine) {
       this.strategyEngine.handleReport(report).then((result) => {
-        // Store intervention results as pending decisions for the engine to consume
+        // If Layer 3 delegation occurred, process the structured decision
+        if (result.delegationResult) {
+          this.processDecision(report, result.delegationResult)
+          return
+        }
+
+        // Fallback: store intervention results as pending decisions (legacy path)
         const nodeId = report.nodeId
         for (const actionResult of result.actionResults) {
           if (actionResult.success && (actionResult.harnessHint || actionResult.modelOverride)) {
@@ -251,8 +259,8 @@ export class DetectorPipeline {
           }
         }
 
-        // If delegation is requested, store a failure decision
-        if (result.delegate) {
+        // If delegation is requested but no result yet, store a failure decision
+        if (result.delegate && !result.delegationResult) {
           this.pendingFailureActions.set(nodeId, { action: "delegate" })
         }
       }).catch((err) => {
@@ -295,6 +303,166 @@ export class DetectorPipeline {
       })
       // Mark the node as harness_blocked in DB + insert agent_event
       this.updateNodeHarnessStatus(nodeId, "harness_blocked", report)
+    }
+  }
+
+  /**
+   * Process a DelegationResult from the Harness Agent (Layer 3).
+   * Maps the structured decision to the correct pending action, updates
+   * node_executions.harness_status, executions.harness_status, and records
+   * an agent_event with the decision field for log rendering.
+   *
+   * Decision mapping:
+   * - fix_and_retry    → pendingActions with varPoolPatches + harnessHint
+   * - guide_and_retry  → pendingActions with harnessHint
+   * - reconfigure_and_retry → pendingActions with modelOverride
+   * - agent_takeover   → pendingFailureAction: { action: "delegate" } + overrideResult to DB
+   * - block_node       → pendingBlockAction (same as synchronous path)
+   *
+   * Node harness_status mapping:
+   * - fix/guide/reconfigure → harness_modified
+   * - agent_takeover        → harness_executed
+   * - block_node            → harness_blocked
+   *
+   * Execution harness_status mapping:
+   * - fix/guide/reconfigure → intervened
+   * - agent_takeover        → delegated
+   * - block_node            → blocked
+   */
+  processDecision(report: DiagnosisReport, result: DelegationResult): void {
+    const nodeId = report.nodeId
+
+    if (!result.success) {
+      // Failed delegation: treat as block_node (safe default)
+      this.updateNodeHarnessStatus(nodeId, "harness_blocked", report, {
+        decision: result.decision,
+        reasoning: result.reasoning,
+      })
+      this.updateExecutionHarnessStatus("blocked")
+      return
+    }
+
+    switch (result.decision) {
+      case "fix_and_retry":
+        this.pendingActions.set(nodeId, {
+          action: "retry",
+          varPoolPatches: result.varPoolPatches,
+          harnessHint: result.harnessHint,
+        })
+        this.updateNodeHarnessStatus(nodeId, "harness_modified", report, {
+          decision: result.decision,
+          reasoning: result.reasoning,
+          varPoolPatches: result.varPoolPatches,
+          harnessHint: result.harnessHint,
+        })
+        this.updateExecutionHarnessStatus("intervened")
+        break
+
+      case "guide_and_retry":
+        this.pendingActions.set(nodeId, {
+          action: "retry",
+          harnessHint: result.harnessHint,
+        })
+        this.updateNodeHarnessStatus(nodeId, "harness_modified", report, {
+          decision: result.decision,
+          reasoning: result.reasoning,
+          harnessHint: result.harnessHint,
+        })
+        this.updateExecutionHarnessStatus("intervened")
+        break
+
+      case "reconfigure_and_retry":
+        this.pendingActions.set(nodeId, {
+          action: "retry",
+          modelOverride: result.modelOverride,
+        })
+        this.updateNodeHarnessStatus(nodeId, "harness_modified", report, {
+          decision: result.decision,
+          reasoning: result.reasoning,
+          modelOverride: result.modelOverride,
+        })
+        this.updateExecutionHarnessStatus("intervened")
+        break
+
+      case "agent_takeover":
+        this.pendingFailureActions.set(nodeId, { action: "delegate" })
+        // Write overrideResult to DB for the engine to pick up on resume
+        this.writeOverrideResultToDb(nodeId, {
+          status: "completed",
+          outputs: result.takeoverOutput ? { output: result.takeoverOutput } : undefined,
+          exitCode: result.takeoverExitCode ?? 0,
+        })
+        this.updateNodeHarnessStatus(nodeId, "harness_executed", report, {
+          decision: result.decision,
+          reasoning: result.reasoning,
+          takeoverOutput: result.takeoverOutput,
+        })
+        this.updateExecutionHarnessStatus("delegated")
+        break
+
+      case "block_node":
+        this.pendingBlockActions.set(nodeId, {
+          action: "skip",
+          overrideResult: {
+            status: "failed",
+            error: result.blockReason ?? "Blocked by harness agent",
+          },
+        })
+        this.updateNodeHarnessStatus(nodeId, "harness_blocked", report, {
+          decision: result.decision,
+          reasoning: result.reasoning,
+          blockReason: result.blockReason,
+          continueSubsequent: result.continueSubsequent,
+        })
+        this.updateExecutionHarnessStatus("blocked")
+        break
+    }
+  }
+
+  /**
+   * Write the override result from an agent_takeover to the node_executions table.
+   * The engine reads this when resuming after a delegate pause.
+   */
+  private writeOverrideResultToDb(
+    nodeId: string,
+    overrideResult: { status: string; outputs?: Record<string, unknown>; exitCode?: number },
+  ): void {
+    try {
+      const db = this.dao.getDb()
+      const neId = `${this.executionId}-${nodeId}`
+      db.prepare(
+        `UPDATE node_executions SET override_result = ? WHERE id = ?`,
+      ).run(JSON.stringify(overrideResult), neId)
+    } catch (err) {
+      console.error("[DetectorPipeline] Failed to write override_result to DB:", err)
+    }
+  }
+
+  /**
+   * Update executions.harness_status (execution-level).
+   * Only escalates: intervened → blocked → delegated (never downgrades).
+   *
+   * Status hierarchy:
+   * - NULL (no intervention)
+   * - intervened (harness modified something but execution continued)
+   * - blocked (a node was blocked)
+   * - delegated (agent takeover occurred)
+   */
+  private updateExecutionHarnessStatus(status: "intervened" | "blocked" | "delegated"): void {
+    try {
+      const db = this.dao.getDb()
+      // Only update if the new status is more severe than the current one
+      // Hierarchy: NULL < intervened < blocked < delegated
+      db.prepare(
+        `UPDATE executions SET harness_status = ?
+         WHERE id = ? AND (
+           harness_status IS NULL
+           OR (harness_status = 'intervened' AND ? IN ('blocked', 'delegated'))
+           OR (harness_status = 'blocked' AND ? = 'delegated')
+         )`,
+      ).run(status, this.executionId, status, status)
+    } catch (err) {
+      console.error("[DetectorPipeline] Failed to update execution harness_status:", err)
     }
   }
 
@@ -467,11 +635,19 @@ export class DetectorPipeline {
    *
    * When status escalates (e.g. intervening → blocked), updates the existing
    * agent_event row in-place to avoid duplicate log entries.
+   *
+   * The optional `decisionContext` adds the `decision` field to the agent_event
+   * content, enabling log rendering to show which decision type was applied.
    */
   private updateNodeHarnessStatus(
     nodeId: string,
     status: string,
     report: DiagnosisReport,
+    decisionContext?: {
+      decision?: HarnessDecisionType
+      reasoning?: string
+      [key: string]: any
+    },
   ): void {
     try {
       const db = this.dao.getDb()
@@ -489,6 +665,7 @@ export class DetectorPipeline {
         pattern: report.pattern,
         evidence: report.evidence,
         status,
+        ...(decisionContext ?? {}),
       })
 
       // Try to update an existing harness event for this node (avoid duplicates)

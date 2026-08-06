@@ -9,19 +9,19 @@ DetectorPipeline 根据 Harness Agent 决策类型和节点类型执行对应操
 04 — AgentDelegationService Core-Pack Integration
 
 ## Status
-ready-for-agent
+done
 
 ## Acceptance Criteria
-- [ ] AC1: fix_and_retry → varPoolPatches + harnessHint 存入 pendingActions
-- [ ] AC2: guide_and_retry → harnessHint 存入 pendingActions
-- [ ] AC3: reconfigure_and_retry → modelOverride 存入 pendingActions
-- [ ] AC4: agent_takeover → pendingFailureAction: { action: "delegate" } + overrideResult 写入 DB
-- [ ] AC5: block_node (同步域) → 保持现有 pendingBlockAction 逻辑
-- [ ] AC6: 决策执行后更新 node_executions.harness_status（harness_modified / harness_executed / harness_blocked）
-- [ ] AC7: 决策执行后更新 executions.harness_status（intervened / blocked / delegated）
-- [ ] AC8: agent_events 记录包含 decision 字段（用于日志渲染）
-- [ ] AC9: bash/python 节点走异步域/暂停域路径
-- [ ] AC10: agent 节点的 Tool Interceptor 触发后走 Tool 拦截域路径（block → pause → guide → resume）
+- [x] AC1: fix_and_retry → varPoolPatches + harnessHint 存入 pendingActions
+- [x] AC2: guide_and_retry → harnessHint 存入 pendingActions
+- [x] AC3: reconfigure_and_retry → modelOverride 存入 pendingActions
+- [x] AC4: agent_takeover → pendingFailureAction: { action: "delegate" } + overrideResult 写入 DB
+- [x] AC5: block_node (同步域) → 保持现有 pendingBlockAction 逻辑
+- [x] AC6: 决策执行后更新 node_executions.harness_status（harness_modified / harness_executed / harness_blocked）
+- [x] AC7: 决策执行后更新 executions.harness_status（intervened / blocked / delegated）
+- [x] AC8: agent_events 记录包含 decision 字段（用于日志渲染）
+- [x] AC9: bash/python 节点走异步域/暂停域路径
+- [x] AC10: agent 节点的 Tool Interceptor 触发后走 Tool 拦截域路径（block → pause → guide → resume）
 
 ## Verification Method
 **Verification type**: unit test + integration test

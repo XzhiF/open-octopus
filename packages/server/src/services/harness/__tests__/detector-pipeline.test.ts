@@ -466,3 +466,375 @@ describe("DetectorPipeline — delegate_to_agent synchronous storage", () => {
     expect((pipeline as any).pendingFailureActions.get("node-y")).toBeUndefined()
   })
 })
+
+// ─── AC1-AC3: Decision-based pendingActions storage ───────────────────────────
+
+describe("DetectorPipeline — decision execution (AC1-AC8)", () => {
+  function makeMockDb() {
+    const stmtMock = { run: vi.fn(), get: vi.fn(), all: vi.fn() }
+    return {
+      prepare: vi.fn(() => stmtMock),
+      _stmtMock: stmtMock,
+    }
+  }
+
+  function makePipelineWithDb(overrides: Record<string, any> = {}) {
+    const mockDb = makeMockDb()
+    const dao = {
+      insertEvent: vi.fn(),
+      getDb: vi.fn(() => mockDb),
+      insertHarnessTokenUsage: vi.fn(),
+    }
+    return {
+      pipeline: new DetectorPipeline({
+        config: minimalConfig,
+        executionId: "exec-test",
+        workspaceId: "ws-test",
+        dao: dao as any,
+        sse: { emit: vi.fn() } as any,
+        ...overrides,
+      }),
+      dao,
+      mockDb,
+    }
+  }
+
+  function makeReport(overrides: Partial<DiagnosisReport> = {}): DiagnosisReport {
+    return {
+      id: "r-decision",
+      timestamp: Date.now(),
+      detector: "stupid_retry",
+      severity: "warning",
+      executionId: "exec-test",
+      nodeId: "bash-build",
+      nodeType: "bash",
+      pattern: "stupid_retry",
+      evidence: [],
+      context: { retryCount: 3, nodeDurationMs: 5000, workflowProgress: 0.5 },
+      ...overrides,
+    }
+  }
+
+  // AC1: fix_and_retry → varPoolPatches + harnessHint stored in pendingActions
+  it("AC1: fix_and_retry stores varPoolPatches + harnessHint in pendingActions", async () => {
+    const { pipeline } = makePipelineWithDb()
+    const report = makeReport()
+
+    pipeline.processDecision(report, {
+      success: true,
+      decision: "fix_and_retry",
+      varPoolPatches: { PRE_INSTALL: "apt-get install -y jq" },
+      harnessHint: "Install jq first",
+      reasoning: "Missing jq tool",
+    })
+
+    const pending = (pipeline as any).pendingActions.get("bash-build")
+    expect(pending).toBeDefined()
+    expect(pending.action).toBe("retry")
+    expect(pending.varPoolPatches).toEqual({ PRE_INSTALL: "apt-get install -y jq" })
+    expect(pending.harnessHint).toBe("Install jq first")
+  })
+
+  // AC2: guide_and_retry → harnessHint stored in pendingActions
+  it("AC2: guide_and_retry stores harnessHint in pendingActions", async () => {
+    const { pipeline } = makePipelineWithDb()
+    const report = makeReport()
+
+    pipeline.processDecision(report, {
+      success: true,
+      decision: "guide_and_retry",
+      harnessHint: "Use smaller batches to avoid timeout",
+      reasoning: "Batch size too large",
+    })
+
+    const pending = (pipeline as any).pendingActions.get("bash-build")
+    expect(pending).toBeDefined()
+    expect(pending.action).toBe("retry")
+    expect(pending.harnessHint).toBe("Use smaller batches to avoid timeout")
+    expect(pending.varPoolPatches).toBeUndefined()
+  })
+
+  // AC3: reconfigure_and_retry → modelOverride stored in pendingActions
+  it("AC3: reconfigure_and_retry stores modelOverride in pendingActions", async () => {
+    const { pipeline } = makePipelineWithDb()
+    const report = makeReport({ nodeType: "agent", nodeId: "agent-analyze" })
+
+    pipeline.processDecision(report, {
+      success: true,
+      decision: "reconfigure_and_retry",
+      modelOverride: "claude-sonnet-4-20250514",
+      reasoning: "Current model lacks vision capability",
+    })
+
+    const pending = (pipeline as any).pendingActions.get("agent-analyze")
+    expect(pending).toBeDefined()
+    expect(pending.action).toBe("retry")
+    expect(pending.modelOverride).toBe("claude-sonnet-4-20250514")
+  })
+
+  // AC4: agent_takeover → pendingFailureAction: { action: "delegate" } + overrideResult to DB
+  it("AC4: agent_takeover stores pendingFailureAction with delegate + writes overrideResult to DB", async () => {
+    const { pipeline, mockDb } = makePipelineWithDb()
+    const report = makeReport()
+
+    pipeline.processDecision(report, {
+      success: true,
+      decision: "agent_takeover",
+      takeoverOutput: "Report generated successfully",
+      takeoverExitCode: 0,
+      reasoning: "Script too complex to fix, taking over",
+    })
+
+    // pendingFailureAction should be set with "delegate"
+    const pendingFailure = (pipeline as any).pendingFailureActions.get("bash-build")
+    expect(pendingFailure).toBeDefined()
+    expect(pendingFailure.action).toBe("delegate")
+
+    // overrideResult should be written to DB (node_executions)
+    const updateCalls = mockDb.prepare.mock.calls.filter(
+      (c: any[]) => typeof c[0] === "string" && c[0].includes("override_result")
+    )
+    expect(updateCalls.length).toBeGreaterThan(0)
+  })
+
+  // AC5: block_node → pendingBlockAction with correct data
+  it("AC5: block_node stores pendingBlockAction with block reason", async () => {
+    const { pipeline } = makePipelineWithDb()
+    const report = makeReport({
+      detector: "process_conflict",
+      severity: "critical",
+    })
+
+    pipeline.processDecision(report, {
+      success: true,
+      decision: "block_node",
+      blockReason: "kill targeting host PID",
+      continueSubsequent: false,
+      reasoning: "Dangerous process kill",
+    })
+
+    const blockAction = (pipeline as any).pendingBlockActions.get("bash-build")
+    expect(blockAction).toBeDefined()
+    expect(blockAction.action).toBe("skip")
+    expect(blockAction.overrideResult.error).toContain("kill targeting host PID")
+  })
+
+  // AC6: node_executions.harness_status updated correctly per decision type
+  it("AC6: fix_and_retry sets node harness_status to harness_modified", async () => {
+    const { pipeline, mockDb } = makePipelineWithDb()
+    const report = makeReport()
+
+    pipeline.processDecision(report, {
+      success: true,
+      decision: "fix_and_retry",
+      varPoolPatches: { X: "1" },
+      reasoning: "fix it",
+    })
+
+    // Check that UPDATE node_executions SET harness_status = 'harness_modified' was called
+    const statusUpdates = mockDb.prepare.mock.calls.filter(
+      (c: any[]) => typeof c[0] === "string" && c[0].includes("harness_status") && c[0].includes("node_executions")
+    )
+    expect(statusUpdates.length).toBeGreaterThan(0)
+    // The run call should have 'harness_modified' as the first parameter
+    const runCalls = mockDb._stmtMock.run.mock.calls
+    const harnessModifiedCall = runCalls.find((c: any[]) => c[0] === "harness_modified")
+    expect(harnessModifiedCall).toBeDefined()
+  })
+
+  it("AC6: agent_takeover sets node harness_status to harness_executed", async () => {
+    const { pipeline, mockDb } = makePipelineWithDb()
+    const report = makeReport()
+
+    pipeline.processDecision(report, {
+      success: true,
+      decision: "agent_takeover",
+      takeoverOutput: "done",
+      takeoverExitCode: 0,
+      reasoning: "take over",
+    })
+
+    const runCalls = mockDb._stmtMock.run.mock.calls
+    const harnessExecutedCall = runCalls.find((c: any[]) => c[0] === "harness_executed")
+    expect(harnessExecutedCall).toBeDefined()
+  })
+
+  it("AC6: block_node sets node harness_status to harness_blocked", async () => {
+    const { pipeline, mockDb } = makePipelineWithDb()
+    const report = makeReport()
+
+    pipeline.processDecision(report, {
+      success: true,
+      decision: "block_node",
+      blockReason: "dangerous",
+      reasoning: "block it",
+    })
+
+    const runCalls = mockDb._stmtMock.run.mock.calls
+    const harnessBlockedCall = runCalls.find((c: any[]) => c[0] === "harness_blocked")
+    expect(harnessBlockedCall).toBeDefined()
+  })
+
+  // AC7: executions.harness_status updated correctly per decision type
+  it("AC7: fix_and_retry sets execution harness_status to intervened", async () => {
+    const { pipeline, mockDb } = makePipelineWithDb()
+    const report = makeReport()
+
+    pipeline.processDecision(report, {
+      success: true,
+      decision: "fix_and_retry",
+      varPoolPatches: { X: "1" },
+      reasoning: "fix it",
+    })
+
+    // Check UPDATE executions SET harness_status
+    const execUpdates = mockDb.prepare.mock.calls.filter(
+      (c: any[]) => typeof c[0] === "string" && c[0].includes("UPDATE executions") && c[0].includes("harness_status")
+    )
+    expect(execUpdates.length).toBeGreaterThan(0)
+    const runCalls = mockDb._stmtMock.run.mock.calls
+    const intervenedCall = runCalls.find((c: any[]) => c[0] === "intervened")
+    expect(intervenedCall).toBeDefined()
+  })
+
+  it("AC7: block_node sets execution harness_status to blocked", async () => {
+    const { pipeline, mockDb } = makePipelineWithDb()
+    const report = makeReport()
+
+    pipeline.processDecision(report, {
+      success: true,
+      decision: "block_node",
+      blockReason: "dangerous",
+      reasoning: "block",
+    })
+
+    const runCalls = mockDb._stmtMock.run.mock.calls
+    const blockedCall = runCalls.find((c: any[]) => c[0] === "blocked")
+    expect(blockedCall).toBeDefined()
+  })
+
+  it("AC7: agent_takeover sets execution harness_status to delegated", async () => {
+    const { pipeline, mockDb } = makePipelineWithDb()
+    const report = makeReport()
+
+    pipeline.processDecision(report, {
+      success: true,
+      decision: "agent_takeover",
+      takeoverOutput: "done",
+      takeoverExitCode: 0,
+      reasoning: "take over",
+    })
+
+    const runCalls = mockDb._stmtMock.run.mock.calls
+    const delegatedCall = runCalls.find((c: any[]) => c[0] === "delegated")
+    expect(delegatedCall).toBeDefined()
+  })
+
+  // AC8: agent_events include decision field
+  it("AC8: agent_events record includes decision field for log rendering", async () => {
+    const { pipeline, mockDb } = makePipelineWithDb()
+    const report = makeReport()
+
+    pipeline.processDecision(report, {
+      success: true,
+      decision: "fix_and_retry",
+      varPoolPatches: { X: "1" },
+      harnessHint: "install jq",
+      reasoning: "missing jq",
+    })
+
+    // Check that INSERT INTO agent_events was called
+    const insertCalls = mockDb.prepare.mock.calls.filter(
+      (c: any[]) => typeof c[0] === "string" && c[0].includes("INSERT INTO agent_events")
+    )
+    expect(insertCalls.length).toBeGreaterThan(0)
+
+    // Check that some run call has content containing the decision field.
+    // The INSERT run params are: (neId, eventOrder, eventType, timestamp, content, contentLength)
+    // content is at index 4.
+    const runCalls = mockDb._stmtMock.run.mock.calls
+    const contentCall = runCalls.find((c: any[]) => {
+      // Check all string params for JSON with decision field
+      for (const param of c) {
+        if (typeof param === "string" && param.includes('"decision"')) {
+          try {
+            const parsed = JSON.parse(param)
+            if (parsed.decision === "fix_and_retry") return true
+          } catch {
+            // not JSON, continue
+          }
+        }
+      }
+      return false
+    })
+    expect(contentCall).toBeDefined()
+  })
+
+  // AC9: bash/python nodes use async/pause domain (no special routing needed in pipeline)
+  it("AC9: bash nodes store pendingActions in async domain (pendingActions map)", async () => {
+    const { pipeline } = makePipelineWithDb()
+    const report = makeReport({ nodeType: "bash" })
+
+    pipeline.processDecision(report, {
+      success: true,
+      decision: "fix_and_retry",
+      varPoolPatches: { X: "1" },
+      reasoning: "fix",
+    })
+
+    // bash node should use pendingActions (async domain)
+    expect((pipeline as any).pendingActions.has("bash-build")).toBe(true)
+  })
+
+  it("AC9: python nodes store pendingActions in async domain", async () => {
+    const { pipeline } = makePipelineWithDb()
+    const report = makeReport({ nodeType: "python", nodeId: "py-script" })
+
+    pipeline.processDecision(report, {
+      success: true,
+      decision: "guide_and_retry",
+      harnessHint: "fix imports",
+      reasoning: "import error",
+    })
+
+    expect((pipeline as any).pendingActions.has("py-script")).toBe(true)
+  })
+
+  // AC10: agent nodes — for non-takeover decisions, still store in pendingActions
+  // (Tool Interceptor path is separate, tested in tool-interceptor.test.ts)
+  it("AC10: agent nodes with guide_and_retry store in pendingActions", async () => {
+    const { pipeline } = makePipelineWithDb()
+    const report = makeReport({ nodeType: "agent", nodeId: "agent-test" })
+
+    pipeline.processDecision(report, {
+      success: true,
+      decision: "guide_and_retry",
+      harnessHint: "Use --isolated flag",
+      reasoning: "port conflict",
+    })
+
+    expect((pipeline as any).pendingActions.has("agent-test")).toBe(true)
+    const pending = (pipeline as any).pendingActions.get("agent-test")
+    expect(pending.harnessHint).toBe("Use --isolated flag")
+  })
+
+  // Failed delegation falls back to block_node
+  it("failed delegation stores no pendingActions and updates harness_status to harness_blocked", async () => {
+    const { pipeline, mockDb } = makePipelineWithDb()
+    const report = makeReport()
+
+    pipeline.processDecision(report, {
+      success: false,
+      decision: "block_node",
+      reasoning: "Agent delegation failed: timeout",
+    })
+
+    // No pending retry action should be stored
+    expect((pipeline as any).pendingActions.has("bash-build")).toBe(false)
+
+    // Should still update harness_status to harness_blocked (safe default)
+    const runCalls = mockDb._stmtMock.run.mock.calls
+    const harnessBlockedCall = runCalls.find((c: any[]) => c[0] === "harness_blocked")
+    expect(harnessBlockedCall).toBeDefined()
+  })
+})

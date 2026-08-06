@@ -14,6 +14,7 @@ import { HarnessConfigService } from "./config-service"
 import { DetectorPipeline } from "./detector-pipeline"
 import { StrategyEngine } from "./strategy-engine"
 import { AgentDelegationService } from "./agent-delegation"
+import { HarnessAgentSession, type HarnessSessionContext } from "./harness-agent-session"
 
 export interface HarnessControllerDeps {
   dao: HarnessDAO
@@ -37,6 +38,13 @@ export class HarnessController {
    */
   private pipelines = new Map<string, DetectorPipeline>()
 
+  /**
+   * Active agent sessions keyed by executionId.
+   * Each execution gets its own HarnessAgentSession for context accumulation.
+   * Created when session context is provided in onExecutionStart().
+   */
+  private sessions = new Map<string, HarnessAgentSession>()
+
   constructor(deps: HarnessControllerDeps) {
     this.dao = deps.dao
     this.sse = deps.sse
@@ -56,6 +64,7 @@ export class HarnessController {
   /**
    * Called when a workflow execution starts.
    * Creates a fresh DetectorPipeline for the execution.
+   * Optionally creates a HarnessAgentSession if session context is provided.
    *
    * @returns the wrapped callbacks to pass to the engine
    */
@@ -66,6 +75,10 @@ export class HarnessController {
     opts?: {
       hostPid?: string
       hostPorts?: string[]
+      workflowContent?: string
+      nodeList?: Array<{ id: string; type: string }>
+      dependencyGraph?: Record<string, string[]>
+      varpoolSnapshot?: Record<string, any>
     },
   ): EngineCallbacks {
     // Clean up any existing pipeline for this execution (defensive)
@@ -73,11 +86,28 @@ export class HarnessController {
 
     const config = this.configService.loadMergedConfig()
 
+    // Create HarnessAgentSession if session context is provided (AC1, AC2)
+    if (opts?.workflowContent && opts?.nodeList && opts?.dependencyGraph) {
+      const sessionContext: HarnessSessionContext = {
+        workflowContent: opts.workflowContent,
+        nodeList: opts.nodeList,
+        dependencyGraph: opts.dependencyGraph,
+        varpoolSnapshot: opts.varpoolSnapshot ?? {},
+        executionId,
+      }
+      const session = new HarnessAgentSession(sessionContext)
+      this.sessions.set(executionId, session)
+    }
+
+    // Get the session (if created) to pass to AgentDelegationService
+    const session = this.sessions.get(executionId)
+
     // Create the AgentDelegationService (Layer 3) for this execution
     const agentDelegationService = new AgentDelegationService({
       dao: this.dao,
       sse: this.sse,
       workspaceId,
+      session, // Pass session for context accumulation (AC3, AC4)
     })
 
     // Create a per-execution StrategyEngine with the current strategies
@@ -109,6 +139,7 @@ export class HarnessController {
   /**
    * Called when a workflow execution ends (completed, failed, cancelled).
    * Destroys the pipeline and its detectors.
+   * Closes the agent session and writes harness_summary to executions table (AC5).
    */
   onExecutionEnd(executionId: string): void {
     const pipeline = this.pipelines.get(executionId)
@@ -116,6 +147,33 @@ export class HarnessController {
       pipeline.destroy()
       this.pipelines.delete(executionId)
     }
+
+    // Close the agent session and write summary (AC5)
+    const session = this.sessions.get(executionId)
+    if (session) {
+      try {
+        session.close()
+        const summary = session.getSummary()
+        if (summary) {
+          this.writeHarnessSummary(executionId, summary)
+        }
+      } catch (err) {
+        console.error(
+          `[HarnessController] Error closing session for ${executionId}:`,
+          err,
+        )
+      } finally {
+        this.sessions.delete(executionId)
+      }
+    }
+  }
+
+  /**
+   * Get the agent session for an active execution.
+   * Returns undefined if no session was created for this execution.
+   */
+  getSession(executionId: string): HarnessAgentSession | undefined {
+    return this.sessions.get(executionId)
   }
 
   /**
@@ -155,5 +213,43 @@ export class HarnessController {
       }
     }
     this.pipelines.clear()
+
+    // Close all sessions without writing summaries (shutdown path)
+    for (const [executionId, session] of this.sessions) {
+      try {
+        if (!session.isClosed) {
+          session.close()
+        }
+      } catch (err) {
+        console.error(
+          `[HarnessController] Error closing session for ${executionId}:`,
+          err,
+        )
+      }
+    }
+    this.sessions.clear()
+  }
+
+  /**
+   * Write the harness summary to the executions table.
+   * Updates both harness_status and harness_summary columns.
+   */
+  private writeHarnessSummary(
+    executionId: string,
+    summary: { totalInterventions: number; decisions: any[]; harnessStatus: string },
+  ): void {
+    try {
+      const db = this.dao.getDb()
+      db.prepare(`
+        UPDATE executions
+        SET harness_status = ?, harness_summary = ?
+        WHERE id = ?
+      `).run(summary.harnessStatus, JSON.stringify(summary), executionId)
+    } catch (err) {
+      console.error(
+        `[HarnessController] Failed to write harness_summary for ${executionId}:`,
+        err,
+      )
+    }
   }
 }
