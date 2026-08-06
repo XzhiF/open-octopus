@@ -203,8 +203,8 @@ describe("StrategyEngine — handleReport (tri-domain router)", () => {
     expect(result.synchronousBlock).toBe(true)
     expect(result.matchedStrategy).not.toBeNull()
     expect(result.matchedStrategy!.match).toBe("process_conflict")
-    // Should have executed abort action
-    expect(result.actionResults.some((r) => r.action === "abort")).toBe(true)
+    // process_conflict now delegates to agent (no direct action execution)
+    expect(result.actionResults).toHaveLength(0)
   })
 
   it("AC2: stupid_retry → delegate: true, no action execution", async () => {
@@ -271,7 +271,7 @@ describe("StrategyEngine — handleReport (tri-domain router)", () => {
     expect(result.actionResults).toHaveLength(0)
   })
 
-  it("process_conflict + critical emits harness_blocked SSE", async () => {
+  it("process_conflict + critical does NOT emit harness_blocked (delegated to agent)", async () => {
     const engine = new StrategyEngine({
       strategies,
       dao: mockDao,
@@ -287,19 +287,14 @@ describe("StrategyEngine — handleReport (tri-domain router)", () => {
     })
     await engine.handleReport(report)
 
+    // harness_blocked is now emitted by onBeforeNode, not strategy engine
     const blockedSseCalls = mockSse.emit.mock.calls.filter(
       (call: any[]) => call[1].event === "harness_blocked",
     )
-    expect(blockedSseCalls).toHaveLength(1)
-
-    const blockedData = blockedSseCalls[0][1].data
-    expect(blockedData.executionId).toBe("exec-42")
-    expect(blockedData.nodeId).toBe("bash-test")
-    expect(blockedData.reason).toBe("Blocked by harness: process conflict")
-    expect(blockedData.pattern).toBe("process_conflict")
+    expect(blockedSseCalls).toHaveLength(0)
   })
 
-  it("process_conflict + critical persists harness_blocked event", async () => {
+  it("process_conflict + critical does NOT persist harness_blocked (delegated to agent)", async () => {
     const engine = new StrategyEngine({
       strategies,
       dao: mockDao,
@@ -313,15 +308,11 @@ describe("StrategyEngine — handleReport (tri-domain router)", () => {
     })
     await engine.handleReport(report)
 
+    // harness_blocked is now persisted by onBeforeNode, not strategy engine
     const blockedInsertCalls = mockDao.insertEvent.mock.calls.filter(
       (call: any[]) => call[0].event_type === "blocked",
     )
-    expect(blockedInsertCalls).toHaveLength(1)
-
-    const blockedRow = blockedInsertCalls[0][0]
-    expect(blockedRow.event_type).toBe("blocked")
-    expect(blockedRow.detector).toBe("process_conflict")
-    expect(blockedRow.severity).toBe("critical")
+    expect(blockedInsertCalls).toHaveLength(0)
   })
 
   it("does NOT emit harness_blocked for non-process_conflict", async () => {

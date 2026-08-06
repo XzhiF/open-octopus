@@ -177,7 +177,7 @@ export class DetectorPipeline {
    * Route an event to all detectors and handle any DiagnosisReports.
    * Returns the list of reports produced (for synchronous post-processing).
    */
-  routeEvent(event: HarnessCallbackEvent): DiagnosisReport[] {
+  routeEvent(event: HarnessCallbackEvent, skipStrategy: boolean = false): DiagnosisReport[] {
     const reports: DiagnosisReport[] = []
     for (const detector of this.detectors) {
       try {
@@ -188,7 +188,7 @@ export class DetectorPipeline {
             report.executionId = this.executionId
           }
           reports.push(report)
-          this.handleDiagnosis(report)
+          this.handleDiagnosis(report, skipStrategy)
         }
       } catch (err) {
         console.error(
@@ -204,7 +204,7 @@ export class DetectorPipeline {
    * Persist a DiagnosisReport to harness_events and emit SSE.
    * Then route the report to the StrategyEngine (Layer 2) if available.
    */
-  private handleDiagnosis(report: DiagnosisReport): void {
+  private handleDiagnosis(report: DiagnosisReport, skipStrategy: boolean = false): void {
     // Persist to DB
     const row: HarnessEvent = {
       id: report.id,
@@ -244,7 +244,8 @@ export class DetectorPipeline {
     }
 
     // Route to StrategyEngine (Layer 2) if available
-    if (this.strategyEngine) {
+    // skipStrategy = true when caller (onBeforeNode) handles delegation directly
+    if (!skipStrategy && this.strategyEngine) {
       this.strategyEngine.handleReport(report).then((result) => {
         // If Layer 3 delegation occurred, process the structured decision
         if (result.delegationResult) {
@@ -542,16 +543,42 @@ export class DetectorPipeline {
               nodeId,
               nodeType,
               nodeConfig,
-            })
-            // BP-5: Synchronously check for CRITICAL reports with abort strategies.
+            }, true) // skipStrategy: onBeforeNode handles delegation directly
+
+            // For critical reports (e.g. process_conflict): delegate to agent
+            // synchronously and await the decision before returning.
             for (const report of reports) {
-              pipeline.synchronouslyStorePendingAction(report)
+              if (report.severity === "critical" && pipeline.strategyEngine) {
+                // Set status to "intervening" while agent analyzes
+                pipeline.updateNodeHarnessStatus(nodeId, "harness_intervening", report)
+
+                const strategyResult = await pipeline.strategyEngine.handleReport(report)
+                if (strategyResult.delegationResult) {
+                  const dr = strategyResult.delegationResult
+                  // Agent decided to block → return skip
+                  if (dr.decision === "block_node") {
+                    pipeline.updateNodeHarnessStatus(nodeId, "harness_blocked", report)
+                    return { action: "skip" as const }
+                  }
+                  // Agent decided to proceed (node is safe after analysis)
+                  if (dr.decision === "agent_takeover" && dr.takeoverOutput) {
+                    pipeline.updateNodeHarnessStatus(nodeId, "harness_executed", report)
+                    return {
+                      action: "override" as const,
+                      overrideResult: {
+                        outputs: { result: dr.takeoverOutput },
+                        status: "completed",
+                        durationMs: 0,
+                      },
+                    }
+                  }
+                  // Other decisions (fix/guide/reconfigure) → proceed normally,
+                  // the onNodeRetry/onFailureDecision hooks handle them
+                  pipeline.updateNodeHarnessStatus(nodeId, "harness_modified", report)
+                }
+              }
             }
-            const blockAction = pipeline.pendingBlockActions.get(nodeId)
-            if (blockAction) {
-              pipeline.pendingBlockActions.delete(nodeId)
-              return blockAction
-            }
+
             if (typeof original === "function") {
               return original.call(target, nodeId, nodeType, nodeConfig)
             }

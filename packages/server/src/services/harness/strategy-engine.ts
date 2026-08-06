@@ -151,17 +151,10 @@ export class StrategyEngine {
     const isCritical = report.severity === "critical"
 
     // ── Synchronous domain: process_conflict + critical ──────────────────
+    // Delegate to agent FIRST — agent decides what to do (block/fix/proceed).
+    // The caller (onBeforeNode) applies the decision synchronously.
+    // No executeActions here — the agent's decision replaces the old abort flow.
     if (isProcessConflict && isCritical) {
-      const matchedStrategy = this.matchStrategy(report)
-
-      // Execute abort actions if the matched strategy has them
-      let actionResults: InterventionResult[] = []
-      if (matchedStrategy && matchedStrategy.actions.some((a) => a.type === "abort")) {
-        actionResults = await this.executeActions(report, matchedStrategy)
-        this.emitBlockedIfNeeded(report, matchedStrategy, actionResults)
-      }
-
-      // Delegate to agent in parallel (async audit)
       let delegationResult: DelegationResult | undefined
       if (this.agentDelegationService) {
         const result = await this.tryDelegate(report)
@@ -183,8 +176,8 @@ export class StrategyEngine {
       return {
         delegate: true,
         synchronousBlock: true,
-        matchedStrategy,
-        actionResults,
+        matchedStrategy: this.matchStrategy(report),
+        actionResults: [],
         delegationResult,
       }
     }
