@@ -13,17 +13,43 @@ import type { HarnessDAO, HarnessConfigRow } from "../../db/dao/harness-dao"
 
 /**
  * Resolve the path to harness-defaults.yaml shipped with @octopus/shared.
- * Falls back to a hard-coded minimal default if the file cannot be found.
+ * Uses multiple strategies since package.json may not be in "exports".
+ * Falls back to null if no strategy succeeds.
  */
 function resolveDefaultsPath(): string | null {
+  const candidates: string[] = []
+
+  // Strategy 1: require.resolve("@octopus/shared/package.json") — needs exports entry
   try {
     const pkgJsonPath = require.resolve("@octopus/shared/package.json")
-    const candidate = path.join(path.dirname(pkgJsonPath), "src/harness/harness-defaults.yaml")
-    if (existsSync(candidate)) return candidate
-  } catch { /* ignore */ }
+    candidates.push(path.join(path.dirname(pkgJsonPath), "src/harness/harness-defaults.yaml"))
+  } catch { /* exports may not include ./package.json */ }
+
+  // Strategy 2: Navigate from the shared module's main entry
+  try {
+    const mainEntry = require.resolve("@octopus/shared")
+    candidates.push(path.join(path.dirname(mainEntry), "..", "src", "harness", "harness-defaults.yaml"))
+  } catch { /* package not resolvable */ }
+
+  // Strategy 3: Monorepo-relative paths from server source / dist
+  // Works in dev (tsx: __dirname = packages/server/src/services/harness)
+  // and production (tsup: __dirname = packages/server/dist)
+  try {
+    const dir = __dirname
+    candidates.push(path.resolve(dir, "..", "..", "..", "shared", "src", "harness", "harness-defaults.yaml"))
+    candidates.push(path.resolve(dir, "..", "..", "..", "..", "packages", "shared", "src", "harness", "harness-defaults.yaml"))
+  } catch { /* __dirname not available */ }
+
+  for (const c of candidates) {
+    if (existsSync(c)) return c
+  }
   return null
 }
 
+/**
+ * Complete fallback defaults — used when harness-defaults.yaml cannot be resolved.
+ * Must stay in sync with packages/shared/src/harness/harness-defaults.yaml.
+ */
 const MINIMAL_DEFAULTS_YAML = `
 detectors:
   stupid_retry:
@@ -37,6 +63,24 @@ detectors:
     enabled: true
     threshold: 3
 strategies:
+  - match: stupid_retry
+    actions:
+      - type: inject_message
+        message: "上次因为同样的原因失败了。请换一种方法解决。"
+      - type: retry_with_hint
+  - match: model_mismatch
+    actions:
+      - type: switch_model
+        prefer: vision_capable
+  - match: process_conflict
+    severity: critical
+    actions:
+      - type: abort
+        reason: "检测到进程冲突，已阻断以保护宿主进程"
+  - match: timeout_cascade
+    actions:
+      - type: pause
+        notify: true
   - match: "*"
     actions:
       - type: pause_and_notify
