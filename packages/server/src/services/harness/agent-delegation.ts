@@ -215,7 +215,10 @@ ${varpoolLines || "(empty)"}
 4. agent_takeover: 你直接完成节点的目标任务（用你的工具执行）
 5. block_node: 阻断节点，分析后续节点依赖
 
-输出严格的 JSON 格式（不要用 YAML，不要加注释）：
+## 输出要求（极其重要）
+
+你必须只输出一个 JSON 代码块，不要输出任何其他文字、表格、markdown 标题或解释。
+你的整个回复必须只有一个 \`\`\`json 代码块：
 
 \`\`\`json
 {
@@ -230,15 +233,7 @@ ${varpoolLines || "(empty)"}
 }
 \`\`\`
 
-字段说明:
-- decision (必填): fix_and_retry | guide_and_retry | reconfigure_and_retry | agent_takeover | block_node
-- reasoning (必填): 分析推理过程
-- varPoolPatches: fix_and_retry 时使用, 键值对形式的变量修改
-- harnessHint: guide_and_retry 时使用, 注入给 agent 的指导文本
-- modelOverride: reconfigure_and_retry 时使用, 切换到的模型名
-- takeoverOutput: agent_takeover 时使用, Agent 完成的输出内容
-- blockReason: block_node 时使用, 阻断原因
-- continueSubsequent: block_node 时使用, 后续节点是否可继续`
+不要使用 YAML。不要使用 markdown 表格。不要在 JSON 前后添加任何文字。`
 }
 
 // ─── Response Parsing ───────────────────────────────────────────────────────
@@ -260,7 +255,7 @@ export function parseDelegationResponse(rawText: string): DelegationResult {
     tokenUsage: { input: 0, output: 0, model: "unknown" },
   })
 
-  // Try to extract JSON from the response
+  // Try to extract structured data from the response
   let jsonStr: string | null = null
   let parsed: any = null
 
@@ -270,23 +265,7 @@ export function parseDelegationResponse(rawText: string): DelegationResult {
     jsonStr = jsonBlockMatch[1].trim()
   }
 
-  // 2. Try untagged code block (no language specifier) — skip yaml/yml blocks
-  if (!jsonStr) {
-    const untaggedMatch = rawText.match(/```(?![a-zA-Z])\s*\n?([\s\S]*?)\n?```/)
-    if (untaggedMatch) {
-      jsonStr = untaggedMatch[1].trim()
-    }
-  }
-
-  // 3. Try to find JSON object in the text
-  if (!jsonStr) {
-    const jsonObjMatch = rawText.match(/\{[\s\S]*\}/)
-    if (jsonObjMatch) {
-      jsonStr = jsonObjMatch[0]
-    }
-  }
-
-  // 4. YAML fallback — try ```yaml / ```yml code blocks
+  // 2. Try ```yaml / ```yml code blocks
   if (!jsonStr) {
     const yamlBlockMatch = rawText.match(/```(?:ya?ml)\s*\n?([\s\S]*?)\n?```/)
     if (yamlBlockMatch) {
@@ -296,14 +275,49 @@ export function parseDelegationResponse(rawText: string): DelegationResult {
           parsed = yamlParsed as Record<string, unknown>
         }
       } catch {
-        // YAML parse failed, fall through to JSON error handling
+        // YAML parse failed, continue
       }
+    }
+  }
+
+  // 3. Markdown fallback — extract decision from prose/markdown responses
+  //    Do this BEFORE loose JSON object matching, because markdown often contains
+  //    stray `{` characters (in tables, diagrams) that fool the JSON regex.
+  if (!jsonStr && !parsed) {
+    const decisionMatch = rawText.match(/(?:decision|决策)[：:\s]*`?([\w_]+)`?/i)
+    if (decisionMatch) {
+      const decisionCandidate = decisionMatch[1].toLowerCase().replace(/-/g, "_")
+      if (isValidDecisionType(decisionCandidate as HarnessDecisionType)) {
+        const reasoningMatch = rawText.match(/(?:理由|reasoning|reason|分析)[：:\s]*\*?\*?([\s\S]*?)(?=\n###|\n##|\n---|\n\||\n\d+\.|$)/i)
+        const blockReasonMatch = rawText.match(/(?:阻断原因|block[_\s]?reason)[：:\s]*\*?\*?([^\n|]+)/i)
+        parsed = {
+          decision: decisionCandidate,
+          reasoning: reasoningMatch?.[1]?.trim() ?? "",
+          blockReason: blockReasonMatch?.[1]?.trim() ?? undefined,
+        } as Record<string, unknown>
+      }
+    }
+  }
+
+  // 4. Try untagged code block that looks like JSON (starts with { or [)
+  if (!jsonStr && !parsed) {
+    const untaggedMatch = rawText.match(/```(?![a-zA-Z])\s*\n?([\s\S]*?)\n?```/)
+    if (untaggedMatch && /^[\s]*[{[]/.test(untaggedMatch[1])) {
+      jsonStr = untaggedMatch[1].trim()
+    }
+  }
+
+  // 5. Try to find JSON object in the text (must start with {)
+  if (!jsonStr && !parsed) {
+    const jsonObjMatch = rawText.match(/\{[\s\S]*\}/)
+    if (jsonObjMatch) {
+      jsonStr = jsonObjMatch[0]
     }
   }
 
   if (!jsonStr && !parsed) {
     return failureResult(
-      "Failed to parse agent response: no JSON or YAML found in response",
+      "Failed to parse agent response: no JSON, YAML, or recognizable decision found",
     )
   }
 
@@ -341,14 +355,14 @@ export function parseDelegationResponse(rawText: string): DelegationResult {
     return {
       success: true,
       decision: parsed.decision,
-      varPoolPatches: parsed.varPoolPatches ?? undefined,
-      harnessHint: parsed.harnessHint ?? undefined,
-      modelOverride: parsed.modelOverride ?? undefined,
-      takeoverOutput: parsed.takeoverOutput ?? undefined,
-      takeoverExitCode: parsed.takeoverExitCode ?? undefined,
-      blockReason: parsed.blockReason ?? undefined,
-      continueSubsequent: parsed.continueSubsequent ?? undefined,
-      reasoning: parsed.reasoning ?? "",
+      varPoolPatches: parsed.varPoolPatches ?? parsed.var_pool_patches ?? undefined,
+      harnessHint: parsed.harnessHint ?? parsed.harness_hint ?? parsed.hint ?? undefined,
+      modelOverride: parsed.modelOverride ?? parsed.model_override ?? parsed.model ?? undefined,
+      takeoverOutput: parsed.takeoverOutput ?? parsed.takeover_output ?? undefined,
+      takeoverExitCode: parsed.takeoverExitCode ?? parsed.takeover_exit_code ?? undefined,
+      blockReason: parsed.blockReason ?? parsed.block_reason ?? parsed.reason ?? undefined,
+      continueSubsequent: parsed.continueSubsequent ?? parsed.continue_subsequent ?? undefined,
+      reasoning: parsed.reasoning ?? parsed.reason ?? parsed.analysis ?? "",
       tokenUsage: { input: 0, output: 0, model: "unknown" },
     }
   }
@@ -522,15 +536,6 @@ export class AgentDelegationService {
     // Parse the response
     const parsed = parseDelegationResponse(responseText)
 
-    // Log raw response when parsing fails (for debugging)
-    if (!parsed.success) {
-      console.warn(
-        `[AgentDelegation] Parse failed for ${executionId}/${nodeId}.`,
-        `Reason: ${parsed.reasoning}`,
-        `Raw response (first 500 chars): ${responseText.slice(0, 500)}`,
-      )
-    }
-
     // Attach token usage info from the agent session / LLM call
     if (tokenInfo) {
       parsed.tokenUsage = tokenInfo
@@ -684,14 +689,12 @@ export class AgentDelegationService {
           })
           sessionId = session.id
         } catch (err) {
-          // Agent service may not be initialized — continue without session
           console.warn(
             "[AgentDelegationService] Could not create agent session:",
             err instanceof Error ? err.message : String(err),
           )
         }
 
-        // Use injected getProvider to avoid tsup bundling issues with dynamic import
         const getProviderFn = this.getProvider
         if (!getProviderFn) {
           throw new Error("No provider getter configured in AgentDelegationService")

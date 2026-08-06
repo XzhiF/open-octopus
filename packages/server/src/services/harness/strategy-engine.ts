@@ -165,18 +165,17 @@ export class StrategyEngine {
       let delegationResult: DelegationResult | undefined
       if (this.agentDelegationService) {
         const result = await this.tryDelegate(report)
-        if (result?.details) {
-          // Build DelegationResult from InterventionResult.details
+        if (result) {
           delegationResult = {
             success: result.success,
-            decision: result.details.decision ?? "block_node",
-            varPoolPatches: result.details.varPoolPatches,
-            harnessHint: result.details.harnessHint,
-            modelOverride: result.details.modelOverride,
-            takeoverOutput: result.details.takeoverOutput,
-            blockReason: result.details.blockReason,
-            reasoning: result.message ?? "",
-            tokenUsage: result.details.tokenUsage,
+            decision: result.details?.decision ?? "block_node",
+            varPoolPatches: result.details?.varPoolPatches,
+            harnessHint: result.details?.harnessHint,
+            modelOverride: result.details?.modelOverride,
+            takeoverOutput: result.details?.takeoverOutput,
+            blockReason: result.details?.blockReason,
+            reasoning: result.details?.reasoning ?? result.message ?? "",
+            tokenUsage: result.details?.tokenUsage,
           }
         }
       }
@@ -194,17 +193,17 @@ export class StrategyEngine {
     let delegationResult: DelegationResult | undefined
     if (this.agentDelegationService) {
       const result = await this.tryDelegate(report)
-      if (result?.details) {
+      if (result) {
         delegationResult = {
           success: result.success,
-          decision: result.details.decision ?? "block_node",
-          varPoolPatches: result.details.varPoolPatches,
-          harnessHint: result.details.harnessHint,
-          modelOverride: result.details.modelOverride,
-          takeoverOutput: result.details.takeoverOutput,
-          blockReason: result.details.blockReason,
-          reasoning: result.message ?? "",
-          tokenUsage: result.details.tokenUsage,
+          decision: result.details?.decision ?? "block_node",
+          varPoolPatches: result.details?.varPoolPatches,
+          harnessHint: result.details?.harnessHint,
+          modelOverride: result.details?.modelOverride,
+          takeoverOutput: result.details?.takeoverOutput,
+          blockReason: result.details?.blockReason,
+          reasoning: result.details?.reasoning ?? result.message ?? "",
+          tokenUsage: result.details?.tokenUsage,
         }
       }
     }
@@ -247,6 +246,12 @@ export class StrategyEngine {
           action: "agent_delegation",
           message: `Agent delegation failed: ${delegationResult.reasoning}`,
           delegate: true,
+          details: {
+            decision: delegationResult.decision ?? "block_node",
+            reasoning: delegationResult.reasoning,
+            blockReason: delegationResult.blockReason ?? delegationResult.reasoning,
+            tokenUsage: delegationResult.tokenUsage,
+          },
         }
       }
 
@@ -257,6 +262,7 @@ export class StrategyEngine {
         delegate: true,
         details: {
           decision: delegationResult.decision,
+          reasoning: delegationResult.reasoning,
           varPoolPatches: delegationResult.varPoolPatches,
           harnessHint: delegationResult.harnessHint,
           modelOverride: delegationResult.modelOverride,
