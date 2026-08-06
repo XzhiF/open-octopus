@@ -29,14 +29,16 @@ function CollapsedPanel({
   interventionCount,
   isIntervening,
   isRunning,
-  extraTokens,
+  inputTokens,
+  outputTokens,
   onExpand,
   onDragStart,
 }: {
   interventionCount: number
   isIntervening: boolean
   isRunning: boolean
-  extraTokens: number
+  inputTokens: number
+  outputTokens: number
   onExpand: () => void
   onDragStart: (e: React.MouseEvent) => void
 }) {
@@ -92,8 +94,11 @@ function CollapsedPanel({
           {!isRunning ? "已完成" : isIntervening ? "干预中" : "监控中"}
         </span>
       </div>
-      {extraTokens > 0 && (
-        <span className="text-[10px] text-muted-foreground pointer-events-none">+{formatTokenCount(extraTokens)}</span>
+      {(inputTokens > 0 || outputTokens > 0) && (
+        <span className="text-[10px] text-muted-foreground pointer-events-none flex items-center gap-1">
+          <span>↑{formatTokenCount(inputTokens)}</span>
+          <span>↓{formatTokenCount(outputTokens)}</span>
+        </span>
       )}
     </div>
   )
@@ -373,7 +378,7 @@ export function HarnessFloatingPanel({
     origHeight: number
   } | null>(null)
 
-  const { events, loading, interventionCount, totalExtraTokens } = useHarnessEvents(
+  const { events, loading, interventionCount, totalExtraTokens, totalInputTokens, totalOutputTokens } = useHarnessEvents(
     workspaceId,
     executionId,
     executionStatus,
@@ -470,7 +475,8 @@ export function HarnessFloatingPanel({
           interventionCount={interventionCount}
           isIntervening={isIntervening}
           isRunning={isRunning}
-          extraTokens={totalExtraTokens}
+          inputTokens={totalInputTokens}
+          outputTokens={totalOutputTokens}
           onExpand={() => setExpanded(true)}
           onDragStart={handleDragStart}
         />

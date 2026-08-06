@@ -47,6 +47,8 @@ interface UseHarnessEventsResult {
   error: string | null
   interventionCount: number
   totalExtraTokens: number
+  totalInputTokens: number
+  totalOutputTokens: number
 }
 
 let eventCounter = 0
@@ -265,5 +267,8 @@ export function useHarnessEvents(
     return sum
   }, 0)
 
-  return { events, loading, error, interventionCount, totalExtraTokens }
+  const totalInputTokens = events.reduce((sum, e) => sum + (e.tokenUsage?.inputTokens ?? 0), 0)
+  const totalOutputTokens = events.reduce((sum, e) => sum + (e.tokenUsage?.outputTokens ?? 0), 0)
+
+  return { events, loading, error, interventionCount, totalExtraTokens, totalInputTokens, totalOutputTokens }
 }
