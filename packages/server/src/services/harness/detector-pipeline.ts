@@ -230,6 +230,12 @@ export class DetectorPipeline {
     // Update node_executions.harness_status and insert agent_event for log viewer
     this.updateNodeHarnessStatus(report.nodeId, "harness_intervening", report)
 
+    // Immediately mark execution-level harness_status as "intervened"
+    // so the execution tree shows harness is working (purple ants)
+    if (report.severity === "critical") {
+      this.updateExecutionHarnessStatus("intervened")
+    }
+
     // Emit SSE
     try {
       this.sse.emit(this.workspaceId, {
