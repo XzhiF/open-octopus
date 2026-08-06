@@ -8,14 +8,14 @@
 05 — DetectorPipeline Decision Execution + Harness Status Update
 
 ## Status
-ready-for-agent
+done
 
 ## Acceptance Criteria
-- [ ] AC1: 执行列表 API 响应包含 harnessStatus 和 harnessSummary 字段
-- [ ] AC2: web-app Execution 接口增加 harnessStatus/harnessSummary 可选字段
-- [ ] AC3: 执行列表中被干预的执行显示 harness 图标（intervened: 🛡️, blocked: 🛡️❌, delegated: 🤖）
-- [ ] AC4: 日志渲染区分 5 种决策类型（不同图标和文案）
-- [ ] AC5: harness_modified 和 harness_executed 节点状态在 flow viewer 正确显示
+- [x] AC1: 执行列表 API 响应包含 harnessStatus 和 harnessSummary 字段
+- [x] AC2: web-app Execution 接口增加 harnessStatus/harnessSummary 可选字段
+- [x] AC3: 执行列表中被干预的执行显示 harness 图标（intervened: 🛡️, blocked: 🛡️❌, delegated: 🤖）
+- [x] AC4: 日志渲染区分 5 种决策类型（不同图标和文案）
+- [x] AC5: harness_modified 和 harness_executed 节点状态在 flow viewer 正确显示
 
 ## Verification Method
 **Verification type**: browser E2E

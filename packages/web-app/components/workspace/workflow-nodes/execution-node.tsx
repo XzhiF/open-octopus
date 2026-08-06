@@ -7,7 +7,7 @@ import { cn } from "@/lib/utils"
 import { Badge } from "@/components/ui/badge"
 import { ExecutionButtonBar } from "./execution-button-bar"
 import { useExecutionNodeCallbacks } from "./execution-node-context"
-import type { ExecutionNodeData, ExecutionStatus, GateStatus, HarnessNodeStatus } from "@/lib/types"
+import type { ExecutionNodeData, ExecutionStatus, GateStatus, HarnessNodeStatus, HarnessExecutionStatus } from "@/lib/types"
 import { CheckCircle2, XCircle, Clock, Loader2, SkipForward, ShieldOff, Undo2, PauseCircle, PlayCircle, Timer, Webhook, MessageSquare, Hourglass, Ban, ShieldCheck, Bot } from "lucide-react"
 import { formatDuration } from "@/lib/format"
 import { useLiveTimer } from "@/hooks/use-live-timer"
@@ -76,6 +76,32 @@ function HarnessStatusIndicator({ status }: { status: HarnessNodeStatus }) {
   }
 }
 
+/** Execution-level harness status badge (from executions.harness_status) */
+function HarnessExecutionBadge({ status }: { status: HarnessExecutionStatus }) {
+  switch (status) {
+    case "intervened":
+      return (
+        <span title="Harness 已干预（修复/指导/重配置）" className="inline-flex items-center gap-0.5 ml-1">
+          <span className="text-sm leading-none">🛡️</span>
+        </span>
+      )
+    case "blocked":
+      return (
+        <span title="Harness 已阻断节点" className="inline-flex items-center gap-0.5 ml-1">
+          <span className="text-sm leading-none">🛡️❌</span>
+        </span>
+      )
+    case "delegated":
+      return (
+        <span title="Harness Agent 接管完成" className="inline-flex items-center gap-0.5 ml-1">
+          <span className="text-sm leading-none">🤖</span>
+        </span>
+      )
+    default:
+      return null
+  }
+}
+
 function ExecutionNodeInner({ data: rawData, selected }: NodeProps) {
   const data = rawData as unknown as ExecutionNodeData
   const callbacks = useExecutionNodeCallbacks()
@@ -126,6 +152,9 @@ function ExecutionNodeInner({ data: rawData, selected }: NodeProps) {
         <Badge variant={badgeVariant} className={cn("text-xs", badgeClasses)}>{badgeLabel}{gateLabel}</Badge>
         {data.harnessStatus && (
           <HarnessStatusIndicator status={data.harnessStatus} />
+        )}
+        {data.harnessExecutionStatus && (
+          <HarnessExecutionBadge status={data.harnessExecutionStatus} />
         )}
         {data.gateStatus === "bypassed" && (
           <ShieldOff className="h-4 w-4 text-gray-400" />

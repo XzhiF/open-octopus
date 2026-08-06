@@ -160,6 +160,8 @@ executionRoutes.get("/tree", (c) => {
       token_usages: tokenUsages.length > 0 ? tokenUsages : undefined,
       approval_metadata: approvalMetadata,
       interaction_metadata: interactionMetadata,
+      harness_status: e.harness_status ?? null,
+      harness_summary: e.harness_summary ? JSON.parse(e.harness_summary) : null,
     }
   })
   return c.json({ workspace_id: workspaceId, nodes })

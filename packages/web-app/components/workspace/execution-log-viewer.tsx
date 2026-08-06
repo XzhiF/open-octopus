@@ -203,14 +203,47 @@ export function EventLabel({ entry }: { entry: LogEvent }) {
       default: {
         // Harness events: harness_process_conflict, harness_stupid_retry, etc.
         if (e.type?.startsWith("harness_")) {
-          const parsed = (() => { try { return JSON.parse(e.content || "{}") } catch { return {} as Record<string, string> } })()
+          const parsed = (() => { try { return JSON.parse(e.content || "{}") } catch { return {} as Record<string, any> } })()
           const detector = parsed.detector || e.type.replace("harness_", "")
           const severity = parsed.severity || ""
           const status = parsed.status || ""
+          const decision = parsed.decision as string | undefined
+          const reasoning = parsed.reasoning as string | undefined
+          const harnessHint = parsed.harnessHint as string | undefined
+          const modelOverride = parsed.modelOverride as string | undefined
+          const blockReason = parsed.blockReason as string | undefined
           const evidence = parsed.evidence
           const evidenceText = Array.isArray(evidence)
             ? evidence.map((ev: any) => ev.errorMessage || ev.pattern || "").filter(Boolean).join("; ")
             : typeof evidence === "string" ? evidence : ""
+
+          // AC4: 5 decision type differentiation (§9 log rendering spec)
+          if (decision) {
+            switch (decision) {
+              case "fix_and_retry": {
+                const summary = reasoning ? reasoning.slice(0, 60) : ""
+                return <span className="text-violet-400">🛡️🔧 Harness 修复并重试: {detector}{summary ? ` — ${summary}` : ""}</span>
+              }
+              case "guide_and_retry": {
+                const hint = harnessHint ? harnessHint.slice(0, 60) : ""
+                return <span className="text-violet-400">🛡️💬 Harness 指导重试: {detector}{hint ? ` — ${hint}` : ""}</span>
+              }
+              case "reconfigure_and_retry": {
+                const model = modelOverride || "new model"
+                return <span className="text-violet-400">🛡️🔄 Harness 切换配置重试: {detector} — model → {model}</span>
+              }
+              case "agent_takeover": {
+                const summary = reasoning ? reasoning.slice(0, 60) : ""
+                return <span className="text-emerald-400">🤖✅ Harness Agent 接管完成: {detector}{summary ? ` — ${summary}` : ""}</span>
+              }
+              case "block_node": {
+                const reason = blockReason || reasoning || evidenceText
+                return <span className="text-red-400">🛡️❌ Harness 阻断: {detector}{reason ? ` — ${reason.slice(0, 80)}` : ""}</span>
+              }
+            }
+          }
+
+          // Fallback: no decision field — use status-based rendering (legacy path)
           const isBlocked = status === "harness_blocked"
           const isModified = status === "harness_modified"
           const isExecuted = status === "harness_executed"
