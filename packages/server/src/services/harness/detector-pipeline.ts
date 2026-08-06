@@ -498,8 +498,11 @@ export class DetectorPipeline {
   }
 
   /**
-   * Update node_executions.harness_status and insert an agent_event
+   * Update node_executions.harness_status and insert/update an agent_event
    * so harness activity shows in both the node UI (🛡️ icon) and log viewer.
+   *
+   * When status escalates (e.g. intervening → blocked), updates the existing
+   * agent_event row in-place to avoid duplicate log entries.
    */
   private updateNodeHarnessStatus(
     nodeId: string,
@@ -509,31 +512,40 @@ export class DetectorPipeline {
     try {
       const db = this.dao.getDb()
       const neId = `${this.executionId}-${nodeId}`
+      const eventType = `harness_${report.detector}`
 
       // Update harness_status on the node execution
       db.prepare(
         `UPDATE node_executions SET harness_status = ? WHERE id = ?`,
       ).run(status, neId)
 
-      // Insert an agent_event so harness activity appears in the log viewer
-      const eventOrder = Date.now()
-      db.prepare(`
-        INSERT INTO agent_events (node_execution_id, event_order, turn_index, event_type, timestamp, content, content_length)
-        VALUES (?, ?, 0, ?, ?, ?, ?)
-      `).run(
-        neId,
-        eventOrder,
-        `harness_${report.detector}`,
-        eventOrder,
-        JSON.stringify({
-          detector: report.detector,
-          severity: report.severity,
-          pattern: report.pattern,
-          evidence: report.evidence,
-          status,
-        }),
-        200,
-      )
+      const eventContent = JSON.stringify({
+        detector: report.detector,
+        severity: report.severity,
+        pattern: report.pattern,
+        evidence: report.evidence,
+        status,
+      })
+
+      // Try to update an existing harness event for this node (avoid duplicates)
+      // agent_events uses composite PK (node_execution_id, event_order) — no id column
+      const existing = db.prepare(
+        `SELECT event_order FROM agent_events WHERE node_execution_id = ? AND event_type = ? ORDER BY event_order DESC LIMIT 1`
+      ).get(neId, eventType) as { event_order: number } | undefined
+
+      if (existing) {
+        // Escalate: update status in-place (e.g. intervening → blocked)
+        db.prepare(
+          `UPDATE agent_events SET content = ? WHERE node_execution_id = ? AND event_order = ?`
+        ).run(eventContent, neId, existing.event_order)
+      } else {
+        // Insert new agent_event for the log viewer
+        const eventOrder = Date.now()
+        db.prepare(`
+          INSERT INTO agent_events (node_execution_id, event_order, turn_index, event_type, timestamp, content, content_length)
+          VALUES (?, ?, 0, ?, ?, ?, ?)
+        `).run(neId, eventOrder, eventType, eventOrder, eventContent, 200)
+      }
     } catch (err) {
       // Non-fatal: harness status update failure shouldn't break the pipeline
       console.error("[DetectorPipeline] Failed to update node harness status:", err)

@@ -86,6 +86,7 @@ export interface EngineCallbacks {
     overrideResult?: NodeExecutionResult
     harnessHint?: string
     modelOverride?: string
+    varPoolPatches?: Record<string, string>
   }>
 
   onFailureDecision?: (
@@ -93,7 +94,12 @@ export interface EngineCallbacks {
     error: string,
     currentStrategy: string,
   ) => Promise<{
-    action: "continue" | "abort" | "delegate"
+    action: "continue" | "abort" | "delegate" | "override"
+    overrideResult?: {
+      status: string
+      outputs?: Record<string, unknown>
+      exitCode?: number
+    }
   }>
 }
 

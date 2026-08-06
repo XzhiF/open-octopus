@@ -132,6 +132,65 @@ export interface IsolationConfig {
 }
 
 /**
+ * HarnessDecisionType — the 5 structured decision types that the Harness Agent
+ * can return (replacing the previous 9 scattered InterventionAction types).
+ *
+ * Mapping from old interventionType:
+ * - "inject"       → "guide_and_retry"
+ * - "varpool"      → "fix_and_retry"
+ * - "definition"   → "fix_and_retry" (via varPool indirect effect)
+ * - "takeover"     → "agent_takeover"
+ */
+export type HarnessDecisionType =
+  | "fix_and_retry"          // Patch variables / config → retry (no direct script edit)
+  | "guide_and_retry"        // Inject guidance hint → retry
+  | "reconfigure_and_retry"  // Switch model / config → retry
+  | "agent_takeover"         // Agent directly completes the node (pause domain)
+  | "block_node"             // Block the node (synchronous domain)
+
+/**
+ * DelegationResult — structured result returned by the Harness Agent after
+ * analysing a DiagnosisReport. Replaces the old inline DelegationResult in
+ * the server's agent-delegation module.
+ */
+export interface DelegationResult {
+  /** Whether the delegation succeeded in producing a valid decision. */
+  success: boolean
+  /** The structured decision type. */
+  decision: HarnessDecisionType
+
+  // --- fix_and_retry ---
+  /** Variable patches to apply before retrying. */
+  varPoolPatches?: Record<string, string>
+
+  // --- guide_and_retry ---
+  /** Guidance hint injected into the agent conversation before retry. */
+  harnessHint?: string
+
+  // --- reconfigure_and_retry ---
+  /** Model identifier to switch to before retrying. */
+  modelOverride?: string
+
+  // --- agent_takeover ---
+  /** Output produced by the Harness Agent when it takes over the node. */
+  takeoverOutput?: string
+  /** Simulated exit code for the takeover result (0 = success). */
+  takeoverExitCode?: number
+
+  // --- block_node ---
+  /** Reason the node was blocked. */
+  blockReason?: string
+  /** Whether subsequent (downstream) nodes may still continue executing. */
+  continueSubsequent?: boolean
+
+  // --- Common ---
+  /** The agent's analysis / reasoning behind the decision. */
+  reasoning: string
+  /** Token consumption for the delegation call. */
+  tokenUsage?: { input: number; output: number; model?: string }
+}
+
+/**
  * HarnessEvent — row shape for harness_events table
  */
 export interface HarnessEvent {

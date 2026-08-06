@@ -14,6 +14,8 @@ export type {
   StrategyAction,
   IsolationConfig,
   HarnessEvent,
+  HarnessDecisionType,
+  DelegationResult,
 } from "./types"
 
 export {

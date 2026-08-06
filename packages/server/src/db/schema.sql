@@ -56,6 +56,8 @@ CREATE TABLE IF NOT EXISTS executions (
   pipeline_config TEXT DEFAULT '{}',
   chain_retry_count INTEGER DEFAULT 0,
   preset_inputs TEXT DEFAULT NULL,
+  harness_status TEXT DEFAULT NULL,
+  harness_summary TEXT DEFAULT NULL,
   started_at TEXT,
   completed_at TEXT,
   duration INTEGER,

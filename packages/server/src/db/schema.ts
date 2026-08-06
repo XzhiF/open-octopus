@@ -161,6 +161,10 @@ function ensureColumnsForExistingTables(db: Database.Database): void {
   ensureColumn(db, 'node_executions', 'harness_status', "TEXT")
   ensureColumn(db, 'node_executions', 'harness_interventions', "TEXT")
   ensureColumn(db, 'node_token_usages', 'source', "TEXT DEFAULT 'node'")
+
+  // Execution-level harness status (schema version 35 — harness-semantic-v2)
+  ensureColumn(db, 'executions', 'harness_status', "TEXT DEFAULT NULL")
+  ensureColumn(db, 'executions', 'harness_summary', "TEXT DEFAULT NULL")
 }
 
 function ensureColumn(db: Database.Database, table: string, column: string, definition: string): void {

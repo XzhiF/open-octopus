@@ -203,10 +203,21 @@ export function EventLabel({ entry }: { entry: LogEvent }) {
       default: {
         // Harness events: harness_process_conflict, harness_stupid_retry, etc.
         if (e.type?.startsWith("harness_")) {
-          const detector = e.type.replace("harness_", "")
-          const severity = e.content ? (() => { try { return JSON.parse(e.content).severity } catch { return "" } })() : ""
-          const color = severity === "critical" ? "text-red-400" : "text-amber-400"
-          return <span className={color}>🛡️ Harness 检测: {detector} ({severity})</span>
+          const parsed = (() => { try { return JSON.parse(e.content || "{}") } catch { return {} as Record<string, string> } })()
+          const detector = parsed.detector || e.type.replace("harness_", "")
+          const severity = parsed.severity || ""
+          const status = parsed.status || ""
+          const evidence = parsed.evidence
+          const evidenceText = Array.isArray(evidence)
+            ? evidence.map((ev: any) => ev.errorMessage || ev.pattern || "").filter(Boolean).join("; ")
+            : typeof evidence === "string" ? evidence : ""
+          const isBlocked = status === "harness_blocked"
+          const isModified = status === "harness_modified"
+          const isExecuted = status === "harness_executed"
+          const color = isBlocked ? "text-red-400" : isModified || isExecuted ? "text-violet-400" : severity === "critical" ? "text-red-400" : "text-amber-400"
+          const label = isBlocked ? `🛡️ Harness 阻断: ${detector}` : isModified ? "🛡️ Harness 已修正" : isExecuted ? "🤖 Harness Agent 接管" : `🛡️ Harness 检测: ${detector}`
+          const detail = isBlocked ? (evidenceText ? ` — ${evidenceText.slice(0, 80)}` : ` (${severity})`) : isModified || isExecuted ? `: ${detector}` : ` (${severity})`
+          return <span className={color}>{label}{detail}</span>
         }
         return <span className="text-muted-foreground">{e.type}</span>
       }

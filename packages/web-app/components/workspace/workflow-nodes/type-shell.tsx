@@ -8,7 +8,7 @@ import { formatDuration } from "@/lib/format"
 import { useLiveTimer } from "@/hooks/use-live-timer"
 import { TokenUsageLine } from "./token-usage-line"
 import { TokenUsageDisplay } from "./token-usage-display"
-import { Clock, Loader2, CheckCircle2, XCircle, SkipForward, PauseCircle, Timer, ShieldCheck, Bot, Ban } from "lucide-react"
+import { Clock, Loader2, CheckCircle2, XCircle, SkipForward, PauseCircle, Timer, ShieldCheck, ShieldX, Bot } from "lucide-react"
 
 interface TypeShellProps {
   nodeType: string
@@ -65,7 +65,7 @@ function HarnessBadge({ status }: { status: HarnessNodeStatus }) {
     case "harness_blocked":
       return (
         <span title="Harness 已阻断" className="inline-flex items-center ml-1">
-          <Ban className="h-3.5 w-3.5 text-red-500" />
+          <ShieldX className="h-3.5 w-3.5 text-red-500" />
         </span>
       )
     default:
