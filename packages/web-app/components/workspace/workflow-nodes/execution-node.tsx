@@ -122,6 +122,8 @@ function ExecutionNodeInner({ data: rawData, selected }: NodeProps) {
   const badgeClasses = isLast ? "bg-emerald-600 text-white border-emerald-600" : config.color
   const isRunning = data.executionStatus === "running"
   const isHarnessIntervening = data.harnessStatus === "harness_intervening"
+    || data.harnessExecutionStatus === "intervened"
+    || data.harnessExecutionStatus === "blocked"
   const elapsedSeconds = useLiveTimer(isRunning ? data.startedAt : undefined)
   const showRollback = (data.executionStatus === "running" || data.executionStatus === "failed") && (data.rollbackOnError || data.rollback === "git-revert")
   const gateLabel = gateLabelMap[data.gateStatus]
