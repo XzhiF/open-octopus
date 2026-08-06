@@ -215,17 +215,30 @@ ${varpoolLines || "(empty)"}
 4. agent_takeover: 你直接完成节点的目标任务（用你的工具执行）
 5. block_node: 阻断节点，分析后续节点依赖
 
-输出 JSON:
+输出严格的 JSON 格式（不要用 YAML，不要加注释）：
+
+\`\`\`json
 {
-  "decision": "fix_and_retry|guide_and_retry|reconfigure_and_retry|agent_takeover|block_node",
+  "decision": "block_node",
   "reasoning": "分析推理过程",
-  "varPoolPatches": {},       // fix_and_retry 时使用
-  "harnessHint": "",          // guide_and_retry 时使用
-  "modelOverride": "",        // reconfigure_and_retry 时使用
-  "takeoverOutput": "",       // agent_takeover 时使用
-  "blockReason": "",          // block_node 时使用
-  "continueSubsequent": true  // block_node 时：后续节点是否可继续
-}`
+  "varPoolPatches": {},
+  "harnessHint": "",
+  "modelOverride": "",
+  "takeoverOutput": "",
+  "blockReason": "阻断原因",
+  "continueSubsequent": true
+}
+\`\`\`
+
+字段说明:
+- decision (必填): fix_and_retry | guide_and_retry | reconfigure_and_retry | agent_takeover | block_node
+- reasoning (必填): 分析推理过程
+- varPoolPatches: fix_and_retry 时使用, 键值对形式的变量修改
+- harnessHint: guide_and_retry 时使用, 注入给 agent 的指导文本
+- modelOverride: reconfigure_and_retry 时使用, 切换到的模型名
+- takeoverOutput: agent_takeover 时使用, Agent 完成的输出内容
+- blockReason: block_node 时使用, 阻断原因
+- continueSubsequent: block_node 时使用, 后续节点是否可继续`
 }
 
 // ─── Response Parsing ───────────────────────────────────────────────────────
@@ -508,6 +521,15 @@ export class AgentDelegationService {
 
     // Parse the response
     const parsed = parseDelegationResponse(responseText)
+
+    // Log raw response when parsing fails (for debugging)
+    if (!parsed.success) {
+      console.warn(
+        `[AgentDelegation] Parse failed for ${executionId}/${nodeId}.`,
+        `Reason: ${parsed.reasoning}`,
+        `Raw response (first 500 chars): ${responseText.slice(0, 500)}`,
+      )
+    }
 
     // Attach token usage info from the agent session / LLM call
     if (tokenInfo) {
