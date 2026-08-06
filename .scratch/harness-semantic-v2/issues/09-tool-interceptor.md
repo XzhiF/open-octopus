@@ -8,16 +8,16 @@
 02 — Harness Agent Core-Pack Definition
 
 ## Status
-ready-for-agent
+done
 
 ## Acceptance Criteria
-- [ ] AC1: agent executor 注册 `onBeforeToolCall` hook（或等效机制）
-- [ ] AC2: hook 接收 tool name + input（bash command string）
-- [ ] AC3: 复用 ProcessConflictDetector 的危险模式匹配（kill/pkill/端口绑定等）
-- [ ] AC4: 匹配到危险模式 → block tool execution + 生成 DiagnosisReport
-- [ ] AC5: block 后 pause agent session → 调 Harness Agent 生成指导 → 注入对话 → resume
-- [ ] AC6: 安全命令正常放行（无性能影响）
-- [ ] AC7: 单元测试覆盖：危险命令被拦截、安全命令放行
+- [x] AC1: agent executor 注册 `onBeforeToolCall` hook（或等效机制）
+- [x] AC2: hook 接收 tool name + input（bash command string）
+- [x] AC3: 复用 ProcessConflictDetector 的危险模式匹配（kill/pkill/端口绑定等）
+- [x] AC4: 匹配到危险模式 → block tool execution + 生成 DiagnosisReport
+- [x] AC5: block 后 pause agent session → 调 Harness Agent 生成指导 → 注入对话 → resume
+- [x] AC6: 安全命令正常放行（无性能影响）
+- [x] AC7: 单元测试覆盖：危险命令被拦截、安全命令放行
 
 ## Verification Method
 **Verification type**: unit test + integration test

@@ -238,7 +238,7 @@ describe("DetectorPipeline — onNodeEnd cleanup (BP-10)", () => {
 // ─── BP-2: Synchronous pending action population in onNodeRetry ──────────────
 
 describe("DetectorPipeline — BP-2 synchronous pending action population", () => {
-  it("onNodeRetry synchronously stores harnessHint from retry_with_hint strategy", () => {
+  it("does NOT store pendingActions for non-process_conflict reports (stupid_retry)", () => {
     const strategies: StrategyConfig[] = [
       {
         match: "stupid_retry",
@@ -248,9 +248,6 @@ describe("DetectorPipeline — BP-2 synchronous pending action population", () =
     const mockSE = makeMockStrategyEngine(strategies)
     const pipeline = makePipeline({ strategyEngine: mockSE })
 
-    // Seed the detector that will produce a report on nodeRetry
-    // We directly test synchronouslyStorePendingAction since onNodeRetry needs
-    // a detector to produce a report
     const report: DiagnosisReport = {
       id: "r1",
       timestamp: Date.now(),
@@ -266,14 +263,11 @@ describe("DetectorPipeline — BP-2 synchronous pending action population", () =
 
     pipeline.synchronouslyStorePendingAction(report)
 
-    // Verify pendingActions was populated synchronously
-    const pending = (pipeline as any).pendingActions.get("bash-build")
-    expect(pending).toBeDefined()
-    expect(pending.harnessHint).toBe("Stop retrying blindly")
-    expect(pending.action).toBe("retry")
+    // BP-2 removed: non-process_conflict reports are routed to Harness Agent (async)
+    expect((pipeline as any).pendingActions.get("bash-build")).toBeUndefined()
   })
 
-  it("onNodeRetry synchronously stores modelOverride from switch_model strategy", () => {
+  it("does NOT store pendingActions for model_mismatch reports", () => {
     const strategies: StrategyConfig[] = [
       {
         match: "model_mismatch",
@@ -298,38 +292,8 @@ describe("DetectorPipeline — BP-2 synchronous pending action population", () =
 
     pipeline.synchronouslyStorePendingAction(report)
 
-    const pending = (pipeline as any).pendingActions.get("agent-node")
-    expect(pending).toBeDefined()
-    expect(pending.modelOverride).toBe("claude-sonnet-4-20250514")
-  })
-
-  it("onNodeRetry synchronously stores modelOverride with explicit model", () => {
-    const strategies: StrategyConfig[] = [
-      {
-        match: "model_mismatch",
-        actions: [{ type: "switch_model", model: "gpt-4o" }],
-      },
-    ]
-    const mockSE = makeMockStrategyEngine(strategies)
-    const pipeline = makePipeline({ strategyEngine: mockSE })
-
-    const report: DiagnosisReport = {
-      id: "r3",
-      timestamp: Date.now(),
-      detector: "model_mismatch",
-      severity: "warning",
-      executionId: "exec-test",
-      nodeId: "agent-node",
-      nodeType: "agent",
-      pattern: "model_mismatch",
-      evidence: [],
-      context: { retryCount: 0, nodeDurationMs: 3000, workflowProgress: 0.3 },
-    }
-
-    pipeline.synchronouslyStorePendingAction(report)
-
-    const pending = (pipeline as any).pendingActions.get("agent-node")
-    expect(pending.modelOverride).toBe("gpt-4o")
+    // BP-2 removed: non-process_conflict reports are routed to Harness Agent (async)
+    expect((pipeline as any).pendingActions.get("agent-node")).toBeUndefined()
   })
 
   it("does nothing when no strategyEngine is set", () => {
@@ -472,7 +436,7 @@ describe("DetectorPipeline — BP-5 onBeforeNode blocking", () => {
 // ─── synchronouslyStorePendingAction: delegate_to_agent ──────────────────────
 
 describe("DetectorPipeline — delegate_to_agent synchronous storage", () => {
-  it("stores delegate in pendingFailureActions when strategy has delegate_to_agent", () => {
+  it("does NOT store delegate in pendingFailureActions for non-process_conflict reports", () => {
     const strategies: StrategyConfig[] = [
       {
         match: "*",
@@ -498,8 +462,7 @@ describe("DetectorPipeline — delegate_to_agent synchronous storage", () => {
 
     pipeline.synchronouslyStorePendingAction(report)
 
-    const pending = (pipeline as any).pendingFailureActions.get("node-y")
-    expect(pending).toBeDefined()
-    expect(pending.action).toBe("delegate")
+    // Non-process_conflict reports are routed to Harness Agent (async), not stored synchronously
+    expect((pipeline as any).pendingFailureActions.get("node-y")).toBeUndefined()
   })
 })

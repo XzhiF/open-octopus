@@ -132,6 +132,9 @@ export interface AgentConfig {
   /** Optional system prompt override (e.g. from persona.md). When provided,
    *  overrides the default preset system prompt in the agent runner. */
   systemPrompt?: SystemPromptInput
+  /** Optional callback invoked before each tool call executes.
+   *  Used by the Tool Interceptor (harness) to block dangerous bash commands. */
+  onBeforeToolCall?: (toolName: string, input: unknown) => Promise<{ allow: boolean; reason?: string } | undefined>
 }
 
 /** OctopusAgentExecutor — wraps AgentExecutor with version resolution + heartbeat */

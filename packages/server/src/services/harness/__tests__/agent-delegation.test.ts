@@ -1,7 +1,8 @@
 // packages/server/src/services/harness/__tests__/agent-delegation.test.ts
 //
 // Unit tests for the AgentDelegationService (Layer 3).
-// Tests delegation prompt construction, response parsing, timeout handling,
+// Tests delegation prompt construction, response parsing (new + old format),
+// backward-compat mapping, agent session runner, timeout handling,
 // token recording, and SSE event emission.
 
 import { describe, it, expect, beforeEach, vi, afterEach } from "vitest"
@@ -9,10 +10,13 @@ import {
   AgentDelegationService,
   buildDelegationPrompt,
   parseDelegationResponse,
+  isValidDecisionType,
+  mapInterventionTypeToDecision,
+  mapDecisionToInterventionType,
   type DelegationContext,
-  type DelegationResult,
+  type AgentSessionRunner,
 } from "../agent-delegation"
-import type { DiagnosisReport } from "@octopus/shared"
+import type { DiagnosisReport, DelegationResult } from "@octopus/shared"
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -47,6 +51,72 @@ function makeContext(overrides: Partial<DelegationContext> = {}): DelegationCont
     ...overrides,
   }
 }
+
+// ─── isValidDecisionType ────────────────────────────────────────────────────
+
+describe("isValidDecisionType", () => {
+  it("returns true for all 5 valid decision types", () => {
+    expect(isValidDecisionType("fix_and_retry")).toBe(true)
+    expect(isValidDecisionType("guide_and_retry")).toBe(true)
+    expect(isValidDecisionType("reconfigure_and_retry")).toBe(true)
+    expect(isValidDecisionType("agent_takeover")).toBe(true)
+    expect(isValidDecisionType("block_node")).toBe(true)
+  })
+
+  it("returns false for invalid decision types", () => {
+    expect(isValidDecisionType("invalid")).toBe(false)
+    expect(isValidDecisionType("inject")).toBe(false)
+    expect(isValidDecisionType("")).toBe(false)
+    expect(isValidDecisionType("varpool")).toBe(false)
+  })
+})
+
+// ─── Backward Compatibility Mapping ─────────────────────────────────────────
+
+describe("mapInterventionTypeToDecision", () => {
+  it("maps inject → guide_and_retry", () => {
+    expect(mapInterventionTypeToDecision("inject")).toBe("guide_and_retry")
+  })
+
+  it("maps varpool → fix_and_retry", () => {
+    expect(mapInterventionTypeToDecision("varpool")).toBe("fix_and_retry")
+  })
+
+  it("maps definition → fix_and_retry", () => {
+    expect(mapInterventionTypeToDecision("definition")).toBe("fix_and_retry")
+  })
+
+  it("maps takeover → agent_takeover", () => {
+    expect(mapInterventionTypeToDecision("takeover")).toBe("agent_takeover")
+  })
+
+  it("returns null for unknown intervention types", () => {
+    expect(mapInterventionTypeToDecision("unknown")).toBe(null)
+    expect(mapInterventionTypeToDecision("")).toBe(null)
+  })
+})
+
+describe("mapDecisionToInterventionType", () => {
+  it("maps fix_and_retry → varpool", () => {
+    expect(mapDecisionToInterventionType("fix_and_retry")).toBe("varpool")
+  })
+
+  it("maps guide_and_retry → inject", () => {
+    expect(mapDecisionToInterventionType("guide_and_retry")).toBe("inject")
+  })
+
+  it("maps reconfigure_and_retry → definition", () => {
+    expect(mapDecisionToInterventionType("reconfigure_and_retry")).toBe("definition")
+  })
+
+  it("maps agent_takeover → takeover", () => {
+    expect(mapDecisionToInterventionType("agent_takeover")).toBe("takeover")
+  })
+
+  it("maps block_node → inject (closest old equivalent)", () => {
+    expect(mapDecisionToInterventionType("block_node")).toBe("inject")
+  })
+})
 
 // ─── Prompt Construction ────────────────────────────────────────────────────
 
@@ -106,15 +176,16 @@ describe("buildDelegationPrompt", () => {
     expect(prompt).toContain("/project")
   })
 
-  it("includes the four intervention types in instructions", () => {
+  it("includes the 5 decision types in instructions", () => {
     const report = makeReport()
     const context = makeContext()
     const prompt = buildDelegationPrompt(report, context)
 
-    expect(prompt).toContain("inject")
-    expect(prompt).toContain("varpool")
-    expect(prompt).toContain("definition")
-    expect(prompt).toContain("takeover")
+    expect(prompt).toContain("fix_and_retry")
+    expect(prompt).toContain("guide_and_retry")
+    expect(prompt).toContain("reconfigure_and_retry")
+    expect(prompt).toContain("agent_takeover")
+    expect(prompt).toContain("block_node")
   })
 
   it("limits recent events to last 20", () => {
@@ -132,10 +203,157 @@ describe("buildDelegationPrompt", () => {
   })
 })
 
-// ─── Response Parsing ───────────────────────────────────────────────────────
+// ─── Response Parsing — New Format ──────────────────────────────────────────
 
-describe("parseDelegationResponse", () => {
-  it("parses valid JSON response with inject intervention", () => {
+describe("parseDelegationResponse — new format (decision field)", () => {
+  it("parses fix_and_retry with varPoolPatches", () => {
+    const rawText = JSON.stringify({
+      decision: "fix_and_retry",
+      reasoning: "Missing dependency, patching varpool",
+      varPoolPatches: { PRE_INSTALL: "apt-get install -y jq" },
+    })
+
+    const result = parseDelegationResponse(rawText)
+
+    expect(result.success).toBe(true)
+    expect(result.decision).toBe("fix_and_retry")
+    expect(result.varPoolPatches).toEqual({ PRE_INSTALL: "apt-get install -y jq" })
+    expect(result.reasoning).toContain("Missing dependency")
+  })
+
+  it("parses guide_and_retry with harnessHint", () => {
+    const rawText = JSON.stringify({
+      decision: "guide_and_retry",
+      reasoning: "Agent needs guidance",
+      harnessHint: "Try installing dependencies first",
+    })
+
+    const result = parseDelegationResponse(rawText)
+
+    expect(result.success).toBe(true)
+    expect(result.decision).toBe("guide_and_retry")
+    expect(result.harnessHint).toBe("Try installing dependencies first")
+  })
+
+  it("parses reconfigure_and_retry with modelOverride", () => {
+    const rawText = JSON.stringify({
+      decision: "reconfigure_and_retry",
+      reasoning: "Model too weak for this task",
+      modelOverride: "claude-opus-4-20250514",
+    })
+
+    const result = parseDelegationResponse(rawText)
+
+    expect(result.success).toBe(true)
+    expect(result.decision).toBe("reconfigure_and_retry")
+    expect(result.modelOverride).toBe("claude-opus-4-20250514")
+  })
+
+  it("parses agent_takeover with takeoverOutput", () => {
+    const rawText = JSON.stringify({
+      decision: "agent_takeover",
+      reasoning: "Script too complex to fix",
+      takeoverOutput: "Report generated successfully",
+      takeoverExitCode: 0,
+    })
+
+    const result = parseDelegationResponse(rawText)
+
+    expect(result.success).toBe(true)
+    expect(result.decision).toBe("agent_takeover")
+    expect(result.takeoverOutput).toBe("Report generated successfully")
+    expect(result.takeoverExitCode).toBe(0)
+  })
+
+  it("parses block_node with blockReason and continueSubsequent", () => {
+    const rawText = JSON.stringify({
+      decision: "block_node",
+      reasoning: "Dangerous operation detected",
+      blockReason: "Kill targeting $HOST_PID",
+      continueSubsequent: false,
+    })
+
+    const result = parseDelegationResponse(rawText)
+
+    expect(result.success).toBe(true)
+    expect(result.decision).toBe("block_node")
+    expect(result.blockReason).toBe("Kill targeting $HOST_PID")
+    expect(result.continueSubsequent).toBe(false)
+  })
+
+  it("extracts JSON from markdown code block", () => {
+    const rawText = `Here's my analysis:
+\`\`\`json
+{
+  "decision": "guide_and_retry",
+  "reasoning": "simple fix",
+  "harnessHint": "try this"
+}
+\`\`\`
+`
+    const result = parseDelegationResponse(rawText)
+
+    expect(result.success).toBe(true)
+    expect(result.decision).toBe("guide_and_retry")
+  })
+
+  it("extracts JSON from surrounding text", () => {
+    const rawText = `Based on my analysis:
+{"decision": "fix_and_retry", "reasoning": "wrong value", "varPoolPatches": {"key": "val"}}
+This should fix it.`
+
+    const result = parseDelegationResponse(rawText)
+
+    expect(result.success).toBe(true)
+    expect(result.decision).toBe("fix_and_retry")
+  })
+
+  it("returns failure for invalid decision type", () => {
+    const rawText = JSON.stringify({
+      decision: "invalid_decision",
+      reasoning: "wrong",
+    })
+
+    const result = parseDelegationResponse(rawText)
+
+    expect(result.success).toBe(false)
+    expect(result.reasoning).toContain("invalid decision")
+  })
+
+  it("returns failure for missing decision field", () => {
+    const rawText = JSON.stringify({
+      reasoning: "no decision field",
+    })
+
+    const result = parseDelegationResponse(rawText)
+
+    expect(result.success).toBe(false)
+    expect(result.reasoning).toContain("missing")
+  })
+
+  it("returns failure for non-JSON text", () => {
+    const rawText = "This is not JSON at all"
+
+    const result = parseDelegationResponse(rawText)
+
+    expect(result.success).toBe(false)
+    expect(result.reasoning).toContain("parse")
+  })
+
+  it("returns failure for invalid JSON", () => {
+    const rawText = "{ invalid json }"
+
+    const result = parseDelegationResponse(rawText)
+
+    expect(result.success).toBe(false)
+    expect(result.reasoning).toContain("invalid JSON")
+  })
+})
+
+// ─── Response Parsing — Old Format (Backward Compat) ────────────────────────
+
+describe("parseDelegationResponse — old format (interventionType)", () => {
+  it("maps inject → guide_and_retry", () => {
     const rawText = JSON.stringify({
       interventionType: "inject",
       data: { message: "Try installing dependencies first" },
@@ -145,12 +363,12 @@ describe("parseDelegationResponse", () => {
     const result = parseDelegationResponse(rawText)
 
     expect(result.success).toBe(true)
-    expect(result.interventionType).toBe("inject")
-    expect(result.interventionData).toEqual({ message: "Try installing dependencies first" })
+    expect(result.decision).toBe("guide_and_retry")
+    expect(result.harnessHint).toBe("Try installing dependencies first")
     expect(result.reasoning).toContain("missing module")
   })
 
-  it("parses valid JSON response with varpool intervention", () => {
+  it("maps varpool → fix_and_retry with key/value data", () => {
     const rawText = JSON.stringify({
       interventionType: "varpool",
       data: { key: "build_target", value: "production" },
@@ -160,10 +378,11 @@ describe("parseDelegationResponse", () => {
     const result = parseDelegationResponse(rawText)
 
     expect(result.success).toBe(true)
-    expect(result.interventionType).toBe("varpool")
+    expect(result.decision).toBe("fix_and_retry")
+    expect(result.varPoolPatches).toEqual({ build_target: "production" })
   })
 
-  it("parses valid JSON response with definition intervention", () => {
+  it("maps definition → fix_and_retry", () => {
     const rawText = JSON.stringify({
       interventionType: "definition",
       data: { field: "script", value: "npm install && npm run build" },
@@ -173,10 +392,10 @@ describe("parseDelegationResponse", () => {
     const result = parseDelegationResponse(rawText)
 
     expect(result.success).toBe(true)
-    expect(result.interventionType).toBe("definition")
+    expect(result.decision).toBe("fix_and_retry")
   })
 
-  it("parses valid JSON response with takeover intervention", () => {
+  it("maps takeover → agent_takeover", () => {
     const rawText = JSON.stringify({
       interventionType: "takeover",
       data: { script: "npm install xyz && npm run build" },
@@ -186,57 +405,11 @@ describe("parseDelegationResponse", () => {
     const result = parseDelegationResponse(rawText)
 
     expect(result.success).toBe(true)
-    expect(result.interventionType).toBe("takeover")
+    expect(result.decision).toBe("agent_takeover")
+    expect(result.takeoverOutput).toBe("npm install xyz && npm run build")
   })
 
-  it("extracts JSON from markdown code block", () => {
-    const rawText = `Here's my analysis:
-\`\`\`json
-{
-  "interventionType": "inject",
-  "data": { "message": "fix it" },
-  "reasoning": "simple fix"
-}
-\`\`\`
-`
-    const result = parseDelegationResponse(rawText)
-
-    expect(result.success).toBe(true)
-    expect(result.interventionType).toBe("inject")
-  })
-
-  it("extracts JSON from surrounding text", () => {
-    const rawText = `Based on my analysis, here is the intervention:
-{"interventionType": "varpool", "data": {"key": "x", "value": "y"}, "reasoning": "wrong value"}
-This should fix the issue.`
-
-    const result = parseDelegationResponse(rawText)
-
-    expect(result.success).toBe(true)
-    expect(result.interventionType).toBe("varpool")
-  })
-
-  it("returns failure for invalid JSON", () => {
-    const rawText = "This is not JSON at all"
-
-    const result = parseDelegationResponse(rawText)
-
-    expect(result.success).toBe(false)
-    expect(result.reasoning).toContain("parse")
-  })
-
-  it("returns failure for missing interventionType", () => {
-    const rawText = JSON.stringify({
-      data: { message: "fix" },
-      reasoning: "missing type",
-    })
-
-    const result = parseDelegationResponse(rawText)
-
-    expect(result.success).toBe(false)
-  })
-
-  it("returns failure for invalid interventionType", () => {
+  it("returns failure for invalid old interventionType", () => {
     const rawText = JSON.stringify({
       interventionType: "invalid_type",
       data: { message: "fix" },
@@ -246,17 +419,17 @@ This should fix the issue.`
     const result = parseDelegationResponse(rawText)
 
     expect(result.success).toBe(false)
+    expect(result.reasoning).toContain("cannot map")
   })
 })
 
 // ─── AgentDelegationService.delegate ────────────────────────────────────────
 
 describe("AgentDelegationService — delegate", () => {
-  let service: AgentDelegationService
   let mockDao: any
   let mockSse: any
   let mockLLMCall: ReturnType<typeof vi.fn>
-  let mockGetProvider: ReturnType<typeof vi.fn>
+  let mockAgentRunner: ReturnType<typeof vi.fn>
 
   beforeEach(() => {
     mockDao = {
@@ -272,31 +445,125 @@ describe("AgentDelegationService — delegate", () => {
     }
 
     mockLLMCall = vi.fn()
-    mockGetProvider = vi.fn()
+    mockAgentRunner = vi.fn()
   })
 
   afterEach(() => {
     vi.restoreAllMocks()
   })
 
-  function createService(opts?: { timeoutMs?: number }) {
+  function createService(opts?: {
+    timeoutMs?: number
+    useAgentRunner?: boolean
+  }) {
     return new AgentDelegationService({
       dao: mockDao,
       sse: mockSse,
       workspaceId: "ws-1",
-      llmCall: mockLLMCall,
+      agentSessionRunner: opts?.useAgentRunner
+        ? (mockAgentRunner as AgentSessionRunner)
+        : undefined,
+      llmCall: opts?.useAgentRunner ? undefined : mockLLMCall,
       timeoutMs: opts?.timeoutMs,
     })
   }
 
-  it("creates a virtual node_execution record for token tracking", async () => {
+  // ── Agent Session Runner (AC1) ──────────────────────────────
+
+  it("uses AgentSessionRunner when provided", async () => {
+    const report = makeReport()
+    const context = makeContext()
+
+    mockAgentRunner.mockResolvedValue({
+      text: JSON.stringify({
+        decision: "guide_and_retry",
+        reasoning: "analysis",
+        harnessHint: "try this",
+      }),
+      tokenUsage: { input: 100, output: 50, model: "claude-sonnet-4-20250514" },
+      sessionId: "session-123",
+    })
+
+    const service = createService({ useAgentRunner: true })
+    const result = await service.delegate({
+      executionId: "exec-1",
+      nodeId: "bash-build",
+      report,
+      context,
+    })
+
+    expect(mockAgentRunner).toHaveBeenCalledWith(
+      expect.objectContaining({
+        cloneName: "harness-agent",
+        executionId: "exec-1",
+        nodeId: "bash-build",
+      }),
+    )
+    expect(result.success).toBe(true)
+    expect(result.decision).toBe("guide_and_retry")
+  })
+
+  it("passes built prompt to AgentSessionRunner", async () => {
+    const report = makeReport()
+    const context = makeContext()
+
+    mockAgentRunner.mockResolvedValue({
+      text: JSON.stringify({
+        decision: "fix_and_retry",
+        reasoning: "analysis",
+      }),
+    })
+
+    const service = createService({ useAgentRunner: true })
+    await service.delegate({
+      executionId: "exec-1",
+      nodeId: "bash-build",
+      report,
+      context,
+    })
+
+    const callArgs = mockAgentRunner.mock.calls[0][0]
+    expect(callArgs.prompt).toContain("stupid_retry")
+    expect(callArgs.prompt).toContain("bash-build")
+    expect(callArgs.prompt).toContain("fix_and_retry")
+  })
+
+  // ── Backward compat with llmCall ────────────────────────────
+
+  it("falls back to llmCall when no AgentSessionRunner", async () => {
     const report = makeReport()
     const context = makeContext()
 
     mockLLMCall.mockResolvedValue({
       text: JSON.stringify({
-        interventionType: "inject",
-        data: { message: "fix" },
+        decision: "guide_and_retry",
+        reasoning: "analysis",
+        harnessHint: "try this",
+      }),
+      tokenUsage: { input: 100, output: 50, model: "claude-sonnet-4-20250514" },
+    })
+
+    const service = createService()
+    const result = await service.delegate({
+      executionId: "exec-1",
+      nodeId: "bash-build",
+      report,
+      context,
+    })
+
+    expect(mockLLMCall).toHaveBeenCalled()
+    expect(result.success).toBe(true)
+  })
+
+  // ── Token recording (AC6) ──────────────────────────────────
+
+  it("records token usage with source='harness'", async () => {
+    const report = makeReport()
+    const context = makeContext()
+
+    mockLLMCall.mockResolvedValue({
+      text: JSON.stringify({
+        decision: "guide_and_retry",
         reasoning: "analysis",
       }),
       tokenUsage: { input: 100, output: 50, model: "claude-sonnet-4-20250514" },
@@ -310,10 +577,56 @@ describe("AgentDelegationService — delegate", () => {
       context,
     })
 
-    expect(mockDao.insertEvent).toHaveBeenCalled()
-    const eventCall = mockDao.insertEvent.mock.calls[0][0]
-    expect(eventCall.event_type).toBe("delegation")
+    expect(mockDao.insertHarnessTokenUsage).toHaveBeenCalled()
+    const tokenCall = mockDao.insertHarnessTokenUsage.mock.calls[0][0]
+    expect(tokenCall.model).toBe("claude-sonnet-4-20250514")
+    expect(tokenCall.inputTokens).toBe(100)
+    expect(tokenCall.outputTokens).toBe(50)
   })
+
+  // ── Timeout protection (AC5) ───────────────────────────────
+
+  it("handles timeout by aborting and returning failure", async () => {
+    const report = makeReport()
+    const context = makeContext()
+
+    mockLLMCall.mockImplementation(
+      () => new Promise((resolve) => setTimeout(() => resolve("{}"), 10000)),
+    )
+
+    const service = createService({ timeoutMs: 50 })
+    const result = await service.delegate({
+      executionId: "exec-1",
+      nodeId: "bash-build",
+      report,
+      context,
+    })
+
+    expect(result.success).toBe(false)
+    expect(result.reasoning).toContain("timeout")
+  })
+
+  it("handles AgentSessionRunner timeout", async () => {
+    const report = makeReport()
+    const context = makeContext()
+
+    mockAgentRunner.mockImplementation(
+      () => new Promise((resolve) => setTimeout(() => resolve({ text: "{}" }), 10000)),
+    )
+
+    const service = createService({ useAgentRunner: true, timeoutMs: 50 })
+    const result = await service.delegate({
+      executionId: "exec-1",
+      nodeId: "bash-build",
+      report,
+      context,
+    })
+
+    expect(result.success).toBe(false)
+    expect(result.reasoning).toContain("timeout")
+  })
+
+  // ── SSE events ─────────────────────────────────────────────
 
   it("emits SSE harness_delegation start and complete events", async () => {
     const report = makeReport()
@@ -321,8 +634,7 @@ describe("AgentDelegationService — delegate", () => {
 
     mockLLMCall.mockResolvedValue({
       text: JSON.stringify({
-        interventionType: "inject",
-        data: { message: "fix" },
+        decision: "guide_and_retry",
         reasoning: "analysis",
       }),
       tokenUsage: { input: 100, output: 50, model: "claude-sonnet-4-20250514" },
@@ -346,56 +658,6 @@ describe("AgentDelegationService — delegate", () => {
     expect(delegationEvents[1][1].data.status).toBe("complete")
   })
 
-  it("records token usage with source='harness'", async () => {
-    const report = makeReport()
-    const context = makeContext()
-
-    mockLLMCall.mockResolvedValue({
-      text: JSON.stringify({
-        interventionType: "inject",
-        data: { message: "fix" },
-        reasoning: "analysis",
-      }),
-      tokenUsage: { input: 100, output: 50, model: "claude-sonnet-4-20250514" },
-    })
-
-    const service = createService()
-    const result = await service.delegate({
-      executionId: "exec-1",
-      nodeId: "bash-build",
-      report,
-      context,
-    })
-
-    // Token usage should be recorded via insertHarnessTokenUsage
-    expect(mockDao.insertHarnessTokenUsage).toHaveBeenCalled()
-    const tokenCall = mockDao.insertHarnessTokenUsage.mock.calls[0][0]
-    expect(tokenCall.model).toBe("claude-sonnet-4-20250514")
-    expect(tokenCall.inputTokens).toBe(100)
-    expect(tokenCall.outputTokens).toBe(50)
-  })
-
-  it("handles timeout by aborting and returning failure", async () => {
-    const report = makeReport()
-    const context = makeContext()
-
-    // Simulate a slow LLM call that exceeds timeout
-    mockLLMCall.mockImplementation(
-      () => new Promise((resolve) => setTimeout(() => resolve("{}"), 10000)),
-    )
-
-    const service = createService({ timeoutMs: 50 })
-    const result = await service.delegate({
-      executionId: "exec-1",
-      nodeId: "bash-build",
-      report,
-      context,
-    })
-
-    expect(result.success).toBe(false)
-    expect(result.reasoning).toContain("timeout")
-  })
-
   it("emits SSE harness_delegation fail event on failure", async () => {
     const report = makeReport()
     const context = makeContext()
@@ -417,10 +679,11 @@ describe("AgentDelegationService — delegate", () => {
       (call: any) => call[1].event === "harness_delegation",
     )
 
-    // Should have start + fail
     expect(delegationEvents.length).toBe(2)
     expect(delegationEvents[1][1].data.status).toBe("fail")
   })
+
+  // ── Persistence ────────────────────────────────────────────
 
   it("persists delegation event to harness_events table", async () => {
     const report = makeReport()
@@ -428,8 +691,7 @@ describe("AgentDelegationService — delegate", () => {
 
     mockLLMCall.mockResolvedValue({
       text: JSON.stringify({
-        interventionType: "inject",
-        data: { message: "fix" },
+        decision: "fix_and_retry",
         reasoning: "analysis",
       }),
     })
@@ -449,15 +711,17 @@ describe("AgentDelegationService — delegate", () => {
     expect(event.event_type).toBe("delegation")
   })
 
-  it("returns correct DelegationResult on success", async () => {
+  // ── Result parsing in delegate flow ────────────────────────
+
+  it("returns correct DelegationResult with new decision types", async () => {
     const report = makeReport()
     const context = makeContext()
 
     mockLLMCall.mockResolvedValue({
       text: JSON.stringify({
-        interventionType: "varpool",
-        data: { key: "build_target", value: "production" },
+        decision: "fix_and_retry",
         reasoning: "Wrong build target causing failures",
+        varPoolPatches: { build_target: "production" },
       }),
     })
 
@@ -470,9 +734,35 @@ describe("AgentDelegationService — delegate", () => {
     })
 
     expect(result.success).toBe(true)
-    expect(result.interventionType).toBe("varpool")
-    expect(result.interventionData).toEqual({ key: "build_target", value: "production" })
+    expect(result.decision).toBe("fix_and_retry")
+    expect(result.varPoolPatches).toEqual({ build_target: "production" })
     expect(result.reasoning).toContain("build target")
+  })
+
+  it("handles backward-compat old interventionType in agent response", async () => {
+    const report = makeReport()
+    const context = makeContext()
+
+    // Agent returns old format — should be mapped to new decision type
+    mockLLMCall.mockResolvedValue({
+      text: JSON.stringify({
+        interventionType: "varpool",
+        data: { key: "build_target", value: "production" },
+        reasoning: "Wrong build target",
+      }),
+    })
+
+    const service = createService()
+    const result = await service.delegate({
+      executionId: "exec-1",
+      nodeId: "bash-build",
+      report,
+      context,
+    })
+
+    expect(result.success).toBe(true)
+    expect(result.decision).toBe("fix_and_retry") // mapped from varpool
+    expect(result.varPoolPatches).toEqual({ build_target: "production" })
   })
 
   it("handles LLM returning unparseable response gracefully", async () => {

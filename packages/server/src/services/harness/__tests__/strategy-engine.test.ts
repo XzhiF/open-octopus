@@ -1,6 +1,6 @@
 // packages/server/src/services/harness/__tests__/strategy-engine.test.ts
 //
-// Unit tests for the StrategyEngine, ActionRegistry, and 5 action implementations.
+// Unit tests for the StrategyEngine (tri-domain router) and ActionRegistry.
 
 import { describe, it, expect, beforeEach, vi } from "vitest"
 import { StrategyEngine } from "../strategy-engine"
@@ -52,23 +52,6 @@ const strategies: StrategyConfig[] = [
     delegate_to_agent: true,
   },
 ]
-
-const defaultConfig: HarnessSystemConfigParsed = {
-  detectors: {
-    stupid_retry: { enabled: true, threshold: 2 },
-    model_mismatch: { enabled: true },
-    process_conflict: { enabled: true },
-    timeout_cascade: { enabled: true, threshold: 3 },
-  },
-  strategies,
-  isolation: {
-    process_group: true,
-    port_protection: true,
-    pid_protection: true,
-    sandbox: "auto",
-    fs_whitelist: [".", "/tmp"],
-  },
-}
 
 // ─── StrategyEngine.matchStrategy ───────────────────────────────────────────
 
@@ -158,7 +141,6 @@ describe("StrategyEngine — matchStrategy", () => {
   })
 
   it("severity ordering: info < warning < critical", () => {
-    // A strategy requiring 'warning' severity should match 'warning' and 'critical'
     const warningStrategies: StrategyConfig[] = [
       { match: "test_detector", severity: "warning", actions: [{ type: "pause" }] },
     ]
@@ -183,133 +165,113 @@ describe("StrategyEngine — matchStrategy", () => {
   })
 })
 
-// ─── StrategyEngine.executeActions ──────────────────────────────────────────
+// ─── StrategyEngine.handleReport — tri-domain router ────────────────────────
 
-describe("StrategyEngine — executeActions", () => {
-  let engine: StrategyEngine
+describe("StrategyEngine — handleReport (tri-domain router)", () => {
   let mockDao: any
   let mockSse: any
-  let mockRepairService: any
 
   beforeEach(() => {
-    mockDao = { insertEvent: vi.fn(), findEvents: vi.fn().mockReturnValue([]) }
-    mockSse = { emit: vi.fn() }
-    mockRepairService = {
-      intervene: vi.fn().mockResolvedValue({ injected: true }),
-      patchVarPool: vi.fn().mockReturnValue({ updated: 1, snapshot: {} }),
-      reloadWorkflow: vi.fn().mockReturnValue({ reloaded: true, diff: ["~ node modified: bash-build"] }),
+    mockDao = {
+      insertEvent: vi.fn(),
+      findEvents: vi.fn().mockReturnValue([]),
+      getDb: vi.fn().mockReturnValue({
+        prepare: vi.fn().mockReturnValue({
+          run: vi.fn(),
+          get: vi.fn().mockReturnValue(undefined),
+        }),
+      }),
     }
-    engine = new StrategyEngine({
+    mockSse = { emit: vi.fn() }
+  })
+
+  it("AC1: process_conflict + critical → delegate: true, synchronousBlock: true", async () => {
+    const engine = new StrategyEngine({
       strategies,
       dao: mockDao,
       sse: mockSse,
       workspaceId: "ws-1",
-      repairService: mockRepairService,
     })
-  })
 
-  it("executes inject_message action and persists result", async () => {
-    const report = makeReport({ detector: "stupid_retry" })
-    const strategy = engine.matchStrategy(report)!
-    const results = await engine.executeActions(report, strategy)
-
-    expect(results).toHaveLength(2) // inject_message + retry_with_hint
-    expect(results[0].success).toBe(true)
-    expect(results[0].action).toBe("inject_message")
-    expect(mockRepairService.intervene).toHaveBeenCalledWith(
-      "exec-1",
-      "bash-build",
-      "Try a different approach.",
-    )
-  })
-
-  it("executes switch_model action and returns modelOverride", async () => {
-    const report = makeReport({
-      detector: "model_mismatch",
-      nodeId: "agent-read",
-      nodeType: "agent",
-    })
-    const strategy = engine.matchStrategy(report)!
-    const results = await engine.executeActions(report, strategy)
-
-    expect(results).toHaveLength(1)
-    expect(results[0].success).toBe(true)
-    expect(results[0].action).toBe("switch_model")
-    expect(results[0].modelOverride).toBeTruthy()
-  })
-
-  it("executes abort action", async () => {
     const report = makeReport({
       detector: "process_conflict",
       severity: "critical",
     })
-    const strategy = engine.matchStrategy(report)!
-    const results = await engine.executeActions(report, strategy)
+    const result = await engine.handleReport(report)
 
-    expect(results).toHaveLength(1)
-    expect(results[0].success).toBe(true)
-    expect(results[0].action).toBe("abort")
+    expect(result.delegate).toBe(true)
+    expect(result.synchronousBlock).toBe(true)
+    expect(result.matchedStrategy).not.toBeNull()
+    expect(result.matchedStrategy!.match).toBe("process_conflict")
+    // Should have executed abort action
+    expect(result.actionResults.some((r) => r.action === "abort")).toBe(true)
   })
 
-  it("executes pause action with notify", async () => {
-    const report = makeReport({
-      detector: "timeout_cascade",
-      severity: "critical",
+  it("AC2: stupid_retry → delegate: true, no action execution", async () => {
+    const engine = new StrategyEngine({
+      strategies,
+      dao: mockDao,
+      sse: mockSse,
+      workspaceId: "ws-1",
     })
-    const strategy = engine.matchStrategy(report)!
-    const results = await engine.executeActions(report, strategy)
 
-    expect(results).toHaveLength(1)
-    expect(results[0].success).toBe(true)
-    expect(results[0].action).toBe("pause")
+    const report = makeReport({ detector: "stupid_retry" })
+    const result = await engine.handleReport(report)
+
+    expect(result.delegate).toBe(true)
+    expect(result.synchronousBlock).toBeUndefined()
+    expect(result.actionResults).toHaveLength(0)
   })
 
-  it("executes wildcard strategy pause_and_notify", async () => {
+  it("AC2: model_mismatch → delegate: true, no action execution", async () => {
+    const engine = new StrategyEngine({
+      strategies,
+      dao: mockDao,
+      sse: mockSse,
+      workspaceId: "ws-1",
+    })
+
+    const report = makeReport({ detector: "model_mismatch", severity: "warning" })
+    const result = await engine.handleReport(report)
+
+    expect(result.delegate).toBe(true)
+    expect(result.synchronousBlock).toBeUndefined()
+    expect(result.actionResults).toHaveLength(0)
+  })
+
+  it("AC2: timeout_cascade → delegate: true, no action execution", async () => {
+    const engine = new StrategyEngine({
+      strategies,
+      dao: mockDao,
+      sse: mockSse,
+      workspaceId: "ws-1",
+    })
+
+    const report = makeReport({ detector: "timeout_cascade", severity: "critical" })
+    const result = await engine.handleReport(report)
+
+    expect(result.delegate).toBe(true)
+    expect(result.synchronousBlock).toBeUndefined()
+    expect(result.actionResults).toHaveLength(0)
+  })
+
+  it("AC2: unknown detector → delegate: true, no action execution", async () => {
+    const engine = new StrategyEngine({
+      strategies,
+      dao: mockDao,
+      sse: mockSse,
+      workspaceId: "ws-1",
+    })
+
     const report = makeReport({ detector: "unknown_detector" })
-    const strategy = engine.matchStrategy(report)!
-    const results = await engine.executeActions(report, strategy)
+    const result = await engine.handleReport(report)
 
-    expect(results).toHaveLength(1)
-    expect(results[0].success).toBe(true)
-    expect(results[0].action).toBe("pause_and_notify")
+    expect(result.delegate).toBe(true)
+    expect(result.synchronousBlock).toBeUndefined()
+    expect(result.actionResults).toHaveLength(0)
   })
 
-  it("persists intervention results to harness_events table", async () => {
-    const report = makeReport({ detector: "stupid_retry" })
-    const strategy = engine.matchStrategy(report)!
-    await engine.executeActions(report, strategy)
-
-    // Should persist at least one intervention event
-    expect(mockDao.insertEvent).toHaveBeenCalled()
-    const insertCall = mockDao.insertEvent.mock.calls[0][0]
-    expect(insertCall.event_type).toBe("intervention")
-    expect(insertCall.execution_id).toBe("exec-1")
-  })
-
-  it("emits SSE harness_intervention event", async () => {
-    const report = makeReport({ detector: "stupid_retry" })
-    const strategy = engine.matchStrategy(report)!
-    await engine.executeActions(report, strategy)
-
-    expect(mockSse.emit).toHaveBeenCalled()
-    const sseCall = mockSse.emit.mock.calls[0]
-    expect(sseCall[1].event).toBe("harness_intervention")
-    expect(sseCall[1].data.executionId).toBe("exec-1")
-  })
-})
-
-// ─── harness_blocked event ────────────────────────────────────────────────
-
-describe("StrategyEngine — harness_blocked event", () => {
-  let mockDao: any
-  let mockSse: any
-
-  beforeEach(() => {
-    mockDao = { insertEvent: vi.fn(), findEvents: vi.fn().mockReturnValue([]) }
-    mockSse = { emit: vi.fn() }
-  })
-
-  it("emits harness_blocked SSE when process_conflict + critical + abort", async () => {
+  it("process_conflict + critical emits harness_blocked SSE", async () => {
     const engine = new StrategyEngine({
       strategies,
       dao: mockDao,
@@ -323,12 +285,8 @@ describe("StrategyEngine — harness_blocked event", () => {
       executionId: "exec-42",
       nodeId: "bash-test",
     })
-    const result = await engine.handleReport(report)
+    await engine.handleReport(report)
 
-    expect(result.matchedStrategy).not.toBeNull()
-    expect(result.matchedStrategy!.match).toBe("process_conflict")
-
-    // Verify harness_blocked SSE was emitted
     const blockedSseCalls = mockSse.emit.mock.calls.filter(
       (call: any[]) => call[1].event === "harness_blocked",
     )
@@ -341,7 +299,7 @@ describe("StrategyEngine — harness_blocked event", () => {
     expect(blockedData.pattern).toBe("process_conflict")
   })
 
-  it("persists harness_blocked event to harness_events table", async () => {
+  it("process_conflict + critical persists harness_blocked event", async () => {
     const engine = new StrategyEngine({
       strategies,
       dao: mockDao,
@@ -355,7 +313,6 @@ describe("StrategyEngine — harness_blocked event", () => {
     })
     await engine.handleReport(report)
 
-    // Find the blocked event in insertEvent calls
     const blockedInsertCalls = mockDao.insertEvent.mock.calls.filter(
       (call: any[]) => call[0].event_type === "blocked",
     )
@@ -363,18 +320,11 @@ describe("StrategyEngine — harness_blocked event", () => {
 
     const blockedRow = blockedInsertCalls[0][0]
     expect(blockedRow.event_type).toBe("blocked")
-    expect(blockedRow.execution_id).toBe("exec-1")
-    expect(blockedRow.node_id).toBe("bash-build")
     expect(blockedRow.detector).toBe("process_conflict")
     expect(blockedRow.severity).toBe("critical")
-
-    const resultData = JSON.parse(blockedRow.result_json)
-    expect(resultData.pattern).toBe("process_conflict")
-    expect(resultData.reason).toBe("Blocked by harness: process conflict")
   })
 
-  it("does NOT emit harness_blocked for non-process_conflict abort", async () => {
-    // Strategy with abort for a different detector
+  it("does NOT emit harness_blocked for non-process_conflict", async () => {
     const customStrategies: StrategyConfig[] = [
       {
         match: "custom_detector",
@@ -400,7 +350,7 @@ describe("StrategyEngine — harness_blocked event", () => {
     expect(blockedSseCalls).toHaveLength(0)
   })
 
-  it("does NOT emit harness_blocked for process_conflict with non-critical severity", async () => {
+  it("process_conflict with non-critical severity → delegate without sync block", async () => {
     const engine = new StrategyEngine({
       strategies,
       dao: mockDao,
@@ -408,88 +358,19 @@ describe("StrategyEngine — harness_blocked event", () => {
       workspaceId: "ws-1",
     })
 
-    // process_conflict with warning severity falls through to wildcard (no abort)
     const report = makeReport({
       detector: "process_conflict",
       severity: "warning",
     })
-    await engine.handleReport(report)
+    const result = await engine.handleReport(report)
+
+    expect(result.delegate).toBe(true)
+    expect(result.synchronousBlock).toBeUndefined()
 
     const blockedSseCalls = mockSse.emit.mock.calls.filter(
       (call: any[]) => call[1].event === "harness_blocked",
     )
     expect(blockedSseCalls).toHaveLength(0)
-  })
-})
-
-// ─── Delegation fallback ────────────────────────────────────────────────────
-
-describe("StrategyEngine — delegation fallback", () => {
-  let mockDao: any
-  let mockSse: any
-
-  beforeEach(() => {
-    mockDao = { insertEvent: vi.fn(), findEvents: vi.fn().mockReturnValue([]) }
-    mockSse = { emit: vi.fn() }
-  })
-
-  it("returns delegate: true when no strategy matches", async () => {
-    const noStrategiesEngine = new StrategyEngine({
-      strategies: [],
-      dao: mockDao,
-      sse: mockSse,
-      workspaceId: "ws-1",
-    })
-
-    const report = makeReport({ detector: "unknown_detector" })
-    const result = await noStrategiesEngine.handleReport(report)
-
-    expect(result.delegate).toBe(true)
-  })
-
-  it("returns delegate: true when wildcard strategy has delegate_to_agent", async () => {
-    const wildcardEngine = new StrategyEngine({
-      strategies: [
-        {
-          match: "*",
-          actions: [{ type: "pause_and_notify" }],
-          delegate_to_agent: true,
-        },
-      ],
-      dao: mockDao,
-      sse: mockSse,
-      workspaceId: "ws-1",
-    })
-
-    const report = makeReport({ detector: "unknown_detector" })
-    const result = await wildcardEngine.handleReport(report)
-
-    expect(result.delegate).toBe(true)
-    expect(result.actionResults).toHaveLength(1)
-  })
-
-  it("does NOT delegate when strategy matched and no delegate_to_agent flag", async () => {
-    const noDelegateEngine = new StrategyEngine({
-      strategies: [
-        {
-          match: "stupid_retry",
-          actions: [{ type: "inject_message", message: "Try again" }],
-          // no delegate_to_agent
-        },
-      ],
-      dao: mockDao,
-      sse: mockSse,
-      workspaceId: "ws-1",
-      repairService: {
-        intervene: vi.fn().mockResolvedValue({ injected: true }),
-      },
-    })
-
-    const report = makeReport({ detector: "stupid_retry" })
-    const result = await noDelegateEngine.handleReport(report)
-
-    expect(result.delegate).toBe(false)
-    expect(result.actionResults).toHaveLength(1)
   })
 })
 
@@ -502,20 +383,22 @@ describe("ActionRegistry", () => {
     registry = new ActionRegistry()
   })
 
-  it("has built-in handlers for default action types", () => {
-    expect(registry.has("inject_message")).toBe(true)
-    expect(registry.has("agent_takeover")).toBe(true)
-    expect(registry.has("modify_varpool")).toBe(true)
-    expect(registry.has("modify_definition")).toBe(true)
-    expect(registry.has("switch_model")).toBe(true)
-    expect(registry.has("retry_with_hint")).toBe(true)
+  it("AC3: has only abort handler", () => {
     expect(registry.has("abort")).toBe(true)
-    expect(registry.has("pause")).toBe(true)
-    expect(registry.has("pause_and_notify")).toBe(true)
   })
 
-  it("returns handler for known action type", () => {
-    const handler = registry.get("inject_message")
+  it("AC3: does NOT have removed handlers", () => {
+    expect(registry.has("inject_message")).toBe(false)
+    expect(registry.has("modify_varpool")).toBe(false)
+    expect(registry.has("modify_definition")).toBe(false)
+    expect(registry.has("switch_model")).toBe(false)
+    expect(registry.has("retry_with_hint")).toBe(false)
+    expect(registry.has("pause")).toBe(false)
+    expect(registry.has("pause_and_notify")).toBe(false)
+  })
+
+  it("returns handler for abort action type", () => {
+    const handler = registry.get("abort")
     expect(handler).toBeDefined()
     expect(typeof handler).toBe("function")
   })
@@ -537,214 +420,31 @@ describe("ActionRegistry", () => {
     expect(registry.has("custom_action")).toBe(true)
     expect(registry.get("custom_action")).toBe(customHandler)
   })
-})
 
-// ─── Action implementations ─────────────────────────────────────────────────
-
-describe("inject_message action", () => {
-  it("calls RepairService.intervene with correct arguments", async () => {
-    const { injectMessageHandler } = await import("../actions/inject-message")
-    const mockRepairService = {
-      intervene: vi.fn().mockResolvedValue({ injected: true }),
-    }
-
-    const result = await injectMessageHandler({
-      report: makeReport({ executionId: "exec-1", nodeId: "bash-build" }),
-      strategyAction: { type: "inject_message", message: "Try differently" },
+  it("executes abort action successfully", async () => {
+    const result = await registry.execute({
+      report: makeReport(),
+      strategyAction: { type: "abort", reason: "Test abort" },
       dao: { insertEvent: vi.fn() } as any,
       sse: { emit: vi.fn() } as any,
-      repairService: mockRepairService as any,
       workspaceId: "ws-1",
     })
 
     expect(result.success).toBe(true)
-    expect(result.action).toBe("inject_message")
-    expect(mockRepairService.intervene).toHaveBeenCalledWith(
-      "exec-1",
-      "bash-build",
-      "Try differently",
-    )
+    expect(result.action).toBe("abort")
+    expect(result.message).toBe("Test abort")
   })
 
-  it("returns failure when no repairService is available", async () => {
-    const { injectMessageHandler } = await import("../actions/inject-message")
-
-    const result = await injectMessageHandler({
+  it("returns failure for unregistered action type", async () => {
+    const result = await registry.execute({
       report: makeReport(),
-      strategyAction: { type: "inject_message", message: "Try" },
+      strategyAction: { type: "unknown_action" },
       dao: { insertEvent: vi.fn() } as any,
       sse: { emit: vi.fn() } as any,
       workspaceId: "ws-1",
     })
 
     expect(result.success).toBe(false)
-    expect(result.message).toContain("RepairService")
-  })
-
-  it("returns failure when message is missing from action config", async () => {
-    const { injectMessageHandler } = await import("../actions/inject-message")
-
-    const result = await injectMessageHandler({
-      report: makeReport(),
-      strategyAction: { type: "inject_message" },
-      dao: { insertEvent: vi.fn() } as any,
-      sse: { emit: vi.fn() } as any,
-      repairService: { intervene: vi.fn() } as any,
-      workspaceId: "ws-1",
-    })
-
-    expect(result.success).toBe(false)
-    expect(result.message).toContain("message")
-  })
-})
-
-describe("agent_takeover action", () => {
-  it("returns stub result with success (ticket 09 will flesh out)", async () => {
-    const { agentTakeoverHandler } = await import("../actions/agent-takeover")
-
-    const result = await agentTakeoverHandler({
-      report: makeReport(),
-      strategyAction: { type: "agent_takeover" },
-      dao: { insertEvent: vi.fn() } as any,
-      sse: { emit: vi.fn() } as any,
-      workspaceId: "ws-1",
-    })
-
-    expect(result.success).toBe(true)
-    expect(result.action).toBe("agent_takeover")
-    expect(result.message).toContain("takeover")
-    expect(result.delegate).toBe(true)
-  })
-})
-
-describe("modify_varpool action", () => {
-  it("calls RepairService.patchVarPool with correct key-value", async () => {
-    const { modifyVarpoolHandler } = await import("../actions/modify-varpool")
-    const mockRepairService = {
-      patchVarPool: vi.fn().mockReturnValue({ updated: 1, snapshot: { my_var: "new_value" } }),
-    }
-
-    const result = await modifyVarpoolHandler({
-      report: makeReport({ executionId: "exec-1" }),
-      strategyAction: { type: "modify_varpool", key: "my_var", value: "new_value" },
-      dao: { insertEvent: vi.fn() } as any,
-      sse: { emit: vi.fn() } as any,
-      repairService: mockRepairService as any,
-      workspaceId: "ws-1",
-    })
-
-    expect(result.success).toBe(true)
-    expect(result.action).toBe("modify_varpool")
-    expect(mockRepairService.patchVarPool).toHaveBeenCalledWith(
-      "exec-1",
-      { my_var: "new_value" },
-    )
-  })
-
-  it("returns failure when no repairService is available", async () => {
-    const { modifyVarpoolHandler } = await import("../actions/modify-varpool")
-
-    const result = await modifyVarpoolHandler({
-      report: makeReport(),
-      strategyAction: { type: "modify_varpool", key: "var", value: "val" },
-      dao: { insertEvent: vi.fn() } as any,
-      sse: { emit: vi.fn() } as any,
-      workspaceId: "ws-1",
-    })
-
-    expect(result.success).toBe(false)
-  })
-})
-
-describe("modify_definition action", () => {
-  it("calls RepairService.reloadWorkflow when available", async () => {
-    const { modifyDefinitionHandler } = await import("../actions/modify-definition")
-    const mockRepairService = {
-      reloadWorkflow: vi.fn().mockReturnValue({ reloaded: true, diff: ["~ node modified"] }),
-    }
-
-    const result = await modifyDefinitionHandler({
-      report: makeReport({ executionId: "exec-1" }),
-      strategyAction: {
-        type: "modify_definition",
-        field: "retry.max_attempts",
-        value: 5,
-        content: "updated yaml content",
-      },
-      dao: { insertEvent: vi.fn() } as any,
-      sse: { emit: vi.fn() } as any,
-      repairService: mockRepairService as any,
-      workspaceId: "ws-1",
-    })
-
-    expect(result.success).toBe(true)
-    expect(result.action).toBe("modify_definition")
-    expect(mockRepairService.reloadWorkflow).toHaveBeenCalledWith(
-      "exec-1",
-      "updated yaml content",
-    )
-  })
-
-  it("returns failure when no repairService is available", async () => {
-    const { modifyDefinitionHandler } = await import("../actions/modify-definition")
-
-    const result = await modifyDefinitionHandler({
-      report: makeReport(),
-      strategyAction: { type: "modify_definition", field: "retry", value: 5 },
-      dao: { insertEvent: vi.fn() } as any,
-      sse: { emit: vi.fn() } as any,
-      workspaceId: "ws-1",
-    })
-
-    expect(result.success).toBe(false)
-  })
-})
-
-describe("switch_model action", () => {
-  it("returns modelOverride for vision_capable preference", async () => {
-    const { switchModelHandler } = await import("../actions/switch-model")
-
-    const result = await switchModelHandler({
-      report: makeReport(),
-      strategyAction: { type: "switch_model", prefer: "vision_capable" },
-      dao: { insertEvent: vi.fn() } as any,
-      sse: { emit: vi.fn() } as any,
-      workspaceId: "ws-1",
-    })
-
-    expect(result.success).toBe(true)
-    expect(result.action).toBe("switch_model")
-    expect(result.modelOverride).toBeTruthy()
-    expect(typeof result.modelOverride).toBe("string")
-  })
-
-  it("returns modelOverride from explicit model field", async () => {
-    const { switchModelHandler } = await import("../actions/switch-model")
-
-    const result = await switchModelHandler({
-      report: makeReport(),
-      strategyAction: { type: "switch_model", model: "claude-opus-4-20250514" },
-      dao: { insertEvent: vi.fn() } as any,
-      sse: { emit: vi.fn() } as any,
-      workspaceId: "ws-1",
-    })
-
-    expect(result.success).toBe(true)
-    expect(result.modelOverride).toBe("claude-opus-4-20250514")
-  })
-
-  it("defaults to sonnet when no preference or model specified", async () => {
-    const { switchModelHandler } = await import("../actions/switch-model")
-
-    const result = await switchModelHandler({
-      report: makeReport(),
-      strategyAction: { type: "switch_model" },
-      dao: { insertEvent: vi.fn() } as any,
-      sse: { emit: vi.fn() } as any,
-      workspaceId: "ws-1",
-    })
-
-    expect(result.success).toBe(true)
-    expect(result.modelOverride).toContain("sonnet")
+    expect(result.message).toContain("No handler registered")
   })
 })

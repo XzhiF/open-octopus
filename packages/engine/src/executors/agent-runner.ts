@@ -41,6 +41,10 @@ export class AgentNodeRunner {
      *  Enables scheduled agent jobs and clone delegation to inject
      *  their own persona + SKILL + memory context (M7 fix). */
     systemPrompt?: SystemPromptInput
+    /** Optional callback invoked before each tool call executes.
+     *  Used by the Tool Interceptor to block dangerous bash commands.
+     *  Return `{ allow: false, reason: string }` to block, or allow/undefined to pass. */
+    onBeforeToolCall?: (toolName: string, input: unknown) => Promise<{ allow: boolean; reason?: string } | undefined>
   }): Promise<AgentRunResult> {
     const start = Date.now()
     const maxRetries = opts.maxRetries ?? 1
@@ -117,6 +121,7 @@ export class AgentNodeRunner {
             effort: opts.effort,
             systemPrompt: opts.systemPrompt ?? { type: "preset", preset: "claude_code" },
             abortSignal: localAbort.signal,
+            onBeforeToolCall: opts.onBeforeToolCall,
           },
         )
 

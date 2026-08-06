@@ -6,29 +6,11 @@
 
 import type { ActionHandler } from "./action-types"
 import type { InterventionResult, ActionContext } from "./action-types"
-import { injectMessageHandler } from "./actions/inject-message"
-import { agentTakeoverHandler } from "./actions/agent-takeover"
-import { modifyVarpoolHandler } from "./actions/modify-varpool"
-import { modifyDefinitionHandler } from "./actions/modify-definition"
-import { switchModelHandler } from "./actions/switch-model"
 
 /**
- * Built-in simple action handlers for actions that don't need complex logic.
+ * Built-in abort handler — the only action kept in the Strategy Engine.
+ * All other actions are now handled by the Harness Agent (Layer 3).
  */
-const retryWithHintHandler: ActionHandler = async (ctx) => {
-  const { strategyAction } = ctx
-  const hint = (strategyAction.message as string) ??
-    (strategyAction.hint as string) ??
-    "Try a different approach to solve this problem."
-
-  return {
-    success: true,
-    action: "retry_with_hint",
-    message: `Will retry with harness hint: ${hint.slice(0, 80)}`,
-    harnessHint: hint,
-  }
-}
-
 const abortHandler: ActionHandler = async (ctx) => {
   const { strategyAction } = ctx
   const reason = (strategyAction.reason as string) ?? "Harness intervention: abort"
@@ -41,43 +23,15 @@ const abortHandler: ActionHandler = async (ctx) => {
   }
 }
 
-const pauseHandler: ActionHandler = async (ctx) => {
-  const { report, strategyAction } = ctx
-  const notify = strategyAction.notify === true
-
-  return {
-    success: true,
-    action: "pause",
-    message: `Paused execution for node ${report.nodeId}${notify ? " (notification sent)" : ""}`,
-    details: { notify },
-  }
-}
-
-const pauseAndNotifyHandler: ActionHandler = async (ctx) => {
-  const { report } = ctx
-
-  return {
-    success: true,
-    action: "pause_and_notify",
-    message: `Paused execution and notified user for node ${report.nodeId}`,
-    details: { notify: true },
-  }
-}
-
 export class ActionRegistry {
   private handlers = new Map<string, ActionHandler>()
 
   constructor() {
-    // Register all built-in handlers
-    this.handlers.set("inject_message", injectMessageHandler)
-    this.handlers.set("agent_takeover", agentTakeoverHandler)
-    this.handlers.set("modify_varpool", modifyVarpoolHandler)
-    this.handlers.set("modify_definition", modifyDefinitionHandler)
-    this.handlers.set("switch_model", switchModelHandler)
-    this.handlers.set("retry_with_hint", retryWithHintHandler)
+    // Only abort is kept — process_conflict sync domain still needs it.
+    // All other actions (inject_message, modify_varpool, modify_definition,
+    // switch_model, retry_with_hint, pause, pause_and_notify) have been
+    // moved to the Harness Agent (Layer 3).
     this.handlers.set("abort", abortHandler)
-    this.handlers.set("pause", pauseHandler)
-    this.handlers.set("pause_and_notify", pauseAndNotifyHandler)
   }
 
   /**

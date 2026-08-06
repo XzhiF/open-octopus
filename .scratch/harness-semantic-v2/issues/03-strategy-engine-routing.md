@@ -7,14 +7,14 @@
 01 — Shared Types + DB Migration
 
 ## Status
-ready-for-agent
+done
 
 ## Acceptance Criteria
-- [ ] AC1: `StrategyEngine.handleReport()` 对 process_conflict+critical 返回 `{ delegate: true, synchronousBlock: true }`
-- [ ] AC2: 对非 process_conflict 报告返回 `{ delegate: true }` (无 action 执行)
-- [ ] AC3: ActionRegistry 中仅保留 `abort` handler（删除 inject_message, modify_varpool, modify_definition, switch_model, retry_with_hint, pause, pause_and_notify）
-- [ ] AC4: `synchronouslyStorePendingAction()` 对 process_conflict 仍存储 pendingBlockAction（同步域）
-- [ ] AC5: 现有单元测试更新后通过
+- [x] AC1: `StrategyEngine.handleReport()` 对 process_conflict+critical 返回 `{ delegate: true, synchronousBlock: true }`
+- [x] AC2: 对非 process_conflict 报告返回 `{ delegate: true }` (无 action 执行)
+- [x] AC3: ActionRegistry 中仅保留 `abort` handler（删除 inject_message, modify_varpool, modify_definition, switch_model, retry_with_hint, pause, pause_and_notify）
+- [x] AC4: `synchronouslyStorePendingAction()` 对 process_conflict 仍存储 pendingBlockAction（同步域）
+- [x] AC5: 现有单元测试更新后通过
 
 ## Verification Method
 **Verification type**: unit test

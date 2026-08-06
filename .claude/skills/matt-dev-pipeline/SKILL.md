@@ -113,10 +113,92 @@ Focus ONLY on your assigned ticket. Do NOT modify files owned by other tickets."
 **b) Wait for all sub-agents in stage to complete**
 
 **c) Integration gate**: Run `pnpm build && pnpm test`
-- PASS → proceed to step (c.5)
+- PASS → proceed to step (c.1)
 - FAIL → diagnose the failure, spawn a fix sub-agent to address build/test errors, max 2 fix attempts
 
-**c.5) Stage commit**: After integration gate passes, commit all changes from this stage:
+**c.1) Stage Quality Gate**: After integration gate passes, spawn a **quality gate sub-agent** to verify implementation quality before committing.
+
+> **Why sub-agent**: The main orchestrator should stay lightweight. The quality gate sub-agent reads the full diff and spec in its own context, then returns only a structured summary to the orchestrator. This prevents context inflation across multiple stages.
+
+Spawn sub-agent via Agent tool:
+```
+Prompt: "You are a Stage Quality Gate reviewer.
+
+Stage: <N>
+Feature: <feature-slug>
+Spec: <artifacts.dir>/<feature-slug>/spec.md
+Tickets in this stage: <list ticket numbers and paths>
+
+Get the stage diff:
+  git diff --cached   (staged changes from this stage's sub-agents)
+  If nothing staged, use: git diff HEAD
+
+Perform 3 checks:
+
+### 1. Spec Compliance (AC Coverage)
+For each ticket in this stage:
+- Read the ticket's ## Acceptance Criteria
+- Read the diff for files related to that ticket
+- Check: does the diff implement EVERY AC?
+- Flag any AC that has no corresponding code change as MISSING
+
+### 2. Integration Surface
+- Identify all cross-package boundaries touched by this stage's diff
+  (imports from other packages, shared types, API contracts)
+- Check: are the interfaces consistent? Does the consuming side match
+  the providing side?
+- Flag any mismatch as INTEGRATION_BREAK
+
+### 3. Completeness (Analog Comparison)
+- For each modified file, find 1-2 analogous existing implementations
+  in the same codebase (similar feature, same pattern)
+- Compare: does the diff cover all the files that analogous features touch?
+  (e.g., if analogous feature has Service + Controller + Route + Test,
+   does this diff have the same set?)
+- Flag any missing file as COMPLETENESS_GAP
+
+## Output Format (MANDATORY — use this exact structure)
+
+\`\`\`
+## Stage <N> Quality Gate Report
+
+### Verdict: PASS / FAIL
+
+### Spec Compliance
+| Ticket | AC# | Status | Evidence |
+|--------|-----|--------|----------|
+| 01-xxx | AC1 | ✅ COVERED | <file:line> |
+| 01-xxx | AC2 | ❌ MISSING | <explanation> |
+
+### Integration Surface
+| Boundary | Provider | Consumer | Status |
+|----------|----------|----------|--------|
+| shared→engine | TypeX | import | ✅ ALIGNED |
+| server→shared | API response | VO field | ❌ MISMATCH |
+
+### Completeness
+| File | Analog | Expected Files | Missing |
+|------|--------|---------------|---------|
+| service.ts | feature-X | 4 files | test.ts |
+
+### Critical Findings (if any)
+- [CRITICAL] <finding>
+- [WARN] <finding>
+\`\`\`
+
+Verdict rules:
+- Any ❌ MISSING AC → FAIL
+- Any ❌ INTEGRATION_BREAK → FAIL
+- COMPLETENESS_GAP and WARN → note but still PASS
+"
+```
+
+**Quality gate result handling**:
+- **PASS** → proceed to step (c.5)
+- **FAIL** → present critical findings to main agent, spawn a fix sub-agent to address the quality issues, re-run quality gate. Max 2 fix attempts.
+- After 2 failed quality gate attempts → log findings in pipeline-report, present to user, pipeline stops.
+
+**c.5) Stage commit**: After integration gate AND quality gate pass, commit all changes from this stage:
 ```bash
 git add -A
 git commit -m "feat(<feature-slug>): stage <N> — <ticket-numbers>"
@@ -132,9 +214,9 @@ After all stages complete:
 git push origin $branch
 ```
 
-**Pass criteria**: All tickets done/skip + build passes + tests pass + code pushed.
+**Pass criteria**: All tickets done/skip + build passes + tests pass + quality gate passes + code pushed.
 
-**Failure handling**: Stage gate fails after 2 fix attempts → log in pipeline-report, present to user, pipeline stops.
+**Failure handling**: Stage integration gate fails after 2 fix attempts → log in pipeline-report, present to user, pipeline stops. Stage quality gate fails after 2 fix attempts → log findings in pipeline-report, present to user, pipeline stops.
 
 ---
 
@@ -334,8 +416,8 @@ Write `<artifacts.dir>/<feature-slug>/pipeline-report.md` **before** committing,
 > 单迭代时此 section 省略。
 
 ### Phase 1: DAG Orchestration
-| Stage | Tickets | Status | Integration Gate | Commit |
-|-------|---------|--------|-----------------|--------|
+| Stage | Tickets | Status | Integration Gate | Quality Gate | Commit |
+|-------|---------|--------|-----------------|-------------|--------|
 
 ### Phase 2: Code Review
 | Axis | Findings | Fixed | Noted | Cycles |
@@ -479,8 +561,8 @@ git push --force-with-lease origin $branch
 ## Key Rules
 
 1. **Phases cannot be skipped**: Must execute 1 → 2 → 3 → 4 → 5 in order
-2. **Phase failure stops pipeline**: Phase 1 (max 1 retry), Phase 2 (max 2 review-fix cycles), Phase 3 (max 2 retries), Phase 4 (matt-e2e-tester handles fix-and-retest internally: Quick Fix → diagnosing-bugs → stop). If exhausted, present to user.
-3. **Orchestrate, don't execute**: Phase 1 spawns concurrent matt-dev-runner sub-agents per DAG stage; Phase 2 主 Agent 直接调用 code-review skill（主 Agent 天然独立于实现代码）; main agent doesn't write code or run tests
+2. **Phase failure stops pipeline**: Phase 1 integration gate (max 2 fix attempts) + quality gate (max 2 fix attempts), Phase 2 (max 2 review-fix cycles), Phase 3 (max 2 retries), Phase 4 (matt-e2e-tester handles fix-and-retest internally: Quick Fix → diagnosing-bugs → stop). If exhausted, present to user.
+3. **Orchestrate, don't execute**: Phase 1 spawns concurrent matt-dev-runner sub-agents per DAG stage; Phase 1 quality gate spawns an independent sub-agent (context isolation); Phase 2 主 Agent 直接调用 code-review skill（主 Agent 天然独立于实现代码）; main agent doesn't write code or run tests
 4. **裁判 ≠ 球员**: Phase 2 code-review 由主 Agent 直接执行（它从没看过实现代码）。修复也由主 Agent 直接 Edit — **不要重新 spawn Phase 1 implementer sub-agents**（它们会重跑 ticket 全流程，不是 targeted fixer）。
 4. **PR precision**: Only create PRs for projects with actual code changes vs target branch
 5. **Artifact ownership**: All intermediates go to `<artifacts.dir>/<feature-slug>/`, never pollute source dirs

@@ -8,16 +8,16 @@
 02 — Harness Agent Core-Pack Definition
 
 ## Status
-ready-for-agent
+done
 
 ## Acceptance Criteria
-- [ ] AC1: AgentDelegationService 通过 AgentService.createSession('harness-agent') 创建 agent 会话
-- [ ] AC2: 使用 DelegationContext 构建 prompt 传递给 agent session
-- [ ] AC3: 解析 agent 输出为新版 DelegationResult（5 种决策类型）
-- [ ] AC4: parseDelegationResponse() 验证 decision 字段在有效枚举内
-- [ ] AC5: 5 分钟超时保护仍然有效
-- [ ] AC6: Token 使用量记录到 node_token_usages (source='harness')
-- [ ] AC7: 旧 interventionType 映射到新 decision 类型的兼容逻辑
+- [x] AC1: AgentDelegationService 通过 AgentService.createSession('harness-agent') 创建 agent 会话
+- [x] AC2: 使用 DelegationContext 构建 prompt 传递给 agent session
+- [x] AC3: 解析 agent 输出为新版 DelegationResult（5 种决策类型）
+- [x] AC4: parseDelegationResponse() 验证 decision 字段在有效枚举内
+- [x] AC5: 5 分钟超时保护仍然有效
+- [x] AC6: Token 使用量记录到 node_token_usages (source='harness')
+- [x] AC7: 旧 interventionType 映射到新 decision 类型的兼容逻辑
 
 ## Verification Method
 **Verification type**: unit test + integration test

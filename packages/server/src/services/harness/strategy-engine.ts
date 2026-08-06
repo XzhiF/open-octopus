@@ -41,6 +41,11 @@ export interface StrategyEngineDeps {
 export interface StrategyEngineResult {
   /** Whether Layer 3 Agent Delegation should take over. */
   delegate: boolean
+  /**
+   * Whether the synchronous domain should block the node (BP-5).
+   * Only set for process_conflict + critical reports.
+   */
+  synchronousBlock?: boolean
   /** The matched strategy (null if no match and no wildcard). */
   matchedStrategy: StrategyConfig | null
   /** Results from executing each action in the matched strategy. */
@@ -131,44 +136,47 @@ export class StrategyEngine {
   }
 
   /**
-   * High-level method: match strategy, execute actions, determine delegation.
-   * This is the primary entry point for the HarnessController/DetectorPipeline.
+   * High-level method: tri-domain router.
    *
-   * When delegation is needed (no match or delegate_to_agent: true), calls
-   * the AgentDelegationService (Layer 3) if available.
+   * - process_conflict + critical → execute abort (sync block) + delegate
+   * - Everything else → delegate to agent (no action execution)
+   *
+   * This is the primary entry point for the HarnessController/DetectorPipeline.
    */
   async handleReport(report: DiagnosisReport): Promise<StrategyEngineResult> {
-    const matchedStrategy = this.matchStrategy(report)
+    const isProcessConflict = report.detector === "process_conflict"
+    const isCritical = report.severity === "critical"
 
-    if (!matchedStrategy) {
-      // No strategy matched → delegate to Layer 3
-      const delegationResult = await this.tryDelegate(report)
+    // ── Synchronous domain: process_conflict + critical ──────────────────
+    if (isProcessConflict && isCritical) {
+      const matchedStrategy = this.matchStrategy(report)
+
+      // Execute abort actions if the matched strategy has them
+      let actionResults: InterventionResult[] = []
+      if (matchedStrategy && matchedStrategy.actions.some((a) => a.type === "abort")) {
+        actionResults = await this.executeActions(report, matchedStrategy)
+        this.emitBlockedIfNeeded(report, matchedStrategy, actionResults)
+      }
+
+      // Delegate to agent in parallel (async audit)
+      if (this.agentDelegationService) {
+        const delegationResult = await this.tryDelegate(report)
+        if (delegationResult) actionResults.push(delegationResult)
+      }
+
       return {
         delegate: true,
-        matchedStrategy: null,
-        actionResults: delegationResult
-          ? [delegationResult]
-          : [],
+        synchronousBlock: true,
+        matchedStrategy,
+        actionResults,
       }
     }
 
-    const actionResults = await this.executeActions(report, matchedStrategy)
-
-    // Emit harness_blocked when process_conflict + critical triggers abort
-    this.emitBlockedIfNeeded(report, matchedStrategy, actionResults)
-
-    // Check if delegation is also needed after executing strategy actions
-    if (matchedStrategy.delegate_to_agent === true) {
-      const delegationResult = await this.tryDelegate(report)
-      if (delegationResult) {
-        actionResults.push(delegationResult)
-      }
-    }
-
+    // ── Async / pause domain: everything else → delegate ─────────────────
     return {
-      delegate: matchedStrategy.delegate_to_agent === true,
-      matchedStrategy,
-      actionResults,
+      delegate: true,
+      matchedStrategy: this.matchStrategy(report),
+      actionResults: [],
     }
   }
 
@@ -208,11 +216,15 @@ export class StrategyEngine {
       return {
         success: true,
         action: "agent_delegation",
-        message: `Agent delegation: ${delegationResult.interventionType} — ${delegationResult.reasoning.slice(0, 100)}`,
+        message: `Agent delegation: ${delegationResult.decision} — ${delegationResult.reasoning.slice(0, 100)}`,
         delegate: true,
         details: {
-          interventionType: delegationResult.interventionType,
-          interventionData: delegationResult.interventionData,
+          decision: delegationResult.decision,
+          varPoolPatches: delegationResult.varPoolPatches,
+          harnessHint: delegationResult.harnessHint,
+          modelOverride: delegationResult.modelOverride,
+          takeoverOutput: delegationResult.takeoverOutput,
+          blockReason: delegationResult.blockReason,
           tokenUsage: delegationResult.tokenUsage,
         },
       }

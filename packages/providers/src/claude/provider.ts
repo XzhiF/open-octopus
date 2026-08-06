@@ -76,16 +76,32 @@ function buildToolCaptureHooks(
   toolResultQueue: ToolResultEntry[],
   pendingQuestions: PendingQuestion[],
   pendingCompletions: PendingCompletion[],
+  onBeforeToolCall?: (toolName: string, input: unknown) => Promise<{ allow: boolean; reason?: string } | undefined>,
 ): Options['hooks'] {
   return {
     PreToolUse: [{
       hooks: [async (input: unknown) => {
         const inp = input as Record<string, unknown>
-        if (inp.tool_name === 'AskUserQuestion') {
+        const toolName = inp.tool_name as string
+        const toolInput = inp.tool_input
+
+        // Check external onBeforeToolCall hook (e.g. Tool Interceptor for dangerous commands)
+        if (onBeforeToolCall) {
+          const decision = await onBeforeToolCall(toolName, toolInput)
+          if (decision && decision.allow === false) {
+            return {
+              hookEventName: 'PreToolUse',
+              permissionDecision: 'deny' as const,
+              permissionDecisionReason: decision.reason ?? 'Tool call blocked by safety guard.',
+            }
+          }
+        }
+
+        if (toolName === 'AskUserQuestion') {
           // Capture question data for SSE events
           pendingQuestions.push({
             toolCallId: inp.tool_use_id as string,
-            questions: inp.tool_input,
+            questions: toolInput,
           })
           // Deny via PreToolUse hook — this works even with bypassPermissions.
           // The permissionDecisionReason becomes the tool result the model sees.
@@ -95,13 +111,13 @@ function buildToolCaptureHooks(
             permissionDecisionReason: 'STOP. The question has been displayed to the user. The user has NOT answered yet. Do NOT output any text or guess any answer. Your turn is over — wait for the next user message.',
           }
         }
-        if (inp.tool_name === 'complete_interaction') {
+        if (toolName === 'complete_interaction') {
           // Capture completion data for processing
-          const toolInput = (inp.tool_input ?? {}) as Record<string, any>
+          const completionInput = (toolInput ?? {}) as Record<string, any>
           pendingCompletions.push({
             toolCallId: inp.tool_use_id as string,
-            summary: toolInput.summary ?? '',
-            vars_update: toolInput.vars_update,
+            summary: completionInput.summary ?? '',
+            vars_update: completionInput.vars_update,
           })
           return {
             hookEventName: 'PreToolUse',
@@ -225,7 +241,7 @@ export class ClaudeSDKProvider implements IAgentProvider {
       allowDangerouslySkipPermissions: true,
       settingSources: ['project', 'user'],
       includePartialMessages: true,
-      hooks: buildToolCaptureHooks(toolResultQueue, pendingQuestions, pendingCompletions),
+      hooks: buildToolCaptureHooks(toolResultQueue, pendingQuestions, pendingCompletions, options?.onBeforeToolCall),
       env: buildSubprocessEnv(options?.env as Record<string, string> | undefined),
       agent: options?.agent,
       skills: options?.skills,

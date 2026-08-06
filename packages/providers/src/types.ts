@@ -60,6 +60,15 @@ export interface SendQueryOptions {
    * preventing the SDK's hardcoded "Error: Answer questions?" tool result.
    */
   interactionSession?: boolean
+
+  /**
+   * Optional callback invoked before each tool call executes.
+   * Used by the Tool Interceptor (harness) to block dangerous bash commands.
+   *
+   * Return `{ allow: false, reason: string }` to block the tool call.
+   * Return `{ allow: true }` or `undefined` to allow it.
+   */
+  onBeforeToolCall?: (toolName: string, input: unknown) => Promise<{ allow: boolean; reason?: string } | undefined>
   varsUpdate?: boolean
   customProviders?: Record<string, {
     base_url: string

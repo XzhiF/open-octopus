@@ -262,75 +262,39 @@ export class DetectorPipeline {
   }
 
   /**
-   * Synchronously extract harnessHint/modelOverride from a DiagnosisReport
-   * by matching the strategy and inspecting action definitions (BP-2).
-   * This runs synchronously so that pendingActions is populated BEFORE
-   * the next onBeforeRetry call from the engine.
+   * Synchronously store a block action for process_conflict + critical reports (BP-5).
+   * This runs synchronously so that pendingBlockActions is populated BEFORE
+   * the onBeforeNode proxy returns, ensuring dangerous nodes are blocked immediately.
    *
-   * Also checks for CRITICAL reports with abort strategies and stores
-   * a block action for onBeforeNode (BP-5).
+   * Only process_conflict reports trigger synchronous blocking.
+   * All other reports are routed asynchronously to the Harness Agent (Layer 3).
    */
   synchronouslyStorePendingAction(report: DiagnosisReport): void {
     if (!this.strategyEngine) return
+
+    // BP-5: Only process_conflict + critical → synchronous block
+    if (report.detector !== "process_conflict" || report.severity !== "critical") {
+      return
+    }
 
     const matchedStrategy = this.strategyEngine.matchStrategy(report)
     if (!matchedStrategy) return
 
     const nodeId = report.nodeId
 
-    // BP-5: CRITICAL report + abort action → store block decision for onBeforeNode
-    if (report.severity === "critical") {
-      const hasAbort = matchedStrategy.actions.some(
-        (a: StrategyAction) => a.type === "abort",
-      )
-      if (hasAbort) {
-        this.pendingBlockActions.set(nodeId, {
-          action: "skip",
-          overrideResult: {
-            status: "failed",
-            error: "Blocked by harness: process conflict",
-          },
-        })
-        // Mark the node as harness_blocked in DB + insert agent_event
-        this.updateNodeHarnessStatus(nodeId, "harness_blocked", report)
-      }
-    }
-
-    // BP-2: Extract harnessHint/modelOverride synchronously from action definitions
-    let harnessHint: string | undefined
-    let modelOverride: string | undefined
-
-    for (const action of matchedStrategy.actions) {
-      if (action.type === "retry_with_hint") {
-        harnessHint =
-          (action.message as string) ??
-          (action.hint as string) ??
-          "Try a different approach to solve this problem."
-      }
-      if (action.type === "switch_model") {
-        const explicitModel = action.model as string | undefined
-        const prefer = action.prefer as string | undefined
-        if (explicitModel) {
-          modelOverride = explicitModel
-        } else if (prefer) {
-          modelOverride = PREFERENCE_MODELS[prefer] ?? PREFERENCE_MODELS.default
-        } else {
-          modelOverride = PREFERENCE_MODELS.default
-        }
-      }
-    }
-
-    if (harnessHint || modelOverride) {
-      this.pendingActions.set(nodeId, {
-        action: "retry",
-        harnessHint,
-        modelOverride,
+    const hasAbort = matchedStrategy.actions.some(
+      (a: StrategyAction) => a.type === "abort",
+    )
+    if (hasAbort) {
+      this.pendingBlockActions.set(nodeId, {
+        action: "skip",
+        overrideResult: {
+          status: "failed",
+          error: "Blocked by harness: process conflict",
+        },
       })
-    }
-
-    // Store delegate decision synchronously if applicable
-    if (matchedStrategy.delegate_to_agent === true) {
-      this.pendingFailureActions.set(nodeId, { action: "delegate" })
+      // Mark the node as harness_blocked in DB + insert agent_event
+      this.updateNodeHarnessStatus(nodeId, "harness_blocked", report)
     }
   }
 

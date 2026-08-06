@@ -2,14 +2,23 @@
 //
 // AgentDelegationService — Layer 3 of the Harness.
 // When the StrategyEngine cannot handle a DiagnosisReport (no strategy match
-// or delegate_to_agent: true), this service delegates to an Octopus built-in
-// Agent session for deep analysis and correction.
+// or delegate_to_agent: true), this service delegates to the core-pack
+// harness-agent for deep analysis and structured decision-making.
 //
-// The delegation is a one-shot call: create session, send prompt, parse
-// response, record tokens, destroy session. No multi-turn conversation.
-// 5-minute timeout protects against runaway agent calls.
+// The delegation flow:
+// 1. Create an agent session (clone harness-agent) for visibility in agent mgmt
+// 2. Build delegation prompt from DiagnosisReport + DelegationContext
+// 3. Run the agent session with timeout protection (5 min default)
+// 4. Parse structured decision (HarnessDecisionType) from agent output
+// 5. Record token usage with source="harness"
+// 6. Persist delegation event + emit SSE
 
-import type { DiagnosisReport, HarnessEvent } from "@octopus/shared"
+import type {
+  DiagnosisReport,
+  HarnessEvent,
+  HarnessDecisionType,
+  DelegationResult,
+} from "@octopus/shared"
 import type { HarnessDAO } from "../../db/dao/harness-dao"
 import type { SSEService } from "../sse"
 
@@ -31,43 +40,118 @@ export interface DelegationContext {
 }
 
 /**
- * Result of an agent delegation call.
+ * Result of running an agent session.
+ * Returned by the AgentSessionRunner abstraction.
  */
-export interface DelegationResult {
-  /** Whether the delegation succeeded in producing a valid intervention. */
-  success: boolean
-  /** The type of intervention the agent recommends. */
-  interventionType: "inject" | "varpool" | "definition" | "takeover" | null
-  /** Action-specific data for the intervention. */
-  interventionData: any
-  /** Token usage statistics for the delegation call. */
-  tokenUsage: { input: number; output: number; model: string }
-  /** The agent's analysis / reasoning. */
-  reasoning: string
+export interface AgentSessionRunResult {
+  /** The text output from the agent. */
+  text: string
+  /** Token usage statistics from the agent run. */
+  tokenUsage?: { input: number; output: number; model: string }
+  /** The agent session ID that was created. */
+  sessionId?: string
 }
+
+/**
+ * Abstraction for creating and running an agent session.
+ * The default implementation creates a session via AgentService (clone harness-agent)
+ * and runs the LLM call through the provider.
+ *
+ * This allows testing with mocks and alternative execution strategies.
+ */
+export type AgentSessionRunner = (params: {
+  cloneName: string
+  prompt: string
+  executionId: string
+  nodeId: string
+}) => Promise<AgentSessionRunResult>
 
 /**
  * Function signature for the LLM call used by the delegation service.
  * Accepts a prompt string and returns the response text plus optional token info.
+ * @deprecated Use AgentSessionRunner instead. Kept for backward compat.
  */
 export type DelegationLLMCall = (prompt: string) => Promise<{
   text: string
   tokenUsage?: { input: number; output: number; model: string }
 }>
 
-// ─── Valid intervention types ───────────────────────────────────────────────
+// Re-export DelegationResult from shared for convenience
+export type { DelegationResult } from "@octopus/shared"
 
-const VALID_INTERVENTION_TYPES = new Set([
-  "inject",
-  "varpool",
-  "definition",
-  "takeover",
+// ─── Valid decision types ───────────────────────────────────────────────────
+
+const VALID_DECISION_TYPES: ReadonlySet<HarnessDecisionType> = new Set([
+  "fix_and_retry",
+  "guide_and_retry",
+  "reconfigure_and_retry",
+  "agent_takeover",
+  "block_node",
 ])
+
+/**
+ * Check if a string is a valid HarnessDecisionType.
+ * Exported for testing.
+ */
+export function isValidDecisionType(value: string): value is HarnessDecisionType {
+  return VALID_DECISION_TYPES.has(value as HarnessDecisionType)
+}
+
+// ─── Backward Compatibility Mapping ─────────────────────────────────────────
+
+/**
+ * Map old interventionType values to new HarnessDecisionType.
+ * Used when parsing responses from agents that still use the old format.
+ *
+ * Mapping:
+ * - "inject"     → "guide_and_retry"
+ * - "varpool"    → "fix_and_retry"
+ * - "definition" → "fix_and_retry" (via varPool indirect effect)
+ * - "takeover"   → "agent_takeover"
+ */
+export function mapInterventionTypeToDecision(
+  interventionType: string,
+): HarnessDecisionType | null {
+  switch (interventionType) {
+    case "inject":
+      return "guide_and_retry"
+    case "varpool":
+      return "fix_and_retry"
+    case "definition":
+      return "fix_and_retry"
+    case "takeover":
+      return "agent_takeover"
+    default:
+      return null
+  }
+}
+
+/**
+ * Map new HarnessDecisionType back to old interventionType for backward compat.
+ * Used when consumers still expect the old format.
+ */
+export function mapDecisionToInterventionType(
+  decision: HarnessDecisionType,
+): string {
+  switch (decision) {
+    case "fix_and_retry":
+      return "varpool"
+    case "guide_and_retry":
+      return "inject"
+    case "reconfigure_and_retry":
+      return "definition"
+    case "agent_takeover":
+      return "takeover"
+    case "block_node":
+      return "inject" // closest old equivalent
+  }
+}
 
 // ─── Prompt Construction ────────────────────────────────────────────────────
 
 /**
  * Build the delegation prompt from a DiagnosisReport and context.
+ * Uses the 5 structured decision types from the harness-agent definition.
  * Exported for testing.
  */
 export function buildDelegationPrompt(
@@ -98,7 +182,7 @@ export function buildDelegationPrompt(
     (report.context.workflowProgress ?? 0) * 100,
   )
 
-  return `你是 Octopus WorkflowEngine 的 Harness Agent 分身。你的任务是分析工作流异常并生成干预方案。
+  return `你是 Octopus 工作流安全守护 Agent。你的任务是分析工作流异常并生成结构化干预决策。
 
 ## 诊断报告
 - 检测器: ${report.detector}
@@ -121,17 +205,24 @@ ${eventsSummary}
 ${varpoolLines || "(empty)"}
 
 ## 你需要做什么
-分析根因，然后从以下干预方式中选择最合适的：
-1. inject: 注入指令给节点 (适用于 agent 节点)
-2. varpool: 修改变量值 (适用于变量值错误)
-3. definition: 修改工作流定义 (适用于配置错误)
-4. takeover: 直接接管执行 (适用于复杂脚本问题)
+分析根因，然后从以下 5 种决策中选择最合适的：
+
+1. fix_and_retry: 修改变量/配置，然后重试（不能直接修改脚本，只能通过 varPool/hint 间接影响）
+2. guide_and_retry: 注入指导到 agent 对话，让它换方法
+3. reconfigure_and_retry: 切换模型/修改配置后重试
+4. agent_takeover: 你直接完成节点的目标任务（用你的工具执行）
+5. block_node: 阻断节点，分析后续节点依赖
 
 输出 JSON:
 {
-  "interventionType": "inject|varpool|definition|takeover",
-  "data": { ... action-specific data ... },
-  "reasoning": "你的分析过程"
+  "decision": "fix_and_retry|guide_and_retry|reconfigure_and_retry|agent_takeover|block_node",
+  "reasoning": "分析推理过程",
+  "varPoolPatches": {},       // fix_and_retry 时使用
+  "harnessHint": "",          // guide_and_retry 时使用
+  "modelOverride": "",        // reconfigure_and_retry 时使用
+  "takeoverOutput": "",       // agent_takeover 时使用
+  "blockReason": "",          // block_node 时使用
+  "continueSubsequent": true  // block_node 时：后续节点是否可继续
 }`
 }
 
@@ -140,15 +231,18 @@ ${varpoolLines || "(empty)"}
 /**
  * Parse the agent's text response into a DelegationResult.
  * Handles JSON embedded in markdown code blocks or surrounding text.
+ *
+ * Supports both new format (decision field) and old format (interventionType)
+ * for backward compatibility.
+ *
  * Exported for testing.
  */
 export function parseDelegationResponse(rawText: string): DelegationResult {
   const failureResult = (reason: string): DelegationResult => ({
     success: false,
-    interventionType: null,
-    interventionData: null,
-    tokenUsage: { input: 0, output: 0, model: "unknown" },
+    decision: "block_node", // safe default for failures
     reasoning: reason,
+    tokenUsage: { input: 0, output: 0, model: "unknown" },
   })
 
   // Try to extract JSON from the response
@@ -184,26 +278,75 @@ export function parseDelegationResponse(rawText: string): DelegationResult {
     )
   }
 
-  // Validate required fields
-  if (!parsed.interventionType) {
-    return failureResult(
-      "Failed to parse agent response: missing 'interventionType' field",
-    )
+  // ── New format: decision field ──────────────────────────────────
+  if (parsed.decision) {
+    if (!isValidDecisionType(parsed.decision)) {
+      return failureResult(
+        `Failed to parse agent response: invalid decision '${parsed.decision}' — must be one of: ${[...VALID_DECISION_TYPES].join(", ")}`,
+      )
+    }
+
+    return {
+      success: true,
+      decision: parsed.decision,
+      varPoolPatches: parsed.varPoolPatches ?? undefined,
+      harnessHint: parsed.harnessHint ?? undefined,
+      modelOverride: parsed.modelOverride ?? undefined,
+      takeoverOutput: parsed.takeoverOutput ?? undefined,
+      takeoverExitCode: parsed.takeoverExitCode ?? undefined,
+      blockReason: parsed.blockReason ?? undefined,
+      continueSubsequent: parsed.continueSubsequent ?? undefined,
+      reasoning: parsed.reasoning ?? "",
+      tokenUsage: { input: 0, output: 0, model: "unknown" },
+    }
   }
 
-  if (!VALID_INTERVENTION_TYPES.has(parsed.interventionType)) {
-    return failureResult(
-      `Failed to parse agent response: invalid interventionType '${parsed.interventionType}' — must be one of: ${[...VALID_INTERVENTION_TYPES].join(", ")}`,
-    )
+  // ── Old format: interventionType field (backward compat) ────────
+  if (parsed.interventionType) {
+    const mappedDecision = mapInterventionTypeToDecision(parsed.interventionType)
+    if (!mappedDecision) {
+      return failureResult(
+        `Failed to parse agent response: invalid interventionType '${parsed.interventionType}' — cannot map to a valid decision type`,
+      )
+    }
+
+    // Build the result from old-format fields
+    const result: DelegationResult = {
+      success: true,
+      decision: mappedDecision,
+      reasoning: parsed.reasoning ?? "",
+      tokenUsage: { input: 0, output: 0, model: "unknown" },
+    }
+
+    // Map old data fields to new fields based on decision type
+    if (parsed.data) {
+      switch (mappedDecision) {
+        case "guide_and_retry":
+          result.harnessHint = parsed.data.message ?? parsed.data.hint ?? undefined
+          break
+        case "fix_and_retry":
+          if (parsed.data.key && parsed.data.value !== undefined) {
+            result.varPoolPatches = { [parsed.data.key]: String(parsed.data.value) }
+          } else if (typeof parsed.data === "object") {
+            result.varPoolPatches = parsed.data
+          }
+          break
+        case "reconfigure_and_retry":
+          result.modelOverride = parsed.data.model ?? parsed.data.field ?? undefined
+          break
+        case "agent_takeover":
+          result.takeoverOutput = parsed.data.script ?? parsed.data.output ?? undefined
+          break
+      }
+    }
+
+    return result
   }
 
-  return {
-    success: true,
-    interventionType: parsed.interventionType,
-    interventionData: parsed.data ?? null,
-    tokenUsage: { input: 0, output: 0, model: "unknown" },
-    reasoning: parsed.reasoning ?? "",
-  }
+  // Neither decision nor interventionType found
+  return failureResult(
+    "Failed to parse agent response: missing 'decision' field (or legacy 'interventionType')",
+  )
 }
 
 // ─── Service ────────────────────────────────────────────────────────────────
@@ -212,7 +355,9 @@ export interface AgentDelegationServiceDeps {
   dao: HarnessDAO
   sse: SSEService
   workspaceId: string
-  /** LLM call function. If not provided, uses the claude provider. */
+  /** Agent session runner. If provided, takes precedence over llmCall. */
+  agentSessionRunner?: AgentSessionRunner
+  /** @deprecated LLM call function. Use agentSessionRunner instead. */
   llmCall?: DelegationLLMCall
   /** Timeout in milliseconds. Default: 300000 (5 minutes). */
   timeoutMs?: number
@@ -220,12 +365,16 @@ export interface AgentDelegationServiceDeps {
 
 /**
  * AgentDelegationService — stateless service that delegates DiagnosisReports
- * to an LLM agent for deep analysis and intervention generation.
+ * to the harness-agent for deep analysis and structured decision generation.
+ *
+ * The service creates an agent session (clone of harness-agent) for each
+ * delegation, making the harness agent visible in the agent management UI.
  */
 export class AgentDelegationService {
   private dao: HarnessDAO
   private sse: SSEService
   private workspaceId: string
+  private agentSessionRunner?: AgentSessionRunner
   private llmCall?: DelegationLLMCall
   private timeoutMs: number
 
@@ -233,18 +382,19 @@ export class AgentDelegationService {
     this.dao = deps.dao
     this.sse = deps.sse
     this.workspaceId = deps.workspaceId
+    this.agentSessionRunner = deps.agentSessionRunner
     this.llmCall = deps.llmCall
     this.timeoutMs = deps.timeoutMs ?? 5 * 60 * 1000 // 5 minutes default
   }
 
   /**
-   * Delegate a DiagnosisReport to the agent for analysis and intervention.
+   * Delegate a DiagnosisReport to the harness-agent for analysis and decision.
    *
    * Flow:
    * 1. Emit SSE harness_delegation start event
    * 2. Build delegation prompt from report + context
-   * 3. Call the LLM (with timeout protection)
-   * 4. Parse the response into a DelegationResult
+   * 3. Run agent session (or LLM call) with timeout protection
+   * 4. Parse the response into a DelegationResult (5 decision types)
    * 5. Record token usage with source="harness"
    * 6. Persist delegation event to harness_events
    * 7. Emit SSE harness_delegation complete/fail event
@@ -265,23 +415,24 @@ export class AgentDelegationService {
     // Build the prompt
     const prompt = buildDelegationPrompt(report, context)
 
-    // Execute the LLM call with timeout
+    // Execute the agent session / LLM call with timeout
     let responseText: string
     let tokenInfo: { input: number; output: number; model: string } | undefined
+    let agentSessionId: string | undefined
 
     try {
-      const result = await this.callWithTimeout(prompt)
+      const result = await this.callWithTimeout(prompt, executionId, nodeId)
       responseText = result.text
       tokenInfo = result.tokenUsage
+      agentSessionId = result.sessionId
     } catch (err) {
       const reason =
         err instanceof Error ? err.message : String(err)
       const failResult: DelegationResult = {
         success: false,
-        interventionType: null,
-        interventionData: null,
-        tokenUsage: { input: 0, output: 0, model: "unknown" },
+        decision: "block_node",
         reasoning: reason,
+        tokenUsage: { input: 0, output: 0, model: "unknown" },
       }
 
       // Persist failure event
@@ -302,7 +453,7 @@ export class AgentDelegationService {
     // Parse the response
     const parsed = parseDelegationResponse(responseText)
 
-    // Attach token usage info from the LLM call
+    // Attach token usage info from the agent session / LLM call
     if (tokenInfo) {
       parsed.tokenUsage = tokenInfo
     }
@@ -333,13 +484,13 @@ export class AgentDelegationService {
   }
 
   /**
-   * Call the LLM with a timeout wrapper.
+   * Call the agent session runner (or LLM fallback) with a timeout wrapper.
    */
   private async callWithTimeout(
     prompt: string,
-  ): Promise<{ text: string; tokenUsage?: { input: number; output: number; model: string } }> {
-    const llmCall = this.llmCall ?? this.getDefaultLLMCall()
-
+    executionId: string,
+    nodeId: string,
+  ): Promise<AgentSessionRunResult> {
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         reject(
@@ -349,7 +500,7 @@ export class AgentDelegationService {
         )
       }, this.timeoutMs)
 
-      llmCall(prompt)
+      this.executeCall(prompt, executionId, nodeId)
         .then((result) => {
           clearTimeout(timer)
           resolve(result)
@@ -362,12 +513,62 @@ export class AgentDelegationService {
   }
 
   /**
-   * Get the default LLM call using the claude provider.
-   * Falls back to a no-op if the provider is unavailable.
+   * Execute the actual agent session run or LLM call.
+   * Prefers agentSessionRunner over llmCall over default provider.
    */
-  private getDefaultLLMCall(): DelegationLLMCall {
-    return async (prompt: string) => {
+  private async executeCall(
+    prompt: string,
+    executionId: string,
+    nodeId: string,
+  ): Promise<AgentSessionRunResult> {
+    // Priority 1: AgentSessionRunner (new pattern)
+    if (this.agentSessionRunner) {
+      return this.agentSessionRunner({
+        cloneName: "harness-agent",
+        prompt,
+        executionId,
+        nodeId,
+      })
+    }
+
+    // Priority 2: Legacy LLM call (backward compat)
+    if (this.llmCall) {
+      const result = await this.llmCall(prompt)
+      return { text: result.text, tokenUsage: result.tokenUsage }
+    }
+
+    // Priority 3: Default provider (fallback)
+    return this.getDefaultAgentRunner()(prompt, executionId, nodeId)
+  }
+
+  /**
+   * Get the default agent runner using the claude provider.
+   * Creates an agent session for visibility, then runs the LLM call.
+   */
+  private getDefaultAgentRunner(): (
+    prompt: string,
+    executionId: string,
+    nodeId: string,
+  ) => Promise<AgentSessionRunResult> {
+    return async (prompt: string, executionId: string, nodeId: string) => {
       try {
+        // Create an agent session for visibility in agent management
+        let sessionId: string | undefined
+        try {
+          const { getAgentService } = await import("../agent/agent-service")
+          const agentService = getAgentService()
+          const session = await agentService.createSession(this.workspaceId, {
+            clone_name: "harness-agent",
+          })
+          sessionId = session.id
+        } catch (err) {
+          // Agent service may not be initialized — continue without session
+          console.warn(
+            "[AgentDelegationService] Could not create agent session:",
+            err instanceof Error ? err.message : String(err),
+          )
+        }
+
         // Dynamic import to avoid hard dependency on providers package
         const { getProvider } = await import("@octopus/providers")
         const provider = getProvider("claude")
@@ -380,7 +581,7 @@ export class AgentDelegationService {
         const stream = provider.sendQuery(prompt, process.cwd(), undefined, {
           model: "sonnet",
           systemPrompt:
-            "You are a workflow debugging agent. Analyze errors and propose fixes in the requested JSON format.",
+            "You are the Octopus workflow security guardian (harness-agent). Analyse workflow anomalies and output structured JSON decisions.",
         })
 
         for await (const chunk of stream) {
@@ -398,10 +599,10 @@ export class AgentDelegationService {
           }
         }
 
-        return { text, tokenUsage }
+        return { text, tokenUsage, sessionId }
       } catch (err) {
         throw new Error(
-          `LLM provider call failed: ${err instanceof Error ? err.message : String(err)}`,
+          `Agent session call failed: ${err instanceof Error ? err.message : String(err)}`,
         )
       }
     }

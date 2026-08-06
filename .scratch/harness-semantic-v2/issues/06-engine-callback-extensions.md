@@ -7,7 +7,7 @@
 01 — Shared Types + DB Migration
 
 ## Status
-ready-for-agent
+done
 
 ## Acceptance Criteria
 - [ ] AC1: onBeforeRetry 返回 varPoolPatches 时，engine 执行 `pool.update(patches)` 批量更新变量

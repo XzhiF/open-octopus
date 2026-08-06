@@ -996,6 +996,9 @@ export class WorkflowEngine {
             // Shallow copy to avoid mutating shared NodeDef across executions
             effectiveNode = { ...effectiveNode, model: retryDecision.modelOverride }
           }
+          if (retryDecision.varPoolPatches) {
+            pool.update(retryDecision.varPoolPatches)
+          }
         }
         let delayMs = calculateBackoff(policy.backoff, attempt) * 1000
         if (policy.max_total_duration > 0) {
@@ -1236,6 +1239,19 @@ export class WorkflowEngine {
             this.pausedAt = node.id
             this.callbacks?.onError?.(node.id, nodeResult.logLines?.join("\n") ?? "Unknown error")
             return { status: "paused", pauseReason: "harness_delegate" }
+          }
+          if (failureDecision.action === "override" && failureDecision.overrideResult) {
+            // Replace failed result with override result — node marked as completed
+            const overridden: NodeExecutionResult = {
+              outputs: failureDecision.overrideResult.outputs ?? {},
+              status: "completed" as const,
+              durationMs: nodeResult.durationMs,
+              logLines: [...(nodeResult.logLines ?? []), "Overridden by harness agent"],
+              exitCode: failureDecision.overrideResult.exitCode ?? 0,
+            }
+            this.nodeResults[node.id] = overridden
+            this.callbacks?.onNodeEnd?.(node.id, "completed", overridden.durationMs, overridden, node.type)
+            continue
           }
         }
         if (strategy === "fail_fast") {
