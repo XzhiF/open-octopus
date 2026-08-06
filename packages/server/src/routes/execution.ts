@@ -212,6 +212,8 @@ executionRoutes.get("/:executionId", async (c) => {
       })) : undefined,
       parentNodeId: ne.parent_node_id ?? undefined,
       iterationIndex: ne.iteration_index ?? undefined,
+      harnessStatus: ne.harness_status ?? undefined,
+      harnessInterventions: ne.harness_interventions ? JSON.parse(ne.harness_interventions) : undefined,
       agentName: (parsedOutputs?.agent_name ?? parsedOutputs?.agentName) as string | undefined,
       agentVersion: (parsedOutputs?.agent_version ?? parsedOutputs?.agentVersion) as string | undefined,
       taskBrief: (parsedOutputs?.task_brief ?? parsedOutputs?.taskBrief) as string | undefined,

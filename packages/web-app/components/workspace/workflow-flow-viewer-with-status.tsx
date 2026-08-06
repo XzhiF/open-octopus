@@ -301,6 +301,8 @@ export function WorkflowFlowViewerWithStatus({
           statusOverlay,
           isCurrent: currentStepId === node.id,
           isActive: activeStepId === node.id,
+          // Pass harness status directly to node data for HarnessStatusIndicator
+          harnessStatus: step?.harnessStatus,
           // Pass workspace/execution context to swarm nodes for SSE + replay
           ...(node.type === "swarm" ? { workspaceId, executionId } : {}),
         },

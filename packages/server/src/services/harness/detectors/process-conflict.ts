@@ -120,17 +120,58 @@ export class ProcessConflictDetector extends BaseDetector {
 
     if (!script) return null
 
-    // Check PID patterns
+    // Check PID patterns (direct matches)
     for (const { pattern, description } of this.pidPatterns) {
       if (pattern.test(script)) {
         return this.buildReport(nodeId, nodeType, "pid_conflict", description, script)
       }
     }
 
+    // Check indirect variable references: VAR=$OCTOPUS_HOST_PID then kill $VAR
+    const indirectMatch = this.checkIndirectPidReference(script)
+    if (indirectMatch) {
+      return this.buildReport(nodeId, nodeType, "pid_conflict", indirectMatch, script)
+    }
+
     // Check port patterns
     for (const { pattern, description } of this.portPatterns) {
       if (pattern.test(script)) {
         return this.buildReport(nodeId, nodeType, "port_conflict", description, script)
+      }
+    }
+
+    return null
+  }
+
+  /**
+   * Detect indirect PID references: a variable assigned from $OCTOPUS_HOST_PID
+   * and then used in a kill command.
+   *
+   * Example:
+   *   HOST_PID=$OCTOPUS_HOST_PID
+   *   kill $HOST_PID
+   */
+  private checkIndirectPidReference(script: string): string | null {
+    // Find all variable assignments from OCTOPUS_HOST_PID
+    // Matches: VAR=$OCTOPUS_HOST_PID, VAR=${OCTOPUS_HOST_PID}, local VAR=$OCTOPUS_HOST_PID
+    const assignRegex = /\b(\w+)\s*=\s*\$\{?OCTOPUS_HOST_PID\}?/g
+    const taintedVars = new Set<string>()
+
+    let match: RegExpExecArray | null
+    while ((match = assignRegex.exec(script)) !== null) {
+      taintedVars.add(match[1])
+    }
+
+    if (taintedVars.size === 0) return null
+
+    // Check if any tainted variable is used in a kill command
+    for (const varName of taintedVars) {
+      const killPattern = new RegExp(
+        `(?:kill|taskkill|pkill)\\b[^\\n]*\\$${varName}\\b`,
+        "i",
+      )
+      if (killPattern.test(script)) {
+        return `kill targeting $${varName} (assigned from $OCTOPUS_HOST_PID)`
       }
     }
 

@@ -53,6 +53,7 @@ export type HarnessNodeStatus =
   | "harness_intervening" // harness is analyzing and executing intervention
   | "harness_modified" // harness modified script/vars/definition, will retry
   | "harness_executed" // harness agent takeover completed
+  | "harness_blocked" // harness blocked this node (process conflict)
 
 /**
  * HarnessSSEEvent — SSE event types emitted by the server

@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect, useRef, useCallback, useMemo } from "react"
-import { ChevronDown, ChevronRight, ChevronUp, ChevronsDown, Terminal, Brain, Wrench, FileText, Play, Check, X, Clock, Users, MessageSquare, Award, RotateCcw, MessageCircle, HelpCircle, CheckCircle2, Activity, AlertTriangle } from "lucide-react"
+import { ChevronDown, ChevronRight, ChevronUp, ChevronsDown, Terminal, Brain, Wrench, FileText, Play, Check, X, Clock, Users, MessageSquare, Award, RotateCcw, MessageCircle, HelpCircle, CheckCircle2, Activity, AlertTriangle, ShieldCheck } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { formatDuration, formatTokenCount } from "@/lib/format"
 import { isMergedEvent, OCTOPUS_EVENT_TYPES, type AgentEvent, type LoopIterationSummary } from "@/lib/types"
@@ -63,6 +63,10 @@ export function EventIcon({ event, agentType }: { event: string; agentType?: str
 
   // Legacy agent_event sub-types
   if (event === "agent_event" && agentType) {
+    // Harness events stored as agent_event with harness_* type
+    if (agentType.startsWith("harness_")) {
+      return <ShieldCheck className="h-3 w-3 text-violet-400 shrink-0" />
+    }
     switch (agentType) {
       case "thinking_block": return <Brain className="h-3 w-3 text-purple-400 shrink-0" />
       case "tool_start": return <Wrench className="h-3 w-3 text-amber-400 shrink-0" />
@@ -196,7 +200,16 @@ export function EventLabel({ entry }: { entry: LogEvent }) {
       }
       case "status": return <span className="text-muted-foreground">状态: {e.status}</span>
       case "error": return <span className="text-red-400">错误: {e.message}</span>
-      default: return <span className="text-muted-foreground">{e.type}</span>
+      default: {
+        // Harness events: harness_process_conflict, harness_stupid_retry, etc.
+        if (e.type?.startsWith("harness_")) {
+          const detector = e.type.replace("harness_", "")
+          const severity = e.content ? (() => { try { return JSON.parse(e.content).severity } catch { return "" } })() : ""
+          const color = severity === "critical" ? "text-red-400" : "text-amber-400"
+          return <span className={color}>🛡️ Harness 检测: {detector} ({severity})</span>
+        }
+        return <span className="text-muted-foreground">{e.type}</span>
+      }
     }
   }
 
@@ -657,9 +670,16 @@ export function ExecutionLogViewer({ workspaceId, executionId, executionStatus }
   const HARNESS_EVENT_PREFIXES = ["harness_directive", "harness_diagnosis", "harness_intervention", "harness_blocked"]
   const filteredEvents = useMemo(() => {
     if (!harnessOnly) return processedEvents
-    return processedEvents.filter((e) =>
-      HARNESS_EVENT_PREFIXES.some((prefix) => e.event === prefix || e.event.startsWith("harness_")),
-    )
+    return processedEvents.filter((e) => {
+      // Direct event match
+      if (HARNESS_EVENT_PREFIXES.some((prefix) => e.event === prefix || e.event.startsWith("harness_"))) return true
+      // agent_event with harness type in event_data
+      if (e.event === "agent_event" && e.event_data?.type) {
+        const t = e.event_data.type as string
+        return t.startsWith("harness_") || HARNESS_EVENT_PREFIXES.includes(t)
+      }
+      return false
+    })
   }, [processedEvents, harnessOnly])
 
   // Flat grouping with loop-aware rendering:

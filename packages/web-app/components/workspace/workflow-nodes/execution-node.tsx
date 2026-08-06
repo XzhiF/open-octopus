@@ -65,6 +65,12 @@ function HarnessStatusIndicator({ status }: { status: HarnessNodeStatus }) {
           <Bot className="h-4 w-4 text-rose-500" />
         </span>
       )
+    case "harness_blocked":
+      return (
+        <span title="Harness 已阻断（进程冲突）" className="inline-flex items-center gap-0.5">
+          <Ban className="h-4 w-4 text-red-500" />
+        </span>
+      )
     default:
       return null
   }

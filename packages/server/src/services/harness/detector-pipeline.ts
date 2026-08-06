@@ -220,6 +220,9 @@ export class DetectorPipeline {
       console.error("[DetectorPipeline] Failed to persist harness event:", err)
     }
 
+    // Update node_executions.harness_status and insert agent_event for log viewer
+    this.updateNodeHarnessStatus(report.nodeId, "harness_intervening", report)
+
     // Emit SSE
     try {
       this.sse.emit(this.workspaceId, {
@@ -288,6 +291,8 @@ export class DetectorPipeline {
             error: "Blocked by harness: process conflict",
           },
         })
+        // Mark the node as harness_blocked in DB + insert agent_event
+        this.updateNodeHarnessStatus(nodeId, "harness_blocked", report)
       }
     }
 
@@ -490,6 +495,49 @@ export class DetectorPipeline {
         }
       },
     })
+  }
+
+  /**
+   * Update node_executions.harness_status and insert an agent_event
+   * so harness activity shows in both the node UI (🛡️ icon) and log viewer.
+   */
+  private updateNodeHarnessStatus(
+    nodeId: string,
+    status: string,
+    report: DiagnosisReport,
+  ): void {
+    try {
+      const db = this.dao.getDb()
+      const neId = `${this.executionId}-${nodeId}`
+
+      // Update harness_status on the node execution
+      db.prepare(
+        `UPDATE node_executions SET harness_status = ? WHERE id = ?`,
+      ).run(status, neId)
+
+      // Insert an agent_event so harness activity appears in the log viewer
+      const eventOrder = Date.now()
+      db.prepare(`
+        INSERT INTO agent_events (node_execution_id, event_order, turn_index, event_type, timestamp, content, content_length)
+        VALUES (?, ?, 0, ?, ?, ?, ?)
+      `).run(
+        neId,
+        eventOrder,
+        `harness_${report.detector}`,
+        eventOrder,
+        JSON.stringify({
+          detector: report.detector,
+          severity: report.severity,
+          pattern: report.pattern,
+          evidence: report.evidence,
+          status,
+        }),
+        200,
+      )
+    } catch (err) {
+      // Non-fatal: harness status update failure shouldn't break the pipeline
+      console.error("[DetectorPipeline] Failed to update node harness status:", err)
+    }
   }
 
   /**

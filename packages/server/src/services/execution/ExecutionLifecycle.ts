@@ -118,7 +118,11 @@ export class ExecutionLifecycle {
 
     // Initialize HarnessController for agentic supervision
     try {
-      const harnessDAO = new HarnessDAO(db)
+      // Use dao.getDb() to get the real better-sqlite3 Database instance.
+      // The constructor `db` param may reference a different object due to
+      // tsup bundling variable renaming (db → db3 collision).
+      const realDb = this.dao.getDb()
+      const harnessDAO = new HarnessDAO(realDb)
       const harnessConfigService = new HarnessConfigService(harnessDAO)
       this.harnessController = new HarnessController({
         dao: harnessDAO,
