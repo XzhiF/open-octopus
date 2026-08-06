@@ -221,6 +221,8 @@ export function useHarnessEvents(
         try {
           const raw = JSON.parse(e.data)
           if (raw.executionId !== executionId) return
+          // Skip delegation "start" events — only show complete/fail with results
+          if (eventType === "harness_delegation" && raw.status === "start") return
           const parsed = parseSSEEvent(eventType, raw)
           setEvents((prev) => [...prev, parsed])
         } catch {

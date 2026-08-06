@@ -561,12 +561,13 @@ export class AgentDelegationService {
       result: parsed,
     })
 
-    // Emit SSE complete/fail event
+    // Emit SSE complete/fail event with result
     this.emitDelegationSSE(
       executionId,
       nodeId,
       delegationId,
       parsed.success ? "complete" : "fail",
+      parsed,
     )
 
     return parsed
@@ -811,6 +812,7 @@ export class AgentDelegationService {
     nodeId: string,
     delegationId: string,
     status: string,
+    result?: DelegationResult,
   ): void {
     try {
       this.sse.emit(this.workspaceId, {
@@ -820,6 +822,7 @@ export class AgentDelegationService {
           nodeId,
           agentSessionId: delegationId,
           status,
+          ...(result ? { result } : {}),
         },
       })
     } catch (err) {
