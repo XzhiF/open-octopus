@@ -59,7 +59,7 @@ function CollapsedPanel({
     }
   }
 
-  const hasActivity = isRunning && interventionCount > 0
+  const hasActivity = interventionCount > 0
 
   return (
     <div
@@ -430,9 +430,9 @@ export function HarnessFloatingPanel({
     [pos],
   )
 
-  // Resize handler — drag from bottom-right corner
+  // Resize handler — supports all 4 corners + 4 edges
   const handleResizeStart = useCallback(
-    (e: React.MouseEvent) => {
+    (e: React.MouseEvent, dir: string) => {
       e.preventDefault()
       e.stopPropagation()
       resizeRef.current = {
@@ -441,12 +441,30 @@ export function HarnessFloatingPanel({
         origWidth: size.width,
         origHeight: size.height,
       }
+      const origPos = pos!
 
       const handleResizeMove = (me: MouseEvent) => {
         if (!resizeRef.current) return
-        const newWidth = Math.max(280, resizeRef.current.origWidth + (me.clientX - resizeRef.current.startX))
-        const newHeight = Math.max(300, resizeRef.current.origHeight + (me.clientY - resizeRef.current.startY))
+        const dx = me.clientX - resizeRef.current.startX
+        const dy = me.clientY - resizeRef.current.startY
+        let newWidth = size.width
+        let newHeight = size.height
+        let newLeft = origPos.left
+        let newTop = origPos.top
+
+        if (dir.includes("e")) newWidth = Math.max(280, resizeRef.current.origWidth + dx)
+        if (dir.includes("w")) {
+          newWidth = Math.max(280, resizeRef.current.origWidth - dx)
+          newLeft = origPos.left + (resizeRef.current.origWidth - newWidth)
+        }
+        if (dir.includes("s")) newHeight = Math.max(300, resizeRef.current.origHeight + dy)
+        if (dir.includes("n")) {
+          newHeight = Math.max(300, resizeRef.current.origHeight - dy)
+          newTop = origPos.top + (resizeRef.current.origHeight - newHeight)
+        }
+
         setSize({ width: newWidth, height: newHeight })
+        setPos({ left: Math.max(0, newLeft), top: Math.max(0, newTop) })
       }
 
       const handleResizeEnd = () => {
@@ -458,7 +476,7 @@ export function HarnessFloatingPanel({
       window.addEventListener("mousemove", handleResizeMove)
       window.addEventListener("mouseup", handleResizeEnd)
     },
-    [size],
+    [size, pos],
   )
 
   // Don't render until position is computed
@@ -549,17 +567,22 @@ export function HarnessFloatingPanel({
         </TabsContent>
       </Tabs>
 
-      {/* Resize handle — bottom-right corner */}
-      <div
-        className="absolute bottom-0 right-0 w-4 h-4 cursor-se-resize flex items-end justify-end"
-        onMouseDown={handleResizeStart}
-        title="调整大小"
-      >
-        <svg width="10" height="10" viewBox="0 0 10 10" className="text-muted-foreground/40">
+      {/* Resize handles — all 4 corners + 4 edges */}
+      {/* Corners */}
+      <div className="absolute top-0 left-0 w-3 h-3 cursor-nw-resize" onMouseDown={(e) => handleResizeStart(e, "nw")} />
+      <div className="absolute top-0 right-0 w-3 h-3 cursor-ne-resize" onMouseDown={(e) => handleResizeStart(e, "ne")} />
+      <div className="absolute bottom-0 left-0 w-3 h-3 cursor-sw-resize" onMouseDown={(e) => handleResizeStart(e, "sw")} />
+      <div className="absolute bottom-0 right-0 w-3 h-3 cursor-se-resize" onMouseDown={(e) => handleResizeStart(e, "se")}>
+        <svg width="10" height="10" viewBox="0 0 10 10" className="text-muted-foreground/40 absolute bottom-0.5 right-0.5">
           <line x1="9" y1="1" x2="1" y2="9" stroke="currentColor" strokeWidth="1" />
           <line x1="9" y1="5" x2="5" y2="9" stroke="currentColor" strokeWidth="1" />
         </svg>
       </div>
+      {/* Edges */}
+      <div className="absolute top-0 left-3 right-3 h-1.5 cursor-n-resize" onMouseDown={(e) => handleResizeStart(e, "n")} />
+      <div className="absolute bottom-0 left-3 right-3 h-1.5 cursor-s-resize" onMouseDown={(e) => handleResizeStart(e, "s")} />
+      <div className="absolute top-3 bottom-3 left-0 w-1.5 cursor-w-resize" onMouseDown={(e) => handleResizeStart(e, "w")} />
+      <div className="absolute top-3 bottom-3 right-0 w-1.5 cursor-e-resize" onMouseDown={(e) => handleResizeStart(e, "e")} />
     </div>
   )
 }
