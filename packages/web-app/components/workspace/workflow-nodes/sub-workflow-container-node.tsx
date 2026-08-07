@@ -92,7 +92,8 @@ export function SubWorkflowContainerNode({ data, selected }: NodeProps) {
     || swData.statusOverlay?.harnessStatus === "harness_modified"
     || swData.harnessStatus === "harness_intervening"
     || swData.harnessStatus === "harness_modified"
-  const showMarchingAnts = stepStatus === "running" || isHarnessActive
+  const isDone = stepStatus === "completed" || stepStatus === "skipped" || stepStatus === "cancelled"
+  const showMarchingAnts = !isDone && (stepStatus === "running" || isHarnessActive)
   const marchColor = (swData.statusOverlay?.harnessStatus === "harness_intervening"
     || swData.harnessStatus === "harness_intervening") ? "#8b5cf6" : "#6366f1"
   const borderColor = stepStatus ? statusBorderColor[stepStatus] ?? "border-gray-300" : "border-indigo-300"

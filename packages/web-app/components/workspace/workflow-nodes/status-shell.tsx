@@ -41,7 +41,10 @@ export function StatusShell({
   const isHarnessActive = statusOverlay?.harnessStatus === "harness_intervening"
     || statusOverlay?.harnessStatus === "harness_modified"
   const marchColor = statusOverlay?.harnessStatus === "harness_intervening" ? "#8b5cf6" : "#f59e0b"
-  const showMarchingAnts = statusOverlay?.stepStatus === "running" || isHarnessActive
+  const isDone = statusOverlay?.stepStatus === "completed"
+    || statusOverlay?.stepStatus === "skipped"
+    || statusOverlay?.stepStatus === "cancelled"
+  const showMarchingAnts = !isDone && (statusOverlay?.stepStatus === "running" || isHarnessActive)
 
   return (
     <div

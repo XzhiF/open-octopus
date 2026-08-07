@@ -116,7 +116,8 @@ export function LoopContainerNode({ data, selected }: NodeProps) {
     || loopData.statusOverlay?.harnessStatus === "harness_modified"
     || loopData.harnessStatus === "harness_intervening"
     || loopData.harnessStatus === "harness_modified"
-  const showMarchingAnts = stepStatus === "running" || isHarnessActive
+  const isDone = stepStatus === "completed" || stepStatus === "skipped" || stepStatus === "cancelled"
+  const showMarchingAnts = !isDone && (stepStatus === "running" || isHarnessActive)
   const marchColor = (loopData.statusOverlay?.harnessStatus === "harness_intervening"
     || loopData.harnessStatus === "harness_intervening") ? "#8b5cf6" : "#f59e0b"
   const borderColor = stepStatus ? statusBorderColor[stepStatus] ?? "border-gray-300" : "border-gray-300"
