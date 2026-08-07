@@ -33,6 +33,7 @@ export interface ParsedHarnessEvent {
     blockReason?: string
     harnessHint?: string
     modelOverride?: string
+    varPoolPatches?: Record<string, string>
   }
   // blocked fields
   reason?: string
@@ -113,6 +114,7 @@ function parseSSEEvent(eventType: string, raw: Record<string, unknown>): ParsedH
               blockReason: rawResult.blockReason as string | undefined,
               harnessHint: rawResult.harnessHint as string | undefined,
               modelOverride: rawResult.modelOverride as string | undefined,
+              varPoolPatches: rawResult.varPoolPatches as Record<string, string> | undefined,
             }
           : undefined,
         tokenUsage,
@@ -197,6 +199,7 @@ export function useHarnessEvents(
                       blockReason: (result as Record<string, unknown>).blockReason as string | undefined,
                       harnessHint: (result as Record<string, unknown>).harnessHint as string | undefined,
                       modelOverride: (result as Record<string, unknown>).modelOverride as string | undefined,
+                      varPoolPatches: (result as Record<string, unknown>).varPoolPatches as Record<string, string> | undefined,
                     }
                   : undefined,
               tokenUsage,

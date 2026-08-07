@@ -358,6 +358,13 @@ function DetailTab({ events }: { events: ParsedHarnessEvent[] }) {
               {selected.delegationResult.modelOverride && (
                 <DetailRow label="模型覆盖" value={selected.delegationResult.modelOverride} />
               )}
+              {selected.delegationResult.varPoolPatches && Object.keys(selected.delegationResult.varPoolPatches).length > 0 && (
+                <DetailSection label="变量修补">
+                  <pre className="text-[10px] font-mono whitespace-pre-wrap text-muted-foreground">
+                    {JSON.stringify(selected.delegationResult.varPoolPatches, null, 2)}
+                  </pre>
+                </DetailSection>
+              )}
             </>
           )}
 
