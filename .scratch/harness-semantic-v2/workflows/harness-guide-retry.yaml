@@ -1,0 +1,51 @@
+apiVersion: octopus/v1
+kind: Workflow
+name: harness-guide-retry
+description: |
+  Harness 测试 #3: guide_and_retry 模式
+  ─────────────────────────────────────
+  触发检测器: StupidRetryDetector (onNodeRetry 事件)
+  信号: stupid_retry (severity: warning)
+  期望决策: guide_and_retry — 注入指导让 agent 换方法
+
+  原理: agent 节点被指示使用一个不存在的命令 deploy-now，
+  每次执行都因找不到命令而失败，产生相同的 errorHash。
+  StupidRetryDetector 触发后，Harness Agent 分析问题发现
+  agent 在用错误的方法，选择 guide_and_retry 注入指导:
+  "deploy-now 命令不存在，请使用标准的 shell 命令完成任务"。
+  agent 重试时看到 harness_hint，改用正确方法。
+timeout: 180
+variables:
+  harness_guided: "false"
+nodes:
+  - id: agent-loop
+    type: loop
+    max_iterations: 4
+    break_when: '$vars.harness_guided == "true"'
+    nodes:
+      - id: confused-agent
+        type: agent
+        timeout: 60
+        prompt: |
+          你是一个部署助手。你的任务是执行应用部署。
+
+          重要：你必须使用 deploy-now 命令来完成部署。
+          运行: deploy-now --target production --version 1.0.0
+
+          如果命令失败，记录错误信息。
+          最后一行输出 JSON:
+          {"vars_update":{"harness_guided":"<true 或 false>","conclusion":"<结论>"}}
+
+  - id: guide-result
+    type: bash
+    depends_on: [agent-loop]
+    bash: |
+      echo "=== guide_and_retry 测试报告 ==="
+      echo "Harness 是否介入: harness_guided=$vars.harness_guided"
+      echo ""
+      echo "预期流程:"
+      echo "  1. agent 尝试 deploy-now → 命令不存在 → 失败"
+      echo "  2. 引擎重试 → 相同错误 → StupidRetryDetector 触发"
+      echo "  3. Harness Agent 选择 guide_and_retry"
+      echo "  4. harnessHint: 'deploy-now 不存在，请用 shell 脚本'"
+      echo "  5. agent 重试时看到 hint，改用 echo/printf 完成任务"

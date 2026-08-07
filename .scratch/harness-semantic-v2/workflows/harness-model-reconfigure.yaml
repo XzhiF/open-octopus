@@ -1,0 +1,70 @@
+apiVersion: octopus/v1
+kind: Workflow
+name: harness-model-reconfigure
+description: |
+  Harness 测试 #5: reconfigure_and_retry 模式
+  ────────────────────────────────────────────
+  触发检测器: StupidRetryDetector + ModelMismatchDetector
+  信号: stupid_retry / model_mismatch
+  期望决策: reconfigure_and_retry — 切换模型后重试
+
+  原理: agent 节点使用 se (轻量模型) 执行复杂的分析任务。
+  轻量模型可能因能力不足反复失败或产生低质量输出。
+  StupidRetryDetector 触发后，Harness Agent 分析发现根因
+  是模型能力不足，选择 reconfigure_and_retry 将模型切换
+  为 pro-max (Claude Sonnet)。如果 API 返回 400 错误且
+  包含 vision/tool/capability 关键词，ModelMismatchDetector
+  也会直接触发。
+
+  备选触发: 若使用非 Claude 引擎 (如 pi/openai) 发送
+  包含图片分析的请求，可能触发 400 vision 错误 →
+  ModelMismatchDetector 直接生成 DiagnosisReport。
+timeout: 180
+variables:
+  harness_reconfigured: "false"
+nodes:
+  - id: reconfigure-loop
+    type: loop
+    max_iterations: 4
+    break_when: '$vars.harness_reconfigured == "true"'
+    nodes:
+      - id: weak-model-task
+        type: agent
+        model: se
+        timeout: 60
+        prompt: |
+          你是一个数据分析助手。请完成以下复杂分析任务:
+
+          1. 分析以下 JSON 数据的趋势和异常:
+             [{"month":1,"revenue":12000},{"month":2,"revenue":15000},
+              {"month":3,"revenue":8000},{"month":4,"revenue":22000},
+              {"month":5,"revenue":19000},{"month":6,"revenue":31000}]
+
+          2. 生成一份包含以下内容的详细报告:
+             - 增长趋势分析 (含百分比变化)
+             - 异常值检测和原因推测
+             - 未来 3 个月预测 (含置信区间)
+             - 建议的行动方案
+
+          3. 将报告写入 /tmp/harness-analysis-report.md
+
+          最后一行输出 JSON:
+          {"vars_update":{"harness_reconfigured":"<true|false>","conclusion":"<2-3句结论>"}}
+
+  - id: reconfigure-result
+    type: bash
+    depends_on: [reconfigure-loop]
+    bash: |
+      echo "=== reconfigure_and_retry 测试报告 ==="
+      echo "Harness 是否介入: harness_reconfigured=$vars.harness_reconfigured"
+      echo ""
+      echo "预期流程:"
+      echo "  1. se 模型执行复杂分析 → 能力不足 → 失败"
+      echo "  2. 引擎重试 → 相同失败 → StupidRetryDetector 触发"
+      echo "  3. Harness Agent 分析: 模型能力不足"
+      echo "  4. 选择 reconfigure_and_retry"
+      echo "  5. modelOverride: 'pro-max' 或 'claude-sonnet-4-20250514'"
+      echo "  6. 节点使用新模型重试 → 分析完成"
+      echo ""
+      echo "备选触发 (ModelMismatchDetector):"
+      echo "  若 API 返回 400 + vision/tool 关键词 → 直接触发"

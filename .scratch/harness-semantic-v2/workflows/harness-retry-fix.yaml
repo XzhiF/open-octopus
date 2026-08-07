@@ -1,0 +1,69 @@
+apiVersion: octopus/v1
+kind: Workflow
+name: harness-retry-fix
+description: |
+  Harness 测试 #2: fix_and_retry 模式
+  ───────────────────────────────────
+  触发检测器: StupidRetryDetector (onNodeRetry 事件)
+  信号: stupid_retry (severity: warning, threshold: 2)
+  期望决策: fix_and_retry — 修补变量池后重试节点
+
+  原理: bash 节点因缺少环境变量 CONFIG_PATH 反复失败，
+  每次重试产生相同的 errorHash。StupidRetryDetector 在
+  第 2 次重试时触发 DiagnosisReport，Harness Agent 分析
+  错误信息后选择 fix_and_retry，提供 varPoolPatches 设置
+  CONFIG_PATH=/tmp/config.json，节点重试成功。
+timeout: 120
+variables:
+  harness_fixed: "false"
+  CONFIG_PATH: ""
+nodes:
+  - id: setup
+    type: bash
+    bash: |
+      echo "=== setup: 创建配置文件 ==="
+      mkdir -p /tmp/harness-test
+      echo '{"version":"1.0","env":"test"}' > /tmp/harness-test/config.json
+      echo "配置文件已创建: /tmp/harness-test/config.json"
+
+  - id: retry-loop
+    type: loop
+    depends_on: [setup]
+    max_iterations: 4
+    break_when: '$vars.harness_fixed == "true"'
+    nodes:
+      - id: failing-task
+        type: bash
+        timeout: 30
+        bash: |
+          echo "=== 尝试执行配置加载任务 ==="
+          # 直接引用 $vars 模板（引擎在每次执行时从 VarPool 解析）
+          RESOLVED_PATH="$vars.CONFIG_PATH"
+          echo "查找配置文件: CONFIG_PATH=${RESOLVED_PATH:-未设置}"
+
+          if [ -z "$RESOLVED_PATH" ]; then
+            echo "ERROR: 环境变量 CONFIG_PATH 未设置"
+            echo "提示: 需要通过 varPool CONFIG_PATH 变量注入"
+            exit 1
+          fi
+
+          if [ ! -f "$RESOLVED_PATH" ]; then
+            echo "ERROR: 配置文件不存在: $RESOLVED_PATH"
+            exit 1
+          fi
+
+          echo "配置加载成功: $RESOLVED_PATH"
+          echo '{"vars_update":{"harness_fixed":"true","conclusion":"配置加载完成"}}'
+
+  - id: result
+    type: bash
+    depends_on: [retry-loop]
+    bash: |
+      echo "=== fix_and_retry 测试报告 ==="
+      echo "Harness 介入结果: harness_fixed=$vars.harness_fixed"
+      echo ""
+      if [ "$vars.harness_fixed" = "true" ]; then
+        echo "✅ 测试通过: Harness Agent 成功修复了变量并完成了重试"
+      else
+        echo "⚠️ 测试注意: Harness 介入了但修复未最终生效"
+      fi
