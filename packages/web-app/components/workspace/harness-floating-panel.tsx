@@ -142,7 +142,8 @@ function TimelineItem({ event }: { event: ParsedHarnessEvent }) {
       }
       icon = dr?.success ? "🤖" : "🤖❌"
       const decision = dr?.decision ? (decisionLabel[dr.decision] ?? dr.decision) : "委托"
-      const reason = dr?.blockReason ?? dr?.reasoning ?? ""
+      const rawReason = dr?.blockReason ?? dr?.reasoning ?? ""
+      const reason = typeof rawReason === "object" ? JSON.stringify(rawReason, null, 2) : rawReason
       label = reason
         ? `${decision} ${event.nodeId ?? ""}`
         : `${decision} ${event.nodeId ?? ""}`
@@ -191,7 +192,10 @@ function TimelineItem({ event }: { event: ParsedHarnessEvent }) {
 
 function MonitorTab({ events }: { events: ParsedHarnessEvent[] }) {
   const stats = useMemo(() => {
-    const interventions = events.filter((e) => e.type === "harness_intervention").length
+    // Count both legacy intervention events and delegation events (fix_and_retry, block_node, etc.)
+    const interventions = events.filter(
+      (e) => e.type === "harness_intervention" || e.type === "harness_delegation",
+    ).length
     const diagnoses = events.filter((e) => e.type === "harness_diagnosis").length
     const blocks = events.filter((e) => e.type === "harness_blocked").length
     // Aggregate token usage across all events
@@ -316,11 +320,11 @@ function DetailTab({ events }: { events: ParsedHarnessEvent[] }) {
           )}
 
           {selected.result && (
-            <DetailRow label="结果" value={selected.result} />
+            <DetailRow label="结果" value={typeof selected.result === "object" ? JSON.stringify(selected.result) : selected.result} />
           )}
 
           {selected.reason && (
-            <DetailRow label="原因" value={selected.reason} />
+            <DetailRow label="原因" value={typeof selected.reason === "object" ? JSON.stringify(selected.reason) : selected.reason} />
           )}
         </div>
       )}

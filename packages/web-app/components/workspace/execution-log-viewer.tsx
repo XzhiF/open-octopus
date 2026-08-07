@@ -96,7 +96,10 @@ export function EventIcon({ event, agentType }: { event: string; agentType?: str
     case "heartbeat": return <Activity className="h-3 w-3 text-rose-500 shrink-0" />
     case "harness_directive": return <AlertTriangle className="h-3 w-3 text-red-500 shrink-0" />
     case "heartbeat_stall": return <AlertTriangle className="h-3 w-3 text-orange-500 shrink-0" />
-    default: return <Clock className="h-3 w-3 text-muted-foreground shrink-0" />
+    default:
+      // Generic harness events (harness_stupid_retry, harness_process_conflict, etc.)
+      if (event.startsWith("harness_")) return <ShieldCheck className="h-3 w-3 text-violet-400 shrink-0" />
+      return <Clock className="h-3 w-3 text-muted-foreground shrink-0" />
   }
 }
 
@@ -161,6 +164,21 @@ export function EventLabel({ entry }: { entry: LogEvent }) {
       return <span className="text-emerald-400">迭代开始{entry.iteration ? ` #${entry.iteration}` : ""}</span>
     case "branch_end":
       return <span className="text-emerald-400">迭代结束{entry.iteration ? ` #${entry.iteration}` : ""}</span>
+  }
+
+  // Harness events: render detector name + severity from event data
+  if (entry.event?.startsWith("harness_")) {
+    const data = entry.data ?? {}
+    const detector = entry.event.replace("harness_", "")
+    const severity = (data as any).severity ?? ""
+    const pattern = (data as any).pattern ?? detector
+    const decision = (data as any).decision ?? ""
+    const status = (data as any).status ?? ""
+    let label = `🛡️ ${pattern}`
+    if (decision) label += ` → ${decision}`
+    else if (status) label += ` (${status})`
+    const colorClass = severity === "critical" ? "text-red-400" : severity === "warning" ? "text-amber-400" : "text-violet-400"
+    return <span className={colorClass}>{label}</span>
   }
 
   // Legacy agent_event sub-types (client-side merged)
@@ -806,6 +824,10 @@ export function ExecutionLogViewer({ workspaceId, executionId, executionStatus }
         } else if (e.event === "end") {
           key = `${nodeId}-end`
           label = `${nodeId} end`
+        } else if (e.event.startsWith("harness_")) {
+          // Harness events on container nodes should be visible
+          key = `${nodeId}-harness`
+          label = `${nodeId} 🛡️`
         } else {
           // Skip other container parent events
           continue

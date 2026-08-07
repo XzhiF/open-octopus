@@ -160,11 +160,20 @@ export class BashExecutor implements NodeExecutor {
         reject(new Error("Aborted"))
         return
       }
+      // Merge VarPool string values into child env so $VAR_NAME works
+      // (e.g. harness varPoolPatches inject CONFIG_PATH → bash sees $CONFIG_PATH)
+      const env = buildHostEnv()
+      for (const [k, v] of Object.entries(this.pool.snapshot())) {
+        if (v != null && typeof v !== "object") {
+          env[k] = String(v)
+        }
+      }
+
       const proc = spawn(BASH_PATH, ["-c", script], {
         stdio: ["pipe", "pipe", "pipe"],
         shell: false,
         cwd: this.cwd,
-        env: buildHostEnv(),
+        env,
       })
 
       let stdout = ""

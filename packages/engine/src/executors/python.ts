@@ -113,10 +113,18 @@ export class PythonExecutor implements NodeExecutor {
         reject(new Error("Aborted"))
         return
       }
+      // Merge VarPool string values into child env so os.environ["VAR_NAME"] works
+      const env = buildHostEnv()
+      for (const [k, v] of Object.entries(this.pool.snapshot())) {
+        if (v != null && typeof v !== "object") {
+          env[k] = String(v)
+        }
+      }
+
       const proc = spawn("python3", ["-c", script], {
         stdio: ["pipe", "pipe", "pipe"],
         shell: false,
-        env: buildHostEnv(),
+        env,
       })
 
       let stdout = ""

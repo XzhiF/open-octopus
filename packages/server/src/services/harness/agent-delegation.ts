@@ -209,16 +209,45 @@ ${varpoolLines || "(empty)"}
 ## 你需要做什么
 分析根因，然后从以下 5 种决策中选择最合适的：
 
-1. fix_and_retry: 修改变量/配置，然后重试（不能直接修改脚本，只能通过 varPool/hint 间接影响）
-2. guide_and_retry: 注入指导到 agent 对话，让它换方法
-3. reconfigure_and_retry: 切换模型/修改配置后重试
-4. agent_takeover: 你直接完成节点的目标任务（用你的工具执行）
-5. block_node: 阻断节点，分析后续节点依赖
+1. **fix_and_retry**: 修改变量/配置，然后重试（不能直接修改脚本，只能通过 varPool/hint 间接影响）
+   - ⚠️ **必须** 在 varPoolPatches 中提供具体的变量修复值
+   - 示例: \`"varPoolPatches": {"CONFIG_PATH": "/correct/path", "API_KEY": "sk-xxx"}\`
+
+2. **guide_and_retry**: 注入指导到 agent 对话，让它换方法
+   - 在 harnessHint 中提供具体指导
+
+3. **reconfigure_and_retry**: 切换模型/修改配置后重试
+   - 在 modelOverride 中指定新模型
+
+4. **agent_takeover**: 你直接完成节点的目标任务（用你的工具执行）
+   - 在 takeoverOutput 中提供执行结果
+
+5. **block_node**: 阻断节点，分析后续节点依赖
+   - 在 blockReason 中说明阻断原因
 
 ## 输出要求（极其重要）
 
 你必须只输出一个 JSON 代码块，不要输出任何其他文字、表格、markdown 标题或解释。
-你的整个回复必须只有一个 \`\`\`json 代码块：
+你的整个回复必须只有一个 \`\`\`json 代码块。
+
+### fix_and_retry 示例（最常见）:
+
+\`\`\`json
+{
+  "decision": "fix_and_retry",
+  "reasoning": "检测到 CONFIG_PATH 未设置，导致脚本失败。需要注入正确的配置路径。",
+  "varPoolPatches": {
+    "CONFIG_PATH": "/etc/app/config.json"
+  },
+  "harnessHint": "已设置 CONFIG_PATH，请重试",
+  "modelOverride": "",
+  "takeoverOutput": "",
+  "blockReason": "",
+  "continueSubsequent": true
+}
+\`\`\`
+
+### 其他决策示例:
 
 \`\`\`json
 {
@@ -483,6 +512,8 @@ export class AgentDelegationService {
     context: DelegationContext
   }): Promise<DelegationResult> {
     const { executionId, nodeId, report, context } = params
+    // Use displayNodeId for SSE/UI (targets the actual failing inner node)
+    const displayNodeId = report.displayNodeId ?? nodeId
     const delegationId = `harness-${executionId}-${nodeId}-${Date.now()}`
 
     // Append DiagnosisReport to session for context accumulation (AC3)
@@ -493,7 +524,7 @@ export class AgentDelegationService {
     }
 
     // Emit SSE start event
-    this.emitDelegationSSE(executionId, nodeId, delegationId, "start")
+    this.emitDelegationSSE(executionId, displayNodeId, delegationId, "start")
 
     // Build the prompt (includes conversation history if session exists)
     const prompt = this.buildPromptWithHistory(report, context)
@@ -528,7 +559,7 @@ export class AgentDelegationService {
       })
 
       // Emit SSE fail event
-      this.emitDelegationSSE(executionId, nodeId, delegationId, "fail")
+      this.emitDelegationSSE(executionId, displayNodeId, delegationId, "fail")
 
       return failResult
     }
@@ -564,7 +595,7 @@ export class AgentDelegationService {
     // Emit SSE complete/fail event with result
     this.emitDelegationSSE(
       executionId,
-      nodeId,
+      displayNodeId,
       delegationId,
       parsed.success ? "complete" : "fail",
       parsed,

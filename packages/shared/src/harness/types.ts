@@ -16,6 +16,8 @@ export interface DiagnosisReport {
   // Facts — what happened
   executionId: string
   nodeId: string
+  /** Optional: the actual failing inner node ID (for loop containers). Used for UI display. */
+  displayNodeId?: string
   nodeType: string // bash | python | agent | ...
   pattern: string // anomaly pattern identifier
 

@@ -388,9 +388,9 @@ export function useExecutionTree(
     es.addEventListener("harness_diagnosis", (e) => {
       try {
         const { executionId, report } = JSON.parse(e.data)
-        if (report?.severity === "critical") {
-          setTreeNodes(prev => prev.map(n => n.id === executionId ? { ...n, harnessStatus: "intervened" as HarnessExecutionStatus } : n))
-        }
+        // Update harnessStatus for ALL diagnosis events (not just critical),
+        // so warning-level detectors (stupid_retry, timeout_cascade) also show purple ants
+        setTreeNodes(prev => prev.map(n => n.id === executionId ? { ...n, harnessStatus: "intervened" as HarnessExecutionStatus } : n))
       } catch { /* skip */ }
     })
     es.addEventListener("harness_delegation", (e) => {

@@ -16,6 +16,7 @@ import type {
 import type { HarnessDAO } from "../../db/dao/harness-dao"
 import type { SSEService } from "../sse"
 import type { RepairService } from "../repair"
+import type { DelegationContext } from "./agent-delegation"
 import type { InterventionResult, ActionContext } from "./action-types"
 import type { AgentDelegationService } from "./agent-delegation"
 import { ActionRegistry } from "./action-registry"
@@ -146,7 +147,11 @@ export class StrategyEngine {
    *
    * This is the primary entry point for the HarnessController/DetectorPipeline.
    */
-  async handleReport(report: DiagnosisReport): Promise<StrategyEngineResult> {
+  async handleReport(report: DiagnosisReport, delegationContext?: DelegationContext): Promise<StrategyEngineResult> {
+    console.log(`[StrategyEngine] handleReport: detector=${report.detector}, severity=${report.severity}, hasContext=${!!delegationContext}`)
+    if (delegationContext) {
+      console.log(`[StrategyEngine] Context: varpool keys=${Object.keys(delegationContext.varpoolSnapshot).join(',')}, events=${delegationContext.recentEvents.length}`)
+    }
     const isProcessConflict = report.detector === "process_conflict"
     const isCritical = report.severity === "critical"
 
@@ -157,7 +162,7 @@ export class StrategyEngine {
     if (isProcessConflict && isCritical) {
       let delegationResult: DelegationResult | undefined
       if (this.agentDelegationService) {
-        const result = await this.tryDelegate(report)
+        const result = await this.tryDelegate(report, delegationContext)
         if (result) {
           delegationResult = {
             success: result.success,
@@ -185,7 +190,7 @@ export class StrategyEngine {
     // ── Async / pause domain: everything else → delegate ─────────────────
     let delegationResult: DelegationResult | undefined
     if (this.agentDelegationService) {
-      const result = await this.tryDelegate(report)
+      const result = await this.tryDelegate(report, delegationContext)
       if (result) {
         delegationResult = {
           success: result.success,
@@ -215,6 +220,7 @@ export class StrategyEngine {
    */
   private async tryDelegate(
     report: DiagnosisReport,
+    delegationContext?: DelegationContext,
   ): Promise<InterventionResult | null> {
     if (!this.agentDelegationService) {
       return null
@@ -225,7 +231,7 @@ export class StrategyEngine {
         executionId: report.executionId,
         nodeId: report.nodeId,
         report,
-        context: {
+        context: delegationContext ?? {
           recentEvents: [],
           varpoolSnapshot: {},
           nodeConfig: null,
@@ -251,7 +257,7 @@ export class StrategyEngine {
       return {
         success: true,
         action: "agent_delegation",
-        message: `Agent delegation: ${delegationResult.decision} — ${delegationResult.reasoning.slice(0, 100)}`,
+        message: `Agent delegation: ${delegationResult.decision} — ${(delegationResult.reasoning ?? "").slice(0, 100)}`,
         delegate: true,
         details: {
           decision: delegationResult.decision,

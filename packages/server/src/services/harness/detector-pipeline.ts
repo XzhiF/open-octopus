@@ -107,6 +107,27 @@ export class DetectorPipeline {
    */
   private pendingBlockActions = new Map<string, PendingBlockAction>()
 
+  /**
+   * In-flight LLM delegation promises keyed by nodeId.
+   * Populated by handleDiagnosis when async delegation starts;
+   * consumed (awaited) by onBeforeRetry proxy before checking pendingActions.
+   * This bridges the gap between fire-and-forget onNodeRetry and awaited onBeforeRetry.
+   */
+  private pendingDelegationPromises = new Map<string, Promise<void>>()
+
+  /**
+   * Current VarPool snapshot passed from engine's onBeforeRetry callback.
+   * Used by buildDelegationContext to provide real-time variable state to the LLM.
+   */
+  currentPoolSnapshot?: Record<string, any>
+
+  /**
+   * Last failing inner node ID per loop node, tracked via onBranchEnd.
+   * Used by onBeforeRetry to attribute harness events to the actual failing
+   * inner node (e.g. "failing-task") rather than the loop container (e.g. "retry-loop").
+   */
+  private lastFailingInnerNode = new Map<string, string>()
+
   constructor(deps: DetectorPipelineDeps) {
     this.executionId = deps.executionId
     this.workspaceId = deps.workspaceId
@@ -208,8 +229,9 @@ export class DetectorPipeline {
   /**
    * Persist a DiagnosisReport to harness_events and emit SSE.
    * Then route the report to the StrategyEngine (Layer 2) if available.
+   * Returns the delegation promise (if any) so callers can await it.
    */
-  private handleDiagnosis(report: DiagnosisReport, skipStrategy: boolean = false): void {
+  private handleDiagnosis(report: DiagnosisReport, skipStrategy: boolean = false): Promise<void> | undefined {
     // Persist to DB
     const row: HarnessEvent = {
       id: report.id,
@@ -233,7 +255,8 @@ export class DetectorPipeline {
     }
 
     // Update node_executions.harness_status and insert agent_event for log viewer
-    this.updateNodeHarnessStatus(report.nodeId, "harness_intervening", report)
+    // Use displayNodeId (inner failing node) for UI if available
+    this.updateNodeHarnessStatus(report.displayNodeId ?? report.nodeId, "harness_intervening", report)
 
     // Immediately mark execution-level harness_status as "intervened"
     // so the execution tree shows harness is working (purple ants)
@@ -259,15 +282,18 @@ export class DetectorPipeline {
 
     // Route to StrategyEngine (Layer 2) if available
     // skipStrategy = true when caller (onBeforeNode) handles delegation directly
+    console.log(`[DetectorPipeline] handleDiagnosis: skipStrategy=${skipStrategy}, hasStrategyEngine=${!!this.strategyEngine}`)
     if (!skipStrategy && this.strategyEngine) {
-      this.strategyEngine.handleReport(report).then((result) => {
-        // If Layer 3 delegation occurred, process the structured decision
+      // Build delegation context from DB so the LLM can see VarPool + events
+      console.log(`[DetectorPipeline] Building delegation context...`)
+      const delegationContext = this.buildDelegationContext(report)
+      console.log(`[DetectorPipeline] Context built: varpool=${JSON.stringify(delegationContext.varpoolSnapshot).slice(0,200)}, events=${delegationContext.recentEvents.length}`)
+      const delegationPromise = this.strategyEngine.handleReport(report, delegationContext).then((result) => {
         if (result.delegationResult) {
           this.processDecision(report, result.delegationResult)
           return
         }
 
-        // Fallback: store intervention results as pending decisions (legacy path)
         const nodeId = report.nodeId
         for (const actionResult of result.actionResults) {
           if (actionResult.success && (actionResult.harnessHint || actionResult.modelOverride)) {
@@ -279,13 +305,16 @@ export class DetectorPipeline {
           }
         }
 
-        // If delegation is requested but no result yet, store a failure decision
         if (result.delegate && !result.delegationResult) {
           this.pendingFailureActions.set(nodeId, { action: "delegate" })
         }
       }).catch((err) => {
         console.error("[DetectorPipeline] StrategyEngine error:", err)
       })
+
+      // Store for cleanup and return so callers can await it
+      this.pendingDelegationPromises.set(report.nodeId, delegationPromise)
+      return delegationPromise
     }
   }
 
@@ -353,20 +382,26 @@ export class DetectorPipeline {
    */
   processDecision(report: DiagnosisReport, result: DelegationResult): void {
     const nodeId = report.nodeId
+    // displayNodeId targets the actual failing inner node for UI (e.g. "failing-task")
+    // while nodeId targets the retried container (e.g. "retry-loop") for pendingActions
+    const displayNodeId = report.displayNodeId ?? nodeId
 
     // Write delegation decision to workspace logs
+    console.log(`[DetectorPipeline] processDecision: node=${nodeId}, decision=${result.decision}, varPoolPatches=${JSON.stringify(result.varPoolPatches)}, harnessHint=${result.harnessHint}`)
     this.writeHarnessLog({
       type: "delegation",
       nodeId,
       success: result.success,
       decision: result.decision,
       reasoning: result.reasoning,
+      varPoolPatches: result.varPoolPatches,
+      harnessHint: result.harnessHint,
       tokenUsage: result.tokenUsage,
     })
 
     if (!result.success) {
       // Failed delegation: treat as block_node (safe default)
-      this.updateNodeHarnessStatus(nodeId, "harness_blocked", report, {
+      this.updateNodeHarnessStatus(displayNodeId, "harness_blocked", report, {
         decision: result.decision,
         reasoning: result.reasoning,
       })
@@ -381,7 +416,7 @@ export class DetectorPipeline {
           varPoolPatches: result.varPoolPatches,
           harnessHint: result.harnessHint,
         })
-        this.updateNodeHarnessStatus(nodeId, "harness_modified", report, {
+        this.updateNodeHarnessStatus(displayNodeId, "harness_modified", report, {
           decision: result.decision,
           reasoning: result.reasoning,
           varPoolPatches: result.varPoolPatches,
@@ -395,7 +430,7 @@ export class DetectorPipeline {
           action: "retry",
           harnessHint: result.harnessHint,
         })
-        this.updateNodeHarnessStatus(nodeId, "harness_modified", report, {
+        this.updateNodeHarnessStatus(displayNodeId, "harness_modified", report, {
           decision: result.decision,
           reasoning: result.reasoning,
           harnessHint: result.harnessHint,
@@ -408,7 +443,7 @@ export class DetectorPipeline {
           action: "retry",
           modelOverride: result.modelOverride,
         })
-        this.updateNodeHarnessStatus(nodeId, "harness_modified", report, {
+        this.updateNodeHarnessStatus(displayNodeId, "harness_modified", report, {
           decision: result.decision,
           reasoning: result.reasoning,
           modelOverride: result.modelOverride,
@@ -424,7 +459,7 @@ export class DetectorPipeline {
           outputs: result.takeoverOutput ? { output: result.takeoverOutput } : undefined,
           exitCode: result.takeoverExitCode ?? 0,
         })
-        this.updateNodeHarnessStatus(nodeId, "harness_executed", report, {
+        this.updateNodeHarnessStatus(displayNodeId, "harness_executed", report, {
           decision: result.decision,
           reasoning: result.reasoning,
           takeoverOutput: result.takeoverOutput,
@@ -440,7 +475,7 @@ export class DetectorPipeline {
             error: result.blockReason ?? "Blocked by harness agent",
           },
         })
-        this.updateNodeHarnessStatus(nodeId, "harness_blocked", report, {
+        this.updateNodeHarnessStatus(displayNodeId, "harness_blocked", report, {
           decision: result.decision,
           reasoning: result.reasoning,
           blockReason: result.blockReason,
@@ -499,6 +534,86 @@ export class DetectorPipeline {
   }
 
   /**
+   * Build DelegationContext from the database so the LLM agent can see:
+   * - Current VarPool values (to know what variables exist and what to patch)
+   * - Recent agent events (to understand the execution flow)
+   * - Workflow YAML (to understand the node structure)
+   */
+  buildDelegationContext(report: DiagnosisReport): import("./agent-delegation").DelegationContext {
+    let varpoolSnapshot: Record<string, any> = {}
+    let recentEvents: any[] = []
+    let workflowContent = ""
+    let nodeConfig: any = null
+
+    // 1. Use currentPoolSnapshot from engine if available (real-time state)
+    if (this.currentPoolSnapshot) {
+      varpoolSnapshot = this.currentPoolSnapshot
+    }
+
+    try {
+      const db = this.dao.getDb()
+
+      // 1b. Fallback: VarPool snapshot from DB if not provided by engine
+      if (!this.currentPoolSnapshot) {
+        const execRow = db.prepare(
+          `SELECT var_pool, workflow_ref FROM executions WHERE id = ?`
+        ).get(this.executionId) as { var_pool: string; workflow_ref: string } | undefined
+        if (execRow?.var_pool) {
+          try { varpoolSnapshot = JSON.parse(execRow.var_pool) } catch {}
+        }
+      }
+
+      // 2. Recent agent events (last 20) for context
+      const events = db.prepare(
+        `SELECT event_type, content FROM agent_events
+         WHERE node_execution_id LIKE ? || '%'
+         ORDER BY event_order DESC LIMIT 20`
+      ).all(this.executionId) as { event_type: string; content: string }[]
+      recentEvents = events.reverse().map(e => {
+        try { return { event_type: e.event_type, ...JSON.parse(e.content) } }
+        catch { return { event_type: e.event_type, content: e.content } }
+      })
+
+      // 3. Workflow YAML from workspace
+      const execRow2 = db.prepare(
+        `SELECT workflow_ref FROM executions WHERE id = ?`
+      ).get(this.executionId) as { workflow_ref: string } | undefined
+      if (this.workspacePath && execRow2?.workflow_ref) {
+        try {
+          const { readFileSync } = require("fs")
+          const { join } = require("path")
+          const wfPath = join(this.workspacePath, "workflows", execRow2.workflow_ref)
+          workflowContent = readFileSync(wfPath, "utf-8")
+        } catch {
+          // Fallback: try to find any YAML in the workflows dir
+          try {
+            const { readFileSync, readdirSync } = require("fs")
+            const { join } = require("path")
+            const wfDir = join(this.workspacePath, "workflows")
+            const files = readdirSync(wfDir) as string[]
+            const yamlFile = files.find((f: string) => f.endsWith(".yaml") || f.endsWith(".yml"))
+            if (yamlFile) {
+              workflowContent = readFileSync(join(wfDir, yamlFile), "utf-8")
+            }
+          } catch {}
+        }
+      }
+
+      // 4. Node config from node_executions
+      const neRow = db.prepare(
+        `SELECT node_type FROM node_executions WHERE id = ?`
+      ).get(`${this.executionId}-${report.nodeId}`) as { node_type: string } | undefined
+      if (neRow) {
+        nodeConfig = { nodeId: report.nodeId, nodeType: neRow.node_type }
+      }
+    } catch (err) {
+      console.error("[DetectorPipeline] Failed to build delegation context:", err)
+    }
+
+    return { recentEvents, varpoolSnapshot, nodeConfig, workflowContent }
+  }
+
+  /**
    * Write harness event to workspace logs/<executionId>/harness.jsonl
    */
   private writeHarnessLog(event: { type: string; [key: string]: unknown }): void {
@@ -536,14 +651,78 @@ export class DetectorPipeline {
             nodeId: string,
             attempt: number,
             lastResult: any,
+            context?: { poolSnapshot?: Record<string, any> },
           ) {
+            // ── Synchronous Detection + Delegation Bridge ─────────────
+            // Engine callback order for attempt N that failed:
+            //   1. onBeforeRetry(N)  ← WE ARE HERE (awaited by engine)
+            //   2. onNodeRetry(N)    ← notification (fires later)
+            //   3. sleep(delayMs)
+            //   4. attempt N+1
+            //
+            // Run detectors NOW (synchronously), start delegation, and
+            // await the result. This ensures pendingActions is populated
+            // before the engine proceeds to the next attempt.
+
+            // Store pool snapshot for use in buildDelegationContext
+            if (context?.poolSnapshot) {
+              pipeline.currentPoolSnapshot = context.poolSnapshot
+            }
+
+            const retryEvent = {
+              type: "nodeRetry" as const,
+              nodeId,
+              attempt,
+              maxAttempts: 0,
+              delayMs: 0,
+              result: lastResult,
+            }
+
+            for (const detector of pipeline.detectors) {
+              try {
+                const report = detector.observe(retryEvent)
+                if (report) {
+                  if (!report.executionId) {
+                    report.executionId = pipeline.executionId
+                  }
+                  // If this is a loop container with a known failing inner node,
+                  // attribute harness events to the inner node for UI clarity.
+                  // The engine still retries the loop (correct behavior), but
+                  // harness UI shows the actual failing node (e.g. "failing-task").
+                  const innerNodeId = pipeline.lastFailingInnerNode.get(nodeId)
+                  if (innerNodeId) {
+                    report.displayNodeId = innerNodeId
+                  }
+                  // handleDiagnosis persists + starts delegation, returns promise.
+                  // Await the delegation directly — no timeout.
+                  // Rationale: if detection fired, we NEED the harness decision.
+                  // Retrying without the fix wastes a retry attempt.
+                  // The LLM provider has its own internal timeout (60-120s)
+                  // which handles hangs. The delegation promise never rejects
+                  // (errors are caught internally in handleDiagnosis).
+                  const delegationPromise = pipeline.handleDiagnosis(report)
+                  if (delegationPromise) {
+                    await delegationPromise
+                  }
+                }
+              } catch (err) {
+                console.error(
+                  `[DetectorPipeline] Error in detector ${detector.name} during onBeforeRetry:`,
+                  err,
+                )
+              }
+            }
+
+            // Now check pendingActions (populated by processDecision above)
             const pending = pipeline.pendingActions.get(nodeId)
             if (pending) {
               pipeline.pendingActions.delete(nodeId)
+              console.log(`[DetectorPipeline] onBeforeRetry returning pending action for ${nodeId}:`, JSON.stringify(pending))
               return pending
             }
+            console.log(`[DetectorPipeline] onBeforeRetry: no pending action for ${nodeId}, returning default retry`)
             if (typeof original === "function") {
-              return original.call(target, nodeId, attempt, lastResult)
+              return original.call(target, nodeId, attempt, lastResult, context)
             }
             return { action: "retry" }
           }
@@ -591,7 +770,7 @@ export class DetectorPipeline {
                 // Set status to "intervening" while agent analyzes
                 pipeline.updateNodeHarnessStatus(nodeId, "harness_intervening", report)
 
-                const strategyResult = await pipeline.strategyEngine.handleReport(report)
+                const strategyResult = await pipeline.strategyEngine.handleReport(report, pipeline.buildDelegationContext(report))
                 if (strategyResult.delegationResult) {
                   const dr = strategyResult.delegationResult
                   // Log delegation to workspace logs
@@ -725,6 +904,9 @@ export class DetectorPipeline {
               pipeline.pendingActions.delete(nodeId)
               pipeline.pendingFailureActions.delete(nodeId)
               pipeline.pendingBlockActions.delete(nodeId)
+              pipeline.pendingDelegationPromises.delete(nodeId)
+              // NOTE: lastFailingInnerNode is NOT cleared here — it must persist
+              // across retries. It's cleaned up in destroy() instead.
               return original.call(target, nodeId, status, durationMs, result, nodeType)
             }
 
@@ -736,20 +918,11 @@ export class DetectorPipeline {
               delayMs: number,
               result?: any,
             ) {
-              const reports = pipeline.routeEvent({
-                type: "nodeRetry",
-                nodeId,
-                attempt,
-                maxAttempts,
-                delayMs,
-                result,
-              })
-              // BP-2: Synchronously populate pendingActions from diagnosis reports.
-              // This ensures that by the next onBeforeRetry call (for attempt+1),
-              // the pending action is already stored.
-              for (const report of reports) {
-                pipeline.synchronouslyStorePendingAction(report)
-              }
+              // Detection + delegation now happens in onBeforeRetry (which fires
+              // BEFORE onNodeRetry in the engine). onNodeRetry is pure notification:
+              // just call the original callback for SSE/DB logging.
+              // Routing nodeRetry to detectors here would double-count the event
+              // (StupidRetryDetector already observed it in onBeforeRetry).
               return original.call(target, nodeId, attempt, maxAttempts, delayMs)
             }
 
@@ -763,6 +936,28 @@ export class DetectorPipeline {
             return function (nodeId: string, error: string) {
               pipeline.routeEvent({ type: "error", nodeId, error })
               return original.call(target, nodeId, error)
+            }
+
+          case "onBranchEnd":
+            return function (
+              nodeExecutionId: string,
+              iteration: number,
+              status: string,
+              nodeResults?: { nodeId: string; status: string; durationMs?: number; error?: string }[],
+            ) {
+              // Track the last failing inner node for each loop container.
+              // This lets onBeforeRetry attribute harness events to the actual
+              // failing node (e.g. "failing-task") instead of the loop (e.g. "retry-loop").
+              if (status === "failed" && nodeResults) {
+                const failedNode = nodeResults.find(n => n.status === "failed")
+                if (failedNode) {
+                  const loopId = nodeExecutionId.replace(/-iter-\d+$/, "")
+                  pipeline.lastFailingInnerNode.set(loopId, failedNode.nodeId)
+                }
+              }
+              if (typeof original === "function") {
+                return original.call(target, nodeExecutionId, iteration, status, nodeResults)
+              }
             }
 
           default:
@@ -792,47 +987,79 @@ export class DetectorPipeline {
       [key: string]: any
     },
   ): void {
-    try {
-      const db = this.dao.getDb()
-      const neId = `${this.executionId}-${nodeId}`
-      const eventType = `harness_${report.detector}`
+    console.log(`[DetectorPipeline] updateNodeHarnessStatus: nodeId=${nodeId}, status=${status}, decision=${decisionContext?.decision}`)
+    const neId = `${this.executionId}-${nodeId}`
+    const eventType = `harness_${report.detector}`
 
-      // Update harness_status on the node execution
+    let db: ReturnType<typeof this.dao.getDb>
+    try {
+      db = this.dao.getDb()
+    } catch {
+      // DAO doesn't expose getDb (e.g. test mocks) — skip agent_event persistence
+      console.log(`[DetectorPipeline] updateNodeHarnessStatus: DAO getDb not available, skipping`)
+      return
+    }
+
+    // Step 1: Update harness_status on the node execution
+    try {
       db.prepare(
         `UPDATE node_executions SET harness_status = ? WHERE id = ?`,
       ).run(status, neId)
+    } catch (err) {
+      console.error(`[DetectorPipeline] Failed to update harness_status for ${neId}:`, err)
+    }
 
-      const eventContent = JSON.stringify({
-        detector: report.detector,
-        severity: report.severity,
-        pattern: report.pattern,
-        evidence: report.evidence,
-        status,
-        ...(decisionContext ?? {}),
-      })
+    const eventContent = JSON.stringify({
+      detector: report.detector,
+      severity: report.severity,
+      pattern: report.pattern,
+      evidence: report.evidence,
+      status,
+      ...(decisionContext ?? {}),
+    })
 
-      // Try to update an existing harness event for this node (avoid duplicates)
-      // agent_events uses composite PK (node_execution_id, event_order) — no id column
+    // Step 2: Insert or update agent_event for the log viewer
+    try {
       const existing = db.prepare(
         `SELECT event_order FROM agent_events WHERE node_execution_id = ? AND event_type = ? ORDER BY event_order DESC LIMIT 1`
       ).get(neId, eventType) as { event_order: number } | undefined
 
       if (existing) {
         // Escalate: update status in-place (e.g. intervening → blocked)
+        console.log(`[DetectorPipeline] updateNodeHarnessStatus: updating existing event_order=${existing.event_order}`)
         db.prepare(
           `UPDATE agent_events SET content = ? WHERE node_execution_id = ? AND event_order = ?`
         ).run(eventContent, neId, existing.event_order)
       } else {
-        // Insert new agent_event for the log viewer
-        const eventOrder = Date.now()
-        db.prepare(`
+        // Insert new agent_event — use high offset (10000+) to avoid collisions
+        // with engine-written events (which use sequential integers 0,1,2,...)
+        // Engine typically writes <100 events per node, so 10000 is safe margin
+        const maxRow = db.prepare(
+          `SELECT COALESCE(MAX(event_order), 9999) as max_order FROM agent_events WHERE node_execution_id = ? AND event_order >= 10000`
+        ).get(neId) as { max_order: number } | undefined
+        const eventOrder = Math.max(10000, (maxRow?.max_order ?? 9999) + 1)
+        const ts = Date.now()
+        console.log(`[DetectorPipeline] updateNodeHarnessStatus: inserting new event neId=${neId}, eventType=${eventType}, eventOrder=${eventOrder}, content_length=${eventContent.length}`)
+        const stmt = db.prepare(`
           INSERT INTO agent_events (node_execution_id, event_order, turn_index, event_type, timestamp, content, content_length)
           VALUES (?, ?, 0, ?, ?, ?, ?)
-        `).run(neId, eventOrder, eventType, eventOrder, eventContent, 200)
+        `)
+        const result = stmt.run(neId, eventOrder, eventType, ts, eventContent, eventContent.length)
+        console.log(`[DetectorPipeline] updateNodeHarnessStatus: insert result: changes=${result.changes}, lastInsertRowid=${result.lastInsertRowid}`)
+
+        // Verify the insert immediately
+        try {
+          const verify = db.prepare(`SELECT event_type, event_order FROM agent_events WHERE node_execution_id = ? AND event_order = ?`).get(neId, eventOrder) as any
+          console.log(`[DetectorPipeline] updateNodeHarnessStatus: verify insert: ${verify ? `found ${verify.event_type} at ${verify.event_order}` : 'NOT FOUND'}`)
+        } catch (verifyErr) {
+          console.error(`[DetectorPipeline] updateNodeHarnessStatus: verify query failed:`, verifyErr)
+        }
       }
     } catch (err) {
-      // Non-fatal: harness status update failure shouldn't break the pipeline
-      console.error("[DetectorPipeline] Failed to update node harness status:", err)
+      console.error(
+        `[DetectorPipeline] Failed to insert/update agent_event for ${neId} (type=${eventType}):`,
+        err,
+      )
     }
   }
 
@@ -851,5 +1078,7 @@ export class DetectorPipeline {
       }
     }
     this.detectors = []
+    this.pendingDelegationPromises.clear()
+    this.lastFailingInnerNode.clear()
   }
 }

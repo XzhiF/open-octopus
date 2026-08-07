@@ -231,7 +231,10 @@ export class ExecutionDAO extends BaseDAO {
   }
 
   deleteAgentEventsByNode(nodeExecutionId: string): Database.RunResult {
-    return this.stmt("DELETE FROM agent_events WHERE node_execution_id = ?").run(nodeExecutionId)
+    console.log(`[ExecutionDAO] deleteAgentEventsByNode: ${nodeExecutionId}`)
+    const result = this.stmt("DELETE FROM agent_events WHERE node_execution_id = ? AND event_type NOT LIKE 'harness_%'").run(nodeExecutionId)
+    console.log(`[ExecutionDAO] deleteAgentEventsByNode: deleted ${result.changes} events`)
+    return result
   }
 
   /** Event types produced by the compaction merge — stored as full JSON for round-trip fidelity. */
@@ -244,8 +247,8 @@ export class ExecutionDAO extends BaseDAO {
   replaceMergedEvents(executionId: string, nodeId: string, mergedEvents: any[]): void {
     this.transaction(() => {
       const neId = `${executionId}-${nodeId}`
-      // Delete old fragmented events for this node
-      this.stmt("DELETE FROM agent_events WHERE node_execution_id = ?").run(neId)
+      // Delete old fragmented events for this node, but preserve harness_* events
+      this.stmt("DELETE FROM agent_events WHERE node_execution_id = ? AND event_type NOT LIKE 'harness_%'").run(neId)
       // Insert merged events
       const insert = this.stmt(`
         INSERT INTO agent_events (

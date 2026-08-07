@@ -782,6 +782,8 @@ export interface AgentEvent {
   heartbeatPayload?: AgentHeartbeat
   directivePayload?: HarnessDirective
   stallPayload?: HeartbeatStallPayload
+  // Generic data payload for harness and other custom events
+  data?: Record<string, unknown>
   // Legacy compat
   type?: string
   line?: string

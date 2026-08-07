@@ -609,7 +609,8 @@ executionRoutes.get("/:executionId/agent-events", (c) => {
           }
         }
         // Heartbeat and harness events: deserialize JSON content and pass through
-        if (row.event_type === "heartbeat" || row.event_type === "harness_directive" || row.event_type === "heartbeat_stall") {
+        // harness_* includes harness_directive, harness_stupid_retry, harness_process_conflict, etc.
+        if (row.event_type === "heartbeat" || row.event_type === "heartbeat_stall" || row.event_type.startsWith("harness_")) {
           let data: Record<string, unknown> = {}
           try { data = JSON.parse(row.content ?? "{}") } catch { /* ignore */ }
           return {

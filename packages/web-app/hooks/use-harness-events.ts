@@ -78,7 +78,7 @@ function parseSSEEvent(eventType: string, raw: Record<string, unknown>): ParsedH
         type: "harness_diagnosis",
         timestamp,
         executionId,
-        nodeId: (raw.report as Record<string, unknown>)?.nodeId as string | undefined,
+        nodeId: ((raw.report as Record<string, unknown>)?.displayNodeId ?? (raw.report as Record<string, unknown>)?.nodeId) as string | undefined,
         report: raw.report as DiagnosisReport,
       }
     case "harness_intervention":

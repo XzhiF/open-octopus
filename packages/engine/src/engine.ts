@@ -83,6 +83,7 @@ export interface EngineCallbacks {
     nodeId: string,
     attempt: number,
     lastResult: NodeExecutionResult,
+    context?: { poolSnapshot?: Record<string, any> },
   ) => Promise<{
     action: "retry" | "skip" | "abort" | "override"
     overrideResult?: NodeExecutionResult
@@ -978,7 +979,7 @@ export class WorkflowEngine {
         }
         // ★ Harness: onBeforeRetry hook — allows harness to skip/abort/override/inject hint/change model
         if (this.callbacks?.onBeforeRetry) {
-          const retryDecision = await this.callbacks.onBeforeRetry(node.id, attempt, result)
+          const retryDecision = await this.callbacks.onBeforeRetry(node.id, attempt, result, { poolSnapshot: pool.snapshot() })
           if (retryDecision.action === "skip") {
             if (nodeTimer) clearTimeout(nodeTimer)
             return { ...result, status: "skipped", retryCount: attempt - 1 }
@@ -999,7 +1000,9 @@ export class WorkflowEngine {
             effectiveNode = { ...effectiveNode, model: retryDecision.modelOverride }
           }
           if (retryDecision.varPoolPatches) {
+            console.log(`[Engine] Applying varPoolPatches for ${node.id}:`, JSON.stringify(retryDecision.varPoolPatches))
             pool.update(retryDecision.varPoolPatches)
+            console.log(`[Engine] Pool snapshot after update:`, JSON.stringify(pool.snapshot()))
           }
         }
         let delayMs = calculateBackoff(policy.backoff, attempt) * 1000
