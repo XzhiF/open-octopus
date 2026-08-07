@@ -365,43 +365,71 @@ function DetailTab({ events }: { events: ParsedHarnessEvent[] }) {
                   </pre>
                 </DetailSection>
               )}
-              {selected.delegationResult.chunks && selected.delegationResult.chunks.length > 0 && (
-                <DetailSection label="Agent 交互">
-                  <div className="space-y-1">
-                    {selected.delegationResult.chunks.map((chunk, i) => {
-                      if (chunk.type === "thinking") {
-                        return (
-                          <div key={i} className="text-[10px] text-purple-400/80">
-                            <span className="text-purple-400 font-medium">💭 </span>
-                            {String(chunk.content ?? "").slice(0, 200)}
-                          </div>
-                        )
-                      }
-                      if (chunk.type === "tool_call_start" || chunk.type === "tool_call") {
-                        return (
-                          <div key={i} className="text-[10px] text-amber-400/80">
-                            <span className="text-amber-400 font-medium">🔧 {String(chunk.toolName ?? "")}</span>
-                            {chunk.toolInput && (
-                              <pre className="text-muted-foreground ml-3 whitespace-pre-wrap">
-                                {typeof chunk.toolInput === "string" ? chunk.toolInput : JSON.stringify(chunk.toolInput, null, 2).slice(0, 200)}
-                              </pre>
-                            )}
-                          </div>
-                        )
-                      }
-                      if (chunk.type === "tool_result") {
-                        return (
-                          <div key={i} className={cn("text-[10px] ml-3", chunk.isError ? "text-red-400/80" : "text-green-400/80")}>
-                            <span className="font-medium">{chunk.isError ? "❌" : "✅"} </span>
-                            {String(chunk.content ?? "").slice(0, 200)}
-                          </div>
-                        )
-                      }
-                      return null
-                    })}
-                  </div>
-                </DetailSection>
-              )}
+              {selected.delegationResult.chunks && selected.delegationResult.chunks.length > 0 && (() => {
+                // Merge consecutive chunks of the same type
+                const merged: Array<{ type: string; content: string; toolName?: string; toolInput?: unknown; isError?: boolean }> = []
+                for (const chunk of selected.delegationResult.chunks) {
+                  const last = merged[merged.length - 1]
+                  if (chunk.type === "thinking" || chunk.type === "thinking_start" || chunk.type === "thinking_done") {
+                    const text = String(chunk.content ?? "")
+                    if (last && last.type === "thinking") {
+                      last.content += text
+                    } else if (text) {
+                      merged.push({ type: "thinking", content: text })
+                    }
+                  } else if (chunk.type === "tool_call_start" || chunk.type === "tool_call") {
+                    merged.push({
+                      type: "tool_call",
+                      content: "",
+                      toolName: String(chunk.toolName ?? ""),
+                      toolInput: chunk.toolInput,
+                    })
+                  } else if (chunk.type === "tool_result") {
+                    merged.push({
+                      type: "tool_result",
+                      content: String(chunk.content ?? ""),
+                      isError: chunk.isError as boolean | undefined,
+                    })
+                  }
+                }
+                return (
+                  <DetailSection label="Agent 交互">
+                    <div className="space-y-1.5">
+                      {merged.map((item, i) => {
+                        if (item.type === "thinking") {
+                          return (
+                            <div key={i} className="text-[10px] text-purple-400/80">
+                              <span className="text-purple-400 font-medium">💭 </span>
+                              {item.content.slice(0, 500)}
+                            </div>
+                          )
+                        }
+                        if (item.type === "tool_call") {
+                          return (
+                            <div key={i} className="text-[10px] text-amber-400/80">
+                              <span className="text-amber-400 font-medium">🔧 {item.toolName}</span>
+                              {item.toolInput && (
+                                <pre className="text-muted-foreground ml-3 whitespace-pre-wrap">
+                                  {typeof item.toolInput === "string" ? item.toolInput.slice(0, 300) : JSON.stringify(item.toolInput, null, 2).slice(0, 300)}
+                                </pre>
+                              )}
+                            </div>
+                          )
+                        }
+                        if (item.type === "tool_result") {
+                          return (
+                            <div key={i} className={cn("text-[10px] ml-3", item.isError ? "text-red-400/80" : "text-green-400/80")}>
+                              <span className="font-medium">{item.isError ? "❌" : "✅"} </span>
+                              {item.content.slice(0, 300)}
+                            </div>
+                          )
+                        }
+                        return null
+                      })}
+                    </div>
+                  </DetailSection>
+                )
+              })()}
             </>
           )}
 
