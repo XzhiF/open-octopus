@@ -520,10 +520,24 @@ export function HarnessFloatingPanel({
   // Compute default position on first mount (right side of viewport)
   useEffect(() => {
     if (pos === null) {
-      const defaultLeft = Math.max(window.innerWidth - 400, 200)
+      const panelWidth = 800
+      const defaultLeft = Math.max(window.innerWidth - panelWidth - 20, 20)
       setPos({ left: defaultLeft, top: 56 })
     }
   }, [pos])
+
+  // Clamp position when expanding to keep panel fully visible
+  useEffect(() => {
+    if (expanded && pos) {
+      const maxLeft = Math.max(window.innerWidth - size.width - 10, 10)
+      const maxTop = Math.max(window.innerHeight - size.height - 10, 10)
+      const clampedLeft = Math.max(10, Math.min(pos.left, maxLeft))
+      const clampedTop = Math.max(10, Math.min(pos.top, maxTop))
+      if (clampedLeft !== pos.left || clampedTop !== pos.top) {
+        setPos({ left: clampedLeft, top: clampedTop })
+      }
+    }
+  }, [expanded, size.width, size.height])
 
   // Shared drag handler — works for both collapsed and expanded
   const handleDragStart = useCallback(
