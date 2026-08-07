@@ -365,6 +365,43 @@ function DetailTab({ events }: { events: ParsedHarnessEvent[] }) {
                   </pre>
                 </DetailSection>
               )}
+              {selected.delegationResult.chunks && selected.delegationResult.chunks.length > 0 && (
+                <DetailSection label="Agent 交互">
+                  <div className="space-y-1">
+                    {selected.delegationResult.chunks.map((chunk, i) => {
+                      if (chunk.type === "thinking") {
+                        return (
+                          <div key={i} className="text-[10px] text-purple-400/80">
+                            <span className="text-purple-400 font-medium">💭 </span>
+                            {String(chunk.content ?? "").slice(0, 200)}
+                          </div>
+                        )
+                      }
+                      if (chunk.type === "tool_call_start" || chunk.type === "tool_call") {
+                        return (
+                          <div key={i} className="text-[10px] text-amber-400/80">
+                            <span className="text-amber-400 font-medium">🔧 {String(chunk.toolName ?? "")}</span>
+                            {chunk.toolInput && (
+                              <pre className="text-muted-foreground ml-3 whitespace-pre-wrap">
+                                {typeof chunk.toolInput === "string" ? chunk.toolInput : JSON.stringify(chunk.toolInput, null, 2).slice(0, 200)}
+                              </pre>
+                            )}
+                          </div>
+                        )
+                      }
+                      if (chunk.type === "tool_result") {
+                        return (
+                          <div key={i} className={cn("text-[10px] ml-3", chunk.isError ? "text-red-400/80" : "text-green-400/80")}>
+                            <span className="font-medium">{chunk.isError ? "❌" : "✅"} </span>
+                            {String(chunk.content ?? "").slice(0, 200)}
+                          </div>
+                        )
+                      }
+                      return null
+                    })}
+                  </div>
+                </DetailSection>
+              )}
             </>
           )}
 

@@ -190,6 +190,8 @@ export interface DelegationResult {
   reasoning: string
   /** Token consumption for the delegation call. */
   tokenUsage?: { input: number; output: number; model?: string }
+  /** Captured message chunks (thinking, tool_call, tool_result) for detail display. */
+  chunks?: Array<{ type: string; [key: string]: unknown }>
 }
 
 /**

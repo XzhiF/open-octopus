@@ -34,6 +34,7 @@ export interface ParsedHarnessEvent {
     harnessHint?: string
     modelOverride?: string
     varPoolPatches?: Record<string, string>
+    chunks?: Array<{ type: string; [key: string]: unknown }>
   }
   // blocked fields
   reason?: string
@@ -115,6 +116,7 @@ function parseSSEEvent(eventType: string, raw: Record<string, unknown>): ParsedH
               harnessHint: rawResult.harnessHint as string | undefined,
               modelOverride: rawResult.modelOverride as string | undefined,
               varPoolPatches: rawResult.varPoolPatches as Record<string, string> | undefined,
+              chunks: rawResult.chunks as Array<{ type: string; [key: string]: unknown }> | undefined,
             }
           : undefined,
         tokenUsage,
@@ -200,6 +202,7 @@ export function useHarnessEvents(
                       harnessHint: (result as Record<string, unknown>).harnessHint as string | undefined,
                       modelOverride: (result as Record<string, unknown>).modelOverride as string | undefined,
                       varPoolPatches: (result as Record<string, unknown>).varPoolPatches as Record<string, string> | undefined,
+                      chunks: (result as Record<string, unknown>).chunks as Array<{ type: string; [key: string]: unknown }> | undefined,
                     }
                   : undefined,
               tokenUsage,

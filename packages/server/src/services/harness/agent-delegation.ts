@@ -52,6 +52,8 @@ export interface AgentSessionRunResult {
   tokenUsage?: { input: number; output: number; model: string }
   /** The agent session ID that was created. */
   sessionId?: string
+  /** Captured message chunks (thinking, tool_call, tool_result) for detail display. */
+  chunks?: Array<{ type: string; [key: string]: unknown }>
 }
 
 /**
@@ -533,12 +535,14 @@ export class AgentDelegationService {
     let responseText: string
     let tokenInfo: { input: number; output: number; model: string } | undefined
     let agentSessionId: string | undefined
+    let agentChunks: Array<{ type: string; [key: string]: unknown }> | undefined
 
     try {
       const result = await this.callWithTimeout(prompt, executionId, nodeId)
       responseText = result.text
       tokenInfo = result.tokenUsage
       agentSessionId = result.sessionId
+      agentChunks = result.chunks
     } catch (err) {
       const reason =
         err instanceof Error ? err.message : String(err)
@@ -570,6 +574,9 @@ export class AgentDelegationService {
     // Attach token usage info from the agent session / LLM call
     if (tokenInfo) {
       parsed.tokenUsage = tokenInfo
+    }
+    if (agentChunks && agentChunks.length > 0) {
+      parsed.chunks = agentChunks
     }
 
     // Record decision to session and append assistant response (AC4)
@@ -741,6 +748,8 @@ export class AgentDelegationService {
         let tokenUsage:
           | { input: number; output: number; model: string }
           | undefined
+        // Capture all meaningful chunks for detail display
+        const chunks: Array<{ type: string; [key: string]: unknown }> = []
 
         const stream = provider.sendQuery(prompt, process.cwd(), undefined, {
           model: "sonnet",
@@ -760,10 +769,15 @@ export class AgentDelegationService {
                 model: "claude-sonnet-4-20250514",
               }
             }
+          } else if (
+            chunk.type === "thinking" || chunk.type === "thinking_start" || chunk.type === "thinking_done" ||
+            chunk.type === "tool_call_start" || chunk.type === "tool_call" || chunk.type === "tool_result"
+          ) {
+            chunks.push(chunk as { type: string; [key: string]: unknown })
           }
         }
 
-        return { text, tokenUsage, sessionId }
+        return { text, tokenUsage, sessionId, chunks }
       } catch (err) {
         throw new Error(
           `Agent session call failed: ${err instanceof Error ? err.message : String(err)}`,
