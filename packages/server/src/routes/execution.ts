@@ -613,11 +613,14 @@ executionRoutes.get("/:executionId/agent-events", (c) => {
         if (row.event_type === "heartbeat" || row.event_type === "heartbeat_stall" || row.event_type.startsWith("harness_")) {
           let data: Record<string, unknown> = {}
           try { data = JSON.parse(row.content ?? "{}") } catch { /* ignore */ }
+          // Extract iteration from content to top-level for log viewer grouping
+          const iteration = data.iteration as number | undefined
           return {
             event: row.event_type,
             nodeId: row.node_id,
             data,
             timestamp: new Date(row.timestamp).toISOString(),
+            ...(iteration != null ? { iteration } : {}),
           }
         }
         // start/end lifecycle events: skip from SQLite (JSONL provides authoritative copies)

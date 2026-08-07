@@ -119,8 +119,10 @@ function TimelineItem({ event }: { event: ParsedHarnessEvent }) {
   switch (event.type) {
     case "harness_diagnosis": {
       const severity = event.report?.severity
+      const iter = (event.report as any)?.iteration
+      const nodeName = iter != null ? `${event.nodeId ?? ""} (iter ${iter})` : (event.nodeId ?? "")
       icon = severity === "critical" ? "🚨" : "⚠️"
-      label = `${event.report?.detector ?? "检测"} ${event.nodeId ?? ""}`
+      label = `${event.report?.detector ?? "检测"} ${nodeName}`
       colorClass = severity === "critical" ? "text-red-400" : "text-amber-400"
       break
     }
@@ -133,6 +135,8 @@ function TimelineItem({ event }: { event: ParsedHarnessEvent }) {
       break
     case "harness_delegation": {
       const dr = event.delegationResult
+      const iter = event.iteration
+      const nodeName = iter != null ? `${event.nodeId ?? ""} (iter ${iter})` : (event.nodeId ?? "")
       const decisionLabel: Record<string, string> = {
         block_node: "阻断",
         fix_and_retry: "修复重试",
@@ -145,8 +149,8 @@ function TimelineItem({ event }: { event: ParsedHarnessEvent }) {
       const rawReason = dr?.blockReason ?? dr?.reasoning ?? ""
       const reason = typeof rawReason === "object" ? JSON.stringify(rawReason, null, 2) : rawReason
       label = reason
-        ? `${decision} ${event.nodeId ?? ""}`
-        : `${decision} ${event.nodeId ?? ""}`
+        ? `${decision} ${nodeName}`
+        : `${decision} ${nodeName}`
       colorClass = dr?.success
         ? dr.decision === "block_node"
           ? "text-red-400"
@@ -319,7 +323,48 @@ function DetailTab({ events }: { events: ParsedHarnessEvent[] }) {
             </DetailSection>
           )}
 
-          {selected.result && (
+          {selected.delegationResult && (
+            <>
+              <DetailRow label="决策" value={selected.delegationResult.decision ?? "-"} />
+              <DetailRow label="成功" value={selected.delegationResult.success ? "✅ 是" : "❌ 否"} />
+              {selected.delegationResult.reasoning && (
+                <DetailSection label="推理">
+                  <pre className="text-[10px] font-mono whitespace-pre-wrap text-muted-foreground">
+                    {selected.delegationResult.reasoning}
+                  </pre>
+                </DetailSection>
+              )}
+              {selected.delegationResult.blockReason && (
+                <DetailSection label="阻断原因">
+                  <pre className="text-[10px] font-mono whitespace-pre-wrap text-red-400">
+                    {selected.delegationResult.blockReason}
+                  </pre>
+                </DetailSection>
+              )}
+              {selected.delegationResult.harnessHint && (
+                <DetailSection label="提示注入">
+                  <pre className="text-[10px] font-mono whitespace-pre-wrap text-muted-foreground">
+                    {selected.delegationResult.harnessHint}
+                  </pre>
+                </DetailSection>
+              )}
+              {selected.delegationResult.modelOverride && (
+                <DetailRow label="模型覆盖" value={selected.delegationResult.modelOverride} />
+              )}
+            </>
+          )}
+
+          {selected.tokenUsage && (
+            <DetailSection label="Token 用量">
+              <div className="text-[10px] font-mono text-muted-foreground space-y-0.5">
+                <div>模型: {selected.tokenUsage.model ?? "-"}</div>
+                <div>输入: {formatTokenCount(selected.tokenUsage.inputTokens ?? 0)}</div>
+                <div>输出: {formatTokenCount(selected.tokenUsage.outputTokens ?? 0)}</div>
+              </div>
+            </DetailSection>
+          )}
+
+          {selected.result && !selected.delegationResult && (
             <DetailRow label="结果" value={typeof selected.result === "object" ? JSON.stringify(selected.result) : selected.result} />
           )}
 

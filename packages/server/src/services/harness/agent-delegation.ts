@@ -593,12 +593,16 @@ export class AgentDelegationService {
     })
 
     // Emit SSE complete/fail event with result
+    // Include both displayNodeId (inner node) and nodeId (loop container)
+    // so the frontend can update harness status on both nodes.
     this.emitDelegationSSE(
       executionId,
       displayNodeId,
       delegationId,
       parsed.success ? "complete" : "fail",
       parsed,
+      displayNodeId !== nodeId ? nodeId : undefined,
+      (report as any).iteration,
     )
 
     return parsed
@@ -844,6 +848,8 @@ export class AgentDelegationService {
     delegationId: string,
     status: string,
     result?: DelegationResult,
+    containerNodeId?: string,
+    iteration?: number,
   ): void {
     try {
       this.sse.emit(this.workspaceId, {
@@ -854,6 +860,8 @@ export class AgentDelegationService {
           agentSessionId: delegationId,
           status,
           ...(result ? { result } : {}),
+          ...(containerNodeId ? { containerNodeId } : {}),
+          ...(iteration != null ? { iteration } : {}),
         },
       })
     } catch (err) {

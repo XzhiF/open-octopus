@@ -237,6 +237,21 @@ export class ObservabilityService {
     this.consecutiveErrors = 0
   }
 
+  /**
+   * Reset a node's event buffer ordering. Called by onNodeStart when a node
+   * restarts (e.g. after retry). The DB events were already cleared by
+   * deleteAgentEventsByNode, so the buffer must also restart from 0 to
+   * avoid INSERT OR IGNORE conflicts with preserved harness events.
+   */
+  resetNodeBuffer(nodeExecId: string): void {
+    const buf = this.buffers.get(nodeExecId)
+    if (buf) {
+      buf.lastEventOrder = 0
+      buf.events = []
+      if (buf.timer) { clearTimeout(buf.timer); buf.timer = null }
+    }
+  }
+
   shutdown(): void {
     for (const [nodeExecId] of this.buffers) {
       this.flushNode(nodeExecId)

@@ -127,6 +127,8 @@ export class DetectorPipeline {
    * inner node (e.g. "failing-task") rather than the loop container (e.g. "retry-loop").
    */
   private lastFailingInnerNode = new Map<string, string>()
+  /** Track current iteration number per loop, set by onBranchStart. */
+  private currentLoopIteration = new Map<string, number>()
 
   constructor(deps: DetectorPipelineDeps) {
     this.executionId = deps.executionId
@@ -232,6 +234,12 @@ export class DetectorPipeline {
    * Returns the delegation promise (if any) so callers can await it.
    */
   private handleDiagnosis(report: DiagnosisReport, skipStrategy: boolean = false): Promise<void> | undefined {
+    // Inject current iteration into the report for UI display
+    const iteration = this.currentLoopIteration.get(report.nodeId)
+    if (iteration != null) {
+      (report as any).iteration = iteration
+    }
+
     // Persist to DB
     const row: HarnessEvent = {
       id: report.id,
@@ -257,6 +265,10 @@ export class DetectorPipeline {
     // Update node_executions.harness_status and insert agent_event for log viewer
     // Use displayNodeId (inner failing node) for UI if available
     this.updateNodeHarnessStatus(report.displayNodeId ?? report.nodeId, "harness_intervening", report)
+    // Also update the loop container's harness_status (purple ants UI) but no agent_event
+    if (report.displayNodeId && report.displayNodeId !== report.nodeId) {
+      this.updateContainerHarnessStatus(report.nodeId, "harness_intervening")
+    }
 
     // Immediately mark execution-level harness_status as "intervened"
     // so the execution tree shows harness is working (purple ants)
@@ -351,7 +363,7 @@ export class DetectorPipeline {
         },
       })
       // Mark the node as harness_blocked in DB + insert agent_event
-      this.updateNodeHarnessStatus(nodeId, "harness_blocked", report)
+      this.updateHarnessStatus(nodeId, report.displayNodeId ?? nodeId, "harness_blocked", report)
       // Update execution-level harness_status
       this.updateExecutionHarnessStatus("blocked")
     }
@@ -401,7 +413,7 @@ export class DetectorPipeline {
 
     if (!result.success) {
       // Failed delegation: treat as block_node (safe default)
-      this.updateNodeHarnessStatus(displayNodeId, "harness_blocked", report, {
+      this.updateHarnessStatus(nodeId, displayNodeId, "harness_blocked", report, {
         decision: result.decision,
         reasoning: result.reasoning,
       })
@@ -416,7 +428,7 @@ export class DetectorPipeline {
           varPoolPatches: result.varPoolPatches,
           harnessHint: result.harnessHint,
         })
-        this.updateNodeHarnessStatus(displayNodeId, "harness_modified", report, {
+        this.updateHarnessStatus(nodeId, displayNodeId, "harness_modified", report, {
           decision: result.decision,
           reasoning: result.reasoning,
           varPoolPatches: result.varPoolPatches,
@@ -430,7 +442,7 @@ export class DetectorPipeline {
           action: "retry",
           harnessHint: result.harnessHint,
         })
-        this.updateNodeHarnessStatus(displayNodeId, "harness_modified", report, {
+        this.updateHarnessStatus(nodeId, displayNodeId, "harness_modified", report, {
           decision: result.decision,
           reasoning: result.reasoning,
           harnessHint: result.harnessHint,
@@ -443,7 +455,7 @@ export class DetectorPipeline {
           action: "retry",
           modelOverride: result.modelOverride,
         })
-        this.updateNodeHarnessStatus(displayNodeId, "harness_modified", report, {
+        this.updateHarnessStatus(nodeId, displayNodeId, "harness_modified", report, {
           decision: result.decision,
           reasoning: result.reasoning,
           modelOverride: result.modelOverride,
@@ -459,7 +471,7 @@ export class DetectorPipeline {
           outputs: result.takeoverOutput ? { output: result.takeoverOutput } : undefined,
           exitCode: result.takeoverExitCode ?? 0,
         })
-        this.updateNodeHarnessStatus(displayNodeId, "harness_executed", report, {
+        this.updateHarnessStatus(nodeId, displayNodeId, "harness_executed", report, {
           decision: result.decision,
           reasoning: result.reasoning,
           takeoverOutput: result.takeoverOutput,
@@ -475,7 +487,7 @@ export class DetectorPipeline {
             error: result.blockReason ?? "Blocked by harness agent",
           },
         })
-        this.updateNodeHarnessStatus(displayNodeId, "harness_blocked", report, {
+        this.updateHarnessStatus(nodeId, displayNodeId, "harness_blocked", report, {
           decision: result.decision,
           reasoning: result.reasoning,
           blockReason: result.blockReason,
@@ -938,6 +950,16 @@ export class DetectorPipeline {
               return original.call(target, nodeId, error)
             }
 
+          case "onBranchStart":
+            return function (nodeExecutionId: string, iteration: number) {
+              // Track current iteration per loop so harness events carry iteration info
+              const loopId = nodeExecutionId.replace(/-iter-\d+$/, "")
+              pipeline.currentLoopIteration.set(loopId, iteration)
+              if (typeof original === "function") {
+                return original.call(target, nodeExecutionId, iteration)
+              }
+            }
+
           case "onBranchEnd":
             return function (
               nodeExecutionId: string,
@@ -977,6 +999,46 @@ export class DetectorPipeline {
    * The optional `decisionContext` adds the `decision` field to the agent_event
    * content, enabling log rendering to show which decision type was applied.
    */
+  /**
+   * Update harness status on both the display node (inner failing node) and
+   * the container node (loop container). The agent_event (log entry) is only
+   * written for the display node — the loop container gets the harness_status
+   * DB field (for purple ants UI) but no separate log entry.
+   */
+  private updateHarnessStatus(
+    nodeId: string,
+    displayNodeId: string,
+    status: string,
+    report: DiagnosisReport,
+    decisionContext?: {
+      decision?: HarnessDecisionType
+      reasoning?: string
+      [key: string]: any
+    },
+  ): void {
+    // Full update for display node: harness_status + agent_event
+    this.updateNodeHarnessStatus(displayNodeId, status, report, decisionContext)
+    // Container node: only update harness_status (no agent_event)
+    if (displayNodeId !== nodeId) {
+      this.updateContainerHarnessStatus(nodeId, status)
+    }
+  }
+
+  /**
+   * Update only the harness_status column on a node_execution, without
+   * inserting an agent_event. Used for loop containers that need the
+   * purple ants UI but shouldn't have a separate log entry.
+   */
+  private updateContainerHarnessStatus(nodeId: string, status: string): void {
+    const neId = `${this.executionId}-${nodeId}`
+    try {
+      const db = this.dao.getDb()
+      db.prepare(`UPDATE node_executions SET harness_status = ? WHERE id = ?`).run(status, neId)
+    } catch (err) {
+      console.error(`[DetectorPipeline] Failed to update container harness_status for ${neId}:`, err)
+    }
+  }
+
   private updateNodeHarnessStatus(
     nodeId: string,
     status: string,
@@ -1009,12 +1071,16 @@ export class DetectorPipeline {
       console.error(`[DetectorPipeline] Failed to update harness_status for ${neId}:`, err)
     }
 
+    // Look up current iteration for the loop container (if node is inside a loop)
+    const iteration = this.currentLoopIteration.get(report.nodeId)
+
     const eventContent = JSON.stringify({
       detector: report.detector,
       severity: report.severity,
       pattern: report.pattern,
       evidence: report.evidence,
       status,
+      ...(iteration != null ? { iteration } : {}),
       ...(decisionContext ?? {}),
     })
 
@@ -1031,13 +1097,13 @@ export class DetectorPipeline {
           `UPDATE agent_events SET content = ? WHERE node_execution_id = ? AND event_order = ?`
         ).run(eventContent, neId, existing.event_order)
       } else {
-        // Insert new agent_event — use high offset (10000+) to avoid collisions
-        // with engine-written events (which use sequential integers 0,1,2,...)
-        // Engine typically writes <100 events per node, so 10000 is safe margin
+        // Insert new agent_event — use the next sequential event_order after the
+        // node's current max so harness events appear in chronological position
+        // in the log viewer (between retries, not after all execution events).
         const maxRow = db.prepare(
-          `SELECT COALESCE(MAX(event_order), 9999) as max_order FROM agent_events WHERE node_execution_id = ? AND event_order >= 10000`
+          `SELECT COALESCE(MAX(event_order), -1) as max_order FROM agent_events WHERE node_execution_id = ?`
         ).get(neId) as { max_order: number } | undefined
-        const eventOrder = Math.max(10000, (maxRow?.max_order ?? 9999) + 1)
+        const eventOrder = (maxRow?.max_order ?? -1) + 1
         const ts = Date.now()
         console.log(`[DetectorPipeline] updateNodeHarnessStatus: inserting new event neId=${neId}, eventType=${eventType}, eventOrder=${eventOrder}, content_length=${eventContent.length}`)
         const stmt = db.prepare(`
@@ -1080,5 +1146,6 @@ export class DetectorPipeline {
     this.detectors = []
     this.pendingDelegationPromises.clear()
     this.lastFailingInnerNode.clear()
+    this.currentLoopIteration.clear()
   }
 }

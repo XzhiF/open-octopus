@@ -37,6 +37,8 @@ export interface ParsedHarnessEvent {
   // blocked fields
   reason?: string
   pattern?: string
+  // iteration (when node is inside a loop)
+  iteration?: number
   // token usage (from delegation or intervention events)
   tokenUsage?: { inputTokens?: number; outputTokens?: number; model?: string }
 }
@@ -102,6 +104,7 @@ function parseSSEEvent(eventType: string, raw: Record<string, unknown>): ParsedH
         nodeId: raw.nodeId as string | undefined,
         agentSessionId: raw.agentSessionId as string | undefined,
         status: raw.status as string | undefined,
+        iteration: raw.iteration as number | undefined,
         delegationResult: rawResult
           ? {
               success: rawResult.success as boolean,
@@ -174,12 +177,14 @@ export function useHarnessEvents(
                   model: rawTu.model as string | undefined,
                 }
               : undefined
+            // For diagnosis and delegation events, prefer displayNodeId (inner failing node) from the report
+            const displayNodeId = report ? (report as Record<string, unknown>).displayNodeId as string : undefined
             return {
               id: row.id as string,
               type: `harness_${eventType}` as HarnessEventType,
               timestamp: (row.timestamp as number) ?? Date.now(),
               executionId: (row.execution_id as string) ?? executionId,
-              nodeId: (row.node_id as string) ?? undefined,
+              nodeId: displayNodeId ?? (row.node_id as string) ?? undefined,
               report,
               action,
               result: typeof result === "string" ? result : undefined,
@@ -195,6 +200,8 @@ export function useHarnessEvents(
                     }
                   : undefined,
               tokenUsage,
+              // Extract iteration from report for delegation events
+              iteration: report ? (report as Record<string, unknown>).iteration as number | undefined : undefined,
             }
           })
           setEvents(parsed)

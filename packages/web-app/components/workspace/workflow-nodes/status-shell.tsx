@@ -38,8 +38,10 @@ export function StatusShell({
 }: StatusShellProps) {
   const typeConfig = nodeIconConfigs[nodeType]
   const effectiveBorderColor = statusOverlay ? borderConfig[statusOverlay.stepStatus] : typeConfig.borderColor
-  const isHarnessIntervening = statusOverlay?.harnessStatus === "harness_intervening"
-  const marchColor = isHarnessIntervening ? "#8b5cf6" : "#f59e0b"
+  const isHarnessActive = statusOverlay?.harnessStatus === "harness_intervening"
+    || statusOverlay?.harnessStatus === "harness_modified"
+  const marchColor = statusOverlay?.harnessStatus === "harness_intervening" ? "#8b5cf6" : "#f59e0b"
+  const showMarchingAnts = statusOverlay?.stepStatus === "running" || isHarnessActive
 
   return (
     <div
@@ -53,7 +55,7 @@ export function StatusShell({
         statusOverlay?.stepStatus === "paused" && "animate-pulse shadow-violet-100",
         statusOverlay?.stepStatus === "pending_approval" && "animate-pulse shadow-amber-100",
       )}
-      style={statusOverlay?.stepStatus === "running" ? {
+      style={showMarchingAnts ? {
         borderColor: "transparent",
         background: `
           repeating-linear-gradient(90deg, ${marchColor} 0 6px, transparent 6px 12px) top    / 100% 2px no-repeat,

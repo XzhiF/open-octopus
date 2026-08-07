@@ -792,6 +792,22 @@ export function ExecutionLogViewer({ workspaceId, executionId, executionStatus }
     // Container parents = loop parents + sub_workflow parents (both use start/end bookends)
     const containerParentNodes = new Set([...loopParentNodes, ...subWorkflowParents])
 
+    // Build a map of inner node IDs → their last iteration number.
+    // Harness events for inner loop nodes don't carry an iteration field,
+    // so we use this to place them in the correct iteration group.
+    const innerNodeLastIter = new Map<string, number>()
+    if (loopIterations) {
+      for (const [loopId, summary] of Object.entries(loopIterations)) {
+        const iters = (summary as any)?.iterations ?? []
+        for (const iter of iters) {
+          const nodes: any[] = iter?.nodes ?? []
+          for (const n of nodes) {
+            if (n.nodeId) innerNodeLastIter.set(n.nodeId, iter.iteration)
+          }
+        }
+      }
+    }
+
     const map = new Map<string, FlatGroup>()
 
     for (const e of filteredEvents) {
@@ -835,6 +851,11 @@ export function ExecutionLogViewer({ workspaceId, executionId, executionStatus }
       } else if (hasIter) {
         key = `${nodeId}-${e.iteration}`
         label = `${nodeId}-${e.iteration}`
+      } else if (e.event?.startsWith("harness_") && innerNodeLastIter.has(nodeId)) {
+        // Harness events for inner loop nodes: place in the last iteration group
+        const iter = innerNodeLastIter.get(nodeId)!
+        key = `${nodeId}-${iter}`
+        label = `${nodeId}-${iter}`
       } else {
         key = nodeId
         label = nodeId

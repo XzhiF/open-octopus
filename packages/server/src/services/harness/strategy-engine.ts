@@ -354,11 +354,13 @@ export class StrategyEngine {
     result: InterventionResult,
   ): void {
     try {
+      const displayNodeId = report.displayNodeId ?? report.nodeId
       this.sse.emit(this.workspaceId, {
         event: "harness_intervention",
         data: {
           executionId: report.executionId,
-          nodeId: report.nodeId,
+          nodeId: displayNodeId,
+          ...(displayNodeId !== report.nodeId ? { containerNodeId: report.nodeId } : {}),
           action: actionDef,
           result: result.message,
           success: result.success,
@@ -391,9 +393,11 @@ export class StrategyEngine {
       return
     }
 
+    const displayNodeId = report.displayNodeId ?? report.nodeId
     const blockedData = {
       executionId: report.executionId,
-      nodeId: report.nodeId,
+      nodeId: displayNodeId,
+      ...(displayNodeId !== report.nodeId ? { containerNodeId: report.nodeId } : {}),
       reason: "Blocked by harness: process conflict",
       pattern: "process_conflict",
     }
