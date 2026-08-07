@@ -288,7 +288,11 @@ function DetailTab({ events }: { events: ParsedHarnessEvent[] }) {
             )}
             onClick={() => setSelectedId(event.id)}
           >
-            {event.type} — {event.nodeId ?? "system"}
+            {(() => {
+              const iter = event.iteration ?? (event.report as any)?.iteration
+              const nodeName = iter != null ? `${event.nodeId ?? "system"} (iter ${iter})` : (event.nodeId ?? "system")
+              return <>{event.type} — {nodeName}</>
+            })()}
           </div>
         ))}
       </div>
@@ -297,7 +301,10 @@ function DetailTab({ events }: { events: ParsedHarnessEvent[] }) {
       {selected && (
         <div className="flex-1 overflow-y-auto min-h-0 px-2 py-2 text-xs space-y-2">
           <DetailRow label="类型" value={selected.type} />
-          <DetailRow label="节点" value={selected.nodeId ?? "-"} />
+          <DetailRow label="节点" value={(() => {
+            const iter = selected.iteration ?? (selected.report as any)?.iteration
+            return iter != null ? `${selected.nodeId ?? "-"} (iter ${iter})` : (selected.nodeId ?? "-")
+          })()} />
           <DetailRow label="时间" value={new Date(selected.timestamp).toLocaleString()} />
 
           {selected.report && (
