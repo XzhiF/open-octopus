@@ -490,7 +490,7 @@ export function HarnessFloatingPanel({
 }: HarnessFloatingPanelProps) {
   const [expanded, setExpanded] = useState(false)
   const [pos, setPos] = useState<{ left: number; top: number } | null>(null)
-  const [size, setSize] = useState<{ width: number; height: number }>({ width: 400, height: 500 })
+  const [size, setSize] = useState<{ width: number; height: number }>({ width: 800, height: 625 })
   const [activeTab, setActiveTab] = useState("monitor")
   const panelRef = useRef<HTMLDivElement>(null)
   const dragRef = useRef<{
