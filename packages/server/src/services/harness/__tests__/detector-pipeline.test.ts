@@ -125,7 +125,7 @@ describe("DetectorPipeline — onBeforeRetry proxy", () => {
 
     const result = await wrapped.onBeforeRetry!("bash-build", 3, { error: "fatal" } as any)
 
-    expect(originalOnBeforeRetry).toHaveBeenCalledWith("bash-build", 3, { error: "fatal" })
+    expect(originalOnBeforeRetry).toHaveBeenCalledWith("bash-build", 3, { error: "fatal" }, undefined)
     expect(result).toEqual({ action: "abort" })
   })
 })

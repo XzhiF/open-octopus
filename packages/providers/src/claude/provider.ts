@@ -208,36 +208,60 @@ export class ClaudeSDKProvider implements IAgentProvider {
     const modelName = options?.model ?? 'sonnet'
     this._llmTracker.reset()
 
-    // Build canUseTool callback for interaction sessions.
-    // This replaces PreToolUse hook deny which returns a hardcoded
-    // "Error: Answer questions?" tool result that the model misinterprets.
-    // canUseTool's `message` field is sent as the tool result content,
-    // giving us full control over what the model sees.
-    const canUseTool: CanUseTool | undefined = options?.interactionSession
-      ? async (toolName, input, cbOptions) => {
-          if (toolName === 'AskUserQuestion') {
-            return {
-              behavior: 'deny' as const,
-              message: 'STOP. Question sent to user. User has NOT answered yet. Do NOT output any text. Do NOT guess any answer. Wait for the next user message.',
-              toolUseID: cbOptions.toolUseID,
-            }
+    // Build canUseTool callback — ALWAYS active to enforce tool interception
+    // even with permissionMode: 'bypassPermissions'.
+    //
+    // PreToolUse hooks are advisory when bypassPermissions is set — the SDK
+    // ignores their deny decisions. canUseTool is the authoritative gate:
+    // its deny is enforced regardless of permission mode.
+    //
+    // This callback integrates three concerns:
+    // 1. onBeforeToolCall hook (harness tool interceptor for dangerous commands)
+    // 2. Interaction session controls (AskUserQuestion, complete_interaction)
+    // 3. Default allow for all other tools
+    const canUseTool: CanUseTool | undefined = async (toolName, input, cbOptions) => {
+      // 1. Harness tool interceptor — block dangerous shell commands
+      if (options?.onBeforeToolCall) {
+        const decision = await options.onBeforeToolCall(toolName, input)
+        if (decision && decision.allow === false) {
+          return {
+            behavior: 'deny' as const,
+            message: decision.reason ?? 'Tool call blocked by safety guard.',
+            toolUseID: cbOptions.toolUseID,
           }
-          if (toolName === 'complete_interaction') {
-            return {
-              behavior: 'deny' as const,
-              message: 'Interaction completion has been captured and forwarded to the workflow engine. The interaction is now complete. Do not output anything else.',
-              toolUseID: cbOptions.toolUseID,
-            }
-          }
-          return { behavior: 'allow' as const, toolUseID: cbOptions.toolUseID }
         }
-      : undefined
+      }
+
+      // 2. Interaction session controls
+      if (options?.interactionSession) {
+        if (toolName === 'AskUserQuestion') {
+          return {
+            behavior: 'deny' as const,
+            message: 'STOP. Question sent to user. User has NOT answered yet. Do NOT output any text. Do NOT guess any answer. Wait for the next user message.',
+            toolUseID: cbOptions.toolUseID,
+          }
+        }
+        if (toolName === 'complete_interaction') {
+          return {
+            behavior: 'deny' as const,
+            message: 'Interaction completion has been captured and forwarded to the workflow engine. The interaction is now complete. Do not output anything else.',
+            toolUseID: cbOptions.toolUseID,
+          }
+        }
+      }
+
+      return { behavior: 'allow' as const, toolUseID: cbOptions.toolUseID }
+    }
 
     const sdkOptions: Options = {
       cwd,
       model: options?.model ?? 'sonnet',
       systemPrompt: options?.systemPrompt ?? { type: 'preset', preset: 'claude_code' },
-      permissionMode: 'bypassPermissions',
+      // Use canUseTool as the sole authorization gate.
+      // Do NOT set permissionMode: 'bypassPermissions' — it prevents canUseTool
+      // from being called, defeating the harness tool interceptor.
+      // canUseTool defaults to allow for all tools except those explicitly denied
+      // by the harness onBeforeToolCall hook or interaction session controls.
       allowDangerouslySkipPermissions: true,
       settingSources: ['project', 'user'],
       includePartialMessages: true,
