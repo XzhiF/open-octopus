@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect, useRef, useCallback, useMemo } from "react"
-import { ChevronDown, ChevronRight, ChevronUp, ChevronsDown, Terminal, Brain, Wrench, FileText, Play, Check, X, Clock, Users, MessageSquare, Award, RotateCcw, MessageCircle, HelpCircle, CheckCircle2, Activity, AlertTriangle } from "lucide-react"
+import { ChevronDown, ChevronRight, ChevronUp, ChevronsDown, Terminal, Brain, Wrench, FileText, Play, Check, X, Clock, Users, MessageSquare, Award, RotateCcw, MessageCircle, HelpCircle, CheckCircle2, Activity, AlertTriangle, ShieldCheck } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { formatDuration, formatTokenCount } from "@/lib/format"
 import { isMergedEvent, OCTOPUS_EVENT_TYPES, type AgentEvent, type LoopIterationSummary } from "@/lib/types"
@@ -63,6 +63,10 @@ export function EventIcon({ event, agentType }: { event: string; agentType?: str
 
   // Legacy agent_event sub-types
   if (event === "agent_event" && agentType) {
+    // Harness events stored as agent_event with harness_* type
+    if (agentType.startsWith("harness_")) {
+      return <ShieldCheck className="h-3 w-3 text-violet-400 shrink-0" />
+    }
     switch (agentType) {
       case "thinking_block": return <Brain className="h-3 w-3 text-purple-400 shrink-0" />
       case "tool_start": return <Wrench className="h-3 w-3 text-amber-400 shrink-0" />
@@ -92,7 +96,10 @@ export function EventIcon({ event, agentType }: { event: string; agentType?: str
     case "heartbeat": return <Activity className="h-3 w-3 text-rose-500 shrink-0" />
     case "harness_directive": return <AlertTriangle className="h-3 w-3 text-red-500 shrink-0" />
     case "heartbeat_stall": return <AlertTriangle className="h-3 w-3 text-orange-500 shrink-0" />
-    default: return <Clock className="h-3 w-3 text-muted-foreground shrink-0" />
+    default:
+      // Generic harness events (harness_stupid_retry, harness_process_conflict, etc.)
+      if (event.startsWith("harness_")) return <ShieldCheck className="h-3 w-3 text-violet-400 shrink-0" />
+      return <Clock className="h-3 w-3 text-muted-foreground shrink-0" />
   }
 }
 
@@ -159,6 +166,21 @@ export function EventLabel({ entry }: { entry: LogEvent }) {
       return <span className="text-emerald-400">迭代结束{entry.iteration ? ` #${entry.iteration}` : ""}</span>
   }
 
+  // Harness events: render detector name + severity from event data
+  if (entry.event?.startsWith("harness_")) {
+    const data = entry.data ?? {}
+    const detector = entry.event.replace("harness_", "")
+    const severity = (data as any).severity ?? ""
+    const pattern = (data as any).pattern ?? detector
+    const decision = (data as any).decision ?? ""
+    const status = (data as any).status ?? ""
+    let label = `🛡️ ${pattern}`
+    if (decision) label += ` → ${decision}`
+    else if (status) label += ` (${status})`
+    const colorClass = severity === "critical" ? "text-red-400" : severity === "warning" ? "text-amber-400" : "text-violet-400"
+    return <span className={colorClass}>{label}</span>
+  }
+
   // Legacy agent_event sub-types (client-side merged)
   if (entry.event === "agent_event" && entry.event_data) {
     const e = entry.event_data
@@ -196,7 +218,60 @@ export function EventLabel({ entry }: { entry: LogEvent }) {
       }
       case "status": return <span className="text-muted-foreground">状态: {e.status}</span>
       case "error": return <span className="text-red-400">错误: {e.message}</span>
-      default: return <span className="text-muted-foreground">{e.type}</span>
+      default: {
+        // Harness events: harness_process_conflict, harness_stupid_retry, etc.
+        if (e.type?.startsWith("harness_")) {
+          const parsed = (() => { try { return JSON.parse(e.content || "{}") } catch { return {} as Record<string, any> } })()
+          const detector = parsed.detector || e.type.replace("harness_", "")
+          const severity = parsed.severity || ""
+          const status = parsed.status || ""
+          const decision = parsed.decision as string | undefined
+          const reasoning = parsed.reasoning as string | undefined
+          const harnessHint = parsed.harnessHint as string | undefined
+          const modelOverride = parsed.modelOverride as string | undefined
+          const blockReason = parsed.blockReason as string | undefined
+          const evidence = parsed.evidence
+          const evidenceText = Array.isArray(evidence)
+            ? evidence.map((ev: any) => ev.errorMessage || ev.pattern || "").filter(Boolean).join("; ")
+            : typeof evidence === "string" ? evidence : ""
+
+          // AC4: 5 decision type differentiation (§9 log rendering spec)
+          if (decision) {
+            switch (decision) {
+              case "fix_and_retry": {
+                const summary = reasoning ? reasoning.slice(0, 60) : ""
+                return <span className="text-violet-400">🛡️🔧 Harness 修复并重试: {detector}{summary ? ` — ${summary}` : ""}</span>
+              }
+              case "guide_and_retry": {
+                const hint = harnessHint ? harnessHint.slice(0, 60) : ""
+                return <span className="text-violet-400">🛡️💬 Harness 指导重试: {detector}{hint ? ` — ${hint}` : ""}</span>
+              }
+              case "reconfigure_and_retry": {
+                const model = modelOverride || "new model"
+                return <span className="text-violet-400">🛡️🔄 Harness 切换配置重试: {detector} — model → {model}</span>
+              }
+              case "agent_takeover": {
+                const summary = reasoning ? reasoning.slice(0, 60) : ""
+                return <span className="text-emerald-400">🤖✅ Harness Agent 接管完成: {detector}{summary ? ` — ${summary}` : ""}</span>
+              }
+              case "block_node": {
+                const reason = blockReason || reasoning || evidenceText
+                return <span className="text-red-400">🛡️❌ Harness 阻断: {detector}{reason ? ` — ${reason.slice(0, 80)}` : ""}</span>
+              }
+            }
+          }
+
+          // Fallback: no decision field — use status-based rendering (legacy path)
+          const isBlocked = status === "harness_blocked"
+          const isModified = status === "harness_modified"
+          const isExecuted = status === "harness_executed"
+          const color = isBlocked ? "text-red-400" : isModified || isExecuted ? "text-violet-400" : severity === "critical" ? "text-red-400" : "text-amber-400"
+          const label = isBlocked ? `🛡️ Harness 阻断: ${detector}` : isModified ? "🛡️ Harness 已修正" : isExecuted ? "🤖 Harness Agent 接管" : `🛡️ Harness 检测: ${detector}`
+          const detail = isBlocked ? (evidenceText ? ` — ${evidenceText.slice(0, 80)}` : ` (${severity})`) : isModified || isExecuted ? `: ${detector}` : ` (${severity})`
+          return <span className={color}>{label}{detail}</span>
+        }
+        return <span className="text-muted-foreground">{e.type}</span>
+      }
     }
   }
 
@@ -262,9 +337,13 @@ export function EventLabel({ entry }: { entry: LogEvent }) {
       const dir = entry.directivePayload
       if (!dir) return <span className="text-red-500">指令</span>
       const isAbort = dir.type === "abort"
+      const isInject = dir.type === "inject"
       return (
-        <span className={isAbort ? "text-red-500" : "text-amber-500"}>
-          指令: {dir.type} — {dir.reason}
+        <span className={isAbort ? "text-red-500" : isInject ? "text-violet-500" : "text-amber-500"}>
+          {isInject ? "🛡️ 注入" : isAbort ? "🚫 终止" : "⏸️ 暂停"}: {dir.reason}
+          {isInject && dir.message && (
+            <span className="text-muted-foreground ml-1">→ {dir.message.slice(0, 40)}{dir.message.length > 40 ? "..." : ""}</span>
+          )}
         </span>
       )
     }
@@ -407,14 +486,26 @@ export function ExpandableRow({ entry }: { entry: LogEvent }) {
 
       {/* Octopus agent event detail: harness_directive */}
       {expanded && entry.event === "harness_directive" && entry.directivePayload && (
-        <div className={`ml-6 mt-0.5 mb-1 p-1.5 rounded text-xs whitespace-pre-wrap ${entry.directivePayload.type === "abort" ? "bg-red-950/20" : "bg-amber-950/20"}`}>
+        <div className={`ml-6 mt-0.5 mb-1 p-1.5 rounded text-xs whitespace-pre-wrap ${entry.directivePayload.type === "abort" ? "bg-red-950/20" : entry.directivePayload.type === "inject" ? "bg-violet-950/20" : "bg-amber-950/20"}`}>
           <div className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5">
             <span className="text-muted-foreground">类型:</span>
-            <span className={entry.directivePayload.type === "abort" ? "text-red-400 font-semibold" : "text-amber-400 font-semibold"}>{entry.directivePayload.type}</span>
+            <span className={entry.directivePayload.type === "abort" ? "text-red-400 font-semibold" : entry.directivePayload.type === "inject" ? "text-violet-400 font-semibold" : "text-amber-400 font-semibold"}>{entry.directivePayload.type}</span>
             <span className="text-muted-foreground">原因:</span>
             <span>{entry.directivePayload.reason}</span>
             <span className="text-muted-foreground">发起者:</span>
             <span>{entry.directivePayload.issued_by}</span>
+            {entry.directivePayload.type === "inject" && entry.directivePayload.message && (
+              <>
+                <span className="text-muted-foreground">消息:</span>
+                <span className="text-violet-300 font-mono">{entry.directivePayload.message}</span>
+              </>
+            )}
+            {entry.directivePayload.type === "inject" && entry.directivePayload.nodeId && (
+              <>
+                <span className="text-muted-foreground">目标节点:</span>
+                <span className="font-mono">{entry.directivePayload.nodeId}</span>
+              </>
+            )}
           </div>
         </div>
       )}
@@ -531,6 +622,7 @@ export function ExecutionLogViewer({ workspaceId, executionId, executionStatus }
     workspaceId, executionId, executionStatus,
   )
   const [collapsedNodes, setCollapsedNodes] = useState<Set<string>>(new Set())
+  const [harnessOnly, setHarnessOnly] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
   const prevCountRef = useRef(0)
   const prevGroupKeysRef = useRef("")
@@ -636,6 +728,22 @@ export function ExecutionLogViewer({ workspaceId, executionId, executionStatus }
     return mergedResult
   }, [rawEvents])
 
+  // Filter events when "Harness Only" mode is active
+  const HARNESS_EVENT_PREFIXES = ["harness_directive", "harness_diagnosis", "harness_intervention", "harness_blocked"]
+  const filteredEvents = useMemo(() => {
+    if (!harnessOnly) return processedEvents
+    return processedEvents.filter((e) => {
+      // Direct event match
+      if (HARNESS_EVENT_PREFIXES.some((prefix) => e.event === prefix || e.event.startsWith("harness_"))) return true
+      // agent_event with harness type in event_data
+      if (e.event === "agent_event" && e.event_data?.type) {
+        const t = e.event_data.type as string
+        return t.startsWith("harness_") || HARNESS_EVENT_PREFIXES.includes(t)
+      }
+      return false
+    })
+  }, [processedEvents, harnessOnly])
+
   // Flat grouping with loop-aware rendering:
   // - Iteration events: key = "{nodeId}-{iteration}"
   // - Loop node start/end: key = "{nodeId}-start" / "{nodeId}-end" (bookends)
@@ -672,7 +780,7 @@ export function ExecutionLogViewer({ workspaceId, executionId, executionStatus }
 
     // Detect sub_workflow parent nodes: nodes that have node_log events with child references
     const subWorkflowParents = new Set<string>()
-    for (const e of processedEvents) {
+    for (const e of filteredEvents) {
       if (e.event === "node_log") {
         const line = e.line ?? e.content ?? ""
         if (extractSubWorkflowChild(line)) {
@@ -684,9 +792,25 @@ export function ExecutionLogViewer({ workspaceId, executionId, executionStatus }
     // Container parents = loop parents + sub_workflow parents (both use start/end bookends)
     const containerParentNodes = new Set([...loopParentNodes, ...subWorkflowParents])
 
+    // Build a map of inner node IDs → their last iteration number.
+    // Harness events for inner loop nodes don't carry an iteration field,
+    // so we use this to place them in the correct iteration group.
+    const innerNodeLastIter = new Map<string, number>()
+    if (loopIterations) {
+      for (const [loopId, summary] of Object.entries(loopIterations)) {
+        const iters = (summary as any)?.iterations ?? []
+        for (const iter of iters) {
+          const nodes: any[] = iter?.nodes ?? []
+          for (const n of nodes) {
+            if (n.nodeId) innerNodeLastIter.set(n.nodeId, iter.iteration)
+          }
+        }
+      }
+    }
+
     const map = new Map<string, FlatGroup>()
 
-    for (const e of processedEvents) {
+    for (const e of filteredEvents) {
       // Skip branch markers — they're metadata, not display events
       if (e.event === "branch_start" || e.event === "branch_end") continue
 
@@ -716,6 +840,10 @@ export function ExecutionLogViewer({ workspaceId, executionId, executionStatus }
         } else if (e.event === "end") {
           key = `${nodeId}-end`
           label = `${nodeId} end`
+        } else if (e.event.startsWith("harness_")) {
+          // Harness events on container nodes should be visible
+          key = `${nodeId}-harness`
+          label = `${nodeId} 🛡️`
         } else {
           // Skip other container parent events
           continue
@@ -723,6 +851,11 @@ export function ExecutionLogViewer({ workspaceId, executionId, executionStatus }
       } else if (hasIter) {
         key = `${nodeId}-${e.iteration}`
         label = `${nodeId}-${e.iteration}`
+      } else if (e.event?.startsWith("harness_") && innerNodeLastIter.has(nodeId)) {
+        // Harness events for inner loop nodes: place in the last iteration group
+        const iter = innerNodeLastIter.get(nodeId)!
+        key = `${nodeId}-${iter}`
+        label = `${nodeId}-${iter}`
       } else {
         key = nodeId
         label = nodeId
@@ -741,7 +874,7 @@ export function ExecutionLogViewer({ workspaceId, executionId, executionStatus }
       )
     )
     return sorted
-  }, [processedEvents, loopIterations])
+  }, [filteredEvents, loopIterations])
 
   // Auto-collapse: collapse old groups, expand newest
   const groupKeys = useMemo(() => Array.from(nodeGroups.keys()).join(","), [nodeGroups])
@@ -798,7 +931,7 @@ export function ExecutionLogViewer({ workspaceId, executionId, executionStatus }
     )
   }
 
-  if (nodeGroups.size === 0) {
+  if (nodeGroups.size === 0 && !harnessOnly) {
     return (
       <div className="flex items-center justify-center h-full text-xs text-muted-foreground">
         暂无日志
@@ -808,7 +941,7 @@ export function ExecutionLogViewer({ workspaceId, executionId, executionStatus }
 
   return (
     <div className="h-full flex flex-col">
-      {nodeGroups.size > 1 && (
+      {(nodeGroups.size > 1 || harnessOnly) && (
         <div className="flex items-center gap-1 px-2 py-1 border-b border-border/30 shrink-0">
           <button
             onClick={expandAll}
@@ -826,6 +959,24 @@ export function ExecutionLogViewer({ workspaceId, executionId, executionStatus }
             <ChevronUp className="h-3 w-3" />
             折叠
           </button>
+          <span className="text-muted-foreground/30">|</span>
+          <button
+            onClick={() => setHarnessOnly(!harnessOnly)}
+            className={cn(
+              "flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] transition-colors",
+              harnessOnly
+                ? "bg-violet-600/20 text-violet-400 border border-violet-500/30"
+                : "text-muted-foreground hover:bg-muted/50 hover:text-foreground",
+            )}
+            title={harnessOnly ? "显示所有事件" : "仅显示 Harness 事件"}
+          >
+            🛡️ {harnessOnly ? "Harness Only" : "All Events"}
+          </button>
+        </div>
+      )}
+      {harnessOnly && nodeGroups.size === 0 && (
+        <div className="flex items-center justify-center h-full text-xs text-muted-foreground">
+          暂无 Harness 事件，点击 🛡️ 切回全部日志
         </div>
       )}
       <div ref={containerRef} className="flex-1 overflow-y-auto min-h-0">

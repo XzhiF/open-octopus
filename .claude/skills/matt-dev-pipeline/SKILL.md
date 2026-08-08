@@ -225,7 +225,12 @@ Prompt: "Artifacts directory: <artifacts.dir>/<feature-slug>/
 Spec path: <artifacts.dir>/<feature-slug>/spec.md
 E2E scripts dir: <artifacts.dir>/<feature-slug>/e2e-scripts/
 E2E screenshots dir: <artifacts.dir>/<feature-slug>/e2e-screenshots/
-E2E data dir: <artifacts.dir>/<feature-slug>/e2e-data/"
+E2E data dir: <artifacts.dir>/<feature-slug>/e2e-data/
+
+IMPORTANT: Before running any E2E tests, set the environment variable:
+  export E2E_ARTIFACTS_DIR=<absolute-path-to-artifacts.dir>/<feature-slug>
+This ensures Playwright and e2e-harness browser.mjs redirect all outputs
+(screenshots, traces, videos) to the correct artifacts directory."
 ```
 
 matt-e2e-tester will:
@@ -245,6 +250,24 @@ matt-e2e-tester will:
 
 **Post-verification**: Update `<artifacts.dir>/index.md` — set current feature-slug status to `done`.
 Note: index.md tracks all feature-slugs across all branches. Phase 5 will read it to build iteration history.
+
+#### Phase 4 Artifact Gate (MANDATORY)
+
+Before proceeding to Phase 5, the orchestrator MUST run this check:
+
+```bash
+ARTIFACTS_DIR="<artifacts.dir>/<feature-slug>"
+echo "=== Phase 4 Artifact Gate ==="
+echo "e2e-screenshots: $(find "$ARTIFACTS_DIR/e2e-screenshots" -name "*.png" 2>/dev/null | wc -l | tr -d ' ') screenshots"
+echo "e2e-scripts:     $(find "$ARTIFACTS_DIR/e2e-scripts" -type f 2>/dev/null | wc -l | tr -d ' ') scripts"
+echo "e2e-data:        $(find "$ARTIFACTS_DIR/e2e-data" -type f 2>/dev/null | wc -l | tr -d ' ') data files"
+```
+
+**Gate rules**:
+- If spec has browser E2E ACs AND `e2e-screenshots/` has **0 PNG files** → **Phase 4 FAILED**. Do NOT proceed to Phase 5. Present to user: "E2E tests were not executed in a browser. No screenshot evidence found."
+- If spec has NO browser E2E ACs (API-only feature) → gate passes automatically.
+- `e2e-scripts/` having 0 files is a **warning** (not a block) — some features may not need custom scripts if Playwright .spec.ts tests cover everything.
+- Record gate results in `pipeline-report.md` Phase 4 section.
 
 ---
 
@@ -456,7 +479,7 @@ git push --force-with-lease origin $branch
 ## Key Rules
 
 1. **Phases cannot be skipped**: Must execute 1 → 2 → 3 → 4 → 5 in order
-2. **Phase failure stops pipeline**: Phase 1 (max 1 retry), Phase 2 (max 2 review-fix cycles), Phase 3 (max 2 retries), Phase 4 (matt-e2e-tester handles fix-and-retest internally: Quick Fix → diagnosing-bugs → stop). If exhausted, present to user.
+2. **Phase failure stops pipeline**: Phase 1 (max 2 fix attempts), Phase 2 (max 2 review-fix cycles), Phase 3 (max 2 retries), Phase 4 (matt-e2e-tester handles fix-and-retest internally: Quick Fix → diagnosing-bugs → stop). If exhausted, present to user.
 3. **Orchestrate, don't execute**: Phase 1 spawns concurrent matt-dev-runner sub-agents per DAG stage; Phase 2 主 Agent 直接调用 code-review skill（主 Agent 天然独立于实现代码）; main agent doesn't write code or run tests
 4. **裁判 ≠ 球员**: Phase 2 code-review 由主 Agent 直接执行（它从没看过实现代码）。修复也由主 Agent 直接 Edit — **不要重新 spawn Phase 1 implementer sub-agents**（它们会重跑 ticket 全流程，不是 targeted fixer）。
 4. **PR precision**: Only create PRs for projects with actual code changes vs target branch

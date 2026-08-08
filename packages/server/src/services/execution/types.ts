@@ -48,6 +48,16 @@ export interface ExecutionRow {
   // v17 新增
   chain_retry_count: number
   preset_inputs: string | null
+  // v35 harness-semantic-v2: execution-level harness status
+  harness_status: string | null
+  harness_summary: string | null
+  // v19+ interaction metadata
+  interaction_metadata: string | null
+  resume_attempts: number
+  pipeline_config: string
+  instance_id: string | null
+  retry_count: number
+  pending_hooks: string
 }
 
 export interface NodeExecutionRow {
@@ -64,6 +74,12 @@ export interface NodeExecutionRow {
   vars_snapshot: string | null
   outputs: string | null
   session_id: string | null
+  retry_count: number
+  last_retry_at: string | null
+  parent_node_id: string | null
+  iteration_index: number | null
+  harness_status: string | null
+  harness_interventions: string | null
 }
 
 export interface BranchExecutionRow {

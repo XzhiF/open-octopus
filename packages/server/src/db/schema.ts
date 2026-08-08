@@ -10,7 +10,7 @@ const _dirname: string =
     ? __dirname
     : path.dirname(fileURLToPath(import.meta.url))
 
-export const SCHEMA_VERSION = 33
+export const SCHEMA_VERSION = 34
 
 /**
  * Apply the complete unified schema to the given database.
@@ -156,6 +156,15 @@ function ensureColumnsForExistingTables(db: Database.Database): void {
 
   // Agent version tracking (schema version 33)
   ensureColumn(db, 'clones', 'current_version_id', "TEXT")
+
+  // Harness columns (schema version 34)
+  ensureColumn(db, 'node_executions', 'harness_status', "TEXT")
+  ensureColumn(db, 'node_executions', 'harness_interventions', "TEXT")
+  ensureColumn(db, 'node_token_usages', 'source', "TEXT DEFAULT 'node'")
+
+  // Execution-level harness status (schema version 35 — harness-semantic-v2)
+  ensureColumn(db, 'executions', 'harness_status', "TEXT DEFAULT NULL")
+  ensureColumn(db, 'executions', 'harness_summary', "TEXT DEFAULT NULL")
 }
 
 function ensureColumn(db: Database.Database, table: string, column: string, definition: string): void {

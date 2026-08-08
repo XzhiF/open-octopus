@@ -22,6 +22,11 @@ export type {
   AgentHeartbeat,
   HarnessDirective,
   HarnessDirectiveType,
+  // Harness types for floating panel + SSE events
+  DiagnosisReport,
+  InterventionAction,
+  HarnessSSEEvent,
+  HarnessEvent,
 } from "@octopus/shared"
 
 import type {
@@ -102,6 +107,22 @@ export type GateStatus = "open" | "closed" | "bypassed"
 
 export type StepExecutionStatus = "pending" | "running" | "completed" | "failed" | "skipped" | "cancelled" | "paused" | "rejected" | "pending_approval" | "pending_interaction"
 
+export type HarnessNodeStatus = "harness_intervening" | "harness_modified" | "harness_executed" | "harness_blocked"
+
+/** Execution-level harness status (stored on executions table, not node_executions) */
+export type HarnessExecutionStatus = "intervened" | "blocked" | "delegated"
+
+/** Summary of harness interventions for an execution */
+export interface HarnessSummary {
+  totalInterventions: number
+  decisions: Array<{
+    node: string
+    decision: string
+    reason?: string
+  }>
+  harnessStatus: HarnessExecutionStatus
+}
+
 export interface StatusOverlay {
   stepStatus: StepExecutionStatus
   duration?: number
@@ -110,6 +131,7 @@ export interface StatusOverlay {
   tokenUsage?: TokenUsage
   tokenUsages?: TokenUsage[]
   heartbeat?: AgentHeartbeat
+  harnessStatus?: HarnessNodeStatus
 }
 
 export interface StepExecution {
@@ -133,6 +155,8 @@ export interface StepExecution {
   agentName?: string
   agentVersion?: string
   taskBrief?: string
+  // harness status
+  harnessStatus?: HarnessNodeStatus
 }
 
 /** Event types emitted by the Octopus agent harness. */
@@ -168,6 +192,8 @@ export interface Execution {
   triggeredBy: "manual" | "schedule" | "webhook" | "chat"
   logs?: string[]
   approvalMetadata?: ApprovalMetadata | null
+  harnessStatus?: HarnessExecutionStatus
+  harnessSummary?: HarnessSummary
 }
 
 // ============ Workflow Selection ============
@@ -244,6 +270,8 @@ export interface ExecutionTreeNode {
   costUsd?: number
   turnCount?: number
   toolCount?: number
+  harnessStatus?: HarnessExecutionStatus
+  harnessSummary?: HarnessSummary
 }
 
 export interface ExecutionNodeData {
@@ -278,6 +306,8 @@ export interface ExecutionNodeData {
   costUsd?: number
   turnCount?: number
   toolCount?: number
+  harnessStatus?: HarnessNodeStatus
+  harnessExecutionStatus?: HarnessExecutionStatus
 }
 
 // ============ Editor Tab ============
@@ -752,6 +782,8 @@ export interface AgentEvent {
   heartbeatPayload?: AgentHeartbeat
   directivePayload?: HarnessDirective
   stallPayload?: HeartbeatStallPayload
+  // Generic data payload for harness and other custom events
+  data?: Record<string, unknown>
   // Legacy compat
   type?: string
   line?: string

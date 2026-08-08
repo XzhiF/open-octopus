@@ -33,6 +33,26 @@ export function setRepairDependencies(
   _getExecService = getExecService
 }
 
+/**
+ * Create a RepairService for a given workspace.
+ * Used by harness-intervene route to delegate "inject" directives.
+ */
+export function createRepairServiceForWorkspace(workspaceId: string): RepairService | null {
+  if (!_dao || !_sse || !_getExecService) return null
+  const svcEntry = _getExecService(workspaceId)
+  if (!svcEntry) return null
+  const resourceManager = getResourceRegistry().get()
+  return new RepairService(
+    _dao,
+    _sse,
+    svcEntry.service,
+    new WorkflowService(),
+    new BuiltInWorkflowService(resourceManager),
+    svcEntry.wsPath,
+    workspaceId,
+  )
+}
+
 const repairRoutes = new Hono()
 
 function getRepairService(c: { req: { param: (name: string) => string | undefined } }): RepairService {

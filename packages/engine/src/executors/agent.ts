@@ -32,6 +32,7 @@ export class AgentExecutor implements NodeExecutor {
   private modelAliasConfig?: ModelAliasConfig
   private providerKey?: string
   private systemPrompt?: SystemPromptInput
+  private onBeforeToolCall?: (toolName: string, input: unknown) => Promise<{ allow: boolean; reason?: string } | undefined>
 
   constructor(
     private node: NodeDef,
@@ -53,6 +54,7 @@ export class AgentExecutor implements NodeExecutor {
     this.modelAliasConfig = config.modelAliasConfig
     this.providerKey = config.providerKey
     this.systemPrompt = config.systemPrompt
+    this.onBeforeToolCall = config.onBeforeToolCall
   }
 
   async execute(): Promise<NodeExecutionResult> {
@@ -114,6 +116,7 @@ export class AgentExecutor implements NodeExecutor {
         onActivity: resetActivityTimer,
         effort: this.node.effort,
         systemPrompt: this.systemPrompt,
+        onBeforeToolCall: this.onBeforeToolCall,
       })
 
       clearTimeout(activityTimer)

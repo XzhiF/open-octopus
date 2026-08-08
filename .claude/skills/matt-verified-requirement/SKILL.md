@@ -181,7 +181,7 @@ The **frontier** = open + unblocked + unclaimed tickets. Select by number (lowes
 
 #### Wayfinder Exit
 
-All decision tickets resolved + map clear (no ungraduated fog) → write the **spec.md** (see Artifact Output below), spawn story-walkthrough sub-agent, fix spec with findings, then write **issues/** (DAG tickets).
+All decision tickets resolved + map clear (no ungraduated fog) → write the **spec.md** (see Artifact Output below), spawn story-walkthrough sub-agent, present findings to user for confirmation, fix spec with user-confirmed findings, then write **issues/** (DAG tickets).
 
 ## Verification Strategy Questions (both paths MUST cover)
 
@@ -244,7 +244,7 @@ What needs to be ready before verification?
 - User says "confirmed" or "hand to agent"
 - All verification dimensions explored
 - **spec.md written** (see Artifact Output)
-- **Story Walk-Through sub-agent completed** and findings incorporated
+- **Story Walk-Through sub-agent completed**, findings presented to user, and user-confirmed fixes incorporated
 - **issues/ written** with DAG tickets
 - Max 15 rounds
 
@@ -253,7 +253,7 @@ What needs to be ready before verification?
 - Map clear — no ungraduated fog in "Not yet specified"
 - All verification dimensions explored (both paths must cover these)
 - **spec.md written** (see Artifact Output)
-- **Story Walk-Through sub-agent completed** and findings incorporated
+- **Story Walk-Through sub-agent completed**, findings presented to user, and user-confirmed fixes incorporated
 - **issues/ written** with DAG tickets
 - Max 20 decision tickets (if more, consider splitting into multiple wayfinder efforts)
 
@@ -282,12 +282,27 @@ After the draft spec.md is written (see Artifact Output below), spawn a **Story 
    Do NOT modify spec.md."
    ```
 3. Read sub-agent's findings
-4. Fix all CRITICAL and HIGH break points in spec.md:
+4. **Present findings to user and get confirmation** (MANDATORY GATE):
+   - Show a structured summary of ALL break points, grouped by severity:
+     - CRITICAL / HIGH: list each with description + recommended fix
+     - MEDIUM / LOW: list each with description + recommendation (fix now vs note in Risks)
+   - For each CRITICAL/HIGH finding, present the **specific recommended fix**:
+     - What type/schema/API to add
+     - What AC to add
+     - What Key Decision to update
+   - **Wait for user response**. The user may:
+     - Confirm all findings → proceed to fix all
+     - Reject specific findings → skip those, don't fix
+     - Propose alternative fixes → use user's approach instead
+     - Add their own modification suggestions → incorporate into the fix plan
+   - Do NOT proceed to modify spec.md until user explicitly confirms the fix plan
+5. Fix confirmed break points in spec.md:
    - Add missing types/schemas/APIs to Implementation Decisions
    - Add new ACs for each fix
    - Update Key Decisions with "Story Gap Fixes"
-5. Re-trace if needed (spawn again if major structural changes)
-6. Append story traces to spec.md Appendix
+   - Incorporate any user-provided modifications
+6. Re-trace if needed (spawn again if major structural changes)
+7. Append story traces to spec.md Appendix
 
 **Human-readable report**: The sub-agent writes `story-walkthrough.md` as a standalone artifact for human review. It is NOT consumed by downstream pipeline steps — purely for the user to understand what gaps were found and how the design was validated.
 
@@ -365,7 +380,7 @@ The following artifacts are created **later** by downstream agents — this skil
 1. Create directory `<artifacts.dir>/<feature-slug>/`
 2. Write `<artifacts.dir>/<feature-slug>/brief.md` (lightweight core info)
 3. Write `<artifacts.dir>/<feature-slug>/spec.md` (using `matt-verified-spec` skill as methodology reference)
-4. Spawn story-walkthrough sub-agent → read findings → fix spec.md
+4. Spawn story-walkthrough sub-agent → read findings → present to user for confirmation → fix spec.md
 5. Write `<artifacts.dir>/<feature-slug>/issues/` (using `matt-verified-tickets` skill as methodology reference)
 6. For wayfinder path, `map.md` and `decisions/` were already created during the wayfinder process
 7. **Update `<artifacts.dir>/index.md`** (append new record, auto-increment number)

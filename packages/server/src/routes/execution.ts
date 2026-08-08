@@ -11,7 +11,7 @@ import { ExecutionDAO } from "../db/dao"
 import { initExecutionServiceRegistry, getService } from "../services/execution-service-registry"
 export { getService } from "../services/execution-service-registry"
 import { mergeAgentEvents } from "@octopus/engine"
-import repairRoutes, { setRepairDependencies } from "./repair"
+import repairRoutes, { setRepairDependencies, createRepairServiceForWorkspace } from "./repair"
 import os from "os"
 
 /** Extract the latest heartbeat data from a list of merged events (searches backwards). */
@@ -160,6 +160,8 @@ executionRoutes.get("/tree", (c) => {
       token_usages: tokenUsages.length > 0 ? tokenUsages : undefined,
       approval_metadata: approvalMetadata,
       interaction_metadata: interactionMetadata,
+      harness_status: e.harness_status ?? null,
+      harness_summary: e.harness_summary ? JSON.parse(e.harness_summary) : null,
     }
   })
   return c.json({ workspace_id: workspaceId, nodes })
@@ -212,6 +214,8 @@ executionRoutes.get("/:executionId", async (c) => {
       })) : undefined,
       parentNodeId: ne.parent_node_id ?? undefined,
       iterationIndex: ne.iteration_index ?? undefined,
+      harnessStatus: ne.harness_status ?? undefined,
+      harnessInterventions: ne.harness_interventions ? JSON.parse(ne.harness_interventions) : undefined,
       agentName: (parsedOutputs?.agent_name ?? parsedOutputs?.agentName) as string | undefined,
       agentVersion: (parsedOutputs?.agent_version ?? parsedOutputs?.agentVersion) as string | undefined,
       taskBrief: (parsedOutputs?.task_brief ?? parsedOutputs?.taskBrief) as string | undefined,
@@ -403,7 +407,16 @@ executionRoutes.post("/:executionId/harness-intervene", async (c) => {
   const svc = getService(workspaceId)
   if (!svc) return c.json({ error: "workspace not found" }, 404)
 
-  let body: { nodeId: string; directive: { type: "abort" | "pause"; reason: string; issued_by: string } }
+  let body: {
+    nodeId: string
+    directive: {
+      type: "abort" | "pause" | "inject"
+      reason: string
+      issued_by: string
+      nodeId?: string
+      message?: string
+    }
+  }
   try {
     body = await c.req.json()
   } catch {
@@ -413,12 +426,29 @@ executionRoutes.post("/:executionId/harness-intervene", async (c) => {
   if (!body.nodeId || !body.directive?.type) {
     return c.json({ error: "nodeId and directive.type are required" }, 400)
   }
-  if (!["abort", "pause"].includes(body.directive.type)) {
-    return c.json({ error: "directive.type must be 'abort' or 'pause'" }, 400)
+  if (!["abort", "pause", "inject"].includes(body.directive.type)) {
+    return c.json({ error: "directive.type must be 'abort', 'pause', or 'inject'" }, 400)
+  }
+
+  // "inject" delegates to RepairService.intervene()
+  if (body.directive.type === "inject") {
+    if (!body.directive.message) {
+      return c.json({ error: "inject directive requires 'message'" }, 400)
+    }
+    try {
+      const repairService = createRepairServiceForWorkspace(workspaceId)
+      if (!repairService) {
+        return c.json({ error: "repair service not available" }, 503)
+      }
+      const result = await repairService.intervene(executionId, body.nodeId, body.directive.message)
+      return c.json({ success: true, directive_applied: "inject", ...result })
+    } catch (err: unknown) {
+      return handleError(err)
+    }
   }
 
   try {
-    const result = await svc.service.harnessIntervene(executionId, body)
+    const result = await svc.service.harnessIntervene(executionId, body as any)
     if (!result.success) {
       const status = result.error === "Execution not found" ? 404 : 400
       return c.json(result, status)
@@ -579,14 +609,18 @@ executionRoutes.get("/:executionId/agent-events", (c) => {
           }
         }
         // Heartbeat and harness events: deserialize JSON content and pass through
-        if (row.event_type === "heartbeat" || row.event_type === "harness_directive" || row.event_type === "heartbeat_stall") {
+        // harness_* includes harness_directive, harness_stupid_retry, harness_process_conflict, etc.
+        if (row.event_type === "heartbeat" || row.event_type === "heartbeat_stall" || row.event_type.startsWith("harness_")) {
           let data: Record<string, unknown> = {}
           try { data = JSON.parse(row.content ?? "{}") } catch { /* ignore */ }
+          // Extract iteration from content to top-level for log viewer grouping
+          const iteration = data.iteration as number | undefined
           return {
             event: row.event_type,
             nodeId: row.node_id,
             data,
             timestamp: new Date(row.timestamp).toISOString(),
+            ...(iteration != null ? { iteration } : {}),
           }
         }
         // start/end lifecycle events: skip from SQLite (JSONL provides authoritative copies)
@@ -694,6 +728,8 @@ executionRoutes.get("/:executionId/agent-events", (c) => {
       // is not captured in JSONL, only their structured node_log events are.
       // Also remove swarm events (JSONL has authoritative data — SQLite may have empty content)
       const filteredSqlite = mergedSqlite.filter((e: any) => {
+        // Keep harness events even for loop inner nodes — they're only in SQLite
+        if (e.event?.startsWith("harness_")) return true
         if (loopInnerNodes.has(e.nodeId) && !e.nodeId?.includes(":")) return false
         // Skip SQLite swarm events — JSONL is the authoritative source
         if (e.event?.startsWith("expert_") || e.event?.startsWith("swarm_") || e.event === "consensus_check") return false

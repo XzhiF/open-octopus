@@ -5,6 +5,7 @@ import type { NodeDef, CrossExecResolver } from "@octopus/shared"
 import type { NodeExecutor, NodeExecutionResult } from "./types"
 import type { BashConfig } from "./executor-config"
 import { applyVarsUpdate } from "./parse-vars-update"
+import { buildHostEnv, prependWrapper, killProcessTree, startForceKillChain } from "./process-isolation"
 
 /**
  * 解析 bash 可执行文件路径。
@@ -80,6 +81,7 @@ export class BashExecutor implements NodeExecutor {
     const start = Date.now()
     let script = substituteVarsFull(this.node.bash!, this.pool, this.nodeOutputs, this.crossExecResolver, this.executionId, this.loopContext)
     script = this.resolveInputs(script)
+    script = prependWrapper(script)
     const timeout = this.node.timeout ?? 30
 
     try {
@@ -158,40 +160,34 @@ export class BashExecutor implements NodeExecutor {
         reject(new Error("Aborted"))
         return
       }
+      // Merge VarPool string values into child env so $VAR_NAME works
+      // (e.g. harness varPoolPatches inject CONFIG_PATH → bash sees $CONFIG_PATH)
+      const env = buildHostEnv()
+      for (const [k, v] of Object.entries(this.pool.snapshot())) {
+        if (v != null && typeof v !== "object") {
+          env[k] = String(v)
+        }
+      }
+
       const proc = spawn(BASH_PATH, ["-c", script], {
         stdio: ["pipe", "pipe", "pipe"],
         shell: false,
         cwd: this.cwd,
-        env: (() => {
-          const childEnv = { ...process.env }
-          delete childEnv.OCTOPUS_DB_PATH
-          return childEnv
-        })(),
+        env,
       })
 
       let stdout = ""
       let stderr = ""
       const logLines: string[] = []
       let aborted = false
+      // Track the force kill chain so we can cancel it when the process exits
+      let killChain: { cancel: () => void } | null = null
 
-      // 监听 abort signal，在 Windows 上强制杀死进程树
+      // 监听 abort signal，使用进程组 kill
       const onAbort = () => {
         aborted = true
-        if (process.platform === "win32") {
-          // Windows: 使用 taskkill 强制杀死进程树
-          try {
-            const { execSync } = require("child_process")
-            execSync(`taskkill /PID ${proc.pid} /T /F`, { stdio: "ignore" })
-          } catch {
-            proc.kill("SIGKILL")
-          }
-        } else {
-          // Unix: 使用 SIGTERM 杀死进程组
-          try {
-            process.kill(-proc.pid!, "SIGTERM")
-          } catch {
-            proc.kill("SIGTERM")
-          }
+        if (proc.pid) {
+          killProcessTree(proc.pid)
         }
       }
 
@@ -220,12 +216,16 @@ export class BashExecutor implements NodeExecutor {
       })
 
       const timer = setTimeout(() => {
-        onAbort()
+        // Timeout: use force kill chain (SIGTERM → 5s → SIGKILL)
+        if (proc.pid) {
+          killChain = startForceKillChain(proc.pid, 5000)
+        }
         reject(new Error(`Timeout after ${timeoutSec}s`))
       }, timeoutSec * 1000)
 
       proc.on("close", (code: number | null) => {
         clearTimeout(timer)
+        killChain?.cancel()
         this.signal?.removeEventListener("abort", onAbort)
         if (aborted) {
           reject(new Error("Aborted"))
@@ -241,6 +241,7 @@ export class BashExecutor implements NodeExecutor {
 
       proc.on("error", (err: Error) => {
         clearTimeout(timer)
+        killChain?.cancel()
         this.signal?.removeEventListener("abort", onAbort)
         reject(err)
       })

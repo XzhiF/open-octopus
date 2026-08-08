@@ -1,0 +1,42 @@
+apiVersion: octopus/v1
+kind: Workflow
+name: harness-process-conflict
+description: |
+  Harness 测试 #1: block_node 模式
+  ─────────────────────────────────
+  触发检测器: ProcessConflictDetector (onBeforeNode 静态扫描)
+  信号: process_conflict / pid_conflict (severity: critical)
+  期望决策: block_node — 阻断危险节点，保护宿主进程
+  执行路径: 同步域 (onBeforeNode → 立即阻断，不执行节点)
+
+  原理: bash 脚本包含 kill $OCTOPUS_HOST_PID，ProcessConflictDetector
+  在 onBeforeNode 阶段扫描脚本内容，匹配到 PID 冲突模式后
+  生成 critical 级别 DiagnosisReport，StrategyEngine 同步委托
+  Harness Agent 做出 block_node 决策，返回 { action: "skip" }。
+timeout: 60
+variables:
+  harness_fixed: "false"
+nodes:
+  - id: setup
+    type: bash
+    bash: |
+      echo "=== Harness block_node 测试 ==="
+      echo "下一个节点包含 kill \$OCTOPUS_HOST_PID"
+      echo "预期: ProcessConflictDetector 静态扫描 → block_node"
+
+  - id: dangerous-node
+    type: bash
+    depends_on: [setup]
+    bash: |
+      echo "Attempting to kill host process..."
+      kill -9 $OCTOPUS_HOST_PID
+      echo "This line should never execute if harness blocks correctly"
+    timeout: 30
+
+  - id: downstream-safe
+    type: bash
+    depends_on: [dangerous-node]
+    bash: |
+      echo "=== 后续节点执行结果 ==="
+      echo "如果 harness 设置了 continueSubsequent: true"
+      echo "此节点仍会执行，说明 harness 正确分析了依赖链"

@@ -88,6 +88,14 @@ function TokenSummary({ input, output }: { input: number; output: number }) {
 export function SubWorkflowContainerNode({ data, selected }: NodeProps) {
   const swData = data as unknown as SubWorkflowContainerData
   const stepStatus = swData.statusOverlay?.stepStatus
+  const isHarnessActive = swData.statusOverlay?.harnessStatus === "harness_intervening"
+    || swData.statusOverlay?.harnessStatus === "harness_modified"
+    || swData.harnessStatus === "harness_intervening"
+    || swData.harnessStatus === "harness_modified"
+  const isDone = stepStatus === "completed" || stepStatus === "skipped" || stepStatus === "cancelled"
+  const showMarchingAnts = !isDone && (stepStatus === "running" || isHarnessActive)
+  const marchColor = (swData.statusOverlay?.harnessStatus === "harness_intervening"
+    || swData.harnessStatus === "harness_intervening") ? "#8b5cf6" : "#6366f1"
   const borderColor = stepStatus ? statusBorderColor[stepStatus] ?? "border-gray-300" : "border-indigo-300"
   const headerBg = stepStatus ? statusBgColor[stepStatus] ?? "bg-indigo-50/80" : "bg-indigo-50/80"
   const tokens = aggregateTokens(swData.statusOverlay)
@@ -98,7 +106,7 @@ export function SubWorkflowContainerNode({ data, selected }: NodeProps) {
 
   return (
     <>
-      {stepStatus === "running" && (
+      {showMarchingAnts && (
         <style>{`
           @keyframes border-march {
             to {
@@ -112,10 +120,10 @@ export function SubWorkflowContainerNode({ data, selected }: NodeProps) {
           .border-running {
             border-color: transparent;
             background:
-              repeating-linear-gradient(90deg, #6366f1 0 6px, transparent 6px 12px) top    / 100% 2px no-repeat,
-              repeating-linear-gradient(90deg, #6366f1 0 6px, transparent 6px 12px) bottom / 100% 2px no-repeat,
-              repeating-linear-gradient(0deg, #6366f1 0 6px, transparent 6px 12px) left   / 2px 100% no-repeat,
-              repeating-linear-gradient(0deg, #6366f1 0 6px, transparent 6px 12px) right  / 2px 100% no-repeat;
+              repeating-linear-gradient(90deg, ${marchColor} 0 6px, transparent 6px 12px) top    / 100% 2px no-repeat,
+              repeating-linear-gradient(90deg, ${marchColor} 0 6px, transparent 6px 12px) bottom / 100% 2px no-repeat,
+              repeating-linear-gradient(0deg, ${marchColor} 0 6px, transparent 6px 12px) left   / 2px 100% no-repeat,
+              repeating-linear-gradient(0deg, ${marchColor} 0 6px, transparent 6px 12px) right  / 2px 100% no-repeat;
             animation: border-march 0.6s linear infinite;
           }
         `}</style>
@@ -125,7 +133,7 @@ export function SubWorkflowContainerNode({ data, selected }: NodeProps) {
           "border-2 border-dashed rounded-lg w-full h-full relative",
           borderColor,
           selected && "ring-2 ring-primary ring-offset-2",
-          stepStatus === "running" && "border-running",
+          showMarchingAnts && "border-running",
         )}
       >
         <Handle type="target" position={Position.Top} className="!bg-muted-foreground !w-3 !h-3" />

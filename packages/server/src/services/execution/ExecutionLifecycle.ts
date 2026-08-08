@@ -17,6 +17,7 @@ import type { BuiltInWorkflowService } from "../builtin-workflow"
 import type { ObservabilityService } from "../observability"
 import type { ErrorTracker } from "../error-tracker"
 import type { KnowledgeService } from "../knowledge"
+import type { RepairService } from "../repair"
 import type { HookDef, WorkflowDef, WorkflowHooks, PipelineConfig, ExecutionLookup } from "@octopus/shared"
 import type { EngineCallbacks } from "@octopus/engine"
 import { WorkflowEngine, FilesystemCheckpointStore, EngineInitPhase } from "@octopus/engine"
@@ -34,6 +35,9 @@ import { ResourcePreFlight } from "../resource-preflight"
 import { ResourceProvisioner } from "../resource-provisioner"
 import { getResourceRegistry } from "../resource-registry"
 import { PipelineConfigLoader } from "../pipeline-config"
+import { HarnessController } from "../harness/harness-controller"
+import { HarnessConfigService } from "../harness/config-service"
+import { HarnessDAO } from "../../db/dao/harness-dao"
 
 export class ExecutionLifecycle {
   private enginePool: EnginePool
@@ -46,6 +50,7 @@ export class ExecutionLifecycle {
   private runner: ExecutionRunner
   private _externalCallbacks = new Map<string, Partial<EngineCallbacks>>()
   private knowledgeService?: KnowledgeService
+  private harnessController?: HarnessController
   // Throttle retireStaleRules — only run at most once per RETIRE_INTERVAL_MS
   // across all executions. retireStaleRules scans the DB and rewrites
   // knowledge files for every stale rule, so calling it on every on_complete
@@ -110,6 +115,23 @@ export class ExecutionLifecycle {
       recordEndCommits: () => this.recordEndCommits(),
       abortAndWait: (ac, eid, t) => this.abortAndWait(ac, eid, t),
     })
+
+    // Initialize HarnessController for agentic supervision
+    try {
+      // Use dao.getDb() to get the real better-sqlite3 Database instance.
+      // The constructor `db` param may reference a different object due to
+      // tsup bundling variable renaming (db → db3 collision).
+      const realDb = this.dao.getDb()
+      const harnessDAO = new HarnessDAO(realDb)
+      const harnessConfigService = new HarnessConfigService(harnessDAO)
+      this.harnessController = new HarnessController({
+        dao: harnessDAO,
+        sse,
+        configService: harnessConfigService,
+      })
+    } catch (err) {
+      console.warn("[ExecutionLifecycle] HarnessController initialization failed (non-fatal):", err)
+    }
   }
 
   /**
@@ -120,7 +142,20 @@ export class ExecutionLifecycle {
     this.engineFactory.setKnowledgeService(service)
   }
 
+  /**
+   * Set the repair service for harness inject_message actions.
+   * Called after construction to break the circular dependency between
+   * ExecutionService → ExecutionLifecycle → HarnessController → RepairService → ExecutionService.
+   */
+  setRepairService(service: RepairService): void {
+    if (this.harnessController) {
+      this.harnessController.setRepairService(service)
+    }
+  }
+
   getEnginePool(): EnginePool { return this.enginePool }
+
+  getHarnessController(): HarnessController | undefined { return this.harnessController }
 
   registerExternalCallbacks(callbacks: Partial<EngineCallbacks>, executionId?: string): void {
     if (executionId) {
@@ -215,8 +250,32 @@ export class ExecutionLifecycle {
     }
     const updatedExec = this.dao.findById(id)!
 
+    // Build callbacks and optionally wrap through HarnessController
+    let callbacks = this.buildCallbacks(id)
+    if (this.harnessController) {
+      try {
+        // Build session context for HarnessAgentSession (workflow content + node metadata)
+        const nodeList = (wf.parsed.nodes ?? []).map((n: any) => ({ id: n.id, type: n.type ?? "bash" }))
+        const dependencyGraph: Record<string, string[]> = {}
+        for (const n of (wf.parsed.nodes ?? [])) {
+          dependencyGraph[n.id] = n.depends_on ?? []
+        }
+        callbacks = this.harnessController.onExecutionStart(id, this.workspaceId, callbacks, {
+          hostPid: process.env.OCTOPUS_HOST_PID,
+          hostPorts: (process.env.OCTOPUS_HOST_PORTS ?? "").split(",").filter(Boolean),
+          workspacePath: this.workspacePath,
+          workflowContent: wf.content,
+          nodeList,
+          dependencyGraph,
+          varpoolSnapshot: resolvedInputValues ?? undefined,
+        })
+      } catch (err) {
+        console.warn("[ExecutionLifecycle] Harness onExecutionStart failed (non-fatal):", err)
+      }
+    }
+
     const engine = this.engineFactory.createEngine(
-      updatedExec as any, wf.parsed, this.buildCallbacks(id), abortController.signal,
+      updatedExec as any, wf.parsed, callbacks, abortController.signal,
     )
 
     this.enginePool.create(id, engine, abortController)
@@ -357,7 +416,11 @@ export class ExecutionLifecycle {
       if (result.status === "paused") {
         this.updateStatus(id, result.status, { progress: result.progress ?? 0, var_pool: JSON.stringify(result.poolSnapshot) })
         this.syncStateJson()
-        this.sse.emit(this.workspaceId, { event: "execution_paused", data: { executionId: id } })
+        if (result.pauseReason === "harness_delegate") {
+          this.sse.emit(this.workspaceId, { event: "harness_delegation", data: { executionId: id, source: "harness_delegate" } })
+        } else {
+          this.sse.emit(this.workspaceId, { event: "execution_paused", data: { executionId: id } })
+        }
         this.enginePool.remove(id)
         return this.dao.findById(id)!
       }
@@ -406,17 +469,34 @@ export class ExecutionLifecycle {
       const endCommitId = await this.recordEndCommits()
       this.dao.updateExecution(id, { end_commit_id: endCommitId })
 
-      this.updateStatus(id, result.status, {
+      // ── Harness status adjustment ──
+      // If all real nodes were skipped by harness, the workflow didn't achieve
+      // its goal → status should be "failed" (not "completed").
+      let finalStatus = result.status
+      if (result.status === "completed") {
+        const nodeResults = result.nodeResults ?? {}
+        const realNodes = Object.entries(nodeResults).filter(
+          ([nodeId]) => !nodeId.startsWith("__"),
+        )
+        if (realNodes.length > 0) {
+          const allSkipped = realNodes.every(([, r]) => r.status === "skipped")
+          if (allSkipped) {
+            finalStatus = "failed"
+          }
+        }
+      }
+
+      this.updateStatus(id, finalStatus, {
         completed_at: new Date().toISOString(),
         duration: result.durationMs,
         progress: 100,
         var_pool: JSON.stringify(result.poolSnapshot),
-        gate_status: result.status === "completed" ? "open" : "closed",
+        gate_status: finalStatus === "completed" ? "open" : "closed",
       })
 
-      this.cleanupOrphanedNodes(id, result.status)
+      this.cleanupOrphanedNodes(id, finalStatus)
 
-      if (result.status === "failed") {
+      if (finalStatus === "failed") {
         this.errorTracker?.capture('execution', this.findFailedNodeError(id) ?? 'workflow execution failed', {
           execution_id: id, node_id: this.findFailedNode(id) ?? undefined, workflow_name: wf.parsed.name,
         })
@@ -426,10 +506,10 @@ export class ExecutionLifecycle {
           duration_ms: result.durationMs,
         }, wf, id)
       }
-      if (result.status === "completed") {
+      if (finalStatus === "completed") {
         await this.executeWorkflowHooks("on_success", { duration_ms: result.durationMs }, wf, id)
       }
-      await this.executeWorkflowHooks("on_complete", { final_status: result.status, duration_ms: result.durationMs }, wf, id)
+      await this.executeWorkflowHooks("on_complete", { final_status: finalStatus, duration_ms: result.durationMs }, wf, id)
 
       // Track knowledge effectiveness after execution completes
       if (this.knowledgeService) {
@@ -484,7 +564,16 @@ export class ExecutionLifecycle {
       }
 
       this.syncStateJson()
-      this.sse.emit(this.workspaceId, { event: "complete", data: { executionId: id, finalStatus: result.status } })
+      this.sse.emit(this.workspaceId, { event: "complete", data: { executionId: id, finalStatus } })
+
+      // Clean up harness detectors for this execution
+      if (this.harnessController) {
+        try {
+          this.harnessController.onExecutionEnd(id)
+        } catch (err) {
+          console.warn("[ExecutionLifecycle] Harness onExecutionEnd failed (non-fatal):", err)
+        }
+      }
     } catch (err: any) {
       this.errorTracker?.capture('execution', err.message ?? 'execution error', {
         execution_id: id, node_id: this.findFailedNode(id) ?? undefined, workflow_name: exec.workflow_name,
@@ -522,6 +611,15 @@ export class ExecutionLifecycle {
         }, wf, id)
         await this.executeWorkflowHooks("on_complete", { final_status: "failed" }, wf, id)
       } catch { /* hook errors silently ignored */ }
+
+      // Clean up harness detectors for this execution (error path)
+      if (this.harnessController) {
+        try {
+          this.harnessController.onExecutionEnd(id)
+        } catch (harnessErr) {
+          console.warn("[ExecutionLifecycle] Harness cleanup failed in error path (non-fatal):", harnessErr)
+        }
+      }
     }
 
     return this.dao.findById(id)!
@@ -552,6 +650,15 @@ export class ExecutionLifecycle {
         await this.executeWorkflowHooks("on_cancel", {}, wf, id)
         await this.executeWorkflowHooks("on_complete", { final_status: "cancelled" }, wf, id)
       } catch { /* non-fatal */ }
+    }
+
+    // Clean up harness detectors for this execution (cancel path)
+    if (this.harnessController) {
+      try {
+        this.harnessController.onExecutionEnd(id)
+      } catch (err) {
+        console.warn("[ExecutionLifecycle] Harness cleanup failed in cancel path (non-fatal):", err)
+      }
     }
 
     const children = this.dao.findChildren(id).filter(
@@ -624,7 +731,7 @@ export class ExecutionLifecycle {
       if (result.status === "pending_approval") {
         this.updateStatus(id, result.status, { var_pool: JSON.stringify(result.poolSnapshot) })
         this.syncStateJson()
-        this.sse.emit(this.workspaceId, { event: "complete", data: { executionId: id, finalStatus: result.status } })
+        this.sse.emit(this.workspaceId, { event: "complete", data: { executionId: id, finalStatus } })
       } else {
         const currentExec = this.dao.findById(id)
         if (currentExec?.status === "paused") {
@@ -662,7 +769,16 @@ export class ExecutionLifecycle {
         }
 
         this.syncStateJson()
-        this.sse.emit(this.workspaceId, { event: "complete", data: { executionId: id, finalStatus: result.status } })
+        this.sse.emit(this.workspaceId, { event: "complete", data: { executionId: id, finalStatus } })
+
+        // Clean up harness detectors for this execution (retry completion path)
+        if (this.harnessController) {
+          try {
+            this.harnessController.onExecutionEnd(id)
+          } catch (err) {
+            console.warn("[ExecutionLifecycle] Harness cleanup failed in retry completion (non-fatal):", err)
+          }
+        }
       }
     } catch (err: any) {
       this.enginePool.remove(id)
@@ -695,6 +811,15 @@ export class ExecutionLifecycle {
           await this.executeWorkflowHooks("on_complete", { final_status: "failed" }, wfForHook, id)
         }
       } catch { /* non-fatal */ }
+
+      // Clean up harness detectors for this execution (retry error path)
+      if (this.harnessController) {
+        try {
+          this.harnessController.onExecutionEnd(id)
+        } catch (harnessErr) {
+          console.warn("[ExecutionLifecycle] Harness cleanup failed in retry error path (non-fatal):", harnessErr)
+        }
+      }
     }
 
     return this.dao.findById(id)!
@@ -916,9 +1041,27 @@ export class ExecutionLifecycle {
         this.syncStateJson()
         this.sse.emit(this.workspaceId, { event: "complete", data: { executionId, finalStatus: result.status } })
         this.enginePool.remove(executionId)
+
+        // Clean up harness detectors for this execution (interaction completion path)
+        if (this.harnessController) {
+          try {
+            this.harnessController.onExecutionEnd(executionId)
+          } catch (err) {
+            console.warn("[ExecutionLifecycle] Harness cleanup failed in interaction completion (non-fatal):", err)
+          }
+        }
       } catch (err) {
         console.error(`[ExecutionLifecycle] Interaction complete failed for ${executionId}/${nodeId}`, err)
         this.updateStatus(executionId, "failed", { error: `Interaction complete failed: ${err instanceof Error ? err.message : String(err)}` })
+
+        // Clean up harness detectors for this execution (interaction completion error path)
+        if (this.harnessController) {
+          try {
+            this.harnessController.onExecutionEnd(executionId)
+          } catch (harnessErr) {
+            console.warn("[ExecutionLifecycle] Harness cleanup failed in interaction error path (non-fatal):", harnessErr)
+          }
+        }
       }
     })
   }
@@ -1117,12 +1260,30 @@ export class ExecutionLifecycle {
 
         this.syncStateJson()
         this.sse.emit(this.workspaceId, { event: "complete", data: { executionId: execId, finalStatus: result.status } })
+
+        // Clean up harness detectors for this execution (autoResume completion path)
+        if (this.harnessController) {
+          try {
+            this.harnessController.onExecutionEnd(execId)
+          } catch (err) {
+            console.warn("[ExecutionLifecycle] Harness cleanup failed in autoResume completion (non-fatal):", err)
+          }
+        }
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err)
         this.enginePool.remove(execId)
         this.dao.updateExecution(execId, { status: "failed" })
         this.dao.updateNodeExecutionsByStatus(execId, "failed", ["running", "pending"], { error: `Auto-resume failed: ${msg}` })
         console.error(`[Recovery] Auto-resume execution failed for ${execId}: ${msg}`)
+
+        // Clean up harness detectors for this execution (autoResume error path)
+        if (this.harnessController) {
+          try {
+            this.harnessController.onExecutionEnd(execId)
+          } catch (harnessErr) {
+            console.warn("[ExecutionLifecycle] Harness cleanup failed in autoResume error path (non-fatal):", harnessErr)
+          }
+        }
       }
     } else {
       const lastRunning = this.dao.findFirstNodeByStatus(execId, "running") ||
@@ -1364,11 +1525,33 @@ export class ExecutionLifecycle {
 
   private reconstructEngine(exec: ExecutionRow): { engine: WorkflowEngine; abortController: AbortController } {
     const abortController = new AbortController()
-    const callbacks = this.buildCallbacks(exec.id)
-    const engine = this.engineFactory.reconstructEngine(exec, callbacks, abortController.signal)
 
     const wf = this.engineFactory.resolveWorkflowWithSnapshot(exec.id, exec.workflow_ref)
     if (!wf) throw new Error(`Workflow not found: ${exec.workflow_ref}`)
+
+    // Build callbacks and optionally wrap through HarnessController
+    let callbacks = this.buildCallbacks(exec.id)
+    if (this.harnessController) {
+      try {
+        const nodeList = (wf.parsed.nodes ?? []).map((n: any) => ({ id: n.id, type: n.type ?? "bash" }))
+        const dependencyGraph: Record<string, string[]> = {}
+        for (const n of (wf.parsed.nodes ?? [])) {
+          dependencyGraph[n.id] = n.depends_on ?? []
+        }
+        callbacks = this.harnessController.onExecutionStart(exec.id, this.workspaceId, callbacks, {
+          hostPid: process.env.OCTOPUS_HOST_PID,
+          hostPorts: (process.env.OCTOPUS_HOST_PORTS ?? "").split(",").filter(Boolean),
+          workspacePath: this.workspacePath,
+          workflowContent: wf.content,
+          nodeList,
+          dependencyGraph,
+        })
+      } catch (err) {
+        console.warn("[ExecutionLifecycle] Harness onExecutionStart in reconstruct failed (non-fatal):", err)
+      }
+    }
+
+    const engine = this.engineFactory.reconstructEngine(exec, callbacks, abortController.signal)
 
     const completedNodes = this.dao.findCompletedNodeExecutions(exec.id)
     for (const node of completedNodes) {

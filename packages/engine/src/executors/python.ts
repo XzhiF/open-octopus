@@ -4,6 +4,7 @@ import type { NodeDef } from "@octopus/shared"
 import type { NodeExecutor, NodeExecutionResult } from "./types"
 import type { PythonConfig } from "./executor-config"
 import { applyVarsUpdate } from "./parse-vars-update"
+import { buildHostEnv, killProcessTree, startForceKillChain } from "./process-isolation"
 
 export class PythonExecutor implements NodeExecutor {
   private signal?: AbortSignal
@@ -112,20 +113,36 @@ export class PythonExecutor implements NodeExecutor {
         reject(new Error("Aborted"))
         return
       }
+      // Merge VarPool string values into child env so os.environ["VAR_NAME"] works
+      const env = buildHostEnv()
+      for (const [k, v] of Object.entries(this.pool.snapshot())) {
+        if (v != null && typeof v !== "object") {
+          env[k] = String(v)
+        }
+      }
+
       const proc = spawn("python3", ["-c", script], {
         stdio: ["pipe", "pipe", "pipe"],
         shell: false,
-        signal: this.signal,
-        env: (() => {
-          const childEnv = { ...process.env }
-          delete childEnv.OCTOPUS_DB_PATH
-          return childEnv
-        })(),
+        env,
       })
 
       let stdout = ""
       let stderr = ""
       const logLines: string[] = []
+      let aborted = false
+      // Track the force kill chain so we can cancel it when the process exits
+      let killChain: { cancel: () => void } | null = null
+
+      // Manual abort handler using process group kill (not proc.kill)
+      const onAbort = () => {
+        aborted = true
+        if (proc.pid) {
+          killProcessTree(proc.pid)
+        }
+      }
+
+      this.signal?.addEventListener("abort", onAbort, { once: true })
 
       proc.stdout?.on("data", (data: Buffer) => {
         const chunk = data.toString()
@@ -150,22 +167,33 @@ export class PythonExecutor implements NodeExecutor {
       })
 
       const timer = setTimeout(() => {
-        proc.kill("SIGTERM")
+        // Timeout: use force kill chain (SIGTERM → 5s → SIGKILL)
+        if (proc.pid) {
+          killChain = startForceKillChain(proc.pid, 5000)
+        }
         reject(new Error(`Timeout after ${timeoutSec}s`))
       }, timeoutSec * 1000)
 
       proc.on("close", (code: number | null) => {
         clearTimeout(timer)
-        resolve({
-          stdout: stdout.trimEnd(),
-          stderr: stderr.trimEnd(),
-          exitCode: code ?? 1,
-          logLines,
-        })
+        killChain?.cancel()
+        this.signal?.removeEventListener("abort", onAbort)
+        if (aborted) {
+          reject(new Error("Aborted"))
+        } else {
+          resolve({
+            stdout: stdout.trimEnd(),
+            stderr: stderr.trimEnd(),
+            exitCode: code ?? 1,
+            logLines,
+          })
+        }
       })
 
       proc.on("error", (err: Error) => {
         clearTimeout(timer)
+        killChain?.cancel()
+        this.signal?.removeEventListener("abort", onAbort)
         reject(err)
       })
     })

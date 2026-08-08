@@ -41,6 +41,8 @@ export interface ExecutionResult {
   nodeResults: Record<string, NodeExecutionResult>
   poolSnapshot: Record<string, any>
   durationMs: number
+  /** Distinguishes harness-initiated pause from user-initiated pause */
+  pauseReason?: "user_pause" | "harness_delegate"
 }
 
 export interface RuntimeNodeMeta {
@@ -59,11 +61,49 @@ export interface EngineCallbacks {
   onBranchEnd?: (nodeExecutionId: string, iteration: number, status: string, nodeResults?: { nodeId: string; status: string; durationMs?: number; error?: string }[]) => void
   onAgentEvent?: (nodeId: string, event: AgentEvent) => void
   onSwarmEvent?: (nodeId: string, event: SwarmSSEEvent) => void
-  onNodeRetry?: (nodeId: string, attempt: number, maxAttempts: number, delayMs: number) => void
+  onNodeRetry?: (nodeId: string, attempt: number, maxAttempts: number, delayMs: number, result?: NodeExecutionResult) => void
   onNodeCompacted?: (nodeId: string, mergedEvents: any[]) => void
   onCheckpoint?: (checkpoint: unknown) => void
   onPipelineReloaded?: (config: PipelineConfig) => void
   onRuntimeNodeAdded?: (nodeId: string, nodeType: string, meta?: RuntimeNodeMeta) => void
+  /** Tool interceptor hook — called before agent tool execution. Return { allow: false } to block. */
+  onBeforeToolCall?: (toolName: string, input: unknown) => Promise<{ allow: boolean; reason?: string } | undefined>
+
+  // ★ Harness callbacks — all optional, backward compatible
+  onBeforeNode?: (
+    nodeId: string,
+    nodeType: string,
+    nodeConfig: NodeDef,
+  ) => Promise<{
+    action: "proceed" | "skip" | "override"
+    overrideResult?: NodeExecutionResult
+  }>
+
+  onBeforeRetry?: (
+    nodeId: string,
+    attempt: number,
+    lastResult: NodeExecutionResult,
+    context?: { poolSnapshot?: Record<string, any> },
+  ) => Promise<{
+    action: "retry" | "skip" | "abort" | "override"
+    overrideResult?: NodeExecutionResult
+    harnessHint?: string
+    modelOverride?: string
+    varPoolPatches?: Record<string, string>
+  }>
+
+  onFailureDecision?: (
+    nodeId: string,
+    error: string,
+    currentStrategy: string,
+  ) => Promise<{
+    action: "continue" | "abort" | "delegate" | "override"
+    overrideResult?: {
+      status: string
+      outputs?: Record<string, unknown>
+      exitCode?: number
+    }
+  }>
 }
 
 export class WorkflowEngine {
@@ -408,6 +448,7 @@ export class WorkflowEngine {
       nodeResults: this.nodeResults,
       poolSnapshot: this.pool.snapshot(),
       durationMs,
+      ...(result.pauseReason ? { pauseReason: result.pauseReason } : {}),
     }
   }
 
@@ -510,6 +551,7 @@ export class WorkflowEngine {
           nodeResults: this.nodeResults,
           poolSnapshot: this.pool.snapshot(),
           durationMs,
+          ...(execResult.pauseReason ? { pauseReason: execResult.pauseReason } : {}),
         }
       }
       throw new Error(`Node not found: ${nodeId} (available: ${sorted.map(n => n.id).join(",")})`)
@@ -816,6 +858,25 @@ export class WorkflowEngine {
       this.logger?.log(node.id, "start", { type: node.type })
       this.callbacks?.onNodeStart?.(node.id, node.type)
 
+      // ★ Harness: onBeforeNode hook — allows harness to skip or override node execution
+      if (this.callbacks?.onBeforeNode) {
+        const decision = await this.callbacks.onBeforeNode(node.id, node.type, node)
+        if (decision.action === "skip") {
+          const skippedResult: NodeExecutionResult = {
+            outputs: {}, status: "skipped", durationMs: 0,
+            logLines: ["Skipped by harness"],
+          }
+          this.logger?.log(node.id, "end", { status: "skipped", durationMs: 0 })
+          this.callbacks?.onNodeEnd?.(node.id, "skipped", 0, skippedResult, node.type)
+          return skippedResult
+        }
+        if (decision.action === "override" && decision.overrideResult) {
+          this.logger?.log(node.id, "end", { status: decision.overrideResult.status, durationMs: decision.overrideResult.durationMs })
+          this.callbacks?.onNodeEnd?.(node.id, decision.overrideResult.status, decision.overrideResult.durationMs, decision.overrideResult, node.type)
+          return decision.overrideResult
+        }
+      }
+
       const nodeResult = await executor.execute()
 
       // Log approval metadata as a separate event so frontend can display prompt/options/decision
@@ -869,6 +930,7 @@ export class WorkflowEngine {
       return this.executeSingleNode(node, pool, signal)
     }
 
+    let effectiveNode = node  // Local copy for harness model overrides
     const nodeStartTime = Date.now()
     let nodeAbort: AbortController | undefined
     let nodeTimer: ReturnType<typeof setTimeout> | undefined
@@ -892,7 +954,7 @@ export class WorkflowEngine {
         }
       }
       try {
-        const result = await this.executeSingleNode(node, pool, effectiveSignal)
+        const result = await this.executeSingleNode(effectiveNode, pool, effectiveSignal)
         if (result.status !== "failed") {
           if (nodeTimer) clearTimeout(nodeTimer)
           return { ...result, retryCount: attempt - 1 }
@@ -915,12 +977,40 @@ export class WorkflowEngine {
           if (nodeTimer) clearTimeout(nodeTimer)
           return { ...result, retryCount: attempt - 1 }
         }
+        // ★ Harness: onBeforeRetry hook — allows harness to skip/abort/override/inject hint/change model
+        if (this.callbacks?.onBeforeRetry) {
+          const retryDecision = await this.callbacks.onBeforeRetry(node.id, attempt, result, { poolSnapshot: pool.snapshot() })
+          if (retryDecision.action === "skip") {
+            if (nodeTimer) clearTimeout(nodeTimer)
+            return { ...result, status: "skipped", retryCount: attempt - 1 }
+          }
+          if (retryDecision.action === "abort") {
+            if (nodeTimer) clearTimeout(nodeTimer)
+            return { ...result, status: "failed", retryCount: attempt - 1 }
+          }
+          if (retryDecision.action === "override" && retryDecision.overrideResult) {
+            if (nodeTimer) clearTimeout(nodeTimer)
+            return retryDecision.overrideResult
+          }
+          if (retryDecision.harnessHint) {
+            pool.set("harness_hint", retryDecision.harnessHint)
+          }
+          if (retryDecision.modelOverride && effectiveNode.type === "agent") {
+            // Shallow copy to avoid mutating shared NodeDef across executions
+            effectiveNode = { ...effectiveNode, model: retryDecision.modelOverride }
+          }
+          if (retryDecision.varPoolPatches) {
+            console.log(`[Engine] Applying varPoolPatches for ${node.id}:`, JSON.stringify(retryDecision.varPoolPatches))
+            pool.update(retryDecision.varPoolPatches)
+            console.log(`[Engine] Pool snapshot after update:`, JSON.stringify(pool.snapshot()))
+          }
+        }
         let delayMs = calculateBackoff(policy.backoff, attempt) * 1000
         if (policy.max_total_duration > 0) {
           const remaining = (policy.max_total_duration - (Date.now() - nodeStartTime) / 1000) * 1000
           delayMs = Math.min(delayMs, Math.max(0, remaining))
         }
-        this.callbacks?.onNodeRetry?.(node.id, attempt, policy.max_attempts, delayMs)
+        this.callbacks?.onNodeRetry?.(node.id, attempt, policy.max_attempts, delayMs, lastResult)
         await this.sleepWithAbort(delayMs, effectiveSignal)
       } catch (err: unknown) {
         if (signal?.aborted) { if (nodeTimer) clearTimeout(nodeTimer); throw err }
@@ -940,7 +1030,7 @@ export class WorkflowEngine {
     nodes: NodeDef[],
     signal?: AbortSignal,
     preSorted?: boolean,
-  ): Promise<{ status: "completed" | "completed_with_failures" | "failed" | "paused" | "cancelled" | "pending_approval" | "pending_interaction" }> {
+  ): Promise<{ status: "completed" | "completed_with_failures" | "failed" | "paused" | "cancelled" | "pending_approval" | "pending_interaction"; pauseReason?: "user_pause" | "harness_delegate" }> {
     // Serial mode: preserve existing sequential behavior exactly
     if (this.executionMode === "serial" || preSorted) {
       return this.executeNodesSequential(nodes, signal, preSorted)
@@ -955,7 +1045,7 @@ export class WorkflowEngine {
     nodes: NodeDef[],
     signal?: AbortSignal,
     preSorted?: boolean,
-  ): Promise<{ status: "completed" | "completed_with_failures" | "failed" | "paused" | "cancelled" | "pending_approval" | "pending_interaction" }> {
+  ): Promise<{ status: "completed" | "completed_with_failures" | "failed" | "paused" | "cancelled" | "pending_approval" | "pending_interaction"; pauseReason?: "user_pause" | "harness_delegate" }> {
     const sorted = preSorted ? nodes : this.topologicalSort(nodes)
     const totalNodes = sorted.length
 
@@ -975,7 +1065,7 @@ export class WorkflowEngine {
           logLines: ["Paused by user"],
         }
         this.callbacks?.onNodeEnd?.(node.id, "paused", 0)
-        return { status: "paused" }
+        return { status: "paused", pauseReason: "user_pause" }
       }
 
       // AbortSignal 检查 (only if not paused)
@@ -1048,7 +1138,7 @@ export class WorkflowEngine {
             logLines: [`Execution paused by user`, `Node interrupted: ${errMsg}`],
           }
           this.callbacks?.onNodeEnd?.(node.id, "paused", 0, this.nodeResults[node.id], node.type)
-          return { status: "paused" }
+          return { status: "paused", pauseReason: "user_pause" }
         }
         // 不是 pause 导致的，重新抛出异常
         throw err
@@ -1069,7 +1159,7 @@ export class WorkflowEngine {
           this.nodeResults[node.id] = nodeResult
         }
         this.callbacks?.onNodeEnd?.(node.id, "paused", nodeResult.durationMs, this.nodeResults[node.id], node.type)
-        return { status: "paused" }
+        return { status: "paused", pauseReason: "user_pause" }
       }
 
       this.nodeResults[node.id] = nodeResult
@@ -1140,6 +1230,35 @@ export class WorkflowEngine {
           this.logger?.log("hook", "error", { event: "on_node_failure", error: msg })
         }
         const strategy = this.pipelineConfig?.execution.failure_strategy ?? "fail_fast"
+        // ★ Harness: onFailureDecision hook — allows harness to continue/abort/delegate
+        if (this.callbacks?.onFailureDecision) {
+          const failureDecision = await this.callbacks.onFailureDecision(
+            node.id, nodeResult.logLines?.join("\n") ?? "Unknown error", strategy
+          )
+          if (failureDecision.action === "continue") {
+            this.hasPartialFailure = true
+            this.callbacks?.onError?.(node.id, nodeResult.logLines?.join("\n") ?? "Unknown error")
+            continue
+          }
+          if (failureDecision.action === "delegate") {
+            this.pausedAt = node.id
+            this.callbacks?.onError?.(node.id, nodeResult.logLines?.join("\n") ?? "Unknown error")
+            return { status: "paused", pauseReason: "harness_delegate" }
+          }
+          if (failureDecision.action === "override" && failureDecision.overrideResult) {
+            // Replace failed result with override result — node marked as completed
+            const overridden: NodeExecutionResult = {
+              outputs: failureDecision.overrideResult.outputs ?? {},
+              status: "completed" as const,
+              durationMs: nodeResult.durationMs,
+              logLines: [...(nodeResult.logLines ?? []), "Overridden by harness agent"],
+              exitCode: failureDecision.overrideResult.exitCode ?? 0,
+            }
+            this.nodeResults[node.id] = overridden
+            this.callbacks?.onNodeEnd?.(node.id, "completed", overridden.durationMs, overridden, node.type)
+            continue
+          }
+        }
         if (strategy === "fail_fast") {
           this.pausedAt = node.id
           this.callbacks?.onError?.(node.id, nodeResult.logLines?.join("\n") ?? "Unknown error")
@@ -1156,7 +1275,7 @@ export class WorkflowEngine {
 
       if (nodeResult.status === "paused") {
         this.pausedAt = node.id
-        return { status: "paused" }
+        return { status: "paused", pauseReason: "user_pause" }
       }
 
       if (nodeResult.status === "pending_approval") {
@@ -1202,7 +1321,7 @@ export class WorkflowEngine {
   private async executeNodesParallel(
     nodes: NodeDef[],
     signal?: AbortSignal,
-  ): Promise<{ status: "completed" | "completed_with_failures" | "failed" | "paused" | "cancelled" | "pending_approval" | "pending_interaction" }> {
+  ): Promise<{ status: "completed" | "completed_with_failures" | "failed" | "paused" | "cancelled" | "pending_approval" | "pending_interaction"; pauseReason?: "user_pause" | "harness_delegate" }> {
     const levels = this.computeExecutionLevels(nodes)
     const totalNodes = nodes.length
     let completedCount = 0
@@ -1228,7 +1347,7 @@ export class WorkflowEngine {
             }
           }
         }
-        return { status: "paused" }
+        return { status: "paused", pauseReason: "user_pause" }
       }
 
       // AbortSignal 检查 (only if not paused)
@@ -1535,7 +1654,7 @@ export class WorkflowEngine {
 
         if (hasPaused) {
           this.pausedAt = pausedNodeId
-          return { status: "paused" }
+          return { status: "paused", pauseReason: "user_pause" }
         }
 
         const hasPendingApproval = results.some((r, i) => r.status === "fulfilled" && (r.value as NodeExecutionResult).status === "pending_approval")
