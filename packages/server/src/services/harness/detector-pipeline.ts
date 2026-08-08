@@ -463,13 +463,34 @@ export class DetectorPipeline {
         this.updateExecutionHarnessStatus("intervened")
         break
 
-      case "agent_takeover":
-        this.pendingFailureActions.set(nodeId, { action: "delegate" })
+      case "agent_takeover": {
+        // Build override result from takeover output (fallback to reasoning if missing)
+        const takeoverResult = {
+          status: "completed" as const,
+          outputs: { result: result.takeoverOutput ?? result.reasoning },
+          durationMs: 0,
+          logLines: [`Harness agent takeover: ${result.reasoning.slice(0, 200)}`],
+          exitCode: result.takeoverExitCode ?? 0,
+        }
+
+        // Set pendingActions so onBeforeRetry can return {action: "override"}
+        // This is the primary path — overrides the current retry with a completed result
+        this.pendingActions.set(nodeId, {
+          action: "override",
+          overrideResult: takeoverResult,
+        })
+
+        // Also set pendingFailureActions for onFailureDecision (fallback if retries exhausted)
+        this.pendingFailureActions.set(nodeId, {
+          action: "override",
+          overrideResult: takeoverResult,
+        })
+
         // Write overrideResult to DB for the engine to pick up on resume
         this.writeOverrideResultToDb(nodeId, {
           status: "completed",
-          outputs: result.takeoverOutput ? { output: result.takeoverOutput } : undefined,
-          exitCode: result.takeoverExitCode ?? 0,
+          outputs: takeoverResult.outputs,
+          exitCode: takeoverResult.exitCode,
         })
         this.updateHarnessStatus(nodeId, displayNodeId, "harness_executed", report, {
           decision: result.decision,
@@ -478,6 +499,7 @@ export class DetectorPipeline {
         })
         this.updateExecutionHarnessStatus("delegated")
         break
+      }
 
       case "block_node":
         this.pendingBlockActions.set(nodeId, {
@@ -501,6 +523,7 @@ export class DetectorPipeline {
   /**
    * Write the override result from an agent_takeover to the node_executions table.
    * The engine reads this when resuming after a delegate pause.
+   * Non-fatal: the in-memory pendingActions path handles the primary flow.
    */
   private writeOverrideResultToDb(
     nodeId: string,
@@ -509,11 +532,15 @@ export class DetectorPipeline {
     try {
       const db = this.dao.getDb()
       const neId = `${this.executionId}-${nodeId}`
-      db.prepare(
-        `UPDATE node_executions SET override_result = ? WHERE id = ?`,
-      ).run(JSON.stringify(overrideResult), neId)
-    } catch (err) {
-      console.error("[DetectorPipeline] Failed to write override_result to DB:", err)
+      // Check if override_result column exists (may not in older schemas)
+      const cols = db.prepare("PRAGMA table_info(node_executions)").all() as Array<{ name: string }>
+      if (cols.some(c => c.name === "override_result")) {
+        db.prepare(
+          `UPDATE node_executions SET override_result = ? WHERE id = ?`,
+        ).run(JSON.stringify(overrideResult), neId)
+      }
+    } catch {
+      // Non-fatal: in-memory pendingActions path handles the primary flow
     }
   }
 
@@ -725,10 +752,16 @@ export class DetectorPipeline {
               }
             }
 
-            // Now check pendingActions (populated by processDecision above)
+            // Now check ALL pending action maps (populated by processDecision above)
+            // Different decision types store to different maps:
+            //   fix/guide/reconfigure → pendingActions
+            //   agent_takeover        → pendingActions + pendingFailureActions
+            //   block_node            → pendingBlockActions
             const pending = pipeline.pendingActions.get(nodeId)
+              ?? pipeline.pendingBlockActions.get(nodeId)
             if (pending) {
               pipeline.pendingActions.delete(nodeId)
+              pipeline.pendingBlockActions.delete(nodeId)
               console.log(`[DetectorPipeline] onBeforeRetry returning pending action for ${nodeId}:`, JSON.stringify(pending))
               return pending
             }

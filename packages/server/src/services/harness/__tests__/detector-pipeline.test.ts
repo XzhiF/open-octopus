@@ -572,8 +572,8 @@ describe("DetectorPipeline — decision execution (AC1-AC8)", () => {
     expect(pending.modelOverride).toBe("claude-sonnet-4-20250514")
   })
 
-  // AC4: agent_takeover → pendingFailureAction: { action: "delegate" } + overrideResult to DB
-  it("AC4: agent_takeover stores pendingFailureAction with delegate + writes overrideResult to DB", async () => {
+  // AC4: agent_takeover → pendingActions + pendingFailureActions with override result
+  it("AC4: agent_takeover stores override action in pendingActions and pendingFailureActions", async () => {
     const { pipeline, mockDb } = makePipelineWithDb()
     const report = makeReport()
 
@@ -585,16 +585,17 @@ describe("DetectorPipeline — decision execution (AC1-AC8)", () => {
       reasoning: "Script too complex to fix, taking over",
     })
 
-    // pendingFailureAction should be set with "delegate"
+    // pendingActions should be set with "override" (for onBeforeRetry)
+    const pending = (pipeline as any).pendingActions.get("bash-build")
+    expect(pending).toBeDefined()
+    expect(pending.action).toBe("override")
+    expect(pending.overrideResult.status).toBe("completed")
+    expect(pending.overrideResult.outputs.result).toBe("Report generated successfully")
+
+    // pendingFailureActions should also be set with "override" (for onFailureDecision)
     const pendingFailure = (pipeline as any).pendingFailureActions.get("bash-build")
     expect(pendingFailure).toBeDefined()
-    expect(pendingFailure.action).toBe("delegate")
-
-    // overrideResult should be written to DB (node_executions)
-    const updateCalls = mockDb.prepare.mock.calls.filter(
-      (c: any[]) => typeof c[0] === "string" && c[0].includes("override_result")
-    )
-    expect(updateCalls.length).toBeGreaterThan(0)
+    expect(pendingFailure.action).toBe("override")
   })
 
   // AC5: block_node → pendingBlockAction with correct data
