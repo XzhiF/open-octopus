@@ -164,6 +164,8 @@ export interface DelegationResult {
   // --- fix_and_retry ---
   /** Variable patches to apply before retrying. */
   varPoolPatches?: Record<string, string>
+  /** Replacement script content for bash/python nodes (fixes syntax errors, missing commands, etc.) */
+  scriptOverride?: string
 
   // --- guide_and_retry ---
   /** Guidance hint injected into the agent conversation before retry. */

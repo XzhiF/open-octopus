@@ -15,6 +15,7 @@ import type { SSEService } from "../sse"
 import { BaseDetector } from "./base-detector"
 import type { HarnessCallbackEvent } from "./base-detector"
 import { StupidRetryDetector } from "./detectors/stupid-retry"
+import { DeterministicErrorDetector } from "./detectors/deterministic-error"
 import { ModelMismatchDetector } from "./detectors/model-mismatch"
 import { ProcessConflictDetector } from "./detectors/process-conflict"
 import { TimeoutCascadeDetector } from "./detectors/timeout-cascade"
@@ -30,6 +31,7 @@ export interface PendingRetryAction {
   harnessHint?: string
   modelOverride?: string
   varPoolPatches?: Record<string, string>
+  scriptOverride?: string
   action: "retry" | "skip" | "abort" | "override"
   overrideResult?: any
 }
@@ -168,6 +170,14 @@ export class DetectorPipeline {
   ): BaseDetector[] {
     const detectors: BaseDetector[] = []
     const d = config.detectors
+
+    // DeterministicErrorDetector: fires at attempt 1 for bash/python nodes.
+    // StupidRetryDetector: fires at attempt 2+ (threshold=2) for any node.
+    // They coexist without suppression — deterministic fires first, stupid_retry
+    // acts as a fallback if the harness fix doesn't resolve the issue.
+    if (d.deterministic_error?.enabled) {
+      detectors.push(new DeterministicErrorDetector())
+    }
 
     if (d.stupid_retry?.enabled) {
       detectors.push(
@@ -427,12 +437,14 @@ export class DetectorPipeline {
           action: "retry",
           varPoolPatches: result.varPoolPatches,
           harnessHint: result.harnessHint,
+          scriptOverride: result.scriptOverride,
         })
         this.updateHarnessStatus(nodeId, displayNodeId, "harness_modified", report, {
           decision: result.decision,
           reasoning: result.reasoning,
           varPoolPatches: result.varPoolPatches,
           harnessHint: result.harnessHint,
+          scriptOverride: result.scriptOverride,
         })
         this.updateExecutionHarnessStatus("intervened")
         break

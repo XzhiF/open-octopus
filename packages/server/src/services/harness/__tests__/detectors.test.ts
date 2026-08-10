@@ -4,6 +4,7 @@
 
 import { describe, it, expect, beforeEach, vi } from "vitest"
 import { StupidRetryDetector } from "../detectors/stupid-retry"
+import { DeterministicErrorDetector } from "../detectors/deterministic-error"
 import { ModelMismatchDetector } from "../detectors/model-mismatch"
 import { ProcessConflictDetector } from "../detectors/process-conflict"
 import { TimeoutCascadeDetector } from "../detectors/timeout-cascade"
@@ -17,6 +18,7 @@ import { computeErrorHash } from "@octopus/shared"
 const defaultConfig: HarnessSystemConfigParsed = {
   detectors: {
     stupid_retry: { enabled: true, threshold: 2 },
+    deterministic_error: { enabled: true },
     model_mismatch: { enabled: true },
     process_conflict: { enabled: true },
     timeout_cascade: { enabled: true, threshold: 3 },
@@ -682,7 +684,7 @@ describe("DetectorPipeline", () => {
   })
 
   it("creates detectors based on config", () => {
-    expect(pipeline.detectorCount).toBe(4)
+    expect(pipeline.detectorCount).toBe(5)
   })
 
   it("skips disabled detectors", () => {
@@ -702,7 +704,7 @@ describe("DetectorPipeline", () => {
       sse: mockSse as any,
     })
 
-    expect(p.detectorCount).toBe(3)
+    expect(p.detectorCount).toBe(4)
   })
 
   it("routes nodeRetry events to StupidRetryDetector and persists + emits on trigger", () => {

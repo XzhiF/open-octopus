@@ -162,13 +162,17 @@ export function buildDelegationPrompt(
   report: DiagnosisReport,
   context: DelegationContext,
 ): string {
-  const evidenceLines = report.evidence.map((e, i) => {
+  const evidenceLines = report.evidence.map((e) => {
     const parts: string[] = []
     if (e.attempt !== undefined) parts.push(`attempt ${e.attempt}`)
     if (e.errorCode) parts.push(`code: ${e.errorCode}`)
     if (e.errorMessage) parts.push(`error: ${e.errorMessage}`)
     if (e.errorHash) parts.push(`hash: ${e.errorHash}`)
-    return `- ${parts.join(", ") || JSON.stringify(e)}`
+    if (e.errorPattern) parts.push(`pattern: ${e.errorPattern}`)
+    if (e.determinism) parts.push(`determinism: ${e.determinism}`)
+    if (e.scriptSnippet) parts.push(`script:\n${e.scriptSnippet}`)
+    if (e.errorText) parts.push(`errorOutput:\n${e.errorText}`)
+    return `- ${parts.join("\n  ") || JSON.stringify(e)}`
   })
 
   // Limit recent events to last 20
@@ -186,62 +190,94 @@ export function buildDelegationPrompt(
     (report.context.workflowProgress ?? 0) * 100,
   )
 
-  return `你是 Octopus 工作流安全守护 Agent。你的任务是分析工作流异常并生成结构化干预决策。
+  // Include node config and workflow content if available
+  const nodeConfigStr = context.nodeConfig
+    ? JSON.stringify(context.nodeConfig, null, 2)
+    : "(not available)"
 
-## 诊断报告
+  const workflowStr = context.workflowContent
+    ? context.workflowContent.substring(0, 3000)
+    : "(not available)"
+
+  return `你是 Octopus 工作流 Harness Agent — 一个智能工作流守护者。
+
+## 当前异常
+
 - 检测器: ${report.detector}
 - 严重度: ${report.severity}
-- 节点: ${report.nodeId} (${report.nodeType})
+- 节点: ${report.nodeId} (类型: ${report.nodeType})
 - 模式: ${report.pattern}
-
-## 证据
-${evidenceLines.join("\n")}
-
-## 执行上下文
 - 重试次数: ${report.context.retryCount}
 - 节点执行时间: ${report.context.nodeDurationMs}ms
 - 工作流进度: ${progressPercent}%
 
-## 最近的 Agent 事件
-${eventsSummary}
+## 错误证据
+${evidenceLines.join("\n")}
 
 ## 当前变量池
 ${varpoolLines || "(empty)"}
 
-## 你需要做什么
-分析根因，然后从以下 5 种决策中选择最合适的：
+## 节点配置
+${nodeConfigStr}
 
-1. **fix_and_retry**: 修改变量/配置，然后重试（不能直接修改脚本，只能通过 varPool/hint 间接影响）
-   - ⚠️ **必须** 在 varPoolPatches 中提供具体的变量修复值
-   - 示例: \`"varPoolPatches": {"CONFIG_PATH": "/correct/path", "API_KEY": "sk-xxx"}\`
+## 工作流定义
+${workflowStr}
 
-2. **guide_and_retry**: 注入指导到 agent 对话，让它换方法
-   - 在 harnessHint 中提供具体指导
+## 最近执行事件
+${eventsSummary}
 
-3. **reconfigure_and_retry**: 切换模型/修改配置后重试
-   - 在 modelOverride 中指定新模型
+---
 
-4. **agent_takeover**: 你直接完成节点的目标任务（用你的工具执行）
-   - 在 takeoverOutput 中提供执行结果
+## 你的任务
 
-5. **block_node**: 阻断节点，分析后续节点依赖
-   - 在 blockReason 中说明阻断原因
+**第一步：分析根因。** 仔细阅读错误信息、脚本内容、变量池和工作流定义，搞清楚节点为什么会失败。
 
-## 输出要求（极其重要）
+**第二步：选择最佳干预策略。** 根据根因分析，从以下 5 种决策中选择最合适的。每种决策都有多种工具可以组合使用，灵活运用：
 
-你必须只输出一个 JSON 代码块，不要输出任何其他文字、表格、markdown 标题或解释。
-你的整个回复必须只有一个 \`\`\`json 代码块。
+### 1. fix_and_retry — 修复问题后重试
+当你能确定根因并且知道怎么修复时选择这个。可用的修复工具（可组合）：
+- **varPoolPatches**: 修补变量池。适用于变量缺失、变量值错误、条件表达式引用了错误的变量等场景。
+- **scriptOverride**: 替换整个脚本内容。适用于 bash/python 脚本有语法错误、缺少依赖、命令拼写错误等脚本本身的问题。
+- **harnessHint**: 注入提示。给执行节点一个方向性的建议。
 
-### fix_and_retry 示例（最常见）:
+### 2. guide_and_retry — 给 agent 节点注入指导后重试
+仅适用于 agent 类型节点。通过 harnessHint 告诉 agent 换一种方法。
+
+### 3. reconfigure_and_retry — 切换模型后重试
+仅适用于 agent 类型节点。当模型能力不足时（如需要视觉能力），在 modelOverride 中指定新模型。
+
+### 4. agent_takeover — 你直接完成节点任务
+当你认为修复脚本不如直接执行任务更高效时选择这个。适用于：
+- 脚本逻辑复杂，修复比重写更难
+- 节点的目标任务你可以通过工具直接完成（bash命令、文件操作等）
+- 确定性错误且修复需要大量改动
+在 takeoverOutput 中提供执行结果。bash/python 节点也可以 takeover。
+
+### 5. block_node — 阻断节点
+当问题无法修复或修复风险太高时选择。在 blockReason 中说明原因。
+设置 continueSubsequent: true 可以让下游节点继续执行（即使本节点被阻断）。
+
+---
+
+## 决策原则
+
+- **先理解，再行动。** 不要看到 "syntax error" 就机械地修语法。想想：这个脚本想做什么？有没有更聪明的方式达成目标？
+- **最小干预。** 能改一个变量就不改整个脚本。能修脚本就不 takeover。
+- **但要务实。** 如果修复脚本需要理解大量上下文，而你直接执行任务更快，那就 takeover。
+- **关注下游。** 如果这个节点修复后下游可以正常跑，优先修复。如果下游也会因为同样原因失败，考虑更根本的修复。
+- **变量问题 vs 脚本问题。** 变量池里的值错误（路径、配置、条件变量）用 varPoolPatches。脚本本身的错误（语法、缺失import、命令拼写）用 scriptOverride。不确定时，两个都提供。
+
+## 输出要求
+
+你必须只输出一个 JSON 代码块。不要输出任何其他文字。
 
 \`\`\`json
 {
   "decision": "fix_and_retry",
-  "reasoning": "检测到 CONFIG_PATH 未设置，导致脚本失败。需要注入正确的配置路径。",
-  "varPoolPatches": {
-    "CONFIG_PATH": "/etc/app/config.json"
-  },
-  "harnessHint": "已设置 CONFIG_PATH，请重试",
+  "reasoning": "详细的根因分析和修复思路",
+  "varPoolPatches": {},
+  "scriptOverride": "",
+  "harnessHint": "",
   "modelOverride": "",
   "takeoverOutput": "",
   "blockReason": "",
@@ -249,22 +285,7 @@ ${varpoolLines || "(empty)"}
 }
 \`\`\`
 
-### 其他决策示例:
-
-\`\`\`json
-{
-  "decision": "block_node",
-  "reasoning": "分析推理过程",
-  "varPoolPatches": {},
-  "harnessHint": "",
-  "modelOverride": "",
-  "takeoverOutput": "",
-  "blockReason": "阻断原因",
-  "continueSubsequent": true
-}
-\`\`\`
-
-不要使用 YAML。不要使用 markdown 表格。不要在 JSON 前后添加任何文字。`
+不使用的字段留空字符串 ""。不要使用 YAML。不要在 JSON 前后添加任何文字。`
 }
 
 // ─── Response Parsing ───────────────────────────────────────────────────────
@@ -387,6 +408,7 @@ export function parseDelegationResponse(rawText: string): DelegationResult {
       success: true,
       decision: parsed.decision,
       varPoolPatches: parsed.varPoolPatches ?? parsed.var_pool_patches ?? undefined,
+      scriptOverride: parsed.scriptOverride ?? parsed.script_override ?? undefined,
       harnessHint: parsed.harnessHint ?? parsed.harness_hint ?? parsed.hint ?? undefined,
       modelOverride: parsed.modelOverride ?? parsed.model_override ?? parsed.model ?? undefined,
       takeoverOutput: parsed.takeoverOutput ?? parsed.takeover_output ?? undefined,

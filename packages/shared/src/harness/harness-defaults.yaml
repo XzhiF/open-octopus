@@ -4,6 +4,8 @@
 # a harness.yaml in the workspace root.
 
 detectors:
+  deterministic_error:
+    enabled: true
   stupid_retry:
     enabled: true
     threshold: 2 # trigger after N retries with same error
@@ -16,6 +18,12 @@ detectors:
     threshold: 3 # trigger after N consecutive node timeouts
 
 strategies:
+  - match: deterministic_error
+    actions:
+      - type: inject_message
+        message: "确定性错误（语法/导入/路径），重试无意义。请修复根因或接管执行。"
+    delegate_to_agent: true
+
   - match: stupid_retry
     actions:
       - type: inject_message

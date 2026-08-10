@@ -90,6 +90,7 @@ export interface EngineCallbacks {
     harnessHint?: string
     modelOverride?: string
     varPoolPatches?: Record<string, string>
+    scriptOverride?: string
   }>
 
   onFailureDecision?: (
@@ -1003,6 +1004,17 @@ export class WorkflowEngine {
             console.log(`[Engine] Applying varPoolPatches for ${node.id}:`, JSON.stringify(retryDecision.varPoolPatches))
             pool.update(retryDecision.varPoolPatches)
             console.log(`[Engine] Pool snapshot after update:`, JSON.stringify(pool.snapshot()))
+          }
+          if (retryDecision.scriptOverride) {
+            // Replace the script content for bash/python nodes.
+            // Shallow copy to avoid mutating shared NodeDef across executions.
+            if (effectiveNode.type === "bash") {
+              console.log(`[Engine] Applying scriptOverride for bash node ${node.id}`)
+              effectiveNode = { ...effectiveNode, bash: retryDecision.scriptOverride }
+            } else if (effectiveNode.type === "python") {
+              console.log(`[Engine] Applying scriptOverride for python node ${node.id}`)
+              effectiveNode = { ...effectiveNode, python: retryDecision.scriptOverride }
+            }
           }
         }
         let delayMs = calculateBackoff(policy.backoff, attempt) * 1000

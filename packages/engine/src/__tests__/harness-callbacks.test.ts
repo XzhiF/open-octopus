@@ -202,7 +202,7 @@ describe("Harness Callbacks — onBeforeRetry", () => {
     const result = await engine.run()
 
     expect(result.status).toBe("completed")
-    expect(onBeforeRetry).toHaveBeenCalledWith("agent-node", 1, expect.anything())
+    expect(onBeforeRetry).toHaveBeenCalledWith("agent-node", 1, expect.anything(), expect.anything())
     // After modelOverride, the node.model should be changed for the next retry
     // The onBeforeNode callback on the retry call should see the updated model
     expect(capturedNode.model).toBe("vision-model")
