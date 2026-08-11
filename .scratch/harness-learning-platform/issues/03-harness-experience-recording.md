@@ -7,16 +7,16 @@
 01 — Schema Migration (needs new columns: scope, node_id, outcome, etc.)
 
 ## Status
-ready-for-agent
+done
 
 ## Acceptance Criteria
-- [ ] AC-1: HarnessController.onExecutionEnd() 遍历 session interventions 并写入 experiences
-- [ ] AC-2: 每条 experience 包含 scope='harness', scope_ref=detector, node_id, pattern_tags, execution_id
-- [ ] AC-3: outcome 初始为 {label:'pending'}，后续由 ticket 04 更新
-- [ ] AC-4: 同时写入 clone daily memory（MemoryService.recordDaily with cloneDir）
-- [ ] AC-5: HarnessAgentSession.close() 扩展：记录干预摘要 + 调用持久化
-- [ ] AC-6: content 字段包含结构化干预摘要（detector + pattern + decision + reasoning）
-- [ ] AC-7: 现有 harness_events 写入不受影响（双写：raw events + distilled experience）
+- [x] AC-1: HarnessController.onExecutionEnd() 遍历 session interventions 并写入 experiences
+- [x] AC-2: 每条 experience 包含 scope='harness', scope_ref=detector, node_id, pattern_tags, execution_id
+- [x] AC-3: outcome 初始为 {label:'pending'}，后续由 ticket 04 更新
+- [x] AC-4: 同时写入 clone daily memory（MemoryService.recordDaily with cloneDir）
+- [x] AC-5: HarnessAgentSession.close() 扩展：记录干预摘要 + 调用持久化
+- [x] AC-6: content 字段包含结构化干预摘要（detector + pattern + decision + reasoning）
+- [x] AC-7: 现有 harness_events 写入不受影响（双写：raw events + distilled experience）
 
 ## Verification Method
 **Verification type**: integration test
@@ -24,7 +24,8 @@ ready-for-agent
 **Verification steps**:
 ```bash
 # 1. Run harness lifecycle test
-pnpm --filter @octopus/server exec vitest run --reporter=verbose src/__tests__/harness-experience-recording.test.ts
+pnpm --filter @octopus/server exec vitest run --reporter=verbose src/services/harness/__tests__/harness-experience-recording.test.ts
+# Result: 9 tests passed
 
 # 2. Verify DB after simulated execution
 sqlite3 ~/.octopus/db/octopus.db "SELECT scope, scope_ref, node_id, outcome FROM experiences WHERE scope='harness' ORDER BY id DESC LIMIT 5"
@@ -35,3 +36,35 @@ cat ~/.octopus/agent/built-in/harness-agent/memory/daily/$(date +%Y-%m-%d).md
 
 **Pass criteria**: All 7 ACs pass
 **Failure handling**: Max 3 fix attempts, then mark SKIP with reason
+
+## Implementation Notes
+
+### Exploration
+**Analog studied**: Existing `HarnessController.onExecutionEnd()` → `session.close()` → `getSummary()` flow.
+
+**Files needing modification**:
+- `harness-controller.ts` — add experience recording in `onExecutionEnd()`
+- `harness-agent-session.ts` — fix report storage (was returning placeholder)
+
+**Specific functions chosen**:
+- `EvolutionDAO.insertExperienceV2()` — for V2 scope-aware experience insertion
+- `MemoryService.recordDaily()` — for clone daily memory write
+- `HarnessAgentSession.getInterventions()` — for iterating over recorded interventions
+
+### Files Modified
+1. `packages/server/src/services/harness/harness-controller.ts`
+   - Added `evolutionDao` and `memoryService` as optional deps
+   - `onExecutionEnd()` now calls `recordSessionExperiences()` and `writeCloneDailyMemory()`
+   - Added `buildExperienceRow()`, `buildExperienceContent()`, `buildDailyMemoryContent()` helpers
+
+2. `packages/server/src/services/harness/harness-agent-session.ts`
+   - Added `pendingReports` Map to store reports from `appendIntervention()`
+   - `recordDecision()` now retrieves the real report instead of placeholder
+
+### Test File Created
+- `packages/server/src/services/harness/__tests__/harness-experience-recording.test.ts` (9 tests)
+  - Tests experience recording with correct scope, scope_ref, node_id, pattern_tags, execution_id
+  - Tests daily memory writing with harness-agent clone directory
+  - Tests no-op when no interventions occurred
+  - Tests structured content format
+  - Tests existing harness_summary behavior unchanged

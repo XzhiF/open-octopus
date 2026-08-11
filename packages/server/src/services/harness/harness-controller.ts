@@ -10,18 +10,26 @@ import type { EngineCallbacks } from "@octopus/engine"
 import type { HarnessDAO } from "../../db/dao/harness-dao"
 import type { SSEService } from "../sse"
 import type { RepairService } from "../repair"
+import type { EvolutionDAO } from "../../db/dao/evolution-dao"
+import type { MemoryService } from "../agent/memory-service"
+import type { SessionIntervention } from "./harness-agent-session"
 import { HarnessConfigService } from "./config-service"
 import { DetectorPipeline } from "./detector-pipeline"
 import { StrategyEngine } from "./strategy-engine"
 import { AgentDelegationService } from "./agent-delegation"
 import { HarnessAgentSession, type HarnessSessionContext } from "./harness-agent-session"
 import { getProvider as _getProvider } from "@octopus/providers"
+import { getBuiltInCloneDir } from "../agent/paths"
 
 export interface HarnessControllerDeps {
   dao: HarnessDAO
   sse: SSEService
   configService: HarnessConfigService
   repairService?: RepairService
+  /** Optional: EvolutionDAO for recording harness experiences (ticket 03). */
+  evolutionDao?: EvolutionDAO
+  /** Optional: MemoryService for writing clone daily memory (ticket 03). */
+  memoryService?: MemoryService
 }
 
 /**
@@ -32,6 +40,8 @@ export class HarnessController {
   private sse: SSEService
   private configService: HarnessConfigService
   private repairService?: RepairService
+  private evolutionDao?: EvolutionDAO
+  private memoryService?: MemoryService
 
   /**
    * Active pipelines keyed by executionId.
@@ -51,6 +61,8 @@ export class HarnessController {
     this.sse = deps.sse
     this.configService = deps.configService
     this.repairService = deps.repairService
+    this.evolutionDao = deps.evolutionDao
+    this.memoryService = deps.memoryService
   }
 
   /**
@@ -144,6 +156,7 @@ export class HarnessController {
    * Called when a workflow execution ends (completed, failed, cancelled).
    * Destroys the pipeline and its detectors.
    * Closes the agent session and writes harness_summary to executions table (AC5).
+   * Records intervention experiences to the experiences table (ticket 03).
    */
   onExecutionEnd(executionId: string): void {
     const pipeline = this.pipelines.get(executionId)
@@ -161,6 +174,12 @@ export class HarnessController {
         if (summary) {
           this.writeHarnessSummary(executionId, summary)
         }
+
+        // Ticket 03: Record experiences for all interventions
+        this.recordSessionExperiences(session, executionId)
+
+        // Ticket 03: Write clone daily memory
+        this.writeCloneDailyMemory(session, executionId)
       } catch (err) {
         console.error(
           `[HarnessController] Error closing session for ${executionId}:`,
@@ -255,5 +274,173 @@ export class HarnessController {
         err,
       )
     }
+  }
+
+  /**
+   * Record experiences for all interventions in the session.
+   * Each intervention becomes an experience row with scope='harness'.
+   * Ticket 03 — AC-1, AC-2, AC-3, AC-6.
+   */
+  private recordSessionExperiences(
+    session: HarnessAgentSession,
+    executionId: string,
+  ): void {
+    if (!this.evolutionDao) {
+      // No DAO configured — skip experience recording (non-fatal)
+      return
+    }
+
+    const interventions = session.getInterventions()
+    if (interventions.length === 0) {
+      return
+    }
+
+    const timestamp = new Date().toISOString()
+    const org = "default" // Harness agent uses default org
+
+    for (const intervention of interventions) {
+      try {
+        const experienceRow = this.buildExperienceRow(intervention, executionId, org, timestamp)
+        this.evolutionDao.insertExperienceV2(experienceRow)
+      } catch (err) {
+        console.error(
+          `[HarnessController] Failed to record experience for node ${intervention.nodeId}:`,
+          err,
+        )
+      }
+    }
+  }
+
+  /**
+   * Build an ExperienceRowV2 from an intervention.
+   * Ticket 03 — AC-2, AC-3, AC-6.
+   */
+  private buildExperienceRow(
+    intervention: SessionIntervention,
+    executionId: string,
+    org: string,
+    timestamp: string,
+  ): Omit<import("../../db/types").ExperienceRowV2, "id"> {
+    const { nodeId, report, decision, reason } = intervention
+
+    // Build structured content: detector + pattern + decision + reasoning
+    const content = this.buildExperienceContent(report, decision, reason)
+
+    // Build pattern tags: [decision, pattern, nodeType, severity]
+    const patternTags = [
+      decision,
+      report.pattern,
+      report.nodeType,
+      report.severity,
+    ]
+
+    return {
+      skill_name: `harness-${report.detector}`,
+      content,
+      source_session_id: null,
+      org,
+      created_at: timestamp,
+      scope: "harness",
+      scope_ref: report.detector,
+      pattern_tags: JSON.stringify(patternTags),
+      outcome: JSON.stringify({ label: "pending" }),
+      source_type: "harness",
+      execution_id: executionId,
+      node_id: nodeId,
+    }
+  }
+
+  /**
+   * Build a searchable experience content string from an intervention.
+   * Includes detector, pattern, decision, reasoning, and node information.
+   * Ticket 03 — AC-6.
+   */
+  private buildExperienceContent(
+    report: import("@octopus/shared").DiagnosisReport,
+    decision: string,
+    reason: string,
+  ): string {
+    const lines = [
+      `## Harness Intervention Summary`,
+      ``,
+      `**Detector**: ${report.detector}`,
+      `**Pattern**: ${report.pattern}`,
+      `**Severity**: ${report.severity}`,
+      `**Node**: ${report.nodeId} (${report.nodeType})`,
+      `**Decision**: ${decision}`,
+      `**Reasoning**: ${reason}`,
+      ``,
+      `### Evidence`,
+    ]
+
+    // Add evidence details
+    for (const evidence of report.evidence) {
+      const parts: string[] = []
+      if (evidence.attempt !== undefined) parts.push(`attempt ${evidence.attempt}`)
+      if (evidence.errorCode) parts.push(`code: ${evidence.errorCode}`)
+      if (evidence.errorMessage) parts.push(`error: ${evidence.errorMessage}`)
+      lines.push(`- ${parts.join(", ") || JSON.stringify(evidence)}`)
+    }
+
+    return lines.join("\n")
+  }
+
+  /**
+   * Write clone daily memory summarizing all interventions.
+   * Ticket 03 — AC-4.
+   */
+  private writeCloneDailyMemory(
+    session: HarnessAgentSession,
+    executionId: string,
+  ): void {
+    if (!this.memoryService) {
+      // No memory service configured — skip daily memory write (non-fatal)
+      return
+    }
+
+    const interventions = session.getInterventions()
+    if (interventions.length === 0) {
+      return
+    }
+
+    try {
+      const content = this.buildDailyMemoryContent(interventions, executionId)
+      const sessionId = `harness-${executionId}`
+      const cloneDir = getBuiltInCloneDir("harness-agent")
+
+      this.memoryService.recordDaily("default", content, sessionId, cloneDir)
+    } catch (err) {
+      console.error(
+        `[HarnessController] Failed to write clone daily memory for ${executionId}:`,
+        err,
+      )
+    }
+  }
+
+  /**
+   * Build daily memory content summarizing all interventions.
+   */
+  private buildDailyMemoryContent(
+    interventions: SessionIntervention[],
+    executionId: string,
+  ): string {
+    const lines = [
+      `## Harness Execution ${executionId}`,
+      ``,
+      `Total interventions: ${interventions.length}`,
+      ``,
+    ]
+
+    for (const intervention of interventions) {
+      lines.push(`### Node: ${intervention.nodeId}`)
+      lines.push(`- Detector: ${intervention.report.detector}`)
+      lines.push(`- Pattern: ${intervention.report.pattern}`)
+      lines.push(`- Severity: ${intervention.report.severity}`)
+      lines.push(`- Decision: ${intervention.decision}`)
+      lines.push(`- Reasoning: ${intervention.reason}`)
+      lines.push(``)
+    }
+
+    return lines.join("\n")
   }
 }

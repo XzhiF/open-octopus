@@ -349,6 +349,21 @@ export class EvolutionService {
   }
 
   /**
+   * Search experiences using FTS5 with scope filtering.
+   * Delegates to EvolutionDAO.searchByScope().
+   */
+  searchExperiences(
+    query: string,
+    scope?: string,
+    limit: number = 10,
+  ): Array<{
+    id: number; skill_name: string; content: string; scope: string;
+    scope_ref: string | null; pattern_tags: string; outcome: string | null
+  }> {
+    return this.dao.searchByScope(query, scope, limit)
+  }
+
+  /**
    * List experiences for a skill.
    */
   listExperiences(org: string, skillName?: string): Array<{

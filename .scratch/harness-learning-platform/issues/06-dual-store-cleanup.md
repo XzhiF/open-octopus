@@ -7,15 +7,15 @@
 01 — Schema Migration (new DAO methods must exist before redirecting SubsystemAdapter)
 
 ## Status
-ready-for-agent
+done
 
 ## Acceptance Criteria
-- [ ] AC-1: SubsystemAdapter.writeExperience() 方法已删除
-- [ ] AC-2: SubsystemAdapter.searchExperiences() 委托给 EvolutionDAO.searchByScope()
-- [ ] AC-3: InitService 不再创建 evolution/experiences/ 目录
-- [ ] AC-4: AgentService.getExperiences() 使用新 DAO 方法
-- [ ] AC-5: 所有引用 writeExperience 的代码已更新或删除
-- [ ] AC-6: 现有 Agent 功能不受影响（experience 读写走 DB）
+- [x] AC-1: SubsystemAdapter.writeExperience() 方法已删除
+- [x] AC-2: SubsystemAdapter.searchExperiences() 委托给 EvolutionDAO.searchByScope()
+- [x] AC-3: InitService 不再创建 evolution/experiences/ 目录
+- [x] AC-4: AgentService.getExperiences() 使用新 DAO 方法
+- [x] AC-5: 所有引用 writeExperience 的代码已更新或删除
+- [x] AC-6: 现有 Agent 功能不受影响（experience 读写走 DB）
 
 ## Verification Method
 **Verification type**: unit test + grep verification
