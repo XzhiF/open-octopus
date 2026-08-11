@@ -112,6 +112,14 @@ function TokenSummary({ input, output }: { input: number; output: number }) {
 export function LoopContainerNode({ data, selected }: NodeProps) {
   const loopData = data as unknown as LoopContainerData
   const stepStatus = loopData.statusOverlay?.stepStatus
+  const isHarnessActive = loopData.statusOverlay?.harnessStatus === "harness_intervening"
+    || loopData.statusOverlay?.harnessStatus === "harness_modified"
+    || loopData.harnessStatus === "harness_intervening"
+    || loopData.harnessStatus === "harness_modified"
+  const isDone = stepStatus === "completed" || stepStatus === "skipped" || stepStatus === "cancelled"
+  const showMarchingAnts = !isDone && (stepStatus === "running" || isHarnessActive)
+  const marchColor = (loopData.statusOverlay?.harnessStatus === "harness_intervening"
+    || loopData.harnessStatus === "harness_intervening") ? "#8b5cf6" : "#f59e0b"
   const borderColor = stepStatus ? statusBorderColor[stepStatus] ?? "border-gray-300" : "border-gray-300"
   const headerBg = stepStatus ? statusBgColor[stepStatus] ?? "bg-gray-50/80" : "bg-gray-50/80"
   const tokens = aggregateTokens(loopData.statusOverlay)
@@ -120,7 +128,7 @@ export function LoopContainerNode({ data, selected }: NodeProps) {
 
   return (
     <>
-      {stepStatus === "running" && (
+      {showMarchingAnts && (
         <style>{`
           @keyframes border-march {
             to {
@@ -134,10 +142,10 @@ export function LoopContainerNode({ data, selected }: NodeProps) {
           .border-running {
             border-color: transparent;
             background:
-              repeating-linear-gradient(90deg, #f59e0b 0 6px, transparent 6px 12px) top    / 100% 2px no-repeat,
-              repeating-linear-gradient(90deg, #f59e0b 0 6px, transparent 6px 12px) bottom / 100% 2px no-repeat,
-              repeating-linear-gradient(0deg, #f59e0b 0 6px, transparent 6px 12px) left   / 2px 100% no-repeat,
-              repeating-linear-gradient(0deg, #f59e0b 0 6px, transparent 6px 12px) right  / 2px 100% no-repeat;
+              repeating-linear-gradient(90deg, ${marchColor} 0 6px, transparent 6px 12px) top    / 100% 2px no-repeat,
+              repeating-linear-gradient(90deg, ${marchColor} 0 6px, transparent 6px 12px) bottom / 100% 2px no-repeat,
+              repeating-linear-gradient(0deg, ${marchColor} 0 6px, transparent 6px 12px) left   / 2px 100% no-repeat,
+              repeating-linear-gradient(0deg, ${marchColor} 0 6px, transparent 6px 12px) right  / 2px 100% no-repeat;
             animation: border-march 0.6s linear infinite;
           }
         `}</style>
@@ -147,7 +155,7 @@ export function LoopContainerNode({ data, selected }: NodeProps) {
           "border-2 border-dashed rounded-lg w-full h-full relative",
           borderColor,
           selected && "ring-2 ring-primary ring-offset-2",
-          stepStatus === "running" && "border-running",
+          showMarchingAnts && "border-running",
         )}
       >
       <Handle type="target" position={Position.Top} className="!bg-muted-foreground !w-3 !h-3" />

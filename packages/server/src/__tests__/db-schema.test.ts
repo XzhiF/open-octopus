@@ -15,7 +15,7 @@ describe("DB Schema", () => {
     db?.close()
   })
 
-  it("creates all 35 tables", () => {
+  it("creates all 38 tables", () => {
     db = createTestDb()
     applySchema(db)
     const rows = db.prepare(
@@ -23,9 +23,10 @@ describe("DB Schema", () => {
     ).all() as { name: string }[]
     const names = rows.map(r => r.name).sort()
     expect(names).toEqual([
-      // Core tables (35)
-      "agent_events", "archive_drafts", "branch_executions", "chat_messages", "chat_sessions",
+      // Core tables (38)
+      "agent_events", "agent_versions", "archive_drafts", "branch_executions", "chat_messages", "chat_sessions",
       "clones", "evolution_log", "execution_archive", "execution_summaries", "executions", "experiences",
+      "harness_config", "harness_events",
       "insight_marks", "interaction_messages",
       // Knowledge tables (1)
       "knowledge_effectiveness",
@@ -44,8 +45,8 @@ describe("DB Schema", () => {
     const rows = db.prepare(
       "SELECT name FROM sqlite_master WHERE type='index' AND name LIKE 'idx_%'"
     ).all() as { name: string }[]
-    // 40 core indexes + 23 agent indexes + 4 knowledge indexes + 6 archive indexes + 2 unique indexes = 75
-    expect(rows.length).toBe(75)
+    // 40 core indexes + 23 agent indexes + 4 knowledge indexes + 6 archive indexes + 2 unique indexes + 2 harness indexes + 2 agent_versions indexes = 79
+    expect(rows.length).toBe(79)
   })
 
   it("workspaces table has correct columns", () => {
@@ -227,5 +228,81 @@ describe("Schema v17 — Pipeline support", () => {
     const idxNames = indexes.map(i => i.name)
     expect(idxNames).toContain("idx_summaries_workflow")
     expect(idxNames).toContain("idx_summaries_created")
+  })
+})
+
+describe("Schema v34 — Harness support", () => {
+  let db: Database.Database
+
+  afterEach(() => {
+    db?.close()
+  })
+
+  it("creates harness_events table with correct columns", () => {
+    db = createTestDb()
+    applySchema(db)
+    const cols = db.prepare("PRAGMA table_info(harness_events)").all() as { name: string }[]
+    expect(cols.map(c => c.name)).toEqual(expect.arrayContaining([
+      "id", "execution_id", "node_id", "timestamp", "event_type",
+      "detector", "severity", "report_json", "action_json",
+      "result_json", "token_usage_json", "created_at",
+    ]))
+  })
+
+  it("creates harness_events indexes", () => {
+    db = createTestDb()
+    applySchema(db)
+    const indexes = db.prepare(
+      "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='harness_events'"
+    ).all() as { name: string }[]
+    const idxNames = indexes.map(i => i.name)
+    expect(idxNames).toContain("idx_harness_events_exec")
+    expect(idxNames).toContain("idx_harness_events_time")
+  })
+
+  it("creates harness_config table with correct columns", () => {
+    db = createTestDb()
+    applySchema(db)
+    const cols = db.prepare("PRAGMA table_info(harness_config)").all() as { name: string; dflt_value: string | null }[]
+    const colNames = cols.map(c => c.name)
+    expect(colNames).toEqual(expect.arrayContaining([
+      "id", "config_yaml", "updated_at", "version",
+    ]))
+    // version default is 1
+    const versionCol = cols.find(c => c.name === "version")
+    expect(versionCol?.dflt_value).toBe("1")
+  })
+
+  it("adds harness_status column to node_executions", () => {
+    db = createTestDb()
+    applySchema(db)
+    const cols = db.prepare("PRAGMA table_info(node_executions)").all() as { name: string }[]
+    expect(cols.map(c => c.name)).toContain("harness_status")
+  })
+
+  it("adds harness_interventions column to node_executions", () => {
+    db = createTestDb()
+    applySchema(db)
+    const cols = db.prepare("PRAGMA table_info(node_executions)").all() as { name: string }[]
+    expect(cols.map(c => c.name)).toContain("harness_interventions")
+  })
+
+  it("adds source column to node_token_usages with default 'node'", () => {
+    db = createTestDb()
+    applySchema(db)
+    const cols = db.prepare("PRAGMA table_info(node_token_usages)").all() as { name: string; dflt_value: string | null }[]
+    const sourceCol = cols.find(c => c.name === "source")
+    expect(sourceCol).toBeDefined()
+    expect(sourceCol!.dflt_value).toBe("'node'")
+  })
+
+  it("is idempotent for harness tables", () => {
+    db = createTestDb()
+    applySchema(db)
+    applySchema(db)
+    const events = db.prepare("SELECT COUNT(*) as cnt FROM harness_events").get() as { cnt: number }
+    expect(events.cnt).toBe(0)
+    const config = db.prepare("SELECT COUNT(*) as cnt FROM harness_config").get() as { cnt: number }
+    expect(config.cnt).toBe(0)
   })
 })

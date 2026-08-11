@@ -38,6 +38,9 @@ export { resolveModelAlias, loadModelAliasConfig, collectNodeEngines } from './c
 export { resolveMoaModel } from './config/moa-model-resolver'
 export type { MoaModelResolution } from './config/moa-model-resolver'
 
+// Harness module
+export * from './harness'
+
 // Simulator test fixture schemas
 export * from './simulator/schemas'
 export * from './version/version-resolver'

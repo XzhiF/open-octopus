@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useRef, useCallback } from "react"
+import { useState, useEffect, useRef, useCallback, useMemo } from "react"
 import { cn } from "@/lib/utils"
 import { formatDuration, formatTokenCount } from "@/lib/format"
 import { getExecutorType } from "@/lib/executor-type"
@@ -36,6 +36,7 @@ import { InteractionModal } from "./interaction-modal"
 import { NodeInfoDialog } from "./node-info-dialog"
 import { SwarmDetailDialog } from "@/components/swarm/organisms/swarm-detail-dialog"
 import { ArchiveDialog } from "@/components/agent/knowledge/archive/ArchiveDialog"
+import { HarnessFloatingPanel } from "./harness-floating-panel"
 import { useLiveTimer } from "@/hooks/use-live-timer"
 import { getServerUrl } from "@/lib/server-config"
 import { useAgentTraces } from "@/hooks/use-agent-traces"
@@ -91,6 +92,7 @@ interface RawStepRow {
   agentName?: string
   agentVersion?: string
   taskBrief?: string
+  harnessStatus?: string
 }
 
 function mapRawStep(raw: RawStepRow): StepExecution {
@@ -114,6 +116,7 @@ function mapRawStep(raw: RawStepRow): StepExecution {
     agentName: raw.agentName,
     agentVersion: raw.agentVersion,
     taskBrief: raw.taskBrief,
+    harnessStatus: raw.harnessStatus as StepExecution["harnessStatus"],
   }
 }
 
@@ -180,6 +183,64 @@ export function WorkflowDetailPanel({ execution, workflow, workspaceId }: Workfl
       : setInterval(fetchStatus, 10000) // slow poll when not running (10s)
     return () => clearInterval(interval)
   }, [liveStatus, fetchStatus])
+
+  // SSE listeners for real-time harness status updates on workflow nodes.
+  // Polling (3s) is too slow to catch the brief harness_intervening state —
+  // these listeners update liveSteps immediately when harness events arrive.
+  useEffect(() => {
+    if (!workspaceId || !execution.id) return
+    const es = new EventSource(
+      `${getServerUrl()}/api/workspaces/${workspaceId}/executions/events`,
+    )
+
+    const updateStepHarness = (nodeIds: string[], status: string) => {
+      setLiveSteps(prev => prev.map(s =>
+        nodeIds.includes(s.stepId) ? { ...s, harnessStatus: status as StepExecution["harnessStatus"] } : s
+      ))
+    }
+
+    es.addEventListener("harness_diagnosis", (e: MessageEvent) => {
+      try {
+        const { executionId, report } = JSON.parse(e.data)
+        if (executionId !== execution.id) return
+        const ids = [report.nodeId, report.displayNodeId].filter(Boolean) as string[]
+        if (ids.length > 0) updateStepHarness(ids, "harness_intervening")
+      } catch { /* skip */ }
+    })
+
+    es.addEventListener("harness_delegation", (e: MessageEvent) => {
+      try {
+        const { executionId, nodeId, containerNodeId, status, result } = JSON.parse(e.data)
+        if (executionId !== execution.id || status !== "complete") return
+        const decision = result?.decision as string | undefined
+        const harnessStatus = decision === "block_node" ? "harness_blocked"
+          : decision === "agent_takeover" ? "harness_executed"
+          : "harness_modified"
+        const ids = [nodeId, containerNodeId].filter(Boolean) as string[]
+        if (ids.length > 0) updateStepHarness(ids, harnessStatus)
+      } catch { /* skip */ }
+    })
+
+    es.addEventListener("harness_intervention", (e: MessageEvent) => {
+      try {
+        const { executionId, nodeId, containerNodeId, success } = JSON.parse(e.data)
+        if (executionId !== execution.id) return
+        const ids = [nodeId, containerNodeId].filter(Boolean) as string[]
+        if (ids.length > 0) updateStepHarness(ids, success ? "harness_modified" : "harness_blocked")
+      } catch { /* skip */ }
+    })
+
+    es.addEventListener("harness_blocked", (e: MessageEvent) => {
+      try {
+        const { executionId, nodeId, containerNodeId } = JSON.parse(e.data)
+        if (executionId !== execution.id) return
+        const ids = [nodeId, containerNodeId].filter(Boolean) as string[]
+        if (ids.length > 0) updateStepHarness(ids, "harness_blocked")
+      } catch { /* skip */ }
+    })
+
+    return () => es.close()
+  }, [workspaceId, execution.id])
 
   // Auto-open approval dialog when status transitions to pending_approval (not on every poll)
   const approvalShownRef = useRef<string | null>(null)
@@ -318,6 +379,22 @@ export function WorkflowDetailPanel({ execution, workflow, workspaceId }: Workfl
     ? liveSteps?.find(s => s.stepId === nodeInfoDialog.stepId) ?? null
     : null
 
+  // Compute the currently active node ID for harness chatbot interventions.
+  // Prefer a running step; fall back to the most recently failed step.
+  const activeNodeId = useMemo(() => {
+    if (!liveSteps) return undefined
+    const running = liveSteps.find(s => s.status === "running")
+    if (running) return running.stepId
+    const failed = [...liveSteps]
+      .filter(s => s.status === "failed")
+      .sort((a, b) => {
+        const aTime = a.completedAt ? new Date(a.completedAt).getTime() : 0
+        const bTime = b.completedAt ? new Date(b.completedAt).getTime() : 0
+        return bTime - aTime
+      })[0]
+    return failed?.stepId ?? undefined
+  }, [liveSteps])
+
   return (
     <div className="flex h-full flex-col">
       {/* Header */}
@@ -331,6 +408,25 @@ export function WorkflowDetailPanel({ execution, workflow, workspaceId }: Workfl
             #{execution.id.slice(-4)}
           </Badge>
           <StatusBadge status={liveStatus} />
+          {execution.harnessStatus && (
+            <span
+              className={cn(
+                "inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-xs text-white",
+                execution.harnessStatus === "blocked"
+                  ? "bg-red-500"
+                  : execution.harnessStatus === "delegated"
+                    ? "bg-violet-500"
+                    : "bg-amber-500",
+              )}
+            >
+              🛡️{" "}
+              {execution.harnessStatus === "blocked"
+                ? "已阻断"
+                : execution.harnessStatus === "delegated"
+                  ? "已接管"
+                  : "已干预"}
+            </span>
+          )}
         </div>
         <div className="flex items-center gap-1">
           {liveStatus === "pending" && (
@@ -569,6 +665,14 @@ export function WorkflowDetailPanel({ execution, workflow, workspaceId }: Workfl
         executionId={execution.id}
         org={workspaceId}
         onArchiveComplete={() => setArchiveOpen(false)}
+      />
+
+      {/* Harness Floating Panel */}
+      <HarnessFloatingPanel
+        workspaceId={workspaceId}
+        executionId={execution.id}
+        executionStatus={liveStatus}
+        currentNodeId={activeNodeId}
       />
     </div>
   )

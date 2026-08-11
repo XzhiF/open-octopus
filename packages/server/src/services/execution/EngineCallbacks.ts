@@ -67,6 +67,10 @@ export class EngineCallbacks implements IEngineCallbacks {
         // Clear old agent events for this node to prevent PRIMARY KEY collision
         // on event_order when retrying/restarting a node (e.g. after server restart).
         try { dao.deleteAgentEventsByNode(neId) } catch { /* non-fatal */ }
+        // Reset observability buffer ordering so the next flush starts from 0,
+        // matching the cleared DB state. Without this, INSERT OR IGNORE would
+        // silently drop events whose event_order conflicts with preserved harness events.
+        obs.resetNodeBuffer(neId)
         // Reset degraded state so the observability buffer resumes writing
         obs.resetDegraded()
         dao.updateNodeExecution(neId, { status: "running", started_at: new Date().toISOString() })

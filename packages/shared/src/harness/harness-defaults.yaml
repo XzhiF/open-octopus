@@ -1,0 +1,59 @@
+# harness-defaults.yaml
+# Default harness configuration shipped with Octopus.
+# Override per-workspace via System Admin UI or by placing
+# a harness.yaml in the workspace root.
+
+detectors:
+  deterministic_error:
+    enabled: true
+  stupid_retry:
+    enabled: true
+    threshold: 2 # trigger after N retries with same error
+  model_mismatch:
+    enabled: true
+  process_conflict:
+    enabled: true
+  timeout_cascade:
+    enabled: true
+    threshold: 3 # trigger after N consecutive node timeouts
+
+strategies:
+  - match: deterministic_error
+    actions:
+      - type: inject_message
+        message: "确定性错误（语法/导入/路径），重试无意义。请修复根因或接管执行。"
+    delegate_to_agent: true
+
+  - match: stupid_retry
+    actions:
+      - type: inject_message
+        message: "上次因为同样的原因失败了。请换一种方法解决。"
+      - type: retry_with_hint
+
+  - match: model_mismatch
+    actions:
+      - type: switch_model
+        prefer: vision_capable
+
+  - match: process_conflict
+    severity: critical
+    actions:
+      - type: abort
+        reason: "检测到进程冲突，已阻断以保护宿主进程"
+
+  - match: timeout_cascade
+    actions:
+      - type: pause
+        notify: true
+
+  - match: "*"
+    actions:
+      - type: pause_and_notify
+    delegate_to_agent: true
+
+isolation:
+  process_group: true
+  port_protection: true
+  pid_protection: true
+  sandbox: auto
+  fs_whitelist: [".", "/tmp"]

@@ -7,13 +7,19 @@
  *   pnpm dev --skip-build             # skip build (if dist/ already exists)
  *   pnpm dev --isolated               # force hash ports + unique DB (any repo)
  *   pnpm dev --port 4001              # custom server port (web = port+1)
- *   pnpm dev --isolated --no-kill     # don't kill existing processes on target ports
+ *   pnpm dev -k                       # kill existing processes on target ports
+ *   pnpm dev --kill                   # same as -k
  *   node scripts/dev.mjs              # same as above
+ *
+ * Port conflict behavior:
+ *   By default, if target ports are occupied, startup FAILS with an error.
+ *   Use -k / --kill to force-kill existing processes on those ports.
+ *   This prevents accidentally killing the host dev server from workflow agents.
  *
  * Modes:
  *   default   — main repo (.git is directory), ports 3001/3000, shared DB
  *   isolated  — worktree (.git is file) OR --isolated flag, hash ports, branch DB
- *   custom    — --port flag, exact ports, no auto-kill of defaults
+ *   custom    — --port flag, exact ports
  *
  * Build safety:
  *   Building only writes to packages/.../dist/ in the source tree.
@@ -210,6 +216,9 @@ function cleanup(exitCode = 0) {
   shuttingDown = true
   console.log("\n[dev] Shutting down...")
 
+  // Remove host PIDs file
+  try { fs.unlinkSync(path.join(os.homedir(), ".octopus", "host-pids.json")) } catch {}
+
   for (const { child, label } of children) {
     if (child.killed || child.exitCode !== null) continue
     if (process.platform === "win32") {
@@ -286,12 +295,34 @@ function buildProject() {
   }
 }
 
+// ─── Port Conflict Check ─────────────────────────────────────────
+
+async function checkPortConflict(serverPort, webPort) {
+  const inHarness = !!process.env.OCTOPUS_HOST_PID
+  const busy = []
+  if (await isPortInUse(serverPort)) busy.push(serverPort)
+  if (await isPortInUse(webPort)) busy.push(webPort)
+  if (busy.length > 0) {
+    if (inHarness) {
+      // Running inside a workflow agent — never kill, never suggest --kill
+      console.error(`[dev] ✗ Port(s) ${busy.join(", ")} already in use.`)
+      console.error(`[dev]   This process is running inside a workflow agent.`)
+      console.error(`[dev]   Use --isolated to start on unique ports instead.`)
+      process.exit(1)
+    }
+    console.error(`[dev] ✗ Port(s) ${busy.join(", ")} already in use.`)
+    console.error(`[dev]   Use -k / --kill to force-kill existing processes, or --isolated for unique ports.`)
+    process.exit(1)
+  }
+}
+
 // ─── Main ────────────────────────────────────────────────────────
 
 async function main() {
   const skipBuild = process.argv.includes("--skip-build")
   const forceIsolated = process.argv.includes("--isolated")
-  const noKill = process.argv.includes("--no-kill")
+  const killExisting = (process.argv.includes("--kill") || process.argv.includes("-k"))
+    && !process.env.OCTOPUS_HOST_PID  // ignore --kill inside workflow agent
 
   // --port <N> — custom server port (web = N+1)
   const portIdx = process.argv.indexOf("--port")
@@ -307,9 +338,11 @@ async function main() {
     branch = getBranchName()
     dbPath = path.join(os.homedir(), ".octopus", "db", `octopus-${safeName(branch || "custom")}.db`)
     console.log(`[dev] mode:   custom (port=${customPort})`)
-    if (!noKill) {
+    if (killExisting) {
       killPort(serverPort)
       killPort(webPort)
+    } else {
+      await checkPortConflict(serverPort, webPort)
     }
   } else if (worktree || forceIsolated) {
     branch = getBranchName()
@@ -321,12 +354,15 @@ async function main() {
     const ports = await allocatePorts(branch)
     serverPort = ports.server
     webPort = ports.web
-    dbPath = initBranchDb(branch)
+    // Use port in DB name to avoid SQLite conflicts between multiple isolated instances
+    dbPath = initBranchDb(`${branch}-${serverPort}`)
 
     // Clean stale processes on allocated ports only
-    if (!noKill) {
+    if (killExisting) {
       killPort(serverPort)
       killPort(webPort)
+    } else {
+      await checkPortConflict(serverPort, webPort)
     }
   } else {
     console.log(`[dev] mode:   default (main repo)`)
@@ -334,10 +370,12 @@ async function main() {
     webPort = 3000
     dbPath = path.join(os.homedir(), ".octopus", "db", "octopus.db")
 
-    // Clean stale processes on default ports
-    if (!noKill) {
+    // Check or kill processes on default ports
+    if (killExisting) {
       killPort(serverPort)
       killPort(webPort)
+    } else {
+      await checkPortConflict(serverPort, webPort)
     }
   }
 
@@ -402,6 +440,16 @@ async function main() {
   console.log(`\n[dev] ✓ server: http://${localIP}:${serverPort}`)
   console.log(`[dev] ✓ web:    http://${localIP}:${webPort}`)
   console.log(`[dev] ✓ health: mode=${health.mode}, pid=${health.pid}`)
+
+  // Write host PIDs file so the server knows all protected PIDs
+  const hostPids = children.map(c => c.child.pid).filter(Boolean)
+  const pidFile = path.join(os.homedir(), ".octopus", "host-pids.json")
+  fs.writeFileSync(pidFile, JSON.stringify({
+    pids: hostPids,
+    ports: { server: serverPort, web: webPort },
+    startedAt: new Date().toISOString(),
+  }))
+  console.log(`[dev] ✓ pids:   ${hostPids.join(", ")} → ${pidFile}`)
   console.log(`\n[dev] Ready. Press Ctrl+C to stop.\n`)
 }
 

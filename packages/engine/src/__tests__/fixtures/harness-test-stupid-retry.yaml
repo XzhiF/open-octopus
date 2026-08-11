@@ -1,0 +1,17 @@
+apiVersion: octopus/v1
+kind: Workflow
+name: Harness Test - Stupid Retry
+description: Tests that harness detects when a node fails with the same error multiple times and injects corrective hints
+
+nodes:
+  - id: bash-fail
+    type: bash
+    script: |
+      echo "Attempting to build..."
+      echo "error: Cannot find module 'xyz'" >&2
+      exit 1
+    retry:
+      max_attempts: 3
+      backoff:
+        type: fixed
+        initial_delay: 1
