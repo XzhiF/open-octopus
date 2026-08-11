@@ -296,7 +296,7 @@ export function createMainAgentRoute(deps: MainAgentRouteDeps): Hono {
     // Normal LLM routing (with optional tool-based delegation)
     // ══════════════════════════════════════════════════════════════
     const assembler = new SystemPromptAssembler(org)
-    const baseSystemPrompt = assembler.assemble()
+    const baseSystemPrompt = assembler.assemble({ userMessage: body.message })
     const systemPrompt = `${baseSystemPrompt}\n\n${DELEGATION_TOOLS_PROMPT}\n\n${EVOLUTION_TOOLS_PROMPT}\n\n${RECORD_DAILY_TOOLS_PROMPT}`
 
     return streamSSE(c, async (stream) => {

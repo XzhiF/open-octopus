@@ -279,6 +279,50 @@ export class EvolutionDAO extends BaseDAO {
   }
 
   /**
+   * Scope-aware FTS5 search across multiple scopes with LIKE fallback.
+   * Searches skill_name, content, scope, scope_ref, and pattern_tags.
+   * Returns full ExperienceRowV2 rows.
+   */
+  searchByScopes(
+    query: string,
+    scopes: string[],
+    limit: number = 5,
+  ): ExperienceRowV2[] {
+    if (scopes.length === 0) return []
+    const safeLimit = Math.min(limit, 100)
+
+    // Build IN clause placeholders
+    const placeholders = scopes.map(() => "?").join(", ")
+
+    try {
+      const sql = `
+        SELECT e.* FROM experiences e
+        JOIN experiences_fts fts ON e.id = fts.rowid
+        WHERE experiences_fts MATCH ? AND e.scope IN (${placeholders})
+        ORDER BY rank
+        LIMIT ?
+      `
+      const params: unknown[] = [query, ...scopes, safeLimit]
+      const results = this.stmt(sql).all(...params) as ExperienceRowV2[]
+      // FTS succeeded but returned no results — fall through to LIKE
+      if (results.length > 0) return results
+    } catch {
+      // FTS MATCH failed — fall through to LIKE search
+    }
+
+    // LIKE fallback (also used when FTS returns empty)
+    const escaped = query.replace(/[%_\\]/g, "\\$&")
+    const sql = `
+      SELECT * FROM experiences
+      WHERE content LIKE ? AND scope IN (${placeholders})
+      ORDER BY created_at DESC
+      LIMIT ?
+    `
+    const params: unknown[] = [`%${escaped}%`, ...scopes, safeLimit]
+    return this.stmt(sql).all(...params) as ExperienceRowV2[]
+  }
+
+  /**
    * Update the outcome field for an experience row.
    * Outcome is a JSON string: {label, success_rate, usage_count, last_applied}.
    */

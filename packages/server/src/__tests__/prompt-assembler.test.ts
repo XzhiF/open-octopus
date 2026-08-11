@@ -241,6 +241,28 @@ describe('ChatPromptAdapter', () => {
     expect(adapterOutput).toBe(originalOutput)
   })
 
+  it('accepts userMessage option without affecting output (ticket 02)', () => {
+    const adapter = new ChatPromptAdapter(TEST_ORG)
+    const original = new SystemPromptAssembler(TEST_ORG)
+
+    // userMessage is optional and accepted — ticket 03 will use it for experience injection
+    // Inline object literals trigger TypeScript excess property checks — compilation
+    // would fail here if userMessage were not declared in AssembleOptions.
+    const withMsg = original.assemble({ userMessage: '之前遇到过这个 error，怎么解决的？' })
+    const withoutMsg = original.assemble({})
+
+    // Both calls must succeed without throwing
+    expect(withMsg.length).toBeGreaterThan(0)
+    expect(withoutMsg.length).toBeGreaterThan(0)
+
+    // Ticket 02 is wiring-only; output should be identical until ticket 03 adds experience segment
+    expect(withMsg).toBe(withoutMsg)
+
+    // ChatPromptAdapter should pass userMessage through
+    const adapterWithMsg = adapter.assemble({ userMessage: '之前遇到过这个 error，怎么解决的？' })
+    expect(adapterWithMsg).toBe(withMsg)
+  })
+
   it('assembleForClone produces the same output as SystemPromptAssembler.assembleForClone()', () => {
     const adapter = new ChatPromptAdapter(TEST_ORG)
     const original = new SystemPromptAssembler(TEST_ORG)

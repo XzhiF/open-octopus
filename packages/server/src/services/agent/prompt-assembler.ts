@@ -74,6 +74,7 @@ export class ChatPromptAdapter implements Adapter {
       scheduled_task: opts?.scheduled_task,
       include_skills: opts?.include_skills,
       session_context: opts?.session_context,
+      userMessage: opts?.userMessage,
     })
   }
 
@@ -88,6 +89,7 @@ export class ChatPromptAdapter implements Adapter {
       scheduled_task: opts?.scheduled_task,
       include_skills: opts?.include_skills,
       session_context: opts?.session_context,
+      userMessage: opts?.userMessage,
     })
   }
 

@@ -7,19 +7,19 @@
 None — can start immediately
 
 ## Status
-ready-for-agent
+done
 
 ## Acceptance Criteria
-- [ ] AC-1: `ContextEnricher` 类在 `packages/server/src/services/agent/context-enricher.ts`
-- [ ] AC-2: `enrich()` 方法接受 `{scope, query, org, budget, forceSearch}` 参数
-- [ ] AC-3: agent scope 实现关键词检测（触发词正则匹配）
-- [ ] AC-4: harness/workflow scope 为 forceSearch=true（always-on）
-- [ ] AC-5: 可见性规则：agent→[agent,global], harness→[harness,global], workflow→[workflow,global]
-- [ ] AC-6: 格式化输出为结构化 markdown（日期 + 模式 + 决策 + 结果标记）
-- [ ] AC-7: 预算截断：>budget 时减少条数（5→3→1）
-- [ ] AC-8: `EvolutionDAO.searchByScopes(query, scopes[], limit)` 支持多 scope IN 查询
-- [ ] AC-9: searchByScopes 有 FTS5 + LIKE fallback（wildcard 转义）
-- [ ] AC-10: 无匹配时返回 `{segment: null, count: 0, tokensUsed: 0}`
+- [x] AC-1: `ContextEnricher` 类在 `packages/server/src/services/agent/context-enricher.ts`
+- [x] AC-2: `enrich()` 方法接受 `{scope, query, org, budget, forceSearch}` 参数
+- [x] AC-3: agent scope 实现关键词检测（触发词正则匹配）
+- [x] AC-4: harness/workflow scope 为 forceSearch=true（always-on）
+- [x] AC-5: 可见性规则：agent→[agent,global], harness→[harness,global], workflow→[workflow,global]
+- [x] AC-6: 格式化输出为结构化 markdown（日期 + 模式 + 决策 + 结果标记）
+- [x] AC-7: 预算截断：>budget 时减少条数（5→3→1）
+- [x] AC-8: `EvolutionDAO.searchByScopes(query, scopes[], limit)` 支持多 scope IN 查询
+- [x] AC-9: searchByScopes 有 FTS5 + LIKE fallback（wildcard 转义）
+- [x] AC-10: 无匹配时返回 `{segment: null, count: 0, tokensUsed: 0}`
 
 ## Verification Method
 **Verification type**: unit test

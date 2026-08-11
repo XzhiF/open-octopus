@@ -83,7 +83,7 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
 
     // Assemble system prompt
     const assembler = new SystemPromptAssembler(org)
-    const systemPrompt = body.system_prompt ?? assembler.assemble({ clone_name: session.clone_name ?? undefined })
+    const systemPrompt = body.system_prompt ?? assembler.assemble({ clone_name: session.clone_name ?? undefined, userMessage: body.message })
 
     // ── Trigger self-check on first message (E2E-055) ──────────────
     runSelfCheck()

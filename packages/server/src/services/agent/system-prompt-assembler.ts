@@ -19,6 +19,8 @@ export interface AssembleOptions {
   scheduled_task?: boolean
   include_skills?: string[]
   session_context?: Record<string, unknown>
+  /** User's current message text — consumed by ContextEnricher (ticket 03) for keyword-based experience search. */
+  userMessage?: string
 }
 
 // ── Constants ──────────────────────────────────────────────────
