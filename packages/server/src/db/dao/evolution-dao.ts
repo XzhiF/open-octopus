@@ -118,6 +118,39 @@ export class EvolutionDAO extends BaseDAO {
     `).all(org, limit) as ExperienceRow[]
   }
 
+  /**
+   * Find recent experiences filtered by scope, for scope-aware reflection.
+   * Returns V2 rows so pattern_tags and outcome are available for analysis.
+   */
+  findRecentExperiencesForReflectionByScope(
+    org: string,
+    scope: string,
+    limit: number = 20,
+  ): ExperienceRowV2[] {
+    return this.stmt(`
+      SELECT * FROM experiences
+      WHERE org = ? AND scope = ? AND created_at > datetime('now', '-7 days')
+      ORDER BY created_at DESC
+      LIMIT ?
+    `).all(org, scope, limit) as ExperienceRowV2[]
+  }
+
+  /**
+   * Find experiences with failure patterns filtered by scope.
+   */
+  findExperiencesWithFailurePatternByScope(
+    org: string,
+    scope: string,
+  ): Array<{ count: number; skill_name: string; scope_ref: string | null }> {
+    return this.stmt(`
+      SELECT COUNT(*) as count, skill_name, scope_ref
+      FROM experiences
+      WHERE org = ? AND scope = ? AND created_at > datetime('now', '-7 days')
+      AND (content LIKE '%失败%' OR content LIKE '%error%' OR content LIKE '%failed%')
+      GROUP BY skill_name, scope_ref HAVING count >= 3
+    `).all(org, scope) as Array<{ count: number; skill_name: string; scope_ref: string | null }>
+  }
+
   insertExperienceWithFts(row: Omit<ExperienceRow, "id">): Database.RunResult {
     const result = this.stmt(`
       INSERT INTO experiences (skill_name, content, source_session_id, org, created_at)

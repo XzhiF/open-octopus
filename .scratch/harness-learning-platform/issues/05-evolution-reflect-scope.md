@@ -8,15 +8,15 @@
 04 — Effectiveness Tracker (needs outcome data for analysis)
 
 ## Status
-ready-for-agent
+done
 
 ## Acceptance Criteria
-- [ ] AC-1: reflect() 接受可选 scope 参数，按 scope 过滤分析范围
-- [ ] AC-2: reflect 产出的 insights 写入 experiences 表（source_type='reflection', scope=对应scope）
-- [ ] AC-3: harness scope 的 reflect 分析 decision 成功率 + detector 准确度 + pattern 频率
-- [ ] AC-4: 写入的 reflection experiences 可被 FTS5 searchByScope 检索到
-- [ ] AC-5: 现有 reflect() 行为（agent scope）不受影响
-- [ ] AC-6: 反思触发机制定义明确（onExecutionEnd 或定时任务）
+- [x] AC-1: reflect() 接受可选 scope 参数，按 scope 过滤分析范围
+- [x] AC-2: reflect 产出的 insights 写入 experiences 表（source_type='reflection', scope=对应scope）
+- [x] AC-3: harness scope 的 reflect 分析 decision 成功率 + detector 准确度 + pattern 频率
+- [x] AC-4: 写入的 reflection experiences 可被 FTS5 searchByScope 检索到
+- [x] AC-5: 现有 reflect() 行为（agent scope）不受影响
+- [x] AC-6: 反思触发机制定义明确（onExecutionEnd 或定时任务）
 
 ## Verification Method
 **Verification type**: unit test + integration test
