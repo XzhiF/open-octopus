@@ -128,9 +128,17 @@ export class ContextEnricher {
   constructor(private dao: EvolutionDAO) {}
 
   /**
-   * Enrich context with relevant historical experiences.
+   * Enrich context with relevant historical experiences (async API).
    */
   async enrich(params: EnrichParams): Promise<EnrichResult> {
+    return this.enrichSync(params)
+  }
+
+  /**
+   * Synchronous enrichment — same logic as enrich() but returns directly.
+   * All underlying DAO operations (better-sqlite3) are synchronous.
+   */
+  enrichSync(params: EnrichParams): EnrichResult {
     const { scope, query, org, budget, forceSearch = false } = params
 
     // Step 1: Check if search should be triggered

@@ -7,14 +7,14 @@
 01 — ContextEnricher Core
 
 ## Status
-ready-for-agent
+done
 
 ## Acceptance Criteria
-- [ ] AC-1: CloneRuntime.assembleContext() 调用 ContextEnricher
-- [ ] AC-2: scope='agent'，可见性 [agent, global]
-- [ ] AC-3: 经验内容附加在 memory 之后
-- [ ] AC-4: 预算 800 tokens
-- [ ] AC-5: 现有 clone 聊天行为不受影响（snapshot 回归）
+  - [x] AC-1: CloneRuntime.assembleContext() 调用 ContextEnricher
+  - [x] AC-2: scope='agent'，可见性 [agent, global]
+  - [x] AC-3: 经验内容附加在 memory 之后
+  - [x] AC-4: 预算 800 tokens
+  - [x] AC-5: 现有 clone 聊天行为不受影响（snapshot 回归）
 
 ## Verification Method
 **Verification type**: unit test

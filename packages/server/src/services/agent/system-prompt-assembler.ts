@@ -2,6 +2,9 @@ import fs from 'fs'
 import path from 'path'
 import { getSkillLoader } from './skill-loader'
 import { getAgentDir, getPersonaPath, getLongTermMemoryPath, getDailyMemoryDir, getReportsDir, getOctopusHome, getClonesDir, getBuiltInCloneDir, getCloneDir } from './paths'
+import { ContextEnricher } from './context-enricher'
+import { getDb } from '../../db/connection'
+import { EvolutionDAO } from '../../db/dao'
 
 // ── Types ──────────────────────────────────────────────────────
 
@@ -10,7 +13,7 @@ export interface PromptSegment {
   content: string
   tokenEstimate: number
   priority: number // lower = higher priority
-  source: 'core' | 'persona' | 'daily_memory' | 'memory' | 'skills' | 'context' | 'scheduled' | 'clone'
+  source: 'core' | 'persona' | 'daily_memory' | 'memory' | 'skills' | 'experience' | 'context' | 'scheduled' | 'clone'
 }
 
 export interface AssembleOptions {
@@ -31,14 +34,16 @@ const CHARS_PER_TOKEN = 4 // rough estimate
 // ── SystemPromptAssembler ──────────────────────────────────────
 
 /**
- * Assembles system prompts from 6 segments (7 for scheduled agents):
- * 1. Core identity — agent role and capabilities
- * 2. Persona — personality, tone, principles
- * 3. Memory — relevant long-term memory snippets
- * 4. Skills — priority-ranked skill instructions
- * 5. Context — workspace rules, environment info
- * 6. Clone — clone-specific instructions (if applicable)
- * 7. Scheduled — scheduled task context (if applicable)
+ * Assembles system prompts from segments:
+ * 1. Core identity — agent role and capabilities (P0)
+ * 2. Persona — personality, tone, principles (P1)
+ * 3. Skills — priority-ranked skill instructions (P2)
+ * 4. Memory — relevant long-term memory snippets (P3)
+ * 4. Daily/working memory (P3)
+ * 4.5. Experience — historical experiences matching user's keywords (P3.5, ticket 03)
+ * 5. Context — workspace rules, environment info (P4)
+ * 6. Clone — clone-specific instructions (P5, if applicable)
+ * 7. Scheduled — scheduled task context (P6, if applicable)
  *
  * Supports budget truncation: lower-priority segments are trimmed
  * or dropped when token budget is exceeded.
@@ -209,6 +214,12 @@ export class SystemPromptAssembler {
     // Segment 4: Daily/working memory (priority 3.5)
     segments.push(this.buildDailyMemorySegment())
 
+    // Segment 4.5: Experience context (priority 3.5) — ticket 03
+    const experienceSegment = this.buildExperienceSegment(options.userMessage)
+    if (experienceSegment) {
+      segments.push(experienceSegment)
+    }
+
     // Segment 5: Skills (priority 2)
     segments.push(this.buildSkillsSegment(options.include_skills))
 
@@ -350,6 +361,44 @@ export class SystemPromptAssembler {
       tokenEstimate: Math.ceil(content.length / CHARS_PER_TOKEN),
       priority: 3,
       source: 'daily_memory',
+    }
+  }
+
+  /**
+   * Build the experience segment by searching historical experiences via ContextEnricher.
+   *
+   * Returns a PromptSegment (priority 3.5) when the userMessage contains trigger keywords
+   * and matching experiences exist. Returns null otherwise (no search, no injection).
+   *
+   * Gracefully degrades: if DB is not initialized or search fails, returns null.
+   */
+  buildExperienceSegment(userMessage: string | undefined): PromptSegment | null {
+    if (!userMessage) return null
+
+    try {
+      const db = getDb()
+      const dao = new EvolutionDAO(db)
+      const enricher = new ContextEnricher(dao)
+
+      const result = enricher.enrichSync({
+        scope: 'agent',
+        query: userMessage,
+        org: this.org,
+        budget: 1200,
+      })
+
+      if (!result.segment) return null
+
+      return {
+        name: 'experience',
+        content: result.segment,
+        tokenEstimate: result.tokensUsed,
+        priority: 3.5,
+        source: 'experience',
+      }
+    } catch {
+      // DB not initialized or search failed — degrade gracefully
+      return null
     }
   }
 
