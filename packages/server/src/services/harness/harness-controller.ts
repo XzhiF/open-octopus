@@ -121,6 +121,7 @@ export class HarnessController {
       dao: this.dao,
       sse: this.sse,
       workspaceId,
+      evolutionDao: this.evolutionDao, // Ticket 04: inject for success rate stats
       session, // Pass session for context accumulation (AC3, AC4)
       getProvider: (id: string) => _getProvider(id),
     })
@@ -157,8 +158,15 @@ export class HarnessController {
    * Destroys the pipeline and its detectors.
    * Closes the agent session and writes harness_summary to executions table (AC5).
    * Records intervention experiences to the experiences table (ticket 03).
+   * Updates intervention outcomes based on execution final status (ticket 04).
+   *
+   * @param executionId The execution that ended.
+   * @param opts Optional execution outcome info for updating experience outcomes.
    */
-  onExecutionEnd(executionId: string): void {
+  onExecutionEnd(
+    executionId: string,
+    opts?: { status: "completed" | "failed" | "cancelled"; lastFailedNodeId?: string },
+  ): void {
     const pipeline = this.pipelines.get(executionId)
     if (pipeline) {
       pipeline.destroy()
@@ -177,6 +185,11 @@ export class HarnessController {
 
         // Ticket 03: Record experiences for all interventions
         this.recordSessionExperiences(session, executionId)
+
+        // Ticket 04: Update pending experience outcomes based on execution status
+        if (opts) {
+          this.updateExperienceOutcomes(executionId, opts)
+        }
 
         // Ticket 03: Write clone daily memory
         this.writeCloneDailyMemory(session, executionId)
@@ -383,6 +396,66 @@ export class HarnessController {
     }
 
     return lines.join("\n")
+  }
+
+  /**
+   * Update pending experience outcomes based on the execution's final status.
+   * Ticket 04 — AC-1, AC-2, AC-3.
+   *
+   * Rules:
+   * - completed → all interventions get outcome.label = 'success'
+   * - failed → last failed node's intervention gets 'failed', all others get 'success'
+   * - cancelled → all interventions stay as 'pending' (no update)
+   */
+  private updateExperienceOutcomes(
+    executionId: string,
+    opts: { status: "completed" | "failed" | "cancelled"; lastFailedNodeId?: string },
+  ): void {
+    if (!this.evolutionDao) {
+      return // No DAO — skip (non-fatal)
+    }
+
+    // Only update for completed or failed executions
+    if (opts.status === "cancelled") {
+      return // Keep pending outcomes for cancelled executions
+    }
+
+    try {
+      // Find all pending experiences for this execution
+      const pendingExperiences = this.evolutionDao.listByExecutionId(executionId, {
+        outcomeLabel: "pending",
+      })
+
+      if (pendingExperiences.length === 0) {
+        return
+      }
+
+      if (opts.status === "completed") {
+        // AC-2: All interventions marked as success
+        for (const exp of pendingExperiences) {
+          this.evolutionDao.updateOutcome(
+            exp.id,
+            JSON.stringify({ label: "success" }),
+          )
+        }
+      } else if (opts.status === "failed") {
+        // AC-3: Last failed node → 'failed', all others → 'success'
+        const lastFailedNodeId = opts.lastFailedNodeId
+        for (const exp of pendingExperiences) {
+          const isLastFailed = exp.node_id === lastFailedNodeId
+          const outcomeLabel = isLastFailed ? "failed" : "success"
+          this.evolutionDao.updateOutcome(
+            exp.id,
+            JSON.stringify({ label: outcomeLabel }),
+          )
+        }
+      }
+    } catch (err) {
+      console.error(
+        `[HarnessController] Failed to update experience outcomes for ${executionId}:`,
+        err,
+      )
+    }
   }
 
   /**

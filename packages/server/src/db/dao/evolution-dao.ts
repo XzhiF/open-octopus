@@ -253,6 +253,24 @@ export class EvolutionDAO extends BaseDAO {
   }
 
   /**
+   * List experiences for a given execution_id, optionally filtered by outcome label.
+   * Used by HarnessController.onExecutionEnd() to batch-update pending outcomes.
+   */
+  listByExecutionId(
+    executionId: string,
+    opts?: { outcomeLabel?: string },
+  ): ExperienceRowV2[] {
+    let sql = `SELECT * FROM experiences WHERE execution_id = ?`
+    const params: unknown[] = [executionId]
+    if (opts?.outcomeLabel) {
+      sql += ` AND json_extract(outcome, '$.label') = ?`
+      params.push(opts.outcomeLabel)
+    }
+    sql += ` ORDER BY created_at ASC`
+    return this.stmt(sql).all(...params) as ExperienceRowV2[]
+  }
+
+  /**
    * Aggregate success rate statistics grouped by decision (from pattern_tags) and scope.
    *
    * Returns two stat maps:
