@@ -7,18 +7,18 @@
 None — can start immediately (independent of schema migration)
 
 ## Status
-ready-for-agent
+done
 
 ## Acceptance Criteria
-- [ ] AC-1: 定义 `PromptAssembler` 接口，含 `assembleForAgent(cloneName?, opts)` 统一入口
-- [ ] AC-2: 现有 SystemPromptAssembler 逻辑包装为 `ChatPromptAdapter`
-- [ ] AC-3: 现有 CloneRuntime.assembleContext 逻辑包装为 `ClonePromptAdapter`
-- [ ] AC-4: 现有 buildDelegationPrompt 逻辑包装为 `HarnessPromptAdapter`
-- [ ] AC-5: 主 Agent 调用 assembleForAgent() 输出与统一前一致（快照测试）
-- [ ] AC-6: Clone 调用 assembleForAgent('clone-name') 输出与统一前一致（快照测试）
-- [ ] AC-7: Harness 调用 assembleForAgent('harness-agent') 输出包含 persona + memory
-- [ ] AC-8: priority-based budget truncation 逻辑保持不变
-- [ ] AC-9: 现有 Clone 聊天行为不受影响（E2E 回归）
+- [x] AC-1: 定义 `PromptAssembler` 接口，含 `assembleForAgent(cloneName?, opts)` 统一入口
+- [x] AC-2: 现有 SystemPromptAssembler 逻辑包装为 `ChatPromptAdapter`
+- [x] AC-3: 现有 CloneRuntime.assembleContext 逻辑包装为 `ClonePromptAdapter`
+- [x] AC-4: 现有 buildDelegationPrompt 逻辑包装为 `HarnessPromptAdapter`
+- [x] AC-5: 主 Agent 调用 assembleForAgent() 输出与统一前一致（快照测试）
+- [x] AC-6: Clone 调用 assembleForAgent('clone-name') 输出与统一前一致（快照测试）
+- [x] AC-7: Harness 调用 assembleForAgent('harness-agent') 输出包含 persona + memory
+- [x] AC-8: priority-based budget truncation 逻辑保持不变
+- [x] AC-9: 现有 Clone 聊天行为不受影响（E2E 回归）
 
 ## Verification Method
 **Verification type**: unit test + E2E snapshot test
