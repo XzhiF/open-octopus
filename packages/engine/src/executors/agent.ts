@@ -342,6 +342,12 @@ export class AgentExecutor implements NodeExecutor {
       }
     }
 
+    // Inject experience segment from VarPool (precomputed by server-side precompute hook)
+    const expSegment = this.pool.get("__experience_segment") as string | undefined
+    if (expSegment) {
+      prompt = expSegment + "\n\n---\n\n" + prompt
+    }
+
     const nodeAnswers: AutoAnswer[] = this.node.auto_answers ?? []
 
     const compiled = compileAutoAnswers(this.globalAutoAnswers ?? [], nodeAnswers)
@@ -359,6 +365,15 @@ export class AgentExecutor implements NodeExecutor {
   /** Build a structured prompt for goal-mode agent nodes. */
   private buildGoalPrompt(): string {
     const parts: string[] = []
+
+    // Inject experience segment from VarPool (precomputed by server-side precompute hook)
+    const expSegment = this.pool.get("__experience_segment") as string | undefined
+    if (expSegment) {
+      parts.push(expSegment)
+      parts.push(``)
+      parts.push(`---`)
+      parts.push(``)
+    }
 
     // Goal section
     parts.push(`## Goal`)

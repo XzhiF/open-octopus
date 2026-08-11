@@ -15,6 +15,7 @@ import { RecoveryManager } from "./execution/RecoveryManager"
 import { globalErrorTracker } from "./error-tracker"
 import { RepairService } from "./repair"
 import { getResourceRegistry } from "./resource-registry"
+import { EvolutionDAO } from "../db/dao/evolution-dao"
 import type { EngineCallbacks } from "@octopus/engine"
 import type { ExecutionRow, NodeExecutionRow, BranchExecutionRow } from "./execution/types"
 
@@ -57,11 +58,12 @@ export class ExecutionService {
       org, workspacePath, workspaceDbId, workspaceId, obs, globalErrorTracker,
     )
 
-    // Wire up knowledge injection pipeline
+    // Wire up knowledge injection pipeline + experience precompute
     try {
       const effectivenessDAO = new KnowledgeEffectivenessDAO(db)
       const pendingReviewDAO = new PendingReviewDAO(db)
-      const knowledgeService = createKnowledgeService(effectivenessDAO, pendingReviewDAO, org)
+      const evolutionDAO = new EvolutionDAO(db)
+      const knowledgeService = createKnowledgeService(effectivenessDAO, pendingReviewDAO, org, evolutionDAO)
       this.lifecycle.setKnowledgeService(knowledgeService)
     } catch (err) {
       console.warn("[ExecutionService] Knowledge service initialization failed:", err)
