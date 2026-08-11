@@ -259,11 +259,12 @@ export class EvolutionDAO extends BaseDAO {
       }>
     } catch {
       // FTS MATCH failed — fallback to LIKE search
+      const escaped = query.replace(/[%_\\]/g, '\\$&')
       let sql = `
         SELECT id, skill_name, content, scope, scope_ref, pattern_tags, outcome
         FROM experiences WHERE content LIKE ?
       `
-      const params: unknown[] = [`%${query}%`]
+      const params: unknown[] = [`%${escaped}%`]
       if (scope) {
         sql += ` AND scope = ?`
         params.push(scope)

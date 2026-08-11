@@ -6,7 +6,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
 import { HarnessController } from "../harness-controller"
-import { HarnessAgentSession, type HarnessSessionsContext } from "../harness-agent-session"
+import { HarnessAgentSession, type HarnessSessionContext } from "../harness-agent-session"
 import type { HarnessDAO } from "../../../db/dao/harness-dao"
 import type { SSEService } from "../../sse"
 import type { HarnessConfigService } from "../config-service"
@@ -16,8 +16,8 @@ import type { DiagnosisReport, DelegationResult } from "@octopus/shared"
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
 function makeSessionContext(
-  overrides: Partial<HarnessSessionsContext> = {},
-): HarnessSessionsContext {
+  overrides: Partial<HarnessSessionContext> = {},
+): HarnessSessionContext {
   return {
     workflowContent: "name: test\nnodes:\n  - id: build\n    type: bash",
     nodeList: [
