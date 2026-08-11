@@ -112,8 +112,8 @@ export class ChatPromptAdapter implements Adapter {
 export class ClonePromptAdapter implements Adapter {
   private runtime: CloneRuntime
 
-  constructor(cloneDef: CloneDef, org: string) {
-    this.runtime = new CloneRuntime(cloneDef, org)
+  constructor(cloneDef: CloneDef, org: string, enricher?: ContextEnricher) {
+    this.runtime = new CloneRuntime(cloneDef, org, undefined, enricher)
   }
 
   assemble(_opts?: AssembleForAgentOpts): string {

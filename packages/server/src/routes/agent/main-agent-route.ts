@@ -13,6 +13,9 @@ import type { MessageChunk } from '@octopus/providers'
 import { getProvider } from '@octopus/providers'
 import type { AgentSessionDAO } from '../../db/dao'
 import { CloneRuntime } from '../../services/agent/clone-runtime'
+import { ContextEnricher } from '../../services/agent/context-enricher'
+import { EvolutionDAO } from '../../db/dao/evolution-dao'
+import { getDb } from '../../db/connection'
 import { SystemPromptAssembler } from '../../services/agent/system-prompt-assembler'
 import { registerActiveStream, unregisterActiveStream } from '../../services/agent/agent-service'
 import { getAgentDir, getBuiltInCloneDir, getCloneDir, getAgentSkillsDir, backupFile } from '../../services/agent/paths'
@@ -232,7 +235,7 @@ export function createMainAgentRoute(deps: MainAgentRouteDeps): Hono {
               data: JSON.stringify({ clone_name: targetClone, display_name: cloneDef.displayName }),
             })
 
-            const runtime = new CloneRuntime(cloneDef, org)
+            const runtime = new CloneRuntime(cloneDef, org, undefined, new ContextEnricher(new EvolutionDAO(getDb())))
             const cwd = runtime.getDefaultCwd()
             let fullContent = ''
 
@@ -750,7 +753,7 @@ async function executeDelegation(
   }
 
   // Execute via CloneRuntime
-  const runtime = new CloneRuntime(cloneDef, org)
+  const runtime = new CloneRuntime(cloneDef, org, undefined, new ContextEnricher(new EvolutionDAO(getDb())))
   const cwd = runtime.getDefaultCwd()
 
   await stream.writeSSE({
