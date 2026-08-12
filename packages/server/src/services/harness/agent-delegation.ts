@@ -597,7 +597,23 @@ export class AgentDelegationService {
     }
 
     // Parse the response
-    const parsed = parseDelegationResponse(responseText)
+    let parsed = parseDelegationResponse(responseText)
+
+    // Fallback: if text parsing failed, try extracting decision from thinking chunks.
+    // Non-Claude models (e.g. qwen) sometimes put the decision in thinking but output
+    // empty or non-structured text. The thinking content often contains the decision.
+    if (!parsed.success && agentChunks && agentChunks.length > 0) {
+      const thinkingText = agentChunks
+        .filter((c) => c.type === "thinking")
+        .map((c) => String(c.content ?? ""))
+        .join("")
+      if (thinkingText) {
+        const fallbackParsed = parseDelegationResponse(thinkingText)
+        if (fallbackParsed.success) {
+          parsed = fallbackParsed
+        }
+      }
+    }
 
     // Attach token usage info from the agent session / LLM call
     if (tokenInfo) {
@@ -824,10 +840,13 @@ export class AgentDelegationService {
           } else if (chunk.type === "result") {
             if (chunk.content) text = chunk.content
             if (chunk.tokens) {
+              // Use real model name from modelUsages (e.g. "claude-sonnet-4-5-20250827")
+              // instead of the short alias ("sonnet") or a hardcoded string
+              const realModel = chunk.modelUsages?.[0]?.model ?? "unknown"
               tokenUsage = {
                 input: chunk.tokens.input,
                 output: chunk.tokens.output,
-                model: "claude-sonnet-4-20250514",
+                model: realModel,
               }
             }
           } else if (

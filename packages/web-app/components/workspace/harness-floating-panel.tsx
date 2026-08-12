@@ -104,13 +104,39 @@ function CollapsedPanel({
   )
 }
 
+// ============ Helpers ============
+
+const MODEL_DISPLAY_NAMES: Record<string, string> = {
+  "claude-sonnet-4-20250514": "Sonnet 4",
+  "claude-sonnet-4-5-20250827": "Sonnet 4.5",
+  "claude-opus-4-20250514": "Opus 4",
+  "claude-opus-4-5-20250827": "Opus 4.5",
+  "claude-haiku-3-5-20241022": "Haiku 3.5",
+  "claude-3-5-haiku-20241022": "Haiku 3.5",
+}
+
+function formatModelName(modelId: string): string {
+  if (MODEL_DISPLAY_NAMES[modelId]) return MODEL_DISPLAY_NAMES[modelId]
+  // Fallback: extract readable parts from model ID
+  const m = modelId.match(/^claude-(\w+)-([\d.]+)-(\d{8})$/)
+  if (m) {
+    const [, tier, version] = m
+    const v = version.includes("-") ? version.replace(/-/g, ".") : version
+    return `${tier.charAt(0).toUpperCase() + tier.slice(1)} ${v}`
+  }
+  return modelId
+}
+
+function formatTimestamp(ts: number): string {
+  const d = new Date(ts)
+  const pad = (n: number) => String(n).padStart(2, "0")
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
+}
+
 // ============ Timeline Item ============
 
 function TimelineItem({ event }: { event: ParsedHarnessEvent }) {
-  const time = new Date(event.timestamp).toLocaleTimeString("zh-CN", {
-    hour: "2-digit",
-    minute: "2-digit",
-  })
+  const time = formatTimestamp(event.timestamp)
 
   let icon: string
   let label: string
@@ -158,17 +184,17 @@ function TimelineItem({ event }: { event: ParsedHarnessEvent }) {
         : "text-muted-foreground"
       // Delegation gets a two-line layout: title + reasoning
       return (
-        <div className="flex items-start gap-1.5 text-xs py-0.5">
-          <span className="text-muted-foreground/60 shrink-0 tabular-nums">{time}</span>
-          <span className="shrink-0">{icon}</span>
-          <div className="min-w-0 flex-1">
-            <div className={cn(colorClass)}>{label}</div>
-            {reason && (
-              <div className="text-muted-foreground whitespace-pre-wrap break-words mt-0.5 text-[11px]">
-                {reason}
-              </div>
-            )}
+        <div className="text-xs py-2">
+          <div className="flex items-start gap-1.5">
+            <span className="text-muted-foreground/60 shrink-0 tabular-nums">{time}</span>
+            <span className="shrink-0">{icon}</span>
+            <span className={cn(colorClass)}>{label}</span>
           </div>
+          {reason && (
+            <div className="text-muted-foreground whitespace-pre-wrap break-words mt-0.5 text-[11px]">
+              {reason}
+            </div>
+          )}
         </div>
       )
     }
@@ -184,7 +210,7 @@ function TimelineItem({ event }: { event: ParsedHarnessEvent }) {
   }
 
   return (
-    <div className="flex items-start gap-1.5 text-xs py-0.5">
+    <div className="flex items-start gap-1.5 text-xs py-2">
       <span className="text-muted-foreground/60 shrink-0 tabular-nums">{time}</span>
       <span className="shrink-0">{icon}</span>
       <span className={cn("truncate", colorClass)}>{label}</span>
@@ -231,7 +257,7 @@ function MonitorTab({ events }: { events: ParsedHarnessEvent[] }) {
   return (
     <div className="flex flex-col h-full">
       {/* Timeline */}
-      <div className="flex-1 overflow-y-auto min-h-0 space-y-0.5 px-2 py-1">
+      <div className="flex-1 overflow-y-auto min-h-0 py-1 divide-y divide-border/50">
         {events.map((event) => (
           <TimelineItem key={event.id} event={event} />
         ))}
@@ -246,7 +272,7 @@ function MonitorTab({ events }: { events: ParsedHarnessEvent[] }) {
         </div>
         {(stats.totalInput > 0 || stats.totalOutput > 0) && (
           <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
-            <span>🤖 {stats.models.length > 0 ? stats.models.map(m => m.length > 20 ? m.slice(0, 20) + "…" : m).join(", ") : "unknown"}</span>
+            <span>🤖 {stats.models.length > 0 ? stats.models.map(m => formatModelName(m)).join(", ") : "unknown"}</span>
             <span className="text-muted-foreground/60">|</span>
             <span>📥 {formatTokenCount(stats.totalInput)}</span>
             <span>📤 {formatTokenCount(stats.totalOutput)}</span>
@@ -259,116 +285,146 @@ function MonitorTab({ events }: { events: ParsedHarnessEvent[] }) {
   )
 }
 
-// ============ Detail Tab ============
+// ============ Event Accordion Item ============
 
-function DetailTab({ events }: { events: ParsedHarnessEvent[] }) {
-  const [selectedId, setSelectedId] = useState<string | null>(null)
-  const selected = events.find((e) => e.id === selectedId)
+function EventAccordionItem({
+  event,
+  isExpanded,
+  onToggle,
+}: {
+  event: ParsedHarnessEvent
+  isExpanded: boolean
+  onToggle: () => void
+}) {
+  const time = formatTimestamp(event.timestamp)
 
-  if (events.length === 0) {
-    return (
-      <div className="text-xs text-muted-foreground text-center py-6">
-        暂无事件详情
-      </div>
-    )
+  const iter = event.iteration ?? (event.report as any)?.iteration
+  const nodeName = iter != null ? `${event.nodeId ?? "system"} (iter ${iter})` : (event.nodeId ?? "system")
+
+  let icon: string
+  let colorClass: string
+  switch (event.type) {
+    case "harness_diagnosis": {
+      const severity = event.report?.severity
+      icon = severity === "critical" ? "🚨" : "⚠️"
+      colorClass = severity === "critical" ? "text-red-400" : "text-amber-400"
+      break
+    }
+    case "harness_intervention":
+      icon = "🔄"
+      colorClass = "text-blue-400"
+      break
+    case "harness_delegation":
+      icon = event.delegationResult?.success ? "🤖" : "🤖❌"
+      colorClass = event.delegationResult?.success
+        ? event.delegationResult?.decision === "block_node" ? "text-red-400" : "text-violet-400"
+        : "text-muted-foreground"
+      break
+    case "harness_blocked":
+      icon = "🚨"
+      colorClass = "text-red-500"
+      break
+    default:
+      icon = "•"
+      colorClass = "text-muted-foreground"
   }
 
   return (
-    <div className="flex flex-col h-full">
-      {/* Event selector */}
-      <div className="shrink-0 border-b border-border/50 px-2 py-1 max-h-[120px] overflow-y-auto space-y-0.5">
-        {events.map((event) => (
-          <div
-            key={event.id}
-            className={cn(
-              "text-xs px-2 py-0.5 rounded cursor-pointer truncate",
-              selectedId === event.id
-                ? "bg-primary/10 text-primary"
-                : "hover:bg-muted/50 text-muted-foreground",
-            )}
-            onClick={() => setSelectedId(event.id)}
-          >
-            {(() => {
-              const iter = event.iteration ?? (event.report as any)?.iteration
-              const nodeName = iter != null ? `${event.nodeId ?? "system"} (iter ${iter})` : (event.nodeId ?? "system")
-              return <>{event.type} — {nodeName}</>
-            })()}
-          </div>
-        ))}
+    <div className="border-b border-border/30 last:border-b-0">
+      {/* Header — clickable */}
+      <div
+        className={cn(
+          "flex items-center gap-1.5 text-xs px-2 py-1.5 cursor-pointer select-none",
+          isExpanded ? "bg-primary/5" : "hover:bg-muted/50",
+        )}
+        onClick={onToggle}
+      >
+        {/* Expand indicator */}
+        <span className={cn(
+          "shrink-0 text-[10px] text-muted-foreground/60 transition-transform duration-150",
+          isExpanded && "rotate-90",
+        )}>▶</span>
+        {/* Timestamp */}
+        <span className="shrink-0 tabular-nums text-muted-foreground/70 font-mono text-[10px]">{time}</span>
+        {/* Icon */}
+        <span className="shrink-0">{icon}</span>
+        {/* Label */}
+        <span className={cn("truncate", colorClass)}>
+          {event.type.replace("harness_", "")} — {nodeName}
+        </span>
       </div>
 
-      {/* Selected event detail */}
-      {selected && (
-        <div className="flex-1 overflow-y-auto min-h-0 px-2 py-2 text-xs space-y-2">
-          <DetailRow label="类型" value={selected.type} />
+      {/* Body — collapsible */}
+      {isExpanded && (
+        <div className="px-2 py-2 text-xs space-y-2 bg-muted/10">
+          <DetailRow label="类型" value={event.type} />
           <DetailRow label="节点" value={(() => {
-            const iter = selected.iteration ?? (selected.report as any)?.iteration
-            return iter != null ? `${selected.nodeId ?? "-"} (iter ${iter})` : (selected.nodeId ?? "-")
+            const iter = event.iteration ?? (event.report as any)?.iteration
+            return iter != null ? `${event.nodeId ?? "-"} (iter ${iter})` : (event.nodeId ?? "-")
           })()} />
-          <DetailRow label="时间" value={new Date(selected.timestamp).toLocaleString()} />
+          <DetailRow label="时间" value={formatTimestamp(event.timestamp)} />
 
-          {selected.report && (
+          {event.report && (
             <>
-              <DetailRow label="检测器" value={selected.report.detector} />
-              <DetailRow label="严重度" value={selected.report.severity} />
-              <DetailRow label="模式" value={selected.report.pattern} />
-              {selected.report.evidence.length > 0 && (
+              <DetailRow label="检测器" value={event.report.detector} />
+              <DetailRow label="严重度" value={event.report.severity} />
+              <DetailRow label="模式" value={event.report.pattern} />
+              {event.report.evidence.length > 0 && (
                 <DetailSection label="证据">
                   <pre className="text-[10px] font-mono whitespace-pre-wrap text-muted-foreground">
-                    {JSON.stringify(selected.report.evidence, null, 2)}
+                    {JSON.stringify(event.report.evidence, null, 2)}
                   </pre>
                 </DetailSection>
               )}
             </>
           )}
 
-          {selected.action && (
+          {event.action && (
             <DetailSection label="干预动作">
               <pre className="text-[10px] font-mono whitespace-pre-wrap text-muted-foreground">
-                {JSON.stringify(selected.action, null, 2)}
+                {JSON.stringify(event.action, null, 2)}
               </pre>
             </DetailSection>
           )}
 
-          {selected.delegationResult && (
+          {event.delegationResult && (
             <>
-              <DetailRow label="决策" value={selected.delegationResult.decision ?? "-"} />
-              <DetailRow label="成功" value={selected.delegationResult.success ? "✅ 是" : "❌ 否"} />
-              {selected.delegationResult.reasoning && (
+              <DetailRow label="决策" value={event.delegationResult.decision ?? "-"} />
+              <DetailRow label="成功" value={event.delegationResult.success ? "✅ 是" : "❌ 否"} />
+              {event.delegationResult.reasoning && (
                 <DetailSection label="推理">
                   <pre className="text-[10px] font-mono whitespace-pre-wrap text-muted-foreground">
-                    {selected.delegationResult.reasoning}
+                    {event.delegationResult.reasoning}
                   </pre>
                 </DetailSection>
               )}
-              {selected.delegationResult.blockReason && (
+              {event.delegationResult.blockReason && (
                 <DetailSection label="阻断原因">
                   <pre className="text-[10px] font-mono whitespace-pre-wrap text-red-400">
-                    {selected.delegationResult.blockReason}
+                    {event.delegationResult.blockReason}
                   </pre>
                 </DetailSection>
               )}
-              {selected.delegationResult.harnessHint && (
+              {event.delegationResult.harnessHint && (
                 <DetailSection label="提示注入">
                   <pre className="text-[10px] font-mono whitespace-pre-wrap text-muted-foreground">
-                    {selected.delegationResult.harnessHint}
+                    {event.delegationResult.harnessHint}
                   </pre>
                 </DetailSection>
               )}
-              {selected.delegationResult.modelOverride && (
-                <DetailRow label="模型覆盖" value={selected.delegationResult.modelOverride} />
+              {event.delegationResult.modelOverride && (
+                <DetailRow label="模型覆盖" value={event.delegationResult.modelOverride} />
               )}
-              {selected.delegationResult.varPoolPatches && Object.keys(selected.delegationResult.varPoolPatches).length > 0 && (
+              {event.delegationResult.varPoolPatches && Object.keys(event.delegationResult.varPoolPatches).length > 0 && (
                 <DetailSection label="变量修补">
                   <pre className="text-[10px] font-mono whitespace-pre-wrap text-muted-foreground">
-                    {JSON.stringify(selected.delegationResult.varPoolPatches, null, 2)}
+                    {JSON.stringify(event.delegationResult.varPoolPatches, null, 2)}
                   </pre>
                 </DetailSection>
               )}
-              {selected.delegationResult.chunks && selected.delegationResult.chunks.length > 0 && (() => {
-                // Merge consecutive chunks of the same type
+              {event.delegationResult.chunks && event.delegationResult.chunks.length > 0 && (() => {
                 const merged: Array<{ type: string; content: string; toolName?: string; toolInput?: unknown; isError?: boolean }> = []
-                for (const chunk of selected.delegationResult.chunks) {
+                for (const chunk of event.delegationResult.chunks) {
                   const last = merged[merged.length - 1]
                   if (chunk.type === "thinking" || chunk.type === "thinking_start" || chunk.type === "thinking_done") {
                     const text = String(chunk.content ?? "")
@@ -408,7 +464,7 @@ function DetailTab({ events }: { events: ParsedHarnessEvent[] }) {
                           return (
                             <div key={i} className="text-[10px] text-amber-400/80">
                               <span className="text-amber-400 font-medium">🔧 {item.toolName}</span>
-                              {item.toolInput && (
+                              {item.toolInput != null && (
                                 <pre className="text-muted-foreground ml-3 whitespace-pre-wrap">
                                   {typeof item.toolInput === "string" ? item.toolInput.slice(0, 300) : JSON.stringify(item.toolInput, null, 2).slice(0, 300)}
                                 </pre>
@@ -433,31 +489,94 @@ function DetailTab({ events }: { events: ParsedHarnessEvent[] }) {
             </>
           )}
 
-          {selected.tokenUsage && (
+          {event.tokenUsage && (
             <DetailSection label="Token 用量">
               <div className="text-[10px] font-mono text-muted-foreground space-y-0.5">
-                <div>模型: {selected.tokenUsage.model ?? "-"}</div>
-                <div>输入: {formatTokenCount(selected.tokenUsage.inputTokens ?? 0)}</div>
-                <div>输出: {formatTokenCount(selected.tokenUsage.outputTokens ?? 0)}</div>
+                <div>模型: {formatModelName(event.tokenUsage.model ?? "-")}</div>
+                <div>输入: {formatTokenCount(event.tokenUsage.inputTokens ?? 0)}</div>
+                <div>输出: {formatTokenCount(event.tokenUsage.outputTokens ?? 0)}</div>
               </div>
             </DetailSection>
           )}
 
-          {selected.result && !selected.delegationResult && (
-            <DetailRow label="结果" value={typeof selected.result === "object" ? JSON.stringify(selected.result) : selected.result} />
+          {event.result && !event.delegationResult && (
+            <DetailRow label="结果" value={typeof event.result === "object" ? JSON.stringify(event.result) : event.result} />
           )}
 
-          {selected.reason && (
-            <DetailRow label="原因" value={typeof selected.reason === "object" ? JSON.stringify(selected.reason) : selected.reason} />
+          {event.reason && (
+            <DetailRow label="原因" value={typeof event.reason === "object" ? JSON.stringify(event.reason) : event.reason} />
           )}
         </div>
       )}
+    </div>
+  )
+}
 
-      {!selected && (
-        <div className="flex-1 flex items-center justify-center text-xs text-muted-foreground">
-          点击选择事件查看详情
-        </div>
-      )}
+// ============ Detail Tab (Accordion) ============
+
+function DetailTab({ events }: { events: ParsedHarnessEvent[] }) {
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set())
+
+  const toggleEvent = useCallback((id: string) => {
+    setExpandedIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) {
+        next.delete(id)
+      } else {
+        next.add(id)
+      }
+      return next
+    })
+  }, [])
+
+  const expandAll = useCallback(() => {
+    setExpandedIds(new Set(events.map((e) => e.id)))
+  }, [events])
+
+  const collapseAll = useCallback(() => {
+    setExpandedIds(new Set())
+  }, [])
+
+  if (events.length === 0) {
+    return (
+      <div className="text-xs text-muted-foreground text-center py-6">
+        暂无事件详情
+      </div>
+    )
+  }
+
+  return (
+    <div className="flex flex-col h-full">
+      {/* Toolbar */}
+      <div className="shrink-0 flex items-center gap-2 px-2 py-1 border-b border-border/50">
+        <span className="text-[10px] text-muted-foreground">{events.length} 个事件</span>
+        <div className="flex-1" />
+        <button
+          className="text-[10px] text-primary hover:underline"
+          onClick={expandAll}
+        >
+          全部展开
+        </button>
+        <span className="text-muted-foreground/40">|</span>
+        <button
+          className="text-[10px] text-primary hover:underline"
+          onClick={collapseAll}
+        >
+          全部收起
+        </button>
+      </div>
+
+      {/* Accordion list */}
+      <div className="flex-1 overflow-y-auto min-h-0">
+        {events.map((event) => (
+          <EventAccordionItem
+            key={event.id}
+            event={event}
+            isExpanded={expandedIds.has(event.id)}
+            onToggle={() => toggleEvent(event.id)}
+          />
+        ))}
+      </div>
     </div>
   )
 }
