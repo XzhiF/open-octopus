@@ -68,6 +68,9 @@ function handleSchemaMigrations(db: Database.Database): void {
 
   // Migrate FTS table to include source column (schema version 29)
   migrateFtsTableWithSource(db)
+
+  // Migrate experiences_fts to include scope-aware columns (schema version 35)
+  migrateExperiencesFtsWithScope(db)
 }
 
 /**
@@ -168,6 +171,15 @@ function ensureColumnsForExistingTables(db: Database.Database): void {
 
   // Budget snapshot (schema version 36 — workflow-observability)
   ensureColumn(db, 'executions', 'budget_snapshot', "TEXT DEFAULT NULL")
+
+  // Experiences v2 columns (schema version 35 — scope-aware experiences)
+  ensureColumn(db, 'experiences', 'scope', "TEXT NOT NULL DEFAULT 'agent'")
+  ensureColumn(db, 'experiences', 'scope_ref', "TEXT DEFAULT NULL")
+  ensureColumn(db, 'experiences', 'pattern_tags', "TEXT DEFAULT '[]'")
+  ensureColumn(db, 'experiences', 'outcome', "TEXT DEFAULT NULL")
+  ensureColumn(db, 'experiences', 'source_type', "TEXT NOT NULL DEFAULT 'session'")
+  ensureColumn(db, 'experiences', 'execution_id', "TEXT DEFAULT NULL")
+  ensureColumn(db, 'experiences', 'node_id', "TEXT DEFAULT NULL")
 }
 
 function ensureColumn(db: Database.Database, table: string, column: string, definition: string): void {
@@ -203,5 +215,29 @@ function migrateFtsTableWithSource(db: Database.Database): void {
     }
   } catch (err) {
     console.warn("[schema] FTS migration check failed:", err instanceof Error ? err.message : String(err))
+  }
+}
+
+/**
+ * Migrate experiences_fts to include scope-aware columns (schema version 35).
+ * FTS5 virtual tables don't support ALTER TABLE, so we drop and recreate.
+ * Schema.sql will recreate the table with the new schema (IF NOT EXISTS).
+ */
+function migrateExperiencesFtsWithScope(db: Database.Database): void {
+  try {
+    const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='experiences_fts'").all()
+    if (tables.length === 0) return // Will be created by schema.sql
+
+    // Check if scope column exists
+    try {
+      db.prepare("SELECT scope FROM experiences_fts LIMIT 1").get()
+      return // Already has scope column
+    } catch {
+      // Scope column missing — drop table, schema.sql will recreate it
+      db.exec("DROP TABLE IF EXISTS experiences_fts")
+      console.log("[schema] Dropped old experiences_fts (missing scope column), will recreate")
+    }
+  } catch (err) {
+    console.warn("[schema] experiences_fts migration check failed:", err instanceof Error ? err.message : String(err))
   }
 }

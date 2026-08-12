@@ -1,15 +1,15 @@
 "use client"
 
 import { useState, useRef, useCallback, useEffect, useMemo } from "react"
-import { useRouter } from "next/navigation"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { Button } from "@/components/ui/button"
-import { Minus, GripHorizontal, ExternalLink } from "lucide-react"
+import { Minus, GripHorizontal } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { useHarnessEvents, type ParsedHarnessEvent } from "@/hooks/use-harness-events"
 import { useExecutionMetrics, type ExecutionMetrics } from "@/hooks/use-execution-metrics"
 import { HarnessChatbot } from "./harness-chatbot"
-import { formatTokenCount, formatCurrency, formatPercent } from "@/lib/analytics-format"
+import { ObservabilityTab } from "./observability-panel"
+import { formatTokenCount } from "@/lib/analytics-format"
 
 // ============ Types ============
 
@@ -100,8 +100,8 @@ function CollapsedPanel({
       </div>
       {metrics.totalTokens > 0 && (
         <span className="text-[10px] text-muted-foreground pointer-events-none flex items-center gap-1">
-          <span>📥{formatTokenCount(metrics.totalInputTokens)}</span>
-          <span>📤{formatTokenCount(metrics.totalOutputTokens)}</span>
+          <span>↑{formatTokenCount(metrics.totalInputTokens)}</span>
+          <span>↓{formatTokenCount(metrics.totalOutputTokens)}</span>
         </span>
       )}
     </div>
@@ -222,115 +222,12 @@ function TimelineItem({ event }: { event: ParsedHarnessEvent }) {
   )
 }
 
-// ============ Summary Cards ============
-
-function getBudgetColor(percent: number): string {
-  if (percent >= 80) return "bg-red-500"
-  if (percent >= 60) return "bg-yellow-500"
-  return "bg-emerald-500"
-}
-
-function SummaryCards({
-  metrics,
-  workspaceId,
-  executionId,
-  isBudgetExceeded,
-}: {
-  metrics: ExecutionMetrics
-  workspaceId: string
-  executionId: string
-  isBudgetExceeded: boolean
-}) {
-  const router = useRouter()
-  const tokensPercent = metrics.budgetProgress.tokensPercent
-
-  return (
-    <div className="shrink-0 border-b border-border/50 px-2 py-2 space-y-2">
-      {/* Budget exceeded banner */}
-      {isBudgetExceeded && (
-        <div className="rounded bg-red-500/10 border border-red-500/30 px-2 py-1.5 flex items-center gap-2">
-          <span className="text-red-500 text-sm">⚠️</span>
-          <span className="text-red-600 text-xs font-semibold">预算超限 — 执行已被阻断</span>
-        </div>
-      )}
-      {/* 4 summary cards in a 2x2 grid */}
-      <div className="grid grid-cols-2 gap-1.5">
-        {/* Total Token Card */}
-        <div className="rounded bg-muted/40 px-2 py-1.5">
-          <div className="text-[10px] text-muted-foreground">Total Token</div>
-          <div className="text-sm font-semibold tabular-nums">{formatTokenCount(metrics.totalTokens)}</div>
-          <div className="text-[10px] text-muted-foreground">
-            📥 {formatTokenCount(metrics.totalInputTokens)} / 📤 {formatTokenCount(metrics.totalOutputTokens)}
-          </div>
-        </div>
-
-        {/* Total Turns Card */}
-        <div className="rounded bg-muted/40 px-2 py-1.5">
-          <div className="text-[10px] text-muted-foreground">LLM Turns</div>
-          <div className="text-sm font-semibold tabular-nums">{metrics.totalTurns}</div>
-        </div>
-
-        {/* Budget Progress Card */}
-        <div className="rounded bg-muted/40 px-2 py-1.5">
-          <div className="text-[10px] text-muted-foreground">Budget</div>
-          {tokensPercent != null ? (
-            <>
-              <div className="text-sm font-semibold tabular-nums">{formatPercent(Math.round(tokensPercent))}</div>
-              <div className="mt-0.5 h-1.5 w-full rounded-full bg-muted overflow-hidden">
-                <div
-                  className={cn("h-full rounded-full transition-all", getBudgetColor(tokensPercent))}
-                  style={{ width: `${Math.min(tokensPercent, 100)}%` }}
-                />
-              </div>
-            </>
-          ) : (
-            <div className="text-sm text-muted-foreground">不限</div>
-          )}
-        </div>
-
-        {/* Error Count Card */}
-        <div className="rounded bg-muted/40 px-2 py-1.5">
-          <div className="text-[10px] text-muted-foreground">Errors</div>
-          <div className={cn(
-            "text-sm font-semibold tabular-nums",
-            metrics.errorCount > 0 && "text-red-400",
-          )}>
-            {metrics.errorCount}
-          </div>
-        </div>
-      </div>
-
-      {/* Observability detail navigation button */}
-      <Button
-        variant="outline"
-        size="sm"
-        className="w-full text-xs h-7"
-        onClick={() =>
-          router.push(`/workspaces/${workspaceId}/executions/${executionId}/observability`)
-        }
-        data-testid="observability-detail-button"
-      >
-        📊 观测详情
-        <ExternalLink className="ml-1 h-3 w-3" />
-      </Button>
-    </div>
-  )
-}
-
 // ============ Monitor Tab ============
 
 function MonitorTab({
   events,
-  metrics,
-  workspaceId,
-  executionId,
-  isBudgetExceeded,
 }: {
   events: ParsedHarnessEvent[]
-  metrics: ExecutionMetrics
-  workspaceId: string
-  executionId: string
-  isBudgetExceeded: boolean
 }) {
   const stats = useMemo(() => {
     // Count both legacy intervention events and delegation events (fix_and_retry, block_node, etc.)
@@ -359,9 +256,6 @@ function MonitorTab({
 
   return (
     <div className="flex flex-col h-full">
-      {/* Summary cards — always visible at the top */}
-      <SummaryCards metrics={metrics} workspaceId={workspaceId} executionId={executionId} isBudgetExceeded={isBudgetExceeded} />
-
       {/* Empty state for timeline */}
       {events.length === 0 ? (
         <div className="flex-1 text-xs text-muted-foreground text-center py-6">
@@ -387,8 +281,8 @@ function MonitorTab({
               <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
                 <span>🤖 {stats.models.length > 0 ? stats.models.map(m => m.length > 20 ? m.slice(0, 20) + "…" : m).join(", ") : "unknown"}</span>
                 <span className="text-muted-foreground/60">|</span>
-                <span>📥 {formatTokenCount(stats.totalInput)}</span>
-                <span>📤 {formatTokenCount(stats.totalOutput)}</span>
+                <span>↑ {formatTokenCount(stats.totalInput)}</span>
+                <span>↓ {formatTokenCount(stats.totalOutput)}</span>
                 <span className="text-muted-foreground/60">=</span>
                 <span className="font-medium">{formatTokenCount(stats.totalInput + stats.totalOutput)}</span>
               </div>
@@ -725,7 +619,7 @@ export function HarnessFloatingPanel({
   const [expanded, setExpanded] = useState(false)
   const [pos, setPos] = useState<{ left: number; top: number } | null>(null)
   const [size, setSize] = useState<{ width: number; height: number }>({ width: 800, height: 625 })
-  const [activeTab, setActiveTab] = useState("monitor")
+  const [activeTab, setActiveTab] = useState("observability")
   const panelRef = useRef<HTMLDivElement>(null)
   const dragRef = useRef<{
     startX: number
@@ -920,6 +814,9 @@ export function HarnessFloatingPanel({
       {/* Tabs */}
       <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 flex flex-col min-h-0">
         <TabsList className="mx-2 mt-1 h-8 shrink-0">
+          <TabsTrigger value="observability" className="text-xs h-6 px-2">
+            观测
+          </TabsTrigger>
           <TabsTrigger value="monitor" className="text-xs h-6 px-2">
             监控
           </TabsTrigger>
@@ -931,8 +828,12 @@ export function HarnessFloatingPanel({
           </TabsTrigger>
         </TabsList>
 
+        <TabsContent value="observability" className="flex-1 mt-0 min-h-0 overflow-hidden">
+          <ObservabilityTab workspaceId={workspaceId} executionId={executionId} />
+        </TabsContent>
+
         <TabsContent value="monitor" className="flex-1 mt-0 min-h-0 overflow-hidden">
-          <MonitorTab events={events} metrics={metrics} workspaceId={workspaceId} executionId={executionId} isBudgetExceeded={isBudgetExceeded} />
+          <MonitorTab events={events} />
         </TabsContent>
 
         <TabsContent value="detail" className="flex-1 mt-0 min-h-0 overflow-hidden">

@@ -34,6 +34,13 @@ vi.mock("sonner", () => ({
   toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() },
 }))
 
+// Mock observability panel (avoids API calls in tests)
+vi.mock("../observability-panel", () => ({
+  ObservabilityTab: ({ workspaceId, executionId }: { workspaceId: string; executionId: string }) => (
+    <div data-testid="observability-panel">观测面板: {workspaceId}/{executionId}</div>
+  ),
+}))
+
 import { HarnessFloatingPanel } from "../harness-floating-panel"
 import { HarnessChatbot } from "../harness-chatbot"
 import { useHarnessEvents } from "@/hooks/use-harness-events"
@@ -164,8 +171,8 @@ describe("HarnessFloatingPanel", () => {
     )
 
     // Should show formatted token counts from execution metrics
-    expect(screen.getByText("📥1.0K")).toBeDefined()
-    expect(screen.getByText("📤500")).toBeDefined()
+    expect(screen.getByText("↑1.0K")).toBeDefined()
+    expect(screen.getByText("↓500")).toBeDefined()
   })
 
   it("does not show token summary in collapsed panel when totalTokens is 0", () => {
@@ -180,7 +187,7 @@ describe("HarnessFloatingPanel", () => {
       />,
     )
 
-    expect(screen.queryByText(/📥/)).toBeNull()
+    expect(screen.queryByText(/↑/)).toBeNull()
   })
 
   // ── Expanded State ─────────────────────────────────────────────
@@ -203,6 +210,7 @@ describe("HarnessFloatingPanel", () => {
 
     // Expanded panel should show tabs
     await waitFor(() => {
+      expect(screen.getByText("观测")).toBeDefined()
       expect(screen.getByText("监控")).toBeDefined()
       expect(screen.getByText("明细")).toBeDefined()
       expect(screen.getByText("Chatbot")).toBeDefined()
@@ -211,7 +219,7 @@ describe("HarnessFloatingPanel", () => {
 
   // ── Tab Switching ──────────────────────────────────────────────
 
-  it("shows monitor tab content by default", async () => {
+  it("shows observability tab by default, monitor tab on switch", async () => {
     mockUseHarnessEvents.mockReturnValue(
       makeHookReturn({
         events: [
@@ -255,133 +263,8 @@ describe("HarnessFloatingPanel", () => {
       expect(screen.getByText("监控")).toBeDefined()
     })
 
-    // Monitor tab should show event count
-    expect(screen.getByText(/干预 0次/)).toBeDefined()
-  })
-
-  // ── AC-3: Summary Cards in MonitorTab ──────────────────────────
-
-  it("shows 4 summary cards in expanded MonitorTab", async () => {
-    mockUseHarnessEvents.mockReturnValue(makeHookReturn())
-    mockUseExecutionMetrics.mockReturnValue(
-      makeMetrics({
-        totalTokens: 5000,
-        totalInputTokens: 3000,
-        totalOutputTokens: 2000,
-        totalTurns: 12,
-        budgetProgress: { tokensPercent: 50, durationPercent: null, costPercent: null },
-        errorCount: 2,
-      }),
-    )
-
-    render(
-      <HarnessFloatingPanel
-        workspaceId="ws-1"
-        executionId="exec-1"
-        executionStatus="running"
-      />,
-    )
-
-    // Expand via mouseDown/mouseUp (drag detection)
-    const collapsed = screen.getByTestId("harness-panel-collapsed")
-    fireEvent.mouseDown(collapsed, { clientX: 100, clientY: 100 })
-    fireEvent.mouseUp(collapsed, { clientX: 100, clientY: 100 })
-
-    await waitFor(() => {
-      // Total Token card
-      expect(screen.getByText("Total Token")).toBeDefined()
-      expect(screen.getByText("5.0K")).toBeDefined()
-      // LLM Turns card
-      expect(screen.getByText("LLM Turns")).toBeDefined()
-      expect(screen.getByText("12")).toBeDefined()
-      // Budget card
-      expect(screen.getByText("Budget")).toBeDefined()
-      expect(screen.getByText("50%")).toBeDefined()
-      // Error Count card
-      expect(screen.getByText("Errors")).toBeDefined()
-    })
-  })
-
-  // ── AC-4: Budget progress bar visibility ───────────────────────────
-
-  it("hides budget progress bar when tokensPercent is null", async () => {
-    mockUseHarnessEvents.mockReturnValue(makeHookReturn())
-    mockUseExecutionMetrics.mockReturnValue(
-      makeMetrics({
-        budgetProgress: { tokensPercent: null, durationPercent: null, costPercent: null },
-      }),
-    )
-
-    render(
-      <HarnessFloatingPanel
-        workspaceId="ws-1"
-        executionId="exec-1"
-        executionStatus="running"
-      />,
-    )
-
-    const collapsedPanel = screen.getByTestId("harness-panel-collapsed")
-    fireEvent.mouseDown(collapsedPanel, { clientX: 100, clientY: 100 })
-    fireEvent.mouseUp(collapsedPanel, { clientX: 100, clientY: 100 })
-
-    await waitFor(() => {
-      // Should show "不限" instead of progress bar
-      expect(screen.getByText("不限")).toBeDefined()
-    })
-  })
-
-  // ── AC-5: Budget progress bar color coding ─────────────────────
-
-  it("shows green progress bar when tokensPercent < 60%", async () => {
-    mockUseHarnessEvents.mockReturnValue(makeHookReturn())
-    mockUseExecutionMetrics.mockReturnValue(
-      makeMetrics({
-        budgetProgress: { tokensPercent: 30, durationPercent: null, costPercent: null },
-      }),
-    )
-
-    render(
-      <HarnessFloatingPanel
-        workspaceId="ws-1"
-        executionId="exec-1"
-        executionStatus="running"
-      />,
-    )
-
-    const collapsedPanel = screen.getByTestId("harness-panel-collapsed")
-    fireEvent.mouseDown(collapsedPanel, { clientX: 100, clientY: 100 })
-    fireEvent.mouseUp(collapsedPanel, { clientX: 100, clientY: 100 })
-
-    await waitFor(() => {
-      expect(screen.getByText("30%")).toBeDefined()
-    })
-  })
-
-  // ── AC-6: Observability detail button ──────────────────────────
-
-  it("shows 📊 观测详情 button that navigates to observability page", async () => {
-    mockUseHarnessEvents.mockReturnValue(makeHookReturn())
-
-    render(
-      <HarnessFloatingPanel
-        workspaceId="ws-1"
-        executionId="exec-1"
-        executionStatus="running"
-      />,
-    )
-
-    const collapsedPanel = screen.getByTestId("harness-panel-collapsed")
-    fireEvent.mouseDown(collapsedPanel, { clientX: 100, clientY: 100 })
-    fireEvent.mouseUp(collapsedPanel, { clientX: 100, clientY: 100 })
-
-    await waitFor(() => {
-      const button = screen.getByTestId("observability-detail-button")
-      expect(button).toBeDefined()
-      fireEvent.click(button)
-      expect(mockPush).toHaveBeenCalledWith(
-        "/workspaces/ws-1/executions/exec-1/observability",
-      )
-    })
+    // Default tab should be 观测 (observability panel rendered)
+    expect(screen.getByTestId("observability-panel")).toBeDefined()
   })
 
   // ── Harness Event Types ────────────────────────────────────────
