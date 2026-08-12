@@ -14,7 +14,7 @@
 03-server-observability-api, 05-webapp-hook-floating-panel
 
 ## Status
-ready-for-agent
+done
 
 ## Acceptance Criteria
 - [ ] AC-1: 页面路由 `app/workspaces/[id]/executions/[eid]/observability/page.tsx` 可访问
