@@ -1,7 +1,8 @@
 import fs from 'fs'
 import path from 'path'
 import os from 'os'
-import { getAgentSkillsDir, getExperiencesDir, getAgentDir } from './paths'
+import { getAgentSkillsDir, getAgentDir } from './paths'
+import { getEvolutionService } from './evolution-service'
 
 // ── Types ──────────────────────────────────────────────────────────
 
@@ -300,71 +301,19 @@ export class SubsystemAdapter {
   }
 
   /**
-   * Write an experience entry (reusing existing evolution format).
-   */
-  writeExperience(skillName: string, content: string): string {
-    const expDir = getExperiencesDir()
-    fs.mkdirSync(expDir, { recursive: true })
-
-    const filename = `${skillName}-${new Date().toISOString().replace(/[:.]/g, '-')}.md`
-    const fullPath = path.join(expDir, filename)
-    const formattedContent = `# ${skillName} 经验\n\n> ${new Date().toISOString()}\n\n${content}\n`
-    fs.writeFileSync(fullPath, formattedContent, 'utf-8')
-
-    // Update index
-    this.updateExperienceIndex(expDir)
-
-    return fullPath
-  }
-
-  /**
    * Search experiences for historical patterns.
+   * Delegates to EvolutionDAO.searchByScope() (DB-backed FTS5 search).
    */
   searchExperiences(query: string, topK: number = 3): Array<{ name: string; content: string; score: number }> {
-    const expDir = getExperiencesDir()
-    if (!fs.existsSync(expDir)) return []
-
-    const results: Array<{ name: string; content: string; score: number }> = []
-    const queryLower = query.toLowerCase()
-
     try {
-      const files = fs.readdirSync(expDir).filter(f => f.endsWith('.md'))
-      for (const file of files) {
-        const fullPath = path.join(expDir, file)
-        const content = fs.readFileSync(fullPath, 'utf-8')
-        const contentLower = content.toLowerCase()
-
-        // Simple keyword matching
-        const terms = queryLower.split(/\s+/).filter(t => t.length >= 2)
-        const matches = terms.filter(t => contentLower.includes(t)).length
-        const score = terms.length > 0 ? matches / terms.length : 0
-
-        if (score > 0.2) {
-          results.push({ name: file, content, score })
-        }
-      }
+      const results = getEvolutionService().searchExperiences(query, undefined, topK)
+      return results.map(r => ({
+        name: r.skill_name,
+        content: r.content,
+        score: 1, // FTS results are ranked; uniform score for backward compat
+      }))
     } catch {
-      // Search failure is non-fatal
-    }
-
-    return results.sort((a, b) => b.score - a.score).slice(0, topK)
-  }
-
-  /**
-   * Update the experience index file.
-   */
-  private updateExperienceIndex(expDir: string): void {
-    try {
-      const files = fs.readdirSync(expDir).filter(f => f.endsWith('.md') && f !== 'index.md')
-      const indexPath = path.join(expDir, 'index.md')
-      const lines = ['# 经验索引\n', `> 更新时间: ${new Date().toISOString()}\n`]
-      for (const file of files) {
-        const name = file.replace(/\.md$/, '').replace(/-/g, ' ')
-        lines.push(`- [${name}](./${file})`)
-      }
-      fs.writeFileSync(indexPath, lines.join('\n'), 'utf-8')
-    } catch {
-      // Index update failure is non-fatal
+      return []
     }
   }
 }

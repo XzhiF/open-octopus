@@ -102,6 +102,8 @@ export class HarnessAgentSession {
   private context: HarnessSessionContext
   private messages: ConversationMessage[] = []
   private interventions: SessionIntervention[] = []
+  /** Pending reports keyed by nodeId — populated by appendIntervention, consumed by recordDecision. */
+  private pendingReports = new Map<string, DiagnosisReport>()
   private closed: boolean = false
   private _timeoutMs: number
 
@@ -176,6 +178,9 @@ export class HarnessAgentSession {
       throw new Error(`Cannot append to closed session for execution ${this.executionId}`)
     }
 
+    // Store the report so recordDecision can retrieve it (ticket 03)
+    this.pendingReports.set(report.nodeId, report)
+
     const message = this.buildInterventionMessage(report, state)
     this.messages.push({
       role: "user",
@@ -188,9 +193,15 @@ export class HarnessAgentSession {
    * Called after appendIntervention() and after the agent responds.
    */
   recordDecision(nodeId: string, decision: DelegationResult): void {
+    // Retrieve the stored report, or fall back to search (ticket 03)
+    const report = this.pendingReports.get(nodeId) ?? this.findLastReportForNode(nodeId)
+
+    // Clean up pending report after recording
+    this.pendingReports.delete(nodeId)
+
     this.interventions.push({
       nodeId,
-      report: this.findLastReportForNode(nodeId),
+      report,
       decision: decision.decision,
       reason: decision.reasoning,
       timestamp: Date.now(),
