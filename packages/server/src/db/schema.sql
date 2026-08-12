@@ -432,14 +432,21 @@ CREATE TABLE IF NOT EXISTS evolution_log (
   timestamp TEXT NOT NULL
 );
 
--- 25. Experiences
+-- 25. Experiences (v2 — schema version 35: +scope, scope_ref, pattern_tags, outcome, source_type, execution_id, node_id)
 CREATE TABLE IF NOT EXISTS experiences (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   skill_name TEXT NOT NULL,
   content TEXT NOT NULL,
   source_session_id TEXT,
   org TEXT NOT NULL,
-  created_at TEXT NOT NULL
+  created_at TEXT NOT NULL,
+  scope TEXT NOT NULL DEFAULT 'agent',
+  scope_ref TEXT DEFAULT NULL,
+  pattern_tags TEXT DEFAULT '[]',
+  outcome TEXT DEFAULT NULL,
+  source_type TEXT NOT NULL DEFAULT 'session',
+  execution_id TEXT DEFAULT NULL,
+  node_id TEXT DEFAULT NULL
 );
 
 -- 26. Safety Events
@@ -493,9 +500,15 @@ CREATE VIRTUAL TABLE IF NOT EXISTS session_memory_fts USING fts5(
   source
 );
 
+-- FTS5 v2: scope-aware columns (schema version 35)
+-- Blue-green migration: old table is dropped and replaced by v2 in schema.ts migration.
+-- External content mode (no content= param): manual sync via DAO.
 CREATE VIRTUAL TABLE IF NOT EXISTS experiences_fts USING fts5(
   skill_name,
-  content
+  content,
+  scope,
+  scope_ref,
+  pattern_tags
 );
 
 CREATE VIRTUAL TABLE IF NOT EXISTS reports_fts USING fts5(
@@ -573,6 +586,12 @@ CREATE INDEX IF NOT EXISTS idx_evolution_org ON evolution_log(org);
 CREATE INDEX IF NOT EXISTS idx_evolution_timestamp ON evolution_log(timestamp DESC);
 CREATE INDEX IF NOT EXISTS idx_experiences_skill ON experiences(skill_name);
 CREATE INDEX IF NOT EXISTS idx_experiences_org ON experiences(org);
+-- Experiences v2 indexes (schema version 35)
+CREATE INDEX IF NOT EXISTS idx_experiences_scope ON experiences(scope);
+CREATE INDEX IF NOT EXISTS idx_experiences_scope_ref ON experiences(scope, scope_ref);
+CREATE INDEX IF NOT EXISTS idx_experiences_source_type ON experiences(source_type);
+CREATE INDEX IF NOT EXISTS idx_experiences_execution_id ON experiences(execution_id);
+CREATE INDEX IF NOT EXISTS idx_experiences_org_scope_time ON experiences(org, scope, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_safety_events_org ON safety_events(org);
 CREATE INDEX IF NOT EXISTS idx_safety_events_type ON safety_events(type);
 CREATE INDEX IF NOT EXISTS idx_safety_events_timestamp ON safety_events(timestamp DESC);

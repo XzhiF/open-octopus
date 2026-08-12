@@ -577,7 +577,13 @@ export class ExecutionLifecycle {
       // Clean up harness detectors for this execution
       if (this.harnessController) {
         try {
-          this.harnessController.onExecutionEnd(id)
+          // Ticket 04: pass execution outcome for experience tracking
+          const failedNodeIds = Object.entries(result.nodeResults).filter(([_, r]) => r.status === "failed").map(([nodeId]) => nodeId)
+          const lastFailedNodeId = failedNodeIds.length > 0 ? failedNodeIds[failedNodeIds.length - 1] : undefined
+          this.harnessController.onExecutionEnd(id, {
+            status: finalStatus === "failed" ? "failed" : "completed",
+            lastFailedNodeId,
+          })
         } catch (err) {
           console.warn("[ExecutionLifecycle] Harness onExecutionEnd failed (non-fatal):", err)
         }
@@ -623,7 +629,11 @@ export class ExecutionLifecycle {
       // Clean up harness detectors for this execution (error path)
       if (this.harnessController) {
         try {
-          this.harnessController.onExecutionEnd(id)
+          // Ticket 04: pass failed status with last failed node
+          this.harnessController.onExecutionEnd(id, {
+            status: "failed",
+            lastFailedNodeId: this.findFailedNode(id) ?? undefined,
+          })
         } catch (harnessErr) {
           console.warn("[ExecutionLifecycle] Harness cleanup failed in error path (non-fatal):", harnessErr)
         }
@@ -663,7 +673,8 @@ export class ExecutionLifecycle {
     // Clean up harness detectors for this execution (cancel path)
     if (this.harnessController) {
       try {
-        this.harnessController.onExecutionEnd(id)
+        // Ticket 04: pass cancelled status (outcomes stay pending)
+        this.harnessController.onExecutionEnd(id, { status: "cancelled" })
       } catch (err) {
         console.warn("[ExecutionLifecycle] Harness cleanup failed in cancel path (non-fatal):", err)
       }
@@ -782,7 +793,7 @@ export class ExecutionLifecycle {
         // Clean up harness detectors for this execution (retry completion path)
         if (this.harnessController) {
           try {
-            this.harnessController.onExecutionEnd(id)
+            this.harnessController.onExecutionEnd(id, { status: finalStatus as string })
           } catch (err) {
             console.warn("[ExecutionLifecycle] Harness cleanup failed in retry completion (non-fatal):", err)
           }
@@ -823,7 +834,7 @@ export class ExecutionLifecycle {
       // Clean up harness detectors for this execution (retry error path)
       if (this.harnessController) {
         try {
-          this.harnessController.onExecutionEnd(id)
+          this.harnessController.onExecutionEnd(id, { status: "failed", lastFailedNodeId: this.findFailedNode(id) ?? undefined })
         } catch (harnessErr) {
           console.warn("[ExecutionLifecycle] Harness cleanup failed in retry error path (non-fatal):", harnessErr)
         }
@@ -1053,7 +1064,7 @@ export class ExecutionLifecycle {
         // Clean up harness detectors for this execution (interaction completion path)
         if (this.harnessController) {
           try {
-            this.harnessController.onExecutionEnd(executionId)
+            this.harnessController.onExecutionEnd(executionId, { status: result.status as string })
           } catch (err) {
             console.warn("[ExecutionLifecycle] Harness cleanup failed in interaction completion (non-fatal):", err)
           }
@@ -1065,7 +1076,7 @@ export class ExecutionLifecycle {
         // Clean up harness detectors for this execution (interaction completion error path)
         if (this.harnessController) {
           try {
-            this.harnessController.onExecutionEnd(executionId)
+            this.harnessController.onExecutionEnd(executionId, { status: "failed" })
           } catch (harnessErr) {
             console.warn("[ExecutionLifecycle] Harness cleanup failed in interaction error path (non-fatal):", harnessErr)
           }
@@ -1272,7 +1283,7 @@ export class ExecutionLifecycle {
         // Clean up harness detectors for this execution (autoResume completion path)
         if (this.harnessController) {
           try {
-            this.harnessController.onExecutionEnd(execId)
+            this.harnessController.onExecutionEnd(execId, { status: result.status as string })
           } catch (err) {
             console.warn("[ExecutionLifecycle] Harness cleanup failed in autoResume completion (non-fatal):", err)
           }
@@ -1287,7 +1298,7 @@ export class ExecutionLifecycle {
         // Clean up harness detectors for this execution (autoResume error path)
         if (this.harnessController) {
           try {
-            this.harnessController.onExecutionEnd(execId)
+            this.harnessController.onExecutionEnd(execId, { status: "failed" })
           } catch (harnessErr) {
             console.warn("[ExecutionLifecycle] Harness cleanup failed in autoResume error path (non-fatal):", harnessErr)
           }
