@@ -89,7 +89,7 @@ export class EngineCallbacks implements IEngineCallbacks {
           }
 
           // Compute budget progress
-          const totalTokens = metrics.totalInputTokens + metrics.totalOutputTokens
+          const totalTokens = metrics.totalInputTokens + metrics.totalOutputTokens + metrics.totalCacheTokens
           const budgetProgress: {
             tokensPercent: number | null
             durationPercent: number | null
@@ -115,6 +115,7 @@ export class EngineCallbacks implements IEngineCallbacks {
               executionId: id,
               totalInputTokens: metrics.totalInputTokens,
               totalOutputTokens: metrics.totalOutputTokens,
+              totalCacheTokens: metrics.totalCacheTokens,
               totalCostUsd: metrics.totalCostUsd,
               totalLlmTurns: metrics.totalLlmTurns,
               budgetProgress,
@@ -156,13 +157,14 @@ export class EngineCallbacks implements IEngineCallbacks {
           if (!budgetSnapshot.max_tokens) return { action: "proceed" as const }
 
           const metrics = tokenUsageDao.aggregateByExecution(id)
-          const totalTokens = metrics.totalInputTokens + metrics.totalOutputTokens
+          const totalTokens = metrics.totalInputTokens + metrics.totalOutputTokens + metrics.totalCacheTokens
 
           if (totalTokens > budgetSnapshot.max_tokens) {
             // Budget exceeded: block this node and abort execution
+            const now = new Date().toISOString()
             dao.updateExecution(id, {
               status: "budget_exceeded",
-              completed_at: new Date().toISOString(),
+              completed_at: now,
             })
             sse.emit(wsId, {
               event: "execution_status",
@@ -172,6 +174,11 @@ export class EngineCallbacks implements IEngineCallbacks {
                 reason: "max_tokens exceeded",
                 budgetSnapshot: { max_tokens: budgetSnapshot.max_tokens, actual: totalTokens },
               },
+            })
+            // Emit execution_progress to notify external listeners (dashboard, etc.)
+            sse.emit(wsId, {
+              event: "execution_progress",
+              data: { executionId: id, status: "budget_exceeded", completedAt: now },
             })
             // Abort the engine so subsequent nodes don't run
             enginePool.cancel(id)

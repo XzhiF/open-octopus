@@ -31,6 +31,7 @@ function CollapsedPanel({
   interventionCount,
   isIntervening,
   isRunning,
+  isBudgetExceeded,
   hasActivity,
   metrics,
   onExpand,
@@ -39,6 +40,7 @@ function CollapsedPanel({
   interventionCount: number
   isIntervening: boolean
   isRunning: boolean
+  isBudgetExceeded: boolean
   hasActivity: boolean
   metrics: ExecutionMetrics
   onExpand: () => void
@@ -84,14 +86,16 @@ function CollapsedPanel({
         <span className="text-muted-foreground">|</span>
         <span
           className={
-            !isRunning
-              ? "text-muted-foreground"
-              : isIntervening
-                ? "text-amber-500"
-                : "text-emerald-500"
+            isBudgetExceeded
+              ? "text-red-500 font-bold"
+              : !isRunning
+                ? "text-muted-foreground"
+                : isIntervening
+                  ? "text-amber-500"
+                  : "text-emerald-500"
           }
         >
-          {!isRunning ? "已完成" : isIntervening ? "干预中" : "监控中"}
+          {isBudgetExceeded ? "预算超限" : !isRunning ? "已完成" : isIntervening ? "干预中" : "监控中"}
         </span>
       </div>
       {metrics.totalTokens > 0 && (
@@ -204,16 +208,25 @@ function SummaryCards({
   metrics,
   workspaceId,
   executionId,
+  isBudgetExceeded,
 }: {
   metrics: ExecutionMetrics
   workspaceId: string
   executionId: string
+  isBudgetExceeded: boolean
 }) {
   const router = useRouter()
   const tokensPercent = metrics.budgetProgress.tokensPercent
 
   return (
     <div className="shrink-0 border-b border-border/50 px-2 py-2 space-y-2">
+      {/* Budget exceeded banner */}
+      {isBudgetExceeded && (
+        <div className="rounded bg-red-500/10 border border-red-500/30 px-2 py-1.5 flex items-center gap-2">
+          <span className="text-red-500 text-sm">⚠️</span>
+          <span className="text-red-600 text-xs font-semibold">预算超限 — 执行已被阻断</span>
+        </div>
+      )}
       {/* 4 summary cards in a 2x2 grid */}
       <div className="grid grid-cols-2 gap-1.5">
         {/* Total Token Card */}
@@ -285,11 +298,13 @@ function MonitorTab({
   metrics,
   workspaceId,
   executionId,
+  isBudgetExceeded,
 }: {
   events: ParsedHarnessEvent[]
   metrics: ExecutionMetrics
   workspaceId: string
   executionId: string
+  isBudgetExceeded: boolean
 }) {
   const stats = useMemo(() => {
     // Count both legacy intervention events and delegation events (fix_and_retry, block_node, etc.)
@@ -319,7 +334,7 @@ function MonitorTab({
   return (
     <div className="flex flex-col h-full">
       {/* Summary cards — always visible at the top */}
-      <SummaryCards metrics={metrics} workspaceId={workspaceId} executionId={executionId} />
+      <SummaryCards metrics={metrics} workspaceId={workspaceId} executionId={executionId} isBudgetExceeded={isBudgetExceeded} />
 
       {/* Empty state for timeline */}
       {events.length === 0 ? (
@@ -615,6 +630,8 @@ export function HarnessFloatingPanel({
   // KD-10: Independent execution metrics hook for observability summary
   const metrics = useExecutionMetrics(workspaceId, executionId)
 
+  const isBudgetExceeded = executionStatus === "budget_exceeded"
+
   const isRunning = executionStatus === "running" || executionStatus === "paused"
   const isIntervening = events.some(
     (e) => e.type === "harness_intervention" && Date.now() - e.timestamp < 10000,
@@ -738,6 +755,7 @@ export function HarnessFloatingPanel({
           interventionCount={interventionCount}
           isIntervening={isIntervening}
           isRunning={isRunning}
+          isBudgetExceeded={isBudgetExceeded}
           hasActivity={isRunning && events.length > 0}
           metrics={metrics}
           onExpand={() => setExpanded(true)}
@@ -795,7 +813,7 @@ export function HarnessFloatingPanel({
         </TabsList>
 
         <TabsContent value="monitor" className="flex-1 mt-0 min-h-0 overflow-hidden">
-          <MonitorTab events={events} metrics={metrics} workspaceId={workspaceId} executionId={executionId} />
+          <MonitorTab events={events} metrics={metrics} workspaceId={workspaceId} executionId={executionId} isBudgetExceeded={isBudgetExceeded} />
         </TabsContent>
 
         <TabsContent value="detail" className="flex-1 mt-0 min-h-0 overflow-hidden">

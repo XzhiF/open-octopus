@@ -98,6 +98,7 @@ export function classifyError(
   error: string,
   nodeType: string,
   status?: string,
+  exitCode?: number | null,
 ): "timeout" | "model_error" | "script_error" | "approval_rejected" | "other" {
   const lowerError = error.toLowerCase()
 
@@ -107,7 +108,7 @@ export function classifyError(
   if (lowerError.includes("model") || lowerError.includes("rate_limit") || lowerError.includes("overloaded")) {
     return "model_error"
   }
-  if ((nodeType === "bash" || nodeType === "python") && lowerError.includes("exit")) {
+  if ((nodeType === "bash" || nodeType === "python") && (exitCode != null && exitCode !== 0)) {
     return "script_error"
   }
   if (status === "rejected") {
@@ -355,7 +356,7 @@ export class ObservabilityQueryService {
     for (const ne of nodeExecutions) {
       if (!ne.error) continue
 
-      const errorType = classifyError(ne.error, ne.node_type, ne.status)
+      const errorType = classifyError(ne.error, ne.node_type, ne.status, ne.exit_code)
 
       // Determine final status: if retried and later succeeded, "recovered"
       // If still failed, "failed"

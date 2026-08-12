@@ -24,16 +24,18 @@ function createNodeExecution(id: string, executionId: string, opts?: {
   node_id?: string; node_type?: string; status?: string; error?: string | null
   retry_count?: number; duration?: number; parent_node_id?: string | null
   iteration_index?: number | null; started_at?: string; completed_at?: string
+  exit_code?: number | null
 }) {
   const now = new Date().toISOString()
   db.prepare(`
-    INSERT INTO node_executions (id, execution_id, node_id, node_type, status, error, retry_count, duration, parent_node_id, iteration_index, started_at, completed_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO node_executions (id, execution_id, node_id, node_type, status, error, retry_count, duration, parent_node_id, iteration_index, exit_code, started_at, completed_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     id, executionId,
     opts?.node_id ?? id, opts?.node_type ?? "agent", opts?.status ?? "completed",
     opts?.error ?? null, opts?.retry_count ?? 0, opts?.duration ?? 1000,
     opts?.parent_node_id ?? null, opts?.iteration_index ?? null,
+    opts?.exit_code ?? null,
     opts?.started_at ?? now, opts?.completed_at ?? now,
   )
 }
@@ -82,8 +84,8 @@ describe("classifyError", () => {
   })
 
   it("classifies script errors for bash/python nodes", () => {
-    expect(classifyError("Process exit with code 1", "bash")).toBe("script_error")
-    expect(classifyError("exit code 127", "python")).toBe("script_error")
+    expect(classifyError("Process exit with code 1", "bash", undefined, 1)).toBe("script_error")
+    expect(classifyError("exit code 127", "python", undefined, 127)).toBe("script_error")
   })
 
   it("classifies approval_rejected", () => {
@@ -195,7 +197,7 @@ describe("ObservabilityQueryService", () => {
     createExecution("exec-6")
     createNodeExecution("ne-1", "exec-6", { node_id: "n1", error: "Connection timeout", status: "failed" })
     createNodeExecution("ne-2", "exec-6", { node_id: "n2", error: "Model overloaded", status: "failed" })
-    createNodeExecution("ne-3", "exec-6", { node_id: "n3", node_type: "bash", error: "exit code 1", status: "failed" })
+    createNodeExecution("ne-3", "exec-6", { node_id: "n3", node_type: "bash", error: "exit code 1", status: "failed", exit_code: 1 })
 
     const data = service.getObservabilityData("exec-6")
     expect(data.errors.length).toBe(3)
