@@ -83,13 +83,16 @@ export class EngineCallbacks implements IEngineCallbacks {
           const metrics = tokenUsageDao.aggregateByExecution(id)
 
           // Parse budget snapshot
-          let budgetSnapshot: { max_tokens?: number; max_duration?: number; max_cost_usd?: number; alert_threshold?: number } | null = null
+          let budgetSnapshot: { max_tokens?: number; max_duration?: number; max_cost_usd?: number; alert_threshold?: number; token_counting_mode?: string } | null = null
           if (exec?.budget_snapshot) {
             try { budgetSnapshot = JSON.parse(exec.budget_snapshot) } catch { /* ignore */ }
           }
 
-          // Compute budget progress
-          const totalTokens = metrics.totalInputTokens + metrics.totalOutputTokens + metrics.totalCacheTokens
+          // Compute budget progress — respect token_counting_mode
+          const mode = budgetSnapshot?.token_counting_mode ?? "all"
+          const totalTokens = mode === "no_cache"
+            ? metrics.totalInputTokens + metrics.totalOutputTokens
+            : metrics.totalInputTokens + metrics.totalOutputTokens + metrics.totalCacheTokens
           const budgetProgress: {
             tokensPercent: number | null
             durationPercent: number | null
@@ -151,13 +154,16 @@ export class EngineCallbacks implements IEngineCallbacks {
           const exec = dao.findById(id)
           if (!exec?.budget_snapshot) return { action: "proceed" as const }
 
-          let budgetSnapshot: { max_tokens?: number; alert_threshold?: number }
+          let budgetSnapshot: { max_tokens?: number; alert_threshold?: number; token_counting_mode?: string }
           try { budgetSnapshot = JSON.parse(exec.budget_snapshot) } catch { return { action: "proceed" as const } }
 
           if (!budgetSnapshot.max_tokens) return { action: "proceed" as const }
 
           const metrics = tokenUsageDao.aggregateByExecution(id)
-          const totalTokens = metrics.totalInputTokens + metrics.totalOutputTokens + metrics.totalCacheTokens
+          const mode = budgetSnapshot.token_counting_mode ?? "all"
+          const totalTokens = mode === "no_cache"
+            ? metrics.totalInputTokens + metrics.totalOutputTokens
+            : metrics.totalInputTokens + metrics.totalOutputTokens + metrics.totalCacheTokens
 
           if (totalTokens > budgetSnapshot.max_tokens) {
             // Budget exceeded: block this node and abort execution

@@ -434,7 +434,10 @@ export class ObservabilityQueryService {
     const alerts: ObservabilityBudgetAlert[] = []
 
     if (snapshot) {
-      const totalTokens = tokens.totalInput + tokens.totalOutput + tokens.totalCache
+      const mode = (snapshot as any).token_counting_mode ?? "all"
+      const totalTokens = mode === "no_cache"
+        ? tokens.totalInput + tokens.totalOutput
+        : tokens.totalInput + tokens.totalOutput + tokens.totalCache
       const alertThreshold = snapshot.alert_threshold ?? 0.8
 
       if (snapshot.max_tokens) {

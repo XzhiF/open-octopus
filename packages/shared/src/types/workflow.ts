@@ -3,6 +3,34 @@ import { NotifyTemplateSchema, NotifyRetrySchema, NotifyProviderConfigSchema, Ch
 import type { NotifyTemplate, NotifyRetryConfig } from "./notify"
 import { ExpertDefSchema, OutputFormatSchema, validateSwarmConstraints } from "./swarm"
 import type { ExpertDef } from "./swarm"
+import { parseTokenAmount } from "../parse-token-amount"
+
+/**
+ * TokenCountingMode — controls which token types are included in budget calculations.
+ * - "all" (default): input + output + cache
+ * - "no_cache": input + output only
+ */
+export const TokenCountingModeSchema = z.enum(["all", "no_cache"]).optional().default("all")
+export type TokenCountingMode = z.infer<typeof TokenCountingModeSchema>
+
+/**
+ * TokenAmountSchema — accepts a plain positive integer or a human-readable string
+ * like "50K" (→ 50000) or "1.5M" (→ 1500000).
+ * Uses z.preprocess so the output type is always `number`.
+ */
+const TokenAmountSchema = z.preprocess(
+  (val) => {
+    if (typeof val === "string") {
+      try {
+        return parseTokenAmount(val)
+      } catch {
+        return val // let the number validation below fail with a clear message
+      }
+    }
+    return val
+  },
+  z.number().int().positive(),
+)
 
 /**
  * EffortLevel — LLM reasoning depth control.
@@ -26,10 +54,11 @@ export const AutoAnswerSchema = z.object({
  * alert_threshold defaults to 0.8 (80%) when not specified.
  */
 export const BudgetSchema = z.object({
-  max_tokens: z.number().int().positive().optional(),
+  max_tokens: TokenAmountSchema.optional(),
   max_duration: z.number().int().positive().optional(),
   max_cost_usd: z.number().positive().optional(),
   alert_threshold: z.number().min(0).max(1).optional().default(0.8),
+  token_counting_mode: TokenCountingModeSchema,
 }).optional()
 
 export type BudgetDef = z.infer<typeof BudgetSchema>

@@ -396,6 +396,7 @@ describe("BudgetSchema", () => {
         max_duration: 300,
         max_cost_usd: 2,
         alert_threshold: 0.9,
+        token_counting_mode: "all",
       })
     }
   })
@@ -449,6 +450,39 @@ describe("BudgetSchema", () => {
       budget: { max_tokens: 1.5 },
     })
     expect(result.success).toBe(false)
+  })
+
+  it("accepts max_tokens with K suffix", () => {
+    const result = WorkflowSchema.safeParse({
+      ...baseWorkflow,
+      budget: { max_tokens: "50K" },
+    })
+    expect(result.success).toBe(true)
+    if (result.success) {
+      expect(result.data.budget?.max_tokens).toBe(50000)
+    }
+  })
+
+  it("accepts max_tokens with M suffix", () => {
+    const result = WorkflowSchema.safeParse({
+      ...baseWorkflow,
+      budget: { max_tokens: "1.5M" },
+    })
+    expect(result.success).toBe(true)
+    if (result.success) {
+      expect(result.data.budget?.max_tokens).toBe(1500000)
+    }
+  })
+
+  it("accepts token_counting_mode no_cache", () => {
+    const result = WorkflowSchema.safeParse({
+      ...baseWorkflow,
+      budget: { max_tokens: 100000, token_counting_mode: "no_cache" },
+    })
+    expect(result.success).toBe(true)
+    if (result.success) {
+      expect(result.data.budget?.token_counting_mode).toBe("no_cache")
+    }
   })
 
   it("rejects negative max_duration", () => {
@@ -539,6 +573,7 @@ nodes:
       max_duration: 300,
       max_cost_usd: 2,
       alert_threshold: 0.9,
+      token_counting_mode: "all",
     })
   })
 })
