@@ -4,6 +4,9 @@ import { ChatService } from "../services/chat"
 import { SSEService } from "../services/sse"
 import { getProvider, type TokenUsage } from "@octopus/providers"
 import { CloneRuntime } from "../services/agent/clone-runtime"
+import { ContextEnricher } from "../services/agent/context-enricher"
+import { EvolutionDAO } from "../db/dao/evolution-dao"
+import { getDb } from "../db/connection"
 import { getBuiltinCloneDef } from "../services/agent/builtin-clones"
 import { getAgentDir, getBuiltInCloneDir } from "../services/agent/paths"
 import fs from "fs"
@@ -120,7 +123,7 @@ export function globalChatRoutes(sseService: SSEService, chatService: ChatServic
     try {
       const cloneDef = getBuiltinCloneDef('scheduler')
       if (cloneDef) {
-        schedulerClonePrompt = new CloneRuntime(cloneDef, 'default').assembleContext()
+        schedulerClonePrompt = new CloneRuntime(cloneDef, 'default', undefined, new ContextEnricher(new EvolutionDAO(getDb()))).assembleContext()
       }
     } catch {
       // Fallback to SYSTEM_PROMPT (already set as default)

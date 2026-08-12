@@ -24,6 +24,7 @@ import type { EvolutionDAO } from "../../db/dao/evolution-dao"
 import type { SSEService } from "../sse"
 import type { HarnessAgentSession } from "./harness-agent-session"
 import { buildStatsSection } from "./effectiveness-tracker"
+import { HarnessPromptAdapter } from "../agent/prompt-assembler"
 import yaml from "js-yaml"
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -557,7 +558,7 @@ export class AgentDelegationService {
     this.emitDelegationSSE(executionId, displayNodeId, delegationId, "start")
 
     // Build the prompt (includes conversation history if session exists)
-    const prompt = this.buildPromptWithHistory(report, context)
+    const prompt = await this.buildPromptWithHistory(report, context)
 
     // Execute the agent session / LLM call with timeout
     let responseText: string
@@ -647,12 +648,19 @@ export class AgentDelegationService {
    * Build the delegation prompt, incorporating conversation history from the session.
    * If a session exists, uses the accumulated messages to provide context across interventions.
    * Otherwise, falls back to the standard buildDelegationPrompt.
-   * Also injects success rate statistics when available (ticket 04 — AC-5).
+   *
+   * Ticket 05 — wires HarnessPromptAdapter for persona + long-term + daily + experience.
+   * Stats injection (ticket 04) is preserved.
    */
-  private buildPromptWithHistory(
+  private async buildPromptWithHistory(
     report: DiagnosisReport,
     context: DelegationContext,
-  ): string {
+  ): Promise<string> {
+    // Build the prefix using HarnessPromptAdapter (persona + memory + daily + experience)
+    const adapter = new HarnessPromptAdapter("default", "harness-agent", this.evolutionDao ?? undefined)
+    const experienceSegment = await adapter.loadExperienceContextAsync(report)
+    const dailyMemory = adapter.loadDailyMemory()
+
     // Build the base prompt (with or without session history)
     let prompt: string
     if (!this.session) {
@@ -688,6 +696,22 @@ export class AgentDelegationService {
         // Fallback: append at the end
         prompt += "\n\n" + statsSection
       }
+    }
+
+    // Prepend adapter-provided context (persona + long-term + daily + experience)
+    // Order: persona → long-term → daily → experience → delegation prompt (with stats)
+    const prefixParts: string[] = []
+    const persona = adapter.loadPersona()
+    if (persona) prefixParts.push(persona)
+
+    const longTermMemory = adapter.loadLongTermMemory()
+    if (longTermMemory) prefixParts.push(longTermMemory)
+
+    if (dailyMemory) prefixParts.push(dailyMemory)
+    if (experienceSegment) prefixParts.push(experienceSegment)
+
+    if (prefixParts.length > 0) {
+      prompt = prefixParts.join("\n\n") + "\n\n" + prompt
     }
 
     return prompt

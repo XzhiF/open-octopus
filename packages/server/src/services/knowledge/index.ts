@@ -1,7 +1,8 @@
 // packages/server/src/services/knowledge/index.ts
 import type { VarPool } from "@octopus/shared"
-import type { KnowledgeEffectivenessDAO, PendingReviewDAO } from "../../db/dao"
+import type { KnowledgeEffectivenessDAO, PendingReviewDAO, EvolutionDAO } from "../../db/dao"
 import { precomputeRelevantRules } from "./precompute"
+import { precomputeExperience } from "../agent/experience-precompute"
 import { KnowledgeInjector } from "@octopus/engine"
 import { trackEffectiveness, retireStaleRules } from "./effectiveness"
 import { checkCompactThreshold } from "./maintenance"
@@ -25,6 +26,7 @@ export class KnowledgeService {
     private effectivenessDAO: KnowledgeEffectivenessDAO,
     private pendingReviewDAO: PendingReviewDAO,
     private org: string,
+    private evolutionDAO?: EvolutionDAO,
   ) {}
 
   /**
@@ -38,8 +40,8 @@ export class KnowledgeService {
   }
 
   /**
-   * Create a precompute hook that populates VarPool with relevant knowledge rules.
-   * Called by the engine before node execution.
+   * Create a precompute hook that populates VarPool with relevant knowledge rules
+   * and experience segments. Called by the engine before node execution.
    */
   createPrecomputeHook() {
     return async (pool: VarPool, workflowName: string, inputs: Record<string, string>) => {
@@ -50,6 +52,11 @@ export class KnowledgeService {
         inputs,
         pool,
       )
+
+      // Experience precompute: inject historical experiences for agent nodes
+      if (this.evolutionDAO) {
+        precomputeExperience(this.org, workflowName, this.evolutionDAO, pool)
+      }
     }
   }
 
@@ -97,6 +104,7 @@ export function createKnowledgeService(
   effectivenessDAO: KnowledgeEffectivenessDAO,
   pendingReviewDAO: PendingReviewDAO,
   org: string,
+  evolutionDAO?: EvolutionDAO,
 ): KnowledgeService {
-  return new KnowledgeService(effectivenessDAO, pendingReviewDAO, org)
+  return new KnowledgeService(effectivenessDAO, pendingReviewDAO, org, evolutionDAO)
 }

@@ -393,6 +393,112 @@ describe("EvolutionDAO V2 — Scope-aware methods", () => {
     })
   })
 
+  // ── searchByScopes ────────────────────────────────────────────────
+
+  describe("searchByScopes", () => {
+    beforeEach(() => {
+      dao.insertExperienceV2(makeV2Row({
+        content: "timeout cascade detected in bash node",
+        scope: "harness",
+        scope_ref: "timeout_detector",
+        pattern_tags: '["fix_and_retry","bash","critical"]',
+      }))
+      dao.insertExperienceV2(makeV2Row({
+        content: "syntax error in python script",
+        scope: "harness",
+        scope_ref: "syntax_detector",
+        pattern_tags: '["guide_and_retry","python","warning"]',
+      }))
+      dao.insertExperienceV2(makeV2Row({
+        content: "timeout issue with agent node",
+        scope: "agent",
+        scope_ref: "some_skill",
+        pattern_tags: '["retry"]',
+      }))
+      dao.insertExperienceV2(makeV2Row({
+        content: "global timeout configuration best practice",
+        scope: "global",
+        scope_ref: null,
+        pattern_tags: '["best_practice"]',
+      }))
+      dao.insertExperienceV2(makeV2Row({
+        content: "workflow timeout handling strategy",
+        scope: "workflow",
+        scope_ref: "wf_node_1",
+        pattern_tags: '["timeout_handling"]',
+      }))
+    })
+
+    it("searches across multiple scopes", () => {
+      const results = dao.searchByScopes("timeout", ["harness", "global"], 10)
+      expect(results.length).toBeGreaterThanOrEqual(2)
+      results.forEach(r => {
+        expect(["harness", "global"]).toContain(r.scope)
+      })
+    })
+
+    it("returns only rows matching specified scopes", () => {
+      const results = dao.searchByScopes("timeout", ["agent", "global"], 10)
+      results.forEach(r => {
+        expect(["agent", "global"]).toContain(r.scope)
+      })
+      // Should NOT include harness or workflow results
+      expect(results.every(r => r.scope !== "harness")).toBe(true)
+      expect(results.every(r => r.scope !== "workflow")).toBe(true)
+    })
+
+    it("returns empty array when no scopes match", () => {
+      const results = dao.searchByScopes("timeout", ["nonexistent_scope"], 10)
+      expect(results).toHaveLength(0)
+    })
+
+    it("returns empty array for non-matching query", () => {
+      const results = dao.searchByScopes("xyznonexistent", ["harness", "global"], 10)
+      expect(results).toHaveLength(0)
+    })
+
+    it("respects limit parameter", () => {
+      const results = dao.searchByScopes("timeout", ["harness", "agent", "global", "workflow"], 2)
+      expect(results).toHaveLength(2)
+    })
+
+    it("returns full experience row with all V2 fields", () => {
+      const results = dao.searchByScopes("timeout", ["harness"], 10)
+      expect(results.length).toBeGreaterThan(0)
+      const row = results[0]
+      expect(row).toHaveProperty("id")
+      expect(row).toHaveProperty("skill_name")
+      expect(row).toHaveProperty("content")
+      expect(row).toHaveProperty("scope")
+      expect(row).toHaveProperty("scope_ref")
+      expect(row).toHaveProperty("pattern_tags")
+      expect(row).toHaveProperty("outcome")
+    })
+
+    it("falls back to LIKE when FTS MATCH fails", () => {
+      // Use a query with special chars that might break FTS
+      const results = dao.searchByScopes("timeout*", ["harness", "global"], 10)
+      expect(Array.isArray(results)).toBe(true)
+    })
+
+    it("handles empty scopes array", () => {
+      const results = dao.searchByScopes("timeout", [], 10)
+      expect(results).toHaveLength(0)
+    })
+
+    it("uses default limit of 5 when not specified", () => {
+      // Insert more than 5 matching rows
+      for (let i = 0; i < 7; i++) {
+        dao.insertExperienceV2(makeV2Row({
+          content: `timeout issue number ${i}`,
+          scope: "harness",
+        }))
+      }
+      const results = dao.searchByScopes("timeout", ["harness"])
+      expect(results.length).toBeLessThanOrEqual(5)
+    })
+  })
+
   // ── Backward compatibility ────────────────────────────────────────
 
   describe("backward compatibility (AC-8)", () => {

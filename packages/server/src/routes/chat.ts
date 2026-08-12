@@ -5,6 +5,9 @@ import { WorkspaceService } from "../services/workspace"
 import { SSEService } from "../services/sse"
 import { getProvider, type TokenUsage } from "@octopus/providers"
 import { CloneRuntime } from "../services/agent/clone-runtime"
+import { ContextEnricher } from "../services/agent/context-enricher"
+import { EvolutionDAO } from "../db/dao/evolution-dao"
+import { getDb } from "../db/connection"
 import { getBuiltinCloneDef } from "../services/agent/builtin-clones"
 import { getAgentDir } from "../services/agent/paths"
 import os from "os"
@@ -92,7 +95,7 @@ export function chatRoutes(sseService: SSEService, chatService: ChatService, wor
     try {
       const cloneDef = getBuiltinCloneDef('workspace')
       if (cloneDef) {
-        workspaceClonePrompt = new CloneRuntime(cloneDef, 'default').assembleContext()
+        workspaceClonePrompt = new CloneRuntime(cloneDef, 'default', undefined, new ContextEnricher(new EvolutionDAO(getDb()))).assembleContext()
       }
     } catch {
       // Non-fatal — proceed with empty clone prompt (pure claude_code preset)

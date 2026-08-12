@@ -1,6 +1,8 @@
 import fs from "fs"
 import path from "path"
 import { PendingReviewDAO } from "../../db/dao/pending-review-dao"
+import { EvolutionDAO } from "../../db/dao/evolution-dao"
+import { getDb } from "../../db/connection"
 import {
   appendToKnowledgeFile,
   generateRuleId,
@@ -536,7 +538,35 @@ export async function proposeRulesForReview(
       (r) => r.autoApprove,
     ).length
 
-    return pendingCount + autoApprovedCount
+    // Step 6: write a workflow-scope experience summarizing what was learned
+    const totalRules = pendingCount + autoApprovedCount
+    if (totalRules > 0 && workflowName) {
+      try {
+        const dao = new EvolutionDAO(getDb())
+        const allRuleTexts = [
+          ...proposedRules.map((r) => r.text),
+          ...recurringResults.map((r) => r.rule.text),
+        ]
+        dao.insertExperienceV2({
+          skill_name: `workflow-${workflowName}`,
+          content: `工作流 ${workflowName} 执行经验:\n${allRuleTexts.map((t) => `- ${t}`).join("\n")}`,
+          source_session_id: null,
+          org,
+          created_at: new Date().toISOString(),
+          scope: "workflow",
+          scope_ref: workflowName,
+          pattern_tags: JSON.stringify(["workflow_execution", ...proposedRules.map((r) => r.scope || "general")]),
+          outcome: JSON.stringify({ label: "success" }),
+          source_type: "workflow",
+          execution_id: execResult.id,
+          node_id: null,
+        })
+      } catch (expErr) {
+        console.warn("[knowledge] Failed to write workflow experience:", expErr)
+      }
+    }
+
+    return totalRules
   } catch (err) {
     console.error("[knowledge] proposeRulesForReview failed:", err)
     return 0

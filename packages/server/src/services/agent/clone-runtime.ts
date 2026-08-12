@@ -21,6 +21,7 @@ import {
   getCloneDir,
   getCloneSkillsDir,
 } from './paths'
+import type { ContextEnricher } from './context-enricher'
 
 // ── Types ──────────────────────────────────────────────────────────
 
@@ -52,8 +53,10 @@ export interface CloneChatResult {
 export class CloneRuntime {
   private org: string
   private cloneDef: CloneDef
+  private enricher?: ContextEnricher
 
-  constructor(cloneDef: CloneDef, org: string) {
+  constructor(cloneDef: CloneDef, org: string, _unused?: unknown, enricher?: ContextEnricher) {
+    this.enricher = enricher
     this.cloneDef = cloneDef
     this.org = org
     this.ensureDirectories()
@@ -120,6 +123,32 @@ export class CloneRuntime {
     // (see getPlugins() + sendWithProvider()). See ADR-006.
 
     return segments.filter(Boolean).join('\n\n')
+  }
+
+  /**
+   * Assemble context with experience enrichment (async).
+   * Calls assembleContext() to get the base prompt, then appends relevant
+   * historical experiences from the ContextEnricher.
+   *
+   * - scope='agent' → visibility: [agent, global]
+   * - budget: 800 tokens
+   * - Experience segment is appended after memory (AC-3).
+   */
+  async assembleContextWithExperience(userMessage: string): Promise<string> {
+    const baseContext = this.assembleContext()
+    if (!this.enricher) return baseContext
+    try {
+      const result = await this.enricher.enrich({
+        scope: 'agent',
+        query: userMessage,
+        org: this.org,
+        budget: 800,
+      })
+      if (!result.segment) return baseContext
+      return baseContext ? baseContext + '\n\n' + result.segment : result.segment
+    } catch {
+      return baseContext
+    }
   }
 
   /**
@@ -258,7 +287,7 @@ export class CloneRuntime {
     cwd: string,
     abortSignal?: AbortSignal,
   ): AsyncGenerator<MessageChunk> {
-    const cloneSystemPrompt = this.assembleContext()
+    const cloneSystemPrompt = await this.assembleContextWithExperience(message)
     const effectiveCwd = cwd || this.getDefaultCwd()
 
     // First attempt: use resume if available

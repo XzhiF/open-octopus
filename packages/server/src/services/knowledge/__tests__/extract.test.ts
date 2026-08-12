@@ -5,6 +5,7 @@ import os from "os"
 import crypto from "crypto"
 import Database from "better-sqlite3"
 import { PendingReviewDAO } from "../../../db/dao/pending-review-dao"
+import { EvolutionDAO } from "../../../db/dao/evolution-dao"
 import { applySchema } from "../../../db/schema"
 import {
   shouldExtractRules,
@@ -19,6 +20,12 @@ import {
   writeKnowledgeFile,
 } from "../file-ops"
 import { compactKnowledgeFile } from "../maintenance"
+
+// Mock getDb to return the test's in-memory database
+let testDb: Database.Database | null = null
+vi.mock("../../../db/connection", () => ({
+  getDb: () => testDb,
+}))
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -48,6 +55,7 @@ describe("extract", () => {
 
   beforeEach(() => {
     db = new Database(":memory:")
+    testDb = db
     applySchema(db)
     pendingReviewDAO = new PendingReviewDAO(db)
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "extract-test-"))
@@ -57,6 +65,7 @@ describe("extract", () => {
 
   afterEach(() => {
     db?.close()
+    testDb = null
     delete process.env.OCTOPUS_KNOWLEDGE_DIR
     fs.rmSync(tmpDir, { recursive: true, force: true })
     fs.rmSync(stateDir, { recursive: true, force: true })
@@ -443,6 +452,89 @@ describe("extract", () => {
         exec, "/nonexistent/path", "test-org", "/nonexistent/state", pendingReviewDAO,
       )
       expect(typeof count).toBe("number")
+    })
+  })
+
+  // =========================================================================
+  // Workflow-scope experience writer
+  // =========================================================================
+  describe("proposeRulesForReview — workflow experience writer", () => {
+    it("writes a workflow-scope experience when rules are extracted with workflowName", async () => {
+      const exec = makeExecResult({
+        id: "exec-wf-001",
+        status: "completed",
+        nodes: {
+          "node-build": { status: "failed", exitCode: 1, lastOutput: "Build failed: missing dependency" },
+        },
+      })
+
+      const dao = new EvolutionDAO(db!)
+
+      // Before: no workflow experiences
+      const before = dao.listByScope("test-org", "workflow")
+      expect(before).toHaveLength(0)
+
+      const count = await proposeRulesForReview(
+        exec, "/tmp/logs", "test-org", stateDir, pendingReviewDAO,
+        undefined, undefined, "my-workflow",
+      )
+
+      // Should have produced at least one rule (heuristic fallback)
+      expect(count).toBeGreaterThanOrEqual(1)
+
+      // After: a workflow-scope experience should exist
+      const after = dao.listByScope("test-org", "workflow")
+      expect(after.length).toBeGreaterThanOrEqual(1)
+
+      const wfExp = after.find((e) => e.scope_ref === "my-workflow")
+      expect(wfExp).toBeDefined()
+      expect(wfExp!.content).toContain("工作流 my-workflow 执行经验")
+      expect(wfExp!.source_type).toBe("workflow")
+      expect(wfExp!.execution_id).toBe("exec-wf-001")
+      expect(wfExp!.pattern_tags).toContain("workflow_execution")
+    })
+
+    it("does NOT write a workflow experience when workflowName is absent", async () => {
+      const exec = makeExecResult({
+        id: "exec-wf-002",
+        status: "completed",
+        nodes: {
+          "node-build": { status: "failed", exitCode: 1, lastOutput: "Build failed: missing dependency" },
+        },
+      })
+
+      const dao = new EvolutionDAO(db!)
+
+      const count = await proposeRulesForReview(
+        exec, "/tmp/logs", "test-org", stateDir, pendingReviewDAO,
+      )
+      expect(count).toBeGreaterThanOrEqual(1)
+
+      // No workflow-scope experience should be written
+      const wfExps = dao.listByScope("test-org", "workflow")
+      expect(wfExps).toHaveLength(0)
+    })
+
+    it("does NOT write a workflow experience when no rules are extracted", async () => {
+      // Clean execution — shouldExtractRules returns false
+      const exec = makeExecResult({
+        id: "exec-wf-003",
+        status: "completed",
+        nodes: {
+          "node-1": { status: "completed", exitCode: 0, lastOutput: "Success" },
+        },
+      })
+
+      const dao = new EvolutionDAO(db!)
+
+      const count = await proposeRulesForReview(
+        exec, "/tmp/logs", "test-org", stateDir, pendingReviewDAO,
+        undefined, undefined, "my-workflow",
+      )
+      expect(count).toBe(0)
+
+      const wfExps = dao.listByScope("test-org", "workflow")
+      expect(wfExps).toHaveLength(0)
     })
   })
 })

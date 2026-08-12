@@ -26,6 +26,9 @@ import path from 'path'
 import type { CloneDef } from '@octopus/shared'
 import type { AgentSessionDAO } from '../../db/dao'
 import { CloneRuntime } from '../../services/agent/clone-runtime'
+import { ContextEnricher } from '../../services/agent/context-enricher'
+import { EvolutionDAO } from '../../db/dao/evolution-dao'
+import { getDb } from '../../db/connection'
 import { isBuiltinClone } from '../../services/agent/builtin-clones'
 import {
   listAllClones,
@@ -276,7 +279,7 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
     sessionDAO.updateLastMessageAt(sessionId, now)
 
     // Instantiate CloneRuntime
-    const runtime = new CloneRuntime(cloneDef, org)
+    const runtime = new CloneRuntime(cloneDef, org, undefined, new ContextEnricher(new EvolutionDAO(getDb())))
     const cwd = runtime.getDefaultCwd()
     const providerSessionId = session.provider_session_id ?? null
 
