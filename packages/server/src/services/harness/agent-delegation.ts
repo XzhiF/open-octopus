@@ -20,8 +20,10 @@ import type {
   DelegationResult,
 } from "@octopus/shared"
 import type { HarnessDAO } from "../../db/dao/harness-dao"
+import type { EvolutionDAO } from "../../db/dao/evolution-dao"
 import type { SSEService } from "../sse"
 import type { HarnessAgentSession } from "./harness-agent-session"
+import { buildStatsSection } from "./effectiveness-tracker"
 import yaml from "js-yaml"
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -474,6 +476,8 @@ export interface AgentDelegationServiceDeps {
   dao: HarnessDAO
   sse: SSEService
   workspaceId: string
+  /** Optional: EvolutionDAO for injecting success rate stats into prompt (ticket 04). */
+  evolutionDao?: EvolutionDAO
   /** Agent session runner. If provided, takes precedence over llmCall. */
   agentSessionRunner?: AgentSessionRunner
   /** @deprecated LLM call function. Use agentSessionRunner instead. */
@@ -497,6 +501,7 @@ export class AgentDelegationService {
   private dao: HarnessDAO
   private sse: SSEService
   private workspaceId: string
+  private evolutionDao?: EvolutionDAO
   private agentSessionRunner?: AgentSessionRunner
   private llmCall?: DelegationLLMCall
   private timeoutMs: number
@@ -507,6 +512,7 @@ export class AgentDelegationService {
     this.dao = deps.dao
     this.sse = deps.sse
     this.workspaceId = deps.workspaceId
+    this.evolutionDao = deps.evolutionDao
     this.agentSessionRunner = deps.agentSessionRunner
     this.llmCall = deps.llmCall
     this.timeoutMs = deps.timeoutMs ?? 5 * 60 * 1000 // 5 minutes default
@@ -591,7 +597,23 @@ export class AgentDelegationService {
     }
 
     // Parse the response
-    const parsed = parseDelegationResponse(responseText)
+    let parsed = parseDelegationResponse(responseText)
+
+    // Fallback: if text parsing failed, try extracting decision from thinking chunks.
+    // Non-Claude models (e.g. qwen) sometimes put the decision in thinking but output
+    // empty or non-structured text. The thinking content often contains the decision.
+    if (!parsed.success && agentChunks && agentChunks.length > 0) {
+      const thinkingText = agentChunks
+        .filter((c) => c.type === "thinking")
+        .map((c) => String(c.content ?? ""))
+        .join("")
+      if (thinkingText) {
+        const fallbackParsed = parseDelegationResponse(thinkingText)
+        if (fallbackParsed.success) {
+          parsed = fallbackParsed
+        }
+      }
+    }
 
     // Attach token usage info from the agent session / LLM call
     if (tokenInfo) {
@@ -641,38 +663,71 @@ export class AgentDelegationService {
    * Build the delegation prompt, incorporating conversation history from the session.
    * If a session exists, uses the accumulated messages to provide context across interventions.
    * Otherwise, falls back to the standard buildDelegationPrompt.
+   * Also injects success rate statistics when available (ticket 04 — AC-5).
    */
   private buildPromptWithHistory(
     report: DiagnosisReport,
     context: DelegationContext,
   ): string {
-    // If no session, use the standard prompt builder
+    // Build the base prompt (with or without session history)
+    let prompt: string
     if (!this.session) {
-      return buildDelegationPrompt(report, context)
+      prompt = buildDelegationPrompt(report, context)
+    } else {
+      // Get the conversation history from the session
+      const messages = this.session.getMessages()
+
+      // Build the prompt by concatenating all messages
+      const promptParts = messages.map((msg) => {
+        if (msg.role === "system") {
+          return msg.content
+        } else if (msg.role === "user") {
+          return `\n\n用户: ${msg.content}`
+        } else {
+          return `\n\n助手: ${msg.content}`
+        }
+      })
+
+      prompt = promptParts.join("")
     }
 
-    // Get the conversation history from the session
-    const messages = this.session.getMessages()
-
-    // Build the prompt by concatenating all messages
-    // The session already has:
-    // - system message (initial workflow context)
-    // - user messages (previous interventions)
-    // - assistant messages (previous decisions)
-    // - current user message (this intervention, just appended)
-    //
-    // We format them as a conversation for the LLM
-    const promptParts = messages.map((msg) => {
-      if (msg.role === "system") {
-        return msg.content
-      } else if (msg.role === "user") {
-        return `\n\n用户: ${msg.content}`
+    // Inject success rate statistics (ticket 04 — AC-5, AC-6)
+    const statsSection = this.buildStatsSectionForReport(report)
+    if (statsSection) {
+      // Insert stats section before the final task instructions
+      // Look for the task instructions marker and insert before it
+      const taskMarker = "---\n\n## 你的任务"
+      const taskIndex = prompt.indexOf(taskMarker)
+      if (taskIndex !== -1) {
+        prompt = prompt.slice(0, taskIndex) + statsSection + "\n\n" + prompt.slice(taskIndex)
       } else {
-        return `\n\n助手: ${msg.content}`
+        // Fallback: append at the end
+        prompt += "\n\n" + statsSection
       }
-    })
+    }
 
-    return promptParts.join("")
+    return prompt
+  }
+
+  /**
+   * Build the stats section for a given DiagnosisReport.
+   * Uses the EvolutionDAO to get success stats for the report's detector.
+   * Returns empty string if no DAO configured or not enough data.
+   * Ticket 04 — AC-5, AC-6.
+   */
+  private buildStatsSectionForReport(report: DiagnosisReport): string {
+    if (!this.evolutionDao) {
+      return ""
+    }
+
+    try {
+      const org = "default" // Harness agent uses default org
+      const stats = this.evolutionDao.getSuccessStats(org, "harness", report.detector)
+      return buildStatsSection(stats)
+    } catch (err) {
+      // Stats injection failure is non-fatal
+      return ""
+    }
   }
 
   /**
@@ -785,10 +840,13 @@ export class AgentDelegationService {
           } else if (chunk.type === "result") {
             if (chunk.content) text = chunk.content
             if (chunk.tokens) {
+              // Use real model name from modelUsages (e.g. "claude-sonnet-4-5-20250827")
+              // instead of the short alias ("sonnet") or a hardcoded string
+              const realModel = chunk.modelUsages?.[0]?.model ?? "unknown"
               tokenUsage = {
                 input: chunk.tokens.input,
                 output: chunk.tokens.output,
-                model: "claude-sonnet-4-20250514",
+                model: realModel,
               }
             }
           } else if (

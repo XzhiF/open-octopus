@@ -41,3 +41,4 @@
 | 37 | harness-gap-fix | 2026-08-06 | feat/workflow-engine-harness | done (6 gaps fixed, 34 unit + 7 E2E tests, PR #45 updated) |
 | 38 | harness-semantic-v2 | 2026-08-06 | feat/workflow-engine-harness | done (converged: 88/100, 2 iterations, 5 bug fixes, PR #45) |
 | 39 | harness-semantic-v2-r2 | 2026-08-06 | feat/workflow-engine-harness | done (gap-fix: AC-3 timeout PASS, AC-4 wired) |
+| 40 | harness-learning-platform | 2026-08-11 | feat/harness-learning-platform | in-progress |

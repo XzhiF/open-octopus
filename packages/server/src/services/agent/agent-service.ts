@@ -429,6 +429,17 @@ export class AgentService {
   }
 
   async getExperiences(org: string, query?: { skill?: string; q?: string }): Promise<Experience[]> {
+    if (query?.q) {
+      // Use FTS5 scope-aware search when query text is provided
+      const results = getEvolutionService().searchExperiences(query.q, undefined, 50)
+      return results.map(r => ({
+        id: r.id,
+        skill_name: r.skill_name,
+        content: r.content,
+        source_session_id: null,
+        created_at: '',
+      }))
+    }
     return getEvolutionService().listExperiences(org, query?.skill)
   }
 

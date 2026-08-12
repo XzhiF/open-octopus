@@ -10,7 +10,7 @@ const _dirname: string =
     ? __dirname
     : path.dirname(fileURLToPath(import.meta.url))
 
-export const SCHEMA_VERSION = 34
+export const SCHEMA_VERSION = 35
 
 /**
  * Apply the complete unified schema to the given database.
@@ -68,6 +68,9 @@ function handleSchemaMigrations(db: Database.Database): void {
 
   // Migrate FTS table to include source column (schema version 29)
   migrateFtsTableWithSource(db)
+
+  // Migrate experiences_fts to v2 content-sync mode (schema version 35)
+  migrateExperiencesFtsV2(db)
 }
 
 /**
@@ -165,6 +168,15 @@ function ensureColumnsForExistingTables(db: Database.Database): void {
   // Execution-level harness status (schema version 35 — harness-semantic-v2)
   ensureColumn(db, 'executions', 'harness_status', "TEXT DEFAULT NULL")
   ensureColumn(db, 'executions', 'harness_summary', "TEXT DEFAULT NULL")
+
+  // Experience v2 columns (schema version 35 — harness-learning-platform)
+  ensureColumn(db, 'experiences', 'scope', "TEXT NOT NULL DEFAULT 'agent'")
+  ensureColumn(db, 'experiences', 'scope_ref', "TEXT DEFAULT NULL")
+  ensureColumn(db, 'experiences', 'pattern_tags', "TEXT DEFAULT '[]'")
+  ensureColumn(db, 'experiences', 'outcome', "TEXT DEFAULT NULL")
+  ensureColumn(db, 'experiences', 'source_type', "TEXT NOT NULL DEFAULT 'session'")
+  ensureColumn(db, 'experiences', 'execution_id', "TEXT DEFAULT NULL")
+  ensureColumn(db, 'experiences', 'node_id', "TEXT DEFAULT NULL")
 }
 
 function ensureColumn(db: Database.Database, table: string, column: string, definition: string): void {
@@ -196,9 +208,85 @@ function migrateFtsTableWithSource(db: Database.Database): void {
     } catch {
       // Source column missing — drop table, schema.sql will recreate it
       db.exec("DROP TABLE IF EXISTS session_memory_fts")
+      // eslint-disable-next-line no-console
       console.log("[schema] Dropped old session_memory_fts (missing source column), will recreate")
     }
   } catch (err) {
+    // eslint-disable-next-line no-console
     console.warn("[schema] FTS migration check failed:", err instanceof Error ? err.message : String(err))
+  }
+}
+
+/**
+ * Blue-green migration for experiences_fts → v2 content-sync mode.
+ *
+ * Strategy:
+ *   1. Check if old (non-content-sync) FTS table exists
+ *   2. If yes: create experiences_fts_v2, populate from experiences, swap names
+ *   3. If no: schema.sql will create it fresh
+ *
+ * This prevents data loss that would occur with a simple DROP + CREATE.
+ * After migration, schema.sql's CREATE VIRTUAL TABLE IF NOT EXISTS is a no-op
+ * because the table already exists (renamed from v2).
+ */
+function migrateExperiencesFtsV2(db: Database.Database): void {
+  try {
+    // Check if the old FTS table exists
+    const tables = db.prepare(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name='experiences_fts'"
+    ).all()
+    if (tables.length === 0) return // Will be created by schema.sql
+
+    // Check if the FTS table already has the v2 columns (scope, scope_ref, pattern_tags)
+    // FTS5 virtual tables show up in table_info, so we can check columns
+    try {
+      const cols = db.prepare("PRAGMA table_info(experiences_fts)").all() as { name: string }[]
+      const hasScope = cols.some(c => c.name === "scope")
+      if (hasScope) return // Already migrated to v2
+    } catch {
+      // table_info might fail on virtual tables in some SQLite versions — proceed with migration
+    }
+
+    // Check if experiences table has the new columns (they should, via ensureColumn above)
+    const expCols = db.prepare("PRAGMA table_info(experiences)").all() as { name: string }[]
+    const hasScopeCol = expCols.some(c => c.name === "scope")
+    if (!hasScopeCol) {
+      // experiences table doesn't have new columns yet — skip FTS migration,
+      // the columns will be added by ensureColumn and FTS will be created fresh by schema.sql
+      return
+    }
+
+    // Blue-green migration: create v2 → populate → swap
+    // eslint-disable-next-line no-console
+    console.log("[schema] Starting experiences_fts blue-green migration to v2...")
+
+    db.exec("DROP TABLE IF EXISTS experiences_fts_v2")
+
+    db.exec(`
+      CREATE VIRTUAL TABLE experiences_fts_v2 USING fts5(
+        skill_name, content, scope, scope_ref, pattern_tags
+      )
+    `)
+
+    // Populate from experiences table (which now has the new columns via ensureColumn)
+    const count = (db.prepare("SELECT COUNT(*) as cnt FROM experiences").get() as { cnt: number }).cnt
+    if (count > 0) {
+      db.exec(`
+        INSERT INTO experiences_fts_v2 (rowid, skill_name, content, scope, scope_ref, pattern_tags)
+        SELECT id, skill_name, content, scope, scope_ref, pattern_tags FROM experiences
+      `)
+    }
+
+    // Atomic swap
+    db.exec("DROP TABLE IF EXISTS experiences_fts")
+    db.exec("ALTER TABLE experiences_fts_v2 RENAME TO experiences_fts")
+
+    // eslint-disable-next-line no-console
+    console.log(`[schema] experiences_fts migrated to v2 (${count} rows populated)`)
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn("[schema] experiences_fts v2 migration failed:", err instanceof Error ? err.message : String(err))
+    // Non-fatal — FTS will be recreated by schema.sql if needed
+    try { db.exec("DROP TABLE IF EXISTS experiences_fts_v2") } catch { /* ignore */ }
   }
 }
