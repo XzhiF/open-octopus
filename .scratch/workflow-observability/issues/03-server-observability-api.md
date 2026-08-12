@@ -7,7 +7,7 @@
 02-server-budget-snapshot
 
 ## Status
-ready-for-agent
+done
 
 ## Acceptance Criteria
 - [ ] AC-1: `GET /executions/:eid/observability` 返回 `ObservabilityData` 结构，所有字段非空（对已完成的有 agent 节点的执行）

@@ -1,5 +1,6 @@
 // packages/server/src/services/execution/ExecutionLifecycle.ts
 import type { ExecutionDAO } from "../../db/dao/execution-dao"
+import { TokenUsageDAO } from "../../db/dao/token-usage-dao"
 import type { ExecutionRow, NodeExecutionRow } from "../../db/types"
 import type Database from "better-sqlite3"
 import { EnginePool } from "./EnginePool"
@@ -72,6 +73,7 @@ export class ExecutionLifecycle {
     private workspaceId: string,
     private observability: ObservabilityService,
     private errorTracker?: ErrorTracker,
+    private tokenUsageDao?: TokenUsageDAO,
   ) {
     this.enginePool = new EnginePool()
     this.engineFactory = new EngineFactory(
@@ -88,6 +90,7 @@ export class ExecutionLifecycle {
     this.callbacksBuilder = new EngineCallbacksBuilder({
       ctx: { db, sse, workflowService, builtInWorkflowService, org, workspacePath, workspaceDbId },
       dao,
+      tokenUsageDao: tokenUsageDao ?? new TokenUsageDAO(db),
       enginePool: this.enginePool,
       observability,
       workspaceId,
@@ -1347,7 +1350,7 @@ export class ExecutionLifecycle {
   }
 
   private cleanupOrphanedNodes(id: string, finalStatus: string): void {
-    if (finalStatus === "failed") {
+    if (finalStatus === "failed" || finalStatus === "budget_exceeded") {
       this.dao.updateNodeExecutionsByStatus(id, "failed", ["running", "pending", "paused"])
     } else if (finalStatus === "completed" || finalStatus === "completed_with_failures" || finalStatus === "rejected") {
       this.dao.updateNodeExecutionsByStatus(id, "skipped", ["pending"])

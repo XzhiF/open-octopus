@@ -198,7 +198,7 @@ if (!process.env.VITEST && daos) {
   leaderboardService = new LeaderboardService(daos.tokenUsage)
 
   observability = new ObservabilityService(daos.execution, daos.tokenUsage, new PrivacyFilter())
-  setExecutionDependencies(sse, observability, daos.execution)
+  setExecutionDependencies(sse, observability, daos.execution, daos.tokenUsage)
   setHarnessDependencies(daos.harness)
   initExecutionServiceRegistry(daos.execution as any, sse, observability, {
     executionDAO: daos.execution,

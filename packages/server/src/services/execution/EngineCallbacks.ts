@@ -7,6 +7,7 @@
 import type { IEngineCallbacks } from "./interfaces"
 import type { ServiceContext } from "./types"
 import type { ExecutionDAO } from "../../db/dao/execution-dao"
+import type { TokenUsageDAO } from "../../db/dao/token-usage-dao"
 import type { EngineCallbacks as EngineCallbackType } from "@octopus/engine"
 import type { PipelineConfig } from "@octopus/shared"
 import type { EnginePool } from "./EnginePool"
@@ -18,6 +19,7 @@ import { join } from "path"
 export interface EngineCallbacksDeps {
   ctx: ServiceContext
   dao: ExecutionDAO
+  tokenUsageDao: TokenUsageDAO
   enginePool: EnginePool
   observability: ObservabilityService
   workspaceId: string           // SSE workspace ID (org:path format)
@@ -30,6 +32,7 @@ export interface EngineCallbacksDeps {
 export class EngineCallbacks implements IEngineCallbacks {
   private ctx: ServiceContext
   private dao: ExecutionDAO
+  private tokenUsageDao: TokenUsageDAO
   private enginePool: EnginePool
   private observability: ObservabilityService
   private workspaceId: string
@@ -41,6 +44,7 @@ export class EngineCallbacks implements IEngineCallbacks {
   constructor(deps: EngineCallbacksDeps) {
     this.ctx = deps.ctx
     this.dao = deps.dao
+    this.tokenUsageDao = deps.tokenUsageDao
     this.enginePool = deps.enginePool
     this.observability = deps.observability
     this.workspaceId = deps.workspaceId
@@ -54,6 +58,7 @@ export class EngineCallbacks implements IEngineCallbacks {
     const id = executionId
     const sse = this.ctx.sse
     const dao = this.dao
+    const tokenUsageDao = this.tokenUsageDao
     const enginePool = this.enginePool
     const obs = this.observability
     const wsId = this.workspaceId
@@ -61,7 +66,132 @@ export class EngineCallbacks implements IEngineCallbacks {
     // Track branch start times for durationMs computation
     const branchStartTimes = new Map<string, number>()
 
+    // Throttle for execution_metrics SSE: max 1 emit per 500ms (trailing edge)
+    let metricsTimer: ReturnType<typeof setTimeout> | null = null
+
+    /** Compute and emit execution_metrics SSE event (throttled, trailing edge). */
+    const scheduleMetricsEmit = () => {
+      // Always use trailing-edge: cancel pending timer and schedule a new one.
+      // This ensures only 1 emission per 500ms window — the latest state wins.
+      if (metricsTimer) {
+        clearTimeout(metricsTimer)
+      }
+      metricsTimer = setTimeout(() => {
+        metricsTimer = null
+        try {
+          const exec = dao.findById(id)
+          const metrics = tokenUsageDao.aggregateByExecution(id)
+
+          // Parse budget snapshot
+          let budgetSnapshot: { max_tokens?: number; max_duration?: number; max_cost_usd?: number; alert_threshold?: number } | null = null
+          if (exec?.budget_snapshot) {
+            try { budgetSnapshot = JSON.parse(exec.budget_snapshot) } catch { /* ignore */ }
+          }
+
+          // Compute budget progress
+          const totalTokens = metrics.totalInputTokens + metrics.totalOutputTokens
+          const budgetProgress: {
+            tokensPercent: number | null
+            durationPercent: number | null
+            costPercent: number | null
+          } = { tokensPercent: null, durationPercent: null, costPercent: null }
+
+          if (budgetSnapshot) {
+            if (budgetSnapshot.max_tokens) {
+              budgetProgress.tokensPercent = (totalTokens / budgetSnapshot.max_tokens) * 100
+            }
+            if (budgetSnapshot.max_cost_usd) {
+              budgetProgress.costPercent = (metrics.totalCostUsd / budgetSnapshot.max_cost_usd) * 100
+            }
+            if (budgetSnapshot.max_duration && exec?.started_at) {
+              const elapsedMs = Date.now() - new Date(exec.started_at).getTime()
+              budgetProgress.durationPercent = (elapsedMs / (budgetSnapshot.max_duration * 1000)) * 100
+            }
+          }
+
+          sse.emit(wsId, {
+            event: "execution_metrics",
+            data: {
+              executionId: id,
+              totalInputTokens: metrics.totalInputTokens,
+              totalOutputTokens: metrics.totalOutputTokens,
+              totalCostUsd: metrics.totalCostUsd,
+              totalLlmTurns: metrics.totalLlmTurns,
+              budgetProgress,
+              errorCount: metrics.errorCount,
+              timestamp: new Date().toISOString(),
+            },
+          })
+
+          // Budget warning: totalTokens > max_tokens * alert_threshold
+          if (budgetSnapshot?.max_tokens) {
+            const threshold = budgetSnapshot.alert_threshold ?? 0.8
+            const warningLimit = budgetSnapshot.max_tokens * threshold
+            if (totalTokens > warningLimit && totalTokens <= budgetSnapshot.max_tokens) {
+              console.warn(
+                `[EngineCallbacks] Budget warning: execution ${id} has consumed ${totalTokens}/${budgetSnapshot.max_tokens} tokens (${(totalTokens / budgetSnapshot.max_tokens * 100).toFixed(1)}%, threshold ${threshold * 100}%)`,
+              )
+            }
+          }
+        } catch (err) {
+          console.error("[EngineCallbacks] Failed to emit execution_metrics:", err)
+        }
+      }, 500)
+    }
+
     return {
+      // ── onBeforeNode: budget blocking (BEFORE harness pipeline) ─────
+      // KD-11: budget check is injected before harness wrapping.
+      // The harness Proxy in DetectorPipeline intercepts onBeforeNode first,
+      // runs its detectors, then falls through to this handler.
+      // KD-16: only fires for top-level nodes (not loop inner nodes).
+      onBeforeNode: async (nodeId: string, nodeType: string, _nodeConfig: any) => {
+        try {
+          const exec = dao.findById(id)
+          if (!exec?.budget_snapshot) return { action: "proceed" as const }
+
+          let budgetSnapshot: { max_tokens?: number; alert_threshold?: number }
+          try { budgetSnapshot = JSON.parse(exec.budget_snapshot) } catch { return { action: "proceed" as const } }
+
+          if (!budgetSnapshot.max_tokens) return { action: "proceed" as const }
+
+          const metrics = tokenUsageDao.aggregateByExecution(id)
+          const totalTokens = metrics.totalInputTokens + metrics.totalOutputTokens
+
+          if (totalTokens > budgetSnapshot.max_tokens) {
+            // Budget exceeded: block this node and abort execution
+            dao.updateExecution(id, {
+              status: "budget_exceeded",
+              completed_at: new Date().toISOString(),
+            })
+            sse.emit(wsId, {
+              event: "execution_status",
+              data: {
+                executionId: id,
+                status: "budget_exceeded",
+                reason: "max_tokens exceeded",
+                budgetSnapshot: { max_tokens: budgetSnapshot.max_tokens, actual: totalTokens },
+              },
+            })
+            // Abort the engine so subsequent nodes don't run
+            enginePool.cancel(id)
+
+            return {
+              action: "override" as const,
+              overrideResult: {
+                outputs: { error: "Budget exceeded" },
+                status: "failed" as const,
+                durationMs: 0,
+                logLines: [`Budget exceeded: ${totalTokens}/${budgetSnapshot.max_tokens} tokens consumed`],
+              },
+            }
+          }
+        } catch (err) {
+          console.error("[EngineCallbacks] Budget check in onBeforeNode failed (non-fatal):", err)
+        }
+        return { action: "proceed" as const }
+      },
+
       onNodeStart: (nodeId, nodeType) => {
         const neId = `${id}-${nodeId}`
         // Clear old agent events for this node to prevent PRIMARY KEY collision
@@ -158,6 +288,11 @@ export class EngineCallbacks implements IEngineCallbacks {
             } : {}),
           },
         })
+
+        // ── execution_metrics SSE: aggregate llm_calls + budget progress ──
+        // Throttled to max 1 emit per 500ms (KD-6 / R1)
+        scheduleMetricsEmit()
+
         this.syncStateJson()
       },
 

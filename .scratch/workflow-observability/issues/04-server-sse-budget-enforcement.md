@@ -11,18 +11,18 @@
 02-server-budget-snapshot
 
 ## Status
-ready-for-agent
+done
 
 ## Acceptance Criteria
-- [ ] AC-1: 每个 `node_end` 后（最多 500ms 内），客户端收到 `execution_metrics` SSE 事件
-- [ ] AC-2: `execution_metrics.data` 包含正确的 `totalInputTokens` / `totalOutputTokens` / `totalCostUsd` / `totalLlmTurns` / `budgetProgress` / `errorCount`
-- [ ] AC-3: `budgetProgress.tokensPercent` == (累计 token / budget_snapshot.max_tokens * 100)，无预算时为 null
-- [ ] AC-4: 累计 token 达到 `max_tokens * alert_threshold` 时，engine notify module 发送预警通知
-- [ ] AC-5: 累计 token 超过 `max_tokens` 时，下一个顶层节点被阻断，执行状态变为 `budget_exceeded`
-- [ ] AC-6: 预算阻断时 emit `execution_status` SSE 事件（非 `status_change`）
-- [ ] AC-7: `budget_exceeded` 状态在 ExecutionLifecycle 中正确处理（写入 DB，onComplete 触发）
-- [ ] AC-8: `budgetProgress.durationPercent` 使用 `executions.started_at` 计算
-- [ ] AC-9: loop 内部节点不触发预算阻断（仅顶层节点边界）
+- [x] AC-1: 每个 `node_end` 后（最多 500ms 内），客户端收到 `execution_metrics` SSE 事件
+- [x] AC-2: `execution_metrics.data` 包含正确的 `totalInputTokens` / `totalOutputTokens` / `totalCostUsd` / `totalLlmTurns` / `budgetProgress` / `errorCount`
+- [x] AC-3: `budgetProgress.tokensPercent` == (累计 token / budget_snapshot.max_tokens * 100)，无预算时为 null
+- [x] AC-4: 累计 token 达到 `max_tokens * alert_threshold` 时，engine notify module 发送预警通知
+- [x] AC-5: 累计 token 超过 `max_tokens` 时，下一个顶层节点被阻断，执行状态变为 `budget_exceeded`
+- [x] AC-6: 预算阻断时 emit `execution_status` SSE 事件（非 `status_change`）
+- [x] AC-7: `budget_exceeded` 状态在 ExecutionLifecycle 中正确处理（写入 DB，onComplete 触发）
+- [x] AC-8: `budgetProgress.durationPercent` 使用 `executions.started_at` 计算
+- [x] AC-9: loop 内部节点不触发预算阻断（仅顶层节点边界）
 
 ## Verification Method
 **Verification type**: Integration test

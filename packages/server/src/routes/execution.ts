@@ -6,8 +6,9 @@ import { WorkflowService } from "../services/workflow"
 import { BuiltInWorkflowService } from "../services/builtin-workflow"
 import { SSEService } from "../services/sse"
 import { ObservabilityService } from "../services/observability"
+import { ObservabilityQueryService } from "../services/observability-query"
 import { PipelineConfigLoader } from "../services/pipeline-config"
-import { ExecutionDAO } from "../db/dao"
+import { ExecutionDAO, TokenUsageDAO } from "../db/dao"
 import { initExecutionServiceRegistry, getService } from "../services/execution-service-registry"
 export { getService } from "../services/execution-service-registry"
 import { mergeAgentEvents } from "@octopus/engine"
@@ -31,9 +32,11 @@ export function extractLatestHeartbeat(
 
 const executionRoutes = new Hono()
 let _executionDAO: ExecutionDAO | null = null
+let _tokenUsageDAO: TokenUsageDAO | null = null
 
-export function setExecutionDependencies(sse: SSEService, obs: ObservabilityService, execDAO?: ExecutionDAO) {
+export function setExecutionDependencies(sse: SSEService, obs: ObservabilityService, execDAO?: ExecutionDAO, tokenDAO?: TokenUsageDAO) {
   _executionDAO = execDAO ?? null
+  _tokenUsageDAO = tokenDAO ?? null
   if (execDAO) {
     initExecutionServiceRegistry(execDAO as any, sse, obs)
     setRepairDependencies(execDAO, sse, getService)
@@ -803,6 +806,29 @@ executionRoutes.get("/:executionId/logs", (c) => {
     await stream.sleep(1000)
     stream.writeSSE({ event: "complete", data: JSON.stringify({ executionId, message: "stream ended" }) })
   })
+})
+
+executionRoutes.get("/:executionId/observability", (c) => {
+  const workspaceId = getWorkspaceId(c)
+  const executionId = getExecutionId(c)
+  const svc = getService(workspaceId)
+  if (!svc) return c.json({ error: "workspace not found" }, 404)
+
+  if (!_executionDAO || !_tokenUsageDAO) {
+    return c.json({ error: "database not available" }, 503)
+  }
+
+  try {
+    const queryService = new ObservabilityQueryService(_executionDAO, _tokenUsageDAO)
+    const data = queryService.getObservabilityData(executionId)
+    return c.json(data)
+  } catch (err: unknown) {
+    if (err && typeof err === "object" && "status" in err) {
+      const e = err as { status: number; message?: string }
+      return c.json({ error: e.message ?? "not found" }, e.status)
+    }
+    throw err
+  }
 })
 
 // ── Repair sub-router ─────────────────────────────────────────────
