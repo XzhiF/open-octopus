@@ -219,11 +219,15 @@ export class EngineCallbacks implements IEngineCallbacks {
 
       onNodeEnd: (nodeId, status, durationMs, result, nodeType) => {
         const neId = `${id}-${nodeId}`
+        const isFailed = ["failed", "skipped_failed", "error"].includes(status)
+        const nodeError = isFailed
+          ? (result?.logLines?.join("\n") ?? result?.error ?? null)
+          : (status === "completed" ? null : undefined)
         dao.updateNodeExecution(neId, {
           status,
           completed_at: new Date().toISOString(), duration: durationMs,
           ...(result?.sessionId ? { session_id: result.sessionId } : {}),
-          ...(status === "completed" ? { error: null } : {}),
+          ...(nodeError !== undefined ? { error: nodeError } : {}),
           ...(result?.outputs ? { outputs: JSON.stringify(result.outputs) } : {}),
         })
         const inst = enginePool.get(id)

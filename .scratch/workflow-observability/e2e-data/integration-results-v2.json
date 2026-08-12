@@ -1,0 +1,278 @@
+{
+  "generatedAt": "2026-08-12T11:11:25.563Z",
+  "total": 45,
+  "passed": 44,
+  "failed": 1,
+  "results": [
+    {
+      "step": "Server health check",
+      "pass": true,
+      "detail": "Server is running on http://localhost:3001",
+      "timestamp": "2026-08-12T11:10:45.167Z"
+    },
+    {
+      "step": "Create test workspace",
+      "pass": true,
+      "detail": "id=e8ec2139-39db-4f9b-8950-3eb0c01d06c7, name=E2E_HARNESS_TEST_obs_v2",
+      "timestamp": "2026-08-12T11:10:45.208Z"
+    },
+    {
+      "step": "Create workflow with budget",
+      "pass": true,
+      "detail": "ref=OBS_TEST_observability.yaml",
+      "timestamp": "2026-08-12T11:10:45.214Z"
+    },
+    {
+      "step": "Create execution",
+      "pass": true,
+      "detail": "executionId=a1303cab-964e-4a27-afe7-76bab52f1382",
+      "timestamp": "2026-08-12T11:10:45.222Z"
+    },
+    {
+      "step": "Start execution",
+      "pass": true,
+      "detail": "Execution started",
+      "timestamp": "2026-08-12T11:11:25.478Z"
+    },
+    {
+      "step": "Execution reaches terminal status",
+      "pass": true,
+      "detail": "status=completed",
+      "timestamp": "2026-08-12T11:11:25.482Z"
+    },
+    {
+      "step": "AC-3: budget_snapshot written to DB",
+      "pass": true,
+      "detail": "snapshot={\"max_tokens\":50000,\"max_duration\":300,\"max_cost_usd\":1,\"alert_threshold\":0.8}",
+      "timestamp": "2026-08-12T11:11:25.510Z"
+    },
+    {
+      "step": "AC-3: snapshot max_tokens=50000",
+      "pass": true,
+      "detail": "actual=50000",
+      "timestamp": "2026-08-12T11:11:25.511Z"
+    },
+    {
+      "step": "AC-3: snapshot max_duration=300",
+      "pass": true,
+      "detail": "actual=300",
+      "timestamp": "2026-08-12T11:11:25.511Z"
+    },
+    {
+      "step": "AC-3: snapshot max_cost_usd=1.0",
+      "pass": true,
+      "detail": "actual=1",
+      "timestamp": "2026-08-12T11:11:25.511Z"
+    },
+    {
+      "step": "GET /observability returns 200",
+      "pass": true,
+      "detail": "status=200",
+      "timestamp": "2026-08-12T11:11:25.513Z"
+    },
+    {
+      "step": "AC-8: executionId matches",
+      "pass": true,
+      "detail": "api=a1303cab-964e-4a27-afe7-76bab52f1382",
+      "timestamp": "2026-08-12T11:11:25.513Z"
+    },
+    {
+      "step": "AC-8: status present",
+      "pass": true,
+      "detail": "status=completed",
+      "timestamp": "2026-08-12T11:11:25.514Z"
+    },
+    {
+      "step": "API: tokens.totalInput is number",
+      "pass": true,
+      "detail": "value=6",
+      "timestamp": "2026-08-12T11:11:25.514Z"
+    },
+    {
+      "step": "API: tokens.totalOutput is number",
+      "pass": true,
+      "detail": "value=120",
+      "timestamp": "2026-08-12T11:11:25.514Z"
+    },
+    {
+      "step": "API: tokens.totalCostUsd is number",
+      "pass": true,
+      "detail": "value=0.0191365",
+      "timestamp": "2026-08-12T11:11:25.514Z"
+    },
+    {
+      "step": "API: tokens.totalCostUsd > 0",
+      "pass": true,
+      "detail": "cost=0.0191365",
+      "timestamp": "2026-08-12T11:11:25.514Z"
+    },
+    {
+      "step": "API: byNode has >= 3 entries",
+      "pass": true,
+      "detail": "count=4",
+      "timestamp": "2026-08-12T11:11:25.514Z"
+    },
+    {
+      "step": "API: agent node 'process' in byNode",
+      "pass": true,
+      "detail": "input=6, output=120",
+      "timestamp": "2026-08-12T11:11:25.514Z"
+    },
+    {
+      "step": "API: agent node has tokens > 0",
+      "pass": true,
+      "detail": "total=126",
+      "timestamp": "2026-08-12T11:11:25.514Z"
+    },
+    {
+      "step": "API: agent node has llmTurns > 0",
+      "pass": true,
+      "detail": "llmTurns=1",
+      "timestamp": "2026-08-12T11:11:25.514Z"
+    },
+    {
+      "step": "API: fail-test node in byNode",
+      "pass": true,
+      "detail": "status=null, retryCount=1",
+      "timestamp": "2026-08-12T11:11:25.514Z"
+    },
+    {
+      "step": "API: fail-test retryCount > 0",
+      "pass": true,
+      "detail": "retryCount=1",
+      "timestamp": "2026-08-12T11:11:25.514Z"
+    },
+    {
+      "step": "API: byModel has entries",
+      "pass": true,
+      "detail": "count=1",
+      "timestamp": "2026-08-12T11:11:25.514Z"
+    },
+    {
+      "step": "API: timeSeries has entries",
+      "pass": true,
+      "detail": "count=1",
+      "timestamp": "2026-08-12T11:11:25.514Z"
+    },
+    {
+      "step": "API: budget section present",
+      "pass": true,
+      "detail": "",
+      "timestamp": "2026-08-12T11:11:25.514Z"
+    },
+    {
+      "step": "API: budget.snapshot not null",
+      "pass": true,
+      "detail": "snapshot={\"max_tokens\":50000,\"max_duration\":300,\"max_cost_usd\":1,\"alert_threshold\":0.8}",
+      "timestamp": "2026-08-12T11:11:25.514Z"
+    },
+    {
+      "step": "API: snapshot.max_tokens=50000",
+      "pass": true,
+      "detail": "actual=50000",
+      "timestamp": "2026-08-12T11:11:25.514Z"
+    },
+    {
+      "step": "API: budget.progress present",
+      "pass": true,
+      "detail": "tokens%=64.68, duration%=13.42, cost%=1.91",
+      "timestamp": "2026-08-12T11:11:25.514Z"
+    },
+    {
+      "step": "API: tokensPercent > 0",
+      "pass": true,
+      "detail": "value=64.68",
+      "timestamp": "2026-08-12T11:11:25.514Z"
+    },
+    {
+      "step": "API: durationPercent > 0",
+      "pass": true,
+      "detail": "value=13.42",
+      "timestamp": "2026-08-12T11:11:25.514Z"
+    },
+    {
+      "step": "API: costPercent > 0",
+      "pass": true,
+      "detail": "value=1.91",
+      "timestamp": "2026-08-12T11:11:25.514Z"
+    },
+    {
+      "step": "AC-5: errors is array",
+      "pass": true,
+      "detail": "count=0",
+      "timestamp": "2026-08-12T11:11:25.514Z"
+    },
+    {
+      "step": "API: rounds present",
+      "pass": true,
+      "detail": "llm=1, retries=1",
+      "timestamp": "2026-08-12T11:11:25.514Z"
+    },
+    {
+      "step": "API: totalLlmTurns > 0",
+      "pass": true,
+      "detail": "value=1",
+      "timestamp": "2026-08-12T11:11:25.514Z"
+    },
+    {
+      "step": "API: totalRetries > 0 (fail-test retried)",
+      "pass": true,
+      "detail": "value=1",
+      "timestamp": "2026-08-12T11:11:25.514Z"
+    },
+    {
+      "step": "R3: API totalInput == DB SUM(input_tokens)",
+      "pass": true,
+      "detail": "API=6, DB=6",
+      "timestamp": "2026-08-12T11:11:25.531Z"
+    },
+    {
+      "step": "R3: API totalOutput == DB SUM(output_tokens)",
+      "pass": true,
+      "detail": "API=120, DB=120",
+      "timestamp": "2026-08-12T11:11:25.531Z"
+    },
+    {
+      "step": "R3: API totalCostUsd ≈ DB SUM(cost_usd)",
+      "pass": true,
+      "detail": "API=0.0191365, DB=0.0191365",
+      "timestamp": "2026-08-12T11:11:25.531Z"
+    },
+    {
+      "step": "R3: API byNode count == DB distinct node count",
+      "pass": true,
+      "detail": "API=4, DB=4",
+      "timestamp": "2026-08-12T11:11:25.544Z"
+    },
+    {
+      "step": "DB: fail-test node found",
+      "pass": true,
+      "detail": "status=failed, retry=1",
+      "timestamp": "2026-08-12T11:11:25.557Z"
+    },
+    {
+      "step": "DB: fail-test status=failed",
+      "pass": true,
+      "detail": "actual=failed",
+      "timestamp": "2026-08-12T11:11:25.557Z"
+    },
+    {
+      "step": "DB: fail-test retry_count >= 1",
+      "pass": true,
+      "detail": "actual=1",
+      "timestamp": "2026-08-12T11:11:25.557Z"
+    },
+    {
+      "step": "BUG-FINDING: fail-test error column is NULL",
+      "pass": false,
+      "detail": "Error message not persisted for retried bash nodes — engine callback flow gap",
+      "timestamp": "2026-08-12T11:11:25.557Z"
+    },
+    {
+      "step": "Cleanup workspace",
+      "pass": true,
+      "detail": "id=e8ec2139-39db-4f9b-8950-3eb0c01d06c7",
+      "timestamp": "2026-08-12T11:11:25.562Z"
+    }
+  ]
+}
