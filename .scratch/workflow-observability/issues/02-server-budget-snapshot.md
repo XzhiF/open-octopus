@@ -7,7 +7,7 @@
 01-shared-schema-budget
 
 ## Status
-ready-for-agent
+done
 
 ## Acceptance Criteria
 - [ ] AC-1: 含 budget 的 workflow 执行后，`executions.budget_snapshot` 列包含正确的 JSON（与 YAML budget 一致）

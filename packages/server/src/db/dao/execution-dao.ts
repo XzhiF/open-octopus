@@ -70,7 +70,7 @@ export class ExecutionDAO extends BaseDAO {
       "duration", "global_session_id", "approval_metadata", "interaction_metadata", "chain_retry_count",
       "preset_inputs", "name", "branch", "start_commit_id", "end_commit_id",
       "pipeline_config", "retry_count", "pending_hooks", "resume_attempts",
-      "instance_id", "input_values",
+      "instance_id", "input_values", "budget_snapshot",
     ])
     const sets: string[] = []
     const vals: unknown[] = []

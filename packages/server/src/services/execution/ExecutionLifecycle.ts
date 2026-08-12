@@ -250,6 +250,11 @@ export class ExecutionLifecycle {
     }
     const updatedExec = this.dao.findById(id)!
 
+    // Write budget snapshot from parsed workflow YAML (KD-8: after getWorkflow(), before engine creation)
+    if (wf.parsed.budget) {
+      this.dao.updateExecution(id, { budget_snapshot: JSON.stringify(wf.parsed.budget) })
+    }
+
     // Build callbacks and optionally wrap through HarnessController
     let callbacks = this.buildCallbacks(id)
     if (this.harnessController) {

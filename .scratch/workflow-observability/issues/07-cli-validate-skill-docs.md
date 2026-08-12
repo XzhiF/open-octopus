@@ -8,12 +8,12 @@
 01-shared-schema-budget
 
 ## Status
-ready-for-agent
+done
 
 ## Acceptance Criteria
-- [ ] AC-1: `octopus workflow validate` 对含合法 budget 的 YAML 返回成功（退出码 0）
-- [ ] AC-2: `octopus workflow validate` 对含非法 budget 的 YAML（如 `max_tokens: -1` 或 `max_tokens: "abc"`）返回失败（退出码 != 0）并显示明确的 budget 错误信息
-- [ ] AC-3: `octo-workflow-dev` skill 文档包含 `budget` 字段的说明、类型、默认值、示例
+- [x] AC-1: `octopus workflow validate` 对含合法 budget 的 YAML 返回成功（退出码 0）
+- [x] AC-2: `octopus workflow validate` 对含非法 budget 的 YAML（如 `max_tokens: -1` 或 `max_tokens: "abc"`）返回失败（退出码 != 0）并显示明确的 budget 错误信息
+- [x] AC-3: `octo-workflow-dev` skill 文档包含 `budget` 字段的说明、类型、默认值、示例
 
 ## Verification Method
 **Verification type**: Integration test + Manual checklist
