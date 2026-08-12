@@ -3,11 +3,12 @@
 import Link from "next/link"
 import { usePathname } from "next/navigation"
 import { cn } from "@/lib/utils"
-import { Boxes, Database } from "lucide-react"
+import { Boxes, Database, ShieldCheck } from "lucide-react"
 
 const MENU = [
   { label: "模型管理", href: "/system/models", icon: Boxes },
   { label: "仓库管理", href: "/system/repos", icon: Database },
+  { label: "Harness 配置", href: "/system/harness", icon: ShieldCheck },
 ]
 
 export default function SystemLayout({ children }: { children: React.ReactNode }) {

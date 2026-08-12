@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import dagre from '@dagrejs/dagre'
 import { type Node, type Edge, useNodesState, useEdgesState } from '@xyflow/react'
-import type { ExecutionStatus, ExecutionTreeNode, GateStatus, CreateNodeFormData, ExecuteNodeFormData, AgentTraceEvent, LoopIterationSummary, IterationDetail } from '@/lib/types'
+import type { ExecutionStatus, ExecutionTreeNode, GateStatus, CreateNodeFormData, ExecuteNodeFormData, AgentTraceEvent, LoopIterationSummary, IterationDetail, HarnessExecutionStatus, HarnessSummary } from '@/lib/types'
 import { getBranchColor } from '@/lib/branch-colors'
 import { fetchExecutionTree, createExecution, startExecution, retryExecution, cancelExecution, skipExecution, deleteExecution } from '@/lib/api-client'
 import { getServerUrl } from '@/lib/server-config'
@@ -79,6 +79,7 @@ function buildNodeData(node: ExecutionTreeNode, parentGateStatus: GateStatus | n
     costUsd: (node as ExecutionTreeNode & { costUsd?: number }).costUsd,
     turnCount: (node as ExecutionTreeNode & { turnCount?: number }).turnCount,
     toolCount: (node as ExecutionTreeNode & { toolCount?: number }).toolCount,
+    harnessExecutionStatus: node.harnessStatus,
   }
 }
 
@@ -173,6 +174,8 @@ function apiNodeToTreeNode(raw: Record<string, unknown>): ExecutionTreeNode {
       : undefined,
     approvalMetadata: raw.approval_metadata as import("@/lib/types").ApprovalMetadata | null | undefined,
     executorType: raw.executor_type as ExecutionTreeNode["executorType"],
+    harnessStatus: raw.harness_status as HarnessExecutionStatus | undefined,
+    harnessSummary: raw.harness_summary as HarnessSummary | null | undefined,
   }
 }
 
@@ -381,6 +384,33 @@ export function useExecutionTree(
       const { executionId, gateStatus } = JSON.parse(e.data)
       setTreeNodes(prev => prev.map(n => n.id === executionId ? { ...n, gateStatus: gateStatus as GateStatus } : n))
     })
+    // ---- Harness SSE events → update execution-level harnessStatus ----
+    es.addEventListener("harness_diagnosis", (e) => {
+      try {
+        const { executionId, report } = JSON.parse(e.data)
+        // Update harnessStatus for ALL diagnosis events (not just critical),
+        // so warning-level detectors (stupid_retry, timeout_cascade) also show purple ants
+        setTreeNodes(prev => prev.map(n => n.id === executionId ? { ...n, harnessStatus: "intervened" as HarnessExecutionStatus } : n))
+      } catch { /* skip */ }
+    })
+    es.addEventListener("harness_delegation", (e) => {
+      try {
+        const { executionId, status, result } = JSON.parse(e.data)
+        if (status === "complete" && result?.decision) {
+          const nextStatus = result.decision === "block_node" ? "blocked"
+            : result.decision === "agent_takeover" ? "delegated"
+            : "intervened"
+          setTreeNodes(prev => prev.map(n => n.id === executionId ? { ...n, harnessStatus: nextStatus as HarnessExecutionStatus } : n))
+        }
+      } catch { /* skip */ }
+    })
+    es.addEventListener("harness_blocked", (e) => {
+      try {
+        const { executionId } = JSON.parse(e.data)
+        setTreeNodes(prev => prev.map(n => n.id === executionId ? { ...n, harnessStatus: "blocked" as HarnessExecutionStatus } : n))
+      } catch { /* skip */ }
+    })
+
     es.addEventListener("execution_deleted", (e) => {
       const data = JSON.parse(e.data)
       const deletedId = data.executionId

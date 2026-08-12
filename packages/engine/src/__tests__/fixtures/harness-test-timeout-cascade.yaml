@@ -1,0 +1,26 @@
+apiVersion: octopus/v1
+kind: Workflow
+name: Harness Test - Timeout Cascade
+description: Tests that harness detects when multiple consecutive nodes timeout and pauses the workflow
+
+nodes:
+  - id: timeout-1
+    type: bash
+    script: |
+      echo "Starting long sleep..."
+      sleep 10
+    timeout: 2
+
+  - id: timeout-2
+    type: bash
+    script: |
+      echo "Starting another long sleep..."
+      sleep 10
+    timeout: 2
+
+  - id: timeout-3
+    type: bash
+    script: |
+      echo "Starting yet another long sleep..."
+      sleep 10
+    timeout: 2

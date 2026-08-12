@@ -108,3 +108,25 @@ When adding a new module:
 2. Create `lib/{name}.self-test.mjs`
 3. Add a DRAFT row to the table above
 4. Promote to STABLE after self-test passes 3 consecutive runs
+
+## Patterns
+
+Reusable testing patterns with import examples, API endpoints, selectors, and pitfall guides.
+
+| Pattern | File | Domain | Description |
+|---------|------|--------|-------------|
+| Workflow Execute | `patterns/workflow-execute.md` | Execution | Create → start → poll workflow lifecycle |
+| Workspace Create | `patterns/workspace-create.md` | Workspace | Workspace CRUD with cleanup |
+| Dialog Interact | `patterns/dialog-interact.md` | Browser | Approval dialog interaction |
+| File Tree Ops | `patterns/file-tree-ops.md` | Browser | File tree navigation and operations |
+| Tab Switch | `patterns/tab-switch.md` | Browser | Tab switching and state verification |
+| **Harness Intercept** | `patterns/harness-intercept.md` | **Harness** | **5-layer interception testing: static scan, canUseTool, bash wrapper, safety prompt, env isolation** |
+
+## Recipes
+
+Complete, runnable E2E test scripts. Copy and customize for your feature.
+
+| Recipe | File | Tests | Runtime |
+|--------|------|-------|---------|
+| Full Lifecycle | `recipes/full-lifecycle.mjs` | Generic workflow lifecycle | ~30s |
+| **Intercept Audit** | `recipes/harness-intercept-audit.mjs` | **T1: static scan, T2: agent tool intercept, T3: timeout takeover, T4: server survival** | **~5min** |

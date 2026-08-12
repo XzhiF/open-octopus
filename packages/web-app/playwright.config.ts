@@ -73,6 +73,11 @@ export default defineConfig({
   retries: process.env.CI ? 2 : 1,
   workers: process.env.CI ? 1 : undefined,
   reporter: process.env.CI ? "html" : [["list"]],
+  // When E2E_ARTIFACTS_DIR is set (by pipeline skills), redirect all test
+  // artifacts (traces, videos, failure screenshots) to the artifacts directory.
+  outputDir: process.env.E2E_ARTIFACTS_DIR
+    ? path.join(process.env.E2E_ARTIFACTS_DIR, "e2e-screenshots", "test-results")
+    : undefined,
   use: {
     baseURL: `http://localhost:${webPort}`,
     trace: "on-first-retry",

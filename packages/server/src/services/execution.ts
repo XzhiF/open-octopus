@@ -13,6 +13,8 @@ import { createKnowledgeService } from "./knowledge"
 import { ExecutionLifecycle } from "./execution/ExecutionLifecycle"
 import { RecoveryManager } from "./execution/RecoveryManager"
 import { globalErrorTracker } from "./error-tracker"
+import { RepairService } from "./repair"
+import { getResourceRegistry } from "./resource-registry"
 import type { EngineCallbacks } from "@octopus/engine"
 import type { ExecutionRow, NodeExecutionRow, BranchExecutionRow } from "./execution/types"
 
@@ -63,6 +65,23 @@ export class ExecutionService {
       this.lifecycle.setKnowledgeService(knowledgeService)
     } catch (err) {
       console.warn("[ExecutionService] Knowledge service initialization failed:", err)
+    }
+
+    // Wire up repair service for harness inject_message actions
+    try {
+      const resourceManager = getResourceRegistry().get()
+      const repairService = new RepairService(
+        this.dao,
+        sse,
+        this,
+        workflowService,
+        new BuiltInWorkflowService(resourceManager),
+        workspacePath,
+        workspaceId,
+      )
+      this.lifecycle.setRepairService(repairService)
+    } catch (err) {
+      console.warn("[ExecutionService] Repair service initialization failed:", err)
     }
 
     this.lifecycle.setupResumeListener()

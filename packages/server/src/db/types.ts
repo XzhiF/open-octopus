@@ -47,6 +47,8 @@ export interface ExecutionRow {
   pipeline_config: string
   chain_retry_count: number
   preset_inputs: string | null
+  harness_status: string | null
+  harness_summary: string | null
   started_at: string | null
   completed_at: string | null
   duration: number | null
@@ -73,6 +75,8 @@ export interface NodeExecutionRow {
   last_retry_at: string | null
   parent_node_id: string | null
   iteration_index: number | null
+  harness_status: string | null
+  harness_interventions: string | null
 }
 
 export interface NodeEdgeRow {

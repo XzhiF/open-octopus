@@ -93,13 +93,16 @@ export interface StructuredResult {
 
 // ===== Harness Directive =====
 
-export type HarnessDirectiveType = "abort" | "pause"
+export type HarnessDirectiveType = "abort" | "pause" | "inject"
 
 export interface HarnessDirective {
   type: HarnessDirectiveType
   reason: string
   issued_by: string
-  timestamp: number
+  timestamp?: number
+  // inject-specific fields
+  nodeId?: string
+  message?: string
 }
 
 // ===== Version Info =====

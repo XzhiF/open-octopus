@@ -106,6 +106,8 @@ INPUT: .scratch/<feature-slug>/  (must have pipeline-report.md or verification-r
 │     └── else → CONTINUE                          │
 │                                                  │
 │  4. Generate gap brief (with carryover section)   │
+│  4.5 Validate gap brief fix paths (sub-agent)     │
+│      └── INFEASIBLE? → adjust brief, retry 1x    │
 │  5. Invoke matt-dev-pipeline (full 5 phases)      │
 │  6. Record iteration results                      │
 │  6.5 Context hygiene:                            │
@@ -196,6 +198,20 @@ Zero ACs with status SKIP in the latest verification-report.
 Browser E2E tests (if any exist in the spec) have execution evidence:
 - Playwright ran against a real browser (screenshots or test output logs)
 - NOT just "tests written" (code existence ≠ verification)
+
+**Mandatory check** — run this command to verify evidence exists:
+```bash
+ARTIFACTS_DIR="<artifacts.dir>/<feature-slug>"
+SCREENSHOT_COUNT=$(find "$ARTIFACTS_DIR/e2e-screenshots" -name "*.png" 2>/dev/null | wc -l | tr -d ' ')
+echo "E2E screenshots found: $SCREENSHOT_COUNT"
+```
+
+**Layer 4 passes** when:
+- Spec has browser E2E ACs AND `$SCREENSHOT_COUNT > 0`, OR
+- Spec has NO browser E2E ACs (API-only feature)
+
+**Layer 4 fails** when:
+- Spec has browser E2E ACs AND `$SCREENSHOT_COUNT == 0` — E2E was never executed in a browser
 
 #### Layer 5: Score Threshold
 Confidence score ≥ 85 (after applying scoring overrides, see below).
@@ -337,6 +353,63 @@ List ALL ACs not PASS from previous rounds:
 > **Execution requirement**: All tests MUST be executed, not just written.
 > Tests written but not executed = 0% credit. Pipeline must produce execution
 > evidence (test output, screenshots, DB queries).
+
+### Step 4.5: Validate Gap Brief Fix Paths
+
+**Why**: Gap briefs propose specific fixes for identified gaps. If a fix path is infeasible (timing conflict, type mismatch, missing bridge), running the full pipeline on it wastes an entire iteration. A lightweight pre-flight check catches these before committing pipeline resources.
+
+**When**: After Step 4 generates the gap brief, before Step 5 invokes the pipeline. Only runs during loop iterations (round ≥ 2), not on the first pipeline run.
+
+**Execution**: Spawn a lightweight sub-agent via Agent tool:
+
+```
+Prompt: "You are a Gap Brief Feasibility Checker.
+
+Read the gap brief at <artifacts.dir>/<current-feature-slug>/brief.md
+
+For each gap target in the '## Gap Targets' section:
+1. Read the proposed fix ('Required fix' field)
+2. Trace the fix through the actual codebase:
+   - Does the data path exist or can it realistically be created?
+   - Are the types/interfaces on both sides compatible?
+   - Does the timing work? (sync callback vs async operation)
+   - Are there cross-package boundaries that need new wiring?
+3. Check against the iteration-handoff.md (if exists):
+   - Does the fix contradict any 'Protected Architecture Decisions'?
+   - Does the fix modify any 'Confirmed Interfaces'?
+
+Output (use this exact structure):
+
+## Gap Brief Feasibility Report
+
+### Verdict: ALL_FEASIBLE / HAS_INFEASIBLE
+
+### Per-Gap Assessment
+| Gap# | Title | Verdict | Blocker (if any) |
+|------|-------|---------|-----------------|
+| G1 | <title> | ✅ FEASIBLE | — |
+| G2 | <title> | ❌ INFEASIBLE | <specific blocker: timing paradox / type mismatch / missing bridge / contradicts ADR-NNN> |
+
+### Suggested Adjustments (for INFEASIBLE gaps)
+- G2: <alternative approach that works within existing constraints, or recommendation to mark as BLOCKED>
+"
+```
+
+**Result handling**:
+- **ALL_FEASIBLE** → proceed to Step 5 immediately
+- **HAS_INFEASIBLE** → adjust the gap brief:
+  - Replace infeasible fix with the suggested alternative, OR
+  - Mark the gap as BLOCKED (exclude from this iteration, don't waste pipeline resources)
+  - Re-validate once (spawn sub-agent again with adjusted brief)
+  - After 1 retry → proceed to Step 5 regardless of result (don't block the loop)
+
+**Token budget**: ~15-20k per validation (reads brief + greps codebase + outputs report). Far less than a full pipeline iteration (~200k+).
+
+**What this catches** (based on real harness iteration data):
+- Fix proposes async operation in sync callback path → timing paradox
+- Fix references type that doesn't exist on consuming side → type mismatch
+- Fix assumes data flows A→B but no code connects them → missing bridge
+- Fix contradicts a protected architecture decision from iteration-handoff.md
 
 ### Step 5: Invoke Pipeline
 

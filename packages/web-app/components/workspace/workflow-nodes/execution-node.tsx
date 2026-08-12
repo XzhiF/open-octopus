@@ -7,8 +7,8 @@ import { cn } from "@/lib/utils"
 import { Badge } from "@/components/ui/badge"
 import { ExecutionButtonBar } from "./execution-button-bar"
 import { useExecutionNodeCallbacks } from "./execution-node-context"
-import type { ExecutionNodeData, ExecutionStatus, GateStatus } from "@/lib/types"
-import { CheckCircle2, XCircle, Clock, Loader2, SkipForward, ShieldOff, Undo2, PauseCircle, PlayCircle, Timer, Webhook, MessageSquare, Hourglass, Ban } from "lucide-react"
+import type { ExecutionNodeData, ExecutionStatus, GateStatus, HarnessNodeStatus, HarnessExecutionStatus } from "@/lib/types"
+import { CheckCircle2, XCircle, Clock, Loader2, SkipForward, ShieldOff, Undo2, PauseCircle, PlayCircle, Timer, Webhook, MessageSquare, Hourglass, Ban, ShieldCheck, Bot } from "lucide-react"
 import { formatDuration } from "@/lib/format"
 import { useLiveTimer } from "@/hooks/use-live-timer"
 import { TokenUsageDisplay } from "./token-usage-display"
@@ -44,6 +44,65 @@ function triggeredByLabel(triggeredBy: string): string {
   }
 }
 
+function HarnessStatusIndicator({ status }: { status: HarnessNodeStatus }) {
+  switch (status) {
+    case "harness_intervening":
+      return (
+        <span title="Harness 正在干预" className="inline-flex items-center">
+          <ShieldCheck className="h-4 w-4 text-violet-500 animate-pulse" />
+        </span>
+      )
+    case "harness_modified":
+      return (
+        <span title="Harness 已修改并重试" className="inline-flex items-center gap-0.5">
+          <ShieldCheck className="h-4 w-4 text-violet-500" />
+          <CheckCircle2 className="h-3 w-3 text-emerald-500" />
+        </span>
+      )
+    case "harness_executed":
+      return (
+        <span title="Harness Agent 接管执行" className="inline-flex items-center">
+          <Bot className="h-4 w-4 text-rose-500" />
+        </span>
+      )
+    case "harness_blocked":
+      return (
+        <span title="Harness 已阻断（进程冲突）" className="inline-flex items-center gap-0.5">
+          <span className="text-sm leading-none">🛡️</span>
+          <XCircle className="h-3 w-3 text-red-500" />
+        </span>
+      )
+    default:
+      return null
+  }
+}
+
+/** Execution-level harness status badge (from executions.harness_status) */
+function HarnessExecutionBadge({ status }: { status: HarnessExecutionStatus }) {
+  switch (status) {
+    case "intervened":
+      return (
+        <span title="Harness 已干预（修复/指导/重配置）" className="inline-flex items-center gap-0.5 ml-1">
+          <span className="text-sm leading-none">🛡️</span>
+        </span>
+      )
+    case "blocked":
+      return (
+        <span title="Harness 已阻断节点" className="inline-flex items-center gap-0.5 ml-1">
+          <span className="text-sm leading-none">🛡️❌</span>
+        </span>
+      )
+    case "delegated":
+      return (
+        <span title="Harness Agent 接管完成" className="inline-flex items-center gap-0.5 ml-1">
+          <span className="text-sm leading-none">🤖</span>
+        </span>
+      )
+    default:
+      return null
+  }
+}
+
 function ExecutionNodeInner({ data: rawData, selected }: NodeProps) {
   const data = rawData as unknown as ExecutionNodeData
   const callbacks = useExecutionNodeCallbacks()
@@ -62,6 +121,9 @@ function ExecutionNodeInner({ data: rawData, selected }: NodeProps) {
   const badgeLabel = isLast ? "最近完成" : displayLabel
   const badgeClasses = isLast ? "bg-emerald-600 text-white border-emerald-600" : config.color
   const isRunning = data.executionStatus === "running"
+  const isHarnessIntervening = data.harnessStatus === "harness_intervening"
+    || data.harnessExecutionStatus === "intervened"
+    || data.harnessExecutionStatus === "blocked"
   const elapsedSeconds = useLiveTimer(isRunning ? data.startedAt : undefined)
   const showRollback = (data.executionStatus === "running" || data.executionStatus === "failed") && (data.rollbackOnError || data.rollback === "git-revert")
   const gateLabel = gateLabelMap[data.gateStatus]
@@ -92,6 +154,12 @@ function ExecutionNodeInner({ data: rawData, selected }: NodeProps) {
           <h4 className="truncate text-sm font-medium">{data.name || data.workflowName}</h4>
         </div>
         <Badge variant={badgeVariant} className={cn("text-xs", badgeClasses)}>{badgeLabel}{gateLabel}</Badge>
+        {data.harnessStatus && (
+          <HarnessStatusIndicator status={data.harnessStatus} />
+        )}
+        {data.harnessExecutionStatus && (
+          <HarnessExecutionBadge status={data.harnessExecutionStatus} />
+        )}
         {data.gateStatus === "bypassed" && (
           <ShieldOff className="h-4 w-4 text-gray-400" />
         )}
@@ -188,26 +256,29 @@ function ExecutionNodeInner({ data: rawData, selected }: NodeProps) {
   )
 
   if (isRunning) {
+    const marchColor = isHarnessIntervening ? "#8b5cf6" : "#f59e0b"
     return (
-      <div className="border-running rounded-lg p-0.5 min-w-[300px] max-w-[340px]">
+      <div
+        className="border-march rounded-lg p-0.5 min-w-[300px] max-w-[340px]"
+        style={{
+          borderColor: "transparent",
+          background: `
+            repeating-linear-gradient(90deg, ${marchColor} 0 6px, transparent 6px 12px) top    / 100% 2px no-repeat,
+            repeating-linear-gradient(90deg, ${marchColor} 0 6px, transparent 6px 12px) bottom / 100% 2px no-repeat,
+            repeating-linear-gradient(0deg, ${marchColor} 0 6px, transparent 6px 12px) left   / 2px 100% no-repeat,
+            repeating-linear-gradient(0deg, ${marchColor} 0 6px, transparent 6px 12px) right  / 2px 100% no-repeat`,
+          animation: "border-march 0.6s linear infinite",
+        }}
+      >
         <style>{`
           @keyframes border-march {
             to {
               background-position:
-                -12px 0,    /* top: dash flow right */
-                -12px 100%, /* bottom: dash flow right */
-                0 -12px,    /* left: dash flow down */
-                100% -12px; /* right: dash flow down */
+                -12px 0,
+                -12px 100%,
+                0 -12px,
+                100% -12px;
             }
-          }
-          .border-running {
-            border-color: transparent;
-            background:
-              repeating-linear-gradient(90deg, #f59e0b 0 6px, transparent 6px 12px) top    / 100% 2px no-repeat,
-              repeating-linear-gradient(90deg, #f59e0b 0 6px, transparent 6px 12px) bottom / 100% 2px no-repeat,
-              repeating-linear-gradient(0deg, #f59e0b 0 6px, transparent 6px 12px) left   / 2px 100% no-repeat,
-              repeating-linear-gradient(0deg, #f59e0b 0 6px, transparent 6px 12px) right  / 2px 100% no-repeat;
-            animation: border-march 0.6s linear infinite;
           }
         `}</style>
         {card}

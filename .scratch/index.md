@@ -36,3 +36,8 @@
 | 32 | agent-workflow-integration | 2026-08-04 | feat/agent-workflow-integration | done (PR #44, 163 tests, 6/6 tickets) |
 | 33 | agent-workflow-integration-r2 | 2026-08-05 | feat/agent-workflow-integration | done (gap-fix: E2E 13 tests + assertion density) |
 | 34 | octopus-agent-ui-wiring | 2026-08-05 | feat/agent-workflow-integration | done (PR #44 updated, 29 tests) |
+| 35 | workflow-engine-harness | 2026-08-05 | feat/workflow-engine-harness | done (converged: GO, PR #45, 2 iterations) |
+| 36 | workflow-engine-harness-r2 | 2026-08-05 | feat/workflow-engine-harness | done (E2E Playwright + code review fixes) |
+| 37 | harness-gap-fix | 2026-08-06 | feat/workflow-engine-harness | done (6 gaps fixed, 34 unit + 7 E2E tests, PR #45 updated) |
+| 38 | harness-semantic-v2 | 2026-08-06 | feat/workflow-engine-harness | done (converged: 88/100, 2 iterations, 5 bug fixes, PR #45) |
+| 39 | harness-semantic-v2-r2 | 2026-08-06 | feat/workflow-engine-harness | done (gap-fix: AC-3 timeout PASS, AC-4 wired) |
