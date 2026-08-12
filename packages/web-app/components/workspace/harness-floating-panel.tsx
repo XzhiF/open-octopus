@@ -102,6 +102,9 @@ function CollapsedPanel({
         <span className="text-[10px] text-muted-foreground pointer-events-none flex items-center gap-1">
           <span>↑{formatTokenCount(metrics.totalInputTokens)}</span>
           <span>↓{formatTokenCount(metrics.totalOutputTokens)}</span>
+          {metrics.totalCacheTokens > 0 && (
+            <span>⚡{formatTokenCount(metrics.totalCacheTokens)}</span>
+          )}
         </span>
       )}
     </div>

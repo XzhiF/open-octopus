@@ -68,6 +68,7 @@ const DEFAULT_METRICS: ExecutionMetrics = {
   totalTokens: 0,
   totalInputTokens: 0,
   totalOutputTokens: 0,
+  totalCacheTokens: 0,
   totalCost: 0,
   totalTurns: 0,
   budgetProgress: { tokensPercent: null, durationPercent: null, costPercent: null },

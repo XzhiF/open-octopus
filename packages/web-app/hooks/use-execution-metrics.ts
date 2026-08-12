@@ -15,6 +15,7 @@ export interface ExecutionMetrics {
   totalTokens: number
   totalInputTokens: number
   totalOutputTokens: number
+  totalCacheTokens: number
   totalCost: number
   totalTurns: number
   budgetProgress: BudgetProgress
@@ -60,6 +61,7 @@ const INITIAL_METRICS: ExecutionMetrics = {
   totalTokens: 0,
   totalInputTokens: 0,
   totalOutputTokens: 0,
+  totalCacheTokens: 0,
   totalCost: 0,
   totalTurns: 0,
   budgetProgress: { tokensPercent: null, durationPercent: null, costPercent: null },
@@ -93,9 +95,10 @@ export function useExecutionMetrics(
       const data: ObservabilityResponse = await res.json()
 
       setMetrics((prev) => ({
-        totalTokens: data.tokens.totalInput + data.tokens.totalOutput,
+        totalTokens: data.tokens.totalInput + data.tokens.totalOutput + data.tokens.totalCache,
         totalInputTokens: data.tokens.totalInput,
         totalOutputTokens: data.tokens.totalOutput,
+        totalCacheTokens: data.tokens.totalCache,
         totalCost: data.tokens.totalCostUsd,
         totalTurns: data.rounds.totalLlmTurns,
         budgetProgress: data.budget.progress,

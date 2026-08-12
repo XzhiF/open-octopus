@@ -200,7 +200,7 @@ export function ObservabilityTab({ workspaceId, executionId }: ObservabilityTabP
       {/* Summary Cards */}
       <div className="grid grid-cols-2 gap-1.5">
         <MiniCard title="总 Token" value={formatTokenCount(totalTokens)}
-          subtitle={`↑${formatTokenCount(data.tokens.totalInput)} ↓${formatTokenCount(data.tokens.totalOutput)}`} />
+          subtitle={`↑${formatTokenCount(data.tokens.totalInput)} ↓${formatTokenCount(data.tokens.totalOutput)} ⚡${formatTokenCount(data.tokens.totalCache)}`} />
         <MiniCard title="总轮次" value={String(data.rounds.totalLlmTurns)}
           subtitle={`Loop ${data.rounds.totalLoopIterations} / Swarm ${data.rounds.totalSwarmRounds}`} />
         <MiniCard title="总成本" value={formatCurrency(data.tokens.totalCostUsd)} subtitle="USD" />

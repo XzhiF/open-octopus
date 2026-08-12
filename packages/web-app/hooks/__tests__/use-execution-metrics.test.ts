@@ -244,7 +244,8 @@ describe("useExecutionMetrics", () => {
     )
 
     // Should have populated from historical data
-    expect(result.current.totalTokens).toBe(750) // 500 + 250
+    expect(result.current.totalTokens).toBe(800) // 500 + 250 + 50 (cache)
+    expect(result.current.totalCacheTokens).toBe(50)
     expect(result.current.totalCost).toBe(0.05)
     expect(result.current.totalTurns).toBe(10)
     expect(result.current.errorCount).toBe(1)
@@ -269,7 +270,7 @@ describe("useExecutionMetrics", () => {
     await flushPromises()
 
     // Historical data loaded
-    expect(result.current.totalTokens).toBe(750)
+    expect(result.current.totalTokens).toBe(800) // 500 + 250 + 50 (cache)
 
     // SSE event arrives with updated cumulative data
     const es = MockEventSource.instances[0]

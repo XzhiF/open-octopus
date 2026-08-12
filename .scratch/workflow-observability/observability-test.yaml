@@ -1,0 +1,59 @@
+# Observability Test Workflow
+# Tests: token tracking, execution metrics, harness events, budget monitoring
+apiVersion: octopus/v1
+kind: Workflow
+name: observability-test
+description: Verify workflow observability features (summary cards, token tracking, event timeline)
+
+budget:
+  max_tokens: 50000
+  max_duration_minutes: 3
+
+nodes:
+  - id: init
+    type: bash
+    command: |
+      echo "=== Observability Test Started ==="
+      echo "Timestamp: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+      echo "Testing: token tracking, execution metrics, harness events"
+      echo "init_complete=true"
+
+  - id: code-analysis
+    type: agent
+    depends_on: [init]
+    agent: octo-code-explorer
+    prompt: |
+      快速分析 packages/shared/package.json 的依赖结构。
+      列出前 3 个主要依赖及其用途，格式简洁。
+    next: data-process
+
+  - id: data-process
+    type: bash
+    depends_on: [code-analysis]
+    command: |
+      echo "=== Data Processing Stage ==="
+      echo "Processing analysis results..."
+      sleep 2
+      echo "Processed 3 dependencies"
+      echo "data_ready=true"
+
+  - id: validation-loop
+    type: loop
+    depends_on: [data-process]
+    iterations: 2
+    body:
+      - id: validate-item
+        type: bash
+        command: |
+          echo "Validating item $iteration of 2"
+          echo "Validation timestamp: $(date -u +%H:%M:%S)"
+          sleep 1
+    next: summary
+
+  - id: summary
+    type: agent
+    depends_on: [validation-loop]
+    agent: octo-code-explorer
+    prompt: |
+      生成一句话总结：本次测试执行了哪些阶段，验证了什么功能。
+      保持简洁，不超过 50 字。
