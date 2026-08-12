@@ -485,6 +485,27 @@ describe("BudgetSchema", () => {
     }
   })
 
+  it("parseWorkflow normalizes swarm node budget K/M strings", () => {
+    const yaml = `
+apiVersion: octopus/v1
+kind: Workflow
+name: test
+nodes:
+  - id: my-swarm
+    type: swarm
+    mode: swarm
+    budget: "100K"
+    context_token_budget: "2M"
+    agents:
+      worker:
+        description: test agent
+        prompt: do stuff
+`
+    const wf = parseWorkflow(yaml)
+    expect(wf.nodes[0].budget).toBe(100000)
+    expect(wf.nodes[0].context_token_budget).toBe(2000000)
+  })
+
   it("rejects negative max_duration", () => {
     const result = WorkflowSchema.safeParse({
       ...baseWorkflow,
