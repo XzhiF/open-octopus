@@ -49,6 +49,7 @@ export interface ExecutionRow {
   preset_inputs: string | null
   harness_status: string | null
   harness_summary: string | null
+  budget_snapshot: string | null
   started_at: string | null
   completed_at: string | null
   duration: number | null

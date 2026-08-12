@@ -20,6 +20,20 @@ export const AutoAnswerSchema = z.object({
   answer: z.string(),
 })
 
+/**
+ * BudgetSchema — workflow-level resource budget constraints.
+ * All fields are optional; the entire budget object is optional on the workflow.
+ * alert_threshold defaults to 0.8 (80%) when not specified.
+ */
+export const BudgetSchema = z.object({
+  max_tokens: z.number().int().positive().optional(),
+  max_duration: z.number().int().positive().optional(),
+  max_cost_usd: z.number().positive().optional(),
+  alert_threshold: z.number().min(0).max(1).optional().default(0.8),
+}).optional()
+
+export type BudgetDef = z.infer<typeof BudgetSchema>
+
 export interface SubAgentDef {
   description: string
   prompt?: string
@@ -439,6 +453,7 @@ export const WorkflowSchema = z.object({
   hooks: WorkflowHooksSchema.optional(),
   providers: z.record(z.string(), NotifyProviderConfigSchema).optional(),
   channels: z.record(z.string(), ChannelProfileSchema).optional(),
+  budget: BudgetSchema,
   requires: z.object({
     skills: z.array(z.string()).optional(),
     agent_files: z.array(z.string()).optional(),
