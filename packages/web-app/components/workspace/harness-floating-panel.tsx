@@ -1,13 +1,15 @@
 "use client"
 
 import { useState, useRef, useCallback, useEffect, useMemo } from "react"
+import { useRouter } from "next/navigation"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { Button } from "@/components/ui/button"
-import { Minus, GripHorizontal } from "lucide-react"
+import { Minus, GripHorizontal, ExternalLink } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { useHarnessEvents, type ParsedHarnessEvent } from "@/hooks/use-harness-events"
+import { useExecutionMetrics, type ExecutionMetrics } from "@/hooks/use-execution-metrics"
 import { HarnessChatbot } from "./harness-chatbot"
-import { formatTokenCount } from "@/lib/analytics-format"
+import { formatTokenCount, formatCurrency, formatPercent } from "@/lib/analytics-format"
 
 // ============ Types ============
 
@@ -30,8 +32,7 @@ function CollapsedPanel({
   isIntervening,
   isRunning,
   hasActivity,
-  inputTokens,
-  outputTokens,
+  metrics,
   onExpand,
   onDragStart,
 }: {
@@ -39,8 +40,7 @@ function CollapsedPanel({
   isIntervening: boolean
   isRunning: boolean
   hasActivity: boolean
-  inputTokens: number
-  outputTokens: number
+  metrics: ExecutionMetrics
   onExpand: () => void
   onDragStart: (e: React.MouseEvent) => void
 }) {
@@ -94,10 +94,10 @@ function CollapsedPanel({
           {!isRunning ? "已完成" : isIntervening ? "干预中" : "监控中"}
         </span>
       </div>
-      {(inputTokens > 0 || outputTokens > 0) && (
+      {metrics.totalTokens > 0 && (
         <span className="text-[10px] text-muted-foreground pointer-events-none flex items-center gap-1">
-          <span>↑{formatTokenCount(inputTokens)}</span>
-          <span>↓{formatTokenCount(outputTokens)}</span>
+          <span>📥{formatTokenCount(metrics.totalInputTokens)}</span>
+          <span>📤{formatTokenCount(metrics.totalOutputTokens)}</span>
         </span>
       )}
     </div>
@@ -192,9 +192,105 @@ function TimelineItem({ event }: { event: ParsedHarnessEvent }) {
   )
 }
 
+// ============ Summary Cards ============
+
+function getBudgetColor(percent: number): string {
+  if (percent >= 80) return "bg-red-500"
+  if (percent >= 60) return "bg-yellow-500"
+  return "bg-emerald-500"
+}
+
+function SummaryCards({
+  metrics,
+  workspaceId,
+  executionId,
+}: {
+  metrics: ExecutionMetrics
+  workspaceId: string
+  executionId: string
+}) {
+  const router = useRouter()
+  const tokensPercent = metrics.budgetProgress.tokensPercent
+
+  return (
+    <div className="shrink-0 border-b border-border/50 px-2 py-2 space-y-2">
+      {/* 4 summary cards in a 2x2 grid */}
+      <div className="grid grid-cols-2 gap-1.5">
+        {/* Total Token Card */}
+        <div className="rounded bg-muted/40 px-2 py-1.5">
+          <div className="text-[10px] text-muted-foreground">Total Token</div>
+          <div className="text-sm font-semibold tabular-nums">{formatTokenCount(metrics.totalTokens)}</div>
+          <div className="text-[10px] text-muted-foreground">
+            📥 {formatTokenCount(metrics.totalInputTokens)} / 📤 {formatTokenCount(metrics.totalOutputTokens)}
+          </div>
+        </div>
+
+        {/* Total Turns Card */}
+        <div className="rounded bg-muted/40 px-2 py-1.5">
+          <div className="text-[10px] text-muted-foreground">LLM Turns</div>
+          <div className="text-sm font-semibold tabular-nums">{metrics.totalTurns}</div>
+        </div>
+
+        {/* Budget Progress Card */}
+        <div className="rounded bg-muted/40 px-2 py-1.5">
+          <div className="text-[10px] text-muted-foreground">Budget</div>
+          {tokensPercent != null ? (
+            <>
+              <div className="text-sm font-semibold tabular-nums">{formatPercent(Math.round(tokensPercent))}</div>
+              <div className="mt-0.5 h-1.5 w-full rounded-full bg-muted overflow-hidden">
+                <div
+                  className={cn("h-full rounded-full transition-all", getBudgetColor(tokensPercent))}
+                  style={{ width: `${Math.min(tokensPercent, 100)}%` }}
+                />
+              </div>
+            </>
+          ) : (
+            <div className="text-sm text-muted-foreground">不限</div>
+          )}
+        </div>
+
+        {/* Error Count Card */}
+        <div className="rounded bg-muted/40 px-2 py-1.5">
+          <div className="text-[10px] text-muted-foreground">Errors</div>
+          <div className={cn(
+            "text-sm font-semibold tabular-nums",
+            metrics.errorCount > 0 && "text-red-400",
+          )}>
+            {metrics.errorCount}
+          </div>
+        </div>
+      </div>
+
+      {/* Observability detail navigation button */}
+      <Button
+        variant="outline"
+        size="sm"
+        className="w-full text-xs h-7"
+        onClick={() =>
+          router.push(`/workspaces/${workspaceId}/executions/${executionId}/observability`)
+        }
+        data-testid="observability-detail-button"
+      >
+        📊 观测详情
+        <ExternalLink className="ml-1 h-3 w-3" />
+      </Button>
+    </div>
+  )
+}
+
 // ============ Monitor Tab ============
 
-function MonitorTab({ events }: { events: ParsedHarnessEvent[] }) {
+function MonitorTab({
+  events,
+  metrics,
+  workspaceId,
+  executionId,
+}: {
+  events: ParsedHarnessEvent[]
+  metrics: ExecutionMetrics
+  workspaceId: string
+  executionId: string
+}) {
   const stats = useMemo(() => {
     // Count both legacy intervention events and delegation events (fix_and_retry, block_node, etc.)
     const interventions = events.filter(
@@ -220,41 +316,45 @@ function MonitorTab({ events }: { events: ParsedHarnessEvent[] }) {
     return { interventions, diagnoses, blocks, totalInput, totalOutput, models: Array.from(models) }
   }, [events])
 
-  if (events.length === 0) {
-    return (
-      <div className="text-xs text-muted-foreground text-center py-6">
-        暂无 Harness 事件
-      </div>
-    )
-  }
-
   return (
     <div className="flex flex-col h-full">
-      {/* Timeline */}
-      <div className="flex-1 overflow-y-auto min-h-0 space-y-0.5 px-2 py-1">
-        {events.map((event) => (
-          <TimelineItem key={event.id} event={event} />
-        ))}
-      </div>
+      {/* Summary cards — always visible at the top */}
+      <SummaryCards metrics={metrics} workspaceId={workspaceId} executionId={executionId} />
 
-      {/* Stats footer */}
-      <div className="shrink-0 border-t border-border/50 px-2 py-1.5 space-y-1">
-        <div className="flex items-center gap-3 text-[10px] text-muted-foreground">
-          <span>干预 {stats.interventions}次</span>
-          <span>诊断 {stats.diagnoses}次</span>
-          {stats.blocks > 0 && <span className="text-red-400">阻断 {stats.blocks}次</span>}
+      {/* Empty state for timeline */}
+      {events.length === 0 ? (
+        <div className="flex-1 text-xs text-muted-foreground text-center py-6">
+          暂无 Harness 事件
         </div>
-        {(stats.totalInput > 0 || stats.totalOutput > 0) && (
-          <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
-            <span>🤖 {stats.models.length > 0 ? stats.models.map(m => m.length > 20 ? m.slice(0, 20) + "…" : m).join(", ") : "unknown"}</span>
-            <span className="text-muted-foreground/60">|</span>
-            <span>📥 {formatTokenCount(stats.totalInput)}</span>
-            <span>📤 {formatTokenCount(stats.totalOutput)}</span>
-            <span className="text-muted-foreground/60">=</span>
-            <span className="font-medium">{formatTokenCount(stats.totalInput + stats.totalOutput)}</span>
+      ) : (
+        <>
+          {/* Timeline */}
+          <div className="flex-1 overflow-y-auto min-h-0 space-y-0.5 px-2 py-1">
+            {events.map((event) => (
+              <TimelineItem key={event.id} event={event} />
+            ))}
           </div>
-        )}
-      </div>
+
+          {/* Stats footer */}
+          <div className="shrink-0 border-t border-border/50 px-2 py-1.5 space-y-1">
+            <div className="flex items-center gap-3 text-[10px] text-muted-foreground">
+              <span>干预 {stats.interventions}次</span>
+              <span>诊断 {stats.diagnoses}次</span>
+              {stats.blocks > 0 && <span className="text-red-400">阻断 {stats.blocks}次</span>}
+            </div>
+            {(stats.totalInput > 0 || stats.totalOutput > 0) && (
+              <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
+                <span>🤖 {stats.models.length > 0 ? stats.models.map(m => m.length > 20 ? m.slice(0, 20) + "…" : m).join(", ") : "unknown"}</span>
+                <span className="text-muted-foreground/60">|</span>
+                <span>📥 {formatTokenCount(stats.totalInput)}</span>
+                <span>📤 {formatTokenCount(stats.totalOutput)}</span>
+                <span className="text-muted-foreground/60">=</span>
+                <span className="font-medium">{formatTokenCount(stats.totalInput + stats.totalOutput)}</span>
+              </div>
+            )}
+          </div>
+        </>
+      )}
     </div>
   )
 }
@@ -512,6 +612,9 @@ export function HarnessFloatingPanel({
     executionStatus,
   )
 
+  // KD-10: Independent execution metrics hook for observability summary
+  const metrics = useExecutionMetrics(workspaceId, executionId)
+
   const isRunning = executionStatus === "running" || executionStatus === "paused"
   const isIntervening = events.some(
     (e) => e.type === "harness_intervention" && Date.now() - e.timestamp < 10000,
@@ -636,8 +739,7 @@ export function HarnessFloatingPanel({
           isIntervening={isIntervening}
           isRunning={isRunning}
           hasActivity={isRunning && events.length > 0}
-          inputTokens={totalInputTokens}
-          outputTokens={totalOutputTokens}
+          metrics={metrics}
           onExpand={() => setExpanded(true)}
           onDragStart={handleDragStart}
         />
@@ -693,7 +795,7 @@ export function HarnessFloatingPanel({
         </TabsList>
 
         <TabsContent value="monitor" className="flex-1 mt-0 min-h-0 overflow-hidden">
-          <MonitorTab events={events} />
+          <MonitorTab events={events} metrics={metrics} workspaceId={workspaceId} executionId={executionId} />
         </TabsContent>
 
         <TabsContent value="detail" className="flex-1 mt-0 min-h-0 overflow-hidden">

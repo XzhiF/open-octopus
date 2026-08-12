@@ -10,7 +10,7 @@
 04-server-sse-budget-enforcement
 
 ## Status
-ready-for-agent
+done
 
 ## Acceptance Criteria
 - [ ] AC-1: `useExecutionMetrics` hook 订阅 `/executions/events` SSE 通道，过滤 `execution_metrics` 事件
