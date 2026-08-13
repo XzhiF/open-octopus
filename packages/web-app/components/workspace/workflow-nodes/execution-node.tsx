@@ -146,7 +146,7 @@ function ExecutionNodeInner({ data: rawData, selected }: NodeProps) {
         <div className="flex h-6 w-6 items-center justify-center rounded-full bg-card">
           {isRunning ? <Loader2 className={cn("h-4 w-4 animate-spin", config.color)} />
           : data.executionStatus === "completed" ? <CheckCircle2 className={cn("h-4 w-4", config.color)} />
-          : data.executionStatus === "failed" ? <XCircle className={cn("h-4 w-4", config.color)} />
+          : data.executionStatus === "failed" || data.executionStatus === "budget_exceeded" ? <XCircle className={cn("h-4 w-4", config.color)} />
           : data.executionStatus === "rejected" ? <Ban className={cn("h-4 w-4", config.color)} />
           : data.executionStatus === "pending" || data.executionStatus === "pending_resume" ? <Clock className={cn("h-4 w-4", config.color)} />
           : <SkipForward className={cn("h-4 w-4", config.color)} />}
