@@ -77,7 +77,7 @@ describe("useExecutionMetrics", () => {
       ok: true,
       json: () =>
         Promise.resolve({
-          tokens: { totalInput: 0, totalOutput: 0, totalCache: 0, totalCostUsd: 0 },
+          tokens: { totalInput: 0, totalOutput: 0, totalCacheRead: 0, totalCacheCreation: 0, totalCostUsd: 0 },
           budget: { snapshot: null, progress: { tokensPercent: null, durationPercent: null, costPercent: null }, alerts: [] },
           errors: [],
           rounds: { totalLlmTurns: 0, totalLoopIterations: 0, totalSwarmRounds: 0, totalRetries: 0 },
@@ -224,7 +224,7 @@ describe("useExecutionMetrics", () => {
       ok: true,
       json: () =>
         Promise.resolve({
-          tokens: { totalInput: 500, totalOutput: 250, totalCache: 50, totalCostUsd: 0.05 },
+          tokens: { totalInput: 500, totalOutput: 250, totalCacheRead: 30, totalCacheCreation: 20, totalCostUsd: 0.05 },
           budget: {
             snapshot: { max_tokens: 10000 },
             progress: { tokensPercent: 7.5, durationPercent: null, costPercent: null },
@@ -245,7 +245,8 @@ describe("useExecutionMetrics", () => {
 
     // Should have populated from historical data
     expect(result.current.totalTokens).toBe(800) // 500 + 250 + 50 (cache)
-    expect(result.current.totalCacheTokens).toBe(50)
+    expect(result.current.totalCacheReadTokens).toBe(30)
+    expect(result.current.totalCacheCreationTokens).toBe(20)
     expect(result.current.totalCost).toBe(0.05)
     expect(result.current.totalTurns).toBe(10)
     expect(result.current.errorCount).toBe(1)
@@ -259,7 +260,7 @@ describe("useExecutionMetrics", () => {
       ok: true,
       json: () =>
         Promise.resolve({
-          tokens: { totalInput: 500, totalOutput: 250, totalCache: 50, totalCostUsd: 0.05 },
+          tokens: { totalInput: 500, totalOutput: 250, totalCacheRead: 30, totalCacheCreation: 20, totalCostUsd: 0.05 },
           budget: { snapshot: null, progress: { tokensPercent: null, durationPercent: null, costPercent: null }, alerts: [] },
           errors: [],
           rounds: { totalLlmTurns: 10, totalLoopIterations: 0, totalSwarmRounds: 0, totalRetries: 0 },

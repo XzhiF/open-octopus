@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState, useRef, useCallback } from "react"
+import { useEffect, useState, useRef, useCallback, Fragment } from "react"
 import { Badge } from "@/components/ui/badge"
 import { Progress } from "@/components/ui/progress"
 import { ChartErrorBoundary } from "@/components/ui/chart-error-boundary"
@@ -44,7 +44,8 @@ interface ObservabilityData {
   tokens: {
     totalInput: number
     totalOutput: number
-    totalCache: number
+    totalCacheRead: number
+    totalCacheCreation: number
     totalCostUsd: number
   }
   byNode: Array<{
@@ -53,7 +54,8 @@ interface ObservabilityData {
     nodeType: string
     inputTokens: number
     outputTokens: number
-    cacheTokens: number
+    cacheReadTokens: number
+    cacheCreationTokens: number
     costUsd: number
     llmTurns: number
     loopIterations: number
@@ -66,7 +68,8 @@ interface ObservabilityData {
     model: string
     inputTokens: number
     outputTokens: number
-    cacheTokens: number
+    cacheReadTokens: number
+    cacheCreationTokens: number
     costUsd: number
     callCount: number
   }>
@@ -231,14 +234,14 @@ export function ObservabilityTab({ workspaceId, executionId }: ObservabilityTabP
     )
   }
 
-  const totalTokens = data.tokens.totalInput + data.tokens.totalOutput + data.tokens.totalCache
+  const totalTokens = data.tokens.totalInput + data.tokens.totalOutput + data.tokens.totalCacheRead + data.tokens.totalCacheCreation
 
   return (
     <div className="h-full overflow-y-auto px-2 py-2 space-y-3 text-xs">
       {/* Summary Cards */}
       <div className="grid grid-cols-2 gap-1.5">
         <MiniCard title="总 Token" value={formatTokenCount(totalTokens)}
-          subtitle={`↑${formatTokenCount(data.tokens.totalInput)} ↓${formatTokenCount(data.tokens.totalOutput)} ⚡${formatTokenCount(data.tokens.totalCache)}`} />
+          subtitle={`↑${formatTokenCount(data.tokens.totalInput)} ↓${formatTokenCount(data.tokens.totalOutput)} ⚡${formatTokenCount(data.tokens.totalCacheRead)} 🗡️${formatTokenCount(data.tokens.totalCacheCreation)}`} />
         <MiniCard title="总轮次" value={String(data.rounds.totalLlmTurns)}
           subtitle={`Loop ${data.rounds.totalLoopIterations} / Swarm ${data.rounds.totalSwarmRounds}`} />
         <MiniCard title="总成本" value={formatCurrency(data.tokens.totalCostUsd)} subtitle="USD" />
@@ -392,7 +395,7 @@ function NodeConsumptionChart({ byNode }: { byNode: ObservabilityData["byNode"] 
 function ModelUsageChart({ byModel }: { byModel: ObservabilityData["byModel"] }) {
   const chartData = byModel.map((m) => ({
     name: m.model,
-    value: m.inputTokens + m.outputTokens + m.cacheTokens,
+    value: m.inputTokens + m.outputTokens + m.cacheReadTokens + m.cacheCreationTokens,
     cost: m.costUsd,
   }))
 
@@ -478,10 +481,10 @@ function RoundsTable({
       <TableBody>
         {byNode.map((node) => {
           const isExpanded = expandedNodes.has(node.nodeId)
-          const totalTokens = node.inputTokens + node.outputTokens + node.cacheTokens
+          const totalTokens = node.inputTokens + node.outputTokens + node.cacheReadTokens + node.cacheCreationTokens
           return (
-            <>
-              <TableRow key={node.nodeId} className="cursor-pointer hover:bg-muted/50 h-7" onClick={() => onToggle(node.nodeId)}>
+            <Fragment key={node.nodeId}>
+              <TableRow className="cursor-pointer hover:bg-muted/50 h-7" onClick={() => onToggle(node.nodeId)}>
                 <TableCell className="p-1">
                   {isExpanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
                 </TableCell>
@@ -519,10 +522,16 @@ function RoundsTable({
                         <span className="text-muted-foreground">输出 Token</span>
                         <span className="font-mono tabular-nums">{formatTokenCount(node.outputTokens)}</span>
                       </div>
-                      {node.cacheTokens > 0 && (
+                      {node.cacheReadTokens > 0 && (
                         <div className="flex justify-between">
-                          <span className="text-muted-foreground">缓存 Token</span>
-                          <span className="font-mono tabular-nums">{formatTokenCount(node.cacheTokens)}</span>
+                          <span className="text-muted-foreground">⚡ 缓存读取</span>
+                          <span className="font-mono tabular-nums">{formatTokenCount(node.cacheReadTokens)}</span>
+                        </div>
+                      )}
+                      {node.cacheCreationTokens > 0 && (
+                        <div className="flex justify-between">
+                          <span className="text-muted-foreground">🗡️ 缓存创建</span>
+                          <span className="font-mono tabular-nums">{formatTokenCount(node.cacheCreationTokens)}</span>
                         </div>
                       )}
                       {node.error && (
@@ -535,7 +544,7 @@ function RoundsTable({
                   </TableCell>
                 </TableRow>
               )}
-            </>
+            </Fragment>
           )
         })}
       </TableBody>

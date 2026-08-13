@@ -37,6 +37,7 @@ function CollapsedPanel({
   harnessInputTokens,
   harnessOutputTokens,
   harnessCacheTokens,
+  harnessCacheCreationTokens,
   onExpand,
   onDragStart,
 }: {
@@ -49,6 +50,7 @@ function CollapsedPanel({
   harnessInputTokens: number
   harnessOutputTokens: number
   harnessCacheTokens: number
+  harnessCacheCreationTokens: number
   onExpand: () => void
   onDragStart: (e: React.MouseEvent) => void
 }) {
@@ -69,12 +71,12 @@ function CollapsedPanel({
     }
   }
 
-  const harnessTotal = harnessInputTokens + harnessOutputTokens
+  const harnessTotal = harnessInputTokens + harnessOutputTokens + harnessCacheTokens + harnessCacheCreationTokens
 
   return (
     <div
       className={cn(
-        "w-[130px] rounded-lg border border-border bg-card shadow-lg cursor-grab active:cursor-grabbing flex flex-col items-start justify-center gap-0.5 px-1.5 py-1.5 opacity-70 hover:opacity-100 transition-opacity select-none overflow-hidden",
+        "w-[170px] rounded-lg border border-border bg-card shadow-lg cursor-grab active:cursor-grabbing flex flex-col items-start justify-center gap-0.5 px-1.5 py-1.5 opacity-70 hover:opacity-100 transition-opacity select-none overflow-hidden",
         hasActivity && "border-violet-400/60",
       )}
       style={hasActivity ? { animation: "harness-pulse 3s ease-in-out infinite" } : undefined}
@@ -113,20 +115,18 @@ function CollapsedPanel({
           <span>📊</span>
           <span>↑{formatTokenCount(metrics.totalInputTokens)}</span>
           <span>↓{formatTokenCount(metrics.totalOutputTokens)}</span>
-          {metrics.totalCacheTokens > 0 && (
-            <span>⚡{formatTokenCount(metrics.totalCacheTokens)}</span>
-          )}
+          <span>⚡{formatTokenCount(metrics.totalCacheReadTokens)}</span>
+          <span>🗡️{formatTokenCount(metrics.totalCacheCreationTokens)}</span>
         </span>
       )}
-      {/* Line 3: harness tokens */}
+      {/* Line 3: harness tokens (input = non-cached, unified) */}
       {harnessTotal > 0 && (
         <span className="text-[10px] text-muted-foreground pointer-events-none flex items-center gap-0.5 whitespace-nowrap">
           <span>🛡️</span>
           <span>↑{formatTokenCount(harnessInputTokens)}</span>
           <span>↓{formatTokenCount(harnessOutputTokens)}</span>
-          {harnessCacheTokens > 0 && (
-            <span>⚡{formatTokenCount(harnessCacheTokens)}</span>
-          )}
+          <span>⚡{formatTokenCount(harnessCacheTokens)}</span>
+          <span>🗡️{formatTokenCount(harnessCacheCreationTokens)}</span>
         </span>
       )}
     </div>
@@ -264,19 +264,21 @@ function MonitorTab({
     // Aggregate token usage across all events
     let totalInput = 0
     let totalOutput = 0
+    let totalCache = 0
+    let totalCacheCreation = 0
     const models = new Set<string>()
     for (const e of events) {
       if (e.tokenUsage) {
         totalInput += e.tokenUsage.inputTokens ?? 0
         totalOutput += e.tokenUsage.outputTokens ?? 0
+        totalCache += e.tokenUsage.cacheTokens ?? 0
+        totalCacheCreation += e.tokenUsage.cacheCreationTokens ?? 0
         if (e.tokenUsage.model) models.add(e.tokenUsage.model)
       }
-      // Also check delegation result's token usage from nested result
-      if (e.type === "harness_delegation" && e.delegationResult) {
-        // delegationResult doesn't have tokenUsage directly, but event.tokenUsage captures it
-      }
     }
-    return { interventions, diagnoses, blocks, totalInput, totalOutput, models: Array.from(models) }
+    // input is non-cached (unified); total = input + cacheRead + cacheCreation + output
+    const totalAll = totalInput + totalCache + totalCacheCreation + totalOutput
+    return { interventions, diagnoses, blocks, totalInput, totalOutput, totalCache, totalCacheCreation, totalAll, models: Array.from(models) }
   }, [events])
 
   return (
@@ -302,14 +304,16 @@ function MonitorTab({
               <span>诊断 {stats.diagnoses}次</span>
               {stats.blocks > 0 && <span className="text-red-400">阻断 {stats.blocks}次</span>}
             </div>
-            {(stats.totalInput > 0 || stats.totalOutput > 0) && (
-              <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
-                <span>🤖 {stats.models.length > 0 ? stats.models.map(m => m.length > 20 ? m.slice(0, 20) + "…" : m).join(", ") : "unknown"}</span>
+            {(stats.totalInput > 0 || stats.totalOutput > 0 || stats.totalCache > 0 || stats.totalCacheCreation > 0) && (
+              <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground flex-wrap">
+                <span>🤖 {stats.models.length > 0 ? stats.models.map(m => m.length > 16 ? m.slice(0, 16) + "…" : m).join(", ") : "unknown"}</span>
                 <span className="text-muted-foreground/60">|</span>
-                <span>↑ {formatTokenCount(stats.totalInput)}</span>
-                <span>↓ {formatTokenCount(stats.totalOutput)}</span>
+                <span>↑{formatTokenCount(stats.totalInput)}</span>
+                <span>↓{formatTokenCount(stats.totalOutput)}</span>
+                <span>⚡{formatTokenCount(stats.totalCache)}</span>
+                <span>🗡️{formatTokenCount(stats.totalCacheCreation)}</span>
                 <span className="text-muted-foreground/60">=</span>
-                <span className="font-medium">{formatTokenCount(stats.totalInput + stats.totalOutput)}</span>
+                <span className="font-medium">{formatTokenCount(stats.totalAll)}</span>
               </div>
             )}
           </div>
@@ -529,6 +533,12 @@ function EventAccordionItem({
                 <div>模型: {formatModelName(event.tokenUsage.model ?? "-")}</div>
                 <div>输入: {formatTokenCount(event.tokenUsage.inputTokens ?? 0)}</div>
                 <div>输出: {formatTokenCount(event.tokenUsage.outputTokens ?? 0)}</div>
+                {(event.tokenUsage.cacheTokens ?? 0) > 0 && (
+                  <div>缓存读取: {formatTokenCount(event.tokenUsage.cacheTokens!)}</div>
+                )}
+                {(event.tokenUsage.cacheCreationTokens ?? 0) > 0 && (
+                  <div>缓存创建: {formatTokenCount(event.tokenUsage.cacheCreationTokens!)}</div>
+                )}
               </div>
             </DetailSection>
           )}
@@ -659,7 +669,7 @@ export function HarnessFloatingPanel({
     origHeight: number
   } | null>(null)
 
-  const { events, loading, interventionCount, totalExtraTokens, totalInputTokens, totalOutputTokens, totalCacheTokens } = useHarnessEvents(
+  const { events, loading, interventionCount, totalExtraTokens, totalInputTokens, totalOutputTokens, totalCacheTokens, totalCacheCreationTokens } = useHarnessEvents(
     workspaceId,
     executionId,
     executionStatus,
@@ -799,6 +809,7 @@ export function HarnessFloatingPanel({
           harnessInputTokens={totalInputTokens}
           harnessOutputTokens={totalOutputTokens}
           harnessCacheTokens={totalCacheTokens}
+          harnessCacheCreationTokens={totalCacheCreationTokens}
           onExpand={() => setExpanded(true)}
           onDragStart={handleDragStart}
         />

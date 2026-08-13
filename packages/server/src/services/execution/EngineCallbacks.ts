@@ -92,7 +92,7 @@ export class EngineCallbacks implements IEngineCallbacks {
           const mode = budgetSnapshot?.token_counting_mode ?? "all"
           const totalTokens = mode === "no_cache"
             ? metrics.totalInputTokens + metrics.totalOutputTokens
-            : metrics.totalInputTokens + metrics.totalOutputTokens + metrics.totalCacheTokens
+            : metrics.totalInputTokens + metrics.totalOutputTokens + metrics.totalCacheReadTokens + metrics.totalCacheCreationTokens
           const budgetProgress: {
             tokensPercent: number | null
             durationPercent: number | null
@@ -118,7 +118,8 @@ export class EngineCallbacks implements IEngineCallbacks {
               executionId: id,
               totalInputTokens: metrics.totalInputTokens,
               totalOutputTokens: metrics.totalOutputTokens,
-              totalCacheTokens: metrics.totalCacheTokens,
+              totalCacheReadTokens: metrics.totalCacheReadTokens,
+              totalCacheCreationTokens: metrics.totalCacheCreationTokens,
               totalCostUsd: metrics.totalCostUsd,
               totalLlmTurns: metrics.totalLlmTurns,
               budgetProgress,
@@ -163,7 +164,7 @@ export class EngineCallbacks implements IEngineCallbacks {
           const mode = budgetSnapshot.token_counting_mode ?? "all"
           const totalTokens = mode === "no_cache"
             ? metrics.totalInputTokens + metrics.totalOutputTokens
-            : metrics.totalInputTokens + metrics.totalOutputTokens + metrics.totalCacheTokens
+            : metrics.totalInputTokens + metrics.totalOutputTokens + metrics.totalCacheReadTokens + metrics.totalCacheCreationTokens
 
           if (totalTokens > budgetSnapshot.max_tokens) {
             // Budget exceeded: block this node and abort execution

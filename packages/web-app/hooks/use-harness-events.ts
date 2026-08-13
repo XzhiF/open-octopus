@@ -42,7 +42,7 @@ export interface ParsedHarnessEvent {
   // iteration (when node is inside a loop)
   iteration?: number
   // token usage (from delegation or intervention events)
-  tokenUsage?: { inputTokens?: number; outputTokens?: number; cacheTokens?: number; model?: string }
+  tokenUsage?: { inputTokens?: number; outputTokens?: number; cacheTokens?: number; cacheCreationTokens?: number; model?: string }
 }
 
 interface UseHarnessEventsResult {
@@ -54,6 +54,7 @@ interface UseHarnessEventsResult {
   totalInputTokens: number
   totalOutputTokens: number
   totalCacheTokens: number
+  totalCacheCreationTokens: number
 }
 
 let eventCounter = 0
@@ -73,6 +74,7 @@ function parseSSEEvent(eventType: string, raw: Record<string, unknown>): ParsedH
         inputTokens: (rawTokenUsage.inputTokens as number) ?? (rawTokenUsage.input as number),
         outputTokens: (rawTokenUsage.outputTokens as number) ?? (rawTokenUsage.output as number),
         cacheTokens: (rawTokenUsage.cacheTokens as number) ?? (rawTokenUsage.cacheRead as number) ?? undefined,
+        cacheCreationTokens: (rawTokenUsage.cacheCreationTokens as number) ?? (rawTokenUsage.cacheCreation as number) ?? undefined,
         model: rawTokenUsage.model as string | undefined,
       }
     : undefined
@@ -180,6 +182,8 @@ export function useHarnessEvents(
               ? {
                   inputTokens: (rawTu.inputTokens as number) ?? (rawTu.input as number),
                   outputTokens: (rawTu.outputTokens as number) ?? (rawTu.output as number),
+                  cacheTokens: (rawTu.cacheTokens as number) ?? (rawTu.cacheRead as number) ?? undefined,
+                  cacheCreationTokens: (rawTu.cacheCreationTokens as number) ?? (rawTu.cacheCreation as number) ?? undefined,
                   model: rawTu.model as string | undefined,
                 }
               : undefined
@@ -285,6 +289,7 @@ export function useHarnessEvents(
   const totalInputTokens = events.reduce((sum, e) => sum + (e.tokenUsage?.inputTokens ?? 0), 0)
   const totalOutputTokens = events.reduce((sum, e) => sum + (e.tokenUsage?.outputTokens ?? 0), 0)
   const totalCacheTokens = events.reduce((sum, e) => sum + (e.tokenUsage?.cacheTokens ?? 0), 0)
+  const totalCacheCreationTokens = events.reduce((sum, e) => sum + (e.tokenUsage?.cacheCreationTokens ?? 0), 0)
 
-  return { events, loading, error, interventionCount, totalExtraTokens, totalInputTokens, totalOutputTokens, totalCacheTokens }
+  return { events, loading, error, interventionCount, totalExtraTokens, totalInputTokens, totalOutputTokens, totalCacheTokens, totalCacheCreationTokens }
 }

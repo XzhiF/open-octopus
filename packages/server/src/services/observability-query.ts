@@ -7,7 +7,8 @@ import type { LlmCallRow, NodeExecutionRow, ExecutionRow } from "../db/types"
 export interface ObservabilityTokenSummary {
   totalInput: number
   totalOutput: number
-  totalCache: number
+  totalCacheRead: number
+  totalCacheCreation: number
   totalCostUsd: number
 }
 
@@ -17,7 +18,8 @@ export interface ObservabilityNodeBreakdown {
   nodeType: string
   inputTokens: number
   outputTokens: number
-  cacheTokens: number
+  cacheReadTokens: number
+  cacheCreationTokens: number
   costUsd: number
   llmTurns: number
   loopIterations: number
@@ -31,7 +33,8 @@ export interface ObservabilityModelBreakdown {
   model: string
   inputTokens: number
   outputTokens: number
-  cacheTokens: number
+  cacheReadTokens: number
+  cacheCreationTokens: number
   costUsd: number
   callCount: number
 }
@@ -161,17 +164,19 @@ export class ObservabilityQueryService {
   private computeTokenSummary(llmCalls: LlmCallRow[]): ObservabilityTokenSummary {
     let totalInput = 0
     let totalOutput = 0
-    let totalCache = 0
+    let totalCacheRead = 0
+    let totalCacheCreation = 0
     let totalCostUsd = 0
 
     for (const call of llmCalls) {
       totalInput += call.input_tokens
       totalOutput += call.output_tokens
-      totalCache += call.cache_read_tokens + call.cache_creation_tokens
+      totalCacheRead += call.cache_read_tokens
+      totalCacheCreation += call.cache_creation_tokens
       totalCostUsd += call.cost_usd ?? 0
     }
 
-    return { totalInput, totalOutput, totalCache, totalCostUsd }
+    return { totalInput, totalOutput, totalCacheRead, totalCacheCreation, totalCostUsd }
   }
 
   private computeByModel(llmCalls: LlmCallRow[]): ObservabilityModelBreakdown[] {
@@ -181,12 +186,13 @@ export class ObservabilityQueryService {
       const model = call.model ?? "unknown"
       let entry = modelMap.get(model)
       if (!entry) {
-        entry = { model, inputTokens: 0, outputTokens: 0, cacheTokens: 0, costUsd: 0, callCount: 0 }
+        entry = { model, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0, costUsd: 0, callCount: 0 }
         modelMap.set(model, entry)
       }
       entry.inputTokens += call.input_tokens
       entry.outputTokens += call.output_tokens
-      entry.cacheTokens += call.cache_read_tokens + call.cache_creation_tokens
+      entry.cacheReadTokens += call.cache_read_tokens
+      entry.cacheCreationTokens += call.cache_creation_tokens
       entry.costUsd += call.cost_usd ?? 0
       entry.callCount++
     }
@@ -231,7 +237,8 @@ export class ObservabilityQueryService {
     const nodeTokenMap = new Map<string, {
       inputTokens: number
       outputTokens: number
-      cacheTokens: number
+      cacheReadTokens: number
+      cacheCreationTokens: number
       costUsd: number
       llmTurns: number
     }>()
@@ -240,12 +247,13 @@ export class ObservabilityQueryService {
       const nodeId = call.node_id ?? "unknown"
       let entry = nodeTokenMap.get(nodeId)
       if (!entry) {
-        entry = { inputTokens: 0, outputTokens: 0, cacheTokens: 0, costUsd: 0, llmTurns: 0 }
+        entry = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0, costUsd: 0, llmTurns: 0 }
         nodeTokenMap.set(nodeId, entry)
       }
       entry.inputTokens += call.input_tokens
       entry.outputTokens += call.output_tokens
-      entry.cacheTokens += call.cache_read_tokens + call.cache_creation_tokens
+      entry.cacheReadTokens += call.cache_read_tokens
+      entry.cacheCreationTokens += call.cache_creation_tokens
       entry.costUsd += call.cost_usd ?? 0
       entry.llmTurns++
     }
@@ -275,7 +283,7 @@ export class ObservabilityQueryService {
       processedNodeIds.add(ne.node_id)
 
       const tokenData = nodeTokenMap.get(ne.node_id) ?? {
-        inputTokens: 0, outputTokens: 0, cacheTokens: 0, costUsd: 0, llmTurns: 0,
+        inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0, costUsd: 0, llmTurns: 0,
       }
 
       // Find the "primary" node execution (first one, or the one with the longest duration)
@@ -290,7 +298,8 @@ export class ObservabilityQueryService {
         nodeType: ne.node_type,
         inputTokens: tokenData.inputTokens,
         outputTokens: tokenData.outputTokens,
-        cacheTokens: tokenData.cacheTokens,
+        cacheReadTokens: tokenData.cacheReadTokens,
+        cacheCreationTokens: tokenData.cacheCreationTokens,
         costUsd: tokenData.costUsd,
         llmTurns: tokenData.llmTurns,
         loopIterations: loopIterationsByParent.get(ne.node_id) ?? 0,
@@ -437,7 +446,7 @@ export class ObservabilityQueryService {
       const mode = (snapshot as any).token_counting_mode ?? "all"
       const totalTokens = mode === "no_cache"
         ? tokens.totalInput + tokens.totalOutput
-        : tokens.totalInput + tokens.totalOutput + tokens.totalCache
+        : tokens.totalInput + tokens.totalOutput + tokens.totalCacheRead + tokens.totalCacheCreation
       const alertThreshold = snapshot.alert_threshold ?? 0.8
 
       if (snapshot.max_tokens) {

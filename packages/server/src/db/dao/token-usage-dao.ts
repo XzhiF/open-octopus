@@ -71,7 +71,8 @@ export class TokenUsageDAO extends BaseDAO {
   aggregateByExecution(executionId: string): {
     totalInputTokens: number
     totalOutputTokens: number
-    totalCacheTokens: number
+    totalCacheReadTokens: number
+    totalCacheCreationTokens: number
     totalCostUsd: number
     totalLlmTurns: number
     errorCount: number
@@ -80,14 +81,16 @@ export class TokenUsageDAO extends BaseDAO {
       SELECT
         COALESCE(SUM(input_tokens), 0) as totalInputTokens,
         COALESCE(SUM(output_tokens), 0) as totalOutputTokens,
-        COALESCE(SUM(cache_read_tokens + cache_creation_tokens), 0) as totalCacheTokens,
+        COALESCE(SUM(cache_read_tokens), 0) as totalCacheReadTokens,
+        COALESCE(SUM(cache_creation_tokens), 0) as totalCacheCreationTokens,
         COALESCE(SUM(cost_usd), 0) as totalCostUsd,
         COUNT(*) as totalLlmTurns
       FROM llm_calls WHERE execution_id = ?
     `).get(executionId) as {
       totalInputTokens: number
       totalOutputTokens: number
-      totalCacheTokens: number
+      totalCacheReadTokens: number
+      totalCacheCreationTokens: number
       totalCostUsd: number
       totalLlmTurns: number
     }
@@ -100,7 +103,8 @@ export class TokenUsageDAO extends BaseDAO {
     return {
       totalInputTokens: tokens.totalInputTokens,
       totalOutputTokens: tokens.totalOutputTokens,
-      totalCacheTokens: tokens.totalCacheTokens,
+      totalCacheReadTokens: tokens.totalCacheReadTokens,
+      totalCacheCreationTokens: tokens.totalCacheCreationTokens,
       totalCostUsd: tokens.totalCostUsd,
       totalLlmTurns: tokens.totalLlmTurns,
       errorCount: errors.errorCount,

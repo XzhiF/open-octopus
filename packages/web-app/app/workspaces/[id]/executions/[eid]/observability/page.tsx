@@ -52,7 +52,8 @@ interface ObservabilityData {
   tokens: {
     totalInput: number
     totalOutput: number
-    totalCache: number
+    totalCacheRead: number
+    totalCacheCreation: number
     totalCostUsd: number
   }
   byNode: Array<{
@@ -233,7 +234,7 @@ export default function ObservabilityPage() {
     )
   }
 
-  const totalTokens = data.tokens.totalInput + data.tokens.totalOutput + data.tokens.totalCache
+  const totalTokens = data.tokens.totalInput + data.tokens.totalOutput + data.tokens.totalCacheRead + data.tokens.totalCacheCreation
 
   return (
     <div className="container mx-auto py-8 space-y-8">
@@ -261,7 +262,7 @@ export default function ObservabilityPage() {
         <SummaryCard
           title="总 Token"
           value={formatNumber(totalTokens)}
-          subtitle={`输入 ${formatNumber(data.tokens.totalInput)} / 输出 ${formatNumber(data.tokens.totalOutput)}`}
+          subtitle={`↑${formatNumber(data.tokens.totalInput)} ↓${formatNumber(data.tokens.totalOutput)} ⚡${formatNumber(data.tokens.totalCacheRead)} 🗡️${formatNumber(data.tokens.totalCacheCreation)}`}
           icon={Coins}
           color="text-blue-500"
           bgColor="bg-blue-500/10"

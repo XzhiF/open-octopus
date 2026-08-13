@@ -840,15 +840,17 @@ export class AgentDelegationService {
           } else if (chunk.type === "result") {
             if (chunk.content) text = chunk.content
             if (chunk.tokens) {
-              // Use real model name from modelUsages (e.g. "claude-sonnet-4-5-20250827")
-              // instead of the short alias ("sonnet") or a hardcoded string
               const realModel = chunk.modelUsages?.[0]?.model ?? "unknown"
               const mu = chunk.modelUsages?.[0]
+              const cacheRead = mu?.cacheReadInputTokens ?? 0
+              const cacheCreation = mu?.cacheCreationInputTokens ?? 0
+              // Store non-cached input only — consistent with llm_calls.input_tokens
+              // chunk.tokens.input = inputTokens + cacheRead + cacheCreation (combined by provider)
               tokenUsage = {
-                input: chunk.tokens.input,
+                input: chunk.tokens.input - cacheRead - cacheCreation,
                 output: chunk.tokens.output,
-                cacheRead: mu?.cacheReadInputTokens ?? 0,
-                cacheCreation: mu?.cacheCreationInputTokens ?? 0,
+                cacheRead,
+                cacheCreation,
                 model: realModel,
               }
             }

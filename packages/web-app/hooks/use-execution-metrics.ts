@@ -15,7 +15,8 @@ export interface ExecutionMetrics {
   totalTokens: number
   totalInputTokens: number
   totalOutputTokens: number
-  totalCacheTokens: number
+  totalCacheReadTokens: number
+  totalCacheCreationTokens: number
   totalCost: number
   totalTurns: number
   budgetProgress: BudgetProgress
@@ -27,7 +28,8 @@ interface SSEMetricsPayload {
   executionId: string
   totalInputTokens: number
   totalOutputTokens: number
-  totalCacheTokens: number
+  totalCacheReadTokens: number
+  totalCacheCreationTokens: number
   totalCostUsd: number
   totalLlmTurns: number
   budgetProgress: BudgetProgress
@@ -39,7 +41,8 @@ interface ObservabilityResponse {
   tokens: {
     totalInput: number
     totalOutput: number
-    totalCache: number
+    totalCacheRead: number
+    totalCacheCreation: number
     totalCostUsd: number
   }
   budget: {
@@ -62,7 +65,8 @@ const INITIAL_METRICS: ExecutionMetrics = {
   totalTokens: 0,
   totalInputTokens: 0,
   totalOutputTokens: 0,
-  totalCacheTokens: 0,
+  totalCacheReadTokens: 0,
+  totalCacheCreationTokens: 0,
   totalCost: 0,
   totalTurns: 0,
   budgetProgress: { tokensPercent: null, durationPercent: null, costPercent: null },
@@ -96,10 +100,11 @@ export function useExecutionMetrics(
       const data: ObservabilityResponse = await res.json()
 
       setMetrics((prev) => ({
-        totalTokens: data.tokens.totalInput + data.tokens.totalOutput + data.tokens.totalCache,
+        totalTokens: data.tokens.totalInput + data.tokens.totalOutput + data.tokens.totalCacheRead + data.tokens.totalCacheCreation,
         totalInputTokens: data.tokens.totalInput,
         totalOutputTokens: data.tokens.totalOutput,
-        totalCacheTokens: data.tokens.totalCache,
+        totalCacheReadTokens: data.tokens.totalCacheRead,
+        totalCacheCreationTokens: data.tokens.totalCacheCreation,
         totalCost: data.tokens.totalCostUsd,
         totalTurns: data.rounds.totalLlmTurns,
         budgetProgress: data.budget.progress,
@@ -137,10 +142,11 @@ export function useExecutionMetrics(
         if (raw.executionId !== executionId) return
 
         setMetrics({
-          totalTokens: raw.totalInputTokens + raw.totalOutputTokens + (raw.totalCacheTokens ?? 0),
+          totalTokens: raw.totalInputTokens + raw.totalOutputTokens + (raw.totalCacheReadTokens ?? 0) + (raw.totalCacheCreationTokens ?? 0),
           totalInputTokens: raw.totalInputTokens,
           totalOutputTokens: raw.totalOutputTokens,
-          totalCacheTokens: raw.totalCacheTokens ?? 0,
+          totalCacheReadTokens: raw.totalCacheReadTokens ?? 0,
+          totalCacheCreationTokens: raw.totalCacheCreationTokens ?? 0,
           totalCost: raw.totalCostUsd,
           totalTurns: raw.totalLlmTurns,
           budgetProgress: raw.budgetProgress,
