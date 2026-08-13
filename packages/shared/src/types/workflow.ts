@@ -148,6 +148,9 @@ export interface WorkflowHooks {
   on_swarm_round_end?: HookDef[]
   on_swarm_consensus?: HookDef[]
   on_swarm_complete?: HookDef[]
+  // budget hooks
+  on_budget_warning?: HookDef[]
+  on_budget_exceeded?: HookDef[]
 }
 
 export const WorkflowHooksSchema = z.object({
@@ -166,6 +169,9 @@ export const WorkflowHooksSchema = z.object({
   on_swarm_round_end: z.array(HookSchema).optional(),
   on_swarm_consensus: z.array(HookSchema).optional(),
   on_swarm_complete: z.array(HookSchema).optional(),
+  // budget hooks
+  on_budget_warning: z.array(HookSchema).optional(),
+  on_budget_exceeded: z.array(HookSchema).optional(),
 })
 
 export interface PlanningDef {

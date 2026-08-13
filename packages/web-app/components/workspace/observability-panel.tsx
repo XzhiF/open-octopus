@@ -214,6 +214,16 @@ export function ObservabilityTab({ workspaceId, executionId, isRunning }: Observ
       } catch { /* skip */ }
     })
 
+    // Listen for budget_warning events — triggers refresh to show updated alerts
+    es.addEventListener("budget_warning", (e: MessageEvent) => {
+      try {
+        const payload = JSON.parse(e.data)
+        if (payload.executionId === executionId) {
+          fetchData()
+        }
+      } catch { /* skip */ }
+    })
+
     return () => {
       es.close()
       esRef.current = null

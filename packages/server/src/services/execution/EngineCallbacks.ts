@@ -9,12 +9,14 @@ import type { ServiceContext } from "./types"
 import type { ExecutionDAO } from "../../db/dao/execution-dao"
 import type { TokenUsageDAO } from "../../db/dao/token-usage-dao"
 import type { EngineCallbacks as EngineCallbackType } from "@octopus/engine"
-import type { PipelineConfig } from "@octopus/shared"
+import type { PipelineConfig, HookDef, NotifyProviderConfig, ChannelProfile } from "@octopus/shared"
 import type { EnginePool } from "./EnginePool"
 import type { ObservabilityService } from "../observability"
 import { getFlag } from "../../config/feature-flags"
 import { appendFileSync, mkdirSync, existsSync } from "fs"
 import { join } from "path"
+import { NotifyDispatcher, ProviderRegistry, registerBuiltinProviders } from "@octopus/engine"
+import { VarPool, TemplateRenderer } from "@octopus/shared"
 
 export interface EngineCallbacksDeps {
   ctx: ServiceContext
@@ -68,6 +70,97 @@ export class EngineCallbacks implements IEngineCallbacks {
 
     // Throttle for execution_metrics SSE: max 1 emit per 500ms (trailing edge)
     let metricsTimer: ReturnType<typeof setTimeout> | null = null
+
+    // Budget hook guards — prevent repeated dispatch
+    let budgetWarningSent = false
+    let budgetExceededSent = false
+
+    /**
+     * Dispatch budget hook events (on_budget_warning / on_budget_exceeded).
+     * Reads workflow definition to get notify hooks, providers, channels.
+     * Dispatches notify-type hooks via NotifyDispatcher.
+     * Emits SSE event for frontend.
+     */
+    const dispatchBudgetHook = async (
+      event: "on_budget_warning" | "on_budget_exceeded",
+      context: Record<string, string>,
+    ) => {
+      // Emit SSE for frontend
+      sse.emit(wsId, {
+        event: "budget_warning",
+        data: {
+          executionId: id,
+          hookEvent: event,
+          ...context,
+        },
+      })
+
+      // Load workflow definition to get hooks/providers/channels
+      try {
+        const exec = dao.findById(id)
+        if (!exec?.workflow_ref) return
+
+        const wfDetail = this.ctx.workflowService.get(
+          this.ctx.workspacePath,
+          exec.workflow_ref,
+          id,
+        )
+        if (!wfDetail?.parsed) return
+
+        const wf = wfDetail.parsed
+        const hooks = wf.hooks?.[event] as HookDef[] | undefined
+        if (!hooks || hooks.length === 0) return
+
+        const providers = wf.providers ?? {}
+        const channels = wf.channels ?? {}
+
+        // Build VarPool with hook context
+        const pool = new VarPool({})
+        if (exec.var_pool) {
+          try {
+            const snapshot = JSON.parse(exec.var_pool)
+            pool.update(snapshot)
+          } catch { /* use empty pool */ }
+        }
+        pool.update({
+          "hook.event": event.replace("on_", ""),
+          "hook.workflow_name": wf.name,
+          "hook.execution_id": id,
+          "hook.timestamp": new Date().toISOString(),
+          ...Object.fromEntries(Object.entries(context).map(([k, v]) => [`hook.${k}`, v])),
+        })
+
+        // Dispatch notify-type hooks
+        registerBuiltinProviders()
+        const dispatcher = new NotifyDispatcher(
+          new ProviderRegistry(),
+          new TemplateRenderer(),
+        )
+
+        for (const hook of hooks) {
+          if (hook.type !== "notify") continue
+          try {
+            const results = await dispatcher.dispatch({
+              hook,
+              pool,
+              providers: providers as Record<string, NotifyProviderConfig>,
+              channels: channels as Record<string, ChannelProfile>,
+            })
+            for (const r of results) {
+              if (!r.success) {
+                console.warn(`[EngineCallbacks] Budget notify failed: ${r.error}`)
+              }
+            }
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err)
+            console.warn(`[EngineCallbacks] Budget hook ${event} error: ${msg}`)
+          }
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        console.warn(`[EngineCallbacks] dispatchBudgetHook error: ${msg}`)
+      }
+    }
 
     /** Compute and emit execution_metrics SSE event (throttled, trailing edge). */
     const scheduleMetricsEmit = () => {
@@ -129,13 +222,24 @@ export class EngineCallbacks implements IEngineCallbacks {
           })
 
           // Budget warning: totalTokens > max_tokens * alert_threshold
-          if (budgetSnapshot?.max_tokens) {
+          if (budgetSnapshot?.max_tokens && !budgetWarningSent) {
             const threshold = budgetSnapshot.alert_threshold ?? 0.8
             const warningLimit = budgetSnapshot.max_tokens * threshold
             if (totalTokens > warningLimit && totalTokens <= budgetSnapshot.max_tokens) {
+              budgetWarningSent = true
+              const pct = (totalTokens / budgetSnapshot.max_tokens * 100).toFixed(1)
               console.warn(
-                `[EngineCallbacks] Budget warning: execution ${id} has consumed ${totalTokens}/${budgetSnapshot.max_tokens} tokens (${(totalTokens / budgetSnapshot.max_tokens * 100).toFixed(1)}%, threshold ${threshold * 100}%)`,
+                `[EngineCallbacks] Budget warning: execution ${id} has consumed ${totalTokens}/${budgetSnapshot.max_tokens} tokens (${pct}%, threshold ${threshold * 100}%)`,
               )
+              // Dispatch on_budget_warning hooks + SSE
+              dispatchBudgetHook("on_budget_warning", {
+                total_tokens: String(totalTokens),
+                max_tokens: String(budgetSnapshot.max_tokens),
+                tokens_percent: pct,
+                alert_threshold: String(threshold),
+                execution_id: id,
+                workflow_name: exec?.workflow_name ?? "unknown",
+              })
             }
           }
         } catch (err) {
@@ -187,6 +291,19 @@ export class EngineCallbacks implements IEngineCallbacks {
               event: "execution_progress",
               data: { executionId: id, status: "budget_exceeded", completedAt: now },
             })
+            // Dispatch on_budget_exceeded hooks + SSE
+            if (!budgetExceededSent) {
+              budgetExceededSent = true
+              const pct = (totalTokens / budgetSnapshot.max_tokens * 100).toFixed(1)
+              dispatchBudgetHook("on_budget_exceeded", {
+                total_tokens: String(totalTokens),
+                max_tokens: String(budgetSnapshot.max_tokens),
+                tokens_percent: pct,
+                alert_threshold: String(budgetSnapshot.alert_threshold ?? 0.8),
+                execution_id: id,
+                workflow_name: exec?.workflow_name ?? "unknown",
+              })
+            }
             // Abort the engine so subsequent nodes don't run
             enginePool.cancel(id)
 
