@@ -1,0 +1,95 @@
+# 错误分类测试
+# 覆盖: classifyError 函数的不同错误类型、错误时间线展示、errorCount 统计
+# 预期: 2x script_error (bash exit 1) + 1x condition routing + errorCount 统计
+apiVersion: octopus/v1
+kind: Workflow
+name: observability-error-test
+description: |
+  错误分类测试 — 触发不同类型的错误
+  验证: 错误时间线分类 (script_error / other)、错误计数、条件分支
+
+budget:
+  max_tokens: 100000
+  max_duration: 300
+  max_cost_usd: 1.0
+
+inputs:
+  mode:
+    description: "Error handling mode (normal/strict)"
+    default: "normal"
+
+nodes:
+  # ── Stage 1: 初始化 ────────────────────────────────────
+  - id: init
+    type: bash
+    command: |
+      echo "=== 错误分类测试启动 ==="
+      echo "将触发多种错误类型: script_error, condition routing"
+
+  # ── Stage 2: script_error — bash 脚本失败 (exit code != 0) ──
+  - id: failing-script
+    type: bash
+    depends_on: [init]
+    command: |
+      echo "模拟脚本执行..."
+      echo "Error: segmentation fault at line 42"
+      echo "exit_code=139"
+      exit 1
+
+  # ── Stage 3: agent 继续执行 (忽略上游失败) ─────────────
+  - id: error-analyzer
+    type: agent
+    depends_on: [failing-script]
+    prompt: |
+      用一句话回答：什么是 segmentation fault？
+
+  # ── Stage 4: 条件分支 — 路由到不同路径 ──────────────────
+  - id: error-gate
+    type: condition
+    depends_on: [error-analyzer]
+    cases:
+      - when: '$inputs.mode == "strict"'
+        then: strict-handler
+      - when: default
+        then: normal-handler
+
+  - id: strict-handler
+    type: bash
+    depends_on: [error-gate]
+    command: |
+      echo "严格模式：所有错误都阻断"
+      exit 1
+
+  - id: normal-handler
+    type: bash
+    depends_on: [error-gate]
+    command: |
+      echo "普通模式：记录错误继续执行"
+      echo "error_count: 1"
+
+  # ── Stage 5: 另一个 bash 失败 (不同 exit code) ────────
+  - id: timeout-simulation
+    type: bash
+    depends_on: [normal-handler]
+    command: |
+      echo "模拟超时场景..."
+      echo "Error: operation timeout after 30000ms"
+      echo "Connection to upstream service timed out"
+      exit 124
+
+  # ── Stage 6: 最终 agent — 汇总错误 ────────────────────
+  - id: error-summary
+    type: agent
+    depends_on: [timeout-simulation]
+    prompt: |
+      列出常见的 3 种程序错误类型（如语法错误、运行时错误、逻辑错误），
+      每种用一句话描述。保持简洁。
+
+  # ── Stage 7: 收尾 ─────────────────────────────────────
+  - id: cleanup
+    type: bash
+    depends_on: [error-summary]
+    command: |
+      echo "=== 错误分类测试完成 ==="
+      echo "预期错误: failing-script (script_error), timeout-simulation (script_error)"
+      echo "预期分支: normal-handler (default case)"

@@ -1,0 +1,48 @@
+# 预算阻断测试
+# 覆盖: budget_exceeded 状态、onBeforeNode 阻断、SSE execution_status 事件、预算进度条
+# 预期: 执行被 budget_exceeded 阻断，状态变为 budget_exceeded，UI 显示红色预算超限横幅
+apiVersion: octopus/v1
+kind: Workflow
+name: observability-budget-test
+description: |
+  预算阻断测试 — 极低 max_tokens 触发预算超限
+  验证: 80% 预警日志、budget_exceeded 阻断、UI 红色横幅
+
+budget:
+  max_tokens: 500          # 极低预算 — 第一个 agent 节点就会超限
+  max_duration: 60
+  max_cost_usd: 0.01
+  alert_threshold: 0.5     # 50% 就预警（更容易在日志中观察到）
+
+nodes:
+  # ── Stage 1: 初始化 (bash, 无 token 消耗) ──────────────
+  - id: init
+    type: bash
+    command: |
+      echo "=== 预算阻断测试 ==="
+      echo "budget: max_tokens=500"
+      echo "预期: 第一个 agent 节点将触发 budget_exceeded"
+
+  # ── Stage 2: 第一个 agent — 消耗 token 逼近上限 ────────
+  - id: analysis
+    type: agent
+    depends_on: [init]
+    prompt: |
+      分析 packages/shared/src/types/workflow.ts 中所有导出类型，列出名称和用途。
+
+  # ── Stage 3: 第二个 agent — 应该被 budget 阻断 ────────
+  - id: deep-analysis
+    type: agent
+    depends_on: [analysis]
+    prompt: |
+      深入分析 packages/shared/src/types/workflow.ts 的每个类型的字段定义，
+      给出完整的字段列表和类型签名。
+
+  # ── Stage 4: 后续节点 — 不应执行 ──────────────────────
+  - id: summary
+    type: bash
+    depends_on: [deep-analysis]
+    command: |
+      echo "如果看到这条输出，说明预算阻断失败了！"
+      echo "ERROR: budget blocking did not work"
+      exit 1
