@@ -211,9 +211,9 @@ describe("HarnessFloatingPanel", () => {
 
     // Expanded panel should show tabs
     await waitFor(() => {
-      expect(screen.getByText("观测")).toBeDefined()
-      expect(screen.getByText("监控")).toBeDefined()
-      expect(screen.getByText("明细")).toBeDefined()
+      expect(screen.getByText("Workflow")).toBeDefined()
+      expect(screen.getByText("Harness")).toBeDefined()
+      expect(screen.getByText("Events")).toBeDefined()
       expect(screen.getByText("Chatbot")).toBeDefined()
     })
   })
@@ -261,10 +261,10 @@ describe("HarnessFloatingPanel", () => {
     fireEvent.mouseUp(collapsed, { clientX: 100, clientY: 100 })
 
     await waitFor(() => {
-      expect(screen.getByText("监控")).toBeDefined()
+      expect(screen.getByText("Harness")).toBeDefined()
     })
 
-    // Default tab should be 观测 (observability panel rendered)
+    // Default tab should be Workflow (observability panel rendered)
     expect(screen.getByTestId("observability-panel")).toBeDefined()
   })
 

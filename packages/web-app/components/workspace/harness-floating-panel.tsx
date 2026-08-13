@@ -809,7 +809,7 @@ export function HarnessFloatingPanel({
   return (
     <div
       ref={panelRef}
-      className="fixed z-50 flex flex-col rounded-lg border border-border bg-card shadow-xl"
+      className="fixed z-50 flex flex-col rounded-lg border border-border bg-card shadow-xl opacity-75 hover:opacity-100 transition-opacity"
       style={{
         left: pos.left,
         top: pos.top,
@@ -827,7 +827,7 @@ export function HarnessFloatingPanel({
         onMouseDown={handleDragStart}
       >
         <GripHorizontal className="h-3.5 w-3.5 text-muted-foreground/60" />
-        <span className="text-xs font-medium flex-1 select-none">🛡️ Harness 监控</span>
+        <span className="text-xs font-medium flex-1 select-none">🛡️ 监控面板</span>
         <Button
           variant="ghost"
           size="icon"
@@ -843,13 +843,13 @@ export function HarnessFloatingPanel({
       <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 flex flex-col min-h-0">
         <TabsList className="mx-2 mt-1 h-8 shrink-0">
           <TabsTrigger value="observability" className="text-xs h-6 px-2">
-            观测
+            Workflow
           </TabsTrigger>
           <TabsTrigger value="monitor" className="text-xs h-6 px-2">
-            监控
+            Harness
           </TabsTrigger>
           <TabsTrigger value="detail" className="text-xs h-6 px-2">
-            明细
+            Events
           </TabsTrigger>
           <TabsTrigger value="chatbot" className="text-xs h-6 px-2">
             Chatbot
