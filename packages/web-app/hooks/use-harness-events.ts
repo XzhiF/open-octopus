@@ -1,7 +1,8 @@
 "use client"
 
-import { useState, useEffect, useRef, useCallback } from "react"
+import { useState, useEffect, useCallback } from "react"
 import { getServerUrl } from "@/lib/server-config"
+import { subscribeSSE } from "@/lib/sse-manager"
 import type { DiagnosisReport, InterventionAction } from "@/lib/types"
 
 // ============ Harness Event Types ============
@@ -148,8 +149,7 @@ export function useHarnessEvents(
 ): UseHarnessEventsResult {
   const [events, setEvents] = useState<ParsedHarnessEvent[]>([])
   const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
-  const esRef = useRef<EventSource | null>(null)
+  const [error] = useState<string | null>(null)
 
   // Reset events when execution changes
   useEffect(() => {
@@ -227,7 +227,7 @@ export function useHarnessEvents(
     }
   }, [workspaceId, executionId])
 
-  // Connect SSE for live updates
+  // Connect SSE for live updates (shared connection)
   useEffect(() => {
     if (!workspaceId || !executionId) {
       setLoading(false)
@@ -237,10 +237,8 @@ export function useHarnessEvents(
     // Fetch historical first
     fetchHistorical()
 
-    const es = new EventSource(
-      `${getServerUrl()}/api/workspaces/${workspaceId}/executions/events`,
-    )
-    esRef.current = es
+    const sseUrl = `${getServerUrl()}/api/workspaces/${workspaceId}/executions/events`
+    const unsubs: Array<() => void> = []
 
     const harnessEventTypes: HarnessEventType[] = [
       "harness_diagnosis",
@@ -250,7 +248,7 @@ export function useHarnessEvents(
     ]
 
     for (const eventType of harnessEventTypes) {
-      es.addEventListener(eventType, (e: MessageEvent) => {
+      unsubs.push(subscribeSSE(sseUrl, eventType, (e: MessageEvent) => {
         try {
           const raw = JSON.parse(e.data)
           if (raw.executionId !== executionId) return
@@ -261,17 +259,10 @@ export function useHarnessEvents(
         } catch {
           /* skip malformed */
         }
-      })
+      }))
     }
 
-    es.addEventListener("error", () => {
-      setError("SSE connection error")
-    })
-
-    return () => {
-      es.close()
-      esRef.current = null
-    }
+    return () => { unsubs.forEach(fn => fn()) }
   }, [workspaceId, executionId, fetchHistorical])
 
   // Compute derived stats — count both legacy intervention and new delegation events

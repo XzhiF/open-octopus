@@ -7,6 +7,7 @@ import type { ExecutionStatus, ExecutionTreeNode, GateStatus, CreateNodeFormData
 import { getBranchColor } from '@/lib/branch-colors'
 import { fetchExecutionTree, createExecution, startExecution, retryExecution, cancelExecution, skipExecution, deleteExecution } from '@/lib/api-client'
 import { getServerUrl } from '@/lib/server-config'
+import { subscribeSSE } from '@/lib/sse-manager'
 import { pushAgentEvents } from '@/hooks/use-agent-traces'
 
 const DAGRE_NODE_WIDTH = 300
@@ -190,8 +191,6 @@ export function useExecutionTree(
   const [treeNodes, setTreeNodes] = useState<ExecutionTreeNode[]>([])
   const [loading, setLoading] = useState(true)
   const [userPositions, setUserPositions] = useState<Record<string, { x: number; y: number }>>(() => loadPositions(workspaceId))
-  const eventSourceRef = useRef<EventSource | null>(null)
-  const sseInitialOpenRef = useRef(false)
 
   // ReactFlow state — onNodesChange handles drag position updates in real-time
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([])
@@ -215,70 +214,60 @@ export function useExecutionTree(
 
   useEffect(() => { loadTree() }, [loadTree])
 
-  // ---- SSE ----
+  // ---- SSE (shared connection via sse-manager) ----
 
   useEffect(() => {
-    sseInitialOpenRef.current = false
-    const es = new EventSource(`${getServerUrl()}/api/workspaces/${workspaceId}/executions/events`)
-    eventSourceRef.current = es
+    const sseUrl = `${getServerUrl()}/api/workspaces/${workspaceId}/executions/events`
+    const unsubs: Array<() => void> = []
 
-    // Detect reconnection: on first open, skip reload; on subsequent opens, refetch tree
-    // to sync state that may have been missed during disconnection (e.g. server restart).
-    es.addEventListener("open", () => {
-      if (!sseInitialOpenRef.current) {
-        sseInitialOpenRef.current = true
-      } else {
-        loadTree()
-      }
-    })
-
-    es.addEventListener("execution_status", (e) => {
+    unsubs.push(subscribeSSE(sseUrl, "execution_status", (e: MessageEvent) => {
       const { executionId, status } = JSON.parse(e.data)
       setTreeNodes(prev => prev.map(n => n.id === executionId ? { ...n, executionStatus: status as ExecutionStatus } : n))
-    })
-    es.addEventListener("execution_paused", (e) => {
-      const { executionId, nodeId, approval } = JSON.parse(e.data)
+    }))
+
+    unsubs.push(subscribeSSE(sseUrl, "execution_paused", (e: MessageEvent) => {
+      const { executionId, approval } = JSON.parse(e.data)
       setTreeNodes(prev => prev.map(n => n.id === executionId ? {
-        ...n,
-        executionStatus: 'paused' as ExecutionStatus,
-        approvalMetadata: approval,
+        ...n, executionStatus: 'paused' as ExecutionStatus, approvalMetadata: approval,
       } : n))
-    })
-    es.addEventListener("execution_pending_approval", (e) => {
-      const { executionId, nodeId, approval } = JSON.parse(e.data)
+    }))
+
+    unsubs.push(subscribeSSE(sseUrl, "execution_pending_approval", (e: MessageEvent) => {
+      const { executionId, approval } = JSON.parse(e.data)
       setTreeNodes(prev => prev.map(n => n.id === executionId ? {
-        ...n,
-        executionStatus: 'pending_approval' as ExecutionStatus,
+        ...n, executionStatus: 'pending_approval' as ExecutionStatus,
         ...(approval ? { approvalMetadata: approval } : {}),
       } : n))
-    })
-    es.addEventListener("execution_interaction_started", (e) => {
+    }))
+
+    unsubs.push(subscribeSSE(sseUrl, "execution_interaction_started", (e: MessageEvent) => {
       const { executionId, nodeId, sessionId, display, maxRounds } = JSON.parse(e.data)
       setTreeNodes(prev => prev.map(n => n.id === executionId ? {
-        ...n,
-        executionStatus: 'pending_interaction' as ExecutionStatus,
+        ...n, executionStatus: 'pending_interaction' as ExecutionStatus,
         interactionMetadata: { nodeId, sessionId, display, maxRounds },
       } : n))
-    })
-    es.addEventListener("execution_interaction_completed", (e) => {
+    }))
+
+    unsubs.push(subscribeSSE(sseUrl, "execution_interaction_completed", (e: MessageEvent) => {
       const { executionId } = JSON.parse(e.data)
-      // Mark execution as running (workflow continues after interaction)
       setTreeNodes(prev => prev.map(n => n.id === executionId ? { ...n, executionStatus: 'running' as ExecutionStatus } : n))
-      // Reload tree after delays to catch subsequent node executions
       setTimeout(() => loadTree(), 1000)
       setTimeout(() => loadTree(), 3000)
       setTimeout(() => loadTree(), 8000)
-    })
-    es.addEventListener("execution_progress", (e) => {
+    }))
+
+    unsubs.push(subscribeSSE(sseUrl, "execution_progress", (e: MessageEvent) => {
       const { executionId, progress } = JSON.parse(e.data)
       setTreeNodes(prev => prev.map(n => n.id === executionId ? { ...n, progress } : n))
-    })
-    es.addEventListener("node_start", (e) => {
+    }))
+
+    unsubs.push(subscribeSSE(sseUrl, "node_start", (e: MessageEvent) => {
       const { executionId } = JSON.parse(e.data)
       const startedAt = new Date().toISOString()
       setTreeNodes(prev => prev.map(n => n.id === executionId ? { ...n, startedAt, executionStatus: 'running' as ExecutionStatus } : n))
-    })
-    es.addEventListener("complete", (e) => {
+    }))
+
+    unsubs.push(subscribeSSE(sseUrl, "complete", (e: MessageEvent) => {
       const { executionId, finalStatus } = JSON.parse(e.data)
       const isTerminal = finalStatus === 'completed' || finalStatus === 'completed_with_failures' || finalStatus === 'rejected'
       setTreeNodes(prev => prev.map(n => n.id === executionId ? {
@@ -287,8 +276,9 @@ export function useExecutionTree(
         progress: isTerminal ? 100 : n.progress,
         completedAt: isTerminal ? new Date().toISOString() : n.completedAt,
       } : n))
-    })
-    es.addEventListener("node_end", (e) => {
+    }))
+
+    unsubs.push(subscribeSSE(sseUrl, "node_end", (e: MessageEvent) => {
       try {
         const data = JSON.parse(e.data)
         const { executionId, durationMs } = data
@@ -297,21 +287,16 @@ export function useExecutionTree(
         const turnCount = data.turnCount as number | undefined
         const toolCount = data.toolCount as number | undefined
         const executorType = data.executorType as ExecutionTreeNode["executorType"]
-        // tokenUsagesData is already aggregated per-model SUM across all steps from the server
         const tokenUsagesData = data.tokenUsages as Array<{ model: string; inputTokens: number; outputTokens: number; cacheReadTokens?: number; cacheCreationTokens?: number }> | undefined
         const aggregatedTokenUsages = tokenUsagesData && tokenUsagesData.length > 0
-          ? tokenUsagesData.map(tu => ({
-            model: tu.model,
-            inputTokens: tu.inputTokens,
-            outputTokens: tu.outputTokens,
-            cacheReadTokens: tu.cacheReadTokens,
-            cacheCreationTokens: tu.cacheCreationTokens,
+          ? tokenUsagesData.map((tu: any) => ({
+            model: tu.model, inputTokens: tu.inputTokens, outputTokens: tu.outputTokens,
+            cacheReadTokens: tu.cacheReadTokens, cacheCreationTokens: tu.cacheCreationTokens,
           }))
           : tokenData ? [{ model: "", inputTokens: tokenData.input ?? 0, outputTokens: tokenData.output ?? 0 }]
           : undefined
         setTreeNodes(prev => prev.map(n => n.id === executionId ? {
-          ...n,
-          duration: durationMs / 1000,
+          ...n, duration: durationMs / 1000,
           ...(aggregatedTokenUsages ? { tokenUsages: aggregatedTokenUsages } : {}),
           ...(costUsd != null ? { costUsd } : {}),
           ...(turnCount != null ? { turnCount } : {}),
@@ -319,43 +304,34 @@ export function useExecutionTree(
           ...(executorType ? { executorType } : {}),
         } : n))
       } catch { /* skip malformed event */ }
-    })
+    }))
 
-    // Agent event — batch push for live timeline updates
-    es.addEventListener("agent_event", (e) => {
+    unsubs.push(subscribeSSE(sseUrl, "agent_event", (e: MessageEvent) => {
       try {
         const { executionId, nodeId, event } = JSON.parse(e.data) as { executionId: string; nodeId: string; event: AgentTraceEvent }
         pushAgentEvents([{ executionId, nodeId, event }])
       } catch { /* skip malformed event */ }
-    })
-    es.addEventListener("branch_start", (e) => {
+    }))
+
+    unsubs.push(subscribeSSE(sseUrl, "branch_start", (e: MessageEvent) => {
       try {
         const { executionId, nodeExecutionId, iteration } = JSON.parse(e.data)
-        // nodeExecutionId encodes the loop node — extract loop part
         const loopId = nodeExecutionId?.split("-iter-")[0] ?? executionId
         setLoopIterations(prev => {
           const next = new Map(prev)
           const existing = next.get(loopId) ?? {
             completed: 0, failed: 0, current: 0, mode: "fixed" as const, iterations: [],
           }
-          const iterDetail: IterationDetail = {
-            iteration,
-            status: "running",
-            startedAt: new Date().toISOString(),
-            nodes: [],
-          }
-          const updatedIterations = existing.iterations.filter(i => i.iteration !== iteration)
+          const iterDetail: IterationDetail = { iteration, status: "running", startedAt: new Date().toISOString(), nodes: [] }
+          const updatedIterations = existing.iterations.filter((i: IterationDetail) => i.iteration !== iteration)
           updatedIterations.push(iterDetail)
-          next.set(loopId, {
-            ...existing,
-            current: iteration,
-            iterations: updatedIterations,
-          })
+          next.set(loopId, { ...existing, current: iteration, iterations: updatedIterations })
           return next
         })
       } catch { /* skip */ }
-    })
-    es.addEventListener("branch_end", (e) => {
+    }))
+
+    unsubs.push(subscribeSSE(sseUrl, "branch_end", (e: MessageEvent) => {
       try {
         const { executionId, nodeExecutionId, iteration, status, durationMs, nodeResults } = JSON.parse(e.data)
         const loopId = nodeExecutionId?.split("-iter-")[0] ?? executionId
@@ -363,37 +339,31 @@ export function useExecutionTree(
           const next = new Map(prev)
           const existing = next.get(loopId)
           if (!existing) return prev
-          const updatedIterations = existing.iterations.map(i => {
+          const updatedIterations = existing.iterations.map((i: IterationDetail) => {
             if (i.iteration !== iteration) return i
-            return {
-              ...i,
-              status: (status ?? "completed") as IterationDetail["status"],
-              completedAt: new Date().toISOString(),
-              durationMs,
-              nodes: nodeResults ?? i.nodes,
-            }
+            return { ...i, status: (status ?? "completed") as IterationDetail["status"], completedAt: new Date().toISOString(), durationMs, nodes: nodeResults ?? i.nodes }
           })
-          const completed = updatedIterations.filter(i => i.status === "completed").length
-          const failed = updatedIterations.filter(i => i.status === "failed").length
+          const completed = updatedIterations.filter((i: IterationDetail) => i.status === "completed").length
+          const failed = updatedIterations.filter((i: IterationDetail) => i.status === "failed").length
           next.set(loopId, { ...existing, iterations: updatedIterations, completed, failed })
           return next
         })
       } catch { /* skip */ }
-    })
-    es.addEventListener("gate_change", (e) => {
+    }))
+
+    unsubs.push(subscribeSSE(sseUrl, "gate_change", (e: MessageEvent) => {
       const { executionId, gateStatus } = JSON.parse(e.data)
       setTreeNodes(prev => prev.map(n => n.id === executionId ? { ...n, gateStatus: gateStatus as GateStatus } : n))
-    })
-    // ---- Harness SSE events → update execution-level harnessStatus ----
-    es.addEventListener("harness_diagnosis", (e) => {
+    }))
+
+    unsubs.push(subscribeSSE(sseUrl, "harness_diagnosis", (e: MessageEvent) => {
       try {
-        const { executionId, report } = JSON.parse(e.data)
-        // Update harnessStatus for ALL diagnosis events (not just critical),
-        // so warning-level detectors (stupid_retry, timeout_cascade) also show purple ants
+        const { executionId } = JSON.parse(e.data)
         setTreeNodes(prev => prev.map(n => n.id === executionId ? { ...n, harnessStatus: "intervened" as HarnessExecutionStatus } : n))
       } catch { /* skip */ }
-    })
-    es.addEventListener("harness_delegation", (e) => {
+    }))
+
+    unsubs.push(subscribeSSE(sseUrl, "harness_delegation", (e: MessageEvent) => {
       try {
         const { executionId, status, result } = JSON.parse(e.data)
         if (status === "complete" && result?.decision) {
@@ -403,15 +373,16 @@ export function useExecutionTree(
           setTreeNodes(prev => prev.map(n => n.id === executionId ? { ...n, harnessStatus: nextStatus as HarnessExecutionStatus } : n))
         }
       } catch { /* skip */ }
-    })
-    es.addEventListener("harness_blocked", (e) => {
+    }))
+
+    unsubs.push(subscribeSSE(sseUrl, "harness_blocked", (e: MessageEvent) => {
       try {
         const { executionId } = JSON.parse(e.data)
         setTreeNodes(prev => prev.map(n => n.id === executionId ? { ...n, harnessStatus: "blocked" as HarnessExecutionStatus } : n))
       } catch { /* skip */ }
-    })
+    }))
 
-    es.addEventListener("execution_deleted", (e) => {
+    unsubs.push(subscribeSSE(sseUrl, "execution_deleted", (e: MessageEvent) => {
       const data = JSON.parse(e.data)
       const deletedId = data.executionId
       setTreeNodes(prev => {
@@ -423,8 +394,9 @@ export function useExecutionTree(
         }
         return updated
       })
-    })
-    es.addEventListener("execution_created", (e) => {
+    }))
+
+    unsubs.push(subscribeSSE(sseUrl, "execution_created", (e: MessageEvent) => {
       const raw = JSON.parse(e.data)
       const newNode = apiNodeToTreeNode(raw)
       setTreeNodes(prev => {
@@ -434,9 +406,9 @@ export function useExecutionTree(
         }
         return prev.concat(newNode)
       })
-    })
-    es.onerror = () => {}
-    return () => { es.close(); eventSourceRef.current = null }
+    }))
+
+    return () => { unsubs.forEach(fn => fn()) }
   }, [workspaceId])
 
   // ---- handlers ----

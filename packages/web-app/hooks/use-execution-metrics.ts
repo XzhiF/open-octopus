@@ -1,7 +1,8 @@
 "use client"
 
-import { useState, useEffect, useRef, useCallback } from "react"
+import { useState, useEffect, useCallback } from "react"
 import { getServerUrl } from "@/lib/server-config"
+import { subscribeSSE } from "@/lib/sse-manager"
 
 // ============ Types ============
 
@@ -80,14 +81,13 @@ const INITIAL_METRICS: ExecutionMetrics = {
  * Subscribes to `execution_metrics` SSE events for a given execution,
  * and fetches initial state from the observability REST API on mount.
  *
- * KD-10: Independent from useHarnessEvents — harness events ≠ execution metrics.
+ * Uses shared SSE connection manager to avoid exhausting browser connection pool.
  */
 export function useExecutionMetrics(
   workspaceId: string,
   executionId: string,
 ): ExecutionMetrics {
   const [metrics, setMetrics] = useState<ExecutionMetrics>(INITIAL_METRICS)
-  const esRef = useRef<EventSource | null>(null)
 
   // Fetch initial historical data from observability API
   const fetchInitial = useCallback(async () => {
@@ -99,7 +99,7 @@ export function useExecutionMetrics(
       if (!res.ok) return
       const data: ObservabilityResponse = await res.json()
 
-      setMetrics((prev) => ({
+      setMetrics({
         totalTokens: data.tokens.totalInput + data.tokens.totalOutput + data.tokens.totalCacheRead + data.tokens.totalCacheCreation,
         totalInputTokens: data.tokens.totalInput,
         totalOutputTokens: data.tokens.totalOutput,
@@ -109,10 +109,9 @@ export function useExecutionMetrics(
         totalTurns: data.rounds.totalLlmTurns,
         budgetProgress: data.budget.progress,
         errorCount: data.errors.length,
-        isConnected: prev.isConnected,
-      }))
+        isConnected: true,
+      })
     } catch (err) {
-      // Non-fatal: SSE will pick up live events
       console.warn("[useExecutionMetrics] Failed to fetch initial observability data:", err)
     }
   }, [workspaceId, executionId])
@@ -122,23 +121,17 @@ export function useExecutionMetrics(
     setMetrics(INITIAL_METRICS)
   }, [executionId])
 
-  // Connect SSE + fetch initial data
+  // Connect SSE + fetch initial data (shared connection)
   useEffect(() => {
     if (!workspaceId || !executionId) return
 
-    // Fetch historical data first
     fetchInitial()
 
-    // Subscribe to SSE for live updates
-    const es = new EventSource(
-      `${getServerUrl()}/api/workspaces/${workspaceId}/executions/events`,
-    )
-    esRef.current = es
+    const sseUrl = `${getServerUrl()}/api/workspaces/${workspaceId}/executions/events`
 
-    es.addEventListener("execution_metrics", (e: MessageEvent) => {
+    const unsub = subscribeSSE(sseUrl, "execution_metrics", (e: MessageEvent) => {
       try {
         const raw: SSEMetricsPayload = JSON.parse(e.data)
-        // Filter by executionId
         if (raw.executionId !== executionId) return
 
         setMetrics({
@@ -158,19 +151,7 @@ export function useExecutionMetrics(
       }
     })
 
-    es.addEventListener("error", () => {
-      setMetrics((prev) => ({ ...prev, isConnected: false }))
-    })
-
-    // Mark connected once the SSE opens
-    es.addEventListener("open", () => {
-      setMetrics((prev) => ({ ...prev, isConnected: true }))
-    })
-
-    return () => {
-      es.close()
-      esRef.current = null
-    }
+    return unsub
   }, [workspaceId, executionId, fetchInitial])
 
   return metrics

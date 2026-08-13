@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState, useRef, useCallback, Fragment } from "react"
+import { useEffect, useState, useCallback, Fragment } from "react"
 import { Badge } from "@/components/ui/badge"
 import { Progress } from "@/components/ui/progress"
 import { ChartErrorBoundary } from "@/components/ui/chart-error-boundary"
@@ -34,6 +34,7 @@ import {
   Cell,
 } from "recharts"
 import { getServerUrl } from "@/lib/server-config"
+import { subscribeSSE } from "@/lib/sse-manager"
 import { formatTokenCount, formatCurrency } from "@/lib/analytics-format"
 
 // ============ Types ============
@@ -154,7 +155,6 @@ export function ObservabilityTab({ workspaceId, executionId, isRunning }: Observ
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set())
-  const esRef = useRef<EventSource | null>(null)
 
   // Fetch data from observability API (reused for both initial load and SSE-triggered refresh)
   const fetchData = useCallback(async () => {
@@ -172,62 +172,32 @@ export function ObservabilityTab({ workspaceId, executionId, isRunning }: Observ
     }
   }, [workspaceId, executionId])
 
-  // Initial fetch + SSE subscription for live updates
+  // Initial fetch + SSE subscription for live updates (shared connection)
   useEffect(() => {
     if (!workspaceId || !executionId) return
 
     // Initial load
     fetchData()
 
-    // Subscribe to execution_metrics SSE for auto-refresh
-    const es = new EventSource(
-      `${getServerUrl()}/api/workspaces/${workspaceId}/executions/events`,
-    )
-    esRef.current = es
+    const sseUrl = `${getServerUrl()}/api/workspaces/${workspaceId}/executions/events`
 
-    es.addEventListener("execution_metrics", (e: MessageEvent) => {
-      try {
-        const payload = JSON.parse(e.data)
-        if (payload.executionId === executionId) {
-          fetchData() // Refetch full data from API
-        }
-      } catch { /* skip malformed */ }
-    })
-
-    // Also listen for execution completion events
-    es.addEventListener("execution_status", (e: MessageEvent) => {
-      try {
-        const payload = JSON.parse(e.data)
-        if (payload.executionId === executionId) {
-          fetchData() // Refetch on status change (e.g. budget_exceeded)
-        }
-      } catch { /* skip */ }
-    })
-
-    // Listen for node_end events — llm_calls are persisted at node end
-    es.addEventListener("node_end", (e: MessageEvent) => {
+    const refreshOnEvent = (e: MessageEvent) => {
       try {
         const payload = JSON.parse(e.data)
         if (payload.executionId === executionId) {
           fetchData()
         }
       } catch { /* skip */ }
-    })
-
-    // Listen for budget_warning events — triggers refresh to show updated alerts
-    es.addEventListener("budget_warning", (e: MessageEvent) => {
-      try {
-        const payload = JSON.parse(e.data)
-        if (payload.executionId === executionId) {
-          fetchData()
-        }
-      } catch { /* skip */ }
-    })
-
-    return () => {
-      es.close()
-      esRef.current = null
     }
+
+    const unsubs = [
+      subscribeSSE(sseUrl, "execution_metrics", refreshOnEvent),
+      subscribeSSE(sseUrl, "execution_status", refreshOnEvent),
+      subscribeSSE(sseUrl, "node_end", refreshOnEvent),
+      subscribeSSE(sseUrl, "budget_warning", refreshOnEvent),
+    ]
+
+    return () => { unsubs.forEach(fn => fn()) }
   }, [workspaceId, executionId, fetchData])
 
   // Polling fallback during execution: refetch every 10s while running

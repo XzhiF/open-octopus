@@ -39,6 +39,7 @@ import { ArchiveDialog } from "@/components/agent/knowledge/archive/ArchiveDialo
 import { HarnessFloatingPanel } from "./harness-floating-panel"
 import { useLiveTimer } from "@/hooks/use-live-timer"
 import { getServerUrl } from "@/lib/server-config"
+import { subscribeSSE } from "@/lib/sse-manager"
 import { useAgentTraces } from "@/hooks/use-agent-traces"
 import { useLLMCalls } from "@/hooks/use-llm-calls"
 import { AgentTimeline } from "@/components/agent-timeline/agent-timeline"
@@ -187,11 +188,10 @@ export function WorkflowDetailPanel({ execution, workflow, workspaceId }: Workfl
   // SSE listeners for real-time harness status updates on workflow nodes.
   // Polling (3s) is too slow to catch the brief harness_intervening state —
   // these listeners update liveSteps immediately when harness events arrive.
+  // Uses shared SSE connection to avoid exhausting browser connection pool.
   useEffect(() => {
     if (!workspaceId || !execution.id) return
-    const es = new EventSource(
-      `${getServerUrl()}/api/workspaces/${workspaceId}/executions/events`,
-    )
+    const sseUrl = `${getServerUrl()}/api/workspaces/${workspaceId}/executions/events`
 
     const updateStepHarness = (nodeIds: string[], status: string) => {
       setLiveSteps(prev => prev.map(s =>
@@ -199,47 +199,49 @@ export function WorkflowDetailPanel({ execution, workflow, workspaceId }: Workfl
       ))
     }
 
-    es.addEventListener("harness_diagnosis", (e: MessageEvent) => {
-      try {
-        const { executionId, report } = JSON.parse(e.data)
-        if (executionId !== execution.id) return
-        const ids = [report.nodeId, report.displayNodeId].filter(Boolean) as string[]
-        if (ids.length > 0) updateStepHarness(ids, "harness_intervening")
-      } catch { /* skip */ }
-    })
+    const unsubs = [
+      subscribeSSE(sseUrl, "harness_diagnosis", (e: MessageEvent) => {
+        try {
+          const { executionId, report } = JSON.parse(e.data)
+          if (executionId !== execution.id) return
+          const ids = [report.nodeId, report.displayNodeId].filter(Boolean) as string[]
+          if (ids.length > 0) updateStepHarness(ids, "harness_intervening")
+        } catch { /* skip */ }
+      }),
 
-    es.addEventListener("harness_delegation", (e: MessageEvent) => {
-      try {
-        const { executionId, nodeId, containerNodeId, status, result } = JSON.parse(e.data)
-        if (executionId !== execution.id || status !== "complete") return
-        const decision = result?.decision as string | undefined
-        const harnessStatus = decision === "block_node" ? "harness_blocked"
-          : decision === "agent_takeover" ? "harness_executed"
-          : "harness_modified"
-        const ids = [nodeId, containerNodeId].filter(Boolean) as string[]
-        if (ids.length > 0) updateStepHarness(ids, harnessStatus)
-      } catch { /* skip */ }
-    })
+      subscribeSSE(sseUrl, "harness_delegation", (e: MessageEvent) => {
+        try {
+          const { executionId, nodeId, containerNodeId, status, result } = JSON.parse(e.data)
+          if (executionId !== execution.id || status !== "complete") return
+          const decision = result?.decision as string | undefined
+          const harnessStatus = decision === "block_node" ? "harness_blocked"
+            : decision === "agent_takeover" ? "harness_executed"
+            : "harness_modified"
+          const ids = [nodeId, containerNodeId].filter(Boolean) as string[]
+          if (ids.length > 0) updateStepHarness(ids, harnessStatus)
+        } catch { /* skip */ }
+      }),
 
-    es.addEventListener("harness_intervention", (e: MessageEvent) => {
-      try {
-        const { executionId, nodeId, containerNodeId, success } = JSON.parse(e.data)
-        if (executionId !== execution.id) return
-        const ids = [nodeId, containerNodeId].filter(Boolean) as string[]
-        if (ids.length > 0) updateStepHarness(ids, success ? "harness_modified" : "harness_blocked")
-      } catch { /* skip */ }
-    })
+      subscribeSSE(sseUrl, "harness_intervention", (e: MessageEvent) => {
+        try {
+          const { executionId, nodeId, containerNodeId, success } = JSON.parse(e.data)
+          if (executionId !== execution.id) return
+          const ids = [nodeId, containerNodeId].filter(Boolean) as string[]
+          if (ids.length > 0) updateStepHarness(ids, success ? "harness_modified" : "harness_blocked")
+        } catch { /* skip */ }
+      }),
 
-    es.addEventListener("harness_blocked", (e: MessageEvent) => {
-      try {
-        const { executionId, nodeId, containerNodeId } = JSON.parse(e.data)
-        if (executionId !== execution.id) return
-        const ids = [nodeId, containerNodeId].filter(Boolean) as string[]
-        if (ids.length > 0) updateStepHarness(ids, "harness_blocked")
-      } catch { /* skip */ }
-    })
+      subscribeSSE(sseUrl, "harness_blocked", (e: MessageEvent) => {
+        try {
+          const { executionId, nodeId, containerNodeId } = JSON.parse(e.data)
+          if (executionId !== execution.id) return
+          const ids = [nodeId, containerNodeId].filter(Boolean) as string[]
+          if (ids.length > 0) updateStepHarness(ids, "harness_blocked")
+        } catch { /* skip */ }
+      }),
+    ]
 
-    return () => es.close()
+    return () => { unsubs.forEach(fn => fn()) }
   }, [workspaceId, execution.id])
 
   // Auto-open approval dialog when status transitions to pending_approval (not on every poll)
