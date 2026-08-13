@@ -515,19 +515,22 @@ export class DetectorPipeline {
       }
 
       case "block_node":
+        // Default continueSubsequent to true: downstream nodes should continue
+        // unless the agent explicitly says they can't (continueSubsequent: false)
+        const continueSubsequent = result.continueSubsequent ?? true
         this.pendingBlockActions.set(nodeId, {
           action: "skip",
           overrideResult: {
             status: "failed",
             error: result.blockReason ?? "Blocked by harness agent",
           },
-          continueSubsequent: result.continueSubsequent,
+          continueSubsequent,
         } as any)
         this.updateHarnessStatus(nodeId, displayNodeId, "harness_blocked", report, {
           decision: result.decision,
           reasoning: result.reasoning,
           blockReason: result.blockReason,
-          continueSubsequent: result.continueSubsequent,
+          continueSubsequent,
         })
         this.updateExecutionHarnessStatus("blocked")
         break

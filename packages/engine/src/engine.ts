@@ -1114,6 +1114,14 @@ export class WorkflowEngine {
           return ["skipped", "skipped_failed", "rejected", "cancelled", "failed"].includes(depResult.status)
         })
         if (hasSkippedDep) {
+          // Mark as partial failure if any dependency actually failed (not just skipped by condition)
+          const hasFailedDep = node.depends_on.some(depId => {
+            const dep = this.nodeResults[depId]
+            return dep && (dep.status === "failed" || dep.status === "skipped_failed")
+          })
+          if (hasFailedDep) {
+            this.hasPartialFailure = true
+          }
           this.nodeResults[node.id] = {
             outputs: {}, status: "skipped", durationMs: 0,
             logLines: [`Skipped: dependency was skipped/rejected/cancelled/failed`],
