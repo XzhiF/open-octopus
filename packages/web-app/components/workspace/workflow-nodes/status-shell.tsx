@@ -46,7 +46,7 @@ export function StatusShell({
     || statusOverlay?.stepStatus === "rejected"
     || statusOverlay?.stepStatus === "skipped"
     || statusOverlay?.stepStatus === "cancelled"
-  const showMarchingAnts = !isDone && (statusOverlay?.stepStatus === "running" || isHarnessActive)
+  const showMarchingAnts = isHarnessActive || (!isDone && statusOverlay?.stepStatus === "running")
 
   return (
     <div
