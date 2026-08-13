@@ -134,7 +134,9 @@ function ExecutionNodeInner({ data: rawData, selected }: NodeProps) {
       className={cn(
         "rounded-[calc(var(--radius)-2px)] bg-card shadow-sm hover:shadow-md",
         "transition-shadow duration-200",
-        isRunning ? "" : "border-2 " + config.borderColor,
+        isHarnessIntervening
+          ? "border-2 border-violet-500 animate-pulse"
+          : isRunning ? "" : "border-2 " + config.borderColor,
         "cursor-grab active:cursor-grabbing",
         data.gateStatus === "bypassed" && "opacity-70",
       )}
