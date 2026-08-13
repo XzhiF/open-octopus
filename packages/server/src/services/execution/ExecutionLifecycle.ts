@@ -90,7 +90,7 @@ export class ExecutionLifecycle {
     this.callbacksBuilder = new EngineCallbacksBuilder({
       ctx: { db, sse, workflowService, builtInWorkflowService, org, workspacePath, workspaceDbId },
       dao,
-      tokenUsageDao: tokenUsageDao ?? new TokenUsageDAO(db),
+      tokenUsageDao: tokenUsageDao ?? new TokenUsageDAO(dao.getDb()),
       enginePool: this.enginePool,
       observability,
       workspaceId,

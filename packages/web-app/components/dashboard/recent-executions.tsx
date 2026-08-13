@@ -34,6 +34,9 @@ const statusConfig: Record<
   skipped: { icon: SkipForward, label: "已跳过", variant: "outline" },
   rejected: { icon: Ban, label: "已拒绝", variant: "destructive" },
   pending_approval: { icon: Clock, label: "待审批", variant: "outline" },
+  pending_interaction: { icon: Clock, label: "交互中", variant: "outline" },
+  pending_resume: { icon: Clock, label: "待恢复", variant: "outline" },
+  budget_exceeded: { icon: XCircle, label: "预算超限", variant: "destructive" },
 }
 
 function formatTime(dateString: string): string {
@@ -60,7 +63,7 @@ function ExecutionRow({ execution }: { execution: Execution }) {
             ? "bg-emerald-500/10 text-emerald-500"
             : execution.status === "completed_with_failures"
               ? "bg-amber-500/10 text-amber-500"
-              : execution.status === "failed" || execution.status === "rejected"
+              : execution.status === "failed" || execution.status === "rejected" || execution.status === "budget_exceeded"
                 ? "bg-destructive/10 text-destructive"
                 : "bg-muted text-muted-foreground"
         }`}
