@@ -729,6 +729,7 @@ export function HarnessFloatingPanel({
       setPos({ left: 0, top: 0 })
       setSize({ width: window.innerWidth, height: window.innerHeight })
       setMaximized(true)
+      setObsKey(k => k + 1) // refresh observability on maximize
     } else {
       // Restore previous geometry
       if (prevGeometry.current) {
@@ -812,34 +813,63 @@ export function HarnessFloatingPanel({
         </Button>
       </div>
 
-      {/* Tabs */}
-      <Tabs value={activeTab} onValueChange={(tab) => {
-        setActiveTab(tab)
-        if (tab === "observability") setObsKey(k => k + 1)
-      }} className="flex-1 flex flex-col min-h-0">
-        <TabsList className="mx-2 mt-1 h-8 shrink-0">
-          <TabsTrigger value="observability" className="text-xs h-6 px-2">
-            Workflow
-          </TabsTrigger>
-          <TabsTrigger value="harness" className="text-xs h-6 px-2">
-            Harness
-          </TabsTrigger>
-        </TabsList>
+      {/* Content: side-by-side when maximized, tabs when normal */}
+      {maximized ? (
+        <div className="flex-1 flex min-h-0">
+          {/* Left: Workflow */}
+          <div className="w-1/2 border-r border-border min-h-0 overflow-hidden flex flex-col">
+            <div className="shrink-0 px-3 py-1.5 border-b border-border/50 bg-muted/20">
+              <span className="text-[11px] font-medium text-muted-foreground">📊 Workflow</span>
+            </div>
+            <div className="flex-1 min-h-0 overflow-hidden">
+              <ObservabilityTab key={`obs-max-${obsKey}`} workspaceId={workspaceId} executionId={executionId} isRunning={isRunning} />
+            </div>
+          </div>
+          {/* Right: Harness */}
+          <div className="w-1/2 min-h-0 overflow-hidden flex flex-col">
+            <div className="shrink-0 px-3 py-1.5 border-b border-border/50 bg-muted/20">
+              <span className="text-[11px] font-medium text-muted-foreground">🛡️ Harness</span>
+            </div>
+            <div className="flex-1 min-h-0 overflow-hidden">
+              <HarnessTab
+                events={events}
+                workspaceId={workspaceId}
+                executionId={executionId}
+                isRunning={isRunning}
+                currentNodeId={currentNodeId}
+              />
+            </div>
+          </div>
+        </div>
+      ) : (
+        <Tabs value={activeTab} onValueChange={(tab) => {
+          setActiveTab(tab)
+          if (tab === "observability") setObsKey(k => k + 1)
+        }} className="flex-1 flex flex-col min-h-0">
+          <TabsList className="mx-2 mt-1 h-8 shrink-0">
+            <TabsTrigger value="observability" className="text-xs h-6 px-2">
+              Workflow
+            </TabsTrigger>
+            <TabsTrigger value="harness" className="text-xs h-6 px-2">
+              Harness
+            </TabsTrigger>
+          </TabsList>
 
-        <TabsContent value="observability" className="flex-1 mt-0 min-h-0 overflow-hidden">
-          <ObservabilityTab key={obsKey} workspaceId={workspaceId} executionId={executionId} isRunning={isRunning} />
-        </TabsContent>
+          <TabsContent value="observability" className="flex-1 mt-0 min-h-0 overflow-hidden">
+            <ObservabilityTab key={obsKey} workspaceId={workspaceId} executionId={executionId} isRunning={isRunning} />
+          </TabsContent>
 
-        <TabsContent value="harness" className="flex-1 mt-0 min-h-0 overflow-hidden">
-          <HarnessTab
-            events={events}
-            workspaceId={workspaceId}
-            executionId={executionId}
-            isRunning={isRunning}
-            currentNodeId={currentNodeId}
-          />
-        </TabsContent>
-      </Tabs>
+          <TabsContent value="harness" className="flex-1 mt-0 min-h-0 overflow-hidden">
+            <HarnessTab
+              events={events}
+              workspaceId={workspaceId}
+              executionId={executionId}
+              isRunning={isRunning}
+              currentNodeId={currentNodeId}
+            />
+          </TabsContent>
+        </Tabs>
+      )}
 
       {/* Resize handles — all 4 corners + 4 edges */}
       {/* Corners */}
