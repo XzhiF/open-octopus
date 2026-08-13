@@ -34,6 +34,8 @@ function CollapsedPanel({
   isBudgetExceeded,
   hasActivity,
   metrics,
+  harnessInputTokens,
+  harnessOutputTokens,
   onExpand,
   onDragStart,
 }: {
@@ -43,6 +45,8 @@ function CollapsedPanel({
   isBudgetExceeded: boolean
   hasActivity: boolean
   metrics: ExecutionMetrics
+  harnessInputTokens: number
+  harnessOutputTokens: number
   onExpand: () => void
   onDragStart: (e: React.MouseEvent) => void
 }) {
@@ -63,10 +67,12 @@ function CollapsedPanel({
     }
   }
 
+  const harnessTotal = harnessInputTokens + harnessOutputTokens
+
   return (
     <div
       className={cn(
-        "w-[120px] h-[48px] rounded-lg border border-border bg-card shadow-lg cursor-grab active:cursor-grabbing flex flex-col items-center justify-center gap-0.5 opacity-70 hover:opacity-100 transition-opacity select-none",
+        "w-[140px] rounded-lg border border-border bg-card shadow-lg cursor-grab active:cursor-grabbing flex flex-col items-center justify-center gap-0.5 px-1 py-1.5 opacity-70 hover:opacity-100 transition-opacity select-none",
         hasActivity && "border-violet-400/60",
       )}
       style={hasActivity ? { animation: "harness-pulse 3s ease-in-out infinite" } : undefined}
@@ -80,6 +86,7 @@ function CollapsedPanel({
           50% { box-shadow: 0 0 12px 2px rgba(139, 92, 246, 0.3); }
         }
       `}</style>
+      {/* Line 1: status */}
       <div className="flex items-center gap-1 text-xs font-medium pointer-events-none">
         <span>🛡️</span>
         <span>{interventionCount}</span>
@@ -98,13 +105,23 @@ function CollapsedPanel({
           {isBudgetExceeded ? "预算超限" : !isRunning ? "已完成" : isIntervening ? "干预中" : "监控中"}
         </span>
       </div>
+      {/* Line 2: workflow total tokens */}
       {metrics.totalTokens > 0 && (
-        <span className="text-[10px] text-muted-foreground pointer-events-none flex items-center gap-1">
+        <span className="text-[10px] text-muted-foreground pointer-events-none flex items-center gap-0.5">
+          <span>📊</span>
           <span>↑{formatTokenCount(metrics.totalInputTokens)}</span>
           <span>↓{formatTokenCount(metrics.totalOutputTokens)}</span>
           {metrics.totalCacheTokens > 0 && (
             <span>⚡{formatTokenCount(metrics.totalCacheTokens)}</span>
           )}
+        </span>
+      )}
+      {/* Line 3: harness tokens */}
+      {harnessTotal > 0 && (
+        <span className="text-[10px] text-muted-foreground pointer-events-none flex items-center gap-0.5">
+          <span>🛡️</span>
+          <span>↑{formatTokenCount(harnessInputTokens)}</span>
+          <span>↓{formatTokenCount(harnessOutputTokens)}</span>
         </span>
       )}
     </div>
@@ -774,6 +791,8 @@ export function HarnessFloatingPanel({
           isBudgetExceeded={isBudgetExceeded}
           hasActivity={isRunning && events.length > 0}
           metrics={metrics}
+          harnessInputTokens={totalInputTokens}
+          harnessOutputTokens={totalOutputTokens}
           onExpand={() => setExpanded(true)}
           onDragStart={handleDragStart}
         />
