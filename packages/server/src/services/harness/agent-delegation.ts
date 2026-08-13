@@ -51,7 +51,7 @@ export interface AgentSessionRunResult {
   /** The text output from the agent. */
   text: string
   /** Token usage statistics from the agent run. */
-  tokenUsage?: { input: number; output: number; model: string }
+  tokenUsage?: { input: number; output: number; cacheRead?: number; cacheCreation?: number; model: string }
   /** The agent session ID that was created. */
   sessionId?: string
   /** Captured message chunks (thinking, tool_call, tool_result) for detail display. */
@@ -79,7 +79,7 @@ export type AgentSessionRunner = (params: {
  */
 export type DelegationLLMCall = (prompt: string) => Promise<{
   text: string
-  tokenUsage?: { input: number; output: number; model: string }
+  tokenUsage?: { input: number; output: number; cacheRead?: number; cacheCreation?: number; model: string }
 }>
 
 // Re-export DelegationResult from shared for convenience
@@ -561,7 +561,7 @@ export class AgentDelegationService {
 
     // Execute the agent session / LLM call with timeout
     let responseText: string
-    let tokenInfo: { input: number; output: number; model: string } | undefined
+    let tokenInfo: { input: number; output: number; cacheRead?: number; cacheCreation?: number; model: string } | undefined
     let agentSessionId: string | undefined
     let agentChunks: Array<{ type: string; [key: string]: unknown }> | undefined
 
@@ -823,7 +823,7 @@ export class AgentDelegationService {
 
         let text = ""
         let tokenUsage:
-          | { input: number; output: number; model: string }
+          | { input: number; output: number; cacheRead?: number; cacheCreation?: number; model: string }
           | undefined
         // Capture all meaningful chunks for detail display
         const chunks: Array<{ type: string; [key: string]: unknown }> = []
@@ -843,9 +843,12 @@ export class AgentDelegationService {
               // Use real model name from modelUsages (e.g. "claude-sonnet-4-5-20250827")
               // instead of the short alias ("sonnet") or a hardcoded string
               const realModel = chunk.modelUsages?.[0]?.model ?? "unknown"
+              const mu = chunk.modelUsages?.[0]
               tokenUsage = {
                 input: chunk.tokens.input,
                 output: chunk.tokens.output,
+                cacheRead: mu?.cacheReadInputTokens ?? 0,
+                cacheCreation: mu?.cacheCreationInputTokens ?? 0,
                 model: realModel,
               }
             }
@@ -873,7 +876,7 @@ export class AgentDelegationService {
     delegationId: string,
     executionId: string,
     nodeId: string,
-    tokenInfo: { input: number; output: number; model: string },
+    tokenInfo: { input: number; output: number; cacheRead?: number; cacheCreation?: number; model: string },
   ): void {
     try {
       const nodeExecId = `${executionId}-${nodeId}`
@@ -885,6 +888,8 @@ export class AgentDelegationService {
         model: tokenInfo.model,
         inputTokens: tokenInfo.input,
         outputTokens: tokenInfo.output,
+        cacheReadTokens: tokenInfo.cacheRead ?? 0,
+        cacheCreationTokens: tokenInfo.cacheCreation ?? 0,
         costUsd: null, // Cost calculation deferred to billing layer
         createdAt: new Date().toISOString(),
       })

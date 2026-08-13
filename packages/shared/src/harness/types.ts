@@ -191,7 +191,7 @@ export interface DelegationResult {
   /** The agent's analysis / reasoning behind the decision. */
   reasoning: string
   /** Token consumption for the delegation call. */
-  tokenUsage?: { input: number; output: number; model?: string }
+  tokenUsage?: { input: number; output: number; cacheRead?: number; cacheCreation?: number; model?: string }
   /** Captured message chunks (thinking, tool_call, tool_result) for detail display. */
   chunks?: Array<{ type: string; [key: string]: unknown }>
 }

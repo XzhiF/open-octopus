@@ -42,7 +42,7 @@ export interface ParsedHarnessEvent {
   // iteration (when node is inside a loop)
   iteration?: number
   // token usage (from delegation or intervention events)
-  tokenUsage?: { inputTokens?: number; outputTokens?: number; model?: string }
+  tokenUsage?: { inputTokens?: number; outputTokens?: number; cacheTokens?: number; model?: string }
 }
 
 interface UseHarnessEventsResult {
@@ -53,6 +53,7 @@ interface UseHarnessEventsResult {
   totalExtraTokens: number
   totalInputTokens: number
   totalOutputTokens: number
+  totalCacheTokens: number
 }
 
 let eventCounter = 0
@@ -71,6 +72,7 @@ function parseSSEEvent(eventType: string, raw: Record<string, unknown>): ParsedH
     ? {
         inputTokens: (rawTokenUsage.inputTokens as number) ?? (rawTokenUsage.input as number),
         outputTokens: (rawTokenUsage.outputTokens as number) ?? (rawTokenUsage.output as number),
+        cacheTokens: (rawTokenUsage.cacheTokens as number) ?? (rawTokenUsage.cacheRead as number) ?? undefined,
         model: rawTokenUsage.model as string | undefined,
       }
     : undefined
@@ -282,6 +284,7 @@ export function useHarnessEvents(
 
   const totalInputTokens = events.reduce((sum, e) => sum + (e.tokenUsage?.inputTokens ?? 0), 0)
   const totalOutputTokens = events.reduce((sum, e) => sum + (e.tokenUsage?.outputTokens ?? 0), 0)
+  const totalCacheTokens = events.reduce((sum, e) => sum + (e.tokenUsage?.cacheTokens ?? 0), 0)
 
-  return { events, loading, error, interventionCount, totalExtraTokens, totalInputTokens, totalOutputTokens }
+  return { events, loading, error, interventionCount, totalExtraTokens, totalInputTokens, totalOutputTokens, totalCacheTokens }
 }
