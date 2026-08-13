@@ -724,6 +724,15 @@ export class WorkflowEngine {
             }
             appendFileSync(join(logDir, "intervention.jsonl"), JSON.stringify(resultLog) + "\n")
           } catch { /* ignore */ }
+
+          // ★ 也通过 callback 发送干预结果，使其持久化到 agent_events
+          this.callbacks?.onAgentEvent?.(nodeId, {
+            type: "intervention_result",
+            data: {
+              result: interventionResult.finalText?.slice(0, 500),
+              sessionId: interventionResult.sessionId,
+            },
+          } as any)
         } catch (err) {
           console.error(`[Engine] Intervention failed for node ${nodeId}:`, err)
         }

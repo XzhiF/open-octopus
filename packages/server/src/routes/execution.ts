@@ -443,7 +443,54 @@ executionRoutes.post("/:executionId/harness-intervene", async (c) => {
       if (!repairService) {
         return c.json({ error: "repair service not available" }, 503)
       }
+
+      // Persist user message to agent_events for chat history
+      const neId = `${executionId}-${body.nodeId}`
+      const now = Date.now()
+      if (_executionDAO) {
+        try {
+          const baseEvent = {
+            node_execution_id: neId,
+            turn_index: 0,
+            tool_call_id: null, tool_name: null, tool_input: null,
+            tool_result: null, tool_is_error: 0, tool_duration_ms: null,
+            status_value: null, error_code: null, error_message: null,
+          }
+          _executionDAO.insertAgentEvent({
+            ...baseEvent,
+            event_order: now,
+            event_type: "harness_user_message",
+            timestamp: now,
+            content: body.directive.message!,
+            content_length: body.directive.message!.length,
+          })
+        } catch { /* non-fatal: chat history persistence */ }
+      }
+
       const result = await repairService.intervene(executionId, body.nodeId, body.directive.message)
+
+      // Persist system response to agent_events
+      const responseMsg = result.injected ? "已注入指令，节点将收到纠正" : "注入失败"
+      if (_executionDAO) {
+        try {
+          const baseEvent = {
+            node_execution_id: neId,
+            turn_index: 0,
+            tool_call_id: null, tool_name: null, tool_input: null,
+            tool_result: null, tool_is_error: 0, tool_duration_ms: null,
+            status_value: null, error_code: null, error_message: null,
+          }
+          _executionDAO.insertAgentEvent({
+            ...baseEvent,
+            event_order: now + 1,
+            event_type: "harness_system_response",
+            timestamp: Date.now(),
+            content: responseMsg,
+            content_length: responseMsg.length,
+          })
+        } catch { /* non-fatal: chat history persistence */ }
+      }
+
       return c.json({ success: true, directive_applied: "inject", ...result })
     } catch (err: unknown) {
       return handleError(err)

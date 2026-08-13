@@ -32,6 +32,36 @@ export function HarnessChatbot({ workspaceId, executionId, isRunning, currentNod
   const scrollRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
 
+  // Load persisted chat history from agent_events on mount
+  useEffect(() => {
+    if (!workspaceId || !executionId) return
+    const loadHistory = async () => {
+      try {
+        const res = await fetch(
+          `${getServerUrl()}/api/workspaces/${workspaceId}/executions/${executionId}/agent-events`,
+        )
+        if (!res.ok) return
+        const data = await res.json()
+        // Filter for harness chat events
+        const chatEvents = (data.events ?? data ?? []).filter(
+          (e: any) => e.event_type === "harness_user_message" || e.event_type === "harness_system_response" || e.event_type === "intervention_result"
+        )
+        if (chatEvents.length === 0) return
+        const loaded: ChatMessage[] = chatEvents.map((e: any) => ({
+          id: `hist-${e.event_order}`,
+          role: e.event_type === "harness_user_message" ? "user" as const : "system" as const,
+          content: e.event_type === "intervention_result"
+            ? (e.event_data?.result ?? e.content ?? "")
+            : (e.content ?? ""),
+          timestamp: e.timestamp,
+          status: "success" as const,
+        }))
+        setMessages(loaded)
+      } catch { /* non-fatal: chat history load */ }
+    }
+    loadHistory()
+  }, [workspaceId, executionId])
+
   // Auto-scroll to bottom on new messages
   useEffect(() => {
     if (scrollRef.current) {
