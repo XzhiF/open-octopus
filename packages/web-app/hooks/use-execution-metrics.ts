@@ -27,6 +27,7 @@ interface SSEMetricsPayload {
   executionId: string
   totalInputTokens: number
   totalOutputTokens: number
+  totalCacheTokens: number
   totalCostUsd: number
   totalLlmTurns: number
   budgetProgress: BudgetProgress
@@ -136,9 +137,10 @@ export function useExecutionMetrics(
         if (raw.executionId !== executionId) return
 
         setMetrics({
-          totalTokens: raw.totalInputTokens + raw.totalOutputTokens,
+          totalTokens: raw.totalInputTokens + raw.totalOutputTokens + (raw.totalCacheTokens ?? 0),
           totalInputTokens: raw.totalInputTokens,
           totalOutputTokens: raw.totalOutputTokens,
+          totalCacheTokens: raw.totalCacheTokens ?? 0,
           totalCost: raw.totalCostUsd,
           totalTurns: raw.totalLlmTurns,
           budgetProgress: raw.budgetProgress,

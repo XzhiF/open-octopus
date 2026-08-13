@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useState, useRef, useCallback } from "react"
 import { Badge } from "@/components/ui/badge"
 import { Progress } from "@/components/ui/progress"
 import { ChartErrorBoundary } from "@/components/ui/chart-error-boundary"
@@ -149,23 +149,61 @@ export function ObservabilityTab({ workspaceId, executionId }: ObservabilityTabP
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set())
+  const esRef = useRef<EventSource | null>(null)
 
-  useEffect(() => {
-    async function fetchData() {
-      try {
-        const res = await fetch(
-          `${getServerUrl()}/api/workspaces/${workspaceId}/executions/${executionId}/observability`,
-        )
-        if (!res.ok) throw new Error(`API 返回 ${res.status}`)
-        setData(await res.json())
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "加载观测数据失败")
-      } finally {
-        setLoading(false)
-      }
+  // Fetch data from observability API (reused for both initial load and SSE-triggered refresh)
+  const fetchData = useCallback(async () => {
+    try {
+      const res = await fetch(
+        `${getServerUrl()}/api/workspaces/${workspaceId}/executions/${executionId}/observability`,
+      )
+      if (!res.ok) throw new Error(`API 返回 ${res.status}`)
+      setData(await res.json())
+      setError(null)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "加载观测数据失败")
+    } finally {
+      setLoading(false)
     }
-    fetchData()
   }, [workspaceId, executionId])
+
+  // Initial fetch + SSE subscription for live updates
+  useEffect(() => {
+    if (!workspaceId || !executionId) return
+
+    // Initial load
+    fetchData()
+
+    // Subscribe to execution_metrics SSE for auto-refresh
+    const es = new EventSource(
+      `${getServerUrl()}/api/workspaces/${workspaceId}/executions/events`,
+    )
+    esRef.current = es
+
+    es.addEventListener("execution_metrics", (e: MessageEvent) => {
+      try {
+        const payload = JSON.parse(e.data)
+        if (payload.executionId === executionId) {
+          fetchData() // Refetch full data from API
+        }
+      } catch { /* skip malformed */ }
+    })
+
+    // Also listen for execution completion events
+    es.addEventListener("execution_status", (e: MessageEvent) => {
+      try {
+        const payload = JSON.parse(e.data)
+        if (payload.executionId === executionId) {
+          fetchData() // Refetch on status change (e.g. budget_exceeded)
+        }
+      } catch { /* skip */ }
+    })
+
+    return () => {
+      es.close()
+      esRef.current = null
+    }
+  }, [workspaceId, executionId, fetchData])
 
   const toggleNode = (nodeId: string) => {
     setExpandedNodes((prev) => {
@@ -442,16 +480,62 @@ function RoundsTable({
           const isExpanded = expandedNodes.has(node.nodeId)
           const totalTokens = node.inputTokens + node.outputTokens + node.cacheTokens
           return (
-            <TableRow key={node.nodeId} className="cursor-pointer hover:bg-muted/50 h-7" onClick={() => onToggle(node.nodeId)}>
-              <TableCell className="p-1">
-                {isExpanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
-              </TableCell>
-              <TableCell className="p-1 font-medium truncate max-w-24">{node.nodeName}</TableCell>
-              <TableCell className="p-1"><Badge variant="outline" className="text-[9px] px-1">{node.nodeType}</Badge></TableCell>
-              <TableCell className="p-1 text-right tabular-nums">{formatTokenCount(totalTokens)}</TableCell>
-              <TableCell className="p-1 text-right tabular-nums">{formatCurrency(node.costUsd)}</TableCell>
-              <TableCell className="p-1 text-right tabular-nums">{(node.durationMs / 1000).toFixed(1)}s</TableCell>
-            </TableRow>
+            <>
+              <TableRow key={node.nodeId} className="cursor-pointer hover:bg-muted/50 h-7" onClick={() => onToggle(node.nodeId)}>
+                <TableCell className="p-1">
+                  {isExpanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+                </TableCell>
+                <TableCell className="p-1 font-medium truncate max-w-24">{node.nodeName}</TableCell>
+                <TableCell className="p-1"><Badge variant="outline" className="text-[9px] px-1">{node.nodeType}</Badge></TableCell>
+                <TableCell className="p-1 text-right tabular-nums">{formatTokenCount(totalTokens)}</TableCell>
+                <TableCell className="p-1 text-right tabular-nums">{formatCurrency(node.costUsd)}</TableCell>
+                <TableCell className="p-1 text-right tabular-nums">{(node.durationMs / 1000).toFixed(1)}s</TableCell>
+              </TableRow>
+              {isExpanded && (
+                <TableRow key={`${node.nodeId}-detail`} className="bg-muted/20">
+                  <TableCell colSpan={6} className="p-2">
+                    <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-[10px]">
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">LLM 轮次</span>
+                        <span className="font-mono tabular-nums">{node.llmTurns}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">Loop 迭代</span>
+                        <span className="font-mono tabular-nums">{node.loopIterations}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">Swarm 轮数</span>
+                        <span className="font-mono tabular-nums">{node.swarmRounds}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">重试次数</span>
+                        <span className="font-mono tabular-nums">{node.retryCount}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">输入 Token</span>
+                        <span className="font-mono tabular-nums">{formatTokenCount(node.inputTokens)}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">输出 Token</span>
+                        <span className="font-mono tabular-nums">{formatTokenCount(node.outputTokens)}</span>
+                      </div>
+                      {node.cacheTokens > 0 && (
+                        <div className="flex justify-between">
+                          <span className="text-muted-foreground">缓存 Token</span>
+                          <span className="font-mono tabular-nums">{formatTokenCount(node.cacheTokens)}</span>
+                        </div>
+                      )}
+                      {node.error && (
+                        <div className="col-span-2 mt-1 rounded bg-red-500/10 border border-red-500/20 p-1.5">
+                          <span className="text-red-500 font-medium">错误: </span>
+                          <span className="text-muted-foreground">{node.error}</span>
+                        </div>
+                      )}
+                    </div>
+                  </TableCell>
+                </TableRow>
+              )}
+            </>
           )
         })}
       </TableBody>
