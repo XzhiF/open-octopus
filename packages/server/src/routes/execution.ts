@@ -662,7 +662,11 @@ executionRoutes.get("/:executionId/agent-events", (c) => {
         // harness_* includes harness_directive, harness_stupid_retry, harness_process_conflict, etc.
         if (row.event_type === "heartbeat" || row.event_type === "heartbeat_stall" || row.event_type.startsWith("harness_")) {
           let data: Record<string, unknown> = {}
-          try { data = JSON.parse(row.content ?? "{}") } catch { /* ignore */ }
+          try { data = JSON.parse(row.content ?? "{}") } catch { /* content is plain text */ }
+          // If JSON parse failed and content exists, store as data.content
+          if (Object.keys(data).length === 0 && row.content) {
+            data = { content: row.content }
+          }
           // Extract iteration from content to top-level for log viewer grouping
           const iteration = data.iteration as number | undefined
           return {

@@ -42,20 +42,27 @@ export function HarnessChatbot({ workspaceId, executionId, isRunning, currentNod
         )
         if (!res.ok) return
         const data = await res.json()
-        // Filter for harness chat events
-        const chatEvents = (data.events ?? data ?? []).filter(
-          (e: any) => e.event_type === "harness_user_message" || e.event_type === "harness_system_response" || e.event_type === "intervention_result"
+        // Filter for harness chat events — API returns `event` field (not `event_type`)
+        const allEvents = data.events ?? data ?? []
+        const chatEvents = allEvents.filter(
+          (e: any) => {
+            const type = e.event ?? e.event_type ?? ""
+            return type === "harness_user_message" || type === "harness_system_response" || type === "intervention_result"
+          }
         )
         if (chatEvents.length === 0) return
-        const loaded: ChatMessage[] = chatEvents.map((e: any) => ({
-          id: `hist-${e.event_order}`,
-          role: e.event_type === "harness_user_message" ? "user" as const : "system" as const,
-          content: e.event_type === "intervention_result"
-            ? (e.event_data?.result ?? e.content ?? "")
-            : (e.content ?? ""),
-          timestamp: e.timestamp,
-          status: "success" as const,
-        }))
+        const loaded: ChatMessage[] = chatEvents.map((e: any, i: number) => {
+          const type = e.event ?? e.event_type ?? ""
+          return {
+            id: `hist-${e.timestamp}-${i}`,
+            role: type === "harness_user_message" ? "user" as const : "system" as const,
+            content: type === "intervention_result"
+              ? (e.data?.result ?? e.event_data?.result ?? e.content ?? "")
+              : (e.data?.content ?? e.content ?? ""),
+            timestamp: e.timestamp ? new Date(e.timestamp).getTime() : Date.now(),
+            status: "success" as const,
+          }
+        })
         setMessages(loaded)
       } catch { /* non-fatal: chat history load */ }
     }
