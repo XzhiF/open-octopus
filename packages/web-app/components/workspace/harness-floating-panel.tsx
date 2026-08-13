@@ -729,7 +729,6 @@ export function HarnessFloatingPanel({
       setPos({ left: 0, top: 0 })
       setSize({ width: window.innerWidth, height: window.innerHeight })
       setMaximized(true)
-      setObsKey(k => k + 1) // refresh observability on maximize
     } else {
       // Restore previous geometry
       if (prevGeometry.current) {
@@ -738,6 +737,8 @@ export function HarnessFloatingPanel({
       }
       setMaximized(false)
     }
+    // Always refresh observability when toggling layout mode
+    setObsKey(k => k + 1)
   }, [maximized, pos, size])
 
   // Don't render until position is computed
