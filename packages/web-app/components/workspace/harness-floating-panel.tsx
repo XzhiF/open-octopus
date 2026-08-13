@@ -72,7 +72,7 @@ function CollapsedPanel({
   return (
     <div
       className={cn(
-        "w-[140px] rounded-lg border border-border bg-card shadow-lg cursor-grab active:cursor-grabbing flex flex-col items-center justify-center gap-0.5 px-1 py-1.5 opacity-70 hover:opacity-100 transition-opacity select-none",
+        "w-[160px] rounded-lg border border-border bg-card shadow-lg cursor-grab active:cursor-grabbing flex flex-col items-start justify-center gap-0.5 px-2 py-1.5 opacity-70 hover:opacity-100 transition-opacity select-none",
         hasActivity && "border-violet-400/60",
       )}
       style={hasActivity ? { animation: "harness-pulse 3s ease-in-out infinite" } : undefined}
@@ -105,23 +105,27 @@ function CollapsedPanel({
           {isBudgetExceeded ? "预算超限" : !isRunning ? "已完成" : isIntervening ? "干预中" : "监控中"}
         </span>
       </div>
-      {/* Line 2: workflow total tokens */}
+      {/* Line 2: workflow total tokens = total */}
       {metrics.totalTokens > 0 && (
-        <span className="text-[10px] text-muted-foreground pointer-events-none flex items-center gap-0.5">
+        <span className="text-[10px] text-muted-foreground pointer-events-none flex items-center gap-0.5 whitespace-nowrap">
           <span>📊</span>
           <span>↑{formatTokenCount(metrics.totalInputTokens)}</span>
           <span>↓{formatTokenCount(metrics.totalOutputTokens)}</span>
           {metrics.totalCacheTokens > 0 && (
             <span>⚡{formatTokenCount(metrics.totalCacheTokens)}</span>
           )}
+          <span className="text-muted-foreground/60">=</span>
+          <span className="font-medium">{formatTokenCount(metrics.totalTokens)}</span>
         </span>
       )}
       {/* Line 3: harness tokens */}
       {harnessTotal > 0 && (
-        <span className="text-[10px] text-muted-foreground pointer-events-none flex items-center gap-0.5">
+        <span className="text-[10px] text-muted-foreground pointer-events-none flex items-center gap-0.5 whitespace-nowrap">
           <span>🛡️</span>
           <span>↑{formatTokenCount(harnessInputTokens)}</span>
           <span>↓{formatTokenCount(harnessOutputTokens)}</span>
+          <span className="text-muted-foreground/60">=</span>
+          <span className="font-medium">{formatTokenCount(harnessTotal)}</span>
         </span>
       )}
     </div>
