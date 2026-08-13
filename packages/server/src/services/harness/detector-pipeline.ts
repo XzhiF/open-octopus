@@ -796,10 +796,17 @@ export class DetectorPipeline {
               pipeline.pendingFailureActions.delete(nodeId)
               return pending
             }
+            // If harness blocked this node, abort the workflow
+            if (pipeline.pendingBlockActions.has(nodeId)) {
+              pipeline.pendingBlockActions.delete(nodeId)
+              return { action: "abort" as const }
+            }
+            // No harness opinion — defer to engine's failure_strategy
+            // (don't default to "continue" which overrides fail_fast)
             if (typeof original === "function") {
               return original.call(target, nodeId, error, currentStrategy)
             }
-            return { action: "continue" }
+            return { action: "abort" as const }
           }
         }
 
