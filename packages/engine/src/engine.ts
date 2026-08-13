@@ -992,7 +992,10 @@ export class WorkflowEngine {
           const retryDecision = await this.callbacks.onBeforeRetry(node.id, attempt, result, { poolSnapshot: pool.snapshot() })
           if (retryDecision.action === "skip") {
             if (nodeTimer) clearTimeout(nodeTimer)
-            return { ...result, status: "skipped", retryCount: attempt - 1 }
+            return {
+              ...result, status: "skipped", retryCount: attempt - 1,
+              harnessContinue: !!(retryDecision as any).continueSubsequent,
+            }
           }
           if (retryDecision.action === "abort") {
             if (nodeTimer) clearTimeout(nodeTimer)
@@ -1101,11 +1104,13 @@ export class WorkflowEngine {
 
       // Skip nodes whose dependencies were skipped/rejected/cancelled/failed
       // (but NOT dependencies skipped by execute_when — those are intentional)
+      // (and NOT dependencies blocked by harness with continueSubsequent: true)
       if (node.depends_on?.length) {
         const hasSkippedDep = node.depends_on.some(depId => {
           const depResult = this.nodeResults[depId]
           if (!depResult) return false
           if (depResult.skippedByCondition) return false // intentional skip, don't cascade
+          if (depResult.harnessContinue) return false // harness block_node with continueSubsequent
           return ["skipped", "skipped_failed", "rejected", "cancelled", "failed"].includes(depResult.status)
         })
         if (hasSkippedDep) {
@@ -1279,6 +1284,17 @@ export class WorkflowEngine {
             this.callbacks?.onNodeEnd?.(node.id, "completed", overridden.durationMs, overridden, node.type)
             continue
           }
+          // ★ Harness: block_node with continueSubsequent → fail this node but don't cascade
+          if ((failureDecision as any).continueSubsequent) {
+            this.hasPartialFailure = true
+            this.nodeResults[node.id] = {
+              ...nodeResult,
+              status: "failed",
+              harnessContinue: true,
+            }
+            this.callbacks?.onError?.(node.id, nodeResult.logLines?.join("\n") ?? "Unknown error")
+            continue
+          }
         }
         if (strategy === "fail_fast") {
           this.pausedAt = node.id
@@ -1421,6 +1437,7 @@ export class WorkflowEngine {
             const depResult = this.nodeResults[depId]
             if (!depResult) return false
             if (depResult.skippedByCondition) return false // intentional skip, don't cascade
+            if (depResult.harnessContinue) return false // harness block_node with continueSubsequent
             return ["skipped", "rejected", "cancelled"].includes(depResult.status)
           })
           if (hasSkippedDep) {
