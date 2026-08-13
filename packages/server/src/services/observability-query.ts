@@ -70,7 +70,7 @@ export interface ObservabilityError {
   timestamp: string
   nodeId: string
   nodeName: string
-  errorType: "timeout" | "model_error" | "script_error" | "approval_rejected" | "other"
+  errorType: "timeout" | "model_error" | "script_error" | "approval_rejected" | "tool_error" | "other"
   errorMessage: string
   retryCount: number
   finalStatus: "recovered" | "failed" | "skipped"
@@ -139,12 +139,13 @@ export class ObservabilityQueryService {
 
     const llmCalls = this.tokenDao.findLlmCallsByExecution(executionId)
     const nodeExecutions = this.execDao.findNodeExecutions(executionId)
+    const toolErrors = this.execDao.findToolErrors(executionId)
 
     const tokens = this.computeTokenSummary(llmCalls)
     const byModel = this.computeByModel(llmCalls)
     const timeSeries = this.computeTimeSeries(llmCalls)
     const byNode = this.computeByNode(llmCalls, nodeExecutions)
-    const errors = this.computeErrors(nodeExecutions)
+    const errors = this.computeErrors(nodeExecutions, toolErrors)
     const rounds = this.computeRounds(llmCalls, nodeExecutions)
     const budget = this.computeBudget(execution, tokens, timeSeries)
 
@@ -359,9 +360,20 @@ export class ObservabilityQueryService {
     return result
   }
 
-  private computeErrors(nodeExecutions: NodeExecutionRow[]): ObservabilityError[] {
+  private computeErrors(
+    nodeExecutions: NodeExecutionRow[],
+    toolErrors: Array<{ node_id: string; tool_name: string; tool_result: string; timestamp: number }>,
+  ): ObservabilityError[] {
     const errors: ObservabilityError[] = []
 
+    // Build node status lookup for tool error finalStatus
+    const nodeStatusMap = new Map<string, string>()
+    for (const ne of nodeExecutions) {
+      // Keep the last status for each node (node_executions are ordered)
+      nodeStatusMap.set(ne.node_id, ne.status)
+    }
+
+    // Node-level errors (from node_executions)
     for (const ne of nodeExecutions) {
       if (!ne.error) continue
 
@@ -384,6 +396,54 @@ export class ObservabilityQueryService {
         errorType,
         errorMessage: ne.error,
         retryCount: ne.retry_count ?? 0,
+        finalStatus,
+      })
+    }
+
+    // Tool-level errors (from agent_events where tool_is_error = 1)
+    // Dedup: same tool_name + similar message within same node → collapse with count
+    const toolErrorMap = new Map<string, {
+      node_id: string; tool_name: string; msg: string; timestamp: number; count: number
+    }>()
+
+    for (const te of toolErrors) {
+      const msg = te.tool_result?.length > 200
+        ? te.tool_result.slice(0, 200) + "…"
+        : (te.tool_result ?? "Tool error")
+
+      // Dedup key: node + tool_name + first 80 chars of message
+      const key = `${te.node_id}:${te.tool_name}:${msg.slice(0, 80)}`
+      const existing = toolErrorMap.get(key)
+      if (existing) {
+        existing.count++
+        // Keep the latest timestamp
+        if (te.timestamp > existing.timestamp) {
+          existing.timestamp = te.timestamp
+        }
+      } else {
+        toolErrorMap.set(key, { node_id: te.node_id, tool_name: te.tool_name, msg, timestamp: te.timestamp, count: 1 })
+      }
+    }
+
+    for (const te of toolErrorMap.values()) {
+      // Derive finalStatus from the owning node's status
+      const nodeStatus = nodeStatusMap.get(te.node_id) ?? "completed"
+      let finalStatus: "recovered" | "failed" | "skipped" = "recovered"
+      if (nodeStatus === "failed") {
+        finalStatus = "failed"
+      } else if (nodeStatus === "skipped") {
+        finalStatus = "skipped"
+      }
+
+      const countSuffix = te.count > 1 ? ` (×${te.count})` : ""
+
+      errors.push({
+        timestamp: new Date(te.timestamp).toISOString(),
+        nodeId: te.node_id,
+        nodeName: te.node_id,
+        errorType: "tool_error",
+        errorMessage: `[${te.tool_name}] ${te.msg}${countSuffix}`,
+        retryCount: te.count - 1,
         finalStatus,
       })
     }

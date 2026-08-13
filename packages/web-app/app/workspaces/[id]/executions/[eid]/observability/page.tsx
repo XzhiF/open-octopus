@@ -143,6 +143,7 @@ const ERROR_TYPE_COLORS: Record<string, string> = {
   timeout: "bg-amber-500/10 text-amber-600 border-amber-500/30",
   model_error: "bg-red-500/10 text-red-600 border-red-500/30",
   script_error: "bg-orange-500/10 text-orange-600 border-orange-500/30",
+  tool_error: "bg-rose-500/10 text-rose-600 border-rose-500/30",
   approval_rejected: "bg-purple-500/10 text-purple-600 border-purple-500/30",
   other: "bg-gray-500/10 text-gray-600 border-gray-500/30",
 }

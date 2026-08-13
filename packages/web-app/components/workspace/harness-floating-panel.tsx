@@ -3,7 +3,7 @@
 import { useState, useRef, useCallback, useEffect, useMemo } from "react"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { Button } from "@/components/ui/button"
-import { Minus, GripHorizontal } from "lucide-react"
+import { Minus, GripHorizontal, Maximize2, Minimize2 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { useHarnessEvents, type ParsedHarnessEvent } from "@/hooks/use-harness-events"
 import { useExecutionMetrics, type ExecutionMetrics } from "@/hooks/use-execution-metrics"
@@ -654,7 +654,10 @@ export function HarnessFloatingPanel({
   const [expanded, setExpanded] = useState(false)
   const [pos, setPos] = useState<{ left: number; top: number } | null>(null)
   const [size, setSize] = useState<{ width: number; height: number }>({ width: 800, height: 625 })
+  const [maximized, setMaximized] = useState(false)
+  const prevGeometry = useRef<{ pos: { left: number; top: number }; size: { width: number; height: number } } | null>(null)
   const [activeTab, setActiveTab] = useState("observability")
+  const [obsKey, setObsKey] = useState(0) // force remount ObservabilityTab on each activation
   const panelRef = useRef<HTMLDivElement>(null)
   const dragRef = useRef<{
     startX: number
@@ -685,12 +688,16 @@ export function HarnessFloatingPanel({
     (e) => e.type === "harness_intervention" && Date.now() - e.timestamp < 10000,
   )
 
-  // Compute default position on first mount (right side of viewport)
+  // Compute default position on first mount — overlay the chat column (right 30%)
   useEffect(() => {
     if (pos === null) {
-      const panelWidth = 800
-      const defaultLeft = Math.max(window.innerWidth - panelWidth - 20, 20)
-      setPos({ left: defaultLeft, top: 56 })
+      // Chat column occupies rightmost 30% of viewport
+      const chatColLeft = window.innerWidth * 0.70
+      const chatColWidth = window.innerWidth * 0.30
+      const panelWidth = Math.max(chatColWidth - 8, 320)
+      const panelHeight = Math.max(window.innerHeight - 52, 400)
+      setSize({ width: panelWidth, height: panelHeight })
+      setPos({ left: chatColLeft + 4, top: 48 })
     }
   }, [pos])
 
@@ -789,6 +796,25 @@ export function HarnessFloatingPanel({
     [size, pos],
   )
 
+  const toggleMaximize = useCallback(() => {
+    if (!maximized) {
+      // Save current geometry before maximizing
+      if (pos) {
+        prevGeometry.current = { pos: { ...pos }, size: { ...size } }
+      }
+      setPos({ left: 0, top: 0 })
+      setSize({ width: window.innerWidth, height: window.innerHeight })
+      setMaximized(true)
+    } else {
+      // Restore previous geometry
+      if (prevGeometry.current) {
+        setPos(prevGeometry.current.pos)
+        setSize(prevGeometry.current.size)
+      }
+      setMaximized(false)
+    }
+  }, [maximized, pos, size])
+
   // Don't render until position is computed
   if (!pos) return null
 
@@ -820,7 +846,10 @@ export function HarnessFloatingPanel({
   return (
     <div
       ref={panelRef}
-      className="fixed z-50 flex flex-col rounded-lg border border-border bg-card shadow-xl opacity-75 hover:opacity-100 transition-opacity"
+      className={cn(
+        "fixed z-50 flex flex-col bg-card",
+        maximized ? "border-0" : "rounded-lg border border-border shadow-xl",
+      )}
       style={{
         left: pos.left,
         top: pos.top,
@@ -843,6 +872,15 @@ export function HarnessFloatingPanel({
           variant="ghost"
           size="icon"
           className="h-6 w-6"
+          onClick={toggleMaximize}
+          title={maximized ? "还原" : "全屏"}
+        >
+          {maximized ? <Minimize2 className="h-3 w-3" /> : <Maximize2 className="h-3 w-3" />}
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-6 w-6"
           onClick={() => setExpanded(false)}
           title="收起"
         >
@@ -851,7 +889,10 @@ export function HarnessFloatingPanel({
       </div>
 
       {/* Tabs */}
-      <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 flex flex-col min-h-0">
+      <Tabs value={activeTab} onValueChange={(tab) => {
+        setActiveTab(tab)
+        if (tab === "observability") setObsKey(k => k + 1)
+      }} className="flex-1 flex flex-col min-h-0">
         <TabsList className="mx-2 mt-1 h-8 shrink-0">
           <TabsTrigger value="observability" className="text-xs h-6 px-2">
             Workflow
@@ -868,7 +909,7 @@ export function HarnessFloatingPanel({
         </TabsList>
 
         <TabsContent value="observability" className="flex-1 mt-0 min-h-0 overflow-hidden">
-          <ObservabilityTab workspaceId={workspaceId} executionId={executionId} />
+          <ObservabilityTab key={obsKey} workspaceId={workspaceId} executionId={executionId} isRunning={isRunning} />
         </TabsContent>
 
         <TabsContent value="monitor" className="flex-1 mt-0 min-h-0 overflow-hidden">

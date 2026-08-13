@@ -816,6 +816,30 @@ export class ExecutionDAO extends BaseDAO {
     return this.stmt(query).all(...params) as Array<Record<string, unknown>>
   }
 
+  /**
+   * Find all tool-level errors (tool_is_error = 1) for an execution.
+   * Used by observability to surface agent-internal tool failures.
+   */
+  findToolErrors(executionId: string): Array<{
+    node_id: string
+    tool_name: string
+    tool_result: string
+    timestamp: number
+  }> {
+    return this.stmt(`
+      SELECT ne.node_id, ae.tool_name, ae.tool_result, ae.timestamp
+      FROM agent_events ae
+      JOIN node_executions ne ON ae.node_execution_id = ne.id
+      WHERE ne.execution_id = ? AND ae.tool_is_error = 1
+      ORDER BY ae.timestamp ASC
+    `).all(executionId) as Array<{
+      node_id: string
+      tool_name: string
+      tool_result: string
+      timestamp: number
+    }>
+  }
+
   exists(id: string): boolean {
     const row = this.stmt("SELECT 1 FROM executions WHERE id = ?").get(id)
     return row !== undefined

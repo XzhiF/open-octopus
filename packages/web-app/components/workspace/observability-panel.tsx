@@ -116,6 +116,7 @@ interface ObservabilityData {
 interface ObservabilityTabProps {
   workspaceId: string
   executionId: string
+  isRunning?: boolean
 }
 
 // ============ Helpers ============
@@ -136,6 +137,7 @@ const ERROR_TYPE_COLORS: Record<string, string> = {
   timeout: "bg-amber-500/10 text-amber-600 border-amber-500/30",
   model_error: "bg-red-500/10 text-red-600 border-red-500/30",
   script_error: "bg-orange-500/10 text-orange-600 border-orange-500/30",
+  tool_error: "bg-rose-500/10 text-rose-600 border-rose-500/30",
   approval_rejected: "bg-purple-500/10 text-purple-600 border-purple-500/30",
   other: "bg-gray-500/10 text-gray-600 border-gray-500/30",
 }
@@ -147,7 +149,7 @@ const PIE_COLORS = [
 
 // ============ Main Component ============
 
-export function ObservabilityTab({ workspaceId, executionId }: ObservabilityTabProps) {
+export function ObservabilityTab({ workspaceId, executionId, isRunning }: ObservabilityTabProps) {
   const [data, setData] = useState<ObservabilityData | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -202,11 +204,29 @@ export function ObservabilityTab({ workspaceId, executionId }: ObservabilityTabP
       } catch { /* skip */ }
     })
 
+    // Listen for node_end events — llm_calls are persisted at node end
+    es.addEventListener("node_end", (e: MessageEvent) => {
+      try {
+        const payload = JSON.parse(e.data)
+        if (payload.executionId === executionId) {
+          fetchData()
+        }
+      } catch { /* skip */ }
+    })
+
     return () => {
       es.close()
       esRef.current = null
     }
   }, [workspaceId, executionId, fetchData])
+
+  // Polling fallback during execution: refetch every 10s while running
+  // This catches updates when SSE events are sparse (e.g. long-running agent nodes)
+  useEffect(() => {
+    if (!isRunning) return
+    const interval = setInterval(fetchData, 10_000)
+    return () => clearInterval(interval)
+  }, [isRunning, fetchData])
 
   const toggleNode = (nodeId: string) => {
     setExpandedNodes((prev) => {
