@@ -450,7 +450,7 @@ function ModelUsageChart({ byModel }: { byModel: ObservabilityData["byModel"] })
 
 function ErrorTimeline({ errors }: { errors: ObservabilityData["errors"] }) {
   return (
-    <div className="space-y-2">
+    <div className="space-y-2 max-h-60 overflow-y-auto">
       {errors.map((err, i) => (
         <div key={`${err.nodeId}-${err.timestamp}-${i}`} className="flex items-start gap-2 rounded border border-border/50 p-2">
           <AlertTriangle className="h-3.5 w-3.5 text-amber-500 shrink-0 mt-0.5" />

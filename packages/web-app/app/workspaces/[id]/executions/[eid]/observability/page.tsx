@@ -664,7 +664,7 @@ function ErrorTimeline({
   }
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-3 max-h-80 overflow-y-auto">
       {errors.map((err, i) => (
         <div
           key={`${err.nodeId}-${err.timestamp}-${i}`}

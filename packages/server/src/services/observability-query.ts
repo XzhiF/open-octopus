@@ -407,9 +407,20 @@ export class ObservabilityQueryService {
     }>()
 
     for (const te of toolErrors) {
-      const msg = te.tool_result?.length > 200
-        ? te.tool_result.slice(0, 200) + "…"
-        : (te.tool_result ?? "Tool error")
+      // Filter out expected/normal tool limitations (not real errors)
+      const result = te.tool_result ?? ""
+      if (
+        (te.tool_name === "Read" && result.includes("exceeds maximum allowed tokens")) ||
+        (te.tool_name === "Read" && result.includes("File does not exist")) ||
+        (te.tool_name === "Glob" && result.includes("No files found")) ||
+        (te.tool_name === "Grep" && result.includes("No matches found"))
+      ) {
+        continue
+      }
+
+      const msg = result.length > 200
+        ? result.slice(0, 200) + "…"
+        : (result || "Tool error")
 
       // Dedup key: node + tool_name + first 80 chars of message
       const key = `${te.node_id}:${te.tool_name}:${msg.slice(0, 80)}`
