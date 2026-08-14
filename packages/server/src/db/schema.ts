@@ -10,7 +10,7 @@ const _dirname: string =
     ? __dirname
     : path.dirname(fileURLToPath(import.meta.url))
 
-export const SCHEMA_VERSION = 35
+export const SCHEMA_VERSION = 36
 
 /**
  * Apply the complete unified schema to the given database.
@@ -168,6 +168,9 @@ function ensureColumnsForExistingTables(db: Database.Database): void {
   // Execution-level harness status (schema version 35 — harness-semantic-v2)
   ensureColumn(db, 'executions', 'harness_status', "TEXT DEFAULT NULL")
   ensureColumn(db, 'executions', 'harness_summary', "TEXT DEFAULT NULL")
+
+  // Budget snapshot (schema version 36 — workflow-observability)
+  ensureColumn(db, 'executions', 'budget_snapshot', "TEXT DEFAULT NULL")
 
   // Experience v2 columns (schema version 35 — harness-learning-platform)
   ensureColumn(db, 'experiences', 'scope', "TEXT NOT NULL DEFAULT 'agent'")

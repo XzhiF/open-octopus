@@ -47,6 +47,10 @@ export interface NodeExecutionResult {
   /** True when node was skipped because execute_when evaluated to false.
    *  Downstream nodes should NOT cascade-skip from this — it's an intentional skip. */
   skippedByCondition?: boolean
+  /** True when harness block_node set continueSubsequent: true.
+   *  Downstream nodes should NOT cascade-skip from this — the harness decided
+   *  the failure is acceptable and subsequent nodes should continue. */
+  harnessContinue?: boolean
   /** Number of retries before final result (0 = first attempt succeeded or no retry) */
   retryCount?: number
   /** Raw LLM call records for observability persistence */

@@ -1,5 +1,6 @@
 import yaml from "js-yaml"
 import { WorkflowSchema, type WorkflowDef, type NodeDef } from "../types/workflow"
+import { parseTokenAmount } from "../parse-token-amount"
 
 export class ValueError extends Error {
   constructor(message: string) {
@@ -16,12 +17,61 @@ export function parseYaml(content: string): unknown {
   return yaml.load(content, { schema: yaml.JSON_SCHEMA })
 }
 
+/**
+ * Pre-process raw YAML to convert human-readable token strings ("50K", "1.5M")
+ * into numbers for all budget-related fields. This runs BEFORE Zod validation
+ * so the schemas can stay as plain z.number() without type inference issues.
+ *
+ * Handles:
+ * - workflow-level budget.max_tokens
+ * - swarm node budget / context_token_budget
+ * - octopus_agent task.budget.max_tokens
+ * - nested nodes (loop body, swarm experts, sub_workflow, etc.)
+ */
+function normalizeTokenAmounts(raw: unknown): unknown {
+  if (raw == null || typeof raw !== "object") return raw
+
+  if (Array.isArray(raw)) {
+    return raw.map(normalizeTokenAmounts)
+  }
+
+  const obj = raw as Record<string, unknown>
+  const result: Record<string, unknown> = { ...obj }
+
+  // Convert string token amounts in known budget fields
+  if (typeof result.budget === "string") {
+    try { result.budget = parseTokenAmount(result.budget) } catch { /* let Zod reject */ }
+  }
+  if (typeof result.context_token_budget === "string") {
+    try { result.context_token_budget = parseTokenAmount(result.context_token_budget) } catch { /* let Zod reject */ }
+  }
+
+  // Recurse into budget object's max_tokens
+  if (result.budget && typeof result.budget === "object" && !Array.isArray(result.budget)) {
+    const budget = result.budget as Record<string, unknown>
+    if (typeof budget.max_tokens === "string") {
+      try { budget.max_tokens = parseTokenAmount(budget.max_tokens) } catch { /* let Zod reject */ }
+    }
+  }
+
+  // Recurse into nested structures
+  if (Array.isArray(result.nodes)) result.nodes = result.nodes.map(normalizeTokenAmounts)
+  if (Array.isArray(result.experts)) result.experts = result.experts.map(normalizeTokenAmounts)
+  if (Array.isArray(result.expert_pool)) result.expert_pool = result.expert_pool.map(normalizeTokenAmounts)
+  if (result.task && typeof result.task === "object") result.task = normalizeTokenAmounts(result.task)
+
+  return result
+}
+
 export function parseWorkflow(yamlDictOrString: string | Record<string, unknown>): WorkflowDef {
   const raw = typeof yamlDictOrString === "string"
     ? yaml.load(yamlDictOrString, { schema: yaml.JSON_SCHEMA }) as Record<string, unknown>
     : yamlDictOrString
 
-  const result = WorkflowSchema.safeParse(raw)
+  // Pre-process: convert "50K"/"1.5M" strings to numbers in all budget fields
+  const normalized = normalizeTokenAmounts(raw) as Record<string, unknown>
+
+  const result = WorkflowSchema.safeParse(normalized)
   if (!result.success) {
     const issues = result.error.issues
     const first = issues[0]

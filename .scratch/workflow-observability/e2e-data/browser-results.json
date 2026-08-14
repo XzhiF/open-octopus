@@ -1,0 +1,116 @@
+{
+  "generatedAt": "2026-08-12T11:13:53.185Z",
+  "total": 18,
+  "passed": 17,
+  "failed": 1,
+  "results": [
+    {
+      "step": "Navigate to observability page",
+      "pass": true,
+      "detail": "url=http://localhost:3000/workspaces/6d8e545e-e55b-4a85-a34c-572b4f73a263/executions/8745dc4a-fb7a-4ac7-9668-74affb8ef729/observability",
+      "timestamp": "2026-08-12T11:13:51.807Z"
+    },
+    {
+      "step": "Screenshot: initial page load",
+      "pass": true,
+      "detail": "",
+      "timestamp": "2026-08-12T11:13:51.898Z"
+    },
+    {
+      "step": "AC-2: Token card/label visible",
+      "pass": true,
+      "detail": "found 10 token-related elements",
+      "timestamp": "2026-08-12T11:13:51.911Z"
+    },
+    {
+      "step": "AC-2: Cost card/label visible",
+      "pass": false,
+      "detail": "found 0 cost-related elements",
+      "timestamp": "2026-08-12T11:13:51.915Z"
+    },
+    {
+      "step": "AC-2: Turn/Round card/label visible",
+      "pass": true,
+      "detail": "found 2 turn-related elements",
+      "timestamp": "2026-08-12T11:13:51.920Z"
+    },
+    {
+      "step": "AC-2: Budget card/label visible",
+      "pass": true,
+      "detail": "found 1 budget-related elements",
+      "timestamp": "2026-08-12T11:13:51.924Z"
+    },
+    {
+      "step": "AC-2: SVG chart elements present",
+      "pass": true,
+      "detail": "svg count=29",
+      "timestamp": "2026-08-12T11:13:51.927Z"
+    },
+    {
+      "step": "AC-2: Recharts elements detected",
+      "pass": true,
+      "detail": "recharts count=160",
+      "timestamp": "2026-08-12T11:13:51.932Z"
+    },
+    {
+      "step": "AC-5: Error timeline section visible",
+      "pass": true,
+      "detail": "found 2 error-related elements",
+      "timestamp": "2026-08-12T11:13:51.966Z"
+    },
+    {
+      "step": "AC-6: Rounds detail section visible",
+      "pass": true,
+      "detail": "found 2 rounds-related elements",
+      "timestamp": "2026-08-12T11:13:51.970Z"
+    },
+    {
+      "step": "AC-6: Expandable rounds detail clicked",
+      "pass": true,
+      "detail": "1 expandable elements found",
+      "timestamp": "2026-08-12T11:13:53.070Z"
+    },
+    {
+      "step": "Screenshot: full page evidence",
+      "pass": true,
+      "detail": "",
+      "timestamp": "2026-08-12T11:13:53.110Z"
+    },
+    {
+      "step": "No critical console errors",
+      "pass": true,
+      "detail": "clean",
+      "timestamp": "2026-08-12T11:13:53.110Z"
+    },
+    {
+      "step": "Browser made observability API call",
+      "pass": true,
+      "detail": "API responded with data",
+      "timestamp": "2026-08-12T11:13:53.110Z"
+    },
+    {
+      "step": "API response has tokens data",
+      "pass": true,
+      "detail": "input=6",
+      "timestamp": "2026-08-12T11:13:53.110Z"
+    },
+    {
+      "step": "API response has byNode data",
+      "pass": true,
+      "detail": "4 nodes",
+      "timestamp": "2026-08-12T11:13:53.110Z"
+    },
+    {
+      "step": "API response has budget data",
+      "pass": true,
+      "detail": "snapshot=true",
+      "timestamp": "2026-08-12T11:13:53.110Z"
+    },
+    {
+      "step": "Cleanup workspace",
+      "pass": true,
+      "detail": "id=6d8e545e-e55b-4a85-a34c-572b4f73a263",
+      "timestamp": "2026-08-12T11:13:53.132Z"
+    }
+  ]
+}

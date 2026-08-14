@@ -14,6 +14,9 @@ const edgeStyleMap: Record<ExecutionStatus, { stroke: string; strokeWidth: numbe
   skipped: { stroke: "#9ca3af", strokeWidth: 1, dashed: true },
   rejected: { stroke: "#ea580c", strokeWidth: 2, dashed: true },
   pending_approval: { stroke: "#f59e0b", strokeWidth: 2, dashed: true },
+  pending_interaction: { stroke: "#a855f7", strokeWidth: 2, dashed: true },
+  pending_resume: { stroke: "#3b82f6", strokeWidth: 2, dashed: true },
+  budget_exceeded: { stroke: "#ef4444", strokeWidth: 2, dashed: false },
 }
 
 export function ExecutionEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, data, markerEnd }: EdgeProps) {

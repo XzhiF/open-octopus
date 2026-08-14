@@ -58,6 +58,7 @@ CREATE TABLE IF NOT EXISTS executions (
   preset_inputs TEXT DEFAULT NULL,
   harness_status TEXT DEFAULT NULL,
   harness_summary TEXT DEFAULT NULL,
+  budget_snapshot TEXT DEFAULT NULL,
   started_at TEXT,
   completed_at TEXT,
   duration INTEGER,

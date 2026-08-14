@@ -15,6 +15,32 @@ import { ExecutionLifecycle } from "../services/execution/ExecutionLifecycle"
 import { ObservabilityService } from "../services/observability"
 import { PrivacyFilter } from "../services/privacy-filter"
 
+const BUDGET_WF = `apiVersion: octopus/v1
+kind: Workflow
+name: budget-test
+budget:
+  max_tokens: 100000
+  max_duration: 300
+  max_cost_usd: 2
+  alert_threshold: 0.8
+nodes:
+  - id: step1
+    type: bash
+    bash: echo hello
+  - id: step2
+    type: bash
+    bash: echo world
+    depends_on:
+      - step1`
+
+const NO_BUDGET_WF = `apiVersion: octopus/v1
+kind: Workflow
+name: no-budget-test
+nodes:
+  - id: step1
+    type: bash
+    bash: echo hello`
+
 const MINIMAL_WF = `apiVersion: octopus/v1
 kind: Workflow
 name: test
@@ -67,6 +93,8 @@ beforeEach(() => {
   fs.mkdirSync(path.join(workspacePath, "state"), { recursive: true })
   fs.writeFileSync(path.join(workspacePath, "workflows", "test.yaml"), MINIMAL_WF)
   fs.writeFileSync(path.join(workspacePath, "workflows", "condition.yaml"), CONDITION_WF)
+  fs.writeFileSync(path.join(workspacePath, "workflows", "budget.yaml"), BUDGET_WF)
+  fs.writeFileSync(path.join(workspacePath, "workflows", "no-budget.yaml"), NO_BUDGET_WF)
   fs.writeFileSync(
     path.join(workspacePath, "config.json"),
     JSON.stringify({ name: "test-ws", init_branch_name: "main", repos: [], created: new Date().toISOString() }),
@@ -588,4 +616,44 @@ describe("ExecutionLifecycle.getLoopIterationSummary", () => {
     const summary = lifecycle.getLoopIterationSummary(exec.id)
     expect(summary).toEqual({})
   })
+})
+
+// ==================== budget snapshot ====================
+
+describe("ExecutionLifecycle.start budget_snapshot", () => {
+  it("writes budget_snapshot when workflow has budget", async () => {
+    const exec = lifecycle.create(workspaceId, { workflow_ref: "budget.yaml" }, ORG)
+
+    // start() runs the full lifecycle; budget_snapshot is written before engine creation
+    // Even if later phases fail, the snapshot should already be persisted.
+    try {
+      await lifecycle.start(exec.id)
+    } catch {
+      // start() may throw for reasons unrelated to budget_snapshot (git, engine_init, etc.)
+    }
+
+    const row = dao.findById(exec.id)
+    expect(row).toBeTruthy()
+    expect(row!.budget_snapshot).toBeTruthy()
+
+    const snapshot = JSON.parse(row!.budget_snapshot!)
+    expect(snapshot.max_tokens).toBe(100000)
+    expect(snapshot.max_duration).toBe(300)
+    expect(snapshot.max_cost_usd).toBe(2)
+    expect(snapshot.alert_threshold).toBe(0.8)
+  }, 30000)
+
+  it("leaves budget_snapshot NULL when workflow has no budget", async () => {
+    const exec = lifecycle.create(workspaceId, { workflow_ref: "no-budget.yaml" }, ORG)
+
+    try {
+      await lifecycle.start(exec.id)
+    } catch {
+      // start() may throw for reasons unrelated to budget_snapshot
+    }
+
+    const row = dao.findById(exec.id)
+    expect(row).toBeTruthy()
+    expect(row!.budget_snapshot).toBeNull()
+  }, 30000)
 })

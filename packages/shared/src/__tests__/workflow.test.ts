@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest"
-import { WorkflowSchema, NodeSchema, AutoAnswerSchema } from "../types/workflow"
-import { isOctopusWorkflow } from "../yaml/parser"
+import { WorkflowSchema, NodeSchema, AutoAnswerSchema, BudgetSchema } from "../types/workflow"
+import { isOctopusWorkflow, parseWorkflow } from "../yaml/parser"
 
 describe("WorkflowSchema", () => {
   it("validates minimal workflow", () => {
@@ -360,5 +360,241 @@ describe("isOctopusWorkflow", () => {
 
   it("returns false for invalid YAML", () => {
     expect(isOctopusWorkflow(": invalid yaml {{")).toBe(false)
+  })
+})
+
+describe("BudgetSchema", () => {
+  const baseWorkflow = {
+    apiVersion: "octopus/v1",
+    kind: "Workflow",
+    name: "test",
+    nodes: [{ id: "step1", type: "bash", bash: "echo hello" }],
+  }
+
+  it("accepts workflow without budget (optional)", () => {
+    const result = WorkflowSchema.safeParse(baseWorkflow)
+    expect(result.success).toBe(true)
+    if (result.success) {
+      expect(result.data.budget).toBeUndefined()
+    }
+  })
+
+  it("accepts valid full budget", () => {
+    const result = WorkflowSchema.safeParse({
+      ...baseWorkflow,
+      budget: {
+        max_tokens: 100000,
+        max_duration: 300,
+        max_cost_usd: 2.0,
+        alert_threshold: 0.9,
+      },
+    })
+    expect(result.success).toBe(true)
+    if (result.success) {
+      expect(result.data.budget).toEqual({
+        max_tokens: 100000,
+        max_duration: 300,
+        max_cost_usd: 2,
+        alert_threshold: 0.9,
+        token_counting_mode: "all",
+      })
+    }
+  })
+
+  it("accepts empty budget object", () => {
+    const result = WorkflowSchema.safeParse({
+      ...baseWorkflow,
+      budget: {},
+    })
+    expect(result.success).toBe(true)
+    if (result.success) {
+      // alert_threshold defaults to 0.8
+      expect(result.data.budget?.alert_threshold).toBe(0.8)
+    }
+  })
+
+  it("applies default alert_threshold 0.8", () => {
+    const result = WorkflowSchema.safeParse({
+      ...baseWorkflow,
+      budget: { max_tokens: 5000 },
+    })
+    expect(result.success).toBe(true)
+    if (result.success) {
+      expect(result.data.budget?.alert_threshold).toBe(0.8)
+    }
+  })
+
+  it("rejects max_tokens as string", () => {
+    const result = WorkflowSchema.safeParse({
+      ...baseWorkflow,
+      budget: { max_tokens: "abc" },
+    })
+    expect(result.success).toBe(false)
+    if (!result.success) {
+      const paths = result.error.issues.map(i => i.path.join("."))
+      expect(paths.some(p => p.includes("max_tokens"))).toBe(true)
+    }
+  })
+
+  it("rejects negative max_tokens", () => {
+    const result = WorkflowSchema.safeParse({
+      ...baseWorkflow,
+      budget: { max_tokens: -1 },
+    })
+    expect(result.success).toBe(false)
+  })
+
+  it("rejects non-integer max_tokens", () => {
+    const result = WorkflowSchema.safeParse({
+      ...baseWorkflow,
+      budget: { max_tokens: 1.5 },
+    })
+    expect(result.success).toBe(false)
+  })
+
+  it("accepts max_tokens with K suffix", () => {
+    const result = WorkflowSchema.safeParse({
+      ...baseWorkflow,
+      budget: { max_tokens: "50K" },
+    })
+    expect(result.success).toBe(true)
+    if (result.success) {
+      expect(result.data.budget?.max_tokens).toBe(50000)
+    }
+  })
+
+  it("accepts max_tokens with M suffix", () => {
+    const result = WorkflowSchema.safeParse({
+      ...baseWorkflow,
+      budget: { max_tokens: "1.5M" },
+    })
+    expect(result.success).toBe(true)
+    if (result.success) {
+      expect(result.data.budget?.max_tokens).toBe(1500000)
+    }
+  })
+
+  it("accepts token_counting_mode no_cache", () => {
+    const result = WorkflowSchema.safeParse({
+      ...baseWorkflow,
+      budget: { max_tokens: 100000, token_counting_mode: "no_cache" },
+    })
+    expect(result.success).toBe(true)
+    if (result.success) {
+      expect(result.data.budget?.token_counting_mode).toBe("no_cache")
+    }
+  })
+
+  it("parseWorkflow normalizes swarm node budget K/M strings", () => {
+    const yaml = `
+apiVersion: octopus/v1
+kind: Workflow
+name: test
+nodes:
+  - id: my-swarm
+    type: swarm
+    mode: swarm
+    budget: "100K"
+    context_token_budget: "2M"
+    agents:
+      worker:
+        description: test agent
+        prompt: do stuff
+`
+    const wf = parseWorkflow(yaml)
+    expect(wf.nodes[0].budget).toBe(100000)
+    expect(wf.nodes[0].context_token_budget).toBe(2000000)
+  })
+
+  it("rejects negative max_duration", () => {
+    const result = WorkflowSchema.safeParse({
+      ...baseWorkflow,
+      budget: { max_duration: -10 },
+    })
+    expect(result.success).toBe(false)
+  })
+
+  it("rejects non-integer max_duration", () => {
+    const result = WorkflowSchema.safeParse({
+      ...baseWorkflow,
+      budget: { max_duration: 1.5 },
+    })
+    expect(result.success).toBe(false)
+  })
+
+  it("rejects negative max_cost_usd", () => {
+    const result = WorkflowSchema.safeParse({
+      ...baseWorkflow,
+      budget: { max_cost_usd: -0.5 },
+    })
+    expect(result.success).toBe(false)
+  })
+
+  it("rejects alert_threshold outside 0-1 range", () => {
+    const r1 = WorkflowSchema.safeParse({
+      ...baseWorkflow,
+      budget: { alert_threshold: 1.5 },
+    })
+    expect(r1.success).toBe(false)
+
+    const r2 = WorkflowSchema.safeParse({
+      ...baseWorkflow,
+      budget: { alert_threshold: -0.1 },
+    })
+    expect(r2.success).toBe(false)
+  })
+
+  it("accepts alert_threshold at boundaries 0 and 1", () => {
+    const r1 = WorkflowSchema.safeParse({
+      ...baseWorkflow,
+      budget: { alert_threshold: 0 },
+    })
+    expect(r1.success).toBe(true)
+
+    const r2 = WorkflowSchema.safeParse({
+      ...baseWorkflow,
+      budget: { alert_threshold: 1 },
+    })
+    expect(r2.success).toBe(true)
+  })
+
+  it("parseWorkflow throws on invalid budget with clear message", () => {
+    const yaml = `
+apiVersion: octopus/v1
+kind: Workflow
+name: test
+budget:
+  max_tokens: "abc"
+nodes:
+  - id: step1
+    type: bash
+    bash: echo hello
+`
+    expect(() => parseWorkflow(yaml)).toThrow(/budget/)
+  })
+
+  it("parseWorkflow accepts valid budget YAML", () => {
+    const yaml = `
+apiVersion: octopus/v1
+kind: Workflow
+name: test
+budget:
+  max_tokens: 100000
+  max_duration: 300
+  max_cost_usd: 2.0
+  alert_threshold: 0.9
+nodes:
+  - id: step1
+    type: bash
+    bash: echo hello
+`
+    const wf = parseWorkflow(yaml)
+    expect(wf.budget).toEqual({
+      max_tokens: 100000,
+      max_duration: 300,
+      max_cost_usd: 2,
+      alert_threshold: 0.9,
+      token_counting_mode: "all",
+    })
   })
 })

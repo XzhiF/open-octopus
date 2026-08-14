@@ -51,7 +51,7 @@ export interface AgentSessionRunResult {
   /** The text output from the agent. */
   text: string
   /** Token usage statistics from the agent run. */
-  tokenUsage?: { input: number; output: number; model: string }
+  tokenUsage?: { input: number; output: number; cacheRead?: number; cacheCreation?: number; model: string }
   /** The agent session ID that was created. */
   sessionId?: string
   /** Captured message chunks (thinking, tool_call, tool_result) for detail display. */
@@ -79,7 +79,7 @@ export type AgentSessionRunner = (params: {
  */
 export type DelegationLLMCall = (prompt: string) => Promise<{
   text: string
-  tokenUsage?: { input: number; output: number; model: string }
+  tokenUsage?: { input: number; output: number; cacheRead?: number; cacheCreation?: number; model: string }
 }>
 
 // Re-export DelegationResult from shared for convenience
@@ -257,7 +257,8 @@ ${eventsSummary}
 
 ### 5. block_node — 阻断节点
 当问题无法修复或修复风险太高时选择。在 blockReason 中说明原因。
-设置 continueSubsequent: true 可以让下游节点继续执行（即使本节点被阻断）。
+**continueSubsequent 默认为 true**：阻断节点后，下游节点通常应继续执行（它们可能能处理上游失败）。
+仅当你的输出是下游节点的必要输入（下游没有你就不可能运行）时，才设置 continueSubsequent: false。
 
 ---
 
@@ -266,7 +267,7 @@ ${eventsSummary}
 - **先理解，再行动。** 不要看到 "syntax error" 就机械地修语法。想想：这个脚本想做什么？有没有更聪明的方式达成目标？
 - **最小干预。** 能改一个变量就不改整个脚本。能修脚本就不 takeover。
 - **但要务实。** 如果修复脚本需要理解大量上下文，而你直接执行任务更快，那就 takeover。
-- **关注下游。** 如果这个节点修复后下游可以正常跑，优先修复。如果下游也会因为同样原因失败，考虑更根本的修复。
+- **关注下游。** 如果这个节点修复后下游可以正常跑，优先修复。如果下游也会因为同样原因失败，考虑更根本的修复。block_node 时，除非下游绝对依赖本节点输出，否则设置 continueSubsequent: true。
 - **变量问题 vs 脚本问题。** 变量池里的值错误（路径、配置、条件变量）用 varPoolPatches。脚本本身的错误（语法、缺失import、命令拼写）用 scriptOverride。不确定时，两个都提供。
 
 ## 输出要求
@@ -561,7 +562,7 @@ export class AgentDelegationService {
 
     // Execute the agent session / LLM call with timeout
     let responseText: string
-    let tokenInfo: { input: number; output: number; model: string } | undefined
+    let tokenInfo: { input: number; output: number; cacheRead?: number; cacheCreation?: number; model: string } | undefined
     let agentSessionId: string | undefined
     let agentChunks: Array<{ type: string; [key: string]: unknown }> | undefined
 
@@ -823,7 +824,7 @@ export class AgentDelegationService {
 
         let text = ""
         let tokenUsage:
-          | { input: number; output: number; model: string }
+          | { input: number; output: number; cacheRead?: number; cacheCreation?: number; model: string }
           | undefined
         // Capture all meaningful chunks for detail display
         const chunks: Array<{ type: string; [key: string]: unknown }> = []
@@ -843,9 +844,16 @@ export class AgentDelegationService {
               // Use real model name from modelUsages (e.g. "claude-sonnet-4-5-20250827")
               // instead of the short alias ("sonnet") or a hardcoded string
               const realModel = chunk.modelUsages?.[0]?.model ?? "unknown"
+              const mu = chunk.modelUsages?.[0]
+              const cacheRead = mu?.cacheReadInputTokens ?? 0
+              const cacheCreation = mu?.cacheCreationInputTokens ?? 0
+              // Store non-cached input only — consistent with llm_calls.input_tokens
+              // chunk.tokens.input = inputTokens + cacheRead + cacheCreation (combined by provider)
               tokenUsage = {
-                input: chunk.tokens.input,
+                input: chunk.tokens.input - cacheRead - cacheCreation,
                 output: chunk.tokens.output,
+                cacheRead,
+                cacheCreation,
                 model: realModel,
               }
             }
@@ -873,7 +881,7 @@ export class AgentDelegationService {
     delegationId: string,
     executionId: string,
     nodeId: string,
-    tokenInfo: { input: number; output: number; model: string },
+    tokenInfo: { input: number; output: number; cacheRead?: number; cacheCreation?: number; model: string },
   ): void {
     try {
       const nodeExecId = `${executionId}-${nodeId}`
@@ -885,6 +893,8 @@ export class AgentDelegationService {
         model: tokenInfo.model,
         inputTokens: tokenInfo.input,
         outputTokens: tokenInfo.output,
+        cacheReadTokens: tokenInfo.cacheRead ?? 0,
+        cacheCreationTokens: tokenInfo.cacheCreation ?? 0,
         costUsd: null, // Cost calculation deferred to billing layer
         createdAt: new Date().toISOString(),
       })

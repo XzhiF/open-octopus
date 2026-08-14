@@ -3,6 +3,34 @@ import { NotifyTemplateSchema, NotifyRetrySchema, NotifyProviderConfigSchema, Ch
 import type { NotifyTemplate, NotifyRetryConfig } from "./notify"
 import { ExpertDefSchema, OutputFormatSchema, validateSwarmConstraints } from "./swarm"
 import type { ExpertDef } from "./swarm"
+import { parseTokenAmount } from "../parse-token-amount"
+
+/**
+ * TokenCountingMode — controls which token types are included in budget calculations.
+ * - "all" (default): input + output + cache
+ * - "no_cache": input + output only
+ */
+export const TokenCountingModeSchema = z.enum(["all", "no_cache"]).optional().default("all")
+export type TokenCountingMode = z.infer<typeof TokenCountingModeSchema>
+
+/**
+ * TokenAmountSchema — accepts a plain positive integer or a human-readable string
+ * like "50K" (→ 50000) or "1.5M" (→ 1500000).
+ * Uses z.preprocess so the output type is always `number`.
+ */
+const TokenAmountSchema = z.preprocess(
+  (val) => {
+    if (typeof val === "string") {
+      try {
+        return parseTokenAmount(val)
+      } catch {
+        return val // let the number validation below fail with a clear message
+      }
+    }
+    return val
+  },
+  z.number().int().positive(),
+)
 
 /**
  * EffortLevel — LLM reasoning depth control.
@@ -19,6 +47,21 @@ export const AutoAnswerSchema = z.object({
   pattern: z.string(),
   answer: z.string(),
 })
+
+/**
+ * BudgetSchema — workflow-level resource budget constraints.
+ * All fields are optional; the entire budget object is optional on the workflow.
+ * alert_threshold defaults to 0.8 (80%) when not specified.
+ */
+export const BudgetSchema = z.object({
+  max_tokens: TokenAmountSchema.optional(),
+  max_duration: z.number().int().positive().optional(),
+  max_cost_usd: z.number().positive().optional(),
+  alert_threshold: z.number().min(0).max(1).optional().default(0.8),
+  token_counting_mode: TokenCountingModeSchema,
+}).optional()
+
+export type BudgetDef = z.infer<typeof BudgetSchema>
 
 export interface SubAgentDef {
   description: string
@@ -105,6 +148,9 @@ export interface WorkflowHooks {
   on_swarm_round_end?: HookDef[]
   on_swarm_consensus?: HookDef[]
   on_swarm_complete?: HookDef[]
+  // budget hooks
+  on_budget_warning?: HookDef[]
+  on_budget_exceeded?: HookDef[]
 }
 
 export const WorkflowHooksSchema = z.object({
@@ -123,6 +169,9 @@ export const WorkflowHooksSchema = z.object({
   on_swarm_round_end: z.array(HookSchema).optional(),
   on_swarm_consensus: z.array(HookSchema).optional(),
   on_swarm_complete: z.array(HookSchema).optional(),
+  // budget hooks
+  on_budget_warning: z.array(HookSchema).optional(),
+  on_budget_exceeded: z.array(HookSchema).optional(),
 })
 
 export interface PlanningDef {
@@ -439,6 +488,7 @@ export const WorkflowSchema = z.object({
   hooks: WorkflowHooksSchema.optional(),
   providers: z.record(z.string(), NotifyProviderConfigSchema).optional(),
   channels: z.record(z.string(), ChannelProfileSchema).optional(),
+  budget: BudgetSchema,
   requires: z.object({
     skills: z.array(z.string()).optional(),
     agent_files: z.array(z.string()).optional(),
