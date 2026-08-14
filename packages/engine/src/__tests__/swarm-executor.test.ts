@@ -206,6 +206,62 @@ describe("SwarmExecutor", () => {
       expect(expertCall?.skills).toEqual(["octo-xzf-clarify"])
     })
 
+    it("concatenates expert_defaults.tools with expert.tools and passes to provider", async () => {
+      const node = makeNode({
+        expert_defaults: {
+          tools: ["Read", "Grep"],
+        },
+        experts: [
+          { role: "expert-1", prompt: "prompt 1", tools: ["Bash"] },
+        ],
+      })
+
+      const capturedOptions: any[] = []
+      const provider: IAgentProvider = {
+        sendQuery: vi.fn().mockImplementation(async function* (prompt: string, cwd: string, resumeId?: string, opts?: any) {
+          capturedOptions.push(opts)
+          yield { type: "text_delta", content: "output", messageId: "msg-1" } as MessageChunk
+          yield { type: "result", content: "output", tokens: { input: 10, output: 10 }, messageId: "msg-1" } as MessageChunk
+        }),
+        getType: () => "mock",
+      }
+
+      const providers: Record<string, IAgentProvider> = { claude: provider }
+      const executor = new SwarmExecutor(node, pool, { providers, cwd: "/tmp" })
+      await executor.execute()
+
+      const expertCall = capturedOptions.find((o: any) => o.tools?.length > 0)
+      expect(expertCall?.tools).toEqual(["Read", "Grep", "Bash"])
+    })
+
+    it("passes expert.disallowed_tools to provider SendQueryOptions", async () => {
+      const node = makeNode({
+        expert_defaults: {
+          disallowed_tools: ["Write"],
+        },
+        experts: [
+          { role: "expert-1", prompt: "prompt 1", disallowed_tools: ["Edit"] },
+        ],
+      })
+
+      const capturedOptions: any[] = []
+      const provider: IAgentProvider = {
+        sendQuery: vi.fn().mockImplementation(async function* (prompt: string, cwd: string, resumeId?: string, opts?: any) {
+          capturedOptions.push(opts)
+          yield { type: "text_delta", content: "output", messageId: "msg-1" } as MessageChunk
+          yield { type: "result", content: "output", tokens: { input: 10, output: 10 }, messageId: "msg-1" } as MessageChunk
+        }),
+        getType: () => "mock",
+      }
+
+      const providers: Record<string, IAgentProvider> = { claude: provider }
+      const executor = new SwarmExecutor(node, pool, { providers, cwd: "/tmp" })
+      await executor.execute()
+
+      const expertCall = capturedOptions.find((o: any) => o.disallowedTools?.length > 0)
+      expect(expertCall?.disallowedTools).toEqual(["Write", "Edit"])
+    })
+
     it("backward compatible — no skills field works as before", async () => {
       const node = makeNode()
 

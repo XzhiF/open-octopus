@@ -20,32 +20,16 @@ scenarios:
       # --- Stage 1: Codebase Research (Swarm Debate) ---
       idea-research:
         output: "研究完成。影响模块: auth, user。待澄清问题: 3"
+
+      # --- Stage 2: Requirements Clarify (interaction) ---
+      requirements-clarify:
+        output: "需求澄清完成。"
         update_vars:
-          requirements_checklist_status: "INCOMPLETE: 待澄清"
+          requirements_confirmed: "true"
 
-      # --- Stage 2a: Requirements Clarify Loop ---
-      requirements-clarify-loop:
-        iterations: 1
-        nodes:
-          requirements-approval:
-            choice: "proceed"
-            comment: "需求已明确，无需补充"
-          requirements-clarify:
-            output: "需求澄清完成。checklist 全部完成。"
-            update_vars:
-              requirements_checklist_status: "COMPLETE"
-
-      # --- Stage 2b: Verification Clarify Loop ---
-      verification-clarify-loop:
-        iterations: 1
-        nodes:
-          verification-approval:
-            choice: "proceed"
-            comment: "验证方案已确认"
-          verification-clarify:
-            output: "验证策略规划完成。环境 checklist 全部完成。"
-            update_vars:
-              env_checklist_status: "COMPLETE"
+      # --- Stage 2b: Verification Strategy ---
+      verification-clarify:
+        output: "验证策略已生成: .scratch/user-auth/02-clarification/verification.md"
 
       # --- Stage 3: Brief Maker ---
       brief-maker:
@@ -85,18 +69,15 @@ scenarios:
         branch: "feat/user-auth"
         feature: "user-auth"
         remote_type: "github"
-        requirements_checklist_status: "COMPLETE"
-        clarify_decision: "proceed"
-        env_checklist_status: "COMPLETE"
-        verify_decision: "proceed"
+        requirements_confirmed: "true"
         spec_status: "passed"
         e2e_status: "passed"
       node_trace:
         executed:
           - init
           - idea-research
-          - requirements-clarify-loop
-          - verification-clarify-loop
+          - requirements-clarify
+          - verification-clarify
           - brief-maker
           - spec-planner
           - execution
@@ -124,30 +105,14 @@ scenarios:
 
       idea-research:
         output: "研究完成。影响模块: search, api。"
+
+      requirements-clarify:
+        output: "需求澄清完成。"
         update_vars:
-          requirements_checklist_status: "INCOMPLETE: 待澄清"
+          requirements_confirmed: "true"
 
-      requirements-clarify-loop:
-        iterations: 1
-        nodes:
-          requirements-approval:
-            choice: "proceed"
-            comment: "需求已明确"
-          requirements-clarify:
-            output: "需求澄清完成。"
-            update_vars:
-              requirements_checklist_status: "COMPLETE"
-
-      verification-clarify-loop:
-        iterations: 1
-        nodes:
-          verification-approval:
-            choice: "proceed"
-            comment: "验证方案确认"
-          verification-clarify:
-            output: "验证策略规划完成。"
-            update_vars:
-              env_checklist_status: "COMPLETE"
+      verification-clarify:
+        output: "验证策略已生成"
 
       brief-maker:
         output: "需求简报已生成"
@@ -193,6 +158,8 @@ scenarios:
         executed:
           - init
           - idea-research
+          - requirements-clarify
+          - verification-clarify
           - brief-maker
           - spec-planner
           - execution

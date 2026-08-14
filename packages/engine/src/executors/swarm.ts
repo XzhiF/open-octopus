@@ -79,6 +79,14 @@ export class SwarmExecutor implements NodeExecutor {
           ...(this.node.expert_defaults?.skills ?? []),
           ...(e.skills ?? []),
         ],
+        tools: [
+          ...(this.node.expert_defaults?.tools ?? []),
+          ...(e.tools ?? []),
+        ],
+        disallowed_tools: [
+          ...(this.node.expert_defaults?.disallowed_tools ?? []),
+          ...(e.disallowed_tools ?? []),
+        ],
       }))
 
       // Resolve agent_file content into expert.prompt for all modes
@@ -140,6 +148,8 @@ export class SwarmExecutor implements NodeExecutor {
         model?: string,
         engine?: string,
         skills?: string[],
+        tools?: string[],
+        disallowedTools?: string[],
       ): Promise<{ text: string; model: string; tokens: number; inputTokens: number; outputTokens: number; toolsUsed: string[]; filesChanged: string[] }> => {
         // ponytail: resolve provider per-expert, then resolve tier aliases for that provider
         const p = resolveProviderForExpert(engine)
@@ -148,7 +158,7 @@ export class SwarmExecutor implements NodeExecutor {
         const resolvedModel = this.modelAliasConfig
           ? resolveModelAlias(rawModel, epk, this.modelAliasConfig) ?? rawModel
           : rawModel
-        const result = await collectFromProvider(p, prompt, this.cwd, resolvedModel, skills)
+        const result = await collectFromProvider(p, prompt, this.cwd, resolvedModel, skills, undefined, tools, disallowedTools)
         budgetTracker.addUsage(result.model, result.inputTokens, result.outputTokens, result.cacheReadTokens, result.cacheCreationTokens, result.costUsd)
         return { text: result.text, model: result.model, tokens: result.tokens, inputTokens: result.inputTokens, outputTokens: result.outputTokens, toolsUsed: result.toolsUsed, filesChanged: result.filesChanged }
       }
@@ -192,6 +202,14 @@ export class SwarmExecutor implements NodeExecutor {
             skills: [
               ...(this.node.expert_defaults?.skills ?? []),
               ...(e.skills ?? []),
+            ],
+            tools: [
+              ...(this.node.expert_defaults?.tools ?? []),
+              ...(e.tools ?? []),
+            ],
+            disallowed_tools: [
+              ...(this.node.expert_defaults?.disallowed_tools ?? []),
+              ...(e.disallowed_tools ?? []),
             ],
           }))
           const poolEnriched = poolWithDefaults.map(expert => {
@@ -519,7 +537,13 @@ Respond ONLY with a JSON array of role names, ordered by relevance (most relevan
 
       // Preserve LLM ordering (most relevant first) instead of YAML declaration order
       const roleToExpert = new Map(pool.map(e => [e.role, e]))
+      const seenRoles = new Set<string>()
       const selected = selectedRoles
+        .filter(role => {
+          if (seenRoles.has(role)) return false
+          seenRoles.add(role)
+          return true
+        })
         .map(role => roleToExpert.get(role))
         .filter((e): e is ExpertDef => e !== undefined)
         .slice(0, upperBound) // enforce upper bound in case LLM returns too many
@@ -632,6 +656,8 @@ async function collectFromProvider(
   model?: string,
   skills?: string[],
   resumeSessionId?: string,
+  tools?: string[],
+  disallowedTools?: string[],
 ): Promise<{
   text: string
   tokens: number
@@ -660,6 +686,8 @@ async function collectFromProvider(
     model,
     systemPrompt: "You are an expert assistant.",
     skills,
+    tools,
+    disallowedTools,
   })
 
   for await (const chunk of gen) {

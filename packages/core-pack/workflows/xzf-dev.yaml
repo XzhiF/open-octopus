@@ -18,6 +18,29 @@ model: pro-max
 timeout: 86400 # 全局超时 24h
 execution_mode: serial
 
+# --- 资源依赖 ---
+requires:
+  skills:
+    - built-in/octo-xzf-init
+    - built-in/octo-xzf-research
+    - built-in/octo-xzf-clarify
+    - built-in/octo-xzf-verification
+    - built-in/octo-xzf-brief-maker
+    - built-in/octo-xzf-spec-designer
+    - built-in/octo-xzf-implementer
+    - built-in/octo-xzf-ship
+  agent_files:
+    - built-in/octo-xzf-codebase-architect.md
+    - built-in/octo-xzf-external-researcher.md
+    - built-in/octo-xzf-risk-analyst.md
+    - agency-agents-zh/engineering-senior-developer.md
+    - agency-agents-zh/engineering-frontend-developer.md
+    - agency-agents-zh/engineering-backend-architect.md
+    - agency-agents-zh/engineering-security-engineer.md
+    - agency-agents-zh/engineering-code-reviewer.md
+    - agency-agents-zh/design-ux-architect.md
+    - agency-agents-zh/product-manager.md
+
 # --- 输入 ---
 inputs:
   idea:
@@ -38,13 +61,10 @@ variables:
   feature: ""
   remote_type: ""
   user_guidance: ""
-  clarify_decision: ""
-  verify_decision: ""
+  requirements_confirmed: ""
   spec_status: ""
   e2e_status: ""
   e2e_decision: ""
-  requirements_checklist_status: ""
-  env_checklist_status: ""
 
 # --- 通知提供者 ---
 providers:
@@ -79,27 +99,6 @@ hooks:
         body: "🌿 $vars.feature @ $vars.branch\n✅ 完成: ${hook.completed_count | default:0}\n⏱️ 总耗时: ${hook.total_duration_ms | duration}"
 
   on_node_success:
-    - id: save-approval-answer
-      nodes: [requirements-approval, verification-approval]
-      bash: |
-        case "$hook.node_id" in
-          requirements-approval|verification-approval) DIR=".scratch/$vars.feature/02-clarification" ;;
-          *)                   DIR=".scratch/$vars.feature/approval-answers" ;;
-        esac
-        mkdir -p "$DIR"
-        FILE="$DIR/$hook.node_id-$hook.timestamp.md"
-        cat > "$FILE" << 'EOF'
-        # $hook.node_id
-
-        **决策**: $hook.node_decision
-        **时间**: $hook.timestamp
-
-        ## 用户输入
-
-        $hook.node_comment
-        EOF
-        echo "Saved: $FILE"
-
     - id: notify-init
       type: notify
       nodes: [init]
@@ -120,7 +119,7 @@ hooks:
 
     - id: notify-clarify
       type: notify
-      nodes: [requirements-clarify-loop]
+      nodes: [requirements-clarify]
       channel: xzf_hermes
       template:
         severity: info
@@ -129,11 +128,11 @@ hooks:
 
     - id: notify-verify
       type: notify
-      nodes: [verification-clarify-loop]
+      nodes: [verification-clarify]
       channel: xzf_hermes
       template:
         severity: info
-        title: "🧪 xzf-dev — 验证方式澄清完成"
+        title: "🧪 xzf-dev — 验证策略生成完成"
         body: "🌿 $vars.feature"
 
     - id: notify-brief
@@ -188,7 +187,6 @@ hooks:
 nodes:
   - id: init
     type: agent
-    skills: [octo-xzf-init]
     prompt: |
       使用 octo-xzf-init skill 初始化 XZF Pipeline 工作环境。
       按 skill 定义的所有步骤执行（Step 1-7，含 4b/4c/4d）。
@@ -214,22 +212,37 @@ nodes:
     depends_on: [init]
     mode: debate
     dynamic: true
-    max_experts: 3
-    rounds: 2
+    max_experts: 5
+    rounds: 3
     consensus_threshold: 0.7
     context_tier: "200k"
     expert_defaults:
-      skills: [octo-xzf-research]
       tools: [Read, Grep, Glob, Bash, WebFetch, WebSearch]
     expert_pool:
       - role: codebase-architect
-        agent_file: .claude/agents/octo-xzf-codebase-architect.md
+        agent_file: built-in/octo-xzf-codebase-architect.md
       - role: external-researcher
-        agent_file: .claude/agents/octo-xzf-external-researcher.md
+        agent_file: built-in/octo-xzf-external-researcher.md
       - role: risk-analyst
-        agent_file: .claude/agents/octo-xzf-risk-analyst.md
+        agent_file: built-in/octo-xzf-risk-analyst.md
+      - role: senior-developer
+        agent_file: agency-agents-zh/engineering-senior-developer.md
+      - role: frontend-developer
+        agent_file: agency-agents-zh/engineering-frontend-developer.md
+      - role: backend-architect
+        agent_file: agency-agents-zh/engineering-backend-architect.md
+      - role: security-engineer
+        agent_file: agency-agents-zh/engineering-security-engineer.md
+      - role: code-reviewer
+        agent_file: agency-agents-zh/engineering-code-reviewer.md
+      - role: ux-architect
+        agent_file: agency-agents-zh/design-ux-architect.md
+      - role: product-manager
+        agent_file: agency-agents-zh/product-manager.md
     topic: |
       ═══ Codebase Research Debate ═══
+
+      使用 octo-xzf-research skill 进行聚焦的 codebase 研究。
 
       读取:
       - 目录规范: .scratch/$vars.feature/00-init/directory-conventions.md
@@ -253,8 +266,9 @@ nodes:
       ⚠️ 如果某位专家的领域与这个 Idea 无关，直接说"本领域无重大影响"，不要硬凑内容。
     host:
       role: research-synthesizer
-      skills: [octo-xzf-clarify]
       prompt: |
+        使用 octo-xzf-clarify skill 综合研究结论并生成初始澄清问题。
+
         读取所有轮次的讨论记录。综合达成共识的结论，标注仍有分歧的点。
         产物路径以 .scratch/$vars.feature/00-init/directory-conventions.md 为准。
 
@@ -284,136 +298,90 @@ nodes:
         ⚠️ 只保留有价值的结论。不填充无内容的章节。
 
         ═══ Part 2: 初始澄清问题 ═══
-        基于 research 结果，按 octo-xzf-clarify skill 方法论生成 Round 1 澄清问题。
+        基于 research 结果，按 octo-xzf-clarify skill 方法论生成初始澄清问题。
         重点关注 Open Questions 和需要用户决策的设计点。
 
-        写入: .scratch/$vars.feature/02-clarification/questions.md（Round 1 格式）
-
-        ═══ Part 3: 初始验证策略 ═══
-        基于 research 结果（特别是 Constraints & Risks），生成初始验证策略草案。
-        参考 octo-xzf-verification skill 方法论，输出：
-        - 测试环境建议（哪些服务需要启动、mock 策略）
-        - 核心验收条件（每个 Affected Module 至少一条）
-        - E2E 场景列表（基于 Idea 的用户流程）
-
-        写入: .scratch/$vars.feature/02-clarification/verification.md
-
-        ⚠️ 此为初始草案，用户可在 verification-clarify-loop 中修正补充。
+        写入: .scratch/$vars.feature/02-clarification/questions.md
 
         ═══ last_output ═══
-        简要总结研究结论、待澄清问题数量和验证策略要点（2-3 句话即可）。
-        详细内容已分别写入 research-brief.md、questions.md、verification.md。
-
-        最后输出 vars_update JSON:
-        {"vars_update": {"requirements_checklist_status": "INCOMPLETE: {缺失项}", "env_checklist_status": "PENDING_REVIEW"}}
+        简要总结研究结论和待澄清问题数量（2-3 句话即可）。
+        详细内容已分别写入 research-brief.md、questions.md。
 
   # ============================================================
-  # Stage 2a: 需求澄清循环
+  # Stage 2: 需求 + 验证策略澄清（多轮对话）
   # ============================================================
 
-  - id: requirements-clarify-loop
-    type: loop
+  - id: requirements-clarify
+    type: interaction
     depends_on: [idea-research]
-    max_iterations: 10
-    break_when: '$vars.clarify_decision == "proceed" && $vars.requirements_checklist_status == "COMPLETE"'
-    nodes:
-      - id: requirements-approval
-        type: approval
-        execute_when: '$vars.clarify_decision != "proceed" || $vars.requirements_checklist_status != "COMPLETE"'
-        comment_label: "澄清输入:"
-        comment_placeholder: "请在此输入您对以上问题的回答..."
-        prompt: |
-          Round $iteration | 未回答的问题将采用推荐方案。
+    interaction_max_rounds: 15
+    interaction_timeout: 600
+    interaction_exit_when: '$vars.requirements_confirmed == "true"'
+    interaction_agent:
+      model: pro-max
+      prompt: |
+        你是需求澄清专家。使用 octo-xzf-clarify skill 方法论进行多轮需求对话。
+        同时使用 octo-xzf-verification skill 规划验证策略。
 
-          $file:.scratch/$vars.feature/02-clarification/questions.md
-        options:
-          - label: "继续"
-            value: "continue"
-          - label: "完成"
-            value: "proceed"
-        outputs:
-          $vars.clarify_decision: "$last_output"
+        ═══ 上下文 ═══
+        Idea: $inputs.idea
+        Feature: $vars.feature
+        Research: .scratch/$vars.feature/01-research/research-brief.md
+        初始问题: .scratch/$vars.feature/02-clarification/questions.md
+        目录规范: .scratch/$vars.feature/00-init/directory-conventions.md
 
-      - id: requirements-clarify
-        type: agent
-        depends_on: [requirements-approval]
-        skills: [octo-xzf-clarify]
-        prompt: |
-          ═══ 需求澄清 — Round $iteration ═══
+        ⚠️ 所有产物路径以 directory-conventions.md 为准，禁止使用源码目录。
 
-          读取:
-          - 目录规范: .scratch/$vars.feature/00-init/directory-conventions.md
-          （idea.md、research-brief.md、questions.md、workspace-topology.md 已在上游 session 中，无需重读）
+        ═══ 澄清方法论 (octo-xzf-clarify) ═══
+        1. 一次一个问题 (one question at a time)
+        2. 不要问可以自己查到的事 (环境/代码结构自己探索)
+        3. 只问需要用户决策的问题
+        4. 每个问题带推荐答案
+        5. 质疑模糊表述
 
-          ⚠️ 所有产物路径以 directory-conventions.md 为准，禁止使用源码目录。
+        ═══ 覆盖维度 (逐步覆盖, 不必按顺序) ═══
+        a) 功能范围: 做什么? 不做什么?
+        b) 数据模型: 哪些表/字段?
+        c) 接口契约: API 路径/参数/响应
+        d) 前端交互: 页面流程/组件结构
+        e) 验证策略: 怎么知道做对了? (octo-xzf-verification)
+        f) 验收标准: 用户故事 + 可验证的 AC
 
-          用户本轮回复:
-          $requirements-approval.output.comment
+        ═══ 完成条件 ═══
+        当所有维度覆盖完毕:
+        1. 生成确认摘要, 展示给用户
+        2. 用户确认后, 写入:
+           - .scratch/$vars.feature/02-clarification/brief.md (需求简报, 裁剪无内容章节)
+        3. 输出 vars_update:
+           {"vars_update": {"requirements_confirmed": "true"}}
 
-          职责: 需求澄清 — 功能边界、优先级、用户场景、技术约束。
-          不涉及测试环境和验证方式（下一阶段处理）。
-
-          澄清方法论、问题格式、Round 流程、Synthesis 输出格式参见 octo-xzf-clarify skill。
-          输出: .scratch/$vars.feature/02-clarification/questions.md
-          下游 approval 直接引用 $requirements-clarify.output.last_output 展示给用户。
-          checklist 完成时按 skill 的阶段衔接指引准备下游验证问题。
-
-          最后输出 vars_update JSON:
-          {"vars_update": {"requirements_checklist_status": "COMPLETE 或 INCOMPLETE: ..."}}
+        ═══ 原则 ═══
+        - 不写实现代码, 只记录决策
+        - 交叉验证 research-brief.md 和代码
+        - 每个 AC 必须有绑定的验证方法
 
   # ============================================================
-  # Stage 2b: 验证方式与测试环境澄清循环
+  # Stage 2b: 验证策略生成
   # ============================================================
 
-  - id: verification-clarify-loop
-    type: loop
-    depends_on: [requirements-clarify-loop]
-    max_iterations: 10
-    break_when: '$vars.verify_decision == "proceed" && $vars.env_checklist_status == "COMPLETE"'
-    nodes:
-      - id: verification-approval
-        type: approval
-        execute_when: '$vars.verify_decision != "proceed" || $vars.env_checklist_status != "COMPLETE"'
-        comment_label: "补充/修正:"
-        comment_placeholder: "请在此补充或修正验证策略..."
-        prompt: |
-          Round $iteration | 环境: $vars.env_checklist_status
-          ⚠️ INCOMPLETE 时必须补全才能进入下一阶段。
+  - id: verification-clarify
+    type: agent
+    depends_on: [requirements-clarify]
+    prompt: |
+      使用 octo-xzf-verification skill 生成验证策略。
 
-          $file:.scratch/$vars.feature/02-clarification/verification.md
-        options:
-          - label: "继续"
-            value: "continue"
-          - label: "完成"
-            value: "proceed"
-        outputs:
-          $vars.verify_decision: "$last_output"
+      读取:
+      - 目录规范: .scratch/$vars.feature/00-init/directory-conventions.md
+      - 需求简报: .scratch/$vars.feature/02-clarification/brief.md
+      - Research: .scratch/$vars.feature/01-research/research-brief.md
 
-      - id: verification-clarify
-        type: agent
-        depends_on: [verification-approval]
-        skills: [octo-xzf-verification]
-        prompt: |
-          ═══ 验证策略规划 — Round $iteration ═══
+      ⚠️ 所有产物路径以 directory-conventions.md 为准，禁止使用源码目录。
 
-          读取:
-          - 目录规范: .scratch/$vars.feature/00-init/directory-conventions.md
-          （idea.md、research-brief.md、questions.md、workspace-topology.md 已在上游 session 中，无需重读）
-
-          ⚠️ 所有产物路径以 directory-conventions.md 为准，禁止使用源码目录。
-
-          用户本轮回复:
-          $verification-approval.output.comment
-
-          验证策略方法论参见 octo-xzf-verification skill。
-          输出: .scratch/$vars.feature/02-clarification/verification.md
-
-          ⚠️ 最终输出（last_output）包含 Synthesis 三部分：「待确认」+「用户补充」+「推荐验证方案」。
-          「推荐验证方案」始终输出（测试环境、验收条件概览、E2E 场景列表），这是 agent 推荐的测试策略，用户可审阅纠正。
-          下游 approval 直接引用 $verification-clarify.output.last_output 展示给用户。
-
-          最后输出 vars_update JSON:
-          {"vars_update": {"env_checklist_status": "COMPLETE 或 INCOMPLETE: ..."}}
+      输出: .scratch/$vars.feature/02-clarification/verification.md
+      内容包含:
+      - 测试环境建议（哪些服务需要启动、mock 策略）
+      - 核心验收条件（每个模块至少一条，每个 AC 绑定验证方法）
+      - E2E 场景列表（基于用户故事的完整流程）
 
   # ============================================================
   # Stage 3: 需求简报（综合澄清结果 → brief.md）
@@ -421,8 +389,7 @@ nodes:
 
   - id: brief-maker
     type: agent
-    depends_on: [verification-clarify-loop]
-    skills: [octo-xzf-brief-maker]
+    depends_on: [verification-clarify]
     prompt: |
       使用 octo-xzf-brief-maker skill 生成需求简报。
 
@@ -444,7 +411,6 @@ nodes:
   - id: spec-planner
     type: agent
     depends_on: [brief-maker]
-    skills: [octo-xzf-spec-designer]
     prompt: |
       使用 octo-xzf-spec-designer skill 生成所有 spec 和 tracer bullet tasks。
 
@@ -484,7 +450,6 @@ nodes:
     agents:
       implementer:
         description: "全栈实现者 — 执行单个 spec 的所有 tracer bullets"
-        skills: [octo-xzf-implementer]
         prompt: |
           使用 octo-xzf-implementer skill 执行指定 spec 的所有 tracer bullets。
 
@@ -554,9 +519,8 @@ nodes:
           e2e-tester:
             description: "E2E 测试执行者 — 执行全量 E2E 测试并修复失败用例"
             model: se
-            skills: [octo-xzf-implementer]
             prompt: |
-              执行所有 spec 的全量 E2E 测试。
+              使用 octo-xzf-implementer skill 执行全量 E2E 测试。
 
               ═══ 执行流程 ═══
               1. 读取 E2E 测试计划: .scratch/{feature}/03-specs/e2e-test-plan.md
@@ -632,7 +596,6 @@ nodes:
   - id: ship
     type: agent
     depends_on: [e2e-verify-loop]
-    skills: [octo-xzf-ship]
     tools: [Read, Bash, Grep, Glob]
     prompt: |
       使用 octo-xzf-ship skill 完成 Ship 交付（PR/MR 提交 + Feature 归档）。
