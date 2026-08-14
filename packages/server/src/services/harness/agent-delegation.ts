@@ -841,6 +841,8 @@ export class AgentDelegationService {
           } else if (chunk.type === "result") {
             if (chunk.content) text = chunk.content
             if (chunk.tokens) {
+              // Use real model name from modelUsages (e.g. "claude-sonnet-4-5-20250827")
+              // instead of the short alias ("sonnet") or a hardcoded string
               const realModel = chunk.modelUsages?.[0]?.model ?? "unknown"
               const mu = chunk.modelUsages?.[0]
               const cacheRead = mu?.cacheReadInputTokens ?? 0

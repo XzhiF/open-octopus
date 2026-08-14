@@ -90,7 +90,7 @@ describe("HarnessFloatingPanel", () => {
 
   // ── Visibility ────────────────────────────────────────────────
 
-  it("renders collapsed panel even when execution is done (for historical viewing)", () => {
+  it("renders collapsed panel with completed status when execution is done", () => {
     mockUseHarnessEvents.mockReturnValue(makeHookReturn())
 
     render(
@@ -101,8 +101,7 @@ describe("HarnessFloatingPanel", () => {
       />,
     )
 
-    const collapsed = screen.getByTestId("harness-panel-collapsed")
-    expect(collapsed).toBeDefined()
+    expect(screen.getByText("已完成")).toBeDefined()
   })
 
   it("renders collapsed panel when running", () => {
@@ -205,7 +204,7 @@ describe("HarnessFloatingPanel", () => {
       />,
     )
 
-    // Click collapsed panel using mouseDown/mouseUp (drag detection)
+    // Click collapsed panel to expand (uses mousedown/mouseup to detect click vs drag)
     const collapsed = screen.getByTestId("harness-panel-collapsed")
     fireEvent.mouseDown(collapsed, { clientX: 100, clientY: 100 })
     fireEvent.mouseUp(collapsed, { clientX: 100, clientY: 100 })
@@ -256,10 +255,10 @@ describe("HarnessFloatingPanel", () => {
       />,
     )
 
-    // Expand via mouseDown/mouseUp (drag detection)
-    const collapsed = screen.getByTestId("harness-panel-collapsed")
-    fireEvent.mouseDown(collapsed, { clientX: 100, clientY: 100 })
-    fireEvent.mouseUp(collapsed, { clientX: 100, clientY: 100 })
+    // Expand (uses mousedown/mouseup to detect click vs drag)
+    const panel = screen.getByTestId("harness-panel-collapsed")
+    fireEvent.mouseDown(panel, { clientX: 100, clientY: 100 })
+    fireEvent.mouseUp(panel, { clientX: 100, clientY: 100 })
 
     await waitFor(() => {
       expect(screen.getByText("Harness")).toBeDefined()
@@ -455,5 +454,36 @@ describe("HarnessFloatingPanel", () => {
     }, 0)
 
     expect(totalExtraTokens).toBe(225) // 150+75
+  })
+
+  // ── totalExtraTokens display in collapsed panel ───────────────────
+
+  it("shows token counts in collapsed panel when tokens > 0", () => {
+    mockUseHarnessEvents.mockReturnValue(makeHookReturn({ totalInputTokens: 300, totalOutputTokens: 130 }))
+
+    render(
+      <HarnessFloatingPanel
+        workspaceId="ws-1"
+        executionId="exec-1"
+        executionStatus="running"
+      />,
+    )
+
+    expect(screen.getByText("↑300")).toBeDefined()
+    expect(screen.getByText("↓130")).toBeDefined()
+  })
+
+  it("does not show token counts in collapsed panel when tokens are 0", () => {
+    mockUseHarnessEvents.mockReturnValue(makeHookReturn({ totalInputTokens: 0, totalOutputTokens: 0 }))
+
+    render(
+      <HarnessFloatingPanel
+        workspaceId="ws-1"
+        executionId="exec-1"
+        executionStatus="running"
+      />,
+    )
+
+    expect(screen.queryByText(/[↑↓]\d+/)).toBeNull()
   })
 })
