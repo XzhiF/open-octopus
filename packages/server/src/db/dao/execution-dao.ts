@@ -247,8 +247,8 @@ export class ExecutionDAO extends BaseDAO {
   replaceMergedEvents(executionId: string, nodeId: string, mergedEvents: any[]): void {
     this.transaction(() => {
       const neId = `${executionId}-${nodeId}`
-      // Delete old fragmented events for this node, but preserve harness_* events
-      this.stmt("DELETE FROM agent_events WHERE node_execution_id = ? AND event_type NOT LIKE 'harness_%'").run(neId)
+      // Delete old fragmented events for this node, but preserve harness_* and intervention_result events
+      this.stmt("DELETE FROM agent_events WHERE node_execution_id = ? AND event_type NOT LIKE 'harness_%' AND event_type != 'intervention_result'").run(neId)
       // Insert merged events
       const insert = this.stmt(`
         INSERT INTO agent_events (
