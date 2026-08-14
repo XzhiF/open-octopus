@@ -213,7 +213,7 @@ nodes:
       Feature: $inputs.feature (空则从 Idea 生成 kebab-case slug)
 
       ═══ 执行 ═══
-      1. 检测当前 git 分支
+      1. 检测当前 git 分支 (已在目标分支, worktree 模式, 不需要创建/切换)
       2. 生成 feature slug (kebab-case, 英文小写+连字符)
       3. 创建产物目录: .scratch/<feature-slug>/
          ├── issues/          ← DAG tickets
@@ -221,9 +221,9 @@ nodes:
          ├── e2e-screenshots/ ← 浏览器截图证据
          └── e2e-data/        ← 测试数据
       4. 写入 idea 到 .scratch/<feature-slug>/idea.md
-      5. 检测 remote 类型 (github / gitlab)
-      6. 创建并切换到 feat/<feature-slug> 分支 (如不存在)
-      7. 扫描 workspace 拓扑 (monorepo packages)
+      5. 检测 remote 类型 (github / gitlab):
+         git remote get-url origin → 包含 github.com → "github", 否则 "gitlab"
+      6. 扫描 workspace 拓扑 (monorepo packages)
 
       ═══ 输出 ═══
       汇报: 分支名, feature slug, remote 类型, workspace 项目数
