@@ -340,6 +340,21 @@ This should fix it.`
     expect(result.reasoning).toContain("parse")
   })
 
+  it("extracts decision from markdown-style 'Decision: `agent_takeover`' (thinking fallback)", () => {
+    // This is the format that appears in thinking chunks from non-Claude models
+    const rawText = `The verify-host-alive bash node is being intercepted because it uses kill -0.
+
+Decision: \`agent_takeover\`
+
+理由：This is a false positive from the interceptor. kill -0 is a standard POSIX way to check process existence.`
+
+    const result = parseDelegationResponse(rawText)
+
+    expect(result.success).toBe(true)
+    expect(result.decision).toBe("agent_takeover")
+    expect(result.reasoning).toContain("false positive")
+  })
+
   it("returns failure for invalid JSON", () => {
     const rawText = "{ invalid json }"
 

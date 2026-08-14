@@ -7,9 +7,22 @@ vi.mock("@/hooks/use-harness-events", () => ({
   useHarnessEvents: vi.fn(),
 }))
 
+// Mock the execution metrics hook
+vi.mock("@/hooks/use-execution-metrics", () => ({
+  useExecutionMetrics: vi.fn(),
+}))
+
 // Mock server-config
 vi.mock("@/lib/server-config", () => ({
   getServerUrl: () => "http://localhost:3001",
+}))
+
+// Mock next/navigation useRouter
+const mockPush = vi.fn()
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ push: mockPush }),
+  useParams: () => ({}),
+  useSearchParams: () => new URLSearchParams(),
 }))
 
 // Mock chatbot's fetch calls
@@ -21,12 +34,22 @@ vi.mock("sonner", () => ({
   toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() },
 }))
 
+// Mock observability panel (avoids API calls in tests)
+vi.mock("../observability-panel", () => ({
+  ObservabilityTab: ({ workspaceId, executionId }: { workspaceId: string; executionId: string }) => (
+    <div data-testid="observability-panel">观测面板: {workspaceId}/{executionId}</div>
+  ),
+}))
+
 import { HarnessFloatingPanel } from "../harness-floating-panel"
 import { HarnessChatbot } from "../harness-chatbot"
 import { useHarnessEvents } from "@/hooks/use-harness-events"
+import { useExecutionMetrics } from "@/hooks/use-execution-metrics"
 import type { ParsedHarnessEvent } from "@/hooks/use-harness-events"
+import type { ExecutionMetrics } from "@/hooks/use-execution-metrics"
 
 const mockUseHarnessEvents = vi.mocked(useHarnessEvents)
+const mockUseExecutionMetrics = vi.mocked(useExecutionMetrics)
 
 function makeHookReturn(overrides: Partial<ReturnType<typeof useHarnessEvents>> = {}) {
   return {
@@ -35,22 +58,42 @@ function makeHookReturn(overrides: Partial<ReturnType<typeof useHarnessEvents>> 
     error: null,
     interventionCount: 0,
     totalExtraTokens: 0,
+    totalInputTokens: 0,
+    totalOutputTokens: 0,
     ...overrides,
   }
+}
+
+const DEFAULT_METRICS: ExecutionMetrics = {
+  totalTokens: 0,
+  totalInputTokens: 0,
+  totalOutputTokens: 0,
+  totalCacheReadTokens: 0,
+  totalCacheCreationTokens: 0,
+  totalCost: 0,
+  totalTurns: 0,
+  budgetProgress: { tokensPercent: null, durationPercent: null, costPercent: null },
+  errorCount: 0,
+  isConnected: false,
+}
+
+function makeMetrics(overrides: Partial<ExecutionMetrics> = {}): ExecutionMetrics {
+  return { ...DEFAULT_METRICS, ...overrides }
 }
 
 describe("HarnessFloatingPanel", () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ success: true }) })
+    mockUseExecutionMetrics.mockReturnValue(DEFAULT_METRICS)
   })
 
   // ── Visibility ────────────────────────────────────────────────
 
-  it("does not render when execution is done and no events", () => {
+  it("renders collapsed panel even when execution is done (for historical viewing)", () => {
     mockUseHarnessEvents.mockReturnValue(makeHookReturn())
 
-    const { container } = render(
+    render(
       <HarnessFloatingPanel
         workspaceId="ws-1"
         executionId="exec-1"
@@ -58,7 +101,8 @@ describe("HarnessFloatingPanel", () => {
       />,
     )
 
-    expect(container.innerHTML).toBe("")
+    const collapsed = screen.getByTestId("harness-panel-collapsed")
+    expect(collapsed).toBeDefined()
   })
 
   it("renders collapsed panel when running", () => {
@@ -108,6 +152,46 @@ describe("HarnessFloatingPanel", () => {
     expect(screen.getByText("监控中")).toBeDefined()
   })
 
+  // ── AC-7: Collapsed panel shows total token summary from metrics ────
+
+  it("shows total token summary in collapsed panel from useExecutionMetrics", () => {
+    mockUseHarnessEvents.mockReturnValue(makeHookReturn())
+    mockUseExecutionMetrics.mockReturnValue(
+      makeMetrics({
+        totalTokens: 1500,
+        totalInputTokens: 1000,
+        totalOutputTokens: 500,
+      }),
+    )
+
+    render(
+      <HarnessFloatingPanel
+        workspaceId="ws-1"
+        executionId="exec-1"
+        executionStatus="running"
+      />,
+    )
+
+    // Should show formatted token counts from execution metrics
+    expect(screen.getByText("↑1.0K")).toBeDefined()
+    expect(screen.getByText("↓500")).toBeDefined()
+  })
+
+  it("does not show token summary in collapsed panel when totalTokens is 0", () => {
+    mockUseHarnessEvents.mockReturnValue(makeHookReturn())
+    mockUseExecutionMetrics.mockReturnValue(makeMetrics())
+
+    render(
+      <HarnessFloatingPanel
+        workspaceId="ws-1"
+        executionId="exec-1"
+        executionStatus="running"
+      />,
+    )
+
+    expect(screen.queryByText(/↑/)).toBeNull()
+  })
+
   // ── Expanded State ─────────────────────────────────────────────
 
   it("expands panel when collapsed panel is clicked", async () => {
@@ -121,21 +205,23 @@ describe("HarnessFloatingPanel", () => {
       />,
     )
 
-    // Click collapsed panel to expand
+    // Click collapsed panel using mouseDown/mouseUp (drag detection)
     const collapsed = screen.getByTestId("harness-panel-collapsed")
-    fireEvent.click(collapsed)
+    fireEvent.mouseDown(collapsed, { clientX: 100, clientY: 100 })
+    fireEvent.mouseUp(collapsed, { clientX: 100, clientY: 100 })
 
     // Expanded panel should show tabs
     await waitFor(() => {
-      expect(screen.getByText("监控")).toBeDefined()
-      expect(screen.getByText("明细")).toBeDefined()
+      expect(screen.getByText("Workflow")).toBeDefined()
+      expect(screen.getByText("Harness")).toBeDefined()
+      expect(screen.getByText("Events")).toBeDefined()
       expect(screen.getByText("Chatbot")).toBeDefined()
     })
   })
 
   // ── Tab Switching ──────────────────────────────────────────────
 
-  it("shows monitor tab content by default", async () => {
+  it("shows observability tab by default, monitor tab on switch", async () => {
     mockUseHarnessEvents.mockReturnValue(
       makeHookReturn({
         events: [
@@ -170,15 +256,17 @@ describe("HarnessFloatingPanel", () => {
       />,
     )
 
-    // Expand
-    fireEvent.click(screen.getByTestId("harness-panel-collapsed"))
+    // Expand via mouseDown/mouseUp (drag detection)
+    const collapsed = screen.getByTestId("harness-panel-collapsed")
+    fireEvent.mouseDown(collapsed, { clientX: 100, clientY: 100 })
+    fireEvent.mouseUp(collapsed, { clientX: 100, clientY: 100 })
 
     await waitFor(() => {
-      expect(screen.getByText("监控")).toBeDefined()
+      expect(screen.getByText("Harness")).toBeDefined()
     })
 
-    // Monitor tab should show event count
-    expect(screen.getByText(/干预 0次/)).toBeDefined()
+    // Default tab should be Workflow (observability panel rendered)
+    expect(screen.getByTestId("observability-panel")).toBeDefined()
   })
 
   // ── Harness Event Types ────────────────────────────────────────
@@ -267,7 +355,7 @@ describe("HarnessFloatingPanel", () => {
         workspaceId="ws-1"
         executionId="exec-1"
         isRunning={true}
-        // No currentNodeId provided
+        // No currentNodeId
       />,
     )
 
@@ -367,35 +455,5 @@ describe("HarnessFloatingPanel", () => {
     }, 0)
 
     expect(totalExtraTokens).toBe(225) // 150+75
-  })
-
-  // ── totalExtraTokens display in collapsed panel ───────────────────
-
-  it("shows extra token count in collapsed panel when totalExtraTokens > 0", () => {
-    mockUseHarnessEvents.mockReturnValue(makeHookReturn({ totalExtraTokens: 430 }))
-
-    render(
-      <HarnessFloatingPanel
-        workspaceId="ws-1"
-        executionId="exec-1"
-        executionStatus="running"
-      />,
-    )
-
-    expect(screen.getByText("+430 tok")).toBeDefined()
-  })
-
-  it("does not show token count in collapsed panel when totalExtraTokens is 0", () => {
-    mockUseHarnessEvents.mockReturnValue(makeHookReturn({ totalExtraTokens: 0 }))
-
-    render(
-      <HarnessFloatingPanel
-        workspaceId="ws-1"
-        executionId="exec-1"
-        executionStatus="running"
-      />,
-    )
-
-    expect(screen.queryByText(/\+\d+ tok/)).toBeNull()
   })
 })

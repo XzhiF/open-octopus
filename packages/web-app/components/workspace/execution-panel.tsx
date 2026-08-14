@@ -351,6 +351,8 @@ export function ExecutionPanel({ execution, workspaceId, onStop, onRollback, onR
                   ? "default"
                   : execution.status === "failed"
                     ? "destructive"
+                    : execution.status === "budget_exceeded"
+                      ? "destructive"
                     : execution.status === "paused"
                       ? "secondary"
                       : execution.status === "pending_approval"
@@ -366,6 +368,7 @@ export function ExecutionPanel({ execution, workspaceId, onStop, onRollback, onR
             {execution.status === "cancelled" && "已取消"}
             {execution.status === "pending_approval" && "待审批"}
             {execution.status === "paused" && (execution.approvalMetadata ? "待审批" : "已暂停")}
+            {execution.status === "budget_exceeded" && "预算超限"}
           </Badge>
           {execution.currentStep && (
             <span className="text-xs text-muted-foreground">

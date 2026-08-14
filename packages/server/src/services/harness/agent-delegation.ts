@@ -20,8 +20,10 @@ import type {
   DelegationResult,
 } from "@octopus/shared"
 import type { HarnessDAO } from "../../db/dao/harness-dao"
+import type { EvolutionDAO } from "../../db/dao/evolution-dao"
 import type { SSEService } from "../sse"
 import type { HarnessAgentSession } from "./harness-agent-session"
+import { buildStatsSection } from "./effectiveness-tracker"
 import yaml from "js-yaml"
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -49,7 +51,7 @@ export interface AgentSessionRunResult {
   /** The text output from the agent. */
   text: string
   /** Token usage statistics from the agent run. */
-  tokenUsage?: { input: number; output: number; model: string }
+  tokenUsage?: { input: number; output: number; cacheRead?: number; cacheCreation?: number; model: string }
   /** The agent session ID that was created. */
   sessionId?: string
   /** Captured message chunks (thinking, tool_call, tool_result) for detail display. */
@@ -77,7 +79,7 @@ export type AgentSessionRunner = (params: {
  */
 export type DelegationLLMCall = (prompt: string) => Promise<{
   text: string
-  tokenUsage?: { input: number; output: number; model: string }
+  tokenUsage?: { input: number; output: number; cacheRead?: number; cacheCreation?: number; model: string }
 }>
 
 // Re-export DelegationResult from shared for convenience
@@ -255,7 +257,8 @@ ${eventsSummary}
 
 ### 5. block_node — 阻断节点
 当问题无法修复或修复风险太高时选择。在 blockReason 中说明原因。
-设置 continueSubsequent: true 可以让下游节点继续执行（即使本节点被阻断）。
+**continueSubsequent 默认为 true**：阻断节点后，下游节点通常应继续执行（它们可能能处理上游失败）。
+仅当你的输出是下游节点的必要输入（下游没有你就不可能运行）时，才设置 continueSubsequent: false。
 
 ---
 
@@ -264,7 +267,7 @@ ${eventsSummary}
 - **先理解，再行动。** 不要看到 "syntax error" 就机械地修语法。想想：这个脚本想做什么？有没有更聪明的方式达成目标？
 - **最小干预。** 能改一个变量就不改整个脚本。能修脚本就不 takeover。
 - **但要务实。** 如果修复脚本需要理解大量上下文，而你直接执行任务更快，那就 takeover。
-- **关注下游。** 如果这个节点修复后下游可以正常跑，优先修复。如果下游也会因为同样原因失败，考虑更根本的修复。
+- **关注下游。** 如果这个节点修复后下游可以正常跑，优先修复。如果下游也会因为同样原因失败，考虑更根本的修复。block_node 时，除非下游绝对依赖本节点输出，否则设置 continueSubsequent: true。
 - **变量问题 vs 脚本问题。** 变量池里的值错误（路径、配置、条件变量）用 varPoolPatches。脚本本身的错误（语法、缺失import、命令拼写）用 scriptOverride。不确定时，两个都提供。
 
 ## 输出要求
@@ -474,6 +477,8 @@ export interface AgentDelegationServiceDeps {
   dao: HarnessDAO
   sse: SSEService
   workspaceId: string
+  /** Optional: EvolutionDAO for injecting success rate stats into prompt (ticket 04). */
+  evolutionDao?: EvolutionDAO
   /** Agent session runner. If provided, takes precedence over llmCall. */
   agentSessionRunner?: AgentSessionRunner
   /** @deprecated LLM call function. Use agentSessionRunner instead. */
@@ -497,6 +502,7 @@ export class AgentDelegationService {
   private dao: HarnessDAO
   private sse: SSEService
   private workspaceId: string
+  private evolutionDao?: EvolutionDAO
   private agentSessionRunner?: AgentSessionRunner
   private llmCall?: DelegationLLMCall
   private timeoutMs: number
@@ -507,6 +513,7 @@ export class AgentDelegationService {
     this.dao = deps.dao
     this.sse = deps.sse
     this.workspaceId = deps.workspaceId
+    this.evolutionDao = deps.evolutionDao
     this.agentSessionRunner = deps.agentSessionRunner
     this.llmCall = deps.llmCall
     this.timeoutMs = deps.timeoutMs ?? 5 * 60 * 1000 // 5 minutes default
@@ -555,7 +562,7 @@ export class AgentDelegationService {
 
     // Execute the agent session / LLM call with timeout
     let responseText: string
-    let tokenInfo: { input: number; output: number; model: string } | undefined
+    let tokenInfo: { input: number; output: number; cacheRead?: number; cacheCreation?: number; model: string } | undefined
     let agentSessionId: string | undefined
     let agentChunks: Array<{ type: string; [key: string]: unknown }> | undefined
 
@@ -591,7 +598,23 @@ export class AgentDelegationService {
     }
 
     // Parse the response
-    const parsed = parseDelegationResponse(responseText)
+    let parsed = parseDelegationResponse(responseText)
+
+    // Fallback: if text parsing failed, try extracting decision from thinking chunks.
+    // Non-Claude models (e.g. qwen) sometimes put the decision in thinking but output
+    // empty or non-structured text. The thinking content often contains the decision.
+    if (!parsed.success && agentChunks && agentChunks.length > 0) {
+      const thinkingText = agentChunks
+        .filter((c) => c.type === "thinking")
+        .map((c) => String(c.content ?? ""))
+        .join("")
+      if (thinkingText) {
+        const fallbackParsed = parseDelegationResponse(thinkingText)
+        if (fallbackParsed.success) {
+          parsed = fallbackParsed
+        }
+      }
+    }
 
     // Attach token usage info from the agent session / LLM call
     if (tokenInfo) {
@@ -641,38 +664,71 @@ export class AgentDelegationService {
    * Build the delegation prompt, incorporating conversation history from the session.
    * If a session exists, uses the accumulated messages to provide context across interventions.
    * Otherwise, falls back to the standard buildDelegationPrompt.
+   * Also injects success rate statistics when available (ticket 04 — AC-5).
    */
   private buildPromptWithHistory(
     report: DiagnosisReport,
     context: DelegationContext,
   ): string {
-    // If no session, use the standard prompt builder
+    // Build the base prompt (with or without session history)
+    let prompt: string
     if (!this.session) {
-      return buildDelegationPrompt(report, context)
+      prompt = buildDelegationPrompt(report, context)
+    } else {
+      // Get the conversation history from the session
+      const messages = this.session.getMessages()
+
+      // Build the prompt by concatenating all messages
+      const promptParts = messages.map((msg) => {
+        if (msg.role === "system") {
+          return msg.content
+        } else if (msg.role === "user") {
+          return `\n\n用户: ${msg.content}`
+        } else {
+          return `\n\n助手: ${msg.content}`
+        }
+      })
+
+      prompt = promptParts.join("")
     }
 
-    // Get the conversation history from the session
-    const messages = this.session.getMessages()
-
-    // Build the prompt by concatenating all messages
-    // The session already has:
-    // - system message (initial workflow context)
-    // - user messages (previous interventions)
-    // - assistant messages (previous decisions)
-    // - current user message (this intervention, just appended)
-    //
-    // We format them as a conversation for the LLM
-    const promptParts = messages.map((msg) => {
-      if (msg.role === "system") {
-        return msg.content
-      } else if (msg.role === "user") {
-        return `\n\n用户: ${msg.content}`
+    // Inject success rate statistics (ticket 04 — AC-5, AC-6)
+    const statsSection = this.buildStatsSectionForReport(report)
+    if (statsSection) {
+      // Insert stats section before the final task instructions
+      // Look for the task instructions marker and insert before it
+      const taskMarker = "---\n\n## 你的任务"
+      const taskIndex = prompt.indexOf(taskMarker)
+      if (taskIndex !== -1) {
+        prompt = prompt.slice(0, taskIndex) + statsSection + "\n\n" + prompt.slice(taskIndex)
       } else {
-        return `\n\n助手: ${msg.content}`
+        // Fallback: append at the end
+        prompt += "\n\n" + statsSection
       }
-    })
+    }
 
-    return promptParts.join("")
+    return prompt
+  }
+
+  /**
+   * Build the stats section for a given DiagnosisReport.
+   * Uses the EvolutionDAO to get success stats for the report's detector.
+   * Returns empty string if no DAO configured or not enough data.
+   * Ticket 04 — AC-5, AC-6.
+   */
+  private buildStatsSectionForReport(report: DiagnosisReport): string {
+    if (!this.evolutionDao) {
+      return ""
+    }
+
+    try {
+      const org = "default" // Harness agent uses default org
+      const stats = this.evolutionDao.getSuccessStats(org, "harness", report.detector)
+      return buildStatsSection(stats)
+    } catch (err) {
+      // Stats injection failure is non-fatal
+      return ""
+    }
   }
 
   /**
@@ -768,7 +824,7 @@ export class AgentDelegationService {
 
         let text = ""
         let tokenUsage:
-          | { input: number; output: number; model: string }
+          | { input: number; output: number; cacheRead?: number; cacheCreation?: number; model: string }
           | undefined
         // Capture all meaningful chunks for detail display
         const chunks: Array<{ type: string; [key: string]: unknown }> = []
@@ -785,10 +841,18 @@ export class AgentDelegationService {
           } else if (chunk.type === "result") {
             if (chunk.content) text = chunk.content
             if (chunk.tokens) {
+              const realModel = chunk.modelUsages?.[0]?.model ?? "unknown"
+              const mu = chunk.modelUsages?.[0]
+              const cacheRead = mu?.cacheReadInputTokens ?? 0
+              const cacheCreation = mu?.cacheCreationInputTokens ?? 0
+              // Store non-cached input only — consistent with llm_calls.input_tokens
+              // chunk.tokens.input = inputTokens + cacheRead + cacheCreation (combined by provider)
               tokenUsage = {
-                input: chunk.tokens.input,
+                input: chunk.tokens.input - cacheRead - cacheCreation,
                 output: chunk.tokens.output,
-                model: "claude-sonnet-4-20250514",
+                cacheRead,
+                cacheCreation,
+                model: realModel,
               }
             }
           } else if (
@@ -815,7 +879,7 @@ export class AgentDelegationService {
     delegationId: string,
     executionId: string,
     nodeId: string,
-    tokenInfo: { input: number; output: number; model: string },
+    tokenInfo: { input: number; output: number; cacheRead?: number; cacheCreation?: number; model: string },
   ): void {
     try {
       const nodeExecId = `${executionId}-${nodeId}`
@@ -827,6 +891,8 @@ export class AgentDelegationService {
         model: tokenInfo.model,
         inputTokens: tokenInfo.input,
         outputTokens: tokenInfo.output,
+        cacheReadTokens: tokenInfo.cacheRead ?? 0,
+        cacheCreationTokens: tokenInfo.cacheCreation ?? 0,
         costUsd: null, // Cost calculation deferred to billing layer
         createdAt: new Date().toISOString(),
       })

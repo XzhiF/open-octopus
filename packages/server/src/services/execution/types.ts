@@ -58,6 +58,8 @@ export interface ExecutionRow {
   instance_id: string | null
   retry_count: number
   pending_hooks: string
+  // workflow-observability: budget snapshot (ticket 02)
+  budget_snapshot: string | null
 }
 
 export interface NodeExecutionRow {

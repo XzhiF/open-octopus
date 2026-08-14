@@ -3,10 +3,12 @@
 import { useState, useRef, useCallback, useEffect, useMemo } from "react"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { Button } from "@/components/ui/button"
-import { Minus, GripHorizontal } from "lucide-react"
+import { Minus, GripHorizontal, Maximize2, Minimize2, MessageCircle, ChevronDown } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { useHarnessEvents, type ParsedHarnessEvent } from "@/hooks/use-harness-events"
+import { useExecutionMetrics, type ExecutionMetrics } from "@/hooks/use-execution-metrics"
 import { HarnessChatbot } from "./harness-chatbot"
+import { ObservabilityTab } from "./observability-panel"
 import { formatTokenCount } from "@/lib/analytics-format"
 
 // ============ Types ============
@@ -29,18 +31,26 @@ function CollapsedPanel({
   interventionCount,
   isIntervening,
   isRunning,
+  isBudgetExceeded,
   hasActivity,
-  inputTokens,
-  outputTokens,
+  metrics,
+  harnessInputTokens,
+  harnessOutputTokens,
+  harnessCacheTokens,
+  harnessCacheCreationTokens,
   onExpand,
   onDragStart,
 }: {
   interventionCount: number
   isIntervening: boolean
   isRunning: boolean
+  isBudgetExceeded: boolean
   hasActivity: boolean
-  inputTokens: number
-  outputTokens: number
+  metrics: ExecutionMetrics
+  harnessInputTokens: number
+  harnessOutputTokens: number
+  harnessCacheTokens: number
+  harnessCacheCreationTokens: number
   onExpand: () => void
   onDragStart: (e: React.MouseEvent) => void
 }) {
@@ -61,10 +71,12 @@ function CollapsedPanel({
     }
   }
 
+  const harnessTotal = harnessInputTokens + harnessOutputTokens + harnessCacheTokens + harnessCacheCreationTokens
+
   return (
     <div
       className={cn(
-        "w-[120px] h-[48px] rounded-lg border border-border bg-card shadow-lg cursor-grab active:cursor-grabbing flex flex-col items-center justify-center gap-0.5 opacity-70 hover:opacity-100 transition-opacity select-none",
+        "w-[170px] rounded-lg border border-border bg-card shadow-lg cursor-grab active:cursor-grabbing flex flex-col items-start justify-center gap-0.5 px-1.5 py-1.5 opacity-70 hover:opacity-100 transition-opacity select-none overflow-hidden",
         hasActivity && "border-violet-400/60",
       )}
       style={hasActivity ? { animation: "harness-pulse 3s ease-in-out infinite" } : undefined}
@@ -78,297 +90,370 @@ function CollapsedPanel({
           50% { box-shadow: 0 0 12px 2px rgba(139, 92, 246, 0.3); }
         }
       `}</style>
-      <div className="flex items-center gap-1 text-xs font-medium pointer-events-none">
+      {/* Line 1: status */}
+      <div className="flex items-center gap-1 text-[11px] font-medium pointer-events-none whitespace-nowrap">
         <span>🛡️</span>
         <span>{interventionCount}</span>
         <span className="text-muted-foreground">|</span>
         <span
           className={
-            !isRunning
-              ? "text-muted-foreground"
-              : isIntervening
-                ? "text-amber-500"
-                : "text-emerald-500"
+            isBudgetExceeded
+              ? "text-red-500 font-bold"
+              : !isRunning
+                ? "text-muted-foreground"
+                : isIntervening
+                  ? "text-amber-500"
+                  : "text-emerald-500"
           }
         >
-          {!isRunning ? "已完成" : isIntervening ? "干预中" : "监控中"}
+          {isBudgetExceeded ? "预算超限" : !isRunning ? "已完成" : isIntervening ? "干预中" : "监控中"}
         </span>
       </div>
-      {(inputTokens > 0 || outputTokens > 0) && (
-        <span className="text-[10px] text-muted-foreground pointer-events-none flex items-center gap-1">
-          <span>↑{formatTokenCount(inputTokens)}</span>
-          <span>↓{formatTokenCount(outputTokens)}</span>
+      {/* Line 2: workflow total tokens */}
+      {metrics.totalTokens > 0 && (
+        <span className="text-[10px] text-muted-foreground pointer-events-none flex items-center gap-0.5 whitespace-nowrap">
+          <span>📊</span>
+          <span>↑{formatTokenCount(metrics.totalInputTokens)}</span>
+          <span>↓{formatTokenCount(metrics.totalOutputTokens)}</span>
+          <span>⚡{formatTokenCount(metrics.totalCacheReadTokens)}</span>
+          <span>🗡️{formatTokenCount(metrics.totalCacheCreationTokens)}</span>
+        </span>
+      )}
+      {/* Line 3: harness tokens (input = non-cached, unified) */}
+      {harnessTotal > 0 && (
+        <span className="text-[10px] text-muted-foreground pointer-events-none flex items-center gap-0.5 whitespace-nowrap">
+          <span>🛡️</span>
+          <span>↑{formatTokenCount(harnessInputTokens)}</span>
+          <span>↓{formatTokenCount(harnessOutputTokens)}</span>
+          <span>⚡{formatTokenCount(harnessCacheTokens)}</span>
+          <span>🗡️{formatTokenCount(harnessCacheCreationTokens)}</span>
         </span>
       )}
     </div>
   )
 }
 
-// ============ Timeline Item ============
+// ============ Helpers ============
 
-function TimelineItem({ event }: { event: ParsedHarnessEvent }) {
-  const time = new Date(event.timestamp).toLocaleTimeString("zh-CN", {
-    hour: "2-digit",
-    minute: "2-digit",
-  })
-
-  let icon: string
-  let label: string
-  let colorClass: string
-
-  switch (event.type) {
-    case "harness_diagnosis": {
-      const severity = event.report?.severity
-      const iter = (event.report as any)?.iteration
-      const nodeName = iter != null ? `${event.nodeId ?? ""} (iter ${iter})` : (event.nodeId ?? "")
-      icon = severity === "critical" ? "🚨" : "⚠️"
-      label = `${event.report?.detector ?? "检测"} ${nodeName}`
-      colorClass = severity === "critical" ? "text-red-400" : "text-amber-400"
-      break
-    }
-    case "harness_intervention":
-      icon = "🔄"
-      label = event.action
-        ? `${event.action.type} ${event.nodeId ?? ""}`
-        : `干预 ${event.nodeId ?? ""}`
-      colorClass = "text-blue-400"
-      break
-    case "harness_delegation": {
-      const dr = event.delegationResult
-      const iter = event.iteration
-      const nodeName = iter != null ? `${event.nodeId ?? ""} (iter ${iter})` : (event.nodeId ?? "")
-      const decisionLabel: Record<string, string> = {
-        block_node: "阻断",
-        fix_and_retry: "修复重试",
-        guide_and_retry: "指导重试",
-        reconfigure_and_retry: "换配置重试",
-        agent_takeover: "Agent 接管",
-      }
-      icon = dr?.success ? "🤖" : "🤖❌"
-      const decision = dr?.decision ? (decisionLabel[dr.decision] ?? dr.decision) : "委托"
-      const rawReason = dr?.blockReason ?? dr?.reasoning ?? ""
-      const reason = typeof rawReason === "object" ? JSON.stringify(rawReason, null, 2) : rawReason
-      label = reason
-        ? `${decision} ${nodeName}`
-        : `${decision} ${nodeName}`
-      colorClass = dr?.success
-        ? dr.decision === "block_node"
-          ? "text-red-400"
-          : "text-violet-400"
-        : "text-muted-foreground"
-      // Delegation gets a two-line layout: title + reasoning
-      return (
-        <div className="flex items-start gap-1.5 text-xs py-0.5">
-          <span className="text-muted-foreground/60 shrink-0 tabular-nums">{time}</span>
-          <span className="shrink-0">{icon}</span>
-          <div className="min-w-0 flex-1">
-            <div className={cn(colorClass)}>{label}</div>
-            {reason && (
-              <div className="text-muted-foreground whitespace-pre-wrap break-words mt-0.5 text-[11px]">
-                {reason}
-              </div>
-            )}
-          </div>
-        </div>
-      )
-    }
-    case "harness_blocked":
-      icon = "🚨"
-      label = `阻断 ${event.nodeId ?? ""}: ${event.reason ?? ""}`
-      colorClass = "text-red-500"
-      break
-    default:
-      icon = "•"
-      label = event.type
-      colorClass = "text-muted-foreground"
-  }
-
-  return (
-    <div className="flex items-start gap-1.5 text-xs py-0.5">
-      <span className="text-muted-foreground/60 shrink-0 tabular-nums">{time}</span>
-      <span className="shrink-0">{icon}</span>
-      <span className={cn("truncate", colorClass)}>{label}</span>
-    </div>
-  )
+const MODEL_DISPLAY_NAMES: Record<string, string> = {
+  "claude-sonnet-4-20250514": "Sonnet 4",
+  "claude-sonnet-4-5-20250827": "Sonnet 4.5",
+  "claude-opus-4-20250514": "Opus 4",
+  "claude-opus-4-5-20250827": "Opus 4.5",
+  "claude-haiku-3-5-20241022": "Haiku 3.5",
+  "claude-3-5-haiku-20241022": "Haiku 3.5",
 }
 
-// ============ Monitor Tab ============
+function formatModelName(modelId: string): string {
+  if (MODEL_DISPLAY_NAMES[modelId]) return MODEL_DISPLAY_NAMES[modelId]
+  // Fallback: extract readable parts from model ID
+  const m = modelId.match(/^claude-(\w+)-([\d.]+)-(\d{8})$/)
+  if (m) {
+    const [, tier, version] = m
+    const v = version.includes("-") ? version.replace(/-/g, ".") : version
+    return `${tier.charAt(0).toUpperCase() + tier.slice(1)} ${v}`
+  }
+  return modelId
+}
 
-function MonitorTab({ events }: { events: ParsedHarnessEvent[] }) {
+function formatTimestamp(ts: number): string {
+  const d = new Date(ts)
+  const pad = (n: number) => String(n).padStart(2, "0")
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
+}
+
+// ============ Harness Tab (merged: timeline + accordion + inline chat) ============
+
+function HarnessTab({
+  events,
+  workspaceId,
+  executionId,
+  isRunning,
+  currentNodeId,
+}: {
+  events: ParsedHarnessEvent[]
+  workspaceId: string
+  executionId: string
+  isRunning: boolean
+  currentNodeId?: string
+}) {
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set())
+  const [chatOpen, setChatOpen] = useState(false)
+
   const stats = useMemo(() => {
-    // Count both legacy intervention events and delegation events (fix_and_retry, block_node, etc.)
     const interventions = events.filter(
       (e) => e.type === "harness_intervention" || e.type === "harness_delegation",
     ).length
     const diagnoses = events.filter((e) => e.type === "harness_diagnosis").length
     const blocks = events.filter((e) => e.type === "harness_blocked").length
-    // Aggregate token usage across all events
     let totalInput = 0
     let totalOutput = 0
+    let totalCache = 0
+    let totalCacheCreation = 0
     const models = new Set<string>()
     for (const e of events) {
       if (e.tokenUsage) {
         totalInput += e.tokenUsage.inputTokens ?? 0
         totalOutput += e.tokenUsage.outputTokens ?? 0
+        totalCache += e.tokenUsage.cacheTokens ?? 0
+        totalCacheCreation += e.tokenUsage.cacheCreationTokens ?? 0
         if (e.tokenUsage.model) models.add(e.tokenUsage.model)
       }
-      // Also check delegation result's token usage from nested result
-      if (e.type === "harness_delegation" && e.delegationResult) {
-        // delegationResult doesn't have tokenUsage directly, but event.tokenUsage captures it
-      }
     }
-    return { interventions, diagnoses, blocks, totalInput, totalOutput, models: Array.from(models) }
+    const totalAll = totalInput + totalCache + totalCacheCreation + totalOutput
+    return { interventions, diagnoses, blocks, totalInput, totalOutput, totalCache, totalCacheCreation, totalAll, models: Array.from(models) }
   }, [events])
 
-  if (events.length === 0) {
-    return (
-      <div className="text-xs text-muted-foreground text-center py-6">
-        暂无 Harness 事件
-      </div>
-    )
-  }
+  const toggleEvent = useCallback((id: string) => {
+    setExpandedIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }, [])
+
+  const expandAll = useCallback(() => {
+    setExpandedIds(new Set(events.map((e) => e.id)))
+  }, [events])
+
+  const collapseAll = useCallback(() => {
+    setExpandedIds(new Set())
+  }, [])
 
   return (
     <div className="flex flex-col h-full">
-      {/* Timeline */}
-      <div className="flex-1 overflow-y-auto min-h-0 space-y-0.5 px-2 py-1">
-        {events.map((event) => (
-          <TimelineItem key={event.id} event={event} />
-        ))}
-      </div>
-
-      {/* Stats footer */}
-      <div className="shrink-0 border-t border-border/50 px-2 py-1.5 space-y-1">
+      {/* Header: stats + chat toggle */}
+      <div className="shrink-0 flex items-center gap-2 px-2 py-1.5 border-b border-border/50 flex-wrap">
         <div className="flex items-center gap-3 text-[10px] text-muted-foreground">
           <span>干预 {stats.interventions}次</span>
           <span>诊断 {stats.diagnoses}次</span>
           {stats.blocks > 0 && <span className="text-red-400">阻断 {stats.blocks}次</span>}
         </div>
-        {(stats.totalInput > 0 || stats.totalOutput > 0) && (
-          <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
-            <span>🤖 {stats.models.length > 0 ? stats.models.map(m => m.length > 20 ? m.slice(0, 20) + "…" : m).join(", ") : "unknown"}</span>
-            <span className="text-muted-foreground/60">|</span>
-            <span>📥 {formatTokenCount(stats.totalInput)}</span>
-            <span>📤 {formatTokenCount(stats.totalOutput)}</span>
-            <span className="text-muted-foreground/60">=</span>
-            <span className="font-medium">{formatTokenCount(stats.totalInput + stats.totalOutput)}</span>
-          </div>
-        )}
+        <div className="flex-1" />
+        <button
+          className={cn(
+            "flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded",
+            chatOpen
+              ? "bg-violet-500/20 text-violet-400"
+              : "text-muted-foreground hover:text-foreground hover:bg-muted/50",
+          )}
+          onClick={() => setChatOpen((v) => !v)}
+        >
+          <MessageCircle className="h-3 w-3" />
+          <span>干预对话</span>
+          {chatOpen ? <ChevronDown className="h-3 w-3" /> : null}
+        </button>
       </div>
+
+      {/* Event list (merged Monitor timeline + Detail accordion) */}
+      {events.length === 0 ? (
+        <div className="flex-1 text-xs text-muted-foreground text-center py-6">
+          暂无 Harness 事件
+        </div>
+      ) : (
+        <>
+          {/* Toolbar */}
+          <div className="shrink-0 flex items-center gap-2 px-2 py-1 border-b border-border/30">
+            <span className="text-[10px] text-muted-foreground">{events.length} 个事件</span>
+            <div className="flex-1" />
+            <button className="text-[10px] text-primary hover:underline" onClick={expandAll}>
+              全部展开
+            </button>
+            <span className="text-muted-foreground/40">|</span>
+            <button className="text-[10px] text-primary hover:underline" onClick={collapseAll}>
+              全部收起
+            </button>
+          </div>
+
+          {/* Accordion timeline */}
+          <div className={cn(
+            "overflow-y-auto min-h-0",
+            chatOpen ? "flex-1" : "flex-1",
+          )}>
+            {events.map((event) => (
+              <EventAccordionItem
+                key={event.id}
+                event={event}
+                isExpanded={expandedIds.has(event.id)}
+                onToggle={() => toggleEvent(event.id)}
+              />
+            ))}
+          </div>
+
+          {/* Token stats footer */}
+          {(stats.totalInput > 0 || stats.totalOutput > 0 || stats.totalCache > 0 || stats.totalCacheCreation > 0) && (
+            <div className="shrink-0 border-t border-border/50 px-2 py-1">
+              <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground flex-wrap">
+                <span>🤖 {stats.models.length > 0 ? stats.models.map(m => m.length > 16 ? m.slice(0, 16) + "…" : m).join(", ") : "unknown"}</span>
+                <span className="text-muted-foreground/60">|</span>
+                <span>↑{formatTokenCount(stats.totalInput)}</span>
+                <span>↓{formatTokenCount(stats.totalOutput)}</span>
+                <span>⚡{formatTokenCount(stats.totalCache)}</span>
+                <span>🗡️{formatTokenCount(stats.totalCacheCreation)}</span>
+                <span className="text-muted-foreground/60">=</span>
+                <span className="font-medium">{formatTokenCount(stats.totalAll)}</span>
+              </div>
+            </div>
+          )}
+        </>
+      )}
+
+      {/* Inline chat panel — collapsible */}
+      {chatOpen && (
+        <div className="shrink-0 border-t border-border flex flex-col" style={{ height: "45%", minHeight: 180, maxHeight: 350 }}>
+          <HarnessChatbot
+            workspaceId={workspaceId}
+            executionId={executionId}
+            isRunning={isRunning}
+            currentNodeId={currentNodeId}
+          />
+        </div>
+      )}
     </div>
   )
 }
 
-// ============ Detail Tab ============
+// ============ Event Accordion Item ============
 
-function DetailTab({ events }: { events: ParsedHarnessEvent[] }) {
-  const [selectedId, setSelectedId] = useState<string | null>(null)
-  const selected = events.find((e) => e.id === selectedId)
+function EventAccordionItem({
+  event,
+  isExpanded,
+  onToggle,
+}: {
+  event: ParsedHarnessEvent
+  isExpanded: boolean
+  onToggle: () => void
+}) {
+  const time = formatTimestamp(event.timestamp)
 
-  if (events.length === 0) {
-    return (
-      <div className="text-xs text-muted-foreground text-center py-6">
-        暂无事件详情
-      </div>
-    )
+  const iter = event.iteration ?? (event.report as any)?.iteration
+  const nodeName = iter != null ? `${event.nodeId ?? "system"} (iter ${iter})` : (event.nodeId ?? "system")
+
+  let icon: string
+  let colorClass: string
+  switch (event.type) {
+    case "harness_diagnosis": {
+      const severity = event.report?.severity
+      icon = severity === "critical" ? "🚨" : "⚠️"
+      colorClass = severity === "critical" ? "text-red-400" : "text-amber-400"
+      break
+    }
+    case "harness_intervention":
+      icon = "🔄"
+      colorClass = "text-blue-400"
+      break
+    case "harness_delegation":
+      icon = event.delegationResult?.success ? "🤖" : "🤖❌"
+      colorClass = event.delegationResult?.success
+        ? event.delegationResult?.decision === "block_node" ? "text-red-400" : "text-violet-400"
+        : "text-muted-foreground"
+      break
+    case "harness_blocked":
+      icon = "🚨"
+      colorClass = "text-red-500"
+      break
+    default:
+      icon = "•"
+      colorClass = "text-muted-foreground"
   }
 
   return (
-    <div className="flex flex-col h-full">
-      {/* Event selector */}
-      <div className="shrink-0 border-b border-border/50 px-2 py-1 max-h-[120px] overflow-y-auto space-y-0.5">
-        {events.map((event) => (
-          <div
-            key={event.id}
-            className={cn(
-              "text-xs px-2 py-0.5 rounded cursor-pointer truncate",
-              selectedId === event.id
-                ? "bg-primary/10 text-primary"
-                : "hover:bg-muted/50 text-muted-foreground",
-            )}
-            onClick={() => setSelectedId(event.id)}
-          >
-            {(() => {
-              const iter = event.iteration ?? (event.report as any)?.iteration
-              const nodeName = iter != null ? `${event.nodeId ?? "system"} (iter ${iter})` : (event.nodeId ?? "system")
-              return <>{event.type} — {nodeName}</>
-            })()}
-          </div>
-        ))}
+    <div className="border-b border-border/30 last:border-b-0">
+      {/* Header — clickable */}
+      <div
+        className={cn(
+          "flex items-center gap-1.5 text-xs px-2 py-1.5 cursor-pointer select-none",
+          isExpanded ? "bg-primary/5" : "hover:bg-muted/50",
+        )}
+        onClick={onToggle}
+      >
+        {/* Expand indicator */}
+        <span className={cn(
+          "shrink-0 text-[10px] text-muted-foreground/60 transition-transform duration-150",
+          isExpanded && "rotate-90",
+        )}>▶</span>
+        {/* Timestamp */}
+        <span className="shrink-0 tabular-nums text-muted-foreground/70 font-mono text-[10px]">{time}</span>
+        {/* Icon */}
+        <span className="shrink-0">{icon}</span>
+        {/* Label */}
+        <span className={cn("truncate", colorClass)}>
+          {event.type.replace("harness_", "")} — {nodeName}
+        </span>
       </div>
 
-      {/* Selected event detail */}
-      {selected && (
-        <div className="flex-1 overflow-y-auto min-h-0 px-2 py-2 text-xs space-y-2">
-          <DetailRow label="类型" value={selected.type} />
+      {/* Body — collapsible */}
+      {isExpanded && (
+        <div className="px-2 py-2 text-xs space-y-2 bg-muted/10">
+          <DetailRow label="类型" value={event.type} />
           <DetailRow label="节点" value={(() => {
-            const iter = selected.iteration ?? (selected.report as any)?.iteration
-            return iter != null ? `${selected.nodeId ?? "-"} (iter ${iter})` : (selected.nodeId ?? "-")
+            const iter = event.iteration ?? (event.report as any)?.iteration
+            return iter != null ? `${event.nodeId ?? "-"} (iter ${iter})` : (event.nodeId ?? "-")
           })()} />
-          <DetailRow label="时间" value={new Date(selected.timestamp).toLocaleString()} />
+          <DetailRow label="时间" value={formatTimestamp(event.timestamp)} />
 
-          {selected.report && (
+          {event.report && (
             <>
-              <DetailRow label="检测器" value={selected.report.detector} />
-              <DetailRow label="严重度" value={selected.report.severity} />
-              <DetailRow label="模式" value={selected.report.pattern} />
-              {selected.report.evidence.length > 0 && (
+              <DetailRow label="检测器" value={event.report.detector} />
+              <DetailRow label="严重度" value={event.report.severity} />
+              <DetailRow label="模式" value={event.report.pattern} />
+              {event.report.evidence.length > 0 && (
                 <DetailSection label="证据">
                   <pre className="text-[10px] font-mono whitespace-pre-wrap text-muted-foreground">
-                    {JSON.stringify(selected.report.evidence, null, 2)}
+                    {JSON.stringify(event.report.evidence, null, 2)}
                   </pre>
                 </DetailSection>
               )}
             </>
           )}
 
-          {selected.action && (
+          {event.action && (
             <DetailSection label="干预动作">
               <pre className="text-[10px] font-mono whitespace-pre-wrap text-muted-foreground">
-                {JSON.stringify(selected.action, null, 2)}
+                {JSON.stringify(event.action, null, 2)}
               </pre>
             </DetailSection>
           )}
 
-          {selected.delegationResult && (
+          {event.delegationResult && (
             <>
-              <DetailRow label="决策" value={selected.delegationResult.decision ?? "-"} />
-              <DetailRow label="成功" value={selected.delegationResult.success ? "✅ 是" : "❌ 否"} />
-              {selected.delegationResult.reasoning && (
+              <DetailRow label="决策" value={event.delegationResult.decision ?? "-"} />
+              <DetailRow label="成功" value={event.delegationResult.success ? "✅ 是" : "❌ 否"} />
+              {event.delegationResult.reasoning && (
                 <DetailSection label="推理">
                   <pre className="text-[10px] font-mono whitespace-pre-wrap text-muted-foreground">
-                    {selected.delegationResult.reasoning}
+                    {event.delegationResult.reasoning}
                   </pre>
                 </DetailSection>
               )}
-              {selected.delegationResult.blockReason && (
+              {event.delegationResult.blockReason && (
                 <DetailSection label="阻断原因">
                   <pre className="text-[10px] font-mono whitespace-pre-wrap text-red-400">
-                    {selected.delegationResult.blockReason}
+                    {event.delegationResult.blockReason}
                   </pre>
                 </DetailSection>
               )}
-              {selected.delegationResult.harnessHint && (
+              {event.delegationResult.harnessHint && (
                 <DetailSection label="提示注入">
                   <pre className="text-[10px] font-mono whitespace-pre-wrap text-muted-foreground">
-                    {selected.delegationResult.harnessHint}
+                    {event.delegationResult.harnessHint}
                   </pre>
                 </DetailSection>
               )}
-              {selected.delegationResult.modelOverride && (
-                <DetailRow label="模型覆盖" value={selected.delegationResult.modelOverride} />
+              {event.delegationResult.modelOverride && (
+                <DetailRow label="模型覆盖" value={event.delegationResult.modelOverride} />
               )}
-              {selected.delegationResult.varPoolPatches && Object.keys(selected.delegationResult.varPoolPatches).length > 0 && (
+              {event.delegationResult.varPoolPatches && Object.keys(event.delegationResult.varPoolPatches).length > 0 && (
                 <DetailSection label="变量修补">
                   <pre className="text-[10px] font-mono whitespace-pre-wrap text-muted-foreground">
-                    {JSON.stringify(selected.delegationResult.varPoolPatches, null, 2)}
+                    {JSON.stringify(event.delegationResult.varPoolPatches, null, 2)}
                   </pre>
                 </DetailSection>
               )}
-              {selected.delegationResult.chunks && selected.delegationResult.chunks.length > 0 && (() => {
-                // Merge consecutive chunks of the same type
+              {event.delegationResult.chunks && event.delegationResult.chunks.length > 0 && (() => {
                 const merged: Array<{ type: string; content: string; toolName?: string; toolInput?: unknown; isError?: boolean }> = []
-                for (const chunk of selected.delegationResult.chunks) {
+                for (const chunk of event.delegationResult.chunks) {
                   const last = merged[merged.length - 1]
                   if (chunk.type === "thinking" || chunk.type === "thinking_start" || chunk.type === "thinking_done") {
                     const text = String(chunk.content ?? "")
@@ -408,7 +493,7 @@ function DetailTab({ events }: { events: ParsedHarnessEvent[] }) {
                           return (
                             <div key={i} className="text-[10px] text-amber-400/80">
                               <span className="text-amber-400 font-medium">🔧 {item.toolName}</span>
-                              {item.toolInput && (
+                              {item.toolInput != null && (
                                 <pre className="text-muted-foreground ml-3 whitespace-pre-wrap">
                                   {typeof item.toolInput === "string" ? item.toolInput.slice(0, 300) : JSON.stringify(item.toolInput, null, 2).slice(0, 300)}
                                 </pre>
@@ -433,34 +518,36 @@ function DetailTab({ events }: { events: ParsedHarnessEvent[] }) {
             </>
           )}
 
-          {selected.tokenUsage && (
+          {event.tokenUsage && (
             <DetailSection label="Token 用量">
               <div className="text-[10px] font-mono text-muted-foreground space-y-0.5">
-                <div>模型: {selected.tokenUsage.model ?? "-"}</div>
-                <div>输入: {formatTokenCount(selected.tokenUsage.inputTokens ?? 0)}</div>
-                <div>输出: {formatTokenCount(selected.tokenUsage.outputTokens ?? 0)}</div>
+                <div>模型: {formatModelName(event.tokenUsage.model ?? "-")}</div>
+                <div>输入: {formatTokenCount(event.tokenUsage.inputTokens ?? 0)}</div>
+                <div>输出: {formatTokenCount(event.tokenUsage.outputTokens ?? 0)}</div>
+                {(event.tokenUsage.cacheTokens ?? 0) > 0 && (
+                  <div>缓存读取: {formatTokenCount(event.tokenUsage.cacheTokens!)}</div>
+                )}
+                {(event.tokenUsage.cacheCreationTokens ?? 0) > 0 && (
+                  <div>缓存创建: {formatTokenCount(event.tokenUsage.cacheCreationTokens!)}</div>
+                )}
               </div>
             </DetailSection>
           )}
 
-          {selected.result && !selected.delegationResult && (
-            <DetailRow label="结果" value={typeof selected.result === "object" ? JSON.stringify(selected.result) : selected.result} />
+          {event.result && !event.delegationResult && (
+            <DetailRow label="结果" value={typeof event.result === "object" ? JSON.stringify(event.result) : event.result} />
           )}
 
-          {selected.reason && (
-            <DetailRow label="原因" value={typeof selected.reason === "object" ? JSON.stringify(selected.reason) : selected.reason} />
+          {event.reason && (
+            <DetailRow label="原因" value={typeof event.reason === "object" ? JSON.stringify(event.reason) : event.reason} />
           )}
-        </div>
-      )}
-
-      {!selected && (
-        <div className="flex-1 flex items-center justify-center text-xs text-muted-foreground">
-          点击选择事件查看详情
         </div>
       )}
     </div>
   )
 }
+
+// DetailRow and DetailSection are used by EventAccordionItem
 
 function DetailRow({ label, value }: { label: string; value: string }) {
   return (
@@ -491,7 +578,10 @@ export function HarnessFloatingPanel({
   const [expanded, setExpanded] = useState(false)
   const [pos, setPos] = useState<{ left: number; top: number } | null>(null)
   const [size, setSize] = useState<{ width: number; height: number }>({ width: 800, height: 625 })
-  const [activeTab, setActiveTab] = useState("monitor")
+  const [maximized, setMaximized] = useState(false)
+  const prevGeometry = useRef<{ pos: { left: number; top: number }; size: { width: number; height: number } } | null>(null)
+  const [activeTab, setActiveTab] = useState("observability")
+  const [obsKey, setObsKey] = useState(0) // force remount ObservabilityTab on each activation
   const panelRef = useRef<HTMLDivElement>(null)
   const dragRef = useRef<{
     startX: number
@@ -506,23 +596,32 @@ export function HarnessFloatingPanel({
     origHeight: number
   } | null>(null)
 
-  const { events, loading, interventionCount, totalExtraTokens, totalInputTokens, totalOutputTokens } = useHarnessEvents(
+  const { events, loading, interventionCount, totalExtraTokens, totalInputTokens, totalOutputTokens, totalCacheTokens, totalCacheCreationTokens } = useHarnessEvents(
     workspaceId,
     executionId,
     executionStatus,
   )
+
+  // KD-10: Independent execution metrics hook for observability summary
+  const metrics = useExecutionMetrics(workspaceId, executionId)
+
+  const isBudgetExceeded = executionStatus === "budget_exceeded"
 
   const isRunning = executionStatus === "running" || executionStatus === "paused"
   const isIntervening = events.some(
     (e) => e.type === "harness_intervention" && Date.now() - e.timestamp < 10000,
   )
 
-  // Compute default position on first mount (right side of viewport)
+  // Compute default position on first mount — overlay the chat column (right 30%)
   useEffect(() => {
     if (pos === null) {
-      const panelWidth = 800
-      const defaultLeft = Math.max(window.innerWidth - panelWidth - 20, 20)
-      setPos({ left: defaultLeft, top: 56 })
+      // Chat column occupies rightmost 30% of viewport
+      const chatColLeft = window.innerWidth * 0.70
+      const chatColWidth = window.innerWidth * 0.30
+      const panelWidth = Math.max(chatColWidth - 8, 320)
+      const panelHeight = Math.max(window.innerHeight - 52, 400)
+      setSize({ width: panelWidth, height: panelHeight })
+      setPos({ left: chatColLeft + 4, top: 48 })
     }
   }, [pos])
 
@@ -621,6 +720,27 @@ export function HarnessFloatingPanel({
     [size, pos],
   )
 
+  const toggleMaximize = useCallback(() => {
+    if (!maximized) {
+      // Save current geometry before maximizing
+      if (pos) {
+        prevGeometry.current = { pos: { ...pos }, size: { ...size } }
+      }
+      setPos({ left: 0, top: 0 })
+      setSize({ width: window.innerWidth, height: window.innerHeight })
+      setMaximized(true)
+    } else {
+      // Restore previous geometry
+      if (prevGeometry.current) {
+        setPos(prevGeometry.current.pos)
+        setSize(prevGeometry.current.size)
+      }
+      setMaximized(false)
+    }
+    // Always refresh observability when toggling layout mode
+    setObsKey(k => k + 1)
+  }, [maximized, pos, size])
+
   // Don't render until position is computed
   if (!pos) return null
 
@@ -635,9 +755,13 @@ export function HarnessFloatingPanel({
           interventionCount={interventionCount}
           isIntervening={isIntervening}
           isRunning={isRunning}
+          isBudgetExceeded={isBudgetExceeded}
           hasActivity={isRunning && events.length > 0}
-          inputTokens={totalInputTokens}
-          outputTokens={totalOutputTokens}
+          metrics={metrics}
+          harnessInputTokens={totalInputTokens}
+          harnessOutputTokens={totalOutputTokens}
+          harnessCacheTokens={totalCacheTokens}
+          harnessCacheCreationTokens={totalCacheCreationTokens}
           onExpand={() => setExpanded(true)}
           onDragStart={handleDragStart}
         />
@@ -648,7 +772,10 @@ export function HarnessFloatingPanel({
   return (
     <div
       ref={panelRef}
-      className="fixed z-50 flex flex-col rounded-lg border border-border bg-card shadow-xl"
+      className={cn(
+        "fixed z-50 flex flex-col bg-card",
+        maximized ? "border-0" : "rounded-lg border border-border shadow-xl",
+      )}
       style={{
         left: pos.left,
         top: pos.top,
@@ -666,7 +793,16 @@ export function HarnessFloatingPanel({
         onMouseDown={handleDragStart}
       >
         <GripHorizontal className="h-3.5 w-3.5 text-muted-foreground/60" />
-        <span className="text-xs font-medium flex-1 select-none">🛡️ Harness 监控</span>
+        <span className="text-xs font-medium flex-1 select-none">🛡️ 监控面板</span>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-6 w-6"
+          onClick={toggleMaximize}
+          title={maximized ? "还原" : "全屏"}
+        >
+          {maximized ? <Minimize2 className="h-3 w-3" /> : <Maximize2 className="h-3 w-3" />}
+        </Button>
         <Button
           variant="ghost"
           size="icon"
@@ -678,37 +814,63 @@ export function HarnessFloatingPanel({
         </Button>
       </div>
 
-      {/* Tabs */}
-      <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 flex flex-col min-h-0">
-        <TabsList className="mx-2 mt-1 h-8 shrink-0">
-          <TabsTrigger value="monitor" className="text-xs h-6 px-2">
-            监控
-          </TabsTrigger>
-          <TabsTrigger value="detail" className="text-xs h-6 px-2">
-            明细
-          </TabsTrigger>
-          <TabsTrigger value="chatbot" className="text-xs h-6 px-2">
-            Chatbot
-          </TabsTrigger>
-        </TabsList>
+      {/* Content: side-by-side when maximized, tabs when normal */}
+      {maximized ? (
+        <div className="flex-1 flex min-h-0">
+          {/* Left: Workflow */}
+          <div className="w-1/2 border-r border-border min-h-0 overflow-hidden flex flex-col">
+            <div className="shrink-0 px-3 py-1.5 border-b border-border/50 bg-muted/20">
+              <span className="text-[11px] font-medium text-muted-foreground">📊 Workflow</span>
+            </div>
+            <div className="flex-1 min-h-0 overflow-hidden">
+              <ObservabilityTab key={`obs-max-${obsKey}`} workspaceId={workspaceId} executionId={executionId} isRunning={isRunning} />
+            </div>
+          </div>
+          {/* Right: Harness */}
+          <div className="w-1/2 min-h-0 overflow-hidden flex flex-col">
+            <div className="shrink-0 px-3 py-1.5 border-b border-border/50 bg-muted/20">
+              <span className="text-[11px] font-medium text-muted-foreground">🛡️ Harness</span>
+            </div>
+            <div className="flex-1 min-h-0 overflow-hidden">
+              <HarnessTab
+                events={events}
+                workspaceId={workspaceId}
+                executionId={executionId}
+                isRunning={isRunning}
+                currentNodeId={currentNodeId}
+              />
+            </div>
+          </div>
+        </div>
+      ) : (
+        <Tabs value={activeTab} onValueChange={(tab) => {
+          setActiveTab(tab)
+          if (tab === "observability") setObsKey(k => k + 1)
+        }} className="flex-1 flex flex-col min-h-0">
+          <TabsList className="mx-2 mt-1 h-8 shrink-0">
+            <TabsTrigger value="observability" className="text-xs h-6 px-2">
+              Workflow
+            </TabsTrigger>
+            <TabsTrigger value="harness" className="text-xs h-6 px-2">
+              Harness
+            </TabsTrigger>
+          </TabsList>
 
-        <TabsContent value="monitor" className="flex-1 mt-0 min-h-0 overflow-hidden">
-          <MonitorTab events={events} />
-        </TabsContent>
+          <TabsContent value="observability" className="flex-1 mt-0 min-h-0 overflow-hidden">
+            <ObservabilityTab key={obsKey} workspaceId={workspaceId} executionId={executionId} isRunning={isRunning} />
+          </TabsContent>
 
-        <TabsContent value="detail" className="flex-1 mt-0 min-h-0 overflow-hidden">
-          <DetailTab events={events} />
-        </TabsContent>
-
-        <TabsContent value="chatbot" className="flex-1 mt-0 min-h-0 overflow-hidden">
-          <HarnessChatbot
-            workspaceId={workspaceId}
-            executionId={executionId}
-            isRunning={isRunning}
-            currentNodeId={currentNodeId}
-          />
-        </TabsContent>
-      </Tabs>
+          <TabsContent value="harness" className="flex-1 mt-0 min-h-0 overflow-hidden">
+            <HarnessTab
+              events={events}
+              workspaceId={workspaceId}
+              executionId={executionId}
+              isRunning={isRunning}
+              currentNodeId={currentNodeId}
+            />
+          </TabsContent>
+        </Tabs>
+      )}
 
       {/* Resize handles — all 4 corners + 4 edges */}
       {/* Corners */}

@@ -14,7 +14,6 @@ const AGENT_DIRS = [
   'clones',
   'skills',
   'evolution',
-  'evolution/experiences',
   'reports',
   'backup',
   'debug',

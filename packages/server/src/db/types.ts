@@ -49,6 +49,7 @@ export interface ExecutionRow {
   preset_inputs: string | null
   harness_status: string | null
   harness_summary: string | null
+  budget_snapshot: string | null
   started_at: string | null
   completed_at: string | null
   duration: number | null
@@ -393,6 +394,27 @@ export interface ExperienceRow {
   source_session_id: string | null
   org: string
   created_at: string
+}
+
+/**
+ * ExperienceRowV2 — extends ExperienceRow with scope-aware columns (schema version 35).
+ * All new columns have DEFAULT values for backward compatibility.
+ */
+export interface ExperienceRowV2 extends ExperienceRow {
+  /** Scope dimension: 'agent' | 'workflow' | 'harness' | 'global' */
+  scope: string
+  /** Reference within scope: skill_name / workflow_ref / detector name */
+  scope_ref: string | null
+  /** JSON array of pattern tags, e.g. '["deterministic_error","bash","critical"]' */
+  pattern_tags: string
+  /** Outcome JSON: {label, success_rate, usage_count, last_applied} or null if pending */
+  outcome: string | null
+  /** Source type: 'session' | 'harness' | 'reflection' */
+  source_type: string
+  /** Execution ID for node-level association */
+  execution_id: string | null
+  /** Node ID for node-level association */
+  node_id: string | null
 }
 
 export interface InsightMarkRow {

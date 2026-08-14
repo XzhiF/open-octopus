@@ -1,0 +1,5 @@
+{
+  "workspaceId": "e8ec2139-39db-4f9b-8950-3eb0c01d06c7",
+  "executionId": "a1303cab-964e-4a27-afe7-76bab52f1382",
+  "workflowRef": "OBS_TEST_observability.yaml"
+}

@@ -371,7 +371,8 @@ export class DetectorPipeline {
           status: "failed",
           error: "Blocked by harness: process conflict",
         },
-      })
+        continueSubsequent: false,
+      } as any)
       // Mark the node as harness_blocked in DB + insert agent_event
       this.updateHarnessStatus(nodeId, report.displayNodeId ?? nodeId, "harness_blocked", report)
       // Update execution-level harness_status
@@ -514,18 +515,22 @@ export class DetectorPipeline {
       }
 
       case "block_node":
+        // Default continueSubsequent to true: downstream nodes should continue
+        // unless the agent explicitly says they can't (continueSubsequent: false)
+        const continueSubsequent = result.continueSubsequent ?? true
         this.pendingBlockActions.set(nodeId, {
           action: "skip",
           overrideResult: {
             status: "failed",
             error: result.blockReason ?? "Blocked by harness agent",
           },
-        })
+          continueSubsequent,
+        } as any)
         this.updateHarnessStatus(nodeId, displayNodeId, "harness_blocked", report, {
           decision: result.decision,
           reasoning: result.reasoning,
           blockReason: result.blockReason,
-          continueSubsequent: result.continueSubsequent,
+          continueSubsequent,
         })
         this.updateExecutionHarnessStatus("blocked")
         break
@@ -796,10 +801,22 @@ export class DetectorPipeline {
               pipeline.pendingFailureActions.delete(nodeId)
               return pending
             }
+            // If harness blocked this node, abort — pass continueSubsequent
+            // so the engine can decide whether downstream nodes continue
+            if (pipeline.pendingBlockActions.has(nodeId)) {
+              const blockAction = pipeline.pendingBlockActions.get(nodeId)!
+              pipeline.pendingBlockActions.delete(nodeId)
+              return {
+                action: "abort" as const,
+                continueSubsequent: (blockAction as any).continueSubsequent,
+              } as any
+            }
+            // No harness opinion — defer to engine's failure_strategy
+            // (don't default to "continue" which overrides fail_fast)
             if (typeof original === "function") {
               return original.call(target, nodeId, error, currentStrategy)
             }
-            return { action: "continue" }
+            return { action: "abort" as const }
           }
         }
 
