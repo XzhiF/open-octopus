@@ -212,17 +212,21 @@ nodes:
       Idea: $inputs.idea
       Feature: $inputs.feature (空则从 Idea 生成 kebab-case slug)
 
-      ═══ 执行 ═══
+      ═══ 执行 (必须实际执行命令, 不是只报告) ═══
       1. 检测当前 git 分支 (已在目标分支, worktree 模式, 不需要创建/切换)
+         运行: git branch --show-current
       2. 生成 feature slug (kebab-case, 英文小写+连字符)
-      3. 创建产物目录: .scratch/<feature-slug>/
-         ├── issues/          ← DAG tickets
-         ├── e2e-scripts/     ← E2E 测试脚本
-         ├── e2e-screenshots/ ← 浏览器截图证据
-         └── e2e-data/        ← 测试数据
-      4. 写入 idea 到 .scratch/<feature-slug>/idea.md
+         如果 $inputs.feature 非空则用它, 否则从 idea 提取
+      3. 创建产物目录 (必须实际 mkdir):
+         mkdir -p .scratch/<feature-slug>/issues
+         mkdir -p .scratch/<feature-slug>/e2e-scripts
+         mkdir -p .scratch/<feature-slug>/e2e-screenshots
+         mkdir -p .scratch/<feature-slug>/e2e-data
+      4. 写入 idea 到文件 (必须实际 Write):
+         写入 .scratch/<feature-slug>/idea.md, 内容为 $inputs.idea
       5. 检测 remote 类型 (github / gitlab):
-         git remote get-url origin → 包含 github.com → "github", 否则 "gitlab"
+         运行: git remote get-url origin
+         包含 github.com → "github", 否则 "gitlab"
       6. 扫描 workspace 拓扑 (monorepo packages)
 
       ═══ 输出 ═══
@@ -246,6 +250,13 @@ nodes:
     rounds: 2
     consensus_threshold: 0.7
     context_tier: "200k"
+    expert_pool:
+      - role: codebase-architect
+        agent_file: .claude/agents/octo-xzf-codebase-architect.md
+      - role: external-researcher
+        agent_file: .claude/agents/octo-xzf-external-researcher.md
+      - role: risk-analyst
+        agent_file: .claude/agents/octo-xzf-risk-analyst.md
     topic: |
       ═══ Codebase Research Debate ═══
 
