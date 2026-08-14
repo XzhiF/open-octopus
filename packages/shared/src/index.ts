@@ -31,6 +31,7 @@ export * from "./plugin/detector"
 export * from "./plugin/types"
 export * from "./types/knowledge"
 export * from "./types/repair"
+export * from "./types/demand"
 export * from "./resource"
 export { ModelAliasConfigSchema, DEFAULT_MODEL_ALIASES, CustomProvidersMapSchema } from './config/model-alias'
 export type { ModelAliasConfig, CustomProviderDef, CustomProvidersMap } from './config/model-alias'

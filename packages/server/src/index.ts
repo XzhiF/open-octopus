@@ -19,6 +19,7 @@ import { ArchiveDraftDAO } from "./db/dao/archive-draft-dao"
 import { InteractionMessageDAO } from "./db/dao/interaction-message-dao"
 import { AgentVersionDAO } from "./db/dao/agent-version-dao"
 import { HarnessDAO } from "./db/dao/harness-dao"
+import { DemandDAO } from "./db/dao/demand-dao"
 import { createKnowledgeRoutes } from "./routes/knowledge"
 import { createReviewRoutes } from "./routes/review"
 import { createArchiveRoutes } from "./routes/archive"
@@ -127,6 +128,7 @@ interface AllDAOs {
   interactionMessage: InteractionMessageDAO
   agentVersion: AgentVersionDAO
   harness: HarnessDAO
+  demand: DemandDAO
 }
 
 function createAllDAOs(db: ReturnType<typeof initDb>): AllDAOs {
@@ -149,6 +151,7 @@ function createAllDAOs(db: ReturnType<typeof initDb>): AllDAOs {
     interactionMessage: new InteractionMessageDAO(db),
     agentVersion: new AgentVersionDAO(db),
     harness: new HarnessDAO(db),
+    demand: new DemandDAO(db),
   }
 }
 
@@ -365,6 +368,7 @@ const d = daos ?? {
   interactionMessage: lazyDAO(InteractionMessageDAO),
   agentVersion: lazyDAO(AgentVersionDAO),
   harness: lazyDAO(HarnessDAO),
+  demand: lazyDAO(DemandDAO),
 }
 
 const wsSvc = workspaceService ?? new WorkspaceService(d.workspace)
