@@ -677,6 +677,15 @@ executionRoutes.get("/:executionId/agent-events", (c) => {
             ...(iteration != null ? { iteration } : {}),
           }
         }
+        // Intervention results: content is the result text
+        if (row.event_type === "intervention_result") {
+          return {
+            event: "intervention_result",
+            nodeId: row.node_id,
+            data: { result: row.content ?? "" },
+            timestamp: new Date(row.timestamp).toISOString(),
+          }
+        }
         // start/end lifecycle events: skip from SQLite (JSONL provides authoritative copies)
         if (row.event_type === "start" || row.event_type === "end") {
           return null

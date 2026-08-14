@@ -232,7 +232,7 @@ export class ExecutionDAO extends BaseDAO {
 
   deleteAgentEventsByNode(nodeExecutionId: string): Database.RunResult {
     console.log(`[ExecutionDAO] deleteAgentEventsByNode: ${nodeExecutionId}`)
-    const result = this.stmt("DELETE FROM agent_events WHERE node_execution_id = ? AND event_type NOT LIKE 'harness_%'").run(nodeExecutionId)
+    const result = this.stmt("DELETE FROM agent_events WHERE node_execution_id = ? AND event_type NOT LIKE 'harness_%' AND event_type != 'intervention_result'").run(nodeExecutionId)
     console.log(`[ExecutionDAO] deleteAgentEventsByNode: deleted ${result.changes} events`)
     return result
   }

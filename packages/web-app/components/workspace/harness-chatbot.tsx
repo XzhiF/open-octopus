@@ -4,6 +4,7 @@ import { useState, useRef, useEffect, useCallback } from "react"
 import { Button } from "@/components/ui/button"
 import { Send, Loader2, ShieldCheck } from "lucide-react"
 import { getServerUrl } from "@/lib/server-config"
+import { subscribeSSE } from "@/lib/sse-manager"
 
 // ============ Types ============
 
@@ -75,6 +76,39 @@ export function HarnessChatbot({ workspaceId, executionId, isRunning, currentNod
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight
     }
   }, [messages])
+
+  // Listen for live intervention_result SSE events
+  useEffect(() => {
+    if (!workspaceId || !executionId) return
+    const url = `${getServerUrl()}/api/workspaces/${workspaceId}/executions/${executionId}/events`
+    return subscribeSSE(url, "intervention_result", (e: MessageEvent) => {
+      try {
+        const payload = JSON.parse(e.data)
+        if (payload.executionId !== executionId) return
+        const result = payload.result ?? "已完成"
+        setMessages((prev) => {
+          const idx = prev.findIndex((m) => m.status === "sending" && m.role === "system")
+          if (idx >= 0) {
+            // Update the placeholder "正在处理..." message with the actual result
+            const updated = [...prev]
+            updated[idx] = { ...updated[idx], content: result, status: "success" as const }
+            return updated
+          }
+          // No pending message — add a new one (e.g. page was open before sending)
+          return [
+            ...prev,
+            {
+              id: `msg-intervention-${Date.now()}`,
+              role: "system" as const,
+              content: result,
+              timestamp: Date.now(),
+              status: "success" as const,
+            },
+          ]
+        })
+      } catch { /* non-fatal: SSE parse error */ }
+    })
+  }, [workspaceId, executionId])
 
   const handleSend = useCallback(async () => {
     const text = input.trim()

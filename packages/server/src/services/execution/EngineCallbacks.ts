@@ -553,6 +553,37 @@ export class EngineCallbacks implements IEngineCallbacks {
           })
         }
 
+        // ── Intervention Result: persist to agent_events + dedicated SSE ──
+        if (event.type === "intervention_result") {
+          const data = event.data as Record<string, unknown> | undefined
+          const resultText = typeof data?.result === "string" ? data.result : JSON.stringify(data ?? {})
+          sse.emit(wsId, {
+            event: "intervention_result",
+            data: { executionId: id, nodeId, result: resultText, sessionId: data?.sessionId },
+          })
+          try {
+            const neId = `${id}-${nodeId}`
+            dao.insertAgentEvent({
+              node_execution_id: neId,
+              event_order: Date.now(),
+              turn_index: 0,
+              event_type: "intervention_result",
+              timestamp: Date.now(),
+              content: resultText,
+              content_length: resultText.length,
+              tool_call_id: null,
+              tool_name: null,
+              tool_input: null,
+              tool_result: null,
+              tool_is_error: 0,
+              tool_duration_ms: null,
+              status_value: null,
+              error_code: null,
+              error_message: null,
+            })
+          } catch { /* silent — intervention result persistence is best-effort */ }
+        }
+
         if (getFlag("agent_events_persist")) {
           try {
             const neId = `${id}-${nodeId}`
