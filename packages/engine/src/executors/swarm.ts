@@ -181,6 +181,7 @@ export class SwarmExecutor implements NodeExecutor {
             resolvedTopic,
             pool,
             this.node.max_experts ?? 3,
+            this.node.mode ?? "review",
             llmCall,
             logLines,
           )
@@ -478,10 +479,13 @@ export class SwarmExecutor implements NodeExecutor {
     topic: string,
     pool: ExpertDef[],
     maxExperts: number,
+    mode: string,
     llmCall: (prompt: string, model?: string, engine?: string, skills?: string[]) => Promise<{ text: string }>,
     logLines: string[],
   ): Promise<{ selected: ExpertDef[] }> {
-    const k = Math.min(maxExperts, pool.length)
+    const upperBound = Math.min(maxExperts, pool.length)
+    // debate requires at least 2 experts; review/dispatch/swarm/moa can work with 1
+    const minExperts = mode === "debate" ? Math.min(2, pool.length) : 1
 
     // Build candidate list — show role + task/prompt snippet for LLM to judge
     const candidateList = pool.map((e, i) => {
@@ -498,10 +502,13 @@ ${topic}
 ${candidateList}
 
 ## Instructions
-Select exactly ${k} expert${k > 1 ? "s" : ""} from the pool above who are most relevant to this topic.
-Consider: which experts' domains are directly affected by this topic?
+Select between ${minExperts} and ${upperBound} experts from the pool above who are DIRECTLY relevant to this topic.
+- Only include experts whose domain is genuinely affected by this topic.
+- If all experts are relevant, select all ${upperBound}.
+- If only a few are relevant, select only those — do NOT pad with irrelevant experts.
+- You MUST select at least ${minExperts} expert${minExperts > 1 ? "s" : ""}.
 
-Respond ONLY with a JSON array of role names, ordered by relevance:
+Respond ONLY with a JSON array of role names, ordered by relevance (most relevant first):
 ["role1", "role2"]`
 
     try {
@@ -510,19 +517,34 @@ Respond ONLY with a JSON array of role names, ordered by relevance:
       const cleaned = result.text.replace(/```json?\s*/g, "").replace(/```/g, "").trim()
       const selectedRoles: string[] = JSON.parse(cleaned)
 
-      const selected = pool.filter(e => selectedRoles.includes(e.role))
-      if (selected.length === 0) {
-        logLines.push(`[pool] LLM returned no valid roles, falling back to first ${k} experts`)
-        return { selected: pool.slice(0, k) }
+      // Preserve LLM ordering (most relevant first) instead of YAML declaration order
+      const roleToExpert = new Map(pool.map(e => [e.role, e]))
+      const selected = selectedRoles
+        .map(role => roleToExpert.get(role))
+        .filter((e): e is ExpertDef => e !== undefined)
+        .slice(0, upperBound) // enforce upper bound in case LLM returns too many
+
+      if (selected.length < minExperts) {
+        logLines.push(`[pool] LLM returned ${selected.length} experts (minimum: ${minExperts}), padding from pool`)
+        // Pad with pool experts that weren't already selected
+        const selectedRoles = new Set(selected.map(e => e.role))
+        for (const expert of pool) {
+          if (selected.length >= minExperts) break
+          if (!selectedRoles.has(expert.role)) {
+            selected.push(expert)
+          }
+        }
       }
 
       for (const expert of selected) {
         logLines.push(`[pool] Selected: ${expert.role}`)
       }
+      logLines.push(`[pool] Selected ${selected.length} of ${pool.length} pool experts (min: ${minExperts}, max: ${upperBound})`)
       return { selected }
     } catch (err) {
-      logLines.push(`[pool] Selection failed: ${err instanceof Error ? err.message : String(err)}, using first ${k} experts`)
-      return { selected: pool.slice(0, k) }
+      const fallbackCount = Math.min(minExperts, pool.length)
+      logLines.push(`[pool] Selection failed: ${err instanceof Error ? err.message : String(err)}, using first ${fallbackCount} experts`)
+      return { selected: pool.slice(0, fallbackCount) }
     }
   }
 

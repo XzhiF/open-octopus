@@ -250,18 +250,17 @@ export class ClaudeSDKProvider implements IAgentProvider {
         }
       }
 
-      return { behavior: 'allow' as const, toolUseID: cbOptions.toolUseID }
+      return { behavior: 'allow' as const, updatedInput: input, toolUseID: cbOptions.toolUseID }
     }
 
     const sdkOptions: Options = {
       cwd,
       model: options?.model ?? 'sonnet',
       systemPrompt: options?.systemPrompt ?? { type: 'preset', preset: 'claude_code' },
-      // Use canUseTool as the sole authorization gate.
       // Do NOT set permissionMode: 'bypassPermissions' — it prevents canUseTool
-      // from being called, defeating the harness tool interceptor.
-      // canUseTool defaults to allow for all tools except those explicitly denied
-      // by the harness onBeforeToolCall hook or interaction session controls.
+      // from being called in SDK 0.2.141, silently disabling the harness tool
+      // interceptor. Instead, default permission mode + canUseTool with
+      // updatedInput handles both permission gating and tool interception.
       allowDangerouslySkipPermissions: true,
       settingSources: ['project', 'user'],
       includePartialMessages: true,
