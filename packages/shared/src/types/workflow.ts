@@ -282,7 +282,6 @@ export interface NodeDef {
   context_tier?: "200k" | "1m"
 
   // interaction
-  interaction_display?: "modal" | "panel"
   interaction_max_rounds?: number
   interaction_exit_when?: string
   interaction_timeout?: number
@@ -391,7 +390,6 @@ export const NodeSchema: z.ZodType<NodeDef> = z.lazy(() =>
     context_tier: z.enum(["200k", "1m"]).optional(),
 
     // interaction
-    interaction_display: z.enum(["modal", "panel"]).optional(),
     interaction_max_rounds: z.number().int().positive().optional(),
     interaction_exit_when: z.string().optional(),
     interaction_timeout: z.number().int().positive().optional(),

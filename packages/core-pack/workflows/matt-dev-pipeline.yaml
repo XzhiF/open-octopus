@@ -340,7 +340,6 @@ nodes:
   - id: requirement-clarify
     type: interaction
     depends_on: [idea-research]
-    interaction_display: panel
     interaction_max_rounds: 15
     interaction_timeout: 600
     interaction_exit_when: '$vars.requirements_confirmed == "true"'

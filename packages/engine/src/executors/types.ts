@@ -16,10 +16,12 @@ export type InnerNodeOverride =
 
 export interface InteractionMetadata {
   sessionId: string
-  display: "modal" | "panel"
   nodeId: string
   maxRounds?: number
   timeout?: number
+  /** Resolved initial prompt (with variable substitution) — pre-computed by engine
+   *  so the frontend doesn't need to re-read the workflow YAML. */
+  initialPrompt?: string
 }
 
 export interface NodeExecutionResult {

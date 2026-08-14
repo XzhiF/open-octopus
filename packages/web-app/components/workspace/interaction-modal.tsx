@@ -23,7 +23,8 @@ interface InteractionModalProps {
   executionId: string
   nodeId: string
   workspaceId: string
-  display?: "modal" | "panel"
+  /** Pre-resolved initial prompt from engine metadata (avoids re-reading YAML on server). */
+  initialPromptFromMeta?: string
   onComplete: (summary: string, varsUpdate?: Record<string, any>) => void
 }
 
@@ -40,7 +41,7 @@ export function InteractionModal({
   executionId,
   nodeId,
   workspaceId,
-  display = "modal",
+  initialPromptFromMeta,
   onComplete,
 }: InteractionModalProps) {
   const [sessionReady, setSessionReady] = useState(false)
@@ -78,7 +79,7 @@ export function InteractionModal({
           {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ display }),
+            body: JSON.stringify({ initialPrompt: initialPromptFromMeta }),
           },
         )
         if (!res.ok) throw new Error("Failed to start interaction session")
@@ -95,7 +96,7 @@ export function InteractionModal({
 
     startSession()
     return () => { cancelled = true }
-  }, [open, executionId, nodeId, workspaceId, display])
+  }, [open, executionId, nodeId, workspaceId])
 
   // Send initial prompt once session is ready and not streaming
   const promptSentRef = useRef<string | null>(null)
@@ -163,7 +164,6 @@ export function InteractionModal({
     }
   }, [forceCompleting, workspaceId, executionId, nodeId, onOpenChange, onComplete])
 
-  // Chat content (shared between modal and panel modes)
   const chatContent = sessionReady ? (
     <ChatPanel
       messages={interaction.messages}
@@ -190,21 +190,6 @@ export function InteractionModal({
     </div>
   )
 
-  if (display === "panel") {
-    return (
-      <div className="flex flex-col h-full border-l">
-        <div className="flex items-center gap-2 border-b px-4 py-3">
-          <MessageCircle className="h-4 w-4 text-purple-500" />
-          <span className="text-sm font-medium">Interaction: {nodeId}</span>
-        </div>
-        <div className="flex-1 min-h-0">
-          {chatContent}
-        </div>
-      </div>
-    )
-  }
-
-  // Modal mode (default)
   return (
     <>
     <Dialog open={open} onOpenChange={onOpenChange}>

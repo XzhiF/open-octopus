@@ -11,7 +11,9 @@ import { ApprovalExecutor } from "./approval"
 import { AgentExecutor } from "./agent"
 import { SwarmExecutor } from "./swarm"
 import { SubWorkflowExecutor } from "./sub-workflow"
+import { DynamicSubWorkflowExecutor } from "./dynamic-sub-workflow"
 import { extractBreakWhenVars, forceAdvanceLoopVars } from "./loop-fallback"
+import { join } from "path"
 
 export class LoopExecutor implements NodeExecutor {
   private iterations = 0
@@ -591,6 +593,31 @@ export class LoopExecutor implements NodeExecutor {
               iterationIndex: meta?.iterationIndex ?? (this.iterations - 1),
             })
           },
+        })
+      case "dynamic_sub_workflow":
+        return new DynamicSubWorkflowExecutor(node, p, {
+          providers: this.config.providers,
+          cwd: this.config.cwd,
+          signal: this.config.signal,
+          callbacks: this.config.callbacks,
+          logger: this.config.logger,
+          executionId: this.config.executionId,
+          modelAliasConfig: this.config.modelAliasConfig,
+          workflowEngine: this.config.workflowEngine,
+          globalSessionId: this.config.globalSessionId,
+          branchSessionIds: this.config.branchSessionIds,
+          inputs: this.config.inputs,
+          engineNodeResults: this.config.engineNodeResults,
+          workflowResolver: (this.config as any).workflowResolver,
+          visitedWorkflows: (this.config as any).visitedWorkflows,
+          ensureNodeExecution: (scopedNodeId, nodeType, meta) => {
+            this.config.ensureNodeExecution?.(scopedNodeId, nodeType, {
+              ...meta,
+              iterationIndex: meta?.iterationIndex ?? (this.iterations - 1),
+            })
+          },
+          outputDir: join(this.config.cwd, "workflows"),
+          workflow: (this.config as any).workflow,
         })
       default:
         throw new Error(`Unknown node type: ${node.type}`)

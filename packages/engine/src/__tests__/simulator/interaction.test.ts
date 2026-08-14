@@ -21,7 +21,6 @@ const interactionWorkflow: WorkflowDef = {
       id: "interact-clarify",
       type: "interaction",
       depends_on: ["bash-init"],
-      interaction_display: "modal",
       interaction_max_rounds: 10,
       interaction_exit_when: "$vars.clarify_status == 'COMPLETE'",
       interaction_agent: {
@@ -126,7 +125,6 @@ const simpleInteractionWorkflow: WorkflowDef = {
     {
       id: "interact",
       type: "interaction",
-      interaction_display: "panel",
       interaction_max_rounds: 5,
     },
     {

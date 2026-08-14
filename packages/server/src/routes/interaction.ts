@@ -48,7 +48,6 @@ export function createInteractionRoutes(
         workspacePath: ws.path,
         executionId: execId,
         nodeId,
-        display: (body.display as "modal" | "panel") ?? "modal",
         initialPrompt: body.initialPrompt as string | undefined,
         maxRounds: body.maxRounds as number | undefined,
         timeout: body.timeout as number | undefined,

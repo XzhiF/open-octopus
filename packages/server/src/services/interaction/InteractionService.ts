@@ -34,7 +34,6 @@ interface InteractionSessionInfo {
   executionId: string
   nodeId: string
   workspaceId: string
-  display: "modal" | "panel"
   maxRounds: number
   currentRound: number
   providerSessionId?: string
@@ -56,7 +55,6 @@ interface StartParams {
   workspacePath: string
   executionId: string
   nodeId: string
-  display?: "modal" | "panel"
   title?: string
   initialPrompt?: string
   maxRounds?: number
@@ -142,14 +140,12 @@ export class InteractionService {
     // Extract initial prompt from workflow YAML if not provided
     let initialPrompt = params.initialPrompt
     let maxRounds = params.maxRounds ?? 20
-    let display = params.display ?? "modal"
 
     if (!initialPrompt) {
       const extracted = this.extractPromptFromWorkflow(params.workspacePath, params.executionId, params.nodeId)
       if (extracted) {
         initialPrompt = extracted.prompt
         if (extracted.maxRounds) maxRounds = extracted.maxRounds
-        if (extracted.display) display = extracted.display
         if (extracted.context) params.context = extracted.context
       }
     }
@@ -166,7 +162,6 @@ export class InteractionService {
       executionId: params.executionId,
       nodeId: params.nodeId,
       workspaceId: params.workspaceId,
-      display,
       maxRounds,
       currentRound: 0,
       providerSessionId,
@@ -180,7 +175,6 @@ export class InteractionService {
 
     // Record interaction_started event
     this.insertAgentEvent(nodeExecId, "interaction_started", {
-      display: session.display,
       maxRounds: session.maxRounds,
     })
 
@@ -195,7 +189,7 @@ export class InteractionService {
     workspacePath: string,
     executionId: string,
     nodeId: string,
-  ): { prompt?: string; maxRounds?: number; display?: string; context?: "continue" | "new" } | null {
+  ): { prompt?: string; maxRounds?: number; context?: "continue" | "new" } | null {
     const exec = this.execDao.findById(executionId)
     if (!exec) return null
 
@@ -214,8 +208,7 @@ export class InteractionService {
       const nodeDef = workflow.nodes.find((n: any) => n.id === nodeId)
       if (!nodeDef) return null
 
-      const result: { prompt?: string; maxRounds?: number; display?: string; context?: "continue" | "new" } = {}
-      result.display = nodeDef.interaction_display ?? "modal"
+      const result: { prompt?: string; maxRounds?: number; context?: "continue" | "new" } = {}
       result.maxRounds = nodeDef.interaction_max_rounds
       result.context = nodeDef.context ?? "continue"
 

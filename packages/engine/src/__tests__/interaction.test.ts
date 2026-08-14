@@ -8,7 +8,6 @@ describe("InteractionExecutor", () => {
     const node: NodeDef = {
       id: "int1",
       type: "interaction",
-      interaction_display: "modal",
       interaction_max_rounds: 10,
       interaction_agent: {
         prompt: "You are a clarification assistant.",
@@ -21,12 +20,11 @@ describe("InteractionExecutor", () => {
 
     expect(result.status).toBe("pending_interaction")
     expect(result.interactionMetadata).toBeDefined()
-    expect(result.interactionMetadata?.display).toBe("modal")
     expect(result.interactionMetadata?.nodeId).toBe("int1")
     expect(result.interactionMetadata?.maxRounds).toBe(10)
   })
 
-  it("uses default display mode (modal) when not specified", async () => {
+  it("uses default max_rounds when not specified", async () => {
     const node: NodeDef = {
       id: "int2",
       type: "interaction",
@@ -36,7 +34,6 @@ describe("InteractionExecutor", () => {
     const result = await executor.execute()
 
     expect(result.status).toBe("pending_interaction")
-    expect(result.interactionMetadata?.display).toBe("modal")
     expect(result.interactionMetadata?.maxRounds).toBe(20) // default
   })
 

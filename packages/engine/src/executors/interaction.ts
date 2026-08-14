@@ -118,16 +118,14 @@ export class InteractionExecutor implements NodeExecutor {
 
     const resolvedPrompt = substituteVarsFull(promptWithFiles, this.pool, this.nodeOutputs, this.crossExecResolver, this.executionId, this.loopContext)
 
-    const display = this.node.interaction_display ?? "modal"
     const interactionMetadata: InteractionMetadata = {
       sessionId: this.sessionId ?? "",
-      display,
       nodeId: this.node.id,
       maxRounds,
       timeout,
+      initialPrompt: resolvedPrompt || undefined,
     }
 
-    logLines.push(`Interaction display: ${display}`)
     logLines.push(`Interaction max_rounds: ${maxRounds}`)
     if (resolvedPrompt) {
       logLines.push(`Interaction prompt: ${resolvedPrompt.slice(0, 200)}`)

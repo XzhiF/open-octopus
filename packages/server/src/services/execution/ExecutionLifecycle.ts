@@ -454,7 +454,6 @@ export class ExecutionLifecycle {
             executionId: id,
             nodeId: interactionMeta?.nodeId,
             sessionId: interactionMeta?.sessionId,
-            display: interactionMeta?.display ?? "modal",
             maxRounds: interactionMeta?.maxRounds,
           },
         })
@@ -923,7 +922,7 @@ export class ExecutionLifecycle {
     id: string,
     nodeId: string,
     workspaceId: string,
-  ): Promise<{ sessionId: string; display: string; initialPrompt?: string }> {
+  ): Promise<{ sessionId: string; initialPrompt?: string }> {
     const exec = this.dao.findById(id)
     if (!exec) throw Object.assign(new Error("Execution not found"), { status: 404 })
     if (exec.status !== "pending_interaction") throw Object.assign(new Error("执行不在交互状态"), { status: 400 })
@@ -941,8 +940,6 @@ export class ExecutionLifecycle {
         }
       } catch { /* ignore parse errors */ }
     }
-
-    const display = nodeDef?.interaction_display ?? "modal"
 
     // Resolve the initial prompt with variable substitution
     if (nodeDef?.interaction_agent?.prompt) {
@@ -970,13 +967,13 @@ export class ExecutionLifecycle {
 
     // Persist interaction metadata for frontend polling
     this.dao.updateExecution(id, {
-      interaction_metadata: JSON.stringify({ nodeId, sessionId, display, maxRounds: nodeDef?.interaction_max_rounds ?? 20 }),
+      interaction_metadata: JSON.stringify({ nodeId, sessionId, maxRounds: nodeDef?.interaction_max_rounds ?? 20 }),
     })
 
     // Notify chatbot panel to reload sessions (interaction session was just created)
     this.sse.emit(this.workspaceId, { event: "session_created", data: { sessionId } })
 
-    return { sessionId, display, initialPrompt }
+    return { sessionId, initialPrompt }
   }
 
   // ==================== Interaction Complete ====================

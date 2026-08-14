@@ -151,7 +151,7 @@ export function WorkflowDetailPanel({ execution, workflow, workspaceId }: Workfl
     execution.approvalMetadata ?? null,
   )
   const [interactionOpen, setInteractionOpen] = useState(false)
-  const [liveInteractionMeta, setLiveInteractionMeta] = useState<{ nodeId: string; sessionId?: string; display: string; maxRounds?: number } | null>(null)
+  const [liveInteractionMeta, setLiveInteractionMeta] = useState<{ nodeId: string; sessionId?: string; initialPrompt?: string } | null>(null)
   const [archiveOpen, setArchiveOpen] = useState(false)
 
   // Always poll when panel is open — ensures recovery from stale prop data
@@ -652,7 +652,7 @@ export function WorkflowDetailPanel({ execution, workflow, workspaceId }: Workfl
           executionId={execution.id}
           nodeId={liveInteractionMeta.nodeId}
           workspaceId={workspaceId}
-          display={liveInteractionMeta.display as "modal" | "panel"}
+          initialPromptFromMeta={liveInteractionMeta.initialPrompt}
           onComplete={() => {
             setInteractionOpen(false)
             fetchStatus()
