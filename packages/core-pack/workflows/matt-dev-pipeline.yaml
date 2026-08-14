@@ -606,29 +606,23 @@ nodes:
       # ----------------------------------------------------------
 
       - id: integration-gate
-        type: bash
+        type: agent
         depends_on: [parse-and-execute]
-        bash: |
-          echo "═══ Integration Gate ═══"
+        prompt: |
+          ═══ Integration Gate ═══
+          你是集成门禁。确保项目能 build + test 通过。
 
-          pnpm build 2>&1
-          BUILD_EXIT=$?
-          if [ $BUILD_EXIT -ne 0 ]; then
-            echo "BUILD FAILED"
-            echo "{\"vars_update\": {\"build_status\": \"failed\"}}"
-            exit 1
-          fi
+          ═══ 步骤 ═══
+          1. 先探索 workspace 结构, 找到 monorepo 根目录 (通常 projects/ 下的 git repo)
+          2. 在正确目录执行 pnpm build
+          3. 如果 build 失败, 分析错误并尝试修复 (最多 2 轮)
+          4. build 通过后, 执行 pnpm test
+          5. 如果 test 失败, 分析失败原因并尝试修复 (最多 2 轮)
 
-          pnpm test 2>&1
-          TEST_EXIT=$?
-          if [ $TEST_EXIT -ne 0 ]; then
-            echo "TEST FAILED"
-            echo "{\"vars_update\": {\"build_status\": \"failed\"}}"
-            exit 1
-          fi
-
-          echo "BUILD + TEST PASSED"
-          echo "{\"vars_update\": {\"build_status\": \"passed\"}}"
+          ═══ 输出 ═══
+          最后输出 vars_update JSON:
+          成功: {"vars_update": {"build_status": "passed"}}
+          失败: {"vars_update": {"build_status": "failed"}}
 
       # ----------------------------------------------------------
       # Phase 2: Code Review (裁判 ≠ 球员)
@@ -673,17 +667,16 @@ nodes:
       # ----------------------------------------------------------
 
       - id: integration-verify
-        type: bash
+        type: agent
         depends_on: [integration-gate, code-review]
-        bash: |
-          echo "═══ Post-Review Integration Verify ═══"
-          pnpm build 2>&1 && pnpm test 2>&1
-          if [ $? -eq 0 ]; then
-            echo "PASSED"
-          else
-            echo "FAILED after review fixes"
-            exit 1
-          fi
+        prompt: |
+          ═══ Post-Review Integration Verify ═══
+          Code review 可能修改了代码。重新验证 build + test。
+
+          1. 找到 monorepo 根目录 (workspace projects/ 下)
+          2. 执行 pnpm build && pnpm test
+          3. 如果失败, 分析并修复 (最多 1 轮)
+          4. 输出 vars_update: {"vars_update": {"verify_status": "passed|failed"}}
 
       # ----------------------------------------------------------
       # Phase 3: Deploy (本地开发环境)
