@@ -117,6 +117,10 @@ export class SimulatorExecutorFactory {
       case "octopus_agent":
         // octopus_agent uses same mock semantics as agent (output + status + update_vars)
         return new MockAgentExecutor(node, this.pool, mockDef as any)
+      case "sub_workflow":
+      case "dynamic_sub_workflow":
+        // sub-workflow types use same mock semantics as agent (output + status + update_vars)
+        return new MockAgentExecutor(node, this.pool, mockDef as any)
       default:
         throw new Error(`Unknown node type: ${node.type}`)
     }

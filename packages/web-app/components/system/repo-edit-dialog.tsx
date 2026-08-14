@@ -30,6 +30,7 @@ import {
 } from "@/components/ui/select"
 import { Trash2 } from "lucide-react"
 import type { ManifestEntry } from "@octopus/shared"
+import { getServerUrl } from "@/lib/server-config"
 
 interface RepoEditDialogProps {
   open: boolean
@@ -86,7 +87,7 @@ export function RepoEditDialog({
     setSaving(true)
     setError(null)
 
-    const serverUrl = process.env.NEXT_PUBLIC_SERVER_URL || "http://localhost:3001"
+    const serverUrl = getServerUrl()
     const manual_tags = tags
       .split(",")
       .map(t => t.trim())
@@ -127,7 +128,7 @@ export function RepoEditDialog({
     setDeleting(true)
     setError(null)
 
-    const serverUrl = process.env.NEXT_PUBLIC_SERVER_URL || "http://localhost:3001"
+    const serverUrl = getServerUrl()
 
     try {
       const res = await fetch(

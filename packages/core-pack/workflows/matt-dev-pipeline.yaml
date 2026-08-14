@@ -1,0 +1,1025 @@
+# yaml-language-server: $schema=./workflow-schema.json
+apiVersion: octopus/v1
+kind: Workflow
+
+# ============================================================
+# Matt Dev Pipeline — 验证驱动的端到端开发流水线
+# Requirement Clarification → Spec + Issues → DAG Execution →
+# Code Review → E2E Verification → Ship → Convergence Loop
+# ============================================================
+#
+# 基于三个 skill 方法论 + mattpocock-skills 原始 skills 的组合编排:
+#   1. matt-verified-requirement — 需求澄清 (interaction 节点)
+#   2. matt-dev-pipeline — 5 阶段开发流水线 (dynamic_sub_workflow)
+#   3. matt-pipeline-loop — 验证驱动迭代循环 (loop 节点)
+#
+# 所有节点使用 mattpocock-skills 原始 skills,
+# prompt 中声明具体 skill 并嵌入定制逻辑。
+#
+# DAG 拓扑 (pipeline-loop 内部):
+#
+#   iteration-setup (bash)
+#        │
+#   iter-spec-regen (agent, R2+ only)
+#        │
+#   parse-and-execute (dynamic_sub_workflow)
+#        │
+#    ┌───┴───┐
+#   code-review   integration-gate
+#    └───┬───┘
+#   integration-verify
+#        │
+#   deploy-check
+#        │
+#   e2e-verify-loop (nested loop)
+#        │
+#   ship-pr
+#        │
+#   verification-report
+#        │
+#   convergence-check
+#        │
+#   gap-generator (execute_when CONTINUE)
+#
+# ============================================================
+
+name: matt-dev-pipeline
+description: |
+  验证驱动的端到端开发流水线。
+  swarm 研究 → interaction 需求澄清 → spec+issues →
+  loop(DAG 执行 → CodeReview → E2E → Ship → 验证审计 → 收敛检查)。
+  使用 mattpocock-skills 原始 skills + prompt 定制。
+execution_mode: auto
+
+# --- 输入 ---
+inputs:
+  idea:
+    description: "你的 Idea — 描述想要实现的功能或需求"
+    required: true
+  feature:
+    description: "Feature slug (可选) — 不提供则从 Idea 自动生成 kebab-case"
+    required: false
+    default: ""
+  max_iterations:
+    description: "最大迭代次数 (收敛循环)"
+    required: false
+    default: "5"
+
+# --- 变量 ---
+variables:
+  # 基础上下文 (pipeline-init 设置)
+  branch: ""
+  feature: ""
+  remote_type: ""
+
+  # 迭代控制 (pipeline-loop)
+  iteration_slug: ""
+  iteration_round: "1"
+  convergence_decision: ""
+  loop_status: "running"
+
+  # Phase 状态
+  e2e_status: ""
+  e2e_decision: ""
+  build_status: ""
+  review_status: ""
+
+# --- 资源依赖 ---
+requires:
+  skills:
+    - mattpocock-skills/implement
+    - mattpocock-skills/tdd
+    - mattpocock-skills/code-review
+    - mattpocock-skills/to-spec
+    - mattpocock-skills/to-tickets
+    - mattpocock-skills/diagnosing-bugs
+    - mattpocock-skills/research
+    - mattpocock-skills/grilling
+    - mattpocock-skills/domain-modeling
+    - mattpocock-skills/handoff
+
+# --- 通知 ---
+providers:
+  hermes-cli:
+    type: hermes
+    timeout: 30
+    min_severity: info
+
+channels:
+  xzf_hermes:
+    provider: hermes-cli
+    target: "telegram:xzf_hermes"
+
+# --- 钩子 ---
+hooks:
+  on_workflow_failure:
+    - id: notify-failure
+      type: notify
+      channel: xzf_hermes
+      template:
+        severity: error
+        title: "❌ matt-dev-pipeline — 工作流失败"
+        body: "🌿 $vars.feature @ $vars.branch\n🔴 失败节点: ${hook.failed_node_id | default:unknown}\n⏱️ 已运行: ${hook.total_duration_ms | duration}\n💡 错误: ${hook.error | default:Unknown error}"
+
+  on_complete:
+    - id: notify-complete
+      type: notify
+      channel: xzf_hermes
+      template:
+        severity: info
+        title: "🏁 matt-dev-pipeline — 工作流完成"
+        body: "🌿 $vars.feature @ $vars.branch\n✅ 完成: ${hook.completed_count | default:0}\n⏱️ 总耗时: ${hook.total_duration_ms | duration}\n📊 最终决策: $vars.convergence_decision"
+
+  on_node_success:
+    - id: notify-init
+      type: notify
+      nodes: [pipeline-init]
+      channel: xzf_hermes
+      template:
+        severity: info
+        title: "✅ 初始化完成"
+        body: "🌿 $vars.feature @ $vars.branch | Remote: $vars.remote_type"
+
+    - id: notify-research
+      type: notify
+      nodes: [idea-research]
+      channel: xzf_hermes
+      template:
+        severity: info
+        title: "🔍 Codebase 研究完成"
+        body: "🌿 $vars.feature"
+
+    - id: notify-clarify
+      type: notify
+      nodes: [requirement-clarify]
+      channel: xzf_hermes
+      template:
+        severity: info
+        title: "💬 需求澄清完成"
+        body: "🌿 $vars.feature"
+
+    - id: notify-dag
+      type: notify
+      nodes: [parse-and-execute]
+      channel: xzf_hermes
+      template:
+        severity: info
+        title: "⚡ DAG 执行完成"
+        body: "🌿 $vars.feature (Round $vars.iteration_round)"
+
+    - id: notify-e2e
+      type: notify
+      nodes: [e2e-verify-loop]
+      channel: xzf_hermes
+      template:
+        severity: info
+        title: "🎯 E2E 验证完成"
+        body: "🌿 $vars.feature | $vars.e2e_status"
+
+    - id: notify-ship
+      type: notify
+      nodes: [ship-pr]
+      channel: xzf_hermes
+      template:
+        severity: info
+        title: "🚀 Ship 完成"
+        body: "🌿 $vars.feature @ $vars.branch"
+
+    - id: notify-verify
+      type: notify
+      nodes: [verification-report]
+      channel: xzf_hermes
+      template:
+        severity: info
+        title: "📊 验证报告完成"
+        body: "🌿 $vars.feature | $vars.convergence_decision"
+
+# ============================================================
+# Nodes
+# ============================================================
+
+nodes:
+  # ============================================================
+  # Stage 0: 环境初始化
+  # ============================================================
+
+  - id: pipeline-init
+    type: agent
+    prompt: |
+      初始化 matt-dev-pipeline 工作环境。
+
+      ═══ 输入 ═══
+      Idea: $inputs.idea
+      Feature: $inputs.feature (空则从 Idea 生成 kebab-case slug)
+
+      ═══ 执行 ═══
+      1. 检测当前 git 分支
+      2. 生成 feature slug (kebab-case, 英文小写+连字符)
+      3. 创建产物目录: .scratch/<feature-slug>/
+         ├── issues/          ← DAG tickets
+         ├── e2e-scripts/     ← E2E 测试脚本
+         ├── e2e-screenshots/ ← 浏览器截图证据
+         └── e2e-data/        ← 测试数据
+      4. 写入 idea 到 .scratch/<feature-slug>/idea.md
+      5. 检测 remote 类型 (github / gitlab)
+      6. 创建并切换到 feat/<feature-slug> 分支 (如不存在)
+      7. 扫描 workspace 拓扑 (monorepo packages)
+
+      ═══ 输出 ═══
+      汇报: 分支名, feature slug, remote 类型, workspace 项目数
+
+      最后输出 vars_update JSON:
+      {"vars_update": {"branch": "{git branch}", "feature": "{feature slug}", "remote_type": "{github|gitlab}", "iteration_slug": "{feature slug}"}}
+
+  # ============================================================
+  # Stage 1: Codebase 研究 (swarm debate)
+  # ============================================================
+  # 使用 research skill, 多专家辩论探索 codebase。
+  # 输出 research-brief 供需求澄清阶段参考。
+
+  - id: idea-research
+    type: swarm
+    depends_on: [pipeline-init]
+    mode: debate
+    dynamic: true
+    max_experts: 3
+    rounds: 2
+    consensus_threshold: 0.7
+    context_tier: "200k"
+    topic: |
+      ═══ Codebase Research Debate ═══
+
+      读取:
+      - Idea: .scratch/$vars.feature/idea.md
+      - Workspace: .scratch/$vars.feature/ (目录结构)
+
+      ═══ 辩论焦点 ═══
+      围绕这个 Idea 进行聚焦讨论:
+      1. 这个 Idea 涉及哪些模块？证据是什么？（引用具体源码文件和行号）
+      2. 现有模式哪些可复用？哪些需要新建或改造？
+      3. 有什么约束和风险？（技术债、性能、兼容性）
+
+      ⚠️ 互相挑战对方的假设
+      ⚠️ 每位专家发言控制在 1000 字以内
+      ⚠️ 如果某专家的领域与这个 Idea 无关, 直接说"本领域无重大影响"
+
+      使用 research skill 方法论进行代码库探索。
+    expert_defaults:
+      tools: [Read, Grep, Glob, Bash]
+    host:
+      role: research-synthesizer
+      prompt: |
+        读取所有轮次的讨论记录。综合达成共识的结论, 标注仍有分歧的点。
+
+        ═══ 输出 ═══
+        写入 .scratch/$vars.feature/research-brief.md:
+
+        ```markdown
+        # Research Brief
+
+        ## Affected Modules
+        | 模块/包 | 影响类型 | 现有代码定位 | 证据 |
+
+        ## Existing Patterns to Reuse
+        - {pattern}: {在哪里} → {本 Idea 如何复用}
+
+        ## Constraints & Risks
+        - {constraint}: {原因} → {对实现的影响}
+
+        ## Open Questions
+        {专家间仍有分歧的点, 需在澄清阶段确认}
+        ```
+
+        ⚠️ 只保留有价值的结论。不填充无内容的章节。
+
+        最后输出 2-3 句话总结研究结论和待澄清问题数量。
+
+  # ============================================================
+  # Stage 2: 需求澄清 (interaction + grilling + domain-modeling)
+  # ============================================================
+  # 使用 interaction 节点实现多轮对话式需求澄清。
+  # interaction agent 使用 grilling skill 方法论,
+  # 逐步提问直到需求完整确认。
+
+  - id: requirement-clarify
+    type: interaction
+    depends_on: [idea-research]
+    interaction_display: panel
+    interaction_max_rounds: 15
+    interaction_timeout: 600
+    interaction_exit_when: '$vars.requirements_confirmed == "true"'
+    interaction_agent:
+      model: pro-max
+      prompt: |
+        你是需求澄清专家。使用 grilling skill 方法论进行多轮需求对话。
+        同时使用 domain-modeling skill 维护术语表。
+
+        ═══ 上下文 ═══
+        Idea: $inputs.idea
+        Feature: $vars.feature
+        Research: .scratch/$vars.feature/research-brief.md
+        产物目录: .scratch/$vars.feature/
+
+        ═══ grilling skill 方法论 ═══
+        1. 一次一个问题 (one question at a time)
+        2. 不要问可以自己查到的事 (环境/代码结构自己探索)
+        3. 只问需要用户决策的问题
+        4. 每个问题带推荐答案
+        5. 质疑模糊表述 ("你说的 'account' 是 Member 还是 User?")
+
+        ═══ 覆盖维度 (逐步覆盖, 不必按顺序) ═══
+        a) 功能范围: 做什么? 不做什么?
+        b) 数据模型: 哪些表/字段?
+        c) 接口契约: API 路径/参数/响应
+        d) 前端交互: 页面流程/组件结构
+        e) 验证策略: 怎么知道做对了? (核心问题)
+        f) 验收标准: 用户故事 + 可验证的 AC
+
+        ═══ domain-modeling skill ═══
+        - 新术语出现时, 立即写入 CONTEXT.md (或 CONTEXT-MAP.md)
+        - 交叉验证已有术语, 发现矛盾时挑战用户
+        - 有重大架构决策时, 创建 ADR (docs/adr/NNNN-slug.md)
+
+        ═══ 完成条件 ═══
+        当所有维度覆盖完毕:
+        1. 生成确认摘要, 展示给用户
+        2. 用户确认后, 写入:
+           - .scratch/$vars.feature/brief.md (轻量摘要, 一页纸)
+           - .scratch/$vars.feature/verification-strategy.md (验证策略: 环境/AC映射/方法详情)
+        3. 输出 vars_update:
+           {"vars_update": {"requirements_confirmed": "true"}}
+
+        ═══ 原则 ═══
+        - 不写实现代码, 只记录决策
+        - 交叉验证 research-brief.md 和代码
+        - 每个 AC 必须有绑定的验证方法
+
+  # ============================================================
+  # Stage 3: Spec + Issues 生成 (to-spec + to-tickets)
+  # ============================================================
+
+  - id: spec-and-issues
+    type: agent
+    depends_on: [requirement-clarify]
+    prompt: |
+      使用 to-spec skill 生成技术规格, 使用 to-tickets skill 生成 DAG tickets。
+
+      ═══ 增强方法论 (在 skill 基础上追加) ═══
+      Spec 增强:
+      - 每个 User Story 必须绑定验证方法 (unit/integration/E2E/manual)
+      - 必须包含 Verification Strategy 章节: 环境/测试用户/AC映射/方法详情
+      - 反假跑标准 R1-R8: 真实服务/业务断言/交叉验证/证据/副作用/真实登录/数据隔离/可重复
+
+      Tickets 增强:
+      - 每个 ticket 必须有 Verification Method 章节 (具体命令/SQL/断言)
+      - 垂直切片: 每个 ticket 横穿全栈 (DB→API→UI→test)
+      - Blocked by 声明依赖 → 形成 DAG
+      - 命名: 01-<slug>.md, 02-<slug>.md
+      - 依赖顺序: DB → Entity → Service → Controller → Frontend → E2E
+
+      ═══ 读取 ═══
+      - Brief: .scratch/$vars.feature/brief.md
+      - Verification Strategy: .scratch/$vars.feature/verification-strategy.md
+      - Research: .scratch/$vars.feature/research-brief.md
+
+      ═══ 输出 ═══
+
+      1. Spec:
+         .scratch/$vars.feature/spec.md
+
+         必须章节:
+         - Problem Statement + Solution
+         - Feature Scope (Do / Don't)
+         - Key Decisions 表
+         - User Stories (穷举, 每个绑定验证方法)
+         - Implementation Decisions (模块/接口/数据模型/API)
+         - Data Model Changes 表
+         - API Contracts 表
+         - Verification Strategy (环境/用户/AC映射/方法详情/R1-R8)
+         - Glossary (新术语)
+         - Appendix: Core User Stories 闭环验证
+
+      2. Issues (DAG tickets):
+         .scratch/$vars.feature/issues/NN-slug.md
+
+         每个 ticket 格式:
+         ```
+         # NN — Title
+
+         ## What to build
+         <端到端行为描述, 用户视角>
+
+         ## Blocked by
+         <前置 ticket 编号 或 "None">
+
+         ## Status
+         ready-for-agent
+
+         ## Acceptance Criteria
+         - [ ] AC1: <可验证条件>
+         - [ ] AC2: <可验证条件>
+
+         ## Verification Method
+         **Verification type**: <unit test / integration test / browser E2E / manual>
+         **Verification steps**: <具体命令/SQL/断言>
+         **Pass criteria**: All verification steps PASS
+         ```
+
+      3. 索引:
+         .scratch/$vars.feature/spec-index.md
+         (按执行顺序: # | 标题 | Tickets 数 | Depends)
+
+      ═══ 原则 ═══
+      - 不写实现代码, 只写决策和接口
+      - 每个 AC 有对应验证方法
+      - 无依赖的 tickets 可并行 (同一 stage)
+
+      最后输出 vars_update JSON:
+      {"vars_update": {"issue_count": "<N>", "stage_count": "<M>"}}
+
+  # ============================================================
+  # Stage 4: Pipeline Loop (matt-pipeline-loop 方法论)
+  # 迭代执行完整流水线, 直到收敛或 hard stop
+  # ============================================================
+
+  - id: pipeline-loop
+    type: loop
+    depends_on: [spec-and-issues]
+    max_iterations: 5
+    break_when: '$vars.convergence_decision == "GO" || $vars.loop_status == "MAX_REACHED" || $vars.loop_status == "REGRESSION" || $vars.loop_status == "STALLED"'
+    nodes:
+      # ----------------------------------------------------------
+      # 4.0: 迭代初始化
+      # ----------------------------------------------------------
+
+      - id: iteration-setup
+        type: bash
+        bash: |
+          FEATURE="$vars.feature"
+          ROUND="$vars.iteration_round"
+
+          # R1 用原始 slug, R2+ 加后缀
+          if [ "$ROUND" = "1" ]; then
+            SLUG="$FEATURE"
+          else
+            SLUG="${FEATURE}-r${ROUND}"
+          fi
+
+          echo "═══ Iteration $ROUND | Slug: $SLUG ═══"
+
+          # 确保目录
+          mkdir -p ".scratch/$SLUG/issues"
+          mkdir -p ".scratch/$SLUG/e2e-scripts"
+          mkdir -p ".scratch/$SLUG/e2e-screenshots"
+          mkdir -p ".scratch/$SLUG/e2e-data"
+
+          # 清理旧 E2E 截图 (收敛检查 L4 需要精确计数)
+          rm -f ".scratch/$SLUG/e2e-screenshots"/*.png 2>/dev/null
+
+          echo "{\"vars_update\": {\"iteration_slug\": \"$SLUG\", \"e2e_status\": \"\", \"e2e_decision\": \"\", \"build_status\": \"\", \"review_status\": \"\"}}"
+
+      # ----------------------------------------------------------
+      # 4.1: Spec + Issues 重新生成 (仅 R2+, gap brief → spec)
+      # R1 使用上游 spec-and-issues 的产物, 此节点跳过
+      # ----------------------------------------------------------
+
+      - id: iter-spec-regen
+        type: agent
+        depends_on: [iteration-setup]
+        execute_when: '$vars.iteration_round != "1"'
+        prompt: |
+          ═══ Gap-fix 迭代 — 使用 to-spec + to-tickets skill ═══
+          Round: $vars.iteration_round | Slug: $vars.iteration_slug
+
+          ═══ 读取 ═══
+          - 原始 brief: .scratch/$vars.feature/brief.md
+          - 上一轮验证报告: .scratch/$vars.feature/verification-report.md
+          - 上一轮 gap brief: .scratch/$vars.feature/gap-brief.md (如有)
+          - 原始 spec: .scratch/$vars.feature/spec.md
+          - Carryover: .scratch/$vars.feature/carryover.md (如有)
+
+          ═══ 生成 ═══
+          基于验证报告的 Gap Analysis, 生成针对失败项的:
+
+          1. Gap Brief: .scratch/$vars.iteration_slug/brief.md
+             - Carryover 表 (上一轮非 PASS 的 AC: SKIP→P0, PARTIAL→P1, FAIL→P0)
+             - Gap Targets: 每个 gap 包含 What failed / Why / Required fix / Verification
+             - Feature Scope: 只修 gap, 不动工作代码
+             - Anti-Fake-Run 条款 (测试写了但不执行 = 0%)
+
+          2. Spec: .scratch/$vars.iteration_slug/spec.md
+             (基于 gap brief, 引用原始 spec 中不修改的部分)
+
+          3. Issues: .scratch/$vars.iteration_slug/issues/
+             (清空后重写 gap tickets, 每个绑定验证方法)
+
+          ═══ 原则 ═══
+          - 3-5 个 gap items, 不超过
+          - 只修失败项, 不碰工作代码
+          - BLOCKED gaps (连续 2 轮无改善) → 标记排除
+          - 每个 gap ticket 必须有 Verification Method
+
+          最后输出 vars_update JSON:
+          {"vars_update": {"issue_count": "<N>"}}
+
+      # ----------------------------------------------------------
+      # Phase 1: DAG 执行 (dynamic_sub_workflow)
+      # LLM 读取 issues/ → 生成 DAG → 引擎并发执行
+      # ----------------------------------------------------------
+
+      - id: parse-and-execute
+        type: dynamic_sub_workflow
+        depends_on: [iter-spec-regen]
+        workflow: ticket-dag
+        on_error: continue
+        prompt: |
+          你是 DAG 规划器。读取 issues 目录中的所有 ticket, 构建执行 DAG。
+
+          Issues 目录: .scratch/$vars.iteration_slug/issues/
+          Spec 文件: .scratch/$vars.iteration_slug/spec.md
+
+          ═══ 步骤 ═══
+          1. 列出 issues/ 中所有 .md 文件
+          2. 读取每个文件, 提取:
+             - Ticket ID (文件名前缀数字, 如 01)
+             - Ticket Title
+             - "Blocked by" 字段 (依赖关系)
+             - "Status" 字段 (跳过 status: done 或 skip 的)
+          3. 构建依赖图
+          4. 为每个待执行的 ticket 创建一个 agent 节点:
+
+          节点格式:
+          ```json
+          {
+            "id": "ticket-NN",
+            "type": "agent",
+            "prompt": "你是实现者, 执行 ticket NN。\n\nSpec: .scratch/<slug>/spec.md\nTicket: .scratch/<slug>/issues/NN-slug.md\n\n使用 implement skill 和 tdd skill 方法论:\n1. Read spec + ticket 理解需求\n2. 探索类似代码 (找 analog, grep 跨包)\n3. TDD 实现 (DB → API → UI → test)\n4. 运行 ticket 的 Verification Method\n5. 更新 ticket Status: done 或 skip\n\n你是多个并发实现者之一。只关注你的 ticket。\n不要修改其他 ticket 的文件。不要 commit。\n\n最后输出 vars_update: {\"vars_update\": {\"ticket_NN_status\": \"done|skip\"}}",
+            "skills": ["implement", "tdd"],
+            "depends_on": ["ticket-XX"]
+          }
+          ```
+
+          ═══ 约束 ═══
+          - 所有节点必须是 type: "agent"
+          - 不允许循环依赖
+          - 无依赖的 ticket 并行执行
+          - depends_on 引用 ticket ID (如 "ticket-01")
+          - 已完成 (done/skip) 的 ticket 不创建节点
+
+      # ----------------------------------------------------------
+      # Phase 1.5: 集成检查 (DAG 后统一 build + test)
+      # ----------------------------------------------------------
+
+      - id: integration-gate
+        type: bash
+        depends_on: [parse-and-execute]
+        bash: |
+          echo "═══ Integration Gate ═══"
+
+          pnpm build 2>&1
+          BUILD_EXIT=$?
+          if [ $BUILD_EXIT -ne 0 ]; then
+            echo "BUILD FAILED"
+            echo "{\"vars_update\": {\"build_status\": \"failed\"}}"
+            exit 1
+          fi
+
+          pnpm test 2>&1
+          TEST_EXIT=$?
+          if [ $TEST_EXIT -ne 0 ]; then
+            echo "TEST FAILED"
+            echo "{\"vars_update\": {\"build_status\": \"failed\"}}"
+            exit 1
+          fi
+
+          echo "BUILD + TEST PASSED"
+          echo "{\"vars_update\": {\"build_status\": \"passed\"}}"
+
+      # ----------------------------------------------------------
+      # Phase 2: Code Review (裁判 ≠ 球员)
+      # 使用 code-review skill, 主 agent 天然独立于实现代码
+      # ----------------------------------------------------------
+
+      - id: code-review
+        type: agent
+        depends_on: [parse-and-execute]
+        prompt: |
+          使用 code-review skill 独立审查所有代码变更。
+          主 agent 从没看过实现过程, 天然独立 → 直接审查。
+
+          ═══ 审查范围 ═══
+          Branch: $vars.branch (对比 origin/main...HEAD)
+          Spec: .scratch/$vars.iteration_slug/spec.md
+
+          ═══ 三轴审查 ═══
+          1. Standards: 编码规范 + code smells
+          2. Spec: diff 对照 spec — 遗漏需求 / 范围蔓延 / 实现偏差
+          3. Completeness: diff 对照同类实现 — 遗漏文件 / 数据流断链
+
+          ═══ 严重度分类 ═══
+          - 🔴 Must fix: 直接 Edit 修复 → pnpm test 验证
+          - 🟡 Should fix: 直接 Edit 修复 → pnpm test 验证
+          - 🔵 Note: 记入报告, 不修复
+
+          ═══ 修复纪律 ═══
+          - 主 Agent 直接 Edit 修复 (不要重新 spawn 实现者)
+          - 修复后 pnpm test 验证
+          - 最多 2 轮 review-fix 循环
+          - 🔴 持续 2 轮 → 记入报告, 继续 (不阻断)
+
+          ═══ 输出 ═══
+          写入: .scratch/$vars.iteration_slug/code-review.md
+
+          最后输出 vars_update JSON:
+          {"vars_update": {"review_status": "passed|has_notes|has_fixes"}}
+
+      # ----------------------------------------------------------
+      # Phase 2.5: 集成验证 (Code Review 修复后)
+      # ----------------------------------------------------------
+
+      - id: integration-verify
+        type: bash
+        depends_on: [integration-gate, code-review]
+        bash: |
+          echo "═══ Post-Review Integration Verify ═══"
+          pnpm build 2>&1 && pnpm test 2>&1
+          if [ $? -eq 0 ]; then
+            echo "PASSED"
+          else
+            echo "FAILED after review fixes"
+            exit 1
+          fi
+
+      # ----------------------------------------------------------
+      # Phase 3: Deploy (本地开发环境)
+      # ----------------------------------------------------------
+
+      - id: deploy-check
+        type: bash
+        depends_on: [integration-verify]
+        bash: |
+          echo "═══ Deploy Check ═══"
+          echo "本地开发模式 — 无需 CI/CD"
+
+          # 检查 dev server (E2E 需要)
+          if curl -s http://localhost:3001/api/health >/dev/null 2>&1; then
+            echo "Dev server: RUNNING on :3001"
+          else
+            echo "Dev server: NOT RUNNING — E2E 阶段将尝试启动"
+          fi
+
+      # ----------------------------------------------------------
+      # Phase 4: E2E 验证 (nested loop — 重试直到通过或跳过)
+      # ----------------------------------------------------------
+
+      - id: e2e-verify-loop
+        type: loop
+        depends_on: [deploy-check]
+        max_iterations: 5
+        break_when: '$vars.e2e_status == "passed" || $vars.e2e_decision == "skip"'
+        nodes:
+          # 4.1: 确保 dev server 运行
+          - id: ensure-dev-server
+            type: bash
+            bash: |
+              if curl -s http://localhost:3001/api/health >/dev/null 2>&1; then
+                echo "Dev server already running on :3001"
+              else
+                echo "Starting dev server..."
+                pnpm dev --isolated &
+                for i in $(seq 1 30); do
+                  sleep 2
+                  if curl -s http://localhost:3001/api/health >/dev/null 2>&1; then
+                    echo "Dev server ready after ${i}x2 seconds"
+                    break
+                  fi
+                done
+              fi
+
+          # 4.2: E2E 测试执行 (使用 implement + diagnosing-bugs skill)
+          - id: e2e-runner
+            type: agent
+            depends_on: [ensure-dev-server]
+            timeout: 1800
+            prompt: |
+              执行全量 E2E 验证。使用 implement skill 和 diagnosing-bugs skill 方法论。
+
+              ═══ 上下文 ═══
+              Feature: $vars.iteration_slug
+              Artifacts: .scratch/$vars.iteration_slug/
+              Spec: .scratch/$vars.iteration_slug/spec.md
+
+              ═══ 环境 ═══
+              export E2E_ARTIFACTS_DIR=.scratch/$vars.iteration_slug
+
+              ═══ 执行流程 ═══
+              1. 读取 spec.md 的 Verification Strategy 和 AC 表
+              2. 按 AC 顺序执行:
+                 - API Integration Tests (curl, 对照反假跑标准 R1-R8)
+                 - Browser E2E (Playwright, 截图到 e2e-screenshots/)
+                 - DB/Cache Cross-validation (SQL 查询)
+              3. 失败 AC:
+                 - Quick Fix (1 次, 小问题直接修)
+                 - diagnosing-bugs skill (1 次, 复杂问题深度诊断)
+                 - re-test
+              4. 收集证据:
+                 - 截图: .scratch/$vars.iteration_slug/e2e-screenshots/
+                 - 脚本: .scratch/$vars.iteration_slug/e2e-scripts/
+                 - 数据: .scratch/$vars.iteration_slug/e2e-data/
+
+              ═══ 反假跑标准 (每个测试必须通过) ═══
+              R1: 真实服务, 非 mock
+              R2: 断言业务字段值 (不只是 200 OK)
+              R3: API ↔ DB 至少双向交叉验证
+              R4: ≥ 2 种证据 (截图+响应体, SQL+API)
+              R5: 写操作验证 DB 变化
+              R6: 通过真实登录获取 token
+              R7: E2E_TEST_ 前缀数据, 测试后清理
+              R8: 可重复, 无手动前置步骤
+
+              ═══ 输出 ═══
+              写入: .scratch/$vars.iteration_slug/e2e-report.md
+              格式: 每个 AC → PASS/FAIL + 证据路径 + 修复记录
+
+              最后输出 vars_update JSON:
+              全通过: {"vars_update": {"e2e_status": "passed"}}
+              有失败: {"vars_update": {"e2e_status": "failed"}}
+
+      # ----------------------------------------------------------
+      # Phase 4.3-4.4: E2E 失败处理 (pipeline-loop 级别, 非嵌套 loop 内部)
+      # ----------------------------------------------------------
+
+      # 4.3: E2E 失败 → 通知用户
+      - id: e2e-notify
+        type: bash
+        depends_on: [e2e-verify-loop]
+        execute_when: '$vars.e2e_status == "failed"'
+        bash: |
+          echo "E2E 测试有失败"
+          echo "报告: .scratch/$vars.iteration_slug/e2e-report.md"
+
+      # 4.4: E2E 失败 → 用户决定重试或跳过
+      - id: e2e-approval
+        type: approval
+        depends_on: [e2e-notify]
+        execute_when: '$vars.e2e_status == "failed"'
+        prompt: |
+          E2E 测试仍有失败 | Loop Round $iteration
+          📁 .scratch/$vars.iteration_slug/e2e-report.md
+          在评论中输入修复指导, 或选择重试/跳过。
+        options:
+          - label: "重试"
+            value: "retry"
+          - label: "跳过"
+            value: "skip"
+        outputs:
+          $vars.e2e_decision: "$last_output"
+
+      # ----------------------------------------------------------
+      # Phase 5: Ship (Git PR + Pipeline Report)
+      # 使用 handoff skill 记录迭代交接
+      # ----------------------------------------------------------
+
+      - id: ship-pr
+        type: agent
+        depends_on: [e2e-verify-loop]
+        tools: [Read, Bash, Grep, Glob]
+        prompt: |
+          完成 Ship 交付: Pipeline Report + Git PR。
+          使用 handoff skill 方法论记录迭代交接。
+
+          ═══ 上下文 ═══
+          Feature slug: $vars.iteration_slug
+          Branch: $vars.branch
+          Remote type: $vars.remote_type
+          Artifacts: .scratch/$vars.iteration_slug/
+
+          ═══ 执行 ═══
+          1. 生成 pipeline-report.md:
+             .scratch/$vars.iteration_slug/pipeline-report.md
+
+             章节:
+             - Phase 1: DAG Orchestration (tickets/stage/status)
+             - Phase 2: Code Review (findings/fixed/noted)
+             - Phase 3: Deploy (本地)
+             - Phase 4: E2E Verification (AC/status/evidence)
+             - Phase 5: Ship (PR links)
+             - Changed Files (git diff --stat)
+             - Remaining Issues
+
+          2. 检查变更 + Commit + Push:
+             git add -A
+             git commit -m "feat($vars.iteration_slug): pipeline artifacts"
+             git push origin $vars.branch
+
+          3. 创建或更新 PR:
+             - gh pr list --head $vars.branch --state open
+             - 已有 → gh pr edit (保留 MANUAL 区块)
+             - 无 → gh pr create
+
+          4. 更新 .scratch/index.md (feature 状态)
+
+          5. 使用 handoff skill 写入交接文件:
+             .scratch/$vars.iteration_slug/iteration-handoff.md
+             (Protected Decisions / Confirmed Interfaces / Gap Targets)
+
+          最后输出 vars_update JSON:
+          {"vars_update": {"pr_url": "<PR URL>"}}
+
+      # ----------------------------------------------------------
+      # 验证审计 (matt-verification-report 方法论)
+      # ----------------------------------------------------------
+
+      - id: verification-report
+        type: agent
+        depends_on: [ship-pr]
+        prompt: |
+          进行验证审计。使用 research skill 探索代码变更, 对照 spec 评估完整性。
+
+          ═══ 输入 ═══
+          Feature: .scratch/$vars.iteration_slug/
+          包含: brief.md, spec.md, issues/, pipeline-report.md,
+                e2e-scripts/, e2e-screenshots/, e2e-data/, code-review.md
+          Git: git diff origin/main...HEAD
+
+          ═══ 审计维度 ═══
+          1. Traceability Matrix: 需求 → 代码 → 测试 (COVERED/PARTIAL/MISSING)
+          2. Test Authenticity:
+             - 断言密度 (≥0.30 HIGH, 0.15-0.29 MEDIUM, <0.15 LOW)
+             - 空测试 / 重言式断言检测
+             - 负面测试比例 (≥30% HEALTHY, <20% HAPPY-PATH-ONLY)
+          3. Quality Gates:
+             - Spec Completeness 100%
+             - Code Completeness ≥90%
+             - Test Completeness ≥80%
+             - Build Health 0 errors
+             - Ticket Resolution ≥80% done
+          4. E2E 证据:
+             find .scratch/$vars.iteration_slug/e2e-screenshots -name "*.png" | wc -l
+             (spec 有浏览器 AC 时, 必须 > 0)
+
+          ═══ 评分覆盖 (反假跑) ═══
+          - 写了但未执行的测试 = 0% (不是 50%)
+          - 浏览器 E2E 未跑 = FAIL
+          - 缺失 pipeline-report.md = score 0
+
+          ═══ 收敛检查 (5 层) ═══
+          L1: pipeline_complete == true (所有 5 Phase 有产物)
+          L2: Carryover 清除 (历史非 PASS AC 已修复)
+          L3: 零 SKIP AC
+          L4: E2E 执行证据 (截图数 > 0 或 API-only feature)
+          L5: adjusted_score ≥ 85
+
+          ═══ 决策 ═══
+          - 全部 5 层通过 → GO
+          - L1-L4 未通过 → NO-GO
+          - 仅 L5 未通过 → REVIEW
+          - score 70-84 → REVIEW
+          - score < 70 → NO-GO
+
+          ═══ 输出 ═══
+          1. 写入: .scratch/$vars.iteration_slug/verification-report.md
+             (Executive Summary + Traceability + Quality Gates + Gap Analysis + Decision)
+
+          2. 更新 loop state: .scratch/$vars.feature/loop-state.json
+
+          3. 写入 carryover: .scratch/$vars.feature/carryover.md
+             (所有非 PASS AC: SKIP→P0, PARTIAL→P1)
+
+          最后输出 vars_update JSON:
+          {"vars_update": {"convergence_decision": "<GO|REVIEW|NO-GO>"}}
+
+      # ----------------------------------------------------------
+      # 收敛控制
+      # ----------------------------------------------------------
+
+      - id: convergence-check
+        type: agent
+        depends_on: [verification-report]
+        prompt: |
+          判断收敛状态, 更新 loop state, 决定是否继续迭代。
+
+          ═══ 读取 ═══
+          - 验证报告: .scratch/$vars.iteration_slug/verification-report.md
+          - Loop state: .scratch/$vars.feature/loop-state.json
+          - Carryover: .scratch/$vars.feature/carryover.md
+
+          ═══ 决策逻辑 ═══
+          基于 verification-report 的 decision:
+          - GO → convergence_decision = "GO" (循环结束)
+          - REVIEW 且 score ≥ 85 → convergence_decision = "GO"
+          - REVIEW 且 score < 85 → convergence_decision = "CONTINUE"
+          - NO-GO → convergence_decision = "CONTINUE"
+
+          Hard stop 检查:
+          - iteration_round ≥ $inputs.max_iterations → loop_status = "MAX_REACHED"
+          - 连续 2 轮 < 5 分提升 → loop_status = "STALLED"
+          - score 比上轮下降 → loop_status = "REGRESSION"
+
+          Hard stop 覆盖: 如果 hard stop 触发, convergence_decision 设为对应状态。
+
+          ═══ 更新 loop-state.json ═══
+          追加本轮:
+          {
+            "round": $vars.iteration_round,
+            "score": <N>,
+            "adjusted_score": <N>,
+            "decision": "<GO|REVIEW|NO-GO>",
+            "pipeline_complete": true,
+            "e2e_executed": <true|false>
+          }
+
+          如果 CONTINUE: iteration_round += 1
+
+          ═══ 输出 ═══
+          最后输出 vars_update JSON:
+          {"vars_update": {
+            "convergence_decision": "<GO|CONTINUE|MAX_REACHED|STALLED|REGRESSION>",
+            "loop_status": "<GO|running|MAX_REACHED|STALLED|REGRESSION>",
+            "iteration_round": "<N+1 if continuing>"
+          }}
+
+      # ----------------------------------------------------------
+      # Gap Brief 生成 (仅 CONTINUE 时执行)
+      # 为下一轮迭代准备聚焦的 spec + issues
+      # ----------------------------------------------------------
+
+      - id: gap-generator
+        type: agent
+        depends_on: [convergence-check]
+        execute_when: '$vars.convergence_decision == "CONTINUE"'
+        prompt: |
+          生成下一轮迭代的 gap brief + spec + issues。
+          使用 to-spec skill 和 to-tickets skill 方法论。
+
+          ═══ 读取 ═══
+          - 验证报告: .scratch/$vars.iteration_slug/verification-report.md
+          - Carryover: .scratch/$vars.feature/carryover.md
+          - 原始 brief: .scratch/$vars.feature/brief.md
+
+          ═══ 生成 ═══
+          1. Gap Brief: .scratch/$vars.feature/gap-brief.md
+             - Carryover 表 (上一轮非 PASS AC + 优先级)
+             - Gap Targets (3-5 个, 不超过):
+               每个: What failed / Why / Required fix / Verification
+             - Feature Scope: 只修 gap, 不动工作代码
+             - Anti-Fake-Run 条款
+
+          2. 新 Spec: .scratch/$vars.feature/spec.md (覆盖)
+             基于 gap brief, 引用原始 spec 中不修改的部分
+
+          3. 新 Issues: .scratch/$vars.feature/issues/ (清空后重写)
+             gap tickets, 每个绑定验证方法
+
+          ═══ 原则 ═══
+          - 外科手术式: 只修失败项
+          - 不碰工作代码 (上一轮 PASS 的部分)
+          - BLOCKED gaps (连续 2 轮无改善) → 标记排除, 不浪费迭代
+
+          最后输出 vars_update JSON:
+          {"vars_update": {"gap_count": "<N>"}}
+
+  # ============================================================
+  # Stage 5: Loop 总结 (pipeline-loop 退出后)
+  # ============================================================
+
+  - id: loop-summary
+    type: agent
+    depends_on: [pipeline-loop]
+    prompt: |
+      生成 matt-pipeline-loop 最终总结。
+
+      ═══ 读取 ═══
+      - Loop state: .scratch/$vars.feature/loop-state.json
+      - Carryover: .scratch/$vars.feature/carryover.md
+
+      ═══ 生成 ═══
+      写入: .scratch/$vars.feature/loop-summary.md
+
+      ```markdown
+      # Loop Summary — $vars.feature
+
+      ## Iteration History
+      | Round | Feature Slug | Score | Adjusted | Decision | Key Fix |
+      |-------|-------------|-------|----------|----------|---------|
+
+      ## Convergence
+      - Final score: <N>/100 (adjusted: <N>/100)
+      - Total iterations: <N>
+      - Status: <GO/MAX_REACHED/STALLED/REGRESSION>
+
+      ## Score Progression
+      <score1> → <score2> (+<diff>) → ...
+
+      ## Carryover History
+      | AC# | First Seen | Final Status | Rounds to Fix |
+      |-----|-----------|-------------|---------------|
+
+      ## Remaining Items
+      <BLOCKED 或 deferred 的项目>
+      ```
+
+      更新 .scratch/index.md 中当前 feature 的最终状态。
+
+      最后输出 vars_update JSON:
+      {"vars_update": {"loop_status": "completed"}}

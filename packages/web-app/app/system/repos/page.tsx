@@ -8,6 +8,7 @@ import { toast } from "sonner"
 import { OrgSelector } from "@/components/system/org-selector"
 import { RepoEditDialog } from "@/components/system/repo-edit-dialog"
 import { useOrgs } from "@/hooks/useOrgs"
+import { getServerUrl } from "@/lib/server-config"
 import type { ManifestEntry } from "@octopus/shared"
 
 interface ReposResponse {
@@ -40,7 +41,7 @@ export default function SystemReposPage() {
     setLoading(true)
     setError(null)
 
-    const serverUrl = process.env.NEXT_PUBLIC_SERVER_URL || "http://localhost:3001"
+    const serverUrl = getServerUrl()
     fetch(`${serverUrl}/api/repos?org=${encodeURIComponent(selectedOrg)}`)
       .then((res) => {
         if (!res.ok) throw new Error(`HTTP ${res.status}`)
@@ -87,7 +88,7 @@ export default function SystemReposPage() {
     const key = `${name}:${op}`
     setGitLoading(prev => ({ ...prev, [key]: true }))
 
-    const serverUrl = process.env.NEXT_PUBLIC_SERVER_URL || "http://localhost:3001"
+    const serverUrl = getServerUrl()
     try {
       const res = await fetch(
         `${serverUrl}/api/repos/${encodeURIComponent(name)}/${op}?org=${encodeURIComponent(selectedOrg)}`,
@@ -122,7 +123,7 @@ export default function SystemReposPage() {
   async function handleBatchOp(op: "pull-all" | "clone-missing") {
     setBatchLoading(prev => ({ ...prev, [op]: true }))
 
-    const serverUrl = process.env.NEXT_PUBLIC_SERVER_URL || "http://localhost:3001"
+    const serverUrl = getServerUrl()
     try {
       const res = await fetch(
         `${serverUrl}/api/repos/${op}?org=${encodeURIComponent(selectedOrg)}`,
@@ -149,7 +150,7 @@ export default function SystemReposPage() {
   async function handleRebuildIndex() {
     setBatchLoading(prev => ({ ...prev, "rebuild-index": true }))
 
-    const serverUrl = process.env.NEXT_PUBLIC_SERVER_URL || "http://localhost:3001"
+    const serverUrl = getServerUrl()
     try {
       const res = await fetch(
         `${serverUrl}/api/repos/rebuild-index?org=${encodeURIComponent(selectedOrg)}`,

@@ -424,6 +424,14 @@ function createAndExecuteMock(
       // octopus_agent uses same mock semantics as agent
       executor = new MockAgentExecutor(node, pool, mockDef as any)
       break
+    case "interaction":
+    case "sub_workflow":
+    case "dynamic_sub_workflow":
+    case "loop":
+      // These types use agent-like mock semantics (output + status + update_vars)
+      // Note: nested loops are mocked as a whole unit, not iterated
+      executor = new MockAgentExecutor(node, pool, mockDef as any)
+      break
     default:
       return Promise.resolve({
         outputs: {},

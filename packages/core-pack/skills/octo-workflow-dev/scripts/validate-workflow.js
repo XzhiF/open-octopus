@@ -188,6 +188,11 @@ function validateL1(yaml, result) {
           result.addError('L1', `type=sub_workflow requires workflow field`, node.id)
         }
         break
+      case 'dynamic_sub_workflow':
+        if (!node.prompt) {
+          result.addError('L1', `type=dynamic_sub_workflow requires prompt field`, node.id)
+        }
+        break
       default:
         if (node.type) {
           result.addError('L1', `Unknown node type: "${node.type}"`, node.id)

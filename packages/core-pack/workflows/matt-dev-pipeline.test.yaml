@@ -1,0 +1,442 @@
+# yaml-language-server: $schema=~/.octopus/test-fixture-schema.json
+scenarios:
+  # =============================================================
+  # Scenario 1: Happy Path — 全流程顺畅, pipeline 一轮收敛
+  # =============================================================
+  - name: "happy path — full pipeline, converge on iteration 1"
+    inputs:
+      idea: "添加用户认证功能"
+      feature: "user-auth"
+      max_iterations: "5"
+    mocks:
+      # --- Stage 0: Init ---
+      pipeline-init:
+        output: "初始化完成。分支: feat/user-auth, feature: user-auth, remote: github"
+        update_vars:
+          branch: "feat/user-auth"
+          feature: "user-auth"
+          remote_type: "github"
+          iteration_slug: "user-auth"
+
+      # --- Stage 1: Codebase Research (Swarm Debate) ---
+      idea-research:
+        output: "研究完成。影响模块: auth, user。待澄清问题: 3"
+        update_vars:
+          idea-research_synthesis: "研究报告: auth 模块需要新建, user 模块需扩展"
+          idea-research_consensus_score: "0.85"
+          idea-research_rounds_used: "2"
+          idea-research_expert_count: "3"
+
+      # --- Stage 2: Requirement Clarify (Interaction) ---
+      requirement-clarify:
+        summary: "需求澄清完成。功能范围、数据模型、API 契约、验证策略均已确认。"
+        rounds: 5
+        vars_update:
+          requirements_confirmed: "true"
+
+      # --- Stage 3: Spec + Issues ---
+      spec-and-issues:
+        output: "Spec 和 3 个 issues 已生成"
+        update_vars:
+          issue_count: "3"
+          stage_count: "2"
+
+      # --- Stage 4: Pipeline Loop (1 iteration, converge) ---
+      pipeline-loop:
+        iterations: 1
+        nodes:
+          iteration-setup:
+            output: "Iteration 1 | Slug: user-auth"
+            update_vars:
+              iteration_slug: "user-auth"
+              e2e_status: ""
+              e2e_decision: ""
+              build_status: ""
+              review_status: ""
+
+          parse-and-execute:
+            output: "DAG executed: 3 tickets completed"
+            update_vars:
+              ticket_01_status: "done"
+              ticket_02_status: "done"
+              ticket_03_status: "done"
+
+          integration-gate:
+            output: "BUILD + TEST PASSED"
+            exit_code: 0
+            update_vars:
+              build_status: "passed"
+
+          code-review:
+            output: "Code review 完成, 无重大发现"
+            update_vars:
+              review_status: "passed"
+
+          integration-verify:
+            output: "PASSED"
+            exit_code: 0
+
+          deploy-check:
+            output: "Dev server: RUNNING on :3001"
+            exit_code: 0
+
+          # Nested loop — simulator treats as agent-style mock
+          e2e-verify-loop:
+            output: "E2E 全部通过"
+            update_vars:
+              e2e_status: "passed"
+
+          ship-pr:
+            output: "Pipeline report 生成, PR 创建成功"
+            update_vars:
+              pr_url: "https://github.com/org/repo/pull/123"
+
+          verification-report:
+            output: "Score: 92/100, Decision: GO"
+            update_vars:
+              convergence_decision: "GO"
+
+          convergence-check:
+            output: "All 5 layers pass → GO"
+            update_vars:
+              convergence_decision: "GO"
+              loop_status: "GO"
+              iteration_round: "2"
+
+          gap-generator:
+            output: "Skipped (convergence reached)"
+
+      # --- Stage 5: Loop Summary ---
+      loop-summary:
+        output: "Loop 总结已生成: 1 iteration, score 92, GO"
+
+    assertions:
+      status: "completed"
+      vars:
+        branch: "feat/user-auth"
+        feature: "user-auth"
+        remote_type: "github"
+        convergence_decision: "GO"
+        loop_status: "GO"
+        e2e_status: "passed"
+      node_trace:
+        executed:
+          - pipeline-init
+          - idea-research
+          - requirement-clarify
+          - spec-and-issues
+          - pipeline-loop
+          - loop-summary
+
+  # =============================================================
+  # Scenario 2: E2E Failure + Skip — E2E 失败后用户选择跳过
+  # =============================================================
+  - name: "e2e failure then skip — user skips E2E, pipeline continues"
+    inputs:
+      idea: "添加搜索功能"
+      feature: "search"
+      max_iterations: "5"
+    mocks:
+      pipeline-init:
+        output: "初始化完成"
+        update_vars:
+          branch: "feat/search"
+          feature: "search"
+          remote_type: "github"
+          iteration_slug: "search"
+
+      idea-research:
+        output: "研究完成"
+        update_vars:
+          idea-research_synthesis: "搜索模块分析完成"
+          idea-research_consensus_score: "0.80"
+
+      requirement-clarify:
+        summary: "需求已确认"
+        rounds: 3
+        vars_update:
+          requirements_confirmed: "true"
+
+      spec-and-issues:
+        output: "Spec 和 2 个 issues"
+        update_vars:
+          issue_count: "2"
+          stage_count: "1"
+
+      pipeline-loop:
+        iterations: 2
+        nodes:
+          # Per-iteration mocks: [iter0, iter1]
+          iteration-setup:
+            - output: "Iteration 1 | Slug: search"
+              update_vars:
+                iteration_slug: "search"
+                e2e_status: ""
+                e2e_decision: ""
+                build_status: ""
+                review_status: ""
+            - output: "Iteration 2 | Slug: search-r2"
+              update_vars:
+                iteration_slug: "search-r2"
+                e2e_status: ""
+                build_status: ""
+                review_status: ""
+
+          iter-spec-regen:
+            - output: "Skipped (round 1)"
+            - output: "Gap spec regenerated for search-r2"
+              update_vars:
+                issue_count: "1"
+
+          parse-and-execute:
+            output: "DAG executed"
+            update_vars:
+              ticket_01_status: "done"
+
+          integration-gate:
+            output: "BUILD + TEST PASSED"
+            exit_code: 0
+            update_vars:
+              build_status: "passed"
+
+          code-review:
+            output: "Code review passed"
+            update_vars:
+              review_status: "passed"
+
+          integration-verify:
+            output: "PASSED"
+            exit_code: 0
+
+          deploy-check:
+            output: "Dev server running"
+            exit_code: 0
+
+          # Iteration 0: E2E fails → user skips → break
+          # Iteration 1: E2E passes → break
+          e2e-verify-loop:
+            - output: "E2E 有失败"
+              update_vars:
+                e2e_status: "failed"
+            - output: "E2E 全部通过"
+              update_vars:
+                e2e_status: "passed"
+
+          # E2E failure path nodes (only active in iter0)
+          e2e-notify:
+            output: "通知已发送"
+
+          e2e-approval:
+            choice: "skip"
+            comment: "E2E 暂时跳过, 后续修复"
+
+          ship-pr:
+            output: "PR 创建成功"
+            update_vars:
+              pr_url: "https://github.com/org/repo/pull/456"
+
+          # Iteration 0: score too low → CONTINUE
+          # Iteration 1: score good → GO
+          verification-report:
+            - output: "Score: 65/100, Decision: NO-GO"
+              update_vars:
+                convergence_decision: "NO-GO"
+            - output: "Score: 88/100, Decision: GO"
+              update_vars:
+                convergence_decision: "GO"
+
+          convergence-check:
+            - output: "Score < 85 → CONTINUE"
+              update_vars:
+                convergence_decision: "CONTINUE"
+                loop_status: "running"
+                iteration_round: "2"
+            - output: "Score ≥ 85 → GO"
+              update_vars:
+                convergence_decision: "GO"
+                loop_status: "GO"
+                iteration_round: "3"
+
+          gap-generator:
+            - output: "Gap brief generated for next iteration"
+            - output: "Skipped (converged)"
+
+      loop-summary:
+        output: "Loop 总结: 2 iterations, final score 88, GO"
+
+    assertions:
+      status: "completed"
+      vars:
+        branch: "feat/search"
+        feature: "search"
+        convergence_decision: "GO"
+        loop_status: "GO"
+        e2e_decision: "skip"
+      node_trace:
+        executed:
+          - pipeline-init
+          - idea-research
+          - requirement-clarify
+          - spec-and-issues
+          - pipeline-loop
+          - loop-summary
+
+  # =============================================================
+  # Scenario 3: Multi-iteration Convergence — 2 轮迭代后收敛
+  # =============================================================
+  - name: "multi-iteration — first round NO-GO, second round GO"
+    inputs:
+      idea: "优化工作流引擎性能"
+      feature: "perf-optimization"
+      max_iterations: "5"
+    mocks:
+      pipeline-init:
+        output: "初始化完成"
+        update_vars:
+          branch: "feat/perf-optimization"
+          feature: "perf-optimization"
+          remote_type: "github"
+          iteration_slug: "perf-optimization"
+
+      idea-research:
+        output: "研究完成: 性能瓶颈在 DAG 调度器"
+        update_vars:
+          idea-research_synthesis: "DAG 调度器需要优化拓扑排序"
+          idea-research_consensus_score: "0.90"
+
+      requirement-clarify:
+        summary: "性能目标和验证标准已确认"
+        rounds: 4
+        vars_update:
+          requirements_confirmed: "true"
+
+      spec-and-issues:
+        output: "Spec 和 4 个 issues 已生成"
+        update_vars:
+          issue_count: "4"
+          stage_count: "3"
+
+      pipeline-loop:
+        iterations: 2
+        nodes:
+          iteration-setup:
+            - output: "Iteration 1 | Slug: perf-optimization"
+              update_vars:
+                iteration_slug: "perf-optimization"
+                e2e_status: ""
+                e2e_decision: ""
+                build_status: ""
+                review_status: ""
+            - output: "Iteration 2 | Slug: perf-optimization-r2"
+              update_vars:
+                iteration_slug: "perf-optimization-r2"
+                e2e_status: ""
+                build_status: ""
+                review_status: ""
+
+          # Round 1: skip (execute_when false). Round 2: run
+          iter-spec-regen:
+            - output: "Skipped (round 1)"
+            - output: "Gap spec regenerated: 2 gap tickets"
+              update_vars:
+                issue_count: "2"
+
+          parse-and-execute:
+            - output: "DAG: 4 tickets done"
+              update_vars:
+                ticket_01_status: "done"
+                ticket_02_status: "done"
+                ticket_03_status: "done"
+                ticket_04_status: "done"
+            - output: "DAG: 2 gap tickets done"
+              update_vars:
+                ticket_01_status: "done"
+                ticket_02_status: "done"
+
+          integration-gate:
+            output: "BUILD + TEST PASSED"
+            exit_code: 0
+            update_vars:
+              build_status: "passed"
+
+          code-review:
+            - output: "Code review: 2 yellow findings"
+              update_vars:
+                review_status: "has_notes"
+            - output: "Code review: all clear"
+              update_vars:
+                review_status: "passed"
+
+          integration-verify:
+            output: "PASSED"
+            exit_code: 0
+
+          deploy-check:
+            output: "Dev server running"
+            exit_code: 0
+
+          e2e-verify-loop:
+            - output: "E2E: 6/8 AC passed, 2 SKIP (E2E env issue)"
+              update_vars:
+                e2e_status: "failed"
+            - output: "E2E: all AC passed"
+              update_vars:
+                e2e_status: "passed"
+
+          e2e-notify:
+            output: "E2E 失败通知已发送"
+
+          e2e-approval:
+            - choice: "retry"
+              comment: "修复 E2E 环境问题后重试"
+            - output: "Skipped (e2e passed)"
+
+          ship-pr:
+            output: "PR 创建/更新"
+            update_vars:
+              pr_url: "https://github.com/org/repo/pull/789"
+
+          # Round 1: SKIP ACs → score low. Round 2: all PASS → score high
+          verification-report:
+            - output: "Score: 72/100 (adjusted: 62). 2 SKIP ACs, carryover: AC-5, AC-7"
+              update_vars:
+                convergence_decision: "NO-GO"
+            - output: "Score: 95/100. All ACs PASS, carryover cleared"
+              update_vars:
+                convergence_decision: "GO"
+
+          convergence-check:
+            - output: "L3 fail (SKIP ACs exist) → CONTINUE"
+              update_vars:
+                convergence_decision: "CONTINUE"
+                loop_status: "running"
+                iteration_round: "2"
+            - output: "All 5 layers pass → GO"
+              update_vars:
+                convergence_decision: "GO"
+                loop_status: "GO"
+                iteration_round: "3"
+
+          gap-generator:
+            - output: "Gap brief: fix AC-5 (E2E env setup), AC-7 (negative test)"
+            - output: "Skipped (converged)"
+
+      loop-summary:
+        output: "Loop 总结: 2 iterations, 72→95, GO"
+
+    assertions:
+      status: "completed"
+      vars:
+        branch: "feat/perf-optimization"
+        feature: "perf-optimization"
+        convergence_decision: "GO"
+        loop_status: "GO"
+        e2e_status: "passed"
+      node_trace:
+        executed:
+          - pipeline-init
+          - idea-research
+          - requirement-clarify
+          - spec-and-issues
+          - pipeline-loop
+          - loop-summary
