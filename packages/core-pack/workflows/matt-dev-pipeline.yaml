@@ -709,6 +709,7 @@ nodes:
           # 4.1: 确保 dev server 运行
           - id: ensure-dev-server
             type: agent
+            timeout: 300
             prompt: |
               确保 dev server 正在运行。
 

@@ -190,6 +190,10 @@ export interface LoopConfig extends CoreConfig {
   /** Pre-creates a node_execution DB record for dynamically discovered nodes (e.g., sub-workflow children).
    *  Carries optional meta for nested execution hierarchy tracking (parent_node_id, iteration_index). */
   ensureNodeExecution?: (scopedNodeId: string, nodeType: string, meta?: RuntimeNodeMeta) => void
+  /** Skill/prompt injection (forwarded to dynamic_sub_workflow child engines) */
+  promptInjector?: PromptInjector
+  precomputeHook?: (pool: VarPool, workflowName: string, inputs: Record<string, string>) => Promise<void>
+  knowledgeInjectorFactory?: (pool: VarPool) => KnowledgeInjector
 }
 
 /** SubWorkflowExecutor — child workflow execution with scoped VarPool */
@@ -234,6 +238,10 @@ export interface DynamicSubWorkflowConfig extends CoreConfig {
   maxCorrectionRounds?: number
   /** Parent workflow metadata (used for default file naming) */
   workflow?: { name: string; engine?: string; model?: string }
+  /** Skill/prompt injection (forwarded to child engine) */
+  promptInjector?: PromptInjector
+  precomputeHook?: (pool: VarPool, workflowName: string, inputs: Record<string, string>) => Promise<void>
+  knowledgeInjectorFactory?: (pool: VarPool) => KnowledgeInjector
 }
 
 /** ResumeConfig — used alongside LoopConfig for resume-from-approval flows */

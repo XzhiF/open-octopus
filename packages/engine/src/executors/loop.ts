@@ -618,6 +618,9 @@ export class LoopExecutor implements NodeExecutor {
           },
           outputDir: join(this.config.cwd, "workflows"),
           workflow: (this.config as any).workflow,
+          promptInjector: (this.config as any).promptInjector,
+          precomputeHook: (this.config as any).precomputeHook,
+          knowledgeInjectorFactory: (this.config as any).knowledgeInjectorFactory,
         })
       default:
         throw new Error(`Unknown node type: ${node.type}`)

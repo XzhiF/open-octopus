@@ -169,6 +169,9 @@ export class ExecutorFactory {
             await this.ctx.executeHooks(event as keyof WorkflowHooks, context)
           },
           agentResolver: this.ctx.agentResolver,
+          promptInjector: this.ctx.promptInjector,
+          precomputeHook: this.ctx.precomputeHook,
+          knowledgeInjectorFactory: this.ctx.knowledgeInjectorFactory,
           ensureNodeExecution: (scopedNodeId, nodeType, meta) => {
             this.ctx.callbacks?.onRuntimeNodeAdded?.(scopedNodeId, nodeType, meta)
           },
@@ -287,6 +290,9 @@ export class ExecutorFactory {
           },
           outputDir: join(this.ctx.cwd, "workflows"),
           workflow: this.ctx.workflow,
+          promptInjector: this.ctx.promptInjector,
+          precomputeHook: this.ctx.precomputeHook,
+          knowledgeInjectorFactory: this.ctx.knowledgeInjectorFactory,
         })
       case "octopus_agent": {
         const rawKey = node.engine ?? this.ctx.workflow.engine ?? "claude"

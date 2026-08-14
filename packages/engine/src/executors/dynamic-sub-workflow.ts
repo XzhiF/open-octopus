@@ -634,6 +634,11 @@ export class DynamicSubWorkflowExecutor implements NodeExecutor {
         this.config.signal,
         this.config.executionId ? `${this.config.executionId}-${workflowName}` : undefined,
         this.config.inputs,
+        undefined, // executionName
+        undefined, // crossExecResolver
+        this.config.promptInjector,
+        this.config.precomputeHook,
+        this.config.knowledgeInjectorFactory,
       )
 
       childEngine.updateVarPool(childPool.snapshot())
