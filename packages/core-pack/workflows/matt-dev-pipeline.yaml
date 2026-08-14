@@ -708,68 +708,47 @@ nodes:
         nodes:
           # 4.1: 确保 dev server 运行
           - id: ensure-dev-server
-            type: bash
-            bash: |
-              if curl -s http://localhost:3001/api/health >/dev/null 2>&1; then
-                echo "Dev server already running on :3001"
-              else
-                echo "Starting dev server..."
-                pnpm dev --isolated &
-                for i in $(seq 1 30); do
-                  sleep 2
-                  if curl -s http://localhost:3001/api/health >/dev/null 2>&1; then
-                    echo "Dev server ready after ${i}x2 seconds"
-                    break
-                  fi
-                done
-              fi
+            type: agent
+            prompt: |
+              确保 dev server 正在运行。
+
+              1. 检查 http://localhost:3001/api/health 是否响应
+              2. 如果已在运行, 直接报告 "Dev server already running"
+              3. 如果未运行, 找到 workspace 的项目目录, 启动 pnpm dev --isolated
+              4. 等待 server 就绪 (最多 60 秒)
+              5. 如果启动失败, 报告错误
+
+              输出 vars_update: {"vars_update": {"dev_server_status": "ready|failed"}}
 
           # 4.2: E2E 测试执行 (使用 implement + diagnosing-bugs skill)
           - id: e2e-runner
             type: agent
             depends_on: [ensure-dev-server]
+            model: se
             timeout: 1800
+            agents:
+              e2e-tester:
+                agent_file: matt-e2e-tester
+                description: E2E verification with fix-and-retest capability
+                model: se
             prompt: |
-              执行全量 E2E 验证。使用 implement skill 和 diagnosing-bugs skill 方法论。
+              委托 matt-e2e-tester 子代理执行全量 E2E 验证。
 
-              ═══ 上下文 ═══
+              ═══ 任务委托 ═══
+              使用 e2e-tester 子代理完成以下任务:
+
               Feature: $vars.iteration_slug
               Artifacts: .scratch/$vars.iteration_slug/
               Spec: .scratch/$vars.iteration_slug/spec.md
 
-              ═══ 环境 ═══
-              export E2E_ARTIFACTS_DIR=.scratch/$vars.iteration_slug
-
-              ═══ 执行流程 ═══
+              执行全量 E2E 验证:
               1. 读取 spec.md 的 Verification Strategy 和 AC 表
-              2. 按 AC 顺序执行:
-                 - API Integration Tests (curl, 对照反假跑标准 R1-R8)
-                 - Browser E2E (Playwright, 截图到 e2e-screenshots/)
-                 - DB/Cache Cross-validation (SQL 查询)
-              3. 失败 AC:
-                 - Quick Fix (1 次, 小问题直接修)
-                 - diagnosing-bugs skill (1 次, 复杂问题深度诊断)
-                 - re-test
-              4. 收集证据:
-                 - 截图: .scratch/$vars.iteration_slug/e2e-screenshots/
-                 - 脚本: .scratch/$vars.iteration_slug/e2e-scripts/
-                 - 数据: .scratch/$vars.iteration_slug/e2e-data/
+              2. 按 AC 顺序执行验证 (API + Browser + DB cross-validation)
+              3. 失败 AC: quick fix → diagnosing-bugs → re-test
+              4. 收集证据 (截图/脚本/数据)
+              5. 输出 e2e-report.md
 
-              ═══ 反假跑标准 (每个测试必须通过) ═══
-              R1: 真实服务, 非 mock
-              R2: 断言业务字段值 (不只是 200 OK)
-              R3: API ↔ DB 至少双向交叉验证
-              R4: ≥ 2 种证据 (截图+响应体, SQL+API)
-              R5: 写操作验证 DB 变化
-              R6: 通过真实登录获取 token
-              R7: E2E_TEST_ 前缀数据, 测试后清理
-              R8: 可重复, 无手动前置步骤
-
-              ═══ 输出 ═══
-              写入: .scratch/$vars.iteration_slug/e2e-report.md
-              格式: 每个 AC → PASS/FAIL + 证据路径 + 修复记录
-
-              最后输出 vars_update JSON:
+              输出 vars_update:
               全通过: {"vars_update": {"e2e_status": "passed"}}
               有失败: {"vars_update": {"e2e_status": "failed"}}
 
