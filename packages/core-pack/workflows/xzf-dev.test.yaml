@@ -39,11 +39,26 @@ scenarios:
       spec-planner:
         output: "Spec 和 Tracer Bullet 设计完成。2 个 spec，5 个 task。"
 
-      # --- Stage 5: Execution ---
+      # --- Stage 5: Execution Loop ---
       execution:
-        output: "passed"
-        update_vars:
-          spec_status: "passed"
+        iterations: 1
+        nodes:
+          spec-selector:
+            output: "选择 spec-001"
+            update_vars:
+              spec_count: "1"
+              current_spec: "0"
+              current_spec_file: ".scratch/user-auth/03-specs/spec-001-auth.md"
+              current_spec_tasks: '[".scratch/user-auth/03-specs/spec-001-auth/T-1-db.md",".scratch/user-auth/03-specs/spec-001-auth/T-2-api.md"]'
+          spec-dag-execute:
+            output: "DAG 执行完成。2 个 task 全部通过。"
+          cr-and-fix:
+            output: "CR 通过，无问题。"
+          spec-progress:
+            output: "spec 0 完成，全部 spec 已执行。"
+            update_vars:
+              current_spec: "1"
+              spec_status: "all_done"
 
       # --- Stage 6: E2E Verify Loop ---
       e2e-verify-loop:
@@ -70,7 +85,7 @@ scenarios:
         feature: "user-auth"
         remote_type: "github"
         requirements_confirmed: "true"
-        spec_status: "passed"
+        spec_status: "all_done"
         e2e_status: "passed"
       node_trace:
         executed:
@@ -121,9 +136,24 @@ scenarios:
         output: "Spec 设计完成。1 个 spec，3 个 task。"
 
       execution:
-        output: "passed"
-        update_vars:
-          spec_status: "passed"
+        iterations: 1
+        nodes:
+          spec-selector:
+            output: "选择 spec-001"
+            update_vars:
+              spec_count: "1"
+              current_spec: "0"
+              current_spec_file: ".scratch/search/03-specs/spec-001-search.md"
+              current_spec_tasks: '[".scratch/search/03-specs/spec-001-search/T-1-api.md"]'
+          spec-dag-execute:
+            output: "DAG 执行完成。"
+          cr-and-fix:
+            output: "CR 通过。"
+          spec-progress:
+            output: "spec 0 完成，全部 spec 已执行。"
+            update_vars:
+              current_spec: "1"
+              spec_status: "all_done"
 
       # E2E 第一轮失败，用户选择跳过
       e2e-verify-loop:
@@ -152,7 +182,7 @@ scenarios:
       vars:
         branch: "feat/search"
         feature: "search"
-        spec_status: "passed"
+        spec_status: "all_done"
         e2e_decision: "skip"
       node_trace:
         executed:

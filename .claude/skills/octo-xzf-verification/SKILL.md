@@ -19,7 +19,7 @@ version: 1.0.0
 
 ### 第一步：决策→验收条件映射
 
-读取 `02-clarification/questions.md` 中「已确认」区的每个 Dx 决策，逐一推导：
+基于会话上下文中 `02-clarification/questions.md` 的「已确认」区每个 Dx 决策，逐一推导：
 
 - **通过标准**: 什么行为/结果证明这个决策正确实现了
 - **反假跑条件**: 什么情况看起来通过但实际没测到（mock 永远返回 true、断言太宽泛、只测 happy path）
@@ -125,13 +125,13 @@ version: 1.0.0
 ### Round 流程
 
 #### Round 1
-- 读取 idea.md + research + questions.md（已确认决策）
+- 基于会话上下文中的 idea.md + research + questions.md（已确认决策）
 - 按四步推导验证策略
 - 写入 verification.md
 - 仅在凭据缺失或环境信息不足时产生「待确认」项
 
 #### Round 2+
-1. 读取现有 verification.md
+1. 基于会话上下文中现有 verification.md
 2. 用户在 approval comment 中的补充/修正 → 记录到「用户补充」
 3. 处理「用户补充」→ 更新策略 → 移到「已确认」
 4. 需要追问的 → 追加到「待确认」

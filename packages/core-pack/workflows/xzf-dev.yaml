@@ -65,6 +65,11 @@ variables:
   spec_status: ""
   e2e_status: ""
   e2e_decision: ""
+  current_spec: "0"
+  spec_count: "0"
+  current_spec_file: ""
+  current_spec_tasks: ""
+  current_spec_done: ""
 
 # --- 通知提供者 ---
 providers:
@@ -321,14 +326,11 @@ nodes:
       model: pro-max
       prompt: |
         你是需求澄清专家。使用 octo-xzf-clarify skill 方法论进行多轮需求对话。
-        同时使用 octo-xzf-verification skill 规划验证策略。
 
         ═══ 上下文 ═══
-        Idea: $inputs.idea
-        Feature: $vars.feature
-        Research: .scratch/$vars.feature/01-research/research-brief.md
-        初始问题: .scratch/$vars.feature/02-clarification/questions.md
+        你已继承上游研究阶段的会话上下文（research-brief.md、questions.md 已在会话中）。
         目录规范: .scratch/$vars.feature/00-init/directory-conventions.md
+        Feature: $vars.feature
 
         ⚠️ 所有产物路径以 directory-conventions.md 为准，禁止使用源码目录。
 
@@ -370,10 +372,8 @@ nodes:
     prompt: |
       使用 octo-xzf-verification skill 生成验证策略。
 
-      读取:
-      - 目录规范: .scratch/$vars.feature/00-init/directory-conventions.md
-      - 需求简报: .scratch/$vars.feature/02-clarification/brief.md
-      - Research: .scratch/$vars.feature/01-research/research-brief.md
+      你已继承上游会话上下文（research-brief、brief.md、澄清对话均已在会话中）。
+      目录规范: .scratch/$vars.feature/00-init/directory-conventions.md
 
       ⚠️ 所有产物路径以 directory-conventions.md 为准，禁止使用源码目录。
 
@@ -393,9 +393,8 @@ nodes:
     prompt: |
       使用 octo-xzf-brief-maker skill 生成需求简报。
 
-      读取:
-      - 目录规范: .scratch/$vars.feature/00-init/directory-conventions.md
-      （idea.md、questions.md、verification.md、workspace-topology.md 已在上游 session 中，无需重读）
+      你已继承上游会话上下文（idea、questions、verification、澄清对话均已在会话中）。
+      目录规范: .scratch/$vars.feature/00-init/directory-conventions.md
 
       ⚠️ 所有产物路径以 directory-conventions.md 为准，禁止使用源码目录。
 
@@ -414,9 +413,8 @@ nodes:
     prompt: |
       使用 octo-xzf-spec-designer skill 生成所有 spec 和 tracer bullet tasks。
 
-      读取:
-      - 目录规范: .scratch/$vars.feature/00-init/directory-conventions.md
-      （brief.md、research-brief.md、workspace-topology.md 已在上游 session 中，无需重读）
+      你已继承上游会话上下文（brief.md、research-brief、verification 均已在会话中）。
+      目录规范: .scratch/$vars.feature/00-init/directory-conventions.md
 
       ⚠️ 所有产物路径以 directory-conventions.md 为准，禁止使用源码目录。
 
@@ -441,66 +439,103 @@ nodes:
       - 格式参见 octo-xzf-spec-designer skill
 
   # ============================================================
-  # Stage 5: 任务执行（per spec → per tracer bullet，基础验证）
+  # Stage 5: Spec 逐个执行 (Loop → dynamic_sub_workflow → CR+Fix)
   # ============================================================
 
   - id: execution
-    type: agent
+    type: loop
     depends_on: [spec-planner]
-    agents:
-      implementer:
-        description: "全栈实现者 — 执行单个 spec 的所有 tracer bullets"
+    max_iterations: 20
+    break_when: '$vars.spec_status == "all_done"'
+    nodes:
+
+      # --- 5a: 选择下一个 spec ---
+      - id: spec-selector
+        type: agent
+        effort: low
         prompt: |
-          使用 octo-xzf-implementer skill 执行指定 spec 的所有 tracer bullets。
+          读取 spec 索引: .scratch/$vars.feature/03-specs/spec-index.md
+          当前进度: spec $vars.current_spec / $vars.spec_count
 
-          执行流程:
-          1. 读取 spec 文件和其子目录下的 tracer bullet tasks
-          2. 检查 checkpoint: .scratch/{feature}/04-execution/spec-{NNN}/checkpoint.json
-             - 存在且 completed → 跳过
-             - 存在但未完成 → 从断点恢复
-             - 不存在 → 从头执行
-          3. 按依赖顺序逐个执行 tracer bullet:
-             - 实现（全栈：DB → API → UI → test）
-             - 基础验证（单测 + 集成测试，对照反假跑标准）
-             - 自治 verify-fix 循环（max 3 次）
-             - 通过后更新 checkpoint.json
-             - 3 次仍失败 → 标记 failed，继续下一个
-          ⚠️ 此阶段不跑 E2E 测试。
-          完成后汇报: 通过/失败的 task 数量。
-    prompt: |
-      你是执行调度者，负责按 spec-index.md 顺序完成所有 spec 的 tracer bullets。
+          按索引顺序，选择第 $vars.current_spec 个 spec（从 0 开始）。
+          读取该 spec 文件及其子目录下的所有 T-N task 文件内容。
 
-      ═══ 执行策略 ═══
-      1. 读取 spec 索引: .scratch/$vars.feature/03-specs/spec-index.md
-      2. 按索引顺序，对每个 spec 执行其子目录下的所有 tracer bullets:
-         - 逐个实现（全栈：DB → API → UI → test）
-         - 基础验证（编译 + 单测，对照反假跑标准）
-         - 自治 verify-fix 循环（max 3 次）
-         - ⚠️ 此阶段不跑 E2E 测试
+          ⚠️ 如果 current_spec >= spec_count（或索引中没有更多 spec），输出:
+          {"vars_update": {"spec_status": "all_done"}}
 
-      ═══ Checkpoint（必须写入） ═══
-      路径: .scratch/$vars.feature/04-execution/spec-{NNN}/checkpoint.json
+          否则输出 vars_update:
+          {"vars_update": {
+            "spec_count": "{spec 总数}",
+            "current_spec_file": "{spec 文件路径}",
+            "current_spec_tasks": "{task 文件路径 JSON 数组}"
+          }}
 
-      每个 spec 开始执行时:
-      1. mkdir -p .scratch/$vars.feature/04-execution/spec-{NNN}/
-      2. 创建 checkpoint.json (status="in_progress", 所有 task 在 tasks_remaining)
+      # --- 5b: 动态生成 DAG 并执行 ---
+      - id: spec-dag-execute
+        type: dynamic_sub_workflow
+        depends_on: [spec-selector]
+        execute_when: '$vars.spec_status != "all_done"'
+        on_error: continue
+        prompt: |
+          根据以下 spec 的 task 文件生成 DAG 执行工作流。
 
-      每个 task 通过后:
-      3. 更新 checkpoint.json (task 从 tasks_remaining 移到 tasks_completed)
+          Spec 文件: $vars.current_spec_file
+          Task 文件列表: $vars.current_spec_tasks
+          目录规范: .scratch/$vars.feature/00-init/directory-conventions.md
 
-      spec 所有 task 完成后:
-      4. 更新 checkpoint.json (status="completed")
+          ═══ DAG 生成规则 ═══
+          1. 每个 T-N task 文件对应一个 agent 节点
+          2. 节点 id 使用 task 编号 (如 T-1, T-2, T-3)
+          3. 依赖关系按 task 文件中的「依赖」字段声明 depends_on
+          4. 无依赖的 task 可并行执行（不声明 depends_on）
+          5. 每个 agent 节点:
+             skills: [octo-xzf-implementer]
+             prompt 包含:
+               - "使用 octo-xzf-implementer skill 执行以下 task"
+               - task 文件的完整内容（目标和验收标准）
+               - "⚠️ 此阶段不跑 E2E 测试"
 
-      ⚠️ checkpoint 是下游 E2E 和 Ship 阶段的进度依据，不写则视为未完成。
-      Schema 严格遵循 octo-xzf-implementer skill 定义。
+      # --- 5c: CR + Fix ---
+      - id: cr-and-fix
+        type: agent
+        depends_on: [spec-dag-execute]
+        execute_when: '$vars.spec_status != "all_done"'
+        effort: high
+        prompt: |
+          你是代码审查专家。审查当前 spec ($vars.current_spec_file) 的所有实现。
 
-      ═══ 完成 ═══
-      输出 vars_update:
-      {"vars_update": {"spec_status": "passed|partial"}}
-      - "passed": 所有 spec 的全部 task 通过
-      - "partial": 有 task 失败但已记录到 checkpoint
-    outputs:
-      $vars.spec_status: "$last_output"
+          基于会话上下文中的 DAG 执行结果，审查并修复问题。
+
+          ═══ 审查要点 ═══
+          1. 每个 task 的验收标准是否全部满足
+          2. 编译/类型检查是否通过 (pnpm build)
+          3. 单测是否通过 (pnpm test)
+          4. 代码质量（明显的 bug、安全问题、性能问题）
+
+          ═══ 修复 ═══
+          发现问题直接修复，不超过 3 轮 verify-fix。
+          修复后重新验证编译和测试。
+
+      # --- 5d: 更新进度 ---
+      - id: spec-progress
+        type: agent
+        depends_on: [cr-and-fix]
+        execute_when: '$vars.spec_status != "all_done"'
+        effort: low
+        prompt: |
+          更新 spec 执行进度。
+
+          1. 创建 checkpoint 文件:
+             mkdir -p .scratch/$vars.feature/04-execution/spec-$(printf '%03d' $vars.current_spec)/
+             写入 {"status":"completed"} 到 checkpoint.json
+
+          2. 计算下一个 spec 编号: current_spec($vars.current_spec) + 1
+
+          3. 判断是否完成:
+             - 如果 下一个编号 >= spec_count($vars.spec_count):
+               输出 vars_update: {"vars_update": {"current_spec": "{next}", "spec_status": "all_done"}}
+             - 否则:
+               输出 vars_update: {"vars_update": {"current_spec": "{next}"}}
 
   # ============================================================
   # Stage 6: E2E 全量验证（完整用户流程测试 + 修复循环）
@@ -600,11 +635,12 @@ nodes:
     prompt: |
       使用 octo-xzf-ship skill 完成 Ship 交付（PR/MR 提交 + Feature 归档）。
 
+      你已继承上游会话上下文（所有 spec、执行结果、E2E 报告均已在会话中）。
+
       运行时上下文:
       - Feature slug: $vars.feature
       - 分支: $vars.branch
       - Remote 类型: $vars.remote_type
       - 产物目录: .scratch/$vars.feature/
-      - Workspace 拓扑: .scratch/$vars.feature/00-init/workspace-topology.md
 
       按 skill 定义的 Step 1 → Step 2 → Step 3 顺序执行。
