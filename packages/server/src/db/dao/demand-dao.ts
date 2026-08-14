@@ -81,6 +81,8 @@ export class DemandDAO extends BaseDAO {
   list(filter: {
     status?: string
     priority?: string
+    createdAtFrom?: string
+    createdAtTo?: string
     page?: number
     pageSize?: number
   }): { data: DemandRow[]; total: number; page: number; pageSize: number } {
@@ -94,6 +96,14 @@ export class DemandDAO extends BaseDAO {
     if (filter.priority) {
       conditions.push("priority = ?")
       params.push(filter.priority)
+    }
+    if (filter.createdAtFrom) {
+      conditions.push("created_at >= ?")
+      params.push(filter.createdAtFrom)
+    }
+    if (filter.createdAtTo) {
+      conditions.push("created_at <= ?")
+      params.push(filter.createdAtTo)
     }
 
     const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : ""
