@@ -108,6 +108,7 @@ requires:
     - agency-agents-zh/testing-performance-benchmarker.md
     - agency-agents-zh/engineering-senior-developer.md
     - agency-agents-zh/engineering-rapid-prototyper.md
+    - matt-e2e-tester
 
 # --- 通知 ---
 providers:
