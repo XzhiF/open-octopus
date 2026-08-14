@@ -31,6 +31,7 @@ import { WorkflowStepEdge } from "./workflow-edges/workflow-step-edge"
 import { parseYaml } from "@/lib/yaml-utils"
 import { yamlToFlowData } from "@/lib/workflow-parser"
 import { getServerUrl } from "@/lib/server-config"
+import { subscribeSSE } from "@/lib/sse-manager"
 import { useExecutionEvents } from "@/hooks/use-execution-events"
 import type { StepExecution, StatusOverlay, TokenUsage, LoopIterationSummary } from "@/lib/types"
 
@@ -140,16 +141,18 @@ export function WorkflowFlowViewerWithStatus({
   const [runtimeNodeVersion, setRuntimeNodeVersion] = useState(0)
   useEffect(() => {
     if (!workspaceId || !executionId) return
-    const es = new EventSource(`${getServerUrl()}/api/workspaces/${workspaceId}/executions/events`)
-    es.addEventListener("runtime_node_added", (e) => {
-      try {
-        const data = JSON.parse(e.data)
-        if (data.executionId === executionId) {
-          setRuntimeNodeVersion(v => v + 1)
-        }
-      } catch { /* ignore */ }
-    })
-    return () => es.close()
+    return subscribeSSE(
+      `${getServerUrl()}/api/workspaces/${workspaceId}/executions/events`,
+      "runtime_node_added",
+      (e) => {
+        try {
+          const data = JSON.parse(e.data)
+          if (data.executionId === executionId) {
+            setRuntimeNodeVersion(v => v + 1)
+          }
+        } catch { /* ignore */ }
+      },
+    )
   }, [workspaceId, executionId])
 
   useEffect(() => {

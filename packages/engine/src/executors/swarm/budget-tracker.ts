@@ -8,6 +8,7 @@ export class BudgetTracker {
   constructor(
     private tokenLimit?: number,
     private timeoutSeconds?: number,
+    private tokenCountingMode: "all" | "no_cache" = "no_cache",
   ) {}
 
   /** Record a single LLM call's token usage (legacy — total tokens only) */
@@ -17,7 +18,8 @@ export class BudgetTracker {
 
   /** Record a detailed LLM call with per-model breakdown */
   addUsage(model: string, input: number, output: number, cacheRead?: number, cacheCreation?: number, costUsd?: number): void {
-    this.consumed += input + output
+    const cache = this.tokenCountingMode === "all" ? (cacheRead ?? 0) + (cacheCreation ?? 0) : 0
+    this.consumed += input + output + cache
     const existing = this.usages.find(u => u.model === model)
     if (existing) {
       existing.inputTokens += input

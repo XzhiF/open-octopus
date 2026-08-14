@@ -4,6 +4,7 @@ import { useState, useRef, useEffect, useCallback } from "react"
 import { Button } from "@/components/ui/button"
 import { Send, Loader2, ShieldCheck } from "lucide-react"
 import { getServerUrl } from "@/lib/server-config"
+import { subscribeSSE } from "@/lib/sse-manager"
 
 // ============ Types ============
 
@@ -32,12 +33,82 @@ export function HarnessChatbot({ workspaceId, executionId, isRunning, currentNod
   const scrollRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
 
+  // Load persisted chat history from agent_events on mount
+  useEffect(() => {
+    if (!workspaceId || !executionId) return
+    const loadHistory = async () => {
+      try {
+        const res = await fetch(
+          `${getServerUrl()}/api/workspaces/${workspaceId}/executions/${executionId}/agent-events`,
+        )
+        if (!res.ok) return
+        const data = await res.json()
+        // Filter for harness chat events — API returns `event` field (not `event_type`)
+        const allEvents = data.events ?? data ?? []
+        const chatEvents = allEvents.filter(
+          (e: any) => {
+            const type = e.event ?? e.event_type ?? ""
+            return type === "harness_user_message" || type === "harness_system_response" || type === "intervention_result"
+          }
+        )
+        if (chatEvents.length === 0) return
+        const loaded: ChatMessage[] = chatEvents.map((e: any, i: number) => {
+          const type = e.event ?? e.event_type ?? ""
+          return {
+            id: `hist-${e.timestamp}-${i}`,
+            role: type === "harness_user_message" ? "user" as const : "system" as const,
+            content: type === "intervention_result"
+              ? (e.data?.result ?? e.event_data?.result ?? e.content ?? "")
+              : (e.data?.content ?? e.content ?? ""),
+            timestamp: e.timestamp ? new Date(e.timestamp).getTime() : Date.now(),
+            status: "success" as const,
+          }
+        })
+        setMessages(loaded)
+      } catch { /* non-fatal: chat history load */ }
+    }
+    loadHistory()
+  }, [workspaceId, executionId])
+
   // Auto-scroll to bottom on new messages
   useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight
     }
   }, [messages])
+
+  // Listen for live intervention_result SSE events
+  useEffect(() => {
+    if (!workspaceId || !executionId) return
+    const url = `${getServerUrl()}/api/workspaces/${workspaceId}/executions/${executionId}/events`
+    return subscribeSSE(url, "intervention_result", (e: MessageEvent) => {
+      try {
+        const payload = JSON.parse(e.data)
+        if (payload.executionId !== executionId) return
+        const result = payload.result ?? "已完成"
+        setMessages((prev) => {
+          const idx = prev.findIndex((m) => m.status === "sending" && m.role === "system")
+          if (idx >= 0) {
+            // Update the placeholder "正在处理..." message with the actual result
+            const updated = [...prev]
+            updated[idx] = { ...updated[idx], content: result, status: "success" as const }
+            return updated
+          }
+          // No pending message — add a new one (e.g. page was open before sending)
+          return [
+            ...prev,
+            {
+              id: `msg-intervention-${Date.now()}`,
+              role: "system" as const,
+              content: result,
+              timestamp: Date.now(),
+              status: "success" as const,
+            },
+          ]
+        })
+      } catch { /* non-fatal: SSE parse error */ }
+    })
+  }, [workspaceId, executionId])
 
   const handleSend = useCallback(async () => {
     const text = input.trim()

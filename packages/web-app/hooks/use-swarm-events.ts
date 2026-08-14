@@ -1,7 +1,8 @@
 "use client"
 
-import { useEffect, useReducer, useRef, useState, useCallback, type Dispatch } from "react"
+import { useEffect, useReducer, useState, useCallback, type Dispatch } from "react"
 import { getServerUrl } from "@/lib/server-config"
+import { subscribeSSE } from "@/lib/sse-manager"
 import type {
   ExpertInfo,
   ExpertStatus,
@@ -495,7 +496,6 @@ export function useSwarmEvents(
   executionId?: string,
 ): UseSwarmEventsResult {
   const [state, dispatch] = useReducer(swarmReducer, initialState)
-  const esRef = useRef<EventSource | null>(null)
   // H5 fix: useState instead of useRef so connected state triggers re-renders
   const [connected, setConnected] = useState(false)
 
@@ -524,113 +524,82 @@ export function useSwarmEvents(
         .catch(() => { /* ignore — SSE will pick up live events */ })
     }
 
-    // Phase 2: Connect SSE for live updates
-    setConnected(false)
-    const es = new EventSource(
-      `${getServerUrl()}/api/workspaces/${workspaceId}/executions/events`,
-    )
-    esRef.current = es
+    // Phase 2: Connect SSE for live updates (shared connection)
+    setConnected(true)
+    const sseUrl = `${getServerUrl()}/api/workspaces/${workspaceId}/executions/events`
+    const unsubs: Array<() => void> = []
 
-    es.addEventListener("open", () => {
-      setConnected(true)
-    })
-
-    es.addEventListener("swarm_mode", (e) => {
+    unsubs.push(subscribeSSE(sseUrl, "swarm_mode", (e: MessageEvent) => {
       try {
         const data = JSON.parse(e.data)
         if (!isEventForNode(data)) return
         dispatch({ type: "mode_detected", payload: { mode: data.mode } })
       } catch { /* skip */ }
-    })
+    }))
 
-    es.addEventListener("expert_spawn", (e) => {
+    unsubs.push(subscribeSSE(sseUrl, "expert_spawn", (e: MessageEvent) => {
       try {
         const data = JSON.parse(e.data)
         if (!isEventForNode(data)) return
         dispatch({
           type: "expert_spawn",
-          payload: {
-            role: data.role,
-            model: data.model ?? "sonnet",
-            source: data.source ?? "predefined",
-            nodeId: data.nodeId,
-          },
+          payload: { role: data.role, model: data.model ?? "sonnet", source: data.source ?? "predefined", nodeId: data.nodeId },
         })
       } catch { /* skip */ }
-    })
+    }))
 
-    es.addEventListener("expert_message", (e) => {
+    unsubs.push(subscribeSSE(sseUrl, "expert_message", (e: MessageEvent) => {
       try {
         const data = JSON.parse(e.data)
         if (!isEventForNode(data)) return
         dispatch({
           type: "expert_message",
-          payload: {
-            role: data.role,
-            round: data.round,
-            content: data.content,
-            tokens: data.tokens ?? 0,
-          },
+          payload: { role: data.role, round: data.round, content: data.content, tokens: data.tokens ?? 0 },
         })
       } catch { /* skip */ }
-    })
+    }))
 
-    es.addEventListener("expert_complete", (e) => {
+    unsubs.push(subscribeSSE(sseUrl, "expert_complete", (e: MessageEvent) => {
       try {
         const data = JSON.parse(e.data)
         if (!isEventForNode(data)) return
         dispatch({
           type: "expert_complete",
           payload: {
-            role: data.role,
-            status: data.status,
-            output: data.output ?? "",
-            tokens: data.tokens ?? 0,
-            inputTokens: data.inputTokens ?? 0,
-            outputTokens: data.outputTokens ?? 0,
-            model: data.model,
+            role: data.role, status: data.status, output: data.output ?? "",
+            tokens: data.tokens ?? 0, inputTokens: data.inputTokens ?? 0,
+            outputTokens: data.outputTokens ?? 0, model: data.model,
           },
         })
       } catch { /* skip */ }
-    })
+    }))
 
-    es.addEventListener("consensus_check", (e) => {
+    unsubs.push(subscribeSSE(sseUrl, "consensus_check", (e: MessageEvent) => {
       try {
         const data = JSON.parse(e.data)
         if (!isEventForNode(data)) return
         dispatch({
           type: "consensus_check",
-          payload: {
-            round: data.round,
-            score: data.score,
-            shouldContinue: data.shouldContinue,
-          },
+          payload: { round: data.round, score: data.score, shouldContinue: data.shouldContinue },
         })
       } catch { /* skip */ }
-    })
+    }))
 
-    es.addEventListener("swarm_round_end", (e) => {
+    unsubs.push(subscribeSSE(sseUrl, "swarm_round_end", (e: MessageEvent) => {
       try {
         const data = JSON.parse(e.data)
         if (!isEventForNode(data)) return
-        dispatch({
-          type: "round_end",
-          payload: { round: data.round, expertCount: data.expertCount },
-        })
+        dispatch({ type: "round_end", payload: { round: data.round, expertCount: data.expertCount } })
       } catch { /* skip */ }
-    })
+    }))
 
-    es.addEventListener("swarm_complete", (e) => {
+    unsubs.push(subscribeSSE(sseUrl, "swarm_complete", (e: MessageEvent) => {
       try {
         const data = JSON.parse(e.data)
         if (!isEventForNode(data)) return
-
-        // Extract mode from swarm_complete event
         if (data.mode) {
           dispatch({ type: "mode_detected", payload: { mode: data.mode as SwarmMode } })
         }
-
-        // Synthesis may be a JSON string (structured output) — extract text
         let synthesis = (data.synthesis as string) ?? ""
         try {
           const parsed = JSON.parse(synthesis)
@@ -638,72 +607,58 @@ export function useSwarmEvents(
             synthesis = parsed.synthesis
           }
         } catch { /* not JSON */ }
-
-        dispatch({
-          type: "swarm_complete",
-          payload: { ...data, synthesis },
-        })
+        dispatch({ type: "swarm_complete", payload: { ...data, synthesis } })
       } catch { /* skip */ }
-    })
+    }))
 
-    es.addEventListener("router_decision", (e) => {
+    unsubs.push(subscribeSSE(sseUrl, "router_decision", (e: MessageEvent) => {
       try {
         const data = JSON.parse(e.data)
         if (!isEventForNode(data)) return
         dispatch({ type: "router_decision", payload: data })
       } catch { /* skip */ }
-    })
+    }))
 
-    es.addEventListener("task_breakdown", (e) => {
+    unsubs.push(subscribeSSE(sseUrl, "task_breakdown", (e: MessageEvent) => {
       try {
         const data = JSON.parse(e.data)
         if (!isEventForNode(data)) return
         dispatch({ type: "task_breakdown", payload: data })
       } catch { /* skip */ }
-    })
+    }))
 
-    es.addEventListener("file_conflict", (e) => {
+    unsubs.push(subscribeSSE(sseUrl, "file_conflict", (e: MessageEvent) => {
       try {
         const data = JSON.parse(e.data)
         if (!isEventForNode(data)) return
-        dispatch({
-          type: "file_conflict",
-          payload: { file: data.file, experts: data.experts },
-        })
+        dispatch({ type: "file_conflict", payload: { file: data.file, experts: data.experts } })
       } catch { /* skip */ }
-    })
+    }))
 
-    es.addEventListener("host_report", (e) => {
+    unsubs.push(subscribeSSE(sseUrl, "host_report", (e: MessageEvent) => {
       try {
         const data = JSON.parse(e.data)
         if (!isEventForNode(data)) return
-        dispatch({
-          type: "host_report",
-          payload: { round: data.round ?? 0, content: data.content, degraded: data.degraded ?? false },
-        })
+        dispatch({ type: "host_report", payload: { round: data.round ?? 0, content: data.content, degraded: data.degraded ?? false } })
       } catch { /* skip */ }
-    })
+    }))
 
-    es.addEventListener("moa_expert_complete", (e) => {
+    unsubs.push(subscribeSSE(sseUrl, "moa_expert_complete", (e: MessageEvent) => {
       try {
         const data = JSON.parse(e.data)
         if (!isEventForNode(data)) return
         dispatch({
           type: "moa_expert_complete",
           payload: {
-            role: data.role,
-            model: data.model ?? "unknown",
-            status: data.status ?? "completed",
-            outputPreview: data.outputPreview ?? "",
-            durationMs: data.durationMs ?? 0,
-            degraded: data.degraded ?? false,
-            degradationChain: data.degradationChain,
+            role: data.role, model: data.model ?? "unknown", status: data.status ?? "completed",
+            outputPreview: data.outputPreview ?? "", durationMs: data.durationMs ?? 0,
+            degraded: data.degraded ?? false, degradationChain: data.degradationChain,
           },
         })
       } catch { /* skip */ }
-    })
+    }))
 
-    es.addEventListener("moa_aggregator", (e) => {
+    unsubs.push(subscribeSSE(sseUrl, "moa_aggregator", (e: MessageEvent) => {
       try {
         const data = JSON.parse(e.data)
         if (!isEventForNode(data)) return
@@ -711,22 +666,15 @@ export function useSwarmEvents(
         dispatch({
           type: phase === "start" ? "moa_aggregator_start" : "moa_aggregator_complete",
           payload: {
-            round: data.round ?? 1,
-            totalRounds: data.totalRounds ?? 1,
-            model: data.model ?? "unknown",
-            inputExpertCount: data.inputExpertCount ?? 0,
+            round: data.round ?? 1, totalRounds: data.totalRounds ?? 1,
+            model: data.model ?? "unknown", inputExpertCount: data.inputExpertCount ?? 0,
           },
         })
       } catch { /* skip */ }
-    })
-
-    es.onerror = () => {
-      setConnected(false)
-    }
+    }))
 
     return () => {
-      es.close()
-      esRef.current = null
+      unsubs.forEach(fn => fn())
       setConnected(false)
     }
   }, [workspaceId, nodeId, executionId, isEventForNode])

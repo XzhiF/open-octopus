@@ -1,7 +1,8 @@
 "use client"
 
-import { useState, useEffect, useRef, useCallback } from "react"
+import { useState, useEffect, useCallback } from "react"
 import { getServerUrl } from "@/lib/server-config"
+import { subscribeSSE } from "@/lib/sse-manager"
 import type { DiagnosisReport, InterventionAction } from "@/lib/types"
 
 // ============ Harness Event Types ============
@@ -42,7 +43,7 @@ export interface ParsedHarnessEvent {
   // iteration (when node is inside a loop)
   iteration?: number
   // token usage (from delegation or intervention events)
-  tokenUsage?: { inputTokens?: number; outputTokens?: number; model?: string }
+  tokenUsage?: { inputTokens?: number; outputTokens?: number; cacheTokens?: number; cacheCreationTokens?: number; model?: string }
 }
 
 interface UseHarnessEventsResult {
@@ -53,6 +54,8 @@ interface UseHarnessEventsResult {
   totalExtraTokens: number
   totalInputTokens: number
   totalOutputTokens: number
+  totalCacheTokens: number
+  totalCacheCreationTokens: number
 }
 
 let eventCounter = 0
@@ -71,6 +74,8 @@ function parseSSEEvent(eventType: string, raw: Record<string, unknown>): ParsedH
     ? {
         inputTokens: (rawTokenUsage.inputTokens as number) ?? (rawTokenUsage.input as number),
         outputTokens: (rawTokenUsage.outputTokens as number) ?? (rawTokenUsage.output as number),
+        cacheTokens: (rawTokenUsage.cacheTokens as number) ?? (rawTokenUsage.cacheRead as number) ?? undefined,
+        cacheCreationTokens: (rawTokenUsage.cacheCreationTokens as number) ?? (rawTokenUsage.cacheCreation as number) ?? undefined,
         model: rawTokenUsage.model as string | undefined,
       }
     : undefined
@@ -144,8 +149,7 @@ export function useHarnessEvents(
 ): UseHarnessEventsResult {
   const [events, setEvents] = useState<ParsedHarnessEvent[]>([])
   const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
-  const esRef = useRef<EventSource | null>(null)
+  const [error] = useState<string | null>(null)
 
   // Reset events when execution changes
   useEffect(() => {
@@ -178,6 +182,8 @@ export function useHarnessEvents(
               ? {
                   inputTokens: (rawTu.inputTokens as number) ?? (rawTu.input as number),
                   outputTokens: (rawTu.outputTokens as number) ?? (rawTu.output as number),
+                  cacheTokens: (rawTu.cacheTokens as number) ?? (rawTu.cacheRead as number) ?? undefined,
+                  cacheCreationTokens: (rawTu.cacheCreationTokens as number) ?? (rawTu.cacheCreation as number) ?? undefined,
                   model: rawTu.model as string | undefined,
                 }
               : undefined
@@ -221,7 +227,7 @@ export function useHarnessEvents(
     }
   }, [workspaceId, executionId])
 
-  // Connect SSE for live updates
+  // Connect SSE for live updates (shared connection)
   useEffect(() => {
     if (!workspaceId || !executionId) {
       setLoading(false)
@@ -231,10 +237,8 @@ export function useHarnessEvents(
     // Fetch historical first
     fetchHistorical()
 
-    const es = new EventSource(
-      `${getServerUrl()}/api/workspaces/${workspaceId}/executions/events`,
-    )
-    esRef.current = es
+    const sseUrl = `${getServerUrl()}/api/workspaces/${workspaceId}/executions/events`
+    const unsubs: Array<() => void> = []
 
     const harnessEventTypes: HarnessEventType[] = [
       "harness_diagnosis",
@@ -244,7 +248,7 @@ export function useHarnessEvents(
     ]
 
     for (const eventType of harnessEventTypes) {
-      es.addEventListener(eventType, (e: MessageEvent) => {
+      unsubs.push(subscribeSSE(sseUrl, eventType, (e: MessageEvent) => {
         try {
           const raw = JSON.parse(e.data)
           if (raw.executionId !== executionId) return
@@ -255,17 +259,10 @@ export function useHarnessEvents(
         } catch {
           /* skip malformed */
         }
-      })
+      }))
     }
 
-    es.addEventListener("error", () => {
-      setError("SSE connection error")
-    })
-
-    return () => {
-      es.close()
-      esRef.current = null
-    }
+    return () => { unsubs.forEach(fn => fn()) }
   }, [workspaceId, executionId, fetchHistorical])
 
   // Compute derived stats — count both legacy intervention and new delegation events
@@ -282,6 +279,8 @@ export function useHarnessEvents(
 
   const totalInputTokens = events.reduce((sum, e) => sum + (e.tokenUsage?.inputTokens ?? 0), 0)
   const totalOutputTokens = events.reduce((sum, e) => sum + (e.tokenUsage?.outputTokens ?? 0), 0)
+  const totalCacheTokens = events.reduce((sum, e) => sum + (e.tokenUsage?.cacheTokens ?? 0), 0)
+  const totalCacheCreationTokens = events.reduce((sum, e) => sum + (e.tokenUsage?.cacheCreationTokens ?? 0), 0)
 
-  return { events, loading, error, interventionCount, totalExtraTokens, totalInputTokens, totalOutputTokens }
+  return { events, loading, error, interventionCount, totalExtraTokens, totalInputTokens, totalOutputTokens, totalCacheTokens, totalCacheCreationTokens }
 }

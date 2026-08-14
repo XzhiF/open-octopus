@@ -1,0 +1,64 @@
+# budget-test.yaml — 验证预算预警 + 阻断通知
+# 低预算 (5000 tokens)，3 个 agent 节点消耗 token 触发预警
+apiVersion: octopus/v1
+kind: Workflow
+name: budget-test
+description: "预算通知测试：80% 预警 + 100% 阻断"
+
+budget:
+  max_tokens: 5000
+  alert_threshold: 0.8
+
+providers:
+  hermes-cli:
+    type: hermes
+    timeout: 30
+    min_severity: info
+
+channels:
+  xzf_hermes:
+    provider: hermes-cli
+    target: "telegram:xzf_hermes"
+
+hooks:
+  on_budget_warning:
+    - id: notify-budget-warn
+      type: notify
+      channel: xzf_hermes
+      template:
+        severity: warn
+        title: "⚠️ 预算预警: $hook.workflow_name"
+        body: "已消耗 $hook.tokens_percent% ($hook.total_tokens / $hook.max_tokens tokens)，阈值 $hook.alert_threshold"
+
+  on_budget_exceeded:
+    - id: notify-budget-block
+      type: notify
+      channel: xzf_hermes
+      template:
+        severity: error
+        title: "🚨 预算超限阻断: $hook.workflow_name"
+        body: "执行已阻断！消耗 $hook.total_tokens / $hook.max_tokens tokens ($hook.tokens_percent%)"
+
+  on_complete:
+    - id: notify-done
+      type: notify
+      channel: xzf_hermes
+      template:
+        severity: info
+        title: "🏁 budget-test 完成"
+        body: "工作流执行结束"
+
+nodes:
+  - id: step-1
+    type: agent
+    prompt: "用 200 字描述量子计算的基本原理，包括量子比特和纠缠。"
+
+  - id: step-2
+    type: agent
+    depends_on: [step-1]
+    prompt: "用 200 字解释深度学习中的反向传播算法，包含梯度下降和链式法则。"
+
+  - id: step-3
+    type: agent
+    depends_on: [step-2]
+    prompt: "用 200 字介绍区块链的共识机制，对比 PoW 和 PoS 的优缺点。"

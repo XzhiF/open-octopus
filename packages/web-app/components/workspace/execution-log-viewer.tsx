@@ -622,7 +622,6 @@ export function ExecutionLogViewer({ workspaceId, executionId, executionStatus }
     workspaceId, executionId, executionStatus,
   )
   const [collapsedNodes, setCollapsedNodes] = useState<Set<string>>(new Set())
-  const [harnessOnly, setHarnessOnly] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
   const prevCountRef = useRef(0)
   const prevGroupKeysRef = useRef("")
@@ -729,20 +728,7 @@ export function ExecutionLogViewer({ workspaceId, executionId, executionStatus }
   }, [rawEvents])
 
   // Filter events when "Harness Only" mode is active
-  const HARNESS_EVENT_PREFIXES = ["harness_directive", "harness_diagnosis", "harness_intervention", "harness_blocked"]
-  const filteredEvents = useMemo(() => {
-    if (!harnessOnly) return processedEvents
-    return processedEvents.filter((e) => {
-      // Direct event match
-      if (HARNESS_EVENT_PREFIXES.some((prefix) => e.event === prefix || e.event.startsWith("harness_"))) return true
-      // agent_event with harness type in event_data
-      if (e.event === "agent_event" && e.event_data?.type) {
-        const t = e.event_data.type as string
-        return t.startsWith("harness_") || HARNESS_EVENT_PREFIXES.includes(t)
-      }
-      return false
-    })
-  }, [processedEvents, harnessOnly])
+  const filteredEvents = processedEvents
 
   // Flat grouping with loop-aware rendering:
   // - Iteration events: key = "{nodeId}-{iteration}"
@@ -931,7 +917,7 @@ export function ExecutionLogViewer({ workspaceId, executionId, executionStatus }
     )
   }
 
-  if (nodeGroups.size === 0 && !harnessOnly) {
+  if (nodeGroups.size === 0) {
     return (
       <div className="flex items-center justify-center h-full text-xs text-muted-foreground">
         暂无日志
@@ -941,7 +927,7 @@ export function ExecutionLogViewer({ workspaceId, executionId, executionStatus }
 
   return (
     <div className="h-full flex flex-col">
-      {(nodeGroups.size > 1 || harnessOnly) && (
+      {nodeGroups.size > 1 && (
         <div className="flex items-center gap-1 px-2 py-1 border-b border-border/30 shrink-0">
           <button
             onClick={expandAll}
@@ -959,24 +945,6 @@ export function ExecutionLogViewer({ workspaceId, executionId, executionStatus }
             <ChevronUp className="h-3 w-3" />
             折叠
           </button>
-          <span className="text-muted-foreground/30">|</span>
-          <button
-            onClick={() => setHarnessOnly(!harnessOnly)}
-            className={cn(
-              "flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] transition-colors",
-              harnessOnly
-                ? "bg-violet-600/20 text-violet-400 border border-violet-500/30"
-                : "text-muted-foreground hover:bg-muted/50 hover:text-foreground",
-            )}
-            title={harnessOnly ? "显示所有事件" : "仅显示 Harness 事件"}
-          >
-            🛡️ {harnessOnly ? "Harness Only" : "All Events"}
-          </button>
-        </div>
-      )}
-      {harnessOnly && nodeGroups.size === 0 && (
-        <div className="flex items-center justify-center h-full text-xs text-muted-foreground">
-          暂无 Harness 事件，点击 🛡️ 切回全部日志
         </div>
       )}
       <div ref={containerRef} className="flex-1 overflow-y-auto min-h-0">

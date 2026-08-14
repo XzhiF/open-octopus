@@ -64,6 +64,53 @@ export class TokenUsageDAO extends BaseDAO {
     return this.stmt("SELECT * FROM llm_calls WHERE execution_id = ?").all(executionId) as LlmCallRow[]
   }
 
+  /**
+   * Aggregate execution-level metrics from llm_calls + node_executions.
+   * Used by EngineCallbacks for execution_metrics SSE events.
+   */
+  aggregateByExecution(executionId: string): {
+    totalInputTokens: number
+    totalOutputTokens: number
+    totalCacheReadTokens: number
+    totalCacheCreationTokens: number
+    totalCostUsd: number
+    totalLlmTurns: number
+    errorCount: number
+  } {
+    const tokens = this.stmt(`
+      SELECT
+        COALESCE(SUM(input_tokens), 0) as totalInputTokens,
+        COALESCE(SUM(output_tokens), 0) as totalOutputTokens,
+        COALESCE(SUM(cache_read_tokens), 0) as totalCacheReadTokens,
+        COALESCE(SUM(cache_creation_tokens), 0) as totalCacheCreationTokens,
+        COALESCE(SUM(cost_usd), 0) as totalCostUsd,
+        COUNT(*) as totalLlmTurns
+      FROM llm_calls WHERE execution_id = ?
+    `).get(executionId) as {
+      totalInputTokens: number
+      totalOutputTokens: number
+      totalCacheReadTokens: number
+      totalCacheCreationTokens: number
+      totalCostUsd: number
+      totalLlmTurns: number
+    }
+
+    const errors = this.stmt(`
+      SELECT COUNT(*) as errorCount FROM node_executions
+      WHERE execution_id = ? AND status = 'failed'
+    `).get(executionId) as { errorCount: number }
+
+    return {
+      totalInputTokens: tokens.totalInputTokens,
+      totalOutputTokens: tokens.totalOutputTokens,
+      totalCacheReadTokens: tokens.totalCacheReadTokens,
+      totalCacheCreationTokens: tokens.totalCacheCreationTokens,
+      totalCostUsd: tokens.totalCostUsd,
+      totalLlmTurns: tokens.totalLlmTurns,
+      errorCount: errors.errorCount,
+    }
+  }
+
   findLlmCallsByNodeExecution(nodeExecutionId: string): LlmCallRow[] {
     return this.stmt("SELECT * FROM llm_calls WHERE node_execution_id = ?").all(nodeExecutionId) as LlmCallRow[]
   }

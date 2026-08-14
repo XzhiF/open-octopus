@@ -1,0 +1,134 @@
+{
+  "generatedAt": "2026-08-12T11:05:05.980Z",
+  "total": 21,
+  "passed": 20,
+  "failed": 1,
+  "results": [
+    {
+      "step": "Server health check",
+      "pass": true,
+      "detail": "Server is running on http://localhost:3001",
+      "timestamp": "2026-08-12T11:04:10.776Z"
+    },
+    {
+      "step": "Create test workspace",
+      "pass": true,
+      "detail": "workspaceId=c4f5c490-8a79-4b7c-9753-1b20ef0eed47, name=E2E_HARNESS_TEST_obs_test",
+      "timestamp": "2026-08-12T11:04:10.814Z"
+    },
+    {
+      "step": "Create workflow with budget",
+      "pass": true,
+      "detail": "ref=OBS_TEST_observability.yaml",
+      "timestamp": "2026-08-12T11:04:10.821Z"
+    },
+    {
+      "step": "Create execution",
+      "pass": true,
+      "detail": "executionId=4c1088c0-0980-49bd-806a-f1c98ace51b1",
+      "timestamp": "2026-08-12T11:04:10.831Z"
+    },
+    {
+      "step": "Start execution",
+      "pass": true,
+      "detail": "Execution started",
+      "timestamp": "2026-08-12T11:05:05.838Z"
+    },
+    {
+      "step": "Execution reaches terminal status",
+      "pass": true,
+      "detail": "status=completed",
+      "timestamp": "2026-08-12T11:05:05.845Z"
+    },
+    {
+      "step": "AC-3: budget_snapshot written to DB",
+      "pass": true,
+      "detail": "snapshot={\"max_tokens\":50000,\"max_duration\":300,\"max_cost_usd\":1,\"alert_threshold\":0.8}...",
+      "timestamp": "2026-08-12T11:05:05.873Z"
+    },
+    {
+      "step": "AC-3: budget_snapshot values correct",
+      "pass": true,
+      "detail": "max_tokens=50000, max_duration=300, max_cost_usd=1",
+      "timestamp": "2026-08-12T11:05:05.873Z"
+    },
+    {
+      "step": "GET /observability returns 200",
+      "pass": true,
+      "detail": "status=200",
+      "timestamp": "2026-08-12T11:05:05.876Z"
+    },
+    {
+      "step": "AC-8: Observability data accessible post-execution",
+      "pass": true,
+      "detail": "executionId=4c1088c0-0980-49bd-806a-f1c98ace51b1, status=completed",
+      "timestamp": "2026-08-12T11:05:05.876Z"
+    },
+    {
+      "step": "API: tokens summary present",
+      "pass": true,
+      "detail": "input=6, output=118, cost=0.20428625",
+      "timestamp": "2026-08-12T11:05:05.876Z"
+    },
+    {
+      "step": "API: byNode breakdown present",
+      "pass": true,
+      "detail": "4 nodes",
+      "timestamp": "2026-08-12T11:05:05.876Z"
+    },
+    {
+      "step": "API: byModel breakdown present",
+      "pass": true,
+      "detail": "1 models",
+      "timestamp": "2026-08-12T11:05:05.876Z"
+    },
+    {
+      "step": "API: timeSeries present",
+      "pass": true,
+      "detail": "1 data points",
+      "timestamp": "2026-08-12T11:05:05.876Z"
+    },
+    {
+      "step": "API: budget section present",
+      "pass": true,
+      "detail": "snapshot={\"max_tokens\":50000,\"max_duration\":300,\"max_cost_usd\":1,\"ale",
+      "timestamp": "2026-08-12T11:05:05.876Z"
+    },
+    {
+      "step": "API: budget progress computed",
+      "pass": true,
+      "detail": "tokens%=64.67, duration%=18.33, cost%=20.43",
+      "timestamp": "2026-08-12T11:05:05.876Z"
+    },
+    {
+      "step": "AC-5: errors array present",
+      "pass": true,
+      "detail": "0 error entries",
+      "timestamp": "2026-08-12T11:05:05.876Z"
+    },
+    {
+      "step": "API: rounds summary present",
+      "pass": true,
+      "detail": "llm=1, loop=0, swarm=0, retries=1",
+      "timestamp": "2026-08-12T11:05:05.877Z"
+    },
+    {
+      "step": "Cross-validation: API tokens == DB tokens",
+      "pass": true,
+      "detail": "API(input=6, output=118) vs DB(input=6, output=118)",
+      "timestamp": "2026-08-12T11:05:05.906Z"
+    },
+    {
+      "step": "DB: Error nodes found in node_executions",
+      "pass": false,
+      "detail": "0 error rows",
+      "timestamp": "2026-08-12T11:05:05.971Z"
+    },
+    {
+      "step": "Cleanup: delete test workspace",
+      "pass": true,
+      "detail": "workspaceId=c4f5c490-8a79-4b7c-9753-1b20ef0eed47",
+      "timestamp": "2026-08-12T11:05:05.979Z"
+    }
+  ]
+}

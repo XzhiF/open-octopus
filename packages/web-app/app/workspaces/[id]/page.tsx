@@ -964,7 +964,7 @@ const handleOpenAsText = async (file: FileNode) => {
 
         {/* Center: Workflow Panel with Tabs */}
         <Panel
-          defaultSize={showFileTree && showChat ? 60 : showFileTree ? 80 : showChat ? 75 : 100}
+          defaultSize={showFileTree && showChat ? 55 : showFileTree ? 85 : showChat ? 70 : 100}
           minSize={40}
           className="min-w-0"
         >
@@ -1101,7 +1101,7 @@ const handleOpenAsText = async (file: FileNode) => {
         {showChat && (
           <>
             <PanelResizeHandle className="w-1 bg-border/40 hover:bg-border transition-colors" />
-            <Panel defaultSize={25} minSize={15} maxSize={40} className="min-w-0">
+            <Panel defaultSize={30} minSize={15} maxSize={40} className="min-w-0">
               <div className="h-full">
                 <ChatPanel
                   messages={messages}

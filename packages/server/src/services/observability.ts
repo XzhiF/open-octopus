@@ -269,6 +269,18 @@ export class ObservabilityService {
       }
     }
 
+    // Intervention results: extract the result text for chat history persistence
+    if (event.type === "intervention_result") {
+      const data = event.data as Record<string, unknown> | undefined
+      return {
+        type: event.type,
+        timestamp: Date.now(),
+        content: typeof data?.result === "string" ? data.result : JSON.stringify(data ?? {}),
+        contentLength: typeof data?.result === "string" ? data.result.length : 0,
+        turnIndex,
+      }
+    }
+
     const base: FilteredAgentEvent = {
       type: event.type,
       timestamp: event.timestamp,

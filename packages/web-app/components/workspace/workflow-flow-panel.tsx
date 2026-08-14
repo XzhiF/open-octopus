@@ -456,6 +456,7 @@ export function WorkflowFlowPanel({
                 if (status === "completed_with_failures") return "#f59e0b"
                 if (status === "running") return "#f59e0b"
                 if (status === "failed") return "#ef4444"
+                if (status === "budget_exceeded") return "#ef4444"
                 if (status === "paused") return "#8b5cf6"
                 if (status === "pending_approval") return "#f59e0b"
                 if (status === "rejected") return "#ea580c"

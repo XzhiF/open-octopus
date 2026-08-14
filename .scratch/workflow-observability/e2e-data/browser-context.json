@@ -1,0 +1,8 @@
+{
+  "workspaceId": "6d8e545e-e55b-4a85-a34c-572b4f73a263",
+  "workspaceName": "E2E_HARNESS_TEST_obs_browser",
+  "executionId": "8745dc4a-fb7a-4ac7-9668-74affb8ef729",
+  "workflowRef": "OBS_TEST_observability.yaml",
+  "executionStatus": "completed",
+  "setupAt": "2026-08-12T11:12:57.569Z"
+}

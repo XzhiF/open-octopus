@@ -70,7 +70,7 @@ export class ExecutionDAO extends BaseDAO {
       "duration", "global_session_id", "approval_metadata", "interaction_metadata", "chain_retry_count",
       "preset_inputs", "name", "branch", "start_commit_id", "end_commit_id",
       "pipeline_config", "retry_count", "pending_hooks", "resume_attempts",
-      "instance_id", "input_values",
+      "instance_id", "input_values", "budget_snapshot",
     ])
     const sets: string[] = []
     const vals: unknown[] = []
@@ -232,7 +232,7 @@ export class ExecutionDAO extends BaseDAO {
 
   deleteAgentEventsByNode(nodeExecutionId: string): Database.RunResult {
     console.log(`[ExecutionDAO] deleteAgentEventsByNode: ${nodeExecutionId}`)
-    const result = this.stmt("DELETE FROM agent_events WHERE node_execution_id = ? AND event_type NOT LIKE 'harness_%'").run(nodeExecutionId)
+    const result = this.stmt("DELETE FROM agent_events WHERE node_execution_id = ? AND event_type NOT LIKE 'harness_%' AND event_type != 'intervention_result'").run(nodeExecutionId)
     console.log(`[ExecutionDAO] deleteAgentEventsByNode: deleted ${result.changes} events`)
     return result
   }
@@ -247,8 +247,8 @@ export class ExecutionDAO extends BaseDAO {
   replaceMergedEvents(executionId: string, nodeId: string, mergedEvents: any[]): void {
     this.transaction(() => {
       const neId = `${executionId}-${nodeId}`
-      // Delete old fragmented events for this node, but preserve harness_* events
-      this.stmt("DELETE FROM agent_events WHERE node_execution_id = ? AND event_type NOT LIKE 'harness_%'").run(neId)
+      // Delete old fragmented events for this node, but preserve harness_* and intervention_result events
+      this.stmt("DELETE FROM agent_events WHERE node_execution_id = ? AND event_type NOT LIKE 'harness_%' AND event_type != 'intervention_result'").run(neId)
       // Insert merged events
       const insert = this.stmt(`
         INSERT INTO agent_events (
@@ -814,6 +814,30 @@ export class ExecutionDAO extends BaseDAO {
     if (nodeId) { query += ` AND ne.node_id = ?`; params.push(nodeId) }
     query += ` ORDER BY ae.timestamp ASC`
     return this.stmt(query).all(...params) as Array<Record<string, unknown>>
+  }
+
+  /**
+   * Find all tool-level errors (tool_is_error = 1) for an execution.
+   * Used by observability to surface agent-internal tool failures.
+   */
+  findToolErrors(executionId: string): Array<{
+    node_id: string
+    tool_name: string
+    tool_result: string
+    timestamp: number
+  }> {
+    return this.stmt(`
+      SELECT ne.node_id, ae.tool_name, ae.tool_result, ae.timestamp
+      FROM agent_events ae
+      JOIN node_executions ne ON ae.node_execution_id = ne.id
+      WHERE ne.execution_id = ? AND ae.tool_is_error = 1
+      ORDER BY ae.timestamp ASC
+    `).all(executionId) as Array<{
+      node_id: string
+      tool_name: string
+      tool_result: string
+      timestamp: number
+    }>
   }
 
   exists(id: string): boolean {

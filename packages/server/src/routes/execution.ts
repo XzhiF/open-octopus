@@ -6,8 +6,9 @@ import { WorkflowService } from "../services/workflow"
 import { BuiltInWorkflowService } from "../services/builtin-workflow"
 import { SSEService } from "../services/sse"
 import { ObservabilityService } from "../services/observability"
+import { ObservabilityQueryService } from "../services/observability-query"
 import { PipelineConfigLoader } from "../services/pipeline-config"
-import { ExecutionDAO } from "../db/dao"
+import { ExecutionDAO, TokenUsageDAO } from "../db/dao"
 import { initExecutionServiceRegistry, getService } from "../services/execution-service-registry"
 export { getService } from "../services/execution-service-registry"
 import { mergeAgentEvents } from "@octopus/engine"
@@ -31,9 +32,11 @@ export function extractLatestHeartbeat(
 
 const executionRoutes = new Hono()
 let _executionDAO: ExecutionDAO | null = null
+let _tokenUsageDAO: TokenUsageDAO | null = null
 
-export function setExecutionDependencies(sse: SSEService, obs: ObservabilityService, execDAO?: ExecutionDAO) {
+export function setExecutionDependencies(sse: SSEService, obs: ObservabilityService, execDAO?: ExecutionDAO, tokenDAO?: TokenUsageDAO) {
   _executionDAO = execDAO ?? null
+  _tokenUsageDAO = tokenDAO ?? null
   if (execDAO) {
     initExecutionServiceRegistry(execDAO as any, sse, obs)
     setRepairDependencies(execDAO, sse, getService)
@@ -440,7 +443,54 @@ executionRoutes.post("/:executionId/harness-intervene", async (c) => {
       if (!repairService) {
         return c.json({ error: "repair service not available" }, 503)
       }
+
+      // Persist user message to agent_events for chat history
+      const neId = `${executionId}-${body.nodeId}`
+      const now = Date.now()
+      if (_executionDAO) {
+        try {
+          const baseEvent = {
+            node_execution_id: neId,
+            turn_index: 0,
+            tool_call_id: null, tool_name: null, tool_input: null,
+            tool_result: null, tool_is_error: 0, tool_duration_ms: null,
+            status_value: null, error_code: null, error_message: null,
+          }
+          _executionDAO.insertAgentEvent({
+            ...baseEvent,
+            event_order: now,
+            event_type: "harness_user_message",
+            timestamp: now,
+            content: body.directive.message!,
+            content_length: body.directive.message!.length,
+          })
+        } catch { /* non-fatal: chat history persistence */ }
+      }
+
       const result = await repairService.intervene(executionId, body.nodeId, body.directive.message)
+
+      // Persist system response to agent_events
+      const responseMsg = result.injected ? "已注入指令，节点将收到纠正" : "注入失败"
+      if (_executionDAO) {
+        try {
+          const baseEvent = {
+            node_execution_id: neId,
+            turn_index: 0,
+            tool_call_id: null, tool_name: null, tool_input: null,
+            tool_result: null, tool_is_error: 0, tool_duration_ms: null,
+            status_value: null, error_code: null, error_message: null,
+          }
+          _executionDAO.insertAgentEvent({
+            ...baseEvent,
+            event_order: now + 1,
+            event_type: "harness_system_response",
+            timestamp: Date.now(),
+            content: responseMsg,
+            content_length: responseMsg.length,
+          })
+        } catch { /* non-fatal: chat history persistence */ }
+      }
+
       return c.json({ success: true, directive_applied: "inject", ...result })
     } catch (err: unknown) {
       return handleError(err)
@@ -612,7 +662,11 @@ executionRoutes.get("/:executionId/agent-events", (c) => {
         // harness_* includes harness_directive, harness_stupid_retry, harness_process_conflict, etc.
         if (row.event_type === "heartbeat" || row.event_type === "heartbeat_stall" || row.event_type.startsWith("harness_")) {
           let data: Record<string, unknown> = {}
-          try { data = JSON.parse(row.content ?? "{}") } catch { /* ignore */ }
+          try { data = JSON.parse(row.content ?? "{}") } catch { /* content is plain text */ }
+          // If JSON parse failed and content exists, store as data.content
+          if (Object.keys(data).length === 0 && row.content) {
+            data = { content: row.content }
+          }
           // Extract iteration from content to top-level for log viewer grouping
           const iteration = data.iteration as number | undefined
           return {
@@ -621,6 +675,15 @@ executionRoutes.get("/:executionId/agent-events", (c) => {
             data,
             timestamp: new Date(row.timestamp).toISOString(),
             ...(iteration != null ? { iteration } : {}),
+          }
+        }
+        // Intervention results: content is the result text
+        if (row.event_type === "intervention_result") {
+          return {
+            event: "intervention_result",
+            nodeId: row.node_id,
+            data: { result: row.content ?? "" },
+            timestamp: new Date(row.timestamp).toISOString(),
           }
         }
         // start/end lifecycle events: skip from SQLite (JSONL provides authoritative copies)
@@ -803,6 +866,29 @@ executionRoutes.get("/:executionId/logs", (c) => {
     await stream.sleep(1000)
     stream.writeSSE({ event: "complete", data: JSON.stringify({ executionId, message: "stream ended" }) })
   })
+})
+
+executionRoutes.get("/:executionId/observability", (c) => {
+  const workspaceId = getWorkspaceId(c)
+  const executionId = getExecutionId(c)
+  const svc = getService(workspaceId)
+  if (!svc) return c.json({ error: "workspace not found" }, 404)
+
+  if (!_executionDAO || !_tokenUsageDAO) {
+    return c.json({ error: "database not available" }, 503)
+  }
+
+  try {
+    const queryService = new ObservabilityQueryService(_executionDAO, _tokenUsageDAO)
+    const data = queryService.getObservabilityData(executionId)
+    return c.json(data)
+  } catch (err: unknown) {
+    if (err && typeof err === "object" && "status" in err) {
+      const e = err as { status: number; message?: string }
+      return c.json({ error: e.message ?? "not found" }, e.status)
+    }
+    throw err
+  }
 })
 
 // ── Repair sub-router ─────────────────────────────────────────────

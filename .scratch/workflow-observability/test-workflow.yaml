@@ -1,0 +1,41 @@
+# Test workflow for observability verification
+name: observability-test
+description: Test workflow to verify execution observability features
+
+budget:
+  max_tokens: 100000
+  max_duration_minutes: 5
+
+nodes:
+  - id: init
+    type: bash
+    command: |
+      echo "=== Observability Test Started ==="
+      echo "Testing token tracking and execution metrics"
+      date
+    next: agent-task
+
+  - id: agent-task
+    type: agent
+    agent: octo-code-explorer
+    prompt: |
+      快速分析当前项目的 package.json，列出主要依赖。
+      用简洁的格式回复。
+    next: loop-test
+
+  - id: loop-test
+    type: loop
+    iterations: 2
+    body:
+      - id: iteration-task
+        type: bash
+        command: |
+          echo "Iteration $iteration of 2"
+          echo "Loop test at $(date)"
+    next: final
+
+  - id: final
+    type: bash
+    command: |
+      echo "=== Test Complete ==="
+      echo "All nodes executed successfully"

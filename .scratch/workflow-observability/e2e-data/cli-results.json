@@ -1,0 +1,38 @@
+{
+  "generatedAt": "2026-08-12T11:14:52.914Z",
+  "total": 5,
+  "passed": 5,
+  "failed": 0,
+  "results": [
+    {
+      "step": "AC-7: Valid budget YAML passes validate",
+      "pass": true,
+      "detail": "✓ Workflow YAML is valid\n  Name: valid-budget-test\n  Nodes: 1",
+      "timestamp": "2026-08-12T11:14:38.692Z"
+    },
+    {
+      "step": "AC-7: Invalid budget (negative) fails validate",
+      "pass": true,
+      "detail": "output=✗ Validation failed: budget.max_tokens: Number must be greater than 0\n",
+      "timestamp": "2026-08-12T11:14:43.507Z"
+    },
+    {
+      "step": "AC-7: Invalid budget (string) fails validate",
+      "pass": true,
+      "detail": "output=✗ Validation failed: budget.max_tokens: Expected number, received string\n",
+      "timestamp": "2026-08-12T11:14:48.233Z"
+    },
+    {
+      "step": "AC-7: Valid YAML without budget passes",
+      "pass": true,
+      "detail": "✓ Workflow YAML is valid\n  Name: no-budget-test\n  Nodes: 1",
+      "timestamp": "2026-08-12T11:14:52.913Z"
+    },
+    {
+      "step": "Cleanup CLI tmp files",
+      "pass": true,
+      "detail": "",
+      "timestamp": "2026-08-12T11:14:52.914Z"
+    }
+  ]
+}

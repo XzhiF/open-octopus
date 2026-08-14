@@ -1,0 +1,114 @@
+# 观测性全链路测试
+# 覆盖: budget 快照、token 多维聚合、轮次统计、错误时间线、循环迭代、条件分支
+# 预期: 4+ LLM turns, 1 error (script_error), 3 loop iterations, budget progress visible
+apiVersion: octopus/v1
+kind: Workflow
+name: observability-full-test
+description: |
+  全链路观测性测试 — 模拟代码审查流水线
+  验证: 浮动面板摘要卡片、观测详情页图表、SSE 实时推送、历史数据回溯
+
+
+inputs:
+  severity:
+    description: "Error severity level (low/high)"
+    default: "low"
+
+nodes:
+  # ── Stage 1: 初始化 (bash) ──────────────────────────────
+  - id: setup
+    type: bash
+    command: |
+      echo "=== 代码审查流水线启动 ==="
+      echo "timestamp: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+      echo "project: open-octopus"
+      echo "target: packages/shared"
+      echo "review_scope: full"
+
+  # ── Stage 2: 代码分析 (agent) — 生成 token 消耗 ────────
+  - id: code-analysis
+    type: agent
+    depends_on: [setup]
+    prompt: |
+      分析 packages/shared/src/types/workflow.ts 的类型定义结构。
+      列出所有导出的类型/接口名称及其用途，格式为 markdown 表格。
+      不要修改任何文件。
+
+  # ── Stage 3: 测试执行 (bash — 故意失败) — 测试 script_error 分类 ──
+  - id: run-tests
+    type: bash
+    depends_on: [code-analysis]
+    command: |
+      echo "Running unit tests..."
+      echo "  ✓ types/workflow.test.ts (12 passed)"
+      echo "  ✓ types/pipeline.test.ts (8 passed)"
+      echo "  ✗ types/budget.test.ts — FAIL: assertion error"
+      echo "    Expected: max_tokens > 0"
+      echo "    Received: undefined"
+      exit 1
+
+  # ── Stage 4: 修复建议 (agent) — 即使上游失败也执行 ─────
+  - id: fix-suggestion
+    type: agent
+    depends_on: [run-tests]
+    prompt: |
+      用一句话回答：TypeScript 中如何安全地访问可能为 undefined 的属性？
+      给出一个代码示例。
+
+  # ── Stage 5: 迭代验证 (loop × 3) — 测试 iteration_index 计数 ──
+  - id: validation-rounds
+    type: loop
+    depends_on: [fix-suggestion]
+    max_iterations: 3
+    nodes:
+      - id: validate
+        type: bash
+        command: |
+          echo "=== 验证轮次 $iteration / 3 ==="
+          echo "检查项: 类型完整性、接口兼容性、命名规范"
+          sleep 1
+          echo "轮次 $iteration 验证完成"
+
+  # ── Stage 6: 质量评估 (agent) — 更多 token 消耗 ────────
+  - id: quality-check
+    type: agent
+    depends_on: [validation-rounds]
+    prompt: |
+      评估以下代码审查结果的质量（1-10 分）：
+      - 分析了 5 个导出类型
+      - 发现 1 个测试失败
+      - 提供了修复建议
+      - 完成了 3 轮验证
+      只输出分数和一句话理由。
+
+  # ── Stage 7: 条件分支 — 测试条件节点观测 ───────────────
+  - id: quality-gate
+    type: condition
+    depends_on: [quality-check]
+    cases:
+      - when: '$inputs.severity == "high"'
+        then: fail-report
+      - when: default
+        then: pass-report
+
+  - id: pass-report
+    type: agent
+    depends_on: [quality-gate]
+    prompt: |
+      用两句话生成代码审查通过报告，包含：审查范围、发现问题数、质量评分。
+
+  - id: fail-report
+    type: agent
+    depends_on: [quality-gate]
+    prompt: |
+      用两句话生成代码审查未通过报告，说明需要返工的原因。
+
+  # ── Stage 8: 收尾 (bash) ───────────────────────────────
+  - id: cleanup
+    type: bash
+    depends_on: [pass-report]
+    command: |
+      echo "=== 代码审查流水线完成 ==="
+      echo "completed_at: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+      echo "total_stages: 8"
+      echo "observability_test: PASS"
