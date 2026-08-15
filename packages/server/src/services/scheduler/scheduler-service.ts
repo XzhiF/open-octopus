@@ -17,6 +17,8 @@ import type {
   SchedulerExecutionSummary,
   SchedulerExecutionStatus,
   JobConfig,
+  TriggerSource,
+  ScheduleStatus,
 } from '@octopus/shared'
 import { ScheduleConfigDAO, ScheduleRunDAO } from '../../db/dao'
 
@@ -50,46 +52,55 @@ export class SchedulerTriggerConflictError extends Error {
   }
 }
 
+export class SchedulerTriggerSourceMismatchError extends Error {
+  constructor(message = 'Only cron schedules can be toggled') {
+    super(message)
+    this.name = 'SchedulerTriggerSourceMismatchError'
+  }
+}
+
 // Re-export for convenience
 export { ConfigValidationError }
 
 // ── Zod Validation Schemas ───────────────────────────────────────────
 
+const cronExpressionField = z.string().min(1).refine(
+  (val) => { try { parseExpression(val); return true } catch { return false } },
+  { message: '无效的 Cron 表达式' },
+)
+
 const createJobSchema = z.object({
   name: z.string().min(1).max(200),
   job_type: z.enum(['workflow', 'agent']),
-  cron_expression: z.string().min(1).refine(
-    (val) => {
-      try { parseExpression(val); return true } catch { return false }
-    },
-    { message: '无效的 Cron 表达式' },
-  ),
+  cron_expression: cronExpressionField.nullable().optional(),
   timezone: z.string().refine(
-    (val) => {
-      try { new Intl.DateTimeFormat('en', { timeZone: val }); return true } catch { return false }
-    },
+    (val) => { try { new Intl.DateTimeFormat('en', { timeZone: val }); return true } catch { return false } },
     { message: '无效的 IANA 时区' },
-  ),
+  ).optional().default('Asia/Shanghai'),
   org: z.string().min(1).max(100).optional(),
   config: z.record(z.unknown()),
   parallel_policy: z.enum(['allow', 'wait', 'skip']).optional().default('skip'),
   timeout_seconds: z.number().int().min(60).max(86400).optional().default(3600),
   notify_on_failure: z.boolean().optional().default(false),
   description: z.string().max(1000).optional(),
+  trigger_source: z.enum(['cron', 'requirement']).optional().default('cron'),
+  source_chat_session_id: z.string().nullable().optional(),
+}).superRefine((data, ctx) => {
+  // trigger_source='cron' (default) requires a valid cron_expression
+  if (data.trigger_source === 'cron' && !data.cron_expression) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "cron_expression is required when trigger_source='cron'",
+      path: ['cron_expression'],
+    })
+  }
 })
 
 const updateJobSchema = z.object({
   name: z.string().min(1).max(200).optional(),
-  cron_expression: z.string().min(1).refine(
-    (val) => {
-      try { parseExpression(val); return true } catch { return false }
-    },
-    { message: '无效的 Cron 表达式' },
-  ).optional(),
+  cron_expression: cronExpressionField.nullable().optional(),
   timezone: z.string().refine(
-    (val) => {
-      try { new Intl.DateTimeFormat('en', { timeZone: val }); return true } catch { return false }
-    },
+    (val) => { try { new Intl.DateTimeFormat('en', { timeZone: val }); return true } catch { return false } },
     { message: '无效的 IANA 时区' },
   ).optional(),
   config: z.record(z.unknown()).optional(),
@@ -105,7 +116,7 @@ interface ScheduleRow {
   id: string
   org: string
   name: string
-  cron_expression: string
+  cron_expression: string | null
   timezone: string
   enabled: number
   timeout_seconds: number
@@ -125,6 +136,10 @@ interface ScheduleRow {
   version: number
   consecutive_failures: number
   max_retain: number
+  status: string
+  trigger_source: string | null
+  source_chat_session_id: string | null
+  claimed_at: string | null
   // Populated by correlated subqueries in listJobs/getJob (not a real column)
   last_exec_status?: string | null
   last_exec_triggered_at?: string | null
@@ -249,6 +264,11 @@ export class SchedulerService {
       queryParams.push(params.workspace_id)
     }
 
+    if (params.trigger_source) {
+      conditions.push('s.trigger_source = ?')
+      queryParams.push(params.trigger_source)
+    }
+
     if (params.org) {
       conditions.push('s.org = ?')
       queryParams.push(params.org)
@@ -294,18 +314,32 @@ export class SchedulerService {
       }
     }
 
+    // Derive status from trigger_source: 'requirement' drafts start as 'draft' (unclaimed),
+    // 'cron' jobs start as 'queued' (ready to fire on schedule)
+    const triggerSource: TriggerSource = validated.trigger_source
+    const status: ScheduleStatus = triggerSource === 'requirement' ? 'draft' : 'queued'
+
+    // For 'cron' jobs, compute next trigger from cron_expression.
+    // For 'requirement' drafts, cron_expression is null and next_trigger_at stays null.
+    const cronExpression = triggerSource === 'cron' ? validated.cron_expression! : null
+    const nextTrigger = cronExpression
+      ? this.calculateNextTrigger(cronExpression, validated.timezone)
+      : null
+
     const id = randomUUID()
     const now = new Date().toISOString()
-    const nextTrigger = this.calculateNextTrigger(validated.cron_expression, validated.timezone)
     const configJson = JSON.stringify(validatedConfig)
 
     // Derive max_retain from config for workflow jobs
     const maxRetain = validatedConfig.type === 'workflow' ? validatedConfig.max_retain : 10
 
+    // Drafts are born disabled (enabled=0); cron jobs born enabled=1
+    const enabled = status === 'draft' ? 0 : 1
+
     this.configDAO.transaction(() => {
       this.configDAO.insertSchedule({
         id, org, name: validated.name,
-        cron_expression: validated.cron_expression, timezone: validated.timezone,
+        cron_expression: cronExpression, timezone: validated.timezone,
         timeout_seconds: validated.timeout_seconds,
         notify_on_failure: validated.notify_on_failure ? 1 : 0,
         next_trigger_at: nextTrigger,
@@ -314,6 +348,10 @@ export class SchedulerService {
         parallel_policy: validated.parallel_policy,
         description: validated.description ?? null,
         max_retain: maxRetain,
+        enabled,
+        status,
+        trigger_source: triggerSource,
+        source_chat_session_id: validated.source_chat_session_id ?? null,
       })
 
       this.writeAuditLog({
@@ -322,9 +360,11 @@ export class SchedulerService {
         changes: {
           name: { before: null, after: validated.name },
           job_type: { before: null, after: validated.job_type },
-          cron_expression: { before: null, after: validated.cron_expression },
+          cron_expression: { before: null, after: cronExpression },
           timezone: { before: null, after: validated.timezone },
           org: { before: null, after: org },
+          trigger_source: { before: null, after: triggerSource },
+          status: { before: null, after: status },
         },
       })
     })
@@ -409,8 +449,11 @@ export class SchedulerService {
       }
     }
 
-    // Recalculate next_trigger_at when cron or timezone changes
-    const effectiveCron = validated.cron_expression ?? existing.cron_expression
+    // Recalculate next_trigger_at when cron or timezone changes.
+    // Use === undefined (not ??) so user can explicitly clear cron by passing null.
+    const effectiveCron = validated.cron_expression === undefined
+      ? existing.cron_expression
+      : validated.cron_expression
     const effectiveTz = validated.timezone ?? existing.timezone
 
     this.configDAO.transaction(() => {
@@ -430,7 +473,7 @@ export class SchedulerService {
         }
       }
       if (validated.cron_expression !== undefined || validated.timezone !== undefined) {
-        const nextTrigger = existing.enabled === 1
+        const nextTrigger = existing.enabled === 1 && effectiveCron
           ? this.calculateNextTrigger(effectiveCron, effectiveTz)
           : null
         updateFields.next_trigger_at = nextTrigger
@@ -482,9 +525,15 @@ export class SchedulerService {
       throw new SchedulerJobNotFoundError()
     }
 
+    // ponytail: guard at service level protects all callers (scheduler route, agent route, agent service)
+    // requirement-type schedules use status draft/queued/claimed/done, never enabled/disabled
+    if ((existing.trigger_source ?? 'cron') !== 'cron') {
+      throw new SchedulerTriggerSourceMismatchError()
+    }
+
     const now = new Date().toISOString()
     const newEnabled = existing.enabled === 1 ? 0 : 1
-    const nextTrigger = newEnabled === 1
+    const nextTrigger = newEnabled === 1 && existing.cron_expression
       ? this.calculateNextTrigger(existing.cron_expression, existing.timezone)
       : null
 
@@ -498,6 +547,37 @@ export class SchedulerService {
         schedule_id: id,
         action: newEnabled === 1 ? 'enabled' : 'disabled',
         changes: { enabled: { before: existing.enabled === 1, after: newEnabled === 1 } },
+      })
+    })
+
+    this.notifyScheduleChange()
+    return this.getJob(id)
+  }
+
+  // ── Enqueue Job (draft → queued) ──────────────────────────────────
+
+  enqueueJob(id: string): SchedulerJob {
+    const existing = this.configDAO.findByIdRaw(id) as unknown as ScheduleRow | undefined
+
+    if (!existing) {
+      throw new SchedulerJobNotFoundError()
+    }
+
+    if ((existing.trigger_source ?? 'cron') !== 'requirement') {
+      throw new SchedulerTriggerSourceMismatchError('Only requirement-type schedules can be enqueued')
+    }
+
+    if ((existing.status ?? 'queued') !== 'draft') {
+      throw new SchedulerJobConflictError(`Cannot enqueue: current status is ${existing.status ?? 'queued'}`)
+    }
+
+    this.configDAO.transaction(() => {
+      this.configDAO.updateSchedule(id, { status: 'queued' })
+
+      this.writeAuditLog({
+        schedule_id: id,
+        action: 'enqueued',
+        changes: { status: { before: 'draft', after: 'queued' } },
       })
     })
 
@@ -761,6 +841,10 @@ export class SchedulerService {
       deleted_at: row.deleted_at,
       created_at: row.created_at,
       updated_at: row.updated_at,
+      status: (row.status ?? 'queued') as ScheduleStatus,
+      trigger_source: (row.trigger_source ?? 'cron') as TriggerSource,
+      source_chat_session_id: row.source_chat_session_id ?? null,
+      claimed_at: row.claimed_at ?? null,
     }
   }
 

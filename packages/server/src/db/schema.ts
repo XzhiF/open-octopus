@@ -10,7 +10,7 @@ const _dirname: string =
     ? __dirname
     : path.dirname(fileURLToPath(import.meta.url))
 
-export const SCHEMA_VERSION = 36
+export const SCHEMA_VERSION = 37
 
 /**
  * Apply the complete unified schema to the given database.
@@ -71,6 +71,9 @@ function handleSchemaMigrations(db: Database.Database): void {
 
   // Migrate experiences_fts to v2 content-sync mode (schema version 35)
   migrateExperiencesFtsV2(db)
+
+  // schema v37: schedules — drop NOT NULL on cron_expression + add task-pool columns
+  migrateSchedulesV37(db)
 }
 
 /**
@@ -180,6 +183,12 @@ function ensureColumnsForExistingTables(db: Database.Database): void {
   ensureColumn(db, 'experiences', 'source_type', "TEXT NOT NULL DEFAULT 'session'")
   ensureColumn(db, 'experiences', 'execution_id', "TEXT DEFAULT NULL")
   ensureColumn(db, 'experiences', 'node_id', "TEXT DEFAULT NULL")
+
+  // Task-pool columns (schema version 37)
+  ensureColumn(db, 'schedules', 'status', "TEXT NOT NULL DEFAULT 'queued'")
+  ensureColumn(db, 'schedules', 'trigger_source', "TEXT")
+  ensureColumn(db, 'schedules', 'source_chat_session_id', "TEXT")
+  ensureColumn(db, 'schedules', 'claimed_at', "TEXT")
 }
 
 function ensureColumn(db: Database.Database, table: string, column: string, definition: string): void {
@@ -291,5 +300,57 @@ function migrateExperiencesFtsV2(db: Database.Database): void {
     console.warn("[schema] experiences_fts v2 migration failed:", err instanceof Error ? err.message : String(err))
     // Non-fatal — FTS will be recreated by schema.sql if needed
     try { db.exec("DROP TABLE IF EXISTS experiences_fts_v2") } catch { /* ignore */ }
+  }
+}
+
+/**
+ * schema v37: schedules — drop NOT NULL on cron_expression.
+ *
+ * SQLite cannot remove a NOT NULL constraint in place. The columns added in
+ * ensureColumnsForExistingTables (status, trigger_source, source_chat_session_id,
+ * claimed_at) are already present on existing DBs. The remaining task is making
+ * cron_expression nullable: detect the old constraint and rename the table to
+ * a backup, letting schema.sql recreate schedules fresh with the new shape.
+ *
+ * Existing rows are preserved in schedules_old_schema_backup_v37 for manual
+ * inspection — matching the execution_archive migration pattern. New active
+ * table starts empty. Acceptable for rapid-iteration dev DBs.
+ */
+function migrateSchedulesV37(db: Database.Database): void {
+  const tables = db.prepare(
+    "SELECT name FROM sqlite_master WHERE type='table' AND name='schedules'"
+  ).all()
+  if (tables.length === 0) return // Will be created by schema.sql
+
+  const cols = db.prepare("PRAGMA table_info(schedules)").all() as {
+    name: string
+    notnull: number
+    type: string
+  }[]
+
+  const cronCol = cols.find(c => c.name === 'cron_expression')
+  if (!cronCol || cronCol.notnull === 0) return // Already nullable
+
+  const count = (db.prepare("SELECT COUNT(*) as cnt FROM schedules").get() as { cnt: number }).cnt
+  db.exec("ALTER TABLE schedules RENAME TO schedules_old_schema_backup_v37")
+  // eslint-disable-next-line no-console
+  console.log(`[schema] Renamed old schedules (${count} rows) → schedules_old_schema_backup_v37; schema.sql will recreate with nullable cron_expression`)
+
+  // ponytail: SQLite FK targets are name-bound — when schedules was renamed,
+  // schedule_executions and schedule_workspaces FKs now point to the backup table,
+  // not the new active schedules. Rename them too so schema.sql recreates with FK
+  // on the new schedules table. Without this, every INSERT into schedule_executions
+  // fails with "FOREIGN KEY constraint failed" because schedule_id exists in new
+  // schedules but FK validates against the backup table. T-6 E2E caught this.
+  for (const dep of ['schedule_executions', 'schedule_workspaces', 'schedule_audit_logs']) {
+    const exists = db.prepare(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name=?"
+    ).all(dep)
+    if (exists.length > 0) {
+      const depCount = (db.prepare(`SELECT COUNT(*) as cnt FROM ${dep}`).get() as { cnt: number }).cnt
+      db.exec(`ALTER TABLE ${dep} RENAME TO ${dep}_old_schema_backup_v37`)
+      // eslint-disable-next-line no-console
+      console.log(`[schema] Renamed ${dep} (${depCount} rows) → ${dep}_old_schema_backup_v37; schema.sql will recreate with FK on new schedules`)
+    }
   }
 }

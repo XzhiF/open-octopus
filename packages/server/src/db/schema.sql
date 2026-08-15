@@ -259,11 +259,13 @@ CREATE TABLE IF NOT EXISTS pipeline_state (
 );
 
 -- 15. Schedules
+-- schema v37: cron_expression nullable (drafts from trigger_source='requirement' have no cron)
+--             + status / trigger_source / source_chat_session_id / claimed_at for task-pool
 CREATE TABLE IF NOT EXISTS schedules (
   id TEXT PRIMARY KEY,
   org TEXT NOT NULL DEFAULT '',
   name TEXT NOT NULL,
-  cron_expression TEXT NOT NULL,
+  cron_expression TEXT,
   timezone TEXT NOT NULL DEFAULT 'Asia/Shanghai',
   workspace_id TEXT,
   workflow_ref TEXT,
@@ -286,6 +288,10 @@ CREATE TABLE IF NOT EXISTS schedules (
   version INTEGER NOT NULL DEFAULT 1,
   consecutive_failures INTEGER NOT NULL DEFAULT 0,
   max_retain INTEGER NOT NULL DEFAULT 10,
+  status TEXT NOT NULL DEFAULT 'queued',
+  trigger_source TEXT,
+  source_chat_session_id TEXT,
+  claimed_at TEXT,
   FOREIGN KEY (workspace_id) REFERENCES workspaces(id)
 );
 
@@ -549,6 +555,8 @@ CREATE INDEX IF NOT EXISTS idx_schedules_enabled ON schedules(enabled, deleted_a
 CREATE INDEX IF NOT EXISTS idx_schedules_next_trigger ON schedules(next_trigger_at) WHERE enabled = 1 AND deleted_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_schedules_job_type ON schedules(job_type);
 CREATE INDEX IF NOT EXISTS idx_schedules_enabled_type ON schedules(enabled, job_type) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_schedules_status ON schedules(status, trigger_source) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_schedules_claimed ON schedules(claimed_at) WHERE claimed_at IS NOT NULL;
 
 -- Schedule executions indexes
 CREATE INDEX IF NOT EXISTS idx_sched_execs_schedule ON schedule_executions(schedule_id, triggered_at DESC);

@@ -6,7 +6,9 @@ import { SchedulerService } from '../services/scheduler/scheduler-service'
 import { DashboardService } from '../services/scheduler/dashboard-service'
 import { ExportService } from '../services/scheduler/export-service'
 import { createSchedulerRoutes } from '../routes/scheduler'
-import { ScheduleConfigDAO, ScheduleRunDAO } from '../db/dao'
+import { ScheduleConfigDAO, ScheduleRunDAO, ChatDAO } from '../db/dao'
+import { ChatService } from '../services/chat'
+import { SSEService } from '../services/sse'
 
 describe('Scheduler Routes (integration)', () => {
   let db: Database.Database
@@ -24,8 +26,9 @@ describe('Scheduler Routes (integration)', () => {
     const service = new SchedulerService(new ScheduleConfigDAO(db), new ScheduleRunDAO(db))
     const dashboard = new DashboardService(new ScheduleConfigDAO(db), new ScheduleRunDAO(db))
     const exportService = new ExportService(new ScheduleConfigDAO(db))
+    const chatService = new ChatService(new ChatDAO(db), new SSEService())
     app = new Hono()
-    app.route('/api/scheduler', createSchedulerRoutes(service, dashboard, exportService))
+    app.route('/api/scheduler', createSchedulerRoutes(service, dashboard, exportService, chatService))
   })
 
   afterAll(() => {
@@ -252,5 +255,163 @@ describe('Scheduler Routes (integration)', () => {
     const afterRes = await app.request('/api/scheduler/jobs')
     const after = await json<{ items: Array<{ id: string }> }>(afterRes)
     expect(after.items.find(j => j.id === id)).toBeUndefined()
+  })
+
+  // ── T-10: Scheduler Endpoint Isolation ────────────────────
+
+  async function createRequirementJob(): Promise<string> {
+    const res = await app.request('/api/scheduler/jobs', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: `t10-req-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        job_type: 'workflow',
+        cron_expression: null,
+        timezone: 'Asia/Shanghai',
+        org: 'test',
+        trigger_source: 'requirement',
+        config: {
+          schema_version: '2.0',
+          type: 'workflow',
+          workspace_spec: { org: 'test', branch_prefix: 'draft', projects: [{ name: 'p', source_path: '/tmp' }] },
+          workflow_chain: [{ workflow_ref: 't10.yaml', input_values: {} }],
+          max_retain: 10,
+        },
+      }),
+    })
+    expect(res.status).toBe(201)
+    const body = await json<{ id: string }>(res)
+    return body.id
+  }
+
+  it('AC21: POST /jobs/:id/toggle on requirement-type returns 400', async () => {
+    const id = await createRequirementJob()
+
+    const res = await app.request(`/api/scheduler/jobs/${id}/toggle`, { method: 'POST' })
+    expect(res.status).toBe(400)
+    const body = await json<{ error: string }>(res)
+    expect(body.error).toMatch(/cron/i)
+
+    // 反假跑 AC21: status 仍是 draft, 未变 enabled/disabled
+    const detail = await app.request(`/api/scheduler/jobs/${id}`)
+    const job = await json<{ status: string; enabled: boolean }>(detail)
+    expect(['draft', 'queued', 'claimed']).toContain(job.status)
+  })
+
+  it('AC22: GET /jobs default excludes requirement-type records', async () => {
+    await createRequirementJob()
+
+    const res = await app.request('/api/scheduler/jobs')
+    expect(res.status).toBe(200)
+    const data = await json<{ items: Array<{ trigger_source?: string | null }> }>(res)
+    // 反假跑 AC22: 默认响应不含 trigger_source='requirement' 记录
+    expect(data.items.every(j => (j.trigger_source ?? 'cron') !== 'requirement')).toBe(true)
+  })
+
+  it('AC22: GET /jobs?trigger_source=requirement returns only requirement-type records', async () => {
+    await createRequirementJob()
+
+    const res = await app.request('/api/scheduler/jobs?trigger_source=requirement')
+    expect(res.status).toBe(200)
+    const data = await json<{ items: Array<{ trigger_source?: string | null }> }>(res)
+    expect(data.items.length).toBeGreaterThan(0)
+    // 反假跑: 所有记录都是 requirement
+    expect(data.items.every(j => j.trigger_source === 'requirement')).toBe(true)
+  })
+
+  // ── T-9: Chat Session Binding ─────────────────────────────────
+
+  it('AC18: POST /jobs with trigger_source=requirement auto-creates chat session + returns source_chat_session_id', async () => {
+    const res = await app.request('/api/scheduler/jobs', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: `t9-draft-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        job_type: 'workflow',
+        cron_expression: null,
+        timezone: 'Asia/Shanghai',
+        org: 'test',
+        trigger_source: 'requirement',
+        config: {
+          schema_version: '2.0',
+          type: 'workflow',
+          workspace_spec: { org: 'test', branch_prefix: 'draft', projects: [{ name: 'p', source_path: '/tmp' }] },
+          workflow_chain: [{ workflow_ref: 't9.yaml', input_values: {} }],
+          max_retain: 10,
+        },
+      }),
+    })
+    expect(res.status).toBe(201)
+    const body = await json<{ id: string; source_chat_session_id: string | null }>(res)
+    // 反假跑 AC18: source_chat_session_id 非空 (auto-created by route)
+    expect(body.source_chat_session_id).toBeTruthy()
+    expect(typeof body.source_chat_session_id).toBe('string')
+
+    // 反假跑: chat_sessions 表真有这条记录, 不只是 API 返回对了
+    const chatRow = db.prepare(
+      'SELECT id, workspace_id FROM chat_sessions WHERE id = ?'
+    ).get(body.source_chat_session_id) as { id: string; workspace_id: string } | undefined
+    expect(chatRow).toBeDefined()
+    expect(chatRow!.workspace_id).toBe('taskpool-draft')
+  })
+
+  it('AC18 反假跑: caller-provided source_chat_session_id is preserved (no auto-create override)', async () => {
+    const res = await app.request('/api/scheduler/jobs', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: `t9-explicit-${Date.now()}`,
+        job_type: 'workflow',
+        cron_expression: null,
+        timezone: 'Asia/Shanghai',
+        org: 'test',
+        trigger_source: 'requirement',
+        source_chat_session_id: 'caller-provided-session-id',
+        config: {
+          schema_version: '2.0',
+          type: 'workflow',
+          workspace_spec: { org: 'test', branch_prefix: 'draft', projects: [{ name: 'p', source_path: '/tmp' }] },
+          workflow_chain: [{ workflow_ref: 't9.yaml', input_values: {} }],
+          max_retain: 10,
+        },
+      }),
+    })
+    expect(res.status).toBe(201)
+    const body = await json<{ source_chat_session_id: string | null }>(res)
+    // Caller's session id preserved, not overridden
+    expect(body.source_chat_session_id).toBe('caller-provided-session-id')
+  })
+
+  it('AC19: GET /jobs/:id returns source_chat_session_id for requirement-type draft', async () => {
+    // Create a draft (auto-creates chat session)
+    const createRes = await app.request('/api/scheduler/jobs', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: `t9-get-${Date.now()}`,
+        job_type: 'workflow',
+        cron_expression: null,
+        timezone: 'Asia/Shanghai',
+        org: 'test',
+        trigger_source: 'requirement',
+        config: {
+          schema_version: '2.0',
+          type: 'workflow',
+          workspace_spec: { org: 'test', branch_prefix: 'draft', projects: [{ name: 'p', source_path: '/tmp' }] },
+          workflow_chain: [{ workflow_ref: 't9.yaml', input_values: {} }],
+          max_retain: 10,
+        },
+      }),
+    })
+    const created = await json<{ id: string; source_chat_session_id: string | null }>(createRes)
+    expect(created.source_chat_session_id).toBeTruthy()
+
+    // 反假跑 AC19: GET 接口返回 source_chat_session_id 字段
+    const getRes = await app.request(`/api/scheduler/jobs/${created.id}`)
+    expect(getRes.status).toBe(200)
+    const body = await json<{ id: string; source_chat_session_id: string | null }>(getRes)
+    expect(body.id).toBe(created.id)
+    expect(body.source_chat_session_id).toBe(created.source_chat_session_id)
+    expect(body.source_chat_session_id).toBeTruthy()
   })
 })

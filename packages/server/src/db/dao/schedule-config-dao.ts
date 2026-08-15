@@ -72,7 +72,10 @@ export class ScheduleConfigDAO extends BaseDAO {
     return !!row
   }
 
-  insertSchedule(row: Partial<ScheduleRow> & { id: string; org: string; name: string; cron_expression: string; timezone: string }): Database.RunResult {
+  insertSchedule(row: Partial<ScheduleRow> & {
+    id: string; org: string; name: string;
+    cron_expression: string | null; timezone: string;
+  }): Database.RunResult {
     const now = new Date().toISOString()
     return this.stmt(`
       INSERT INTO schedules (
@@ -80,8 +83,9 @@ export class ScheduleConfigDAO extends BaseDAO {
         input_values, enabled, timeout_seconds, notify_on_failure,
         notify_channel, notify_target, container_execution_id,
         next_trigger_at, created_at, updated_at,
-        job_type, config, parallel_policy, description, version, consecutive_failures, max_retain
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        job_type, config, parallel_policy, description, version, consecutive_failures, max_retain,
+        status, trigger_source, source_chat_session_id, claimed_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       row.id, row.org, row.name, row.cron_expression, row.timezone,
       row.workspace_id ?? null, row.workflow_ref ?? null,
@@ -93,6 +97,8 @@ export class ScheduleConfigDAO extends BaseDAO {
       row.job_type ?? "workflow", row.config ?? "{}",
       row.parallel_policy ?? "skip", row.description ?? null,
       row.version ?? 1, row.consecutive_failures ?? 0, row.max_retain ?? 10,
+      row.status ?? "queued", row.trigger_source ?? null,
+      row.source_chat_session_id ?? null, row.claimed_at ?? null,
     )
   }
 
@@ -133,6 +139,19 @@ export class ScheduleConfigDAO extends BaseDAO {
     return this.stmt(
       "SELECT * FROM schedules WHERE enabled = 1 AND deleted_at IS NULL"
     ).all() as ScheduleRow[]
+  }
+
+  findQueuedSchedules(): ScheduleRow[] {
+    return this.stmt(
+      "SELECT * FROM schedules WHERE status = 'queued' AND deleted_at IS NULL ORDER BY created_at ASC"
+    ).all() as ScheduleRow[]
+  }
+
+  // T-5 AC11: stale claimed — claimed_at older than cutoff ISO string
+  findStaleClaimed(cutoffIso: string): ScheduleRow[] {
+    return this.stmt(
+      "SELECT * FROM schedules WHERE status = 'claimed' AND claimed_at IS NOT NULL AND claimed_at < ? AND deleted_at IS NULL"
+    ).all(cutoffIso) as ScheduleRow[]
   }
 
   findActiveExecutions(scheduleId: string): { id: string }[] {
@@ -514,6 +533,18 @@ export class ScheduleConfigDAO extends BaseDAO {
     try {
       return this.stmt("UPDATE schedule_workspaces SET status = 'cleaned', completed_at = ? WHERE workspace_id = ?")
         .run(completedAt, workspaceId)
+    } catch {
+      return { changes: 0, lastInsertRowid: 0 }
+    }
+  }
+
+  // T-5 AC11: mark all incomplete schedule_workspaces for a schedule as cleaned
+  // (used when rolling back stale claimed tasks; workspace dir cleanup is deferred to the retain loop)
+  markScheduleWorkspacesCleanedBySchedule(scheduleId: string, completedAt: string): Database.RunResult {
+    try {
+      return this.stmt(
+        "UPDATE schedule_workspaces SET status = 'cleaned', completed_at = ? WHERE schedule_id = ? AND status IN ('running', 'started')"
+      ).run(completedAt, scheduleId)
     } catch {
       return { changes: 0, lastInsertRowid: 0 }
     }

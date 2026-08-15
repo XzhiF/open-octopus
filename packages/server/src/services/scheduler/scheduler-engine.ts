@@ -19,6 +19,16 @@ const MAX_AGENT_CONCURRENCY = parseInt(
   process.env.OCTOPUS_SCHEDULER_MAX_AGENT_CONCURRENT ?? '10',
   10,
 )
+// AC6: mirrors workflow-executor.ts MAX_PARALLEL_WORKSPACES — kept in sync via env var
+const MAX_PARALLEL_WORKSPACES = parseInt(
+  process.env.OCTOPUS_SCHEDULER_MAX_PARALLEL ?? '3',
+  10,
+)
+// AC11: stale claimed threshold — claimed_at older than this rolls back to queued
+const STALE_CLAIMED_THRESHOLD_MS = parseInt(
+  process.env.OCTOPUS_SCHEDULER_STALE_CLAIMED_MS ?? '600000',
+  10,
+)
 
 interface ScheduleRow {
   id: string
@@ -43,6 +53,10 @@ interface ScheduleRow {
   version: number
   consecutive_failures: number
   max_retain: number
+  status: string | null
+  trigger_source: string | null
+  source_chat_session_id: string | null
+  claimed_at: string | null
 }
 
 /**
@@ -378,6 +392,82 @@ export class SchedulerEngine {
         err instanceof Error ? err.message : String(err),
       ),
     )
+
+    this.checkStaleClaimed().catch((err: unknown) =>
+      console.error(
+        '[SchedulerEngine] checkStaleClaimed error:',
+        err instanceof Error ? err.message : String(err),
+      ),
+    )
+
+    this.checkQueuedTasks().catch((err: unknown) =>
+      console.error(
+        '[SchedulerEngine] checkQueuedTasks error:',
+        err instanceof Error ? err.message : String(err),
+      ),
+    )
+  }
+
+  // T-8: claim BEFORE dispatch; on sync dispatch failure rollback to 'queued' so next tick can retry.
+  // ponytail: only catches sync throws from insert/dispatch; async executor failures flow through
+  // executeWorkflow's .catch + T-5 checkStaleClaimed (claimed_at > 10min) — rolling those back here
+  // would create an infinite retry loop on persistent workflow errors.
+  // AC6: respects MAX_PARALLEL_WORKSPACES — remaining queued tasks retry on next tick.
+  private async checkQueuedTasks(): Promise<void> {
+    const queued = this.configDAO.findQueuedSchedules() as ScheduleRow[]
+
+    for (const schedule of queued) {
+      if ((schedule.trigger_source ?? 'cron') !== 'requirement') continue
+
+      // AC6: don't dispatch beyond global concurrency cap. Remaining queued tasks
+      // stay in 'queued' status and retry on the next tick when active count drops.
+      const activeCount = this.runDAO.countDistinctActiveSchedules()
+      if (activeCount >= MAX_PARALLEL_WORKSPACES) break
+
+      const now = new Date()
+      const schedExecId = randomUUID()
+      const tzOffset = this.getTimezoneOffset(schedule.timezone)
+
+      this.configDAO.updateSchedule(schedule.id, {
+        status: 'claimed',
+        claimed_at: now.toISOString(),
+      })
+
+      try {
+        this.runDAO.insertTriggeredExecution(
+          schedExecId, schedule.id, 'scheduled',
+          now.toISOString(), tzOffset, schedule.timezone, 'scheduler',
+        )
+
+        this.dispatchExecution(schedule, schedExecId)
+      } catch (err: unknown) {
+        console.error(
+          '[SchedulerEngine] checkQueuedTasks dispatch failed, rolling back to queued:',
+          err instanceof Error ? err.message : String(err),
+        )
+        this.configDAO.updateSchedule(schedule.id, {
+          status: 'queued',
+          claimed_at: null,
+        })
+      }
+    }
+  }
+
+  // T-5 AC11: stale claimed (claimed_at older than threshold) → rollback to queued
+  // + mark any incomplete schedule_workspaces as cleaned.
+  // ponytail: 10min default is a calibration knob — real-world task duration may need tuning.
+  private async checkStaleClaimed(): Promise<void> {
+    const cutoff = new Date(Date.now() - STALE_CLAIMED_THRESHOLD_MS).toISOString()
+    const stale = this.configDAO.findStaleClaimed(cutoff) as ScheduleRow[]
+
+    const now = new Date().toISOString()
+    for (const schedule of stale) {
+      this.configDAO.updateSchedule(schedule.id, {
+        status: 'queued',
+        claimed_at: null,
+      })
+      this.configDAO.markScheduleWorkspacesCleanedBySchedule(schedule.id, now)
+    }
   }
 
   private async checkTimeouts(): Promise<void> {
@@ -552,6 +642,10 @@ export class SchedulerEngine {
       deleted_at: schedule.deleted_at,
       created_at: schedule.created_at,
       updated_at: schedule.updated_at,
+      status: (schedule.status ?? 'queued') as 'draft' | 'queued' | 'claimed',
+      trigger_source: (schedule.trigger_source ?? 'cron') as 'cron' | 'requirement',
+      source_chat_session_id: schedule.source_chat_session_id ?? null,
+      claimed_at: schedule.claimed_at ?? null,
     }
   }
 

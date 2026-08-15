@@ -236,7 +236,7 @@ export interface ScheduleRow {
   id: string
   org: string
   name: string
-  cron_expression: string
+  cron_expression: string | null
   timezone: string
   workspace_id: string | null
   workflow_ref: string | null
@@ -259,6 +259,10 @@ export interface ScheduleRow {
   version: number
   consecutive_failures: number
   max_retain: number
+  status: string
+  trigger_source: string | null
+  source_chat_session_id: string | null
+  claimed_at: string | null
 }
 
 export interface ScheduleExecutionRow {

@@ -7,12 +7,19 @@ import {
   SchedulerJobConflictError,
   SchedulerVersionConflictError,
   SchedulerTriggerConflictError,
+  SchedulerTriggerSourceMismatchError,
 } from '../services/scheduler/scheduler-service'
 import { DashboardService } from '../services/scheduler/dashboard-service'
 import { ExportService } from '../services/scheduler/export-service'
 import { ConfigValidationError } from '../services/scheduler/config-validator'
 import { parseCronExpression, naturalLanguageToCron } from '../services/cron-utils'
 import type { CreateJobInput, UpdateJobInput } from '@octopus/shared'
+import type { ChatService } from '../services/chat'
+
+// ponytail: convention-based workspace_id for chat sessions bound to requirement-type drafts.
+// Matches the pattern used by routes/global-chat.ts for global scheduler chat.
+// Each session still has its own randomUUID; this is just a namespace for listSessions filtering.
+const TASKPOOL_DRAFT_CHAT_SCOPE = 'taskpool-draft'
 
 // ── Rate Limiter ────────────────────────────────────────────────────
 
@@ -120,6 +127,7 @@ function classifyError(err: unknown): { status: number; message: string } {
   if (err instanceof SchedulerJobConflictError) return { status: 409, message: err.message }
   if (err instanceof SchedulerVersionConflictError) return { status: 409, message: err.message }
   if (err instanceof SchedulerTriggerConflictError) return { status: 409, message: err.message }
+  if (err instanceof SchedulerTriggerSourceMismatchError) return { status: 400, message: err.message }
   if (err instanceof ConfigValidationError) return { status: 400, message: err.message }
 
   const msg = err instanceof Error ? err.message : String(err)
@@ -147,6 +155,7 @@ export function createSchedulerRoutes(
   service: SchedulerService,
   dashboardService?: DashboardService,
   exportService?: ExportService,
+  chatService?: ChatService,
 ): Hono {
   const router = new Hono()
 
@@ -155,6 +164,9 @@ export function createSchedulerRoutes(
   // GET /jobs — list with pagination, filtering, sorting
   router.get('/jobs', rateLimitDefault, (c) => {
     try {
+      // Default to 'cron' so requirement-type drafts don't pollute cron UI listings;
+      // callers wanting requirement-type must pass ?trigger_source=requirement explicitly.
+      const rawTrigger = c.req.query('trigger_source') as 'cron' | 'requirement' | undefined
       const result = service.listJobs({
         page: parseIntParam(c.req.query('page'), 1),
         limit: Math.min(parseIntParam(c.req.query('limit'), 20), 100),
@@ -164,6 +176,7 @@ export function createSchedulerRoutes(
         workspace_id: c.req.query('workspace_id'),
         sort: c.req.query('sort') as 'name' | 'created_at' | 'next_trigger_at' | undefined,
         order: c.req.query('order') as 'asc' | 'desc' | undefined,
+        trigger_source: rawTrigger ?? 'cron',
       })
       return c.json(result)
     } catch (err: unknown) {
@@ -177,6 +190,17 @@ export function createSchedulerRoutes(
     const body = await safeJson(c)
     if (!body) return c.json({ error: 'Invalid or missing JSON body' }, 400)
     try {
+      // T-9: auto-create a chat session for requirement-type drafts so source_chat_session_id isn't orphaned.
+      // Caller may pass an explicit source_chat_session_id to override (e.g., binding to an existing session).
+      if (
+        chatService
+        && body.trigger_source === 'requirement'
+        && !body.source_chat_session_id
+      ) {
+        const draftTitle = typeof body.name === 'string' ? body.name : undefined
+        const session = chatService.createSession(TASKPOOL_DRAFT_CHAT_SCOPE, draftTitle)
+        body.source_chat_session_id = session.id
+      }
       const job = service.createJob(body as CreateJobInput)
       return c.json(job, 201)
     } catch (err: unknown) {
@@ -249,6 +273,17 @@ export function createSchedulerRoutes(
     try {
       const result = service.triggerJob(c.req.param('id'))
       return c.json(result)
+    } catch (err: unknown) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status)
+    }
+  })
+
+  // POST /jobs/:id/enqueue — draft → queued (task pool 入池)
+  router.post('/jobs/:id/enqueue', rateLimitDefault, (c) => {
+    try {
+      const job = service.enqueueJob(c.req.param('id'))
+      return c.json(job)
     } catch (err: unknown) {
       const { status, message } = classifyError(err)
       return c.json({ error: message }, status)

@@ -18,7 +18,7 @@ interface ScheduleRow {
   id: string
   org: string
   name: string
-  cron_expression: string
+  cron_expression: string | null
   timezone: string
   enabled: number
   timeout_seconds: number
@@ -125,14 +125,21 @@ export class WorkflowExecutor implements Executor {
     // 5. Generate branch suffix (timestamp + random to avoid collisions)
     const branchSuffix = formatBranchSuffix(new Date())
 
+    // ponytail: requirement-type schedules use a deterministic taskpool-{schedule_id}-{ts}
+    // name so failed drafts can be traced back to their schedule; cron jobs keep the
+    // AI-supplied branch_prefix from workspace_spec.
+    const isRequirement = job.trigger_source === 'requirement'
+    const branchPrefix = isRequirement ? `taskpool-${schedule.id}` : config.workspace_spec.branch_prefix
+    const workspaceName = isRequirement ? `${branchPrefix}-${branchSuffix}` : `${config.workspace_spec.branch_prefix}-${branchSuffix}`
+
     // 6. Create a new workspace from spec
     let workspace
     try {
       workspace = this.workspaceService.createFromSpec({
         org: config.workspace_spec.org,
-        name: `${config.workspace_spec.branch_prefix}-${branchSuffix}`,
+        name: workspaceName,
         projects: config.workspace_spec.projects,
-        branch_prefix: config.workspace_spec.branch_prefix,
+        branch_prefix: branchPrefix,
         branch_suffix: branchSuffix,
         source: 'scheduler',
         source_schedule_id: schedule.id,
@@ -190,7 +197,7 @@ export class WorkflowExecutor implements Executor {
       'schedule.id': schedule.id,
       'schedule.name': schedule.name,
       'schedule.triggered_at': now.toISOString(),
-      'schedule.cron_expression': schedule.cron_expression,
+      'schedule.cron_expression': schedule.cron_expression ?? '',
       'schedule.timezone': schedule.timezone,
       'execution.trigger_type': 'scheduled',
     }
@@ -397,6 +404,8 @@ export class WorkflowExecutor implements Executor {
   }
 
   private updateNextTrigger(schedule: ScheduleRow): void {
+    // Drafts (trigger_source='requirement') have no cron_expression — skip next-trigger update.
+    if (!schedule.cron_expression) return
     try {
       const interval = parseExpression(schedule.cron_expression, {
         tz: schedule.timezone,

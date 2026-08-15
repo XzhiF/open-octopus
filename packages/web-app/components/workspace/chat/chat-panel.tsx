@@ -202,6 +202,16 @@ export function ChatPanel({
         )}
         {messages.map((msg, idx) => {
           if (shouldHideAfterCard(msg, idx, answeringState)) return null
+          // T-11: per-AI-message retry — re-send last user message before this assistant turn.
+          // Walks backward through messages to find the nearest preceding user message.
+          const onRetry = msg.role === "assistant" ? (() => {
+            for (let i = idx - 1; i >= 0; i--) {
+              if (messages[i].role === "user" && messages[i].displayType === "user") {
+                return () => { void onSendMessage(messages[i].content) }
+              }
+            }
+            return undefined
+          })() : undefined
           return (
             <MessageBubble
               key={`${msg.id}-${msg.displayType}`}
@@ -211,6 +221,7 @@ export function ChatPanel({
               )}
               isSessionStreaming={isStreaming}
               onAnswer={onSendMessage}
+              onRetry={onRetry}
             />
           )
         })}

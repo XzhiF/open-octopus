@@ -13,6 +13,12 @@ export type SchedulerExecutionStatus =
   | 'skipped'
   | 'missed'
 
+/** What created this schedule. 'cron' = scheduled by cron_expression; 'requirement' = draft from chat/manual input awaiting claim. */
+export type TriggerSource = 'cron' | 'requirement'
+
+/** Lifecycle status of a schedule (schema v37). 'draft' = unclaimed draft, 'queued' = active/ready, 'claimed' = taken by an executor. */
+export type ScheduleStatus = 'draft' | 'queued' | 'claimed'
+
 // ── Project & Workspace Spec (for scheduler-created workspaces) ─────
 
 export const projectSpecSchema = z.object({
@@ -108,7 +114,7 @@ export interface SchedulerJob {
   id: string
   name: string
   job_type: JobType
-  cron_expression: string
+  cron_expression: string | null
   timezone: string
   enabled: boolean
   org?: string
@@ -125,12 +131,16 @@ export interface SchedulerJob {
   deleted_at: string | null
   created_at: string
   updated_at: string
+  status: ScheduleStatus
+  trigger_source: TriggerSource
+  source_chat_session_id: string | null
+  claimed_at: string | null
 }
 
 export interface CreateJobInput {
   name: string
   job_type: JobType
-  cron_expression: string
+  cron_expression: string | null
   timezone: string
   org?: string
   config: JobConfig
@@ -138,11 +148,13 @@ export interface CreateJobInput {
   timeout_seconds?: number
   notify_on_failure?: boolean
   description?: string
+  trigger_source?: TriggerSource
+  source_chat_session_id?: string | null
 }
 
 export interface UpdateJobInput {
   name?: string
-  cron_expression?: string
+  cron_expression?: string | null
   timezone?: string
   config?: JobConfig
   parallel_policy?: ParallelPolicy
@@ -160,4 +172,5 @@ export interface ListJobsParams {
   org?: string
   sort?: 'next_trigger_at' | 'name' | 'created_at'
   order?: 'asc' | 'desc'
+  trigger_source?: TriggerSource
 }

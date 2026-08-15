@@ -15,6 +15,7 @@ import {
   BrainCircuit,
   Package,
   Sliders,
+  ListTodo,
 } from "lucide-react"
 
 const navigation = [
@@ -22,6 +23,7 @@ const navigation = [
   { name: "工作空间", href: "/workspaces", icon: FolderKanban },
   { name: "工作经验", href: "/experience", icon: BookOpen },
   { name: "系统调度", href: "/scheduler", icon: Clock },
+  { name: "任务池", href: "/tasks", icon: ListTodo },
   { name: "Agent", href: "/agent", icon: BrainCircuit },
   { name: "资源", href: "/resources", icon: Package },
   { name: "系统管理", href: "/system/models", icon: Sliders },
