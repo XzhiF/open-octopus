@@ -346,7 +346,9 @@ export class DynamicSubWorkflowExecutor implements NodeExecutor {
     this.updateMetaExecutionStatus(metaPath, execResult.status === "completed" ? "completed" : "failed")
 
     const outputs: Record<string, any> = {
-      generated_workflow: workflowName,
+      // Use snapshot name (without executionId) so API can find it
+      // Snapshot: state/dynamic-workflows/{execId}/{baseName}-iter{N}.yaml
+      generated_workflow: `${this.node.workflow ?? `${this.config.workflow?.name ?? "workflow"}__${this.node.id}`}${this.config.iterationIndex != null ? `-iter${this.config.iterationIndex}` : ""}`,
       node_count: dag.nodes.length,
       validation_rounds: validationRounds,
     }

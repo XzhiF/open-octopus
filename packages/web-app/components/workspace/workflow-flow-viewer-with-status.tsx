@@ -163,24 +163,44 @@ export function WorkflowFlowViewerWithStatus({
     // Track which refs are dynamic (generated at runtime) vs static
     // Note: dynamic_sub_workflow generated files have executionId in filename,
     // so only fetch them when executionId is available (not in preview mode)
-    const collectRefs = (nodes: Array<Record<string, unknown>>): Array<{ ref: string; isDynamic: boolean }> => {
+    const collectRefs = (nodes: Array<Record<string, unknown>>, parentPath = ""): Array<{ ref: string; isDynamic: boolean }> => {
       const refs: Array<{ ref: string; isDynamic: boolean }> = []
       for (const n of nodes) {
         if (n.type === "sub_workflow" && n.workflow) {
           refs.push({ ref: n.workflow as string, isDynamic: false })
         }
-        // Only collect dynamic_sub_workflow refs when we have an executionId
-        if (n.type === "dynamic_sub_workflow" && n.workflow && executionId) {
-          refs.push({ ref: n.workflow as string, isDynamic: true })
+        // Collect dynamic_sub_workflow refs from:
+        // 1. Static workflow field in YAML (if specified)
+        // 2. Runtime outputs.generated_workflow from execution steps
+        if (n.type === "dynamic_sub_workflow" && executionId) {
+          if (n.workflow) {
+            refs.push({ ref: n.workflow as string, isDynamic: true })
+          }
+          // Look up generated_workflow from step outputs (handles runtime DAG generation)
+          const nodeId = n.id as string
+          if (nodeId) {
+            for (const [stepId, step] of stepMap.entries()) {
+              // Match base nodeId or iteration-suffixed (e.g. "spec-dag-execute-iter0")
+              if (stepId === nodeId || stepId.startsWith(`${nodeId}-iter`)) {
+                const genWf = (step.outputs as Record<string, unknown>)?.generated_workflow
+                if (typeof genWf === "string" && genWf) {
+                  refs.push({ ref: genWf, isDynamic: true })
+                }
+              }
+            }
+          }
         }
         if (Array.isArray(n.nodes)) {
-          refs.push(...collectRefs(n.nodes as Array<Record<string, unknown>>))
+          refs.push(...collectRefs(n.nodes as Array<Record<string, unknown>>, `${parentPath}${n.id}.`))
         }
       }
       return refs
     }
 
-    const refInfos = collectRefs(parsed.nodes as Array<Record<string, unknown>>)
+    const allRefs = collectRefs(parsed.nodes as Array<Record<string, unknown>>)
+    // Deduplicate refs (multiple iterations may generate different workflow names)
+    const seen = new Set<string>()
+    const refInfos = allRefs.filter(r => { if (seen.has(r.ref)) return false; seen.add(r.ref); return true })
     if (refInfos.length === 0 || !workspaceId) return
 
     // Skip refs we already resolved successfully
@@ -214,11 +234,40 @@ export function WorkflowFlowViewerWithStatus({
       setSubWorkflowNodes(results)
     }
     fetchAll()
-  }, [yamlContent, workspaceId, stepCountKey, runtimeNodeVersion])
+  }, [yamlContent, workspaceId, executionId, stepCountKey, stepMap, runtimeNodeVersion])
 
   const flowData = useMemo(() => {
     const parsed = parseYaml(yamlContent)
     if (!parsed) return null
+
+    // Inject generated_workflow from step outputs into YAML nodes so
+    // yamlToFlowData can look up child nodes in subWorkflowNodes.
+    // dynamic_sub_workflow nodes don't have a static workflow field —
+    // the DAG is generated at runtime and stored in outputs.generated_workflow.
+    if (Array.isArray(parsed.nodes)) {
+      for (const n of parsed.nodes) {
+        if (n.type === "dynamic_sub_workflow" && !n.workflow) {
+          const step = stepMap.get(n.id)
+          const genWf = (step?.outputs as Record<string, unknown>)?.generated_workflow
+          if (typeof genWf === "string" && genWf) {
+            n.workflow = genWf
+          }
+        }
+        // Also inject for nested nodes inside loops
+        if (Array.isArray(n.nodes)) {
+          for (const inner of n.nodes) {
+            if (inner.type === "dynamic_sub_workflow" && !inner.workflow) {
+              const step = stepMap.get(inner.id)
+              const genWf = (step?.outputs as Record<string, unknown>)?.generated_workflow
+              if (typeof genWf === "string" && genWf) {
+                inner.workflow = genWf
+              }
+            }
+          }
+        }
+      }
+    }
+
     const data = yamlToFlowData(parsed, subWorkflowNodes)
     if (!data) return null
 
