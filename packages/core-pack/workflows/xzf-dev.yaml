@@ -550,7 +550,7 @@ nodes:
     nodes:
       - id: e2e-runner
         type: agent
-        timeout: 1800 # 30min — E2E 测试可能涉及浏览器操作/长请求，给足时间
+        timeout: 3600 # 1h — E2E 测试可能涉及浏览器操作/长请求/修复循环
         agents:
           e2e-tester:
             description: "E2E 测试执行者 — 执行全量 E2E 测试并修复失败用例"
