@@ -62,6 +62,7 @@ variables:
   remote_type: ""
   user_guidance: ""
   requirements_confirmed: ""
+  verification_confirmed: ""
   spec_status: ""
   e2e_status: ""
   e2e_decision: ""
@@ -367,21 +368,48 @@ nodes:
   # ============================================================
 
   - id: verification-clarify
-    type: agent
+    type: interaction
     depends_on: [requirements-clarify]
-    prompt: |
-      使用 octo-xzf-verification skill 生成验证策略。
+    interaction_max_rounds: 10
+    interaction_timeout: 600
+    interaction_exit_when: '$vars.verification_confirmed == "true"'
+    interaction_agent:
+      model: pro-max
+      prompt: |
+        你是验证策略规划专家。使用 octo-xzf-verification skill 推导验证策略（推导，不是提问）。
 
-      你已继承上游会话上下文（research-brief、brief.md、澄清对话均已在会话中）。
-      目录规范: .scratch/$vars.feature/00-init/directory-conventions.md
+        ═══ 上下文 ═══
+        继承上游会话（research-brief、brief 澄清对话、questions.md 已确认决策均在会话中）。
+        目录规范: .scratch/$vars.feature/00-init/directory-conventions.md
+        ⚠️ 产物路径以 directory-conventions.md 为准，禁止源码目录。
 
-      ⚠️ 所有产物路径以 directory-conventions.md 为准，禁止使用源码目录。
+        ═══ 多轮流程 (octo-xzf-verification) ═══
+        Round 1（verification.md 不存在）:
+        1. 决策→验收条件映射（每个 Dx：通过标准 + 反假跑）
+        2. E2E 场景设计（用户视角完整场景）
+        3. 单测覆盖（模块/文件/case 表）
+        4. 测试方法（系统如何测试）：从 topology 推导启动命令/端口/工具/数据/凭据
+           — 无法推断且影响执行的 → ❓ Vx 待确认，让用户在评论澄清
+        5. 敏感凭据强制澄清 → ❓ Vx [CRITICAL] 待确认项
+        写入 .scratch/$vars.feature/02-clarification/verification.md
+        输出 Synthesis（待确认 + 推荐验证方案概览：测试环境/验收条件/E2E场景/单测模块）给用户审阅。
 
-      输出: .scratch/$vars.feature/02-clarification/verification.md
-      内容包含:
-      - 测试环境建议（哪些服务需要启动、mock 策略）
-      - 核心验收条件（每个模块至少一条，每个 AC 绑定验证方法）
-      - E2E 场景列表（基于用户故事的完整流程）
+        Round 2+（文件已存在）:
+        1. 读现有 verification.md
+        2. 用户评论补充/修正 → 记录「用户补充」→ 处理 → 移「已确认」
+        3. 需追问 → 追加「待确认」
+        4. 重新输出 Synthesis
+
+        ═══ 完成条件 ═══
+        env_checklist_status:
+        - 「待确认」+「用户补充」都清空 → COMPLETE
+        - 有未处理项 → INCOMPLETE: {缺失项}
+
+        当 COMPLETE，输出 vars_update:
+        {"vars_update": {"verification_confirmed": "true"}}
+
+        ⚠️ 测试环境端口/启动命令错误会杀运行中服务，必须让用户在 Synthesis 审阅。
+        ⚠️ 敏感凭据（账号/API Key/Token）agent 无法推断，必须待用户在评论提供。
 
   # ============================================================
   # Stage 3: 需求简报（综合澄清结果 → brief.md）
@@ -454,20 +482,28 @@ nodes:
         type: agent
         prompt: |
           读取 spec 索引: .scratch/$vars.feature/03-specs/spec-index.md
-          当前进度: spec $vars.current_spec / $vars.spec_count
+          当前进度变量: current_spec=$vars.current_spec / spec_count=$vars.spec_count
 
-          按索引顺序，选择第 $vars.current_spec 个 spec（从 0 开始）。
-          读取该 spec 文件及其子目录下的所有 T-N task 文件内容。
+          ═══ 扫描已完成 spec（resume 跳过）═══
+          按索引顺序逐行检查。对每个 spec 行：
+          1. 取其文件名前缀（如 spec-001-user-login.md → spec-001）
+          2. 检查 .scratch/$vars.feature/04-execution/{前缀}/checkpoint.json
+             存在且 status=completed → 该 spec 已完成，跳过
+          3. 第一个未完成（无 checkpoint 或 status≠completed）的 spec 即为目标
 
-          ⚠️ 如果 current_spec >= spec_count（或索引中没有更多 spec），输出:
-          {"vars_update": {"spec_status": "all_done"}}
-
-          否则输出 vars_update:
+          ═══ 输出 ═══
+          若找到未完成 spec（第 N 行，N 从 1 计）:
           {"vars_update": {
             "spec_count": "{spec 总数}",
-            "current_spec_file": "{spec 文件路径}",
-            "current_spec_tasks": "{task 文件路径 JSON 数组}"
+            "current_spec": "{N-1}",
+            "current_spec_file": "{该 spec 文件路径}",
+            "current_spec_tasks": "{该 spec 子目录下所有 T-N task 文件路径 JSON 数组}"
           }}
+
+          若所有 spec 都有 completed checkpoint（或索引为空）:
+          {"vars_update": {"spec_status": "all_done"}}
+
+          ⚠️ current_spec 是 0-based（第 1 行 → 0）。spec_count 从索引行数得出。
 
       # --- 5b: 动态生成 DAG 并执行 ---
       - id: spec-dag-execute
@@ -524,19 +560,18 @@ nodes:
         depends_on: [cr-and-fix]
         execute_when: '$vars.spec_status != "all_done"'
         prompt: |
-          更新 spec 执行进度。
+          更新当前 spec 的执行 checkpoint。
 
-          1. 创建 checkpoint 文件:
-             mkdir -p .scratch/$vars.feature/04-execution/spec-$(printf '%03d' $vars.current_spec)/
-             写入 {"status":"completed"} 到 checkpoint.json
+          1. 从 $vars.current_spec_file 提取 spec 前缀
+             （如 .scratch/feat/03-specs/spec-002-auth.md → spec-002）
+          2. mkdir -p .scratch/$vars.feature/04-execution/{前缀}/
+          3. 写入 {"status":"completed"} 到 checkpoint.json
 
-          2. 计算下一个 spec 编号: current_spec($vars.current_spec) + 1
+          4. 判断是否最后一个 spec:
+             若 current_spec($vars.current_spec) + 1 >= spec_count($vars.spec_count):
+               输出 {"vars_update": {"spec_status": "all_done"}}
 
-          3. 判断是否完成:
-             - 如果 下一个编号 >= spec_count($vars.spec_count):
-               输出 vars_update: {"vars_update": {"current_spec": "{next}", "spec_status": "all_done"}}
-             - 否则:
-               输出 vars_update: {"vars_update": {"current_spec": "{next}"}}
+          ⚠️ 不写 current_spec（由 spec-selector 每轮扫描得出）。
 
   # ============================================================
   # Stage 6: E2E 全量验证（完整用户流程测试 + 修复循环）
@@ -559,10 +594,22 @@ nodes:
               使用 octo-xzf-implementer skill 执行全量 E2E 测试。
 
               ═══ 执行流程 ═══
-              1. 读取 E2E 测试计划: .scratch/{feature}/03-specs/e2e-test-plan.md
-              2. 按计划顺序执行 E2E 测试（浏览器操作 / curl / playwright）
-              3. 收集证据（截图、API 响应、DB 查询）
-              4. 对照反假跑标准，确认"真通过"
+              1. 读取 E2E 测试计划: .scratch/{feature}/03-specs/e2e-test-plan.md（场景顺序 + 每步来源 spec）
+              2. 读取验证方法: .scratch/{feature}/02-clarification/verification.md
+                 — 测试方法（系统如何测试：启动命令/端口/工具/数据/凭据）
+                 — 反假跑标准
+              3. 读取相关 spec: .scratch/{feature}/03-specs/spec-NNN.md
+                 — 当前步骤所属 spec 的验收标准（从 e2e-test-plan 步骤标注获取 spec 编号）
+
+              ═══ 测试方法 fallback ═══
+              若 verification.md 测试方法不完整（缺启动命令/端口/工具）:
+              → 按 .scratch/{feature}/00-init/workspace-topology.md 自行启动系统、选择工具
+                （有 web 界面用 playwright，纯 API 用 curl）
+              → ⚠️ 但断言必须来自 spec 验收标准，不得自行编造"通过"条件
+
+              4. 按 e2e-test-plan 顺序执行（用 verification 测试方法启动系统/操作）
+              5. 收集证据（截图、API 响应、DB 查询）→ .scratch/{feature}/05-reports/
+              6. 对照反假跑标准，确认"真通过"
 
               ═══ 文件存放 ═══
               - 测试脚本（SQL/shell/curl）: .scratch/{feature}/05-reports/e2e-scripts/
