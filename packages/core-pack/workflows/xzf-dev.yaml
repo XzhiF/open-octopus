@@ -452,7 +452,6 @@ nodes:
       # --- 5a: 选择下一个 spec ---
       - id: spec-selector
         type: agent
-        effort: low
         prompt: |
           读取 spec 索引: .scratch/$vars.feature/03-specs/spec-index.md
           当前进度: spec $vars.current_spec / $vars.spec_count
@@ -500,28 +499,32 @@ nodes:
         type: agent
         depends_on: [spec-dag-execute]
         execute_when: '$vars.spec_status != "all_done"'
-        effort: high
+        agents:
+          code-reviewer:
+            description: "代码审查专家 — 审查并修复 spec 实现"
+            prompt: |
+              审查当前 spec ($vars.current_spec_file) 的所有实现，修复发现的问题。
+
+              基于会话上下文中的 DAG 执行结果进行审查。
+
+              ═══ 审查要点 ═══
+              1. 每个 task 的验收标准是否全部满足
+              2. 编译/类型检查是否通过 (pnpm build)
+              3. 单测是否通过 (pnpm test)
+              4. 代码质量（明显的 bug、安全问题、性能问题）
+
+              ═══ 修复 ═══
+              发现问题直接修复，不超过 3 轮 verify-fix。
+              修复后重新验证编译和测试。
         prompt: |
-          你是代码审查专家。审查当前 spec ($vars.current_spec_file) 的所有实现。
-
-          基于会话上下文中的 DAG 执行结果，审查并修复问题。
-
-          ═══ 审查要点 ═══
-          1. 每个 task 的验收标准是否全部满足
-          2. 编译/类型检查是否通过 (pnpm build)
-          3. 单测是否通过 (pnpm test)
-          4. 代码质量（明显的 bug、安全问题、性能问题）
-
-          ═══ 修复 ═══
-          发现问题直接修复，不超过 3 轮 verify-fix。
-          修复后重新验证编译和测试。
+          委派 code-reviewer 子 agent 审查当前 spec 的实现。
+          获取审查结果后汇报: 通过/修复了什么问题/仍有问题。
 
       # --- 5d: 更新进度 ---
       - id: spec-progress
         type: agent
         depends_on: [cr-and-fix]
         execute_when: '$vars.spec_status != "all_done"'
-        effort: low
         prompt: |
           更新 spec 执行进度。
 
