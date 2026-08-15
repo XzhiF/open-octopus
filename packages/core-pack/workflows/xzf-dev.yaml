@@ -487,9 +487,7 @@ nodes:
           2. 节点 id 使用 task 编号 (如 T-1, T-2, T-3)
           3. 依赖关系按 task 文件中的「依赖」字段声明 depends_on
           4. 无依赖的 task 可并行执行（不声明 depends_on）
-          5. 每个 agent 节点:
-             skills: [octo-xzf-implementer]
-             prompt 包含:
+          5. 每个 agent 节点的 prompt 包含:
                - "使用 octo-xzf-implementer skill 执行以下 task"
                - task 文件的完整内容（目标和验收标准）
                - "⚠️ 此阶段不跑 E2E 测试"
