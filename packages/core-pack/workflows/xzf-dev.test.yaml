@@ -42,6 +42,9 @@ scenarios:
         output: "Spec 和 Tracer Bullet 设计完成。2 个 spec，5 个 task。"
 
       # --- Stage 5: Execution Loop ---
+      spec-audit:
+        output: "Spec 审查完成。3 故事，2 断点，采纳 2 补充。"
+
       execution:
         iterations: 1
         nodes:
@@ -62,18 +65,13 @@ scenarios:
               spec_status: "all_done"
 
       # --- Stage 6: E2E Verify Loop ---
-      e2e-verify-loop:
-        iterations: 1
-        nodes:
-          e2e-runner:
-            output: "passed"
-            update_vars:
-              e2e_status: "passed"
-          e2e-notify:
-            output: ""
-          e2e-approval:
-            choice: "retry"
-            comment: ""
+      impl-walkthrough-fix:
+        output: "实现审查完成。修复 1 处，0 非阻塞。"
+
+      e2e-verify:
+        output: "E2E 全部通过。"
+        update_vars:
+          e2e_status: "passed"
 
       # --- Stage 7: Ship ---
       ship:
@@ -97,17 +95,16 @@ scenarios:
           - verification-clarify
           - brief-maker
           - spec-planner
+          - spec-audit
           - execution
-          - e2e-verify-loop
+          - impl-walkthrough-fix
+          - e2e-verify
           - ship
-        skipped:
-          - e2e-notify
-          - e2e-approval
 
   # =============================================================
   # Scenario 2: E2E Failure + Skip — E2E 失败后用户选择跳过
   # =============================================================
-  - name: "e2e failure then skip"
+  - name: "e2e blockers then ship"
     inputs:
       idea: "添加搜索功能"
       feature: "search"
@@ -139,6 +136,9 @@ scenarios:
       spec-planner:
         output: "Spec 设计完成。1 个 spec，3 个 task。"
 
+      spec-audit:
+        output: "Spec 审查完成。3 故事，2 断点，采纳 2 补充。"
+
       execution:
         iterations: 1
         nodes:
@@ -159,23 +159,13 @@ scenarios:
               spec_status: "all_done"
 
       # E2E 第一轮失败，用户选择跳过
-      e2e-verify-loop:
-        iterations: 2
-        nodes:
-          e2e-runner:
-            - output: "failed"
-              update_vars:
-                e2e_status: "failed"
-            - output: "failed"
-              update_vars:
-                e2e_status: "failed"
-          e2e-notify:
-            output: "通知已发送"
-          e2e-approval:
-            - choice: "retry"
-              comment: "再试一次"
-            - choice: "skip"
-              comment: "跳过 E2E 继续交付"
+      impl-walkthrough-fix:
+        output: "实现审查完成。修复 1 处，0 非阻塞。"
+
+      e2e-verify:
+        output: "E2E 最大努力完成。2 项 BLOCKED（已记录），其余通过。"
+        update_vars:
+          e2e_status: "blocked"
 
       ship:
         output: "PR 已提交: https://github.com/org/repo/pull/456"
@@ -186,7 +176,7 @@ scenarios:
         branch: "feat/search"
         feature: "search"
         spec_status: "all_done"
-        e2e_decision: "skip"
+        e2e_status: "blocked"
       node_trace:
         executed:
           - init
@@ -195,8 +185,10 @@ scenarios:
           - verification-clarify
           - brief-maker
           - spec-planner
+          - spec-audit
           - execution
-          - e2e-verify-loop
+          - impl-walkthrough-fix
+          - e2e-verify
           - ship
 
   # =============================================================
@@ -242,6 +234,9 @@ scenarios:
 
       # --- Stage 5: Execution Loop ---
       # spec-001 已有 checkpoint（resume 场景），selector 扫描后跳到 spec-002
+      spec-audit:
+        output: "Spec 审查完成。3 故事，2 断点，采纳 2 补充。"
+
       execution:
         iterations: 1
         nodes:
@@ -262,18 +257,13 @@ scenarios:
               spec_status: "all_done"
 
       # --- Stage 6: E2E Verify Loop ---
-      e2e-verify-loop:
-        iterations: 1
-        nodes:
-          e2e-runner:
-            output: "passed"
-            update_vars:
-              e2e_status: "passed"
-          e2e-notify:
-            output: ""
-          e2e-approval:
-            choice: "retry"
-            comment: ""
+      impl-walkthrough-fix:
+        output: "实现审查完成。修复 1 处，0 非阻塞。"
+
+      e2e-verify:
+        output: "E2E 全部通过。"
+        update_vars:
+          e2e_status: "passed"
 
       # --- Stage 7: Ship ---
       ship:
@@ -297,9 +287,8 @@ scenarios:
           - verification-clarify
           - brief-maker
           - spec-planner
+          - spec-audit
           - execution
-          - e2e-verify-loop
+          - impl-walkthrough-fix
+          - e2e-verify
           - ship
-        skipped:
-          - e2e-notify
-          - e2e-approval
