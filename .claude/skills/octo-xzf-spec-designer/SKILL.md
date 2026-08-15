@@ -9,12 +9,12 @@ version: 2.2.0
 # Spec + Tracer Bullet 设计规范
 
 ## 触发条件
-Stage 4 agent 节点，读取 brief.md，一次生成所有 spec 和 tracer bullet tasks。
+Stage 4 agent 节点，基于会话上下文中的 brief.md 内容，一次生成所有 spec 和 tracer bullet tasks。
 
 ## 核心原则
 
 1. **目标驱动** — 每个 spec/task 只写"做什么"和"怎么验证"，不写"怎么实现"
-2. **垂直切片** — 每个 task 是一个 tracer bullet：横穿 DB→API→UI→测试的完整路径
+2. **DAG 并行设计** — task 按依赖关系组织为 DAG，独立 task 可并行执行
 3. **用户视角** — task 描述"用户能做什么"，不写"改什么文件"
 4. **不写文件路径** — agent 自行决定实现方式，路径会过时
 5. **验证优先** — 每个 spec 和 task 都必须有明确的验证方法
@@ -63,11 +63,13 @@ Stage 4 agent 节点，读取 brief.md，一次生成所有 spec 和 tracer bull
 
 > 无 UI 变更的 spec 省略此节。
 
-## Tracer Bullets
+## Tracer Bullets (DAG)
 | # | 标题 | 用户可验证结果 | 依赖 |
 |---|------|--------------|------|
-| T1 | {标题} | {完成后用户能看到/做什么} | — |
-| T2 | {标题} | {完成后用户能看到/做什么} | T1 |
+| T1 | {基础设施} | {完成后能验证什么} | — |
+| T2 | {独立模块 A} | {完成后能验证什么} | T1 |
+| T3 | {独立模块 B} | {完成后能验证什么} | T1 |
+| T4 | {集成} | {完成后能验证什么} | T2, T3 |
 
 ## 单测要点
 
@@ -120,11 +122,12 @@ Stage 4 agent 节点，读取 brief.md，一次生成所有 spec 和 tracer bull
 
 ### Tracer Bullet 设计规则
 
-1. **每个 task 是完整路径** — 不做"前端 task"或"后端 task"水平切片
+1. **DAG 优先** — 识别可并行的独立 task，用依赖边连接，最大化并行度
 2. **每个 task 独立可验证** — 完成后能 demo 或跑验证
 3. **每个 task 装进一个 context window** — 不要太细碎也不要太庞大
 4. **不写文件路径** — 只写用户行为和验证方式
-5. **依赖关系最小化** — 尽量线性，少交叉依赖
+5. **依赖关系显式声明** — 无依赖的 task 写 `—`，有依赖的列出前置 task
+6. **基础层先行** — 共享基础设施（DB schema、公共组件）作为 DAG 根节点，后续 task 依赖它
 
 ## Spec 索引文件
 

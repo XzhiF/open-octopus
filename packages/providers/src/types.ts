@@ -49,6 +49,7 @@ export interface SendQueryOptions {
   env?: Record<string, string>
   agent?: string
   skills?: string[]
+  tools?: string[]
   agents?: Record<string, OctopusAgentDef>
   plugins?: Array<{ type: 'local'; path: string }>
   disablePlugins?: string[]

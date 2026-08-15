@@ -163,7 +163,7 @@ _Avoid_: 凭证, credential
 
 ## Host 综合输出
 
-Host 读取所有轮次讨论，综合为 `research-brief.md`:
+Host 综合所有轮次讨论，输出为 `research-brief.md`:
 
 ```markdown
 # Research Brief

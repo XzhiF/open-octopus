@@ -764,13 +764,19 @@ export function ExecutionLogViewer({ workspaceId, executionId, executionStatus }
       return null
     }
 
-    // Detect sub_workflow parent nodes: nodes that have node_log events with child references
+    // Detect sub_workflow parent nodes: nodes that have node_log events with child references.
+    // Only add non-scoped nodeIds (no ':') — scoped children (e.g. "spec-dag-execute:T-1-iter0")
+    // are the children themselves, not container parents. Adding them here would cause
+    // thinking_block/text_block events to hit the containerParentNodes branch and get skipped.
     const subWorkflowParents = new Set<string>()
     for (const e of filteredEvents) {
       if (e.event === "node_log") {
         const line = e.line ?? e.content ?? ""
         if (extractSubWorkflowChild(line)) {
-          subWorkflowParents.add(e.nodeId || "")
+          const nid = e.nodeId || ""
+          if (!nid.includes(":")) {
+            subWorkflowParents.add(nid)
+          }
         }
       }
     }
@@ -794,6 +800,16 @@ export function ExecutionLogViewer({ workspaceId, executionId, executionStatus }
       }
     }
 
+    // Pre-pass: build nodeId → iteration map from events that carry iteration.
+    // node_log events from JSONL have iteration via loop context; SQLite events (agent_event,
+    // thinking_block, text_block) for the same scoped nodeId lack it. This map bridges the gap.
+    const knownNodeIter = new Map<string, number>()
+    for (const e of filteredEvents) {
+      if (e.iteration != null && e.iteration > 0 && e.nodeId && !knownNodeIter.has(e.nodeId)) {
+        knownNodeIter.set(e.nodeId, e.iteration)
+      }
+    }
+
     const map = new Map<string, FlatGroup>()
 
     for (const e of filteredEvents) {
@@ -806,14 +822,25 @@ export function ExecutionLogViewer({ workspaceId, executionId, executionStatus }
       let key: string
       let label: string
 
-      // Sub-workflow child events: group by parent:childNodeId (with iteration suffix when inside a loop)
+      // Sub-workflow child events: group by scoped nodeId.
+      // After the iterationIndex fix, the bridge scoped() produces nodeId like
+      // "spec-dag-execute:T-1-iter0" — child name + iter suffix already embedded.
+      // So if nodeId contains ':', use it directly; don't re-extract childNode.
+      // Old format (nodeId = "spec-dag-execute", no ':') needs childNode appended.
       if (e.event === "node_log") {
         const line = e.line ?? e.content ?? ""
         const childNode = extractSubWorkflowChild(line)
         if (childNode) {
-          const iterSuffix = e.iteration != null && e.iteration > 0 ? `-iter${e.iteration}` : ""
-          key = `${nodeId}:${childNode}${iterSuffix}`
-          label = `${nodeId}:${childNode}${iterSuffix}`
+          if (nodeId.includes(":")) {
+            // New format: nodeId already has child + iter suffix from bridge scoped()
+            key = nodeId
+            label = nodeId
+          } else {
+            // Old format: nodeId is just the parent, append child + iter
+            const iterSuffix = e.iteration != null && e.iteration > 0 ? `-iter${e.iteration}` : ""
+            key = `${nodeId}:${childNode}${iterSuffix}`
+            label = `${nodeId}:${childNode}${iterSuffix}`
+          }
         } else {
           key = `${nodeId}:meta`
           label = `${nodeId} (meta)`
@@ -837,6 +864,42 @@ export function ExecutionLogViewer({ workspaceId, executionId, executionStatus }
       } else if (hasIter) {
         key = `${nodeId}-${e.iteration}`
         label = `${nodeId}-${e.iteration}`
+      } else if (nodeId.includes(":")) {
+        // Scoped sub-workflow child events (e.g. "spec-dag-execute:T-1-iter2") from SQLite.
+        // If nodeId already has -iterN suffix (from bridge scoped()), use it directly.
+        // Otherwise fall back to inferring iteration from loop context.
+        const nodeIdHasIter = /-iter\d+$/.test(nodeId)
+        if (nodeIdHasIter) {
+          key = nodeId
+          label = nodeId
+        } else {
+          let inferredIter: number | undefined = knownNodeIter.get(nodeId)
+          if (inferredIter == null) inferredIter = innerNodeLastIter.get(nodeId)
+          if (inferredIter == null && loopIterations) {
+            for (const [, summary] of Object.entries(loopIterations)) {
+              const iters = (summary as any)?.iterations ?? []
+              for (const iter of iters) {
+                const nodes: any[] = iter?.nodes ?? []
+                if (nodes.some((n: any) => n.nodeId === nodeId)) {
+                  inferredIter = iter.iteration
+                  break
+                }
+              }
+              if (inferredIter == null) {
+                const running = iters.find((i: any) => i.status === "running")
+                if (running) inferredIter = running.iteration
+              }
+              if (inferredIter != null) break
+            }
+          }
+          if (inferredIter != null) {
+            key = `${nodeId}-iter${inferredIter}`
+            label = `${nodeId}-iter${inferredIter}`
+          } else {
+            key = nodeId
+            label = nodeId
+          }
+        }
       } else if (e.event?.startsWith("harness_") && innerNodeLastIter.has(nodeId)) {
         // Harness events for inner loop nodes: place in the last iteration group
         const iter = innerNodeLastIter.get(nodeId)!

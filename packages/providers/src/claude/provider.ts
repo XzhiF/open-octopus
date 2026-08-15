@@ -274,6 +274,7 @@ export class ClaudeSDKProvider implements IAgentProvider {
           )
         : undefined,
       plugins: resolvePlugins(options),
+      tools: options?.tools,
       disallowedTools: options?.disallowedTools,
       ...(typeof options?.effort === 'string' ? { effort: options.effort as Options['effort'] } : {}),
       canUseTool,

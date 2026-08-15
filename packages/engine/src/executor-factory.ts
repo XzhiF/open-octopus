@@ -246,7 +246,8 @@ export class ExecutorFactory {
           executionId: this.ctx.executionId,
           nodeOutputs: buildNodeOutputs(),
           cwd: this.ctx.cwd,
-          sessionId: this.ctx.interactionSessionId,
+          sessionId: this.ctx.interactionSessionId
+            ?? (node.interaction_agent?.context !== "new" ? this.ctx.globalSessionId : undefined),
           currentRound: this.ctx.interactionCurrentRound,
         })
       case "sub_workflow":

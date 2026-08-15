@@ -20,32 +20,18 @@ scenarios:
       # --- Stage 1: Codebase Research (Swarm Debate) ---
       idea-research:
         output: "研究完成。影响模块: auth, user。待澄清问题: 3"
-        update_vars:
-          requirements_checklist_status: "INCOMPLETE: 待澄清"
 
-      # --- Stage 2a: Requirements Clarify Loop ---
-      requirements-clarify-loop:
-        iterations: 1
-        nodes:
-          requirements-approval:
-            choice: "proceed"
-            comment: "需求已明确，无需补充"
-          requirements-clarify:
-            output: "需求澄清完成。checklist 全部完成。"
-            update_vars:
-              requirements_checklist_status: "COMPLETE"
+      # --- Stage 2: Requirements Clarify (interaction) ---
+      requirements-clarify:
+        summary: "需求澄清完成。"
+        vars_update:
+          requirements_confirmed: "true"
 
-      # --- Stage 2b: Verification Clarify Loop ---
-      verification-clarify-loop:
-        iterations: 1
-        nodes:
-          verification-approval:
-            choice: "proceed"
-            comment: "验证方案已确认"
-          verification-clarify:
-            output: "验证策略规划完成。环境 checklist 全部完成。"
-            update_vars:
-              env_checklist_status: "COMPLETE"
+      # --- Stage 2b: Verification Strategy ---
+      verification-clarify:
+        summary: "验证策略已生成: .scratch/user-auth/02-clarification/verification.md"
+        vars_update:
+          verification_confirmed: "true"
 
       # --- Stage 3: Brief Maker ---
       brief-maker:
@@ -55,25 +41,37 @@ scenarios:
       spec-planner:
         output: "Spec 和 Tracer Bullet 设计完成。2 个 spec，5 个 task。"
 
-      # --- Stage 5: Execution ---
-      execution:
-        output: "passed"
-        update_vars:
-          spec_status: "passed"
+      # --- Stage 5: Execution Loop ---
+      spec-audit:
+        output: "Spec 审查完成。3 故事，2 断点，采纳 2 补充。"
 
-      # --- Stage 6: E2E Verify Loop ---
-      e2e-verify-loop:
+      execution:
         iterations: 1
         nodes:
-          e2e-runner:
-            output: "passed"
+          spec-selector:
+            output: "选择 spec-001"
             update_vars:
-              e2e_status: "passed"
-          e2e-notify:
-            output: ""
-          e2e-approval:
-            choice: "retry"
-            comment: ""
+              spec_count: "1"
+              current_spec: "0"
+              current_spec_file: ".scratch/user-auth/03-specs/spec-001-auth.md"
+              current_spec_tasks: '[".scratch/user-auth/03-specs/spec-001-auth/T-1-db.md",".scratch/user-auth/03-specs/spec-001-auth/T-2-api.md"]'
+          spec-dag-execute:
+            output: "DAG 执行完成。2 个 task 全部通过。"
+          cr-and-fix:
+            output: "CR 通过，无问题。"
+          spec-progress:
+            output: "spec 0 完成，全部 spec 已执行。"
+            update_vars:
+              spec_status: "all_done"
+
+      # --- Stage 6: E2E Verify Loop ---
+      impl-walkthrough-fix:
+        output: "实现审查完成。修复 1 处，0 非阻塞。"
+
+      e2e-verify:
+        output: "E2E 全部通过。"
+        update_vars:
+          e2e_status: "passed"
 
       # --- Stage 7: Ship ---
       ship:
@@ -85,31 +83,28 @@ scenarios:
         branch: "feat/user-auth"
         feature: "user-auth"
         remote_type: "github"
-        requirements_checklist_status: "COMPLETE"
-        clarify_decision: "proceed"
-        env_checklist_status: "COMPLETE"
-        verify_decision: "proceed"
-        spec_status: "passed"
+        requirements_confirmed: "true"
+        verification_confirmed: "true"
+        spec_status: "all_done"
         e2e_status: "passed"
       node_trace:
         executed:
           - init
           - idea-research
-          - requirements-clarify-loop
-          - verification-clarify-loop
+          - requirements-clarify
+          - verification-clarify
           - brief-maker
           - spec-planner
+          - spec-audit
           - execution
-          - e2e-verify-loop
+          - impl-walkthrough-fix
+          - e2e-verify
           - ship
-        skipped:
-          - e2e-notify
-          - e2e-approval
 
   # =============================================================
   # Scenario 2: E2E Failure + Skip — E2E 失败后用户选择跳过
   # =============================================================
-  - name: "e2e failure then skip"
+  - name: "e2e blockers then ship"
     inputs:
       idea: "添加搜索功能"
       feature: "search"
@@ -124,30 +119,16 @@ scenarios:
 
       idea-research:
         output: "研究完成。影响模块: search, api。"
-        update_vars:
-          requirements_checklist_status: "INCOMPLETE: 待澄清"
 
-      requirements-clarify-loop:
-        iterations: 1
-        nodes:
-          requirements-approval:
-            choice: "proceed"
-            comment: "需求已明确"
-          requirements-clarify:
-            output: "需求澄清完成。"
-            update_vars:
-              requirements_checklist_status: "COMPLETE"
+      requirements-clarify:
+        summary: "需求澄清完成。"
+        vars_update:
+          requirements_confirmed: "true"
 
-      verification-clarify-loop:
-        iterations: 1
-        nodes:
-          verification-approval:
-            choice: "proceed"
-            comment: "验证方案确认"
-          verification-clarify:
-            output: "验证策略规划完成。"
-            update_vars:
-              env_checklist_status: "COMPLETE"
+      verification-clarify:
+        summary: "验证策略已生成"
+        vars_update:
+          verification_confirmed: "true"
 
       brief-maker:
         output: "需求简报已生成"
@@ -155,29 +136,36 @@ scenarios:
       spec-planner:
         output: "Spec 设计完成。1 个 spec，3 个 task。"
 
+      spec-audit:
+        output: "Spec 审查完成。3 故事，2 断点，采纳 2 补充。"
+
       execution:
-        output: "passed"
-        update_vars:
-          spec_status: "passed"
+        iterations: 1
+        nodes:
+          spec-selector:
+            output: "选择 spec-001"
+            update_vars:
+              spec_count: "1"
+              current_spec: "0"
+              current_spec_file: ".scratch/search/03-specs/spec-001-search.md"
+              current_spec_tasks: '[".scratch/search/03-specs/spec-001-search/T-1-api.md"]'
+          spec-dag-execute:
+            output: "DAG 执行完成。"
+          cr-and-fix:
+            output: "CR 通过。"
+          spec-progress:
+            output: "spec 0 完成，全部 spec 已执行。"
+            update_vars:
+              spec_status: "all_done"
 
       # E2E 第一轮失败，用户选择跳过
-      e2e-verify-loop:
-        iterations: 2
-        nodes:
-          e2e-runner:
-            - output: "failed"
-              update_vars:
-                e2e_status: "failed"
-            - output: "failed"
-              update_vars:
-                e2e_status: "failed"
-          e2e-notify:
-            output: "通知已发送"
-          e2e-approval:
-            - choice: "retry"
-              comment: "再试一次"
-            - choice: "skip"
-              comment: "跳过 E2E 继续交付"
+      impl-walkthrough-fix:
+        output: "实现审查完成。修复 1 处，0 非阻塞。"
+
+      e2e-verify:
+        output: "E2E 最大努力完成。2 项 BLOCKED（已记录），其余通过。"
+        update_vars:
+          e2e_status: "blocked"
 
       ship:
         output: "PR 已提交: https://github.com/org/repo/pull/456"
@@ -187,14 +175,120 @@ scenarios:
       vars:
         branch: "feat/search"
         feature: "search"
-        spec_status: "passed"
-        e2e_decision: "skip"
+        spec_status: "all_done"
+        e2e_status: "blocked"
       node_trace:
         executed:
           - init
           - idea-research
+          - requirements-clarify
+          - verification-clarify
           - brief-maker
           - spec-planner
+          - spec-audit
           - execution
-          - e2e-verify-loop
+          - impl-walkthrough-fix
+          - e2e-verify
+          - ship
+
+  # =============================================================
+  # Scenario 3: Resume-Skip — spec-001 已有 checkpoint，selector 扫描后跳到 spec-002
+  # =============================================================
+  - name: "resume skip — spec-001 already done, jump to spec-002"
+    inputs:
+      idea: "添加通知功能"
+      feature: "notify"
+      research_guidance: ""
+    mocks:
+      # --- Stage 0: Init ---
+      init:
+        output: "初始化完成。分支: feat/notify, feature: notify, remote: github"
+        update_vars:
+          branch: "feat/notify"
+          feature: "notify"
+          remote_type: "github"
+
+      # --- Stage 1: Codebase Research ---
+      idea-research:
+        output: "研究完成。影响模块: notify, api。"
+
+      # --- Stage 2: Requirements Clarify ---
+      requirements-clarify:
+        summary: "需求澄清完成。"
+        vars_update:
+          requirements_confirmed: "true"
+
+      # --- Stage 2b: Verification (interaction) ---
+      verification-clarify:
+        summary: "验证策略已生成"
+        vars_update:
+          verification_confirmed: "true"
+
+      # --- Stage 3: Brief Maker ---
+      brief-maker:
+        output: "需求简报已生成"
+
+      # --- Stage 4: Spec Planner ---
+      spec-planner:
+        output: "Spec 设计完成。2 个 spec，3 个 task。"
+
+      # --- Stage 5: Execution Loop ---
+      # spec-001 已有 checkpoint（resume 场景），selector 扫描后跳到 spec-002
+      spec-audit:
+        output: "Spec 审查完成。3 故事，2 断点，采纳 2 补充。"
+
+      execution:
+        iterations: 1
+        nodes:
+          spec-selector:
+            output: "跳过 spec-001（已完成），选择 spec-002"
+            update_vars:
+              spec_count: "2"
+              current_spec: "1"
+              current_spec_file: ".scratch/notify/03-specs/spec-002-email.md"
+              current_spec_tasks: '[".scratch/notify/03-specs/spec-002-email/T-1-smtp.md"]'
+          spec-dag-execute:
+            output: "DAG 执行完成。"
+          cr-and-fix:
+            output: "CR 通过。"
+          spec-progress:
+            output: "spec 2 完成，全部 spec 已执行。"
+            update_vars:
+              spec_status: "all_done"
+
+      # --- Stage 6: E2E Verify Loop ---
+      impl-walkthrough-fix:
+        output: "实现审查完成。修复 1 处，0 非阻塞。"
+
+      e2e-verify:
+        output: "E2E 全部通过。"
+        update_vars:
+          e2e_status: "passed"
+
+      # --- Stage 7: Ship ---
+      ship:
+        output: "PR 已提交: https://github.com/org/repo/pull/789"
+
+    assertions:
+      status: "completed"
+      vars:
+        branch: "feat/notify"
+        feature: "notify"
+        verification_confirmed: "true"
+        current_spec: "1"
+        spec_count: "2"
+        spec_status: "all_done"
+        e2e_status: "passed"
+      node_trace:
+        executed:
+          - init
+          - idea-research
+          - requirements-clarify
+          - verification-clarify
+          - brief-maker
+          - spec-planner
+          - spec-audit
+          - execution
+          - impl-walkthrough-fix
+          - e2e-verify
           - ship

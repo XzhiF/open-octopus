@@ -3,7 +3,7 @@ name: octo-xzf-clarify
 description: "需求澄清方法论 — 功能完整性分析、问题清单、Round 迭代"
 category: coding-assistant
 tags: [xzf-dev]
-version: 2.5.0
+version: 2.6.0
 ---
 
 # 需求澄清方法论
@@ -119,7 +119,7 @@ version: 2.5.0
 
 Synthesis 是 approval 节点展示给用户的内容，**必须让用户看到完整选项才能做决策**。
 
-读取刚写入的 questions.md，严格按以下格式输出：
+基于会话上下文中刚写入的 questions.md，严格按以下格式输出：
 
 ##### 「待澄清」— 必须保留所有方案选项（不可压缩！）
 
@@ -181,6 +181,20 @@ Synthesis 是 approval 节点展示给用户的内容，**必须让用户看到�
 
 > Research 项与功能澄清项、环境澄清项并列，不是独立阶段。用户在 approval 中一并回答。
 > Research 答案下游流入 `technical-guide.md`（技术调研结论）和对应 spec 文件（codebase 研究结论）。
+
+### 第二步半：故事完整性 Walk-Through（刨根问底）
+
+覆盖维度后，用 octo-xzf-story-walker skill（requirement 模式）trace 1-3 核心故事穿过**已决策的**接口/存储/UI，找决策缺口：
+
+- 某步数据字段无 writer 决策（孤儿字段）
+- 跨模块无接口决策（魔术桥）
+- 错误路径未决（静默失败）
+- 自动流程缺触发器决策（缺触发器）
+- 反馈未闭环（断反馈）
+
+把缺口转为**待澄清问题**追加到 questions.md「待澄清」（方案 A/B/C + ⭐ 推荐），刨根问底把每个需求点问清。
+
+目标：存储/接口/UI-UX/设计/决策全闭环，故事端到端走通。
 
 ### 第三步：充分性评估
 每轮澄清后评估：

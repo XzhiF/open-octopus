@@ -1782,7 +1782,7 @@ export class WorkflowEngine {
 
   /** Update session tracking after an agent or swarm node completes. */
   private updateSessionContext(node: NodeDef, result: NodeExecutionResult): void {
-    if ((node.type !== "agent" && node.type !== "swarm") || !result.sessionId) return
+    if ((node.type !== "agent" && node.type !== "swarm" && node.type !== "interaction") || !result.sessionId) return
 
     // Don't update globalSessionId with failed node's session —
     // we want to retry from the last SUCCESSFUL session, not the failed attempt.
