@@ -393,14 +393,25 @@ function NodeConsumptionChart({ byNode }: { byNode: ObservabilityData["byNode"] 
 }
 
 function ModelUsageChart({ byModel }: { byModel: ObservabilityData["byModel"] }) {
-  const chartData = byModel.map((m) => ({
-    name: m.model,
-    value: m.inputTokens + m.outputTokens + m.cacheReadTokens + m.cacheCreationTokens,
-    cost: m.costUsd,
-  }))
+  const chartData = byModel.map((m) => {
+    const cacheRead = m.cacheReadTokens
+    const cacheWrite = m.cacheCreationTokens
+    let cacheFlag = ""
+    if (cacheRead === 0 && cacheWrite === 0) cacheFlag = "无缓存"
+    else if (cacheWrite === 0) cacheFlag = "无写"
+    else if (cacheRead === 0) cacheFlag = "只写不读"
+    return {
+      name: m.model,
+      value: m.inputTokens + m.outputTokens + cacheRead + cacheWrite,
+      cost: m.costUsd,
+      cacheRead,
+      cacheWrite,
+      cacheFlag,
+    }
+  })
 
   return (
-    <div className="flex items-center gap-4">
+    <div className="flex items-start gap-4">
       <div className="h-[120px] w-[120px] shrink-0">
         <ResponsiveContainer width="100%" height="100%">
           <PieChart>
@@ -414,13 +425,22 @@ function ModelUsageChart({ byModel }: { byModel: ObservabilityData["byModel"] })
           </PieChart>
         </ResponsiveContainer>
       </div>
-      <div className="flex-1 space-y-1 min-w-0">
+      <div className="flex-1 space-y-1.5 min-w-0">
         {chartData.map((item, i) => (
-          <div key={item.name} className="flex items-center gap-1.5 text-[10px]">
-            <div className="h-2.5 w-2.5 rounded-full shrink-0" style={{ backgroundColor: PIE_COLORS[i % PIE_COLORS.length] }} />
-            <span className="font-mono truncate max-w-24" title={item.name}>{item.name}</span>
-            <span className="text-muted-foreground ml-auto tabular-nums">{formatTokenCount(item.value)}</span>
-            <span className="text-muted-foreground tabular-nums">{formatCurrency(item.cost)}</span>
+          <div key={item.name} className="space-y-0.5">
+            <div className="flex items-center gap-1.5 text-[10px]">
+              <div className="h-2.5 w-2.5 rounded-full shrink-0" style={{ backgroundColor: PIE_COLORS[i % PIE_COLORS.length] }} />
+              <span className="font-mono truncate max-w-24" title={item.name}>{item.name}</span>
+              <span className="text-muted-foreground ml-auto tabular-nums">{formatTokenCount(item.value)}</span>
+              <span className="text-muted-foreground tabular-nums">{formatCurrency(item.cost)}</span>
+            </div>
+            <div className="flex items-center gap-1.5 pl-4 text-[10px] text-muted-foreground tabular-nums">
+              <span>⚡{formatTokenCount(item.cacheRead)}</span>
+              <span>🗡️{formatTokenCount(item.cacheWrite)}</span>
+              {item.cacheFlag && (
+                <span className="text-amber-500">⚠ {item.cacheFlag}</span>
+              )}
+            </div>
           </div>
         ))}
       </div>
