@@ -466,6 +466,14 @@ export class SchedulerEngine {
         status: 'queued',
         claimed_at: null,
       })
+      // Issue 3: release the partial unique index on schedule_executions
+      // (status IN triggered/running). Without this the orphaned execution row
+      // blocks the next dispatch's insertTriggeredExecution and the task can
+      // never be re-dispatched after a worker crash.
+      this.runDAO.markStaleExecutionsFailed(
+        schedule.id,
+        `Stale claimed rolled back to queued at ${now}`,
+      )
       this.configDAO.markScheduleWorkspacesCleanedBySchedule(schedule.id, now)
     }
   }

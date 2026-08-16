@@ -239,6 +239,7 @@ export class WorkflowExecutor implements Executor {
           notifyOnFailure: schedule.notify_on_failure === 1,
           schedule,
           maxRetain: config.max_retain,
+          isRequirement,
         })
       }) as any,
     }, execution.id)
@@ -309,6 +310,7 @@ export class WorkflowExecutor implements Executor {
     notifyOnFailure: boolean
     schedule: ScheduleRow
     maxRetain: number
+    isRequirement: boolean
   }): void {
     const durationMs = Date.now() - opts.triggeredAt
 
@@ -322,6 +324,17 @@ export class WorkflowExecutor implements Executor {
     if (status === 'completed') {
       // Update schedule_execution
       this.runDAO.markExecutionCompleteWithDuration(opts.schedExecId, 'completed', durationMs)
+
+      // Issue 2 fix: requirement schedules track lifecycle in the `status` column
+      // (draft/queued/claimed/done). Without this the kanban "done" column never
+      // fills even after a successful run — the schedule stayed "claimed".
+      // Cron schedules keep using enabled/disabled, so leave them untouched.
+      if (opts.isRequirement) {
+        this.configDAO.updateSchedule(opts.scheduleId, {
+          status: 'done',
+          claimed_at: null,
+        })
+      }
 
       // Update schedule_workspace
       this.configDAO.updateScheduleWorkspaceStatus(opts.schedWsId, {
