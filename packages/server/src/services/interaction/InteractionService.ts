@@ -74,6 +74,7 @@ class StreamAccumulator {
   thinkingStartTime = 0
   tokens?: TokenUsage
   costUsd?: number
+  model?: string
   completionDetected: { summary: string; vars_update?: Record<string, unknown> } | null = null
   llmCallStartTime = Date.now()
   toolCallMap = new Map<string, { dbId: string; toolName: string; startTime: number }>()
@@ -685,6 +686,9 @@ export class InteractionService {
     if (chunk.sessionId) _session.providerSessionId = chunk.sessionId
     if (chunk.tokens) acc.tokens = chunk.tokens
     if (chunk.costUsd !== undefined) acc.costUsd = chunk.costUsd
+    // Capture the actual model the provider used (from result.modelUsages) instead of
+    // hardcoding a label. Falls back to "unknown" if the provider didn't report it.
+    if (chunk.modelUsages?.length) acc.model = chunk.modelUsages[0].model
     // Don't yield result here — we yield it after the loop in sendMessage
     return []
   }
@@ -735,7 +739,7 @@ export class InteractionService {
     this.tokenDao.insert({
       id: randomUUID(),
       node_execution_id: session.nodeExecutionId,
-      model: "claude-sonnet-4-20250514",
+      model: acc.model ?? "unknown",
       input_tokens: acc.tokens.input ?? 0,
       output_tokens: acc.tokens.output ?? 0,
       cost_usd: acc.costUsd ?? null,
@@ -756,7 +760,7 @@ export class InteractionService {
       turn_index: session.currentRound,
       call_index: 0,
       message_id: acc.assistantMessageId,
-      model: "claude-sonnet-4-20250514",
+      model: acc.model ?? "unknown",
       stop_reason: acc.completionDetected ? "end_turn" : null,
       timestamp: acc.llmCallStartTime,
       duration_ms: now - acc.llmCallStartTime,
