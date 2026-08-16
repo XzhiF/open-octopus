@@ -6,6 +6,7 @@ import { WorkspaceDAO } from '../db/dao'
 import os from "os"
 import path from "path"
 import fs from "fs"
+import { execFileSync } from "child_process"
 
 let db: Database.Database
 let service: WorkspaceService
@@ -112,5 +113,77 @@ describe("WorkspaceService", () => {
     expect(ws.name).toBe("Existing")
     expect(fs.existsSync(path.join(basePath, "existing-file.txt"))).toBe(true)
     fs.rmSync(basePath, { recursive: true, force: true })
+  })
+
+  // ── Ticket 08: source_path resolution + error propagation (G3) ──────────
+  // createFromSpec must propagate initWorktreesFromSpec's throw so the scheduler
+  // (workflow-executor.ts catch) can record schedule_executions.error_summary
+  // instead of silently producing a broken workspace.
+  describe("createFromSpec — source_path resolution (ticket 08)", () => {
+    let realHome: string | undefined
+    let fakeHome: string
+
+    beforeEach(() => {
+      realHome = process.env.HOME
+      fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), "ws-svc-home-"))
+      process.env.HOME = fakeHome
+    })
+
+    afterEach(() => {
+      if (realHome === undefined) delete process.env.HOME
+      else process.env.HOME = realHome
+      if (fs.existsSync(fakeHome)) fs.rmSync(fakeHome, { recursive: true, force: true })
+    })
+
+    it("creates a worktree when source_path is empty and repos/index.md resolves the repo", () => {
+      const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), "ws-svc-repo-"))
+      try {
+        execFileSync("git", ["init"], { cwd: repoDir })
+        execFileSync("git", ["config", "user.email", "t@t.com"], { cwd: repoDir })
+        execFileSync("git", ["config", "user.name", "T"], { cwd: repoDir })
+        fs.writeFileSync(path.join(repoDir, "README.md"), "# x")
+        execFileSync("git", ["add", "-A"], { cwd: repoDir })
+        execFileSync("git", ["commit", "-m", "init"], { cwd: repoDir })
+
+        const reposDir = path.join(fakeHome, ".octopus", "orgs", "xzf", "repos")
+        fs.mkdirSync(reposDir, { recursive: true })
+        fs.writeFileSync(
+          path.join(reposDir, "index.md"),
+          `# GitRepo Index\n\n## core (xzf)\n\n### demo\n- local: ${repoDir} ✓ cloned\n`,
+        )
+
+        const ws = service.createFromSpec({
+          org: "xzf",
+          name: "taskpool-sched-1",
+          projects: [{ name: "demo", source_path: "", group: "core" }],
+          branch_prefix: "taskpool-s1",
+          branch_suffix: "suffix",
+          source: "scheduler",
+          source_schedule_id: "sched-1",
+          workflow_chain: [{ workflow_ref: "wf.yaml", input_values: {} }],
+        })
+
+        expect(fs.existsSync(path.join(ws.path, "projects", "demo", ".git"))).toBe(true)
+      } finally {
+        if (fs.existsSync(repoDir)) fs.rmSync(repoDir, { recursive: true, force: true })
+      }
+    })
+
+    it("throws when source_path is empty and the repo is not resolvable (no silent skip)", () => {
+      // No repos/index.md authored at all → resolveRepoPath throws index.md not found,
+      // which must propagate out of createFromSpec.
+      expect(() =>
+        service.createFromSpec({
+          org: "xzf",
+          name: "taskpool-sched-2",
+          projects: [{ name: "ghost", source_path: "", group: "core" }],
+          branch_prefix: "taskpool-s2",
+          branch_suffix: "suffix",
+          source: "scheduler",
+          source_schedule_id: "sched-2",
+          workflow_chain: [{ workflow_ref: "wf.yaml", input_values: {} }],
+        }),
+      ).toThrow(/index\.md not found/)
+    })
   })
 })

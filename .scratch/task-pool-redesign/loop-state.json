@@ -1,0 +1,11 @@
+{
+  "root_feature": "task-pool-redesign",
+  "branch": "test-task-board",
+  "iterations": [],
+  "max_iterations": 5,
+  "convergence_threshold": 85,
+  "status": "running",
+  "current_round": 1,
+  "round1_note": "matt-dev-pipeline on root spec (14 tickets) — pending. No verification-report yet. Unblocked starts: 01 shared-types, 08 source-path-fix.",
+  "artifacts_dir": ".scratch/task-pool-redesign"
+}

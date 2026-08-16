@@ -43,3 +43,4 @@
 | 39 | harness-semantic-v2-r2 | 2026-08-06 | feat/workflow-engine-harness | done (gap-fix: AC-3 timeout PASS, AC-4 wired) |
 | 40 | harness-learning-platform | 2026-08-11 | feat/harness-learning-platform | in-progress |
 | 41 | workflow-observability | 2026-08-12 | feat/workflow-observability | in-progress (spec + 7 tickets, story walk-through done) |
+| 42 | task-pool-redesign | 2026-08-17 | feat/task-pool-redesign | spec+issues ready (16 decisions + ADR-0008 + 14 impl tickets + 11 story-gap fixes) |
