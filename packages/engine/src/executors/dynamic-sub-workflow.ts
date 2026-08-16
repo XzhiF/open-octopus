@@ -13,7 +13,7 @@ import { AgentNodeRunner } from "./agent-runner"
 import { validateL1Structure, validateL2Graph, validateL3Semantics, runValidationPipeline } from "./dynamic-sub-workflow-validation"
 import { computeInputHash, buildInputSnapshot } from "./dynamic-sub-workflow-hash"
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "fs"
-import { join } from "path"
+import { join, dirname } from "path"
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -304,6 +304,16 @@ export class DynamicSubWorkflowExecutor implements NodeExecutor {
       }
     }
 
+    // 层次2: 若 spec-to-tasks 产了声明式 dag.json，确定性构图（跳过 LLM 生成）
+    if (!dag) {
+      const declared = this.loadDeclaredDAG()
+      if (declared) {
+        dag = declared
+        validationRounds = 0
+        logLines.push(`Loaded declared DAG from dag.json (${dag.nodes.length} nodes) — skipping LLM generation`)
+      }
+    }
+
     // 4. Generate DAG if needed
     if (!dag) {
       const genResult = await this.generateAndValidateDAG(
@@ -339,6 +349,19 @@ export class DynamicSubWorkflowExecutor implements NodeExecutor {
       }
     }
 
+    // Compute the snapshot (short) name once — used for the mid-execution
+    // outputs update and the final result outputs.
+    const generatedWorkflowName = `${this.node.workflow ?? `${this.config.workflow?.name ?? "workflow"}__${this.node.id}`}${this.config.iterationIndex != null ? `-iter${this.config.iterationIndex}` : ""}`
+
+    // Surface generated_workflow to consumers while the node is still running
+    // (outputs are otherwise only persisted on node_end) so the frontend can
+    // show the child DAG during execution.
+    this.config.callbacks?.onOutputsUpdate?.(this.node.id, {
+      generated_workflow: generatedWorkflowName,
+      node_count: dag.nodes.length,
+      validation_rounds: validationRounds,
+    })
+
     // 6. Execute the generated DAG
     const execResult = await this.executeDAG(dag, workflowName, logLines, onError)
 
@@ -348,7 +371,7 @@ export class DynamicSubWorkflowExecutor implements NodeExecutor {
     const outputs: Record<string, any> = {
       // Use snapshot name (without executionId) so API can find it
       // Snapshot: state/dynamic-workflows/{execId}/{baseName}-iter{N}.yaml
-      generated_workflow: `${this.node.workflow ?? `${this.config.workflow?.name ?? "workflow"}__${this.node.id}`}${this.config.iterationIndex != null ? `-iter${this.config.iterationIndex}` : ""}`,
+      generated_workflow: generatedWorkflowName,
       node_count: dag.nodes.length,
       validation_rounds: validationRounds,
     }
@@ -373,6 +396,27 @@ export class DynamicSubWorkflowExecutor implements NodeExecutor {
     const execSuffix = this.config.executionId ? `-${this.config.executionId}` : ""
     const iterSuffix = this.config.iterationIndex != null ? `-iter${this.config.iterationIndex}` : ""
     return `${baseName}${execSuffix}${iterSuffix}`
+  }
+
+  /** 层次2: 读 spec-to-tasks 产的声明式 dag.json（确定性 DAG，跳过 LLM 生成）。
+   *  从 current_spec_tasks 推 spec 子目录，读 {dir}/dag.json。无则返回 null（回退 LLM）。 */
+  private loadDeclaredDAG(): GeneratedDAG | null {
+    const tasksRaw = this.pool.get("current_spec_tasks")
+    let tasks: unknown = tasksRaw
+    if (typeof tasksRaw === "string") {
+      try { tasks = JSON.parse(tasksRaw) } catch { return null }
+    }
+    if (!Array.isArray(tasks) || tasks.length === 0) return null
+    const first = tasks[0]
+    if (typeof first !== "string") return null
+    const specDir = dirname(first)
+    const dagPath = join(this.config.cwd, specDir, "dag.json")
+    if (!existsSync(dagPath)) return null
+    try {
+      const dag = JSON.parse(readFileSync(dagPath, "utf-8")) as GeneratedDAG
+      if (!dag?.nodes?.length) return null
+      return dag
+    } catch { return null }
   }
 
   private async generateAndValidateDAG(

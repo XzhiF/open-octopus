@@ -341,6 +341,20 @@ export class EngineCallbacks implements IEngineCallbacks {
         this.syncStateJson()
       },
 
+      onOutputsUpdate: (nodeId, outputs) => {
+        // Mid-execution outputs (e.g. dynamic_sub_workflow generated_workflow,
+        // persisted when the DAG is generated — before node_end) so consumers can
+        // render the child workflow while the node is still running.
+        const neId = `${id}-${nodeId}`
+        try {
+          dao.updateNodeExecution(neId, { outputs: JSON.stringify(outputs) })
+        } catch { /* non-fatal: node row may not exist yet */ }
+        sse.emit(wsId, {
+          event: "node_outputs_update",
+          data: { executionId: id, nodeId, outputs },
+        })
+      },
+
       onNodeEnd: (nodeId, status, durationMs, result, nodeType) => {
         const neId = `${id}-${nodeId}`
         const isFailed = ["failed", "skipped_failed", "error"].includes(status)
