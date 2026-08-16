@@ -250,8 +250,15 @@ export class WorkflowExecutor implements Executor {
     // schedules.status='running' feeds the kanban "running" column. Previously this
     // was never written, so a task sat in "claimed" the whole time it executed and
     // the "running" column stayed empty (type also lacked 'running'/'done').
+    // Cron schedules keep using enabled/disabled, so only requirement-type advances.
     this.runDAO.markExecutionRunning(executionId)
-    this.configDAO.updateSchedule(schedule.id, { status: 'running' })
+    if (isRequirement) {
+      this.configDAO.updateSchedule(schedule.id, { status: 'running' })
+      this.sse.emit('taskpool', {
+        event: 'schedule_status',
+        data: { schedule_id: schedule.id, status: 'running' },
+      })
+    }
 
     // 14. Start root execution (chain will auto-execute via ExecutionService)
     try {
@@ -349,6 +356,10 @@ export class WorkflowExecutor implements Executor {
         this.configDAO.updateSchedule(opts.scheduleId, {
           status: 'done',
           claimed_at: null,
+        })
+        this.sse.emit('taskpool', {
+          event: 'schedule_status',
+          data: { schedule_id: opts.scheduleId, status: 'done' },
         })
       }
 

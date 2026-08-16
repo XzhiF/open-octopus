@@ -7,6 +7,8 @@ import { Button } from "@/components/ui/button"
 import { toast } from "sonner"
 import { listJobs, type SchedulerJob } from "@/lib/scheduler-api"
 import { groupJobsByStatus, TASK_POOL_COLUMNS } from "@/lib/task-pool"
+import { subscribeSSE } from "@/lib/sse-manager"
+import { getServerUrl } from "@/lib/server-config"
 import { ChatPanel } from "@/components/workspace/chat/chat-panel"
 import { useChatStream } from "@/components/workspace/chat/use-chat-stream"
 
@@ -44,6 +46,18 @@ export default function TasksPage() {
     fetchJobs()
     const id = setInterval(fetchJobs, REFRESH_INTERVAL_MS)
     return () => clearInterval(id)
+  }, [fetchJobs])
+
+  // Real-time push for the transitions that matter (running / done / rollback).
+  // draft→queued→claimed stay on the 10s poll above — fast enough, and avoids
+  // per-task channels. SSE fires fetchJobs on any schedule_status event.
+  useEffect(() => {
+    const unsub = subscribeSSE(
+      `${getServerUrl()}/api/scheduler/events`,
+      "schedule_status",
+      () => fetchJobs(),
+    )
+    return () => unsub()
   }, [fetchJobs])
 
   useEffect(() => {
