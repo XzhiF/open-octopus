@@ -25,8 +25,8 @@ requires:
     - built-in/octo-xzf-research
     - built-in/octo-xzf-clarify
     - built-in/octo-xzf-verification
-    - built-in/octo-xzf-brief-maker
     - built-in/octo-xzf-spec-designer
+    - built-in/octo-xzf-spec-to-tasks
     - built-in/octo-xzf-implementer
     - built-in/octo-xzf-ship
     - built-in/octo-xzf-story-walker
@@ -140,18 +140,9 @@ hooks:
         title: "🧪 xzf-dev — 验证策略生成完成"
         body: "🌿 $vars.feature"
 
-    - id: notify-brief
-      type: notify
-      nodes: [brief-maker]
-      channel: xzf_hermes
-      template:
-        severity: info
-        title: "📋 xzf-dev — 需求简报生成完成"
-        body: "🌿 $vars.feature"
-
     - id: notify-spec
       type: notify
-      nodes: [spec-planner]
+      nodes: [spec-to-tasks]
       channel: xzf_hermes
       template:
         severity: info
@@ -358,8 +349,7 @@ nodes:
         ═══ 完成条件 ═══
         当所有维度覆盖完毕:
         1. 生成确认摘要, 展示给用户
-        2. 用户确认后, 写入:
-           - .scratch/$vars.feature/02-clarification/brief.md (需求简报, 裁剪无内容章节)
+        2. 确保 questions.md「已确认」区完整（已随每轮维护；brief 已去除，下游 spec-planner 直接读 questions.md + verification.md）
         3. 输出 vars_update:
            {"vars_update": {"requirements_confirmed": "true"}}
 
@@ -417,62 +407,37 @@ nodes:
         ⚠️ 敏感凭据（账号/API Key/Token）agent 无法推断，必须待用户在评论提供。
 
   # ============================================================
-  # Stage 3: 需求简报（综合澄清结果 → brief.md）
-  # ============================================================
-
-  - id: brief-maker
-    type: agent
-    depends_on: [verification-clarify]
-    prompt: |
-      使用 octo-xzf-brief-maker skill 生成需求简报。
-
-      你已继承上游会话上下文（idea、questions、verification、澄清对话均已在会话中）。
-      目录规范: .scratch/$vars.feature/00-init/directory-conventions.md
-
-      ⚠️ 所有产物路径以 directory-conventions.md 为准，禁止使用源码目录。
-
-      输出: .scratch/$vars.feature/02-clarification/brief.md
-
-      原则: 只保留结论，不保留讨论过程。下游节点只读 brief.md。
-      裁剪无内容章节。确保每个验收标准有验证方法。
-
-  # ============================================================
-  # Stage 4: Spec + Task 生成（单 agent，一次完成）
+  # Stage 4a: Spec 初稿（specs only，无 tasks）
   # ============================================================
 
   - id: spec-planner
     type: agent
-    depends_on: [brief-maker]
+    depends_on: [verification-clarify]
     prompt: |
-      使用 octo-xzf-spec-designer skill 生成所有 spec 和 tracer bullet tasks。
+      使用 octo-xzf-spec-designer skill 产 spec 初稿。
 
-      你已继承上游会话上下文（brief.md、research-brief、verification 均已在会话中）。
+      你已继承上游会话上下文（research-brief、questions、verification 均已在会话中）。
       目录规范: .scratch/$vars.feature/00-init/directory-conventions.md
 
       ⚠️ 所有产物路径以 directory-conventions.md 为准，禁止使用源码目录。
 
-      ═══ 输出 ═══
-      1. 每个 spec 写入:
-         .scratch/$vars.feature/03-specs/spec-NNN-{name}.md
-      2. 每个 spec 的 tracer bullets 写入子目录:
-         .scratch/$vars.feature/03-specs/spec-NNN-{name}/T-N-{name}.md
-         ⚠️ 所有 spec 必须建子目录（即使只有 1 个 task），下游执行循环靠子目录中的 T-N 文件发现任务
-      3. 生成索引: .scratch/$vars.feature/03-specs/spec-index.md
-         （按执行顺序: # | 文件名 | 标题 | Tracer Bullets 数 | Depends）
-      4. 生成 E2E 测试计划: .scratch/$vars.feature/03-specs/e2e-test-plan.md
-         综合所有 spec 的 E2E 验证方法，按执行顺序编排为一份完整测试计划
-      5. 若有遗留文件（重跑），先清空 03-specs/ 再写入
+      ═══ 输出（只产 spec，不产 tasks）═══
+      1. 每个 spec 写入: .scratch/$vars.feature/03-specs/spec-NNN-{name}.md
+         含: 目标 / 服务链 / Wireframe / 验收标准(AC) / 单测要点 / E2E 验证场景 / 数据模型 / API 契约 / 约束
+         ⚠️ 不写 Tracer Bullets 表、不建子目录、不出 T-N task 文件（tasks 由下游 spec-to-tasks 出）
+      2. 生成索引: .scratch/$vars.feature/03-specs/spec-index.md
+         （# | 文件名 | 标题 | Depends；Tracer Bullets 数留空，由 spec-to-tasks 填）
+      3. 若有遗留文件（重跑），先清空 03-specs/ 再写入
 
       ═══ 原则 ═══
       - 简单需求 → 1 个 spec 即可，不强制拆分
-      - Task 用垂直切片（tracer bullet）：每个 task 横穿全栈，独立可验证
-      - Task 描述用户视角："用户能做什么"，不写"改什么文件"
-      - 不写文件路径，agent 自行决定实现方式
-      - 每个 spec 必须定义反假跑标准（区分"真通过"vs"假通过"）
+      - spec 描述用户视角，不写文件路径，agent 自行决定实现方式
+      - 每个 spec 必须有验收标准 + E2E 场景（含反假跑标准）
+      - spec 自包含（brief 已去除，下游只读 spec）
       - 格式参见 octo-xzf-spec-designer skill
 
   # ============================================================
-  # Stage 4b: Spec Walk-Through 审查 (只补充，不改原设计路径)
+  # Stage 4b: Spec Walk-Through 审查（只审 spec、改 spec，不 bolt task）
   # ============================================================
 
   - id: spec-audit
@@ -486,28 +451,65 @@ nodes:
 
           读:
           - .scratch/$vars.feature/03-specs/spec-index.md
-          - 各 spec-NNN.md + 子目录 T-N task
-          - .scratch/$vars.feature/02-clarification/brief.md
+          - 各 spec-NNN.md（此阶段尚无 tasks）
+          - .scratch/$vars.feature/02-clarification/questions.md
           - .scratch/$vars.feature/02-clarification/verification.md
 
           trace 核心故事穿过 specs + 当前 codebase，找断路/阻塞/未实现/反馈未闭环。
           查 6 反模式（魔术桥/孤儿字段/静默失败/缺触发器/无版本/断反馈）。
 
-          返回结构化断点（severity + fix 建议 + 涉及 spec/task）。
+          返回结构化断点（severity + fix 建议 + 涉及 spec）。
           ⚠️ 只返回发现，不改 spec/code。
     prompt: |
-      委派 story-walker 审查 plan 完整性。获取断点后：
+      委派 story-walker 审查 spec 完整性。获取断点后：
 
       ═══ 原则 ═══
-      只补充，不改原设计路径/方案/已有 T-N/AC（前面需求澄清的线路已对）。
+      修改 spec 文件本身，不新增 task（tasks 由下游 spec-to-tasks 出）。
+      前面需求澄清的线路已对，只补缺口（加 AC/字段/路径/场景），不改已定路径。
 
       ═══ 采纳规则 ═══
-      - CRITICAL/HIGH（阻塞断路）→ 采纳为补充：
-        追加新 T-N task / AC 到对应 spec 子目录（如 T-N-gap-*.md），不改已有。
+      - CRITICAL/HIGH（断路/孤儿字段/缺触发器）→ 直接改 spec：
+        补 AC、修 API 路径、补数据字段/服务链、补 E2E 场景。
       - MEDIUM/LOW → 记录到 spec-audit.md，不自动改。
 
-      写入 .scratch/$vars.feature/03-specs/spec-audit.md（断点 + 采纳的补充清单）。
-      汇报：审查了 N 个故事，发现 X 断点，采纳 Y 个补充。
+      写入 .scratch/$vars.feature/03-specs/spec-audit.md（断点 + 应用的 spec 修改清单）。
+      汇报：审查了 N 个故事，发现 X 断点，改了 Y 处 spec。
+
+  # ============================================================
+  # Stage 4c: Spec → Tasks（吸呐 audit 后出 tracer bullet tasks）
+  # ============================================================
+
+  - id: spec-to-tasks
+    type: agent
+    depends_on: [spec-audit]
+    prompt: |
+      使用 octo-xzf-spec-to-tasks skill，从已 audit 的 specs 出 tracer bullet tasks。
+
+      你已继承上游会话上下文（specs、spec-audit 变更清单均在会话中）。
+      目录规范: .scratch/$vars.feature/00-init/directory-conventions.md
+
+      ⚠️ 所有产物路径以 directory-conventions.md 为准，禁止使用源码目录。
+
+      ═══ 输出 ═══
+      1. 每个 spec 出 tracer bullet tasks，写入子目录:
+         .scratch/$vars.feature/03-specs/spec-NNN-{name}/T-N-{name}.md
+         ⚠️ 所有 spec 必须建子目录（即使 1 个 task），下游 execution loop 靠子目录 T-N 文件发现任务
+      2. 更新索引: .scratch/$vars.feature/03-specs/spec-index.md
+         补 Tracer Bullets 数 + 执行顺序
+      3. 生成 E2E 测试计划: .scratch/$vars.feature/03-specs/e2e-test-plan.md
+         从 spec 的 E2E 场景编排
+      4. 每个 spec 子目录产声明式 DAG: .scratch/$vars.feature/03-specs/spec-NNN-{name}/dag.json
+         { "nodes": [ { "id":"T-1", "type":"agent", "prompt":"使用 octo-xzf-implementer skill 执行 task: .../T-1-*.md\n\n目标+验收标准见该文件。此阶段不跑 E2E。", "depends_on":[] }, ... ] }
+         ⚠️ depends_on 与 T-N 文件 `## Blocked by` 一致；prompt 引用 T-N 文件路径不内联全文
+         下游 dynamic_sub_workflow 直接读 dag.json 确定性构图（不再 LLM 生成 DAG）
+      5. 若有遗留 task 文件（重跑），先清空 spec 子目录再写入
+
+      ═══ 铁律 ═══
+      - 垂直切片横穿全栈，每 task 独立可验证
+      - 不出 E2E task（E2E 归 e2e-verify 阶段）
+      - 不出 gap task（缺口已在 spec-audit 修进 spec）
+      - Blocked-by 显式声明（DAG 边），DAG 无环；独立 task 可并行
+      - 宽重构（改列名/改类型跨全局）不强行做 tracer bullet，按 expand→migrate 分批→contract 拆
 
   # ============================================================
   # Stage 5: Spec 逐个执行 (Loop → dynamic_sub_workflow → CR+Fix)
@@ -515,7 +517,7 @@ nodes:
 
   - id: execution
     type: loop
-    depends_on: [spec-audit]
+    depends_on: [spec-to-tasks]
     max_iterations: 20
     break_when: '$vars.spec_status == "all_done"'
     nodes:
@@ -604,6 +606,9 @@ nodes:
         execute_when: '$vars.spec_status != "all_done"'
         prompt: |
           更新当前 spec 的执行 checkpoint。
+
+          ⚠️ 此节点是机械操作：只写 checkpoint + 判断 all_done。
+          CR 审查结果由 cr-and-fix 负责，不是你的职责——不要审查、不要质疑、不要问用户，无条件写 checkpoint。
 
           1. 从 $vars.current_spec_file 提取 spec 前缀
              （如 .scratch/feat/03-specs/spec-002-auth.md → spec-002）
@@ -719,14 +724,22 @@ nodes:
     depends_on: [e2e-verify]
     tools: [Read, Bash, Grep, Glob]
     prompt: |
-      使用 octo-xzf-ship skill 完成 Ship 交付（PR/MR 提交 + Feature 归档）。
+      使用 octo-xzf-ship skill 完成 Ship 交付。skill 分 4 个阶段，**全部必须执行，不得跳过任何一个**：
 
-      你已继承上游会话上下文（所有 spec、执行结果、E2E 报告均已在会话中）。
+      - Phase A: 写 .scratch/$vars.feature/06-ship/summary.md（交付摘要）
+      - Phase B: 读 .scratch/index.md + 各 feature-slug 产物，收集迭代上下文
+      - Phase C: 遍历项目列表创建/更新 PR（gh pr create/edit）
+      - Phase D: Feature 归档 — .scratch/$vars.feature/ → 每个项目的 .octopus/xzf/
 
       运行时上下文:
       - Feature slug: $vars.feature
       - 分支: $vars.branch
       - Remote 类型: $vars.remote_type
       - 产物目录: .scratch/$vars.feature/
+      - 项目列表: .scratch/$vars.feature/00-init/workspace-topology.md（「项目列表」表的「路径」列，相对 workspace 根）
 
-      按 skill 定义的 Step 1 → Step 2 → Step 3 顺序执行。
+      ⚠️ Phase D 归档是必做项，不可跳过：
+      - 对 workspace-topology.md 列出的每个项目，cp -r .scratch/$vars.feature/ → {project}/.octopus/xzf/{slug}
+      - 目标目录已存在 → 后缀 -v1 / -v2 ...（见 skill 命名冲突规则）
+      - 追加一行到 {project}/.octopus/xzf/index.md（# | Date | Branch | Feature Slug | Archive）
+      - PR 建好 ≠ Ship 完成；归档未落盘 = Ship 未完成。最后必须核对 projects/*/ 下确有 .octopus/xzf/{slug}/ 落盘。

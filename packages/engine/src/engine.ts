@@ -66,6 +66,10 @@ export interface EngineCallbacks {
   onCheckpoint?: (checkpoint: unknown) => void
   onPipelineReloaded?: (config: PipelineConfig) => void
   onRuntimeNodeAdded?: (nodeId: string, nodeType: string, meta?: RuntimeNodeMeta) => void
+  /** Mid-execution outputs update. Lets executors surface outputs before node_end
+   *  (e.g. dynamic_sub_workflow persists generated_workflow when the DAG is generated,
+   *  so consumers can render the child workflow while the node is still running). */
+  onOutputsUpdate?: (nodeId: string, outputs: Record<string, any>) => void
   /** Tool interceptor hook — called before agent tool execution. Return { allow: false } to block. */
   onBeforeToolCall?: (toolName: string, input: unknown) => Promise<{ allow: boolean; reason?: string } | undefined>
 
