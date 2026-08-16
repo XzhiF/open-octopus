@@ -256,7 +256,8 @@ export class InteractionService {
       // same model the agent nodes established it with. Without this the
       // provider defaults to 'sonnet', breaking the resume → independent session.
       const engine = nodeDef.engine ?? workflow.engine ?? "claude"
-      const rawModel = nodeDef.model ?? workflow.model
+      // Model may be set at node level, under interaction_agent, or workflow level.
+      const rawModel = nodeDef.model ?? nodeDef.interaction_agent?.model ?? workflow.model
       result.engine = engine
       if (rawModel) {
         const orgDir = exec.org
