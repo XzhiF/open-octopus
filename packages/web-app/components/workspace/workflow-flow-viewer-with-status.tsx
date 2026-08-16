@@ -179,13 +179,38 @@ export function WorkflowFlowViewerWithStatus({
           // Look up generated_workflow from step outputs (handles runtime DAG generation)
           const nodeId = n.id as string
           if (nodeId) {
+            let foundGenWf = false
             for (const [stepId, step] of stepMap.entries()) {
               // Match base nodeId or iteration-suffixed (e.g. "spec-dag-execute-iter0")
               if (stepId === nodeId || stepId.startsWith(`${nodeId}-iter`)) {
                 const genWf = (step.outputs as Record<string, unknown>)?.generated_workflow
                 if (typeof genWf === "string" && genWf) {
                   refs.push({ ref: genWf, isDynamic: true })
+                  foundGenWf = true
                 }
+              }
+            }
+            // Fallback: while the dynamic_sub_workflow node is RUNNING, its
+            // outputs.generated_workflow is not yet in the DB (only written on
+            // node_end). Derive the snapshot name from scoped child steps
+            // (e.g. "spec-dag-execute:T-1-iter0" → iter0) and construct the
+            // default-name snapshot the executor persists to disk, so the child
+            // DAG can be fetched and shown during execution.
+            if (!foundGenWf) {
+              const escId = nodeId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+              const iterRe = new RegExp(`^${escId}:.*-iter(\\d+)$`)
+              const iters = new Set<string>()
+              let hasScoped = false
+              for (const stepId of stepMap.keys()) {
+                const m = stepId.match(iterRe)
+                if (m) { iters.add(m[1]); hasScoped = true }
+                else if (stepId.startsWith(`${nodeId}:`)) hasScoped = true
+              }
+              for (const iter of iters) {
+                refs.push({ ref: `workflow__${nodeId}-iter${iter}`, isDynamic: true })
+              }
+              if (iters.size === 0 && hasScoped) {
+                refs.push({ ref: `workflow__${nodeId}`, isDynamic: true })
               }
             }
           }

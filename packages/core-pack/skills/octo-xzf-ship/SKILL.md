@@ -8,6 +8,9 @@ version: 2.0.0
 
 # Ship 交付方法论
 
+> **4 个阶段（Phase A→B→C→D）全部必做，不得跳过任何一个。**
+> 常见错误：只做完 Phase A/B/C（PR 建好）就收尾，漏掉 Phase D 归档 → 产物未落盘到 projects。**PR 建好 ≠ Ship 完成**，Phase D 未落盘 = Ship 未完成。
+
 ## 触发条件
 Stage 7 agent 节点，所有 spec 执行完毕后生成 PR/MR。
 
@@ -196,19 +199,23 @@ PR 创建/更新成功后，将 `.scratch/index.md` 中当前 feature-slug 的 S
 
 ---
 
-## Phase D: Feature 归档（项目级迭代记录）
+## Phase D: Feature 归档（项目级迭代记录）— ⚠️ 必做，不可跳过
 
-PR/MR 提交完毕后，将本次迭代的完整产物归档到 workspace 每个项目的 `.octopus/xzf/` 目录下。
+PR/MR 提交完毕后，将本次迭代的完整产物归档到 workspace 每个项目的 `.octopus/xzf/` 目录下。**PR 建好不等于 Ship 完成——Phase D 落盘后 Ship 才算结束。**
 
 目的：每个项目维护自己的永久迭代历史，方便后续回溯需求背景、设计决策和验证结果。
+
+### 项目列表来源
+
+读 `.scratch/{feature}/00-init/workspace-topology.md`，取「项目列表」表每行的「路径」列（相对 workspace 根，如 `projects/open-octopus`）。对该列表中的每个项目执行下述归档。
 
 ### 归档流程
 
 ```bash
-# 对 workspace-topology.md 中的每个项目:
+# 对 workspace-topology.md 项目列表中的每个项目:
 
 FEATURE_SLUG="{feature}"
-PROJECT_PATH="{project-path}"
+PROJECT_PATH="{project-path}"   # workspace-topology.md 的「路径」列
 XZF_DIR="$PROJECT_PATH/.octopus/xzf"
 mkdir -p "$XZF_DIR"
 
@@ -283,6 +290,7 @@ echo "[{project}] 归档完成: .octopus/xzf/$ARCHIVE_SLUG (序号 #$NEXT_NUM)"
 3. **Git diff is truth**: Changed Files 永远从 `git diff` 实时生成，不依赖任何 feature-slug 的记录
 4. **归档源 = .scratch/**: Phase D 从 `.scratch/{feature}/` 拷贝，不从 `.octopus/xzf/`
 5. **双 index 维护**: `.scratch/index.md`（共享注册）+ `{project}/.octopus/xzf/index.md`（项目归档）
+6. **Phase D 落盘核对（Ship 完成判据）**: PR 建好后必须执行 Phase D 归档，并用 `ls projects/*/.octopus/xzf/{slug}/` 核对每个项目确有归档目录落盘。归档未落盘 = Ship 未完成，不得输出「Ship 完成」。
 
 ---
 

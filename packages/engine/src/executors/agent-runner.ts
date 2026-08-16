@@ -45,6 +45,10 @@ export class AgentNodeRunner {
      *  Used by the Tool Interceptor to block dangerous bash commands.
      *  Return `{ allow: false, reason: string }` to block, or allow/undefined to pass. */
     onBeforeToolCall?: (toolName: string, input: unknown) => Promise<{ allow: boolean; reason?: string } | undefined>
+    /** Tools to disallow for this agent. Non-interaction agents default to blocking
+     *  AskUserQuestion + complete_interaction (interaction-session tools) so they
+     *  cannot ask the user mid-execution (would hang or empty-answer). */
+    disallowedTools?: string[]
   }): Promise<AgentRunResult> {
     const start = Date.now()
     const maxRetries = opts.maxRetries ?? 1
@@ -122,6 +126,9 @@ export class AgentNodeRunner {
             systemPrompt: opts.systemPrompt ?? { type: "preset", preset: "claude_code" },
             abortSignal: localAbort.signal,
             onBeforeToolCall: opts.onBeforeToolCall,
+            // Non-interaction agents must be autonomous: block interaction-session
+            // tools so they cannot ask the user mid-execution (would hang/empty-answer).
+            disallowedTools: ["AskUserQuestion", "complete_interaction", ...(opts.disallowedTools ?? [])],
           },
         )
 

@@ -33,9 +33,9 @@ scenarios:
         vars_update:
           verification_confirmed: "true"
 
-      # --- Stage 3: Brief Maker ---
-      brief-maker:
-        output: "需求简报已生成: .scratch/user-auth/02-clarification/brief.md"
+      # --- Stage 4c: Spec → Tasks ---
+      spec-to-tasks:
+        output: "Tasks 生成完成。2 spec, 6 task。"
 
       # --- Stage 4: Spec Planner ---
       spec-planner:
@@ -93,9 +93,9 @@ scenarios:
           - idea-research
           - requirements-clarify
           - verification-clarify
-          - brief-maker
           - spec-planner
           - spec-audit
+          - spec-to-tasks
           - execution
           - impl-walkthrough-fix
           - e2e-verify
@@ -130,8 +130,8 @@ scenarios:
         vars_update:
           verification_confirmed: "true"
 
-      brief-maker:
-        output: "需求简报已生成"
+      spec-to-tasks:
+        output: "Tasks 生成完成。2 spec, 6 task。"
 
       spec-planner:
         output: "Spec 设计完成。1 个 spec，3 个 task。"
@@ -183,9 +183,9 @@ scenarios:
           - idea-research
           - requirements-clarify
           - verification-clarify
-          - brief-maker
           - spec-planner
           - spec-audit
+          - spec-to-tasks
           - execution
           - impl-walkthrough-fix
           - e2e-verify
@@ -224,9 +224,9 @@ scenarios:
         vars_update:
           verification_confirmed: "true"
 
-      # --- Stage 3: Brief Maker ---
-      brief-maker:
-        output: "需求简报已生成"
+      # --- Stage 4c: Spec → Tasks ---
+      spec-to-tasks:
+        output: "Tasks 生成完成。2 spec, 6 task。"
 
       # --- Stage 4: Spec Planner ---
       spec-planner:
@@ -285,9 +285,9 @@ scenarios:
           - idea-research
           - requirements-clarify
           - verification-clarify
-          - brief-maker
           - spec-planner
           - spec-audit
+          - spec-to-tasks
           - execution
           - impl-walkthrough-fix
           - e2e-verify
