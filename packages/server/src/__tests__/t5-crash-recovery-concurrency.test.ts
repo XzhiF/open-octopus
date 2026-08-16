@@ -228,4 +228,34 @@ describe('T-5: crash recovery + concurrency cap', () => {
     engine.stop()
     edb.close()
   })
+
+  // ── Story-walker #1: stale running also rolls back ─────────────────
+  // A worker that crashed AFTER dispatch confirmed (schedules.status advanced to
+  // 'running') but before completion. Pre-fix findStaleClaimed only matched
+  // status='claimed', so a 'running' row stuck forever. The #1 fix made the
+  // query match status IN ('claimed','running').
+  it('AC11+ (story-walker #1): stale running (crashed mid-execution) rolls back to queued', async () => {
+    const { edb, engine } = setupEngineWithSlowExecutor()
+    const scheduleId = 't5-running-stale'
+    const staleIso = new Date(Date.now() - 20 * 60 * 1000).toISOString()
+    const now = new Date().toISOString()
+
+    edb.prepare(`
+      INSERT INTO schedules (id, org, name, cron_expression, timezone, enabled, timeout_seconds,
+        notify_on_failure, created_at, updated_at, job_type, config, parallel_policy, version,
+        consecutive_failures, max_retain, status, trigger_source, source_chat_session_id, claimed_at)
+      VALUES (?, ?, ?, NULL, 'Asia/Shanghai', 0, 3600, 0, ?, ?, 'workflow', '{}', 'skip', 1, 0, 10,
+        'running', 'requirement', NULL, ?)
+    `).run(scheduleId, ORG, `t5-${scheduleId}`, now, now, staleIso)
+
+    await (engine as unknown as { checkStaleClaimed: () => Promise<void> }).checkStaleClaimed()
+
+    const row = edb.prepare('SELECT status, claimed_at FROM schedules WHERE id = ?').get(scheduleId) as
+      { status: string; claimed_at: string | null }
+    expect(row.status).toBe('queued')
+    expect(row.claimed_at).toBeNull()
+
+    engine.stop()
+    edb.close()
+  })
 })

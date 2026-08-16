@@ -16,8 +16,10 @@ export type SchedulerExecutionStatus =
 /** What created this schedule. 'cron' = scheduled by cron_expression; 'requirement' = draft from chat/manual input awaiting claim. */
 export type TriggerSource = 'cron' | 'requirement'
 
-/** Lifecycle status of a schedule (schema v37). 'draft' = unclaimed draft, 'queued' = active/ready, 'claimed' = taken by an executor. */
-export type ScheduleStatus = 'draft' | 'queued' | 'claimed'
+/** Lifecycle status of a schedule (schema v37). draft → queued → claimed → running → done.
+ *  'claimed' = taken by executor before dispatch confirms; 'running' = execution in flight;
+ *  'done' = chain completed (requirement-type only; cron uses enabled/disabled). */
+export type ScheduleStatus = 'draft' | 'queued' | 'claimed' | 'running' | 'done'
 
 // ── Project & Workspace Spec (for scheduler-created workspaces) ─────
 

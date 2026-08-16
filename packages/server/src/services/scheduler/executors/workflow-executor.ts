@@ -1,5 +1,7 @@
 import Database from 'better-sqlite3'
 import { randomUUID } from 'crypto'
+import { readFileSync } from 'fs'
+import { join } from 'path'
 import { parseExpression } from 'cron-parser'
 import { getExecutionService } from '../../execution-service-registry'
 import { SSEService } from '../../sse'
@@ -244,8 +246,12 @@ export class WorkflowExecutor implements Executor {
       }) as any,
     }, execution.id)
 
-    // 13. Set status to 'running'
+    // 13. Set status to 'running' — schedule_executions row + schedules row.
+    // schedules.status='running' feeds the kanban "running" column. Previously this
+    // was never written, so a task sat in "claimed" the whole time it executed and
+    // the "running" column stayed empty (type also lacked 'running'/'done').
     this.runDAO.markExecutionRunning(executionId)
+    this.configDAO.updateSchedule(schedule.id, { status: 'running' })
 
     // 14. Start root execution (chain will auto-execute via ExecutionService)
     try {
@@ -322,13 +328,23 @@ export class WorkflowExecutor implements Executor {
     const lastExecutionId = lastExec?.id ?? opts.executionId
 
     if (status === 'completed') {
-      // Update schedule_execution
+      // ── Chain continuation (#4 story-walker): PR #50 promised "root → child →
+      // child managed by ExecutionService" but the child-trigger was missing —
+      // only the root step ever ran. config.json.workflow_chain holds the
+      // remaining chain (createFromSpec stores slice(1)); the completed
+      // execution's child_index selects the next step. Single-step chains
+      // (length 1) have an empty remaining chain → nextStep null → finalize.
+      const nextStep = this.resolveNextChainStep(opts.schedWsId, opts.executionId)
+      if (nextStep) {
+        this.triggerChildStep(opts, nextStep)
+        return // child's onComplete re-enters handleChainComplete; don't finalize yet
+      }
+
+      // Chain fully complete → finalize schedule_execution + schedule + workspace
       this.runDAO.markExecutionCompleteWithDuration(opts.schedExecId, 'completed', durationMs)
 
       // Issue 2 fix: requirement schedules track lifecycle in the `status` column
-      // (draft/queued/claimed/done). Without this the kanban "done" column never
-      // fills even after a successful run — the schedule stayed "claimed".
-      // Cron schedules keep using enabled/disabled, so leave them untouched.
+      // (draft/queued/claimed/running/done). Cron uses enabled/disabled.
       if (opts.isRequirement) {
         this.configDAO.updateSchedule(opts.scheduleId, {
           status: 'done',
@@ -383,6 +399,103 @@ export class WorkflowExecutor implements Executor {
 
     // Enforce retention policy
     this.enforceRetention(opts.scheduleId, opts.maxRetain)
+  }
+
+  // ── Chain continuation helpers (#4 story-walker) ──────────────────
+
+  /**
+   * Resolve the next workflow_chain step (if any) for the completed execution.
+   * config.json.workflow_chain holds the remaining chain (slice(1) of the full
+   * chain; the root was triggered immediately). remaining[child_index] is the
+   * next step: remaining[0] == chain[1], and the root's child_index is 0.
+   */
+  private resolveNextChainStep(schedWsId: string, executionId: string): WorkflowChainItem | null {
+    const wsRow = this.configDAO.findScheduleWorkspaceById(schedWsId)
+    if (!wsRow) return null
+    const registry = getExecutionService(wsRow.workspace_id)
+    if (!registry) return null
+    try {
+      const config = JSON.parse(readFileSync(join(registry.wsPath, 'config.json'), 'utf-8')) as {
+        workflow_chain?: WorkflowChainItem[]
+      }
+      const remaining = config.workflow_chain ?? []
+      const completed = this.execDAO.findById(executionId)
+      const childIndex = completed?.child_index ?? 0
+      return remaining[childIndex] ?? null
+    } catch {
+      return null
+    }
+  }
+
+  /**
+   * Trigger the next chain step as a child execution of the completed one.
+   * The child's completion re-enters handleChainComplete (recursive) until the
+   * chain is exhausted, at which point the schedule finalizes to 'done'.
+   */
+  private triggerChildStep(
+    opts: {
+      executionId: string
+      schedExecId: string
+      schedWsId: string
+      scheduleId: string
+      triggeredAt: number
+      notifyOnFailure: boolean
+      schedule: ScheduleRow
+      maxRetain: number
+      isRequirement: boolean
+    },
+    nextStep: WorkflowChainItem,
+  ): void {
+    const wsRow = this.configDAO.findScheduleWorkspaceById(opts.schedWsId)
+    if (!wsRow) return
+    const registry = getExecutionService(wsRow.workspace_id)
+    if (!registry) return
+
+    const completed = this.execDAO.findById(opts.executionId)
+    const nextChildIndex = (completed?.child_index ?? 0) + 1
+
+    let child
+    try {
+      child = registry.service.create(wsRow.workspace_id, {
+        workflow_ref: nextStep.workflow_ref,
+        parent_id: opts.executionId,
+        child_index: nextChildIndex,
+        input_values: nextStep.input_values,
+        triggered_by: 'scheduler',
+      })
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err)
+      console.error('[WorkflowExecutor] child execution creation failed', {
+        parentExec: opts.executionId, error: msg,
+      })
+      // Child creation failed → finalize the chain as failed so it doesn't hang.
+      this.runDAO.markExecutionCompleteWithDuration(
+        opts.schedExecId, 'failed', Date.now() - opts.triggeredAt,
+        `Child creation failed: ${msg}`,
+      )
+      this.configDAO.updateScheduleWorkspaceStatus(opts.schedWsId, {
+        status: 'failed', execution_id: opts.executionId,
+        completed_at: new Date().toISOString(), error: msg,
+      })
+      return
+    }
+
+    // Child's completion re-enters handleChainComplete with the child's id.
+    registry.service.registerExternalCallbacks({
+      onComplete: (() => {
+        this.handleChainComplete({ ...opts, executionId: child.id })
+      }) as any,
+    }, child.id)
+
+    // Fire and forget — explicit error capture (Issue 1 lesson: no silent failures).
+    registry.service.start(child.id, nextStep.input_values).catch((err: unknown) => {
+      const msg = err instanceof Error ? err.message : String(err)
+      console.error('[WorkflowExecutor] child execution start failed', {
+        executionId: child.id, error: msg,
+      })
+      this.runDAO.markExecutionFailed(opts.schedExecId, msg, ['triggered', 'running'])
+      registry.service.clearExternalCallbacks(child.id)
+    })
   }
 
   // ── Retention enforcement ────────────────────────────────────────

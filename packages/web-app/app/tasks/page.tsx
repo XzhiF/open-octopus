@@ -95,7 +95,7 @@ export default function TasksPage() {
                 </Button>
                 <Button
                   size="sm"
-                  onClick={() => toast.info('新建任务入口待 T-1 落地')}
+                  onClick={() => toast.info('在右侧对话面板描述需求，AI 会生成 WorkflowConfig，预览后点入队')}
                 >
                   <Plus className="size-4" />
                   新建任务

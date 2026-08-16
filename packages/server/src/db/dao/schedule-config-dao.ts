@@ -147,10 +147,12 @@ export class ScheduleConfigDAO extends BaseDAO {
     ).all() as ScheduleRow[]
   }
 
-  // T-5 AC11: stale claimed — claimed_at older than cutoff ISO string
+  // T-5 AC11: stale claimed/running — claimed_at older than cutoff ISO string.
+  // Includes 'running' so a task that crashed mid-execution (status advanced past
+  // 'claimed' but the process died) also rolls back to queued for re-dispatch.
   findStaleClaimed(cutoffIso: string): ScheduleRow[] {
     return this.stmt(
-      "SELECT * FROM schedules WHERE status = 'claimed' AND claimed_at IS NOT NULL AND claimed_at < ? AND deleted_at IS NULL"
+      "SELECT * FROM schedules WHERE status IN ('claimed', 'running') AND claimed_at IS NOT NULL AND claimed_at < ? AND deleted_at IS NULL"
     ).all(cutoffIso) as ScheduleRow[]
   }
 
