@@ -9,6 +9,7 @@ import { existsSync, readFileSync } from "fs"
 import { join } from "path"
 import type { IAgentProvider, MessageChunk, TokenUsage } from "@octopus/providers"
 import { getProvider } from "@octopus/providers"
+import { resolveModelAlias, loadModelAliasConfig } from "@octopus/shared"
 import { extractInteractionCompletion } from "@octopus/engine"
 import { InteractionMessageDAO } from "../../db/dao/interaction-message-dao"
 import { TokenUsageDAO } from "../../db/dao/token-usage-dao"
@@ -37,6 +38,11 @@ interface InteractionSessionInfo {
   maxRounds: number
   currentRound: number
   providerSessionId?: string
+  /** Inherited workflow engine (provider key) + resolved model so the
+   * interaction resumes the globalSession with the same model the agent nodes
+   * established it with (otherwise the provider default breaks the resume). */
+  engine?: string
+  model?: string
   nodeExecutionId: string
   startedAt: number
   timeout?: number
@@ -138,18 +144,22 @@ export class InteractionService {
     const nodeExecRow = this.execDao.findNodeExecution(params.executionId, params.nodeId)
     const nodeExecId = nodeExecRow?.id ?? `${params.executionId}-${params.nodeId}`
 
-    // Extract initial prompt from workflow YAML if not provided
+    // Always read the interaction node config from the workflow YAML. engine+model
+    // must be inherited (not defaulted to claude/sonnet) so resuming the
+    // globalSession requests the same model the agent nodes established it with.
+    const extracted = this.extractPromptFromWorkflow(params.workspacePath, params.executionId, params.nodeId)
     let initialPrompt = params.initialPrompt
     let maxRounds = params.maxRounds ?? 20
 
-    if (!initialPrompt) {
-      const extracted = this.extractPromptFromWorkflow(params.workspacePath, params.executionId, params.nodeId)
-      if (extracted) {
-        initialPrompt = extracted.prompt
-        if (extracted.maxRounds) maxRounds = extracted.maxRounds
-        if (extracted.context) params.context = extracted.context
-      }
+    if (!initialPrompt && extracted) {
+      initialPrompt = extracted.prompt
+      if (extracted.maxRounds) maxRounds = extracted.maxRounds
+      if (extracted.context) params.context = extracted.context
     }
+
+    // Inherited workflow provider + resolved model (independent of initialPrompt).
+    const engine = extracted?.engine
+    const model = extracted?.model
 
     // Determine provider session: "continue" (default) shares the workflow's
     // global session for context continuity; "new" creates a fresh session.
@@ -166,6 +176,8 @@ export class InteractionService {
       maxRounds,
       currentRound: 0,
       providerSessionId,
+      engine,
+      model,
       nodeExecutionId: nodeExecId,
       startedAt: Date.now(),
       timeout: params.timeout,
@@ -190,7 +202,7 @@ export class InteractionService {
     workspacePath: string,
     executionId: string,
     nodeId: string,
-  ): { prompt?: string; maxRounds?: number; context?: "continue" | "new" } | null {
+  ): { prompt?: string; maxRounds?: number; context?: "continue" | "new"; engine?: string; model?: string } | null {
     const exec = this.execDao.findById(executionId)
     if (!exec) return null
 
@@ -209,7 +221,7 @@ export class InteractionService {
       const nodeDef = workflow.nodes.find((n: any) => n.id === nodeId)
       if (!nodeDef) return null
 
-      const result: { prompt?: string; maxRounds?: number; context?: "continue" | "new" } = {}
+      const result: { prompt?: string; maxRounds?: number; context?: "continue" | "new"; engine?: string; model?: string } = {}
       result.maxRounds = nodeDef.interaction_max_rounds
       result.context = nodeDef.context ?? "continue"
 
@@ -237,6 +249,21 @@ export class InteractionService {
         }
 
         result.prompt = prompt
+      }
+
+      // Inherit the workflow's engine + model. Resolve the model via the same
+      // alias config the engine uses so resuming the globalSession requests the
+      // same model the agent nodes established it with. Without this the
+      // provider defaults to 'sonnet', breaking the resume → independent session.
+      const engine = nodeDef.engine ?? workflow.engine ?? "claude"
+      const rawModel = nodeDef.model ?? workflow.model
+      result.engine = engine
+      if (rawModel) {
+        const orgDir = exec.org
+          ? join(process.env.HOME ?? "~", ".octopus", "orgs", exec.org)
+          : undefined
+        const cfg = loadModelAliasConfig(orgDir ? { orgDir } : undefined)
+        result.model = resolveModelAlias(rawModel, engine, cfg) ?? rawModel
       }
 
       return result
@@ -295,8 +322,17 @@ export class InteractionService {
       created_at: new Date().toISOString(),
     })
 
-    // Get the provider and start streaming
-    const agent: IAgentProvider = getProvider("claude")
+    // Get the provider and start streaming. Use the inherited workflow engine +
+    // model so resuming the globalSession matches the agent nodes. Fall back to
+    // claude if the inherited engine isn't synchronously registered (e.g. pi
+    // uses an async factory) — model inheritance still applies via sendQuery.
+    const engineKey = session.engine ?? "claude"
+    let agent: IAgentProvider
+    try {
+      agent = getProvider(engineKey)
+    } catch {
+      agent = getProvider("claude")
+    }
     const agentDir = getAgentDir()
 
     try {
@@ -304,6 +340,7 @@ export class InteractionService {
         systemPrompt: { type: "preset", preset: "claude_code", append: INTERACTION_SYSTEM_PROMPT },
         interactionSession: true,
         plugins: [{ type: "local", path: agentDir }],
+        ...(session.model ? { model: session.model } : {}),
       })
 
       for await (const chunk of chunkStream) {
