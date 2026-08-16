@@ -23,7 +23,7 @@ const TASKPOOL_DRAFT_CHAT_SCOPE = 'taskpool-draft'
 
 // ── Rate Limiter ────────────────────────────────────────────────────
 
-function createRateLimiter(maxTokens: number, refillIntervalMs: number) {
+export function createRateLimiter(maxTokens: number, refillIntervalMs: number) {
   const buckets = new Map<string, { tokens: number; lastRefill: number }>()
 
   // Cleanup old entries every 5 minutes
@@ -67,9 +67,13 @@ function createRateLimiter(maxTokens: number, refillIntervalMs: number) {
       buckets.set(key, bucket)
     }
 
-    // Refill tokens based on elapsed time
+    // Refill fractionally per elapsed time (standard token bucket). The old
+    // Math.floor(elapsed / interval) * maxTokens only refilled in whole-interval
+    // chunks, so any client polling faster than the interval (e.g. /tasks 10s
+    // kanban poll vs 60s refill) drained the bucket to zero and then stayed 429
+    // forever — refill never fired because the interval never elapsed fully.
     const elapsed = now - bucket.lastRefill
-    const refilled = Math.floor(elapsed / refillIntervalMs) * maxTokens
+    const refilled = (elapsed / refillIntervalMs) * maxTokens
     bucket.tokens = Math.min(maxTokens, bucket.tokens + refilled)
     bucket.lastRefill = now
 
