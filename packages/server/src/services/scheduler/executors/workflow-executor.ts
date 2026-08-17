@@ -16,6 +16,15 @@ const MAX_PARALLEL_WORKSPACES = parseInt(
   10,
 )
 
+/**
+ * Ticket 04 (composite dispatch): the workflow_ref of the composition-task template
+ * (core-pack/workflows/composition-task.yaml, name: composition-task). A composite
+ * task's config carries workflow_chain[0].workflow_ref === this AND task_spec.subunits
+ * — when dispatched, the coordinator-ws runs this workflow, whose Loop + task_dispatch
+ * nodes (03's bridge) fan out N child schedules and a trailing moa aggregates them.
+ */
+const COMPOSITION_WF_REF = 'composition-task'
+
 interface ScheduleRow {
   id: string
   org: string
@@ -124,6 +133,14 @@ export class WorkflowExecutor implements Executor {
       }
     }
 
+    // Ticket 04 (composite dispatch): task_spec.subunits present, OR the first chain
+    // step's workflow_ref is the composition-task template → coordinator-ws path. The
+    // coordinator runs the composition wf (Loop over subunits + task_dispatch fan-out
+    // via 03's bridge + moa aggregation); it has NO projects of its own (orchestration
+    // only — spec D4). Subunits feed the composition wf's Loop as input_values (G9/G10).
+    // Simple tasks (no subunits) take the existing single-workflow_chain path unchanged.
+    const isComposite = this.isCompositeTask(config)
+
     // 5. Generate branch suffix (timestamp + random to avoid collisions)
     const branchSuffix = formatBranchSuffix(new Date())
 
@@ -140,7 +157,11 @@ export class WorkflowExecutor implements Executor {
       workspace = this.workspaceService.createFromSpec({
         org: config.workspace_spec.org,
         name: workspaceName,
-        projects: config.workspace_spec.projects,
+        // Ticket 04: coordinator-ws has NO projects (orchestration only — spec D4).
+        // initWorktreesFromSpec iterates `for (const proj of projects)` so an empty
+        // array is a no-op (no worktrees, no throw) — the coordinator only runs the
+        // composition wf and never touches git. Simple tasks pass the real projects.
+        projects: isComposite ? [] : config.workspace_spec.projects,
         branch_prefix: branchPrefix,
         branch_suffix: branchSuffix,
         source: 'scheduler',
@@ -209,7 +230,12 @@ export class WorkflowExecutor implements Executor {
       execution = registry.service.create(workspace.id, {
         workflow_ref: firstStep.workflow_ref,
         triggered_by: 'scheduler',
-        input_values: firstStep.input_values,
+        // Ticket 04: composite tasks feed subunits/subunit_count/goal/integration_prompt
+        // to the composition wf as input_values (G9/G10). ExecutionService.create accepts
+        // Record<string, unknown> (not string-only at runtime), so the subunits array is
+        // passed as a real object — the composition Loop consumes $iteration.subunit from
+        // it downstream. Simple tasks pass the chain step's string input_values unchanged.
+        input_values: isComposite ? this.buildCompositeInputValues(config) : firstStep.input_values,
         initial_var_pool: scheduleVars,
       })
     } catch (err: unknown) {
@@ -353,13 +379,29 @@ export class WorkflowExecutor implements Executor {
       // Issue 2 fix: requirement schedules track lifecycle in the `status` column
       // (draft/queued/claimed/running/done). Cron uses enabled/disabled.
       if (opts.isRequirement) {
+        // Ticket 04 (composite parent aggregation): when a composite task's
+        // composition wf completes, propagate 'failed' if any child schedule
+        // dispatched by its task_dispatch nodes failed. The composition wf itself
+        // completes successfully even on partial results (TaskDispatchExecutor
+        // resumes with empty output on child failure), so without this check a
+        // composite parent would wrongly show 'done' while a subunit failed.
+        // Child schedules carry the parent_task_dispatch marker (03) pointing at
+        // this composition wf execution; findFailedChildSchedules reads it via
+        // json_extract. Simple tasks have no children → stays 'done'.
+        let finalStatus: 'done' | 'failed' = 'done'
+        if (this.isCompositeSchedule(opts.schedule)) {
+          const failedChildren = this.configDAO.findFailedChildSchedules(opts.executionId)
+          if (failedChildren.length > 0) {
+            finalStatus = 'failed'
+          }
+        }
         this.configDAO.updateSchedule(opts.scheduleId, {
-          status: 'done',
+          status: finalStatus,
           claimed_at: null,
         })
         this.sse.emit('taskpool', {
           event: 'schedule_status',
-          data: { schedule_id: opts.scheduleId, status: 'done' },
+          data: { schedule_id: opts.scheduleId, status: finalStatus },
         })
       }
 
@@ -437,6 +479,49 @@ export class WorkflowExecutor implements Executor {
 
     // Enforce retention policy
     this.enforceRetention(opts.scheduleId, opts.maxRetain)
+  }
+
+  // ── Ticket 04: composite dispatch helpers ────────────────────────────
+
+  /** True if `config` describes a composite task: task_spec.subunits present, OR the
+   *  first chain step's workflow_ref is the composition-task template (G9). Drives the
+   *  coordinator-ws dispatch path (no projects + composition wf + subunits as
+   *  input_values) and the parent-aggregation failed-child check at completion. */
+  private isCompositeTask(config: WorkflowConfig): boolean {
+    if (config.task_spec?.subunits?.length) return true
+    const ref = config.workflow_chain[0]?.workflow_ref
+    if (typeof ref === 'string') {
+      return ref === COMPOSITION_WF_REF || ref.endsWith(`/${COMPOSITION_WF_REF}`)
+    }
+    return false
+  }
+
+  /** Parse a schedule row's config and test for composite shape. Used in
+   *  handleChainComplete where we only have the ScheduleRow, not the parsed
+   *  WorkflowConfig. A parse failure is treated as non-composite (defensive — the
+   *  dispatch path already validated the config at execute() time). */
+  private isCompositeSchedule(schedule: ScheduleRow): boolean {
+    try {
+      const config = JSON.parse(schedule.config) as WorkflowConfig
+      return this.isCompositeTask(config)
+    } catch {
+      return false
+    }
+  }
+
+  /** Build the input_values the composition wf receives (G9/G10): the subunits array
+   *  (real objects — the composition Loop exposes $iteration.subunit from it),
+   *  subunit_count (drives the Loop break_when), goal (moa topic), and
+   *  integration_prompt (moa aggregator prompt). These mirror composition-task.yaml's
+   *  `variables` block, overridden by the actual task_spec at materialization. */
+  private buildCompositeInputValues(config: WorkflowConfig): Record<string, unknown> {
+    const subunits = config.task_spec?.subunits ?? []
+    return {
+      subunits,
+      subunit_count: subunits.length,
+      goal: config.task_spec?.goal ?? '',
+      integration_prompt: config.task_spec?.integration_goal?.prompt ?? '',
+    }
   }
 
   // ── G1 task_dispatch parent-resume ─────────────────────────────────

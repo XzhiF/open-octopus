@@ -19,6 +19,23 @@ export class ScheduleConfigDAO extends BaseDAO {
     return (this.stmt("SELECT * FROM schedules WHERE id = ?").get(id) as ScheduleRow) ?? null
   }
 
+  /**
+   * Ticket 04 (composite dispatch parent aggregation): find FAILED child schedules
+   * dispatched by a task_dispatch node whose persisted `parent_task_dispatch` marker
+   * points at the given parent composition-wf execution. The marker is written by
+   * TaskDispatchService at dispatch time (03) so the correlation survives restarts;
+   * this query reads it back via json_extract to propagate child failure → parent
+   * 'failed' at composition-wf completion. Read-only — symmetric to 05's failed writer.
+   */
+  findFailedChildSchedules(parentExecutionId: string): ScheduleRow[] {
+    return this.stmt(
+      `SELECT * FROM schedules
+       WHERE deleted_at IS NULL
+         AND status = 'failed'
+         AND json_extract(config, '$.parent_task_dispatch.execution_id') = ?`,
+    ).all(parentExecutionId) as ScheduleRow[]
+  }
+
   findByName(name: string): ScheduleRow | null {
     return (this.stmt("SELECT * FROM schedules WHERE name = ? AND deleted_at IS NULL").get(name) as ScheduleRow) ?? null
   }
