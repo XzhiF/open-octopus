@@ -691,7 +691,7 @@ nodes:
           echo "本地开发模式 — 无需 CI/CD"
 
           # 检查 dev server (E2E 需要)
-          if curl -s http://localhost:3001/api/health >/dev/null 2>&1; then
+          if curl -s http://localhost:3001/api/actuator/health >/dev/null 2>&1; then
             echo "Dev server: RUNNING on :3001"
           else
             echo "Dev server: NOT RUNNING — E2E 阶段将尝试启动"
@@ -714,7 +714,7 @@ nodes:
             prompt: |
               确保 dev server 正在运行。
 
-              1. 检查 http://localhost:3001/api/health 是否响应
+              1. 检查 http://localhost:3001/api/actuator/health 是否响应
               2. 如果已在运行, 直接报告 "Dev server already running"
               3. 如果未运行, 找到 workspace 的项目目录, 启动 pnpm dev --isolated
               4. 等待 server 就绪 (最多 60 秒)

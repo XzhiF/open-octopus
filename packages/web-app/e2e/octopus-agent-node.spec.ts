@@ -647,9 +647,8 @@ test.describe("octopus_agent Node E2E", () => {
 
     const ctx = await request.newContext()
     try {
-      const res = await ctx.get(`${SERVER_URL}/api/health`)
-      // Health endpoint may return 200 or 404 if not implemented
-      // We just verify the server is responsive
+      const res = await ctx.get(`${SERVER_URL}/api/actuator/health`)
+      // Health endpoint should return 200 when server is healthy
       expect(res.status()).toBeLessThan(500)
     } finally {
       await ctx.dispose()

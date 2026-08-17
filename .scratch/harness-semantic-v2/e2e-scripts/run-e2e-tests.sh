@@ -46,7 +46,7 @@ log_skip() { echo -e "${YELLOW}[SKIP]${NC} $*"; SKIPPED=$((SKIPPED + 1)); }
 log_section() { echo -e "\n${BLUE}═══ $* ═══${NC}"; }
 
 check_server() {
-  if ! curl -sf "${SERVER_URL}/api/health" > /dev/null 2>&1; then
+  if ! curl -sf "${SERVER_URL}/api/actuator/health" > /dev/null 2>&1; then
     log_skip "Server not reachable at ${SERVER_URL} — skipping all tests"
     log_info "Start the server with 'pnpm dev' and re-run this script"
     exit 2
