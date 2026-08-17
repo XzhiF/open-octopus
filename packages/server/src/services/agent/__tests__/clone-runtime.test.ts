@@ -251,6 +251,123 @@ describe('CloneRuntime', () => {
     })
   })
 
+  // 07 (SG6, v2-D8/D13): draft-scope authoring_resources[] SKILL.md content
+  // is injected into the task-author session's systemPrompt.append via a new
+  // `authoringResourcesContent` param on chat(). sendWithProvider appends it
+  // ALONGSIDE specUpdateNotice (clone-runtime.ts:346-348 — same concat seam
+  // 05's specUpdateNotice uses). Mechanism B (SPIKE S2): assembleContext is
+  // fresh per turn, so the latest authoring_resources[] content is re-read
+  // every turn by the route (which calls TaskAuthorSessionAugmenter before
+  // runtime.chat). For Claude SDK (the provider task-author uses), resume
+  // works natively — no fresh-session / DB-history-prepend needed.
+  describe('chat — authoringResourcesContent (07, SG6)', () => {
+    type SpyOpts = { systemPrompt: { type: string; preset: string; append: string } }
+
+    it('appends authoringResourcesContent to systemPrompt.append (alongside specUpdateNotice)', async () => {
+      const providers = await import('@octopus/providers')
+      const sendQuerySpy = vi.fn(async function* (
+        _prompt: string,
+        _cwd: string,
+        _resumeSessionId: string | undefined,
+        _options?: SpyOpts,
+      ): AsyncGenerator<{ type: string; sessionId?: string }> {
+        yield { type: 'result', sessionId: 'provider-sess-ar-1' }
+      })
+      vi.spyOn(providers, 'getProvider').mockImplementation(() => ({
+        getType: () => 'claude',
+        sendQuery: sendQuerySpy,
+      }) as unknown as ReturnType<typeof providers.getProvider>)
+
+      const cloneDef = createTestCloneDef()
+      const runtime = new CloneRuntime(cloneDef, 'test-org')
+      const AUTHORING = '## Available Skills\n### octo-backend\nBuild the backend.'
+      const NOTICE = '@@spec_updated: goal, skills'
+
+      for await (const _ of runtime.chat('hello', 'sess-ar-1', null, TEST_DIR, NOTICE, AUTHORING)) {
+        // drain — provider receives the system prompt during iteration
+      }
+
+      const options = sendQuerySpy.mock.calls[0][3]!
+      // AUTHORING content is in the append string
+      expect(options.systemPrompt.append).toContain(AUTHORING)
+      // specUpdateNotice is also in the append string (alongside)
+      expect(options.systemPrompt.append).toContain(NOTICE)
+      // Base persona is still the foundation of the append
+      expect(options.systemPrompt.append).toContain('Test persona for workspace clone')
+      // Preset unchanged
+      expect(options.systemPrompt.preset).toBe('claude_code')
+
+      vi.restoreAllMocks()
+    })
+
+    it('appends authoringResourcesContent alone (no specUpdateNotice — undefined hole)', async () => {
+      const providers = await import('@octopus/providers')
+      const sendQuerySpy = vi.fn(async function* (
+        _prompt: string,
+        _cwd: string,
+        _resumeSessionId: string | undefined,
+        _options?: SpyOpts,
+      ): AsyncGenerator<{ type: string; sessionId?: string }> {
+        yield { type: 'result', sessionId: 'provider-sess-ar-2' }
+      })
+      vi.spyOn(providers, 'getProvider').mockImplementation(() => ({
+        getType: () => 'claude',
+        sendQuery: sendQuerySpy,
+      }) as unknown as ReturnType<typeof providers.getProvider>)
+
+      const cloneDef = createTestCloneDef()
+      const runtime = new CloneRuntime(cloneDef, 'test-org')
+      const AUTHORING = '## Available Skills\n### octo-research\nResearch skills.'
+
+      // Pass AUTHORING as 6th arg, no specUpdateNotice (5th arg undefined).
+      // The param order (notice before authoringContent) lets the route pass
+      // `undefined` for notice when only authoring is pending — verified here.
+      for await (const _ of runtime.chat('hello', 'sess-ar-2', null, TEST_DIR, undefined, AUTHORING)) {
+        // drain
+      }
+
+      const options = sendQuerySpy.mock.calls[0][3]!
+      expect(options.systemPrompt.append).toContain(AUTHORING)
+      // No notice → no @@spec_updated leak
+      expect(options.systemPrompt.append).not.toContain('@@spec_updated')
+      // Persona still present
+      expect(options.systemPrompt.append).toContain('Test persona for workspace clone')
+
+      vi.restoreAllMocks()
+    })
+
+    it('no authoringResourcesContent + no specUpdateNotice → just persona (backward compat)', async () => {
+      const providers = await import('@octopus/providers')
+      const sendQuerySpy = vi.fn(async function* (
+        _prompt: string,
+        _cwd: string,
+        _resumeSessionId: string | undefined,
+        _options?: SpyOpts,
+      ): AsyncGenerator<{ type: string; sessionId?: string }> {
+        yield { type: 'result', sessionId: 'provider-sess-ar-3' }
+      })
+      vi.spyOn(providers, 'getProvider').mockImplementation(() => ({
+        getType: () => 'claude',
+        sendQuery: sendQuerySpy,
+      }) as unknown as ReturnType<typeof providers.getProvider>)
+
+      const cloneDef = createTestCloneDef()
+      const runtime = new CloneRuntime(cloneDef, 'test-org')
+      // Existing call shape (≤5 args) — no authoringContent, no notice
+      for await (const _ of runtime.chat('hello', 'sess-ar-3', null, TEST_DIR)) {
+        // drain
+      }
+
+      const options = sendQuerySpy.mock.calls[0][3]!
+      // append == assembled clone context (persona + memory guidance), nothing extra
+      expect(options.systemPrompt.append).toContain('Test persona for workspace clone')
+      expect(options.systemPrompt.append).not.toContain('## Available Skills')
+      expect(options.systemPrompt.append).not.toContain('@@spec_updated')
+
+      vi.restoreAllMocks()
+    })
+  })
+
   describe('assembleContext (plugin-based skill discovery)', () => {
     it('does not include skill text in assembled context (ADR-006)', () => {
       // Create shared skill — should NOT appear in assembleContext output

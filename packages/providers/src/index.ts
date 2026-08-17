@@ -13,3 +13,8 @@ export type { OctopusAgentDef, ProviderPolicy } from './types'
 export { EventEmitter } from './shared/event-emitter'
 export { testConnectivity } from './connectivity'
 export type { ConnectivityResult } from './connectivity'
+
+// 07 (SG11): prompt-enhancer — resurrected from dead code. Used by
+// TaskAuthorSessionAugmenter (server) to format authoring_resources[]
+// SKILL.md content into the task-author session's systemPrompt.append.
+export { enhancePromptWithSkills } from './pi/prompt-enhancer'

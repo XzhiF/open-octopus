@@ -42,6 +42,9 @@ import { getBuiltInCloneDir, getCloneDir } from '../../services/agent/paths'
 import { getMemoryService } from '../../services/agent/memory-service'
 import { autosaveTaskDraft } from './autosave'
 import { getSpecNotice, clearSpecNotice } from '../../services/tasks/spec-notice-store'
+import { TaskAuthorSessionAugmenter } from '../../services/tasks/task-author-session-augmenter'
+import { getResourceRegistry } from '../../services/resource-registry'
+import type { ResourceRef } from '@octopus/shared'
 
 // ── Route deps ─────────────────────────────────────────────────────
 
@@ -312,6 +315,43 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
       ? getSpecNotice(noticeTaskId)
       : undefined
 
+    // 07 — authoring_resources prompt-inject (SG6, v2-D8/D13, SPIKE S2
+    // Mechanism B). The task-author clone chat route resolves
+    // `tasks.authoring_resources[]` (draft-scope, set by the agent via the
+    // `update_task_spec_field` tool field='authoring_resources' — 03 built
+    // that endpoint) per turn, resolves each skill's SKILL.md content via
+    // TaskAuthorSessionAugmenter (ResourceManager → readFile →
+    // enhancePromptWithSkills — SG11 resurrects the dead code), and passes
+    // the content string to runtime.chat as `authoringResourcesContent`.
+    // sendWithProvider appends it to systemPrompt.append ALONGSIDE
+    // specUpdateNotice (clone-runtime.ts:346-348 — same concat seam 05 uses).
+    // assembleContext is fresh per turn, so the latest authoring_resources[]
+    // is re-read every turn (Mechanism B). Only skill-type refs are injected
+    // (agent/command/rule are workspace-scope → workflow.requires via SG7).
+    // Gated by task-author + taskDAO (same gate as specUpdateNotice); absent
+    // taskDAO (older test paths) → no injection (unchanged behavior).
+    let authoringResourcesContent: string | undefined
+    if (noticeTaskId && taskDAO) {
+      try {
+        const taskRow = taskDAO.getById(noticeTaskId)
+        const authoringResources: ResourceRef[] = taskRow?.authoring_resources
+          ? JSON.parse(taskRow.authoring_resources) as ResourceRef[]
+          : []
+        if (authoringResources.length > 0) {
+          const augmenter = new TaskAuthorSessionAugmenter(getResourceRegistry().get())
+          authoringResourcesContent = augmenter.resolveAuthoringResourcesContent(authoringResources) || undefined
+        }
+      } catch (err: unknown) {
+        // Non-fatal — chat reply unaffected; the agent just doesn't see
+        // authoring_resources content this turn (malformed JSON, missing
+        // resource, etc.). Mirrors the swallow+log pattern in spec-notice.
+        console.error(
+          '[clone-route] authoring_resources resolution failed (non-fatal):',
+          err instanceof Error ? err.message : String(err),
+        )
+      }
+    }
+
     return streamSSE(c, async (stream) => {
       let aborted = false
       const abortStream = () => { aborted = true }
@@ -327,7 +367,7 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
         const memoryToolCalls: Array<{ id: string; name: string; input?: Record<string, unknown> }> = []
         const MEMORY_TOOL_NAMES = ['record_daily']
 
-        for await (const chunk of runtime.chat(body.message!, sessionId, providerSessionId, cwd, specUpdateNotice)) {
+        for await (const chunk of runtime.chat(body.message!, sessionId, providerSessionId, cwd, specUpdateNotice, authoringResourcesContent)) {
           if (aborted || (stream as any)._aborted) break
 
           switch (chunk.type) {

@@ -10,6 +10,12 @@ import { WorkspaceService } from '../../workspace'
 import type { SchedulerJob, WorkflowConfig, WorkflowChainItem, ScheduleStatusListener, OriginType, TaskSpec } from "@octopus/shared"
 import type { Executor, ExecutionResult } from './executor-interface'
 import { ScheduleConfigDAO, ScheduleRunDAO, ExecutionDAO } from '../../../db/dao'
+// Ticket 08 (ADR-0009): the orchestration-strategy seam owns the composition
+// workflow ref + the composite threshold as the single source of truth. The
+// executor's isCompositeTask below is the POST-materialization config-shape
+// detector (a different layer — it sees the materialized WorkflowConfig, not
+// the original TaskSpec); it shares the seam's constant so the two never drift.
+import { COMPOSITION_WF_REF } from '../orchestration-strategy'
 
 const MAX_PARALLEL_WORKSPACES = parseInt(
   process.env.OCTOPUS_SCHEDULER_MAX_PARALLEL ?? '3',
@@ -22,8 +28,11 @@ const MAX_PARALLEL_WORKSPACES = parseInt(
  * task's config carries workflow_chain[0].workflow_ref === this AND task_spec.subunits
  * — when dispatched, the coordinator-ws runs this workflow, whose Loop + task_dispatch
  * nodes (03's bridge) fan out N child schedules and a trailing moa aggregates them.
+ *
+ * Ticket 08 (ADR-0009): the constant now lives in the orchestration-strategy seam
+ * (single source of truth, shared with DefaultOrchestrationStrategy +
+ * scheduler-service). Imported above; no local duplicate.
  */
-const COMPOSITION_WF_REF = 'composition-task'
 
 interface ScheduleRow {
   id: string
@@ -144,12 +153,28 @@ export class WorkflowExecutor implements Executor {
       }
     }
 
-    // Ticket 04 (composite dispatch): task_spec.subunits present, OR the first chain
-    // step's workflow_ref is the composition-task template → coordinator-ws path. The
-    // coordinator runs the composition wf (Loop over subunits + task_dispatch fan-out
-    // via 03's bridge + moa aggregation); it has NO projects of its own (orchestration
-    // only — spec D4). Subunits feed the composition wf's Loop as input_values (G9/G10).
-    // Simple tasks (no subunits) take the existing single-workflow_chain path unchanged.
+    // Ticket 04 (composite dispatch) + Ticket 08 (ADR-0009): the isComposite
+    // decision bifurcates execute() into two dispatch paths:
+    //
+    //   simple (isComposite=false, subunits.length<2) → SIMPLE-DIRECT-DISPATCH:
+    //     1 real workspace (projects=config.workspace_spec.projects) runs the
+    //     task's own workflow_ref directly. NO coordinator-ws. This is the
+    //     ADR-0009 N+1→1 win — simple tasks no longer pay for an orchestration-
+    //     only workspace they don't need.
+    //
+    //   composite (isComposite=true, subunits.length>=2) → COORDINATOR-DISPATCH:
+    //     1 coordinator-ws (projects=[], orchestration only — spec D4) runs
+    //     composition-task.yaml, whose Loop× task_dispatch nodes fan out N
+    //     child schedules + workspaces (TaskDispatchService, ADR-0008). The
+    //     parent-aggregation check at completion propagates 'failed' if any
+    //     child failed.
+    //
+    // The PRE-materialization decision (DefaultOrchestrationStrategy.planDispatch
+    // in orchestration-strategy.ts) is the single source of truth for the
+    // threshold + composition ref. This POST-materialization detector
+    // (isCompositeTask) reconstructs the decision from the config shape —
+    // necessary because the executor sees the materialized WorkflowConfig, not
+    // the original TaskSpec. The two share COMPOSITION_WF_REF so they never drift.
     const isComposite = this.isCompositeTask(config)
 
     // 5. Generate branch suffix (timestamp + random to avoid collisions)
@@ -534,7 +559,15 @@ export class WorkflowExecutor implements Executor {
    *  optimization). The composition-task template detection (workflow_ref ===
    *  COMPOSITION_WF_REF) still treats an explicitly-composition config as
    *  composite regardless of subunit count (defensive — a config that literally
-   *  asks for the composition wf is composite by construction). */
+   *  asks for the composition wf is composite by construction).
+   *
+   *  Ticket 08 (ADR-0009): this is the POST-materialization detector (sees
+   *  the materialized WorkflowConfig). The PRE-materialization decision lives
+   *  in {@link DefaultOrchestrationStrategy.planDispatch} (orchestration-strategy.ts),
+   *  which is the single source of truth for the threshold + composition ref.
+   *  This detector shares {@link COMPOSITION_WF_REF} with the seam so the two
+   *  layers never drift. A future variant (subunit-level retry / conditional
+   *  DAG) swaps the strategy at the dispatch seam WITHOUT touching this executor. */
   private isCompositeTask(config: WorkflowConfig): boolean {
     if ((config.task_spec?.subunits?.length ?? 0) >= 2) return true
     const ref = config.workflow_chain[0]?.workflow_ref

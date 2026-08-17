@@ -451,6 +451,10 @@ export class TasksService {
     } as unknown as TaskSpec)
     const projectIds = parseJSON<string[]>(existing.project_ids, [])
     const skills = parseJSON<string[]>(existing.skills, [])
+    // SG7 (ticket 07): pass the task's resources column (workspace-scope) to
+    // materialize so it propagates into config.requires alongside subunit
+    // resources. The materialize body UNIONs both + dedupes.
+    const resources = parseJSON<ResourceRef[]>(existing.resources, [])
     const subunits: SubunitSpec[] = taskSpec.subunits ?? []
     // SG9: composite requires subunits.length >= 2 (1-subunit → simple
     // workflow_chain). The materialize body's own threshold (06 changes it) is
@@ -466,6 +470,7 @@ export class TasksService {
       existing.org,
       existing.workflow_ref ?? undefined,
       skills,
+      resources,
     )
     const configJson = JSON.stringify(config)
     const now = new Date().toISOString()

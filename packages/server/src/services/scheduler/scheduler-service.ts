@@ -23,6 +23,7 @@ import type {
   TaskSpec,
   SubunitSpec,
   OriginType,
+  ResourceRef,
 } from '@octopus/shared'
 import {
   taskSpecSchema,
@@ -168,12 +169,18 @@ function isCompositeTaskSpec(task_spec: TaskSpec): boolean {
 //      re-parsing task_spec.subunits at runtime.
 //   3. Simple path (subunits.length < 2) uses the provided workflow_ref directly
 //      (skips coordinator-ws, ADR-0009). No subunit_count injected (none needed).
+// SG7 (ticket 07): propagate `resources` (task-level, from tasks.resources
+//   column) + `task_spec.subunits[].resources[]` → `config.requires`. Mapping:
+//   skill→skills, agent→agent_files, command→commands, rule→rules. UNION + dedupe
+//   across task-level and all subunits. Omitted entirely when no resources
+//   (backward compat with 06's AC4 — config.requires stays undefined).
 export function materializeTaskSpecToConfig(
   task_spec: TaskSpec,
   project_ids: string[],
   org: string,
   workflow_ref?: string,
   skills?: string[],
+  resources?: ResourceRef[],
 ): WorkflowConfig {
   const isComposite = isCompositeTaskSpec(task_spec)
   const projects = project_ids.map((id) => ({ name: id, source_path: '', group: '' }))
@@ -214,7 +221,56 @@ export function materializeTaskSpecToConfig(
   if (skills?.length) {
     ;(config as WorkflowConfig & { skills?: string[] }).skills = skills
   }
+  // SG7 (ticket 07): propagate task-level + subunit-level resources → config.requires.
+  // UNION + dedupe across all sources (task.resources + each subunit.resources).
+  // Omitted entirely when no resources → config.requires stays undefined (backward
+  // compat: 06's AC4 doesn't expect requires, and existing schedules have none).
+  const requires = buildConfigRequires(task_spec, resources)
+  if (requires) {
+    config.requires = requires
+  }
   return config
+}
+
+/** SG7 (ticket 07): build config.requires from task-level resources[] +
+ *  task_spec.subunits[].resources[] (UNION, deduped). Returns undefined when
+ *  the union is empty (no resources anywhere) so the config stays minimal.
+ *  Mapping: skill→skills, agent→agent_files, command→commands, rule→rules. */
+function buildConfigRequires(
+  task_spec: TaskSpec,
+  taskResources?: ResourceRef[],
+): { skills: string[]; agent_files: string[]; commands: string[]; rules: string[] } | undefined {
+  const all: ResourceRef[] = [...(taskResources ?? []), ...(task_spec.resources ?? [])]
+  for (const su of task_spec.subunits ?? []) {
+    all.push(...(su.resources ?? []))
+  }
+  if (all.length === 0) return undefined
+
+  const skills = new Set<string>()
+  const agent_files = new Set<string>()
+  const commands = new Set<string>()
+  const rules = new Set<string>()
+  for (const ref of all) {
+    switch (ref.type) {
+      case "skill": skills.add(ref.name); break
+      case "agent": agent_files.add(ref.name); break
+      case "command": commands.add(ref.name); break
+      case "rule": rules.add(ref.name); break
+    }
+  }
+  const result: { skills: string[]; agent_files: string[]; commands: string[]; rules: string[] } = {
+    skills: [...skills],
+    agent_files: [...agent_files],
+    commands: [...commands],
+    rules: [...rules],
+  }
+  // Only return when at least one bucket is non-empty (defensive — `all` was
+  // non-empty but an unknown type could land in no bucket; keep the contract).
+  if (result.skills.length === 0 && result.agent_files.length === 0
+    && result.commands.length === 0 && result.rules.length === 0) {
+    return undefined
+  }
+  return result
 }
 
 /** Build the composition DAG from task_spec: one node per subunit + one

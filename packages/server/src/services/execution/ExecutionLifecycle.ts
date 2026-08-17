@@ -371,6 +371,14 @@ export class ExecutionLifecycle {
         resourcePreflight: new ResourcePreFlight(),
         resourceProvisioner: new ResourceProvisioner(getResourceRegistry().get()),
         logger: engine.getLogger(),
+        // 07 (SG7): pass the schedule's config.requires (propagated by
+        // materializeTaskSpecToConfig from tasks.resources[] +
+        // subunit.resources[]) so EngineInitPhase UNION-merges them with
+        // workflow.requires and provisions them into the workspace's
+        // .claude/skills|agents|commands|rules. Lookup is best-effort: a
+        // missing schedule (manual execution) or malformed config falls back
+        // to workflow.requires alone (unchanged behavior).
+        configRequires: this.resolveScheduleConfigRequires(id),
       })
 
       if (initResult.status === "failed") {
@@ -1588,6 +1596,53 @@ export class ExecutionLifecycle {
 
   private findNodeDef(nodes: any[], nodeId: string): any | null {
     return findNodeDef(nodes, nodeId)
+  }
+
+  /**
+   * 07 (SG7): look up the schedule's config.requires (propagated by
+   * materializeTaskSpecToConfig from tasks.resources[] + subunit.resources[])
+   * so EngineInitPhase UNION-merges them with workflow.requires and provisions
+   * them into the workspace's .claude/skills|agents|commands|rules.
+   *
+   * The link is executions → workspaces (source_schedule_id) → schedules (config).
+   * Best-effort: a missing schedule (manual execution, null source_schedule_id),
+   * a deleted schedule, or a malformed/empty config → returns undefined, and
+   * EngineInitPhase falls back to workflow.requires alone (unchanged behavior).
+   * Non-fatal: provisioning is not blocked by a lookup failure.
+   */
+  private resolveScheduleConfigRequires(
+    executionId: string,
+  ): { skills?: string[]; agent_files?: string[]; commands?: string[]; rules?: string[] } | undefined {
+    try {
+      const row = this.dao.getDb()
+        .prepare(`
+          SELECT s.config AS config
+          FROM executions e
+          JOIN workspaces w ON w.id = e.workspace_id
+          LEFT JOIN schedules s ON s.id = w.source_schedule_id AND s.deleted_at IS NULL
+          WHERE e.id = ?
+        `)
+        .get(executionId) as { config: string | null } | undefined
+      if (!row?.config) return undefined
+      const parsed = JSON.parse(row.config) as {
+        requires?: {
+          skills?: string[]
+          agent_files?: string[]
+          commands?: string[]
+          rules?: string[]
+        }
+      }
+      const req = parsed.requires
+      if (!req) return undefined
+      const hasAny = (req.skills?.length ?? 0) > 0
+        || (req.agent_files?.length ?? 0) > 0
+        || (req.commands?.length ?? 0) > 0
+        || (req.rules?.length ?? 0) > 0
+      return hasAny ? req : undefined
+    } catch {
+      // Malformed config / DB error — non-fatal, fall back to workflow.requires
+      return undefined
+    }
   }
 
   private isWorkflowNodeId(workflowRef: string, nodeId: string): boolean {

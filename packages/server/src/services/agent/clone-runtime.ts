@@ -261,11 +261,21 @@ export class CloneRuntime {
    * prompt append (not prepend-to-user-msg) avoids DB + SDK history pollution
    * and the @@ token being treated as an instruction.
    *
-   * Param order: `specUpdateNotice` sits before `abortSignal` so the primary
-   * caller (clone/index.ts send path) reads cleanly without an `undefined`
-   * hole. All existing callers pass ≤4 args, so the reorder is backwards-
-   * compatible (verified: clone/index.ts:306, main-agent-route.ts:239/763,
-   * clone-runtime.test.ts:168).
+   * 07 (SG6, v2-D8/D13): `authoringResourcesContent` is the draft-scope
+   * SKILL.md content resolved from `tasks.authoring_resources[]` by
+   * TaskAuthorSessionAugmenter (route-resolved per turn, since assembleContext
+   * is fresh per turn — Mechanism B, SPIKE S2). sendWithProvider appends it
+   * to the system-prompt `append` string ALONGSIDE specUpdateNotice. Only
+   * skill-type authoring_resources are injected (agents/commands/rules are
+   * workspace-scope → workflow.requires via SG7 materialize, not draft-scope).
+   * For Claude SDK (task-author's provider), resume works natively — no
+   * fresh-session / DB-history-prepend (the rejected Pi-only mechanism).
+   *
+   * Param order: `specUpdateNotice` then `authoringResourcesContent` sit before
+   * `abortSignal` so the primary caller (clone/index.ts send path) reads
+   * cleanly without an `undefined` hole. All existing callers pass ≤4 args,
+   * so the reorder is backwards-compatible (verified: clone/index.ts:306,
+   * main-agent-route.ts:239/763, clone-runtime.test.ts:168).
    */
   async *chat(
     message: string,
@@ -273,6 +283,7 @@ export class CloneRuntime {
     providerSessionId: string | null,
     cwd: string,
     specUpdateNotice?: string,
+    authoringResourcesContent?: string,
     abortSignal?: AbortSignal,
   ): AsyncGenerator<MessageChunk> {
     const cloneSystemPrompt = this.assembleContext()
@@ -286,6 +297,7 @@ export class CloneRuntime {
         providerSessionId,
         cloneSystemPrompt,
         specUpdateNotice,
+        authoringResourcesContent,
         abortSignal,
       )
       yield* stream
@@ -302,6 +314,7 @@ export class CloneRuntime {
             null,
             cloneSystemPrompt,
             specUpdateNotice,
+            authoringResourcesContent,
             abortSignal,
           )
           yield* stream
@@ -328,6 +341,11 @@ export class CloneRuntime {
    * discovery. 05 (SPIKE S1): `specUpdateNotice` is concatenated onto the
    * system-prompt `append` string (clone-runtime.ts:310-329) so the
    * task-author agent receives the user's [保存草稿] override in-context.
+   * 07 (SG6): `authoringResourcesContent` is appended alongside the notice
+   * so the task-author agent sees the current turn's authoring_resources[]
+   * SKILL.md content. Concat order: cloneContext (base) → authoringResources
+   * (skills) → specUpdateNotice (transient override) — skills land as part of
+   * the base context, the notice lands as a trailing override.
    */
   private sendWithProvider(
     message: string,
@@ -335,17 +353,24 @@ export class CloneRuntime {
     resumeSessionId: string | null,
     cloneSystemPrompt: string,
     specUpdateNotice: string | undefined,
+    authoringResourcesContent: string | undefined,
     abortSignal?: AbortSignal,
   ): AsyncGenerator<MessageChunk> {
     const provider = getProvider('claude')
 
     // 05 — SPIKE S1: append the transient spec-update notice to the system
-    // prompt. Only concat when a notice is actually pending; an empty/absent
-    // notice leaves the append equal to the assembled clone context (no
-    // stray separator, no @@ leak).
-    const append = specUpdateNotice
-      ? `${cloneSystemPrompt}\n\n${specUpdateNotice}`
-      : cloneSystemPrompt
+    // prompt. 07 — SG6: append authoring_resources SKILL.md content first
+    // (so it's part of the base context), then the notice (trailing override).
+    // Only concat when each piece is actually present; absent pieces leave no
+    // stray separator (no @@ leak, no empty ## Available Skills section).
+    const segments: string[] = [cloneSystemPrompt]
+    if (authoringResourcesContent) {
+      segments.push(authoringResourcesContent)
+    }
+    if (specUpdateNotice) {
+      segments.push(specUpdateNotice)
+    }
+    const append = segments.filter(Boolean).join('\n\n')
 
     return provider.sendQuery(message, cwd, resumeSessionId ?? undefined, {
       systemPrompt: {

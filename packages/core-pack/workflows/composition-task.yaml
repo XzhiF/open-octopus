@@ -15,12 +15,23 @@
 # Conventions:
 #   - $iteration 是 loop 计数器（engine 1-based / simulator 0-based）；break_when
 #     '$iteration >= $vars.subunit_count' 在两种环境都收敛到 N 次（N=subunit_count）。
+#   - subunit_count 注入路径（SG5，ticket 06）：dispatch seam 的
+#     materializeTaskSpecToConfig 在复合路径把
+#     workflow_chain[0].input_values.subunit_count = task_spec.subunits.length
+#     （number；Zod input_values 是 record<string,string>，靠 type-cast 透传，engine
+#     从 VarPool 读数值做比较）。engine 的 var 初始化把 workflow_chain item 的
+#     input_values 经 pool.update 合并进 $vars，故 break_when 读的是注入的真实值，
+#     不是下方 variables.subunit_count: 3 的 simulate 默认。见
+#     packages/engine/src/__tests__/loop-task-dispatch.test.ts（镜像本模板形状）。
 #   - task_dispatch.subunit "$iteration.subunit" 是字符串引用，由 TaskDispatchExecutor
 #     从 composition loop 的 iteration context 解析为第 i 个 SubunitSpec。
 #   - output_mapping { result: "last_output" } 把子 schedule 输出暴露为
 #     $vars.result 与 $dispatch-child.output.result，供 moa 聚合读取。
-#   - 模板变量（subunit_count/goal/integration_prompt）为 simulate 默认值；scheduler
-#     物化时按 task_spec 覆盖（subunit_count = task_spec.subunits.length 等）。
+#   - 模板变量（subunit_count/goal/integration_prompt）为 simulate 默认值。运行时
+#     只有 subunit_count 经 input_values 注入（见上）；goal/integration_prompt
+#     当前 materialize 未注入（已知 future-wiring：moa 聚合用 simulate 默认；
+#     需真实 goal 流入时扩展 materialize 注 input_values.goal +
+#     input_values.integration_prompt，server 侧改动）。
 
 apiVersion: octopus/v1
 kind: Workflow
