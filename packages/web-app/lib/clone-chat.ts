@@ -75,6 +75,9 @@ export function reduceCloneEvent(
     }
 
     case "thinking_start": {
+      // Guard: skip if a thinking block already exists in this turn (prevents
+      // duplicate keys from SSE replay or server re-emitting thinking_start).
+      if (tail.some((m) => m.kind === "thinking")) return prev
       return [...head, ...tail, { id: `${userId}-thinking`, role: "assistant", kind: "thinking", content: "" }]
     }
 
