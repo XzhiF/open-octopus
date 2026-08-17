@@ -26,8 +26,17 @@ function makeJob(partial: Partial<SchedulerJob> & { id: string }): SchedulerJob 
   } as SchedulerJob
 }
 
+describe("TASK_POOL_COLUMNS", () => {
+  it("exposes 7 columns including failed + aborted (ticket 12, G2)", () => {
+    const ids = TASK_POOL_COLUMNS.map(c => c.id)
+    expect(ids).toEqual([
+      'draft', 'queued', 'claimed', 'running', 'done', 'failed', 'aborted',
+    ])
+  })
+})
+
 describe("groupJobsByStatus", () => {
-  it("returns all 5 buckets even when input is empty (AC5 反假跑)", () => {
+  it("returns all 7 buckets even when input is empty (AC5 反假跑)", () => {
     const grouped = groupJobsByStatus([])
     const bucketKeys = Object.keys(grouped).sort()
     const expected = TASK_POOL_COLUMNS.map(c => c.id).sort()
@@ -49,6 +58,21 @@ describe("groupJobsByStatus", () => {
     expect(grouped.claimed.map(j => j.id)).toEqual(['c'])
     expect(grouped.running).toEqual([])
     expect(grouped.done).toEqual([])
+    expect(grouped.failed).toEqual([])
+    expect(grouped.aborted).toEqual([])
+  })
+
+  it("buckets failed and aborted jobs into their own columns (G2)", () => {
+    const jobs = [
+      makeJob({ id: 'f', status: 'failed' as never, name: '失败任务' }),
+      makeJob({ id: 'ab', status: 'aborted' as never, name: '中止任务' }),
+    ]
+    const grouped = groupJobsByStatus(jobs)
+    expect(grouped.failed.map(j => j.id)).toEqual(['f'])
+    expect(grouped.aborted.map(j => j.id)).toEqual(['ab'])
+    // must NOT leak into running/done (the stale-loop regression G2 fixes)
+    expect(grouped.running).toEqual([])
+    expect(grouped.done).toEqual([])
   })
 
   it("drops jobs with unknown status values (defensive)", () => {
@@ -58,11 +82,6 @@ describe("groupJobsByStatus", () => {
     ]
     const grouped = groupJobsByStatus(jobs)
     expect(grouped.draft.map(j => j.id)).toEqual(['a'])
-    expect(grouped.queued).toEqual([])
-    expect(grouped.claimed).toEqual([])
-    expect(grouped.running).toEqual([])
-    expect(grouped.done).toEqual([])
-    // No 'enabled' bucket exists in the result (not silently created)
     expect(Object.keys(grouped).sort()).toEqual(TASK_POOL_COLUMNS.map(c => c.id).sort())
   })
 
