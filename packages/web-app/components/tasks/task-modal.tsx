@@ -12,11 +12,17 @@ import { Textarea } from "@/components/ui/textarea"
 import { Checkbox } from "@/components/ui/checkbox"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Spinner } from "@/components/ui/spinner"
-import { Plus, Trash2, Send, Ban, AlertCircle, CheckCircle2, Workflow } from "lucide-react"
+import { Plus, Trash2, Send, Ban, AlertCircle, CheckCircle2, Workflow, ExternalLink } from "lucide-react"
 import { toast } from "sonner"
-import type { SchedulerJob } from "@/lib/scheduler-api"
+import type { SchedulerJob, JobDetail, JobDetailChild } from "@/lib/scheduler-api"
 import type { WorkflowConfig, TaskSpec, SubunitSpec, IntegrationGoal } from "@octopus/shared"
-import { enqueueJob, abortJob, updateJob, listJobs } from "@/lib/scheduler-api"
+import { enqueueJob, abortJob, updateJob, listJobs, getJob } from "@/lib/scheduler-api"
+import { subscribeSSE } from "@/lib/sse-manager"
+import { getServerUrl } from "@/lib/server-config"
+import { useRouter } from "next/navigation"
+import { computeAggregateStatus } from "@/lib/composite-status"
+import { CompositeDag } from "@/components/tasks/composite-dag"
+import { CompositeEventsPanel, type CompositeEvent } from "@/components/tasks/composite-events-panel"
 import { useCloneChatStream } from "@/lib/clone-chat"
 import { CloneChatView } from "@/components/tasks/clone-chat-view"
 import { ProjectSelector, type SelectedProject } from "@/components/scheduler/project-selector"
@@ -35,7 +41,7 @@ interface TaskModalProps {
   onDraftResolved?: (draft: SchedulerJob) => void
 }
 
-type ModalMode = "authoring" | "simple-execution" | "composite-stub" | "done" | "terminal"
+type ModalMode = "authoring" | "simple-execution" | "composite" | "done" | "terminal"
 
 const TASK_AUTHOR_API = "/api/clones/task-author"
 
@@ -55,10 +61,14 @@ function isComposite(job: SchedulerJob | null): boolean {
 
 function resolveMode(job: SchedulerJob | null): ModalMode {
   if (job === null || job.status === "draft") return "authoring"
-  if (job.status === "done") return isComposite(job) ? "composite-stub" : "done"
-  if (job.status === "failed" || job.status === "aborted") return "terminal"
+  if (job.status === "done") return isComposite(job) ? "composite" : "done"
+  if (job.status === "failed" || job.status === "aborted") {
+    // Composite failed/aborted parent still shows the composite view (terminal
+    // children + integration). Simple tasks show the terminal view.
+    return isComposite(job) ? "composite" : "terminal"
+  }
   // queued / claimed / running
-  return isComposite(job) ? "composite-stub" : "simple-execution"
+  return isComposite(job) ? "composite" : "simple-execution"
 }
 
 const STATUS_LABEL: Record<string, string> = {
@@ -94,7 +104,9 @@ export function TaskModal({ open, onOpenChange, job, onMutated, onDraftResolved 
           {mode === "simple-execution" && job && (
             <SimpleExecutionMode job={job} onMutated={onMutated} onClose={() => onOpenChange(false)} />
           )}
-          {mode === "composite-stub" && <CompositeStub job={job} />}
+          {mode === "composite" && job && (
+            <CompositeMode job={job} onMutated={onMutated} onClose={() => onOpenChange(false)} />
+          )}
           {mode === "done" && job && <DoneMode job={job} />}
           {mode === "terminal" && job && <TerminalMode job={job} />}
         </div>
@@ -109,7 +121,7 @@ function ModalHeader({ job, mode }: { job: SchedulerJob | null; mode: ModalMode 
   const subtitle =
     mode === "authoring"
       ? "Authoring · spec 左 / 对话 右"
-      : mode === "composite-stub"
+      : mode === "composite"
         ? "复合任务"
         : mode === "done"
           ? "结果"
@@ -457,22 +469,229 @@ function SimpleExecutionMode({ job, onMutated, onClose }: { job: SchedulerJob; o
   )
 }
 
-function CompositeStub({ job }: { job: SchedulerJob | null }) {
-  const spec = taskSpecOf(job)
-  const count = spec?.subunits?.length ?? 0
-  return (
-    <div className="p-5 space-y-3" data-task-composite-stub>
-      <div className="rounded-lg border border-dashed border-primary/40 bg-primary/5 p-4 text-sm">
-        <div className="flex items-center gap-2 font-medium"><Workflow className="size-4 text-primary" /> 复合任务执行视图</div>
-        <p className="mt-1 text-xs text-muted-foreground">
-          composition DAG + {count} 个子 workspace + moa 聚合的实时视图由 ticket 13 构建。
-        </p>
+// ── Composite: composition DAG + N child cards + integration + SSE ──────
+
+/** Derive the integration (moa/synthesis) node status from parent + children.
+ *  The integration node is the composition workflow's final aggregator — its
+ *  status tracks whether synthesis has run. Parent schedule status reflects the
+ *  whole composition; children reflect the subunit fan-out. */
+function integrationStatusOf(parent: string, children: JobDetailChild[]): string {
+  if (parent === "done" || parent === "failed" || parent === "aborted") return parent
+  const allChildrenDone = children.length > 0 && children.every((c) => c.status === "done")
+  return allChildrenDone ? "running" : "pending"
+}
+
+export function CompositeMode({
+  job, onMutated, onClose,
+}: {
+  job: SchedulerJob
+  onMutated: () => void
+  onClose: () => void
+}) {
+  const router = useRouter()
+  const [detail, setDetail] = useState<JobDetail | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [aborting, setAborting] = useState(false)
+  const [events, setEvents] = useState<CompositeEvent[]>([])
+
+  // Fetch the full JobDetail (children[] + dag) — the kanban row only carries
+  // SchedulerJob; the composite fields come from GET /jobs/:id (ticket 10).
+  const fetchDetail = useCallback(async (id: string) => {
+    try {
+      const data = await getJob(id)
+      setDetail(data)
+    } catch {
+      // Non-fatal: the modal still shows the parent row from props.
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    void fetchDetail(job.id)
+  }, [job.id, fetchDetail])
+
+  // Real-time SSE: subscribe to schedule_status for the parent + each child.
+  // On any matching event, append to the events log and re-fetch the detail so
+  // statuses refresh in real time (ticket 13 AC: SSE 实时刷新父+各子状态).
+  useEffect(() => {
+    if (!job.id) return
+    const parentLabel = "父任务"
+    const labelFor = (scheduleId: string): string => {
+      if (scheduleId === job.id) return parentLabel
+      const child = detail?.children?.find((c) => c.schedule_id === scheduleId)
+      return child?.subunit_name ?? scheduleId.slice(0, 8)
+    }
+    const isRelevant = (scheduleId: string): boolean => {
+      if (scheduleId === job.id) return true
+      return detail?.children?.some((c) => c.schedule_id === scheduleId) ?? false
+    }
+
+    const unsub = subscribeSSE(
+      `${getServerUrl()}/api/scheduler/events`,
+      "schedule_status",
+      (e: MessageEvent) => {
+        try {
+          const payload = JSON.parse(e.data) as { schedule_id: string; status: string }
+          if (!isRelevant(payload.schedule_id)) return
+          setEvents((prev) => [
+            ...prev,
+            {
+              schedule_id: payload.schedule_id,
+              status: payload.status,
+              label: labelFor(payload.schedule_id),
+              at: new Date().toISOString(),
+            },
+          ])
+          void fetchDetail(job.id)
+        } catch {
+          // Malformed event payload — ignore.
+        }
+      }
+    )
+    return () => unsub()
+  }, [job.id, detail, fetchDetail])
+
+  const children = detail?.children ?? []
+  const dag = detail?.dag
+  const parentStatus = detail?.status ?? job.status
+  const aggregate = computeAggregateStatus(children, parentStatus)
+  const integrationStatus = integrationStatusOf(parentStatus, children)
+  const canAbort = parentStatus === "claimed" || parentStatus === "running"
+
+  const handleChildClick = useCallback((scheduleId: string) => {
+    router.push(`/scheduler/jobs/${scheduleId}`)
+  }, [router])
+
+  const handleAbort = async () => {
+    setAborting(true)
+    try {
+      await abortJob(job.id)
+      toast.success("已中止任务，工作区将清理")
+      onMutated()
+      onClose()
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : "中止失败")
+    } finally {
+      setAborting(false)
+    }
+  }
+
+  if (loading && !detail) {
+    return (
+      <div className="flex items-center justify-center h-full">
+        <Spinner className="size-5" />
       </div>
-      {spec?.integration_goal ? (
-        <div className="text-xs text-muted-foreground">整合策略: <code>{spec.integration_goal.strategy}</code></div>
-      ) : null}
+    )
+  }
+
+  return (
+    <div className="grid grid-cols-1 lg:grid-cols-[1fr_280px] h-full min-h-0" data-task-composite>
+      {/* Left: DAG + child cards + integration + abort */}
+      <div className="flex flex-col min-h-0 overflow-y-auto">
+        {/* Aggregate status bar */}
+        <div className="flex items-center justify-between gap-2 px-4 py-2.5 border-b border-border bg-muted/30">
+          <div className="flex items-center gap-2">
+            <Workflow className="size-4 text-primary" />
+            <span className="text-sm font-medium">聚合状态</span>
+            <Badge
+              variant="secondary"
+              className={STATUS_TONE[aggregate] ?? ""}
+              data-testid="composite-aggregate-status"
+            >
+              {STATUS_LABEL[aggregate] ?? aggregate}
+            </Badge>
+          </div>
+          <span className="text-xs text-muted-foreground">{children.length} 个子任务</span>
+        </div>
+
+        {/* Composition DAG */}
+        {dag ? (
+          <div className="px-2 py-3 border-b border-border">
+            <CompositeDag
+              dag={dag}
+              children={children}
+              integrationStatus={integrationStatus}
+              onChildClick={(name) => {
+                const child = children.find((c) => c.subunit_name === name)
+                if (child) handleChildClick(child.schedule_id)
+              }}
+            />
+          </div>
+        ) : (
+          <div className="px-4 py-6 text-xs text-muted-foreground">等待 composition DAG…</div>
+        )}
+
+        {/* Child cards */}
+        <div className="p-3 space-y-2">
+          <h3 className="text-xs font-semibold text-muted-foreground">子任务执行</h3>
+          {children.map((c) => (
+            <button
+              key={c.schedule_id}
+              data-testid={`composite-child-${c.schedule_id}`}
+              onClick={() => handleChildClick(c.schedule_id)}
+              className="w-full text-left rounded-md border border-border bg-card p-2.5 hover:border-primary/40 hover:shadow-sm transition-all flex items-center gap-2"
+            >
+              <span className={`size-2 rounded-full shrink-0 ${STATUS_DOT_COLOR[c.status] ?? "bg-muted-foreground"}`} />
+              <div className="flex-1 min-w-0">
+                <div className="text-sm font-medium truncate">{c.subunit_name}</div>
+                <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                  <code className="text-[10px]">{c.workflow_ref}</code>
+                  <span>·</span>
+                  <span>{STATUS_LABEL[c.status] ?? c.status}</span>
+                </div>
+              </div>
+              <ExternalLink className="size-3.5 text-muted-foreground shrink-0" />
+            </button>
+          ))}
+          {children.length === 0 && (
+            <p className="text-xs text-muted-foreground py-2">子任务尚未派发。</p>
+          )}
+        </div>
+
+        {/* Integration node status */}
+        <div className="px-3 pb-3" data-testid="composite-integration">
+          <div className="rounded-md border border-dashed border-primary/30 bg-primary/5 p-2.5 flex items-center gap-2">
+            <span className={`size-2 rounded-full shrink-0 ${STATUS_DOT_COLOR[integrationStatus] ?? "bg-muted-foreground"}`} />
+            <div className="flex-1 min-w-0">
+              <div className="text-sm font-medium">整合节点</div>
+              <div className="text-xs text-muted-foreground">
+                {taskSpecOf(job)?.integration_goal?.strategy === "merge" ? "merge" : "synthesis (moa 聚合)"}
+              </div>
+            </div>
+            <Badge variant="secondary" className={STATUS_TONE[integrationStatus] ?? ""}>
+              {STATUS_LABEL[integrationStatus] ?? integrationStatus}
+            </Badge>
+          </div>
+        </div>
+
+        {/* Abort */}
+        {canAbort && (
+          <div className="flex justify-end px-3 pb-4">
+            <Button variant="destructive" size="sm" onClick={handleAbort} disabled={aborting} data-task-abort>
+              {aborting ? <Spinner className="size-4" /> : <Ban className="size-4" />}
+              中止
+            </Button>
+          </div>
+        )}
+      </div>
+
+      {/* Right: real-time SSE events panel */}
+      <div className="border-l border-border min-h-0">
+        <CompositeEventsPanel events={events} />
+      </div>
     </div>
   )
+}
+
+const STATUS_DOT_COLOR: Record<string, string> = {
+  queued: "bg-blue-500",
+  claimed: "bg-amber-500",
+  running: "bg-blue-500 animate-pulse",
+  done: "bg-emerald-500",
+  failed: "bg-red-500",
+  aborted: "bg-zinc-500",
+  pending: "bg-muted-foreground",
 }
 
 function DoneMode({ job }: { job: SchedulerJob }) {

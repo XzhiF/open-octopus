@@ -52,6 +52,45 @@ export type {
   ListAuditLogsParams,
 }
 
+// ============ JobDetail (composite view, ticket 10/13) ============
+// GET /jobs/:id returns a JobDetail for composite tasks: children[] (actual
+// dispatched child schedules) + dag (composition structure from task_spec).
+// The canonical definitions live in @octopus/server (scheduler-service.ts), but
+// web-app cannot import from the server package — these mirror that shape so the
+// client is type-safe without a cross-package dependency.
+
+export interface JobDetailDagNode {
+  id: string
+  type: "subunit" | "integration"
+  label: string
+  workflow_ref?: string
+}
+
+export interface JobDetailDagEdge {
+  from: string
+  to: string
+}
+
+export interface JobDetailDag {
+  nodes: JobDetailDagNode[]
+  edges: JobDetailDagEdge[]
+}
+
+export interface JobDetailChild {
+  schedule_id: string
+  name: string
+  status: string
+  workflow_ref: string
+  subunit_name: string
+}
+
+/** JobDetail = SchedulerJob + optional composite fields. Simple tasks return a
+ *  plain SchedulerJob (children/dag undefined) — backward compatible. */
+export type JobDetail = SchedulerJob & {
+  children?: JobDetailChild[]
+  dag?: JobDetailDag
+}
+
 // ============ Helpers ============
 
 async function handleResponse<T>(res: Response): Promise<T> {
@@ -95,9 +134,9 @@ export async function createJob(input: CreateJobInput): Promise<SchedulerJob> {
   return handleResponse<SchedulerJob>(res)
 }
 
-export async function getJob(id: string, signal?: AbortSignal): Promise<SchedulerJob> {
+export async function getJob(id: string, signal?: AbortSignal): Promise<JobDetail> {
   const res = await fetch(`${getServerUrl()}${BASE}/jobs/${id}`, { signal })
-  return handleResponse<SchedulerJob>(res)
+  return handleResponse<JobDetail>(res)
 }
 
 export async function updateJob(
