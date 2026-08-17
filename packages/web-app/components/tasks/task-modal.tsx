@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useMemo, useState, useCallback } from "react"
+import { useEffect, useMemo, useState, useCallback, useRef } from "react"
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
 } from "@/components/ui/dialog"
@@ -23,8 +23,9 @@ import { useRouter } from "next/navigation"
 import { computeAggregateStatus } from "@/lib/composite-status"
 import { CompositeDag } from "@/components/tasks/composite-dag"
 import { CompositeEventsPanel, type CompositeEvent } from "@/components/tasks/composite-events-panel"
-import { useCloneChatStream } from "@/lib/clone-chat"
-import { CloneChatView } from "@/components/tasks/clone-chat-view"
+import { useAgentChat } from "@/hooks/useAgentChat"
+import { ChatArea } from "@/components/agent/chat/ChatArea"
+import * as agentApi from "@/lib/agent/api"
 import { ProjectSelector, type SelectedProject } from "@/components/scheduler/project-selector"
 import { useOrgs } from "@/hooks/useOrgs"
 import { listResources } from "@/lib/resource/api"
@@ -43,7 +44,7 @@ interface TaskModalProps {
 
 type ModalMode = "authoring" | "simple-execution" | "composite" | "done" | "terminal"
 
-const TASK_AUTHOR_API = "/api/clones/task-author"
+const TASK_AUTHOR_CLONE = "task-author"
 
 function workflowConfigOf(job: SchedulerJob | null): WorkflowConfig | null {
   if (!job || job.job_type !== "workflow") return null
@@ -151,15 +152,51 @@ function AuthoringMode({
   onDraftResolved?: (draft: SchedulerJob) => void
   onClose: () => void
 }) {
-  const sessionId = job?.source_chat_session_id ?? null
-  const chat = useCloneChatStream({
-    apiBase: TASK_AUTHOR_API,
-    sessionId,
-    onSessionCreated: () => {},
-  })
+  const initialSessionId = job?.source_chat_session_id ?? null
+  const [activeSessionId, setActiveSessionId] = useState<string | null>(initialSessionId)
+  const pendingMessageRef = useRef<string | null>(null)
+
+  // Sync activeSessionId when job's source_chat_session_id changes (e.g., draft resolved)
+  useEffect(() => {
+    if (job?.source_chat_session_id && job.source_chat_session_id !== activeSessionId) {
+      setActiveSessionId(job.source_chat_session_id)
+    }
+  }, [job?.source_chat_session_id])
+
+  // API overrides: route through task-author clone endpoints
+  const apiOverrides = useMemo(() => ({
+    getSession: (id: string, q?: { limit?: number; cursor?: string }) =>
+      agentApi.getCloneSession(TASK_AUTHOR_CLONE, id, q),
+    chatStream: (id: string, msg: string) =>
+      agentApi.cloneChatStream(TASK_AUTHOR_CLONE, id, msg),
+    stopChat: (id: string) =>
+      agentApi.stopCloneChat(TASK_AUTHOR_CLONE, id),
+  }), [])
+
+  const chat = useAgentChat(activeSessionId, { api: apiOverrides })
+
+  // Load messages when session changes
+  const loadedSessionIdsRef = useRef<Set<string>>(new Set())
+  useEffect(() => {
+    if (!activeSessionId) return
+    if (loadedSessionIdsRef.current.has(activeSessionId)) return
+    loadedSessionIdsRef.current.add(activeSessionId)
+    if (pendingMessageRef.current) return // skip load for new sessions with pending msg
+    chat.loadMessages()
+  }, [activeSessionId])
+
+  // Create a session for task-author clone
+  const createSession = useCallback(async (): Promise<string | null> => {
+    try {
+      const session = await agentApi.createCloneSession(TASK_AUTHOR_CLONE)
+      setActiveSessionId(session.id)
+      return session.id
+    } catch {
+      return null
+    }
+  }, [])
 
   // New-task flow: after each completed turn, look up the draft the clone created
-  // (linked via source_chat_session_id) and lift it to the page so [入队] enables.
   const resolveDraft = useCallback(async (sid: string) => {
     if (!sid || job) return
     try {
@@ -173,10 +210,29 @@ function AuthoringMode({
     }
   }, [job, onDraftResolved])
 
-  const handleSend = useCallback(async (content: string) => {
-    const sid = await chat.sendMessage(content)
-    if (sid) void resolveDraft(sid)
-  }, [chat, resolveDraft])
+  // Handle send: create session if needed, then send message
+  const handleSend = useCallback((message: string) => {
+    if (activeSessionId) {
+      chat.sendMessage(message)
+      void resolveDraft(activeSessionId)
+    } else {
+      // No session yet — create one, then send
+      pendingMessageRef.current = message
+      void createSession()
+    }
+  }, [activeSessionId, chat, createSession, resolveDraft])
+
+  // When session is created and there's a pending message, send it
+  useEffect(() => {
+    if (activeSessionId && pendingMessageRef.current) {
+      const msg = pendingMessageRef.current
+      pendingMessageRef.current = null
+      requestAnimationFrame(() => {
+        chat.sendMessage(msg)
+        void resolveDraft(activeSessionId)
+      })
+    }
+  }, [activeSessionId, chat, resolveDraft])
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-2 h-full min-h-0">
@@ -184,24 +240,32 @@ function AuthoringMode({
         <SpecPanel job={job} onMutated={onMutated} />
       </div>
       <div className="flex flex-col min-h-0">
-        <CloneChatView
+        <ChatArea
           messages={chat.messages}
-          isStreaming={chat.isStreaming}
-          status={chat.status}
+          streaming={chat.streaming}
+          streamContent={chat.streamContent}
+          streamThinking={chat.streamThinking}
+          isThinking={chat.isThinking}
+          toolCalls={chat.toolCalls}
+          pendingConfirm={chat.pendingConfirm}
+          error={chat.error}
+          statusMessage={chat.statusMessage}
           onSend={handleSend}
-          onAbort={chat.abort}
+          onStop={chat.stopGenerate}
+          onConfirm={chat.handleConfirm}
+          hasSession={!!activeSessionId}
+          currentCloneName={TASK_AUTHOR_CLONE}
         />
       </div>
-      <AuthoringFooter job={job} chatReady={chat.ready} onEnqueue={onMutated} onClose={onClose} />
+      <AuthoringFooter job={job} onEnqueue={onMutated} onClose={onClose} />
     </div>
   )
 }
 
 function AuthoringFooter({
-  job, chatReady, onEnqueue, onClose,
+  job, onEnqueue, onClose,
 }: {
   job: SchedulerJob | null
-  chatReady: boolean
   onEnqueue: () => Promise<void> | void
   onClose: () => void
 }) {
@@ -226,7 +290,7 @@ function AuthoringFooter({
   return (
     <div className="col-span-full flex items-center justify-end gap-2 border-t border-border px-5 py-3 bg-background">
       <span className="mr-auto text-xs text-muted-foreground">
-        {job ? "确认 spec 后入队执行" : chatReady ? "先与 task-author 对话生成 spec" : "正在准备对话…"}
+        {job ? "确认 spec 后入队执行" : "先与 task-author 对话生成 spec"}
       </span>
       <Button variant="outline" size="sm" onClick={onClose}>取消</Button>
       <Button size="sm" onClick={handleEnqueue} disabled={!canEnqueue || busy} data-task-enqueue>
