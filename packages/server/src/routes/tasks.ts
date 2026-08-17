@@ -56,6 +56,46 @@ async function safeJson(c: Context): Promise<Record<string, unknown> | null> {
 
 export function createTasksRoutes(service: TasksService, sse: SSEService): Hono {
   const router = new Hono()
+  // SSE route — MUST be registered BEFORE /:id below. Hono v4 matches
+  // routes in registration order; a /:id registered first shadows the
+  // literal /events (returns 404 "Task not found" for /api/tasks/events).
+  // Verified by Phase-4 E2E. See ticket 12.
+  // ── SSE ────────────────────────────────────────────────────────
+
+  // GET /events — task_status + spec_field_update on the 'taskpool' channel.
+  // Mirrors taskpoolEventRoutes (routes/events.ts) so the /tasks kanban can
+  // subscribe at /api/tasks/events without coupling to the scheduler path.
+  router.get("/events", (c) => {
+    return streamSSE(c, async (stream) => {
+      // Immediate heartbeat so the client's fetch/EventSource resolves within
+      // milliseconds instead of waiting up to 30s for the first periodic
+      // heartbeat. Without this, the SpecPanel's EventSource stays in
+      // CONNECTING state + misses early spec_field_update events (the
+      // Phase-4 Story-C test 12 failure). Hono's streamSSE flushes response
+      // headers on the first writeSSE, so this also opens the connection.
+      await stream.writeSSE({
+        event: "heartbeat",
+        data: JSON.stringify({ ts: new Date().toISOString(), hello: true }),
+      })
+      const unsub = sse.subscribe("taskpool", (event) => {
+        stream.writeSSE({ event: event.event, data: JSON.stringify(event.data) })
+      })
+      const interval = setInterval(() => {
+        stream.writeSSE({
+          event: "heartbeat",
+          data: JSON.stringify({ ts: new Date().toISOString() }),
+        })
+      }, 30000)
+      stream.onAbort(() => {
+        unsub()
+        clearInterval(interval)
+      })
+      while (true) {
+        await stream.sleep(1000)
+      }
+    })
+  })
+
 
   // ── CRUD ──────────────────────────────────────────────────────
 
@@ -191,31 +231,6 @@ export function createTasksRoutes(service: TasksService, sse: SSEService): Hono 
     }
   })
 
-  // ── SSE ────────────────────────────────────────────────────────
-
-  // GET /events — task_status + spec_field_update on the 'taskpool' channel.
-  // Mirrors taskpoolEventRoutes (routes/events.ts) so the /tasks kanban can
-  // subscribe at /api/tasks/events without coupling to the scheduler path.
-  router.get("/events", (c) => {
-    return streamSSE(c, async (stream) => {
-      const unsub = sse.subscribe("taskpool", (event) => {
-        stream.writeSSE({ event: event.event, data: JSON.stringify(event.data) })
-      })
-      const interval = setInterval(() => {
-        stream.writeSSE({
-          event: "heartbeat",
-          data: JSON.stringify({ ts: new Date().toISOString() }),
-        })
-      }, 30000)
-      stream.onAbort(() => {
-        unsub()
-        clearInterval(interval)
-      })
-      while (true) {
-        await stream.sleep(1000)
-      }
-    })
-  })
 
   return router
 }

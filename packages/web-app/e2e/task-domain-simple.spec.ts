@@ -255,6 +255,10 @@ test.describe("Story A: Simple task full closed loop", () => {
     // Simulate user editing a spec field directly via API (the project_ids
     // field). In the real UI, the user clicks a project in ProjectSelector.
     // Here we PUT the full task_spec + project_ids via [保存草稿].
+    // Also set workflow_ref so the dispatch seam (test 5) materializes a
+    // config the runner can actually execute → reaches done (AC6). Without
+    // a workflow_ref, the materialized config has workflow_ref='' and the
+    // runner claims + hangs in 'running' forever (the original AC6 failure).
     const currentTask = await getTask(taskId)
     const updatedSpec = {
       ...JSON.parse(readTaskRow(taskId)!.task_spec),
@@ -263,6 +267,7 @@ test.describe("Story A: Simple task full closed loop", () => {
     const saved = await updateTask(taskId, currentTask.version, {
       task_spec: updatedSpec,
       project_ids: ["e2e-td-project"],
+      workflow_ref: "test-task-workflow.yaml",
     })
     expect(saved.version, "Save should bump version").toBeGreaterThan(currentTask.version)
 
