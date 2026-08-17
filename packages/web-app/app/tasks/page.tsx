@@ -76,7 +76,7 @@ export default function TasksPage() {
     <div className="flex flex-1 min-h-0 flex-col">
       <div className="flex flex-col h-full min-w-0">
         <header className="flex items-center gap-3 px-6 py-4 border-b border-border">
-          <h1 className="text-2xl font-bold tracking-tight">任务池</h1>
+          <h1 className="text-2xl font-bold tracking-tight">任务看板</h1>
           <span className="text-sm text-muted-foreground">{jobs.length} 个任务</span>
           <div className="ml-auto flex gap-2">
             <Button variant="outline" size="sm" onClick={fetchJobs} disabled={loading}>
