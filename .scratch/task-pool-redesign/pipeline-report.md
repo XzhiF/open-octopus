@@ -54,8 +54,12 @@ Local dev only (`pnpm dev`), no CI/CD — skip. Restart dev server to pick up ch
 
 **Anti-fake-run R1-R8:** all PASS — real dev server (3001+3000), business-data asserts, API↔DB↔SSE cross-validation, 10 screenshots + response bodies + DB queries + SSE payloads, write-op DB verification, real /tasks UI path, E2E_TP_ prefix + cleanup (0 remaining), repeatable self-contained scripts.
 
-## Phase 5: Ship (Git PR — TBD after Phase 4)
-Branch: test-task-board → main (PR #50, updated). Pipeline artifacts committed before PR.
+## Phase 5: Ship (Git PR)
+- Branch: `test-task-board` → `main` (PR #50, OPEN, updated)
+- PR: https://github.com/XzhiF/open-octopus/pull/50
+- Pushed: `a7130f7..f654458` (9 redesign commits + Phase 2 fix + Phase 4 artifacts)
+- PR body: `.scratch/task-pool-redesign/pr-body.md` (applied via `gh pr edit 50`)
+- Pipeline artifacts (pipeline-report.md, e2e-scripts/, e2e-screenshots/, loop-state.json, map.md, spec.md, brief.md, decisions/, issues/, ADR-0008) committed + pushed, included in PR diff.
 
 ## Changed Files (git diff a7130f7...HEAD, 101 files, +10545/-364)
 - **shared**: scheduler-job.ts (TaskSpec/SubunitSpec/ScheduleStatus+failed/aborted/workflowConfigSchema v3), workflow.ts (task_dispatch NodeDef), task-dispatch-port.ts (new, TaskDispatchPort), task-pool-schema.test.ts (+350)
