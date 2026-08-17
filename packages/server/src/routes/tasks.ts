@@ -10,7 +10,7 @@
 import { Hono } from "hono"
 import type { Context } from "hono"
 import { streamSSE } from "hono/streaming"
-import { ZodError } from "zod"
+import { z, ZodError } from "zod"
 import {
   TasksService,
   TaskNotFoundError,
@@ -24,6 +24,7 @@ import {
 import { SSEService } from "../services/sse"
 import {
   taskSpecSchema,
+  resourceRefSchema,
   type TaskStatus,
   type TaskSpecField,
 } from "@octopus/shared"
@@ -124,10 +125,10 @@ export function createTasksRoutes(service: TasksService, sse: SSEService): Hono 
       const input: UpdateTaskInput = {}
       if (typeof body.name === "string") input.name = body.name
       if (body.task_spec !== undefined) input.task_spec = taskSpecSchema.parse(body.task_spec)
-      if (body.skills !== undefined) input.skills = body.skills as string[]
-      if (body.project_ids !== undefined) input.project_ids = body.project_ids as string[]
-      if (body.resources !== undefined) input.resources = body.resources as any
-      if (body.authoring_resources !== undefined) input.authoring_resources = body.authoring_resources as any
+      if (body.skills !== undefined) input.skills = z.array(z.string()).parse(body.skills)
+      if (body.project_ids !== undefined) input.project_ids = z.array(z.string()).parse(body.project_ids)
+      if (body.resources !== undefined) input.resources = z.array(resourceRefSchema).parse(body.resources)
+      if (body.authoring_resources !== undefined) input.authoring_resources = z.array(resourceRefSchema).parse(body.authoring_resources)
       if (body.workflow_ref !== undefined) {
         input.workflow_ref = typeof body.workflow_ref === "string" ? body.workflow_ref : null
       }

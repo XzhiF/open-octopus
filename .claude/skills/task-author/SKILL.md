@@ -1,26 +1,28 @@
 ---
 name: task-author
-description: "Task-Author 规格作者 — 与用户对话产出结构化 task_spec（WHAT），经 confirm gate 入队后由 scheduler 物化为 WorkflowConfig 调度执行（HOW）。覆盖 scheduler REST API（创建 draft / 编辑 / 入队 / 列表）、task_spec schema、以及 task_spec→WorkflowConfig 物化指引（简单=workflow_chain 单项；复合=composition workflow + Loop over subunits + task_dispatch + moa 聚合）。当用户需要把一个模糊需求转成可调度执行的任务规格时加载。"
+description: "Task-Author 规格作者 — 与用户对话产出结构化 task_spec（WHAT），经 confirm gate 入队后由 dispatch seam 物化为 WorkflowConfig 调度执行（HOW）。覆盖 /api/tasks REST API（创建 draft / 编辑 / 入队 / 列表 / 中止）、update_task_spec_field 端点（POST /api/tasks/:id/spec-field，对话中绑定 goal/ac/skills/projects/subunits/integration_goal/resources/authoring_resources 8 字段 + spec_field_update SSE 联动 SpecPanel）、非-cwd 资源加载（authoring_resources[] draft 期绑 + augmenter prompt-inject vs resources[] workspace 期 → workflow.requires）、以及 task_spec→WorkflowConfig 物化指引（简单=workflow_chain 单项直分发；复合=composition-task.yaml + Loop over subunits + task_dispatch + moa 聚合，subunit_count 经 input_values 注入）。当用户需要把一个模糊需求转成可调度执行的任务规格时加载。"
 category: devops
-tags: [task-pool, task-author, task_spec, scheduler, workflow, composition, dispatch, spec]
-version: 1.0.0
+tags: [task-pool, task-author, task_spec, tasks, workflow, composition, dispatch, spec]
+version: 2.0.0
 ---
 
 # Task-Author 规格作者
 
-你是 Task-Author 分身。你的职责是把用户的模糊需求转成**结构化 task_spec**（WHAT），再经用户确认 [入队] 后由 scheduler 物化为 WorkflowConfig 调度执行（HOW）。
+你是 Task-Author 分身。把用户的模糊需求转成**结构化 task_spec**（WHAT），经用户确认 [入队] 后由 dispatch seam 物化为 WorkflowConfig 调度执行（HOW）。
+
+> v2: 任务是一等 `tasks` 表（非 v1 的 schedules.config.task_spec）。API 面迁移到 `/api/tasks`；对话中可经 `update_task_spec_field` 端点绑字段，SpecPanel 经 `spec_field_update` SSE 实时联动。本 SKILL 经 plugin 扫描可发现（**按需 Read，不自动注入 system prompt**）。
 
 ## WHAT 与 HOW 分离
 
 - **task_spec = WHAT**：goal、验收标准、（复合任务时）subunits 与 integration_goal。你只产这个。
-- **WorkflowConfig = HOW**：scheduler 在 enqueue 时物化。简单任务 = `workflow_chain` 单项；复合任务 = `workflow_ref` 指向 composition workflow，subunits 经 Loop 喂 `task_dispatch` 节点。
-- 你不直接执行工作流，也不自行触发入队——产 spec 后等用户点 [入队]。
+- **WorkflowConfig = HOW**：dispatch seam（`POST /api/tasks/:id/ready`）时物化。简单 = `workflow_chain` 单项直分发（1 ws）；复合 = `workflow_ref` 指向 composition workflow，subunits 经 Loop 喂 `task_dispatch`。
+- 你不执行工作流，也不自行入队——产 spec 后等用户点 [入队]。
 
 ## 前置条件
 
 1. Octopus Server 运行中。主仓库 `3001`，worktree hash 端口（`pnpm port`），prod `3099`。
-2. 基础 URL：`http://localhost:$PORT/api/scheduler`
-3. 多仓库项目路径来自 `~/.octopus/orgs/{org}/repos/index.md`（空 source_path 时由 server 在 dispatch 时解析）。不要假定当前 cwd 就是项目目录。
+2. 基础 URL：`http://localhost:$PORT/api/tasks`（**v2: 不再是 /api/scheduler/jobs**）。
+3. 多仓库项目路径来自 `~/.octopus/orgs/{org}/repos/index.md`（空 source_path 时由 server 在 dispatch 时解析）。
 
 ## task_spec schema（你产出的产物）
 
@@ -30,180 +32,138 @@ version: 1.0.0
   "ac": ["可验证的验收标准 1", "验收标准 2"], // 必填，string[]，至少 1 条
   "data_model": { /* 可选，任意结构化产物 */ },
   "contracts":  { /* 可选，任意结构化产物 */ },
-  "subunits": [          // 可选；出现 ⇒ 复合任务
-    {
-      "name": "backend",
-      "workspace_spec": {
-        "org": "xzf",
-        "branch_prefix": "feat-x",
-        "projects": [
-          { "name": "my-app", "source_path": "", "group": "" }
-        ]
-      },
-      "workflow_ref": "flows/backend.yaml",
-      "input_values": { "goal": "$task_spec.goal" },
-      "skills": ["octo-backend"]
-    }
+  "subunits": [          // 可选；出现且 length>=2 ⇒ 复合任务
+    { "name": "backend", "workspace_spec": {...}, "workflow_ref": "flows/backend.yaml", "input_values": {}, "skills": ["octo-backend"], "resources": [] }
   ],
-  "integration_goal": {  // 可选；复合任务末尾的整合策略
-    "strategy": "synthesis", // 'synthesis'（默认，moa 聚合）| 'merge'
-    "prompt": "合并各 subunit 输出"
-  }
+  "integration_goal": { "strategy": "synthesis", "prompt": "合并各 subunit 输出" },
+  "resources": [ { "type": "skill", "name": "octo-backend" } ],        // workspace-scope → workflow.requires
+  "authoring_resources": [ { "type": "skill", "name": "domain-glossary" } ] // draft-scope → augmenter prompt-inject
 }
 ```
 
 规则：
-- `goal` + `ac` 必填。`ac` 至少 1 条且非空。
-- `subunits` 存在 ⇒ 复合任务；每个 subunit 必须有 `name` / `workspace_spec` / `workflow_ref`。`skills` / `input_values` 默认 `[]` / `{}`。
-- `integration_goal.strategy` 默认 `synthesis`。`merge` 为 opt-in。
-- 多仓库：主项目写进 `workspace_spec.projects[0]`；其余仓库也写进 `projects[]`，`source_path` 空时由 server 解析（`group` 定位 repos/index.md 分组）。
+- `goal` + `ac` 必填，`ac` 至少 1 条非空。
+- `subunits.length >= 2` ⇒ 复合（coordinator-ws + composition-task.yaml + task_dispatch fan-out N 子）；0/1 subunit ⇒ 简单（直分发 1 ws，无 coordinator-ws，ADR-0009）。
+- `resources`/`authoring_resources` 条目 `{type, name}`，type ∈ `skill|agent|command|rule`（4 provisionable；`workflow`/`clone` 不在此）。
 
-## API 端点清单（curl）
+## API 端点清单（curl — update_task_spec_field 是 HTTP 端点，非 native SDK 工具）
 
-### 1. 创建 draft（你产 spec 后第一步）
+> v2: 所有端点在 `/api/tasks`。`update_task_spec_field` 是 REST 端点（agent 经 Bash curl 调，**非** SDK 原生工具）。
+
+### 1. 创建 draft
 
 ```bash
-curl -s -X POST "http://localhost:$PORT/api/scheduler/jobs" \
+curl -s -X POST "http://localhost:$PORT/api/tasks" \
   -H "Content-Type: application/json" \
-  -d '{
-    "name": "E2E_TP_my-task",
-    "job_type": "workflow",
-    "cron_expression": null,
-    "timezone": "Asia/Shanghai",
-    "org": "xzf",
-    "trigger_source": "requirement",
-    "config": {
-      "schema_version": "3.0",
-      "type": "workflow",
-      "workspace_spec": {
-        "org": "xzf",
-        "branch_prefix": "task-author",
-        "projects": [{"name": "my-app", "source_path": "", "group": ""}]
-      },
-      "workflow_chain": [{"workflow_ref": "flows/simple.yaml", "input_values": {}}],
-      "max_retain": 5,
-      "task_spec": {
-        "goal": "给 my-app 加一个健康检查端点",
-        "ac": ["GET /health 返回 200", "覆盖单元测试"]
-      }
-    }
-  }' | jq .
+  -d '{ "name": "E2E_TD_my-task", "org": "xzf",
+        "source_chat_session_id": "<task-author 会话 id，可选>",
+        "task_spec": { "goal": "...", "ac": ["..."] },
+        "project_ids": [], "skills": [], "resources": [], "authoring_resources": [] }' | jq .
 ```
+- 返回 tasks 行 `status: "draft"`。autosave seam（首轮流后）也会隐式建 draft + link `source_chat_session_id`（你也可显式 POST）。
+- server 会 `sessions.scope_id = task.id` 绑定会话。
 
-要点：
-- `trigger_source: "requirement"` ⇒ draft（不跑 cron）。
-- `cron_expression: null`（requirement 任务无 cron）。
-- `config.schema_version: "3.0"` 才能带 `task_spec`；`2.0` 兼容旧的无 spec 任务。
-- server 会**自动创建一个 task-author clone session** 并把 `source_chat_session_id` 写回 job（G7）。你不需要手动传 `source_chat_session_id`，但如果用户已有一个会话，可显式传入复用。
-- 返回的 job `status` 为 `draft`，`enabled` 为 false。
+### 2. 对话中绑字段（update_task_spec_field）★v2 联动核心
 
-### 2. 编辑 draft（PUT，需乐观锁）
+对话中澄清出某字段后，**立即**绑定（不必等整 spec）——SpecPanel 经 `spec_field_update` SSE 实时刷新：
 
 ```bash
-VERSION=$(curl -s "http://localhost:$PORT/api/scheduler/jobs/$JOB_ID" | jq -r '.version')
-curl -s -X PUT "http://localhost:$PORT/api/scheduler/jobs/$JOB_ID" \
+curl -s -X POST "http://localhost:$PORT/api/tasks/$TASK_ID/spec-field" \
   -H "Content-Type: application/json" \
-  -H "If-Match: $VERSION" \
-  -d '{"config": { /* 整个 config 对象，含修订后的 task_spec */ }}' | jq .
+  -d '{ "field": "goal", "value": "给 my-app 加健康检查端点" }' | jq .
 ```
 
-> PUT 必须带 `If-Match: <version>`，否则 428。409 表示版本冲突，重新 GET 取最新 version。
+| field | value 形态 |
+|-------|-----------|
+| `goal` | string |
+| `ac` | string[] |
+| `projects` | string[] (project_ids) |
+| `skills` | string[] |
+| `subunits` | SubunitSpec[] |
+| `integration_goal` | { strategy, prompt? } |
+| `resources` | ResourceRef[]（workspace-scope） |
+| `authoring_resources` | ResourceRef[]（draft-scope） |
 
-### 3. 入队（confirm gate）——用户点 [入队] 才调用
+- 返回 `{version}`；409 = 版本冲突（用户刚 [保存草稿] 改了）→ 重新 `GET /api/tasks/:id` 取 version 重试。
+- 用户 [保存草稿] 后，server 经 **system-prompt append** 注入 `@@spec_updated: <fields>` 到你下轮流（SPIKE S1，v2-D7 PUSH）——你能感知用户覆盖。
+
+### 3. 编辑 draft（PUT，乐观锁）
 
 ```bash
-curl -s -X POST "http://localhost:$PORT/api/scheduler/jobs/$JOB_ID/enqueue" | jq .
-# draft → queued；scheduler 引擎 claim 后物化 workspace 并执行
+VERSION=$(curl -s "http://localhost:$PORT/api/tasks/$TASK_ID" | jq -r '.version')
+curl -s -X PUT "http://localhost:$PORT/api/tasks/$TASK_ID" \
+  -H "Content-Type: application/json" -H "If-Match: $VERSION" \
+  -d '{ "task_spec": { /* 修订后的整 task_spec */ } }' | jq .
 ```
+> 增量绑字段优先用 spec-field（§2）；整 spec 替换用 PUT。PUT 缺 If-Match → 428；冲突 → 409。
 
-> 你**不**自行调用 enqueue。产 spec、确认 job 创建成功后，把 `JOB_ID` 交给用户，等用户在 UI 点 [入队] 或显式确认后再调用。
-
-### 4. 列表 / 详情
+### 4. 入队（confirm gate）——用户点 [入队] 才调用
 
 ```bash
-# 任务池看板（只看 requirement 草稿/任务）
-curl -s "http://localhost:$PORT/api/scheduler/jobs?trigger_source=requirement" | jq .
-# 单个详情
-curl -s "http://localhost:$PORT/api/scheduler/jobs/$JOB_ID" | jq .
+curl -s -X POST "http://localhost:$PORT/api/tasks/$TASK_ID/ready" | jq .
+# draft → ready；dispatch seam 物化 schedules envelope（origin_type='task'）→ scheduler 认领执行
+```
+> 你**不**自行入队。产 spec + 确认 tasks 行后，把 TASK_ID 给用户，等用户 [入队]。
+
+### 5. 列表 / 详情 / 中止
+
+```bash
+curl -s "http://localhost:$PORT/api/tasks" | jq .          # 看板
+curl -s "http://localhost:$PORT/api/tasks/$TASK_ID" | jq . # 详情（含 children[] for 复合）
+curl -s -X POST "http://localhost:$PORT/api/tasks/$TASK_ID/abort" | jq .  # running→aborted + ws 清理
 ```
 
-## task_spec → WorkflowConfig 物化指引
+## 资源加载（authoring vs workspace 两 scope）
 
-enqueue 时 scheduler 按 `task_spec` 是否含 `subunits` 决定物化路径：
+- **authoring_resources[]（draft-scope）**：你想加载来辅助写 spec 的已安装技能/资源。经 spec-field `field=authoring_resources` 绑定 → `TaskAuthorSessionAugmenter` 下轮流把 SKILL.md 内容 **prompt-inject** 进你的 system prompt（assembleContext 每 turn fresh）。**不要**调用名为 `load_resource_for_authoring` 的工具——它不存在；机制就是 `authoring_resources` + augmenter 自动注入。
+- **resources[]（workspace-scope）**：任务执行期需要的资源。经 spec-field `field=resources` 绑定 → dispatch 时 `materializeTaskSpecToConfig` 传播到 `config.requires` → `EngineInitPhase` UNION 合并进 `workflow.requires` → provisioner 分发到目标 workspace。
+- 两 scope 都可用户在 SpecPanel picker 选 + 你协助绑。
 
-### A. 简单任务（无 subunits）
+## task_spec → WorkflowConfig 物化（dispatch seam，`ready` 时）
 
-物化为 `workflow_chain` 单项：
+### A. 简单任务（subunits 0/1）
+
+物化为 `workflow_chain` 单项，**直分发 1 workspace（无 coordinator-ws，ADR-0009 N+1→1）**：
 ```jsonc
-{
-  "schema_version": "3.0",
-  "type": "workflow",
-  "workspace_spec": { /* task_spec 隐含或 job.config.workspace_spec */ },
-  "workflow_chain": [
-    { "workflow_ref": "<job.config.workflow_chain[0].workflow_ref>", "input_values": {} }
-  ],
-  "max_retain": 5,
-  "task_spec": { "goal": "...", "ac": ["..."] }
-}
+{ "type":"workflow", "workflow_chain":[{ "workflow_ref":"<ref>", "input_values":{} }],
+  "workspace_spec":{...}, "requires":{...} }   // 无 task_spec（留 tasks 表）
 ```
-单 workspace 跑单个 workflow_ref。
 
-### B. 复合任务（含 subunits[] + integration_goal）
+### B. 复合任务（subunits.length >= 2 + integration_goal）
 
-物化为 **composition workflow**（`workflow_ref` 指向 `packages/core-pack/workflows/composition-task.yaml` 模板），subunits 经 **Loop** 逐个喂 `task_dispatch` 节点，末尾 moa 聚合。模板结构（详见 `composition-task.yaml`）：
+物化为 **composition workflow**（`workflow_ref` 指向 `composition-task.yaml`），subunits 经 **Loop** 逐个喂 `task_dispatch`，末尾 moa 聚合。`input_values.subunit_count` 由 `materializeTaskSpecToConfig` 注入：
 
 ```yaml
 # packages/core-pack/workflows/composition-task.yaml（coordinator-ws 执行，无 projects）
-apiVersion: octopus/v1
-kind: Workflow
-name: composition-task
-variables:                         # 模板默认；scheduler 物化时按 task_spec 覆盖
-  subunit_count: 3
-  goal: "复合任务总目标"
-  integration_prompt: "综合各 subunit 输出，产出统一交付物。"
 nodes:
   - id: loop-subunits
     type: loop
-    max_iterations: 20
-    break_when: '$iteration >= $vars.subunit_count'   # 收敛：engine 1-based / simulator 0-based 都停在第 N 次
-    nodes:                          # loop 内节点用复数 nodes（非 node）
+    break_when: '$iteration >= $vars.subunit_count'   # engine 1-based 收敛
+    nodes:
       - id: dispatch-child
         type: task_dispatch
-        subunit: "$iteration.subunit"  # 字符串引用，executor 从 loop iteration context 解析为第 i 个 SubunitSpec
-        await: true                     # G1 pause-resume：等子 schedule 完成
-        input_mapping: { goal: "$vars.goal" }
-        output_mapping: { result: "last_output" }   # 子输出 → $vars.result + $dispatch-child.output.result
+        subunit: "$iteration.subunit"   # 第 i 个 SubunitSpec
+        await: true                      # G1 pause-resume：等子 schedule 完成
   - id: integrate
-    type: swarm                       # integration_goal.strategy=synthesis ⇒ moa 聚合
-    depends_on: [loop-subunits]      # 读 $dispatch-child.output.* 累积的子输出做综合
+    type: swarm                          # integration_goal.strategy=synthesis ⇒ moa
+    depends_on: [loop-subunits]
     mode: moa
-    topic: "$vars.goal"
-    prompt: "$vars.integration_prompt"
-    dynamic: true
-    max_experts: 3
-    aggregator: { role: "synthesizer", prompt: "合并各 subunit 产出到统一交付物。" }
 ```
-
-要点：
-- `task_dispatch` 节点的 `subunit` 是**字符串引用**（`$iteration.subunit`），不是内联对象；executor 从 composition loop 的 iteration context 解析为第 i 个 `SubunitSpec`。
-- `await: true` 触发 G1 pause-resume 跨边界桥：父 composition-wf 暂停，子 schedule（各 subunit 独立 workspace）完成后 resume，子输出经 `output_mapping` 流回 `$vars.<parentVar>` 与 `$dispatch-child.output.<parentVar>`。
-- `integration_goal.strategy=synthesis` ⇒ 末尾 moa/swarm 聚合读 `$dispatch-child.output`；`merge` ⇒ opt-in 结构化合并。
-- N 个 subunits ⇒ N 个子 schedule（各 createFromSpec 独立 ws）；受 `MAX_PARALLEL_WORKSPACES` 约束，超出排队由 task_dispatch 层处理。
-- 模板用 `validate-workflow.js` 校验 0 errors；`octopus workflow simulate composition-task.yaml --json` happy path green（task_dispatch 自动通过，moa 走 mock）。
+- `task_dispatch` 子 schedule 各 `createFromSpec` 独立 ws（origin_role='subunit'）；`await:true` 触发 pause-resume，子输出经 output_mapping 流回。
+- `merge` strategy ⇒ opt-in 结构化合并（非默认 moa synthesis）。
 
 ## 交互风格
 
-- **结构化优先**：始终输出 JSON `task_spec`，不要自由散文。对话中澄清后直接给可粘贴的 JSON。
-- **confirm gate**：产 spec → POST /jobs 创建 draft → 把 JOB_ID 给用户 → 等用户 [入队]。
-- **多仓库不假定 cwd**：项目路径来自 repos/index.md 或用户显式提供，spec 里用 source_path/group 引用。
-- **WHAT/HOW 分离**：你只产 task_spec；workflow_ref 选什么、composition wf 怎么编排是 HOW，由用户/scheduler/模板决定，你可建议但不强加。
-- **失败回滚感知**：若 POST /jobs 失败（如名称冲突 409），server 会回滚自动创建的 task-author session，不会留孤儿会话——直接修名重试即可。
+- **结构化优先**：始终输出 JSON task_spec，不自由散文。
+- **confirm gate**：产 spec → 建draft（POST /api/tasks 或 autosave）→ 把 TASK_ID 给用户 → 等用户 [入队]（POST /:id/ready）。
+- **增量绑字段**：对话中澄清出某字段立即 spec-field 绑，SpecPanel 实时刷新（不必等整 spec）。
+- **多仓库不假定 cwd**：项目路径来自 repos/index.md 或用户提供。
+- **WHAT/HOW 分离**：你只产 task_spec；workflow_ref/composition 编排是 HOW。
 
 ## 错误码
 
 | HTTP | 含义 | 处理 |
 |------|------|------|
-| 400 | 参数校验失败（task_spec 缺 goal/ac、config 格式错） | 检查 JSON 体 |
-| 409 | 名称冲突 / PUT 版本冲突 | 改名或重新 GET 取 version |
+| 400 | 参数校验失败（task_spec 缺 goal/ac） | 检查 JSON 体 |
+| 409 | 名称冲突 / spec-field 版本冲突 | 改名或重新 GET 取 version |
 | 428 | PUT 缺 If-Match | 补 If-Match: <version> |
-| 429 | 限流（创建 10/min） | 等待重试 |

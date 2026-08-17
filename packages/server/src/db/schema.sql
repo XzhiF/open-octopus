@@ -296,8 +296,9 @@ CREATE TABLE IF NOT EXISTS schedules (
   consecutive_failures INTEGER NOT NULL DEFAULT 0,
   max_retain INTEGER NOT NULL DEFAULT 10,
   status TEXT NOT NULL DEFAULT 'queued',
-  trigger_source TEXT,
-  source_chat_session_id TEXT,
+  -- v2: trigger_source + source_chat_session_id REMOVED (SG1b) — schedules is now
+  -- origin-typed (origin_type/origin_id/origin_role/assoc_meta); task linkage lives on
+  -- tasks.source_chat_session_id. status + claimed_at KEPT (run-phase, runner needs).
   origin_type TEXT NOT NULL DEFAULT 'cron',
   origin_id TEXT,
   origin_role TEXT,
@@ -602,7 +603,7 @@ CREATE INDEX IF NOT EXISTS idx_schedules_enabled ON schedules(enabled, deleted_a
 CREATE INDEX IF NOT EXISTS idx_schedules_next_trigger ON schedules(next_trigger_at) WHERE enabled = 1 AND deleted_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_schedules_job_type ON schedules(job_type);
 CREATE INDEX IF NOT EXISTS idx_schedules_enabled_type ON schedules(enabled, job_type) WHERE deleted_at IS NULL;
-CREATE INDEX IF NOT EXISTS idx_schedules_status ON schedules(status, trigger_source) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_schedules_status ON schedules(status) WHERE deleted_at IS NULL;
 -- schema v38: additive origin lookup index (S2 polymorphic association).
 -- findSchedulesByOrigin + cascade-reap + orphan reaper use (origin_type, origin_id).
 CREATE INDEX IF NOT EXISTS idx_schedules_origin ON schedules(origin_type, origin_id) WHERE deleted_at IS NULL;

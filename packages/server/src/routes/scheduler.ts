@@ -222,49 +222,13 @@ export function createSchedulerRoutes(
     const body = await safeJson(c)
     if (!body) return c.json({ error: 'Invalid or missing JSON body' }, 400)
 
-    // G7: auto-create a REAL task-author clone session for requirement-type drafts so
-    // source_chat_session_id isn't orphaned. Replaces the retired 'taskpool-draft' fake
-    // workspace_id sentinel — the session lives in `sessions` (clone-session mechanism),
-    // clone_name='task-author', session_type='clone_direct', scope_id linked to the task
-    // id after createJob succeeds. Caller may pass an explicit source_chat_session_id to
-    // override (e.g., binding to an existing task-author chat session).
-    let autoSessionId: string | null = null
-    if (
-      agentSessionDAO
-      && body.trigger_source === 'requirement'
-      && !body.source_chat_session_id
-    ) {
-      const draftTitle = typeof body.name === 'string' ? body.name : 'Task draft'
-      const org = typeof body.org === 'string' ? body.org : 'default'
-      autoSessionId = crypto.randomUUID()
-      const now = new Date().toISOString()
-      agentSessionDAO.insertSession({
-        id: autoSessionId,
-        org,
-        title: draftTitle,
-        clone_name: 'task-author',
-        session_type: 'clone_direct',
-        // scope_id is null until createJob returns the task id; linked below.
-        scope_id: null,
-        created_at: now,
-        updated_at: now,
-      })
-      body.source_chat_session_id = autoSessionId
-    }
-
+    // v2: task-pool requirement path REMOVED (code-review F3). task-author now uses
+    // /api/tasks (routes/tasks.ts); the G7 auto-session + createJob(trigger_source=
+    // 'requirement') path is dead. POST /api/scheduler/jobs is cron-only.
     try {
       const job = service.createJob(body as CreateJobInputWithSpec)
-      // Link the auto-created clone session to the task (scope_id = task id).
-      if (autoSessionId) {
-        agentSessionDAO?.updateSession(autoSessionId, { scope_id: job.id })
-      }
       return c.json(job, 201)
     } catch (err: unknown) {
-      // Rollback: clean up the orphan task-author session on createJob failure so no
-      // dangling active session references a non-existent task (G7 FK-risk elimination).
-      if (autoSessionId && agentSessionDAO) {
-        try { agentSessionDAO.softDelete(autoSessionId) } catch { /* non-fatal */ }
-      }
       const { status, message } = classifyError(err)
       return c.json({ error: message }, status)
     }
