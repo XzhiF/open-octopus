@@ -14,15 +14,28 @@ vi.mock("@/lib/tasks-api", () => ({
   updateSpecField: vi.fn(),
 }))
 
-// Mock sse-manager: capture the task_status listener so the test can drive it.
-let sseListener: ((e: { data: string }) => void) | null = null
-const unsubSpy = vi.fn()
+// Mock sse-manager: capture listeners per event type so the test can drive
+// both `task_status` (parent mirror) and `schedule_status` (per-child) SSE.
+// ticket 11: CompositeMode subscribes to BOTH event types on the same URL.
+const sseListeners = new Map<string, (e: { data: string }) => void>()
+const unsubSpies: Array<ReturnType<typeof vi.fn>> = []
 vi.mock("@/lib/sse-manager", () => ({
-  subscribeSSE: vi.fn((_url: string, _eventType: string, listener: (e: { data: string }) => void) => {
-    sseListener = listener
-    return unsubSpy
-  }),
+  subscribeSSE: vi.fn(
+    (_url: string, eventType: string, listener: (e: { data: string }) => void) => {
+      sseListeners.set(eventType, listener)
+      const spy = vi.fn()
+      unsubSpies.push(spy)
+      return spy
+    },
+  ),
 }))
+
+/** Dispatch a captured SSE listener for the given event type. */
+function dispatchSSE(eventType: string, data: unknown): void {
+  const listener = sseListeners.get(eventType)
+  if (!listener) throw new Error(`no SSE listener registered for "${eventType}"`)
+  listener({ data: JSON.stringify(data) })
+}
 
 // Mock next/navigation router to assert drill-down navigation (SG15 retarget).
 const pushSpy = vi.fn()
@@ -103,7 +116,8 @@ function makeDetail(overrides: Partial<TaskDetail> = {}): TaskDetail {
 describe("CompositeMode", () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    sseListener = null
+    sseListeners.clear()
+    unsubSpies.length = 0
   })
 
   it("renders DAG, child cards, and integration node from TaskDetail", async () => {
@@ -180,11 +194,13 @@ describe("CompositeMode", () => {
       expect(screen.getByTestId("composite-dag")).toBeDefined()
     })
 
-    expect(sseListener).not.toBeNull()
+    // ticket 11: CompositeMode subscribes to BOTH task_status + schedule_status.
+    expect(sseListeners.has("task_status")).toBe(true)
+    expect(sseListeners.has("schedule_status")).toBe(true)
     // Dispatch a task_status event for the parent task (ScheduleStatusListener
     // emits with task_id = parent; schedule_id = the child that transitioned).
     await act(async () => {
-      sseListener!({ data: JSON.stringify({ task_id: "parent-1", status: "running", schedule_id: "child-1" }) })
+      dispatchSSE("task_status", { task_id: "parent-1", status: "running", schedule_id: "child-1" })
     })
 
     // getTask called a second time (re-fetch).
@@ -196,6 +212,127 @@ describe("CompositeMode", () => {
     await waitFor(() => {
       expect(screen.getByTestId("composite-aggregate-status").textContent).toMatch(/done|完成/)
     })
+  })
+
+  // ── ticket 11: schedule_status SSE for child transitions (AC2) ───────
+
+  it("schedule_status for a child schedule re-fetches + refreshes the child card", async () => {
+    const first = makeDetail()
+    const second = makeDetail({
+      children: [
+        { schedule_id: "child-1", name: "子1", status: "done", origin_role: "subunit", workflow_ref: "wf-a" },
+        { schedule_id: "child-2", name: "子2", status: "running", origin_role: "subunit", workflow_ref: "wf-b" },
+        { schedule_id: "child-3", name: "子3", status: "done", origin_role: "subunit", workflow_ref: "wf-c" },
+      ],
+    })
+    mockGetTask.mockResolvedValueOnce(first).mockResolvedValueOnce(second)
+
+    render(<CompositeMode task={makeParentTask()} onMutated={() => {}} onClose={() => {}} />)
+
+    await waitFor(() => {
+      expect(screen.getByTestId("composite-child-child-1")).toBeDefined()
+    })
+
+    // Before: child-1 is "running" (from makeDetail default).
+    expect(screen.getByTestId("composite-child-child-1").textContent).toMatch(/执行中|running/)
+
+    // A child schedule transition (queued→running→done) emits schedule_status
+    // {schedule_id, status} on the taskpool channel (task-dispatch-service /
+    // workflow-executor). CompositeMode must catch it + refetch.
+    await act(async () => {
+      dispatchSSE("schedule_status", { schedule_id: "child-1", status: "done" })
+    })
+
+    await waitFor(() => {
+      expect(mockGetTask).toHaveBeenCalledTimes(2)
+    })
+
+    // After refetch, child-1 card reflects "done".
+    await waitFor(() => {
+      expect(screen.getByTestId("composite-child-child-1").textContent).toMatch(/完成|done/)
+    })
+  })
+
+  it("schedule_status for an unrelated schedule is ignored (no refetch)", async () => {
+    mockGetTask.mockResolvedValue(makeDetail())
+
+    render(<CompositeMode task={makeParentTask()} onMutated={() => {}} onClose={() => {}} />)
+
+    await waitFor(() => {
+      expect(screen.getByTestId("composite-dag")).toBeDefined()
+    })
+
+    const callsBefore = mockGetTask.mock.calls.length
+
+    // A schedule that isn't one of this task's children — must not trigger work.
+    await act(async () => {
+      dispatchSSE("schedule_status", { schedule_id: "unrelated-schedule", status: "running" })
+    })
+
+    // No refetch (give the scheduler a beat to prove it).
+    expect(mockGetTask.mock.calls.length).toBe(callsBefore)
+  })
+
+  it("schedule_status for a child surfaces in the events panel labelled with the child name", async () => {
+    mockGetTask.mockResolvedValue(makeDetail())
+
+    render(<CompositeMode task={makeParentTask()} onMutated={() => {}} onClose={() => {}} />)
+
+    await waitFor(() => {
+      expect(screen.getByTestId("composite-events-panel")).toBeDefined()
+    })
+
+    await act(async () => {
+      dispatchSSE("schedule_status", { schedule_id: "child-2", status: "running" })
+    })
+
+    // The events panel shows the child's name (子2) — not a raw schedule id.
+    await waitFor(() => {
+      const panel = screen.getByTestId("composite-events-panel")
+      expect(panel.textContent).toContain("子2")
+    })
+  })
+
+  it("does not re-subscribe to SSE when detail refetches (stable subscription)", async () => {
+    // ticket 11: detail must NOT be in the SSE effect deps — refetching should
+    // not tear down + re-create the subscription (risks missing events in the
+    // gap). The handler reads fresh children from a ref instead.
+    const { subscribeSSE } = await import("@/lib/sse-manager")
+    const subscribeSpy = vi.mocked(subscribeSSE)
+
+    mockGetTask.mockResolvedValueOnce(makeDetail()).mockResolvedValueOnce(
+      makeDetail({
+        status: "done",
+        children: [
+          { schedule_id: "child-1", name: "子1", status: "done", origin_role: "subunit", workflow_ref: "wf-a" },
+          { schedule_id: "child-2", name: "子2", status: "done", origin_role: "subunit", workflow_ref: "wf-b" },
+          { schedule_id: "child-3", name: "子3", status: "done", origin_role: "subunit", workflow_ref: "wf-c" },
+        ],
+      }),
+    )
+
+    render(<CompositeMode task={makeParentTask()} onMutated={() => {}} onClose={() => {}} />)
+
+    await waitFor(() => {
+      expect(screen.getByTestId("composite-dag")).toBeDefined()
+    })
+
+    // Snapshot the subscription count after initial mount (2: task_status +
+    // schedule_status).
+    const subsAfterMount = subscribeSpy.mock.calls.length
+
+    // Trigger a refetch via a parent task_status event.
+    await act(async () => {
+      dispatchSSE("task_status", { task_id: "parent-1", status: "done" })
+    })
+    await waitFor(() => {
+      expect(mockGetTask).toHaveBeenCalledTimes(2)
+    })
+
+    // No new subscribe calls — the subscription survived the refetch.
+    expect(subscribeSpy.mock.calls.length).toBe(subsAfterMount)
+    // And no unsubscribe happened either.
+    expect(unsubSpies.every((s) => s.mock.calls.length === 0)).toBe(true)
   })
 
   it("clicking a child card navigates to /tasks/:taskId/children/:scheduleId (SG15)", async () => {

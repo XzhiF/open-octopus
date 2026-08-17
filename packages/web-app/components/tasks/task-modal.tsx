@@ -426,46 +426,87 @@ export function CompositeMode({
     void fetchDetail(task.id)
   }, [task.id, fetchDetail])
 
-  // Real-time SSE: task_status on /api/tasks/events. The ScheduleStatusListener
-  // (SG2) emits when a child schedule transition mirrors onto the parent task.
+  // ticket 11 (AC2): the SSE handlers must read the LATEST children without
+  // re-subscribing on every refetch. detailRef mirrors `detail` so the effect
+  // deps stay [task.id, fetchDetail] (both stable) — the subscription survives
+  // refetches and no events are missed in a tear-down/re-create gap.
+  const detailRef = useRef<TaskDetail | null>(null)
+  useEffect(() => {
+    detailRef.current = detail
+  }, [detail])
+
+  // Real-time SSE on /api/tasks/events. The server's `taskpool` channel carries
+  // TWO event types this drill-down cares about (both forwarded by the route):
+  //  - task_status    {task_id, status, schedule_id, origin_type}  — parent
+  //                    mirror emitted by ScheduleStatusListener (SG2) when a
+  //                    child schedule transition mirrors onto tasks.status.
+  //  - schedule_status {schedule_id, status}                       — per-schedule
+  //                    transitions emitted by task-dispatch-service (child
+  //                    queued/running, SG10) + workflow-executor (running/done/
+  //                    failed). These are the most frequent child signals; without
+  //                    this subscription child cards only refresh on the slower
+  //                    parent-mirror event (ticket 10's minimal wiring).
   useEffect(() => {
     if (!task.id) return
+    const eventsUrl = `${getServerUrl()}/api/tasks/events`
     const parentLabel = "父任务"
+
     const labelFor = (scheduleId: string): string => {
       if (scheduleId === task.id) return parentLabel
-      const child = detail?.children?.find((c) => c.schedule_id === scheduleId)
+      const child = detailRef.current?.children?.find((c) => c.schedule_id === scheduleId)
       return child?.name ?? scheduleId.slice(0, 8)
     }
-    const isRelevant = (payloadTaskId: string, scheduleId?: string): boolean => {
-      if (payloadTaskId === task.id) return true
-      if (scheduleId) return detail?.children?.some((c) => c.schedule_id === scheduleId) ?? false
-      return false
+    // Relevance: task_status is relevant if task_id is the parent OR a known
+    // child schedule_id; schedule_status is relevant only for known children.
+    const isChildSchedule = (scheduleId: string): boolean =>
+      detailRef.current?.children?.some((c) => c.schedule_id === scheduleId) ?? false
+
+    const pushEvent = (scheduleId: string, status: string) => {
+      setEvents((prev) => [
+        ...prev,
+        {
+          schedule_id: scheduleId,
+          status,
+          label: labelFor(scheduleId),
+          at: new Date().toISOString(),
+        },
+      ])
     }
 
-    const unsub = subscribeSSE(
-      `${getServerUrl()}/api/tasks/events`,
-      "task_status",
-      (e: MessageEvent) => {
-        try {
-          const payload = JSON.parse(e.data) as { task_id: string; status: string; schedule_id?: string }
-          if (!isRelevant(payload.task_id, payload.schedule_id)) return
-          setEvents((prev) => [
-            ...prev,
-            {
-              schedule_id: payload.schedule_id ?? payload.task_id,
-              status: payload.status,
-              label: labelFor(payload.schedule_id ?? payload.task_id),
-              at: new Date().toISOString(),
-            },
-          ])
-          void fetchDetail(task.id)
-        } catch {
-          // Malformed event payload — ignore.
-        }
-      },
-    )
-    return () => unsub()
-  }, [task.id, detail, fetchDetail])
+    const onTaskStatus = (e: MessageEvent) => {
+      try {
+        const payload = JSON.parse(e.data) as { task_id: string; status: string; schedule_id?: string }
+        const isParent = payload.task_id === task.id
+        const isChild = payload.schedule_id ? isChildSchedule(payload.schedule_id) : false
+        if (!isParent && !isChild) return
+        pushEvent(payload.schedule_id ?? payload.task_id, payload.status)
+        void fetchDetail(task.id)
+      } catch {
+        // Malformed event payload — ignore.
+      }
+    }
+
+    const onScheduleStatus = (e: MessageEvent) => {
+      try {
+        const payload = JSON.parse(e.data) as { schedule_id: string; status: string }
+        // schedule_status fires for EVERY schedule on the taskpool channel
+        // (incl. cron jobs unrelated to this task). Filter to this task's children
+        // so an unrelated transition doesn't trigger a spurious refetch.
+        if (!isChildSchedule(payload.schedule_id)) return
+        pushEvent(payload.schedule_id, payload.status)
+        void fetchDetail(task.id)
+      } catch {
+        // Malformed event payload — ignore.
+      }
+    }
+
+    const unsubTaskStatus = subscribeSSE(eventsUrl, "task_status", onTaskStatus)
+    const unsubScheduleStatus = subscribeSSE(eventsUrl, "schedule_status", onScheduleStatus)
+    return () => {
+      unsubTaskStatus()
+      unsubScheduleStatus()
+    }
+  }, [task.id, fetchDetail])
 
   const children = detail?.children ?? []
   const dagChildren = childrenToDagChildren(children)
