@@ -9,7 +9,7 @@ import { groupTasksByStatus, TASK_COLUMNS } from "@/lib/task-board"
 import { subscribeSSE } from "@/lib/sse-manager"
 import { getServerUrl } from "@/lib/server-config"
 import { TaskModal } from "@/components/tasks/task-modal"
-import { TASK_STATUS_EVENT } from "@octopus/shared"
+import { TASK_STATUS_EVENT, SPEC_FIELD_UPDATE_EVENT } from "@octopus/shared"
 
 const REFRESH_INTERVAL_MS = 10_000
 
@@ -53,6 +53,19 @@ export default function TasksPage() {
       () => {
         void fetchTasks()
       },
+    )
+    return () => unsub()
+  }, [fetchTasks])
+
+  // spec_field_update: refetch immediately when ANY task's spec changes
+  // (agent binds goal/ac/skills/etc. via the spec-field tool). This makes
+  // the SpecPanel's version-based re-seed fire without waiting for the 10s
+  // poll — the fresh task arrives within milliseconds of the spec-field POST.
+  useEffect(() => {
+    const unsub = subscribeSSE(
+      `${getServerUrl()}/api/tasks/events`,
+      SPEC_FIELD_UPDATE_EVENT,
+      () => { void fetchTasks() },
     )
     return () => unsub()
   }, [fetchTasks])

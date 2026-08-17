@@ -19,7 +19,7 @@
 
 "use client"
 
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -88,12 +88,21 @@ export function SpecPanel({ task, onMutated }: SpecPanelProps) {
   const [saving, setSaving] = useState(false)
 
   const taskId = task?.id
+  // Mirror dirty in a ref so the re-seed effect can check it without depending on dirty
+  // directly (would re-run the effect on every keystroke). Assigned after dirty useMemo below.
+  const dirtyRef = useRef(false)
 
   // Re-seed local state when a DIFFERENT task is opened (modal switch). Same
   // task's version bumps arrive via SSE below — do NOT re-seed on version change
   // or we'd clobber the user's in-progress edits + the SSE-applied fields.
   useEffect(() => {
     if (!taskId) return
+    // SG8fix: don't clobber user edits — only re-seed when the panel is clean.
+    // This also catches missed SSE events: the /tasks page's 10s poll returns
+    // a fresh task (version bumped) → this effect re-runs → applies the fresh
+    // value even if the spec_field_update SSE was missed during a Strict Mode
+    // remount gap.
+    if (dirtyRef.current) return
     const t = task!
     setVersion(t.version)
     setGoal(t.task_spec.goal ?? "")
@@ -105,7 +114,7 @@ export function SpecPanel({ task, onMutated }: SpecPanelProps) {
     setResources(t.resources ?? [])
     setAuthoringResources(t.authoring_resources ?? [])
     // eslint-disable-next-line react-hooks/exhaustive-deps -- re-seed on switch only
-  }, [taskId])
+  }, [taskId, task?.version]) // SG8fix: re-seed on version too (catch missed SSE via poll)
 
   // ── SSE: spec_field_update → apply field locally + bump version (v2-D7/D12) ─
   useEffect(() => {
@@ -174,6 +183,7 @@ export function SpecPanel({ task, onMutated }: SpecPanelProps) {
       JSON.stringify(authoringResources) !== JSON.stringify(task.authoring_resources ?? [])
     )
   }, [task, goal, ac, subunits, integration, skills, projects, resources, authoringResources])
+  dirtyRef.current = dirty  // mirror for the re-seed effect (runs each render)
 
   const handleSave = async (): Promise<void> => {
     if (!task) return
