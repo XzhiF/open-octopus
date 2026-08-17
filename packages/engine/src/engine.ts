@@ -507,12 +507,19 @@ export class WorkflowEngine {
             await this.executeHooks(event as keyof WorkflowHooks, context)
           },
           agentResolver: this.agentResolver,
+          // G1: thread the port so a task_dispatch node inside this loop can fan out
+          // child schedules on every iteration (incl. iterations after the resume one).
+          taskDispatchPort: this.taskDispatchPort,
         }, {
           innerNodeOverrides: overrides.size > 0 ? overrides : undefined,
           resumeFromNodeId: innerNode.id,
           engineNodeResults: this.nodeResults,
           resumeIteration,
           prevIterationResults: prevLoopResult?.innerNodeResults,
+          // G1: one-shot resume payload — the resumed iteration's inner task_dispatch
+          // node consumes this (applies output_mapping → completed, no re-dispatch);
+          // the loop clears it after consumption (approval-override delete precedent).
+          taskDispatchChildOutput: opts?.taskDispatchChildOutput,
         })
 
         this.callbacks?.onNodeStart?.(parentNode.id, parentNode.type)

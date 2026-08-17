@@ -10,12 +10,13 @@ import {
   SchedulerTriggerConflictError,
   SchedulerTriggerSourceMismatchError,
   SchedulerJobNotAbortableError,
+  type CreateJobInputWithSpec,
+  type UpdateJobInputWithSpec,
 } from '../services/scheduler/scheduler-service'
 import { DashboardService } from '../services/scheduler/dashboard-service'
 import { ExportService } from '../services/scheduler/export-service'
 import { ConfigValidationError } from '../services/scheduler/config-validator'
 import { parseCronExpression, naturalLanguageToCron } from '../services/cron-utils'
-import type { CreateJobInput, UpdateJobInput } from '@octopus/shared'
 import type { AgentSessionDAO } from '../db/dao'
 
 // G7 (retire 'taskpool-draft' sentinel): requirement-type drafts no longer bind to a
@@ -252,7 +253,7 @@ export function createSchedulerRoutes(
     }
 
     try {
-      const job = service.createJob(body as CreateJobInput)
+      const job = service.createJob(body as CreateJobInputWithSpec)
       // Link the auto-created clone session to the task (scope_id = task id).
       if (autoSessionId) {
         agentSessionDAO?.updateSession(autoSessionId, { scope_id: job.id })
@@ -296,7 +297,7 @@ export function createSchedulerRoutes(
     }
 
     try {
-      const job = service.updateJob(c.req.param('id'), body as UpdateJobInput, version)
+      const job = service.updateJob(c.req.param('id'), body as UpdateJobInputWithSpec, version)
       return c.json(job)
     } catch (err: unknown) {
       const { status, message } = classifyError(err)

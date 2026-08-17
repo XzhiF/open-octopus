@@ -36,6 +36,22 @@ export class ScheduleConfigDAO extends BaseDAO {
     ).all(parentExecutionId) as ScheduleRow[]
   }
 
+  /**
+   * Ticket 10 (JobDetail composite view): find ALL child schedules dispatched by a
+   * task_dispatch node whose persisted `parent_task_dispatch` marker points at the
+   * given parent composition-wf execution. Mirrors findFailedChildSchedules but
+   * returns children of every status (draft/queued/claimed/running/done/failed/aborted)
+   * so GET /jobs/:id can render the composite kanban's children[] regardless of state.
+   */
+  findChildSchedules(parentExecutionId: string): ScheduleRow[] {
+    return this.stmt(
+      `SELECT * FROM schedules
+       WHERE deleted_at IS NULL
+         AND json_extract(config, '$.parent_task_dispatch.execution_id') = ?
+       ORDER BY created_at ASC`,
+    ).all(parentExecutionId) as ScheduleRow[]
+  }
+
   findByName(name: string): ScheduleRow | null {
     return (this.stmt("SELECT * FROM schedules WHERE name = ? AND deleted_at IS NULL").get(name) as ScheduleRow) ?? null
   }

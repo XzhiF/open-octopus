@@ -214,6 +214,10 @@ export interface LoopConfig extends CoreConfig {
   promptInjector?: PromptInjector
   precomputeHook?: (pool: VarPool, workflowName: string, inputs: Record<string, string>) => Promise<void>
   knowledgeInjectorFactory?: (pool: VarPool) => KnowledgeInjector
+  /** G1: TaskDispatchPort injected by the server (createSessionFn precedent). Threaded to inner
+   *  task_dispatch nodes so a composition Loop can fan out child schedules via the port.
+   *  Without this, an inner task_dispatch node would fail ("no TaskDispatchPort injected"). */
+  taskDispatchPort?: TaskDispatchPort
 }
 
 /** SubWorkflowExecutor — child workflow execution with scoped VarPool */
@@ -272,6 +276,12 @@ export interface ResumeConfig {
   engineNodeResults?: Record<string, NodeExecutionResult>
   /** Inner node results from the iteration that paused — preserves $nodeId.output across resume */
   prevIterationResults?: Record<string, NodeExecutionResult>
+  /** G1: task_dispatch resume payload — the completed child schedule's output snapshot.
+   *  Threaded in by engine.retryFrom({ taskDispatchChildOutput }) when resuming a task_dispatch
+   *  node paused inside a loop. Consumed ONE-SHOT by the loop's inner task_dispatch node
+   *  (approval-override delete precedent): the resumed iteration applies output_mapping and
+   *  completes without re-dispatching; subsequent iterations dispatch the next subunit. */
+  taskDispatchChildOutput?: Record<string, unknown>
 }
 
 // ============================================================

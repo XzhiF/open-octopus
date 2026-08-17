@@ -180,6 +180,7 @@ export class ExecutorFactory {
           ensureNodeExecution: (scopedNodeId, nodeType, meta) => {
             this.ctx.callbacks?.onRuntimeNodeAdded?.(scopedNodeId, nodeType, meta)
           },
+          taskDispatchPort: this.ctx.taskDispatchPort,
         })
       case "agent": {
         const rawKey = node.engine ?? this.ctx.workflow.engine ?? "claude"

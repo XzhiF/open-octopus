@@ -19,6 +19,12 @@ import type {
   JobConfig,
   TriggerSource,
   ScheduleStatus,
+  WorkflowConfig,
+  TaskSpec,
+  SubunitSpec,
+} from '@octopus/shared'
+import {
+  taskSpecSchema,
 } from '@octopus/shared'
 import { ScheduleConfigDAO, ScheduleRunDAO } from '../../db/dao'
 import { SSEService } from '../sse'
@@ -75,6 +81,143 @@ export class SchedulerJobNotAbortableError extends Error {
 // Re-export for convenience
 export { ConfigValidationError }
 
+// ── JobDetail (composite view, ticket 10) ─────────────────────────────
+// GET /jobs/:id returns a JobDetail for composite tasks: children[] (actual
+// dispatched child schedules, found via the parent_task_dispatch marker written
+// by TaskDispatchService at dispatch time) + dag (the composition structure
+// derived from task_spec.subunits + integration_goal). Simple tasks return a
+// plain SchedulerJob (children/dag undefined).
+
+export interface JobDetailDagNode {
+  id: string
+  type: 'subunit' | 'integration'
+  label: string
+  workflow_ref?: string
+}
+
+export interface JobDetailDagEdge {
+  from: string
+  to: string
+}
+
+export interface JobDetailDag {
+  nodes: JobDetailDagNode[]
+  edges: JobDetailDagEdge[]
+}
+
+export interface JobDetailChild {
+  schedule_id: string
+  name: string
+  status: string
+  workflow_ref: string
+  subunit_name: string
+}
+
+export type JobDetail = SchedulerJob & {
+  children?: JobDetailChild[]
+  dag?: JobDetailDag
+}
+
+/** CreateJobInput extended with task_spec-authoring fields (G9). The shared
+ *  CreateJobInput carries the legacy config path; these fields drive the
+ *  task_spec materialization path in createJob/updateJob. */
+export interface CreateJobInputWithSpec extends CreateJobInput {
+  task_spec?: TaskSpec
+  project_ids?: string[]
+  skills?: string[]
+  workflow_ref?: string
+}
+
+export interface UpdateJobInputWithSpec extends UpdateJobInput {
+  task_spec?: TaskSpec
+  project_ids?: string[]
+  skills?: string[]
+  workflow_ref?: string
+}
+
+// ── task_spec → WorkflowConfig materialization (G9) ────────────────────
+// Transforms a task-author-produced TaskSpec into the full WorkflowConfig the
+// executor reads. Simple task (no subunits): workflow_chain single item using
+// the provided workflow_ref. Composite task (subunits present): workflow_ref
+// 'composition-task' (the core-pack template, ticket 04's COMPOSITION_WF_REF)
+// + task_spec.subunits preserved in config (executor reads via
+// buildCompositeInputValues). skills are re-attached post-validation (Zod
+// strips unknown keys from workflowConfigSchema) so per-task skills survive in
+// the persisted config JSON for downstream skill injection (D6).
+
+const COMPOSITION_WF_REF = 'composition-task'
+
+function isCompositeTaskSpec(task_spec: TaskSpec): boolean {
+  return !!task_spec.subunits?.length
+}
+
+function materializeTaskSpecToConfig(
+  task_spec: TaskSpec,
+  project_ids: string[],
+  org: string,
+  workflow_ref?: string,
+  skills?: string[],
+): WorkflowConfig {
+  const isComposite = isCompositeTaskSpec(task_spec)
+  const projects = project_ids.map((id) => ({ name: id, source_path: '', group: '' }))
+  // branch_prefix must match /^[a-zA-Z0-9_-]+$/ (workspaceSpecSchema). Derive a
+  // safe, stable prefix from org so multiple drafts in the same org share a prefix.
+  const branchPrefix = `taskpool-${org}`.replace(/[^a-zA-Z0-9_-]/g, '-').slice(0, 50) || 'taskpool'
+
+  const config: WorkflowConfig = {
+    schema_version: '3.0',
+    type: 'workflow',
+    workspace_spec: {
+      org,
+      branch_prefix: branchPrefix,
+      projects: projects.length
+        ? projects
+        : [{ name: 'default', source_path: '', group: '' }],
+    },
+    workflow_chain: isComposite
+      ? [{ workflow_ref: COMPOSITION_WF_REF, input_values: {} }]
+      : [{ workflow_ref: workflow_ref ?? '', input_values: {} }],
+    max_retain: 10,
+    task_spec,
+  }
+  // Re-attach skills post-validation-safe (survives JSON.stringify; Zod would
+  // strip on re-parse but we only parse-read, not re-validate, on GET).
+  if (skills?.length) {
+    ;(config as WorkflowConfig & { skills?: string[] }).skills = skills
+  }
+  return config
+}
+
+/** Build the composition DAG from task_spec: one node per subunit + one
+ *  integration node (if integration_goal present), edges subunit→integration. */
+function buildDagFromTaskSpec(task_spec: TaskSpec): JobDetailDag {
+  const subunits = task_spec.subunits ?? []
+  const nodes: JobDetailDagNode[] = subunits.map((su: SubunitSpec) => ({
+    id: su.name,
+    type: 'subunit',
+    label: su.name,
+    workflow_ref: su.workflow_ref,
+  }))
+
+  const edges: JobDetailDagEdge[] = []
+
+  if (task_spec.integration_goal || subunits.length > 1) {
+    const integrationId = 'integration'
+    nodes.push({
+      id: integrationId,
+      type: 'integration',
+      label: task_spec.integration_goal?.strategy === 'merge' ? 'merge' : 'synthesis',
+    })
+    for (const su of subunits) {
+      edges.push({ from: su.name, to: integrationId })
+    }
+  } else if (subunits.length === 1) {
+    // Single subunit, no integration — still surface it as a node (no edges).
+  }
+
+  return { nodes, edges }
+}
+
 // ── Zod Validation Schemas ───────────────────────────────────────────
 
 const cronExpressionField = z.string().min(1).refine(
@@ -91,7 +234,14 @@ const createJobSchema = z.object({
     { message: '无效的 IANA 时区' },
   ).optional().default('Asia/Shanghai'),
   org: z.string().min(1).max(100).optional(),
-  config: z.record(z.unknown()),
+  // config is now optional when task_spec is provided (G9: materialize from task_spec).
+  // Backward compatible: existing callers still pass config directly.
+  config: z.record(z.unknown()).optional(),
+  // Ticket 10 (G9): task-author-produced spec → materialized into WorkflowConfig.
+  task_spec: taskSpecSchema.optional(),
+  project_ids: z.array(z.string().min(1)).optional(),
+  skills: z.array(z.string()).optional(),
+  workflow_ref: z.string().optional(),
   parallel_policy: z.enum(['allow', 'wait', 'skip']).optional().default('skip'),
   timeout_seconds: z.number().int().min(60).max(86400).optional().default(3600),
   notify_on_failure: z.boolean().optional().default(false),
@@ -107,6 +257,24 @@ const createJobSchema = z.object({
       path: ['cron_expression'],
     })
   }
+  // G9: one of config or task_spec must be present. task_spec path materializes
+  // the full WorkflowConfig; the legacy config path passes it through directly.
+  if (!data.config && !data.task_spec) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'either config or task_spec is required',
+      path: ['config'],
+    })
+  }
+  // task_spec path requires project_ids (for workspace_spec.projects). The legacy
+  // config path already carries workspace_spec inside config.
+  if (data.task_spec && !data.project_ids?.length && !data.config) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'project_ids is required when task_spec is provided (without config)',
+      path: ['project_ids'],
+    })
+  }
 })
 
 const updateJobSchema = z.object({
@@ -117,6 +285,12 @@ const updateJobSchema = z.object({
     { message: '无效的 IANA 时区' },
   ).optional(),
   config: z.record(z.unknown()).optional(),
+  // Ticket 10: edit task_spec while status=draft (PUT /jobs/:id, If-Match).
+  // Re-materializes the WorkflowConfig from the updated task_spec.
+  task_spec: taskSpecSchema.optional(),
+  project_ids: z.array(z.string().min(1)).optional(),
+  skills: z.array(z.string()).optional(),
+  workflow_ref: z.string().optional(),
   parallel_policy: z.enum(['allow', 'wait', 'skip']).optional(),
   timeout_seconds: z.number().int().min(60).max(86400).optional(),
   notify_on_failure: z.boolean().optional(),
@@ -315,11 +489,29 @@ export class SchedulerService {
 
   // ── Create Job ────────────────────────────────────────────────────
 
-  createJob(input: CreateJobInput): SchedulerJob {
+  createJob(input: CreateJobInputWithSpec): SchedulerJob {
     const validated = createJobSchema.parse(input)
 
-    // Validate config against job type schema
-    const validatedConfig = validateConfig(validated.job_type, validated.config)
+    // G9: materialize WorkflowConfig from task_spec if provided (task-author path),
+    // else use the legacy config path (backward compatible). validateConfig runs
+    // the full Zod schema (workflowConfigSchema v3.0) so task_spec survives (it's
+    // in the schema); skills are re-attached post-validation (Zod strips unknown keys).
+    let validatedConfig: JobConfig
+    let skills: string[] | undefined
+    if (validated.task_spec && !validated.config) {
+      const orgForMaterialization = validated.org ?? ''
+      const materialized = materializeTaskSpecToConfig(
+        validated.task_spec,
+        validated.project_ids ?? [],
+        orgForMaterialization,
+        validated.workflow_ref,
+        validated.skills,
+      )
+      validatedConfig = validateConfig(validated.job_type, materialized)
+      skills = validated.skills
+    } else {
+      validatedConfig = validateConfig(validated.job_type, validated.config)
+    }
 
     // Derive org: explicit org param, or from workspace_spec in config, or empty
     const org = validated.org
@@ -346,7 +538,10 @@ export class SchedulerService {
 
     const id = randomUUID()
     const now = new Date().toISOString()
-    const configJson = JSON.stringify(validatedConfig)
+    // Re-attach skills (stripped by Zod validateConfig) so per-task skills persist
+    // in the config JSON for downstream skill injection (D6).
+    const configObj = skills?.length ? { ...validatedConfig, skills } : validatedConfig
+    const configJson = JSON.stringify(configObj)
 
     // Derive max_retain from config for workflow jobs
     const maxRetain = validatedConfig.type === 'workflow' ? validatedConfig.max_retain : 10
@@ -393,19 +588,74 @@ export class SchedulerService {
 
   // ── Get Job ───────────────────────────────────────────────────────
 
-  getJob(id: string): SchedulerJob {
+  getJob(id: string): JobDetail {
     const row = this.configDAO.getJobWithLastExec(id)
 
     if (!row) {
       throw new SchedulerJobNotFoundError()
     }
 
-    return this.enrichJobRow(row)
+    const job = this.enrichJobRow(row)
+
+    // Ticket 10: composite tasks return JobDetail with children[] + dag.
+    // dag is derived from task_spec.subunits + integration_goal (static structure).
+    // children[] are actual dispatched child schedules (found via the
+    // parent_task_dispatch marker written by TaskDispatchService at dispatch time).
+    // For a draft (not yet dispatched), children=[] — only the planned dag exists.
+    if (job.config.type === 'workflow' && job.config.task_spec?.subunits?.length) {
+      const detail = job as JobDetail
+      detail.dag = buildDagFromTaskSpec(job.config.task_spec)
+      detail.children = this.findCompositeChildren(id, job.config.task_spec.subunits)
+    }
+
+    return job
+  }
+
+  /** Look up dispatched child schedules for a composite parent. Correlates via the
+   *  parent_task_dispatch marker in each child's config (pointing at the parent
+   *  composition-wf execution_id). Matches each child to a subunit by workflow_ref
+   *  (first unmatched) so the kanban can label children with their subunit name. */
+  private findCompositeChildren(scheduleId: string, subunits: SubunitSpec[]): JobDetailChild[] {
+    // Find the parent's composition-wf execution_id from schedule_executions.
+    // Draft → no executions → children=[].
+    const execs = this.runDAO.listExecutions(scheduleId, { limit: 5 })
+    const parentExecId = execs.data.find((e) => e.execution_id)?.execution_id
+    if (!parentExecId) return []
+
+    const childRows = this.configDAO.findChildSchedules(parentExecId)
+    const usedSubunitIdx = new Set<number>()
+
+    return childRows.map((row) => {
+      const childConfig = safeJsonParse<{ workflow_chain?: Array<{ workflow_ref: string }> }>(
+        row.config,
+        {},
+      )
+      const childWorkflowRef = childConfig.workflow_chain?.[0]?.workflow_ref ?? ''
+
+      // Match child to subunit by workflow_ref (first unmatched subunit).
+      let subunitName = row.name
+      for (let i = 0; i < subunits.length; i++) {
+        if (usedSubunitIdx.has(i)) continue
+        if (subunits[i].workflow_ref === childWorkflowRef) {
+          subunitName = subunits[i].name
+          usedSubunitIdx.add(i)
+          break
+        }
+      }
+
+      return {
+        schedule_id: row.id,
+        name: row.name,
+        status: row.status,
+        workflow_ref: childWorkflowRef,
+        subunit_name: subunitName,
+      }
+    })
   }
 
   // ── Update Job (optimistic locking) ──────────────────────────────
 
-  updateJob(id: string, input: UpdateJobInput, version: number): SchedulerJob {
+  updateJob(id: string, input: UpdateJobInputWithSpec, version: number): SchedulerJob {
     const existing = this.configDAO.findByIdRaw(id) as unknown as ScheduleRow | undefined
 
     if (!existing) {
@@ -418,9 +668,36 @@ export class SchedulerService {
 
     const validated = updateJobSchema.parse(input)
 
-    // Validate config if provided
+    // G9: re-materialize config if task_spec provided (edit while draft).
+    // task_spec edits are only allowed while status=draft (the authoring review
+    // state). Once enqueued (queued/claimed/running/done/failed/aborted), the
+    // config is immutable — editing it would desync the executor.
     let validatedConfig: JobConfig | undefined
-    if (validated.config) {
+    let skills: string[] | undefined
+    if (validated.task_spec) {
+      if ((existing.status ?? 'queued') !== 'draft') {
+        throw new SchedulerJobConflictError(
+          `Cannot edit task_spec: current status is ${existing.status ?? 'queued'} (only draft can be edited)`,
+        )
+      }
+      const existingConfig = safeJsonParse<WorkflowConfig>(existing.config, {} as WorkflowConfig)
+      const existingProjects = existingConfig.workspace_spec?.projects?.map((p) => p.name) ?? []
+      const projectIds = validated.project_ids ?? existingProjects
+      const org = existingConfig.workspace_spec?.org ?? existing.org ?? ''
+      // Preserve the existing workflow_ref when re-materializing (simple tasks need
+      // it for workflow_chain; composite tasks use 'composition-task' regardless).
+      const existingWorkflowRef = existingConfig.workflow_chain?.[0]?.workflow_ref
+      const materialized = materializeTaskSpecToConfig(
+        validated.task_spec,
+        projectIds,
+        org,
+        validated.workflow_ref ?? existingWorkflowRef,
+        validated.skills,
+      )
+      validatedConfig = validateConfig(existing.job_type as JobType, materialized)
+      skills = validated.skills
+    } else if (validated.config) {
+      // Legacy config path (backward compatible)
       validatedConfig = validateConfig(existing.job_type as JobType, validated.config)
     }
 
@@ -485,7 +762,10 @@ export class SchedulerService {
         updateFields.notify_on_failure = validated.notify_on_failure ? 1 : 0
       }
       if (validatedConfig) {
-        updateFields.config = JSON.stringify(validatedConfig)
+        // Re-attach skills (stripped by Zod validateConfig) so per-task skills
+        // persist in the config JSON (D6, same as createJob).
+        const configObj = skills?.length ? { ...validatedConfig, skills } : validatedConfig
+        updateFields.config = JSON.stringify(configObj)
         if (existing.job_type === 'workflow' && validatedConfig.type === 'workflow') {
           updateFields.max_retain = validatedConfig.max_retain
         }
