@@ -25,6 +25,13 @@ export interface SessionOptions {
   skills?: string[]
   /** Allowed tool names (Pi SDK lowercase names: "read", "bash", etc.) — undefined = all tools */
   tools?: string[]
+  /**
+   * Pre-opened SessionManager for resuming an existing session.
+   * When provided, createAgentSession adopts its resumed state (messages,
+   * thinking level, model) instead of creating a new session file.
+   * Used by findSession() to reconstruct a usable AgentSession (ticket 13).
+   */
+  sessionManager?: any
   /** Custom provider definitions from models.yaml custom_providers */
   customProviders?: Record<string, {
     base_url: string
@@ -85,6 +92,10 @@ export async function createSession(opts: SessionOptions): Promise<SessionResult
     cwd: opts.cwd,
     modelRegistry,
     resourceLoader,
+    // ticket 13: when resuming, pass the pre-opened SessionManager so the
+    // new AgentSession adopts the resumed state (messages/thinking/model)
+    // instead of creating a fresh session file.
+    ...(opts.sessionManager ? { sessionManager: opts.sessionManager } : {}),
     ...(opts.systemPrompt ? { systemPrompt: opts.systemPrompt } : {}),
     ...(opts.extensions ? { extensions: opts.extensions } : {}),
     ...(opts.customTools ? { customTools: opts.customTools } : {}),
@@ -307,16 +318,64 @@ export function disposeSession(session: any): void {
   }
 }
 
-export async function findSession(cwd: string, id: string): Promise<SessionResult | null> {
+/**
+ * Find a persisted session by id (prefix match) and reconstruct a usable
+ * AgentSession from it (ticket 13).
+ *
+ * Pre-fix bug (SPIKE S2): this returned the bare SessionManager (file handle)
+ * from `SessionManager.open(...)`. provider.ts:284/298 then called
+ * `session.subscribe`/`session.prompt` on it — both undefined on SessionManager
+ * → TypeError on every resumed clone chat turn 2+.
+ *
+ * Fix: open the SessionManager to get the resumed state, then rebuild an
+ * AgentSession via createAgentSession with `options.sessionManager = <opened>`.
+ * This produces an AgentSession carrying subscribe/prompt/abort/dispose AND
+ * the resumed history, with the same extensions/systemPrompt/customTools
+ * wiring as a fresh session (no AC4 regression).
+ *
+ * @param cwd Working directory (used to locate the session dir)
+ * @param id Session id (prefix match against SessionManager.list)
+ * @param opts SessionOptions to apply when reconstructing the AgentSession
+ *   (extensions, customTools, systemPrompt, skills, customProviders,
+ *   filteredEnv). When omitted, a minimal cwd-only reconstruction is used.
+ */
+export async function findSession(
+  cwd: string,
+  id: string,
+  opts?: SessionOptions,
+): Promise<SessionResult | null> {
   try {
     const pi = await getPiModule()
-    if (pi.SessionManager) {
-      const sessions = await pi.SessionManager.list(cwd)
-      const match = sessions?.find((s: any) => s.id?.startsWith(id))
-      if (match) {
-        const session = await pi.SessionManager.open(match.path)
-        return { session, sessionId: match.id, modelRegistry: null }
-      }
+    if (!pi.SessionManager) return null
+    const sessions = await pi.SessionManager.list(cwd)
+    const match = sessions?.find((s: any) => s.id?.startsWith(id))
+    if (!match) return null
+    // Reopen the session file to recover persisted state (messages, thinking
+    // level, model). SessionManager is a file handle, NOT an AgentSession —
+    // it lacks subscribe/prompt/abort/dispose.
+    const sessionManager = await pi.SessionManager.open(match.path)
+    // Reconstruct an AgentSession that adopts the resumed SessionManager.
+    // Routed through createSession so extensions/systemPrompt/customTools/
+    // modelRegistry/resourceLoader wiring matches a fresh session.
+    const reconstructed = await createSession({
+      cwd,
+      filteredEnv: opts?.filteredEnv,
+      systemPrompt: opts?.systemPrompt,
+      extensions: opts?.extensions,
+      customTools: opts?.customTools,
+      skills: opts?.skills,
+      tools: opts?.tools,
+      customProviders: opts?.customProviders,
+      sessionManager,
+    })
+    // Preserve the canonical session id from the SessionInfo (the reopened
+    // SessionManager carries the same id, but createSession's sessionId
+    // extraction already reads it from the AgentSession — keep match.id as
+    // the source of truth to match the pre-fix return shape).
+    return {
+      session: reconstructed.session,
+      sessionId: reconstructed.sessionId ?? match.id,
+      modelRegistry: reconstructed.modelRegistry,
     }
   } catch {
     // Session restore not available

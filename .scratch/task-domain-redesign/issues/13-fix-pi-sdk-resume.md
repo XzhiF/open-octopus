@@ -7,7 +7,24 @@
 None（providers 包，独立于 v2 tasks 域；与 01 同 Stage 0 并发，不同包无冲突）。
 
 ## Status
-in-progress (ticket 13, Stage 0)
+done (ticket 13, Stage 0)
+
+## Verification Summary
+
+### Files changed (providers-internal only)
+- `packages/providers/src/pi/pi-sdk-adapter.ts` — added `sessionManager?` to `SessionOptions`; threaded into `createAgentSession`; refactored `findSession(cwd, id, opts?)` to open `SessionManager.open(match.path)` then route through `createSession({...opts, sessionManager})` so it returns an `AgentSession` (subscribe/prompt/abort/dispose) carrying resumed state.
+- `packages/providers/src/pi/provider.ts` — `PiAgentProvider` SessionCache factory now passes the full `SessionOptions` (extensions/systemPrompt/customTools/skills/customProviders/filteredEnv/cwd) into `PiSdk.findSession(...)` so the reconstructed AgentSession matches a fresh session's wiring.
+- `packages/providers/src/__tests__/pi/session-resume.test.ts` — replaced mock-only resume coverage with REAL `createSession`/`findSession` calls that catch the SessionManager-vs-AgentSession type mismatch; kept the original TC-038/TC-039 SessionCache mock tests (different seam).
+
+### AC results
+- AC1: `findSession` returns a usable `AgentSession` (subscribe/prompt/abort/dispose verified as functions), not a bare `SessionManager`. PASS.
+- AC2: 2-turn resume — `session.subscribe(cb)` returns an unsub function (no TypeError), `session.prompt` is a function, and `session.agent.state.messages` contains the turn-1 assistant reply (history preserved). PASS.
+- AC3: `session-resume.test.ts` uses a REAL factory (no mocks) for the resume path and asserts AgentSession methods exist — the exact test that was red before the fix (`TypeError: session.subscribe is not a function`) is now green. PASS.
+- AC4: workspace clone chat resume does not regress — full providers suite shows 11 pre-existing failures (identical to baseline with changes stashed; all in unrelated files: connectivity/faux-provider/sub-agent-tool/system-prompt/session-cache mock tests) and 0 new failures. PASS.
+
+### Test run
+`pnpm vitest run src/__tests__/pi/session-resume.test.ts` → 5/5 PASS.
+Full `pnpm vitest run` (providers) → 141 passed | 11 failed (all pre-existing, unchanged from baseline). `pnpm build` → success. `tsc --noEmit` → no errors in touched files.
 
 ## Exploration
 
