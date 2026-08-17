@@ -39,6 +39,9 @@ import { PipelineConfigLoader } from "../pipeline-config"
 import { HarnessController } from "../harness/harness-controller"
 import { HarnessConfigService } from "../harness/config-service"
 import { HarnessDAO } from "../../db/dao/harness-dao"
+import { TaskDispatchService } from "../scheduler/task-dispatch-service"
+import { WorkspaceService } from "../workspace"
+import { WorkspaceDAO } from "../../db/dao"
 
 export class ExecutionLifecycle {
   private enginePool: EnginePool
@@ -52,6 +55,11 @@ export class ExecutionLifecycle {
   private _externalCallbacks = new Map<string, Partial<EngineCallbacks>>()
   private knowledgeService?: KnowledgeService
   private harnessController?: HarnessController
+  // G1 TaskDispatchPort impl for this (coordinator) workspace. Injected into every
+  // engine via engineFactory.setTaskDispatchPort. Its resumeParent callback is bound
+  // to this lifecycle's resumeTaskDispatch (after construction — breaks the cycle:
+  // the port is passed to EngineFactory, which this lifecycle constructs).
+  private taskDispatchService: TaskDispatchService
   // Throttle retireStaleRules — only run at most once per RETIRE_INTERVAL_MS
   // across all executions. retireStaleRules scans the DB and rewrites
   // knowledge files for every stale rule, so calling it on every on_complete
@@ -82,6 +90,24 @@ export class ExecutionLifecycle {
       new PipelineConfigLoader(workspacePath),
       workspacePath,
     )
+
+    // G1: construct this workspace's TaskDispatchPort and wire it into the engine
+    // factory (so every engine built here gets the port via setTaskDispatchPort).
+    // The resume callback is bound lazily — dispatchChildSchedule only fires at
+    // engine.run() time, long after this constructor returns, so binding it here
+    // (via an arrow that calls this.resumeTaskDispatch) is safe.
+    this.taskDispatchService = new TaskDispatchService({
+      db,
+      workspaceId,
+      workspacePath,
+      org,
+      workspaceService: new WorkspaceService(new WorkspaceDAO(db)),
+      sse,
+    })
+    this.taskDispatchService.setResumeParentCallback(
+      (execId, nodeId, output) => this.resumeTaskDispatch(execId, nodeId, output),
+    )
+    this.engineFactory.setTaskDispatchPort(this.taskDispatchService)
     this.gitOps = new GitOperations(workspacePath)
     this.stateManager = new StateFileManager(workspacePath, workspaceDbId, dao)
     this.queryService = new ExecutionQueryService({
@@ -455,6 +481,32 @@ export class ExecutionLifecycle {
             nodeId: interactionMeta?.nodeId,
             sessionId: interactionMeta?.sessionId,
             maxRounds: interactionMeta?.maxRounds,
+          },
+        })
+        this.enginePool.remove(id)
+        return this.dao.findById(id)!
+      }
+
+      // G1 task_dispatch pause: composition-wf node awaiting a child schedule.
+      // Mirrors pending_interaction — persist var_pool (so a reconstructed engine
+      // resumes from the snapshot), emit SSE for observability, and remove from the
+      // enginePool (the server's child-complete callback reconstructs + resumes via
+      // resumeTaskDispatch → engine.retryFrom({ taskDispatchChildOutput })). The child
+      // schedule correlation (parent execution_id + task_dispatch node_id) is recorded
+      // by the TaskDispatchPort on the child schedule's config at dispatch time.
+      if (result.status === "pending_task_dispatch") {
+        this.updateStatus(id, result.status, { progress: result.progress ?? 0, var_pool: JSON.stringify(result.poolSnapshot) })
+        this.syncStateJson()
+        const pausedNode = Object.values(result.nodeResults).find(r => r.status === "pending_task_dispatch")
+        const taskDispatchMeta = pausedNode?.taskDispatchMetadata
+        this.sse.emit(this.workspaceId, {
+          event: "execution_task_dispatch_awaited",
+          data: {
+            executionId: id,
+            nodeId: taskDispatchMeta?.nodeId,
+            scheduleId: taskDispatchMeta?.scheduleHandle.schedule_id,
+            workspaceId: taskDispatchMeta?.scheduleHandle.workspace_id,
+            subunitName: taskDispatchMeta?.subunitName,
           },
         })
         this.enginePool.remove(id)
@@ -1076,6 +1128,139 @@ export class ExecutionLifecycle {
             this.harnessController.onExecutionEnd(executionId, { status: "failed" })
           } catch (harnessErr) {
             console.warn("[ExecutionLifecycle] Harness cleanup failed in interaction error path (non-fatal):", harnessErr)
+          }
+        }
+      }
+    })
+  }
+
+  // ==================== Task dispatch resume (G1) ====================
+
+  /**
+   * Resume a composition-wf execution paused on a `pending_task_dispatch` node,
+   * threading the completed child schedule's output back into the parent engine.
+   *
+   * Called by the server's child-complete callback (TaskDispatchService /
+   * workflow-executor) when a child schedule dispatched by a task_dispatch node
+   * finishes. Mirrors `completeInteraction` + `runInteractionCompleteInBackground`:
+   * reconstructs the engine from the persisted var_pool snapshot (the paused
+   * task_dispatch node is NOT pre-seeded — `findCompletedNodeExecutions` excludes
+   * pending_* statuses — so retryFrom re-runs it with `taskDispatchChildOutput`,
+   * the executor applies output_mapping and completes, and downstream aggregation
+   * nodes read `$<taskDispatchId>.output.<key>`.
+   */
+  async resumeTaskDispatch(
+    id: string,
+    nodeId: string,
+    childOutput: Record<string, unknown>,
+  ): Promise<ExecutionRow> {
+    const exec = this.dao.findById(id)
+    if (!exec) throw Object.assign(new Error("Execution not found"), { status: 404 })
+    if (exec.status !== "pending_task_dispatch") {
+      throw Object.assign(new Error(`执行不在 task_dispatch 等待状态 (current: ${exec.status})`), { status: 400 })
+    }
+
+    const neId = `${id}-${nodeId}`
+    const ne = this.dao.findNodeExecutionById(neId)
+    if (!ne) throw Object.assign(new Error("Node execution not found"), { status: 404 })
+
+    this.enginePool.clearApprovalTimer(id) // reuse the approval-timer mechanism for any future timeout
+
+    let inst = this.enginePool.get(id)
+    if (!inst) {
+      inst = this.reconstructEngine(exec)
+      this.enginePool.create(id, inst.engine, inst.abortController)
+    }
+
+    // Mark the awaited node back to running so the kanban/duration tracking reflects
+    // the resume (same as completeInteraction marking the interaction node completed).
+    const startedAt = ne.started_at ? new Date(ne.started_at).getTime() : Date.now()
+    const durationMs = Date.now() - startedAt
+    this.updateNodeStatus(neId, "running", { completed_at: null, duration: durationMs })
+    this.updateStatus(id, "running")
+
+    this.sse.emit(this.workspaceId, {
+      event: "execution_task_dispatch_resumed",
+      data: { executionId: id, nodeId },
+    })
+    this.sse.emit(this.workspaceId, { event: "execution_status", data: { executionId: id, status: "running" } })
+
+    this.runTaskDispatchResumeInBackground(id, nodeId, inst.abortController.signal, childOutput)
+
+    return this.dao.findById(id)!
+  }
+
+  private runTaskDispatchResumeInBackground(
+    executionId: string,
+    nodeId: string,
+    signal: AbortSignal,
+    childOutput: Record<string, unknown>,
+  ): void {
+    setImmediate(async () => {
+      try {
+        const inst = this.enginePool.get(executionId)
+        if (!inst) return
+
+        const result = await inst.engine.retryFrom(nodeId, {
+          signal,
+          taskDispatchChildOutput: childOutput,
+        })
+
+        if (signal.aborted) return
+
+        // Process the result similar to normal execution completion.
+        // A resumed task_dispatch that pauses again (e.g. a Loop dispatching the
+        // next subunit) returns pending_task_dispatch — leave the execution paused
+        // for the next child-complete callback (mirrors the interaction paused check).
+        const currentExec = this.dao.findById(executionId)
+        if (result.status === "pending_task_dispatch" || currentExec?.status === "pending_task_dispatch") {
+          this.updateStatus(executionId, "pending_task_dispatch", {
+            var_pool: JSON.stringify(result.poolSnapshot),
+          } as any)
+          this.syncStateJson()
+          // Emit awaited SSE + remove from pool — the next child completion reconstructs.
+          this.sse.emit(this.workspaceId, {
+            event: "execution_task_dispatch_awaited",
+            data: {
+              executionId,
+              nodeId: Object.values(result.nodeResults).find(r => r.status === "pending_task_dispatch")?.taskDispatchMetadata?.nodeId,
+            },
+          })
+          this.enginePool.remove(executionId)
+          return
+        }
+        if (currentExec?.status === "paused") {
+          this.syncStateJson()
+          return
+        }
+
+        this.updateStatus(executionId, result.status, {
+          completed_at: new Date().toISOString(),
+          duration: Date.now() - (currentExec?.started_at ? new Date(currentExec.started_at).getTime() : Date.now()),
+          var_pool: JSON.stringify(result.poolSnapshot),
+          gate_status: result.status === "completed" ? "open" : "closed",
+        } as any)
+
+        this.syncStateJson()
+        this.sse.emit(this.workspaceId, { event: "complete", data: { executionId, finalStatus: result.status } })
+        this.enginePool.remove(executionId)
+
+        if (this.harnessController) {
+          try {
+            this.harnessController.onExecutionEnd(executionId, { status: result.status as string })
+          } catch (err) {
+            console.warn("[ExecutionLifecycle] Harness cleanup failed in task_dispatch resume (non-fatal):", err)
+          }
+        }
+      } catch (err) {
+        console.error(`[ExecutionLifecycle] Task dispatch resume failed for ${executionId}/${nodeId}`, err)
+        this.updateStatus(executionId, "failed", { error: `Task dispatch resume failed: ${err instanceof Error ? err.message : String(err)}` })
+
+        if (this.harnessController) {
+          try {
+            this.harnessController.onExecutionEnd(executionId, { status: "failed" })
+          } catch (harnessErr) {
+            console.warn("[ExecutionLifecycle] Harness cleanup failed in task_dispatch resume error path (non-fatal):", harnessErr)
           }
         }
       }

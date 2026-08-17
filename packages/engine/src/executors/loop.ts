@@ -313,7 +313,7 @@ export class LoopExecutor implements NodeExecutor {
           }
         }
 
-        if (result.status === "paused" || result.status === "pending_approval") {
+        if (result.status === "paused" || result.status === "pending_approval" || result.status === "pending_task_dispatch") {
           const durationMs = Date.now() - start
           // Build innerNodeResults from completed nodes (for resume)
           const innerNodeResults: Record<string, NodeExecutionResult> = {}
@@ -330,6 +330,9 @@ export class LoopExecutor implements NodeExecutor {
             // but on subsequent loop iterations the loop's onNodeEnd is the
             // only source of the new approval info.
             approvalMetadata: result.approvalMetadata,
+            // G1: propagate task_dispatch pause metadata so the server can correlate
+            // the child schedule completion back to this loop's inner task_dispatch node.
+            taskDispatchMetadata: result.taskDispatchMetadata,
             innerNodeResults,
           }
         }

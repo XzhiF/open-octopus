@@ -14,6 +14,7 @@ import { LoopExecutor } from "./executors/loop"
 import { AgentExecutor } from "./executors/agent"
 import { SwarmExecutor } from "./executors/swarm"
 import { AgentNodeRunner } from "./executors/agent-runner"
+import { TaskDispatchExecutor } from "./executors/task-dispatch"
 import { topologicalSort, computeExecutionLevels, detectCycles, buildConditionTargetDeps, getEffectiveDeps } from "./graph-utils"
 import { ExecutorFactory } from "./executor-factory"
 import { JsonlLogger, sanitizeId } from "./logger"
@@ -26,6 +27,7 @@ import type { ModelAliasConfig } from "@octopus/shared"
 import { PromptInjector } from "./prompt-injector"
 import type { KnowledgeInjector } from "./knowledge-injector"
 import type { VersionResolver } from "@octopus/shared"
+import type { TaskDispatchPort } from "@octopus/shared"
 import { RetryPolicyResolver } from "./pipeline/retry-resolver"
 import { FailureClassifier } from "./pipeline/failure-classifier"
 import { NotifyDispatcher } from "./notify/dispatcher"
@@ -37,7 +39,7 @@ import type { PipelineConfig } from "@octopus/shared"
 
 export interface ExecutionResult {
   workflowName: string
-  status: "completed" | "completed_with_failures" | "failed" | "paused" | "cancelled" | "rejected" | "pending_approval" | "pending_interaction"
+  status: "completed" | "completed_with_failures" | "failed" | "paused" | "cancelled" | "rejected" | "pending_approval" | "pending_interaction" | "pending_task_dispatch"
   nodeResults: Record<string, NodeExecutionResult>
   poolSnapshot: Record<string, any>
   durationMs: number
@@ -120,6 +122,13 @@ export class WorkflowEngine {
   private pausedAt?: string
   private pendingApprovalNodeId?: string
   private pendingInteractionNodeId?: string
+  // task_dispatch pause (G1): the composition-wf node awaiting a child schedule.
+  // Mirrors pendingApprovalNodeId/pendingInteractionNodeId — cleared on retryFrom.
+  private pendingTaskDispatchNodeId?: string
+  // Server-injected TaskDispatchPort (G1). Optional so a missing injection surfaces
+  // as a deterministic node failure (executor returns "TaskDispatchPort not available"),
+  // not a crash. Set via setTaskDispatchPort at server boot (setVersionResolver precedent).
+  private taskDispatchPort?: TaskDispatchPort
   private executionMode: "auto" | "serial"
   private maxConcurrent: number | undefined
   // globalSessionId: the workflow's main conversation thread.
@@ -254,8 +263,21 @@ export class WorkflowEngine {
     registerBuiltinProviders()
     this.notifyDispatcher = new NotifyDispatcher(new ProviderRegistry(), new TemplateRenderer())
 
-    // Initialize executor factory
-    this.executorFactory = new ExecutorFactory({
+    // Initialize executor factory (instance fields are all set by this point;
+    // workflowResolver/versionResolver/taskDispatchPort are undefined until their
+    // setters fire — buildExecutorFactoryContext reads them directly so rebuilds
+    // pick up the latest values, mirroring the setVersionResolver precedent).
+    this.executorFactory = new ExecutorFactory(this.buildExecutorFactoryContext())
+  }
+
+  /**
+   * Build the ExecutorFactoryContext from the current instance fields.
+   * Used by the constructor + setWorkflowResolver/setVersionResolver/setTaskDispatchPort
+   * so a rebuild always reflects the latest injected resolvers/ports. Single source of
+   * truth — avoids 4× field-list drift across the rebuild sites.
+   */
+  private buildExecutorFactoryContext(): import("./executor-factory").ExecutorFactoryContext {
+    return {
       pool: this.pool,
       signal: this.signal,
       nodeResults: this.nodeResults,
@@ -280,7 +302,8 @@ export class WorkflowEngine {
       workflowResolver: this.workflowResolver,
       visitedWorkflows: this.visitedWorkflows,
       versionResolver: this.versionResolver,
-    })
+      taskDispatchPort: this.taskDispatchPort,
+    }
   }
 
   updateVarPool(data: Record<string, string>): void {
@@ -306,33 +329,7 @@ export class WorkflowEngine {
   ): void {
     this.workflowResolver = resolver
     this.visitedWorkflows = visitedWorkflows
-    // Update the executor factory context
-    this.executorFactory = new ExecutorFactory({
-      pool: this.pool,
-      signal: this.signal,
-      nodeResults: this.nodeResults,
-      logger: this.logger,
-      callbacks: this.callbacks,
-      cwd: this.cwd,
-      crossExecResolver: this.crossExecResolver,
-      executionId: this.executionId,
-      providers: this.providers,
-      workflow: this.workflow,
-      workflowDefaultModel: this.workflowDefaultModel,
-      globalSessionId: this.globalSessionId,
-      branchSessionIds: this.branchSessionIds,
-      inputs: this.inputs,
-      modelAliasConfig: this.modelAliasConfig,
-      checkpointStore: this.checkpointStore,
-      agentResolver: this.agentResolver,
-      knowledgeInjectorFactory: this.knowledgeInjectorFactory,
-      promptInjector: this.promptInjector,
-      resolvePreviousSessionId: (node) => this.resolvePreviousSessionId(node),
-      executeHooks: (event, context) => this.executeHooks(event, context),
-      workflowResolver: resolver,
-      visitedWorkflows,
-      versionResolver: this.versionResolver,
-    })
+    this.executorFactory = new ExecutorFactory(this.buildExecutorFactoryContext())
   }
 
   /**
@@ -341,33 +338,19 @@ export class WorkflowEngine {
    */
   setVersionResolver(resolver: VersionResolver): void {
     this.versionResolver = resolver
-    // Rebuild executor factory with versionResolver
-    this.executorFactory = new ExecutorFactory({
-      pool: this.pool,
-      signal: this.signal,
-      nodeResults: this.nodeResults,
-      logger: this.logger,
-      callbacks: this.callbacks,
-      cwd: this.cwd,
-      crossExecResolver: this.crossExecResolver,
-      executionId: this.executionId,
-      providers: this.providers,
-      workflow: this.workflow,
-      workflowDefaultModel: this.workflowDefaultModel,
-      globalSessionId: this.globalSessionId,
-      branchSessionIds: this.branchSessionIds,
-      inputs: this.inputs,
-      modelAliasConfig: this.modelAliasConfig,
-      checkpointStore: this.checkpointStore,
-      agentResolver: this.agentResolver,
-      knowledgeInjectorFactory: this.knowledgeInjectorFactory,
-      promptInjector: this.promptInjector,
-      resolvePreviousSessionId: (node) => this.resolvePreviousSessionId(node),
-      executeHooks: (event, context) => this.executeHooks(event, context),
-      workflowResolver: this.workflowResolver,
-      visitedWorkflows: this.visitedWorkflows,
-      versionResolver: resolver,
-    })
+    this.executorFactory = new ExecutorFactory(this.buildExecutorFactoryContext())
+  }
+
+  /**
+   * Set the server-provided TaskDispatchPort (G1 pause-resume bridge).
+   * Called by EngineFactory at createEngine/reconstructEngine so task_dispatch nodes
+   * can fan out child schedules. Optional — a missing injection surfaces as a
+   * deterministic node failure ("TaskDispatchPort not available"), not a crash.
+   * Mirrors setVersionResolver: set field → rebuild factory.
+   */
+  setTaskDispatchPort(port: TaskDispatchPort): void {
+    this.taskDispatchPort = port
+    this.executorFactory = new ExecutorFactory(this.buildExecutorFactoryContext())
   }
 
   setNodeResult(nodeId: string, result: NodeExecutionResult): void {
@@ -466,10 +449,15 @@ export class WorkflowEngine {
       intervention?: string
       interactionCompletion?: { summary: string; vars_update?: Record<string, any> }
       interactionSessionId?: string
+      /** G1 task_dispatch resume payload: the completed child schedule's output
+       *  snapshot. When present on a task_dispatch pause node, the executor applies
+       *  output_mapping and completes (mirrors interactionCompletion for interaction). */
+      taskDispatchChildOutput?: Record<string, unknown>
     }
   ): Promise<ExecutionResult> {
     this.pendingApprovalNodeId = undefined
     this.pendingInteractionNodeId = undefined
+    this.pendingTaskDispatchNodeId = undefined
     this.pausedAt = undefined  // ★ 清除暂停状态，允许继续执行
     const start = Date.now()
 
@@ -537,6 +525,14 @@ export class WorkflowEngine {
         if (loopResult.status === "pending_approval") {
           this.pendingApprovalNodeId = parentNode.id
           return { status: "pending_approval" as const, workflowName: this.workflow.name, nodeResults: this.nodeResults, poolSnapshot: this.pool.snapshot(), durationMs: loopDurationMs }
+        }
+        // G1: a task_dispatch node inside the loop paused awaiting a child schedule.
+        // The loop's pendingTaskDispatchNodeId is the OUTER loop node (so the server
+        // can resume the whole loop); the inner task_dispatch node id is carried in
+        // loopResult.taskDispatchMetadata.nodeId for the server's resume correlation.
+        if (loopResult.status === "pending_task_dispatch") {
+          this.pendingTaskDispatchNodeId = parentNode.id
+          return { status: "pending_task_dispatch" as const, workflowName: this.workflow.name, nodeResults: this.nodeResults, poolSnapshot: this.pool.snapshot(), durationMs: loopDurationMs }
         }
         if (loopResult.status === "failed") {
           return { status: "failed" as const, workflowName: this.workflow.name, nodeResults: this.nodeResults, poolSnapshot: this.pool.snapshot(), durationMs: loopDurationMs }
@@ -635,6 +631,58 @@ export class WorkflowEngine {
       this.nodeResults[pauseNode.id] = result
 
       // Fire onNodeEnd callback so outputs/tokens are persisted to DB
+      this.callbacks?.onNodeEnd?.(pauseNode.id, result.status, result.durationMs ?? 0, result, pauseNode.type)
+
+      if (result.status !== "completed") {
+        const durationMs = Date.now() - start
+        return {
+          workflowName: this.workflow.name,
+          status: "failed",
+          nodeResults: this.nodeResults,
+          poolSnapshot: this.pool.snapshot(),
+          durationMs,
+        }
+      }
+
+      const remainingNodes = sorted.slice(startIdx + 1)
+      const execResult = await this.executeNodes(remainingNodes, signal, true)
+      const durationMs = Date.now() - start
+      return {
+        workflowName: this.workflow.name,
+        status: execResult.status,
+        nodeResults: this.nodeResults,
+        poolSnapshot: this.pool.snapshot(),
+        durationMs,
+      }
+    }
+
+    // 路径 A3: task_dispatch 恢复 — 重建 TaskDispatchExecutor 注入 childOutput（G1
+    // pause-resume 跨邊界橋）。子 schedule 完成 → server 的 child-complete 回調調
+    // retryFrom({ taskDispatchChildOutput }) → executor apply output_mapping →
+    // completed，下游聚合節點讀 $<taskDispatchId>.output.<key>。與 interaction
+    // (路徑 A2) 同形態：直接構造 executor（不經 factory，避免單次 payload 洩漏到
+    // 共享 factory context 影響其他 task_dispatch 節點）。port 在 resume 路徑不
+    // 需要（processCompletion 僅用 childOutput）。
+    if (pauseNode.type === "task_dispatch" && opts?.taskDispatchChildOutput) {
+      const nodeOutputs: Record<string, Record<string, any>> = {}
+      for (const [id, result] of Object.entries(this.nodeResults)) {
+        const outputs = { ...(result.outputs ?? {}) }
+        if (result.lastOutput !== undefined) outputs["output"] = result.lastOutput
+        nodeOutputs[id] = outputs
+      }
+      const executor = new TaskDispatchExecutor(pauseNode, this.pool, {
+        port: this.taskDispatchPort,
+        childOutput: opts.taskDispatchChildOutput,
+        signal,
+        crossExecResolver: this.crossExecResolver,
+        executionId: this.executionId,
+        nodeOutputs,
+        cwd: this.cwd,
+      })
+      const result = await executor.execute()
+      this.nodeResults[pauseNode.id] = result
+
+      // Fire onNodeEnd callback so outputs are persisted to DB (interaction precedent)
       this.callbacks?.onNodeEnd?.(pauseNode.id, result.status, result.durationMs ?? 0, result, pauseNode.type)
 
       if (result.status !== "completed") {
@@ -903,8 +951,8 @@ export class WorkflowEngine {
         })
       }
 
-      // Only log "end" for terminal states — pending_approval/pending_interaction/paused are pauses, not endings
-      if (nodeResult.status !== "pending_approval" && nodeResult.status !== "pending_interaction" && nodeResult.status !== "paused") {
+      // Only log "end" for terminal states — pending_approval/pending_interaction/pending_task_dispatch/paused are pauses, not endings
+      if (nodeResult.status !== "pending_approval" && nodeResult.status !== "pending_interaction" && nodeResult.status !== "pending_task_dispatch" && nodeResult.status !== "paused") {
         this.logger?.log(node.id, "end", {
           status: nodeResult.status,
           durationMs: nodeResult.durationMs,
@@ -1058,7 +1106,7 @@ export class WorkflowEngine {
     nodes: NodeDef[],
     signal?: AbortSignal,
     preSorted?: boolean,
-  ): Promise<{ status: "completed" | "completed_with_failures" | "failed" | "paused" | "cancelled" | "pending_approval" | "pending_interaction"; pauseReason?: "user_pause" | "harness_delegate" }> {
+  ): Promise<{ status: "completed" | "completed_with_failures" | "failed" | "paused" | "cancelled" | "pending_approval" | "pending_interaction" | "pending_task_dispatch"; pauseReason?: "user_pause" | "harness_delegate" }> {
     // Serial mode: preserve existing sequential behavior exactly
     if (this.executionMode === "serial" || preSorted) {
       return this.executeNodesSequential(nodes, signal, preSorted)
@@ -1073,7 +1121,7 @@ export class WorkflowEngine {
     nodes: NodeDef[],
     signal?: AbortSignal,
     preSorted?: boolean,
-  ): Promise<{ status: "completed" | "completed_with_failures" | "failed" | "paused" | "cancelled" | "pending_approval" | "pending_interaction"; pauseReason?: "user_pause" | "harness_delegate" }> {
+  ): Promise<{ status: "completed" | "completed_with_failures" | "failed" | "paused" | "cancelled" | "pending_approval" | "pending_interaction" | "pending_task_dispatch"; pauseReason?: "user_pause" | "harness_delegate" }> {
     const sorted = preSorted ? nodes : this.topologicalSort(nodes)
     const totalNodes = sorted.length
 
@@ -1082,7 +1130,7 @@ export class WorkflowEngine {
 
       // Skip nodes that already have a terminal result
       const existingResult = this.nodeResults[node.id]
-      if (existingResult && ["completed", "failed", "skipped", "skipped_failed", "rejected", "cancelled", "paused", "pending_approval", "pending_interaction"].includes(existingResult.status)) {
+      if (existingResult && ["completed", "failed", "skipped", "skipped_failed", "rejected", "cancelled", "paused", "pending_approval", "pending_interaction", "pending_task_dispatch"].includes(existingResult.status)) {
         continue
       }
 
@@ -1337,6 +1385,14 @@ export class WorkflowEngine {
         return { status: "pending_interaction" as const }
       }
 
+      // G1 task_dispatch pause: composition-wf node awaiting a child schedule.
+      // Mirrors pending_approval/pending_interaction — engine stops here, server's
+      // child-complete callback resumes via retryFrom({ taskDispatchChildOutput }).
+      if (nodeResult.status === "pending_task_dispatch") {
+        this.pendingTaskDispatchNodeId = node.id
+        return { status: "pending_task_dispatch" as const }
+      }
+
       // Condition jumpTo: 跳过中间节点，跳到目标节点
       if (node.type === "condition" && nodeResult.jumpTo) {
         const jumpIdx = sorted.findIndex((n) => n.id === nodeResult.jumpTo)
@@ -1370,7 +1426,7 @@ export class WorkflowEngine {
   private async executeNodesParallel(
     nodes: NodeDef[],
     signal?: AbortSignal,
-  ): Promise<{ status: "completed" | "completed_with_failures" | "failed" | "paused" | "cancelled" | "pending_approval" | "pending_interaction"; pauseReason?: "user_pause" | "harness_delegate" }> {
+  ): Promise<{ status: "completed" | "completed_with_failures" | "failed" | "paused" | "cancelled" | "pending_approval" | "pending_interaction" | "pending_task_dispatch"; pauseReason?: "user_pause" | "harness_delegate" }> {
     const levels = this.computeExecutionLevels(nodes)
     const totalNodes = nodes.length
     let completedCount = 0
@@ -1437,7 +1493,7 @@ export class WorkflowEngine {
       for (const node of level) {
         // Skip nodes that already have a terminal result (from previous execution or reconstruction)
         const existingResult = this.nodeResults[node.id]
-        if (existingResult && ["completed", "failed", "skipped", "rejected", "cancelled", "paused", "pending_approval", "pending_interaction"].includes(existingResult.status)) {
+        if (existingResult && ["completed", "failed", "skipped", "rejected", "cancelled", "paused", "pending_approval", "pending_interaction", "pending_task_dispatch"].includes(existingResult.status)) {
           completedCount++
           continue
         }
@@ -1723,6 +1779,16 @@ export class WorkflowEngine {
             this.pendingInteractionNodeId = pendingNode.id
           }
           return { status: "pending_interaction" as const }
+        }
+
+        // G1 task_dispatch pause (parallel path) — mirrors approval/interaction.
+        const hasPendingTaskDispatch = results.some((r, i) => r.status === "fulfilled" && (r.value as NodeExecutionResult).status === "pending_task_dispatch")
+        if (hasPendingTaskDispatch) {
+          const pendingNode = this.findPendingNodeByStatus(batch, results, "pending_task_dispatch")
+          if (pendingNode) {
+            this.pendingTaskDispatchNodeId = pendingNode.id
+          }
+          return { status: "pending_task_dispatch" as const }
         }
 
         // Condition jumpTo: set target for subsequent level skipping

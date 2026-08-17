@@ -1,0 +1,63 @@
+# composition-task.yaml — 复合任务编排模板 (G10)
+#
+# 复合任务（含 subunits[] 的 task_spec）入队后，scheduler 在 coordinator-ws 物化此
+# 模板执行：coordinator-ws 无 projects（工作区由 scheduler 物化，本工作流只做编排）。
+#
+# Flow:
+#   1. loop-subunits — 遍历 task_spec.subunits，每 iteration 跑一个 task_dispatch 节点
+#      (await: true)。task_dispatch 经 TaskDispatchPort fan-out 一个独立子 schedule
+#      （各 subunit 独立 workspace + workflow_ref），并触发 G1 pause-resume：父
+#      composition-wf 暂停，子 schedule 完成后 resume 父节点，子输出经 output_mapping
+#      流回 → $vars.result 与 $dispatch-child.output.result。
+#   2. integrate — 末尾 moa 聚合节点，depends_on loop-subunits，读各 task_dispatch 累积
+#      输出做综合（integration_goal.strategy=synthesis 默认；merge 为 opt-in）。
+#
+# Conventions:
+#   - $iteration 是 loop 计数器（engine 1-based / simulator 0-based）；break_when
+#     '$iteration >= $vars.subunit_count' 在两种环境都收敛到 N 次（N=subunit_count）。
+#   - task_dispatch.subunit "$iteration.subunit" 是字符串引用，由 TaskDispatchExecutor
+#     从 composition loop 的 iteration context 解析为第 i 个 SubunitSpec。
+#   - output_mapping { result: "last_output" } 把子 schedule 输出暴露为
+#     $vars.result 与 $dispatch-child.output.result，供 moa 聚合读取。
+#   - 模板变量（subunit_count/goal/integration_prompt）为 simulate 默认值；scheduler
+#     物化时按 task_spec 覆盖（subunit_count = task_spec.subunits.length 等）。
+
+apiVersion: octopus/v1
+kind: Workflow
+name: composition-task
+description: "复合任务编排：Loop 逐 subunit task_dispatch（G1 pause-resume）+ moa 聚合"
+
+variables:
+  subunit_count: 3
+  goal: "复合任务总目标"
+  integration_prompt: "综合各 subunit 输出，产出统一交付物，对照验收标准查漏补缺。"
+
+nodes:
+  # ── 1. Loop over subunits — 每 iteration 派发一个子 schedule ──────────────
+  - id: loop-subunits
+    type: loop
+    max_iterations: 20
+    break_when: '$iteration >= $vars.subunit_count'
+    nodes:
+      # 唯一内节点 = loop 入口，无需 depends_on。task_dispatch 是叶子节点（无 nodes）。
+      - id: dispatch-child
+        type: task_dispatch
+        subunit: "$iteration.subunit"     # 字符串引用 → executor 解析为第 i 个 SubunitSpec
+        await: true                       # G1 pause-resume：等子 schedule 完成后 resume
+        input_mapping:
+          goal: "$vars.goal"              # 父变量 → 子 schedule 输入
+        output_mapping:
+          result: "last_output"           # 子输出 → $vars.result + $dispatch-child.output.result
+
+  # ── 2. moa 聚合 — depends_on loop，综合各子 schedule 产出 ─────────────────
+  - id: integrate
+    type: swarm
+    depends_on: [loop-subunits]
+    mode: moa
+    topic: "$vars.goal"
+    prompt: "$vars.integration_prompt"
+    dynamic: true                         # 专家运行时动态选取（不硬编码 experts）
+    max_experts: 3
+    aggregator:
+      role: "synthesizer"
+      prompt: "合并各 subunit 的产出到统一交付物，消除重复与矛盾，对照 $vars.goal 与验收标准。"

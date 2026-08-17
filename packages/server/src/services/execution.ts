@@ -161,6 +161,17 @@ export class ExecutionService {
     return this.lifecycle.completeInteraction(id, nodeId, summary, varsUpdate)
   }
 
+  /**
+   * G1 task_dispatch resume: thread a completed child schedule's output back into
+   * the paused parent composition-wf execution. Called by the scheduler's
+   * child-complete callback (workflow-executor.ts) when a child schedule dispatched
+   * by a task_dispatch node finishes. Delegates to ExecutionLifecycle.resumeTaskDispatch
+   * → engine.retryFrom({ taskDispatchChildOutput }).
+   */
+  async resumeTaskDispatch(id: string, nodeId: string, childOutput: Record<string, unknown>): Promise<ExecutionRow> {
+    return this.lifecycle.resumeTaskDispatch(id, nodeId, childOutput)
+  }
+
   async pause(executionId: string): Promise<{ success: boolean; error?: string }> {
     return this.lifecycle.pause(executionId)
   }

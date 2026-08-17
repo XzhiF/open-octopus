@@ -150,38 +150,46 @@ enqueue 时 scheduler 按 `task_spec` 是否含 `subunits` 决定物化路径：
 
 ### B. 复合任务（含 subunits[] + integration_goal）
 
-物化为 **composition workflow**（`workflow_ref` 指向 composition wf YAML），subunits 经 **Loop** 逐个喂 `task_dispatch` 节点，末尾 moa 聚合：
+物化为 **composition workflow**（`workflow_ref` 指向 `packages/core-pack/workflows/composition-task.yaml` 模板），subunits 经 **Loop** 逐个喂 `task_dispatch` 节点，末尾 moa 聚合。模板结构（详见 `composition-task.yaml`）：
 
 ```yaml
-# composition wf（由 scheduler 物化或预置模板）
+# packages/core-pack/workflows/composition-task.yaml（coordinator-ws 执行，无 projects）
 apiVersion: octopus/v1
 kind: Workflow
-name: composition
+name: composition-task
+variables:                         # 模板默认；scheduler 物化时按 task_spec 覆盖
+  subunit_count: 3
+  goal: "复合任务总目标"
+  integration_prompt: "综合各 subunit 输出，产出统一交付物。"
 nodes:
   - id: loop-subunits
     type: loop
-    over: $vars.subunits           # task_spec.subunits[]
-    node:
-      id: dispatch-child
-      type: task_dispatch
-      subunit: "$iteration.subunit"  # 字符串引用，executor 从 loop iteration 解析
-      workflow_ref: "$iteration.subunit.workflow_ref"
-      await: true                    # G1 pause-resume：等子 schedule 完成
-      input_mapping: { goal: "$vars.goal" }
-      output_mapping: { result: "$last_output" }
+    max_iterations: 20
+    break_when: '$iteration >= $vars.subunit_count'   # 收敛：engine 1-based / simulator 0-based 都停在第 N 次
+    nodes:                          # loop 内节点用复数 nodes（非 node）
+      - id: dispatch-child
+        type: task_dispatch
+        subunit: "$iteration.subunit"  # 字符串引用，executor 从 loop iteration context 解析为第 i 个 SubunitSpec
+        await: true                     # G1 pause-resume：等子 schedule 完成
+        input_mapping: { goal: "$vars.goal" }
+        output_mapping: { result: "last_output" }   # 子输出 → $vars.result + $dispatch-child.output.result
   - id: integrate
-    type: swarm                      # integration_goal.strategy=synthesis ⇒ moa 聚合
+    type: swarm                       # integration_goal.strategy=synthesis ⇒ moa 聚合
+    depends_on: [loop-subunits]      # 读 $dispatch-child.output.* 累积的子输出做综合
     mode: moa
+    topic: "$vars.goal"
     prompt: "$vars.integration_prompt"
-    depends_on: [loop-subunits]
-    # 读 $taskDispatchId.output.* 累积的子输出做综合
+    dynamic: true
+    max_experts: 3
+    aggregator: { role: "synthesizer", prompt: "合并各 subunit 产出到统一交付物。" }
 ```
 
 要点：
-- `task_dispatch` 节点的 `subunit` 是**字符串引用**（`$iteration.subunit`），不是内联对象。
-- `await: true` 触发 G1 pause-resume 跨边界桥：父 composition-wf 暂停，子 schedule（各 subunit 独立 workspace）完成后 resume，子输出经 `output_mapping` 流回。
-- `integration_goal.strategy=synthesis` ⇒ 末尾 moa/swarm 聚合读 `$taskDispatchId.output`；`merge` ⇒ opt-in 结构化合并。
+- `task_dispatch` 节点的 `subunit` 是**字符串引用**（`$iteration.subunit`），不是内联对象；executor 从 composition loop 的 iteration context 解析为第 i 个 `SubunitSpec`。
+- `await: true` 触发 G1 pause-resume 跨边界桥：父 composition-wf 暂停，子 schedule（各 subunit 独立 workspace）完成后 resume，子输出经 `output_mapping` 流回 `$vars.<parentVar>` 与 `$dispatch-child.output.<parentVar>`。
+- `integration_goal.strategy=synthesis` ⇒ 末尾 moa/swarm 聚合读 `$dispatch-child.output`；`merge` ⇒ opt-in 结构化合并。
 - N 个 subunits ⇒ N 个子 schedule（各 createFromSpec 独立 ws）；受 `MAX_PARALLEL_WORKSPACES` 约束，超出排队由 task_dispatch 层处理。
+- 模板用 `validate-workflow.js` 校验 0 errors；`octopus workflow simulate composition-task.yaml --json` happy path green（task_dispatch 自动通过，moa 走 mock）。
 
 ## 交互风格
 

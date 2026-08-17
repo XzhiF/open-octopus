@@ -425,8 +425,95 @@ export class WorkflowExecutor implements Executor {
       }
     }
 
+    // G1: if this schedule was dispatched by a task_dispatch node (composite task),
+    // resume the PARENT composition-wf's task_dispatch node with the child's output.
+    // Distinct concern from the same-ws chain above — handled by a separate method
+    // so the chain logic stays untouched (05's failure writer above is unaffected).
+    // This path fires when the child was claimed+run by the scheduler-engine (e.g.
+    // a child queued at the concurrency cap, later claimed). The under-cap path
+    // runs the child directly via TaskDispatchService, which registers its own
+    // onComplete and resumes the parent without going through WorkflowExecutor.
+    this.maybeResumeParentTaskDispatch(opts, lastExecutionId)
+
     // Enforce retention policy
     this.enforceRetention(opts.scheduleId, opts.maxRetain)
+  }
+
+  // ── G1 task_dispatch parent-resume ─────────────────────────────────
+
+  /** True if this schedule was dispatched by a task_dispatch node (carries the
+   *  parent_task_dispatch marker in its config — written by TaskDispatchService). */
+  private hasParentTaskDispatchMarker(schedule: ScheduleRow): boolean {
+    try {
+      const config = JSON.parse(schedule.config) as { parent_task_dispatch?: unknown }
+      return config?.parent_task_dispatch != null
+    } catch {
+      return false
+    }
+  }
+
+  /**
+   * Resume the parent composition-wf's task_dispatch node when a child schedule
+   * dispatched by task_dispatch completes. Reads the child's var_pool snapshot
+   * (sub-workflow precedent: output_mapping reads child pool vars) and calls the
+   * parent workspace's ExecutionService.resumeTaskDispatch → engine.retryFrom
+   * with taskDispatchChildOutput. The parent correlation (execution_id + node_id)
+   * is read from the child schedule's persisted config marker (restart-safe).
+   */
+  private maybeResumeParentTaskDispatch(
+    opts: { schedule: ScheduleRow; scheduleId: string },
+    lastExecutionId: string,
+  ): void {
+    if (!this.hasParentTaskDispatchMarker(opts.schedule)) return
+
+    let marker: { execution_id: string; node_id: string } | undefined
+    try {
+      const config = JSON.parse(opts.schedule.config) as {
+        parent_task_dispatch?: { execution_id: string; node_id: string }
+      }
+      marker = config?.parent_task_dispatch
+    } catch {
+      // config parse error already handled by hasParentTaskDispatchMarker
+    }
+    if (!marker) return
+
+    // Read the child's var_pool snapshot (the deepest execution in the chain).
+    const childExec = this.execDAO.findById(lastExecutionId)
+    const varPoolRaw = childExec?.var_pool ?? "{}"
+    let childOutput: Record<string, unknown>
+    try {
+      childOutput = JSON.parse(varPoolRaw) as Record<string, unknown>
+    } catch {
+      childOutput = {}
+    }
+
+    // Locate the PARENT composition-wf execution + its workspace's ExecutionService.
+    // The parent lives in the coordinator workspace (distinct from this child's ws).
+    const parentExec = this.execDAO.findById(marker.execution_id)
+    if (!parentExec) {
+      console.error(
+        `[WorkflowExecutor] task_dispatch resume: parent execution ${marker.execution_id} not found`,
+      )
+      return
+    }
+    const parentRegistry = getExecutionService(parentExec.workspace_id)
+    if (!parentRegistry) {
+      console.error(
+        `[WorkflowExecutor] task_dispatch resume: ExecutionService unavailable for parent workspace ${parentExec.workspace_id}`,
+      )
+      return
+    }
+
+    // A failed child still resumes the parent with an empty/partial output so the
+    // composition-wf's failure strategy can decide (mirror TaskDispatchService).
+    parentRegistry.service
+      .resumeTaskDispatch(marker.execution_id, marker.node_id, childOutput)
+      .catch((err: unknown) => {
+        console.error(
+          `[WorkflowExecutor] task_dispatch resume failed for parent ${marker!.execution_id}:`,
+          err instanceof Error ? err.message : String(err),
+        )
+      })
   }
 
   // ── Chain continuation helpers (#4 story-walker) ──────────────────

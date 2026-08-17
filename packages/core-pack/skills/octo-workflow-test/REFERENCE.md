@@ -444,6 +444,35 @@ loop-node:
       output: "logged"
 ```
 
+### `task_dispatch` — auto-passes (no mock needed)
+
+A `task_dispatch` node fans out a child schedule via the server-injected `TaskDispatchPort`, which the simulator does not provide. Two auto-pass paths cover it:
+
+- **Inside a loop, no mock**: `executeInnerNode` auto-passes with `outputs: {}`.
+- **With a mock**: `createAndExecuteMock`'s `default` branch auto-passes (`task_dispatch` is not in the mock-factory switch).
+
+So a composition workflow (Loop over subunits → `task_dispatch` → moa) simulates green by **mocking only the post-loop `swarm`/`moa` node** and converging the loop on `$iteration >= $vars.subunit_count`:
+
+```yaml
+# composition-task.test.yaml
+scenarios:
+  - name: "happy path — 3 subunits, loop converges, moa aggregates"
+    inputs:
+      goal: "复合任务总目标"
+      integration_prompt: "综合各 subunit 输出。"
+    mocks:
+      # dispatch-child (task_dispatch, inside loop): intentionally unmocked → auto-passes
+      integrate:                         # moa (top-level swarm): strict mode requires a mock
+        output: "统一交付物：3 subunits 已综合。"
+        update_vars:
+          integrate_synthesis: "综合报告"
+          integrate_expert_count: "3"
+    assertions:
+      status: "completed"
+```
+
+> The loop runs N iterations (N = `$vars.subunit_count`, default 3 from the template's `variables`), each `task_dispatch` auto-passing, then breaks on `$iteration >= $vars.subunit_count`. The mocked `integrate` node completes the workflow.
+
 ### Approval with Comment Chain
 
 When downstream node references `$approval-node.output.comment`:

@@ -506,3 +506,60 @@ nodes:
       prompt: "Plan tasks for sprint $iteration based on $vars.backlog"
 ```
 Each iteration generates a separate file: `sprint-plan-iter0.yaml`, `sprint-plan-iter1.yaml`, etc.
+
+## 11. `task_dispatch` — Composite Task Fan-out
+
+`task_dispatch` fans out one child schedule per subunit of a composite task and pauses the parent composition workflow until the child completes (G1 pause-resume). It lives **inside a composition workflow's subunit loop**; a post-loop `swarm`/`moa` node aggregates the dispatched outputs.
+
+### Composition: Loop over subunits + moa aggregation (canonical)
+
+```yaml
+# composition-task.yaml — runs in the coordinator-ws (no projects; the
+# scheduler materializes the coordinator workspace). The scheduler seeds
+# $vars.subunit_count / goal / integration_prompt from task_spec.
+apiVersion: octopus/v1
+kind: Workflow
+name: composition-task
+variables:
+  subunit_count: 3
+  goal: "复合任务总目标"
+  integration_prompt: "综合各 subunit 输出，产出统一交付物。"
+
+nodes:
+  # 1. Loop over subunits — each iteration dispatches one child schedule.
+  - id: loop-subunits
+    type: loop
+    max_iterations: 20
+    break_when: '$iteration >= $vars.subunit_count'   # converges in engine (1-based) + simulator (0-based)
+    nodes:
+      - id: dispatch-child
+        type: task_dispatch
+        subunit: "$iteration.subunit"   # executor resolves to i-th SubunitSpec
+        await: true                      # G1: pause until child schedule completes
+        input_mapping:
+          goal: "$vars.goal"
+        output_mapping:
+          result: "last_output"          # → $vars.result + $dispatch-child.output.result
+
+  # 2. moa aggregation — depends_on the loop, reads dispatched child outputs.
+  - id: integrate
+    type: swarm
+    depends_on: [loop-subunits]
+    mode: moa
+    topic: "$vars.goal"
+    prompt: "$vars.integration_prompt"
+    dynamic: true
+    max_experts: 3
+    aggregator:
+      role: "synthesizer"
+      prompt: "合并各 subunit 产出到统一交付物，对照 $vars.goal 与验收标准。"
+```
+
+### Key points
+
+- **`subunit` is a string reference**, never an inline object. `$iteration.subunit` resolves via the composition loop's iteration context to the i-th `SubunitSpec` (mirrors sub-workflow `resolveMappingValue`, object-preserving).
+- **`await: true`** triggers G1 pause-resume: the parent composition-wf pauses; the server's child-complete callback resumes the node and threads child output through `output_mapping` into `$vars.<parentVar>` and `$<nodeId>.output.<parentVar>` for the moa aggregator.
+- **`output_mapping` is `{ parentVar: childKey }`** (parentVar ← childKey), the inverse direction of `input_mapping`.
+- **Convergence**: `break_when: '$iteration >= $vars.subunit_count'` is robust to the engine's 1-based vs the simulator's 0-based `$iteration` — both stop after N iterations for `subunit_count = N`.
+- **`integrate` depends_on `[loop-subunits]`** so it runs only after every subunit's child schedule has completed.
+- **Simulate**: a `task_dispatch` node auto-passes in `octopus workflow simulate` (no `TaskDispatchPort` is injected); provide a mock for the post-loop `swarm`/`moa` node. See `octo-workflow-test`.

@@ -9,6 +9,7 @@ import {
   SchedulerVersionConflictError,
   SchedulerTriggerConflictError,
   SchedulerTriggerSourceMismatchError,
+  SchedulerJobNotAbortableError,
 } from '../services/scheduler/scheduler-service'
 import { DashboardService } from '../services/scheduler/dashboard-service'
 import { ExportService } from '../services/scheduler/export-service'
@@ -157,6 +158,7 @@ function classifyError(err: unknown): { status: number; message: string } {
   if (err instanceof SchedulerVersionConflictError) return { status: 409, message: err.message }
   if (err instanceof SchedulerTriggerConflictError) return { status: 409, message: err.message }
   if (err instanceof SchedulerTriggerSourceMismatchError) return { status: 400, message: err.message }
+  if (err instanceof SchedulerJobNotAbortableError) return { status: 400, message: err.message }
   if (err instanceof ConfigValidationError) return { status: 400, message: err.message }
 
   const msg = err instanceof Error ? err.message : String(err)
@@ -341,6 +343,19 @@ export function createSchedulerRoutes(
   router.post('/jobs/:id/enqueue', rateLimitDefault, (c) => {
     try {
       const job = service.enqueueJob(c.req.param('id'))
+      return c.json(job)
+    } catch (err: unknown) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status)
+    }
+  })
+
+  // POST /jobs/:id/abort — claimed/running → aborted (G4: user-triggered abort)
+  // Terminal: releases unique_active + cancels the running execution + cleans ws.
+  // Non-claimable states (draft/queued/done/failed/aborted) → 400.
+  router.post('/jobs/:id/abort', rateLimitDefault, async (c) => {
+    try {
+      const job = await service.abortJob(c.req.param('id'))
       return c.json(job)
     } catch (err: unknown) {
       const { status, message } = classifyError(err)

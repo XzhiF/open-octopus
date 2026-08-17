@@ -8,14 +8,16 @@
   "current_round": 1,
   "artifacts_dir": ".scratch/task-pool-redesign",
   "round1_stage_progress": {
-    "stage_0": "done (01 shared-types, 08 source-path-fix) — committed; build green, 49 tests",
-    "stage_1": "in_progress (02 engine task_dispatch executor, 05 failed/aborted lifecycle, 09 task-author clone+retire sentinel)",
-    "stage_2": "pending (03 port bridge, 06 abort, 07 SSE, 11 composition template)",
-    "stage_3": "pending (04 composite dispatch)",
-    "stage_4": "pending (10 jobs task_spec/JobDetail)",
-    "stage_5": "pending (12 web TaskModal+kanban)",
-    "stage_6": "pending (13 web composite modal)",
-    "stage_7": "pending (14 integration+E2E)"
+    "stage_0": "done committed (01, 08) — build green, 49 tests",
+    "stage_1": "done committed (02, 05, 09) — build green, 50 tests",
+    "stage_2": "in_progress (03 TaskDispatchPort bridge, 06 abort endpoint, 11 composition template) — NON-OVERLAPPING ownership: 03=engine.ts+new server port-impl file+workflow-executor.ts; 06=routes/scheduler.ts+scheduler-service.ts+scheduler-engine.ts; 11=core-pack only",
+    "stage_3": "pending (07 SSE injection — AFTER 06, touches scheduler-engine.ts+scheduler-service.ts)",
+    "stage_4": "pending (04 composite dispatch — AFTER 03+07, touches scheduler-engine.ts+workflow-executor.ts)",
+    "stage_5": "pending (10 jobs task_spec/JobDetail)",
+    "stage_6": "pending (12 web TaskModal+kanban)",
+    "stage_7": "pending (13 web composite modal)",
+    "stage_8": "pending (14 integration+E2E)"
   },
-  "resumption_note": "If this session ends mid-round-1, resume by re-invoking matt-pipeline-loop on .scratch/task-pool-redesign — read round1_stage_progress, continue from the next pending stage. Each stage is committed, so git state is the source of truth for what's done."
+  "restaged_note": "07 moved stage2->3 (needs 06 abort transition + shares scheduler-engine.ts with 06); 04 moved stage3->4 (shares scheduler-engine.ts with 07). Avoids concurrent-edit races on the hot scheduler-engine.ts file. Original issues/ blocked-by still valid; this is execution ordering.",
+  "resumption_note": "If session ends mid-round-1, resume via /matt-pipeline-loop on .scratch/task-pool-redesign. Read round1_stage_progress + restaged_note. Continue from next pending stage. Each stage committed to git (bc0778d=stage0, <stage1>=latest). Git log is source of truth for done stages. Re-run remaining stages in order, then Phase 2 code-review, Phase 4 E2E, Phase 5 ship, then verification-report + convergence."
 }

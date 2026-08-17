@@ -59,6 +59,18 @@ export class SchedulerTriggerSourceMismatchError extends Error {
   }
 }
 
+// G4 (ticket 06): abort is only valid on an in-flight (claimed/running) task.
+// Aborting a draft (not yet enqueued), a queued task (not yet claimed), or a
+// terminal state (done/failed/aborted) is a no-op at best and a data-corruption
+// race at worst. Maps to HTTP 400 so callers can surface "cannot abort a task
+// that isn't running" rather than a generic 500.
+export class SchedulerJobNotAbortableError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'SchedulerJobNotAbortableError'
+  }
+}
+
 // Re-export for convenience
 export { ConfigValidationError }
 
@@ -580,6 +592,85 @@ export class SchedulerService {
         changes: { status: { before: 'draft', after: 'queued' } },
       })
     })
+
+    this.notifyScheduleChange()
+    return this.getJob(id)
+  }
+
+  // ── Abort Job (claimed/running → aborted) ───────────────────────
+  // G4 (ticket 06): user-triggered abort. Terminal — checkStaleClaimed (engine)
+  // filters status IN (claimed,running), so 'aborted' is never rolled back to
+  // queued, breaking the stale→rollback→redispatch loop. Mirrors enqueueJob's
+  // guard+transaction+audit shape; the running-execution cancel is best-effort.
+  async abortJob(id: string): Promise<SchedulerJob> {
+    const existing = this.configDAO.findByIdRaw(id) as unknown as ScheduleRow | undefined
+
+    if (!existing) {
+      throw new SchedulerJobNotFoundError()
+    }
+
+    const currentStatus = (existing.status ?? 'queued') as ScheduleStatus
+    // Guard: only an in-flight task may be aborted. Drafts/queued haven't
+    // claimed a worker; done/failed/aborted are already terminal.
+    if (currentStatus !== 'claimed' && currentStatus !== 'running') {
+      throw new SchedulerJobNotAbortableError(
+        `Cannot abort: current status is ${currentStatus} (only claimed/running can be aborted)`,
+      )
+    }
+
+    // Capture the in-flight execution's links BEFORE mutating schedule_executions.
+    // markStaleExecutionsFailed (below) flips the row to 'failed'; we need the
+    // execution_id + workspace_id to cancel the running workflow execution (if any).
+    const activeExec = this.configDAO.findActiveExecutions(id)[0]
+    const activeExecRow = activeExec ? this.runDAO.findExecutionById(activeExec.id) : null
+    const executionId = activeExecRow?.execution_id ?? null
+    const workspaceId = activeExecRow?.workspace_id ?? null
+
+    const now = new Date().toISOString()
+    const reason = `Aborted by user at ${now}`
+
+    this.configDAO.transaction(() => {
+      // ticket 07: emit schedule_status aborted here
+      this.configDAO.updateSchedule(id, {
+        status: 'aborted',
+        claimed_at: null,
+      })
+
+      // Release the partial unique index idx_sched_execs_unique_active
+      // (status IN triggered/running) so the schedule can be re-dispatched /
+      // no longer blocks. Same primitive the stale-claimed rollback uses.
+      this.runDAO.markStaleExecutionsFailed(id, reason)
+
+      // Mark any in-flight schedule_workspaces as cleaned. Workspace dir
+      // cleanup is deferred to the retain loop (matches checkStaleClaimed).
+      this.configDAO.markScheduleWorkspacesCleanedBySchedule(id, now)
+
+      this.writeAuditLog({
+        schedule_id: id,
+        action: 'aborted',
+        changes: { status: { before: currentStatus, after: 'aborted' } },
+      })
+    })
+
+    // Cancel the running workflow execution (if any). Best-effort: a missing
+    // execution_id (claimed but not yet linked to an executions row) or a
+    // gone workspace must NOT block the abort — the DB state above is already
+    // terminal. Dynamic import mirrors scheduler-engine.checkTimeouts to avoid
+    // a static dependency cycle with execution-service-registry.
+    if (executionId && workspaceId) {
+      try {
+        const { getExecutionService } = await import('../execution-service-registry')
+        const registry = getExecutionService(workspaceId)
+        if (registry) {
+          await registry.service.cancel(executionId)
+        }
+      } catch (err: unknown) {
+        console.error(
+          '[SchedulerService] abortJob: failed to cancel running execution (non-fatal — abort already persisted):',
+          err instanceof Error ? err.message : String(err),
+        )
+      }
+    }
 
     this.notifyScheduleChange()
     return this.getJob(id)

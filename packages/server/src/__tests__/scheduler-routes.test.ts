@@ -534,4 +534,120 @@ describe('Scheduler Routes (integration)', () => {
     expect(body.source_chat_session_id).toBe(created.source_chat_session_id)
     expect(body.source_chat_session_id).toBeTruthy()
   })
+
+  // ── G4 (ticket 06): abort endpoint + workspace cleanup ──────────
+
+  // Helper: create a requirement draft, enqueue → queued, then simulate the
+  // engine claim (status='claimed', claimed_at set) + insert an ACTIVE
+  // schedule_execution (status='triggered') and a schedule_workspace row
+  // (status='running') so the abort path has the full in-flight state to tear
+  // down. Mirrors what checkQueuedTasks + dispatchExecution produce at runtime.
+  async function createClaimedScheduleWithActiveExecution(
+    status: 'claimed' | 'running' = 'claimed',
+  ): Promise<{ id: string; execId: string; wsRowId: string }> {
+    const id = await createRequirementJob() // status='draft'
+    // draft → queued (confirm gate)
+    const enq = await app.request(`/api/scheduler/jobs/${id}/enqueue`, { method: 'POST' })
+    expect(enq.status).toBe(200)
+
+    const now = new Date().toISOString()
+    db.prepare('UPDATE schedules SET status = ?, claimed_at = ? WHERE id = ?').run(status, now, id)
+
+    const execId = `exec-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+    db.prepare(
+      `INSERT INTO schedule_executions (id, schedule_id, execution_id, status, trigger_type, triggered_at, timezone_offset, timezone_iana, created_at, triggered_by)
+       VALUES (?, ?, NULL, ?, 'scheduled', ?, '+00:00', 'UTC', ?, 'scheduler')`,
+    ).run(execId, id, status === 'running' ? 'running' : 'triggered', now, now)
+
+    const wsRowId = `sw-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+    db.prepare(
+      `INSERT INTO schedule_workspaces (id, schedule_id, workspace_id, status, branch_suffix, started_at)
+       VALUES (?, ?, ?, 'running', 'abort-test', ?)`,
+    ).run(wsRowId, id, wsId, now)
+
+    return { id, execId, wsRowId }
+  }
+
+  it('G4/AC15: POST /jobs/:id/abort on claimed → aborted + executions failed + ws cleaned + audit', async () => {
+    const { id, execId, wsRowId } = await createClaimedScheduleWithActiveExecution('claimed')
+
+    const res = await app.request(`/api/scheduler/jobs/${id}/abort`, { method: 'POST' })
+    expect(res.status).toBe(200)
+
+    // schedules.status = 'aborted', claimed_at cleared (terminal)
+    const sched = db.prepare('SELECT status, claimed_at FROM schedules WHERE id = ?').get(id) as
+      { status: string; claimed_at: string | null }
+    expect(sched.status).toBe('aborted')
+    expect(sched.claimed_at).toBeNull()
+
+    // unique_active released: the active schedule_execution is now 'failed'
+    const exec = db.prepare('SELECT status, error_summary FROM schedule_executions WHERE id = ?').get(execId) as
+      { status: string; error_summary: string | null }
+    expect(exec.status).toBe('failed')
+    expect(exec.error_summary).toMatch(/abort/i)
+
+    // unique_active truly released: a NEW triggered execution inserts without conflict
+    // (idx_sched_execs_unique_active is a partial index on status IN triggered/running)
+    const newExecId = `exec2-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+    const insertNew = db.prepare(
+      `INSERT INTO schedule_executions (id, schedule_id, status, trigger_type, triggered_at, timezone_offset, timezone_iana, created_at, triggered_by)
+       VALUES (?, ?, 'triggered', 'scheduled', ?, '+00:00', 'UTC', ?, 'scheduler')`,
+    )
+    expect(() => insertNew.run(newExecId, id, new Date().toISOString(), new Date().toISOString())).not.toThrow()
+    db.prepare('DELETE FROM schedule_executions WHERE id = ?').run(newExecId)
+
+    // ws marked cleaned
+    const sw = db.prepare('SELECT status FROM schedule_workspaces WHERE id = ?').get(wsRowId) as { status: string }
+    expect(sw.status).toBe('cleaned')
+
+    // audit log action='aborted' (filter by action — created_at ties with the
+    // prior 'enqueued' audit make ORDER BY created_at DESC nondeterministic)
+    const audit = db.prepare(
+      "SELECT action FROM scheduler_audit_logs WHERE schedule_id = ? AND action = 'aborted'",
+    ).get(id) as { action: string } | undefined
+    expect(audit, 'aborted audit log must exist').toBeDefined()
+    expect(audit?.action).toBe('aborted')
+  })
+
+  it('G4: POST /jobs/:id/abort on running → aborted + executions failed', async () => {
+    const { id, execId } = await createClaimedScheduleWithActiveExecution('running')
+
+    const res = await app.request(`/api/scheduler/jobs/${id}/abort`, { method: 'POST' })
+    expect(res.status).toBe(200)
+
+    const sched = db.prepare('SELECT status FROM schedules WHERE id = ?').get(id) as { status: string }
+    expect(sched.status).toBe('aborted')
+
+    // markStaleExecutionsFailed covers status IN ('triggered','running') → 'running' too
+    const exec = db.prepare('SELECT status FROM schedule_executions WHERE id = ?').get(execId) as { status: string }
+    expect(exec.status).toBe('failed')
+  })
+
+  it('G4/AC: POST /jobs/:id/abort on a draft → 400 (not abortable, status unchanged)', async () => {
+    const id = await createRequirementJob() // status='draft'
+
+    const res = await app.request(`/api/scheduler/jobs/${id}/abort`, { method: 'POST' })
+    expect(res.status).toBe(400)
+    const body = await json<{ error: string }>(res)
+    expect(body.error).toMatch(/status/i)
+
+    // 反假跑: status unchanged (still draft, no partial mutation)
+    const sched = db.prepare('SELECT status, claimed_at FROM schedules WHERE id = ?').get(id) as
+      { status: string; claimed_at: string | null }
+    expect(sched.status).toBe('draft')
+  })
+
+  it('G4/AC: POST /jobs/:id/abort on queued → 400 (not yet claimed)', async () => {
+    const id = await createRequirementJob()
+    const enq = await app.request(`/api/scheduler/jobs/${id}/enqueue`, { method: 'POST' })
+    expect(enq.status).toBe(200)
+
+    const res = await app.request(`/api/scheduler/jobs/${id}/abort`, { method: 'POST' })
+    expect(res.status).toBe(400)
+  })
+
+  it('G4/AC: POST /jobs/:id/abort on unknown → 404', async () => {
+    const res = await app.request('/api/scheduler/jobs/nonexistent-job-id/abort', { method: 'POST' })
+    expect(res.status).toBe(404)
+  })
 })

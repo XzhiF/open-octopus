@@ -62,6 +62,7 @@ CLI `octopus workflow simulate <yaml>` 自动发现同目录 `.test.yaml`，无�
 | `approval` | ✅ 必须 | 用户审批，mock choice |
 | `condition` | ❌ 不需要 | 基于 VarPool 实际求值 |
 | `loop` | ✅ 必须 | 包含内部节点 mock |
+| `task_dispatch` | ❌ 自动通过 | 模拟器无 `TaskDispatchPort` 注入；循环内无 mock 的内节点自动通过（`executeInnerNode`），即便提供 mock 也走 `createAndExecuteMock` 默认分支自动通过。真实 fan-out 由 server 注入的 port 完成，不参与模拟。 |
 
 ### 3.3 变量流向图
 
