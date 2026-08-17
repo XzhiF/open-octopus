@@ -7,17 +7,14 @@
   "status": "running",
   "current_round": 1,
   "artifacts_dir": ".scratch/task-pool-redesign",
-  "round1_stage_progress": {
-    "stage_0": "done committed bc0778d (01, 08)",
-    "stage_1": "done committed 2b02385 (02, 05, 09)",
-    "stage_2": "done committed d1705e8 (03, 06, 11)",
-    "stage_3": "done committed (07 SSE) — build clean, ~150 tests",
-    "stage_4": "in_progress (04 composite dispatch — scheduler-engine.ts + workflow-executor.ts; coordinator-ws runs composition wf + parent aggregation status)",
-    "stage_5": "pending (10 jobs task_spec/JobDetail — AFTER 04)",
-    "stage_6": "pending (12 web TaskModal+kanban)",
-    "stage_7": "pending (13 web composite modal)",
-    "stage_8": "pending (14 integration+E2E)"
+  "phase": "Phase 4 E2E (matt-e2e-tester running, background) — Phase 1+2 done+committed",
+  "round1_summary": {
+    "phase_1_dag": "DONE — 8 stages, 13 tickets + engine LoopExecutor fix, all committed (bc0778d..3ff86b8)",
+    "phase_2_review": "DONE — 3-axis code-review; 2 MUST-FIX (SpecPanel dirty+save) + 1 SHOULD-FIX (return types) fixed; #4/#5 accepted; committed 3ff86b8",
+    "phase_3_deploy": "N/A (local dev, no CI)",
+    "phase_4_e2e": "RUNNING (matt-e2e-tester background) — verifying US1-16 + API integration; LLM chatbot path may SKIP (no API keys) → API+UI E2E instead",
+    "phase_5_ship": "PENDING E2E — PR update on test-task-board (#50) after Phase 4 filled"
   },
-  "remaining_pipeline_phases": "After stage 8: Phase 2 code-review, Phase 4 E2E (matt-e2e-tester), Phase 5 ship (PR test-task-board). Then matt-verification-report + convergence (>=85) or gap-fix loop.",
-  "resumption_note": "Resume via /matt-pipeline-loop on .scratch/task-pool-redesign. Read round1_stage_progress. Git log (bc0778d..HEAD) = source of truth. G1 bridge + G10 composition template + lifecycle + abort + SSE all DONE. Remaining: composite dispatch wiring, jobs API, web UI, E2E, ship."
+  "metrics": "101 files, +10545/-364 lines, 9 commits; 3313 tests pass / 60 pre-existing baseline failures (none from redesign) / 10 skipped",
+  "resumption_note": "If session ends: resume via /matt-pipeline-loop on .scratch/task-pool-redesign. Phase 1+2 committed (bc0778d..3ff86b8). pipeline-report.md has Phase 4 placeholder — fill from e2e-tester result + do Phase 5 (PR) + verification-report + convergence."
 }
