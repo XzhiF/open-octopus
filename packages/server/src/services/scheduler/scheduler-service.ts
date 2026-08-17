@@ -21,6 +21,7 @@ import type {
   ScheduleStatus,
 } from '@octopus/shared'
 import { ScheduleConfigDAO, ScheduleRunDAO } from '../../db/dao'
+import { SSEService } from '../sse'
 
 // ── Error Classes ────────────────────────────────────────────────────
 
@@ -223,10 +224,15 @@ export class SchedulerService {
   private callbacks: SchedulerCallbacks = {}
   private configDAO: ScheduleConfigDAO
   private runDAO: ScheduleRunDAO
+  // 07 (G5): optional so existing 2-arg call sites (incl. other tickets'
+  // tests) keep compiling; production (index.ts) always passes the real
+  // SSEService. Emits are guarded with this.sse?.emit.
+  private sse?: SSEService
 
-  constructor(configDAO: ScheduleConfigDAO, runDAO: ScheduleRunDAO) {
+  constructor(configDAO: ScheduleConfigDAO, runDAO: ScheduleRunDAO, sse?: SSEService) {
     this.configDAO = configDAO
     this.runDAO = runDAO
+    this.sse = sse
   }
 
   /** Late-bind engine callbacks (engine is constructed after the service). */
@@ -593,6 +599,11 @@ export class SchedulerService {
       })
     })
 
+    // 07 (G5): emit draft→queued so the kanban moves the card out of draft
+    // instantly on [入队]. Emitted AFTER the transaction commits so a rolled-
+    // back enqueue never produces a spurious SSE event.
+    this.emitScheduleStatus(id, 'queued')
+
     this.notifyScheduleChange()
     return this.getJob(id)
   }
@@ -630,7 +641,6 @@ export class SchedulerService {
     const reason = `Aborted by user at ${now}`
 
     this.configDAO.transaction(() => {
-      // ticket 07: emit schedule_status aborted here
       this.configDAO.updateSchedule(id, {
         status: 'aborted',
         claimed_at: null,
@@ -651,6 +661,13 @@ export class SchedulerService {
         changes: { status: { before: currentStatus, after: 'aborted' } },
       })
     })
+
+    // 07 (G5): emit claimed/running→aborted so the kanban moves the card to the
+    // aborted column instantly on [中止]. Emitted AFTER the transaction commits
+    // (so a rolled-back abort never produces a spurious SSE event) and BEFORE
+    // the best-effort execution cancel (so a slow cancel can't delay the UI
+    // signal — the DB state is already terminal).
+    this.emitScheduleStatus(id, 'aborted')
 
     // Cancel the running workflow execution (if any). Best-effort: a missing
     // execution_id (claimed but not yet linked to an executions row) or a
@@ -892,6 +909,19 @@ export class SchedulerService {
     } catch {
       return null
     }
+  }
+
+  /**
+   * 07 (G5): broadcast a schedule lifecycle transition on the global 'taskpool'
+   * SSE channel. Mirrors WorkflowExecutor's emit shape (workflow-executor.ts:257)
+   * so the /tasks kanban receives draft→queued and abort transitions in real
+   * time instead of the 10s poll. No-op when no SSEService was injected.
+   */
+  private emitScheduleStatus(scheduleId: string, status: string): void {
+    this.sse?.emit('taskpool', {
+      event: 'schedule_status',
+      data: { schedule_id: scheduleId, status },
+    })
   }
 
   private enrichJobRow(row: ScheduleRow): SchedulerJob {

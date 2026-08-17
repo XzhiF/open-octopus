@@ -10,6 +10,7 @@ import { CircuitBreaker, CircuitBreakerOpenError } from './circuit-breaker'
 import { ConsecutiveFailureTracker } from './consecutive-failure-tracker'
 import type { Executor, ExecutionResult } from './executors/executor-interface'
 import { ScheduleConfigDAO, ScheduleRunDAO } from '../../db/dao'
+import { SSEService } from '../sse'
 
 const AUXILIARY_TICK_INTERVAL = parseInt(
   process.env.OCTOPUS_SCHEDULER_TICK_MS ?? '60000',
@@ -90,6 +91,10 @@ export class SchedulerEngine {
     runDAO: ScheduleRunDAO,
     private scheduleService: WorkspaceScheduleService,
     private executors: Map<string, Executor>,
+    // 07: optional so existing 4-arg call sites (incl. other tickets' tests)
+    // keep compiling; production (index.ts) always passes the real SSEService.
+    // Emits are guarded with this.sse?.emit so absent-sse is a no-op, not a crash.
+    private sse?: SSEService,
   ) {
     this.failureTracker = new ConsecutiveFailureTracker(configDAO)
     this.configDAO = configDAO
@@ -379,6 +384,10 @@ export class SchedulerEngine {
           status: 'failed',
           claimed_at: null,
         })
+        // 07 (G5): emit the terminal 'failed' transition so the /tasks kanban
+        // updates in real time instead of waiting for the 10s poll. 05 wired the
+        // DB write + deferred this SSE emit to 07 (see comment above).
+        this.emitScheduleStatus(schedule.id, 'failed')
       }
 
       if (schedule.notify_on_failure) {
@@ -451,6 +460,9 @@ export class SchedulerEngine {
         status: 'claimed',
         claimed_at: now.toISOString(),
       })
+      // 07 (G5): emit the queued→claimed transition so the kanban claims the
+      // card in real time, not on the next 10s poll.
+      this.emitScheduleStatus(schedule.id, 'claimed')
 
       try {
         this.runDAO.insertTriggeredExecution(
@@ -468,6 +480,9 @@ export class SchedulerEngine {
           status: 'queued',
           claimed_at: null,
         })
+        // 07 (G5): emit the rollback transition so the kanban releases the card
+        // back to the queued column instead of leaving it visually claimed.
+        this.emitScheduleStatus(schedule.id, 'queued')
       }
     }
   }
@@ -489,6 +504,10 @@ export class SchedulerEngine {
         status: 'queued',
         claimed_at: null,
       })
+      // 07 (G5): emit the stale-claimed→queued rollback so the kanban reflects
+      // crash recovery in real time. Terminal failed/aborted never reach here
+      // (findStaleClaimed filters status IN claimed/running).
+      this.emitScheduleStatus(schedule.id, 'queued')
       // Issue 3: release the partial unique index on schedule_executions
       // (status IN triggered/running). Without this the orphaned execution row
       // blocks the next dispatch's insertTriggeredExecution and the task can
@@ -709,6 +728,22 @@ export class SchedulerEngine {
     } catch {
       return '+00:00'
     }
+  }
+
+  // ── Private: SSE ───────────────────────────────────────────────────
+
+  /**
+   * 07 (G5): broadcast a schedule lifecycle transition on the global 'taskpool'
+   * SSE channel. Mirrors WorkflowExecutor's emit shape
+   * (workflow-executor.ts:257/360/397) so the /tasks kanban receives every
+   * queued/claimed/rollback/failed transition in real time instead of polling.
+   * No-op when no SSEService was injected (test contexts that don't assert SSE).
+   */
+  private emitScheduleStatus(scheduleId: string, status: string): void {
+    this.sse?.emit('taskpool', {
+      event: 'schedule_status',
+      data: { schedule_id: scheduleId, status },
+    })
   }
 }
 

@@ -8,16 +8,16 @@
   "current_round": 1,
   "artifacts_dir": ".scratch/task-pool-redesign",
   "round1_stage_progress": {
-    "stage_0": "done committed (01, 08) — build green, 49 tests",
-    "stage_1": "done committed (02, 05, 09) — build green, 50 tests",
-    "stage_2": "in_progress (03 TaskDispatchPort bridge, 06 abort endpoint, 11 composition template) — NON-OVERLAPPING ownership: 03=engine.ts+new server port-impl file+workflow-executor.ts; 06=routes/scheduler.ts+scheduler-service.ts+scheduler-engine.ts; 11=core-pack only",
-    "stage_3": "pending (07 SSE injection — AFTER 06, touches scheduler-engine.ts+scheduler-service.ts)",
-    "stage_4": "pending (04 composite dispatch — AFTER 03+07, touches scheduler-engine.ts+workflow-executor.ts)",
-    "stage_5": "pending (10 jobs task_spec/JobDetail)",
+    "stage_0": "done committed bc0778d (01, 08)",
+    "stage_1": "done committed 2b02385 (02, 05, 09)",
+    "stage_2": "done committed (03, 06, 11) — build green, ~145 tests total",
+    "stage_3": "NEXT (07 SSE injection) — inject SSEService into SchedulerEngine constructor + emit schedule_status on all transitions: queued(enqueueJob in scheduler-service.ts), claimed(checkQueuedTasks in scheduler-engine.ts), rollback(checkStaleClaimed in scheduler-engine.ts), aborted(abortJob in scheduler-service.ts — 06 left a comment '// ticket 07: emit schedule_status aborted here'), failed(handleChainComplete — 05 already emits, verify). Owns: scheduler-engine.ts (constructor + checkQueuedTasks/checkStaleClaimed emits) + scheduler-service.ts (enqueueJob/abortJob emits).",
+    "stage_4": "pending (04 composite dispatch — AFTER 07; touches scheduler-engine.ts+workflow-executor.ts; coordinator-ws + composition wf dispatch + parent aggregation status)",
+    "stage_5": "pending (10 jobs task_spec/JobDetail — AFTER 04)",
     "stage_6": "pending (12 web TaskModal+kanban)",
     "stage_7": "pending (13 web composite modal)",
     "stage_8": "pending (14 integration+E2E)"
   },
-  "restaged_note": "07 moved stage2->3 (needs 06 abort transition + shares scheduler-engine.ts with 06); 04 moved stage3->4 (shares scheduler-engine.ts with 07). Avoids concurrent-edit races on the hot scheduler-engine.ts file. Original issues/ blocked-by still valid; this is execution ordering.",
-  "resumption_note": "If session ends mid-round-1, resume via /matt-pipeline-loop on .scratch/task-pool-redesign. Read round1_stage_progress + restaged_note. Continue from next pending stage. Each stage committed to git (bc0778d=stage0, <stage1>=latest). Git log is source of truth for done stages. Re-run remaining stages in order, then Phase 2 code-review, Phase 4 E2E, Phase 5 ship, then verification-report + convergence."
+  "remaining_pipeline_phases": "After stage 8: Phase 2 code-review (/code-review test-task-board...HEAD vs spec), Phase 3 deploy (skip — local dev), Phase 4 E2E (matt-e2e-tester — author simple+composite+abort+failed Playwright), Phase 5 ship (PR update on test-task-board). Then matt-verification-report + convergence (>=85) or gap-fix loop (-r2...).",
+  "resumption_note": "Resume via /matt-pipeline-loop on .scratch/task-pool-redesign. Read round1_stage_progress — continue from stage_3 (07 SSE). Git log (bc0778d..HEAD) is source of truth for done stages. The composition wf + task_dispatch bridge (the riskiest pieces, G1/G10) are DONE and tested. Remaining: SSE, composite dispatch wiring, jobs API, web UI, E2E, ship."
 }

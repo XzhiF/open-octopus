@@ -370,7 +370,7 @@ const d = daos ?? {
 const wsSvc = workspaceService ?? new WorkspaceService(d.workspace)
 const chatSvc = chatService ?? new ChatService(d.chat, sse)
 const lbSvc = leaderboardService ?? new LeaderboardService(d.tokenUsage)
-const schedSvc = new SchedulerService(d.scheduleConfig, d.scheduleRun)
+const schedSvc = new SchedulerService(d.scheduleConfig, d.scheduleRun, sse)
 const interactionSvc = new InteractionService(d.interactionMessage, d.tokenUsage, d.execution, sse, async (workspaceId, execId, nodeId, summary, varsUpdate, providerSessionId) => {
   const entry = getExecutionService(workspaceId)
   if (entry) {
@@ -665,7 +665,7 @@ if (shouldServe) {
 
       // ★ Initialize Scheduler Service (always available, not gated by feature flag)
       // Pattern A (Singleton): Services created once with pre-built DAOs
-      const schedulerService = new SchedulerService(daos!.scheduleConfig, daos!.scheduleRun)
+      const schedulerService = new SchedulerService(daos!.scheduleConfig, daos!.scheduleRun, sse)
       const dashboardService = new DashboardService(daos!.scheduleConfig, daos!.scheduleRun)
       const exportService = new ExportService(daos!.scheduleConfig)
       app.route('/api/scheduler', createSchedulerRoutes(schedulerService, dashboardService, exportService, daos!.agentSession))
@@ -688,7 +688,7 @@ if (shouldServe) {
         ))
 
         const schedulerEngine = new SchedulerEngine(
-          daos!.scheduleConfig, daos!.scheduleRun, scheduleService, executors,
+          daos!.scheduleConfig, daos!.scheduleRun, scheduleService, executors, sse,
         )
         scheduleService.setOnScheduleChange(() => schedulerEngine.reload())
 
