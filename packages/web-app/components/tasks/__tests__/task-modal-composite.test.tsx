@@ -1,13 +1,20 @@
 import { describe, it, expect, vi, beforeEach } from "vitest"
 import { render, screen, fireEvent, waitFor, act } from "@testing-library/react"
+import type { Task, TaskSpec } from "@octopus/shared"
 
-// Mock scheduler-api: getJob returns a composite JobDetail.
-vi.mock("@/lib/scheduler-api", () => ({
-  getJob: vi.fn(),
-  abortJob: vi.fn(),
+// Mock tasks-api: getTask returns a composite TaskDetail (Task + children).
+vi.mock("@/lib/tasks-api", () => ({
+  getTask: vi.fn(),
+  abortTask: vi.fn(),
+  listTasks: vi.fn(),
+  readyTask: vi.fn(),
+  updateTask: vi.fn(),
+  deleteTask: vi.fn(),
+  createTask: vi.fn(),
+  updateSpecField: vi.fn(),
 }))
 
-// Mock sse-manager: capture the listener so the test can dispatch events.
+// Mock sse-manager: capture the task_status listener so the test can drive it.
 let sseListener: ((e: { data: string }) => void) | null = null
 const unsubSpy = vi.fn()
 vi.mock("@/lib/sse-manager", () => ({
@@ -17,7 +24,7 @@ vi.mock("@/lib/sse-manager", () => ({
   }),
 }))
 
-// Mock next/navigation router to assert drill-down navigation.
+// Mock next/navigation router to assert drill-down navigation (SG15 retarget).
 const pushSpy = vi.fn()
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: pushSpy, replace: vi.fn(), refresh: vi.fn() }),
@@ -38,70 +45,59 @@ vi.mock("sonner", () => ({
 // Mock server-config.
 vi.mock("@/lib/server-config", () => ({ getServerUrl: () => "http://localhost:3001" }))
 
-import { getJob } from "@/lib/scheduler-api"
+import { getTask } from "@/lib/tasks-api"
 import { CompositeMode } from "../task-modal"
-import type { JobDetail } from "@/lib/scheduler-api"
+import type { TaskDetail } from "@/lib/tasks-api"
 
-const mockGetJob = vi.mocked(getJob)
+const mockGetTask = vi.mocked(getTask)
 
-function makeCompositeJobDetail(overrides: Partial<JobDetail> = {}): JobDetail {
+// ── Fixtures ─────────────────────────────────────────────────────────
+
+const COMPOSITE_SPEC: TaskSpec = {
+  goal: "g",
+  ac: ["a"],
+  resources: [],
+  authoring_resources: [],
+  subunits: [
+    { name: "子1", workflow_ref: "wf-a", workspace_spec: { org: "test", branch_prefix: "bp", projects: [{ name: "p1", source_path: "", group: "" }] }, input_values: {}, skills: [], resources: [] },
+    { name: "子2", workflow_ref: "wf-b", workspace_spec: { org: "test", branch_prefix: "bp", projects: [{ name: "p1", source_path: "", group: "" }] }, input_values: {}, skills: [], resources: [] },
+    { name: "子3", workflow_ref: "wf-c", workspace_spec: { org: "test", branch_prefix: "bp", projects: [{ name: "p1", source_path: "", group: "" }] }, input_values: {}, skills: [], resources: [] },
+  ],
+  integration_goal: { strategy: "synthesis" },
+}
+
+function makeParentTask(overrides: Partial<Task> = {}): Task {
   return {
     id: "parent-1",
-    name: "E2E_TP_复合任务",
-    job_type: "workflow",
-    cron_expression: null,
-    timezone: "Asia/Shanghai",
-    enabled: true,
-    config: {
-      schema_version: "3.0",
-      type: "workflow",
-      workspace_spec: { org: "test", branch_prefix: "taskpool-test", projects: [{ name: "p1", source_path: "", group: "" }] },
-      workflow_chain: [{ workflow_ref: "composition-task", input_values: {} }],
-      max_retain: 10,
-      task_spec: {
-        goal: "g",
-        ac: ["a"],
-        subunits: [
-          { name: "子1", workflow_ref: "wf-a", workspace_spec: { org: "test", branch_prefix: "bp", projects: [{ name: "p1", source_path: "", group: "" }] }, input_values: {}, skills: [] },
-          { name: "子2", workflow_ref: "wf-b", workspace_spec: { org: "test", branch_prefix: "bp", projects: [{ name: "p1", source_path: "", group: "" }] }, input_values: {}, skills: [] },
-          { name: "子3", workflow_ref: "wf-c", workspace_spec: { org: "test", branch_prefix: "bp", projects: [{ name: "p1", source_path: "", group: "" }] }, input_values: {}, skills: [] },
-        ],
-        integration_goal: { strategy: "synthesis" },
-      },
-    },
-    parallel_policy: "allow",
-    timeout_seconds: 300,
-    notify_on_failure: false,
+    org: "test",
+    name: "E2E_TD_复合任务",
+    status: "running",
+    task_spec: COMPOSITE_SPEC,
+    authoring_resources: [],
+    resources: [],
+    skills: [],
+    project_ids: [],
+    workflow_ref: undefined,
     version: 1,
-    consecutive_failures: 0,
-    next_trigger_at: null,
+    source_chat_session_id: null,
     deleted_at: null,
     created_at: "2026-01-01T00:00:00Z",
     updated_at: "2026-01-01T00:00:00Z",
-    status: "running",
-    trigger_source: "requirement",
-    source_chat_session_id: null,
-    claimed_at: null,
-    children: [
-      { schedule_id: "child-1", name: "子1", status: "running", workflow_ref: "wf-a", subunit_name: "子1" },
-      { schedule_id: "child-2", name: "子2", status: "queued", workflow_ref: "wf-b", subunit_name: "子2" },
-      { schedule_id: "child-3", name: "子3", status: "done", workflow_ref: "wf-c", subunit_name: "子3" },
-    ],
-    dag: {
-      nodes: [
-        { id: "子1", type: "subunit", label: "子1", workflow_ref: "wf-a" },
-        { id: "子2", type: "subunit", label: "子2", workflow_ref: "wf-b" },
-        { id: "子3", type: "subunit", label: "子3", workflow_ref: "wf-c" },
-        { id: "integration", type: "integration", label: "synthesis" },
-      ],
-      edges: [
-        { from: "子1", to: "integration" },
-        { from: "子2", to: "integration" },
-        { from: "子3", to: "integration" },
-      ],
-    },
+    completed_at: null,
     ...overrides,
-  }
+  } as Task
+}
+
+function makeDetail(overrides: Partial<TaskDetail> = {}): TaskDetail {
+  const { children, ...taskOverrides } = overrides
+  return {
+    ...makeParentTask(taskOverrides),
+    children: children ?? [
+      { schedule_id: "child-1", name: "子1", status: "running", origin_role: "subunit", workflow_ref: "wf-a" },
+      { schedule_id: "child-2", name: "子2", status: "queued", origin_role: "subunit", workflow_ref: "wf-b" },
+      { schedule_id: "child-3", name: "子3", status: "done", origin_role: "subunit", workflow_ref: "wf-c" },
+    ],
+  } as TaskDetail
 }
 
 describe("CompositeMode", () => {
@@ -110,10 +106,10 @@ describe("CompositeMode", () => {
     sseListener = null
   })
 
-  it("renders DAG, child cards, and integration node from JobDetail", async () => {
-    mockGetJob.mockResolvedValue(makeCompositeJobDetail())
+  it("renders DAG, child cards, and integration node from TaskDetail", async () => {
+    mockGetTask.mockResolvedValue(makeDetail())
 
-    render(<CompositeMode job={makeCompositeJobDetail()} onMutated={() => {}} onClose={() => {}} />)
+    render(<CompositeMode task={makeParentTask()} onMutated={() => {}} onClose={() => {}} />)
 
     await waitFor(() => {
       expect(screen.getByTestId("composite-dag")).toBeDefined()
@@ -132,17 +128,17 @@ describe("CompositeMode", () => {
   })
 
   it("aggregate status becomes done when all children done + parent done", async () => {
-    const detail = makeCompositeJobDetail({
+    const detail = makeDetail({
       status: "done",
       children: [
-        { schedule_id: "child-1", name: "子1", status: "done", workflow_ref: "wf-a", subunit_name: "子1" },
-        { schedule_id: "child-2", name: "子2", status: "done", workflow_ref: "wf-b", subunit_name: "子2" },
-        { schedule_id: "child-3", name: "子3", status: "done", workflow_ref: "wf-c", subunit_name: "子3" },
+        { schedule_id: "child-1", name: "子1", status: "done", origin_role: "subunit", workflow_ref: "wf-a" },
+        { schedule_id: "child-2", name: "子2", status: "done", origin_role: "subunit", workflow_ref: "wf-b" },
+        { schedule_id: "child-3", name: "子3", status: "done", origin_role: "subunit", workflow_ref: "wf-c" },
       ],
     })
-    mockGetJob.mockResolvedValue(detail)
+    mockGetTask.mockResolvedValue(detail)
 
-    render(<CompositeMode job={detail} onMutated={() => {}} onClose={() => {}} />)
+    render(<CompositeMode task={makeParentTask({ status: "done" })} onMutated={() => {}} onClose={() => {}} />)
 
     await waitFor(() => {
       expect(screen.getByTestId("composite-aggregate-status").textContent).toMatch(/done|完成/)
@@ -150,49 +146,50 @@ describe("CompositeMode", () => {
   })
 
   it("aggregate status is failed if any child failed", async () => {
-    const detail = makeCompositeJobDetail({
+    const detail = makeDetail({
       status: "running",
       children: [
-        { schedule_id: "child-1", name: "子1", status: "failed", workflow_ref: "wf-a", subunit_name: "子1" },
-        { schedule_id: "child-2", name: "子2", status: "done", workflow_ref: "wf-b", subunit_name: "子2" },
+        { schedule_id: "child-1", name: "子1", status: "failed", origin_role: "subunit", workflow_ref: "wf-a" },
+        { schedule_id: "child-2", name: "子2", status: "done", origin_role: "subunit", workflow_ref: "wf-b" },
       ],
     })
-    mockGetJob.mockResolvedValue(detail)
+    mockGetTask.mockResolvedValue(detail)
 
-    render(<CompositeMode job={detail} onMutated={() => {}} onClose={() => {}} />)
+    render(<CompositeMode task={makeParentTask()} onMutated={() => {}} onClose={() => {}} />)
 
     await waitFor(() => {
       expect(screen.getByTestId("composite-aggregate-status").textContent).toMatch(/failed|失败/)
     })
   })
 
-  it("subscribes to SSE schedule_status and re-fetches on child event", async () => {
-    const first = makeCompositeJobDetail()
-    const second = makeCompositeJobDetail({
-      children: [
-        { schedule_id: "child-1", name: "子1", status: "done", workflow_ref: "wf-a", subunit_name: "子1" },
-        { schedule_id: "child-2", name: "子2", status: "done", workflow_ref: "wf-b", subunit_name: "子2" },
-        { schedule_id: "child-3", name: "子3", status: "done", workflow_ref: "wf-c", subunit_name: "子3" },
-      ],
+  it("subscribes to SSE task_status and re-fetches on parent event", async () => {
+    const first = makeDetail()
+    const second = makeDetail({
       status: "done",
+      children: [
+        { schedule_id: "child-1", name: "子1", status: "done", origin_role: "subunit", workflow_ref: "wf-a" },
+        { schedule_id: "child-2", name: "子2", status: "done", origin_role: "subunit", workflow_ref: "wf-b" },
+        { schedule_id: "child-3", name: "子3", status: "done", origin_role: "subunit", workflow_ref: "wf-c" },
+      ],
     })
-    mockGetJob.mockResolvedValueOnce(first).mockResolvedValueOnce(second)
+    mockGetTask.mockResolvedValueOnce(first).mockResolvedValueOnce(second)
 
-    render(<CompositeMode job={first} onMutated={() => {}} onClose={() => {}} />)
+    render(<CompositeMode task={makeParentTask()} onMutated={() => {}} onClose={() => {}} />)
 
     await waitFor(() => {
       expect(screen.getByTestId("composite-dag")).toBeDefined()
     })
 
     expect(sseListener).not.toBeNull()
-    // Dispatch a schedule_status event for a child.
+    // Dispatch a task_status event for the parent task (ScheduleStatusListener
+    // emits with task_id = parent; schedule_id = the child that transitioned).
     await act(async () => {
-      sseListener!({ data: JSON.stringify({ schedule_id: "child-1", status: "done" }) })
+      sseListener!({ data: JSON.stringify({ task_id: "parent-1", status: "running", schedule_id: "child-1" }) })
     })
 
-    // getJob called a second time (re-fetch).
+    // getTask called a second time (re-fetch).
     await waitFor(() => {
-      expect(mockGetJob).toHaveBeenCalledTimes(2)
+      expect(mockGetTask).toHaveBeenCalledTimes(2)
     })
 
     // Aggregate now done.
@@ -201,10 +198,10 @@ describe("CompositeMode", () => {
     })
   })
 
-  it("clicking a child card navigates to that child execution detail", async () => {
-    mockGetJob.mockResolvedValue(makeCompositeJobDetail())
+  it("clicking a child card navigates to /tasks/:taskId/children/:scheduleId (SG15)", async () => {
+    mockGetTask.mockResolvedValue(makeDetail())
 
-    render(<CompositeMode job={makeCompositeJobDetail()} onMutated={() => {}} onClose={() => {}} />)
+    render(<CompositeMode task={makeParentTask()} onMutated={() => {}} onClose={() => {}} />)
 
     await waitFor(() => {
       expect(screen.getByTestId("composite-dag")).toBeDefined()
@@ -214,13 +211,14 @@ describe("CompositeMode", () => {
     const childCard = screen.getByTestId("composite-child-child-1")
     fireEvent.click(childCard)
 
-    expect(pushSpy).toHaveBeenCalledWith("/scheduler/jobs/child-1")
+    // SG15: retargeted from /scheduler/jobs/:id → /tasks/:taskId/children/:scheduleId
+    expect(pushSpy).toHaveBeenCalledWith("/tasks/parent-1/children/child-1")
   })
 
   it("renders the real-time SSE events panel", async () => {
-    mockGetJob.mockResolvedValue(makeCompositeJobDetail())
+    mockGetTask.mockResolvedValue(makeDetail())
 
-    render(<CompositeMode job={makeCompositeJobDetail()} onMutated={() => {}} onClose={() => {}} />)
+    render(<CompositeMode task={makeParentTask()} onMutated={() => {}} onClose={() => {}} />)
 
     await waitFor(() => {
       expect(screen.getByTestId("composite-events-panel")).toBeDefined()

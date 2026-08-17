@@ -1,3 +1,15 @@
+// packages/web-app/components/tasks/task-modal.tsx
+//
+// TaskModal — the unified task modal for the first-class `tasks` domain
+// (v2-D1, SG14 — reads `Task`, NOT `SchedulerJob`). One modal, five modes:
+// authoring (draft) / simple-execution / composite / done / terminal. The
+// authoring spec↔agent linkage (SpecPanel) lives in spec-panel.tsx; the
+// composite DAG / events panel (ticket 11 will replace the drill-down viewer)
+// is minimally type-adapted here to read `Task` + `TaskDetail.children`.
+//
+// router.push retarget (SG15): child drill-down →
+// `/tasks/:taskId/children/:scheduleId` (was `/scheduler/jobs/:id`).
+
 "use client"
 
 import { useEffect, useMemo, useState, useCallback, useRef } from "react"
@@ -6,89 +18,87 @@ import {
 } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
-import { Textarea } from "@/components/ui/textarea"
-import { Checkbox } from "@/components/ui/checkbox"
-import { ScrollArea } from "@/components/ui/scroll-area"
 import { Spinner } from "@/components/ui/spinner"
-import { Plus, Trash2, Send, Ban, AlertCircle, CheckCircle2, Workflow, ExternalLink } from "lucide-react"
+import { Send, Ban, AlertCircle, CheckCircle2, Workflow, ExternalLink } from "lucide-react"
 import { toast } from "sonner"
-import type { SchedulerJob, JobDetail, JobDetailChild } from "@/lib/scheduler-api"
-import type { WorkflowConfig, TaskSpec, SubunitSpec, IntegrationGoal } from "@octopus/shared"
-import { enqueueJob, abortJob, updateJob, listJobs, getJob } from "@/lib/scheduler-api"
+import type { Task, TaskSpec, SubunitSpec } from "@octopus/shared"
+import {
+  listTasks, getTask, readyTask, abortTask, type TaskDetail, type TaskChild,
+} from "@/lib/tasks-api"
 import { subscribeSSE } from "@/lib/sse-manager"
 import { getServerUrl } from "@/lib/server-config"
 import { useRouter } from "next/navigation"
 import { computeAggregateStatus } from "@/lib/composite-status"
 import { CompositeDag } from "@/components/tasks/composite-dag"
 import { CompositeEventsPanel, type CompositeEvent } from "@/components/tasks/composite-events-panel"
+import { SpecPanel, ResourcePicker } from "./spec-panel"
 import { useAgentChat } from "@/hooks/useAgentChat"
 import { ChatArea } from "@/components/agent/chat/ChatArea"
 import * as agentApi from "@/lib/agent/api"
-import { ProjectSelector, type SelectedProject } from "@/components/scheduler/project-selector"
-import { useOrgs } from "@/hooks/useOrgs"
-import { listResources } from "@/lib/resource/api"
+
+// Re-export the authoring pieces so callers can import everything from the
+// modal entrypoint (the SpecPanel test imports from here).
+export { SpecPanel, ResourcePicker }
+
+// ── Types ───────────────────────────────────────────────────────────
 
 interface TaskModalProps {
   open: boolean
   onOpenChange: (open: boolean) => void
-  /** null = new-task authoring ([+新建]). A draft job opens authoring resumed on its
-   *  source_chat_session_id; non-draft opens execution / done / terminal views. */
-  job: SchedulerJob | null
-  /** Refresh the kanban after a mutation (enqueue / abort / draft edit). */
+  /** null = new-task authoring ([+新建]). A draft task opens authoring resumed
+   *  on its source_chat_session_id; non-draft opens execution/done/terminal. */
+  task: Task | null
+  /** Refresh the kanban after a mutation (ready / abort / draft edit). */
   onMutated: () => void
   /** Page adopts a draft the task-author clone just created (new-task flow). */
-  onDraftResolved?: (draft: SchedulerJob) => void
+  onDraftResolved?: (task: Task) => void
 }
 
 type ModalMode = "authoring" | "simple-execution" | "composite" | "done" | "terminal"
 
 const TASK_AUTHOR_CLONE = "task-author"
 
-function workflowConfigOf(job: SchedulerJob | null): WorkflowConfig | null {
-  if (!job || job.job_type !== "workflow") return null
-  return job.config as WorkflowConfig
+// ── Helpers ─────────────────────────────────────────────────────────
+
+function taskSpecOf(task: Task | null): TaskSpec | null {
+  return task?.task_spec ?? null
 }
 
-function taskSpecOf(job: SchedulerJob | null): TaskSpec | null {
-  return workflowConfigOf(job)?.task_spec ?? null
+/** SG9: composite requires subunits.length >= 2 (1-subunit → simple
+ *  workflow_chain). The dispatch seam (server) uses the same threshold. */
+function isComposite(task: Task | null): boolean {
+  const spec = taskSpecOf(task)
+  return !!spec && Array.isArray(spec.subunits) && spec.subunits.length >= 2
 }
 
-function isComposite(job: SchedulerJob | null): boolean {
-  const spec = taskSpecOf(job)
-  return !!spec && Array.isArray(spec.subunits) && spec.subunits.length > 0
-}
-
-function resolveMode(job: SchedulerJob | null): ModalMode {
-  if (job === null || job.status === "draft") return "authoring"
-  if (job.status === "done") return isComposite(job) ? "composite" : "done"
-  if (job.status === "failed" || job.status === "aborted") {
-    // Composite failed/aborted parent still shows the composite view (terminal
-    // children + integration). Simple tasks show the terminal view.
-    return isComposite(job) ? "composite" : "terminal"
+function resolveMode(task: Task | null): ModalMode {
+  if (task === null || task.status === "draft") return "authoring"
+  if (task.status === "ready" || task.status === "running") {
+    return isComposite(task) ? "composite" : "simple-execution"
   }
-  // queued / claimed / running
-  return isComposite(job) ? "composite" : "simple-execution"
+  // done / failed / aborted
+  if (task.status === "done") return isComposite(task) ? "composite" : "done"
+  return isComposite(task) ? "composite" : "terminal"
 }
 
 const STATUS_LABEL: Record<string, string> = {
-  draft: "草稿", queued: "待执行", claimed: "已认领", running: "执行中",
+  draft: "草稿", ready: "待执行", running: "执行中",
   done: "已完成", failed: "失败", aborted: "已中止",
 }
 
 const STATUS_TONE: Record<string, string> = {
   draft: "bg-muted text-muted-foreground",
-  queued: "bg-blue-500/15 text-blue-500",
-  claimed: "bg-amber-500/15 text-amber-600",
+  ready: "bg-blue-500/15 text-blue-500",
   running: "bg-blue-500/15 text-blue-500",
   done: "bg-emerald-500/15 text-emerald-600",
   failed: "bg-red-500/15 text-red-500",
   aborted: "bg-zinc-500/15 text-zinc-500",
 }
 
-export function TaskModal({ open, onOpenChange, job, onMutated, onDraftResolved }: TaskModalProps) {
-  const mode = resolveMode(job)
+// ── TaskModal ───────────────────────────────────────────────────────
+
+export function TaskModal({ open, onOpenChange, task, onMutated, onDraftResolved }: TaskModalProps) {
+  const mode = resolveMode(task)
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -97,28 +107,28 @@ export function TaskModal({ open, onOpenChange, job, onMutated, onDraftResolved 
         className="sm:max-w-[92vw] w-[92vw] max-h-[90vh] h-[90vh] p-0 gap-0 flex flex-col"
         aria-describedby={undefined}
       >
-        <ModalHeader job={job} mode={mode} />
+        <ModalHeader task={task} mode={mode} />
         <div className="flex-1 min-h-0 overflow-hidden">
           {mode === "authoring" && (
-            <AuthoringMode job={job} onMutated={onMutated} onDraftResolved={onDraftResolved} onClose={() => onOpenChange(false)} />
+            <AuthoringMode task={task} onMutated={onMutated} onDraftResolved={onDraftResolved} onClose={() => onOpenChange(false)} />
           )}
-          {mode === "simple-execution" && job && (
-            <SimpleExecutionMode job={job} onMutated={onMutated} onClose={() => onOpenChange(false)} />
+          {mode === "simple-execution" && task && (
+            <SimpleExecutionMode task={task} onMutated={onMutated} onClose={() => onOpenChange(false)} />
           )}
-          {mode === "composite" && job && (
-            <CompositeMode job={job} onMutated={onMutated} onClose={() => onOpenChange(false)} />
+          {mode === "composite" && task && (
+            <CompositeMode task={task} onMutated={onMutated} onClose={() => onOpenChange(false)} />
           )}
-          {mode === "done" && job && <DoneMode job={job} />}
-          {mode === "terminal" && job && <TerminalMode job={job} />}
+          {mode === "done" && task && <DoneMode task={task} />}
+          {mode === "terminal" && task && <TerminalMode task={task} />}
         </div>
       </DialogContent>
     </Dialog>
   )
 }
 
-function ModalHeader({ job, mode }: { job: SchedulerJob | null; mode: ModalMode }) {
-  const title = job?.name ?? "新建任务"
-  const status = job?.status ?? "draft"
+function ModalHeader({ task, mode }: { task: Task | null; mode: ModalMode }) {
+  const title = task?.name ?? "新建任务"
+  const status = task?.status ?? "draft"
   const subtitle =
     mode === "authoring"
       ? "Authoring · spec 左 / 对话 右"
@@ -145,25 +155,25 @@ function ModalHeader({ job, mode }: { job: SchedulerJob | null; mode: ModalMode 
 // ── Authoring: spec LEFT / clone chat RIGHT ──────────────────────────
 
 function AuthoringMode({
-  job, onMutated, onDraftResolved, onClose,
+  task, onMutated, onDraftResolved, onClose,
 }: {
-  job: SchedulerJob | null
+  task: Task | null
   onMutated: () => void
-  onDraftResolved?: (draft: SchedulerJob) => void
+  onDraftResolved?: (task: Task) => void
   onClose: () => void
 }) {
-  const initialSessionId = job?.source_chat_session_id ?? null
+  const initialSessionId = task?.source_chat_session_id ?? null
   const [activeSessionId, setActiveSessionId] = useState<string | null>(initialSessionId)
   const pendingMessageRef = useRef<string | null>(null)
 
-  // Sync activeSessionId when job's source_chat_session_id changes (e.g., draft resolved)
+  // Sync activeSessionId when task's source_chat_session_id is set (draft resolved).
   useEffect(() => {
-    if (job?.source_chat_session_id && job.source_chat_session_id !== activeSessionId) {
-      setActiveSessionId(job.source_chat_session_id)
+    if (task?.source_chat_session_id && task.source_chat_session_id !== activeSessionId) {
+      setActiveSessionId(task.source_chat_session_id)
     }
-  }, [job?.source_chat_session_id])
+  }, [task?.source_chat_session_id, activeSessionId])
 
-  // API overrides: route through task-author clone endpoints
+  // API overrides: route through the task-author clone endpoints (05/07 pattern).
   const apiOverrides = useMemo(() => ({
     getSession: (id: string, q?: { limit?: number; cursor?: string }) =>
       agentApi.getCloneSession(TASK_AUTHOR_CLONE, id, q),
@@ -175,7 +185,6 @@ function AuthoringMode({
 
   const chat = useAgentChat(activeSessionId, { api: apiOverrides })
 
-  // Load messages when session changes
   const loadedSessionIdsRef = useRef<Set<string>>(new Set())
   useEffect(() => {
     if (!activeSessionId) return
@@ -183,9 +192,8 @@ function AuthoringMode({
     loadedSessionIdsRef.current.add(activeSessionId)
     if (pendingMessageRef.current) return // skip load for new sessions with pending msg
     chat.loadMessages()
-  }, [activeSessionId])
+  }, [activeSessionId, chat])
 
-  // Create a session for task-author clone
   const createSession = useCallback(async (): Promise<string | null> => {
     try {
       const session = await agentApi.createCloneSession(TASK_AUTHOR_CLONE)
@@ -196,33 +204,32 @@ function AuthoringMode({
     }
   }, [])
 
-  // New-task flow: after each completed turn, look up the draft the clone created
+  // New-task flow: after a turn, look up the draft the autosave seam (04)
+  // created server-side (linked via source_chat_session_id). Best-effort —
+  // the page's 10s polling + task_status SSE will also surface it.
   const resolveDraft = useCallback(async (sid: string) => {
-    if (!sid || job) return
+    if (!sid || task) return
     try {
-      const data = await listJobs({ page: 1, limit: 100, trigger_source: "requirement" })
+      const data = await listTasks({ status: "draft" })
       const draft = data.items
-        .filter((j) => j.source_chat_session_id === sid && j.status === "draft")
+        .filter((t) => t.source_chat_session_id === sid && t.status === "draft")
         .sort((a, b) => (b.created_at > a.created_at ? 1 : -1))[0]
       if (draft) onDraftResolved?.(draft)
     } catch {
       // refetch will happen via onMutated elsewhere
     }
-  }, [job, onDraftResolved])
+  }, [task, onDraftResolved])
 
-  // Handle send: create session if needed, then send message
   const handleSend = useCallback((message: string) => {
     if (activeSessionId) {
       chat.sendMessage(message)
       void resolveDraft(activeSessionId)
     } else {
-      // No session yet — create one, then send
       pendingMessageRef.current = message
       void createSession()
     }
   }, [activeSessionId, chat, createSession, resolveDraft])
 
-  // When session is created and there's a pending message, send it
   useEffect(() => {
     if (activeSessionId && pendingMessageRef.current) {
       const msg = pendingMessageRef.current
@@ -237,7 +244,7 @@ function AuthoringMode({
   return (
     <div className="grid grid-cols-1 lg:grid-cols-2 h-full min-h-0">
       <div className="flex flex-col min-h-0 border-r border-border overflow-y-auto">
-        <SpecPanel job={job} onMutated={onMutated} />
+        <SpecPanel task={task} onMutated={onMutated} />
       </div>
       <div className="flex flex-col min-h-0">
         <ChatArea
@@ -258,26 +265,28 @@ function AuthoringMode({
           hideEmptyState
         />
       </div>
-      <AuthoringFooter job={job} onEnqueue={onMutated} onClose={onClose} />
+      <AuthoringFooter task={task} onEnqueue={onMutated} onClose={onClose} />
     </div>
   )
 }
 
 function AuthoringFooter({
-  job, onEnqueue, onClose,
+  task, onEnqueue, onClose,
 }: {
-  job: SchedulerJob | null
+  task: Task | null
   onEnqueue: () => Promise<void> | void
   onClose: () => void
 }) {
   const [busy, setBusy] = useState(false)
-  const canEnqueue = !!job && job.status === "draft"
+  const canEnqueue = !!task && task.status === "draft"
 
   const handleEnqueue = async () => {
-    if (!job) return
+    if (!task) return
     setBusy(true)
     try {
-      await enqueueJob(job.id)
+      // [入队] = draft→ready (confirm gate, v1 D13) + dispatch seam (server
+      // creates the schedules envelope: simple=1 primary; composite=1 coordinator).
+      await readyTask(task.id)
       toast.success("已入队，任务进入待执行列")
       onEnqueue()
       onClose()
@@ -291,7 +300,7 @@ function AuthoringFooter({
   return (
     <div className="col-span-full flex items-center justify-end gap-2 border-t border-border px-5 py-3 bg-background">
       <span className="mr-auto text-xs text-muted-foreground">
-        {job ? "确认 spec 后入队执行" : "先与 task-author 对话生成 spec"}
+        {task ? "确认 spec 后入队执行（[保存草稿] 在 spec 面板）" : "先与 task-author 对话生成 spec"}
       </span>
       <Button variant="outline" size="sm" onClick={onClose}>取消</Button>
       <Button size="sm" onClick={handleEnqueue} disabled={!canEnqueue || busy} data-task-enqueue>
@@ -302,218 +311,17 @@ function AuthoringFooter({
   )
 }
 
-// ── Spec panel: project/skill selectors + task_spec editor ───────────
-
-function SpecPanel({ job, onMutated }: { job: SchedulerJob | null; onMutated: () => void }) {
-  const { orgs } = useOrgs()
-  const org = orgs[0]?.name ?? ""
-  const wfConfig = workflowConfigOf(job)
-  const seedProjects: SelectedProject[] = useMemo(
-    () => (wfConfig?.workspace_spec.projects ?? []).map((p) => ({ name: p.name, source_path: p.source_path, group: p.group })),
-    [wfConfig]
-  )
-  const [projects, setProjects] = useState<SelectedProject[]>(seedProjects)
-  useEffect(() => { setProjects(seedProjects) }, [seedProjects])
-
-  const spec = taskSpecOf(job)
-  const [goal, setGoal] = useState(spec?.goal ?? "")
-  const [ac, setAc] = useState<string[]>(spec?.ac ?? [""])
-  const [subunits, setSubunits] = useState<SubunitSpec[]>(spec?.subunits ?? [])
-  const [integration, setIntegration] = useState<IntegrationGoal>(spec?.integration_goal ?? { strategy: "synthesis" })
-  const [skills, setSkills] = useState<string[]>(spec?.subunits?.flatMap((s) => s.skills) ?? [])
-
-  useEffect(() => {
-    setGoal(spec?.goal ?? "")
-    setAc(spec?.ac ?? [""])
-    setSubunits(spec?.subunits ?? [])
-    setIntegration(spec?.integration_goal ?? { strategy: "synthesis" })
-  }, [spec])
-
-  const [saving, setSaving] = useState(false)
-  const dirty = useMemo(() => {
-    if (!spec) return false
-    const seedProjNames = (wfConfig?.workspace_spec.projects ?? []).map((p) => p.name)
-    return (
-      goal !== (spec.goal ?? "")
-      || ac.join("\n") !== (spec.ac ?? []).join("\n")
-      || JSON.stringify(subunits) !== JSON.stringify(spec.subunits ?? [])
-      || JSON.stringify(integration) !== JSON.stringify(spec.integration_goal ?? { strategy: "synthesis" })
-      || JSON.stringify(projects.map((p) => p.name)) !== JSON.stringify(seedProjNames)
-      || JSON.stringify(skills) !== JSON.stringify(spec.subunits?.flatMap((s) => s.skills) ?? [])
-    )
-  }, [goal, ac, subunits, integration, projects, skills, spec, wfConfig])
-
-  const handleSave = async () => {
-    if (!job || !wfConfig) return
-    const nextSpec: TaskSpec = {
-      goal: goal.trim() || spec?.goal || "未命名目标",
-      ac: ac.map((s) => s.trim()).filter(Boolean),
-      ...(spec?.data_model ? { data_model: spec.data_model } : {}),
-      ...(spec?.contracts ? { contracts: spec.contracts } : {}),
-      ...(subunits.length > 0 ? { subunits } : {}),
-      integration_goal: integration,
-    }
-    setSaving(true)
-    try {
-      await updateJob(job.id, {
-        config: {
-          ...wfConfig,
-          workspace_spec: { ...wfConfig.workspace_spec, projects },
-          task_spec: nextSpec,
-          ...(skills.length > 0 ? { skills } : {}),
-        },
-      }, job.version)
-      toast.success("spec 已保存")
-      onMutated()
-    } catch (err: unknown) {
-      toast.error(err instanceof Error ? err.message : "保存失败")
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  return (
-    <div className="p-4 space-y-4" data-task-spec-panel>
-      <section className="space-y-2">
-        <Label className="text-xs text-muted-foreground">项目 (多仓库)</Label>
-        {org ? (
-          <ProjectSelector org={org} value={projects} onChange={setProjects} />
-        ) : (
-          <p className="text-xs text-muted-foreground">未配置组织 — 请先运行 octopus setup。</p>
-        )}
-      </section>
-
-      <SkillsSelector value={skills} onChange={setSkills} />
-
-      <section className="space-y-2">
-        <Label htmlFor="task-goal" className="text-xs text-muted-foreground">目标 (goal)</Label>
-        <Textarea id="task-goal" value={goal} onChange={(e) => setGoal(e.target.value)} rows={2} placeholder="任务要达成什么…" className="text-sm" />
-      </section>
-
-      <section className="space-y-2">
-        <Label className="text-xs text-muted-foreground">验收标准 (AC)</Label>
-        <div className="space-y-1.5">
-          {ac.map((item, i) => (
-            <div key={i} className="flex items-start gap-2">
-              <span className="text-xs text-muted-foreground mt-2 w-5 shrink-0">{i + 1}.</span>
-              <Input value={item} onChange={(e) => setAc(ac.map((a, j) => j === i ? e.target.value : a))} className="h-8 text-sm" />
-              <button onClick={() => setAc(ac.filter((_, j) => j !== i))} className="mt-1 text-muted-foreground hover:text-destructive" aria-label="删除验收标准">
-                <Trash2 className="size-3.5" />
-              </button>
-            </div>
-          ))}
-          <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => setAc([...ac, ""])}>
-            <Plus className="size-3.5" /> 添加验收标准
-          </Button>
-        </div>
-      </section>
-
-      {subunits.length > 0 ? (
-        <SubunitsEditor subunits={subunits} onChange={setSubunits} />
-      ) : (
-        <section className="rounded-md border border-dashed border-border p-3 text-xs text-muted-foreground">
-          简单任务（单个 workspace）。若 task-author 生成多个 subunit，将在此编辑复合 spec。
-        </section>
-      )}
-
-      <section className="space-y-2">
-        <Label className="text-xs text-muted-foreground">整合策略 (integration_goal)</Label>
-        <select
-          className="h-8 w-full rounded-md border border-border bg-background px-2 text-sm"
-          value={integration.strategy}
-          onChange={(e) => setIntegration({ ...integration, strategy: e.target.value as "synthesis" | "merge" })}
-        >
-          <option value="synthesis">synthesis (moa 聚合，默认)</option>
-          <option value="merge">merge (结构合并)</option>
-        </select>
-      </section>
-
-      <div className="flex justify-end">
-        <Button size="sm" variant="outline" onClick={handleSave} disabled={!job || saving || !dirty}>
-          {saving ? <Spinner className="size-4" /> : null}
-          保存 spec
-        </Button>
-      </div>
-    </div>
-  )
-}
-
-function SkillsSelector({ value, onChange }: { value: string[]; onChange: (v: string[]) => void }) {
-  const [available, setAvailable] = useState<{ name: string }[]>([])
-  const [loading, setLoading] = useState(true)
-  useEffect(() => {
-    let cancelled = false
-    setLoading(true)
-    listResources({ type: "skill", installed: true })
-      .then((data) => { if (!cancelled) setAvailable(data.resources.map((r) => ({ name: r.name }))) })
-      .catch(() => { if (!cancelled) setAvailable([]) })
-      .finally(() => { if (!cancelled) setLoading(false) })
-    return () => { cancelled = true }
-  }, [])
-
-  const toggle = (name: string) => {
-    onChange(value.includes(name) ? value.filter((s) => s !== name) : [...value, name])
-  }
-
-  return (
-    <section className="space-y-2">
-      <Label className="text-xs text-muted-foreground">技能 (skills)</Label>
-      {loading ? (
-        <div className="flex items-center gap-2 text-xs text-muted-foreground"><Spinner className="size-3.5" /> 加载技能…</div>
-      ) : available.length === 0 ? (
-        <p className="text-xs text-muted-foreground">未安装技能。</p>
-      ) : (
-        <ScrollArea className="h-28 rounded border p-2">
-          <div className="flex flex-col gap-1">
-            {available.map((s) => (
-              <label key={s.name} className="flex cursor-pointer items-center gap-2 text-xs hover:bg-accent rounded px-1 py-0.5">
-                <Checkbox checked={value.includes(s.name)} onCheckedChange={() => toggle(s.name)} />
-                <span className="truncate">{s.name}</span>
-              </label>
-            ))}
-          </div>
-        </ScrollArea>
-      )}
-    </section>
-  )
-}
-
-function SubunitsEditor({ subunits, onChange }: { subunits: SubunitSpec[]; onChange: (s: SubunitSpec[]) => void }) {
-  const update = (i: number, patch: Partial<SubunitSpec>) =>
-    onChange(subunits.map((s, j) => j === i ? { ...s, ...patch } : s))
-  return (
-    <section className="space-y-2">
-      <Label className="text-xs text-muted-foreground">子单元 (subunits) · 复合任务</Label>
-      <div className="space-y-2">
-        {subunits.map((su, i) => (
-          <div key={i} className="rounded-md border border-border p-2.5 space-y-1.5">
-            <div className="flex items-center gap-2">
-              <Input value={su.name} onChange={(e) => update(i, { name: e.target.value })} className="h-7 text-xs flex-1" placeholder="名称" />
-              <button onClick={() => onChange(subunits.filter((_, j) => j !== i))} className="text-muted-foreground hover:text-destructive" aria-label="删除子单元">
-                <Trash2 className="size-3.5" />
-              </button>
-            </div>
-            <Input value={su.workflow_ref} onChange={(e) => update(i, { workflow_ref: e.target.value })} className="h-7 text-xs" placeholder="workflow_ref" />
-            <Input value={su.skills.join(", ")} onChange={(e) => update(i, { skills: e.target.value.split(",").map((x) => x.trim()).filter(Boolean) })} className="h-7 text-xs" placeholder="skills (逗号分隔)" />
-          </div>
-        ))}
-      </div>
-    </section>
-  )
-}
-
 // ── Simple execution: single-ws status + abort ──────────────────────
 
-function SimpleExecutionMode({ job, onMutated, onClose }: { job: SchedulerJob; onMutated: () => void; onClose: () => void }) {
-  const wfConfig = workflowConfigOf(job)
-  const workflowRef = wfConfig?.workflow_chain?.[0]?.workflow_ref ?? "—"
+function SimpleExecutionMode({ task, onMutated, onClose }: { task: Task; onMutated: () => void; onClose: () => void }) {
+  const workflowRef = task.workflow_ref ?? "—"
   const [aborting, setAborting] = useState(false)
-  const canAbort = job.status === "claimed" || job.status === "running"
+  const canAbort = task.status === "running"
 
   const handleAbort = async () => {
     setAborting(true)
     try {
-      await abortJob(job.id)
+      await abortTask(task.id)
       toast.success("已中止任务，工作区将清理")
       onMutated()
       onClose()
@@ -528,14 +336,13 @@ function SimpleExecutionMode({ job, onMutated, onClose }: { job: SchedulerJob; o
     <div className="p-5 space-y-4" data-task-simple-execution>
       <div className="rounded-lg border border-border p-4 space-y-1.5 text-sm">
         <div className="flex justify-between"><span className="text-muted-foreground">workflow_ref</span><code className="text-xs">{workflowRef}</code></div>
-        <div className="flex justify-between"><span className="text-muted-foreground">状态</span><span>{STATUS_LABEL[job.status] ?? job.status}</span></div>
-        <div className="flex justify-between"><span className="text-muted-foreground">认领时间</span><span>{job.claimed_at ? new Date(job.claimed_at).toLocaleString() : "—"}</span></div>
-        {job.last_execution?.error_summary ? (
-          <div className="flex items-start gap-1.5 pt-1 text-red-500"><AlertCircle className="size-3.5 mt-0.5 shrink-0" /><span className="text-xs">{job.last_execution.error_summary}</span></div>
+        <div className="flex justify-between"><span className="text-muted-foreground">状态</span><span>{STATUS_LABEL[task.status] ?? task.status}</span></div>
+        {task.completed_at ? (
+          <div className="flex justify-between"><span className="text-muted-foreground">完成时间</span><span>{new Date(task.completed_at).toLocaleString()}</span></div>
         ) : null}
       </div>
       <p className="text-xs text-muted-foreground">
-        实时进度经 SSE schedule_status 推送，看板卡与状态秒级同步。完整执行流程图见执行详情。
+        实时进度经 SSE task_status 推送，看板卡与状态秒级同步。完整执行流程图见执行详情。
       </p>
       <div className="flex justify-end">
         <Button variant="destructive" size="sm" onClick={handleAbort} disabled={!canAbort || aborting} data-task-abort>
@@ -549,34 +356,64 @@ function SimpleExecutionMode({ job, onMutated, onClose }: { job: SchedulerJob; o
 
 // ── Composite: composition DAG + N child cards + integration + SSE ──────
 
-/** Derive the integration (moa/synthesis) node status from parent + children.
- *  The integration node is the composition workflow's final aggregator — its
- *  status tracks whether synthesis has run. Parent schedule status reflects the
- *  whole composition; children reflect the subunit fan-out. */
-function integrationStatusOf(parent: string, children: JobDetailChild[]): string {
+/** Derive a minimal composition DAG from task_spec.subunits (client-side) —
+ *  the server's TaskDetail doesn't carry a dag. Nodes = subunits + 1
+ *  integration node; edges = each subunit → integration. Keeps the existing
+ *  CompositeDag rendering functional; ticket 11 will replace the drill-down. */
+function deriveDag(spec: TaskSpec | null): { nodes: { id: string; type: "subunit" | "integration"; label: string; workflow_ref?: string }[]; edges: { from: string; to: string }[] } {
+  const subunits = spec?.subunits ?? []
+  if (subunits.length === 0) return { nodes: [], edges: [] }
+  // Explicit element type so the 'integration' push is assignable to the same
+  // array the 'subunit' map produced (TS would otherwise infer the array as
+  // { type: "subunit" }[] from the map).
+  const nodes: { id: string; type: "subunit" | "integration"; label: string; workflow_ref?: string }[] =
+    subunits.map((s: SubunitSpec) => ({
+      id: s.name, type: "subunit" as const, label: s.name, workflow_ref: s.workflow_ref,
+    }))
+  nodes.push({
+    id: "integration",
+    type: "integration" as const,
+    label: spec?.integration_goal?.strategy === "merge" ? "merge" : "synthesis",
+  })
+  const edges = subunits.map((s: SubunitSpec) => ({ from: s.name, to: "integration" }))
+  return { nodes, edges }
+}
+
+/** Map TaskDetail.children (server S2 origin lookup) → the JobDetailChild shape
+ *  the existing CompositeDag/child-card components consume (name → subunit_name).
+ *  Keeps composite-dag.tsx untouched (ticket 11's lane). */
+function childrenToDagChildren(children: TaskChild[]): { schedule_id: string; name: string; status: string; workflow_ref: string; subunit_name: string }[] {
+  return children.map((c) => ({
+    schedule_id: c.schedule_id,
+    name: c.name,
+    status: c.status,
+    workflow_ref: c.workflow_ref ?? "",
+    subunit_name: c.name,
+  }))
+}
+
+function integrationStatusOf(parent: string, children: { status: string }[]): string {
   if (parent === "done" || parent === "failed" || parent === "aborted") return parent
   const allChildrenDone = children.length > 0 && children.every((c) => c.status === "done")
   return allChildrenDone ? "running" : "pending"
 }
 
 export function CompositeMode({
-  job, onMutated, onClose,
+  task, onMutated, onClose,
 }: {
-  job: SchedulerJob
+  task: Task
   onMutated: () => void
   onClose: () => void
 }) {
   const router = useRouter()
-  const [detail, setDetail] = useState<JobDetail | null>(null)
+  const [detail, setDetail] = useState<TaskDetail | null>(null)
   const [loading, setLoading] = useState(true)
   const [aborting, setAborting] = useState(false)
   const [events, setEvents] = useState<CompositeEvent[]>([])
 
-  // Fetch the full JobDetail (children[] + dag) — the kanban row only carries
-  // SchedulerJob; the composite fields come from GET /jobs/:id (ticket 10).
   const fetchDetail = useCallback(async (id: string) => {
     try {
-      const data = await getJob(id)
+      const data = await getTask(id)
       setDetail(data)
     } catch {
       // Non-fatal: the modal still shows the parent row from props.
@@ -586,74 +423,62 @@ export function CompositeMode({
   }, [])
 
   useEffect(() => {
-    void fetchDetail(job.id)
-  }, [job.id, fetchDetail])
+    void fetchDetail(task.id)
+  }, [task.id, fetchDetail])
 
-  // Real-time SSE: subscribe to schedule_status for the parent + each child.
-  // On any matching event, append to the events log and re-fetch the detail so
-  // statuses refresh in real time (ticket 13 AC: SSE 实时刷新父+各子状态).
+  // Real-time SSE: task_status on /api/tasks/events. The ScheduleStatusListener
+  // (SG2) emits when a child schedule transition mirrors onto the parent task.
   useEffect(() => {
-    if (!job.id) return
+    if (!task.id) return
     const parentLabel = "父任务"
     const labelFor = (scheduleId: string): string => {
-      if (scheduleId === job.id) return parentLabel
+      if (scheduleId === task.id) return parentLabel
       const child = detail?.children?.find((c) => c.schedule_id === scheduleId)
-      return child?.subunit_name ?? scheduleId.slice(0, 8)
+      return child?.name ?? scheduleId.slice(0, 8)
     }
-    const isRelevant = (scheduleId: string): boolean => {
-      if (scheduleId === job.id) return true
-      return detail?.children?.some((c) => c.schedule_id === scheduleId) ?? false
+    const isRelevant = (payloadTaskId: string, scheduleId?: string): boolean => {
+      if (payloadTaskId === task.id) return true
+      if (scheduleId) return detail?.children?.some((c) => c.schedule_id === scheduleId) ?? false
+      return false
     }
 
     const unsub = subscribeSSE(
-      `${getServerUrl()}/api/scheduler/events`,
-      "schedule_status",
+      `${getServerUrl()}/api/tasks/events`,
+      "task_status",
       (e: MessageEvent) => {
         try {
-          const payload = JSON.parse(e.data) as { schedule_id: string; status: string }
-          if (!isRelevant(payload.schedule_id)) return
+          const payload = JSON.parse(e.data) as { task_id: string; status: string; schedule_id?: string }
+          if (!isRelevant(payload.task_id, payload.schedule_id)) return
           setEvents((prev) => [
             ...prev,
             {
-              schedule_id: payload.schedule_id,
+              schedule_id: payload.schedule_id ?? payload.task_id,
               status: payload.status,
-              label: labelFor(payload.schedule_id),
+              label: labelFor(payload.schedule_id ?? payload.task_id),
               at: new Date().toISOString(),
             },
           ])
-          void fetchDetail(job.id)
+          void fetchDetail(task.id)
         } catch {
           // Malformed event payload — ignore.
         }
-      }
+      },
     )
     return () => unsub()
-  }, [job.id, detail, fetchDetail])
+  }, [task.id, detail, fetchDetail])
 
   const children = detail?.children ?? []
-  const dag = detail?.dag
-  const parentStatus = detail?.status ?? job.status
-  const aggregate = computeAggregateStatus(children, parentStatus)
+  const dagChildren = childrenToDagChildren(children)
+  const dag = deriveDag(taskSpecOf(task))
+  const parentStatus = detail?.status ?? task.status
+  const aggregate = computeAggregateStatus(dagChildren, parentStatus)
   const integrationStatus = integrationStatusOf(parentStatus, children)
-  const canAbort = parentStatus === "claimed" || parentStatus === "running"
+  const canAbort = parentStatus === "running"
 
+  // SG15: retarget child drill-down to the tasks domain.
   const handleChildClick = useCallback((scheduleId: string) => {
-    router.push(`/scheduler/jobs/${scheduleId}`)
-  }, [router])
-
-  const handleAbort = async () => {
-    setAborting(true)
-    try {
-      await abortJob(job.id)
-      toast.success("已中止任务，工作区将清理")
-      onMutated()
-      onClose()
-    } catch (err: unknown) {
-      toast.error(err instanceof Error ? err.message : "中止失败")
-    } finally {
-      setAborting(false)
-    }
-  }
+    router.push(`/tasks/${task.id}/children/${scheduleId}`)
+  }, [router, task.id])
 
   if (loading && !detail) {
     return (
@@ -665,33 +490,26 @@ export function CompositeMode({
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-[1fr_280px] h-full min-h-0" data-task-composite>
-      {/* Left: DAG + child cards + integration + abort */}
       <div className="flex flex-col min-h-0 overflow-y-auto">
-        {/* Aggregate status bar */}
         <div className="flex items-center justify-between gap-2 px-4 py-2.5 border-b border-border bg-muted/30">
           <div className="flex items-center gap-2">
             <Workflow className="size-4 text-primary" />
             <span className="text-sm font-medium">聚合状态</span>
-            <Badge
-              variant="secondary"
-              className={STATUS_TONE[aggregate] ?? ""}
-              data-testid="composite-aggregate-status"
-            >
+            <Badge variant="secondary" className={STATUS_TONE[aggregate] ?? ""} data-testid="composite-aggregate-status">
               {STATUS_LABEL[aggregate] ?? aggregate}
             </Badge>
           </div>
           <span className="text-xs text-muted-foreground">{children.length} 个子任务</span>
         </div>
 
-        {/* Composition DAG */}
-        {dag ? (
+        {dag.nodes.length > 0 ? (
           <div className="px-2 py-3 border-b border-border">
             <CompositeDag
               dag={dag}
-              children={children}
+              children={dagChildren}
               integrationStatus={integrationStatus}
               onChildClick={(name) => {
-                const child = children.find((c) => c.subunit_name === name)
+                const child = children.find((c) => c.name === name)
                 if (child) handleChildClick(child.schedule_id)
               }}
             />
@@ -700,7 +518,6 @@ export function CompositeMode({
           <div className="px-4 py-6 text-xs text-muted-foreground">等待 composition DAG…</div>
         )}
 
-        {/* Child cards */}
         <div className="p-3 space-y-2">
           <h3 className="text-xs font-semibold text-muted-foreground">子任务执行</h3>
           {children.map((c) => (
@@ -712,11 +529,12 @@ export function CompositeMode({
             >
               <span className={`size-2 rounded-full shrink-0 ${STATUS_DOT_COLOR[c.status] ?? "bg-muted-foreground"}`} />
               <div className="flex-1 min-w-0">
-                <div className="text-sm font-medium truncate">{c.subunit_name}</div>
+                <div className="text-sm font-medium truncate">{c.name}</div>
                 <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                  <code className="text-[10px]">{c.workflow_ref}</code>
+                  <code className="text-[10px]">{c.workflow_ref ?? "—"}</code>
                   <span>·</span>
                   <span>{STATUS_LABEL[c.status] ?? c.status}</span>
+                  {c.origin_role ? <span className="text-[10px] px-1 rounded bg-muted">{c.origin_role}</span> : null}
                 </div>
               </div>
               <ExternalLink className="size-3.5 text-muted-foreground shrink-0" />
@@ -727,14 +545,13 @@ export function CompositeMode({
           )}
         </div>
 
-        {/* Integration node status */}
         <div className="px-3 pb-3" data-testid="composite-integration">
           <div className="rounded-md border border-dashed border-primary/30 bg-primary/5 p-2.5 flex items-center gap-2">
             <span className={`size-2 rounded-full shrink-0 ${STATUS_DOT_COLOR[integrationStatus] ?? "bg-muted-foreground"}`} />
             <div className="flex-1 min-w-0">
               <div className="text-sm font-medium">整合节点</div>
               <div className="text-xs text-muted-foreground">
-                {taskSpecOf(job)?.integration_goal?.strategy === "merge" ? "merge" : "synthesis (moa 聚合)"}
+                {taskSpecOf(task)?.integration_goal?.strategy === "merge" ? "merge" : "synthesis (moa 聚合)"}
               </div>
             </div>
             <Badge variant="secondary" className={STATUS_TONE[integrationStatus] ?? ""}>
@@ -743,10 +560,21 @@ export function CompositeMode({
           </div>
         </div>
 
-        {/* Abort */}
         {canAbort && (
           <div className="flex justify-end px-3 pb-4">
-            <Button variant="destructive" size="sm" onClick={handleAbort} disabled={aborting} data-task-abort>
+            <Button variant="destructive" size="sm" onClick={async () => {
+              setAborting(true)
+              try {
+                await abortTask(task.id)
+                toast.success("已中止任务，工作区将清理")
+                onMutated()
+                onClose()
+              } catch (err: unknown) {
+                toast.error(err instanceof Error ? err.message : "中止失败")
+              } finally {
+                setAborting(false)
+              }
+            }} disabled={aborting} data-task-abort>
               {aborting ? <Spinner className="size-4" /> : <Ban className="size-4" />}
               中止
             </Button>
@@ -754,7 +582,6 @@ export function CompositeMode({
         )}
       </div>
 
-      {/* Right: real-time SSE events panel */}
       <div className="border-l border-border min-h-0">
         <CompositeEventsPanel events={events} />
       </div>
@@ -772,24 +599,21 @@ const STATUS_DOT_COLOR: Record<string, string> = {
   pending: "bg-muted-foreground",
 }
 
-function DoneMode({ job }: { job: SchedulerJob }) {
-  const spec = taskSpecOf(job)
+function DoneMode({ task }: { task: Task }) {
+  const spec = taskSpecOf(task)
   return (
     <div className="p-5 space-y-3" data-task-done>
       <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-4 text-sm space-y-1">
         <div className="flex items-center gap-2 font-medium text-emerald-600"><CheckCircle2 className="size-4" /> 任务完成</div>
         {spec ? <p className="text-xs text-muted-foreground">目标: {spec.goal}</p> : null}
-        {job.last_execution?.error_summary ? (
-          <p className="text-xs text-muted-foreground">{job.last_execution.error_summary}</p>
-        ) : null}
       </div>
       <p className="text-xs text-muted-foreground">综合报告与 PR 链接在结果产物就绪后展示。</p>
     </div>
   )
 }
 
-function TerminalMode({ job }: { job: SchedulerJob }) {
-  const failed = job.status === "failed"
+function TerminalMode({ task }: { task: Task }) {
+  const failed = task.status === "failed"
   return (
     <div className="p-5 space-y-3" data-task-terminal>
       <div className={`rounded-lg border p-4 text-sm space-y-1 ${failed ? "border-red-500/30 bg-red-500/5" : "border-zinc-500/30 bg-zinc-500/5"}`}>
@@ -797,11 +621,6 @@ function TerminalMode({ job }: { job: SchedulerJob }) {
           {failed ? <AlertCircle className="size-4" /> : <Ban className="size-4" />}
           {failed ? "任务失败" : "任务已中止"}
         </div>
-        {job.last_execution?.error_summary ? (
-          <pre className="mt-1 whitespace-pre-wrap break-words text-xs text-muted-foreground">{job.last_execution.error_summary}</pre>
-        ) : (
-          <p className="text-xs text-muted-foreground">无错误摘要。</p>
-        )}
       </div>
       <p className="text-xs text-muted-foreground">{failed ? "失败为终态 (G2)，不会自动重派。可新建任务重试。" : "中止为终态，工作区已清理。"}</p>
     </div>
