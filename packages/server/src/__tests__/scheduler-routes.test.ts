@@ -1,14 +1,13 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest'
+import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest'
 import Database from 'better-sqlite3'
 import { Hono } from 'hono'
 import { applySchema } from '../db/schema'
 import { SchedulerService } from '../services/scheduler/scheduler-service'
 import { DashboardService } from '../services/scheduler/dashboard-service'
 import { ExportService } from '../services/scheduler/export-service'
-import { createSchedulerRoutes } from '../routes/scheduler'
-import { ScheduleConfigDAO, ScheduleRunDAO, ChatDAO } from '../db/dao'
-import { ChatService } from '../services/chat'
-import { SSEService } from '../services/sse'
+import { createSchedulerRoutes, resetSchedulerRateLimitersForTests } from '../routes/scheduler'
+import { createCloneSessionRoutes } from '../routes/clone'
+import { ScheduleConfigDAO, ScheduleRunDAO, AgentSessionDAO } from '../db/dao'
 
 describe('Scheduler Routes (integration)', () => {
   let db: Database.Database
@@ -26,13 +25,25 @@ describe('Scheduler Routes (integration)', () => {
     const service = new SchedulerService(new ScheduleConfigDAO(db), new ScheduleRunDAO(db))
     const dashboard = new DashboardService(new ScheduleConfigDAO(db), new ScheduleRunDAO(db))
     const exportService = new ExportService(new ScheduleConfigDAO(db))
-    const chatService = new ChatService(new ChatDAO(db), new SSEService())
+    // G7: scheduler route now binds a REAL task-author clone session (sessions table)
+    // via AgentSessionDAO, replacing the retired 'taskpool-draft' chat_sessions sentinel.
+    const agentSessionDAO = new AgentSessionDAO(db)
     app = new Hono()
-    app.route('/api/scheduler', createSchedulerRoutes(service, dashboard, exportService, chatService))
+    app.route('/api/scheduler', createSchedulerRoutes(service, dashboard, exportService, agentSessionDAO))
+    // Mount clone routes so task-author chat session resolves via the clone-session mechanism.
+    app.route('/api/clones', createCloneSessionRoutes({ sessionDAO: agentSessionDAO }))
   })
 
   afterAll(() => {
     db.close()
+  })
+
+  // Reset rate-limiter buckets before each test. The suite shares one app, so
+  // the module-level limiters would otherwise accumulate >maxTokens writes
+  // across tests and falsely 429 later assertions (test-isolation, not real
+  // rate limiting).
+  beforeEach(() => {
+    resetSchedulerRateLimitersForTests()
   })
 
   // Helper: parse JSON body from Hono Response
@@ -319,9 +330,9 @@ describe('Scheduler Routes (integration)', () => {
     expect(data.items.every(j => j.trigger_source === 'requirement')).toBe(true)
   })
 
-  // ── T-9: Chat Session Binding ─────────────────────────────────
+  // ── G7: task-author clone session binding (retires 'taskpool-draft' sentinel) ──
 
-  it('AC18: POST /jobs with trigger_source=requirement auto-creates chat session + returns source_chat_session_id', async () => {
+  it('G7/AC18: POST /jobs with trigger_source=requirement auto-creates a REAL task-author clone session + scope_id=job.id', async () => {
     const res = await app.request('/api/scheduler/jobs', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -347,12 +358,120 @@ describe('Scheduler Routes (integration)', () => {
     expect(body.source_chat_session_id).toBeTruthy()
     expect(typeof body.source_chat_session_id).toBe('string')
 
-    // 反假跑: chat_sessions 表真有这条记录, 不只是 API 返回对了
-    const chatRow = db.prepare(
-      'SELECT id, workspace_id FROM chat_sessions WHERE id = ?'
-    ).get(body.source_chat_session_id) as { id: string; workspace_id: string } | undefined
-    expect(chatRow).toBeDefined()
-    expect(chatRow!.workspace_id).toBe('taskpool-draft')
+    // G7: session is a REAL clone session in the `sessions` table (clone-session mechanism),
+    // NOT a chat_sessions row with the retired 'taskpool-draft' fake workspace_id.
+    const sessionRow = db.prepare(
+      'SELECT id, clone_name, session_type, scope_id, is_deleted FROM sessions WHERE id = ?'
+    ).get(body.source_chat_session_id) as
+      | { id: string; clone_name: string; session_type: string; scope_id: string | null; is_deleted: number }
+      | undefined
+    expect(sessionRow, 'task-author clone session must exist in sessions table').toBeDefined()
+    expect(sessionRow!.clone_name).toBe('task-author')
+    expect(sessionRow!.session_type).toBe('clone_direct')
+    expect(sessionRow!.scope_id).toBe(body.id) // linked to the task id (G7: scope_id=task_id)
+    expect(sessionRow!.is_deleted).toBe(0)
+
+    // G7 反假跑: NO 'taskpool-draft' fake workspace_id row in chat_sessions (sentinel retired)
+    const chatRow = db.prepare('SELECT id FROM chat_sessions WHERE id = ?').get(body.source_chat_session_id)
+    expect(chatRow, 'chat_sessions must NOT carry the retired taskpool-draft sentinel').toBeUndefined()
+  })
+
+  it('G7: POST /api/clones/task-author/sessions/:id/chat resolves the real clone session (not 404)', async () => {
+    // Create a requirement draft → auto-creates a task-author clone session with scope_id=job.id
+    const createRes = await app.request('/api/scheduler/jobs', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: `g7-chat-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        job_type: 'workflow',
+        cron_expression: null,
+        timezone: 'Asia/Shanghai',
+        org: 'test',
+        trigger_source: 'requirement',
+        config: {
+          schema_version: '2.0',
+          type: 'workflow',
+          workspace_spec: { org: 'test', branch_prefix: 'draft', projects: [{ name: 'p', source_path: '/tmp' }] },
+          workflow_chain: [{ workflow_ref: 'g7.yaml', input_values: {} }],
+          max_retain: 10,
+        },
+      }),
+    })
+    expect(createRes.status).toBe(201)
+    const created = await json<{ id: string; source_chat_session_id: string | null }>(createRes)
+    expect(created.source_chat_session_id).toBeTruthy()
+    const sessionId = created.source_chat_session_id!
+
+    // The auto-created session is a real task-author clone session, so the generic
+    // clone chat route must resolve it (200 SSE stream). The provider may error
+    // inside the stream, but the session+clone must NOT 404.
+    const chatRes = await app.request(`/api/clones/task-author/sessions/${sessionId}/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: 'draft a simple task spec' }),
+    })
+    expect(chatRes.status).toBe(200)
+    // Drain the SSE body so the stream completes cleanly
+    await chatRes.text()
+  })
+
+  it('G7: createJob failure rolls back the auto-created task-author session (no orphan)', async () => {
+    // Baseline: create a requirement draft whose name we will duplicate
+    const dupName = `E2E_TP_rollback_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+    const first = await app.request('/api/scheduler/jobs', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: dupName,
+        job_type: 'workflow',
+        cron_expression: null,
+        timezone: 'Asia/Shanghai',
+        org: 'test',
+        trigger_source: 'requirement',
+        config: {
+          schema_version: '2.0',
+          type: 'workflow',
+          workspace_spec: { org: 'test', branch_prefix: 'draft', projects: [{ name: 'p', source_path: '/tmp' }] },
+          workflow_chain: [{ workflow_ref: 'r.yaml', input_values: {} }],
+          max_retain: 10,
+        },
+      }),
+    })
+    expect(first.status).toBe(201)
+
+    // Count ACTIVE task-author clone sessions right before the failing create
+    const activeBefore = (db.prepare(
+      "SELECT COUNT(*) as c FROM sessions WHERE clone_name = 'task-author' AND is_deleted = 0"
+    ).get() as { c: number }).c
+
+    // Duplicate name → 409. The route auto-creates a session BEFORE calling createJob,
+    // then createJob throws → the catch block must roll the orphan session back.
+    const dup = await app.request('/api/scheduler/jobs', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: dupName,
+        job_type: 'workflow',
+        cron_expression: null,
+        timezone: 'Asia/Shanghai',
+        org: 'test',
+        trigger_source: 'requirement',
+        config: {
+          schema_version: '2.0',
+          type: 'workflow',
+          workspace_spec: { org: 'test', branch_prefix: 'draft', projects: [{ name: 'p', source_path: '/tmp' }] },
+          workflow_chain: [{ workflow_ref: 'r.yaml', input_values: {} }],
+          max_retain: 10,
+        },
+      }),
+    })
+    expect(dup.status).toBe(409)
+
+    // 反假跑: NO active orphan session left (the rolled-back one is is_deleted=1, not chattable)
+    const activeAfter = (db.prepare(
+      "SELECT COUNT(*) as c FROM sessions WHERE clone_name = 'task-author' AND is_deleted = 0"
+    ).get() as { c: number }).c
+    expect(activeAfter).toBe(activeBefore)
   })
 
   it('AC18 反假跑: caller-provided source_chat_session_id is preserved (no auto-create override)', async () => {
@@ -404,6 +523,7 @@ describe('Scheduler Routes (integration)', () => {
       }),
     })
     const created = await json<{ id: string; source_chat_session_id: string | null }>(createRes)
+    expect(createRes.status).toBe(201)
     expect(created.source_chat_session_id).toBeTruthy()
 
     // 反假跑 AC19: GET 接口返回 source_chat_session_id 字段

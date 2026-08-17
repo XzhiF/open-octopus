@@ -362,6 +362,25 @@ export class SchedulerEngine {
         }
       }
 
+      // G2 retry cap (ticket 05): for requirement-type tasks, the cron-style
+      // auto-disable above (enabled=0) does NOT stop re-dispatch, because
+      // findQueuedSchedules filters by status='queued' only and ignores enabled.
+      // A persistently-failing requirement task would otherwise loop
+      // claimed→(stale rollback)→queued→redispatch forever. Promote to terminal
+      // 'failed' exactly when the N=5 threshold fires: findStaleClaimed
+      // (status IN claimed/running) and findQueuedSchedules (status='queued')
+      // both skip 'failed', so the loop stops. SSE emit for this transition is
+      // wired by ticket 07, which injects SSEService into SchedulerEngine.
+      if (
+        trackerResult.autoDisabled &&
+        (schedule.trigger_source ?? 'cron') === 'requirement'
+      ) {
+        this.configDAO.updateSchedule(schedule.id, {
+          status: 'failed',
+          claimed_at: null,
+        })
+      }
+
       if (schedule.notify_on_failure) {
         const errorSummary = result.errorMessage ?? 'Execution failed'
         this.notificationService
@@ -456,6 +475,10 @@ export class SchedulerEngine {
   // T-5 AC11: stale claimed (claimed_at older than threshold) → rollback to queued
   // + mark any incomplete schedule_workspaces as cleaned.
   // ponytail: 10min default is a calibration knob — real-world task duration may need tuning.
+  // G2 (ticket 05): the findStaleClaimed query filters status IN ('claimed','running'),
+  // so terminal 'failed'/'aborted' are NEVER rolled back — this is what breaks the
+  // failed→stale→rollback→redispatch infinite loop. See workflow-executor.ts
+  // handleChainComplete (failed writer) + onExecutionComplete (retry cap) above.
   private async checkStaleClaimed(): Promise<void> {
     const cutoff = new Date(Date.now() - STALE_CLAIMED_THRESHOLD_MS).toISOString()
     const stale = this.configDAO.findStaleClaimed(cutoff) as ScheduleRow[]
@@ -650,7 +673,11 @@ export class SchedulerEngine {
       deleted_at: schedule.deleted_at,
       created_at: schedule.created_at,
       updated_at: schedule.updated_at,
-      status: (schedule.status ?? 'queued') as 'draft' | 'queued' | 'claimed',
+      // G6 (ticket 05): widen the cast to the full ScheduleStatus union. The old
+      // `as 'draft' | 'queued' | 'claimed'` lied to TypeScript (runtime values
+      // like 'running'/'done'/'failed'/'aborted' still flowed through) — callers
+      // comparing job.status to those literals got false "impossible" feedback.
+      status: (schedule.status ?? 'queued') as import('@octopus/shared').ScheduleStatus,
       trigger_source: (schedule.trigger_source ?? 'cron') as 'cron' | 'requirement',
       source_chat_session_id: schedule.source_chat_session_id ?? null,
       claimed_at: schedule.claimed_at ?? null,

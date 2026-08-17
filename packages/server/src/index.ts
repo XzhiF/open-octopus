@@ -668,7 +668,7 @@ if (shouldServe) {
       const schedulerService = new SchedulerService(daos!.scheduleConfig, daos!.scheduleRun)
       const dashboardService = new DashboardService(daos!.scheduleConfig, daos!.scheduleRun)
       const exportService = new ExportService(daos!.scheduleConfig)
-      app.route('/api/scheduler', createSchedulerRoutes(schedulerService, dashboardService, exportService, chatSvc))
+      app.route('/api/scheduler', createSchedulerRoutes(schedulerService, dashboardService, exportService, daos!.agentSession))
       ;(global as any).__octopus_scheduler_service = schedulerService
 
       // ★ Initialize Scheduler Engine with executors

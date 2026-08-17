@@ -6,6 +6,16 @@
   "convergence_threshold": 85,
   "status": "running",
   "current_round": 1,
-  "round1_note": "matt-dev-pipeline on root spec (14 tickets) — pending. No verification-report yet. Unblocked starts: 01 shared-types, 08 source-path-fix.",
-  "artifacts_dir": ".scratch/task-pool-redesign"
+  "artifacts_dir": ".scratch/task-pool-redesign",
+  "round1_stage_progress": {
+    "stage_0": "done (01 shared-types, 08 source-path-fix) — committed; build green, 49 tests",
+    "stage_1": "in_progress (02 engine task_dispatch executor, 05 failed/aborted lifecycle, 09 task-author clone+retire sentinel)",
+    "stage_2": "pending (03 port bridge, 06 abort, 07 SSE, 11 composition template)",
+    "stage_3": "pending (04 composite dispatch)",
+    "stage_4": "pending (10 jobs task_spec/JobDetail)",
+    "stage_5": "pending (12 web TaskModal+kanban)",
+    "stage_6": "pending (13 web composite modal)",
+    "stage_7": "pending (14 integration+E2E)"
+  },
+  "resumption_note": "If this session ends mid-round-1, resume by re-invoking matt-pipeline-loop on .scratch/task-pool-redesign — read round1_stage_progress, continue from the next pending stage. Each stage is committed, so git state is the source of truth for what's done."
 }

@@ -1,6 +1,7 @@
 import { Hono } from 'hono'
 import type { Context, Next } from 'hono'
 import { ZodError } from 'zod'
+import crypto from 'crypto'
 import {
   SchedulerService,
   SchedulerJobNotFoundError,
@@ -14,16 +15,22 @@ import { ExportService } from '../services/scheduler/export-service'
 import { ConfigValidationError } from '../services/scheduler/config-validator'
 import { parseCronExpression, naturalLanguageToCron } from '../services/cron-utils'
 import type { CreateJobInput, UpdateJobInput } from '@octopus/shared'
-import type { ChatService } from '../services/chat'
+import type { AgentSessionDAO } from '../db/dao'
 
-// ponytail: convention-based workspace_id for chat sessions bound to requirement-type drafts.
-// Matches the pattern used by routes/global-chat.ts for global scheduler chat.
-// Each session still has its own randomUUID; this is just a namespace for listSessions filtering.
-const TASKPOOL_DRAFT_CHAT_SCOPE = 'taskpool-draft'
+// G7 (retire 'taskpool-draft' sentinel): requirement-type drafts no longer bind to a
+// fake workspace_id in chat_sessions. Instead, createJob auto-creates a REAL task-author
+// clone session in the `sessions` table (clone-session mechanism), with scope_id linked
+// to the task id after createJob succeeds. On createJob failure the orphan session is
+// rolled back (soft-deleted). See spec G7 + ticket 09.
 
 // ── Rate Limiter ────────────────────────────────────────────────────
 
-export function createRateLimiter(maxTokens: number, refillIntervalMs: number) {
+/** Rate limiter middleware with an exposed buckets map (test-resettable). */
+type RateLimiterFn = ((c: Context, next: Next) => Response | Promise<Response> | ReturnType<Next>) & {
+  buckets: Map<string, { tokens: number; lastRefill: number }>
+}
+
+export function createRateLimiter(maxTokens: number, refillIntervalMs: number): RateLimiterFn {
   const buckets = new Map<string, { tokens: number; lastRefill: number }>()
 
   // Cleanup old entries every 5 minutes
@@ -35,7 +42,7 @@ export function createRateLimiter(maxTokens: number, refillIntervalMs: number) {
   }, 300_000)
   if (typeof cleanupTimer === 'object' && 'unref' in cleanupTimer) cleanupTimer.unref()
 
-  return function rateLimiter(c: Context, next: Next) {
+  const rateLimiter = function rateLimiter(c: Context, next: Next) {
     // Security: Don't trust X-Forwarded-For from untrusted sources
     // Use connection IP from Hono's connInfo or fallback to a safe default
     let ip = 'unknown'
@@ -83,7 +90,14 @@ export function createRateLimiter(maxTokens: number, refillIntervalMs: number) {
 
     bucket.tokens--
     return next()
-  }
+  } as RateLimiterFn
+
+  // Expose buckets so tests can reset state between suites. Without this, the
+  // module-level limiters below accumulate tokens across every test in a
+  // shared-app suite (e.g. scheduler-routes.test.ts creates >10 jobs), which
+  // falsely 429s later tests — a test-isolation bug, not real rate limiting.
+  rateLimiter.buckets = buckets
+  return rateLimiter
 }
 
 // Helper: Check if IP is from a trusted private network (proxy)
@@ -117,6 +131,17 @@ const rateLimitCreate = createRateLimiter(10, 60_000)   // 10/min
 const rateLimitTrigger = createRateLimiter(5, 60_000)   // 5/min
 const rateLimitDelete = createRateLimiter(5, 60_000)    // 5/min
 const rateLimitDefault = createRateLimiter(60, 60_000)  // 60/min
+
+/**
+ * Test-only helper: reset every scheduler rate-limiter bucket so a long
+ * shared-app test suite (which may issue >maxTokens writes) does not
+ * falsely 429 later assertions. No effect on production behavior.
+ */
+export function resetSchedulerRateLimitersForTests(): void {
+  for (const limiter of [rateLimitCreate, rateLimitTrigger, rateLimitDelete, rateLimitDefault]) {
+    limiter.buckets.clear()
+  }
+}
 
 // ── Error Classification ────────────────────────────────────────────
 
@@ -159,7 +184,7 @@ export function createSchedulerRoutes(
   service: SchedulerService,
   dashboardService?: DashboardService,
   exportService?: ExportService,
-  chatService?: ChatService,
+  agentSessionDAO?: AgentSessionDAO,
 ): Hono {
   const router = new Hono()
 
@@ -193,21 +218,50 @@ export function createSchedulerRoutes(
   router.post('/jobs', rateLimitCreate, async (c) => {
     const body = await safeJson(c)
     if (!body) return c.json({ error: 'Invalid or missing JSON body' }, 400)
+
+    // G7: auto-create a REAL task-author clone session for requirement-type drafts so
+    // source_chat_session_id isn't orphaned. Replaces the retired 'taskpool-draft' fake
+    // workspace_id sentinel — the session lives in `sessions` (clone-session mechanism),
+    // clone_name='task-author', session_type='clone_direct', scope_id linked to the task
+    // id after createJob succeeds. Caller may pass an explicit source_chat_session_id to
+    // override (e.g., binding to an existing task-author chat session).
+    let autoSessionId: string | null = null
+    if (
+      agentSessionDAO
+      && body.trigger_source === 'requirement'
+      && !body.source_chat_session_id
+    ) {
+      const draftTitle = typeof body.name === 'string' ? body.name : 'Task draft'
+      const org = typeof body.org === 'string' ? body.org : 'default'
+      autoSessionId = crypto.randomUUID()
+      const now = new Date().toISOString()
+      agentSessionDAO.insertSession({
+        id: autoSessionId,
+        org,
+        title: draftTitle,
+        clone_name: 'task-author',
+        session_type: 'clone_direct',
+        // scope_id is null until createJob returns the task id; linked below.
+        scope_id: null,
+        created_at: now,
+        updated_at: now,
+      })
+      body.source_chat_session_id = autoSessionId
+    }
+
     try {
-      // T-9: auto-create a chat session for requirement-type drafts so source_chat_session_id isn't orphaned.
-      // Caller may pass an explicit source_chat_session_id to override (e.g., binding to an existing session).
-      if (
-        chatService
-        && body.trigger_source === 'requirement'
-        && !body.source_chat_session_id
-      ) {
-        const draftTitle = typeof body.name === 'string' ? body.name : undefined
-        const session = chatService.createSession(TASKPOOL_DRAFT_CHAT_SCOPE, draftTitle)
-        body.source_chat_session_id = session.id
-      }
       const job = service.createJob(body as CreateJobInput)
+      // Link the auto-created clone session to the task (scope_id = task id).
+      if (autoSessionId) {
+        agentSessionDAO?.updateSession(autoSessionId, { scope_id: job.id })
+      }
       return c.json(job, 201)
     } catch (err: unknown) {
+      // Rollback: clean up the orphan task-author session on createJob failure so no
+      // dangling active session references a non-existent task (G7 FK-risk elimination).
+      if (autoSessionId && agentSessionDAO) {
+        try { agentSessionDAO.softDelete(autoSessionId) } catch { /* non-fatal */ }
+      }
       const { status, message } = classifyError(err)
       return c.json({ error: message }, status)
     }

@@ -383,6 +383,23 @@ export class WorkflowExecutor implements Executor {
         error: errorSummary,
       })
 
+      // G2 (ticket 05): mirror the done path's schedule-level writer. Without
+      // this, a failed requirement task stays stuck in 'running' → checkStaleClaimed
+      // rolls it back to 'queued' → re-dispatch → fail again (infinite loop at
+      // scheduler-engine.ts:413). 'failed' is terminal: findStaleClaimed filters
+      // status IN ('claimed','running'), so it skips failed/aborted. Cron keeps
+      // using enabled/disabled + consecutive_failures, so this is requirement-only.
+      if (opts.isRequirement) {
+        this.configDAO.updateSchedule(opts.scheduleId, {
+          status: 'failed',
+          claimed_at: null,
+        })
+        this.sse.emit('taskpool', {
+          event: 'schedule_status',
+          data: { schedule_id: opts.scheduleId, status: 'failed' },
+        })
+      }
+
       if (opts.notifyOnFailure) {
         this.notificationService
           .sendFailureNotification(
