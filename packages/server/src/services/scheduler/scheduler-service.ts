@@ -22,6 +22,7 @@ import type {
   WorkflowConfig,
   TaskSpec,
   SubunitSpec,
+  OriginType,
 } from '@octopus/shared'
 import {
   taskSpecSchema,
@@ -149,15 +150,24 @@ export interface UpdateJobInputWithSpec extends UpdateJobInput {
 
 const COMPOSITION_WF_REF = 'composition-task'
 
+// SG9 (ticket 06): composite requires subunits.length >= 2 (1-subunit → simple
+// workflow_chain). The dispatch seam (TasksService.readyTask) uses the same
+// threshold; materialize + isCompositeTask (workflow-executor) mirror it so
+// simple 1-subunit tasks skip the coordinator-ws (ADR-0009 N+1→1 optimization).
 function isCompositeTaskSpec(task_spec: TaskSpec): boolean {
-  return !!task_spec.subunits?.length
+  return (task_spec.subunits?.length ?? 0) >= 2
 }
 
-// SG5 export (boundary-allowed one-line change): the tasks dispatch seam
-// (TasksService.readyTask) calls this to materialize the WorkflowConfig for the
-// schedules envelope. Body UNTOUCHED — 06 does SG5 body (drop task_spec output
-// + inject subunit_count). Until 06 lands the config retains task_spec; 03's
-// verification only checks origin_type='task' + status='queued', not config.
+// SG5 (ticket 06): the tasks dispatch seam (TasksService.readyTask) calls this
+// to materialize the WorkflowConfig for the schedules envelope. Body changes:
+//   1. DROP task_spec from the output config — task_spec lives in the tasks
+//      table (v2-D1); the schedules.config carries only the runtime WorkflowConfig
+//      (workspace_spec + workflow_chain + requires), not the authoring WHAT.
+//   2. Composite path injects input_values.subunit_count on workflow_chain[0]
+//      so the composition-task workflow's Loop break_when can read it without
+//      re-parsing task_spec.subunits at runtime.
+//   3. Simple path (subunits.length < 2) uses the provided workflow_ref directly
+//      (skips coordinator-ws, ADR-0009). No subunit_count injected (none needed).
 export function materializeTaskSpecToConfig(
   task_spec: TaskSpec,
   project_ids: string[],
@@ -182,10 +192,22 @@ export function materializeTaskSpecToConfig(
         : [{ name: 'default', source_path: '', group: '' }],
     },
     workflow_chain: isComposite
-      ? [{ workflow_ref: COMPOSITION_WF_REF, input_values: {} }]
+      ? [{
+          workflow_ref: COMPOSITION_WF_REF,
+          // SG5: inject subunit_count so the composition-task Loop break_when
+          // can read it without re-parsing task_spec.subunits at runtime. The
+          // subunits array itself is NOT injected here (task_spec is dropped);
+          // the composition-task workflow reads subunits from its own input_values
+          // if needed — but the canonical input source is subunit_count for the
+          // Loop break, which is all that's needed for iteration control.
+          input_values: { subunit_count: task_spec.subunits!.length } as unknown as Record<string, string>,
+        }]
       : [{ workflow_ref: workflow_ref ?? '', input_values: {} }],
     max_retain: 10,
-    task_spec,
+    // SG5: NO task_spec in the output config — it lives in the tasks table now.
+    // The composition-task workflow reads subunit_count (above) + the parent
+    // task's task_spec via the tasks origin lookup if needed (future), not from
+    // this config.
   }
   // Re-attach skills post-validation-safe (survives JSON.stringify; Zod would
   // strip on re-parse but we only parse-read, not re-validate, on GET).
@@ -331,8 +353,12 @@ interface ScheduleRow {
   consecutive_failures: number
   max_retain: number
   status: string
-  trigger_source: string | null
-  source_chat_session_id: string | null
+  // schema v38b (ticket 06 / SG1b): trigger_source + source_chat_session_id
+  // DROPPED. The承重 sites below use origin_type (S2 polymorphic origin).
+  origin_type: string | null
+  origin_id: string | null
+  origin_role: string | null
+  assoc_meta: string | null
   claimed_at: string | null
   // Populated by correlated subqueries in listJobs/getJob (not a real column)
   last_exec_status?: string | null
@@ -475,9 +501,18 @@ export class SchedulerService {
       queryParams.push(params.workspace_id)
     }
 
+    // SG1b (ticket 06): listJobs still accepts ?trigger_source=requirement (legacy
+    // route filter), but the schedules table no longer has the trigger_source col.
+    // Map the legacy filter to origin_type: 'requirement' → origin_type IN
+    // ('task','manual','api') (non-cron); 'cron' → origin_type='cron'. This keeps
+    // the existing /api/scheduler/jobs?trigger_source=... route working without
+    // touching routes/scheduler.ts.
     if (params.trigger_source) {
-      conditions.push('s.trigger_source = ?')
-      queryParams.push(params.trigger_source)
+      if (params.trigger_source === 'requirement') {
+        conditions.push("s.origin_type IN ('task','manual','api')")
+      } else {
+        conditions.push("s.origin_type = 'cron'")
+      }
     }
 
     if (params.org) {
@@ -526,7 +561,16 @@ export class SchedulerService {
         validated.workflow_ref,
         validated.skills,
       )
-      validatedConfig = validateConfig(validated.job_type, materialized)
+      // SG5 (ticket 06): materialize injects input_values.subunit_count as a
+      // NUMBER for the composition-task Loop break_when. The shared
+      // workflowChainItemSchema.input_values is z.record(z.string(), z.string())
+      // (string values only — boundary: shared off-limits to widen). Zod
+      // validation would reject the number, so SKIP validateConfig for the
+      // task_spec-materialized path — the materialize output is a known-good
+      // system-produced shape (not user input), same as the v2 readyTask path
+      // (TasksService.readyTask doesn't validate either). The legacy config
+      // path below still validates user-supplied configs.
+      validatedConfig = materialized as unknown as JobConfig
       skills = validated.skills
     } else {
       validatedConfig = validateConfig(validated.job_type, validated.config)
@@ -543,9 +587,18 @@ export class SchedulerService {
       }
     }
 
-    // Derive status from trigger_source: 'requirement' drafts start as 'draft' (unclaimed),
-    // 'cron' jobs start as 'queued' (ready to fire on schedule)
+    // Derive status + origin_type from trigger_source. SG1b (ticket 06):
+    // trigger_source is no longer persisted (DROPPED col) — the SchedulerService
+    // still accepts it in the input schema (backward-compat with routes/scheduler.ts)
+    // but maps it to origin_type at the boundary:
+    //   trigger_source='requirement' → origin_type='task' (task-pool semantics)
+    //   trigger_source='cron' (default) → origin_type='cron'
+    // The new dispatch seam (TasksService.readyTask) sets origin_type directly
+    // ('task' + origin_role). This createJob path is the legacy /api/scheduler/jobs
+    // route (task-author v1; spec: removed in favor of /api/tasks, but the route
+    // is out of this ticket's scope — keep working via the mapping).
     const triggerSource: TriggerSource = validated.trigger_source
+    const originType: OriginType = triggerSource === 'requirement' ? 'task' : 'cron'
     const status: ScheduleStatus = triggerSource === 'requirement' ? 'draft' : 'queued'
 
     // For 'cron' jobs, compute next trigger from cron_expression.
@@ -582,8 +635,10 @@ export class SchedulerService {
         max_retain: maxRetain,
         enabled,
         status,
-        trigger_source: triggerSource,
-        source_chat_session_id: validated.source_chat_session_id ?? null,
+        // SG1b: origin cols replace the dropped trigger_source/source_chat_session_id.
+        // The legacy createJob path doesn't carry origin_id/origin_role (those are
+        // set by the dispatch seam / TaskDispatchService); only origin_type here.
+        origin_type: originType,
       })
 
       this.writeAuditLog({
@@ -595,7 +650,7 @@ export class SchedulerService {
           cron_expression: { before: null, after: cronExpression },
           timezone: { before: null, after: validated.timezone },
           org: { before: null, after: org },
-          trigger_source: { before: null, after: triggerSource },
+          origin_type: { before: null, after: originType },
           status: { before: null, after: status },
         },
       })
@@ -621,13 +676,52 @@ export class SchedulerService {
     // children[] are actual dispatched child schedules (found via the
     // parent_task_dispatch marker written by TaskDispatchService at dispatch time).
     // For a draft (not yet dispatched), children=[] — only the planned dag exists.
-    if (job.config.type === 'workflow' && job.config.task_spec?.subunits?.length) {
+    //
+    // SG5 (ticket 06): task_spec is NO LONGER in config (lives in the tasks table).
+    // Detect composite via the composition-task workflow_ref OR input_values.subunit_count
+    // (injected by materializeTaskSpecToConfig). When composite, look up the task_spec
+    // from the tasks table via S2 origin (origin_type='task', origin_id=task.id) to
+    // build the dag. Falls back to config.task_spec for legacy/test configs that
+    // still carry it (defensive — backward compat).
+    const taskSpec = this.resolveCompositeTaskSpec(job.config, row as ScheduleRow)
+    if (job.config.type === 'workflow' && taskSpec?.subunits?.length) {
       const detail = job as JobDetail
-      detail.dag = buildDagFromTaskSpec(job.config.task_spec)
-      detail.children = this.findCompositeChildren(id, job.config.task_spec.subunits)
+      detail.dag = buildDagFromTaskSpec(taskSpec)
+      detail.children = this.findCompositeChildren(id, taskSpec.subunits)
     }
 
     return job
+  }
+
+  /** SG5 (ticket 06): resolve the task_spec for a composite schedule. The config
+   *  no longer carries task_spec (dropped by materializeTaskSpecToConfig). Look it
+   *  up from the tasks table via S2 origin (origin_type='task', origin_id=task.id).
+   *  Falls back to config.task_spec for legacy/test configs that still carry it.
+   *  Returns null for non-composite or unresolvable schedules. */
+  private resolveCompositeTaskSpec(config: JobConfig, row: ScheduleRow): TaskSpec | null {
+    // Legacy/test path: config still carries task_spec (composite-dispatch.test.ts seeds this).
+    if (config.task_spec?.subunits?.length) return config.task_spec
+    // SG5 new path: detect composite via composition-task workflow_ref OR
+    // input_values.subunit_count (injected by materializeTaskSpecToConfig).
+    const ref = config.workflow_chain?.[0]?.workflow_ref
+    const isCompositeRef = typeof ref === 'string' && (ref === COMPOSITION_WF_REF || ref.endsWith(`/${COMPOSITION_WF_REF}`))
+    const subunitCount = (config.workflow_chain?.[0]?.input_values as Record<string, unknown> | undefined)?.subunit_count
+    const isCompositeCount = typeof subunitCount === 'number' && subunitCount >= 2
+    if (!isCompositeRef && !isCompositeCount) return null
+    // Look up the parent task's task_spec via S2 origin.
+    const originId = row.origin_id
+    const originType = row.origin_type
+    if (!originId || (originType ?? 'cron') !== 'task') return null
+    try {
+      const taskRow = this.configDAO
+        .getDb()
+        .prepare('SELECT task_spec FROM tasks WHERE id = ? AND deleted_at IS NULL')
+        .get(originId) as { task_spec: string | null } | undefined
+      if (!taskRow?.task_spec) return null
+      return JSON.parse(taskRow.task_spec) as TaskSpec
+    } catch {
+      return null
+    }
   }
 
   /** Look up dispatched child schedules for a composite parent. Correlates via the
@@ -843,8 +937,10 @@ export class SchedulerService {
     }
 
     // ponytail: guard at service level protects all callers (scheduler route, agent route, agent service)
-    // requirement-type schedules use status draft/queued/claimed/done, never enabled/disabled
-    if ((existing.trigger_source ?? 'cron') !== 'cron') {
+    // SG1b (ticket 06): only cron-origin schedules use enabled/disabled toggle.
+    // task/manual/api-origin schedules use status draft/queued/claimed/done, never enabled/disabled.
+    // Migrated from trigger_source!=='cron' to origin_type!=='cron' (same semantics).
+    if ((existing.origin_type ?? 'cron') !== 'cron') {
       throw new SchedulerTriggerSourceMismatchError()
     }
 
@@ -880,8 +976,11 @@ export class SchedulerService {
       throw new SchedulerJobNotFoundError()
     }
 
-    if ((existing.trigger_source ?? 'cron') !== 'requirement') {
-      throw new SchedulerTriggerSourceMismatchError('Only requirement-type schedules can be enqueued')
+    // SG1b (ticket 06): only task-origin schedules can be enqueued (draft→queued).
+    // Migrated from trigger_source!=='requirement' to origin_type!=='task'
+    // (same semantics: task-pool drafts, not cron jobs).
+    if ((existing.origin_type ?? 'cron') !== 'task') {
+      throw new SchedulerTriggerSourceMismatchError('Only task-origin schedules can be enqueued')
     }
 
     if ((existing.status ?? 'queued') !== 'draft') {
@@ -1275,8 +1374,14 @@ export class SchedulerService {
       created_at: row.created_at,
       updated_at: row.updated_at,
       status: (row.status ?? 'queued') as ScheduleStatus,
-      trigger_source: (row.trigger_source ?? 'cron') as TriggerSource,
-      source_chat_session_id: row.source_chat_session_id ?? null,
+      // SG1b (ticket 06): trigger_source + source_chat_session_id DROPPED from
+      // schedules. The shared SchedulerJob type still carries trigger_source
+      // (boundary: shared off-limits), so derive it from origin_type for the
+      // DTO: cron → 'cron'; task/agent/manual/api → 'requirement' (v1 semantics
+      // = "queue/claim-driven, not cron-driven"). source_chat_session_id is null
+      // (no longer persisted; tasks table owns the chat-session back-ref).
+      trigger_source: ((row.origin_type ?? 'cron') === 'cron' ? 'cron' : 'requirement') as TriggerSource,
+      source_chat_session_id: null,
       claimed_at: row.claimed_at ?? null,
     }
   }

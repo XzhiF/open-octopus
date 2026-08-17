@@ -147,9 +147,9 @@ describe("WorkflowExecutor composite dispatch (ticket 04)", () => {
       `INSERT INTO schedules (
         id, org, name, cron_expression, timezone, enabled, timeout_seconds, notify_on_failure,
         created_at, updated_at, job_type, config, parallel_policy, version,
-        consecutive_failures, max_retain, status, trigger_source, claimed_at
+        consecutive_failures, max_retain, status, origin_type, claimed_at
       ) VALUES (?, 'e2e-tp-org', 'e2e-tp-composite-task', NULL, 'UTC', 1, 3600, 0,
-        datetime('now'), datetime('now'), 'workflow', ?, 'skip', 1, 0, 10, 'claimed', 'requirement', ?)`,
+        datetime('now'), datetime('now'), 'workflow', ?, 'skip', 1, 0, 10, 'claimed', 'task', ?)`,
     ).run(schedId, JSON.stringify(config), new Date().toISOString())
   }
 
@@ -282,9 +282,9 @@ describe("WorkflowExecutor composite dispatch (ticket 04)", () => {
       `INSERT INTO schedules (
         id, org, name, cron_expression, timezone, enabled, timeout_seconds, notify_on_failure,
         created_at, updated_at, job_type, config, parallel_policy, version,
-        consecutive_failures, max_retain, status, trigger_source
+        consecutive_failures, max_retain, status, origin_type
       ) VALUES (?, 'e2e-tp-org', 'e2e-tp-child-failed', NULL, 'UTC', 1, 3600, 0,
-        datetime('now'), datetime('now'), 'workflow', ?, 'skip', 1, 0, 10, 'failed', 'requirement')`,
+        datetime('now'), datetime('now'), 'workflow', ?, 'skip', 1, 0, 10, 'failed', 'task')`,
     ).run("e2e-tp-child-1", JSON.stringify(childConfig))
 
     // Composition wf completes (done path) but a failed child exists → propagate failed

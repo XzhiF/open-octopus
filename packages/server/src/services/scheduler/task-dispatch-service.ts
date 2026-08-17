@@ -26,7 +26,7 @@
 
 import { randomUUID } from "crypto"
 import type Database from "better-sqlite3"
-import type { SubunitSpec, TaskDispatchPort, ScheduleHandle, WorkflowConfig } from "@octopus/shared"
+import type { SubunitSpec, TaskDispatchPort, ScheduleHandle, WorkflowConfig, OriginRole } from "@octopus/shared"
 import { ScheduleConfigDAO, ScheduleRunDAO, ExecutionDAO } from "../../db/dao"
 import type { WorkspaceService } from "../workspace"
 import type { SSEService } from "../sse"
@@ -87,13 +87,21 @@ export class TaskDispatchService implements TaskDispatchPort {
 
   // ── TaskDispatchPort ───────────────────────────────────────────────
 
-  async dispatchChildSchedule(subunit: SubunitSpec): Promise<ScheduleHandle> {
+  async dispatchChildSchedule(subunit: SubunitSpec, origin_role: OriginRole): Promise<ScheduleHandle> {
     const parentCtx = this.resolveParentContext()
     if (!parentCtx) {
       throw new Error(
         "task_dispatch: no running composition-wf execution found in the coordinator workspace to correlate the child schedule with",
       )
     }
+
+    // SG1 (ticket 06): resolve the parent task id for origin_id. The child
+    // schedule's origin_id points at the PARENT TASK (not the coordinator
+    // schedule) — so the orphan reaper + cascade-reap + GET /tasks/:id children
+    // all correlate via origin_type='task' AND origin_id=task.id. The parent
+    // task id is read from the coordinator schedule that created this workspace
+    // (workspaces.source_schedule_id → schedules.origin_id).
+    const parentTaskId = this.resolveParentTaskId()
 
     const scheduleId = randomUUID()
 
@@ -102,7 +110,7 @@ export class TaskDispatchService implements TaskDispatchPort {
     // waiting on this handle; it stays paused until a slot frees and the queued
     // child is claimed/run (scheduler-engine, tickets 06/07).
     if (this.runDAO.countDistinctActiveSchedules() >= MAX_PARALLEL_WORKSPACES) {
-      this.createChildScheduleRow(scheduleId, subunit, parentCtx, "queued")
+      this.createChildScheduleRow(scheduleId, subunit, parentCtx, "queued", origin_role, parentTaskId)
       this.deps.sse.emit("taskpool", {
         event: "schedule_status",
         data: { schedule_id: scheduleId, status: "queued" },
@@ -112,7 +120,16 @@ export class TaskDispatchService implements TaskDispatchPort {
 
     // Create the child schedule row (distinct schedule_id → never collides with
     // idx_sched_execs_unique_active which is per-schedule_id).
-    this.createChildScheduleRow(scheduleId, subunit, parentCtx, "running")
+    this.createChildScheduleRow(scheduleId, subunit, parentCtx, "running", origin_role, parentTaskId)
+
+    // SG10 (ticket 06): emit child 'running' SSE when the child starts. The
+    // queued path above emits 'queued'; the running path emits 'running' here
+    // (before workspace creation) so the kanban claims the child card in real
+    // time. Mirrors WorkflowExecutor's running emit shape.
+    this.deps.sse.emit("taskpool", {
+      event: "schedule_status",
+      data: { schedule_id: scheduleId, status: "running" },
+    })
 
     // Materialize an independent workspace for the child sub-workflow.
     const branchSuffix = formatBranchSuffix(new Date())
@@ -287,11 +304,41 @@ export class TaskDispatchService implements TaskDispatchPort {
     return { execution_id: parent.id, node_id: runningNode.node_id }
   }
 
+  /** SG1 (ticket 06): resolve the parent TASK id for the child schedule's
+   *  origin_id. The child's origin_id points at the parent TASK (S2 polymorphic
+   *  origin, no FK), not the coordinator schedule. The parent task id is read
+   *  from the coordinator schedule that created this coordinator workspace:
+   *    workspaces.source_schedule_id → schedules.origin_id (= parent task id)
+   *  Returns null if not resolvable (defensive — orphan reaper handles a NULL
+   *  origin_id as an orphan, which is acceptable for a corrupted state). */
+  private resolveParentTaskId(): string | null {
+    try {
+      const row = this.configDAO
+        .getDb()
+        .prepare(
+          `SELECT s.origin_id AS origin_id
+           FROM workspaces w
+           JOIN schedules s ON s.id = w.source_schedule_id
+           WHERE w.id = ? AND s.origin_type = 'task' AND s.origin_id IS NOT NULL`,
+        )
+        .get(this.deps.workspaceId) as { origin_id: string | null } | undefined
+      return row?.origin_id ?? null
+    } catch (err: unknown) {
+      console.error(
+        `[TaskDispatchService] resolveParentTaskId failed (non-fatal — child schedule origin_id will be NULL):`,
+        err instanceof Error ? err.message : String(err),
+      )
+      return null
+    }
+  }
+
   private createChildScheduleRow(
     scheduleId: string,
     subunit: SubunitSpec,
     parentCtx: ParentTaskDispatchMarker,
     status: "queued" | "running",
+    originRole: OriginRole,
+    parentTaskId: string | null,
   ): void {
     const config: ChildConfig = {
       schema_version: "3.0",
@@ -303,6 +350,10 @@ export class TaskDispatchService implements TaskDispatchPort {
       max_retain: 10,
       parent_task_dispatch: parentCtx,
     }
+    // SG1 (ticket 06): child schedule carries origin_type='task' + origin_role
+    // (passed by the caller — 'subunit' for fan-out children) + origin_id=<parent
+    // task id> (resolved via the coordinator workspace's source_schedule_id →
+    // schedules.origin_id). Replaces the dropped trigger_source='requirement'.
     this.configDAO.insertSchedule({
       id: scheduleId,
       org: this.deps.org,
@@ -311,8 +362,10 @@ export class TaskDispatchService implements TaskDispatchPort {
       timezone: "UTC",
       job_type: "workflow",
       config: JSON.stringify(config),
-      trigger_source: "requirement",
       status,
+      origin_type: "task",
+      origin_role: parentTaskId ? originRole : originRole,
+      origin_id: parentTaskId,
     })
   }
 }

@@ -176,6 +176,81 @@ describe('CloneRuntime', () => {
     })
   })
 
+  // 05 — reverse context msg (SPIKE S1, v2-D7). The notice is concatenated
+  // into the provider's systemPrompt.append by sendWithProvider so the
+  // task-author agent sees the user's spec override on the next turn.
+  describe('chat — specUpdateNotice (05, SPIKE S1)', () => {
+    // Shape of the sendQuery options we assert on (systemPrompt.append is
+    // where sendWithProvider concatenates the notice — clone-runtime.ts:319).
+    type SpyOpts = { systemPrompt: { type: string; preset: string; append: string } }
+
+    it('appends specUpdateNotice to the systemPrompt.append sent to the provider', async () => {
+      const providers = await import('@octopus/providers')
+      const sendQuerySpy = vi.fn(async function* (
+        _prompt: string,
+        _cwd: string,
+        _resumeSessionId: string | undefined,
+        _options?: SpyOpts,
+      ): AsyncGenerator<{ type: string; sessionId?: string }> {
+        yield { type: 'result', sessionId: 'provider-sess-notice-1' }
+      })
+      vi.spyOn(providers, 'getProvider').mockImplementation(() => ({
+        getType: () => 'claude',
+        sendQuery: sendQuerySpy,
+      }) as unknown as ReturnType<typeof providers.getProvider>)
+
+      const cloneDef = createTestCloneDef()
+      const runtime = new CloneRuntime(cloneDef, 'test-org')
+
+      const NOTICE = '@@spec_updated: goal, skills'
+      for await (const _ of runtime.chat('hello', 'session-notice-1', null, TEST_DIR, NOTICE)) {
+        // drain — the provider receives the system prompt during iteration
+      }
+
+      // sendQuery called once (first attempt with resume=null succeeds)
+      expect(sendQuerySpy).toHaveBeenCalledTimes(1)
+      const options = sendQuerySpy.mock.calls[0][3]!
+      // SPIKE S1: the notice is concatenated into the append string
+      expect(options.systemPrompt.append).toContain(NOTICE)
+      // The assembled clone context (persona) is still the base of the append
+      expect(options.systemPrompt.append).toContain('Test persona for workspace clone')
+      // Preset unchanged — we only append, never replace
+      expect(options.systemPrompt.preset).toBe('claude_code')
+
+      vi.restoreAllMocks()
+    })
+
+    it('does not append anything when specUpdateNotice is omitted (no @@spec_updated leak)', async () => {
+      const providers = await import('@octopus/providers')
+      const sendQuerySpy = vi.fn(async function* (
+        _prompt: string,
+        _cwd: string,
+        _resumeSessionId: string | undefined,
+        _options?: SpyOpts,
+      ): AsyncGenerator<{ type: string; sessionId?: string }> {
+        yield { type: 'result', sessionId: 'provider-sess-notice-2' }
+      })
+      vi.spyOn(providers, 'getProvider').mockImplementation(() => ({
+        getType: () => 'claude',
+        sendQuery: sendQuerySpy,
+      }) as unknown as ReturnType<typeof providers.getProvider>)
+
+      const cloneDef = createTestCloneDef()
+      const runtime = new CloneRuntime(cloneDef, 'test-org')
+      for await (const _ of runtime.chat('hello', 'session-notice-2', null, TEST_DIR)) {
+        // drain — no specUpdateNotice passed
+      }
+
+      const options = sendQuerySpy.mock.calls[0][3]!
+      // No notice → no @@spec_updated token in the system prompt
+      expect(options.systemPrompt.append).not.toContain('@@spec_updated')
+      // Persona still present (append == assembled context, unmodified)
+      expect(options.systemPrompt.append).toContain('Test persona for workspace clone')
+
+      vi.restoreAllMocks()
+    })
+  })
+
   describe('assembleContext (plugin-based skill discovery)', () => {
     it('does not include skill text in assembled context (ADR-006)', () => {
       // Create shared skill — should NOT appear in assembleContext output

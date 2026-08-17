@@ -11,6 +11,7 @@ import { ConsecutiveFailureTracker } from './consecutive-failure-tracker'
 import type { Executor, ExecutionResult } from './executors/executor-interface'
 import { ScheduleConfigDAO, ScheduleRunDAO } from '../../db/dao'
 import { SSEService } from '../sse'
+import { reapOrphanSchedules } from './orphan-reaper'
 import type { ScheduleStatusListener, OriginType, ScheduleStatus } from '@octopus/shared'
 
 const AUXILIARY_TICK_INTERVAL = parseInt(
@@ -56,8 +57,12 @@ interface ScheduleRow {
   consecutive_failures: number
   max_retain: number
   status: string | null
-  trigger_source: string | null
-  source_chat_session_id: string | null
+  // schema v38b (ticket 06 / SG1b): trigger_source + source_chat_session_id
+  // DROPPED. The承重 sites below use origin_type (S2 polymorphic origin).
+  origin_type: string | null
+  origin_id: string | null
+  origin_role: string | null
+  assoc_meta: string | null
   claimed_at: string | null
 }
 
@@ -374,18 +379,23 @@ export class SchedulerEngine {
         }
       }
 
-      // G2 retry cap (ticket 05): for requirement-type tasks, the cron-style
-      // auto-disable above (enabled=0) does NOT stop re-dispatch, because
-      // findQueuedSchedules filters by status='queued' only and ignores enabled.
-      // A persistently-failing requirement task would otherwise loop
-      // claimed→(stale rollback)→queued→redispatch forever. Promote to terminal
-      // 'failed' exactly when the N=5 threshold fires: findStaleClaimed
-      // (status IN claimed/running) and findQueuedSchedules (status='queued')
-      // both skip 'failed', so the loop stops. SSE emit for this transition is
-      // wired by ticket 07, which injects SSEService into SchedulerEngine.
+      // G2 retry cap (ticket 05 → migrated to origin_type by ticket 06 / SG1):
+      // for task-origin schedules, the cron-style auto-disable above (enabled=0)
+      // does NOT stop re-dispatch, because findQueuedSchedules filters by
+      // status='queued' only and ignores enabled. A persistently-failing task
+      // would otherwise loop claimed→(stale rollback)→queued→redispatch forever.
+      // Promote to terminal 'failed' exactly when the N=5 threshold fires:
+      // findStaleClaimed (status IN claimed/running) and findQueuedSchedules
+      // (status='queued') both skip 'failed', so the loop stops.
+      //
+      // SG1: the gate now keys on origin_type='task' (was trigger_source='requirement').
+      // agent-origin (origin_type='agent') defaults to v1 auto-disable (the block
+      // above) and is NOT promoted to terminal 'failed' — the auto-disable + cron
+      // re-trigger path is sufficient for agent schedules. SSE emit for this
+      // transition is wired by ticket 07 (ScheduleStatusListener injection).
       if (
         trackerResult.autoDisabled &&
-        (schedule.trigger_source ?? 'cron') === 'requirement'
+        (schedule.origin_type ?? 'cron') === 'task'
       ) {
         this.configDAO.updateSchedule(schedule.id, {
           status: 'failed',
@@ -441,6 +451,20 @@ export class SchedulerEngine {
         err instanceof Error ? err.message : String(err),
       ),
     )
+
+    // SG12 (ticket 06): orphan schedule reaper. Scans for task-origin schedules
+    // whose origin_id points at a missing/deleted task and soft-deletes them.
+    // This is the app-level integrity backstop for S2's no-FK origin_id. Runs on
+    // every auxiliary tick (cheap LEFT JOIN; no-op when no orphans). Cascade-
+    // reap on task delete/abort is the primary path; this covers the gap.
+    try {
+      reapOrphanSchedules(this.configDAO.getDb())
+    } catch (err: unknown) {
+      console.error(
+        '[SchedulerEngine] orphan reaper error:',
+        err instanceof Error ? err.message : String(err),
+      )
+    }
   }
 
   // T-8: claim BEFORE dispatch; on sync dispatch failure rollback to 'queued' so next tick can retry.
@@ -448,11 +472,25 @@ export class SchedulerEngine {
   // executeWorkflow's .catch + T-5 checkStaleClaimed (claimed_at > 10min) — rolling those back here
   // would create an infinite retry loop on persistent workflow errors.
   // AC6: respects MAX_PARALLEL_WORKSPACES — remaining queued tasks retry on next tick.
+  // SG1 (ticket 06): the claim filter now keys on origin_type IN ('task','manual','api')
+  // (was trigger_source='requirement'). cron-origin schedules stay on their own
+  // triggerSchedule path (cron re-trigger by cron_expression), so checkQueuedTasks
+  // must NOT claim them. 'agent' origin also stays out (agent schedules use the
+  // agent executor + cron re-trigger, not the task queue).
   private async checkQueuedTasks(): Promise<void> {
     const queued = this.configDAO.findQueuedSchedules() as ScheduleRow[]
 
     for (const schedule of queued) {
-      if ((schedule.trigger_source ?? 'cron') !== 'requirement') continue
+      // SG1: claim task/manual/api-origin schedules only. cron + agent stay on
+      // their own trigger paths. Default to 'cron' for legacy rows (no origin_type).
+      const originType = schedule.origin_type ?? 'cron'
+      if (
+        originType !== 'task' &&
+        originType !== 'manual' &&
+        originType !== 'api'
+      ) {
+        continue
+      }
 
       // AC6: don't dispatch beyond global concurrency cap. Remaining queued tasks
       // stay in 'queued' status and retry on the next tick when active count drops.
@@ -679,6 +717,18 @@ export class SchedulerEngine {
       } as import('@octopus/shared').JobConfig
     }
 
+    // SG1b (ticket 06): trigger_source + source_chat_session_id were DROPPED
+    // from schedules (migrated to origin_type). The shared SchedulerJob type
+    // still carries trigger_source (boundary: shared off-limits), so derive it
+    // from origin_type: cron → 'cron'; task/agent/manual/api → 'requirement'
+    // (the v1 'requirement' semantics = "not cron-driven, queue/claim-driven").
+    // This keeps workflow-executor's isRequirement = job.trigger_source === 'requirement'
+    // working for task-origin schedules without touching the shared type.
+    const originType = (schedule.origin_type ?? 'cron') as
+      | 'cron' | 'task' | 'agent' | 'manual' | 'api'
+    const derivedTriggerSource: 'cron' | 'requirement' =
+      originType === 'cron' ? 'cron' : 'requirement'
+
     return {
       id: schedule.id,
       name: schedule.name,
@@ -704,8 +754,9 @@ export class SchedulerEngine {
       // like 'running'/'done'/'failed'/'aborted' still flowed through) — callers
       // comparing job.status to those literals got false "impossible" feedback.
       status: (schedule.status ?? 'queued') as import('@octopus/shared').ScheduleStatus,
-      trigger_source: (schedule.trigger_source ?? 'cron') as 'cron' | 'requirement',
-      source_chat_session_id: schedule.source_chat_session_id ?? null,
+      // SG1b: derived from origin_type (see comment above). NOT read from a DB col.
+      trigger_source: derivedTriggerSource,
+      source_chat_session_id: null,
       claimed_at: schedule.claimed_at ?? null,
     }
   }

@@ -97,8 +97,8 @@ function insertRequirementSchedule(
       enabled, timeout_seconds, notify_on_failure,
       created_at, updated_at, job_type, config, parallel_policy,
       version, consecutive_failures, max_retain,
-      status, trigger_source, source_chat_session_id, claimed_at
-    ) VALUES (?, ?, ?, NULL, 'Asia/Shanghai', ?, 3600, 0, ?, ?, 'workflow', '{}', 'skip', 1, ?, 10, ?, 'requirement', NULL, ?)
+      status, origin_type, claimed_at
+    ) VALUES (?, ?, ?, NULL, 'Asia/Shanghai', ?, 3600, 0, ?, ?, 'workflow', '{}', 'skip', 1, ?, 10, ?, 'task', ?)
   `).run(
     id,
     ORG,

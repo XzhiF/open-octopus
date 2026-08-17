@@ -75,11 +75,18 @@ function handleSchemaMigrations(db: Database.Database): void {
   // schema v37: schedules — drop NOT NULL on cron_expression + add task-pool columns
   migrateSchedulesV37(db)
 
-  // schema v38 is ADDITIVE: origin cols are added via ensureColumnsForExistingTables
-  // above (origin_type/origin_id/origin_role/assoc_meta). trigger_source /
-  // source_chat_session_id are KEPT (coexist transiently) — their removal + migrating
-  // the 3 承重 sites to origin_type is ticket 06's job, done together so the build
-  // stays green. No DROP COLUMN migration here.
+  // schema v38 ADDITIVE: origin cols are added via ensureColumnsForExistingTables
+  // above (origin_type/origin_id/origin_role/assoc_meta). Nothing to do here for
+  // the additive phase — origin cols coexist with the v37 task-pool hack cols
+  // (trigger_source / source_chat_session_id) transiently.
+
+  // schema v38b (ticket 06 / SG1b): DROP the task-pool hack cols trigger_source +
+  // source_chat_session_id. Their承重 sites (scheduler-engine failed-promotion +
+  // checkQueuedTasks filter + task-dispatch-service child creation) are migrated
+  // to origin_type in the same ticket. Done AFTER the origin col migration above
+  // so the build stays green through the removal. Safe on fresh DBs (table may
+  // not exist yet / cols may not exist) and on existing dev DBs (cols dropped).
+  migrateSchedulesV38DropTriggerCols(db)
 }
 
 /**
@@ -190,16 +197,18 @@ function ensureColumnsForExistingTables(db: Database.Database): void {
   ensureColumn(db, 'experiences', 'execution_id', "TEXT DEFAULT NULL")
   ensureColumn(db, 'experiences', 'node_id', "TEXT DEFAULT NULL")
 
-  // Run-phase + polymorphic origin columns (schema v37 → v38, ADDITIVE).
-  // v37: status/trigger_source/source_chat_session_id/claimed_at for the task-pool
-  //      run lifecycle.
+  // Run-phase + polymorphic origin columns (schema v37 → v38, ADDITIVE then DROP).
+  // v37: status/claimed_at for the task-pool run lifecycle (trigger_source /
+  //      source_chat_session_id were also added in v37 as the task-pool hack).
   // v38: ADD origin_type/origin_id/origin_role/assoc_meta (S2 polymorphic origin, no
   //      FK — app-level cascade-reap + orphan reaper maintain integrity).
-  //      trigger_source/source_chat_session_id are KEPT (coexist transiently) — their
-  //      removal + migrating the 3 承重 sites to origin_type is ticket 06's job.
+  // v38b (ticket 06 / SG1b): DROP trigger_source + source_chat_session_id — the
+  //      承重 sites are migrated to origin_type. The cols are NO LONGER
+  //      ensured (removed below) and the migrateSchedulesV38DropTriggerCols
+  //      migration drops them from existing dev DBs. Fresh DBs created by
+  //      schema.sql still have the cols (schema.sql is 02's, not touched here);
+  //      the migration runs on every applySchema and drops them idempotently.
   ensureColumn(db, 'schedules', 'status', "TEXT NOT NULL DEFAULT 'queued'")
-  ensureColumn(db, 'schedules', 'trigger_source', "TEXT")
-  ensureColumn(db, 'schedules', 'source_chat_session_id', "TEXT")
   ensureColumn(db, 'schedules', 'claimed_at', "TEXT")
   ensureColumn(db, 'schedules', 'origin_type', "TEXT NOT NULL DEFAULT 'cron'")
   ensureColumn(db, 'schedules', 'origin_id', "TEXT")
@@ -367,6 +376,90 @@ function migrateSchedulesV37(db: Database.Database): void {
       db.exec(`ALTER TABLE ${dep} RENAME TO ${dep}_old_schema_backup_v37`)
       // eslint-disable-next-line no-console
       console.log(`[schema] Renamed ${dep} (${depCount} rows) → ${dep}_old_schema_backup_v37; schema.sql will recreate with FK on new schedules`)
+    }
+  }
+}
+
+/**
+ * schema v38b (ticket 06 / SG1b): DROP the task-pool hack cols `trigger_source`
+ * and `source_chat_session_id` from `schedules`.
+ *
+ * These cols were added in v37 as the task-pool hack (storing task drafts inside
+ * the cron scheduler). v2 (task-domain-redesign) replaces them with the
+ * first-class `tasks` table + S2 polymorphic `origin_type`/`origin_id`/`origin_role`
+ * cols (added additively in v38). The 3 承重 sites (scheduler-engine failed-
+ * promotion gate + checkQueuedTasks filter + task-dispatch-service child creation)
+ * are migrated to `origin_type` in the same ticket, so dropping the cols is safe.
+ *
+ * CONSTRAINT: schema.sql (02's file, off-limits to this ticket) defines
+ * `idx_schedules_status ON schedules(status, trigger_source)` — an index that
+ * REFERENCES trigger_source. SQLite cannot DROP a column that's part of an index
+ * ("error in index ... after drop column"). So the migration must:
+ *   1. DROP the index (so the column is no longer indexed)
+ *   2. DROP the column
+ *   3. RECREATE the index on just `status` (trigger_source is gone)
+ * After step 3, schema.sql's `CREATE INDEX IF NOT EXISTS idx_schedules_status
+ * ON schedules(status, trigger_source)` is a no-op (index already exists) and
+ * does NOT validate column references — so it doesn't break on the missing col.
+ *
+ * Fresh DBs (1st applySchema): migration runs before schema.sql creates the
+ * table → no-op. schema.sql then creates table + index WITH the cols. So the
+ * cols exist after the 1st applySchema. On the 2nd+ applySchema (idempotent
+ * test, dev DB restart), the migration drops them. Code never reads/writes them
+ * regardless (ScheduleRow type has them removed; insertSchedule doesn't write
+ * them), so the lingering cols on 1st-applySchema DBs are harmless.
+ *
+ * Wrapped in try-catch per col so a failure on one is non-fatal (the col stays,
+ * code is type-clean + doesn't use it).
+ */
+function migrateSchedulesV38DropTriggerCols(db: Database.Database): void {
+  const tables = db.prepare(
+    "SELECT name FROM sqlite_master WHERE type='table' AND name='schedules'"
+  ).all()
+  if (tables.length === 0) return // Will be created by schema.sql (with the cols; next run drops them)
+
+  // The index referencing trigger_source must be dropped first (SQLite can't
+  // drop a column that's part of an index). Recreate it on just `status` after.
+  const hasStatusIdx = db.prepare(
+    "SELECT name FROM sqlite_master WHERE type='index' AND name='idx_schedules_status'",
+  ).get() as { name: string } | undefined
+
+  for (const col of ['trigger_source', 'source_chat_session_id']) {
+    const cols = db.prepare("PRAGMA table_info(schedules)").all() as { name: string }[]
+    if (!cols.some((c) => c.name === col)) continue // already dropped
+    try {
+      // Drop the status index before dropping trigger_source (it references it).
+      // For source_chat_session_id the index isn't affected, but dropping it once
+      // for the first col is enough; the recreate below re-adds it on `status`.
+      if (col === 'trigger_source' && hasStatusIdx) {
+        db.exec("DROP INDEX IF EXISTS idx_schedules_status")
+      }
+      db.exec(`ALTER TABLE schedules DROP COLUMN ${col}`)
+      // eslint-disable-next-line no-console
+      console.log(`[schema] Dropped schedules.${col} (v38b / ticket 06 SG1b — migrated to origin_type)`)
+    } catch (err) {
+      // SQLite < 3.35.0 doesn't support DROP COLUMN, or other failure — log + continue.
+      // The col stays but code no longer reads/writes it (type-clean); the orphan
+      // col is harmless on legacy DBs.
+      console.warn(
+        `[schema] Failed to drop schedules.${col}: ${err instanceof Error ? err.message : String(err)} (non-fatal — col is no longer used)`,
+      )
+    }
+  }
+
+  // Recreate the status index on just `status` (trigger_source is gone). Use
+  // IF NOT EXISTS so this is idempotent + so schema.sql's later
+  // `CREATE INDEX IF NOT EXISTS idx_schedules_status ON schedules(status, trigger_source)`
+  // is a no-op (the index already exists → no column-reference validation).
+  if (hasStatusIdx) {
+    try {
+      db.exec(
+        "CREATE INDEX IF NOT EXISTS idx_schedules_status ON schedules(status) WHERE deleted_at IS NULL",
+      )
+    } catch (err) {
+      console.warn(
+        `[schema] Failed to recreate idx_schedules_status: ${err instanceof Error ? err.message : String(err)} (non-fatal)`,
+      )
     }
   }
 }

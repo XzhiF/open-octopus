@@ -114,8 +114,8 @@ describe('T-5: crash recovery + concurrency cap', () => {
         enabled, timeout_seconds, notify_on_failure,
         created_at, updated_at, job_type, config, parallel_policy,
         version, consecutive_failures, max_retain,
-        status, trigger_source, source_chat_session_id, claimed_at
-      ) VALUES (?, ?, ?, NULL, 'Asia/Shanghai', 0, 3600, 0, ?, ?, 'workflow', '{}', 'skip', 1, 0, 10, 'claimed', 'requirement', NULL, ?)
+        status, origin_type, claimed_at
+      ) VALUES (?, ?, ?, NULL, 'Asia/Shanghai', 0, 3600, 0, ?, ?, 'workflow', '{}', 'skip', 1, 0, 10, 'claimed', 'task', ?)
     `).run(id, ORG, `t5-${id}`, now, now, claimedAtIso)
   }
 
@@ -146,8 +146,8 @@ describe('T-5: crash recovery + concurrency cap', () => {
           enabled, timeout_seconds, notify_on_failure,
           created_at, updated_at, job_type, config, parallel_policy,
           version, consecutive_failures, max_retain,
-          status, trigger_source, source_chat_session_id, claimed_at
-        ) VALUES (?, ?, ?, NULL, 'Asia/Shanghai', 0, 3600, 0, ?, ?, 'workflow', '{}', 'skip', 1, 0, 10, 'draft', 'requirement', NULL, NULL)
+          status, origin_type, claimed_at
+        ) VALUES (?, ?, ?, NULL, 'Asia/Shanghai', 0, 3600, 0, ?, ?, 'workflow', '{}', 'skip', 1, 0, 10, 'draft', 'task', NULL)
       `).run(id, ORG, `t5-ac6-name-${i}`, new Date().toISOString(), new Date().toISOString())
       svc.enqueueJob(id)
       ids.push(id)
@@ -243,9 +243,9 @@ describe('T-5: crash recovery + concurrency cap', () => {
     edb.prepare(`
       INSERT INTO schedules (id, org, name, cron_expression, timezone, enabled, timeout_seconds,
         notify_on_failure, created_at, updated_at, job_type, config, parallel_policy, version,
-        consecutive_failures, max_retain, status, trigger_source, source_chat_session_id, claimed_at)
+        consecutive_failures, max_retain, status, origin_type, claimed_at)
       VALUES (?, ?, ?, NULL, 'Asia/Shanghai', 0, 3600, 0, ?, ?, 'workflow', '{}', 'skip', 1, 0, 10,
-        'running', 'requirement', NULL, ?)
+        'running', 'task', ?)
     `).run(scheduleId, ORG, `t5-${scheduleId}`, now, now, staleIso)
 
     await (engine as unknown as { checkStaleClaimed: () => Promise<void> }).checkStaleClaimed()

@@ -23,7 +23,7 @@ describe("DB Schema", () => {
     ).all() as { name: string }[]
     const names = rows.map(r => r.name).sort()
     expect(names).toEqual([
-      // Core tables (38)
+      // Core tables (38) — includes `tasks` (schema v38, v2-D1 first-class task domain)
       "agent_events", "agent_versions", "archive_drafts", "branch_executions", "chat_messages", "chat_sessions",
       "clones", "evolution_log", "execution_archive", "execution_summaries", "executions", "experiences",
       "harness_config", "harness_events",
@@ -35,7 +35,7 @@ describe("DB Schema", () => {
       "pending_review", "pipeline_state", "reports", "safety_events",
       "schedule_audit_logs", "schedule_executions", "schedule_workspaces",
       "scheduled_job_executions", "scheduler_audit_logs", "scheduler_state", "schedules",
-      "sessions", "workspace_archive", "workspaces",
+      "sessions", "tasks", "workspace_archive", "workspaces",
     ])
   })
 
@@ -45,8 +45,11 @@ describe("DB Schema", () => {
     const rows = db.prepare(
       "SELECT name FROM sqlite_master WHERE type='index' AND name LIKE 'idx_%'"
     ).all() as { name: string }[]
-    // 40 core indexes + 28 agent indexes (5 new experiences v2) + 4 knowledge indexes + 6 archive indexes + 2 unique indexes + 2 harness indexes + 2 agent_versions indexes = 84
-    expect(rows.length).toBe(84)
+    // 40 core indexes + 28 agent indexes (5 new experiences v2) + 4 knowledge indexes
+    // + 6 archive indexes + 2 unique indexes + 2 harness indexes + 2 agent_versions indexes
+    // + schema v38: 1 schedules origin index (idx_schedules_origin) + 6 tasks indexes
+    // (idx_tasks_status/org_status/org/source_chat_session/updated) = 93
+    expect(rows.length).toBe(93)
   })
 
   it("workspaces table has correct columns", () => {

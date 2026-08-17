@@ -127,9 +127,10 @@ export class ScheduleConfigDAO extends BaseDAO {
     cron_expression: string | null; timezone: string;
   }): Database.RunResult {
     const now = new Date().toISOString()
-    // schema v38 ADDITIVE: origin cols coexist with trigger_source/source_chat_session_id
-    // (removal is ticket 06's job). New dispatch-seam callers set origin_type/origin_id/
-    // origin_role/assoc_meta; legacy callers still passing trigger_source keep working.
+    // schema v38b (ticket 06 / SG1b): trigger_source + source_chat_session_id
+    // are DROPPED from schedules. New dispatch-seam callers set origin_type/
+    // origin_id/origin_role/assoc_meta; legacy callers passing the removed
+    // trigger_source/source_chat_session_id keys have them ignored (not written).
     return this.stmt(`
       INSERT INTO schedules (
         id, org, name, cron_expression, timezone, workspace_id, workflow_ref,
@@ -137,9 +138,8 @@ export class ScheduleConfigDAO extends BaseDAO {
         notify_channel, notify_target, container_execution_id,
         next_trigger_at, created_at, updated_at,
         job_type, config, parallel_policy, description, version, consecutive_failures, max_retain,
-        status, trigger_source, source_chat_session_id,
-        origin_type, origin_id, origin_role, assoc_meta, claimed_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        status, origin_type, origin_id, origin_role, assoc_meta, claimed_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       row.id, row.org, row.name, row.cron_expression, row.timezone,
       row.workspace_id ?? null, row.workflow_ref ?? null,
@@ -151,8 +151,7 @@ export class ScheduleConfigDAO extends BaseDAO {
       row.job_type ?? "workflow", row.config ?? "{}",
       row.parallel_policy ?? "skip", row.description ?? null,
       row.version ?? 1, row.consecutive_failures ?? 0, row.max_retain ?? 10,
-      row.status ?? "queued", row.trigger_source ?? null,
-      row.source_chat_session_id ?? null,
+      row.status ?? "queued",
       row.origin_type ?? "cron", row.origin_id ?? null,
       row.origin_role ?? null, row.assoc_meta ?? null,
       row.claimed_at ?? null,

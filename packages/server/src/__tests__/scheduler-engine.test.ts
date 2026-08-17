@@ -233,13 +233,14 @@ describe('SchedulerEngine', () => {
   // ── G2 (ticket 05): failed/aborted are terminal — checkStaleClaimed must NOT roll back ──
   it('G2: checkStaleClaimed does not roll back terminal failed/aborted (prevents infinite re-dispatch)', async () => {
     const old = new Date(Date.now() - 20 * 60_000).toISOString() // 20 min ago, beyond 10min stale threshold
-    const baseCols = `id, org, name, cron_expression, timezone, enabled, timeout_seconds, notify_on_failure, created_at, updated_at, job_type, config, parallel_policy, version, consecutive_failures, max_retain, status, trigger_source, claimed_at`
+    // SG1b (ticket 06): trigger_source DROPPED → origin_type ('task' = v1 'requirement')
+    const baseCols = `id, org, name, cron_expression, timezone, enabled, timeout_seconds, notify_on_failure, created_at, updated_at, job_type, config, parallel_policy, version, consecutive_failures, max_retain, status, origin_type, claimed_at`
     // terminal failed
-    db.prepare(`INSERT INTO schedules (${baseCols}) VALUES ('s-failed', 'test', 'f', NULL, 'UTC', 1, 3600, 0, datetime('now'), datetime('now'), 'workflow', '{}', 'skip', 1, 0, 10, 'failed', 'requirement', ?)`).run(old)
+    db.prepare(`INSERT INTO schedules (${baseCols}) VALUES ('s-failed', 'test', 'f', NULL, 'UTC', 1, 3600, 0, datetime('now'), datetime('now'), 'workflow', '{}', 'skip', 1, 0, 10, 'failed', 'task', ?)`).run(old)
     // terminal aborted
-    db.prepare(`INSERT INTO schedules (${baseCols}) VALUES ('s-aborted', 'test', 'a', NULL, 'UTC', 1, 3600, 0, datetime('now'), datetime('now'), 'workflow', '{}', 'skip', 1, 0, 10, 'aborted', 'requirement', ?)`).run(old)
+    db.prepare(`INSERT INTO schedules (${baseCols}) VALUES ('s-aborted', 'test', 'a', NULL, 'UTC', 1, 3600, 0, datetime('now'), datetime('now'), 'workflow', '{}', 'skip', 1, 0, 10, 'aborted', 'task', ?)`).run(old)
     // control: claimed + stale → SHOULD roll back to queued (existing behavior)
-    db.prepare(`INSERT INTO schedules (${baseCols}) VALUES ('s-claimed', 'test', 'c', NULL, 'UTC', 1, 3600, 0, datetime('now'), datetime('now'), 'workflow', '{}', 'skip', 1, 0, 10, 'claimed', 'requirement', ?)`).run(old)
+    db.prepare(`INSERT INTO schedules (${baseCols}) VALUES ('s-claimed', 'test', 'c', NULL, 'UTC', 1, 3600, 0, datetime('now'), datetime('now'), 'workflow', '{}', 'skip', 1, 0, 10, 'claimed', 'task', ?)`).run(old)
 
     const executors = new Map<string, Executor>()
     executors.set('workflow', createMockExecutor())
@@ -263,10 +264,10 @@ describe('SchedulerEngine', () => {
         id, org, name, cron_expression, timezone,
         enabled, timeout_seconds, notify_on_failure,
         created_at, updated_at, job_type, config, parallel_policy, version,
-        consecutive_failures, max_retain, status, trigger_source, claimed_at
+        consecutive_failures, max_retain, status, origin_type, claimed_at
       ) VALUES ('s-retry', 'test', 'retry', NULL, 'UTC', 1, 3600, 0, datetime('now'), datetime('now'),
         'workflow', '{"schema_version":"2.0","type":"workflow","workspace_spec":{"org":"t","branch_prefix":"b","projects":[{"name":"p","source_path":"","group":""}]},"workflow_chain":[{"workflow_ref":"w","input_values":{}}]}',
-        'skip', 1, 4, 10, 'queued', 'requirement', NULL)
+        'skip', 1, 4, 10, 'queued', 'task', NULL)
     `).run()
 
     const failingExecutor: Executor = {

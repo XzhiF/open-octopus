@@ -171,21 +171,22 @@ describe('WorkflowExecutor handleChainComplete (G2 failed writer)', () => {
 
   function seedSchedule(opts: { isRequirement: boolean; status?: string }) {
     const status = opts.status ?? 'running'
-    const triggerSource = opts.isRequirement ? 'requirement' : null
+    // SG1b (ticket 06): trigger_source DROPPED → origin_type ('task' = v1 'requirement')
+    const originType = opts.isRequirement ? 'task' : 'cron'
     const claimedAt = opts.isRequirement ? new Date(Date.now() - 5 * 60_000).toISOString() : null
     db.prepare(`
       INSERT INTO schedules (
         id, org, name, cron_expression, timezone,
         enabled, timeout_seconds, notify_on_failure,
         created_at, updated_at, job_type, config, parallel_policy, version,
-        consecutive_failures, max_retain, status, trigger_source, claimed_at
+        consecutive_failures, max_retain, status, origin_type, claimed_at
       ) VALUES (?, 'test', 'g2-task', NULL, 'UTC',
         1, 3600, 0, datetime('now'), datetime('now'),
         'workflow', ?, 'skip', 1, 0, 10, ?, ?, ?)
     `).run(
       schedId,
       JSON.stringify({ schema_version: '2.0', type: 'workflow', workspace_spec: { org: 'test', branch_prefix: 'b', projects: [{ name: 'p', source_path: '', group: '' }] }, workflow_chain: [{ workflow_ref: 'wf', input_values: {} }] }),
-      status, triggerSource, claimedAt,
+      status, originType, claimedAt,
     )
   }
 

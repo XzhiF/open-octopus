@@ -24,7 +24,7 @@ import crypto from 'crypto'
 import fs from 'fs'
 import path from 'path'
 import type { CloneDef } from '@octopus/shared'
-import type { AgentSessionDAO } from '../../db/dao'
+import type { AgentSessionDAO, TaskDAO } from '../../db/dao'
 import { CloneRuntime } from '../../services/agent/clone-runtime'
 import { isBuiltinClone } from '../../services/agent/builtin-clones'
 import {
@@ -40,11 +40,20 @@ import {
 } from '../../services/agent/agent-service'
 import { getBuiltInCloneDir, getCloneDir } from '../../services/agent/paths'
 import { getMemoryService } from '../../services/agent/memory-service'
+import { autosaveTaskDraft } from './autosave'
+import { getSpecNotice, clearSpecNotice } from '../../services/tasks/spec-notice-store'
 
 // ── Route deps ─────────────────────────────────────────────────────
 
 export interface CloneSessionRouteDeps {
   sessionDAO: AgentSessionDAO
+  /**
+   * TaskDAO for the task-author autosave seam (04, v2-D6). Optional for
+   * backwards-compat with tests that only exercise clone-file/session
+   * routes — the seam skips (no-op) when absent. When present, fires at
+   * turn-end for cloneName === 'task-author' sessions.
+   */
+  taskDAO?: TaskDAO
 }
 
 // ── File route constants removed — file ops now in clone-files.ts ──
@@ -76,7 +85,7 @@ function resolveCloneDefFromFs(name: string): CloneDef | null {
 // ── Route factory ──────────────────────────────────────────────────
 
 export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
-  const { sessionDAO } = deps
+  const { sessionDAO, taskDAO } = deps
   const app = new Hono()
 
   // ══════════════════════════════════════════════════════════════════
@@ -280,6 +289,29 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
     const cwd = runtime.getDefaultCwd()
     const providerSessionId = session.provider_session_id ?? null
 
+    // 05 — reverse context msg (SPIKE S1, v2-D7). If the user saved a draft
+    // (PUT /api/tasks) since the last turn, TasksService.updateTask set a
+    // transient, in-memory notice keyed by task_id. Resolve the task bound
+    // to this session (same lookup the autosave seam uses) and read the
+    // pending notice. Passed to CloneRuntime.chat below as `specUpdateNotice`
+    // → sendWithProvider appends it to the system-prompt `append` string
+    // (assembleContext is fresh per turn, clone-runtime.ts:261, so this
+    // re-delivers only while the notice stays pending). Cleared AFTER the
+    // stream (below) so a mid-stream error / abort re-delivers next turn
+    // (at-least-once; the notice is an idempotent nudge, not a state change).
+    // Gated by task-author + taskDAO: only task-author sessions carry spec
+    // notices, and taskDAO is optional (wired only with the autosave seam).
+    // This is a DIFFERENT location from 04's turn-end autosave block
+    // (below, ~:416-428) — the send path reads before runtime.chat; the
+    // autosave seam writes at turn-end. No overlap.
+    const noticeTaskId =
+      cloneName === 'task-author' && taskDAO
+        ? taskDAO.getBySourceChatSession(sessionId)?.id ?? null
+        : null
+    const specUpdateNotice = noticeTaskId
+      ? getSpecNotice(noticeTaskId)
+      : undefined
+
     return streamSSE(c, async (stream) => {
       let aborted = false
       const abortStream = () => { aborted = true }
@@ -295,7 +327,7 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
         const memoryToolCalls: Array<{ id: string; name: string; input?: Record<string, unknown> }> = []
         const MEMORY_TOOL_NAMES = ['record_daily']
 
-        for await (const chunk of runtime.chat(body.message!, sessionId, providerSessionId, cwd)) {
+        for await (const chunk of runtime.chat(body.message!, sessionId, providerSessionId, cwd, specUpdateNotice)) {
           if (aborted || (stream as any)._aborted) break
 
           switch (chunk.type) {
@@ -345,6 +377,17 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
               await stream.writeSSE({ event: 'error', data: JSON.stringify({ code: chunk.code, message: chunk.message }) })
               break
           }
+        }
+
+        // 05 — the provider has now received the system-prompt append
+        // (assembled + sent during the stream above), so the one-shot notice
+        // is delivered. Clear it so the NEXT turn doesn't re-deliver. Gated
+        // on !aborted: an aborted stream may not have fully delivered, so
+        // leave the notice pending for the next turn (at-least-once). A
+        // thrown stream skips this line entirely (outer catch) — also
+        // leaves the notice pending for retry. Idempotent + non-fatal.
+        if (noticeTaskId && specUpdateNotice && !aborted) {
+          clearSpecNotice(noticeTaskId)
         }
 
         // Execute memory tool calls (record_daily) with clone context
@@ -403,6 +446,20 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
           if (session.title === `${cloneName} 会话` || session.title === '新会话') {
             const autoTitle = body.message!.slice(0, 40).replace(/\n/g, ' ').trim() || `${cloneName} 会话`
             sessionDAO.updateSession(sessionId, { title: autoTitle })
+          }
+
+          // 04 — task-author autosave seam (v2-D6/D11/SG3/SG8).
+          // Fires at turn-end (after auto-title block, before done SSE),
+          // gated by cloneName === 'task-author'. Best-effort — chat reply
+          // unaffected on failure. First turn → create draft row + link
+          // session.scope_id (SG3). Subsequent turns → targeted UPDATE
+          // name+updated_at ONLY (SG8: no version bump, no task_spec touch).
+          if (cloneName === 'task-author' && taskDAO) {
+            const autoTitle = sessionDAO.findById(sessionId)?.title ?? `${cloneName} 会话`
+            autosaveTaskDraft(
+              { taskDAO, sessionDAO },
+              { sessionId, org, autoTitle },
+            )
           }
 
           await stream.writeSSE({

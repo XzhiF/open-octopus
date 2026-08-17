@@ -260,11 +260,11 @@ export interface ScheduleRow {
   consecutive_failures: number
   max_retain: number
   status: string
-  /** v37 task-pool hack col. KEPT transiently (schema v38) — removal + migrating
-   *  the 3 承重 sites to origin_type is ticket 06's job. Prefer origin_type. */
-  trigger_source: string | null
-  /** v37 task-pool hack col. KEPT transiently (schema v38) — see trigger_source. */
-  source_chat_session_id: string | null
+  /** v38b (ticket 06 / SG1b): trigger_source + source_chat_session_id were
+   *  DROPPED from schedules. The承重 sites are migrated to origin_type (S2
+   *  polymorphic origin). The shared `SchedulerJob` type still carries a
+   *  `trigger_source` field (boundary: shared off-limits) — derived from
+   *  origin_type by buildSchedulerJob/enrichJobRow, NOT read from this row. */
   /** v38 S2 polymorphic origin (no FK on origin_id). 'cron' default for legacy rows. */
   origin_type: string
   /** Parent id — for tasks: the tasks.id this schedule was dispatched from. */

@@ -47,6 +47,9 @@ import {
 import type { TaskRow, ScheduleRow } from "../../db/types"
 import type { SSEService } from "../sse"
 import { materializeTaskSpecToConfig } from "../scheduler/scheduler-service"
+import {
+  setSpecNotice,
+} from "./spec-notice-store"
 
 // ── Error Classes ────────────────────────────────────────────────────
 
@@ -339,6 +342,22 @@ export class TasksService {
 
     const result = this.taskDAO.updateWithVersion(id, fields, expectedVersion)
     if (result.changes === 0) throw new TaskVersionConflictError()
+
+    // 05 — reverse context msg (SPIKE S1, v2-D7). [保存草稿] → set a
+    // transient, in-memory notice keyed by task_id. The task-author clone
+    // chat send path reads it on the next turn and passes it to
+    // CloneRuntime.chat as `specUpdateNotice` → system-prompt append so the
+    // agent sees the user's spec override. PUSH model (v2-D7): the notice is
+    // delivered once, then cleared by the send path. Acceptable to lose on
+    // server restart (transient UX nudge, not a source of truth). Kept out
+    // of the DB on purpose — 06 owns schema.ts, and a transient column would
+    // collide with the concurrent schema work. Lists the changed field names
+    // (values can be large JSON; the agent re-GETs to reconcile).
+    const changedFields = (Object.keys(input) as Array<keyof UpdateTaskInput>)
+      .filter((k) => input[k] !== undefined)
+    if (changedFields.length > 0) {
+      setSpecNotice(id, `@@spec_updated: ${changedFields.join(", ")}`)
+    }
 
     const row = this.taskDAO.getById(id)
     if (!row) throw new TaskNotFoundError()

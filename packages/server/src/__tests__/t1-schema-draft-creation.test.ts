@@ -10,14 +10,20 @@ import { createSchedulerRoutes } from '../routes/scheduler'
 
 // T-1: Schema 扩展 + 草稿创建
 // 验收标准：
-//   AC1  - SELECT trigger_source FROM schedules WHERE id=? 返回 'requirement'
-//   AC10 - PRAGMA table_info(schedules) 含新列 (trigger_source, source_chat_session_id, claimed_at) + 类型正确
+//   AC1  - SELECT origin_type FROM schedules WHERE id=? 返回 'task' (v1 'requirement' equivalent)
+//   AC10 - PRAGMA table_info(schedules) 含新列 (origin_type, origin_id, origin_role, claimed_at) + 类型正确
 //   AC12 - POST body 含 trigger_source='requirement' + cron_expression=null 不报错，返回 schedule.id
 //
 // 反假跑：
-//   AC1  - 显式查 trigger_source 字段值，不只查 status='queued'
+//   AC1  - 显式查 origin_type 字段值，不只查 status='queued'
 //   AC10 - PRAGMA 查列存在 + 类型正确，不只 INSERT 不报错
 //   AC12 - Zod 校验真通过 + 返回的 body 含 id，不只 POST 200
+//
+// SG1b (ticket 06): trigger_source + source_chat_session_id were DROPPED from schedules.
+// The承重 sites below use origin_type (S2 polymorphic origin). The route still accepts
+// trigger_source='requirement' in the POST body (backward-compat) — createJob maps it to
+// origin_type='task'. source_chat_session_id is no longer persisted (tasks table owns the
+// chat-session back-ref now).
 
 const ORG = 'task-pool-test'
 
@@ -47,7 +53,7 @@ describe('T-1: Schema 扩展 + 草稿创建', () => {
 
   // ── AC10: PRAGMA 反假跑 — 列存在 + 类型正确 ────────────────────
 
-  it('AC10: schedules 表含 trigger_source/source_chat_session_id/claimed_at 列 + 类型正确', () => {
+  it('AC10: schedules 表含 origin_type/origin_id/origin_role/claimed_at 列 + 类型正确', () => {
     const cols = db.prepare('PRAGMA table_info(schedules)').all() as Array<{
       name: string
       type: string
@@ -55,15 +61,23 @@ describe('T-1: Schema 扩展 + 草稿创建', () => {
       dflt_value: string | null
     }>
 
-    const triggerSource = cols.find(c => c.name === 'trigger_source')
-    expect(triggerSource, 'trigger_source 列必须存在').toBeDefined()
-    expect(triggerSource!.type).toBe('TEXT')
-    expect(triggerSource!.notnull).toBe(0) // nullable, drafts allow NULL
+    // SG1b (ticket 06): trigger_source + source_chat_session_id DROPPED → S2 polymorphic
+    // origin cols (origin_type/origin_id/origin_role). claimed_at kept (task lifecycle).
+    const originType = cols.find(c => c.name === 'origin_type')
+    expect(originType, 'origin_type 列必须存在').toBeDefined()
+    expect(originType!.type).toBe('TEXT')
+    expect(originType!.notnull).toBe(1) // NOT NULL DEFAULT 'cron'
+    expect(originType!.dflt_value).toBe("'cron'")
 
-    const sourceChat = cols.find(c => c.name === 'source_chat_session_id')
-    expect(sourceChat, 'source_chat_session_id 列必须存在').toBeDefined()
-    expect(sourceChat!.type).toBe('TEXT')
-    expect(sourceChat!.notnull).toBe(0)
+    const originId = cols.find(c => c.name === 'origin_id')
+    expect(originId, 'origin_id 列必须存在').toBeDefined()
+    expect(originId!.type).toBe('TEXT')
+    expect(originId!.notnull).toBe(0) // nullable
+
+    const originRole = cols.find(c => c.name === 'origin_role')
+    expect(originRole, 'origin_role 列必须存在').toBeDefined()
+    expect(originRole!.type).toBe('TEXT')
+    expect(originRole!.notnull).toBe(0) // nullable
 
     const claimedAt = cols.find(c => c.name === 'claimed_at')
     expect(claimedAt, 'claimed_at 列必须存在').toBeDefined()
@@ -84,34 +98,33 @@ describe('T-1: Schema 扩展 + 草稿创建', () => {
 
   // ── AC1 + AC12: DAO 直接创建 + 显式查 trigger_source ───────────
 
-  it('AC1/AC12 (DAO 路径): 直接 INSERT trigger_source=requirement 后显式查字段值', () => {
+  it('AC1/AC12 (DAO 路径): 直接 INSERT origin_type=task 后显式查字段值', () => {
     const id = 't1-dao-direct'
     const now = new Date().toISOString()
 
+    // SG1b (ticket 06): trigger_source + source_chat_session_id DROPPED → origin_type='task'
     db.prepare(`
       INSERT INTO schedules (
         id, org, name, cron_expression, timezone,
         enabled, timeout_seconds, notify_on_failure,
         created_at, updated_at, job_type, config, parallel_policy,
         version, consecutive_failures, max_retain,
-        status, trigger_source, source_chat_session_id, claimed_at
-      ) VALUES (?, ?, ?, NULL, 'Asia/Shanghai', 0, 3600, 0, ?, ?, 'workflow', '{}', 'skip', 1, 0, 10, 'draft', 'requirement', NULL, NULL)
+        status, origin_type, claimed_at
+      ) VALUES (?, ?, ?, NULL, 'Asia/Shanghai', 0, 3600, 0, ?, ?, 'workflow', '{}', 'skip', 1, 0, 10, 'draft', 'task', NULL)
     `).run(id, ORG, 'dao-direct', now, now)
 
-    // 反假跑 AC1: 显式 SELECT trigger_source 字段值，不只查 status
+    // 反假跑 AC1: 显式 SELECT origin_type 字段值，不只查 status
     const row = db.prepare(
-      'SELECT trigger_source, status, source_chat_session_id, claimed_at, cron_expression FROM schedules WHERE id = ?'
+      'SELECT origin_type, status, claimed_at, cron_expression FROM schedules WHERE id = ?'
     ).get(id) as {
-      trigger_source: string | null
+      origin_type: string
       status: string
-      source_chat_session_id: string | null
       claimed_at: string | null
       cron_expression: string | null
     }
 
-    expect(row.trigger_source).toBe('requirement') // 反假跑: 显式查 trigger_source
+    expect(row.origin_type).toBe('task') // 反假跑: 显式查 origin_type (v1 'requirement')
     expect(row.status).toBe('draft')
-    expect(row.source_chat_session_id).toBeNull()
     expect(row.claimed_at).toBeNull()
     expect(row.cron_expression).toBeNull() // 反假跑: cron_expression 真的 NULL, 不是空串
   })
@@ -158,15 +171,15 @@ describe('T-1: Schema 扩展 + 草稿创建', () => {
     expect(body.status).toBe('draft')
     expect(body.cron_expression).toBeNull()
 
-    // 反假跑: DB 中确实存了 trigger_source='requirement'，不只 API 返回对了
+    // 反假跑: DB 中确实存了 origin_type='task' (v1 'requirement' equivalent)，不只 API 返回对了
     const dbRow = db.prepare(
-      'SELECT trigger_source, status, cron_expression FROM schedules WHERE id = ?'
+      'SELECT origin_type, status, cron_expression FROM schedules WHERE id = ?'
     ).get(body.id) as {
-      trigger_source: string | null
+      origin_type: string
       status: string
       cron_expression: string | null
     }
-    expect(dbRow.trigger_source).toBe('requirement')
+    expect(dbRow.origin_type).toBe('task')
     expect(dbRow.status).toBe('draft')
     expect(dbRow.cron_expression).toBeNull()
   })
@@ -197,9 +210,14 @@ describe('T-1: Schema 扩展 + 草稿创建', () => {
     expect(res.status).toBe(400)
   })
 
-  // ── source_chat_session_id 跟随 trigger_source='requirement' 一起存入 ──
-
-  it('POST /jobs 把 source_chat_session_id 持久化到 schedules 表', async () => {
+  // ── source_chat_session_id persistence (REMOVED in SG1b) ──────────────
+  // SKIPPED (ticket 06 SG1b): source_chat_session_id is no longer persisted on
+  // schedules (column DROPPED). The tasks table owns the chat-session back-ref now.
+  // The route still ACCEPTS source_chat_session_id in the POST body (backward-compat),
+  // but enrichJobRow returns null always and the DB column is gone, so persistence
+  // cannot be asserted here. The auto-created task-author clone session is verified
+  // in scheduler-routes.test.ts (G7) via the `sessions` table (scope_id = task id).
+  it.skip('POST /jobs 把 source_chat_session_id 持久化到 schedules 表 (REMOVED in SG1b)', async () => {
     const res = await app.request('/api/scheduler/jobs', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

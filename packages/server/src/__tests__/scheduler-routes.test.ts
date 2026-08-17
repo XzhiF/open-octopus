@@ -354,25 +354,27 @@ describe('Scheduler Routes (integration)', () => {
     })
     expect(res.status).toBe(201)
     const body = await json<{ id: string; source_chat_session_id: string | null }>(res)
-    // 反假跑 AC18: source_chat_session_id 非空 (auto-created by route)
-    expect(body.source_chat_session_id).toBeTruthy()
-    expect(typeof body.source_chat_session_id).toBe('string')
+    // SG1b (ticket 06): source_chat_session_id is no longer persisted on schedules
+    // (column DROPPED). enrichJobRow returns null always. The auto-created task-author
+    // clone session is still created (G7 preserved) — find it via scope_id = task id below.
+    expect(body.source_chat_session_id).toBeNull()
 
     // G7: session is a REAL clone session in the `sessions` table (clone-session mechanism),
     // NOT a chat_sessions row with the retired 'taskpool-draft' fake workspace_id.
+    // SG1b: look up by scope_id = body.id (the route links scope_id to the task id).
     const sessionRow = db.prepare(
-      'SELECT id, clone_name, session_type, scope_id, is_deleted FROM sessions WHERE id = ?'
-    ).get(body.source_chat_session_id) as
+      'SELECT id, clone_name, session_type, scope_id, is_deleted FROM sessions WHERE scope_id = ? AND clone_name = ?'
+    ).get(body.id, 'task-author') as
       | { id: string; clone_name: string; session_type: string; scope_id: string | null; is_deleted: number }
       | undefined
-    expect(sessionRow, 'task-author clone session must exist in sessions table').toBeDefined()
+    expect(sessionRow, 'task-author clone session must exist in sessions table (scope_id=task_id)').toBeDefined()
     expect(sessionRow!.clone_name).toBe('task-author')
     expect(sessionRow!.session_type).toBe('clone_direct')
     expect(sessionRow!.scope_id).toBe(body.id) // linked to the task id (G7: scope_id=task_id)
     expect(sessionRow!.is_deleted).toBe(0)
 
     // G7 反假跑: NO 'taskpool-draft' fake workspace_id row in chat_sessions (sentinel retired)
-    const chatRow = db.prepare('SELECT id FROM chat_sessions WHERE id = ?').get(body.source_chat_session_id)
+    const chatRow = db.prepare('SELECT id FROM chat_sessions WHERE id = ?').get(sessionRow!.id)
     expect(chatRow, 'chat_sessions must NOT carry the retired taskpool-draft sentinel').toBeUndefined()
   })
 
@@ -399,8 +401,14 @@ describe('Scheduler Routes (integration)', () => {
     })
     expect(createRes.status).toBe(201)
     const created = await json<{ id: string; source_chat_session_id: string | null }>(createRes)
-    expect(created.source_chat_session_id).toBeTruthy()
-    const sessionId = created.source_chat_session_id!
+    // SG1b: source_chat_session_id no longer in response (null). The auto-created
+    // task-author clone session still exists — find it via scope_id = task id.
+    expect(created.source_chat_session_id).toBeNull()
+    const session = db.prepare(
+      'SELECT id FROM sessions WHERE scope_id = ? AND clone_name = ?'
+    ).get(created.id, 'task-author') as { id: string } | undefined
+    expect(session, 'task-author clone session must exist (scope_id=task_id)').toBeDefined()
+    const sessionId = session!.id
 
     // The auto-created session is a real task-author clone session, so the generic
     // clone chat route must resolve it (200 SSE stream). The provider may error
@@ -474,7 +482,10 @@ describe('Scheduler Routes (integration)', () => {
     expect(activeAfter).toBe(activeBefore)
   })
 
-  it('AC18 反假跑: caller-provided source_chat_session_id is preserved (no auto-create override)', async () => {
+  // SKIPPED (ticket 06 SG1b): source_chat_session_id is no longer persisted on schedules
+  // (column DROPPED) — enrichJobRow returns null always, so a caller-provided id cannot
+  // be round-tripped via the response. The tasks table owns the chat-session back-ref now.
+  it.skip('AC18 反假跑: caller-provided source_chat_session_id is preserved (no auto-create override)', async () => {
     const res = await app.request('/api/scheduler/jobs', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -501,7 +512,11 @@ describe('Scheduler Routes (integration)', () => {
     expect(body.source_chat_session_id).toBe('caller-provided-session-id')
   })
 
-  it('AC19: GET /jobs/:id returns source_chat_session_id for requirement-type draft', async () => {
+  // SKIPPED (ticket 06 SG1b): source_chat_session_id is no longer persisted on schedules
+  // (column DROPPED) — GET /jobs/:id returns null always. The tasks table owns the
+  // chat-session back-ref now; the auto-created task-author clone session is verified in
+  // G7/AC18 above (via sessions.scope_id = task id).
+  it.skip('AC19: GET /jobs/:id returns source_chat_session_id for requirement-type draft', async () => {
     // Create a draft (auto-creates chat session)
     const createRes = await app.request('/api/scheduler/jobs', {
       method: 'POST',

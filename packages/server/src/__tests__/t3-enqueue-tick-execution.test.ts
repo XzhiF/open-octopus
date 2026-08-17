@@ -101,10 +101,11 @@ describe('T-3: enqueue + tick execution', () => {
     expect(body.status).toBe('queued')
 
     // 反假跑 AC3: 显式查 DB status 字段, 不只看 API 返回
-    const row = db.prepare('SELECT status, trigger_source FROM schedules WHERE id = ?').get(id) as
-      { status: string; trigger_source: string }
+    // SG1b (ticket 06): trigger_source DROPPED → query origin_type ('task' = v1 'requirement')
+    const row = db.prepare('SELECT status, origin_type FROM schedules WHERE id = ?').get(id) as
+      { status: string; origin_type: string }
     expect(row.status).toBe('queued')
-    expect(row.trigger_source).toBe('requirement')
+    expect(row.origin_type).toBe('task')
   })
 
   // ── State machine guard: enqueue on non-draft returns 409 ───────
@@ -176,8 +177,8 @@ describe('T-3: enqueue + tick execution', () => {
         enabled, timeout_seconds, notify_on_failure,
         created_at, updated_at, job_type, config, parallel_policy,
         version, consecutive_failures, max_retain,
-        status, trigger_source, source_chat_session_id, claimed_at
-      ) VALUES (?, ?, ?, NULL, 'Asia/Shanghai', 0, 3600, 0, ?, ?, 'workflow', '{}', 'skip', 1, 0, 10, 'draft', 'requirement', NULL, NULL)
+        status, origin_type, claimed_at
+      ) VALUES (?, ?, ?, NULL, 'Asia/Shanghai', 0, 3600, 0, ?, ?, 'workflow', '{}', 'skip', 1, 0, 10, 'draft', 'task', NULL)
     `).run('t3-engine-1', ORG, 't3-engine-name', new Date().toISOString(), new Date().toISOString())
 
     expect(insertRes.changes).toBe(1)
@@ -248,8 +249,8 @@ describe('T-3: enqueue + tick execution', () => {
         enabled, timeout_seconds, notify_on_failure,
         created_at, updated_at, job_type, config, parallel_policy,
         version, consecutive_failures, max_retain,
-        status, trigger_source, source_chat_session_id, claimed_at
-      ) VALUES (?, ?, ?, NULL, 'Asia/Shanghai', 0, 3600, 0, ?, ?, 'workflow', '{}', 'skip', 1, 0, 10, 'draft', 'requirement', NULL, NULL)
+        status, origin_type, claimed_at
+      ) VALUES (?, ?, ?, NULL, 'Asia/Shanghai', 0, 3600, 0, ?, ?, 'workflow', '{}', 'skip', 1, 0, 10, 'draft', 'task', NULL)
     `).run(SCHEDULE_ID, ORG, 't3-naming-name', new Date().toISOString(), new Date().toISOString())
 
     svc.enqueueJob(SCHEDULE_ID)

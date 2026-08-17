@@ -4,7 +4,7 @@
 SG11 新 `TaskAuthorSessionAugmenter`：`ResourceManager`→解析 installPath→读 SKILL.md→`enhancePromptWithSkills`（救活死码）→pi-sdk systemPrompt。SG6 每 turn clone chat 路由开头重读 `tasks.authoring_resources[]`→`_rebuildSystemPrompt`（pi-sdk-adapter.ts:106）（**SPIKE S2 验证**；不可行→备选每 turn 重建 session / user-msg preamble）。SG7 `materializeTaskSpecToConfig` 传播 `tasks.resources[]`/`subunit.resources[]`→`config.requires`；`EngineInitPhase` UNION 合并 `config.requires`→`workflow.requires`。draft 期 prompt-inject；workspace 期 provisioner。
 
 ## Blocked by
-03 (tasks service), 06 (materialize), 13 (pi-sdk resume — 同文件 pi-sdk-adapter.ts 安全序)
+03 (tasks service), 06 (materialize), 13 (pi-sdk resume — 同文件 pi-sdk-adapter.ts 安全序), 05 (reverse-msg — clone-runtime.ts 同文件序)
 
 ## Status
 ready-for-agent

@@ -250,12 +250,29 @@ export class CloneRuntime {
   /**
    * Send message via Claude SDK with resume + append.
    * Yields MessageChunk for streaming.
+   *
+   * 05 (SPIKE S1, v2-D7): `specUpdateNotice` is a transient, reverse-direction
+   * notice set by TasksService.updateTask ([保存草稿]) and read by the
+   * task-author clone chat send path. sendWithProvider appends it to the
+   * system-prompt `append` string so the agent sees the user's spec override
+   * on the next turn. assembleContext is fresh per turn (re-built at the top
+   * of this method), so the notice is re-delivered only while the clone
+   * route keeps it pending (it clears the notice after the stream). System-
+   * prompt append (not prepend-to-user-msg) avoids DB + SDK history pollution
+   * and the @@ token being treated as an instruction.
+   *
+   * Param order: `specUpdateNotice` sits before `abortSignal` so the primary
+   * caller (clone/index.ts send path) reads cleanly without an `undefined`
+   * hole. All existing callers pass ≤4 args, so the reorder is backwards-
+   * compatible (verified: clone/index.ts:306, main-agent-route.ts:239/763,
+   * clone-runtime.test.ts:168).
    */
   async *chat(
     message: string,
     sessionId: string,
     providerSessionId: string | null,
     cwd: string,
+    specUpdateNotice?: string,
     abortSignal?: AbortSignal,
   ): AsyncGenerator<MessageChunk> {
     const cloneSystemPrompt = this.assembleContext()
@@ -268,6 +285,7 @@ export class CloneRuntime {
         effectiveCwd,
         providerSessionId,
         cloneSystemPrompt,
+        specUpdateNotice,
         abortSignal,
       )
       yield* stream
@@ -283,6 +301,7 @@ export class CloneRuntime {
             effectiveCwd,
             null,
             cloneSystemPrompt,
+            specUpdateNotice,
             abortSignal,
           )
           yield* stream
@@ -305,22 +324,34 @@ export class CloneRuntime {
   // ── Private Helpers ─────────────────────────────────────────────
 
   /**
-   * Send query via provider with clone context and plugin-based skill discovery.
+   * Send query via provider with clone context and plugin-based skill
+   * discovery. 05 (SPIKE S1): `specUpdateNotice` is concatenated onto the
+   * system-prompt `append` string (clone-runtime.ts:310-329) so the
+   * task-author agent receives the user's [保存草稿] override in-context.
    */
   private sendWithProvider(
     message: string,
     cwd: string,
     resumeSessionId: string | null,
     cloneSystemPrompt: string,
+    specUpdateNotice: string | undefined,
     abortSignal?: AbortSignal,
   ): AsyncGenerator<MessageChunk> {
     const provider = getProvider('claude')
+
+    // 05 — SPIKE S1: append the transient spec-update notice to the system
+    // prompt. Only concat when a notice is actually pending; an empty/absent
+    // notice leaves the append equal to the assembled clone context (no
+    // stray separator, no @@ leak).
+    const append = specUpdateNotice
+      ? `${cloneSystemPrompt}\n\n${specUpdateNotice}`
+      : cloneSystemPrompt
 
     return provider.sendQuery(message, cwd, resumeSessionId ?? undefined, {
       systemPrompt: {
         type: 'preset',
         preset: 'claude_code',
-        append: cloneSystemPrompt,
+        append,
       },
       abortSignal,
       model: this.cloneDef.config.model,

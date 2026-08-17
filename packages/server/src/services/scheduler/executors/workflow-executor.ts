@@ -7,7 +7,7 @@ import { getExecutionService } from '../../execution-service-registry'
 import { SSEService } from '../../sse'
 import { NotificationService } from '../../notification'
 import { WorkspaceService } from '../../workspace'
-import type { SchedulerJob, WorkflowConfig, WorkflowChainItem, ScheduleStatusListener, OriginType } from "@octopus/shared"
+import type { SchedulerJob, WorkflowConfig, WorkflowChainItem, ScheduleStatusListener, OriginType, TaskSpec } from "@octopus/shared"
 import type { Executor, ExecutionResult } from './executor-interface'
 import { ScheduleConfigDAO, ScheduleRunDAO, ExecutionDAO } from '../../../db/dao'
 
@@ -246,7 +246,7 @@ export class WorkflowExecutor implements Executor {
         // Record<string, unknown> (not string-only at runtime), so the subunits array is
         // passed as a real object — the composition Loop consumes $iteration.subunit from
         // it downstream. Simple tasks pass the chain step's string input_values unchanged.
-        input_values: isComposite ? this.buildCompositeInputValues(config) : firstStep.input_values,
+        input_values: isComposite ? this.buildCompositeInputValues(config, schedule.id) : firstStep.input_values,
         initial_var_pool: scheduleVars,
       })
     } catch (err: unknown) {
@@ -522,12 +522,21 @@ export class WorkflowExecutor implements Executor {
 
   // ── Ticket 04: composite dispatch helpers ────────────────────────────
 
-  /** True if `config` describes a composite task: task_spec.subunits present, OR the
-   *  first chain step's workflow_ref is the composition-task template (G9). Drives the
-   *  coordinator-ws dispatch path (no projects + composition wf + subunits as
-   *  input_values) and the parent-aggregation failed-child check at completion. */
+  /** True if `config` describes a composite task: task_spec.subunits present
+   *  with length >= 2, OR the first chain step's workflow_ref is the
+   *  composition-task template (G9). Drives the coordinator-ws dispatch path
+   *  (no projects + composition wf + subunits as input_values) and the parent-
+   *  aggregation failed-child check at completion.
+   *
+   *  SG9 (ticket 06): the threshold is now subunits.length >= 2 (was
+   *  `!!subunits?.length` / N>=1). A 1-subunit task is NOT composite — it takes
+   *  the simple workflow_chain path (skips coordinator-ws, ADR-0009 N+1→1
+   *  optimization). The composition-task template detection (workflow_ref ===
+   *  COMPOSITION_WF_REF) still treats an explicitly-composition config as
+   *  composite regardless of subunit count (defensive — a config that literally
+   *  asks for the composition wf is composite by construction). */
   private isCompositeTask(config: WorkflowConfig): boolean {
-    if (config.task_spec?.subunits?.length) return true
+    if ((config.task_spec?.subunits?.length ?? 0) >= 2) return true
     const ref = config.workflow_chain[0]?.workflow_ref
     if (typeof ref === 'string') {
       return ref === COMPOSITION_WF_REF || ref.endsWith(`/${COMPOSITION_WF_REF}`)
@@ -552,14 +561,60 @@ export class WorkflowExecutor implements Executor {
    *  (real objects — the composition Loop exposes $iteration.subunit from it),
    *  subunit_count (drives the Loop break_when), goal (moa topic), and
    *  integration_prompt (moa aggregator prompt). These mirror composition-task.yaml's
-   *  `variables` block, overridden by the actual task_spec at materialization. */
-  private buildCompositeInputValues(config: WorkflowConfig): Record<string, unknown> {
-    const subunits = config.task_spec?.subunits ?? []
+   *  `variables` block, overridden by the actual task_spec at materialization.
+   *
+   *  SG5 (ticket 06): materializeTaskSpecToConfig now DROPS task_spec from the
+   *  config (it lives in the tasks table, v2-D1). So config.task_spec is absent on
+   *  the new dispatch-seam path. Fall back to reading task_spec from the tasks
+   *  table via S2 origin lookup (origin_type='task', origin_id=task.id). The
+   *  legacy/test path that seeds config WITH task_spec still works (first branch). */
+  private buildCompositeInputValues(config: WorkflowConfig, scheduleId?: string): Record<string, unknown> {
+    // Legacy/test path: config carries task_spec (composite-dispatch.test.ts seeds this).
+    if (config.task_spec) {
+      const subunits = config.task_spec.subunits ?? []
+      return {
+        subunits,
+        subunit_count: subunits.length,
+        goal: config.task_spec.goal ?? '',
+        integration_prompt: config.task_spec.integration_goal?.prompt ?? '',
+      }
+    }
+    // SG5 new path: task_spec dropped from config — read from the tasks table via
+    // origin lookup. The schedule's origin_id IS the parent task id (S2).
+    const taskSpec = this.resolveTaskSpecFromOrigin(scheduleId)
+    const subunits = taskSpec?.subunits ?? []
     return {
       subunits,
       subunit_count: subunits.length,
-      goal: config.task_spec?.goal ?? '',
-      integration_prompt: config.task_spec?.integration_goal?.prompt ?? '',
+      goal: taskSpec?.goal ?? '',
+      integration_prompt: taskSpec?.integration_goal?.prompt ?? '',
+    }
+  }
+
+  /** SG5: resolve the parent task's task_spec from the tasks table via S2 origin
+   *  lookup. The schedule's origin_id points at the parent task id. Returns null
+   *  if the lookup fails (defensive — buildCompositeInputValues falls back to
+   *  empty subunits, which the composition wf handles as a no-op Loop). */
+  private resolveTaskSpecFromOrigin(scheduleId?: string): TaskSpec | null {
+    if (!scheduleId) return null
+    try {
+      const row = this.configDAO
+        .getDb()
+        .prepare(
+          `SELECT t.task_spec AS task_spec
+           FROM schedules s
+           JOIN tasks t ON t.id = s.origin_id AND t.deleted_at IS NULL
+           WHERE s.id = ? AND s.origin_type = 'task'`,
+        )
+        .get(scheduleId) as { task_spec: string | null } | undefined
+      if (!row?.task_spec) return null
+      return JSON.parse(row.task_spec) as TaskSpec
+    } catch (err: unknown) {
+      console.error(
+        `[WorkflowExecutor] resolveTaskSpecFromOrigin failed for ${scheduleId} (non-fatal — composition wf gets empty subunits):`,
+        err instanceof Error ? err.message : String(err),
+      )
+      return null
     }
   }
 

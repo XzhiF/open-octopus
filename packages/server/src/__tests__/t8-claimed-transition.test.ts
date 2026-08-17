@@ -50,8 +50,8 @@ function insertDraft(db: Database.Database, id: string) {
       enabled, timeout_seconds, notify_on_failure,
       created_at, updated_at, job_type, config, parallel_policy,
       version, consecutive_failures, max_retain,
-      status, trigger_source, source_chat_session_id, claimed_at
-    ) VALUES (?, ?, ?, NULL, 'Asia/Shanghai', 0, 3600, 0, ?, ?, 'workflow', '{}', 'skip', 1, 0, 10, 'draft', 'requirement', NULL, NULL)
+      status, origin_type, claimed_at
+    ) VALUES (?, ?, ?, NULL, 'Asia/Shanghai', 0, 3600, 0, ?, ?, 'workflow', '{}', 'skip', 1, 0, 10, 'draft', 'task', NULL)
   `).run(id, ORG, `name-${id}`, new Date().toISOString(), new Date().toISOString())
 }
 

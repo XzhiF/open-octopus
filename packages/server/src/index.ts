@@ -372,6 +372,10 @@ const d = daos ?? {
   interactionMessage: lazyDAO(InteractionMessageDAO),
   agentVersion: lazyDAO(AgentVersionDAO),
   harness: lazyDAO(HarnessDAO),
+  // 03 (v2-D1): tasks table DAO. Added to the lazy fallback so `d.task` works
+  // in test mode (VITEST) where `daos` is null and the lazy proxy branch is used.
+  // 04's task-author autosave seam + TasksService both consume it.
+  task: lazyDAO(TaskDAO),
 }
 
 const wsSvc = workspaceService ?? new WorkspaceService(d.workspace)
@@ -440,6 +444,9 @@ app.route("/api/agent", createAgentRoutes({
 // Clone session routes — direct entry for Web UI pages
 app.route("/api/clones", createCloneSessionRoutes({
   sessionDAO: d.agentSession,
+  // 04: task-author autosave seam (v2-D6) — fires at turn-end for
+  // cloneName === 'task-author'. Optional dep; no-op when absent.
+  taskDAO: d.task,
 }))
 
 // Clone file tree and operations API
