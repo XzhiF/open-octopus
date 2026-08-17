@@ -186,20 +186,20 @@ export async function triggerJob(
 
 /** Confirm gate (D13/G7): move a draft schedule draft→queued. Server runs enqueueJob →
  *  schedules.status='queued' + SSE schedule_status(queued). */
-export async function enqueueJob(id: string): Promise<{ ok: boolean }> {
+export async function enqueueJob(id: string): Promise<SchedulerJob> {
   const res = await fetch(`${getServerUrl()}${BASE}/jobs/${id}/enqueue`, {
     method: "POST",
   })
-  return handleResponse<{ ok: boolean }>(res)
+  return handleResponse<SchedulerJob>(res)
 }
 
 /** User-triggered abort (G4): guard status in (claimed,running) → schedules.status='aborted'
  *  + workspace cleanup + SSE schedule_status(aborted). */
-export async function abortJob(id: string): Promise<{ ok: boolean }> {
+export async function abortJob(id: string): Promise<JobDetail> {
   const res = await fetch(`${getServerUrl()}${BASE}/jobs/${id}/abort`, {
     method: "POST",
   })
-  return handleResponse<{ ok: boolean }>(res)
+  return handleResponse<JobDetail>(res)
 }
 
 // ============ Executions ============

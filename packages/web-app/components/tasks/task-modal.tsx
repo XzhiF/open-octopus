@@ -267,8 +267,16 @@ function SpecPanel({ job, onMutated }: { job: SchedulerJob | null; onMutated: ()
   const [saving, setSaving] = useState(false)
   const dirty = useMemo(() => {
     if (!spec) return false
-    return goal !== spec.goal || ac.join("\n") !== spec.ac.join("\n")
-  }, [goal, ac, spec])
+    const seedProjNames = (wfConfig?.workspace_spec.projects ?? []).map((p) => p.name)
+    return (
+      goal !== (spec.goal ?? "")
+      || ac.join("\n") !== (spec.ac ?? []).join("\n")
+      || JSON.stringify(subunits) !== JSON.stringify(spec.subunits ?? [])
+      || JSON.stringify(integration) !== JSON.stringify(spec.integration_goal ?? { strategy: "synthesis" })
+      || JSON.stringify(projects.map((p) => p.name)) !== JSON.stringify(seedProjNames)
+      || JSON.stringify(skills) !== JSON.stringify(spec.subunits?.flatMap((s) => s.skills) ?? [])
+    )
+  }, [goal, ac, subunits, integration, projects, skills, spec, wfConfig])
 
   const handleSave = async () => {
     if (!job || !wfConfig) return
@@ -283,7 +291,12 @@ function SpecPanel({ job, onMutated }: { job: SchedulerJob | null; onMutated: ()
     setSaving(true)
     try {
       await updateJob(job.id, {
-        config: { ...wfConfig, task_spec: nextSpec },
+        config: {
+          ...wfConfig,
+          workspace_spec: { ...wfConfig.workspace_spec, projects },
+          task_spec: nextSpec,
+          ...(skills.length > 0 ? { skills } : {}),
+        },
       }, job.version)
       toast.success("spec 已保存")
       onMutated()
