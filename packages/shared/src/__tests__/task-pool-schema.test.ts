@@ -211,7 +211,7 @@ describe("workflowConfigSchema v3.0 + task_spec (AC1, AC5)", () => {
       workspace_spec: { org: "o", branch_prefix: "b", projects: [] },
       workflow_chain: [],
       max_retain: 1,
-      task_spec: { goal: "g", ac: ["a"] },
+      task_spec: { goal: "g", ac: ["a"], resources: [], authoring_resources: [] },
     }
     expect(v2.schema_version).toBe("2.0")
     expect(v3.schema_version).toBe("3.0")

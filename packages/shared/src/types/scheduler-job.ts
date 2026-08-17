@@ -16,6 +16,15 @@ export type SchedulerExecutionStatus =
 /** What created this schedule. 'cron' = scheduled by cron_expression; 'requirement' = draft from chat/manual input awaiting claim. */
 export type TriggerSource = 'cron' | 'requirement'
 
+/** v2 (S2 polymorphic origin) — generalizes {@link TriggerSource}. What created
+ *  a schedule, with no FK on origin_id (app-level cascade-reap + orphan reaper
+ *  maintain integrity, the tradeoff for S2's uniform polymorphic association):
+ *  'cron' = cron_expression-driven; 'task' = spawned by the tasks dispatch seam
+ *  (origin_id = parent task id); 'agent' = spawned by an agent run; 'manual' =
+ *  user-enqueued; 'api' = external API enqueue. Extensible. */
+export const OriginTypeSchema = z.enum(["cron", "task", "agent", "manual", "api"])
+export type OriginType = z.infer<typeof OriginTypeSchema>
+
 /** Lifecycle status of a schedule (schema v37). draft → queued → claimed → running → done.
  *  'claimed' = taken by executor before dispatch confirms; 'running' = execution in flight;
  *  'done' = chain completed (requirement-type only; cron uses enabled/disabled).
@@ -48,6 +57,25 @@ export const workflowChainItemSchema = z.object({
   input_values: z.record(z.string(), z.string()).default({}),
 })
 
+// ── Task resource refs (v2-D3/D13) ──────────────────────────────────
+
+/** The 4 provisionable resource types a task may bind. Mirrors
+ *  `ProvisionableType` (resource-provisioner.ts); excludes 'clone' (manual
+ *  install only) and 'workflow' (referenced via workflow_ref, not a bound
+ *  resource). Each member maps 1:1 to a {@link workflowConfigRequiresSchema}
+ *  key: skill→skills, agent→agent_files, command→commands, rule→rules. */
+export const taskResourceTypeSchema = z.enum(["skill", "agent", "command", "rule"])
+export type TaskResourceType = z.infer<typeof taskResourceTypeSchema>
+
+/** A bound resource reference. `type` selects the requires bucket the resource
+ *  materializes into; `name` is the resource name in the global registry (may
+ *  be group-qualified, e.g. "built-in/octo-backend"). */
+export const resourceRefSchema = z.object({
+  type: taskResourceTypeSchema,
+  name: z.string().min(1).max(200),
+})
+export type ResourceRef = z.infer<typeof resourceRefSchema>
+
 // ── Task pool v3.0 types (composite dispatch: spec = WHAT, workflow_ref = HOW) ──
 
 /** How subunit outputs are combined at the end of a composition workflow (D14).
@@ -65,6 +93,8 @@ export const subunitSpecSchema = z.object({
   workflow_ref: WorkflowRef.zodSchema(),
   input_values: z.record(z.string(), z.string()).default({}),
   skills: z.array(z.string()).default([]),
+  // v2-D13/SG7: workspace-scope resources → child workflow.requires at dispatch.
+  resources: z.array(resourceRefSchema).default([]),
 })
 
 /** Structured task body produced by the task-author chatbot (D9). Stored as
@@ -77,6 +107,10 @@ export const taskSpecSchema = z.object({
   contracts: z.record(z.string(), z.unknown()).optional(),
   subunits: z.array(subunitSpecSchema).optional(),
   integration_goal: integrationGoalSchema.optional(),
+  // v2-D13/SG7: workspace-scope resources → workflow.requires at dispatch.
+  resources: z.array(resourceRefSchema).default([]),
+  // v2-D8/D13: draft-scope resources prompt-injected into the task-author session.
+  authoring_resources: z.array(resourceRefSchema).default([]),
 })
 
 // ── Zod schemas (single source of truth) ────────────────────────────
@@ -97,6 +131,19 @@ export const workflowConfigSchemaV1 = z.object({
   input_values: z.record(z.string(), z.string()).optional(),
 })
 
+/** Shape of {@link workflowConfigSchema}.requires — mirrors `WorkflowDef.requires`
+ *  (workflow.ts). 4 keys; 'clones' is omitted because tasks do not provision
+ *  clones via config (clones are manual-install per ResourceProvisioner).
+ *  {@link materializeTaskSpecToConfig} propagates tasks.resources[] /
+ *  subunit.resources[] → here; EngineInitPhase UNION-merges config.requires →
+ *  workflow.requires (does NOT override, SG7). */
+export const workflowConfigRequiresSchema = z.object({
+  skills: z.array(z.string()).optional(),
+  agent_files: z.array(z.string()).optional(),
+  commands: z.array(z.string()).optional(),
+  rules: z.array(z.string()).optional(),
+})
+
 /** v2.0/v3.0 — workspace spec + workflow chain + retention.
  *  v3.0 adds optional `task_spec` (composite task body, D9). v2.0 configs (no
  *  task_spec) remain valid for backward compatibility — versioned TEXT, no migration.
@@ -109,6 +156,8 @@ export const workflowConfigSchema = z.object({
   workflow_chain: z.array(workflowChainItemSchema).min(1).max(20),
   max_retain: z.number().int().min(1).max(100).default(10),
   task_spec: taskSpecSchema.optional(),
+  // v2-D13/SG7: optional, mirrors WorkflowDef.requires.
+  requires: workflowConfigRequiresSchema.optional(),
 })
 
 export const agentConfigSchema = z.object({

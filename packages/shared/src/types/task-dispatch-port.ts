@@ -15,6 +15,16 @@ export interface ScheduleHandle {
 }
 
 /**
+ * Role a dispatched child schedule plays in the task's orchestration (v2-D9 /
+ * ADR-0009 dispatch seam, S2 polymorphic origin).
+ *  - 'primary' = simple task's single direct schedule (skip coordinator-ws).
+ *  - 'coordinator' = composite task's composition-workflow schedule (runs
+ *    composition-task.yaml + Loop× task_dispatch fan-out).
+ *  - 'subunit' = a fan-out child of the coordinator (one per SubunitSpec).
+ */
+export type OriginRole = "primary" | "coordinator" | "subunit"
+
+/**
  * Engine → scheduler boundary for composite task dispatch (G1).
  *
  * The engine package only depends on `@octopus/shared` + `@octopus/providers`,
@@ -31,8 +41,13 @@ export interface TaskDispatchPort {
    * workflow_ref via createFromSpec). Returns a handle the parent task_dispatch
    * node awaits. Must not block on child completion — the child runs async and
    * calls back via {@link resumeOnCompletion}.
+   *
+   * @param origin_role v2 (SG1) — the role the created schedule plays in the
+   *   task's orchestration. The impl sets `origin_type='task'`,
+   *   `origin_role=<origin_role>`, and `origin_id=<parent task id>` on the
+   *   created schedule (S2 polymorphic origin, no FK).
    */
-  dispatchChildSchedule(subunit: SubunitSpec): Promise<ScheduleHandle>
+  dispatchChildSchedule(subunit: SubunitSpec, origin_role: OriginRole): Promise<ScheduleHandle>
 
   /**
    * Resume the paused parent task_dispatch node with the completed child's
