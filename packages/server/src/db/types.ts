@@ -260,8 +260,19 @@ export interface ScheduleRow {
   consecutive_failures: number
   max_retain: number
   status: string
+  /** v37 task-pool hack col. KEPT transiently (schema v38) — removal + migrating
+   *  the 3 承重 sites to origin_type is ticket 06's job. Prefer origin_type. */
   trigger_source: string | null
+  /** v37 task-pool hack col. KEPT transiently (schema v38) — see trigger_source. */
   source_chat_session_id: string | null
+  /** v38 S2 polymorphic origin (no FK on origin_id). 'cron' default for legacy rows. */
+  origin_type: string
+  /** Parent id — for tasks: the tasks.id this schedule was dispatched from. */
+  origin_id: string | null
+  /** Role within the parent origin: 'primary' | 'coordinator' | 'subunit' | 'auxiliary'. */
+  origin_role: string | null
+  /** Arbitrary JSON for the origin association (e.g. parent_task_dispatch marker). */
+  assoc_meta: string | null
   claimed_at: string | null
 }
 
@@ -330,6 +341,43 @@ export interface ScheduleWorkspaceRow {
   started_at: string
   completed_at: string | null
   error: string | null
+}
+
+// ── Tasks Table (schema v38 — first-class task domain, v2-D1) ──────────
+
+/** A first-class task row. S2 polymorphic origin: NO schedule_id / execution_id /
+ *  claimed_at — the link to schedules is via
+ *  `schedules WHERE origin_type='task' AND origin_id=task.id` (no FK; integrity
+ *  via app-level cascade-reap + orphan reaper, SG12). task_spec/resources/
+ *  authoring_resources/skills/project_ids are JSON TEXT; the autosave seam writes
+ *  ONLY name+updated_at and never touches task_spec/resources/version (SG8). */
+export interface TaskRow {
+  id: string
+  org: string
+  name: string
+  /** 'draft' | 'ready' | 'running' | 'done' | 'failed' | 'aborted' (CHECK-enforced). */
+  status: string
+  /** FK→sessions.id; back-ref for sessions.scope_id (SG3 retarget). */
+  source_chat_session_id: string | null
+  /** JSON TaskSpec — the structured WHAT (D9). */
+  task_spec: string
+  /** JSON ResourceRef[] — draft-scope, prompt-injected (v2-D8/D13). */
+  authoring_resources: string
+  /** JSON ResourceRef[] — workspace-scope → workflow.requires at dispatch (v2-D13/SG7). */
+  resources: string
+  /** JSON string[] — bound skill names. */
+  skills: string
+  /** JSON string[] — bound project ids. */
+  project_ids: string
+  workflow_ref: string | null
+  /** Optimistic concurrency; bumped on task_spec/resources/authoring_resources writes. */
+  version: number
+  /** Soft-delete marker (discard draft/ready = soft delete, not a status). */
+  deleted_at: string | null
+  created_at: string
+  updated_at: string
+  /** Set when status reaches terminal done/failed/aborted. */
+  completed_at: string | null
 }
 
 // ── Agent Tables ────────────────────────────────────────────────────

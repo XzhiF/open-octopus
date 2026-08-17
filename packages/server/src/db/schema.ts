@@ -10,7 +10,7 @@ const _dirname: string =
     ? __dirname
     : path.dirname(fileURLToPath(import.meta.url))
 
-export const SCHEMA_VERSION = 37
+export const SCHEMA_VERSION = 38
 
 /**
  * Apply the complete unified schema to the given database.
@@ -74,6 +74,12 @@ function handleSchemaMigrations(db: Database.Database): void {
 
   // schema v37: schedules — drop NOT NULL on cron_expression + add task-pool columns
   migrateSchedulesV37(db)
+
+  // schema v38 is ADDITIVE: origin cols are added via ensureColumnsForExistingTables
+  // above (origin_type/origin_id/origin_role/assoc_meta). trigger_source /
+  // source_chat_session_id are KEPT (coexist transiently) — their removal + migrating
+  // the 3 承重 sites to origin_type is ticket 06's job, done together so the build
+  // stays green. No DROP COLUMN migration here.
 }
 
 /**
@@ -184,11 +190,21 @@ function ensureColumnsForExistingTables(db: Database.Database): void {
   ensureColumn(db, 'experiences', 'execution_id', "TEXT DEFAULT NULL")
   ensureColumn(db, 'experiences', 'node_id', "TEXT DEFAULT NULL")
 
-  // Task-pool columns (schema version 37)
+  // Run-phase + polymorphic origin columns (schema v37 → v38, ADDITIVE).
+  // v37: status/trigger_source/source_chat_session_id/claimed_at for the task-pool
+  //      run lifecycle.
+  // v38: ADD origin_type/origin_id/origin_role/assoc_meta (S2 polymorphic origin, no
+  //      FK — app-level cascade-reap + orphan reaper maintain integrity).
+  //      trigger_source/source_chat_session_id are KEPT (coexist transiently) — their
+  //      removal + migrating the 3 承重 sites to origin_type is ticket 06's job.
   ensureColumn(db, 'schedules', 'status', "TEXT NOT NULL DEFAULT 'queued'")
   ensureColumn(db, 'schedules', 'trigger_source', "TEXT")
   ensureColumn(db, 'schedules', 'source_chat_session_id', "TEXT")
   ensureColumn(db, 'schedules', 'claimed_at', "TEXT")
+  ensureColumn(db, 'schedules', 'origin_type', "TEXT NOT NULL DEFAULT 'cron'")
+  ensureColumn(db, 'schedules', 'origin_id', "TEXT")
+  ensureColumn(db, 'schedules', 'origin_role', "TEXT")
+  ensureColumn(db, 'schedules', 'assoc_meta', "TEXT")
 }
 
 function ensureColumn(db: Database.Database, table: string, column: string, definition: string): void {

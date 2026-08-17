@@ -52,6 +52,23 @@ export class ScheduleConfigDAO extends BaseDAO {
     ).all(parentExecutionId) as ScheduleRow[]
   }
 
+  /**
+   * S2 polymorphic origin lookup (schema v38): find all schedules whose
+   * `origin_type` + `origin_id` point at the given parent. For tasks, this is
+   * `findSchedulesByOrigin('task', task.id)` — used by GET /tasks/:id (children
+   * drill-down), the cascade-reap on task delete/abort, and the orphan reaper
+   * (SG12). No FK on origin_id (S2 tradeoff) — app-level integrity. Returns
+   * active (non-deleted) schedules ordered by created_at ASC so dispatch order
+   * (primary → subunits) is stable.
+   */
+  findSchedulesByOrigin(originType: string, originId: string): ScheduleRow[] {
+    return this.stmt(
+      `SELECT * FROM schedules
+       WHERE origin_type = ? AND origin_id = ? AND deleted_at IS NULL
+       ORDER BY created_at ASC`,
+    ).all(originType, originId) as ScheduleRow[]
+  }
+
   findByName(name: string): ScheduleRow | null {
     return (this.stmt("SELECT * FROM schedules WHERE name = ? AND deleted_at IS NULL").get(name) as ScheduleRow) ?? null
   }
@@ -110,6 +127,9 @@ export class ScheduleConfigDAO extends BaseDAO {
     cron_expression: string | null; timezone: string;
   }): Database.RunResult {
     const now = new Date().toISOString()
+    // schema v38 ADDITIVE: origin cols coexist with trigger_source/source_chat_session_id
+    // (removal is ticket 06's job). New dispatch-seam callers set origin_type/origin_id/
+    // origin_role/assoc_meta; legacy callers still passing trigger_source keep working.
     return this.stmt(`
       INSERT INTO schedules (
         id, org, name, cron_expression, timezone, workspace_id, workflow_ref,
@@ -117,8 +137,9 @@ export class ScheduleConfigDAO extends BaseDAO {
         notify_channel, notify_target, container_execution_id,
         next_trigger_at, created_at, updated_at,
         job_type, config, parallel_policy, description, version, consecutive_failures, max_retain,
-        status, trigger_source, source_chat_session_id, claimed_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        status, trigger_source, source_chat_session_id,
+        origin_type, origin_id, origin_role, assoc_meta, claimed_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       row.id, row.org, row.name, row.cron_expression, row.timezone,
       row.workspace_id ?? null, row.workflow_ref ?? null,
@@ -131,7 +152,10 @@ export class ScheduleConfigDAO extends BaseDAO {
       row.parallel_policy ?? "skip", row.description ?? null,
       row.version ?? 1, row.consecutive_failures ?? 0, row.max_retain ?? 10,
       row.status ?? "queued", row.trigger_source ?? null,
-      row.source_chat_session_id ?? null, row.claimed_at ?? null,
+      row.source_chat_session_id ?? null,
+      row.origin_type ?? "cron", row.origin_id ?? null,
+      row.origin_role ?? null, row.assoc_meta ?? null,
+      row.claimed_at ?? null,
     )
   }
 

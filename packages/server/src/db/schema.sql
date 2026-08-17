@@ -259,8 +259,15 @@ CREATE TABLE IF NOT EXISTS pipeline_state (
 );
 
 -- 15. Schedules
--- schema v37: cron_expression nullable (drafts from trigger_source='requirement' have no cron)
+-- schema v37: cron_expression nullable (drafts from trigger_source='requirement' had no cron)
 --             + status / trigger_source / source_chat_session_id / claimed_at for task-pool
+-- schema v38: ADDITIVE origin cols (origin_type/origin_id/origin_role/assoc_meta) for S2
+--             polymorphic origin (no FK on origin_id — app-level cascade-reap + orphan
+--             reaper maintain integrity). trigger_source/source_chat_session_id are KEPT
+--             for now (coexist transiently) — their REMOVAL + migrating the 3 承重 sites
+--             (scheduler-engine failed-promotion / checkQueuedTasks filter / task-dispatch
+--             child creation) to origin_type is ticket 06's job, done together so the build
+--             stays green through the removal. The first-class `tasks` table owns lifecycle/spec.
 CREATE TABLE IF NOT EXISTS schedules (
   id TEXT PRIMARY KEY,
   org TEXT NOT NULL DEFAULT '',
@@ -291,6 +298,10 @@ CREATE TABLE IF NOT EXISTS schedules (
   status TEXT NOT NULL DEFAULT 'queued',
   trigger_source TEXT,
   source_chat_session_id TEXT,
+  origin_type TEXT NOT NULL DEFAULT 'cron',
+  origin_id TEXT,
+  origin_role TEXT,
+  assoc_meta TEXT,
   claimed_at TEXT,
   FOREIGN KEY (workspace_id) REFERENCES workspaces(id)
 );
@@ -377,6 +388,10 @@ CREATE TABLE IF NOT EXISTS schedule_workspaces (
 -- =============================================================================
 
 -- 21. Sessions
+-- scope_id semantics (schema v38): retargeted to tasks.id (was schedules.id soft-link).
+-- The writer is the autosave seam (clone/index.ts) + POST /api/tasks (SG3) — both set
+-- scope_id = task.id after creating a draft task bound to this chat session. The
+-- back-ref lives on tasks.source_chat_session_id.
 CREATE TABLE IF NOT EXISTS sessions (
   id TEXT PRIMARY KEY,
   org TEXT NOT NULL,
@@ -391,6 +406,38 @@ CREATE TABLE IF NOT EXISTS sessions (
   last_message_at TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
+);
+
+-- 21b. Tasks (schema v38 — first-class task domain; v2-D1)
+-- Owns draft→ready→running→done/failed/aborted lifecycle + task_spec (WHAT) +
+-- resource/skill bindings. S2 polymorphic origin: NO schedule_id / execution_id /
+-- claimed_at here — the link to schedules is via
+-- `schedules WHERE origin_type='task' AND origin_id=task.id` (no FK; integrity via
+-- app-level cascade-reap + orphan reaper, SG12). task_spec is the structured WHAT
+-- (D9); resources (workspace-scope → workflow.requires at dispatch, v2-D13/SG7) and
+-- authoring_resources (draft-scope, prompt-injected into the task-author session,
+-- v2-D8/D13) live as their own JSON columns for query/provisioning convenience.
+-- Autosave (clone/index.ts) writes ONLY name+updated_at — never task_spec/resources
+-- or version (SG8). status CHECK enforces the 6 lifecycle states (claimed folded into
+-- running, v2-D14); soft-deleted drafts/ready carry deleted_at, not a status value.
+CREATE TABLE IF NOT EXISTS tasks (
+  id TEXT PRIMARY KEY,
+  org TEXT NOT NULL,
+  name TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','ready','running','done','failed','aborted')),
+  source_chat_session_id TEXT,
+  task_spec TEXT NOT NULL DEFAULT '{}',
+  authoring_resources TEXT NOT NULL DEFAULT '[]',
+  resources TEXT NOT NULL DEFAULT '[]',
+  skills TEXT NOT NULL DEFAULT '[]',
+  project_ids TEXT NOT NULL DEFAULT '[]',
+  workflow_ref TEXT,
+  version INTEGER NOT NULL DEFAULT 1,
+  deleted_at TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  completed_at TEXT,
+  FOREIGN KEY (source_chat_session_id) REFERENCES sessions(id)
 );
 
 -- 22. Messages
@@ -556,6 +603,9 @@ CREATE INDEX IF NOT EXISTS idx_schedules_next_trigger ON schedules(next_trigger_
 CREATE INDEX IF NOT EXISTS idx_schedules_job_type ON schedules(job_type);
 CREATE INDEX IF NOT EXISTS idx_schedules_enabled_type ON schedules(enabled, job_type) WHERE deleted_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_schedules_status ON schedules(status, trigger_source) WHERE deleted_at IS NULL;
+-- schema v38: additive origin lookup index (S2 polymorphic association).
+-- findSchedulesByOrigin + cascade-reap + orphan reaper use (origin_type, origin_id).
+CREATE INDEX IF NOT EXISTS idx_schedules_origin ON schedules(origin_type, origin_id) WHERE deleted_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_schedules_claimed ON schedules(claimed_at) WHERE claimed_at IS NOT NULL;
 
 -- Schedule executions indexes
@@ -585,6 +635,17 @@ CREATE INDEX IF NOT EXISTS idx_sessions_org ON sessions(org);
 CREATE INDEX IF NOT EXISTS idx_sessions_clone ON sessions(clone_name);
 CREATE INDEX IF NOT EXISTS idx_sessions_active ON sessions(is_active) WHERE is_deleted = 0;
 CREATE INDEX IF NOT EXISTS idx_sessions_last_message ON sessions(last_message_at DESC) WHERE is_deleted = 0;
+CREATE INDEX IF NOT EXISTS idx_sessions_scope ON sessions(scope_id) WHERE scope_id IS NOT NULL;
+
+-- Tasks indexes (schema v38)
+-- kanban listByStatus + listByOrg (active = deleted_at IS NULL)
+CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_tasks_org_status ON tasks(org, status) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_tasks_org ON tasks(org) WHERE deleted_at IS NULL;
+-- autosave seam lookup (find the draft task bound to a chat session)
+CREATE INDEX IF NOT EXISTS idx_tasks_source_chat_session ON tasks(source_chat_session_id) WHERE source_chat_session_id IS NOT NULL AND deleted_at IS NULL;
+-- board recency sort
+CREATE INDEX IF NOT EXISTS idx_tasks_updated ON tasks(updated_at DESC) WHERE deleted_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_messages_summary ON messages(is_summary) WHERE is_summary = 1;
 CREATE INDEX IF NOT EXISTS idx_clones_org ON clones(org);
