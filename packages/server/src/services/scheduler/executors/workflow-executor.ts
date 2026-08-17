@@ -7,7 +7,7 @@ import { getExecutionService } from '../../execution-service-registry'
 import { SSEService } from '../../sse'
 import { NotificationService } from '../../notification'
 import { WorkspaceService } from '../../workspace'
-import type { SchedulerJob, WorkflowConfig, WorkflowChainItem } from '@octopus/shared'
+import type { SchedulerJob, WorkflowConfig, WorkflowChainItem, ScheduleStatusListener, OriginType } from "@octopus/shared"
 import type { Executor, ExecutionResult } from './executor-interface'
 import { ScheduleConfigDAO, ScheduleRunDAO, ExecutionDAO } from '../../../db/dao'
 
@@ -40,6 +40,11 @@ interface ScheduleRow {
   deleted_at: string | null
   job_type: string
   config: string
+  // 03 (SG2): origin cols present on every schedule row (schema v38). Used by
+  // the ScheduleStatusListener injection to mirror transitions onto tasks.
+  // Null on legacy cron rows; set by the tasks dispatch seam for task-origin.
+  origin_type?: string | null
+  origin_id?: string | null
 }
 
 /**
@@ -62,6 +67,12 @@ export class WorkflowExecutor implements Executor {
     runDAO: ScheduleRunDAO,
     execDAO: ExecutionDAO,
     workspaceService: WorkspaceService,
+    // 03 (SG2): optional ScheduleStatusListener. When injected, the 3
+    // schedule_status emit sites (running, done/failed-finalStatus, failed)
+    // also mirror onto tasks.status + emit task_status SSE. The listener
+    // self-filters by origin_type='task'. Optional so existing 5-arg call
+    // sites keep compiling.
+    private scheduleStatusListener?: ScheduleStatusListener,
   ) {
     this.workspaceService = workspaceService
     this.configDAO = configDAO
@@ -284,6 +295,17 @@ export class WorkflowExecutor implements Executor {
         event: 'schedule_status',
         data: { schedule_id: schedule.id, status: 'running' },
       })
+      // 03 (SG2): mirror onto tasks.status. Ungated by isRequirement for the
+      // listener call — the listener self-filters by origin_type='task', so
+      // cron schedules are a no-op. Fires for task-origin schedules once 06
+      // migrates the isRequirement gate to origin_type (the SSE emit above
+      // stays gated until then).
+      this.scheduleStatusListener?.onScheduleTransition({
+        schedule_id: schedule.id,
+        origin_type: (schedule.origin_type ?? "cron") as OriginType,
+        origin_id: schedule.origin_id ?? "",
+        status: "running",
+      })
     }
 
     // 14. Start root execution (chain will auto-execute via ExecutionService)
@@ -403,6 +425,15 @@ export class WorkflowExecutor implements Executor {
           event: 'schedule_status',
           data: { schedule_id: opts.scheduleId, status: finalStatus },
         })
+        // 03 (SG2): mirror done/failed onto tasks.status. Listener self-filters
+        // by origin_type='task'; opts.schedule carries the origin cols (added
+        // schema v38 — present on every row, null on legacy cron rows).
+        this.scheduleStatusListener?.onScheduleTransition({
+          schedule_id: opts.scheduleId,
+          origin_type: (opts.schedule.origin_type ?? "cron") as OriginType,
+          origin_id: opts.schedule.origin_id ?? "",
+          status: finalStatus,
+        })
       }
 
       // Update schedule_workspace
@@ -439,6 +470,14 @@ export class WorkflowExecutor implements Executor {
         this.sse.emit('taskpool', {
           event: 'schedule_status',
           data: { schedule_id: opts.scheduleId, status: 'failed' },
+        })
+        // 03 (SG2): mirror failed onto tasks.status.
+        this.scheduleStatusListener?.onScheduleTransition({
+          schedule_id: opts.scheduleId,
+          origin_type: (opts.schedule.origin_type ?? "cron") as OriginType,
+          origin_id: opts.schedule.origin_id ?? "",
+          status: "failed",
+          error_summary: errorSummary,
         })
       }
 

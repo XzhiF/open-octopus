@@ -25,6 +25,8 @@ import type {
 } from '@octopus/shared'
 import {
   taskSpecSchema,
+  type ScheduleStatusListener,
+  type OriginType,
 } from '@octopus/shared'
 import { ScheduleConfigDAO, ScheduleRunDAO } from '../../db/dao'
 import { SSEService } from '../sse'
@@ -151,7 +153,12 @@ function isCompositeTaskSpec(task_spec: TaskSpec): boolean {
   return !!task_spec.subunits?.length
 }
 
-function materializeTaskSpecToConfig(
+// SG5 export (boundary-allowed one-line change): the tasks dispatch seam
+// (TasksService.readyTask) calls this to materialize the WorkflowConfig for the
+// schedules envelope. Body UNTOUCHED — 06 does SG5 body (drop task_spec output
+// + inject subunit_count). Until 06 lands the config retains task_spec; 03's
+// verification only checks origin_type='task' + status='queued', not config.
+export function materializeTaskSpecToConfig(
   task_spec: TaskSpec,
   project_ids: string[],
   org: string,
@@ -402,11 +409,23 @@ export class SchedulerService {
   // tests) keep compiling; production (index.ts) always passes the real
   // SSEService. Emits are guarded with this.sse?.emit.
   private sse?: SSEService
+  // 03 (SG2): optional ScheduleStatusListener. When injected, the
+  // emitScheduleStatus seam also mirrors the transition onto the parent task's
+  // status + emits task_status SSE (covers enqueueJob→queued + abortJob→aborted
+  // — the two transitions this service owns). Optional so existing 3-arg call
+  // sites keep compiling; production wires the real listener.
+  private scheduleStatusListener?: ScheduleStatusListener
 
-  constructor(configDAO: ScheduleConfigDAO, runDAO: ScheduleRunDAO, sse?: SSEService) {
+  constructor(
+    configDAO: ScheduleConfigDAO,
+    runDAO: ScheduleRunDAO,
+    sse?: SSEService,
+    scheduleStatusListener?: ScheduleStatusListener,
+  ) {
     this.configDAO = configDAO
     this.runDAO = runDAO
     this.sse = sse
+    this.scheduleStatusListener = scheduleStatusListener
   }
 
   /** Late-bind engine callbacks (engine is constructed after the service). */
@@ -1202,6 +1221,19 @@ export class SchedulerService {
       event: 'schedule_status',
       data: { schedule_id: scheduleId, status },
     })
+    // 03 (SG2): mirror the schedule transition onto the parent task's status +
+    // emit task_status SSE. The listener self-filters by origin_type='task'
+    // (cron/agent/manual/api schedules are no-ops). The schedule row is fetched
+    // to pass origin_type/origin_id — origin_id IS the parent task id (S2).
+    const schedule = this.configDAO.findByIdRaw(scheduleId)
+    if (schedule && schedule.origin_type) {
+      this.scheduleStatusListener?.onScheduleTransition({
+        schedule_id: scheduleId,
+        origin_type: schedule.origin_type as OriginType,
+        origin_id: schedule.origin_id ?? '',
+        status: status as ScheduleStatus,
+      })
+    }
   }
 
   private enrichJobRow(row: ScheduleRow): SchedulerJob {

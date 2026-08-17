@@ -14,6 +14,7 @@ import {
   ScheduleRunDAO, ChatDAO, OrgDAO, AgentSessionDAO, EvolutionDAO,
   CloneDAO, SafetyDAO,
   PendingReviewDAO, KnowledgeEffectivenessDAO, ArchiveDAO,
+  TaskDAO,
 } from "./db/dao"
 import { ArchiveDraftDAO } from "./db/dao/archive-draft-dao"
 import { InteractionMessageDAO } from "./db/dao/interaction-message-dao"
@@ -43,6 +44,7 @@ import { createPipelineRoutes } from "./routes/pipeline"
 import chainRoutes from "./routes/chain-routes"
 import scheduleRoutes, { setScheduleService } from "./routes/schedule"
 import { createSchedulerRoutes } from "./routes/scheduler"
+import { createTasksRoutes } from "./routes/tasks"
 import { createAgentRoutes } from "./routes/agent"
 import { createCloneSessionRoutes } from "./routes/clone"
 import { createCloneFilesRoutes } from "./routes/agent/clone-files"
@@ -64,6 +66,8 @@ import { initExecutionServiceRegistry, getExecutionService } from "./services/ex
 import { WorkspaceScheduleService } from "./services/schedule"
 import { SchedulerService } from "./services/scheduler/scheduler-service"
 import { SchedulerEngine } from "./services/scheduler/scheduler-engine"
+import { TaskScheduleStatusListener } from "./services/scheduler/schedule-status-listener"
+import { TasksService } from "./services/tasks/tasks-service"
 import { WorkflowExecutor } from "./services/scheduler/executors/workflow-executor"
 import { AgentExecutor } from "./services/scheduler/executors/agent-executor"
 import { DashboardService } from "./services/scheduler/dashboard-service"
@@ -127,6 +131,8 @@ interface AllDAOs {
   interactionMessage: InteractionMessageDAO
   agentVersion: AgentVersionDAO
   harness: HarnessDAO
+  // 03: first-class tasks table DAO (v2-D1).
+  task: TaskDAO
 }
 
 function createAllDAOs(db: ReturnType<typeof initDb>): AllDAOs {
@@ -149,6 +155,7 @@ function createAllDAOs(db: ReturnType<typeof initDb>): AllDAOs {
     interactionMessage: new InteractionMessageDAO(db),
     agentVersion: new AgentVersionDAO(db),
     harness: new HarnessDAO(db),
+    task: new TaskDAO(db),
   }
 }
 
@@ -665,11 +672,29 @@ if (shouldServe) {
 
       // ★ Initialize Scheduler Service (always available, not gated by feature flag)
       // Pattern A (Singleton): Services created once with pre-built DAOs
-      const schedulerService = new SchedulerService(daos!.scheduleConfig, daos!.scheduleRun, sse)
+      // 03 (SG2): TaskScheduleStatusListener injected into the scheduler service
+      // (covers enqueueJob→queued + abortJob→aborted), the engine (claim/rollback/
+      // retry-cap-failed), and the workflow executor (running/done/failed). The
+      // listener self-filters by origin_type='task' so non-task schedules no-op.
+      const scheduleStatusListener = new TaskScheduleStatusListener(
+        daos!.task,
+        daos!.scheduleConfig,
+        sse,
+      )
+      const schedulerService = new SchedulerService(
+        daos!.scheduleConfig, daos!.scheduleRun, sse, scheduleStatusListener,
+      )
       const dashboardService = new DashboardService(daos!.scheduleConfig, daos!.scheduleRun)
       const exportService = new ExportService(daos!.scheduleConfig)
       app.route('/api/scheduler', createSchedulerRoutes(schedulerService, dashboardService, exportService, daos!.agentSession))
       ;(global as any).__octopus_scheduler_service = schedulerService
+
+      // ★ Initialize Tasks Service (always available, not gated by feature flag)
+      // 03: first-class tasks domain — /api/tasks CRUD + spec-field + ready
+      // (dispatch seam) + abort + /events SSE.
+      const tasksService = new TasksService(db, sse, daos!.agentSession)
+      app.route('/api/tasks', createTasksRoutes(tasksService, sse))
+      ;(global as any).__octopus_tasks_service = tasksService
 
       // ★ Initialize Scheduler Engine with executors
       if (getFlag('scheduler')) {
@@ -682,6 +707,7 @@ if (shouldServe) {
         const executors = new Map<string, import('./services/scheduler/executors/executor-interface').Executor>()
         executors.set('workflow', new WorkflowExecutor(
           sse, daos!.scheduleConfig, daos!.scheduleRun, daos!.execution, workspaceService!,
+          scheduleStatusListener,
         ))
         executors.set('agent', new AgentExecutor(
           daos!.scheduleRun, daos!.execution, undefined,
@@ -689,6 +715,7 @@ if (shouldServe) {
 
         const schedulerEngine = new SchedulerEngine(
           daos!.scheduleConfig, daos!.scheduleRun, scheduleService, executors, sse,
+          scheduleStatusListener,
         )
         scheduleService.setOnScheduleChange(() => schedulerEngine.reload())
 

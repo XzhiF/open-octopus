@@ -11,6 +11,7 @@ import { ConsecutiveFailureTracker } from './consecutive-failure-tracker'
 import type { Executor, ExecutionResult } from './executors/executor-interface'
 import { ScheduleConfigDAO, ScheduleRunDAO } from '../../db/dao'
 import { SSEService } from '../sse'
+import type { ScheduleStatusListener, OriginType, ScheduleStatus } from '@octopus/shared'
 
 const AUXILIARY_TICK_INTERVAL = parseInt(
   process.env.OCTOPUS_SCHEDULER_TICK_MS ?? '60000',
@@ -95,6 +96,12 @@ export class SchedulerEngine {
     // keep compiling; production (index.ts) always passes the real SSEService.
     // Emits are guarded with this.sse?.emit so absent-sse is a no-op, not a crash.
     private sse?: SSEService,
+    // 03 (SG2): optional ScheduleStatusListener. When injected, every
+    // schedule_status emit also mirrors onto tasks.status + emits task_status
+    // SSE (covers checkQueuedTasks claim, sync-rollback, stale-rollback, and
+    // onExecutionComplete retry-cap → failed — the transitions this engine
+    // owns). Optional so existing 5-arg call sites keep compiling.
+    private scheduleStatusListener?: ScheduleStatusListener,
   ) {
     this.failureTracker = new ConsecutiveFailureTracker(configDAO)
     this.configDAO = configDAO
@@ -744,6 +751,21 @@ export class SchedulerEngine {
       event: 'schedule_status',
       data: { schedule_id: scheduleId, status },
     })
+    // 03 (SG2): mirror the schedule transition onto the parent task's status +
+    // emit task_status SSE. The listener self-filters by origin_type='task'
+    // (cron/agent/manual/api schedules are no-ops). Fetched here via findByIdRaw
+    // to pass origin_type/origin_id — origin_id IS the parent task id (S2).
+    // No-op when no listener was injected (test contexts that don't assert
+    // task-status mirroring).
+    const schedule = this.configDAO.findByIdRaw(scheduleId)
+    if (schedule && schedule.origin_type) {
+      this.scheduleStatusListener?.onScheduleTransition({
+        schedule_id: scheduleId,
+        origin_type: schedule.origin_type as OriginType,
+        origin_id: schedule.origin_id ?? '',
+        status: status as ScheduleStatus,
+      })
+    }
   }
 }
 
