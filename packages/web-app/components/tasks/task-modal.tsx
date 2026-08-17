@@ -135,7 +135,7 @@ function ModalHeader({ job, mode }: { job: SchedulerJob | null; mode: ModalMode 
         <DialogTitle className="text-base truncate">{title}</DialogTitle>
         <DialogDescription className="text-xs">{subtitle}</DialogDescription>
       </div>
-      <Badge variant="secondary" className={`shrink-0 ${STATUS_TONE[status] ?? ""}`} data-task-modal-status={status}>
+      <Badge variant="secondary" className={`shrink-0 mr-8 ${STATUS_TONE[status] ?? ""}`} data-task-modal-status={status}>
         {STATUS_LABEL[status] ?? status}
       </Badge>
     </DialogHeader>
@@ -255,6 +255,7 @@ function AuthoringMode({
           onConfirm={chat.handleConfirm}
           hasSession={!!activeSessionId}
           currentCloneName={TASK_AUTHOR_CLONE}
+          hideEmptyState
         />
       </div>
       <AuthoringFooter job={job} onEnqueue={onMutated} onClose={onClose} />

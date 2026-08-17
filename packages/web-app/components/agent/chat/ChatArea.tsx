@@ -39,6 +39,12 @@ interface ChatAreaProps {
   currentCloneName?: string | null
   /** Source badge for delegation responses */
   streamSource?: string | null
+  /** Custom empty state title (default: "开始你的第一个对话") */
+  emptyStateTitle?: string
+  /** Custom empty state description (default: agent description) */
+  emptyStateDescription?: string
+  /** Hide empty state entirely (input stays at bottom) */
+  hideEmptyState?: boolean
   reviewItems?: Array<{
     id: string
     type: 'rule'
@@ -57,6 +63,7 @@ export function ChatArea({
   messages, streaming, streamContent, streamThinking, isThinking, toolCalls, pendingConfirm,
   error, statusMessage, onSend, onStop, onConfirm, hasSession, currentCloneName, streamSource,
   reviewItems, onReviewAction,
+  emptyStateTitle, emptyStateDescription, hideEmptyState,
 }: ChatAreaProps) {
   const [input, setInput] = useState('')
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -97,11 +104,15 @@ export function ChatArea({
     <div className="flex flex-col flex-1 min-h-0">
       {/* Content area */}
       {!hasSession ? (
-        <AgentEmptyState
-          icon={MessageSquare}
-          title="开始你的第一个对话"
-          description="Agent 可以理解你的意图，自动编排工作流、管理记忆和分身。试试发送一条指令吧。"
-        />
+        hideEmptyState ? (
+          <div className="flex-1" />
+        ) : (
+          <AgentEmptyState
+            icon={MessageSquare}
+            title={emptyStateTitle ?? "开始你的第一个对话"}
+            description={emptyStateDescription ?? "Agent 可以理解你的意图，自动编排工作流、管理记忆和分身。试试发送一条指令吧。"}
+          />
+        )
       ) : (
         <div ref={scrollRef} className="flex-1 overflow-y-auto">
           <div className="max-w-3xl mx-auto px-4 py-6 space-y-4">
