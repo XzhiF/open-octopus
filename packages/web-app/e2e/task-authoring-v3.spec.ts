@@ -337,6 +337,16 @@ test.describe("goalac: goal/ac card (AC4/AC5/AC6)", () => {
       { timeoutMs: 10_000, message: "spec_field_update SSE not received for goal" },
     )
 
+    // D19 (review-fix): every spec-field update emits a companion
+    // task_artifacts_update on the same taskpool stream (so the OutputViewer
+    // re-fetches the artifact index without polling). Assert the subscriber
+    // captured it for this task — independent server-side evidence the emit
+    // path is wired (R3/R4: SSE payload { task_id }).
+    await waitFor(
+      () => sseSub!.taskArtifactsEvents.find((e) => e.task_id === taskId),
+      { timeoutMs: 10_000, message: "task_artifacts_update SSE not received (D19 companion emit)" },
+    )
+
     // AC4: the goal emerges in the UI (SSE applied live).
     await expect(card.getByText(goalText), "goal emerges after SSE").toBeVisible({ timeout: 10_000 })
 
@@ -768,8 +778,18 @@ test.describe("assist: assist-workflow runs (AC3/AC4/AC5/AC6)", () => {
     })
     seedAssistRunOutput(runId, synthesis)
 
-    // The viewer's poll (1.5s) re-fetches the run → output present → adoption
-    // panel mounts. AC5: panel renders with the structured triplet.
+    // D19: the OutputViewer is SSE-only (no polling) — it re-fetches a run
+    // ONLY on assist_run_update SSE or when runIds changes (output-viewer.tsx
+    // useEffect[runIds] re-fetches ALL runs). The seed writes the aggregator
+    // output to the DB directly (no engine, no SSE), so re-trigger the MoA
+    // button to append a 2nd run → the parent's setRunIds change forces the
+    // viewer to re-fetch ALL runs → the seeded run's GET (real API, R1) returns
+    // the structured output → adoption panel mounts. This is a real user
+    // action (re-trigger), not a fake SSE injection.
+    await workspace.locator("[data-assist-trigger='moa-requirements-review']").click()
+    await expect(runsSection.locator("[data-run-row]")).toHaveCount(2, { timeout: 15_000 })
+
+    // AC5: panel renders with the structured triplet (re-fetch surfaced output).
     const panel = runsSection.locator("[data-moa-adoption-panel]")
     await expect(panel, "adoption panel renders when run has output (AC5)").toBeVisible({ timeout: 15_000 })
 
@@ -839,6 +859,12 @@ test.describe("assist: assist-workflow runs (AC3/AC4/AC5/AC6)", () => {
     // Seed malformed synthesis → parse failure → output_raw + output_parse_error.
     const malformed = "this is not valid JSON { so the aggregator parse fails"
     seedAssistRunOutput(runId, malformed)
+
+    // D19: SSE-only viewer — re-trigger to force a runIds change → re-fetch ALL
+    // runs (see the adoption test above for the rationale). The seeded run's GET
+    // returns output_raw + output_parse_error (real API, R1).
+    await workspace.locator("[data-assist-trigger='moa-requirements-review']").click()
+    await expect(runsSection.locator("[data-run-row]")).toHaveCount(2, { timeout: 15_000 })
 
     // AC6: the degraded card renders output_raw (no adoption panel, no white screen).
     const degraded = runsSection.locator("[data-run-parse-error]")

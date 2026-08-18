@@ -834,6 +834,12 @@ export interface AssistRunUpdateEvent {
   run_id: string
   phase: string
 }
+/** D19: companion event emitted on every spec-field update (same taskpool
+ *  stream) so the OutputViewer re-fetches the artifact index without polling.
+ *  Shape: { task_id } (no field/version — it's a "go re-fetch" signal). */
+export interface TaskArtifactsUpdateEvent {
+  task_id: string
+}
 
 /** A live SSE subscriber for /api/tasks/events. Uses Node's fetch streaming
  *  (the events endpoint is an infinite stream — page.request would block).
@@ -842,6 +848,7 @@ export interface SseSubscriber {
   taskStatusEvents: TaskStatusEvent[]
   specFieldEvents: SpecFieldUpdateEvent[]
   assistRunEvents: AssistRunUpdateEvent[]
+  taskArtifactsEvents: TaskArtifactsUpdateEvent[]
   heartbeat: number
   stop: () => void
 }
@@ -860,6 +867,7 @@ export async function startSseSubscriber(): Promise<SseSubscriber> {
   const taskStatusEvents: TaskStatusEvent[] = []
   const specFieldEvents: SpecFieldUpdateEvent[] = []
   const assistRunEvents: AssistRunUpdateEvent[] = []
+  const taskArtifactsEvents: TaskArtifactsUpdateEvent[] = []
   let heartbeat = 0
 
   const controller = new AbortController()
@@ -903,6 +911,10 @@ export async function startSseSubscriber(): Promise<SseSubscriber> {
             specFieldEvents.push(parsed as SpecFieldUpdateEvent)
           } else if (eventName === "assist_run_update") {
             assistRunEvents.push(parsed as AssistRunUpdateEvent)
+          } else if (eventName === "task_artifacts_update") {
+            // D19 (SW-BP8): companion "go re-fetch artifacts" signal emitted
+            // alongside every spec_field_update on the same taskpool stream.
+            taskArtifactsEvents.push(parsed as TaskArtifactsUpdateEvent)
           } else if (eventName === "heartbeat") {
             heartbeat++
           }
@@ -921,6 +933,7 @@ export async function startSseSubscriber(): Promise<SseSubscriber> {
     taskStatusEvents,
     specFieldEvents,
     assistRunEvents,
+    taskArtifactsEvents,
     heartbeat,
     stop: () => {
       controller.abort()

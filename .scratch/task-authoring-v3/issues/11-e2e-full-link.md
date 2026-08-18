@@ -166,3 +166,53 @@ grep -c "expect(" e2e/task-authoring-v3.spec.ts   →  154
   spec-field API in tests; the LLM's timing/wording of the bind is manual).
 - [ ] agent suggests assist-workflow bubble (the trigger button is clicked
   in tests; the agent's proactive suggestion bubble is manual).
+
+## Independent E2E verification update (matt-e2e-tester, 2026-08-18)
+
+Re-ran the full suite against the final code state (review-fix dist with
+D19 `task_artifacts_update` companion emission + D6 `@@task_context`).
+Extended the helpers + tests; all 14 tests green (retries=0, 24.9s).
+
+### Extensions applied
+- **SSE subscriber** (`task-domain-helpers.ts`): added
+  `TaskArtifactsUpdateEvent` + `taskArtifactsEvents[]` capture (analogous to
+  `assist_run_update`). Additive — sibling specs unaffected (their test-1
+  failure is the v3 TaskModal TemplatePicker redesign, not this change).
+- **D19 E2E assertion** (test 4, goalac group): after `updateSpecField(goal)`,
+  asserts the subscriber captured `task_artifacts_update` for the task —
+  independent E2E evidence the companion emit is wired (corroborates the
+  server-side `tasks-v3-gates.test.ts` D19 test, 15/15 green).
+
+### Fix-and-retest (assist adoption panel, tests 11 + 12)
+- **Failure**: test 11 (adoption panel) timed out — panel never mounted after
+  `seedAssistRunOutput`. Root cause: the OutputViewer is SSE-only (D19, no
+  polling); it re-fetches a run ONLY on `assist_run_update` SSE or a
+  `runIds` change. The seed writes the aggregator output to the DB directly
+  (no engine, no SSE), so the viewer never re-fetches. The test's stale
+  comment ("viewer's poll (1.5s)") predates the D19 SSE-only refactor.
+- **Backend isolation** (script `e2e-scripts/debug-assist-seed-get.mjs`):
+  confirmed the GET route correctly returns the parsed output after the seed
+  (`hasOutput=true`) — the bug was purely the viewer's refresh, not the
+  backend. `run_id === execution_id` (confirmed in assist-workflow-service.ts).
+- **Quick Fix** (test-only, no prod code): after seeding, re-trigger the MoA
+  button → the parent's `setRunIds` change makes the viewer re-fetch ALL runs
+  (`output-viewer.tsx` `useEffect[runIds]`) → the seeded run's GET returns the
+  structured output → panel mounts. A real user action (re-trigger) + real GET
+  route (R1), no fake SSE injection. Same fix applied to test 12 (parse-error
+  degraded card). Both green; 18 screenshots regenerated fresh.
+
+### AC coverage (14/14 PASS)
+All US1–US14 PASS. Manual-checklist items per the accepted exclusions:
+- US5 `@@spec_updated` next-round delivery (D6) — manual (agent conversation).
+- US8 chat-driven artifact edits — manual (LLM behavior).
+- US9 agent proactive suggestion bubble — manual (LLM behavior).
+- D6 `@@task_context` system-prompt append — manual (agent conversation).
+
+### Cross-feature regression finding (sibling spec, NOT task-authoring-v3)
+`task-domain-simple.spec.ts` test 1 fails: expects v2 `[data-task-spec-panel]`
+after [+新建], but the v3 redesign intentionally renders
+`[data-template-picker]` for new tasks. This is correct-by-design v3 behavior;
+the sibling spec is outdated. Fixing it requires rewriting Story A to the v3
+TemplatePicker flow — out of scope for task-authoring-v3 verification (different
+feature's spec). Not caused by the additive helper change (test 1 uses no SSE).
+
