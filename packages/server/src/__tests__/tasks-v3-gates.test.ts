@@ -29,6 +29,7 @@ import { TasksService } from "../services/tasks/tasks-service"
 import { createTasksRoutes } from "../routes/tasks"
 import {
   SPEC_FIELD_UPDATE_EVENT,
+  TASK_ARTIFACTS_UPDATE_EVENT,
 } from "@octopus/shared"
 import {
   getSpecNotice,
@@ -38,16 +39,21 @@ import {
 const ORG = "e2e-td-05"
 
 type SpecFieldEvent = { task_id: string; field: string; value: unknown; version: number }
+type ArtifactsEvent = { task_id: string }
 
 function makeSSECollector() {
   const sse = new SSEService()
   const specEvents: SpecFieldEvent[] = []
+  const artifactEvents: ArtifactsEvent[] = []
   sse.subscribe("taskpool", (e) => {
     if (e.event === SPEC_FIELD_UPDATE_EVENT) {
       specEvents.push(e.data as SpecFieldEvent)
     }
+    if (e.event === TASK_ARTIFACTS_UPDATE_EVENT) {
+      artifactEvents.push(e.data as ArtifactsEvent)
+    }
   })
-  return { sse, specEvents }
+  return { sse, specEvents, artifactEvents }
 }
 
 function newDb(): Database.Database {
@@ -103,6 +109,7 @@ describe("05: spec-field source + confirmation persistence + ready gate (integra
   let app: Hono
   let sse: SSEService
   let specEvents: SpecFieldEvent[]
+  let artifactEvents: ArtifactsEvent[]
   let taskDAO: TaskDAO
 
   beforeAll(() => {
@@ -110,6 +117,7 @@ describe("05: spec-field source + confirmation persistence + ready gate (integra
     const collector = makeSSECollector()
     sse = collector.sse
     specEvents = collector.specEvents
+    artifactEvents = collector.artifactEvents
     taskDAO = new TaskDAO(db)
     const service = new TasksService(db, sse, new AgentSessionDAO(db))
     app = new Hono()
@@ -124,6 +132,7 @@ describe("05: spec-field source + confirmation persistence + ready gate (integra
     // Isolate the in-memory notice store + SSE collector between cases.
     clearAllSpecNotices()
     specEvents.length = 0
+    artifactEvents.length = 0
   })
 
   // ── AC1: source flag ───────────────────────────────────────────────────
@@ -201,6 +210,21 @@ describe("05: spec-field source + confirmation persistence + ready gate (integra
       value: true,
       version: 2,
     })
+  })
+
+  it("D19: every spec-field update also emits companion task_artifacts_update (same taskpool stream, no polling)", async () => {
+    const id = insertTask(db, {
+      name: "E2E_TD_artifacts_evt",
+      task_spec: { goal: "E2E_TD goal", ac: ["E2E_TD ac1"], task_type: "coding" },
+    })
+    const res = await app.request(`/api/tasks/${id}/spec-field`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ field: "goal", value: "E2E_TD updated goal" }),
+    })
+    expect(res.status).toBe(200)
+    // Companion event carries the task id so the OutputViewer can filter + re-fetch.
+    expect(artifactEvents).toContainEqual({ task_id: id })
   })
 
   it("AC2b: spec-field(ac_confirmed=[...]) persists into task_spec + emits SSE", async () => {

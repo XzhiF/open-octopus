@@ -29,13 +29,12 @@
 
 import type Database from "better-sqlite3"
 import { randomUUID } from "crypto"
-import fs from "fs"
 import path from "path"
 import { readdirSync, readFileSync, existsSync } from "fs"
 import {
   assistWorkflowOutputSchema,
+  ASSIST_RUN_UPDATE_EVENT,
   type AssistWorkflowRun,
-  type AssistWorkflowRun as RunShape,
 } from "@octopus/shared"
 import { TaskDAO } from "../../db/dao/task-dao"
 import { ExecutionDAO } from "../../db/dao/execution-dao"
@@ -48,9 +47,9 @@ import { getExecutionService } from "../execution-service-registry"
  *  makes progress, or reaches a terminal state (D19). Mirrors the
  *  spec_field_update / task_status mechanism: the /api/tasks/events SSE route
  *  subscribes to 'taskpool' and forwards events to the SpecPanel / OutputViewer.
- *  Defined locally (not in shared) to stay in ticket 07's lane — the shared
- *  AssistWorkflowRun schema (ticket 01) already carries the response shape. */
-export const ASSIST_RUN_UPDATE_EVENT = "assist_run_update" as const
+ *  Canonical home is @octopus/shared (contract shared with the web-app
+ *  OutputViewer); re-exported here for existing server-side import sites. */
+export { ASSIST_RUN_UPDATE_EVENT }
 
 /** The 3 built-in assist-workflow template ids (AC3 whitelist). These are the
  *  `name:` fields of the core-pack/workflows/*.yaml files — the engine resolves
@@ -241,7 +240,7 @@ export class AssistWorkflowService {
   /** Read one assist run. Returns status, process logs, and the structured
    *  output (parsed aggregator JSON). Parse failure → output_raw +
    *  output_parse_error (SW-BP10), never throws. */
-  getRun(taskId: string, runId: string): RunShape {
+  getRun(taskId: string, runId: string): AssistWorkflowRun {
     const exec = this.execDAO.findById(runId)
     if (!exec) {
       throw new AssistWorkflowError(`Assist run not found: ${runId}`, "RUN_NOT_FOUND")
@@ -267,7 +266,7 @@ export class AssistWorkflowService {
     const nodeOutputs = this.execDAO.findNodeOutputs(runId, SWARM_NODE_ID)
     const synthesis = typeof nodeOutputs?.synthesis === "string" ? nodeOutputs.synthesis : ""
 
-    const run: RunShape = {
+    const run: AssistWorkflowRun = {
       run_id: runId,
       execution_id: runId,
       workspace_id: exec.workspace_id,
@@ -295,7 +294,7 @@ export class AssistWorkflowService {
 
   /** List all assist runs for a task, newest first (helper for a future list
    *  route; not required by the spec but keeps the service self-contained). */
-  listRuns(taskId: string): RunShape[] {
+  listRuns(taskId: string): AssistWorkflowRun[] {
     // pipeline_config LIKE '%"task_id":"<taskId>"%' — matches the shape written
     // by trigger(). Escapes SQL LIKE wildcards in the taskId defensively.
     const escaped = taskId.replace(/[%_\\]/g, "\\$&")
@@ -304,7 +303,7 @@ export class AssistWorkflowService {
         "SELECT id FROM executions WHERE pipeline_config LIKE ? ESCAPE '\\' ORDER BY created_at DESC",
       )
       .all(`%"task_id":"${escaped}"%`) as { id: string }[]
-    const runs: RunShape[] = []
+    const runs: AssistWorkflowRun[] = []
     for (const row of rows) {
       try {
         runs.push(this.getRun(taskId, row.id))

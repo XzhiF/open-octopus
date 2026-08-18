@@ -365,10 +365,49 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
     // derived purely from the id (no DB field — ADR-0011), so this is a
     // stat, not a query.
     let taskHomePath: string | undefined
+    let taskArtifactsDir: string | undefined
     if (noticeTaskId) {
-      const home = new TaskHomeService().homePath(noticeTaskId)
+      const homeService = new TaskHomeService()
+      const home = homeService.homePath(noticeTaskId)
       if (fs.existsSync(home)) {
         taskHomePath = home
+        taskArtifactsDir = homeService.artifactsDir(noticeTaskId)
+      }
+    }
+
+    // 05 (task-authoring-v3 code-review F1/D6): v3 task context — artifacts
+    // dir + skill-group lock — appended to the system prompt every turn (随
+    // task context 注入). The agent's cwd stays the built-in clone dir, so it
+    // needs the ABSOLUTE artifacts path to Write artifact files + register
+    // artifacts.json (D5/R4), and the lock context so it stops suggesting
+    // group changes after creation (ADR-0012). Gated: v3 task (task_type set)
+    // with an existing home; non-fatal on any read/parse failure.
+    let taskContextContent: string | undefined
+    if (noticeTaskId && taskDAO && taskHomePath && taskArtifactsDir) {
+      try {
+        const ctxRow = taskDAO.getById(noticeTaskId)
+        const ctxSpec = ctxRow?.task_spec
+          ? JSON.parse(ctxRow.task_spec) as { task_type?: string; skill_groups?: string[] }
+          : null
+        if (ctxSpec?.task_type) {
+          const lines = [
+            '@@task_context (task-authoring-v3):',
+            `- 产物目录: ${taskArtifactsDir} — 产物文件用绝对路径写入此目录，并在该目录的 artifacts.json 登记索引条目`,
+          ]
+          const groups = Array.isArray(ctxSpec.skill_groups) ? ctxSpec.skill_groups : []
+          if (groups.length > 0) {
+            lines.push(`- Skill 组已锁定: ${groups.join(', ')}（创建时锁定，不可变更；不要建议修改）`)
+          }
+          taskContextContent = lines.join('\n')
+        }
+      } catch (err: unknown) {
+        // Non-fatal — chat reply unaffected; agent just misses the context
+        // line this turn (malformed task_spec, etc.). Mirrors the
+        // authoring_resources swallow+log pattern above.
+        console.error(
+          '[clone-route] task context resolution failed (non-fatal):',
+          err instanceof Error ? err.message : String(err),
+        )
       }
     }
 
@@ -387,7 +426,7 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
         const memoryToolCalls: Array<{ id: string; name: string; input?: Record<string, unknown> }> = []
         const MEMORY_TOOL_NAMES = ['record_daily']
 
-        for await (const chunk of runtime.chat(body.message!, sessionId, providerSessionId, cwd, specUpdateNotice, authoringResourcesContent, undefined, taskHomePath)) {
+        for await (const chunk of runtime.chat(body.message!, sessionId, providerSessionId, cwd, specUpdateNotice, authoringResourcesContent, undefined, taskHomePath, taskContextContent)) {
           if (aborted || (stream as any)._aborted) break
 
           switch (chunk.type) {

@@ -121,12 +121,12 @@ const TASK_AUTHOR_PERSONA = `# Task-Author 分身
 curl -s "http://localhost:3001/api/tasks?status=draft" | jq '.items[-1] | {id, name, version}'
 \`\`\`
 
-如果返回空（autosave 尚未创建），你也可以显式创建：
+如果返回空（autosave 尚未创建），你也可以显式创建（**必须**带 source_chat_session_id 绑定当前会话 — D15 会话优先，否则产生未绑定的孪生草稿）：
 
 \`\`\`bash
 curl -s -X POST "http://localhost:3001/api/tasks" \\
   -H "Content-Type: application/json" \\
-  -d '{ "name": "task-name", "task_spec": { "goal": "...", "ac": ["..."] } }' | jq .
+  -d '{ "name": "task-name", "source_chat_session_id": "<当前会话 id>", "task_spec": { "goal": "...", "ac": ["..."] } }' | jq .
 \`\`\`
 
 ### 第二步：逐字段绑定（对话中立即执行）
@@ -155,7 +155,7 @@ curl -s -X POST "http://localhost:3001/api/tasks/$TASK_ID/spec-field" \\
   -d '{ "field": "skills", "value": ["octo-backend", "octo-workflow-dev"] }'
 \`\`\`
 
-可用字段：goal | ac | projects | skills | subunits | integration_goal | resources | authoring_resources
+可用字段：goal | ac | projects | skills | subunits | integration_goal | resources | authoring_resources | decisions
 
 返回 \`{version}\`；409 = 版本冲突 → 重新 GET 取 version 重试。
 

@@ -307,6 +307,7 @@ export class CloneRuntime {
     authoringResourcesContent?: string,
     abortSignal?: AbortSignal,
     taskHomePath?: string,
+    taskContextContent?: string,
   ): AsyncGenerator<MessageChunk> {
     const cloneSystemPrompt = this.assembleContext()
     const effectiveCwd = cwd || this.getDefaultCwd()
@@ -322,6 +323,7 @@ export class CloneRuntime {
         authoringResourcesContent,
         abortSignal,
         taskHomePath,
+        taskContextContent,
       )
       yield* stream
       return
@@ -340,6 +342,7 @@ export class CloneRuntime {
             authoringResourcesContent,
             abortSignal,
             taskHomePath,
+            taskContextContent,
           )
           yield* stream
           return
@@ -380,15 +383,22 @@ export class CloneRuntime {
     authoringResourcesContent: string | undefined,
     abortSignal?: AbortSignal,
     taskHomePath?: string,
+    taskContextContent?: string,
   ): AsyncGenerator<MessageChunk> {
     const provider = getProvider('claude')
 
     // 05 — SPIKE S1: append the transient spec-update notice to the system
     // prompt. 07 — SG6: append authoring_resources SKILL.md content first
     // (so it's part of the base context), then the notice (trailing override).
+    // D6 (task-authoring-v3): taskContextContent (artifacts dir + skill-group
+    // lock) is persistent per-task base context — lands right after the clone
+    // context, before skills and the transient notice.
     // Only concat when each piece is actually present; absent pieces leave no
     // stray separator (no @@ leak, no empty ## Available Skills section).
     const segments: string[] = [cloneSystemPrompt]
+    if (taskContextContent) {
+      segments.push(taskContextContent)
+    }
     if (authoringResourcesContent) {
       segments.push(authoringResourcesContent)
     }

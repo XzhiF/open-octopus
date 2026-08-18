@@ -18,6 +18,8 @@
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from "vitest"
 import Database from "better-sqlite3"
+import fs from "fs"
+import path from "path"
 import { Hono } from "hono"
 import { applySchema } from "../db/schema"
 import { AgentSessionDAO, TaskDAO } from "../db/dao"
@@ -36,7 +38,28 @@ import {
 // when the hoisted mock factory executes.
 const capture = vi.hoisted(() => ({
   notice: undefined as string | undefined,
+  taskHomePath: undefined as string | undefined,
+  taskContext: undefined as string | undefined,
   chatCalls: 0,
+}))
+
+// Temp home base for the D6 task-context tests. The clone route news up a
+// default-base TaskHomeService (homedir/.octopus in prod); the mock redirects
+// homePath/artifactsDir under a temp dir so tests never touch the real home.
+const homeTmp = vi.hoisted(() => `/tmp/octopus-d6-home-${Date.now()}`)
+
+vi.mock("../services/tasks/task-home-service", () => ({
+  TaskHomeService: class {
+    homePath(id: string): string {
+      return path.join(homeTmp, "tasks", id)
+    }
+    artifactsDir(id: string): string {
+      return path.join(homeTmp, "tasks", id, "artifacts")
+    }
+    createHome(id: string): string {
+      return path.join(homeTmp, "tasks", id)
+    }
+  },
 }))
 
 vi.mock("../services/agent/clone-runtime", () => ({
@@ -51,9 +74,15 @@ vi.mock("../services/agent/clone-runtime", () => ({
       _psid: string | null,
       _cwd: string,
       specUpdateNotice?: string,
+      _authoringResourcesContent?: string,
+      _abortSignal?: AbortSignal,
+      taskHomePath?: string,
+      taskContextContent?: string,
     ) {
       capture.chatCalls += 1
       capture.notice = specUpdateNotice
+      capture.taskHomePath = taskHomePath
+      capture.taskContext = taskContextContent
       yield { type: "text_delta", content: "ack — spec noted", messageId: "fake-msg-id" }
       yield { type: "result", sessionId: "fake-provider-session" }
     }
@@ -115,6 +144,8 @@ describe("05: reverse context msg — [save] → store → next chat → CloneRu
     // Isolate the in-memory notice store + capture state between cases.
     clearAllSpecNotices()
     capture.notice = undefined
+    capture.taskHomePath = undefined
+    capture.taskContext = undefined
     capture.chatCalls = 0
   })
 
@@ -285,5 +316,105 @@ describe("05: reverse context msg — [save] → store → next chat → CloneRu
     // capture should not have received any specUpdateNotice from a
     // task-author path (none ran in this case)
     expect(capture.chatCalls).toBe(0)
+  })
+
+  // ── D6 (task-authoring-v3): v3 task context append ─────────────────────
+  // The send path appends @@task_context (artifacts dir absolute path +
+  // skill-group lock) to the system prompt for v3 tasks (task_type set) with
+  // an existing home; v2 tasks or missing home → no context (no leak).
+
+  /** Seed a session + turn-1 draft (autosave), then upgrade the row's
+   *  task_spec in-place and return {sessionId, taskId}. */
+  async function seedSessionWithSpec(spec: Record<string, unknown>, makeHome: boolean) {
+    const createRes = await app.request("/api/clones/task-author/sessions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Octopus-Org": ORG },
+      body: JSON.stringify({}),
+    })
+    expect(createRes.status).toBe(201)
+    const session = (await createRes.json()) as { id: string }
+    const r1 = await app.request(
+      `/api/clones/task-author/sessions/${session.id}/chat`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Octopus-Org": ORG },
+        body: JSON.stringify({ message: "E2E_TD D6 seed turn" }),
+      },
+    )
+    expect(r1.status).toBe(200)
+    await r1.text() // drain SSE so autosave creates the draft
+
+    const taskRow = taskDAO.getBySourceChatSession(session.id)
+    expect(taskRow).not.toBeNull()
+    const taskId = taskRow!.id
+    db.prepare("UPDATE tasks SET task_spec = ? WHERE id = ?")
+      .run(JSON.stringify(spec), taskId)
+
+    const home = path.join(homeTmp, "tasks", taskId)
+    if (makeHome) fs.mkdirSync(home, { recursive: true })
+    return { sessionId: session.id, taskId, home }
+  }
+
+  it("D6 AC: v3 task (task_type set, home exists) → chat passes taskContextContent with artifacts dir + lock line", async () => {
+    const { sessionId, home } = await seedSessionWithSpec(
+      { goal: "E2E_TD D6 goal", ac: ["E2E_TD ac"], task_type: "coding", skill_groups: ["octo-backend", "octo-frontend"] },
+      true,
+    )
+    const res = await app.request(
+      `/api/clones/task-author/sessions/${sessionId}/chat`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Octopus-Org": ORG },
+        body: JSON.stringify({ message: "E2E_TD D6 turn with context" }),
+      },
+    )
+    expect(res.status).toBe(200)
+    await res.text()
+
+    expect(capture.taskHomePath).toBe(home)
+    expect(capture.taskContext).toBeDefined()
+    // Absolute artifacts dir the agent must Write into + register artifacts.json
+    expect(capture.taskContext).toContain(path.join(home, "artifacts"))
+    expect(capture.taskContext).toContain("artifacts.json")
+    // Skill-group lock context (ADR-0012)
+    expect(capture.taskContext).toContain("octo-backend, octo-frontend")
+    expect(capture.taskContext).toContain("锁定")
+  })
+
+  it("D6 gate: v2 task (no task_type) → taskContextContent stays undefined", async () => {
+    const { sessionId } = await seedSessionWithSpec(
+      { goal: "E2E_TD D6 v2 goal", ac: ["E2E_TD ac"] },
+      true,
+    )
+    const res = await app.request(
+      `/api/clones/task-author/sessions/${sessionId}/chat`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Octopus-Org": ORG },
+        body: JSON.stringify({ message: "E2E_TD D6 v2 turn" }),
+      },
+    )
+    expect(res.status).toBe(200)
+    await res.text()
+    expect(capture.taskContext).toBeUndefined()
+  })
+
+  it("D6 gate: v3 task but home missing → taskHomePath + taskContextContent both undefined", async () => {
+    const { sessionId } = await seedSessionWithSpec(
+      { goal: "E2E_TD D6 goal", ac: ["E2E_TD ac"], task_type: "coding", skill_groups: ["octo-backend"] },
+      false, // no home on disk
+    )
+    const res = await app.request(
+      `/api/clones/task-author/sessions/${sessionId}/chat`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Octopus-Org": ORG },
+        body: JSON.stringify({ message: "E2E_TD D6 no-home turn" }),
+      },
+    )
+    expect(res.status).toBe(200)
+    await res.text()
+    expect(capture.taskHomePath).toBeUndefined()
+    expect(capture.taskContext).toBeUndefined()
   })
 })

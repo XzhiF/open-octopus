@@ -57,6 +57,15 @@ export type TaskSpecField = z.infer<typeof TaskSpecFieldSchema>
  *  tracked version to avoid a subsequent [save] 409. */
 export const SPEC_FIELD_UPDATE_EVENT = "spec_field_update" as const
 
+// ── task-authoring-v3 SSE events (D19, SW-BP8) ───────────────────────
+/** Emitted on the "taskpool" channel alongside spec_field_update (same
+ *  mechanism, D19): signals the task's artifact index may have changed so
+ *  the OutputViewer re-fetches GET /api/tasks/:id/artifacts. No polling. */
+export const TASK_ARTIFACTS_UPDATE_EVENT = "task_artifacts_update" as const
+/** Emitted on the "taskpool" channel when an assist-workflow run changes
+ *  phase (start/complete/error). Payload: {task_id, run_id, phase}. */
+export const ASSIST_RUN_UPDATE_EVENT = "assist_run_update" as const
+
 export const specFieldUpdatePayloadSchema = z.object({
   task_id: z.string().min(1),
   field: TaskSpecFieldSchema,

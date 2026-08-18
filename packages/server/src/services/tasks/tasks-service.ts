@@ -34,6 +34,7 @@ import {
   type OriginType,
   type ArtifactIndexEntry,
   SPEC_FIELD_UPDATE_EVENT,
+  TASK_ARTIFACTS_UPDATE_EVENT,
   TASK_STATUS_EVENT,
   taskSpecSchema,
   validateSpecFieldValue,
@@ -645,6 +646,15 @@ export class TasksService {
         version: updated.version,
       },
     })
+    // D19 (SW-BP8): companion task_artifacts_update on the same taskpool
+    // stream — spec-field activity correlates with artifact production (the
+    // agent writes artifacts.json to the home dir directly on disk, so this
+    // event is the server's observable trigger). The OutputViewer re-fetches
+    // GET /api/tasks/:id/artifacts; no polling.
+    this.sse.emit("taskpool", {
+      event: TASK_ARTIFACTS_UPDATE_EVENT,
+      data: { task_id: id },
+    })
 
     // 05 (SW-BP4): user-direct-edit → transient @@spec_updated notice so the
     // agent reconciles on its next chat turn. Same store the [保存草稿] path
@@ -724,7 +734,7 @@ export class TasksService {
     // created at task creation). v2/legacy tasks (no task_type) skip injection
     // (AC4 backward compat — no home exists, the key is omitted not errored).
     const taskArtifactsDir = taskSpec.task_type !== undefined
-      ? new TaskHomeService().artifactsDir(id)
+      ? this.taskHomeService.artifactsDir(id)
       : undefined
     const config = materializeTaskSpecToConfig(
       taskSpec,

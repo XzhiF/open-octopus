@@ -17,12 +17,12 @@
 
 "use client"
 
-import { useEffect, useState, useCallback, useRef } from "react"
+import { useEffect, useState, useCallback } from "react"
 import { Badge } from "@/components/ui/badge"
 import { Spinner } from "@/components/ui/spinner"
 import { FileText, Eye, Brain, ShieldAlert, Lightbulb } from "lucide-react"
 import type { Task, ArtifactIndexEntry, AssistWorkflowRun } from "@octopus/shared"
-import { SPEC_FIELD_UPDATE_EVENT } from "@octopus/shared"
+import { SPEC_FIELD_UPDATE_EVENT, TASK_ARTIFACTS_UPDATE_EVENT, ASSIST_RUN_UPDATE_EVENT } from "@octopus/shared"
 import { subscribeSSE } from "@/lib/sse-manager"
 import { getServerUrl } from "@/lib/server-config"
 import {
@@ -33,17 +33,11 @@ import { ArtifactViewerDialog } from "./artifact-viewer-dialog"
 import { WorkflowLogDialog } from "./workflow-log-dialog"
 import { MoaAdoptionPanel } from "./moa-adoption-panel"
 
-/** SSE event names on the taskpool channel (D19). `assist_run_update` is
- *  emitted by the server (assist-workflow-service.ts); `task_artifacts_update`
- *  is the designated D19 channel (server emission is a known gap — the frontend
- *  subscribes future-ready + falls back to spec_field_update as the bridge). */
-const ASSIST_RUN_UPDATE_EVENT = "assist_run_update"
-const TASK_ARTIFACTS_UPDATE_EVENT = "task_artifacts_update"
-
 export interface OutputViewerProps {
   task: Task
-  /** Run ids tracked by the parent (added on trigger). The viewer fetches + polls
-   *  each. The parent owns this so the command-bar trigger + the viewer share
+  /** Run ids tracked by the parent (added on trigger). The viewer fetches
+   *  each once + follows SSE assist_run_update transitions (D19: no polling).
+   *  The parent owns this so the command-bar trigger + the viewer share
    *  one source of truth. */
   runIds: string[]
   /** Fired after an MoA adoption merges ac/decisions via spec-field (parent
@@ -106,9 +100,9 @@ export function OutputViewer({ task, runIds, onAdopted }: OutputViewerProps) {
     void refreshArtifacts()
   }, [taskId, refreshArtifacts])
 
-  // D19: SSE refresh. task_artifacts_update is the designated channel (server
-  // gap — subscribed future-ready); spec_field_update is the verifiable bridge
-  // (agent's spec update correlates with artifact production). Both → re-fetch.
+  // D19: SSE refresh. task_artifacts_update is the designated channel (emitted
+  // by the server alongside spec_field_update — same taskpool mechanism);
+  // spec_field_update stays subscribed as a direct trigger too. Both → re-fetch.
   useEffect(() => {
     if (!taskId) return
     const onArtifacts = () => void refreshArtifacts()
@@ -130,8 +124,6 @@ export function OutputViewer({ task, runIds, onAdopted }: OutputViewerProps) {
   // ── Assist runs (runIds owned by parent; viewer fetches each) ───────
   const [runs, setRuns] = useState<Record<string, AssistWorkflowRun>>({})
   const [logRun, setLogRun] = useState<AssistWorkflowRun | null>(null)
-  const runsRef = useRef<Record<string, AssistWorkflowRun>>({})
-  runsRef.current = runs
 
   const refreshRun = useCallback(async (runId: string) => {
     try {
@@ -144,33 +136,12 @@ export function OutputViewer({ task, runIds, onAdopted }: OutputViewerProps) {
     }
   }, [taskId])
 
-  // Fetch each tracked run once on mount + poll until terminal. The assist
-  // workflow runs in the background; without a provider it reaches a terminal
-  // error state quickly. Polling (1.5s) is the fallback; SSE assist_run_update
-  // drives the timely transition (below) — polling closes the gap if SSE is
-  // missed (e.g. reconnect).
+  // Fetch each tracked run once on mount/runIds-change. D19: NO polling —
+  // subsequent transitions are driven by the SSE assist_run_update handler
+  // below (server emits start/complete/error). The one-shot initial fetch
+  // covers the subscribe-before-trigger race.
   useEffect(() => {
-    let cancelled = false
-    const active = new Set<string>()
-    const poll = async () => {
-      while (!cancelled) {
-        const pending = runIds.filter((id) => {
-          const r = runsRef.current[id]
-          return !r || !["done", "completed", "failed", "error", "aborted"].includes(r.status)
-        })
-        await Promise.all(pending.filter((id) => !active.has(id)).map(async (id) => {
-          active.add(id)
-          await refreshRun(id)
-          active.delete(id)
-        }))
-        if (pending.length === 0) break
-        await new Promise((r) => setTimeout(r, 1500))
-      }
-    }
-    // Initial fetch for all tracked runs.
     void Promise.all(runIds.map((id) => refreshRun(id)))
-    void poll()
-    return () => { cancelled = true }
   }, [runIds, refreshRun])
 
   // D19: SSE assist_run_update → re-fetch the named run (filtered by task_id).
