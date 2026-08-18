@@ -98,7 +98,15 @@ export const subunitSpecSchema = z.object({
 })
 
 /** Structured task body produced by the task-author chatbot (D9). Stored as
- *  schedules.config.task_spec (v3.0). `subunits` present ⇒ composite task. */
+ *  schedules.config.task_spec (v3.0). `subunits` present ⇒ composite task.
+ *
+ *  Task-authoring v3 (ADR-0010/0011/0012, SW-BP2) adds authoring-side fields:
+ *  `task_type` (coding|generic) + `skill_groups[]` (selected at creation then
+ *  LOCKED — PUT must not drop them), `decisions[]` (decision memos adopted from
+ *  MoA output, SW-BP3), and confirmation gates `goal_confirmed` /
+ *  `ac_confirmed[]` (D18, persisted through spec-field so drafts survive modal
+ *  close). All five are part of the schema so zod does not strip them on a PUT
+ *  round-trip (SW-BP2 — unknown keys would be silently dropped). */
 export const taskSpecSchema = z.object({
   goal: z.string().min(1),
   ac: z.array(z.string().min(1)).min(1),
@@ -111,6 +119,22 @@ export const taskSpecSchema = z.object({
   resources: z.array(resourceRefSchema).default([]),
   // v2-D8/D13: draft-scope resources prompt-injected into the task-author session.
   authoring_resources: z.array(resourceRefSchema).default([]),
+  // ── task-authoring v3 (ticket 01) ──
+  // Template selected on the template page (D13). Optional: legacy/v2 tasks
+  // predate the two-phase flow and omit it; treated as "generic" downstream.
+  task_type: z.enum(["coding", "generic"]).optional(),
+  // Skill groups chosen at creation (D2/D3); locked post-create (ADR-0012).
+  // Default [] so v2 tasks parse cleanly. NOT written into authoring_resources
+  // (D4 — that would trigger the augmenter's full-text injection, double-loading
+  // skills already exposed via the per-task plugin dir, D1).
+  skill_groups: z.array(z.string()).default([]),
+  // Decision memos adopted from MoA expert output (D10/SW-BP3). A bindable
+  // spec-field (see TaskSpecFieldSchema "decisions") so adoption persists here.
+  decisions: z.array(z.string()).default([]),
+  // Confirmation gates (D18): persisted via spec-field so a draft's confirmed
+  // state survives modal close; readyTask enforces both before enqueue.
+  goal_confirmed: z.boolean().optional(),
+  ac_confirmed: z.array(z.string()).default([]),
 })
 
 // ── Zod schemas (single source of truth) ────────────────────────────

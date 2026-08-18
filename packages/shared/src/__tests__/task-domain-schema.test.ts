@@ -224,7 +224,7 @@ describe("AC2 — resource refs + spec/config extensions", () => {
       max_retain: 10,
       requires: { skills: ["octo-backend"] },
     }
-    const spec: TaskSpec = { goal: "g", ac: ["a"], resources: [ref], authoring_resources: [ref] }
+    const spec: TaskSpec = { goal: "g", ac: ["a"], resources: [ref], authoring_resources: [ref], skill_groups: [], decisions: [], ac_confirmed: [] }
     const sub: SubunitSpec = {
       name: "n",
       workspace_spec: { org: "o", branch_prefix: "b", projects: [] },
@@ -421,7 +421,7 @@ describe("AC5 — Task row type (S2 polymorphic-origin, no schedule pointers)", 
     id: "task-1",
     org: "xzf",
     name: "Build feature X",
-    task_spec: { goal: "g", ac: ["a"], resources: [], authoring_resources: [] },
+    task_spec: { goal: "g", ac: ["a"], resources: [], authoring_resources: [], skill_groups: [], decisions: [], ac_confirmed: [] },
     authoring_resources: [] as ResourceRef[],
     resources: [] as ResourceRef[],
     skills: [] as string[],

@@ -5,6 +5,9 @@ import {
   type ResourceRef,
   type TaskSpec,
   type ScheduleStatus,
+  subunitSpecSchema,
+  integrationGoalSchema,
+  resourceRefSchema,
 } from "./scheduler-job"
 
 // ── TaskStatus (v2-D2/D14 — first-class task lifecycle) ─────────────
@@ -23,12 +26,17 @@ export const TaskStatusSchema = z.enum([
 ])
 export type TaskStatus = z.infer<typeof TaskStatusSchema>
 
-// ── TaskSpecField (v2-D12 — the 8 agent-settable fields) ─────────────
+// ── TaskSpecField (v2-D12 — the 8 agent-settable fields; v3 adds decisions) ─
 /** Fields the `update_task_spec_field` tool / `spec_field_update` SSE carry.
  *  goal/ac/subunits/integration_goal live inside task_spec; skills/projects map
  *  to the tasks.skills / tasks.project_ids columns; resources/authoring_resources
  *  map to the tasks.resources / tasks.authoring_resources columns. The server
- *  routes each field to the right column/blob on write. */
+ *  routes each field to the right column/blob on write.
+ *
+ *  task-authoring v3 (ticket 01, SW-BP3): adds `"decisions"` — the adoption
+ *  target for MoA suggestion output, persisted into task_spec.decisions. This
+ *  closes the orphan-field gap (decisions had a schema home but no settable
+ *  field route); ticket 05 wires the server-side binding + the `source` flag. */
 export const TaskSpecFieldSchema = z.enum([
   "projects",
   "skills",
@@ -38,6 +46,7 @@ export const TaskSpecFieldSchema = z.enum([
   "integration_goal",
   "resources",
   "authoring_resources",
+  "decisions",
 ])
 export type TaskSpecField = z.infer<typeof TaskSpecFieldSchema>
 
@@ -91,6 +100,121 @@ export const updateTaskSpecFieldToolSchema = z.object({
   value: z.unknown(),
 })
 export type UpdateTaskSpecFieldTool = z.infer<typeof updateTaskSpecFieldToolSchema>
+
+// ── spec-field value validation (v3 — shared canonical seam, SW-BP3) ──
+/** Error thrown by {@link validateSpecFieldValue} on invalid input. The server
+ *  route maps it to HTTP 400 (not 500). Mirrored from the server's local
+ *  validator so shared is the single source of truth for per-field validation;
+ *  ticket 05 wires the server to this canonical copy. */
+export class TaskSpecFieldError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = "TaskSpecFieldError"
+  }
+}
+
+/** Validate a spec-field value against the per-field schema (v2-D12 + v3
+ *  `decisions`, SW-BP3). Throws {@link TaskSpecFieldError} on invalid input so
+ *  the caller (server route) returns 400. Returns the coerced/validated value.
+ *
+ *  Why this lives in shared: the spec-field contract is shared (the agent tool,
+ *  the SSE payload, and the route all agree on field names + value shapes), so
+ *  per-field validation belongs with that contract. The `decisions` branch is
+ *  the new adoption path for MoA expert suggestions (D10) — string[] memos
+ *  persisted into task_spec.decisions. goal_confirmed/ac_confirmed binding is
+ *  ticket 05's lane (server-side source flag + ready gate); this validator
+ *  covers the fields whose value shape shared prescribes. */
+export function validateSpecFieldValue(field: TaskSpecField, value: unknown): unknown {
+  switch (field) {
+    case "goal":
+      if (typeof value !== "string" || !value.trim()) {
+        throw new TaskSpecFieldError("field 'goal' must be a non-empty string")
+      }
+      return value
+    case "ac":
+      if (!Array.isArray(value) || !value.every((v) => typeof v === "string" && v.trim())) {
+        throw new TaskSpecFieldError("field 'ac' must be an array of non-empty strings")
+      }
+      return value
+    case "decisions":
+      if (!Array.isArray(value) || !value.every((v) => typeof v === "string" && v.trim())) {
+        throw new TaskSpecFieldError("field 'decisions' must be an array of non-empty strings")
+      }
+      return value
+    case "subunits":
+      if (!Array.isArray(value)) {
+        throw new TaskSpecFieldError("field 'subunits' must be an array")
+      }
+      return value.map((v) => subunitSpecSchema.parse(v))
+    case "integration_goal":
+      return integrationGoalSchema.parse(value)
+    case "resources":
+    case "authoring_resources":
+      if (!Array.isArray(value)) {
+        throw new TaskSpecFieldError(`field '${field}' must be an array`)
+      }
+      return value.map((v) => resourceRefSchema.parse(v))
+    case "skills":
+    case "projects":
+      if (!Array.isArray(value) || !value.every((v) => typeof v === "string")) {
+        throw new TaskSpecFieldError(`field '${field}' must be an array of strings`)
+      }
+      return value
+    default:
+      throw new TaskSpecFieldError(`unknown field: ${field as string}`)
+  }
+}
+
+// ── task-authoring v3: artifact index + assist-workflow run types (ticket 01) ─
+/** One row of a task's artifacts.json index (ADR-0011, D5). The index is the
+ *  single source of truth for "what did this task produce". `external: true`
+ *  ⇒ `path` is an ABSOLUTE path at the artifact's native location (registered,
+ *  not relocated); `false` ⇒ `path` is relative to the task home's artifacts/
+ *  dir. ticket 02's TaskHomeService parses/writes entries through this schema;
+ *  ticket 06's content route whitelists against it. */
+export const artifactIndexEntrySchema = z.object({
+  path: z.string().min(1),
+  by: z.string().min(1),
+  title: z.string(),
+  external: z.boolean(),
+  updated_at: z.string().min(1),
+})
+export type ArtifactIndexEntry = z.infer<typeof artifactIndexEntrySchema>
+
+/** One timestamped line of an assist-workflow run's process log (D19, US10). */
+export const assistWorkflowLogSchema = z.object({
+  t: z.string().min(1),
+  icon: z.string(),
+  text: z.string(),
+})
+
+/** Structured MoA aggregator output (D10, US11). Parsed from the aggregator
+ *  node's JSON; when parsing fails the run carries `output_raw` +
+ *  `output_parse_error` instead (SW-BP10). */
+export const assistWorkflowOutputSchema = z.object({
+  ac_candidates: z.array(z.string()).default([]),
+  suggestions: z.array(z.string()).default([]),
+  risks: z.array(z.string()).default([]),
+})
+
+/** The lifecycle + output shape of one assist-workflow run (D9/D16/D19).
+ *  `status` is a permissive string here — the execution-lifecycle vocabulary is
+ *  owned by the server/ticket-07 run service; shared only carries the contract
+ *  shape (the GET /assist-workflows/:runId response, spec line 126). `logs`
+ *  come from the execution's node log; `output*` are the aggregator-parse
+ *  triplet with the SW-BP10 fallback. */
+export const assistWorkflowRunSchema = z.object({
+  run_id: z.string().min(1),
+  execution_id: z.string().min(1),
+  workspace_id: z.string().min(1),
+  template: z.string().min(1),
+  status: z.string(),
+  logs: z.array(assistWorkflowLogSchema),
+  output: assistWorkflowOutputSchema.optional(),
+  output_raw: z.string().optional(),
+  output_parse_error: z.boolean().optional(),
+})
+export type AssistWorkflowRun = z.infer<typeof assistWorkflowRunSchema>
 
 // ── Task row (first-class tasks table; v2-D1, S2 polymorphic origin) ─
 /** A first-class task row.
