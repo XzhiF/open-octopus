@@ -76,21 +76,22 @@
 
 ### Changed Files（当前迭代 vs 9917e986，git diff 实时）
 
-基线 `9917e986`（#43 task-domain-redesign 终点）→ HEAD `ee3ce0c0`。`git diff --shortstat 9917e986...HEAD` 实时核定：85 files, +15801/-106。
+基线 `9917e986`（#43 task-domain-redesign 终点）→ HEAD `b430f89a`（含 r2 gap-fix）。`git diff --shortstat 9917e986...HEAD` 实时核定：94 files, +13250/-118。
 
 | Package | Files | Change |
 |---------|-------|--------|
-| shared | 5 | +380 / -6 |
+| shared | 5 | +380 / −6 |
 | providers | 0 | — |
-| engine | 2 | +159 / -2 |
+| engine | 2 | +159 / −2 |
 | core-pack | 7 | +199 / 0 |
-| server | 21 | +4748 / -66 |
-| web-app | 21 | +7878 / -32 |
+| server | 22 | +5091 / −66 |
+| web-app | 21 | +4358 / −44 |
 
-非 packages/（tests/E2E/.scratch/ADRs/CONTEXT-MAP）：29 files, +2437 / 0。
+非 packages/（tests/E2E/.scratch/ADRs/CONTEXT-MAP）：37 files, +3063 / 0。
 
-当前迭代合计：85 files, +15801/-106（含报告后 doc commits d24b7591/a9fe1206 及 r1 verification handoff ee3ce0c0；providers 0 文件——本迭代未触 providers）。
+当前迭代合计：94 files, +13250/-118（r2 gap-fix 后口径；providers 0 文件——本迭代未触 providers）。
 
+> 口径演变：R1 报告初版按 `origin/main...HEAD` 误算（含 #43 文件）；r2-03 修正为 vs 9917e986（@ee3ce0c0 = 85 files, +15801/−106）；r2 提交（b430f89a）删除 prototype（−3568 行，因该文件在基线后加入又删除，三点 diff 中完全抵消）+ 新增 r2 工件 → 94/+13250/−118。
 > 核实命令：`git diff --shortstat 9917e986...HEAD`；按包计数：`git diff --name-only 9917e986...HEAD | grep -oE "^packages/[a-z-]+" | sort | uniq -c`。
 
 ### Remaining Issues
