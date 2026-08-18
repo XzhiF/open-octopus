@@ -44,4 +44,4 @@
 | 40 | harness-learning-platform | 2026-08-11 | feat/harness-learning-platform | in-progress |
 | 41 | workflow-observability | 2026-08-12 | feat/workflow-observability | in-progress (spec + 7 tickets, story walk-through done) |
 | 42 | task-pool-redesign | 2026-08-17 | test-task-board | done (GO converged R1, 88/87, PR #50; US3 env-blocked) |
-| 43 | task-domain-redesign | 2026-08-18 | feat/task-domain-redesign | in-progress (wayfinder: 7/7 decisions resolved → ADR-0009; spec draft + story-walkthrough running) |
+| 43 | task-domain-redesign | 2026-08-18 | feat/task-domain-redesign | done (feat→main PR; 22/22 product-verified; AC2 repro-proven, B-AC3 provider-gated SKIP) |
