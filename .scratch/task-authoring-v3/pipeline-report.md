@@ -72,7 +72,7 @@
 ### Phase 5: Ship (Git PR)
 | Project | Branch | PR# | Action |
 |---------|--------|-----|--------|
-| open-octopus (monorepo) | feat/task-domain-redesign | #51 | Updated（smart overwrite，保留 MANUAL 区块） |
+| open-octopus (monorepo) | feat/task-domain-redesign | [#51](https://github.com/XzhiF/open-octopus/pull/51) | Updated（smart overwrite，保留 MANUAL 区块） |
 
 ### Changed Files（当前迭代 vs 9917e986，git diff 实时）
 | Package | Files | Change |
