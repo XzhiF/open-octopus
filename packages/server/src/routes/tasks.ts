@@ -17,16 +17,17 @@ import {
   TaskVersionConflictError,
   TaskStatusConflictError,
   TaskSpecFieldError,
+  TaskReadyGateError,
   type CreateTaskInput,
   type UpdateTaskInput,
   type UpdateSpecFieldInput,
+  type ServerSpecField,
 } from "../services/tasks/tasks-service"
 import { SSEService } from "../services/sse"
 import {
   taskSpecSchema,
   resourceRefSchema,
   type TaskStatus,
-  type TaskSpecField,
 } from "@octopus/shared"
 
 // ── Error Classification ────────────────────────────────────────────
@@ -193,14 +194,21 @@ export function createTasksRoutes(service: TasksService, sse: SSEService): Hono 
 
   // ── Actions ───────────────────────────────────────────────────
 
-  // POST /:id/spec-field — agent update_task_spec_field tool endpoint →
-  // merge field + emit spec_field_update SSE
+  // POST /:id/spec-field — agent update_task_spec_field tool endpoint OR user
+  // direct edit (05, SW-BP4) → merge field + emit spec_field_update SSE. The
+  // optional `source` flag (default "agent") routes user-direct edits through
+  // the @@spec_updated notice so the agent reconciles next turn; agent edits
+  // don't set the notice.
   router.post("/:id/spec-field", async (c) => {
     const body = await safeJson(c)
     if (!body) return c.json({ error: "Invalid or missing JSON body" }, 400)
     try {
-      const field = body.field as TaskSpecField
-      const input: UpdateSpecFieldInput = { field, value: body.value }
+      const field = body.field as ServerSpecField
+      // source: "user" → record @@spec_updated notice; anything else (incl.
+      // omitted — the existing agent-curl / E2E-helper callers, AC5) → "agent",
+      // no notice. Lenient default-to-agent keeps backward compat.
+      const source = body.source === "user" || body.source === "agent" ? body.source : "agent"
+      const input: UpdateSpecFieldInput = { field, value: body.value, source }
       const result = service.updateSpecField(c.req.param("id"), input)
       return c.json(result)
     } catch (err: unknown) {
@@ -209,12 +217,17 @@ export function createTasksRoutes(service: TasksService, sse: SSEService): Hono 
     }
   })
 
-  // POST /:id/ready — draft→ready + dispatch seam (creates schedules envelope)
+  // POST /:id/ready — draft→ready + dispatch seam (creates schedules envelope).
+  // 05 (D18): a v3 task whose confirmation gate fails → 409 + missing-items
+  // list so the UI can show exactly what to confirm before enqueue (US6).
   router.post("/:id/ready", (c) => {
     try {
       const task = service.readyTask(c.req.param("id"))
       return c.json(task)
     } catch (err: unknown) {
+      if (err instanceof TaskReadyGateError) {
+        return c.json({ error: err.message, missing: err.missing }, 409)
+      }
       const { status, message } = classifyError(err)
       return c.json({ error: message }, status)
     }

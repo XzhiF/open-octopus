@@ -35,9 +35,8 @@ import {
   SPEC_FIELD_UPDATE_EVENT,
   TASK_STATUS_EVENT,
   taskSpecSchema,
-  resourceRefSchema,
-  subunitSpecSchema,
-  integrationGoalSchema,
+  validateSpecFieldValue,
+  TaskSpecFieldError,
 } from "@octopus/shared"
 import {
   TaskDAO,
@@ -74,10 +73,26 @@ export class TaskStatusConflictError extends Error {
   }
 }
 
-export class TaskSpecFieldError extends Error {
-  constructor(message: string) {
+// 05 (SW-BP3): the server re-exports shared's canonical TaskSpecFieldError so
+// the route's `instanceof` check stays a single-class match whether the throw
+// comes from the shared validateSpecFieldValue (the 9 shared fields incl.
+// `decisions`) or from the server-side goal_confirmed/ac_confirmed validation
+// below. Do not declare a separate server class — two classes would let a
+// shared-thrown 400 fall through to 500.
+export { TaskSpecFieldError }
+
+/** 05 (D18): thrown by {@link TasksService.readyTask} when a v3 task's
+ *  confirmation gate fails (goal empty / ac<1 / goal_confirmed!==true / an ac
+ *  item not in ac_confirmed). Carries the `missing` list so the route can
+ *  return 409 + a missing-items payload (US6: the user sees exactly what to
+ *  confirm before enqueue). */
+export class TaskReadyGateError extends Error {
+  constructor(
+    message: string,
+    public missing: string[],
+  ) {
     super(message)
-    this.name = "TaskSpecFieldError"
+    this.name = "TaskReadyGateError"
   }
 }
 
@@ -134,8 +149,14 @@ export interface UpdateTaskInput {
 }
 
 export interface UpdateSpecFieldInput {
-  field: TaskSpecField
+  field: ServerSpecField
   value: unknown
+  /** 05 (SW-BP4): who is setting this field. `"user"` (direct SpecPanel edit)
+   *  → the service records an @@spec_updated notice so the agent reconciles on
+   *  its next chat turn (the clone send path delivers + clears it). `"agent"`
+   *  (the default — also when omitted, AC5) does NOT set a notice, so the agent
+   *  never sees its own edit echoed back as a user override. */
+  source?: "user" | "agent"
 }
 
 export interface ListTasksParams {
@@ -175,41 +196,34 @@ function toDTO(row: TaskRow): TaskDTO {
   }
 }
 
-/** Validate a spec-field value against the per-field schema (v2-D12). Throws
- *  TaskSpecFieldError on invalid input so the route returns 400, not 500. */
-function validateSpecFieldValue(field: TaskSpecField, value: unknown): unknown {
+/** Server-side spec-field set: the 9 shared bindable fields (via
+ *  {@link validateSpecFieldValue}) PLUS the two v3 confirmation gates
+ *  `goal_confirmed` / `ac_confirmed` (D18). The latter live in taskSpecSchema
+ *  (storage — ticket 01) but are intentionally NOT in the shared
+ *  TaskSpecFieldSchema enum (spec line 94 only adds `decisions` there); their
+ *  value validation is ticket 05's lane, server-side. */
+export type ServerSpecField = TaskSpecField | "goal_confirmed" | "ac_confirmed"
+
+/** Validate a spec-field value. Delegates to the shared canonical
+ *  {@link validateSpecFieldValue} for the 9 shared fields (incl. `decisions`,
+ *  SW-BP3) so the contract stays single-sourced, and validates the two
+ *  confirmation gates server-side (boolean / string[]). Throws
+ *  {@link TaskSpecFieldError} on invalid input so the route returns 400. */
+function validateServerSpecField(field: ServerSpecField, value: unknown): unknown {
   switch (field) {
-    case "goal":
-      if (typeof value !== "string" || !value.trim()) {
-        throw new TaskSpecFieldError("field 'goal' must be a non-empty string")
+    case "goal_confirmed":
+      if (typeof value !== "boolean") {
+        throw new TaskSpecFieldError("field 'goal_confirmed' must be a boolean")
       }
       return value
-    case "ac":
+    case "ac_confirmed":
       if (!Array.isArray(value) || !value.every((v) => typeof v === "string" && v.trim())) {
-        throw new TaskSpecFieldError("field 'ac' must be an array of non-empty strings")
-      }
-      return value
-    case "subunits":
-      if (!Array.isArray(value)) {
-        throw new TaskSpecFieldError("field 'subunits' must be an array")
-      }
-      return value.map((v) => subunitSpecSchema.parse(v))
-    case "integration_goal":
-      return integrationGoalSchema.parse(value)
-    case "resources":
-    case "authoring_resources":
-      if (!Array.isArray(value)) {
-        throw new TaskSpecFieldError(`field '${field}' must be an array`)
-      }
-      return value.map((v) => resourceRefSchema.parse(v))
-    case "skills":
-    case "projects":
-      if (!Array.isArray(value) || !value.every((v) => typeof v === "string")) {
-        throw new TaskSpecFieldError(`field '${field}' must be an array of strings`)
+        throw new TaskSpecFieldError("field 'ac_confirmed' must be an array of non-empty strings")
       }
       return value
     default:
-      throw new TaskSpecFieldError(`unknown field: ${field as string}`)
+      // Shared field (incl. decisions) — canonical validator in shared.
+      return validateSpecFieldValue(field, value)
   }
 }
 
@@ -367,9 +381,12 @@ export class TasksService {
   // ── spec-field tool endpoint ──────────────────────────────────────
 
   /** POST /api/tasks/:id/spec-field — the agent `update_task_spec_field`
-   *  tool endpoint. Merges a single field into the right column, bumps
-   *  version, emits spec_field_update SSE. Returns the new version.
-   *  Stale version → 409 → agent re-GET + retry (v2-D12). */
+   *  tool endpoint AND the user-direct-edit path (05, SW-BP4). Merges a single
+   *  field into the right column, bumps version, emits spec_field_update SSE.
+   *  `source="user"` → setSpecNotice so the agent sees @@spec_updated on its
+   *  next chat turn (the clone send path delivers + clears it); `source="agent"`
+   *  (default) does NOT, so the agent never echoes its own edit back. Returns
+   *  the new version. Stale version → 409 → agent re-GET + retry (v2-D12). */
   updateSpecField(id: string, input: UpdateSpecFieldInput): { version: number } {
     const existing = this.taskDAO.getById(id)
     if (!existing) throw new TaskNotFoundError()
@@ -381,7 +398,7 @@ export class TasksService {
         `Cannot edit spec of a task in status '${existing.status}'`,
       )
     }
-    const validatedValue = validateSpecFieldValue(input.field, input.value)
+    const validatedValue = validateServerSpecField(input.field, input.value)
 
     const fields: Record<string, unknown> = {}
     const currentSpec = parseJSON<TaskSpec>(existing.task_spec, {
@@ -394,7 +411,11 @@ export class TasksService {
       case "ac":
       case "subunits":
       case "integration_goal":
-        // Merge into task_spec JSON.
+      case "decisions":
+      case "goal_confirmed":
+      case "ac_confirmed":
+        // Merge into task_spec JSON (all v3 confirmation/decision fields +
+        // the original goal/ac/subunits/integration_goal live in task_spec).
         fields.task_spec = JSON.stringify({ ...currentSpec, [input.field]: validatedValue })
         break
       case "skills":
@@ -426,6 +447,17 @@ export class TasksService {
         version: updated.version,
       },
     })
+
+    // 05 (SW-BP4): user-direct-edit → transient @@spec_updated notice so the
+    // agent reconciles on its next chat turn. Same store the [保存草稿] path
+    // (updateTask) writes to; the clone send path (clone/index.ts) reads +
+    // clears it. Agent source MUST NOT set it, or the agent would see its own
+    // edit echoed back as a user override. One field name in the notice (values
+    // can be large JSON; the agent re-GETs to reconcile — mirrors updateTask).
+    if (input.source === "user") {
+      setSpecNotice(id, `@@spec_updated: ${input.field}`)
+    }
+
     return { version: updated.version }
   }
 
@@ -449,6 +481,31 @@ export class TasksService {
       goal: "",
       ac: [],
     } as unknown as TaskSpec)
+
+    // 05 (D18, US6): confirmation gate. A v3 task (one that went through the
+    // two-phase flow → task_type set) may NOT be enqueued until its intent is
+    // fully confirmed: goal non-empty ∧ ac≥1 ∧ goal_confirmed===true ∧ every ac
+    // item listed in ac_confirmed. UI temp state is lost on modal close, so the
+    // gate must be server-side. Legacy/v2 tasks (no task_type) predate the
+    // confirmation flow and keep the existing no-gate behavior — this preserves
+    // the v2 ready cases in tasks-routes.test.ts. On failure, return the
+    // missing-items list so the UI shows exactly what to confirm (409 + JSON).
+    if (taskSpec.task_type !== undefined) {
+      const missing: string[] = []
+      if (!taskSpec.goal || !taskSpec.goal.trim()) missing.push("goal")
+      if (!taskSpec.ac || taskSpec.ac.length < 1) missing.push("ac")
+      if (taskSpec.goal_confirmed !== true) missing.push("goal_confirmed")
+      const acConfirmed = taskSpec.ac_confirmed ?? []
+      const unconfirmedAc = (taskSpec.ac ?? []).filter((a) => !acConfirmed.includes(a))
+      if (unconfirmedAc.length > 0) missing.push("ac_confirmed")
+      if (missing.length > 0) {
+        throw new TaskReadyGateError(
+          `Task not ready: missing ${missing.join(", ")}`,
+          missing,
+        )
+      }
+    }
+
     const projectIds = parseJSON<string[]>(existing.project_ids, [])
     const skills = parseJSON<string[]>(existing.skills, [])
     // SG7 (ticket 07): pass the task's resources column (workspace-scope) to
