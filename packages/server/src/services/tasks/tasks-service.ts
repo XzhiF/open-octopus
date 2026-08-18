@@ -32,6 +32,7 @@ import {
   type SubunitSpec,
   type ScheduleStatus,
   type OriginType,
+  type ArtifactIndexEntry,
   SPEC_FIELD_UPDATE_EVENT,
   TASK_STATUS_EVENT,
   taskSpecSchema,
@@ -48,6 +49,9 @@ import type { SSEService } from "../sse"
 import { materializeTaskSpecToConfig } from "../scheduler/scheduler-service"
 import { TaskHomeService } from "./task-home-service"
 import { PluginMaterializer } from "./plugin-materializer"
+// 06: re-export so the route's classifyError instanceof check matches throws
+// from TaskHomeService.readArtifactContent without a second class declaration.
+export { ArtifactAccessError } from "./task-home-service"
 import { getResourceRegistry } from "../resource-registry"
 import {
   setSpecNotice,
@@ -417,9 +421,38 @@ export class TasksService {
     return { ...dto, children }
   }
 
+  /** GET /api/tasks/:id/artifacts — the artifact index (ticket 06, US7).
+   *  Validates the task exists (→ 404 via {@link TaskNotFoundError}) then
+   *  delegates to {@link TaskHomeService.readArtifacts}, which returns [] for
+   *  a missing index and [] + warn for corrupted JSON (SW-BP12). The
+   *  task-exists check runs FIRST so a missing task is a 404, not a silent []
+   *  (a [] response means "task has no artifacts yet", which is wrong for a
+   *  task that doesn't exist). */
+  listArtifacts(taskId: string): ArtifactIndexEntry[] {
+    const row = this.taskDAO.getById(taskId)
+    if (!row) throw new TaskNotFoundError()
+    return this.taskHomeService.readArtifacts(taskId)
+  }
+
+  /** GET /api/tasks/:id/artifacts/content?path= — full artifact content with
+   *  whitelist (ticket 06, US7 / AC2/AC3/AC4). Validates the task exists (→
+   *  404 via {@link TaskNotFoundError}) BEFORE the whitelist so a missing task
+   *  is 404 (not a misleading 403/400 from the path check). Delegates the
+   *  whitelist + read to {@link TaskHomeService.readArtifactContent}, which
+   *  throws {@link ArtifactAccessError} (FORBIDDEN→403 / NOT_FOUND→404). The
+   *  route validates the `path` query param is a non-empty string (→ 400)
+   *  before calling this — so this method receives a non-empty path. */
+  readArtifactContent(
+    taskId: string,
+    requestedPath: string,
+  ): { path: string; content: string } {
+    const row = this.taskDAO.getById(taskId)
+    if (!row) throw new TaskNotFoundError()
+    return this.taskHomeService.readArtifactContent(taskId, requestedPath)
+  }
+
   /** GET /api/tasks — list active tasks (kanban), filtered by status and/or org. */
-  listTasks(params: ListTasksParams = {}): { items: TaskDTO[] } {
-    let rows: TaskRow[]
+  listTasks(params: ListTasksParams = {}): { items: TaskDTO[] } {    let rows: TaskRow[]
     if (params.status && params.org) {
       // listByStatus doesn't filter by org — filter in memory (small N).
       rows = this.taskDAO.listByStatus(params.status).filter((r) => r.org === params.org)

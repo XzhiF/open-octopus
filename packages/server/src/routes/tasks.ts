@@ -19,6 +19,7 @@ import {
   TaskSpecFieldError,
   TaskReadyGateError,
   TaskLockViolationError,
+  ArtifactAccessError,
   type CreateTaskInput,
   type UpdateTaskInput,
   type UpdateSpecFieldInput,
@@ -45,6 +46,15 @@ function classifyError(err: unknown): { status: number; message: string } {
   // task exists and is editable; only these two fields are immutable).
   if (err instanceof TaskLockViolationError) return { status: 409, message: err.message }
   if (err instanceof TaskSpecFieldError) return { status: 400, message: err.message }
+  // 06 (US7): artifact content whitelist + missing-file classification. The
+  // code field carries FORBIDDEN (403 — path not whitelisted / escape attempt)
+  // vs NOT_FOUND (404 — whitelisted but file missing on disk, AC4).
+  if (err instanceof ArtifactAccessError) {
+    switch (err.code) {
+      case "FORBIDDEN": return { status: 403, message: err.message }
+      case "NOT_FOUND": return { status: 404, message: err.message }
+    }
+  }
   // 07: assist-workflow template/run classification.
   if (err instanceof AssistWorkflowError) {
     switch (err.code) {
@@ -185,6 +195,39 @@ export function createTasksRoutes(
     try {
       const task = service.getTask(c.req.param("id"))
       return c.json(task)
+    } catch (err: unknown) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status)
+    }
+  })
+
+  // ── Artifacts (ticket 06 — US7) ────────────────────────────────────
+  // GET /:id/artifacts — the artifact index (artifacts.json). Missing file →
+  // []; corrupted JSON → [] + warn (SW-BP12); missing task → 404. The index
+  // is the single source of truth for "what did this task produce" (ADR-0011).
+  router.get("/:id/artifacts", (c) => {
+    try {
+      const entries = service.listArtifacts(c.req.param("id"))
+      return c.json(entries)
+    } catch (err: unknown) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status)
+    }
+  })
+
+  // GET /:id/artifacts/content?path= — full artifact content (US7). The
+  // `path` query param is required (non-empty string) → 400 when missing;
+  // the service then whitelists it (AC2: relative-inside-artifacts no-escape
+  // OR registered external=true absolute; else 403) and reads live disk
+  // content (AC3) or 404 when the whitelisted file is missing (AC4).
+  router.get("/:id/artifacts/content", (c) => {
+    const requestedPath = c.req.query("path")
+    if (!requestedPath || !requestedPath.trim()) {
+      return c.json({ error: "Query param 'path' is required" }, 400)
+    }
+    try {
+      const result = service.readArtifactContent(c.req.param("id"), requestedPath)
+      return c.json(result)
     } catch (err: unknown) {
       const { status, message } = classifyError(err)
       return c.json({ error: message }, status)

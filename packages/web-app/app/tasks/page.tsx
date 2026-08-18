@@ -172,6 +172,7 @@ function TaskCard({ task, onClick }: TaskCardProps) {
   return (
     <article
       data-task-card
+      data-task-id={task.id}
       data-task-status={task.status}
       onClick={onClick}
       role="button"

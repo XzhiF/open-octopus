@@ -58,6 +58,19 @@ export interface CreateTaskInput {
    *  tasks.id, SG3). The autosave seam (04) creates a task implicitly; this is
    *  the explicit POST path. */
   source_chat_session_id?: string | null
+  // ── task-authoring v3 (ticket 09 — two-phase flow) ──
+  /** D13: template selected on the template page (coding/generic). Present ⇒
+   *  the server takes the v3 path (home created, skill_groups materialized,
+   *  ready-gate applies). Absent ⇒ legacy v2 create. */
+  task_type?: "coding" | "generic"
+  /** D2/D3: skill groups chosen at creation then LOCKED (ADR-0012). Persisted
+   *  into task_spec.skill_groups (D4 — NOT authoring_resources, which would
+   *  double-inject via the augmenter). */
+  skill_groups?: string[]
+  /** D13 coding-template preset: org + projects only (skills belong to
+   *  workflow.requires, not the preset). preset.org OVERRIDES the top-level
+   *  org (the template page is the source of the authoring context). */
+  preset?: { org?: string; projects?: string[] }
 }
 
 export interface UpdateTaskInput {
@@ -77,6 +90,29 @@ export interface UpdateTaskInput {
 export interface ListTasksParams {
   status?: TaskStatus
   org?: string
+}
+
+// ── v3: client-side spec-field + ready-gate types (ticket 09) ──────────
+
+/** The set of field names the spec-field route accepts. Mirrors the server's
+ *  `ServerSpecField` (tasks-service.ts:241): the shared `TaskSpecField` enum
+ *  PLUS the v3 confirmation gates `goal_confirmed` / `ac_confirmed` (D18),
+ *  which live in task_spec JSON but are bindable through the spec-field seam.
+ *  The shared enum omits them because they aren't agent-tool fields; the
+ *  client sends them by name for user confirmations (AC5). */
+export type ClientSpecField = TaskSpecField | "goal_confirmed" | "ac_confirmed"
+
+/** Thrown by {@link readyTask} when the v3 confirmation gate fails (D18/US6).
+ *  Carries the `missing` list (e.g. ["goal_confirmed","ac_confirmed"]) so the
+ *  UI shows exactly what to confirm before enqueue — the server-side gate is
+ *  the backstop for UI temp state lost on modal close. */
+export class TaskReadyGateError extends Error {
+  public missing: string[]
+  constructor(message: string, missing: string[]) {
+    super(message)
+    this.name = "TaskReadyGateError"
+    this.missing = missing
+  }
 }
 
 // ============ Helpers ============
@@ -118,7 +154,11 @@ export async function getTask(id: string, signal?: AbortSignal): Promise<TaskDet
 }
 
 /** POST /api/tasks — explicit draft creation. The autosave seam (04) may also
- *  create a draft implicitly; both paths converge on the server's createTask. */
+ *  create a draft implicitly; both paths converge on the server's createTask.
+ *
+ *  v3 (ticket 09, D15): the two-phase template page sends source_chat_session_id
+ *  (created first) + task_type + skill_groups[] + preset{org,projects}. Legacy
+ *  callers (no task_type) take the v2 path. */
 export async function createTask(input: CreateTaskInput): Promise<Task> {
   const res = await fetch(`${getServerUrl()}${BASE}`, {
     method: "POST",
@@ -161,10 +201,25 @@ export async function deleteTask(id: string): Promise<{ ok: true }> {
 /** POST /api/tasks/:id/ready — draft→ready (confirm gate, v1 D13) + dispatch
  *  seam (creates the schedules envelope: simple=1 primary; composite=1
  *  coordinator). Runner claims the schedule; ScheduleStatusListener mirrors
- *  running. 409 if not draft. */
+ *  running. 409 if not draft.
+ *
+ *  v3 (ticket 09, D18/US6): a v3 task (task_type set) must additionally pass
+ *  the confirmation gate (goal non-empty ∧ ac≥1 ∧ goal_confirmed ∧ all ac in
+ *  ac_confirmed). On failure the server returns 409 with `{error, missing[]}`;
+ *  this function throws a {@link TaskReadyGateError} carrying `.missing` so
+ *  the UI can show exactly what to confirm before enqueue (server-side gate
+ *  is the backstop for UI temp state lost on modal close). */
 export async function readyTask(id: string): Promise<Task> {
   const res = await fetch(`${getServerUrl()}${BASE}/${id}/ready`, { method: "POST" })
-  return handleResponse<Task>(res)
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}))
+    // D18 gate miss: 409 + missing[] → typed error so the UI shows the gaps.
+    if (res.status === 409 && Array.isArray(body.missing)) {
+      throw new TaskReadyGateError(body.error ?? "Task not ready", body.missing as string[])
+    }
+    throw new Error(body.error ?? `HTTP ${res.status}`)
+  }
+  return res.json()
 }
 
 /** POST /api/tasks/:id/abort — running/ready→aborted + ws cleanup (v1 G4).
@@ -177,18 +232,29 @@ export async function abortTask(id: string): Promise<Task> {
 }
 
 /** POST /api/tasks/:id/spec-field — agent `update_task_spec_field` tool
- *  endpoint. Merges a single field into the right column, bumps version,
- *  emits `spec_field_update` SSE so the SpecPanel applies the field locally +
- *  bumps its tracked version (avoids a subsequent [save] 409, v2-D12). */
+ *  endpoint, AND the v3 user-direct-edit path. Merges a single field into the
+ *  right column, bumps version, emits `spec_field_update` SSE so the SpecPanel
+ *  applies the field locally + bumps its tracked version (avoids a subsequent
+ *  [save] 409, v2-D12).
+ *
+ *  v3 (ticket 09, D7/SW-BP4): `source` routes user-direct edits through the
+ *  @@spec_updated reverse-notice path so the agent reconciles next turn;
+ *  agent edits (default) do NOT set the notice (the agent would see its own
+ *  edit echoed back as a user override). The field name may be a v3
+ *  confirmation field (`goal_confirmed` / `ac_confirmed`) — the server's
+ *  ServerSpecField extends the shared enum with those two (D18). */
 export async function updateSpecField(
   id: string,
-  field: TaskSpecField,
+  field: ClientSpecField,
   value: unknown,
+  opts?: { source?: "user" | "agent" },
 ): Promise<{ version: number }> {
+  const body: Record<string, unknown> = { field, value }
+  if (opts?.source) body.source = opts.source
   const res = await fetch(`${getServerUrl()}${BASE}/${id}/spec-field`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ field, value }),
+    body: JSON.stringify(body),
   })
   return handleResponse<{ version: number }>(res)
 }

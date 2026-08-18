@@ -35,6 +35,9 @@ import { SpecPanel, ResourcePicker } from "./spec-panel"
 import { useAgentChat } from "@/hooks/useAgentChat"
 import { ChatArea } from "@/components/agent/chat/ChatArea"
 import * as agentApi from "@/lib/agent/api"
+import { TemplatePicker } from "./authoring/template-picker"
+import { AuthoringWorkspace } from "./authoring/authoring-workspace"
+import { createTask } from "@/lib/tasks-api"
 
 // Re-export the authoring pieces so callers can import everything from the
 // modal entrypoint (the SpecPanel test imports from here).
@@ -54,7 +57,14 @@ interface TaskModalProps {
   onDraftResolved?: (task: Task) => void
 }
 
-type ModalMode = "authoring" | "simple-execution" | "composite" | "done" | "terminal"
+type ModalMode =
+  | "authoring"
+  | "authoring-v3-template"
+  | "authoring-v3-workspace"
+  | "simple-execution"
+  | "composite"
+  | "done"
+  | "terminal"
 
 const TASK_AUTHOR_CLONE = "task-author"
 
@@ -71,8 +81,21 @@ function isComposite(task: Task | null): boolean {
   return !!spec && Array.isArray(spec.subunits) && spec.subunits.length >= 2
 }
 
+/** v3 (ticket 09): a task is a v3 two-phase-flow task when task_spec.task_type
+ *  is set (it went through the TemplatePicker → create-with-task_type path).
+ *  Legacy/v2 drafts (no task_type) keep the existing AuthoringMode. */
+function isV3Task(task: Task | null): boolean {
+  const spec = taskSpecOf(task)
+  return !!spec && spec.task_type !== undefined
+}
+
 function resolveMode(task: Task | null): ModalMode {
-  if (task === null || task.status === "draft") return "authoring"
+  if (task === null) return "authoring-v3-template"
+  if (task.status === "draft") {
+    // v3 two-phase-flow draft (task_type set) → AuthoringWorkspace; legacy
+    // v2 draft (no task_type) → the existing SpecPanel-based AuthoringMode.
+    return isV3Task(task) ? "authoring-v3-workspace" : "authoring"
+  }
   if (task.status === "ready" || task.status === "running") {
     return isComposite(task) ? "composite" : "simple-execution"
   }
@@ -126,6 +149,16 @@ export function TaskModal({ open, onOpenChange, task, onMutated, onDraftResolved
       >
         <ModalHeader task={task} mode={mode} isFullscreen={isFullscreen} onToggleFullscreen={() => setIsFullscreen((f) => !f)} />
         <div className="flex-1 min-h-0 overflow-hidden">
+          {mode === "authoring-v3-template" && (
+            <TemplatePickerMode
+              onDraftResolved={onDraftResolved ?? (() => {})}
+              onMutated={onMutated}
+              onClose={() => onOpenChange(false)}
+            />
+          )}
+          {mode === "authoring-v3-workspace" && task && (
+            <AuthoringWorkspace task={task} onMutated={onMutated} onClose={() => onOpenChange(false)} />
+          )}
           {mode === "authoring" && (
             <AuthoringMode task={task} onMutated={onMutated} onDraftResolved={onDraftResolved} onClose={() => onOpenChange(false)} />
           )}
@@ -179,6 +212,60 @@ function ModalHeader({ task, mode, isFullscreen, onToggleFullscreen }: {
         </Badge>
       </div>
     </DialogHeader>
+  )
+}
+
+// ── v3 Authoring: template picker → AuthoringWorkspace (two-phase) ────
+
+/** Phase 1 of the v3 two-phase flow (ticket 09, D15). Renders the
+ *  TemplatePicker; on 开始编写, runs the D15 create sequence:
+ *    1. POST /api/clones/task-author/sessions  (session FIRST — autosave/
+ *       spec-field/SSE all resolve via source_chat_session_id)
+ *    2. POST /api/tasks {source_chat_session_id, task_type, skill_groups,
+ *       preset{org,projects}} → creates the draft + home + materializes the
+ *       plugin dir.
+ *  On success, `onDraftResolved(task)` adopts the draft so the parent
+ *  re-renders with task set → resolveMode routes to AuthoringWorkspace. */
+function TemplatePickerMode({
+  onDraftResolved, onMutated, onClose,
+}: {
+  onDraftResolved: (task: Task) => void
+  onMutated: () => void
+  onClose: () => void
+}) {
+  const [busy, setBusy] = useState(false)
+
+  const handleCreate = async (value: {
+    task_type: "coding" | "generic"
+    skill_groups: string[]
+    preset: { org?: string; projects: string[] }
+  }) => {
+    setBusy(true)
+    try {
+      // D15 step 1: create the chat session FIRST.
+      const session = await agentApi.createCloneSession(TASK_AUTHOR_CLONE)
+      // D15 step 2: POST the task with the session id + v3 fields.
+      const task = await createTask({
+        org: value.preset.org ?? "default",
+        source_chat_session_id: session.id,
+        task_type: value.task_type,
+        skill_groups: value.skill_groups,
+        preset: value.preset,
+      })
+      // Adopt the draft → parent re-renders → AuthoringWorkspace (phase 2).
+      onDraftResolved(task)
+      onMutated()
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : "创建任务失败")
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="h-full min-h-0" data-task-template-mode>
+      <TemplatePicker onCreate={handleCreate} busy={busy} />
+    </div>
   )
 }
 

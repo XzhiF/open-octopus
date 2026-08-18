@@ -30,6 +30,26 @@ const SKILLS_DIR = "skills"
 const ARTIFACTS_DIR = "artifacts"
 const ARTIFACTS_JSON = "artifacts.json"
 
+/** Thrown by {@link TaskHomeService.readArtifactContent} when a requested path
+ *  fails the whitelist (`FORBIDDEN` → HTTP 403) or passes the whitelist but the
+ *  file is missing on disk (`NOT_FOUND` → HTTP 404). Mirrors the
+ *  `AssistWorkflowError` code-field pattern so the route's `classifyError` maps
+ *  codes to statuses without instanceof chains per code.
+ *
+ *  Why the whitelist lives here (not the route): the route must stay a thin
+ *  delegate (mirrors the assist-workflow route pair). The whitelist is a
+ *  filesystem concern — it needs the task's artifacts/ dir (pure derivation
+ *  here) and the index (read here) to decide "is this path ours to serve". */
+export class ArtifactAccessError extends Error {
+  constructor(
+    message: string,
+    public readonly code: "FORBIDDEN" | "NOT_FOUND",
+  ) {
+    super(message)
+    this.name = "ArtifactAccessError"
+  }
+}
+
 export class TaskHomeService {
   private readonly baseDir: string
 
@@ -126,6 +146,87 @@ export class TaskHomeService {
     else current.push(validated)
     fs.writeFileSync(file, JSON.stringify(current, null, 2), "utf-8")
     return current
+  }
+
+  /** Read the full content of one artifact (ticket 06, US7 / AC2/AC3/AC4). The
+   *  whitelist has two branches:
+   *    - Absolute path → MUST be registered in the index with `external===true`
+   *      and an exact `path` match (AC2 — registered-not-relocated, ADR-0011).
+   *      Unregistered absolute path → FORBIDDEN (403); registered but missing
+   *      on disk → NOT_FOUND (404, AC4 — the UI shows a degraded state).
+   *    - Relative path → resolved against the task's `artifacts/` dir and must
+   *      NOT escape it (AC2 — `../` and cross-drive paths rejected). The
+   *      canonical idiom: `path.relative(artDir, resolved)` must not start with
+   *      `..` and must not be absolute (a cross-drive rel on Windows). Not
+   *      required to be in the index — the home owns everything inside
+   *      `artifacts/`. Missing on disk → NOT_FOUND (404).
+   *
+   *  Returns `{ path, content }` where `path` is the requested path verbatim
+   *  (relative for internal, absolute for external — the caller/UI uses it as
+   *  the identity key). `content` is the live disk content (== fs.readFileSync,
+   *  AC3 — never a cached value). Null bytes are rejected upfront (path-
+   *  injection guard). */
+  readArtifactContent(
+    taskId: string,
+    requestedPath: string,
+  ): { path: string; content: string } {
+    // Path-injection guard — a null byte can truncate the path mid-component
+    // in some native APIs; reject upfront rather than reason about it below.
+    if (requestedPath.includes("\0")) {
+      throw new ArtifactAccessError(
+        "artifact path must not contain null bytes",
+        "FORBIDDEN",
+      )
+    }
+
+    const artDir = this.artifactsDir(taskId)
+
+    if (path.isAbsolute(requestedPath)) {
+      // External branch: must be a registered external entry (exact path match).
+      const index = this.readArtifacts(taskId)
+      const registered = index.some(
+        (e) => e.external && e.path === requestedPath,
+      )
+      if (!registered) {
+        throw new ArtifactAccessError(
+          `path not whitelisted: ${requestedPath} (not a registered external artifact)`,
+          "FORBIDDEN",
+        )
+      }
+      if (!fs.existsSync(requestedPath)) {
+        throw new ArtifactAccessError(
+          `artifact file not found on disk: ${requestedPath}`,
+          "NOT_FOUND",
+        )
+      }
+      const content = fs.readFileSync(requestedPath, "utf-8")
+      return { path: requestedPath, content }
+    }
+
+    // Internal branch: relative path resolved against the artifacts/ dir, must
+    // not escape. path.resolve collapses `..` segments; path.relative then
+    // yields the offset from artDir — if it starts with `..` or is absolute
+    // (cross-drive on Windows), the path escaped.
+    const resolved = path.resolve(artDir, requestedPath)
+    const rel = path.relative(artDir, resolved)
+    if (rel.startsWith("..") || path.isAbsolute(rel)) {
+      // Escaped the artifacts dir (e.g. `../persona.md`) or landed on another
+      // drive (Windows cross-drive rel is absolute). Reject as forbidden.
+      throw new ArtifactAccessError(
+        `path escapes the artifacts directory: ${requestedPath}`,
+        "FORBIDDEN",
+      )
+    }
+    // rel === "" means the path resolves to the artifacts dir itself (e.g.
+    // path=".") — not a file, so NOT_FOUND rather than FORBIDDEN (not an escape).
+    if (rel === "" || !fs.existsSync(resolved) || !fs.statSync(resolved).isFile()) {
+      throw new ArtifactAccessError(
+        `artifact file not found: ${requestedPath}`,
+        "NOT_FOUND",
+      )
+    }
+    const content = fs.readFileSync(resolved, "utf-8")
+    return { path: requestedPath, content }
   }
 
   /** Delete the whole task home. Junctions/symlinks inside the tree (the

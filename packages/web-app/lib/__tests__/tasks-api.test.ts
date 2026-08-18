@@ -13,6 +13,7 @@ import {
   readyTask,
   abortTask,
   updateSpecField,
+  TaskReadyGateError,
   type TaskDetail,
 } from "../tasks-api"
 
@@ -23,7 +24,7 @@ function makeTask(overrides: Partial<Task> & { id: string }): Task {
     org: "default",
     name: overrides.id,
     status: "draft",
-    task_spec: { goal: "g", ac: ["a"], resources: [], authoring_resources: [] },
+    task_spec: { goal: "g", ac: ["a"], resources: [], authoring_resources: [], skill_groups: [], decisions: [], ac_confirmed: [] },
     authoring_resources: [],
     resources: [],
     skills: [],
@@ -162,6 +163,29 @@ describe("createTask", () => {
     })
     expect(result.id).toBe("new")
   })
+
+  it("v3 two-phase flow: sends task_type + skill_groups + preset{org,projects}", async () => {
+    // AC2/D15: the template page creates a session first, then POSTs the task
+    // with the v3 body. The server (tasks.ts:123) reads these exact keys;
+    // preset.org overrides top-level org (tasks-service.ts:333).
+    const created = makeTask({ id: "v3", name: "v3 task" })
+    mockFetchOnce(created)
+
+    await createTask({
+      org: "E2E_TD_org",
+      source_chat_session_id: "sess-1",
+      task_type: "coding",
+      skill_groups: ["default", "open-spec"],
+      preset: { org: "E2E_TD_org", projects: ["octopus-server"] },
+    })
+
+    const [, init] = (fetch as unknown as { mock: { calls: [string, RequestInit][] } }).mock.calls[0]
+    const body = JSON.parse(init.body as string)
+    expect(body.task_type).toBe("coding")
+    expect(body.skill_groups).toEqual(["default", "open-spec"])
+    expect(body.preset).toEqual({ org: "E2E_TD_org", projects: ["octopus-server"] })
+    expect(body.source_chat_session_id).toBe("sess-1")
+  })
 })
 
 // ── updateTask ([save draft] — PUT with If-Match) ────────────────────
@@ -175,7 +199,7 @@ describe("updateTask", () => {
       "t1",
       {
         name: "renamed",
-        task_spec: { goal: "g2", ac: ["a"], resources: [], authoring_resources: [] },
+        task_spec: { goal: "g2", ac: ["a"], resources: [], authoring_resources: [], skill_groups: [], decisions: [], ac_confirmed: [] },
         resources: [{ type: "skill", name: "octo-x" }],
       },
       1,
@@ -237,6 +261,29 @@ describe("readyTask", () => {
     expect(init.method).toBe("POST")
     expect(result.status).toBe("ready")
   })
+
+  it("v3 gate: 409 with missing[] surfaces as TaskReadyGateError.missing (AC6/D18)", async () => {
+    // Server readyTask (tasks.ts:269) returns 409 {error, missing:[...]} when
+    // goal_confirmed/ac_confirmed not satisfied. The UI must show the gaps.
+    const gate409 = {
+      error: "Task not ready: missing goal_confirmed, ac_confirmed",
+      missing: ["goal_confirmed", "ac_confirmed"],
+    }
+    mockFetchOnce(gate409, { ok: false, status: 409 })
+
+    const err = await readyTask("t1").catch((e: unknown) => e)
+    expect(err).toBeInstanceOf(TaskReadyGateError)
+    expect((err as TaskReadyGateError).missing).toEqual(["goal_confirmed", "ac_confirmed"])
+    expect((err as TaskReadyGateError).message).toContain("missing goal_confirmed")
+  })
+
+  it("non-409 errors still throw a plain Error (not a gate error)", async () => {
+    mockFetchOnce({ error: "Cannot ready a task in status 'running'" }, { ok: false, status: 409 })
+    // 409 but no `missing` field → status conflict, not a gate miss.
+    const err = await readyTask("t1").catch((e: unknown) => e)
+    expect(err).toBeInstanceOf(Error)
+    expect(err).not.toBeInstanceOf(TaskReadyGateError)
+  })
 })
 
 // ── abortTask (running→aborted + ws cleanup) ────────────────────────
@@ -269,6 +316,39 @@ describe("updateSpecField", () => {
     expect(init.headers).toMatchObject({ "Content-Type": "application/json" })
     expect(JSON.parse(init.body as string)).toEqual({ field: "goal", value: "new goal text" })
     expect(result).toEqual({ version: 3 })
+  })
+
+  it("v3 user-direct-edit: sends source=user so server sets @@spec_updated (AC4/D7)", async () => {
+    // The default source is "agent" (no notice). source=user → server records
+    // the @@spec_updated reverse notice so the agent reconciles next turn.
+    mockFetchOnce({ version: 4 })
+
+    await updateSpecField("t1", "goal", "user override", { source: "user" })
+
+    const [, init] = (fetch as unknown as { mock: { calls: [string, RequestInit][] } }).mock.calls[0]
+    expect(JSON.parse(init.body as string)).toEqual({
+      field: "goal",
+      value: "user override",
+      source: "user",
+    })
+  })
+
+  it("v3 confirm: sends goal_confirmed / ac_confirmed as the field name (AC5/D18)", async () => {
+    // The server's ServerSpecField EXTENDS the shared enum with goal_confirmed/
+    // ac_confirmed (tasks-service.ts:241); the frontend sends them by name.
+    mockFetchOnce({ version: 5 })
+    await updateSpecField("t1", "goal_confirmed", true, { source: "user" })
+    let body = JSON.parse(
+      (fetch as unknown as { mock: { calls: [string, RequestInit][] } }).mock.calls[0][1]!.body as string,
+    )
+    expect(body).toEqual({ field: "goal_confirmed", value: true, source: "user" })
+
+    mockFetchOnce({ version: 6 })
+    await updateSpecField("t1", "ac_confirmed", ["ac 1", "ac 2"], { source: "user" })
+    body = JSON.parse(
+      (fetch as unknown as { mock: { calls: [string, RequestInit][] } }).mock.calls[1][1]!.body as string,
+    )
+    expect(body).toEqual({ field: "ac_confirmed", value: ["ac 1", "ac 2"], source: "user" })
   })
 })
 

@@ -7,7 +7,7 @@ TaskModal 重构为两阶段（US1-6/14/D12/D15）。交互参照原型 VariantL
 04 — 创建扩展 + skill-groups 路由 · 05 — spec-field gates
 
 ## Status
-ready-for-agent
+done
 
 ## Acceptance Criteria
 - [ ] AC1: TaskModal draft 打开 → 先渲染 TemplatePicker；GET /api/skill-groups 渲染组列表（checkbox 多选，default 组含「不物化」说明）；选组后创建按钮可用
@@ -29,3 +29,43 @@ E2E（扩展 task-domain-helpers）：模板页选 2 组 → 创建 → 断言 D
 
 **Pass criteria**: All verification steps PASS
 **Failure handling**: Max 3 fix attempts, then mark SKIP with reason
+
+## Exploration
+
+### Analog studied
+- Closest existing feature: the v2 `AuthoringMode` in `packages/web-app/components/tasks/task-modal.tsx` (spec LEFT / task-author chat RIGHT, lazy session creation on first message, `onDraftResolved` adopts an autosaved draft). The interaction reference is `app/tasks/prototype/page.tsx` VariantL (lines 2927–3490) — code is rewritten, not copied (R6/throwaway).
+- SpecPanel (`components/tasks/spec-panel.tsx`) is the analog for the SSE `spec_field_update` subscription + version-bump pattern + `[save draft]` PUT If-Match. The v3 goal/ac card reuses the SAME SSE subscription seam but writes via `POST spec-field source=user` (D7) instead of PUT.
+
+### Files needing modification (all in packages/web-app — my lane)
+- `lib/tasks-api.ts` — extend `CreateTaskInput` (+ `task_type`/`skill_groups`/`preset`), `createTask` body, `updateSpecField` (+ `source` param), `readyTask` (surface 409 `missing[]` via a typed error). NEW `listSkillGroups()` client for GET /api/skill-groups.
+- `components/tasks/task-modal.tsx` — `resolveMode` routes `task===null` → v3 template; `task.status===draft && task_type set` → v3 workspace; v2 draft (no task_type) keeps the existing AuthoringMode (backward compat, do NOT break SpecPanel tests).
+- NEW `components/tasks/authoring/template-picker.tsx` — phase 1 (task type cards + skill-group checkboxes + org/projects + 开始编写).
+- NEW `components/tasks/authoring/goal-ac-card.tsx` — ghost → SSE emerge → inline edit (spec-field source=user → ✏️ 已编辑) → per-field confirm (goal_confirmed / ac_confirmed[]).
+- NEW `components/tasks/authoring/authoring-workspace.tsx` — phase 2 (top bar: type badge + 🔒 skill-group badges + preset popup org+projects only; chat LEFT with command bar aggregating selected groups' /commands; OutputViewer RIGHT with GoalAcCard + enqueue checklist; enqueue gate 409 missing).
+
+### Specific functions / contracts chosen
+- `agentApi.createCloneSession(TASK_AUTHOR_CLONE)` — reuse (existing in `lib/agent/api.ts:232`, already used by AuthoringMode). Chosen because the D15 create sequence requires a session FIRST; do NOT use a different session-creation path.
+- `createTask({org, source_chat_session_id, task_type, skill_groups, preset:{org,projects}})` — server route `POST /api/tasks` (routes/tasks.ts:123) reads exactly these body keys; `preset.org` OVERRIDES top-level `org` (tasks-service.ts:333). Send both to be safe.
+- `updateSpecField(id, field, value, source)` — server route `POST /:id/spec-field` (tasks.ts:248) accepts `source:"user"|"agent"` (default agent); `source==="user"` → `setSpecNotice(@@spec_updated)` (tasks-service.ts:621). The server's `ServerSpecField` (tasks-service.ts:241) EXTENDS the shared enum with `"goal_confirmed" | "ac_confirmed"` — the frontend must send these field names for confirm actions (AC5), even though shared's `TaskSpecFieldSchema` omits them. Do NOT use PUT for direct edits (D7 says user-direct-edit goes through spec-field source=user).
+- `readyTask(id)` — server `POST /:id/ready` (tasks.ts:269) returns 409 `{error, missing:[...]}` when the v3 gate fails (D18). The frontend must parse `missing` to show the gate gap (AC6). Do NOT swallow the 409 body.
+- SSE subscription: `subscribeSSE(url, SPEC_FIELD_UPDATE_EVENT, handler)` from `lib/sse-manager` — same seam SpecPanel uses (spec-panel.tsx:127). The goal/ac card subscribes for `goal`/`ac`/`goal_confirmed`/`ac_confirmed` fields + bumps local version.
+
+### Out of scope (other tickets)
+- ArtifactViewerDialog / WorkflowLogDialog / MoaAdoptionPanel (US7/9/10/11 — tickets 10/11). The OutputViewer right panel is structured so those slots can be added later without rework; this ticket renders only the goal/ac card + enqueue checklist there.
+
+## Verification Result
+
+**Unit tests**: 44 new tests, all green (skill-groups-api 3, tasks-api 20 incl. 4 v3 cases, template-picker 6, goal-ac-card 8, authoring-workspace 7). Existing task-modal-spec-panel (10) + task-modal-composite (10) still pass — v2 legacy flow untouched.
+
+**Typecheck**: all new/modified web-app files clean. (Pre-existing `app/tasks/prototype/page.tsx` `moSugChecked` typos + `task-modal-composite.test.tsx` fixture are throwaway/baseline — not this ticket's files.)
+
+**E2E** (`pnpm playwright test e2e/task-authoring-v3.spec.ts -g "template|goalac"`): 6/6 PASS against the real server (:3001) + real web (:3000) + real SQLite:
+- template-01: GET /api/skill-groups renders groups; default group shows 不物化 note; create enables on select (AC1)
+- template-02: session-first → POST /api/tasks(v3) → AuthoringWorkspace; DB task_spec.task_type+skill_groups; home dir readdir; sessions.scope_id == task.id (AC2/D15)
+- template-03: type badge + 🔒 skill-group badges (no dropdown); preset popup = org+projects only, no 技能 label (AC3/US14)
+- goalac-01: ghost → SSE spec_field_update(goal) emerges; direct edit → spec-field source=user → DB version+1 + ✏️ edited mark (AC4/D7)
+- goalac-02: confirm goal/ac → spec-field(goal_confirmed/ac_confirmed); close+reopen modal → confirm state persists (AC5/D18)
+- goalac-03: enqueue disabled when unconfirmed; server readyTaskRaw → 409 missing=[goal_confirmed,ac_confirmed] (AC6 backstop)
+
+**Environment note**: the running dev server was stale (pre-ticket-04 build — skill-groups route 404, v3 create returned empty task_spec). Rebuilt `@octopus/server` dist + restarted `PORT=3001 node packages/server/dist/index.js` to load committed route code. No server SOURCE was modified (ticket 06's lane).
+

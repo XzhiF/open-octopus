@@ -280,7 +280,15 @@ async function apiContext(): Promise<APIRequestContext> {
 
 /** POST /api/tasks — create a draft task. */
 export async function createTask(
-  input: { org?: string; name?: string; source_chat_session_id?: string | null },
+  input: {
+    org?: string
+    name?: string
+    source_chat_session_id?: string | null
+    // v3 (ticket 09): two-phase-flow fields. Absent → legacy v2 create.
+    task_type?: "coding" | "generic"
+    skill_groups?: string[]
+    preset?: { org?: string; projects?: string[] }
+  },
 ): Promise<TaskDTO> {
   const ctx = await apiContext()
   try {
@@ -289,6 +297,9 @@ export async function createTask(
         org: input.org ?? TASK_E2E_ORG,
         name: input.name,
         source_chat_session_id: input.source_chat_session_id ?? undefined,
+        ...(input.task_type ? { task_type: input.task_type } : {}),
+        ...(input.skill_groups ? { skill_groups: input.skill_groups } : {}),
+        ...(input.preset ? { preset: input.preset } : {}),
       },
       headers: { "Content-Type": "application/json" },
     })
@@ -308,7 +319,10 @@ export async function listTasks(params?: { status?: string; org?: string }): Pro
   try {
     const qs = new URLSearchParams()
     if (params?.status) qs.set("status", params.status)
-    qs.set("org", params?.org ?? TASK_E2E_ORG)
+    // Org is opt-in: only filter when explicitly provided. The v3 two-phase
+    // E2E (task-authoring-v3.spec.ts) creates tasks via the UI, which selects a
+    // REAL registered org — forcing TASK_E2E_ORG here would hide those tasks.
+    if (params?.org) qs.set("org", params.org)
     const res = await ctx.get(`${SERVER_URL}/api/tasks?${qs.toString()}`)
     if (!res.ok()) {
       const body = await res.text()
@@ -357,16 +371,21 @@ export async function updateTask(
   }
 }
 
-/** POST /api/tasks/:id/spec-field — agent update_task_spec_field tool. */
+/** POST /api/tasks/:id/spec-field — agent update_task_spec_field tool.
+ *  v3 (ticket 09): `source` routes user-direct-edits through the
+ *  @@spec_updated notice path (D7). Default omitted → "agent" (no notice). */
 export async function updateSpecField(
   taskId: string,
   field: string,
   value: unknown,
+  opts?: { source?: "user" | "agent" },
 ): Promise<{ version: number }> {
   const ctx = await apiContext()
   try {
+    const body: Record<string, unknown> = { field, value }
+    if (opts?.source) body.source = opts.source
     const res = await ctx.post(`${SERVER_URL}/api/tasks/${taskId}/spec-field`, {
-      data: { field, value },
+      data: body,
       headers: { "Content-Type": "application/json" },
     })
     if (!res.ok()) {
@@ -376,6 +395,58 @@ export async function updateSpecField(
     return (await res.json()) as { version: number }
   } finally {
     await ctx.dispose()
+  }
+}
+
+/** GET /api/skill-groups — list skill groups for the template page (D3). */
+export async function listSkillGroupsViaApi(): Promise<{
+  groups: Array<{ group: string; displayName: string; skills: Array<{ name: string; description?: string }> }>
+}> {
+  const ctx = await apiContext()
+  try {
+    const res = await ctx.get(`${SERVER_URL}/api/skill-groups`)
+    if (!res.ok()) {
+      const text = await res.text()
+      throw new Error(`listSkillGroups failed (${res.status()}): ${text}`)
+    }
+    return (await res.json()) as {
+      groups: Array<{ group: string; displayName: string; skills: Array<{ name: string; description?: string }> }>
+    }
+  } finally {
+    await ctx.dispose()
+  }
+}
+
+/** POST /api/tasks/:id/ready — returns the raw {status, body} so the caller
+ *  can assert the D18 gate's 409 + missing[] (AC6). Unlike {@link readyTask},
+ *  this never throws on 409 — it surfaces the body. */
+export async function readyTaskRaw(taskId: string): Promise<{
+  status: number
+  body: { error?: string; missing?: string[] } & Record<string, unknown>
+}> {
+  const ctx = await apiContext()
+  try {
+    const res = await ctx.post(`${SERVER_URL}/api/tasks/${taskId}/ready`, {
+      headers: { "Content-Type": "application/json" },
+    })
+    const body = (await res.json().catch(() => ({}))) as { error?: string; missing?: string[] } & Record<string, unknown>
+    return { status: res.status(), body }
+  } finally {
+    await ctx.dispose()
+  }
+}
+
+/** Read the task home directory contents (~/.octopus/tasks/{id}/) — R3/R5:
+ *  cross-validate that the v3 create path materialized the home + skills/
+ *  subdir. Returns null when the dir is absent (v2/legacy task or not yet
+ *  materialized). */
+export function readTaskHomeDir(taskId: string): string[] | null {
+  const home = path.join(os.homedir(), ".octopus", "tasks", taskId)
+  if (!fs.existsSync(home)) return null
+  try {
+    return fs.readdirSync(home)
+  } catch {
+    return null
   }
 }
 
