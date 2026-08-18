@@ -1,0 +1,8 @@
+{
+  "root_feature": "task-authoring-v3",
+  "branch": "feat/task-domain-redesign",
+  "iterations": [],
+  "max_iterations": 5,
+  "convergence_threshold": 85,
+  "status": "running"
+}

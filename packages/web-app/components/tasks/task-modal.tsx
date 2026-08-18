@@ -19,7 +19,7 @@ import {
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Spinner } from "@/components/ui/spinner"
-import { Send, Ban, AlertCircle, CheckCircle2, Workflow, ExternalLink } from "lucide-react"
+import { Send, Ban, AlertCircle, CheckCircle2, Workflow, ExternalLink, Maximize2, Minimize2 } from "lucide-react"
 import { toast } from "sonner"
 import type { Task, TaskSpec, SubunitSpec } from "@octopus/shared"
 import {
@@ -99,15 +99,32 @@ const STATUS_TONE: Record<string, string> = {
 
 export function TaskModal({ open, onOpenChange, task, onMutated, onDraftResolved }: TaskModalProps) {
   const mode = resolveMode(task)
+  const [isFullscreen, setIsFullscreen] = useState(false)
+
+  // Reset fullscreen when modal closes
+  useEffect(() => {
+    if (!open) setIsFullscreen(false)
+  }, [open])
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
         showCloseButton
-        className="sm:max-w-[92vw] w-[92vw] max-h-[90vh] h-[90vh] p-0 gap-0 flex flex-col"
+        className={
+          isFullscreen
+            ? "sm:max-w-[100vw] w-screen h-screen max-h-screen p-0 gap-0 flex flex-col !rounded-none border-0"
+            : "sm:max-w-[92vw] w-[92vw] max-h-[90vh] h-[90vh] p-0 gap-0 flex flex-col"
+        }
         aria-describedby={undefined}
+        onEscapeKeyDown={(e) => {
+          if (isFullscreen) {
+            e.preventDefault()
+            setIsFullscreen(false)
+          }
+        }}
+        overlayClassName={isFullscreen ? "bg-transparent" : undefined}
       >
-        <ModalHeader task={task} mode={mode} />
+        <ModalHeader task={task} mode={mode} isFullscreen={isFullscreen} onToggleFullscreen={() => setIsFullscreen((f) => !f)} />
         <div className="flex-1 min-h-0 overflow-hidden">
           {mode === "authoring" && (
             <AuthoringMode task={task} onMutated={onMutated} onDraftResolved={onDraftResolved} onClose={() => onOpenChange(false)} />
@@ -126,7 +143,9 @@ export function TaskModal({ open, onOpenChange, task, onMutated, onDraftResolved
   )
 }
 
-function ModalHeader({ task, mode }: { task: Task | null; mode: ModalMode }) {
+function ModalHeader({ task, mode, isFullscreen, onToggleFullscreen }: {
+  task: Task | null; mode: ModalMode; isFullscreen: boolean; onToggleFullscreen: () => void
+}) {
   const title = task?.name ?? "新建任务"
   const status = task?.status ?? "draft"
   const subtitle =
@@ -145,9 +164,20 @@ function ModalHeader({ task, mode }: { task: Task | null; mode: ModalMode }) {
         <DialogTitle className="text-base truncate">{title}</DialogTitle>
         <DialogDescription className="text-xs">{subtitle}</DialogDescription>
       </div>
-      <Badge variant="secondary" className={`shrink-0 mr-8 ${STATUS_TONE[status] ?? ""}`} data-task-modal-status={status}>
-        {STATUS_LABEL[status] ?? status}
-      </Badge>
+      <div className="flex items-center gap-2 shrink-0 mr-8">
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-7 w-7"
+          onClick={onToggleFullscreen}
+          title={isFullscreen ? "退出全屏 (Esc)" : "全屏"}
+        >
+          {isFullscreen ? <Minimize2 className="h-3.5 w-3.5" /> : <Maximize2 className="h-3.5 w-3.5" />}
+        </Button>
+        <Badge variant="secondary" className={`${STATUS_TONE[status] ?? ""}`} data-task-modal-status={status}>
+          {STATUS_LABEL[status] ?? status}
+        </Badge>
+      </div>
     </DialogHeader>
   )
 }

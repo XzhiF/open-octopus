@@ -67,7 +67,12 @@ export interface SpecPanelProps {
 
 export function SpecPanel({ task, onMutated }: SpecPanelProps) {
   const { orgs } = useOrgs()
-  const org = orgs[0]?.name ?? ""
+  const [org, setOrg] = useState<string>(orgs[0]?.name ?? "")
+
+  // Sync org when orgs list loads (initially empty → first org).
+  useEffect(() => {
+    if (orgs.length > 0 && !org) setOrg(orgs[0].name)
+  }, [orgs, org])
 
   // ── Local spec state (seeded from task; re-synced only on task.id change) ─
   const [version, setVersion] = useState<number>(task?.version ?? 0)
@@ -236,6 +241,22 @@ export function SpecPanel({ task, onMutated }: SpecPanelProps) {
   return (
     <div className="p-4 space-y-4" data-task-spec-panel>
       <section className="space-y-2">
+        <div className="flex items-center gap-2">
+          <Label className="text-xs text-muted-foreground shrink-0">组织</Label>
+          {orgs.length > 1 ? (
+            <select
+              className="h-7 flex-1 rounded-md border border-border bg-background px-2 text-xs"
+              value={org}
+              onChange={(e) => setOrg(e.target.value)}
+            >
+              {orgs.map((o) => (
+                <option key={o.name} value={o.name}>{o.name}</option>
+              ))}
+            </select>
+          ) : (
+            <span className="text-xs text-muted-foreground truncate">{org || "—"}</span>
+          )}
+        </div>
         <Label className="text-xs text-muted-foreground">项目 (多仓库)</Label>
         {org ? (
           <ProjectSelector org={org} value={projects} onChange={setProjects} />
