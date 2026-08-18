@@ -13,7 +13,7 @@
 // (sub_workflow precedent) and the node's result outputs so downstream nodes can
 // read `$<taskDispatchId>.output.<key>` for aggregation (moa synthesis).
 
-import { VarPool, applyOutputsMapping } from "@octopus/shared"
+import { VarPool, applyOutputsMapping, substituteVars } from "@octopus/shared"
 import type {
   NodeDef,
   CrossExecResolver,
@@ -86,11 +86,21 @@ export class TaskDispatchExecutor implements NodeExecutor {
 
     logLines.push(`task_dispatch: dispatching subunit "${subunit.name}" (workflow_ref: ${subunit.workflow_ref})`)
 
+    // Ticket 08 (AC3/D14): resolve input_mapping from the parent pool and merge
+    // into the subunit's input_values before dispatching. This forwards parent
+    // vars (e.g. $vars.task_artifacts_dir) to the child schedule's input_values
+    // so the child workflow's $vars.task_artifacts_dir is set. Mirrors
+    // sub-workflow.ts resolveMappingValue (pure $vars.xxx → pool.get, preserving
+    // type; $nodeId.output.xxx → nodeOutputs; templates → substituteVars).
+    // Gated on this.node.input_mapping presence so existing nodes without it
+    // are unaffected (backward compat — the subunit passes through unchanged).
+    const subunitToDispatch = this.applyInputMapping(subunit, logLines)
+
     let handle: ScheduleHandle
     try {
       // Port contract: resolves once the child schedule is CREATED (queued), not on
       // completion — so this await does not block the event loop on the child run.
-      handle = await this.config.port.dispatchChildSchedule(subunit)
+      handle = await this.config.port.dispatchChildSchedule(subunitToDispatch)
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err)
       return {
@@ -194,6 +204,69 @@ export class TaskDispatchExecutor implements NodeExecutor {
         logLines.push(`output_mapping: ${parentVar} ← ${childKey} (not found in child output)`)
       }
     }
+  }
+
+  /**
+   * Ticket 08 (AC3): Apply `node.input_mapping` to the subunit before dispatch.
+   * Resolves each mapping expression from the parent pool and merges the result
+   * into a COPY of the subunit's input_values (non-mutating — the task_spec's
+   * subunit data is read-only). Returns the original subunit unchanged when
+   * input_mapping is absent (backward compat). Mirrors sub-workflow.ts
+   * resolveMappingValue: $vars.xxx → pool.get (type-preserving); $nodeId.output.xxx
+   * → nodeOutputs; templates/literals → substituteVars.
+   */
+  private applyInputMapping(
+    subunit: SubunitSpec,
+    logLines: string[],
+  ): SubunitSpec {
+    if (!this.node.input_mapping) return subunit
+    const nodeOutputs = this.config.nodeOutputs ?? {}
+    const enrichedValues: Record<string, unknown> = {}
+    for (const [childVar, expr] of Object.entries(this.node.input_mapping)) {
+      try {
+        const value = this.resolveMappingValue(expr, nodeOutputs)
+        if (value !== undefined) {
+          enrichedValues[childVar] = value
+          logLines.push(`input_mapping: ${childVar} = ${JSON.stringify(value)}`)
+        } else {
+          logLines.push(`input_mapping: ${childVar} ← ${expr} (resolved to undefined — skipped)`)
+        }
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err)
+        logLines.push(`input_mapping error for ${childVar}: ${msg}`)
+      }
+    }
+    // Non-mutating: shallow-copy the subunit with merged input_values. The
+    // enrichedValues may carry non-string types (paths, numbers) — cast through
+    // unknown to match SubunitSpec.input_values' Record<string, string> at the
+    // type level (runtime carries the real values; same pattern as
+    // materializeTaskSpecToConfig's input_values cast).
+    return {
+      ...subunit,
+      input_values: { ...subunit.input_values, ...enrichedValues } as unknown as Record<string, string>,
+    }
+  }
+
+  /**
+   * Resolve a mapping expression to its actual value (not stringified).
+   * - Pure `$vars.key` → returns pool.get(key) preserving type
+   * - Pure `$nodeId.output.key` → returns node output value
+   * - Templates or literals → substituteVars (string result)
+   * Mirrors sub-workflow.ts:266-284 resolveMappingValue.
+   */
+  private resolveMappingValue(
+    expr: string,
+    nodeOutputs: Record<string, Record<string, any>>,
+  ): unknown {
+    const varsMatch = expr.match(/^\$vars\.([a-zA-Z0-9_]+)$/)
+    if (varsMatch) {
+      return this.pool.get(varsMatch[1])
+    }
+    const outputMatch = expr.match(/^\$([a-zA-Z0-9_-]+)\.output\.([a-zA-Z0-9_]+)$/)
+    if (outputMatch) {
+      return nodeOutputs[outputMatch[1]]?.[outputMatch[2]]
+    }
+    return substituteVars(expr, this.pool, nodeOutputs)
   }
 
   /**

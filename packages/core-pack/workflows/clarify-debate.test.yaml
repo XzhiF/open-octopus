@@ -1,0 +1,20 @@
+# clarify-debate.test.yaml — simulate fixture for clarify-debate.yaml
+#
+# Minimal scenario: debate 2 rounds, host mocked to emit valid three-part JSON.
+
+scenarios:
+  - name: "happy path — debate converges, host emits three-part JSON"
+    inputs:
+      goal: "E2E_TD goal: 改善可观测性"
+      ac: "E2E_TD ac1: 有指标看板"
+      projects: "my-app"
+    mocks:
+      panel:
+        output: '{"ac_candidates":["E2E_TD ac2: 指标含 RED 三件套"],"suggestions":["E2E_TD 先埋点后看板"],"risks":["E2E_TD 指标爆炸"]}'
+        update_vars:
+          panel_synthesis: '{"ac_candidates":["E2E_TD ac2"],"suggestions":["E2E_TD s1"],"risks":["E2E_TD r1"]}'
+          panel_consensus_score: "0.85"
+          panel_rounds_used: "2"
+          panel_expert_count: "3"
+    assertions:
+      status: "completed"

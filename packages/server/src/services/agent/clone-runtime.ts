@@ -233,16 +233,30 @@ export class CloneRuntime {
    *
    * The SDK scans each plugin's direct skills/ subdirectory (non-recursive)
    * and injects discovered skills into the system prompt automatically.
+   *
+   * 03 (task-authoring-v3, AC5): an optional `taskHomePath` appends a THIRD
+   * plugin directory — the per-task home (`~/.octopus/tasks/{id}/`). The SDK
+   * scans `{taskHomePath}/skills/`, which is where PluginMaterializer linked
+   * the task's selected Skill-group skills (ADR-0010). Only the task-author
+   * send path passes this (AC6 — routes/clone/index.ts); other clones omit it
+   * and get the original 2-plugin behavior. Param is tail-appended so every
+   * existing caller (clone/index.ts, main-agent-route.ts, tests) keeps working
+   * unchanged (SW-BP15). Falsy (`undefined`/`""`) → no third plugin (no cwd
+   * root scan).
    */
-  getPlugins(): Array<{ type: 'local'; path: string }> {
+  getPlugins(taskHomePath?: string): Array<{ type: 'local'; path: string }> {
     const clonePath = this.cloneDef.type === 'built-in'
       ? getBuiltInCloneDir(this.cloneDef.name)
       : getCloneDir(this.cloneDef.name)
 
-    return [
+    const plugins: Array<{ type: 'local'; path: string }> = [
       { type: 'local', path: getAgentDir() },
       { type: 'local', path: clonePath },
     ]
+    if (taskHomePath) {
+      plugins.push({ type: 'local', path: taskHomePath })
+    }
+    return plugins
   }
 
   // ── Provider Call Encapsulation ─────────────────────────────────
@@ -276,6 +290,13 @@ export class CloneRuntime {
    * cleanly without an `undefined` hole. All existing callers pass ≤4 args,
    * so the reorder is backwards-compatible (verified: clone/index.ts:306,
    * main-agent-route.ts:239/763, clone-runtime.test.ts:168).
+   *
+   * 03 (task-authoring-v3, AC5): `taskHomePath` is appended AFTER `abortSignal`
+   * (tail) — NOT before it — so the existing 4-7-arg callers (clone/index.ts
+   * passes 6, main-agent-route passes 4, tests pass ≤6) are unchanged. Only
+   * the task-author send path (routes/clone/index.ts AC6) passes the 8th arg.
+   * sendWithProvider threads it to getPlugins(taskHomePath) which appends a
+   * third plugin directory (the per-task home for materialized skill links).
    */
   async *chat(
     message: string,
@@ -285,6 +306,7 @@ export class CloneRuntime {
     specUpdateNotice?: string,
     authoringResourcesContent?: string,
     abortSignal?: AbortSignal,
+    taskHomePath?: string,
   ): AsyncGenerator<MessageChunk> {
     const cloneSystemPrompt = this.assembleContext()
     const effectiveCwd = cwd || this.getDefaultCwd()
@@ -299,6 +321,7 @@ export class CloneRuntime {
         specUpdateNotice,
         authoringResourcesContent,
         abortSignal,
+        taskHomePath,
       )
       yield* stream
       return
@@ -316,6 +339,7 @@ export class CloneRuntime {
             specUpdateNotice,
             authoringResourcesContent,
             abortSignal,
+            taskHomePath,
           )
           yield* stream
           return
@@ -355,6 +379,7 @@ export class CloneRuntime {
     specUpdateNotice: string | undefined,
     authoringResourcesContent: string | undefined,
     abortSignal?: AbortSignal,
+    taskHomePath?: string,
   ): AsyncGenerator<MessageChunk> {
     const provider = getProvider('claude')
 
@@ -380,7 +405,7 @@ export class CloneRuntime {
       },
       abortSignal,
       model: this.cloneDef.config.model,
-      plugins: this.getPlugins(),
+      plugins: this.getPlugins(taskHomePath),
     })
   }
 

@@ -1,0 +1,23 @@
+# moa-requirements-review.test.yaml — simulate fixture for moa-requirements-review.yaml
+#
+# Minimal scenario: aggregator mocked to emit valid three-part JSON.
+# Asserts workflow completes (the simulator auto-passes unmocked swarm side-effect
+# nodes only in non-strict mode; strict mode requires a mock for the `panel` swarm
+# node, provided here). The real LLM path is exercised at E2E with a minimal config.
+
+scenarios:
+  - name: "happy path — aggregator emits three-part JSON"
+    inputs:
+      goal: "E2E_TD goal: 给 my-app 加健康检查"
+      ac: "E2E_TD ac1: /healthz 返回 200"
+      projects: "my-app"
+    mocks:
+      panel:
+        output: '{"ac_candidates":["E2E_TD ac2: /readyz 返回 200","E2E_TD ac3: 健康检查 < 50ms"],"suggestions":["E2E_TD 用 /healthz 与 /readyz 双端点"],"risks":["E2E_TD 健康检查打 DB 连接池"]}'
+        update_vars:
+          panel_synthesis: '{"ac_candidates":["E2E_TD ac2"],"suggestions":["E2E_TD s1"],"risks":["E2E_TD r1"]}'
+          panel_consensus_score: "1.0"
+          panel_rounds_used: "1"
+          panel_expert_count: "3"
+    assertions:
+      status: "completed"

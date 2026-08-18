@@ -68,6 +68,7 @@ import { SchedulerService } from "./services/scheduler/scheduler-service"
 import { SchedulerEngine } from "./services/scheduler/scheduler-engine"
 import { TaskScheduleStatusListener } from "./services/scheduler/schedule-status-listener"
 import { TasksService } from "./services/tasks/tasks-service"
+import { AssistWorkflowService } from "./services/tasks/assist-workflow-service"
 import { WorkflowExecutor } from "./services/scheduler/executors/workflow-executor"
 import { AgentExecutor } from "./services/scheduler/executors/agent-executor"
 import { DashboardService } from "./services/scheduler/dashboard-service"
@@ -699,8 +700,11 @@ if (shouldServe) {
       // ★ Initialize Tasks Service (always available, not gated by feature flag)
       // 03: first-class tasks domain — /api/tasks CRUD + spec-field + ready
       // (dispatch seam) + abort + /events SSE.
+      // 07: assist-workflow routes (POST/GET /:id/assist-workflows) — service
+      // owns temp-workspace creation + execution trigger + output parsing.
       const tasksService = new TasksService(db, sse, daos!.agentSession)
-      app.route('/api/tasks', createTasksRoutes(tasksService, sse))
+      const assistService = new AssistWorkflowService(db, sse)
+      app.route('/api/tasks', createTasksRoutes(tasksService, sse, assistService))
       ;(global as any).__octopus_tasks_service = tasksService
 
       // ★ Initialize Scheduler Engine with executors

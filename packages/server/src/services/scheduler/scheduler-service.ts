@@ -174,6 +174,18 @@ function isCompositeTaskSpec(task_spec: TaskSpec): boolean {
 //   skill→skills, agent→agent_files, command→commands, rule→rules. UNION + dedupe
 //   across task-level and all subunits. Omitted entirely when no resources
 //   (backward compat with 06's AC4 — config.requires stays undefined).
+// Ticket 08 (D14/SW-BP7): $vars.task_artifacts_dir injection. The dispatch seam
+// (TasksService.readyTask) computes the task's artifacts directory via
+// TaskHomeService.artifactsDir(id) (pure path, ADR-0011) and passes it here. It
+// lands in workflow_chain[0].input_values so:
+//   - simple tasks: execute() passes firstStep.input_values directly → the
+//     workflow's $vars.task_artifacts_dir is set.
+//   - composite tasks: buildCompositeInputValues (workflow-executor.ts) READS
+//     it from here and preserves it in the composition wf's input_values (AC2 —
+//     without this, buildCompositeInputValues would drop it since it replaces
+//     firstStep.input_values entirely).
+// Omitted (undefined) for legacy tasks that have no task home (AC4 backward
+// compat — createJob/updateJob paths don't pass it).
 export function materializeTaskSpecToConfig(
   task_spec: TaskSpec,
   project_ids: string[],
@@ -181,6 +193,7 @@ export function materializeTaskSpecToConfig(
   workflow_ref?: string,
   skills?: string[],
   resources?: ResourceRef[],
+  taskArtifactsDir?: string,
 ): WorkflowConfig {
   const isComposite = isCompositeTaskSpec(task_spec)
   const projects = project_ids.map((id) => ({ name: id, source_path: '', group: '' }))
@@ -188,6 +201,18 @@ export function materializeTaskSpecToConfig(
   // safe, stable prefix from org so multiple drafts in the same org share a prefix.
   const branchPrefix = `taskpool-${org}`.replace(/[^a-zA-Z0-9_-]/g, '-').slice(0, 50) || 'taskpool'
 
+  // Ticket 08: build the input_values for workflow_chain[0]. Simple tasks carry
+  // task_artifacts_dir directly (execute passes firstStep.input_values to the
+  // workflow). Composite tasks carry subunit_count (SG5) + task_artifacts_dir
+  // (the latter is read by buildCompositeInputValues at execute time, AC2).
+  const simpleInputValues: Record<string, unknown> = {}
+  const compositeInputValues: Record<string, unknown> = {
+    subunit_count: task_spec.subunits?.length ?? 0,
+  }
+  if (taskArtifactsDir) {
+    simpleInputValues.task_artifacts_dir = taskArtifactsDir
+    compositeInputValues.task_artifacts_dir = taskArtifactsDir
+  }
   const config: WorkflowConfig = {
     schema_version: '3.0',
     type: 'workflow',
@@ -207,9 +232,11 @@ export function materializeTaskSpecToConfig(
           // the composition-task workflow reads subunits from its own input_values
           // if needed — but the canonical input source is subunit_count for the
           // Loop break, which is all that's needed for iteration control.
-          input_values: { subunit_count: task_spec.subunits!.length } as unknown as Record<string, string>,
+          // Ticket 08: task_artifacts_dir is also injected here so
+          // buildCompositeInputValues can read+preserve it (AC2).
+          input_values: compositeInputValues as unknown as Record<string, string>,
         }]
-      : [{ workflow_ref: workflow_ref ?? '', input_values: {} }],
+      : [{ workflow_ref: workflow_ref ?? '', input_values: simpleInputValues as unknown as Record<string, string> }],
     max_retain: 10,
     // SG5: NO task_spec in the output config — it lives in the tasks table now.
     // The composition-task workflow reads subunit_count (above) + the parent

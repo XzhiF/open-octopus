@@ -1,0 +1,52 @@
+# moa-requirements-review.yaml — 编写期辅助工作流：MoA 需求评审 (D9/US9-11)
+#
+# 3 个内置辅助工作流之一。编写期由用户触发（agent 建议权 + 用户执行权，D9），
+# 经 AssistWorkflowService 以**临时 workspace**（source='task-assist'，
+# workspacePath=任务家目录，D16）为执行宿主启动。
+#
+# Flow:
+#   1. panel (swarm, mode=moa) — ≥2 experts 并行评审 task_spec 的 goal/ac
+#      完整性与可验证性 / 集成点与影响面 / 安全风险；aggregator 汇总为
+#      JSON {ac_candidates[], suggestions[], risks[]}。
+#
+# Output contract (D10/SW-BP10):
+#   - aggregator.prompt 要求输出严格 JSON 三段式。
+#   - AssistWorkflowService 解析 synthesis 为 {ac_candidates, suggestions, risks}；
+#     解析失败 → output_raw + output_parse_error=true 兜底（不抛错）。
+#
+# Input (AC7, injected via $vars from task_spec):
+#   - $vars.goal — task_spec.goal
+#   - $vars.ac — task_spec.ac (joined bullet list)
+#   - $vars.projects — task_spec.projects (joined)
+#   AssistWorkflowService.trigger passes these as input_values; the engine's
+#   VarPool merges input_values into $vars, so experts read them via $vars.*.
+
+apiVersion: octopus/v1
+kind: Workflow
+name: moa-requirements-review
+description: "MoA 需求评审：多专家并行评审 goal/ac，聚合为三段式 JSON 产出"
+
+variables:
+  goal: ""
+  ac: ""
+  projects: ""
+
+nodes:
+  - id: panel
+    type: swarm
+    mode: moa
+    topic: "评审任务需求：goal=$vars.goal；验收标准=$vars.ac；涉及项目=$vars.projects"
+    rounds: 1
+    experts:
+      - role: 需求专家
+        prompt: "评审 goal 与 ac 的完整性与可验证性。指出遗漏的验收标准、模糊措辞、不可测的断言。给出候选 ac 补充。"
+      - role: 架构专家
+        prompt: "分析集成点、依赖面与潜在技术风险。指出与现有系统冲突的地方、边界条件、性能/可用性盲区。"
+      - role: 安全专家
+        prompt: "识别安全风险：鉴权/授权、数据泄露、注入面、供应链。给出具体缓解建议。"
+    aggregator:
+      role: 需求综合者
+      prompt: |
+        汇总各专家意见，**只输出一个 JSON 对象**，不要 markdown 代码块、不要解释文字。结构：
+        {"ac_candidates": ["候选验收标准1", ...], "suggestions": ["方案建议1", ...], "risks": ["风险提示1", ...]}
+        ac_candidates = 应补充的验收标准；suggestions = 方案/集成建议；risks = 风险提示。每项为非空字符串。若某类无内容返回空数组。

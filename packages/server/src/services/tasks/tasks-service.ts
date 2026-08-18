@@ -46,6 +46,7 @@ import {
 import type { TaskRow, ScheduleRow } from "../../db/types"
 import type { SSEService } from "../sse"
 import { materializeTaskSpecToConfig } from "../scheduler/scheduler-service"
+import { TaskHomeService } from "./task-home-service"
 import {
   setSpecNotice,
 } from "./spec-notice-store"
@@ -521,6 +522,13 @@ export class TasksService {
     // Materialize the WorkflowConfig for the schedule envelope. The exported
     // function includes task_spec in the output (06 drops it); 03's
     // verification only checks origin_type='task' + status='queued'.
+    // Ticket 08 (D14): inject $vars.task_artifacts_dir = homePath(id)/artifacts
+    // for v3 tasks (task_type set — went through the two-phase flow → home
+    // created at task creation). v2/legacy tasks (no task_type) skip injection
+    // (AC4 backward compat — no home exists, the key is omitted not errored).
+    const taskArtifactsDir = taskSpec.task_type !== undefined
+      ? new TaskHomeService().artifactsDir(id)
+      : undefined
     const config = materializeTaskSpecToConfig(
       taskSpec,
       projectIds,
@@ -528,6 +536,7 @@ export class TasksService {
       existing.workflow_ref ?? undefined,
       skills,
       resources,
+      taskArtifactsDir,
     )
     const configJson = JSON.stringify(config)
     const now = new Date().toISOString()

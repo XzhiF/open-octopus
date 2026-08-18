@@ -23,6 +23,7 @@ import {
   type UpdateSpecFieldInput,
   type ServerSpecField,
 } from "../services/tasks/tasks-service"
+import { AssistWorkflowService, AssistWorkflowError } from "../services/tasks/assist-workflow-service"
 import { SSEService } from "../services/sse"
 import {
   taskSpecSchema,
@@ -41,6 +42,15 @@ function classifyError(err: unknown): { status: number; message: string } {
   if (err instanceof TaskVersionConflictError) return { status: 409, message: err.message }
   if (err instanceof TaskStatusConflictError) return { status: 409, message: err.message }
   if (err instanceof TaskSpecFieldError) return { status: 400, message: err.message }
+  // 07: assist-workflow template/run classification.
+  if (err instanceof AssistWorkflowError) {
+    switch (err.code) {
+      case "INVALID_TEMPLATE": return { status: 400, message: err.message }
+      case "TASK_NOT_FOUND": return { status: 404, message: err.message }
+      case "RUN_NOT_FOUND": return { status: 404, message: err.message }
+      case "RUN_MISMATCH": return { status: 403, message: err.message }
+    }
+  }
   const msg = err instanceof Error ? err.message : String(err)
   return { status: 500, message: msg }
 }
@@ -55,7 +65,11 @@ async function safeJson(c: Context): Promise<Record<string, unknown> | null> {
 
 // ── Route Factory ───────────────────────────────────────────────────
 
-export function createTasksRoutes(service: TasksService, sse: SSEService): Hono {
+export function createTasksRoutes(
+  service: TasksService,
+  sse: SSEService,
+  assistService?: AssistWorkflowService,
+): Hono {
   const router = new Hono()
   // SSE route — MUST be registered BEFORE /:id below. Hono v4 matches
   // routes in registration order; a /:id registered first shadows the
@@ -238,6 +252,38 @@ export function createTasksRoutes(service: TasksService, sse: SSEService): Hono 
     try {
       const task = await service.abortTask(c.req.param("id"))
       return c.json(task)
+    } catch (err: unknown) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status)
+    }
+  })
+
+  // ── Assist workflows (ticket 07 — US9/10/11) ────────────────────
+  // POST /:id/assist-workflows — trigger a built-in assist-workflow run
+  // (AC3). Body: { template, input? }. Returns { run_id, execution_id,
+  // workspace_id, template }. Non-whitelist template → 400.
+  router.post("/:id/assist-workflows", async (c) => {
+    if (!assistService) return c.json({ error: "Assist workflow service not configured" }, 503)
+    const body = await safeJson(c)
+    if (!body) return c.json({ error: "Invalid or missing JSON body" }, 400)
+    const template = typeof body.template === "string" ? body.template : ""
+    try {
+      const result = assistService.trigger(c.req.param("id"), template, body.input as never)
+      return c.json(result, 200)
+    } catch (err: unknown) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status)
+    }
+  })
+
+  // GET /:id/assist-workflows/:runId — run status + process logs + structured
+  // output (AC4). Parse failure → output_raw + output_parse_error (SW-BP10),
+  // surfaced as fields on the 200 response, not an error status.
+  router.get("/:id/assist-workflows/:runId", (c) => {
+    if (!assistService) return c.json({ error: "Assist workflow service not configured" }, 503)
+    try {
+      const run = assistService.getRun(c.req.param("id"), c.req.param("runId"))
+      return c.json(run)
     } catch (err: unknown) {
       const { status, message } = classifyError(err)
       return c.json({ error: message }, status)

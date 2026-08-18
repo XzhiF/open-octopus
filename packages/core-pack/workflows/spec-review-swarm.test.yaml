@@ -1,0 +1,20 @@
+# spec-review-swarm.test.yaml — simulate fixture for spec-review-swarm.yaml
+#
+# Minimal scenario: review-mode host mocked to emit valid three-part JSON.
+
+scenarios:
+  - name: "happy path — review host emits three-part JSON"
+    inputs:
+      goal: "E2E_TD goal: 加日志聚合"
+      ac: "E2E_TD ac1: 日志写入 JSON Lines"
+      projects: "my-app"
+    mocks:
+      panel:
+        output: '{"ac_candidates":["E2E_TD ac2: 日志带 trace_id"],"suggestions":["E2E_TD 用结构化日志"],"risks":["E2E_TD 日志体量"]}'
+        update_vars:
+          panel_synthesis: '{"ac_candidates":["E2E_TD ac2"],"suggestions":["E2E_TD s1"],"risks":["E2E_TD r1"]}'
+          panel_consensus_score: "1.0"
+          panel_rounds_used: "1"
+          panel_expert_count: "3"
+    assertions:
+      status: "completed"

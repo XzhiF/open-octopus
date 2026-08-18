@@ -596,12 +596,25 @@ export class WorkflowExecutor implements Executor {
    *  integration_prompt (moa aggregator prompt). These mirror composition-task.yaml's
    *  `variables` block, overridden by the actual task_spec at materialization.
    *
+   *  Ticket 08 (AC2): PRESERVES task_artifacts_dir from
+   *  config.workflow_chain[0].input_values (injected by materializeTaskSpecToConfig).
+   *  Without this, the key would be DROPPED — buildCompositeInputValues completely
+   *  replaces firstStep.input_values at execute() time (the "chain input_values
+   *  replacement drops injected keys" hazard SW-BP7 warns about). When absent
+   *  (legacy configs without the key), it's omitted — backward compat (AC4).
+   *
    *  SG5 (ticket 06): materializeTaskSpecToConfig now DROPS task_spec from the
    *  config (it lives in the tasks table, v2-D1). So config.task_spec is absent on
    *  the new dispatch-seam path. Fall back to reading task_spec from the tasks
    *  table via S2 origin lookup (origin_type='task', origin_id=task.id). The
    *  legacy/test path that seeds config WITH task_spec still works (first branch). */
   private buildCompositeInputValues(config: WorkflowConfig, scheduleId?: string): Record<string, unknown> {
+    // Ticket 08 (AC2): read task_artifacts_dir from the config's workflow_chain[0]
+    // (injected by materializeTaskSpecToConfig). Preserved in both branches below.
+    const chainInputValues = config.workflow_chain[0]?.input_values as Record<string, unknown> | undefined
+    const taskArtifactsDir = chainInputValues?.task_artifacts_dir
+    const artifactsEntry = taskArtifactsDir ? { task_artifacts_dir: taskArtifactsDir } : {}
+
     // Legacy/test path: config carries task_spec (composite-dispatch.test.ts seeds this).
     if (config.task_spec) {
       const subunits = config.task_spec.subunits ?? []
@@ -610,6 +623,7 @@ export class WorkflowExecutor implements Executor {
         subunit_count: subunits.length,
         goal: config.task_spec.goal ?? '',
         integration_prompt: config.task_spec.integration_goal?.prompt ?? '',
+        ...artifactsEntry,
       }
     }
     // SG5 new path: task_spec dropped from config — read from the tasks table via
@@ -621,6 +635,7 @@ export class WorkflowExecutor implements Executor {
       subunit_count: subunits.length,
       goal: taskSpec?.goal ?? '',
       integration_prompt: taskSpec?.integration_goal?.prompt ?? '',
+      ...artifactsEntry,
     }
   }
 

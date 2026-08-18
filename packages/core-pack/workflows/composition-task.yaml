@@ -57,6 +57,7 @@ nodes:
         await: true                       # G1 pause-resume：等子 schedule 完成后 resume
         input_mapping:
           goal: "$vars.goal"              # 父变量 → 子 schedule 输入
+          task_artifacts_dir: "$vars.task_artifacts_dir"  # Ticket 08 (D14): 产物目录透传给子单元
         output_mapping:
           result: "last_output"           # 子输出 → $vars.result + $dispatch-child.output.result
 

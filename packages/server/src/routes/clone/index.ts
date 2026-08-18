@@ -43,6 +43,7 @@ import { getMemoryService } from '../../services/agent/memory-service'
 import { autosaveTaskDraft } from './autosave'
 import { getSpecNotice, clearSpecNotice } from '../../services/tasks/spec-notice-store'
 import { TaskAuthorSessionAugmenter } from '../../services/tasks/task-author-session-augmenter'
+import { TaskHomeService } from '../../services/tasks/task-home-service'
 import { getResourceRegistry } from '../../services/resource-registry'
 import type { ResourceRef } from '@octopus/shared'
 
@@ -352,6 +353,25 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
       }
     }
 
+    // 03 (task-authoring-v3, AC6): resolve the per-task home path for the
+    // task-author session so CloneRuntime.getPlugins can append it as a third
+    // plugin directory (the SDK scans `{taskHomePath}/skills/` for the
+    // materialized Skill-group links — ADR-0010). Gated by the same
+    // `noticeTaskId` (task-author + taskDAO) already resolved above, AND a
+    // filesystem existence check: only pass the path when the home actually
+    // exists on disk (created by POST /api/tasks → TaskHomeService.createHome
+    // — ticket 04 / 02). A non-existent home → undefined → getPlugins stays
+    // at 2 plugins (no cwd-root scan, no bogus third plugin). The path is
+    // derived purely from the id (no DB field — ADR-0011), so this is a
+    // stat, not a query.
+    let taskHomePath: string | undefined
+    if (noticeTaskId) {
+      const home = new TaskHomeService().homePath(noticeTaskId)
+      if (fs.existsSync(home)) {
+        taskHomePath = home
+      }
+    }
+
     return streamSSE(c, async (stream) => {
       let aborted = false
       const abortStream = () => { aborted = true }
@@ -367,7 +387,7 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
         const memoryToolCalls: Array<{ id: string; name: string; input?: Record<string, unknown> }> = []
         const MEMORY_TOOL_NAMES = ['record_daily']
 
-        for await (const chunk of runtime.chat(body.message!, sessionId, providerSessionId, cwd, specUpdateNotice, authoringResourcesContent)) {
+        for await (const chunk of runtime.chat(body.message!, sessionId, providerSessionId, cwd, specUpdateNotice, authoringResourcesContent, undefined, taskHomePath)) {
           if (aborted || (stream as any)._aborted) break
 
           switch (chunk.type) {
