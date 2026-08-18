@@ -45,4 +45,4 @@
 | 41 | workflow-observability | 2026-08-12 | feat/workflow-observability | in-progress (spec + 7 tickets, story walk-through done) |
 | 42 | task-pool-redesign | 2026-08-17 | test-task-board | done (GO converged R1, 88/87, PR #50; US3 env-blocked) |
 | 43 | task-domain-redesign | 2026-08-18 | feat/task-domain-redesign | done (feat→main PR; 22/22 product-verified; AC2 repro-proven, B-AC3 provider-gated SKIP) |
-| 44 | task-authoring-v3 | 2026-08-18 | feat/task-domain-redesign | in-progress (spec done: 19 decisions incl. 3 ADRs + 16 walk-through fixes; 11 tickets DAG) |
+| 44 | task-authoring-v3 | 2026-08-18 | feat/task-domain-redesign | done (pipeline 5-phase PASS: 11 tickets DAG, 3-axis review 5 fixes, E2E 14/14 + 19 screenshots, PR #51 updated) |
