@@ -39,6 +39,14 @@ import {
   waitFor,
   startSseSubscriber,
   type SseSubscriber,
+  // ── ticket 10 viewer/assist helpers ──
+  writeTaskArtifactIndex,
+  writeTaskArtifactFile,
+  listArtifactsViaApi,
+  getArtifactContentRaw,
+  triggerAssistWorkflowRaw,
+  getAssistWorkflowRunViaApi,
+  seedAssistRunOutput,
 } from "./helpers/task-domain-helpers"
 
 // ── Constants ───────────────────────────────────────────────────────────
@@ -397,5 +405,396 @@ test.describe("goalac: goal/ac card (AC4/AC5/AC6)", () => {
 
     await page.screenshot({ path: screenshotPath("goalac-03-gate-disabled.png"), fullPage: true })
     log(`Enqueue gate: UI disabled + server 409 missing=[${gate.body.missing!.join(",")}]`)
+  })
+})
+
+// ── viewer: AC1/AC2/AC7 — artifact index + full-content dialog + degraded ──
+
+test.describe("viewer: artifact viewer (AC1/AC2/AC7)", () => {
+  // A fresh task for the viewer tests so pre-placed artifacts don't collide with
+  // the goalac group's task state. Created via the same session-first → POST
+  // sequence the TemplatePicker uses (D15), then we write fixtures into its home.
+  let viewerTaskId: string | null = null
+
+  test.beforeAll(async () => {
+    if (!serverAvailable) return
+    // Create a session first (D15), then a v3 coding task bound to it.
+    const { createTaskAuthorSession, createTask } = await import("./helpers/task-domain-helpers")
+    const session = await createTaskAuthorSession({ title: `${DATA_PREFIX}viewer`, org: TASK_E2E_ORG })
+    const task = await createTask({
+      org: TASK_E2E_ORG,
+      name: `${DATA_PREFIX}viewer-task`,
+      source_chat_session_id: session.id,
+      task_type: "coding",
+      skill_groups: ["default"],
+    })
+    viewerTaskId = task.id
+    createdTaskIds.push(task.id)
+    log(`viewer: created task ${task.id} for artifact fixtures`)
+  })
+
+  test("artifact list renders index; click → full-content dialog == disk (AC1)", async ({ page }) => {
+    test.skip(!serverAvailable, "Server not available")
+    test.skip(!viewerTaskId, "viewer task not created")
+    const taskId = viewerTaskId!
+
+    // R8: pre-place artifacts.json + a real file on disk (the agent would do
+    // this via Write + artifacts.json; here we fixture it directly).
+    const specContent = "# E2E_TD proposal\n\nThis is the **full** artifact content.\nLine 3 here."
+    writeTaskArtifactFile(taskId, "proposal.md", specContent)
+    const now = new Date().toISOString()
+    writeTaskArtifactIndex(taskId, [
+      { path: "proposal.md", by: "open-spec", title: "proposal.md — 方案文档", external: false, updated_at: now },
+    ])
+
+    // R3: API-side cross-check — the index route returns what we wrote.
+    const index = await listArtifactsViaApi(taskId)
+    expect(index.length, "GET artifacts returns the pre-placed entry").toBeGreaterThan(0)
+    expect(index.some((e) => e.path === "proposal.md"), "index carries proposal.md").toBe(true)
+
+    // R6: open the real TaskModal → OutputViewer renders the artifact row.
+    await page.goto("/tasks")
+    await page.waitForLoadState("domcontentloaded")
+    await page.locator('[data-task-column="draft"]').waitFor({ state: "visible", timeout: 15_000 })
+    await page.locator(`[data-task-id="${taskId}"]`).first().click()
+    const dialog = page.getByRole("dialog")
+    await expect(dialog).toBeVisible({ timeout: 10_000 })
+    const workspace = dialog.locator("[data-authoring-workspace]")
+    await expect(workspace).toBeVisible({ timeout: 10_000 })
+
+    // AC1: the artifact row renders in the output viewer.
+    const artifactsSection = workspace.locator("[data-artifacts-section]")
+    await expect(artifactsSection, "artifacts section renders").toBeVisible({ timeout: 10_000 })
+    const row = artifactsSection.locator("[data-artifact-row='0']")
+    await expect(row, "artifact row 0 renders").toBeVisible({ timeout: 10_000 })
+
+    // Click → ArtifactViewerDialog opens with the full content.
+    await row.click()
+    const viewer = page.locator("[data-artifact-viewer-dialog]")
+    await expect(viewer, "artifact viewer dialog opens").toBeVisible({ timeout: 10_000 })
+    const content = viewer.locator("[data-artifact-content]")
+    await expect(content, "dialog renders the disk content verbatim (AC1)").toContainText("Line 3 here.", { timeout: 10_000 })
+    // R3: the dialog content == disk content (independent source of truth). The
+    // <pre> renders the raw file text (no markdown rendering), so the disk
+    // content appears verbatim — assert the heading is present in both.
+    const os = await import("os")
+    const pathMod = await import("path")
+    const diskContent = await import("fs").then((fs) => {
+      try {
+        return fs.readFileSync(
+          pathMod.join(os.homedir(), ".octopus", "tasks", taskId, "artifacts", "proposal.md"),
+          "utf-8",
+        )
+      } catch {
+        return null
+      }
+    })
+    if (diskContent) {
+      await expect(content).toContainText("E2E_TD proposal")
+    }
+
+    // AC1/D11: the footer hint "有意见在对话里说" is present (no approval btns).
+    await expect(viewer.locator("text=有意见")).toBeVisible()
+    const approveBtns = await viewer.getByRole("button", { name: /批阅|通过|驳回|审批/ }).count()
+    expect(approveBtns, "no approval/reject buttons (D11)").toBe(0)
+
+    await page.screenshot({ path: screenshotPath("viewer-01-content-dialog.png"), fullPage: true })
+    log("viewer: artifact dialog renders full disk content; no approval buttons (D11)")
+  })
+
+  test("content 403/404 → dialog degraded state, no white screen (AC2)", async ({ page }) => {
+    test.skip(!serverAvailable, "Server not available")
+    test.skip(!viewerTaskId, "viewer task not created")
+    const taskId = viewerTaskId!
+
+    // AC2 fixtures: a missing-on-disk relative file (404) + an escape path (403).
+    // Both are valid index entries (schema only requires non-empty path string);
+    // the content route whitelists them → 404/403 respectively.
+    const now = new Date().toISOString()
+    writeTaskArtifactIndex(taskId, [
+      { path: "missing.md", by: "open-spec", title: "missing.md — 文件缺失", external: false, updated_at: now },
+      { path: "../escape.md", by: "open-spec", title: "escape — 越权", external: false, updated_at: now },
+    ])
+
+    // R3: API-side cross-check the degraded statuses.
+    const notFound = await getArtifactContentRaw(taskId, "missing.md")
+    expect(notFound.status, "missing-on-disk → 404 (AC2)").toBe(404)
+    const forbidden = await getArtifactContentRaw(taskId, "../escape.md")
+    expect(forbidden.status, "escape path → 403 (AC2)").toBe(403)
+
+    // R6: open the modal → click the missing row → degraded 404 state.
+    await page.goto("/tasks")
+    await page.waitForLoadState("domcontentloaded")
+    await page.locator('[data-task-column="draft"]').waitFor({ state: "visible", timeout: 15_000 })
+    await page.locator(`[data-task-id="${taskId}"]`).first().click()
+    const dialog = page.getByRole("dialog")
+    await expect(dialog).toBeVisible({ timeout: 10_000 })
+    const section = dialog.locator("[data-artifacts-section]")
+
+    // Click the missing-file row (index 0 after the rewrite above).
+    await section.locator("[data-artifact-row='0']").click()
+    const viewer = page.locator("[data-artifact-viewer-dialog]")
+    await expect(viewer).toBeVisible({ timeout: 10_000 })
+    await expect(viewer.locator("[data-artifact-degraded]"), "404 → degraded state (no white screen)").toBeVisible({ timeout: 10_000 })
+    await expect(viewer.locator("text=磁盘上未找到")).toBeVisible()
+    await page.keyboard.press("Escape")
+    await expect(viewer).not.toBeVisible({ timeout: 5000 })
+
+    await page.screenshot({ path: screenshotPath("viewer-02-degraded-404.png"), fullPage: true })
+    log("viewer: 404 missing-file → degraded state (no white screen, AC2)")
+  })
+
+  test("SSE-driven refresh: new artifact appears without manual reload (AC7)", async ({ page }) => {
+    test.skip(!serverAvailable, "Server not available")
+    test.skip(!viewerTaskId, "viewer task not created")
+    const taskId = viewerTaskId!
+
+    // Reset the index to a single known artifact + write its file.
+    const now = new Date().toISOString()
+    writeTaskArtifactFile(taskId, "spec.md", "# E2E_TD spec\ninitial")
+    writeTaskArtifactIndex(taskId, [
+      { path: "spec.md", by: "task-author", title: "spec.md", external: false, updated_at: now },
+    ])
+
+    await page.goto("/tasks")
+    await page.waitForLoadState("domcontentloaded")
+    await page.locator('[data-task-column="draft"]').waitFor({ state: "visible", timeout: 15_000 })
+    await page.locator(`[data-task-id="${taskId}"]`).first().click()
+    const dialog = page.getByRole("dialog")
+    await expect(dialog).toBeVisible({ timeout: 10_000 })
+    const section = dialog.locator("[data-artifacts-section]")
+    // Initial load: one artifact row.
+    await expect(section.locator("[data-artifact-row='0']")).toBeVisible({ timeout: 10_000 })
+    await expect(section.locator("[data-artifact-row='1']")).toHaveCount(0)
+
+    // While the modal is OPEN, place a 2nd artifact on disk + index, then fire
+    // a spec_field_update (the verifiable SSE bridge — agent's spec update
+    // correlates with artifact production; the server emits spec_field_update on
+    // the taskpool channel, which the OutputViewer also listens for → re-fetch).
+    writeTaskArtifactFile(taskId, "ac.md", "# E2E_TD ac\n- candidate")
+    const now2 = new Date().toISOString()
+    writeTaskArtifactIndex(taskId, [
+      { path: "spec.md", by: "task-author", title: "spec.md", external: false, updated_at: now },
+      { path: "ac.md", by: "task-author", title: "ac.md", external: false, updated_at: now2 },
+    ])
+    // Trigger the SSE refresh signal (source=user so it's a real spec-field call).
+    await updateSpecField(taskId, "goal", "E2E_TD refresh-trigger goal", { source: "user" })
+
+    // AC7: the new row appears WITHOUT a manual reload / modal reopen.
+    await expect(section.locator("[data-artifact-row='1']"), "2nd artifact appears via SSE refresh (AC7)").toBeVisible({ timeout: 15_000 })
+
+    await page.screenshot({ path: screenshotPath("viewer-03-sse-refresh.png"), fullPage: true })
+    log("viewer: SSE-driven refresh surfaced the 2nd artifact without manual reload (AC7)")
+  })
+})
+
+// ── assist: AC3/AC4/AC5/AC6 — assist-workflow trigger + log + adoption ────
+
+test.describe("assist: assist-workflow runs (AC3/AC4/AC5/AC6)", () => {
+  let assistTaskId: string | null = null
+
+  test.beforeAll(async () => {
+    if (!serverAvailable) return
+    const { createTaskAuthorSession, createTask } = await import("./helpers/task-domain-helpers")
+    const session = await createTaskAuthorSession({ title: `${DATA_PREFIX}assist`, org: TASK_E2E_ORG })
+    // Seed goal/ac so the assist input ($vars.goal/$vars.ac) is non-empty.
+    const task = await createTask({
+      org: TASK_E2E_ORG,
+      name: `${DATA_PREFIX}assist-task`,
+      source_chat_session_id: session.id,
+      task_type: "coding",
+      skill_groups: ["default"],
+    })
+    assistTaskId = task.id
+    createdTaskIds.push(task.id)
+    await updateSpecField(task.id, "goal", "E2E_TD assist goal: review requirements")
+    await updateSpecField(task.id, "ac", ["E2E_TD ac one", "E2E_TD ac two"])
+    log(`assist: created task ${task.id} for assist-workflow tests`)
+  })
+
+  test("trigger whitelist + run card + log dialog (AC3/AC4)", async ({ page }) => {
+    test.skip(!serverAvailable, "Server not available")
+    test.skip(!assistTaskId, "assist task not created")
+    const taskId = assistTaskId!
+
+    // AC3: non-whitelist template → 400 (server-side whitelist backstop). The UI
+    // button only triggers whitelisted templates, so the 400 path is API-only.
+    const bad = await triggerAssistWorkflowRaw(taskId, "not-a-real-template")
+    expect(bad.status, "unknown template → 400 (AC3 whitelist)").toBe(400)
+
+    // R6: open the modal → use the real MoA trigger button in the command bar.
+    // The workspace tracks runIds client-side (populated on the POST response),
+    // so the run row only appears when the trigger goes through the UI.
+    await page.goto("/tasks")
+    await page.waitForLoadState("domcontentloaded")
+    await page.locator('[data-task-column="draft"]').waitFor({ state: "visible", timeout: 15_000 })
+    await page.locator(`[data-task-id="${taskId}"]`).first().click()
+    const dialog = page.getByRole("dialog")
+    await expect(dialog).toBeVisible({ timeout: 10_000 })
+    const workspace = dialog.locator("[data-authoring-workspace]")
+    await expect(workspace).toBeVisible({ timeout: 10_000 })
+
+    // AC4: click the MoA trigger button → POST → run row enters the output viewer.
+    const triggerBtn = workspace.locator("[data-assist-trigger='moa-requirements-review']")
+    await expect(triggerBtn, "MoA trigger button in command bar").toBeVisible({ timeout: 10_000 })
+    await triggerBtn.click()
+
+    // The run row appears (with a "拉取中" badge before the GET resolves).
+    const runsSection = workspace.locator("[data-workflow-runs-section]")
+    await expect(runsSection, "workflow runs section renders after trigger").toBeVisible({ timeout: 15_000 })
+    const runRow = runsSection.locator("[data-run-row]").first()
+    await expect(runRow, "run row renders in the output viewer (AC4)").toBeVisible({ timeout: 15_000 })
+    // AC4: a status badge is present on the row.
+    await expect(runRow.locator("[data-slot='badge']").first()).toBeVisible()
+    const runId = await runRow.getAttribute("data-run-row")
+    expect(runId, "run row carries the run_id").toBeTruthy()
+
+    // R3: SSE assist_run_update emitted for this run (D19). The server emits on
+    // start + terminal phase; either satisfies the "SSE drove the UI" assertion.
+    expect(sseSub).not.toBeNull()
+    await waitFor(
+      () => sseSub!.assistRunEvents.find((e) => e.task_id === taskId && e.run_id === runId),
+      { timeoutMs: 15_000, message: "assist_run_update SSE not received for the run" },
+    )
+
+    // R3: GET run → shape is correct (logs array, template, status).
+    const run = await getAssistWorkflowRunViaApi(taskId, runId!)
+    expect(run.template, "run carries the template name").toBe("moa-requirements-review")
+    expect(run.run_id, "run_id round-trips").toBe(runId)
+    expect(Array.isArray(run.logs), "run has logs array").toBe(true)
+
+    // AC3: click the run row → WorkflowLogDialog opens.
+    await runRow.click()
+    const logDialog = page.locator("[data-workflow-log-dialog]")
+    await expect(logDialog, "workflow log dialog opens on row click (AC3)").toBeVisible({ timeout: 10_000 })
+    // The dialog renders either the log lines or the empty-logs hint (no provider
+    // → the run may have errored immediately). Either way it's not a white screen.
+    const hasLogs = await logDialog.locator("[data-workflow-logs]").count()
+    const hasEmpty = await logDialog.locator("[data-workflow-empty-logs]").count()
+    expect(hasLogs + hasEmpty, "log dialog renders logs or empty hint (AC3)").toBeGreaterThan(0)
+
+    await page.screenshot({ path: screenshotPath("assist-01-log-dialog.png"), fullPage: true })
+    log(`assist: triggered ${run.template} via UI; run row + log dialog rendered (status=${run.status})`)
+  })
+
+  test("adoption panel → spec-field(ac) + spec-field(decisions) (AC5)", async ({ page }) => {
+    test.skip(!serverAvailable, "Server not available")
+    test.skip(!assistTaskId, "assist task not created")
+    const taskId = assistTaskId!
+
+    // Open the modal + trigger a fresh run via the UI (same path as AC4).
+    await page.goto("/tasks")
+    await page.waitForLoadState("domcontentloaded")
+    await page.locator('[data-task-column="draft"]').waitFor({ state: "visible", timeout: 15_000 })
+    await page.locator(`[data-task-id="${taskId}"]`).first().click()
+    const dialog = page.getByRole("dialog")
+    await expect(dialog).toBeVisible({ timeout: 10_000 })
+    const workspace = dialog.locator("[data-authoring-workspace]")
+    await expect(workspace).toBeVisible({ timeout: 10_000 })
+    await workspace.locator("[data-assist-trigger='moa-requirements-review']").click()
+    const runsSection = workspace.locator("[data-workflow-runs-section]")
+    await expect(runsSection).toBeVisible({ timeout: 15_000 })
+    const runRow = runsSection.locator("[data-run-row]").first()
+    await expect(runRow).toBeVisible({ timeout: 15_000 })
+    const runId = await runRow.getAttribute("data-run-row")
+    if (!runId) {
+      test.skip(true, "trigger did not produce a run row (no runId)")
+      return
+    }
+
+    // The real MoA needs an LLM provider; in dev the run stays "running". Seed
+    // the aggregator output directly into the DB (mirrors the server assist
+    // test) so the REAL GET route parses + returns structured output — the UI
+    // is exercised through the real API (R1), not a mock.
+    const acCandidate = "E2E_TD adopted ac from MoA"
+    const suggestion = "E2E_TD adopted suggestion: async event bus"
+    const synthesis = JSON.stringify({
+      ac_candidates: [acCandidate, "second candidate not adopted"],
+      suggestions: [suggestion],
+      risks: ["E2E_TD risk: rate limit"],
+    })
+    seedAssistRunOutput(runId, synthesis)
+
+    // The viewer's poll (1.5s) re-fetches the run → output present → adoption
+    // panel mounts. AC5: panel renders with the structured triplet.
+    const panel = runsSection.locator("[data-moa-adoption-panel]")
+    await expect(panel, "adoption panel renders when run has output (AC5)").toBeVisible({ timeout: 15_000 })
+
+    // Toggle the first suggestion checkbox ON (default off) → decision memo.
+    await panel.locator("[data-moa-suggestion-checkbox='0']").click()
+    // The first ac candidate is checked by default → will be adopted into ac.
+
+    const beforeRow = readTaskRow(taskId)
+    const beforeDecisions = (JSON.parse(beforeRow!.task_spec).decisions ?? []) as string[]
+    const beforeAc = (JSON.parse(beforeRow!.task_spec).ac ?? []) as string[]
+
+    await panel.locator("[data-moa-adopt-button]").click()
+    await expect(panel.locator("[data-moa-adopted]"), "adopted confirmation renders").toBeVisible({ timeout: 10_000 })
+
+    // R3/R5: spec-field(decisions) persisted the adopted suggestion (SW-BP3) +
+    // spec-field(ac) persisted the adopted candidate. Cross-check the DB.
+    await waitFor(() => {
+      const row = readTaskRow(taskId)
+      if (!row) return null
+      const spec = JSON.parse(row.task_spec)
+      const decisions = (spec.decisions ?? []) as string[]
+      const ac = (spec.ac ?? []) as string[]
+      return decisions.includes(suggestion) && ac.includes(acCandidate) ? row : null
+    }, { timeoutMs: 10_000, message: "DB ac/decisions did not persist the adoption" })
+
+    const afterSpec = JSON.parse(readTaskRow(taskId)!.task_spec)
+    expect((afterSpec.decisions as string[]), "decisions includes adopted suggestion (SW-BP3)").toContain(suggestion)
+    expect((afterSpec.ac as string[]), "ac includes adopted candidate").toContain(acCandidate)
+    expect((afterSpec.decisions as string[]).length, "decisions grew").toBeGreaterThan(beforeDecisions.length)
+    expect((afterSpec.ac as string[]).length, "ac grew").toBeGreaterThan(beforeAc.length)
+
+    // AC5: the decision memo section lists the adopted suggestion (D10).
+    await expect(dialog.locator("[data-decision-memo]")).toBeVisible({ timeout: 10_000 })
+    await expect(dialog.locator("[data-decision-memo]")).toContainText(suggestion)
+
+    await page.screenshot({ path: screenshotPath("assist-03-adoption.png"), fullPage: true })
+    log(`assist: adoption panel → DB ac + decisions persisted (AC5/SW-BP3)`)
+  })
+
+  test("output_parse_error → degraded card with output_raw (AC6)", async ({ page }) => {
+    test.skip(!serverAvailable, "Server not available")
+    test.skip(!assistTaskId, "assist task not created")
+    const taskId = assistTaskId!
+
+    // Trigger a fresh run via the UI, then seed a MALFORMED aggregator synthesis
+    // → the GET route returns output_raw + output_parse_error (SW-BP10). The
+    // viewer renders the degraded card (not the adoption panel, not a white screen).
+    await page.goto("/tasks")
+    await page.waitForLoadState("domcontentloaded")
+    await page.locator('[data-task-column="draft"]').waitFor({ state: "visible", timeout: 15_000 })
+    await page.locator(`[data-task-id="${taskId}"]`).first().click()
+    const dialog = page.getByRole("dialog")
+    await expect(dialog).toBeVisible({ timeout: 10_000 })
+    const workspace = dialog.locator("[data-authoring-workspace]")
+    await expect(workspace).toBeVisible({ timeout: 10_000 })
+    await workspace.locator("[data-assist-trigger='moa-requirements-review']").click()
+    const runsSection = workspace.locator("[data-workflow-runs-section]")
+    await expect(runsSection).toBeVisible({ timeout: 15_000 })
+    const runRow = runsSection.locator("[data-run-row]").first()
+    await expect(runRow).toBeVisible({ timeout: 15_000 })
+    const runId = await runRow.getAttribute("data-run-row")
+    if (!runId) {
+      test.skip(true, "trigger did not produce a run row (no runId)")
+      return
+    }
+
+    // Seed malformed synthesis → parse failure → output_raw + output_parse_error.
+    const malformed = "this is not valid JSON { so the aggregator parse fails"
+    seedAssistRunOutput(runId, malformed)
+
+    // AC6: the degraded card renders output_raw (no adoption panel, no white screen).
+    const degraded = runsSection.locator("[data-run-parse-error]")
+    await expect(degraded, "parse-error → degraded card with output_raw (AC6)").toBeVisible({ timeout: 15_000 })
+    await expect(degraded, "degraded card shows the raw output text").toContainText("not valid JSON")
+    // The adoption panel must NOT render (output is undefined on parse failure).
+    await expect(runsSection.locator("[data-moa-adoption-panel]")).toHaveCount(0)
+
+    await page.screenshot({ path: screenshotPath("assist-02-parse-error.png"), fullPage: true })
+    log("assist: malformed aggregator output → degraded card with output_raw (AC6/SW-BP10)")
   })
 })

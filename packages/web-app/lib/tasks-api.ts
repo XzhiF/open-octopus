@@ -19,6 +19,8 @@ import type {
   TaskSpecField,
   TaskSpec,
   ResourceRef,
+  ArtifactIndexEntry,
+  AssistWorkflowRun,
 } from "@octopus/shared"
 
 // ============ TaskDetail (composite view) ============
@@ -259,5 +261,97 @@ export async function updateSpecField(
   return handleResponse<{ version: number }>(res)
 }
 
+// ============ Artifacts (ticket 06 routes — US7/D5) ============
+
+/** GET /api/tasks/:id/artifacts — the artifact index (artifacts.json). Missing
+ *  file → []; corrupted JSON → [] + server-side warn (SW-BP12); missing task →
+ *  404. The index is the single source of truth for "what did this task produce"
+ *  (ADR-0011). `external:true` entries carry an ABSOLUTE path at the artifact's
+ *  native location; `false` entries are relative to the task home's artifacts/ dir. */
+export async function listArtifacts(taskId: string): Promise<ArtifactIndexEntry[]> {
+  const res = await fetch(buildUrl(`/${taskId}/artifacts`))
+  return handleResponse<ArtifactIndexEntry[]>(res)
+}
+
+/** Error thrown by {@link getArtifactContent} on 403 (path outside the whitelist
+ *  — escape/unregistered) or 404 (whitelisted but missing on disk). The caller
+ *  surfaces a degraded state in the viewer rather than white-screening (AC2). */
+export class ArtifactContentError extends Error {
+  public readonly status: number
+  constructor(message: string, status: number) {
+    super(message)
+    this.name = "ArtifactContentError"
+    this.status = status
+  }
+}
+
+export interface ArtifactContent {
+  path: string
+  content: string
+}
+
+/** GET /api/tasks/:id/artifacts/content?path= — full artifact content (US7). The
+ *  server whitelists `path` (relative-inside-artifacts no-escape OR a registered
+ *  external=true absolute path) and reads live disk content. 400 (missing param),
+ *  403 (forbidden — escape/unregistered), 404 (missing on disk) → throws
+ *  {@link ArtifactContentError} carrying the status so the UI shows the right
+ *  degraded hint (AC2). */
+export async function getArtifactContent(taskId: string, artifactPath: string): Promise<ArtifactContent> {
+  const res = await fetch(buildUrl(`/${taskId}/artifacts/content`, { path: artifactPath }))
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}))
+    throw new ArtifactContentError(body.error ?? `HTTP ${res.status}`, res.status)
+  }
+  return res.json()
+}
+
+// ============ Assist workflows (ticket 07 routes — US9/10/11/D9) ============
+
+/** The 3 built-in assist-workflow template ids (AC3 whitelist). Mirrors the
+ *  server's `ASSIST_WORKFLOW_TEMPLATES` constant. The MoA trigger button uses
+ *  `moa-requirements-review` (primary). */
+export const ASSIST_WORKFLOW_TEMPLATES = [
+  "moa-requirements-review",
+  "spec-review-swarm",
+  "clarify-debate",
+] as const
+export type AssistWorkflowTemplate = (typeof ASSIST_WORKFLOW_TEMPLATES)[number]
+
+export interface AssistWorkflowTriggerResult {
+  run_id: string
+  execution_id: string
+  workspace_id: string
+  template: string
+}
+
+/** POST /api/tasks/:id/assist-workflows — trigger a built-in assist-workflow run
+ *  (US9). Body: `{ template, input? }`. Non-whitelist template → 400. The run
+ *  executes in the background (temp workspace source='task-assist', D16); the
+ *  response returns immediately with the run id. Progress/completion arrive via
+ *  `assist_run_update` SSE (D19) + GET /assist-workflows/:runId. */
+export async function triggerAssistWorkflow(
+  taskId: string,
+  template: string,
+  input?: { goal?: string; ac?: string[]; projects?: string[] },
+): Promise<AssistWorkflowTriggerResult> {
+  const body: Record<string, unknown> = { template }
+  if (input) body.input = input
+  const res = await fetch(buildUrl(`/${taskId}/assist-workflows`), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  })
+  return handleResponse<AssistWorkflowTriggerResult>(res)
+}
+
+/** GET /api/tasks/:id/assist-workflows/:runId — run status + process logs +
+ *  structured output (US10/US11). Parse failure → `output_raw` +
+ *  `output_parse_error=true` on the 200 response (SW-BP10), never an error
+ *  status. Missing/mismatched run → throws (404). */
+export async function getAssistWorkflowRun(taskId: string, runId: string): Promise<AssistWorkflowRun> {
+  const res = await fetch(buildUrl(`/${taskId}/assist-workflows/${runId}`))
+  return handleResponse<AssistWorkflowRun>(res)
+}
+
 // Re-export shared types so callers can import everything from one place.
-export type { Task, TaskStatus, TaskSpecField } from "@octopus/shared"
+export type { Task, TaskStatus, TaskSpecField, ArtifactIndexEntry, AssistWorkflowRun } from "@octopus/shared"

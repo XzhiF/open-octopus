@@ -27,17 +27,18 @@ import {
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Spinner } from "@/components/ui/spinner"
-import { Send, Settings2, Lock } from "lucide-react"
+import { Send, Settings2, Lock, Brain } from "lucide-react"
 import { toast } from "sonner"
 import type { Task } from "@octopus/shared"
 import { listSkillGroups, type SkillGroup } from "@/lib/skill-groups-api"
-import { readyTask, TaskReadyGateError } from "@/lib/tasks-api"
+import { readyTask, TaskReadyGateError, triggerAssistWorkflow } from "@/lib/tasks-api"
 import { ProjectSelector, type SelectedProject } from "@/components/scheduler/project-selector"
 import { useOrgs } from "@/hooks/useOrgs"
 import { useAgentChat } from "@/hooks/useAgentChat"
 import { ChatArea } from "@/components/agent/chat/ChatArea"
 import * as agentApi from "@/lib/agent/api"
 import { GoalAcCard } from "./goal-ac-card"
+import { OutputViewer } from "./output-viewer"
 
 const TASK_AUTHOR_CLONE = "task-author"
 
@@ -135,6 +136,28 @@ export function AuthoringWorkspace({ task, onMutated, onClose }: AuthoringWorksp
   const [enqueueBusy, setEnqueueBusy] = useState(false)
   const [gateMissing, setGateMissing] = useState<string[] | null>(null)
 
+  // ── Assist-workflow runs (US9/AC4): tracked run ids → OutputViewer fetches ─
+  // The command-bar MoA button triggers the built-in moa-requirements-review
+  // template (primary; the agent's suggestion bubble is LLM-driven → manual
+  // verification). The run executes in the background (D16 temp workspace);
+  // progress + completion arrive via assist_run_update SSE (D19) inside the
+  // OutputViewer. Reset on task switch so a different task's runs aren't shown.
+  const [runIds, setRunIds] = useState<string[]>([])
+  useEffect(() => {
+    setRunIds([])
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- reset on task switch
+  }, [task.id])
+
+  const handleTriggerAssist = async (template: string) => {
+    try {
+      const result = await triggerAssistWorkflow(task.id, template)
+      setRunIds((prev) => (prev.includes(result.run_id) ? prev : [...prev, result.run_id]))
+      toast.message(`已触发 ${template}`, { description: `run ${result.run_id.slice(0, 8)} 进入运行态` })
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : "触发辅助工作流失败")
+    }
+  }
+
   const handleEnqueue = async () => {
     if (!canEnqueue || enqueueBusy) return
     setEnqueueBusy(true)
@@ -194,6 +217,15 @@ export function AuthoringWorkspace({ task, onMutated, onClose }: AuthoringWorksp
                 </button>
               ))
             )}
+            <span className="mx-1 text-border shrink-0">|</span>
+            <button
+              onClick={() => void handleTriggerAssist("moa-requirements-review")}
+              className="shrink-0 px-2 py-0.5 rounded text-[10px] bg-purple-500/10 text-purple-600 hover:bg-purple-500/20 transition-colors flex items-center gap-1"
+              data-assist-trigger="moa-requirements-review"
+              title="运行 MoA 专家咨询辅助工作流"
+            >
+              <Brain className="size-3" /> 专家咨询 (MoA)
+            </button>
           </div>
 
           <div className="flex-1 min-h-0">
@@ -220,6 +252,8 @@ export function AuthoringWorkspace({ task, onMutated, onClose }: AuthoringWorksp
         {/* ── RIGHT: output viewer (D11 — no skill-group info here) ── */}
         <div className="w-[340px] shrink-0 flex flex-col min-h-0 bg-muted/20 overflow-y-auto p-3 space-y-3" data-output-viewer>
           <GoalAcCard task={task} onMutated={onMutated} />
+
+          <OutputViewer task={task} runIds={runIds} onAdopted={onMutated} />
 
           {/* enqueue checklist (AC6) */}
           <div className="rounded-lg border bg-background px-3 py-2.5" data-enqueue-checklist>

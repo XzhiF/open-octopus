@@ -86,7 +86,11 @@ export function resolveDbPath(): string {
 }
 
 interface NodeSqliteDb {
-  prepare: (sql: string) => { get: (...params: unknown[]) => unknown; all: (...params: unknown[]) => unknown[] }
+  prepare: (sql: string) => {
+    get: (...params: unknown[]) => unknown
+    all: (...params: unknown[]) => unknown[]
+    run: (...params: unknown[]) => unknown
+  }
   close: () => void
 }
 
@@ -450,6 +454,178 @@ export function readTaskHomeDir(taskId: string): string[] | null {
   }
 }
 
+/** Resolve the task home directory path (~/.octopus/tasks/{id}/) — the on-disk
+ *  convention (ADR-0011). Returns null when the home is absent. */
+export function taskHomePath(taskId: string): string | null {
+  const home = path.join(os.homedir(), ".octopus", "tasks", taskId)
+  return fs.existsSync(home) ? home : null
+}
+
+/** The task's artifacts/ directory (~/.octopus/tasks/{id}/artifacts/). Created
+ *  on demand so E2E fixtures can write into it even before any artifact exists. */
+export function taskArtifactsDir(taskId: string): string {
+  const dir = path.join(os.homedir(), ".octopus", "tasks", taskId, "artifacts")
+  fs.mkdirSync(dir, { recursive: true })
+  return dir
+}
+
+export interface ArtifactIndexEntryShape {
+  path: string
+  by: string
+  title: string
+  external: boolean
+  updated_at: string
+}
+
+/** Write artifacts.json (the artifact index, ADR-0011) directly to disk. Used
+ *  by the viewer E2E to pre-place an index before opening the dialog. Each entry
+ *  is validated by the server on read (invalid rows dropped + warned), so the
+ *  fixture must carry all schema-required fields. */
+export function writeTaskArtifactIndex(taskId: string, entries: ArtifactIndexEntryShape[]): void {
+  const dir = taskArtifactsDir(taskId)
+  fs.writeFileSync(path.join(dir, "artifacts.json"), JSON.stringify(entries, null, 2), "utf-8")
+}
+
+/** Write a file into the task's artifacts/ dir (relative path). Used by the
+ *  viewer E2E to pre-place the on-disk content the GET content route reads. */
+export function writeTaskArtifactFile(taskId: string, relativePath: string, content: string): void {
+  const dir = taskArtifactsDir(taskId)
+  const full = path.join(dir, relativePath)
+  fs.mkdirSync(path.dirname(full), { recursive: true })
+  fs.writeFileSync(full, content, "utf-8")
+}
+
+/** GET /api/tasks/:id/artifacts — the artifact index. Missing file → [];
+ *  corrupted → [] + server warn (SW-BP12). */
+export async function listArtifactsViaApi(taskId: string): Promise<ArtifactIndexEntryShape[]> {
+  const ctx = await apiContext()
+  try {
+    const res = await ctx.get(`${SERVER_URL}/api/tasks/${taskId}/artifacts`)
+    if (!res.ok()) {
+      const text = await res.text()
+      throw new Error(`listArtifacts failed (${res.status()}): ${text}`)
+    }
+    return (await res.json()) as ArtifactIndexEntryShape[]
+  } finally {
+    await ctx.dispose()
+  }
+}
+
+/** GET /api/tasks/:id/artifacts/content?path= — returns the raw {status, body}
+ *  so the caller can assert 403 (escape/unregistered) + 404 (missing on disk)
+ *  degraded states (AC2) without throwing. */
+export async function getArtifactContentRaw(
+  taskId: string,
+  artifactPath: string,
+): Promise<{ status: number; body: { path?: string; content?: string; error?: string } & Record<string, unknown> }> {
+  const ctx = await apiContext()
+  try {
+    const qs = new URLSearchParams({ path: artifactPath })
+    const res = await ctx.get(`${SERVER_URL}/api/tasks/${taskId}/artifacts/content?${qs.toString()}`)
+    const body = (await res.json().catch(() => ({}))) as { path?: string; content?: string; error?: string } & Record<string, unknown>
+    return { status: res.status(), body }
+  } finally {
+    await ctx.dispose()
+  }
+}
+
+/** POST /api/tasks/:id/assist-workflows — trigger a built-in assist-workflow
+ *  run. Returns the raw {status, body} so the caller can assert 400 on a bad
+ *  template (AC3) without throwing. */
+export async function triggerAssistWorkflowRaw(
+  taskId: string,
+  template: string,
+  input?: { goal?: string; ac?: string[]; projects?: string[] },
+): Promise<{
+  status: number
+  body: { run_id?: string; execution_id?: string; workspace_id?: string; template?: string; error?: string } & Record<string, unknown>
+}> {
+  const ctx = await apiContext()
+  try {
+    const data: Record<string, unknown> = { template }
+    if (input) data.input = input
+    const res = await ctx.post(`${SERVER_URL}/api/tasks/${taskId}/assist-workflows`, {
+      data,
+      headers: { "Content-Type": "application/json" },
+    })
+    const body = (await res.json().catch(() => ({}))) as { run_id?: string; execution_id?: string; workspace_id?: string; template?: string; error?: string } & Record<string, unknown>
+    return { status: res.status(), body }
+  } finally {
+    await ctx.dispose()
+  }
+}
+
+export interface AssistWorkflowRunShape {
+  run_id: string
+  execution_id: string
+  workspace_id: string
+  template: string
+  status: string
+  logs: Array<{ t: string; icon: string; text: string }>
+  output?: { ac_candidates: string[]; suggestions: string[]; risks: string[] }
+  output_raw?: string
+  output_parse_error?: boolean
+}
+
+/** GET /api/tasks/:id/assist-workflows/:runId — run status + logs + structured
+ *  output (parse failure → output_raw + output_parse_error on the 200 response). */
+export async function getAssistWorkflowRunViaApi(taskId: string, runId: string): Promise<AssistWorkflowRunShape> {
+  const ctx = await apiContext()
+  try {
+    const res = await ctx.get(`${SERVER_URL}/api/tasks/${taskId}/assist-workflows/${runId}`)
+    if (!res.ok()) {
+      const text = await res.text()
+      throw new Error(`getAssistWorkflowRun failed (${res.status()}): ${text}`)
+    }
+    return (await res.json()) as AssistWorkflowRunShape
+  } finally {
+    await ctx.dispose()
+  }
+}
+
+/** Seed an assist run's aggregator output directly into the DB (mirrors the
+ *  server assist test's `insertExecutionWithOutput`). The real MoA workflow
+ *  needs an LLM provider; in dev it stays "running" indefinitely. Seeding the
+ *  swarm node's `outputs.synthesis` lets the GET /assist-workflows/:runId route
+ *  (the real server, R1) parse + return structured output — so the UI is
+ *  exercised through the real API without a working provider.
+ *
+ *  - `synthesis` = a JSON string → run.output = {ac_candidates, suggestions, risks}
+ *  - `synthesis` = malformed text → run.output_raw + run.output_parse_error (AC6)
+ *  Also sets the execution status to `completed` (default) so the run shows a
+ *  terminal badge + stops the viewer's poll. */
+export function seedAssistRunOutput(
+  runId: string,
+  synthesis: string,
+  opts?: { status?: string },
+): void {
+  const dbPath = resolveDbPath()
+  if (!fs.existsSync(dbPath)) {
+    throw new Error(`DB file not found at ${dbPath} — cannot seed assist run output`)
+  }
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { DatabaseSync } = require("node:sqlite") as {
+    DatabaseSync: new (path: string) => NodeSqliteDb
+  }
+  const db = new DatabaseSync(dbPath)
+  try {
+    const now = new Date().toISOString()
+    const status = opts?.status ?? "completed"
+    db.prepare("UPDATE executions SET status = ?, updated_at = ? WHERE id = ?").run(status, now, runId)
+    // Remove any prior partial panel row for this execution (real engine's).
+    db.prepare("DELETE FROM node_executions WHERE execution_id = ? AND node_id = 'panel'").run(runId)
+    const neId = `${runId}-panel-e2e`
+    db.prepare(`
+      INSERT INTO node_executions (id, execution_id, node_id, node_type, status,
+        started_at, completed_at, duration, exit_code, error, vars_snapshot, outputs,
+        session_id, parent_node_id, iteration_index)
+      VALUES (?, ?, 'panel', 'swarm', 'completed', ?, ?, 10, 0, NULL, NULL, ?, NULL, NULL, NULL)
+    `).run(neId, runId, now, now, JSON.stringify({ synthesis }))
+  } finally {
+    db.close()
+  }
+}
+
 /** POST /api/tasks/:id/ready — enqueue: draft→ready + dispatch seam. */
 export async function readyTask(taskId: string): Promise<TaskDTO> {
   const ctx = await apiContext()
@@ -608,6 +784,11 @@ export interface SpecFieldUpdateEvent {
   value: unknown
   version: number
 }
+export interface AssistRunUpdateEvent {
+  task_id: string
+  run_id: string
+  phase: string
+}
 
 /** A live SSE subscriber for /api/tasks/events. Uses Node's fetch streaming
  *  (the events endpoint is an infinite stream — page.request would block).
@@ -615,23 +796,25 @@ export interface SpecFieldUpdateEvent {
 export interface SseSubscriber {
   taskStatusEvents: TaskStatusEvent[]
   specFieldEvents: SpecFieldUpdateEvent[]
+  assistRunEvents: AssistRunUpdateEvent[]
   heartbeat: number
   stop: () => void
 }
 
 /**
  * Subscribe to /api/tasks/events on the server and collect task_status +
- * spec_field_update events into the returned arrays. The subscriber stays
- * alive until stop() is called. Uses Node fetch streaming (the events endpoint
- * is an infinite loop with 30s heartbeats).
+ * spec_field_update + assist_run_update events into the returned arrays. The
+ * subscriber stays alive until stop() is called. Uses Node fetch streaming (the
+ * events endpoint is an infinite loop with 30s heartbeats).
  *
  * This verifies the SERVER emits the SSE (R3: server-side of the SSE path).
- * The UI-side assertion (SpecPanel reflects the field) is done in the test
- * body by checking the DOM element.
+ * The UI-side assertion (SpecPanel / OutputViewer reflects the field) is done
+ * in the test body by checking the DOM element.
  */
 export async function startSseSubscriber(): Promise<SseSubscriber> {
   const taskStatusEvents: TaskStatusEvent[] = []
   const specFieldEvents: SpecFieldUpdateEvent[] = []
+  const assistRunEvents: AssistRunUpdateEvent[] = []
   let heartbeat = 0
 
   const controller = new AbortController()
@@ -673,6 +856,8 @@ export async function startSseSubscriber(): Promise<SseSubscriber> {
             taskStatusEvents.push(parsed as TaskStatusEvent)
           } else if (eventName === "spec_field_update") {
             specFieldEvents.push(parsed as SpecFieldUpdateEvent)
+          } else if (eventName === "assist_run_update") {
+            assistRunEvents.push(parsed as AssistRunUpdateEvent)
           } else if (eventName === "heartbeat") {
             heartbeat++
           }
@@ -690,6 +875,7 @@ export async function startSseSubscriber(): Promise<SseSubscriber> {
   return {
     taskStatusEvents,
     specFieldEvents,
+    assistRunEvents,
     heartbeat,
     stop: () => {
       controller.abort()
