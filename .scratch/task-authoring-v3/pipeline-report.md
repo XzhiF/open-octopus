@@ -66,7 +66,7 @@
 
 - matt-e2e-tester：**14/14 PASS**（retries=0 24.9s）。1 次 Quick Fix（test-only：D19 SSE-only 重构后旧轮询假设失效 → 用真实再触发驱动 re-fetch，忠实 SSE-only 设计）。
 - R1–R8 反假跑合规：API↔DB↔FS↔SSE↔UI 五层交叉验证；156 个 `expect()`（11.1/test，同级 spec 最高）。
-- **19 张截图**（template/goalac/viewer/assist/fulllink 全关键步，mtime 2026-08-18 22:01，修复后重生成）。
+- **18 张 v3-specific 截图**（template/goalac/viewer/assist/fulllink 全关键步，mtime 2026-08-18 22:01，修复后重生成；上一迭代遗留的 `task-domain/A-01-kanban-board.png` 已移回 `.scratch/task-domain-redesign/e2e-screenshots/`，目录现仅含 v3 截图）。
 - 跨特性发现：`task-domain-simple/composite` 旧 sibling spec 对 v3 TemplatePicker 流过时（correct-by-design，属另一 feature 的 spec，单独跟进）。
 
 ### Phase 5: Ship (Git PR)
@@ -75,16 +75,23 @@
 | open-octopus (monorepo) | feat/task-domain-redesign | [#51](https://github.com/XzhiF/open-octopus/pull/51) | Updated（smart overwrite，保留 MANUAL 区块） |
 
 ### Changed Files（当前迭代 vs 9917e986，git diff 实时）
+
+基线 `9917e986`（#43 task-domain-redesign 终点）→ HEAD `ee3ce0c0`。`git diff --shortstat 9917e986...HEAD` 实时核定：85 files, +15801/-106。
+
 | Package | Files | Change |
 |---------|-------|--------|
-| shared | 8 | +1554 / −9 |
-| providers | 4 | +248 / −17 |
-| engine | 12 | +1515 / −77 |
-| core-pack | 16 | +648 / −8 |
-| server | 73 | +15712 / −143 |
-| web-app | 48 | +13501 / −16 |
+| shared | 5 | +380 / -6 |
+| providers | 0 | — |
+| engine | 2 | +159 / -2 |
+| core-pack | 7 | +199 / 0 |
+| server | 21 | +4748 / -66 |
+| web-app | 21 | +7878 / -32 |
 
-当前迭代合计：80 files, +15286/−106（其中 prod 文件 36，其余为 tests/E2E/ADR/scratch）。
+非 packages/（tests/E2E/.scratch/ADRs/CONTEXT-MAP）：29 files, +2437 / 0。
+
+当前迭代合计：85 files, +15801/-106（含报告后 doc commits d24b7591/a9fe1206 及 r1 verification handoff ee3ce0c0；providers 0 文件——本迭代未触 providers）。
+
+> 核实命令：`git diff --shortstat 9917e986...HEAD`；按包计数：`git diff --name-only 9917e986...HEAD | grep -oE "^packages/[a-z-]+" | sort | uniq -c`。
 
 ### Remaining Issues
 | # | Issue | Impact | Suggestion |

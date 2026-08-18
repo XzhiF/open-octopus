@@ -10,10 +10,10 @@ None — can start immediately
 done
 
 ## Acceptance Criteria
-- [ ] AC1: `shared/src/types/scheduler-job.ts` 的 taskSpecSchema 增 `task_type: z.enum(["coding","generic"]).optional()`、`skill_groups: z.array(z.string()).default([])`、`decisions: z.array(z.string()).default([])`、`goal_confirmed: z.boolean().optional()`、`ac_confirmed: z.array(z.string()).default([])`
-- [ ] AC2: `shared/src/types/task.ts` 的 TaskSpecFieldSchema 增 `"decisions"`；validateSpecFieldValue 增 decisions 分支（string[] 校验）
-- [ ] AC3: 新增 ArtifactIndexEntry 类型：`{ path, by, title, external, updated_at }`；AssistWorkflowRun 类型：`{ run_id, execution_id, workspace_id, template, status, logs[], output?, output_raw?, output_parse_error? }`
-- [ ] AC4: 既有字段 goal/ac min(1) 约束不被破坏
+- [x] AC1: `shared/src/types/scheduler-job.ts` 的 taskSpecSchema 增 `task_type: z.enum(["coding","generic"]).optional()`、`skill_groups: z.array(z.string()).default([])`、`decisions: z.array(z.string()).default([])`、`goal_confirmed: z.boolean().optional()`、`ac_confirmed: z.array(z.string()).default([])`
+- [x] AC2: `shared/src/types/task.ts` 的 TaskSpecFieldSchema 增 `"decisions"`；validateSpecFieldValue 增 decisions 分支（string[] 校验）
+- [x] AC3: 新增 ArtifactIndexEntry 类型：`{ path, by, title, external, updated_at }`；AssistWorkflowRun 类型：`{ run_id, execution_id, workspace_id, template, status, logs[], output?, output_raw?, output_parse_error? }`
+- [x] AC4: 既有字段 goal/ac min(1) 约束不被破坏
 
 ## Verification Method
 **Verification type**: unit test

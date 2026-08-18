@@ -22,6 +22,8 @@ import path from "path"
 import os from "os"
 import { materializeTaskSpecToConfig } from "../services/scheduler/scheduler-service"
 import { TaskHomeService } from "../services/tasks/task-home-service"
+import { TasksService } from "../services/tasks/tasks-service"
+import { SSEService } from "../services/sse"
 import { WorkflowExecutor } from "../services/scheduler/executors/workflow-executor"
 import { ScheduleConfigDAO, ScheduleRunDAO, ExecutionDAO } from "../db/dao"
 import { applySchema } from "../db/schema"
@@ -111,6 +113,55 @@ describe("08 AC1/AC4: materializeTaskSpecToConfig task_artifacts_dir injection",
     const config = materializeTaskSpecToConfig(taskSpec, ["proj"], ORG, "wf", [])
     const iv = config.workflow_chain[0].input_values as Record<string, unknown>
     expect(iv.task_artifacts_dir).toBeUndefined()
+  })
+
+  // GS5/r2-05: key-set integrity. Value-checks (above) confirm the VALUE; this
+  // confirms the KEY's structural presence/absence in Object.keys — a stronger
+  // claim that catches "key set with undefined value" or "extra key leaked"
+  // which toBeUndefined/toBe would miss. Independent truth source: the function
+  // body builds simpleInputValues as `{}` or `{task_artifacts_dir}` — nothing else.
+  it("AC1/AC4 boundary: simple input_values key-set is EXACTLY [task_artifacts_dir] when provided, [] when undefined (no leakage)", () => {
+    const taskSpec = { goal: "g", ac: ["a"] } as unknown as TaskSpec
+    const expected = home.artifactsDir(TASK_ID)
+
+    const withArt = materializeTaskSpecToConfig(
+      taskSpec, ["proj"], ORG, "e2e-td-08/wf", [], undefined, expected,
+    )
+    const ivWith = withArt.workflow_chain[0].input_values as Record<string, unknown>
+    // Exact key-set: only task_artifacts_dir, no surprise keys.
+    expect(Object.keys(ivWith)).toEqual(["task_artifacts_dir"])
+
+    const withoutArt = materializeTaskSpecToConfig(taskSpec, ["proj"], ORG, "e2e-td-08/wf", [])
+    const ivWithout = withoutArt.workflow_chain[0].input_values as Record<string, unknown>
+    // Exact empty key-set: the key is never SET (not just undefined-valued) —
+    // legacy tasks get a minimal config with no injection trace.
+    expect(Object.keys(ivWithout)).toEqual([])
+  })
+
+  // GS5/r2-05: composite key-set + derived value. subunit_count is DERIVED inside
+  // the function from `task_spec.subunits?.length` (not echoed from a param), so
+  // asserting ===3 with 3 subunits is a real derived-value check. And the exact
+  // key-set proves the composite branch carries both subunit_count + task_artifacts_dir.
+  it("AC1 composite boundary: composite input_values key-set is EXACTLY [subunit_count, task_artifacts_dir] (subunit_count derived from subunits.length)", () => {
+    const taskSpec = {
+      goal: "g", ac: ["a"],
+      subunits: [
+        { name: "su-a", workspace_spec: { org: ORG, branch_prefix: "e2e-td-08-a", projects: [{ name: "p", source_path: "", group: "" }] }, workflow_ref: "wf-a", input_values: {}, skills: [], resources: [] },
+        { name: "su-b", workspace_spec: { org: ORG, branch_prefix: "e2e-td-08-b", projects: [{ name: "p", source_path: "", group: "" }] }, workflow_ref: "wf-b", input_values: {}, skills: [], resources: [] },
+        { name: "su-c", workspace_spec: { org: ORG, branch_prefix: "e2e-td-08-c", projects: [{ name: "p", source_path: "", group: "" }] }, workflow_ref: "wf-c", input_values: {}, skills: [], resources: [] },
+      ],
+    } as unknown as TaskSpec
+    const expected = home.artifactsDir(TASK_ID)
+    const config = materializeTaskSpecToConfig(
+      taskSpec, ["proj"], ORG, undefined, [], undefined, expected,
+    )
+    const iv = config.workflow_chain[0].input_values as Record<string, unknown>
+    // subunit_count is derived from task_spec.subunits.length inside the function
+    // (not a param echo) — 3 subunits → 3.
+    expect(iv.subunit_count).toBe(3)
+    // Exact key-set (sorted for order-independence): composite branch produces
+    // subunit_count + task_artifacts_dir, nothing else.
+    expect(Object.keys(iv).sort()).toEqual(["subunit_count", "task_artifacts_dir"].sort())
   })
 })
 
@@ -227,6 +278,23 @@ describe("08 AC2: composite dispatch — buildCompositeInputValues preserves tas
     // The other composite keys are still present (not clobbered)
     expect(inputValues.subunit_count).toBe(3)
     expect(inputValues.goal).toBe("E2E_TD_08_goal")
+
+    // GS5/r2-05: composite preservation integrity. buildCompositeInputValues
+    // completely REPLACES firstStep.input_values (the SW-BP7 hazard), then spreads
+    // ...artifactsEntry LAST. These assertions prove every original key survives
+    // that replacement AND task_artifacts_dir is not clobbered by an earlier key:
+    //   - integration_prompt: a KEY-RENAME (task_spec.integration_goal.prompt →
+    //     integration_prompt). Asserting the renamed key + value catches a
+    //     regression where the rename is dropped (would yield undefined).
+    //   - subunits: must be the ARRAY (not stringified) so the composition Loop
+    //     can iterate it.
+    //   - exact key-set: no key dropped, no extra key leaked.
+    expect(inputValues.integration_prompt).toBe("E2E_TD_08_synth")
+    expect(Array.isArray(inputValues.subunits)).toBe(true)
+    expect(inputValues.subunits).toHaveLength(3)
+    expect(Object.keys(inputValues).sort()).toEqual(
+      ["goal", "integration_prompt", "subunit_count", "subunits", "task_artifacts_dir"],
+    )
   })
 
   it("AC2/AC4: composite config WITHOUT task_artifacts_dir → key absent (backward compat)", async () => {
@@ -393,4 +461,187 @@ describe("08 AC3: composition subunit — input_mapping forwards task_artifacts_
     const receivedSubunit = spy.mock.calls[0][0] as SubunitSpec
     expect(receivedSubunit.input_values.task_artifacts_dir).toBeUndefined()
   }, 20000)
+
+  // GS5/r2-05: type preservation through input_mapping. resolveMappingValue
+  // (task-dispatch.ts:257) does `return this.pool.get(key)` for pure $vars.xxx —
+  // VarPool stores `any` in a Map, and Object.entries preserves number/boolean.
+  // So a non-string $vars value MUST arrive at the subunit with its type intact
+  // (not stringified to "42"/"true"). This is a real edge the existing AC3 test
+  // (string-only) does not cover. If a future refactor routes $vars through
+  // substituteVars (which String()ifies), this test fails — catching the
+  // type-loss regression before it reaches production dispatch.
+  it("AC3/type-preservation: input_mapping resolves $vars.<numeric>/<boolean> preserving type (not stringified)", async () => {
+    const subunits = [makeSubunit("a")]
+    const nodes: NodeDef[] = [
+      {
+        id: "loop-subunits",
+        type: "loop",
+        max_iterations: 20,
+        break_when: "$iteration >= $vars.subunit_count",
+        nodes: [
+          {
+            id: "dispatch-child",
+            type: "task_dispatch",
+            subunit: "$iteration.subunit",
+            await: true,
+            input_mapping: {
+              // string path (regression guard — existing behavior must still hold)
+              task_artifacts_dir: "$vars.task_artifacts_dir",
+              // numeric + boolean paths — the new edge under test
+              numeric_metric: "$vars.numeric_metric",
+              flag: "$vars.flag",
+            },
+            output_mapping: { result: "last_output" },
+          },
+        ],
+      },
+    ]
+    const wf: WorkflowDef = {
+      apiVersion: "octopus/v1",
+      kind: "Workflow",
+      name: "loop-task-dispatch-08-types",
+      execution_mode: "serial",
+      budget: {} as any,
+      // variables seeds VarPool via `new Map(Object.entries(variables))` —
+      // Object.entries preserves number/boolean (not stringified).
+      variables: {
+        subunits,
+        subunit_count: subunits.length,
+        goal: "g",
+        task_artifacts_dir: ARTIFACTS_DIR,
+        numeric_metric: 42,   // number, not "42"
+        flag: true,           // boolean, not "true"
+      } as Record<string, unknown>,
+      nodes,
+    }
+    const { port, spy } = makePort()
+
+    const engine = new WorkflowEngine(wf, {}, process.cwd())
+    engine.setTaskDispatchPort(port)
+
+    const res = await engine.run()
+    expect(res.status).toBe("pending_task_dispatch")
+    expect(spy).toHaveBeenCalledTimes(1)
+
+    const received = spy.mock.calls[0][0] as SubunitSpec
+    // resolveMappingValue returns pool.get(key) raw (no String()). Object.is is
+    // type-strict, so toBe(42) DISTINGUISHES the number 42 from the string "42" —
+    // a single assertion that fails the moment a refactor routes $vars through
+    // substituteVars (which would stringify). No separate typeof check: it would
+    // be logically implied by toBe(42) and thus tautological padding.
+    expect(received.input_values.numeric_metric).toBe(42)
+    expect(received.input_values.flag).toBe(true)
+  }, 20000)
+})
+
+// ──────────────────────────────────────────────────────────────────────
+//  GS5/r2-05: injection seam — TasksService.readyTask threads the injected
+//  TaskHomeService.artifactsDir into the materialized schedule config.
+//
+//  Confirmed seam (Round 1): TasksService constructor takes an optional
+//  `taskHomeService` (position 4). readyTask computes
+//  `taskArtifactsDir = taskSpec.task_type !== undefined
+//                      ? this.taskHomeService.artifactsDir(id) : undefined`
+//  and passes it to materializeTaskSpecToConfig. By injecting a TaskHomeService
+//  whose baseDir is a known temp prefix, we assert the resulting schedule
+//  config's task_artifacts_dir CARRIES that temp prefix — proving the path
+//  went through the injected seam, not the default os.homedir()/.octopus.
+//  This is an end-to-end ready→materialize→insertSchedule exercise (real
+//  :memory: DB, real TasksService); no HTTP, no production changes.
+// ──────────────────────────────────────────────────────────────────────
+
+describe("08 injection-seam: TasksService.readyTask uses injected TaskHomeService.baseDir", () => {
+  let db: Database.Database
+  let tempBase: string
+  let svc: TasksService
+  let sse: SSEService
+
+  beforeEach(() => {
+    db = new Database(":memory:")
+    applySchema(db)
+    tempBase = path.join(os.tmpdir(), `octopus-r2-05-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`)
+    sse = new SSEService()
+    // Inject a TaskHomeService whose baseDir is the temp prefix. readyTask will
+    // call artifactsDir(id) = path.join(tempBase, "tasks", id, "artifacts").
+    svc = new TasksService(db, sse, undefined, new TaskHomeService(tempBase))
+  })
+  afterEach(() => {
+    db.close()
+    try { require("fs").rmSync(tempBase, { recursive: true, force: true }) } catch { /* */ }
+  })
+
+  /** Seed a draft task row directly (mirrors tasks-v3-gates.test.ts insertTask). */
+  function insertDraftTask(id: string, spec: Record<string, unknown>): void {
+    const now = new Date().toISOString()
+    db.prepare(`
+      INSERT INTO tasks (id, org, name, status, source_chat_session_id, task_spec,
+        authoring_resources, resources, skills, project_ids, workflow_ref, version,
+        deleted_at, created_at, updated_at, completed_at)
+      VALUES (?, ?, ?, 'draft', NULL, ?, '[]', '[]', '[]', '[]', NULL, 1, NULL, ?, ?, NULL)
+    `).run(id, ORG, "r2-05-task", JSON.stringify(spec), now, now)
+  }
+
+  /** Read the schedule config that readyTask materialized (S2 origin lookup). */
+  function readScheduleConfig(taskId: string): {
+    workflow_chain: Array<{ workflow_ref: string; input_values: Record<string, unknown> }>
+    task_spec?: unknown
+    workspace_spec?: { org: string }
+  } {
+    const row = db.prepare(
+      "SELECT config FROM schedules WHERE origin_id = ? AND origin_type = 'task'",
+    ).get(taskId) as { config: string }
+    return JSON.parse(row.config)
+  }
+
+  it("AC1-seam: v3 task ready → config.task_artifacts_dir carries injected tempBase (not default homedir)", () => {
+    const id = "e2e-td-08-r2-05-v3"
+    insertDraftTask(id, {
+      goal: "E2E_TD r2-05 goal", ac: ["E2E_TD ac1"],
+      task_type: "coding",            // v3 → readyTask injects taskArtifactsDir
+      goal_confirmed: true,            // gate satisfied
+      ac_confirmed: ["E2E_TD ac1"],
+    })
+
+    const dto = svc.readyTask(id)
+    expect(dto.status).toBe("ready")
+
+    const config = readScheduleConfig(id)
+    const iv = config.workflow_chain[0].input_values
+    const expected = path.join(tempBase, "tasks", id, "artifacts")
+    // The injected base threaded through: path is EXACTLY tempBase/tasks/id/artifacts.
+    expect(iv.task_artifacts_dir).toBe(expected)
+    // SG5 (ticket 06): task_spec is DROPPED from the materialized config (lives
+    // in the tasks table). A regression that re-attaches task_spec would fail
+    // this — catches the "config carries task_spec" hazard independent of the
+    // path assertions above.
+    expect(config).not.toHaveProperty("task_spec")
+    // The schedule envelope carries the S2 origin wiring (origin_type='task',
+    // origin_id=task.id) — the seam TasksService.readyTask is responsible for.
+    const sched = db.prepare(
+      "SELECT origin_type, origin_id, status FROM schedules WHERE origin_id = ? AND origin_type = 'task'",
+    ).get(id) as { origin_type: string; origin_id: string; status: string }
+    expect(sched.origin_type).toBe("task")
+    expect(sched.origin_id).toBe(id)
+  })
+
+  it("AC4-seam: v2 task (no task_type) ready → task_artifacts_dir key ABSENT (legacy backward compat, no home)", () => {
+    const id = "e2e-td-08-r2-05-v2"
+    // v2 task: no task_type → readyTask's `taskSpec.task_type !== undefined` is
+    // false → taskArtifactsDir is undefined → no injection (AC4 backward compat).
+    // The confirmation gate is ALSO skipped for v2 (gate is v3-only).
+    insertDraftTask(id, { goal: "E2E_TD r2-05 v2 goal", ac: ["E2E_TD ac1"] })
+
+    const dto = svc.readyTask(id)
+    expect(dto.status).toBe("ready")
+
+    const config = readScheduleConfig(id)
+    const iv = config.workflow_chain[0].input_values
+    // Exact empty key-set: legacy tasks get a minimal config with NO injection
+    // trace (stronger than toBeUndefined — the key is never SET, so Object.keys
+    // excludes it). A regression that injects an empty-string or undefined-valued
+    // key would pass toBeUndefined but FAIL this exact-set check.
+    expect(Object.keys(iv)).toEqual([])
+    // No workflow_ref seeded on the task → materialize defaults to '' for simple.
+    expect(config.workflow_chain[0].workflow_ref).toBe("")
+  })
 })
