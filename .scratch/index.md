@@ -46,4 +46,4 @@
 | 42 | task-pool-redesign | 2026-08-17 | test-task-board | done (GO converged R1, 88/87, PR #50; US3 env-blocked) |
 | 43 | task-domain-redesign | 2026-08-18 | feat/task-domain-redesign | done (feat→main PR; 22/22 product-verified; AC2 repro-proven, B-AC3 provider-gated SKIP) |
 | 44 | task-authoring-v3 | 2026-08-18 | feat/task-domain-redesign | done (pipeline 5-phase PASS: 11 tickets DAG, 3-axis review 5 fixes, E2E 14/14 + 19 screenshots, PR #51 updated; R1 verification 78.5 REVIEW) |
-| 45 | task-authoring-v3-r2 | 2026-08-18 | feat/task-domain-redesign | in-progress (gap-fix: prototype removal, sibling specs v3, report fixes, US8 checklist, dispatch assertions) |
+| 45 | task-authoring-v3-r2 | 2026-08-18 | feat/task-domain-redesign | done (gap-fix: prototype removed 404, sibling specs 11+2 tolerance green, report reconciled, US8 checklist BLOCKED-pending-human, dispatch 42 asserts) |
