@@ -36,6 +36,15 @@ export const SCREENSHOT_DIR =
     ? path.join(process.env.E2E_ARTIFACTS_DIR, "e2e-screenshots", "task-domain")
     : path.resolve(__dirname, "../../../../.scratch/task-domain-redesign/e2e-screenshots")
 
+// Ticket 11 — v3 full-link evidence dir. Screenshots for the
+// task-authoring-v3 spec MUST land here (the pipeline artifact gate fails the
+// phase when zero PNGs exist in this dir). Kept separate from SCREENSHOT_DIR
+// so the task-domain-redesign specs keep writing to their own evidence dir.
+export const V3_SCREENSHOT_DIR = path.resolve(
+  __dirname,
+  "../../../../.scratch/task-authoring-v3/e2e-screenshots",
+)
+
 // ── Logging ─────────────────────────────────────────────────────────────
 
 /** Prefixed stdout — avoids bare console.log in E2E (matches octopus-agent-node.spec.ts). */
@@ -57,6 +66,20 @@ export function ensureScreenshotDir(): void {
 export function screenshotPath(name: string): string {
   ensureScreenshotDir()
   return path.join(SCREENSHOT_DIR, name)
+}
+
+/** Ensure the v3 screenshot dir exists (ticket 11 evidence dir). */
+export function ensureV3ScreenshotDir(): void {
+  if (!fs.existsSync(V3_SCREENSHOT_DIR)) {
+    fs.mkdirSync(V3_SCREENSHOT_DIR, { recursive: true })
+  }
+}
+
+/** Resolve a screenshot path under the v3 evidence dir (ticket 11). Creates
+ *  the dir on demand so the first screenshot never fails on a missing dir. */
+export function v3ScreenshotPath(name: string): string {
+  ensureV3ScreenshotDir()
+  return path.join(V3_SCREENSHOT_DIR, name)
 }
 
 // ── Server availability (R1: real server) ──────────────────────────────
@@ -370,6 +393,28 @@ export async function updateTask(
       throw new Error(`updateTask failed (${res.status()}): ${text}`)
     }
     return (await res.json()) as TaskDTO
+  } finally {
+    await ctx.dispose()
+  }
+}
+
+/** PUT /api/tasks/:id — raw {status, body} variant for asserting the SW-BP9
+ *  lock 409 (skill_groups/task_type change rejected) WITHOUT throwing. The
+ *  non-raw {@link updateTask} throws on non-2xx, so it can't surface the 409
+ *  body for the AC2 lock-regression assertion. */
+export async function updateTaskRaw(
+  taskId: string,
+  expectedVersion: number,
+  body: Record<string, unknown>,
+): Promise<{ status: number; body: { error?: string } & Record<string, unknown> }> {
+  const ctx = await apiContext()
+  try {
+    const res = await ctx.put(`${SERVER_URL}/api/tasks/${taskId}`, {
+      data: body,
+      headers: { "Content-Type": "application/json", "If-Match": String(expectedVersion) },
+    })
+    const bodyJson = (await res.json().catch(() => ({}))) as { error?: string } & Record<string, unknown>
+    return { status: res.status(), body: bodyJson }
   } finally {
     await ctx.dispose()
   }
