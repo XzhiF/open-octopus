@@ -19,6 +19,9 @@ import { ArchiveDraftDAO } from "./db/dao/archive-draft-dao"
 import { InteractionMessageDAO } from "./db/dao/interaction-message-dao"
 import { AgentVersionDAO } from "./db/dao/agent-version-dao"
 import { HarnessDAO } from "./db/dao/harness-dao"
+import { DemandDAO } from "./db/dao/demand-dao"
+import { DemandService } from "./services/task-board/demand-service"
+import { createTaskBoardRoutes } from "./routes/task-board"
 import { createKnowledgeRoutes } from "./routes/knowledge"
 import { createReviewRoutes } from "./routes/review"
 import { createArchiveRoutes } from "./routes/archive"
@@ -127,6 +130,7 @@ interface AllDAOs {
   interactionMessage: InteractionMessageDAO
   agentVersion: AgentVersionDAO
   harness: HarnessDAO
+  demand: DemandDAO
 }
 
 function createAllDAOs(db: ReturnType<typeof initDb>): AllDAOs {
@@ -149,6 +153,7 @@ function createAllDAOs(db: ReturnType<typeof initDb>): AllDAOs {
     interactionMessage: new InteractionMessageDAO(db),
     agentVersion: new AgentVersionDAO(db),
     harness: new HarnessDAO(db),
+    demand: new DemandDAO(db),
   }
 }
 
@@ -365,6 +370,7 @@ const d = daos ?? {
   interactionMessage: lazyDAO(InteractionMessageDAO),
   agentVersion: lazyDAO(AgentVersionDAO),
   harness: lazyDAO(HarnessDAO),
+  demand: lazyDAO(DemandDAO),
 }
 
 const wsSvc = workspaceService ?? new WorkspaceService(d.workspace)
@@ -452,6 +458,10 @@ app.route("/api/review", createReviewRoutes(reviewService, d.pendingReview))
 // Archive routes — execution result summarization + rule proposal
 const stateDir = path.join(process.env.HOME ?? "~", ".octopus", "state")
 app.route("/api/archive", createArchiveRoutes(d.pendingReview, stateDir, d.archive, d.archiveDraft))
+
+// Task-board routes — demand lifecycle management + pool status
+const demandService = new DemandService(d.demand)
+app.route("/api/task-board", createTaskBoardRoutes(demandService, d.demand))
 
 // Resource management — unified resource lifecycle (install/uninstall/verify/audit)
 const resourceRegistry = getResourceRegistry()

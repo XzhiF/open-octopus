@@ -15,7 +15,7 @@ describe("DB Schema", () => {
     db?.close()
   })
 
-  it("creates all 38 tables", () => {
+  it("creates all 39 tables", () => {
     db = createTestDb()
     applySchema(db)
     const rows = db.prepare(
@@ -23,9 +23,9 @@ describe("DB Schema", () => {
     ).all() as { name: string }[]
     const names = rows.map(r => r.name).sort()
     expect(names).toEqual([
-      // Core tables (38)
+      // Core tables (39)
       "agent_events", "agent_versions", "archive_drafts", "branch_executions", "chat_messages", "chat_sessions",
-      "clones", "evolution_log", "execution_archive", "execution_summaries", "executions", "experiences",
+      "clones", "demands", "evolution_log", "execution_archive", "execution_summaries", "executions", "experiences",
       "harness_config", "harness_events",
       "insight_marks", "interaction_messages",
       // Knowledge tables (1)
@@ -45,8 +45,8 @@ describe("DB Schema", () => {
     const rows = db.prepare(
       "SELECT name FROM sqlite_master WHERE type='index' AND name LIKE 'idx_%'"
     ).all() as { name: string }[]
-    // 40 core indexes + 28 agent indexes (5 new experiences v2) + 4 knowledge indexes + 6 archive indexes + 2 unique indexes + 2 harness indexes + 2 agent_versions indexes = 84
-    expect(rows.length).toBe(84)
+    // 40 core indexes + 28 agent indexes (5 new experiences v2) + 4 knowledge indexes + 6 archive indexes + 2 unique indexes + 2 harness indexes + 2 agent_versions indexes + 3 demands indexes = 87
+    expect(rows.length).toBe(87)
   })
 
   it("workspaces table has correct columns", () => {

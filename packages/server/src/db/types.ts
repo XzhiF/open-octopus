@@ -572,3 +572,24 @@ export interface LeaderboardEntry {
   metric_value: number
   execution_count: number
 }
+
+// ── Task Pool Tables ─────────────────────────────────────────────────
+
+export interface DemandRow {
+  id: string
+  title: string
+  description: string
+  status: string           // 'draft' | 'discussing' | 'incubated' | 'ready' | 'dispatched' | 'executing' | 'done' | 'failed'
+  priority: string         // 'low' | 'normal' | 'high' | 'critical'
+  project_ids: string      // JSON array of project IDs
+  demand_workflow_ref: string
+  exec_workflow_chain: string  // JSON array of workflow refs
+  workspace_id: string | null
+  ready_at: string | null
+  dispatched_at: string | null
+  completed_at: string | null
+  result: string | null
+  error_message: string | null
+  created_at: string
+  updated_at: string
+}

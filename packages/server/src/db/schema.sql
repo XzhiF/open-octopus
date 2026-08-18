@@ -858,3 +858,35 @@ CREATE TABLE IF NOT EXISTS archive_drafts (
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+-- =============================================================================
+-- Task Pool — Demands Table (schema version 37)
+-- =============================================================================
+
+-- 39. Demands — tracks demands through the full lifecycle:
+--     draft → discussing → incubated → ready → dispatched → executing → done/failed
+CREATE TABLE IF NOT EXISTS demands (
+  id TEXT PRIMARY KEY,
+  title TEXT NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'draft'
+    CHECK (status IN ('draft', 'discussing', 'incubated', 'ready', 'dispatched', 'executing', 'done', 'failed')),
+  priority TEXT NOT NULL DEFAULT 'normal'
+    CHECK (priority IN ('low', 'normal', 'high', 'critical')),
+  project_ids TEXT NOT NULL DEFAULT '[]',
+  demand_workflow_ref TEXT NOT NULL DEFAULT '',
+  exec_workflow_chain TEXT NOT NULL DEFAULT '[]',
+  workspace_id TEXT DEFAULT NULL,
+  ready_at TEXT DEFAULT NULL,
+  dispatched_at TEXT DEFAULT NULL,
+  completed_at TEXT DEFAULT NULL,
+  result TEXT DEFAULT NULL,
+  error_message TEXT DEFAULT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_demands_status ON demands(status);
+CREATE INDEX IF NOT EXISTS idx_demands_priority ON demands(priority);
+CREATE INDEX IF NOT EXISTS idx_demands_created_at ON demands(created_at DESC);
+
