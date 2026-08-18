@@ -6,7 +6,8 @@
 | # | Feature | Date | Tickets |
 |---|---------|------|---------|
 | 43 | task-domain-redesign (v2 tasks table + deterministic draft + spec↔agent linkage) | 2026-08-18 | done (22/22 product-verified) |
-| 44 | task-authoring-v3 (本 PR 新增) | 2026-08-18 | 11 (DAG 7 stages) |
+| 44 | task-authoring-v3 | 2026-08-18 | 11 (DAG 7 stages) |
+| 45 | task-authoring-v3-r2 (gap-fix: prototype removal, sibling specs v3, report reconcile, US8 checklist, dispatch asserts) | 2026-08-18 | 5 (single concurrent stage) |
 
 ### E2E Verification（latest: task-authoring-v3）
 | AC | Condition | Status |
@@ -27,7 +28,7 @@
 | US14 | preset 仅 org+projects | ✅ PASS |
 | D19 | task_artifacts_update 伴随 SSE（无轮询） | ✅ PASS |
 
-14/14 browser E2E PASS（retries=0），19 张截图证据，API↔DB↔FS↔SSE↔UI 五层交叉验证（R1–R8 合规），156 assertions。Code review 3-axis：5 项 🔴/🟡 全部修复并二次验证（含 D6 task context 注入、D19 SSE 无轮询）。
+14/14 browser E2E PASS（retries=0；R2 gap-fix 后复跑回归仍全绿），sibling specs 11 passed + 2 provider-gated skips，18 张截图证据，API↔DB↔FS↔SSE↔UI 五层交叉验证（R1–R8 合规），156 assertions + r2 dispatch 强化（22→42 expects）。Code review 3-axis：5 项 🔴/🟡 全部修复并二次验证（含 D6 task context 注入、D19 SSE 无轮询）；r2 gap-fix review 0 🔴。
 
 ### Changed Files（当前迭代，vs 上一迭代末端）
 ```
@@ -41,9 +42,9 @@
 ```
 
 ### Known Follow-ups
-- `task-domain-simple/composite` sibling E2E specs 对 v3 TemplatePicker 流过时（correct-by-design，单独跟进）
+- **MANUAL-CHECKLIST**（`.scratch/task-authoring-v3/MANUAL-CHECKLIST.md`）：M1-M5 人工项待执行回填证据（US5 @@spec_updated 投递 / US8 对话改产物 / US9 建议气泡 / D6 @@task_context 可见 / real-LLM MoA）— US8 收敛的唯一残差（BLOCKED-pending-human）
 - 分支预存 31 个环境漂移测试失败（与本特性无关，已记录基线）
-- manual checklist：real-LLM MoA 完成、agent 建议气泡、@@task_context 对话投递
+- sibling specs 两个 provider-gated skip（无 LLM 环境的固有容忍，simple/composite 互相镜像）
 
 <!-- MANUAL-START -->
 <!-- MANUAL-END -->
