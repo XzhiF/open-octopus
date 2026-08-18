@@ -18,6 +18,7 @@ import {
   TaskStatusConflictError,
   TaskSpecFieldError,
   TaskReadyGateError,
+  TaskLockViolationError,
   type CreateTaskInput,
   type UpdateTaskInput,
   type UpdateSpecFieldInput,
@@ -26,7 +27,6 @@ import {
 import { AssistWorkflowService, AssistWorkflowError } from "../services/tasks/assist-workflow-service"
 import { SSEService } from "../services/sse"
 import {
-  taskSpecSchema,
   resourceRefSchema,
   type TaskStatus,
 } from "@octopus/shared"
@@ -41,6 +41,9 @@ function classifyError(err: unknown): { status: number; message: string } {
   if (err instanceof TaskNotFoundError) return { status: 404, message: err.message }
   if (err instanceof TaskVersionConflictError) return { status: 409, message: err.message }
   if (err instanceof TaskStatusConflictError) return { status: 409, message: err.message }
+  // 04 (SW-BP9): skill_groups/task_type locked at creation → 409 (not 400 — the
+  // task exists and is editable; only these two fields are immutable).
+  if (err instanceof TaskLockViolationError) return { status: 409, message: err.message }
   if (err instanceof TaskSpecFieldError) return { status: 400, message: err.message }
   // 07: assist-workflow template/run classification.
   if (err instanceof AssistWorkflowError) {
@@ -114,7 +117,9 @@ export function createTasksRoutes(
 
   // ── CRUD ──────────────────────────────────────────────────────
 
-  // POST / — create a draft task
+  // POST / — create a draft task. 04 (D13/D15): the two-phase-flow template page
+  // sends source_chat_session_id (created first, D15) + task_type + skill_groups[]
+  // + preset{org,projects}. Legacy callers (no task_type) take the v2 path.
   router.post("/", async (c) => {
     const body = await safeJson(c)
     if (!body) return c.json({ error: "Invalid or missing JSON body" }, 400)
@@ -128,6 +133,28 @@ export function createTasksRoutes(
             : body.source_chat_session_id === null
               ? null
               : undefined,
+      }
+      // 04 (D13): task_type selects the template (coding/generic); present ⇒ v3.
+      if (body.task_type === "coding" || body.task_type === "generic") {
+        input.task_type = body.task_type
+      }
+      // 04 (D2/D3): skill groups chosen at creation then LOCKED (ADR-0012).
+      if (Array.isArray(body.skill_groups)) {
+        input.skill_groups = body.skill_groups.filter(
+          (s: unknown) => typeof s === "string" && s.length > 0,
+        )
+      }
+      // 04 (D13): preset = org + projects (coding template; skills belong to
+      // workflow.requires, NOT the preset).
+      if (body.preset && typeof body.preset === "object") {
+        const p = body.preset as { org?: unknown; projects?: unknown }
+        input.preset = {}
+        if (typeof p.org === "string") input.preset.org = p.org
+        if (Array.isArray(p.projects)) {
+          input.preset.projects = p.projects.filter(
+            (proj: unknown) => typeof proj === "string" && proj.length > 0,
+          )
+        }
       }
       const task = service.createTask(input)
       return c.json(task, 201)
@@ -179,7 +206,12 @@ export function createTasksRoutes(
     try {
       const input: UpdateTaskInput = {}
       if (typeof body.name === "string") input.name = body.name
-      if (body.task_spec !== undefined) input.task_spec = taskSpecSchema.parse(body.task_spec)
+      // 04 (SW-BP9): pass the RAW task_spec (not taskSpecSchema.parse'd) so the
+      // service can (a) lock-check skill_groups/task_type on the pre-parse
+      // values (parse defaults absent skill_groups→[], masking an explicit
+      // change) and (b) merge-preserve the locked fields when the body omits
+      // them. The service parses + validates (ZodError → 400 via classifyError).
+      if (body.task_spec !== undefined) input.task_spec = body.task_spec
       if (body.skills !== undefined) input.skills = z.array(z.string()).parse(body.skills)
       if (body.project_ids !== undefined) input.project_ids = z.array(z.string()).parse(body.project_ids)
       if (body.resources !== undefined) input.resources = z.array(resourceRefSchema).parse(body.resources)

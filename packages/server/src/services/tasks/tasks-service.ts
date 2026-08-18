@@ -47,6 +47,8 @@ import type { TaskRow, ScheduleRow } from "../../db/types"
 import type { SSEService } from "../sse"
 import { materializeTaskSpecToConfig } from "../scheduler/scheduler-service"
 import { TaskHomeService } from "./task-home-service"
+import { PluginMaterializer } from "./plugin-materializer"
+import { getResourceRegistry } from "../resource-registry"
 import {
   setSpecNotice,
 } from "./spec-notice-store"
@@ -81,6 +83,18 @@ export class TaskStatusConflictError extends Error {
 // below. Do not declare a separate server class — two classes would let a
 // shared-thrown 400 fall through to 500.
 export { TaskSpecFieldError }
+
+/** 04 (SW-BP9): thrown by {@link TasksService.updateTask} when a PUT attempts to
+ *  change `skill_groups` or `task_type` (locked at creation per ADR-0012). The
+ *  route maps it to 409 so the UI can show "locked" without a stale-version
+ *  retry storm. Do NOT reuse TaskStatusConflictError for this — it's not a
+ *  status conflict, it's an immutability contract (clearer message + intent). */
+export class TaskLockViolationError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = "TaskLockViolationError"
+  }
+}
 
 /** 05 (D18): thrown by {@link TasksService.readyTask} when a v3 task's
  *  confirmation gate fails (goal empty / ac<1 / goal_confirmed!==true / an ac
@@ -137,11 +151,32 @@ export interface CreateTaskInput {
   org: string
   name?: string
   source_chat_session_id?: string | null
+  // ── task-authoring v3 (ticket 04, D13/D15) ──
+  /** Template selected on the template page. Present ⇒ v3 two-phase-flow task
+   *  (home created, skill_groups materialized, ready-gate applies). Absent ⇒
+   *  legacy/v2 create (no home, no gate — backward compat with the existing
+   *  tasks-routes.test.ts POST cases). */
+  task_type?: "coding" | "generic"
+  /** Skill groups chosen at creation then LOCKED (ADR-0012). Default []. NOT
+   *  written into authoring_resources (D4 — that would trigger the augmenter's
+   *  full-text injection, double-loading skills already in the per-task plugin
+   *  dir). The "default" group is an empty marker (D17) — not materialized. */
+  skill_groups?: string[]
+  /** Coding-template preset (D13): org + projects only (skills belong to
+   *  workflow.requires, not the preset). preset.org overrides the top-level org
+   *  when present (the template page is the source of the authoring context). */
+  preset?: { org?: string; projects?: string[] }
 }
 
 export interface UpdateTaskInput {
   name?: string
-  task_spec?: TaskSpec
+  /** RAW (unparsed) task_spec from the PUT body. The service validates
+   *  (taskSpecSchema.parse) AND applies the SW-BP9 lock (reject skill_groups /
+   *  task_type changes) AND merge-preserves locked fields when the body omits
+   *  them — a route-side parse would default absent skill_groups→[] and clobber
+   *  the locked value (SW-BP2). Other fields (skills/project_ids/resources) stay
+   *  route-parsed; only task_spec is service-owned for the lock+merge logic. */
+  task_spec?: unknown
   skills?: string[]
   project_ids?: string[]
   resources?: ResourceRef[]
@@ -235,16 +270,41 @@ export class TasksService {
   private scheduleDAO: ScheduleConfigDAO
   private agentSessionDAO: AgentSessionDAO | null
   private sse: SSEService
+  /** 04 — home + plugin materialization (per-task plugin dir, ADR-0010). Injected
+   *  so tests use a temp baseDir + temp ResourceManager; production omits them and
+   *  the materializer is lazily resolved against the global ResourceManager singleton
+   *  (so a test that never hits the v3 create path doesn't construct the global RM). */
+  private taskHomeService: TaskHomeService
+  private pluginMaterializer: PluginMaterializer | null
 
   constructor(
     db: Database.Database,
     sse: SSEService,
     agentSessionDAO?: AgentSessionDAO,
+    // SW-BP15: tail-appended, never reorder the existing params (would break the
+    // 22 tasks-routes + tasks-v3-gates callers that pass only db/sse/agentDAO).
+    taskHomeService?: TaskHomeService,
+    pluginMaterializer?: PluginMaterializer,
   ) {
     this.taskDAO = new TaskDAO(db)
     this.scheduleDAO = new ScheduleConfigDAO(db)
     this.agentSessionDAO = agentSessionDAO ?? null
     this.sse = sse
+    this.taskHomeService = taskHomeService ?? new TaskHomeService()
+    this.pluginMaterializer = pluginMaterializer ?? null
+  }
+
+  /** Lazily resolve the PluginMaterializer against the global ResourceManager
+   *  singleton. Only called on the v3 create path (task_type set + non-empty
+   *  non-default skill_groups); tests inject their own materializer so this path
+   *  is never hit in the test suite. The static import of getResourceRegistry
+   *  does NOT construct the singleton — only the `.get()` call here does, and
+   *  that runs only when no materializer was injected (the production index.ts
+   *  injects one, so this is a defensive fallback for ad-hoc callers). */
+  private resolveMaterializer(): PluginMaterializer {
+    if (this.pluginMaterializer) return this.pluginMaterializer
+    this.pluginMaterializer = new PluginMaterializer(getResourceRegistry().get())
+    return this.pluginMaterializer
   }
 
   // ── Create ────────────────────────────────────────────────────────
@@ -253,20 +313,49 @@ export class TasksService {
    *  also create a draft implicitly; both paths converge here. SG3: if a
    *  source_chat_session_id is provided, link the session's scope_id to the
    *  new task id (the autosave-seam writer is 04's job; this is the explicit
-   *  POST path). */
+   *  POST path).
+   *
+   *  04 (D1/D5/D13/D15): when `task_type` is present (v3 two-phase flow), the
+   *  task gets a home dir (`~/.octopus/tasks/{id}/`) with a materialized skills/
+   *  plugin directory for the selected skill groups (ADR-0010). skill_groups +
+   *  task_type persist into task_spec (D4: NOT authoring_resources, which would
+   *  double-inject). preset.org/projects → tasks.org/project_ids (D13 coding
+   *  template: only org+projects). When task_type is absent, the legacy/v2
+   *  create path is unchanged (no home, no gate — backward compat). */
   createTask(input: CreateTaskInput): TaskDTO {
     const id = randomUUID()
     const now = new Date().toISOString()
     const name = input.name?.trim() || "Untitled task"
+    const isV3 = !!input.task_type
+
+    // 04 (D13): preset.org overrides the top-level org (the template page is the
+    // source of the authoring context). preset.projects → project_ids.
+    const org = input.preset?.org ?? input.org
+    const projectIds = input.preset?.projects ?? []
+
+    // 04 (D4): task_type + skill_groups live in task_spec, NOT authoring_resources.
+    // goal/ac start empty (the authoring chat fills them via spec-field). The raw
+    // JSON is stored without taskSpecSchema.parse here (goal="" / ac=[] would fail
+    // the schema's min(1) — validation happens on PUT [save draft], by which time
+    // the user has filled them in).
+    const taskSpecObj: Record<string, unknown> = { goal: "", ac: [] }
+    if (isV3) {
+      taskSpecObj.task_type = input.task_type
+      taskSpecObj.skill_groups = input.skill_groups ?? []
+    }
+
     this.taskDAO.insert({
       id,
-      org: input.org,
+      org,
       name,
       status: "draft",
       source_chat_session_id: input.source_chat_session_id ?? null,
+      task_spec: JSON.stringify(taskSpecObj),
+      project_ids: JSON.stringify(projectIds),
       created_at: now,
       updated_at: now,
     })
+
     // SG3: link the bound chat session's scope_id to the new task id (explicit
     // POST path). The autosave seam (04) does the same for the implicit path.
     if (input.source_chat_session_id && this.agentSessionDAO) {
@@ -279,6 +368,29 @@ export class TasksService {
         )
       }
     }
+
+    // 04 (ADR-0010/D1): v3 task → create home + materialize skill groups into
+    // {home}/skills/ as junctions/symlinks (or copy fallback). The "default"
+    // group is an empty marker (D17) — the materializer skips it, so no skills
+    // are linked (shared skills are already exposed via plugin #1).
+    if (isV3) {
+      const home = this.taskHomeService.createHome(id)
+      const groups = input.skill_groups ?? []
+      if (groups.length > 0) {
+        try {
+          this.resolveMaterializer().materializeGroups(home, groups)
+        } catch (err: unknown) {
+          // Non-fatal: the task row + home exist; the session can still proceed.
+          // A materialization failure (e.g. all skills missing) must not block
+          // task creation — the user can retry via a re-PUT (idempotent).
+          console.error(
+            `[TasksService] createTask: materializeGroups failed for ${id} (non-fatal — home created):`,
+            err instanceof Error ? err.message : String(err),
+          )
+        }
+      }
+    }
+
     const row = this.taskDAO.getById(id)
     if (!row) {
       throw new Error(`TasksService.createTask: inserted task ${id} not found`)
@@ -344,8 +456,60 @@ export class TasksService {
     const fields: Record<string, unknown> = {}
     if (input.name !== undefined) fields.name = input.name
     if (input.task_spec !== undefined) {
-      // Validate the full spec via Zod (throws ZodError → route 400).
-      fields.task_spec = JSON.stringify(taskSpecSchema.parse(input.task_spec))
+      // 04 (SW-BP9): skill_groups / task_type are LOCKED at creation (ADR-0012).
+      // A PUT that attempts to change them → 409 (TaskLockViolationError). The
+      // check runs on the RAW body values BEFORE taskSpecSchema.parse — parse
+      // would default absent skill_groups→[] and mask an explicit change as
+      // "same as default". After the check, the locked fields are MERGE-PRESERVED:
+      // a PUT that omits them (the UI only saves goal/ac) keeps the existing
+      // values rather than clobbering to the schema default (SW-BP2).
+      const rawSpec = input.task_spec as Record<string, unknown> | null
+      if (rawSpec && typeof rawSpec === "object") {
+        const existingSpec = parseJSON<TaskSpec>(existing.task_spec, {
+          goal: "",
+          ac: [],
+        } as unknown as TaskSpec)
+        // task_type lock: present + differs → 409.
+        if (
+          "task_type" in rawSpec &&
+          rawSpec.task_type !== (existingSpec as Record<string, unknown>).task_type
+        ) {
+          throw new TaskLockViolationError(
+            "task_type is locked at task creation and cannot be changed (SW-BP9)",
+          )
+        }
+        // skill_groups lock: present + differs → 409. Compare via sorted JSON so
+        // order-insensitive (["a","b"] == ["b","a"] — the user re-ordering the
+        // locked selection is not a violation, only the set matters).
+        if ("skill_groups" in rawSpec) {
+          const exGroups = ((existingSpec as Record<string, unknown>).skill_groups ?? []) as string[]
+          const inGroups = (rawSpec.skill_groups ?? []) as string[]
+          const sameSet =
+            [...exGroups].sort().join("\n") === [...inGroups].sort().join("\n")
+          if (!sameSet) {
+            throw new TaskLockViolationError(
+              "skill_groups are locked at task creation and cannot be changed (SW-BP9)",
+            )
+          }
+        }
+        // Validate the full spec via Zod (throws ZodError → route 400).
+        const parsed = taskSpecSchema.parse(rawSpec)
+        // Merge-preserve: if the body omitted the locked fields, restore them
+        // from the existing row (parse defaults absent skill_groups→[] and
+        // task_type→undefined, which would silently clobber the locked values).
+        if (!("task_type" in rawSpec)) {
+          parsed.task_type = (existingSpec as Record<string, unknown>).task_type as
+            | "coding" | "generic" | undefined
+        }
+        if (!("skill_groups" in rawSpec)) {
+          parsed.skill_groups =
+            ((existingSpec as Record<string, unknown>).skill_groups as string[] | undefined) ?? []
+        }
+        fields.task_spec = JSON.stringify(parsed)
+      } else {
+        // Non-object task_spec (null / wrong type) → let Zod reject it as 400.
+        fields.task_spec = JSON.stringify(taskSpecSchema.parse(input.task_spec))
+      }
     }
     if (input.skills !== undefined) fields.skills = JSON.stringify(input.skills)
     if (input.project_ids !== undefined) fields.project_ids = JSON.stringify(input.project_ids)
@@ -686,7 +850,14 @@ export class TasksService {
   /** DELETE /api/tasks/:id — soft-delete (discard draft/ready). Cascade-reaps
    *  all child schedules via S2 origin lookup (R-INT: origin_id has no FK, so
    *  app-level integrity is the only guard against orphans). Only draft/ready
-   *  tasks are discardable; a running task must be aborted first. */
+   *  tasks are discardable; a running task must be aborted first.
+   *
+   *  04 (AC5/ADR-0011/SW-BP14): a DRAFT task's home dir (`~/.octopus/tasks/{id}/`)
+   *  is reaped on delete (no orphan dirs). reapHome does NOT follow junctions/
+   *  symlinks inside skills/ — a link to a registry skill source must not drag
+   *  that source into the void. A non-draft task (ready/done/failed/aborted)
+   *  PRESERVES its home (artifacts are the record of what ran; kept until a
+   *  future hard-delete). Idempotent on a missing home (v2 tasks have none). */
   deleteTask(id: string): { ok: true } {
     const existing = this.taskDAO.getById(id)
     if (!existing) throw new TaskNotFoundError()
@@ -694,6 +865,19 @@ export class TasksService {
       throw new TaskStatusConflictError(
         "Cannot delete a running task — abort it first",
       )
+    }
+    // 04 (AC5): draft → reap home (non-draft preserved). Done BEFORE the
+    // soft-delete so a reap failure (locked file, etc.) doesn't leave the row
+    // soft-deleted while the home lingers — the row stays active for a retry.
+    if (existing.status === "draft") {
+      try {
+        this.taskHomeService.reapHome(id)
+      } catch (err: unknown) {
+        console.error(
+          `[TasksService] deleteTask: reapHome failed for ${id} (non-fatal — task soft-deleted):`,
+          err instanceof Error ? err.message : String(err),
+        )
+      }
     }
     // Cascade-reap: soft-delete all child schedules (origin_type='task').
     const children = this.scheduleDAO.findSchedulesByOrigin("task", id)

@@ -45,6 +45,7 @@ import chainRoutes from "./routes/chain-routes"
 import scheduleRoutes, { setScheduleService } from "./routes/schedule"
 import { createSchedulerRoutes } from "./routes/scheduler"
 import { createTasksRoutes } from "./routes/tasks"
+import { createSkillGroupsRoutes } from "./routes/skill-groups"
 import { createAgentRoutes } from "./routes/agent"
 import { createCloneSessionRoutes } from "./routes/clone"
 import { createCloneFilesRoutes } from "./routes/agent/clone-files"
@@ -68,6 +69,8 @@ import { SchedulerService } from "./services/scheduler/scheduler-service"
 import { SchedulerEngine } from "./services/scheduler/scheduler-engine"
 import { TaskScheduleStatusListener } from "./services/scheduler/schedule-status-listener"
 import { TasksService } from "./services/tasks/tasks-service"
+import { TaskHomeService } from "./services/tasks/task-home-service"
+import { PluginMaterializer } from "./services/tasks/plugin-materializer"
 import { AssistWorkflowService } from "./services/tasks/assist-workflow-service"
 import { WorkflowExecutor } from "./services/scheduler/executors/workflow-executor"
 import { AgentExecutor } from "./services/scheduler/executors/agent-executor"
@@ -700,11 +703,19 @@ if (shouldServe) {
       // ★ Initialize Tasks Service (always available, not gated by feature flag)
       // 03: first-class tasks domain — /api/tasks CRUD + spec-field + ready
       // (dispatch seam) + abort + /events SSE.
+      // 04: TaskHomeService + PluginMaterializer injected so a v3 task creation
+      // (task_type set) materializes the per-task plugin dir (ADR-0010). The
+      // materializer wraps the global ResourceManager singleton (registry is the
+      // source of truth for skill groups, D3). /api/skill-groups is the
+      // template-page data source (registry skill aggregation + default marker).
       // 07: assist-workflow routes (POST/GET /:id/assist-workflows) — service
       // owns temp-workspace creation + execution trigger + output parsing.
-      const tasksService = new TasksService(db, sse, daos!.agentSession)
+      const taskHomeService = new TaskHomeService()
+      const pluginMaterializer = new PluginMaterializer(resourceRegistry.get())
+      const tasksService = new TasksService(db, sse, daos!.agentSession, taskHomeService, pluginMaterializer)
       const assistService = new AssistWorkflowService(db, sse)
       app.route('/api/tasks', createTasksRoutes(tasksService, sse, assistService))
+      app.route('/api/skill-groups', createSkillGroupsRoutes(resourceRegistry.get()))
       ;(global as any).__octopus_tasks_service = tasksService
 
       // ★ Initialize Scheduler Engine with executors
