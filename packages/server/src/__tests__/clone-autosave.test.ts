@@ -142,11 +142,11 @@ describe("04: task-author autosave seam + scope_id writer (integration)", () => 
     expect(taskRow).toBeDefined()
     expect(taskRow.status).toBe("draft")
     expect(taskRow.source_chat_session_id).toBe(session.id)
-    // Auto-title = first 40 chars of the first user message (the auto-title
+    // Auto-title = first 20 chars of the first user message (the auto-title
     // block fires before the seam and sets the session title; the seam reads
     // the session title to name the task).
     const expectedTitle =
-      firstMessage.slice(0, 40).replace(/\n/g, " ").trim() || "task-author 会话"
+      firstMessage.slice(0, 20).replace(/\n/g, " ").trim() || "task-author 会话"
     expect(taskRow.name).toBe(expectedTitle)
     expect(taskRow.version).toBe(1)
     expect(taskRow.task_spec).toBe("{}") // SG8: autosave never touches task_spec

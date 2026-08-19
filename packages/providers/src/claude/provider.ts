@@ -1,7 +1,7 @@
 import { query, type Options, type AgentDefinition, type CanUseTool } from '@anthropic-ai/claude-agent-sdk'
 import type { IAgentProvider, SendQueryOptions, MessageChunk, TokenUsage, ModelUsageEntry, OctopusAgentDef } from '../types'
 import { LLMCallTracker } from '../llm-call-tracker'
-import { getPluginSdkConfigs } from '@octopus/shared'
+import { getPluginSdkConfigs, loadModelAliasConfig, resolveModelAlias } from '@octopus/shared'
 import fs from 'fs'
 import path from 'path'
 import os from 'os'
@@ -185,6 +185,14 @@ function toClaudeAgentDef(def: OctopusAgentDef): AgentDefinition {
 export class ClaudeSDKProvider implements IAgentProvider {
   private _llmTracker = new LLMCallTracker()
 
+  /** Resolve model tier alias to SDK-recognized name (e.g. "pro-max" → "opus", "pro" → "sonnet", "se" → "haiku") */
+  private resolveModelName(model: string | undefined): string {
+    if (!model) return 'sonnet'
+    const config = loadModelAliasConfig()
+    const resolved = resolveModelAlias(model, 'claude', config)
+    return resolved ?? model
+  }
+
   getLLMCalls() {
     return this._llmTracker.getAllCalls()
   }
@@ -205,7 +213,7 @@ export class ClaudeSDKProvider implements IAgentProvider {
     let currentMessageId = ""
     const blockTypes = new Map<number, 'thinking' | 'text' | 'tool_use'>()
     const pendingToolCalls = new Map<number, PendingToolCall>()
-    const modelName = options?.model ?? 'sonnet'
+    const modelName = this.resolveModelName(options?.model)
     this._llmTracker.reset()
 
     // Build canUseTool callback — ALWAYS active to enforce tool interception
@@ -255,7 +263,7 @@ export class ClaudeSDKProvider implements IAgentProvider {
 
     const sdkOptions: Options = {
       cwd,
-      model: options?.model ?? 'sonnet',
+      model: modelName,
       systemPrompt: options?.systemPrompt ?? { type: 'preset', preset: 'claude_code' },
       // Do NOT set permissionMode: 'bypassPermissions' — it prevents canUseTool
       // from being called in SDK 0.2.141, silently disabling the harness tool
@@ -288,7 +296,14 @@ export class ClaudeSDKProvider implements IAgentProvider {
       }, { once: true })
     }
 
-    for await (const event of query({ prompt, options: sdkOptions })) {
+    // Store query reference so we can call getContextUsage() (control request)
+    // after message_start. The Query object is an AsyncGenerator with extra
+    // methods (getContextUsage, setModel, etc.) — only available during the
+    // active stream.
+    const q = query({ prompt, options: sdkOptions })
+    let contextUsageEmitted = false
+
+    for await (const event of q) {
 
       while (toolResultQueue.length > 0) {
         const tr = toolResultQueue.shift()!
@@ -333,6 +348,20 @@ export class ClaudeSDKProvider implements IAgentProvider {
           const actualModel = e.message?.model ?? modelName
           this._llmTracker.onMessageStart(currentMessageId, actualModel)
           yield { type: 'message_start', messageId: currentMessageId }
+
+          // Fetch context window usage breakdown from the SDK (control request).
+          // Only do this once per stream to avoid repeated calls on multi-turn
+          // tool-use loops (message_start fires for each assistant message).
+          if (!contextUsageEmitted) {
+            contextUsageEmitted = true
+            try {
+              const ctxUsage = await q.getContextUsage()
+              yield { type: 'context_usage', data: ctxUsage }
+            } catch {
+              // getContextUsage may fail if the SDK subprocess doesn't support
+              // it or the transport isn't streaming mode — non-fatal, skip.
+            }
+          }
         }
 
         else if (e.type === 'content_block_start') {

@@ -19,11 +19,15 @@ import {
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Spinner } from "@/components/ui/spinner"
-import { Send, Ban, AlertCircle, CheckCircle2, Workflow, ExternalLink, Maximize2, Minimize2 } from "lucide-react"
+import {
+  AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogCancel, AlertDialogAction,
+} from "@/components/ui/alert-dialog"
+import { Send, Ban, AlertCircle, CheckCircle2, Workflow, ExternalLink, Maximize2, Minimize2, Trash2 } from "lucide-react"
 import { toast } from "sonner"
 import type { Task, TaskSpec, SubunitSpec } from "@octopus/shared"
 import {
-  listTasks, getTask, readyTask, abortTask, type TaskDetail, type TaskChild,
+  listTasks, getTask, readyTask, abortTask, deleteTask, type TaskDetail, type TaskChild,
 } from "@/lib/tasks-api"
 import { subscribeSSE } from "@/lib/sse-manager"
 import { getServerUrl } from "@/lib/server-config"
@@ -81,20 +85,17 @@ function isComposite(task: Task | null): boolean {
   return !!spec && Array.isArray(spec.subunits) && spec.subunits.length >= 2
 }
 
-/** v3 (ticket 09): a task is a v3 two-phase-flow task when task_spec.task_type
- *  is set (it went through the TemplatePicker → create-with-task_type path).
- *  Legacy/v2 drafts (no task_type) keep the existing AuthoringMode. */
-function isV3Task(task: Task | null): boolean {
-  const spec = taskSpecOf(task)
-  return !!spec && spec.task_type !== undefined
-}
-
 function resolveMode(task: Task | null): ModalMode {
   if (task === null) return "authoring-v3-template"
   if (task.status === "draft") {
-    // v3 two-phase-flow draft (task_type set) → AuthoringWorkspace; legacy
-    // v2 draft (no task_type) → the existing SpecPanel-based AuthoringMode.
-    return isV3Task(task) ? "authoring-v3-workspace" : "authoring"
+    // bugfix 2026-08-19: ALL drafts open the v3 AuthoringWorkspace. Legacy/v2
+    // drafts (no task_type — created before the two-phase flow) previously
+    // fell back to the old SpecPanel-based AuthoringMode, which users read as
+    // "the pre-iteration UI". The workspace degrades gracefully for them
+    // (task_type ?? "generic", skill_groups ?? [], lazy chat session on first
+    // send). AuthoringMode below is now unreachable dead-weight kept only so
+    // the SpecPanel-based unit tests keep their import surface.
+    return "authoring-v3-workspace"
   }
   if (task.status === "ready" || task.status === "running") {
     return isComposite(task) ? "composite" : "simple-execution"
@@ -123,64 +124,113 @@ const STATUS_TONE: Record<string, string> = {
 export function TaskModal({ open, onOpenChange, task, onMutated, onDraftResolved }: TaskModalProps) {
   const mode = resolveMode(task)
   const [isFullscreen, setIsFullscreen] = useState(false)
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false)
+  const [deleteBusy, setDeleteBusy] = useState(false)
 
   // Reset fullscreen when modal closes
   useEffect(() => {
     if (!open) setIsFullscreen(false)
   }, [open])
 
+  const handleDeleteDraft = useCallback(async () => {
+    if (!task || task.status !== "draft") return
+    setDeleteBusy(true)
+    try {
+      await deleteTask(task.id)
+      toast.success("草稿已废弃")
+      setDeleteConfirmOpen(false)
+      onMutated()
+      onOpenChange(false)
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : "删除失败")
+    } finally {
+      setDeleteBusy(false)
+    }
+  }, [task, onMutated, onOpenChange])
+
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent
-        showCloseButton
-        className={
-          isFullscreen
-            ? "sm:max-w-[100vw] w-screen h-screen max-h-screen p-0 gap-0 flex flex-col !rounded-none border-0"
-            : "sm:max-w-[92vw] w-[92vw] max-h-[90vh] h-[90vh] p-0 gap-0 flex flex-col"
-        }
-        aria-describedby={undefined}
-        onEscapeKeyDown={(e) => {
-          if (isFullscreen) {
-            e.preventDefault()
-            setIsFullscreen(false)
+    <>
+      <Dialog open={open} onOpenChange={onOpenChange}>
+        <DialogContent
+          showCloseButton
+          className={
+            isFullscreen
+              ? "sm:max-w-[100vw] w-screen h-screen max-h-screen p-0 gap-0 flex flex-col !rounded-none border-0"
+              : "sm:max-w-[92vw] w-[92vw] max-h-[90vh] h-[90vh] p-0 gap-0 flex flex-col"
           }
-        }}
-        overlayClassName={isFullscreen ? "bg-transparent" : undefined}
-      >
-        <ModalHeader task={task} mode={mode} isFullscreen={isFullscreen} onToggleFullscreen={() => setIsFullscreen((f) => !f)} />
-        <div className="flex-1 min-h-0 overflow-hidden">
-          {mode === "authoring-v3-template" && (
-            <TemplatePickerMode
-              onDraftResolved={onDraftResolved ?? (() => {})}
-              onMutated={onMutated}
-              onClose={() => onOpenChange(false)}
-            />
-          )}
-          {mode === "authoring-v3-workspace" && task && (
-            <AuthoringWorkspace task={task} onMutated={onMutated} onClose={() => onOpenChange(false)} />
-          )}
-          {mode === "authoring" && (
-            <AuthoringMode task={task} onMutated={onMutated} onDraftResolved={onDraftResolved} onClose={() => onOpenChange(false)} />
-          )}
-          {mode === "simple-execution" && task && (
-            <SimpleExecutionMode task={task} onMutated={onMutated} onClose={() => onOpenChange(false)} />
-          )}
-          {mode === "composite" && task && (
-            <CompositeMode task={task} onMutated={onMutated} onClose={() => onOpenChange(false)} />
-          )}
-          {mode === "done" && task && <DoneMode task={task} />}
-          {mode === "terminal" && task && <TerminalMode task={task} />}
-        </div>
-      </DialogContent>
-    </Dialog>
+          aria-describedby={undefined}
+          onEscapeKeyDown={(e) => {
+            if (isFullscreen) {
+              e.preventDefault()
+              setIsFullscreen(false)
+            }
+          }}
+          overlayClassName={isFullscreen ? "bg-transparent" : undefined}
+        >
+          <ModalHeader
+            task={task}
+            mode={mode}
+            isFullscreen={isFullscreen}
+            onToggleFullscreen={() => setIsFullscreen((f) => !f)}
+            onDeleteDraft={() => setDeleteConfirmOpen(true)}
+          />
+          <div className="flex-1 min-h-0 overflow-hidden">
+            {mode === "authoring-v3-template" && (
+              <TemplatePickerMode
+                onDraftResolved={onDraftResolved ?? (() => {})}
+                onMutated={onMutated}
+                onClose={() => onOpenChange(false)}
+              />
+            )}
+            {mode === "authoring-v3-workspace" && task && (
+              <AuthoringWorkspace task={task} onMutated={onMutated} onClose={() => onOpenChange(false)} />
+            )}
+            {mode === "authoring" && (
+              <AuthoringMode task={task} onMutated={onMutated} onDraftResolved={onDraftResolved} onClose={() => onOpenChange(false)} />
+            )}
+            {mode === "simple-execution" && task && (
+              <SimpleExecutionMode task={task} onMutated={onMutated} onClose={() => onOpenChange(false)} />
+            )}
+            {mode === "composite" && task && (
+              <CompositeMode task={task} onMutated={onMutated} onClose={() => onOpenChange(false)} />
+            )}
+            {mode === "done" && task && <DoneMode task={task} />}
+            {mode === "terminal" && task && <TerminalMode task={task} />}
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Confirm-delete dialog for draft tasks */}
+      <AlertDialog open={deleteConfirmOpen} onOpenChange={setDeleteConfirmOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>废弃草稿</AlertDialogTitle>
+            <AlertDialogDescription>
+              确定要废弃「{task?.name ?? "未命名"}」吗？草稿内容及工作目录将被清理，此操作不可撤销。
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleteBusy}>取消</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={deleteBusy}
+              onClick={(e) => { e.preventDefault(); void handleDeleteDraft() }}
+              className="bg-red-600 hover:bg-red-700"
+            >
+              {deleteBusy ? "删除中…" : "确认废弃"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
   )
 }
 
-function ModalHeader({ task, mode, isFullscreen, onToggleFullscreen }: {
-  task: Task | null; mode: ModalMode; isFullscreen: boolean; onToggleFullscreen: () => void
+function ModalHeader({ task, mode, isFullscreen, onToggleFullscreen, onDeleteDraft }: {
+  task: Task | null; mode: ModalMode; isFullscreen: boolean; onToggleFullscreen: () => void; onDeleteDraft: () => void
 }) {
   const title = task?.name ?? "新建任务"
   const status = task?.status ?? "draft"
+  const isDraft = status === "draft"
   const subtitle =
     mode === "authoring"
       ? "Authoring · spec 左 / 对话 右"
@@ -198,6 +248,18 @@ function ModalHeader({ task, mode, isFullscreen, onToggleFullscreen }: {
         <DialogDescription className="text-xs">{subtitle}</DialogDescription>
       </div>
       <div className="flex items-center gap-2 shrink-0 mr-8">
+        {isDraft && (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-7 text-xs text-red-500 hover:text-red-600 hover:bg-red-500/10"
+            onClick={onDeleteDraft}
+            data-task-modal-delete
+          >
+            <Trash2 className="h-3.5 w-3.5 mr-1" />
+            废弃草稿
+          </Button>
+        )}
         <Button
           variant="ghost"
           size="icon"
@@ -369,6 +431,7 @@ function AuthoringMode({
           streaming={chat.streaming}
           streamContent={chat.streamContent}
           streamThinking={chat.streamThinking}
+          streamTimeline={chat.streamTimeline}
           isThinking={chat.isThinking}
           toolCalls={chat.toolCalls}
           pendingConfirm={chat.pendingConfirm}

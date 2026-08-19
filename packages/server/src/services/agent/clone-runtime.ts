@@ -308,6 +308,7 @@ export class CloneRuntime {
     abortSignal?: AbortSignal,
     taskHomePath?: string,
     taskContextContent?: string,
+    modelOverride?: string,
   ): AsyncGenerator<MessageChunk> {
     const cloneSystemPrompt = this.assembleContext()
     const effectiveCwd = cwd || this.getDefaultCwd()
@@ -324,6 +325,7 @@ export class CloneRuntime {
         abortSignal,
         taskHomePath,
         taskContextContent,
+        modelOverride,
       )
       yield* stream
       return
@@ -343,6 +345,7 @@ export class CloneRuntime {
             abortSignal,
             taskHomePath,
             taskContextContent,
+            modelOverride,
           )
           yield* stream
           return
@@ -384,6 +387,7 @@ export class CloneRuntime {
     abortSignal?: AbortSignal,
     taskHomePath?: string,
     taskContextContent?: string,
+    modelOverride?: string,
   ): AsyncGenerator<MessageChunk> {
     const provider = getProvider('claude')
 
@@ -414,7 +418,7 @@ export class CloneRuntime {
         append,
       },
       abortSignal,
-      model: this.cloneDef.config.model,
+      model: modelOverride ?? this.cloneDef.config.model,
       plugins: this.getPlugins(taskHomePath),
     })
   }

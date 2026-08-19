@@ -256,7 +256,7 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
     const sessionId = c.req.param('id')
     const org = c.req.header('X-Octopus-Org') || (c.get('org') as string) || 'default'
 
-    let body: { message?: string }
+    let body: { message?: string; model?: string }
     try {
       body = await c.req.json()
     } catch {
@@ -376,29 +376,42 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
     }
 
     // 05 (task-authoring-v3 code-review F1/D6): v3 task context — artifacts
-    // dir + skill-group lock — appended to the system prompt every turn (随
-    // task context 注入). The agent's cwd stays the built-in clone dir, so it
-    // needs the ABSOLUTE artifacts path to Write artifact files + register
-    // artifacts.json (D5/R4), and the lock context so it stops suggesting
-    // group changes after creation (ADR-0012). Gated: v3 task (task_type set)
-    // with an existing home; non-fatal on any read/parse failure.
+    // dir + skill-group lock + locked projects — appended to the system prompt
+    // every turn (随 task context 注入). The agent's cwd stays the built-in
+    // clone dir, so it needs the ABSOLUTE artifacts path to Write artifact
+    // files + register artifacts.json (D5/R4), the lock context so it stops
+    // suggesting group changes after creation (ADR-0012), and the locked
+    // project names so it knows which project(s) the user selected.
+    // Non-fatal on any read/parse failure.
     let taskContextContent: string | undefined
-    if (noticeTaskId && taskDAO && taskHomePath && taskArtifactsDir) {
+    if (noticeTaskId && taskDAO) {
       try {
         const ctxRow = taskDAO.getById(noticeTaskId)
         const ctxSpec = ctxRow?.task_spec
           ? JSON.parse(ctxRow.task_spec) as { task_type?: string; skill_groups?: string[] }
           : null
         if (ctxSpec?.task_type) {
-          const lines = [
-            '@@task_context (task-authoring-v3):',
-            `- 产物目录: ${taskArtifactsDir} — 产物文件用绝对路径写入此目录，并在该目录的 artifacts.json 登记索引条目`,
-          ]
+          const lines: string[] = ['@@task_context (task-authoring-v3):']
+          // Artifacts dir — only when the task home exists
+          if (taskHomePath && taskArtifactsDir) {
+            lines.push(`- 产物目录: ${taskArtifactsDir} — 产物文件用绝对路径写入此目录，并在该目录的 artifacts.json 登记索引条目`)
+          }
           const groups = Array.isArray(ctxSpec.skill_groups) ? ctxSpec.skill_groups : []
           if (groups.length > 0) {
             lines.push(`- Skill 组已锁定: ${groups.join(', ')}（创建时锁定，不可变更；不要建议修改）`)
           }
-          taskContextContent = lines.join('\n')
+          // Locked projects — user's "编写语境" selection, always inject so
+          // the agent knows which project(s) to work in
+          const projectIds: string[] = ctxRow?.project_ids
+            ? JSON.parse(ctxRow.project_ids) as string[]
+            : []
+          if (projectIds.length > 0) {
+            lines.push(`- 项目已锁定: ${projectIds.join(', ')}（用户在"编写语境"中选定的项目，agent 应在此项目上下文中工作）`)
+          }
+          // Only set context if we have more than just the header
+          if (lines.length > 1) {
+            taskContextContent = lines.join('\n')
+          }
         }
       } catch (err: unknown) {
         // Non-fatal — chat reply unaffected; agent just misses the context
@@ -421,31 +434,49 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
         let fullThinking = ''
         let resultSessionId: string | null = null
         const toolCalls: Array<{
-          id: string; name: string; input?: unknown; result?: unknown; isError?: boolean
+          id: string; name: string; input?: unknown; result?: unknown; isError?: boolean; status?: string
         }> = []
+        // Arrival-ordered process timeline (2026-08-19): thinking segments /
+        // text fragments / tool calls interleaved as they happened. Persisted
+        // in the message metadata JSON so the UI's collapsible meta can render
+        // chronologically on history reload (mirrors the client-side
+        // useAgentChat streamTimeline for the live turn).
+        const timeline: Array<{ kind: 'thinking' | 'text' | 'tool'; text?: string; id?: string }> = []
         const memoryToolCalls: Array<{ id: string; name: string; input?: Record<string, unknown> }> = []
         const MEMORY_TOOL_NAMES = ['record_daily']
 
-        for await (const chunk of runtime.chat(body.message!, sessionId, providerSessionId, cwd, specUpdateNotice, authoringResourcesContent, undefined, taskHomePath, taskContextContent)) {
+        for await (const chunk of runtime.chat(body.message!, sessionId, providerSessionId, cwd, specUpdateNotice, authoringResourcesContent, undefined, taskHomePath, taskContextContent, body.model)) {
           if (aborted || (stream as any)._aborted) break
 
           switch (chunk.type) {
-            case 'text_delta':
+            case 'text_delta': {
               fullContent += chunk.content
+              const lastTl = timeline[timeline.length - 1]
+              if (lastTl && lastTl.kind === 'text') lastTl.text = (lastTl.text ?? '') + chunk.content
+              else timeline.push({ kind: 'text', text: chunk.content })
               await stream.writeSSE({ event: 'text_delta', data: JSON.stringify({ delta: chunk.content, content: fullContent }) })
               break
+            }
             case 'thinking_start':
               await stream.writeSSE({ event: 'thinking_start', data: '{}' })
               break
-            case 'thinking':
+            case 'thinking': {
               fullThinking += chunk.content
+              const lastTh = timeline[timeline.length - 1]
+              if (lastTh && lastTh.kind === 'thinking') lastTh.text = (lastTh.text ?? '') + chunk.content
+              else timeline.push({ kind: 'thinking', text: chunk.content })
               await stream.writeSSE({ event: 'thinking', data: JSON.stringify({ delta: chunk.content }) })
               break
+            }
             case 'thinking_done':
               await stream.writeSSE({ event: 'thinking_done', data: '{}' })
               break
+            case 'context_usage':
+              await stream.writeSSE({ event: 'context_usage', data: JSON.stringify(chunk.data) })
+              break
             case 'tool_call_start':
-              toolCalls.push({ id: chunk.toolCallId, name: chunk.toolName })
+              toolCalls.push({ id: chunk.toolCallId, name: chunk.toolName, status: 'start' })
+              timeline.push({ kind: 'tool', id: chunk.toolCallId })
               await stream.writeSSE({ event: 'tool_call', data: JSON.stringify({ type: 'start', tool_call_id: chunk.toolCallId, tool_name: chunk.toolName }) })
               break
             case 'tool_call': {
@@ -462,7 +493,7 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
             }
             case 'tool_result': {
               const tc = toolCalls.find(t => t.id === chunk.toolCallId)
-              if (tc) { tc.result = chunk.content; tc.isError = chunk.isError }
+              if (tc) { tc.result = chunk.content; tc.isError = chunk.isError; tc.status = chunk.isError ? 'fail' : 'result' }
               await stream.writeSSE({ event: 'tool_call', data: JSON.stringify({ type: 'result', tool_call_id: chunk.toolCallId, content: chunk.content, is_error: chunk.isError }) })
               break
             }
@@ -528,6 +559,7 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
           const metadata = JSON.stringify({
             thinking: fullThinking || undefined,
             tool_calls: toolCalls.length > 0 ? toolCalls : undefined,
+            timeline: timeline.length > 0 ? timeline : undefined,
           })
 
           sessionDAO.insertCloneMessage({
@@ -543,7 +575,7 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
 
           // Auto-generate title on first message
           if (session.title === `${cloneName} 会话` || session.title === '新会话') {
-            const autoTitle = body.message!.slice(0, 40).replace(/\n/g, ' ').trim() || `${cloneName} 会话`
+            const autoTitle = body.message!.slice(0, 20).replace(/\n/g, ' ').trim() || `${cloneName} 会话`
             sessionDAO.updateSession(sessionId, { title: autoTitle })
           }
 
@@ -567,6 +599,7 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
               session_id: sessionId,
               message_id: assistantMsgId,
               session_title: sessionDAO.findById(sessionId)?.title,
+              model: body.model ?? cloneDef.config.model ?? undefined,
             }),
           })
         }

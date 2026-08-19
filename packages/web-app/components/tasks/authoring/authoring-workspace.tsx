@@ -24,14 +24,18 @@ import { useEffect, useMemo, useState, useCallback, useRef } from "react"
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
 } from "@/components/ui/dialog"
+import {
+  AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogCancel, AlertDialogAction,
+} from "@/components/ui/alert-dialog"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Spinner } from "@/components/ui/spinner"
-import { Send, Settings2, Lock, Brain } from "lucide-react"
+import { Send, Settings2, Lock, Brain, Trash2 } from "lucide-react"
 import { toast } from "sonner"
 import type { Task } from "@octopus/shared"
 import { listSkillGroups, type SkillGroup } from "@/lib/skill-groups-api"
-import { readyTask, TaskReadyGateError, triggerAssistWorkflow } from "@/lib/tasks-api"
+import { readyTask, deleteTask, updateTask, TaskReadyGateError, triggerAssistWorkflow } from "@/lib/tasks-api"
 import { ProjectSelector, type SelectedProject } from "@/components/scheduler/project-selector"
 import { useOrgs } from "@/hooks/useOrgs"
 import { useAgentChat } from "@/hooks/useAgentChat"
@@ -53,6 +57,48 @@ export function AuthoringWorkspace({ task, onMutated, onClose }: AuthoringWorksp
   const taskType = spec.task_type ?? "generic"
   const skillGroups = spec.skill_groups ?? []
 
+  // ── Resizable panels: drag the divider to adjust chat ↔ output width ──
+  // Default split: 60% chat (left) / 40% output (right).
+  const containerRef = useRef<HTMLDivElement>(null)
+  const [rightWidth, setRightWidth] = useState(0)
+  const draggingRef = useRef(false)
+  const startXRef = useRef(0)
+  const startWidthRef = useRef(0)
+
+  // Measure container on mount and set initial 40% width.
+  useEffect(() => {
+    if (containerRef.current && rightWidth === 0) {
+      setRightWidth(Math.round(containerRef.current.clientWidth * 0.4))
+    }
+  }, [rightWidth])
+
+  const onDividerMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault()
+    draggingRef.current = true
+    startXRef.current = e.clientX
+    startWidthRef.current = rightWidth
+    document.body.style.cursor = "col-resize"
+    document.body.style.userSelect = "none"
+
+    const onMouseMove = (ev: MouseEvent) => {
+      if (!draggingRef.current) return
+      // Dragging left → wider right panel (delta negative → right grows)
+      const delta = startXRef.current - ev.clientX
+      const container = containerRef.current
+      const maxW = container ? container.clientWidth * 0.6 : 700
+      setRightWidth(Math.min(maxW, Math.max(240, startWidthRef.current + delta)))
+    }
+    const onMouseUp = () => {
+      draggingRef.current = false
+      document.body.style.cursor = ""
+      document.body.style.userSelect = ""
+      document.removeEventListener("mousemove", onMouseMove)
+      document.removeEventListener("mouseup", onMouseUp)
+    }
+    document.addEventListener("mousemove", onMouseMove)
+    document.addEventListener("mouseup", onMouseUp)
+  }, [rightWidth])
+
   // ── Skill-group commands (AC7): fetch once, filter to locked groups ──
   const [allGroups, setAllGroups] = useState<SkillGroup[]>([])
   useEffect(() => {
@@ -63,20 +109,21 @@ export function AuthoringWorkspace({ task, onMutated, onClose }: AuthoringWorksp
     return () => { cancelled = true }
   }, [])
 
-  // Aggregated /commands from the LOCKED selected groups. The default group
-  // (D17 empty marker) has skills:[] → contributes nothing; the built-in flow
-  // is already available via the task-author persona.
+  // Aggregated slash commands for the `/` autocomplete in the chat input.
+  // The task-author clone has access to ALL shared skills via plugin #1
+  // (`~/.octopus/agent`, per ADR-006 getPlugins ignores CloneDef.skills),
+  // so we include every installed skill regardless of the task's locked
+  // skill groups. The locked groups only control what gets *materialized*
+  // to the task home for workflow execution (plugin #3), not what the
+  // clone can invoke during the authoring chat.
+  // "default" group (D17) is an empty marker → contributes nothing.
   const commands = useMemo(() => {
-    const byName = new Map<string, SkillGroup>()
-    for (const g of allGroups) byName.set(g.group, g)
-    const out: string[] = []
-    for (const name of skillGroups) {
-      const g = byName.get(name)
-      if (!g) continue
-      for (const s of g.skills) out.push(`/${s.name}`)
+    const out: Array<{ name: string; description?: string }> = []
+    for (const g of allGroups) {
+      for (const s of g.skills) out.push({ name: s.name, description: s.description })
     }
     return out
-  }, [allGroups, skillGroups])
+  }, [allGroups])
 
   // ── Chat (reuses the v2 AuthoringMode wiring) ──────────────────────
   const initialSessionId = task.source_chat_session_id ?? null
@@ -87,11 +134,16 @@ export function AuthoringWorkspace({ task, onMutated, onClose }: AuthoringWorksp
     }
   }, [task.source_chat_session_id, activeSessionId])
 
+  // ── Model selection (pro-max / pro / se, default pro) ──
+  const [model, setModel] = useState('pro')
+  const modelRef = useRef(model)
+  modelRef.current = model
+
   const apiOverrides = useMemo(() => ({
     getSession: (id: string, q?: { limit?: number; cursor?: string }) =>
       agentApi.getCloneSession(TASK_AUTHOR_CLONE, id, q),
-    chatStream: (id: string, msg: string) =>
-      agentApi.cloneChatStream(TASK_AUTHOR_CLONE, id, msg),
+    chatStream: (id: string, msg: string, opts?: { model?: string }) =>
+      agentApi.cloneChatStream(TASK_AUTHOR_CLONE, id, msg, { model: opts?.model ?? modelRef.current }),
     stopChat: (id: string) =>
       agentApi.stopCloneChat(TASK_AUTHOR_CLONE, id),
   }), [])
@@ -104,9 +156,41 @@ export function AuthoringWorkspace({ task, onMutated, onClose }: AuthoringWorksp
     chat.loadMessages()
   }, [activeSessionId, chat])
 
+  // Lazy session (bugfix 2026-08-19): pre-v3 legacy drafts open here too but
+  // may lack source_chat_session_id (e.g. actuator-era rows). Mirror v2
+  // AuthoringMode: buffer the first message, create the task-author session,
+  // send once the session id lands. v3 drafts always have a session (D15
+  // session-first create) so this path is legacy-only.
+  const pendingMessageRef = useRef<string | null>(null)
+  const createSession = useCallback(async (): Promise<string | null> => {
+    try {
+      const session = await agentApi.createCloneSession(TASK_AUTHOR_CLONE)
+      setActiveSessionId(session.id)
+      return session.id
+    } catch {
+      toast.error("创建会话失败")
+      return null
+    }
+  }, [])
+
   const handleSend = useCallback((message: string) => {
-    chat.sendMessage(message)
-  }, [chat])
+    if (activeSessionId) {
+      chat.sendMessage(message)
+    } else {
+      pendingMessageRef.current = message
+      void createSession()
+    }
+  }, [activeSessionId, chat, createSession])
+
+  useEffect(() => {
+    if (activeSessionId && pendingMessageRef.current) {
+      const msg = pendingMessageRef.current
+      pendingMessageRef.current = null
+      requestAnimationFrame(() => {
+        chat.sendMessage(msg)
+      })
+    }
+  }, [activeSessionId, chat])
 
   // AC7: command-bar click sends the slash-command straight to the agent
   // (ChatArea owns its input internally, so seeding isn't an option without
@@ -124,6 +208,33 @@ export function AuthoringWorkspace({ task, onMutated, onClose }: AuthoringWorksp
     if (orgs.length > 0 && !presetOrg) setPresetOrg(orgs[0].name)
   }, [orgs, presetOrg])
 
+  // Preset save: persist project selection to task.project_ids via updateTask.
+  // The selection is "locked" once saved (matches the dialog hint: "预设创建后
+  // 随任务锁定"). When task.project_ids is non-empty the dialog becomes
+  // effectively read-only (save button hidden).
+  const [presetSaveBusy, setPresetSaveBusy] = useState(false)
+  const presetLocked = (task.project_ids ?? []).length > 0
+  const presetDirty = useMemo(() => {
+    if (presetLocked) return false
+    const saved = (task.project_ids ?? []).sort()
+    const current = presetProjects.map((p) => p.name).sort()
+    return JSON.stringify(saved) !== JSON.stringify(current)
+  }, [task.project_ids, presetProjects, presetLocked])
+  const handleSavePreset = useCallback(async () => {
+    setPresetSaveBusy(true)
+    try {
+      await updateTask(task.id, {
+        project_ids: presetProjects.map((p) => p.name),
+      }, task.version)
+      onMutated()
+      setPresetOpen(false)
+    } catch (err) {
+      toast.error(`保存项目失败: ${err instanceof Error ? err.message : String(err)}`)
+    } finally {
+      setPresetSaveBusy(false)
+    }
+  }, [task.id, task.version, presetProjects, onMutated])
+
   // ── Enqueue gate (AC6/D18): derive from server-side task_spec truth ─
   const goalConfirmed = !!spec.goal_confirmed
   const acConfirmed = spec.ac_confirmed ?? []
@@ -135,6 +246,25 @@ export function AuthoringWorkspace({ task, onMutated, onClose }: AuthoringWorksp
 
   const [enqueueBusy, setEnqueueBusy] = useState(false)
   const [gateMissing, setGateMissing] = useState<string[] | null>(null)
+
+  // ── Delete draft ──
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false)
+  const [deleteBusy, setDeleteBusy] = useState(false)
+
+  const handleDeleteDraft = useCallback(async () => {
+    setDeleteBusy(true)
+    try {
+      await deleteTask(task.id)
+      toast.success("草稿已废弃")
+      setDeleteConfirmOpen(false)
+      onMutated()
+      onClose()
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : "删除失败")
+    } finally {
+      setDeleteBusy(false)
+    }
+  }, [task.id, onMutated, onClose])
 
   // ── Assist-workflow runs (US9/AC4): tracked run ids → OutputViewer fetches ─
   // The command-bar MoA button triggers the built-in moa-requirements-review
@@ -183,7 +313,7 @@ export function AuthoringWorkspace({ task, onMutated, onClose }: AuthoringWorksp
   const typeBadge = taskType === "coding" ? "🛠 开发任务" : "📄 通用任务"
 
   return (
-    <div className="flex flex-col h-full min-h-0" data-authoring-workspace>
+    <div ref={containerRef} className="flex flex-col h-full min-h-0" data-authoring-workspace>
       {/* ── top bar (AC3) ── */}
       <div className="px-4 py-2 border-b bg-muted/30 flex items-center gap-2 flex-wrap">
         <Badge variant="secondary" className="text-[10px]" data-task-type-badge>{typeBadge}</Badge>
@@ -197,43 +327,62 @@ export function AuthoringWorkspace({ task, onMutated, onClose }: AuthoringWorksp
             <Settings2 className="size-3 mr-1" /> 编写语境 · {presetOrg} · {presetProjects.length} 项目
           </Button>
         )}
-        <div className="ml-auto text-[10px] text-muted-foreground">右侧 = 产出查看器 · 有问题直接在对话里让 agent 改</div>
+        <div className="ml-auto flex items-center gap-2">
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-6 text-[10px] text-red-500 hover:text-red-600 hover:bg-red-500/10"
+            onClick={() => setDeleteConfirmOpen(true)}
+            data-task-modal-delete
+          >
+            <Trash2 className="size-3 mr-0.5" />
+            废弃
+          </Button>
+          <span className="text-[10px] text-muted-foreground">右侧 = 产出查看器 · 有问题直接在对话里让 agent 改</span>
+        </div>
       </div>
 
       <div className="flex-1 flex min-h-0">
         {/* ── LEFT: chat (AC7 command bar above it) ── */}
-        <div className="flex-1 flex flex-col min-h-0 border-r border-border">
-          <div className="px-3 py-1.5 border-b bg-background flex items-center gap-2 overflow-x-auto" data-command-bar>
-            {commands.length === 0 ? (
-              <span className="text-[10px] text-muted-foreground">无额外命令（仅内置 spec-field 流程）</span>
-            ) : (
-              commands.map((cmd) => (
-                <button
-                  key={cmd}
-                  onClick={() => handleSend(cmd.startsWith("/") ? `${cmd} ` : cmd)}
-                  className="shrink-0 px-2 py-0.5 rounded text-[10px] bg-muted hover:bg-accent transition-colors"
-                >
-                  {cmd}
-                </button>
-              ))
+        {/* min-w-0 (bugfix 2026-08-19): the command bar's shrink-0 chips give
+            this column a huge min-content width; without min-w-0 the flex item
+            refuses to shrink below it, blowing the row past the dialog and
+            pushing the right output-viewer panel off-screen (user-visible:
+            "明细右边内容溢出"). min-w-0 lets flex-basis:0 win so the command
+            bar scrolls internally (overflow-x-auto) instead. */}
+        <div className="flex-1 flex flex-col min-h-0 min-w-0 border-r border-border">
+          {/* Assist-trigger bar (MoA). Skill commands moved to the chat input's
+              `/` slash-autocomplete — no more command-bar chips that auto-send. */}
+          <div className="px-3 py-1.5 border-b bg-background flex items-center gap-2" data-command-bar>
+            {commands.length > 0 && (
+              <span className="text-[10px] text-muted-foreground">输入 / 调用技能（{commands.length} 个可用）</span>
             )}
-            <span className="mx-1 text-border shrink-0">|</span>
-            <button
-              onClick={() => void handleTriggerAssist("moa-requirements-review")}
-              className="shrink-0 px-2 py-0.5 rounded text-[10px] bg-purple-500/10 text-purple-600 hover:bg-purple-500/20 transition-colors flex items-center gap-1"
-              data-assist-trigger="moa-requirements-review"
-              title="运行 MoA 专家咨询辅助工作流"
-            >
-              <Brain className="size-3" /> 专家咨询 (MoA)
-            </button>
+            {commands.length === 0 && (
+              <span className="text-[10px] text-muted-foreground">无额外命令（仅内置 spec-field 流程）</span>
+            )}
+            <div className="ml-auto">
+              <button
+                onClick={() => void handleTriggerAssist("moa-requirements-review")}
+                className="shrink-0 px-2 py-0.5 rounded text-[10px] bg-purple-500/10 text-purple-600 hover:bg-purple-500/20 transition-colors flex items-center gap-1"
+                data-assist-trigger="moa-requirements-review"
+                title="运行 MoA 专家咨询辅助工作流"
+              >
+                <Brain className="size-3" /> 专家咨询 (MoA)
+              </button>
+            </div>
           </div>
 
-          <div className="flex-1 min-h-0">
+          {/* flex flex-col (bugfix 2026-08-19): ChatArea's root is `flex-1`,
+              which only constrains its height inside a flex parent — without
+              it the message list grows unbounded and never scrolls ("chat
+              内容多了不能上下拖动"). v2 AuthoringMode had the flex parent. */}
+          <div className="flex-1 min-h-0 flex flex-col">
             <ChatArea
               messages={chat.messages}
               streaming={chat.streaming}
               streamContent={chat.streamContent}
               streamThinking={chat.streamThinking}
+              streamTimeline={chat.streamTimeline}
               isThinking={chat.isThinking}
               toolCalls={chat.toolCalls}
               pendingConfirm={chat.pendingConfirm}
@@ -245,12 +394,23 @@ export function AuthoringWorkspace({ task, onMutated, onClose }: AuthoringWorksp
               hasSession={!!activeSessionId}
               currentCloneName={TASK_AUTHOR_CLONE}
               hideEmptyState
+              commands={commands}
+              contextUsage={chat.contextUsage}
+              currentModel={model}
+              onModelChange={setModel}
             />
           </div>
         </div>
 
+        {/* ── Draggable divider ── */}
+        <div
+          onMouseDown={onDividerMouseDown}
+          className="w-1 shrink-0 cursor-col-resize bg-border hover:bg-primary/50 active:bg-primary transition-colors"
+          title="拖拽调整宽度"
+        />
+
         {/* ── RIGHT: output viewer (D11 — no skill-group info here) ── */}
-        <div className="w-[340px] shrink-0 flex flex-col min-h-0 bg-muted/20 overflow-y-auto p-3 space-y-3" data-output-viewer>
+        <div style={{ width: rightWidth }} className="shrink-0 flex flex-col min-h-0 bg-muted/20 overflow-y-auto p-3 space-y-3" data-output-viewer>
           <GoalAcCard task={task} onMutated={onMutated} />
 
           <OutputViewer task={task} runIds={runIds} onAdopted={onMutated} />
@@ -303,7 +463,7 @@ export function AuthoringWorkspace({ task, onMutated, onClose }: AuthoringWorksp
           <div className="space-y-3 text-xs">
             <div>
               <div className="text-muted-foreground mb-1">组织</div>
-              {orgs.length > 1 ? (
+              {orgs.length > 1 && !presetLocked ? (
                 <select
                   className="h-7 w-full rounded-md border border-border bg-background px-2 text-xs"
                   value={presetOrg}
@@ -312,23 +472,59 @@ export function AuthoringWorkspace({ task, onMutated, onClose }: AuthoringWorksp
                   {orgs.map((o) => <option key={o.name} value={o.name}>{o.name}</option>)}
                 </select>
               ) : (
-                <div className="text-muted-foreground">{presetOrg || "—"}</div>
+                <div className="text-muted-foreground">{presetOrg || "—"}{presetLocked && " 🔒"}</div>
               )}
             </div>
             <div>
-              <div className="text-muted-foreground mb-1">项目（多选）</div>
+              <div className="text-muted-foreground mb-1">项目（多选）{presetLocked && "🔒"}</div>
               {presetOrg ? (
-                <ProjectSelector org={presetOrg} value={presetProjects} onChange={setPresetProjects} />
+                <ProjectSelector org={presetOrg} value={presetProjects} onChange={presetLocked ? () => {} : setPresetProjects} />
               ) : (
                 <p className="text-muted-foreground">未配置组织</p>
               )}
             </div>
             <div className="rounded-md border border-dashed p-2 text-[10px] text-muted-foreground">
-              预设创建后随任务锁定。换语境 = 新建任务。
+              {presetLocked
+                ? "语境已锁定。换语境 = 新建任务。"
+                : "选择项目后保存以锁定。保存后不可更改。"}
             </div>
+            {!presetLocked && (
+              <div className="flex justify-end">
+                <Button
+                  size="sm"
+                  disabled={!presetDirty || presetSaveBusy}
+                  onClick={() => { void handleSavePreset() }}
+                >
+                  {presetSaveBusy ? <Spinner className="size-3 mr-1" /> : null}
+                  {presetSaveBusy ? "保存中…" : "保存并锁定"}
+                </Button>
+              </div>
+            )}
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* ── Confirm-delete dialog ── */}
+      <AlertDialog open={deleteConfirmOpen} onOpenChange={setDeleteConfirmOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>废弃草稿</AlertDialogTitle>
+            <AlertDialogDescription>
+              确定要废弃「{task.name ?? "未命名"}」吗？草稿内容及工作目录将被清理，此操作不可撤销。
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleteBusy}>取消</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={deleteBusy}
+              onClick={(e) => { e.preventDefault(); void handleDeleteDraft() }}
+              className="bg-red-600 hover:bg-red-700"
+            >
+              {deleteBusy ? "删除中…" : "确认废弃"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }

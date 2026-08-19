@@ -24,6 +24,7 @@ function parseMessageMetadata(msg: any): AgentMessage {
       ...msg,
       thinking: meta.thinking ?? msg.thinking,
       tool_calls: meta.tool_calls ?? msg.tool_calls,
+      timeline: meta.timeline ?? msg.timeline,
     }
   } catch {
     return msg
@@ -265,10 +266,10 @@ export function getCloneSession(cloneName: string, sessionId: string, query?: { 
   })
 }
 
-export function cloneChatStream(cloneName: string, sessionId: string, message: string): AgentSSEConnection {
+export function cloneChatStream(cloneName: string, sessionId: string, message: string, opts?: { model?: string }): AgentSSEConnection {
   const controller = new AbortController()
   const url = `${CLONE_BASE()}/${cloneName}/sessions/${sessionId}/chat`
-  const body = JSON.stringify({ message })
+  const body = JSON.stringify({ message, ...(opts?.model ? { model: opts.model } : {}) })
 
   const streamPromise = fetch(url, {
     method: 'POST',

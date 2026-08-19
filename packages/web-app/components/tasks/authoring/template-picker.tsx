@@ -77,15 +77,15 @@ export function TemplatePicker({ onCreate, busy }: TemplatePickerProps) {
   const toggleGroup = (group: string) => {
     const on = selectedGroups.includes(group)
     if (on) {
-      // Never allow zero groups — the create button needs ≥1.
-      const next = selectedGroups.filter((g) => g !== group)
-      if (next.length > 0) setSelectedGroups(next)
+      setSelectedGroups(selectedGroups.filter((g) => g !== group))
     } else {
       setSelectedGroups([...selectedGroups, group])
     }
   }
 
-  const canCreate = selectedGroups.length > 0
+  // Skill groups are optional — zero selection is fine (only the built-in
+  // spec-field flow + shared skills will be available).
+  const canCreate = true
 
   const handleCreate = () => {
     if (!canCreate) return
@@ -163,7 +163,7 @@ export function TemplatePicker({ onCreate, busy }: TemplatePickerProps) {
                   >
                     {on && <Check className="size-3" />}
                   </span>
-                  <div className="flex-1">
+                  <div className="flex-1 min-w-0">
                     <div className="text-xs font-medium flex items-center gap-1">
                       {g.displayName}
                       {isDefault && (

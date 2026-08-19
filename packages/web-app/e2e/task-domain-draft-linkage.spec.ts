@@ -186,9 +186,11 @@ test.describe("Story C: Draft autosave + spec↔agent linkage + resource loading
       { timeoutMs: 10_000, message: "spec_field_update SSE not received for goal" },
     )
 
-    // UI assert (R6): SpecPanel #task-goal textarea reflects the SSE update
-    const goalInput = dialog.locator("#task-goal")
-    await expect(goalInput, "Goal textarea should reflect SSE update").toHaveValue(goalText, {
+    // UI assert (R6): the draft modal's GoalAcCard reflects the SSE update.
+    // (2026-08-19 bugfix: ALL drafts open the v3 AuthoringWorkspace — the
+    // legacy SpecPanel #task-goal textarea is no longer the draft UI.)
+    const goalCard = dialog.locator("[data-goal-ac-card]")
+    await expect(goalCard, "GoalAcCard should reflect SSE goal update").toContainText(goalText, {
       timeout: 10_000,
     })
 

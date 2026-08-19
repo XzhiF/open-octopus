@@ -1,10 +1,15 @@
 "use client"
 
 import { useState, useEffect, useCallback, useRef } from "react"
-import { RefreshCw, Plus } from "lucide-react"
+import { RefreshCw, Plus, Trash2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import {
+  AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogCancel, AlertDialogAction,
+} from "@/components/ui/alert-dialog"
 import type { Task } from "@octopus/shared"
-import { listTasks } from "@/lib/tasks-api"
+import { listTasks, deleteTask } from "@/lib/tasks-api"
+import { toast } from "sonner"
 import { groupTasksByStatus, TASK_COLUMNS } from "@/lib/task-board"
 import { subscribeSSE } from "@/lib/sse-manager"
 import { getServerUrl } from "@/lib/server-config"
@@ -84,6 +89,27 @@ export default function TasksPage() {
   const openCard = (task: Task) => { setModalTask(task); setModalOpen(true) }
   const close = () => { setModalOpen(false); setModalTask(null) }
 
+  // Delete a draft task (soft-delete). Only draft tasks are deletable from
+  // the kanban card; non-draft tasks require abort-first (server 409 guard).
+  const [deletingTaskId, setDeletingTaskId] = useState<string | null>(null)
+  const [deleteBusy, setDeleteBusy] = useState(false)
+
+  const handleDeleteDraft = useCallback(async (taskId: string) => {
+    setDeleteBusy(true)
+    try {
+      await deleteTask(taskId)
+      toast.success("草稿已废弃")
+      setDeletingTaskId(null)
+      // Close the modal if the deleted task was open
+      if (modalTask?.id === taskId) close()
+      void fetchTasks()
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : "删除失败")
+    } finally {
+      setDeleteBusy(false)
+    }
+  }, [fetchTasks, modalTask])
+
   // New-task flow: the task-author clone + autosave seam (04) create a draft
   // (linked via source_chat_session_id); adopt it so [入队] enables without
   // closing the modal.
@@ -132,7 +158,12 @@ export default function TasksPage() {
                   </header>
                   <div className="flex flex-col gap-2 flex-1 p-2 overflow-auto">
                     {grouped[col.id].map((task) => (
-                      <TaskCard key={task.id} task={task} onClick={() => openCard(task)} />
+                      <TaskCard
+                        key={task.id}
+                        task={task}
+                        onClick={() => openCard(task)}
+                        onDeleteRequest={(t) => setDeletingTaskId(t.id)}
+                      />
                     ))}
                     {grouped[col.id].length === 0 && (
                       <div
@@ -157,6 +188,31 @@ export default function TasksPage() {
         onMutated={fetchTasks}
         onDraftResolved={handleDraftResolved}
       />
+
+      {/* Confirm-delete dialog for draft tasks */}
+      <AlertDialog open={!!deletingTaskId} onOpenChange={(o) => { if (!o) setDeletingTaskId(null) }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>废弃草稿</AlertDialogTitle>
+            <AlertDialogDescription>
+              确定要废弃这个草稿吗？草稿内容及工作目录将被清理，此操作不可撤销。
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleteBusy}>取消</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={deleteBusy}
+              onClick={(e) => {
+                e.preventDefault()
+                if (deletingTaskId) void handleDeleteDraft(deletingTaskId)
+              }}
+              className="bg-red-600 hover:bg-red-700"
+            >
+              {deleteBusy ? "删除中…" : "确认废弃"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }
@@ -164,11 +220,13 @@ export default function TasksPage() {
 interface TaskCardProps {
   task: Task
   onClick: () => void
+  onDeleteRequest: (task: Task) => void
 }
 
-function TaskCard({ task, onClick }: TaskCardProps) {
+function TaskCard({ task, onClick, onDeleteRequest }: TaskCardProps) {
   // SG9: composite requires subunits.length >= 2.
   const composite = !!task.task_spec.subunits && task.task_spec.subunits.length >= 2
+  const isDraft = task.status === "draft"
   return (
     <article
       data-task-card
@@ -178,11 +236,23 @@ function TaskCard({ task, onClick }: TaskCardProps) {
       role="button"
       tabIndex={0}
       onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onClick() } }}
-      className="rounded-md border border-border bg-card p-3 text-sm shadow-sm cursor-pointer hover:border-primary/40 hover:shadow transition-all"
+      className="group rounded-md border border-border bg-card p-3 text-sm shadow-sm cursor-pointer hover:border-primary/40 hover:shadow transition-all relative"
     >
       <div className="flex items-center justify-between gap-2">
         <h3 className="font-medium truncate">{task.name}</h3>
-        {composite ? <span className="text-[10px] px-1 py-0.5 rounded bg-primary/10 text-primary shrink-0">复合</span> : null}
+        <div className="flex items-center gap-1 shrink-0">
+          {composite ? <span className="text-[10px] px-1 py-0.5 rounded bg-primary/10 text-primary">复合</span> : null}
+          {isDraft && (
+            <button
+              data-task-delete-btn
+              onClick={(e) => { e.stopPropagation(); onDeleteRequest(task) }}
+              className="size-5 rounded flex items-center justify-center text-muted-foreground/50 hover:text-red-500 hover:bg-red-500/10 opacity-0 group-hover:opacity-100 transition-all"
+              title="废弃草稿"
+            >
+              <Trash2 className="size-3" />
+            </button>
+          )}
+        </div>
       </div>
       <dl className="mt-2 flex flex-col gap-1 text-xs text-muted-foreground">
         <div className="flex justify-between">

@@ -23,7 +23,7 @@ export function ChatTab() {
   }, [updateSessionTitle])
 
   const {
-    messages, streaming, streamContent, streamThinking, isThinking, toolCalls, pendingConfirm,
+    messages, streaming, streamContent, streamThinking, streamTimeline, isThinking, toolCalls, pendingConfirm,
     error: chatError, statusMessage,
     sendMessage, stopGenerate, handleConfirm, loadMessages,
   } = useAgentChat(activeSessionId, { onTitleUpdate: handleTitleUpdate })
@@ -121,6 +121,7 @@ export function ChatTab() {
           streaming={streaming}
           streamContent={streamContent}
           streamThinking={streamThinking}
+          streamTimeline={streamTimeline}
           isThinking={isThinking}
           toolCalls={toolCalls}
           pendingConfirm={pendingConfirm}
