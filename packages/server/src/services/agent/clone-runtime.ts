@@ -18,7 +18,6 @@ import {
   getDailyMemoryDir,
   getBuiltInCloneDir,
   getCloneDir,
-  getCloneDir,
   getCloneSkillsDir,
 } from './paths'
 
@@ -307,7 +306,6 @@ export class CloneRuntime {
     authoringResourcesContent?: string,
     abortSignal?: AbortSignal,
     taskHomePath?: string,
-    taskContextContent?: string,
     modelOverride?: string,
   ): AsyncGenerator<MessageChunk> {
     const cloneSystemPrompt = this.assembleContext()
@@ -324,7 +322,6 @@ export class CloneRuntime {
         authoringResourcesContent,
         abortSignal,
         taskHomePath,
-        taskContextContent,
         modelOverride,
       )
       yield* stream
@@ -344,7 +341,6 @@ export class CloneRuntime {
             authoringResourcesContent,
             abortSignal,
             taskHomePath,
-            taskContextContent,
             modelOverride,
           )
           yield* stream
@@ -386,7 +382,6 @@ export class CloneRuntime {
     authoringResourcesContent: string | undefined,
     abortSignal?: AbortSignal,
     taskHomePath?: string,
-    taskContextContent?: string,
     modelOverride?: string,
   ): AsyncGenerator<MessageChunk> {
     const provider = getProvider('claude')
@@ -394,15 +389,13 @@ export class CloneRuntime {
     // 05 — SPIKE S1: append the transient spec-update notice to the system
     // prompt. 07 — SG6: append authoring_resources SKILL.md content first
     // (so it's part of the base context), then the notice (trailing override).
-    // D6 (task-authoring-v3): taskContextContent (artifacts dir + skill-group
-    // lock) is persistent per-task base context — lands right after the clone
-    // context, before skills and the transient notice.
+    // Dynamic workspace state (org, projects, skill groups) lives in
+    // `{taskHome}/context.md` — NOT in the system prompt. This keeps the
+    // system prompt stable for prompt cache stability. The agent reads
+    // context.md on demand when it sees @@context_updated.
     // Only concat when each piece is actually present; absent pieces leave no
     // stray separator (no @@ leak, no empty ## Available Skills section).
     const segments: string[] = [cloneSystemPrompt]
-    if (taskContextContent) {
-      segments.push(taskContextContent)
-    }
     if (authoringResourcesContent) {
       segments.push(authoringResourcesContent)
     }
@@ -420,6 +413,13 @@ export class CloneRuntime {
       abortSignal,
       model: modelOverride ?? this.cloneDef.config.model,
       plugins: this.getPlugins(taskHomePath),
+      // Path guard: for task-author sessions, block Write/Edit outside the
+      // task home directory. This is a HARD enforcement — the agent CANNOT
+      // write to the project codebase or other locations. Rules file is
+      // advisory (agent can ignore); the hook is mandatory.
+      onBeforeToolCall: taskHomePath
+        ? buildPathGuard(taskHomePath)
+        : undefined,
     })
   }
 
@@ -686,5 +686,56 @@ export class CloneRuntime {
       ``,
       `**注意：绝对不要在未读取当前内容、未询问用户意图的情况下直接覆盖 persona.md。**`,
     ].join('\n')
+  }
+}
+
+/** Build an onBeforeToolCall callback that blocks Write/Edit tool calls to
+ *  paths outside the task home directory. This is a HARD enforcement —
+ *  unlike the rules file (advisory), the hook MANDATES compliance.
+ *
+ *  Allowed paths:
+ *    - Inside task home (artifacts/, skills/, context.md, .claude/, etc.)
+ *
+ *  Blocked paths:
+ *    - Any path outside the task home (project codebase, system dirs, etc.)
+ *
+ *  Read-only tools (Read, Glob, Grep, LS, etc.) are always allowed. */
+function buildPathGuard(taskHomePath: string): (toolName: string, input: unknown) => Promise<{ allow: boolean; reason?: string } | undefined> {
+  const normalizedHome = path.resolve(taskHomePath)
+
+  return async (toolName: string, input: unknown): Promise<{ allow: boolean; reason?: string } | undefined> => {
+    // Only intercept file-write tools
+    if (toolName !== 'Write' && toolName !== 'Edit' && toolName !== 'NotebookEdit') {
+      return undefined // allow all other tools
+    }
+
+    const inp = input as Record<string, unknown>
+    const filePath = (inp.file_path ?? inp.notebook_path) as string | undefined
+    if (!filePath) return undefined // no path to check → allow
+
+    const resolved = path.resolve(filePath)
+
+    // Allow if inside the task home directory
+    if (resolved === normalizedHome || resolved.startsWith(normalizedHome + path.sep)) {
+      return undefined // allowed
+    }
+
+    // Blocked — provide a clear message so the agent redirects to artifacts/
+    return {
+      allow: false,
+      reason: [
+        `BLOCKED: "${filePath}" is outside the task workspace.`,
+        ``,
+        `Task home: ${normalizedHome}`,
+        `Artifacts dir: ${path.join(normalizedHome, 'artifacts')}`,
+        ``,
+        `You MUST write all output files inside the task home directory.`,
+        `- Formal artifacts → write to the artifacts/ subdirectory`,
+        `- Working files (context, notes) → write to the task home root`,
+        `- DO NOT write to the project codebase or any other location.`,
+        ``,
+        `Please redirect this write to the appropriate location inside the task home.`,
+      ].join('\n'),
+    }
   }
 }

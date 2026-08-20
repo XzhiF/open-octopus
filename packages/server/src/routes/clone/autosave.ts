@@ -23,6 +23,7 @@
 
 import crypto from "crypto"
 import type { TaskDAO, AgentSessionDAO } from "../../db/dao"
+import { TaskHomeService } from "../../services/tasks/task-home-service"
 
 export interface AutosaveDeps {
   taskDAO: TaskDAO
@@ -69,6 +70,20 @@ export function autosaveTaskDraft(
       created_at: now,
       updated_at: now,
     })
+    // Create task home directory so the next turn's clone cwd override
+    // (routes/clone/index.ts) can resolve to the task dir instead of the
+    // clone's own dir. Without this, @@task_context is not injected and
+    // skill-relative paths land in the wrong place.
+    try {
+      new TaskHomeService().createHome(id, { org: input.org })
+    } catch (err: unknown) {
+      // Non-fatal — task row exists; home creation is best-effort. Mirrors
+      // the swallow+log pattern for scope_id link above.
+      console.error(
+        "[autosaveTaskDraft] failed to create task home (non-fatal — task row created):",
+        err instanceof Error ? err.message : String(err),
+      )
+    }
     // SG3: link the bound chat session's scope_id to the new task id (implicit
     // autosave path — mirrors TasksService.createTask's explicit POST path).
     try {

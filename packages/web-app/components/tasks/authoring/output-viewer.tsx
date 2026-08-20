@@ -20,7 +20,11 @@
 import { useEffect, useState, useCallback } from "react"
 import { Badge } from "@/components/ui/badge"
 import { Spinner } from "@/components/ui/spinner"
-import { FileText, Eye, Brain, ShieldAlert, Lightbulb } from "lucide-react"
+import { ScrollArea } from "@/components/ui/scroll-area"
+import {
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
+} from "@/components/ui/dialog"
+import { FileText, Eye, Brain, ShieldAlert, Lightbulb, FolderOpen, Copy, Settings2 } from "lucide-react"
 import type { Task, ArtifactIndexEntry, AssistWorkflowRun } from "@octopus/shared"
 import { SPEC_FIELD_UPDATE_EVENT, TASK_ARTIFACTS_UPDATE_EVENT, ASSIST_RUN_UPDATE_EVENT } from "@octopus/shared"
 import { subscribeSSE } from "@/lib/sse-manager"
@@ -28,6 +32,7 @@ import { getServerUrl } from "@/lib/server-config"
 import {
   listArtifacts,
   getAssistWorkflowRun,
+  getTaskContext,
 } from "@/lib/tasks-api"
 import { ArtifactViewerDialog } from "./artifact-viewer-dialog"
 import { WorkflowLogDialog } from "./workflow-log-dialog"
@@ -74,8 +79,72 @@ function runBadge(status: string): { label: string; className: string } {
   }
 }
 
+/** Fallback clipboard write for contexts where navigator.clipboard is
+ *  unavailable (non-HTTPS, older browsers). Uses a hidden textarea +
+ *  document.execCommand('copy'). */
+function copyToClipboard(text: string): void {
+  if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+    void navigator.clipboard.writeText(text)
+    return
+  }
+  const textarea = document.createElement("textarea")
+  textarea.value = text
+  textarea.style.position = "fixed"
+  textarea.style.left = "-9999px"
+  textarea.style.opacity = "0"
+  document.body.appendChild(textarea)
+  textarea.select()
+  try {
+    document.execCommand("copy")
+  } catch {
+    // ignore — nothing more we can do
+  }
+  document.body.removeChild(textarea)
+}
+
 export function OutputViewer({ task, runIds, onAdopted }: OutputViewerProps) {
   const taskId = task.id
+  // Absolute paths from the server (fetched via getTaskContext on mount).
+  // Falls back to ~/ prefix until the fetch resolves.
+  const [artifactsDir, setArtifactsDir] = useState(`~/.octopus/tasks/${taskId}/artifacts`)
+  const [contextFilePath, setContextFilePath] = useState("")
+
+  // Fetch absolute paths + context content on mount / taskId change.
+  useEffect(() => {
+    let cancelled = false
+    getTaskContext(taskId)
+      .then((res) => {
+        if (cancelled) return
+        setArtifactsDir(res.artifactsDir)
+        setContextFilePath(res.path)
+        if (res.content !== null) setContextContent(res.content)
+      })
+      .catch(() => { /* non-fatal — keep ~/ fallback */ })
+    return () => { cancelled = true }
+  }, [taskId])
+
+  // ── Context viewer (context.md) ──────────────────────────────────────
+  const [showContext, setShowContext] = useState(false)
+  const [contextContent, setContextContent] = useState<string | null>(null)
+  const [contextLoading, setContextLoading] = useState(false)
+
+  const openContextViewer = useCallback(async () => {
+    setShowContext(true)
+    // If content wasn't loaded yet by the initial fetch, fetch it now.
+    if (contextContent === null && !contextLoading) {
+      setContextLoading(true)
+      try {
+        const result = await getTaskContext(taskId)
+        setContextContent(result.content)
+        setContextFilePath(result.path)
+        setArtifactsDir(result.artifactsDir)
+      } catch {
+        setContextContent(null)
+      } finally {
+        setContextLoading(false)
+      }
+    }
+  }, [taskId, contextContent, contextLoading])
 
   // ── Artifacts index ────────────────────────────────────────────────
   const [artifacts, setArtifacts] = useState<ArtifactIndexEntry[]>([])
@@ -180,6 +249,31 @@ export function OutputViewer({ task, runIds, onAdopted }: OutputViewerProps) {
           </span>
           <span className="text-[10px] text-muted-foreground">点击查看完整内容</span>
         </div>
+        {/* Artifacts dir path display — helps users locate where skill outputs land */}
+        <div className="px-3 py-1 border-b flex items-center gap-1.5 text-[10px] text-muted-foreground font-mono bg-muted/30">
+          <FolderOpen className="size-2.5 shrink-0" />
+          <span className="truncate" title={artifactsDir}>{artifactsDir}</span>
+          <button
+            onClick={() => { copyToClipboard(artifactsDir) }}
+            className="shrink-0 ml-auto p-0.5 rounded hover:bg-muted transition-colors"
+            title="复制路径"
+          >
+            <Copy className="size-2.5" />
+          </button>
+        </div>
+        {/* Context.md viewer row — shows agent's workspace context on click */}
+        <button
+          className="w-full px-3 py-2 flex items-center gap-2 hover:bg-muted/50 text-left border-b transition-colors"
+          onClick={openContextViewer}
+          data-context-viewer-row
+        >
+          <Settings2 className="size-3.5 shrink-0 text-purple-500" />
+          <div className="flex-1 min-w-0">
+            <div className="text-xs truncate">工作上下文 (context.md)</div>
+            <div className="text-[9px] text-muted-foreground">org · 项目路径 · 技能组 — agent 感知的工作语境</div>
+          </div>
+          <Eye className="size-3.5 text-muted-foreground shrink-0" />
+        </button>
         {artifactsLoading ? (
           <div className="px-3 py-3 text-[11px] text-muted-foreground flex items-center gap-2">
             <Spinner className="size-3" /> 加载产物索引…
@@ -310,6 +404,45 @@ export function OutputViewer({ task, runIds, onAdopted }: OutputViewerProps) {
         run={logRun}
         onOpenChange={(o) => { if (!o) setLogRun(null) }}
       />
+
+      {/* ── Context viewer dialog ── */}
+      <Dialog open={showContext} onOpenChange={(o) => { if (!o) setShowContext(false) }}>
+        <DialogContent
+          className="sm:max-w-[640px] max-h-[75vh] p-0 gap-0 flex flex-col"
+          showCloseButton
+          data-context-viewer-dialog
+        >
+          <DialogHeader className="px-4 py-3 border-b shrink-0 space-y-0">
+            <DialogTitle className="text-sm flex items-center gap-2">
+              <Settings2 className="size-3.5 text-purple-500" />
+              工作上下文 (context.md)
+            </DialogTitle>
+            <DialogDescription className="font-mono text-[10px] truncate">
+              {contextFilePath || "加载中…"}
+            </DialogDescription>
+          </DialogHeader>
+
+          <ScrollArea className="flex-1 min-h-0" data-context-content-scroll>
+            {contextLoading ? (
+              <div className="flex items-center justify-center p-8 text-xs text-muted-foreground gap-2">
+                <Spinner className="size-4" /> 读取上下文…
+              </div>
+            ) : contextContent ? (
+              <pre className="p-4 text-[11px] leading-relaxed whitespace-pre-wrap font-mono break-words" data-context-content>
+                {contextContent}
+              </pre>
+            ) : (
+              <div className="p-6 text-xs text-muted-foreground text-center">
+                context.md 尚未生成——首次对话后自动创建
+              </div>
+            )}
+          </ScrollArea>
+
+          <div className="px-4 py-2 border-t text-[10px] text-muted-foreground shrink-0">
+            此文件是 agent 的工作语境。修改"编写语境"后 agent 会自动重新读取
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

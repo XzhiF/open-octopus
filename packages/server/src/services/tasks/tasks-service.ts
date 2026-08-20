@@ -49,13 +49,16 @@ import type { TaskRow, ScheduleRow } from "../../db/types"
 import type { SSEService } from "../sse"
 import { materializeTaskSpecToConfig } from "../scheduler/scheduler-service"
 import { TaskHomeService } from "./task-home-service"
+import type { ProjectRef } from "./task-home-service"
 import { PluginMaterializer } from "./plugin-materializer"
 // 06: re-export so the route's classifyError instanceof check matches throws
 // from TaskHomeService.readArtifactContent without a second class declaration.
 export { ArtifactAccessError } from "./task-home-service"
 import { getResourceRegistry } from "../resource-registry"
+import { WorkspaceGit } from "../workspace-git"
 import {
   setSpecNotice,
+  getSpecNotice,
 } from "./spec-notice-store"
 
 // ── Error Classes ────────────────────────────────────────────────────
@@ -312,6 +315,22 @@ export class TasksService {
     return this.pluginMaterializer
   }
 
+  /** Resolve project names to ProjectRef[] with filesystem paths via
+   *  WorkspaceGit (repos/index.md lookup). Unresolvable names get
+   *  { name, path: undefined } so they still appear in context.md. */
+  private resolveProjectRefs(org: string, names: string[]): ProjectRef[] {
+    if (!org || names.length === 0) return []
+    const git = new WorkspaceGit()
+    return names.map((name) => {
+      try {
+        const resolved = git.resolveRepoPath(org, name)
+        return { name, path: resolved }
+      } catch {
+        return { name }
+      }
+    })
+  }
+
   // ── Create ────────────────────────────────────────────────────────
 
   /** POST /api/tasks — explicit draft creation. The autosave seam (04) may
@@ -379,8 +398,12 @@ export class TasksService {
     // group is an empty marker (D17) — the materializer skips it, so no skills
     // are linked (shared skills are already exposed via plugin #1).
     if (isV3) {
-      const home = this.taskHomeService.createHome(id)
       const groups = input.skill_groups ?? []
+      // Pass org + resolved project paths + skill groups to createHome so
+      // context.md is populated from the start (not empty until the first
+      // chat turn or a subsequent updateTask).
+      const projectRefs = this.resolveProjectRefs(org, projectIds)
+      const home = this.taskHomeService.createHome(id, { org, projects: projectRefs, skillGroups: groups })
       if (groups.length > 0) {
         try {
           this.resolveMaterializer().materializeGroups(home, groups)
@@ -572,6 +595,39 @@ export class TasksService {
       setSpecNotice(id, `@@spec_updated: ${changedFields.join(", ")}`)
     }
 
+    // Context-affecting fields changed → refresh context.md so the agent
+    // sees the latest org/projects/skill_groups when it re-reads the file.
+    // The specUpdateNotice above already tells the agent "something changed";
+    // the rules file instructs it to re-read context.md on @@context_updated.
+    const contextFields = changedFields.filter((f) =>
+      f === 'project_ids' || f === 'task_spec' || f === 'skills'
+    )
+    if (contextFields.length > 0) {
+      try {
+        const row = this.taskDAO.getById(id)
+        if (row) {
+          const ctxSpec = row.task_spec
+            ? JSON.parse(row.task_spec) as { skill_groups?: string[] }
+            : null
+          const groups = ctxSpec?.skill_groups ?? []
+          const projectIds: string[] = row.project_ids
+            ? JSON.parse(row.project_ids) as string[]
+            : []
+          const projectRefs = this.resolveProjectRefs(row.org, projectIds)
+          this.taskHomeService.writeContextFile(id, row.org, projectRefs, groups)
+          // Add context_updated to the notice so the agent knows to re-read
+          const existing = getSpecNotice(id) ?? ''
+          setSpecNotice(id, `${existing}\n@@context_updated: ${contextFields.join(", ")} — 请重新读取 context.md`.trim())
+        }
+      } catch (err: unknown) {
+        // Non-fatal — context.md stays stale; agent misses the update.
+        console.error(
+          '[TasksService] writeContextFile on updateTask failed (non-fatal):',
+          err instanceof Error ? err.message : String(err),
+        )
+      }
+    }
+
     const row = this.taskDAO.getById(id)
     if (!row) throw new TaskNotFoundError()
     return toDTO(row)
@@ -664,6 +720,36 @@ export class TasksService {
     // can be large JSON; the agent re-GETs to reconcile — mirrors updateTask).
     if (input.source === "user") {
       setSpecNotice(id, `@@spec_updated: ${input.field}`)
+    }
+
+    // Context-affecting field changed → refresh context.md (always, regardless
+    // of source — the file is the source of truth for the agent's on-demand
+    // read). For user-source, also append @@context_updated to the notice.
+    if (input.field === "projects" || input.field === "skills") {
+      try {
+        const row = this.taskDAO.getById(id)
+        if (row) {
+          const ctxSpec = row.task_spec
+            ? JSON.parse(row.task_spec) as { skill_groups?: string[] }
+            : null
+          const groups = ctxSpec?.skill_groups ?? []
+          const projectIds: string[] = row.project_ids
+            ? JSON.parse(row.project_ids) as string[]
+            : []
+          const projectRefs = this.resolveProjectRefs(row.org, projectIds)
+          this.taskHomeService.writeContextFile(id, row.org, projectRefs, groups)
+          if (input.source === "user") {
+            const existing = getSpecNotice(id) ?? ''
+            setSpecNotice(id, `${existing}\n@@context_updated: ${input.field} — 请重新读取 context.md`.trim())
+          }
+        }
+      } catch (err: unknown) {
+        // Non-fatal
+        console.error(
+          '[TasksService] writeContextFile on updateSpecField failed (non-fatal):',
+          err instanceof Error ? err.message : String(err),
+        )
+      }
     }
 
     return { version: updated.version }

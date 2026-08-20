@@ -51,14 +51,63 @@ describe("TaskHomeService", () => {
       expect(fs.existsSync(expected)).toBe(false)
     })
 
-    it("createHome builds the skills/ + artifacts/ skeleton", () => {
+    it("createHome builds the skills/ + artifacts/ + .claude/rules/ skeleton + context.md", () => {
       const id = "t-1"
       const home = svc.createHome(id)
       expect(home).toBe(svc.homePath(id))
       expect(fs.existsSync(path.join(home, "skills"))).toBe(true)
       expect(fs.existsSync(path.join(home, "artifacts"))).toBe(true)
+      expect(fs.existsSync(path.join(home, ".claude", "rules"))).toBe(true)
+      expect(fs.existsSync(path.join(home, ".claude", "rules", "task-context.md"))).toBe(true)
+      expect(fs.existsSync(path.join(home, "context.md"))).toBe(true)
       const entries = fs.readdirSync(home).sort()
-      expect(entries).toEqual(["artifacts", "skills"])
+      expect(entries).toEqual([".claude", "artifacts", "context.md", "skills"])
+    })
+
+    it("createHome writes task-context.md with path constraints only", () => {
+      const id = "t-1b"
+      svc.createHome(id)
+      const ruleContent = fs.readFileSync(
+        path.join(svc.homePath(id), ".claude", "rules", "task-context.md"),
+        "utf-8",
+      )
+      expect(ruleContent).toContain("工作目录")
+      expect(ruleContent).toContain("产物目录")
+      expect(ruleContent).toContain("强制")
+      expect(ruleContent).toContain("alwaysApply: true")
+      // Rules file references context.md for dynamic state
+      expect(ruleContent).toContain("context.md")
+      // Rules file has NO project/org state inline — that belongs to context.md
+      expect(ruleContent).not.toContain("项目已锁定")
+      expect(ruleContent).not.toContain("repos/index.md")
+    })
+
+    it("createHome writes context.md with org/projects/skillGroups", () => {
+      const id = "t-1c"
+      svc.createHome(id, { org: "xzf", projects: [{ name: "open-octopus", path: "/home/user/octopus" }], skillGroups: ["superpowers-zh"] })
+      const ctx = fs.readFileSync(path.join(svc.homePath(id), "context.md"), "utf-8")
+      expect(ctx).toContain("org: xzf")
+      expect(ctx).toContain("project: open-octopus")
+      expect(ctx).toContain("/home/user/octopus")
+      expect(ctx).toContain("locked skill groups: superpowers-zh")
+      expect(ctx).toContain("cwd:")
+    })
+
+    it("writeContextFile refreshes dynamic state without touching rules", () => {
+      const id = "t-1d"
+      svc.createHome(id, { org: "old-org" })
+      const ruleBefore = fs.readFileSync(path.join(svc.homePath(id), ".claude", "rules", "task-context.md"), "utf-8")
+
+      // Simulate project change
+      svc.writeContextFile(id, "old-org", [{ name: "new-project", path: "/path/to/new-project" }], ["group-a"])
+      const ctx = fs.readFileSync(path.join(svc.homePath(id), "context.md"), "utf-8")
+      expect(ctx).toContain("project: new-project")
+      expect(ctx).toContain("/path/to/new-project")
+      expect(ctx).toContain("locked skill groups: group-a")
+
+      // Rules file untouched (static)
+      const ruleAfter = fs.readFileSync(path.join(svc.homePath(id), ".claude", "rules", "task-context.md"), "utf-8")
+      expect(ruleAfter).toBe(ruleBefore)
     })
 
     it("createHome is idempotent (calling twice leaves one home)", () => {
@@ -67,7 +116,40 @@ describe("TaskHomeService", () => {
       svc.createHome(id)
       const home = svc.homePath(id)
       const entries = fs.readdirSync(home).sort()
-      expect(entries).toEqual(["artifacts", "skills"])
+      expect(entries).toEqual([".claude", "artifacts", "context.md", "skills"])
+    })
+
+    it("ensureRulesFile backfills rules for existing homes without .claude/", () => {
+      const id = "t-3"
+      // Simulate an old task home (no .claude/ dir)
+      const home = svc.homePath(id)
+      fs.mkdirSync(path.join(home, "skills"), { recursive: true })
+      fs.mkdirSync(path.join(home, "artifacts"), { recursive: true })
+      expect(fs.existsSync(path.join(home, ".claude"))).toBe(false)
+
+      svc.ensureRulesFile(id)
+
+      expect(fs.existsSync(path.join(home, ".claude", "rules", "task-context.md"))).toBe(true)
+      const content = fs.readFileSync(path.join(home, ".claude", "rules", "task-context.md"), "utf-8")
+      expect(content).toContain("alwaysApply: true")
+    })
+
+    it("ensureRulesFile is no-op when rules file already exists", () => {
+      const id = "t-4"
+      svc.createHome(id) // writes rules file
+      const rulePath = path.join(svc.homePath(id), ".claude", "rules", "task-context.md")
+      const before = fs.readFileSync(rulePath, "utf-8")
+
+      svc.ensureRulesFile(id) // should not overwrite
+
+      const after = fs.readFileSync(rulePath, "utf-8")
+      expect(after).toBe(before)
+    })
+
+    it("ensureRulesFile is no-op when home doesn't exist", () => {
+      // Should not throw, should not create anything
+      svc.ensureRulesFile("t-nonexistent")
+      expect(fs.existsSync(svc.homePath("t-nonexistent"))).toBe(false)
     })
   })
 

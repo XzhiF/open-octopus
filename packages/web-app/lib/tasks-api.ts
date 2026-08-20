@@ -305,6 +305,23 @@ export async function getArtifactContent(taskId: string, artifactPath: string): 
   return res.json()
 }
 
+/** GET /api/tasks/:id/context — read the workspace context file (context.md)
+ *  + filesystem paths. Returns { content, path, artifactsDir, homePath }.
+ *  content may be null if context.md hasn't been created yet. */
+export async function getTaskContext(taskId: string): Promise<{
+  content: string | null
+  path: string
+  artifactsDir: string
+  homePath: string
+}> {
+  const res = await fetch(buildUrl(`/${taskId}/context`))
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}))
+    throw new Error(body.error ?? `HTTP ${res.status}`)
+  }
+  return res.json()
+}
+
 // ============ Assist workflows (ticket 07 routes — US9/10/11/D9) ============
 
 /** The 3 built-in assist-workflow template ids (AC3 whitelist). Mirrors the

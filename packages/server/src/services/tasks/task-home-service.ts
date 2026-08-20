@@ -29,6 +29,17 @@ import {
 const SKILLS_DIR = "skills"
 const ARTIFACTS_DIR = "artifacts"
 const ARTIFACTS_JSON = "artifacts.json"
+const RULES_DIR = path.join(".claude", "rules")
+const RULES_FILENAME = "task-context.md"
+const CONTEXT_FILENAME = "context.md"
+
+/** A project reference with name and optional filesystem path. When `path` is
+ *  resolved the agent knows where the codebase lives on disk; when unresolved
+ *  (path absent) only the name is shown so the agent at least knows the name. */
+export interface ProjectRef {
+  name: string
+  path?: string
+}
 
 /** Thrown by {@link TaskHomeService.readArtifactContent} when a requested path
  *  fails the whitelist (`FORBIDDEN` → HTTP 403) or passes the whitelist but the
@@ -73,13 +84,142 @@ export class TaskHomeService {
     return path.join(this.artifactsDir(taskId), ARTIFACTS_JSON)
   }
 
-  /** Create the home skeleton: `tasks/{id}/` + `skills/` + `artifacts/`.
-   *  Idempotent (mkdir recursive). Returns the home path. */
-  createHome(taskId: string): string {
+  /** Create the home skeleton: `tasks/{id}/` + `skills/` + `artifacts/` +
+   *  `.claude/rules/task-context.md` + `context.md`. Idempotent (mkdir
+   *  recursive). Returns the home path.
+   *
+   *  Design split (prompt-cache friendly):
+   *    - Rules file = **static constraints** (SDK-loaded, CLAUDE.md priority):
+   *      cwd, relative-path resolution, artifacts dir, path rules.
+   *      References `context.md` for dynamic state.
+   *    - context.md = **dynamic state** (org, projects, skill groups):
+   *      Read by the agent on demand. Rewritten when state changes.
+   *    - System prompt = **no dynamic context** — only static persona + skill
+   *      content. Prompt cache stays stable across turns. */
+  createHome(taskId: string, opts: { org?: string; projects?: ProjectRef[]; skillGroups?: string[] } = {}): string {
     const home = this.homePath(taskId)
     fs.mkdirSync(path.join(home, SKILLS_DIR), { recursive: true })
     fs.mkdirSync(path.join(home, ARTIFACTS_DIR), { recursive: true })
+    fs.mkdirSync(path.join(home, RULES_DIR), { recursive: true })
+    this.writeTaskContextRule(taskId)
+    this.writeContextFile(taskId, opts.org, opts.projects, opts.skillGroups)
     return home
+  }
+
+  /** Write (or refresh) `context.md` in the task home root. Contains the
+   *  dynamic workspace state: org, locked projects (with filesystem paths),
+   *  locked skill groups. The agent reads this file on demand (triggered by
+   *  @@context_updated notice) instead of receiving the state in the system
+   *  prompt. This keeps the system prompt stable for prompt caching. */
+  writeContextFile(taskId: string, org?: string, projects?: ProjectRef[], skillGroups?: string[]): void {
+    const home = this.homePath(taskId)
+    const filePath = path.join(home, CONTEXT_FILENAME)
+    try {
+      const lines = ['# Workspace Context', '']
+      if (org) lines.push(`- org: ${org}`)
+      lines.push(`- cwd: ${home}`)
+      if (projects && projects.length > 0) {
+        for (const p of projects) {
+          if (p.path) {
+            lines.push(`- project: ${p.name}  →  ${p.path}`)
+          } else {
+            lines.push(`- project: ${p.name}  (路径未解析)`)
+          }
+        }
+      }
+      if (skillGroups && skillGroups.length > 0) {
+        lines.push(`- locked skill groups: ${skillGroups.join(', ')}`)
+      }
+      lines.push('')
+      lines.push('> 此文件由系统维护。当"编写语境"变更时自动更新。')
+      fs.writeFileSync(filePath, lines.join('\n'), 'utf-8')
+    } catch (err: unknown) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[task-home] writeContextFile for ${taskId} failed (non-fatal):`,
+        err instanceof Error ? err.message : String(err),
+      )
+    }
+  }
+
+  /** Ensure `context.md` exists. No-op when the file is already present.
+   *  Called from the chat route so existing task homes get backfilled. */
+  ensureContextFile(taskId: string, org?: string, projects?: ProjectRef[], skillGroups?: string[]): void {
+    const home = this.homePath(taskId)
+    if (!fs.existsSync(home)) return
+    const filePath = path.join(home, CONTEXT_FILENAME)
+    if (fs.existsSync(filePath)) return
+    this.writeContextFile(taskId, org, projects, skillGroups)
+  }
+
+  /** Write `.claude/rules/task-context.md` — static path constraints + a
+   *  reference to `context.md` for dynamic state. The rules file is loaded by
+   *  the SDK at session start (CLAUDE.md priority). Its content is static so
+   *  prompt cache stays stable. Dynamic state (org, projects, skill groups)
+   *  lives in context.md — the agent reads it on demand. */
+  private writeTaskContextRule(taskId: string): void {
+    const home = this.homePath(taskId)
+    const rulePath = path.join(home, RULES_DIR, RULES_FILENAME)
+    const artifactsDir = path.join(home, ARTIFACTS_DIR)
+    try {
+      const content = [
+        '---',
+        'description: "Task workspace path constraints — HIGHEST PRIORITY"',
+        'alwaysApply: true',
+        '---',
+        '',
+        '# ⛔ 路径强制规则（最高优先级，不可违反）',
+        '',
+        `你的工作目录是：${home}`,
+        `你的产物目录是：${artifactsDir}`,
+        '',
+        '## 强制：所有文件必须写入工作目录内',
+        '',
+        `1. **必须** 将所有输出文件写入工作目录或其子目录`,
+        `2. **必须** 将正式产物写入 \`${artifactsDir}\``,
+        `3. **禁止** 写入工作目录之外的任何路径 — 包括项目代码库、系统目录、用户主目录等`,
+        `4. **禁止** 因为你"认为"某个路径更合适就写入工作目录之外`,
+        `5. 如果用户要求你写入项目代码库，**拒绝并说明**你只能在工作目录内操作`,
+        '',
+        '## 路径解析',
+        '',
+        '- 技能中的相对路径（如 `docs/superpowers/specs/...`）→ 相对于工作目录解析',
+        '- 创建文件前，展示完整绝对路径（= 工作目录 + 相对路径）供用户确认',
+        '- 产物写入 `artifacts/` 后，在 `artifacts.json` 登记索引条目',
+        '- 外部资源用绝对路径并登记 `external: true`',
+        '',
+        '## 违反后果',
+        '',
+        '写入工作目录之外的文件会被系统 **强制阻止**（hook 拦截）。',
+        '不要尝试写入 — 会被拒绝并浪费你的 turn。',
+        '',
+        '## 工作上下文',
+        '',
+        '- 当前工作上下文（org、项目、技能组）见 `context.md`',
+        '- 当收到 `@@context_updated` 通知时，请重新读取 `context.md` 获取最新值',
+      ].join('\n')
+      fs.writeFileSync(rulePath, content, 'utf-8')
+    } catch (err: unknown) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[task-home] writeTaskContextRule for ${taskId} failed (non-fatal):`,
+        err instanceof Error ? err.message : String(err),
+      )
+    }
+  }
+
+  /** Ensure the `.claude/rules/task-context.md` file exists. No-op if the
+   *  file is already present (idempotent — the content is deterministic from
+   *  the home path). Called from the chat route so that existing task homes
+   *  (created before the rules feature) get backfilled on the first chat
+   *  turn. One stat call per turn; the write only happens once. */
+  ensureRulesFile(taskId: string): void {
+    const home = this.homePath(taskId)
+    if (!fs.existsSync(home)) return
+    const rulePath = path.join(home, RULES_DIR, RULES_FILENAME)
+    if (fs.existsSync(rulePath)) return
+    fs.mkdirSync(path.join(home, RULES_DIR), { recursive: true })
+    this.writeTaskContextRule(taskId)
   }
 
   /** Read artifacts.json. Missing file → []. Corrupted JSON → [] + warn

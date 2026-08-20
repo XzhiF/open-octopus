@@ -27,6 +27,8 @@ import type { CloneDef } from '@octopus/shared'
 import type { AgentSessionDAO, TaskDAO } from '../../db/dao'
 import { CloneRuntime } from '../../services/agent/clone-runtime'
 import { isBuiltinClone } from '../../services/agent/builtin-clones'
+import { WorkspaceGit } from '../../services/workspace-git'
+import type { ProjectRef } from '../../services/tasks/task-home-service'
 import {
   listAllClones,
   resolveCloneInfo,
@@ -63,6 +65,22 @@ export interface CloneSessionRouteDeps {
 // ── File route constants removed — file ops now in clone-files.ts ──
 
 // ── Helpers ────────────────────────────────────────────────────────
+
+/** Resolve project names to ProjectRef[] with filesystem paths. Uses
+ *  WorkspaceGit to look up each name in the org's repos/index.md. Unresolvable
+ *  names get { name, path: undefined } so they still appear in context.md. */
+function resolveProjectRefs(org: string, names: string[]): ProjectRef[] {
+  if (!org || names.length === 0) return []
+  const git = new WorkspaceGit()
+  return names.map((name) => {
+    try {
+      const resolved = git.resolveRepoPath(org, name)
+      return { name, path: resolved }
+    } catch {
+      return { name }
+    }
+  })
+}
 
 function resolveCloneDefFromFs(name: string): CloneDef | null {
   const info = resolveCloneInfo(name)
@@ -290,7 +308,10 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
 
     // Instantiate CloneRuntime
     const runtime = new CloneRuntime(cloneDef, org)
-    const cwd = runtime.getDefaultCwd()
+    // task-author: cwd = task home (so skill-relative paths land in the task
+    // dir, not the clone's own dir). Resolved after noticeTaskId + homeService
+    // below; falls back to the clone's own dir when no task home exists.
+    const defaultCwd = runtime.getDefaultCwd()
     const providerSessionId = session.provider_session_id ?? null
 
     // 05 — reverse context msg (SPIKE S1, v2-D7). If the user saved a draft
@@ -372,53 +393,52 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
       if (fs.existsSync(home)) {
         taskHomePath = home
         taskArtifactsDir = homeService.artifactsDir(noticeTaskId)
+        // Backfill .claude/rules/task-context.md for existing task homes
+        // (created before the rules feature). Idempotent — one stat per turn,
+        // write only happens once. New tasks already have it from createHome.
+        homeService.ensureRulesFile(noticeTaskId)
       }
     }
 
-    // 05 (task-authoring-v3 code-review F1/D6): v3 task context — artifacts
-    // dir + skill-group lock + locked projects — appended to the system prompt
-    // every turn (随 task context 注入). The agent's cwd stays the built-in
-    // clone dir, so it needs the ABSOLUTE artifacts path to Write artifact
-    // files + register artifacts.json (D5/R4), the lock context so it stops
-    // suggesting group changes after creation (ADR-0012), and the locked
-    // project names so it knows which project(s) the user selected.
-    // Non-fatal on any read/parse failure.
-    let taskContextContent: string | undefined
-    if (noticeTaskId && taskDAO) {
+    // task-author cwd override: when the task home exists, use it as cwd so
+    // skill-relative paths (e.g. writing-plans → docs/superpowers/plans/...)
+    // resolve inside the task dir rather than the clone's own dir.
+    const cwd = taskHomePath || defaultCwd
+
+    // 05 → context.md (v3 task-authoring, cache-friendly redesign):
+    // Dynamic workspace state (org, projects, skill groups) lives in
+    // `{taskHome}/context.md` instead of the system prompt. The system prompt
+    // stays STATIC for prompt cache stability. The agent reads context.md on
+    // demand, triggered by @@context_updated notice (set by tasks-service
+    // when the user changes "编写语境"). The rules file (.claude/rules/)
+    // references context.md with a static instruction.
+    //
+    // Per turn: ensure context.md is up-to-date with the latest DB values.
+    // This is an idempotent write (overwrites with current state); cheap
+    // since it only happens when taskHomePath exists (task-author sessions).
+    if (noticeTaskId && taskHomePath && taskDAO) {
       try {
         const ctxRow = taskDAO.getById(noticeTaskId)
         const ctxSpec = ctxRow?.task_spec
-          ? JSON.parse(ctxRow.task_spec) as { task_type?: string; skill_groups?: string[] }
+          ? JSON.parse(ctxRow.task_spec) as { skill_groups?: string[] }
           : null
-        if (ctxSpec?.task_type) {
-          const lines: string[] = ['@@task_context (task-authoring-v3):']
-          // Artifacts dir — only when the task home exists
-          if (taskHomePath && taskArtifactsDir) {
-            lines.push(`- 产物目录: ${taskArtifactsDir} — 产物文件用绝对路径写入此目录，并在该目录的 artifacts.json 登记索引条目`)
-          }
-          const groups = Array.isArray(ctxSpec.skill_groups) ? ctxSpec.skill_groups : []
-          if (groups.length > 0) {
-            lines.push(`- Skill 组已锁定: ${groups.join(', ')}（创建时锁定，不可变更；不要建议修改）`)
-          }
-          // Locked projects — user's "编写语境" selection, always inject so
-          // the agent knows which project(s) to work in
-          const projectIds: string[] = ctxRow?.project_ids
-            ? JSON.parse(ctxRow.project_ids) as string[]
-            : []
-          if (projectIds.length > 0) {
-            lines.push(`- 项目已锁定: ${projectIds.join(', ')}（用户在"编写语境"中选定的项目，agent 应在此项目上下文中工作）`)
-          }
-          // Only set context if we have more than just the header
-          if (lines.length > 1) {
-            taskContextContent = lines.join('\n')
-          }
-        }
+        const groups = ctxSpec && Array.isArray(ctxSpec.skill_groups) ? ctxSpec.skill_groups : []
+        const projectNames: string[] = ctxRow?.project_ids
+          ? JSON.parse(ctxRow.project_ids) as string[]
+          : []
+        // Use the task's own org (from DB) for path resolution — NOT the
+        // request header which defaults to "default" when the frontend
+        // doesn't send X-Octopus-Org.
+        const taskOrg = ctxRow?.org ?? org
+        // Resolve project names → filesystem paths so the agent knows where
+        // each codebase lives on disk (not just the name).
+        const projectRefs: ProjectRef[] = resolveProjectRefs(taskOrg, projectNames)
+        const homeService = new TaskHomeService()
+        homeService.writeContextFile(noticeTaskId, taskOrg, projectRefs, groups)
       } catch (err: unknown) {
-        // Non-fatal — chat reply unaffected; agent just misses the context
-        // line this turn (malformed task_spec, etc.). Mirrors the
-        // authoring_resources swallow+log pattern above.
+        // Non-fatal — the stale context.md stays; agent misses the update.
         console.error(
-          '[clone-route] task context resolution failed (non-fatal):',
+          '[clone-route] writeContextFile failed (non-fatal):',
           err instanceof Error ? err.message : String(err),
         )
       }
@@ -445,7 +465,7 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
         const memoryToolCalls: Array<{ id: string; name: string; input?: Record<string, unknown> }> = []
         const MEMORY_TOOL_NAMES = ['record_daily']
 
-        for await (const chunk of runtime.chat(body.message!, sessionId, providerSessionId, cwd, specUpdateNotice, authoringResourcesContent, undefined, taskHomePath, taskContextContent, body.model)) {
+        for await (const chunk of runtime.chat(body.message!, sessionId, providerSessionId, cwd, specUpdateNotice, authoringResourcesContent, undefined, taskHomePath, body.model)) {
           if (aborted || (stream as any)._aborted) break
 
           switch (chunk.type) {

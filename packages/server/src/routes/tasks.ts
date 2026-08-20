@@ -11,6 +11,8 @@ import { Hono } from "hono"
 import type { Context } from "hono"
 import { streamSSE } from "hono/streaming"
 import { z, ZodError } from "zod"
+import fs from "fs"
+import path from "path"
 import {
   TasksService,
   TaskNotFoundError,
@@ -27,6 +29,7 @@ import {
 } from "../services/tasks/tasks-service"
 import { AssistWorkflowService, AssistWorkflowError } from "../services/tasks/assist-workflow-service"
 import { SSEService } from "../services/sse"
+import { TaskHomeService } from "../services/tasks/task-home-service"
 import {
   resourceRefSchema,
   type TaskStatus,
@@ -228,6 +231,30 @@ export function createTasksRoutes(
     try {
       const result = service.readArtifactContent(c.req.param("id"), requestedPath)
       return c.json(result)
+    } catch (err: unknown) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status)
+    }
+  })
+
+  // ── Context file (workspace state visible to agent) ──────────────────
+  // GET /:id/context — read the task's context.md + filesystem paths. The
+  // dynamic workspace state file the agent reads when notified via
+  // @@context_updated. Also returns absolute paths for the UI (artifactsDir,
+  // homePath) so the frontend can display + copy real filesystem locations.
+  // Returns { content, path, artifactsDir, homePath }. content/path may be
+  // null if context.md hasn't been created yet.
+  router.get("/:id/context", (c) => {
+    try {
+      const homeService = new TaskHomeService()
+      const homePath = homeService.homePath(c.req.param("id"))
+      const artifactsDir = homeService.artifactsDir(c.req.param("id"))
+      const ctxPath = path.join(homePath, "context.md")
+      let content: string | null = null
+      if (fs.existsSync(ctxPath)) {
+        content = fs.readFileSync(ctxPath, "utf-8")
+      }
+      return c.json({ content, path: ctxPath, artifactsDir, homePath })
     } catch (err: unknown) {
       const { status, message } = classifyError(err)
       return c.json({ error: message }, status)

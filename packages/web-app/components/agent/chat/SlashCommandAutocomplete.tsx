@@ -89,11 +89,15 @@ export function SlashCommandAutocomplete({
   }, [visible, notifyOpen])
 
   // Filter commands by the partial query.
+  // Name: prefix match (startsWith) — typing `/cxx` should NOT match `/octo-guide`.
+  // Description: includes match (looser — the query can appear anywhere in desc).
+  // When query is non-empty, at least one must match for the command to appear.
   const filtered = commands.filter((cmd) => {
     if (!query) return true
     const q = query.toLowerCase()
-    return cmd.name.toLowerCase().includes(q)
-      || (cmd.description?.toLowerCase().includes(q) ?? false)
+    const nameMatches = cmd.name.toLowerCase().startsWith(q)
+    const descMatches = cmd.description?.toLowerCase().includes(q) ?? false
+    return nameMatches || descMatches
   })
 
   // Reset selected index when filter changes.
@@ -114,6 +118,7 @@ export function SlashCommandAutocomplete({
         setSelectedIndex((prev) => Math.max(prev - 1, 0))
       } else if (e.key === 'Escape') {
         e.preventDefault()
+        e.stopPropagation()  // Prevent Dialog from closing — only dismiss the dropdown
         notifyOpen(false)
       } else if (e.key === 'Enter' || e.key === 'Tab') {
         e.preventDefault()

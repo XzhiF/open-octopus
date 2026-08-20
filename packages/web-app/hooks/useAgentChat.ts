@@ -46,7 +46,23 @@ export function useAgentChat(sessionId: string | null, options?: { onTitleUpdate
   const [statusMessage, setStatusMessage] = useState('')
   // Context window usage breakdown (from SDK getContextUsage via SSE context_usage event).
   // Updated at the start of each assistant turn (after message_start).
-  const [contextUsage, setContextUsage] = useState<ContextUsageData | null>(null)
+  // Persisted in sessionStorage keyed by sessionId so reopening the dialog
+  // restores the last known token count without needing to send a message.
+  const [contextUsage, setContextUsageRaw] = useState<ContextUsageData | null>(() => {
+    if (!sessionId) return null
+    try {
+      const saved = sessionStorage.getItem(`context-usage:${sessionId}`)
+      return saved ? JSON.parse(saved) : null
+    } catch { return null }
+  })
+  const setContextUsage = useCallback((data: ContextUsageData | null) => {
+    setContextUsageRaw(data)
+    if (sessionId && data) {
+      try { sessionStorage.setItem(`context-usage:${sessionId}`, JSON.stringify(data)) } catch { /* quota */ }
+    } else if (sessionId && !data) {
+      try { sessionStorage.removeItem(`context-usage:${sessionId}`) } catch { /* ignore */ }
+    }
+  }, [sessionId])
   const { connect, disconnect } = useSSEConnection()
   const streamContentRef = useRef('')
   const streamThinkingRef = useRef('')
@@ -70,13 +86,24 @@ export function useAgentChat(sessionId: string | null, options?: { onTitleUpdate
     }
   }, [disconnect])
 
-  // When sessionId changes while streaming, abort the old stream
+  // When sessionId changes while streaming, abort the old stream.
+  // Also restore contextUsage from sessionStorage for the new session (so the
+  // status bar shows the last known token count without a fresh message).
   useEffect(() => {
     if (streamingSessionRef.current && streamingSessionRef.current !== sessionId) {
       disconnect()
       setStreaming(false)
       streamingRef.current = false
       streamingSessionRef.current = null
+    }
+    // Restore contextUsage for the new session (or null if no cached value).
+    if (sessionId) {
+      try {
+        const saved = sessionStorage.getItem(`context-usage:${sessionId}`)
+        setContextUsageRaw(saved ? JSON.parse(saved) : null)
+      } catch { setContextUsageRaw(null) }
+    } else {
+      setContextUsageRaw(null)
     }
   }, [sessionId, disconnect])
 
@@ -124,7 +151,9 @@ export function useAgentChat(sessionId: string | null, options?: { onTitleUpdate
     setToolCalls([])
     setError(null)
     setStatusMessage('')
-    setContextUsage(null)
+    // contextUsage: NOT reset here — preserve the last known value so the
+    // status bar stays populated between sends (and across dialog reopens).
+    // The new value arrives via onContextUsage SSE handler during the stream.
     streamContentRef.current = ''
     streamThinkingRef.current = ''
     toolCallsRef.current = []
@@ -289,7 +318,7 @@ export function useAgentChat(sessionId: string | null, options?: { onTitleUpdate
     }
 
     connect(source, handlers)
-  }, [sessionId, connect])
+  }, [sessionId, connect, setContextUsage])
 
   const stopGenerate = useCallback(async () => {
     if (!sessionId) return

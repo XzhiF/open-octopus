@@ -59,6 +59,15 @@ vi.mock("../services/tasks/task-home-service", () => ({
     createHome(id: string): string {
       return path.join(homeTmp, "tasks", id)
     }
+    writeContextFile(): void {
+      // no-op in test
+    }
+    ensureContextFile(): void {
+      // no-op in test
+    }
+    ensureRulesFile(): void {
+      // no-op in test
+    }
   },
 }))
 
@@ -77,12 +86,13 @@ vi.mock("../services/agent/clone-runtime", () => ({
       _authoringResourcesContent?: string,
       _abortSignal?: AbortSignal,
       taskHomePath?: string,
-      taskContextContent?: string,
+      _modelOverride?: string,
     ) {
       capture.chatCalls += 1
       capture.notice = specUpdateNotice
       capture.taskHomePath = taskHomePath
-      capture.taskContext = taskContextContent
+      // taskContextContent no longer exists — dynamic state lives in context.md
+      capture.taskContext = undefined
       yield { type: "text_delta", content: "ack — spec noted", messageId: "fake-msg-id" }
       yield { type: "result", sessionId: "fake-provider-session" }
     }
@@ -355,7 +365,7 @@ describe("05: reverse context msg — [save] → store → next chat → CloneRu
     return { sessionId: session.id, taskId, home }
   }
 
-  it("D6 AC: v3 task (task_type set, home exists) → chat passes taskContextContent with artifacts dir + lock line", async () => {
+  it("D6 AC: v3 task (task_type set, home exists) → chat passes taskHomePath; context.md written by route (not via system prompt)", async () => {
     const { sessionId, home } = await seedSessionWithSpec(
       { goal: "E2E_TD D6 goal", ac: ["E2E_TD ac"], task_type: "coding", skill_groups: ["octo-backend", "octo-frontend"] },
       true,
@@ -372,13 +382,10 @@ describe("05: reverse context msg — [save] → store → next chat → CloneRu
     await res.text()
 
     expect(capture.taskHomePath).toBe(home)
-    expect(capture.taskContext).toBeDefined()
-    // Absolute artifacts dir the agent must Write into + register artifacts.json
-    expect(capture.taskContext).toContain(path.join(home, "artifacts"))
-    expect(capture.taskContext).toContain("artifacts.json")
-    // Skill-group lock context (ADR-0012)
-    expect(capture.taskContext).toContain("octo-backend, octo-frontend")
-    expect(capture.taskContext).toContain("锁定")
+    // Dynamic context is no longer injected into the system prompt (prompt cache
+    // stability). It lives in context.md on disk — written by the route via
+    // writeContextFile (mocked as no-op here; tested separately in task-home-service tests).
+    expect(capture.taskContext).toBeUndefined()
   })
 
   it("D6 gate: v2 task (no task_type) → taskContextContent stays undefined", async () => {
