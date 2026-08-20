@@ -343,13 +343,29 @@ export interface AssistWorkflowTriggerResult {
 
 /** POST /api/tasks/:id/assist-workflows — trigger a built-in assist-workflow run
  *  (US9). Body: `{ template, input? }`. Non-whitelist template → 400. The run
- *  executes in the background (temp workspace source='task-assist', D16); the
- *  response returns immediately with the run id. Progress/completion arrive via
- *  `assist_run_update` SSE (D19) + GET /assist-workflows/:runId. */
+ *  executes in the background; the response returns immediately with the run id.
+ *  Progress/completion arrive via `assist_run_update` SSE (D19). On completion,
+ *  a markdown artifact is written to the task's artifacts/ dir.
+ *
+ *  v2 (dynamic MoA/Debate): template = "dynamic-moa-analysis", input carries
+ *  mode, experts[{agent, engine, model}], aggregator?, rounds?, userInput. */
 export async function triggerAssistWorkflow(
   taskId: string,
   template: string,
-  input?: { goal?: string; ac?: string[]; projects?: string[] },
+  input?: {
+    goal?: string
+    ac?: string[]
+    projects?: string[]
+    userInput?: string
+    /** "moa" (parallel + aggregate) or "debate" (multi-round argue). */
+    mode?: "moa" | "debate"
+    /** Expert rows: each = { agent id, engine, model }. Min 2. */
+    experts?: Array<{ agent: string; engine: string; model: string }>
+    /** Aggregator model config (MoA mode only). */
+    aggregator?: { engine?: string; model: string }
+    /** Max debate rounds (Debate mode only, default 3). */
+    rounds?: number
+  },
 ): Promise<AssistWorkflowTriggerResult> {
   const body: Record<string, unknown> = { template }
   if (input) body.input = input

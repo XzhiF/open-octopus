@@ -43,6 +43,7 @@ import { ChatArea } from "@/components/agent/chat/ChatArea"
 import * as agentApi from "@/lib/agent/api"
 import { GoalAcCard } from "./goal-ac-card"
 import { OutputViewer } from "./output-viewer"
+import { MoATriggerDialog, type MoATriggerInput } from "./moa-trigger-dialog"
 
 const TASK_AUTHOR_CLONE = "task-author"
 
@@ -273,18 +274,34 @@ export function AuthoringWorkspace({ task, onMutated, onClose }: AuthoringWorksp
   // progress + completion arrive via assist_run_update SSE (D19) inside the
   // OutputViewer. Reset on task switch so a different task's runs aren't shown.
   const [runIds, setRunIds] = useState<string[]>([])
+  const [moaOpen, setMoaOpen] = useState(false)
+  const [moaRunning, setMoaRunning] = useState(false)
   useEffect(() => {
     setRunIds([])
     // eslint-disable-next-line react-hooks/exhaustive-deps -- reset on task switch
   }, [task.id])
 
-  const handleTriggerAssist = async (template: string) => {
+  const handleTriggerMoa = async (input: MoATriggerInput) => {
+    setMoaRunning(true)
     try {
-      const result = await triggerAssistWorkflow(task.id, template)
+      const result = await triggerAssistWorkflow(task.id, "dynamic-moa-analysis", {
+        goal: input.goal || undefined,
+        ac: input.ac.length > 0 ? input.ac : undefined,
+        projects: input.projects.length > 0 ? input.projects : undefined,
+        userInput: input.userInput || undefined,
+        mode: input.mode,
+        experts: input.experts,
+        aggregator: input.aggregator,
+        rounds: input.rounds,
+      })
       setRunIds((prev) => (prev.includes(result.run_id) ? prev : [...prev, result.run_id]))
-      toast.message(`已触发 ${template}`, { description: `run ${result.run_id.slice(0, 8)} 进入运行态` })
+      const modeLabel = input.mode === "moa" ? "MoA 分析" : "Debate 辩论"
+      toast.message(`${modeLabel}已启动`, { description: `完成后结果将保存为产物文件` })
     } catch (err: unknown) {
-      toast.error(err instanceof Error ? err.message : "触发辅助工作流失败")
+      toast.error(err instanceof Error ? err.message : "触发分析失败")
+    } finally {
+      setMoaRunning(false)
+      setMoaOpen(false)
     }
   }
 
@@ -362,13 +379,20 @@ export function AuthoringWorkspace({ task, onMutated, onClose }: AuthoringWorksp
             )}
             <div className="ml-auto">
               <button
-                onClick={() => void handleTriggerAssist("moa-requirements-review")}
+                onClick={() => setMoaOpen(true)}
                 className="shrink-0 px-2 py-0.5 rounded text-[10px] bg-purple-500/10 text-purple-600 hover:bg-purple-500/20 transition-colors flex items-center gap-1"
                 data-assist-trigger="moa-requirements-review"
                 title="运行 MoA 专家咨询辅助工作流"
               >
                 <Brain className="size-3" /> 专家咨询 (MoA)
               </button>
+              <MoATriggerDialog
+                task={task}
+                open={moaOpen}
+                onOpenChange={setMoaOpen}
+                onTrigger={handleTriggerMoa}
+                running={moaRunning}
+              />
             </div>
           </div>
 

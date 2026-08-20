@@ -30,6 +30,7 @@ variables:
   goal: ""
   ac: ""
   projects: ""
+  user_input: ""
 
 nodes:
   - id: panel
@@ -50,3 +51,4 @@ nodes:
         汇总各专家意见，**只输出一个 JSON 对象**，不要 markdown 代码块、不要解释文字。结构：
         {"ac_candidates": ["候选验收标准1", ...], "suggestions": ["方案建议1", ...], "risks": ["风险提示1", ...]}
         ac_candidates = 应补充的验收标准；suggestions = 方案/集成建议；risks = 风险提示。每项为非空字符串。若某类无内容返回空数组。
+        如果 $vars.user_input 非空，请额外关注用户补充的问题和上下文。
