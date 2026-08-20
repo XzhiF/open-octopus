@@ -493,4 +493,129 @@ describe("04: task create extension + skill-groups route (integration)", () => {
     // exposed via the per-task plugin dir).
     expect(readAuthoringResources(db, task.id)).toEqual([])
   })
+
+  // ── 06: header rename syncs the bound session title (bugfix 2026-08-21) ──
+
+  it("06: PUT {name} syncs the bound task-author session title (bugfix 2026-08-21)", async () => {
+    const sessionId = `e2e-td-sess-${Math.random().toString(36).slice(2, 10)}`
+    insertSession(db, sessionId, ORG)
+    const res = await app.request("/api/tasks", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        org: ORG,
+        source_chat_session_id: sessionId,
+        name: "E2E_TD before-rename",
+      }),
+    })
+    expect(res.status).toBe(201)
+    const task = await json<{ id: string; version: number }>(res)
+    expect(readScopeId(db, sessionId)).toBe(task.id)
+
+    // Header rename (the EditableTitle flow) → PUT {name}.
+    const putRes = await app.request(`/api/tasks/${task.id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json", "If-Match": String(task.version) },
+      body: JSON.stringify({ name: "E2E_TD after-rename" }),
+    })
+    expect(putRes.status).toBe(200)
+
+    // The bound session title follows — so the autosave seam (which writes
+    // session.title → tasks.name) can never clobber the manual rename.
+    const s = db.prepare("SELECT title FROM sessions WHERE id = ?").get(sessionId) as {
+      title: string
+    }
+    expect(s.title).toBe("E2E_TD after-rename")
+  })
+
+  it("06: PUT {name} on an UNBOUND task is a silent no-op (best-effort sync)", async () => {
+    const res = await app.request("/api/tasks", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ org: ORG, name: "E2E_TD unbound" }),
+    })
+    expect(res.status).toBe(201)
+    const task = await json<{ id: string; version: number }>(res)
+
+    const putRes = await app.request(`/api/tasks/${task.id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json", "If-Match": String(task.version) },
+      body: JSON.stringify({ name: "E2E_TD unbound-renamed" }),
+    })
+    expect(putRes.status).toBe(200)
+  })
+
+  // ── 06: spec.json — structured goal/ac snapshot the agent reads ──────
+
+  it("06: POST create writes spec.json; a spec-field goal save refreshes it", async () => {
+    const res = await app.request("/api/tasks", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ org: ORG, task_type: "coding", name: "E2E_TD specjson" }),
+    })
+    expect(res.status).toBe(201)
+    const task = await json<{ id: string }>(res)
+
+    const specPath = path.join(taskHome.homePath(task.id), "spec.json")
+    expect(fs.existsSync(specPath)).toBe(true)
+    const initial = JSON.parse(fs.readFileSync(specPath, "utf-8")) as {
+      task_id: string
+      version: number
+      spec: { goal: string }
+    }
+    expect(initial.task_id).toBe(task.id)
+    expect(initial.spec.goal).toBe("")
+
+    // Agent binds goal via spec-field → snapshot refreshed.
+    const sf = await app.request(`/api/tasks/${task.id}/spec-field`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ field: "goal", value: "E2E_TD 给服务加健康检查" }),
+    })
+    expect(sf.status).toBe(200)
+
+    const refreshed = JSON.parse(fs.readFileSync(specPath, "utf-8")) as {
+      version: number
+      spec: { goal: string; ac: string[] }
+    }
+    expect(refreshed.version).toBe(2)
+    expect(refreshed.spec.goal).toBe("E2E_TD 给服务加健康检查")
+  })
+
+  it("06: PUT task_spec writes spec.json; legacy/v2 task (no home) is a silent no-op", async () => {
+    // v3 task: home exists → spec.json updated on PUT.
+    const res = await app.request("/api/tasks", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ org: ORG, task_type: "coding", name: "E2E_TD put-spec" }),
+    })
+    const task = await json<{ id: string; version: number }>(res)
+    const putRes = await app.request(`/api/tasks/${task.id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json", "If-Match": String(task.version) },
+      body: JSON.stringify({ task_spec: { goal: "E2E_TD PUT goal", ac: ["a1"] } }),
+    })
+    expect(putRes.status).toBe(200)
+    const specPath = path.join(taskHome.homePath(task.id), "spec.json")
+    const snap = JSON.parse(fs.readFileSync(specPath, "utf-8")) as {
+      spec: { goal: string; ac: string[] }
+    }
+    expect(snap.spec.goal).toBe("E2E_TD PUT goal")
+    expect(snap.spec.ac).toEqual(["a1"])
+
+    // legacy/v2 task (no task_type → no home): the snapshot write is skipped
+    // without throwing.
+    const v2 = await app.request("/api/tasks", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ org: ORG, name: "E2E_TD v2" }),
+    })
+    const v2Task = await json<{ id: string; version: number }>(v2)
+    const v2Put = await app.request(`/api/tasks/${v2Task.id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json", "If-Match": String(v2Task.version) },
+      body: JSON.stringify({ task_spec: { goal: "E2E_TD v2 goal", ac: ["b1"] } }),
+    })
+    expect(v2Put.status).toBe(200)
+  })
 })

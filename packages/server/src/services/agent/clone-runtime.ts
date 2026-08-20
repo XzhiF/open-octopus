@@ -8,7 +8,7 @@
 //
 import fs from 'fs'
 import path from 'path'
-import type { MessageChunk } from '@octopus/providers'
+import type { MessageChunk, OctopusAgentDef } from '@octopus/providers'
 import { getProvider } from '@octopus/providers'
 import type { CloneDef } from '@octopus/shared'
 import {
@@ -307,6 +307,7 @@ export class CloneRuntime {
     abortSignal?: AbortSignal,
     taskHomePath?: string,
     modelOverride?: string,
+    subagents?: Record<string, OctopusAgentDef>,
   ): AsyncGenerator<MessageChunk> {
     const cloneSystemPrompt = this.assembleContext()
     const effectiveCwd = cwd || this.getDefaultCwd()
@@ -323,6 +324,7 @@ export class CloneRuntime {
         abortSignal,
         taskHomePath,
         modelOverride,
+        subagents,
       )
       yield* stream
       return
@@ -342,6 +344,7 @@ export class CloneRuntime {
             abortSignal,
             taskHomePath,
             modelOverride,
+            subagents,
           )
           yield* stream
           return
@@ -383,6 +386,7 @@ export class CloneRuntime {
     abortSignal?: AbortSignal,
     taskHomePath?: string,
     modelOverride?: string,
+    subagents?: Record<string, OctopusAgentDef>,
   ): AsyncGenerator<MessageChunk> {
     const provider = getProvider('claude')
 
@@ -412,6 +416,7 @@ export class CloneRuntime {
       },
       abortSignal,
       model: modelOverride ?? this.cloneDef.config.model,
+      agents: subagents,
       plugins: this.getPlugins(taskHomePath),
       // Path guard: for task-author sessions, block Write/Edit outside the
       // task home directory. This is a HARD enforcement — the agent CANNOT

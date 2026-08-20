@@ -423,6 +423,9 @@ export class TasksService {
     if (!row) {
       throw new Error(`TasksService.createTask: inserted task ${id} not found`)
     }
+    // 06: the POST body may carry goal/ac — overwrite the baseline spec.json
+    // (written empty by createHome) with the real task_spec.
+    this.writeSpecSnapshot(id)
     return toDTO(row)
   }
 
@@ -579,6 +582,26 @@ export class TasksService {
     const result = this.taskDAO.updateWithVersion(id, fields, expectedVersion)
     if (result.changes === 0) throw new TaskVersionConflictError()
 
+    // 04 (bugfix 2026-08-21): a manual title rename (PUT {name}) is user-owned —
+    // sync it to the bound task-author session title. The autosave seam writes
+    // session.title → tasks.name at turn-end; keeping the two equal makes that a
+    // no-op, so the header rename survives the next chat turn. Best-effort,
+    // non-fatal (most tasks are not bound to a session).
+    if (input.name !== undefined && input.name !== existing.name) {
+      const linked = existing.source_chat_session_id
+      if (linked && this.agentSessionDAO) {
+        try {
+          this.agentSessionDAO.updateSession(linked, { title: input.name })
+        } catch (err: unknown) {
+          // eslint-disable-next-line no-console
+          console.error(
+            '[TasksService] updateTask: failed to sync session title (non-fatal — task renamed):',
+            err instanceof Error ? err.message : String(err),
+          )
+        }
+      }
+    }
+
     // 05 — reverse context msg (SPIKE S1, v2-D7). [保存草稿] → set a
     // transient, in-memory notice keyed by task_id. The task-author clone
     // chat send path reads it on the next turn and passes it to
@@ -630,6 +653,9 @@ export class TasksService {
 
     const row = this.taskDAO.getById(id)
     if (!row) throw new TaskNotFoundError()
+    // 06: task_spec may have changed (or the name for the spec.json header) —
+    // keep the structured goal/ac snapshot current.
+    this.writeSpecSnapshot(id)
     return toDTO(row)
   }
 
@@ -752,7 +778,35 @@ export class TasksService {
       }
     }
 
+    // 06: every spec-field write (any field, any source) refreshes the
+    // structured goal/ac snapshot (spec.json) the task-author agent reads.
+    this.writeSpecSnapshot(id)
+
     return { version: updated.version }
+  }
+
+  /** 06 — refresh `{home}/spec.json` from the current tasks row. The
+   *  task-author agent reads this structured snapshot for goal/ac instead of
+   *  curling the API. Best-effort, non-fatal: legacy/v2 tasks have no home dir
+   *  (writeSpecFile is a silent no-op). Called on every spec write (create /
+   *  PUT / spec-field) so the file always reflects the current task_spec. */
+  private writeSpecSnapshot(id: string): void {
+    try {
+      const row = this.taskDAO.getById(id)
+      if (!row) return
+      const spec = parseJSON<Record<string, unknown>>(row.task_spec, {})
+      this.taskHomeService.writeSpecFile(id, {
+        version: row.version,
+        spec,
+        updated_at: row.updated_at,
+      })
+    } catch (err: unknown) {
+      // eslint-disable-next-line no-console
+      console.error(
+        `[TasksService] writeSpecFile for ${id} failed (non-fatal):`,
+        err instanceof Error ? err.message : String(err),
+      )
+    }
   }
 
   // ── Dispatch seam (ready → schedules envelope) ───────────────────

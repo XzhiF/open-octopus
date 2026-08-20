@@ -158,9 +158,9 @@ describe("04: task-author autosave seam + scope_id writer (integration)", () => 
     expect(sessionRow.scope_id).toBe(taskRow.id)
   })
 
-  // ── AC2: second turn → name+updated_at re-written, version unchanged ────
+  // ── AC2: second turn → updated_at bumped, name PRESERVED (user-owned) ──
 
-  it("AC2: second turn re-writes name+updated_at, keeps version at 1, leaves task_spec untouched (SG8)", async () => {
+  it("AC2: second turn bumps updated_at but preserves the user-owned task name (no clobber)", async () => {
     // Fresh session for isolation
     const createRes = await app.request("/api/clones/task-author/sessions", {
       method: "POST",
@@ -189,13 +189,13 @@ describe("04: task-author autosave seam + scope_id writer (integration)", () => 
         updated_at: string
       }
 
-    // Simulate a user renaming the session between turns — proves the seam
-    // re-derives the title from the session each turn (AC2 "title 更新").
-    const renamedTitle = "E2E_TD user-renamed session title"
-    db.prepare("UPDATE sessions SET title = ? WHERE id = ?").run(
-      renamedTitle,
-      session.id,
-    )
+    // Simulate the user renaming the task header. In the product this goes
+    // through PUT /api/tasks/:id {name} which ALSO syncs the bound session
+    // title (TasksService.updateTask) — replicate both here so the two stores
+    // stay equal, exactly as the header rename does.
+    const renamedTitle = "E2E_TD user-renamed task title"
+    db.prepare("UPDATE tasks SET name = ? WHERE id = ?").run(renamedTitle, beforeRow.id)
+    db.prepare("UPDATE sessions SET title = ? WHERE id = ?").run(renamedTitle, session.id)
 
     // Ensure updated_at advances (ISO millisecond precision)
     await new Promise((r) => setTimeout(r, 5))
@@ -224,10 +224,103 @@ describe("04: task-author autosave seam + scope_id writer (integration)", () => 
     // SG8: task_spec UNCHANGED (autosave must not touch it)
     expect(afterRow.task_spec).toBe(beforeRow.task_spec)
     expect(afterRow.task_spec).toBe("{}")
-    // AC2: title re-written to track the renamed session
+    // BUGFIX 2026-08-21: the manual rename survives the autosave — the task
+    // name is user-owned once the draft row exists, so autosave no longer
+    // overwrites it with the session title.
     expect(afterRow.name).toBe(renamedTitle)
-    // AC2: updated_at bumped (heartbeat)
+    // updated_at bumped (heartbeat)
     expect(afterRow.updated_at > beforeRow.updated_at).toBe(true)
+  })
+
+  // ── AC3: a session-title change alone does NOT leak into the task name ──
+
+  it("AC3: a sidebar session-title change does NOT overwrite the task name", async () => {
+    const createRes = await app.request("/api/clones/task-author/sessions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Octopus-Org": ORG },
+      body: JSON.stringify({}),
+    })
+    const session = (await createRes.json()) as { id: string }
+
+    // Turn 1 — establishes the task row with the auto-title.
+    const r1 = await app.request(`/api/clones/task-author/sessions/${session.id}/chat`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Octopus-Org": ORG },
+      body: JSON.stringify({ message: "E2E_TD establish title" }),
+    })
+    await r1.text()
+    const before = db
+      .prepare("SELECT name FROM tasks WHERE source_chat_session_id = ?")
+      .get(session.id) as { name: string }
+    // Auto-title = first 20 chars of the first message (truncated).
+    expect(before.name).toBe("E2E_TD establish tit")
+
+    // Session renamed in the sidebar (no task sync — this is NOT a header
+    // rename). The autosave must not propagate it into the task name.
+    db.prepare("UPDATE sessions SET title = ? WHERE id = ?").run(
+      "E2E_TD sidebar-only rename",
+      session.id,
+    )
+
+    await new Promise((r) => setTimeout(r, 5))
+    const r2 = await app.request(`/api/clones/task-author/sessions/${session.id}/chat`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Octopus-Org": ORG },
+      body: JSON.stringify({ message: "E2E_TD second" }),
+    })
+    await r2.text()
+
+    const after = db
+      .prepare("SELECT name FROM tasks WHERE source_chat_session_id = ?")
+      .get(session.id) as { name: string }
+    // Task title wins — the session rename stays in the chat sidebar only.
+    expect(after.name).toBe(before.name)
+  })
+
+  // ── Gate: turn 1 of a task-bound session does not auto-title / clobber ──
+
+  it("gate: turn 1 of a task-bound session preserves the POST-created name (no auto-title)", async () => {
+    const createRes = await app.request("/api/clones/task-author/sessions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Octopus-Org": ORG },
+      body: JSON.stringify({}),
+    })
+    const session = (await createRes.json()) as { id: string }
+
+    // Pre-bind a task the way POST /api/tasks does (source_chat_session_id).
+    const taskId = "e2e-td-prebound-task"
+    const now = new Date().toISOString()
+    taskDAO.insert({
+      id: taskId,
+      org: ORG,
+      name: "E2E_TD manual POST title",
+      status: "draft",
+      source_chat_session_id: session.id,
+      created_at: now,
+      updated_at: now,
+    })
+
+    // First chat turn on the bound session.
+    const r1 = await app.request(`/api/clones/task-author/sessions/${session.id}/chat`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Octopus-Org": ORG },
+      body: JSON.stringify({ message: "E2E_TD first message here" }),
+    })
+    await r1.text()
+
+    // The POST-created name is preserved (autosave's existing-branch no longer
+    // writes the session title over it).
+    const row = db.prepare("SELECT name FROM tasks WHERE id = ?").get(taskId) as {
+      name: string
+    }
+    expect(row.name).toBe("E2E_TD manual POST title")
+
+    // And the auto-title block did NOT fire: the session keeps its placeholder
+    // title instead of being re-derived from the first chat message.
+    const s = db.prepare("SELECT title FROM sessions WHERE id = ?").get(session.id) as {
+      title: string
+    }
+    expect(s.title).toBe("task-author 会话")
   })
 
   // ── Gate: non-task-author clones do NOT trigger the seam ────────────────

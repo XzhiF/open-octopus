@@ -251,6 +251,82 @@ describe('CloneRuntime', () => {
     })
   })
 
+  // Single-expert consultation: the clone chat route passes resolved SDK
+  // subagent defs (experts) via chat()'s `subagents` tail param. sendWithProvider
+  // must forward them as the sendQuery `agents` option so the main agent can
+  // invoke the expert via its Agent tool for that turn.
+  describe('chat — subagents (single-expert consultation)', () => {
+    type SpyOpts = {
+      systemPrompt: { type: string; preset: string; append: string }
+      agents?: Record<string, { description: string; prompt: string; tools?: string[] }>
+    }
+
+    it('forwards subagents as the sendQuery agents option (including on resume retry)', async () => {
+      const providers = await import('@octopus/providers')
+      const sendQuerySpy = vi.fn(async function* (
+        _prompt: string,
+        _cwd: string,
+        _resumeSessionId: string | undefined,
+        _options?: SpyOpts,
+      ): AsyncGenerator<{ type: string; sessionId?: string }> {
+        yield { type: 'result', sessionId: 'provider-sess-subagent-1' }
+      })
+      vi.spyOn(providers, 'getProvider').mockImplementation(() => ({
+        getType: () => 'claude',
+        sendQuery: sendQuerySpy,
+      }) as unknown as ReturnType<typeof providers.getProvider>)
+
+      const cloneDef = createTestCloneDef()
+      const runtime = new CloneRuntime(cloneDef, 'test-org')
+
+      const subagents = {
+        'engineering-rapid-prototyper': {
+          description: '快速原型',
+          prompt: '你是快速原型师…',
+          tools: ['Read', 'Grep', 'Glob'],
+        },
+      }
+      for await (const _ of runtime.chat(
+        'hello', 'session-subagent-1', null, TEST_DIR, undefined, undefined, undefined, undefined, undefined, subagents,
+      )) {
+        // drain
+      }
+
+      expect(sendQuerySpy).toHaveBeenCalledTimes(1)
+      const options = sendQuerySpy.mock.calls[0][3]!
+      expect(options.agents).toEqual(subagents)
+
+      vi.restoreAllMocks()
+    })
+
+    it('omits the agents option when no subagents are passed', async () => {
+      const providers = await import('@octopus/providers')
+      const sendQuerySpy = vi.fn(async function* (
+        _prompt: string,
+        _cwd: string,
+        _resumeSessionId: string | undefined,
+        _options?: SpyOpts,
+      ): AsyncGenerator<{ type: string; sessionId?: string }> {
+        yield { type: 'result', sessionId: 'provider-sess-subagent-2' }
+      })
+      vi.spyOn(providers, 'getProvider').mockImplementation(() => ({
+        getType: () => 'claude',
+        sendQuery: sendQuerySpy,
+      }) as unknown as ReturnType<typeof providers.getProvider>)
+
+      const cloneDef = createTestCloneDef()
+      const runtime = new CloneRuntime(cloneDef, 'test-org')
+      for await (const _ of runtime.chat('hello', 'session-subagent-2', null, TEST_DIR)) {
+        // drain — no subagents passed
+      }
+
+      const options = sendQuerySpy.mock.calls[0][3]!
+      expect(options.agents).toBeUndefined()
+
+      vi.restoreAllMocks()
+    })
+  })
+
   // 07 (SG6, v2-D8/D13): draft-scope authoring_resources[] SKILL.md content
   // is injected into the task-author session's systemPrompt.append via a new
   // `authoringResourcesContent` param on chat(). sendWithProvider appends it

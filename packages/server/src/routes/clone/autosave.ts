@@ -19,7 +19,14 @@
 //
 // The autoTitle is derived by the caller (the route reads the session title
 // AFTER the auto-title block has run, so it reflects the just-computed
-// first-message title on turn 1, or the user-renamed title on later turns).
+// first-message title on turn 1).
+//
+// Bugfix 2026-08-21: the task name is USER-OWNED once the draft row exists
+// (header rename / POST name). Subsequent turns therefore refresh updated_at
+// ONLY and never overwrite the name with the session title. TasksService.
+// updateTask keeps the bound session title in sync with a header rename, so
+// writing existing.name is a no-op in the common case; when they diverge (a
+// sidebar session rename not followed by a header rename), the task title wins.
 
 import crypto from "crypto"
 import type { TaskDAO, AgentSessionDAO } from "../../db/dao"
@@ -51,11 +58,15 @@ export function autosaveTaskDraft(
   try {
     const existing = taskDAO.getBySourceChatSession(input.sessionId)
     if (existing) {
-      // Subsequent turn: targeted UPDATE name+updated_at ONLY (SG8).
-      // Does NOT bump version, does NOT touch task_spec/resources —
-      // avoids races with the spec-field tool on the same turn (autosave
-      // fires at turn-end, after tool calls have already landed).
-      taskDAO.updateAutosave(existing.id, input.autoTitle)
+      // Subsequent turn: refresh updated_at ONLY (SG8). The name is
+      // USER-OWNED once the draft row exists — writing the session title here
+      // was clobbering a manual header rename on the next chat turn (bugfix
+      // 2026-08-21). updateTask syncs header renames into the session title,
+      // so existing.name === session title in the common case; when they
+      // diverge, the task title wins. Still no version bump and no
+      // task_spec/resources touch — avoids races with the spec-field tool on
+      // the same turn (autosave fires at turn-end, after tool calls).
+      taskDAO.updateAutosave(existing.id, existing.name)
       return existing.id
     }
     // First turn: create draft row + link scope_id (SG3).

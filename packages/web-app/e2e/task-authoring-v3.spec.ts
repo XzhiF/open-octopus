@@ -322,8 +322,9 @@ test.describe("goalac: goal/ac card (AC4/AC5/AC6)", () => {
     await expect(dialog).toBeVisible({ timeout: 10_000 })
     const card = dialog.locator("[data-goal-ac-card]")
 
-    // AC4: ghost placeholder before the agent binds (task created with empty goal).
-    await expect(card.getByText(/goal — 待 agent 绑定后浮现/)).toBeVisible({ timeout: 10_000 })
+    // AC4: goal is an always-editable textarea before the agent binds (empty).
+    await expect(card.getByRole("textbox", { name: "编辑 goal" })).toBeVisible({ timeout: 10_000 })
+    await expect(card.getByRole("textbox", { name: "编辑 goal" })).toHaveValue("")
 
     // Simulate the agent binding goal via the spec-field tool (mechanism-level;
     // LLM content is manual per R2). The server emits spec_field_update SSE.
@@ -347,17 +348,19 @@ test.describe("goalac: goal/ac card (AC4/AC5/AC6)", () => {
       { timeoutMs: 10_000, message: "task_artifacts_update SSE not received (D19 companion emit)" },
     )
 
-    // AC4: the goal emerges in the UI (SSE applied live).
-    await expect(card.getByText(goalText), "goal emerges after SSE").toBeVisible({ timeout: 10_000 })
+    // AC4: the goal emerges in the UI (SSE applied live into the textarea).
+    await expect(
+      card.getByRole("textbox", { name: "编辑 goal" }),
+      "goal emerges after SSE",
+    ).toHaveValue(goalText)
 
-    // AC4: direct edit → spec-field source=user → DB version+1 + ✏️ edited mark.
+    // AC4: direct edit (blur-commit) → spec-field source=user → DB version+1 + ✏️ edited mark.
     const beforeRow = readTaskRow(taskId)
     const beforeVersion = beforeRow!.version
 
-    await card.getByRole("button", { name: /直接编辑.*goal|编辑 goal/i }).click()
-    const textarea = card.getByRole("textbox")
-    await textarea.fill("E2E_TD user override goal")
-    await card.getByRole("button", { name: /^保存$/ }).click()
+    const goalInput = card.getByRole("textbox", { name: "编辑 goal" })
+    await goalInput.fill("E2E_TD user override goal")
+    await goalInput.blur()
 
     // The ✏️ edited mark surfaces after a user-direct-edit.
     await expect(card.locator("[data-edited-mark]")).toBeVisible({ timeout: 10_000 })
@@ -1008,7 +1011,10 @@ test.describe("fulllink: AC1 story + AC2 lock (ticket 11)", () => {
       { timeoutMs: 10_000, message: "spec_field_update SSE for goal" },
     )
     const card = workspace.locator("[data-goal-ac-card]")
-    await expect(card.getByText(goalText), "goal emerges after SSE").toBeVisible({ timeout: 10_000 })
+    await expect(
+      card.getByRole("textbox", { name: "编辑 goal" }),
+      "goal emerges after SSE",
+    ).toHaveValue(goalText)
     // R3: DB goal == the value the agent bound (API↔DB cross-check).
     expect(JSON.parse(readTaskRow(draft.id)!.task_spec).goal, "DB goal == agent-bound value").toBe(goalText)
     // R4: the SSE payload's version matches the DB version after the bump
@@ -1038,13 +1044,11 @@ test.describe("fulllink: AC1 story + AC2 lock (ticket 11)", () => {
       ).toBeVisible({ timeout: 10_000 })
     }
 
-    // ── Step 5: direct edit goal → DB version+1 (AC1/US5, source=user) ──
+    // ── Step 5: direct edit goal (blur-commit) → DB version+1 (AC1/US5, source=user) ──
     const beforeVersion = readTaskRow(draft.id)!.version
-    await card.getByRole("button", { name: /直接编辑.*goal|编辑 goal/i }).click()
-    // The goal edit surface is a <textarea>; the ac items are <input>s, so
-    // scope to textarea to avoid the strict-mode 3-match violation.
-    await card.locator("textarea").fill("E2E_TD fulllink user override goal")
-    await card.getByRole("button", { name: /^保存$/ }).click()
+    const goalInput = card.getByRole("textbox", { name: "编辑 goal" })
+    await goalInput.fill("E2E_TD fulllink user override goal")
+    await goalInput.blur()
     await expect(card.locator("[data-edited-mark]"), "edited mark surfaces after user direct edit").toBeVisible({ timeout: 10_000 })
     await waitFor(() => {
       const row = readTaskRow(draft.id)

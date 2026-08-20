@@ -14,7 +14,7 @@
 
 import { useEffect, useMemo, useState, useCallback, useRef } from "react"
 import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
+  Dialog, DialogContent, DialogHeader, DialogDescription,
 } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -41,6 +41,7 @@ import { ChatArea } from "@/components/agent/chat/ChatArea"
 import * as agentApi from "@/lib/agent/api"
 import { TemplatePicker } from "./authoring/template-picker"
 import { AuthoringWorkspace } from "./authoring/authoring-workspace"
+import { EditableTitle } from "./editable-title"
 import { createTask } from "@/lib/tasks-api"
 
 // Re-export the authoring pieces so callers can import everything from the
@@ -173,6 +174,7 @@ export function TaskModal({ open, onOpenChange, task, onMutated, onDraftResolved
             isFullscreen={isFullscreen}
             onToggleFullscreen={() => setIsFullscreen((f) => !f)}
             onDeleteDraft={() => setDeleteConfirmOpen(true)}
+            onMutated={onMutated}
           />
           <div className="flex-1 min-h-0 overflow-hidden">
             {mode === "authoring-v3-template" && (
@@ -225,10 +227,9 @@ export function TaskModal({ open, onOpenChange, task, onMutated, onDraftResolved
   )
 }
 
-function ModalHeader({ task, mode, isFullscreen, onToggleFullscreen, onDeleteDraft }: {
-  task: Task | null; mode: ModalMode; isFullscreen: boolean; onToggleFullscreen: () => void; onDeleteDraft: () => void
+function ModalHeader({ task, mode, isFullscreen, onToggleFullscreen, onDeleteDraft, onMutated }: {
+  task: Task | null; mode: ModalMode; isFullscreen: boolean; onToggleFullscreen: () => void; onDeleteDraft: () => void; onMutated: () => void
 }) {
-  const title = task?.name ?? "新建任务"
   const status = task?.status ?? "draft"
   const isDraft = status === "draft"
   const subtitle =
@@ -244,7 +245,7 @@ function ModalHeader({ task, mode, isFullscreen, onToggleFullscreen, onDeleteDra
   return (
     <DialogHeader className="px-5 py-3 border-b border-border flex-row items-center justify-between space-y-0">
       <div className="min-w-0">
-        <DialogTitle className="text-base truncate">{title}</DialogTitle>
+        <EditableTitle task={task} onMutated={onMutated} />
         <DialogDescription className="text-xs">{subtitle}</DialogDescription>
       </div>
       <div className="flex items-center gap-2 shrink-0 mr-8">

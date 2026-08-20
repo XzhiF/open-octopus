@@ -46,6 +46,23 @@ version: 2.0.0
 - `subunits.length >= 2` ⇒ 复合（coordinator-ws + composition-task.yaml + task_dispatch fan-out N 子）；0/1 subunit ⇒ 简单（直分发 1 ws，无 coordinator-ws，ADR-0009）。
 - `resources`/`authoring_resources` 条目 `{type, name}`，type ∈ `skill|agent|command|rule`（4 provisionable；`workflow`/`clone` 不在此）。
 
+## 读取当前规格（goal/ac — 首选本地 spec.json）
+
+每次 goal/ac/确认状态等 spec-field 保存，server 都会重写任务 home 根目录的 `spec.json`（`{task_home}/spec.json`，即你的工作目录下）。它是当前 task_spec 的**结构化本地快照**：
+
+```json
+{
+  "task_id": "…",
+  "version": 7,
+  "updated_at": "…",
+  "spec": { "goal": "…", "ac": ["…"], "goal_confirmed": true, "ac_confirmed": ["…"], "decisions": [] }
+}
+```
+
+**需要读当前 goal/ac/确认状态时，直接 Read `spec.json`** —— 它是权威、最新的本地文件，比 curl API 更可靠（不会因漏读本 SKILL 的 API 章节或猜错端口而拿不到）。被问及"当前目标/验收标准"且你尚未掌握时，先读这个文件再回答。
+
+> 例外：无 home 的 legacy/v2 任务没有 `spec.json` → 用 §3 `GET /api/tasks/:id` 回退。rules 文件（`.claude/rules/task-context.md`）也会提示你读 `spec.json`。
+
 ## API 端点清单（curl — update_task_spec_field 是 HTTP 端点，非 native SDK 工具）
 
 > v2: 所有端点在 `/api/tasks`。`update_task_spec_field` 是 REST 端点（agent 经 Bash curl 调，**非** SDK 原生工具）。

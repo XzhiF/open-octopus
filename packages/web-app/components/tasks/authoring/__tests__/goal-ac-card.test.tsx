@@ -72,20 +72,27 @@ afterEach(() => {
   vi.clearAllMocks()
 })
 
-// ── AC4: ghost → SSE emerge → direct edit (source=user) → ✏️ edited ──
+// ── Editing model: always-editable (no ghost lock), blur-commit ──
 
-describe("GoalAcCard — goal/ac emerge + direct edit", () => {
-  it("shows ghost placeholders when goal/ac are unbound (empty)", () => {
+describe("GoalAcCard — goal/ac editing (always-editable)", () => {
+  it("empty goal/ac show editable fields + an add button (not blocking ghosts)", () => {
     const task = makeTask({ id: "t1" })
     render(<GoalAcCard task={task} onMutated={() => {}} />)
-    expect(screen.getByText(/goal — 待 agent 绑定后浮现/i)).toBeDefined()
-    expect(screen.getByText(/ac — 待 agent 绑定后浮现/i)).toBeDefined()
+
+    // goal: an editable textarea with an instructive placeholder, even unbound.
+    const goalInput = screen.getByPlaceholderText(/输入目标/) as HTMLTextAreaElement
+    expect(goalInput).toBeDefined()
+    expect(goalInput.value).toBe("")
+
+    // ac: an editable list with a hint + an add button, even unbound.
+    expect(screen.getByText(/暂无验收标准/)).toBeDefined()
+    expect(screen.getByRole("button", { name: /添加验收标准/ })).toBeDefined()
   })
 
-  it("SSE spec_field_update(goal) makes the goal emerge (agent binds)", async () => {
+  it("SSE spec_field_update(goal) fills the goal textarea (agent binds)", async () => {
     const task = makeTask({ id: "t1" })
     render(<GoalAcCard task={task} onMutated={() => {}} />)
-    expect(screen.getByText(/goal — 待 agent 绑定后浮现/i)).toBeDefined()
+    expect(screen.getByPlaceholderText(/输入目标/)).toBeDefined()
 
     // Agent calls spec-field(goal=...) server-side → SSE arrives.
     expect(specFieldListener).not.toBeNull()
@@ -96,11 +103,11 @@ describe("GoalAcCard — goal/ac emerge + direct edit", () => {
     })
 
     await waitFor(() => {
-      expect(screen.getByText("agent-set goal")).toBeDefined()
+      expect(screen.getByDisplayValue("agent-set goal")).toBeDefined()
     })
   })
 
-  it("SSE spec_field_update(ac) makes the ac list emerge (agent binds)", async () => {
+  it("SSE spec_field_update(ac) emerges the ac list (agent binds)", async () => {
     const task = makeTask({ id: "t1" })
     render(<GoalAcCard task={task} onMutated={() => {}} />)
 
@@ -111,13 +118,13 @@ describe("GoalAcCard — goal/ac emerge + direct edit", () => {
     })
 
     await waitFor(() => {
-      // ac items render as <input value={item}> — assert by display value.
+      // ac items render as editable textareas — assert by display value.
       expect(screen.getByDisplayValue("ac one")).toBeDefined()
       expect(screen.getByDisplayValue("ac two")).toBeDefined()
     })
   })
 
-  it("direct goal edit → POST spec-field(goal, source=user) + ✏️ edited mark + resets goal_confirmed", async () => {
+  it("goal blur-commit → POST spec-field(goal, source=user) + ✏️ edited + resets goal_confirmed", async () => {
     const task = makeTask({
       id: "t1",
       task_spec: {
@@ -127,12 +134,10 @@ describe("GoalAcCard — goal/ac emerge + direct edit", () => {
     })
     render(<GoalAcCard task={task} onMutated={() => {}} />)
 
-    // Click the inline-edit affordance to reveal the textarea.
-    fireEvent.click(screen.getByRole("button", { name: /直接编辑|编辑 goal/i }))
-
-    const textarea = screen.getByRole("textbox") as HTMLTextAreaElement
-    fireEvent.change(textarea, { target: { value: "user override" } })
-    fireEvent.click(screen.getByRole("button", { name: /^保存$/ }))
+    // Directly edit the always-editable goal textarea, then blur to save.
+    const goalInput = screen.getByLabelText("编辑 goal") as HTMLTextAreaElement
+    fireEvent.change(goalInput, { target: { value: "user override" } })
+    fireEvent.blur(goalInput)
 
     await waitFor(() => {
       expect(mockUpdateSpecField).toHaveBeenCalledWith(
@@ -140,7 +145,7 @@ describe("GoalAcCard — goal/ac emerge + direct edit", () => {
       )
     })
 
-    // AC4: the ✏️ edited mark surfaces after a user-direct-edit.
+    // The ✏️ edited mark surfaces after a user-direct-edit.
     expect(screen.getByText(/已编辑/i)).toBeDefined()
 
     // AC4: editing the goal resets goal_confirmed (the gate must re-confirm).
@@ -152,7 +157,22 @@ describe("GoalAcCard — goal/ac emerge + direct edit", () => {
     })
   })
 
-  it("ignores spec_field_update events for a different task_id", async () => {
+  it("goal blur without any change is a no-op (no spec-field POST)", () => {
+    const task = makeTask({
+      id: "t1",
+      task_spec: {
+        goal: "a goal", ac: [], skill_groups: ["default"], task_type: "coding",
+        goal_confirmed: false, ac_confirmed: [], decisions: [], resources: [], authoring_resources: [],
+      } as Task["task_spec"],
+    })
+    render(<GoalAcCard task={task} onMutated={() => {}} />)
+
+    fireEvent.blur(screen.getByLabelText("编辑 goal"))
+
+    expect(mockUpdateSpecField).not.toHaveBeenCalled()
+  })
+
+  it("ignores spec_field_update events for a different task_id", () => {
     const task = makeTask({ id: "t1" })
     render(<GoalAcCard task={task} onMutated={() => {}} />)
 
@@ -162,8 +182,118 @@ describe("GoalAcCard — goal/ac emerge + direct edit", () => {
       })
     })
 
-    // Still ghost — event was for a different task.
-    expect(screen.getByText(/goal — 待 agent 绑定后浮现/i)).toBeDefined()
+    // Still empty/editable — event was for a different task.
+    expect((screen.getByPlaceholderText(/输入目标/) as HTMLTextAreaElement).value).toBe("")
+  })
+})
+
+// ── AC list: + / − buttons, blur-commit, auto-wrap textareas ──
+
+describe("GoalAcCard — ac add/remove/edit (+/− buttons, auto-wrap)", () => {
+  it("empty ac: 添加验收标准 adds an editable first row — locally only, no POST", () => {
+    const task = makeTask({ id: "t1" }) // default task_spec.ac = []
+    render(<GoalAcCard task={task} onMutated={() => {}} />)
+
+    fireEvent.click(screen.getByRole("button", { name: /添加验收标准/ }))
+
+    // A fresh editable row appeared — but nothing persisted (the server rejects
+    // "" as a spec-field ac value, so blank rows persist only once typed).
+    expect(screen.getByPlaceholderText(/输入一条验收标准/)).toBeDefined()
+    expect(mockUpdateSpecField).not.toHaveBeenCalled()
+  })
+
+  it("empty ac: type into the new row + blur POSTs the first ac item", async () => {
+    const task = makeTask({ id: "t1" })
+    render(<GoalAcCard task={task} onMutated={() => {}} />)
+
+    fireEvent.click(screen.getByRole("button", { name: /添加验收标准/ }))
+    const row = screen.getByPlaceholderText(/输入一条验收标准/) as HTMLTextAreaElement
+    fireEvent.focus(row)
+    fireEvent.change(row, { target: { value: "first ac" } })
+    fireEvent.blur(row)
+
+    await waitFor(() => {
+      expect(mockUpdateSpecField).toHaveBeenCalledWith(
+        "t1", "ac", ["first ac"], { source: "user" },
+      )
+    })
+  })
+
+  it("typing in an ac row + blur commits the trimmed value", async () => {
+    const task = makeTask({
+      id: "t1",
+      task_spec: {
+        goal: "g", ac: ["ac one", "ac two"], skill_groups: ["default"], task_type: "coding",
+        goal_confirmed: false, ac_confirmed: [], decisions: [], resources: [], authoring_resources: [],
+      } as Task["task_spec"],
+    })
+    render(<GoalAcCard task={task} onMutated={() => {}} />)
+
+    const row = screen.getByDisplayValue("ac one") as HTMLTextAreaElement
+    fireEvent.focus(row)
+    fireEvent.change(row, { target: { value: "  ac one edited  " } })
+    fireEvent.blur(row)
+
+    await waitFor(() => {
+      expect(mockUpdateSpecField).toHaveBeenCalledWith(
+        "t1", "ac", ["ac one edited", "ac two"], { source: "user" },
+      )
+    })
+  })
+
+  it("emptying an ac row + blur removes it (POST without it — no blank rows)", async () => {
+    const task = makeTask({
+      id: "t1",
+      task_spec: {
+        goal: "g", ac: ["ac one", "ac two"], skill_groups: ["default"], task_type: "coding",
+        goal_confirmed: false, ac_confirmed: [], decisions: [], resources: [], authoring_resources: [],
+      } as Task["task_spec"],
+    })
+    render(<GoalAcCard task={task} onMutated={() => {}} />)
+
+    const row = screen.getByDisplayValue("ac one") as HTMLTextAreaElement
+    fireEvent.focus(row) // snapshot the persisted content (ac one) at focus
+    fireEvent.change(row, { target: { value: "" } })
+    fireEvent.blur(row)
+
+    await waitFor(() => {
+      expect(mockUpdateSpecField).toHaveBeenCalledWith(
+        "t1", "ac", ["ac two"], { source: "user" },
+      )
+    })
+  })
+
+  it("− removes an ac row (POST the set without it)", async () => {
+    const task = makeTask({
+      id: "t1",
+      task_spec: {
+        goal: "g", ac: ["ac one", "ac two"], skill_groups: ["default"], task_type: "coding",
+        goal_confirmed: false, ac_confirmed: [], decisions: [], resources: [], authoring_resources: [],
+      } as Task["task_spec"],
+    })
+    render(<GoalAcCard task={task} onMutated={() => {}} />)
+
+    fireEvent.click(screen.getByRole("button", { name: /删除 ac 1/ }))
+
+    await waitFor(() => {
+      expect(mockUpdateSpecField).toHaveBeenCalledWith(
+        "t1", "ac", ["ac two"], { source: "user" },
+      )
+    })
+  })
+
+  it("ac items render as auto-wrapping textareas (not single-line inputs)", () => {
+    const task = makeTask({
+      id: "t1",
+      task_spec: {
+        goal: "g", ac: ["ac one"], skill_groups: ["default"], task_type: "coding",
+        goal_confirmed: false, ac_confirmed: [], decisions: [], resources: [], authoring_resources: [],
+      } as Task["task_spec"],
+    })
+    render(<GoalAcCard task={task} onMutated={() => {}} />)
+
+    const row = screen.getByDisplayValue("ac one") as HTMLTextAreaElement
+    expect(row.tagName).toBe("TEXTAREA")
   })
 })
 

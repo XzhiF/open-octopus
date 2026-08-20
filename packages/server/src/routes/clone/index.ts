@@ -26,6 +26,7 @@ import path from 'path'
 import type { CloneDef } from '@octopus/shared'
 import type { AgentSessionDAO, TaskDAO } from '../../db/dao'
 import { CloneRuntime } from '../../services/agent/clone-runtime'
+import { resolveExpertSubagents } from '../../services/agent/expert-registry'
 import { isBuiltinClone } from '../../services/agent/builtin-clones'
 import { WorkspaceGit } from '../../services/workspace-git'
 import type { ProjectRef } from '../../services/tasks/task-home-service'
@@ -274,7 +275,7 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
     const sessionId = c.req.param('id')
     const org = c.req.header('X-Octopus-Org') || (c.get('org') as string) || 'default'
 
-    let body: { message?: string; model?: string }
+    let body: { message?: string; model?: string; subagents?: Array<{ id: string; label?: string }> }
     try {
       body = await c.req.json()
     } catch {
@@ -284,6 +285,11 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
     if (!body.message) {
       return c.json({ error: { code: 'INVALID_PARAM', message: 'message is required' } }, 400)
     }
+
+    // Single-expert consultation: optional subagent refs → SDK agent defs
+    // registered for THIS turn only (the main agent invokes them via its
+    // Agent tool, then they vanish on the next turn).
+    const subagents = resolveExpertSubagents(body.subagents ?? [])
 
     // Verify session exists and belongs to clone
     const session = sessionDAO.findById(sessionId)
@@ -465,7 +471,7 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
         const memoryToolCalls: Array<{ id: string; name: string; input?: Record<string, unknown> }> = []
         const MEMORY_TOOL_NAMES = ['record_daily']
 
-        for await (const chunk of runtime.chat(body.message!, sessionId, providerSessionId, cwd, specUpdateNotice, authoringResourcesContent, undefined, taskHomePath, body.model)) {
+        for await (const chunk of runtime.chat(body.message!, sessionId, providerSessionId, cwd, specUpdateNotice, authoringResourcesContent, undefined, taskHomePath, body.model, subagents)) {
           if (aborted || (stream as any)._aborted) break
 
           switch (chunk.type) {
@@ -607,8 +613,16 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
             sessionDAO.updateProviderSession(sessionId, resultSessionId)
           }
 
-          // Auto-generate title on first message
-          if (session.title === `${cloneName} 会话` || session.title === '新会话') {
+          // Auto-generate title on first message. Skip when a task is already
+          // bound to this session (source_chat_session_id): the task name is
+          // user-owned (header/POST), and re-deriving the session title from
+          // the first chat message would let autosave clobber it (bugfix
+          // 2026-08-21). The bound-task lookup only runs when the title is
+          // still the placeholder (i.e. effectively the first message).
+          if (
+            (session.title === `${cloneName} 会话` || session.title === '新会话') &&
+            !(taskDAO && taskDAO.getBySourceChatSession(sessionId))
+          ) {
             const autoTitle = body.message!.slice(0, 20).replace(/\n/g, ' ').trim() || `${cloneName} 会话`
             sessionDAO.updateSession(sessionId, { title: autoTitle })
           }

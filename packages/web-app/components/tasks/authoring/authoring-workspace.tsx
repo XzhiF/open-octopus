@@ -43,7 +43,7 @@ import { ChatArea } from "@/components/agent/chat/ChatArea"
 import * as agentApi from "@/lib/agent/api"
 import { GoalAcCard } from "./goal-ac-card"
 import { OutputViewer } from "./output-viewer"
-import { MoATriggerDialog, type MoATriggerInput } from "./moa-trigger-dialog"
+import { MoATriggerDialog, type MoATriggerInput, type SingleExpertInput } from "./moa-trigger-dialog"
 
 const TASK_AUTHOR_CLONE = "task-author"
 
@@ -143,8 +143,11 @@ export function AuthoringWorkspace({ task, onMutated, onClose }: AuthoringWorksp
   const apiOverrides = useMemo(() => ({
     getSession: (id: string, q?: { limit?: number; cursor?: string }) =>
       agentApi.getCloneSession(TASK_AUTHOR_CLONE, id, q),
-    chatStream: (id: string, msg: string, opts?: { model?: string }) =>
-      agentApi.cloneChatStream(TASK_AUTHOR_CLONE, id, msg, { model: opts?.model ?? modelRef.current }),
+    chatStream: (id: string, msg: string, opts?: { model?: string; subagents?: Array<{ id: string; label?: string }> }) =>
+      agentApi.cloneChatStream(TASK_AUTHOR_CLONE, id, msg, {
+        model: opts?.model ?? modelRef.current,
+        subagents: opts?.subagents,
+      }),
     stopChat: (id: string) =>
       agentApi.stopCloneChat(TASK_AUTHOR_CLONE, id),
   }), [])
@@ -162,7 +165,7 @@ export function AuthoringWorkspace({ task, onMutated, onClose }: AuthoringWorksp
   // AuthoringMode: buffer the first message, create the task-author session,
   // send once the session id lands. v3 drafts always have a session (D15
   // session-first create) so this path is legacy-only.
-  const pendingMessageRef = useRef<string | null>(null)
+  const pendingMessageRef = useRef<{ message: string; opts?: { subagents?: Array<{ id: string; label?: string }> } } | null>(null)
   const createSession = useCallback(async (): Promise<string | null> => {
     try {
       const session = await agentApi.createCloneSession(TASK_AUTHOR_CLONE)
@@ -178,17 +181,38 @@ export function AuthoringWorkspace({ task, onMutated, onClose }: AuthoringWorksp
     if (activeSessionId) {
       chat.sendMessage(message)
     } else {
-      pendingMessageRef.current = message
+      pendingMessageRef.current = { message }
       void createSession()
     }
   }, [activeSessionId, chat, createSession])
 
+  // ── Single-expert consultation (v1): compose + send the consult message to
+  // the task-author session, registering the expert as an SDK subagent for this
+  // turn (the server resolves body.subagents → agents option). No workflow run.
+  const handleSingleConsult = useCallback((input: SingleExpertInput) => {
+    if (chat.streaming) {
+      toast.error("请等待当前回复完成后再咨询")
+      return
+    }
+    const subagents = [{ id: input.role.id, label: input.role.label }]
+    if (activeSessionId) {
+      chat.sendMessage(input.composedPrompt, { subagents })
+    } else {
+      pendingMessageRef.current = { message: input.composedPrompt, opts: { subagents } }
+      void createSession()
+    }
+    // The message is enqueued (or buffered for a lazy session) — the consultation
+    // starts in the chat. Close the dialog so the user watches it work (bugfix
+    // 2026-08-21: previously the window stayed open after 开始咨询).
+    setMoaOpen(false)
+  }, [activeSessionId, chat, createSession])
+
   useEffect(() => {
     if (activeSessionId && pendingMessageRef.current) {
-      const msg = pendingMessageRef.current
+      const pending = pendingMessageRef.current
       pendingMessageRef.current = null
       requestAnimationFrame(() => {
-        chat.sendMessage(msg)
+        chat.sendMessage(pending.message, pending.opts)
       })
     }
   }, [activeSessionId, chat])
@@ -391,6 +415,7 @@ export function AuthoringWorkspace({ task, onMutated, onClose }: AuthoringWorksp
                 open={moaOpen}
                 onOpenChange={setMoaOpen}
                 onTrigger={handleTriggerMoa}
+                onConsultSingle={handleSingleConsult}
                 running={moaRunning}
               />
             </div>

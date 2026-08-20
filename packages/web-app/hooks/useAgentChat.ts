@@ -14,6 +14,13 @@ export type StreamTimelineItem =
   | { kind: 'text'; id: string; text: string }
   | { kind: 'tool'; id: string }
 
+/** A subagent (expert) to register for a single chat turn — resolved server-side
+ *  into the Claude SDK `agents` option so the main agent can invoke it. */
+export interface ChatSubagentRef {
+  id: string
+  label?: string
+}
+
 export interface UseAgentChatApiOverride {
   /** Load session messages. Returns { messages: PaginatedResponse<AgentMessage> } */
   getSession?: (id: string, query?: { limit?: number; cursor?: string }) => Promise<{
@@ -21,7 +28,7 @@ export interface UseAgentChatApiOverride {
     messages: import('@/lib/agent/types').PaginatedResponse<import('@/lib/agent/types').AgentMessage>
   }>
   /** Create SSE stream for chat. Returns { reader, abort } */
-  chatStream?: (id: string, message: string, opts?: { debug?: boolean; delegate_to?: string; model?: string }) => import('@/lib/agent/api').AgentSSEConnection
+  chatStream?: (id: string, message: string, opts?: { debug?: boolean; delegate_to?: string; model?: string; subagents?: ChatSubagentRef[] }) => import('@/lib/agent/api').AgentSSEConnection
   /** Stop an in-progress chat stream */
   stopChat?: (id: string) => Promise<unknown>
 }
@@ -118,7 +125,7 @@ export function useAgentChat(sessionId: string | null, options?: { onTitleUpdate
     }
   }, [sessionId])
 
-  const sendMessage = useCallback(async (message: string, opts?: { delegate_to?: string; model?: string }) => {
+  const sendMessage = useCallback(async (message: string, opts?: { delegate_to?: string; model?: string; subagents?: ChatSubagentRef[] }) => {
     if (!sessionId || !message.trim()) return
     // Guard: block if already streaming
     if (streamingRef.current) return
@@ -161,7 +168,11 @@ export function useAgentChat(sessionId: string | null, options?: { onTitleUpdate
     setStreamTimeline([])
 
     const chatStreamFn = apiOverrideRef.current?.chatStream ?? api.chatStream
-    const source = chatStreamFn(sessionId, message, { delegate_to: opts?.delegate_to, model: opts?.model })
+    const source = chatStreamFn(sessionId, message, {
+      delegate_to: opts?.delegate_to,
+      model: opts?.model,
+      subagents: opts?.subagents,
+    })
 
     const handlers: SSEHandlers = {
       onContextUsage: (data) => {

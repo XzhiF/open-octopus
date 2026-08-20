@@ -276,10 +276,19 @@ export function getCloneSession(cloneName: string, sessionId: string, query?: { 
   })
 }
 
-export function cloneChatStream(cloneName: string, sessionId: string, message: string, opts?: { model?: string }): AgentSSEConnection {
+export function cloneChatStream(
+  cloneName: string,
+  sessionId: string,
+  message: string,
+  opts?: { model?: string; subagents?: Array<{ id: string; label?: string }> },
+): AgentSSEConnection {
   const controller = new AbortController()
   const url = `${CLONE_BASE()}/${cloneName}/sessions/${sessionId}/chat`
-  const body = JSON.stringify({ message, ...(opts?.model ? { model: opts.model } : {}) })
+  const body = JSON.stringify({
+    message,
+    ...(opts?.model ? { model: opts.model } : {}),
+    ...(opts?.subagents && opts.subagents.length > 0 ? { subagents: opts.subagents } : {}),
+  })
 
   const streamPromise = fetch(url, {
     method: 'POST',

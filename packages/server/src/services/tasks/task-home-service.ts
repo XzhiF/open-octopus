@@ -32,6 +32,7 @@ const ARTIFACTS_JSON = "artifacts.json"
 const RULES_DIR = path.join(".claude", "rules")
 const RULES_FILENAME = "task-context.md"
 const CONTEXT_FILENAME = "context.md"
+const SPEC_FILENAME = "spec.json"
 
 /** A project reference with name and optional filesystem path. When `path` is
  *  resolved the agent knows where the codebase lives on disk; when unresolved
@@ -85,8 +86,8 @@ export class TaskHomeService {
   }
 
   /** Create the home skeleton: `tasks/{id}/` + `skills/` + `artifacts/` +
-   *  `.claude/rules/task-context.md` + `context.md`. Idempotent (mkdir
-   *  recursive). Returns the home path.
+   *  `.claude/rules/task-context.md` + `context.md` + `spec.json`. Idempotent
+   *  (mkdir recursive). Returns the home path.
    *
    *  Design split (prompt-cache friendly):
    *    - Rules file = **static constraints** (SDK-loaded, CLAUDE.md priority):
@@ -94,6 +95,10 @@ export class TaskHomeService {
    *      References `context.md` for dynamic state.
    *    - context.md = **dynamic state** (org, projects, skill groups):
    *      Read by the agent on demand. Rewritten when state changes.
+   *    - spec.json = **structured goal/ac snapshot**: the task-author agent
+   *      reads it for the current goal/ac/confirmations instead of curling the
+   *      API. Written with an empty baseline at creation; `writeSpecFile`
+   *      refreshes it whenever the task_spec changes.
    *    - System prompt = **no dynamic context** — only static persona + skill
    *      content. Prompt cache stays stable across turns. */
   createHome(taskId: string, opts: { org?: string; projects?: ProjectRef[]; skillGroups?: string[] } = {}): string {
@@ -103,6 +108,7 @@ export class TaskHomeService {
     fs.mkdirSync(path.join(home, RULES_DIR), { recursive: true })
     this.writeTaskContextRule(taskId)
     this.writeContextFile(taskId, opts.org, opts.projects, opts.skillGroups)
+    this.writeSpecFile(taskId, { version: 1, spec: {}, updated_at: new Date().toISOString() })
     return home
   }
 
@@ -131,12 +137,56 @@ export class TaskHomeService {
         lines.push(`- locked skill groups: ${skillGroups.join(', ')}`)
       }
       lines.push('')
+      // 06: point the agent at the structured goal/ac snapshot (spec.json) —
+      // the file it should read for goal/ac instead of curling the API.
+      lines.push('- 当前 goal/ac/确认状态快照见同目录 `spec.json`（每次 spec-field 保存后由 server 重写，权威）')
+      lines.push('')
       lines.push('> 此文件由系统维护。当"编写语境"变更时自动更新。')
       fs.writeFileSync(filePath, lines.join('\n'), 'utf-8')
     } catch (err: unknown) {
       // eslint-disable-next-line no-console
       console.warn(
         `[task-home] writeContextFile for ${taskId} failed (non-fatal):`,
+        err instanceof Error ? err.message : String(err),
+      )
+    }
+  }
+
+  /** Write (or refresh) `{home}/spec.json` — a structured snapshot of the
+   *  current task_spec (goal, ac, confirmations, decisions, …). The
+   *  task-author agent reads this file for goal/ac instead of curling the REST
+   *  API (deterministic — it may miss the skill's API instructions on an early
+   *  turn, but the rules file always points it here). Rewritten on every
+   *  spec-field update / PUT / creation (see TasksService.writeSpecSnapshot).
+   *
+   *  No home dir → silent no-op (legacy/v2 tasks have no home; the agent falls
+   *  back to the API). Best-effort: a failed write must not break the
+   *  spec-field path. */
+  writeSpecFile(
+    taskId: string,
+    payload: { version: number; spec: Record<string, unknown>; updated_at: string },
+  ): void {
+    const home = this.homePath(taskId)
+    if (!fs.existsSync(home)) return
+    try {
+      fs.writeFileSync(
+        path.join(home, SPEC_FILENAME),
+        JSON.stringify(
+          {
+            task_id: taskId,
+            version: payload.version,
+            updated_at: payload.updated_at,
+            spec: payload.spec,
+          },
+          null,
+          2,
+        ),
+        'utf-8',
+      )
+    } catch (err: unknown) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[task-home] writeSpecFile for ${taskId} failed (non-fatal):`,
         err instanceof Error ? err.message : String(err),
       )
     }
@@ -196,6 +246,7 @@ export class TaskHomeService {
         '## 工作上下文',
         '',
         '- 当前工作上下文（org、项目、技能组）见 `context.md`',
+        '- 当前 goal/ac/确认状态快照见 `spec.json`（每次 spec-field 保存后由 server 重写；权威本地快照，不必 curl API）',
         '- 当收到 `@@context_updated` 通知时，请重新读取 `context.md` 获取最新值',
       ].join('\n')
       fs.writeFileSync(rulePath, content, 'utf-8')

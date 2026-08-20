@@ -61,7 +61,7 @@ describe("TaskHomeService", () => {
       expect(fs.existsSync(path.join(home, ".claude", "rules", "task-context.md"))).toBe(true)
       expect(fs.existsSync(path.join(home, "context.md"))).toBe(true)
       const entries = fs.readdirSync(home).sort()
-      expect(entries).toEqual([".claude", "artifacts", "context.md", "skills"])
+      expect(entries).toEqual([".claude", "artifacts", "context.md", "skills", "spec.json"])
     })
 
     it("createHome writes task-context.md with path constraints only", () => {
@@ -110,13 +110,77 @@ describe("TaskHomeService", () => {
       expect(ruleAfter).toBe(ruleBefore)
     })
 
+    // ── 06: spec.json — structured goal/ac snapshot the task-author agent reads ──
+
+    it("createHome writes a baseline spec.json; writeSpecFile refreshes it with real data", () => {
+      const id = "t-spec"
+      svc.createHome(id)
+      const p = path.join(svc.homePath(id), "spec.json")
+      expect(fs.existsSync(p)).toBe(true)
+
+      const first = JSON.parse(fs.readFileSync(p, "utf-8")) as {
+        task_id: string
+        version: number
+        updated_at: string
+        spec: Record<string, unknown>
+      }
+      expect(first.task_id).toBe(id)
+      expect(first.version).toBe(1)
+      expect(first.spec).toEqual({})
+
+      // A spec-field save refreshes the snapshot with the current task_spec.
+      svc.writeSpecFile(id, {
+        version: 7,
+        spec: { goal: "g", ac: ["a1", "a2"], goal_confirmed: true, ac_confirmed: ["a1", "a2"] },
+        updated_at: "2026-08-21T00:00:00Z",
+      })
+      const second = JSON.parse(fs.readFileSync(p, "utf-8")) as {
+        task_id: string
+        version: number
+        updated_at: string
+        spec: { goal: string; ac: string[]; goal_confirmed: boolean }
+      }
+      expect(second.version).toBe(7)
+      expect(second.spec.goal).toBe("g")
+      expect(second.spec.ac).toEqual(["a1", "a2"])
+      expect(second.spec.goal_confirmed).toBe(true)
+      expect(second.updated_at).toBe("2026-08-21T00:00:00Z")
+    })
+
+    it("writeSpecFile is a silent no-op when the home doesn't exist (legacy/v2 task)", () => {
+      const warnBefore = warnSpy.mock.calls.length
+      svc.writeSpecFile("t-ghost", { version: 1, spec: {}, updated_at: "x" })
+      expect(fs.existsSync(svc.homePath("t-ghost"))).toBe(false)
+      // No warning either — a missing home is an expected case, not an error.
+      expect(warnSpy.mock.calls.length).toBe(warnBefore)
+    })
+
+    it("rules file (task-context.md) points the agent to spec.json", () => {
+      const id = "t-rules"
+      svc.createHome(id)
+      const content = fs.readFileSync(
+        path.join(svc.homePath(id), ".claude", "rules", "task-context.md"),
+        "utf-8",
+      )
+      // The rules file is SDK-loaded (alwaysApply) — this is the deterministic
+      // way the agent learns about spec.json on its first turn.
+      expect(content).toContain("spec.json")
+    })
+
+    it("context.md points to spec.json", () => {
+      const id = "t-ctx"
+      svc.createHome(id)
+      const ctx = fs.readFileSync(path.join(svc.homePath(id), "context.md"), "utf-8")
+      expect(ctx).toContain("spec.json")
+    })
+
     it("createHome is idempotent (calling twice leaves one home)", () => {
       const id = "t-2"
       svc.createHome(id)
       svc.createHome(id)
       const home = svc.homePath(id)
       const entries = fs.readdirSync(home).sort()
-      expect(entries).toEqual([".claude", "artifacts", "context.md", "skills"])
+      expect(entries).toEqual([".claude", "artifacts", "context.md", "skills", "spec.json"])
     })
 
     it("ensureRulesFile backfills rules for existing homes without .claude/", () => {

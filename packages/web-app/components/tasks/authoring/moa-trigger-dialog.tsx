@@ -30,6 +30,11 @@ export const AVAILABLE_ROLES = [
   { id: "engineering-code-reviewer", label: "👀 代码审查员", desc: "正确性、可维护性、性能" },
   { id: "engineering-security-engineer", label: "🔒 安全工程师", desc: "威胁建模、漏洞评估" },
   { id: "engineering-sre", label: "🛠️ SRE", desc: "可靠性、SLO、可观测性" },
+  { id: "engineering-rapid-prototyper", label: "⚡ 快速原型师", desc: "快速验证想法、MVP 创建" },
+  { id: "engineering-frontend-developer", label: "💻 前端开发者", desc: "UI 实现、性能优化" },
+  { id: "engineering-codebase-onboarding-engineer", label: "🧭 代码库引导工程师", desc: "快速上手陌生代码库" },
+  { id: "prompt-engineer", label: "🧠 提示词工程师", desc: "提示词设计、输出质量优化" },
+  { id: "agents-orchestrator", label: "🎭 智能体编排者", desc: "编排多智能体工作流" },
 ] as const
 
 export const AVAILABLE_ENGINES = [
@@ -43,7 +48,10 @@ export const AVAILABLE_MODELS = [
   { id: "se", label: "se (轻量)" },
 ] as const
 
-export type MoAMode = "moa" | "debate"
+/** Modes that run through the workflow engine (MoA/Debate). */
+export type WorkflowMoAMode = "moa" | "debate"
+/** All dialog modes, including the workflow-free single-expert consultation. */
+export type MoAMode = WorkflowMoAMode | "single"
 
 export interface ExpertRow {
   id: string
@@ -57,11 +65,18 @@ export interface MoATriggerInput {
   ac: string[]
   projects: string[]
   userInput: string
-  mode: MoAMode
+  mode: WorkflowMoAMode
   experts: Array<{ agent: string; engine: string; model: string }>
   aggregator?: { engine: string; model: string }
   rounds?: number
   consensusThreshold?: number
+}
+
+export interface SingleExpertInput {
+  role: { id: string; label: string }
+  /** The composed chat message (explicitly instructs the main agent to invoke
+   *  the expert subagent) — this is what gets sent to the session. */
+  composedPrompt: string
 }
 
 export interface MoATriggerDialogProps {
@@ -69,6 +84,7 @@ export interface MoATriggerDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   onTrigger: (input: MoATriggerInput) => void
+  onConsultSingle?: (input: SingleExpertInput) => void
   running?: boolean
 }
 
@@ -81,10 +97,24 @@ function makeDefaultRow(role?: string): ExpertRow {
   return { id: nextRowId(), engine: "pi", model: "pro", role: role ?? AVAILABLE_ROLES[0].id }
 }
 
+/** Compose the chat message for single-expert consultation. It explicitly names
+ *  the subagent the main agent must invoke (the server registers it for this
+ *  turn via the SDK `agents` option) and asks for the answer verbatim. */
+function buildSingleConsultPrompt(role: { id: string; label: string }, prompt: string): string {
+  const q = prompt.trim()
+  return [
+    `🔍 专家咨询 · ${role.label}（${role.id}）`,
+    "",
+    `请调用子代理「${role.id}」（${role.label}）来回答下面的问题，并把它的回答原样反馈给我，不要自己代替它回答：`,
+    "",
+    q,
+  ].join("\n")
+}
+
 // ── Component ──────────────────────────────────────────────────────
 
 export function MoATriggerDialog({
-  task, open, onOpenChange, onTrigger, running = false,
+  task, open, onOpenChange, onTrigger, onConsultSingle, running = false,
 }: MoATriggerDialogProps) {
   const spec = task.task_spec
   const goal = spec.goal ?? ""
@@ -101,14 +131,20 @@ export function MoATriggerDialog({
   const [aggModel, setAggModel] = useState("pro-max")
   const [rounds, setRounds] = useState(3)
   const [userInput, setUserInput] = useState("")
+  // Single-expert mode state
+  const [singleRole, setSingleRole] = useState<string>(AVAILABLE_ROLES[0].id)
+  const [singlePrompt, setSinglePrompt] = useState("")
 
   // Reset on dialog close
   useEffect(() => {
     if (!open) {
       setMode("moa")
       setUserInput("")
+      setSinglePrompt("")
     }
   }, [open])
+
+  const singleRoleDef = AVAILABLE_ROLES.find((r) => r.id === singleRole) ?? AVAILABLE_ROLES[0]
 
   // Roles already selected (for debate uniqueness constraint)
   const usedRoles = useMemo(() => new Set(rows.map((r) => r.role)), [rows])
@@ -129,6 +165,13 @@ export function MoATriggerDialog({
   }
 
   const handleSubmit = () => {
+    if (mode === "single") {
+      onConsultSingle?.({
+        role: { id: singleRoleDef.id, label: singleRoleDef.label },
+        composedPrompt: buildSingleConsultPrompt(singleRoleDef, singlePrompt),
+      })
+      return
+    }
     onTrigger({
       goal,
       ac,
@@ -141,7 +184,9 @@ export function MoATriggerDialog({
     })
   }
 
-  const canSubmit = rows.length >= 2
+  const canSubmit = mode === "single"
+    ? singlePrompt.trim().length > 0
+    : rows.length >= 2
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -169,6 +214,10 @@ export function MoATriggerDialog({
               <input type="radio" name="moa-mode" checked={mode === "debate"} onChange={() => setMode("debate")} className="accent-purple-600" />
               Debate 多轮辩论
             </label>
+            <label className="flex items-center gap-1.5 text-[11px] cursor-pointer">
+              <input type="radio" name="moa-mode" checked={mode === "single"} onChange={() => setMode("single")} className="accent-purple-600" />
+              💬 单专家咨询
+            </label>
           </div>
 
           {/* ── Pre-filled context ── */}
@@ -195,6 +244,7 @@ export function MoATriggerDialog({
           </div>
 
           {/* ── Expert rows ── */}
+          {mode !== "single" && (
           <div className="space-y-2">
             <div className="text-[11px] font-medium text-muted-foreground">
               参辩角色（至少 2 个）
@@ -271,6 +321,50 @@ export function MoATriggerDialog({
               </Button>
             </div>
           </div>
+          )}
+
+          {/* ── Single-expert consultation ── */}
+          {mode === "single" && (
+            <div className="space-y-3">
+              <div className="space-y-1.5">
+                <div className="text-[11px] font-medium text-muted-foreground">咨询专家</div>
+                <select
+                  className="h-7 w-full rounded-md border border-border bg-background px-1.5 text-[11px]"
+                  value={singleRole}
+                  onChange={(e) => setSingleRole(e.target.value)}
+                  disabled={running}
+                >
+                  {AVAILABLE_ROLES.map((r) => (
+                    <option key={r.id} value={r.id}>{r.label} — {r.desc}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-[11px] font-medium text-muted-foreground" htmlFor="single-consult-question">
+                  咨询问题
+                </label>
+                <Textarea
+                  id="single-consult-question"
+                  placeholder="例如：针对这份草稿，请评估验收标准是否完备，并给出补充建议..."
+                  value={singlePrompt}
+                  onChange={(e) => setSinglePrompt(e.target.value)}
+                  className="min-h-[90px] text-[12px] resize-none"
+                  disabled={running}
+                />
+              </div>
+
+              <div className="space-y-1">
+                <div className="text-[11px] font-medium text-muted-foreground">将发送到会话（请确认）</div>
+                <div className="rounded-md border bg-muted/30 p-2.5 text-[10px] leading-relaxed whitespace-pre-wrap text-muted-foreground">
+                  {buildSingleConsultPrompt(singleRoleDef, singlePrompt) || "请输入咨询问题"}
+                </div>
+                <p className="text-[10px] text-muted-foreground">
+                  提交后由主 agent 调用该专家子代理并反馈回答，不走工作流引擎。
+                </p>
+              </div>
+            </div>
+          )}
 
           {/* ── Mode-specific config ── */}
           {mode === "moa" && (
@@ -336,7 +430,9 @@ export function MoATriggerDialog({
 
         <div className="px-5 py-3 border-t flex items-center justify-between shrink-0">
           <span className="text-[10px] text-muted-foreground">
-            分析结果将保存为产物文件，可在聊天中让 agent 读取
+            {mode === "single"
+              ? "提交后将发送到会话，由主 agent 调用专家子代理回复"
+              : "分析结果将保存为产物文件，可在聊天中让 agent 读取"}
           </span>
           <Button
             size="sm"
@@ -345,7 +441,9 @@ export function MoATriggerDialog({
             className="bg-purple-600 hover:bg-purple-700 text-white"
           >
             {running ? (
-              <><Loader2 className="size-3.5 mr-1.5 animate-spin" />分析中…</>
+              <><Loader2 className="size-3.5 mr-1.5 animate-spin" />处理中…</>
+            ) : mode === "single" ? (
+              <><Brain className="size-3.5 mr-1.5" />开始咨询</>
             ) : mode === "moa" ? (
               <><Brain className="size-3.5 mr-1.5" />开始分析</>
             ) : (
