@@ -74,6 +74,9 @@ export interface AgentMessage {
   is_summary: boolean
   is_compressed: boolean
   is_edited: boolean
+  /** True when the user interrupted (stopped) this response mid-stream.
+   *  The message contains whatever the agent produced before the abort. */
+  interrupted?: boolean
 }
 
 // ===== Memory =====

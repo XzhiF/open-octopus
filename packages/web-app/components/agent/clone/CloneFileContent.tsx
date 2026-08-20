@@ -84,7 +84,7 @@ export function CloneFileContent({ cloneName, file, onSaved }: CloneFileContentP
         <div className="flex items-center gap-2">
           <span className="text-sm font-medium">{file.path}</span>
           {file.readonly && (
-            <span className="flex items-center gap-1 px-2 py-0.5 text-xs bg-agent-warning-light text-agent-warning rounded">
+            <span className="flex items-center gap-1 px-2 py-0.5 text-xs bg-agent-warn-light text-agent-warn rounded">
               <Lock className="h-3 w-3" />
               只读
             </span>

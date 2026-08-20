@@ -552,14 +552,28 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
         }
 
         // Store assistant message + update provider session
-        if (fullContent) {
+        // Persist if there's ANY content — text, tool calls, or thinking.
+        // Previously only text-gated (`if (fullContent)`), so messages with
+        // only tool calls / thinking (e.g. user aborts before first text
+        // delta) were silently lost on restart.
+        const hasAnyContent = fullContent || toolCalls.length > 0 || fullThinking
+        if (hasAnyContent) {
           const assistantMsgId = crypto.randomUUID()
           const assistantNow = new Date().toISOString()
 
           const metadata = JSON.stringify({
             thinking: fullThinking || undefined,
-            tool_calls: toolCalls.length > 0 ? toolCalls : undefined,
+            tool_calls: toolCalls.length > 0
+              // Mark non-terminal tool calls as 'fail' so they don't keep
+              // spinning when loaded from DB after restart. Also set ended_at
+              // so the elapsed timer stops counting.
+              ? toolCalls.map((tc) => {
+                  const terminal = tc.status === 'success' || tc.status === 'result' || tc.status === 'fail'
+                  return terminal ? tc : { ...tc, status: 'fail', ended_at: Date.now() }
+                })
+              : undefined,
             timeline: timeline.length > 0 ? timeline : undefined,
+            interrupted: aborted || undefined,
           })
 
           sessionDAO.insertCloneMessage({

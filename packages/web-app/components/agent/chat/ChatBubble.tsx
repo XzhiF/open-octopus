@@ -3,7 +3,7 @@
 import { useState, useMemo } from 'react'
 import type { AgentMessage, MessageTimelineEntry, ToolCallRecord } from '@/lib/agent/types'
 import { cn } from '@/lib/utils'
-import { Bot, User, Brain, Wrench, ChevronRight } from 'lucide-react'
+import { Bot, User, Brain, Wrench, ChevronRight, Square } from 'lucide-react'
 import { ToolCallCard } from './ToolCallCard'
 
 interface ChatBubbleProps {
@@ -58,8 +58,22 @@ export function ChatBubble({ message }: ChatBubbleProps) {
           <div className="whitespace-pre-wrap break-words">{displayContent}</div>
         )}
 
+        {/* No text content but has tool calls / thinking — show a placeholder
+            so the bubble isn't completely empty */}
+        {!displayContent && hasMeta && (
+          <div className="text-muted-foreground italic text-xs">（未生成文本回复）</div>
+        )}
+
         {message.is_edited && (
           <span className="text-xs opacity-50 mt-1 block">(已编辑)</span>
+        )}
+
+        {/* Interrupted indicator — user stopped the response mid-stream */}
+        {message.interrupted && (
+          <div className="flex items-center gap-1.5 mt-2 pt-2 border-t border-dashed border-agent-warn/40">
+            <Square className="h-3 w-3 text-agent-warn" />
+            <span className="text-xs text-agent-warn">回复已被用户中断</span>
+          </div>
         )}
       </div>
     </div>

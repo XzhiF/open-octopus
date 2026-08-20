@@ -293,32 +293,75 @@ export function useAgentChat(sessionId: string | null, options?: { onTitleUpdate
 
   const stopGenerate = useCallback(async () => {
     if (!sessionId) return
+
+    // Wrap in try/finally so partial content is ALWAYS preserved — even if
+    // the stop API call fails, the user sees what the agent produced so far.
     try {
       const stopChatFn = apiOverrideRef.current?.stopChat ?? api.stopChat
       await stopChatFn(sessionId)
-      disconnect()
-      setStreaming(false)
-      streamingRef.current = false
-      streamingSessionRef.current = null
-      if (streamContentRef.current) {
-        const partialMsg: AgentMessage = {
-          id: `partial-${Date.now()}`,
-          session_id: sessionId,
-          role: 'assistant',
-          content: streamContentRef.current + '\n\n*[已停止生成]*',
-          created_at: new Date().toISOString(),
-          is_summary: false,
-          is_compressed: false,
-          is_edited: false,
-        }
-        setMessages(prev => [...prev, partialMsg])
-      }
-      setStreamContent('')
-      setStreamTimeline([])
-      timelineRef.current = []
     } catch {
-      setError('Failed to stop generation')
+      // Server-side abort failed (network error, 500, etc.) — that's OK,
+      // we still disconnect locally and save the partial message.
     }
+
+    disconnect()
+    setStreaming(false)
+    streamingRef.current = false
+    streamingSessionRef.current = null
+
+    // Preserve ANY content the agent produced before the abort — text,
+    // tool calls, or thinking. Previously only text was saved; tool calls
+    // and thinking silently vanished.
+    const partialText = streamContentRef.current
+    // Mark non-terminal tool calls as 'fail' — otherwise they keep spinning
+    // (Loader2 icon) indefinitely because no result event will arrive.
+    // Also set `ended_at` so the elapsed timer stops counting.
+    const stopNow = Date.now()
+    const partialTools = toolCallsRef.current.length > 0
+      ? toolCallsRef.current.map((tc) => {
+          const terminal = tc.status === 'success' || tc.status === 'result' || tc.status === 'fail'
+          return terminal ? tc : { ...tc, status: 'fail' as const, ended_at: stopNow }
+        })
+      : undefined
+    const partialThinking = streamThinkingRef.current || undefined
+    const partialTimeline = timelineRef.current.length > 0
+      ? timelineRef.current.map((it) =>
+          it.kind === 'tool'
+            ? { kind: 'tool' as const, id: it.id }
+            : { kind: it.kind, text: it.text })
+      : undefined
+
+    const hasAnyContent = partialText || partialTools || partialThinking
+
+    if (hasAnyContent) {
+      const partialMsg: AgentMessage = {
+        id: `partial-${Date.now()}`,
+        session_id: sessionId,
+        role: 'assistant',
+        content: partialText,
+        tool_calls: partialTools,
+        thinking: partialThinking,
+        timeline: partialTimeline,
+        created_at: new Date().toISOString(),
+        is_summary: false,
+        is_compressed: false,
+        is_edited: false,
+        interrupted: true,
+      }
+      setMessages(prev => [...prev, partialMsg])
+    }
+
+    // Clear streaming state
+    setStreamContent('')
+    setStreamThinking('')
+    setIsThinking(false)
+    setToolCalls([])
+    setStreamTimeline([])
+    timelineRef.current = []
+    streamContentRef.current = ''
+    streamThinkingRef.current = ''
+    toolCallsRef.current = []
+    setStatusMessage('')
   }, [sessionId, disconnect])
 
   const handleConfirm = useCallback(async (eventId: string, decision: 'accept' | 'reject') => {
