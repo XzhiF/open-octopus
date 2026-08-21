@@ -7,7 +7,7 @@ import type { KnowledgeService } from "../knowledge"
 import type { EngineCallbacks } from "@octopus/engine"
 import { WorkflowEngine, PromptInjector } from "@octopus/engine"
 import { CrossExecResolver, collectNodeEngines, parseWorkflow, WorkflowRef, VersionResolver } from "@octopus/shared"
-import type { WorkflowDef, AgentVersionInfo } from "@octopus/shared"
+import type { WorkflowDef, AgentVersionInfo, TaskDispatchPort } from "@octopus/shared"
 import { PipelineConfigLoader } from "../pipeline-config"
 import { getProvider } from "@octopus/providers"
 import { selectAndInstallAgents } from "../resource-agent-service"
@@ -16,6 +16,10 @@ import { join } from "path"
 
 export class EngineFactory implements IEngineFactory {
   private knowledgeService?: KnowledgeService
+  // G1: server-provided TaskDispatchPort, injected into every engine via
+  // engine.setTaskDispatchPort (createSessionFn precedent). Optional — a missing
+  // injection surfaces as a deterministic task_dispatch node failure, not a crash.
+  private taskDispatchPort?: TaskDispatchPort
 
   constructor(
     private ctx: ServiceContext,
@@ -29,6 +33,15 @@ export class EngineFactory implements IEngineFactory {
    */
   setKnowledgeService(service: KnowledgeService): void {
     this.knowledgeService = service
+  }
+
+  /**
+   * Set the TaskDispatchPort (G1) — wired by ExecutionLifecycle once it has
+   * constructed the TaskDispatchService for this workspace. Every engine built
+   * afterwards (createEngine/reconstructEngine) gets the port via setTaskDispatchPort.
+   */
+  setTaskDispatchPort(port: TaskDispatchPort): void {
+    this.taskDispatchPort = port
   }
 
   /**
@@ -151,6 +164,12 @@ export class EngineFactory implements IEngineFactory {
       // agent_versions table may not exist yet (pre-migration) — create empty resolver as fallback
       console.warn(`[EngineFactory] VersionResolver fallback (empty): ${err instanceof Error ? err.message : err}`)
       engine.setVersionResolver(new VersionResolver([]))
+    }
+
+    // G1: inject the TaskDispatchPort so task_dispatch nodes can fan out child
+    // schedules. No-op if unset (engine handles undefined port as a node failure).
+    if (this.taskDispatchPort) {
+      engine.setTaskDispatchPort(this.taskDispatchPort)
     }
 
     return engine

@@ -266,6 +266,82 @@ describe("EngineInitPhase", () => {
         )
       })
     })
+
+    // 07 (SG7): configRequires (from the schedule's WorkflowConfig.requires,
+    // propagated by materializeTaskSpecToConfig) UNION-merges with
+    // workflow.requires for provisioning. Does NOT override workflow-defined
+    // requires; duplicates are deduped. The merged set is what the provisioner
+    // sees via resourcePreflight.check.
+    describe("configRequires UNION merge (07 SG7)", () => {
+      it("UNION-merges configRequires with workflow.requires (deduped, no override)", async () => {
+        workflow = {
+          ...workflow,
+          requires: { skills: ["wf-skill"] },
+        } as WorkflowDef
+
+        // analyze returns empty (no scan resources) so check is only called
+        // once — for the merged requires manifest in Step 1.
+        vi.mocked(resourcePreflight.analyze).mockReturnValue({ agents: [], skills: [], commands: [], rules: [] })
+        vi.mocked(resourcePreflight.check).mockReturnValue({ missing: [], available: [] })
+
+        await phase.run(createOptions({
+          workflow,
+          configRequires: { skills: ["cfg-skill", "wf-skill"] }, // "wf-skill" is a dupe
+        } as any))
+
+        // Step 1 manifest passed to preflight.check = UNION(wf.requires, configRequires), deduped
+        const manifest = vi.mocked(resourcePreflight.check).mock.calls[0][0]
+        expect(manifest.skills).toEqual(expect.arrayContaining(["wf-skill", "cfg-skill"]))
+        expect(manifest.skills).toHaveLength(2)
+      })
+
+      it("configRequires alone (no workflow.requires) is provisioned", async () => {
+        // workflow has no requires field
+        vi.mocked(resourcePreflight.analyze).mockReturnValue({ agents: [], skills: [], commands: [], rules: [] })
+        vi.mocked(resourcePreflight.check).mockReturnValue({ missing: [], available: [] })
+
+        await phase.run(createOptions({
+          configRequires: { commands: ["ship-cmd"], rules: ["coding-style"] },
+        } as any))
+
+        const manifest = vi.mocked(resourcePreflight.check).mock.calls[0][0]
+        expect(manifest.commands).toEqual(["ship-cmd"])
+        expect(manifest.rules).toEqual(["coding-style"])
+      })
+
+      it("agent_files from configRequires UNION with workflow agent_files", async () => {
+        workflow = {
+          ...workflow,
+          requires: { agent_files: ["wf-agent.md"] },
+        } as WorkflowDef
+        vi.mocked(resourcePreflight.analyze).mockReturnValue({ agents: [], skills: [], commands: [], rules: [] })
+        vi.mocked(resourcePreflight.check).mockReturnValue({ missing: [], available: [] })
+
+        await phase.run(createOptions({
+          workflow,
+          configRequires: { agent_files: ["cfg-agent"] },
+        } as any))
+
+        const manifest = vi.mocked(resourcePreflight.check).mock.calls[0][0]
+        // agentFileToName strips .md → both resolve to bare names, deduped
+        expect(manifest.agents).toEqual(expect.arrayContaining(["wf-agent", "cfg-agent"]))
+        expect(manifest.agents).toHaveLength(2)
+      })
+
+      it("no configRequires → unchanged behavior (backward compat)", async () => {
+        workflow = {
+          ...workflow,
+          requires: { skills: ["wf-skill"] },
+        } as WorkflowDef
+        vi.mocked(resourcePreflight.analyze).mockReturnValue({ agents: [], skills: [], commands: [], rules: [] })
+        vi.mocked(resourcePreflight.check).mockReturnValue({ missing: [], available: [] })
+
+        await phase.run(createOptions({ workflow }))
+
+        const manifest = vi.mocked(resourcePreflight.check).mock.calls[0][0]
+        expect(manifest.skills).toEqual(["wf-skill"])
+      })
+    })
   })
 
   describe("git sync", () => {

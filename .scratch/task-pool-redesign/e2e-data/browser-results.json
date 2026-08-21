@@ -1,0 +1,134 @@
+{
+  "generatedAt": "2026-08-17T04:34:32.450Z",
+  "total": 21,
+  "passed": 21,
+  "failed": 0,
+  "results": [
+    {
+      "step": "kanban renders 7 columns",
+      "pass": true,
+      "detail": "count=7",
+      "timestamp": "2026-08-17T04:34:17.539Z"
+    },
+    {
+      "step": "columns are draft/queued/claimed/running/done/failed/aborted",
+      "pass": true,
+      "detail": "[\"draft\",\"queued\",\"claimed\",\"running\",\"done\",\"failed\",\"aborted\"]",
+      "timestamp": "2026-08-17T04:34:17.550Z"
+    },
+    {
+      "step": "screenshot kanban-1440",
+      "pass": true,
+      "detail": "/Users/xzf/Projects/ai/XzhiF/open-octopus/.scratch/task-pool-redesign/e2e-screenshots/kanban-1440.png",
+      "timestamp": "2026-08-17T04:34:18.081Z"
+    },
+    {
+      "step": "screenshot kanban-320",
+      "pass": true,
+      "detail": "/Users/xzf/Projects/ai/XzhiF/open-octopus/.scratch/task-pool-redesign/e2e-screenshots/kanban-320.png",
+      "timestamp": "2026-08-17T04:34:18.607Z"
+    },
+    {
+      "step": "screenshot kanban-768",
+      "pass": true,
+      "detail": "/Users/xzf/Projects/ai/XzhiF/open-octopus/.scratch/task-pool-redesign/e2e-screenshots/kanban-768.png",
+      "timestamp": "2026-08-17T04:34:19.131Z"
+    },
+    {
+      "step": "screenshot kanban-1024",
+      "pass": true,
+      "detail": "/Users/xzf/Projects/ai/XzhiF/open-octopus/.scratch/task-pool-redesign/e2e-screenshots/kanban-1024.png",
+      "timestamp": "2026-08-17T04:34:19.655Z"
+    },
+    {
+      "step": "failed job appears in failed column",
+      "pass": true,
+      "detail": "count=1",
+      "timestamp": "2026-08-17T04:34:20.164Z"
+    },
+    {
+      "step": "failed card status text=failed",
+      "pass": true,
+      "detail": "status=\"failed\"",
+      "timestamp": "2026-08-17T04:34:20.167Z"
+    },
+    {
+      "step": "done modal opens on card click",
+      "pass": true,
+      "detail": "modal_elements=1",
+      "timestamp": "2026-08-17T04:34:21.774Z"
+    },
+    {
+      "step": "done modal status=done",
+      "pass": true,
+      "detail": "status=\"done\"",
+      "timestamp": "2026-08-17T04:34:21.775Z"
+    },
+    {
+      "step": "composite card has [复合] badge",
+      "pass": true,
+      "detail": "count=1",
+      "timestamp": "2026-08-17T04:34:22.309Z"
+    },
+    {
+      "step": "composite modal opens on card click",
+      "pass": true,
+      "detail": "modal_elements=1",
+      "timestamp": "2026-08-17T04:34:24.421Z"
+    },
+    {
+      "step": "composite modal has DAG nodes",
+      "pass": true,
+      "detail": "nodes=4",
+      "timestamp": "2026-08-17T04:34:24.423Z"
+    },
+    {
+      "step": "simple-execution panel visible",
+      "pass": true,
+      "detail": "panel=1",
+      "timestamp": "2026-08-17T04:34:26.512Z"
+    },
+    {
+      "step": "abort button visible in simple-execution",
+      "pass": true,
+      "detail": "btn=1",
+      "timestamp": "2026-08-17T04:34:26.513Z"
+    },
+    {
+      "step": "authoring modal has spec panel (LEFT)",
+      "pass": true,
+      "detail": "panel=1",
+      "timestamp": "2026-08-17T04:34:28.633Z"
+    },
+    {
+      "step": "[入队] button visible in authoring modal",
+      "pass": true,
+      "detail": "btn=1",
+      "timestamp": "2026-08-17T04:34:28.634Z"
+    },
+    {
+      "step": "authoring modal renders (status badge visible)",
+      "pass": true,
+      "detail": "badge=1",
+      "timestamp": "2026-08-17T04:34:28.635Z"
+    },
+    {
+      "step": "SSE refresh: draft→queued card moved",
+      "pass": true,
+      "detail": "draft=0 queued=1",
+      "timestamp": "2026-08-17T04:34:32.244Z"
+    },
+    {
+      "step": "no console errors on /tasks",
+      "pass": true,
+      "detail": "errors=0 ",
+      "timestamp": "2026-08-17T04:34:32.266Z"
+    },
+    {
+      "step": "cleanup: all E2E_TP_ schedules removed",
+      "pass": true,
+      "detail": "{\"cnt\":0}",
+      "timestamp": "2026-08-17T04:34:32.450Z"
+    }
+  ]
+}

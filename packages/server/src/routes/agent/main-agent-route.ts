@@ -318,7 +318,7 @@ export function createMainAgentRoute(deps: MainAgentRouteDeps): Hono {
         const evolutionToolCalls: Array<{ id: string; name: string; input?: Record<string, unknown> }> = []
         const memoryToolCalls: Array<{ id: string; name: string; input?: Record<string, unknown> }> = []
         const toolCalls: Array<{
-          id: string; name: string; input?: unknown; result?: unknown; isError?: boolean
+          id: string; name: string; input?: unknown; result?: unknown; isError?: boolean; status?: string
         }> = []
 
         for await (const chunk of chunks) {
@@ -340,7 +340,7 @@ export function createMainAgentRoute(deps: MainAgentRouteDeps): Hono {
               await stream.writeSSE({ event: 'thinking_done', data: '{}' })
               break
             case 'tool_call_start':
-              toolCalls.push({ id: chunk.toolCallId, name: chunk.toolName })
+              toolCalls.push({ id: chunk.toolCallId, name: chunk.toolName, status: 'start' })
               await stream.writeSSE({ event: 'tool_call', data: JSON.stringify({ type: 'start', tool_call_id: chunk.toolCallId, tool_name: chunk.toolName }) })
 
               // Check for delegation tool calls
@@ -372,7 +372,7 @@ export function createMainAgentRoute(deps: MainAgentRouteDeps): Hono {
             }
             case 'tool_result': {
               const tc = toolCalls.find(t => t.id === chunk.toolCallId)
-              if (tc) { tc.result = chunk.content; tc.isError = chunk.isError }
+              if (tc) { tc.result = chunk.content; tc.isError = chunk.isError; tc.status = chunk.isError ? 'fail' : 'result' }
               await stream.writeSSE({ event: 'tool_call', data: JSON.stringify({ type: 'result', tool_call_id: chunk.toolCallId, content: chunk.content, is_error: chunk.isError }) })
               break
             }

@@ -49,6 +49,19 @@ export interface ToolCallRecord {
   ended_at?: number
 }
 
+/** One entry of a turn's arrival-ordered process timeline (2026-08-19):
+ *  thinking segment / agent text fragment / tool call, interleaved as they
+ *  happened. Persisted by the clone chat route in the message metadata JSON
+ *  (`timeline`) so the completed-message collapsible meta can render
+ *  chronologically instead of grouping "all thinking" + "all tools". */
+export interface MessageTimelineEntry {
+  kind: 'thinking' | 'text' | 'tool'
+  /** thinking / text content */
+  text?: string
+  /** tool call id — resolves against message.tool_calls */
+  id?: string
+}
+
 export interface AgentMessage {
   id: string
   session_id: string
@@ -56,10 +69,14 @@ export interface AgentMessage {
   content: string
   tool_calls?: ToolCallRecord[]
   thinking?: string
+  timeline?: MessageTimelineEntry[]
   created_at: string
   is_summary: boolean
   is_compressed: boolean
   is_edited: boolean
+  /** True when the user interrupted (stopped) this response mid-stream.
+   *  The message contains whatever the agent produced before the abort. */
+  interrupted?: boolean
 }
 
 // ===== Memory =====
@@ -236,13 +253,31 @@ export interface DebugLogEntry {
   decisions: string[]
 }
 
+// ===== Context Usage (from Claude Agent SDK getContextUsage) =====
+/** Context window usage breakdown — mirrored from @octopus/providers ContextUsageData. */
+export interface ContextUsageData {
+  categories: { name: string; tokens: number; color: string; isDeferred?: boolean }[]
+  totalTokens: number
+  maxTokens: number
+  rawMaxTokens: number
+  percentage: number
+  model: string
+  memoryFiles?: { path: string; type: string; tokens: number }[]
+  mcpTools?: { name: string; serverName: string; tokens: number; isLoaded?: boolean }[]
+  systemPromptSections?: { name: string; tokens: number }[]
+  systemTools?: { name: string; tokens: number }[]
+  agents?: { agentType: string; source: string; tokens: number }[]
+  slashCommands?: { totalCommands: number; includedCommands: number; tokens: number }
+}
+
 // ===== SSE Events =====
 export type AgentSSEEvent =
   | { event: 'text_delta'; data: { content: string } }
   | { event: 'tool_call'; data: { id: string; name: string; input: unknown; status: 'pending' | 'success' | 'fail'; result?: unknown } }
   | { event: 'status'; data: { phase: string; message: string } }
   | { event: 'confirm'; data: { event_id: string; type: 'dangerous_command' | 'evolution_major'; operation: string; detail: string } }
-  | { event: 'done'; data: { session_id: string; message_id: string; session_title?: string; token_usage?: { input: number; output: number } } }
+  | { event: 'context_usage'; data: ContextUsageData }
+  | { event: 'done'; data: { session_id: string; message_id: string; session_title?: string; token_usage?: { input: number; output: number }; model?: string } }
   | { event: 'error'; data: { code: string; message: string } }
 
 // ===== Agent Versions =====

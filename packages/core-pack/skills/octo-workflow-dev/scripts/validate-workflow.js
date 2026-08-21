@@ -193,6 +193,16 @@ function validateL1(yaml, result) {
           result.addError('L1', `type=dynamic_sub_workflow requires prompt field`, node.id)
         }
         break
+      case 'task_dispatch':
+        // subunit is a string reference (e.g. "$iteration.subunit") resolved by
+        // the TaskDispatchExecutor at runtime from the composition loop context.
+        // await: true triggers G1 pause-resume (child schedule completion resumes
+        // the parent composition-wf node). input_mapping/output_mapping reused
+        // from sub_workflow. Used inside a composition workflow's subunit loop.
+        if (!node.subunit) {
+          result.addError('L1', `type=task_dispatch requires subunit field (string reference, e.g. "$iteration.subunit")`, node.id)
+        }
+        break
       default:
         if (node.type) {
           result.addError('L1', `Unknown node type: "${node.type}"`, node.id)

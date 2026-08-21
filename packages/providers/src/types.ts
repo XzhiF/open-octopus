@@ -104,8 +104,27 @@ export type MessageChunk =
   | { type: 'complete_interaction'; toolCallId: string; summary: string; vars_update?: Record<string, any> }
   | { type: 'local_command_output'; content: string }
   | { type: 'status'; status: 'compacting' | 'requesting' | null; varsUpdate?: Record<string, unknown> }
+  | { type: 'context_usage'; data: ContextUsageData }
   | { type: 'result'; content?: string; sessionId?: string; tokens?: TokenUsage; costUsd?: number; modelUsages?: ModelUsageEntry[] }
   | { type: 'error'; code: string; message: string }
+
+/** Context window usage breakdown — sourced from Claude Agent SDK's
+ *  `Query.getContextUsage()`. Mirrors `SDKControlGetContextUsageResponse`.
+ *  Emitted as a `context_usage` MessageChunk after `message_start`. */
+export interface ContextUsageData {
+  categories: { name: string; tokens: number; color: string; isDeferred?: boolean }[]
+  totalTokens: number
+  maxTokens: number
+  rawMaxTokens: number
+  percentage: number
+  model: string
+  memoryFiles?: { path: string; type: string; tokens: number }[]
+  mcpTools?: { name: string; serverName: string; tokens: number; isLoaded?: boolean }[]
+  systemPromptSections?: { name: string; tokens: number }[]
+  systemTools?: { name: string; tokens: number }[]
+  agents?: { agentType: string; source: string; tokens: number }[]
+  slashCommands?: { totalCommands: number; includedCommands: number; tokens: number }
+}
 
 export interface IAgentProvider {
   sendQuery(

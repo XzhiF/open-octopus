@@ -1,0 +1,22 @@
+{
+  "root_feature": "task-pool-redesign",
+  "branch": "test-task-board",
+  "iterations": [
+    {
+      "round": 1,
+      "score": 88,
+      "adjusted_score": 87,
+      "decision": "GO",
+      "carryover_in": [],
+      "carryover_out": [],
+      "pipeline_complete": true,
+      "e2e_executed": true,
+      "phases": "Phase1 build(8 stages) + Phase2 review(2 must-fix fixed) + Phase4 E2E(50/50) + Phase5 ship(PR#50)",
+      "blocked": ["US3 (LLM chatbot — no API keys, environmental)"]
+    }
+  ],
+  "max_iterations": 5,
+  "convergence_threshold": 85,
+  "status": "converged",
+  "final_verdict": "GO — score 88/87 (>=85), converged round 1. PR #50 ready to merge. US3 = environmental BLOCKED (needs API keys), not an iteration target."
+}

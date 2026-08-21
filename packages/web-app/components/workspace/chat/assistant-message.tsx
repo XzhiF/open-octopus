@@ -1,13 +1,15 @@
 "use client"
 
 import type { ChatMessage } from "@/lib/types"
+import { WorkflowConfigPreview } from "./workflow-config-preview"
 
 interface AssistantMessageProps {
   message: ChatMessage
   isStreaming?: boolean
+  onRetry?: () => void
 }
 
-export function AssistantMessage({ message, isStreaming }: AssistantMessageProps) {
+export function AssistantMessage({ message, isStreaming, onRetry }: AssistantMessageProps) {
   return (
     <div className="mb-4">
       <div className="bg-secondary rounded-xl px-4 py-3 text-sm leading-relaxed break-words overflow-wrap-anywhere max-w-[90%]">
@@ -21,6 +23,7 @@ export function AssistantMessage({ message, isStreaming }: AssistantMessageProps
           <span className="inline-block w-2 h-4 bg-foreground/60 ml-0.5 animate-pulse align-text-bottom" />
         )}
       </div>
+      <WorkflowConfigPreview content={message.content} onRetry={onRetry} />
     </div>
   )
 }

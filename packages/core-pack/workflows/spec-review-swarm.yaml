@@ -1,0 +1,42 @@
+# spec-review-swarm.yaml — 编写期辅助工作流：Spec 评审 (swarm review mode, D9)
+#
+# 3 个内置辅助工作流之一。与 moa-requirements-review 的差异：使用 review 模式
+# （DiscussionStrategy：单轮多专家 + host 综合），更轻量、更快收敛，适合
+# 已有初稿 spec 时的快速过审。
+#
+# Flow:
+#   1. panel (swarm, mode=review) — N 个专家就 goal/ac/projects 给意见；
+#      host 综合为 JSON {ac_candidates[], suggestions[], risks[]}。
+#
+# Output contract: 同 moa-requirements-review（aggregator prompt 即 host prompt，
+# 要求严格 JSON 三段式）。AssistWorkflowService 解析同一 synthesis 字段。
+
+apiVersion: octopus/v1
+kind: Workflow
+name: spec-review-swarm
+description: "Spec 评审（review 模式）：多专家就现有 goal/ac 给意见，host 汇总为三段式 JSON"
+
+variables:
+  goal: ""
+  ac: ""
+  projects: ""
+
+nodes:
+  - id: panel
+    type: swarm
+    mode: review
+    topic: "评审现有 spec：goal=$vars.goal；ac=$vars.ac；projects=$vars.projects"
+    rounds: 1
+    experts:
+      - role: 完整性评审
+        prompt: "逐条核对 ac 是否覆盖 goal；指出遗漏场景与边界条件。"
+      - role: 可验证性评审
+        prompt: "逐条核对 ac 是否可客观验证；指出模糊措辞与不可测断言。"
+      - role: 风险评审
+        prompt: "识别集成、性能、安全、运维风险。"
+    host:
+      role: 评审综合者
+      prompt: |
+        汇总各专家意见，**只输出一个 JSON 对象**，不要 markdown 代码块、不要解释文字。结构：
+        {"ac_candidates": ["候选验收标准1", ...], "suggestions": ["方案建议1", ...], "risks": ["风险提示1", ...]}
+        若某类无内容返回空数组。

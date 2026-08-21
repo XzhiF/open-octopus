@@ -85,6 +85,21 @@ export class ScheduleRunDAO extends BaseDAO {
     ).get(scheduleId) as { cnt: number }).cnt
   }
 
+  /**
+   * Mark any still-active (triggered/running) schedule_executions for a schedule
+   * as failed. Used during stale-claimed rollback so the partial unique index
+   * `idx_sched_execs_unique_active (schedule_id) WHERE status IN ('triggered','running')`
+   * releases — otherwise the next dispatch's insertTriggeredExecution collides
+   * with the orphaned row and the task can never be re-dispatched (Issue 3).
+   */
+  markStaleExecutionsFailed(scheduleId: string, reason: string): Database.RunResult {
+    return this.stmt(
+      `UPDATE schedule_executions
+       SET status = 'failed', error_summary = ?, completed_at = datetime('now')
+       WHERE schedule_id = ? AND status IN ('triggered', 'running')`
+    ).run(reason, scheduleId)
+  }
+
   countMissedBySchedule(scheduleId: string): number {
     return (this.stmt(
       "SELECT COUNT(*) as cnt FROM schedule_executions WHERE schedule_id = ? AND status = 'missed'"

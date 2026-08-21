@@ -14,9 +14,10 @@ interface MessageBubbleProps {
   isStreaming?: boolean
   isSessionStreaming?: boolean
   onAnswer?: (content: string) => void
+  onRetry?: () => void
 }
 
-export const MessageBubble = memo(function MessageBubble({ message, isStreaming, isSessionStreaming, onAnswer }: MessageBubbleProps) {
+export const MessageBubble = memo(function MessageBubble({ message, isStreaming, isSessionStreaming, onAnswer, onRetry }: MessageBubbleProps) {
   // AskUserQuestion tool calls use QuestionCard for smooth morphing
   // isSessionStreaming is the raw session streaming state — QuestionCard must stay disabled
   // until the stream fully completes (green "完成" status bar appears)
@@ -34,11 +35,11 @@ export const MessageBubble = memo(function MessageBubble({ message, isStreaming,
     case "ask_user_question":
       return <QuestionCard message={message} onAnswer={onAnswer ?? (() => {})} disabled={isSessionStreaming ?? false} />
     case "text":
-      return <AssistantMessage message={message} isStreaming={isStreaming} />
+      return <AssistantMessage message={message} isStreaming={isStreaming} onRetry={onRetry} />
     case "error":
-      return <AssistantMessage message={message} />
+      return <AssistantMessage message={message} onRetry={onRetry} />
     case "file":
-      return <AssistantMessage message={message} />
+      return <AssistantMessage message={message} onRetry={onRetry} />
     default:
       return null
   }

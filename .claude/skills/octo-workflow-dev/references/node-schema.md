@@ -1,6 +1,6 @@
 # Node Schema Reference
 
-Field definitions for all 10 Octopus workflow node types. Source of truth: `packages/shared/src/types/workflow.ts`.
+Field definitions for all 11 Octopus workflow node types. Source of truth: `packages/shared/src/types/workflow.ts`.
 
 ---
 
@@ -9,7 +9,7 @@ Field definitions for all 10 Octopus workflow node types. Source of truth: `pack
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `id` | string | ✅ | Unique node identifier within the workflow |
-| `type` | enum | ✅ | One of: `bash`, `python`, `agent`, `condition`, `approval`, `loop`, `swarm`, `interaction`, `sub_workflow`, `dynamic_sub_workflow` |
+| `type` | enum | ✅ | One of: `bash`, `python`, `agent`, `condition`, `approval`, `loop`, `swarm`, `interaction`, `sub_workflow`, `dynamic_sub_workflow`, `task_dispatch` |
 | `depends_on` | string[] | — | IDs of upstream nodes this node depends on |
 | `execute_when` | string | — | Expression; falsy → node is skipped |
 | `outputs` | Record<string, string> | — | Map VarPool keys to expressions |
@@ -379,6 +379,74 @@ When re-executing with the same upstream input, the engine compares the input ha
 - Default: `{parentWorkflow}__{nodeId}.yaml`
 - Custom: `{workflow}.yaml` (when `workflow` field is set)
 - Inside loop: `{name}-iter{N}.yaml`
+
+---
+
+## 11. `task_dispatch` — Composite Task Child-Schedule Fan-out
+
+Fans out one child schedule for a single subunit of a composite task and pauses the parent composition workflow until the child completes (G1 pause-resume bridge). Used **inside a composition workflow's subunit loop** — each loop iteration runs one `task_dispatch` node whose `subunit` reference resolves to the i-th `SubunitSpec` from `task_spec.subunits`.
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `subunit` | string | ✅ | String reference resolved at runtime by the `TaskDispatchExecutor` to a `SubunitSpec`. Supports `$iteration.subunit` (composition loop context), `$vars.xxx`, `$nodeId.output.xxx`, or literal JSON. **Not** an inline object. |
+| `workflow_ref` | string | — | Override the subunit's workflow_ref (defaults to the resolved subunit's `workflow_ref`) |
+| `await` | boolean | — | `true` = pause parent until child schedule completes (G1), child output flows back via `output_mapping`; `false` = fire-and-forget, complete immediately after the child schedule is created |
+| `input_mapping` | Record<string, string> | — | Map parent VarPool vars → child schedule inputs (reused from `sub_workflow`) |
+| `output_mapping` | Record<string, string> | — | `{ parentVar: childKey }` — child output written to `$vars.parentVar` AND `$<nodeId>.output.parentVar` for downstream aggregation |
+| `outputs` | Record<string, string> | — | Standard `outputs` block (`$vars.x = expr`), applied on resume (interaction/approval precedent) |
+
+### How G1 pause-resume works
+
+1. **First call**: `TaskDispatchExecutor.resolveSubunit()` resolves the `subunit` reference → `TaskDispatchPort.dispatchChildSchedule(subunit)` creates a child schedule (own workspace + workflow_ref) → the node returns `pending_task_dispatch` and the engine **pauses** the composition-wf (reuses interaction/approval infra, no in-memory Promise blocking).
+2. **Resume**: the server's child-complete callback re-invokes the engine with the child's output snapshot → a new executor instance applies `output_mapping` → `completed`. Child output is now readable as `$<taskDispatchId>.output.<parentVar>` by downstream nodes (e.g. the moa aggregator).
+
+### Variable resolution (`subunit` reference)
+
+The executor resolves the `subunit` string **without** `substituteVars` (object-preserving, mirroring sub-workflow `resolveMappingValue`):
+
+| Reference | Resolves from |
+|-----------|---------------|
+| `$iteration.subunit` | `config.loopContext.subunit` — the composition loop exposes the current subunit per iteration |
+| `$vars.xxx` | Parent VarPool (object-preserving) |
+| `$nodeId.output.xxx` | A prior node's output value |
+| literal JSON | Parsed as a `SubunitSpec` directly |
+
+> The resolved value must be shaped like a `SubunitSpec` (`name` + `workflow_ref` required) or the node fails deterministically.
+
+### Example (inside a composition workflow)
+
+```yaml
+- id: loop-subunits
+  type: loop
+  max_iterations: 20
+  break_when: '$iteration >= $vars.subunit_count'
+  nodes:
+    - id: dispatch-child
+      type: task_dispatch
+      subunit: "$iteration.subunit"   # → i-th SubunitSpec from task_spec.subunits
+      await: true                      # G1: pause until child schedule completes
+      input_mapping:
+        goal: "$vars.goal"
+      output_mapping:
+        result: "last_output"          # child output → $vars.result + $dispatch-child.output.result
+
+- id: integrate
+  type: swarm
+  depends_on: [loop-subunits]           # moa aggregation reads $dispatch-child.output.result
+  mode: moa
+  topic: "$vars.goal"
+  dynamic: true
+  max_experts: 3
+  aggregator:
+    role: "synthesizer"
+    prompt: "合并各 subunit 产出为统一交付物。"
+```
+
+### Constraints
+
+- `subunit` is a **string reference**, never an inline object (the schema rejects inline-object subunits).
+- A `task_dispatch` node is a leaf — it has no `nodes`/`cases`/inner children.
+- The `TaskDispatchPort` is server-injected; a missing port surfaces as a deterministic node failure (not a crash). In `octopus workflow simulate`, a `task_dispatch` node **auto-passes** (no port is injected) — see `octo-workflow-test`.
 
 ---
 

@@ -1,5 +1,5 @@
 import { VarPool, evaluateExpression, resolveModelAlias } from "@octopus/shared"
-import type { NodeDef } from "@octopus/shared"
+import type { NodeDef, SubunitSpec } from "@octopus/shared"
 import type { NodeExecutor, NodeExecutionResult, InnerNodeOverride } from "./types"
 import type { LoopConfig, ResumeConfig } from "./executor-config"
 import type { AgentEvent } from "./agent-types"
@@ -12,6 +12,7 @@ import { AgentExecutor } from "./agent"
 import { SwarmExecutor } from "./swarm"
 import { SubWorkflowExecutor } from "./sub-workflow"
 import { DynamicSubWorkflowExecutor } from "./dynamic-sub-workflow"
+import { TaskDispatchExecutor } from "./task-dispatch"
 import { extractBreakWhenVars, forceAdvanceLoopVars } from "./loop-fallback"
 import { join } from "path"
 
@@ -313,7 +314,7 @@ export class LoopExecutor implements NodeExecutor {
           }
         }
 
-        if (result.status === "paused" || result.status === "pending_approval") {
+        if (result.status === "paused" || result.status === "pending_approval" || result.status === "pending_task_dispatch") {
           const durationMs = Date.now() - start
           // Build innerNodeResults from completed nodes (for resume)
           const innerNodeResults: Record<string, NodeExecutionResult> = {}
@@ -330,6 +331,9 @@ export class LoopExecutor implements NodeExecutor {
             // but on subsequent loop iterations the loop's onNodeEnd is the
             // only source of the new approval info.
             approvalMetadata: result.approvalMetadata,
+            // G1: propagate task_dispatch pause metadata so the server can correlate
+            // the child schedule completion back to this loop's inner task_dispatch node.
+            taskDispatchMetadata: result.taskDispatchMetadata,
             innerNodeResults,
           }
         }
@@ -471,7 +475,15 @@ export class LoopExecutor implements NodeExecutor {
 
   private createExecutor(node: NodeDef, pool?: VarPool, completedInnerResults?: Map<string, NodeExecutionResult>): NodeExecutor {
     const p = pool ?? this.pool
-    const loopCtx = { iteration: this.iterations }
+    // G10: expose the current subunit to inner nodes via loopContext so a
+    // composition-style Loop (subunit: "$iteration.subunit") resolves to the
+    // i-th SubunitSpec. this.iterations is 1-based (incremented before use at
+    // line 103), so the 0-based array index is iteration - 1.
+    const loopCtx: Record<string, any> = { iteration: this.iterations }
+    const subunits = this.resolveSubunits()
+    if (subunits && this.iterations >= 1 && this.iterations <= subunits.length) {
+      loopCtx.subunit = subunits[this.iterations - 1]
+    }
     switch (node.type) {
       case "swarm":
         return new SwarmExecutor(node, p, {
@@ -623,8 +635,50 @@ export class LoopExecutor implements NodeExecutor {
           precomputeHook: (this.config as any).precomputeHook,
           knowledgeInjectorFactory: (this.config as any).knowledgeInjectorFactory,
         })
+      case "task_dispatch": {
+        // G1 resume inside a loop: the resumed iteration's inner task_dispatch
+        // node gets the childOutput payload (one-shot — approval-override delete
+        // precedent at line ~164) so it applies output_mapping and completes
+        // without re-dispatching. Subsequent iterations dispatch the next
+        // subunit via the port (loopContext.subunit, populated above).
+        let childOutput: Record<string, unknown> | undefined
+        if (this.resume?.resumeFromNodeId === node.id && this.resume?.taskDispatchChildOutput) {
+          childOutput = this.resume.taskDispatchChildOutput
+          // One-shot: clear so the next iteration's createExecutor(dispatch-child)
+          // dispatches instead of re-resuming.
+          this.resume.taskDispatchChildOutput = undefined
+        }
+        return new TaskDispatchExecutor(node, p, {
+          port: this.config.taskDispatchPort,
+          childOutput,
+          signal: this.config.signal,
+          loopContext: loopCtx,
+          executionId: this.config.executionId,
+          nodeOutputs: this.buildInnerNodeOutputs(completedInnerResults),
+          cwd: this.config.cwd,
+        })
+      }
       default:
         throw new Error(`Unknown node type: ${node.type}`)
     }
+  }
+
+  /**
+   * Resolve the subunits array for a composition-style Loop (G10): each
+   * iteration dispatches subunits[iteration-1] as the inner task_dispatch
+   * node's subunit. Reads from the VarPool first ($vars.subunits — where the
+   * server's input_values land via pool.update, and where composition-task.yaml's
+   * sibling $vars.subunit_count / $vars.goal already live), falling back to
+   * LoopConfig.inputs.subunits. Returns undefined when this loop isn't iterating
+   * over subunits; loopContext.subunit stays unset, so a task_dispatch node that
+   * references "$iteration.subunit" fails with a clear coerceSubunit error
+   * (deterministic, not a silent crash) — by design.
+   */
+  private resolveSubunits(): SubunitSpec[] | undefined {
+    const fromPool = this.pool.get("subunits")
+    if (Array.isArray(fromPool)) return fromPool as SubunitSpec[]
+    const fromInputs = this.config.inputs?.subunits
+    if (Array.isArray(fromInputs)) return fromInputs as SubunitSpec[]
+    return undefined
   }
 }

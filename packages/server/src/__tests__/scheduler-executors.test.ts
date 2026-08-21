@@ -153,6 +153,121 @@ describe.skip('WorkflowExecutor', () => {
   })
 })
 
+// ── G2 (ticket 05): handleChainComplete failure path writes schedules.status='failed' ──
+// The done path (workflow-executor.ts:355-364) already writes schedules.status='done'
+// + SSE for requirement-type schedules. The failure path (372-399) historically only
+// marked schedule_executions + schedule_workspaces, leaving schedules.status stuck at
+// 'running' → stale rollback → infinite re-dispatch loop. This block verifies the
+// failed writer mirrors the done writer.
+describe('WorkflowExecutor handleChainComplete (G2 failed writer)', () => {
+  let db: Database.Database
+  let executor: WorkflowExecutor
+  const wsId = 'g2-ws'
+  const schedId = 'g2-sched'
+  const execId = 'g2-exec'        // root execution id (engine-level)
+  const schedExecId = 'g2-se'     // schedule_executions id
+  const mockSSE = { emit: vi.fn() } as any
+  const mockWorkspaceService = { delete: vi.fn() } as any
+
+  function seedSchedule(opts: { isRequirement: boolean; status?: string }) {
+    const status = opts.status ?? 'running'
+    // SG1b (ticket 06): trigger_source DROPPED → origin_type ('task' = v1 'requirement')
+    const originType = opts.isRequirement ? 'task' : 'cron'
+    const claimedAt = opts.isRequirement ? new Date(Date.now() - 5 * 60_000).toISOString() : null
+    db.prepare(`
+      INSERT INTO schedules (
+        id, org, name, cron_expression, timezone,
+        enabled, timeout_seconds, notify_on_failure,
+        created_at, updated_at, job_type, config, parallel_policy, version,
+        consecutive_failures, max_retain, status, origin_type, claimed_at
+      ) VALUES (?, 'test', 'g2-task', NULL, 'UTC',
+        1, 3600, 0, datetime('now'), datetime('now'),
+        'workflow', ?, 'skip', 1, 0, 10, ?, ?, ?)
+    `).run(
+      schedId,
+      JSON.stringify({ schema_version: '2.0', type: 'workflow', workspace_spec: { org: 'test', branch_prefix: 'b', projects: [{ name: 'p', source_path: '', group: '' }] }, workflow_chain: [{ workflow_ref: 'wf', input_values: {} }] }),
+      status, originType, claimedAt,
+    )
+  }
+
+  function seedExecutionRow(status: string) {
+    // Root executions row — findExecutionStatusSimple / findLastChildExecution read this.
+    db.prepare(`
+      INSERT INTO executions (id, workspace_id, parent_id, child_index, workflow_ref, workflow_name,
+        status, triggered_by, org, created_at, updated_at)
+      VALUES (?, ?, '0', 0, 'wf', 'g2-wf', ?, 'scheduler', 'test', datetime('now'), datetime('now'))
+    `).run(execId, wsId, status)
+  }
+
+  function seedSchedExecution(status: string) {
+    db.prepare(`
+      INSERT INTO schedule_executions (id, schedule_id, status, trigger_type, triggered_at,
+        timezone_offset, timezone_iana, created_at, triggered_by)
+      VALUES (?, ?, ?, 'scheduled', datetime('now'), '+00:00', 'UTC', datetime('now'), 'scheduler')
+    `).run(schedExecId, schedId, status)
+  }
+
+  beforeEach(() => {
+    db = new Database(':memory:')
+    applySchema(db)
+    db.pragma('foreign_keys = ON')
+    db.prepare(`INSERT INTO workspaces (id, name, org, path, created_at, updated_at) VALUES (?, 'g2-ws', 'test', '/tmp', datetime('now'), datetime('now'))`).run(wsId)
+    executor = new WorkflowExecutor(mockSSE, new ScheduleConfigDAO(db), new ScheduleRunDAO(db), new ExecutionDAO(db), mockWorkspaceService)
+    mockSSE.emit.mockClear()
+  })
+
+  afterEach(() => { db.close() })
+
+  // Helper: call the private chain-completion handler with a failed root execution.
+  function fireChainComplete(isRequirement: boolean) {
+    const schedule = new ScheduleConfigDAO(db).findById(schedId)! as any
+    ;(executor as any).handleChainComplete({
+      executionId: execId,
+      schedExecId,
+      schedWsId: 'sw-nonexistent',  // findScheduleWorkspaceById → null → cleanup block skipped
+      scheduleId: schedId,
+      triggeredAt: Date.now() - 1000,
+      notifyOnFailure: false,
+      schedule,
+      maxRetain: 10,
+      isRequirement,
+    })
+  }
+
+  it('G2: requirement schedule → schedules.status="failed" + SSE (not stuck in running)', () => {
+    seedSchedule({ isRequirement: true, status: 'running' })
+    seedExecutionRow('failed')      // root execution failed
+    seedSchedExecution('running')   // schedule_execution in flight
+
+    fireChainComplete(true)
+
+    const sched = db.prepare('SELECT status, claimed_at FROM schedules WHERE id = ?').get(schedId) as { status: string; claimed_at: string | null }
+    expect(sched.status).toBe('failed')
+    expect(sched.claimed_at).toBeNull()
+
+    const se = db.prepare('SELECT status FROM schedule_executions WHERE id = ?').get(schedExecId) as { status: string }
+    expect(se.status).toBe('failed')
+
+    expect(mockSSE.emit).toHaveBeenCalledWith('taskpool', {
+      event: 'schedule_status',
+      data: { schedule_id: schedId, status: 'failed' },
+    })
+  })
+
+  it('G2: cron schedule (isRequirement=false) does NOT write schedules.status (cron uses enabled/disabled)', () => {
+    seedSchedule({ isRequirement: false, status: 'queued' })
+    seedExecutionRow('failed')
+    seedSchedExecution('running')
+
+    fireChainComplete(false)
+
+    const sched = db.prepare('SELECT status FROM schedules WHERE id = ?').get(schedId) as { status: string }
+    expect(sched.status).toBe('queued')  // unchanged — cron path keeps status out of the lifecycle
+    const failedEmits = mockSSE.emit.mock.calls.filter((c: any[]) => c[1]?.data?.status === 'failed')
+    expect(failedEmits).toHaveLength(0)
+  })
+})
+
 describe('AgentExecutor', () => {
   let db: Database.Database
   const wsId = 'ws-2'

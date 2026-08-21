@@ -315,7 +315,7 @@ export class WorkspaceService {
   createFromSpec(input: {
     org: string
     name: string
-    projects: Array<{ name: string; source_path: string }>
+    projects: Array<{ name: string; source_path: string; group?: string }>
     branch_prefix: string
     branch_suffix: string
     source: 'scheduler'
@@ -380,8 +380,11 @@ export class WorkspaceService {
       created_at: now, updated_at: now,
     })
 
-    // Initialize worktrees from ProjectSpec (uses source_path directly)
-    this.git.initWorktreesFromSpec(wsDir, input.projects, input.branch_prefix, input.branch_suffix, input.name)
+    // Initialize worktrees from ProjectSpec. Empty source_path is resolved from
+    // repos/index.md via WorkspaceGit.resolveRepoPath; resolution failures throw
+    // and propagate to the workflow-executor catch → schedule_executions.error_summary
+    // (G3 fix: no silent skip).
+    this.git.initWorktreesFromSpec(wsDir, input.projects, input.branch_prefix, input.branch_suffix, input.name, input.org)
 
     return this.getById(id)!
   }

@@ -111,4 +111,48 @@ describe("GitOps", () => {
 
     rmSync(workspaceDir, { recursive: true, force: true })
   })
+
+  // ── Regression: task-pool dispatch "0.13s failed" root cause ──────────
+  // A scheduler worktree is checked out to its own branch (e.g. taskpool-<id>),
+  // while the main working tree of the source repo holds `main`. The execution
+  // engine calls switchToExecutionBranch("main") → createOrSwitchBranch("main").
+  // `git checkout main` fails with "already checked out at <main-tree>"; the
+  // old code treated ANY checkout failure as "branch missing" and fell back to
+  // `git checkout -b main` which then fatals with "a branch named 'main' already
+  // exists". Result: echo node reports "Git command failed", execution dies in
+  // ~124ms. Fix: when the branch exists but can't be checked out because another
+  // worktree holds it, keep the current (isolated) branch instead of fataling.
+  it("createOrSwitchBranch keeps current branch when target is held by another worktree (no fatal)", async () => {
+    const repoDir = mkdtempSync(join(tmpdir(), "wt-repo-"))
+    try {
+      execFileSync("git", ["init"], { cwd: repoDir })
+      execFileSync("git", ["config", "user.email", "t@t.com"], { cwd: repoDir })
+      execFileSync("git", ["config", "user.name", "T"], { cwd: repoDir })
+      writeFileSync(join(repoDir, "f.txt"), "1")
+      execFileSync("git", ["add", "-A"], { cwd: repoDir })
+      execFileSync("git", ["commit", "-m", "init"], { cwd: repoDir })
+      // 主工作树当前占用的分支(默认 main 或 master,取决于 git 配置)
+      const heldBranch = execFileSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], {
+        cwd: repoDir, encoding: "utf8",
+      }).trim()
+
+      // 建 worktree 在独立分支 dev,主树仍占 heldBranch
+      const wtDir = mkdtempSync(join(tmpdir(), "wt-tree-")) + "-wt"
+      rmSync(wtDir, { recursive: true, force: true })
+      execFileSync("git", ["worktree", "add", "-b", "dev", wtDir], { cwd: repoDir })
+
+      try {
+        // 在 worktree 里切 heldBranch —— 主树已占,git checkout 必 fatal
+        const result = await gitOps.createOrSwitchBranch(wtDir, heldBranch)
+        expect(result.created).toBe(false)
+        // worktree 仍留在自己的隔离分支 dev,没有崩
+        const branchAfter = await gitOps.getCurrentBranch(wtDir)
+        expect(branchAfter).toBe("dev")
+      } finally {
+        execFileSync("git", ["worktree", "remove", "--force", wtDir], { cwd: repoDir })
+      }
+    } finally {
+      rmSync(repoDir, { recursive: true, force: true })
+    }
+  })
 })

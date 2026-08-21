@@ -1,8 +1,8 @@
 ---
 name: octo-workflow-dev
-description: "When using this skill, AI agents create, edit, and debug Octopus YAML workflows — including 10 node types, sub-agent delegation, skills loading, Notify/Hook configuration, variable system, DAG orchestration, and auto-testing."
+description: "When using this skill, AI agents create, edit, and debug Octopus YAML workflows — including 11 node types, sub-agent delegation, skills loading, Notify/Hook configuration, variable system, DAG orchestration, and auto-testing."
 category: coding-assistant
-tags: [octopus, workflow, YAML, agent, subagent, notify, hooks, swarm, interaction, sub_workflow, testing, simulator]
+tags: [octopus, workflow, YAML, agent, subagent, notify, hooks, swarm, interaction, sub_workflow, task_dispatch, composition, testing, simulator]
 ---
 
 # Octopus Workflow Development Assistant
@@ -47,7 +47,7 @@ d.resources.filter(r=>r.installed&&r.type==='skill')
 | Criteria | Path |
 |----------|------|
 | ≤ 3 nodes, types only `bash`/`python`/`agent` | **Quick Path** → Step 3 (light) → Step 5 → Step 6 |
-| ≥ 4 nodes, OR includes `swarm`/`loop`/`sub_workflow`/`interaction`/`condition`/`approval` | **Full Wizard** → all steps |
+| ≥ 4 nodes, OR includes `swarm`/`loop`/`sub_workflow`/`interaction`/`condition`/`approval`/`task_dispatch` | **Full Wizard** → all steps |
 
 ---
 
@@ -138,7 +138,7 @@ Auto-fix loop: errors → fix → re-validate → 0 errors → address warnings
 ### Reference Documents
 | Document | Content |
 |----------|---------|
-| `references/node-schema.md` | All 10 node types field reference |
+| `references/node-schema.md` | All 11 node types field reference |
 | `references/node-patterns.md` | Usage patterns + YAML examples |
 | `references/requires-and-effort.md` | **`requires` 资源声明 + `effort` 推理深度** |
 | `references/swarm-modes.md` | 5 swarm modes + ExpertDef + Host |

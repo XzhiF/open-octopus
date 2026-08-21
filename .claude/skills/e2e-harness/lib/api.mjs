@@ -158,7 +158,7 @@ export function resolveWebUrl() {
 /**
  * Make a JSON HTTP request to the Octopus API.
  *
- * @param {string} urlOrPath - Full URL or path (e.g. "/api/health"). Paths are prefixed with API base URL.
+ * @param {string} urlOrPath - Full URL or path (e.g. "/api/actuator/health"). Paths are prefixed with API base URL.
  * @param {RequestInit} [options] - fetch options
  * @returns {Promise<{ ok: boolean, status: number, data: any, text: string }>}
  */
@@ -198,10 +198,7 @@ export async function fetchJSON(urlOrPath, options = {}) {
 export async function healthCheck(apiUrl) {
   const base = apiUrl || resolveApiUrl()
   try {
-    // Try actuator health endpoint first (production path), fall back to /api/health
-    let result = await fetchJSON(`${base}/api/actuator/health`)
-    if (result.ok) return true
-    result = await fetchJSON(`${base}/api/health`)
+    const result = await fetchJSON(`${base}/api/actuator/health`)
     return result.ok
   } catch {
     return false

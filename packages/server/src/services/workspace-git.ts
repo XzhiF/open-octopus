@@ -8,44 +8,89 @@ import path from "path"
 import os from "os"
 import { workspaceGuide } from "./workspace-scaffold"
 
+/** Escape a literal string for safe interpolation into a RegExp source. */
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+}
+
 export class WorkspaceGit {
+  /**
+   * Resolve a repo's local filesystem path from `~/.octopus/orgs/{org}/repos/index.md`.
+   * Shared by user-workspace init (`initWorktreesSync`) and scheduler-path init
+   * (`initWorktreesFromSpec`).
+   *
+   * Throws a clear error whenever the repo cannot be resolved — index.md missing,
+   * group/repo not found, or local path unreachable — so the scheduler path fails
+   * loudly instead of silently skipping (G3 fix). The user-workspace path wraps
+   * each call in try/catch to preserve its continue-on-failure contract.
+   */
+  resolveRepoPath(org: string, name: string, group?: string): string {
+    const indexPath = path.join(os.homedir(), ".octopus", "orgs", org, "repos", "index.md")
+    if (!fs.existsSync(indexPath)) {
+      throw new Error(`repos/index.md not found for org '${org}' (looked at ${indexPath})`)
+    }
+    const indexContent = fs.readFileSync(indexPath, "utf-8").replace(/\r\n/g, "\n")
+
+    // Scope to the group section when a group is provided, so ProjectSpec.group is
+    // actually consumed (G8 orphan-field elimination) and resolution is unambiguous.
+    let scope = indexContent
+    if (group && group.trim() !== "") {
+      const sections = indexContent.split(/^## /m)
+      const section = sections.find(sec => {
+        const firstLine = sec.split("\n")[0]
+        return new RegExp(`^${escapeRegex(group)}(\\s|\\(|$)`).test(firstLine)
+      })
+      if (!section) {
+        throw new Error(`group '${group}' not found in index.md for org '${org}'`)
+      }
+      scope = section
+    }
+
+    const localMatch = new RegExp(
+      `### ${escapeRegex(name)}\\n[^#]*?- local: (.+?)(?: ✓| —|$)`, "s",
+    ).exec(scope)
+    if (!localMatch) {
+      throw new Error(
+        `repo '${name}' not found in index.md${group ? ` under group '${group}'` : ""} for org '${org}'`,
+      )
+    }
+
+    let localPath = localMatch[1].trim()
+    if (localPath.startsWith("~")) localPath = localPath.replace(/^~/, os.homedir())
+
+    if (!fs.existsSync(localPath) || !fs.existsSync(path.join(localPath, ".git"))) {
+      throw new Error(`local path for '${name}' unreachable: ${localPath}`)
+    }
+    return localPath
+  }
+
   /**
    * Initialize git worktrees for repos listed in ~/.octopus/orgs/{org}/repos/index.md.
    * Creates detached worktrees in workspace/projects/ and updates config.json + CLAUDE.md.
+   * Per-repo resolution failures are collected into `failed[]` so one missing repo
+   * does not abort the whole user-workspace creation.
    */
   initWorktreesSync(
     workspacePath: string, repoSpecs: string[], org: string, wsName: string, branch?: string,
   ): { created: number; failed: string[] } {
     const failed: string[] = []
-    const indexPath = path.join(os.homedir(), ".octopus", "orgs", org, "repos", "index.md")
-    if (!fs.existsSync(indexPath)) {
-      console.log("[WorkspaceGit] index.md not found, skipping worktree init")
-      return { created: 0, failed: repoSpecs.map(spec => `${spec}: index.md not found`) }
-    }
-
     const { spawnSync } = require("child_process") as typeof import("child_process")
     const projectsDir = path.join(workspacePath, "projects")
     const entries: { name: string; group: string; main_path: string; worktree_path: string }[] = []
-    const indexContent = fs.readFileSync(indexPath, "utf-8").replace(/\r\n/g, "\n")
 
     for (const spec of repoSpecs) {
       const parts = spec.includes("/") ? spec.split("/") : [org, spec]
       const [group, name] = parts
       const wtDir = path.join(projectsDir, name)
 
-      const localMatch = new RegExp(`### ${name}\\n[^#]*?- local: (.+?)(?: ✓| —|$)`, "s").exec(indexContent)
-      if (!localMatch) {
-        const reason = `${spec}: not found in index.md`
-        console.log(`[WorkspaceGit] ${reason}`)
-        failed.push(reason)
-        continue
-      }
-
-      let localPath = localMatch[1].trim()
-      if (localPath.startsWith("~")) localPath = localPath.replace(/^~/, os.homedir())
-
-      if (!fs.existsSync(localPath) || !fs.existsSync(path.join(localPath, ".git"))) {
-        const reason = `${spec}: local path unreachable: ${localPath}`
+      // Resolve local path via the shared helper. User workspaces historically match
+      // by name globally (group derived here is for labeling only), so no group is
+      // passed — preserving the prior global-match behavior.
+      let localPath: string
+      try {
+        localPath = this.resolveRepoPath(org, name)
+      } catch (e: unknown) {
+        const reason = `${spec}: ${e instanceof Error ? e.message : String(e)}`
         console.log(`[WorkspaceGit] ${reason}`)
         failed.push(reason)
         continue
@@ -95,53 +140,58 @@ export class WorkspaceGit {
 
   /**
    * Initialize worktrees from explicit project specs (scheduler path).
+   *
+   * Empty `source_path` is resolved from `~/.octopus/orgs/{org}/repos/index.md` via
+   * the shared `resolveRepoPath` (scoped by `group` when provided). Resolution
+   * failures THROW (propagating to createFromSpec → workflow-executor catch →
+   * schedule_executions.error_summary), so multi-repo dispatch is never silently
+   * broken by an unresolvable project (G3 fix).
    */
   initWorktreesFromSpec(
     workspacePath: string,
-    projects: Array<{ name: string; source_path: string }>,
+    projects: Array<{ name: string; source_path: string; group?: string }>,
     branchPrefix: string,
     branchSuffix: string,
     wsName: string,
+    org: string,
   ): void {
     const { spawnSync } = require("child_process") as typeof import("child_process")
     const projectsDir = path.join(workspacePath, "projects")
     const entries: { name: string; main_path: string; worktree_path: string; branch: string }[] = []
+    const branchName = `${branchPrefix}-${branchSuffix}`
 
     for (const proj of projects) {
-      const sourcePath = proj.source_path.replace(/^~/, os.homedir())
-      const branchName = `${branchPrefix}-${branchSuffix}`
+      // Explicit source_path wins; empty → repos/index.md lookup by name (+group).
+      const rawSource = proj.source_path ?? ""
+      const sourcePath = rawSource.trim() !== ""
+        ? rawSource.replace(/^~/, os.homedir())
+        : this.resolveRepoPath(org, proj.name, proj.group ?? "")
+
       const wtDir = path.join(projectsDir, proj.name)
 
       if (!fs.existsSync(sourcePath) || !fs.existsSync(path.join(sourcePath, ".git"))) {
-        console.log(`[WorkspaceGit] source path unreachable: ${sourcePath}`)
-        continue
+        throw new Error(`source path unreachable for '${proj.name}': ${sourcePath}`)
       }
 
-      try {
-        spawnSync("git", ["worktree", "prune"], { cwd: sourcePath, timeout: 10000 })
-        if (fs.existsSync(wtDir)) fs.rmSync(wtDir, { recursive: true, force: true })
+      spawnSync("git", ["worktree", "prune"], { cwd: sourcePath, timeout: 10000 })
+      if (fs.existsSync(wtDir)) fs.rmSync(wtDir, { recursive: true, force: true })
 
-        const result = spawnSync("git", ["worktree", "add", "-f", wtDir, "--detach"], {
-          cwd: sourcePath, timeout: 60000,
-        })
-        if (result.status !== 0) {
-          console.error(`[WorkspaceGit] worktree add failed for ${proj.name}: ${result.stderr.toString().trim()}`)
-          continue
-        }
-
-        const coResult = spawnSync("git", ["checkout", "-b", branchName], { cwd: wtDir, timeout: 30000 })
-        if (coResult.status !== 0) {
-          const switchResult = spawnSync("git", ["checkout", branchName], { cwd: wtDir, timeout: 30000 })
-          if (switchResult.status !== 0) {
-            console.error(`[WorkspaceGit] branch checkout failed for ${proj.name}`)
-            continue
-          }
-        }
-
-        entries.push({ name: proj.name, main_path: sourcePath, worktree_path: wtDir, branch: branchName })
-      } catch (e: any) {
-        console.error(`[WorkspaceGit] worktree failed for ${proj.name}:`, e.message)
+      const result = spawnSync("git", ["worktree", "add", "-f", wtDir, "--detach"], {
+        cwd: sourcePath, timeout: 60000,
+      })
+      if (result.status !== 0) {
+        throw new Error(`worktree add failed for '${proj.name}': ${result.stderr.toString().trim()}`)
       }
+
+      const coResult = spawnSync("git", ["checkout", "-b", branchName], { cwd: wtDir, timeout: 30000 })
+      if (coResult.status !== 0) {
+        const switchResult = spawnSync("git", ["checkout", branchName], { cwd: wtDir, timeout: 30000 })
+        if (switchResult.status !== 0) {
+          throw new Error(`branch checkout failed for '${proj.name}': ${switchResult.stderr.toString().trim()}`)
+        }
+      }
+
+      entries.push({ name: proj.name, main_path: sourcePath, worktree_path: wtDir, branch: branchName })
     }
 
     if (entries.length > 0) {

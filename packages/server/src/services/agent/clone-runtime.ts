@@ -8,7 +8,7 @@
 //
 import fs from 'fs'
 import path from 'path'
-import type { MessageChunk } from '@octopus/providers'
+import type { MessageChunk, OctopusAgentDef } from '@octopus/providers'
 import { getProvider } from '@octopus/providers'
 import type { CloneDef } from '@octopus/shared'
 import {
@@ -17,7 +17,6 @@ import {
   getLongTermMemoryPath,
   getDailyMemoryDir,
   getBuiltInCloneDir,
-  getCloneDir,
   getCloneDir,
   getCloneSkillsDir,
 } from './paths'
@@ -233,16 +232,30 @@ export class CloneRuntime {
    *
    * The SDK scans each plugin's direct skills/ subdirectory (non-recursive)
    * and injects discovered skills into the system prompt automatically.
+   *
+   * 03 (task-authoring-v3, AC5): an optional `taskHomePath` appends a THIRD
+   * plugin directory — the per-task home (`~/.octopus/tasks/{id}/`). The SDK
+   * scans `{taskHomePath}/skills/`, which is where PluginMaterializer linked
+   * the task's selected Skill-group skills (ADR-0010). Only the task-author
+   * send path passes this (AC6 — routes/clone/index.ts); other clones omit it
+   * and get the original 2-plugin behavior. Param is tail-appended so every
+   * existing caller (clone/index.ts, main-agent-route.ts, tests) keeps working
+   * unchanged (SW-BP15). Falsy (`undefined`/`""`) → no third plugin (no cwd
+   * root scan).
    */
-  getPlugins(): Array<{ type: 'local'; path: string }> {
+  getPlugins(taskHomePath?: string): Array<{ type: 'local'; path: string }> {
     const clonePath = this.cloneDef.type === 'built-in'
       ? getBuiltInCloneDir(this.cloneDef.name)
       : getCloneDir(this.cloneDef.name)
 
-    return [
+    const plugins: Array<{ type: 'local'; path: string }> = [
       { type: 'local', path: getAgentDir() },
       { type: 'local', path: clonePath },
     ]
+    if (taskHomePath) {
+      plugins.push({ type: 'local', path: taskHomePath })
+    }
+    return plugins
   }
 
   // ── Provider Call Encapsulation ─────────────────────────────────
@@ -250,13 +263,51 @@ export class CloneRuntime {
   /**
    * Send message via Claude SDK with resume + append.
    * Yields MessageChunk for streaming.
+   *
+   * 05 (SPIKE S1, v2-D7): `specUpdateNotice` is a transient, reverse-direction
+   * notice set by TasksService.updateTask ([保存草稿]) and read by the
+   * task-author clone chat send path. sendWithProvider appends it to the
+   * system-prompt `append` string so the agent sees the user's spec override
+   * on the next turn. assembleContext is fresh per turn (re-built at the top
+   * of this method), so the notice is re-delivered only while the clone
+   * route keeps it pending (it clears the notice after the stream). System-
+   * prompt append (not prepend-to-user-msg) avoids DB + SDK history pollution
+   * and the @@ token being treated as an instruction.
+   *
+   * 07 (SG6, v2-D8/D13): `authoringResourcesContent` is the draft-scope
+   * SKILL.md content resolved from `tasks.authoring_resources[]` by
+   * TaskAuthorSessionAugmenter (route-resolved per turn, since assembleContext
+   * is fresh per turn — Mechanism B, SPIKE S2). sendWithProvider appends it
+   * to the system-prompt `append` string ALONGSIDE specUpdateNotice. Only
+   * skill-type authoring_resources are injected (agents/commands/rules are
+   * workspace-scope → workflow.requires via SG7 materialize, not draft-scope).
+   * For Claude SDK (task-author's provider), resume works natively — no
+   * fresh-session / DB-history-prepend (the rejected Pi-only mechanism).
+   *
+   * Param order: `specUpdateNotice` then `authoringResourcesContent` sit before
+   * `abortSignal` so the primary caller (clone/index.ts send path) reads
+   * cleanly without an `undefined` hole. All existing callers pass ≤4 args,
+   * so the reorder is backwards-compatible (verified: clone/index.ts:306,
+   * main-agent-route.ts:239/763, clone-runtime.test.ts:168).
+   *
+   * 03 (task-authoring-v3, AC5): `taskHomePath` is appended AFTER `abortSignal`
+   * (tail) — NOT before it — so the existing 4-7-arg callers (clone/index.ts
+   * passes 6, main-agent-route passes 4, tests pass ≤6) are unchanged. Only
+   * the task-author send path (routes/clone/index.ts AC6) passes the 8th arg.
+   * sendWithProvider threads it to getPlugins(taskHomePath) which appends a
+   * third plugin directory (the per-task home for materialized skill links).
    */
   async *chat(
     message: string,
     sessionId: string,
     providerSessionId: string | null,
     cwd: string,
+    specUpdateNotice?: string,
+    authoringResourcesContent?: string,
     abortSignal?: AbortSignal,
+    taskHomePath?: string,
+    modelOverride?: string,
+    subagents?: Record<string, OctopusAgentDef>,
   ): AsyncGenerator<MessageChunk> {
     const cloneSystemPrompt = this.assembleContext()
     const effectiveCwd = cwd || this.getDefaultCwd()
@@ -268,7 +319,12 @@ export class CloneRuntime {
         effectiveCwd,
         providerSessionId,
         cloneSystemPrompt,
+        specUpdateNotice,
+        authoringResourcesContent,
         abortSignal,
+        taskHomePath,
+        modelOverride,
+        subagents,
       )
       yield* stream
       return
@@ -283,7 +339,12 @@ export class CloneRuntime {
             effectiveCwd,
             null,
             cloneSystemPrompt,
+            specUpdateNotice,
+            authoringResourcesContent,
             abortSignal,
+            taskHomePath,
+            modelOverride,
+            subagents,
           )
           yield* stream
           return
@@ -305,26 +366,65 @@ export class CloneRuntime {
   // ── Private Helpers ─────────────────────────────────────────────
 
   /**
-   * Send query via provider with clone context and plugin-based skill discovery.
+   * Send query via provider with clone context and plugin-based skill
+   * discovery. 05 (SPIKE S1): `specUpdateNotice` is concatenated onto the
+   * system-prompt `append` string (clone-runtime.ts:310-329) so the
+   * task-author agent receives the user's [保存草稿] override in-context.
+   * 07 (SG6): `authoringResourcesContent` is appended alongside the notice
+   * so the task-author agent sees the current turn's authoring_resources[]
+   * SKILL.md content. Concat order: cloneContext (base) → authoringResources
+   * (skills) → specUpdateNotice (transient override) — skills land as part of
+   * the base context, the notice lands as a trailing override.
    */
   private sendWithProvider(
     message: string,
     cwd: string,
     resumeSessionId: string | null,
     cloneSystemPrompt: string,
+    specUpdateNotice: string | undefined,
+    authoringResourcesContent: string | undefined,
     abortSignal?: AbortSignal,
+    taskHomePath?: string,
+    modelOverride?: string,
+    subagents?: Record<string, OctopusAgentDef>,
   ): AsyncGenerator<MessageChunk> {
     const provider = getProvider('claude')
+
+    // 05 — SPIKE S1: append the transient spec-update notice to the system
+    // prompt. 07 — SG6: append authoring_resources SKILL.md content first
+    // (so it's part of the base context), then the notice (trailing override).
+    // Dynamic workspace state (org, projects, skill groups) lives in
+    // `{taskHome}/context.md` — NOT in the system prompt. This keeps the
+    // system prompt stable for prompt cache stability. The agent reads
+    // context.md on demand when it sees @@context_updated.
+    // Only concat when each piece is actually present; absent pieces leave no
+    // stray separator (no @@ leak, no empty ## Available Skills section).
+    const segments: string[] = [cloneSystemPrompt]
+    if (authoringResourcesContent) {
+      segments.push(authoringResourcesContent)
+    }
+    if (specUpdateNotice) {
+      segments.push(specUpdateNotice)
+    }
+    const append = segments.filter(Boolean).join('\n\n')
 
     return provider.sendQuery(message, cwd, resumeSessionId ?? undefined, {
       systemPrompt: {
         type: 'preset',
         preset: 'claude_code',
-        append: cloneSystemPrompt,
+        append,
       },
       abortSignal,
-      model: this.cloneDef.config.model,
-      plugins: this.getPlugins(),
+      model: modelOverride ?? this.cloneDef.config.model,
+      agents: subagents,
+      plugins: this.getPlugins(taskHomePath),
+      // Path guard: for task-author sessions, block Write/Edit outside the
+      // task home directory. This is a HARD enforcement — the agent CANNOT
+      // write to the project codebase or other locations. Rules file is
+      // advisory (agent can ignore); the hook is mandatory.
+      onBeforeToolCall: taskHomePath
+        ? buildPathGuard(taskHomePath)
+        : undefined,
     })
   }
 
@@ -591,5 +691,56 @@ export class CloneRuntime {
       ``,
       `**注意：绝对不要在未读取当前内容、未询问用户意图的情况下直接覆盖 persona.md。**`,
     ].join('\n')
+  }
+}
+
+/** Build an onBeforeToolCall callback that blocks Write/Edit tool calls to
+ *  paths outside the task home directory. This is a HARD enforcement —
+ *  unlike the rules file (advisory), the hook MANDATES compliance.
+ *
+ *  Allowed paths:
+ *    - Inside task home (artifacts/, skills/, context.md, .claude/, etc.)
+ *
+ *  Blocked paths:
+ *    - Any path outside the task home (project codebase, system dirs, etc.)
+ *
+ *  Read-only tools (Read, Glob, Grep, LS, etc.) are always allowed. */
+function buildPathGuard(taskHomePath: string): (toolName: string, input: unknown) => Promise<{ allow: boolean; reason?: string } | undefined> {
+  const normalizedHome = path.resolve(taskHomePath)
+
+  return async (toolName: string, input: unknown): Promise<{ allow: boolean; reason?: string } | undefined> => {
+    // Only intercept file-write tools
+    if (toolName !== 'Write' && toolName !== 'Edit' && toolName !== 'NotebookEdit') {
+      return undefined // allow all other tools
+    }
+
+    const inp = input as Record<string, unknown>
+    const filePath = (inp.file_path ?? inp.notebook_path) as string | undefined
+    if (!filePath) return undefined // no path to check → allow
+
+    const resolved = path.resolve(filePath)
+
+    // Allow if inside the task home directory
+    if (resolved === normalizedHome || resolved.startsWith(normalizedHome + path.sep)) {
+      return undefined // allowed
+    }
+
+    // Blocked — provide a clear message so the agent redirects to artifacts/
+    return {
+      allow: false,
+      reason: [
+        `BLOCKED: "${filePath}" is outside the task workspace.`,
+        ``,
+        `Task home: ${normalizedHome}`,
+        `Artifacts dir: ${path.join(normalizedHome, 'artifacts')}`,
+        ``,
+        `You MUST write all output files inside the task home directory.`,
+        `- Formal artifacts → write to the artifacts/ subdirectory`,
+        `- Working files (context, notes) → write to the task home root`,
+        `- DO NOT write to the project codebase or any other location.`,
+        ``,
+        `Please redirect this write to the appropriate location inside the task home.`,
+      ].join('\n'),
+    }
   }
 }

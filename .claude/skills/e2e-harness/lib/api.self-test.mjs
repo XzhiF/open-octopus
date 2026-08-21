@@ -52,7 +52,7 @@ async function main() {
 
   // Test 5: fetchJSON with valid path
   try {
-    const result = await fetchJSON("/api/health")
+    const result = await fetchJSON("/api/actuator/health")
     const valid =
       typeof result === "object" &&
       typeof result.ok === "boolean" &&
