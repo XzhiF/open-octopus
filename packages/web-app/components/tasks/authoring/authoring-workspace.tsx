@@ -24,18 +24,14 @@ import { useEffect, useMemo, useState, useCallback, useRef } from "react"
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
 } from "@/components/ui/dialog"
-import {
-  AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle,
-  AlertDialogDescription, AlertDialogFooter, AlertDialogCancel, AlertDialogAction,
-} from "@/components/ui/alert-dialog"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Spinner } from "@/components/ui/spinner"
-import { Send, Settings2, Lock, Brain, Trash2 } from "lucide-react"
+import { Send, Settings2, Lock, Brain } from "lucide-react"
 import { toast } from "sonner"
 import type { Task } from "@octopus/shared"
 import { listSkillGroups, type SkillGroup } from "@/lib/skill-groups-api"
-import { readyTask, deleteTask, updateTask, TaskReadyGateError, triggerAssistWorkflow } from "@/lib/tasks-api"
+import { readyTask, updateTask, TaskReadyGateError, triggerAssistWorkflow } from "@/lib/tasks-api"
 import { ProjectSelector, type SelectedProject } from "@/components/scheduler/project-selector"
 import { useOrgs } from "@/hooks/useOrgs"
 import { useAgentChat } from "@/hooks/useAgentChat"
@@ -272,25 +268,6 @@ export function AuthoringWorkspace({ task, onMutated, onClose }: AuthoringWorksp
   const [enqueueBusy, setEnqueueBusy] = useState(false)
   const [gateMissing, setGateMissing] = useState<string[] | null>(null)
 
-  // ── Delete draft ──
-  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false)
-  const [deleteBusy, setDeleteBusy] = useState(false)
-
-  const handleDeleteDraft = useCallback(async () => {
-    setDeleteBusy(true)
-    try {
-      await deleteTask(task.id)
-      toast.success("草稿已废弃")
-      setDeleteConfirmOpen(false)
-      onMutated()
-      onClose()
-    } catch (err: unknown) {
-      toast.error(err instanceof Error ? err.message : "删除失败")
-    } finally {
-      setDeleteBusy(false)
-    }
-  }, [task.id, onMutated, onClose])
-
   // ── Assist-workflow runs (US9/AC4): tracked run ids → OutputViewer fetches ─
   // The command-bar MoA button triggers the built-in moa-requirements-review
   // template (primary; the agent's suggestion bubble is LLM-driven → manual
@@ -369,17 +346,17 @@ export function AuthoringWorkspace({ task, onMutated, onClose }: AuthoringWorksp
           </Button>
         )}
         <div className="ml-auto flex items-center gap-2">
+          <span className="text-[10px] text-muted-foreground">右侧 = 产出 · 有问题对话里让 agent 改</span>
           <Button
-            variant="ghost"
             size="sm"
-            className="h-6 text-[10px] text-red-500 hover:text-red-600 hover:bg-red-500/10"
-            onClick={() => setDeleteConfirmOpen(true)}
-            data-task-modal-delete
+            className="h-6 text-[10px]"
+            onClick={handleEnqueue}
+            disabled={!canEnqueue || enqueueBusy}
+            data-task-enqueue
           >
-            <Trash2 className="size-3 mr-0.5" />
-            废弃
+            {enqueueBusy ? <Spinner className="size-3" /> : <Send className="size-3 mr-0.5" />}
+            入队执行
           </Button>
-          <span className="text-[10px] text-muted-foreground">右侧 = 产出查看器 · 有问题直接在对话里让 agent 改</span>
         </div>
       </div>
 
@@ -406,9 +383,9 @@ export function AuthoringWorkspace({ task, onMutated, onClose }: AuthoringWorksp
                 onClick={() => setMoaOpen(true)}
                 className="shrink-0 px-2 py-0.5 rounded text-[10px] bg-purple-500/10 text-purple-600 hover:bg-purple-500/20 transition-colors flex items-center gap-1"
                 data-assist-trigger="moa-requirements-review"
-                title="运行 MoA 专家咨询辅助工作流"
+                title="运行专家咨询辅助工作流（MoA / Debate / 单专家）"
               >
-                <Brain className="size-3" /> 专家咨询 (MoA)
+                <Brain className="size-3" /> 专家咨询
               </button>
               <MoATriggerDialog
                 task={task}
@@ -464,9 +441,11 @@ export function AuthoringWorkspace({ task, onMutated, onClose }: AuthoringWorksp
 
           <OutputViewer task={task} runIds={runIds} onAdopted={onMutated} />
 
-          {/* enqueue checklist (AC6) */}
-          <div className="rounded-lg border bg-background px-3 py-2.5" data-enqueue-checklist>
-            <div className="flex items-center flex-wrap gap-x-4 gap-y-1 text-[11px] mb-2">
+          {/* enqueue checklist (AC6) — status only; the 入队执行 button moved to
+              the top bar (right of 废弃) so it's always reachable without
+              scrolling the panel. */}
+          <div className="shrink-0 rounded-lg border bg-background px-3 py-2.5" data-enqueue-checklist>
+            <div className="flex items-center flex-wrap gap-x-4 gap-y-1 text-[11px]">
               <span className="flex items-center gap-1">
                 <span className={goalConfirmed ? "text-emerald-600" : "text-amber-500"}>
                   {goalConfirmed ? "✅" : "⏳"}
@@ -479,23 +458,13 @@ export function AuthoringWorkspace({ task, onMutated, onClose }: AuthoringWorksp
               </span>
             </div>
             {gateMissing && gateMissing.length > 0 ? (
-              <div className="mb-2 rounded-md border border-red-500/30 bg-red-500/5 px-2 py-1.5 text-[10px] text-red-600" data-gate-missing>
+              <div className="mt-1.5 rounded-md border border-red-500/30 bg-red-500/5 px-2 py-1.5 text-[10px] text-red-600" data-gate-missing>
                 服务端门禁缺失：{gateMissing.join(", ")}
               </div>
             ) : null}
             {!canEnqueue ? (
-              <p className="text-[10px] text-muted-foreground mb-2">请先确认 goal + 全部 ac</p>
+              <p className="mt-1.5 text-[10px] text-muted-foreground">请先确认 goal + 全部 ac（顶部「入队执行」按钮）</p>
             ) : null}
-            <Button
-              size="sm"
-              className="w-full text-xs"
-              onClick={handleEnqueue}
-              disabled={!canEnqueue || enqueueBusy}
-              data-task-enqueue
-            >
-              {enqueueBusy ? <Spinner className="size-4" /> : <Send className="size-3.5 mr-1" />}
-              入队执行
-            </Button>
           </div>
         </div>
       </div>
@@ -553,27 +522,6 @@ export function AuthoringWorkspace({ task, onMutated, onClose }: AuthoringWorksp
         </DialogContent>
       </Dialog>
 
-      {/* ── Confirm-delete dialog ── */}
-      <AlertDialog open={deleteConfirmOpen} onOpenChange={setDeleteConfirmOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>废弃草稿</AlertDialogTitle>
-            <AlertDialogDescription>
-              确定要废弃「{task.name ?? "未命名"}」吗？草稿内容及工作目录将被清理，此操作不可撤销。
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={deleteBusy}>取消</AlertDialogCancel>
-            <AlertDialogAction
-              disabled={deleteBusy}
-              onClick={(e) => { e.preventDefault(); void handleDeleteDraft() }}
-              className="bg-red-600 hover:bg-red-700"
-            >
-              {deleteBusy ? "删除中…" : "确认废弃"}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
     </div>
   )
 }

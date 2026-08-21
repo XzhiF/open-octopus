@@ -108,6 +108,7 @@ export function OutputViewer({ task, runIds, onAdopted }: OutputViewerProps) {
   // Falls back to ~/ prefix until the fetch resolves.
   const [artifactsDir, setArtifactsDir] = useState(`~/.octopus/tasks/${taskId}/artifacts`)
   const [contextFilePath, setContextFilePath] = useState("")
+  const [specFilePath, setSpecFilePath] = useState("")
 
   // Fetch absolute paths + context content on mount / taskId change.
   useEffect(() => {
@@ -117,7 +118,11 @@ export function OutputViewer({ task, runIds, onAdopted }: OutputViewerProps) {
         if (cancelled) return
         setArtifactsDir(res.artifactsDir)
         setContextFilePath(res.path)
+        // `?? null`: a server running pre-spec.json code omits specContent
+        // (undefined) — treat it the same as an explicit null.
+        setSpecFilePath(res.specPath ?? "")
         if (res.content !== null) setContextContent(res.content)
+        if (res.specContent != null) setSpecContent(res.specContent)
       })
       .catch(() => { /* non-fatal — keep ~/ fallback */ })
     return () => { cancelled = true }
@@ -145,6 +150,28 @@ export function OutputViewer({ task, runIds, onAdopted }: OutputViewerProps) {
       }
     }
   }, [taskId, contextContent, contextLoading])
+
+  // ── Spec viewer (spec.json) ─────────────────────────────────────────
+  const [showSpec, setShowSpec] = useState(false)
+  const [specContent, setSpecContent] = useState<string | null>(null)
+  const [specLoading, setSpecLoading] = useState(false)
+
+  const openSpecViewer = useCallback(async () => {
+    setShowSpec(true)
+    // spec.json is rewritten on every spec-field save — always re-fetch on
+    // open so the dialog shows the current snapshot, not a stale mount-time one.
+    setSpecLoading(true)
+    try {
+      const result = await getTaskContext(taskId)
+      // `?? null`: a server running pre-spec.json code omits specContent.
+      setSpecContent(result.specContent ?? null)
+      setSpecFilePath(result.specPath ?? "")
+    } catch {
+      setSpecContent(null)
+    } finally {
+      setSpecLoading(false)
+    }
+  }, [taskId])
 
   // ── Artifacts index ────────────────────────────────────────────────
   const [artifacts, setArtifacts] = useState<ArtifactIndexEntry[]>([])
@@ -239,8 +266,10 @@ export function OutputViewer({ task, runIds, onAdopted }: OutputViewerProps) {
   const acItems = (task.task_spec.ac as string[] | undefined) ?? []
   const existingDecisions = decisions
 
+  // shrink-0: keep natural height in the panel's flex column so the panel
+  // scrolls instead of squashing this section (see goal-ac-card).
   return (
-    <div className="space-y-3" data-output-viewer-sections>
+    <div className="shrink-0 space-y-3" data-output-viewer-sections>
       {/* ── Artifacts (AC1/AC2) ── */}
       <div className="rounded-lg border bg-background" data-artifacts-section>
         <div className="px-3 py-2 border-b flex items-center justify-between">
@@ -271,6 +300,19 @@ export function OutputViewer({ task, runIds, onAdopted }: OutputViewerProps) {
           <div className="flex-1 min-w-0">
             <div className="text-xs truncate">工作上下文 (context.md)</div>
             <div className="text-[9px] text-muted-foreground">org · 项目路径 · 技能组 — agent 感知的工作语境</div>
+          </div>
+          <Eye className="size-3.5 text-muted-foreground shrink-0" />
+        </button>
+        {/* Spec.json viewer row — shows the structured goal/ac snapshot on click */}
+        <button
+          className="w-full px-3 py-2 flex items-center gap-2 hover:bg-muted/50 text-left border-b transition-colors"
+          onClick={openSpecViewer}
+          data-spec-viewer-row
+        >
+          <FileText className="size-3.5 shrink-0 text-amber-500" />
+          <div className="flex-1 min-w-0">
+            <div className="text-xs truncate">任务规格 (spec.json)</div>
+            <div className="text-[9px] text-muted-foreground">goal · ac · 确认状态 — 结构化规格快照</div>
           </div>
           <Eye className="size-3.5 text-muted-foreground shrink-0" />
         </button>
@@ -440,6 +482,45 @@ export function OutputViewer({ task, runIds, onAdopted }: OutputViewerProps) {
 
           <div className="px-4 py-2 border-t text-[10px] text-muted-foreground shrink-0">
             此文件是 agent 的工作语境。修改"编写语境"后 agent 会自动重新读取
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Spec viewer dialog (spec.json) ── */}
+      <Dialog open={showSpec} onOpenChange={(o) => { if (!o) setShowSpec(false) }}>
+        <DialogContent
+          className="sm:max-w-[640px] max-h-[75vh] p-0 gap-0 flex flex-col"
+          showCloseButton
+          data-spec-viewer-dialog
+        >
+          <DialogHeader className="px-4 py-3 border-b shrink-0 space-y-0">
+            <DialogTitle className="text-sm flex items-center gap-2">
+              <FileText className="size-3.5 text-amber-500" />
+              任务规格 (spec.json)
+            </DialogTitle>
+            <DialogDescription className="font-mono text-[10px] truncate">
+              {specFilePath || "加载中…"}
+            </DialogDescription>
+          </DialogHeader>
+
+          <ScrollArea className="flex-1 min-h-0" data-spec-content-scroll>
+            {specLoading ? (
+              <div className="flex items-center justify-center p-8 text-xs text-muted-foreground gap-2">
+                <Spinner className="size-4" /> 读取规格…
+              </div>
+            ) : specContent ? (
+              <pre className="p-4 text-[11px] leading-relaxed whitespace-pre-wrap font-mono break-words" data-spec-content>
+                {specContent}
+              </pre>
+            ) : (
+              <div className="p-6 text-xs text-muted-foreground text-center">
+                spec.json 尚未生成——首次保存规格后自动创建
+              </div>
+            )}
+          </ScrollArea>
+
+          <div className="px-4 py-2 border-t text-[10px] text-muted-foreground shrink-0">
+            此文件是 task_spec 的结构化本地快照，每次规格保存后由 server 重写
           </div>
         </DialogContent>
       </Dialog>

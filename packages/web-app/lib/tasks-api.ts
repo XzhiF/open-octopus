@@ -306,13 +306,16 @@ export async function getArtifactContent(taskId: string, artifactPath: string): 
 }
 
 /** GET /api/tasks/:id/context — read the workspace context file (context.md)
- *  + filesystem paths. Returns { content, path, artifactsDir, homePath }.
- *  content may be null if context.md hasn't been created yet. */
+ *  + the structured spec snapshot (spec.json) + filesystem paths. Returns
+ *  { content, path, artifactsDir, homePath, specContent, specPath }.
+ *  content/specContent may be null if the file hasn't been created yet. */
 export async function getTaskContext(taskId: string): Promise<{
   content: string | null
   path: string
   artifactsDir: string
   homePath: string
+  specContent: string | null
+  specPath: string
 }> {
   const res = await fetch(buildUrl(`/${taskId}/context`))
   if (!res.ok) {

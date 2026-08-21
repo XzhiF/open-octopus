@@ -275,8 +275,11 @@ export function GoalAcCard({ task, onMutated }: GoalAcCardProps) {
     }
   }
 
+  // shrink-0: the right panel is a flex column — without it, tall content
+  // (long goal/ac) makes flex SHRINK this card and overflow-hidden clips it,
+  // instead of the panel scrolling.
   return (
-    <div className="rounded-lg border-2 border-amber-400/40 bg-background overflow-hidden" data-goal-ac-card>
+    <div className="shrink-0 rounded-lg border-2 border-amber-400/40 bg-background overflow-hidden" data-goal-ac-card>
       <div className="px-3 py-2 border-b bg-amber-400/10 flex items-center gap-2">
         <span className="text-xs font-semibold">🎯 目标 & 验收标准</span>
         <span className="text-[10px] text-muted-foreground">可直接编辑 · agent 绑定后自动填充</span>

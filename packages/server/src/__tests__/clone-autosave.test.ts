@@ -277,9 +277,9 @@ describe("04: task-author autosave seam + scope_id writer (integration)", () => 
     expect(after.name).toBe(before.name)
   })
 
-  // ── Gate: turn 1 of a task-bound session does not auto-title / clobber ──
+  // ── Gate: turn 1 of a task-bound session does not clobber a user-set name ──
 
-  it("gate: turn 1 of a task-bound session preserves the POST-created name (no auto-title)", async () => {
+  it("gate: turn 1 of a task-bound session preserves the POST-created name", async () => {
     const createRes = await app.request("/api/clones/task-author/sessions", {
       method: "POST",
       headers: { "Content-Type": "application/json", "X-Octopus-Org": ORG },
@@ -308,19 +308,79 @@ describe("04: task-author autosave seam + scope_id writer (integration)", () => 
     })
     await r1.text()
 
-    // The POST-created name is preserved (autosave's existing-branch no longer
-    // writes the session title over it).
+    // The POST-created (user-set) name is preserved — autosave's existing
+    // branch only adopts the session title while the name is still the
+    // default, never a user-set name.
     const row = db.prepare("SELECT name FROM tasks WHERE id = ?").get(taskId) as {
       name: string
     }
     expect(row.name).toBe("E2E_TD manual POST title")
 
-    // And the auto-title block did NOT fire: the session keeps its placeholder
-    // title instead of being re-derived from the first chat message.
+    // The auto-title block DID fire (title was still the placeholder): the
+    // session title is derived from the first message for the sidebar. The
+    // derived title must NOT leak into the user-set task name (asserted
+    // above) — the two stores are allowed to diverge here.
     const s = db.prepare("SELECT title FROM sessions WHERE id = ?").get(session.id) as {
       title: string
     }
-    expect(s.title).toBe("task-author 会话")
+    expect(s.title).toBe("E2E_TD first message")
+  })
+
+  // ── Refinement: default-name draft adopts the smart title after first chat ──
+
+  it("refinement: a pre-bound task with the DEFAULT name adopts the smart title on first chat", async () => {
+    const createRes = await app.request("/api/clones/task-author/sessions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Octopus-Org": ORG },
+      body: JSON.stringify({}),
+    })
+    const session = (await createRes.json()) as { id: string }
+
+    // Pre-bind a draft the way POST /api/tasks does when the caller sends no
+    // name → DEFAULT_TASK_NAME ("Untitled task").
+    const taskId = "e2e-td-default-name-task"
+    const now = new Date().toISOString()
+    taskDAO.insert({
+      id: taskId,
+      org: ORG,
+      name: "Untitled task",
+      status: "draft",
+      source_chat_session_id: session.id,
+      created_at: now,
+      updated_at: now,
+    })
+
+    // First chat turn on the bound session.
+    const r1 = await app.request(`/api/clones/task-author/sessions/${session.id}/chat`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Octopus-Org": ORG },
+      body: JSON.stringify({ message: "E2E_TD 给 workflow 执行增加监控 context 功能" }),
+    })
+    await r1.text()
+
+    // The default name is NOT user-owned → autosave adopts the smart session
+    // title (first 20 chars of the first message).
+    const row = db.prepare("SELECT name FROM tasks WHERE id = ?").get(taskId) as {
+      name: string
+    }
+    const expectedTitle =
+      "E2E_TD 给 workflow 执行增加监控 context 功能".slice(0, 20).replace(/\n/g, " ").trim()
+    expect(row.name).toBe(expectedTitle)
+    expect(row.name).not.toBe("Untitled task")
+
+    // Second turn: the name is now user-adopted (no longer the default) and
+    // must be stable — no further rewrites from the session title.
+    await new Promise((r) => setTimeout(r, 5))
+    const r2 = await app.request(`/api/clones/task-author/sessions/${session.id}/chat`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Octopus-Org": ORG },
+      body: JSON.stringify({ message: "E2E_TD 第二条消息完全不同" }),
+    })
+    await r2.text()
+    const after = db.prepare("SELECT name FROM tasks WHERE id = ?").get(taskId) as {
+      name: string
+    }
+    expect(after.name).toBe(expectedTitle)
   })
 
   // ── Gate: non-task-author clones do NOT trigger the seam ────────────────

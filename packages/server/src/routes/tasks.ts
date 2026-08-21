@@ -238,12 +238,12 @@ export function createTasksRoutes(
   })
 
   // ── Context file (workspace state visible to agent) ──────────────────
-  // GET /:id/context — read the task's context.md + filesystem paths. The
-  // dynamic workspace state file the agent reads when notified via
+  // GET /:id/context — read the task's context.md + spec.json + filesystem
+  // paths. The dynamic workspace state file the agent reads when notified via
   // @@context_updated. Also returns absolute paths for the UI (artifactsDir,
   // homePath) so the frontend can display + copy real filesystem locations.
-  // Returns { content, path, artifactsDir, homePath }. content/path may be
-  // null if context.md hasn't been created yet.
+  // Returns { content, path, artifactsDir, homePath, specContent, specPath }.
+  // content/specContent may be null if the file hasn't been created yet.
   router.get("/:id/context", (c) => {
     try {
       const homeService = new TaskHomeService()
@@ -254,7 +254,12 @@ export function createTasksRoutes(
       if (fs.existsSync(ctxPath)) {
         content = fs.readFileSync(ctxPath, "utf-8")
       }
-      return c.json({ content, path: ctxPath, artifactsDir, homePath })
+      const specPath = path.join(homePath, "spec.json")
+      let specContent: string | null = null
+      if (fs.existsSync(specPath)) {
+        specContent = fs.readFileSync(specPath, "utf-8")
+      }
+      return c.json({ content, path: ctxPath, artifactsDir, homePath, specContent, specPath })
     } catch (err: unknown) {
       const { status, message } = classifyError(err)
       return c.json({ error: message }, status)

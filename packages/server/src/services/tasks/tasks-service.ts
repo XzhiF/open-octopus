@@ -56,6 +56,12 @@ import { PluginMaterializer } from "./plugin-materializer"
 export { ArtifactAccessError } from "./task-home-service"
 import { getResourceRegistry } from "../resource-registry"
 import { WorkspaceGit } from "../workspace-git"
+
+/** Default task name when the caller provides none. NOT user-owned — the
+ *  autosave seam (routes/clone/autosave.ts) may still adopt a smart title
+ *  while the name equals this. A user rename (header/POST) makes the name
+ *  user-owned and freezes it against autosave. */
+export const DEFAULT_TASK_NAME = "Untitled task"
 import {
   setSpecNotice,
   getSpecNotice,
@@ -349,7 +355,7 @@ export class TasksService {
   createTask(input: CreateTaskInput): TaskDTO {
     const id = randomUUID()
     const now = new Date().toISOString()
-    const name = input.name?.trim() || "Untitled task"
+    const name = input.name?.trim() || DEFAULT_TASK_NAME
     const isV3 = !!input.task_type
 
     // 04 (D13): preset.org overrides the top-level org (the template page is the

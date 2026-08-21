@@ -613,16 +613,15 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
             sessionDAO.updateProviderSession(sessionId, resultSessionId)
           }
 
-          // Auto-generate title on first message. Skip when a task is already
-          // bound to this session (source_chat_session_id): the task name is
-          // user-owned (header/POST), and re-deriving the session title from
-          // the first chat message would let autosave clobber it (bugfix
-          // 2026-08-21). The bound-task lookup only runs when the title is
-          // still the placeholder (i.e. effectively the first message).
-          if (
-            (session.title === `${cloneName} 会话` || session.title === '新会话') &&
-            !(taskDAO && taskDAO.getBySourceChatSession(sessionId))
-          ) {
+          // Auto-generate title on first message (title still placeholder).
+          // Runs even when a task is bound to the session: the session title
+          // feeds the sidebar AND the autosave seam's autoTitle. A bound task
+          // with a USER-SET name is safe — the autosave seam only adopts the
+          // session title while the task name is still the default
+          // (DEFAULT_TASK_NAME), never overwriting a user rename (bugfix
+          // 2026-08-21 + refinement). A header rename syncs the session title
+          // to the new name, so the placeholder check below skips re-deriving.
+          if (session.title === `${cloneName} 会话` || session.title === '新会话') {
             const autoTitle = body.message!.slice(0, 20).replace(/\n/g, ' ').trim() || `${cloneName} 会话`
             sessionDAO.updateSession(sessionId, { title: autoTitle })
           }
@@ -637,7 +636,7 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
             const autoTitle = sessionDAO.findById(sessionId)?.title ?? `${cloneName} 会话`
             autosaveTaskDraft(
               { taskDAO, sessionDAO },
-              { sessionId, org, autoTitle },
+              { sessionId, org, autoTitle, placeholderTitle: `${cloneName} 会话` },
             )
           }
 
