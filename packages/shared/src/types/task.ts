@@ -36,7 +36,13 @@ export type TaskStatus = z.infer<typeof TaskStatusSchema>
  *  task-authoring v3 (ticket 01, SW-BP3): adds `"decisions"` — the adoption
  *  target for MoA suggestion output, persisted into task_spec.decisions. This
  *  closes the orphan-field gap (decisions had a schema home but no settable
- *  field route); ticket 05 wires the server-side binding + the `source` flag. */
+ *  field route); ticket 05 wires the server-side binding + the `source` flag.
+ *
+ *  task-workflow-handoff (ADR-0013): adds `"workflow_ref"` — the HOW binding.
+ *  Lives as a top-level tasks.workflow_ref column (same pattern as skills /
+ *  projects); the server's updateSpecField routes it there. Included in the
+ *  shared enum so the agent tool / SSE / ClientSpecField all agree on the
+ *  field name, and the spec_field_update SSE reaches the SpecPanel. */
 export const TaskSpecFieldSchema = z.enum([
   "projects",
   "skills",
@@ -47,6 +53,7 @@ export const TaskSpecFieldSchema = z.enum([
   "resources",
   "authoring_resources",
   "decisions",
+  "workflow_ref",
 ])
 export type TaskSpecField = z.infer<typeof TaskSpecFieldSchema>
 
@@ -167,6 +174,15 @@ export function validateSpecFieldValue(field: TaskSpecField, value: unknown): un
     case "projects":
       if (!Array.isArray(value) || !value.every((v) => typeof v === "string")) {
         throw new TaskSpecFieldError(`field '${field}' must be an array of strings`)
+      }
+      return value
+    case "workflow_ref":
+      // task-workflow-handoff (ADR-0013): a non-empty string ref. The value is
+      // validated as a string here (the shared contract) — resolvable-ness
+      // against the installed built-ins / task-home workflows/ is the server's
+      // fail-fast concern (WorkflowRefResolver; the route returns 400 on miss).
+      if (typeof value !== "string" || !value.trim()) {
+        throw new TaskSpecFieldError("field 'workflow_ref' must be a non-empty string")
       }
       return value
     default:

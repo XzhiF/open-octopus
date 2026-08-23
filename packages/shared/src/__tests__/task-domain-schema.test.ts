@@ -37,6 +37,7 @@ const EXPECTED_ORIGIN_TYPES = ["cron", "task", "agent", "manual", "api"] as cons
 const EXPECTED_RESOURCE_TYPES = ["skill", "agent", "command", "rule"] as const
 const EXPECTED_ORIGIN_ROLES = ["primary", "coordinator", "subunit"] as const
 // Spec-field names the tool/SSE may carry (spec v2-D12 + glossary).
+// task-workflow-handoff (ADR-0013): adds `workflow_ref` to the bindable set.
 const EXPECTED_SPEC_FIELDS = [
   "projects",
   "skills",
@@ -46,6 +47,8 @@ const EXPECTED_SPEC_FIELDS = [
   "integration_goal",
   "resources",
   "authoring_resources",
+  "decisions",
+  "workflow_ref",
 ] as const
 
 const baseWorkspaceSpec = {
