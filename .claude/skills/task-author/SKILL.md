@@ -1,9 +1,9 @@
 ---
 name: task-author
-description: "Task-Author 规格作者 — 与用户对话产出结构化 task_spec（WHAT），经 confirm gate 入队后由 dispatch seam 物化为 WorkflowConfig 调度执行（HOW）。覆盖 /api/tasks REST API（创建 draft / 编辑 / 入队 / 列表 / 中止）、update_task_spec_field 端点（POST /api/tasks/:id/spec-field，对话中绑定 goal/ac/skills/projects/subunits/integration_goal/resources/authoring_resources 8 字段 + spec_field_update SSE 联动 SpecPanel）、非-cwd 资源加载（authoring_resources[] draft 期绑 + augmenter prompt-inject vs resources[] workspace 期 → workflow.requires）、以及 task_spec→WorkflowConfig 物化指引（简单=workflow_chain 单项直分发；复合=composition-task.yaml + Loop over subunits + task_dispatch + moa 聚合，subunit_count 经 input_values 注入）。当用户需要把一个模糊需求转成可调度执行的任务规格时加载。"
+description: "Task-Author 规格作者 — 与用户对话产出结构化 task_spec（WHAT）+ 经 HOW-handoff 绑定 workflow_ref（HOW），经 confirm gate 入队后由 dispatch seam 物化为 WorkflowConfig 调度执行。覆盖 /api/tasks REST API（创建 draft / 编辑 / 入队 / 列表 / 中止 / workflow-ref 查看）、update_task_spec_field 端点（POST /api/tasks/:id/spec-field，对话中绑定 goal/ac/skills/projects/subunits/integration_goal/resources/authoring_resources/workflow_ref 9 字段 + spec_field_update SSE 联动 SpecPanel）、非-cwd 资源加载（authoring_resources[] draft 期绑 + augmenter prompt-inject vs resources[] workspace 期 → workflow.requires）、以及 task_spec→WorkflowConfig 物化指引（简单=workflow_chain 单项直分发；复合=composition-task.yaml + Loop over subunits + task_dispatch + moa 聚合，subunit_count 经 input_values 注入）。当用户需要把一个模糊需求转成可调度执行的任务规格时加载。"
 category: devops
-tags: [task-pool, task-author, task_spec, tasks, workflow, composition, dispatch, spec]
-version: 2.0.0
+tags: [task-pool, task-author, task_spec, tasks, workflow, composition, dispatch, spec, workflow_ref, how-handoff]
+version: 2.1.0
 ---
 
 # Task-Author 规格作者
@@ -14,9 +14,10 @@ version: 2.0.0
 
 ## WHAT 与 HOW 分离
 
-- **task_spec = WHAT**：goal、验收标准、（复合任务时）subunits 与 integration_goal。你只产这个。
-- **WorkflowConfig = HOW**：dispatch seam（`POST /api/tasks/:id/ready`）时物化。简单 = `workflow_chain` 单项直分发（1 ws）；复合 = `workflow_ref` 指向 composition workflow，subunits 经 Loop 喂 `task_dispatch`。
-- 你不执行工作流，也不自行入队——产 spec 后等用户点 [入队]。
+- **task_spec = WHAT**：goal、验收标准、（复合任务时）subunits 与 integration_goal。你产这个。
+- **workflow_ref = HOW 的入口** (ADR-0013): HOW-handoff 步骤枚举→推荐→用户确认→绑定。你**协助**用户选/建/绑，但绑定需用户确认。
+- **WorkflowConfig = HOW**: dispatch seam（`POST /api/tasks/:id/ready`）时物化。简单 = `workflow_chain` 单项直分发（1 ws）；复合 = `workflow_ref` 指向 composition workflow，subunits 经 Loop 喂 `task_dispatch`。
+- 你不执行工作流，也不自行入队——产 spec + 绑 workflow_ref 后等用户点 [入队]。
 
 ## 前置条件
 
@@ -100,9 +101,11 @@ curl -s -X POST "http://localhost:$PORT/api/tasks/$TASK_ID/spec-field" \
 | `integration_goal` | { strategy, prompt? } |
 | `resources` | ResourceRef[]（workspace-scope） |
 | `authoring_resources` | ResourceRef[]（draft-scope） |
+| `workflow_ref` | string (ADR-0013: 非空字符串; fail-fast 预检 — 必须可解析) |
 
 - 返回 `{version}`；409 = 版本冲突（用户刚 [保存草稿] 改了）→ 重新 `GET /api/tasks/:id` 取 version 重试。
 - 用户 [保存草稿] 后，server 经 **system-prompt append** 注入 `@@spec_updated: <fields>` 到你下轮流（SPIKE S1，v2-D7 PUSH）——你能感知用户覆盖。
+- `workflow_ref` 绑定即预检：ref 必须是**已安装内置工作流**（`GET /api/workflows/built-in` 清单）或**任务 home `workflows/` 目录**里的 YAML 文件名（你自建的 flow）。**不**接受全局 `~/.octopus/workflows/` 里的 ref。绑定失败 → 400 `workflow not resolvable`，task 保持 draft。
 
 ### 3. 编辑 draft（PUT，乐观锁）
 
@@ -122,12 +125,14 @@ curl -s -X POST "http://localhost:$PORT/api/tasks/$TASK_ID/ready" | jq .
 ```
 > 你**不**自行入队。产 spec + 确认 tasks 行后，把 TASK_ID 给用户，等用户 [入队]。
 
-### 5. 列表 / 详情 / 中止
+### 5. 列表 / 详情 / 中止 / 查看绑定的工作流
 
 ```bash
 curl -s "http://localhost:$PORT/api/tasks" | jq .          # 看板
 curl -s "http://localhost:$PORT/api/tasks/$TASK_ID" | jq . # 详情（含 children[] for 复合）
 curl -s -X POST "http://localhost:$PORT/api/tasks/$TASK_ID/abort" | jq .  # running→aborted + ws 清理
+curl -s "http://localhost:$PORT/api/tasks/$TASK_ID/workflow-ref" | jq .    # 查看绑定的工作流内容 + source
+# 返回 { ref, content, source:"builtin"|"task-home" }，未绑定 → { ref, content, source }=null
 ```
 
 ## 资源加载（authoring vs workspace 两 scope）
@@ -169,18 +174,101 @@ nodes:
 - `task_dispatch` 子 schedule 各 `createFromSpec` 独立 ws（origin_role='subunit'）；`await:true` 触发 pause-resume，子输出经 output_mapping 流回。
 - `merge` strategy ⇒ opt-in 结构化合并（非默认 moa synthesis）。
 
+## HOW-handoff (ADR-0013) —— 入队前完成工作流选择 + 绑定
+
+> 简单任务 (subunits < 2) 的入队门槛 (ready-gate) 已升级为"**workflow_ref 必须可解析**"(S3)。可解析集 = 已安装内置 ∨ task home `workflows/`。空 ref 或不可解析 → 409 `missing workflow_ref`。你**必须**在宣布可入队前完成 HOW-handoff。
+
+### 步骤 1: 枚举已安装工作流
+
+```bash
+curl -s "http://localhost:$PORT/api/workflows/built-in" | jq '.[] | {ref, name, group}'
+```
+
+### 步骤 2: 推荐 + 用户确认
+
+- 基于 `task_spec` (goal/ac/subunits) + 可用工作流，给出 1-3 个推荐（每条带理由：为什么适合这个任务）。
+- 等待用户确认 / 指定替代 / 说"都不行"。
+- **不要**在用户确认前擅自绑定 —— 绑定即入队门槛的一部分，用户有权拒绝。
+
+### 步骤 3a: 用户接受推荐 → 直接绑定
+
+```bash
+curl -s -X POST "http://localhost:$PORT/api/tasks/$TASK_ID/spec-field" \
+  -H "Content-Type: application/json" \
+  -d '{ "field": "workflow_ref", "value": "octo/recommended-flow" }' | jq .
+```
+
+400 = ref 不可解析（不该发生 — 你刚枚举过，但防御性处理：换其他推荐或进入自建）。
+
+### 步骤 3b: 用户拒绝 → 自建工作流
+
+自建 flow 写入任务 home 的 `workflows/` 目录（路径 = `cwd` 下的 `workflows/my-flow.yaml`）：
+
+```bash
+# 写入工作流 YAML
+cat > workflows/my-flow.yaml <<'EOF'
+schema_version: "3.0"
+type: workflow
+workspace_spec:
+  org: <org>
+  branch_prefix: task-<id>
+  projects: []
+workflow_chain:
+  - workflow_ref: my-flow
+    input_values: {}
+nodes:
+  - id: main
+    type: bash
+    command: "echo hello"
+EOF
+
+# validate (必须通过 — 硬门槛)
+octopus workflow validate workflows/my-flow.yaml
+```
+
+**AC5/AC6: 生命周期含真实外部副作用的工作流**（如会删数据、调外部 API、修改 git）—— 你必须显式声明副作用 + 把理由记入 `task_spec.decisions`：
+
+```bash
+curl -s -X POST "http://localhost:$PORT/api/tasks/$TASK_ID/spec-field" \
+  -H "Content-Type: application/json" \
+  -d '{ "field": "decisions", "value": ["自建 flow 含 X 副作用，因为 Y"] }' | jq .
+```
+
+**模拟器必须跑通** (D6 硬门槛): 用 Workflow Simulator 验证节点流转、变量传递、break_when 收敛。具体命令见 simulator skill (若有) 或 workflow validate --simulate。
+
+**validate + 模拟器都通过后**,绑定 (ref = 文件名,如 `my-flow.yaml`):
+
+```bash
+curl -s -X POST "http://localhost:$PORT/api/tasks/$TASK_ID/spec-field" \
+  -H "Content-Type: application/json" \
+  -d '{ "field": "workflow_ref", "value": "my-flow.yaml" }' | jq .
+```
+
+### 步骤 4: 检查绑定 + 入队放行
+
+```bash
+# 查看绑定的工作流内容 (AC8)
+curl -s "http://localhost:$PORT/api/tasks/$TASK_ID/workflow-ref" | jq .
+# 200: { ref, content, source:"builtin"|"task-home" }
+```
+
+绑定成功后宣布可入队 — **用户**决定是否点 [入队]。你**不**自行调 ready。
+
+> 用户不看 SpecPanel 绑定直接入队 → 门禁 (ready-gate) 照常执行（责任归用户）。
+
 ## 交互风格
 
 - **结构化优先**：始终输出 JSON task_spec，不自由散文。
-- **confirm gate**：产 spec → 建draft（POST /api/tasks 或 autosave）→ 把 TASK_ID 给用户 → 等用户 [入队]（POST /:id/ready）。
+- **confirm gate + workflow_ref gate**：产 spec + HOW-handoff 绑 workflow_ref → 建draft（POST /api/tasks 或 autosave）→ 把 TASK_ID 给用户 → 等用户 [入队]（POST /:id/ready）。
 - **增量绑字段**：对话中澄清出某字段立即 spec-field 绑，SpecPanel 实时刷新（不必等整 spec）。
 - **多仓库不假定 cwd**：项目路径来自 repos/index.md 或用户提供。
-- **WHAT/HOW 分离**：你只产 task_spec；workflow_ref/composition 编排是 HOW。
+- **WHAT/HOW 协作**：你产 task_spec + 经 HOW-handoff 协助绑 workflow_ref，但绑前必用户确认。
 
 ## 错误码
 
 | HTTP | 含义 | 处理 |
 |------|------|------|
-| 400 | 参数校验失败（task_spec 缺 goal/ac） | 检查 JSON 体 |
-| 409 | 名称冲突 / spec-field 版本冲突 | 改名或重新 GET 取 version |
+| 400 | 参数校验失败（task_spec 缺 goal/ac）或 workflow_ref 不可解析 | 检查 JSON 体 / 换 ref / 自建 flow 走 validate+模拟器 |
+| 404 | task 不存在 / workflow-ref 查看时 task 缺失 | 检查 TASK_ID |
+| 409 | 名称冲突 / spec-field 版本冲突 / ready-gate 不满足（missing[] 列具体字段） | 改名或重新 GET 取 version；按 missing 列表补字段 |
 | 428 | PUT 缺 If-Match | 补 If-Match: <version> |

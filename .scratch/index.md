@@ -47,4 +47,4 @@
 | 43 | task-domain-redesign | 2026-08-18 | feat/task-domain-redesign | done (feat→main PR; 22/22 product-verified; AC2 repro-proven, B-AC3 provider-gated SKIP) |
 | 44 | task-authoring-v3 | 2026-08-18 | feat/task-domain-redesign | done (loop 2 iterations: R1 78.5 → R2 80.6 REVIEW; exited structural ceiling, zero code gaps; PR #51; US8 manual-evidence-pending) |
 | 45 | task-authoring-v3-r2 | 2026-08-18 | feat/task-domain-redesign | done (gap-fix: prototype removed 404, sibling specs 11+2 tolerance green, report reconciled, US8 checklist BLOCKED-pending-human, dispatch 42 asserts) |
-| 46 | task-workflow-handoff | 2026-08-23 | feat/task-domain-redesign | in-progress (grilled: S1+S2+S3 scope, 7 decisions, ADR-0013) |
+| 46 | task-workflow-handoff | 2026-08-23 | feat/task-domain-redesign | done (pipeline: build green, review 0 r0, no E2E per D7) |
