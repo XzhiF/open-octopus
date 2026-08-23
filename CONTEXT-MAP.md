@@ -97,6 +97,9 @@
 | **任务家目录 (Task Home)** | `~/.octopus/tasks/{task-id}/` — 由 task id 推出的约定目录（不加 DB 字段），含 skills/（plugin 目录）+ artifacts/（产物 + artifacts.json 索引）。draft 删除时整体 reap。ADR-0011。 | server |
 | **登记不搬迁 (Register, don't relocate)** | 产物收集策略 — octopus 原生 skill 产物写统一 artifacts/ 目录；第三方 skill 产物留原生位置，登记进 artifacts.json 索引。UI/调度器只读索引。ADR-0011。 | server |
 | **辅助工作流 (Assist Workflow)** | 编写期可触发的内置工作流（moa-requirements-review / spec-review-swarm / clarify-debate）。建议权给 agent，执行权留用户；结构化产出（ac 候选/方案建议/风险）勾选采纳进 spec。 | server, core-pack |
+| **HOW-handoff** | task-author 对话收尾步骤 — 入队前枚举可复用工作流 → 推荐 + 用户确认 → 复用 or 自建（validate + 模拟器必过）→ 绑定 workflow_ref。ADR-0013。 | core-pack |
+| **workflow 解析集 (Resolution Set)** | 任务 workflow_ref 的有效来源集合 = 已安装内置工作流 ∨ task home `workflows/`。全局 `~/.octopus/workflows/` 明确排除。绑定预检 / ready-gate / 查看器三处共用。ADR-0013。 | server |
+| **Task Home workflows/** | `~/.octopus/tasks/{task-id}/workflows/` — 自建工作流落位目录；dispatch 时经 `input_values.task_workflows_dir` 注入、拷进执行 ws `workflows/`（S2a 拷贝，非引擎直查）。ADR-0013。 | server |
 
 ## Anti-Patterns（禁止）
 
@@ -138,3 +141,4 @@ core-pack ← (纯数据资源)
 - [0010-per-task-plugin-dir.md](docs/adr/0010-per-task-plugin-dir.md) — Skill 组经 per-task plugin 目录获 SDK 原生加载
 - [0011-task-home-register-dont-relocate.md](docs/adr/0011-task-home-register-dont-relocate.md) — 任务家目录约定 + 登记不搬迁
 - [0012-skill-group-lock-at-creation.md](docs/adr/0012-skill-group-lock-at-creation.md) — Skill 组创建时锁定（两阶段编写流）
+- [0013-workflow-ref-authoring-provisioning.md](docs/adr/0013-workflow-ref-authoring-provisioning.md) — workflow_ref 归属 authoring agent；自建 flow 落 task home + 分发拷贝（amends ADR-0008）
