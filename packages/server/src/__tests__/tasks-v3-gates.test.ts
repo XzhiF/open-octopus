@@ -71,6 +71,7 @@ function insertTask(
     status: string
     task_spec: Record<string, unknown>
     version: number
+    workflow_ref: string | null
   }> = {},
 ) {
   const id = overrides.id ?? `e2e-td-task-${Math.random().toString(36).slice(2, 8)}`
@@ -80,13 +81,14 @@ function insertTask(
     INSERT INTO tasks (id, org, name, status, source_chat_session_id, task_spec,
       authoring_resources, resources, skills, project_ids, workflow_ref, version,
       deleted_at, created_at, updated_at, completed_at)
-    VALUES (?, ?, ?, ?, NULL, ?, '[]', '[]', '[]', '[]', NULL, ?, NULL, ?, ?, NULL)
+    VALUES (?, ?, ?, ?, NULL, ?, '[]', '[]', '[]', '[]', ?, ?, NULL, ?, ?, NULL)
   `).run(
     id,
     ORG,
     overrides.name ?? "E2E_TD task",
     overrides.status ?? "draft",
     JSON.stringify(spec),
+    overrides.workflow_ref ?? null,
     overrides.version ?? 1,
     now,
     now,
@@ -119,7 +121,20 @@ describe("05: spec-field source + confirmation persistence + ready gate (integra
     specEvents = collector.specEvents
     artifactEvents = collector.artifactEvents
     taskDAO = new TaskDAO(db)
-    const service = new TasksService(db, sse, new AgentSessionDAO(db))
+    // task-workflow-handoff (ADR-0013): inject a stub BuiltInWorkflowService that
+    // recognizes any ref whose group or bare-name matches the e2e-td-* test prefix.
+    // This lets the ready-gate resolver find "e2e-td-XX/simple" without touching
+    // the real ResourceManager or the filesystem.
+    const stubBuiltIn = {
+      get(ref: string) {
+        // Accept any ref containing an "e2e-td" component (group or name).
+        if (ref.includes("e2e-td")) {
+          return { ref, content: "stub-builtin" }
+        }
+        return null
+      },
+    } as any
+    const service = new TasksService(db, sse, new AgentSessionDAO(db), undefined, undefined, stubBuiltIn)
     app = new Hono()
     app.route("/api/tasks", createTasksRoutes(service, sse))
   })
@@ -319,6 +334,7 @@ describe("05: spec-field source + confirmation persistence + ready gate (integra
   it("AC3c: ready with goal_confirmed=true but ac unconfirmed → 409 + missing contains 'ac_confirmed' only", async () => {
     const id = insertTask(db, {
       name: "E2E_TD_gate_aconly",
+      workflow_ref: "e2e-td-04/simple", // satisfy the option-A gate → isolate ac_confirmed
       task_spec: {
         goal: "E2E_TD goal",
         ac: ["E2E_TD ac1", "E2E_TD ac2"],
@@ -334,9 +350,10 @@ describe("05: spec-field source + confirmation persistence + ready gate (integra
     expect(body.missing).toEqual(["ac_confirmed"])
   })
 
-  it("AC3d: ready with all confirmed → 200 ∧ status=ready", async () => {
+  it("AC3d: ready with all confirmed + simple workflow_ref → 200 ∧ status=ready", async () => {
     const id = insertTask(db, {
       name: "E2E_TD_gate_pass",
+      workflow_ref: "e2e-td-04/simple", // simple task requires a dispatch workflow_ref
       task_spec: {
         goal: "E2E_TD goal",
         ac: ["E2E_TD ac1"],
@@ -366,7 +383,60 @@ describe("05: spec-field source + confirmation persistence + ready gate (integra
     expect((await json<{ status: string }>(res)).status).toBe("ready")
   })
 
-  // ── AC4: confirmation persists across GET ─────────────────────────────
+  it("AC3f: ready on v3 SIMPLE task with all confirmed but NO workflow_ref → 409 + missing contains 'workflow_ref'", async () => {
+    // Option-A gate (2026-08-23): a simple v3 task (subunits < 2) materializes
+    // workflow_chain[0].workflow_ref from tasks.workflow_ref; an empty ref fails at
+    // runtime ("Workflow not found"), so enqueue must be rejected up-front.
+    const id = insertTask(db, {
+      name: "E2E_TD_gate_noref",
+      task_spec: {
+        goal: "E2E_TD goal",
+        ac: ["E2E_TD ac1"],
+        task_type: "coding",
+        goal_confirmed: true,
+        ac_confirmed: ["E2E_TD ac1"],
+      },
+      // workflow_ref omitted → NULL (the helper default) — the gated condition
+    })
+    const res = await app.request(`/api/tasks/${id}/ready`, { method: "POST" })
+    expect(res.status).toBe(409)
+    const body = await json<{ error: string; missing: string[] }>(res)
+    expect(body.missing).toContain("workflow_ref")
+    // Everything else IS satisfied → only workflow_ref missing
+    expect(body.missing).toEqual(["workflow_ref"])
+    // Task stays draft (not a partial flip)
+    const row = db.prepare("SELECT status FROM tasks WHERE id = ?").get(id) as { status: string }
+    expect(row.status).toBe("draft")
+  })
+
+  it("AC3g: ready on v3 COMPOSITE task (2+ subunits) with no task-level workflow_ref → 200 (built-in composition-task)", async () => {
+    // Composite materializes to the built-in 'composition-task' ref, so a
+    // task-level workflow_ref is NOT required by the option-A gate.
+    const id = insertTask(db, {
+      name: "E2E_TD_gate_comp",
+      task_spec: {
+        goal: "E2E_TD goal",
+        ac: ["E2E_TD ac1"],
+        task_type: "coding",
+        goal_confirmed: true,
+        ac_confirmed: ["E2E_TD ac1"],
+        subunits: [
+          {
+            name: "su-a", workspace_spec: { org: ORG, branch_prefix: "aa", projects: [] },
+            workflow_ref: "wf-a", input_values: {}, skills: [], resources: [],
+          },
+          {
+            name: "su-b", workspace_spec: { org: ORG, branch_prefix: "bb", projects: [] },
+            workflow_ref: "wf-b", input_values: {}, skills: [], resources: [],
+          },
+        ],
+      },
+      // workflow_ref (task-level) intentionally NULL — composite doesn't need it
+    })
+    const res = await app.request(`/api/tasks/${id}/ready`, { method: "POST" })
+    expect(res.status).toBe(200)
+    expect((await json<{ status: string }>(res)).status).toBe("ready")
+  })
 
   it("AC4: confirming goal_confirmed/ac_confirmed via spec-field survives a fresh GET (DB-backed, not UI temp)", async () => {
     const id = insertTask(db, {
@@ -393,5 +463,128 @@ describe("05: spec-field source + confirmation persistence + ready gate (integra
     const detail = await json<{ task_spec: { goal_confirmed?: boolean; ac_confirmed?: string[] } }>(res)
     expect(detail.task_spec.goal_confirmed).toBe(true)
     expect(detail.task_spec.ac_confirmed).toEqual(["E2E_TD ac1"])
+  })
+
+  // ── task-workflow-handoff (ADR-0013): workflow_ref spec-field bind + view ──
+
+  it("AC7: spec-field(workflow_ref=<resolvable>) → 200 + version bump + SSE + column set", async () => {
+    const id = insertTask(db, {
+      name: "E2E_TD_wf_bind",
+      task_spec: { goal: "E2E_TD goal", ac: ["E2E_TD ac1"], task_type: "coding" },
+    })
+    // Resolvable via stub builtin (matches "e2e-td" substring)
+    const res = await app.request(`/api/tasks/${id}/spec-field`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ field: "workflow_ref", value: "e2e-td/my-flow" }),
+    })
+    expect(res.status).toBe(200)
+    const result = await json<{ version: number }>(res)
+    expect(result.version).toBe(2)
+
+    // SSE: spec_field_update carries field="workflow_ref" + value
+    const event = specEvents.find((e) => e.task_id === id && e.field === "workflow_ref")
+    expect(event).toBeDefined()
+    expect(event!.value).toBe("e2e-td/my-flow")
+
+    // DB column set
+    const row = db.prepare("SELECT workflow_ref FROM tasks WHERE id = ?").get(id) as { workflow_ref: string | null }
+    expect(row.workflow_ref).toBe("e2e-td/my-flow")
+  })
+
+  it("AC7: spec-field(workflow_ref=<UNRESOLVABLE>) → 400 + column unchanged", async () => {
+    const id = insertTask(db, {
+      name: "E2E_TD_wf_reject",
+      task_spec: { goal: "E2E_TD goal", ac: ["E2E_TD ac1"], task_type: "coding" },
+    })
+    // Non-resolvable: "unknown/flow" doesn't match the e2e-td-* stub
+    const res = await app.request(`/api/tasks/${id}/spec-field`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ field: "workflow_ref", value: "unknown/flow" }),
+    })
+    expect(res.status).toBe(400)
+    const body = await json<{ error: string }>(res)
+    expect(body.error).toContain("workflow not resolvable")
+
+    // Column remains null
+    const row = db.prepare("SELECT workflow_ref FROM tasks WHERE id = ?").get(id) as { workflow_ref: string | null }
+    expect(row.workflow_ref).toBeNull()
+  })
+
+  it("AC7: spec-field(workflow_ref=<empty>) → 400 (shared validator)", async () => {
+    const id = insertTask(db, {
+      name: "E2E_TD_wf_empty",
+      task_spec: { goal: "E2E_TD goal", ac: ["E2E_TD ac1"], task_type: "coding" },
+    })
+    const res = await app.request(`/api/tasks/${id}/spec-field`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ field: "workflow_ref", value: "" }),
+    })
+    expect(res.status).toBe(400)
+  })
+
+  it("AC9: ready on v3 SIMPLE task with NON-EMPTY but UNRESOLVABLE workflow_ref → 409 + missing contains 'workflow_ref' (S3 gate upgrade)", async () => {
+    // S3 gate upgrade: non-empty alone is no longer enough. The ref must be
+    // resolvable against the resolution set. A non-empty but unresolvable ref
+    // is treated the same as empty.
+    const id = insertTask(db, {
+      name: "E2E_TD_gate_unresolvable",
+      workflow_ref: "unknown/flow", // not in stub builtin; no task-home file
+      task_spec: {
+        goal: "E2E_TD goal",
+        ac: ["E2E_TD ac1"],
+        task_type: "coding",
+        goal_confirmed: true,
+        ac_confirmed: ["E2E_TD ac1"],
+      },
+    })
+    const res = await app.request(`/api/tasks/${id}/ready`, { method: "POST" })
+    expect(res.status).toBe(409)
+    const body = await json<{ error: string; missing: string[] }>(res)
+    expect(body.missing).toContain("workflow_ref")
+    // Task stays draft
+    const row = db.prepare("SELECT status FROM tasks WHERE id = ?").get(id) as { status: string }
+    expect(row.status).toBe("draft")
+  })
+
+  // ── GET /:id/workflow-ref (AC8 view endpoint) ─────────────────────────
+
+  it("AC8: GET /workflow-ref on unbound task → {ref,content,source}=null", async () => {
+    const id = insertTask(db, { name: "E2E_TD_wf_unbound" })
+    const res = await app.request(`/api/tasks/${id}/workflow-ref`)
+    expect(res.status).toBe(200)
+    const body = await json<{ ref: string | null; content: string | null; source: string | null }>(res)
+    expect(body.ref).toBeNull()
+    expect(body.content).toBeNull()
+    expect(body.source).toBeNull()
+  })
+
+  it("AC8: GET /workflow-ref on bound (resolvable) task → {ref,content,source}", async () => {
+    const id = insertTask(db, {
+      name: "E2E_TD_wf_bound",
+      workflow_ref: "e2e-td/my-flow",
+    })
+    const res = await app.request(`/api/tasks/${id}/workflow-ref`)
+    expect(res.status).toBe(200)
+    const body = await json<{ ref: string; content: string; source: string }>(res)
+    expect(body.ref).toBe("e2e-td/my-flow")
+    expect(body.content).toBe("stub-builtin")
+    expect(body.source).toBe("builtin")
+  })
+
+  it("AC8: GET /workflow-ref on bound but unresolvable ref → 400", async () => {
+    const id = insertTask(db, {
+      name: "E2E_TD_wf_stale",
+      workflow_ref: "unknown/stale",
+    })
+    const res = await app.request(`/api/tasks/${id}/workflow-ref`)
+    expect(res.status).toBe(400)
+  })
+
+  it("AC8: GET /workflow-ref on missing task → 404", async () => {
+    const res = await app.request("/api/tasks/no-such-id/workflow-ref")
+    expect(res.status).toBe(404)
   })
 })

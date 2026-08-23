@@ -128,7 +128,16 @@ describe("04: task create extension + skill-groups route (integration)", () => {
     const materializer = new PluginMaterializer(rm)
     agentSessionDAO = new AgentSessionDAO(db)
     const sse = new SSEService()
-    const service = new TasksService(db, sse, agentSessionDAO, taskHome, materializer)
+    const service = new TasksService(
+      db,
+      sse,
+      agentSessionDAO,
+      taskHome,
+      materializer,
+      // task-workflow-handoff (ADR-0013): stub BuiltInWorkflowService recognizes
+      // any ref containing "e2e-td" so the ready-gate resolver succeeds.
+      { get: (ref: string) => ref.includes("e2e-td") ? { ref, content: "stub" } : null } as any,
+    )
     app = new Hono()
     app.route("/api/tasks", createTasksRoutes(service, sse))
     app.route("/api/skill-groups", createSkillGroupsRoutes(rm))
@@ -463,6 +472,16 @@ describe("04: task create extension + skill-groups route (integration)", () => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ field: "ac_confirmed", value: ["E2E_TD ac1"] }),
     })
+    // Gate (option A): simple v3 task requires a dispatch workflow_ref — bind one
+    // via the real authoring PUT path (If-Match optimistic lock, re-GET for version).
+    const beforePut = await app.request(`/api/tasks/${task.id}`)
+    const current = await json<{ version: number }>(beforePut)
+    const put = await app.request(`/api/tasks/${task.id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json", "If-Match": String(current.version) },
+      body: JSON.stringify({ workflow_ref: "e2e-td-v3/simple" }),
+    })
+    expect(put.status).toBe(200)
     const readyRes = await app.request(`/api/tasks/${task.id}/ready`, { method: "POST" })
     expect(readyRes.status).toBe(200)
     const home = taskHome.homePath(task.id)

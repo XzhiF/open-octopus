@@ -18,6 +18,7 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest"
 import Database from "better-sqlite3"
+import fs from "fs"
 import path from "path"
 import os from "os"
 import { materializeTaskSpecToConfig } from "../services/scheduler/scheduler-service"
@@ -563,7 +564,15 @@ describe("08 injection-seam: TasksService.readyTask uses injected TaskHomeServic
     sse = new SSEService()
     // Inject a TaskHomeService whose baseDir is the temp prefix. readyTask will
     // call artifactsDir(id) = path.join(tempBase, "tasks", id, "artifacts").
-    svc = new TasksService(db, sse, undefined, new TaskHomeService(tempBase))
+    // task-workflow-handoff (ADR-0013): stub BuiltInWorkflowService recognizes
+    // any ref containing "e2e-td" (same pattern as v3-gates).
+    const stubBuiltIn = {
+      get(ref: string) {
+        if (ref.includes("e2e-td")) return { ref, content: "stub-builtin" }
+        return null
+      },
+    } as any
+    svc = new TasksService(db, sse, undefined, new TaskHomeService(tempBase), undefined, stubBuiltIn)
   })
   afterEach(() => {
     db.close()
@@ -571,14 +580,14 @@ describe("08 injection-seam: TasksService.readyTask uses injected TaskHomeServic
   })
 
   /** Seed a draft task row directly (mirrors tasks-v3-gates.test.ts insertTask). */
-  function insertDraftTask(id: string, spec: Record<string, unknown>): void {
+  function insertDraftTask(id: string, spec: Record<string, unknown>, workflowRef: string | null = null): void {
     const now = new Date().toISOString()
     db.prepare(`
       INSERT INTO tasks (id, org, name, status, source_chat_session_id, task_spec,
         authoring_resources, resources, skills, project_ids, workflow_ref, version,
         deleted_at, created_at, updated_at, completed_at)
-      VALUES (?, ?, ?, 'draft', NULL, ?, '[]', '[]', '[]', '[]', NULL, 1, NULL, ?, ?, NULL)
-    `).run(id, ORG, "r2-05-task", JSON.stringify(spec), now, now)
+      VALUES (?, ?, ?, 'draft', NULL, ?, '[]', '[]', '[]', '[]', ?, 1, NULL, ?, ?, NULL)
+    `).run(id, ORG, "r2-05-task", JSON.stringify(spec), workflowRef, now, now)
   }
 
   /** Read the schedule config that readyTask materialized (S2 origin lookup). */
@@ -600,7 +609,7 @@ describe("08 injection-seam: TasksService.readyTask uses injected TaskHomeServic
       task_type: "coding",            // v3 → readyTask injects taskArtifactsDir
       goal_confirmed: true,            // gate satisfied
       ac_confirmed: ["E2E_TD ac1"],
-    })
+    }, "e2e-td-08/wf") // simple task → dispatch workflow_ref required by the gate
 
     const dto = svc.readyTask(id)
     expect(dto.status).toBe("ready")
@@ -643,5 +652,87 @@ describe("08 injection-seam: TasksService.readyTask uses injected TaskHomeServic
     expect(Object.keys(iv)).toEqual([])
     // No workflow_ref seeded on the task → materialize defaults to '' for simple.
     expect(config.workflow_chain[0].workflow_ref).toBe("")
+  })
+
+  it("AC1-seam: v3 task ready → config carries task_workflows_dir (ADR-0013 injection seam)", () => {
+    const id = "e2e-td-08-r2-05-wf"
+    insertDraftTask(id, {
+      goal: "E2E_TD r2-05 wf", ac: ["E2E_TD ac1"],
+      task_type: "coding",
+      goal_confirmed: true,
+      ac_confirmed: ["E2E_TD ac1"],
+    }, "e2e-td-08/wf")
+
+    const dto = svc.readyTask(id)
+    expect(dto.status).toBe("ready")
+
+    const config = readScheduleConfig(id)
+    const iv = config.workflow_chain[0].input_values as Record<string, unknown>
+    const expected = path.join(tempBase, "tasks", id, "workflows")
+    expect(iv.task_workflows_dir).toBe(expected)
+  })
+})
+
+// ──────────────────────────────────────────────────────────────────────
+//  AC10: dispatch copy — {home}/workflows/*.yaml → ws workflows/ (ADR-0013)
+// ──────────────────────────────────────────────────────────────────────
+
+describe("08 AC10: dispatch copy — task_workflows_dir YAMLs copied into ws workflows/", () => {
+  let tmpHome: string
+  let tmpWs: string
+
+  beforeEach(() => {
+    tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-td-ac10-home-"))
+    tmpWs = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-td-ac10-ws-"))
+    // Create ws workflows/ dir (as createFromSpec would)
+    fs.mkdirSync(path.join(tmpWs, "workflows"), { recursive: true })
+  })
+
+  afterEach(() => {
+    try { fs.rmSync(tmpHome, { recursive: true, force: true }) } catch { /* */ }
+    try { fs.rmSync(tmpWs, { recursive: true, force: true }) } catch { /* */ }
+  })
+
+  it("copies YAML files from task_workflows_dir into ws workflows/", async () => {
+    // Seed task home workflows/ dir with two YAMLs + one non-YAML
+    const srcDir = path.join(tmpHome, "tasks", "task-1", "workflows")
+    fs.mkdirSync(srcDir, { recursive: true })
+    fs.writeFileSync(path.join(srcDir, "my-flow.yaml"), "workflow: my-flow\n", "utf-8")
+    fs.writeFileSync(path.join(srcDir, "other.yml"), "workflow: other\n", "utf-8")
+    fs.writeFileSync(path.join(srcDir, "readme.md"), "ignore me", "utf-8")
+
+    // Exercise the exported helper directly (it's a pure FS function, no DB)
+    const { copyTaskWorkflowsToWs } = await import(
+      "../services/scheduler/executors/workflow-executor"
+    )
+    copyTaskWorkflowsToWs(srcDir, tmpWs)
+
+    // Both YAMLs present in ws workflows/
+    const wsWf = path.join(tmpWs, "workflows")
+    expect(fs.existsSync(path.join(wsWf, "my-flow.yaml"))).toBe(true)
+    expect(fs.existsSync(path.join(wsWf, "other.yml"))).toBe(true)
+    // Non-YAML not copied
+    expect(fs.existsSync(path.join(wsWf, "readme.md"))).toBe(false)
+    // Content preserved
+    expect(fs.readFileSync(path.join(wsWf, "my-flow.yaml"), "utf-8")).toBe("workflow: my-flow\n")
+  })
+
+  it("no-op when source dir is missing (legacy tasks)", async () => {
+    const { copyTaskWorkflowsToWs } = await import(
+      "../services/scheduler/executors/workflow-executor"
+    )
+    // Missing source dir — must not throw, must not add files to ws
+    copyTaskWorkflowsToWs("/nonexistent/path", tmpWs)
+    expect(fs.readdirSync(path.join(tmpWs, "workflows"))).toEqual([])
+  })
+
+  it("no-op when source dir is empty", async () => {
+    const emptyDir = path.join(tmpHome, "empty")
+    fs.mkdirSync(emptyDir, { recursive: true })
+    const { copyTaskWorkflowsToWs } = await import(
+      "../services/scheduler/executors/workflow-executor"
+    )
+    copyTaskWorkflowsToWs(emptyDir, tmpWs)
+    expect(fs.readdirSync(path.join(tmpWs, "workflows"))).toEqual([])
   })
 })
