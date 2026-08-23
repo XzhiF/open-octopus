@@ -29,6 +29,10 @@ import {
 const SKILLS_DIR = "skills"
 const ARTIFACTS_DIR = "artifacts"
 const ARTIFACTS_JSON = "artifacts.json"
+// task-workflow-handoff (ADR-0013): task home owns a `workflows/` directory for
+// agent-authored workflow YAMLs. Dispatch copies these into the execution ws
+// workflows/ (via WorkflowExecutor.execute post-createFromSpec).
+const WORKFLOWS_DIR = "workflows"
 const RULES_DIR = path.join(".claude", "rules")
 const RULES_FILENAME = "task-context.md"
 const CONTEXT_FILENAME = "context.md"
@@ -80,6 +84,44 @@ export class TaskHomeService {
     return path.join(this.homePath(taskId), ARTIFACTS_DIR)
   }
 
+  /** Directory holding agent-authored workflow YAMLs (ADR-0013). Dispatch
+   *  copies these into the execution ws `workflows/` so the engine's existing
+   *  `{ws}/workflows/` resolver finds them. Pure path — no FS side effect. */
+  workflowsDir(taskId: string): string {
+    return path.join(this.homePath(taskId), WORKFLOWS_DIR)
+  }
+
+  /** Read a workflow YAML from `{home}/workflows/{ref}` (ADR-0013). `ref` is
+   *  a filename in the workflows/ directory (e.g. `my-flow.yaml`). Returns the
+   *  file content on hit, null on miss. Rejects path-escape attempts (ref
+   *  must be a bare filename with no `/`, `\`, `..`). */
+  readWorkflowFile(taskId: string, ref: string): string | null {
+    // Path-injection guard — ref must be a bare filename (no separators or escapes).
+    if (ref.includes("/") || ref.includes("\\") || ref.includes("..") || ref.includes("\0")) {
+      return null
+    }
+    const dir = this.workflowsDir(taskId)
+    const filePath = path.join(dir, ref)
+    if (!fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) {
+      return null
+    }
+    return fs.readFileSync(filePath, "utf-8")
+  }
+
+  /** List YAML filenames in `{home}/workflows/` (ADR-0013). Returns [] when
+   *  the directory is missing or empty. Bare filenames only (no path prefix). */
+  listWorkflowFiles(taskId: string): string[] {
+    const dir = this.workflowsDir(taskId)
+    if (!fs.existsSync(dir)) return []
+    try {
+      return fs
+        .readdirSync(dir)
+        .filter((f) => (f.endsWith(".yaml") || f.endsWith(".yml")) && fs.statSync(path.join(dir, f)).isFile())
+    } catch {
+      return []
+    }
+  }
+
   /** Path to artifacts.json (may not exist yet). */
   private artifactsJsonPath(taskId: string): string {
     return path.join(this.artifactsDir(taskId), ARTIFACTS_JSON)
@@ -105,6 +147,10 @@ export class TaskHomeService {
     const home = this.homePath(taskId)
     fs.mkdirSync(path.join(home, SKILLS_DIR), { recursive: true })
     fs.mkdirSync(path.join(home, ARTIFACTS_DIR), { recursive: true })
+    // task-workflow-handoff (ADR-0013): workflows/ for agent-authored YAMLs.
+    // Dispatch copies these into the execution ws workflows/ so the engine
+    // resolver hits them. Empty at creation; the agent (or a seed) writes.
+    fs.mkdirSync(path.join(home, WORKFLOWS_DIR), { recursive: true })
     fs.mkdirSync(path.join(home, RULES_DIR), { recursive: true })
     this.writeTaskContextRule(taskId)
     this.writeContextFile(taskId, opts.org, opts.projects, opts.skillGroups)

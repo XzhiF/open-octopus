@@ -51,17 +51,18 @@ describe("TaskHomeService", () => {
       expect(fs.existsSync(expected)).toBe(false)
     })
 
-    it("createHome builds the skills/ + artifacts/ + .claude/rules/ skeleton + context.md", () => {
+    it("createHome builds the skills/ + artifacts/ + workflows/ + .claude/rules/ skeleton + context.md", () => {
       const id = "t-1"
       const home = svc.createHome(id)
       expect(home).toBe(svc.homePath(id))
       expect(fs.existsSync(path.join(home, "skills"))).toBe(true)
       expect(fs.existsSync(path.join(home, "artifacts"))).toBe(true)
+      expect(fs.existsSync(path.join(home, "workflows"))).toBe(true)
       expect(fs.existsSync(path.join(home, ".claude", "rules"))).toBe(true)
       expect(fs.existsSync(path.join(home, ".claude", "rules", "task-context.md"))).toBe(true)
       expect(fs.existsSync(path.join(home, "context.md"))).toBe(true)
       const entries = fs.readdirSync(home).sort()
-      expect(entries).toEqual([".claude", "artifacts", "context.md", "skills", "spec.json"])
+      expect(entries).toEqual([".claude", "artifacts", "context.md", "skills", "spec.json", "workflows"])
     })
 
     it("createHome writes task-context.md with path constraints only", () => {
@@ -91,6 +92,57 @@ describe("TaskHomeService", () => {
       expect(ctx).toContain("/home/user/octopus")
       expect(ctx).toContain("locked skill groups: superpowers-zh")
       expect(ctx).toContain("cwd:")
+    })
+
+    // ── task-workflow-handoff (ADR-0013): workflows/ dir + readWorkflowFile ──
+
+    it("workflowsDir is a pure path derivation", () => {
+      const id = "t-wf"
+      const expected = path.join(base, "tasks", id, "workflows")
+      expect(svc.workflowsDir(id)).toBe(expected)
+    })
+
+    it("readWorkflowFile returns null for missing home / missing file", () => {
+      const id = "t-wf-miss"
+      // No home created → directory missing → null
+      expect(svc.readWorkflowFile(id, "missing.yaml")).toBeNull()
+      // Home created but file missing → null
+      svc.createHome(id)
+      expect(svc.readWorkflowFile(id, "missing.yaml")).toBeNull()
+    })
+
+    it("readWorkflowFile rejects path-escape attempts (ref must be bare filename)", () => {
+      const id = "t-wf-escape"
+      svc.createHome(id)
+      // Write a real file, then try to read via escape path
+      fs.writeFileSync(path.join(svc.workflowsDir(id), "secret.yaml"), "content", "utf-8")
+      expect(svc.readWorkflowFile(id, "../secret.yaml")).toBeNull()
+      expect(svc.readWorkflowFile(id, "sub/secret.yaml")).toBeNull()
+      expect(svc.readWorkflowFile(id, "..\\secret.yaml")).toBeNull()
+      expect(svc.readWorkflowFile(id, "secret.yaml\0.txt")).toBeNull()
+    })
+
+    it("readWorkflowFile returns content on hit", () => {
+      const id = "t-wf-hit"
+      svc.createHome(id)
+      const yaml = "workflow:\n  name: my-flow\n"
+      fs.writeFileSync(path.join(svc.workflowsDir(id), "my-flow.yaml"), yaml, "utf-8")
+      expect(svc.readWorkflowFile(id, "my-flow.yaml")).toBe(yaml)
+    })
+
+    it("listWorkflowFiles lists YAML filenames, ignores non-YAML", () => {
+      const id = "t-wf-list"
+      svc.createHome(id)
+      fs.writeFileSync(path.join(svc.workflowsDir(id), "a.yaml"), "x", "utf-8")
+      fs.writeFileSync(path.join(svc.workflowsDir(id), "b.yml"), "x", "utf-8")
+      fs.writeFileSync(path.join(svc.workflowsDir(id), "readme.md"), "x", "utf-8")
+      fs.mkdirSync(path.join(svc.workflowsDir(id), "subdir"), { recursive: true })
+      const files = svc.listWorkflowFiles(id)
+      expect(files.sort()).toEqual(["a.yaml", "b.yml"])
+    })
+
+    it("listWorkflowFiles returns [] when home/workflows missing", () => {
+      expect(svc.listWorkflowFiles("no-such-id")).toEqual([])
     })
 
     it("writeContextFile refreshes dynamic state without touching rules", () => {
@@ -180,7 +232,7 @@ describe("TaskHomeService", () => {
       svc.createHome(id)
       const home = svc.homePath(id)
       const entries = fs.readdirSync(home).sort()
-      expect(entries).toEqual([".claude", "artifacts", "context.md", "skills", "spec.json"])
+      expect(entries).toEqual([".claude", "artifacts", "context.md", "skills", "spec.json", "workflows"])
     })
 
     it("ensureRulesFile backfills rules for existing homes without .claude/", () => {
