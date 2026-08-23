@@ -298,3 +298,42 @@ describe("SpecPanel — subunits per-subunit resources", () => {
 function mockedToastError(toast: { error?: unknown }): (msg: string) => unknown {
   return toast.error as (msg: string) => unknown
 }
+
+// ── task-workflow-handoff (ADR-0013, S5): workflow_ref display ─────────
+
+describe("SpecPanel — workflow_ref display (ADR-0013)", () => {
+  it("shows unbound hint when workflow_ref is empty", () => {
+    const task = makeTask({ id: "t1", version: 1 })
+    render(<SpecPanel task={task} onMutated={() => {}} />)
+    // Hint about agent binding
+    expect(screen.getByTestId("workflow-ref-display")).toBeDefined()
+    expect(screen.getByText(/未绑定工作流/)).toBeDefined()
+  })
+
+  it("displays bound workflow_ref with 查看 button", () => {
+    const task = makeTask({ id: "t1", version: 1, workflow_ref: "octo/my-flow" })
+    render(<SpecPanel task={task} onMutated={() => {}} />)
+    expect(screen.getByText("octo/my-flow")).toBeDefined()
+    expect(screen.getByRole("button", { name: /查看/ })).toBeDefined()
+  })
+
+  it("SSE spec_field_update(workflow_ref) updates display live", () => {
+    const task = makeTask({ id: "t1", version: 1 })
+    render(<SpecPanel task={task} onMutated={() => {}} />)
+    // Initially unbound
+    expect(screen.getByText(/未绑定工作流/)).toBeDefined()
+    // SSE delivers the bind
+    act(() => {
+      specFieldListener?.({
+        data: JSON.stringify({
+          task_id: "t1",
+          field: "workflow_ref",
+          value: "octo/new-flow",
+          version: 2,
+        }),
+      })
+    })
+    // Now shows the bound value
+    expect(screen.getByText("octo/new-flow")).toBeDefined()
+  })
+})

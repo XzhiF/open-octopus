@@ -90,6 +90,11 @@ export function SpecPanel({ task, onMutated }: SpecPanelProps) {
   const [authoringResources, setAuthoringResources] = useState<ResourceRef[]>(
     task?.authoring_resources ?? [],
   )
+  // task-workflow-handoff (ADR-0013): workflow_ref state. Seeded from the task
+  // row's workflow_ref column (not task_spec — it's a top-level column like
+  // skills/projects). SSE spec_field_update with field="workflow_ref" updates
+  // this in real time.
+  const [workflowRef, setWorkflowRef] = useState<string>(task?.workflow_ref ?? "")
   const [saving, setSaving] = useState(false)
 
   const taskId = task?.id
@@ -118,6 +123,7 @@ export function SpecPanel({ task, onMutated }: SpecPanelProps) {
     setProjects((t.project_ids ?? []).map((name) => ({ name, source_path: "", group: "" })))
     setResources(t.resources ?? [])
     setAuthoringResources(t.authoring_resources ?? [])
+    setWorkflowRef(t.workflow_ref ?? "")
     // eslint-disable-next-line react-hooks/exhaustive-deps -- re-seed on switch only
   }, [taskId, task?.version]) // SG8fix: re-seed on version too (catch missed SSE via poll)
 
@@ -169,6 +175,10 @@ export function SpecPanel({ task, onMutated }: SpecPanelProps) {
         break
       case "authoring_resources":
         setAuthoringResources(value as ResourceRef[])
+        break
+      case "workflow_ref":
+        // task-workflow-handoff (ADR-0013): SSE-driven live update.
+        setWorkflowRef(value as string)
         break
     }
   }
@@ -266,6 +276,9 @@ export function SpecPanel({ task, onMutated }: SpecPanelProps) {
       </section>
 
       <SkillsSelector value={skills} onChange={setSkills} />
+
+      {/* task-workflow-handoff (ADR-0013): workflow_ref display + view. */}
+      <WorkflowRefDisplay taskId={task?.id ?? null} workflowRef={workflowRef} />
 
       <section className="space-y-2">
         <Label htmlFor="task-goal" className="text-xs text-muted-foreground">目标 (goal)</Label>
@@ -489,6 +502,104 @@ export function ResourcePicker({ scope, value, onChange }: ResourcePickerProps) 
             })}
           </div>
         </ScrollArea>
+      )}
+    </section>
+  )
+}
+
+// ── WorkflowRefDisplay (ADR-0013, S5 / US5 / AC8) ────────────────────
+//
+// Shows the bound workflow_ref (top-level column, not in task_spec). The value
+// arrives via SSE spec_field_update in real time. Clicking "查看" fetches
+// GET /api/tasks/:id/workflow-ref and renders the content + source in a
+// degraded-friendly way. When no ref is bound, shows a muted hint that the
+// agent will bind one during HOW-handoff.
+
+interface WorkflowRefDisplayProps {
+  taskId: string | null
+  workflowRef: string
+}
+
+function WorkflowRefDisplay({ taskId, workflowRef }: WorkflowRefDisplayProps) {
+  const [viewing, setViewing] = useState(false)
+  const [content, setContent] = useState<string | null>(null)
+  const [source, setSource] = useState<string | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const handleOpen = async () => {
+    if (!taskId || !workflowRef) return
+    setViewing(true)
+    setLoading(true)
+    setError(null)
+    try {
+      const res = await fetch(`${getServerUrl()}/api/tasks/${taskId}/workflow-ref`)
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}))
+        setError((body as { error?: string }).error ?? `HTTP ${res.status}`)
+        setLoading(false)
+        return
+      }
+      const data = (await res.json()) as { ref: string | null; content: string | null; source: string | null }
+      setContent(data.content)
+      setSource(data.source)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "fetch failed")
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleClose = () => {
+    setViewing(false)
+    setContent(null)
+    setSource(null)
+    setError(null)
+  }
+
+  return (
+    <section className="space-y-2" data-testid="workflow-ref-display">
+      <Label className="text-xs text-muted-foreground">工作流 (workflow_ref)</Label>
+      {workflowRef ? (
+        <div className="flex items-center gap-2">
+          <span className="text-xs font-mono truncate flex-1" title={workflowRef}>
+            {workflowRef}
+          </span>
+          <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={handleOpen}>
+            查看
+          </Button>
+        </div>
+      ) : (
+        <p className="text-xs text-muted-foreground italic">
+          未绑定工作流 — task-author 在 HOW-handoff 阶段会枚举已安装工作流并推荐。
+        </p>
+      )}
+      {viewing && (
+        <div className="rounded-md border border-border p-2 space-y-2" data-testid="workflow-ref-viewer">
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] text-muted-foreground">来源: {source ?? "—"}</span>
+            <button
+              onClick={handleClose}
+              className="text-[10px] text-muted-foreground hover:text-foreground"
+              aria-label="关闭"
+            >
+              关闭
+            </button>
+          </div>
+          {loading ? (
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              <Spinner className="size-3.5" /> 加载中…
+            </div>
+          ) : error ? (
+            <p className="text-xs text-destructive">{error}</p>
+          ) : content ? (
+            <pre className="text-[11px] font-mono whitespace-pre-wrap overflow-auto max-h-60 rounded bg-muted p-2">
+              {content}
+            </pre>
+          ) : (
+            <p className="text-xs text-muted-foreground italic">无内容</p>
+          )}
+        </div>
       )}
     </section>
   )
