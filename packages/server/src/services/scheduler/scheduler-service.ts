@@ -186,6 +186,11 @@ function isCompositeTaskSpec(task_spec: TaskSpec): boolean {
 //     firstStep.input_values entirely).
 // Omitted (undefined) for legacy tasks that have no task home (AC4 backward
 // compat — createJob/updateJob paths don't pass it).
+//
+// task-workflow-handoff (ADR-0013): taskWorkflowsDir is injected as
+// $vars.task_workflows_dir for simple tasks (mirroring task_artifacts_dir).
+// WorkflowExecutor reads this post-createFromSpec to copy agent-authored
+// workflow YAMLs from the task home into the execution ws workflows/.
 export function materializeTaskSpecToConfig(
   task_spec: TaskSpec,
   project_ids: string[],
@@ -194,6 +199,7 @@ export function materializeTaskSpecToConfig(
   skills?: string[],
   resources?: ResourceRef[],
   taskArtifactsDir?: string,
+  taskWorkflowsDir?: string,
 ): WorkflowConfig {
   const isComposite = isCompositeTaskSpec(task_spec)
   const projects = project_ids.map((id) => ({ name: id, source_path: '', group: '' }))
@@ -212,6 +218,13 @@ export function materializeTaskSpecToConfig(
   if (taskArtifactsDir) {
     simpleInputValues.task_artifacts_dir = taskArtifactsDir
     compositeInputValues.task_artifacts_dir = taskArtifactsDir
+  }
+  // task-workflow-handoff (ADR-0013): task_workflows_dir injection (mirrors
+  // task_artifacts_dir). WorkflowExecutor reads this to copy {home}/workflows/
+  // YAMLs into the execution ws `workflows/` post-createFromSpec.
+  if (taskWorkflowsDir) {
+    simpleInputValues.task_workflows_dir = taskWorkflowsDir
+    compositeInputValues.task_workflows_dir = taskWorkflowsDir
   }
   const config: WorkflowConfig = {
     schema_version: '3.0',

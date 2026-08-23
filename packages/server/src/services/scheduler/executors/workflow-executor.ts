@@ -1,7 +1,7 @@
 import Database from 'better-sqlite3'
 import { randomUUID } from 'crypto'
-import { readFileSync } from 'fs'
-import { join } from 'path'
+import fs, { readFileSync } from 'fs'
+import path, { join } from 'path'
 import { parseExpression } from 'cron-parser'
 import { getExecutionService } from '../../execution-service-registry'
 import { SSEService } from '../../sse'
@@ -21,6 +21,33 @@ const MAX_PARALLEL_WORKSPACES = parseInt(
   process.env.OCTOPUS_SCHEDULER_MAX_PARALLEL ?? '3',
   10,
 )
+
+/** task-workflow-handoff (ADR-0013, S2a): copy YAML files from the task home's
+ *  `workflows/` directory into the execution workspace's `workflows/` dir. The
+ *  engine's existing `{ws}/workflows/` resolver finds them on create. Empty
+ *  source dir is a no-op (no YAML to copy → nothing copied). Missing source
+ *  dir is also a no-op (legacy tasks may lack the dir). */
+export function copyTaskWorkflowsToWs(taskWorkflowsDir: string, wsPath: string): void {
+  if (!fs.existsSync(taskWorkflowsDir)) return
+  const wsWorkflowsDir = path.join(wsPath, "workflows")
+  // Ensure ws workflows/ exists (createFromSpec already creates it, but this
+  // is defensive — a test or a non-standard scaffold may skip it).
+  fs.mkdirSync(wsWorkflowsDir, { recursive: true })
+  const entries = fs.readdirSync(taskWorkflowsDir)
+  for (const entry of entries) {
+    if (!entry.endsWith(".yaml") && !entry.endsWith(".yml")) continue
+    const src = path.join(taskWorkflowsDir, entry)
+    // Defensive: skip non-files (subdirs, symlinks to dirs) — we only copy YAML files.
+    try {
+      const stat = fs.statSync(src)
+      if (!stat.isFile()) continue
+    } catch {
+      continue
+    }
+    const dst = path.join(wsWorkflowsDir, entry)
+    fs.copyFileSync(src, dst)
+  }
+}
 
 /**
  * Ticket 04 (composite dispatch): the workflow_ref of the composition-task template
@@ -248,8 +275,36 @@ export class WorkflowExecutor implements Executor {
       }
     }
 
+    // task-workflow-handoff (ADR-0013, S2a): copy agent-authored workflow YAMLs
+    // from the task home's `workflows/` directory (injected as
+    // $vars.task_workflows_dir by materializeTaskSpecToConfig) into the
+    // execution workspace's `workflows/` directory. The engine's existing
+    // `{ws}/workflows/` resolver then finds them on create(workflow_ref).
+    //
+    // The copy window is synchronous + inside the dispatch segment (between
+    // createFromSpec and execution.create), so race with other writers is
+    // effectively zero (ADR-0013 §Consequences). Copy errors are logged + the
+    // dispatch continues — if the bound ref was in the task-home set at bind
+    // time (guaranteed by the fail-fast resolver), the file is already on disk;
+    // a transient copy error is the only failure mode and the execution will
+    // surface "Workflow not found" clearly if it matters.
     // 10. Trigger the first workflow in chain (root execution only)
     const firstStep = config.workflow_chain[0]
+    try {
+      const inputValues = (firstStep.input_values ?? {}) as Record<string, unknown>
+      const taskWorkflowsDir = typeof inputValues.task_workflows_dir === 'string'
+        ? inputValues.task_workflows_dir
+        : null
+      if (taskWorkflowsDir) {
+        copyTaskWorkflowsToWs(taskWorkflowsDir, registry.wsPath)
+      }
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err)
+      // Non-fatal: log and continue. The engine resolver will surface "Workflow
+      // not found" if the bound ref was not copied successfully.
+      console.error(`[WorkflowExecutor] task_workflows copy failed (non-fatal): ${message}`)
+    }
+
     const now = new Date()
 
     const scheduleVars: Record<string, string> = {
