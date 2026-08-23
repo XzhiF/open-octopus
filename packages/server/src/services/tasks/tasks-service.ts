@@ -56,6 +56,10 @@ import { PluginMaterializer } from "./plugin-materializer"
 export { ArtifactAccessError } from "./task-home-service"
 import { getResourceRegistry } from "../resource-registry"
 import { WorkspaceGit } from "../workspace-git"
+import { BuiltInWorkflowService } from "../builtin-workflow"
+// task-workflow-handoff (ADR-0013): shared resolver for bind/ready/view.
+import { resolveWorkflowRef, isWorkflowRefResolvable } from "./workflow-ref-resolver"
+import type { WorkflowResolverDeps } from "./workflow-ref-resolver"
 
 /** Default task name when the caller provides none. NOT user-owned — the
  *  autosave seam (routes/clone/autosave.ts) may still adopt a smart title
@@ -290,6 +294,12 @@ export class TasksService {
    *  (so a test that never hits the v3 create path doesn't construct the global RM). */
   private taskHomeService: TaskHomeService
   private pluginMaterializer: PluginMaterializer | null
+  /** task-workflow-handoff (ADR-0013): workflow_ref resolver dependency. Injected
+   *  so tests can stub the builtin branch (a stub map, not the real
+   *  ResourceManager); production injects the global BuiltInWorkflowService.
+   *  Optional: when null, only the task-home branch of the resolution set is
+   *  checked — backward-compatible with ad-hoc callers that don't wire it. */
+  private builtInWorkflowService: BuiltInWorkflowService | null
 
   constructor(
     db: Database.Database,
@@ -299,6 +309,10 @@ export class TasksService {
     // 22 tasks-routes + tasks-v3-gates callers that pass only db/sse/agentDAO).
     taskHomeService?: TaskHomeService,
     pluginMaterializer?: PluginMaterializer,
+    // task-workflow-handoff (ADR-0013): tail-appended so existing callers are
+    // undisturbed. When omitted, the resolver's built-in branch is null (only
+    // task-home branch checked). index.ts passes the real BuiltInWorkflowService.
+    builtInWorkflowService?: BuiltInWorkflowService | null,
   ) {
     this.taskDAO = new TaskDAO(db)
     this.scheduleDAO = new ScheduleConfigDAO(db)
@@ -306,6 +320,18 @@ export class TasksService {
     this.sse = sse
     this.taskHomeService = taskHomeService ?? new TaskHomeService()
     this.pluginMaterializer = pluginMaterializer ?? null
+    this.builtInWorkflowService = builtInWorkflowService ?? null
+  }
+
+  /** Build the resolver deps for a given taskId (ADR-0013). Shared by the
+   *  bind-fail-fast (updateSpecField), the ready-gate upgrade, and the view
+   *  endpoint (GET /:id/workflow-ref). */
+  private resolverDeps(taskId: string): WorkflowResolverDeps {
+    return {
+      builtIn: this.builtInWorkflowService,
+      taskHome: this.taskHomeService,
+      taskId,
+    }
   }
 
   /** Lazily resolve the PluginMaterializer against the global ResourceManager
@@ -482,6 +508,30 @@ export class TasksService {
     const row = this.taskDAO.getById(taskId)
     if (!row) throw new TaskNotFoundError()
     return this.taskHomeService.readArtifactContent(taskId, requestedPath)
+  }
+
+  /** GET /api/tasks/:id/workflow-ref — view the bound workflow's content + source
+   *  (ADR-0013, US5 / AC8). Returns `{ ref, content, source }` on hit. When the
+   *  task has no bound ref (tasks.workflow_ref NULL/empty), returns
+   *  `{ ref: null, content: null, source: null }` so the SpecPanel can render a
+   *  degraded state (the user sees "未绑定工作流"). When a ref is bound but
+   *  unresolvable (e.g. the builtin was uninstalled between bind and view),
+   *  throws {@link TaskSpecFieldError} (→ 400 via classifyError). The task-exist
+   *  check runs FIRST so a missing task is a 404 (not a misleading 400/empty). */
+  viewWorkflowRef(taskId: string): { ref: string | null; content: string | null; source: string | null } {
+    const row = this.taskDAO.getById(taskId)
+    if (!row) throw new TaskNotFoundError()
+    const ref = row.workflow_ref?.trim() ?? ""
+    if (!ref) {
+      return { ref: null, content: null, source: null }
+    }
+    const resolution = resolveWorkflowRef(ref, this.resolverDeps(taskId))
+    if (!resolution) {
+      throw new TaskSpecFieldError(
+        `workflow not resolvable: '${ref}' (was bound but no longer in the resolution set)`,
+      )
+    }
+    return { ref: resolution.ref, content: resolution.content, source: resolution.source }
   }
 
   /** GET /api/tasks — list active tasks (kanban), filtered by status and/or org. */
@@ -687,6 +737,20 @@ export class TasksService {
     }
     const validatedValue = validateServerSpecField(input.field, input.value)
 
+    // task-workflow-handoff (ADR-0013): fail-fast pre-check on bind. The
+    // resolver's resolution set = installed built-ins ∪ task-home workflows/.
+    // A bind that can't resolve is REJECTED up-front (400 via TaskSpecFieldError)
+    // so the authoring agent corrects in the same turn — the ready-gate upgrade
+    // (below) is the second line of defense at enqueue.
+    if (input.field === "workflow_ref") {
+      const ref = validatedValue as string
+      if (!isWorkflowRefResolvable(ref, this.resolverDeps(id))) {
+        throw new TaskSpecFieldError(
+          `workflow not resolvable: '${ref}' (not an installed built-in and not found in task home workflows/)`,
+        )
+      }
+    }
+
     const fields: Record<string, unknown> = {}
     const currentSpec = parseJSON<TaskSpec>(existing.task_spec, {
       goal: "",
@@ -716,6 +780,11 @@ export class TasksService {
         break
       case "authoring_resources":
         fields.authoring_resources = JSON.stringify(validatedValue)
+        break
+      case "workflow_ref":
+        // ADR-0013: workflow_ref lives as a TOP-LEVEL column (tasks.workflow_ref)
+        // — same pattern as skills/projects/resources. NOT stored in task_spec.
+        fields.workflow_ref = validatedValue
         break
     }
 
@@ -852,6 +921,29 @@ export class TasksService {
       const acConfirmed = taskSpec.ac_confirmed ?? []
       const unconfirmedAc = (taskSpec.ac ?? []).filter((a) => !acConfirmed.includes(a))
       if (unconfirmedAc.length > 0) missing.push("ac_confirmed")
+      // 08 (gate, 2026-08-23 — option A): a SIMPLE v3 task (subunits < 2)
+      // materializes workflow_chain[0].workflow_ref straight from tasks.workflow_ref
+      // via materializeTaskSpecToConfig (`workflow_ref ?? ''` — scheduler-service.ts:
+      // 239). An empty ref fails at RUNTIME with "Workflow not found: " (EngineFactory
+      // resolveWorkflowWithSnapshot has no default fallback) AFTER the runner has
+      // claimed the schedule + provisioned a workspace + created an execution — a
+      // doomed task that burns a claim slot. Gate it here so enqueue is REJECTED
+      // up-front with a clear missing-items message ("先绑定工作流再入队"). Composite
+      // tasks (subunits >= 2) materialize to the BUILT-IN 'composition-task' ref and
+      // need no task-level workflow_ref — excluded from this check.
+      //
+      // task-workflow-handoff (ADR-0013, S3): gate upgrade from "non-empty" to
+      // "resolvable against the resolution set" (installed built-ins ∪ task-home
+      // workflows/). A non-empty but UNRESOLVABLE ref is treated the same as
+      // empty — added to missing. The resolver is the same one bind-fail-fast
+      // uses (single source of truth, three call sites).
+      const subunits = taskSpec.subunits ?? []
+      if (subunits.length < 2) {
+        const ref = existing.workflow_ref?.trim() ?? ""
+        if (!ref || !isWorkflowRefResolvable(ref, this.resolverDeps(id))) {
+          missing.push("workflow_ref")
+        }
+      }
       if (missing.length > 0) {
         throw new TaskReadyGateError(
           `Task not ready: missing ${missing.join(", ")}`,
@@ -879,9 +971,12 @@ export class TasksService {
     // for v3 tasks (task_type set — went through the two-phase flow → home
     // created at task creation). v2/legacy tasks (no task_type) skip injection
     // (AC4 backward compat — no home exists, the key is omitted not errored).
-    const taskArtifactsDir = taskSpec.task_type !== undefined
-      ? this.taskHomeService.artifactsDir(id)
-      : undefined
+    // task-workflow-handoff (ADR-0013): same pattern for task_workflows_dir —
+    // the WorkflowExecutor uses it post-createFromSpec to copy agent-authored
+    // workflow YAMLs from {home}/workflows/ into the execution ws workflows/.
+    const isV3 = taskSpec.task_type !== undefined
+    const taskArtifactsDir = isV3 ? this.taskHomeService.artifactsDir(id) : undefined
+    const taskWorkflowsDir = isV3 ? this.taskHomeService.workflowsDir(id) : undefined
     const config = materializeTaskSpecToConfig(
       taskSpec,
       projectIds,
@@ -890,6 +985,7 @@ export class TasksService {
       skills,
       resources,
       taskArtifactsDir,
+      taskWorkflowsDir,
     )
     const configJson = JSON.stringify(config)
     const now = new Date().toISOString()

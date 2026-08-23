@@ -72,6 +72,7 @@ import { TasksService } from "./services/tasks/tasks-service"
 import { TaskHomeService } from "./services/tasks/task-home-service"
 import { PluginMaterializer } from "./services/tasks/plugin-materializer"
 import { AssistWorkflowService } from "./services/tasks/assist-workflow-service"
+import { BuiltInWorkflowService } from "./services/builtin-workflow"
 import { WorkflowExecutor } from "./services/scheduler/executors/workflow-executor"
 import { AgentExecutor } from "./services/scheduler/executors/agent-executor"
 import { DashboardService } from "./services/scheduler/dashboard-service"
@@ -712,7 +713,13 @@ if (shouldServe) {
       // owns temp-workspace creation + execution trigger + output parsing.
       const taskHomeService = new TaskHomeService()
       const pluginMaterializer = new PluginMaterializer(resourceRegistry.get())
-      const tasksService = new TasksService(db, sse, daos!.agentSession, taskHomeService, pluginMaterializer)
+      // task-workflow-handoff (ADR-0013): BuiltInWorkflowService for the
+      // workflow_ref resolver (bind/ready/view). Wraps the global registry so
+      // the resolution set = installed built-ins ∪ task-home workflows/.
+      const builtInWorkflowService = new BuiltInWorkflowService(resourceRegistry.get())
+      const tasksService = new TasksService(
+        db, sse, daos!.agentSession, taskHomeService, pluginMaterializer, builtInWorkflowService,
+      )
       const assistService = new AssistWorkflowService(db, sse)
       app.route('/api/tasks', createTasksRoutes(tasksService, sse, assistService))
       app.route('/api/skill-groups', createSkillGroupsRoutes(resourceRegistry.get()))

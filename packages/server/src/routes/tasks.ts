@@ -397,6 +397,21 @@ export function createTasksRoutes(
     }
   })
 
+  // task-workflow-handoff (ADR-0013, US5 / AC8): view the bound workflow's
+  // content + source. 200 `{ ref, content, source }` on hit; `{ ref: null,
+  // content: null, source: null }` when unbound; 400 when the bound ref is no
+  // longer resolvable (uninstalled builtin / missing task-home file); 404 when
+  // the task doesn't exist.
+  router.get("/:id/workflow-ref", (c) => {
+    try {
+      const result = service.viewWorkflowRef(c.req.param("id"))
+      return c.json(result)
+    } catch (err: unknown) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status)
+    }
+  })
+
 
   return router
 }
