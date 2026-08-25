@@ -9,7 +9,7 @@
  */
 
 import type { IAgentProvider } from "@octopus/providers"
-import type { AutoAnswer, ModelAliasConfig, CrossExecResolver } from "@octopus/shared"
+import type { AutoAnswer, ModelAliasConfig, CrossExecResolver, TaskDispatchPort } from "@octopus/shared"
 import { VarPool } from "@octopus/shared"
 import type { EngineCallbacks, RuntimeNodeMeta } from "../engine"
 import type { JsonlLogger } from "../logger"
@@ -100,6 +100,26 @@ export interface InteractionConfig {
   cwd?: string
   sessionId?: string
   currentRound?: number
+}
+
+/** TaskDispatchExecutor — fans out a child schedule for composite tasks (G1 pause-resume).
+ *  Mirrors Interaction/Approval pause-resume: first execute() dispatches via the port
+ *  and returns pending_task_dispatch; the server's child-complete callback re-invokes
+ *  the engine (trigger-source-agnostic retryFrom) with a childOutput payload, which the
+ *  factory threads here so the resumed executor applies output_mapping and completes. */
+export interface TaskDispatchConfig {
+  /** Server-provided port; injected via ExecutorFactoryContext (createSessionFn precedent).
+   *  Optional so a missing injection surfaces as a deterministic node failure, not a crash. */
+  port?: TaskDispatchPort
+  /** Resume payload: the completed child schedule's output snapshot. When present,
+   *  execute() skips dispatch and applies output_mapping → completed. */
+  childOutput?: Record<string, unknown>
+  signal?: AbortSignal
+  loopContext?: Record<string, any>
+  crossExecResolver?: CrossExecResolver
+  executionId?: string
+  nodeOutputs?: Record<string, Record<string, any>>
+  cwd?: string
 }
 
 /** BashExecutor — logging + variable resolution */
@@ -194,6 +214,10 @@ export interface LoopConfig extends CoreConfig {
   promptInjector?: PromptInjector
   precomputeHook?: (pool: VarPool, workflowName: string, inputs: Record<string, string>) => Promise<void>
   knowledgeInjectorFactory?: (pool: VarPool) => KnowledgeInjector
+  /** G1: TaskDispatchPort injected by the server (createSessionFn precedent). Threaded to inner
+   *  task_dispatch nodes so a composition Loop can fan out child schedules via the port.
+   *  Without this, an inner task_dispatch node would fail ("no TaskDispatchPort injected"). */
+  taskDispatchPort?: TaskDispatchPort
 }
 
 /** SubWorkflowExecutor — child workflow execution with scoped VarPool */
@@ -252,6 +276,12 @@ export interface ResumeConfig {
   engineNodeResults?: Record<string, NodeExecutionResult>
   /** Inner node results from the iteration that paused — preserves $nodeId.output across resume */
   prevIterationResults?: Record<string, NodeExecutionResult>
+  /** G1: task_dispatch resume payload — the completed child schedule's output snapshot.
+   *  Threaded in by engine.retryFrom({ taskDispatchChildOutput }) when resuming a task_dispatch
+   *  node paused inside a loop. Consumed ONE-SHOT by the loop's inner task_dispatch node
+   *  (approval-override delete precedent): the resumed iteration applies output_mapping and
+   *  completes without re-dispatching; subsequent iterations dispatch the next subunit. */
+  taskDispatchChildOutput?: Record<string, unknown>
 }
 
 // ============================================================

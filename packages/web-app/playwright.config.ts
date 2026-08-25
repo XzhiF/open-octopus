@@ -72,6 +72,13 @@ export default defineConfig({
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 1,
   workers: process.env.CI ? 1 : undefined,
+  // Per-test timeout. The task-domain specs (ticket 12) use waitFor with
+  // timeoutMs up to 180_000 (coordinator subunit dispatch, G2 terminal-state
+  // wait) and rely on the spec's own catch block to fire test.skip() when
+  // the provider/coordinator is absent. The Playwright default 30s killed
+  // those tests before the skip could fire, turning intentional skips into
+  // hard failures. 240s gives the 180s waitFor room to elapse + skip cleanly.
+  timeout: 240_000,
   reporter: process.env.CI ? "html" : [["list"]],
   // When E2E_ARTIFACTS_DIR is set (by pipeline skills), redirect all test
   // artifacts (traces, videos, failure screenshots) to the artifacts directory.

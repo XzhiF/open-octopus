@@ -65,6 +65,7 @@ export function CloneDetailView({ clone, onBack }: CloneDetailViewProps) {
     streamThinking,
     isThinking,
     toolCalls,
+    streamTimeline,
     pendingConfirm,
     error: chatError,
     statusMessage,
@@ -276,6 +277,7 @@ export function CloneDetailView({ clone, onBack }: CloneDetailViewProps) {
                         streaming={streaming}
                         streamContent={streamContent}
                         streamThinking={streamThinking}
+                        streamTimeline={streamTimeline}
                         isThinking={isThinking}
                         toolCalls={toolCalls}
                         pendingConfirm={pendingConfirm}

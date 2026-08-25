@@ -1,0 +1,75 @@
+# composition-task.yaml — 复合任务编排模板 (G10)
+#
+# 复合任务（含 subunits[] 的 task_spec）入队后，scheduler 在 coordinator-ws 物化此
+# 模板执行：coordinator-ws 无 projects（工作区由 scheduler 物化，本工作流只做编排）。
+#
+# Flow:
+#   1. loop-subunits — 遍历 task_spec.subunits，每 iteration 跑一个 task_dispatch 节点
+#      (await: true)。task_dispatch 经 TaskDispatchPort fan-out 一个独立子 schedule
+#      （各 subunit 独立 workspace + workflow_ref），并触发 G1 pause-resume：父
+#      composition-wf 暂停，子 schedule 完成后 resume 父节点，子输出经 output_mapping
+#      流回 → $vars.result 与 $dispatch-child.output.result。
+#   2. integrate — 末尾 moa 聚合节点，depends_on loop-subunits，读各 task_dispatch 累积
+#      输出做综合（integration_goal.strategy=synthesis 默认；merge 为 opt-in）。
+#
+# Conventions:
+#   - $iteration 是 loop 计数器（engine 1-based / simulator 0-based）；break_when
+#     '$iteration >= $vars.subunit_count' 在两种环境都收敛到 N 次（N=subunit_count）。
+#   - subunit_count 注入路径（SG5，ticket 06）：dispatch seam 的
+#     materializeTaskSpecToConfig 在复合路径把
+#     workflow_chain[0].input_values.subunit_count = task_spec.subunits.length
+#     （number；Zod input_values 是 record<string,string>，靠 type-cast 透传，engine
+#     从 VarPool 读数值做比较）。engine 的 var 初始化把 workflow_chain item 的
+#     input_values 经 pool.update 合并进 $vars，故 break_when 读的是注入的真实值，
+#     不是下方 variables.subunit_count: 3 的 simulate 默认。见
+#     packages/engine/src/__tests__/loop-task-dispatch.test.ts（镜像本模板形状）。
+#   - task_dispatch.subunit "$iteration.subunit" 是字符串引用，由 TaskDispatchExecutor
+#     从 composition loop 的 iteration context 解析为第 i 个 SubunitSpec。
+#   - output_mapping { result: "last_output" } 把子 schedule 输出暴露为
+#     $vars.result 与 $dispatch-child.output.result，供 moa 聚合读取。
+#   - 模板变量（subunit_count/goal/integration_prompt）为 simulate 默认值。运行时
+#     只有 subunit_count 经 input_values 注入（见上）；goal/integration_prompt
+#     当前 materialize 未注入（已知 future-wiring：moa 聚合用 simulate 默认；
+#     需真实 goal 流入时扩展 materialize 注 input_values.goal +
+#     input_values.integration_prompt，server 侧改动）。
+
+apiVersion: octopus/v1
+kind: Workflow
+name: composition-task
+description: "复合任务编排：Loop 逐 subunit task_dispatch（G1 pause-resume）+ moa 聚合"
+
+variables:
+  subunit_count: 3
+  goal: "复合任务总目标"
+  integration_prompt: "综合各 subunit 输出，产出统一交付物，对照验收标准查漏补缺。"
+
+nodes:
+  # ── 1. Loop over subunits — 每 iteration 派发一个子 schedule ──────────────
+  - id: loop-subunits
+    type: loop
+    max_iterations: 20
+    break_when: '$iteration >= $vars.subunit_count'
+    nodes:
+      # 唯一内节点 = loop 入口，无需 depends_on。task_dispatch 是叶子节点（无 nodes）。
+      - id: dispatch-child
+        type: task_dispatch
+        subunit: "$iteration.subunit"     # 字符串引用 → executor 解析为第 i 个 SubunitSpec
+        await: true                       # G1 pause-resume：等子 schedule 完成后 resume
+        input_mapping:
+          goal: "$vars.goal"              # 父变量 → 子 schedule 输入
+          task_artifacts_dir: "$vars.task_artifacts_dir"  # Ticket 08 (D14): 产物目录透传给子单元
+        output_mapping:
+          result: "last_output"           # 子输出 → $vars.result + $dispatch-child.output.result
+
+  # ── 2. moa 聚合 — depends_on loop，综合各子 schedule 产出 ─────────────────
+  - id: integrate
+    type: swarm
+    depends_on: [loop-subunits]
+    mode: moa
+    topic: "$vars.goal"
+    prompt: "$vars.integration_prompt"
+    dynamic: true                         # 专家运行时动态选取（不硬编码 experts）
+    max_experts: 3
+    aggregator:
+      role: "synthesizer"
+      prompt: "合并各 subunit 的产出到统一交付物，消除重复与矛盾，对照 $vars.goal 与验收标准。"

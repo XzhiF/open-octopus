@@ -3,6 +3,7 @@ import { NotifyTemplateSchema, NotifyRetrySchema, NotifyProviderConfigSchema, Ch
 import type { NotifyTemplate, NotifyRetryConfig } from "./notify"
 import { ExpertDefSchema, OutputFormatSchema, validateSwarmConstraints } from "./swarm"
 import type { ExpertDef } from "./swarm"
+import { subunitSpecSchema, type SubunitSpec } from "./scheduler-job"
 import { parseTokenAmount } from "../parse-token-amount"
 
 /**
@@ -208,7 +209,7 @@ export const InteractionAgentSchema = z.object({
 
 export interface NodeDef {
   id: string
-  type: "bash" | "python" | "agent" | "condition" | "approval" | "loop" | "swarm" | "interaction" | "sub_workflow" | "dynamic_sub_workflow" | "octopus_agent"
+  type: "bash" | "python" | "agent" | "condition" | "approval" | "loop" | "swarm" | "interaction" | "sub_workflow" | "dynamic_sub_workflow" | "octopus_agent" | "task_dispatch"
   model?: string
   engine?: string
   timeout?: number
@@ -300,6 +301,17 @@ export interface NodeDef {
   output_mapping?: Record<string, string>
   on_error?: "fail" | "continue"
 
+  // task_dispatch — fan-out a child schedule for composite tasks (G1 pause-resume).
+  // input_mapping/output_mapping are reused from sub_workflow above. The parent
+  // composition-wf node pauses (reusing interaction/approval infra) until the child
+  // schedule completes; child output flows back via output_mapping into
+  // $<taskDispatchId>.output.<key> for downstream aggregation nodes.
+  // subunit is a string reference (e.g. "$iteration.subunit") resolved by the
+  // executor to a SubunitSpec from the composition loop / task_spec.subunits.
+  subunit?: string
+  workflow_ref?: string
+  await?: boolean
+
   // octopus_agent
   version?: string
   min_stage?: "alpha" | "beta" | "rc" | "stable"
@@ -324,7 +336,7 @@ export interface NodeDef {
 export const NodeSchema: z.ZodType<NodeDef> = z.lazy(() =>
   z.object({
     id: z.string(),
-    type: z.enum(["bash", "python", "agent", "condition", "approval", "loop", "swarm", "interaction", "sub_workflow", "dynamic_sub_workflow", "octopus_agent"]),
+    type: z.enum(["bash", "python", "agent", "condition", "approval", "loop", "swarm", "interaction", "sub_workflow", "dynamic_sub_workflow", "octopus_agent", "task_dispatch"]),
     model: z.string().optional(),
     engine: z.string().optional(),
     timeout: z.number().int().positive().optional(),
@@ -407,6 +419,13 @@ export const NodeSchema: z.ZodType<NodeDef> = z.lazy(() =>
     input_mapping: z.record(z.string(), z.string()).optional(),
     output_mapping: z.record(z.string(), z.string()).optional(),
     on_error: z.enum(["fail", "continue"]).optional(),
+
+    // task_dispatch (G1) — subunit is a string reference resolved at runtime
+    // from a composition loop iteration (e.g. "$iteration.subunit") to a
+    // SubunitSpec from task_spec.subunits.
+    subunit: z.string().optional(),
+    workflow_ref: z.string().optional(),
+    await: z.boolean().optional(),
 
     // octopus_agent
     version: z.string().optional(),

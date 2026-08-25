@@ -24,9 +24,12 @@ import crypto from 'crypto'
 import fs from 'fs'
 import path from 'path'
 import type { CloneDef } from '@octopus/shared'
-import type { AgentSessionDAO } from '../../db/dao'
+import type { AgentSessionDAO, TaskDAO } from '../../db/dao'
 import { CloneRuntime } from '../../services/agent/clone-runtime'
+import { resolveExpertSubagents } from '../../services/agent/expert-registry'
 import { isBuiltinClone } from '../../services/agent/builtin-clones'
+import { WorkspaceGit } from '../../services/workspace-git'
+import type { ProjectRef } from '../../services/tasks/task-home-service'
 import {
   listAllClones,
   resolveCloneInfo,
@@ -40,16 +43,45 @@ import {
 } from '../../services/agent/agent-service'
 import { getBuiltInCloneDir, getCloneDir } from '../../services/agent/paths'
 import { getMemoryService } from '../../services/agent/memory-service'
+import { autosaveTaskDraft } from './autosave'
+import { getSpecNotice, clearSpecNotice } from '../../services/tasks/spec-notice-store'
+import { TaskAuthorSessionAugmenter } from '../../services/tasks/task-author-session-augmenter'
+import { TaskHomeService } from '../../services/tasks/task-home-service'
+import { getResourceRegistry } from '../../services/resource-registry'
+import type { ResourceRef } from '@octopus/shared'
 
 // ── Route deps ─────────────────────────────────────────────────────
 
 export interface CloneSessionRouteDeps {
   sessionDAO: AgentSessionDAO
+  /**
+   * TaskDAO for the task-author autosave seam (04, v2-D6). Optional for
+   * backwards-compat with tests that only exercise clone-file/session
+   * routes — the seam skips (no-op) when absent. When present, fires at
+   * turn-end for cloneName === 'task-author' sessions.
+   */
+  taskDAO?: TaskDAO
 }
 
 // ── File route constants removed — file ops now in clone-files.ts ──
 
 // ── Helpers ────────────────────────────────────────────────────────
+
+/** Resolve project names to ProjectRef[] with filesystem paths. Uses
+ *  WorkspaceGit to look up each name in the org's repos/index.md. Unresolvable
+ *  names get { name, path: undefined } so they still appear in context.md. */
+function resolveProjectRefs(org: string, names: string[]): ProjectRef[] {
+  if (!org || names.length === 0) return []
+  const git = new WorkspaceGit()
+  return names.map((name) => {
+    try {
+      const resolved = git.resolveRepoPath(org, name)
+      return { name, path: resolved }
+    } catch {
+      return { name }
+    }
+  })
+}
 
 function resolveCloneDefFromFs(name: string): CloneDef | null {
   const info = resolveCloneInfo(name)
@@ -76,7 +108,7 @@ function resolveCloneDefFromFs(name: string): CloneDef | null {
 // ── Route factory ──────────────────────────────────────────────────
 
 export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
-  const { sessionDAO } = deps
+  const { sessionDAO, taskDAO } = deps
   const app = new Hono()
 
   // ══════════════════════════════════════════════════════════════════
@@ -243,7 +275,7 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
     const sessionId = c.req.param('id')
     const org = c.req.header('X-Octopus-Org') || (c.get('org') as string) || 'default'
 
-    let body: { message?: string }
+    let body: { message?: string; model?: string; subagents?: Array<{ id: string; label?: string }> }
     try {
       body = await c.req.json()
     } catch {
@@ -253,6 +285,11 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
     if (!body.message) {
       return c.json({ error: { code: 'INVALID_PARAM', message: 'message is required' } }, 400)
     }
+
+    // Single-expert consultation: optional subagent refs → SDK agent defs
+    // registered for THIS turn only (the main agent invokes them via its
+    // Agent tool, then they vanish on the next turn).
+    const subagents = resolveExpertSubagents(body.subagents ?? [])
 
     // Verify session exists and belongs to clone
     const session = sessionDAO.findById(sessionId)
@@ -277,8 +314,141 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
 
     // Instantiate CloneRuntime
     const runtime = new CloneRuntime(cloneDef, org)
-    const cwd = runtime.getDefaultCwd()
+    // task-author: cwd = task home (so skill-relative paths land in the task
+    // dir, not the clone's own dir). Resolved after noticeTaskId + homeService
+    // below; falls back to the clone's own dir when no task home exists.
+    const defaultCwd = runtime.getDefaultCwd()
     const providerSessionId = session.provider_session_id ?? null
+
+    // 05 — reverse context msg (SPIKE S1, v2-D7). If the user saved a draft
+    // (PUT /api/tasks) since the last turn, TasksService.updateTask set a
+    // transient, in-memory notice keyed by task_id. Resolve the task bound
+    // to this session (same lookup the autosave seam uses) and read the
+    // pending notice. Passed to CloneRuntime.chat below as `specUpdateNotice`
+    // → sendWithProvider appends it to the system-prompt `append` string
+    // (assembleContext is fresh per turn, clone-runtime.ts:261, so this
+    // re-delivers only while the notice stays pending). Cleared AFTER the
+    // stream (below) so a mid-stream error / abort re-delivers next turn
+    // (at-least-once; the notice is an idempotent nudge, not a state change).
+    // Gated by task-author + taskDAO: only task-author sessions carry spec
+    // notices, and taskDAO is optional (wired only with the autosave seam).
+    // This is a DIFFERENT location from 04's turn-end autosave block
+    // (below, ~:416-428) — the send path reads before runtime.chat; the
+    // autosave seam writes at turn-end. No overlap.
+    const noticeTaskId =
+      cloneName === 'task-author' && taskDAO
+        ? taskDAO.getBySourceChatSession(sessionId)?.id ?? null
+        : null
+    const specUpdateNotice = noticeTaskId
+      ? getSpecNotice(noticeTaskId)
+      : undefined
+
+    // 07 — authoring_resources prompt-inject (SG6, v2-D8/D13, SPIKE S2
+    // Mechanism B). The task-author clone chat route resolves
+    // `tasks.authoring_resources[]` (draft-scope, set by the agent via the
+    // `update_task_spec_field` tool field='authoring_resources' — 03 built
+    // that endpoint) per turn, resolves each skill's SKILL.md content via
+    // TaskAuthorSessionAugmenter (ResourceManager → readFile →
+    // enhancePromptWithSkills — SG11 resurrects the dead code), and passes
+    // the content string to runtime.chat as `authoringResourcesContent`.
+    // sendWithProvider appends it to systemPrompt.append ALONGSIDE
+    // specUpdateNotice (clone-runtime.ts:346-348 — same concat seam 05 uses).
+    // assembleContext is fresh per turn, so the latest authoring_resources[]
+    // is re-read every turn (Mechanism B). Only skill-type refs are injected
+    // (agent/command/rule are workspace-scope → workflow.requires via SG7).
+    // Gated by task-author + taskDAO (same gate as specUpdateNotice); absent
+    // taskDAO (older test paths) → no injection (unchanged behavior).
+    let authoringResourcesContent: string | undefined
+    if (noticeTaskId && taskDAO) {
+      try {
+        const taskRow = taskDAO.getById(noticeTaskId)
+        const authoringResources: ResourceRef[] = taskRow?.authoring_resources
+          ? JSON.parse(taskRow.authoring_resources) as ResourceRef[]
+          : []
+        if (authoringResources.length > 0) {
+          const augmenter = new TaskAuthorSessionAugmenter(getResourceRegistry().get())
+          authoringResourcesContent = augmenter.resolveAuthoringResourcesContent(authoringResources) || undefined
+        }
+      } catch (err: unknown) {
+        // Non-fatal — chat reply unaffected; the agent just doesn't see
+        // authoring_resources content this turn (malformed JSON, missing
+        // resource, etc.). Mirrors the swallow+log pattern in spec-notice.
+        console.error(
+          '[clone-route] authoring_resources resolution failed (non-fatal):',
+          err instanceof Error ? err.message : String(err),
+        )
+      }
+    }
+
+    // 03 (task-authoring-v3, AC6): resolve the per-task home path for the
+    // task-author session so CloneRuntime.getPlugins can append it as a third
+    // plugin directory (the SDK scans `{taskHomePath}/skills/` for the
+    // materialized Skill-group links — ADR-0010). Gated by the same
+    // `noticeTaskId` (task-author + taskDAO) already resolved above, AND a
+    // filesystem existence check: only pass the path when the home actually
+    // exists on disk (created by POST /api/tasks → TaskHomeService.createHome
+    // — ticket 04 / 02). A non-existent home → undefined → getPlugins stays
+    // at 2 plugins (no cwd-root scan, no bogus third plugin). The path is
+    // derived purely from the id (no DB field — ADR-0011), so this is a
+    // stat, not a query.
+    let taskHomePath: string | undefined
+    let taskArtifactsDir: string | undefined
+    if (noticeTaskId) {
+      const homeService = new TaskHomeService()
+      const home = homeService.homePath(noticeTaskId)
+      if (fs.existsSync(home)) {
+        taskHomePath = home
+        taskArtifactsDir = homeService.artifactsDir(noticeTaskId)
+        // Backfill .claude/rules/task-context.md for existing task homes
+        // (created before the rules feature). Idempotent — one stat per turn,
+        // write only happens once. New tasks already have it from createHome.
+        homeService.ensureRulesFile(noticeTaskId)
+      }
+    }
+
+    // task-author cwd override: when the task home exists, use it as cwd so
+    // skill-relative paths (e.g. writing-plans → docs/superpowers/plans/...)
+    // resolve inside the task dir rather than the clone's own dir.
+    const cwd = taskHomePath || defaultCwd
+
+    // 05 → context.md (v3 task-authoring, cache-friendly redesign):
+    // Dynamic workspace state (org, projects, skill groups) lives in
+    // `{taskHome}/context.md` instead of the system prompt. The system prompt
+    // stays STATIC for prompt cache stability. The agent reads context.md on
+    // demand, triggered by @@context_updated notice (set by tasks-service
+    // when the user changes "编写语境"). The rules file (.claude/rules/)
+    // references context.md with a static instruction.
+    //
+    // Per turn: ensure context.md is up-to-date with the latest DB values.
+    // This is an idempotent write (overwrites with current state); cheap
+    // since it only happens when taskHomePath exists (task-author sessions).
+    if (noticeTaskId && taskHomePath && taskDAO) {
+      try {
+        const ctxRow = taskDAO.getById(noticeTaskId)
+        const ctxSpec = ctxRow?.task_spec
+          ? JSON.parse(ctxRow.task_spec) as { skill_groups?: string[] }
+          : null
+        const groups = ctxSpec && Array.isArray(ctxSpec.skill_groups) ? ctxSpec.skill_groups : []
+        const projectNames: string[] = ctxRow?.project_ids
+          ? JSON.parse(ctxRow.project_ids) as string[]
+          : []
+        // Use the task's own org (from DB) for path resolution — NOT the
+        // request header which defaults to "default" when the frontend
+        // doesn't send X-Octopus-Org.
+        const taskOrg = ctxRow?.org ?? org
+        // Resolve project names → filesystem paths so the agent knows where
+        // each codebase lives on disk (not just the name).
+        const projectRefs: ProjectRef[] = resolveProjectRefs(taskOrg, projectNames)
+        const homeService = new TaskHomeService()
+        homeService.writeContextFile(noticeTaskId, taskOrg, projectRefs, groups)
+      } catch (err: unknown) {
+        // Non-fatal — the stale context.md stays; agent misses the update.
+        console.error(
+          '[clone-route] writeContextFile failed (non-fatal):',
+          err instanceof Error ? err.message : String(err),
+        )
+      }
+    }
 
     return streamSSE(c, async (stream) => {
       let aborted = false
@@ -290,31 +460,49 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
         let fullThinking = ''
         let resultSessionId: string | null = null
         const toolCalls: Array<{
-          id: string; name: string; input?: unknown; result?: unknown; isError?: boolean
+          id: string; name: string; input?: unknown; result?: unknown; isError?: boolean; status?: string
         }> = []
+        // Arrival-ordered process timeline (2026-08-19): thinking segments /
+        // text fragments / tool calls interleaved as they happened. Persisted
+        // in the message metadata JSON so the UI's collapsible meta can render
+        // chronologically on history reload (mirrors the client-side
+        // useAgentChat streamTimeline for the live turn).
+        const timeline: Array<{ kind: 'thinking' | 'text' | 'tool'; text?: string; id?: string }> = []
         const memoryToolCalls: Array<{ id: string; name: string; input?: Record<string, unknown> }> = []
         const MEMORY_TOOL_NAMES = ['record_daily']
 
-        for await (const chunk of runtime.chat(body.message!, sessionId, providerSessionId, cwd)) {
+        for await (const chunk of runtime.chat(body.message!, sessionId, providerSessionId, cwd, specUpdateNotice, authoringResourcesContent, undefined, taskHomePath, body.model, subagents)) {
           if (aborted || (stream as any)._aborted) break
 
           switch (chunk.type) {
-            case 'text_delta':
+            case 'text_delta': {
               fullContent += chunk.content
+              const lastTl = timeline[timeline.length - 1]
+              if (lastTl && lastTl.kind === 'text') lastTl.text = (lastTl.text ?? '') + chunk.content
+              else timeline.push({ kind: 'text', text: chunk.content })
               await stream.writeSSE({ event: 'text_delta', data: JSON.stringify({ delta: chunk.content, content: fullContent }) })
               break
+            }
             case 'thinking_start':
               await stream.writeSSE({ event: 'thinking_start', data: '{}' })
               break
-            case 'thinking':
+            case 'thinking': {
               fullThinking += chunk.content
+              const lastTh = timeline[timeline.length - 1]
+              if (lastTh && lastTh.kind === 'thinking') lastTh.text = (lastTh.text ?? '') + chunk.content
+              else timeline.push({ kind: 'thinking', text: chunk.content })
               await stream.writeSSE({ event: 'thinking', data: JSON.stringify({ delta: chunk.content }) })
               break
+            }
             case 'thinking_done':
               await stream.writeSSE({ event: 'thinking_done', data: '{}' })
               break
+            case 'context_usage':
+              await stream.writeSSE({ event: 'context_usage', data: JSON.stringify(chunk.data) })
+              break
             case 'tool_call_start':
-              toolCalls.push({ id: chunk.toolCallId, name: chunk.toolName })
+              toolCalls.push({ id: chunk.toolCallId, name: chunk.toolName, status: 'start' })
+              timeline.push({ kind: 'tool', id: chunk.toolCallId })
               await stream.writeSSE({ event: 'tool_call', data: JSON.stringify({ type: 'start', tool_call_id: chunk.toolCallId, tool_name: chunk.toolName }) })
               break
             case 'tool_call': {
@@ -331,7 +519,7 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
             }
             case 'tool_result': {
               const tc = toolCalls.find(t => t.id === chunk.toolCallId)
-              if (tc) { tc.result = chunk.content; tc.isError = chunk.isError }
+              if (tc) { tc.result = chunk.content; tc.isError = chunk.isError; tc.status = chunk.isError ? 'fail' : 'result' }
               await stream.writeSSE({ event: 'tool_call', data: JSON.stringify({ type: 'result', tool_call_id: chunk.toolCallId, content: chunk.content, is_error: chunk.isError }) })
               break
             }
@@ -345,6 +533,17 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
               await stream.writeSSE({ event: 'error', data: JSON.stringify({ code: chunk.code, message: chunk.message }) })
               break
           }
+        }
+
+        // 05 — the provider has now received the system-prompt append
+        // (assembled + sent during the stream above), so the one-shot notice
+        // is delivered. Clear it so the NEXT turn doesn't re-deliver. Gated
+        // on !aborted: an aborted stream may not have fully delivered, so
+        // leave the notice pending for the next turn (at-least-once). A
+        // thrown stream skips this line entirely (outer catch) — also
+        // leaves the notice pending for retry. Idempotent + non-fatal.
+        if (noticeTaskId && specUpdateNotice && !aborted) {
+          clearSpecNotice(noticeTaskId)
         }
 
         // Execute memory tool calls (record_daily) with clone context
@@ -379,13 +578,28 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
         }
 
         // Store assistant message + update provider session
-        if (fullContent) {
+        // Persist if there's ANY content — text, tool calls, or thinking.
+        // Previously only text-gated (`if (fullContent)`), so messages with
+        // only tool calls / thinking (e.g. user aborts before first text
+        // delta) were silently lost on restart.
+        const hasAnyContent = fullContent || toolCalls.length > 0 || fullThinking
+        if (hasAnyContent) {
           const assistantMsgId = crypto.randomUUID()
           const assistantNow = new Date().toISOString()
 
           const metadata = JSON.stringify({
             thinking: fullThinking || undefined,
-            tool_calls: toolCalls.length > 0 ? toolCalls : undefined,
+            tool_calls: toolCalls.length > 0
+              // Mark non-terminal tool calls as 'fail' so they don't keep
+              // spinning when loaded from DB after restart. Also set ended_at
+              // so the elapsed timer stops counting.
+              ? toolCalls.map((tc) => {
+                  const terminal = tc.status === 'success' || tc.status === 'result' || tc.status === 'fail'
+                  return terminal ? tc : { ...tc, status: 'fail', ended_at: Date.now() }
+                })
+              : undefined,
+            timeline: timeline.length > 0 ? timeline : undefined,
+            interrupted: aborted || undefined,
           })
 
           sessionDAO.insertCloneMessage({
@@ -399,10 +613,31 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
             sessionDAO.updateProviderSession(sessionId, resultSessionId)
           }
 
-          // Auto-generate title on first message
+          // Auto-generate title on first message (title still placeholder).
+          // Runs even when a task is bound to the session: the session title
+          // feeds the sidebar AND the autosave seam's autoTitle. A bound task
+          // with a USER-SET name is safe — the autosave seam only adopts the
+          // session title while the task name is still the default
+          // (DEFAULT_TASK_NAME), never overwriting a user rename (bugfix
+          // 2026-08-21 + refinement). A header rename syncs the session title
+          // to the new name, so the placeholder check below skips re-deriving.
           if (session.title === `${cloneName} 会话` || session.title === '新会话') {
-            const autoTitle = body.message!.slice(0, 40).replace(/\n/g, ' ').trim() || `${cloneName} 会话`
+            const autoTitle = body.message!.slice(0, 20).replace(/\n/g, ' ').trim() || `${cloneName} 会话`
             sessionDAO.updateSession(sessionId, { title: autoTitle })
+          }
+
+          // 04 — task-author autosave seam (v2-D6/D11/SG3/SG8).
+          // Fires at turn-end (after auto-title block, before done SSE),
+          // gated by cloneName === 'task-author'. Best-effort — chat reply
+          // unaffected on failure. First turn → create draft row + link
+          // session.scope_id (SG3). Subsequent turns → targeted UPDATE
+          // name+updated_at ONLY (SG8: no version bump, no task_spec touch).
+          if (cloneName === 'task-author' && taskDAO) {
+            const autoTitle = sessionDAO.findById(sessionId)?.title ?? `${cloneName} 会话`
+            autosaveTaskDraft(
+              { taskDAO, sessionDAO },
+              { sessionId, org, autoTitle, placeholderTitle: `${cloneName} 会话` },
+            )
           }
 
           await stream.writeSSE({
@@ -411,6 +646,7 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
               session_id: sessionId,
               message_id: assistantMsgId,
               session_title: sessionDAO.findById(sessionId)?.title,
+              model: body.model ?? cloneDef.config.model ?? undefined,
             }),
           })
         }

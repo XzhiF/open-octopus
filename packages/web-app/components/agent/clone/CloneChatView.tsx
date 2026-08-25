@@ -31,7 +31,7 @@ export function CloneChatView({ clone, onBack }: CloneChatViewProps) {
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false)
 
   const {
-    messages, streaming, streamContent, streamThinking, isThinking, toolCalls, pendingConfirm,
+    messages, streaming, streamContent, streamThinking, streamTimeline, isThinking, toolCalls, pendingConfirm,
     error: chatError, statusMessage,
     sendMessage, stopGenerate, handleConfirm, loadMessages,
   } = useAgentChat(activeSessionId)
@@ -210,6 +210,7 @@ export function CloneChatView({ clone, onBack }: CloneChatViewProps) {
           streaming={streaming}
           streamContent={streamContent}
           streamThinking={streamThinking}
+          streamTimeline={streamTimeline}
           isThinking={isThinking}
           toolCalls={toolCalls}
           pendingConfirm={pendingConfirm}

@@ -1,0 +1,906 @@
+$ node scripts/dev.mjs
+[dev] mode:   default (main repo)
+[dev] port:   server=3001  web=3000
+[dev] Building project...
+$ pnpm -r run build && node scripts/sync-builtin.mjs
+Scope: 7 of 8 workspace projects
+packages/core-pack build$ tsup skills/octo-dev-copilot/scripts/workspace.ts --format cjs --out-dir skills/octo-dev-copilot/scripts --target node18 --no-dts --clean false
+packages/shared build$ tsup src/index.ts --format esm,cjs --dts
+packages/shared build: CLI Building entry: src/index.ts
+packages/shared build: CLI Using tsconfig: tsconfig.json
+packages/shared build: CLI tsup v8.5.1
+packages/shared build: CLI Using tsup config: /Users/xzf/Projects/ai/XzhiF/open-octopus/packages/shared/tsup.config.ts
+packages/core-pack build: CLI Building entry: skills/octo-dev-copilot/scripts/workspace.ts
+packages/core-pack build: CLI Using tsconfig: ../../tsconfig.json
+packages/core-pack build: CLI tsup v8.5.1
+packages/shared build: CLI Target: es2022
+packages/shared build: CLI Cleaning output folder
+packages/shared build: ESM Build start
+packages/shared build: CJS Build start
+packages/core-pack build: CLI Target: node18
+packages/core-pack build: CJS Build start
+packages/core-pack build: CJS skills/octo-dev-copilot/scripts/workspace.js 38.17 KB
+packages/core-pack build: CJS ⚡️ Build success in 66ms
+packages/core-pack build: Done
+packages/shared build: CJS dist/index.js 251.53 KB
+packages/shared build: CJS ⚡️ Build success in 176ms
+packages/shared build: ESM dist/index.mjs 222.18 KB
+packages/shared build: ESM ⚡️ Build success in 177ms
+packages/shared build: DTS Build start
+packages/shared build: DTS ⚡️ Build success in 5898ms
+packages/shared build: DTS dist/index.d.mts 623.78 KB
+packages/shared build: DTS dist/index.d.ts  623.78 KB
+packages/shared build: Done
+packages/providers build$ tsup src/index.ts --format esm,cjs --dts
+packages/web-app build$ next build
+packages/providers build: CLI Building entry: src/index.ts
+packages/providers build: CLI Using tsconfig: tsconfig.json
+packages/providers build: CLI tsup v8.5.1
+packages/providers build: CLI Target: es2022
+packages/providers build: ESM Build start
+packages/providers build: CJS Build start
+packages/web-app build: ⚠ Warning: Next.js inferred your workspace root, but it may not be correct.
+packages/web-app build:  We detected multiple lockfiles and selected the directory of /Users/xzf/pnpm-lock.yaml as the root directory.
+packages/web-app build:  To silence this warning, set `turbopack.root` in your Next.js config, or consider removing one of the lockfiles if it's not needed.
+packages/web-app build:    See https://nextjs.org/docs/app/api-reference/config/next-config-js/turbopack#root-directory for more information.
+packages/web-app build:  Detected additional lockfiles: 
+packages/web-app build:    * /Users/xzf/Projects/ai/XzhiF/open-octopus/pnpm-workspace.yaml
+packages/providers build: CJS dist/index.js 66.87 KB
+packages/providers build: CJS ⚡️ Build success in 111ms
+packages/providers build: ESM dist/octopus-hooks-LQUXH2RE.mjs  125.00 B
+packages/providers build: ESM dist/chunk-DGGO7HQO.mjs          1.29 KB
+packages/providers build: ESM dist/pi-sdk-adapter-JEMY6V5R.mjs 324.00 B
+packages/providers build: ESM dist/chunk-SCI3QBY6.mjs          584.00 B
+packages/providers build: ESM dist/chunk-5GIFHTHL.mjs          1.36 KB
+packages/providers build: ESM dist/chunk-6K6DV3QV.mjs          6.86 KB
+packages/providers build: ESM dist/registry-O3FFTASZ.mjs       294.00 B
+packages/providers build: ESM dist/security-DEV2XIKW.mjs       170.00 B
+packages/providers build: ESM dist/index.mjs                   53.03 KB
+packages/providers build: ESM ⚡️ Build success in 113ms
+packages/web-app build: ▲ Next.js 16.2.4 (Turbopack)
+packages/providers build: DTS Build start
+packages/web-app build:   Creating an optimized production build ...
+packages/providers build: DTS ⚡️ Build success in 2325ms
+packages/providers build: DTS dist/index.d.mts 12.04 KB
+packages/providers build: DTS dist/index.d.ts  12.04 KB
+packages/providers build: Done
+packages/web-app build: Turbopack build encountered 1 warnings:
+packages/web-app build: ./Projects/ai/XzhiF/open-octopus/packages/web-app/next.config.mjs
+packages/web-app build: Encountered unexpected file in NFT list
+packages/web-app build: A file was traced that indicates that the whole project was traced unintentionally. Somewhere in the import trace below, there are:
+packages/web-app build: - filesystem operations (like path.join, path.resolve or fs.readFile), or
+packages/web-app build: - very dynamic requires (like require('./' + foo)).
+packages/web-app build: To resolve this, you can
+packages/web-app build: - remove them if possible, or
+packages/web-app build: - only use them in development, or
+packages/web-app build: - make sure they are statically scoped to some subfolder: path.join(process.cwd(), 'data', bar), or
+packages/web-app build: - add ignore comments: path.join(/*turbopackIgnore: true*/ process.cwd(), bar)
+packages/web-app build: Import trace:
+packages/web-app build:   Client Component SSR:
+packages/web-app build:     ./Projects/ai/XzhiF/open-octopus/packages/web-app/next.config.mjs
+packages/web-app build:     ./Projects/ai/XzhiF/open-octopus/packages/shared/dist/index.mjs [Client Component SSR]
+packages/web-app build:     ./Projects/ai/XzhiF/open-octopus/packages/web-app/lib/workflow-config-extract.ts [Client Component SSR]
+packages/web-app build:     ./Projects/ai/XzhiF/open-octopus/packages/web-app/components/workspace/chat/workflow-config-preview.tsx [Client Component SSR]
+packages/web-app build:     ./Projects/ai/XzhiF/open-octopus/packages/web-app/components/workspace/chat/assistant-message.tsx [Client Component SSR]
+packages/web-app build:     ./Projects/ai/XzhiF/open-octopus/packages/web-app/components/workspace/chat/message-bubble.tsx [Client Component SSR]
+packages/web-app build:     ./Projects/ai/XzhiF/open-octopus/packages/web-app/components/workspace/chat/chat-panel.tsx [Client Component SSR]
+packages/web-app build:     ./Projects/ai/XzhiF/open-octopus/packages/web-app/app/workspaces/[id]/page.tsx [Client Component SSR]
+packages/web-app build:     ./Projects/ai/XzhiF/open-octopus/packages/web-app/app/workspaces/[id]/page.tsx [Server Component]
+packages/web-app build: ✓ Compiled successfully in 16.9s
+packages/web-app build:   Skipping validation of types
+packages/web-app build:   Finished TypeScript config validation in 21ms ...
+packages/web-app build:   Collecting page data using 9 workers ...
+packages/web-app build:   Generating static pages using 9 workers (0/20) ...
+packages/web-app build:   Generating static pages using 9 workers (5/20) 
+packages/web-app build:   Generating static pages using 9 workers (10/20) 
+packages/web-app build:   Generating static pages using 9 workers (15/20) 
+packages/web-app build: ✓ Generating static pages using 9 workers (20/20) in 263ms
+packages/web-app build:   Finalizing page optimization ...
+packages/web-app build: Route (app)
+packages/web-app build: ┌ ƒ /
+packages/web-app build: ├ ƒ /_not-found
+packages/web-app build: ├ ƒ /agent
+packages/web-app build: ├ ƒ /dev/agent-node-test
+packages/web-app build: ├ ƒ /dev/harness-test
+packages/web-app build: ├ ƒ /dev/moa-test
+packages/web-app build: ├ ƒ /dev/swarm-test
+packages/web-app build: ├ ƒ /experience
+packages/web-app build: ├ ƒ /resources
+packages/web-app build: ├ ƒ /resources/[type]/[name]
+packages/web-app build: ├ ƒ /resources/audit
+packages/web-app build: ├ ƒ /resources/install
+packages/web-app build: ├ ƒ /scheduler
+packages/web-app build: ├ ƒ /scheduler/jobs/[id]
+packages/web-app build: ├ ƒ /settings
+packages/web-app build: ├ ƒ /system
+packages/web-app build: ├ ƒ /system/harness
+packages/web-app build: ├ ƒ /system/models
+packages/web-app build: ├ ƒ /system/repos
+packages/web-app build: ├ ƒ /tasks
+packages/web-app build: ├ ƒ /workspaces
+packages/web-app build: ├ ƒ /workspaces/[id]
+packages/web-app build: ├ ƒ /workspaces/[id]/archive-detail
+packages/web-app build: └ ƒ /workspaces/[id]/executions/[eid]/observability
+packages/web-app build: ƒ  (Dynamic)  server-rendered on demand
+packages/web-app build: Done
+packages/engine build$ tsup src/index.ts --format esm,cjs --dts
+packages/engine build: CLI Building entry: src/index.ts
+packages/engine build: CLI Using tsconfig: tsconfig.json
+packages/engine build: CLI tsup v8.5.1
+packages/engine build: CLI Using tsup config: /Users/xzf/Projects/ai/XzhiF/open-octopus/packages/engine/tsup.config.ts
+packages/engine build: CLI Target: es2022
+packages/engine build: CLI Cleaning output folder
+packages/engine build: ESM Build start
+packages/engine build: CJS Build start
+packages/engine build: CJS dist/index.js 432.83 KB
+packages/engine build: CJS ⚡️ Build success in 41ms
+packages/engine build: ESM dist/swarm-router-GMH5V5QS.mjs  3.20 KB
+packages/engine build: ESM dist/index.mjs                  55.48 KB
+packages/engine build: ESM dist/chunk-HRNOSX4P.mjs         4.17 KB
+packages/engine build: ESM dist/engine-KPCKMLFR.mjs        86.00 B
+packages/engine build: ESM dist/role-registry-IIJV5SOQ.mjs 82.00 B
+packages/engine build: ESM dist/chunk-HEDONVS5.mjs         327.14 KB
+packages/engine build: ESM ⚡️ Build success in 44ms
+packages/engine build: DTS Build start
+packages/engine build: DTS ⚡️ Build success in 1502ms
+packages/engine build: DTS dist/index.d.mts 63.97 KB
+packages/engine build: DTS dist/index.d.ts  63.97 KB
+packages/engine build: Done
+packages/server build$ tsup src/index.ts --format esm,cjs --dts
+packages/cli build$ tsup src/index.ts --format esm,cjs --dts && node scripts/copy-core-pack.mjs
+packages/server build: CLI Building entry: src/index.ts
+packages/server build: CLI Using tsconfig: tsconfig.json
+packages/server build: CLI tsup v8.5.1
+packages/server build: CLI Using tsup config: /Users/xzf/Projects/ai/XzhiF/open-octopus/packages/server/tsup.config.ts
+packages/server build: CLI Target: es2022
+packages/server build: CLI Cleaning output folder
+packages/server build: ESM Build start
+packages/server build: CJS Build start
+packages/cli build: CLI Building entry: src/index.ts
+packages/cli build: CLI Using tsconfig: tsconfig.json
+packages/cli build: CLI tsup v8.5.1
+packages/cli build: CLI Using tsup config: /Users/xzf/Projects/ai/XzhiF/open-octopus/packages/cli/tsup.config.ts
+packages/cli build: CLI Target: es2022
+packages/cli build: CLI Cleaning output folder
+packages/cli build: ESM Build start
+packages/cli build: CJS Build start
+packages/cli build: CJS dist/index.js 148.45 KB
+packages/cli build: CJS ⚡️ Build success in 54ms
+packages/cli build: ESM dist/index.mjs 138.26 KB
+packages/cli build: ESM ⚡️ Build success in 54ms
+packages/server build:  WARN  [33m▲ [43;33m[[43;30mWARNING[43;33m][0m [1mDuplicate member "findLlmCallsByExecution" in class body[0m [duplicate-class-member]
+packages/server build:     src/db/dao/token-usage-dao.ts:788:2:
+packages/server build: [37m      788 │   [32mfindLlmCallsByExecution[37m(executionId: string, nodeId?: string): ...
+packages/server build:           ╵   [32m~~~~~~~~~~~~~~~~~~~~~~~[0m
+packages/server build:   The original member "findLlmCallsByExecution" is here:
+packages/server build:     src/db/dao/token-usage-dao.ts:63:2:
+packages/server build: [37m      63 │   [32mfindLlmCallsByExecution[37m(executionId: string): LlmCallRow[] {
+packages/server build:          ╵   [32m~~~~~~~~~~~~~~~~~~~~~~~[0m
+packages/server build:  WARN  [33m▲ [43;33m[[43;30mWARNING[43;33m][0m [1mDuplicate member "archiveWorkspace" in class body[0m [duplicate-class-member]
+packages/server build:     src/services/archive/archive-service.ts:351:8:
+packages/server build: [37m      351 │   async [32marchiveWorkspace[37m(
+packages/server build:           ╵         [32m~~~~~~~~~~~~~~~~[0m
+packages/server build:   The original member "archiveWorkspace" is here:
+packages/server build:     src/services/archive/archive-service.ts:119:8:
+packages/server build: [37m      119 │   async [32marchiveWorkspace[37m(
+packages/server build:           ╵         [32m~~~~~~~~~~~~~~~~[0m
+packages/server build:  WARN  [33m▲ [43;33m[[43;30mWARNING[43;33m][0m [1mDuplicate member "findLlmCallsByExecution" in class body[0m [duplicate-class-member]
+packages/server build:     src/db/dao/token-usage-dao.ts:788:2:
+packages/server build: [37m      788 │   [32mfindLlmCallsByExecution[37m(executionId: string, nodeId?: string): ...
+packages/server build:           ╵   [32m~~~~~~~~~~~~~~~~~~~~~~~[0m
+packages/server build:   The original member "findLlmCallsByExecution" is here:
+packages/server build:     src/db/dao/token-usage-dao.ts:63:2:
+packages/server build: [37m      63 │   [32mfindLlmCallsByExecution[37m(executionId: string): LlmCallRow[] {
+packages/server build:          ╵   [32m~~~~~~~~~~~~~~~~~~~~~~~[0m
+packages/server build:  WARN  [33m▲ [43;33m[[43;30mWARNING[43;33m][0m [1m"import.meta" is not available with the "cjs" output format and will be empty[0m [empty-import-meta]
+packages/server build:     src/db/schema.ts:11:33:
+packages/server build: [37m      11 │     : path.dirname(fileURLToPath([32mimport.meta[37m.url))
+packages/server build:          ╵                                  [32m~~~~~~~~~~~[0m
+packages/server build:   You need to set the output format to "esm" for "import.meta" to work correctly.
+packages/server build:  WARN  [33m▲ [43;33m[[43;30mWARNING[43;33m][0m [1mDuplicate member "archiveWorkspace" in class body[0m [duplicate-class-member]
+packages/server build:     src/services/archive/archive-service.ts:351:8:
+packages/server build: [37m      351 │   async [32marchiveWorkspace[37m(
+packages/server build:           ╵         [32m~~~~~~~~~~~~~~~~[0m
+packages/server build:   The original member "archiveWorkspace" is here:
+packages/server build:     src/services/archive/archive-service.ts:119:8:
+packages/server build: [37m      119 │   async [32marchiveWorkspace[37m(
+packages/server build:           ╵         [32m~~~~~~~~~~~~~~~~[0m
+packages/server build: ESM dist/archive-service-KFD2NXOC.mjs            377.00 B
+packages/server build: ESM dist/agent-service-YFQ3TFEZ.mjs              528.00 B
+packages/server build: ESM dist/prompts-VBV3ZRIV.mjs                    21.81 KB
+packages/server build: ESM dist/analysis-assembler-F5FDRWPO.mjs         4.31 KB
+packages/server build: ESM dist/experience-merger-IBCQJM2U.mjs          3.69 KB
+packages/server build: ESM dist/chain-routes-IXICRYLV.mjs               678.00 B
+packages/server build: ESM dist/system-prompt-assembler-AT2XNGMD.mjs    162.00 B
+packages/server build: ESM dist/notification-service-HADUDSIF.mjs       299.00 B
+packages/server build: ESM dist/memory-service-IKL5DN6B.mjs             228.00 B
+packages/server build: ESM dist/archive-analysis-service-JSPQH5TW.mjs   11.02 KB
+packages/server build: ESM dist/recovery-service-WU234HJT.mjs           240.00 B
+packages/server build: ESM dist/maintenance-TSXHWFLL.mjs                331.00 B
+packages/server build: ESM dist/config-manager-2K33XIQM.mjs             232.00 B
+packages/server build: ESM dist/effectiveness-S54PGUZS.mjs              346.00 B
+packages/server build: ESM dist/resource-registry-WHMUVXET.mjs          181.00 B
+packages/server build: ESM dist/execution-service-registry-VXHG4TYT.mjs 726.00 B
+packages/server build: ESM dist/llm-76FCWXUR.mjs                        195.00 B
+packages/server build: ESM dist/extract-TYQBHOI2.mjs                    10.75 KB
+packages/server build: ESM dist/paths-CG6FVX4X.mjs                      1.08 KB
+packages/server build: ESM dist/generate-OD33OYST.mjs                   1.27 KB
+packages/server build: ESM dist/db-U3RCYST2.mjs                         321.00 B
+packages/server build: ESM dist/context-builder-OQZ2BKQZ.mjs            12.13 KB
+packages/server build: ESM dist/chunk-XT4VEJTN.mjs                      26.85 KB
+packages/server build: ESM dist/skill-discovery-VPEPVE5E.mjs            5.55 KB
+packages/server build: ESM dist/chunk-OROXWN4P.mjs                      62.96 KB
+packages/server build: ESM dist/chunk-46WHSC7D.mjs                      55.47 KB
+packages/server build: ESM dist/chunk-PBUB7ELZ.mjs                      15.94 KB
+packages/server build: ESM dist/chunk-TG4PZ3ZT.mjs                      4.24 KB
+packages/server build: ESM dist/chunk-BJCWNNSC.mjs                      5.77 KB
+packages/server build: ESM dist/chunk-BXHXBBUE.mjs                      9.37 KB
+packages/server build: ESM dist/chunk-QTHJ4CGK.mjs                      6.51 KB
+packages/server build: ESM dist/chunk-ZFSPTUWB.mjs                      469.12 KB
+packages/server build: ESM dist/chunk-XHKIZXND.mjs                      4.49 KB
+packages/server build: ESM dist/chunk-E65GNIUB.mjs                      1.04 KB
+packages/server build: ESM dist/chunk-SDFPUXQF.mjs                      2.04 KB
+packages/server build: ESM dist/chunk-FDFZY3X2.mjs                      760.00 B
+packages/server build: ESM dist/yjs-ws-S7MFVLTD.mjs                     265.00 B
+packages/server build: ESM dist/chunk-S4NMBQT7.mjs                      12.85 KB
+packages/server build: ESM dist/chunk-V556T6GH.mjs                      2.37 KB
+packages/server build: ESM dist/chunk-AAA2MPKK.mjs                      28.77 KB
+packages/server build: ESM dist/workspace-dao-DNNC35WL.mjs              144.00 B
+packages/server build: ESM dist/chunk-XRRYTUO6.mjs                      18.88 KB
+packages/server build: ESM dist/chunk-GFTQBBOS.mjs                      7.27 KB
+packages/server build: ESM dist/execution-dao-BNJAZJCT.mjs              144.00 B
+packages/server build: ESM dist/chunk-W6CDFGPU.mjs                      41.83 KB
+packages/server build: ESM dist/token-usage-dao-NVOIQ76T.mjs            146.00 B
+packages/server build: ESM dist/chunk-CYZXNBE3.mjs                      27.71 KB
+packages/server build: ESM dist/chunk-CRBHRWN4.mjs                      1.08 KB
+packages/server build: ESM dist/archive-draft-dao-DLY5RFI4.mjs          119.00 B
+packages/server build: ESM dist/file-ops-L7CNNF5T.mjs                   903.00 B
+packages/server build: ESM dist/chunk-Z2KPXMYT.mjs                      8.77 KB
+packages/server build: ESM dist/chunk-3JTMWA7D.mjs                      1.78 KB
+packages/server build: ESM dist/chunk-FHFEJHQU.mjs                      2.88 KB
+packages/server build: ESM dist/chunk-CIESM3BP.mjs                      1.30 KB
+packages/server build: ESM dist/pending-review-dao-SPRXNJHO.mjs         152.00 B
+packages/server build: ESM dist/chunk-MUMJI23M.mjs                      3.88 KB
+packages/server build: ESM dist/index.mjs                               636.87 KB
+packages/server build: ESM ⚡️ Build success in 134ms
+packages/server build: CJS dist/index.js 1.61 MB
+packages/server build: CJS ⚡️ Build success in 135ms
+packages/server build: DTS Build start
+packages/cli build: DTS Build start
+packages/cli build: DTS ⚡️ Build success in 1243ms
+packages/cli build: DTS dist/index.d.mts 678.00 B
+packages/cli build: DTS dist/index.d.ts  678.00 B
+packages/cli build: Copied core-pack/config/ -> dist/core-pack/config/
+packages/cli build: Copied core-pack/presets/ -> dist/core-pack/presets/
+packages/cli build: Copied core-pack/workflows/ -> dist/core-pack/workflows/
+packages/cli build: Copied core-pack/skills/ -> dist/core-pack/skills/
+packages/cli build: Copied core-pack/agents/ -> dist/core-pack/agents/
+packages/cli build: Copied core-pack/scripts/ -> dist/core-pack/scripts/
+packages/cli build: Copied core-pack/templates/ -> dist/core-pack/templates/
+packages/cli build: Done
+packages/server build: DTS ⚡️ Build success in 3652ms
+packages/server build: DTS dist/index.d.mts 175.00 B
+packages/server build: DTS dist/index.d.ts  175.00 B
+packages/server build: Done
+[sync-builtin] skills: 34, agents: 8, schema: ✗
+[dev] Build complete.
+[server] [server] Built-in clones initialized: 1 registered, 0 dirs created
+[server] [yjs] 12 active workspaces (lazy init on first access)
+[server] Octopus Server running on http://0.0.0.0:3001 (LAN: http://192.168.2.168:3001) (PID: 49626)
+[server] WebSocket ready on ws://0.0.0.0:3001
+[server] Log file: /Users/xzf/.octopus/logs/server-main.log
+[server] [scheduler] Started with 1 active cron jobs (workflow + agent)
+[server] <-- GET /api/actuator/health
+[server] --> GET /api/actuator/health [32m200[0m 27ms
+
+[dev] ✓ server: http://192.168.2.168:3001
+[dev] ✓ web:    http://192.168.2.168:3000
+[dev] ✓ health: mode=default, pid=49626
+[dev] ✓ pids:   49626, 49627 → /Users/xzf/.octopus/host-pids.json
+
+[dev] Ready. Press Ctrl+C to stop.
+
+[server] <-- GET /api/health
+[server] --> GET /api/health [33m404[0m 1ms
+[web] ▲ Next.js 16.2.4 (Turbopack)
+[web] - Local:         http://localhost:3000
+[web] - Network:       http://192.168.2.168:3000
+[web] ✓ Ready in 332ms
+[web] ⚠ Warning: Next.js inferred your workspace root, but it may not be correct.
+[web]  We detected multiple lockfiles and selected the directory of /Users/xzf/pnpm-lock.yaml as the root directory.
+[web]  To silence this warning, set `turbopack.root` in your Next.js config, or consider removing one of the lockfiles if it's not needed.
+[web]    See https://nextjs.org/docs/app/api-reference/config/next-config-js/turbopack#root-directory for more information.
+[web]  Detected additional lockfiles: 
+[web]    * /Users/xzf/Projects/ai/XzhiF/open-octopus/pnpm-workspace.yaml
+[web]  GET / 200 in 907ms (next.js: 705ms, application-code: 202ms)
+[server] <-- GET /api/health
+[server] --> GET /api/health [33m404[0m 1ms
+[web]  GET / 200 in 31ms (next.js: 1935µs, application-code: 29ms)
+[server] <-- GET /
+[server] --> GET / [33m404[0m 0ms
+[server] <-- GET /api/
+[server] --> GET /api/ [33m404[0m 0ms
+[server] <-- GET /api/scheduler/jobs
+[server] --> GET /api/scheduler/jobs [32m200[0m 1ms
+[server] <-- GET /api/scheduler/events
+[server] --> GET /api/scheduler/events [32m200[0m 2ms
+[server] <-- GET /api/scheduler/events
+[server] --> GET /api/scheduler/events [32m200[0m 0ms
+[server] <-- GET /api/scheduler/jobs?trigger_source=requirement
+[server] --> GET /api/scheduler/jobs?trigger_source=requirement [32m200[0m 1ms
+[server] <-- GET /api/scheduler/events
+[server] --> GET /api/scheduler/events [32m200[0m 0ms
+[server] <-- POST /api/scheduler/jobs
+[server] --> POST /api/scheduler/jobs [32m201[0m 4ms
+[server] <-- POST /api/scheduler/jobs
+[server] --> POST /api/scheduler/jobs [32m201[0m 2ms
+[server] <-- GET /api/scheduler/jobs/04431748-fb4d-4fbe-ba6e-14d3a1c53fd3
+[server] --> GET /api/scheduler/jobs/04431748-fb4d-4fbe-ba6e-14d3a1c53fd3 [32m200[0m 0ms
+[server] <-- POST /api/scheduler/jobs
+[server] --> POST /api/scheduler/jobs [32m201[0m 1ms
+[server] <-- POST /api/scheduler/jobs/905054cb-5774-4d42-bdc3-0f47be9a4891/enqueue
+[server] [sse] emit event=schedule_status listeners=3
+[server] --> POST /api/scheduler/jobs/905054cb-5774-4d42-bdc3-0f47be9a4891/enqueue [32m200[0m 1ms
+[server] <-- POST /api/scheduler/jobs
+[server] --> POST /api/scheduler/jobs [32m201[0m 1ms
+[server] <-- POST /api/scheduler/jobs/9b668fc6-28d1-4b1c-98b1-64b15ef33b83/enqueue
+[server] [sse] emit event=schedule_status listeners=3
+[server] --> POST /api/scheduler/jobs/9b668fc6-28d1-4b1c-98b1-64b15ef33b83/enqueue [32m200[0m 1ms
+[server] <-- POST /api/scheduler/jobs/9b668fc6-28d1-4b1c-98b1-64b15ef33b83/abort
+[server] [sse] emit event=schedule_status listeners=3
+[server] --> POST /api/scheduler/jobs/9b668fc6-28d1-4b1c-98b1-64b15ef33b83/abort [32m200[0m 2ms
+[server] <-- POST /api/scheduler/jobs
+[server] --> POST /api/scheduler/jobs [32m201[0m 2ms
+[server] <-- POST /api/scheduler/jobs/fcb2374a-250d-4b75-b9c3-ecc514d17be1/abort
+[server] --> POST /api/scheduler/jobs/fcb2374a-250d-4b75-b9c3-ecc514d17be1/abort [33m400[0m 0ms
+[server] <-- POST /api/scheduler/jobs
+[server] --> POST /api/scheduler/jobs [32m201[0m 7ms
+[server] <-- POST /api/scheduler/jobs/541bae1f-2b30-417a-b7f8-ad299f66f980/enqueue
+[server] [sse] emit event=schedule_status listeners=3
+[server] --> POST /api/scheduler/jobs/541bae1f-2b30-417a-b7f8-ad299f66f980/enqueue [32m200[0m 1ms
+[server] <-- POST /api/scheduler/jobs
+[server] --> POST /api/scheduler/jobs [32m201[0m 1ms
+[server] <-- DELETE /api/scheduler/jobs/85b1ca7e-40e6-433e-914b-3515d3ab3f52
+[server] --> DELETE /api/scheduler/jobs/85b1ca7e-40e6-433e-914b-3515d3ab3f52 [32m200[0m 1ms
+[server] <-- DELETE /api/scheduler/jobs/04431748-fb4d-4fbe-ba6e-14d3a1c53fd3
+[server] --> DELETE /api/scheduler/jobs/04431748-fb4d-4fbe-ba6e-14d3a1c53fd3 [32m200[0m 0ms
+[server] <-- DELETE /api/scheduler/jobs/905054cb-5774-4d42-bdc3-0f47be9a4891
+[server] --> DELETE /api/scheduler/jobs/905054cb-5774-4d42-bdc3-0f47be9a4891 [32m200[0m 0ms
+[server] <-- DELETE /api/scheduler/jobs/9b668fc6-28d1-4b1c-98b1-64b15ef33b83
+[server] --> DELETE /api/scheduler/jobs/9b668fc6-28d1-4b1c-98b1-64b15ef33b83 [32m200[0m 1ms
+[server] <-- DELETE /api/scheduler/jobs/fcb2374a-250d-4b75-b9c3-ecc514d17be1
+[server] --> DELETE /api/scheduler/jobs/fcb2374a-250d-4b75-b9c3-ecc514d17be1 [32m200[0m 1ms
+[server] <-- DELETE /api/scheduler/jobs/541bae1f-2b30-417a-b7f8-ad299f66f980
+[server] --> DELETE /api/scheduler/jobs/541bae1f-2b30-417a-b7f8-ad299f66f980 [32m200[0m 1ms
+[server] <-- DELETE /api/scheduler/jobs/8285b7a2-1248-43f7-80c8-69dbda97b10a
+[server] --> DELETE /api/scheduler/jobs/8285b7a2-1248-43f7-80c8-69dbda97b10a [32m200[0m 1ms
+[server] <-- GET /api/scheduler/events
+[server] --> GET /api/scheduler/events [32m200[0m 0ms
+[server] <-- POST /api/scheduler/jobs
+[server] --> POST /api/scheduler/jobs [32m201[0m 1ms
+[server] <-- POST /api/scheduler/jobs
+[server] --> POST /api/scheduler/jobs [32m201[0m 2ms
+[server] <-- GET /api/scheduler/jobs/1edcbeb2-37fb-47c3-a759-62fd16e49f25
+[server] --> GET /api/scheduler/jobs/1edcbeb2-37fb-47c3-a759-62fd16e49f25 [32m200[0m 0ms
+[server] <-- POST /api/scheduler/jobs
+[server] --> POST /api/scheduler/jobs [32m201[0m 1ms
+[server] <-- POST /api/scheduler/jobs/6ae2b820-ce37-4f7b-a7f3-f64a64c10285/enqueue
+[server] [sse] emit event=schedule_status listeners=4
+[server] --> POST /api/scheduler/jobs/6ae2b820-ce37-4f7b-a7f3-f64a64c10285/enqueue [32m200[0m 1ms
+[server] <-- POST /api/scheduler/jobs
+[server] --> POST /api/scheduler/jobs [32m201[0m 1ms
+[server] <-- POST /api/scheduler/jobs/a3243961-1fb9-4009-8eeb-215c4ccf55b3/enqueue
+[server] [sse] emit event=schedule_status listeners=4
+[server] --> POST /api/scheduler/jobs/a3243961-1fb9-4009-8eeb-215c4ccf55b3/enqueue [32m200[0m 0ms
+[server] <-- POST /api/scheduler/jobs/a3243961-1fb9-4009-8eeb-215c4ccf55b3/abort
+[server] [sse] emit event=schedule_status listeners=4
+[server] --> POST /api/scheduler/jobs/a3243961-1fb9-4009-8eeb-215c4ccf55b3/abort [32m200[0m 1ms
+[server] <-- POST /api/scheduler/jobs
+[server] --> POST /api/scheduler/jobs [32m201[0m 1ms
+[server] <-- POST /api/scheduler/jobs/f71d2702-5d13-44a2-9aaa-9e74d48c90be/abort
+[server] --> POST /api/scheduler/jobs/f71d2702-5d13-44a2-9aaa-9e74d48c90be/abort [33m400[0m 0ms
+[server] <-- POST /api/scheduler/jobs
+[server] --> POST /api/scheduler/jobs [32m201[0m 1ms
+[server] <-- POST /api/scheduler/jobs/27fb2ef2-d8df-4adc-ad39-8bdb7e5f9e4a/enqueue
+[server] [sse] emit event=schedule_status listeners=4
+[server] --> POST /api/scheduler/jobs/27fb2ef2-d8df-4adc-ad39-8bdb7e5f9e4a/enqueue [32m200[0m 0ms
+[server] <-- POST /api/scheduler/jobs
+[server] --> POST /api/scheduler/jobs [32m201[0m 1ms
+[server] [sse] emit event=schedule_status listeners=4
+[server] [sse] emit event=schedule_status listeners=4
+[server] [WorkspaceScaffold] copied skill: octo-dev-copilot
+[server] [WorkspaceScaffold] copied skill: octo-workflow-dev
+[server] [WorkspaceScaffold] copied skill: octo-resource-manager
+[server] [WorkspaceScaffold] copied skill: octo-source-analyzer
+[server] [WorkspaceScaffold] copied agent: devil-advocate.md
+[server] [WorkspaceScaffold] copied agent: architecture-explorer.md
+[server] [WorkspaceScaffold] copied agent: vision-analyzer.md
+[server] [WorkflowExecutor] workspace creation failed {
+[server]   scheduleId: '6ae2b820-ce37-4f7b-a7f3-f64a64c10285',
+[server]   error: "repos/index.md not found for org 'default' (looked at /Users/xzf/.octopus/orgs/default/repos/index.md)"
+[server] }
+[server] [sse] emit event=schedule_status listeners=4
+[server] [WorkspaceScaffold] copied skill: octo-dev-copilot
+[server] [WorkspaceScaffold] copied skill: octo-workflow-dev
+[server] [WorkspaceScaffold] copied skill: octo-resource-manager
+[server] [WorkspaceScaffold] copied skill: octo-source-analyzer
+[server] [WorkspaceScaffold] copied agent: devil-advocate.md
+[server] [WorkspaceScaffold] copied agent: architecture-explorer.md
+[server] [WorkspaceScaffold] copied agent: vision-analyzer.md
+[server] [WorkflowExecutor] workspace creation failed {
+[server]   scheduleId: '27fb2ef2-d8df-4adc-ad39-8bdb7e5f9e4a',
+[server]   error: "repos/index.md not found for org 'default' (looked at /Users/xzf/.octopus/orgs/default/repos/index.md)"
+[server] }
+[server] <-- DELETE /api/scheduler/jobs/d8d2a298-42d6-47d6-88e5-ce9112ae7c08
+[server] --> DELETE /api/scheduler/jobs/d8d2a298-42d6-47d6-88e5-ce9112ae7c08 [32m200[0m 0ms
+[server] <-- DELETE /api/scheduler/jobs/1edcbeb2-37fb-47c3-a759-62fd16e49f25
+[server] --> DELETE /api/scheduler/jobs/1edcbeb2-37fb-47c3-a759-62fd16e49f25 [32m200[0m 1ms
+[server] <-- DELETE /api/scheduler/jobs/6ae2b820-ce37-4f7b-a7f3-f64a64c10285
+[server] --> DELETE /api/scheduler/jobs/6ae2b820-ce37-4f7b-a7f3-f64a64c10285 [32m200[0m 0ms
+[server] <-- DELETE /api/scheduler/jobs/a3243961-1fb9-4009-8eeb-215c4ccf55b3
+[server] --> DELETE /api/scheduler/jobs/a3243961-1fb9-4009-8eeb-215c4ccf55b3 [32m200[0m 1ms
+[server] <-- DELETE /api/scheduler/jobs/f71d2702-5d13-44a2-9aaa-9e74d48c90be
+[server] --> DELETE /api/scheduler/jobs/f71d2702-5d13-44a2-9aaa-9e74d48c90be [32m200[0m 0ms
+[server] <-- DELETE /api/scheduler/jobs/27fb2ef2-d8df-4adc-ad39-8bdb7e5f9e4a
+[server] --> DELETE /api/scheduler/jobs/27fb2ef2-d8df-4adc-ad39-8bdb7e5f9e4a [32m200[0m 0ms
+[server] <-- DELETE /api/scheduler/jobs/1a36da12-5665-413c-869d-e0bdf9eb47fd
+[server] --> DELETE /api/scheduler/jobs/1a36da12-5665-413c-869d-e0bdf9eb47fd [32m200[0m 1ms
+[server] <-- POST /api/scheduler/jobs
+[server] --> POST /api/scheduler/jobs [32m201[0m 1ms
+[server] <-- POST /api/scheduler/jobs/592df746-aff9-44b3-baeb-7a5e0f99c761/enqueue
+[server] [sse] emit event=schedule_status listeners=4
+[server] --> POST /api/scheduler/jobs/592df746-aff9-44b3-baeb-7a5e0f99c761/enqueue [32m200[0m 1ms
+[server] <-- POST /api/scheduler/jobs
+[server] --> POST /api/scheduler/jobs [32m201[0m 1ms
+[server] <-- POST /api/scheduler/jobs
+[server] --> POST /api/scheduler/jobs [32m201[0m 1ms
+[server] <-- POST /api/scheduler/jobs/d9e5fec5-fd0c-4c52-ab75-81fb9886611d/enqueue
+[server] [sse] emit event=schedule_status listeners=4
+[server] --> POST /api/scheduler/jobs/d9e5fec5-fd0c-4c52-ab75-81fb9886611d/enqueue [32m200[0m 1ms
+[server] <-- POST /api/scheduler/jobs
+[server] --> POST /api/scheduler/jobs [32m201[0m 1ms
+[server] <-- POST /api/scheduler/jobs/6ac7436f-7e05-4c8e-97cb-6fe5d3b738b9/enqueue
+[server] [sse] emit event=schedule_status listeners=4
+[server] --> POST /api/scheduler/jobs/6ac7436f-7e05-4c8e-97cb-6fe5d3b738b9/enqueue [32m200[0m 1ms
+[server] <-- POST /api/scheduler/jobs
+[server] --> POST /api/scheduler/jobs [32m201[0m 1ms
+[server] <-- POST /api/scheduler/jobs
+[server] --> POST /api/scheduler/jobs [33m429[0m 0ms
+[web]  GET /tasks 200 in 94ms (next.js: 10ms, application-code: 84ms)
+[server] <-- GET /api/scheduler/jobs?page=1&limit=100&trigger_source=requirement
+[server] --> GET /api/scheduler/jobs?page=1&limit=100&trigger_source=requirement [32m200[0m 0ms
+[server] <-- GET /api/scheduler/events
+[server] --> GET /api/scheduler/events [32m200[0m 0ms
+[server] <-- GET /api/orgs
+[server] --> GET /api/orgs [32m200[0m 0ms
+[server] <-- GET /api/resources?type=skill&installed=true
+[server] --> GET /api/resources?type=skill&installed=true [32m200[0m 6ms
+[server] <-- GET /api/orgs
+[server] --> GET /api/orgs [32m200[0m 0ms
+[server] <-- GET /api/resources?type=skill&installed=true
+[server] --> GET /api/resources?type=skill&installed=true [32m200[0m 1ms
+[server] <-- GET /api/workspaces/repos?org=xzf
+[server] --> GET /api/workspaces/repos?org=xzf [32m200[0m 0ms
+[server] <-- GET /api/workspaces/repos?org=xzf
+[server] --> GET /api/workspaces/repos?org=xzf [32m200[0m 1ms
+[server] <-- GET /api/scheduler/jobs/605a51d0-461e-4e33-9835-e262372b4021
+[server] --> GET /api/scheduler/jobs/605a51d0-461e-4e33-9835-e262372b4021 [32m200[0m 0ms
+[server] <-- GET /api/scheduler/jobs/605a51d0-461e-4e33-9835-e262372b4021
+[server] --> GET /api/scheduler/jobs/605a51d0-461e-4e33-9835-e262372b4021 [32m200[0m 0ms
+[server] <-- GET /api/orgs
+[server] --> GET /api/orgs [32m200[0m 0ms
+[server] <-- GET /api/resources?type=skill&installed=true
+[server] --> GET /api/resources?type=skill&installed=true [32m200[0m 0ms
+[server] <-- GET /api/orgs
+[server] --> GET /api/orgs [32m200[0m 0ms
+[server] <-- GET /api/resources?type=skill&installed=true
+[server] --> GET /api/resources?type=skill&installed=true [32m200[0m 0ms
+[server] <-- GET /api/workspaces/repos?org=xzf
+[server] --> GET /api/workspaces/repos?org=xzf [32m200[0m 0ms
+[server] <-- GET /api/workspaces/repos?org=xzf
+[server] --> GET /api/workspaces/repos?org=xzf [32m200[0m 1ms
+[server] <-- GET /api/scheduler/jobs?page=1&limit=100&trigger_source=requirement
+[server] --> GET /api/scheduler/jobs?page=1&limit=100&trigger_source=requirement [32m200[0m 0ms
+[server] <-- GET /api/orgs
+[server] --> GET /api/orgs [32m200[0m 0ms
+[server] <-- GET /api/resources?type=skill&installed=true
+[server] --> GET /api/resources?type=skill&installed=true [32m200[0m 0ms
+[server] <-- GET /api/orgs
+[server] --> GET /api/orgs [32m200[0m 0ms
+[server] <-- GET /api/resources?type=skill&installed=true
+[server] --> GET /api/resources?type=skill&installed=true [32m200[0m 0ms
+[server] <-- GET /api/workspaces/repos?org=xzf
+[server] --> GET /api/workspaces/repos?org=xzf [32m200[0m 1ms
+[server] <-- GET /api/workspaces/repos?org=xzf
+[server] --> GET /api/workspaces/repos?org=xzf [32m200[0m 0ms
+[server] <-- GET /api/resources?type=skill&installed=true
+[server] --> GET /api/resources?type=skill&installed=true [32m200[0m 0ms
+[server] <-- GET /api/orgs
+[server] --> GET /api/orgs [32m200[0m 0ms
+[server] <-- GET /api/orgs
+[server] --> GET /api/orgs [32m200[0m 0ms
+[server] <-- GET /api/resources?type=skill&installed=true
+[server] --> GET /api/resources?type=skill&installed=true [32m200[0m 0ms
+[server] <-- GET /api/workspaces/repos?org=xzf
+[server] --> GET /api/workspaces/repos?org=xzf [32m200[0m 0ms
+[server] <-- GET /api/workspaces/repos?org=xzf
+[server] --> GET /api/workspaces/repos?org=xzf [32m200[0m 1ms
+[server] <-- POST /api/scheduler/jobs/062be5fb-691e-4789-bc59-5ea3894c9fbf/enqueue
+[server] [sse] emit event=schedule_status listeners=5
+[server] --> POST /api/scheduler/jobs/062be5fb-691e-4789-bc59-5ea3894c9fbf/enqueue [32m200[0m 0ms
+[server] <-- GET /api/scheduler/jobs?page=1&limit=100&trigger_source=requirement
+[server] --> GET /api/scheduler/jobs?page=1&limit=100&trigger_source=requirement [32m200[0m 0ms
+[server] <-- DELETE /api/scheduler/jobs/592df746-aff9-44b3-baeb-7a5e0f99c761
+[server] --> DELETE /api/scheduler/jobs/592df746-aff9-44b3-baeb-7a5e0f99c761 [32m200[0m 1ms
+[server] <-- DELETE /api/scheduler/jobs/605a51d0-461e-4e33-9835-e262372b4021
+[server] --> DELETE /api/scheduler/jobs/605a51d0-461e-4e33-9835-e262372b4021 [32m200[0m 0ms
+[server] <-- DELETE /api/scheduler/jobs/d9e5fec5-fd0c-4c52-ab75-81fb9886611d
+[server] --> DELETE /api/scheduler/jobs/d9e5fec5-fd0c-4c52-ab75-81fb9886611d [32m200[0m 1ms
+[server] <-- DELETE /api/scheduler/jobs/6ac7436f-7e05-4c8e-97cb-6fe5d3b738b9
+[server] --> DELETE /api/scheduler/jobs/6ac7436f-7e05-4c8e-97cb-6fe5d3b738b9 [32m200[0m 0ms
+[server] <-- DELETE /api/scheduler/jobs/062be5fb-691e-4789-bc59-5ea3894c9fbf
+[server] --> DELETE /api/scheduler/jobs/062be5fb-691e-4789-bc59-5ea3894c9fbf [32m200[0m 0ms
+[server] <-- POST /api/scheduler/jobs
+[server] --> POST /api/scheduler/jobs [32m201[0m 1ms
+[server] <-- POST /api/scheduler/jobs/a20e50b0-4dd7-4c6d-845b-2d5387318c1c/enqueue
+[server] [sse] emit event=schedule_status listeners=5
+[server] --> POST /api/scheduler/jobs/a20e50b0-4dd7-4c6d-845b-2d5387318c1c/enqueue [32m200[0m 1ms
+[server] [sse] emit event=schedule_status listeners=5
+[server] [sse] emit event=schedule_status listeners=5
+[server] [WorkspaceScaffold] copied skill: octo-dev-copilot
+[server] [WorkspaceScaffold] copied skill: octo-workflow-dev
+[server] [WorkspaceScaffold] copied skill: octo-resource-manager
+[server] [WorkspaceScaffold] copied skill: octo-source-analyzer
+[server] [WorkspaceScaffold] copied agent: devil-advocate.md
+[server] [WorkspaceScaffold] copied agent: architecture-explorer.md
+[server] [WorkspaceScaffold] copied agent: vision-analyzer.md
+[server] [WorkflowExecutor] workspace creation failed {
+[server]   scheduleId: 'a20e50b0-4dd7-4c6d-845b-2d5387318c1c',
+[server]   error: "repos/index.md not found for org 'default' (looked at /Users/xzf/.octopus/orgs/default/repos/index.md)"
+[server] }
+[server] <-- GET /api/scheduler/events
+[server] --> GET /api/scheduler/events [32m200[0m 1ms
+[server] <-- POST /api/scheduler/jobs
+[server] --> POST /api/scheduler/jobs [32m201[0m 0ms
+[server] <-- POST /api/scheduler/jobs
+[server] --> POST /api/scheduler/jobs [32m201[0m 1ms
+[server] <-- GET /api/scheduler/jobs/c9a523e5-e972-45e7-95d9-12068c62cb3d
+[server] --> GET /api/scheduler/jobs/c9a523e5-e972-45e7-95d9-12068c62cb3d [32m200[0m 0ms
+[server] <-- POST /api/scheduler/jobs
+[server] --> POST /api/scheduler/jobs [32m201[0m 1ms
+[server] <-- POST /api/scheduler/jobs/5b7fe4fa-65b4-4fff-92ee-1fbc0d6c97e6/enqueue
+[server] [sse] emit event=schedule_status listeners=6
+[server] --> POST /api/scheduler/jobs/5b7fe4fa-65b4-4fff-92ee-1fbc0d6c97e6/enqueue [32m200[0m 0ms
+[server] [sse] emit event=schedule_status listeners=6
+[server] [WorkspaceScaffold] copied skill: octo-dev-copilot
+[server] [WorkspaceScaffold] copied skill: octo-workflow-dev
+[server] [WorkspaceScaffold] copied skill: octo-resource-manager
+[server] [WorkspaceScaffold] copied skill: octo-source-analyzer
+[server] [WorkspaceScaffold] copied agent: devil-advocate.md
+[server] [WorkspaceScaffold] copied agent: architecture-explorer.md
+[server] [WorkspaceScaffold] copied agent: vision-analyzer.md
+[server] [WorkflowExecutor] workspace creation failed {
+[server]   scheduleId: '5b7fe4fa-65b4-4fff-92ee-1fbc0d6c97e6',
+[server]   error: "repos/index.md not found for org 'default' (looked at /Users/xzf/.octopus/orgs/default/repos/index.md)"
+[server] }
+[server] <-- POST /api/scheduler/jobs
+[server] --> POST /api/scheduler/jobs [32m201[0m 1ms
+[server] <-- POST /api/scheduler/jobs/7422230e-1739-4fd4-a2ed-edfeda42d082/enqueue
+[server] [sse] emit event=schedule_status listeners=6
+[server] --> POST /api/scheduler/jobs/7422230e-1739-4fd4-a2ed-edfeda42d082/enqueue [32m200[0m 1ms
+[server] <-- POST /api/scheduler/jobs/7422230e-1739-4fd4-a2ed-edfeda42d082/abort
+[server] [sse] emit event=schedule_status listeners=6
+[server] --> POST /api/scheduler/jobs/7422230e-1739-4fd4-a2ed-edfeda42d082/abort [32m200[0m 1ms
+[server] <-- POST /api/scheduler/jobs
+[server] --> POST /api/scheduler/jobs [32m201[0m 1ms
+[server] <-- POST /api/scheduler/jobs/2ca585e2-2e40-4874-93c7-fd8988dfcd5f/abort
+[server] --> POST /api/scheduler/jobs/2ca585e2-2e40-4874-93c7-fd8988dfcd5f/abort [33m400[0m 0ms
+[server] <-- POST /api/scheduler/jobs
+[server] --> POST /api/scheduler/jobs [32m201[0m 1ms
+[server] <-- POST /api/scheduler/jobs/575d38a3-1e05-4954-b462-e7027238fd78/enqueue
+[server] [sse] emit event=schedule_status listeners=6
+[server] --> POST /api/scheduler/jobs/575d38a3-1e05-4954-b462-e7027238fd78/enqueue [32m200[0m 1ms
+[server] <-- POST /api/scheduler/jobs
+[server] --> POST /api/scheduler/jobs [32m201[0m 1ms
+[server] <-- DELETE /api/scheduler/jobs/2958de0b-afbf-4ad3-bfa8-9e08a642634c
+[server] --> DELETE /api/scheduler/jobs/2958de0b-afbf-4ad3-bfa8-9e08a642634c [32m200[0m 0ms
+[server] <-- DELETE /api/scheduler/jobs/c9a523e5-e972-45e7-95d9-12068c62cb3d
+[server] --> DELETE /api/scheduler/jobs/c9a523e5-e972-45e7-95d9-12068c62cb3d [32m200[0m 1ms
+[server] <-- DELETE /api/scheduler/jobs/5b7fe4fa-65b4-4fff-92ee-1fbc0d6c97e6
+[server] --> DELETE /api/scheduler/jobs/5b7fe4fa-65b4-4fff-92ee-1fbc0d6c97e6 [32m200[0m 1ms
+[server] <-- DELETE /api/scheduler/jobs/7422230e-1739-4fd4-a2ed-edfeda42d082
+[server] --> DELETE /api/scheduler/jobs/7422230e-1739-4fd4-a2ed-edfeda42d082 [32m200[0m 0ms
+[server] <-- DELETE /api/scheduler/jobs/2ca585e2-2e40-4874-93c7-fd8988dfcd5f
+[server] --> DELETE /api/scheduler/jobs/2ca585e2-2e40-4874-93c7-fd8988dfcd5f [32m200[0m 0ms
+[server] <-- DELETE /api/scheduler/jobs/575d38a3-1e05-4954-b462-e7027238fd78
+[server] --> DELETE /api/scheduler/jobs/575d38a3-1e05-4954-b462-e7027238fd78 [32m200[0m 0ms
+[server] <-- DELETE /api/scheduler/jobs/736fb018-468d-46d3-8e6f-5bf0cb9cdbc3
+[server] --> DELETE /api/scheduler/jobs/736fb018-468d-46d3-8e6f-5bf0cb9cdbc3 [32m200[0m 0ms
+[server] <-- GET /api/scheduler/events
+[server] --> GET /api/scheduler/events [32m200[0m 0ms
+[server] <-- POST /api/scheduler/jobs
+[server] --> POST /api/scheduler/jobs [32m201[0m 1ms
+[server] <-- POST /api/scheduler/jobs
+[server] --> POST /api/scheduler/jobs [32m201[0m 0ms
+[server] <-- GET /api/scheduler/jobs/2e7c8764-6f9e-4252-8316-40203ae559f0
+[server] --> GET /api/scheduler/jobs/2e7c8764-6f9e-4252-8316-40203ae559f0 [32m200[0m 0ms
+[server] <-- POST /api/scheduler/jobs
+[server] --> POST /api/scheduler/jobs [32m201[0m 0ms
+[server] <-- POST /api/scheduler/jobs/60abed1a-6ce4-417d-9471-082ca86f94a2/enqueue
+[server] [sse] emit event=schedule_status listeners=7
+[server] --> POST /api/scheduler/jobs/60abed1a-6ce4-417d-9471-082ca86f94a2/enqueue [32m200[0m 1ms
+[server] <-- POST /api/scheduler/jobs
+[server] --> POST /api/scheduler/jobs [32m201[0m 1ms
+[server] <-- POST /api/scheduler/jobs/e9a71ea0-0b47-4856-8884-389cad98715a/enqueue
+[server] [sse] emit event=schedule_status listeners=7
+[server] --> POST /api/scheduler/jobs/e9a71ea0-0b47-4856-8884-389cad98715a/enqueue [32m200[0m 1ms
+[server] <-- POST /api/scheduler/jobs/e9a71ea0-0b47-4856-8884-389cad98715a/abort
+[server] [sse] emit event=schedule_status listeners=7
+[server] --> POST /api/scheduler/jobs/e9a71ea0-0b47-4856-8884-389cad98715a/abort [32m200[0m 1ms
+[server] <-- POST /api/scheduler/jobs
+[server] --> POST /api/scheduler/jobs [32m201[0m 1ms
+[server] <-- POST /api/scheduler/jobs/579ec689-2b64-4548-9d8d-87332a166a60/abort
+[server] --> POST /api/scheduler/jobs/579ec689-2b64-4548-9d8d-87332a166a60/abort [33m400[0m 0ms
+[server] <-- POST /api/scheduler/jobs
+[server] --> POST /api/scheduler/jobs [32m201[0m 1ms
+[server] <-- POST /api/scheduler/jobs/d73bdbce-6d95-4c07-b88f-4c13ad07a6c4/enqueue
+[server] [sse] emit event=schedule_status listeners=7
+[server] --> POST /api/scheduler/jobs/d73bdbce-6d95-4c07-b88f-4c13ad07a6c4/enqueue [32m200[0m 1ms
+[server] [sse] emit event=schedule_status listeners=7
+[server] [sse] emit event=schedule_status listeners=7
+[server] [WorkspaceScaffold] copied skill: octo-dev-copilot
+[server] [WorkspaceScaffold] copied skill: octo-workflow-dev
+[server] [WorkspaceScaffold] copied skill: octo-resource-manager
+[server] [WorkspaceScaffold] copied skill: octo-source-analyzer
+[server] [WorkspaceScaffold] copied agent: devil-advocate.md
+[server] [WorkspaceScaffold] copied agent: architecture-explorer.md
+[server] [WorkspaceScaffold] copied agent: vision-analyzer.md
+[server] [WorkflowExecutor] workspace creation failed {
+[server]   scheduleId: '60abed1a-6ce4-417d-9471-082ca86f94a2',
+[server]   error: "repos/index.md not found for org 'default' (looked at /Users/xzf/.octopus/orgs/default/repos/index.md)"
+[server] }
+[server] [sse] emit event=schedule_status listeners=7
+[server] [WorkspaceScaffold] copied skill: octo-dev-copilot
+[server] [WorkspaceScaffold] copied skill: octo-workflow-dev
+[server] [WorkspaceScaffold] copied skill: octo-resource-manager
+[server] [WorkspaceScaffold] copied skill: octo-source-analyzer
+[server] [WorkspaceScaffold] copied agent: devil-advocate.md
+[server] [WorkspaceScaffold] copied agent: architecture-explorer.md
+[server] [WorkspaceScaffold] copied agent: vision-analyzer.md
+[server] [WorkflowExecutor] workspace creation failed {
+[server]   scheduleId: 'd73bdbce-6d95-4c07-b88f-4c13ad07a6c4',
+[server]   error: "repos/index.md not found for org 'default' (looked at /Users/xzf/.octopus/orgs/default/repos/index.md)"
+[server] }
+[server] <-- POST /api/scheduler/jobs
+[server] --> POST /api/scheduler/jobs [32m201[0m 1ms
+[server] <-- DELETE /api/scheduler/jobs/99d4bdd9-df97-4298-ac3a-ae52b9b0f3f1
+[server] --> DELETE /api/scheduler/jobs/99d4bdd9-df97-4298-ac3a-ae52b9b0f3f1 [32m200[0m 1ms
+[server] <-- DELETE /api/scheduler/jobs/2e7c8764-6f9e-4252-8316-40203ae559f0
+[server] --> DELETE /api/scheduler/jobs/2e7c8764-6f9e-4252-8316-40203ae559f0 [32m200[0m 1ms
+[server] <-- DELETE /api/scheduler/jobs/60abed1a-6ce4-417d-9471-082ca86f94a2
+[server] --> DELETE /api/scheduler/jobs/60abed1a-6ce4-417d-9471-082ca86f94a2 [32m200[0m 1ms
+[server] <-- DELETE /api/scheduler/jobs/e9a71ea0-0b47-4856-8884-389cad98715a
+[server] --> DELETE /api/scheduler/jobs/e9a71ea0-0b47-4856-8884-389cad98715a [32m200[0m 1ms
+[server] <-- DELETE /api/scheduler/jobs/579ec689-2b64-4548-9d8d-87332a166a60
+[server] --> DELETE /api/scheduler/jobs/579ec689-2b64-4548-9d8d-87332a166a60 [32m200[0m 0ms
+[server] <-- DELETE /api/scheduler/jobs/d73bdbce-6d95-4c07-b88f-4c13ad07a6c4
+[server] --> DELETE /api/scheduler/jobs/d73bdbce-6d95-4c07-b88f-4c13ad07a6c4 [32m200[0m 0ms
+[server] <-- DELETE /api/scheduler/jobs/231f775a-d47d-499a-a442-d5261d8628a0
+[server] --> DELETE /api/scheduler/jobs/231f775a-d47d-499a-a442-d5261d8628a0 [32m200[0m 0ms
+[server] <-- GET /api/scheduler/events
+[server] --> GET /api/scheduler/events [32m200[0m 0ms
+[server] <-- POST /api/scheduler/jobs
+[server] --> POST /api/scheduler/jobs [32m201[0m 2ms
+[server] <-- POST /api/scheduler/jobs
+[server] --> POST /api/scheduler/jobs [32m201[0m 1ms
+[server] <-- GET /api/scheduler/jobs/0c0c2050-d669-4525-88f1-a91b933ea905
+[server] --> GET /api/scheduler/jobs/0c0c2050-d669-4525-88f1-a91b933ea905 [32m200[0m 0ms
+[server] <-- POST /api/scheduler/jobs
+[server] --> POST /api/scheduler/jobs [32m201[0m 1ms
+[server] <-- POST /api/scheduler/jobs/35c32525-a95f-4568-b5a3-b75ea7675a47/enqueue
+[server] [sse] emit event=schedule_status listeners=8
+[server] --> POST /api/scheduler/jobs/35c32525-a95f-4568-b5a3-b75ea7675a47/enqueue [32m200[0m 1ms
+[server] <-- POST /api/scheduler/jobs
+[server] --> POST /api/scheduler/jobs [32m201[0m 1ms
+[server] <-- POST /api/scheduler/jobs/ec708193-d0c0-4554-8fad-82512997222c/enqueue
+[server] [sse] emit event=schedule_status listeners=8
+[server] --> POST /api/scheduler/jobs/ec708193-d0c0-4554-8fad-82512997222c/enqueue [32m200[0m 1ms
+[server] <-- POST /api/scheduler/jobs/ec708193-d0c0-4554-8fad-82512997222c/abort
+[server] [sse] emit event=schedule_status listeners=8
+[server] --> POST /api/scheduler/jobs/ec708193-d0c0-4554-8fad-82512997222c/abort [32m200[0m 1ms
+[server] <-- POST /api/scheduler/jobs
+[server] --> POST /api/scheduler/jobs [32m201[0m 1ms
+[server] <-- POST /api/scheduler/jobs/52a402b5-8519-486d-ac41-0b8fb36de22d/abort
+[server] --> POST /api/scheduler/jobs/52a402b5-8519-486d-ac41-0b8fb36de22d/abort [33m400[0m 1ms
+[server] <-- POST /api/scheduler/jobs
+[server] --> POST /api/scheduler/jobs [32m201[0m 1ms
+[server] <-- POST /api/scheduler/jobs/d57407be-b959-44d4-8543-f469b7ed3ca8/enqueue
+[server] [sse] emit event=schedule_status listeners=8
+[server] --> POST /api/scheduler/jobs/d57407be-b959-44d4-8543-f469b7ed3ca8/enqueue [32m200[0m 1ms
+[server] <-- POST /api/scheduler/jobs
+[server] --> POST /api/scheduler/jobs [32m201[0m 2ms
+[server] <-- DELETE /api/scheduler/jobs/825be6b9-a547-4883-b81a-01965d9f3e8c
+[server] --> DELETE /api/scheduler/jobs/825be6b9-a547-4883-b81a-01965d9f3e8c [32m200[0m 1ms
+[server] <-- DELETE /api/scheduler/jobs/0c0c2050-d669-4525-88f1-a91b933ea905
+[server] --> DELETE /api/scheduler/jobs/0c0c2050-d669-4525-88f1-a91b933ea905 [32m200[0m 0ms
+[server] <-- DELETE /api/scheduler/jobs/35c32525-a95f-4568-b5a3-b75ea7675a47
+[server] --> DELETE /api/scheduler/jobs/35c32525-a95f-4568-b5a3-b75ea7675a47 [32m200[0m 0ms
+[server] <-- DELETE /api/scheduler/jobs/ec708193-d0c0-4554-8fad-82512997222c
+[server] --> DELETE /api/scheduler/jobs/ec708193-d0c0-4554-8fad-82512997222c [32m200[0m 0ms
+[server] <-- DELETE /api/scheduler/jobs/52a402b5-8519-486d-ac41-0b8fb36de22d
+[server] --> DELETE /api/scheduler/jobs/52a402b5-8519-486d-ac41-0b8fb36de22d [32m200[0m 1ms
+[server] <-- DELETE /api/scheduler/jobs/d57407be-b959-44d4-8543-f469b7ed3ca8
+[server] --> DELETE /api/scheduler/jobs/d57407be-b959-44d4-8543-f469b7ed3ca8 [32m200[0m 0ms
+[server] <-- DELETE /api/scheduler/jobs/5b1d8f99-6ba5-4c66-a20c-c57938a02669
+[server] --> DELETE /api/scheduler/jobs/5b1d8f99-6ba5-4c66-a20c-c57938a02669 [32m200[0m 0ms
+[server] <-- GET /api/scheduler/events
+[server] --> GET /api/scheduler/events [32m200[0m 0ms
+[server] <-- POST /api/scheduler/jobs
+[server] --> POST /api/scheduler/jobs [32m201[0m 0ms
+[server] <-- POST /api/scheduler/jobs
+[server] --> POST /api/scheduler/jobs [32m201[0m 1ms
+[server] <-- GET /api/scheduler/jobs/82132d4d-ea7c-4cbf-87ab-e0394cbb1faf
+[server] --> GET /api/scheduler/jobs/82132d4d-ea7c-4cbf-87ab-e0394cbb1faf [32m200[0m 0ms
+[server] <-- POST /api/scheduler/jobs
+[server] --> POST /api/scheduler/jobs [32m201[0m 1ms
+[server] <-- POST /api/scheduler/jobs/210bf192-9711-4867-963e-8fecbc482287/enqueue
+[server] [sse] emit event=schedule_status listeners=9
+[server] --> POST /api/scheduler/jobs/210bf192-9711-4867-963e-8fecbc482287/enqueue [32m200[0m 0ms
+[server] <-- POST /api/scheduler/jobs
+[server] --> POST /api/scheduler/jobs [32m201[0m 1ms
+[server] <-- POST /api/scheduler/jobs/e1475594-b7cc-4dfd-9242-8c2dc2897d66/enqueue
+[server] [sse] emit event=schedule_status listeners=9
+[server] --> POST /api/scheduler/jobs/e1475594-b7cc-4dfd-9242-8c2dc2897d66/enqueue [32m200[0m 0ms
+[server] <-- POST /api/scheduler/jobs/e1475594-b7cc-4dfd-9242-8c2dc2897d66/abort
+[server] [sse] emit event=schedule_status listeners=9
+[server] --> POST /api/scheduler/jobs/e1475594-b7cc-4dfd-9242-8c2dc2897d66/abort [32m200[0m 1ms
+[server] <-- POST /api/scheduler/jobs
+[server] --> POST /api/scheduler/jobs [32m201[0m 1ms
+[server] <-- POST /api/scheduler/jobs/df21db91-d984-432a-b73a-754da4adca6f/abort
+[server] --> POST /api/scheduler/jobs/df21db91-d984-432a-b73a-754da4adca6f/abort [33m400[0m 1ms
+[server] <-- POST /api/scheduler/jobs
+[server] --> POST /api/scheduler/jobs [32m201[0m 1ms
+[server] <-- POST /api/scheduler/jobs/7e4fbdd8-3d11-42eb-baa4-e0b4fbea4e39/enqueue
+[server] [sse] emit event=schedule_status listeners=9
+[server] --> POST /api/scheduler/jobs/7e4fbdd8-3d11-42eb-baa4-e0b4fbea4e39/enqueue [32m200[0m 0ms
+[server] <-- POST /api/scheduler/jobs
+[server] --> POST /api/scheduler/jobs [32m201[0m 1ms
+[server] <-- DELETE /api/scheduler/jobs/533d3ab8-7dbb-421a-bfe1-28fa4d716c0e
+[server] --> DELETE /api/scheduler/jobs/533d3ab8-7dbb-421a-bfe1-28fa4d716c0e [32m200[0m 1ms
+[server] <-- DELETE /api/scheduler/jobs/82132d4d-ea7c-4cbf-87ab-e0394cbb1faf
+[server] --> DELETE /api/scheduler/jobs/82132d4d-ea7c-4cbf-87ab-e0394cbb1faf [32m200[0m 1ms
+[server] <-- DELETE /api/scheduler/jobs/210bf192-9711-4867-963e-8fecbc482287
+[server] --> DELETE /api/scheduler/jobs/210bf192-9711-4867-963e-8fecbc482287 [32m200[0m 0ms
+[server] <-- DELETE /api/scheduler/jobs/e1475594-b7cc-4dfd-9242-8c2dc2897d66
+[server] --> DELETE /api/scheduler/jobs/e1475594-b7cc-4dfd-9242-8c2dc2897d66 [32m200[0m 1ms
+[server] <-- DELETE /api/scheduler/jobs/df21db91-d984-432a-b73a-754da4adca6f
+[server] --> DELETE /api/scheduler/jobs/df21db91-d984-432a-b73a-754da4adca6f [32m200[0m 1ms
+[server] <-- DELETE /api/scheduler/jobs/7e4fbdd8-3d11-42eb-baa4-e0b4fbea4e39
+[server] --> DELETE /api/scheduler/jobs/7e4fbdd8-3d11-42eb-baa4-e0b4fbea4e39 [32m200[0m 0ms
+[server] <-- DELETE /api/scheduler/jobs/72a9e249-7c3b-4ab8-8147-0b12d4a3086d
+[server] --> DELETE /api/scheduler/jobs/72a9e249-7c3b-4ab8-8147-0b12d4a3086d [32m200[0m 0ms
+[server] <-- GET /api/scheduler/events
+[server] --> GET /api/scheduler/events [32m200[0m 0ms
+[server] <-- POST /api/scheduler/jobs
+[server] --> POST /api/scheduler/jobs [32m201[0m 1ms
+[server] <-- POST /api/scheduler/jobs
+[server] --> POST /api/scheduler/jobs [32m201[0m 1ms
+[server] <-- GET /api/scheduler/jobs/beefa849-00cd-4f57-a204-04fae3e8ce54
+[server] --> GET /api/scheduler/jobs/beefa849-00cd-4f57-a204-04fae3e8ce54 [32m200[0m 0ms
+[server] <-- POST /api/scheduler/jobs
+[server] --> POST /api/scheduler/jobs [32m201[0m 1ms
+[server] <-- POST /api/scheduler/jobs/caa44a94-f131-4707-a5a4-4729c43ac99e/enqueue
+[server] [sse] emit event=schedule_status listeners=10
+[server] --> POST /api/scheduler/jobs/caa44a94-f131-4707-a5a4-4729c43ac99e/enqueue [32m200[0m 1ms
+[server] <-- POST /api/scheduler/jobs
+[server] --> POST /api/scheduler/jobs [32m201[0m 0ms
+[server] <-- POST /api/scheduler/jobs/eb425109-c3e1-4a0f-a7d4-6d9708f3ecda/enqueue
+[server] [sse] emit event=schedule_status listeners=10
+[server] --> POST /api/scheduler/jobs/eb425109-c3e1-4a0f-a7d4-6d9708f3ecda/enqueue [32m200[0m 1ms
+[server] <-- POST /api/scheduler/jobs/eb425109-c3e1-4a0f-a7d4-6d9708f3ecda/abort
+[server] [sse] emit event=schedule_status listeners=10
+[server] --> POST /api/scheduler/jobs/eb425109-c3e1-4a0f-a7d4-6d9708f3ecda/abort [32m200[0m 0ms
+[server] <-- POST /api/scheduler/jobs
+[server] --> POST /api/scheduler/jobs [32m201[0m 2ms
+[server] <-- POST /api/scheduler/jobs/50e75cb7-f20f-45e2-a246-7e0ed3c4f276/abort
+[server] --> POST /api/scheduler/jobs/50e75cb7-f20f-45e2-a246-7e0ed3c4f276/abort [33m400[0m 0ms
+[server] <-- POST /api/scheduler/jobs
+[server] --> POST /api/scheduler/jobs [32m201[0m 1ms
+[server] <-- POST /api/scheduler/jobs/9db59511-129b-471d-b589-e37ae4d732e0/enqueue
+[server] [sse] emit event=schedule_status listeners=10
+[server] --> POST /api/scheduler/jobs/9db59511-129b-471d-b589-e37ae4d732e0/enqueue [32m200[0m 1ms
+[server] <-- POST /api/scheduler/jobs
+[server] --> POST /api/scheduler/jobs [32m201[0m 1ms
+[server] <-- DELETE /api/scheduler/jobs/18846499-a838-4c5c-b50a-0cd752549f2c
+[server] --> DELETE /api/scheduler/jobs/18846499-a838-4c5c-b50a-0cd752549f2c [32m200[0m 1ms
+[server] <-- DELETE /api/scheduler/jobs/beefa849-00cd-4f57-a204-04fae3e8ce54
+[server] --> DELETE /api/scheduler/jobs/beefa849-00cd-4f57-a204-04fae3e8ce54 [32m200[0m 0ms
+[server] <-- DELETE /api/scheduler/jobs/caa44a94-f131-4707-a5a4-4729c43ac99e
+[server] --> DELETE /api/scheduler/jobs/caa44a94-f131-4707-a5a4-4729c43ac99e [32m200[0m 1ms
+[server] <-- DELETE /api/scheduler/jobs/eb425109-c3e1-4a0f-a7d4-6d9708f3ecda
+[server] --> DELETE /api/scheduler/jobs/eb425109-c3e1-4a0f-a7d4-6d9708f3ecda [32m200[0m 0ms
+[server] <-- DELETE /api/scheduler/jobs/50e75cb7-f20f-45e2-a246-7e0ed3c4f276
+[server] --> DELETE /api/scheduler/jobs/50e75cb7-f20f-45e2-a246-7e0ed3c4f276 [32m200[0m 0ms
+[server] <-- DELETE /api/scheduler/jobs/9db59511-129b-471d-b589-e37ae4d732e0
+[server] --> DELETE /api/scheduler/jobs/9db59511-129b-471d-b589-e37ae4d732e0 [32m200[0m 0ms
+[server] <-- DELETE /api/scheduler/jobs/71ecd622-50a7-40e8-846e-b93bb31a2e56
+[server] --> DELETE /api/scheduler/jobs/71ecd622-50a7-40e8-846e-b93bb31a2e56 [32m200[0m 1ms
+[server] <-- GET /api/scheduler/events
+[server] --> GET /api/scheduler/events [32m200[0m 0ms
+[server] <-- POST /api/scheduler/jobs
+[server] --> POST /api/scheduler/jobs [32m201[0m 1ms
+[server] <-- POST /api/scheduler/jobs
+[server] --> POST /api/scheduler/jobs [32m201[0m 0ms
+[server] <-- GET /api/scheduler/jobs/9e1956c0-71bf-4401-876e-a407cd6860c4
+[server] --> GET /api/scheduler/jobs/9e1956c0-71bf-4401-876e-a407cd6860c4 [32m200[0m 0ms
+[server] <-- POST /api/scheduler/jobs
+[server] --> POST /api/scheduler/jobs [32m201[0m 1ms
+[server] <-- POST /api/scheduler/jobs/aee8cdbf-0f94-4ddf-b82e-6c717b13b98a/enqueue
+[server] [sse] emit event=schedule_status listeners=11
+[server] --> POST /api/scheduler/jobs/aee8cdbf-0f94-4ddf-b82e-6c717b13b98a/enqueue [32m200[0m 0ms
+[server] <-- POST /api/scheduler/jobs
+[server] --> POST /api/scheduler/jobs [32m201[0m 1ms
+[server] <-- POST /api/scheduler/jobs/ea7e26c0-06fc-4ef4-90f8-f33266934e16/enqueue
+[server] [sse] emit event=schedule_status listeners=11
+[server] --> POST /api/scheduler/jobs/ea7e26c0-06fc-4ef4-90f8-f33266934e16/enqueue [32m200[0m 1ms
+[server] <-- POST /api/scheduler/jobs/ea7e26c0-06fc-4ef4-90f8-f33266934e16/abort
+[server] [sse] emit event=schedule_status listeners=11
+[server] --> POST /api/scheduler/jobs/ea7e26c0-06fc-4ef4-90f8-f33266934e16/abort [32m200[0m 1ms
+[server] <-- POST /api/scheduler/jobs
+[server] --> POST /api/scheduler/jobs [32m201[0m 1ms
+[server] <-- POST /api/scheduler/jobs/1889cfdc-59fe-45a1-a55d-0f1aad54c1e7/abort
+[server] --> POST /api/scheduler/jobs/1889cfdc-59fe-45a1-a55d-0f1aad54c1e7/abort [33m400[0m 0ms
+[server] <-- POST /api/scheduler/jobs
+[server] --> POST /api/scheduler/jobs [32m201[0m 0ms
+[server] <-- POST /api/scheduler/jobs/f255cb38-7bdf-4f0e-a887-9161fa9696c3/enqueue
+[server] [sse] emit event=schedule_status listeners=11
+[server] --> POST /api/scheduler/jobs/f255cb38-7bdf-4f0e-a887-9161fa9696c3/enqueue [32m200[0m 1ms
+[server] <-- POST /api/scheduler/jobs
+[server] --> POST /api/scheduler/jobs [32m201[0m 1ms
+[server] [sse] emit event=schedule_status listeners=11
+[server] [sse] emit event=schedule_status listeners=11
+[server] [WorkspaceScaffold] copied skill: octo-dev-copilot
+[server] [WorkspaceScaffold] copied skill: octo-workflow-dev
+[server] [WorkspaceScaffold] copied skill: octo-resource-manager
+[server] [WorkspaceScaffold] copied skill: octo-source-analyzer
+[server] [WorkspaceScaffold] copied agent: devil-advocate.md
+[server] [WorkspaceScaffold] copied agent: architecture-explorer.md
+[server] [WorkspaceScaffold] copied agent: vision-analyzer.md
+[server] [WorkflowExecutor] workspace creation failed {
+[server]   scheduleId: 'aee8cdbf-0f94-4ddf-b82e-6c717b13b98a',
+[server]   error: "repos/index.md not found for org 'default' (looked at /Users/xzf/.octopus/orgs/default/repos/index.md)"
+[server] }
+[server] [sse] emit event=schedule_status listeners=11
+[server] [WorkspaceScaffold] copied skill: octo-dev-copilot
+[server] [WorkspaceScaffold] copied skill: octo-workflow-dev
+[server] [WorkspaceScaffold] copied skill: octo-resource-manager
+[server] [WorkspaceScaffold] copied skill: octo-source-analyzer
+[server] [WorkspaceScaffold] copied agent: devil-advocate.md
+[server] [WorkspaceScaffold] copied agent: architecture-explorer.md
+[server] [WorkspaceScaffold] copied agent: vision-analyzer.md
+[server] [WorkflowExecutor] workspace creation failed {
+[server]   scheduleId: 'f255cb38-7bdf-4f0e-a887-9161fa9696c3',
+[server]   error: "repos/index.md not found for org 'default' (looked at /Users/xzf/.octopus/orgs/default/repos/index.md)"
+[server] }
+[server] <-- DELETE /api/scheduler/jobs/f478b59a-3614-47df-91d2-402410ec35a6
+[server] --> DELETE /api/scheduler/jobs/f478b59a-3614-47df-91d2-402410ec35a6 [32m200[0m 0ms
+[server] <-- DELETE /api/scheduler/jobs/9e1956c0-71bf-4401-876e-a407cd6860c4
+[server] --> DELETE /api/scheduler/jobs/9e1956c0-71bf-4401-876e-a407cd6860c4 [32m200[0m 0ms
+[server] <-- DELETE /api/scheduler/jobs/aee8cdbf-0f94-4ddf-b82e-6c717b13b98a
+[server] --> DELETE /api/scheduler/jobs/aee8cdbf-0f94-4ddf-b82e-6c717b13b98a [32m200[0m 0ms
+[server] <-- DELETE /api/scheduler/jobs/ea7e26c0-06fc-4ef4-90f8-f33266934e16
+[server] --> DELETE /api/scheduler/jobs/ea7e26c0-06fc-4ef4-90f8-f33266934e16 [32m200[0m 0ms
+[server] <-- DELETE /api/scheduler/jobs/1889cfdc-59fe-45a1-a55d-0f1aad54c1e7
+[server] --> DELETE /api/scheduler/jobs/1889cfdc-59fe-45a1-a55d-0f1aad54c1e7 [32m200[0m 0ms
+[server] <-- DELETE /api/scheduler/jobs/f255cb38-7bdf-4f0e-a887-9161fa9696c3
+[server] --> DELETE /api/scheduler/jobs/f255cb38-7bdf-4f0e-a887-9161fa9696c3 [32m200[0m 0ms
+[server] <-- DELETE /api/scheduler/jobs/b44084c5-1913-452b-a9fb-0926df01a112
+[server] --> DELETE /api/scheduler/jobs/b44084c5-1913-452b-a9fb-0926df01a112 [32m200[0m 1ms
+
+[dev] Shutting down...
+[server] SIGTERM sent
+[web] SIGTERM sent
+[server] [server] Received SIGTERM, shutting down gracefully...
+[server] [server] HTTP server closed.
+[server] [server] Database closed.
+[web] [?25h

@@ -1,0 +1,33 @@
+# yaml-language-server: $schema=~/.octopus/test-fixture-schema.json
+# composition-task.test.yaml — simulate fixture for composition-task.yaml
+#
+# Happy path: subunit_count=3 (from workflow `variables`) → loop iterates 3×
+# (break_when '$iteration >= 3' converges), task_dispatch auto-passes each
+# iteration (no TaskDispatchPort in simulator — inner node with no mock
+# auto-passes via simulator-engine.ts executeInnerNode), moa `integrate` is
+# mocked → workflow completed.
+
+scenarios:
+  - name: "happy path — 3 subunits, loop converges, moa aggregates"
+    inputs:
+      goal: "给 my-app 加健康检查 + 日志 + 指标"
+      integration_prompt: "综合三路 subunit 产出，产出统一交付报告。"
+    mocks:
+      # dispatch-child (task_dispatch, inside the loop): intentionally unmocked.
+      # In the simulator, an inner loop node with no mock auto-passes; and
+      # task_dispatch is not in the mock-factory switch, so it would auto-pass
+      # (default case) even if a mock were provided. This mirrors the real
+      # composition-wf where the TaskDispatchPort (server-injected) does the
+      # actual child-schedule fan-out — not exercised by the simulator.
+
+      # integrate (moa aggregation, top-level): strict mode (default) requires a
+      # mock for side-effect swarm nodes.
+      integrate:
+        output: "统一交付物：健康检查 + 日志 + 指标三路 subunit 已综合，验收标准全部满足。"
+        update_vars:
+          integrate_synthesis: "综合报告：3 subunits 合并完成"
+          integrate_consensus_score: "1.0"
+          integrate_rounds_used: "1"
+          integrate_expert_count: "3"
+    assertions:
+      status: "completed"

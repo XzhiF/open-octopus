@@ -43,3 +43,8 @@
 | 39 | harness-semantic-v2-r2 | 2026-08-06 | feat/workflow-engine-harness | done (gap-fix: AC-3 timeout PASS, AC-4 wired) |
 | 40 | harness-learning-platform | 2026-08-11 | feat/harness-learning-platform | in-progress |
 | 41 | workflow-observability | 2026-08-12 | feat/workflow-observability | in-progress (spec + 7 tickets, story walk-through done) |
+| 42 | task-pool-redesign | 2026-08-17 | test-task-board | done (GO converged R1, 88/87, PR #50; US3 env-blocked) |
+| 43 | task-domain-redesign | 2026-08-18 | feat/task-domain-redesign | done (feat→main PR; 22/22 product-verified; AC2 repro-proven, B-AC3 provider-gated SKIP) |
+| 44 | task-authoring-v3 | 2026-08-18 | feat/task-domain-redesign | done (loop 2 iterations: R1 78.5 → R2 80.6 REVIEW; exited structural ceiling, zero code gaps; PR #51; US8 manual-evidence-pending) |
+| 45 | task-authoring-v3-r2 | 2026-08-18 | feat/task-domain-redesign | done (gap-fix: prototype removed 404, sibling specs 11+2 tolerance green, report reconciled, US8 checklist BLOCKED-pending-human, dispatch 42 asserts) |
+| 46 | task-workflow-handoff | 2026-08-23 | feat/task-domain-redesign | done (pipeline: build green, review 0 r0, no E2E per D7) |

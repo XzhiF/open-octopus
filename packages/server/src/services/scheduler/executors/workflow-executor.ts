@@ -1,24 +1,71 @@
 import Database from 'better-sqlite3'
 import { randomUUID } from 'crypto'
+import fs, { readFileSync } from 'fs'
+import path, { join } from 'path'
 import { parseExpression } from 'cron-parser'
 import { getExecutionService } from '../../execution-service-registry'
 import { SSEService } from '../../sse'
 import { NotificationService } from '../../notification'
 import { WorkspaceService } from '../../workspace'
-import type { SchedulerJob, WorkflowConfig, WorkflowChainItem } from '@octopus/shared'
+import type { SchedulerJob, WorkflowConfig, WorkflowChainItem, ScheduleStatusListener, OriginType, TaskSpec } from "@octopus/shared"
 import type { Executor, ExecutionResult } from './executor-interface'
 import { ScheduleConfigDAO, ScheduleRunDAO, ExecutionDAO } from '../../../db/dao'
+// Ticket 08 (ADR-0009): the orchestration-strategy seam owns the composition
+// workflow ref + the composite threshold as the single source of truth. The
+// executor's isCompositeTask below is the POST-materialization config-shape
+// detector (a different layer — it sees the materialized WorkflowConfig, not
+// the original TaskSpec); it shares the seam's constant so the two never drift.
+import { COMPOSITION_WF_REF } from '../orchestration-strategy'
 
 const MAX_PARALLEL_WORKSPACES = parseInt(
   process.env.OCTOPUS_SCHEDULER_MAX_PARALLEL ?? '3',
   10,
 )
 
+/** task-workflow-handoff (ADR-0013, S2a): copy YAML files from the task home's
+ *  `workflows/` directory into the execution workspace's `workflows/` dir. The
+ *  engine's existing `{ws}/workflows/` resolver finds them on create. Empty
+ *  source dir is a no-op (no YAML to copy → nothing copied). Missing source
+ *  dir is also a no-op (legacy tasks may lack the dir). */
+export function copyTaskWorkflowsToWs(taskWorkflowsDir: string, wsPath: string): void {
+  if (!fs.existsSync(taskWorkflowsDir)) return
+  const wsWorkflowsDir = path.join(wsPath, "workflows")
+  // Ensure ws workflows/ exists (createFromSpec already creates it, but this
+  // is defensive — a test or a non-standard scaffold may skip it).
+  fs.mkdirSync(wsWorkflowsDir, { recursive: true })
+  const entries = fs.readdirSync(taskWorkflowsDir)
+  for (const entry of entries) {
+    if (!entry.endsWith(".yaml") && !entry.endsWith(".yml")) continue
+    const src = path.join(taskWorkflowsDir, entry)
+    // Defensive: skip non-files (subdirs, symlinks to dirs) — we only copy YAML files.
+    try {
+      const stat = fs.statSync(src)
+      if (!stat.isFile()) continue
+    } catch {
+      continue
+    }
+    const dst = path.join(wsWorkflowsDir, entry)
+    fs.copyFileSync(src, dst)
+  }
+}
+
+/**
+ * Ticket 04 (composite dispatch): the workflow_ref of the composition-task template
+ * (core-pack/workflows/composition-task.yaml, name: composition-task). A composite
+ * task's config carries workflow_chain[0].workflow_ref === this AND task_spec.subunits
+ * — when dispatched, the coordinator-ws runs this workflow, whose Loop + task_dispatch
+ * nodes (03's bridge) fan out N child schedules and a trailing moa aggregates them.
+ *
+ * Ticket 08 (ADR-0009): the constant now lives in the orchestration-strategy seam
+ * (single source of truth, shared with DefaultOrchestrationStrategy +
+ * scheduler-service). Imported above; no local duplicate.
+ */
+
 interface ScheduleRow {
   id: string
   org: string
   name: string
-  cron_expression: string
+  cron_expression: string | null
   timezone: string
   enabled: number
   timeout_seconds: number
@@ -29,6 +76,11 @@ interface ScheduleRow {
   deleted_at: string | null
   job_type: string
   config: string
+  // 03 (SG2): origin cols present on every schedule row (schema v38). Used by
+  // the ScheduleStatusListener injection to mirror transitions onto tasks.
+  // Null on legacy cron rows; set by the tasks dispatch seam for task-origin.
+  origin_type?: string | null
+  origin_id?: string | null
 }
 
 /**
@@ -51,6 +103,12 @@ export class WorkflowExecutor implements Executor {
     runDAO: ScheduleRunDAO,
     execDAO: ExecutionDAO,
     workspaceService: WorkspaceService,
+    // 03 (SG2): optional ScheduleStatusListener. When injected, the 3
+    // schedule_status emit sites (running, done/failed-finalStatus, failed)
+    // also mirror onto tasks.status + emit task_status SSE. The listener
+    // self-filters by origin_type='task'. Optional so existing 5-arg call
+    // sites keep compiling.
+    private scheduleStatusListener?: ScheduleStatusListener,
   ) {
     this.workspaceService = workspaceService
     this.configDAO = configDAO
@@ -122,17 +180,52 @@ export class WorkflowExecutor implements Executor {
       }
     }
 
+    // Ticket 04 (composite dispatch) + Ticket 08 (ADR-0009): the isComposite
+    // decision bifurcates execute() into two dispatch paths:
+    //
+    //   simple (isComposite=false, subunits.length<2) → SIMPLE-DIRECT-DISPATCH:
+    //     1 real workspace (projects=config.workspace_spec.projects) runs the
+    //     task's own workflow_ref directly. NO coordinator-ws. This is the
+    //     ADR-0009 N+1→1 win — simple tasks no longer pay for an orchestration-
+    //     only workspace they don't need.
+    //
+    //   composite (isComposite=true, subunits.length>=2) → COORDINATOR-DISPATCH:
+    //     1 coordinator-ws (projects=[], orchestration only — spec D4) runs
+    //     composition-task.yaml, whose Loop× task_dispatch nodes fan out N
+    //     child schedules + workspaces (TaskDispatchService, ADR-0008). The
+    //     parent-aggregation check at completion propagates 'failed' if any
+    //     child failed.
+    //
+    // The PRE-materialization decision (DefaultOrchestrationStrategy.planDispatch
+    // in orchestration-strategy.ts) is the single source of truth for the
+    // threshold + composition ref. This POST-materialization detector
+    // (isCompositeTask) reconstructs the decision from the config shape —
+    // necessary because the executor sees the materialized WorkflowConfig, not
+    // the original TaskSpec. The two share COMPOSITION_WF_REF so they never drift.
+    const isComposite = this.isCompositeTask(config)
+
     // 5. Generate branch suffix (timestamp + random to avoid collisions)
     const branchSuffix = formatBranchSuffix(new Date())
+
+    // ponytail: requirement-type schedules use a deterministic taskpool-{schedule_id}-{ts}
+    // name so failed drafts can be traced back to their schedule; cron jobs keep the
+    // AI-supplied branch_prefix from workspace_spec.
+    const isRequirement = job.trigger_source === 'requirement'
+    const branchPrefix = isRequirement ? `taskpool-${schedule.id}` : config.workspace_spec.branch_prefix
+    const workspaceName = isRequirement ? `${branchPrefix}-${branchSuffix}` : `${config.workspace_spec.branch_prefix}-${branchSuffix}`
 
     // 6. Create a new workspace from spec
     let workspace
     try {
       workspace = this.workspaceService.createFromSpec({
         org: config.workspace_spec.org,
-        name: `${config.workspace_spec.branch_prefix}-${branchSuffix}`,
-        projects: config.workspace_spec.projects,
-        branch_prefix: config.workspace_spec.branch_prefix,
+        name: workspaceName,
+        // Ticket 04: coordinator-ws has NO projects (orchestration only — spec D4).
+        // initWorktreesFromSpec iterates `for (const proj of projects)` so an empty
+        // array is a no-op (no worktrees, no throw) — the coordinator only runs the
+        // composition wf and never touches git. Simple tasks pass the real projects.
+        projects: isComposite ? [] : config.workspace_spec.projects,
+        branch_prefix: branchPrefix,
         branch_suffix: branchSuffix,
         source: 'scheduler',
         source_schedule_id: schedule.id,
@@ -182,15 +275,43 @@ export class WorkflowExecutor implements Executor {
       }
     }
 
+    // task-workflow-handoff (ADR-0013, S2a): copy agent-authored workflow YAMLs
+    // from the task home's `workflows/` directory (injected as
+    // $vars.task_workflows_dir by materializeTaskSpecToConfig) into the
+    // execution workspace's `workflows/` directory. The engine's existing
+    // `{ws}/workflows/` resolver then finds them on create(workflow_ref).
+    //
+    // The copy window is synchronous + inside the dispatch segment (between
+    // createFromSpec and execution.create), so race with other writers is
+    // effectively zero (ADR-0013 §Consequences). Copy errors are logged + the
+    // dispatch continues — if the bound ref was in the task-home set at bind
+    // time (guaranteed by the fail-fast resolver), the file is already on disk;
+    // a transient copy error is the only failure mode and the execution will
+    // surface "Workflow not found" clearly if it matters.
     // 10. Trigger the first workflow in chain (root execution only)
     const firstStep = config.workflow_chain[0]
+    try {
+      const inputValues = (firstStep.input_values ?? {}) as Record<string, unknown>
+      const taskWorkflowsDir = typeof inputValues.task_workflows_dir === 'string'
+        ? inputValues.task_workflows_dir
+        : null
+      if (taskWorkflowsDir) {
+        copyTaskWorkflowsToWs(taskWorkflowsDir, registry.wsPath)
+      }
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err)
+      // Non-fatal: log and continue. The engine resolver will surface "Workflow
+      // not found" if the bound ref was not copied successfully.
+      console.error(`[WorkflowExecutor] task_workflows copy failed (non-fatal): ${message}`)
+    }
+
     const now = new Date()
 
     const scheduleVars: Record<string, string> = {
       'schedule.id': schedule.id,
       'schedule.name': schedule.name,
       'schedule.triggered_at': now.toISOString(),
-      'schedule.cron_expression': schedule.cron_expression,
+      'schedule.cron_expression': schedule.cron_expression ?? '',
       'schedule.timezone': schedule.timezone,
       'execution.trigger_type': 'scheduled',
     }
@@ -200,7 +321,12 @@ export class WorkflowExecutor implements Executor {
       execution = registry.service.create(workspace.id, {
         workflow_ref: firstStep.workflow_ref,
         triggered_by: 'scheduler',
-        input_values: firstStep.input_values,
+        // Ticket 04: composite tasks feed subunits/subunit_count/goal/integration_prompt
+        // to the composition wf as input_values (G9/G10). ExecutionService.create accepts
+        // Record<string, unknown> (not string-only at runtime), so the subunits array is
+        // passed as a real object — the composition Loop consumes $iteration.subunit from
+        // it downstream. Simple tasks pass the chain step's string input_values unchanged.
+        input_values: isComposite ? this.buildCompositeInputValues(config, schedule.id) : firstStep.input_values,
         initial_var_pool: scheduleVars,
       })
     } catch (err: unknown) {
@@ -232,12 +358,35 @@ export class WorkflowExecutor implements Executor {
           notifyOnFailure: schedule.notify_on_failure === 1,
           schedule,
           maxRetain: config.max_retain,
+          isRequirement,
         })
       }) as any,
     }, execution.id)
 
-    // 13. Set status to 'running'
+    // 13. Set status to 'running' — schedule_executions row + schedules row.
+    // schedules.status='running' feeds the kanban "running" column. Previously this
+    // was never written, so a task sat in "claimed" the whole time it executed and
+    // the "running" column stayed empty (type also lacked 'running'/'done').
+    // Cron schedules keep using enabled/disabled, so only requirement-type advances.
     this.runDAO.markExecutionRunning(executionId)
+    if (isRequirement) {
+      this.configDAO.updateSchedule(schedule.id, { status: 'running' })
+      this.sse.emit('taskpool', {
+        event: 'schedule_status',
+        data: { schedule_id: schedule.id, status: 'running' },
+      })
+      // 03 (SG2): mirror onto tasks.status. Ungated by isRequirement for the
+      // listener call — the listener self-filters by origin_type='task', so
+      // cron schedules are a no-op. Fires for task-origin schedules once 06
+      // migrates the isRequirement gate to origin_type (the SSE emit above
+      // stays gated until then).
+      this.scheduleStatusListener?.onScheduleTransition({
+        schedule_id: schedule.id,
+        origin_type: (schedule.origin_type ?? "cron") as OriginType,
+        origin_id: schedule.origin_id ?? "",
+        status: "running",
+      })
+    }
 
     // 14. Start root execution (chain will auto-execute via ExecutionService)
     try {
@@ -302,6 +451,7 @@ export class WorkflowExecutor implements Executor {
     notifyOnFailure: boolean
     schedule: ScheduleRow
     maxRetain: number
+    isRequirement: boolean
   }): void {
     const durationMs = Date.now() - opts.triggeredAt
 
@@ -313,8 +463,58 @@ export class WorkflowExecutor implements Executor {
     const lastExecutionId = lastExec?.id ?? opts.executionId
 
     if (status === 'completed') {
-      // Update schedule_execution
+      // ── Chain continuation (#4 story-walker): PR #50 promised "root → child →
+      // child managed by ExecutionService" but the child-trigger was missing —
+      // only the root step ever ran. config.json.workflow_chain holds the
+      // remaining chain (createFromSpec stores slice(1)); the completed
+      // execution's child_index selects the next step. Single-step chains
+      // (length 1) have an empty remaining chain → nextStep null → finalize.
+      const nextStep = this.resolveNextChainStep(opts.schedWsId, opts.executionId)
+      if (nextStep) {
+        this.triggerChildStep(opts, nextStep)
+        return // child's onComplete re-enters handleChainComplete; don't finalize yet
+      }
+
+      // Chain fully complete → finalize schedule_execution + schedule + workspace
       this.runDAO.markExecutionCompleteWithDuration(opts.schedExecId, 'completed', durationMs)
+
+      // Issue 2 fix: requirement schedules track lifecycle in the `status` column
+      // (draft/queued/claimed/running/done). Cron uses enabled/disabled.
+      if (opts.isRequirement) {
+        // Ticket 04 (composite parent aggregation): when a composite task's
+        // composition wf completes, propagate 'failed' if any child schedule
+        // dispatched by its task_dispatch nodes failed. The composition wf itself
+        // completes successfully even on partial results (TaskDispatchExecutor
+        // resumes with empty output on child failure), so without this check a
+        // composite parent would wrongly show 'done' while a subunit failed.
+        // Child schedules carry the parent_task_dispatch marker (03) pointing at
+        // this composition wf execution; findFailedChildSchedules reads it via
+        // json_extract. Simple tasks have no children → stays 'done'.
+        let finalStatus: 'done' | 'failed' = 'done'
+        if (this.isCompositeSchedule(opts.schedule)) {
+          const failedChildren = this.configDAO.findFailedChildSchedules(opts.executionId)
+          if (failedChildren.length > 0) {
+            finalStatus = 'failed'
+          }
+        }
+        this.configDAO.updateSchedule(opts.scheduleId, {
+          status: finalStatus,
+          claimed_at: null,
+        })
+        this.sse.emit('taskpool', {
+          event: 'schedule_status',
+          data: { schedule_id: opts.scheduleId, status: finalStatus },
+        })
+        // 03 (SG2): mirror done/failed onto tasks.status. Listener self-filters
+        // by origin_type='task'; opts.schedule carries the origin cols (added
+        // schema v38 — present on every row, null on legacy cron rows).
+        this.scheduleStatusListener?.onScheduleTransition({
+          schedule_id: opts.scheduleId,
+          origin_type: (opts.schedule.origin_type ?? "cron") as OriginType,
+          origin_id: opts.schedule.origin_id ?? "",
+          status: finalStatus,
+        })
+      }
 
       // Update schedule_workspace
       this.configDAO.updateScheduleWorkspaceStatus(opts.schedWsId, {
@@ -335,6 +535,31 @@ export class WorkflowExecutor implements Executor {
         completed_at: new Date().toISOString(),
         error: errorSummary,
       })
+
+      // G2 (ticket 05): mirror the done path's schedule-level writer. Without
+      // this, a failed requirement task stays stuck in 'running' → checkStaleClaimed
+      // rolls it back to 'queued' → re-dispatch → fail again (infinite loop at
+      // scheduler-engine.ts:413). 'failed' is terminal: findStaleClaimed filters
+      // status IN ('claimed','running'), so it skips failed/aborted. Cron keeps
+      // using enabled/disabled + consecutive_failures, so this is requirement-only.
+      if (opts.isRequirement) {
+        this.configDAO.updateSchedule(opts.scheduleId, {
+          status: 'failed',
+          claimed_at: null,
+        })
+        this.sse.emit('taskpool', {
+          event: 'schedule_status',
+          data: { schedule_id: opts.scheduleId, status: 'failed' },
+        })
+        // 03 (SG2): mirror failed onto tasks.status.
+        this.scheduleStatusListener?.onScheduleTransition({
+          schedule_id: opts.scheduleId,
+          origin_type: (opts.schedule.origin_type ?? "cron") as OriginType,
+          origin_id: opts.schedule.origin_id ?? "",
+          status: "failed",
+          error_summary: errorSummary,
+        })
+      }
 
       if (opts.notifyOnFailure) {
         this.notificationService
@@ -361,8 +586,313 @@ export class WorkflowExecutor implements Executor {
       }
     }
 
+    // G1: if this schedule was dispatched by a task_dispatch node (composite task),
+    // resume the PARENT composition-wf's task_dispatch node with the child's output.
+    // Distinct concern from the same-ws chain above — handled by a separate method
+    // so the chain logic stays untouched (05's failure writer above is unaffected).
+    // This path fires when the child was claimed+run by the scheduler-engine (e.g.
+    // a child queued at the concurrency cap, later claimed). The under-cap path
+    // runs the child directly via TaskDispatchService, which registers its own
+    // onComplete and resumes the parent without going through WorkflowExecutor.
+    this.maybeResumeParentTaskDispatch(opts, lastExecutionId)
+
     // Enforce retention policy
     this.enforceRetention(opts.scheduleId, opts.maxRetain)
+  }
+
+  // ── Ticket 04: composite dispatch helpers ────────────────────────────
+
+  /** True if `config` describes a composite task: task_spec.subunits present
+   *  with length >= 2, OR the first chain step's workflow_ref is the
+   *  composition-task template (G9). Drives the coordinator-ws dispatch path
+   *  (no projects + composition wf + subunits as input_values) and the parent-
+   *  aggregation failed-child check at completion.
+   *
+   *  SG9 (ticket 06): the threshold is now subunits.length >= 2 (was
+   *  `!!subunits?.length` / N>=1). A 1-subunit task is NOT composite — it takes
+   *  the simple workflow_chain path (skips coordinator-ws, ADR-0009 N+1→1
+   *  optimization). The composition-task template detection (workflow_ref ===
+   *  COMPOSITION_WF_REF) still treats an explicitly-composition config as
+   *  composite regardless of subunit count (defensive — a config that literally
+   *  asks for the composition wf is composite by construction).
+   *
+   *  Ticket 08 (ADR-0009): this is the POST-materialization detector (sees
+   *  the materialized WorkflowConfig). The PRE-materialization decision lives
+   *  in {@link DefaultOrchestrationStrategy.planDispatch} (orchestration-strategy.ts),
+   *  which is the single source of truth for the threshold + composition ref.
+   *  This detector shares {@link COMPOSITION_WF_REF} with the seam so the two
+   *  layers never drift. A future variant (subunit-level retry / conditional
+   *  DAG) swaps the strategy at the dispatch seam WITHOUT touching this executor. */
+  private isCompositeTask(config: WorkflowConfig): boolean {
+    if ((config.task_spec?.subunits?.length ?? 0) >= 2) return true
+    const ref = config.workflow_chain[0]?.workflow_ref
+    if (typeof ref === 'string') {
+      return ref === COMPOSITION_WF_REF || ref.endsWith(`/${COMPOSITION_WF_REF}`)
+    }
+    return false
+  }
+
+  /** Parse a schedule row's config and test for composite shape. Used in
+   *  handleChainComplete where we only have the ScheduleRow, not the parsed
+   *  WorkflowConfig. A parse failure is treated as non-composite (defensive — the
+   *  dispatch path already validated the config at execute() time). */
+  private isCompositeSchedule(schedule: ScheduleRow): boolean {
+    try {
+      const config = JSON.parse(schedule.config) as WorkflowConfig
+      return this.isCompositeTask(config)
+    } catch {
+      return false
+    }
+  }
+
+  /** Build the input_values the composition wf receives (G9/G10): the subunits array
+   *  (real objects — the composition Loop exposes $iteration.subunit from it),
+   *  subunit_count (drives the Loop break_when), goal (moa topic), and
+   *  integration_prompt (moa aggregator prompt). These mirror composition-task.yaml's
+   *  `variables` block, overridden by the actual task_spec at materialization.
+   *
+   *  Ticket 08 (AC2): PRESERVES task_artifacts_dir from
+   *  config.workflow_chain[0].input_values (injected by materializeTaskSpecToConfig).
+   *  Without this, the key would be DROPPED — buildCompositeInputValues completely
+   *  replaces firstStep.input_values at execute() time (the "chain input_values
+   *  replacement drops injected keys" hazard SW-BP7 warns about). When absent
+   *  (legacy configs without the key), it's omitted — backward compat (AC4).
+   *
+   *  SG5 (ticket 06): materializeTaskSpecToConfig now DROPS task_spec from the
+   *  config (it lives in the tasks table, v2-D1). So config.task_spec is absent on
+   *  the new dispatch-seam path. Fall back to reading task_spec from the tasks
+   *  table via S2 origin lookup (origin_type='task', origin_id=task.id). The
+   *  legacy/test path that seeds config WITH task_spec still works (first branch). */
+  private buildCompositeInputValues(config: WorkflowConfig, scheduleId?: string): Record<string, unknown> {
+    // Ticket 08 (AC2): read task_artifacts_dir from the config's workflow_chain[0]
+    // (injected by materializeTaskSpecToConfig). Preserved in both branches below.
+    const chainInputValues = config.workflow_chain[0]?.input_values as Record<string, unknown> | undefined
+    const taskArtifactsDir = chainInputValues?.task_artifacts_dir
+    const artifactsEntry = taskArtifactsDir ? { task_artifacts_dir: taskArtifactsDir } : {}
+
+    // Legacy/test path: config carries task_spec (composite-dispatch.test.ts seeds this).
+    if (config.task_spec) {
+      const subunits = config.task_spec.subunits ?? []
+      return {
+        subunits,
+        subunit_count: subunits.length,
+        goal: config.task_spec.goal ?? '',
+        integration_prompt: config.task_spec.integration_goal?.prompt ?? '',
+        ...artifactsEntry,
+      }
+    }
+    // SG5 new path: task_spec dropped from config — read from the tasks table via
+    // origin lookup. The schedule's origin_id IS the parent task id (S2).
+    const taskSpec = this.resolveTaskSpecFromOrigin(scheduleId)
+    const subunits = taskSpec?.subunits ?? []
+    return {
+      subunits,
+      subunit_count: subunits.length,
+      goal: taskSpec?.goal ?? '',
+      integration_prompt: taskSpec?.integration_goal?.prompt ?? '',
+      ...artifactsEntry,
+    }
+  }
+
+  /** SG5: resolve the parent task's task_spec from the tasks table via S2 origin
+   *  lookup. The schedule's origin_id points at the parent task id. Returns null
+   *  if the lookup fails (defensive — buildCompositeInputValues falls back to
+   *  empty subunits, which the composition wf handles as a no-op Loop). */
+  private resolveTaskSpecFromOrigin(scheduleId?: string): TaskSpec | null {
+    if (!scheduleId) return null
+    try {
+      const row = this.configDAO
+        .getDb()
+        .prepare(
+          `SELECT t.task_spec AS task_spec
+           FROM schedules s
+           JOIN tasks t ON t.id = s.origin_id AND t.deleted_at IS NULL
+           WHERE s.id = ? AND s.origin_type = 'task'`,
+        )
+        .get(scheduleId) as { task_spec: string | null } | undefined
+      if (!row?.task_spec) return null
+      return JSON.parse(row.task_spec) as TaskSpec
+    } catch (err: unknown) {
+      console.error(
+        `[WorkflowExecutor] resolveTaskSpecFromOrigin failed for ${scheduleId} (non-fatal — composition wf gets empty subunits):`,
+        err instanceof Error ? err.message : String(err),
+      )
+      return null
+    }
+  }
+
+  // ── G1 task_dispatch parent-resume ─────────────────────────────────
+
+  /** True if this schedule was dispatched by a task_dispatch node (carries the
+   *  parent_task_dispatch marker in its config — written by TaskDispatchService). */
+  private hasParentTaskDispatchMarker(schedule: ScheduleRow): boolean {
+    try {
+      const config = JSON.parse(schedule.config) as { parent_task_dispatch?: unknown }
+      return config?.parent_task_dispatch != null
+    } catch {
+      return false
+    }
+  }
+
+  /**
+   * Resume the parent composition-wf's task_dispatch node when a child schedule
+   * dispatched by task_dispatch completes. Reads the child's var_pool snapshot
+   * (sub-workflow precedent: output_mapping reads child pool vars) and calls the
+   * parent workspace's ExecutionService.resumeTaskDispatch → engine.retryFrom
+   * with taskDispatchChildOutput. The parent correlation (execution_id + node_id)
+   * is read from the child schedule's persisted config marker (restart-safe).
+   */
+  private maybeResumeParentTaskDispatch(
+    opts: { schedule: ScheduleRow; scheduleId: string },
+    lastExecutionId: string,
+  ): void {
+    if (!this.hasParentTaskDispatchMarker(opts.schedule)) return
+
+    let marker: { execution_id: string; node_id: string } | undefined
+    try {
+      const config = JSON.parse(opts.schedule.config) as {
+        parent_task_dispatch?: { execution_id: string; node_id: string }
+      }
+      marker = config?.parent_task_dispatch
+    } catch {
+      // config parse error already handled by hasParentTaskDispatchMarker
+    }
+    if (!marker) return
+
+    // Read the child's var_pool snapshot (the deepest execution in the chain).
+    const childExec = this.execDAO.findById(lastExecutionId)
+    const varPoolRaw = childExec?.var_pool ?? "{}"
+    let childOutput: Record<string, unknown>
+    try {
+      childOutput = JSON.parse(varPoolRaw) as Record<string, unknown>
+    } catch {
+      childOutput = {}
+    }
+
+    // Locate the PARENT composition-wf execution + its workspace's ExecutionService.
+    // The parent lives in the coordinator workspace (distinct from this child's ws).
+    const parentExec = this.execDAO.findById(marker.execution_id)
+    if (!parentExec) {
+      console.error(
+        `[WorkflowExecutor] task_dispatch resume: parent execution ${marker.execution_id} not found`,
+      )
+      return
+    }
+    const parentRegistry = getExecutionService(parentExec.workspace_id)
+    if (!parentRegistry) {
+      console.error(
+        `[WorkflowExecutor] task_dispatch resume: ExecutionService unavailable for parent workspace ${parentExec.workspace_id}`,
+      )
+      return
+    }
+
+    // A failed child still resumes the parent with an empty/partial output so the
+    // composition-wf's failure strategy can decide (mirror TaskDispatchService).
+    parentRegistry.service
+      .resumeTaskDispatch(marker.execution_id, marker.node_id, childOutput)
+      .catch((err: unknown) => {
+        console.error(
+          `[WorkflowExecutor] task_dispatch resume failed for parent ${marker!.execution_id}:`,
+          err instanceof Error ? err.message : String(err),
+        )
+      })
+  }
+
+  // ── Chain continuation helpers (#4 story-walker) ──────────────────
+
+  /**
+   * Resolve the next workflow_chain step (if any) for the completed execution.
+   * config.json.workflow_chain holds the remaining chain (slice(1) of the full
+   * chain; the root was triggered immediately). remaining[child_index] is the
+   * next step: remaining[0] == chain[1], and the root's child_index is 0.
+   */
+  private resolveNextChainStep(schedWsId: string, executionId: string): WorkflowChainItem | null {
+    const wsRow = this.configDAO.findScheduleWorkspaceById(schedWsId)
+    if (!wsRow) return null
+    const registry = getExecutionService(wsRow.workspace_id)
+    if (!registry) return null
+    try {
+      const config = JSON.parse(readFileSync(join(registry.wsPath, 'config.json'), 'utf-8')) as {
+        workflow_chain?: WorkflowChainItem[]
+      }
+      const remaining = config.workflow_chain ?? []
+      const completed = this.execDAO.findById(executionId)
+      const childIndex = completed?.child_index ?? 0
+      return remaining[childIndex] ?? null
+    } catch {
+      return null
+    }
+  }
+
+  /**
+   * Trigger the next chain step as a child execution of the completed one.
+   * The child's completion re-enters handleChainComplete (recursive) until the
+   * chain is exhausted, at which point the schedule finalizes to 'done'.
+   */
+  private triggerChildStep(
+    opts: {
+      executionId: string
+      schedExecId: string
+      schedWsId: string
+      scheduleId: string
+      triggeredAt: number
+      notifyOnFailure: boolean
+      schedule: ScheduleRow
+      maxRetain: number
+      isRequirement: boolean
+    },
+    nextStep: WorkflowChainItem,
+  ): void {
+    const wsRow = this.configDAO.findScheduleWorkspaceById(opts.schedWsId)
+    if (!wsRow) return
+    const registry = getExecutionService(wsRow.workspace_id)
+    if (!registry) return
+
+    const completed = this.execDAO.findById(opts.executionId)
+    const nextChildIndex = (completed?.child_index ?? 0) + 1
+
+    let child
+    try {
+      child = registry.service.create(wsRow.workspace_id, {
+        workflow_ref: nextStep.workflow_ref,
+        parent_id: opts.executionId,
+        child_index: nextChildIndex,
+        input_values: nextStep.input_values,
+        triggered_by: 'scheduler',
+      })
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err)
+      console.error('[WorkflowExecutor] child execution creation failed', {
+        parentExec: opts.executionId, error: msg,
+      })
+      // Child creation failed → finalize the chain as failed so it doesn't hang.
+      this.runDAO.markExecutionCompleteWithDuration(
+        opts.schedExecId, 'failed', Date.now() - opts.triggeredAt,
+        `Child creation failed: ${msg}`,
+      )
+      this.configDAO.updateScheduleWorkspaceStatus(opts.schedWsId, {
+        status: 'failed', execution_id: opts.executionId,
+        completed_at: new Date().toISOString(), error: msg,
+      })
+      return
+    }
+
+    // Child's completion re-enters handleChainComplete with the child's id.
+    registry.service.registerExternalCallbacks({
+      onComplete: (() => {
+        this.handleChainComplete({ ...opts, executionId: child.id })
+      }) as any,
+    }, child.id)
+
+    // Fire and forget — explicit error capture (Issue 1 lesson: no silent failures).
+    registry.service.start(child.id, nextStep.input_values).catch((err: unknown) => {
+      const msg = err instanceof Error ? err.message : String(err)
+      console.error('[WorkflowExecutor] child execution start failed', {
+        executionId: child.id, error: msg,
+      })
+      this.runDAO.markExecutionFailed(opts.schedExecId, msg, ['triggered', 'running'])
+      registry.service.clearExternalCallbacks(child.id)
+    })
   }
 
   // ── Retention enforcement ────────────────────────────────────────
@@ -397,6 +927,8 @@ export class WorkflowExecutor implements Executor {
   }
 
   private updateNextTrigger(schedule: ScheduleRow): void {
+    // Drafts (trigger_source='requirement') have no cron_expression — skip next-trigger update.
+    if (!schedule.cron_expression) return
     try {
       const interval = parseExpression(schedule.cron_expression, {
         tz: schedule.timezone,

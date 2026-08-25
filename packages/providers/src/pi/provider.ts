@@ -101,12 +101,11 @@ export class PiAgentProvider implements IAgentProvider {
     this.sessionCache = new SessionCache(async (cwd, resumeSessionId, opts) => {
       const extensions: any[] = [createOctopusHooks()]
       const customTools: any[] = opts?.subAgentTools ?? []
-      if (resumeSessionId) {
-        const restored = await PiSdk.findSession(cwd, resumeSessionId)
-        if (restored) return restored
-        console.warn(`[PiProvider] Session '${resumeSessionId}' not found, creating new session`)
-      }
-      return PiSdk.createSession({
+      // ticket 13: pass the full SessionOptions into findSession so the
+      // reconstructed AgentSession matches a fresh session's wiring
+      // (extensions/systemPrompt/customTools/skills/customProviders/filteredEnv).
+      // Pre-fix, findSession returned a bare SessionManager and these were lost.
+      const resumeOpts = {
         cwd,
         filteredEnv: opts?.filteredEnv ?? {},
         systemPrompt: opts?.systemPrompt,
@@ -114,7 +113,13 @@ export class PiAgentProvider implements IAgentProvider {
         customTools,
         skills: opts?.skills,
         customProviders: opts?.customProviders ?? this.getCustomProviders(),
-      })
+      }
+      if (resumeSessionId) {
+        const restored = await PiSdk.findSession(cwd, resumeSessionId, resumeOpts)
+        if (restored) return restored
+        console.warn(`[PiProvider] Session '${resumeSessionId}' not found, creating new session`)
+      }
+      return PiSdk.createSession(resumeOpts)
     })
   }
 

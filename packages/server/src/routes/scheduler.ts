@@ -1,22 +1,38 @@
 import { Hono } from 'hono'
 import type { Context, Next } from 'hono'
 import { ZodError } from 'zod'
+import crypto from 'crypto'
 import {
   SchedulerService,
   SchedulerJobNotFoundError,
   SchedulerJobConflictError,
   SchedulerVersionConflictError,
   SchedulerTriggerConflictError,
+  SchedulerTriggerSourceMismatchError,
+  SchedulerJobNotAbortableError,
+  type CreateJobInputWithSpec,
+  type UpdateJobInputWithSpec,
 } from '../services/scheduler/scheduler-service'
 import { DashboardService } from '../services/scheduler/dashboard-service'
 import { ExportService } from '../services/scheduler/export-service'
 import { ConfigValidationError } from '../services/scheduler/config-validator'
 import { parseCronExpression, naturalLanguageToCron } from '../services/cron-utils'
-import type { CreateJobInput, UpdateJobInput } from '@octopus/shared'
+import type { AgentSessionDAO } from '../db/dao'
+
+// G7 (retire 'taskpool-draft' sentinel): requirement-type drafts no longer bind to a
+// fake workspace_id in chat_sessions. Instead, createJob auto-creates a REAL task-author
+// clone session in the `sessions` table (clone-session mechanism), with scope_id linked
+// to the task id after createJob succeeds. On createJob failure the orphan session is
+// rolled back (soft-deleted). See spec G7 + ticket 09.
 
 // ── Rate Limiter ────────────────────────────────────────────────────
 
-function createRateLimiter(maxTokens: number, refillIntervalMs: number) {
+/** Rate limiter middleware with an exposed buckets map (test-resettable). */
+type RateLimiterFn = ((c: Context, next: Next) => Response | Promise<Response> | ReturnType<Next>) & {
+  buckets: Map<string, { tokens: number; lastRefill: number }>
+}
+
+export function createRateLimiter(maxTokens: number, refillIntervalMs: number): RateLimiterFn {
   const buckets = new Map<string, { tokens: number; lastRefill: number }>()
 
   // Cleanup old entries every 5 minutes
@@ -28,7 +44,7 @@ function createRateLimiter(maxTokens: number, refillIntervalMs: number) {
   }, 300_000)
   if (typeof cleanupTimer === 'object' && 'unref' in cleanupTimer) cleanupTimer.unref()
 
-  return function rateLimiter(c: Context, next: Next) {
+  const rateLimiter = function rateLimiter(c: Context, next: Next) {
     // Security: Don't trust X-Forwarded-For from untrusted sources
     // Use connection IP from Hono's connInfo or fallback to a safe default
     let ip = 'unknown'
@@ -60,9 +76,13 @@ function createRateLimiter(maxTokens: number, refillIntervalMs: number) {
       buckets.set(key, bucket)
     }
 
-    // Refill tokens based on elapsed time
+    // Refill fractionally per elapsed time (standard token bucket). The old
+    // Math.floor(elapsed / interval) * maxTokens only refilled in whole-interval
+    // chunks, so any client polling faster than the interval (e.g. /tasks 10s
+    // kanban poll vs 60s refill) drained the bucket to zero and then stayed 429
+    // forever — refill never fired because the interval never elapsed fully.
     const elapsed = now - bucket.lastRefill
-    const refilled = Math.floor(elapsed / refillIntervalMs) * maxTokens
+    const refilled = (elapsed / refillIntervalMs) * maxTokens
     bucket.tokens = Math.min(maxTokens, bucket.tokens + refilled)
     bucket.lastRefill = now
 
@@ -72,7 +92,14 @@ function createRateLimiter(maxTokens: number, refillIntervalMs: number) {
 
     bucket.tokens--
     return next()
-  }
+  } as RateLimiterFn
+
+  // Expose buckets so tests can reset state between suites. Without this, the
+  // module-level limiters below accumulate tokens across every test in a
+  // shared-app suite (e.g. scheduler-routes.test.ts creates >10 jobs), which
+  // falsely 429s later tests — a test-isolation bug, not real rate limiting.
+  rateLimiter.buckets = buckets
+  return rateLimiter
 }
 
 // Helper: Check if IP is from a trusted private network (proxy)
@@ -107,6 +134,17 @@ const rateLimitTrigger = createRateLimiter(5, 60_000)   // 5/min
 const rateLimitDelete = createRateLimiter(5, 60_000)    // 5/min
 const rateLimitDefault = createRateLimiter(60, 60_000)  // 60/min
 
+/**
+ * Test-only helper: reset every scheduler rate-limiter bucket so a long
+ * shared-app test suite (which may issue >maxTokens writes) does not
+ * falsely 429 later assertions. No effect on production behavior.
+ */
+export function resetSchedulerRateLimitersForTests(): void {
+  for (const limiter of [rateLimitCreate, rateLimitTrigger, rateLimitDelete, rateLimitDefault]) {
+    limiter.buckets.clear()
+  }
+}
+
 // ── Error Classification ────────────────────────────────────────────
 
 function classifyError(err: unknown): { status: number; message: string } {
@@ -120,6 +158,8 @@ function classifyError(err: unknown): { status: number; message: string } {
   if (err instanceof SchedulerJobConflictError) return { status: 409, message: err.message }
   if (err instanceof SchedulerVersionConflictError) return { status: 409, message: err.message }
   if (err instanceof SchedulerTriggerConflictError) return { status: 409, message: err.message }
+  if (err instanceof SchedulerTriggerSourceMismatchError) return { status: 400, message: err.message }
+  if (err instanceof SchedulerJobNotAbortableError) return { status: 400, message: err.message }
   if (err instanceof ConfigValidationError) return { status: 400, message: err.message }
 
   const msg = err instanceof Error ? err.message : String(err)
@@ -147,6 +187,7 @@ export function createSchedulerRoutes(
   service: SchedulerService,
   dashboardService?: DashboardService,
   exportService?: ExportService,
+  agentSessionDAO?: AgentSessionDAO,
 ): Hono {
   const router = new Hono()
 
@@ -155,6 +196,9 @@ export function createSchedulerRoutes(
   // GET /jobs — list with pagination, filtering, sorting
   router.get('/jobs', rateLimitDefault, (c) => {
     try {
+      // Default to 'cron' so requirement-type drafts don't pollute cron UI listings;
+      // callers wanting requirement-type must pass ?trigger_source=requirement explicitly.
+      const rawTrigger = c.req.query('trigger_source') as 'cron' | 'requirement' | undefined
       const result = service.listJobs({
         page: parseIntParam(c.req.query('page'), 1),
         limit: Math.min(parseIntParam(c.req.query('limit'), 20), 100),
@@ -164,6 +208,7 @@ export function createSchedulerRoutes(
         workspace_id: c.req.query('workspace_id'),
         sort: c.req.query('sort') as 'name' | 'created_at' | 'next_trigger_at' | undefined,
         order: c.req.query('order') as 'asc' | 'desc' | undefined,
+        trigger_source: rawTrigger ?? 'cron',
       })
       return c.json(result)
     } catch (err: unknown) {
@@ -176,8 +221,12 @@ export function createSchedulerRoutes(
   router.post('/jobs', rateLimitCreate, async (c) => {
     const body = await safeJson(c)
     if (!body) return c.json({ error: 'Invalid or missing JSON body' }, 400)
+
+    // v2: task-pool requirement path REMOVED (code-review F3). task-author now uses
+    // /api/tasks (routes/tasks.ts); the G7 auto-session + createJob(trigger_source=
+    // 'requirement') path is dead. POST /api/scheduler/jobs is cron-only.
     try {
-      const job = service.createJob(body as CreateJobInput)
+      const job = service.createJob(body as CreateJobInputWithSpec)
       return c.json(job, 201)
     } catch (err: unknown) {
       const { status, message } = classifyError(err)
@@ -212,7 +261,7 @@ export function createSchedulerRoutes(
     }
 
     try {
-      const job = service.updateJob(c.req.param('id'), body as UpdateJobInput, version)
+      const job = service.updateJob(c.req.param('id'), body as UpdateJobInputWithSpec, version)
       return c.json(job)
     } catch (err: unknown) {
       const { status, message } = classifyError(err)
@@ -249,6 +298,30 @@ export function createSchedulerRoutes(
     try {
       const result = service.triggerJob(c.req.param('id'))
       return c.json(result)
+    } catch (err: unknown) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status)
+    }
+  })
+
+  // POST /jobs/:id/enqueue — draft → queued (task pool 入池)
+  router.post('/jobs/:id/enqueue', rateLimitDefault, (c) => {
+    try {
+      const job = service.enqueueJob(c.req.param('id'))
+      return c.json(job)
+    } catch (err: unknown) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status)
+    }
+  })
+
+  // POST /jobs/:id/abort — claimed/running → aborted (G4: user-triggered abort)
+  // Terminal: releases unique_active + cancels the running execution + cleans ws.
+  // Non-claimable states (draft/queued/done/failed/aborted) → 400.
+  router.post('/jobs/:id/abort', rateLimitDefault, async (c) => {
+    try {
+      const job = await service.abortJob(c.req.param('id'))
+      return c.json(job)
     } catch (err: unknown) {
       const { status, message } = classifyError(err)
       return c.json({ error: message }, status)

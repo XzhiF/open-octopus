@@ -92,6 +92,14 @@
 | **Clone Resource (分身资源)** | 用户创建的 Agent 分身定义包（persona + config + skills + memory），通过资源模块安装/激活。区别于内置分身。 | shared, server |
 | **activated** | ResourceEntry 上的布尔字段 — 标识资源是否已激活到运行时目录。与 status（文件完整性）分离。 | shared |
 | **Resource Backup (资源备份)** | 卸载分身时可选保留的备份，存储于 `~/.octopus/resources/backups/{type}/{name}-{timestamp}/`。 | shared |
+| **Skill 组 (Skill Group)** | 按资源 registry `group` 聚合的技能套件（如 open-spec / mattpocock-skills）。任务创建时选定（可多选，创建后锁定），物化为 per-task plugin 目录。区别于 tasks.skills（执行技能）。 | server, web-app |
+| **Per-task Plugin 目录** | `~/.octopus/tasks/{task-id}/skills/` — 所选 Skill 组的 skills 从 resources/installed symlink 进来，作为第三个 plugin 传给 task-author 会话，获得 SDK 原生渐进式披露。ADR-0010。 | server |
+| **任务家目录 (Task Home)** | `~/.octopus/tasks/{task-id}/` — 由 task id 推出的约定目录（不加 DB 字段），含 skills/（plugin 目录）+ artifacts/（产物 + artifacts.json 索引）。draft 删除时整体 reap。ADR-0011。 | server |
+| **登记不搬迁 (Register, don't relocate)** | 产物收集策略 — octopus 原生 skill 产物写统一 artifacts/ 目录；第三方 skill 产物留原生位置，登记进 artifacts.json 索引。UI/调度器只读索引。ADR-0011。 | server |
+| **辅助工作流 (Assist Workflow)** | 编写期可触发的内置工作流（moa-requirements-review / spec-review-swarm / clarify-debate）。建议权给 agent，执行权留用户；结构化产出（ac 候选/方案建议/风险）勾选采纳进 spec。 | server, core-pack |
+| **HOW-handoff** | task-author 对话收尾步骤 — 入队前枚举可复用工作流 → 推荐 + 用户确认 → 复用 or 自建（validate + 模拟器必过）→ 绑定 workflow_ref。ADR-0013。 | core-pack |
+| **workflow 解析集 (Resolution Set)** | 任务 workflow_ref 的有效来源集合 = 已安装内置工作流 ∨ task home `workflows/`。全局 `~/.octopus/workflows/` 明确排除。绑定预检 / ready-gate / 查看器三处共用。ADR-0013。 | server |
+| **Task Home workflows/** | `~/.octopus/tasks/{task-id}/workflows/` — 自建工作流落位目录；dispatch 时经 `input_values.task_workflows_dir` 注入、拷进执行 ws `workflows/`（S2a 拷贝，非引擎直查）。ADR-0013。 | server |
 
 ## Anti-Patterns（禁止）
 
@@ -130,3 +138,7 @@ core-pack ← (纯数据资源)
 ## System-wide ADRs
 
 - [0001-mattpocock-dev-single-workflow.md](docs/adr/0001-mattpocock-dev-single-workflow.md) — 单一工作流 vs 拆分
+- [0010-per-task-plugin-dir.md](docs/adr/0010-per-task-plugin-dir.md) — Skill 组经 per-task plugin 目录获 SDK 原生加载
+- [0011-task-home-register-dont-relocate.md](docs/adr/0011-task-home-register-dont-relocate.md) — 任务家目录约定 + 登记不搬迁
+- [0012-skill-group-lock-at-creation.md](docs/adr/0012-skill-group-lock-at-creation.md) — Skill 组创建时锁定（两阶段编写流）
+- [0013-workflow-ref-authoring-provisioning.md](docs/adr/0013-workflow-ref-authoring-provisioning.md) — workflow_ref 归属 authoring agent；自建 flow 落 task home + 分发拷贝（amends ADR-0008）

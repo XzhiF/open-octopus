@@ -34,7 +34,7 @@ const MAX_POLL_MS = 300000 // 5 minutes
 
 async function checkServer(): Promise<boolean> {
   try {
-    const res = await fetch(`${SERVER_URL}/api/health`)
+    const res = await fetch(`${SERVER_URL}/api/actuator/health`)
     return res.ok
   } catch {
     return false

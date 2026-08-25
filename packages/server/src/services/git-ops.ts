@@ -137,16 +137,46 @@ export class GitOps {
     return { branch: sha, detached: true }
   }
 
-  /** Create or switch branch. Returns whether branch was created vs switched to existing. */
-  async createOrSwitchBranch(projectPath: string, branchName: string): Promise<{ created: boolean }> {
+  /**
+   * Check whether a local branch exists (refs/heads/<name>).
+   * Reliable inside a worktree — show-ref resolves through the common git dir.
+   */
+  private async branchExists(projectPath: string, branchName: string): Promise<boolean> {
     try {
       await runGit(projectPath, ["show-ref", "--verify", "--quiet", `refs/heads/${branchName}`])
-      await runGit(projectPath, ["checkout", branchName])
-      return { created: false }
+      return true
     } catch {
+      return false
+    }
+  }
+
+  /** Create or switch branch. Returns whether branch was created vs switched to existing. */
+  async createOrSwitchBranch(projectPath: string, branchName: string): Promise<{ created: boolean }> {
+    const exists = await this.branchExists(projectPath, branchName)
+    if (!exists) {
       await runGit(projectPath, ["checkout", "-b", branchName])
       return { created: true }
     }
+    // Branch exists — switch to it. In a worktree this can fail with
+    // "already checked out at <path>" when another working tree holds the branch
+    // (e.g. the source repo's main tree is on `main` while this scheduler
+    // worktree is on its own `taskpool-<id>` branch). Previously this threw, and
+    // the caller's try/catch misread it as "branch missing", falling back to
+    // `git checkout -b` which then fatals ("a branch named 'main' already exists"),
+    // killing the execution in ~124ms. Keep the current isolated branch instead.
+    try {
+      await runGit(projectPath, ["checkout", branchName])
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err)
+      if (/already checked out/i.test(msg)) {
+        process.stderr.write(
+          `[git-ops] branch "${branchName}" is checked out by another worktree; keeping current branch in ${projectPath}\n`,
+        )
+        return { created: false }
+      }
+      throw err
+    }
+    return { created: false }
   }
 
   /** Number of commits ahead of upstream */

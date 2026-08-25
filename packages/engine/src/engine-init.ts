@@ -56,6 +56,20 @@ export interface EngineInitOptions {
   resourceProvisioner?: ResourceProvisionerLike
   resourcePreflight?: ResourcePreFlightLike
   logger?: JsonlLogger
+  /**
+   * 07 (SG7): config.requires from the schedule's WorkflowConfig (propagated
+   * by materializeTaskSpecToConfig from tasks.resources[] + subunit.resources[]).
+   * UNION-merged with workflow.requires for provisioning — does NOT override
+   * workflow-defined requires; duplicates across both sources are deduped.
+   * Optional: existing call sites (no schedule config) omit it and behavior
+   * is unchanged (workflow.requires alone drives provisioning).
+   */
+  configRequires?: {
+    skills?: string[]
+    agent_files?: string[]
+    commands?: string[]
+    rules?: string[]
+  }
 }
 
 export interface GitSyncResult {
@@ -99,6 +113,50 @@ function agentFileToName(filePath: string): string | undefined {
   if (typeof filePath !== "string" || filePath.includes("$")) return undefined
   const basename = filePath.split("/").pop() ?? filePath
   return basename.replace(/\.md$/, "")
+}
+
+/**
+ * 07 (SG7): UNION-merge workflow.requires + configRequires (from the schedule's
+ * WorkflowConfig.requires, propagated by materializeTaskSpecToConfig). Does NOT
+ * override workflow.requires — duplicates are deduped via Set. `clones` come
+ * only from workflow.requires (config.requires schema omits clones; tasks do
+ * not provision clones via config — manual-install per ResourceProvisioner).
+ * Returns a full requires object (all 5 buckets, possibly empty) so downstream
+ * Step 0/Step 1 code reads a single merged source without re-merging.
+ */
+function mergeRequires(
+  wf?: {
+    skills?: string[]
+    agent_files?: string[]
+    commands?: string[]
+    rules?: string[]
+    clones?: string[]
+  },
+  cfg?: {
+    skills?: string[]
+    agent_files?: string[]
+    commands?: string[]
+    rules?: string[]
+  },
+): {
+  skills: string[]
+  agent_files: string[]
+  commands: string[]
+  rules: string[]
+  clones: string[]
+} {
+  const skills = new Set([...(wf?.skills ?? []), ...(cfg?.skills ?? [])])
+  const agent_files = new Set([...(wf?.agent_files ?? []), ...(cfg?.agent_files ?? [])])
+  const commands = new Set([...(wf?.commands ?? []), ...(cfg?.commands ?? [])])
+  const rules = new Set([...(wf?.rules ?? []), ...(cfg?.rules ?? [])])
+  const clones = new Set([...(wf?.clones ?? [])])
+  return {
+    skills: [...skills],
+    agent_files: [...agent_files],
+    commands: [...commands],
+    rules: [...rules],
+    clones: [...clones],
+  }
 }
 
 export class EngineInitPhase {
@@ -173,6 +231,7 @@ export class EngineInitPhase {
       resourceProvisioner,
       resourcePreflight,
       logger,
+      configRequires,
     } = options
 
     const startTime = Date.now()
@@ -187,8 +246,18 @@ export class EngineInitPhase {
     callbacks.onNodeStart?.(INIT_NODE_ID, INIT_NODE_TYPE)
 
     try {
+      // 07 (SG7): UNION-merge workflow.requires + configRequires (from the
+      // schedule's WorkflowConfig.requires, propagated by materialize). The
+      // merged set drives all downstream provisioning (Step 0 clones gate +
+      // Step 1 requires provisioning) so config-declared resources are
+      // installed into the workspace's .claude/skills|agents|commands|rules
+      // alongside workflow-declared ones. Does NOT override workflow.requires
+      // — duplicates are deduped via Set. configRequires is optional;
+      // omitting it (existing call sites) leaves workflow.requires unchanged.
+      const mergedRequires = mergeRequires(workflow.requires, configRequires)
+
       // Step 0: Clone hard-fail gate — check BEFORE provisioning
-      const requiresClones = workflow.requires?.clones ?? []
+      const requiresClones = mergedRequires.clones
       if (requiresClones.length > 0) {
         const homeDir = os.homedir()
         const missingClones: string[] = []
@@ -218,12 +287,12 @@ export class EngineInitPhase {
       }
 
       // Step 1: Provision declared requires resources first
-      const requiresSkills = workflow.requires?.skills ?? []
-      const requiresAgentFiles = workflow.requires?.agent_files ?? []
-      const requiresCommands = workflow.requires?.commands ?? []
-      const requiresRules = workflow.requires?.rules ?? []
+      const requiresSkills = mergedRequires.skills
+      const requiresAgentFiles = mergedRequires.agent_files
+      const requiresCommands = mergedRequires.commands
+      const requiresRules = mergedRequires.rules
       const hasRequires = requiresSkills.length > 0 || requiresAgentFiles.length > 0
-        || requiresCommands.length > 0 || requiresRules.length > 0
+        || requiresCommands.length > 0 || requiresRules.length > 0 || requiresClones.length > 0
 
       if (hasRequires && !resourcePreflight) {
         this.logMessage(logger, callbacks, `[WARN] requires declared but resource preflight not configured — skipping provision`)

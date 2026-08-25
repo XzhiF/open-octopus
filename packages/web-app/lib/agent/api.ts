@@ -17,16 +17,27 @@ import { getServerUrl } from '@/lib/server-config'
  * in the metadata column: { thinking?: string, tool_calls?: ToolCallRecord[] }
  */
 function parseMessageMetadata(msg: any): AgentMessage {
-  if (!msg.metadata || typeof msg.metadata !== 'string') return msg
+  // Normalize boolean fields from SQLite (stored as 0/1 integers) to real
+  // booleans. Without this, `{0}` could leak into JSX if any code path
+  // accidentally renders a numeric field — React renders `0` as visible text.
+  const normalized = {
+    ...msg,
+    is_summary: !!msg.is_summary,
+    is_compressed: !!msg.is_compressed,
+    is_edited: !!msg.is_edited,
+  }
+  if (!normalized.metadata || typeof normalized.metadata !== 'string') return normalized
   try {
-    const meta = JSON.parse(msg.metadata)
+    const meta = JSON.parse(normalized.metadata)
     return {
-      ...msg,
-      thinking: meta.thinking ?? msg.thinking,
-      tool_calls: meta.tool_calls ?? msg.tool_calls,
+      ...normalized,
+      thinking: meta.thinking ?? normalized.thinking,
+      tool_calls: meta.tool_calls ?? normalized.tool_calls,
+      timeline: meta.timeline ?? normalized.timeline,
+      interrupted: meta.interrupted ?? normalized.interrupted,
     }
   } catch {
-    return msg
+    return normalized
   }
 }
 
@@ -265,10 +276,19 @@ export function getCloneSession(cloneName: string, sessionId: string, query?: { 
   })
 }
 
-export function cloneChatStream(cloneName: string, sessionId: string, message: string): AgentSSEConnection {
+export function cloneChatStream(
+  cloneName: string,
+  sessionId: string,
+  message: string,
+  opts?: { model?: string; subagents?: Array<{ id: string; label?: string }> },
+): AgentSSEConnection {
   const controller = new AbortController()
   const url = `${CLONE_BASE()}/${cloneName}/sessions/${sessionId}/chat`
-  const body = JSON.stringify({ message })
+  const body = JSON.stringify({
+    message,
+    ...(opts?.model ? { model: opts.model } : {}),
+    ...(opts?.subagents && opts.subagents.length > 0 ? { subagents: opts.subagents } : {}),
+  })
 
   const streamPromise = fetch(url, {
     method: 'POST',

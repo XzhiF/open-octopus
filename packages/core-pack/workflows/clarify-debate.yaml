@@ -1,0 +1,41 @@
+# clarify-debate.yaml — 编写期辅助工作流：澄清辩论 (swarm debate mode, D9)
+#
+# 3 个内置辅助工作流之一。debate 模式（DiscussionStrategy：多轮讨论 + 共识检测），
+# 适合 goal 本身存在歧义、需多轮交锋澄清的场景。
+#
+# Flow:
+#   1. panel (swarm, mode=debate) — 2+ 专家多轮辩论 goal 的歧义点；
+#      host 综合为 JSON {ac_candidates[], suggestions[], risks[]}。
+#
+# Output contract: 同 moa-requirements-review。
+
+apiVersion: octopus/v1
+kind: Workflow
+name: clarify-debate
+description: "澄清辩论（debate 模式）：多专家多轮辩论 goal 歧义，host 汇总为三段式 JSON"
+
+variables:
+  goal: ""
+  ac: ""
+  projects: ""
+
+nodes:
+  - id: panel
+    type: swarm
+    mode: debate
+    topic: "辩论澄清任务意图：goal=$vars.goal；ac=$vars.ac；projects=$vars.projects"
+    rounds: 2
+    consensus_threshold: 0.7
+    experts:
+      - role: 范围主张者
+        prompt: "主张对 goal 范围的窄解释，避免范围蔓延。指出 goal 中可被砍掉的隐含承诺。"
+      - role: 范围拓展者
+        prompt: "主张对 goal 的宽解释，指出被忽略的相关场景与用户旅程。"
+      - role: 验收标准执笔
+        prompt: "把辩论中的共识与分歧转写为可验证的验收标准候选。"
+    host:
+      role: 辩论综合者
+      prompt: |
+        汇总辩论结论，**只输出一个 JSON 对象**，不要 markdown 代码块、不要解释文字。结构：
+        {"ac_candidates": ["候选验收标准1", ...], "suggestions": ["方案建议1", ...], "risks": ["风险提示1", ...]}
+        ac_candidates 应吸收辩论中达成的验收标准；suggestions 记录未解决的方向建议；risks 记录辩论暴露的歧义风险。若某类无内容返回空数组。

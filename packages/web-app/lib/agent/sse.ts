@@ -12,6 +12,7 @@ export interface SSEHandlers {
   onToolCall?: (data: Extract<AgentSSEEvent, { event: 'tool_call' }>['data']) => void
   onStatus?: (data: Extract<AgentSSEEvent, { event: 'status' }>['data']) => void
   onConfirm?: (data: Extract<AgentSSEEvent, { event: 'confirm' }>['data']) => void
+  onContextUsage?: (data: import('@/lib/agent/types').ContextUsageData) => void
   onDone?: (data: Extract<AgentSSEEvent, { event: 'done' }>['data']) => void
   onError?: (data: Extract<AgentSSEEvent, { event: 'error' }>['data']) => void
 }
@@ -83,6 +84,9 @@ export function useSSEConnection() {
                   break
                 case 'thinking_done':
                   handlers.onThinkingDone?.()
+                  break
+                case 'context_usage':
+                  handlers.onContextUsage?.(data)
                   break
                 case 'tool_call':
                   handlers.onToolCall?.(data)

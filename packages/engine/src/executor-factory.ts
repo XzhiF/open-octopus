@@ -3,7 +3,7 @@
 // Factory for creating type-specific executors from node definitions.
 // Extracted from WorkflowEngine.createExecutor() to reduce engine.ts size.
 //
-import type { NodeDef, WorkflowHooks, VersionResolver } from "@octopus/shared"
+import type { NodeDef, WorkflowHooks, VersionResolver, TaskDispatchPort } from "@octopus/shared"
 import { VarPool, resolveModelAlias } from "@octopus/shared"
 import type { NodeExecutionResult } from "./executors/types"
 import type { AgentEvent } from "./executors/agent-types"
@@ -20,6 +20,7 @@ import { SubWorkflowExecutor } from "./executors/sub-workflow"
 import { DynamicSubWorkflowExecutor } from "./executors/dynamic-sub-workflow"
 import { OctopusAgentExecutor } from "./executors/octopus-agent"
 import { AgentNodeRunner } from "./executors/agent-runner"
+import { TaskDispatchExecutor } from "./executors/task-dispatch"
 import type { EngineCallbacks, RuntimeNodeMeta } from "./engine"
 import type { JsonlLogger } from "./logger"
 import type { CrossExecResolver } from "@octopus/shared"
@@ -61,6 +62,10 @@ export interface ExecutorFactoryContext {
   // Octopus agent support
   versionResolver?: VersionResolver
   createSessionFn?: import("./executors/octopus-agent/session").CreateSessionFn
+  // Task dispatch support (G1) — port is injected by the server (createSessionFn
+  // precedent); childOutput is the resume payload threaded in on retryFrom.
+  taskDispatchPort?: TaskDispatchPort
+  taskDispatchChildOutput?: Record<string, unknown>
 }
 
 export class ExecutorFactory {
@@ -175,6 +180,7 @@ export class ExecutorFactory {
           ensureNodeExecution: (scopedNodeId, nodeType, meta) => {
             this.ctx.callbacks?.onRuntimeNodeAdded?.(scopedNodeId, nodeType, meta)
           },
+          taskDispatchPort: this.ctx.taskDispatchPort,
         })
       case "agent": {
         const rawKey = node.engine ?? this.ctx.workflow.engine ?? "claude"
@@ -249,6 +255,16 @@ export class ExecutorFactory {
           sessionId: this.ctx.interactionSessionId
             ?? (node.interaction_agent?.context !== "new" ? this.ctx.globalSessionId : undefined),
           currentRound: this.ctx.interactionCurrentRound,
+        })
+      case "task_dispatch":
+        return new TaskDispatchExecutor(node, p, {
+          port: this.ctx.taskDispatchPort,
+          childOutput: this.ctx.taskDispatchChildOutput,
+          signal: s,
+          crossExecResolver: this.ctx.crossExecResolver,
+          executionId: this.ctx.executionId,
+          nodeOutputs: buildNodeOutputs(),
+          cwd: this.ctx.cwd,
         })
       case "sub_workflow":
         return new SubWorkflowExecutor(node, p, {
