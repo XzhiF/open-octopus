@@ -4,9 +4,13 @@
 // (ADR-0011). Each task derives a home directory `~/.octopus/tasks/{id}/` by
 // id alone (NO DB field — the path is deterministic). Owns:
 //   - createHome: the skills/ + artifacts/ skeleton (ADR-0010 / ADR-0011).
-//   - readArtifacts / writeArtifactEntry: the artifacts.json index — the single
-//     source of truth for "what did this task produce". Missing → []; corrupted
-//     JSON → [] + warn (SW-BP12). Invalid entries rejected on write (AC3).
+//   - readArtifacts: SCAN-FIRST — the filesystem under artifacts/ is the source
+//     of truth for "what did this task produce"; artifacts.json is an optional
+//     ENRICHMENT layer (by/title overlay + external absolute-path entries).
+//     Missing/corrupted index → [] (still lists the dir); invalid entries
+//     dropped (SW-BP12).
+//   - writeArtifactEntry: register/enrich one index row (rejects invalid,
+//     AC3; upserts by path).
 //   - reapHome: delete the whole home WITHOUT following junctions/symlinks
 //     (SW-BP14 — a link inside skills/ must not drag its target into the void).
 //
@@ -187,7 +191,7 @@ export class TaskHomeService {
       // the file it should read for goal/ac instead of curling the API.
       lines.push('- 当前 goal/ac/确认状态快照见同目录 `spec.json`（每次 spec-field 保存后由 server 重写，权威）')
       lines.push('')
-      lines.push('> 此文件由系统维护。当"编写语境"变更时自动更新。')
+      lines.push('> 此文件由系统维护。当"codebase"变更时自动更新。')
       fs.writeFileSync(filePath, lines.join('\n'), 'utf-8')
     } catch (err: unknown) {
       // eslint-disable-next-line no-console
@@ -281,8 +285,8 @@ export class TaskHomeService {
         '',
         '- 技能中的相对路径（如 `docs/superpowers/specs/...`）→ 相对于工作目录解析',
         '- 创建文件前，展示完整绝对路径（= 工作目录 + 相对路径）供用户确认',
-        '- 产物写入 `artifacts/` 后，在 `artifacts.json` 登记索引条目',
-        '- 外部资源用绝对路径并登记 `external: true`',
+        '- 产物写入 `artifacts/` 后会自动出现在产出清单中；如需补充标题/说明/分组，再在 `artifacts.json` 登记增强条目',
+        '- 外部资源（不在工作目录内）必须用绝对路径并在 `artifacts.json` 登记 `external: true`，否则无法读取',
         '',
         '## 违反后果',
         '',
@@ -319,11 +323,101 @@ export class TaskHomeService {
     this.writeTaskContextRule(taskId)
   }
 
-  /** Read artifacts.json. Missing file → []. Corrupted JSON → [] + warn
-   *  (SW-BP12). Non-array top-level → [] + warn. Per-entry schema-invalid
-   *  rows are dropped (defense-in-depth — the writer rejects before persist,
-   *  but a hand-edited or partial-write file must not break GET). */
+  /** Read the task's artifact index — the answer to "what did this task produce".
+   *  SCAN-FIRST (bugfix redesign 2026-08-26): the filesystem is the source of
+   *  truth. Every file under `artifacts/` is a deliverable; artifacts.json is an
+   *  optional ENRICHMENT layer that overlays by/title on matching files and
+   *  carries external=true entries (absolute paths OUTSIDE the dir — 登记不搬迁,
+   *  ADR-0011), which a scan can't see. Internal index entries whose file is
+   *  gone are dropped (deleted = gone). There is no schema drift possible — an
+   *  LLM session can write files without a valid index and they still show up. */
   readArtifacts(taskId: string): ArtifactIndexEntry[] {
+    const dir = this.artifactsDir(taskId)
+
+    // 1. Filesystem truth: recursively list every real file under artifacts/.
+    const scanned = this.scanArtifactDir(dir)
+
+    // 2. Index enrichment (tolerant read — both flat-array and LLM grouped-
+    //    object forms). by/title overlay on matching files; external entries
+    //    are appended since they live outside the dir.
+    const indexEntries = this.readArtifactsIndex(taskId)
+
+    const merged: ArtifactIndexEntry[] = []
+    const seen = new Set<string>()
+
+    for (const fileEntry of scanned) {
+      const indexHit = indexEntries.find((ie) => !ie.external && ie.path === fileEntry.path)
+      merged.push(
+        indexHit
+          ? { ...fileEntry, by: indexHit.by, title: indexHit.title }
+          : fileEntry,
+      )
+      seen.add(fileEntry.path)
+    }
+
+    for (const ie of indexEntries) {
+      if (!ie.external || seen.has(ie.path)) continue
+      seen.add(ie.path)
+      merged.push(ie)
+    }
+
+    return merged
+  }
+
+  /** Recursively list every real file under the artifacts dir (the index file
+   *  itself excluded) as an ArtifactIndexEntry-shaped candidate: relative path,
+   *  basename title, filesystem attribution, mtime as updated_at. This is the
+   *  scan-first base — the index only enriches it. Unreadable subdirs are
+   *  skipped (SW-BP12 defense-in-depth). */
+  private scanArtifactDir(dir: string): ArtifactIndexEntry[] {
+    if (!fs.existsSync(dir)) return []
+    const out: ArtifactIndexEntry[] = []
+    const walk = (rel: string): void => {
+      let dirents: fs.Dirent[]
+      try {
+        dirents = fs.readdirSync(path.join(dir, rel), { withFileTypes: true })
+      } catch {
+        return // unreadable — skip (SW-BP12: don't let one bad dir break GET)
+      }
+      for (const ent of dirents) {
+        const child = rel ? path.join(rel, ent.name) : ent.name
+        if (ent.isDirectory()) {
+          walk(child)
+          continue
+        }
+        if (child === ARTIFACTS_JSON) continue // the index itself isn't an artifact
+        let mtime: string
+        try {
+          mtime = fs.statSync(path.join(dir, child)).mtime.toISOString()
+        } catch {
+          mtime = new Date(0).toISOString()
+        }
+        out.push({
+          path: child.split(path.sep).join("/"), // normalise separators (path contract)
+          by: "filesystem",
+          title: path.basename(child),
+          external: false,
+          updated_at: mtime,
+        })
+      }
+    }
+    walk("")
+    out.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0))
+    return out
+  }
+
+  /** Tolerant read of artifacts.json only (the ENRICHMENT layer). Missing file
+   *  → []. Corrupted JSON → [] + warn (SW-BP12). Accepts BOTH index shapes
+   *  producers write:
+   *    - the flat ARRAY of ArtifactIndexEntry (official writer — writeArtifactEntry);
+   *    - a grouped OBJECT `{ task_id?, <group>: [entries], external?: [...] }`
+   *      that LLM sessions write directly (e.g. the `grill-aftermath` register).
+   *      Array-valued keys are entry groups; the `external` group marks
+   *      absolute-path (external) entries.
+   *  Loose entries (`{ path, kind, desc }`) are normalized into the contract
+   *  shape (by/title/external/updated_at defaults). Per-entry invalid rows are
+   *  dropped (defense-in-depth — a bad row must not break GET). */
+  private readArtifactsIndex(taskId: string): ArtifactIndexEntry[] {
     const file = this.artifactsJsonPath(taskId)
     let raw: string
     try {
@@ -344,26 +438,121 @@ export class TaskHomeService {
       )
       return []
     }
-    if (!Array.isArray(parsed)) {
+
+    const candidates = this.collectArtifactCandidates(parsed, taskId)
+
+    const valid: ArtifactIndexEntry[] = []
+    for (const candidate of candidates) {
+      const normalized = this.normalizeArtifactEntry(candidate, taskId)
+      if (!normalized) continue
+      // Dedupe by path — the merged layer keyed on path assumes unique entries
+      // (flat-array upsert keeps the latest, but a hand-written index may dup).
+      if (valid.some((existing) => existing.path === normalized.path)) continue
+      valid.push(normalized)
+    }
+    return valid
+  }
+
+  /** Flatten the parsed index file into candidate entry objects. Flat-array
+   *  form → entries as-is. Grouped-object form → entries of every array-valued
+   *  key; the `external` group marks absolute-path entries (`external: true`
+   *  unless the entry already carries its own flag). An unusable shape (not an
+   *  array, no array-valued group) → warn + []. */
+  private collectArtifactCandidates(
+    parsed: unknown,
+    taskId: string,
+  ): Array<Record<string, unknown>> {
+    if (Array.isArray(parsed)) {
+      return parsed
+        .filter((e): e is Record<string, unknown> =>
+          !!e && typeof e === "object" && !Array.isArray(e))
+        .map((e) => ({ ...e }))
+    }
+    if (parsed && typeof parsed === "object") {
+      const obj = parsed as Record<string, unknown>
+      const out: Array<Record<string, unknown>> = []
+      for (const [key, value] of Object.entries(obj)) {
+        if (!Array.isArray(value)) continue
+        for (const e of value) {
+          if (!e || typeof e !== "object" || Array.isArray(e)) continue
+          const entry = { ...(e as Record<string, unknown>) }
+          if (entry.external === undefined && key === "external") entry.external = true
+          out.push(entry)
+        }
+      }
+      if (out.length > 0) return out
       // eslint-disable-next-line no-console
       console.warn(
-        `[task-home] artifacts.json for ${taskId} is not an array — returning [].`,
+        `[task-home] artifacts.json for ${taskId} is not an array and has no group lists — returning [].`,
       )
       return []
     }
-    const valid: ArtifactIndexEntry[] = []
-    for (let i = 0; i < parsed.length; i++) {
-      const result = artifactIndexEntrySchema.safeParse(parsed[i])
-      if (result.success) {
-        valid.push(result.data)
-      } else {
-        // eslint-disable-next-line no-console
-        console.warn(
-          `[task-home] artifacts.json[${i}] for ${taskId} is invalid — dropped: ${result.error.message}`,
-        )
-      }
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[task-home] artifacts.json for ${taskId} is not an array — returning [].`,
+    )
+    return []
+  }
+
+  /** Coerce a candidate into the ArtifactIndexEntry contract, filling
+   *  best-effort defaults for loose LLM-written entries (`{path, kind, desc}`):
+   *  by="task-author", title=desc ?? basename(path), external from group/field,
+   *  updated_at = the artifact file's mtime (epoch when the file is missing). */
+  private normalizeArtifactEntry(
+    candidate: Record<string, unknown>,
+    taskId: string,
+  ): ArtifactIndexEntry | null {
+    const direct = artifactIndexEntrySchema.safeParse(candidate)
+    if (direct.success) return direct.data
+
+    const rawPath = candidate.path
+    if (typeof rawPath !== "string" || rawPath.length === 0) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[task-home] artifacts.json entry for ${taskId} has no path — dropped.`,
+      )
+      return null
     }
-    return valid
+    const external = typeof candidate.external === "boolean" ? candidate.external : false
+    const listedTitle =
+      (typeof candidate.title === "string" && candidate.title)
+        ? candidate.title
+        : (typeof candidate.desc === "string" && candidate.desc)
+          ? candidate.desc
+          : undefined
+    const entry: unknown = {
+      path: rawPath,
+      by: typeof candidate.by === "string" && candidate.by ? candidate.by : "task-author",
+      title: listedTitle ?? path.basename(rawPath),
+      external,
+      updated_at:
+        typeof candidate.updated_at === "string" && candidate.updated_at
+          ? candidate.updated_at
+          : this.artifactMtime(taskId, rawPath, external) ?? new Date(0).toISOString(),
+    }
+    if (!artifactIndexEntrySchema.safeParse(entry).success) {
+      // Unreachable in practice (path/by/title/external/updated_at all filled)
+      // — keep the parse as the last gate (no second writer of bad rows).
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[task-home] artifacts.json entry for ${taskId} could not be normalized — dropped.`,
+      )
+      return null
+    }
+    return entry as ArtifactIndexEntry
+  }
+
+  /** Best-effort mtime of the artifact file (mtime → updated_at fallback for
+   *  loose entries). Missing file → null (caller falls back to epoch). */
+  private artifactMtime(taskId: string, relOrAbs: string, external: boolean): string | null {
+    try {
+      const abs = external ? relOrAbs : path.join(this.artifactsDir(taskId), relOrAbs)
+      const st = fs.statSync(abs)
+      return st.mtime.toISOString()
+    } catch {
+      // eslint-disable-next-line no-console
+      return null
+    }
   }
 
   /** Append or upsert (by `path`) an artifact entry. The entry is validated

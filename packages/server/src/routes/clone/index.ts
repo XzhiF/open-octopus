@@ -416,7 +416,7 @@ export function createCloneSessionRoutes(deps: CloneSessionRouteDeps): Hono {
     // `{taskHome}/context.md` instead of the system prompt. The system prompt
     // stays STATIC for prompt cache stability. The agent reads context.md on
     // demand, triggered by @@context_updated notice (set by tasks-service
-    // when the user changes "编写语境"). The rules file (.claude/rules/)
+    // when the user changes "codebase"). The rules file (.claude/rules/)
     // references context.md with a static instruction.
     //
     // Per turn: ensure context.md is up-to-date with the latest DB values.

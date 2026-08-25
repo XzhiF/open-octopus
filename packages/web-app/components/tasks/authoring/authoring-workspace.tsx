@@ -5,7 +5,7 @@
 // is open. Layout (interaction ref: prototype VariantL authoring phase,
 // app/tasks/prototype/page.tsx:3153 — code rewritten):
 //
-//   ┌─ top bar: type badge + 🔒 skill-group badges + 编写语境 popup ──┐
+//   ┌─ top bar: type badge + 🔒 skill-group badges + codebase popup ──┐
 //   ├─ LEFT (chat): command bar (aggregated /commands) + ChatArea      │
 //   ├─ RIGHT (output viewer): GoalAcCard + enqueue checklist           │
 //   └─ footer: 入队 button (disabled until confirmed; 409 → missing)   ─┘
@@ -106,21 +106,29 @@ export function AuthoringWorkspace({ task, onMutated, onClose }: AuthoringWorksp
     return () => { cancelled = true }
   }, [])
 
-  // Aggregated slash commands for the `/` autocomplete in the chat input.
-  // The task-author clone has access to ALL shared skills via plugin #1
-  // (`~/.octopus/agent`, per ADR-006 getPlugins ignores CloneDef.skills),
-  // so we include every installed skill regardless of the task's locked
-  // skill groups. The locked groups only control what gets *materialized*
-  // to the task home for workflow execution (plugin #3), not what the
-  // clone can invoke during the authoring chat.
+  // Aggregated slash commands for the `/` autocomplete in the chat input —
+  // scoped to the task's LOCKED skill groups (bugfix 2026-08-26). Previously
+  // this aggregated every installed skill from /api/skill-groups regardless
+  // of the selection: creating a coding task with only mattpocock-skills then
+  // seeing "101 技能可用" + /superpowers commands in the chat was a display
+  // mismatch. The actual loadable set is the task-home materialization (plugin
+  // #3, only the locked groups) + platform built-ins via plugin #1 — the old
+  // comment's "clone has all shared skills" assumption only covered plugin #1's
+  // octo-* built-ins, not the whole global registry. The UI now advertises /
+  // autocompletes only what the selection implies.
   // "default" group (D17) is an empty marker → contributes nothing.
+  const lockedGroupNames = useMemo(() => new Set(skillGroups), [skillGroups])
+  const commandGroups = useMemo(
+    () => allGroups.filter((g) => lockedGroupNames.has(g.group)),
+    [allGroups, lockedGroupNames],
+  )
   const commands = useMemo(() => {
     const out: Array<{ name: string; description?: string }> = []
-    for (const g of allGroups) {
+    for (const g of commandGroups) {
       for (const s of g.skills) out.push({ name: s.name, description: s.description })
     }
     return out
-  }, [allGroups])
+  }, [commandGroups])
 
   // ── Chat (reuses the v2 AuthoringMode wiring) ──────────────────────
   const initialSessionId = task.source_chat_session_id ?? null
@@ -342,7 +350,7 @@ export function AuthoringWorkspace({ task, onMutated, onClose }: AuthoringWorksp
         ))}
         {taskType === "coding" && (
           <Button variant="outline" size="sm" className="h-6 text-[10px]" onClick={() => setPresetOpen(true)} data-preset-button>
-            <Settings2 className="size-3 mr-1" /> 编写语境 · {presetOrg} · {presetProjects.length} 项目
+            <Settings2 className="size-3 mr-1" /> codebase · {presetOrg} · {presetProjects.length} 项目
           </Button>
         )}
         <div className="ml-auto flex items-center gap-2">
@@ -473,7 +481,7 @@ export function AuthoringWorkspace({ task, onMutated, onClose }: AuthoringWorksp
       <Dialog open={presetOpen} onOpenChange={setPresetOpen}>
         <DialogContent className="sm:max-w-[420px]">
           <DialogHeader>
-            <DialogTitle className="text-base">⚙️ 编写语境</DialogTitle>
+            <DialogTitle className="text-base">⚙️ codebase</DialogTitle>
             <DialogDescription className="text-xs">
               预设只有组织 + 项目两项。执行技能由 workflow.requires 负责。
             </DialogDescription>

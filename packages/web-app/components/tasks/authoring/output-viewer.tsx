@@ -450,7 +450,7 @@ export function OutputViewer({ task, runIds, onAdopted }: OutputViewerProps) {
       {/* ── Context viewer dialog ── */}
       <Dialog open={showContext} onOpenChange={(o) => { if (!o) setShowContext(false) }}>
         <DialogContent
-          className="sm:max-w-[640px] max-h-[75vh] p-0 gap-0 flex flex-col"
+          className="sm:max-w-[640px] h-[75vh] max-h-[75vh] p-0 gap-0 flex flex-col"
           showCloseButton
           data-context-viewer-dialog
         >
@@ -481,7 +481,7 @@ export function OutputViewer({ task, runIds, onAdopted }: OutputViewerProps) {
           </ScrollArea>
 
           <div className="px-4 py-2 border-t text-[10px] text-muted-foreground shrink-0">
-            此文件是 agent 的工作语境。修改"编写语境"后 agent 会自动重新读取
+            此文件是 agent 的工作语境。修改"codebase"后 agent 会自动重新读取
           </div>
         </DialogContent>
       </Dialog>
@@ -489,7 +489,7 @@ export function OutputViewer({ task, runIds, onAdopted }: OutputViewerProps) {
       {/* ── Spec viewer dialog (spec.json) ── */}
       <Dialog open={showSpec} onOpenChange={(o) => { if (!o) setShowSpec(false) }}>
         <DialogContent
-          className="sm:max-w-[640px] max-h-[75vh] p-0 gap-0 flex flex-col"
+          className="sm:max-w-[640px] h-[75vh] max-h-[75vh] p-0 gap-0 flex flex-col"
           showCloseButton
           data-spec-viewer-dialog
         >

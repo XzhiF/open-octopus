@@ -194,7 +194,7 @@ export function TemplatePicker({ onCreate, busy }: TemplatePickerProps) {
         {taskType === "coding" && (
           <section>
             <div className="text-xs font-medium mb-2">
-              编写语境 <span className="text-muted-foreground font-normal">（预设仅此两项；执行技能归 workflow.requires）</span>
+              codebase <span className="text-muted-foreground font-normal">（预设仅此两项；执行技能归 workflow.requires）</span>
             </div>
             {orgs.length > 1 ? (
               <select
