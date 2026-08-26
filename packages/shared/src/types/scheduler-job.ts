@@ -135,6 +135,14 @@ export const taskSpecSchema = z.object({
   // state survives modal close; readyTask enforces both before enqueue.
   goal_confirmed: z.boolean().optional(),
   ac_confirmed: z.array(z.string()).default([]),
+  // task-workflow-presets (T1): input_values for workflow binding. Keys/values
+  // are non-empty strings; values may contain ${goal}/${ac} placeholders resolved
+  // at materialization time. Single value ≤ 2048 chars. Optional for backward
+  // compat with tasks created before this field existed.
+  input_values: z.record(
+    z.string().min(1),
+    z.string().min(1).max(2048),
+  ).optional(),
 })
 
 // ── Zod schemas (single source of truth) ────────────────────────────
