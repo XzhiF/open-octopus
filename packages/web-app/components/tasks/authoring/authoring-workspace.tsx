@@ -39,6 +39,7 @@ import { ChatArea } from "@/components/agent/chat/ChatArea"
 import * as agentApi from "@/lib/agent/api"
 import { GoalAcCard } from "./goal-ac-card"
 import { OutputViewer } from "./output-viewer"
+import { WorkflowBox } from "./workflow-box"
 import { MoATriggerDialog, type MoATriggerInput, type SingleExpertInput } from "./moa-trigger-dialog"
 
 const TASK_AUTHOR_CLONE = "task-author"
@@ -447,6 +448,9 @@ export function AuthoringWorkspace({ task, onMutated, onClose }: AuthoringWorksp
         <div style={{ width: rightWidth }} className="shrink-0 flex flex-col min-h-0 bg-muted/20 overflow-y-auto p-3 space-y-3" data-output-viewer>
           <GoalAcCard task={task} onMutated={onMutated} />
 
+          {/* task-workflow-presets (T6): WorkflowBox between GoalAcCard and OutputViewer */}
+          <WorkflowBox task={task} onMutated={onMutated} />
+
           <OutputViewer task={task} runIds={runIds} onAdopted={onMutated} />
 
           {/* enqueue checklist (AC6) — status only; the 入队执行 button moved to
@@ -463,6 +467,12 @@ export function AuthoringWorkspace({ task, onMutated, onClose }: AuthoringWorksp
                 <span className={allAcConfirmed ? "text-emerald-600" : "text-amber-500"}>
                   {allAcConfirmed ? "✅" : "⏳"}
                 </span> ac ×{acItems.length}
+              </span>
+              {/* task-workflow-presets (T6): workflow_ref status line */}
+              <span className="flex items-center gap-1" data-checklist-workflow>
+                <span className={!!task.workflow_ref ? "text-emerald-600" : "text-amber-500"}>
+                  {!!task.workflow_ref ? "✅" : "⏳"}
+                </span> workflow
               </span>
             </div>
             {gateMissing && gateMissing.length > 0 ? (
