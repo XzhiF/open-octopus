@@ -1,0 +1,29 @@
+# Default workflow presets — maps skill groups to recommended workflows + input templates.
+# Each preset: name + skills_group[] (empty = general fallback) + workflow ref + inputs skeleton.
+# Inputs may contain ${goal} and ${ac} placeholders — resolved at materialization time.
+#
+# This file is the preset catalog for the task-author clone. It lives at:
+#   ~/.octopus/agent/built-in/task-author/workflow-presets.yaml
+# and is read by:
+#   - Server: GET /api/workflow-presets?skills_group=a,b
+#   - Agent: task-author SKILL.md HOW-handoff (recommendation basis)
+#
+# Shape: each preset = { name, skills_group[], workflow, inputs{} }
+# - skills_group: [] = general fallback (matches any task)
+# - workflow: ref format "group/name" for built-ins, bare filename for task-home
+# - inputs: key→value map; values may contain ${goal} / ${ac} placeholders
+
+presets:
+  # General fallback — matches all skill groups
+  - name: general-dev
+    skills_group: []
+    workflow: built-in/matt-dev-pipeline
+    inputs:
+      idea: "${goal}"
+
+  # XZF development pipeline
+  - name: xzf-dev
+    skills_group: [octo-xzf-implementer]
+    workflow: built-in/xzf-dev
+    inputs:
+      idea: "${goal}"
