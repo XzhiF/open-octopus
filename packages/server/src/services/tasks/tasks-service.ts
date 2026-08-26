@@ -60,6 +60,8 @@ import { BuiltInWorkflowService } from "../builtin-workflow"
 // task-workflow-handoff (ADR-0013): shared resolver for bind/ready/view.
 import { resolveWorkflowRef, isWorkflowRefResolvable } from "./workflow-ref-resolver"
 import type { WorkflowResolverDeps } from "./workflow-ref-resolver"
+// task-workflow-presets (T5): template resolver for required inputs check.
+import { resolveInputValues, parseWorkflowInputDefs } from "../scheduler/template-resolver"
 
 /** Default task name when the caller provides none. NOT user-owned — the
  *  autosave seam (routes/clone/autosave.ts) may still adopt a smart title
@@ -942,6 +944,26 @@ export class TasksService {
         const ref = existing.workflow_ref?.trim() ?? ""
         if (!ref || !isWorkflowRefResolvable(ref, this.resolverDeps(id))) {
           missing.push("workflow_ref")
+        }
+        // task-workflow-presets (T5): check required workflow inputs. Resolve
+        // the workflow content → parse its inputs section → for each required
+        // input, check that the resolved input_values (after ${goal}/${ac}
+        // substitution) has a non-empty value. Missing → missing.push("input:<name>").
+        if (ref) {
+          const resolved = resolveWorkflowRef(ref, this.resolverDeps(id))
+          if (resolved) {
+            const inputDefs = parseWorkflowInputDefs(resolved.content)
+            const materialized = resolveInputValues(
+              taskSpec.input_values,
+              taskSpec.goal,
+              taskSpec.ac,
+            )
+            for (const def of inputDefs) {
+              if (def.required && !materialized[def.name]?.trim()) {
+                missing.push(`input:${def.name}`)
+              }
+            }
+          }
         }
       }
       if (missing.length > 0) {

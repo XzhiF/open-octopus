@@ -45,6 +45,7 @@ import chainRoutes from "./routes/chain-routes"
 import scheduleRoutes, { setScheduleService } from "./routes/schedule"
 import { createSchedulerRoutes } from "./routes/scheduler"
 import { createTasksRoutes } from "./routes/tasks"
+import { createWorkflowPresetsRoutes } from "./routes/workflow-presets"
 import { createSkillGroupsRoutes } from "./routes/skill-groups"
 import { createAgentRoutes } from "./routes/agent"
 import { createCloneSessionRoutes } from "./routes/clone"
@@ -72,6 +73,7 @@ import { TasksService } from "./services/tasks/tasks-service"
 import { TaskHomeService } from "./services/tasks/task-home-service"
 import { PluginMaterializer } from "./services/tasks/plugin-materializer"
 import { AssistWorkflowService } from "./services/tasks/assist-workflow-service"
+import { WorkflowPresetsService } from "./services/workflow-presets-service"
 import { BuiltInWorkflowService } from "./services/builtin-workflow"
 import { WorkflowExecutor } from "./services/scheduler/executors/workflow-executor"
 import { AgentExecutor } from "./services/scheduler/executors/agent-executor"
@@ -722,6 +724,9 @@ if (shouldServe) {
       )
       const assistService = new AssistWorkflowService(db, sse)
       app.route('/api/tasks', createTasksRoutes(tasksService, sse, assistService))
+      // task-workflow-presets (T3): preset catalog API
+      const workflowPresetsService = new WorkflowPresetsService()
+      app.route('/api/workflow-presets', createWorkflowPresetsRoutes(() => workflowPresetsService))
       app.route('/api/skill-groups', createSkillGroupsRoutes(resourceRegistry.get()))
       ;(global as any).__octopus_tasks_service = tasksService
 
