@@ -1,0 +1,6 @@
+[
+  {
+    "task_spec": "{\"goal\":\"E2E_TEST: implement workflow presets binding\",\"ac\":[\"preset catalog API works\",\"binding dialog saves input_values\",\"ready-gate checks required inputs\"],\"resources\":[],\"authoring_resources\":[],\"task_type\":\"coding\",\"skill_groups\":[\"octo-xzf-implementer\"],\"decisions\":[],\"goal_confirmed\":true,\"ac_confirmed\":[\"preset catalog API works\",\"binding dialog saves input_values\",\"ready-gate checks required inputs\"],\"input_values\":{\"idea\":\"${goal}\"}}",
+    "workflow_ref": "built-in/matt-dev-pipeline"
+  }
+]

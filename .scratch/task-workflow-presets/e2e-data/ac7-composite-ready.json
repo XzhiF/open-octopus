@@ -1,0 +1,70 @@
+{
+  "id": "e8595afc-8314-4630-92ea-042cf99077a6",
+  "org": "E2E_TD_org",
+  "name": "E2E_TEST_WP_composite-no-inputs",
+  "status": "ready",
+  "task_spec": {
+    "goal": "E2E_TEST: composite task",
+    "ac": [
+      "composite skips input validation"
+    ],
+    "subunits": [
+      {
+        "name": "sub1",
+        "workspace_spec": {
+          "org": "E2E_TD_org",
+          "branch_prefix": "test",
+          "projects": [
+            {
+              "name": "p1",
+              "source_path": "/tmp",
+              "group": ""
+            }
+          ]
+        },
+        "workflow_ref": "built-in/basic-dev-flow",
+        "input_values": {},
+        "skills": [],
+        "resources": []
+      },
+      {
+        "name": "sub2",
+        "workspace_spec": {
+          "org": "E2E_TD_org",
+          "branch_prefix": "test",
+          "projects": [
+            {
+              "name": "p2",
+              "source_path": "/tmp",
+              "group": ""
+            }
+          ]
+        },
+        "workflow_ref": "built-in/basic-dev-flow",
+        "input_values": {},
+        "skills": [],
+        "resources": []
+      }
+    ],
+    "resources": [],
+    "authoring_resources": [],
+    "task_type": "coding",
+    "skill_groups": [],
+    "decisions": [],
+    "goal_confirmed": true,
+    "ac_confirmed": [
+      "composite skips input validation"
+    ]
+  },
+  "authoring_resources": [],
+  "resources": [],
+  "skills": [],
+  "project_ids": [],
+  "workflow_ref": null,
+  "version": 3,
+  "source_chat_session_id": null,
+  "deleted_at": null,
+  "created_at": "2026-08-27T00:13:55.231Z",
+  "updated_at": "2026-08-27T00:13:55.234Z",
+  "completed_at": null
+}
