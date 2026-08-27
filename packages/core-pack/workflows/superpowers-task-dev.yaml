@@ -1,0 +1,172 @@
+# yaml-language-server: $schema=./workflow-schema.json
+apiVersion: octopus/v1
+kind: Workflow
+
+# ============================================================
+# Superpowers Task Dev Pipeline
+# Task 专用简化开发流水线（superpowers-zh 技能组）
+#
+# WHAT 由任务看板注入：goal / ac 经 workflow inputs 物化传入；
+# task_artifacts_dir 由 dispatch seam 注入 $vars（ADR-0013 / ticket 08）。
+#
+# Flow:
+#   detect-plan → develop (subagent-driven-development)
+#              → cr-fix  (requesting-code-review) → ship
+#
+# 设计依据：xzf-dev 的简化版 —— 无研究/澄清/E2E 阶段（需求已在看板对话
+# 中完成），产物里已有 writing-plans 计划文档则按计划执行，否则按 goal+ac 自拆。
+# ============================================================
+
+name: superpowers-task-dev
+description: |
+  Task 专用简化开发流水线（superpowers-zh）。
+  自动检测产物中的 writing-plans 计划文档：有则按计划执行，无则按 goal+ac 自行拆解。
+  开发用 subagent-driven-development，CR 用 requesting-code-review 审查并修正，
+  最后摘要 + commit + PR 交付。
+version: 1.0.0
+
+# --- 全局配置 ---
+engine: claude
+model: pro-max
+timeout: 86400 # 全局超时 24h
+execution_mode: serial
+
+# --- 资源依赖 ---
+requires:
+  skills:
+    - superpowers-zh/subagent-driven-development
+    - superpowers-zh/requesting-code-review
+
+# --- 输入（看板 preset 以 goal/ac 占位符映射）---
+inputs:
+  goal:
+    description: "任务目标（WHAT）— 看板 goal 字段注入"
+    required: true
+  ac:
+    description: "验收标准（WHAT done）— 看板 ac 字段注入，逐行核对，是完成的唯一判据"
+    required: true
+
+# --- 变量 ---
+variables:
+  plan_file: ""
+  cr_status: ""
+  ship_status: ""
+
+# ============================================================
+# Stage 0: 产物检测 — 判断是否有 writing-plans 计划文档
+# ============================================================
+
+nodes:
+  - id: detect-plan
+    type: bash
+    bash: |
+      DIR="$vars.task_artifacts_dir"
+      PLAN=""
+      if [ -n "$DIR" ] && [ -d "$DIR" ]; then
+        # 首选判据：writing-plans 强制头部引用 subagent-driven-development
+        PLAN=$(grep -rl "subagent-driven-development" "$DIR" --include="*.md" 2>/dev/null | head -1)
+        # 退路判据：plan / 设计 / spec 命名的 markdown
+        if [ -z "$PLAN" ]; then
+          PLAN=$(find "$DIR" -type f \( -iname "*plan*.md" -o -iname "*设计*.md" -o -iname "*spec*.md" \) 2>/dev/null | head -1)
+        fi
+      fi
+      printf '{"vars_update":{"plan_file":"%s"}}\n' "$PLAN"
+
+  # ============================================================
+  # Stage 1: 开发 — subagent-driven-development
+  # ============================================================
+
+  - id: develop
+    type: agent
+    depends_on: [detect-plan]
+    timeout: 14400
+    skills: [subagent-driven-development]
+    prompt: |
+      使用 subagent-driven-development 技能完成开发任务。
+
+      ═══ 输入 (WHAT) ═══
+      目标: $inputs.goal
+      验收标准:
+      $inputs.ac
+
+      ═══ 开发依据（二选一）═══
+      当前计划文档变量 plan_file = 「$vars.plan_file」
+
+      plan_file 非空 → 产物中已有 writing-plans 生成的计划文档（路径见 plan_file）。
+        读取它，按其中的任务逐个执行；计划里的目标/架构/技术栈优先于你的自行假设，
+        不得静默偏离计划（确需偏离时说明理由并记录）。
+
+      plan_file 为空 → 无计划文档。以 goal + 验收标准为输入，先做简短实现拆解
+        （涉及哪些文件、每步如何验证），再按拆解逐项执行。
+
+      ═══ 要求 ═══
+      - 全程按 subagent-driven-development 方法论：每个任务委派子代理实现，
+        任务之间做 review 与验收，不攒到最后统一检查。
+      - 每个子任务自带验证（编译/测试），失败当场修复。
+      - 全部完成后对照上方验收标准逐条自查。
+
+      汇报：使用的依据（计划文档 / goal+ac 自拆）、完成的任务清单、验证结果。
+
+  # ============================================================
+  # Stage 2: Code Review + 修正 — requesting-code-review
+  # ============================================================
+
+  - id: cr-fix
+    type: agent
+    depends_on: [develop]
+    timeout: 7200
+    skills: [requesting-code-review]
+    prompt: |
+      使用 requesting-code-review 技能，对本分支相对基线分支的全部变更发起代码审查，并修正。
+
+      ═══ 审查对齐依据 ═══
+      1. 验收标准（逐条核对是否满足）:
+      $inputs.ac
+      2. 目标: $inputs.goal
+      3. 计划文档（若非空，检查实现是否偏离）: $vars.plan_file
+
+      ═══ 修正要求 ═══
+      - 确认的问题直接修复；修复后重新验证编译和测试。
+      - 对反馈有异议且判断正确的，逐条列理由，不盲改。
+      - 审查-修正不超过 3 轮，超出则记录遗留问题。
+
+      汇报：审查发现的问题数、已修复数、遗留项（若有）。
+
+      输出 vars_update:
+      {"vars_update": {"cr_status": "{passed|fixed|open}"}}
+      （passed=无确认问题；fixed=问题已全部修复；open=有未解决遗留）
+
+  # ============================================================
+  # Stage 3: Ship 交付（参考 xzf-dev ship 的 Phase A/B/C，简化为单仓 PR）
+  # ============================================================
+
+  - id: ship
+    type: agent
+    depends_on: [cr-fix]
+    tools: [Read, Write, Bash, Grep, Glob]
+    prompt: |
+      完成交付。按以下三个阶段顺序执行，全部必做：
+
+      ═══ Phase A: 交付摘要 ═══
+      写入产物目录 $vars.task_artifacts_dir/ship-report.md（目录不存在先 mkdir -p）：
+      - 目标一句话
+      - 验收标准逐条: PASS/BLOCKED + 证据
+      - 变更文件清单（git diff --stat）
+      - CR 结论与遗留问题（$vars.cr_status）
+
+      ═══ Phase B: Commit ═══
+      - 若当前在 main/master，先 git checkout -b 一个 feat/ 前缀分支（名称取自目标关键词）。
+      - 确认工作区变更均与本任务相关；git add 精确到文件（禁止盲目 -A），
+        以 conventional commits 格式提交（消息概括 goal 与关键变更）。
+      - 已全部提交则跳过。
+
+      ═══ Phase C: PR ═══
+      - git push -u origin {当前分支}
+      - gh pr create：title = goal 一句话；body = ship-report.md 内容。
+      - 已存在 PR（gh pr view 成功）→ gh pr edit 更新 title/body。
+      - gh 不可用或无 remote → 记录原因，ship_status=local（仅本地提交）。
+
+      汇报：分支名、PR 链接、验收标准达成情况。
+
+      输出 vars_update:
+      {"vars_update": {"ship_status": "{PR 链接 | local | failed: 原因}"}}

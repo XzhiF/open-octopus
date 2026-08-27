@@ -48,4 +48,12 @@ presets:
     workflow: built-in/xzf-dev
     inputs:
       idea: "\${goal}"
+
+  # Superpowers-zh task development (plan-doc detection → subagent dev → CR → ship)
+  - name: superpowers-task-dev
+    skills_group: [superpowers-zh]
+    workflow: built-in/superpowers-task-dev
+    inputs:
+      goal: "\${goal}"
+      ac: "\${ac}"
 `
