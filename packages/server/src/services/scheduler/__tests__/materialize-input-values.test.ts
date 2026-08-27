@@ -63,16 +63,18 @@ describe("materializeTaskSpecToConfig — input_values resolution (T4)", () => {
     expect(inputs.requirement).toBeUndefined()
   })
 
-  it("throws on unknown placeholder", () => {
+  it("materializes unknown placeholder as empty string (no throw; gate rejects)", () => {
     const spec: TaskSpec = {
       ...baseSpec,
       input_values: { key: "${unknown}" },
     }
-    expect(() =>
-      materializeTaskSpecToConfig(
-        spec, ["proj1"], "test-org", "built-in/flow",
-      ),
-    ).toThrow(/unknown placeholder/i)
+    // Review fix 2026-08-27: dispatch must NOT throw on a stray placeholder — the
+    // ready-gate surfaces it in missing ("input:key") BEFORE enqueue. If one
+    // slips through, materialize keeps "" and warns instead of killing the run.
+    const config = materializeTaskSpecToConfig(
+      spec, ["proj1"], "test-org", "built-in/flow",
+    )
+    expect(config.workflow_chain[0].input_values.key).toBe("")
   })
 
   it("composite task does not include user input_values in chain", () => {

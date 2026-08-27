@@ -942,34 +942,40 @@ export class TasksService {
       const subunits = taskSpec.subunits ?? []
       if (subunits.length < 2) {
         const ref = existing.workflow_ref?.trim() ?? ""
-        if (!ref || !isWorkflowRefResolvable(ref, this.resolverDeps(id))) {
+        // Single resolve (review fix 2026-08-27): the old code walked the ref
+        // twice (isWorkflowRefResolvable + resolveWorkflowRef). One call — null
+        // ⇒ unresolvable (→ missing workflow_ref); hit ⇒ content for the
+        // required-inputs check.
+        const resolution = ref ? resolveWorkflowRef(ref, this.resolverDeps(id)) : null
+        if (!resolution) {
           missing.push("workflow_ref")
-        }
-        // task-workflow-presets (T5): check required workflow inputs. Resolve
-        // the workflow content → parse its inputs section → for each required
-        // input, check that the resolved input_values (after ${goal}/${ac}
-        // substitution) has a non-empty value. Missing → missing.push("input:<name>").
-        if (ref) {
-          const resolved = resolveWorkflowRef(ref, this.resolverDeps(id))
-          if (resolved) {
-            const inputDefs = parseWorkflowInputDefs(resolved.content)
-            const materialized = resolveInputValues(
-              taskSpec.input_values,
-              taskSpec.goal,
-              taskSpec.ac,
-            )
-            for (const def of inputDefs) {
-              if (def.required && !materialized[def.name]?.trim()) {
-                missing.push(`input:${def.name}`)
-              }
+        } else {
+          // task-workflow-presets (T5): required inputs check against the
+          // RESOLVED input_values (after ${goal}/${ac} substitution). Keys whose
+          // value has an unknown/empty placeholder also surface as missing
+          // (input:<name>), never a 500.
+          const inputDefs = parseWorkflowInputDefs(resolution.content)
+          const { values, unresolved } = resolveInputValues(
+            taskSpec.input_values,
+            taskSpec.goal,
+            taskSpec.ac,
+          )
+          for (const key of unresolved) missing.push(`input:${key}`)
+          for (const def of inputDefs) {
+            if (def.required && !values[def.name]?.trim()) {
+              missing.push(`input:${def.name}`)
             }
           }
         }
       }
       if (missing.length > 0) {
+        // Dedupe — an unresolved placeholder on a required input can hit both
+        // the `input:<key>` (unresolved) and `input:<name>` (empty-required)
+        // paths with the same key.
+        const uniqueMissing = Array.from(new Set(missing))
         throw new TaskReadyGateError(
-          `Task not ready: missing ${missing.join(", ")}`,
-          missing,
+          `Task not ready: missing ${uniqueMissing.join(", ")}`,
+          uniqueMissing,
         )
       }
     }

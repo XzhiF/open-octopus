@@ -14,6 +14,11 @@
 
 import { z } from "zod"
 
+/** Task workflow input values: key→non-empty string, values may contain
+ *  `${goal}` / `${ac}` templates resolved at materialization. A named type so
+ *  the invariant travels with the name across server + web-app seams. */
+export type InputValues = Record<string, string>
+
 /** A single workflow preset: maps skill groups to a recommended workflow + input
  *  skeleton. `skills_group: []` is the general fallback — matches any task. */
 export const workflowPresetSchema = z.object({

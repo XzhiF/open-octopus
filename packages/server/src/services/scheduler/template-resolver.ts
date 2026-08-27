@@ -9,9 +9,14 @@
 //   ${goal} → task_spec.goal (string, direct substitution)
 //   ${ac}   → task_spec.ac.join('\n') (array → newline-joined)
 //
-// Unknown placeholders (e.g. ${foo}) → throw Error (fail-fast at bind time).
+// Unknown placeholders (e.g. ${foo}) do NOT throw — they resolve to "" and the
+// key is reported in `unresolved` so the ready-gate can push it into the
+// missing list ("input:<name>") instead of 500-ing the request (review fix
+// 2026-08-27: readers flagged a throw crossing the binding-helper boundary into
+// the task state machine).
 
 import yaml from "js-yaml"
+import type { InputValues } from "@octopus/shared"
 
 /** Known placeholder → replacement value map builder. */
 function buildPlaceholderMap(
@@ -24,40 +29,52 @@ function buildPlaceholderMap(
   }
 }
 
-/** Resolve ${goal} and ${ac} placeholders in input_values. Throws on unknown
- *  placeholders (fail-fast — the binding dialog should have caught this, but
- *  the server is the safety net).
+export interface ResolvedInputValues {
+  /** Placeholder-resolved values (unknown placeholders → ""). */
+  values: InputValues
+  /** Keys whose value contained an unknown placeholder (e.g. `${goaal}`) or a
+   *  placeholder referencing an empty WHAT field. Callers decide the policy:
+   *  ready-gate → missing list; materialization → best-effort (keep ""). */
+  unresolved: string[]
+}
+
+/** Resolve ${goal} / ${ac} placeholders in input_values. Never throws — an
+ *  unknown placeholder resolves to "" and its key lands in `unresolved`, so a
+ *  bad template surfaces as data (missing list) rather than a hard error across
+ *  service boundaries.
  *
  *  @param inputValues - raw input_values from task_spec (may be undefined)
  *  @param goal - task_spec.goal
- *  @param ac - task_spec.ac (string[])
- *  @returns resolved Record<string, string> with all placeholders replaced */
+ *  @param ac - task_spec.ac (string[]) */
 export function resolveInputValues(
-  inputValues: Record<string, string> | undefined,
+  inputValues: InputValues | undefined,
   goal: string,
   ac: string[],
-): Record<string, string> {
+): ResolvedInputValues {
   if (!inputValues || Object.keys(inputValues).length === 0) {
-    return {}
+    return { values: {}, unresolved: [] }
   }
 
   const map = buildPlaceholderMap(goal, ac)
   const placeholderRegex = /\$\{(\w+)\}/g
-  const resolved: Record<string, string> = {}
+  const values: InputValues = {}
+  const unresolved: string[] = []
 
   for (const [key, value] of Object.entries(inputValues)) {
-    resolved[key] = value.replace(placeholderRegex, (match, name: string) => {
+    let hadUnknown = false
+    values[key] = value.replace(placeholderRegex, (match, name: string) => {
       if (name in map) {
-        return map[name]
+        const replaced = map[name]
+        if (!replaced) hadUnknown = true // placeholder present but WHAT empty
+        return replaced
       }
-      throw new Error(
-        `Unknown placeholder in input_values["${key}"]: ${match}. ` +
-        `Known placeholders: \${goal}, \${ac}`,
-      )
+      hadUnknown = true
+      return ""
     })
+    if (hadUnknown) unresolved.push(key)
   }
 
-  return resolved
+  return { values, unresolved }
 }
 
 /** A workflow input definition: name + whether it's required. */

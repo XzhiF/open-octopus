@@ -71,7 +71,7 @@ export function WorkflowBox({ task, onMutated }: WorkflowBoxProps) {
       {isBound && Object.keys(inputValues).length > 0 && (
         <div className="flex flex-wrap gap-1" data-input-chips>
           {Object.entries(inputValues).map(([key, value]) => {
-            const source = getInputSource(value)
+            const source = describeInputShape(value)
             return (
               <Badge key={key} variant="outline" className="text-[9px] py-0 h-4">
                 {key}: {source}
@@ -102,8 +102,10 @@ export function WorkflowBox({ task, onMutated }: WorkflowBoxProps) {
   )
 }
 
-/** Determine the "source" label for an input value chip. */
-function getInputSource(value: string): string {
+/** Classify an input value's placeholder SHAPE for the chip label — whether it
+ *  is a pure ${goal} / ${ac} template, a mixed template, or a literal value
+ *  (truncated). Distinguishes "came from WHAT" vs "hand-typed" at a glance. */
+function describeInputShape(value: string): string {
   if (value === "${goal}") return "${goal}"
   if (value === "${ac}") return "${ac}"
   if (value.includes("${goal}")) return "goal+…"

@@ -216,11 +216,21 @@ export function materializeTaskSpecToConfig(
   // task_spec.input_values and merge into simpleInputValues. Management keys
   // (task_artifacts_dir, task_workflows_dir) are written LAST so they take
   // priority over any user-supplied input_values with the same key.
-  const resolvedInputs = resolveInputValues(
+  const { values: resolvedInputs, unresolved } = resolveInputValues(
     task_spec.input_values,
     task_spec.goal,
     task_spec.ac,
   )
+  // Best-effort at dispatch: an unresolved placeholder (e.g. `${goaal}`) is a
+  // gate-visible defect — the ready-gate pushes it into missing before enqueue.
+  // If one slips through here, warn and keep the "" value instead of blocking
+  // the whole dispatch (SW-BP13: never let a data quirk kill the run).
+  if (unresolved.length > 0) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[scheduler] input_values has unresolved placeholders for a task — check before ready: ${unresolved.join(", ")}`,
+    )
+  }
   const simpleInputValues: Record<string, unknown> = { ...resolvedInputs }
   const compositeInputValues: Record<string, unknown> = {
     subunit_count: task_spec.subunits?.length ?? 0,

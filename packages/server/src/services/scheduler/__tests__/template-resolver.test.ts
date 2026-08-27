@@ -3,88 +3,92 @@ import { resolveInputValues, parseWorkflowInputDefs } from "../template-resolver
 
 describe("resolveInputValues", () => {
   it("replaces ${goal} with actual goal", () => {
-    const result = resolveInputValues(
+    const { values } = resolveInputValues(
       { requirement: "${goal}" },
       "Build a widget",
       ["works", "is fast"],
     )
-    expect(result.requirement).toBe("Build a widget")
+    expect(values.requirement).toBe("Build a widget")
   })
 
   it("replaces ${ac} with ac.join('\\n')", () => {
-    const result = resolveInputValues(
+    const { values } = resolveInputValues(
       { acceptance: "${ac}" },
       "goal",
       ["criterion 1", "criterion 2"],
     )
-    expect(result.acceptance).toBe("criterion 1\ncriterion 2")
+    expect(values.acceptance).toBe("criterion 1\ncriterion 2")
   })
 
   it("handles mixed text with placeholders", () => {
-    const result = resolveInputValues(
+    const { values } = resolveInputValues(
       { summary: "Goal: ${goal} | AC: ${ac}" },
       "test",
       ["a", "b"],
     )
-    expect(result.summary).toBe("Goal: test | AC: a\nb")
+    expect(values.summary).toBe("Goal: test | AC: a\nb")
   })
 
-  it("throws on unknown placeholder", () => {
-    expect(() =>
-      resolveInputValues(
-        { key: "${unknown}" },
-        "goal",
-        ["ac"],
-      ),
-    ).toThrow(/unknown placeholder/i)
+  it("reports unknown placeholder as unresolved (empty value, no throw)", () => {
+    const { values, unresolved } = resolveInputValues(
+      { key: "${unknown}" },
+      "goal",
+      ["ac"],
+    )
+    expect(values.key).toBe("")
+    expect(unresolved).toEqual(["key"])
   })
 
-  it("throws on multiple unknown placeholders (reports first)", () => {
-    expect(() =>
-      resolveInputValues(
-        { key: "${foo}" },
-        "goal",
-        ["ac"],
-      ),
-    ).toThrow(/\$\{foo\}/)
+  it("reports multiple unresolved placeholders", () => {
+    const { unresolved } = resolveInputValues(
+      { a: "${foo}", b: "x ${bar} y" },
+      "goal",
+      ["ac"],
+    )
+    expect(unresolved).toEqual(["a", "b"])
   })
 
-  it("returns empty object for undefined input_values", () => {
+  it("returns empty values for undefined input_values", () => {
     const result = resolveInputValues(undefined, "goal", ["ac"])
-    expect(result).toEqual({})
+    expect(result).toEqual({ values: {}, unresolved: [] })
   })
 
-  it("returns empty object for empty input_values", () => {
+  it("returns empty values for empty input_values", () => {
     const result = resolveInputValues({}, "goal", ["ac"])
-    expect(result).toEqual({})
+    expect(result).toEqual({ values: {}, unresolved: [] })
   })
 
   it("passes through values without placeholders", () => {
-    const result = resolveInputValues(
+    const { values, unresolved } = resolveInputValues(
       { key: "literal value", num: "42" },
       "goal",
       ["ac"],
     )
-    expect(result).toEqual({ key: "literal value", num: "42" })
+    expect(values).toEqual({ key: "literal value", num: "42" })
+    expect(unresolved).toEqual([])
   })
 
   it("handles multiple placeholders in same value", () => {
-    const result = resolveInputValues(
+    const { values } = resolveInputValues(
       { combined: "${goal} + ${ac}" },
       "do thing",
       ["ok"],
     )
-    expect(result.combined).toBe("do thing + ok")
+    expect(values.combined).toBe("do thing + ok")
   })
 
-  it("handles empty goal/ac gracefully", () => {
-    const result = resolveInputValues(
-      { req: "${goal}", acc: "${ac}" },
+  it("flags a placeholder referencing an EMPTY WHAT field as unresolved (non-empty value impossible)", () => {
+    const { values, unresolved } = resolveInputValues(
+      { req: "${goal}", acc: "${ac}", direct: "literal" },
       "",
       [],
     )
-    expect(result.req).toBe("")
-    expect(result.acc).toBe("")
+    expect(values.req).toBe("")
+    expect(values.acc).toBe("")
+    expect(values.direct).toBe("literal")
+    // reg/acc carry a placeholder but its source is empty → surfaced so the
+    // caller (ready-gate) can reject; direct literal is untouched.
+    expect(unresolved.sort()).toEqual(["acc", "req"])
   })
 })
 

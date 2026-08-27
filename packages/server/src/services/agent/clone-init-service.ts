@@ -9,6 +9,7 @@ import type { CloneDef } from '@octopus/shared'
 import type { CloneDAO } from '../../db/dao'
 import { BUILTIN_CLONES } from './builtin-clones'
 import { getBuiltInClonesDir, getBuiltInCloneDir, getBuiltInCloneMemoryDir } from './paths'
+import { DEFAULT_WORKFLOW_PRESETS_YAML } from './workflow-presets-seed'
 
 // ── Types ──────────────────────────────────────────────────────────
 
@@ -96,6 +97,21 @@ export class CloneInitService {
       result.filesCreated.push(`built-in/${name}/config.json`)
     } else {
       result.filesSkipped.push(`built-in/${name}/config.json`)
+    }
+
+    // 3. Seed default workflow-presets.yaml for the task-author clone
+    // (task-workflow-presets, T3 review fix): the preset catalog that drives
+    // HOW-handoff recommendations + GET /api/workflow-presets. Only the
+    // task-author clone carries one. Skip-if-exists so a user-customized
+    // catalog survives restarts (persona.md pattern).
+    if (name === 'task-author') {
+      const presetsPath = path.join(cloneDir, 'workflow-presets.yaml')
+      if (!fs.existsSync(presetsPath)) {
+        fs.writeFileSync(presetsPath, DEFAULT_WORKFLOW_PRESETS_YAML, 'utf-8')
+        result.filesCreated.push(`built-in/${name}/workflow-presets.yaml`)
+      } else {
+        result.filesSkipped.push(`built-in/${name}/workflow-presets.yaml`)
+      }
     }
 
     // 4. Register in DB (skip if exists)

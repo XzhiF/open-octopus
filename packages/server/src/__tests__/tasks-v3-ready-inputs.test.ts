@@ -164,6 +164,35 @@ describe("T5: ready-gate required inputs validation (integration)", () => {
     expect(body.missing).toContain("input:idea")
   })
 
+  it("AC1b: UNKNOWN placeholder ${nope} in input_values → 409 with input:idea (NEVER 500)", async () => {
+    // Review fix 2026-08-27: a stray/unknown placeholder must surface as a
+    // missing item in the gate (like any other missing input), not a raw throw
+    // that 500s the ready request.
+    const id = insertTask(db, {
+      name: "E2E_TD_unknown_placeholder",
+      task_spec: {
+        goal: "Build something",
+        ac: ["works"],
+        task_type: "coding",
+        goal_confirmed: true,
+        ac_confirmed: ["works"],
+        skill_groups: [],
+        decisions: [],
+        resources: [],
+        authoring_resources: [],
+        input_values: { idea: "${nope}" },
+      },
+      workflow_ref: "built-in/required-flow",
+    })
+
+    const res = await app.request(`/api/tasks/${id}/ready`, { method: "POST" })
+    expect(res.status).toBe(409)
+    const body = await res.json() as { error: string; missing: string[] }
+    // The unresolved ${nope} key surfaces as a missing input (deduped against the
+    // required-empty check), never a 500.
+    expect(body.missing).toContain("input:idea")
+  })
+
   it("AC2: ${goal} in input_values resolves → passes input check", async () => {
     const id = insertTask(db, {
       name: "E2E_TD_goal_resolved",
