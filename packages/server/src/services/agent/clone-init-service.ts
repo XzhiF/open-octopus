@@ -9,7 +9,7 @@ import type { CloneDef } from '@octopus/shared'
 import type { CloneDAO } from '../../db/dao'
 import { BUILTIN_CLONES } from './builtin-clones'
 import { getBuiltInClonesDir, getBuiltInCloneDir, getBuiltInCloneMemoryDir } from './paths'
-import { DEFAULT_WORKFLOW_PRESETS_YAML, PREV_DEFAULT_WORKFLOW_PRESETS_YAML, PRESETS_VERSION, hashPresetsContent } from './workflow-presets-seed'
+import { DEFAULT_WORKFLOW_PRESETS_YAML, PREV_DEFAULT_WORKFLOW_PRESETS_YAMLS, PRESETS_VERSION, hashPresetsContent } from './workflow-presets-seed'
 
 // ── Types ──────────────────────────────────────────────────────────
 
@@ -112,7 +112,7 @@ export class CloneInitService {
     // NEVER refreshed the default catalog (general-dev kept pointing at
     // matt-dev-pipeline after the task-dev rebinding). Now:
     //   missing            → write current default
-    //   ≡ prev default     → refresh to current default + log
+    //   ≡ any historical default → refresh to current default + log
     //   ≡ current default  → skip (already fresh, no warn)
     //   anything else      → user hand-edit: preserve + warn once
     // The content comparison is normalized (version header + trailing
@@ -134,7 +134,7 @@ export class CloneInitService {
         }
         if (existing !== null) {
           const hash = hashPresetsContent(existing)
-          if (hash === hashPresetsContent(PREV_DEFAULT_WORKFLOW_PRESETS_YAML)) {
+          if (PREV_DEFAULT_WORKFLOW_PRESETS_YAMLS.some((prev) => hash === hashPresetsContent(prev))) {
             fs.writeFileSync(presetsPath, DEFAULT_WORKFLOW_PRESETS_YAML, 'utf-8')
             result.filesRefreshed.push(presetsKey)
             console.log(

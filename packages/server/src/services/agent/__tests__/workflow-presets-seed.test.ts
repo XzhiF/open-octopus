@@ -12,7 +12,7 @@ import yaml from "js-yaml"
 import { workflowPresetsCatalogSchema } from "@octopus/shared"
 import {
   DEFAULT_WORKFLOW_PRESETS_YAML,
-  PREV_DEFAULT_WORKFLOW_PRESETS_YAML,
+  PREV_DEFAULT_WORKFLOW_PRESETS_YAMLS,
   PRESETS_VERSION,
   hashPresetsContent,
 } from "../workflow-presets-seed"
@@ -70,23 +70,29 @@ describe("preset seed versioning (goal-task-dev 05)", () => {
     expect(PRESETS_VERSION).toBe(2)
   })
 
-  it("PREV default is the pre-migration literal (general-dev=matt-dev-pipeline)", () => {
-    const parsed = workflowPresetsCatalogSchema.parse(yaml.load(PREV_DEFAULT_WORKFLOW_PRESETS_YAML))
-    const general = parsed.presets.find((p) => p.name === "general-dev")
-    expect(general!.workflow).toBe("built-in/matt-dev-pipeline")
-    // no version header on the prev default
-    expect(PREV_DEFAULT_WORKFLOW_PRESETS_YAML.startsWith("# version:")).toBe(false)
+  it("PREV defaults are the pre-migration literals (general-dev=matt-dev-pipeline)", () => {
+    for (const prev of PREV_DEFAULT_WORKFLOW_PRESETS_YAMLS) {
+      const parsed = workflowPresetsCatalogSchema.parse(yaml.load(prev))
+      expect(parsed.presets.length).toBeGreaterThanOrEqual(1)
+      const general = parsed.presets.find((p) => p.name === "general-dev")
+      expect(general!.workflow).toBe("built-in/matt-dev-pipeline")
+      // no version header on any prev default
+      expect(prev.startsWith("# version:")).toBe(false)
+    }
   })
 
   it("hashPresetsContent: normalizes version header + trailing whitespace, distinguishes real edits", () => {
     const newH = hashPresetsContent(DEFAULT_WORKFLOW_PRESETS_YAML)
-    const prevH = hashPresetsContent(PREV_DEFAULT_WORKFLOW_PRESETS_YAML)
+    const prevH = hashPresetsContent(PREV_DEFAULT_WORKFLOW_PRESETS_YAMLS[PREV_DEFAULT_WORKFLOW_PRESETS_YAMLS.length - 1])
+    // historical baselines are mutually distinct (each must be recognized)
+    expect(new Set(PREV_DEFAULT_WORKFLOW_PRESETS_YAMLS.map(hashPresetsContent)).size)
+      .toBe(PREV_DEFAULT_WORKFLOW_PRESETS_YAMLS.length)
     expect(newH).not.toBe(prevH)
 
     // header line + trailing whitespace do not change the identity hash
     expect(hashPresetsContent(DEFAULT_WORKFLOW_PRESETS_YAML + "\n\n")).toBe(newH)
     expect(hashPresetsContent(DEFAULT_WORKFLOW_PRESETS_YAML.replace(`# version: ${PRESETS_VERSION}\n`, ""))).toBe(newH)
-    expect(hashPresetsContent(PREV_DEFAULT_WORKFLOW_PRESETS_YAML + "\n")).toBe(prevH)
+    expect(hashPresetsContent(PREV_DEFAULT_WORKFLOW_PRESETS_YAMLS[PREV_DEFAULT_WORKFLOW_PRESETS_YAMLS.length - 1] + "\n")).toBe(prevH)
 
     // a genuine content edit changes it
     expect(hashPresetsContent(DEFAULT_WORKFLOW_PRESETS_YAML + "# tweaked\n")).not.toBe(newH)

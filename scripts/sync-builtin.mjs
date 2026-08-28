@@ -4,7 +4,6 @@
  *
  * - skills/    → .claude/skills/
  * - agents/    → .claude/agents/
- * - workflow-schema.json → ~/.octopus/workflow-schema.json
  *
  * Runs after pnpm build to keep local copies in sync
  * with the source-of-truth in packages/core-pack/.
@@ -60,14 +59,4 @@ const agentCount = syncDir(agentsSrc, agentsDst, name => {
   return name.endsWith('.md') && !name.endsWith('.tpl')
 })
 
-// Schema: workflow-schema.json → ~/.octopus/
-const schemaSrc = join(corePack, 'workflows', 'workflow-schema.json')
-if (existsSync(schemaSrc)) {
-  const globalSchemaDst = join(homedir(), '.octopus', 'workflow-schema.json')
-  mkdirSync(dirname(globalSchemaDst), { recursive: true })
-  cpSync(schemaSrc, globalSchemaDst, { force: true })
-}
-
-console.log(
-  `[sync-builtin] skills: ${skillCount}, agents: ${agentCount}, schema: ${existsSync(schemaSrc) ? '✓' : '✗'}`
-)
+console.log(`[sync-builtin] skills: ${skillCount}, agents: ${agentCount}`)
