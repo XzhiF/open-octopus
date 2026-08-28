@@ -1,0 +1,113 @@
+apiVersion: octopus/v1
+kind: Workflow
+
+# ============================================================
+# Task Dev Pipeline — 任务看板默认无人值守工作流
+#
+# skills-free：不依赖任何技能组，goal 语义由引擎 /goal 适配器提供。
+# WHAT 由看板注入：goal / ac 经 workflow inputs 物化传入；
+# task_artifacts_dir 由 dispatch seam 注入 $vars。
+#
+# Flow:
+#   develop (goal 模式：worker 迭代 → 独立 evaluator 逐轮判 met/impossible，
+#            max_turns 硬保险丝)
+#   → ship (prompt 模式：报告 + commit + PR)
+#
+# 设计依据（K6）：自查修正折进 condition + 外置 evaluator，无需独立 cr 节点；
+# 未收敛必须响（节点 failed 携证据），不伪装 completed。
+# ============================================================
+
+name: task-dev
+description: |
+  任务看板默认无人值守流水线（skills-free）。
+  develop 以 goal 模式自治收敛（独立 evaluator 逐轮判定，max_turns 硬保险丝兜底），
+  ship 汇总交付：ship-report.md + conventional commit + PR（gh 不可用降级本地提交）。
+version: 1.0.0
+
+# --- 全局配置 ---
+engine: claude
+model: pro-max
+timeout: 86400 # 全局超时 24h
+execution_mode: serial
+
+# --- 输入（看板 preset 以 goal/ac 占位符映射；max_turns 走表单默认）---
+inputs:
+  goal:
+    description: "任务目标（WHAT）— 看板 goal 字段注入"
+    required: true
+  ac:
+    description: "验收标准（逐条判据）— 看板 ac 字段注入，是完成的唯一判据"
+    required: true
+  max_turns:
+    description: "模型往返步数上限（goal 节点硬保险丝，1 turn = 1 次 assistant API 往返）"
+    required: false
+    default: "200"
+
+# --- 变量 ---
+variables:
+  ship_status: ""
+
+# ============================================================
+# Stage 1: 开发 — goal 模式自治收敛
+# ============================================================
+
+nodes:
+  - id: develop
+    type: agent
+    goal: |
+      完成下述开发任务，并使每一条验收判据都有可复核证据。
+
+      ═══ 目标 (WHAT) ═══
+      $inputs.goal
+
+      ═══ 验收判据（逐条核对，全部满足才算达成）═══
+      $inputs.ac
+
+      ═══ 完成判据与自查指引 ═══
+      - 每条验收判据必须经过实际执行验证（运行命令、读取文件确认内容），证据可定位（文件路径/命令输出摘要）；仅声称完成不算达成。
+      - 非代码产物（计划/笔记/验证记录）一律写入产物目录 $vars.task_artifacts_dir（不存在先 mkdir -p），不污染源码目录。
+      - 判据未全部满足前不得收束；发现实现与判据偏差时修正实现，不得降低判据。
+
+      ═══ 软退出条款 ═══
+      - 若同一阻塞点连续多轮尝试仍无进展（环境缺失/判据互相矛盾/依赖外部人工决策），停止迭代，把阻塞清单（现象/已尝试/需要谁做什么）写入 $vars.task_artifacts_dir/blockers.md，并以此作为终态收束退出。
+
+      ═══ 终态汇报 ═══
+      last_output 逐条列出：AC → PASS/BLOCKED + 证据。
+
+    max_turns: $inputs.max_turns
+    timeout: 14400 # 节点超时 4h
+
+  # ============================================================
+  # Stage 2: Ship 交付（三阶段全必做）
+  # ============================================================
+
+  - id: ship
+    type: agent
+    depends_on: [develop]
+    timeout: 3600
+    prompt: |
+      完成交付。按以下三个阶段顺序执行，全部必做：
+
+      ═══ Phase A: 交付摘要 ═══
+      写入产物目录 $vars.task_artifacts_dir/ship-report.md（目录不存在先 mkdir -p）：
+      - 目标一句话
+      - 验收标准逐条: PASS/BLOCKED + 证据（取自上游 develop 节点终态汇报）
+      - 变更文件清单（git diff --stat 相对基线分支）
+      - 阻塞/遗留项（若有，含 blockers.md 摘要）
+
+      ═══ Phase B: Commit ═══
+      - 若当前在 main/master，先 git checkout -b 一个 feat/ 前缀分支（名称取自目标关键词）。
+      - 确认工作区变更均与本任务相关；git add 精确到文件（禁止盲目 -A），
+        以 conventional commits 格式提交（消息概括 goal 与关键变更）。
+      - 已全部提交则跳过。
+
+      ═══ Phase C: PR ═══
+      - git push -u origin {当前分支}
+      - gh pr create：title = goal 一句话；body = ship-report.md 内容。
+      - 已存在 PR（gh pr view 成功）→ gh pr edit 更新 title/body。
+      - gh 不可用或无 remote → 记录原因，仅保留本地提交（ship_status=local）。
+
+      汇报：分支名、PR 链接（或 local 原因）、验收标准达成情况。
+
+      输出 vars_update:
+      {"vars_update": {"ship_status": "{PR 链接 | local | failed: 原因}"}}

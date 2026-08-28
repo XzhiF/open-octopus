@@ -1,4 +1,3 @@
-# yaml-language-server: $schema=~/.octopus/test-fixture-schema.json
 # composition-task.test.yaml — simulate fixture for composition-task.yaml
 #
 # Happy path: subunit_count=3 (from workflow `variables`) → loop iterates 3×

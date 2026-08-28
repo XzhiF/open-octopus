@@ -326,7 +326,6 @@ loop-node-id:
 ### 6.1 文件结构
 
 ```yaml
-# yaml-language-server: $schema=~/.octopus/test-fixture-schema.json
 scenarios:
   - name: "happy path"
     inputs:                         # 工作流输入参数（可选）
