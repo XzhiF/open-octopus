@@ -4,6 +4,7 @@ import type { NodeExecutor, NodeExecutionResult } from "./types"
 import type { AgentConfig } from "./executor-config"
 import type { SystemPromptInput } from "@octopus/providers"
 import { AgentNodeRunner } from "./agent-runner"
+import type { AgentRunResult } from "./agent-types"
 import type { PromptInjector } from "../prompt-injector"
 import type { KnowledgeInjector } from "../knowledge-injector"
 import { applyVarsUpdate } from "./parse-vars-update"
@@ -33,6 +34,8 @@ export class AgentExecutor implements NodeExecutor {
   private providerKey?: string
   private systemPrompt?: SystemPromptInput
   private onBeforeToolCall?: (toolName: string, input: unknown) => Promise<{ allow: boolean; reason?: string } | undefined>
+  /** Warn-once state for resolveNodeNumber (walkthrough O). */
+  private invalidNumberWarned = false
 
   constructor(
     private node: NodeDef,
@@ -117,9 +120,22 @@ export class AgentExecutor implements NodeExecutor {
         effort: this.node.effort,
         systemPrompt: this.systemPrompt,
         onBeforeToolCall: this.onBeforeToolCall,
+        // Node-level execution constraints (goal-task-dev): resolved here, passed
+        // straight to the SDK (claude engine; other providers ignore the fields).
+        maxTurns: this.resolveNodeNumber(this.node.max_turns),
+        maxBudgetUsd: this.resolveNodeNumber(this.node.max_budget_usd),
+        tools: this.node.tools,
+        disallowedTools: this.node.disallowed_tools,
       })
 
       clearTimeout(activityTimer)
+
+      // SDK hard-fuse terminal (error_max_turns / error_max_budget_usd) —
+      // non-convergence must be LOUD in unattended runs (K3): node failed with
+      // goal_evidence assembled from the last active_goal event + terminalMeta.
+      if (result.terminalReason) {
+        return this.buildTerminalResult(result, heartbeatWarnings)
+      }
 
       const outputs: Record<string, any> = { last_output: result.finalText }
       this.applyVarsUpdate(result.finalText, outputs)
@@ -162,6 +178,59 @@ export class AgentExecutor implements NodeExecutor {
       clearTimeout(activityTimer)
       clearInterval(heartbeatTimer)
       this.signal?.removeEventListener("abort", onExternalAbort)
+    }
+  }
+
+  /** Resolve a number-or-string node field (max_turns / max_budget_usd).
+   *  number → passthrough; string → substituteVarsFull → Number;
+   *  NaN → treated as UNSET (undefined = no limit, CC headless default) with a
+   *  warn ONCE per node execution (walkthrough O — distinguishes invalid from
+   *  simply-not-written). */
+  private resolveNodeNumber(raw: number | string | undefined): number | undefined {
+    if (raw === undefined) return undefined
+    if (typeof raw === "number") return Number.isFinite(raw) ? raw : undefined
+    const substituted = substituteVarsFull(raw, this.pool, this.buildNodeOutputs(), this.crossExecResolver, this.executionId, this.loopContext).trim()
+    if (substituted === "") return undefined
+    const n = Number(substituted)
+    if (Number.isNaN(n)) {
+      if (!this.invalidNumberWarned) {
+        this.invalidNumberWarned = true
+        console.warn(`[agent:${this.node.id}] numeric field "${raw}" did not resolve to a number — treated as unset (no limit)`)
+      }
+      return undefined
+    }
+    return n
+  }
+
+  /** Map an SDK hard-fuse terminal (from AgentNodeRunner) to a failed node
+   *  result carrying convergence evidence. evidence = last active_goal event
+   *  (iterations/last_reason from the evaluator) + terminalMeta (numTurns/costUsd). */
+  private buildTerminalResult(result: AgentRunResult, heartbeatWarnings: string[]): NodeExecutionResult {
+    const evidence: Record<string, unknown> = {}
+    let lastActiveGoal: AgentRunResult["events"][number] | undefined
+    for (const e of result.events) {
+      if (e.type === "active_goal") lastActiveGoal = e
+    }
+    if (lastActiveGoal && lastActiveGoal.type === "active_goal") {
+      evidence.iterations = lastActiveGoal.iterations
+      if (lastActiveGoal.last_reason !== undefined) evidence.last_reason = lastActiveGoal.last_reason
+    }
+    if (result.terminalMeta?.numTurns !== undefined) evidence.numTurns = result.terminalMeta.numTurns
+    if (result.terminalMeta?.costUsd !== undefined) evidence.costUsd = result.terminalMeta.costUsd
+
+    const errorMessage = `goal_not_met (${result.terminalReason})`
+    return {
+      lastOutput: result.finalText,
+      outputs: { last_output: result.finalText, goal_evidence: evidence },
+      status: "failed",
+      error: errorMessage,
+      durationMs: result.durationMs,
+      logLines: [...heartbeatWarnings, errorMessage],
+      sessionId: result.sessionId,
+      tokens: result.tokens,
+      modelUsages: result.modelUsages,
+      events: result.events,
+      llmCalls: result.llmCalls,
     }
   }
 
@@ -356,15 +425,24 @@ export class AgentExecutor implements NodeExecutor {
     return prompt
   }
 
-  /** Build a structured prompt for goal-mode agent nodes. */
+  /** Build a structured prompt for goal-mode agent nodes.
+   *
+   *  goal-task-dev (K1): goal mode = Claude Code native `/goal` + thin adapter.
+   *  First line is `/goal <interpolated condition>` — the condition is the FULL
+   *  interpolated text of the node's `goal:` field (K2); the SDK's built-in
+   *  evaluator owns convergence (met/impossible) and the node-level
+   *  max_turns/max_budget_usd hard fuses are passed straight to the SDK.
+   *  No more Allowed/Disallowed Tools prompt sections — the SDK enforces those.
+   *  Context injection is FULL — the former 20-key/100-char/200-char truncation
+   *  was a lying interface (K7). */
   private buildGoalPrompt(): string {
     const parts: string[] = []
 
-    // Goal section
-    parts.push(`## Goal`)
-    parts.push(substituteVarsFull(this.node.goal!, this.pool, this.buildNodeOutputs(), this.crossExecResolver, this.executionId, this.loopContext))
+    // /goal directive — condition = goal 全文插值后,首行前置
+    const condition = substituteVarsFull(this.node.goal!, this.pool, this.buildNodeOutputs(), this.crossExecResolver, this.executionId, this.loopContext)
+    parts.push(`/goal ${condition}`)
 
-    // Constraints section
+    // Constraints section (prompt-level soft constraints — stays, orthogonal to SDK enforcement)
     if (this.node.constraints?.length) {
       parts.push(``)
       parts.push(`## Constraints`)
@@ -373,36 +451,17 @@ export class AgentExecutor implements NodeExecutor {
       }
     }
 
-    // Planning tools
-    if (this.node.planning?.tools?.length) {
-      parts.push(``)
-      parts.push(`## Allowed Tools`)
-      for (const t of this.node.planning.tools) {
-        parts.push(`- ${t}`)
-      }
-    }
-    if (this.node.planning?.disallowed_tools?.length) {
-      parts.push(``)
-      parts.push(`## Disallowed Tools`)
-      for (const t of this.node.planning.disallowed_tools) {
-        parts.push(`- ${t}`)
-      }
-    }
-
-    // Instructions
+    // Instructions — concise autonomy guidance (convergence/exit is the evaluator's job)
     parts.push(``)
     parts.push(`## Instructions`)
     parts.push(`You are an autonomous agent. Plan your approach step by step:`)
     parts.push(`1. Think about what you need to do`)
     parts.push(`2. Identify what information you need`)
     parts.push(`3. Execute your plan using available tools`)
-    if (this.node.planning?.verify) {
-      parts.push(`4. Verify your result before finishing`)
-    }
     parts.push(``)
     parts.push(`You must work within the stated constraints. If a constraint prevents completion, explain why in your output.`)
 
-    // Context injection: previous node results
+    // Context injection: previous node results (full, no truncation)
     const goalContext = this.buildGoalContext()
     if (goalContext) {
       parts.push(``)
@@ -432,11 +491,12 @@ export class AgentExecutor implements NodeExecutor {
     return parts.join('\n')
   }
 
-  /** Build context section with previous node results and VarPool summary for goal-mode agents. */
+  /** Build context section with previous node results and VarPool summary for goal-mode agents.
+   *  Full injection — no key-count or char-count truncation (K7). */
   private buildGoalContext(): string {
     const parts: string[] = []
 
-    // 1. Previous node results
+    // 1. Previous node results — complete lastOutput, verbatim
     if (this.engineContext) {
       const prevResults = Object.entries(this.engineContext.nodeResults)
         .filter(([_, r]) => r.status === 'completed' || r.status === 'failed')
@@ -446,20 +506,20 @@ export class AgentExecutor implements NodeExecutor {
         for (const [id, result] of prevResults) {
           parts.push(`- ${id}: ${result.status} (${result.durationMs}ms)`)
           if (result.lastOutput) {
-            parts.push(`  Output: ${result.lastOutput.slice(0, 200)}...`)
+            parts.push(`  Output: ${result.lastOutput}`)
           }
         }
       }
     }
 
-    // 2. VarPool snapshot
+    // 2. VarPool snapshot — all keys, full values
     const poolSnapshot = this.pool.snapshot()
     const poolKeys = Object.keys(poolSnapshot)
     if (poolKeys.length > 0) {
       parts.push('## Available Variables')
-      for (const key of poolKeys.slice(0, 20)) {
+      for (const key of poolKeys) {
         const val = poolSnapshot[key]
-        parts.push(`- $vars.${key} = ${JSON.stringify(val)?.slice(0, 100)}`)
+        parts.push(`- $vars.${key} = ${JSON.stringify(val)}`)
       }
     }
 

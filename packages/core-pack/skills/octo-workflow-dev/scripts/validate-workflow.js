@@ -8,8 +8,8 @@
  *   node validate-workflow.js ./workflows/*.yaml
  *
  * Validation Levels:
- *   L1 (Structure): YAML parseable, required fields present, types correct
- *   L2 (Cross-constraints): Swarm mutual exclusions, goal/prompt exclusivity, condition default order, depends_on references exist
+ *   L1 (Structure): YAML parseable, required fields present, types correct (incl. goal-mode node fields: max_turns/max_budget_usd number|string, tools/disallowed_tools string[])
+ *   L2 (Cross-constraints): Swarm mutual exclusions, goal/prompt exclusivity, planning deprecation (migration error), non-claude engine claude-only-field warnings, condition default order, depends_on references exist
  *   L3 (Semantic): Variable syntax, expression syntax, interaction_exit_when syntax
  *
  * Hard Checks (Warnings):
@@ -21,6 +21,14 @@
 
 const fs = require('fs')
 const path = require('path')
+
+// ── goal-task-dev parser mirrors (authority: packages/shared/src/yaml/parser.ts) ──
+
+// Deprecated `planning:` block (K4) — parser raises a ValueError pre-Zod.
+const PLANNING_MIGRATION = 'planning 已废弃: max_turns/max_budget_usd/disallowed_tools 提升为节点字段, verify 删除'
+
+// Node fields only honored by the claude engine (K8) — validate warns, runtime ignores.
+const CLAUDE_ONLY_NODE_FIELDS = ['max_turns', 'max_budget_usd', 'tools', 'disallowed_tools']
 
 // ── YAML Loading ──────────────────────────────────────────────────────────────
 
@@ -64,6 +72,7 @@ class ValidationResult {
     this.file = file
     this.errors = []    // L1, L2, L3 errors
     this.warnings = []  // Hard checks (non-fatal)
+    this.skippedFixture = false // top-level `scenarios` → test fixture, not a workflow
   }
 
   addError(level, message, nodeId) {
@@ -215,12 +224,49 @@ function validateL1(yaml, result) {
   for (const node of yaml.nodes) {
     validateNodeFields(node)
   }
+
+  // Node-level new fields (goal-task-dev): type contract mirrors shared NodeSchema
+  //   max_turns / max_budget_usd : number | string (string supports $inputs interpolation)
+  //   tools / disallowed_tools   : string[]
+  const validateGoalFieldTypes = (node) => {
+    for (const f of ['max_turns', 'max_budget_usd']) {
+      if (node[f] !== undefined && typeof node[f] !== 'number' && typeof node[f] !== 'string') {
+        result.addError('L1', `"${f}" must be number or string (string allows $inputs interpolation), got ${typeof node[f]}`, node.id)
+      }
+    }
+    for (const f of ['tools', 'disallowed_tools']) {
+      if (node[f] !== undefined && (!Array.isArray(node[f]) || node[f].some(v => typeof v !== 'string'))) {
+        result.addError('L1', `"${f}" must be an array of strings`, node.id)
+      }
+    }
+    if (node.nodes) {
+      for (const inner of node.nodes) validateGoalFieldTypes(inner)
+    }
+  }
+  for (const node of yaml.nodes) {
+    validateGoalFieldTypes(node)
+  }
 }
 
 // ── L2: Cross-Constraint Validation ───────────────────────────────────────────
 
 function validateL2(yaml, result) {
   const validateNode = (node) => {
+    // Deprecated `planning:` block → migration error (mirrors parser.ts pre-Zod recursive scan, K4)
+    if (node.planning !== undefined) {
+      result.addError('L2', `node "${node.id}": ${PLANNING_MIGRATION}`, node.id)
+    }
+
+    // claude-only fields on non-claude engine → warning, runtime silently ignores (mirrors validateWorkflow, K8).
+    // Engine resolution chain: node.engine ?? workflow.engine ?? "claude"; "claude-code" is a claude alias.
+    const nodeEngine = node.engine || yaml.engine || 'claude'
+    if (nodeEngine !== 'claude' && nodeEngine !== 'claude-code') {
+      const used = CLAUDE_ONLY_NODE_FIELDS.filter(f => node[f] !== undefined)
+      if (used.length > 0) {
+        result.addWarning(`node "${node.id}": engine "${nodeEngine}" does not support claude-only fields (${used.join(', ')}) — they will be ignored at runtime`, node.id)
+      }
+    }
+
     // Agent: goal and prompt mutual exclusion
     if (node.type === 'agent' && node.goal && node.prompt) {
       result.addError('L2', `agent node cannot have both goal and prompt (mutually exclusive)`, node.id)
@@ -472,6 +518,13 @@ function validateFile(filePath) {
     return result
   }
 
+  // Test fixtures (*.test.yaml: top-level `scenarios`) are not workflows —
+  // skip workflow schema checks; they are verified via `octopus workflow simulate`.
+  if (Array.isArray(yaml.scenarios)) {
+    result.skippedFixture = true
+    return result
+  }
+
   validateL1(yaml, result)
   if (!result.ok) return result // Stop early on L1 errors
 
@@ -532,6 +585,7 @@ function main() {
     const output = results.map(r => ({
       file: r.file,
       ok: r.ok,
+      skippedFixture: r.skippedFixture,
       errors: r.errors,
       warnings: r.warnings,
     }))
@@ -540,8 +594,14 @@ function main() {
     let passedCount = 0
     let failedCount = 0
     let warningCount = 0
+    let fixtureCount = 0
 
     for (const r of results) {
+      if (r.skippedFixture) {
+        console.log(`○ ${r.file} (test fixture — verify via "octopus workflow simulate")`)
+        fixtureCount++
+        continue
+      }
       if (r.ok) {
         console.log(`✓ ${r.file}`)
         passedCount++
@@ -563,7 +623,7 @@ function main() {
       }
     }
 
-    console.log(`\n${passedCount} passed, ${failedCount} failed`)
+    console.log(`\n${passedCount} passed, ${failedCount} failed${fixtureCount ? `, ${fixtureCount} fixture(s) skipped` : ''}`)
     if (warningCount > 0) {
       console.log(`${warningCount} warning(s)`)
     }

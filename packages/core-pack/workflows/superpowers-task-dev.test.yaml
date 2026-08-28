@@ -1,4 +1,3 @@
-# yaml-language-server: $schema=~/.octopus/test-fixture-schema.json
 scenarios:
   # =============================================================
   # Scenario 1: 产物中有 writing-plans 计划文档 → 按计划执行
@@ -18,8 +17,6 @@ scenarios:
 
       cr-fix:
         output: "CR 发现 2 个问题，已修复 2 个，验证通过。"
-        update_vars:
-          cr_status: "fixed"
 
       ship:
         output: "已提交并创建 PR: https://github.com/XzhiF/open-octopus/pull/99"
@@ -29,7 +26,6 @@ scenarios:
       status: "completed"
       vars:
         plan_file: "/tmp/artifacts/2026-08-28-batch-enqueue.md"
-        cr_status: "fixed"
         ship_status: "https://github.com/XzhiF/open-octopus/pull/99"
       node_trace:
         executed:
@@ -56,8 +52,6 @@ scenarios:
 
       cr-fix:
         output: "CR 无确认问题。"
-        update_vars:
-          cr_status: "passed"
 
       ship:
         output: "本地提交完成（无 remote，ship_status=local）。"
@@ -67,7 +61,6 @@ scenarios:
       status: "completed"
       vars:
         plan_file: ""
-        cr_status: "passed"
         ship_status: "local"
       node_trace:
         executed:

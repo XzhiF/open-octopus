@@ -1,5 +1,7 @@
 # budget-test.yaml — 验证预算预警 + 阻断通知
 # 低预算 (5000 tokens)，3 个 agent 节点消耗 token 触发预警
+apiVersion: octopus/v1
+kind: Workflow
 name: budget-test
 description: "预算通知测试：80% 预警 + 100% 阻断"
 

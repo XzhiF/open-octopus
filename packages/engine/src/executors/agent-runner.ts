@@ -1,4 +1,4 @@
-import type { IAgentProvider, TokenUsage, ModelUsageEntry, SystemPromptInput } from "@octopus/providers"
+import type { IAgentProvider, TokenUsage, ModelUsageEntry, SystemPromptInput, GoalTerminalReason } from "@octopus/providers"
 import type { EffortLevel } from "@octopus/shared"
 import type { AgentEvent, AgentRunResult } from "./agent-types"
 
@@ -49,6 +49,14 @@ export class AgentNodeRunner {
      *  AskUserQuestion + complete_interaction (interaction-session tools) so they
      *  cannot ask the user mid-execution (would hang or empty-answer). */
     disallowedTools?: string[]
+    /** SDK hard fuse — assistant API round-trip cap (claude engine; other
+     *  providers ignore the field). Terminal: error_max_turns. */
+    maxTurns?: number
+    /** SDK hard fuse — USD budget cap (claude engine; other providers ignore
+     *  the field). Terminal: error_max_budget_usd. */
+    maxBudgetUsd?: number
+    /** Base tool set for this agent (SDK `tools`; claude engine only). */
+    tools?: string[]
   }): Promise<AgentRunResult> {
     const start = Date.now()
     const maxRetries = opts.maxRetries ?? 1
@@ -60,6 +68,9 @@ export class AgentNodeRunner {
     let finalTokens: TokenUsage | undefined
     let finalModelUsages: ModelUsageEntry[] | undefined
     let finalCostUsd: number | undefined
+    /** SDK hard-fuse terminal detected on the stream (error_max_turns / error_max_budget_usd).
+     *  NOT an exception — the run is authoritative and returns with evidence attached. */
+    let terminal: { reason: GoalTerminalReason; numTurns?: number; costUsd?: number } | undefined
 
     const emit = (event: AgentEvent) => {
       events.push(event)
@@ -123,6 +134,9 @@ export class AgentNodeRunner {
             skills: opts.skills,
             agents: opts.agents,
             effort: opts.effort,
+            maxTurns: opts.maxTurns,
+            maxBudgetUsd: opts.maxBudgetUsd,
+            tools: opts.tools,
             systemPrompt: opts.systemPrompt ?? { type: "preset", preset: "claude_code" },
             abortSignal: localAbort.signal,
             onBeforeToolCall: opts.onBeforeToolCall,
@@ -164,6 +178,19 @@ export class AgentNodeRunner {
             case "status":
               emit({ type: "status", status: chunk.status, timestamp: ts })
               break
+            case "active_goal":
+              // Convergence evidence from the SDK /goal evaluator — passthrough
+              // into the events pipeline (JSONL/SSE compaction passes unknown
+              // agent_event subtypes through unchanged).
+              emit({
+                type: "active_goal",
+                condition: chunk.condition,
+                iterations: chunk.iterations,
+                last_reason: chunk.last_reason,
+                set_at: chunk.set_at,
+                timestamp: ts,
+              })
+              break
             case "result":
               receivedResult = true
               finalSessionId = chunk.sessionId
@@ -173,8 +200,22 @@ export class AgentNodeRunner {
               break
             case "error":
               emit({ type: "error", code: chunk.code, message: chunk.message, timestamp: ts })
+              // SDK hard-fuse terminals (error_max_turns / error_max_budget_usd)
+              // are NORMAL terminal states, not exceptions: the run stopped by
+              // policy and the caller maps it to a failed node with evidence.
+              if (chunk.terminalReason) {
+                terminal = {
+                  reason: chunk.terminalReason,
+                  numTurns: chunk.numTurns,
+                  costUsd: chunk.costUsd,
+                }
+                if (chunk.sessionId) finalSessionId = chunk.sessionId
+                break
+              }
               throw new Error(`Agent error: ${chunk.code} - ${chunk.message}`)
           }
+
+          if (terminal) break
         }
       } catch (err: unknown) {
         // Distinguish idle timeout from other errors
@@ -192,6 +233,23 @@ export class AgentNodeRunner {
         }
       } finally {
         if (idleTimer) clearTimeout(idleTimer)
+      }
+
+      // SDK hard-fuse terminal — return the run with terminal metadata,
+      // bypassing both the retry loop and the stream-fracture throw below.
+      if (terminal) {
+        return {
+          finalText: textBuffer,
+          sessionId: finalSessionId,
+          tokens: finalTokens,
+          modelUsages: finalModelUsages,
+          costUsd: terminal.costUsd ?? finalCostUsd,
+          events,
+          durationMs: Date.now() - start,
+          llmCalls: this.provider.getLLMCalls?.() ?? [],
+          terminalReason: terminal.reason,
+          terminalMeta: { numTurns: terminal.numTurns, costUsd: terminal.costUsd },
+        }
       }
 
       if (receivedResult) {

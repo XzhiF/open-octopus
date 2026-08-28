@@ -23,6 +23,34 @@ Variable system, expression syntax, and cross-execution references for Octopus w
 
 ---
 
+## Goal Mode 与变量插值
+
+`goal` 字段全文在装配为 `/goal <condition>` 前先做变量插值——`$inputs.*` / `$vars.*` / `$node_id.output.*` 均可用。验收标准等输入**经插值进 condition 文本**（引擎无独立 ac 概念）：
+
+```yaml
+inputs:
+  goal: { description: "任务目标", required: true }
+  ac:   { description: "验收标准（逐条判据）", required: true }
+  max_turns: { description: "模型往返步数上限", required: false, default: "200" }
+
+nodes:
+  - id: develop
+    type: agent
+    goal: |
+      完成目标并逐条满足判据：
+      $inputs.goal
+      $inputs.ac
+    max_turns: $inputs.max_turns   # default "200" 为字符串，运行时插值后数值化
+```
+
+要点：
+- **判据写法**：可判伪句式 + 软退出条款（见 `special-conventions.md`「Goal Mode 写作约定」）。
+- **节点级字段同样支持插值**：`max_turns`/`max_budget_usd` 可写 `number|string`（string 走变量替换后 `Number()`，无效→视为未设置）。
+- **全量注入**：goal 模式下 `## Previous Node Results` / `## Available Variables` 上下文**无任何截断**，上游输出与变量池全量给到 worker。
+- **收敛证据**：每轮 evaluator 进度以 `active_goal` 事件（condition/iterations/last_reason）落 JSONL/SSE；未收敛节点终态为 failed，error 携 `goal_not_met (<reason>)`。
+
+---
+
 ## Writing to VarPool — `outputs` Block
 
 ```yaml

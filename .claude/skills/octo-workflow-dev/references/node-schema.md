@@ -71,18 +71,38 @@ Field definitions for all 11 Octopus workflow node types. Source of truth: `pack
 
 *At least one of `prompt`, `agent`, `goal`, or `agents` is required.
 
-### Goal Mode (alternative to prompt)
+### Goal Mode (alternative to prompt) — Claude Code `/goal` adapter
+
+`goal` 字段全文（插值后）即 `/goal <condition>` 的完成判据：worker 迭代干活，**独立 evaluator 逐轮判 met/impossible**；met → 节点 completed，未收敛 → 烧到硬保险丝后节点 **failed**（携 `goal_not_met (<终态>)` 证据，不伪装 completed）。
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `goal` | string | ✅ | High-level goal (mutually exclusive with `prompt`) |
+| `goal` | string | ✅ | 完成判据 condition（与 `prompt` 互斥）。必须**可判伪**：逐条给判据 + 要求证据；ac 等输入经 `$inputs.xxx` 插值进文本 |
 | `constraints` | string[] | — | Natural language constraints |
-| `planning.verify` | boolean | — | Append verification step |
-| `planning.tools` | string[] | — | Allowed tools (soft constraint) |
-| `planning.disallowed_tools` | string[] | — | Disallowed tools (soft constraint) |
-| `planning.max_turns` | number | — | Max turns (⚠️ not enforced, use `timeout`) |
+| `max_turns` | number\|string | — | 硬保险丝：turn 上限。string 支持 `$inputs.x` 插值；无效值视为未设置 |
+| `max_budget_usd` | number\|string | — | 硬保险丝：美元预算上限 |
+| `disallowed_tools` | string[] | — | SDK 硬执行工具黑名单 |
+| `tools` | string[] | — | SDK 硬执行工具白名单（可用工具基础集） |
 
+> **Turn semantics (K5)**: 1 turn = 1 次 assistant API 往返；并行 tool_use 计 1 turn，每个 tool_result 回传开新 turn，`/goal` 续跑同样计 turn。
+> **claude-only**: `max_turns`/`max_budget_usd`/`tools`/`disallowed_tools` 仅 claude engine 真实执行；其他 engine validate 时 WARNING、运行时静默忽略。这些字段对 prompt 模式 agent 节点同样可用（非 goal 专属）。
+> **软退出条款**: condition 内写"同一阻塞点连续多轮无进展 → 停止迭代、输出阻塞清单并以此收束"，教 evaluator 判 impossible 时给出可验收解释。
 > Goal mode does NOT support `agents` sub-agents.
+>
+> **⚠️ 迁移**: 旧 `planning:` 块（`max_turns/tools/disallowed_tools/verify`）已整体废弃——含 `planning:` 的 YAML parse 直接报错。前三者提升为上表节点字段，`verify` 删除（验证要求写进 condition 文本本身）。
+
+```yaml
+- id: implement
+  type: agent
+  goal: |
+    完成以下目标，且每条判据均有可复核证据：
+    $inputs.goal
+    判据：
+    $inputs.ac
+    若同一阻塞点连续多轮无进展，输出阻塞清单并以此收束退出。
+  max_turns: $inputs.max_turns   # number 或 $inputs 插值 string
+  max_budget_usd: 5
+```
 
 ### SubAgentDef
 

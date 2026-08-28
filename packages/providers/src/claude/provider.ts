@@ -196,6 +196,34 @@ function goalTerminalReason(subtype: string): GoalTerminalReason | undefined {
   return undefined
 }
 
+/** Headless live path for /goal convergence evidence (ticket-03 finding):
+ *  claude CLI 2.1.250 filters the top-level `active_goal` StdoutMessage out of
+ *  headless stdout — the ONLY exit is a synthetic isMeta `user` message whose
+ *  text is `Stop hook feedback:\n[<condition>]: <reason>`, emitted once per
+ *  not-met (blocked) iteration. Returns null for anything else, including
+ *  prefix-matching but unparsable text (caller keeps prior behavior). */
+function parseStopHookFeedback(event: unknown): { condition: string; reason: string } | null {
+  const um = event as { message?: { content?: unknown } }
+  const content = um.message?.content
+  let text: string | null = null
+  if (typeof content === 'string') {
+    text = content
+  } else if (Array.isArray(content)) {
+    const parts = content
+      .filter((b): b is { type: 'text'; text: string } =>
+        typeof b === 'object' && b !== null && (b as { type?: unknown }).type === 'text' &&
+        typeof (b as { text?: unknown }).text === 'string')
+    if (parts.length > 0) text = parts.map(p => p.text).join('\n')
+  }
+  if (!text || !text.startsWith('Stop hook feedback:')) return null
+  // Condition may contain ':' and newlines — the separator is the FIRST ']: '
+  // after the leading '[' (lazy group). A reason containing ']: ' therefore
+  // parses correctly. Unparsable (no bracket form) → null → skip mapping.
+  const m = /^Stop hook feedback:\n\[(.+?)\]: ([\s\S]*)$/s.exec(text)
+  if (!m) return null
+  return { condition: m[1], reason: m[2] }
+}
+
 /** Non-terminal-fidelity rule (walkthrough E): a non-success result must NOT
  *  flatten away the evidence the engine needs — num_turns / total_cost_usd /
  *  session_id / terminal-reason all survive into the error chunk. */
@@ -341,6 +369,10 @@ export class ClaudeSDKProvider implements IAgentProvider {
     // active stream.
     const q = query({ prompt, options: sdkOptions })
     let contextUsageEmitted = false
+    // Per-session (per sendQuery) running count of stop-hook-feedback blocks,
+    // 1-based — feeds ActiveGoalChunk.iterations; set_at = first-seen time.
+    let goalIterations = 0
+    let goalSetAt: number | undefined
 
     for await (const event of q) {
 
@@ -502,6 +534,24 @@ export class ClaudeSDKProvider implements IAgentProvider {
       }
 
       else if (event.type === 'user') {
+        // Headless LIVE path for /goal evidence: the evaluator's not-met
+        // (block) verdict surfaces only as a synthetic isMeta user message
+        // "Stop hook feedback:\n[<condition>]: <reason>". Map it to the same
+        // ActiveGoalChunk shape as the forward-compat StdoutMessage branch
+        // below; anything else (plain text, tool_result, unparsable) keeps the
+        // old drop-and-continue behavior.
+        const feedback = parseStopHookFeedback(event)
+        if (feedback) {
+          goalIterations += 1
+          if (goalSetAt === undefined) goalSetAt = Date.now()
+          yield {
+            type: 'active_goal',
+            condition: feedback.condition,
+            iterations: goalIterations,
+            last_reason: feedback.reason,
+            set_at: goalSetAt,
+          }
+        }
         continue
       }
 
@@ -535,11 +585,16 @@ export class ClaudeSDKProvider implements IAgentProvider {
       }
 
       else if ((event as { type: string }).type === 'active_goal') {
-        // SDKActiveGoalMessage is emitted by query() at runtime (sdk.mjs
-        // readMessages: `e.type==="active_goal"` → enqueued) and is a member
-        // of the internal StdoutMessage union (sdk.d.ts:7764), but NOT of the
-        // public SDKMessage TS union — hence the cast. `value` is null when
-        // the goal is cleared (evaluator reported met): pass condition: null.
+        // FORWARD-COMPAT only: SDKActiveGoalMessage is a member of the
+        // internal StdoutMessage union (sdk.d.ts:7764) and sdk.mjs readMessages
+        // has an enqueue branch, but claude CLI 2.1.250's stdout write predicate
+        // unconditionally EXCLUDES type 'active_goal' — headless never emits it
+        // (ticket-03 root cause, binary-verified; --include-hook-events /
+        // --include-partial-messages do not help). The LIVE path under the
+        // current CLI is the stop-hook-feedback mapping in the `user` branch.
+        // Keep this branch for future CLIs that restore the message.
+        // `value` is null when the goal is cleared (evaluator reported met):
+        // pass condition: null.
         const ag = event as unknown as { value: { condition: string; iterations: number; set_at: number; tokens_at_start: number; last_reason?: string } | null }
         if (ag.value === null) {
           yield { type: 'active_goal', condition: null, iterations: 0 }
