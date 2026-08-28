@@ -1,0 +1,99 @@
+PASS | AC6a GET presets general-dev=task-dev | status=200 gen={"name":"general-dev","skills_group":[],"workflow":"built-in/task-dev","inputs":{"goal":"${goal}","ac":"${ac}"}}
+PASS [AC6a GET presets general-dev=task-dev] status=200 gen={"name":"general-dev","skills_group":[],"workflow":"built-in/task-dev","inputs":{"goal":"${goal}","ac":"${ac}"}}
+PASS | AC6a inputs skeleton ${goal}/${ac} | {"goal":"${goal}","ac":"${ac}"}
+PASS [AC6a inputs skeleton ${goal}/${ac}] {"goal":"${goal}","ac":"${ac}"}
+PASS | AC6a presets include superpowers | {"name":"superpowers-task-dev","skills_group":["superpowers-zh"],"workflow":"built-in/superpowers-task-dev","inputs":{"goal":"${goal}","ac":"${ac}"}}
+PASS [AC6a presets include superpowers] {"name":"superpowers-task-dev","skills_group":["superpowers-zh"],"workflow":"built-in/superpowers-task-dev","inputs":{"goal":"${goal}","ac":"${ac}"}}
+PASS | AC6a superpowers-zh filter returns superpowers preset | status=200 n=2 has=true
+PASS [AC6a superpowers-zh filter returns superpowers preset] status=200 n=2 has=true
+PASS | AC6b task-dev detail loaded | status=200 keys=["goal","ac","max_turns"]
+PASS [AC6b task-dev detail loaded] status=200 keys=["goal","ac","max_turns"]
+PASS | AC6b goal required=true w/ description | {"description":"任务目标（WHAT）— 看板 goal 字段注入","required":true,"default":""}
+PASS [AC6b goal required=true w/ description] {"description":"任务目标（WHAT）— 看板 goal 字段注入","required":true,"default":""}
+PASS | AC6b ac required=true w/ description | {"description":"验收标准（逐条判据）— 看板 ac 字段注入，是完成的唯一判据","required":true,"default":""}
+PASS [AC6b ac required=true w/ description] {"description":"验收标准（逐条判据）— 看板 ac 字段注入，是完成的唯一判据","required":true,"default":""}
+PASS | AC6b max_turns required=false default="200" (string) | {"description":"模型往返步数上限（goal 节点硬保险丝，1 turn = 1 次 assistant API 往返）","required":false,"default":"200"}
+PASS [AC6b max_turns required=false default="200" (string)] {"description":"模型往返步数上限（goal 节点硬保险丝，1 turn = 1 次 assistant API 往返）","required":false,"default":"200"}
+PASS | AC9-live catalog file exists | /Users/xzf/.octopus/agent/built-in/task-author/workflow-presets.yaml
+PASS [AC9-live catalog file exists] /Users/xzf/.octopus/agent/built-in/task-author/workflow-presets.yaml
+PASS | AC9-live version header == # version: 2 | # version: 2
+PASS [AC9-live version header == # version: 2] # version: 2
+PASS | AC9-live file binds general-dev→task-dev
+PASS [AC9-live file binds general-dev→task-dev] 
+PASS | AC9-live API↔file cross-validated | API=built-in/task-dev
+PASS [AC9-live API↔file cross-validated] API=built-in/task-dev
+PASS | AC6c draft created (201, v1) | id=13619a2a-5994-4f51-81c8-8c6f1be6d110 v=1
+PASS [AC6c draft created (201, v1)] id=13619a2a-5994-4f51-81c8-8c6f1be6d110 v=1
+PASS | AC6c ready-gate 409 with missing:goal_confirmed | status=409 missing=["goal_confirmed","ac_confirmed","input:goal","input:ac"]
+PASS [AC6c ready-gate 409 with missing:goal_confirmed] status=409 missing=["goal_confirmed","ac_confirmed","input:goal","input:ac"]
+PASS | AC6c 409 creates NO schedule | rows=0
+PASS [AC6c 409 creates NO schedule] rows=0
+PASS | AC6d PUT bind workflow_ref persisted | workflow_ref=built-in/task-dev
+PASS [AC6d PUT bind workflow_ref persisted] workflow_ref=built-in/task-dev
+PASS | AC6d ready-gate 409-gone (200 ready) | status=200 task.status=ready
+PASS [AC6d ready-gate 409-gone (200 ready)] status=200 task.status=ready
+PASS | AC6d schedule row created (queued, origin=task, no cron) | [{"id":"a5100a80-ed25-451f-bbea-c45985b06d1e","st":"queued","origin":"task"}]
+PASS [AC6d schedule row created (queued, origin=task, no cron)] [{"id":"a5100a80-ed25-451f-bbea-c45985b06d1e","st":"queued","origin":"task"}]
+PASS | AC6d materialized input_values.goal verbatim | goal=在工作区创建文件 hello.txt，内容恰好为 X
+PASS [AC6d materialized input_values.goal verbatim] goal=在工作区创建文件 hello.txt，内容恰好为 X
+PASS | AC6d materialized input_values.ac verbatim (single-item join) | ac=文件 hello.txt 存在且去空白后内容恰好为 X
+PASS [AC6d materialized input_values.ac verbatim (single-item join)] ac=文件 hello.txt 存在且去空白后内容恰好为 X
+PASS | AC6d NO max_turns key (rides YAML default) | keys=["goal","ac","task_artifacts_dir","task_workflows_dir"]
+PASS [AC6d NO max_turns key (rides YAML default)] keys=["goal","ac","task_artifacts_dir","task_workflows_dir"]
+PASS | AC6d config.workflow_ref=built-in/task-dev | built-in/task-dev
+PASS [AC6d config.workflow_ref=built-in/task-dev] built-in/task-dev
+PASS | AC6d v3 task_artifacts_dir injected | /Users/xzf/.octopus/tasks/2ef2b139-520b-4179-b937-39d02e3eb941/artifacts
+PASS [AC6d v3 task_artifacts_dir injected] /Users/xzf/.octopus/tasks/2ef2b139-520b-4179-b937-39d02e3eb941/artifacts
+PASS | AC6d gate/main task aborted pre-tick | abort=200
+PASS [AC6d gate/main task aborted pre-tick] abort=200
+PASS | AC6e variant ready 200 | status=200
+PASS [AC6e variant ready 200] status=200
+PASS | AC6e max_turns="5" materialized into config | max_turns="5"
+PASS [AC6e max_turns="5" materialized into config] max_turns="5"
+PASS | AC6e variant aborted | ["aborted"]
+PASS [AC6e variant aborted] ["aborted"]
+PASS | SAFETY zero executions for gate tasks | n=0
+PASS [SAFETY zero executions for gate tasks] n=0
+PASS | CLEANUP tasks+schedules hard-deleted (incl. prefix sweep) | {"t":0,"s":0,"leaked":0}
+PASS [CLEANUP tasks+schedules hard-deleted (incl. prefix sweep)] {"t":0,"s":0,"leaked":0}
+PASS | CLEANUP SQL executed
+PASS [CLEANUP SQL executed] 
+
+============================================================
+  T3 API E2E — AC6/AC9-live/handoff(1)(2)(3)(8)
+============================================================
+Status | Step                                                          | Detail                                                      
+-------+---------------------------------------------------------------+-------------------------------------------------------------
+PASS   | AC6a GET presets general-dev=task-dev                         | status=200 gen={"name":"general-dev","skills_group":[],"work
+PASS   | AC6a inputs skeleton ${goal}/${ac}                            | {"goal":"${goal}","ac":"${ac}"}                             
+PASS   | AC6a presets include superpowers                              | {"name":"superpowers-task-dev","skills_group":["superpowers-
+PASS   | AC6a superpowers-zh filter returns superpowers preset         | status=200 n=2 has=true                                     
+PASS   | AC6b task-dev detail loaded                                   | status=200 keys=["goal","ac","max_turns"]                   
+PASS   | AC6b goal required=true w/ description                        | {"description":"任务目标（WHAT）— 看板 goal 字段注入","required":true,"d
+PASS   | AC6b ac required=true w/ description                          | {"description":"验收标准（逐条判据）— 看板 ac 字段注入，是完成的唯一判据","required":
+PASS   | AC6b max_turns required=false default="200" (string)          | {"description":"模型往返步数上限（goal 节点硬保险丝，1 turn = 1 次 assistant 
+PASS   | AC9-live catalog file exists                                  | /Users/xzf/.octopus/agent/built-in/task-author/workflow-pres
+PASS   | AC9-live version header == # version: 2                       | # version: 2                                                
+PASS   | AC9-live file binds general-dev→task-dev                      |                                                             
+PASS   | AC9-live API↔file cross-validated                             | API=built-in/task-dev                                       
+PASS   | AC6c draft created (201, v1)                                  | id=13619a2a-5994-4f51-81c8-8c6f1be6d110 v=1                 
+PASS   | AC6c ready-gate 409 with missing:goal_confirmed               | status=409 missing=["goal_confirmed","ac_confirmed","input:g
+PASS   | AC6c 409 creates NO schedule                                  | rows=0                                                      
+PASS   | AC6d PUT bind workflow_ref persisted                          | workflow_ref=built-in/task-dev                              
+PASS   | AC6d ready-gate 409-gone (200 ready)                          | status=200 task.status=ready                                
+PASS   | AC6d schedule row created (queued, origin=task, no cron)      | [{"id":"a5100a80-ed25-451f-bbea-c45985b06d1e","st":"queued",
+PASS   | AC6d materialized input_values.goal verbatim                  | goal=在工作区创建文件 hello.txt，内容恰好为 X                             
+PASS   | AC6d materialized input_values.ac verbatim (single-item join) | ac=文件 hello.txt 存在且去空白后内容恰好为 X                              
+PASS   | AC6d NO max_turns key (rides YAML default)                    | keys=["goal","ac","task_artifacts_dir","task_workflows_dir"]
+PASS   | AC6d config.workflow_ref=built-in/task-dev                    | built-in/task-dev                                           
+PASS   | AC6d v3 task_artifacts_dir injected                           | /Users/xzf/.octopus/tasks/2ef2b139-520b-4179-b937-39d02e3eb9
+PASS   | AC6d gate/main task aborted pre-tick                          | abort=200                                                   
+PASS   | AC6e variant ready 200                                        | status=200                                                  
+PASS   | AC6e max_turns="5" materialized into config                   | max_turns="5"                                               
+PASS   | AC6e variant aborted                                          | ["aborted"]                                                 
+PASS   | SAFETY zero executions for gate tasks                         | n=0                                                         
+PASS   | CLEANUP tasks+schedules hard-deleted (incl. prefix sweep)     | {"t":0,"s":0,"leaked":0}                                    
+PASS   | CLEANUP SQL executed                                          |                                                             
+-------+---------------------------------------------------------------+-------------------------------------------------------------
+Total: 30 | Passed: 30 | Failed: 0 | ALL PASS ✓
+============================================================

@@ -1,0 +1,45 @@
+=== shared:goal-mode+planning(AC5) (exit=0) ===
+
+ Test Files  2 passed (2)
+      Tests  28 passed (28)
+   Start at  01:48:37
+   Duration  307ms (transform 136ms, setup 0ms, collect 175ms, tests 20ms, environment 0ms, prepare 105ms)
+
+ Test Files  2 passed (2)
+      Tests  28 passed (28)
+=== providers:plumbing(AC4) (exit=0) ===
+
+ Test Files  1 passed (1)
+      Tests  14 passed (14)
+   Start at  01:48:38
+   Duration  378ms (transform 133ms, setup 0ms, collect 169ms, tests 8ms, environment 0ms, prepare 40ms)
+
+ Test Files  1 passed (1)
+      Tests  14 passed (14)
+=== engine:adapter(AC1/AC3/AC4) (exit=0) ===
+
+ Test Files  2 passed (2)
+      Tests  22 passed (22)
+   Start at  01:48:39
+   Duration  371ms (transform 179ms, setup 0ms, collect 233ms, tests 10ms, environment 0ms, prepare 83ms)
+
+ Test Files  2 passed (2)
+      Tests  22 passed (22)
+=== server:preset-migration(AC9) (exit=0) ===
+
+ Test Files  2 passed (2)
+      Tests  12 passed (12)
+   Start at  01:48:40
+   Duration  361ms (transform 161ms, setup 0ms, collect 273ms, tests 43ms, environment 0ms, prepare 78ms)
+
+ Test Files  2 passed (2)
+      Tests  12 passed (12)
+=== webapp:workflow-box(fixF/N) (exit=0) ===
+
+ Test Files  1 passed (1)
+      Tests  7 passed (7)
+   Start at  01:48:41
+   Duration  1.47s (transform 75ms, setup 41ms, collect 297ms, tests 431ms, environment 461ms, prepare 49ms)
+
+ Test Files  1 passed (1)
+      Tests  7 passed (7)

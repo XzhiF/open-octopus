@@ -1,0 +1,12 @@
+apiVersion: octopus/v1
+kind: Workflow
+name: E2E_TEST_GTD_fix_pi_warning
+engine: pi
+nodes:
+  - id: develop
+    type: agent
+    prompt: 非 claude 引擎带 claude-only 字段应产生 warning 而非 reject
+    max_turns: 10
+    max_budget_usd: 1
+    tools: [Read, Write]
+    disallowed_tools: [Bash]
