@@ -9,7 +9,7 @@ import type { CloneDef } from '@octopus/shared'
 import type { CloneDAO } from '../../db/dao'
 import { BUILTIN_CLONES } from './builtin-clones'
 import { getBuiltInClonesDir, getBuiltInCloneDir, getBuiltInCloneMemoryDir } from './paths'
-import { DEFAULT_WORKFLOW_PRESETS_YAML } from './workflow-presets-seed'
+import { DEFAULT_WORKFLOW_PRESETS_YAML, PREV_DEFAULT_WORKFLOW_PRESETS_YAML, PRESETS_VERSION, hashPresetsContent } from './workflow-presets-seed'
 
 // ── Types ──────────────────────────────────────────────────────────
 
@@ -17,6 +17,9 @@ export interface CloneInitResult {
   dirsCreated: string[]
   filesCreated: string[]
   filesSkipped: string[]
+  /** Seed-migration refreshes (goal-task-dev 05): existed as an untouched
+   *  previous default → rewritten to the current default. */
+  filesRefreshed: string[]
   dbRegistered: string[]
   dbSkipped: string[]
 }
@@ -24,6 +27,9 @@ export interface CloneInitResult {
 // ── CloneInitService ──────────────────────────────────────────────
 
 export class CloneInitService {
+  /** Paths already warned about this process (warn-once per user-modified file). */
+  private readonly warnedUserModified = new Set<string>()
+
   /**
    * Initialize built-in clones if not exists (idempotent).
    * Creates directory structure, writes default persona.md,
@@ -34,6 +40,7 @@ export class CloneInitService {
       dirsCreated: [],
       filesCreated: [],
       filesSkipped: [],
+      filesRefreshed: [],
       dbRegistered: [],
       dbSkipped: [],
     }
@@ -99,18 +106,54 @@ export class CloneInitService {
       result.filesSkipped.push(`built-in/${name}/config.json`)
     }
 
-    // 3. Seed default workflow-presets.yaml for the task-author clone
-    // (task-workflow-presets, T3 review fix): the preset catalog that drives
-    // HOW-handoff recommendations + GET /api/workflow-presets. Only the
-    // task-author clone carries one. Skip-if-exists so a user-customized
-    // catalog survives restarts (persona.md pattern).
+    // 3. Seed/migrate workflow-presets.yaml for the task-author clone
+    // (task-workflow-presets T3 review fix; versioned migration added by
+    // goal-task-dev ticket 05): pure skip-if-exists meant existing installs
+    // NEVER refreshed the default catalog (general-dev kept pointing at
+    // matt-dev-pipeline after the task-dev rebinding). Now:
+    //   missing            → write current default
+    //   ≡ prev default     → refresh to current default + log
+    //   ≡ current default  → skip (already fresh, no warn)
+    //   anything else      → user hand-edit: preserve + warn once
+    // The content comparison is normalized (version header + trailing
+    // whitespace stripped, see hashPresetsContent) so the migration marker
+    // itself never causes a false "user-modified" verdict.
     if (name === 'task-author') {
       const presetsPath = path.join(cloneDir, 'workflow-presets.yaml')
+      const presetsKey = `built-in/${name}/workflow-presets.yaml`
       if (!fs.existsSync(presetsPath)) {
         fs.writeFileSync(presetsPath, DEFAULT_WORKFLOW_PRESETS_YAML, 'utf-8')
-        result.filesCreated.push(`built-in/${name}/workflow-presets.yaml`)
+        result.filesCreated.push(presetsKey)
       } else {
-        result.filesSkipped.push(`built-in/${name}/workflow-presets.yaml`)
+        let existing: string | null = null
+        try {
+          existing = fs.readFileSync(presetsPath, 'utf-8')
+        } catch {
+          result.filesSkipped.push(presetsKey)
+          // unreadable — leave it alone entirely (DB registration continues below)
+        }
+        if (existing !== null) {
+          const hash = hashPresetsContent(existing)
+          if (hash === hashPresetsContent(PREV_DEFAULT_WORKFLOW_PRESETS_YAML)) {
+            fs.writeFileSync(presetsPath, DEFAULT_WORKFLOW_PRESETS_YAML, 'utf-8')
+            result.filesRefreshed.push(presetsKey)
+            console.log(
+              `[CloneInitService] ${presetsKey} matched the embedded previous default — ` +
+              `refreshed to seed default v${PRESETS_VERSION}`,
+            )
+          } else if (hash === hashPresetsContent(DEFAULT_WORKFLOW_PRESETS_YAML)) {
+            result.filesSkipped.push(presetsKey)
+          } else {
+            result.filesSkipped.push(presetsKey)
+            if (!this.warnedUserModified.has(presetsPath)) {
+              this.warnedUserModified.add(presetsPath)
+              console.warn(
+                `[CloneInitService] ${presetsKey} was user-modified — keeping it; ` +
+                `seed default v${PRESETS_VERSION} NOT applied (delete the file to re-seed)`,
+              )
+            }
+          }
+        }
       }
     }
 
