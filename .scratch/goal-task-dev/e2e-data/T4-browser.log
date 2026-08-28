@@ -1,0 +1,63 @@
+PASS | PRE draft created | id=be36e0ee-8935-4915-8a8e-2697f40ed96a
+PASS [PRE draft created] id=be36e0ee-8935-4915-8a8e-2697f40ed96a
+PASS | UI-1 board shows draft card | selector matched
+PASS [UI-1 board shows draft card] selector matched
+PASS | UI-2 WorkflowBox rendered in authoring view
+PASS [UI-2 WorkflowBox rendered in authoring view] 
+PASS | UI-2 initially unbound
+PASS [UI-2 initially unbound] 
+PASS | UI-3 dialog opens with recommended preset general-dev
+PASS [UI-3 dialog opens with recommended preset general-dev] 
+PASS | UI-4 preset prefill goal=${goal} | goal="${goal}"
+PASS [UI-4 preset prefill goal=${goal}] goal="${goal}"
+PASS | UI-4 preset prefill ac=${ac} | ac="${ac}"
+PASS [UI-4 preset prefill ac=${ac}] ac="${ac}"
+PASS | UI-5 fix F max_turns input SHOWS "200" | max_turns="200"
+PASS [UI-5 fix F max_turns input SHOWS "200"] max_turns="200"
+PASS | SHOT-1 proof fix F | /Users/xzf/Projects/ai/XzhiF/open-octopus/.scratch/goal-task-dev/e2e-screenshots/01-dialog-preset-general-dev-maxturns-200.png
+PASS [SHOT-1 proof fix F] /Users/xzf/Projects/ai/XzhiF/open-octopus/.scratch/goal-task-dev/e2e-screenshots/01-dialog-preset-general-dev-maxturns-200.png
+PASS | UI-6 fix N manual switch clears prefilled goal/ac | goal="" ac="" (xzf-dev had goal field=0)
+PASS [UI-6 fix N manual switch clears prefilled goal/ac] goal="" ac="" (xzf-dev had goal field=0)
+PASS | UI-6 untouched max_turns still shows default 200 | max_turns="200"
+PASS [UI-6 untouched max_turns still shows default 200] max_turns="200"
+PASS | SHOT-2 proof fix N | /Users/xzf/Projects/ai/XzhiF/open-octopus/.scratch/goal-task-dev/e2e-screenshots/02-dialog-manual-switch-cleared.png
+PASS [SHOT-2 proof fix N] /Users/xzf/Projects/ai/XzhiF/open-octopus/.scratch/goal-task-dev/e2e-screenshots/02-dialog-manual-switch-cleared.png
+PASS | UI-7 badge shows built-in/task-dev | badge="built-in/task-dev"
+PASS [UI-7 badge shows built-in/task-dev] badge="built-in/task-dev"
+PASS | SHOT-3 proof badge | /Users/xzf/Projects/ai/XzhiF/open-octopus/.scratch/goal-task-dev/e2e-screenshots/03-workflow-box-badge-bound.png
+PASS [SHOT-3 proof badge] /Users/xzf/Projects/ai/XzhiF/open-octopus/.scratch/goal-task-dev/e2e-screenshots/03-workflow-box-badge-bound.png
+PASS | DB-1 workflow_ref=built-in/task-dev | db.workflow_ref=built-in/task-dev
+PASS [DB-1 workflow_ref=built-in/task-dev] db.workflow_ref=built-in/task-dev
+PASS | DB-1 save dropped untouched default+cleared fields (no max_turns/goal/ac keys) | input_values=undefined
+PASS [DB-1 save dropped untouched default+cleared fields (no max_turns/goal/ac keys)] input_values=undefined
+PASS | UI-8 no fatal console errors on flow
+PASS [UI-8 no fatal console errors on flow] 
+PASS | CLEANUP browser task deleted | remaining=0
+PASS [CLEANUP browser task deleted] remaining=0
+
+============================================================
+  T4 Browser E2E — fix F/N + badge + DB
+============================================================
+Status | Step                                                                           | Detail                                                      
+-------+--------------------------------------------------------------------------------+-------------------------------------------------------------
+PASS   | PRE draft created                                                              | id=be36e0ee-8935-4915-8a8e-2697f40ed96a                     
+PASS   | UI-1 board shows draft card                                                    | selector matched                                            
+PASS   | UI-2 WorkflowBox rendered in authoring view                                    |                                                             
+PASS   | UI-2 initially unbound                                                         |                                                             
+PASS   | UI-3 dialog opens with recommended preset general-dev                          |                                                             
+PASS   | UI-4 preset prefill goal=${goal}                                               | goal="${goal}"                                              
+PASS   | UI-4 preset prefill ac=${ac}                                                   | ac="${ac}"                                                  
+PASS   | UI-5 fix F max_turns input SHOWS "200"                                         | max_turns="200"                                             
+PASS   | SHOT-1 proof fix F                                                             | /Users/xzf/Projects/ai/XzhiF/open-octopus/.scratch/goal-task
+PASS   | UI-6 fix N manual switch clears prefilled goal/ac                              | goal="" ac="" (xzf-dev had goal field=0)                    
+PASS   | UI-6 untouched max_turns still shows default 200                               | max_turns="200"                                             
+PASS   | SHOT-2 proof fix N                                                             | /Users/xzf/Projects/ai/XzhiF/open-octopus/.scratch/goal-task
+PASS   | UI-7 badge shows built-in/task-dev                                             | badge="built-in/task-dev"                                   
+PASS   | SHOT-3 proof badge                                                             | /Users/xzf/Projects/ai/XzhiF/open-octopus/.scratch/goal-task
+PASS   | DB-1 workflow_ref=built-in/task-dev                                            | db.workflow_ref=built-in/task-dev                           
+PASS   | DB-1 save dropped untouched default+cleared fields (no max_turns/goal/ac keys) | input_values=undefined                                      
+PASS   | UI-8 no fatal console errors on flow                                           |                                                             
+PASS   | CLEANUP browser task deleted                                                   | remaining=0                                                 
+-------+--------------------------------------------------------------------------------+-------------------------------------------------------------
+Total: 18 | Passed: 18 | Failed: 0 | ALL PASS ✓
+============================================================

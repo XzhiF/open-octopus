@@ -1,0 +1,72 @@
+✗ Validation failed: root.nodes[0] (node "develop"): planning 已废弃: max_turns/max_budget_usd/disallowed_tools 提升为节点字段, verify 删除
+PASS [AC5a-planning-rejected] exit=1
+PASS [AC5a-migration-text] contains 'planning 已废弃'
+✗ Validation failed: root.nodes[0].nodes[0] (node "inner"): planning 已废弃: max_turns/max_budget_usd/disallowed_tools 提升为节点字段, verify 删除
+PASS [AC5b-loop-planning-rejected] exit=1
+PASS [AC5b-loop-migration-text] contains 'planning 已废弃'
+✓ Workflow YAML is valid
+  Name: E2E_TEST_GTD_fix_pi_warning
+  Nodes: 1
+⚠ node "develop": engine "pi" does not support claude-only fields (max_turns, max_budget_usd, tools, disallowed_tools) — they will be ignored at runtime
+PASS [AC5c-pi-not-rejected] exit=0
+PASS [AC5c-warning-printed] warnings surfaced in CLI output
+✓ Workflow YAML is valid
+  Name: task-dev
+  Nodes: 2
+PASS [VAL-task-dev] exit=0
+✓ Workflow YAML is valid
+  Name: superpowers-task-dev
+  Nodes: 4
+PASS [VAL-superpowers-task-dev] exit=0
+✗ Validation failed: node "idea-research": debate/swarm mode with custom host.prompt must include "assessment" JSON output (consensus_score, should_continue). Without it, consensus detection is silently disabled and the debate will always run all 3 rounds. Add an "assessment" block to host.prompt or remove host.prompt to use the built-in template.
+INFO [VAL-xzf-dev] pre-existing baseline failure (swarm host.prompt), NOT counted
+Simulating: packages/core-pack/workflows/task-dev.yaml
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+✔ Scenario "happy — develop converges, ship delivers PR" (0ms)
+  ✔ Assertions:
+    ✔ status = completed
+    ✔ vars.ship_status = "https://github.com/XzhiF/open-octopus/pull/201"
+    ✔ node "develop" was executed
+    ✔ node "ship" was executed
+
+✔ Scenario "exhausted — develop hits max_turns fuse" (0ms)
+  ✔ Assertions:
+    ✔ status = failed
+    ✔ node "develop" was executed
+    ✔ develop log contains "goal_not_met (max_turns)"
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+✔ Results: 2 passed, 0 failed (2 scenarios, 1ms total)
+PASS [SIM-task-dev] exit=0
+PASS [SIM-task-dev-2scenarios] 2 passed
+PASS [SIM-task-dev-exhausted-evidence] exhausted scenario asserts goal_not_met (max_turns)
+Simulating: packages/core-pack/workflows/superpowers-task-dev.yaml
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+✔ Scenario "plan found — develop follows plan doc" (0ms)
+  ✔ Assertions:
+    ✔ status = completed
+    ✔ vars.plan_file = "/tmp/artifacts/2026-08-28-batch-enqueue.md"
+    ✔ vars.ship_status = "https://github.com/XzhiF/open-octopus/pull/99"
+    ✔ node "detect-plan" was executed
+    ✔ node "develop" was executed
+    ✔ node "cr-fix" was executed
+    ✔ node "ship" was executed
+
+✔ Scenario "no plan — develop self-decomposes from goal+ac" (0ms)
+  ✔ Assertions:
+    ✔ status = completed
+    ✔ vars.plan_file = ""
+    ✔ vars.ship_status = "local"
+    ✔ node "detect-plan" was executed
+    ✔ node "develop" was executed
+    ✔ node "cr-fix" was executed
+    ✔ node "ship" was executed
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+✔ Results: 2 passed, 0 failed (2 scenarios, 6ms total)
+PASS [SIM-superpowers] exit=0
+PASS [SIM-superpowers-2scenarios] 2 passed
+
+=== T2 RESULT: fails=0 ===

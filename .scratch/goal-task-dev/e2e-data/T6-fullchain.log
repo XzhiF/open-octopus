@@ -1,0 +1,83 @@
+PASS | SETUP repo has exactly 1 seed commit
+PASS [SETUP repo has exactly 1 seed commit] 
+PASS | SETUP repo has NO remote (safety precondition)
+PASS [SETUP repo has NO remote (safety precondition)] 
+PASS | SETUP repos index.md written
+PASS [SETUP repos index.md written] 
+PASS | CHAIN draft created | id=2ddd860c-47fc-4ae2-a33f-18075383c7dd
+PASS [CHAIN draft created] id=2ddd860c-47fc-4ae2-a33f-18075383c7dd
+PASS | CHAIN PUT bind ok | status=200
+PASS [CHAIN PUT bind ok] status=200
+PASS | CHAIN ready(200) — enqueued | status=200
+PASS [CHAIN ready(200) — enqueued] status=200
+PASS | CHAIN schedule queued | sched=fa8ad687-4ce5-4013-a275-f9bb63089d80
+PASS [CHAIN schedule queued] sched=fa8ad687-4ce5-4013-a275-f9bb63089d80
+Waiting for scheduler tick + real task-dev execution (up to 15 min)...
+PASS | EXEC terminal reached | task=failed after 171s exec=completed
+PASS [EXEC terminal reached] task=failed after 171s exec=completed
+FAIL | EXEC task completed + schedule done | task=failed sched=failed
+FAIL [EXEC task completed + schedule done] task=failed sched=failed
+PASS | EXEC develop node completed (JSONL end=completed) | develop=completed
+PASS [EXEC develop node completed (JSONL end=completed)] develop=completed
+PASS | EXEC ship node completed (JSONL end=completed) | ship=completed
+PASS [EXEC ship node completed (JSONL end=completed)] ship=completed
+PASS | EXEC develop transcript contains the goal condition | /Users/xzf/.octopus/orgs/default/workspaces/taskpool-fa8ad687-4ce5-4013-a275-f9bb63089d80-20260829020030-d8ai/logs/9edaf4ae-ebd2-4ae6-87fe-433ea780e263/develop.jsonl
+PASS [EXEC develop transcript contains the goal condition] /Users/xzf/.octopus/orgs/default/workspaces/taskpool-fa8ad687-4ce5-4013-a275-f9bb63089d80-20260829020030-d8ai/logs/9edaf4ae-ebd2-4ae6-87fe-433ea780e263/develop.jsonl
+PASS | GIT new commit(s) beyond seed exist | total=2
+PASS [GIT new commit(s) beyond seed exist] total=2
+fatal: path 'hello.txt' does not exist in 'main'
+PASS | GIT hello.txt committed with exact GTD_E2E_OK content | branch=taskpool-fa8ad687-4ce5-4013-a275-f9bb63089d80-20260829020030-d8ai
+PASS [GIT hello.txt committed with exact GTD_E2E_OK content] branch=taskpool-fa8ad687-4ce5-4013-a275-f9bb63089d80-20260829020030-d8ai
+PASS | GIT commit message conventional-ish (feat/fix/chore) | feat: add hello.txt with GTD_E2E_OK marker
+PASS [GIT commit message conventional-ish (feat/fix/chore)] feat: add hello.txt with GTD_E2E_OK marker
+PASS | SAFETY still no remote after run (never pushed)
+PASS [SAFETY still no remote after run (never pushed)] 
+PASS | FILE hello.txt exists in execution worktree (trimmed==GTD_E2E_OK) | /Users/xzf/.octopus/orgs/default/workspaces/taskpool-fa8ad687-4ce5-4013-a275-f9bb63089d80-20260829020030-d8ai/projects/gtd-e2e-repo/hello.txt
+PASS [FILE hello.txt exists in execution worktree (trimmed==GTD_E2E_OK)] /Users/xzf/.octopus/orgs/default/workspaces/taskpool-fa8ad687-4ce5-4013-a275-f9bb63089d80-20260829020030-d8ai/projects/gtd-e2e-repo/hello.txt
+PASS | FILE ship-report.md exists in artifacts dir | /Users/xzf/.octopus/tasks/2ddd860c-47fc-4ae2-a33f-18075383c7dd/artifacts/ship-report.md
+PASS [FILE ship-report.md exists in artifacts dir] /Users/xzf/.octopus/tasks/2ddd860c-47fc-4ae2-a33f-18075383c7dd/artifacts/ship-report.md
+PASS | FILE ship-report.md content references AC/file | # Ship Report ⏎  ⏎ ## 目标 ⏎ 在 `projects/gtd-e2e-repo` 根目录创建 `hello.txt`，内容为 `GTD_E2E_OK`（不执行 commit/push）。 ⏎  ⏎ ## 验收标准 ⏎  ⏎ | AC | Status | 证据 | ⏎ |---|---|---| ⏎ | `he
+PASS [FILE ship-report.md content references AC/file] # Ship Report ⏎  ⏎ ## 目标 ⏎ 在 `projects/gtd-e2e-repo` 根目录创建 `hello.txt`，内容为 `GTD_E2E_OK`（不执行 commit/push）。 ⏎  ⏎ ## 验收标准 ⏎  ⏎ | AC | Status | 证据 | ⏎ |---|---|---| ⏎ | `he
+PASS | API artifacts endpoint reachable (200) | status=200 n=2
+PASS [API artifacts endpoint reachable (200)] status=200 n=2
+PASS | DB var_pool ship_status indicates local fallback | ship_status":
+PASS [DB var_pool ship_status indicates local fallback] ship_status":
+PASS | SHOT-4 fullchain completed board view | /Users/xzf/Projects/ai/XzhiF/open-octopus/.scratch/goal-task-dev/e2e-screenshots/04-fullchain-completed-board.png
+PASS [SHOT-4 fullchain completed board view] /Users/xzf/Projects/ai/XzhiF/open-octopus/.scratch/goal-task-dev/e2e-screenshots/04-fullchain-completed-board.png
+PASS | CLEANUP DB rows deleted (task/sched/exec/ws) | {"t":0,"s":0,"e":0}
+PASS [CLEANUP DB rows deleted (task/sched/exec/ws)] {"t":0,"s":0,"e":0}
+PASS | CLEANUP repo+workspace dirs+index.md restored | REPO=false IDX=false
+PASS [CLEANUP repo+workspace dirs+index.md restored] REPO=false IDX=false
+
+============================================================
+  T6 FULL-CHAIN REAL RUN — kanban→task-dev→ship (throwaway repo)
+============================================================
+Status | Step                                                              | Detail                                                      
+-------+-------------------------------------------------------------------+-------------------------------------------------------------
+PASS   | SETUP repo has exactly 1 seed commit                              |                                                             
+PASS   | SETUP repo has NO remote (safety precondition)                    |                                                             
+PASS   | SETUP repos index.md written                                      |                                                             
+PASS   | CHAIN draft created                                               | id=2ddd860c-47fc-4ae2-a33f-18075383c7dd                     
+PASS   | CHAIN PUT bind ok                                                 | status=200                                                  
+PASS   | CHAIN ready(200) — enqueued                                       | status=200                                                  
+PASS   | CHAIN schedule queued                                             | sched=fa8ad687-4ce5-4013-a275-f9bb63089d80                  
+PASS   | EXEC terminal reached                                             | task=failed after 171s exec=completed                       
+FAIL   | EXEC task completed + schedule done                               | task=failed sched=failed                                    
+PASS   | EXEC develop node completed (JSONL end=completed)                 | develop=completed                                           
+PASS   | EXEC ship node completed (JSONL end=completed)                    | ship=completed                                              
+PASS   | EXEC develop transcript contains the goal condition               | /Users/xzf/.octopus/orgs/default/workspaces/taskpool-fa8ad68
+PASS   | GIT new commit(s) beyond seed exist                               | total=2                                                     
+PASS   | GIT hello.txt committed with exact GTD_E2E_OK content             | branch=taskpool-fa8ad687-4ce5-4013-a275-f9bb63089d80-2026082
+PASS   | GIT commit message conventional-ish (feat/fix/chore)              | feat: add hello.txt with GTD_E2E_OK marker                  
+PASS   | SAFETY still no remote after run (never pushed)                   |                                                             
+PASS   | FILE hello.txt exists in execution worktree (trimmed==GTD_E2E_OK) | /Users/xzf/.octopus/orgs/default/workspaces/taskpool-fa8ad68
+PASS   | FILE ship-report.md exists in artifacts dir                       | /Users/xzf/.octopus/tasks/2ddd860c-47fc-4ae2-a33f-18075383c7
+PASS   | FILE ship-report.md content references AC/file                    | # Ship Report ⏎  ⏎ ## 目标 ⏎ 在 `projects/gtd-e2e-repo` 根目录创建 `
+PASS   | API artifacts endpoint reachable (200)                            | status=200 n=2                                              
+PASS   | DB var_pool ship_status indicates local fallback                  | ship_status":                                               
+PASS   | SHOT-4 fullchain completed board view                             | /Users/xzf/Projects/ai/XzhiF/open-octopus/.scratch/goal-task
+PASS   | CLEANUP DB rows deleted (task/sched/exec/ws)                      | {"t":0,"s":0,"e":0}                                         
+PASS   | CLEANUP repo+workspace dirs+index.md restored                     | REPO=false IDX=false                                        
+-------+-------------------------------------------------------------------+-------------------------------------------------------------
+Total: 24 | Passed: 23 | Failed: 1 | SOME FAILED ✗
+============================================================
