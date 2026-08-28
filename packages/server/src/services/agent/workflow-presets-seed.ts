@@ -15,7 +15,9 @@
 // meant existing installs NEVER refreshed (general-dev kept pointing at
 // matt-dev-pipeline, US1 died silently). The default now carries a
 // `# version: N` header; CloneInitService compares the existing file's
-// NORMALIZED content hash against PREV_DEFAULT_WORKFLOW_PRESETS_YAML:
+// NORMALIZED content hash against ALL historical embedded defaults
+// (PREV_DEFAULT_WORKFLOW_PRESETS_YAMLS — code-review c1: a single baseline
+// silently stranded installs seeded before mid-life literal changes):
 //   ≡ prev default (untouched seed)  → refresh to new default + log
 //   ≡ current default                → skip silently (already fresh)
 //   anything else (user hand-edit)   → preserve + warn once
@@ -31,13 +33,10 @@ import { createHash } from 'crypto'
  *  header line of DEFAULT_WORKFLOW_PRESETS_YAML (guarded by test). */
 export const PRESETS_VERSION = 2
 
-/** The previous embedded default (v1 — shipped by task-workflow-presets,
- *  general-dev bound to built-in/matt-dev-pipeline, no version header).
- *  KEPT VERBATIM as the migration baseline: an existing file whose normalized
- *  content hashes to this value is provably an untouched seed → safe to
- *  refresh. Do not edit; future migrations add a new constant + bump
- *  PRESETS_VERSION (compare against the then-PREV default). */
-export const PREV_DEFAULT_WORKFLOW_PRESETS_YAML = `# Default workflow presets — maps skill groups to recommended workflows + input templates.
+/** The most recent embedded default before v2 (v1b — task-workflow-presets
+ *  with the superpowers-task-dev preset appended by 709e8019). KEPT VERBATIM
+ *  as a migration baseline. Do not edit. */
+export const PREV_DEFAULT_V1B_WORKFLOW_PRESETS_YAML = `# Default workflow presets — maps skill groups to recommended workflows + input templates.
 # Each preset: name + skills_group[] (empty = general fallback) + workflow ref + inputs skeleton.
 # Inputs may contain \${goal} and \${ac} placeholders — resolved at materialization time.
 #
@@ -75,6 +74,49 @@ presets:
       goal: "\${goal}"
       ac: "\${ac}"
 `
+
+/** The ORIGINAL shipped default (v1a — task-workflow-presets at merge-base,
+ *  before the superpowers preset was appended). Installs seeded from this
+ *  literal are equally untouched seeds (code-review c1). Do not edit. */
+export const PREV_DEFAULT_V1A_WORKFLOW_PRESETS_YAML = `# Default workflow presets — maps skill groups to recommended workflows + input templates.
+# Each preset: name + skills_group[] (empty = general fallback) + workflow ref + inputs skeleton.
+# Inputs may contain \${goal} and \${ac} placeholders — resolved at materialization time.
+#
+# This file is the preset catalog for the task-author clone. It lives at:
+#   ~/.octopus/agent/built-in/task-author/workflow-presets.yaml
+# and is read by:
+#   - Server: GET /api/workflow-presets?skills_group=a,b
+#   - Agent: task-author SKILL.md HOW-handoff (recommendation basis)
+#
+# Shape: each preset = { name, skills_group[], workflow, inputs{} }
+# - skills_group: [] = general fallback (matches any query)
+# - workflow: ref format "group/name" for built-ins, bare filename for task-home
+# - inputs: key→value map; values may contain \${goal} / \${ac} placeholders
+
+presets:
+  # General fallback — matches all skill groups
+  - name: general-dev
+    skills_group: []
+    workflow: built-in/matt-dev-pipeline
+    inputs:
+      idea: "\${goal}"
+
+  # XZF development pipeline
+  - name: xzf-dev
+    skills_group: [octo-xzf-implementer]
+    workflow: built-in/xzf-dev
+    inputs:
+      idea: "\${goal}"
+`
+
+/** ALL historical embedded defaults — an existing file whose normalized hash
+ *  matches ANY of these is provably an untouched seed → refresh-safe.
+ *  Future migrations: move the then-current default into this list, bump
+ *  PRESETS_VERSION; never edit existing literals. */
+export const PREV_DEFAULT_WORKFLOW_PRESETS_YAMLS: string[] = [
+  PREV_DEFAULT_V1A_WORKFLOW_PRESETS_YAML,
+  PREV_DEFAULT_V1B_WORKFLOW_PRESETS_YAML,
+]
 
 /** Default preset catalog — maps skill groups to recommended workflows + input
  *  skeletons. `skills_group: []` = general fallback (matches any task). Inputs

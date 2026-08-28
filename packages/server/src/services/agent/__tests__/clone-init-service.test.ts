@@ -42,7 +42,8 @@ vi.mock('../paths', async () => {
 import { CloneInitService } from '../clone-init-service'
 import {
   DEFAULT_WORKFLOW_PRESETS_YAML,
-  PREV_DEFAULT_WORKFLOW_PRESETS_YAML,
+  PREV_DEFAULT_V1A_WORKFLOW_PRESETS_YAML,
+  PREV_DEFAULT_V1B_WORKFLOW_PRESETS_YAML,
   PRESETS_VERSION,
 } from '../workflow-presets-seed'
 
@@ -66,8 +67,8 @@ describe('CloneInitService — workflow-presets.yaml seed migration (AC3)', () =
     fs.rmSync(MOCK_HOME, { recursive: true, force: true })
   })
 
-  it('refreshes an untouched old default to the new default and logs', () => {
-    seedExistingFile(PREV_DEFAULT_WORKFLOW_PRESETS_YAML)
+  it('refreshes an untouched old default (v1b) to the new default and logs', () => {
+    seedExistingFile(PREV_DEFAULT_V1B_WORKFLOW_PRESETS_YAML)
 
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
     try {
@@ -85,7 +86,7 @@ describe('CloneInitService — workflow-presets.yaml seed migration (AC3)', () =
   })
 
   it('preserves a hand-edited catalog and warns exactly once per instance', () => {
-    const handEdited = PREV_DEFAULT_WORKFLOW_PRESETS_YAML + '\n# my customization\n'
+    const handEdited = PREV_DEFAULT_V1B_WORKFLOW_PRESETS_YAML + '\n# my customization\n'
     seedExistingFile(handEdited)
 
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
@@ -127,11 +128,31 @@ describe('CloneInitService — workflow-presets.yaml seed migration (AC3)', () =
     }
   })
 
+  it('refreshes an install seeded from the EARLIER v1a literal (pre-superpowers) — code-review c1', () => {
+    // v1a shipped before the superpowers preset was appended mid-life. A single
+    // PREV baseline would hash-miss it → false "user-modified" → never
+    // refreshed. Every historical default must be recognized.
+    seedExistingFile(PREV_DEFAULT_V1A_WORKFLOW_PRESETS_YAML)
+
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      const result = new CloneInitService().initBuiltInClones('test-org', fakeDAO)
+
+      expect(fs.readFileSync(presetsPath(), 'utf-8')).toBe(DEFAULT_WORKFLOW_PRESETS_YAML)
+      expect(result.filesRefreshed).toContain(PRESETS_RESULT_KEY)
+      expect(warnSpy).not.toHaveBeenCalled()
+    } finally {
+      logSpy.mockRestore()
+      warnSpy.mockRestore()
+    }
+  })
+
   it('refreshes even when the editor appended a trailing blank line to the old default', () => {
     // Normalization (trimEnd + version-header strip) must not let whitespace
     // drift flip an unmodified seed into "user-modified" — otherwise every
     // editor-touching user silently opts out of future seed migrations.
-    seedExistingFile(PREV_DEFAULT_WORKFLOW_PRESETS_YAML + '\n\n')
+    seedExistingFile(PREV_DEFAULT_V1B_WORKFLOW_PRESETS_YAML + '\n\n')
 
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
     try {
