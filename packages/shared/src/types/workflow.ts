@@ -175,20 +175,6 @@ export const WorkflowHooksSchema = z.object({
   on_budget_exceeded: z.array(HookSchema).optional(),
 })
 
-export interface PlanningDef {
-  max_turns?: number
-  verify?: boolean
-  tools?: string[]
-  disallowed_tools?: string[]
-}
-
-export const PlanningSchema = z.object({
-  max_turns: z.number().int().positive().optional(),
-  verify: z.boolean().optional(),
-  tools: z.array(z.string()).optional(),
-  disallowed_tools: z.array(z.string()).optional(),
-})
-
 export interface InteractionAgentDef {
   skills?: string[]
   prompt?: string
@@ -236,7 +222,16 @@ export interface NodeDef {
   // Agent goal mode (Upgrade 1)
   goal?: string
   constraints?: string[]
-  planning?: PlanningDef
+  // NOTE: `planning:` was deprecated (goal-task-dev K4) — parseWorkflow raises a
+  // migration ValueError via a pre-Zod recursive scan; do NOT reintroduce it here.
+
+  // Node-level execution constraints (claude engine only; other engines ignore at
+  // runtime and validateWorkflow emits a warning). Number-or-string fields support
+  // "$inputs.x" interpolation — resolved by the engine executor.
+  tools?: string[]
+  max_turns?: number | string
+  max_budget_usd?: number | string
+  disallowed_tools?: string[]
 
   // effort — LLM reasoning depth control
   effort?: EffortLevel
@@ -359,7 +354,10 @@ export const NodeSchema: z.ZodType<NodeDef> = z.lazy(() =>
 
     goal: z.string().optional(),
     constraints: z.array(z.string()).optional(),
-    planning: PlanningSchema.optional(),
+    tools: z.array(z.string()).optional(),
+    max_turns: z.union([z.number(), z.string()]).optional(),
+    max_budget_usd: z.union([z.number(), z.string()]).optional(),
+    disallowed_tools: z.array(z.string()).optional(),
 
     effort: EffortLevelSchema.optional(),
 
