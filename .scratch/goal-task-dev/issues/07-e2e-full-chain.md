@@ -7,7 +7,10 @@
 03, 04, 05, 06
 
 ## Status
-ready-for-agent
+skip
+
+## Skip reason
+用户决策(2026-08-29):ticket 级全链 E2E 不跑;其全部断言(重启后两端点 curl、PUT/confirm→物化 DB 断言、看板最小任务真跑、weekly 绊网脚本)并入 Phase 4 matt-e2e-tester 复核(用户已批准启 server 验证)。05 号工单 Verification 段的三条 handoff 随之移交 Phase 4 prompt。
 
 ## Acceptance Criteria
 - [ ] AC1: 全链路:POST task(goal=最小可判任务, ac 一条)→ PUT workflow_ref+input_values → confirm → schedule 执行 → 断言节点 completed、产物文件内容正确、DB 状态流转、JSONL 含 active_goal 证据链

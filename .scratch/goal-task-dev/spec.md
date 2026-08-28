@@ -216,6 +216,12 @@ R1 真 claude CLI(非 mock)跑 AC2/AC3;R2 断文件内容/subtype;R3 API↔DB↔
 [UI] 作者保留 `planning:{max_turns:5,verify:true}` → parse 报错指路新字段
 [Exec] 改写后通过;engine: octopus_agent + max_turns → validate 警告,运行忽略
 
+## Execution Decisions
+- Story walk-through:已执行(15 断点全修入 spec)
+- Ticket 07 工程级全链 E2E:**skip(用户决策)**——断言并入 Phase 4
+- Phase 4 matt-e2e-tester:**执行(用户批准,含启 server + 真实执行)**
+- Ticket 执行模式:matt-dev-pipeline DAG 并发
+
 ## Issues(DAG)
 | Stage | Tickets |
 |---|---|
