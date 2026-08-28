@@ -1,5 +1,5 @@
 import { query, type Options, type AgentDefinition, type CanUseTool } from '@anthropic-ai/claude-agent-sdk'
-import type { IAgentProvider, SendQueryOptions, MessageChunk, TokenUsage, ModelUsageEntry, OctopusAgentDef } from '../types'
+import type { IAgentProvider, SendQueryOptions, MessageChunk, TokenUsage, ModelUsageEntry, OctopusAgentDef, GoalTerminalReason } from '../types'
 import { LLMCallTracker } from '../llm-call-tracker'
 import { getPluginSdkConfigs, loadModelAliasConfig, resolveModelAlias } from '@octopus/shared'
 import fs from 'fs'
@@ -179,7 +179,44 @@ function toClaudeAgentDef(def: OctopusAgentDef): AgentDefinition {
     tools: def.tools,
     model: def.model,
     effort: def.effort,
+    // SDK AgentDefinition (sdk.d.ts:38-101) accepts these — they used to be
+    // silently dropped here, so agent frontmatter (maxTurns/background/skills)
+    // never reached the SDK.
+    skills: def.skills,
+    maxTurns: def.maxTurns,
+    background: def.background,
   } as AgentDefinition
+}
+
+/** Terminal-reason vocabulary per spec: derive from result subtype, NOT the
+ *  SDK's raw terminal_reason (which spells the budget case 'budget_exhausted'). */
+function goalTerminalReason(subtype: string): GoalTerminalReason | undefined {
+  if (subtype === 'error_max_turns') return 'max_turns'
+  if (subtype === 'error_max_budget_usd') return 'max_budget_usd'
+  return undefined
+}
+
+/** Non-terminal-fidelity rule (walkthrough E): a non-success result must NOT
+ *  flatten away the evidence the engine needs — num_turns / total_cost_usd /
+ *  session_id / terminal-reason all survive into the error chunk. */
+interface SDKResultErrorLike {
+  subtype: string
+  num_turns?: number
+  total_cost_usd?: number
+  session_id?: string
+  errors?: string[]
+}
+
+function buildResultErrorChunk(rm: SDKResultErrorLike): MessageChunk {
+  return {
+    type: 'error',
+    code: rm.subtype,
+    message: rm.errors?.join('; ') ?? 'unknown error',
+    numTurns: rm.num_turns,
+    costUsd: rm.total_cost_usd,
+    sessionId: rm.session_id,
+    terminalReason: goalTerminalReason(rm.subtype),
+  }
 }
 
 export class ClaudeSDKProvider implements IAgentProvider {
@@ -284,6 +321,8 @@ export class ClaudeSDKProvider implements IAgentProvider {
       plugins: resolvePlugins(options),
       tools: options?.tools,
       disallowedTools: options?.disallowedTools,
+      maxTurns: options?.maxTurns,
+      maxBudgetUsd: options?.maxBudgetUsd,
       ...(typeof options?.effort === 'string' ? { effort: options.effort as Options['effort'] } : {}),
       canUseTool,
       ...(options?.abortSignal ? { abortController: new AbortController() } : {}),
@@ -495,8 +534,28 @@ export class ClaudeSDKProvider implements IAgentProvider {
         }
       }
 
+      else if ((event as { type: string }).type === 'active_goal') {
+        // SDKActiveGoalMessage is emitted by query() at runtime (sdk.mjs
+        // readMessages: `e.type==="active_goal"` → enqueued) and is a member
+        // of the internal StdoutMessage union (sdk.d.ts:7764), but NOT of the
+        // public SDKMessage TS union — hence the cast. `value` is null when
+        // the goal is cleared (evaluator reported met): pass condition: null.
+        const ag = event as unknown as { value: { condition: string; iterations: number; set_at: number; tokens_at_start: number; last_reason?: string } | null }
+        if (ag.value === null) {
+          yield { type: 'active_goal', condition: null, iterations: 0 }
+        } else {
+          yield {
+            type: 'active_goal',
+            condition: ag.value.condition,
+            iterations: ag.value.iterations,
+            last_reason: ag.value.last_reason,
+            set_at: ag.value.set_at,
+          }
+        }
+      }
+
       else if (event.type === 'result') {
-        const rm = event as { subtype: string; session_id?: string; result?: string; usage?: { input_tokens?: number; output_tokens?: number; cache_read_input_tokens?: number; cache_creation_input_tokens?: number }; total_cost_usd?: number; errors?: string[]; modelUsage?: Record<string, { inputTokens?: number; outputTokens?: number; cacheReadInputTokens?: number; cacheCreationInputTokens?: number; costUSD?: number }> }
+        const rm = event as { subtype: string; session_id?: string; result?: string; num_turns?: number; usage?: { input_tokens?: number; output_tokens?: number; cache_read_input_tokens?: number; cache_creation_input_tokens?: number }; total_cost_usd?: number; errors?: string[]; modelUsage?: Record<string, { inputTokens?: number; outputTokens?: number; cacheReadInputTokens?: number; cacheCreationInputTokens?: number; costUSD?: number }> }
         // result.modelUsage is the ONLY authoritative source of per-model token totals
         if (rm.modelUsage && Object.keys(rm.modelUsage).length > 0) {
           // Calibrate tracker's completed calls with authoritative token data
@@ -522,11 +581,7 @@ export class ClaudeSDKProvider implements IAgentProvider {
               modelUsages,
             }
           } else {
-            yield {
-              type: 'error',
-              code: rm.subtype,
-              message: rm.errors?.join('; ') ?? 'unknown error',
-            }
+            yield buildResultErrorChunk(rm)
           }
         } else {
           // Fallback: no modelUsage — use legacy single-model usage from result
@@ -561,11 +616,7 @@ export class ClaudeSDKProvider implements IAgentProvider {
               modelUsages: fallbackModelUsages,
             }
           } else {
-            yield {
-              type: 'error',
-              code: rm.subtype,
-              message: rm.errors?.join('; ') ?? 'unknown error',
-            }
+            yield buildResultErrorChunk(rm)
           }
         }
       }

@@ -34,7 +34,8 @@ workflowCmd
 
     const content = readFileSync(absPath, "utf-8")
     const wf = parseWorkflow(content)
-    validateWorkflow(wf)
+    const { warnings } = validateWorkflow(wf)
+    for (const w of warnings) console.warn(`Warning: ${w}`)
 
     if (options.model) wf.model = options.model
     if (options.engine) wf.engine = options.engine
@@ -166,10 +167,11 @@ workflowCmd
     const content = readFileSync(absPath, "utf-8")
     try {
       const wf = parseWorkflow(content)
-      validateWorkflow(wf)
+      const { warnings } = validateWorkflow(wf)
       console.log("✓ Workflow YAML is valid")
       console.log(`  Name: ${wf.name}`)
       console.log(`  Nodes: ${wf.nodes.length}`)
+      for (const w of warnings) console.warn(`⚠ ${w}`)
     } catch (error: any) {
       console.error(`✗ Validation failed: ${error.message}`)
       process.exit(1)

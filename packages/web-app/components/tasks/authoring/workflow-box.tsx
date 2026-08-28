@@ -166,6 +166,10 @@ function WorkflowBindingDialog({ task, open, onOpenChange, onMutated }: Workflow
 
   const handleSelectWorkflow = useCallback((ref: string) => {
     setSelectedRef(ref)
+    // goal-task-dev T06 (N): manual pick from 全部内置 must clear previously
+    // filled values — otherwise preset/workflow values leak across selection.
+    // Preset clicks (handleSelectPreset) keep their skeleton prefill.
+    setFormInputs({})
     setDetailLoading(true)
     getBuiltInWorkflowDetail(ref)
       .then(setSelectedDetail)
@@ -340,7 +344,12 @@ function WorkflowBindingDialog({ task, open, onOpenChange, onMutated }: Workflow
                           <Input
                             className="h-6 text-xs"
                             placeholder={def.description || (def.required ? "必填" : "可选")}
-                            value={formInputs[name] ?? ""}
+                            // goal-task-dev T06 (F): show the workflow's declared
+                            // default for untouched fields (e.g. max_turns=200).
+                            // Unedited defaults are NOT written into formInputs, so
+                            // they are not persisted on save — the YAML default wins.
+                            // A user-cleared field stays cleared ("" is not nullish).
+                            value={formInputs[name] ?? def.default ?? ""}
                             onChange={(e) =>
                               setFormInputs((prev) => ({ ...prev, [name]: e.target.value }))
                             }
