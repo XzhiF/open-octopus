@@ -1,6 +1,6 @@
 ---
 name: matt-verified-requirement
-description: Verification-driven requirement clarification. Multi-turn dialogue using grilling or wayfinder paths. Clarifies requirements, defines verification strategies and acceptance criteria. Outputs a verified spec.md and DAG-structured issues/ for pipeline execution. Spawns story-walkthrough sub-agent for design validation. Uses domain-modeling to maintain project glossary and ADRs. Use when proposing new features, refactors, or discussing verification approaches.
+description: Verification-driven requirement clarification. Multi-turn dialogue using grilling or wayfinder paths. Clarifies requirements, defines verification strategies and acceptance criteria. Outputs a verified spec.md and DAG-structured issues/ (always including an E2E ticket) for pipeline execution. At exit asks the user ONCE about execution options — story walk-through, E2E verification, ticket execution mode — and records them in spec.md as Execution Decisions. Uses domain-modeling to maintain project glossary and ADRs. Use when proposing new features, refactors, or discussing verification approaches.
 dependencies: domain-modeling, grilling, wayfinder, research
 ---
 
@@ -181,7 +181,7 @@ The **frontier** = open + unblocked + unclaimed tickets. Select by number (lowes
 
 #### Wayfinder Exit
 
-All decision tickets resolved + map clear (no ungraduated fog) → write the **spec.md** (see Artifact Output below), spawn story-walkthrough sub-agent, present findings to user for confirmation, fix spec with user-confirmed findings, then write **issues/** (DAG tickets).
+All decision tickets resolved + map clear (no ungraduated fog) → write the **spec.md** (see Artifact Output below) → run the **Execution Decisions gate** (ONE batched ask: story walk-through / E2E / ticket execution mode, see below) → if walkthrough opted in: spawn story-walkthrough sub-agent, present findings to user for confirmation, fix spec with user-confirmed findings → write **issues/** (DAG tickets, always including the E2E ticket).
 
 ## Verification Strategy Questions (both paths MUST cover)
 
@@ -244,7 +244,8 @@ What needs to be ready before verification?
 - User says "confirmed" or "hand to agent"
 - All verification dimensions explored
 - **spec.md written** (see Artifact Output)
-- **Story Walk-Through sub-agent completed**, findings presented to user, and user-confirmed fixes incorporated
+- **Execution Decisions gate asked** (ONE batched ask) and answers recorded in spec.md `## Execution Decisions`
+- **Story Walk-Through**: opted in → sub-agent completed, findings presented, user-confirmed fixes incorporated; opted out → skip recorded
 - **issues/ written** with DAG tickets
 - Max 15 rounds
 
@@ -253,13 +254,31 @@ What needs to be ready before verification?
 - Map clear — no ungraduated fog in "Not yet specified"
 - All verification dimensions explored (both paths must cover these)
 - **spec.md written** (see Artifact Output)
-- **Story Walk-Through sub-agent completed**, findings presented to user, and user-confirmed fixes incorporated
+- **Execution Decisions gate asked** (ONE batched ask) and answers recorded in spec.md `## Execution Decisions`
+- **Story Walk-Through**: opted in → sub-agent completed, findings presented, user-confirmed fixes incorporated; opted out → skip recorded
 - **issues/ written** with DAG tickets
 - Max 20 decision tickets (if more, consider splitting into multiple wayfinder efforts)
 
-## Story Walk-Through Analysis (MANDATORY, sub-agent)
+## Execution Decisions Gate (MANDATORY — ONE batched ask)
 
-After the draft spec.md is written (see Artifact Output below), spawn a **Story Walk-Through sub-agent** to validate the design forms a complete closed-loop system.
+Once requirement clarification is complete (all decision branches resolved + verification strategy explored) and the draft spec.md is written, ask the user **all execution questions in ONE message** — never drip-feed them one by one:
+
+| # | Question | Options | Recommendation basis |
+|---|----------|---------|---------------------|
+| 1 | **Story Walk-Through** — run the independent design-validation sub-agent? | run / skip | run: user-facing features, cross-module data flows, complex state machines · skip: small internal refactors, CLI-only, single-module tweaks |
+| 2 | **E2E verification** — run E2E in the downstream pipeline (Phase 4)? | run / skip | run: spec has browser/API E2E ACs · skip: pure internal refactor, docs-only, or user will verify manually. **The E2E ticket is always generated regardless of this answer** |
+| 3 | **Ticket execution mode** — how will pipeline Phase 1 implement tickets? | sub-agent concurrent (default) / current agent quick | sub-agent: multi-ticket / cross-package DAGs · quick: 1-2 small tickets where sub-agent spawn overhead outweighs isolation |
+
+Rules:
+- **Wait for the user's explicit answers** — never proceed with silent defaults.
+- Record all three answers in spec.md `## Execution Decisions` (see Spec Template).
+- Downstream `matt-dev-pipeline` reads this block; it only re-asks a decision if it is missing from spec.md.
+
+## Story Walk-Through Analysis (OPTIONAL — per Execution Decisions, sub-agent)
+
+This section runs **only if the user opted in at the Execution Decisions gate above** — the ask happens there, batched with the E2E and execution-mode questions. If the user opted out, skip this entire section (the decision is already recorded in spec.md `## Execution Decisions`) and proceed to issues/.
+
+**What it does**: an independent sub-agent traces each core user story end-to-end through the design to validate it forms a complete closed-loop system.
 
 **Why sub-agent**: 裁判 ≠ 球员 — the spec author cannot reliably find gaps in their own spec. An independent reader catches what the writer missed.
 
@@ -320,7 +339,7 @@ On exit, create `<artifacts.dir>/<feature-slug>/` and write all artifacts.
 <artifacts.dir>/<feature-slug>/
 ├── brief.md              ← Lightweight core info summary (for human review)
 ├── spec.md               ← Full verified spec (single source of truth for agents)
-├── story-walkthrough.md  ← Human-readable walkthrough report (review only, not consumed by pipeline)
+├── story-walkthrough.md  ← Walkthrough report (only when user opted in; review only, not consumed by pipeline)
 └── issues/               ← DAG tickets with blocked-by + verification
     ├── 01-<slug>.md
     ├── 02-<slug>.md
@@ -332,7 +351,7 @@ On exit, create `<artifacts.dir>/<feature-slug>/` and write all artifacts.
 ```
 <artifacts.dir>/<feature-slug>/
 ├── brief.md              ← Lightweight core info summary (for human review)
-├── spec.md               ← Full verified spec (written AFTER story walkthrough)
+├── spec.md               ← Full verified spec (written AFTER story walkthrough, when user opted in)
 ├── issues/               ← DAG tickets with blocked-by + verification
 ├── map.md                ← Decision map (wayfinder core artifact)
 ├── decisions/            ← Decision tickets (resolved during wayfinder stage)
@@ -380,11 +399,12 @@ The following artifacts are created **later** by downstream agents — this skil
 1. Create directory `<artifacts.dir>/<feature-slug>/`
 2. Write `<artifacts.dir>/<feature-slug>/brief.md` (lightweight core info)
 3. Write `<artifacts.dir>/<feature-slug>/spec.md` (using `matt-verified-spec` skill as methodology reference)
-4. Spawn story-walkthrough sub-agent → read findings → present to user for confirmation → fix spec.md
-5. Write `<artifacts.dir>/<feature-slug>/issues/` (using `matt-verified-tickets` skill as methodology reference)
-6. For wayfinder path, `map.md` and `decisions/` were already created during the wayfinder process
-7. **Update `<artifacts.dir>/index.md`** (append new record, auto-increment number)
-8. Tell the user the output paths and how to proceed (see Next Steps)
+4. Run the **Execution Decisions gate** — ONE batched ask (story walk-through / E2E / ticket execution mode) → record answers in spec.md `## Execution Decisions`
+5. If walkthrough opted in: spawn story-walkthrough sub-agent → read findings → present to user for confirmation → fix spec.md; if opted out: proceed (decision already recorded)
+6. Write `<artifacts.dir>/<feature-slug>/issues/` (using `matt-verified-tickets` skill as methodology reference) — **always append the final E2E ticket** (see Issues Writing rule 8)
+7. For wayfinder path, `map.md` and `decisions/` were already created during the wayfinder process
+8. **Update `<artifacts.dir>/index.md`** (append new record, auto-increment number)
+9. Tell the user the output paths and how to proceed (see Next Steps)
 
 ### Index File Maintenance
 
@@ -406,6 +426,7 @@ The following artifacts are created **later** by downstream agents — this skil
 
 ## Summary
 - [N] key decisions → [spec.md § Key Decisions](./spec.md)
+- [N] execution decisions (walkthrough / E2E / mode) → [spec.md § Execution Decisions](./spec.md)
 - [N] acceptance criteria → [spec.md § Acceptance Criteria](./spec.md)
 - [N] core stories verified → [spec.md § Appendix](./spec.md)
 
@@ -440,6 +461,14 @@ The solution, described from the user's perspective.
 ## Key Decisions
 | # | Decision | Conclusion | Reason |
 |---|---------|-----------|--------|
+
+## Execution Decisions
+<!-- Filled at the ONE batched exit gate; consumed by matt-dev-pipeline (it re-asks only if a row is missing) -->
+| # | Decision | Choice | Reason |
+|---|----------|--------|--------|
+| 1 | Story Walk-Through | run / skipped (user decision) | |
+| 2 | E2E Verification (pipeline Phase 4) | run / skip (user decision) | |
+| 3 | Ticket Execution Mode | sub-agent-concurrent / main-agent-quick | |
 
 ## Decision Map Summary (wayfinder path only)
 | # | Ticket | Type | Decision |
@@ -536,7 +565,7 @@ Map: [map.md](./map.md)
 
 ## Issues Writing (DAG Tickets)
 
-After spec.md is finalized (including story walk-through fixes), write implementation tickets to `<artifacts.dir>/<feature-slug>/issues/`.
+After spec.md is finalized (including story walk-through fixes, when the user opted in), write implementation tickets to `<artifacts.dir>/<feature-slug>/issues/`.
 
 See `matt-verified-tickets` skill (enhancement of `to-tickets`) for verification method additions and DAG rules.
 
@@ -586,6 +615,7 @@ ready-for-agent
 5. Executable verification — specific commands, specific SQL, specific assertions
 6. One session size — each ticket fits in one agent call
 7. DAG structure — tickets without mutual blockers can run concurrently in the same stage
+8. **E2E ticket always generated** — regardless of the user's E2E run/skip choice, `issues/` MUST end with exactly one `NN-e2e-verification.md` ticket: blocked by all functional tickets, Verification type = browser E2E / API integration test (per spec's Verification Strategy), ACs drawn from the spec's E2E-level ACs. The pipeline's Phase 4 consumes it when E2E runs; when the user skips E2E, the pipeline marks it `skip (user decision)`.
 
 ## Relationship to Original Skills
 
