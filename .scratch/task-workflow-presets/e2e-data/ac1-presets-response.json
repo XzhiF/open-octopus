@@ -1,0 +1,22 @@
+{
+  "presets": [
+    {
+      "name": "general-dev",
+      "skills_group": [],
+      "workflow": "built-in/matt-dev-pipeline",
+      "inputs": {
+        "idea": "${goal}"
+      }
+    },
+    {
+      "name": "xzf-dev",
+      "skills_group": [
+        "octo-xzf-implementer"
+      ],
+      "workflow": "built-in/xzf-dev",
+      "inputs": {
+        "idea": "${goal}"
+      }
+    }
+  ]
+}

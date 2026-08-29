@@ -96,17 +96,15 @@ describe("TemplatePicker — skill-group list (AC1)", () => {
   })
 })
 
-// ── AC1: create button enabled only after a group is selected ────────
+// ── AC1: create button (v2 design: skill groups are OPTIONAL — the built-in
+// default group is always available, so 开始编写 is never gated) ─────────
 
 describe("TemplatePicker — create button (AC1)", () => {
-  it("开始编写 is disabled until a skill group is selected", async () => {
+  it("开始编写 is enabled without an explicit group (D17: built-in default always available)", async () => {
     render(<TemplatePicker onCreate={() => {}} />)
     await waitFor(() => expect(screen.getByText("open-spec")).toBeDefined())
 
     const btn = screen.getByRole("button", { name: /开始编写/ }) as HTMLButtonElement
-    expect(btn.disabled).toBe(true)
-
-    fireEvent.click(screen.getByLabelText("default"))
     expect(btn.disabled).toBe(false)
   })
 })

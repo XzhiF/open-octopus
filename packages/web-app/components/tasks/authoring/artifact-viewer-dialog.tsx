@@ -77,10 +77,16 @@ export function ArtifactViewerDialog({ taskId, entry, onOpenChange }: ArtifactVi
     return () => { cancelled = true }
   }, [taskId, entry])
 
+  // Line/char stats for the footer (only when content is actually loaded).
+  const stats =
+    state.kind === "loaded"
+      ? { lines: state.content.split("\n").length, chars: state.content.length }
+      : null
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
-        className="sm:max-w-[720px] max-h-[85vh] p-0 gap-0 flex flex-col"
+        className="sm:max-w-[720px] h-[85vh] max-h-[85vh] p-0 gap-0 flex flex-col"
         showCloseButton
         data-artifact-viewer-dialog
       >
@@ -132,8 +138,13 @@ export function ArtifactViewerDialog({ taskId, entry, onOpenChange }: ArtifactVi
           )}
         </ScrollArea>
 
-        <div className="px-4 py-2 border-t text-[10px] text-muted-foreground shrink-0">
-          有意见？关闭后在左侧对话里直接说，agent 会修改并更新此产物
+        <div className="px-4 py-2 border-t text-[10px] text-muted-foreground shrink-0 flex items-center justify-between gap-2">
+          <span>有意见？关闭后在左侧对话里直接说，agent 会修改并更新此产物</span>
+          {stats && (
+            <span className="font-mono shrink-0 tabular-nums" data-artifact-stats>
+              {stats.lines} 行 · {stats.chars} 字
+            </span>
+          )}
         </div>
       </DialogContent>
     </Dialog>

@@ -290,7 +290,7 @@ test.describe("template: two-phase create (AC1/AC2/AC3)", () => {
     // AC3/US14: the preset popup has ONLY org + projects (no skills section).
     await workspace.locator("[data-preset-button]").click()
     // The preset popup's DialogTitle (an h2) appears — confirms the popup opened.
-    await expect(page.getByRole("heading", { name: /编写语境/ })).toBeVisible({ timeout: 10_000 })
+    await expect(page.getByRole("heading", { name: /codebase/ })).toBeVisible({ timeout: 10_000 })
     // The preset dialog body shows the org context (US14: org + projects only).
     await expect(page.getByText(/组织|项目/).last()).toBeVisible({ timeout: 10_000 })
     // US14: no "技能" label anywhere in the preset popup (skills belong to

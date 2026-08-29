@@ -46,6 +46,8 @@ import { getServerUrl } from "@/lib/server-config"
 import { listResources } from "@/lib/resource/api"
 import { ProjectSelector, type SelectedProject } from "@/components/scheduler/project-selector"
 import { useOrgs } from "@/hooks/useOrgs"
+// task-workflow-presets (T6): shared WorkflowBox for v2 SpecPanel
+import { WorkflowBox as WorkflowBoxShared } from "./authoring/workflow-box"
 
 // The 4 provisionable TaskResourceType values (excludes workflow + clone —
 // workflow is referenced via workflow_ref, clone is manual-install only).
@@ -279,6 +281,9 @@ export function SpecPanel({ task, onMutated }: SpecPanelProps) {
 
       {/* task-workflow-handoff (ADR-0013): workflow_ref display + view. */}
       <WorkflowRefDisplay taskId={task?.id ?? null} workflowRef={workflowRef} />
+
+      {/* task-workflow-presets (T6): WorkflowBox for binding dialog in v2 */}
+      {task && <WorkflowBoxShared task={task} onMutated={onMutated} />}
 
       <section className="space-y-2">
         <Label htmlFor="task-goal" className="text-xs text-muted-foreground">目标 (goal)</Label>

@@ -1,0 +1,6 @@
+{
+  "error": "Task not ready: missing input:idea",
+  "missing": [
+    "input:idea"
+  ]
+}

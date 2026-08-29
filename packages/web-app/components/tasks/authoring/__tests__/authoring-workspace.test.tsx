@@ -143,7 +143,7 @@ describe("AuthoringWorkspace — top bar (AC3)", () => {
     render(<AuthoringWorkspace task={task} onMutated={() => {}} onClose={() => {}} />)
     await waitFor(() => expect(screen.getByText("open-spec")).toBeDefined())
 
-    fireEvent.click(screen.getByRole("button", { name: /编写语境|预设/ }))
+    fireEvent.click(screen.getByRole("button", { name: /codebase|预设/ }))
 
     // Preset dialog has org + project selector, but NO skills section.
     await waitFor(() => {
@@ -168,6 +168,33 @@ describe("AuthoringWorkspace — command bar (AC7)", () => {
     // The aggregated slash-commands are handed to the chat's /-autocomplete.
     expect(screen.getByTestId("slash-cmd-open-spec")).toBeDefined()
     expect(screen.getByTestId("slash-cmd-spec-review")).toBeDefined()
+  })
+
+  it("scopes the /-autocomplete to the task's locked groups (no cross-group /superpowers)", async () => {
+    // Regression (2026-08-26): the autocomplete previously aggregated EVERY
+    // installed skill from /api/skill-groups — a task locking only open-spec
+    // still advertised unselected groups' commands (e.g. superpowers' /brainstorming).
+    mockListSkillGroups.mockResolvedValue({
+      groups: [
+        ...GROUPS,
+        { group: "superpowers-zh", displayName: "superpowers-zh", skills: [{ name: "brainstorming" }] },
+      ],
+    })
+    // Lock ONLY open-spec (drop "default" too, to prove the set is the gate).
+    const task = makeTask({
+      id: "t1",
+      task_spec: {
+        goal: "g", ac: ["ac 1", "ac 2"], skill_groups: ["open-spec"],
+        task_type: "coding", goal_confirmed: false, ac_confirmed: [],
+        decisions: [], resources: [], authoring_resources: [],
+      } as Task["task_spec"],
+    })
+    render(<AuthoringWorkspace task={task} onMutated={() => {}} onClose={() => {}} />)
+    await waitFor(() => expect(screen.getByText("输入 / 调用技能（2 个可用）")).toBeDefined())
+    // Locked group's commands are present; the unselected group's is not.
+    expect(screen.getByTestId("slash-cmd-open-spec")).toBeDefined()
+    expect(screen.getByTestId("slash-cmd-spec-review")).toBeDefined()
+    expect(screen.queryByTestId("slash-cmd-brainstorming")).toBeNull()
   })
 
   it("shows the empty-commands hint when no locked group contributes commands", async () => {

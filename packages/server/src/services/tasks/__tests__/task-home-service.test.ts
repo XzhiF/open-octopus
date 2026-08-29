@@ -289,6 +289,11 @@ describe("TaskHomeService", () => {
 
     it("writeArtifactEntry round-trips 3 distinct entries", () => {
       svc.createHome("t-11")
+      // scan-first: the FILES must exist on disk (filesystem is the truth).
+      const dir = path.join(base, "tasks", "t-11", "artifacts")
+      fs.writeFileSync(path.join(dir, "spec.md"), "# spec", "utf-8")
+      fs.writeFileSync(path.join(dir, "proposal.md"), "# proposal", "utf-8")
+      fs.writeFileSync(path.join(dir, "stories.md"), "# stories", "utf-8")
       svc.writeArtifactEntry("t-11", entry({ path: "spec.md" }))
       svc.writeArtifactEntry("t-11", entry({ path: "proposal.md", title: "Proposal" }))
       svc.writeArtifactEntry("t-11", entry({ path: "stories.md", title: "Stories" }))
@@ -305,6 +310,8 @@ describe("TaskHomeService", () => {
 
     it("writeArtifactEntry upserts by path (dedupe, latest wins)", () => {
       svc.createHome("t-12")
+      const dir = path.join(base, "tasks", "t-12", "artifacts")
+      fs.writeFileSync(path.join(dir, "spec.md"), "# spec", "utf-8")
       svc.writeArtifactEntry("t-12", entry({ path: "spec.md", title: "Old" }))
       svc.writeArtifactEntry("t-12", entry({ path: "spec.md", title: "New" }))
       const read = svc.readArtifacts("t-12")
@@ -324,6 +331,12 @@ describe("TaskHomeService", () => {
     it("writeArtifactEntry works even if home was not pre-created (defensive mkdir)", () => {
       // No createHome call — writeArtifactEntry must still persist.
       svc.writeArtifactEntry("t-14", entry({ path: "spec.md" }))
+      // scan-first: drop a real file so the entry survives the listing.
+      fs.writeFileSync(
+        path.join(base, "tasks", "t-14", "artifacts", "spec.md"),
+        "# spec",
+        "utf-8",
+      )
       expect(svc.readArtifacts("t-14")).toHaveLength(1)
     })
 
@@ -343,6 +356,73 @@ describe("TaskHomeService", () => {
       fs.writeFileSync(file, '{"oops":true}', "utf-8")
       expect(svc.readArtifacts("t-16")).toEqual([])
       expect(warnSpy).toHaveBeenCalled()
+    })
+
+    it("readArtifacts flattens a grouped-object index written by an LLM session (bugfix 2026-08-26)", () => {
+      svc.createHome("t-17")
+      const dir = path.join(base, "tasks", "t-17", "artifacts")
+      fs.writeFileSync(path.join(dir, "glossary.md"), "# g", "utf-8")
+      fs.writeFileSync(path.join(dir, "spec-details.md"), "# s", "utf-8")
+      fs.writeFileSync(path.join(dir, "artifacts.json"), JSON.stringify({
+        task_id: "t-17",
+        "grill-aftermath": [
+          { path: "glossary.md", kind: "glossary", desc: "词条" },
+          { path: "spec-details.md", kind: "spec", desc: "细节" },
+        ],
+        external: [{ path: path.join(base, "external", "proposal.md"), by: "agent" }],
+      }), "utf-8")
+
+      const read = svc.readArtifacts("t-17")
+      expect(read).toHaveLength(3)
+
+      const glossary = read.find((e) => e.path === "glossary.md")!
+      expect(glossary.title).toBe("词条") // desc → title fallback
+      expect(glossary.by).toBe("task-author") // missing by → default
+      expect(glossary.external).toBe(false) // relative artifact
+      expect(glossary.updated_at.length).toBeGreaterThan(0) // mtime fallback
+
+      const ext = read.find((e) => e.external)!
+      expect(ext.path).toBe(path.join(base, "external", "proposal.md"))
+      expect(ext.by).toBe("agent") // explicit by preserved
+      expect(warnSpy).not.toHaveBeenCalled()
+    })
+
+    it("readArtifacts drops a loose entry with no path from a grouped index", () => {
+      svc.createHome("t-18")
+      const dir = path.join(base, "tasks", "t-18", "artifacts")
+      fs.writeFileSync(path.join(dir, "artifacts.json"), JSON.stringify({
+        "grill-aftermath": [{ desc: "no path here" }],
+      }), "utf-8")
+      expect(svc.readArtifacts("t-18")).toEqual([])
+      expect(warnSpy).toHaveBeenCalled()
+    })
+
+    it("scan-first: an unregistered file still appears (filesystem is the truth)", () => {
+      svc.createHome("t-19")
+      const dir = path.join(base, "tasks", "t-19", "artifacts")
+      fs.writeFileSync(path.join(dir, "agent-notes.md"), "# notes", "utf-8")
+      fs.mkdirSync(path.join(dir, "adr"), { recursive: true })
+      fs.writeFileSync(path.join(dir, "adr", "0001-x.md"), "# adr", "utf-8")
+      // No artifacts.json at all — the listing is purely the filesystem.
+      const read = svc.readArtifacts("t-19")
+      expect(read).toHaveLength(2)
+      const notes = read.find((e) => e.path === "agent-notes.md")!
+      expect(notes.by).toBe("filesystem")
+      expect(notes.title).toBe("agent-notes.md")
+      expect(notes.external).toBe(false)
+      expect(notes.updated_at.length).toBeGreaterThan(0)
+      const adr = read.find((e) => e.path === "adr/0001-x.md")!
+      expect(adr).toBeDefined()
+    })
+
+    it("scan-first: an internal index entry whose file is gone is dropped", () => {
+      svc.createHome("t-19b")
+      const dir = path.join(base, "tasks", "t-19b", "artifacts")
+      fs.writeFileSync(path.join(dir, "artifacts.json"), JSON.stringify([
+        { path: "ghost.md", by: "agent", title: "Ghost", external: false, updated_at: "2026-08-18T00:00:00.000Z" },
+      ]), "utf-8")
+      // The file was deleted → the entry no longer lists (filesystem is truth).
+      expect(svc.readArtifacts("t-19b")).toEqual([])
     })
   })
 
@@ -392,6 +472,12 @@ describe("TaskHomeService", () => {
 
     it("external=false + relative path is accepted", () => {
       svc.createHome("t-23")
+      // scan-first: the file must exist for the entry to survive the listing.
+      fs.writeFileSync(
+        path.join(svc.artifactsDir("t-23"), "spec.md"),
+        "# spec",
+        "utf-8",
+      )
       svc.writeArtifactEntry("t-23", base_entry())
       const read = svc.readArtifacts("t-23")
       expect(read).toHaveLength(1)

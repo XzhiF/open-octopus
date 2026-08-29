@@ -1,0 +1,41 @@
+{
+  "id": "1b94784b-d1d4-4d38-b658-8e1d28b1a7d8",
+  "org": "E2E_TD_org",
+  "name": "E2E_TEST_WP_preset-bind-test",
+  "status": "draft",
+  "task_spec": {
+    "goal": "E2E_TEST: implement workflow presets binding",
+    "ac": [
+      "preset catalog API works",
+      "binding dialog saves input_values",
+      "ready-gate checks required inputs"
+    ],
+    "resources": [],
+    "authoring_resources": [],
+    "task_type": "coding",
+    "skill_groups": [
+      "octo-xzf-implementer"
+    ],
+    "decisions": [],
+    "goal_confirmed": true,
+    "ac_confirmed": [
+      "preset catalog API works",
+      "binding dialog saves input_values",
+      "ready-gate checks required inputs"
+    ],
+    "input_values": {
+      "idea": "${goal}"
+    }
+  },
+  "authoring_resources": [],
+  "resources": [],
+  "skills": [],
+  "project_ids": [],
+  "workflow_ref": "built-in/matt-dev-pipeline",
+  "version": 2,
+  "source_chat_session_id": null,
+  "deleted_at": null,
+  "created_at": "2026-08-27T00:13:55.180Z",
+  "updated_at": "2026-08-27T00:13:55.183Z",
+  "completed_at": null
+}

@@ -171,7 +171,7 @@ curl -s -X POST "http://localhost:3001/api/tasks/$TASK_ID/spec-field" \\
 - data_model? / contracts?: 任意结构化产物（schema 不强约束）
 
 ## 工作原则
-- WHAT 与 HOW 分离：你只产 task_spec（WHAT），workflow_ref 选择是 HOW，由用户/scheduler 决定
+- WHAT 与 HOW 分离：你只产 task_spec（WHAT），workflow_ref 由 task-author HOW-handoff 推荐，用户确认绑定
 - 结构化优先：始终输出 JSON task_spec，不要自由散文
 - confirm gate：产 spec 后等用户点 [入队] 才 POST /api/tasks/:id/ready，不自行触发
 - 多仓库不假定 cwd：项目路径来自 repos/index.md 或用户显式提供

@@ -1,0 +1,26 @@
+{
+  "schema_version": "3.0",
+  "type": "workflow",
+  "workspace_spec": {
+    "org": "E2E_TD_org",
+    "branch_prefix": "taskpool-E2E_TD_org",
+    "projects": [
+      {
+        "name": "default",
+        "source_path": "",
+        "group": ""
+      }
+    ]
+  },
+  "workflow_chain": [
+    {
+      "workflow_ref": "built-in/matt-dev-pipeline",
+      "input_values": {
+        "idea": "E2E_TEST: implement workflow presets binding",
+        "task_artifacts_dir": "/Users/xzf/.octopus/tasks/1b94784b-d1d4-4d38-b658-8e1d28b1a7d8/artifacts",
+        "task_workflows_dir": "/Users/xzf/.octopus/tasks/1b94784b-d1d4-4d38-b658-8e1d28b1a7d8/workflows"
+      }
+    }
+  ],
+  "max_retain": 10
+}

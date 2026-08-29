@@ -80,9 +80,26 @@ export function ProjectSelector({
       .finally(() => setLoading(false))
   }, [org])
 
+  // A task's project_ids persists NAMES only — group/source_path aren't stored
+  // server-side. When restored (e.g. the AuthoringWorkspace codebase preset
+  // popup, presetProjects init from task.project_ids), SelectedProject.group is
+  // "" so the `${group}/${name}` id can't match the manifest repos above and the
+  // previously-chosen checkboxes fail to echo as checked. Resolve the missing
+  // group from the loaded manifest once repos arrive; entries that stay
+  // unresolvable (repo no longer in the manifest) render by name, unchecked.
+  const effectiveValue = useMemo(() => {
+    if (!value.some((p) => !p.group)) return value
+    if (repos.length === 0) return value
+    return value.map((p) => {
+      if (p.group) return p
+      const match = repos.find((r) => r.name === p.name)
+      return match ? { ...p, group: match.group } : p
+    })
+  }, [value, repos])
+
   const selectedIds = useMemo(
-    () => new Set(value.map((p) => `${p.group}/${p.name}`)),
-    [value]
+    () => new Set(effectiveValue.map((p) => `${p.group}/${p.name}`)),
+    [effectiveValue]
   )
 
   const filteredRepos = useMemo(() => {
@@ -113,10 +130,10 @@ export function ProjectSelector({
   const toggleRepo = (repo: ManifestRepo) => {
     const id = `${repo.group}/${repo.name}`
     if (selectedIds.has(id)) {
-      onChange(value.filter((p) => `${p.group}/${p.name}` !== id))
+      onChange(effectiveValue.filter((p) => `${p.group}/${p.name}` !== id))
     } else {
       onChange([
-        ...value,
+        ...effectiveValue,
         {
           name: repo.name,
           source_path: "", // Will be resolved server-side from repos/index.md
@@ -133,10 +150,10 @@ export function ProjectSelector({
     if (allSelected) {
       // Deselect all in group
       const groupIds = new Set(groupRepos.map((r) => `${r.group}/${r.name}`))
-      onChange(value.filter((p) => !groupIds.has(`${p.group}/${p.name}`)))
+      onChange(effectiveValue.filter((p) => !groupIds.has(`${p.group}/${p.name}`)))
     } else {
       // Select all in group
-      const existing = new Set(value.map((p) => `${p.group}/${p.name}`))
+      const existing = new Set(effectiveValue.map((p) => `${p.group}/${p.name}`))
       const toAdd = groupRepos
         .filter((r) => !existing.has(`${r.group}/${r.name}`))
         .map((r) => ({
@@ -144,12 +161,12 @@ export function ProjectSelector({
           source_path: "",
           group: r.group,
         }))
-      onChange([...value, ...toAdd])
+      onChange([...effectiveValue, ...toAdd])
     }
   }
 
   const removeProject = (index: number) => {
-    onChange(value.filter((_, i) => i !== index))
+    onChange(effectiveValue.filter((_, i) => i !== index))
   }
 
   return (
@@ -161,7 +178,7 @@ export function ProjectSelector({
             已选项目 ({value.length})
           </Label>
           <div className="flex flex-wrap gap-1.5">
-            {value.map((proj, i) => (
+            {effectiveValue.map((proj, i) => (
               <Badge
                 key={i}
                 variant="secondary"

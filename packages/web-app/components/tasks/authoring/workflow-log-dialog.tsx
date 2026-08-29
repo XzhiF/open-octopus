@@ -54,7 +54,7 @@ export function WorkflowLogDialog({ run, onOpenChange }: WorkflowLogDialogProps)
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
-        className="sm:max-w-[640px] max-h-[85vh] p-0 gap-0 flex flex-col"
+        className="sm:max-w-[640px] h-[85vh] max-h-[85vh] p-0 gap-0 flex flex-col"
         showCloseButton
         data-workflow-log-dialog
       >

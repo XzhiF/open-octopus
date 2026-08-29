@@ -1,0 +1,77 @@
+# yaml-language-server: $schema=~/.octopus/test-fixture-schema.json
+scenarios:
+  # =============================================================
+  # Scenario 1: 产物中有 writing-plans 计划文档 → 按计划执行
+  # =============================================================
+  - name: "plan found — develop follows plan doc"
+    inputs:
+      goal: "给任务看板添加批量入队功能"
+      ac: "- 支持多选任务一次入队\n- 入队失败的行内提示原因"
+    mocks:
+      detect-plan:
+        output: '{"vars_update":{"plan_file":"/tmp/artifacts/2026-08-28-batch-enqueue.md"}}'
+        update_vars:
+          plan_file: "/tmp/artifacts/2026-08-28-batch-enqueue.md"
+
+      develop:
+        output: "按计划文档执行 3 个任务，全部完成并通过编译+单测。"
+
+      cr-fix:
+        output: "CR 发现 2 个问题，已修复 2 个，验证通过。"
+        update_vars:
+          cr_status: "fixed"
+
+      ship:
+        output: "已提交并创建 PR: https://github.com/XzhiF/open-octopus/pull/99"
+        update_vars:
+          ship_status: "https://github.com/XzhiF/open-octopus/pull/99"
+    assertions:
+      status: "completed"
+      vars:
+        plan_file: "/tmp/artifacts/2026-08-28-batch-enqueue.md"
+        cr_status: "fixed"
+        ship_status: "https://github.com/XzhiF/open-octopus/pull/99"
+      node_trace:
+        executed:
+          - detect-plan
+          - develop
+          - cr-fix
+          - ship
+
+  # =============================================================
+  # Scenario 2: 产物中无计划文档 → goal+ac 自拆执行
+  # =============================================================
+  - name: "no plan — develop self-decomposes from goal+ac"
+    inputs:
+      goal: "修复滚动条缺失问题"
+      ac: "- 长内容弹窗可上下滚动"
+    mocks:
+      detect-plan:
+        output: '{"vars_update":{"plan_file":""}}'
+        update_vars:
+          plan_file: ""
+
+      develop:
+        output: "无计划文档，按 goal+ac 拆解 1 个任务完成，验证通过。"
+
+      cr-fix:
+        output: "CR 无确认问题。"
+        update_vars:
+          cr_status: "passed"
+
+      ship:
+        output: "本地提交完成（无 remote，ship_status=local）。"
+        update_vars:
+          ship_status: "local"
+    assertions:
+      status: "completed"
+      vars:
+        plan_file: ""
+        cr_status: "passed"
+        ship_status: "local"
+      node_trace:
+        executed:
+          - detect-plan
+          - develop
+          - cr-fix
+          - ship

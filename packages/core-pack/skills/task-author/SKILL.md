@@ -186,7 +186,8 @@ curl -s "http://localhost:$PORT/api/workflows/built-in" | jq '.[] | {ref, name, 
 
 ### 步骤 2: 推荐 + 用户确认
 
-- 基于 `task_spec` (goal/ac/subunits) + 可用工作流，给出 1-3 个推荐（每条带理由：为什么适合这个任务）。
+- 按 `workflow-presets.yaml`（`~/.octopus/agent/built-in/task-author/workflow-presets.yaml`）过滤：`task.skill_groups` 命中 + 空 `skills_group` 兜底，给出 1-3 候选+理由（为什么适合这个任务）。
+- 无命中 → 退化为全量内置列表（`GET /api/workflows/built-in`）。
 - 等待用户确认 / 指定替代 / 说"都不行"。
 - **不要**在用户确认前擅自绑定 —— 绑定即入队门槛的一部分，用户有权拒绝。
 

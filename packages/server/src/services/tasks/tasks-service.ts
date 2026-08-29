@@ -60,6 +60,8 @@ import { BuiltInWorkflowService } from "../builtin-workflow"
 // task-workflow-handoff (ADR-0013): shared resolver for bind/ready/view.
 import { resolveWorkflowRef, isWorkflowRefResolvable } from "./workflow-ref-resolver"
 import type { WorkflowResolverDeps } from "./workflow-ref-resolver"
+// task-workflow-presets (T5): template resolver for required inputs check.
+import { resolveInputValues, parseWorkflowInputDefs } from "../scheduler/template-resolver"
 
 /** Default task name when the caller provides none. NOT user-owned — the
  *  autosave seam (routes/clone/autosave.ts) may still adopt a smart title
@@ -940,14 +942,40 @@ export class TasksService {
       const subunits = taskSpec.subunits ?? []
       if (subunits.length < 2) {
         const ref = existing.workflow_ref?.trim() ?? ""
-        if (!ref || !isWorkflowRefResolvable(ref, this.resolverDeps(id))) {
+        // Single resolve (review fix 2026-08-27): the old code walked the ref
+        // twice (isWorkflowRefResolvable + resolveWorkflowRef). One call — null
+        // ⇒ unresolvable (→ missing workflow_ref); hit ⇒ content for the
+        // required-inputs check.
+        const resolution = ref ? resolveWorkflowRef(ref, this.resolverDeps(id)) : null
+        if (!resolution) {
           missing.push("workflow_ref")
+        } else {
+          // task-workflow-presets (T5): required inputs check against the
+          // RESOLVED input_values (after ${goal}/${ac} substitution). Keys whose
+          // value has an unknown/empty placeholder also surface as missing
+          // (input:<name>), never a 500.
+          const inputDefs = parseWorkflowInputDefs(resolution.content)
+          const { values, unresolved } = resolveInputValues(
+            taskSpec.input_values,
+            taskSpec.goal,
+            taskSpec.ac,
+          )
+          for (const key of unresolved) missing.push(`input:${key}`)
+          for (const def of inputDefs) {
+            if (def.required && !values[def.name]?.trim()) {
+              missing.push(`input:${def.name}`)
+            }
+          }
         }
       }
       if (missing.length > 0) {
+        // Dedupe — an unresolved placeholder on a required input can hit both
+        // the `input:<key>` (unresolved) and `input:<name>` (empty-required)
+        // paths with the same key.
+        const uniqueMissing = Array.from(new Set(missing))
         throw new TaskReadyGateError(
-          `Task not ready: missing ${missing.join(", ")}`,
-          missing,
+          `Task not ready: missing ${uniqueMissing.join(", ")}`,
+          uniqueMissing,
         )
       }
     }
