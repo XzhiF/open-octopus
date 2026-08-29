@@ -43,9 +43,10 @@ import {
 import {
   TaskDAO,
   ScheduleConfigDAO,
+  ScheduleRunDAO,
   AgentSessionDAO,
 } from "../../db/dao"
-import type { TaskRow, ScheduleRow } from "../../db/types"
+import type { TaskRow, ScheduleRow, ScheduleExecutionRow } from "../../db/types"
 import type { SSEService } from "../sse"
 import { materializeTaskSpecToConfig } from "../scheduler/scheduler-service"
 import { TaskHomeService } from "./task-home-service"
@@ -164,6 +165,27 @@ export interface TaskDetailDTO extends TaskDTO {
     status: string
     origin_role: string | null
     workflow_ref: string | null
+    /** Task board 弹窗优化 (2026-08-29): the schedule's workspace (schedules.
+     *  workspace_id FK) — null until the runner provisions one. Together with
+     *  execution_ref.execution_id this is the deep-link pair for
+     *  /workspaces/{ws}?tab=detail&execId={exec}. */
+    workspace_id: string | null
+    /** Compact summary of the LATEST schedule_executions row (triggered_at
+     *  DESC), or null before the first run. agent_output/token_usage are NOT
+     *  inlined (can be large) — the modal fetches them on demand via
+     *  GET /api/scheduler/jobs/{schedule_id}/executions/{id}. */
+    execution_ref: {
+      id: string
+      status: string
+      execution_id: string | null
+      /** Per-run workspace (schedule_executions.workspace_id) — the precise
+       *  deep-link target while/after a run. */
+      workspace_id: string | null
+      triggered_at: string
+      completed_at: string | null
+      duration_ms: number | null
+      error_summary: string | null
+    } | null
   }>
 }
 
@@ -288,6 +310,8 @@ function validateServerSpecField(field: ServerSpecField, value: unknown): unknow
 export class TasksService {
   private taskDAO: TaskDAO
   private scheduleDAO: ScheduleConfigDAO
+  /** 弹窗优化: latest-run summary per child schedule (schedule_executions). */
+  private runDAO: ScheduleRunDAO
   private agentSessionDAO: AgentSessionDAO | null
   private sse: SSEService
   /** 04 — home + plugin materialization (per-task plugin dir, ADR-0010). Injected
@@ -318,6 +342,7 @@ export class TasksService {
   ) {
     this.taskDAO = new TaskDAO(db)
     this.scheduleDAO = new ScheduleConfigDAO(db)
+    this.runDAO = new ScheduleRunDAO(db)
     this.agentSessionDAO = agentSessionDAO ?? null
     this.sse = sse
     this.taskHomeService = taskHomeService ?? new TaskHomeService()
@@ -478,8 +503,30 @@ export class TasksService {
         status: s.status,
         origin_role: s.origin_role,
         workflow_ref: extractWorkflowRef(s.config),
+        workspace_id: s.workspace_id ?? null,
+        execution_ref: this.latestExecutionRef(s.id),
       }))
     return { ...dto, children }
+  }
+
+  /** Compact latest-run summary for a child schedule (listExecutions is
+   *  triggered_at DESC). Null when the schedule never ran (ready/parked).
+   *  Deliberately excludes agent_output/token_usage — fetch those via the
+   *  scheduler executions endpoint on demand (弹窗优化 2026-08-29). */
+  private latestExecutionRef(scheduleId: string): TaskDetailDTO["children"][number]["execution_ref"] {
+    const { data } = this.runDAO.listExecutions(scheduleId, { page: 1, limit: 1 })
+    const row: ScheduleExecutionRow | undefined = data[0]
+    if (!row) return null
+    return {
+      id: row.id,
+      status: row.status,
+      execution_id: row.execution_id ?? null,
+      workspace_id: row.workspace_id ?? null,
+      triggered_at: row.triggered_at,
+      completed_at: row.completed_at ?? null,
+      duration_ms: row.duration_ms ?? null,
+      error_summary: row.error_summary ?? null,
+    }
   }
 
   /** GET /api/tasks/:id/artifacts — the artifact index (ticket 06, US7).

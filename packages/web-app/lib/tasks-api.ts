@@ -43,6 +43,26 @@ export interface TaskChild {
   origin_role: string | null
   /** workflow_ref extracted from the schedule's config.workflow_chain[0]. */
   workflow_ref: string | null
+  /** v39 — one-shot due time (ISO). Root rows carry the trigger time; null = none. */
+  scheduled_at?: string | null
+  /** 弹窗优化 (2026-08-29): the schedule's workspace id — null until the runner
+   *  provisions one. Pairs with execution_ref.execution_id for the
+   *  /workspaces/{ws}?tab=detail&execId={exec} deep link. */
+  workspace_id?: string | null
+  /** Latest schedule_executions row (compact; null before first run).
+   *  agent_output / token_usage are fetched on demand via
+   *  getExecution(schedule_id, id) from scheduler-api. */
+  execution_ref?: {
+    id: string
+    status: string
+    execution_id: string | null
+    /** Per-run workspace (schedule_executions.workspace_id). */
+    workspace_id: string | null
+    triggered_at: string
+    completed_at: string | null
+    duration_ms: number | null
+    error_summary: string | null
+  } | null
 }
 
 /** TaskDetail = Task + optional children. Simple/draft tasks return children=[]
