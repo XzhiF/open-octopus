@@ -1,6 +1,6 @@
 import { Hono } from "hono"
 import { WorkspaceService } from "../services/workspace"
-import { WorkspaceDAO, OrgDAO } from "../db/dao"
+import { WorkspaceDAO, OrgDAO, ExecutionDAO } from "../db/dao"
 import { orgExists } from "../services/org"
 import { parseManifest, parseManifestJson, loadModelAliasConfig } from "@octopus/shared"
 import { readFileSync, existsSync, readdirSync } from "fs"
@@ -8,12 +8,17 @@ import { join } from "path"
 import os from "os"
 import { getArchiveService, ArchivePartialFailure } from "../services/archive/archive-service"
 
-export function createWorkspaceRoutes(workspaceService: WorkspaceService, orgDAO: OrgDAO, workspaceDAO: WorkspaceDAO): Hono {
+export function createWorkspaceRoutes(workspaceService: WorkspaceService, orgDAO: OrgDAO, workspaceDAO: WorkspaceDAO, executionDAO?: ExecutionDAO): Hono {
   const workspaceRoutes = new Hono()
 
   workspaceRoutes.get("/", (c) => {
     const workspaces = workspaceService.list()
-    const resolved = workspaces.map(w => ({ ...w, path: w.path.replace(/^~/, os.homedir()) }))
+    const runningCounts = executionDAO?.countRunningGroupedByWorkspace() ?? {}
+    const resolved = workspaces.map(w => ({
+      ...w,
+      path: w.path.replace(/^~/, os.homedir()),
+      running_count: runningCounts[w.id] ?? 0,
+    }))
     return c.json(resolved)
   })
 

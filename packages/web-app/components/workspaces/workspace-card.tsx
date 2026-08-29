@@ -58,12 +58,14 @@ function formatRelativeTime(dateString: string | null | undefined): string {
 export function WorkspaceCard({ workspace, onDelete, onArchive, onViewArchive }: WorkspaceCardProps) {
   const config = statusConfig[workspace.status] ?? { label: workspace.status, variant: "outline" as const }
   const isArchived = (workspace as any).archive_status === "archived"
+  const runningCount = workspace.running_count ?? 0
+  const isRunning = runningCount > 0 && !isArchived
   const cardHref = isArchived
     ? `/workspaces/${workspace.id}/archive-detail`
     : `/workspaces/${workspace.id}`
 
   return (
-    <Card className={`group relative transition-shadow hover:shadow-md ${isArchived ? "opacity-75" : ""}`} data-testid="workspace-card">
+    <Card className={`group relative transition-shadow hover:shadow-md ${isArchived ? "opacity-75" : ""} ${isRunning ? "marching-ants-border" : ""}`} data-testid="workspace-card">
       <CardHeader className="py-2 pb-0">
         <div className="flex items-start justify-between">
           <div className="flex items-center gap-3">
@@ -143,6 +145,14 @@ export function WorkspaceCard({ workspace, onDelete, onArchive, onViewArchive }:
         <div className="mt-4 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Badge variant={config.variant} data-testid="workspace-status-badge">{config.label}</Badge>
+            {isRunning && (
+              <Badge
+                className="border-amber-500/50 bg-amber-500/15 text-amber-600 dark:text-amber-400"
+                data-testid="workspace-running-badge"
+              >
+                运行中 {runningCount}
+              </Badge>
+            )}
             {isArchived && (
               <Badge variant="secondary" className="text-xs">
                 <Archive className="mr-1 h-3 w-3" />

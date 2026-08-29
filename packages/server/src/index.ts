@@ -418,7 +418,7 @@ if (!daos) {
 }
 
 app.route("/api/orgs", createOrgRoutes(d.org))
-app.route("/api/workspaces", createWorkspaceRoutes(wsSvc, d.org, d.workspace))
+app.route("/api/workspaces", createWorkspaceRoutes(wsSvc, d.org, d.workspace, d.execution))
 app.route("/api/workspaces/:id/workflows", createWorkflowOpsRoutes(d.workspace))
 app.route("/api/workspaces/:id/workflows", createWorkflowRoutes(d.workspace, () => resourceRegistry.get()))
 app.route("/api/workspaces/:id/executions", executionRoutes)

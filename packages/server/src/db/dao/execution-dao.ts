@@ -387,6 +387,15 @@ export class ExecutionDAO extends BaseDAO {
     return row.count
   }
 
+  countRunningGroupedByWorkspace(): Record<string, number> {
+    const rows = this.stmt(
+      "SELECT workspace_id, COUNT(*) as count FROM executions WHERE status = 'running' GROUP BY workspace_id"
+    ).all() as Array<{ workspace_id: string; count: number }>
+    const result: Record<string, number> = {}
+    for (const r of rows) result[r.workspace_id] = r.count
+    return result
+  }
+
   findNodeExecutionById(id: string): NodeExecutionRow | null {
     return (this.stmt("SELECT * FROM node_executions WHERE id = ?").get(id) as NodeExecutionRow) ?? null
   }
