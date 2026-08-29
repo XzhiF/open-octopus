@@ -1,4 +1,4 @@
-import type { IAgentProvider, TokenUsage, ModelUsageEntry, SystemPromptInput, GoalTerminalReason } from "@octopus/providers"
+import type { IAgentProvider, TokenUsage, ModelUsageEntry, SystemPromptInput, GoalTerminalReason, MessageDeltaUsage } from "@octopus/providers"
 import type { EffortLevel } from "@octopus/shared"
 import type { AgentEvent, AgentRunResult } from "./agent-types"
 
@@ -71,6 +71,11 @@ export class AgentNodeRunner {
     /** SDK hard-fuse terminal detected on the stream (error_max_turns / error_max_budget_usd).
      *  NOT an exception — the run is authoritative and returns with evidence attached. */
     let terminal: { reason: GoalTerminalReason; numTurns?: number; costUsd?: number } | undefined
+
+    // 实时 usage 跟踪：turn 按 message_start 计数，total 跨 resume attempt 累计。
+    // 权威终值仍以 result/node_end 为准，这里只服务运行中展示。
+    let liveTurnCount = 0
+    const liveTurnTotal: MessageDeltaUsage = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0 }
 
     const emit = (event: AgentEvent) => {
       events.push(event)
@@ -191,6 +196,20 @@ export class AgentNodeRunner {
                 timestamp: ts,
               })
               break
+            case "message_start":
+              liveTurnCount++
+              break
+            case "message_delta": {
+              const delta: MessageDeltaUsage | undefined = chunk.usage
+                ?? (typeof chunk.outputTokens === "number" ? { outputTokens: chunk.outputTokens } : undefined)
+              if (!delta) break
+              for (const k of ["inputTokens", "outputTokens", "cacheReadTokens", "cacheCreationTokens"] as const) {
+                const v = delta[k]
+                if (typeof v === "number") liveTurnTotal[k] = (liveTurnTotal[k] ?? 0) + v
+              }
+              emit({ type: "turn_usage", turn: Math.max(liveTurnCount, 1), delta, total: { ...liveTurnTotal }, timestamp: ts })
+              break
+            }
             case "result":
               receivedResult = true
               finalSessionId = chunk.sessionId

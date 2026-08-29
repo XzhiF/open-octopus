@@ -1,5 +1,5 @@
 import { query, type Options, type AgentDefinition, type CanUseTool } from '@anthropic-ai/claude-agent-sdk'
-import type { IAgentProvider, SendQueryOptions, MessageChunk, TokenUsage, ModelUsageEntry, OctopusAgentDef, GoalTerminalReason } from '../types'
+import type { IAgentProvider, SendQueryOptions, MessageChunk, TokenUsage, ModelUsageEntry, OctopusAgentDef, GoalTerminalReason, MessageDeltaUsage } from '../types'
 import { LLMCallTracker } from '../llm-call-tracker'
 import { getPluginSdkConfigs, loadModelAliasConfig, resolveModelAlias } from '@octopus/shared'
 import fs from 'fs'
@@ -9,6 +9,8 @@ import os from 'os'
 interface SDKStreamEvent {
   type: string
   message?: { id: string; model?: string; usage?: { output_tokens?: number; input_tokens?: number; cache_read_input_tokens?: number; cache_creation_input_tokens?: number }; stop_reason?: string }
+  /** message_delta 顶层 usage：本条消息累计终值（output 必有，input/cache 按端点可能缺失） */
+  usage?: { input_tokens?: number; output_tokens?: number; cache_read_input_tokens?: number; cache_creation_input_tokens?: number }
   content_block?: { type: string; id?: string; name?: string; text?: string; thinking?: string; input?: unknown }
   delta?: { type: string; text?: string; thinking?: string; partial_json?: string; signature?: string; stop_reason?: string; stop_sequence?: string }
   index?: number
@@ -509,14 +511,25 @@ export class ClaudeSDKProvider implements IAgentProvider {
         }
 
         else if (e.type === 'message_delta') {
-          // 不在 stream 阶段读 output_tokens：SDK 的字段路径在历史版本中有过变更
-          // （曾经 e.usage.output_tokens，曾经 e.message.usage.output_tokens），
-          // 且即使读对也不是权威数据。权威数据来自 result.modelUsage。
-          this._llmTracker.onMessageDelta(e.delta?.stop_reason ?? '')
+          // message_delta.usage 携带本条消息的累计终值。实测（SDK 0.3.235）：
+          // Σ per-turn == result.usage 逐字段相等，是运行中唯一可靠的 token 来源。
+          // 直连 Anthropic 时可能只有 output_tokens，input/cache 按端点缺失 → defensive 读取。
+          const rawU = e.usage
+          const numOrUndef = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : undefined)
+          const usage: MessageDeltaUsage | undefined = rawU
+            ? {
+                inputTokens: numOrUndef(rawU.input_tokens),
+                outputTokens: numOrUndef(rawU.output_tokens),
+                cacheReadTokens: numOrUndef(rawU.cache_read_input_tokens),
+                cacheCreationTokens: numOrUndef(rawU.cache_creation_input_tokens),
+              }
+            : undefined
+          this._llmTracker.onMessageDelta(e.delta?.stop_reason ?? '', usage)
           yield {
             type: 'message_delta',
             stopReason: e.delta?.stop_reason ?? '',
-            outputTokens: undefined,
+            outputTokens: usage?.outputTokens,
+            usage,
             messageId: currentMessageId,
           }
         }
@@ -633,6 +646,7 @@ export class ClaudeSDKProvider implements IAgentProvider {
               sessionId: rm.session_id,
               tokens: { input: totalInput, output: totalOutput, total: totalInput + totalOutput },
               costUsd: rm.total_cost_usd,
+              numTurns: rm.num_turns,
               modelUsages,
             }
           } else {

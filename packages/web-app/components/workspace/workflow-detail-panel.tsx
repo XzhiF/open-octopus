@@ -154,13 +154,26 @@ export function WorkflowDetailPanel({ execution, workflow, workspaceId }: Workfl
   const [liveInteractionMeta, setLiveInteractionMeta] = useState<{ nodeId: string; sessionId?: string; initialPrompt?: string } | null>(null)
   const [archiveOpen, setArchiveOpen] = useState(false)
 
+  // ── SSE 增量补丁保护 ─────────────────────────────────────────────
+  // node_start/node_end 事件毫秒级写入 liveSteps，3s 轮询仅作 SSE 断流兜底。
+  // 补丁后短时间窗口内，晚到的旧 REST 快照不得覆盖更新的 SSE 值。
+  const stepPatchRef = useRef<Map<string, { ts: number; patch: Partial<StepExecution> }>>(new Map())
+
   // Always poll when panel is open — ensures recovery from stale prop data
   const fetchStatus = useCallback(() => {
+    const t0 = Date.now()
     fetch(`${getServerUrl()}/api/workspaces/${workspaceId}/executions/${execution.id}`)
       .then(r => r.json())
       .then(d => {
         if (d.status) setLiveStatus(d.status)
-        if (d.steps) setLiveSteps(d.steps.map(mapRawStep))
+        if (d.steps) {
+          for (const [k, v] of stepPatchRef.current) if (t0 - v.ts > 15000) stepPatchRef.current.delete(k)
+          setLiveSteps(d.steps.map((raw: RawStepRow) => {
+            const s = mapRawStep(raw)
+            const entry = stepPatchRef.current.get(s.stepId)
+            return entry && entry.ts >= t0 ? { ...s, ...entry.patch } : s
+          }))
+        }
         if (d.workflow_content && !yamlContent) setYamlContent(d.workflow_content)
         setLiveApprovalMetadata(d.approvalMetadata ?? null)
         setLiveInteractionMeta(d.interactionMetadata ?? null)
@@ -237,6 +250,66 @@ export function WorkflowDetailPanel({ execution, workflow, workspaceId }: Workfl
           if (executionId !== execution.id) return
           const ids = [nodeId, containerNodeId].filter(Boolean) as string[]
           if (ids.length > 0) updateStepHarness(ids, "harness_blocked")
+        } catch { /* skip */ }
+      }),
+
+      // ── 节点生命周期增量更新：替代「等 3s 轮询整包替换」的延迟 ──
+      subscribeSSE(sseUrl, "node_start", (e: MessageEvent) => {
+        try {
+          const { executionId, nodeId } = JSON.parse(e.data)
+          if (executionId !== execution.id || !nodeId) return
+          const patch: Partial<StepExecution> = { status: "running", startedAt: new Date().toISOString() }
+          stepPatchRef.current.set(nodeId, { ts: Date.now(), patch })
+          setLiveSteps(prev => (prev ?? []).map(s => s.stepId === nodeId ? { ...s, ...patch } : s))
+        } catch { /* skip */ }
+      }),
+
+      subscribeSSE(sseUrl, "node_end", (e: MessageEvent) => {
+        try {
+          const d = JSON.parse(e.data)
+          if (d.executionId !== execution.id || !d.nodeId) return
+          const raw: Partial<StepExecution> = {
+            status: d.status,
+            completedAt: new Date().toISOString(),
+            duration: typeof d.durationMs === "number" ? Math.round(d.durationMs / 1000) : undefined,
+            tokensInput: d.tokens?.input,
+            tokensOutput: d.tokens?.output,
+            tokenUsages: d.tokenUsages,
+          }
+          const patch = Object.fromEntries(
+            Object.entries(raw).filter(([, v]) => v !== undefined),
+          ) as Partial<StepExecution>
+          stepPatchRef.current.set(d.nodeId, { ts: Date.now(), patch })
+          setLiveSteps(prev => (prev ?? []).map(s => s.stepId === d.nodeId ? { ...s, ...patch } : s))
+        } catch { /* skip */ }
+      }),
+
+      subscribeSSE(sseUrl, "execution_status", (e: MessageEvent) => {
+        try {
+          const { executionId, status } = JSON.parse(e.data)
+          if (executionId === execution.id && typeof status === "string") setLiveStatus(status as Execution["status"])
+        } catch { /* skip */ }
+      }),
+
+      // 运行中 agent 节点的 per-turn 实时 token/轮次（engine turn_usage 事件，
+      // 权威终值仍由 node_end 覆盖校准）
+      subscribeSSE(sseUrl, "agent_event", (e: MessageEvent) => {
+        try {
+          const { executionId, nodeId, event } = JSON.parse(e.data)
+          if (executionId !== execution.id || !nodeId || event?.type !== "turn_usage") return
+          const total = event.total ?? {}
+          const raw: Partial<StepExecution> = {
+            status: "running",
+            // 直连 Anthropic 时 inputTokens 可能未测得 → undefined 保留旧值，不清零
+            tokensInput: (total.inputTokens ?? 0) > 0 ? total.inputTokens : undefined,
+            tokensOutput: (total.outputTokens ?? 0) > 0 ? total.outputTokens : undefined,
+            turns: typeof event.turn === "number" ? event.turn : undefined,
+          }
+          const patch = Object.fromEntries(
+            Object.entries(raw).filter(([, v]) => v !== undefined),
+          ) as Partial<StepExecution>
+          stepPatchRef.current.set(nodeId, { ts: Date.now(), patch })
+          setLiveSteps(prev => (prev ?? []).map(s => s.stepId === nodeId ? { ...s, ...patch } : s))
         } catch { /* skip */ }
       }),
     ]

@@ -51,6 +51,8 @@ export interface Workspace {
   updatedAt: string
   lastActivityAt?: string
   path: string
+  /** 当前处于 running 状态的工作流执行数（列表接口返回） */
+  running_count?: number
 }
 
 // ============ Project ============
@@ -147,6 +149,8 @@ export interface StepExecution {
   model?: string
   tokensInput?: number
   tokensOutput?: number
+  /** 运行中实时轮次（turn_usage SSE 事件驱动；轮询数据不含此字段） */
+  turns?: number
   tokenUsages?: TokenUsage[]
   nodeType?: string
   parentNodeId?: string

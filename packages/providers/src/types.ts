@@ -111,9 +111,19 @@ export interface ActiveGoalChunk {
   set_at?: number
 }
 
+/** Per-turn token usage carried by message_delta (end of each assistant message).
+ *  实测（SDK 0.3.235 + 代理端点）：Σ per-turn message_delta.usage == result.usage，
+ *  output_tokens 在直连 Anthropic 时必然存在；input/cache 字段按端点可能缺失。 */
+export interface MessageDeltaUsage {
+  inputTokens?: number
+  outputTokens?: number
+  cacheReadTokens?: number
+  cacheCreationTokens?: number
+}
+
 export type MessageChunk =
   | { type: 'message_start'; messageId: string; inputTokens?: number }
-  | { type: 'message_delta'; stopReason: string; outputTokens?: number; messageId: string }
+  | { type: 'message_delta'; stopReason: string; outputTokens?: number; usage?: MessageDeltaUsage; messageId: string }
   | { type: 'message_stop'; messageId: string }
   | { type: 'text_delta'; content: string; messageId: string }
   | { type: 'text_done'; messageId: string }
@@ -130,7 +140,7 @@ export type MessageChunk =
   | { type: 'local_command_output'; content: string }
   | { type: 'status'; status: 'compacting' | 'requesting' | null; varsUpdate?: Record<string, unknown> }
   | { type: 'context_usage'; data: ContextUsageData }
-  | { type: 'result'; content?: string; sessionId?: string; tokens?: TokenUsage; costUsd?: number; modelUsages?: ModelUsageEntry[] }
+  | { type: 'result'; content?: string; sessionId?: string; tokens?: TokenUsage; costUsd?: number; numTurns?: number; modelUsages?: ModelUsageEntry[] }
   | { type: 'error'; code: string; message: string; numTurns?: number; costUsd?: number; sessionId?: string; terminalReason?: GoalTerminalReason }
   | ActiveGoalChunk
 

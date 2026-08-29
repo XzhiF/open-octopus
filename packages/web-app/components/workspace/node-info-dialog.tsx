@@ -90,9 +90,14 @@ export function NodeInfoDialog({
                 耗时: {formatDuration(step.duration)}
               </span>
             )}
-            {step.tokensInput != null && step.tokensInput > 0 && (
+            {step.turns != null && step.turns > 0 && (
+              <span className="text-xs text-muted-foreground tabular-nums">
+                轮次 {step.turns}
+              </span>
+            )}
+            {((step.tokensInput ?? 0) > 0 || (step.tokensOutput ?? 0) > 0) && (
               <span className="text-xs tabular-nums border-l border-border/50 pl-3">
-                <span className="font-semibold">↑</span>{formatTokenCount(step.tokensInput)}{" "}
+                <span className="font-semibold">↑</span>{formatTokenCount(step.tokensInput ?? 0)}{" "}
                 <span className="font-semibold">↓</span>{formatTokenCount(step.tokensOutput ?? 0)}
               </span>
             )}

@@ -255,3 +255,59 @@ describe("AgentNodeRunner", () => {
     expect(optionsArg.effort).toBeUndefined()
   })
 })
+describe("AgentNodeRunner turn_usage 事件", () => {
+  it("每个 message_delta(带 usage) 发出 turn_usage，total 为跨轮累计", async () => {
+    const events: AgentEvent[] = []
+    const provider = makeMockProvider([
+      { type: "message_start", messageId: "m1" },
+      { type: "message_delta", stopReason: "tool_use", messageId: "m1", usage: { inputTokens: 6, outputTokens: 111, cacheReadTokens: 0, cacheCreationTokens: 36451 } },
+      { type: "message_stop", messageId: "m1" },
+      { type: "message_start", messageId: "m2" },
+      { type: "message_delta", stopReason: "end_turn", messageId: "m2", usage: { inputTokens: 6, outputTokens: 51, cacheReadTokens: 36451, cacheCreationTokens: 152 } },
+      { type: "message_stop", messageId: "m2" },
+      { type: "result", content: "done", sessionId: "s1" },
+    ])
+    const runner = new AgentNodeRunner(provider, "/tmp/test", (e) => events.push(e))
+    await runner.run({ prompt: "x", context: "new" })
+
+    const usageEvents = events.filter(e => e.type === "turn_usage")
+    expect(usageEvents).toHaveLength(2)
+    expect(usageEvents[0]).toMatchObject({
+      turn: 1,
+      delta: { outputTokens: 111 },
+      total: { inputTokens: 6, outputTokens: 111, cacheReadTokens: 0, cacheCreationTokens: 36451 },
+    })
+    expect(usageEvents[1]).toMatchObject({
+      turn: 2,
+      total: { inputTokens: 12, outputTokens: 162, cacheReadTokens: 36451, cacheCreationTokens: 36603 },
+    })
+  })
+
+  it("message_delta 无 usage（旧数据/直连缺字段）→ 不发 turn_usage", async () => {
+    const events: AgentEvent[] = []
+    const provider = makeMockProvider([
+      { type: "message_start", messageId: "m1" },
+      { type: "message_delta", stopReason: "end_turn", messageId: "m1" },
+      { type: "message_stop", messageId: "m1" },
+      { type: "result", sessionId: "s1" },
+    ])
+    const runner = new AgentNodeRunner(provider, "/tmp/test", (e) => events.push(e))
+    await runner.run({ prompt: "x", context: "new" })
+    expect(events.filter(e => e.type === "turn_usage")).toHaveLength(0)
+  })
+
+  it("只有 outputTokens 的 delta（直连 Anthropic 口径）也能累计", async () => {
+    const events: AgentEvent[] = []
+    const provider = makeMockProvider([
+      { type: "message_start", messageId: "m1" },
+      { type: "message_delta", stopReason: "end_turn", messageId: "m1", outputTokens: 42 },
+      { type: "message_stop", messageId: "m1" },
+      { type: "result", sessionId: "s1" },
+    ])
+    const runner = new AgentNodeRunner(provider, "/tmp/test", (e) => events.push(e))
+    await runner.run({ prompt: "x", context: "new" })
+    const usageEvents = events.filter(e => e.type === "turn_usage")
+    expect(usageEvents).toHaveLength(1)
+    expect(usageEvents[0]).toMatchObject({ turn: 1, total: { outputTokens: 42 } })
+  })
+})

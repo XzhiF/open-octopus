@@ -42,7 +42,97 @@ function simulateOneCall(tracker: LLMCallTracker, model: string, messageId: stri
   return messageId
 }
 
+/** 带真实 per-turn usage 的完整生命周期 */
+function simulateOneCallWithUsage(
+  tracker: LLMCallTracker, model: string, messageId: string,
+  usage: { outputTokens?: number; inputTokens?: number; cacheReadTokens?: number; cacheCreationTokens?: number },
+): string {
+  tracker.onMessageStart(messageId, model)
+  tracker.onTextDelta()
+  tracker.onMessageDelta("end_turn", usage)
+  tracker.onMessageStop(messageId)
+  return messageId
+}
+
 describe("LLMCallTracker", () => {
+  describe("per-turn usage 实时记录（message_delta 携带）", () => {
+    it("onMessageDelta 带 usage → 无需 calibrate，record 即为实测值", () => {
+      const tracker = new LLMCallTracker()
+      simulateOneCallWithUsage(tracker, "claude-sonnet-4-5", "msg-1", { inputTokens: 6, outputTokens: 111, cacheReadTokens: 0, cacheCreationTokens: 36451 })
+
+      const calls = tracker.getLLMCalls()
+      expect(calls[0].inputTokens).toBe(6)
+      expect(calls[0].outputTokens).toBe(111)
+      expect(calls[0].cacheCreationTokens).toBe(36451)
+    })
+
+    it("onMessageDelta 只带 outputTokens（直连 Anthropic）→ 其余字段保持 0", () => {
+      const tracker = new LLMCallTracker()
+      simulateOneCallWithUsage(tracker, "claude-sonnet-4-5", "m1", { outputTokens: 42 })
+      const calls = tracker.getLLMCalls()
+      expect(calls[0].outputTokens).toBe(42)
+      expect(calls[0].inputTokens).toBe(0)
+      expect(calls[0].cacheReadTokens).toBe(0)
+    })
+
+    it("实测全中：calibrate 不改动实测值，且 Σ===authTotal", () => {
+      const tracker = new LLMCallTracker()
+      simulateOneCallWithUsage(tracker, "m", "a", { outputTokens: 111, inputTokens: 6 })
+      simulateOneCallWithUsage(tracker, "m", "b", { outputTokens: 51, inputTokens: 6 })
+      tracker.calibrateFromModelUsage(makeModelUsage("m", 12, 162))
+      const calls = tracker.getLLMCalls()
+      expect(calls.map(c => c.outputTokens)).toEqual([111, 51])
+      expect(calls.map(c => c.inputTokens)).toEqual([6, 6])
+    })
+
+    it("混合场景：已测 record 保留，未测 record 吸收残差，Σ===authTotal", () => {
+      const tracker = new LLMCallTracker()
+      simulateOneCallWithUsage(tracker, "m", "a", { outputTokens: 60 })
+      simulateOneCallWithUsage(tracker, "m", "b", { outputTokens: 40 })
+      simulateOneCall(tracker, "m", "c") // 无实测
+      tracker.calibrateFromModelUsage(makeModelUsage("m", 0, 110))
+      const calls = tracker.getLLMCalls()
+      expect(calls.map(c => c.outputTokens)).toEqual([60, 40, 10])
+      expect(calls.reduce((s, c) => s + c.outputTokens, 0)).toBe(110)
+    })
+
+    it("实测超过 authTotal（异常口径）→ 信任实测，不倒扣", () => {
+      const tracker = new LLMCallTracker()
+      simulateOneCallWithUsage(tracker, "m", "a", { outputTokens: 200 })
+      tracker.calibrateFromModelUsage(makeModelUsage("m", 0, 150))
+      expect(tracker.getLLMCalls()[0].outputTokens).toBe(200)
+    })
+
+    it("全实测且有正残差（同模型辅助调用）→ 残差并入最后一条，Σ===authTotal", () => {
+      const tracker = new LLMCallTracker()
+      simulateOneCallWithUsage(tracker, "m", "a", { outputTokens: 50 })
+      simulateOneCallWithUsage(tracker, "m", "b", { outputTokens: 50 })
+      tracker.calibrateFromModelUsage(makeModelUsage("m", 0, 107))
+      const calls = tracker.getLLMCalls()
+      expect(calls.map(c => c.outputTokens)).toEqual([50, 57])
+    })
+
+    it("字段独立：output 实测、input 未测 → input 均匀分配，output 保留", () => {
+      const tracker = new LLMCallTracker()
+      simulateOneCallWithUsage(tracker, "m", "a", { outputTokens: 70 })
+      simulateOneCallWithUsage(tracker, "m", "b", { outputTokens: 30 })
+      tracker.calibrateFromModelUsage(makeModelUsage("m", 100, 100))
+      const calls = tracker.getLLMCalls()
+      expect(calls.map(c => c.outputTokens)).toEqual([70, 30])
+      expect(calls.map(c => c.inputTokens)).toEqual([50, 50])
+    })
+
+    it("costUsd：无实测时仍均匀分配且严格和等于 authCost", () => {
+      const tracker = new LLMCallTracker()
+      simulateOneCall(tracker, "m", "a")
+      simulateOneCall(tracker, "m", "b")
+      const mu = makeModelUsage("m", 10, 20)
+      mu["m"].costUSD = 0.3
+      tracker.calibrateFromModelUsage(mu)
+      const calls = tracker.getLLMCalls()
+      expect(calls[0].costUsd + calls[1].costUsd).toBeCloseTo(0.3, 10)
+    })
+  })
   describe("stream 阶段不记录 token（所有 token 字段应为 0）", () => {
     it("单个 call 的 inputTokens / outputTokens / cache / cost 在 stream 阶段保持 0", () => {
       const tracker = new LLMCallTracker()

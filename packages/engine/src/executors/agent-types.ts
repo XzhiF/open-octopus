@@ -1,4 +1,4 @@
-import type { TokenUsage, ModelUsageEntry, LLMCallRecord, GoalTerminalReason } from "@octopus/providers"
+import type { TokenUsage, ModelUsageEntry, LLMCallRecord, GoalTerminalReason, MessageDeltaUsage } from "@octopus/providers"
 import type { AgentHeartbeat, HarnessDirective } from "@octopus/shared"
 
 export type AgentEvent =
@@ -11,6 +11,10 @@ export type AgentEvent =
   | { type: "text_delta"; content: string; timestamp: number }
   | { type: "status"; status: "compacting" | "requesting" | "resuming_after_crash" | null; timestamp: number }
   | { type: "error"; code: string; message: string; timestamp: number }
+  /** Per-turn token usage (from message_delta, authoritative for output).
+   *  delta = this turn's usage; total = cumulative across the run (all attempts).
+   *  Emitted once per assistant message — natural throttle, no extra rate risk. */
+  | { type: "turn_usage"; turn: number; delta: MessageDeltaUsage; total: MessageDeltaUsage; timestamp: number }
   /** Convergence evidence from the SDK /goal evaluator (passthrough of the
    *  provider's active_goal chunk). condition: null means the goal was
    *  cleared/met — do not fabricate an empty string. */
