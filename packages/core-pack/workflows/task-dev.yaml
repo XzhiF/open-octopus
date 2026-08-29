@@ -41,7 +41,7 @@ inputs:
   max_turns:
     description: "模型往返步数上限（goal 节点硬保险丝，1 turn = 1 次 assistant API 往返）"
     required: false
-    default: "200"
+    default: "500"
 
 # --- 变量 ---
 variables:

@@ -6,7 +6,7 @@ scenarios:
     inputs:
       goal: "给设置页添加深色模式开关"
       ac: "- 设置页存在主题切换开关\n- 切换后刷新页面保持所选主题"
-      max_turns: "200"
+      max_turns: "500"
     mocks:
       develop:
         output: "AC1 PASS: 开关渲染于 src/settings/theme-toggle.tsx（测试通过）；AC2 PASS: localStorage 持久化，手动刷新验证主题保持。"
