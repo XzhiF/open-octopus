@@ -773,7 +773,7 @@ function CostPanel({ aggregates, calls, loading }: CostPanelProps) {
   }
 
   const models = Object.entries(aggregates.modelBreakdown)
-    .sort((a, b) => b[1].costUsd - a[1].costUsd)
+    .sort((a, b) => (b[1].costUsd ?? 0) - (a[1].costUsd ?? 0))
 
   return (
     <div className="space-y-3">
@@ -783,7 +783,11 @@ function CostPanel({ aggregates, calls, loading }: CostPanelProps) {
         <div className="grid grid-cols-2 gap-2 text-xs">
           <div>
             <div className="text-muted-foreground">总成本</div>
-            <div className="text-lg font-bold tabular-nums text-amber-600">${aggregates.totalCost.toFixed(2)}</div>
+            <div className="text-lg font-bold tabular-nums text-amber-600">
+              {aggregates.totals.cost.usd === null
+                ? "未定价"
+                : `${aggregates.totals.cost.complete ? "$" : "≈$"}${aggregates.totals.cost.usd.toFixed(2)}`}
+            </div>
           </div>
           <div>
             <div className="text-muted-foreground">调用次数</div>
@@ -791,17 +795,17 @@ function CostPanel({ aggregates, calls, loading }: CostPanelProps) {
           </div>
           <div>
             <div className="text-muted-foreground">Cache Hit Rate</div>
-            <div className="text-lg font-bold tabular-nums">{(aggregates.cacheHitRate * 100).toFixed(0)}%</div>
+            <div className="text-lg font-bold tabular-nums">{aggregates.totals.cacheHitRate === null ? "—" : `${(aggregates.totals.cacheHitRate * 100).toFixed(0)}%`}</div>
           </div>
           <div>
             <div className="text-muted-foreground">Input / Output</div>
             <div className="text-sm tabular-nums">
-              ↑{formatTokenCount(aggregates.totalInputTokens)} ↓{formatTokenCount(aggregates.totalOutputTokens)}
+              ↑{formatTokenCount(aggregates.usage.inputTokens)} ↓{formatTokenCount(aggregates.usage.outputTokens)}
             </div>
           </div>
         </div>
         <CostLine
-          costUsd={aggregates.totalCost}
+          costUsd={aggregates.totals.cost.usd}
           turns={aggregates.totalCalls}
         />
       </div>
@@ -820,7 +824,7 @@ function CostPanel({ aggregates, calls, loading }: CostPanelProps) {
                   </div>
                 </div>
                 <div className="text-right tabular-nums font-medium">
-                  ${stats.costUsd.toFixed(2)}
+                  {stats.costUsd === null ? "未定价" : `$${stats.costUsd.toFixed(2)}`}
                 </div>
               </div>
             ))}

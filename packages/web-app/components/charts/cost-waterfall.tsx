@@ -5,7 +5,7 @@ import { useMemo } from "react"
 interface CostWaterfallProps {
   models: Array<{
     model: string
-    total_cost: number
+    total_cost: number | null
     calls: number
     input_tokens: number
     output_tokens: number
@@ -13,15 +13,17 @@ interface CostWaterfallProps {
   height?: number
 }
 
+const known = (v: number | null) => v ?? 0
+
 export function CostWaterfall({ models, height = 240 }: CostWaterfallProps) {
   const bars = useMemo(() => {
     if (!models.length) return []
-    const maxCost = Math.max(...models.map((m) => m.total_cost), 0.01)
-    const sorted = [...models].sort((a, b) => b.total_cost - a.total_cost)
+    const maxCost = Math.max(...models.map((m) => known(m.total_cost)), 0.01)
+    const sorted = [...models].sort((a, b) => known(b.total_cost) - known(a.total_cost))
     return sorted.map((m) => ({
       ...m,
-      pct: (m.total_cost / maxCost) * 100,
-      pctTotal: maxCost > 0 ? (m.total_cost / models.reduce((s, x) => s + x.total_cost, 0)) * 100 : 0,
+      pct: (known(m.total_cost) / maxCost) * 100,
+      pctTotal: maxCost > 0 ? (known(m.total_cost) / models.reduce((s, x) => s + known(x.total_cost), 0)) * 100 : 0,
     }))
   }, [models])
 
@@ -39,7 +41,7 @@ export function CostWaterfall({ models, height = 240 }: CostWaterfallProps) {
         <div className="h-2 w-2 rounded-full bg-blue-500" />
         <span className="text-sm font-medium">成本瀑布图</span>
         <span className="ml-auto text-xs text-muted-foreground">
-          ${bars.reduce((s, b) => s + b.total_cost, 0).toFixed(2)} 总计
+          ${known(bars.reduce((s, b) => s + known(b.total_cost), 0)) ? `$${bars.reduce((s, b) => s + known(b.total_cost), 0).toFixed(2)}` : "未定价"} 总计
         </span>
       </div>
 
@@ -58,7 +60,7 @@ export function CostWaterfall({ models, height = 240 }: CostWaterfallProps) {
                 }}
               />
               <span className="absolute inset-0 flex items-center px-2 text-xs text-white/80 font-medium truncate">
-                ${bar.total_cost.toFixed(2)} ({bar.pctTotal.toFixed(1)}%)
+                {bar.total_cost === null ? "未定价" : `$${bar.total_cost.toFixed(2)}`} ({bar.pctTotal.toFixed(1)}%)
               </span>
             </div>
             <span className="w-12 text-right text-xs text-muted-foreground">{bar.calls} calls</span>

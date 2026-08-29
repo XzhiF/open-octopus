@@ -21,7 +21,7 @@ export async function fetchLLMCalls(
   const url = new URL(`${getServerUrl()}/api/executions/${executionId}/llm-calls`)
   if (nodeId) url.searchParams.set("nodeId", nodeId)
   const res = await fetch(url.toString())
-  if (!res.ok) return { data: [], aggregates: { totalCalls: 0, totalInputTokens: 0, totalOutputTokens: 0, totalCacheReadTokens: 0, totalCacheCreationTokens: 0, totalCost: 0, cacheHitRate: 0, modelBreakdown: {} } }
+  if (!res.ok) return { data: [], aggregates: { totalCalls: 0, usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0 }, totals: { tokens: 0, cost: { usd: null, complete: true }, cacheHitRate: null }, modelBreakdown: {} } }
   return res.json()
 }
 

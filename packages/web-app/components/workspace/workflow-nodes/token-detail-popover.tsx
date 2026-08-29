@@ -12,8 +12,9 @@ interface TokenDetailPopoverProps {
 }
 
 export function TokenDetailPopover({ usages, isRunning, children }: TokenDetailPopoverProps) {
-  const totalInput = usages.reduce((sum, u) => sum + u.inputTokens + (u.cacheReadTokens ?? 0), 0)
-  const totalOutput = usages.reduce((sum, u) => sum + u.outputTokens + (u.cacheCreationTokens ?? 0), 0)
+  // C3: 折叠口径废除 —— 总输入/输出为纯值，cache 在下方分项展示
+  const totalInput = usages.reduce((sum, u) => sum + u.inputTokens, 0)
+  const totalOutput = usages.reduce((sum, u) => sum + u.outputTokens, 0)
 
   return (
     <Popover>

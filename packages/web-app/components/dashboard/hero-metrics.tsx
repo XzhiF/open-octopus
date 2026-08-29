@@ -7,7 +7,9 @@ import { formatDuration } from "@/lib/format"
 interface HeroMetricsProps {
   totalExecutions: number
   successRate: number
-  totalCost: number
+  /** C3: null = 未定价；complete=false = 部分和（≈） */
+  totalCost: number | null
+  totalCostComplete?: boolean
   avgDurationMs: number
   prevTotalExecutions?: number
   prevSuccessRate?: number
@@ -40,11 +42,13 @@ function TrendBadge({ current, prev, unit = "", isDuration = false }: { current:
   )
 }
 
-export function HeroMetrics({ totalExecutions, successRate, totalCost, avgDurationMs, prevTotalExecutions, prevSuccessRate, prevTotalCost, prevAvgDurationMs }: HeroMetricsProps) {
-  const metrics = [
+export function HeroMetrics({ totalExecutions, successRate, totalCost, totalCostComplete, avgDurationMs, prevTotalExecutions, prevSuccessRate, prevTotalCost, prevAvgDurationMs }: HeroMetricsProps) {
+  const costDisplay = totalCost === null ? "—"
+    : `${totalCostComplete === false ? "≈" : ""}$${totalCost.toFixed(2)}`
+  const metrics: Array<{ label: string; value?: number; prev?: number; unit?: string; isDuration?: boolean; display?: string }> = [
     { label: "总执行", value: totalExecutions, prev: prevTotalExecutions, unit: "", isDuration: false },
     { label: "成功率", value: successRate * 100, prev: prevSuccessRate ? prevSuccessRate * 100 : undefined, unit: "%", isDuration: false },
-    { label: "总成本", value: totalCost, prev: prevTotalCost, unit: "$", isDuration: false },
+    { label: "总成本", display: costDisplay },
     { label: "平均耗时", value: avgDurationMs / 1000, prev: prevAvgDurationMs ? prevAvgDurationMs / 1000 : undefined, unit: "s", isDuration: true },
   ]
 
@@ -53,7 +57,9 @@ export function HeroMetrics({ totalExecutions, successRate, totalCost, avgDurati
       {metrics.map(m => (
         <div key={m.label} className="rounded-lg border bg-card p-4">
           <p className="text-xs text-muted-foreground">{m.label}</p>
-          <TrendBadge current={m.value} prev={m.prev} unit={m.unit} isDuration={m.isDuration} />
+          {m.display !== undefined
+            ? <p className="text-2xl font-bold tabular-nums mt-1">{m.display}</p>
+            : <TrendBadge current={m.value ?? 0} prev={m.prev} unit={m.unit} isDuration={m.isDuration} />}
         </div>
       ))}
     </div>

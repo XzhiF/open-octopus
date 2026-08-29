@@ -4,7 +4,8 @@ import { cn } from "@/lib/utils"
 import { Coins, Repeat, Wrench, Clock } from "lucide-react"
 
 interface CostLineProps {
-  costUsd: number
+  /** C3: null = 未定价（渲染 —，不渲染假 $0） */
+  costUsd: number | null
   turns?: number
   tools?: number
   durationMs?: number
@@ -15,7 +16,7 @@ export function CostLine({ costUsd, turns, tools, durationMs }: CostLineProps) {
 
   parts.push(
     <span key="cost" className="flex items-center gap-1 font-medium text-amber-600 dark:text-amber-400">
-      <Coins className="h-3 w-3" />${costUsd.toFixed(2)}
+      <Coins className="h-3 w-3" />{costUsd === null ? "未定价" : `$${costUsd.toFixed(2)}`}
     </span>
   )
 

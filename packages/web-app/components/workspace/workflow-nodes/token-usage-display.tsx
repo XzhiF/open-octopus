@@ -27,9 +27,9 @@ export function TokenUsageDisplay({ usages, isRunning, maxVisible = DEFAULT_MAX_
   return (
     <div className="space-y-0.5 mt-1">
       {visible.map((u, i) => {
-        // 计算总输入和总输出（包含缓存）
-        const totalInput = u.inputTokens + (u.cacheReadTokens ?? 0)
-        const totalOutput = u.outputTokens + (u.cacheCreationTokens ?? 0)
+        // C3: 折叠口径废除 —— 纯值（cache 由 ⚡/🗡 徽标分项承载）
+        const totalInput = u.inputTokens
+        const totalOutput = u.outputTokens
         return (
           <div
             key={`${u.model}-${i}`}

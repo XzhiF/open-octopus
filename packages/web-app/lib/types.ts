@@ -589,15 +589,25 @@ export interface LLMCallData {
   cost_usd?: number
 }
 
+/** C3 wire：server ledger 的 totals 结构（跨端共享形状）。 */
+export interface LedgerTotalsWire {
+  tokens: number
+  cost: { usd: number | null; complete: boolean }
+  cacheHitRate: number | null
+}
+
+export interface UsageWire {
+  inputTokens: number
+  outputTokens: number
+  cacheReadTokens: number
+  cacheCreationTokens: number
+}
+
 export interface LLMCallAggregates {
   totalCalls: number
-  totalInputTokens: number
-  totalOutputTokens: number
-  totalCacheReadTokens: number
-  totalCacheCreationTokens: number
-  totalCost: number
-  cacheHitRate: number
-  modelBreakdown: Record<string, { calls: number; inputTokens: number; outputTokens: number; costUsd: number }>
+  usage: UsageWire
+  totals: LedgerTotalsWire
+  modelBreakdown: Record<string, { calls: number; inputTokens: number; outputTokens: number; costUsd: number | null }>
 }
 
 // ============ Analytics ============

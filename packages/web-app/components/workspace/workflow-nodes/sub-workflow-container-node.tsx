@@ -63,8 +63,8 @@ function aggregateTokens(overlay?: StatusOverlay): { input: number; output: numb
   if (usages.length === 0) return null
   return usages.reduce(
     (acc, u) => ({
-      input: acc.input + u.inputTokens + (u.cacheReadTokens ?? 0),
-      output: acc.output + u.outputTokens + (u.cacheCreationTokens ?? 0),
+      input: acc.input + u.inputTokens,
+      output: acc.output + u.outputTokens,
     }),
     { input: 0, output: 0 },
   )

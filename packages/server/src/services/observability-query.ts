@@ -18,6 +18,8 @@ export interface ObservabilityNodeBreakdown {
   nodeId: string
   nodeName: string
   nodeType: string
+  /** C3: server 单源总量行 */
+  tokens: number
   inputTokens: number
   outputTokens: number
   cacheReadTokens: number
@@ -34,6 +36,8 @@ export interface ObservabilityNodeBreakdown {
 
 export interface ObservabilityModelBreakdown {
   model: string
+  /** C3: server 单源总量行（web 不再四字段自加） */
+  tokens: number
   inputTokens: number
   outputTokens: number
   cacheReadTokens: number
@@ -180,7 +184,7 @@ export class ObservabilityQueryService {
       const model = call.model ?? "unknown"
       let entry = modelMap.get(model)
       if (!entry) {
-        entry = { model, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0, costs: [], callCount: 0 }
+        entry = { model, tokens: 0, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0, costs: [], callCount: 0 }
         modelMap.set(model, entry)
       }
       entry.inputTokens += call.input_tokens
@@ -192,7 +196,8 @@ export class ObservabilityQueryService {
     }
 
     return Array.from(modelMap.values()).map(e => ({
-      model: e.model, inputTokens: e.inputTokens, outputTokens: e.outputTokens,
+      model: e.model, tokens: totalTokens({ inputTokens: e.inputTokens, outputTokens: e.outputTokens, cacheReadTokens: e.cacheReadTokens, cacheCreationTokens: e.cacheCreationTokens }),
+      inputTokens: e.inputTokens, outputTokens: e.outputTokens,
       cacheReadTokens: e.cacheReadTokens, cacheCreationTokens: e.cacheCreationTokens,
       costUsd: costSummary(e.costs).usd, callCount: e.callCount,
     }))
@@ -294,6 +299,7 @@ export class ObservabilityQueryService {
         nodeId: ne.node_id,
         nodeName: ne.node_id,
         nodeType: ne.node_type,
+        tokens: totalTokens({ inputTokens: tokenData.inputTokens, outputTokens: tokenData.outputTokens, cacheReadTokens: tokenData.cacheReadTokens, cacheCreationTokens: tokenData.cacheCreationTokens }),
         inputTokens: tokenData.inputTokens,
         outputTokens: tokenData.outputTokens,
         cacheReadTokens: tokenData.cacheReadTokens,

@@ -9,7 +9,8 @@ interface SummaryBarProps {
   totalDurationMs: number
   totalInputTokens: number
   totalOutputTokens: number
-  totalCostUsd: number
+  /** C3: null = 未定价 */
+  totalCostUsd: number | null
   turnDurations?: { turnIndex: number; durationMs: number }[]
 }
 
@@ -41,7 +42,7 @@ export function SummaryBar({ turnCount, totalDurationMs, totalInputTokens, total
         </span>
         <span className="text-muted-foreground">·</span>
         <span className="flex items-center gap-1 tabular-nums font-medium">
-          <Coins className="h-3 w-3 text-amber-500" />${totalCostUsd.toFixed(2)}
+          <Coins className="h-3 w-3 text-amber-500" />{totalCostUsd === null ? "未定价" : `$${totalCostUsd.toFixed(2)}`}
         </span>
       </div>
 

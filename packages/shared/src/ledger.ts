@@ -88,6 +88,32 @@ export function ledgerTotals(rows: readonly LedgerRow[]): LedgerTotals {
   }
 }
 
+/** 单份账本汇总（usage + cost），供跨执行合并。 */
+export interface LedgerPart {
+  usage: TokenUsage
+  cost: LedgerCost
+}
+
+/**
+ * 跨执行/跨组合并唯一公式（web TaskAiUsageCard 旧 V4 加权 bug 的根治）：
+ * usage 逐字段相加；cost = 已知部分和（全 null → null），complete = 全部且无 null；
+ * hitRate 用合并后 usage 重算（分母加权天然正确）。
+ */
+export function mergeLedgerParts(parts: readonly LedgerPart[]): { usage: TokenUsage; totals: LedgerTotals } {
+  const usage = parts.reduce<TokenUsage>((acc, p) => addTokenUsage(acc, p.usage), emptyTokenUsage())
+  let usd: number | null = null
+  let complete = true
+  for (const p of parts) {
+    if (p.cost.usd === null) { if (p.cost.complete) continue; complete = false; continue }
+    usd = (usd ?? 0) + p.cost.usd
+    if (!p.cost.complete) complete = false
+  }
+  return {
+    usage,
+    totals: { tokens: totalTokens(usage), cost: { usd, complete }, cacheHitRate: cacheHitRateOf(usage) },
+  }
+}
+
 /** 已有一份合并好的 usage + 各行 cost 时直出 totals（SSE live 累计用）。 */
 export function totalsFromUsage(usage: TokenUsage, costs: readonly (number | null | undefined)[]): LedgerTotals {
   return {

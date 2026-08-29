@@ -28,7 +28,7 @@ export default function DashboardPage() {
     running_executions: 0,
     pending_executions: 0,
     avg_duration_ms: null as number | null,
-    total_cost: 0,
+    total_cost: { usd: null, complete: true } as { usd: number | null; complete: boolean },
   })
   const [runningExecutions, setRunningExecutions] = useState<Execution[]>([])
   const [pendingExecutions, setPendingExecutions] = useState<Execution[]>([])
@@ -50,7 +50,7 @@ export default function DashboardPage() {
       if (statsResult.status === "fulfilled") {
         setStats(statsResult.value)
       } else {
-        setStats({ total_workspaces: 0, total_workflows: 0, total_executions: 0, completed_executions: 0, failed_executions: 0, running_executions: 0, pending_executions: 0, avg_duration_ms: null, total_cost: 0 })
+        setStats({ total_workspaces: 0, total_workflows: 0, total_executions: 0, completed_executions: 0, failed_executions: 0, running_executions: 0, pending_executions: 0, avg_duration_ms: null, total_cost: { usd: null, complete: true } })
       }
       if (queueResult.status === "fulfilled") {
         const allQueue = Array.isArray(queueResult.value) ? queueResult.value : []
@@ -132,7 +132,8 @@ export default function DashboardPage() {
       <HeroMetrics
         totalExecutions={totalExecutions}
         successRate={successRate}
-        totalCost={stats.total_cost ?? 0}
+        totalCost={stats.total_cost?.usd ?? null}
+        totalCostComplete={stats.total_cost?.complete ?? true}
         avgDurationMs={stats.avg_duration_ms ?? 0}
       />
 

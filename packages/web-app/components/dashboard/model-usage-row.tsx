@@ -15,9 +15,9 @@ export function ModelUsageRow({ usage, className }: ModelUsageRowProps) {
     return `$${cost.toFixed(4)}`
   }
 
-  // 计算总数：输入总数 = input + cache_read，输出总数 = output + cache_creation
-  const totalInput = usage.inputTokens + usage.cacheReadTokens
-  const totalOutput = usage.outputTokens + usage.cacheCreationTokens
+  // C3: 折叠口径废除 —— 输入/输出纯值，cache 分项在 tooltip 与徽标
+  const totalInput = usage.inputTokens
+  const totalOutput = usage.outputTokens
 
   const tooltip = `总输入: ${formatTokenCount(totalInput)}\n  - 输入: ${formatTokenCount(usage.inputTokens)}\n  - 缓存读: ${formatTokenCount(usage.cacheReadTokens)}\n总输出: ${formatTokenCount(totalOutput)}\n  - 输出: ${formatTokenCount(usage.outputTokens)}\n  - 缓存写: ${formatTokenCount(usage.cacheCreationTokens)}`
 

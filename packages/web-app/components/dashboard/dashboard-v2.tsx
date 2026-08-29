@@ -38,7 +38,8 @@ export function DashboardV2({ workspaceId, dashboardStats }: DashboardV2Props) {
       ? dashboardStats.completedToday / (dashboardStats.completedToday + dashboardStats.failedToday)
       : 0
   )
-  const totalCost = analytics?.totalCost ?? 0
+  // C3: workspace analytics totalCost = LedgerCost { usd, complete }
+  const totalCost = (analytics?.totalCost as { usd: number | null; complete: boolean } | undefined)?.usd ?? null
   const avgDurationMs = analytics?.avgDurationMs ?? 0
 
   return (
@@ -47,6 +48,7 @@ export function DashboardV2({ workspaceId, dashboardStats }: DashboardV2Props) {
         totalExecutions={totalExecutions}
         successRate={successRate}
         totalCost={totalCost}
+        totalCostComplete={((analytics?.totalCost as { usd: number | null; complete: boolean } | undefined)?.complete) ?? true}
         avgDurationMs={avgDurationMs}
       />
 

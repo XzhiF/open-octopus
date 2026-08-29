@@ -77,7 +77,7 @@ describe("useExecutionMetrics", () => {
       ok: true,
       json: () =>
         Promise.resolve({
-          tokens: { usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0 }, totalCostUsd: 0 },
+          tokens: { usage: {  inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0  }, totals: { tokens: 0, cost: { usd: null, complete: true }, cacheHitRate: null } },
           budget: { snapshot: null, progress: { tokensPercent: null, durationPercent: null, costPercent: null }, alerts: [] },
           errors: [],
           rounds: { totalLlmTurns: 0, totalLoopIterations: 0, totalSwarmRounds: 0, totalRetries: 0 },
@@ -113,6 +113,7 @@ describe("useExecutionMetrics", () => {
         executionId: "exec-other",
         usage: { inputTokens: 999, outputTokens: 888, cacheReadTokens: 0, cacheCreationTokens: 0 },
               totalCostUsd: 0.5,
+              totals: { tokens: 1887, cost: { usd: 0.5, complete: true }, cacheHitRate: null },
         totalLlmTurns: 5,
         budgetProgress: { tokensPercent: null, durationPercent: null, costPercent: null },
         errorCount: 0,
@@ -128,6 +129,7 @@ describe("useExecutionMetrics", () => {
         executionId: "exec-1",
         usage: { inputTokens: 100, outputTokens: 50, cacheReadTokens: 0, cacheCreationTokens: 0 },
               totalCostUsd: 0.01,
+              totals: { tokens: 150, cost: { usd: 0.01, complete: true }, cacheHitRate: null },
         totalLlmTurns: 3,
         budgetProgress: { tokensPercent: 10, durationPercent: null, costPercent: null },
         errorCount: 1,
@@ -140,7 +142,7 @@ describe("useExecutionMetrics", () => {
 
   // ── AC-2: Returns correct shape with real-time updates ────────────
 
-  it("returns totalTokens as input + output sum", async () => {
+  it("passes through server ledger totals (C3: 前端不再自加)", async () => {
     const { result } = renderHook(() => useExecutionMetrics("ws-1", "exec-1"))
     await flushPromises()
 
@@ -150,6 +152,7 @@ describe("useExecutionMetrics", () => {
         executionId: "exec-1",
         usage: { inputTokens: 200, outputTokens: 100, cacheReadTokens: 0, cacheCreationTokens: 0 },
               totalCostUsd: 0.02,
+              totals: { tokens: 300, cost: { usd: 0.02, complete: true }, cacheHitRate: null },
         totalLlmTurns: 5,
         budgetProgress: { tokensPercent: 30, durationPercent: null, costPercent: null },
         errorCount: 0,
@@ -176,6 +179,7 @@ describe("useExecutionMetrics", () => {
         executionId: "exec-1",
         usage: { inputTokens: 100, outputTokens: 50, cacheReadTokens: 0, cacheCreationTokens: 0 },
               totalCostUsd: 0.01,
+              totals: { tokens: 150, cost: { usd: 0.01, complete: true }, cacheHitRate: null },
         totalLlmTurns: 2,
         budgetProgress: { tokensPercent: 15, durationPercent: null, costPercent: null },
         errorCount: 0,
@@ -191,6 +195,7 @@ describe("useExecutionMetrics", () => {
         executionId: "exec-1",
         usage: { inputTokens: 300, outputTokens: 150, cacheReadTokens: 0, cacheCreationTokens: 0 },
               totalCostUsd: 0.03,
+              totals: { tokens: 450, cost: { usd: 0.03, complete: true }, cacheHitRate: null },
         totalLlmTurns: 5,
         budgetProgress: { tokensPercent: 45, durationPercent: null, costPercent: null },
         errorCount: 1,
@@ -219,7 +224,7 @@ describe("useExecutionMetrics", () => {
       ok: true,
       json: () =>
         Promise.resolve({
-          tokens: { usage: { inputTokens: 500, outputTokens: 250, cacheReadTokens: 30, cacheCreationTokens: 20 }, totalCostUsd: 0.05 },
+          tokens: { usage: {  inputTokens: 500, outputTokens: 250, cacheReadTokens: 30, cacheCreationTokens: 20  }, totals: { tokens: 800, cost: { usd: 0.05, complete: true }, cacheHitRate: null } },
           budget: {
             snapshot: { max_tokens: 10000 },
             progress: { tokensPercent: 7.5, durationPercent: null, costPercent: null },
@@ -255,7 +260,7 @@ describe("useExecutionMetrics", () => {
       ok: true,
       json: () =>
         Promise.resolve({
-          tokens: { usage: { inputTokens: 500, outputTokens: 250, cacheReadTokens: 30, cacheCreationTokens: 20 }, totalCostUsd: 0.05 },
+          tokens: { usage: {  inputTokens: 500, outputTokens: 250, cacheReadTokens: 30, cacheCreationTokens: 20  }, totals: { tokens: 800, cost: { usd: 0.05, complete: true }, cacheHitRate: null } },
           budget: { snapshot: null, progress: { tokensPercent: null, durationPercent: null, costPercent: null }, alerts: [] },
           errors: [],
           rounds: { totalLlmTurns: 10, totalLoopIterations: 0, totalSwarmRounds: 0, totalRetries: 0 },
@@ -275,6 +280,7 @@ describe("useExecutionMetrics", () => {
         executionId: "exec-1",
         usage: { inputTokens: 800, outputTokens: 400, cacheReadTokens: 0, cacheCreationTokens: 0 },
               totalCostUsd: 0.08,
+              totals: { tokens: 1200, cost: { usd: 0.08, complete: true }, cacheHitRate: null },
         totalLlmTurns: 15,
         budgetProgress: { tokensPercent: null, durationPercent: null, costPercent: null },
         errorCount: 0,

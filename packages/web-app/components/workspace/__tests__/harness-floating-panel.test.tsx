@@ -73,6 +73,8 @@ const DEFAULT_METRICS: ExecutionMetrics = {
   totalCacheReadTokens: 0,
   totalCacheCreationTokens: 0,
   totalCost: 0,
+  costComplete: true,
+  cacheHitRate: null,
   totalTurns: 0,
   budgetProgress: { tokensPercent: null, durationPercent: null, costPercent: null },
   errorCount: 0,

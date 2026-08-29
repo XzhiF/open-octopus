@@ -412,12 +412,18 @@ export function createAnalyticsRoutes(
 
     // C3: aggregates 的总量走 ledger（execution 级 = ntu 单源；nodeId 过滤 = 该节点
     // ntu 行经同一 JS 公式），旧 cacheHitRate V1（cache/total）与两字段 total 口径废除。
-    const ledgerRows: LedgerRow[] = nodeId
-      ? tokenUsageDAO.findLedgerRowsByNodeId(executionId as string, nodeId)
-      : []
-    const totals = nodeId
-      ? ledgerTotals(ledgerRows)
-      : tokenUsageDAO.aggregateByExecution(executionId as string).totals
+    const ledgerAgg = nodeId
+      ? (() => {
+          const rows = tokenUsageDAO.findLedgerRowsByNodeId(executionId as string, nodeId)
+          return {
+            usage: rows.reduce<TokenUsage>((a, r) => addTokenUsage(a, r), emptyTokenUsage()),
+            totals: ledgerTotals(rows),
+          }
+        })()
+      : (() => {
+          const m = tokenUsageDAO.aggregateByExecution(executionId as string)
+          return { usage: m.usage, totals: m.totals }
+        })()
 
     const modelBreakdown: Record<string, { calls: number; inputTokens: number; outputTokens: number; costUsd: number | null }> = {}
     const modelCosts: Record<string, Array<number | null>> = {}
@@ -440,7 +446,8 @@ export function createAnalyticsRoutes(
       data: calls,
       aggregates: {
         totalCalls: calls.length,
-        totals,
+        usage: ledgerAgg.usage,
+        totals: ledgerAgg.totals,
         modelBreakdown,
       },
       _degraded: false,

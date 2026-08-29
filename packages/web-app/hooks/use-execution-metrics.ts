@@ -13,22 +13,34 @@ export interface BudgetProgress {
 }
 
 export interface ExecutionMetrics {
+  /** C3: 全部总量字段由 server ledger totals 直供，前端零公式 */
   totalTokens: number
   totalInputTokens: number
   totalOutputTokens: number
   totalCacheReadTokens: number
   totalCacheCreationTokens: number
-  totalCost: number
+  /** null = 未定价（显示 —）；complete=false = 部分和（显示 ≈） */
+  totalCost: number | null
+  costComplete: boolean
+  cacheHitRate: number | null
   totalTurns: number
   budgetProgress: BudgetProgress
   errorCount: number
   isConnected: boolean
 }
 
+interface LedgerTotalsWire {
+  tokens: number
+  cost: { usd: number | null; complete: boolean }
+  cacheHitRate: number | null
+}
+
+interface UsageWire { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheCreationTokens: number }
+
 interface SSEMetricsPayload {
   executionId: string
-  usage: { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheCreationTokens: number }
-  totalCostUsd: number
+  usage: UsageWire
+  totals: LedgerTotalsWire
   totalLlmTurns: number
   budgetProgress: BudgetProgress
   errorCount: number
@@ -37,8 +49,8 @@ interface SSEMetricsPayload {
 
 interface ObservabilityResponse {
   tokens: {
-    usage: { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheCreationTokens: number }
-    totalCostUsd: number
+    usage: UsageWire
+    totals: LedgerTotalsWire
   }
   budget: {
     snapshot: { max_tokens?: number; max_duration?: number; max_cost_usd?: number } | null
@@ -62,7 +74,9 @@ const INITIAL_METRICS: ExecutionMetrics = {
   totalOutputTokens: 0,
   totalCacheReadTokens: 0,
   totalCacheCreationTokens: 0,
-  totalCost: 0,
+  totalCost: null,
+  costComplete: true,
+  cacheHitRate: null,
   totalTurns: 0,
   budgetProgress: { tokensPercent: null, durationPercent: null, costPercent: null },
   errorCount: 0,
@@ -94,12 +108,14 @@ export function useExecutionMetrics(
       const data: ObservabilityResponse = await res.json()
 
       setMetrics({
-        totalTokens: data.tokens.usage.inputTokens + data.tokens.usage.outputTokens + data.tokens.usage.cacheReadTokens + data.tokens.usage.cacheCreationTokens,
+        totalTokens: data.tokens.totals.tokens,
         totalInputTokens: data.tokens.usage.inputTokens,
         totalOutputTokens: data.tokens.usage.outputTokens,
         totalCacheReadTokens: data.tokens.usage.cacheReadTokens,
         totalCacheCreationTokens: data.tokens.usage.cacheCreationTokens,
-        totalCost: data.tokens.totalCostUsd,
+        totalCost: data.tokens.totals.cost.usd,
+        costComplete: data.tokens.totals.cost.complete,
+        cacheHitRate: data.tokens.totals.cacheHitRate,
         totalTurns: data.rounds.totalLlmTurns,
         budgetProgress: data.budget.progress,
         errorCount: data.errors.length,
@@ -129,12 +145,14 @@ export function useExecutionMetrics(
         if (raw.executionId !== executionId) return
 
         setMetrics({
-          totalTokens: raw.usage.inputTokens + raw.usage.outputTokens + raw.usage.cacheReadTokens + raw.usage.cacheCreationTokens,
+          totalTokens: raw.totals.tokens,
           totalInputTokens: raw.usage.inputTokens,
           totalOutputTokens: raw.usage.outputTokens,
           totalCacheReadTokens: raw.usage.cacheReadTokens,
           totalCacheCreationTokens: raw.usage.cacheCreationTokens,
-          totalCost: raw.totalCostUsd,
+          totalCost: raw.totals.cost.usd,
+          costComplete: raw.totals.cost.complete,
+          cacheHitRate: raw.totals.cacheHitRate,
           totalTurns: raw.totalLlmTurns,
           budgetProgress: raw.budgetProgress,
           errorCount: raw.errorCount,

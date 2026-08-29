@@ -44,17 +44,18 @@ interface ObservabilityData {
   status: string
   tokens: {
     usage: { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheCreationTokens: number }
-    totalCostUsd: number
+    totals: { tokens: number; cost: { usd: number | null; complete: boolean }; cacheHitRate: number | null }
   }
   byNode: Array<{
     nodeId: string
     nodeName: string
     nodeType: string
+    tokens: number
     inputTokens: number
     outputTokens: number
     cacheReadTokens: number
     cacheCreationTokens: number
-    costUsd: number
+    costUsd: number | null
     llmTurns: number
     loopIterations: number
     swarmRounds: number
@@ -64,11 +65,12 @@ interface ObservabilityData {
   }>
   byModel: Array<{
     model: string
+    tokens: number
     inputTokens: number
     outputTokens: number
     cacheReadTokens: number
     cacheCreationTokens: number
-    costUsd: number
+    costUsd: number | null
     callCount: number
   }>
   timeSeries: Array<{
@@ -231,7 +233,9 @@ export function ObservabilityTab({ workspaceId, executionId, isRunning }: Observ
     )
   }
 
-  const totalTokens = data.tokens.usage.inputTokens + data.tokens.usage.outputTokens + data.tokens.usage.cacheReadTokens + data.tokens.usage.cacheCreationTokens
+  // C3: totals 由 server ledger 直供
+  const { totals } = data.tokens
+  const totalTokens = totals.tokens
 
   return (
     <div className="h-full overflow-y-auto px-2 py-2 space-y-3 text-xs">
@@ -241,7 +245,7 @@ export function ObservabilityTab({ workspaceId, executionId, isRunning }: Observ
           subtitle={`↑${formatTokenCount(data.tokens.usage.inputTokens)} ↓${formatTokenCount(data.tokens.usage.outputTokens)} ⚡${formatTokenCount(data.tokens.usage.cacheReadTokens)} 🗡️${formatTokenCount(data.tokens.usage.cacheCreationTokens)}`} />
         <MiniCard title="总轮次" value={String(data.rounds.totalLlmTurns)}
           subtitle={`Loop ${data.rounds.totalLoopIterations} / Swarm ${data.rounds.totalSwarmRounds}`} />
-        <MiniCard title="总成本" value={formatCurrency(data.tokens.totalCostUsd)} subtitle="USD" />
+        <MiniCard title="总成本" value={totals.cost.usd === null ? "—" : formatCurrency(totals.cost.usd) + (totals.cost.complete ? "" : " ≈")} subtitle="USD" />
         <MiniBudgetCard budget={data.budget} />
       </div>
 
@@ -400,7 +404,7 @@ function ModelUsageChart({ byModel }: { byModel: ObservabilityData["byModel"] })
     return {
       name: m.model,
       value: m.inputTokens + m.outputTokens + cacheRead + cacheWrite,
-      cost: m.costUsd,
+      cost: m.costUsd ?? 0, // 图轴需要数；未定价行画 0（列表列显示 —）
       cacheRead,
       cacheWrite,
       cacheFlag,
@@ -498,7 +502,7 @@ function RoundsTable({
       <TableBody>
         {byNode.map((node) => {
           const isExpanded = expandedNodes.has(node.nodeId)
-          const totalTokens = node.inputTokens + node.outputTokens + node.cacheReadTokens + node.cacheCreationTokens
+          const totalTokens = node.tokens
           return (
             <Fragment key={node.nodeId}>
               <TableRow className="cursor-pointer hover:bg-muted/50 h-7" onClick={() => onToggle(node.nodeId)}>
@@ -508,7 +512,7 @@ function RoundsTable({
                 <TableCell className="p-1 font-medium truncate max-w-24">{node.nodeName}</TableCell>
                 <TableCell className="p-1"><Badge variant="outline" className="text-[9px] px-1">{node.nodeType}</Badge></TableCell>
                 <TableCell className="p-1 text-right tabular-nums">{formatTokenCount(totalTokens)}</TableCell>
-                <TableCell className="p-1 text-right tabular-nums">{formatCurrency(node.costUsd)}</TableCell>
+                <TableCell className="p-1 text-right tabular-nums">{node.costUsd === null ? "—" : formatCurrency(node.costUsd)}</TableCell>
                 <TableCell className="p-1 text-right tabular-nums">{(node.durationMs / 1000).toFixed(1)}s</TableCell>
               </TableRow>
               {isExpanded && (

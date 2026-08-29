@@ -85,9 +85,9 @@ export function AgentTimeline({
   const { totalDurationMs, turnDurations } = computeAggregates(allTurns)
 
   const turnCount = allTurns.length
-  const totalInputTokens = llmAggregates?.totalInputTokens ?? 0
-  const totalOutputTokens = llmAggregates?.totalOutputTokens ?? 0
-  const totalCostUsd = llmAggregates?.totalCost ?? 0
+  const totalInputTokens = llmAggregates?.usage.inputTokens ?? 0
+  const totalOutputTokens = llmAggregates?.usage.outputTokens ?? 0
+  const totalCostUsd = llmAggregates?.totals.cost.usd ?? null
 
   const scrollToBottom = useCallback(() => {
     if (scrollRef.current) {

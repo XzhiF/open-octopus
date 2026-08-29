@@ -137,9 +137,9 @@ describe("TaskRunDetailView", () => {
     mockFetchLLMCalls.mockResolvedValue({
       data: [],
       aggregates: {
-        totalCalls: 12, totalInputTokens: 24000, totalOutputTokens: 413000,
-        totalCacheReadTokens: 1458600, totalCacheCreationTokens: 513900,
-        totalCost: 1.234, cacheHitRate: 0.96,
+        totalCalls: 12,
+        usage: { inputTokens: 24000, outputTokens: 413000, cacheReadTokens: 1458600, cacheCreationTokens: 513900 },
+        totals: { tokens: 2409700, cost: { usd: 1.234, complete: true }, cacheHitRate: 1458600 / (24000 + 1458600) },
         modelBreakdown: { "sonnet": { calls: 10, inputTokens: 20000, outputTokens: 400000, costUsd: 1.0 }, "haiku": { calls: 2, inputTokens: 4000, outputTokens: 13000, costUsd: 0.234 } },
       },
     })
@@ -148,7 +148,8 @@ describe("TaskRunDetailView", () => {
     expect(await screen.findByText("任务 AI 消耗")).toBeTruthy()
     expect(screen.getByText(/全部 1 次执行合计 · 不含编写期对话/)).toBeTruthy()
     // 卡内 + 行内各一份成本（≥1 美元两位小数）
-    expect(screen.getAllByText(/≈\$1\.23/)).toHaveLength(2)
+    // C3: 定价完整 → 无 ≈ 前缀（≈ 只属于部分定价/未定价态）
+    expect(screen.getAllByText(/\$1\.23/)).toHaveLength(2)
     expect(screen.getByText(/12 次调用/)).toBeTruthy()
     expect(screen.getByText("sonnet×10")).toBeTruthy()
     expect(screen.getByText("haiku×2")).toBeTruthy()

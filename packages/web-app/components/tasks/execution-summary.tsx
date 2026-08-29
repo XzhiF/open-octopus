@@ -25,6 +25,7 @@ import {
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Spinner } from "@/components/ui/spinner"
+import { mergeLedgerParts } from "@octopus/shared"
 import { getTask, listArtifacts, type TaskChild, type TaskDetail } from "@/lib/tasks-api"
 import { getExecution } from "@/lib/scheduler-api"
 import { fetchLLMCalls } from "@/lib/observability-api"
@@ -168,7 +169,7 @@ function ChildRunRow({ child, now, agg }: { child: TaskChild; now: number; agg: 
       const exec = await getExecution(child.schedule_id, ref.id)
       const parts: string[] = []
       if (exec.model_used) parts.push(`模型: ${exec.model_used}`)
-      if (exec.token_usage) parts.push(`tokens: ↑${exec.token_usage.input} ↓${exec.token_usage.output}`)
+      if (exec.token_usage) parts.push(`tokens: ↑${exec.token_usage.inputTokens} ↓${exec.token_usage.outputTokens}`) // C1 规范字段名（基线改名残留顺手修）
       if (exec.agent_output) parts.push("", exec.agent_output)
       setOutput({ state: "done", text: parts.join("\n") || "（该次运行没有记录输出）" })
     } catch (err: unknown) {
@@ -202,7 +203,7 @@ function ChildRunRow({ child, now, agg }: { child: TaskChild; now: number; agg: 
           {child.scheduled_at && <span>计划 {fmtTime(child.scheduled_at)}</span>}
           {agg && agg.totalCalls > 0 && (
             <span className="tabular-nums" title="该次运行的 LLM 调用（llm_calls 于节点结束落库，中止的半截运行可能缺数据）">
-              <Bot className="size-3 inline mr-1" />{agg.totalCalls} 次调用 · ↑{formatTokenCount(agg.totalInputTokens)} ↓{formatTokenCount(agg.totalOutputTokens)} · ≈{fmtCost(agg.totalCost)}
+              <Bot className="size-3 inline mr-1" />{agg.totalCalls} 次调用 · ↑{formatTokenCount(agg.usage.inputTokens)} ↓{formatTokenCount(agg.usage.outputTokens)} · {fmtCost(agg.totals.cost.usd, agg.totals.cost.complete)}
             </span>
           )}
         </div>
@@ -297,38 +298,35 @@ function useRunsAggregates(execIds: string[], isLive: boolean) {
 
 function mergeAggregates(list: LLMCallAggregates[]): LLMCallAggregates | null {
   if (list.length === 0) return null
-  const out: LLMCallAggregates = {
-    totalCalls: 0, totalInputTokens: 0, totalOutputTokens: 0,
-    totalCacheReadTokens: 0, totalCacheCreationTokens: 0,
-    totalCost: 0, cacheHitRate: 0, modelBreakdown: {},
-  }
-  let denom = 0
+  // C3: 合并公式在 shared mergeLedgerParts 单源（旧 V4 加权 bug —— 权重 ||1
+  // 分母 ||0 不一致 —— 随此删除）
+  const merged = mergeLedgerParts(list.map(a => ({ usage: a.usage, cost: a.totals.cost })))
+  const modelBreakdown: LLMCallAggregates["modelBreakdown"] = {}
   for (const a of list) {
-    out.totalCalls += a.totalCalls
-    out.totalInputTokens += a.totalInputTokens
-    out.totalOutputTokens += a.totalOutputTokens
-    out.totalCacheReadTokens += a.totalCacheReadTokens
-    out.totalCacheCreationTokens += a.totalCacheCreationTokens
-    out.totalCost += a.totalCost
-    denom += (a.totalInputTokens || 0)
-    out.cacheHitRate += (a.cacheHitRate || 0) * (a.totalInputTokens || 1)
     for (const [m, b] of Object.entries(a.modelBreakdown ?? {})) {
-      const cur = out.modelBreakdown[m] ?? { calls: 0, inputTokens: 0, outputTokens: 0, costUsd: 0 }
-      out.modelBreakdown[m] = {
+      const cur = modelBreakdown[m]
+      if (!cur) { modelBreakdown[m] = { ...b }; continue }
+      modelBreakdown[m] = {
         calls: cur.calls + b.calls,
         inputTokens: cur.inputTokens + b.inputTokens,
         outputTokens: cur.outputTokens + b.outputTokens,
-        costUsd: cur.costUsd + b.costUsd,
+        costUsd: cur.costUsd === null ? b.costUsd : (b.costUsd === null ? cur.costUsd : cur.costUsd + b.costUsd),
       }
     }
   }
-  out.cacheHitRate = denom > 0 ? out.cacheHitRate / denom : 0
-  return out
+  return {
+    totalCalls: list.reduce((a, x) => a + x.totalCalls, 0),
+    usage: merged.usage,
+    totals: merged.totals,
+    modelBreakdown,
+  }
 }
 
-function fmtCost(usd: number): string {
-  if (!Number.isFinite(usd) || usd <= 0) return "$0"
-  return usd >= 1 ? `$${usd.toFixed(2)}` : `$${usd.toFixed(4)}`
+function fmtCost(usd: number | null, complete = true): string {
+  if (usd === null || !Number.isFinite(usd)) return "未定价"
+  if (usd <= 0) return complete ? "$0" : "≈$0"
+  const body = usd >= 1 ? `$${usd.toFixed(2)}` : `$${usd.toFixed(4)}`
+  return complete ? body : `≈${body}`
 }
 
 /** 任务级 AI 消耗卡（2026-08-29 语义修正）：聚合该任务**全部工作流执行**的
@@ -357,13 +355,13 @@ export function TaskAiUsageCard({ agg, loading, runCount }: {
         <div className="space-y-2" data-ai-usage>
           <div className="flex flex-wrap items-center gap-x-5 gap-y-1.5 text-sm">
             <span className="text-muted-foreground">调用 <b className="text-foreground tabular-nums">{agg.totalCalls}</b> 次</span>
-            <span className="tabular-nums" title="input / output tokens">↑{formatTokenCount(agg.totalInputTokens)} ↓{formatTokenCount(agg.totalOutputTokens)}</span>
-            {(agg.totalCacheReadTokens > 0 || agg.totalCacheCreationTokens > 0) && (
-              <span className="text-xs text-muted-foreground tabular-nums" title={`缓存命中率 ${(agg.cacheHitRate * 100).toFixed(1)}%`}>
-                缓存 读{formatTokenCount(agg.totalCacheReadTokens)}·写{formatTokenCount(agg.totalCacheCreationTokens)}
+            <span className="tabular-nums" title="input / output tokens">↑{formatTokenCount(agg.usage.inputTokens)} ↓{formatTokenCount(agg.usage.outputTokens)}</span>
+            {(agg.usage.cacheReadTokens > 0 || agg.usage.cacheCreationTokens > 0) && (
+              <span className="text-xs text-muted-foreground tabular-nums" title={agg.totals.cacheHitRate === null ? "缓存命中率: 无输入类 token" : `缓存命中率 ${(agg.totals.cacheHitRate * 100).toFixed(1)}%`}>
+                缓存 读{formatTokenCount(agg.usage.cacheReadTokens)}·写{formatTokenCount(agg.usage.cacheCreationTokens)}
               </span>
             )}
-            <span className="font-semibold tabular-nums" title="按边际阶梯定价现算">≈{fmtCost(agg.totalCost)}</span>
+            <span className="font-semibold tabular-nums" title="价表估算（≈=部分未定价）">{fmtCost(agg.totals.cost.usd, agg.totals.cost.complete)}</span>
           </div>
           {models.length > 0 && (
             <div className="flex flex-wrap gap-1.5">
