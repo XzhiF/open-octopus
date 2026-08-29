@@ -1,14 +1,15 @@
 import type { ExecutionDAO } from "../db/dao/execution-dao"
 import type { TokenUsageDAO } from "../db/dao/token-usage-dao"
 import type { LlmCallRow, NodeExecutionRow, ExecutionRow } from "../db/types"
+import type { TokenUsage } from "@octopus/shared"
+import { emptyTokenUsage, addTokenUsage, totalTokens, TokenUsageSchema } from "@octopus/shared"
+import { usageFromRow } from "../db/dao/usage-mapping"
 
 // ── Types ──────────────────────────────────────────────────────────────
 
 export interface ObservabilityTokenSummary {
-  totalInput: number
-  totalOutput: number
-  totalCacheRead: number
-  totalCacheCreation: number
+  /** 规范用量（纯值四字段，C1）—— 取代 totalInput/totalCacheRead 平铺族 */
+  usage: TokenUsage
   totalCostUsd: number
 }
 
@@ -163,21 +164,14 @@ export class ObservabilityQueryService {
   }
 
   private computeTokenSummary(llmCalls: LlmCallRow[]): ObservabilityTokenSummary {
-    let totalInput = 0
-    let totalOutput = 0
-    let totalCacheRead = 0
-    let totalCacheCreation = 0
+    // snake 行 → 规范形状：只经 usageFromRow 单点（C1 · D4）
+    let usage = emptyTokenUsage()
     let totalCostUsd = 0
-
     for (const call of llmCalls) {
-      totalInput += call.input_tokens
-      totalOutput += call.output_tokens
-      totalCacheRead += call.cache_read_tokens
-      totalCacheCreation += call.cache_creation_tokens
+      usage = addTokenUsage(usage, usageFromRow(call))
       totalCostUsd += call.cost_usd ?? 0
     }
-
-    return { totalInput, totalOutput, totalCacheRead, totalCacheCreation, totalCostUsd }
+    return { usage: TokenUsageSchema.parse(usage), totalCostUsd }
   }
 
   private computeByModel(llmCalls: LlmCallRow[]): ObservabilityModelBreakdown[] {
@@ -515,13 +509,13 @@ export class ObservabilityQueryService {
 
     if (snapshot) {
       const mode = (snapshot as any).token_counting_mode ?? "all"
-      const totalTokens = mode === "no_cache"
-        ? tokens.totalInput + tokens.totalOutput
-        : tokens.totalInput + tokens.totalOutput + tokens.totalCacheRead + tokens.totalCacheCreation
+      const consumed = mode === "no_cache"
+        ? tokens.usage.inputTokens + tokens.usage.outputTokens
+        : totalTokens(tokens.usage)
       const alertThreshold = snapshot.alert_threshold ?? 0.8
 
       if (snapshot.max_tokens) {
-        const pct = (totalTokens / snapshot.max_tokens) * 100
+        const pct = (consumed / snapshot.max_tokens) * 100
         progress.tokensPercent = Math.round(pct * 100) / 100
 
         if (pct >= alertThreshold * 100) {
@@ -529,7 +523,7 @@ export class ObservabilityQueryService {
             type: pct >= 100 ? "exceeded" : "warning",
             metric: "tokens",
             threshold: snapshot.max_tokens * alertThreshold,
-            actual: totalTokens,
+            actual: consumed,
             timestamp: new Date().toISOString(),
           })
         }

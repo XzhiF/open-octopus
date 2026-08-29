@@ -43,10 +43,8 @@ function makeMocks() {
 
   const tokenUsageDao = {
     aggregateByExecution: vi.fn().mockReturnValue({
-      totalInputTokens: 0,
-      totalOutputTokens: 0,
-      totalCacheTokens: 0,
-      totalCostUsd: 0,
+      usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0 },
+            totalCostUsd: 0,
       totalLlmTurns: 0,
       errorCount: 0,
     }),
@@ -123,10 +121,8 @@ describe("EngineCallbacks — execution_metrics SSE event", () => {
 
   it("emits execution_metrics after node_end", () => {
     setMock(mocks.tokenUsageDao, "aggregateByExecution", {
-      totalInputTokens: 1500,
-      totalOutputTokens: 800,
-      totalCacheTokens: 0,
-      totalCostUsd: 0.01,
+      usage: { inputTokens: 1500, outputTokens: 800, cacheReadTokens: 0, cacheCreationTokens: 0 },
+            totalCostUsd: 0.01,
       totalLlmTurns: 3,
       errorCount: 0,
     })
@@ -142,10 +138,8 @@ describe("EngineCallbacks — execution_metrics SSE event", () => {
     expect(metricsEvents.length).toBe(1)
     expect(metricsEvents[0][1].data).toMatchObject({
       executionId: "exec-1",
-      totalInputTokens: 1500,
-      totalOutputTokens: 800,
-      totalCacheTokens: 0,
-      totalCostUsd: 0.01,
+      usage: { inputTokens: 1500, outputTokens: 800, cacheReadTokens: 0, cacheCreationTokens: 0 },
+            totalCostUsd: 0.01,
       totalLlmTurns: 3,
       errorCount: 0,
     })
@@ -153,10 +147,8 @@ describe("EngineCallbacks — execution_metrics SSE event", () => {
 
   it("throttles execution_metrics to max 1 per 500ms", () => {
     setMock(mocks.tokenUsageDao, "aggregateByExecution", {
-      totalInputTokens: 100,
-      totalOutputTokens: 50,
-      totalCacheTokens: 0,
-      totalCostUsd: 0.001,
+      usage: { inputTokens: 100, outputTokens: 50, cacheReadTokens: 0, cacheCreationTokens: 0 },
+            totalCostUsd: 0.001,
       totalLlmTurns: 1,
       errorCount: 0,
     })
@@ -200,10 +192,8 @@ describe("EngineCallbacks — budget progress", () => {
       workflow_ref: "test.yaml",
     })
     setMock(mocks.tokenUsageDao, "aggregateByExecution", {
-      totalInputTokens: 5000,
-      totalOutputTokens: 3000,
-      totalCacheTokens: 0,
-      totalCostUsd: 0.05,
+      usage: { inputTokens: 5000, outputTokens: 3000, cacheReadTokens: 0, cacheCreationTokens: 0 },
+            totalCostUsd: 0.05,
       totalLlmTurns: 5,
       errorCount: 1,
     })
@@ -233,10 +223,8 @@ describe("EngineCallbacks — budget progress", () => {
       workflow_ref: "test.yaml",
     })
     setMock(mocks.tokenUsageDao, "aggregateByExecution", {
-      totalInputTokens: 100,
-      totalOutputTokens: 50,
-      totalCacheTokens: 0,
-      totalCostUsd: 0.001,
+      usage: { inputTokens: 100, outputTokens: 50, cacheReadTokens: 0, cacheCreationTokens: 0 },
+            totalCostUsd: 0.001,
       totalLlmTurns: 1,
       errorCount: 0,
     })
@@ -270,10 +258,8 @@ describe("EngineCallbacks — budget progress", () => {
       workflow_ref: "test.yaml",
     })
     setMock(mocks.tokenUsageDao, "aggregateByExecution", {
-      totalInputTokens: 0,
-      totalOutputTokens: 0,
-      totalCacheTokens: 0,
-      totalCostUsd: 0,
+      usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0 },
+            totalCostUsd: 0,
       totalLlmTurns: 0,
       errorCount: 0,
     })
@@ -319,10 +305,8 @@ describe("EngineCallbacks — budget warning", () => {
       workflow_ref: "test.yaml",
     })
     setMock(mocks.tokenUsageDao, "aggregateByExecution", {
-      totalInputTokens: 5000,
-      totalOutputTokens: 3500,
-      totalCacheTokens: 0,
-      totalCostUsd: 0.05,
+      usage: { inputTokens: 5000, outputTokens: 3500, cacheReadTokens: 0, cacheCreationTokens: 0 },
+            totalCostUsd: 0.05,
       totalLlmTurns: 5,
       errorCount: 0,
     })
@@ -350,10 +334,8 @@ describe("EngineCallbacks — budget warning", () => {
       workflow_ref: "test.yaml",
     })
     setMock(mocks.tokenUsageDao, "aggregateByExecution", {
-      totalInputTokens: 2000,
-      totalOutputTokens: 1000,
-      totalCacheTokens: 0,
-      totalCostUsd: 0.02,
+      usage: { inputTokens: 2000, outputTokens: 1000, cacheReadTokens: 0, cacheCreationTokens: 0 },
+            totalCostUsd: 0.02,
       totalLlmTurns: 2,
       errorCount: 0,
     })
@@ -389,10 +371,8 @@ describe("EngineCallbacks — budget blocking (onBeforeNode)", () => {
       workflow_ref: "test.yaml",
     })
     setMock(mocks.tokenUsageDao, "aggregateByExecution", {
-      totalInputTokens: 3000,
-      totalOutputTokens: 2500,
-      totalCacheTokens: 0,
-      totalCostUsd: 0.05,
+      usage: { inputTokens: 3000, outputTokens: 2500, cacheReadTokens: 0, cacheCreationTokens: 0 },
+            totalCostUsd: 0.05,
       totalLlmTurns: 5,
       errorCount: 0,
     })
@@ -431,10 +411,8 @@ describe("EngineCallbacks — budget blocking (onBeforeNode)", () => {
       workflow_ref: "test.yaml",
     })
     setMock(mocks.tokenUsageDao, "aggregateByExecution", {
-      totalInputTokens: 2000,
-      totalOutputTokens: 1000,
-      totalCacheTokens: 0,
-      totalCostUsd: 0.02,
+      usage: { inputTokens: 2000, outputTokens: 1000, cacheReadTokens: 0, cacheCreationTokens: 0 },
+            totalCostUsd: 0.02,
       totalLlmTurns: 2,
       errorCount: 0,
     })
@@ -467,10 +445,8 @@ describe("EngineCallbacks — budget blocking (onBeforeNode)", () => {
       workflow_ref: "test.yaml",
     })
     setMock(mocks.tokenUsageDao, "aggregateByExecution", {
-      totalInputTokens: 800,
-      totalOutputTokens: 500,
-      totalCacheTokens: 0,
-      totalCostUsd: 0.01,
+      usage: { inputTokens: 800, outputTokens: 500, cacheReadTokens: 0, cacheCreationTokens: 0 },
+            totalCostUsd: 0.01,
       totalLlmTurns: 2,
       errorCount: 0,
     })

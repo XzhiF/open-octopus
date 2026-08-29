@@ -12,6 +12,8 @@ import { ExecutionDAO, TokenUsageDAO } from "../db/dao"
 import { initExecutionServiceRegistry, getService } from "../services/execution-service-registry"
 export { getService } from "../services/execution-service-registry"
 import { mergeAgentEvents } from "@octopus/engine"
+import type { TokenUsage } from "@octopus/shared"
+import { addTokenUsage, emptyTokenUsage } from "@octopus/shared"
 import repairRoutes, { setRepairDependencies, createRepairServiceForWorkspace } from "./repair"
 import os from "os"
 
@@ -191,8 +193,11 @@ executionRoutes.get("/:executionId", async (c) => {
   // Map node_executions to frontend StepExecution format
   const steps = execution.steps.map(ne => {
     const stepTokens = perStepTokenUsages.filter(t => t.stepId === ne.node_id)
-    const tokensInput = stepTokens.length > 0 ? stepTokens.reduce((s, t) => s + t.inputTokens + (t.cacheReadTokens ?? 0), 0) : undefined
-    const tokensOutput = stepTokens.length > 0 ? stepTokens.reduce((s, t) => s + t.outputTokens + (t.cacheCreationTokens ?? 0), 0) : undefined
+    // C1：废除 in+cacheRead / out+cacheCreation 折叠切分 —— 嵌套规范 usage（纯值）。
+    // 旧「REST 终态比运行中 turn_usage 虚胖」的节点卡跳变随之消失。
+    const stepUsage: TokenUsage | undefined = stepTokens.length > 0
+      ? stepTokens.reduce<TokenUsage>((acc, t) => addTokenUsage(acc, t), emptyTokenUsage())
+      : undefined
     const parsedOutputs = ne.outputs ? JSON.parse(ne.outputs) : undefined
     return {
       stepId: ne.node_id,
@@ -206,9 +211,8 @@ executionRoutes.get("/:executionId", async (c) => {
       output: parsedOutputs?.last_output ?? parsedOutputs?.decision ?? undefined,
       outputs: parsedOutputs,
       model: stepTokens.length > 0 ? stepTokens[0].model : undefined,
-      tokensInput,
-      tokensOutput,
-      tokenUsages: stepTokens.length > 0 ? stepTokens.map(t => ({
+      ...(stepUsage ? { usage: stepUsage } : {}),
+      modelUsages: stepTokens.length > 0 ? stepTokens.map(t => ({
         model: t.model,
         inputTokens: t.inputTokens,
         outputTokens: t.outputTokens,

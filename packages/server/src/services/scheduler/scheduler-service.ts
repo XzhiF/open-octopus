@@ -24,6 +24,7 @@ import type {
   SubunitSpec,
   OriginType,
   ResourceRef, TokenUsage } from '@octopus/shared'
+import { usageFromLegacyJson } from '../../db/dao/usage-mapping'
 import {
   taskSpecSchema,
   type ScheduleStatusListener,
@@ -520,33 +521,6 @@ interface ScheduleWorkspaceRow {
 }
 
 // ── Utilities ────────────────────────────────────────────────────────
-
-/**
- * schedule_executions.token_usage 是历史 JSON blob：
- * - 旧行（C1 之前写入）为 { input, output } 合并口径（input 含 cache，无 cache 列）；
- * - 新行为规范 TokenUsage 四字段纯值。
- * 这里做一次读侧归一 —— 旧行无法事后拆分 cache，按原值映射（口径偏大是存量事实，
- * 由 C3 的 ledger 统一解释；本函数不做臆测修正）。
- */
-function usageFromScheduleJson(value: string | null | undefined): TokenUsage | null {
-  const parsed = safeJsonParse<Partial<TokenUsage> & { input?: number; output?: number } | null>(value, null)
-  if (!parsed) return null
-  if (typeof parsed.inputTokens === 'number' || typeof parsed.outputTokens === 'number') {
-    return {
-      inputTokens: parsed.inputTokens ?? 0,
-      outputTokens: parsed.outputTokens ?? 0,
-      cacheReadTokens: parsed.cacheReadTokens ?? 0,
-      cacheCreationTokens: parsed.cacheCreationTokens ?? 0,
-    }
-  }
-  // legacy { input, output } merged shape
-  return {
-    inputTokens: parsed.input ?? 0,
-    outputTokens: parsed.output ?? 0,
-    cacheReadTokens: 0,
-    cacheCreationTokens: 0,
-  }
-}
 
 function safeJsonParse<T>(value: string | null | undefined, fallback: T): T {
   if (value == null) return fallback
@@ -1556,7 +1530,7 @@ export class SchedulerService {
       triggered_by: row.triggered_by,
       agent_output: row.agent_output,
       model_used: row.model_used,
-      token_usage: usageFromScheduleJson(row.token_usage),
+      token_usage: usageFromLegacyJson(safeJsonParse<unknown>(row.token_usage, null)),
       metadata: safeJsonParse<Record<string, unknown>>(row.metadata, {}),
       created_at: row.created_at,
     }

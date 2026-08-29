@@ -113,8 +113,8 @@ describe("ObservabilityQueryService", () => {
 
     expect(data.executionId).toBe("exec-1")
     expect(data.status).toBe("completed")
-    expect(data.tokens.totalInput).toBe(200)
-    expect(data.tokens.totalOutput).toBe(100)
+    expect(data.tokens.usage.inputTokens).toBe(200)
+    expect(data.tokens.usage.outputTokens).toBe(100)
     expect(data.tokens.totalCostUsd).toBe(0.05)
     expect(data.byNode).toHaveLength(1)
     expect(data.byNode[0].nodeId).toBe("agent-1")
@@ -137,7 +137,7 @@ describe("ObservabilityQueryService", () => {
 
     const data = service.getObservabilityData("exec-2")
     // SUM(input_tokens) WHERE execution_id = 'exec-2' = 100 + 150 + 200 = 450
-    expect(data.tokens.totalInput).toBe(450)
+    expect(data.tokens.usage.inputTokens).toBe(450)
   })
 
   it("computes byNode with correct per-node breakdown (AC-3)", () => {

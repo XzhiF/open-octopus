@@ -1,6 +1,7 @@
 import type Database from "better-sqlite3"
 import { BaseDAO } from "./base"
 import type { NodeTokenUsageRow, LlmCallRow } from "../types"
+import type { TokenUsage } from "@octopus/shared"
 
 export class TokenUsageDAO extends BaseDAO {
   constructor(db: Database.Database) { super(db) }
@@ -60,8 +61,12 @@ export class TokenUsageDAO extends BaseDAO {
 
   // ── llm_calls ───────────────────────────────────────────────────
 
-  findLlmCallsByExecution(executionId: string): LlmCallRow[] {
-    return this.stmt("SELECT * FROM llm_calls WHERE execution_id = ?").all(executionId) as LlmCallRow[]
+  findLlmCallsByExecution(executionId: string, nodeId?: string): LlmCallRow[] {
+    let query = `SELECT * FROM llm_calls WHERE execution_id = ?`
+    const params: unknown[] = [executionId]
+    if (nodeId) { query += ` AND node_id = ?`; params.push(nodeId) }
+    query += ` ORDER BY turn_index, call_index`
+    return this.stmt(query).all(...params) as LlmCallRow[]
   }
 
   /**
@@ -69,10 +74,7 @@ export class TokenUsageDAO extends BaseDAO {
    * Used by EngineCallbacks for execution_metrics SSE events.
    */
   aggregateByExecution(executionId: string): {
-    totalInputTokens: number
-    totalOutputTokens: number
-    totalCacheReadTokens: number
-    totalCacheCreationTokens: number
+    usage: TokenUsage
     totalCostUsd: number
     totalLlmTurns: number
     errorCount: number
@@ -101,10 +103,12 @@ export class TokenUsageDAO extends BaseDAO {
     `).get(executionId) as { errorCount: number }
 
     return {
-      totalInputTokens: tokens.totalInputTokens,
-      totalOutputTokens: tokens.totalOutputTokens,
-      totalCacheReadTokens: tokens.totalCacheReadTokens,
-      totalCacheCreationTokens: tokens.totalCacheCreationTokens,
+      usage: {
+        inputTokens: tokens.totalInputTokens,
+        outputTokens: tokens.totalOutputTokens,
+        cacheReadTokens: tokens.totalCacheReadTokens,
+        cacheCreationTokens: tokens.totalCacheCreationTokens,
+      },
       totalCostUsd: tokens.totalCostUsd,
       totalLlmTurns: tokens.totalLlmTurns,
       errorCount: errors.errorCount,
@@ -783,14 +787,6 @@ export class TokenUsageDAO extends BaseDAO {
       FROM llm_calls WHERE workspace_id = ? AND timestamp >= ?
       GROUP BY date ORDER BY date ASC
     `).all(workspaceId, tsCutoff) as Array<Record<string, unknown>>
-  }
-
-  findLlmCallsByExecution(executionId: string, nodeId?: string): Array<Record<string, unknown>> {
-    let query = `SELECT * FROM llm_calls WHERE execution_id = ?`
-    const params: unknown[] = [executionId]
-    if (nodeId) { query += ` AND node_id = ?`; params.push(nodeId) }
-    query += ` ORDER BY turn_index, call_index`
-    return this.stmt(query).all(...params) as Array<Record<string, unknown>>
   }
 
   findLlmCallsByWorkflowSince(workspaceId: string, workflowRef: string, tsCutoff: number): Array<Record<string, unknown>> {
