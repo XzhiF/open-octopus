@@ -325,6 +325,45 @@ export async function getTaskContext(taskId: string): Promise<{
   return res.json()
 }
 
+// ============ Workflow-ref view (task board: click bound workflow → full YAML) ============
+
+/** Error thrown by {@link getWorkflowRefView} when the bound ref can no longer
+ *  be resolved (400 — was bound but is neither an installed builtin nor a task
+ *  home workflows/ file) or the task is gone (404). The viewer surfaces a
+ *  degraded state instead of white-screening (same discipline as
+ *  {@link ArtifactContentError}). */
+export class WorkflowRefViewError extends Error {
+  public readonly status: number
+  constructor(message: string, status: number) {
+    super(message)
+    this.name = "WorkflowRefViewError"
+    this.status = status
+  }
+}
+
+export interface WorkflowRefView {
+  /** The bound ref; null when nothing is bound. */
+  ref: string | null
+  /** Full raw YAML text; null when unbound. */
+  content: string | null
+  /** Where the ref resolved: installed builtin vs task home workflows/ dir. */
+  source: "builtin" | "task-home" | null
+}
+
+/** GET /api/tasks/:id/workflow-ref — full YAML content of the workflow this
+ *  task is bound to (ADR-0013 HOW entry). Server resolution order: installed
+ *  builtin → task home workflows/. Unbound → 200 with all-null payload.
+ *  Non-2xx → {@link WorkflowRefViewError} carrying the status (400 unresolvable
+ *  / 404 task missing) so the dialog can show the matching degraded hint. */
+export async function getWorkflowRefView(taskId: string): Promise<WorkflowRefView> {
+  const res = await fetch(buildUrl(`/${taskId}/workflow-ref`))
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}))
+    throw new WorkflowRefViewError(body.error ?? `HTTP ${res.status}`, res.status)
+  }
+  return res.json()
+}
+
 // ============ Assist workflows (ticket 07 routes — US9/10/11/D9) ============
 
 /** The 3 built-in assist-workflow template ids (AC3 whitelist). Mirrors the

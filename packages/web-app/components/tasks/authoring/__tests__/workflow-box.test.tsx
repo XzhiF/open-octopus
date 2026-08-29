@@ -3,7 +3,7 @@ import { render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { WorkflowBox } from "../workflow-box"
 import type { Task, TaskSpec } from "@octopus/shared"
-import { updateTask } from "@/lib/tasks-api"
+import { updateTask, getWorkflowRefView, WorkflowRefViewError } from "@/lib/tasks-api"
 
 // jsdom lacks ResizeObserver; user.click focuses elements which mounts the
 // Radix ScrollArea observer inside the binding dialog.
@@ -23,9 +23,21 @@ import {
 } from "@/lib/workflow-presets-api"
 
 // Mock the API modules
-vi.mock("@/lib/tasks-api", () => ({
-  updateTask: vi.fn().mockResolvedValue({ id: "test-task", version: 2 }),
-}))
+vi.mock("@/lib/tasks-api", () => {
+  class WorkflowRefViewError extends Error {
+    status: number
+    constructor(message: string, status: number) {
+      super(message)
+      this.name = "WorkflowRefViewError"
+      this.status = status
+    }
+  }
+  return {
+    updateTask: vi.fn().mockResolvedValue({ id: "test-task", version: 2 }),
+    getWorkflowRefView: vi.fn().mockResolvedValue({ ref: null, content: null, source: null }),
+    WorkflowRefViewError,
+  }
+})
 
 vi.mock("@/lib/workflow-presets-api", () => ({
   listWorkflowPresets: vi.fn().mockResolvedValue({ presets: [] }),
@@ -264,5 +276,51 @@ describe("WorkflowBox", () => {
     expect(patch.workflow_ref).toBe("built-in/task-dev")
     // Empty ac dropped, rendered-but-untouched max_turns NOT persisted (YAML default wins)
     expect(patch.task_spec?.input_values).toEqual({ goal: "${goal}" })
+  })
+
+  // ── Click-to-view bound workflow full content (task-board optimization) ──
+
+  it("renders no view button when unbound", () => {
+    render(<WorkflowBox task={makeTask()} onMutated={() => {}} />)
+    expect(document.querySelector("[data-workflow-view-button]")).toBeNull()
+  })
+
+  it("badge click opens viewer dialog with full YAML + source label", async () => {
+    const user = userEvent.setup()
+    vi.mocked(getWorkflowRefView).mockResolvedValue({
+      ref: "built-in/task-dev",
+      content: "name: task-dev\nnodes:\n  - id: develop\n",
+      source: "builtin",
+    })
+    render(<WorkflowBox task={makeTask({ workflow_ref: "built-in/task-dev" })} onMutated={() => {}} />)
+    await user.click(document.querySelector("[data-workflow-view-button]")!)
+
+    // Dialog is portalled to document.body — raw YAML rendered verbatim, source labeled.
+    const content = await waitFor(() => {
+      const el = document.querySelector("[data-workflow-content]")
+      expect(el).toBeTruthy()
+      return el
+    })
+    expect(content!.textContent).toContain("id: develop")
+    expect(document.querySelector("[data-workflow-viewer-dialog]")!.textContent).toContain("内置工作流")
+    // Footer stats (4 lines incl. trailing newline split, chars count)
+    expect(document.querySelector("[data-workflow-stats]")!.textContent).toContain("行")
+    expect(getWorkflowRefView).toHaveBeenCalledWith("test-task")
+  })
+
+  it("viewer dialog shows degraded hint when the bound ref is no longer resolvable (400)", async () => {
+    const user = userEvent.setup()
+    vi.mocked(getWorkflowRefView).mockRejectedValue(
+      new WorkflowRefViewError("workflow not resolvable: 'built-in/gone'", 400),
+    )
+    render(<WorkflowBox task={makeTask({ workflow_ref: "built-in/gone" })} onMutated={() => {}} />)
+    await user.click(document.querySelector("[data-workflow-view-button]")!)
+
+    const degraded = await waitFor(() => {
+      const el = document.querySelector("[data-workflow-degraded]")
+      expect(el).toBeTruthy()
+      return el
+    })
+    expect(degraded!.textContent).toContain("绑定的工作流已不存在")
   })
 })

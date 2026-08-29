@@ -25,10 +25,11 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Spinner } from "@/components/ui/spinner"
 import { ScrollArea } from "@/components/ui/scroll-area"
-import { Link2, Search, ChevronRight, ExternalLink } from "lucide-react"
+import { Link2, Search, ChevronRight, ExternalLink, Eye } from "lucide-react"
 import { toast } from "sonner"
 import type { Task, TaskSpec } from "@octopus/shared"
 import { updateTask } from "@/lib/tasks-api"
+import { WorkflowViewerDialog } from "@/components/tasks/authoring/workflow-viewer-dialog"
 import {
   listWorkflowPresets,
   getBuiltInWorkflowDetail,
@@ -50,6 +51,7 @@ export function WorkflowBox({ task, onMutated }: WorkflowBoxProps) {
   const isBound = !!workflowRef
 
   const [dialogOpen, setDialogOpen] = useState(false)
+  const [viewerOpen, setViewerOpen] = useState(false)
 
   return (
     <div className="rounded-lg border bg-background px-3 py-2.5 space-y-1.5" data-workflow-box>
@@ -57,9 +59,22 @@ export function WorkflowBox({ task, onMutated }: WorkflowBoxProps) {
         <Link2 className="size-3.5 text-muted-foreground shrink-0" />
         <span className="text-xs font-medium">工作流</span>
         {isBound ? (
-          <Badge variant="secondary" className="text-[10px] ml-auto" data-workflow-ref-badge>
-            {workflowRef}
-          </Badge>
+          /* Click-to-view: mirrors OutputViewer artifact rows (点击查看完整内容) —
+             opens WorkflowViewerDialog with the full YAML from the workflow-ref
+             endpoint. The binding dialog's collapsed preview only covers builtin
+             refs and truncates at 1000 chars; this covers task-home too. */
+          <button
+            type="button"
+            className="ml-auto inline-flex items-center gap-1 rounded-md pl-1.5 pr-1 py-0.5 hover:bg-accent transition-colors"
+            title="点击查看完整内容"
+            onClick={() => setViewerOpen(true)}
+            data-workflow-view-button
+          >
+            <Badge variant="secondary" className="text-[10px] max-w-[180px] truncate" data-workflow-ref-badge>
+              {workflowRef}
+            </Badge>
+            <Eye className="size-3 text-muted-foreground shrink-0" />
+          </button>
         ) : (
           <span className="text-[10px] text-muted-foreground ml-auto" data-workflow-unbound>
             未绑定
@@ -97,6 +112,13 @@ export function WorkflowBox({ task, onMutated }: WorkflowBoxProps) {
         open={dialogOpen}
         onOpenChange={setDialogOpen}
         onMutated={onMutated}
+      />
+
+      <WorkflowViewerDialog
+        taskId={task.id}
+        workflowRef={workflowRef ?? null}
+        open={viewerOpen}
+        onOpenChange={setViewerOpen}
       />
     </div>
   )
