@@ -1,0 +1,11 @@
+apiVersion: octopus/v1
+kind: Workflow
+name: E2E_TEST_GTD_fix_planning
+engine: claude
+nodes:
+  - id: develop
+    type: agent
+    goal: 测试 planning 废弃
+    planning:
+      max_turns: 5
+      verify: true

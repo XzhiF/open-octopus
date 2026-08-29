@@ -212,7 +212,6 @@ sub-workflow-node-id:
 ### File Structure
 
 ```yaml
-# yaml-language-server: $schema=~/.octopus/test-fixture-schema.json
 scenarios:
   - name: "happy path"
     inputs:                         # Workflow input parameters (optional)

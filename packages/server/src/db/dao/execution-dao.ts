@@ -1066,6 +1066,20 @@ export class ExecutionDAO extends BaseDAO {
     return row?.status ?? null
   }
 
+  /** Real (non-pseudo `__*`) node outcomes for an execution — used by the
+   *  scheduler chain-completion callback to mirror ExecutionLifecycle's
+   *  allSkipped→failed rule while the engine run is still unwinding. */
+  countRealNodeOutcomes(executionId: string): { completed: number; skipped: number } {
+    const row = this.stmt(`
+      SELECT
+        SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) AS completed,
+        SUM(CASE WHEN status = 'skipped'   THEN 1 ELSE 0 END) AS skipped
+      FROM node_executions
+      WHERE execution_id = ? AND substr(node_id, 1, 2) != '__'
+    `).get(executionId) as { completed: number | null; skipped: number | null } | undefined
+    return { completed: row?.completed ?? 0, skipped: row?.skipped ?? 0 }
+  }
+
   findFirstNodeError(executionId: string): string | null {
     const row = this.stmt(
       "SELECT error FROM node_executions WHERE execution_id = ? AND status = 'failed' LIMIT 1"

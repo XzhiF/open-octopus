@@ -1,0 +1,52 @@
+scenarios:
+  # =============================================================
+  # Scenario 1: happy — develop 收敛，ship 交付 PR
+  # =============================================================
+  - name: "happy — develop converges, ship delivers PR"
+    inputs:
+      goal: "给设置页添加深色模式开关"
+      ac: "- 设置页存在主题切换开关\n- 切换后刷新页面保持所选主题"
+      max_turns: "500"
+    mocks:
+      develop:
+        output: "AC1 PASS: 开关渲染于 src/settings/theme-toggle.tsx（测试通过）；AC2 PASS: localStorage 持久化，手动刷新验证主题保持。"
+      ship:
+        output: "已提交并创建 PR: https://github.com/XzhiF/open-octopus/pull/201"
+        update_vars:
+          ship_status: "https://github.com/XzhiF/open-octopus/pull/201"
+    assertions:
+      status: "completed"
+      vars:
+        ship_status: "https://github.com/XzhiF/open-octopus/pull/201"
+      node_trace:
+        executed:
+          - develop
+          - ship
+
+  # =============================================================
+  # Scenario 2: max_turns 耗尽 — goal 硬保险丝响（K3：未收敛必须响）
+  # 耗尽的终态映射本身由真跑+单元覆盖（AC2/AC3 车道）；
+  # 此处 fixture 直接 mock develop 节点 failed + error（fix M：
+  # MockAgentExecutor 整体替换 executor，fixture 触不到 terminalReason）。
+  # =============================================================
+  - name: "exhausted — develop hits max_turns fuse"
+    inputs:
+      goal: "为全部遥测 span 补齐 user_id 字段"
+      ac: "- 所有 span 均携带非空 user_id"
+      max_turns: "3"
+    mocks:
+      develop:
+        status: "failed"
+        error: "goal_not_met (max_turns)"
+        output: "已迭代 3 轮：span 采集链路依赖外部 SDK 升级，判据未满足，无进展。"
+      ship:
+        output: "不应执行"
+    assertions:
+      status: "failed"
+      node_trace:
+        executed:
+          - develop
+      logs:
+        develop:
+          contains:
+            - "goal_not_met (max_turns)"

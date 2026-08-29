@@ -1,0 +1,14 @@
+apiVersion: octopus/v1
+kind: Workflow
+name: E2E_TEST_GTD_fix_planning_loop
+engine: claude
+nodes:
+  - id: loop1
+    type: loop
+    max_iterations: 3
+    nodes:
+      - id: inner
+        type: agent
+        goal: 测试 loop 内层 planning 递归预扫
+        planning:
+          max_turns: 5

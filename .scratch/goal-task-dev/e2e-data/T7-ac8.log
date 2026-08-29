@@ -1,0 +1,8 @@
+PASS [AC8-grep-scope] hits=0 (expect 0)
+PASS [AC8-grep-broad] hits=0 (expect 0)
+PASS [AC8-no-orphan-schema] exists=no
+PASS [AC8-no-corepack-schema] 
+PASS [AC8-sync-builtin-exists] 
+PASS [AC8-sync-builtin-no-schema-branch] schema mentions=0 (expect 0)
+PASS [AC8-sync-builtin-runs-clean] exit=0
+PASS [AC8-setup-runner-code-free] non-comment workflow-schema code lines=0 (expect 0)

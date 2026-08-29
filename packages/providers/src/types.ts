@@ -45,7 +45,10 @@ export interface SendQueryOptions {
   model?: string
   systemPrompt?: SystemPromptInput
   abortSignal?: AbortSignal
+  /** USD budget cap — SDK enforces it via `error_max_budget_usd` terminal result. */
   maxBudgetUsd?: number
+  /** Hard cap on assistant API round-trips — SDK enforces it via `error_max_turns`. */
+  maxTurns?: number
   env?: Record<string, string>
   agent?: string
   skills?: string[]
@@ -86,6 +89,28 @@ export interface SendQueryOptions {
   }>
 }
 
+/**
+ * SDK hard-fuse terminal reasons, derived from the result subtype:
+ * `error_max_turns` → 'max_turns', `error_max_budget_usd` → 'max_budget_usd'.
+ * (The SDK's raw `terminal_reason` uses 'budget_exhausted' for the budget case —
+ * we normalize to the feature vocabulary consumed by the engine runner.)
+ */
+export type GoalTerminalReason = 'max_turns' | 'max_budget_usd'
+
+/**
+ * Convergence evidence from the SDK's `/goal` Stop hook (SDKActiveGoalMessage,
+ * a TOP-LEVEL StdoutMessage type). `condition` is null when the goal was
+ * cleared (evaluator reported met); otherwise carries the condition text,
+ * per-iteration count and the evaluator's last reason.
+ */
+export interface ActiveGoalChunk {
+  type: 'active_goal'
+  condition: string | null
+  iterations: number
+  last_reason?: string
+  set_at?: number
+}
+
 export type MessageChunk =
   | { type: 'message_start'; messageId: string; inputTokens?: number }
   | { type: 'message_delta'; stopReason: string; outputTokens?: number; messageId: string }
@@ -106,7 +131,8 @@ export type MessageChunk =
   | { type: 'status'; status: 'compacting' | 'requesting' | null; varsUpdate?: Record<string, unknown> }
   | { type: 'context_usage'; data: ContextUsageData }
   | { type: 'result'; content?: string; sessionId?: string; tokens?: TokenUsage; costUsd?: number; modelUsages?: ModelUsageEntry[] }
-  | { type: 'error'; code: string; message: string }
+  | { type: 'error'; code: string; message: string; numTurns?: number; costUsd?: number; sessionId?: string; terminalReason?: GoalTerminalReason }
+  | ActiveGoalChunk
 
 /** Context window usage breakdown — sourced from Claude Agent SDK's
  *  `Query.getContextUsage()`. Mirrors `SDKControlGetContextUsageResponse`.

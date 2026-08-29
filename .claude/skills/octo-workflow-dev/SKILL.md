@@ -9,8 +9,8 @@ tags: [octopus, workflow, YAML, agent, subagent, notify, hooks, swarm, interacti
 
 Wizard-style orchestrator for creating, editing, and debugging Octopus YAML workflows.
 
-> **Schema authority**: `~/.octopus/workflow-schema.json` (source: `packages/core-pack/workflows/workflow-schema.json`)
-> When unsure about any field, consult the schema first — don't write from memory.
+> **Schema authority**: the shared Zod parser — `packages/shared/src/types/workflow.ts` (NodeSchema/WorkflowSchema) + `packages/shared/src/yaml/parser.ts` (semantic pre-checks).
+> When unsure about any field, consult `references/node-schema.md` first, then the parser source — don't write from memory. (The JSON-schema route `~/.octopus/workflow-schema.json` is retired; do not reference it in YAML headers.)
 
 ---
 
@@ -127,7 +127,7 @@ Auto-fix loop: errors → fix → re-validate → 0 errors → address warnings
 - ⚠️ **非入口节点必须有 `depends_on`** — 无例外，遗漏 = DAG 断裂
 - ⚠️ **Loop 子节点必须有 `depends_on`** — 即使 serial 模式
 - Node `id` must be unique (recursive)
-- `goal` and `prompt` mutually exclusive
+- `goal` and `prompt` mutually exclusive — `goal` = `/goal` 原生收敛语义（见 `references/node-schema.md` Goal Mode）；旧 `planning:` 块已废弃
 - Notify via providers+channels+hook, not bash
 - `__status: "failed"` not `exit 1`
 - String literals in outputs: `'"value"'`

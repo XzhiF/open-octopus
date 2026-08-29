@@ -1,4 +1,3 @@
-# yaml-language-server: $schema=~/.octopus/test-fixture-schema.json
 scenarios:
   # =============================================================
   # Scenario 1: Happy Path — 全流程顺畅, pipeline 一轮收敛

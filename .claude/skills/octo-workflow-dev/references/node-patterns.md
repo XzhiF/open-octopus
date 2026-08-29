@@ -123,17 +123,21 @@ Typical usage patterns and working YAML examples for each of the 10 node types.
 ```yaml
 - id: analyze
   type: agent
-  goal: "Analyze root cause of issue #$vars.issue_id, output JSON {root_cause, severity}"
+  goal: |
+    Analyze root cause of issue #$vars.issue_id. Achievement requires: output JSON {root_cause, severity}
+    with evidence (file paths / log snippets) per criterion. If no progress on the same blocker for
+    several rounds, output the blocker list and close out in that terminal state.
   constraints:
     - "Only read src/ and tests/ directories"
     - "Do not modify any files"
-  planning:
-    tools: [Read, Grep, Glob, Bash]
-    disallowed_tools: [Write, Edit]
-    verify: true
+  tools: [Read, Grep, Glob, Bash]     # SDK 硬执行（原 planning.tools 提升为节点字段）
+  disallowed_tools: [Write, Edit]     # SDK 硬执行（原 planning.disallowed_tools）
+  max_turns: 20                       # 硬保险丝（原 planning.max_turns；planning.verify 已删——验证要求写进 goal 文本）
   outputs:
     severity: "$last_output.severity"
 ```
+
+> 旧 `planning:` 块已整体废弃（parse 报迁移错误）；见 `node-schema.md` Goal Mode 与 `special-conventions.md`「Goal Mode 写作约定」。
 
 ### Skills loading
 ```yaml

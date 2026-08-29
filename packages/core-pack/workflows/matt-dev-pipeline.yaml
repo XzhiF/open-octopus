@@ -1,4 +1,3 @@
-# yaml-language-server: $schema=./workflow-schema.json
 apiVersion: octopus/v1
 kind: Workflow
 
