@@ -15,7 +15,8 @@ import { groupTasksByStatus, TASK_COLUMNS } from "@/lib/task-board"
 import { subscribeSSE } from "@/lib/sse-manager"
 import { getServerUrl } from "@/lib/server-config"
 import { TaskModal } from "@/components/tasks/task-modal"
-import { TASK_STATUS_EVENT, SPEC_FIELD_UPDATE_EVENT } from "@octopus/shared"
+import { TriggerDialog } from "@/components/tasks/trigger-dialog"
+import { TASK_STATUS_EVENT, SPEC_FIELD_UPDATE_EVENT, TASK_TRIGGER_EVENT } from "@octopus/shared"
 
 const REFRESH_INTERVAL_MS = 10_000
 
@@ -76,6 +77,18 @@ export default function TasksPage() {
     return () => unsub()
   }, [fetchTasks])
 
+  // v39 task_trigger: a manual/time trigger was armed or a pending timed
+  // trigger cancelled — refresh so the 「已排队 · … 触发」 badge / column
+  // position updates without waiting for the 10s poll.
+  useEffect(() => {
+    const unsub = subscribeSSE(
+      `${getServerUrl()}/api/tasks/events`,
+      TASK_TRIGGER_EVENT,
+      () => { void fetchTasks() },
+    )
+    return () => unsub()
+  }, [fetchTasks])
+
   // Keep the open modal's task in sync with the latest fetched row (version/
   // status) — same pattern as the v1 SchedulerJob sync, now against Task.
   const tasksRef = useRef<Task[]>(tasks)
@@ -110,6 +123,9 @@ export default function TasksPage() {
   // the kanban card; non-draft tasks require abort-first (server 409 guard).
   const [deletingTaskId, setDeletingTaskId] = useState<string | null>(null)
   const [deleteBusy, setDeleteBusy] = useState(false)
+
+  // v39: which ready task has the trigger dialog open.
+  const [triggerTaskId, setTriggerTaskId] = useState<string | null>(null)
 
   const handleDeleteDraft = useCallback(async (taskId: string) => {
     setDeleteBusy(true)
@@ -180,6 +196,7 @@ export default function TasksPage() {
                         task={task}
                         onClick={() => openCard(task)}
                         onDeleteRequest={(t) => setDeletingTaskId(t.id)}
+                        onTriggerRequest={(t) => setTriggerTaskId(t.id)}
                       />
                     ))}
                     {grouped[col.id].length === 0 && (
@@ -204,6 +221,14 @@ export default function TasksPage() {
         task={modalTask}
         onMutated={fetchTasks}
         onDraftResolved={handleDraftResolved}
+      />
+
+      {/* v39 trigger dialog — armed from ready-column cards (or modal) */}
+      <TriggerDialog
+        open={!!triggerTaskId}
+        onOpenChange={(o) => { if (!o) setTriggerTaskId(null) }}
+        task={tasks.find((t) => t.id === triggerTaskId) ?? null}
+        onTriggered={fetchTasks}
       />
 
       {/* Confirm-delete dialog for draft tasks */}
@@ -238,12 +263,19 @@ interface TaskCardProps {
   task: Task
   onClick: () => void
   onDeleteRequest: (task: Task) => void
+  onTriggerRequest: (task: Task) => void
 }
 
-function TaskCard({ task, onClick, onDeleteRequest }: TaskCardProps) {
+function TaskCard({ task, onClick, onDeleteRequest, onTriggerRequest }: TaskCardProps) {
   // SG9: composite requires subunits.length >= 2.
   const composite = !!task.task_spec.subunits && task.task_spec.subunits.length >= 2
   const isDraft = task.status === "draft"
+  const isReady = task.status === "ready"
+  // v39: task mirrored 'running' but its root schedule is still 'queued' =
+  // armed one-shot not yet due (v39 manual/time trigger; claimed/running are
+  // NOT flagged here — the kanban badge only covers the waiting window).
+  const isQueuedRun =
+    task.status === "running" && task.schedule_status === "queued" && !!task.scheduled_at
   return (
     <article
       data-task-card
@@ -259,6 +291,27 @@ function TaskCard({ task, onClick, onDeleteRequest }: TaskCardProps) {
         <h3 className="font-medium truncate">{task.name}</h3>
         <div className="flex items-center gap-1 shrink-0">
           {composite ? <span className="text-[10px] px-1 py-0.5 rounded bg-primary/10 text-primary">复合</span> : null}
+          {isQueuedRun && (
+            <span
+              data-task-queued-badge
+              className="text-[10px] px-1 py-0.5 rounded bg-amber-500/10 text-amber-600 dark:text-amber-400"
+              title={`定时触发：${new Date(task.scheduled_at!).toLocaleString()}`}
+            >
+              {new Date(task.scheduled_at!).getTime() > Date.now()
+                ? `已排队 · ${new Date(task.scheduled_at!).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })} 触发`
+                : "排队等待执行"}
+            </span>
+          )}
+          {isReady && (
+            <button
+              data-task-trigger-btn
+              onClick={(e) => { e.stopPropagation(); onTriggerRequest(task) }}
+              className="text-[10px] px-1.5 py-0.5 rounded bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
+              title="人工触发（立即或定时）"
+            >
+              触发
+            </button>
+          )}
           {isDraft && (
             <button
               data-task-delete-btn

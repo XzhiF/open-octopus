@@ -274,6 +274,9 @@ export interface ScheduleRow {
   /** Arbitrary JSON for the origin association (e.g. parent_task_dispatch marker). */
   assoc_meta: string | null
   claimed_at: string | null
+  /** v39 — one-shot due time (ISO) for task-origin triggers; NULL =
+   *  cron/legacy/claim-immediately. Distinct from next_trigger_at (cron cycle). */
+  scheduled_at: string | null
 }
 
 export interface ScheduleExecutionRow {

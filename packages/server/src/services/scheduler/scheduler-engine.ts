@@ -64,6 +64,8 @@ interface ScheduleRow {
   origin_role: string | null
   assoc_meta: string | null
   claimed_at: string | null
+  /** v39 — one-shot due time (ISO) for task-origin triggers; NULL = claim-immediately */
+  scheduled_at: string | null
 }
 
 /**
@@ -78,6 +80,8 @@ interface ScheduleRow {
 export class SchedulerEngine {
   private cronJobs = new Map<string, cron.ScheduledTask>()
   private running = false
+  /** v39: re-entrancy flag for checkQueuedTasks (wake() + auxiliary tick overlap) */
+  private queuedChecking = false
   private tickInterval: ReturnType<typeof setInterval> | null = null
   private notificationService = new NotificationService()
   private failureTracker: ConsecutiveFailureTracker
@@ -115,6 +119,17 @@ export class SchedulerEngine {
 
   isRunning(): boolean {
     return this.running
+  }
+
+  /** v39: run the queued-claim pass NOW — sub-second pickup after an explicit
+   *  task trigger instead of waiting up to AUXILIARY_TICK_INTERVAL (60s).
+   *  No-op when the engine is not running (restart recovery flows through the
+   *  regular tick on start). Re-entrancy is handled inside checkQueuedTasks. */
+  wake(): void {
+    if (!this.running) return
+    this.checkQueuedTasks().catch((err) => {
+      console.error('[SchedulerEngine] wake claim pass failed:', err instanceof Error ? err.message : String(err))
+    })
   }
 
   getCircuitBreakerSummary(): { state: 'open' | 'closed' | 'half-open' } {
@@ -478,57 +493,70 @@ export class SchedulerEngine {
   // must NOT claim them. 'agent' origin also stays out (agent schedules use the
   // agent executor + cron re-trigger, not the task queue).
   private async checkQueuedTasks(): Promise<void> {
-    const queued = this.configDAO.findQueuedSchedules() as ScheduleRow[]
+    // v39 re-entrancy guard: `wake()` and the 60s auxiliary tick can overlap.
+    // The fetch→claim span below is synchronous (better-sqlite3), so an
+    // interleave could double-claim across overlapping invocations — guard.
+    if (this.queuedChecking) return
+    this.queuedChecking = true
+    try {
+      // v39 due-filter: rows with a future scheduled_at are not returned until
+      // due; NULL-due (legacy/cron/manual) stay claim-immediately. FIFO by
+      // COALESCE(scheduled_at, created_at).
+      const nowIso = new Date().toISOString()
+      const queued = this.configDAO.findQueuedSchedules(nowIso) as ScheduleRow[]
 
-    for (const schedule of queued) {
-      // SG1: claim task/manual/api-origin schedules only. cron + agent stay on
-      // their own trigger paths. Default to 'cron' for legacy rows (no origin_type).
-      const originType = schedule.origin_type ?? 'cron'
-      if (
-        originType !== 'task' &&
-        originType !== 'manual' &&
-        originType !== 'api'
-      ) {
-        continue
-      }
+      for (const schedule of queued) {
+        // SG1: claim task/manual/api-origin schedules only. cron + agent stay on
+        // their own trigger paths. Default to 'cron' for legacy rows (no origin_type).
+        const originType = schedule.origin_type ?? 'cron'
+        if (
+          originType !== 'task' &&
+          originType !== 'manual' &&
+          originType !== 'api'
+        ) {
+          continue
+        }
 
-      // AC6: don't dispatch beyond global concurrency cap. Remaining queued tasks
-      // stay in 'queued' status and retry on the next tick when active count drops.
-      const activeCount = this.runDAO.countDistinctActiveSchedules()
-      if (activeCount >= MAX_PARALLEL_WORKSPACES) break
+        // AC6: don't dispatch beyond global concurrency cap. Remaining queued tasks
+        // stay in 'queued' status and retry on the next tick when active count drops.
+        const activeCount = this.runDAO.countDistinctActiveSchedules()
+        if (activeCount >= MAX_PARALLEL_WORKSPACES) break
 
-      const now = new Date()
-      const schedExecId = randomUUID()
-      const tzOffset = this.getTimezoneOffset(schedule.timezone)
+        const now = new Date()
+        const schedExecId = randomUUID()
+        const tzOffset = this.getTimezoneOffset(schedule.timezone)
 
-      this.configDAO.updateSchedule(schedule.id, {
-        status: 'claimed',
-        claimed_at: now.toISOString(),
-      })
-      // 07 (G5): emit the queued→claimed transition so the kanban claims the
-      // card in real time, not on the next 10s poll.
-      this.emitScheduleStatus(schedule.id, 'claimed')
-
-      try {
-        this.runDAO.insertTriggeredExecution(
-          schedExecId, schedule.id, 'scheduled',
-          now.toISOString(), tzOffset, schedule.timezone, 'scheduler',
-        )
-
-        this.dispatchExecution(schedule, schedExecId)
-      } catch (err: unknown) {
-        console.error(
-          '[SchedulerEngine] checkQueuedTasks dispatch failed, rolling back to queued:',
-          err instanceof Error ? err.message : String(err),
-        )
         this.configDAO.updateSchedule(schedule.id, {
-          status: 'queued',
-          claimed_at: null,
+          status: 'claimed',
+          claimed_at: now.toISOString(),
         })
-        // 07 (G5): emit the rollback transition so the kanban releases the card
-        // back to the queued column instead of leaving it visually claimed.
-        this.emitScheduleStatus(schedule.id, 'queued')
+        // 07 (G5): emit the queued→claimed transition so the kanban claims the
+        // card in real time, not on the next 10s poll.
+        this.emitScheduleStatus(schedule.id, 'claimed')
+
+        try {
+          this.runDAO.insertTriggeredExecution(
+            schedExecId, schedule.id, 'scheduled',
+            now.toISOString(), tzOffset, schedule.timezone, 'scheduler',
+          )
+
+          this.dispatchExecution(schedule, schedExecId)
+        } catch (err: unknown) {
+          console.error(
+            '[SchedulerEngine] checkQueuedTasks dispatch failed, rolling back to queued:',
+            err instanceof Error ? err.message : String(err),
+          )
+          this.configDAO.updateSchedule(schedule.id, {
+            status: 'queued',
+            claimed_at: null,
+          })
+          // 07 (G5): emit the rollback transition so the kanban releases the card
+          // back to the queued column instead of leaving it visually claimed.
+          this.emitScheduleStatus(schedule.id, 'queued')
+        }
       }
+    } finally {
+      this.queuedChecking = false
     }
   }
 

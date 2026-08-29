@@ -102,6 +102,22 @@ export const taskStatusSsePayloadSchema = z.object({
 })
 export type TaskStatusSsePayload = z.infer<typeof taskStatusSsePayloadSchema>
 
+// ── task_trigger SSE payload (v39 — manual/time trigger) ──────────────
+/** Emitted on the "taskpool" channel when a parked (draft) task schedule is
+ *  explicitly triggered (immediately or at a future point), or when a pending
+ *  timed trigger is cancelled. The kanban subscribes to refresh the
+ *  「已排队 · … 触发」 badge without waiting for the 10s poll. */
+export const TASK_TRIGGER_EVENT = "task_trigger" as const
+
+export const taskTriggerSsePayloadSchema = z.object({
+  task_id: z.string().min(1),
+  /** triggered = immediate; scheduled = future one-shot; cancelled = pending trigger withdrawn */
+  action: z.enum(["triggered", "scheduled", "cancelled"]),
+  /** ISO due time; null = immediate trigger or cancel */
+  scheduled_at: z.string().nullable(),
+})
+export type TaskTriggerSsePayload = z.infer<typeof taskTriggerSsePayloadSchema>
+
 // ── update_task_spec_field tool (v2-D7) ──────────────────────────────
 /** Agent tool name + input schema. The server's tool handler validates input,
  *  merges the field into tasks.task_spec / resources / authoring_resources /
@@ -280,6 +296,14 @@ export interface Task {
   updated_at: string
   /** Set when status reaches a terminal done/failed/aborted. */
   completed_at?: string | null
+  /** v39 board enrichment (batched root-schedule join at list time): the task's
+   *  root schedule row status ('draft' parked / 'queued' waiting trigger due /
+   *  'claimed'/'running' ...). Undefined when no root row exists (draft task). */
+  schedule_status?: string | null
+  /** v39 — root schedule's one-shot due time (ISO). Null/undefined = parked or
+   *  immediate. Together with schedule_status='queued' renders the
+   *  「已排队 · … 触发」 badge while the task is mirrored 'running'. */
+  scheduled_at?: string | null
 }
 
 // ── ScheduleStatusListener (SG2 — engine↔server boundary port) ───────

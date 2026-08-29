@@ -10,7 +10,7 @@ const _dirname: string =
     ? __dirname
     : path.dirname(fileURLToPath(import.meta.url))
 
-export const SCHEMA_VERSION = 38
+export const SCHEMA_VERSION = 39
 
 /**
  * Apply the complete unified schema to the given database.
@@ -214,6 +214,9 @@ function ensureColumnsForExistingTables(db: Database.Database): void {
   ensureColumn(db, 'schedules', 'origin_id', "TEXT")
   ensureColumn(db, 'schedules', 'origin_role', "TEXT")
   ensureColumn(db, 'schedules', 'assoc_meta', "TEXT")
+  // v39: one-shot due time for task-origin manual/time triggers. NULL =
+  // cron/legacy/claim-immediately. Additive nullable column — no rebuild.
+  ensureColumn(db, 'schedules', 'scheduled_at', "TEXT")
 }
 
 function ensureColumn(db: Database.Database, table: string, column: string, definition: string): void {

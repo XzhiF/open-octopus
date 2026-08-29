@@ -29,6 +29,7 @@ import type { Task, TaskSpec, SubunitSpec } from "@octopus/shared"
 import {
   listTasks, getTask, readyTask, abortTask, deleteTask, type TaskDetail, type TaskChild,
 } from "@/lib/tasks-api"
+import { TriggerActions } from "@/components/tasks/trigger-dialog"
 import { subscribeSSE } from "@/lib/sse-manager"
 import { getServerUrl } from "@/lib/server-config"
 import { useRouter } from "next/navigation"
@@ -519,6 +520,7 @@ function SimpleExecutionMode({ task, onMutated, onClose }: { task: Task; onMutat
         <TaskRunDetailView task={task} />
       </div>
       <div className="shrink-0 flex items-center justify-end gap-2 border-t border-border px-5 py-3 bg-background">
+        <TriggerActions task={task} onMutated={onMutated} />
         <Button variant="destructive" size="sm" onClick={handleAbort} disabled={!canAbort || aborting} data-task-abort>
           {aborting ? <Spinner className="size-4" /> : <Ban className="size-4" />}
           中止
@@ -787,6 +789,7 @@ export function CompositeMode({
 
         {(canAbort || task.status === "ready") && (
           <div className="flex items-center justify-end gap-2 px-3 pb-4">
+            <TriggerActions task={task} onMutated={onMutated} />
             {canAbort && (
             <Button variant="destructive" size="sm" onClick={async () => {
               setAborting(true)

@@ -763,6 +763,10 @@ if (shouldServe) {
         })
 
         schedulerEngine.start()
+        // v39: sub-second claim pickup after an explicit task trigger
+        // (TasksService.triggerTask calls this; late-bound because the engine
+        // is constructed after tasksService).
+        tasksService.setWakeScheduler(() => schedulerEngine.wake())
         ;(global as any).__octopus_scheduler = schedulerEngine
         ;(global as any).__octopus_schedule_service = scheduleService
         const jobCount = schedulerEngine['cronJobs']?.size ?? 0

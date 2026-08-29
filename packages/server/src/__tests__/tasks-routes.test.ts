@@ -285,7 +285,9 @@ describe("03: /api/tasks routes + TasksService (integration)", () => {
     expect(schedules.length).toBe(1)
     expect(schedules[0].origin_type).toBe("task")
     expect(schedules[0].origin_role).toBe("primary")
-    expect(schedules[0].status).toBe("queued")
+    // v39: enqueue PARKS the envelope (draft) — a manual POST /:id/trigger
+    // arms it to 'queued'; the runner never auto-claims a ready task.
+    expect(schedules[0].status).toBe("draft")
   })
 
   it("POST /:id/ready (composite, 2+ subunits) → 1 coordinator schedule (role=coordinator)", async () => {
@@ -329,7 +331,8 @@ describe("03: /api/tasks routes + TasksService (integration)", () => {
     const schedules = readSchedulesByOrigin(db, id)
     expect(schedules.length).toBe(1)
     expect(schedules[0].origin_role).toBe("coordinator")
-    expect(schedules[0].status).toBe("queued")
+    // v39: composite envelope is parked too (trigger arms it; see above).
+    expect(schedules[0].status).toBe("draft")
   })
 
   it("POST /:id/ready rejects non-draft with 409", async () => {

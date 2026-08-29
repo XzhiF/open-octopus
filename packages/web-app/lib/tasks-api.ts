@@ -253,6 +253,28 @@ export async function abortTask(id: string): Promise<Task> {
   return handleResponse<Task>(res)
 }
 
+/** POST /api/tasks/:id/trigger — v39 人工触发. Arms the parked (draft) root
+ *  envelope: draft→queued with scheduled_at = at ?? now. `at` absent = 立即触发;
+ *  future ISO = 单次定时触发. Rejections (not ready / already armed / running /
+ *  envelope missing) → Error(body.error) — the server's conflict messages are
+ *  already user-facing Chinese. */
+export async function triggerTask(id: string, at?: string): Promise<Task> {
+  const res = await fetch(`${getServerUrl()}${BASE}/${id}/trigger`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(at ? { at } : {}),
+  })
+  return handleResponse<Task>(res)
+}
+
+/** POST /api/tasks/:id/trigger/cancel — withdraw an armed-but-not-started
+ *  timed trigger (queued, unclaimed, future due) back to parked; task returns
+ *  to ready. Already claimed/executing → 409 Error. */
+export async function cancelTaskTrigger(id: string): Promise<Task> {
+  const res = await fetch(`${getServerUrl()}${BASE}/${id}/trigger/cancel`, { method: "POST" })
+  return handleResponse<Task>(res)
+}
+
 /** POST /api/tasks/:id/spec-field — agent `update_task_spec_field` tool
  *  endpoint, AND the v3 user-direct-edit path. Merges a single field into the
  *  right column, bumps version, emits `spec_field_update` SSE so the SpecPanel
