@@ -211,9 +211,9 @@ export function applyChunkToMessages(prev: ChatMessage[], chunk: Record<string, 
 
     case "result": {
       const content = chunk.content as string | undefined
-      const updated = prev.map(m => m.displayType === "text" && !m.tokens ? {
+      const updated = prev.map(m => m.displayType === "text" && !m.usage ? {
         ...m,
-        tokens: chunk.tokens as ChatMessage["tokens"],
+        usage: chunk.usage as ChatMessage["usage"],
         costUsd: chunk.costUsd as number,
       } : m)
 

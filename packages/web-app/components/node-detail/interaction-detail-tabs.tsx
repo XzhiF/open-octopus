@@ -78,7 +78,7 @@ export function InteractionDetailTabs({
             thinkingContent: row.type === "thinking" ? row.content : undefined,
             thinkingDone: row.type === "thinking",
             thinkingDuration: meta.thinkingDuration as string | undefined,
-            tokens: meta.tokens as ChatMessage["tokens"],
+            usage: meta.usage as ChatMessage["usage"],
             costUsd: meta.costUsd as number | undefined,
           }
         })

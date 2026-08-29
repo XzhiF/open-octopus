@@ -43,10 +43,7 @@ interface ObservabilityData {
   executionId: string
   status: string
   tokens: {
-    totalInput: number
-    totalOutput: number
-    totalCacheRead: number
-    totalCacheCreation: number
+    usage: { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheCreationTokens: number }
     totalCostUsd: number
   }
   byNode: Array<{
@@ -234,14 +231,14 @@ export function ObservabilityTab({ workspaceId, executionId, isRunning }: Observ
     )
   }
 
-  const totalTokens = data.tokens.totalInput + data.tokens.totalOutput + data.tokens.totalCacheRead + data.tokens.totalCacheCreation
+  const totalTokens = data.tokens.usage.inputTokens + data.tokens.usage.outputTokens + data.tokens.usage.cacheReadTokens + data.tokens.usage.cacheCreationTokens
 
   return (
     <div className="h-full overflow-y-auto px-2 py-2 space-y-3 text-xs">
       {/* Summary Cards */}
       <div className="grid grid-cols-2 gap-1.5">
         <MiniCard title="总 Token" value={formatTokenCount(totalTokens)}
-          subtitle={`↑${formatTokenCount(data.tokens.totalInput)} ↓${formatTokenCount(data.tokens.totalOutput)} ⚡${formatTokenCount(data.tokens.totalCacheRead)} 🗡️${formatTokenCount(data.tokens.totalCacheCreation)}`} />
+          subtitle={`↑${formatTokenCount(data.tokens.usage.inputTokens)} ↓${formatTokenCount(data.tokens.usage.outputTokens)} ⚡${formatTokenCount(data.tokens.usage.cacheReadTokens)} 🗡️${formatTokenCount(data.tokens.usage.cacheCreationTokens)}`} />
         <MiniCard title="总轮次" value={String(data.rounds.totalLlmTurns)}
           subtitle={`Loop ${data.rounds.totalLoopIterations} / Swarm ${data.rounds.totalSwarmRounds}`} />
         <MiniCard title="总成本" value={formatCurrency(data.tokens.totalCostUsd)} subtitle="USD" />

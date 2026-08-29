@@ -85,6 +85,9 @@ interface RawStepRow {
   model?: string
   tokensInput?: number
   tokensOutput?: number
+  /** 规范纯值用量（C1：server steps 现发 usage，不再发 tokensInput=in+cache 折叠值） */
+  usage?: { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheCreationTokens: number }
+  modelUsages?: TokenUsage[]
   tokenUsages?: TokenUsage[]
   token_usages?: { model: string; inputTokens: number; outputTokens: number }[]
   nodeType?: string
@@ -108,9 +111,10 @@ function mapRawStep(raw: RawStepRow): StepExecution {
     outputs: raw.outputs,
     error: raw.error,
     model: raw.model,
-    tokensInput: raw.tokensInput,
-    tokensOutput: raw.tokensOutput,
-    tokenUsages: raw.tokenUsages ?? raw.token_usages,
+    // C1：tokensInput/Output 取纯值 usage（与运行中 turn_usage 同口径 → 节点卡不再跳变）
+    tokensInput: raw.usage?.inputTokens ?? raw.tokensInput,
+    tokensOutput: raw.usage?.outputTokens ?? raw.tokensOutput,
+    tokenUsages: raw.modelUsages ?? raw.tokenUsages ?? raw.token_usages,
     nodeType: raw.nodeType,
     parentNodeId: raw.parentNodeId,
     iterationIndex: raw.iterationIndex,
@@ -207,7 +211,7 @@ export function WorkflowDetailPanel({ execution, workflow, workspaceId }: Workfl
     const sseUrl = `${getServerUrl()}/api/workspaces/${workspaceId}/executions/events`
 
     const updateStepHarness = (nodeIds: string[], status: string) => {
-      setLiveSteps(prev => prev.map(s =>
+      setLiveSteps(prev => (prev ?? []).map(s =>
         nodeIds.includes(s.stepId) ? { ...s, harnessStatus: status as StepExecution["harnessStatus"] } : s
       ))
     }
@@ -272,9 +276,9 @@ export function WorkflowDetailPanel({ execution, workflow, workspaceId }: Workfl
             status: d.status,
             completedAt: new Date().toISOString(),
             duration: typeof d.durationMs === "number" ? Math.round(d.durationMs / 1000) : undefined,
-            tokensInput: d.tokens?.input,
-            tokensOutput: d.tokens?.output,
-            tokenUsages: d.tokenUsages,
+            tokensInput: d.usage?.inputTokens,
+            tokensOutput: d.usage?.outputTokens,
+            tokenUsages: d.modelUsages,
           }
           const patch = Object.fromEntries(
             Object.entries(raw).filter(([, v]) => v !== undefined),
@@ -297,7 +301,7 @@ export function WorkflowDetailPanel({ execution, workflow, workspaceId }: Workfl
         try {
           const { executionId, nodeId, event } = JSON.parse(e.data)
           if (executionId !== execution.id || !nodeId || event?.type !== "turn_usage") return
-          const total = event.total ?? {}
+          const total = event.cumulative ?? {}
           const raw: Partial<StepExecution> = {
             status: "running",
             // 直连 Anthropic 时 inputTokens 可能未测得 → undefined 保留旧值，不清零

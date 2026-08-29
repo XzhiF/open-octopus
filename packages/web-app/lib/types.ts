@@ -364,7 +364,8 @@ export interface ChatMessage {
   toolDuration?: string
   thinkingStartMs?: number
   thinkingDuration?: string
-  tokens?: { input: number; output: number }
+  /** 规范用量（C1）—— chat 消息 metadata 与 result SSE 统一 usage 键 */
+  usage?: { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheCreationTokens: number }
   costUsd?: number
 }
 
@@ -411,7 +412,7 @@ export function fromDBMessage(row: {
     toolDuration: meta.toolDuration as string | undefined,
     thinkingStartMs: meta.thinkingStartMs as number | undefined,
     thinkingDuration: meta.thinkingDuration as string | undefined,
-    tokens: meta.tokens as ChatMessage["tokens"],
+    usage: meta.usage as ChatMessage["usage"],
     costUsd: meta.costUsd as number | undefined,
   }
 }

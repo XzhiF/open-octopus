@@ -100,7 +100,7 @@ describe("WorkflowDetailPanel SSE 增量更新 liveSteps", () => {
     expect(getSteps().find(s => s.stepId === "n2")?.status).toBe("pending")
   })
 
-  it("node_end 事件写入 status/duration/tokens/tokenUsages", async () => {
+  it("node_end 事件写入 status/duration/usage/modelUsages", async () => {
     render(<WorkflowDetailPanel execution={makeExecution()} workspaceId="ws-1" />)
     await flush()
     fire("node_end", {
@@ -108,8 +108,8 @@ describe("WorkflowDetailPanel SSE 增量更新 liveSteps", () => {
       nodeId: "n1",
       status: "completed",
       durationMs: 12345,
-      tokens: { input: 100, output: 50 },
-      tokenUsages: [{ model: "m1", inputTokens: 100, outputTokens: 50, cacheReadTokens: 0, cacheCreationTokens: 0 }],
+      usage: { inputTokens: 100, outputTokens: 50, cacheReadTokens: 0, cacheCreationTokens: 0 },
+      modelUsages: [{ model: "m1", inputTokens: 100, outputTokens: 50, cacheReadTokens: 0, cacheCreationTokens: 0 }],
     })
     const n1 = getSteps().find(s => s.stepId === "n1")
     expect(n1?.status).toBe("completed")
@@ -139,7 +139,7 @@ describe("WorkflowDetailPanel SSE 增量更新 liveSteps", () => {
     await flush()
     fire("agent_event", {
       executionId: "exec-1", nodeId: "n1",
-      event: { type: "turn_usage", turn: 3, delta: { outputTokens: 57 }, total: { inputTokens: 18, outputTokens: 219, cacheReadTokens: 73054, cacheCreationTokens: 36695 } },
+      event: { type: "turn_usage", turn: 3, delta: { outputTokens: 57 }, cumulative: { inputTokens: 18, outputTokens: 219, cacheReadTokens: 73054, cacheCreationTokens: 36695 } },
     })
     const n1 = getSteps().find(s => s.stepId === "n1")
     expect(n1?.status).toBe("running")
@@ -155,12 +155,12 @@ describe("WorkflowDetailPanel SSE 增量更新 liveSteps", () => {
     await flush()
     fire("agent_event", {
       executionId: "exec-1", nodeId: "n1",
-      event: { type: "turn_usage", turn: 1, delta: { outputTokens: 42 }, total: { outputTokens: 42 } },
+      event: { type: "turn_usage", turn: 1, delta: { outputTokens: 42 }, cumulative: { inputTokens: 0, outputTokens: 42, cacheReadTokens: 0, cacheCreationTokens: 0 } },
     })
     const n1 = getSteps().find(s => s.stepId === "n1")
     expect(n1?.tokensOutput).toBe(42)
     expect(n1?.tokensInput ?? undefined).toBeUndefined()
-    fire("node_end", { executionId: "exec-1", nodeId: "n1", status: "completed", tokens: { input: 100, output: 99 } })
+    fire("node_end", { executionId: "exec-1", nodeId: "n1", status: "completed", usage: { inputTokens: 100, outputTokens: 99, cacheReadTokens: 0, cacheCreationTokens: 0 } })
     const done = getSteps().find(s => s.stepId === "n1")
     expect(done?.tokensInput).toBe(100)
     expect(done?.tokensOutput).toBe(99)
@@ -189,7 +189,7 @@ describe("WorkflowDetailPanel SSE 增量更新 liveSteps", () => {
     // 一次轮询已发出但响应未回（快照里 n1 仍是 pending）
     await act(async () => { /* let effect-triggered fetch start */ })
 
-    fire("node_end", { executionId: "exec-1", nodeId: "n1", status: "completed", tokens: { input: 7, output: 9 } })
+    fire("node_end", { executionId: "exec-1", nodeId: "n1", status: "completed", usage: { inputTokens: 7, outputTokens: 9, cacheReadTokens: 0, cacheCreationTokens: 0 } })
     // 旧快照迟到返回
     pollSteps = [...pollSteps] // snapshot taken before SSE patch
     await act(async () => { resolveFetch?.({ json: async () => ({ status: "running", steps: pollSteps }) }) })

@@ -50,10 +50,7 @@ interface ObservabilityData {
   executionId: string
   status: string
   tokens: {
-    totalInput: number
-    totalOutput: number
-    totalCacheRead: number
-    totalCacheCreation: number
+    usage: { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheCreationTokens: number }
     totalCostUsd: number
   }
   byNode: Array<{
@@ -62,7 +59,8 @@ interface ObservabilityData {
     nodeType: string
     inputTokens: number
     outputTokens: number
-    cacheTokens: number
+    cacheReadTokens: number
+    cacheCreationTokens: number
     costUsd: number
     llmTurns: number
     loopIterations: number
@@ -75,7 +73,8 @@ interface ObservabilityData {
     model: string
     inputTokens: number
     outputTokens: number
-    cacheTokens: number
+    cacheReadTokens: number
+    cacheCreationTokens: number
     costUsd: number
     callCount: number
   }>
@@ -235,7 +234,7 @@ export default function ObservabilityPage() {
     )
   }
 
-  const totalTokens = data.tokens.totalInput + data.tokens.totalOutput + data.tokens.totalCacheRead + data.tokens.totalCacheCreation
+  const totalTokens = data.tokens.usage.inputTokens + data.tokens.usage.outputTokens + data.tokens.usage.cacheReadTokens + data.tokens.usage.cacheCreationTokens
 
   return (
     <div className="container mx-auto py-8 space-y-8">
@@ -263,7 +262,7 @@ export default function ObservabilityPage() {
         <SummaryCard
           title="总 Token"
           value={formatNumber(totalTokens)}
-          subtitle={`↑${formatNumber(data.tokens.totalInput)} ↓${formatNumber(data.tokens.totalOutput)} ⚡${formatNumber(data.tokens.totalCacheRead)} 🗡️${formatNumber(data.tokens.totalCacheCreation)}`}
+          subtitle={`↑${formatNumber(data.tokens.usage.inputTokens)} ↓${formatNumber(data.tokens.usage.outputTokens)} ⚡${formatNumber(data.tokens.usage.cacheReadTokens)} 🗡️${formatNumber(data.tokens.usage.cacheCreationTokens)}`}
           icon={Coins}
           color="text-blue-500"
           bgColor="bg-blue-500/10"
@@ -595,7 +594,7 @@ function ModelUsageChart({
 
   const chartData = byModel.map((m) => ({
     name: m.model,
-    value: m.inputTokens + m.outputTokens + m.cacheTokens,
+    value: m.inputTokens + m.outputTokens + m.cacheReadTokens + m.cacheCreationTokens,
     cost: m.costUsd,
   }))
 
@@ -768,7 +767,7 @@ function NodeRow({
   isExpanded: boolean
   onToggle: () => void
 }) {
-  const totalTokens = node.inputTokens + node.outputTokens + node.cacheTokens
+  const totalTokens = node.inputTokens + node.outputTokens + node.cacheReadTokens + node.cacheCreationTokens
 
   return (
     <>

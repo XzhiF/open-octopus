@@ -321,7 +321,7 @@ export function globalChatRoutes(sseService: SSEService, chatService: ChatServic
             type: 'text',
             metadata: JSON.stringify({
               displayType: 'text',
-              tokens: currentTokens,
+              usage: currentTokens,
               costUsd: currentCostUsd,
             }),
           })

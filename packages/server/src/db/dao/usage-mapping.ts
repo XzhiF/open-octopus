@@ -49,3 +49,19 @@ export function normalizeUsageJson(text: string | null | undefined): string | nu
     return text
   }
 }
+
+/**
+ * harness_events 行出口归一：规范 4 字段 + 保留 model，供前端只读规范形状。
+ * 旧行 {input,output,cacheRead?,model} 与新行 {inputTokens,...,model} 都能吃。
+ */
+export function normalizeHarnessTokenJson(row: { token_usage_json?: string | null }): string | null {
+  const text = row.token_usage_json
+  if (!text) return text ?? null
+  try {
+    const parsed = JSON.parse(text) as Record<string, unknown>
+    const usage = usageFromLegacyJson(parsed)
+    return JSON.stringify({ ...usage, model: typeof parsed.model === 'string' ? parsed.model : undefined })
+  } catch {
+    return text
+  }
+}

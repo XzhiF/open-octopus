@@ -282,18 +282,18 @@ export function useExecutionTree(
       try {
         const data = JSON.parse(e.data)
         const { executionId, durationMs } = data
-        const tokenData = data.tokens
+        const tokenData = data.usage
         const costUsd = data.costUsd as number | undefined
         const turnCount = data.turnCount as number | undefined
         const toolCount = data.toolCount as number | undefined
         const executorType = data.executorType as ExecutionTreeNode["executorType"]
-        const tokenUsagesData = data.tokenUsages as Array<{ model: string; inputTokens: number; outputTokens: number; cacheReadTokens?: number; cacheCreationTokens?: number }> | undefined
+        const tokenUsagesData = data.modelUsages as Array<{ model: string; inputTokens: number; outputTokens: number; cacheReadTokens?: number; cacheCreationTokens?: number }> | undefined
         const aggregatedTokenUsages = tokenUsagesData && tokenUsagesData.length > 0
           ? tokenUsagesData.map((tu: any) => ({
             model: tu.model, inputTokens: tu.inputTokens, outputTokens: tu.outputTokens,
             cacheReadTokens: tu.cacheReadTokens, cacheCreationTokens: tu.cacheCreationTokens,
           }))
-          : tokenData ? [{ model: "", inputTokens: tokenData.input ?? 0, outputTokens: tokenData.output ?? 0 }]
+          : tokenData ? [{ model: "", inputTokens: tokenData.inputTokens ?? 0, outputTokens: tokenData.outputTokens ?? 0 }]
           : undefined
         setTreeNodes(prev => prev.map(n => n.id === executionId ? {
           ...n, duration: durationMs / 1000,

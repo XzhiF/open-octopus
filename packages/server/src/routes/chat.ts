@@ -283,7 +283,7 @@ export function chatRoutes(sseService: SSEService, chatService: ChatService, wor
             type: "text",
             metadata: JSON.stringify({
               displayType: 'text',
-              tokens: currentTokens,
+              usage: currentTokens,
               costUsd: currentCostUsd,
             }),
           })

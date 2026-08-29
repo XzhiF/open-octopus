@@ -27,10 +27,7 @@ export interface ExecutionMetrics {
 
 interface SSEMetricsPayload {
   executionId: string
-  totalInputTokens: number
-  totalOutputTokens: number
-  totalCacheReadTokens: number
-  totalCacheCreationTokens: number
+  usage: { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheCreationTokens: number }
   totalCostUsd: number
   totalLlmTurns: number
   budgetProgress: BudgetProgress
@@ -40,10 +37,7 @@ interface SSEMetricsPayload {
 
 interface ObservabilityResponse {
   tokens: {
-    totalInput: number
-    totalOutput: number
-    totalCacheRead: number
-    totalCacheCreation: number
+    usage: { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheCreationTokens: number }
     totalCostUsd: number
   }
   budget: {
@@ -100,11 +94,11 @@ export function useExecutionMetrics(
       const data: ObservabilityResponse = await res.json()
 
       setMetrics({
-        totalTokens: data.tokens.totalInput + data.tokens.totalOutput + data.tokens.totalCacheRead + data.tokens.totalCacheCreation,
-        totalInputTokens: data.tokens.totalInput,
-        totalOutputTokens: data.tokens.totalOutput,
-        totalCacheReadTokens: data.tokens.totalCacheRead,
-        totalCacheCreationTokens: data.tokens.totalCacheCreation,
+        totalTokens: data.tokens.usage.inputTokens + data.tokens.usage.outputTokens + data.tokens.usage.cacheReadTokens + data.tokens.usage.cacheCreationTokens,
+        totalInputTokens: data.tokens.usage.inputTokens,
+        totalOutputTokens: data.tokens.usage.outputTokens,
+        totalCacheReadTokens: data.tokens.usage.cacheReadTokens,
+        totalCacheCreationTokens: data.tokens.usage.cacheCreationTokens,
         totalCost: data.tokens.totalCostUsd,
         totalTurns: data.rounds.totalLlmTurns,
         budgetProgress: data.budget.progress,
@@ -135,11 +129,11 @@ export function useExecutionMetrics(
         if (raw.executionId !== executionId) return
 
         setMetrics({
-          totalTokens: raw.totalInputTokens + raw.totalOutputTokens + (raw.totalCacheReadTokens ?? 0) + (raw.totalCacheCreationTokens ?? 0),
-          totalInputTokens: raw.totalInputTokens,
-          totalOutputTokens: raw.totalOutputTokens,
-          totalCacheReadTokens: raw.totalCacheReadTokens ?? 0,
-          totalCacheCreationTokens: raw.totalCacheCreationTokens ?? 0,
+          totalTokens: raw.usage.inputTokens + raw.usage.outputTokens + raw.usage.cacheReadTokens + raw.usage.cacheCreationTokens,
+          totalInputTokens: raw.usage.inputTokens,
+          totalOutputTokens: raw.usage.outputTokens,
+          totalCacheReadTokens: raw.usage.cacheReadTokens,
+          totalCacheCreationTokens: raw.usage.cacheCreationTokens,
           totalCost: raw.totalCostUsd,
           totalTurns: raw.totalLlmTurns,
           budgetProgress: raw.budgetProgress,

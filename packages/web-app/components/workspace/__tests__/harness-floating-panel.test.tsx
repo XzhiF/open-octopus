@@ -60,6 +60,8 @@ function makeHookReturn(overrides: Partial<ReturnType<typeof useHarnessEvents>> 
     totalExtraTokens: 0,
     totalInputTokens: 0,
     totalOutputTokens: 0,
+    totalCacheReadTokens: 0,
+    totalCacheCreationTokens: 0,
     ...overrides,
   }
 }

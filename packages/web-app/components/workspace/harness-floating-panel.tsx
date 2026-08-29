@@ -195,7 +195,7 @@ function HarnessTab({
       if (e.tokenUsage) {
         totalInput += e.tokenUsage.inputTokens ?? 0
         totalOutput += e.tokenUsage.outputTokens ?? 0
-        totalCache += e.tokenUsage.cacheTokens ?? 0
+        totalCache += e.tokenUsage.cacheReadTokens ?? 0
         totalCacheCreation += e.tokenUsage.cacheCreationTokens ?? 0
         if (e.tokenUsage.model) models.add(e.tokenUsage.model)
       }
@@ -524,8 +524,8 @@ function EventAccordionItem({
                 <div>模型: {formatModelName(event.tokenUsage.model ?? "-")}</div>
                 <div>输入: {formatTokenCount(event.tokenUsage.inputTokens ?? 0)}</div>
                 <div>输出: {formatTokenCount(event.tokenUsage.outputTokens ?? 0)}</div>
-                {(event.tokenUsage.cacheTokens ?? 0) > 0 && (
-                  <div>缓存读取: {formatTokenCount(event.tokenUsage.cacheTokens!)}</div>
+                {(event.tokenUsage.cacheReadTokens ?? 0) > 0 && (
+                  <div>缓存读取: {formatTokenCount(event.tokenUsage.cacheReadTokens!)}</div>
                 )}
                 {(event.tokenUsage.cacheCreationTokens ?? 0) > 0 && (
                   <div>缓存创建: {formatTokenCount(event.tokenUsage.cacheCreationTokens!)}</div>
@@ -596,7 +596,7 @@ export function HarnessFloatingPanel({
     origHeight: number
   } | null>(null)
 
-  const { events, loading, interventionCount, totalExtraTokens, totalInputTokens, totalOutputTokens, totalCacheTokens, totalCacheCreationTokens } = useHarnessEvents(
+  const { events, loading, interventionCount, totalExtraTokens, totalInputTokens, totalOutputTokens, totalCacheReadTokens, totalCacheCreationTokens } = useHarnessEvents(
     workspaceId,
     executionId,
     executionStatus,
@@ -760,7 +760,7 @@ export function HarnessFloatingPanel({
           metrics={metrics}
           harnessInputTokens={totalInputTokens}
           harnessOutputTokens={totalOutputTokens}
-          harnessCacheTokens={totalCacheTokens}
+          harnessCacheTokens={totalCacheReadTokens}
           harnessCacheCreationTokens={totalCacheCreationTokens}
           onExpand={() => setExpanded(true)}
           onDragStart={handleDragStart}
