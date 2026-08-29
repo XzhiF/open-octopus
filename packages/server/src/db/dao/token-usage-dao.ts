@@ -1,7 +1,7 @@
 import type Database from "better-sqlite3"
 import { BaseDAO } from "./base"
 import type { NodeTokenUsageRow, LlmCallRow } from "../types"
-import type { TokenUsage } from "@octopus/shared"
+import { LEDGER_SQL, costSummary, type TokenUsage, type LedgerTotals, type LedgerCost, type LedgerRow } from "@octopus/shared"
 import { ledgerCostUsd, type NodeUsageSource } from "./usage-ledger"
 
 export class TokenUsageDAO extends BaseDAO {
@@ -81,11 +81,11 @@ export class TokenUsageDAO extends BaseDAO {
     `).run(executionId)
   }
 
-  totalCost(): number {
+  totalCost(): LedgerCost {
     const row = this.stmt(
-      "SELECT SUM(cost_usd) as total FROM node_token_usages WHERE cost_usd IS NOT NULL"
-    ).get() as { total: number | null }
-    return row?.total ?? 0
+      `SELECT ${LEDGER_SQL.sumCost('')} as usd, ${LEDGER_SQL.costComplete('')} as complete FROM node_token_usages`
+    ).get() as { usd: number | null; complete: number }
+    return { usd: row?.usd ?? null, complete: row?.complete === 1 }
   }
 
   // ── llm_calls ───────────────────────────────────────────────────
@@ -99,32 +99,38 @@ export class TokenUsageDAO extends BaseDAO {
   }
 
   /**
-   * Aggregate execution-level metrics from llm_calls + node_executions.
-   * Used by EngineCallbacks for execution_metrics SSE events.
+   * 执行级总量 —— C3/Q4：唯一账本 node_token_usages（不再从 llm_calls 聚合，
+   * 与 steps/REST 终态同源，运行中↔完成跳变根除；llm_calls_persist flag 只影响明细）。
+   * totalLlmTurns 仍是明细计数（llm_calls 行），与总量无关。
    */
   aggregateByExecution(executionId: string): {
     usage: TokenUsage
-    totalCostUsd: number
+    totals: LedgerTotals
     totalLlmTurns: number
     errorCount: number
   } {
-    const tokens = this.stmt(`
+    const row = this.stmt(`
       SELECT
-        COALESCE(SUM(input_tokens), 0) as totalInputTokens,
-        COALESCE(SUM(output_tokens), 0) as totalOutputTokens,
-        COALESCE(SUM(cache_read_tokens), 0) as totalCacheReadTokens,
-        COALESCE(SUM(cache_creation_tokens), 0) as totalCacheCreationTokens,
-        COALESCE(SUM(cost_usd), 0) as totalCostUsd,
-        COUNT(*) as totalLlmTurns
-      FROM llm_calls WHERE execution_id = ?
+        COALESCE(SUM(ntu.input_tokens), 0) as totalInputTokens,
+        COALESCE(SUM(ntu.output_tokens), 0) as totalOutputTokens,
+        COALESCE(SUM(ntu.cache_read_tokens), 0) as totalCacheReadTokens,
+        COALESCE(SUM(ntu.cache_creation_tokens), 0) as totalCacheCreationTokens,
+        ${LEDGER_SQL.sumTokens('ntu.')} as tokens,
+        ${LEDGER_SQL.sumCost('ntu.')} as cost_usd,
+        ${LEDGER_SQL.costComplete('ntu.')} as cost_complete,
+        ${LEDGER_SQL.cacheHitRate('ntu.')} as cache_hit_rate
+      FROM node_token_usages ntu
+      JOIN node_executions ne ON ntu.node_execution_id = ne.id
+      WHERE ne.execution_id = ?
     `).get(executionId) as {
-      totalInputTokens: number
-      totalOutputTokens: number
-      totalCacheReadTokens: number
-      totalCacheCreationTokens: number
-      totalCostUsd: number
-      totalLlmTurns: number
+      totalInputTokens: number; totalOutputTokens: number
+      totalCacheReadTokens: number; totalCacheCreationTokens: number
+      tokens: number | null; cost_usd: number | null; cost_complete: number; cache_hit_rate: number | null
     }
+
+    const turns = this.stmt(
+      "SELECT COUNT(*) as n FROM llm_calls WHERE execution_id = ?"
+    ).get(executionId) as { n: number }
 
     const errors = this.stmt(`
       SELECT COUNT(*) as errorCount FROM node_executions
@@ -133,15 +139,63 @@ export class TokenUsageDAO extends BaseDAO {
 
     return {
       usage: {
-        inputTokens: tokens.totalInputTokens,
-        outputTokens: tokens.totalOutputTokens,
-        cacheReadTokens: tokens.totalCacheReadTokens,
-        cacheCreationTokens: tokens.totalCacheCreationTokens,
+        inputTokens: row.totalInputTokens,
+        outputTokens: row.totalOutputTokens,
+        cacheReadTokens: row.totalCacheReadTokens,
+        cacheCreationTokens: row.totalCacheCreationTokens,
       },
-      totalCostUsd: tokens.totalCostUsd,
-      totalLlmTurns: tokens.totalLlmTurns,
+      totals: {
+        tokens: row.tokens ?? 0,
+        cost: { usd: row.cost_usd, complete: row.cost_complete === 1 },
+        cacheHitRate: row.cache_hit_rate,
+      },
+      totalLlmTurns: turns.n,
       errorCount: errors.errorCount,
     }
+  }
+
+  /** 工作区时间窗内的账本费用（C3/Q4：源 = ntu 账本，非 llm_calls 明细）。 */
+  costForWorkspaceSince(workspaceId: string, createdSinceIso: string): LedgerCost {
+    const row = this.stmt(`
+      SELECT ${LEDGER_SQL.sumCost('ntu.')} as usd, ${LEDGER_SQL.costComplete('ntu.')} as complete
+      FROM node_token_usages ntu
+      JOIN node_executions ne ON ntu.node_execution_id = ne.id
+      JOIN executions e ON ne.execution_id = e.id
+      WHERE e.workspace_id = ? AND e.created_at >= ?
+    `).get(workspaceId, createdSinceIso) as { usd: number | null; complete: number }
+    return { usd: row?.usd ?? null, complete: row?.complete === 1 }
+  }
+
+  /** 指定执行集合的账本费用（workflow 打分等跨执行总量用，C3/Q4 单源 ntu）。 */
+  costForExecutions(executionIds: readonly string[]): LedgerCost {
+    if (executionIds.length === 0) return { usd: null, complete: true }
+    const marks = executionIds.map(() => '?').join(',')
+    const row = this.stmt(`
+      SELECT ${LEDGER_SQL.sumCost('ntu.')} as usd, ${LEDGER_SQL.costComplete('ntu.')} as complete
+      FROM node_token_usages ntu
+      JOIN node_executions ne ON ntu.node_execution_id = ne.id
+      WHERE ne.execution_id IN (${marks})
+    `).get(...executionIds) as { usd: number | null; complete: number }
+    return { usd: row?.usd ?? null, complete: row?.complete === 1 }
+  }
+
+  /** 单节点（node_id 语义）的账本行 → LedgerRow，供按节点 totals（JS 镜像同一公式）。 */
+  findLedgerRowsByNodeId(executionId: string, nodeId: string): LedgerRow[] {
+    const rows = this.stmt(`
+      SELECT ntu.model, ntu.input_tokens, ntu.output_tokens,
+             ntu.cache_read_tokens, ntu.cache_creation_tokens, ntu.cost_usd
+      FROM node_token_usages ntu
+      JOIN node_executions ne ON ntu.node_execution_id = ne.id
+      WHERE ne.execution_id = ? AND ne.node_id = ?
+    `).all(executionId, nodeId) as Array<{
+      model: string | null; input_tokens: number; output_tokens: number
+      cache_read_tokens: number; cache_creation_tokens: number; cost_usd: number | null
+    }>
+    return rows.map(r => ({
+      inputTokens: r.input_tokens, outputTokens: r.output_tokens,
+      cacheReadTokens: r.cache_read_tokens, cacheCreationTokens: r.cache_creation_tokens,
+      costUsd: r.cost_usd,
+    }))
   }
 
   findLlmCallsByNodeExecution(nodeExecutionId: string): LlmCallRow[] {
@@ -222,9 +276,9 @@ export class TokenUsageDAO extends BaseDAO {
       WITH workspace_totals AS (
         SELECT
           w.id AS workspace_id, w.name AS workspace_name,
-          SUM(ntu.input_tokens + ntu.output_tokens + ntu.cache_read_tokens + ntu.cache_creation_tokens) AS total_tokens,
-          CASE WHEN COUNT(*) = COUNT(ntu.cost_usd) THEN SUM(ntu.cost_usd) ELSE NULL END AS total_cost_usd,
-          COUNT(*) = COUNT(ntu.cost_usd) AS cost_complete
+          ${LEDGER_SQL.sumTokens('ntu.')} AS total_tokens,
+          ${LEDGER_SQL.sumCost('ntu.')} AS total_cost_usd,
+          ${LEDGER_SQL.costComplete('ntu.')} AS cost_complete
         FROM node_token_usages ntu
         JOIN node_executions ne ON ntu.node_execution_id = ne.id
         JOIN executions e ON ne.execution_id = e.id
@@ -239,7 +293,7 @@ export class TokenUsageDAO extends BaseDAO {
         SUM(ntu.output_tokens) AS output_tokens,
         SUM(ntu.cache_read_tokens) AS cache_read_tokens,
         SUM(ntu.cache_creation_tokens) AS cache_creation_tokens,
-        CASE WHEN COUNT(*) = COUNT(ntu.cost_usd) THEN SUM(ntu.cost_usd) ELSE NULL END AS model_cost_usd
+        ${LEDGER_SQL.sumCost('ntu.')} AS model_cost_usd
       FROM workspace_totals wt
       JOIN executions e ON e.workspace_id = wt.workspace_id
       JOIN node_executions ne ON ne.execution_id = e.id
@@ -264,12 +318,12 @@ export class TokenUsageDAO extends BaseDAO {
       SELECT
         e.id AS execution_id, e.workflow_ref AS workflow_ref, e.workflow_name AS workflow_name,
         w.id AS workspace_id, w.name AS workspace_name,
-        SUM(ntu.input_tokens + ntu.output_tokens + ntu.cache_read_tokens + ntu.cache_creation_tokens) AS total_tokens,
+        ${LEDGER_SQL.sumTokens('ntu.')} AS total_tokens,
         SUM(ntu.input_tokens) AS input_tokens, SUM(ntu.output_tokens) AS output_tokens,
         SUM(ntu.cache_read_tokens) AS cache_read_tokens,
         SUM(ntu.cache_creation_tokens) AS cache_creation_tokens,
-        CASE WHEN COUNT(ntu.node_execution_id) = COUNT(ntu.cost_usd) THEN SUM(ntu.cost_usd) ELSE NULL END AS total_cost_usd,
-        COUNT(ntu.node_execution_id) = COUNT(ntu.cost_usd) AS cost_complete
+        ${LEDGER_SQL.sumCost('ntu.')} AS total_cost_usd,
+        ${LEDGER_SQL.costComplete('ntu.')} AS cost_complete
       FROM executions e
       JOIN workspaces w ON e.workspace_id = w.id
       JOIN node_executions ne ON ne.execution_id = e.id
@@ -294,8 +348,8 @@ export class TokenUsageDAO extends BaseDAO {
         SUM(ntu.input_tokens) AS input_tokens, SUM(ntu.output_tokens) AS output_tokens,
         SUM(ntu.cache_read_tokens) AS cache_read_tokens,
         SUM(ntu.cache_creation_tokens) AS cache_creation_tokens,
-        CASE WHEN COUNT(*) = COUNT(ntu.cost_usd) THEN SUM(ntu.cost_usd) ELSE NULL END AS model_cost_usd,
-        COUNT(*) = COUNT(ntu.cost_usd) AS cost_complete
+        ${LEDGER_SQL.sumCost('ntu.')} AS model_cost_usd,
+        ${LEDGER_SQL.costComplete('ntu.')} AS cost_complete
       FROM node_token_usages ntu
       JOIN node_executions ne ON ntu.node_execution_id = ne.id
       WHERE ne.execution_id = ?
@@ -318,9 +372,9 @@ export class TokenUsageDAO extends BaseDAO {
         SUM(ntu.input_tokens) AS input_tokens, SUM(ntu.output_tokens) AS output_tokens,
         SUM(ntu.cache_read_tokens) AS cache_read_tokens,
         SUM(ntu.cache_creation_tokens) AS cache_creation_tokens,
-        SUM(ntu.input_tokens + ntu.output_tokens + ntu.cache_read_tokens + ntu.cache_creation_tokens) AS total_tokens,
-        CASE WHEN COUNT(*) = COUNT(ntu.cost_usd) THEN SUM(ntu.cost_usd) ELSE NULL END AS cost_usd,
-        COUNT(*) = COUNT(ntu.cost_usd) AS cost_complete
+        ${LEDGER_SQL.sumTokens('ntu.')} AS total_tokens,
+        ${LEDGER_SQL.sumCost('ntu.')} AS cost_usd,
+        ${LEDGER_SQL.costComplete('ntu.')} AS cost_complete
       FROM node_token_usages ntu
       GROUP BY ntu.model
       ORDER BY total_tokens DESC LIMIT ?
@@ -333,7 +387,7 @@ export class TokenUsageDAO extends BaseDAO {
 
   // ── Health & monitoring queries ──────────────────────────────────────
 
-  getHealthStats(workspaceId: string, days: number): { total: number; success_count: number; failure_count: number; avg_duration: number | null; total_cost: number } {
+  getHealthStats(workspaceId: string, days: number): { total: number; success_count: number; failure_count: number; avg_duration: number | null; total_cost: number | null; cost_complete: boolean } {
     const statsRow = this.stmt(`
       SELECT COUNT(*) as total,
         SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as success_count,
@@ -345,14 +399,14 @@ export class TokenUsageDAO extends BaseDAO {
     `).get(workspaceId, days) as { total: number; success_count: number; failure_count: number; avg_duration: number | null }
 
     const costRow = this.stmt(`
-      SELECT COALESCE(SUM(ntu.cost_usd), 0) as total_cost
+      SELECT ${LEDGER_SQL.sumCost('ntu.')} as total_cost, ${LEDGER_SQL.costComplete('ntu.')} as cost_complete
       FROM node_token_usages ntu
       JOIN node_executions ne ON ntu.node_execution_id = ne.id
       JOIN executions e ON ne.execution_id = e.id
       WHERE e.workspace_id = ? AND e.created_at >= datetime('now', '-' || ? || ' days')
-    `).get(workspaceId, days) as { total_cost: number }
+    `).get(workspaceId, days) as { total_cost: number | null; cost_complete: number }
 
-    return { ...statsRow, total_cost: costRow.total_cost }
+    return { ...statsRow, total_cost: costRow.total_cost, cost_complete: costRow.cost_complete === 1 }
   }
 
   getDailyTrend(workspaceId: string, days: number): Array<{ date: string; success_count: number; failed_count: number }> {
@@ -427,12 +481,12 @@ export class TokenUsageDAO extends BaseDAO {
   }
 
   getCostSpikeAlerts(workspaceId: string, days: number): Array<{
-    id: string; workflow_ref: string; exec_cost: number; created_at: string;
+    id: string; workflow_ref: string; exec_cost: number | null; created_at: string;
     avg_cost: number; cost_ratio: number
   }> {
     return this.stmt(`
       WITH exec_costs AS (
-        SELECT e.id, e.workflow_ref, e.created_at, SUM(ntu.cost_usd) as exec_cost
+        SELECT e.id, e.workflow_ref, e.created_at, ${LEDGER_SQL.sumCost('ntu.')} as exec_cost
         FROM executions e
         JOIN node_executions ne ON ne.execution_id = e.id
         JOIN node_token_usages ntu ON ntu.node_execution_id = ne.id
@@ -562,12 +616,12 @@ export class TokenUsageDAO extends BaseDAO {
   }
 
   getCostAnomalies(workspaceId: string, days: number): Array<{
-    id: string; workflow_ref: string; exec_cost: number; avg_cost: number;
+    id: string; workflow_ref: string; exec_cost: number | null; avg_cost: number;
     cost_ratio: number; severity: string
   }> {
     return this.stmt(`
       WITH exec_costs AS (
-        SELECT e.id, e.workflow_ref, e.created_at, SUM(ntu.cost_usd) as exec_cost
+        SELECT e.id, e.workflow_ref, e.created_at, ${LEDGER_SQL.sumCost('ntu.')} as exec_cost
         FROM executions e JOIN node_executions ne ON ne.execution_id = e.id
         JOIN node_token_usages ntu ON ntu.node_execution_id = ne.id
         WHERE e.workspace_id = ? AND e.created_at >= datetime('now', '-' || ? || ' days')
@@ -588,10 +642,10 @@ export class TokenUsageDAO extends BaseDAO {
     }>
   }
 
-  getCostTrend(workspaceId: string, days: number): Array<{ date: string; total_cost: number; exec_count: number }> {
+  getCostTrend(workspaceId: string, days: number): Array<{ date: string; total_cost: number | null; exec_count: number }> {
     return this.stmt(`
       SELECT DATE(e.created_at) as date,
-        COALESCE(SUM(ntu.cost_usd), 0) as total_cost,
+        ${LEDGER_SQL.sumCost('ntu.')} as total_cost,
         COUNT(DISTINCT e.id) as exec_count
       FROM executions e
       LEFT JOIN node_executions ne ON ne.execution_id = e.id
@@ -599,20 +653,18 @@ export class TokenUsageDAO extends BaseDAO {
       WHERE e.workspace_id = ? AND e.parent_id = '0'
         AND e.created_at >= datetime('now', '-' || ? || ' days')
       GROUP BY DATE(e.created_at) ORDER BY date ASC
-    `).all(workspaceId, days) as Array<{ date: string; total_cost: number; exec_count: number }>
+    `).all(workspaceId, days) as Array<{ date: string; total_cost: number | null; exec_count: number }>
   }
 
   getTokenDistribution(workspaceId: string, days: number): Array<{
     model: string; total_input: number; total_output: number;
-    total_cost: number; cache_hit_rate: number
+    total_cost: number | null; cache_hit_rate: number | null
   }> {
     return this.stmt(`
       SELECT ntu.model,
         SUM(ntu.input_tokens) as total_input, SUM(ntu.output_tokens) as total_output,
-        COALESCE(SUM(ntu.cost_usd), 0) as total_cost,
-        CASE WHEN SUM(ntu.input_tokens + ntu.cache_read_tokens) > 0
-          THEN ROUND(CAST(SUM(ntu.cache_read_tokens) AS REAL) / SUM(ntu.input_tokens + ntu.cache_read_tokens) * 100, 1)
-          ELSE 0 END as cache_hit_rate
+        ${LEDGER_SQL.sumCost('ntu.')} as total_cost,
+        ${LEDGER_SQL.cacheHitRate('ntu.')} as cache_hit_rate
       FROM node_token_usages ntu
       JOIN node_executions ne ON ntu.node_execution_id = ne.id
       JOIN executions e ON ne.execution_id = e.id
@@ -620,18 +672,18 @@ export class TokenUsageDAO extends BaseDAO {
       GROUP BY ntu.model ORDER BY total_cost DESC
     `).all(workspaceId, days) as Array<{
       model: string; total_input: number; total_output: number;
-      total_cost: number; cache_hit_rate: number
+      total_cost: number | null; cache_hit_rate: number | null
     }>
   }
 
   getCostByWorkflow(workspaceId: string, days: number): Array<{
-    workflow_ref: string; total_cost: number; exec_count: number; avg_cost: number
+    workflow_ref: string; total_cost: number | null; exec_count: number; avg_cost: number | null
   }> {
     return this.stmt(`
       SELECT e.workflow_ref,
-        COALESCE(SUM(ntu.cost_usd), 0) as total_cost,
+        ${LEDGER_SQL.sumCost('ntu.')} as total_cost,
         COUNT(DISTINCT e.id) as exec_count,
-        COALESCE(SUM(ntu.cost_usd), 0) / COUNT(DISTINCT e.id) as avg_cost
+        ${LEDGER_SQL.sumCost('ntu.')} / COUNT(DISTINCT e.id) as avg_cost
       FROM executions e
       LEFT JOIN node_executions ne ON ne.execution_id = e.id
       LEFT JOIN node_token_usages ntu ON ntu.node_execution_id = ne.id
@@ -639,60 +691,66 @@ export class TokenUsageDAO extends BaseDAO {
         AND e.created_at >= datetime('now', '-' || ? || ' days')
       GROUP BY e.workflow_ref ORDER BY total_cost DESC
     `).all(workspaceId, days) as Array<{
-      workflow_ref: string; total_cost: number; exec_count: number; avg_cost: number
+      workflow_ref: string; total_cost: number | null; exec_count: number; avg_cost: number | null
     }>
   }
 
   // ── Workspace Token Stats (for archive preview) ──────────────────────
 
   getWorkspaceTokenStats(workspaceId: string): {
-    total: { inputTokens: number; outputTokens: number; cost: number }
-    byModel: Array<{ model: string; inputTokens: number; outputTokens: number; cost: number }>
+    total: { inputTokens: number; outputTokens: number; cost: LedgerCost }
+    byModel: Array<{ model: string; inputTokens: number; outputTokens: number; cost: number | null }>
     byWorkflow: Array<{
-      workflowRef: string; inputTokens: number; outputTokens: number; cost: number
-      byModel: Array<{ model: string; inputTokens: number; outputTokens: number; cost: number }>
+      workflowRef: string; inputTokens: number; outputTokens: number; cost: LedgerCost
+      byModel: Array<{ model: string; inputTokens: number; outputTokens: number; cost: number | null }>
     }>
   } {
     // Workspace total + model breakdown
     const modelRows = this.stmt(`
       SELECT ntu.model,
         SUM(ntu.input_tokens) as input_tokens, SUM(ntu.output_tokens) as output_tokens,
-        COALESCE(SUM(ntu.cost_usd), 0) as cost
+        ${LEDGER_SQL.sumCost('ntu.')} as cost
       FROM node_token_usages ntu
       JOIN node_executions ne ON ntu.node_execution_id = ne.id
       JOIN executions e ON ne.execution_id = e.id
       WHERE e.workspace_id = ?
       GROUP BY ntu.model ORDER BY cost DESC
-    `).all(workspaceId) as Array<{ model: string; input_tokens: number; output_tokens: number; cost: number }>
+    `).all(workspaceId) as Array<{ model: string; input_tokens: number; output_tokens: number; cost: number | null }>
 
-    const total = modelRows.reduce((acc, r) => ({
-      inputTokens: acc.inputTokens + r.input_tokens,
-      outputTokens: acc.outputTokens + r.output_tokens,
-      cost: acc.cost + r.cost,
-    }), { inputTokens: 0, outputTokens: 0, cost: 0 })
+    const total = {
+      inputTokens: modelRows.reduce((a, r) => a + r.input_tokens, 0),
+      outputTokens: modelRows.reduce((a, r) => a + r.output_tokens, 0),
+      cost: costSummary(modelRows.map(r => r.cost)),
+    }
 
     // Per-workflow with model breakdown
     const wfRows = this.stmt(`
       SELECT e.workflow_ref, ntu.model,
         SUM(ntu.input_tokens) as input_tokens, SUM(ntu.output_tokens) as output_tokens,
-        COALESCE(SUM(ntu.cost_usd), 0) as cost
+        ${LEDGER_SQL.sumCost('ntu.')} as cost
       FROM node_token_usages ntu
       JOIN node_executions ne ON ntu.node_execution_id = ne.id
       JOIN executions e ON ne.execution_id = e.id
       WHERE e.workspace_id = ?
       GROUP BY e.workflow_ref, ntu.model ORDER BY e.workflow_ref, cost DESC
-    `).all(workspaceId) as Array<{ workflow_ref: string; model: string; input_tokens: number; output_tokens: number; cost: number }>
+    `).all(workspaceId) as Array<{ workflow_ref: string; model: string; input_tokens: number; output_tokens: number; cost: number | null }>
 
-    const wfMap = new Map<string, { inputTokens: number; outputTokens: number; cost: number; byModel: Array<{ model: string; inputTokens: number; outputTokens: number; cost: number }> }>()
+    const wfMap = new Map<string, { inputTokens: number; outputTokens: number; costs: Array<number | null>; byModel: Array<{ model: string; inputTokens: number; outputTokens: number; cost: number | null }> }>()
     for (const r of wfRows) {
       let wf = wfMap.get(r.workflow_ref)
-      if (!wf) { wf = { inputTokens: 0, outputTokens: 0, cost: 0, byModel: [] }; wfMap.set(r.workflow_ref, wf) }
+      if (!wf) { wf = { inputTokens: 0, outputTokens: 0, costs: [], byModel: [] }; wfMap.set(r.workflow_ref, wf) }
       wf.inputTokens += r.input_tokens
       wf.outputTokens += r.output_tokens
-      wf.cost += r.cost
+      wf.costs.push(r.cost)
       wf.byModel.push({ model: r.model, inputTokens: r.input_tokens, outputTokens: r.output_tokens, cost: r.cost })
     }
-    const byWorkflow = Array.from(wfMap.entries()).map(([workflowRef, stats]) => ({ workflowRef, ...stats }))
+    const byWorkflow = Array.from(wfMap.entries()).map(([workflowRef, stats]) => ({
+      workflowRef,
+      inputTokens: stats.inputTokens,
+      outputTokens: stats.outputTokens,
+      cost: costSummary(stats.costs),
+      byModel: stats.byModel,
+    }))
 
     return {
       total,
@@ -703,15 +761,15 @@ export class TokenUsageDAO extends BaseDAO {
 
   getNodeTokenStats(workspaceId: string): Array<{
     workflowRef: string; nodeId: string; nodeName: string; nodeType: string
-    inputTokens: number; outputTokens: number; cost: number
-    byModel: Array<{ model: string; inputTokens: number; outputTokens: number; cost: number }>
+    inputTokens: number; outputTokens: number; cost: LedgerCost
+    byModel: Array<{ model: string; inputTokens: number; outputTokens: number; cost: number | null }>
   }> {
     const rows = this.stmt(`
       SELECT e.workflow_ref, ne.node_id,
         ne.node_type,
         ntu.model,
         SUM(ntu.input_tokens) as input_tokens, SUM(ntu.output_tokens) as output_tokens,
-        COALESCE(SUM(ntu.cost_usd), 0) as cost
+        ${LEDGER_SQL.sumCost('ntu.')} as cost
       FROM node_token_usages ntu
       JOIN node_executions ne ON ntu.node_execution_id = ne.id
       JOIN executions e ON ne.execution_id = e.id
@@ -720,29 +778,33 @@ export class TokenUsageDAO extends BaseDAO {
       ORDER BY e.workflow_ref, cost DESC
     `).all(workspaceId) as Array<{
       workflow_ref: string; node_id: string; node_type: string
-      model: string; input_tokens: number; output_tokens: number; cost: number
+      model: string; input_tokens: number; output_tokens: number; cost: number | null
     }>
 
     const nodeMap = new Map<string, {
       workflowRef: string; nodeId: string; nodeName: string; nodeType: string
-      inputTokens: number; outputTokens: number; cost: number
-      byModel: Array<{ model: string; inputTokens: number; outputTokens: number; cost: number }>
+      inputTokens: number; outputTokens: number; costs: Array<number | null>
+      byModel: Array<{ model: string; inputTokens: number; outputTokens: number; cost: number | null }>
     }>()
 
     for (const r of rows) {
       const key = `${r.workflow_ref}:${r.node_id}`
       let node = nodeMap.get(key)
       if (!node) {
-        node = { workflowRef: r.workflow_ref, nodeId: r.node_id, nodeName: r.node_id, nodeType: r.node_type, inputTokens: 0, outputTokens: 0, cost: 0, byModel: [] }
+        node = { workflowRef: r.workflow_ref, nodeId: r.node_id, nodeName: r.node_id, nodeType: r.node_type, inputTokens: 0, outputTokens: 0, costs: [], byModel: [] }
         nodeMap.set(key, node)
       }
       node.inputTokens += r.input_tokens
       node.outputTokens += r.output_tokens
-      node.cost += r.cost
+      node.costs.push(r.cost)
       node.byModel.push({ model: r.model, inputTokens: r.input_tokens, outputTokens: r.output_tokens, cost: r.cost })
     }
 
-    return Array.from(nodeMap.values())
+    return Array.from(nodeMap.values()).map(n => ({
+      workflowRef: n.workflowRef, nodeId: n.nodeId, nodeName: n.nodeName, nodeType: n.nodeType,
+      inputTokens: n.inputTokens, outputTokens: n.outputTokens,
+      cost: costSummary(n.costs), byModel: n.byModel,
+    }))
   }
 
   // ── LLM call analysis (for suggestion-engine) ────────────────────────
@@ -783,16 +845,16 @@ export class TokenUsageDAO extends BaseDAO {
 
   // ── Analytics cost queries ─────────────────────────────────────────
 
-  totalCostByWorkspaceSince(workspaceId: string, tsCutoff: number): number {
+  totalCostByWorkspaceSince(workspaceId: string, tsCutoff: number): number | null {
     const row = this.stmt(
-      "SELECT COALESCE(SUM(cost_usd), 0) as total FROM llm_calls WHERE workspace_id = ? AND timestamp >= ?"
-    ).get(workspaceId, tsCutoff) as { total: number }
+      `SELECT ${LEDGER_SQL.sumCost('')} as total FROM llm_calls WHERE workspace_id = ? AND timestamp >= ?`
+    ).get(workspaceId, tsCutoff) as { total: number | null }
     return row.total
   }
 
   costByModelSince(workspaceId: string, tsCutoff: number): Array<Record<string, unknown>> {
     return this.stmt(`
-      SELECT model, COUNT(*) as calls, SUM(cost_usd) as total_cost,
+      SELECT model, COUNT(*) as calls, ${LEDGER_SQL.sumCost('')} as total_cost,
              SUM(input_tokens) as input_tokens, SUM(output_tokens) as output_tokens,
              SUM(cache_read_tokens) as cache_read, SUM(cache_creation_tokens) as cache_create
       FROM llm_calls WHERE workspace_id = ? AND timestamp >= ?
@@ -803,7 +865,7 @@ export class TokenUsageDAO extends BaseDAO {
   costByWorkflowSince(workspaceId: string, tsCutoff: number): Array<Record<string, unknown>> {
     return this.stmt(`
       SELECT workflow_ref, COUNT(DISTINCT execution_id) as executions,
-             SUM(cost_usd) as total_cost
+             ${LEDGER_SQL.sumCost('')} as total_cost
       FROM llm_calls WHERE workspace_id = ? AND timestamp >= ?
       GROUP BY workflow_ref ORDER BY total_cost DESC
     `).all(workspaceId, tsCutoff) as Array<Record<string, unknown>>
@@ -812,7 +874,7 @@ export class TokenUsageDAO extends BaseDAO {
   dailyCostSince(workspaceId: string, tsCutoff: number): Array<Record<string, unknown>> {
     return this.stmt(`
       SELECT DATE(timestamp / 1000, 'unixepoch') as date,
-             SUM(cost_usd) as total_cost, COUNT(*) as calls
+             ${LEDGER_SQL.sumCost('')} as total_cost, COUNT(*) as calls
       FROM llm_calls WHERE workspace_id = ? AND timestamp >= ?
       GROUP BY date ORDER BY date ASC
     `).all(workspaceId, tsCutoff) as Array<Record<string, unknown>>

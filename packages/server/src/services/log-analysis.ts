@@ -12,7 +12,9 @@ export interface HealthSummary {
   successRate: number
   failureRate: number
   avgDurationMs: number
-  totalCostUsd: number
+  /** C3: ledger 三态 —— null = 窗口内全部未定价；complete=false = 部分和 */
+  totalCostUsd: number | null
+  costComplete: boolean
   activeAlerts: number
   periodDays: number
   dailyTrend: DailyTrendPoint[]
@@ -91,7 +93,7 @@ export interface CostAnomaly {
 
 export interface CostTrendPoint {
   date: string
-  totalCostUsd: number
+  totalCostUsd: number | null
   executionCount: number
 }
 
@@ -99,15 +101,16 @@ export interface TokenDistribution {
   model: string
   totalInputTokens: number
   totalOutputTokens: number
-  totalCostUsd: number
-  cacheHitRate: number
+  totalCostUsd: number | null
+  /** C3: 规范命中率 0-1；无输入类 token → null */
+  cacheHitRate: number | null
 }
 
 export interface WorkflowCost {
   workflowRef: string
-  totalCostUsd: number
+  totalCostUsd: number | null
   executionCount: number
-  avgCostPerExecution: number
+  avgCostPerExecution: number | null
 }
 
 export interface LogContext {
@@ -206,7 +209,8 @@ export class LogAnalysisService {
         successRate: total > 0 ? Math.round((success / total) * 1000) / 10 : 0,
         failureRate: total > 0 ? Math.round((failure / total) * 1000) / 10 : 0,
         avgDurationMs: Math.round(stats.avg_duration ?? 0),
-        totalCostUsd: Math.round((stats.total_cost ?? 0) * 100) / 100,
+        totalCostUsd: stats.total_cost === null ? null : Math.round(stats.total_cost * 100) / 100,
+        costComplete: stats.cost_complete,
         activeAlerts: alertCount,
         periodDays: days,
         dailyTrend: trendRows.map(r => ({
@@ -259,6 +263,7 @@ export class LogAnalysisService {
       const costSpikes = this.tokenDao.getCostSpikeAlerts(workspaceId, days)
 
       for (const c of costSpikes) {
+        if (c.exec_cost === null) continue // SQL 谓词已滤 NULL，此为类型守卫
         alerts.push({
           id: generateAlertId("cost_spike", c.workflow_ref, undefined, c.created_at),
           severity: c.cost_ratio >= 5 ? "critical" : "warning",
@@ -363,11 +368,11 @@ export class LogAnalysisService {
       const costRows = this.tokenDao.getCostAnomalies(workspaceId, days)
 
       const costAnomalies: CostAnomaly[] = costRows
-        .filter(r => r.severity !== "normal")
+        .filter(r => r.severity !== "normal" && r.exec_cost !== null)
         .map(r => ({
           executionId: r.id,
           workflowRef: r.workflow_ref,
-          execCostUsd: Math.round(r.exec_cost * 100) / 100,
+          execCostUsd: Math.round((r.exec_cost as number) * 100) / 100,
           avgCostUsd: Math.round(r.avg_cost * 100) / 100,
           costRatio: r.cost_ratio,
           severity: r.severity as "critical" | "warning",
@@ -385,9 +390,10 @@ export class LogAnalysisService {
     return this.cached(`cost:${workspaceId}:${days}`, () => {
       const trendRows = this.tokenDao.getCostTrend(workspaceId, days)
 
+      // C3: 趋势点 = 已知消费曲线（null = 当日全部未定价，图上不画假 0）
       const costTrend: CostTrendPoint[] = trendRows.map(r => ({
         date: r.date,
-        totalCostUsd: Math.round(r.total_cost * 100) / 100,
+        totalCostUsd: r.total_cost === null ? null : Math.round(r.total_cost * 100) / 100,
         executionCount: r.exec_count,
       }))
 
@@ -397,7 +403,8 @@ export class LogAnalysisService {
         model: r.model,
         totalInputTokens: r.total_input,
         totalOutputTokens: r.total_output,
-        totalCostUsd: Math.round(r.total_cost * 100) / 100,
+        totalCostUsd: r.total_cost === null ? null : Math.round(r.total_cost * 100) / 100,
+        // C3/Q5: 命中率升规范 —— 0-1 且未定价为 null（旧 0-100+假0 由 DAO 端根除）
         cacheHitRate: r.cache_hit_rate,
       }))
 
@@ -405,9 +412,9 @@ export class LogAnalysisService {
 
       const costByWorkflow: WorkflowCost[] = wfRows.map(r => ({
         workflowRef: r.workflow_ref,
-        totalCostUsd: Math.round(r.total_cost * 100) / 100,
+        totalCostUsd: r.total_cost === null ? null : Math.round(r.total_cost * 100) / 100,
         executionCount: r.exec_count,
-        avgCostPerExecution: Math.round(r.avg_cost * 100) / 100,
+        avgCostPerExecution: r.avg_cost === null ? null : Math.round(r.avg_cost * 100) / 100,
       }))
 
       return { costTrend, tokenDistribution, costByWorkflow }

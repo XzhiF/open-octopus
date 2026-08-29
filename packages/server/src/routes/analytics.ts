@@ -1,5 +1,9 @@
 import { Hono } from 'hono'
 import type { Context } from 'hono'
+import {
+  emptyTokenUsage, addTokenUsage, costSummary, cacheHitRateOf, ledgerTotals,
+  type TokenUsage, type LedgerRow,
+} from '@octopus/shared'
 import { existsSync, readdirSync, readFileSync } from 'fs'
 import { join } from 'path'
 import os from 'os'
@@ -11,6 +15,9 @@ import type { LogAnalysisService } from '../services/log-analysis'
 
 // ─── Log Analysis Routes (default export) ──────────────────────────
 // Mounted at: /api/workspaces/:id/analytics
+
+/** 打分启发式：单次执行 $10 为成本效率满分线（产品参数，非 ledger 口径）。 */
+const COST_EFFICIENCY_BASELINE_USD = 10
 
 function getWorkspaceId(c: { req: { param: (name: string) => string | undefined } }): string {
   const id = c.req.param("id")
@@ -403,37 +410,37 @@ export function createAnalyticsRoutes(
 
     const calls = tokenUsageDAO.findLlmCallsByExecution(executionId, nodeId || undefined)
 
-    const totalInputTokens = calls.reduce((sum, c) => sum + (c.input_tokens as number ?? 0), 0)
-    const totalOutputTokens = calls.reduce((sum, c) => sum + (c.output_tokens as number ?? 0), 0)
-    const totalCacheReadTokens = calls.reduce((sum, c) => sum + (c.cache_read_tokens as number ?? 0), 0)
-    const totalCacheCreationTokens = calls.reduce((sum, c) => sum + (c.cache_creation_tokens as number ?? 0), 0)
-    const totalCost = calls.reduce((sum, c) => sum + (c.cost_usd as number ?? 0), 0)
-    const totalCacheTokens = totalCacheReadTokens + totalCacheCreationTokens
-    const totalTokens = totalInputTokens + totalOutputTokens
-    const cacheHitRate = totalTokens > 0 ? totalCacheTokens / totalTokens : 0
+    // C3: aggregates 的总量走 ledger（execution 级 = ntu 单源；nodeId 过滤 = 该节点
+    // ntu 行经同一 JS 公式），旧 cacheHitRate V1（cache/total）与两字段 total 口径废除。
+    const ledgerRows: LedgerRow[] = nodeId
+      ? tokenUsageDAO.findLedgerRowsByNodeId(executionId as string, nodeId)
+      : []
+    const totals = nodeId
+      ? ledgerTotals(ledgerRows)
+      : tokenUsageDAO.aggregateByExecution(executionId as string).totals
 
-    const modelBreakdown: Record<string, { calls: number; inputTokens: number; outputTokens: number; costUsd: number }> = {}
+    const modelBreakdown: Record<string, { calls: number; inputTokens: number; outputTokens: number; costUsd: number | null }> = {}
+    const modelCosts: Record<string, Array<number | null>> = {}
     for (const call of calls) {
       const model = (call.model as string) ?? 'unknown'
       if (!modelBreakdown[model]) {
-        modelBreakdown[model] = { calls: 0, inputTokens: 0, outputTokens: 0, costUsd: 0 }
+        modelBreakdown[model] = { calls: 0, inputTokens: 0, outputTokens: 0, costUsd: null }
+        modelCosts[model] = []
       }
       modelBreakdown[model].calls++
       modelBreakdown[model].inputTokens += call.input_tokens as number ?? 0
       modelBreakdown[model].outputTokens += call.output_tokens as number ?? 0
-      modelBreakdown[model].costUsd += call.cost_usd as number ?? 0
+      modelCosts[model].push(call.cost_usd as number | null)
+    }
+    for (const [model, costs] of Object.entries(modelCosts)) {
+      modelBreakdown[model].costUsd = costSummary(costs).usd
     }
 
     return c.json({
       data: calls,
       aggregates: {
         totalCalls: calls.length,
-        totalInputTokens,
-        totalOutputTokens,
-        totalCacheReadTokens,
-        totalCacheCreationTokens,
-        totalCost,
-        cacheHitRate,
+        totals,
         modelBreakdown,
       },
       _degraded: false,
@@ -458,7 +465,7 @@ export function createAnalyticsRoutes(
 
     const totalExecutions = execDAO.countByWorkspaceSince(workspaceId, cutoff)
     const successRate = execDAO.successRateByWorkspaceSince(workspaceId, cutoff)
-    const totalCost = tokenUsageDAO.totalCostByWorkspaceSince(workspaceId, tsCutoff)
+    const totalCost = tokenUsageDAO.costForWorkspaceSince(workspaceId, cutoff)
     const avgDurationMs = execDAO.avgDurationByWorkspaceSince(workspaceId, cutoff)
     const workflowStats = execDAO.workflowStatsByWorkspace(workspaceId, cutoff)
     const dailyTrend = execDAO.dailyTrendByWorkspace(workspaceId, cutoff)
@@ -500,23 +507,37 @@ export function createAnalyticsRoutes(
       : 0
     const speedStability = Math.max(0, 1 - (Math.sqrt(durationVariance) / (avgDuration || 1)))
 
-    const totalCost = llmCalls.reduce((sum: number, c) => sum + ((c.cost_usd as number) ?? 0), 0)
-    const avgCostPerRun = executions.length > 0 ? totalCost / executions.length : 0
-    const costEfficiency = Math.max(0, 1 - (avgCostPerRun / 10))
+    // C3: 打分输入走 ledger —— cost 源 = ntu（costForExecutions），命中率 = 规范公式
+    const ledgerCost = tokenUsageDAO.costForExecutions(executions.map(e => e.id as string))
+    const avgCostPerRun = ledgerCost.usd !== null && executions.length > 0
+      ? ledgerCost.usd / executions.length : null
+    // 启发式：单次执行 $10 为满分线（与 ledger 无关的产品参数，C2 移交项具名化）
+    const costEfficiency = avgCostPerRun === null
+      ? null
+      : Math.max(0, 1 - (avgCostPerRun / COST_EFFICIENCY_BASELINE_USD))
 
-    const totalTokens = llmCalls.reduce((sum: number, c) =>
-      sum + ((c.input_tokens as number) ?? 0) + ((c.output_tokens as number) ?? 0), 0)
-    const cacheTokens = llmCalls.reduce((sum: number, c) =>
-      sum + ((c.cache_read_tokens as number) ?? 0), 0)
-    const tokenEfficiency = totalTokens > 0 ? cacheTokens / totalTokens : 0
+    const callUsage = llmCalls.reduce<TokenUsage>((acc, c) => addTokenUsage(acc, {
+      inputTokens: (c.input_tokens as number) ?? 0,
+      outputTokens: (c.output_tokens as number) ?? 0,
+      cacheReadTokens: (c.cache_read_tokens as number) ?? 0,
+      cacheCreationTokens: (c.cache_creation_tokens as number) ?? 0,
+    }), emptyTokenUsage())
+    const tokenEfficiency = cacheHitRateOf(callUsage)
 
     const retryCount = executions.filter((e) => (e.retry_count as number ?? 0) > 0).length
     const retryRate = executions.length > 0 ? retryCount / executions.length : 0
     const reliability = Math.max(0, 1 - retryRate)
 
-    const healthScore = Math.round(
-      (successScore * 0.4 + speedStability * 0.2 + costEfficiency * 0.15 + tokenEfficiency * 0.15 + reliability * 0.1) * 100
-    )
+    // 未定价/无缓存维度不参与打分，权重重归一（C3/Q8-2：qwen 工作区不再白拿或白丢分）
+    const dims: Array<[number | null, number]> = [
+      [successScore, 0.4], [speedStability, 0.2], [costEfficiency, 0.15],
+      [tokenEfficiency, 0.15], [reliability, 0.1],
+    ]
+    const present = dims.filter((d): d is [number, number] => d[0] !== null)
+    const weightSum = present.reduce((a, [, w]) => a + w, 0)
+    const healthScore = weightSum > 0
+      ? Math.round(present.reduce((a, [v, w]) => a + v * w, 0) / weightSum * 100)
+      : 0
     const grade = healthScore >= 90 ? 'A' : healthScore >= 75 ? 'B' : healthScore >= 60 ? 'C' : healthScore >= 40 ? 'D' : 'F'
 
     return c.json({
@@ -527,13 +548,14 @@ export function createAnalyticsRoutes(
         totalExecutions: executions.length,
         successRate: successScore,
         avgDurationMs: avgDuration,
-        totalCost,
+        totalCost: ledgerCost.usd,
+        costComplete: ledgerCost.complete,
         avgCostPerRun,
         healthDimensions: {
           success: Math.round(successScore * 100),
           speedStability: Math.round(speedStability * 100),
-          costEfficiency: Math.round(costEfficiency * 100),
-          tokenEfficiency: Math.round(tokenEfficiency * 100),
+          costEfficiency: costEfficiency === null ? null : Math.round(costEfficiency * 100),
+          tokenEfficiency: tokenEfficiency === null ? null : Math.round(tokenEfficiency * 100),
           reliability: Math.round(reliability * 100),
         },
       },
@@ -556,7 +578,7 @@ export function createAnalyticsRoutes(
 
     return c.json({
       data: {
-        totalCost: (costByModel as Array<{ total_cost: number; calls: number }>).reduce((s, m) => s + m.total_cost, 0),
+        totalCost: costSummary((costByModel as Array<{ total_cost: number | null }>).map(m => m.total_cost)).usd,
         totalCalls: (costByModel as Array<{ total_cost: number; calls: number }>).reduce((s, m) => s + m.calls, 0),
         days,
       },

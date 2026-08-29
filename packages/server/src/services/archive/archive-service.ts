@@ -1,4 +1,5 @@
 import type Database from "better-sqlite3"
+import { LEDGER_SQL, costSummary } from "@octopus/shared"
 import type { ArchiveDAO } from "../../db/dao/archive-dao"
 import type { ExecutionDAO } from "../../db/dao/execution-dao"
 import { WorkspaceDAO } from "../../db/dao/workspace-dao"
@@ -57,6 +58,8 @@ export class ArchiveService {
       "SELECT COUNT(*) as cnt FROM node_executions WHERE execution_id = ? AND status = 'completed'",
     ).get(executionId) as { cnt: number }).cnt
 
+    // C3/Q8-1: 归档单源 = node_token_usages 账本（旧 tokens 取 ntu 而 cost 取
+    // llm_calls 的交叉口径废除）；calls 是明细计数，仍归 llm_calls 管辖。
     const tokenAgg = this.db.prepare(`
       SELECT
         COALESCE(SUM(input_tokens), 0) as input,
@@ -68,19 +71,27 @@ export class ArchiveService {
     `).get(executionId) as Record<string, number>
 
     const modelRows = this.db.prepare(`
-      SELECT model, COUNT(*) as calls,
-             SUM(input_tokens + output_tokens) as tokens,
-             COALESCE(SUM(cost_usd), 0) as cost
-      FROM llm_calls WHERE execution_id = ?
-      GROUP BY model
-    `).all(executionId) as Array<{ model: string; calls: number; tokens: number; cost: number }>
+      SELECT ntu.model as model,
+             ${LEDGER_SQL.sumTokens('ntu.')} as tokens,
+             ${LEDGER_SQL.sumCost('ntu.')} as cost
+      FROM node_token_usages ntu
+      JOIN node_executions ne ON ntu.node_execution_id = ne.id
+      WHERE ne.execution_id = ?
+      GROUP BY ntu.model
+    `).all(executionId) as Array<{ model: string | null; tokens: number; cost: number | null }>
 
-    const modelBreakdown: Record<string, { calls: number; tokens: number; cost: number }> = {}
-    let totalCost = 0
+    const callCounts = new Map<string, number>((this.db.prepare(`
+      SELECT model, COUNT(*) as calls FROM llm_calls WHERE execution_id = ? GROUP BY model
+    `).all(executionId) as Array<{ model: string | null; calls: number }>)
+      .map(r => [r.model ?? "unknown", r.calls] as [string, number]))
+
+    const modelBreakdown: Record<string, { calls: number; tokens: number; cost: number | null }> = {}
     for (const row of modelRows) {
-      modelBreakdown[row.model ?? "unknown"] = { calls: row.calls, tokens: row.tokens, cost: row.cost }
-      totalCost += row.cost
+      const key = row.model ?? "unknown"
+      modelBreakdown[key] = { calls: callCounts.get(key) ?? 0, tokens: row.tokens, cost: row.cost }
     }
+    // 全未定价 → NULL（不再 COALESCE 焊 0）；部分定价 → 已知和
+    const totalCost = costSummary(modelRows.map(r => r.cost)).usd
 
     const nodeSummary = this.db.prepare(`
       SELECT node_id, node_type, status, duration
@@ -159,9 +170,9 @@ export class ArchiveService {
           description: ws.description,
           source: ws.source,
           execution_count: execRows.length,
-          total_cost: execRows.length > 0 ? (this.db.prepare(
-            "SELECT COALESCE(SUM(total_cost), 0) as total FROM execution_archive WHERE workspace_id = ?",
-          ).get(workspaceId) as { total: number }).total : 0,
+          total_cost: (this.db.prepare(
+            `SELECT ${LEDGER_SQL.sumCostOf('total_cost')} as total FROM execution_archive WHERE workspace_id = ?`,
+          ).get(workspaceId) as { total: number | null }).total,
           total_duration_ms: execRows.length > 0 ? (this.db.prepare(
             "SELECT COALESCE(SUM(total_duration_ms), 0) as total FROM execution_archive WHERE workspace_id = ?",
           ).get(workspaceId) as { total: number }).total : 0,

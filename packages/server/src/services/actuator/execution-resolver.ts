@@ -31,7 +31,13 @@ export interface ExecutionProgressResponse {
     input: number
     output: number
     cache_read: number
-    estimated_cost_usd: number
+    cache_creation: number
+    total_tokens: number
+    /** C3: ledger 三态（null=未定价，不再 ??0 焊假数） */
+    estimated_cost_usd: number | null
+    cost_complete: boolean
+    /** 规范命中率 0-1（无输入类 token → null） */
+    cache_hit_rate: number | null
   } | null
   recent_errors: {
     node_id: string
@@ -181,15 +187,19 @@ export class ExecutionResolver {
   private aggregateTokens(executionId: string): ExecutionProgressResponse['tokens'] {
     if (!this.tokenUsageDAO) return null
     try {
-      const rows = this.tokenUsageDAO.findByExecution(executionId)
-      if (rows.length === 0) return null
-      const agg = rows.reduce((acc, r) => ({
-        input: acc.input + (r.input_tokens ?? 0),
-        output: acc.output + (r.output_tokens ?? 0),
-        cache_read: acc.cache_read + (r.cache_read_tokens ?? 0),
-        estimated_cost_usd: acc.estimated_cost_usd + (r.cost_usd ?? 0),
-      }), { input: 0, output: 0, cache_read: 0, estimated_cost_usd: 0 })
-      return agg
+      // C3: 走 ledger 单源（旧实现丢 cache_creation 整列 + ??0 焊 cost）
+      const m = this.tokenUsageDAO.aggregateByExecution(executionId)
+      if (m.totals.tokens === 0) return null
+      return {
+        input: m.usage.inputTokens,
+        output: m.usage.outputTokens,
+        cache_read: m.usage.cacheReadTokens,
+        cache_creation: m.usage.cacheCreationTokens,
+        total_tokens: m.totals.tokens,
+        estimated_cost_usd: m.totals.cost.usd,
+        cost_complete: m.totals.cost.complete,
+        cache_hit_rate: m.totals.cacheHitRate,
+      }
     } catch {
       return null
     }

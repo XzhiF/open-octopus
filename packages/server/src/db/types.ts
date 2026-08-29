@@ -565,7 +565,8 @@ export interface ExecutionArchiveRow {
   workspace_id: string
   org: string
   workflow_name: string | null
-  total_cost: number
+  /** C3: ledger 三态 —— NULL = 归档时全部未定价（REAL DEFAULT 0 可空，存量 0 不回填） */
+  total_cost: number | null
   total_duration_ms: number
   node_count: number
   success_rate: number
@@ -585,7 +586,7 @@ export interface WorkspaceArchiveRow {
   description: string | null
   source: string | null
   execution_count: number
-  total_cost: number
+  total_cost: number | null
   total_duration_ms: number
   created_at: string | null
   archived_at: string
@@ -600,17 +601,17 @@ export interface WorkspaceArchiveRow {
 
 export interface ArchiveStats {
   total_executions: number
-  total_cost: number
+  total_cost: number | null
   avg_duration_ms: number
-  avg_cost_per_execution: number
+  avg_cost_per_execution: number | null
   success_rate: number
   archived_workspaces: number
-  archived_workspace_cost: number
+  archived_workspace_cost: number | null
 }
 
 export interface CostTrend {
   date: string
-  cost: number
+  cost: number | null
   execution_count: number
 }
 
@@ -619,7 +620,7 @@ export interface WorkflowStat {
   execution_count: number
   success_rate: number
   avg_duration_ms: number
-  avg_cost: number
+  avg_cost: number | null
 }
 
 export interface LeaderboardEntry {

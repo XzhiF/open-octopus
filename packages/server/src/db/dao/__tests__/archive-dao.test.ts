@@ -101,15 +101,15 @@ describe("ArchiveDAO", () => {
 
   // ── getStats ──────────────────────────────────────────────────────
 
-  it("returns all-zero stats on empty tables", () => {
+  it("empty tables: counts are 0, costs are NULL (C3: 未定价/无数据 ≠ 假 $0)", () => {
     const stats = dao.getStats()
     expect(stats.total_executions).toBe(0)
-    expect(stats.total_cost).toBe(0)
+    expect(stats.total_cost).toBeNull()
     expect(stats.avg_duration_ms).toBe(0)
-    expect(stats.avg_cost_per_execution).toBe(0)
+    expect(stats.avg_cost_per_execution).toBeNull()
     expect(stats.success_rate).toBe(0)
     expect(stats.archived_workspaces).toBe(0)
-    expect(stats.archived_workspace_cost).toBe(0)
+    expect(stats.archived_workspace_cost).toBeNull()
   })
 
   it("aggregates stats correctly with data", () => {
@@ -148,7 +148,7 @@ describe("ArchiveDAO", () => {
     const trends = dao.getCostTrends("xzf", "90d")
     expect(trends.length).toBeGreaterThanOrEqual(1)
     // Only the recent row should appear
-    const totalCost = trends.reduce((sum, t) => sum + t.cost, 0)
+    const totalCost = trends.reduce((sum, t) => sum + (t.cost ?? 0), 0) // C3: 趋势点可 null（当日未定价）
     expect(totalCost).toBeCloseTo(0.5)
   })
 

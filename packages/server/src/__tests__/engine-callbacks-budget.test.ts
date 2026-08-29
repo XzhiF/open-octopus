@@ -44,7 +44,7 @@ function makeMocks() {
     recordNodeUsage: vi.fn(),
     aggregateByExecution: vi.fn().mockReturnValue({
       usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0 },
-            totalCostUsd: 0,
+            totals: { tokens: 0, cost: { usd: 0, complete: true }, cacheHitRate: null },
       totalLlmTurns: 0,
       errorCount: 0,
     }),
@@ -122,7 +122,7 @@ describe("EngineCallbacks — execution_metrics SSE event", () => {
   it("emits execution_metrics after node_end", () => {
     setMock(mocks.tokenUsageDao, "aggregateByExecution", {
       usage: { inputTokens: 1500, outputTokens: 800, cacheReadTokens: 0, cacheCreationTokens: 0 },
-            totalCostUsd: 0.01,
+            totals: { tokens: 0, cost: { usd: 0.01, complete: true }, cacheHitRate: null },
       totalLlmTurns: 3,
       errorCount: 0,
     })
@@ -139,7 +139,7 @@ describe("EngineCallbacks — execution_metrics SSE event", () => {
     expect(metricsEvents[0][1].data).toMatchObject({
       executionId: "exec-1",
       usage: { inputTokens: 1500, outputTokens: 800, cacheReadTokens: 0, cacheCreationTokens: 0 },
-            totalCostUsd: 0.01,
+            totals: { tokens: 0, cost: { usd: 0.01, complete: true }, cacheHitRate: null },
       totalLlmTurns: 3,
       errorCount: 0,
     })
@@ -148,7 +148,7 @@ describe("EngineCallbacks — execution_metrics SSE event", () => {
   it("throttles execution_metrics to max 1 per 500ms", () => {
     setMock(mocks.tokenUsageDao, "aggregateByExecution", {
       usage: { inputTokens: 100, outputTokens: 50, cacheReadTokens: 0, cacheCreationTokens: 0 },
-            totalCostUsd: 0.001,
+            totals: { tokens: 0, cost: { usd: 0.001, complete: true }, cacheHitRate: null },
       totalLlmTurns: 1,
       errorCount: 0,
     })
@@ -193,7 +193,7 @@ describe("EngineCallbacks — budget progress", () => {
     })
     setMock(mocks.tokenUsageDao, "aggregateByExecution", {
       usage: { inputTokens: 5000, outputTokens: 3000, cacheReadTokens: 0, cacheCreationTokens: 0 },
-            totalCostUsd: 0.05,
+            totals: { tokens: 0, cost: { usd: 0.05, complete: true }, cacheHitRate: null },
       totalLlmTurns: 5,
       errorCount: 1,
     })
@@ -224,7 +224,7 @@ describe("EngineCallbacks — budget progress", () => {
     })
     setMock(mocks.tokenUsageDao, "aggregateByExecution", {
       usage: { inputTokens: 100, outputTokens: 50, cacheReadTokens: 0, cacheCreationTokens: 0 },
-            totalCostUsd: 0.001,
+            totals: { tokens: 0, cost: { usd: 0.001, complete: true }, cacheHitRate: null },
       totalLlmTurns: 1,
       errorCount: 0,
     })
@@ -259,7 +259,7 @@ describe("EngineCallbacks — budget progress", () => {
     })
     setMock(mocks.tokenUsageDao, "aggregateByExecution", {
       usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0 },
-            totalCostUsd: 0,
+            totals: { tokens: 0, cost: { usd: 0, complete: true }, cacheHitRate: null },
       totalLlmTurns: 0,
       errorCount: 0,
     })
@@ -306,7 +306,7 @@ describe("EngineCallbacks — budget warning", () => {
     })
     setMock(mocks.tokenUsageDao, "aggregateByExecution", {
       usage: { inputTokens: 5000, outputTokens: 3500, cacheReadTokens: 0, cacheCreationTokens: 0 },
-            totalCostUsd: 0.05,
+            totals: { tokens: 0, cost: { usd: 0.05, complete: true }, cacheHitRate: null },
       totalLlmTurns: 5,
       errorCount: 0,
     })
@@ -335,7 +335,7 @@ describe("EngineCallbacks — budget warning", () => {
     })
     setMock(mocks.tokenUsageDao, "aggregateByExecution", {
       usage: { inputTokens: 2000, outputTokens: 1000, cacheReadTokens: 0, cacheCreationTokens: 0 },
-            totalCostUsd: 0.02,
+            totals: { tokens: 0, cost: { usd: 0.02, complete: true }, cacheHitRate: null },
       totalLlmTurns: 2,
       errorCount: 0,
     })
@@ -372,7 +372,7 @@ describe("EngineCallbacks — budget blocking (onBeforeNode)", () => {
     })
     setMock(mocks.tokenUsageDao, "aggregateByExecution", {
       usage: { inputTokens: 3000, outputTokens: 2500, cacheReadTokens: 0, cacheCreationTokens: 0 },
-            totalCostUsd: 0.05,
+            totals: { tokens: 0, cost: { usd: 0.05, complete: true }, cacheHitRate: null },
       totalLlmTurns: 5,
       errorCount: 0,
     })
@@ -412,7 +412,7 @@ describe("EngineCallbacks — budget blocking (onBeforeNode)", () => {
     })
     setMock(mocks.tokenUsageDao, "aggregateByExecution", {
       usage: { inputTokens: 2000, outputTokens: 1000, cacheReadTokens: 0, cacheCreationTokens: 0 },
-            totalCostUsd: 0.02,
+            totals: { tokens: 0, cost: { usd: 0.02, complete: true }, cacheHitRate: null },
       totalLlmTurns: 2,
       errorCount: 0,
     })
@@ -446,7 +446,7 @@ describe("EngineCallbacks — budget blocking (onBeforeNode)", () => {
     })
     setMock(mocks.tokenUsageDao, "aggregateByExecution", {
       usage: { inputTokens: 800, outputTokens: 500, cacheReadTokens: 0, cacheCreationTokens: 0 },
-            totalCostUsd: 0.01,
+            totals: { tokens: 0, cost: { usd: 0.01, complete: true }, cacheHitRate: null },
       totalLlmTurns: 2,
       errorCount: 0,
     })

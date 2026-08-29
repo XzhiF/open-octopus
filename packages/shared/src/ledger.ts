@@ -45,6 +45,11 @@ export const LEDGER_SQL = {
   /** 每组是否全部有价（空组 0=0 → 1，vacuous true，与 JS costSummary([]) 对齐） */
   costComplete: (p = '') =>
     `COUNT(*) = COUNT(${p}cost_usd)`,
+  /** 任意「可空 cost 列」的通用版（冻结聚合表等非账本表用），col 传全限定列名 */
+  sumCostOf: (col: string) =>
+    `CASE WHEN COUNT(${col}) = 0 THEN NULL ELSE COALESCE(SUM(${col}), 0) END`,
+  costCompleteOf: (col: string) =>
+    `COUNT(*) = COUNT(${col})`,
   /** cache 命中率 0–1；input+cacheRead 为 0 → NULL */
   cacheHitRate: (p = '') =>
     `CASE WHEN SUM(${p}input_tokens + ${p}cache_read_tokens) > 0 ` +

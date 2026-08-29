@@ -1,4 +1,5 @@
 import { Hono } from "hono"
+import { costSummary, type LedgerCost } from "@octopus/shared"
 import { WorkspaceService } from "../services/workspace"
 import { WorkflowService } from "../services/workflow"
 import { LeaderboardService } from "../services/leaderboard"
@@ -25,21 +26,28 @@ export function createDashboardRoutes(
     )
 
     const execRow = execDAO.getDashboardStats()
-    const totalCost = tokenUsageDAO.totalCost()
+    // C3: 全局费用走 ledger 规范 —— LedgerCost 三态（全未定价=null，部分=已知和+false）
+    const liveCost = tokenUsageDAO.totalCost()
 
     // Get archived workspace stats
     let archivedWorkspaces = 0
     let archivedExecutions = 0
-    let archivedCost = 0
+    let archivedCost: LedgerCost = { usd: null, complete: true }
     if (archiveDAO) {
       try {
         const archived = archiveDAO.getArchivedWorkspaces()
         archivedWorkspaces = archived.length
         archivedExecutions = archived.reduce((sum, ws) => sum + ws.execution_count, 0)
-        archivedCost = archived.reduce((sum, ws) => sum + ws.total_cost, 0)
+        archivedCost = costSummary(archived.map(ws => ws.total_cost))
       } catch (err) {
         console.warn("Failed to get archived workspace stats:", err)
       }
+    }
+    const allTimeCost: LedgerCost = {
+      usd: liveCost.usd === null && archivedCost.usd === null
+        ? null
+        : (liveCost.usd ?? 0) + (archivedCost.usd ?? 0),
+      complete: liveCost.complete && archivedCost.complete,
     }
 
     const stats = {
@@ -52,14 +60,14 @@ export function createDashboardRoutes(
       running_executions: execRow.running_executions,
       pending_executions: execRow.pending_executions,
       avg_duration_ms: execRow.avg_duration_ms,
-      total_cost: totalCost,
+      total_cost: liveCost,
       // Archive stats
       archived_workspaces: archivedWorkspaces,
       archived_executions: archivedExecutions,
       archived_cost: archivedCost,
       // Merged totals (active + archived)
       all_time_executions: execRow.total_executions + archivedExecutions,
-      all_time_cost: totalCost + archivedCost,
+      all_time_cost: allTimeCost,
       all_time_workspaces: workspaces.length + archivedWorkspaces,
     }
     return c.json(stats)

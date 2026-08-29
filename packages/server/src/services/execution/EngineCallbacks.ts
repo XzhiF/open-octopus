@@ -4,7 +4,7 @@
 // ExecutionLifecycle.buildCallbacks(). Handles SSE emission, DB persistence,
 // observability integration, token tracking, and external callback dispatch.
 //
-import { totalTokens } from "@octopus/shared"
+import { totalTokens, costSummary } from "@octopus/shared"
 import type { IEngineCallbacks } from "./interfaces"
 import type { ServiceContext } from "./types"
 import type { ExecutionDAO } from "../../db/dao/execution-dao"
@@ -198,7 +198,9 @@ export class EngineCallbacks implements IEngineCallbacks {
               budgetProgress.tokensPercent = (consumedTokens / budgetSnapshot.max_tokens) * 100
             }
             if (budgetSnapshot.max_cost_usd) {
-              budgetProgress.costPercent = (metrics.totalCostUsd / budgetSnapshot.max_cost_usd) * 100
+              budgetProgress.costPercent = metrics.totals.cost.usd === null
+                ? null // 未定价：费用预算进度不可计算（不假 0%）
+                : (metrics.totals.cost.usd / budgetSnapshot.max_cost_usd) * 100
             }
             if (budgetSnapshot.max_duration && exec?.started_at) {
               const elapsedMs = Date.now() - new Date(exec.started_at).getTime()
@@ -212,7 +214,8 @@ export class EngineCallbacks implements IEngineCallbacks {
               executionId: id,
               // C1：嵌套规范 usage（不再平铺 totalInputTokens 等 5 字段）
               usage: metrics.usage,
-              totalCostUsd: metrics.totalCostUsd,
+              // C3: 唯一 totals（tokens=四字段和 / cost 三态 / cacheHitRate 0–1）
+              totals: metrics.totals,
               totalLlmTurns: metrics.totalLlmTurns,
               budgetProgress,
               errorCount: metrics.errorCount,
@@ -406,10 +409,10 @@ export class EngineCallbacks implements IEngineCallbacks {
 
         const llmCalls = result?.llmCalls ?? []
         const modelUsages = result?.modelUsages ?? []
-        // Compute cost from llmCalls (agent) or modelUsages (swarm/dispatch)
-        const costUsd = llmCalls.length > 0
-          ? llmCalls.reduce((sum: number, c: any) => sum + (c.costUsd ?? 0), 0)
-          : modelUsages.reduce((sum: number, mu: any) => sum + (mu.costUsd ?? 0), 0)
+        // C3: 节点 cost 走 ledger 三态（全未定价 = null，不再 ??0 焊成假 $0）
+        const costUsd = costSummary(
+          (llmCalls.length > 0 ? llmCalls : modelUsages).map((c: any) => c.costUsd as number | null | undefined),
+        ).usd
         const turnCount = new Set(llmCalls.map((c: any) => c.turnIndex ?? 1)).size
         const toolCount = new Set(llmCalls.filter((c: any) => c.stopReason === "tool_use").map((c: any) => c.toolName)).size
 
@@ -425,7 +428,7 @@ export class EngineCallbacks implements IEngineCallbacks {
           event: "node_end",
           data: {
             executionId: id, nodeId, status, durationMs, executorType: nodeType,
-            costUsd: costUsd > 0 ? costUsd : undefined,
+            costUsd: costUsd ?? undefined,
             turnCount: turnCount > 0 ? turnCount : undefined,
             toolCount: toolCount > 0 ? toolCount : undefined,
             ...(hasTokens ? { usage: nodeUsage } : {}),
