@@ -16,12 +16,12 @@ function makeDaoMock() {
     updateNodeExecutionsByStatus: vi.fn(),
     insertNodeExecutionOrIgnore: vi.fn(),
     replaceMergedEvents: vi.fn(),
-    insertNodeTokenUsage: vi.fn(),
   } as unknown as ExecutionDAO
 }
 
 function makeTokenDaoMock() {
   return {
+    recordNodeUsage: vi.fn(),
     insertBatch: vi.fn(),
     findByNodeExecutionId: vi.fn(() => []),
     aggregateByModel: vi.fn(() => []),

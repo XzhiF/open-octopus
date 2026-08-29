@@ -374,11 +374,16 @@ export class EngineCallbacks implements IEngineCallbacks {
         if (result?.modelUsages && result.modelUsages.length > 0) {
           const now = new Date().toISOString()
           for (const mu of result.modelUsages) {
-            dao.insertNodeTokenUsage(
-              `${neId}-token-${mu.model}`, neId, mu.model,
-              mu.inputTokens, mu.outputTokens, mu.costUsd ?? null,
-              mu.cacheReadTokens ?? 0, mu.cacheCreationTokens ?? 0, now,
-            )
+            // C3: ledger 唯一写入口（cost 兜底估算也在入口内，与 llm_calls 对称）
+            tokenUsageDao.recordNodeUsage({
+              id: `${neId}-token-${mu.model}`,
+              nodeExecutionId: neId,
+              model: mu.model,
+              usage: mu,
+              costUsd: mu.costUsd,
+              source: 'node',
+              createdAt: now,
+            })
           }
         }
 

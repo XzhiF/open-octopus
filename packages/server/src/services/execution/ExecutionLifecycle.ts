@@ -157,6 +157,7 @@ export class ExecutionLifecycle {
         dao: harnessDAO,
         sse,
         configService: harnessConfigService,
+        tokenUsageDao: this.tokenUsageDao ?? new TokenUsageDAO(realDb),
       })
     } catch (err) {
       console.warn("[ExecutionLifecycle] HarnessController initialization failed (non-fatal):", err)

@@ -11,6 +11,7 @@ import { SSEService } from "../services/sse"
 import { WorkflowService } from "../services/workflow"
 import { BuiltInWorkflowService } from "../services/builtin-workflow"
 import { ExecutionDAO } from "../db/dao/execution-dao"
+import { TokenUsageDAO } from "../db/dao/token-usage-dao"
 import { ExecutionLifecycle } from "../services/execution/ExecutionLifecycle"
 import { ObservabilityService } from "../services/observability"
 import { PrivacyFilter } from "../services/privacy-filter"
@@ -291,8 +292,9 @@ describe("ExecutionLifecycle.getTokenUsagesForExecution", () => {
       node_id: "step2", node_type: "agent", status: "completed",
     })
     const now = new Date().toISOString()
-    dao.insertNodeTokenUsage(`${exec.id}-step1-token-claude`, `${exec.id}-step1`, "claude", 100, 50, 0.01, 20, 10, now)
-    dao.insertNodeTokenUsage(`${exec.id}-step2-token-claude`, `${exec.id}-step2`, "claude", 200, 80, 0.02, 30, 15, now)
+    const tokenDao = new TokenUsageDAO(dao.getDb())
+    tokenDao.recordNodeUsage({ id: `${exec.id}-step1-token-claude`, nodeExecutionId: `${exec.id}-step1`, model: "claude", usage: { inputTokens: 100, outputTokens: 50, cacheReadTokens: 20, cacheCreationTokens: 10 }, costUsd: 0.01, source: 'node', createdAt: now })
+    tokenDao.recordNodeUsage({ id: `${exec.id}-step2-token-claude`, nodeExecutionId: `${exec.id}-step2`, model: "claude", usage: { inputTokens: 200, outputTokens: 80, cacheReadTokens: 30, cacheCreationTokens: 15 }, costUsd: 0.02, source: 'node', createdAt: now })
 
     const usages = lifecycle.getTokenUsagesForExecution(exec.id)
     expect(usages.length).toBe(1)
@@ -314,7 +316,7 @@ describe("ExecutionLifecycle.getTokenUsagesPerStep", () => {
       node_id: "step1", node_type: "agent", status: "completed",
     })
     const now = new Date().toISOString()
-    dao.insertNodeTokenUsage(`${exec.id}-step1-token-claude`, `${exec.id}-step1`, "claude", 100, 50, 0.01, 20, 10, now)
+    new TokenUsageDAO(dao.getDb()).recordNodeUsage({ id: `${exec.id}-step1-token-claude`, nodeExecutionId: `${exec.id}-step1`, model: "claude", usage: { inputTokens: 100, outputTokens: 50, cacheReadTokens: 20, cacheCreationTokens: 10 }, costUsd: 0.01, source: 'node', createdAt: now })
 
     const usages = lifecycle.getTokenUsagesPerStep(exec.id)
     expect(usages.length).toBe(1)

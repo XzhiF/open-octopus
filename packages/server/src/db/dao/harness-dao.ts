@@ -119,43 +119,5 @@ export class HarnessDAO extends BaseDAO {
 
   // ── Token tracking for harness agent delegations ─────────────────
 
-  /**
-   * Record token usage for a harness agent delegation.
-   * Uses the node_token_usages table with source='harness'.
-   */
-  insertHarnessTokenUsage(params: {
-    id: string
-    nodeExecutionId: string
-    model: string
-    inputTokens: number
-    outputTokens: number
-    cacheReadTokens?: number
-    cacheCreationTokens?: number
-    costUsd: number | null
-    createdAt: string
-  }): void {
-    this.stmt(`
-      INSERT INTO node_token_usages
-        (id, node_execution_id, model, input_tokens, output_tokens, cost_usd,
-         cache_read_tokens, cache_creation_tokens, source, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'harness', ?)
-      ON CONFLICT(id) DO UPDATE SET
-        input_tokens = input_tokens + excluded.input_tokens,
-        output_tokens = output_tokens + excluded.output_tokens,
-        cache_read_tokens = cache_read_tokens + excluded.cache_read_tokens,
-        cache_creation_tokens = cache_creation_tokens + excluded.cache_creation_tokens,
-        cost_usd = COALESCE(cost_usd, 0) + COALESCE(excluded.cost_usd, 0),
-        created_at = excluded.created_at
-    `).run(
-      params.id,
-      params.nodeExecutionId,
-      params.model,
-      params.inputTokens,
-      params.outputTokens,
-      params.costUsd,
-      params.cacheReadTokens ?? 0,
-      params.cacheCreationTokens ?? 0,
-      params.createdAt,
-    )
-  }
+  // insertHarnessTokenUsage 已删除（C3）：node_token_usages 唯一写入口 = TokenUsageDAO.recordNodeUsage(source='harness')
 }

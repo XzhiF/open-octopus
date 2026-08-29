@@ -22,6 +22,7 @@ import type {
 } from "@octopus/shared"
 import { emptyTokenUsage } from "@octopus/shared"
 import type { HarnessDAO } from "../../db/dao/harness-dao"
+import type { TokenUsageDAO } from "../../db/dao/token-usage-dao"
 import type { EvolutionDAO } from "../../db/dao/evolution-dao"
 import type { SSEService } from "../sse"
 import type { HarnessAgentSession } from "./harness-agent-session"
@@ -487,6 +488,8 @@ export interface AgentDelegationServiceDeps {
   llmCall?: DelegationLLMCall
   /** Timeout in milliseconds. Default: 300000 (5 minutes). */
   timeoutMs?: number
+  /** C3: node_token_usages 唯一写入口（TokenUsageDAO.recordNodeUsage）。 */
+  tokenUsageDao: TokenUsageDAO
   /** Harness agent session for context accumulation across interventions (ticket 10). */
   session?: HarnessAgentSession
   /** Provider getter function — injected to avoid tsup bundling issues with dynamic import. */
@@ -502,6 +505,7 @@ export interface AgentDelegationServiceDeps {
  */
 export class AgentDelegationService {
   private dao: HarnessDAO
+  private tokenUsageDao: TokenUsageDAO
   private sse: SSEService
   private workspaceId: string
   private evolutionDao?: EvolutionDAO
@@ -513,6 +517,7 @@ export class AgentDelegationService {
 
   constructor(deps: AgentDelegationServiceDeps) {
     this.dao = deps.dao
+    this.tokenUsageDao = deps.tokenUsageDao
     this.sse = deps.sse
     this.workspaceId = deps.workspaceId
     this.evolutionDao = deps.evolutionDao
@@ -877,15 +882,14 @@ export class AgentDelegationService {
       const nodeExecId = `${executionId}-${nodeId}`
       const tokenId = `${delegationId}-token`
 
-      this.dao.insertHarnessTokenUsage({
+      // C3: 恒 NULL 时代终结 —— ledger 唯一写入口统一补 cost（SDK 未给 → 价表估算 → 未知仍 NULL）
+      this.tokenUsageDao.recordNodeUsage({
         id: tokenId,
         nodeExecutionId: nodeExecId,
         model: tokenInfo.model,
-        inputTokens: tokenInfo.inputTokens,
-        outputTokens: tokenInfo.outputTokens,
-        cacheReadTokens: tokenInfo.cacheReadTokens,
-        cacheCreationTokens: tokenInfo.cacheCreationTokens,
-        costUsd: null, // Cost calculation deferred to billing layer
+        usage: tokenInfo,
+        costUsd: tokenInfo.costUsd,
+        source: 'harness',
         createdAt: new Date().toISOString(),
       })
     } catch (err) {

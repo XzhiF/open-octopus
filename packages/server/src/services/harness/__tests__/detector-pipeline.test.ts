@@ -483,7 +483,6 @@ describe("DetectorPipeline — decision execution (AC1-AC8)", () => {
     const dao = {
       insertEvent: vi.fn(),
       getDb: vi.fn(() => mockDb),
-      insertHarnessTokenUsage: vi.fn(),
     }
     return {
       pipeline: new DetectorPipeline({

@@ -8,6 +8,7 @@
 import type { HarnessSystemConfigParsed } from "@octopus/shared"
 import type { EngineCallbacks } from "@octopus/engine"
 import type { HarnessDAO } from "../../db/dao/harness-dao"
+import { TokenUsageDAO } from "../../db/dao/token-usage-dao"
 import type { SSEService } from "../sse"
 import type { RepairService } from "../repair"
 import type { EvolutionDAO } from "../../db/dao/evolution-dao"
@@ -30,6 +31,8 @@ export interface HarnessControllerDeps {
   evolutionDao?: EvolutionDAO
   /** Optional: MemoryService for writing clone daily memory (ticket 03). */
   memoryService?: MemoryService
+  /** C3: node_token_usages 唯一写入口的 DAO；缺省时由 HarnessDAO 的连接自建。 */
+  tokenUsageDao?: TokenUsageDAO
 }
 
 /**
@@ -42,6 +45,7 @@ export class HarnessController {
   private repairService?: RepairService
   private evolutionDao?: EvolutionDAO
   private memoryService?: MemoryService
+  private tokenUsageDao: TokenUsageDAO
 
   /**
    * Active pipelines keyed by executionId.
@@ -63,6 +67,7 @@ export class HarnessController {
     this.repairService = deps.repairService
     this.evolutionDao = deps.evolutionDao
     this.memoryService = deps.memoryService
+    this.tokenUsageDao = deps.tokenUsageDao ?? new TokenUsageDAO(deps.dao.getDb())
   }
 
   /**
@@ -124,6 +129,7 @@ export class HarnessController {
       evolutionDao: this.evolutionDao, // Ticket 04: inject for success rate stats
       session, // Pass session for context accumulation (AC3, AC4)
       getProvider: (id: string) => _getProvider(id),
+      tokenUsageDao: this.tokenUsageDao, // C3: ledger 唯一写入口
     })
 
     // Create a per-execution StrategyEngine with the current strategies

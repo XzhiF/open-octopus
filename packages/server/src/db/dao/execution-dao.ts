@@ -632,19 +632,7 @@ export class ExecutionDAO extends BaseDAO {
     `).all(workflowRef, workspaceId, limit) as Array<{ summary: string; status: string; duration_ms: number; created_at: string }>
   }
 
-  insertNodeTokenUsage(id: string, nodeExecutionId: string, model: string, inputTokens: number, outputTokens: number, costUsd: number | null, cacheReadTokens: number, cacheCreationTokens: number, createdAt: string): Database.RunResult {
-    return this.stmt(
-      `INSERT INTO node_token_usages (id, node_execution_id, model, input_tokens, output_tokens, cost_usd, cache_read_tokens, cache_creation_tokens, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT(id) DO UPDATE SET
-         input_tokens = input_tokens + excluded.input_tokens,
-         output_tokens = output_tokens + excluded.output_tokens,
-         cost_usd = COALESCE(cost_usd, 0) + COALESCE(excluded.cost_usd, 0),
-         cache_read_tokens = cache_read_tokens + excluded.cache_read_tokens,
-         cache_creation_tokens = cache_creation_tokens + excluded.cache_creation_tokens,
-         created_at = excluded.created_at`
-    ).run(id, nodeExecutionId, model, inputTokens, outputTokens, costUsd, cacheReadTokens, cacheCreationTokens, createdAt)
-  }
+  // insertNodeTokenUsage 已删除（C3）：node_token_usages 唯一写入口 = TokenUsageDAO.recordNodeUsage
 
   updateNodeExecutionsGlobalSession(executionId: string, globalSessionId: string): Database.RunResult {
     return this.stmt("UPDATE executions SET global_session_id = ? WHERE id = ?").run(globalSessionId, executionId)

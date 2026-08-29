@@ -2,6 +2,7 @@ import type Database from "better-sqlite3"
 import { BaseDAO } from "./base"
 import type { NodeTokenUsageRow, LlmCallRow } from "../types"
 import type { TokenUsage } from "@octopus/shared"
+import { ledgerCostUsd, type NodeUsageSource } from "./usage-ledger"
 
 export class TokenUsageDAO extends BaseDAO {
   constructor(db: Database.Database) { super(db) }
@@ -30,13 +31,41 @@ export class TokenUsageDAO extends BaseDAO {
     `).all(executionId) as Array<NodeTokenUsageRow & { node_id: string }>
   }
 
-  insert(row: NodeTokenUsageRow): Database.RunResult {
+  /**
+   * node_token_usages 唯一写入口（C3 · UsageLedger）。三条旧路径
+   * （ExecutionDAO.insertNodeTokenUsage / 本表旧 insert / HarnessDAO.insertHarnessTokenUsage）
+   * 收编于此：UPSERT 累加 + source 判别 + cost 三态（未知保持 NULL，绝不焊 0）。
+   * 同 id 冲突累加（engine/harness 用确定式 id 重跑累加；interaction 每轮新 uuid 不冲突）。
+   */
+  recordNodeUsage(input: {
+    id: string
+    nodeExecutionId: string
+    model: string
+    usage: Pick<TokenUsage, 'inputTokens' | 'outputTokens' | 'cacheReadTokens' | 'cacheCreationTokens'>
+    /** SDK/calibrate 给的价格；null/undefined = 未给，入口会查价表估算（ledgerCostUsd） */
+    costUsd?: number | null
+    source: NodeUsageSource
+    createdAt: string
+  }): Database.RunResult {
+    const cost = ledgerCostUsd(input.usage, input.model, input.costUsd)
     return this.stmt(`
-      INSERT INTO node_token_usages (id, node_execution_id, model, input_tokens, output_tokens, cost_usd, cache_read_tokens, cache_creation_tokens, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO node_token_usages (id, node_execution_id, model, input_tokens, output_tokens, cost_usd, cache_read_tokens, cache_creation_tokens, source, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        input_tokens = input_tokens + excluded.input_tokens,
+        output_tokens = output_tokens + excluded.output_tokens,
+        cache_read_tokens = cache_read_tokens + excluded.cache_read_tokens,
+        cache_creation_tokens = cache_creation_tokens + excluded.cache_creation_tokens,
+        cost_usd = CASE
+          WHEN node_token_usages.cost_usd IS NULL AND excluded.cost_usd IS NULL THEN NULL
+          ELSE COALESCE(node_token_usages.cost_usd, 0) + COALESCE(excluded.cost_usd, 0)
+        END,
+        created_at = excluded.created_at
     `).run(
-      row.id, row.node_execution_id, row.model, row.input_tokens, row.output_tokens,
-      row.cost_usd, row.cache_read_tokens, row.cache_creation_tokens, row.created_at,
+      input.id, input.nodeExecutionId, input.model,
+      input.usage.inputTokens, input.usage.outputTokens, cost,
+      input.usage.cacheReadTokens, input.usage.cacheCreationTokens,
+      input.source, input.createdAt,
     )
   }
 

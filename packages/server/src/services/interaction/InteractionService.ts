@@ -11,6 +11,7 @@ import type { IAgentProvider, MessageChunk } from "@octopus/providers"
 import type { TokenUsage } from "@octopus/shared"
 import { getProvider } from "@octopus/providers"
 import { resolveModelAlias, loadModelAliasConfig } from "@octopus/shared"
+import { ledgerCostUsd } from "../../db/dao/usage-ledger"
 import { extractInteractionCompletion } from "@octopus/engine"
 import { InteractionMessageDAO } from "../../db/dao/interaction-message-dao"
 import { TokenUsageDAO } from "../../db/dao/token-usage-dao"
@@ -775,18 +776,15 @@ export class InteractionService {
   /** Write aggregated token usage to node_token_usages. */
   private writeTokenUsage(acc: StreamAccumulator, session: InteractionSessionInfo): void {
     if (!acc.usage) return
-    this.tokenDao.insert({
+    // C3: ledger 唯一写入口（每轮新 uuid 不冲突；cost 未知时入口按价表估算）
+    this.tokenDao.recordNodeUsage({
       id: randomUUID(),
-      node_execution_id: session.nodeExecutionId,
+      nodeExecutionId: session.nodeExecutionId,
       model: acc.model ?? "unknown",
-      // C1/D4：interaction 写入口径对齐 —— 纯值 input + 真实 cache 列（旧实现把合并
-      // input 写库且 cache 列恒 0，是与引擎主链路互斥的第二种口径）
-      input_tokens: acc.usage.inputTokens,
-      output_tokens: acc.usage.outputTokens,
-      cost_usd: acc.costUsd ?? null,
-      cache_read_tokens: acc.usage.cacheReadTokens,
-      cache_creation_tokens: acc.usage.cacheCreationTokens,
-      created_at: new Date().toISOString(),
+      usage: acc.usage,
+      costUsd: acc.costUsd,
+      source: 'interaction',
+      createdAt: new Date().toISOString(),
     })
   }
 
@@ -810,7 +808,8 @@ export class InteractionService {
       output_tokens: acc.usage.outputTokens,
       cache_read_tokens: acc.usage.cacheReadTokens,
       cache_creation_tokens: acc.usage.cacheCreationTokens,
-      cost_usd: acc.costUsd ?? null,
+      // C3: 与 node 表写入口同一 cost 兜底（SDK 未给价 → 价表估算 → 未知 NULL）
+      cost_usd: ledgerCostUsd(acc.usage, acc.model, acc.costUsd),
       org: null,
       workspace_id: session.workspaceId,
       workflow_ref: null,

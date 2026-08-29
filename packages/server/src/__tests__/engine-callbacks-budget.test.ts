@@ -34,7 +34,6 @@ function makeMocks() {
     updateExecution: vi.fn(),
     updateExecutionProgress: vi.fn(),
     deleteAgentEventsByNode: vi.fn(),
-    insertNodeTokenUsage: vi.fn(),
     insertAgentEvent: vi.fn(),
     updateNodeRetryInfo: vi.fn(),
     insertNodeExecutionOrIgnore: vi.fn(),
@@ -42,6 +41,7 @@ function makeMocks() {
   } as unknown as ExecutionDAO
 
   const tokenUsageDao = {
+    recordNodeUsage: vi.fn(),
     aggregateByExecution: vi.fn().mockReturnValue({
       usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0 },
             totalCostUsd: 0,
