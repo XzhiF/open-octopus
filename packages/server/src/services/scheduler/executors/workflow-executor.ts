@@ -348,7 +348,7 @@ export class WorkflowExecutor implements Executor {
     // 12. Register chain completion callback
     const triggeredAt = now.getTime()
     registry.service.registerExternalCallbacks({
-      onComplete: (() => {
+      onComplete: ((engineFinalStatus?: string) => {
         this.handleChainComplete({
           executionId: execution.id,
           schedExecId: executionId,
@@ -359,6 +359,7 @@ export class WorkflowExecutor implements Executor {
           schedule,
           maxRetain: config.max_retain,
           isRequirement,
+          engineFinalStatus,
         })
       }) as any,
     }, execution.id)
@@ -452,11 +453,35 @@ export class WorkflowExecutor implements Executor {
     schedule: ScheduleRow
     maxRetain: number
     isRequirement: boolean
+    /** Engine's terminal status, threaded from onComplete (engine.ts:431 fires
+     *  inside run(), BEFORE ExecutionLifecycle persists the final status —
+     *  a pure DB read here observes a stale 'running' and misfinalizes a
+     *  SUCCEEDED chain as failed; goal-task-dev E2E T6). */
+    engineFinalStatus?: string
   }): void {
     const durationMs = Date.now() - opts.triggeredAt
 
-    // Check the root execution's final status
-    const status = this.execDAO.findExecutionStatusSimple(opts.executionId) ?? 'completed'
+    // Check the root execution's final status.
+    // Resolution order (goal-task-dev status-mirror fix):
+    //   1. DB when it already holds a FINAL status — authoritative after
+    //      persistence, includes ExecutionLifecycle's allSkipped→failed
+    //      adjustment (covers resume re-entry + late/deferred finalizations);
+    //   2. engine's in-flight reported status (the race case: DB still 'running');
+    //   3. legacy fallback (previous behavior).
+    const FINAL_STATUSES = new Set(['completed', 'completed_with_failures', 'failed', 'cancelled', 'rejected'])
+    const dbStatus = this.execDAO.findExecutionStatusSimple(opts.executionId)
+    let status = dbStatus && FINAL_STATUSES.has(dbStatus)
+      ? dbStatus
+      : (opts.engineFinalStatus ?? dbStatus ?? 'completed')
+    if (status === 'completed' && !(dbStatus && FINAL_STATUSES.has(dbStatus))) {
+      // Mirror ExecutionLifecycle's allSkipped→failed rule while trusting the
+      // in-flight engine value (run() hasn't returned, so the adjustment hasn't
+      // been persisted): completed with zero real completed nodes but some
+      // skipped → the workflow achieved nothing → failed. (0 real nodes at all
+      // stays completed — same as the lifecycle rule's length>0 guard.)
+      const outcomes = this.execDAO.countRealNodeOutcomes(opts.executionId)
+      if (outcomes.completed === 0 && outcomes.skipped > 0) status = 'failed'
+    }
 
     // Find the last execution in the chain (deepest child)
     const lastExec = this.execDAO.findLastChildExecution(opts.executionId)

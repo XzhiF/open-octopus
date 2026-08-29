@@ -493,10 +493,14 @@ export class EngineCallbacks implements IEngineCallbacks {
         this.syncStateJson()
       },
 
-      onComplete: () => {
+      // goal-task-dev T6 fix: engine.ts:431 fires onComplete INSIDE run(), before
+      // the server persists the final status (run() returns later) — the external
+      // consumer must receive the engine's authoritative value instead of
+      // re-reading a still-'running' DB row.
+      onComplete: (finalStatus?: string) => {
         const ext = this.externalCallbacks.get(id) ?? this.externalCallbacks.get("__default__")
         if (ext?.onComplete) {
-          try { ext.onComplete() } catch (err) {
+          try { ext.onComplete(finalStatus ?? '') } catch (err) {
             console.error("[EngineCallbacks] External onComplete failed:", err)
           }
           this.externalCallbacks.delete(id)
