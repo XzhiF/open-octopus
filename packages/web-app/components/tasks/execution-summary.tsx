@@ -180,9 +180,9 @@ function ChildRunRow({ child, now, agg }: { child: TaskChild; now: number; agg: 
   // 耗时：终态用 duration_ms；运行中用 now - triggered_at 现算（now 由上层 1s tick 驱动）
   let durationText: string | null = null
   if (ref) {
-    if (ref.duration_ms != null) durationText = formatDuration(ref.duration_ms / 1000)
-    else if (ref.completed_at) durationText = formatDuration((new Date(ref.completed_at).getTime() - new Date(ref.triggered_at).getTime()) / 1000)
-    else if (isRunning) durationText = formatDuration(Math.max(0, (now - new Date(ref.triggered_at).getTime()) / 1000))
+    if (ref.duration_ms != null) durationText = formatDuration(ref.duration_ms)
+    else if (ref.completed_at) durationText = formatDuration(new Date(ref.completed_at).getTime() - new Date(ref.triggered_at).getTime())
+    else if (isRunning) durationText = formatDuration(Math.max(0, now - new Date(ref.triggered_at).getTime()))
   }
 
   return (

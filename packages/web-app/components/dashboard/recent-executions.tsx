@@ -87,7 +87,7 @@ function ExecutionRow({ execution }: { execution: Execution }) {
       {/* Duration */}
       <div className="flex flex-shrink-0 items-center gap-1 text-sm text-muted-foreground">
         <Timer className="h-3.5 w-3.5" />
-        <span className="tabular-nums">{formatDuration(execution.duration)}</span>
+        <span className="tabular-nums">{formatDuration(execution.duration != null ? execution.duration * 1000 : null)}</span>
       </div>
 
       {/* Time */}

@@ -49,7 +49,7 @@ export function HeroMetrics({ totalExecutions, successRate, totalCost, totalCost
     { label: "总执行", value: totalExecutions, prev: prevTotalExecutions, unit: "", isDuration: false },
     { label: "成功率", value: successRate * 100, prev: prevSuccessRate ? prevSuccessRate * 100 : undefined, unit: "%", isDuration: false },
     { label: "总成本", display: costDisplay },
-    { label: "平均耗时", value: avgDurationMs / 1000, prev: prevAvgDurationMs ? prevAvgDurationMs / 1000 : undefined, unit: "s", isDuration: true },
+    { label: "平均耗时", value: avgDurationMs, prev: prevAvgDurationMs, unit: "s", isDuration: true },
   ]
 
   return (

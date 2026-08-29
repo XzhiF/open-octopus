@@ -10,7 +10,7 @@ import { useHarnessEvents, type ParsedHarnessEvent } from "@/hooks/use-harness-e
 import { useExecutionMetrics, type ExecutionMetrics } from "@/hooks/use-execution-metrics"
 import { HarnessChatbot } from "./harness-chatbot"
 import { ObservabilityTab } from "./observability-panel"
-import { formatTokenCount } from "@/lib/analytics-format"
+import { formatTokenCount } from "@/lib/format"
 
 // ============ Types ============
 

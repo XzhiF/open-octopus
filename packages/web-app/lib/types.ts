@@ -127,7 +127,7 @@ export interface HarnessSummary {
 
 export interface StatusOverlay {
   stepStatus: StepExecutionStatus
-  duration?: number
+  duration?: number // in seconds
   startedAt?: string
   error?: string
   tokenUsage?: TokenUsage

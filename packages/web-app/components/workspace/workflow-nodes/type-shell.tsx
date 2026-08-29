@@ -111,12 +111,12 @@ export function TypeShell({ nodeType, name, statusOverlay, children }: TypeShell
       )}
       {isRunning && elapsedSeconds !== undefined && (
         <div className="flex items-center justify-between text-xs text-amber-600 font-medium px-3 pb-1">
-          <span className="tabular-nums"><Timer className="h-3 w-3 inline mr-1" />{formatDuration(elapsedSeconds)}</span>
+          <span className="tabular-nums"><Timer className="h-3 w-3 inline mr-1" />{formatDuration(elapsedSeconds * 1000)}</span>
         </div>
       )}
       {statusOverlay?.stepStatus === "completed" && statusOverlay.duration !== undefined && (
         <div className="flex items-center justify-between text-xs text-muted-foreground px-3 pb-1">
-          <span className="tabular-nums">耗时: {formatDuration(statusOverlay.duration)}</span>
+          <span className="tabular-nums">耗时: {formatDuration((statusOverlay.duration ?? 0) * 1000)}</span>
         </div>
       )}
       {/* Token usage display */}

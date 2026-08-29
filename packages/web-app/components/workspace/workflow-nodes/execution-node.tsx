@@ -223,12 +223,12 @@ function ExecutionNodeInner({ data: rawData, selected }: NodeProps) {
           </div>
           {isRunning && elapsedSeconds !== undefined && (
             <span className="flex items-center gap-1 shrink-0 tabular-nums text-amber-600 font-medium">
-              <Timer className="h-3 w-3" />{formatDuration(elapsedSeconds)}
+              <Timer className="h-3 w-3" />{formatDuration(elapsedSeconds * 1000)}
             </span>
           )}
           {!isRunning && (data.executionStatus === "completed" || data.executionStatus === "failed" || data.executionStatus === "cancelled" || data.executionStatus === "rejected") && data.duration !== undefined && (
             <span className="flex items-center gap-1 shrink-0 tabular-nums">
-              <Hourglass className="h-3 w-3" />{formatDuration(data.duration)}
+              <Hourglass className="h-3 w-3" />{formatDuration((data.duration ?? 0) * 1000)}
             </span>
           )}
         </div>

@@ -3,7 +3,9 @@ export interface HealthSummary {
   successRate: number
   failureRate: number
   avgDurationMs: number
-  totalCostUsd: number
+  /** C3 ledger 三态（wire 对齐 server/log-analysis.ts）：null = 窗口内全部未定价 */
+  totalCostUsd: number | null
+  costComplete: boolean
   activeAlerts: number
   periodDays: number
   dailyTrend: DailyTrendPoint[]
@@ -82,7 +84,7 @@ export interface CostAnomaly {
 
 export interface CostTrendPoint {
   date: string
-  totalCostUsd: number
+  totalCostUsd: number | null
   executionCount: number
 }
 
@@ -90,15 +92,16 @@ export interface TokenDistribution {
   model: string
   totalInputTokens: number
   totalOutputTokens: number
-  totalCostUsd: number
-  cacheHitRate: number
+  totalCostUsd: number | null
+  /** C3 规范命中率 0–1；无输入类 token → null */
+  cacheHitRate: number | null
 }
 
 export interface WorkflowCost {
   workflowRef: string
-  totalCostUsd: number
+  totalCostUsd: number | null
   executionCount: number
-  avgCostPerExecution: number
+  avgCostPerExecution: number | null
 }
 
 export interface LogContext {

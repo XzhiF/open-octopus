@@ -73,7 +73,7 @@ export function IterationGroup({
           </span>
           <span className="truncate">{headerPreview}</span>
           <span className="text-muted-foreground/50 ml-auto text-[10px] shrink-0">
-            {events.length} events{duration > 0 && ` · ${formatDuration(duration / 1000)}`}
+            {events.length} events{duration > 0 && ` · ${formatDuration(duration)}`}
           </span>
         </button>
       </CollapsibleTrigger>

@@ -102,7 +102,7 @@ function SwarmNodeInner({ data: rawData }: NodeProps) {
           {isCompleted && data.statusOverlay?.duration != null && (
             <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
               <Timer className="h-3 w-3" />
-              <span>耗时: {formatDuration(data.statusOverlay.duration)}</span>
+              <span>耗时: {formatDuration((data.statusOverlay.duration ?? 0) * 1000)}</span>
             </div>
           )}
 

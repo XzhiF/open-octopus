@@ -194,7 +194,7 @@ export const LoopOverview = memo(function LoopOverview({
                     <Icon className={cn("h-3.5 w-3.5 shrink-0", cfg.className)} />
                     {iter.durationMs != null && (
                       <span className="text-muted-foreground/60 tabular-nums ml-auto shrink-0">
-                        {formatDuration(iter.durationMs / 1000)}
+                        {formatDuration(iter.durationMs)}
                       </span>
                     )}
                     {iter.status === "running" && (

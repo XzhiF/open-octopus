@@ -110,7 +110,7 @@ export function EventLabel({ entry }: { entry: LogEvent }) {
   switch (entry.event) {
     case "thinking_block": {
       const dur = entry.startedAt && entry.completedAt
-        ? formatDuration((new Date(entry.completedAt).getTime() - new Date(entry.startedAt).getTime()) / 1000)
+        ? formatDuration(new Date(entry.completedAt).getTime() - new Date(entry.startedAt).getTime())
         : undefined
       return <span className="text-purple-400">思考完成{dur ? ` (${dur})` : ""}</span>
     }
@@ -125,7 +125,7 @@ export function EventLabel({ entry }: { entry: LogEvent }) {
     case "tool_call": {
       const name = entry.toolName ?? "unknown"
       const dur = entry.startedAt && entry.completedAt
-        ? formatDuration((new Date(entry.completedAt).getTime() - new Date(entry.startedAt).getTime()) / 1000)
+        ? formatDuration(new Date(entry.completedAt).getTime() - new Date(entry.startedAt).getTime())
         : undefined
       return (
         <span className={entry.isError ? "text-red-400" : "text-amber-400"}>
@@ -279,7 +279,7 @@ export function EventLabel({ entry }: { entry: LogEvent }) {
     case "start": return <span className="text-emerald-400">开始执行</span>
     case "end": return (
       <span className={entry.status === "failed" || entry.exitCode ? "text-red-400" : "text-emerald-400"}>
-        完成 {entry.durationMs != null && `(${formatDuration(entry.durationMs / 1000)})`}
+        完成 {entry.durationMs != null && `(${formatDuration(entry.durationMs)})`}
         {entry.exitCode != null && entry.exitCode !== 0 && ` exit=${entry.exitCode}`}
         {entry.status === "failed" && " — 失败"}
       </span>

@@ -35,7 +35,7 @@ import {
 } from "recharts"
 import { getServerUrl } from "@/lib/server-config"
 import { subscribeSSE } from "@/lib/sse-manager"
-import { formatTokenCount, formatCurrency } from "@/lib/analytics-format"
+import { formatTokenCount, formatCost } from "@/lib/format"
 
 // ============ Types ============
 
@@ -245,7 +245,7 @@ export function ObservabilityTab({ workspaceId, executionId, isRunning }: Observ
           subtitle={`↑${formatTokenCount(data.tokens.usage.inputTokens)} ↓${formatTokenCount(data.tokens.usage.outputTokens)} ⚡${formatTokenCount(data.tokens.usage.cacheReadTokens)} 🗡️${formatTokenCount(data.tokens.usage.cacheCreationTokens)}`} />
         <MiniCard title="总轮次" value={String(data.rounds.totalLlmTurns)}
           subtitle={`Loop ${data.rounds.totalLoopIterations} / Swarm ${data.rounds.totalSwarmRounds}`} />
-        <MiniCard title="总成本" value={totals.cost.usd === null ? "—" : formatCurrency(totals.cost.usd) + (totals.cost.complete ? "" : " ≈")} subtitle="USD" />
+        <MiniCard title="总成本" value={formatCost(totals.cost.usd, totals.cost.complete)} subtitle="USD" />
         <MiniBudgetCard budget={data.budget} />
       </div>
 
@@ -404,7 +404,8 @@ function ModelUsageChart({ byModel }: { byModel: ObservabilityData["byModel"] })
     return {
       name: m.model,
       value: m.inputTokens + m.outputTokens + cacheRead + cacheWrite,
-      cost: m.costUsd ?? 0, // 图轴需要数；未定价行画 0（列表列显示 —）
+      cost: m.costUsd ?? 0, // 图轴需要数；未定价行画 0（列表列经 costUsd 显示 —）
+      costUsd: m.costUsd,
       cacheRead,
       cacheWrite,
       cacheFlag,
@@ -433,7 +434,7 @@ function ModelUsageChart({ byModel }: { byModel: ObservabilityData["byModel"] })
               <div className="h-2.5 w-2.5 rounded-full shrink-0" style={{ backgroundColor: PIE_COLORS[i % PIE_COLORS.length] }} />
               <span className="font-mono truncate max-w-24" title={item.name}>{item.name}</span>
               <span className="text-muted-foreground ml-auto tabular-nums">{formatTokenCount(item.value)}</span>
-              <span className="text-muted-foreground tabular-nums">{formatCurrency(item.cost)}</span>
+              <span className="text-muted-foreground tabular-nums">{formatCost(item.costUsd)}</span>
             </div>
             <div className="flex items-center gap-1.5 pl-4 text-[10px] text-muted-foreground tabular-nums">
               <span>⚡{formatTokenCount(item.cacheRead)}</span>
@@ -512,7 +513,7 @@ function RoundsTable({
                 <TableCell className="p-1 font-medium truncate max-w-24">{node.nodeName}</TableCell>
                 <TableCell className="p-1"><Badge variant="outline" className="text-[9px] px-1">{node.nodeType}</Badge></TableCell>
                 <TableCell className="p-1 text-right tabular-nums">{formatTokenCount(totalTokens)}</TableCell>
-                <TableCell className="p-1 text-right tabular-nums">{node.costUsd === null ? "—" : formatCurrency(node.costUsd)}</TableCell>
+                <TableCell className="p-1 text-right tabular-nums">{formatCost(node.costUsd)}</TableCell>
                 <TableCell className="p-1 text-right tabular-nums">{(node.durationMs / 1000).toFixed(1)}s</TableCell>
               </TableRow>
               {isExpanded && (

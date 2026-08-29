@@ -94,12 +94,12 @@ export function NodeCardShell({
         )}
         {isRunning && elapsedSeconds !== undefined && (
           <div className="flex items-center justify-between text-xs text-amber-600 font-medium mt-2">
-            <span className="tabular-nums"><Timer className="h-3 w-3 inline mr-1" />{formatDuration(elapsedSeconds)}</span>
+            <span className="tabular-nums"><Timer className="h-3 w-3 inline mr-1" />{formatDuration(elapsedSeconds * 1000)}</span>
           </div>
         )}
         {statusOverlay && statusOverlay.stepStatus === "completed" && statusOverlay.duration !== undefined && (
           <div className="flex items-center justify-between text-xs text-muted-foreground mt-2">
-            <span className="tabular-nums">耗时: {formatDuration(statusOverlay.duration)}</span>
+            <span className="tabular-nums">耗时: {formatDuration((statusOverlay.duration ?? 0) * 1000)}</span>
           </div>
         )}
         {statusOverlay && statusOverlay.stepStatus === "failed" && statusOverlay.error && (

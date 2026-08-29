@@ -104,7 +104,7 @@ function StepItem({ step, isLast }: { step: StepExecution; isLast: boolean }) {
         </div>
         {step.duration !== undefined && (
           <p className="mt-0.5 text-xs text-muted-foreground">
-            耗时: {formatDuration(step.duration)}
+            耗时: {formatDuration(step.duration * 1000)}
           </p>
         )}
         {step.tokenUsages && step.tokenUsages.length > 0 && (

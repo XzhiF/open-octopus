@@ -8,7 +8,7 @@ import { CostTrendChart } from "./cost-trend-chart"
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from "recharts"
 import { ChartContainer, ChartTooltipContent } from "@/components/ui/chart"
 import { XCircle, DollarSign } from "lucide-react"
-import { formatCurrency } from "@/lib/analytics-format"
+import { formatCost } from "@/lib/format"
 
 const MODEL_COLORS = ["#3b82f6", "#8b5cf6", "#ec4899", "#f97316", "#10b981"]
 
@@ -80,7 +80,7 @@ export function CostTab({ workspaceId }: { workspaceId: string }) {
                     <div className="text-muted-foreground tabular-nums flex gap-4">
                       <span>{(t.totalInputTokens / 1000).toFixed(0)}K in</span>
                       <span>{(t.totalOutputTokens / 1000).toFixed(0)}K out</span>
-                      <span>{formatCurrency(t.totalCostUsd)}</span>
+                      <span>{formatCost(t.totalCostUsd)}</span>
                     </div>
                   </div>
                 ))}
@@ -99,9 +99,9 @@ export function CostTab({ workspaceId }: { workspaceId: string }) {
               <div key={wf.workflowRef} className="flex items-center justify-between text-sm p-2 rounded-md bg-muted/50">
                 <span className="font-medium">{wf.workflowRef}</span>
                 <div className="flex gap-4 text-muted-foreground tabular-nums">
-                  <span>{formatCurrency(wf.totalCostUsd)}</span>
+                  <span>{formatCost(wf.totalCostUsd)}</span>
                   <span>{wf.executionCount} 次</span>
-                  <span>{formatCurrency(wf.avgCostPerExecution)}/次</span>
+                  <span>{formatCost(wf.avgCostPerExecution)}/次</span>
                 </div>
               </div>
             ))}
