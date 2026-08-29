@@ -378,7 +378,7 @@ export class EngineCallbacks implements IEngineCallbacks {
             dao.insertNodeTokenUsage(
               `${neId}-token-${mu.model}`, neId, mu.model,
               mu.inputTokens, mu.outputTokens, mu.costUsd ?? null,
-              mu.cacheReadInputTokens ?? 0, mu.cacheCreationInputTokens ?? 0, now,
+              mu.cacheReadTokens ?? 0, mu.cacheCreationTokens ?? 0, now,
             )
           }
         }
@@ -395,8 +395,10 @@ export class EngineCallbacks implements IEngineCallbacks {
           dao.updateExecution(id, { interaction_metadata: JSON.stringify(result.interactionMetadata) })
         }
 
-        const finalInput = result?.tokens?.input ?? 0
-        const finalOutput = result?.tokens?.output ?? 0
+        // TODO(C1-②): node_end.tokens 合并口径信封将删除，统一透出 usage 规范形状
+        const u = result?.usage
+        const finalInput = u ? u.inputTokens + u.cacheReadTokens + u.cacheCreationTokens : 0
+        const finalOutput = u ? u.outputTokens : 0
         const hasTokens = finalInput > 0 || finalOutput > 0
 
         obs.flushNode(neId)
@@ -431,8 +433,8 @@ export class EngineCallbacks implements IEngineCallbacks {
                 model: mu.model,
                 inputTokens: mu.inputTokens,
                 outputTokens: mu.outputTokens,
-                cacheReadTokens: mu.cacheReadInputTokens ?? 0,
-                cacheCreationTokens: mu.cacheCreationInputTokens ?? 0,
+                cacheReadTokens: mu.cacheReadTokens ?? 0,
+                cacheCreationTokens: mu.cacheCreationTokens ?? 0,
               })),
             } : {}),
           },

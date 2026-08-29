@@ -1,4 +1,5 @@
-import type { TokenUsage, ModelUsageEntry, LLMCallRecord } from "@octopus/providers"
+import type { LLMCallRecord } from "@octopus/providers"
+import type { TokenUsage, ModelUsage } from "@octopus/shared"
 import type { AgentEvent } from "./agent-types"
 
 export interface ApprovalMetadata {
@@ -50,8 +51,9 @@ export interface NodeExecutionResult {
   jumpTo?: string
   timeout?: number
   sessionId?: string
-  tokens?: TokenUsage
-  modelUsages?: ModelUsageEntry[]
+  /** 规范用量（纯值口径，C1） */
+  usage?: TokenUsage
+  modelUsages?: ModelUsage[]
   events?: AgentEvent[]
   approvalMetadata?: ApprovalMetadata
   interactionMetadata?: InteractionMetadata

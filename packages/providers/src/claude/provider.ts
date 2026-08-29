@@ -1,5 +1,7 @@
 import { query, type Options, type AgentDefinition, type CanUseTool } from '@anthropic-ai/claude-agent-sdk'
-import type { IAgentProvider, SendQueryOptions, MessageChunk, TokenUsage, ModelUsageEntry, OctopusAgentDef, GoalTerminalReason, MessageDeltaUsage } from '../types'
+import type { IAgentProvider, SendQueryOptions, MessageChunk, OctopusAgentDef, GoalTerminalReason } from '../types'
+import type { ModelUsage, TokenUsageDelta } from '@octopus/shared'
+import { mergeModelUsages } from '@octopus/shared'
 import { LLMCallTracker } from '../llm-call-tracker'
 import { getPluginSdkConfigs, loadModelAliasConfig, resolveModelAlias } from '@octopus/shared'
 import fs from 'fs'
@@ -62,16 +64,6 @@ function buildSubprocessEnv(extra?: Record<string, string>): NodeJS.ProcessEnv {
     ...extra,
     ...(shouldUseGlobalAuth ? { CLAUDE_USE_GLOBAL_AUTH: 'true' } : {}),
   }
-}
-
-function normalizeUsage(usage?: {
-  input_tokens?: number
-  output_tokens?: number
-}): TokenUsage | undefined {
-  if (!usage || typeof usage.input_tokens !== 'number' || typeof usage.output_tokens !== 'number') {
-    return undefined
-  }
-  return { input: usage.input_tokens, output: usage.output_tokens, total: usage.input_tokens + usage.output_tokens }
 }
 
 function buildToolCaptureHooks(
@@ -516,7 +508,7 @@ export class ClaudeSDKProvider implements IAgentProvider {
           // 直连 Anthropic 时可能只有 output_tokens，input/cache 按端点缺失 → defensive 读取。
           const rawU = e.usage
           const numOrUndef = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : undefined)
-          const usage: MessageDeltaUsage | undefined = rawU
+          const usage: TokenUsageDelta | undefined = rawU
             ? {
                 inputTokens: numOrUndef(rawU.input_tokens),
                 outputTokens: numOrUndef(rawU.output_tokens),
@@ -624,27 +616,26 @@ export class ClaudeSDKProvider implements IAgentProvider {
 
       else if (event.type === 'result') {
         const rm = event as { subtype: string; session_id?: string; result?: string; num_turns?: number; usage?: { input_tokens?: number; output_tokens?: number; cache_read_input_tokens?: number; cache_creation_input_tokens?: number }; total_cost_usd?: number; errors?: string[]; modelUsage?: Record<string, { inputTokens?: number; outputTokens?: number; cacheReadInputTokens?: number; cacheCreationInputTokens?: number; costUSD?: number }> }
-        // result.modelUsage is the ONLY authoritative source of per-model token totals
+        // result.modelUsage is the ONLY authoritative source of per-model token totals.
+        // SDK snake/原始 key → 规范 ModelUsage 的转换只发生在这里（seam adapter）。
         if (rm.modelUsage && Object.keys(rm.modelUsage).length > 0) {
+          const modelUsages: ModelUsage[] = Object.entries(rm.modelUsage).map(([model, mu]) => ({
+            model,
+            inputTokens: mu.inputTokens ?? 0,
+            outputTokens: mu.outputTokens ?? 0,
+            cacheReadTokens: mu.cacheReadInputTokens ?? 0,
+            cacheCreationTokens: mu.cacheCreationInputTokens ?? 0,
+            costUsd: mu.costUSD,
+          }))
           // Calibrate tracker's completed calls with authoritative token data
-          this._llmTracker.calibrateFromModelUsage(rm.modelUsage)
-
-          const modelUsages: ModelUsageEntry[] = []
-          for (const [model, mu] of Object.entries(rm.modelUsage)) {
-            const inputTokens = mu.inputTokens ?? 0
-            const outputTokens = mu.outputTokens ?? 0
-            const cacheReadInputTokens = mu.cacheReadInputTokens ?? 0
-            const cacheCreationInputTokens = mu.cacheCreationInputTokens ?? 0
-            modelUsages.push({ model, inputTokens, outputTokens, cacheReadInputTokens, cacheCreationInputTokens, costUsd: mu.costUSD })
-          }
+          this._llmTracker.calibrateFromModelUsage(modelUsages)
           if (rm.subtype === 'success') {
-            const totalInput = Object.values(rm.modelUsage).reduce((s, mu) => s + (mu.inputTokens ?? 0) + (mu.cacheReadInputTokens ?? 0) + (mu.cacheCreationInputTokens ?? 0), 0)
-            const totalOutput = Object.values(rm.modelUsage).reduce((s, mu) => s + (mu.outputTokens ?? 0), 0)
             yield {
               type: 'result',
               content: rm.result,
               sessionId: rm.session_id,
-              tokens: { input: totalInput, output: totalOutput, total: totalInput + totalOutput },
+              // 规范口径：纯值四字段合计（不再把 cache 折进 input）
+              usage: mergeModelUsages(modelUsages),
               costUsd: rm.total_cost_usd,
               numTurns: rm.num_turns,
               modelUsages,
@@ -654,35 +645,28 @@ export class ClaudeSDKProvider implements IAgentProvider {
           }
         } else {
           // Fallback: no modelUsage — use legacy single-model usage from result
-          const rawInput = rm.usage?.input_tokens ?? 0
-          const cacheRead = rm.usage?.cache_read_input_tokens ?? 0
-          const cacheCreation = rm.usage?.cache_creation_input_tokens ?? 0
-          const finalInput = rawInput + cacheRead + cacheCreation
-          const finalOutput = rm.usage?.output_tokens ?? 0
-
-          // Calibrate tracker with fallback usage data
-          if (finalOutput > 0 || cacheRead > 0 || cacheCreation > 0) {
-            this._llmTracker.calibrateFromModelUsage({
-              [modelName]: {
-                inputTokens: rawInput,
-                outputTokens: finalOutput,
-                cacheReadInputTokens: cacheRead,
-                cacheCreationInputTokens: cacheCreation,
-              },
-            })
+          const fallbackModelUsage: ModelUsage = {
+            model: modelName,
+            inputTokens: rm.usage?.input_tokens ?? 0,
+            outputTokens: rm.usage?.output_tokens ?? 0,
+            cacheReadTokens: rm.usage?.cache_read_input_tokens ?? 0,
+            cacheCreationTokens: rm.usage?.cache_creation_input_tokens ?? 0,
           }
-
-          const fallbackModelUsages: ModelUsageEntry[] = (rawInput > 0 || finalOutput > 0)
-            ? [{ model: modelName, inputTokens: rawInput, outputTokens: finalOutput, cacheReadInputTokens: cacheRead, cacheCreationInputTokens: cacheCreation }]
-            : []
+          const hasAny = fallbackModelUsage.outputTokens > 0 || fallbackModelUsage.cacheReadTokens > 0 || fallbackModelUsage.cacheCreationTokens > 0
+          if (hasAny) {
+            this._llmTracker.calibrateFromModelUsage([fallbackModelUsage])
+          }
           if (rm.subtype === 'success') {
             yield {
               type: 'result',
               content: rm.result,
               sessionId: rm.session_id,
-              tokens: { input: finalInput, output: finalOutput, total: finalInput + finalOutput },
+              usage: fallbackModelUsage,
               costUsd: rm.total_cost_usd,
-              modelUsages: fallbackModelUsages,
+              numTurns: rm.num_turns,
+              modelUsages: (fallbackModelUsage.inputTokens > 0 || fallbackModelUsage.outputTokens > 0)
+                ? [fallbackModelUsage]
+                : [],
             }
           } else {
             yield buildResultErrorChunk(rm)

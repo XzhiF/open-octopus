@@ -1,7 +1,6 @@
 import { VarPool, evaluateExpression, parsePipelineConfig, TemplateRenderer } from "@octopus/shared"
 import type { WorkflowDef, NodeDef, AutoAnswer, HookDef, WorkflowHooks } from "@octopus/shared"
 import type { IAgentProvider } from "@octopus/providers"
-import type { TokenUsage } from "@octopus/providers"
 import type { NodeExecutionResult, InnerNodeOverride } from "./executors/types"
 import type { AgentEvent } from "./executors/agent-types"
 import type { SwarmSSEEvent } from "./executors/swarm/swarm-types"

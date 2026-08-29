@@ -1,8 +1,10 @@
 export { ClaudeSDKProvider } from './claude/provider'
-export type { IAgentProvider, SendQueryOptions, MessageChunk, TokenUsage, ModelUsageEntry, SystemPromptInput, SystemPromptPreset, ContextUsageData, GoalTerminalReason, ActiveGoalChunk, MessageDeltaUsage } from './types'
+export type { IAgentProvider, SendQueryOptions, MessageChunk, SystemPromptInput, SystemPromptPreset, ContextUsageData, GoalTerminalReason, ActiveGoalChunk } from './types'
 export { registerProvider, getProvider, getProviderAsync, isProviderRegistered, listProviders, resetProviderInstances } from './registry'
-export { LLMCallTracker, computeCost, calibrateCosts } from './llm-call-tracker'
+export { LLMCallTracker, computeCost } from './llm-call-tracker'
 export type { LLMCallRecord } from './llm-call-tracker'
+// 注意：TokenUsage / ModelUsage / TokenUsageDelta 一律从 @octopus/shared 导入（C1 口径统一），
+// providers 包不再 re-export 任何 token 形状。
 
 // Pi Provider
 export { PiAgentProvider } from './pi/provider'

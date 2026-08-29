@@ -497,7 +497,7 @@ describe("AgentDelegationService — delegate", () => {
         reasoning: "analysis",
         harnessHint: "try this",
       }),
-      tokenUsage: { input: 100, output: 50, model: "claude-sonnet-4-20250514" },
+      tokenUsage: { inputTokens: 100, outputTokens: 50, cacheReadTokens: 0, cacheCreationTokens: 0, model: "claude-sonnet-4-20250514" },
       sessionId: "session-123",
     })
 
@@ -557,7 +557,7 @@ describe("AgentDelegationService — delegate", () => {
         reasoning: "analysis",
         harnessHint: "try this",
       }),
-      tokenUsage: { input: 100, output: 50, model: "claude-sonnet-4-20250514" },
+      tokenUsage: { inputTokens: 100, outputTokens: 50, cacheReadTokens: 0, cacheCreationTokens: 0, model: "claude-sonnet-4-20250514" },
     })
 
     const service = createService()
@@ -583,7 +583,7 @@ describe("AgentDelegationService — delegate", () => {
         decision: "guide_and_retry",
         reasoning: "analysis",
       }),
-      tokenUsage: { input: 100, output: 50, model: "claude-sonnet-4-20250514" },
+      tokenUsage: { inputTokens: 100, outputTokens: 50, cacheReadTokens: 0, cacheCreationTokens: 0, model: "claude-sonnet-4-20250514" },
     })
 
     const service = createService()
@@ -654,7 +654,7 @@ describe("AgentDelegationService — delegate", () => {
         decision: "guide_and_retry",
         reasoning: "analysis",
       }),
-      tokenUsage: { input: 100, output: 50, model: "claude-sonnet-4-20250514" },
+      tokenUsage: { inputTokens: 100, outputTokens: 50, cacheReadTokens: 0, cacheCreationTokens: 0, model: "claude-sonnet-4-20250514" },
     })
 
     const service = createService()

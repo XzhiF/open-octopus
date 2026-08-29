@@ -8,7 +8,7 @@ describe('TokenAggregator', () => {
     agg.add('model-b', { input: 200, output: 80, cost: { total: 0.02 } })
 
     const usage = agg.toTokenUsage()
-    expect(usage).toEqual({ input: 300, output: 130, total: 430 })
+    expect(usage).toEqual({ inputTokens: 300, outputTokens: 130, cacheReadTokens: 0, cacheCreationTokens: 0 })
     expect(agg.totalCost()).toBe(0.03)
     expect(agg.toModelUsages()).toHaveLength(2)
   })
@@ -17,7 +17,7 @@ describe('TokenAggregator', () => {
     const agg = new TokenAggregator()
     agg.add('model', { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: undefined })
 
-    expect(agg.toTokenUsage()).toEqual({ input: 0, output: 0, total: 0 })
+    expect(agg.toTokenUsage()).toEqual({ inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0 })
     expect(agg.totalCost()).toBe(0)
     expect(Number.isNaN(agg.totalCost())).toBe(false)
   })
@@ -35,7 +35,7 @@ describe('TokenAggregator', () => {
     agg.add('gpt-4o', { input: 50, output: 20, cost: { total: 0.005 } })
     agg.add('gpt-4o', { input: 30, output: 10, cost: { total: 0.003 } })
 
-    expect(agg.toTokenUsage()).toEqual({ input: 80, output: 30, total: 110 })
+    expect(agg.toTokenUsage()).toEqual({ inputTokens: 80, outputTokens: 30, cacheReadTokens: 0, cacheCreationTokens: 0 })
     expect(agg.toModelUsages()).toHaveLength(1)
     expect(agg.toModelUsages()[0].inputTokens).toBe(80)
   })

@@ -111,7 +111,7 @@ describe("HeartbeatHandler", () => {
     const handler = new HeartbeatHandler("test-node", config, {}, onEvent)
 
     // Simulate token tracking
-    handler.updateTokens({ input: 1000, output: 500, total: 1500 })
+    handler.updateTokens({ inputTokens: 1000, outputTokens: 500, cacheReadTokens: 0, cacheCreationTokens: 0 })
 
     handler.onAgentEvent({ type: "tool_result", toolCallId: "1", toolName: "Read", content: "", timestamp: Date.now() })
 
@@ -215,7 +215,7 @@ describe("HeartbeatHandler", () => {
     const handler = new HeartbeatHandler("test-node", config, budget, onEvent)
 
     // Simulate token usage exceeding budget
-    handler.updateTokens({ input: 800, output: 500, total: 1300 })
+    handler.updateTokens({ inputTokens: 800, outputTokens: 500, cacheReadTokens: 0, cacheCreationTokens: 0 })
 
     handler.onAgentEvent({ type: "tool_result", toolCallId: "1", toolName: "Read", content: "", timestamp: Date.now() })
 
@@ -256,7 +256,7 @@ describe("HeartbeatHandler", () => {
     const handler = new HeartbeatHandler("test-node", config, budget, onEvent)
 
     // Simulate token usage exceeding budget
-    handler.updateTokens({ input: 800, output: 500, total: 1300 })
+    handler.updateTokens({ inputTokens: 800, outputTokens: 500, cacheReadTokens: 0, cacheCreationTokens: 0 })
 
     handler.onAgentEvent({ type: "tool_result", toolCallId: "1", toolName: "Read", content: "", timestamp: Date.now() })
 

@@ -231,7 +231,7 @@ export class PiAgentProvider implements IAgentProvider {
             ...chunk,
             sessionId: sessionResult?.sessionId,
             model: resolvedModelName,
-            tokens: (tokenUsage.total ?? 0) > 0 ? tokenUsage : undefined,
+            usage: (tokenUsage.inputTokens + tokenUsage.outputTokens + tokenUsage.cacheReadTokens + tokenUsage.cacheCreationTokens) > 0 ? tokenUsage : undefined,
             costUsd: tokenAgg.totalCost() || undefined,
             modelUsages: modelUsages.length > 0 ? modelUsages : undefined,
           }

@@ -313,8 +313,8 @@ describe('AgentExecutor', () => {
           type: 'result',
           content: output,
           sessionId: 'sess-1',
-          tokens,
-          modelUsages: [{ model: 'claude-sonnet-4-5-20250514', inputTokens: tokens.input, outputTokens: tokens.output }],
+          usage: { inputTokens: tokens.input, outputTokens: tokens.output, cacheReadTokens: 0, cacheCreationTokens: 0 },
+          modelUsages: [{ model: 'claude-sonnet-4-5-20250514', inputTokens: tokens.input, outputTokens: tokens.output, cacheReadTokens: 0, cacheCreationTokens: 0 }],
         }
       },
     }
@@ -357,13 +357,13 @@ describe('AgentExecutor', () => {
 
     expect(result.success).toBe(true)
     expect(result.modelUsed).toBe('claude-sonnet-4-5-20250514')
-    expect(result.tokenUsage).toEqual({ input: 100, output: 200 })
+    expect(result.tokenUsage).toEqual({ inputTokens: 100, outputTokens: 200, cacheReadTokens: 0, cacheCreationTokens: 0 })
 
     const row = db.prepare('SELECT agent_output, model_used, token_usage, status FROM schedule_executions WHERE id = ?').get(execId) as any
     expect(row.status).toBe('completed')
     expect(row.agent_output).toBe('Hello world')
     expect(row.model_used).toBe('claude-sonnet-4-5-20250514')
-    expect(JSON.parse(row.token_usage)).toEqual({ input: 100, output: 200 })
+    expect(JSON.parse(row.token_usage)).toEqual({ inputTokens: 100, outputTokens: 200, cacheReadTokens: 0, cacheCreationTokens: 0 })
   })
 
   it('A3: retries on failure and respects max_attempts', async () => {

@@ -1,4 +1,5 @@
 import type { NodeExecutionResult } from "@octopus/engine"
+import { totalTokens } from "@octopus/shared"
 
 /**
  * Format milliseconds to human-readable duration string.
@@ -63,13 +64,13 @@ export function generateSummary(
     }
   }
 
-  // Token usage
-  const totalTokens = Object.values(nodeResults).reduce(
-    (sum, r) => sum + (r.tokens?.input ?? 0) + (r.tokens?.output ?? 0),
+  // Token usage — 规范用量全口径合计（含 cache，等价旧「provider 合并 total」）
+  const total = Object.values(nodeResults).reduce(
+    (sum, r) => sum + (r.usage ? totalTokens(r.usage) : 0),
     0
   )
-  if (totalTokens > 0) {
-    lines.push(`Total tokens used: ${totalTokens.toLocaleString()}`)
+  if (total > 0) {
+    lines.push(`Total tokens used: ${total.toLocaleString()}`)
   }
 
   return lines.join("\n")

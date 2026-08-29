@@ -208,12 +208,8 @@ export class OctopusAgentExecutor implements NodeExecutor {
         heartbeatHandler.onAgentEvent(event)
       }
     }
-    if (agentResult.tokens) {
-      heartbeatHandler.updateTokens({
-        input: agentResult.tokens.input,
-        output: agentResult.tokens.output,
-        total: agentResult.tokens.total ?? (agentResult.tokens.input + agentResult.tokens.output),
-      })
+    if (agentResult.usage) {
+      heartbeatHandler.updateTokens(agentResult.usage)
     }
 
     // 7. Parse structured result from agent output

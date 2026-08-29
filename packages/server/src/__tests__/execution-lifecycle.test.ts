@@ -529,7 +529,7 @@ describe("ExecutionLifecycle.buildCallbacks", () => {
       modelUsages: [{
         model: "claude-sonnet-4-20250514",
         inputTokens: 500, outputTokens: 200, costUsd: 0.005,
-        cacheReadInputTokens: 100, cacheCreationInputTokens: 50,
+        cacheReadTokens: 100, cacheCreationTokens: 50,
       }],
     }, "agent")
 

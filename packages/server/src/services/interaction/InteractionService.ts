@@ -7,7 +7,8 @@
 import { randomUUID } from "crypto"
 import { existsSync, readFileSync } from "fs"
 import { join } from "path"
-import type { IAgentProvider, MessageChunk, TokenUsage } from "@octopus/providers"
+import type { IAgentProvider, MessageChunk } from "@octopus/providers"
+import type { TokenUsage } from "@octopus/shared"
 import { getProvider } from "@octopus/providers"
 import { resolveModelAlias, loadModelAliasConfig } from "@octopus/shared"
 import { extractInteractionCompletion } from "@octopus/engine"
@@ -78,7 +79,7 @@ class StreamAccumulator {
   thinkingContent = ""
   thinkingMessageId = ""
   thinkingStartTime = 0
-  tokens?: TokenUsage
+  usage?: TokenUsage
   costUsd?: number
   model?: string
   completionDetected: { summary: string; vars_update?: Record<string, unknown> } | null = null
@@ -377,7 +378,7 @@ export class InteractionService {
     yield {
       type: "result",
       sessionId: session.sessionId,
-      tokens: acc.tokens,
+      usage: acc.usage,
       costUsd: acc.costUsd,
     }
 
@@ -717,12 +718,12 @@ export class InteractionService {
   }
 
   private handleResult(
-    chunk: MessageChunk,
+    chunk: Extract<MessageChunk, { type: "result" }>,
     _session: InteractionSessionInfo,
     acc: StreamAccumulator,
   ): InteractionSSEEvent[] {
     if (chunk.sessionId) _session.providerSessionId = chunk.sessionId
-    if (chunk.tokens) acc.tokens = chunk.tokens
+    if (chunk.usage) acc.usage = chunk.usage
     if (chunk.costUsd !== undefined) acc.costUsd = chunk.costUsd
     // Capture the actual model the provider used (from result.modelUsages) instead of
     // hardcoding a label. Falls back to "unknown" if the provider didn't report it.
@@ -764,7 +765,7 @@ export class InteractionService {
         acc.fullText,
         JSON.stringify({
           displayType: "text",
-          tokens: acc.tokens,
+          usage: acc.usage,
           costUsd: acc.costUsd,
         }),
       )
@@ -773,23 +774,25 @@ export class InteractionService {
 
   /** Write aggregated token usage to node_token_usages. */
   private writeTokenUsage(acc: StreamAccumulator, session: InteractionSessionInfo): void {
-    if (!acc.tokens) return
+    if (!acc.usage) return
     this.tokenDao.insert({
       id: randomUUID(),
       node_execution_id: session.nodeExecutionId,
       model: acc.model ?? "unknown",
-      input_tokens: acc.tokens.input ?? 0,
-      output_tokens: acc.tokens.output ?? 0,
+      // C1/D4：interaction 写入口径对齐 —— 纯值 input + 真实 cache 列（旧实现把合并
+      // input 写库且 cache 列恒 0，是与引擎主链路互斥的第二种口径）
+      input_tokens: acc.usage.inputTokens,
+      output_tokens: acc.usage.outputTokens,
       cost_usd: acc.costUsd ?? null,
-      cache_read_tokens: acc.tokens.cacheRead ?? 0,
-      cache_creation_tokens: acc.tokens.cacheCreation ?? 0,
+      cache_read_tokens: acc.usage.cacheReadTokens,
+      cache_creation_tokens: acc.usage.cacheCreationTokens,
       created_at: new Date().toISOString(),
     })
   }
 
   /** Write per-call details to llm_calls table. */
   private writeLlmCall(acc: StreamAccumulator, session: InteractionSessionInfo): void {
-    if (!acc.tokens) return
+    if (!acc.usage) return
     const now = Date.now()
     const llmCallRow: LlmCallRow = {
       id: randomUUID(),
@@ -803,10 +806,10 @@ export class InteractionService {
       timestamp: acc.llmCallStartTime,
       duration_ms: now - acc.llmCallStartTime,
       ttft_ms: null,
-      input_tokens: acc.tokens.input ?? 0,
-      output_tokens: acc.tokens.output ?? 0,
-      cache_read_tokens: acc.tokens.cacheRead ?? 0,
-      cache_creation_tokens: acc.tokens.cacheCreation ?? 0,
+      input_tokens: acc.usage.inputTokens,
+      output_tokens: acc.usage.outputTokens,
+      cache_read_tokens: acc.usage.cacheReadTokens,
+      cache_creation_tokens: acc.usage.cacheCreationTokens,
       cost_usd: acc.costUsd ?? null,
       org: null,
       workspace_id: session.workspaceId,

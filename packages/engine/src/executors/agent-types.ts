@@ -1,5 +1,5 @@
-import type { TokenUsage, ModelUsageEntry, LLMCallRecord, GoalTerminalReason, MessageDeltaUsage } from "@octopus/providers"
-import type { AgentHeartbeat, HarnessDirective } from "@octopus/shared"
+import type { LLMCallRecord, GoalTerminalReason } from "@octopus/providers"
+import type { TokenUsage, TokenUsageDelta, ModelUsage, AgentHeartbeat, HarnessDirective } from "@octopus/shared"
 
 export type AgentEvent =
   | { type: "thinking_start"; timestamp: number }
@@ -12,9 +12,9 @@ export type AgentEvent =
   | { type: "status"; status: "compacting" | "requesting" | "resuming_after_crash" | null; timestamp: number }
   | { type: "error"; code: string; message: string; timestamp: number }
   /** Per-turn token usage (from message_delta, authoritative for output).
-   *  delta = this turn's usage; total = cumulative across the run (all attempts).
+   *  delta = this turn's usage; cumulative = 跨全部 attempt 的累计（纯值口径）。
    *  Emitted once per assistant message — natural throttle, no extra rate risk. */
-  | { type: "turn_usage"; turn: number; delta: MessageDeltaUsage; total: MessageDeltaUsage; timestamp: number }
+  | { type: "turn_usage"; turn: number; delta: TokenUsageDelta; cumulative: TokenUsage; timestamp: number }
   /** Convergence evidence from the SDK /goal evaluator (passthrough of the
    *  provider's active_goal chunk). condition: null means the goal was
    *  cleared/met — do not fabricate an empty string. */
@@ -26,8 +26,9 @@ export type AgentEvent =
 export interface AgentRunResult {
   finalText: string
   sessionId?: string
-  tokens?: TokenUsage
-  modelUsages?: ModelUsageEntry[]
+  /** 规范用量（纯值口径，来自 provider result.usage） */
+  usage?: TokenUsage
+  modelUsages?: ModelUsage[]
   costUsd?: number
   events: AgentEvent[]
   durationMs: number

@@ -14,7 +14,7 @@ export class FauxPiProvider implements IAgentProvider {
         type: 'result',
         content: 'Hello from faux provider. This is a deterministic test response.',
         sessionId: 'faux-session-1',
-        tokens: { input: 10, output: 15, total: 25 },
+        usage: { inputTokens: 10, outputTokens: 15, cacheReadTokens: 0, cacheCreationTokens: 0 },
         costUsd: 0,
       },
     ]
@@ -50,7 +50,7 @@ export function fauxWithToolCall(): FauxPiProvider {
       type: 'result',
       content: 'Found 2 files.',
       sessionId: 'faux-session-2',
-      tokens: { input: 20, output: 30, total: 50 },
+      usage: { inputTokens: 20, outputTokens: 30, cacheReadTokens: 0, cacheCreationTokens: 0 },
     },
   ])
 }

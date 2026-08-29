@@ -1,4 +1,10 @@
-export interface LLMCallRecord {
+import type { ModelUsage, TokenUsage, TokenUsageDelta } from '@octopus/shared'
+
+/**
+ * 单次 LLM call 记录。token 字段继承全站规范形状 TokenUsage
+ * （纯值口径：inputTokens 不含 cache，见 shared/types/usage.ts）。
+ */
+export interface LLMCallRecord extends TokenUsage {
   turnIndex: number
   messageId: string
   model?: string
@@ -6,10 +12,6 @@ export interface LLMCallRecord {
   timestamp: number
   durationMs: number
   ttftMs?: number
-  inputTokens: number
-  outputTokens: number
-  cacheReadTokens: number
-  cacheCreationTokens: number
   costUsd?: number
 }
 
@@ -58,16 +60,6 @@ export function computeCost(call: LLMCallRecord, model: string): number {
   )
 }
 
-export function calibrateCosts(calls: LLMCallRecord[], sdkTotalCost: number): void {
-  const estimated = calls.reduce((sum, c) => sum + computeCost(c, c.model ?? 'default'), 0)
-  if (estimated === 0 || sdkTotalCost === 0) return
-  const ratio = sdkTotalCost / estimated
-  if (Math.abs(ratio - 1.0) < 0.1) return
-  for (const call of calls) {
-    call.costUsd = computeCost(call, call.model ?? 'default') * ratio
-  }
-}
-
 interface ActiveCall {
   messageId: string
   model?: string
@@ -75,7 +67,7 @@ interface ActiveCall {
   firstTokenTime?: number
   stopReason?: string
   /** message_delta 实测 usage（SDK/端点提供时）。calibrate 阶段保留不覆盖 */
-  usage?: Partial<Pick<LLMCallRecord, 'inputTokens' | 'outputTokens' | 'cacheReadTokens' | 'cacheCreationTokens'>>
+  usage?: TokenUsageDelta
 }
 
 /**
@@ -202,25 +194,18 @@ export class LLMCallTracker {
   }
 
   /**
-   * 用 result 事件的权威 modelUsage 覆盖 completedCalls 的 token / cost 字段。
+   * 用 result 事件的权威 modelUsage（全站规范形状 ModelUsage[]，由 provider
+   * 在 SDK seam 完成 snake→规范转换后传入）覆盖 completedCalls 的 token / cost 字段。
    *
    * 分配策略：
-   *   - 按模型分组
+   *   - 按模型分组（模型名先 normalizeModelName，与 stream 阶段记录的 key 对齐）
    *   - 同模型 N 个 call 均匀分配（floor），余数丢到最后一个 call
    *   - 保证 SUM(call.token) === authTotal（严格相等，无累积误差）
    *
    * 如果 result 事件不到达，completedCalls 保持全 0 — 这比显示错误数据更好。
    */
-  calibrateFromModelUsage(
-    modelUsage: Record<string, {
-      inputTokens?: number
-      outputTokens?: number
-      cacheReadInputTokens?: number
-      cacheCreationInputTokens?: number
-      costUSD?: number
-    }>
-  ): void {
-    if (!modelUsage || Object.keys(modelUsage).length === 0) return
+  calibrateFromModelUsage(modelUsages: readonly ModelUsage[]): void {
+    if (!modelUsages || modelUsages.length === 0) return
 
     const callsByModel = new Map<string, LLMCallRecord[]>()
     for (const call of this.completedCalls) {
@@ -229,17 +214,17 @@ export class LLMCallTracker {
       callsByModel.get(model)!.push(call)
     }
 
-    for (const [rawModel, usage] of Object.entries(modelUsage)) {
+    for (const usage of modelUsages) {
       // 剥离 ANSI 转义码，和 tracker 存的 clean model key 对齐
-      const model = normalizeModelName(rawModel)
+      const model = normalizeModelName(usage.model)
       const calls = callsByModel.get(model)
       if (!calls || calls.length === 0) continue
 
       const authInput = usage.inputTokens ?? 0
       const authOutput = usage.outputTokens ?? 0
-      const authCacheRead = usage.cacheReadInputTokens ?? 0
-      const authCacheCreation = usage.cacheCreationInputTokens ?? 0
-      const authCost = usage.costUSD ?? computeCostFromTokens(
+      const authCacheRead = usage.cacheReadTokens ?? 0
+      const authCacheCreation = usage.cacheCreationTokens ?? 0
+      const authCost = usage.costUsd ?? computeCostFromTokens(
         authInput, authOutput, authCacheRead, authCacheCreation, model
       )
 
