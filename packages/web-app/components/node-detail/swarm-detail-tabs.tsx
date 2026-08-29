@@ -3,7 +3,7 @@
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { useSwarmEvents } from "@/hooks/use-swarm-events"
-import { formatTokenCount } from "@/lib/format"
+import { formatTokenCount, formatPercent } from "@/lib/format"
 import { Users, MessageSquare, TrendingUp, ExternalLink, Zap } from "lucide-react"
 import type { StepExecution } from "@/lib/types"
 
@@ -99,7 +99,7 @@ export function SwarmDetailTabs({
               共识分数
             </div>
             <div className="text-lg font-semibold tabular-nums">
-              {(consensusScore * 100).toFixed(0)}%
+              {formatPercent(consensusScore)}
             </div>
           </div>
         )}

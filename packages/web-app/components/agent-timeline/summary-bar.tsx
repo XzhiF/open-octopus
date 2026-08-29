@@ -1,7 +1,7 @@
 "use client"
 
 import { cn } from "@/lib/utils"
-import { formatCost, formatTokenCount } from "@/lib/format"
+import { formatCost, formatTokenCount, formatDuration } from "@/lib/format"
 import type { LLMCallAggregates } from "@/lib/types"
 import { ArrowUp, ArrowDown, Coins, Zap } from "lucide-react"
 
@@ -13,11 +13,6 @@ interface SummaryBarProps {
   /** C3: null = 未定价 */
   totalCostUsd: number | null
   turnDurations?: { turnIndex: number; durationMs: number }[]
-}
-
-function formatDuration(ms: number): string {
-  if (ms < 1000) return `${ms}ms`
-  return `${(ms / 1000).toFixed(1)}s`
 }
 
 export function SummaryBar({ turnCount, totalDurationMs, totalInputTokens, totalOutputTokens, totalCostUsd, turnDurations }: SummaryBarProps) {

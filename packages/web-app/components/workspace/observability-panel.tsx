@@ -35,7 +35,7 @@ import {
 } from "recharts"
 import { getServerUrl } from "@/lib/server-config"
 import { subscribeSSE } from "@/lib/sse-manager"
-import { formatTokenCount, formatCost } from "@/lib/format"
+import { formatTokenCount, formatCost, formatDuration, formatPercent } from "@/lib/format"
 
 // ============ Types ============
 
@@ -326,7 +326,7 @@ function MiniBudgetCard({ budget }: { budget: ObservabilityData["budget"] }) {
       ) : tokensPercent !== null ? (
         <>
           <div className={`text-sm font-semibold tabular-nums ${tokensPercent > 100 ? "text-red-500" : ""}`}>
-            {tokensPercent.toFixed(1)}%
+            {formatPercent(tokensPercent / 100, 1)}
           </div>
           <div className="mt-0.5 h-1.5 w-full rounded-full bg-muted overflow-hidden">
             <div
@@ -418,7 +418,7 @@ function ModelUsageChart({ byModel }: { byModel: ObservabilityData["byModel"] })
         <ResponsiveContainer width="100%" height="100%">
           <PieChart>
             <Pie data={chartData} cx="50%" cy="50%" outerRadius={50} dataKey="value" nameKey="name"
-              label={({ percent }) => `${(percent * 100).toFixed(0)}%`} labelLine={false}>
+              label={({ percent }) => formatPercent(percent)} labelLine={false}>
               {chartData.map((_, i) => (
                 <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />
               ))}
@@ -514,7 +514,7 @@ function RoundsTable({
                 <TableCell className="p-1"><Badge variant="outline" className="text-[9px] px-1">{node.nodeType}</Badge></TableCell>
                 <TableCell className="p-1 text-right tabular-nums">{formatTokenCount(totalTokens)}</TableCell>
                 <TableCell className="p-1 text-right tabular-nums">{formatCost(node.costUsd)}</TableCell>
-                <TableCell className="p-1 text-right tabular-nums">{(node.durationMs / 1000).toFixed(1)}s</TableCell>
+                <TableCell className="p-1 text-right tabular-nums">{formatDuration(node.durationMs)}</TableCell>
               </TableRow>
               {isExpanded && (
                 <TableRow key={`${node.nodeId}-detail`} className="bg-muted/20">

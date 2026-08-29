@@ -1,6 +1,7 @@
 "use client"
 
 import { cn } from "@/lib/utils"
+import { formatPercent } from "@/lib/format"
 import { Badge } from "@/components/ui/badge"
 import { MetricCard } from "../atoms/metric-card"
 import { SwarmBadge } from "../atoms/swarm-badge"
@@ -67,7 +68,7 @@ export function SwarmHeaderBar({
         />
         <MetricCard
           label="预算"
-          value={budgetPercentage != null ? `${budgetPercentage.toFixed(0)}%` : "-"}
+          value={formatPercent(budgetPercentage != null ? budgetPercentage / 100 : null)}
           icon={Coins}
           warning={isBudgetWarning}
           maxValue={100}

@@ -67,7 +67,7 @@ export function AnomalyTab({ workspaceId }: { workspaceId: string }) {
                   <XAxis dataKey="x" name="序号" tick={{ fontSize: 12 }} />
                   <YAxis dataKey="y" name="耗时(s)" tick={{ fontSize: 12 }} />
                   <Tooltip content={<ChartTooltipContent />} />
-                  <ReferenceLine y={meanMs} stroke="hsl(var(--chart-2))" strokeDasharray="3 3" label={`μ=${meanMs.toFixed(0)}s`} />
+                  <ReferenceLine y={meanMs} stroke="hsl(var(--chart-2))" strokeDasharray="3 3" label={`μ=${meanMs.toFixed(0)}s`} /> {/* fmt-ok: 轴刻度 */}
                   <ReferenceLine y={meanMs + 2 * stddevMs} stroke="hsl(var(--chart-3))" strokeDasharray="3 3" label="μ+2σ" />
                   <Scatter data={scatterData} fill="hsl(var(--chart-1))" />
                 </ScatterChart>

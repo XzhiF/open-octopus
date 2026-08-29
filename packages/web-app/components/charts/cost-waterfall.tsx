@@ -1,7 +1,7 @@
 "use client"
 
 import { useMemo } from "react"
-import { formatCost } from "@/lib/format"
+import { formatCost, formatPercent } from "@/lib/format"
 
 interface CostWaterfallProps {
   models: Array<{
@@ -65,7 +65,7 @@ export function CostWaterfall({ models, height = 240 }: CostWaterfallProps) {
                 }}
               />
               <span className="absolute inset-0 flex items-center px-2 text-xs text-white/80 font-medium truncate">
-                {formatCost(bar.total_cost)} ({bar.pctTotal.toFixed(1)}%)
+                {formatCost(bar.total_cost)} ({formatPercent(bar.pctTotal / 100, 1)})
               </span>
             </div>
             <span className="w-12 text-right text-xs text-muted-foreground">{bar.calls} calls</span>

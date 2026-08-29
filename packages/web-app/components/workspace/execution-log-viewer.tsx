@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react"
 import { ChevronDown, ChevronRight, ChevronUp, ChevronsDown, Terminal, Brain, Wrench, FileText, Play, Check, X, Clock, Users, MessageSquare, Award, RotateCcw, MessageCircle, HelpCircle, CheckCircle2, Activity, AlertTriangle, ShieldCheck } from "lucide-react"
 import { cn } from "@/lib/utils"
-import { formatDuration, formatTokenCount } from "@/lib/format"
+import { formatDuration, formatTokenCount, formatPercent } from "@/lib/format"
 import { isMergedEvent, OCTOPUS_EVENT_TYPES, type AgentEvent, type LoopIterationSummary } from "@/lib/types"
 import { useExecutionEvents } from "@/hooks/use-execution-events"
 // IterationGroup used in loop-overview panel
@@ -461,7 +461,7 @@ export function ExpandableRow({ entry }: { entry: LogEvent }) {
             <span className="text-muted-foreground">Token:</span>
             <span className="tabular-nums">{entry.heartbeatPayload.tokens_used.toLocaleString()}{entry.heartbeatPayload.tokens_budget ? ` / ${entry.heartbeatPayload.tokens_budget.toLocaleString()}` : ""}</span>
             <span className="text-muted-foreground">置信度:</span>
-            <span>{(entry.heartbeatPayload.confidence * 100).toFixed(0)}%</span>
+            <span>{formatPercent(entry.heartbeatPayload.confidence)}</span>
             {entry.heartbeatPayload.current_activity && (
               <>
                 <span className="text-muted-foreground">活动:</span>

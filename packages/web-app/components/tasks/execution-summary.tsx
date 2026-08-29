@@ -32,7 +32,7 @@ import { fetchLLMCalls } from "@/lib/observability-api"
 import type { LLMCallAggregates } from "@/lib/types"
 import { subscribeSSE } from "@/lib/sse-manager"
 import { getServerUrl } from "@/lib/server-config"
-import { formatDuration, formatTokenCount, formatCost } from "@/lib/format"
+import { formatDuration, formatTokenCount, formatCost, formatPercent } from "@/lib/format"
 import { TASK_STATUS_EVENT } from "@octopus/shared"
 import type { ArtifactIndexEntry, Task } from "@octopus/shared"
 import { ArtifactViewerDialog } from "./authoring/artifact-viewer-dialog"
@@ -350,7 +350,7 @@ export function TaskAiUsageCard({ agg, loading, runCount }: {
             <span className="text-muted-foreground">调用 <b className="text-foreground tabular-nums">{agg.totalCalls}</b> 次</span>
             <span className="tabular-nums" title="input / output tokens">↑{formatTokenCount(agg.usage.inputTokens)} ↓{formatTokenCount(agg.usage.outputTokens)}</span>
             {(agg.usage.cacheReadTokens > 0 || agg.usage.cacheCreationTokens > 0) && (
-              <span className="text-xs text-muted-foreground tabular-nums" title={agg.totals.cacheHitRate === null ? "缓存命中率: 无输入类 token" : `缓存命中率 ${(agg.totals.cacheHitRate * 100).toFixed(1)}%`}>
+              <span className="text-xs text-muted-foreground tabular-nums" title={agg.totals.cacheHitRate === null ? "缓存命中率: 无输入类 token" : `缓存命中率 ${formatPercent(agg.totals.cacheHitRate, 1)}`}>
                 缓存 读{formatTokenCount(agg.usage.cacheReadTokens)}·写{formatTokenCount(agg.usage.cacheCreationTokens)}
               </span>
             )}

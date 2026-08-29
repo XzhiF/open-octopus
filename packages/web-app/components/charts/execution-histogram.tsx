@@ -7,6 +7,10 @@ interface ExecutionHistogramProps {
   durations: number[] // milliseconds
 }
 
+// fmt-ok: recharts 轴刻度用「整秒数」紧凑标度（30s/60s），与 formatDuration 的
+// 阅读文案（1m 0s）是两种用途——轴标签要求等宽短标度，豁免全站时长单源。
+const fmtAxisSec = (ms: number) => `${(ms / 1000).toFixed(0)}s` // fmt-ok: 轴刻度 helper
+
 function computeBins(data: number[]): { min: number; max: number; binWidth: number } {
   if (data.length === 0) return { min: 0, max: 1000, binWidth: 100 }
   const sorted = [...data].sort((a, b) => a - b)
@@ -34,7 +38,7 @@ export function ExecutionHistogram({ durations }: ExecutionHistogramProps) {
 
   const chartData = Object.entries(bins)
     .filter(([, count]) => count > 0)
-    .map(([bin, count]) => ({ bin: `${(Number(bin) / 1000).toFixed(0)}s`, count }))
+    .map(([bin, count]) => ({ bin: fmtAxisSec(Number(bin)), count }))
 
   const sorted = [...durations].sort((a, b) => a - b)
   const p50 = sorted[Math.floor(sorted.length * 0.5)]
@@ -50,9 +54,9 @@ export function ExecutionHistogram({ durations }: ExecutionHistogramProps) {
             <YAxis tick={{ fontSize: 10 }} />
             <Tooltip />
             <Bar dataKey="count" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} />
-            <ReferenceLine x={`${(p50 / 1000).toFixed(0)}s`} stroke="#10b981" strokeDasharray="3 3" label={{ value: "P50", position: "top", fontSize: 9, fill: "#10b981" }} />
-            <ReferenceLine x={`${(p90 / 1000).toFixed(0)}s`} stroke="#f59e0b" strokeDasharray="3 3" label={{ value: "P90", position: "top", fontSize: 9, fill: "#f59e0b" }} />
-            <ReferenceLine x={`${(p99 / 1000).toFixed(0)}s`} stroke="#ef4444" strokeDasharray="3 3" label={{ value: "P99", position: "top", fontSize: 9, fill: "#ef4444" }} />
+            <ReferenceLine x={fmtAxisSec(p50)} stroke="#10b981" strokeDasharray="3 3" label={{ value: "P50", position: "top", fontSize: 9, fill: "#10b981" }} />
+            <ReferenceLine x={fmtAxisSec(p90)} stroke="#f59e0b" strokeDasharray="3 3" label={{ value: "P90", position: "top", fontSize: 9, fill: "#f59e0b" }} />
+            <ReferenceLine x={fmtAxisSec(p99)} stroke="#ef4444" strokeDasharray="3 3" label={{ value: "P99", position: "top", fontSize: 9, fill: "#ef4444" }} />
           </BarChart>
         </ResponsiveContainer>
       </div>

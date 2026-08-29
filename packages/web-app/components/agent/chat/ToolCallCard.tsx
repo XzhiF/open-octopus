@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
+import { formatDuration } from '@/lib/format'
 import { ChevronRight, Check, X, Loader2 } from 'lucide-react'
 import type { ToolCallRecord } from '@/lib/agent/types'
 import { cn } from '@/lib/utils'
@@ -21,12 +22,6 @@ const statusIcons: Record<string, React.ReactNode> = {
 
 function isTerminal(status?: string) {
   return status === 'success' || status === 'result' || status === 'fail'
-}
-
-function formatMs(ms: number): string {
-  if (ms < 1000) return `${ms}ms`
-  const s = ms / 1000
-  return s < 60 ? `${s.toFixed(1)}s` : `${Math.floor(s / 60)}m${Math.round(s % 60)}s`
 }
 
 function useElapsed(startedAt?: number, endedAt?: number): number {
@@ -162,7 +157,7 @@ export function ToolCallCard({ toolCall }: ToolCallCardProps) {
             'text-xs tabular-nums shrink-0',
             done ? 'text-muted-foreground' : 'text-agent-info'
           )}>
-            {elapsed > 0 && formatMs(elapsed)}
+            {elapsed > 0 && formatDuration(elapsed)}
           </span>
           <ChevronRight className={cn('h-3.5 w-3.5 transition-transform text-muted-foreground shrink-0', open && 'rotate-90')} />
         </button>

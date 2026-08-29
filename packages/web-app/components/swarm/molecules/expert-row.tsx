@@ -1,6 +1,7 @@
 "use client"
 
 import { useState } from "react"
+import { formatPercent } from "@/lib/format"
 import { cn } from "@/lib/utils"
 import { Badge } from "@/components/ui/badge"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
@@ -96,7 +97,7 @@ export function ExpertRow({ expert, highlighted = false }: ExpertRowProps) {
                     />
                   </div>
                   <span className="text-[10px] font-medium tabular-nums">
-                    {(expert.matchScore * 100).toFixed(0)}%
+                    {formatPercent(expert.matchScore)}
                   </span>
                 </div>
               )}

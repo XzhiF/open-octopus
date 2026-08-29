@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect, useState, useCallback } from "react"
+import { formatDuration } from "@/lib/format"
 import Link from "next/link"
 import { ExternalLink, RefreshCw } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -32,12 +33,10 @@ function formatTime(iso: string): string {
   })
 }
 
-function formatDuration(start: string, end: string | null): string {
+// 业务态「进行中」属调用方；耗时渲染走全站唯一 formatDuration（毫秒入参）
+function formatElapsed(start: string, end: string | null): string {
   if (!end) return "进行中"
-  const ms = new Date(end).getTime() - new Date(start).getTime()
-  if (ms < 1000) return `${ms}ms`
-  if (ms < 60000) return `${Math.round(ms / 1000)}s`
-  return `${Math.round(ms / 60000)}m`
+  return formatDuration(new Date(end).getTime() - new Date(start).getTime())
 }
 
 interface Props {
@@ -122,7 +121,7 @@ export function WorkspaceHistoryTable({ jobId, maxRetain }: Props) {
                     </Badge>
                   </td>
                   <td className="px-4 py-2 text-xs text-muted-foreground">
-                    {formatDuration(ws.started_at, ws.completed_at)}
+                    {formatElapsed(ws.started_at, ws.completed_at)}
                   </td>
                   <td className="px-4 py-2 text-right">
                     {ws.workspace_id ? (

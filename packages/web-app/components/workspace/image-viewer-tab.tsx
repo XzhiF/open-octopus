@@ -4,6 +4,7 @@ import { useState, useRef, useCallback, useEffect, WheelEvent, MouseEvent } from
 import { ZoomIn, ZoomOut, RotateCcw, Maximize2, Download, ImageOff } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { getServerUrl } from "@/lib/server-config"
+import { formatBytes } from "@/lib/format"
 
 interface ImageViewerTabProps {
   filePath: string
@@ -15,11 +16,7 @@ const IMAGE_EXTENSIONS = new Set([
   "png", "jpg", "jpeg", "gif", "webp", "ico", "bmp", "tiff", "tif", "avif", "svg",
 ])
 
-function formatFileSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
-}
+
 
 export function ImageViewerTab({ filePath, fileName, workspaceId }: ImageViewerTabProps) {
   const [scale, setScale] = useState(1)
@@ -137,7 +134,7 @@ export function ImageViewerTab({ filePath, fileName, workspaceId }: ImageViewerT
         {loaded && imageSize && (
           <span className="text-xs text-muted-foreground">
             {imageSize.w} × {imageSize.h}
-            {fileSize != null && ` · ${formatFileSize(fileSize)}`}
+            {fileSize != null && ` · ${formatBytes(fileSize)}`}
             {isVector && " · SVG"}
           </span>
         )}

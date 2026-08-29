@@ -43,7 +43,7 @@ import {
   Cell,
 } from "recharts"
 import { getServerUrl } from "@/lib/server-config"
-import { formatCost, formatTokenCount } from "@/lib/format"
+import { formatCost, formatDuration, formatPercent, formatTokenCount } from "@/lib/format"
 
 // ============ Types ============
 
@@ -455,7 +455,7 @@ function BudgetProgressRow({
       <div className="flex items-center justify-between text-xs">
         <span className="text-muted-foreground">{label}</span>
         <span className={isExceeded ? "text-red-500 font-medium" : ""}>
-          {percent.toFixed(1)}%
+          {formatPercent(percent / 100, 1)}
         </span>
       </div>
       <Progress value={Math.min(percent, 100)} className={isExceeded ? "[&_[data-slot=progress-indicator]]:bg-red-500" : ""} />
@@ -611,7 +611,7 @@ function ModelUsageChart({
               dataKey="value"
               nameKey="name"
               label={({ name, percent }) =>
-                `${name.replace("claude-", "").slice(0, 12)} (${(percent * 100).toFixed(0)}%)`
+                `${name.replace("claude-", "").slice(0, 12)} (${formatPercent(percent)})`
               }
               labelLine={false}
             >
@@ -795,7 +795,7 @@ function NodeRow({
           {formatCost(node.costUsd)}
         </TableCell>
         <TableCell className="text-right tabular-nums">
-          {(node.durationMs / 1000).toFixed(1)}s
+          {formatDuration(node.durationMs)}
         </TableCell>
       </TableRow>
       {isExpanded && (

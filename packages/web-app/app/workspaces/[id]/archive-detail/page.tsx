@@ -8,7 +8,7 @@ import { ArrowLeft, Archive, TrendingUp, DollarSign, Clock, CheckCircle2, FileTe
 import Link from "next/link"
 import { useParams } from "next/navigation"
 import { toast } from "sonner"
-import { formatCost } from "@/lib/format"
+import { formatCost, formatDuration } from "@/lib/format"
 
 interface ArchiveDetail {
   workspace_id: string
@@ -78,15 +78,6 @@ export default function ArchiveDetailPage() {
         </div>
       </div>
     )
-  }
-
-  const formatDuration = (ms: number) => {
-    const seconds = Math.floor(ms / 1000)
-    const minutes = Math.floor(seconds / 60)
-    const hours = Math.floor(minutes / 60)
-    if (hours > 0) return `${hours}h ${minutes % 60}m`
-    if (minutes > 0) return `${minutes}m ${seconds % 60}s`
-    return `${seconds}s`
   }
 
   const formatDate = (dateStr: string) => {

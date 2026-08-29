@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useCallback } from 'react'
+import { formatPercent } from "@/lib/format"
 import { Search, AlertTriangle } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -67,7 +68,7 @@ export function SessionSearch() {
               <div className="flex items-center gap-2 mb-1">
                 <h4 className="text-sm font-medium">{result.session_title}</h4>
                 <Badge variant="outline" className="text-xs">
-                  相关度: {(result.score * 100).toFixed(0)}%
+                  相关度: {formatPercent(result.score)}
                 </Badge>
               </div>
               <p className="text-sm text-muted-foreground line-clamp-2">{result.summary}</p>

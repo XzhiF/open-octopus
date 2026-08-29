@@ -1,6 +1,7 @@
 "use client"
 
 import { useState } from "react"
+import { formatDuration } from "@/lib/format"
 import { cn } from "@/lib/utils"
 import { Card, CardContent } from "@/components/ui/card"
 import { ScrollArea } from "@/components/ui/scroll-area"
@@ -210,7 +211,7 @@ export function MoaResultTab({
                 <p className="text-sm font-medium truncate">{e.role}</p>
                 <div className="flex items-center gap-1.5">
                   <span className="text-[10px] text-muted-foreground">
-                    {moaResult ? `${(moaResult.durationMs / 1000).toFixed(1)}s` : "..."}
+                    {moaResult ? formatDuration(moaResult.durationMs) : "..."}
                   </span>
                   {moaResult?.degraded && (
                     <Badge variant="outline" className="text-[9px] px-1 py-0 text-moa-resolve-degraded border-moa-resolve-degraded/40">

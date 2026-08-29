@@ -105,7 +105,7 @@ export function applyChunkToMessages(prev: ChatMessage[], chunk: Record<string, 
             thinkingDone: true,
             thinkingDuration: serverDuration ?? (
               m.thinkingStartMs
-                ? `${((Date.now() - m.thinkingStartMs) / 1000).toFixed(1)}s`
+                ? `${((Date.now() - m.thinkingStartMs) / 1000).toFixed(1)}s` // fmt-ok: 协议文本
                 : undefined
             ),
           }
@@ -156,7 +156,7 @@ export function applyChunkToMessages(prev: ChatMessage[], chunk: Record<string, 
       const toolId = chunk.toolCallId as string
       const seconds = chunk.elapsedSeconds as number
       return prev.map(m => m.toolCallId === toolId && m.toolStatus === "running"
-        ? { ...m, toolDuration: `${seconds.toFixed(1)}s` }
+        ? { ...m, toolDuration: `${seconds.toFixed(1)}s` } // fmt-ok: 协议文本
         : m
       )
     }

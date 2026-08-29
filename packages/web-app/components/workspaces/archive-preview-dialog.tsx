@@ -13,7 +13,7 @@ import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { formatCost, formatTokenCount } from "@/lib/format"
+import { formatPercent, formatCost, formatTokenCount, formatDuration } from "@/lib/format"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import {
   Select,
@@ -270,15 +270,6 @@ export function ArchivePreviewDialog({
     )
   }
 
-  const formatDuration = (ms: number) => {
-    const seconds = Math.floor(ms / 1000)
-    const minutes = Math.floor(seconds / 60)
-    const hours = Math.floor(minutes / 60)
-    if (hours > 0) return `${hours}h ${minutes % 60}m`
-    if (minutes > 0) return `${minutes}m ${seconds % 60}s`
-    return `${seconds}s`
-  }
-
   if (!workspace) return null
 
   return (
@@ -405,7 +396,7 @@ export function ArchivePreviewDialog({
                 <CardContent>
                   <div className="text-2xl font-bold">{preview.stats.execution_count}</div>
                   <div className="text-xs text-muted-foreground">
-                    成功率: {(preview.stats.success_rate > 1 ? preview.stats.success_rate : preview.stats.success_rate * 100).toFixed(1)}%
+                    成功率: {formatPercent(preview.stats.success_rate > 1 ? preview.stats.success_rate / 100 : preview.stats.success_rate, 1)}
                   </div>
                 </CardContent>
               </Card>
@@ -704,7 +695,7 @@ export function ArchivePreviewDialog({
                                           {exp.scope ?? "org"}: {exp.target ?? "all"}
                                         </Badge>
                                         <Badge variant="secondary" className="text-xs">
-                                          置信度: {((exp.confidence ?? 0.5) * 100).toFixed(0)}%
+                                          置信度: {formatPercent(exp.confidence ?? 0.5)}
                                         </Badge>
                                       </div>
                                     </div>

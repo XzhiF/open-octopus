@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useRef, useEffect, useCallback, useMemo } from "react"
+import { formatDuration } from "@/lib/format"
 import type { ChatMessage, ChatSession } from "@/lib/types"
 import { MessageBubble } from "./message-bubble"
 import { SessionTabs } from "./session-tabs"
@@ -9,13 +10,6 @@ import { Send, Square, Check, X } from "lucide-react"
 
 const SHORT_PLACEHOLDER = "输入消息..."
 const LONG_PLACEHOLDER = "输入消息... (Enter发送，Shift+Enter换行)"
-
-function formatTime(seconds: number): string {
-  if (seconds < 60) return `${seconds}s`
-  const m = Math.floor(seconds / 60)
-  const s = seconds % 60
-  return `${m}m ${s}s`
-}
 
 interface StreamingStatusBarProps {
   isStreaming: boolean
@@ -42,7 +36,7 @@ function StreamingStatusBar({ isStreaming, streamStartMs, streamEndState }: Stre
     return (
       <div className="px-4 py-1.5 text-xs text-emerald-500 border-t border-border/50 flex items-center gap-1.5 shrink-0">
         <Check className="w-3 h-3 shrink-0" />
-        <span>完成 耗时 {formatTime(elapsed)}</span>
+        <span>完成 耗时 {formatDuration(elapsed * 1000)}</span>
       </div>
     )
   }
@@ -51,7 +45,7 @@ function StreamingStatusBar({ isStreaming, streamStartMs, streamEndState }: Stre
     return (
       <div className="px-4 py-1.5 text-xs text-red-400 border-t border-border/50 flex items-center gap-1.5 shrink-0">
         <X className="w-3 h-3 shrink-0" />
-        <span>已中断 {formatTime(elapsed)}</span>
+        <span>已中断 {formatDuration(elapsed * 1000)}</span>
       </div>
     )
   }
@@ -59,7 +53,7 @@ function StreamingStatusBar({ isStreaming, streamStartMs, streamEndState }: Stre
   return (
     <div className="px-4 py-1.5 text-xs text-muted-foreground border-t border-border/50 flex items-center gap-2 shrink-0">
       <div className="w-2 h-2 bg-blue-400 rounded-full animate-pulse shrink-0" />
-      <span>AI 正在工作 {formatTime(elapsed)}</span>
+      <span>AI 正在工作 {formatDuration(elapsed * 1000)}</span>
     </div>
   )
 }

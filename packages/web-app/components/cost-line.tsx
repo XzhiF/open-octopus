@@ -1,7 +1,7 @@
 "use client"
 
 import { cn } from "@/lib/utils"
-import { formatCost } from "@/lib/format"
+import { formatCost, formatDuration } from "@/lib/format"
 import { Coins, Repeat, Wrench, Clock } from "lucide-react"
 
 interface CostLineProps {
@@ -38,10 +38,9 @@ export function CostLine({ costUsd, turns, tools, durationMs }: CostLineProps) {
   }
 
   if (durationMs != null && durationMs > 0) {
-    const seconds = durationMs / 1000
     parts.push(
       <span key="duration" className="flex items-center gap-1">
-        <Clock className="h-3 w-3" />{seconds < 60 ? `${seconds.toFixed(0)}s` : `${(seconds / 60).toFixed(1)}m`}
+        <Clock className="h-3 w-3" />{formatDuration(durationMs)}
       </span>
     )
   }

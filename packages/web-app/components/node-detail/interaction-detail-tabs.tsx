@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useEffect } from "react"
+import { formatDuration } from "@/lib/format"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { MessageBubble } from "@/components/workspace/chat/message-bubble"
 import type { ChatMessage, StepExecution } from "@/lib/types"
@@ -181,7 +182,7 @@ export function InteractionDetailTabs({
             return dur != null && dur > 0 ? (
               <div className="bg-muted rounded p-2 text-xs">
                 <div className="text-muted-foreground">Duration</div>
-                <div className="font-medium">{dur.toFixed(1)}s</div>
+                <div className="font-medium">{formatDuration(dur * 1000)}</div>
               </div>
             ) : null
           })()}

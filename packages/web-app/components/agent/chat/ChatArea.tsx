@@ -378,7 +378,7 @@ export function ChatArea({
                 >
                   <span>📋</span>
                   <span>{formatTokenCount(contextUsage.totalTokens)} / {formatTokenCount(contextUsage.maxTokens)}</span>
-                  <span className="opacity-60">({contextUsage.percentage.toFixed(1)}%)</span>
+                  <span className="opacity-60">({contextUsage.percentage.toFixed(1)}%) {/* fmt-ok: percentage 量纲未经 server 核实（providers wire），待查后收编 */}</span>
                   {contextExpanded ? <ChevronDown className="size-2.5" /> : <ChevronUp className="size-2.5" />}
                 </button>
               )}

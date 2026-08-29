@@ -15,7 +15,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Loader2, TrendingUp, DollarSign, AlertCircle, Lightbulb, Package, FileText, Check, Badge as BadgeIcon } from "lucide-react"
 import { getServerUrl } from "@/lib/server-config"
-import { formatCost, formatTokenCount } from "@/lib/format"
+import { formatPercent, formatCost, formatTokenCount, formatDuration } from "@/lib/format"
 
 interface ArchiveViewDialogProps {
   workspaceId: string | null
@@ -63,15 +63,6 @@ interface ArchiveData {
   extracted_agents: number
   analysis_report: unknown
   metadata: string | null
-}
-
-function formatDuration(ms: number) {
-  const seconds = Math.floor(ms / 1000)
-  const minutes = Math.floor(seconds / 60)
-  const hours = Math.floor(minutes / 60)
-  if (hours > 0) return `${hours}h ${minutes % 60}m`
-  if (minutes > 0) return `${minutes}m ${seconds % 60}s`
-  return `${seconds}s`
 }
 
 export function ArchiveViewDialog({ workspaceId, workspaceName, open, onOpenChange }: ArchiveViewDialogProps) {
@@ -455,7 +446,7 @@ export function ArchiveViewDialog({ workspaceId, workspaceName, open, onOpenChan
                                               <Badge variant="outline" className="text-xs">{exp.scope}: {exp.target ?? "all"}</Badge>
                                             )}
                                             {exp.confidence != null && (
-                                              <Badge variant="secondary" className="text-xs">置信度: {(exp.confidence * 100).toFixed(0)}%</Badge>
+                                              <Badge variant="secondary" className="text-xs">置信度: {formatPercent(exp.confidence)}</Badge>
                                             )}
                                             {adopted && <Badge className="text-xs bg-green-600">已采纳</Badge>}
                                           </div>

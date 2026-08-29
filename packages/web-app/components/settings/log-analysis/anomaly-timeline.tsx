@@ -2,7 +2,7 @@
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { AlertOctagon, AlertTriangle } from "lucide-react"
-import { formatCost } from "@/lib/format"
+import { formatCost, formatDuration } from "@/lib/format"
 import type { DurationAnomaly, ConsecutiveFailure, CostAnomaly } from "@/lib/analytics-types"
 
 interface AnomalyTimelineProps {
@@ -22,7 +22,7 @@ export function AnomalyTimeline({ durationAnomalies, consecutiveFailures, costAn
     ...durationAnomalies.slice(0, 10).map(a => ({
       timestamp: "",
       severity: a.severity,
-      description: `${a.nodeId} 耗时 ${(a.currentDurationMs / 1000).toFixed(0)}s (Z=${a.zScore})`,
+      description: `${a.nodeId} 耗时 ${formatDuration(a.currentDurationMs)} (Z=${a.zScore})`,
     })),
     ...consecutiveFailures.map(c => ({
       timestamp: c.streakEnd,

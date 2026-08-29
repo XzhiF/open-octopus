@@ -1,7 +1,7 @@
 "use client"
 
 import { cn } from "@/lib/utils"
-import { formatCost } from "@/lib/format"
+import { formatCost, formatDuration, formatPercent } from "@/lib/format"
 import { Badge } from "@/components/ui/badge"
 
 const GRADE_COLORS: Record<string, { bg: string; text: string; border: string }> = {
@@ -35,8 +35,8 @@ export function WorkflowHealthCard({ workflowRef, healthScore, grade, successRat
       </div>
       <div className="flex items-center gap-4 text-xs text-muted-foreground">
         <span className="tabular-nums">健康分: {healthScore}</span>
-        <span className="tabular-nums">成功率: {(successRate * 100).toFixed(0)}%</span>
-        <span className="tabular-nums">{(avgDurationMs / 1000).toFixed(1)}s</span>
+        <span className="tabular-nums">成功率: {formatPercent(successRate)}</span>
+        <span className="tabular-nums">{formatDuration(avgDurationMs)}</span>
         <span className="tabular-nums">{formatCost(totalCost)}</span>
       </div>
     </div>

@@ -1,6 +1,7 @@
 "use client"
 
 import { useState } from "react"
+import { formatDuration } from "@/lib/format"
 import { cn } from "@/lib/utils"
 import type { TurnGroup, AgentTraceEvent } from "@/lib/types"
 import { ChevronRight, Brain, Wrench, MessageSquare, AlertTriangle, Clock } from "lucide-react"
@@ -108,7 +109,7 @@ export function TurnSection({ turn, isExpanded, isLive, onToggle }: TurnSectionP
             </span>
           )}
           <span className="text-xs text-muted-foreground tabular-nums">
-            {duration > 0 ? `${(duration / 1000).toFixed(1)}s` : ""}
+            {duration > 0 ? formatDuration(duration) : ""}
           </span>
         </div>
       </button>

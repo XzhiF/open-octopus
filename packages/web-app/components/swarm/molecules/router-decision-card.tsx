@@ -1,6 +1,7 @@
 "use client"
 
 import { useState } from "react"
+import { formatPercent } from "@/lib/format"
 import { cn } from "@/lib/utils"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { ChevronDown, ChevronRight, Brain } from "lucide-react"
@@ -56,7 +57,7 @@ export function RouterDecisionCard({ decision }: RouterDecisionCardProps) {
                           />
                         </div>
                         <span className="text-[10px] font-medium tabular-nums">
-                          {(expert.matchScore * 100).toFixed(0)}%
+                          {formatPercent(expert.matchScore)}
                         </span>
                       </div>
                     </div>

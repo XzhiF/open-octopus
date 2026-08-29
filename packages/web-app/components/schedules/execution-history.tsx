@@ -1,5 +1,6 @@
 "use client"
 
+import { formatDuration } from "@/lib/format"
 import {
   Table,
   TableBody,
@@ -22,16 +23,6 @@ interface Props {
   loading: boolean
   onPageChange: (page: number) => void
   onRetry: (executionId: string) => Promise<unknown>
-}
-
-function formatDuration(ms: number | null): string {
-  if (ms === null) return "-"
-  if (ms < 1000) return `${ms}ms`
-  const seconds = Math.floor(ms / 1000)
-  if (seconds < 60) return `${seconds}s`
-  const minutes = Math.floor(seconds / 60)
-  const remaining = seconds % 60
-  return `${minutes}m ${remaining}s`
 }
 
 export function ExecutionHistory({

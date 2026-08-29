@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import { formatPercent, formatDuration } from "@/lib/format"
 import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
@@ -197,10 +198,10 @@ function ExecutionHistory({ executions, summary }: { executions: JobExecution[];
           失败 {summary.failure}
         </span>
         <span className="text-muted-foreground">
-          成功率 {summary.success_rate}%
+          成功率 {formatPercent(summary.success_rate > 1 ? summary.success_rate / 100 : summary.success_rate)}
         </span>
         <span className="text-muted-foreground">
-          平均耗时 {summary.avg_duration_ms > 0 ? `${(summary.avg_duration_ms / 1000).toFixed(1)}s` : '—'}
+          平均耗时 {formatDuration(summary.avg_duration_ms)}
         </span>
       </div>
 
@@ -230,7 +231,7 @@ function ExecutionHistory({ executions, summary }: { executions: JobExecution[];
                 {exec.status}
               </span>
               <span className="text-muted-foreground w-16">
-                {exec.duration_ms != null ? `${(exec.duration_ms / 1000).toFixed(1)}s` : '—'}
+                {formatDuration(exec.duration_ms)}
               </span>
               {exec.report_summary && (
                 <span className="text-muted-foreground truncate flex-1" title={exec.report_summary}>

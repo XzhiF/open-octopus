@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback, useMemo } from "react"
 import { cn } from "@/lib/utils"
-import { formatDuration, formatTokenCount, formatCost } from "@/lib/format"
+import { formatDuration, formatTokenCount, formatCost, formatPercent } from "@/lib/format"
 import { getExecutorType } from "@/lib/executor-type"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -793,7 +793,7 @@ function CostPanel({ aggregates, calls, loading }: CostPanelProps) {
           </div>
           <div>
             <div className="text-muted-foreground">Cache Hit Rate</div>
-            <div className="text-lg font-bold tabular-nums">{aggregates.totals.cacheHitRate === null ? "—" : `${(aggregates.totals.cacheHitRate * 100).toFixed(0)}%`}</div>
+            <div className="text-lg font-bold tabular-nums">{formatPercent(aggregates.totals.cacheHitRate)}</div>
           </div>
           <div>
             <div className="text-muted-foreground">Input / Output</div>
