@@ -742,6 +742,7 @@ if (shouldServe) {
         executors.set('workflow', new WorkflowExecutor(
           sse, daos!.scheduleConfig, daos!.scheduleRun, daos!.execution, workspaceService!,
           scheduleStatusListener,
+          daos!.task,
         ))
         executors.set('agent', new AgentExecutor(
           daos!.scheduleRun, daos!.execution, undefined,

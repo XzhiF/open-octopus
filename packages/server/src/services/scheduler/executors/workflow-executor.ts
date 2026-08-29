@@ -9,13 +9,14 @@ import { NotificationService } from '../../notification'
 import { WorkspaceService } from '../../workspace'
 import type { SchedulerJob, WorkflowConfig, WorkflowChainItem, ScheduleStatusListener, OriginType, TaskSpec } from "@octopus/shared"
 import type { Executor, ExecutionResult } from './executor-interface'
-import { ScheduleConfigDAO, ScheduleRunDAO, ExecutionDAO } from '../../../db/dao'
+import { ScheduleConfigDAO, ScheduleRunDAO, ExecutionDAO, TaskDAO } from '../../../db/dao'
 // Ticket 08 (ADR-0009): the orchestration-strategy seam owns the composition
 // workflow ref + the composite threshold as the single source of truth. The
 // executor's isCompositeTask below is the POST-materialization config-shape
 // detector (a different layer — it sees the materialized WorkflowConfig, not
 // the original TaskSpec); it shares the seam's constant so the two never drift.
 import { COMPOSITION_WF_REF } from '../orchestration-strategy'
+import { taskWorkspaceName } from '../task-ws-name'
 
 const MAX_PARALLEL_WORKSPACES = parseInt(
   process.env.OCTOPUS_SCHEDULER_MAX_PARALLEL ?? '3',
@@ -96,6 +97,7 @@ export class WorkflowExecutor implements Executor {
   private configDAO: ScheduleConfigDAO
   private runDAO: ScheduleRunDAO
   private execDAO: ExecutionDAO
+  private taskDAO: TaskDAO | null
 
   constructor(
     private sse: SSEService,
@@ -109,11 +111,17 @@ export class WorkflowExecutor implements Executor {
     // self-filters by origin_type='task'. Optional so existing 5-arg call
     // sites keep compiling.
     private scheduleStatusListener?: ScheduleStatusListener,
+    // task-ws-name (2026-08-29): optional TaskDAO — when present, task-origin
+    // schedules create their workspace as `task:{任务标题}` instead of the raw
+    // taskpool-{scheduleId} name. Optional (trailing) so existing call sites
+    // keep compiling; without it the old naming stands.
+    taskDAO?: TaskDAO,
   ) {
     this.workspaceService = workspaceService
     this.configDAO = configDAO
     this.runDAO = runDAO
     this.execDAO = execDAO
+    this.taskDAO = taskDAO ?? null
   }
 
   getType(): string {
@@ -210,9 +218,17 @@ export class WorkflowExecutor implements Executor {
     // ponytail: requirement-type schedules use a deterministic taskpool-{schedule_id}-{ts}
     // name so failed drafts can be traced back to their schedule; cron jobs keep the
     // AI-supplied branch_prefix from workspace_spec.
+    // task-ws-name (2026-08-29): task-origin schedules display `task:{任务标题}`
+    // (用户改过的 name，或默认名时从 goal 生成的 chatbot 同款智能标题)；查不到
+    // 任务/取不到标题时回退旧 taskpool 命名。branch_prefix 不变（git 分支追溯）。
     const isRequirement = job.trigger_source === 'requirement'
     const branchPrefix = isRequirement ? `taskpool-${schedule.id}` : config.workspace_spec.branch_prefix
-    const workspaceName = isRequirement ? `${branchPrefix}-${branchSuffix}` : `${config.workspace_spec.branch_prefix}-${branchSuffix}`
+    const taskRow = schedule.origin_type === 'task' && schedule.origin_id && this.taskDAO
+      ? this.taskDAO.getById(schedule.origin_id)
+      : null
+    const taskWsName = taskRow ? taskWorkspaceName({ name: taskRow.name, task_spec: taskRow.task_spec }) : null
+    const workspaceName = taskWsName
+      ?? (isRequirement ? `${branchPrefix}-${branchSuffix}` : `${config.workspace_spec.branch_prefix}-${branchSuffix}`)
 
     // 6. Create a new workspace from spec
     let workspace
