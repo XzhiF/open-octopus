@@ -7,6 +7,7 @@ export function SchedulerTableSkeleton() {
         <div key={i} className="flex items-center gap-4 px-2">
           <Skeleton className="h-5 w-40 rounded" />
           <Skeleton className="h-5 w-16 rounded" />
+          <Skeleton className="h-5 w-14 rounded-full" />
           <Skeleton className="h-5 w-28 rounded" />
           <Skeleton className="h-5 w-10 rounded-full" />
           <Skeleton className="h-5 w-24 rounded" />

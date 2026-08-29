@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useEffect, useCallback, useRef } from "react"
+import { useSearchParams } from "next/navigation"
 import { RefreshCw, Plus, Trash2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
@@ -88,6 +89,22 @@ export default function TasksPage() {
   const openNew = () => { setModalTask(null); setModalOpen(true) }
   const openCard = (task: Task) => { setModalTask(task); setModalOpen(true) }
   const close = () => { setModalOpen(false); setModalTask(null) }
+
+  // Deep link: /tasks?task=<id> (emitted by the scheduler table's 任务 origin
+  // badge). Opens that task's modal once the fetched board contains it; the
+  // ref guard means a manual close is not re-opened by the next 10s poll.
+  const searchParams = useSearchParams()
+  const deepLinkAppliedRef = useRef(false)
+  useEffect(() => {
+    if (deepLinkAppliedRef.current || modalOpen || tasks.length === 0) return
+    const targetId = searchParams.get("task")
+    if (!targetId) return
+    const match = tasks.find((t) => t.id === targetId)
+    if (match) {
+      deepLinkAppliedRef.current = true
+      openCard(match)
+    }
+  }, [tasks, modalOpen, searchParams])
 
   // Delete a draft task (soft-delete). Only draft tasks are deletable from
   // the kanban card; non-draft tasks require abort-first (server 409 guard).

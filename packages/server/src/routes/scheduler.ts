@@ -17,6 +17,7 @@ import { DashboardService } from '../services/scheduler/dashboard-service'
 import { ExportService } from '../services/scheduler/export-service'
 import { ConfigValidationError } from '../services/scheduler/config-validator'
 import { parseCronExpression, naturalLanguageToCron } from '../services/cron-utils'
+import { OriginTypeSchema, type OriginType } from '@octopus/shared'
 import type { AgentSessionDAO } from '../db/dao'
 
 // G7 (retire 'taskpool-draft' sentinel): requirement-type drafts no longer bind to a
@@ -196,9 +197,23 @@ export function createSchedulerRoutes(
   // GET /jobs — list with pagination, filtering, sorting
   router.get('/jobs', rateLimitDefault, (c) => {
     try {
-      // Default to 'cron' so requirement-type drafts don't pollute cron UI listings;
-      // callers wanting requirement-type must pass ?trigger_source=requirement explicitly.
+      // 2026-08-29 (task-board observability, approach A): the old default
+      // `trigger_source ?? 'cron'` hid every origin_type='task' schedule the
+      // readyTask dispatch seam creates — running tasks were invisible in the
+      // 系统调度 UI while DashboardCards counted them. Now: NO origin filter by
+      // default (the table spans all origins), with an explicit ?origin=
+      // single-origin filter for focused views. ?trigger_source= stays for
+      // backward compatibility (legacy 'cron'/'requirement' coarse mapping).
       const rawTrigger = c.req.query('trigger_source') as 'cron' | 'requirement' | undefined
+      const rawOrigin = c.req.query('origin')
+      let origin: OriginType | undefined
+      if (rawOrigin !== undefined) {
+        const parsed = OriginTypeSchema.safeParse(rawOrigin)
+        if (!parsed.success) {
+          return c.json({ error: `invalid origin: '${rawOrigin}' (expected one of: cron, task, agent, manual, api)` }, 400)
+        }
+        origin = parsed.data
+      }
       const result = service.listJobs({
         page: parseIntParam(c.req.query('page'), 1),
         limit: Math.min(parseIntParam(c.req.query('limit'), 20), 100),
@@ -208,7 +223,8 @@ export function createSchedulerRoutes(
         workspace_id: c.req.query('workspace_id'),
         sort: c.req.query('sort') as 'name' | 'created_at' | 'next_trigger_at' | undefined,
         order: c.req.query('order') as 'asc' | 'desc' | undefined,
-        trigger_source: rawTrigger ?? 'cron',
+        trigger_source: rawTrigger,
+        origin,
       })
       return c.json(result)
     } catch (err: unknown) {
