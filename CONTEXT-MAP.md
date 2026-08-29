@@ -35,7 +35,8 @@
 | **技能叠加** | 分身继承全局 skills + 自己专属 skills（built-in/{name}/skills/），按优先级排序。 | server |
 | **人格替换** | 分身用自己的 persona.md，完全替换主 Agent 的 persona。每个分身有独立人格。 | server |
 | **provider_session_id** | Claude Code SDK 的 resume 会话 ID。统一后所有分身都使用 resume 省 token。存储在 SessionRow 上。 | server, providers |
-| **@@mention** | 用户在聊天中输入 `@@分身代号` 触发委托调用的语法。前端拦截解析，后端通过 `delegate_to` 字段直接调 CloneRuntime。 | server, web-app |
+| **TokenUsage（用量记录）** | 全站唯一的 token 用量规范形状 `{inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens}`，四字段**纯值**（input 不含 cache）。`total` 不是字段，需具名函数显式选口径。snake↔camel 只在 3 个 seam（SDK 入口 / DB 行 / wire 出口）转换。定义于 `shared/types/usage.ts`（Zod 派生）。见 ADR-0014。 | shared, providers, engine, server, web-app |
+| **UsageLedger（用量台账）** | *（预留词，C3 未落地）* server 侧单一聚合 module：写侧三路收敛、读侧「总 tokens / 总费用 / cacheHitRate」各只有一个定义与量纲。C1 只统一了单次执行形状，跨执行聚合归此。 | server || **@@mention** | 用户在聊天中输入 `@@分身代号` 触发委托调用的语法。前端拦截解析，后端通过 `delegate_to` 字段直接调 CloneRuntime。 | server, web-app |
 | **委托 (Delegation)** | 当前聊天 Agent 将消息转发给指定分身处理。前端解析 @@mention → POST `{ delegate_to }` → 后端调 CloneRuntime → 分身回复内联显示。 | server, web-app |
 | **分身文件白名单** | 分身文件管理 API 允许读写的路径列表（persona.md / config.json / memory/*），防止目录穿越攻击。 | server |
 | **英文代号 (name)** | 分身唯一标识，`/^[a-z0-9-]+$/`，用于文件路径和 API 路由。与 display_name 分离。 | shared |
