@@ -8,6 +8,7 @@ import { ArrowLeft, Archive, TrendingUp, DollarSign, Clock, CheckCircle2, FileTe
 import Link from "next/link"
 import { useParams } from "next/navigation"
 import { toast } from "sonner"
+import { formatCost } from "@/lib/format"
 
 interface ArchiveDetail {
   workspace_id: string
@@ -156,9 +157,9 @@ export default function ArchiveDetailPage() {
             <DollarSign className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">${archive.total_cost.toFixed(2)}</div>
+            <div className="text-2xl font-bold">{formatCost(archive.total_cost)}</div>
             <p className="text-xs text-muted-foreground">
-              Avg ${(archive.total_cost / Math.max(archive.execution_count, 1)).toFixed(2)}/exec
+              Avg {formatCost(archive.total_cost / Math.max(archive.execution_count, 1))}/exec
             </p>
           </CardContent>
         </Card>

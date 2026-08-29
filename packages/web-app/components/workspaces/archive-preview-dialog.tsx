@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { formatCost, formatTokenCount } from "@/lib/format"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import {
   Select,
@@ -276,10 +277,6 @@ export function ArchivePreviewDialog({
     if (hours > 0) return `${hours}h ${minutes % 60}m`
     if (minutes > 0) return `${minutes}m ${seconds % 60}s`
     return `${seconds}s`
-  }
-
-  const formatCost = (cost: number) => {
-    return `$${cost.toFixed(2)}`
   }
 
   if (!workspace) return null
@@ -555,22 +552,21 @@ export function ArchivePreviewDialog({
                   if (!ts?.total || (ts.total.inputTokens === 0 && ts.total.outputTokens === 0)) {
                     return <div className="text-center py-8 text-muted-foreground">无 Token 使用数据</div>
                   }
-                  const fmt = (n: number) => n >= 1000000 ? `${(n / 1000000).toFixed(1)}M` : n >= 1000 ? `${(n / 1000).toFixed(1)}K` : String(n)
                   return (
                     <>
                       {/* Summary cards */}
                       <div className="grid grid-cols-3 gap-4">
                         <Card><CardContent className="pt-4 text-center">
                           <div className="text-xs text-muted-foreground mb-1">Input Tokens</div>
-                          <div className="text-xl font-bold">{fmt(ts.total.inputTokens)}</div>
+                          <div className="text-xl font-bold">{formatTokenCount(ts.total.inputTokens)}</div>
                         </CardContent></Card>
                         <Card><CardContent className="pt-4 text-center">
                           <div className="text-xs text-muted-foreground mb-1">Output Tokens</div>
-                          <div className="text-xl font-bold">{fmt(ts.total.outputTokens)}</div>
+                          <div className="text-xl font-bold">{formatTokenCount(ts.total.outputTokens)}</div>
                         </CardContent></Card>
                         <Card><CardContent className="pt-4 text-center">
                           <div className="text-xs text-muted-foreground mb-1">Total Cost</div>
-                          <div className="text-xl font-bold">${ts.total.cost.toFixed(4)}</div>
+                          <div className="text-xl font-bold">{formatCost(ts.total.cost)}</div>
                         </CardContent></Card>
                       </div>
 
@@ -590,9 +586,9 @@ export function ArchivePreviewDialog({
                                 {ts.byModel.map((m: any) => (
                                   <tr key={m.model} className="border-b last:border-0">
                                     <td className="py-1 font-mono">{m.model}</td>
-                                    <td className="text-right py-1">{fmt(m.inputTokens)}</td>
-                                    <td className="text-right py-1">{fmt(m.outputTokens)}</td>
-                                    <td className="text-right py-1">${m.cost.toFixed(4)}</td>
+                                    <td className="text-right py-1">{formatTokenCount(m.inputTokens)}</td>
+                                    <td className="text-right py-1">{formatTokenCount(m.outputTokens)}</td>
+                                    <td className="text-right py-1">{formatCost(m.cost)}</td>
                                   </tr>
                                 ))}
                               </tbody>
@@ -612,11 +608,11 @@ export function ArchivePreviewDialog({
                                 <div key={wf.workflowRef} className="border rounded-md p-3">
                                   <div className="flex justify-between items-center mb-2">
                                     <span className="text-sm font-medium">{wf.workflowRef}</span>
-                                    <span className="text-xs text-muted-foreground">{fmt(wf.inputTokens + wf.outputTokens)} tokens · ${wf.cost.toFixed(4)}</span>
+                                    <span className="text-xs text-muted-foreground">{formatTokenCount(wf.inputTokens + wf.outputTokens)} tokens · {formatCost(wf.cost)}</span>
                                   </div>
                                   {wf.byModel.length > 0 && (
                                     <div className="flex gap-3 text-xs text-muted-foreground mb-2">
-                                      {wf.byModel.map((m: any) => <span key={m.model}>{m.model}: {fmt(m.inputTokens + m.outputTokens)}</span>)}
+                                      {wf.byModel.map((m: any) => <span key={m.model}>{m.model}: {formatTokenCount(m.inputTokens + m.outputTokens)}</span>)}
                                     </div>
                                   )}
                                   {wfNodes.length > 0 && (
@@ -627,7 +623,7 @@ export function ArchivePreviewDialog({
                                             <Badge variant="outline" className="text-[10px] px-1">{node.nodeType}</Badge>
                                             <span className="font-mono">{node.nodeName}</span>
                                           </span>
-                                          <span className="text-muted-foreground">{fmt(node.inputTokens + node.outputTokens)} tokens · ${node.cost.toFixed(4)}</span>
+                                          <span className="text-muted-foreground">{formatTokenCount(node.inputTokens + node.outputTokens)} tokens · {formatCost(node.cost)}</span>
                                         </div>
                                       ))}
                                     </div>

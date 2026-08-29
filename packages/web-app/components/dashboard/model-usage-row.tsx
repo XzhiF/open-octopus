@@ -1,7 +1,7 @@
 "use client"
 
 import { cn } from "@/lib/utils"
-import { formatTokenCount } from "@/lib/format"
+import { formatTokenCount, formatCost } from "@/lib/format"
 import type { ModelUsageGroup } from "@/lib/types"
 
 interface ModelUsageRowProps {
@@ -10,11 +10,6 @@ interface ModelUsageRowProps {
 }
 
 export function ModelUsageRow({ usage, className }: ModelUsageRowProps) {
-  const formatCost = (cost: number | null) => {
-    if (cost === null) return "-"
-    return `$${cost.toFixed(4)}`
-  }
-
   // C3: 折叠口径废除 —— 输入/输出纯值，cache 分项在 tooltip 与徽标
   const totalInput = usage.inputTokens
   const totalOutput = usage.outputTokens

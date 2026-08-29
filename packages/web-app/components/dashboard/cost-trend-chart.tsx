@@ -1,6 +1,7 @@
 "use client"
 
 import { ChartErrorBoundary } from "@/components/ui/chart-error-boundary"
+import { formatCost } from "@/lib/format"
 
 interface CostTrendChartProps {
   data: Array<{ date: string; total_cost: number; calls: number }>
@@ -24,10 +25,10 @@ export function CostTrendChart({ data, days }: CostTrendChartProps) {
               key={d.date}
               className="flex-1 bg-blue-500/80 hover:bg-blue-500 rounded-t transition-colors relative group"
               style={{ height: `${(d.total_cost / maxCost) * 100}%`, minHeight: d.total_cost > 0 ? '4px' : '0' }}
-              title={`${d.date}: $${d.total_cost.toFixed(2)} (${d.calls} calls)`}
+              title={`${d.date}: ${formatCost(d.total_cost)} (${d.calls} calls)`}
             >
               <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 px-2 py-1 bg-popover text-popover-foreground text-xs rounded shadow opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-10">
-                {d.date}: ${d.total_cost.toFixed(2)}
+                {d.date}: {formatCost(d.total_cost)}
               </div>
             </div>
           ))}

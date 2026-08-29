@@ -1,6 +1,7 @@
 "use client"
 
 import { cn } from "@/lib/utils"
+import { formatCost } from "@/lib/format"
 import { Coins, Repeat, Wrench, Clock } from "lucide-react"
 
 interface CostLineProps {
@@ -16,7 +17,7 @@ export function CostLine({ costUsd, turns, tools, durationMs }: CostLineProps) {
 
   parts.push(
     <span key="cost" className="flex items-center gap-1 font-medium text-amber-600 dark:text-amber-400">
-      <Coins className="h-3 w-3" />{costUsd === null ? "未定价" : `$${costUsd.toFixed(2)}`}
+      <Coins className="h-3 w-3" />{formatCost(costUsd)}
     </span>
   )
 

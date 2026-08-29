@@ -1,6 +1,6 @@
 "use client"
 
-import { formatTokenCount } from "@/lib/format"
+import { formatTokenCount, formatCost } from "@/lib/format"
 import type { ModelRanking } from "@/lib/types"
 
 interface ModelRankingItemProps {
@@ -9,11 +9,6 @@ interface ModelRankingItemProps {
 }
 
 export function ModelRankingItem({ rank, item }: ModelRankingItemProps) {
-  const formatCost = (cost: number | null, complete: boolean) => {
-    if (cost === null) return "-"
-    return complete ? `$${cost.toFixed(4)}` : `≈$${cost.toFixed(4)}`
-  }
-
   // C3: 折叠口径废除 —— 纯值
   const totalInput = item.inputTokens
   const totalOutput = item.outputTokens

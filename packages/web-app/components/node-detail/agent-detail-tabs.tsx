@@ -6,6 +6,7 @@ import { AgentTimeline } from "@/components/agent-timeline/agent-timeline"
 import { CostLine } from "@/components/cost-line"
 import { useAgentTraces } from "@/hooks/use-agent-traces"
 import { useLLMCalls } from "@/hooks/use-llm-calls"
+import { formatCost } from "@/lib/format"
 
 interface AgentDetailTabsProps {
   executionId: string
@@ -46,7 +47,7 @@ export function AgentDetailTabs({ executionId, nodeId, step, workspaceId, isRunn
             {Object.entries(aggregates.modelBreakdown).map(([model, stats]) => (
               <div key={model} className="text-xs flex justify-between">
                 <span className="text-muted-foreground">{model}</span>
-                <span className="tabular-nums">{stats.calls} calls · {stats.costUsd === null ? "未定价" : `$${stats.costUsd.toFixed(2)}`}</span>
+                <span className="tabular-nums">{stats.calls} calls · {formatCost(stats.costUsd)}</span>
               </div>
             ))}
           </div>

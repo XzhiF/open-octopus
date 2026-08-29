@@ -2,7 +2,7 @@
 
 import { ArrowUpRight, ArrowDownRight } from "lucide-react"
 import { cn } from "@/lib/utils"
-import { formatDuration } from "@/lib/format"
+import { formatDuration, formatCost } from "@/lib/format"
 
 interface HeroMetricsProps {
   totalExecutions: number
@@ -18,11 +18,10 @@ interface HeroMetricsProps {
 }
 
 function TrendBadge({ current, prev, unit = "", isDuration = false }: { current: number; prev?: number; unit?: string; isDuration?: boolean }) {
-  // Format value with unit: $ is prefix, % and s are suffixes
+  // Format value with unit: % and s are suffixes（货币走 formatCost，不经此组件）
   const formattedValue = (() => {
     if (isDuration) return formatDuration(current)
-    const num = current.toFixed(unit === '$' ? 2 : 0)
-    if (unit === '$') return `$${num}`
+    const num = current.toFixed(0)
     if (unit === '%' || unit === 's') return `${num}${unit}`
     return num
   })()
@@ -43,12 +42,10 @@ function TrendBadge({ current, prev, unit = "", isDuration = false }: { current:
 }
 
 export function HeroMetrics({ totalExecutions, successRate, totalCost, totalCostComplete, avgDurationMs, prevTotalExecutions, prevSuccessRate, prevTotalCost, prevAvgDurationMs }: HeroMetricsProps) {
-  const costDisplay = totalCost === null ? "—"
-    : `${totalCostComplete === false ? "≈" : ""}$${totalCost.toFixed(2)}`
   const metrics: Array<{ label: string; value?: number; prev?: number; unit?: string; isDuration?: boolean; display?: string }> = [
     { label: "总执行", value: totalExecutions, prev: prevTotalExecutions, unit: "", isDuration: false },
     { label: "成功率", value: successRate * 100, prev: prevSuccessRate ? prevSuccessRate * 100 : undefined, unit: "%", isDuration: false },
-    { label: "总成本", display: costDisplay },
+    { label: "总成本", display: formatCost(totalCost, totalCostComplete) },
     { label: "平均耗时", value: avgDurationMs, prev: prevAvgDurationMs, unit: "s", isDuration: true },
   ]
 

@@ -32,7 +32,7 @@ import { fetchLLMCalls } from "@/lib/observability-api"
 import type { LLMCallAggregates } from "@/lib/types"
 import { subscribeSSE } from "@/lib/sse-manager"
 import { getServerUrl } from "@/lib/server-config"
-import { formatDuration, formatTokenCount } from "@/lib/format"
+import { formatDuration, formatTokenCount, formatCost } from "@/lib/format"
 import { TASK_STATUS_EVENT } from "@octopus/shared"
 import type { ArtifactIndexEntry, Task } from "@octopus/shared"
 import { ArtifactViewerDialog } from "./authoring/artifact-viewer-dialog"
@@ -203,7 +203,7 @@ function ChildRunRow({ child, now, agg }: { child: TaskChild; now: number; agg: 
           {child.scheduled_at && <span>计划 {fmtTime(child.scheduled_at)}</span>}
           {agg && agg.totalCalls > 0 && (
             <span className="tabular-nums" title="该次运行的 LLM 调用（llm_calls 于节点结束落库，中止的半截运行可能缺数据）">
-              <Bot className="size-3 inline mr-1" />{agg.totalCalls} 次调用 · ↑{formatTokenCount(agg.usage.inputTokens)} ↓{formatTokenCount(agg.usage.outputTokens)} · {fmtCost(agg.totals.cost.usd, agg.totals.cost.complete)}
+              <Bot className="size-3 inline mr-1" />{agg.totalCalls} 次调用 · ↑{formatTokenCount(agg.usage.inputTokens)} ↓{formatTokenCount(agg.usage.outputTokens)} · {formatCost(agg.totals.cost.usd, agg.totals.cost.complete)}
             </span>
           )}
         </div>
@@ -322,13 +322,6 @@ function mergeAggregates(list: LLMCallAggregates[]): LLMCallAggregates | null {
   }
 }
 
-function fmtCost(usd: number | null, complete = true): string {
-  if (usd === null || !Number.isFinite(usd)) return "未定价"
-  if (usd <= 0) return complete ? "$0" : "≈$0"
-  const body = usd >= 1 ? `$${usd.toFixed(2)}` : `$${usd.toFixed(4)}`
-  return complete ? body : `≈${body}`
-}
-
 /** 任务级 AI 消耗卡（2026-08-29 语义修正）：聚合该任务**全部工作流执行**的
  *  LLM 调用 —— simple=1 条主执行、composite=协调器+N 子单元全部求和，所以它是
  *  任务口径而非单次执行口径；单次执行的用量在下方各行内联展示。
@@ -361,12 +354,12 @@ export function TaskAiUsageCard({ agg, loading, runCount }: {
                 缓存 读{formatTokenCount(agg.usage.cacheReadTokens)}·写{formatTokenCount(agg.usage.cacheCreationTokens)}
               </span>
             )}
-            <span className="font-semibold tabular-nums" title="价表估算（≈=部分未定价）">{fmtCost(agg.totals.cost.usd, agg.totals.cost.complete)}</span>
+            <span className="font-semibold tabular-nums" title="价表估算（≈=部分未定价）">{formatCost(agg.totals.cost.usd, agg.totals.cost.complete)}</span>
           </div>
           {models.length > 0 && (
             <div className="flex flex-wrap gap-1.5">
               {models.map(([m, b]) => (
-                <Badge key={m} variant="outline" className="text-[10px] font-mono" title={`${b.calls} 次 · ↑${b.inputTokens} ↓${b.outputTokens} · ${fmtCost(b.costUsd)}`}>
+                <Badge key={m} variant="outline" className="text-[10px] font-mono" title={`${b.calls} 次 · ↑${b.inputTokens} ↓${b.outputTokens} · ${formatCost(b.costUsd)}`}>
                   {m}×{b.calls}
                 </Badge>
               ))}

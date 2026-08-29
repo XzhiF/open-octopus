@@ -4,6 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts"
 import { ChartContainer, ChartTooltipContent } from "@/components/ui/chart"
 import type { CostTrendPoint } from "@/lib/analytics-types"
+import { formatCost } from "@/lib/format"
 
 interface CostTrendChartProps {
   data: CostTrendPoint[]
@@ -29,7 +30,7 @@ export function CostTrendChart({ data, days }: CostTrendChartProps) {
             <BarChart data={data}>
               <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
               <XAxis dataKey="date" tick={{ fontSize: 12 }} />
-              <YAxis tick={{ fontSize: 12 }} tickFormatter={v => `$${v}`} />
+              <YAxis tick={{ fontSize: 12 }} tickFormatter={v => formatCost(v)} />
               <Tooltip content={<ChartTooltipContent />} />
               <Bar dataKey="totalCostUsd" name="成本" fill="var(--color-cost)" radius={[4, 4, 0, 0]} />
             </BarChart>

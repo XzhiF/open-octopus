@@ -177,7 +177,7 @@ describe("OctopusAgentDetailTabs", () => {
 
     expect(screen.getByTestId("cost-line")).toBeInTheDocument()
     expect(screen.getByText("claude-sonnet-4-20250514")).toBeVisible()
-    expect(screen.getByText("5 calls · $0.05")).toBeVisible()
+    expect(screen.getByText("5 calls · $0.0500")).toBeVisible()
   })
 
   it("does not crash with minimal props (no optional fields)", () => {

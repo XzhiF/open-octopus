@@ -8,7 +8,7 @@ import { CostTrendChart } from "./cost-trend-chart"
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from "recharts"
 import { ChartContainer, ChartTooltipContent } from "@/components/ui/chart"
 import { XCircle, DollarSign } from "lucide-react"
-import { formatCost } from "@/lib/format"
+import { formatCost, formatTokenCount } from "@/lib/format"
 
 const MODEL_COLORS = ["#3b82f6", "#8b5cf6", "#ec4899", "#f97316", "#10b981"]
 
@@ -78,8 +78,8 @@ export function CostTab({ workspaceId }: { workspaceId: string }) {
                       <span>{t.model}</span>
                     </div>
                     <div className="text-muted-foreground tabular-nums flex gap-4">
-                      <span>{(t.totalInputTokens / 1000).toFixed(0)}K in</span>
-                      <span>{(t.totalOutputTokens / 1000).toFixed(0)}K out</span>
+                      <span>{formatTokenCount(t.totalInputTokens)} in</span>
+                      <span>{formatTokenCount(t.totalOutputTokens)} out</span>
                       <span>{formatCost(t.totalCostUsd)}</span>
                     </div>
                   </div>

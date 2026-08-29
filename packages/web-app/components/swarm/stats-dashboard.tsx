@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react"
 import { fetchSwarmStats } from "@/lib/api-client"
 import { MetricCard } from "./atoms/metric-card"
+import { formatTokenCount } from "@/lib/format"
 import {
   BarChart3,
   CheckCircle,
@@ -74,12 +75,6 @@ export function StatsDashboard({ workspaceId, from, to }: StatsDashboardProps) {
     return `${(s / 60).toFixed(1)}min`
   }
 
-  const formatTokens = (n: number) => {
-    if (n < 1000) return String(Math.round(n))
-    if (n < 1_000_000) return `${(n / 1000).toFixed(1)}K`
-    return `${(n / 1_000_000).toFixed(1)}M`
-  }
-
   const modeEntries = Object.entries(stats.mode_distribution).filter(([, v]) => v > 0)
 
   return (
@@ -102,7 +97,7 @@ export function StatsDashboard({ workspaceId, from, to }: StatsDashboardProps) {
         />
         <MetricCard
           label="平均 Token"
-          value={formatTokens(stats.avg_token_consumed)}
+          value={formatTokenCount(stats.avg_token_consumed)}
           icon={Coins}
         />
         <MetricCard

@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback, useMemo } from "react"
 import { cn } from "@/lib/utils"
-import { formatDuration, formatTokenCount } from "@/lib/format"
+import { formatDuration, formatTokenCount, formatCost } from "@/lib/format"
 import { getExecutorType } from "@/lib/executor-type"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -784,9 +784,7 @@ function CostPanel({ aggregates, calls, loading }: CostPanelProps) {
           <div>
             <div className="text-muted-foreground">总成本</div>
             <div className="text-lg font-bold tabular-nums text-amber-600">
-              {aggregates.totals.cost.usd === null
-                ? "未定价"
-                : `${aggregates.totals.cost.complete ? "$" : "≈$"}${aggregates.totals.cost.usd.toFixed(2)}`}
+              {formatCost(aggregates.totals.cost.usd, aggregates.totals.cost.complete)}
             </div>
           </div>
           <div>
@@ -824,7 +822,7 @@ function CostPanel({ aggregates, calls, loading }: CostPanelProps) {
                   </div>
                 </div>
                 <div className="text-right tabular-nums font-medium">
-                  {stats.costUsd === null ? "未定价" : `$${stats.costUsd.toFixed(2)}`}
+                  {formatCost(stats.costUsd)}
                 </div>
               </div>
             ))}

@@ -1,6 +1,7 @@
 "use client"
 
 import { useMemo } from "react"
+import { formatCost } from "@/lib/format"
 
 interface CostWaterfallProps {
   models: Array<{
@@ -35,13 +36,17 @@ export function CostWaterfall({ models, height = 240 }: CostWaterfallProps) {
     )
   }
 
+  // 三态总计：全未定价 → null（—）；部分行未定价 → 已知部分和（≈）
+  const allUnpriced = bars.every((b) => b.total_cost === null)
+  const grandTotal = bars.reduce((s, b) => s + known(b.total_cost), 0)
+
   return (
     <div className="rounded-lg border bg-card p-4 space-y-3">
       <div className="flex items-center gap-2">
         <div className="h-2 w-2 rounded-full bg-blue-500" />
         <span className="text-sm font-medium">成本瀑布图</span>
         <span className="ml-auto text-xs text-muted-foreground">
-          ${known(bars.reduce((s, b) => s + known(b.total_cost), 0)) ? `$${bars.reduce((s, b) => s + known(b.total_cost), 0).toFixed(2)}` : "未定价"} 总计
+          {formatCost(allUnpriced ? null : grandTotal, bars.every((b) => b.total_cost !== null))} 总计
         </span>
       </div>
 
@@ -60,7 +65,7 @@ export function CostWaterfall({ models, height = 240 }: CostWaterfallProps) {
                 }}
               />
               <span className="absolute inset-0 flex items-center px-2 text-xs text-white/80 font-medium truncate">
-                {bar.total_cost === null ? "未定价" : `$${bar.total_cost.toFixed(2)}`} ({bar.pctTotal.toFixed(1)}%)
+                {formatCost(bar.total_cost)} ({bar.pctTotal.toFixed(1)}%)
               </span>
             </div>
             <span className="w-12 text-right text-xs text-muted-foreground">{bar.calls} calls</span>

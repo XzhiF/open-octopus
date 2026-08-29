@@ -1,6 +1,7 @@
 "use client"
 
 import { cn } from "@/lib/utils"
+import { formatCost } from "@/lib/format"
 import { Badge } from "@/components/ui/badge"
 
 const GRADE_COLORS: Record<string, { bg: string; text: string; border: string }> = {
@@ -17,7 +18,8 @@ interface WorkflowHealthCardProps {
   grade: string
   successRate: number
   avgDurationMs: number
-  totalCost: number
+  /** C3 三态：null = 未定价 */
+  totalCost: number | null
 }
 
 export function WorkflowHealthCard({ workflowRef, healthScore, grade, successRate, avgDurationMs, totalCost }: WorkflowHealthCardProps) {
@@ -35,7 +37,7 @@ export function WorkflowHealthCard({ workflowRef, healthScore, grade, successRat
         <span className="tabular-nums">健康分: {healthScore}</span>
         <span className="tabular-nums">成功率: {(successRate * 100).toFixed(0)}%</span>
         <span className="tabular-nums">{(avgDurationMs / 1000).toFixed(1)}s</span>
-        <span className="tabular-nums">${totalCost.toFixed(2)}</span>
+        <span className="tabular-nums">{formatCost(totalCost)}</span>
       </div>
     </div>
   )

@@ -43,6 +43,7 @@ import {
   Cell,
 } from "recharts"
 import { getServerUrl } from "@/lib/server-config"
+import { formatCost, formatTokenCount } from "@/lib/format"
 
 // ============ Types ============
 
@@ -122,12 +123,6 @@ interface ObservabilityData {
 }
 
 // ============ Helpers ============
-
-function formatNumber(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`
-  return String(n)
-}
 
 function formatTimestamp(ts: string): string {
   try {
@@ -265,8 +260,8 @@ export default function ObservabilityPage() {
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
         <SummaryCard
           title="总 Token"
-          value={formatNumber(totals.tokens)}
-          subtitle={`↑${formatNumber(data.tokens.usage.inputTokens)} ↓${formatNumber(data.tokens.usage.outputTokens)} ⚡${formatNumber(data.tokens.usage.cacheReadTokens)} 🗡️${formatNumber(data.tokens.usage.cacheCreationTokens)}`}
+          value={formatTokenCount(totals.tokens)}
+          subtitle={`↑${formatTokenCount(data.tokens.usage.inputTokens)} ↓${formatTokenCount(data.tokens.usage.outputTokens)} ⚡${formatTokenCount(data.tokens.usage.cacheReadTokens)} 🗡️${formatTokenCount(data.tokens.usage.cacheCreationTokens)}`}
           icon={Coins}
           color="text-blue-500"
           bgColor="bg-blue-500/10"
@@ -281,7 +276,7 @@ export default function ObservabilityPage() {
         />
         <SummaryCard
           title="总成本"
-          value={totals.cost.usd === null ? "—" : `${totals.cost.complete ? "$" : "≈$"}${totals.cost.usd.toFixed(4)}`}
+          value={formatCost(totals.cost.usd, totals.cost.complete)}
           subtitle="USD"
           icon={DollarSign}
           color="text-amber-500"
@@ -599,7 +594,8 @@ function ModelUsageChart({
   const chartData = byModel.map((m) => ({
     name: m.model,
     value: m.tokens,
-    cost: m.costUsd ?? 0, // 图表轴需要数；未定价模型行成本画 0（tooltip 见 costUsd null）
+    cost: m.costUsd ?? 0, // 图表轴需要数；未定价模型行成本画 0（列表经 costUsd 显示 —）
+    costUsd: m.costUsd,
   }))
 
   return (
@@ -641,10 +637,10 @@ function ModelUsageChart({
               {item.name}
             </span>
             <span className="text-muted-foreground ml-auto">
-              {formatNumber(item.value)} tokens
+              {formatTokenCount(item.value)} tokens
             </span>
             <span className="text-muted-foreground text-xs">
-              ${item.cost.toFixed(4)}
+              {formatCost(item.costUsd)}
             </span>
           </div>
         ))}
@@ -793,10 +789,10 @@ function NodeRow({
           </Badge>
         </TableCell>
         <TableCell className="text-right tabular-nums">
-          {formatNumber(totalTokens)}
+          {formatTokenCount(totalTokens)}
         </TableCell>
         <TableCell className="text-right tabular-nums">
-          {node.costUsd === null ? "—" : `$${node.costUsd.toFixed(4)}`}
+          {formatCost(node.costUsd)}
         </TableCell>
         <TableCell className="text-right tabular-nums">
           {(node.durationMs / 1000).toFixed(1)}s
