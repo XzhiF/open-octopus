@@ -1,0 +1,23 @@
+T1-units.sh
+T2-cli.sh
+T3-api.mjs
+T4-browser.mjs
+T6-fullchain.mjs
+T7-ac8.sh
+PASS | SETUP repo has exactly 1 seed commit
+PASS [SETUP repo has exactly 1 seed commit] 
+PASS | SETUP repo has NO remote (safety precondition)
+PASS [SETUP repo has NO remote (safety precondition)] 
+PASS | SETUP repos index.md written
+PASS [SETUP repos index.md written] 
+PASS | CHAIN draft created | id=63a8d013-2c74-45df-97e4-bd009bfa6d6e
+PASS [CHAIN draft created] id=63a8d013-2c74-45df-97e4-bd009bfa6d6e
+PASS | CHAIN PUT bind ok | status=200
+PASS [CHAIN PUT bind ok] status=200
+PASS | CHAIN ready(200) — enqueued | status=200
+PASS [CHAIN ready(200) — enqueued] status=200
+PASS | CHAIN schedule queued | sched=e1292c18-8846-47b9-ae36-3276b34bc979
+PASS [CHAIN schedule queued] sched=e1292c18-8846-47b9-ae36-3276b34bc979
+Waiting for scheduler tick + real task-dev execution (up to 15 min)...
+
+[exited with code 0]

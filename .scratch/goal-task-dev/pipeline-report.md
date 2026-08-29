@@ -70,7 +70,7 @@ Stage 2 期间收编两个计划外变更:providers stop-hook-feedback 映射(03
 ### Remaining Issues
 | # | Issue | Impact | Suggestion |
 |---|-------|--------|------------|
-| 1 | task 状态镜像竞态(先存) | 全链成功后看板显 failed,误导验收 | 另案:executor 回读改事件源或 onComplete 后持久化;修复需重启 dev server |
+| 1 | ~~task 状态镜像竞态(先存)~~ | **已修复**(本分支尾部 commit):onComplete 穿透 engine 终态 + DB 已终态优先 + allSkipped 镜像;6 例竞态单测;重启后 T6 全链真跑复核 `tasks=done/sched=done/exec=completed` 三层一致(T6-rerun-after-fix.log) | — |
 | 2 | task-modal-spec-panel 用例在 HEAD 红(重复文本,`c6e1613e` 引入) | 无生产影响,CI 噪音 | 建议 #52 分支补 dedupe ticket |
 | 3 | weekly 绊网为本地脚本(无 CI 凭据) | 版本漂移需人跑 | 本地周检或加带 secrets 的自托管 runner |
 | 4 | 🔵 5 条 smell(ship prompt 双份等) | 可读性/漂移风险 | 出现第三消费方时抽取 |
