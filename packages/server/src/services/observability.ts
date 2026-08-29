@@ -2,7 +2,7 @@ import Database from "better-sqlite3"
 import type { AgentEvent } from "@octopus/engine"
 import type { LLMCallRecord } from "@octopus/providers"
 import { PrivacyFilter } from "./privacy-filter"
-import { computeCost } from "@octopus/providers"
+import { priceFor, estimateCost } from "@octopus/shared"
 import { ExecutionDAO, TokenUsageDAO } from "../db/dao"
 import type { AgentEventRow, LlmCallRow } from "../db/types"
 
@@ -213,7 +213,8 @@ export class ObservabilityService {
         output_tokens: call.outputTokens,
         cache_read_tokens: call.cacheReadTokens,
         cache_creation_tokens: call.cacheCreationTokens,
-        cost_usd: call.costUsd ?? computeCost(call, call.model ?? 'default'),
+        // C2：SDK/价表都没有 → 写 NULL（未定价），不再有 default=sonnet 假兜底
+        cost_usd: call.costUsd ?? estimateCost(call, priceFor(call.model)),
         org: meta.org,
         workspace_id: meta.workspaceId,
         workflow_ref: meta.workflowRef,

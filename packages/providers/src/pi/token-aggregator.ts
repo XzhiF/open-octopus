@@ -37,7 +37,9 @@ export class TokenAggregator {
       existing.outputTokens += output
       existing.cacheReadTokens += cacheRead
       existing.cacheCreationTokens += cacheCreation
-      existing.costUsd = (existing.costUsd ?? 0) + cost
+      // C2：pi SDK 按注册表算出的 0 价 = 未注册价（假实测），归一为 undefined 未定价
+      const sum = (existing.costUsd ?? 0) + cost
+      existing.costUsd = sum > 0 ? sum : undefined
     } else {
       this.entries.push({
         model,
@@ -45,7 +47,7 @@ export class TokenAggregator {
         outputTokens: output,
         cacheReadTokens: cacheRead,
         cacheCreationTokens: cacheCreation,
-        costUsd: cost,
+        costUsd: cost > 0 ? cost : undefined,
       })
     }
   }

@@ -40,6 +40,19 @@ describe('TokenAggregator', () => {
     expect(agg.toModelUsages()[0].inputTokens).toBe(80)
   })
 
+  it('C2: 0 价（pi 注册表未定价 → SDK 算出 0）产出 undefined，不是假 $0', () => {
+    const agg = new TokenAggregator()
+    agg.add('qwen3.7-max', { input: 100, output: 50, cost: { total: 0 } })
+    agg.add('qwen3.7-max', { input: 100, output: 50 }) // cost 缺失同样按 0 聚合
+    expect(agg.toModelUsages()[0].costUsd).toBeUndefined()
+
+    // 有真实价时照常出数
+    const priced = new TokenAggregator()
+    priced.add('qwen3.7-max', { input: 100, output: 50, cost: { total: 0.004 } })
+    priced.add('qwen3.7-max', { input: 100, output: 50, cost: { total: 0 } })
+    expect(priced.toModelUsages()[0].costUsd).toBe(0.004)
+  })
+
   it('S08-6: totalCost supports budget threshold comparison', () => {
     const agg = new TokenAggregator()
     const maxBudgetUsd = 0.05

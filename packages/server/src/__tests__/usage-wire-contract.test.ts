@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest'
-import { TokenUsageSchema, ModelUsageSchema, totalTokens, addTokenUsage, emptyTokenUsage, mergeModelUsages } from '@octopus/shared'
+import { describe, it, expect, afterEach } from 'vitest'
+import { TokenUsageSchema, ModelUsageSchema, totalTokens, addTokenUsage, emptyTokenUsage, mergeModelUsages, priceFor, estimateCost, __setPricingOverlayForTest, __resetPricingOverlayForTest } from '@octopus/shared'
 import { usageFromRow, usageFromLegacyJson, normalizeUsageJson } from '../db/dao/usage-mapping'
 
 /**
@@ -74,5 +74,45 @@ describe('累计/合并工具（节点卡不跳变的实现底座）', () => {
       { model: 'b', inputTokens: 10, outputTokens: 10, cacheReadTokens: 10, cacheCreationTokens: 10 },
     ])
     expect(merged).toEqual({ inputTokens: 11, outputTokens: 11, cacheReadTokens: 11, cacheCreationTokens: 11 })
+  })
+})
+
+/**
+ * C2 Pricing 契约 —— 钉死「无 default 兜底」与落库表达式的三态语义
+ * （llm_calls.cost_usd 唯一写路径 observability.ts 用的就是这个组合）。
+ */
+describe('Pricing 契约 (C2)', () => {
+  afterEach(() => __resetPricingOverlayForTest())
+  it('未定价模型 → estimateCost null（绝不再出现 sonnet 假兜底）', () => {
+    __setPricingOverlayForTest({})
+    const call = { inputTokens: 1000, outputTokens: 500, cacheReadTokens: 0, cacheCreationTokens: 0 }
+    expect(priceFor('qwen3.7-max')).toBeNull()
+    expect(estimateCost(call, priceFor('qwen3.7-max'))).toBeNull()
+    // observability 表达式的等价形式：SDK 没给 cost 且未定价 → NULL
+    const sdkCost: number | undefined = undefined
+    expect(sdkCost ?? estimateCost(call, priceFor('qwen3.7-max'))).toBeNull()
+  })
+
+  it('SDK 给了 cost 时优先实测（?? 不被 0 伪装——seam 处 0 已归一 undefined）', () => {
+    __setPricingOverlayForTest({})
+    const call = { inputTokens: 1000, outputTokens: 500, cacheReadTokens: 0, cacheCreationTokens: 0 }
+    const sdkCost = 0.042
+    expect(sdkCost ?? estimateCost(call, priceFor('claude-sonnet-4-5-20250827'))).toBe(0.042)
+    // seam 归一后（provider.ts: mu.costUSD || undefined）：0 → undefined → 走价表
+    const zeroFromSdk: number | undefined = 0
+    const normalized = zeroFromSdk || undefined
+    expect(normalized ?? estimateCost(call, priceFor('claude-sonnet-4-5-20250827')))
+      .toBeCloseTo((1000 * 3 + 500 * 15) / 1e6, 12)
+  })
+
+  it('models.yaml overlay 对代理模型名生效：qwen3.8-flash[1m] 接住 qwen3.8-flash 配置价', () => {
+    __setPricingOverlayForTest({ 'qwen3.8-flash': { input: 1, output: 2, cacheRead: 0.1, cacheCreation: 0.5 } })
+    const tier = priceFor('qwen3.8-flash[1m]')!
+    expect(tier).toBeDefined()
+    expect(estimateCost({ inputTokens: 1_000_000, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0 }, tier)).toBe(1)
+  })
+
+  it('wire：ModelUsage.costUsd 可选 —— undefined 行经 Zod parse 不炸（未定价可传输）', () => {
+    expect(() => ModelUsageSchema.parse({ model: 'qwen3.7-max', inputTokens: 1, outputTokens: 1, cacheReadTokens: 0, cacheCreationTokens: 0 })).not.toThrow()
   })
 })

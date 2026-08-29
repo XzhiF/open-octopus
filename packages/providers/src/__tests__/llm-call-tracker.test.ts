@@ -1,6 +1,11 @@
-import { describe, it, expect } from "vitest"
+import { describe, it, expect, beforeEach, afterEach } from "vitest"
 import { LLMCallTracker } from "../llm-call-tracker"
 import type { ModelUsage } from "@octopus/shared"
+import { __setPricingOverlayForTest, __resetPricingOverlayForTest } from "@octopus/shared"
+
+// 钉住 pricing overlay：只用 BUILTIN_PRICING，测试不读真实 ~/.octopus/models.yaml
+beforeEach(() => __setPricingOverlayForTest({}))
+afterEach(() => __resetPricingOverlayForTest())
 
 /**
  * LLMCallTracker 单元测试
@@ -140,7 +145,7 @@ describe("LLMCallTracker", () => {
     })
   })
   describe("stream 阶段不记录 token（所有 token 字段应为 0）", () => {
-    it("单个 call 的 inputTokens / outputTokens / cache / cost 在 stream 阶段保持 0", () => {
+    it("单个 call 的 inputTokens / outputTokens / cache 在 stream 阶段保持 0，cost 未知", () => {
       const tracker = new LLMCallTracker()
       simulateOneCall(tracker, "claude-sonnet-4-5-20250827", "msg-1")
 
@@ -150,7 +155,8 @@ describe("LLMCallTracker", () => {
       expect(calls[0].outputTokens).toBe(0)
       expect(calls[0].cacheReadTokens).toBe(0)
       expect(calls[0].cacheCreationTokens).toBe(0)
-      expect(calls[0].costUsd).toBe(0)
+      // C2：初值不再伪装成 0，未知就是未知（0 会在下游 ?? 兜底中被当成实测）
+      expect(calls[0].costUsd).toBeUndefined()
     })
 
     it("result 事件不到达时 (Case F)：getLLMCalls 返回全 0 的 records", () => {
@@ -164,7 +170,7 @@ describe("LLMCallTracker", () => {
       for (const call of calls) {
         expect(call.inputTokens).toBe(0)
         expect(call.outputTokens).toBe(0)
-        expect(call.costUsd).toBe(0)
+        expect(call.costUsd).toBeUndefined()
       }
     })
   })
@@ -285,8 +291,8 @@ describe("LLMCallTracker", () => {
       const tracker = new LLMCallTracker()
       simulateOneCall(tracker, "claude-sonnet-4-5-20250827", "msg-1")
 
-      // 不传 costUSD，让 tracker 根据 MODEL_PRICING 自动计算
-      // sonnet: input 3/1e6, output 15/1e6, cacheRead 0.30/1e6, cacheCreation 3.75/1e6
+      // 不传 costUSD，让 tracker 按 shared BUILTIN_PRICING（USD/MTok）自动估算
+      // sonnet: input 3, output 15, cacheRead 0.30, cacheCreation 3.75 (per MTok)
       // 1000 * 3/1e6 + 500 * 15/1e6 + 200 * 0.30/1e6 + 100 * 3.75/1e6 = 0.010935
       tracker.calibrateFromModelUsage(
         makeModelUsage("claude-sonnet-4-5-20250827", 1000, 500, 200, 100)
@@ -295,6 +301,20 @@ describe("LLMCallTracker", () => {
       const calls = tracker.getLLMCalls()
       expect(calls).toHaveLength(1)
       expect(calls[0].costUsd).toBeCloseTo(0.010935, 6)
+    })
+
+    it("未定价模型（qwen 等）无 costUSD → cost 保持未知，绝不再按 default=sonnet 假计费", () => {
+      const tracker = new LLMCallTracker()
+      simulateOneCall(tracker, "qwen3.7-max", "msg-1")
+
+      // token 权威值照常 calibrate（不变式不受 pricing 影响）
+      tracker.calibrateFromModelUsage(makeModelUsage("qwen3.7-max", 1000, 500))
+
+      const calls = tracker.getLLMCalls()
+      expect(calls[0].inputTokens).toBe(1000)
+      expect(calls[0].outputTokens).toBe(500)
+      // cost：priceFor miss → estimateCost null → 跳过分配 = undefined（落库 NULL）
+      expect(calls[0].costUsd).toBeUndefined()
     })
 
     it("calibrate 可多次调用，后调覆盖前调", () => {

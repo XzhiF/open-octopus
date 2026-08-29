@@ -39,6 +39,8 @@ export * from "./resource"
 export { ModelAliasConfigSchema, DEFAULT_MODEL_ALIASES, CustomProvidersMapSchema } from './config/model-alias'
 export type { ModelAliasConfig, CustomProviderDef, CustomProvidersMap } from './config/model-alias'
 export { resolveModelAlias, loadModelAliasConfig, collectNodeEngines } from './config/model-alias'
+export { BUILTIN_PRICING, priceFor, estimateCost, __setPricingOverlayForTest, __resetPricingOverlayForTest } from './pricing'
+export type { PricingTier } from './pricing'
 export { resolveMoaModel } from './config/moa-model-resolver'
 export type { MoaModelResolution } from './config/moa-model-resolver'
 export { parseTokenAmount } from './parse-token-amount'

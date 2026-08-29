@@ -1,3 +1,4 @@
+import { priceFor, estimateCost } from '@octopus/shared'
 import type { ModelUsage, TokenUsage, TokenUsageDelta } from '@octopus/shared'
 
 /**
@@ -13,51 +14,6 @@ export interface LLMCallRecord extends TokenUsage {
   durationMs: number
   ttftMs?: number
   costUsd?: number
-}
-
-interface PricingTier {
-  input: number
-  output: number
-  cacheRead: number
-  cacheCreation: number
-}
-
-const MODEL_PRICING: Record<string, PricingTier> = {
-  'claude-sonnet-4-20250514': { input: 3/1e6, output: 15/1e6, cacheRead: 0.30/1e6, cacheCreation: 3.75/1e6 },
-  'claude-sonnet-4-5-20250827': { input: 3/1e6, output: 15/1e6, cacheRead: 0.30/1e6, cacheCreation: 3.75/1e6 },
-  'claude-haiku-3-5':         { input: 0.80/1e6, output: 4/1e6, cacheRead: 0.08/1e6, cacheCreation: 1/1e6 },
-  'claude-opus-4-20250514':   { input: 15/1e6, output: 75/1e6, cacheRead: 1.50/1e6, cacheCreation: 18.75/1e6 },
-  'default':                  { input: 3/1e6, output: 15/1e6, cacheRead: 0.30/1e6, cacheCreation: 3.75/1e6 },
-}
-
-/**
- * Compute cost directly from token counts + pricing tier.
- * Used when SDK's result event doesn't supply costUSD (older SDK versions).
- */
-export function computeCostFromTokens(
-  inputTokens: number,
-  outputTokens: number,
-  cacheReadTokens: number,
-  cacheCreationTokens: number,
-  model: string
-): number {
-  const p = MODEL_PRICING[model] ?? MODEL_PRICING['default']
-  return (
-    inputTokens * p.input +
-    outputTokens * p.output +
-    cacheReadTokens * p.cacheRead +
-    cacheCreationTokens * p.cacheCreation
-  )
-}
-
-export function computeCost(call: LLMCallRecord, model: string): number {
-  return computeCostFromTokens(
-    call.inputTokens,
-    call.outputTokens,
-    call.cacheReadTokens,
-    call.cacheCreationTokens,
-    model
-  )
 }
 
 interface ActiveCall {
@@ -182,7 +138,7 @@ export class LLMCallTracker {
       outputTokens: call.usage?.outputTokens ?? 0,
       cacheReadTokens: call.usage?.cacheReadTokens ?? 0,
       cacheCreationTokens: call.usage?.cacheCreationTokens ?? 0,
-      costUsd: 0,
+      // C2：cost 初始不是 0 而是未知 —— 0 会在下游 ?? 兜底里伪装成实测值
     }
     this.completedCalls.push(record)
     return record
@@ -224,9 +180,9 @@ export class LLMCallTracker {
       const authOutput = usage.outputTokens ?? 0
       const authCacheRead = usage.cacheReadTokens ?? 0
       const authCacheCreation = usage.cacheCreationTokens ?? 0
-      const authCost = usage.costUsd ?? computeCostFromTokens(
-        authInput, authOutput, authCacheRead, authCacheCreation, model
-      )
+      // SDK 给了 costUSD 就用（0 视为未定价，seam 已归一 undefined）；
+      // 否则查 shared 价表估算（models.yaml 补价通道）。未定价 → null → 不编数。
+      const authCost = usage.costUsd ?? estimateCost(usage, priceFor(model))
 
       // 每个 token 字段独立做「保留实测 + 残差分配」：
       //   - residual = authTotal − Σ(measured)；≤0 时信任实测，不倒扣
@@ -239,18 +195,21 @@ export class LLMCallTracker {
       distributeResidual(calls, authCacheCreation, c => c.cacheCreationTokens, (c, v) => { c.cacheCreationTokens = v })
 
       // costUsd 无 per-turn 实测来源（价格表不完整），仍按均匀分配到全部 records。
+      // 未定价（authCost === null）时跳过分配：records 保持未知，下游写 NULL。
       const n = calls.length
-      // costUsd 用整数皮科单位（1e12）分配，避免浮点精度问题
-      // 1e12 足以覆盖 $0.000001 ~ $10000 的典型 cost 范围，
-      // 且乘以 1e12 后仍在 Number.MAX_SAFE_INTEGER 范围内
-      const costPicous = Math.round(authCost * 1e12)
-      const perCostPicous = Math.floor(costPicous / n)
+      if (authCost !== null) {
+        // costUsd 用整数皮科单位（1e12）分配，避免浮点精度问题
+        // 1e12 足以覆盖 $0.000001 ~ $10000 的典型 cost 范围，
+        // 且乘以 1e12 后仍在 Number.MAX_SAFE_INTEGER 范围内
+        const costPicous = Math.round(authCost * 1e12)
+        const perCostPicous = Math.floor(costPicous / n)
 
-      for (let i = 0; i < n; i++) {
-        const isLast = i === n - 1
-        calls[i].costUsd = isLast
-          ? (costPicous - perCostPicous * (n - 1)) / 1e12
-          : perCostPicous / 1e12
+        for (let i = 0; i < n; i++) {
+          const isLast = i === n - 1
+          calls[i].costUsd = isLast
+            ? (costPicous - perCostPicous * (n - 1)) / 1e12
+            : perCostPicous / 1e12
+        }
       }
     }
   }

@@ -625,7 +625,9 @@ export class ClaudeSDKProvider implements IAgentProvider {
             outputTokens: mu.outputTokens ?? 0,
             cacheReadTokens: mu.cacheReadInputTokens ?? 0,
             cacheCreationTokens: mu.cacheCreationInputTokens ?? 0,
-            costUsd: mu.costUSD,
+            // C2：SDK 对不认识的模型（代理 qwen 等）给 costUSD=0 —— 0 是假实测，
+            // seam 处归一为 undefined（未定价），把估算机会让给 shared 价表
+            costUsd: mu.costUSD || undefined,
           }))
           // Calibrate tracker's completed calls with authoritative token data
           this._llmTracker.calibrateFromModelUsage(modelUsages)
@@ -636,7 +638,8 @@ export class ClaudeSDKProvider implements IAgentProvider {
               sessionId: rm.session_id,
               // 规范口径：纯值四字段合计（不再把 cache 折进 input）
               usage: mergeModelUsages(modelUsages),
-              costUsd: rm.total_cost_usd,
+              // 0 = SDK 不认识该模型（代理/未定价）→ 归一为未定价，非 $0 实测
+              costUsd: rm.total_cost_usd || undefined,
               numTurns: rm.num_turns,
               modelUsages,
             }
