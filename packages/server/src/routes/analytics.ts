@@ -358,6 +358,79 @@ export default createAnalyticsLogRoutes
 // ─── Observability Routes (named export) ───────────────────────────
 // Mounted at: /api
 
+function toEpochMs(t: unknown): number {
+  if (typeof t === 'number') return Number.isFinite(t) ? t : 0
+  if (typeof t === 'string') {
+    const n = Number(t)
+    if (Number.isFinite(n)) return n
+    const p = Date.parse(t)
+    return Number.isNaN(p) ? 0 : p
+  }
+  return 0
+}
+
+/**
+ * 按「所属回合」把 agent 事件分组（trace 时间线用）。
+ *
+ * 为什么不能直接用存储的 agent_events.turn_index：部分写入路径会把该列压平成常量
+ * （实测多回合节点 thinking_block 全 =1），traces 据此分组就退化成「1 turns」，
+ * 且丢失可展开的逐回合结构。而 llm_calls.turn_index 是权威每回合一条。
+ *
+ * 重派规则：thinking_block 的时间戳恰等于该回合 llm_call 的起始 ts，其后的工具/
+ * 文本块顺延，故把每个事件归到「最大的 call.ts <= event.ts」那次调用所属回合
+ * （事件早于首次调用 → 归第 1 回合）。无 llm_calls 的节点（bash/子流程/…）回退
+ * 用存储 turn_index，行为不变。纯函数，接口即分组，便于直测。
+ */
+export function assignTurnsToEvents(
+  events: Array<Record<string, unknown>>,
+  calls: Array<{ node_execution_id: string; turn_index: number; timestamp: number }>,
+): Array<Record<string, unknown>> {
+  const boundsByNode = new Map<string, Array<{ turn: number; ts: number }>>()
+  for (const c of calls) {
+    const arr = boundsByNode.get(c.node_execution_id) ?? []
+    arr.push({ turn: c.turn_index, ts: c.timestamp })
+    boundsByNode.set(c.node_execution_id, arr)
+  }
+  for (const arr of boundsByNode.values()) arr.sort((a, b) => a.ts - b.ts || a.turn - b.turn)
+
+  const eventsByNode = new Map<string, Array<Record<string, unknown>>>()
+  for (const e of events) {
+    const ne = e.node_execution_id as string
+    const arr = eventsByNode.get(ne) ?? []
+    arr.push(e)
+    eventsByNode.set(ne, arr)
+  }
+
+  const out: Array<Record<string, unknown>> = []
+  for (const [ne, nodeEvents] of eventsByNode) {
+    // 跨 int/ISO 混存的 timestamp 全局排序不可靠 → 按写入序 event_order 稳定排。
+    nodeEvents.sort((a, b) => ((a.event_order as number) ?? 0) - ((b.event_order as number) ?? 0))
+    const bounds = boundsByNode.get(ne)
+    const turnMap = new Map<number, Array<Record<string, unknown>>>()
+    for (const e of nodeEvents) {
+      let turn: number
+      if (!bounds || bounds.length === 0) {
+        turn = (e.turn_index as number) ?? 1
+      } else {
+        const evTs = toEpochMs(e.timestamp)
+        turn = bounds[0].turn
+        for (const b of bounds) { if (b.ts <= evTs) turn = b.turn; else break }
+      }
+      let bucket = turnMap.get(turn)
+      if (!bucket) { bucket = []; turnMap.set(turn, bucket) }
+      bucket.push(e)
+    }
+    out.push({
+      node_execution_id: ne,
+      node_id: nodeEvents[0]?.node_id,
+      turns: Array.from(turnMap.entries())
+        .sort((a, b) => a[0] - b[0])
+        .map(([turn_index, evs]) => ({ turn_index, events: evs, eventCount: evs.length })),
+    })
+  }
+  return out
+}
+
 export function createAnalyticsRoutes(
   execDAO: ExecutionDAO,
   tokenUsageDAO: TokenUsageDAO,
@@ -367,35 +440,14 @@ export function createAnalyticsRoutes(
   const router = new Hono()
 
   router.get('/executions/:id/traces', (c: Context) => {
-    const executionId = c.req.param('id')
+    const executionId = c.req.param('id') ?? ''
     const nodeId = c.req.query('nodeId')
 
     const events = execDAO.findAgentEventsWithNode(executionId, nodeId || undefined)
+    const calls = tokenUsageDAO.findLlmCallsByExecution(executionId, nodeId || undefined)
 
-    const turnsByNode: Record<string, Array<Record<string, unknown>>> = {}
-    for (const event of events) {
-      const nodeExecId = event.node_execution_id as string
-      if (!turnsByNode[nodeExecId]) turnsByNode[nodeExecId] = []
-      turnsByNode[nodeExecId].push(event)
-    }
-
-    const turns = Object.entries(turnsByNode).map(([nodeExecId, nodeEvents]) => {
-      const turnMap = new Map<number, Array<Record<string, unknown>>>()
-      for (const event of nodeEvents) {
-        const turnIndex = event.turn_index as number
-        if (!turnMap.has(turnIndex)) turnMap.set(turnIndex, [])
-        turnMap.get(turnIndex)!.push(event)
-      }
-      return {
-        node_execution_id: nodeExecId,
-        node_id: nodeEvents[0]?.node_id,
-        turns: Array.from(turnMap.entries()).map(([turnIndex, events]) => ({
-          turn_index: turnIndex,
-          events,
-          eventCount: events.length,
-        })),
-      }
-    })
+    // 用 llm_calls 权威回合窗口重派 turn_index（存储列在部分路径下被压平）。
+    const turns = assignTurnsToEvents(events, calls)
 
     return c.json({
       data: turns,
