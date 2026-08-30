@@ -197,4 +197,77 @@ describe("WorkflowDetailPanel SSE 增量更新 liveSteps", () => {
     expect(getSteps().find(s => s.stepId === "n1")?.status).toBe("completed")
     expect(getSteps().find(s => s.stepId === "n1")?.tokensInput).toBe(7)
   })
+
+  it("运行中 turn_usage 补丁先于轮询发起 → 不被无 token 的运行中快照抹掉", async () => {
+    // 回归：旧 `entry.ts >= t0` 规则会丢弃「早于本次 fetch 发起」的实时补丁，
+    // 而运行中节点 REST 快照永远不含 token（只在 node_end 落库）→ 每轮抹零，
+    // 表现为「只有 node_end 才看得到」。修复后：运行中 + 无 token 的快照必须让实时补丁胜出。
+    vi.useFakeTimers()
+    try {
+      let resolveFetch: ((v: unknown) => void) | null = null
+      vi.stubGlobal("fetch", vi.fn(() => new Promise(res => { resolveFetch = v => res(v) })))
+      const runningNoToken = {
+        status: "running",
+        steps: [
+          { stepId: "n1", stepName: "Node 1", status: "running" },
+          { stepId: "n2", stepName: "Node 2", status: "pending" },
+        ],
+      }
+      render(<WorkflowDetailPanel execution={makeExecution()} workspaceId="ws-1" />)
+      await act(async () => {})
+      // 初始轮询：n1 运行中、REST 尚无 usage
+      await act(async () => { resolveFetch?.({ json: async () => runningNoToken }) })
+      expect(getSteps().find(s => s.stepId === "n1")?.tokensInput).toBeUndefined()
+
+      // turn_usage 实时补丁写入（时刻 = 当前假时钟 T）
+      fire("agent_event", {
+        executionId: "exec-1", nodeId: "n1",
+        event: { type: "turn_usage", turn: 3, delta: { outputTokens: 57 }, cumulative: { inputTokens: 18, outputTokens: 219, cacheReadTokens: 0, cacheCreationTokens: 0 } },
+      })
+      expect(getSteps().find(s => s.stepId === "n1")?.tokensInput).toBe(18)
+
+      // 推进时钟触发下一次轮询：其 t0 (T+3000) 晚于补丁时刻 T
+      vi.advanceTimersByTime(3000)
+      await act(async () => {})
+      await act(async () => { resolveFetch?.({ json: async () => runningNoToken }) })
+
+      // 补丁必须存活，不被运行中无 token 的快照回退
+      const n1 = getSteps().find(s => s.stepId === "n1")
+      expect(n1?.tokensInput).toBe(18)
+      expect(n1?.tokensOutput).toBe(219)
+      expect(n1?.turns).toBe(3)
+    } finally {
+      vi.useRealTimers()
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it("node_end 落库后：迟到的旧轮询已带权威 token → 不被更早的 turn_usage 补丁覆盖", async () => {
+    // 保护反向竞态：终值落库后，小累计的旧实时补丁不得回退权威值。
+    vi.useFakeTimers()
+    try {
+      let resolveFetch: ((v: unknown) => void) | null = null
+      vi.stubGlobal("fetch", vi.fn(() => new Promise(res => { resolveFetch = v => res(v) })))
+      render(<WorkflowDetailPanel execution={makeExecution()} workspaceId="ws-1" />)
+      await act(async () => {})
+      await act(async () => { resolveFetch?.({ json: async () => ({ status: "running", steps: [{ stepId: "n1", stepName: "Node 1", status: "running" }, { stepId: "n2", stepName: "Node 2", status: "pending" }] }) }) })
+      // turn_usage 补丁（小累计）
+      fire("agent_event", {
+        executionId: "exec-1", nodeId: "n1",
+        event: { type: "turn_usage", turn: 2, delta: { outputTokens: 20 }, cumulative: { inputTokens: 5, outputTokens: 40, cacheReadTokens: 0, cacheCreationTokens: 0 } },
+      })
+      // 推进时钟：补丁早于下一次 fetch 发起
+      vi.advanceTimersByTime(3000)
+      await act(async () => {})
+      // 迟到快照已带 node_end 权威值
+      await act(async () => { resolveFetch?.({ json: async () => ({ status: "completed", steps: [{ stepId: "n1", stepName: "Node 1", status: "completed", usage: { inputTokens: 100, outputTokens: 500, cacheReadTokens: 0, cacheCreationTokens: 0 } }, { stepId: "n2", stepName: "Node 2", status: "pending" }] }) }) })
+      const n1 = getSteps().find(s => s.stepId === "n1")
+      expect(n1?.status).toBe("completed")
+      expect(n1?.tokensInput).toBe(100)   // 权威终值，未被小累计补丁覆盖
+      expect(n1?.tokensOutput).toBe(500)
+    } finally {
+      vi.useRealTimers()
+      vi.unstubAllGlobals()
+    }
+  })
 })

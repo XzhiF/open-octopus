@@ -50,6 +50,21 @@ import type { LLMCallData, LLMCallAggregates } from "@/lib/types"
 const POLL_INTERVAL_MS = 3000
 const RUNNING_STATUSES = new Set(["running", "paused", "pending_approval", "pending_interaction"])
 
+/**
+ * 轮询快照与 SSE 实时补丁（node_start/node_end/turn_usage）竞争时的胜出规则。
+ * t0 = 本次 fetch 发起时刻；patch.ts = 补丁写入时刻。
+ * - 补丁晚于 fetch 发起（patch.ts >= t0）：确比快照新 → 补丁胜（防迟到的旧快照回退 node_end）；
+ * - 补丁早于 t0：仅当快照仍是「运行中且 REST 尚无 token」（即权威终值未落库）时补丁仍胜——
+ *   运行中节点的 token 只在 node_end 写库，REST 快照永远不含实时累计值，旧规则一律丢弃这类
+ *   补丁会让实时 token 每轮被抹掉（表现为「只有 node_end 才看得到」）。
+ * - 快照已带终值（node_end 后 usage 落库 / 状态已翻转）：REST 胜，避免旧的小累计覆盖校准终值。
+ */
+function livePatchWins(patchTs: number, t0: number, snapshot: StepExecution): boolean {
+  if (patchTs >= t0) return true
+  const snapshotHasTokens = (snapshot.tokensInput ?? 0) > 0 || (snapshot.tokensOutput ?? 0) > 0
+  return snapshot.status === "running" && !snapshotHasTokens
+}
+
 function StatusBadge({ status }: { status: string }) {
   const config: Record<string, { color: string; label: string }> = {
     running: { color: "bg-amber-500", label: "运行中" },
@@ -175,7 +190,7 @@ export function WorkflowDetailPanel({ execution, workflow, workspaceId }: Workfl
           setLiveSteps(d.steps.map((raw: RawStepRow) => {
             const s = mapRawStep(raw)
             const entry = stepPatchRef.current.get(s.stepId)
-            return entry && entry.ts >= t0 ? { ...s, ...entry.patch } : s
+            return entry && livePatchWins(entry.ts, t0, s) ? { ...s, ...entry.patch } : s
           }))
         }
         if (d.workflow_content && !yamlContent) setYamlContent(d.workflow_content)
