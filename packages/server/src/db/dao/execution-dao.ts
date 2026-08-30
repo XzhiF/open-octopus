@@ -1,5 +1,6 @@
 import type Database from "better-sqlite3"
 import { BaseDAO } from "./base"
+import { buildTurnBoundaries, deriveTurnForTs, toEpochMs } from "../../turn-index"
 import type {
   ExecutionRow, NodeExecutionRow, NodeEdgeRow, BranchExecutionRow,
   AgentEventRow, ExecutionSummaryRow, PipelineStateRow, PaginatedResult,
@@ -249,6 +250,13 @@ export class ExecutionDAO extends BaseDAO {
       const neId = `${executionId}-${nodeId}`
       // Delete old fragmented events for this node, but preserve harness_* and intervention_result events
       this.stmt("DELETE FROM agent_events WHERE node_execution_id = ? AND event_type NOT LIKE 'harness_%' AND event_type != 'intervention_result'").run(neId)
+      // 权威轮次窗口：llm_calls 每回合一条、ts 与回合精确对齐，且在本方法（节点收尾
+      // 后触发）之前已由 onNodeEnd 落库。合并块不带 turnIndex → 按窗口派生回合，
+      // 否则旧逻辑 `e.turnIndex ?? 1` 会把任意多回合一律压成 turn_index=1。
+      const callRows = this.stmt(
+        "SELECT turn_index, timestamp FROM llm_calls WHERE node_execution_id = ? ORDER BY timestamp",
+      ).all(neId) as Array<{ turn_index: number; timestamp: number }>
+      const bounds = buildTurnBoundaries(callRows)
       // Insert merged events
       const insert = this.stmt(`
         INSERT INTO agent_events (
@@ -266,8 +274,11 @@ export class ExecutionDAO extends BaseDAO {
         const content = isMergedType
           ? JSON.stringify(e)
           : (e.content ?? e.line ?? (e.lines ? e.lines.join("\n") : null))
+        // 与读侧 assignTurnsToEvents 同一真相源(llm_calls 时间窗)，写读一致。
+        const evMs = toEpochMs(e.startedAt ?? e.timestamp)
+        const turn = (bounds.length > 0 && evMs > 0) ? deriveTurnForTs(bounds, evMs) : (e.turnIndex ?? 1)
         insert.run(
-          neId, i, e.turnIndex ?? 1, e.event, ts,
+          neId, i, turn, e.event, ts,
           content, content ? content.length : 0,
           e.toolCallId ?? null, e.toolName ?? null,
           e.input ? (typeof e.input === "string" ? e.input : JSON.stringify(e.input)) : null,

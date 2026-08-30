@@ -11,6 +11,7 @@ import { getFlag, loadFeatureFlags } from '../config/feature-flags'
 import { SuggestionEngine } from '../services/suggestion-engine'
 import { getLogAnalysisService } from '../services/log-analysis'
 import { WorkspaceDAO, ExecutionDAO, TokenUsageDAO } from '../db/dao'
+import { buildTurnBoundaries, deriveTurnForTs, toEpochMs, type TurnBoundary } from '../turn-index'
 import type { LogAnalysisService } from '../services/log-analysis'
 
 // ─── Log Analysis Routes (default export) ──────────────────────────
@@ -358,40 +359,24 @@ export default createAnalyticsLogRoutes
 // ─── Observability Routes (named export) ───────────────────────────
 // Mounted at: /api
 
-function toEpochMs(t: unknown): number {
-  if (typeof t === 'number') return Number.isFinite(t) ? t : 0
-  if (typeof t === 'string') {
-    const n = Number(t)
-    if (Number.isFinite(n)) return n
-    const p = Date.parse(t)
-    return Number.isNaN(p) ? 0 : p
-  }
-  return 0
-}
-
 /**
- * 按「所属回合」把 agent 事件分组（trace 时间线用）。
- *
- * 为什么不能直接用存储的 agent_events.turn_index：部分写入路径会把该列压平成常量
- * （实测多回合节点 thinking_block 全 =1），traces 据此分组就退化成「1 turns」，
- * 且丢失可展开的逐回合结构。而 llm_calls.turn_index 是权威每回合一条。
- *
- * 重派规则：thinking_block 的时间戳恰等于该回合 llm_call 的起始 ts，其后的工具/
- * 文本块顺延，故把每个事件归到「最大的 call.ts <= event.ts」那次调用所属回合
- * （事件早于首次调用 → 归第 1 回合）。无 llm_calls 的节点（bash/子流程/…）回退
- * 用存储 turn_index，行为不变。纯函数，接口即分组，便于直测。
+ * 按「所属回合」把 agent 事件分组（trace 时间线用）。轮次派生委托共享 util
+ * `turn-index`（与写侧 `replaceMergedEvents` 同一真相源 = llm_calls 时间窗）。
+ * 无 llm_calls 的节点（bash/子流程/…）回退用存储 turn_index，行为不变。
+ * 纯函数，接口即分组，便于直测。
  */
 export function assignTurnsToEvents(
   events: Array<Record<string, unknown>>,
   calls: Array<{ node_execution_id: string; turn_index: number; timestamp: number }>,
 ): Array<Record<string, unknown>> {
-  const boundsByNode = new Map<string, Array<{ turn: number; ts: number }>>()
+  const boundsByNode = new Map<string, TurnBoundary[]>()
+  const callsByNode = new Map<string, Array<{ turn_index: number; timestamp: number }>>()
   for (const c of calls) {
-    const arr = boundsByNode.get(c.node_execution_id) ?? []
-    arr.push({ turn: c.turn_index, ts: c.timestamp })
-    boundsByNode.set(c.node_execution_id, arr)
+    const arr = callsByNode.get(c.node_execution_id) ?? []
+    arr.push({ turn_index: c.turn_index, timestamp: c.timestamp })
+    callsByNode.set(c.node_execution_id, arr)
   }
-  for (const arr of boundsByNode.values()) arr.sort((a, b) => a.ts - b.ts || a.turn - b.turn)
+  for (const [ne, cs] of callsByNode) boundsByNode.set(ne, buildTurnBoundaries(cs))
 
   const eventsByNode = new Map<string, Array<Record<string, unknown>>>()
   for (const e of events) {
@@ -405,17 +390,12 @@ export function assignTurnsToEvents(
   for (const [ne, nodeEvents] of eventsByNode) {
     // 跨 int/ISO 混存的 timestamp 全局排序不可靠 → 按写入序 event_order 稳定排。
     nodeEvents.sort((a, b) => ((a.event_order as number) ?? 0) - ((b.event_order as number) ?? 0))
-    const bounds = boundsByNode.get(ne)
+    const bounds = boundsByNode.get(ne) ?? []
     const turnMap = new Map<number, Array<Record<string, unknown>>>()
     for (const e of nodeEvents) {
-      let turn: number
-      if (!bounds || bounds.length === 0) {
-        turn = (e.turn_index as number) ?? 1
-      } else {
-        const evTs = toEpochMs(e.timestamp)
-        turn = bounds[0].turn
-        for (const b of bounds) { if (b.ts <= evTs) turn = b.turn; else break }
-      }
+      const turn = bounds.length === 0
+        ? ((e.turn_index as number) ?? 1)
+        : deriveTurnForTs(bounds, toEpochMs(e.timestamp))
       let bucket = turnMap.get(turn)
       if (!bucket) { bucket = []; turnMap.set(turn, bucket) }
       bucket.push(e)
