@@ -1,4 +1,4 @@
-import { loadModelAliasConfig } from './config/model-alias'
+import { loadModelAliasConfig, type ModelAliasConfig } from './config/model-alias'
 
 /**
  * 全站唯一计价模块（C2 · ADR-0015）。
@@ -11,8 +11,8 @@ import { loadModelAliasConfig } from './config/model-alias'
  * （旧 MODEL_PRICING.default=sonnet 价曾让 qwen 系每笔都被按 $3/$15 假记账）。
  *
  * 价来源两层（overlay 优先，用于覆盖/补价）：
- * 1. models.yaml `custom_providers.*.models[].cost`（懒加载一次）——补价通道，
- *    改数据不改代码；
+ * 1. models.yaml —— `model_presets`（预设层：继承供给 + 定价终审）与
+ *    `custom_providers.*.models[].cost`（懒加载一次）；改数据不改代码；
  * 2. `BUILTIN_PRICING`——仅收录可验证的 Claude 系官方价（SDK 缺 costUSD 时兜底）。
  */
 
@@ -47,17 +47,61 @@ function pricingKey(model: string): string {
   return model.trim().toLowerCase()
 }
 
-function buildOverlay(): Record<string, PricingTier> {
+function sameTier(a: PricingTier, b: PricingTier): boolean {
+  return a.input === b.input && a.output === b.output && a.cacheRead === b.cacheRead && a.cacheCreation === b.cacheCreation
+}
+
+/** cost 块 → PricingTier。不完整块（preset 少字段）/ 全 0 = 不可定价 → null。 */
+function toTier(cost: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number } | undefined): PricingTier | null {
+  if (!cost) return null
+  const { input, output, cacheRead, cacheWrite } = cost
+  if (input === undefined || output === undefined || cacheRead === undefined || cacheWrite === undefined) return null
+  if (input === 0 && output === 0 && cacheRead === 0 && cacheWrite === 0) return null
+  return { input, output, cacheRead, cacheCreation: cacheWrite }
+}
+
+/**
+ * overlay 装配（2026-08-30 预设层扩展，ADR-0015 §model_presets）。键空间两族：
+ * - **前缀键 `provider/id`**：custom 条目价（含 model_presets 继承后的生效值）；
+ *   带 `/` 的预设条目精确覆盖同名前缀键（厂商级终审）。
+ * - **裸键 `id`**：SDK 报裸名的命中面（claude 代理场景）。取值优先级：
+ *   裸名预设（终审）> custom 各商一致的唯一值；多商不同价且无预设终审 →
+ *   裸键丢弃 + warn（宁可未定价，不静默选边——D2 无 default 精神的延伸）。
+ * 键统一 trim+lowercase；全 0 块 = 没填价，不入表。
+ */
+function buildOverlay(cfg: ModelAliasConfig): Record<string, PricingTier> {
   const map: Record<string, PricingTier> = {}
   try {
-    const cfg = loadModelAliasConfig()
-    for (const provider of Object.values(cfg.custom_providers)) {
+    const bareCands = new Map<string, Array<{ tier: PricingTier; source: string }>>()
+    for (const [pname, provider] of Object.entries(cfg.custom_providers)) {
       for (const m of provider.models) {
-        const t = m.cost
-        // 全 0 = models.yaml 里没填价 = 未定价，不入 overlay（区别于误把 0 当免费）
-        if (!t || (t.input === 0 && t.output === 0 && t.cacheRead === 0 && t.cacheWrite === 0)) continue
-        map[pricingKey(m.id)] = { input: t.input, output: t.output, cacheRead: t.cacheRead, cacheCreation: t.cacheWrite }
+        const tier = toTier(m.cost)
+        if (!tier) continue
+        const idKey = pricingKey(m.id)
+        map[`${pricingKey(pname)}/${idKey}`] = tier
+        const cands = bareCands.get(idKey) ?? []
+        cands.push({ tier, source: pname })
+        bareCands.set(idKey, cands)
       }
+    }
+    const preBare = new Map<string, PricingTier>()
+    for (const p of cfg.model_presets) {
+      const key = pricingKey(p.id)
+      const tier = toTier(p.cost)
+      if (!tier) {
+        if (p.cost) console.warn(`[pricing] model_presets "${p.id}" 的 cost 块不完整（需 input/output/cacheRead/cacheWrite 四字段），该价不生效`)
+        continue
+      }
+      if (key.includes('/')) map[key] = tier
+      else preBare.set(key, tier)
+    }
+    for (const [key, tier] of preBare) map[key] = tier
+    for (const [key, cands] of bareCands) {
+      if (preBare.has(key)) continue
+      const uniq: Array<{ tier: PricingTier; source: string }> = []
+      for (const c of cands) if (!uniq.some((u) => sameTier(u.tier, c.tier))) uniq.push(c)
+      if (uniq.length === 1) map[key] = cands[0].tier
+      else console.warn(`[pricing] 裸模型名 "${key}" 在 ${uniq.map((u) => u.source).join(" / ")} 间价格不一致，裸名查询按未定价处理——在 model_presets 配 "${key}" 可终审定价`)
     }
   } catch {
     // 配置读取失败不致命：退化为只有内置表
@@ -67,15 +111,16 @@ function buildOverlay(): Record<string, PricingTier> {
 
 /**
  * 两阶段匹配（共识 ①）：
- * 1. 精确命中（key 统一 trim+lowercase，解决 `[1M]`/`[1m]` 大小写漂移）；
+ * 1. 精确命中（key 统一 trim+lowercase，解决 `[1M]`/`[1m]` 大小写漂移）——
+ *    pi 报 `dashscope/qwen3.7-plus` 带前缀名命中 overlay 前缀键（厂商级价）；
  * 2. miss → 剥掉尾部 `[...]` 变体段再精确一次——代理上报的
  *    `qwen3.8-flash[1m]` 接住用户配置的 `qwen3.8-flash` 价；
  *    想给变体单独定价就配精确键 `qwen3.8-flash[1m]`，阶段 1 自动优先。
- * 无 default、无前缀猜测。
+ * 无 default、无 provider 猜测（报裸名时不跨商选价，见 buildOverlay 裸键裁决）。
  */
 export function priceFor(model: string | null | undefined): PricingTier | null {
   if (!model) return null
-  if (overlay === null) overlay = buildOverlay()
+  if (overlay === null) overlay = buildOverlay(loadModelAliasConfig())
   const builtin = BUILTIN_PRICING as Record<string, PricingTier>
   let key = pricingKey(model)
   if (overlay[key]) return overlay[key]
@@ -101,6 +146,11 @@ export function estimateCost(usage: PricingUsage, tier: PricingTier | null | und
 }
 
 // —— 测试钩子 ——
+
+/** 用给定 config 装配 overlay（纯装配器，测试直打；不读文件）。 */
+export function __buildOverlayForTest(cfg: ModelAliasConfig): Record<string, PricingTier> {
+  return buildOverlay(cfg)
+}
 
 /** 钉住 overlay（传入即用；null 清空）。只应在测试中调用。 */
 export function __setPricingOverlayForTest(entries: Record<string, PricingTier> | null): void {

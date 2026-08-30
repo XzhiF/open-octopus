@@ -33,3 +33,16 @@ deletion test：删掉「统一价表」概念，4 个价源立刻在原地各�
 - **代价**：qwen 系新行 `cost_usd` 从假数变 NULL——费用列对用户暂时为空，直到 models.yaml 贴价。**存量假数不回填不清洗**（解释权归 C3 ledger，与 C1 D4 同策略）。
 - **移交 C3**：`analytics.ts` 的 `costEfficiency = 1 − avgCost/10` 魔数与「NULL `?? 0` 求和」——qwen 变 NULL 后该分数会系统性偏乐观，属跨执行聚合语义，归 UsageLedger 定夺。
 - **验证**：单刀提交；shared pricing 10 例 + tracker 28 例（含未定价跳过分配新例）+ aggregator 0→undefined 例 + wire-contract C2 4 例 + **observability 真落库三态 4 例**（qwen→NULL / 变体匹配 / 内置兜底 / 实测优先）；全仓 tsc 无新增、各包 vitest 失败集 = HEAD 基线。
+
+## Amendment 2026-08-30: model_presets 预设层（跨厂商价隔离 + 字段继承）
+
+上线后发现 Decision #3/#4 的两处缺陷：**overlay 无 provider 维度**（多商 `custom_providers` 配同名 model id 异价时后写静默覆盖先写）；**pi 上报带前缀名**（`dashscope/qwen3.7-plus`）与 overlay 裸键永错位，兜底估算恒 NULL。
+
+新增 models.yaml 顶层 `model_presets` 层（条目同 `models[]` 形，`id` 允许裸名或 `provider/model`）：
+
+1. **继承在 raw 层做**（`applyModelPresets`，zod parse 前）：custom 条目缺失字段 ← 前缀预设 > 裸名预设。schema 字段全带 `.default()` 使 parse 后「没配」与「配 0」不可分，raw 的 `hasOwnProperty` 才是"没配"的精确语义；cost 块**逐字段**合并（条目已写字段优先）。
+2. **overlay 双键装配**：custom 生效价同时写前缀键 `provider/id`（唯一不撞）与裸键 `id`（claude 代理报裸名的命面）；预设条目按 id 形态写对应键。
+3. **裸键裁决**：裸名预设 = 终审直写；无预设时 custom 各商同价 → 保留、异价 → **裸键丢弃 + warn**（宁可未定价不静默选边——#1 无 default 精神的延伸）。跨商异价的正当逃逸口就是往预设层写一行裸名。
+4. 预设 cost 块不完整（<4 字段）→ 该价不生效 + warn（防半块 0 伪装成价）。
+
+验证：shared `model-presets.test.ts` 14 例（继承矩阵/裁决矩阵/双键命中）；四包 tsc/vitest 例级 = HEAD 基线零新增。
