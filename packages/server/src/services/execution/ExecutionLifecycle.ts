@@ -1905,6 +1905,10 @@ export class ExecutionLifecycle {
     return this.queryService.getTokenUsagesForExecution(executionId)
   }
 
+  llmCallCountsByNode(executionId: string): Record<string, number> {
+    return this.queryService.llmCallCountsByNode(executionId)
+  }
+
   // ==================== Lifecycle hooks ====================
 
   private async executeWorkflowHooks(

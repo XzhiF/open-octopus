@@ -25,6 +25,7 @@ interface TokenUsageEntry {
   outputTokens: number
   cacheReadTokens?: number
   cacheCreationTokens?: number
+  costUsd?: number | null
 }
 
 export class ExecutionService {
@@ -133,6 +134,11 @@ export class ExecutionService {
 
   getTokenUsagesPerStep(executionId: string): TokenUsageEntry[] {
     return this.lifecycle.getTokenUsagesPerStep(executionId)
+  }
+
+  /** 每节点 LLM 请求次数（供节点主行「总请求次数」）。 */
+  llmCallCountsByNode(executionId: string): Record<string, number> {
+    return this.lifecycle.llmCallCountsByNode(executionId)
   }
 
   // ==================== Lifecycle ====================

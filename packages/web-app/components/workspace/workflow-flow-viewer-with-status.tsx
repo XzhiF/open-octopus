@@ -354,13 +354,28 @@ export function WorkflowFlowViewerWithStatus({
             duration: effectiveDuration,
             startedAt: step.startedAt,
             error: step.error,
-            tokenUsage: ((step.tokensInput ?? 0) > 0 || (step.tokensOutput ?? 0) > 0)
+            // 节点主行用「节点级聚合」：多模型则合并四路 token + 取合计费用，单模型即其值。
+            // 明细(每模型/缓存分解)留到点开弹窗（TokenUsageDisplay）。
+            tokenUsage: step.tokenUsages && step.tokenUsages.length > 0
               ? {
-                  model: step.model ?? "",
-                  inputTokens: step.tokensInput ?? 0,
-                  outputTokens: step.tokensOutput ?? 0,
+                  model: step.tokenUsages.length > 1 ? `${step.model ?? ""} +${step.tokenUsages.length - 1}` : (step.model ?? step.tokenUsages[0].model ?? ""),
+                  inputTokens: step.tokenUsages.reduce((s, u) => s + (u.inputTokens ?? 0), 0),
+                  outputTokens: step.tokenUsages.reduce((s, u) => s + (u.outputTokens ?? 0), 0),
+                  cacheReadTokens: step.tokenUsages.reduce((s, u) => s + (u.cacheReadTokens ?? 0), 0),
+                  cacheCreationTokens: step.tokenUsages.reduce((s, u) => s + (u.cacheCreationTokens ?? 0), 0),
+                  costUsd: step.costUsd ?? undefined,
+                  costComplete: step.costComplete,
                 }
-              : undefined,
+              : ((step.tokensInput ?? 0) > 0 || (step.tokensOutput ?? 0) > 0
+                  ? {
+                      model: step.model ?? "",
+                      inputTokens: step.tokensInput ?? 0,
+                      outputTokens: step.tokensOutput ?? 0,
+                      costUsd: step.costUsd ?? undefined,
+                      costComplete: step.costComplete,
+                    }
+                  : undefined),
+            requestCount: step.requestCount,
             tokenUsages: step.tokenUsages && step.tokenUsages.length > 0
               ? step.tokenUsages
               : undefined,

@@ -13,7 +13,7 @@ import { initExecutionServiceRegistry, getService } from "../services/execution-
 export { getService } from "../services/execution-service-registry"
 import { mergeAgentEvents } from "@octopus/engine"
 import type { TokenUsage } from "@octopus/shared"
-import { addTokenUsage, emptyTokenUsage } from "@octopus/shared"
+import { addTokenUsage, emptyTokenUsage, costSummary } from "@octopus/shared"
 import repairRoutes, { setRepairDependencies, createRepairServiceForWorkspace } from "./repair"
 import os from "os"
 
@@ -190,6 +190,7 @@ executionRoutes.get("/:executionId", async (c) => {
   const workflowContent = svc.service.getWorkflowContent(executionId)
   const allTokenUsages = svc.service.getTokenUsagesForExecution(executionId)
   const perStepTokenUsages = svc.service.getTokenUsagesPerStep(executionId)
+  const reqCounts = svc.service.llmCallCountsByNode(executionId)
   // Map node_executions to frontend StepExecution format
   const steps = execution.steps.map(ne => {
     const stepTokens = perStepTokenUsages.filter(t => t.stepId === ne.node_id)
@@ -198,6 +199,9 @@ executionRoutes.get("/:executionId", async (c) => {
     const stepUsage: TokenUsage | undefined = stepTokens.length > 0
       ? stepTokens.reduce<TokenUsage>((acc, t) => addTokenUsage(acc, t), emptyTokenUsage())
       : undefined
+    // C3：节点费用走 ledger 唯一源（三态：全未定价 = null，不焊 0）。请求次数 = llm_calls 行数。
+    const nodeCost = costSummary(stepTokens.map(t => t.costUsd))
+    const requestCount = reqCounts[ne.node_id] ?? 0
     const parsedOutputs = ne.outputs ? JSON.parse(ne.outputs) : undefined
     return {
       stepId: ne.node_id,
@@ -212,12 +216,16 @@ executionRoutes.get("/:executionId", async (c) => {
       outputs: parsedOutputs,
       model: stepTokens.length > 0 ? stepTokens[0].model : undefined,
       ...(stepUsage ? { usage: stepUsage } : {}),
+      costUsd: nodeCost.usd,
+      costComplete: nodeCost.complete,
+      ...(requestCount > 0 ? { requestCount } : {}),
       modelUsages: stepTokens.length > 0 ? stepTokens.map(t => ({
         model: t.model,
         inputTokens: t.inputTokens,
         outputTokens: t.outputTokens,
         cacheReadTokens: t.cacheReadTokens,
         cacheCreationTokens: t.cacheCreationTokens,
+        costUsd: t.costUsd ?? null,
       })) : undefined,
       parentNodeId: ne.parent_node_id ?? undefined,
       iterationIndex: ne.iteration_index ?? undefined,

@@ -105,6 +105,9 @@ interface RawStepRow {
   modelUsages?: TokenUsage[]
   tokenUsages?: TokenUsage[]
   token_usages?: { model: string; inputTokens: number; outputTokens: number }[]
+  costUsd?: number | null
+  costComplete?: boolean
+  requestCount?: number
   nodeType?: string
   parentNodeId?: string
   iterationIndex?: number
@@ -130,6 +133,9 @@ function mapRawStep(raw: RawStepRow): StepExecution {
     tokensInput: raw.usage?.inputTokens ?? raw.tokensInput,
     tokensOutput: raw.usage?.outputTokens ?? raw.tokensOutput,
     tokenUsages: raw.modelUsages ?? raw.tokenUsages ?? raw.token_usages,
+    costUsd: raw.costUsd,
+    costComplete: raw.costComplete,
+    requestCount: raw.requestCount,
     nodeType: raw.nodeType,
     parentNodeId: raw.parentNodeId,
     iterationIndex: raw.iterationIndex,
@@ -294,6 +300,8 @@ export function WorkflowDetailPanel({ execution, workflow, workspaceId }: Workfl
             tokensInput: d.usage?.inputTokens,
             tokensOutput: d.usage?.outputTokens,
             tokenUsages: d.modelUsages,
+            costUsd: d.costUsd,
+            requestCount: d.turnCount,
           }
           const patch = Object.fromEntries(
             Object.entries(raw).filter(([, v]) => v !== undefined),

@@ -557,14 +557,25 @@ export class ExecutionDAO extends BaseDAO {
       .get(executionId, nodeId) as { error: string | null; exit_code: number | null }) ?? null
   }
 
-  findNodeTokenUsages(executionId: string): Array<{ node_id: string; model: string; input_tokens: number; output_tokens: number; cache_read_tokens: number; cache_creation_tokens: number }> {
+  findNodeTokenUsages(executionId: string): Array<{ node_id: string; model: string; input_tokens: number; output_tokens: number; cache_read_tokens: number; cache_creation_tokens: number; cost_usd: number | null }> {
     return this.stmt(
       `SELECT ne.node_id, ntu.model, ntu.input_tokens, ntu.output_tokens,
-              ntu.cache_read_tokens, ntu.cache_creation_tokens
+              ntu.cache_read_tokens, ntu.cache_creation_tokens, ntu.cost_usd
        FROM node_token_usages ntu
        JOIN node_executions ne ON ntu.node_execution_id = ne.id
        WHERE ne.execution_id = ?`
-    ).all(executionId) as Array<{ node_id: string; model: string; input_tokens: number; output_tokens: number; cache_read_tokens: number; cache_creation_tokens: number }>
+    ).all(executionId) as Array<{ node_id: string; model: string; input_tokens: number; output_tokens: number; cache_read_tokens: number; cache_creation_tokens: number; cost_usd: number | null }>
+  }
+
+  /** 每节点 llm_calls 行数（= LLM 请求次数）。 */
+  llmCallCountsByNode(executionId: string): Array<{ node_id: string; count: number }> {
+    return this.stmt(
+      `SELECT ne.node_id, COUNT(*) as count
+       FROM llm_calls lc
+       JOIN node_executions ne ON lc.node_execution_id = ne.id
+       WHERE ne.execution_id = ?
+       GROUP BY ne.node_id`
+    ).all(executionId) as Array<{ node_id: string; count: number }>
   }
 
   findLatestNodeOutput(executionId: string, nodeId: string): Record<string, unknown> | null {

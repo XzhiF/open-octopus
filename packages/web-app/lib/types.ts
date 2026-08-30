@@ -132,6 +132,8 @@ export interface StatusOverlay {
   error?: string
   tokenUsage?: TokenUsage
   tokenUsages?: TokenUsage[]
+  /** 节点 LLM 请求次数（= llm_calls 行数），供节点主行「N 次」。 */
+  requestCount?: number
   heartbeat?: AgentHeartbeat
   harnessStatus?: HarnessNodeStatus
 }
@@ -149,6 +151,11 @@ export interface StepExecution {
   model?: string
   tokensInput?: number
   tokensOutput?: number
+  /** 节点级费用（C3 ledger 三态：全未定价=null）+ 是否完整计价。 */
+  costUsd?: number | null
+  costComplete?: boolean
+  /** 节点 LLM 请求次数（llm_calls 行数）。 */
+  requestCount?: number
   /** 运行中实时轮次（turn_usage SSE 事件驱动；轮询数据不含此字段） */
   turns?: number
   tokenUsages?: TokenUsage[]
