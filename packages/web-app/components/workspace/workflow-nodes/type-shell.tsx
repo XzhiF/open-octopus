@@ -4,7 +4,8 @@ import { cn } from "@/lib/utils"
 import { Badge } from "@/components/ui/badge"
 import { nodeIconConfigs } from "./node-icon-config"
 import type { StatusOverlay, StepExecutionStatus, HarnessNodeStatus } from "@/lib/types"
-import { formatDuration, formatTokenCount, formatCost } from "@/lib/format"
+import { formatDuration } from "@/lib/format"
+import { TokenAggregateLine } from "./token-aggregate-line"
 import { useLiveTimer } from "@/hooks/use-live-timer"
 import { Clock, Loader2, CheckCircle2, XCircle, SkipForward, PauseCircle, Timer, ShieldCheck, ShieldX, Bot } from "lucide-react"
 
@@ -118,20 +119,7 @@ export function TypeShell({ nodeType, name, statusOverlay, children }: TypeShell
         </div>
       )}
       {/* 节点主行：模型 · ∑处理量(含缓存) · N次 · 费用。缓存/每模型明细收进点开弹窗。 */}
-      {(() => {
-        const tu = statusOverlay?.tokenUsage
-        const total = tu ? (tu.inputTokens ?? 0) + (tu.outputTokens ?? 0) + (tu.cacheReadTokens ?? 0) + (tu.cacheCreationTokens ?? 0) : 0
-        if (!tu || (total === 0 && !statusOverlay?.requestCount)) return null
-        return (
-          <div className={cn("text-xs tabular-nums flex items-center gap-1.5 px-3 pb-1", isRunning ? "text-amber-600 font-medium" : "text-muted-foreground")}>
-            <span className="font-medium truncate max-w-[150px]">{tu.model}</span>
-            <span title="处理量（输入+输出+缓存读+缓存写）">∑{formatTokenCount(total)}</span>
-            {!!statusOverlay?.requestCount && <span title="LLM 请求次数">{statusOverlay.requestCount}次</span>}
-            {tu.costUsd != null && <span>{formatCost(tu.costUsd, tu.costComplete)}</span>}
-            {isRunning && <span className="inline-block h-1.5 w-1.5 rounded-full bg-amber-500 animate-pulse" />}
-          </div>
-        )
-      })()}
+      <TokenAggregateLine usage={statusOverlay?.tokenUsage} requestCount={statusOverlay?.requestCount} isRunning={isRunning} className="px-3 pb-1" />
       {statusOverlay?.stepStatus === "failed" && statusOverlay.error && (
         <p className="px-3 pb-1 text-xs text-red-600 truncate">{statusOverlay.error}</p>
       )}

@@ -11,8 +11,7 @@ import type { ExecutionNodeData, ExecutionStatus, GateStatus, HarnessNodeStatus,
 import { CheckCircle2, XCircle, Clock, Loader2, SkipForward, ShieldOff, Undo2, PauseCircle, PlayCircle, Timer, Webhook, MessageSquare, Hourglass, Ban, ShieldCheck, Bot } from "lucide-react"
 import { formatDuration } from "@/lib/format"
 import { useLiveTimer } from "@/hooks/use-live-timer"
-import { TokenUsageDisplay } from "./token-usage-display"
-import { CostLine } from "@/components/cost-line"
+import { TokenAggregateLine } from "./token-aggregate-line"
 
 const statusConfig: Record<ExecutionStatus, { color: string; bgColor: string; borderColor: string; label: string }> = {
   pending: { color: "text-blue-600", bgColor: "bg-blue-50", borderColor: "border-blue-200", label: "待开始" },
@@ -190,20 +189,15 @@ function ExecutionNodeInner({ data: rawData, selected }: NodeProps) {
         {isRunning && (!data.tokenUsages || data.tokenUsages.length === 0) && (
           <div className="h-4 mt-1" />
         )}
-        {data.tokenUsages && data.tokenUsages.length > 0 && (
-          <TokenUsageDisplay
-            usages={data.tokenUsages}
-            isRunning={isRunning}
-          />
-        )}
-        {data.costUsd != null && data.costUsd > 0 && (
-          <CostLine
-            costUsd={data.costUsd}
-            turns={data.turnCount}
-            tools={data.toolCount}
-            durationMs={data.duration != null ? data.duration * 1000 : undefined}
-          />
-        )}
+        {/* 与 agent 节点同一聚合主行：模型 · ∑处理量 · N次(turnCount) · 费用(ledger)。
+            tools 明细收进点开弹窗，不再在卡上双行。 */}
+        <TokenAggregateLine
+          usage={data.tokenUsages}
+          requestCount={data.turnCount}
+          costUsd={data.costUsd}
+          isRunning={isRunning}
+          className="mt-1"
+        />
         <div className="flex items-center justify-between text-xs text-muted-foreground">
           <div className="flex items-center gap-1.5 min-w-0">
             {isRunning && <span className="tabular-nums shrink-0">{data.progress}%</span>}
