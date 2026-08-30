@@ -204,19 +204,25 @@ export class PiAgentProvider implements IAgentProvider {
           this.llmTracker.onTextDelta()
         }
       } else if (event.type === 'message_end') {
-        this.llmTracker.onMessageDelta(event.stopReason)
+        // C5：Pi per-message 实测 usage 接线 llm_calls 明细（与 tokenAgg 同源）——
+        // 此前 onMessageDelta 不带 usage，Pi 的 llm_calls 行四字段恒 0（明细失真）。
+        const usage = event.message?.usage
+        this.llmTracker.onMessageDelta(event.stopReason, usage ? {
+          inputTokens: usage.input ?? 0,
+          outputTokens: usage.output ?? 0,
+          cacheReadTokens: usage.cacheRead ?? 0,
+          cacheCreationTokens: usage.cacheWrite ?? 0,
+        } : undefined)
         this.llmTracker.onMessageStop(mapperState.messageId)
         // Capture token usage from message (Pi SDK stores usage per-message, not per-agent)
-        const usage = event.message?.usage
         if (usage) {
           tokenAgg.add(resolvedModelName ?? 'unknown', usage)
         }
       }
 
-      // Aggregate token usage from agent_end
-      if (event.type === 'agent_end' && event.usage) {
-        tokenAgg.add(options?.model ?? 'unknown', event.usage)
-      }
+      // C5 探针定夺（读源 pi-agent-core@0.80.3）：agent_end 的所有 emit 点恒为
+      // { type, messages }，从不携带 usage——原「agent_end 也喂 aggregator」分支是
+      // 永不命中的僵尸双源，已结构性删除（保留 = 上游一加 usage 字段即变双计）。
 
       const chunks = mapPiEventToChunks(event, mapperState)
       if (chunks === null) return null
