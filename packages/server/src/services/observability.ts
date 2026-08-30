@@ -40,15 +40,12 @@ interface NodeBuffer {
   timer: ReturnType<typeof setTimeout> | null
 }
 
-/**
- * 回合计数（0-based 计数器，落库时 clamp 到 ≥1）。回合起点 = 一次 assistant 回合的开始。
- * 事件流在到达此处前可能已被合并（fragment → thinking_block / tool_call / text_block），
- * 合并会抹掉 thinking_start，所以必须同时认 thinking_block —— 否则计数器永不推进，
- * 整节点塌成 turn_index=1（traces 因此显示 "1 turns"）。实测每个 thinking_block == 一个回合。
- */
-export function computeTurnIndex(eventType: string, currentTurn: number): number {
-  if (eventType === 'thinking_start' || eventType === 'thinking_block') {
+function computeTurnIndex(eventType: string, currentTurn: number): number {
+  if (eventType === 'thinking_start') {
     return currentTurn + 1
+  }
+  if (currentTurn === 0) {
+    return 1
   }
   return currentTurn
 }
@@ -126,8 +123,7 @@ export class ObservabilityService {
 
     buf.turnIndex = computeTurnIndex(event.type, buf.turnIndex)
 
-    // 首个 thinking_block 之前的 lead-in 事件（start / 首条 status）归第 1 回合。
-    const filtered = this.filterEvent(event, Math.max(buf.turnIndex, 1))
+    const filtered = this.filterEvent(event, buf.turnIndex)
     if (filtered) buf.events.push(filtered)
 
     if (buf.events.length >= 50) {
