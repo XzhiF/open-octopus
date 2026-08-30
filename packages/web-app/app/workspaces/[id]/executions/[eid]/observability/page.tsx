@@ -259,7 +259,7 @@ export default function ObservabilityPage() {
       {/* Section 1: Summary Cards */}
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
         <SummaryCard
-          title="总 Token"
+          title="处理量·含缓存"
           value={formatTokenCount(totals.tokens)}
           subtitle={`↑${formatTokenCount(data.tokens.usage.inputTokens)} ↓${formatTokenCount(data.tokens.usage.outputTokens)} ⚡${formatTokenCount(data.tokens.usage.cacheReadTokens)} 🗡️${formatTokenCount(data.tokens.usage.cacheCreationTokens)}`}
           icon={Coins}
