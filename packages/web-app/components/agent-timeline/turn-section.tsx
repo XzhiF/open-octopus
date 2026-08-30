@@ -98,7 +98,9 @@ export function TurnSection({ turn, isExpanded, isLive, onToggle }: TurnSectionP
             isExpanded && "rotate-90",
           )}
         />
-        <span className="font-medium tabular-nums">T{turn.turn_index + 1}</span>
+        {/* turn_index 持久化即 1-based（computeTurnIndex 首事件 0→1），直接取，勿 +1——
+            旧 +1 把第一轮标成 T2 且永不出现 T1。 */}
+        <span className="font-medium tabular-nums">T{turn.turn_index}</span>
         <span className="text-muted-foreground">·</span>
         <span className="text-muted-foreground">{summary}</span>
         <div className="ml-auto flex items-center gap-2">
