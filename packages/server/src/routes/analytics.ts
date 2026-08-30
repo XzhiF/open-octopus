@@ -411,6 +411,77 @@ export function assignTurnsToEvents(
   return out
 }
 
+/** JSON 信封解析：合并块 content 存的是整事件 JSON（round-trip 用），读侧统一解包。 */
+function parseEnvelope(content: unknown): Record<string, unknown> | null {
+  if (typeof content !== "string" || !content.startsWith("{")) return null
+  try {
+    const j = JSON.parse(content)
+    return j && typeof j === "object" && !Array.isArray(j) ? j as Record<string, unknown> : null
+  } catch { return null }
+}
+
+function asString(v: unknown): string {
+  if (typeof v === "string") return v
+  if (v == null) return ""
+  try { return JSON.stringify(v) } catch { return String(v) }
+}
+
+/**
+ * traces 读侧词汇归一（唯一 seam）：DB 里 agent 事件存在两代写法——
+ *  raw(observability):      tool_start / tool_input / tool_result 三行，列分离，thinking 纯文本
+ *  merged(节点收尾压缩):    tool_call 每次调用两行 + thinking_block/text_block，
+ *                           全量 JSON 塞 content 信封，列部分填充。
+ * 这里把 merged 词汇折叠成可渲染形状：tool_call 按 tool_call_id 合并为一行
+ * （input 取非空、result 取非空、duration 列缺则用信封 startedAt/completedAt 差），
+ * thinking_block/text_block 解包 content 为正文。前端只需再认 event_type="tool_call"。
+ */
+export function normalizeTraceEvents(events: Array<Record<string, unknown>>): Array<Record<string, unknown>> {
+  const out: Array<Record<string, unknown>> = []
+  const toolRowById = new Map<string, Record<string, unknown>>()
+
+  for (const e of events) {
+    const et = e.event_type as string
+    if (et === "thinking_block" || et === "text_block") {
+      const env = parseEnvelope(e.content)
+      const inner = env ? asString(env.content) : ""
+      out.push(inner ? { ...e, content: inner, content_length: inner.length } : e)
+      continue
+    }
+    if (et === "tool_call") {
+      const env = parseEnvelope(e.content)
+      const id = (e.tool_call_id ?? env?.toolCallId) as string | null
+      const input = asString(e.tool_input) || asString(env?.input)
+      const result = asString(e.tool_result) || asString(env?.result)
+      const isError = (e.tool_is_error || env?.isError) ? 1 : 0
+      const envDurRaw = env?.startedAt && env?.completedAt
+        ? Date.parse(String(env.completedAt)) - Date.parse(String(env.startedAt))
+        : null
+      const envDur = envDurRaw != null && Number.isFinite(envDurRaw) ? envDurRaw : null
+      const dur = e.tool_duration_ms != null ? (e.tool_duration_ms as number) : envDur
+      const prev = id ? toolRowById.get(id) : undefined
+      if (prev) {
+        if (!prev.tool_input) prev.tool_input = input || null
+        if (!prev.tool_result) prev.tool_result = result || null
+        if (isError) prev.tool_is_error = 1
+        if (prev.tool_duration_ms == null && dur != null) prev.tool_duration_ms = dur
+        continue
+      }
+      const row: Record<string, unknown> = {
+        ...e,
+        tool_input: input || null,
+        tool_result: result || null,
+        tool_is_error: isError,
+        tool_duration_ms: dur,
+      }
+      out.push(row)
+      if (id) toolRowById.set(id, row)
+      continue
+    }
+    out.push(e)
+  }
+  return out
+}
+
 export function createAnalyticsRoutes(
   execDAO: ExecutionDAO,
   tokenUsageDAO: TokenUsageDAO,
@@ -426,8 +497,8 @@ export function createAnalyticsRoutes(
     const events = execDAO.findAgentEventsWithNode(executionId, nodeId || undefined)
     const calls = tokenUsageDAO.findLlmCallsByExecution(executionId, nodeId || undefined)
 
-    // 用 llm_calls 权威回合窗口重派 turn_index（存储列在部分路径下被压平）。
-    const turns = assignTurnsToEvents(events, calls)
+    // 词汇归一（merged → 可渲染形状）先于回合派生：tool_call 折叠后回合窗口取起始行。
+    const turns = assignTurnsToEvents(normalizeTraceEvents(events), calls)
 
     return c.json({
       data: turns,
@@ -457,17 +528,19 @@ export function createAnalyticsRoutes(
           return { usage: m.usage, totals: m.totals }
         })()
 
-    const modelBreakdown: Record<string, { calls: number; inputTokens: number; outputTokens: number; costUsd: number | null }> = {}
+    const modelBreakdown: Record<string, { calls: number; inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheCreationTokens: number; costUsd: number | null }> = {}
     const modelCosts: Record<string, Array<number | null>> = {}
     for (const call of calls) {
       const model = (call.model as string) ?? 'unknown'
       if (!modelBreakdown[model]) {
-        modelBreakdown[model] = { calls: 0, inputTokens: 0, outputTokens: 0, costUsd: null }
+        modelBreakdown[model] = { calls: 0, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0, costUsd: null }
         modelCosts[model] = []
       }
       modelBreakdown[model].calls++
       modelBreakdown[model].inputTokens += call.input_tokens as number ?? 0
       modelBreakdown[model].outputTokens += call.output_tokens as number ?? 0
+      modelBreakdown[model].cacheReadTokens += call.cache_read_tokens as number ?? 0
+      modelBreakdown[model].cacheCreationTokens += call.cache_creation_tokens as number ?? 0
       modelCosts[model].push(call.cost_usd as number | null)
     }
     for (const [model, costs] of Object.entries(modelCosts)) {
@@ -478,6 +551,8 @@ export function createAnalyticsRoutes(
       data: calls,
       aggregates: {
         totalCalls: calls.length,
+        // 工具调用总数 = 不同 tool_call_id 数（raw 三行/merged 两行同 id 自动去重）。
+        toolCalls: execDAO.countToolCalls(executionId as string, nodeId || undefined),
         usage: ledgerAgg.usage,
         totals: ledgerAgg.totals,
         modelBreakdown,

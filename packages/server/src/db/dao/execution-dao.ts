@@ -836,6 +836,24 @@ export class ExecutionDAO extends BaseDAO {
   }
 
   /**
+   * 工具调用总数 = 不同 tool_call_id 数。两代词汇（raw 的 tool_start/tool_input/tool_result
+   * 三行、merged 的 tool_call 两行）共享同一 id，DISTINCT 天然去重。
+   */
+  countToolCalls(executionId: string, nodeId?: string): number {
+    let query = `
+      SELECT COUNT(DISTINCT ae.tool_call_id) AS count
+      FROM agent_events ae
+      JOIN node_executions ne ON ae.node_execution_id = ne.id
+      WHERE ne.execution_id = ? AND ae.tool_call_id IS NOT NULL
+        AND ae.event_type IN ('tool_start','tool_input','tool_result','tool_call')
+    `
+    const params: unknown[] = [executionId]
+    if (nodeId) { query += ` AND ne.node_id = ?`; params.push(nodeId) }
+    const row = this.stmt(query).get(...params) as { count: number } | undefined
+    return row?.count ?? 0
+  }
+
+  /**
    * Find all tool-level errors (tool_is_error = 1) for an execution.
    * Used by observability to surface agent-internal tool failures.
    */

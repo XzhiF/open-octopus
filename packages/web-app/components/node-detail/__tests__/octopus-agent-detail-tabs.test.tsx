@@ -161,6 +161,7 @@ describe("OctopusAgentDetailTabs", () => {
       calls: [],
       aggregates: {
         totalCalls: 5,
+        toolCalls: 3,
         usage: { inputTokens: 1000, outputTokens: 500, cacheReadTokens: 200, cacheCreationTokens: 100 },
         totals: { tokens: 1800, cost: { usd: 0.05, complete: true }, cacheHitRate: 200 / 1200 },
         modelBreakdown: {
@@ -175,7 +176,9 @@ describe("OctopusAgentDetailTabs", () => {
 
     await user.click(screen.getByRole("tab", { name: "成本" }))
 
-    expect(screen.getByTestId("cost-line")).toBeInTheDocument()
+    // 成本页已收敛为共享 CostTab（llm_calls 单一真相源）：请求/工具次数 + 每模型全量
+    expect(screen.getByText("5 次请求")).toBeVisible()
+    expect(screen.getByText("3 次工具调用")).toBeVisible()
     expect(screen.getByText("claude-sonnet-4-20250514")).toBeVisible()
     expect(screen.getByText("5 calls · $0.0500")).toBeVisible()
   })

@@ -3,10 +3,9 @@
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import type { StepExecution } from "@/lib/types"
 import { AgentTimeline } from "@/components/agent-timeline/agent-timeline"
-import { CostLine } from "@/components/cost-line"
+import { CostTab } from "./cost-tab"
 import { useAgentTraces } from "@/hooks/use-agent-traces"
 import { useLLMCalls } from "@/hooks/use-llm-calls"
-import { formatCost } from "@/lib/format"
 
 interface AgentDetailTabsProps {
   executionId: string
@@ -41,19 +40,7 @@ export function AgentDetailTabs({ executionId, nodeId, step, workspaceId, isRunn
       </TabsContent>
 
       <TabsContent value="cost" className="m-0 p-3">
-        {aggregates.totalCalls > 0 ? (
-          <div className="space-y-3">
-            <CostLine costUsd={aggregates.totals.cost.usd} turns={aggregates.totalCalls} />
-            {Object.entries(aggregates.modelBreakdown).map(([model, stats]) => (
-              <div key={model} className="text-xs flex justify-between">
-                <span className="text-muted-foreground">{model}</span>
-                <span className="tabular-nums">{stats.calls} calls · {formatCost(stats.costUsd)}</span>
-              </div>
-            ))}
-          </div>
-        ) : (
-          <div className="text-xs text-muted-foreground">暂无 LLM 调用数据</div>
-        )}
+        <CostTab aggregates={aggregates} />
       </TabsContent>
     </Tabs>
   )

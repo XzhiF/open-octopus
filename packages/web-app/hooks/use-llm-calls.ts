@@ -6,6 +6,7 @@ export function useLLMCalls(executionId: string, nodeId?: string) {
   const [calls, setCalls] = useState<LLMCallData[]>([])
   const [aggregates, setAggregates] = useState<LLMCallAggregates>({
     totalCalls: 0,
+    toolCalls: 0,
     usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0 },
     totals: { tokens: 0, cost: { usd: null, complete: true }, cacheHitRate: null },
     modelBreakdown: {},
@@ -23,6 +24,7 @@ export function useLLMCalls(executionId: string, nodeId?: string) {
           setCalls(result.data ?? [])
           setAggregates(result.aggregates ?? {
             totalCalls: 0,
+            toolCalls: 0,
             usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0 },
             totals: { tokens: 0, cost: { usd: null, complete: true }, cacheHitRate: null },
             modelBreakdown: {},

@@ -7,6 +7,8 @@ import { ArrowUp, ArrowDown, Coins, Zap } from "lucide-react"
 
 interface SummaryBarProps {
   turnCount: number
+  /** 工具调用总数（事件流中不同 tool_call_id 数）。 */
+  toolCallCount?: number
   totalDurationMs: number
   totalInputTokens: number
   totalOutputTokens: number
@@ -15,13 +17,19 @@ interface SummaryBarProps {
   turnDurations?: { turnIndex: number; durationMs: number }[]
 }
 
-export function SummaryBar({ turnCount, totalDurationMs, totalInputTokens, totalOutputTokens, totalCostUsd, turnDurations }: SummaryBarProps) {
+export function SummaryBar({ turnCount, toolCallCount, totalDurationMs, totalInputTokens, totalOutputTokens, totalCostUsd, turnDurations }: SummaryBarProps) {
   const maxDuration = turnDurations ? Math.max(...turnDurations.map(t => t.durationMs), 1) : 1
 
   return (
     <div className="rounded-lg border bg-card p-3">
       <div className="flex items-center gap-3 text-sm">
         <span className="font-medium">{turnCount} turns</span>
+        {!!toolCallCount && (
+          <>
+            <span className="text-muted-foreground">·</span>
+            <span className="text-muted-foreground tabular-nums" title="工具调用总数">{toolCallCount} tools</span>
+          </>
+        )}
         <span className="text-muted-foreground">·</span>
         <span className="text-muted-foreground">{formatDuration(totalDurationMs)}</span>
         <span className="text-muted-foreground">·</span>

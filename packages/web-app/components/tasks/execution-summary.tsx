@@ -310,12 +310,15 @@ function mergeAggregates(list: LLMCallAggregates[]): LLMCallAggregates | null {
         calls: cur.calls + b.calls,
         inputTokens: cur.inputTokens + b.inputTokens,
         outputTokens: cur.outputTokens + b.outputTokens,
+        cacheReadTokens: (cur.cacheReadTokens ?? 0) + (b.cacheReadTokens ?? 0),
+        cacheCreationTokens: (cur.cacheCreationTokens ?? 0) + (b.cacheCreationTokens ?? 0),
         costUsd: cur.costUsd === null ? b.costUsd : (b.costUsd === null ? cur.costUsd : cur.costUsd + b.costUsd),
       }
     }
   }
   return {
     totalCalls: list.reduce((a, x) => a + x.totalCalls, 0),
+    toolCalls: list.reduce((a, x) => a + (x.toolCalls ?? 0), 0),
     usage: merged.usage,
     totals: merged.totals,
     modelBreakdown,

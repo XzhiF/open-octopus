@@ -612,9 +612,11 @@ export interface UsageWire {
 
 export interface LLMCallAggregates {
   totalCalls: number
+  /** 工具调用总数（agent_events 不同 tool_call_id 数）。 */
+  toolCalls: number
   usage: UsageWire
   totals: LedgerTotalsWire
-  modelBreakdown: Record<string, { calls: number; inputTokens: number; outputTokens: number; costUsd: number | null }>
+  modelBreakdown: Record<string, { calls: number; inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheCreationTokens: number; costUsd: number | null }>
 }
 
 // ============ Analytics ============
