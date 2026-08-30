@@ -2,7 +2,7 @@
 
 **English** | [中文](README.md)
 
-> AI Workflow Orchestration + Multi-Project Isolation + Agent/Skill Asset Management
+> Agentic Workflow Orchestration + Multi-Project Isolation + Agent/Skill Asset Management + Task Board
 
 > ⚠️ **Early Stage**: Octopus is under active development. Many features are being refined and generalized. APIs and workflow formats may change. Feedback is welcome, but not recommended for production use yet.
 
@@ -10,129 +10,55 @@
 
 ## Introduction
 
-Octopus aims to be a **Loop Engineering** development platform that enables AI Agents to continuously iterate within isolated multi-project environments through orchestratable workflows.
+Octopus aims to be a **Loop Engineering** development platform: AI Agents iterate continuously inside isolated multi-project environments through orchestratable workflows — and the project itself is iterated with Octopus.
 
-Core idea: **AI is not a one-shot tool — it's an engineering system that can run in continuous loops.**
+Core idea: **an Agent is not a passive node in a workflow — it's a first-class citizen** that makes its own decisions, spawns sub-workflows dynamically, triggers multi-agent collaboration, and keeps running 24/7 under a safety harness. The system forms a self-iterating loop: *define → schedule → execute → guard → archive → evolve*.
 
-- **Scheduler** — Workflows triggered by cron or manually, running 24/7
-- **Orchestrator** — YAML-defined workflows with 7 executor types for complex task orchestration
-- **Workflow Engine** — Chain invocation, DAG parallel scheduling, Swarm multi-agent collaboration, Dynamic routing
-- **Agent Ecosystem** — Integrates 266 built-in roles from agency-agents-zh, supports custom roles, Swarm Router dynamically selects experts
-- **Workspace Isolation** — Multi-project git worktree isolation, parallel without interference
+- **Workflow Engine** — Declarative YAML DSL, 12 node types, dependencies auto-derived into a parallel DAG; Chain / DAG / Swarm / Dynamic orchestration
+- **Swarm Engine** — Five strategies: review / debate / dispatch / dynamic / moa — one node orchestrates a panel of experts
+- **Harness** — Three-layer safety guard (detect → intervene → delegate) that makes unattended runs actually trustworthy
+- **Task Board + Scheduler** — Co-author Specs on a Kanban board, confirm to enqueue; cron-scheduled or manually triggered, self-looping 24/7
+- **Workspace Isolation** — Per-project git worktrees with their own ports and databases — parallel without interference
+- **Agent Clones** — Six built-in system clones each with a job of their own, plus custom ones; every clone carries its persona, skills, memory, and worktree, and can be versioned and merged back to the mainline
+- **Asset Ecosystem** — 266 preset roles from agency-agents-zh plus the superpowers-zh skill library, with unified install / versioning / dependency management for Skills, Agents, and Workflows
 
 ---
 
-## Prerequisites
+## Tech Stack
 
-| Tool | Purpose | Install |
-|------|---------|---------|
-| **Node.js** ≥ 20 | Runtime | https://nodejs.org |
-| **pnpm** ≥ 9 | Package manager | `npm install -g pnpm` |
-| **GitHub CLI** (`gh`) | Repository ops, PR management | https://cli.github.com |
-| **Claude Code** | AI execution engine | https://docs.anthropic.com/en/docs/claude-code |
-| **Hermes Agent** | Notification push (Telegram/Slack/Webhook) | — |
-| **Git** | Version control + worktree | https://git-scm.com |
+TypeScript 5.9 · Node.js 20 · pnpm Workspaces · Hono 4 (REST + SSE + WebSocket) · Next.js 16 + React 19 · Claude Agent SDK + Pi Agent SDK · SQLite · XYFlow · Yjs · Monaco Editor · Zod · Vitest + Playwright
 
 ---
 
 ## Installation
 
 ```bash
-# 1. Clone the repository
 git clone git@github.com:XzhiF/open-octopus.git
-cd octopus
-
-# 2. Install dependencies + build
+cd open-octopus
 pnpm install
 pnpm build
-
-# 3. Register global command (symlink, recommended for development)
-
-# Linux / macOS
-ln -sf $(pwd)/packages/cli/dist/index.js /usr/local/bin/octopus
-
-# Windows (Admin PowerShell)
-New-Item -ItemType SymbolicLink -Path "$env:USERPROFILE\AppData\Local\Microsoft\WindowsApps\octopus" -Target "$PWD\packages\cli\dist\index.js"
-
-# 4. Verify
-octopus version              # Expected output: octopus v1.0.0
+pnpm dev            # Web UI http://localhost:3000 · Server API http://localhost:3001
 ```
+
+Before running, make sure you have **Node.js ≥ 20**, **pnpm ≥ 9**, **Git** (required for worktree isolation), and **Claude Code / Pi** as the AI execution engine. `gh` (GitHub CLI) is used for repository and PR operations, and Hermes for notification push — both optional.
+
+> 🚧 Two things are in flight for the setup experience, and both will replace the steps above:
+> 1. **Interactive setup wizard** — a first-run guide in the Web UI: pick an org, fill in the project manifest, install resources, all by clicking through
+> 2. **Agent-friendly install doc** — a setup document you can hand straight to Claude Code, where *"get this running"* is enough to deploy and initialize everything
 
 ---
 
 ## Quick Start
 
-### 1. Initialize Organization
+Open http://localhost:3000:
 
-```bash
-octopus setup --org myorg
-```
+1. **Initialize your org** — On first use, prepare `~/.octopus/orgs/<org>/repos/manifest.md` as your project list (currently via `octopus setup` + `octopus repos sync`; the setup wizard will replace this in one step)
+2. **Create a Workspace** — Go to Workspace, click "New", pick a project and branch; each workspace owns a git worktree, port, and database
+3. **Author workflows** — Write YAML in the Monaco editor, inspect node dependencies on the XYFlow canvas; pick from built-in templates or the resource library
+4. **Run and observe** — Click Run and watch node status, expert discussion, logs, and token/cost spend in real time; anomalies are intercepted by Harness and pushed to you
+5. **Task Board** — Co-author a Spec with an Agent (goal / acceptance criteria / bound workflow), confirm to enqueue, and let the Scheduler dispatch it
+6. **Accumulate and reuse** — Finished runs are archived as knowledge and injected into later workflows; Skills / Agents / Workflows are managed centrally in the resource library
 
-This creates the following structure under `~/.octopus/orgs/myorg/`:
-
-```
-~/.octopus/orgs/myorg/
-├── repos/
-│   ├── manifest.md      ← Project list (you edit this)
-│   └── index.md         ← Auto-generated (do not edit)
-├── mcp/
-│   └── mcp_prod.yaml    ← MCP service registry
-├── agents/              ← Organization-level Agent definitions
-├── skills/              ← Organization-level Skills
-└── workflows/           ← Organization-level workflows
-```
-
-### 2. Edit Project Manifest
-
-Edit `~/.octopus/orgs/myorg/repos/manifest.md` to add your projects:
-
-```markdown
-## my-team
-
-- backend-api git@github.com:my-team/backend-api.git [main] {java, spring-boot}
-- web-frontend git@github.com:my-team/web-frontend.git [main] {vue3, nuxt}
-- shared-lib git@github.com:my-team/shared-lib.git [main] {typescript}
-```
-
-Format: `- project_name git_url [branch] {tag1, tag2}`
-
-### 3. Sync Projects
-
-```bash
-octopus repos sync --org myorg
-```
-
-This will:
-1. Clone all missing projects from the manifest to `~/.octopus/orgs/myorg/repos/projects/`
-2. Pull the latest code for all projects
-3. Rebuild `index.md` (project index for Agent search)
-
-### 4. Sync Workflows
-
-```bash
-octopus workflow sync --org myorg
-```
-
-Syncs built-in workflow templates to `~/.octopus/orgs/myorg/workflows/`.
-
-### 5. Start Services
-
-```bash
-pnpm dev
-```
-
-After startup:
-- **Web UI**: http://localhost:3000
-- **Server API**: http://localhost:3001
-
-### 6. Operate via Web UI
-
-Open http://localhost:3000, where you can:
-
-1. **Create a Workspace** — Navigate to Workspace in the sidebar, click "New", enter a name
-2. **Select a Workflow** — Choose a workflow YAML within the workspace
-3. **Run the Workflow** — Click "Run" to watch real-time node execution, expert discussions, and log output
-4. **View Results** — After completion, see synthesis output, consensus scores, and execution trees
 <p align="center">
 <img src="docs/imgs/workflow.jpg" alt="Workflow Execution UI" width="30%" /><img src="docs/imgs/swarm.jpg" alt="Swarm Multi-Agent Collaboration" width="30%" /><img src="docs/imgs/archive.jpg" alt="Archive" width="30%" />
 </p>
@@ -144,51 +70,62 @@ Open http://localhost:3000, where you can:
 ```
 octopus/
 ├── packages/
-│   ├── shared/          ← @octopus/shared (Zod schemas + VarPool + config)
-│   ├── providers/       ← @octopus/providers (Claude SDK wrapper + Token tracking)
+│   ├── shared/          ← @octopus/shared (Zod schemas + VarPool + Harness contracts + config)
+│   ├── providers/       ← @octopus/providers (Claude SDK + Pi SDK engines + token/cost tracking)
 │   ├── cli/             ← octopus (Commander.js CLI)
-│   ├── engine/          ← @octopus/engine (7 executors + WorkflowEngine)
-│   ├── server/          ← @octopus/server (Hono REST API + SSE)
-│   ├── web-app/         ← @octopus/web-app (Next.js frontend)
-│   └── core-pack/       ← @octopus/core-pack (skills/agents/templates)
-├── scripts/             ← Dev tools (dev.mjs, prod.mjs)
+│   ├── engine/          ← @octopus/engine (12 executors + WorkflowEngine + Harness + Checkpoint)
+│   ├── server/          ← @octopus/server (Hono REST + SSE + WebSocket/Yjs + Actuator)
+│   ├── web-app/         ← @octopus/web-app (Next.js 16 + React 19 frontend)
+│   └── core-pack/       ← @octopus/core-pack (skills / agents / workflow templates)
+├── scripts/             ← Dev tools (dev.mjs, prod.mjs, branch-port.mjs)
 ├── pnpm-workspace.yaml
 └── CLAUDE.md
 ```
 
 ```
 Package dependencies:
-shared ← providers ← engine ← cli/server
-                shared ← cli/server/web-app
-                core-pack ← cli/server
+shared ← providers ← engine ← cli / server
+shared ← cli / server / web-app
+core-pack ← cli / server
 ```
 
 ---
 
 ## Key Features
 
-### Workflow Engine — 7 Executor Types
+### Workflow Engine — 12 Node Types
 
 | Executor | Description |
 |----------|-------------|
-| **BashExecutor** | Execute shell commands |
-| **PythonExecutor** | Execute Python scripts |
-| **AgentExecutor** | Invoke AI agents with sub-agent delegation |
-| **ConditionExecutor** | Conditional branching |
-| **ApprovalExecutor** | Human approval (supports Auto Answers for unattended runs) |
-| **LoopExecutor** | Loop iteration |
-| **SwarmExecutor** | Multi-agent collaboration (review/debate/dispatch/dynamic) |
+| **bash / python** | Run shell commands and Python scripts |
+| **agent** | Invoke AI agents with sub-agent delegation and skill loading (Claude SDK / Pi SDK) |
+| **octopus_agent** | Native platform agent node with access to Octopus' own tools and resources |
+| **interaction** | Human-in-the-loop node for conversational clarification and confirmation |
+| **condition** | Conditional branching |
+| **approval** | Human approval (supports Auto Answers for unattended runs) |
+| **loop** | Loop iteration with Checkpoint recovery |
+| **swarm** | Multi-agent collaboration (5 strategies) |
+| **sub_workflow** | Nested sub-workflow |
+| **dynamic_sub_workflow** | LLM generates a sub-DAG at runtime |
+| **task_dispatch** | Composite task dispatch — files sub-tasks back into the Task Board |
 
-### Swarm — Multi-Agent Collaboration
+Dependencies are auto-derived into a parallel DAG; lifecycle hooks wake an agent to handle failures or budget overruns; resources are declared and pre-installed so a workflow is ready the moment it runs.
 
-A single YAML node orchestrates multiple AI experts to collaborate:
+```yaml
+# Variable system: $vars.xxx global pool · $node-id.output.xxx upstream · $last_output · $iteration
+```
+
+### Swarm — 5 Collaboration Strategies
+
+A single YAML node orchestrates multiple AI experts:
 
 | Mode | Description | Use Case |
 |------|-------------|----------|
 | **review** | All experts run in parallel once, Host synthesizes | Code review, security audit |
-| **debate** | Multi-round discussion + consensus detection, early exit on threshold | Tech decisions, trade-off analysis |
-| **dispatch** | DAG dependency scheduling, parallel within levels | Feature implementation, multi-step collaboration |
-| **swarm** | LLM auto-selects mode and experts | Smart routing, open-ended topics |
+| **debate** | Multi-round discussion + consensus detection with early exit; sliding-window context, old-round summary compression, token budget safety valve | Tech decisions, trade-off analysis |
+| **dispatch** | DAG dependency scheduling (Kahn topological sort + cycle detection), parallel within levels, serial across levels, downstream skipped on upstream failure | Feature implementation, multi-step collaboration |
+| **swarm** | SwarmRouter two-phase routing: keyword prefilter → LLM picks 2–5 experts and the collaboration mode | Smart routing, open-ended topics |
+| **moa** | Full fan-out to all experts → Aggregator merges results, with a model fallback chain | High-quality output, multi-perspective synthesis |
 
 ```yaml
 # Example: 3-expert tech stack debate
@@ -207,9 +144,52 @@ A single YAML node orchestrates multiple AI experts to collaborate:
       prompt: "Evaluate from a neutral platform engineering perspective"
 ```
 
+### Harness — Three-Layer Safety Guard
+
+Unattended runs are only viable if something has your back when things go wrong. Harness sits on the execution path, so anomalies stop needing a human watching a screen:
+
+```
+Detect (5 anomaly detectors)
+  deterministic_error · stupid_retry · model_mismatch · process_conflict · timeout_cascade
+    ↓
+Intervene (5 actions)
+  inject_message to steer · retry_with_hint to change approach · switch_model
+  pause with notification · abort to protect the host
+    ↓
+Delegate
+  Complex cases go to the Harness Agent for analysis and disposition; block and alert if it cannot self-heal
+```
+
+On the host side, ToolInterceptor blocks dangerous tool calls, and process-group isolation with port / PID protection keeps child processes from killing the host. Policies are overridable per workspace from the System panel.
+
+### Task Board + Scheduler
+
+- **Task Board** — A Kanban board where users and Agents co-author Specs (goal / acceptance criteria / bound workflow / sub-unit breakdown); confirm to enqueue, and a workflow view tracks execution progress per task
+- **Workflow binding** — A preset catalog maps task types to workflow templates plus `input_values`, with required-field validation before enqueueing
+- **SchedulerEngine** — Scans and claims queued tasks, dispatching in Simple (execute directly) or Composite (coordinator spawns sub-tasks) mode, with cron scheduling, run history, and audit logs
+
+### Agent Clone System
+
+Workflow nodes are the *work*; clones are the *people*. A clone = persona (persona.md) + skills + its own memory + a dedicated git worktree + model config — a role you can cultivate over time:
+
+| Built-in system clone | Responsibility | Memory |
+|------|------|------|
+| **workspace** Full-stack dev assistant | Read/edit project files, build/test/deploy, code review | shared |
+| **scheduler** Scheduled task manager | cron job creation, status monitoring, retry on failure, run reports | isolated |
+| **archive** Engineering analyst | Execution archival, experience extraction, structured analysis | shared |
+| **resource** Resource operations expert | Discovery, install, and dependency handling for Skills / Agents / Workflows | isolated |
+| **harness-agent** Workflow safety guard | Takes over complex anomalies delegated by Harness, then disposes or blocks | isolated |
+| **task-author** Task spec author | Turns vague requirements into schedulable Specs via chat on the Task Board | isolated |
+
+- **Custom clones** — A creation wizard sets persona, skill set, model, and tools; persona and resource files are editable live in the Monaco panel with autosave, built-ins included
+- **Isolated execution** — Each clone binds its own worktree and branch, reading and writing memory under a shared / isolated scope, so many clones run in parallel without stepping on each other
+- **Version management** — Releases snapshotted under semver `major.minor.patch[-alpha|beta|rc|stable]`, dual-written to DB and filesystem with compensating transactions; versions can be diffed (persona / config / skill add-remove) and rolled back in one click
+- **Result merging** — Clone output goes back to the mainline through a merge review dialog, and merged content enters the knowledge base as a `clone_merge` source
+- **Two invocation paths** — The main Agent reaches clones through the unified CLI/API entry via LLM tool delegation (nothing to wire up by hand), or the Web UI connects to a clone session directly (zero routing latency); inside workflows the `octopus_agent` node assigns work to a specific clone
+
 ### Workspace Multi-Project Isolation
 
-Three fully isolated development modes that can run simultaneously:
+Three fully isolated run modes that can be up at the same time:
 
 | Mode | Command | Server | Web | Database | Use Case |
 |------|---------|--------|-----|----------|----------|
@@ -217,43 +197,22 @@ Three fully isolated development modes that can run simultaneously:
 | **dev (worktree)** | `pnpm dev` | hash | +1 | `octopus-{branch}.db` | Parallel branches |
 | **prod** | `pnpm prod` | 3099 | 3098 | `octopus-prod.db` | Use Octopus to iterate on itself |
 
-Each worktree automatically gets its own ports and database — no interference.
+Each workspace = its own git worktree + pipeline.yaml + skills/agents config + Checkpoint + logs. Create one manually, or let the Scheduler rebuild a clean environment from the ProjectSpec every time, auto-generating instruction files and preset resources.
 
 ### Unattended Execution
 
 - **Auto Answers** — Global + node-level preset answers; AI auto-responds to confirmations
-- **Notify Subsystem** — Workflow lifecycle event push (Telegram/Slack/Webhook)
-- **Hooks** — `on_workflow_failure` / `on_complete` / `on_node_success` lifecycle hooks
-- **Checkpoint** — Swarm saves state every round, resumable after interruption
+- **Notify subsystem** — Node progress, budget alerts, failures, and Harness interventions all funnel through Hermes to Telegram/Slack/Webhook, graded by severity
+- **Hooks** — `on_workflow_failure` / `on_complete` / `on_node_success` lifecycle hooks that can wake an agent to self-heal
+- **Checkpoint** — Node / level / batch state persistence with TTL, resumable after interruption
+- **Budget** — Unified token / cost (USD) / time accounting, with threshold-triggered hooks and alerts
 
----
+### Assets & Memory
 
-## CLI Reference
-
-> Workspace creation, workflow execution, and most operations are done via the **Web UI** (`pnpm dev` → http://localhost:3000).
-> CLI commands are primarily for environment setup and project sync.
-
-```bash
-# Initialization & Configuration
-octopus setup --org myorg                 # Initialize/update ~/.octopus/orgs/myorg/
-octopus upgrade --org myorg               # Upgrade (check version and trigger setup)
-
-# Project Management
-octopus repos sync --org myorg            # One-click sync: clone + pull + rebuild index
-octopus repos update --org myorg          # Scan manifest, update index.md
-octopus repos clone my-project --org myorg # Clone a specific project
-octopus repos pull --org myorg            # Pull latest for all projects
-
-# Workflows
-octopus workflow sync --org myorg         # Sync built-in workflow templates
-octopus workflow run <yaml> --org myorg   # Execute a workflow
-octopus workflow validate <yaml>          # Validate YAML format
-octopus workflow list --org myorg         # List available workflows
-
-# Other
-octopus version                           # Version info
-octopus init . --org myorg                # Initialize current directory
-```
+- **Resource** — Unified install, versioning, and dependency management for Skills / Agents / Workflows; workflows declare what they need and resources are bound intelligently, loaded on demand, resolved automatically
+- **Knowledge store** — Runs and conversations are auto-mined into experience entries (rule / skill) → reviewed into the store → conflict-resolved → injected by scope → hit effectiveness fed back (a full knowledge base is its next major upgrade — see Evolution)
+- **Agent Memory** — Session summaries with FTS retrieval, archived per clone and over time, queryable by clones and the Orchestrator
+- **SystemPromptAssembler** — Seven priority levels with budget-aware truncation, so context is spent where it matters
 
 ---
 
@@ -276,7 +235,8 @@ Octopus draws inspiration and builds upon the following excellent projects:
 
 - **[Archon](https://github.com/coleam00/Archon)** — Core concepts and foundational implementation for workflow orchestration. Special thanks to Cole Medin for his open-source contributions.
 - **[superpowers-zh](https://github.com/jnMetaCode/superpowers-zh)** — Chinese-enhanced skill framework providing 20+ out-of-the-box Skills for Octopus.
-- **[agency-agents-zh](https://github.com/jnMetaCode/agency-agents-zh)** — Chinese Agent role library with 30+ built-in roles for Swarm Router dynamic selection.
+- **[agency-agents-zh](https://github.com/jnMetaCode/agency-agents-zh)** — Chinese Agent role library with hundreds of built-in roles for Swarm Router dynamic selection.
+- **[Matt Pocock's skills](https://github.com/mattpocock/skills)** — The clarify → spec → tickets → implement engineering flow this project's own evolution follows.
 
 Thanks to these authors for creating such excellent open-source projects.
 
@@ -316,63 +276,72 @@ Resource
   └→ Unified management of SKILL / Agent / Workflow installation, versioning,
      and dependencies; smart binding on workflow execution — load on demand,
      resolve automatically
+
+Agent as First-class Node
+  └→ The octopus_agent node puts platform agents directly inside workflows, tools,
+     memory, and resources included; interaction and task_dispatch wire up the
+     human loop and task delegation, with chat driving execution both ways
+
+Knowledge Store
+  └→ Lightweight per-entry accumulation: extract → review → conflict resolution →
+     injection → effectiveness feedback, already covering archive / conversation /
+     clone-merge sources
+
+Harness
+  └→ Three-layer safety guard: anomaly detection → smart intervention → agent
+     delegation, plus ToolInterceptor and process-tree isolation, so unattended
+     runs are finally safe to actually turn on
+
+Workflow Observability
+  └→ Actuator runtime endpoints + unified token/cost accounting + error tracing
+     + execution monitoring
+
+Task Board
+  └→ Requirement → Spec (goal / acceptance criteria / workflow binding) → confirm
+     and enqueue → scheduled execution → board tracking
+```
+
+**… In Progress ↓**
+
+```
+Task Board Hardening
+  └→ Currently focused on task specification and execution modes: unified Spec field
+     semantics, verifiable acceptance criteria, workflow binding with required-field
+     validation, and both Simple / Composite execution paths smoothed out
+
+Setup & Onboarding
+  └→ Paying back the productization debt: an in-browser setup wizard plus an
+     agent-friendly install doc, collapsing today's scattered CLI steps and
+     hand-edited manifests into one repeatable onboarding
 ```
 
 **… Planned ↓**
 
 ```
-Agent Refine
-  └→ Avatar refinement: distill accumulated assets for specific domains to produce avatars,
-     or directly create new avatars and let them practice their cultivation methods
+Second Brain · Full Knowledge Base
+  └→ Not today's entry-level experience store, but a major version jump: a structured,
+     complete knowledge base — unified cataloging and retrieval across projects,
+     execution history, and conversations, with provenance, freshness, conflicts, and
+     evolution chains — so every pitfall and decision sticks, comes back when searched,
+     and gets used: a genuine second brain for the developer
 
-Agent Workflow
-  └→ Orchestrator Agent / avatars → domain-level Agents (own SKILL + memory),
-     enhanced node types, integrated into workflows for cultivation
+Clone Dojo
+  └→ Built on that knowledge base — training only makes sense once the accumulation is
+     searchable: give clones somewhere to actually train, with samples (domain task sets
+     and test cases) · evaluation (reproducible scoring and verdicts) · quantified data
+     (capability radar and growth curves) · a training ground (isolated environment with
+     re-runnable cases), plus domain-organized "manuals" (SKILLs + memory +
+     counter-examples), so a clone built for a specific job advances with a venue, a
+     syllabus, and scores to follow
 
-Octopus Repository
-  └→ Shared repository for Workflows / SKILLs / avatars — upload, download, share
-
-Workflow Observability
-  └→ Runtime observability for workflows: tool call error detection,
-     model anomalous behavior recognition, custom node scoring
-     (e.g., bugs found/resolved per E2E round, node quality scores),
-     scoring data accumulates as knowledge to feed back into workflow
-     design, prompt optimization, and input prompt reviews;
-     extensible via Hooks (e.g., Ponytail plugins) for runtime intervention
-
-Agent Router
-  └→ Orchestrator Agent takes over the full scheduling layer
-     (except Workflow Engine): complete observability
-     (avatar behavior tracing, dispatch chain logging);
-     improved avatar orchestration — task distribution, load balancing,
-     failure retry, dynamic capability profiling
-
-Verifiable Framework
-  └→ Define measurable delivery standards, precise down to Workflow node level;
-     built on Workflow Observability, supervised by a "Foreman" (dispatch)
-     and "Inspector" (validation) dual-role closed loop —
-     standard definition → execution verification → deviation correction
-     → delivery confirmation; verification results accumulate as knowledge
-     to feed back into standard iteration and process optimization
-
-Workspace Chat Dev
-  └→ Embedded Chat Agent in Workspace for conversational workflow driving:
-     user triggers workflow via chat → awaits execution → Agent reports
-     results → enters next human-AI interaction round; targets early-stage
-     phases like requirements clarification and design confirmation,
-     can invoke expert-team workflows (e.g., MoA-assisted decision-making,
-     spec writing); underlying capabilities exist — focus on optimizing
-     interaction fluency and context continuity
-```
-
-**… Future Considerations ↓**
-
-```
 Sandbox
-  └→ Isolated environments, focus on E2E test optimization, end-to-end integration
+  └→ An execution sandbox for end-to-end E2E — build, boot, browser interaction, and
+     result assertion form a closed loop with no dependency on external deployment, so
+     every delivery can actually be verified by running it
 
 Hub-and-Spoke
-  └→ Architecture evolution: centralized configuration management, coordinated scheduling, no longer single-machine bound
+  └→ Architecture evolution: centralized configuration management, coordinated
+     scheduling, no longer single-machine bound
 ```
 
 ---
