@@ -27,17 +27,24 @@ export function TokenUsageDisplay({ usages, isRunning, maxVisible = DEFAULT_MAX_
   return (
     <div className="space-y-0.5 mt-1">
       {visible.map((u, i) => {
-        // C3: 折叠口径废除 —— 纯值（cache 由 ⚡/🗡 徽标分项承载）
-        const totalInput = u.inputTokens
-        const totalOutput = u.outputTokens
+        // C3: 折叠口径废除 —— 纯值（cache 由 ⚡/🗡 徽标分项承载，与监控面板 totalTokens 同口径，
+        // 二者可互相印证：↑in+↓out+⚡cacheRead+🗡️cacheWrite == 面板「总 Token」）。
+        const cacheRead = u.cacheReadTokens ?? 0
+        const cacheWrite = u.cacheCreationTokens ?? 0
         return (
           <div
             key={`${u.model}-${i}`}
             className={cn("text-xs tabular-nums flex items-center gap-1", rowColor)}
           >
             <span className="font-medium truncate max-w-[120px]">{u.model}</span>
-            <span>↑{formatTokenCount(totalInput)}</span>
-            <span>↓{formatTokenCount(totalOutput)}</span>
+            <span>↑{formatTokenCount(u.inputTokens)}</span>
+            <span>↓{formatTokenCount(u.outputTokens)}</span>
+            {cacheRead > 0 && (
+              <span className="text-muted-foreground" title="缓存读取">⚡{formatTokenCount(cacheRead)}</span>
+            )}
+            {cacheWrite > 0 && (
+              <span className="text-muted-foreground" title="缓存创建">🗡️{formatTokenCount(cacheWrite)}</span>
+            )}
           </div>
         )
       })}
