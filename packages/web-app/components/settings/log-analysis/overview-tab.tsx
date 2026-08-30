@@ -11,7 +11,7 @@ import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContai
 import { ChartContainer, ChartTooltipContent } from "@/components/ui/chart"
 import type { Alert } from "@/lib/analytics-types"
 import { Activity, CheckCircle2, XCircle, Clock, DollarSign } from "lucide-react"
-import { formatCurrency, formatDuration, formatPercent } from "@/lib/analytics-format"
+import { formatCost, formatDuration, formatPercent } from "@/lib/format"
 
 function StatCard({ icon: Icon, label, value }: { icon: React.ComponentType<{ className?: string }>; label: string; value: string }) {
   return (
@@ -79,10 +79,10 @@ export function OverviewTab({ workspaceId }: { workspaceId: string }) {
       {/* 健康摘要统计卡 */}
       <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
         <StatCard icon={Activity} label="总执行" value={String(summary.totalExecutions)} />
-        <StatCard icon={CheckCircle2} label="成功率" value={formatPercent(summary.successRate)} />
-        <StatCard icon={XCircle} label="失败率" value={formatPercent(summary.failureRate)} />
+        <StatCard icon={CheckCircle2} label="成功率" value={formatPercent(summary.successRate / 100, 1)} />
+        <StatCard icon={XCircle} label="失败率" value={formatPercent(summary.failureRate / 100, 1)} />
         <StatCard icon={Clock} label="平均耗时" value={formatDuration(summary.avgDurationMs)} />
-        <StatCard icon={DollarSign} label="总成本" value={formatCurrency(summary.totalCostUsd)} />
+        <StatCard icon={DollarSign} label="总成本" value={formatCost(summary.totalCostUsd, summary.costComplete)} />
       </div>
 
       {/* 活跃告警 */}

@@ -1,47 +1,47 @@
 "use client"
 
 import { cn } from "@/lib/utils"
+import { formatCost, formatTokenCount, formatDuration } from "@/lib/format"
 import type { LLMCallAggregates } from "@/lib/types"
 import { ArrowUp, ArrowDown, Coins, Zap } from "lucide-react"
 
 interface SummaryBarProps {
   turnCount: number
+  /** 工具调用总数（事件流中不同 tool_call_id 数）。 */
+  toolCallCount?: number
   totalDurationMs: number
   totalInputTokens: number
   totalOutputTokens: number
-  totalCostUsd: number
+  /** C3: null = 未定价 */
+  totalCostUsd: number | null
   turnDurations?: { turnIndex: number; durationMs: number }[]
 }
 
-function formatDuration(ms: number): string {
-  if (ms < 1000) return `${ms}ms`
-  return `${(ms / 1000).toFixed(1)}s`
-}
-
-function formatTokens(n: number): string {
-  if (n >= 1000) return `${(n / 1000).toFixed(1)}K`
-  return String(n)
-}
-
-export function SummaryBar({ turnCount, totalDurationMs, totalInputTokens, totalOutputTokens, totalCostUsd, turnDurations }: SummaryBarProps) {
+export function SummaryBar({ turnCount, toolCallCount, totalDurationMs, totalInputTokens, totalOutputTokens, totalCostUsd, turnDurations }: SummaryBarProps) {
   const maxDuration = turnDurations ? Math.max(...turnDurations.map(t => t.durationMs), 1) : 1
 
   return (
     <div className="rounded-lg border bg-card p-3">
       <div className="flex items-center gap-3 text-sm">
         <span className="font-medium">{turnCount} turns</span>
+        {!!toolCallCount && (
+          <>
+            <span className="text-muted-foreground">·</span>
+            <span className="text-muted-foreground tabular-nums" title="工具调用总数">{toolCallCount} tools</span>
+          </>
+        )}
         <span className="text-muted-foreground">·</span>
         <span className="text-muted-foreground">{formatDuration(totalDurationMs)}</span>
         <span className="text-muted-foreground">·</span>
         <span className="flex items-center gap-1 tabular-nums">
-          <ArrowUp className="h-3 w-3 text-violet-500" />{formatTokens(totalInputTokens)}
+          <ArrowUp className="h-3 w-3 text-violet-500" />{formatTokenCount(totalInputTokens)}
         </span>
         <span className="flex items-center gap-1 tabular-nums">
-          <ArrowDown className="h-3 w-3 text-blue-500" />{formatTokens(totalOutputTokens)}
+          <ArrowDown className="h-3 w-3 text-blue-500" />{formatTokenCount(totalOutputTokens)}
         </span>
         <span className="text-muted-foreground">·</span>
         <span className="flex items-center gap-1 tabular-nums font-medium">
-          <Coins className="h-3 w-3 text-amber-500" />${totalCostUsd.toFixed(2)}
+          <Coins className="h-3 w-3 text-amber-500" />{formatCost(totalCostUsd)}
         </span>
       </div>
 

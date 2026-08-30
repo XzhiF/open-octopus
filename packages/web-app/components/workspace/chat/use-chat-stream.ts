@@ -132,7 +132,7 @@ function applyChunkToSession(prev: ChatMessage[], chunk: Record<string, unknown>
           thinkingDone: true,
           thinkingDuration: serverDuration ?? (
             m.thinkingStartMs
-              ? `${((Date.now() - m.thinkingStartMs) / 1000).toFixed(1)}s`
+              ? `${((Date.now() - m.thinkingStartMs) / 1000).toFixed(1)}s` // fmt-ok: 协议文本
               : undefined
           ),
         }
@@ -183,7 +183,7 @@ function applyChunkToSession(prev: ChatMessage[], chunk: Record<string, unknown>
       const toolId = chunk.toolCallId as string
       const seconds = chunk.elapsedSeconds as number
       return prev.map(m => m.toolCallId === toolId && m.toolStatus === "running"
-        ? { ...m, toolDuration: `${seconds.toFixed(1)}s` }
+        ? { ...m, toolDuration: `${seconds.toFixed(1)}s` } // fmt-ok: 协议文本
         : m
       )
     }
@@ -251,9 +251,9 @@ function applyChunkToSession(prev: ChatMessage[], chunk: Record<string, unknown>
 
     case "result": {
       const content = chunk.content as string | undefined
-      const updated = prev.map(m => m.displayType === "text" && !m.tokens ? {
+      const updated = prev.map(m => m.displayType === "text" && !m.usage ? {
         ...m,
-        tokens: chunk.tokens as ChatMessage["tokens"],
+        usage: chunk.usage as ChatMessage["usage"],
         costUsd: chunk.costUsd as number,
       } : m)
 

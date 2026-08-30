@@ -8,7 +8,8 @@ interface LlmSankeyProps {
     node: string
     model: string
     stopReason: string
-    costUsd: number
+    /** C3: null = 未定价（图按 0 计，不产生假费用） */
+    costUsd: number | null
   }>
 }
 
@@ -26,10 +27,10 @@ export function LlmSankey({ data }: LlmSankeyProps) {
     const height = 250
     svg.setAttribute('viewBox', `0 0 ${width} ${height}`)
 
-    const totalCost = data.reduce((s, d) => s + d.costUsd, 0)
+    const totalCost = data.reduce((s, d) => s + (d.costUsd ?? 0), 0)
     const modelCosts = models.map(m => ({
       model: m,
-      cost: data.filter(d => d.model === m).reduce((s, d) => s + d.costUsd, 0),
+      cost: data.filter(d => d.model === m).reduce((s, d) => s + (d.costUsd ?? 0), 0),
     }))
 
     let x = 10

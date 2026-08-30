@@ -2,7 +2,8 @@ import { Hono } from "hono"
 import { streamSSE } from "hono/streaming"
 import { ChatService } from "../services/chat"
 import { SSEService } from "../services/sse"
-import { getProvider, type TokenUsage } from "@octopus/providers"
+import { getProvider } from "@octopus/providers"
+import type { TokenUsage } from "@octopus/shared"
 import { CloneRuntime } from "../services/agent/clone-runtime"
 import { getBuiltinCloneDef } from "../services/agent/builtin-clones"
 import { getAgentDir, getBuiltInCloneDir } from "../services/agent/paths"
@@ -282,7 +283,7 @@ export function globalChatRoutes(sseService: SSEService, chatService: ChatServic
             if (chunk.sessionId) {
               chatService.updateProviderSession(sessionId, chunk.sessionId)
             }
-            currentTokens = chunk.tokens
+            currentTokens = chunk.usage
             currentCostUsd = chunk.costUsd
           }
 
@@ -320,7 +321,7 @@ export function globalChatRoutes(sseService: SSEService, chatService: ChatServic
             type: 'text',
             metadata: JSON.stringify({
               displayType: 'text',
-              tokens: currentTokens,
+              usage: currentTokens,
               costUsd: currentCostUsd,
             }),
           })

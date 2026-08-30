@@ -23,8 +23,8 @@ import type {
   TaskSpec,
   SubunitSpec,
   OriginType,
-  ResourceRef,
-} from '@octopus/shared'
+  ResourceRef, TokenUsage } from '@octopus/shared'
+import { usageFromLegacyJson } from '../../db/dao/usage-mapping'
 import {
   taskSpecSchema,
   type ScheduleStatusListener,
@@ -629,6 +629,13 @@ export class SchedulerService {
       } else {
         conditions.push("s.origin_type = 'cron'")
       }
+    }
+
+    // 2026-08-29 (approach A): precise single-origin filter — takes precedence
+    // when combined with the legacy trigger_source above (both AND-ed).
+    if (params.origin) {
+      conditions.push('s.origin_type = ?')
+      queryParams.push(params.origin)
     }
 
     if (params.org) {
@@ -1497,6 +1504,12 @@ export class SchedulerService {
       // = "queue/claim-driven, not cron-driven"). source_chat_session_id is null
       // (no longer persisted; tasks table owns the chat-session back-ref).
       trigger_source: ((row.origin_type ?? 'cron') === 'cron' ? 'cron' : 'requirement') as TriggerSource,
+      // 2026-08-29 (approach A): pass the authoritative polymorphic origin
+      // through — the lossy trigger_source above collapses task/manual/api/agent
+      // into 'requirement'; the scheduler UI needs origin_type for the 来源
+      // badge + conditional toggle, and origin_id to deep-link task rows.
+      origin_type: (row.origin_type ?? null) as OriginType | null,
+      origin_id: row.origin_id ?? null,
       source_chat_session_id: null,
       claimed_at: row.claimed_at ?? null,
     }
@@ -1517,7 +1530,7 @@ export class SchedulerService {
       triggered_by: row.triggered_by,
       agent_output: row.agent_output,
       model_used: row.model_used,
-      token_usage: safeJsonParse<{ input: number; output: number } | null>(row.token_usage, null),
+      token_usage: usageFromLegacyJson(safeJsonParse<unknown>(row.token_usage, null)),
       metadata: safeJsonParse<Record<string, unknown>>(row.metadata, {}),
       created_at: row.created_at,
     }

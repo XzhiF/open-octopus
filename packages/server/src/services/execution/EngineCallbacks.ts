@@ -4,6 +4,7 @@
 // ExecutionLifecycle.buildCallbacks(). Handles SSE emission, DB persistence,
 // observability integration, token tracking, and external callback dispatch.
 //
+import { totalTokens, costSummary } from "@octopus/shared"
 import type { IEngineCallbacks } from "./interfaces"
 import type { ServiceContext } from "./types"
 import type { ExecutionDAO } from "../../db/dao/execution-dao"
@@ -183,9 +184,9 @@ export class EngineCallbacks implements IEngineCallbacks {
 
           // Compute budget progress — respect token_counting_mode
           const mode = budgetSnapshot?.token_counting_mode ?? "all"
-          const totalTokens = mode === "no_cache"
-            ? metrics.totalInputTokens + metrics.totalOutputTokens
-            : metrics.totalInputTokens + metrics.totalOutputTokens + metrics.totalCacheReadTokens + metrics.totalCacheCreationTokens
+          const consumedTokens = mode === "no_cache"
+            ? metrics.usage.inputTokens + metrics.usage.outputTokens
+            : totalTokens(metrics.usage)
           const budgetProgress: {
             tokensPercent: number | null
             durationPercent: number | null
@@ -194,10 +195,12 @@ export class EngineCallbacks implements IEngineCallbacks {
 
           if (budgetSnapshot) {
             if (budgetSnapshot.max_tokens) {
-              budgetProgress.tokensPercent = (totalTokens / budgetSnapshot.max_tokens) * 100
+              budgetProgress.tokensPercent = (consumedTokens / budgetSnapshot.max_tokens) * 100
             }
             if (budgetSnapshot.max_cost_usd) {
-              budgetProgress.costPercent = (metrics.totalCostUsd / budgetSnapshot.max_cost_usd) * 100
+              budgetProgress.costPercent = metrics.totals.cost.usd === null
+                ? null // 未定价：费用预算进度不可计算（不假 0%）
+                : (metrics.totals.cost.usd / budgetSnapshot.max_cost_usd) * 100
             }
             if (budgetSnapshot.max_duration && exec?.started_at) {
               const elapsedMs = Date.now() - new Date(exec.started_at).getTime()
@@ -209,11 +212,10 @@ export class EngineCallbacks implements IEngineCallbacks {
             event: "execution_metrics",
             data: {
               executionId: id,
-              totalInputTokens: metrics.totalInputTokens,
-              totalOutputTokens: metrics.totalOutputTokens,
-              totalCacheReadTokens: metrics.totalCacheReadTokens,
-              totalCacheCreationTokens: metrics.totalCacheCreationTokens,
-              totalCostUsd: metrics.totalCostUsd,
+              // C1：嵌套规范 usage（不再平铺 totalInputTokens 等 5 字段）
+              usage: metrics.usage,
+              // C3: 唯一 totals（tokens=四字段和 / cost 三态 / cacheHitRate 0–1）
+              totals: metrics.totals,
               totalLlmTurns: metrics.totalLlmTurns,
               budgetProgress,
               errorCount: metrics.errorCount,
@@ -225,15 +227,15 @@ export class EngineCallbacks implements IEngineCallbacks {
           if (budgetSnapshot?.max_tokens && !budgetWarningSent) {
             const threshold = budgetSnapshot.alert_threshold ?? 0.8
             const warningLimit = budgetSnapshot.max_tokens * threshold
-            if (totalTokens > warningLimit && totalTokens <= budgetSnapshot.max_tokens) {
+            if (consumedTokens > warningLimit && consumedTokens <= budgetSnapshot.max_tokens) {
               budgetWarningSent = true
-              const pct = (totalTokens / budgetSnapshot.max_tokens * 100).toFixed(1)
+              const pct = (consumedTokens / budgetSnapshot.max_tokens * 100).toFixed(1)
               console.warn(
-                `[EngineCallbacks] Budget warning: execution ${id} has consumed ${totalTokens}/${budgetSnapshot.max_tokens} tokens (${pct}%, threshold ${threshold * 100}%)`,
+                `[EngineCallbacks] Budget warning: execution ${id} has consumed ${consumedTokens}/${budgetSnapshot.max_tokens} tokens (${pct}%, threshold ${threshold * 100}%)`,
               )
               // Dispatch on_budget_warning hooks + SSE
               dispatchBudgetHook("on_budget_warning", {
-                total_tokens: String(totalTokens),
+                total_tokens: String(consumedTokens),
                 max_tokens: String(budgetSnapshot.max_tokens),
                 tokens_percent: pct,
                 alert_threshold: String(threshold),
@@ -266,11 +268,11 @@ export class EngineCallbacks implements IEngineCallbacks {
 
           const metrics = tokenUsageDao.aggregateByExecution(id)
           const mode = budgetSnapshot.token_counting_mode ?? "all"
-          const totalTokens = mode === "no_cache"
-            ? metrics.totalInputTokens + metrics.totalOutputTokens
-            : metrics.totalInputTokens + metrics.totalOutputTokens + metrics.totalCacheReadTokens + metrics.totalCacheCreationTokens
+          const consumedTokens = mode === "no_cache"
+            ? metrics.usage.inputTokens + metrics.usage.outputTokens
+            : totalTokens(metrics.usage)
 
-          if (totalTokens > budgetSnapshot.max_tokens) {
+          if (consumedTokens > budgetSnapshot.max_tokens) {
             // Budget exceeded: block this node and abort execution
             const now = new Date().toISOString()
             dao.updateExecution(id, {
@@ -283,7 +285,7 @@ export class EngineCallbacks implements IEngineCallbacks {
                 executionId: id,
                 status: "budget_exceeded",
                 reason: "max_tokens exceeded",
-                budgetSnapshot: { max_tokens: budgetSnapshot.max_tokens, actual: totalTokens },
+                budgetSnapshot: { max_tokens: budgetSnapshot.max_tokens, actual: consumedTokens },
               },
             })
             // Emit execution_progress to notify external listeners (dashboard, etc.)
@@ -294,9 +296,9 @@ export class EngineCallbacks implements IEngineCallbacks {
             // Dispatch on_budget_exceeded hooks + SSE
             if (!budgetExceededSent) {
               budgetExceededSent = true
-              const pct = (totalTokens / budgetSnapshot.max_tokens * 100).toFixed(1)
+              const pct = (consumedTokens / budgetSnapshot.max_tokens * 100).toFixed(1)
               dispatchBudgetHook("on_budget_exceeded", {
-                total_tokens: String(totalTokens),
+                total_tokens: String(consumedTokens),
                 max_tokens: String(budgetSnapshot.max_tokens),
                 tokens_percent: pct,
                 alert_threshold: String(budgetSnapshot.alert_threshold ?? 0.8),
@@ -313,7 +315,7 @@ export class EngineCallbacks implements IEngineCallbacks {
                 outputs: { error: "Budget exceeded" },
                 status: "failed" as const,
                 durationMs: 0,
-                logLines: [`Budget exceeded: ${totalTokens}/${budgetSnapshot.max_tokens} tokens consumed`],
+                logLines: [`Budget exceeded: ${consumedTokens}/${budgetSnapshot.max_tokens} tokens consumed`],
               },
             }
           }
@@ -375,11 +377,16 @@ export class EngineCallbacks implements IEngineCallbacks {
         if (result?.modelUsages && result.modelUsages.length > 0) {
           const now = new Date().toISOString()
           for (const mu of result.modelUsages) {
-            dao.insertNodeTokenUsage(
-              `${neId}-token-${mu.model}`, neId, mu.model,
-              mu.inputTokens, mu.outputTokens, mu.costUsd ?? null,
-              mu.cacheReadInputTokens ?? 0, mu.cacheCreationInputTokens ?? 0, now,
-            )
+            // C3: ledger 唯一写入口（cost 兜底估算也在入口内，与 llm_calls 对称）
+            tokenUsageDao.recordNodeUsage({
+              id: `${neId}-token-${mu.model}`,
+              nodeExecutionId: neId,
+              model: mu.model,
+              usage: mu,
+              costUsd: mu.costUsd,
+              source: 'node',
+              createdAt: now,
+            })
           }
         }
 
@@ -395,18 +402,17 @@ export class EngineCallbacks implements IEngineCallbacks {
           dao.updateExecution(id, { interaction_metadata: JSON.stringify(result.interactionMetadata) })
         }
 
-        const finalInput = result?.tokens?.input ?? 0
-        const finalOutput = result?.tokens?.output ?? 0
-        const hasTokens = finalInput > 0 || finalOutput > 0
+        const nodeUsage = result?.usage
+        const hasTokens = !!nodeUsage && totalTokens(nodeUsage) > 0
 
         obs.flushNode(neId)
 
         const llmCalls = result?.llmCalls ?? []
         const modelUsages = result?.modelUsages ?? []
-        // Compute cost from llmCalls (agent) or modelUsages (swarm/dispatch)
-        const costUsd = llmCalls.length > 0
-          ? llmCalls.reduce((sum: number, c: any) => sum + (c.costUsd ?? 0), 0)
-          : modelUsages.reduce((sum: number, mu: any) => sum + (mu.costUsd ?? 0), 0)
+        // C3: 节点 cost 走 ledger 三态（全未定价 = null，不再 ??0 焊成假 $0）
+        const costUsd = costSummary(
+          (llmCalls.length > 0 ? llmCalls : modelUsages).map((c: any) => c.costUsd as number | null | undefined),
+        ).usd
         const turnCount = new Set(llmCalls.map((c: any) => c.turnIndex ?? 1)).size
         const toolCount = new Set(llmCalls.filter((c: any) => c.stopReason === "tool_use").map((c: any) => c.toolName)).size
 
@@ -422,19 +428,11 @@ export class EngineCallbacks implements IEngineCallbacks {
           event: "node_end",
           data: {
             executionId: id, nodeId, status, durationMs, executorType: nodeType,
-            costUsd: costUsd > 0 ? costUsd : undefined,
+            costUsd: costUsd ?? undefined,
             turnCount: turnCount > 0 ? turnCount : undefined,
             toolCount: toolCount > 0 ? toolCount : undefined,
-            ...(hasTokens ? { tokens: { input: finalInput, output: finalOutput } } : {}),
-            ...(result?.modelUsages?.length ? {
-              tokenUsages: result.modelUsages.map((mu: any) => ({
-                model: mu.model,
-                inputTokens: mu.inputTokens,
-                outputTokens: mu.outputTokens,
-                cacheReadTokens: mu.cacheReadInputTokens ?? 0,
-                cacheCreationTokens: mu.cacheCreationInputTokens ?? 0,
-              })),
-            } : {}),
+            ...(hasTokens ? { usage: nodeUsage } : {}),
+            ...(result?.modelUsages?.length ? { modelUsages: result.modelUsages } : {}),
           },
         })
 

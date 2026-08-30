@@ -1,20 +1,8 @@
 import type { LLMCallRecord } from './llm-call-tracker'
 import type { EffortLevel } from '@octopus/shared'
-
-export interface TokenUsage {
-  input: number
-  output: number
-  total?: number
-}
-
-export interface ModelUsageEntry {
-  model: string
-  inputTokens: number
-  outputTokens: number
-  cacheReadInputTokens?: number
-  cacheCreationInputTokens?: number
-  costUsd?: number
-}
+// TokenUsage / ModelUsage / TokenUsageDelta 全站规范形状定义在 @octopus/shared（C1 口径统一）。
+// provider 的职责：在 SDK seam 把 snake_case 原始事件转成规范形状，其余各层不再换形。
+import type { TokenUsage, ModelUsage, TokenUsageDelta } from '@octopus/shared'
 
 export interface SystemPromptPreset {
   type: 'preset'
@@ -111,9 +99,12 @@ export interface ActiveGoalChunk {
   set_at?: number
 }
 
+// message_delta 的 per-turn 实测用量与 SSE delta 均使用 shared 的 TokenUsageDelta，
+// providers 不再本地定义任何 token 形状（C1 · D3 不留 alias）。
+
 export type MessageChunk =
-  | { type: 'message_start'; messageId: string; inputTokens?: number }
-  | { type: 'message_delta'; stopReason: string; outputTokens?: number; messageId: string }
+  | { type: 'message_start'; messageId: string }
+  | { type: 'message_delta'; stopReason: string; outputTokens?: number; usage?: TokenUsageDelta; messageId: string }
   | { type: 'message_stop'; messageId: string }
   | { type: 'text_delta'; content: string; messageId: string }
   | { type: 'text_done'; messageId: string }
@@ -130,7 +121,7 @@ export type MessageChunk =
   | { type: 'local_command_output'; content: string }
   | { type: 'status'; status: 'compacting' | 'requesting' | null; varsUpdate?: Record<string, unknown> }
   | { type: 'context_usage'; data: ContextUsageData }
-  | { type: 'result'; content?: string; sessionId?: string; tokens?: TokenUsage; costUsd?: number; modelUsages?: ModelUsageEntry[] }
+  | { type: 'result'; content?: string; sessionId?: string; usage?: TokenUsage; costUsd?: number; numTurns?: number; modelUsages?: ModelUsage[] }
   | { type: 'error'; code: string; message: string; numTurns?: number; costUsd?: number; sessionId?: string; terminalReason?: GoalTerminalReason }
   | ActiveGoalChunk
 

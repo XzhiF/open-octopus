@@ -42,7 +42,7 @@ export function ToolCard({ message }: ToolCardProps) {
   useEffect(() => {
     if (message.toolStatus !== "running") return
     const startTime = new Date(message.timestamp).getTime()
-    const tick = () => setLiveElapsed(Number(((Date.now() - startTime) / 1000).toFixed(1)))
+    const tick = () => setLiveElapsed(Number(((Date.now() - startTime) / 1000).toFixed(1))) // fmt-ok: 协议数值
     tick()
     const timer = setInterval(tick, 100)
     return () => clearInterval(timer)
@@ -53,7 +53,7 @@ export function ToolCard({ message }: ToolCardProps) {
   const hasDetails = Boolean(message.toolInput) || Boolean(message.toolResult)
 
   const displayDuration = message.toolStatus === "running"
-    ? liveElapsed > 0 ? `${liveElapsed.toFixed(1)}s` : undefined
+    ? liveElapsed > 0 ? `${liveElapsed.toFixed(1)}s` : undefined // fmt-ok: 协议文本
     : message.toolDuration
 
   return (

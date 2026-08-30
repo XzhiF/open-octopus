@@ -54,10 +54,11 @@ function aggregateTokens(overlay?: StatusOverlay): { input: number; output: numb
   if (!overlay) return null
   const usages: TokenUsage[] = overlay.tokenUsages ?? (overlay.tokenUsage ? [overlay.tokenUsage] : [])
   if (usages.length === 0) return null
+  // C3: 容器徽章用纯值（旧把 cache 折进输入，与全站口径背离）
   return usages.reduce(
     (acc, u) => ({
-      input: acc.input + u.inputTokens + (u.cacheReadTokens ?? 0),
-      output: acc.output + u.outputTokens + (u.cacheCreationTokens ?? 0),
+      input: acc.input + u.inputTokens,
+      output: acc.output + u.outputTokens,
     }),
     { input: 0, output: 0 },
   )

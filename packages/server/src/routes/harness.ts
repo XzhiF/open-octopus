@@ -5,6 +5,7 @@
 
 import { Hono } from "hono"
 import type { HarnessDAO } from "../db/dao/harness-dao"
+import { normalizeHarnessTokenJson } from "../db/dao/usage-mapping"
 import { HarnessConfigService, HarnessConfigError } from "../services/harness/config-service"
 
 let _harnessDAO: HarnessDAO | null = null
@@ -80,7 +81,7 @@ harnessRoutes.get("/events/:execId", (c) => {
     const events = _harnessDAO.findEvents(execId, {
       type: typeFilter,
       severity: severityFilter,
-    })
+    }).map(e => ({ ...e, token_usage_json: normalizeHarnessTokenJson(e) }))
     return c.json({ events })
   } catch (err: unknown) {
     return handleHarnessError(err)

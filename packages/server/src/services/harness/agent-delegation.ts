@@ -18,8 +18,11 @@ import type {
   HarnessEvent,
   HarnessDecisionType,
   DelegationResult,
+  ModelUsage,
 } from "@octopus/shared"
+import { emptyTokenUsage } from "@octopus/shared"
 import type { HarnessDAO } from "../../db/dao/harness-dao"
+import type { TokenUsageDAO } from "../../db/dao/token-usage-dao"
 import type { EvolutionDAO } from "../../db/dao/evolution-dao"
 import type { SSEService } from "../sse"
 import type { HarnessAgentSession } from "./harness-agent-session"
@@ -50,8 +53,8 @@ export interface DelegationContext {
 export interface AgentSessionRunResult {
   /** The text output from the agent. */
   text: string
-  /** Token usage statistics from the agent run. */
-  tokenUsage?: { input: number; output: number; cacheRead?: number; cacheCreation?: number; model: string }
+  /** Token usage statistics from the agent run（规范形状 C1）。 */
+  tokenUsage?: ModelUsage
   /** The agent session ID that was created. */
   sessionId?: string
   /** Captured message chunks (thinking, tool_call, tool_result) for detail display. */
@@ -79,7 +82,7 @@ export type AgentSessionRunner = (params: {
  */
 export type DelegationLLMCall = (prompt: string) => Promise<{
   text: string
-  tokenUsage?: { input: number; output: number; cacheRead?: number; cacheCreation?: number; model: string }
+  tokenUsage?: ModelUsage
 }>
 
 // Re-export DelegationResult from shared for convenience
@@ -307,7 +310,7 @@ export function parseDelegationResponse(rawText: string): DelegationResult {
     success: false,
     decision: "block_node", // safe default for failures
     reasoning: reason,
-    tokenUsage: { input: 0, output: 0, model: "unknown" },
+    tokenUsage: { ...emptyTokenUsage(), model: "unknown" },
   })
 
   // Try to extract structured data from the response
@@ -419,7 +422,7 @@ export function parseDelegationResponse(rawText: string): DelegationResult {
       blockReason: parsed.blockReason ?? parsed.block_reason ?? parsed.reason ?? undefined,
       continueSubsequent: parsed.continueSubsequent ?? parsed.continue_subsequent ?? undefined,
       reasoning: parsed.reasoning ?? parsed.reason ?? parsed.analysis ?? "",
-      tokenUsage: { input: 0, output: 0, model: "unknown" },
+      tokenUsage: { ...emptyTokenUsage(), model: "unknown" },
     }
   }
 
@@ -437,7 +440,7 @@ export function parseDelegationResponse(rawText: string): DelegationResult {
       success: true,
       decision: mappedDecision,
       reasoning: parsed.reasoning ?? "",
-      tokenUsage: { input: 0, output: 0, model: "unknown" },
+      tokenUsage: { ...emptyTokenUsage(), model: "unknown" },
     }
 
     // Map old data fields to new fields based on decision type
@@ -485,6 +488,8 @@ export interface AgentDelegationServiceDeps {
   llmCall?: DelegationLLMCall
   /** Timeout in milliseconds. Default: 300000 (5 minutes). */
   timeoutMs?: number
+  /** C3: node_token_usages 唯一写入口（TokenUsageDAO.recordNodeUsage）。 */
+  tokenUsageDao: TokenUsageDAO
   /** Harness agent session for context accumulation across interventions (ticket 10). */
   session?: HarnessAgentSession
   /** Provider getter function — injected to avoid tsup bundling issues with dynamic import. */
@@ -500,6 +505,7 @@ export interface AgentDelegationServiceDeps {
  */
 export class AgentDelegationService {
   private dao: HarnessDAO
+  private tokenUsageDao: TokenUsageDAO
   private sse: SSEService
   private workspaceId: string
   private evolutionDao?: EvolutionDAO
@@ -511,6 +517,7 @@ export class AgentDelegationService {
 
   constructor(deps: AgentDelegationServiceDeps) {
     this.dao = deps.dao
+    this.tokenUsageDao = deps.tokenUsageDao
     this.sse = deps.sse
     this.workspaceId = deps.workspaceId
     this.evolutionDao = deps.evolutionDao
@@ -562,7 +569,7 @@ export class AgentDelegationService {
 
     // Execute the agent session / LLM call with timeout
     let responseText: string
-    let tokenInfo: { input: number; output: number; cacheRead?: number; cacheCreation?: number; model: string } | undefined
+    let tokenInfo: ModelUsage | undefined
     let agentSessionId: string | undefined
     let agentChunks: Array<{ type: string; [key: string]: unknown }> | undefined
 
@@ -579,7 +586,7 @@ export class AgentDelegationService {
         success: false,
         decision: "block_node",
         reasoning: reason,
-        tokenUsage: { input: 0, output: 0, model: "unknown" },
+        tokenUsage: { ...emptyTokenUsage(), model: "unknown" },
       }
 
       // Persist failure event
@@ -631,7 +638,7 @@ export class AgentDelegationService {
     }
 
     // Record token usage with source="harness"
-    if (tokenInfo && tokenInfo.input + tokenInfo.output > 0) {
+    if (tokenInfo && tokenInfo.inputTokens + tokenInfo.outputTokens > 0) {
       this.recordTokenUsage(delegationId, executionId, nodeId, tokenInfo)
     }
 
@@ -823,9 +830,7 @@ export class AgentDelegationService {
         const provider = getProviderFn("claude")
 
         let text = ""
-        let tokenUsage:
-          | { input: number; output: number; cacheRead?: number; cacheCreation?: number; model: string }
-          | undefined
+        let tokenUsage: ModelUsage | undefined
         // Capture all meaningful chunks for detail display
         const chunks: Array<{ type: string; [key: string]: unknown }> = []
 
@@ -840,21 +845,11 @@ export class AgentDelegationService {
             text += chunk.content
           } else if (chunk.type === "result") {
             if (chunk.content) text = chunk.content
-            if (chunk.tokens) {
-              // Use real model name from modelUsages (e.g. "claude-sonnet-4-5-20250827")
-              // instead of the short alias ("sonnet") or a hardcoded string
-              const realModel = chunk.modelUsages?.[0]?.model ?? "unknown"
-              const mu = chunk.modelUsages?.[0]
-              const cacheRead = mu?.cacheReadInputTokens ?? 0
-              const cacheCreation = mu?.cacheCreationInputTokens ?? 0
-              // Store non-cached input only — consistent with llm_calls.input_tokens
-              // chunk.tokens.input = inputTokens + cacheRead + cacheCreation (combined by provider)
+            if (chunk.usage) {
+              // C1: provider result.usage 已是纯值规范口径（旧「减 cache」反推不再需要）
               tokenUsage = {
-                input: chunk.tokens.input - cacheRead - cacheCreation,
-                output: chunk.tokens.output,
-                cacheRead,
-                cacheCreation,
-                model: realModel,
+                ...chunk.usage,
+                model: chunk.modelUsages?.[0]?.model ?? "unknown",
               }
             }
           } else if (
@@ -881,21 +876,20 @@ export class AgentDelegationService {
     delegationId: string,
     executionId: string,
     nodeId: string,
-    tokenInfo: { input: number; output: number; cacheRead?: number; cacheCreation?: number; model: string },
+    tokenInfo: ModelUsage,
   ): void {
     try {
       const nodeExecId = `${executionId}-${nodeId}`
       const tokenId = `${delegationId}-token`
 
-      this.dao.insertHarnessTokenUsage({
+      // C3: 恒 NULL 时代终结 —— ledger 唯一写入口统一补 cost（SDK 未给 → 价表估算 → 未知仍 NULL）
+      this.tokenUsageDao.recordNodeUsage({
         id: tokenId,
         nodeExecutionId: nodeExecId,
         model: tokenInfo.model,
-        inputTokens: tokenInfo.input,
-        outputTokens: tokenInfo.output,
-        cacheReadTokens: tokenInfo.cacheRead ?? 0,
-        cacheCreationTokens: tokenInfo.cacheCreation ?? 0,
-        costUsd: null, // Cost calculation deferred to billing layer
+        usage: tokenInfo,
+        costUsd: tokenInfo.costUsd,
+        source: 'harness',
         createdAt: new Date().toISOString(),
       })
     } catch (err) {

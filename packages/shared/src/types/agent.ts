@@ -1,4 +1,6 @@
 // ===== Enums =====
+// TokenUsage 全站规范形状见 ./usage.ts（C1 口径统一）
+import type { TokenUsage } from './usage'
 
 export type SessionType = 'main' | 'delegate' | 'clone_direct'
 export type CloneStatus = 'active' | 'idle' | 'executing'
@@ -28,13 +30,6 @@ export type AgentSSEEvent =
   | { event: 'confirm'; data: { event_id: string; type: 'dangerous_command' | 'evolution_major'; operation: string; detail: string } }
   | { event: 'done'; data: { session_id: string; message_id: string; token_usage?: TokenUsage } }
   | { event: 'error'; data: { code: string; message: string } }
-
-export interface TokenUsage {
-  input: number
-  output: number
-  cache_read?: number
-  cache_creation?: number
-}
 
 // ===== Pagination =====
 

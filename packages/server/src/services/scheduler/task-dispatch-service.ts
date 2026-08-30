@@ -27,10 +27,11 @@
 import { randomUUID } from "crypto"
 import type Database from "better-sqlite3"
 import type { SubunitSpec, TaskDispatchPort, ScheduleHandle, WorkflowConfig, OriginRole } from "@octopus/shared"
-import { ScheduleConfigDAO, ScheduleRunDAO, ExecutionDAO } from "../../db/dao"
+import { ScheduleConfigDAO, ScheduleRunDAO, ExecutionDAO, TaskDAO } from "../../db/dao"
 import type { WorkspaceService } from "../workspace"
 import type { SSEService } from "../sse"
 import { getExecutionService } from "../execution-service-registry"
+import { taskWorkspaceName } from "./task-ws-name"
 
 const MAX_PARALLEL_WORKSPACES = parseInt(
   process.env.OCTOPUS_SCHEDULER_MAX_PARALLEL ?? "3",
@@ -72,12 +73,15 @@ export class TaskDispatchService implements TaskDispatchPort {
   private configDAO: ScheduleConfigDAO
   private runDAO: ScheduleRunDAO
   private execDAO: ExecutionDAO
+  /** task-ws-name: parent task lookup for `task:{标题}·{子单元}` naming. */
+  private taskDAO: TaskDAO
   private resumeParent: ResumeParentFn | undefined
 
   constructor(private deps: TaskDispatchServiceDeps) {
     this.configDAO = new ScheduleConfigDAO(deps.db)
     this.runDAO = new ScheduleRunDAO(deps.db)
     this.execDAO = new ExecutionDAO(deps.db)
+    this.taskDAO = new TaskDAO(deps.db)
   }
 
   /** Wire the parent-resume hook (ExecutionLifecycle.resumeTaskDispatch). */
@@ -133,7 +137,13 @@ export class TaskDispatchService implements TaskDispatchPort {
 
     // Materialize an independent workspace for the child sub-workflow.
     const branchSuffix = formatBranchSuffix(new Date())
-    const workspaceName = `taskpool-${scheduleId}-${branchSuffix}`
+    // task-ws-name (2026-08-29): 与主执行同款命名 —— `task:{父任务标题}·{子单元名}`；
+    // 父任务查不到/无标题时回退旧 taskpool-{scheduleId} 命名。
+    const parentTaskRow = parentTaskId ? this.taskDAO.getById(parentTaskId) : null
+    const taskWsName = parentTaskRow
+      ? taskWorkspaceName({ name: parentTaskRow.name, task_spec: parentTaskRow.task_spec }, { subName: subunit.name })
+      : null
+    const workspaceName = taskWsName ?? `taskpool-${scheduleId}-${branchSuffix}`
     let workspace
     try {
       workspace = this.deps.workspaceService.createFromSpec({

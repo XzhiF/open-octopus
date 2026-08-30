@@ -1,6 +1,8 @@
 'use client'
 
 import { Badge } from '@/components/ui/badge'
+import { formatPercent } from "@/lib/format"
+import { formatDuration } from '@/lib/format'
 import { Button } from '@/components/ui/button'
 import { Progress } from '@/components/ui/progress'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -41,12 +43,6 @@ export function ActiveTaskList({ tasks, loading, onCancel }: ActiveTaskListProps
     )
   }
 
-  const formatElapsed = (ms: number) => {
-    const s = Math.floor(ms / 1000)
-    const m = Math.floor(s / 60)
-    return m > 0 ? `${m}分${s % 60}秒` : `${s}秒`
-  }
-
   return (
     <ScrollArea className="h-full">
       <div className="p-4 grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -79,13 +75,13 @@ export function ActiveTaskList({ tasks, loading, onCancel }: ActiveTaskListProps
             {task.progress !== undefined && (
               <div className="mb-2">
                 <Progress value={task.progress * 100} className="h-1.5" />
-                <span className="text-xs text-muted-foreground mt-1">{(task.progress * 100).toFixed(0)}%</span>
+                <span className="text-xs text-muted-foreground mt-1">{formatPercent(task.progress)}</span>
               </div>
             )}
 
             <div className="flex items-center gap-1 text-xs text-muted-foreground">
               <Clock className="h-3.5 w-3.5" />
-              已耗时: {formatElapsed(task.elapsed_ms)}
+              已耗时: {formatDuration(task.elapsed_ms)}
             </div>
           </div>
         ))}

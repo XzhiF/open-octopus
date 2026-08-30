@@ -179,3 +179,38 @@ describe("yamlToFlowData — loop container extraction", () => {
     expect(innerA?.data.name).toBe("Inner A")
   })
 })
+
+describe("yamlToFlowData — goal-mode agent node", () => {
+  it("maps node.goal into node data so goal-mode agent nodes render their middle", () => {
+    const workflow = {
+      name: "goal-test",
+      nodes: [
+        {
+          id: "develop",
+          type: "agent",
+          description: "Develop",
+          goal: "完成下述开发任务\n═══ 目标 (WHAT) ═══\n实现 token 计费",
+        },
+      ],
+    }
+
+    const result = yamlToFlowData(workflow)!
+    const devNode = result.nodes.find((n) => n.id === "develop")
+
+    expect(devNode?.data.type).toBe("agent")
+    expect(devNode?.data.goal).toContain("实现 token 计费")
+  })
+
+  it("keeps prompt mapping untouched for non-goal (prompt-function) agent nodes", () => {
+    const workflow = {
+      name: "prompt-test",
+      nodes: [{ id: "worker", type: "agent", prompt: "Do the thing", description: "Worker" }],
+    }
+
+    const result = yamlToFlowData(workflow)!
+    const workerNode = result.nodes.find((n) => n.id === "worker")
+
+    expect(workerNode?.data.prompt).toBe("Do the thing")
+    expect(workerNode?.data.goal).toBeUndefined()
+  })
+})

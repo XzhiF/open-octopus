@@ -1,26 +1,31 @@
 import type { ExecutionDAO } from "../db/dao/execution-dao"
 import type { TokenUsageDAO } from "../db/dao/token-usage-dao"
 import type { LlmCallRow, NodeExecutionRow, ExecutionRow } from "../db/types"
+import type { TokenUsage } from "@octopus/shared"
+import { emptyTokenUsage, addTokenUsage, totalTokens, costSummary, type LedgerTotals } from "@octopus/shared"
+import { usageFromRow } from "../db/dao/usage-mapping"
 
 // ── Types ──────────────────────────────────────────────────────────────
 
 export interface ObservabilityTokenSummary {
-  totalInput: number
-  totalOutput: number
-  totalCacheRead: number
-  totalCacheCreation: number
-  totalCostUsd: number
+  /** 规范用量（纯值四字段，C1）—— 取代 totalInput/totalCacheRead 平铺族 */
+  usage: TokenUsage
+  /** C3: 唯一规范总量（tokens/cost 三态/cacheHitRate 0-1），源 = ntu 账本 */
+  totals: LedgerTotals
 }
 
 export interface ObservabilityNodeBreakdown {
   nodeId: string
   nodeName: string
   nodeType: string
+  /** C3: server 单源总量行 */
+  tokens: number
   inputTokens: number
   outputTokens: number
   cacheReadTokens: number
   cacheCreationTokens: number
-  costUsd: number
+  /** C3: 行级三态 —— null = 该组全部未定价（部分定价 = 已知和） */
+  costUsd: number | null
   llmTurns: number
   loopIterations: number
   swarmRounds: number
@@ -31,11 +36,14 @@ export interface ObservabilityNodeBreakdown {
 
 export interface ObservabilityModelBreakdown {
   model: string
+  /** C3: server 单源总量行（web 不再四字段自加） */
+  tokens: number
   inputTokens: number
   outputTokens: number
   cacheReadTokens: number
   cacheCreationTokens: number
-  costUsd: number
+  /** C3: 行级三态（null = 全未定价） */
+  costUsd: number | null
   callCount: number
 }
 
@@ -141,7 +149,7 @@ export class ObservabilityQueryService {
     const nodeExecutions = this.execDao.findNodeExecutions(executionId)
     const toolErrors = this.execDao.findToolErrors(executionId)
 
-    const tokens = this.computeTokenSummary(llmCalls)
+    const tokens = this.computeTokenSummary(executionId)
     const byModel = this.computeByModel(llmCalls)
     const timeSeries = this.computeTimeSeries(llmCalls)
     const byNode = this.computeByNode(llmCalls, nodeExecutions)
@@ -162,43 +170,37 @@ export class ObservabilityQueryService {
     }
   }
 
-  private computeTokenSummary(llmCalls: LlmCallRow[]): ObservabilityTokenSummary {
-    let totalInput = 0
-    let totalOutput = 0
-    let totalCacheRead = 0
-    let totalCacheCreation = 0
-    let totalCostUsd = 0
-
-    for (const call of llmCalls) {
-      totalInput += call.input_tokens
-      totalOutput += call.output_tokens
-      totalCacheRead += call.cache_read_tokens
-      totalCacheCreation += call.cache_creation_tokens
-      totalCostUsd += call.cost_usd ?? 0
-    }
-
-    return { totalInput, totalOutput, totalCacheRead, totalCacheCreation, totalCostUsd }
+  private computeTokenSummary(executionId: string): ObservabilityTokenSummary {
+    // C3/Q4: 总量唯一账本 = node_token_usages（aggregateByExecution 单源，与
+    // steps/SSE 同源不跳变；llm_calls 只供下方明细分解）
+    const m = this.tokenDao.aggregateByExecution(executionId)
+    return { usage: m.usage, totals: m.totals }
   }
 
   private computeByModel(llmCalls: LlmCallRow[]): ObservabilityModelBreakdown[] {
-    const modelMap = new Map<string, ObservabilityModelBreakdown>()
+    const modelMap = new Map<string, Omit<ObservabilityModelBreakdown, 'costUsd'> & { costs: Array<number | null> }>()
 
     for (const call of llmCalls) {
       const model = call.model ?? "unknown"
       let entry = modelMap.get(model)
       if (!entry) {
-        entry = { model, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0, costUsd: 0, callCount: 0 }
+        entry = { model, tokens: 0, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0, costs: [], callCount: 0 }
         modelMap.set(model, entry)
       }
       entry.inputTokens += call.input_tokens
       entry.outputTokens += call.output_tokens
       entry.cacheReadTokens += call.cache_read_tokens
       entry.cacheCreationTokens += call.cache_creation_tokens
-      entry.costUsd += call.cost_usd ?? 0
+      entry.costs.push(call.cost_usd)
       entry.callCount++
     }
 
-    return Array.from(modelMap.values())
+    return Array.from(modelMap.values()).map(e => ({
+      model: e.model, tokens: totalTokens({ inputTokens: e.inputTokens, outputTokens: e.outputTokens, cacheReadTokens: e.cacheReadTokens, cacheCreationTokens: e.cacheCreationTokens }),
+      inputTokens: e.inputTokens, outputTokens: e.outputTokens,
+      cacheReadTokens: e.cacheReadTokens, cacheCreationTokens: e.cacheCreationTokens,
+      costUsd: costSummary(e.costs).usd, callCount: e.callCount,
+    }))
   }
 
   private computeTimeSeries(llmCalls: LlmCallRow[]): ObservabilityTimeSeriesPoint[] {
@@ -215,7 +217,7 @@ export class ObservabilityQueryService {
     for (const call of sorted) {
       cumulativeInput += call.input_tokens
       cumulativeOutput += call.output_tokens
-      cumulativeCost += call.cost_usd ?? 0
+      cumulativeCost += call.cost_usd ?? 0 // ledger-ok: known-spend curve（明细累计曲线，非总量出口）
 
       points.push({
         timestamp: new Date(call.timestamp).toISOString(),
@@ -240,7 +242,7 @@ export class ObservabilityQueryService {
       outputTokens: number
       cacheReadTokens: number
       cacheCreationTokens: number
-      costUsd: number
+      costs: Array<number | null>
       llmTurns: number
     }>()
 
@@ -248,14 +250,14 @@ export class ObservabilityQueryService {
       const nodeId = call.node_id ?? "unknown"
       let entry = nodeTokenMap.get(nodeId)
       if (!entry) {
-        entry = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0, costUsd: 0, llmTurns: 0 }
+        entry = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0, costs: [], llmTurns: 0 }
         nodeTokenMap.set(nodeId, entry)
       }
       entry.inputTokens += call.input_tokens
       entry.outputTokens += call.output_tokens
       entry.cacheReadTokens += call.cache_read_tokens
       entry.cacheCreationTokens += call.cache_creation_tokens
-      entry.costUsd += call.cost_usd ?? 0
+      entry.costs.push(call.cost_usd)
       entry.llmTurns++
     }
 
@@ -284,7 +286,7 @@ export class ObservabilityQueryService {
       processedNodeIds.add(ne.node_id)
 
       const tokenData = nodeTokenMap.get(ne.node_id) ?? {
-        inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0, costUsd: 0, llmTurns: 0,
+        inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0, costs: [], llmTurns: 0,
       }
 
       // Find the "primary" node execution (first one, or the one with the longest duration)
@@ -297,11 +299,12 @@ export class ObservabilityQueryService {
         nodeId: ne.node_id,
         nodeName: ne.node_id,
         nodeType: ne.node_type,
+        tokens: totalTokens({ inputTokens: tokenData.inputTokens, outputTokens: tokenData.outputTokens, cacheReadTokens: tokenData.cacheReadTokens, cacheCreationTokens: tokenData.cacheCreationTokens }),
         inputTokens: tokenData.inputTokens,
         outputTokens: tokenData.outputTokens,
         cacheReadTokens: tokenData.cacheReadTokens,
         cacheCreationTokens: tokenData.cacheCreationTokens,
-        costUsd: tokenData.costUsd,
+        costUsd: costSummary(tokenData.costs).usd,
         llmTurns: tokenData.llmTurns,
         loopIterations: loopIterationsByParent.get(ne.node_id) ?? 0,
         swarmRounds: swarmRoundsByNode.get(ne.node_id) ?? 0,
@@ -515,13 +518,13 @@ export class ObservabilityQueryService {
 
     if (snapshot) {
       const mode = (snapshot as any).token_counting_mode ?? "all"
-      const totalTokens = mode === "no_cache"
-        ? tokens.totalInput + tokens.totalOutput
-        : tokens.totalInput + tokens.totalOutput + tokens.totalCacheRead + tokens.totalCacheCreation
+      const consumed = mode === "no_cache"
+        ? tokens.usage.inputTokens + tokens.usage.outputTokens
+        : totalTokens(tokens.usage)
       const alertThreshold = snapshot.alert_threshold ?? 0.8
 
       if (snapshot.max_tokens) {
-        const pct = (totalTokens / snapshot.max_tokens) * 100
+        const pct = (consumed / snapshot.max_tokens) * 100
         progress.tokensPercent = Math.round(pct * 100) / 100
 
         if (pct >= alertThreshold * 100) {
@@ -529,7 +532,7 @@ export class ObservabilityQueryService {
             type: pct >= 100 ? "exceeded" : "warning",
             metric: "tokens",
             threshold: snapshot.max_tokens * alertThreshold,
-            actual: totalTokens,
+            actual: consumed,
             timestamp: new Date().toISOString(),
           })
         }
@@ -555,8 +558,8 @@ export class ObservabilityQueryService {
         }
       }
 
-      if (snapshot.max_cost_usd) {
-        const pct = (tokens.totalCostUsd / snapshot.max_cost_usd) * 100
+      if (snapshot.max_cost_usd && tokens.totals.cost.usd !== null) {
+        const pct = (tokens.totals.cost.usd / snapshot.max_cost_usd) * 100
         progress.costPercent = Math.round(pct * 100) / 100
 
         if (pct >= alertThreshold * 100) {
@@ -564,7 +567,7 @@ export class ObservabilityQueryService {
             type: pct >= 100 ? "exceeded" : "warning",
             metric: "cost",
             threshold: snapshot.max_cost_usd * alertThreshold,
-            actual: tokens.totalCostUsd,
+            actual: tokens.totals.cost.usd,
             timestamp: new Date().toISOString(),
           })
         }

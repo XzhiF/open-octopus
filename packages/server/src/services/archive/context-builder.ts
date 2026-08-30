@@ -1,4 +1,5 @@
 import type Database from "better-sqlite3"
+import { LEDGER_SQL } from "@octopus/shared"
 import type { WorkspaceDAO } from "../../db/dao/workspace-dao"
 import type { ExecutionDAO } from "../../db/dao/execution-dao"
 import type { ExecutionRow } from "../../db/types"
@@ -73,8 +74,8 @@ export interface ErrorEntry {
 }
 
 export interface CostProfile {
-  total_cost: number
-  daily_avg: number
+  total_cost: number | null
+  daily_avg: number | null
   trend_direction: "increasing" | "decreasing" | "stable"
   trend_pct: number
   modelBreakdown: ModelBreakdown[]
@@ -84,7 +85,8 @@ export interface ModelBreakdown {
   model: string
   calls: number
   tokens: number
-  cost: number
+  /** C3: null = 该模型未定价 */
+  cost: number | null
 }
 
 export interface NodePattern {
@@ -193,29 +195,19 @@ function buildFailedNodes(executionId: string, db: Database.Database): FailedNod
   }))
 }
 
-function getExecutionCost(executionId: string, db: Database.Database): number {
-  // Primary: node_token_usages (covers all executor types including swarm)
+function getExecutionCost(executionId: string, db: Database.Database): number | null {
+  // C3/Q8-1: 单源 ntu 账本 —— 旧「ntu>0 否则 llm_calls」双表回退链废除
+  // （ntu 已是总量唯一账本；回退链只在旧数据上掩盖两表不对称）。
   const ntuRow = db
     .prepare(
-      `SELECT COALESCE(SUM(cost_usd), 0) as cost
+      `SELECT ${LEDGER_SQL.sumCost('')} as cost
        FROM node_token_usages
        WHERE node_execution_id IN (
          SELECT id FROM node_executions WHERE execution_id = ?
        )`,
     )
-    .get(executionId) as { cost: number }
-  const ntuCost = Number(ntuRow.cost) || 0
-  if (ntuCost > 0) return ntuCost
-
-  // Fallback: llm_calls (legacy path)
-  const lcRow = db
-    .prepare(
-      `SELECT COALESCE(SUM(cost_usd), 0) as cost
-       FROM llm_calls
-       WHERE execution_id = ?`,
-    )
-    .get(executionId) as { cost: number }
-  return Number(lcRow.cost) || 0
+    .get(executionId) as { cost: number | null }
+  return ntuRow.cost
 }
 
 function sampleExecutions(executions: ExecutionRow[], db: Database.Database): ExecutionRow[] {
@@ -229,7 +221,7 @@ function sampleExecutions(executions: ExecutionRow[], db: Database.Database): Ex
 
   // Top 10 by cost (compute in JS to include executions with no llm_calls)
   const execCosts = executions.map((e) => ({ id: e.id, cost: getExecutionCost(e.id, db) }))
-  execCosts.sort((a, b) => b.cost - a.cost)
+  execCosts.sort((a, b) => (b.cost ?? -1) - (a.cost ?? -1))
   const topCostIds = new Set(execCosts.slice(0, 10).map((c) => c.id))
 
   const selectedIds = new Set<string>()
@@ -257,7 +249,7 @@ async function buildExecutionSummaries(
 ): Promise<ExecutionSummary[]> {
   return executions.map((exec, index) => {
     const duration_s = (exec.duration ?? 0) / 1000
-    const cost = getExecutionCost(exec.id, db)
+    const cost = getExecutionCost(exec.id, db) ?? 0
     const failedNodes = buildFailedNodes(exec.id, db)
 
     return {
@@ -295,7 +287,8 @@ function buildWorkflowProfiles(
     const avgDuration_s = durations.length > 0 ? durations.reduce((a, b) => a + b, 0) / durations.length / 1000 : 0
 
     const costs = execs.map((e) => getExecutionCost(e.id, db))
-    const avgCost = costs.length > 0 ? costs.reduce((a, b) => a + b, 0) / costs.length : 0
+    const knownCosts = costs.filter((c): c is number => c !== null)
+    const avgCost = knownCosts.length > 0 ? knownCosts.reduce((a, b) => a + b, 0) / knownCosts.length : 0
 
     const nodeTypes = [
       ...new Set(
@@ -319,11 +312,11 @@ function buildWorkflowProfiles(
 
     const firstAvg =
       firstHalf.length > 0
-        ? firstHalf.reduce((sum, e) => sum + getExecutionCost(e.id, db), 0) / firstHalf.length
+        ? firstHalf.reduce((sum, e) => sum + (getExecutionCost(e.id, db) ?? 0), 0) / firstHalf.length
         : 0
     const secondAvg =
       secondHalf.length > 0
-        ? secondHalf.reduce((sum, e) => sum + getExecutionCost(e.id, db), 0) / secondHalf.length
+        ? secondHalf.reduce((sum, e) => sum + (getExecutionCost(e.id, db) ?? 0), 0) / secondHalf.length
         : 0
 
     let costTrendDirection: "increasing" | "decreasing" | "stable" = "stable"
@@ -408,14 +401,14 @@ function buildCostProfile(
   // Path: node_token_usages → node_executions → executions
   const totalRow = db
     .prepare(
-      `SELECT COALESCE(SUM(ntu.cost_usd), 0) as total
+      `SELECT ${LEDGER_SQL.sumCost('ntu.')} as total
        FROM node_token_usages ntu
        JOIN node_executions ne ON ntu.node_execution_id = ne.id
        JOIN executions e ON ne.execution_id = e.id
        WHERE e.workspace_id = ?`,
     )
-    .get(workspaceId) as { total: number }
-  const total_cost = Number(totalRow.total) || 0
+    .get(workspaceId) as { total: number | null }
+  const total_cost = totalRow.total
 
   // Daily average: use execution started_at for date range
   const dateRangeRow = db
@@ -428,7 +421,7 @@ function buildCostProfile(
     )
     .get(workspaceId) as { min_ts: string | null; max_ts: string | null }
 
-  let daily_avg = 0
+  let daily_avg: number | null = 0
   let trend_direction: "increasing" | "decreasing" | "stable" = "stable"
   let trend_pct = 0
 
@@ -436,8 +429,8 @@ function buildCostProfile(
     const minMs = new Date(dateRangeRow.min_ts).getTime()
     const maxMs = new Date(dateRangeRow.max_ts).getTime()
     const days = Math.max(1, Math.ceil((maxMs - minMs) / (1000 * 60 * 60 * 24)))
-    daily_avg = total_cost / days
-  } else if (total_cost > 0) {
+    daily_avg = total_cost === null ? null : total_cost / days
+  } else if (total_cost !== null && total_cost > 0) {
     daily_avg = total_cost
   }
 
@@ -452,15 +445,15 @@ function buildCostProfile(
        GROUP BY day
        ORDER BY day ASC`,
     )
-    .all(workspaceId) as Array<{ day: string; cost: number }>
+    .all(workspaceId) as Array<{ day: string; cost: number | null }>
 
   if (dailyRows.length >= 2) {
     const mid = Math.floor(dailyRows.length / 2)
     const firstHalf = dailyRows.slice(0, mid)
     const secondHalf = dailyRows.slice(mid)
 
-    const firstAvg = firstHalf.reduce((s, r) => s + r.cost, 0) / firstHalf.length
-    const secondAvg = secondHalf.reduce((s, r) => s + r.cost, 0) / secondHalf.length
+    const firstAvg = firstHalf.reduce((s, r) => s + (r.cost ?? 0), 0) / firstHalf.length
+    const secondAvg = secondHalf.reduce((s, r) => s + (r.cost ?? 0), 0) / secondHalf.length
 
     if (firstAvg > 0) {
       trend_pct = ((secondAvg - firstAvg) / firstAvg) * 100
@@ -477,8 +470,8 @@ function buildCostProfile(
     .prepare(
       `SELECT ntu.model,
               COUNT(*) as calls,
-              SUM(ntu.input_tokens + ntu.output_tokens) as tokens,
-              COALESCE(SUM(ntu.cost_usd), 0) as cost
+              ${LEDGER_SQL.sumTokens('ntu.')} as tokens,
+              ${LEDGER_SQL.sumCost('ntu.')} as cost
        FROM node_token_usages ntu
        JOIN node_executions ne ON ntu.node_execution_id = ne.id
        JOIN executions e ON ne.execution_id = e.id
@@ -486,7 +479,7 @@ function buildCostProfile(
        GROUP BY ntu.model
        ORDER BY cost DESC`,
     )
-    .all(workspaceId) as Array<{ model: string; calls: number; tokens: number; cost: number }>
+    .all(workspaceId) as Array<{ model: string; calls: number; tokens: number; cost: number | null }>
 
   const modelBreakdown: ModelBreakdown[] = modelRows.map((row) => ({
     model: row.model ?? "unknown",

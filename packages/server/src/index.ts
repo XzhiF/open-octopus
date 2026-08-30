@@ -418,7 +418,7 @@ if (!daos) {
 }
 
 app.route("/api/orgs", createOrgRoutes(d.org))
-app.route("/api/workspaces", createWorkspaceRoutes(wsSvc, d.org, d.workspace))
+app.route("/api/workspaces", createWorkspaceRoutes(wsSvc, d.org, d.workspace, d.execution))
 app.route("/api/workspaces/:id/workflows", createWorkflowOpsRoutes(d.workspace))
 app.route("/api/workspaces/:id/workflows", createWorkflowRoutes(d.workspace, () => resourceRegistry.get()))
 app.route("/api/workspaces/:id/executions", executionRoutes)
@@ -742,6 +742,7 @@ if (shouldServe) {
         executors.set('workflow', new WorkflowExecutor(
           sse, daos!.scheduleConfig, daos!.scheduleRun, daos!.execution, workspaceService!,
           scheduleStatusListener,
+          daos!.task,
         ))
         executors.set('agent', new AgentExecutor(
           daos!.scheduleRun, daos!.execution, undefined,
@@ -762,6 +763,10 @@ if (shouldServe) {
         })
 
         schedulerEngine.start()
+        // v39: sub-second claim pickup after an explicit task trigger
+        // (TasksService.triggerTask calls this; late-bound because the engine
+        // is constructed after tasksService).
+        tasksService.setWakeScheduler(() => schedulerEngine.wake())
         ;(global as any).__octopus_scheduler = schedulerEngine
         ;(global as any).__octopus_schedule_service = scheduleService
         const jobCount = schedulerEngine['cronJobs']?.size ?? 0

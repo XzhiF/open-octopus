@@ -69,6 +69,13 @@ function seedLlmCall(
     INSERT INTO llm_calls (id, node_execution_id, execution_id, turn_index, call_index, timestamp, duration_ms, model, input_tokens, output_tokens, cost_usd, cache_read_tokens, cache_creation_tokens)
     VALUES (?, ?, ?, 0, 0, 1000, 500, ?, ?, ?, ?, 20, 10)
   `).run(id, nodeExecId, execId, model, inputTokens, outputTokens, costUsd)
+  // C3/Q8-1: 归档成本单源 = ntu 账本 —— fixture 同步双写（与线上 engine 路径
+  // 「同一 result 双写两表」一致）
+  db.prepare(`
+    INSERT INTO node_token_usages (id, node_execution_id, model, input_tokens, output_tokens,
+      cost_usd, cache_read_tokens, cache_creation_tokens, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, 20, 10, datetime('now'))
+  `).run(`${id}-ntu`, nodeExecId, model, inputTokens, outputTokens, costUsd)
 }
 
 describe("buildArchiveContext", () => {
@@ -106,7 +113,7 @@ describe("buildArchiveContext", () => {
     expect(result!.executions).toEqual([])
     expect(result!.workflows).toEqual([])
     expect(result!.errorCatalog).toEqual([])
-    expect(result!.costProfile.total_cost).toBe(0)
+    expect(result!.costProfile.total_cost).toBeNull() // C3: 无数据 ≠ 假 $0
     expect(result!.nodePatterns).toEqual([])
     expect(result!.existingKnowledge).toEqual([])
   })
@@ -137,7 +144,7 @@ describe("buildArchiveContext", () => {
     expect(result!.executions[0].failedNodes[0].errorSnippet.length).toBe(500)
   })
 
-  it("calculates execution cost from llm_calls", async () => {
+  it("calculates execution cost from ledger (ntu)", async () => {
     seedWorkspace(db, "ws-1")
     seedExecution(db, "exec-1", "ws-1")
     seedNodeExecution(db, "ne-1", "exec-1", "node-1", "bash")
@@ -280,13 +287,13 @@ describe("buildArchiveContext", () => {
     const sonnetBreakdown = result!.costProfile.modelBreakdown.find((m) => m.model === "sonnet")
     expect(sonnetBreakdown).toBeDefined()
     expect(sonnetBreakdown!.calls).toBe(2)
-    expect(sonnetBreakdown!.tokens).toBe(375) // (100+50) + (150+75)
+    expect(sonnetBreakdown!.tokens).toBe(435) // C3: 四字段口径 (100+50+30) + (150+75+30)
     expect(sonnetBreakdown!.cost).toBeCloseTo(0.03, 5)
 
     const opusBreakdown = result!.costProfile.modelBreakdown.find((m) => m.model === "opus")
     expect(opusBreakdown).toBeDefined()
     expect(opusBreakdown!.calls).toBe(1)
-    expect(opusBreakdown!.tokens).toBe(300) // 200+100
+    expect(opusBreakdown!.tokens).toBe(330) // C3 四字段口径：200+100+30(cache)
     expect(opusBreakdown!.cost).toBeCloseTo(0.05, 5)
   })
 

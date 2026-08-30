@@ -12,6 +12,7 @@ function makeMocks() {
   const dao = {
     insertEvent: vi.fn(),
     findEvents: vi.fn().mockReturnValue([]),
+    getDb: vi.fn(() => ({})), // C3: controller 缺省自建 TokenUsageDAO 用（构造无副作用）
   } as unknown as HarnessDAO
 
   const sse = {

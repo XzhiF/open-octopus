@@ -1,6 +1,7 @@
 'use client'
 
 import { ScrollArea } from '@/components/ui/scroll-area'
+import { formatDuration } from '@/lib/format'
 import { Badge } from '@/components/ui/badge'
 import { cn } from '@/lib/utils'
 import {
@@ -14,15 +15,6 @@ import type { ArchiveSummaryResponse } from '@/lib/knowledge/types'
 
 interface ExecutionSummaryPanelProps {
   summary: ArchiveSummaryResponse
-}
-
-function formatDuration(ms: number): string {
-  if (ms < 1000) return `${ms}ms`
-  const seconds = Math.floor(ms / 1000)
-  if (seconds < 60) return `${seconds}s`
-  const minutes = Math.floor(seconds / 60)
-  const remainSec = seconds % 60
-  return `${minutes}m ${remainSec}s`
 }
 
 const STATUS_CONFIG = {

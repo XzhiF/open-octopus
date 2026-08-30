@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useEffect, useCallback } from "react"
+import { emptyTokenUsage, addTokenUsage, totalTokens } from "@octopus/shared"
 import { getServerUrl } from "@/lib/server-config"
 import { subscribeSSE } from "@/lib/sse-manager"
 import type { DiagnosisReport, InterventionAction } from "@/lib/types"
@@ -43,7 +44,8 @@ export interface ParsedHarnessEvent {
   // iteration (when node is inside a loop)
   iteration?: number
   // token usage (from delegation or intervention events)
-  tokenUsage?: { inputTokens?: number; outputTokens?: number; cacheTokens?: number; cacheCreationTokens?: number; model?: string }
+  /** 规范用量（server 已在 /events + live SSE 出口统一为规范 4 字段，前端不再做双名防御） */
+  tokenUsage?: { inputTokens?: number; outputTokens?: number; cacheReadTokens?: number; cacheCreationTokens?: number; model?: string }
 }
 
 interface UseHarnessEventsResult {
@@ -54,7 +56,7 @@ interface UseHarnessEventsResult {
   totalExtraTokens: number
   totalInputTokens: number
   totalOutputTokens: number
-  totalCacheTokens: number
+  totalCacheReadTokens: number
   totalCacheCreationTokens: number
 }
 
@@ -65,17 +67,16 @@ function parseSSEEvent(eventType: string, raw: Record<string, unknown>): ParsedH
   const timestamp = Date.now()
   const executionId = (raw.executionId as string) ?? ""
 
-  // Extract token usage from SSE payload — may be at top-level or nested in result
-  // Server uses { input, output, model }; legacy may use { inputTokens, outputTokens }
+  // tokenUsage 为 server 规范形状（C1）：inputTokens/outputTokens/cacheReadTokens/cacheCreationTokens(+model)
   const rawTokenUsage =
     (raw.tokenUsage as Record<string, unknown> | undefined) ??
     ((raw.result as Record<string, unknown> | undefined)?.tokenUsage as Record<string, unknown> | undefined)
   const tokenUsage = rawTokenUsage
     ? {
-        inputTokens: (rawTokenUsage.inputTokens as number) ?? (rawTokenUsage.input as number),
-        outputTokens: (rawTokenUsage.outputTokens as number) ?? (rawTokenUsage.output as number),
-        cacheTokens: (rawTokenUsage.cacheTokens as number) ?? (rawTokenUsage.cacheRead as number) ?? undefined,
-        cacheCreationTokens: (rawTokenUsage.cacheCreationTokens as number) ?? (rawTokenUsage.cacheCreation as number) ?? undefined,
+        inputTokens: rawTokenUsage.inputTokens as number | undefined,
+        outputTokens: rawTokenUsage.outputTokens as number | undefined,
+        cacheReadTokens: rawTokenUsage.cacheReadTokens as number | undefined,
+        cacheCreationTokens: rawTokenUsage.cacheCreationTokens as number | undefined,
         model: rawTokenUsage.model as string | undefined,
       }
     : undefined
@@ -180,10 +181,10 @@ export function useHarnessEvents(
               : undefined
             const tokenUsage = rawTu
               ? {
-                  inputTokens: (rawTu.inputTokens as number) ?? (rawTu.input as number),
-                  outputTokens: (rawTu.outputTokens as number) ?? (rawTu.output as number),
-                  cacheTokens: (rawTu.cacheTokens as number) ?? (rawTu.cacheRead as number) ?? undefined,
-                  cacheCreationTokens: (rawTu.cacheCreationTokens as number) ?? (rawTu.cacheCreation as number) ?? undefined,
+                  inputTokens: rawTu.inputTokens as number | undefined,
+                  outputTokens: rawTu.outputTokens as number | undefined,
+                  cacheReadTokens: rawTu.cacheReadTokens as number | undefined,
+                  cacheCreationTokens: rawTu.cacheCreationTokens as number | undefined,
                   model: rawTu.model as string | undefined,
                 }
               : undefined
@@ -270,17 +271,24 @@ export function useHarnessEvents(
     (e) => e.type === "harness_intervention" || e.type === "harness_delegation",
   ).length
 
-  const totalExtraTokens = events.reduce((sum, e) => {
+  // C3: 五路 reduce 收编为 shared 公式单源（addTokenUsage + totalTokens）。
+  // 口径变化：totalExtraTokens 旧为 in+out（漏 cache），现与全站总量同 = 四字段和。
+  let usageTotals = emptyTokenUsage()
+  for (const e of events) {
     if (e.tokenUsage) {
-      return sum + (e.tokenUsage.inputTokens ?? 0) + (e.tokenUsage.outputTokens ?? 0)
+      usageTotals = addTokenUsage(usageTotals, {
+        inputTokens: e.tokenUsage.inputTokens ?? 0,
+        outputTokens: e.tokenUsage.outputTokens ?? 0,
+        cacheReadTokens: e.tokenUsage.cacheReadTokens ?? 0,
+        cacheCreationTokens: e.tokenUsage.cacheCreationTokens ?? 0,
+      })
     }
-    return sum
-  }, 0)
+  }
+  const totalExtraTokens = totalTokens(usageTotals)
+  const totalInputTokens = usageTotals.inputTokens
+  const totalOutputTokens = usageTotals.outputTokens
+  const totalCacheReadTokens = usageTotals.cacheReadTokens
+  const totalCacheCreationTokens = usageTotals.cacheCreationTokens
 
-  const totalInputTokens = events.reduce((sum, e) => sum + (e.tokenUsage?.inputTokens ?? 0), 0)
-  const totalOutputTokens = events.reduce((sum, e) => sum + (e.tokenUsage?.outputTokens ?? 0), 0)
-  const totalCacheTokens = events.reduce((sum, e) => sum + (e.tokenUsage?.cacheTokens ?? 0), 0)
-  const totalCacheCreationTokens = events.reduce((sum, e) => sum + (e.tokenUsage?.cacheCreationTokens ?? 0), 0)
-
-  return { events, loading, error, interventionCount, totalExtraTokens, totalInputTokens, totalOutputTokens, totalCacheTokens, totalCacheCreationTokens }
+  return { events, loading, error, interventionCount, totalExtraTokens, totalInputTokens, totalOutputTokens, totalCacheReadTokens, totalCacheCreationTokens }
 }

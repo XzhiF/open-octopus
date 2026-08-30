@@ -1,4 +1,4 @@
-import type { SchedulerJob, SchedulerExecutionStatus } from '@octopus/shared'
+import type { SchedulerJob, SchedulerExecutionStatus, TokenUsage } from '@octopus/shared'
 
 export interface ExecutionResult {
   success: boolean
@@ -9,7 +9,7 @@ export interface ExecutionResult {
   // Agent-specific fields
   agentOutput?: string
   modelUsed?: string
-  tokenUsage?: { input: number; output: number }
+  tokenUsage?: TokenUsage
 }
 
 export interface Executor {

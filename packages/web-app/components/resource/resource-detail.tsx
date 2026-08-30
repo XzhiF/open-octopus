@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react"
 import { useParams, useRouter } from "next/navigation"
+import { formatBytes } from "@/lib/format"
 import Link from "next/link"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -44,12 +45,6 @@ function fileIcon(path: string) {
   if (path.endsWith(".md")) return FileText
   if (/\.(ts|tsx|js|jsx|py|sh|yaml|yml|json)$/.test(path)) return FileCode
   return File
-}
-
-function formatSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes}B`
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`
-  return `${(bytes / (1024 * 1024)).toFixed(1)}MB`
 }
 
 export function ResourceDetail() {
@@ -262,7 +257,7 @@ export function ResourceDetail() {
                   <ChevronRight className="h-3 w-3 text-muted-foreground" />
                   <span className="text-sm font-medium">{selectedFile}</span>
                   <span className="ml-auto text-xs text-muted-foreground">
-                    {formatSize(fileContent.length)}
+                    {formatBytes(fileContent.length)}
                   </span>
                 </div>
                 {/* File body */}

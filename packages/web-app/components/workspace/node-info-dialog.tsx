@@ -82,17 +82,22 @@ export function NodeInfoDialog({
             </Badge>
             {step.status === "running" && elapsedSeconds !== undefined && (
               <span className="text-xs text-amber-600 tabular-nums">
-                <TimerIcon className="h-3 w-3 inline mr-1" />{formatDuration(elapsedSeconds)}
+                <TimerIcon className="h-3 w-3 inline mr-1" />{formatDuration(elapsedSeconds * 1000)}
               </span>
             )}
             {step.status !== "running" && step.duration !== undefined && (
               <span className="text-xs text-muted-foreground">
-                耗时: {formatDuration(step.duration)}
+                耗时: {formatDuration(step.duration * 1000)}
               </span>
             )}
-            {step.tokensInput != null && step.tokensInput > 0 && (
+            {step.turns != null && step.turns > 0 && (
+              <span className="text-xs text-muted-foreground tabular-nums">
+                轮次 {step.turns}
+              </span>
+            )}
+            {((step.tokensInput ?? 0) > 0 || (step.tokensOutput ?? 0) > 0) && (
               <span className="text-xs tabular-nums border-l border-border/50 pl-3">
-                <span className="font-semibold">↑</span>{formatTokenCount(step.tokensInput)}{" "}
+                <span className="font-semibold">↑</span>{formatTokenCount(step.tokensInput ?? 0)}{" "}
                 <span className="font-semibold">↓</span>{formatTokenCount(step.tokensOutput ?? 0)}
               </span>
             )}

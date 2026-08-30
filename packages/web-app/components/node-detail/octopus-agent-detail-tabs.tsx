@@ -2,7 +2,7 @@
 
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { AgentTimeline } from "@/components/agent-timeline/agent-timeline"
-import { CostLine } from "@/components/cost-line"
+import { CostTab } from "./cost-tab"
 import { useAgentTraces } from "@/hooks/use-agent-traces"
 import { useLLMCalls } from "@/hooks/use-llm-calls"
 
@@ -50,19 +50,7 @@ export function OctopusAgentDetailTabs({
       </TabsContent>
 
       <TabsContent value="cost" className="m-0 p-3">
-        {aggregates.totalCalls > 0 ? (
-          <div className="space-y-3">
-            <CostLine costUsd={aggregates.totalCost} turns={aggregates.totalCalls} />
-            {Object.entries(aggregates.modelBreakdown).map(([model, stats]) => (
-              <div key={model} className="text-xs flex justify-between">
-                <span className="text-muted-foreground">{model}</span>
-                <span className="tabular-nums">{stats.calls} calls · ${stats.costUsd.toFixed(2)}</span>
-              </div>
-            ))}
-          </div>
-        ) : (
-          <div className="text-xs text-muted-foreground">暂无 LLM 调用数据</div>
-        )}
+        <CostTab aggregates={aggregates} />
       </TabsContent>
 
       <TabsContent value="info" className="m-0 p-3">

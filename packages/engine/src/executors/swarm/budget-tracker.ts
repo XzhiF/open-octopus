@@ -1,9 +1,10 @@
 import type { BudgetStatus } from "./swarm-types"
-import type { TokenUsage, ModelUsageEntry } from "@octopus/providers"
+import type { TokenUsage, ModelUsage } from "@octopus/shared"
+import { mergeModelUsages } from "@octopus/shared"
 
 export class BudgetTracker {
   private consumed = 0
-  private usages: ModelUsageEntry[] = []
+  private usages: ModelUsage[] = []
 
   constructor(
     private tokenLimit?: number,
@@ -16,24 +17,24 @@ export class BudgetTracker {
     this.consumed += count
   }
 
-  /** Record a detailed LLM call with per-model breakdown */
-  addUsage(model: string, input: number, output: number, cacheRead?: number, cacheCreation?: number, costUsd?: number): void {
-    const cache = this.tokenCountingMode === "all" ? (cacheRead ?? 0) + (cacheCreation ?? 0) : 0
-    this.consumed += input + output + cache
+  /** Record a detailed LLM call with per-model breakdown — usage 为规范形状（纯值口径） */
+  addUsage(model: string, usage: TokenUsage, costUsd?: number): void {
+    const cache = this.tokenCountingMode === "all" ? usage.cacheReadTokens + usage.cacheCreationTokens : 0
+    this.consumed += usage.inputTokens + usage.outputTokens + cache
     const existing = this.usages.find(u => u.model === model)
     if (existing) {
-      existing.inputTokens += input
-      existing.outputTokens += output
-      existing.cacheReadInputTokens = (existing.cacheReadInputTokens ?? 0) + (cacheRead ?? 0)
-      existing.cacheCreationInputTokens = (existing.cacheCreationInputTokens ?? 0) + (cacheCreation ?? 0)
+      existing.inputTokens += usage.inputTokens
+      existing.outputTokens += usage.outputTokens
+      existing.cacheReadTokens += usage.cacheReadTokens
+      existing.cacheCreationTokens += usage.cacheCreationTokens
       existing.costUsd = (existing.costUsd ?? 0) + (costUsd ?? 0)
     } else {
       this.usages.push({
         model,
-        inputTokens: input,
-        outputTokens: output,
-        cacheReadInputTokens: cacheRead,
-        cacheCreationInputTokens: cacheCreation,
+        inputTokens: usage.inputTokens,
+        outputTokens: usage.outputTokens,
+        cacheReadTokens: usage.cacheReadTokens,
+        cacheCreationTokens: usage.cacheCreationTokens,
         costUsd,
       })
     }
@@ -43,15 +44,13 @@ export class BudgetTracker {
     return this.consumed
   }
 
-  /** Aggregate token totals (input + output across all models) */
+  /** 全模型聚合的规范用量（纯值四字段；总量由调用方经 totalTokens() 显式选口径） */
   getTokenUsage(): TokenUsage {
-    const input = this.usages.reduce((s, u) => s + u.inputTokens, 0)
-    const output = this.usages.reduce((s, u) => s + u.outputTokens, 0)
-    return { input, output, total: input + output }
+    return mergeModelUsages(this.usages)
   }
 
   /** Per-model usage breakdown for persistence and UI display */
-  getModelUsages(): ModelUsageEntry[] {
+  getModelUsages(): ModelUsage[] {
     return this.usages.filter(u => u.inputTokens > 0 || u.outputTokens > 0)
   }
 

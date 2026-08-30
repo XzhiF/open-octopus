@@ -57,6 +57,17 @@ function createLlmCall(id: string, nodeExecId: string, executionId: string, opts
     opts?.cost_usd ?? 0.01, opts?.model ?? "claude-sonnet-4-20250514",
     opts?.node_id ?? "node-1",
   )
+  // C3/Q4: summary 总量源 = ntu 账本 —— fixture 同步行（Σntu ≡ Σllm_calls，
+  // 与线上 engine 路径「同一 result 双写」语义一致）
+  db.prepare(`
+    INSERT INTO node_token_usages (id, node_execution_id, model, input_tokens, output_tokens,
+      cost_usd, cache_read_tokens, cache_creation_tokens, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+  `).run(
+    `${id}-ntu`, nodeExecId, opts?.model ?? "claude-sonnet-4-20250514",
+    opts?.input_tokens ?? 100, opts?.output_tokens ?? 50,
+    opts?.cost_usd ?? 0.01, opts?.cache_read_tokens ?? 0, opts?.cache_creation_tokens ?? 0,
+  )
 }
 
 beforeEach(() => {
@@ -113,9 +124,9 @@ describe("ObservabilityQueryService", () => {
 
     expect(data.executionId).toBe("exec-1")
     expect(data.status).toBe("completed")
-    expect(data.tokens.totalInput).toBe(200)
-    expect(data.tokens.totalOutput).toBe(100)
-    expect(data.tokens.totalCostUsd).toBe(0.05)
+    expect(data.tokens.usage.inputTokens).toBe(200)
+    expect(data.tokens.usage.outputTokens).toBe(100)
+    expect(data.tokens.totals.cost.usd).toBe(0.05)
     expect(data.byNode).toHaveLength(1)
     expect(data.byNode[0].nodeId).toBe("agent-1")
     expect(data.byNode[0].llmTurns).toBe(1)
@@ -137,7 +148,7 @@ describe("ObservabilityQueryService", () => {
 
     const data = service.getObservabilityData("exec-2")
     // SUM(input_tokens) WHERE execution_id = 'exec-2' = 100 + 150 + 200 = 450
-    expect(data.tokens.totalInput).toBe(450)
+    expect(data.tokens.usage.inputTokens).toBe(450)
   })
 
   it("computes byNode with correct per-node breakdown (AC-3)", () => {

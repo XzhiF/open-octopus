@@ -28,7 +28,6 @@ function makeDaoMock(): ExecutionDAO {
     updateNodeExecutionsByStatus: vi.fn(),
     insertNodeExecutionOrIgnore: vi.fn(),
     replaceMergedEvents: vi.fn(),
-    insertNodeTokenUsage: vi.fn(),
   } as unknown as ExecutionDAO
 }
 

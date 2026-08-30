@@ -8,6 +8,7 @@ import { AutoResizeTextarea } from '@/components/ui/auto-resize-textarea'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { cn } from '@/lib/utils'
+import { formatTokenCount } from '@/lib/format'
 import { ChatBubble } from './ChatBubble'
 import { ToolCallCard } from './ToolCallCard'
 import { QuestionCard } from '@/components/workspace/chat/question-card'
@@ -376,8 +377,8 @@ export function ChatArea({
                   title="Context window usage"
                 >
                   <span>📋</span>
-                  <span>{formatTokens(contextUsage.totalTokens)} / {formatTokens(contextUsage.maxTokens)}</span>
-                  <span className="opacity-60">({contextUsage.percentage.toFixed(1)}%)</span>
+                  <span>{formatTokenCount(contextUsage.totalTokens)} / {formatTokenCount(contextUsage.maxTokens)}</span>
+                  <span className="opacity-60">({contextUsage.percentage.toFixed(1)}%) {/* fmt-ok: percentage 量纲未经 server 核实（providers wire），待查后收编 */}</span>
                   {contextExpanded ? <ChevronDown className="size-2.5" /> : <ChevronUp className="size-2.5" />}
                 </button>
               )}
@@ -416,7 +417,7 @@ export function ChatArea({
                     <span className="size-2 rounded-sm" style={{ backgroundColor: cat.color }} />
                     <span className="text-muted-foreground">{cat.name}</span>
                   </div>
-                  <span className="font-mono">{formatTokens(cat.tokens)}</span>
+                  <span className="font-mono">{formatTokenCount(cat.tokens)}</span>
                 </div>
               ))}
               {contextUsage.memoryFiles && contextUsage.memoryFiles.length > 0 && (
@@ -425,7 +426,7 @@ export function ChatArea({
                   {contextUsage.memoryFiles.map((f) => (
                     <div key={f.path} className="flex items-center justify-between py-0.5 pl-2">
                       <span className="truncate text-muted-foreground/70 max-w-[200px]">{f.path}</span>
-                      <span className="font-mono shrink-0 ml-2">{formatTokens(f.tokens)}</span>
+                      <span className="font-mono shrink-0 ml-2">{formatTokenCount(f.tokens)}</span>
                     </div>
                   ))}
                 </div>
@@ -469,12 +470,5 @@ function AutoFollowPre({ text }: { text: string }) {
       {text}
     </pre>
   )
-}
-
-/** Format token count as compact string: 15230 → "15.2K", 1200 → "1.2K", 500 → "500". */
-function formatTokens(tokens: number): string {
-  if (tokens >= 1_000_000) return `${(tokens / 1_000_000).toFixed(1)}M`
-  if (tokens >= 1_000) return `${(tokens / 1_000).toFixed(1)}K`
-  return String(tokens)
 }
 

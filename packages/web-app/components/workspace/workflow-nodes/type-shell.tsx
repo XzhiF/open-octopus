@@ -5,9 +5,8 @@ import { Badge } from "@/components/ui/badge"
 import { nodeIconConfigs } from "./node-icon-config"
 import type { StatusOverlay, StepExecutionStatus, HarnessNodeStatus } from "@/lib/types"
 import { formatDuration } from "@/lib/format"
+import { TokenAggregateLine } from "./token-aggregate-line"
 import { useLiveTimer } from "@/hooks/use-live-timer"
-import { TokenUsageLine } from "./token-usage-line"
-import { TokenUsageDisplay } from "./token-usage-display"
 import { Clock, Loader2, CheckCircle2, XCircle, SkipForward, PauseCircle, Timer, ShieldCheck, ShieldX, Bot } from "lucide-react"
 
 interface TypeShellProps {
@@ -111,29 +110,16 @@ export function TypeShell({ nodeType, name, statusOverlay, children }: TypeShell
       )}
       {isRunning && elapsedSeconds !== undefined && (
         <div className="flex items-center justify-between text-xs text-amber-600 font-medium px-3 pb-1">
-          <span className="tabular-nums"><Timer className="h-3 w-3 inline mr-1" />{formatDuration(elapsedSeconds)}</span>
+          <span className="tabular-nums"><Timer className="h-3 w-3 inline mr-1" />{formatDuration(elapsedSeconds * 1000)}</span>
         </div>
       )}
       {statusOverlay?.stepStatus === "completed" && statusOverlay.duration !== undefined && (
         <div className="flex items-center justify-between text-xs text-muted-foreground px-3 pb-1">
-          <span className="tabular-nums">耗时: {formatDuration(statusOverlay.duration)}</span>
+          <span className="tabular-nums">耗时: {formatDuration((statusOverlay.duration ?? 0) * 1000)}</span>
         </div>
       )}
-      {/* Token usage display */}
-      {statusOverlay?.tokenUsages && statusOverlay.tokenUsages.length > 0 ? (
-        <div className="px-3 pb-1">
-          <TokenUsageDisplay
-            usages={statusOverlay.tokenUsages}
-            isRunning={isRunning}
-            maxVisible={2}
-          />
-        </div>
-      ) : (
-        <TokenUsageLine
-          usage={statusOverlay?.tokenUsage}
-          isRunning={isRunning}
-        />
-      )}
+      {/* 节点主行：模型 · ∑处理量(含缓存) · N次 · 费用。缓存/每模型明细收进点开弹窗。 */}
+      <TokenAggregateLine usage={statusOverlay?.tokenUsage} requestCount={statusOverlay?.requestCount} isRunning={isRunning} className="px-3 pb-1" />
       {statusOverlay?.stepStatus === "failed" && statusOverlay.error && (
         <p className="px-3 pb-1 text-xs text-red-600 truncate">{statusOverlay.error}</p>
       )}

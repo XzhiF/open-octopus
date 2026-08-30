@@ -381,12 +381,22 @@
 
 .marching-ants-border {
   border-color: transparent !important;
-  background:
-    repeating-linear-gradient(90deg, #f59e0b 0 6px, transparent 6px 12px) top    / 100% 2px no-repeat,
-    repeating-linear-gradient(90deg, #f59e0b 0 6px, transparent 6px 12px) bottom / 100% 2px no-repeat,
-    repeating-linear-gradient(0deg, #f59e0b 0 6px, transparent 6px 12px) left   / 2px 100% no-repeat,
-    repeating-linear-gradient(0deg, #f59e0b 0 6px, transparent 6px 12px) right  / 2px 100% no-repeat;
+  /* 使用 longhand 而非 background 简写，避免重置元素自身的 background-color */
+  background-image:
+    repeating-linear-gradient(90deg, #f59e0b 0 6px, transparent 6px 12px),
+    repeating-linear-gradient(90deg, #f59e0b 0 6px, transparent 6px 12px),
+    repeating-linear-gradient(0deg, #f59e0b 0 6px, transparent 6px 12px),
+    repeating-linear-gradient(0deg, #f59e0b 0 6px, transparent 6px 12px);
+  background-position: 0 0, 0 100%, 0 0, 100% 0;
+  background-size: 100% 2px, 100% 2px, 2px 100%, 2px 100%;
+  background-repeat: no-repeat;
   animation: marching-ants 0.6s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .marching-ants-border {
+    animation: none;
+  }
 }
 
 @keyframes knowledge-slide-in {

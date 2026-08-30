@@ -6,12 +6,9 @@ export function useLLMCalls(executionId: string, nodeId?: string) {
   const [calls, setCalls] = useState<LLMCallData[]>([])
   const [aggregates, setAggregates] = useState<LLMCallAggregates>({
     totalCalls: 0,
-    totalInputTokens: 0,
-    totalOutputTokens: 0,
-    totalCacheReadTokens: 0,
-    totalCacheCreationTokens: 0,
-    totalCost: 0,
-    cacheHitRate: 0,
+    toolCalls: 0,
+    usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0 },
+    totals: { tokens: 0, cost: { usd: null, complete: true }, cacheHitRate: null },
     modelBreakdown: {},
   })
   const [loading, setLoading] = useState(true)
@@ -26,9 +23,11 @@ export function useLLMCalls(executionId: string, nodeId?: string) {
         if (!cancelled) {
           setCalls(result.data ?? [])
           setAggregates(result.aggregates ?? {
-            totalCalls: 0, totalInputTokens: 0, totalOutputTokens: 0,
-            totalCacheReadTokens: 0, totalCacheCreationTokens: 0,
-            totalCost: 0, cacheHitRate: 0, modelBreakdown: {},
+            totalCalls: 0,
+            toolCalls: 0,
+            usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0 },
+            totals: { tokens: 0, cost: { usd: null, complete: true }, cacheHitRate: null },
+            modelBreakdown: {},
           })
         }
       })

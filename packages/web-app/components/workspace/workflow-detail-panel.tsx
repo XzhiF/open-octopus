@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback, useMemo } from "react"
 import { cn } from "@/lib/utils"
-import { formatDuration, formatTokenCount } from "@/lib/format"
+import { formatDuration, formatTokenCount, formatCost, formatPercent } from "@/lib/format"
 import { getExecutorType } from "@/lib/executor-type"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -50,6 +50,21 @@ import type { LLMCallData, LLMCallAggregates } from "@/lib/types"
 const POLL_INTERVAL_MS = 3000
 const RUNNING_STATUSES = new Set(["running", "paused", "pending_approval", "pending_interaction"])
 
+/**
+ * 轮询快照与 SSE 实时补丁（node_start/node_end/turn_usage）竞争时的胜出规则。
+ * t0 = 本次 fetch 发起时刻；patch.ts = 补丁写入时刻。
+ * - 补丁晚于 fetch 发起（patch.ts >= t0）：确比快照新 → 补丁胜（防迟到的旧快照回退 node_end）；
+ * - 补丁早于 t0：仅当快照仍是「运行中且 REST 尚无 token」（即权威终值未落库）时补丁仍胜——
+ *   运行中节点的 token 只在 node_end 写库，REST 快照永远不含实时累计值，旧规则一律丢弃这类
+ *   补丁会让实时 token 每轮被抹掉（表现为「只有 node_end 才看得到」）。
+ * - 快照已带终值（node_end 后 usage 落库 / 状态已翻转）：REST 胜，避免旧的小累计覆盖校准终值。
+ */
+function livePatchWins(patchTs: number, t0: number, snapshot: StepExecution): boolean {
+  if (patchTs >= t0) return true
+  const snapshotHasTokens = (snapshot.tokensInput ?? 0) > 0 || (snapshot.tokensOutput ?? 0) > 0
+  return snapshot.status === "running" && !snapshotHasTokens
+}
+
 function StatusBadge({ status }: { status: string }) {
   const config: Record<string, { color: string; label: string }> = {
     running: { color: "bg-amber-500", label: "运行中" },
@@ -85,8 +100,14 @@ interface RawStepRow {
   model?: string
   tokensInput?: number
   tokensOutput?: number
+  /** 规范纯值用量（C1：server steps 现发 usage，不再发 tokensInput=in+cache 折叠值） */
+  usage?: { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheCreationTokens: number }
+  modelUsages?: TokenUsage[]
   tokenUsages?: TokenUsage[]
   token_usages?: { model: string; inputTokens: number; outputTokens: number }[]
+  costUsd?: number | null
+  costComplete?: boolean
+  requestCount?: number
   nodeType?: string
   parentNodeId?: string
   iterationIndex?: number
@@ -108,9 +129,13 @@ function mapRawStep(raw: RawStepRow): StepExecution {
     outputs: raw.outputs,
     error: raw.error,
     model: raw.model,
-    tokensInput: raw.tokensInput,
-    tokensOutput: raw.tokensOutput,
-    tokenUsages: raw.tokenUsages ?? raw.token_usages,
+    // C1：tokensInput/Output 取纯值 usage（与运行中 turn_usage 同口径 → 节点卡不再跳变）
+    tokensInput: raw.usage?.inputTokens ?? raw.tokensInput,
+    tokensOutput: raw.usage?.outputTokens ?? raw.tokensOutput,
+    tokenUsages: raw.modelUsages ?? raw.tokenUsages ?? raw.token_usages,
+    costUsd: raw.costUsd,
+    costComplete: raw.costComplete,
+    requestCount: raw.requestCount,
     nodeType: raw.nodeType,
     parentNodeId: raw.parentNodeId,
     iterationIndex: raw.iterationIndex,
@@ -154,13 +179,26 @@ export function WorkflowDetailPanel({ execution, workflow, workspaceId }: Workfl
   const [liveInteractionMeta, setLiveInteractionMeta] = useState<{ nodeId: string; sessionId?: string; initialPrompt?: string } | null>(null)
   const [archiveOpen, setArchiveOpen] = useState(false)
 
+  // ── SSE 增量补丁保护 ─────────────────────────────────────────────
+  // node_start/node_end 事件毫秒级写入 liveSteps，3s 轮询仅作 SSE 断流兜底。
+  // 补丁后短时间窗口内，晚到的旧 REST 快照不得覆盖更新的 SSE 值。
+  const stepPatchRef = useRef<Map<string, { ts: number; patch: Partial<StepExecution> }>>(new Map())
+
   // Always poll when panel is open — ensures recovery from stale prop data
   const fetchStatus = useCallback(() => {
+    const t0 = Date.now()
     fetch(`${getServerUrl()}/api/workspaces/${workspaceId}/executions/${execution.id}`)
       .then(r => r.json())
       .then(d => {
         if (d.status) setLiveStatus(d.status)
-        if (d.steps) setLiveSteps(d.steps.map(mapRawStep))
+        if (d.steps) {
+          for (const [k, v] of stepPatchRef.current) if (t0 - v.ts > 15000) stepPatchRef.current.delete(k)
+          setLiveSteps(d.steps.map((raw: RawStepRow) => {
+            const s = mapRawStep(raw)
+            const entry = stepPatchRef.current.get(s.stepId)
+            return entry && livePatchWins(entry.ts, t0, s) ? { ...s, ...entry.patch } : s
+          }))
+        }
         if (d.workflow_content && !yamlContent) setYamlContent(d.workflow_content)
         setLiveApprovalMetadata(d.approvalMetadata ?? null)
         setLiveInteractionMeta(d.interactionMetadata ?? null)
@@ -194,7 +232,7 @@ export function WorkflowDetailPanel({ execution, workflow, workspaceId }: Workfl
     const sseUrl = `${getServerUrl()}/api/workspaces/${workspaceId}/executions/events`
 
     const updateStepHarness = (nodeIds: string[], status: string) => {
-      setLiveSteps(prev => prev.map(s =>
+      setLiveSteps(prev => (prev ?? []).map(s =>
         nodeIds.includes(s.stepId) ? { ...s, harnessStatus: status as StepExecution["harnessStatus"] } : s
       ))
     }
@@ -237,6 +275,68 @@ export function WorkflowDetailPanel({ execution, workflow, workspaceId }: Workfl
           if (executionId !== execution.id) return
           const ids = [nodeId, containerNodeId].filter(Boolean) as string[]
           if (ids.length > 0) updateStepHarness(ids, "harness_blocked")
+        } catch { /* skip */ }
+      }),
+
+      // ── 节点生命周期增量更新：替代「等 3s 轮询整包替换」的延迟 ──
+      subscribeSSE(sseUrl, "node_start", (e: MessageEvent) => {
+        try {
+          const { executionId, nodeId } = JSON.parse(e.data)
+          if (executionId !== execution.id || !nodeId) return
+          const patch: Partial<StepExecution> = { status: "running", startedAt: new Date().toISOString() }
+          stepPatchRef.current.set(nodeId, { ts: Date.now(), patch })
+          setLiveSteps(prev => (prev ?? []).map(s => s.stepId === nodeId ? { ...s, ...patch } : s))
+        } catch { /* skip */ }
+      }),
+
+      subscribeSSE(sseUrl, "node_end", (e: MessageEvent) => {
+        try {
+          const d = JSON.parse(e.data)
+          if (d.executionId !== execution.id || !d.nodeId) return
+          const raw: Partial<StepExecution> = {
+            status: d.status,
+            completedAt: new Date().toISOString(),
+            duration: typeof d.durationMs === "number" ? Math.round(d.durationMs / 1000) : undefined,
+            tokensInput: d.usage?.inputTokens,
+            tokensOutput: d.usage?.outputTokens,
+            tokenUsages: d.modelUsages,
+            costUsd: d.costUsd,
+            requestCount: d.turnCount,
+          }
+          const patch = Object.fromEntries(
+            Object.entries(raw).filter(([, v]) => v !== undefined),
+          ) as Partial<StepExecution>
+          stepPatchRef.current.set(d.nodeId, { ts: Date.now(), patch })
+          setLiveSteps(prev => (prev ?? []).map(s => s.stepId === d.nodeId ? { ...s, ...patch } : s))
+        } catch { /* skip */ }
+      }),
+
+      subscribeSSE(sseUrl, "execution_status", (e: MessageEvent) => {
+        try {
+          const { executionId, status } = JSON.parse(e.data)
+          if (executionId === execution.id && typeof status === "string") setLiveStatus(status as Execution["status"])
+        } catch { /* skip */ }
+      }),
+
+      // 运行中 agent 节点的 per-turn 实时 token/轮次（engine turn_usage 事件，
+      // 权威终值仍由 node_end 覆盖校准）
+      subscribeSSE(sseUrl, "agent_event", (e: MessageEvent) => {
+        try {
+          const { executionId, nodeId, event } = JSON.parse(e.data)
+          if (executionId !== execution.id || !nodeId || event?.type !== "turn_usage") return
+          const total = event.cumulative ?? {}
+          const raw: Partial<StepExecution> = {
+            status: "running",
+            // 直连 Anthropic 时 inputTokens 可能未测得 → undefined 保留旧值，不清零
+            tokensInput: (total.inputTokens ?? 0) > 0 ? total.inputTokens : undefined,
+            tokensOutput: (total.outputTokens ?? 0) > 0 ? total.outputTokens : undefined,
+            turns: typeof event.turn === "number" ? event.turn : undefined,
+          }
+          const patch = Object.fromEntries(
+            Object.entries(raw).filter(([, v]) => v !== undefined),
+          ) as Partial<StepExecution>
+          stepPatchRef.current.set(nodeId, { ts: Date.now(), patch })
+          setLiveSteps(prev => (prev ?? []).map(s => s.stepId === nodeId ? { ...s, ...patch } : s))
         } catch { /* skip */ }
       }),
     ]
@@ -696,7 +796,7 @@ function CostPanel({ aggregates, calls, loading }: CostPanelProps) {
   }
 
   const models = Object.entries(aggregates.modelBreakdown)
-    .sort((a, b) => b[1].costUsd - a[1].costUsd)
+    .sort((a, b) => (b[1].costUsd ?? 0) - (a[1].costUsd ?? 0))
 
   return (
     <div className="space-y-3">
@@ -706,7 +806,9 @@ function CostPanel({ aggregates, calls, loading }: CostPanelProps) {
         <div className="grid grid-cols-2 gap-2 text-xs">
           <div>
             <div className="text-muted-foreground">总成本</div>
-            <div className="text-lg font-bold tabular-nums text-amber-600">${aggregates.totalCost.toFixed(2)}</div>
+            <div className="text-lg font-bold tabular-nums text-amber-600">
+              {formatCost(aggregates.totals.cost.usd, aggregates.totals.cost.complete)}
+            </div>
           </div>
           <div>
             <div className="text-muted-foreground">调用次数</div>
@@ -714,17 +816,17 @@ function CostPanel({ aggregates, calls, loading }: CostPanelProps) {
           </div>
           <div>
             <div className="text-muted-foreground">Cache Hit Rate</div>
-            <div className="text-lg font-bold tabular-nums">{(aggregates.cacheHitRate * 100).toFixed(0)}%</div>
+            <div className="text-lg font-bold tabular-nums">{formatPercent(aggregates.totals.cacheHitRate)}</div>
           </div>
           <div>
             <div className="text-muted-foreground">Input / Output</div>
             <div className="text-sm tabular-nums">
-              ↑{formatTokenCount(aggregates.totalInputTokens)} ↓{formatTokenCount(aggregates.totalOutputTokens)}
+              ↑{formatTokenCount(aggregates.usage.inputTokens)} ↓{formatTokenCount(aggregates.usage.outputTokens)}
             </div>
           </div>
         </div>
         <CostLine
-          costUsd={aggregates.totalCost}
+          costUsd={aggregates.totals.cost.usd}
           turns={aggregates.totalCalls}
         />
       </div>
@@ -743,7 +845,7 @@ function CostPanel({ aggregates, calls, loading }: CostPanelProps) {
                   </div>
                 </div>
                 <div className="text-right tabular-nums font-medium">
-                  ${stats.costUsd.toFixed(2)}
+                  {formatCost(stats.costUsd)}
                 </div>
               </div>
             ))}

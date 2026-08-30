@@ -74,6 +74,7 @@ describe("ArchiveService", () => {
       seedLlmCall(db, "exec-1", "ne-1", "sonnet")
       seedLlmCall(db, "exec-1", "ne-2", "opus")
       seedTokenUsage(db, "ne-1", "sonnet")
+      seedTokenUsage(db, "ne-2", "opus") // C3: 归档 cost 单源 ntu —— 账本行配齐（线上 engine 双写语义）
 
       const result = await service.archiveExecution("exec-1")
       expect(result.archived).toBe(true)

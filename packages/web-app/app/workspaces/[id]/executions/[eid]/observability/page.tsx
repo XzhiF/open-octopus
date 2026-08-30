@@ -43,6 +43,7 @@ import {
   Cell,
 } from "recharts"
 import { getServerUrl } from "@/lib/server-config"
+import { formatCost, formatDuration, formatPercent, formatTokenCount } from "@/lib/format"
 
 // ============ Types ============
 
@@ -50,20 +51,20 @@ interface ObservabilityData {
   executionId: string
   status: string
   tokens: {
-    totalInput: number
-    totalOutput: number
-    totalCacheRead: number
-    totalCacheCreation: number
-    totalCostUsd: number
+    usage: { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheCreationTokens: number }
+    totals: { tokens: number; cost: { usd: number | null; complete: boolean }; cacheHitRate: number | null }
   }
   byNode: Array<{
     nodeId: string
     nodeName: string
     nodeType: string
+    tokens: number
     inputTokens: number
     outputTokens: number
-    cacheTokens: number
-    costUsd: number
+    cacheReadTokens: number
+    cacheCreationTokens: number
+    /** C3: 行级三态（null = 未定价） */
+    costUsd: number | null
     llmTurns: number
     loopIterations: number
     swarmRounds: number
@@ -73,10 +74,12 @@ interface ObservabilityData {
   }>
   byModel: Array<{
     model: string
+    tokens: number
     inputTokens: number
     outputTokens: number
-    cacheTokens: number
-    costUsd: number
+    cacheReadTokens: number
+    cacheCreationTokens: number
+    costUsd: number | null
     callCount: number
   }>
   timeSeries: Array<{
@@ -120,12 +123,6 @@ interface ObservabilityData {
 }
 
 // ============ Helpers ============
-
-function formatNumber(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`
-  return String(n)
-}
 
 function formatTimestamp(ts: string): string {
   try {
@@ -235,7 +232,8 @@ export default function ObservabilityPage() {
     )
   }
 
-  const totalTokens = data.tokens.totalInput + data.tokens.totalOutput + data.tokens.totalCacheRead + data.tokens.totalCacheCreation
+  // C3: totals 由 server ledger 直供（前端零公式）
+  const { totals } = data.tokens
 
   return (
     <div className="container mx-auto py-8 space-y-8">
@@ -261,9 +259,9 @@ export default function ObservabilityPage() {
       {/* Section 1: Summary Cards */}
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
         <SummaryCard
-          title="总 Token"
-          value={formatNumber(totalTokens)}
-          subtitle={`↑${formatNumber(data.tokens.totalInput)} ↓${formatNumber(data.tokens.totalOutput)} ⚡${formatNumber(data.tokens.totalCacheRead)} 🗡️${formatNumber(data.tokens.totalCacheCreation)}`}
+          title="处理量·含缓存"
+          value={formatTokenCount(totals.tokens)}
+          subtitle={`↑${formatTokenCount(data.tokens.usage.inputTokens)} ↓${formatTokenCount(data.tokens.usage.outputTokens)} ⚡${formatTokenCount(data.tokens.usage.cacheReadTokens)} 🗡️${formatTokenCount(data.tokens.usage.cacheCreationTokens)}`}
           icon={Coins}
           color="text-blue-500"
           bgColor="bg-blue-500/10"
@@ -278,7 +276,7 @@ export default function ObservabilityPage() {
         />
         <SummaryCard
           title="总成本"
-          value={`$${data.tokens.totalCostUsd.toFixed(4)}`}
+          value={formatCost(totals.cost.usd, totals.cost.complete)}
           subtitle="USD"
           icon={DollarSign}
           color="text-amber-500"
@@ -457,7 +455,7 @@ function BudgetProgressRow({
       <div className="flex items-center justify-between text-xs">
         <span className="text-muted-foreground">{label}</span>
         <span className={isExceeded ? "text-red-500 font-medium" : ""}>
-          {percent.toFixed(1)}%
+          {formatPercent(percent / 100, 1)}
         </span>
       </div>
       <Progress value={Math.min(percent, 100)} className={isExceeded ? "[&_[data-slot=progress-indicator]]:bg-red-500" : ""} />
@@ -595,8 +593,9 @@ function ModelUsageChart({
 
   const chartData = byModel.map((m) => ({
     name: m.model,
-    value: m.inputTokens + m.outputTokens + m.cacheTokens,
-    cost: m.costUsd,
+    value: m.tokens,
+    cost: m.costUsd ?? 0, // 图表轴需要数；未定价模型行成本画 0（列表经 costUsd 显示 —）
+    costUsd: m.costUsd,
   }))
 
   return (
@@ -612,7 +611,7 @@ function ModelUsageChart({
               dataKey="value"
               nameKey="name"
               label={({ name, percent }) =>
-                `${name.replace("claude-", "").slice(0, 12)} (${(percent * 100).toFixed(0)}%)`
+                `${name.replace("claude-", "").slice(0, 12)} (${formatPercent(percent)})`
               }
               labelLine={false}
             >
@@ -638,10 +637,10 @@ function ModelUsageChart({
               {item.name}
             </span>
             <span className="text-muted-foreground ml-auto">
-              {formatNumber(item.value)} tokens
+              {formatTokenCount(item.value)} tokens
             </span>
             <span className="text-muted-foreground text-xs">
-              ${item.cost.toFixed(4)}
+              {formatCost(item.costUsd)}
             </span>
           </div>
         ))}
@@ -768,7 +767,7 @@ function NodeRow({
   isExpanded: boolean
   onToggle: () => void
 }) {
-  const totalTokens = node.inputTokens + node.outputTokens + node.cacheTokens
+  const totalTokens = node.tokens
 
   return (
     <>
@@ -790,13 +789,13 @@ function NodeRow({
           </Badge>
         </TableCell>
         <TableCell className="text-right tabular-nums">
-          {formatNumber(totalTokens)}
+          {formatTokenCount(totalTokens)}
         </TableCell>
         <TableCell className="text-right tabular-nums">
-          ${node.costUsd.toFixed(4)}
+          {formatCost(node.costUsd)}
         </TableCell>
         <TableCell className="text-right tabular-nums">
-          {(node.durationMs / 1000).toFixed(1)}s
+          {formatDuration(node.durationMs)}
         </TableCell>
       </TableRow>
       {isExpanded && (

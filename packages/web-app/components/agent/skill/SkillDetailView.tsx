@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback, useMemo } from 'react'
+import { formatBytes } from '@/lib/format'
 import { Pencil, X, GitCompare, Save, RotateCcw, Search, FileText, Tag, Fingerprint, Wrench } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -18,12 +19,6 @@ interface SkillDetailViewProps {
   skills: SkillInfo[]
   loading?: boolean
   onRefresh: () => void
-}
-
-function formatSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes}B`
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`
-  return `${(bytes / (1024 * 1024)).toFixed(1)}MB`
 }
 
 /** Fuzzy match: returns matched character indices, or null if no match */
@@ -399,7 +394,7 @@ export function SkillDetailView({ skills, loading: skillsLoading, onRefresh }: S
                       <Badge variant="outline" className={cn('text-xs px-1', srcInfo.className)}>
                         {srcInfo.label}
                       </Badge>
-                      <span className="text-xs text-muted-foreground">{formatSize(skill.file_size ?? 0)}</span>
+                      <span className="text-xs text-muted-foreground">{formatBytes(skill.file_size ?? 0)}</span>
                     </div>
                   </button>
                 )

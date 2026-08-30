@@ -104,13 +104,13 @@ describe("AgentNodeRunner", () => {
       { type: "text_delta", content: "ok", messageId: "msg1" },
       { type: "text_done", messageId: "msg1" },
       { type: "message_stop", messageId: "msg1" },
-      { type: "result", tokens: { input: 100, output: 50, total: 150 }, costUsd: 0.01 },
+      { type: "result", usage: { inputTokens: 100, outputTokens: 50, cacheReadTokens: 0, cacheCreationTokens: 0 }, costUsd: 0.01 },
     ])
 
     const runner = new AgentNodeRunner(provider, "/tmp/test")
     const result = await runner.run({ prompt: "test", context: "new" })
 
-    expect(result.tokens).toEqual({ input: 100, output: 50, total: 150 })
+    expect(result.usage).toEqual({ inputTokens: 100, outputTokens: 50, cacheReadTokens: 0, cacheCreationTokens: 0 })
     expect(result.costUsd).toBe(0.01)
   })
 
@@ -155,7 +155,7 @@ describe("AgentNodeRunner", () => {
         }
         // resume call
         yield { type: "text_delta", content: " + completed", messageId: "msg2" }
-        yield { type: "result", sessionId: "sess-final", tokens: { input: 50, output: 20, total: 70 } }
+        yield { type: "result", sessionId: "sess-final", usage: { inputTokens: 50, outputTokens: 20, cacheReadTokens: 0, cacheCreationTokens: 0 } }
       },
     }
 
@@ -169,7 +169,7 @@ describe("AgentNodeRunner", () => {
     expect(callCount).toBe(2)
     expect(result.finalText).toBe("partial work + completed")
     expect(result.sessionId).toBe("sess-final")
-    expect(result.tokens).toEqual({ input: 50, output: 20, total: 70 })
+    expect(result.usage).toEqual({ inputTokens: 50, outputTokens: 20, cacheReadTokens: 0, cacheCreationTokens: 0 })
   })
 
   it("throws without resume when context=new and stream fractures", async () => {
@@ -253,5 +253,61 @@ describe("AgentNodeRunner", () => {
 
     const optionsArg = vi.mocked(provider.sendQuery).mock.calls[0][3]
     expect(optionsArg.effort).toBeUndefined()
+  })
+})
+describe("AgentNodeRunner turn_usage 事件", () => {
+  it("每个 message_delta(带 usage) 发出 turn_usage，cumulative 为跨轮累计", async () => {
+    const events: AgentEvent[] = []
+    const provider = makeMockProvider([
+      { type: "message_start", messageId: "m1" },
+      { type: "message_delta", stopReason: "tool_use", messageId: "m1", usage: { inputTokens: 6, outputTokens: 111, cacheReadTokens: 0, cacheCreationTokens: 36451 } },
+      { type: "message_stop", messageId: "m1" },
+      { type: "message_start", messageId: "m2" },
+      { type: "message_delta", stopReason: "end_turn", messageId: "m2", usage: { inputTokens: 6, outputTokens: 51, cacheReadTokens: 36451, cacheCreationTokens: 152 } },
+      { type: "message_stop", messageId: "m2" },
+      { type: "result", content: "done", sessionId: "s1" },
+    ])
+    const runner = new AgentNodeRunner(provider, "/tmp/test", (e) => events.push(e))
+    await runner.run({ prompt: "x", context: "new" })
+
+    const usageEvents = events.filter(e => e.type === "turn_usage")
+    expect(usageEvents).toHaveLength(2)
+    expect(usageEvents[0]).toMatchObject({
+      turn: 1,
+      delta: { outputTokens: 111 },
+      cumulative: { inputTokens: 6, outputTokens: 111, cacheReadTokens: 0, cacheCreationTokens: 36451 },
+    })
+    expect(usageEvents[1]).toMatchObject({
+      turn: 2,
+      cumulative: { inputTokens: 12, outputTokens: 162, cacheReadTokens: 36451, cacheCreationTokens: 36603 },
+    })
+  })
+
+  it("message_delta 无 usage（旧数据/直连缺字段）→ 不发 turn_usage", async () => {
+    const events: AgentEvent[] = []
+    const provider = makeMockProvider([
+      { type: "message_start", messageId: "m1" },
+      { type: "message_delta", stopReason: "end_turn", messageId: "m1" },
+      { type: "message_stop", messageId: "m1" },
+      { type: "result", sessionId: "s1" },
+    ])
+    const runner = new AgentNodeRunner(provider, "/tmp/test", (e) => events.push(e))
+    await runner.run({ prompt: "x", context: "new" })
+    expect(events.filter(e => e.type === "turn_usage")).toHaveLength(0)
+  })
+
+  it("只有 outputTokens 的 delta（直连 Anthropic 口径）也能累计", async () => {
+    const events: AgentEvent[] = []
+    const provider = makeMockProvider([
+      { type: "message_start", messageId: "m1" },
+      { type: "message_delta", stopReason: "end_turn", messageId: "m1", outputTokens: 42 },
+      { type: "message_stop", messageId: "m1" },
+      { type: "result", sessionId: "s1" },
+    ])
+    const runner = new AgentNodeRunner(provider, "/tmp/test", (e) => events.push(e))
+    await runner.run({ prompt: "x", context: "new" })
+    const usageEvents = events.filter(e => e.type === "turn_usage")
+    expect(usageEvents).toHaveLength(1)
+    expect(usageEvents[0]).toMatchObject({ turn: 1, cumulative: { outputTokens: 42, inputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0 } })
   })
 })

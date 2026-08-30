@@ -10,7 +10,7 @@ import { SwarmBadge } from "../atoms/swarm-badge"
 import { formatDuration } from "@/lib/format"
 import type { SwarmMode, SwarmStatus } from "@/lib/swarm-types"
 import type { TokenUsage } from "@/lib/types"
-import { TokenUsageDisplay } from "@/components/workspace/workflow-nodes/token-usage-display"
+import { TokenAggregateLine } from "@/components/workspace/workflow-nodes/token-aggregate-line"
 
 const statusBadgeConfig: Record<string, { label: string; color: string; icon: typeof CheckCircle2 }> = {
   completed: { label: "已完成", color: "text-emerald-600", icon: CheckCircle2 },
@@ -102,17 +102,12 @@ function SwarmNodeInner({ data: rawData }: NodeProps) {
           {isCompleted && data.statusOverlay?.duration != null && (
             <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
               <Timer className="h-3 w-3" />
-              <span>耗时: {formatDuration(data.statusOverlay.duration)}</span>
+              <span>耗时: {formatDuration((data.statusOverlay.duration ?? 0) * 1000)}</span>
             </div>
           )}
 
-          {data.statusOverlay?.tokenUsages && data.statusOverlay.tokenUsages.length > 0 && (
-            <TokenUsageDisplay
-              usages={data.statusOverlay.tokenUsages}
-              isRunning={isRunning}
-              maxVisible={2}
-            />
-          )}
+          {/* 与 agent/子执行节点同一聚合主行口径 */}
+          <TokenAggregateLine usage={data.statusOverlay?.tokenUsages} isRunning={isRunning} className="mt-1" />
         </div>
 
         <Handle type="source" position={Position.Bottom} className="!bg-muted-foreground" />

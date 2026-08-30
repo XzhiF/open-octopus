@@ -444,6 +444,7 @@ describe("parseDelegationResponse — old format (interventionType)", () => {
 
 describe("AgentDelegationService — delegate", () => {
   let mockDao: any
+  let mockTokenUsageDao: any
   let mockSse: any
   let mockLLMCall: ReturnType<typeof vi.fn>
   let mockAgentRunner: ReturnType<typeof vi.fn>
@@ -452,10 +453,11 @@ describe("AgentDelegationService — delegate", () => {
     mockDao = {
       insertEvent: vi.fn(),
       insertTokenUsage: vi.fn(),
-      insertHarnessTokenUsage: vi.fn(),
       createNodeExecution: vi.fn(),
       updateNodeExecution: vi.fn(),
     }
+    // C3: ledger 唯一写入口 mock（node_token_usages 不再经 HarnessDAO）
+    mockTokenUsageDao = { recordNodeUsage: vi.fn() }
 
     mockSse = {
       emit: vi.fn(),
@@ -475,6 +477,7 @@ describe("AgentDelegationService — delegate", () => {
   }) {
     return new AgentDelegationService({
       dao: mockDao,
+      tokenUsageDao: mockTokenUsageDao,
       sse: mockSse,
       workspaceId: "ws-1",
       agentSessionRunner: opts?.useAgentRunner
@@ -497,7 +500,7 @@ describe("AgentDelegationService — delegate", () => {
         reasoning: "analysis",
         harnessHint: "try this",
       }),
-      tokenUsage: { input: 100, output: 50, model: "claude-sonnet-4-20250514" },
+      tokenUsage: { inputTokens: 100, outputTokens: 50, cacheReadTokens: 0, cacheCreationTokens: 0, model: "claude-sonnet-4-20250514" },
       sessionId: "session-123",
     })
 
@@ -557,7 +560,7 @@ describe("AgentDelegationService — delegate", () => {
         reasoning: "analysis",
         harnessHint: "try this",
       }),
-      tokenUsage: { input: 100, output: 50, model: "claude-sonnet-4-20250514" },
+      tokenUsage: { inputTokens: 100, outputTokens: 50, cacheReadTokens: 0, cacheCreationTokens: 0, model: "claude-sonnet-4-20250514" },
     })
 
     const service = createService()
@@ -583,7 +586,7 @@ describe("AgentDelegationService — delegate", () => {
         decision: "guide_and_retry",
         reasoning: "analysis",
       }),
-      tokenUsage: { input: 100, output: 50, model: "claude-sonnet-4-20250514" },
+      tokenUsage: { inputTokens: 100, outputTokens: 50, cacheReadTokens: 0, cacheCreationTokens: 0, model: "claude-sonnet-4-20250514" },
     })
 
     const service = createService()
@@ -594,11 +597,12 @@ describe("AgentDelegationService — delegate", () => {
       context,
     })
 
-    expect(mockDao.insertHarnessTokenUsage).toHaveBeenCalled()
-    const tokenCall = mockDao.insertHarnessTokenUsage.mock.calls[0][0]
+    expect(mockTokenUsageDao.recordNodeUsage).toHaveBeenCalled()
+    const tokenCall = mockTokenUsageDao.recordNodeUsage.mock.calls[0][0]
     expect(tokenCall.model).toBe("claude-sonnet-4-20250514")
-    expect(tokenCall.inputTokens).toBe(100)
-    expect(tokenCall.outputTokens).toBe(50)
+    expect(tokenCall.source).toBe("harness")
+    expect(tokenCall.usage.inputTokens).toBe(100)
+    expect(tokenCall.usage.outputTokens).toBe(50)
   })
 
   // ── Timeout protection (AC5) ───────────────────────────────
@@ -654,7 +658,7 @@ describe("AgentDelegationService — delegate", () => {
         decision: "guide_and_retry",
         reasoning: "analysis",
       }),
-      tokenUsage: { input: 100, output: 50, model: "claude-sonnet-4-20250514" },
+      tokenUsage: { inputTokens: 100, outputTokens: 50, cacheReadTokens: 0, cacheCreationTokens: 0, model: "claude-sonnet-4-20250514" },
     })
 
     const service = createService()

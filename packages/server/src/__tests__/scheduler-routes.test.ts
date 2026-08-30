@@ -309,14 +309,51 @@ describe('Scheduler Routes (integration)', () => {
     expect(['draft', 'queued', 'claimed']).toContain(job.status)
   })
 
-  it('AC22: GET /jobs default excludes requirement-type records', async () => {
-    await createRequirementJob()
+  // 2026-08-29 (task-board observability, approach A): the old AC22 contract
+  // ("default excludes requirement-type") is REVERSED — the readyTask dispatch
+  // seam creates origin_type='task' schedules and the scheduler UI must show
+  // them (they were counted by DashboardCards but invisible in the table).
+  // cron-only views remain available via ?trigger_source=cron / ?origin=cron.
+
+  it('AC22-rev: GET /jobs default includes requirement-type records with origin fields', async () => {
+    const id = await createRequirementJob()
 
     const res = await app.request('/api/scheduler/jobs')
     expect(res.status).toBe(200)
+    const data = await json<{ items: Array<{ id: string; trigger_source?: string | null; origin_type?: string | null }> }>(res)
+    // 反假跑: the requirement row is in the DEFAULT list (not hidden behind ?trigger_source=)
+    const mine = data.items.find(j => j.id === id)
+    expect(mine).toBeDefined()
+    expect(mine!.trigger_source).toBe('requirement')
+    // 反假跑 (approach A): authoritative origin passes through the DTO for the UI badge
+    expect(mine!.origin_type).toBe('task')
+  })
+
+  it('AC22-compat: GET /jobs?trigger_source=cron still excludes requirement-type records', async () => {
+    await createRequirementJob()
+
+    const res = await app.request('/api/scheduler/jobs?trigger_source=cron')
+    expect(res.status).toBe(200)
     const data = await json<{ items: Array<{ trigger_source?: string | null }> }>(res)
-    // 反假跑 AC22: 默认响应不含 trigger_source='requirement' 记录
-    expect(data.items.every(j => (j.trigger_source ?? 'cron') !== 'requirement')).toBe(true)
+    expect(data.items.every(j => (j.trigger_source ?? 'cron') === 'cron')).toBe(true)
+  })
+
+  it('GET /jobs?origin=task returns only task-origin records', async () => {
+    const id = await createRequirementJob()
+
+    const res = await app.request('/api/scheduler/jobs?origin=task')
+    expect(res.status).toBe(200)
+    const data = await json<{ items: Array<{ id: string; origin_type?: string | null }> }>(res)
+    expect(data.items.some(j => j.id === id)).toBe(true)
+    // 反假跑: single-origin filter is exact — no cron rows leak in
+    expect(data.items.every(j => j.origin_type === 'task')).toBe(true)
+  })
+
+  it('GET /jobs?origin=bogus → 400', async () => {
+    const res = await app.request('/api/scheduler/jobs?origin=bogus')
+    expect(res.status).toBe(400)
+    const body = await json<{ error: string }>(res)
+    expect(body.error).toMatch(/invalid origin/)
   })
 
   it('AC22: GET /jobs?trigger_source=requirement returns only requirement-type records', async () => {

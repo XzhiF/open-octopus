@@ -29,6 +29,7 @@ import type { Task, TaskSpec, SubunitSpec } from "@octopus/shared"
 import {
   listTasks, getTask, readyTask, abortTask, deleteTask, type TaskDetail, type TaskChild,
 } from "@/lib/tasks-api"
+import { TriggerActions } from "@/components/tasks/trigger-dialog"
 import { subscribeSSE } from "@/lib/sse-manager"
 import { getServerUrl } from "@/lib/server-config"
 import { useRouter } from "next/navigation"
@@ -42,6 +43,7 @@ import * as agentApi from "@/lib/agent/api"
 import { TemplatePicker } from "./authoring/template-picker"
 import { AuthoringWorkspace } from "./authoring/authoring-workspace"
 import { EditableTitle } from "./editable-title"
+import { TaskRunDetailView } from "./execution-summary"
 import { createTask } from "@/lib/tasks-api"
 
 // Re-export the authoring pieces so callers can import everything from the
@@ -468,7 +470,7 @@ function AuthoringFooter({
       // [入队] = draft→ready (confirm gate, v1 D13) + dispatch seam (server
       // creates the schedules envelope: simple=1 primary; composite=1 coordinator).
       await readyTask(task.id)
-      toast.success("已入队，任务进入待执行列")
+      toast.success("已入队，等待手动触发")
       onEnqueue()
       onClose()
     } catch (err: unknown) {
@@ -492,10 +494,9 @@ function AuthoringFooter({
   )
 }
 
-// ── Simple execution: single-ws status + abort ──────────────────────
+// ── Simple execution: full info body + trigger/abort footer ─────────
 
 function SimpleExecutionMode({ task, onMutated, onClose }: { task: Task; onMutated: () => void; onClose: () => void }) {
-  const workflowRef = task.workflow_ref ?? "—"
   const [aborting, setAborting] = useState(false)
   const canAbort = task.status === "running"
 
@@ -514,18 +515,12 @@ function SimpleExecutionMode({ task, onMutated, onClose }: { task: Task; onMutat
   }
 
   return (
-    <div className="p-5 space-y-4" data-task-simple-execution>
-      <div className="rounded-lg border border-border p-4 space-y-1.5 text-sm">
-        <div className="flex justify-between"><span className="text-muted-foreground">workflow_ref</span><code className="text-xs">{workflowRef}</code></div>
-        <div className="flex justify-between"><span className="text-muted-foreground">状态</span><span>{STATUS_LABEL[task.status] ?? task.status}</span></div>
-        {task.completed_at ? (
-          <div className="flex justify-between"><span className="text-muted-foreground">完成时间</span><span>{new Date(task.completed_at).toLocaleString()}</span></div>
-        ) : null}
+    <div className="flex flex-col h-full min-h-0" data-task-simple-execution>
+      <div className="flex-1 min-h-0">
+        <TaskRunDetailView task={task} />
       </div>
-      <p className="text-xs text-muted-foreground">
-        实时进度经 SSE task_status 推送，看板卡与状态秒级同步。完整执行流程图见执行详情。
-      </p>
-      <div className="flex justify-end">
+      <div className="shrink-0 flex items-center justify-end gap-2 border-t border-border px-5 py-3 bg-background">
+        <TriggerActions task={task} onMutated={onMutated} />
         <Button variant="destructive" size="sm" onClick={handleAbort} disabled={!canAbort || aborting} data-task-abort>
           {aborting ? <Spinner className="size-4" /> : <Ban className="size-4" />}
           中止
@@ -697,8 +692,18 @@ export function CompositeMode({
   const integrationStatus = integrationStatusOf(parentStatus, children)
   const canAbort = parentStatus === "running"
 
-  // SG15: retarget child drill-down to the tasks domain.
+  // SG15: retarget child drill-down to the tasks domain. 弹窗优化 (2026-08-29):
+  // /tasks/:id/children/:sid 页面并不存在（点了 404）——一旦 children 带上
+  // workspace/execution 引用（children[].execution_ref），直接深链到 workspace
+  // 页的执行详情面板；否则保留原路由（现状不变，等 ticket 11 落地该页）。
   const handleChildClick = useCallback((scheduleId: string) => {
+    const child = detailRef.current?.children?.find((c) => c.schedule_id === scheduleId)
+    const ws = child?.execution_ref?.workspace_id ?? child?.workspace_id
+    const exec = child?.execution_ref?.execution_id
+    if (ws) {
+      router.push(exec ? `/workspaces/${ws}?tab=detail&execId=${exec}` : `/workspaces/${ws}`)
+      return
+    }
     router.push(`/tasks/${task.id}/children/${scheduleId}`)
   }, [router, task.id])
 
@@ -782,8 +787,10 @@ export function CompositeMode({
           </div>
         </div>
 
-        {canAbort && (
-          <div className="flex justify-end px-3 pb-4">
+        {(canAbort || task.status === "ready") && (
+          <div className="flex items-center justify-end gap-2 px-3 pb-4">
+            <TriggerActions task={task} onMutated={onMutated} />
+            {canAbort && (
             <Button variant="destructive" size="sm" onClick={async () => {
               setAborting(true)
               try {
@@ -800,6 +807,7 @@ export function CompositeMode({
               {aborting ? <Spinner className="size-4" /> : <Ban className="size-4" />}
               中止
             </Button>
+            )}
           </div>
         )}
       </div>
@@ -822,14 +830,14 @@ const STATUS_DOT_COLOR: Record<string, string> = {
 }
 
 function DoneMode({ task }: { task: Task }) {
-  const spec = taskSpecOf(task)
   return (
-    <div className="p-5 space-y-3" data-task-done>
-      <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-4 text-sm space-y-1">
-        <div className="flex items-center gap-2 font-medium text-emerald-600"><CheckCircle2 className="size-4" /> 任务完成</div>
-        {spec ? <p className="text-xs text-muted-foreground">目标: {spec.goal}</p> : null}
+    <div className="flex flex-col h-full min-h-0" data-task-done>
+      <div className="shrink-0 flex items-center gap-2 border-b border-emerald-500/30 bg-emerald-500/5 px-5 py-2.5 text-sm text-emerald-600">
+        <CheckCircle2 className="size-4" /> 任务完成{task.completed_at ? ` · ${new Date(task.completed_at).toLocaleString("zh-CN")}` : ""}
       </div>
-      <p className="text-xs text-muted-foreground">综合报告与 PR 链接在结果产物就绪后展示。</p>
+      <div className="flex-1 min-h-0">
+        <TaskRunDetailView task={task} />
+      </div>
     </div>
   )
 }
@@ -837,14 +845,17 @@ function DoneMode({ task }: { task: Task }) {
 function TerminalMode({ task }: { task: Task }) {
   const failed = task.status === "failed"
   return (
-    <div className="p-5 space-y-3" data-task-terminal>
-      <div className={`rounded-lg border p-4 text-sm space-y-1 ${failed ? "border-red-500/30 bg-red-500/5" : "border-zinc-500/30 bg-zinc-500/5"}`}>
-        <div className={`flex items-center gap-2 font-medium ${failed ? "text-red-500" : "text-zinc-500"}`}>
-          {failed ? <AlertCircle className="size-4" /> : <Ban className="size-4" />}
-          {failed ? "任务失败" : "任务已中止"}
-        </div>
+    <div className="flex flex-col h-full min-h-0" data-task-terminal>
+      <div className={`shrink-0 flex items-center gap-2 border-b px-5 py-2.5 text-sm ${failed ? "border-red-500/30 bg-red-500/5 text-red-500" : "border-zinc-500/30 bg-zinc-500/5 text-zinc-500 dark:text-zinc-400"}`}>
+        {failed ? <AlertCircle className="size-4" /> : <Ban className="size-4" />}
+        {failed ? "任务失败" : "任务已中止"}
+        <span className="ml-auto text-xs text-muted-foreground font-normal">
+          {failed ? "失败为终态 (G2)，不会自动重派，可新建任务重试" : "中止为终态，工作区已清理"}
+        </span>
       </div>
-      <p className="text-xs text-muted-foreground">{failed ? "失败为终态 (G2)，不会自动重派。可新建任务重试。" : "中止为终态，工作区已清理。"}</p>
+      <div className="flex-1 min-h-0">
+        <TaskRunDetailView task={task} />
+      </div>
     </div>
   )
 }

@@ -1,5 +1,6 @@
-import type { IAgentProvider, TokenUsage, ModelUsageEntry, SystemPromptInput, GoalTerminalReason } from "@octopus/providers"
-import type { EffortLevel } from "@octopus/shared"
+import type { IAgentProvider, SystemPromptInput, GoalTerminalReason } from "@octopus/providers"
+import type { EffortLevel, TokenUsage, TokenUsageDelta, ModelUsage } from "@octopus/shared"
+import { emptyTokenUsage, addTokenUsage } from "@octopus/shared"
 import type { AgentEvent, AgentRunResult } from "./agent-types"
 
 const RESUME_PROMPT = "Your previous session was interrupted mid-execution. Do NOT restart from the beginning. Review what has already been done and continue from the exact point of interruption. If the task appears complete, output your final result."
@@ -65,12 +66,17 @@ export class AgentNodeRunner {
     const events: AgentEvent[] = []
     let textBuffer = ""
     let finalSessionId: string | undefined
-    let finalTokens: TokenUsage | undefined
-    let finalModelUsages: ModelUsageEntry[] | undefined
+    let finalUsage: TokenUsage | undefined
+    let finalModelUsages: ModelUsage[] | undefined
     let finalCostUsd: number | undefined
     /** SDK hard-fuse terminal detected on the stream (error_max_turns / error_max_budget_usd).
      *  NOT an exception — the run is authoritative and returns with evidence attached. */
     let terminal: { reason: GoalTerminalReason; numTurns?: number; costUsd?: number } | undefined
+
+    // 实时 usage 跟踪：turn 按 message_start 计数，cumulative 跨 resume attempt 累计。
+    // 权威终值仍以 result/node_end 为准，这里只服务运行中展示。
+    let liveTurnCount = 0
+    let liveTurnTotal: TokenUsage = emptyTokenUsage()
 
     const emit = (event: AgentEvent) => {
       events.push(event)
@@ -191,10 +197,21 @@ export class AgentNodeRunner {
                 timestamp: ts,
               })
               break
+            case "message_start":
+              liveTurnCount++
+              break
+            case "message_delta": {
+              const delta: TokenUsageDelta | undefined = chunk.usage
+                ?? (typeof chunk.outputTokens === "number" ? { outputTokens: chunk.outputTokens } : undefined)
+              if (!delta) break
+              liveTurnTotal = addTokenUsage(liveTurnTotal, delta)
+              emit({ type: "turn_usage", turn: Math.max(liveTurnCount, 1), delta, cumulative: liveTurnTotal, timestamp: ts })
+              break
+            }
             case "result":
               receivedResult = true
               finalSessionId = chunk.sessionId
-              finalTokens = chunk.tokens
+              finalUsage = chunk.usage
               finalModelUsages = chunk.modelUsages
               finalCostUsd = chunk.costUsd
               break
@@ -241,7 +258,7 @@ export class AgentNodeRunner {
         return {
           finalText: textBuffer,
           sessionId: finalSessionId,
-          tokens: finalTokens,
+          usage: finalUsage,
           modelUsages: finalModelUsages,
           costUsd: terminal.costUsd ?? finalCostUsd,
           events,
@@ -256,7 +273,7 @@ export class AgentNodeRunner {
         return {
           finalText: textBuffer,
           sessionId: finalSessionId,
-          tokens: finalTokens,
+          usage: finalUsage,
           modelUsages: finalModelUsages,
           costUsd: finalCostUsd,
           events,

@@ -1,4 +1,5 @@
 import type Database from "better-sqlite3"
+import { LEDGER_SQL } from "@octopus/shared"
 import { BaseDAO } from "./base"
 import type {
   ExecutionArchiveRow, WorkspaceArchiveRow, ArchiveStats,
@@ -93,9 +94,9 @@ export class ArchiveDAO extends BaseDAO {
     const execStats = this.stmt(`
       SELECT
         COUNT(*) as total_executions,
-        COALESCE(SUM(total_cost), 0) as total_cost,
+        ${LEDGER_SQL.sumCostOf('total_cost')} as total_cost,
         COALESCE(AVG(total_duration_ms), 0) as avg_duration_ms,
-        COALESCE(SUM(total_cost) / NULLIF(COUNT(*), 0), 0) as avg_cost_per_execution,
+        ${LEDGER_SQL.sumCostOf('total_cost')} / NULLIF(COUNT(*), 0) as avg_cost_per_execution,
         COALESCE(AVG(success_rate), 0) as success_rate
       FROM execution_archive ${where}
     `).get(...params) as Omit<ArchiveStats, 'archived_workspaces' | 'archived_workspace_cost'>
@@ -103,9 +104,9 @@ export class ArchiveDAO extends BaseDAO {
     const wsWhere = org ? "WHERE org = ?" : ""
     const wsParams = org ? [org] : []
     const wsStats = this.stmt(`
-      SELECT COUNT(*) as archived_workspaces, COALESCE(SUM(total_cost), 0) as archived_workspace_cost
+      SELECT COUNT(*) as archived_workspaces, ${LEDGER_SQL.sumCostOf('total_cost')} as archived_workspace_cost
       FROM workspace_archive ${wsWhere}
-    `).get(...wsParams) as { archived_workspaces: number; archived_workspace_cost: number }
+    `).get(...wsParams) as { archived_workspaces: number; archived_workspace_cost: number | null }
 
     return { ...execStats, ...wsStats }
   }
@@ -118,7 +119,7 @@ export class ArchiveDAO extends BaseDAO {
     const where = `WHERE ${conditions.join(" AND ")}`
 
     return this.stmt(`
-      SELECT date(archived_at) as date, COALESCE(SUM(total_cost), 0) as cost, COUNT(*) as execution_count
+      SELECT date(archived_at) as date, ${LEDGER_SQL.sumCostOf('total_cost')} as cost, COUNT(*) as execution_count
       FROM execution_archive ${where}
       GROUP BY date(archived_at)
       ORDER BY date ASC
@@ -135,7 +136,7 @@ export class ArchiveDAO extends BaseDAO {
         COUNT(*) as execution_count,
         COALESCE(AVG(success_rate), 0) as success_rate,
         COALESCE(AVG(total_duration_ms), 0) as avg_duration_ms,
-        COALESCE(AVG(total_cost), 0) as avg_cost
+        AVG(total_cost) as avg_cost
       FROM execution_archive ${where}
       GROUP BY workflow_name
       ORDER BY execution_count DESC
@@ -154,11 +155,11 @@ export class ArchiveDAO extends BaseDAO {
     `).all(org, limit) as LeaderboardEntry[]
   }
 
-  getWorkspaceArchiveStats(org: string): { total_workspaces: number; total_execution_count: number; total_cost: number } {
+  getWorkspaceArchiveStats(org: string): { total_workspaces: number; total_execution_count: number; total_cost: number | null } {
     return this.stmt(`
-      SELECT COUNT(*) as total_workspaces, COALESCE(SUM(execution_count), 0) as total_execution_count, COALESCE(SUM(total_cost), 0) as total_cost
+      SELECT COUNT(*) as total_workspaces, COALESCE(SUM(execution_count), 0) as total_execution_count, ${LEDGER_SQL.sumCostOf('total_cost')} as total_cost
       FROM workspace_archive WHERE org = ?
-    `).get(org) as { total_workspaces: number; total_execution_count: number; total_cost: number }
+    `).get(org) as { total_workspaces: number; total_execution_count: number; total_cost: number | null }
   }
 
   // ── Archive V2: Extraction tracking ─────────────────────────────

@@ -2,7 +2,7 @@
 
 import { useState } from "react"
 import Link from "next/link"
-import { formatTokenCount } from "@/lib/format"
+import { formatTokenCount, formatCost } from "@/lib/format"
 import { LEADERBOARD_MAX_VISIBLE_MODELS } from "@/lib/constants"
 import type { ExecutionRanking } from "@/lib/types"
 import { ModelUsageRow } from "./model-usage-row"
@@ -19,11 +19,6 @@ export function WorkflowRankingItem({ rank, item }: WorkflowRankingItemProps) {
     ? item.models
     : item.models.slice(0, LEADERBOARD_MAX_VISIBLE_MODELS)
   const hasMore = item.models.length > LEADERBOARD_MAX_VISIBLE_MODELS
-
-  const formatCost = (cost: number | null, complete: boolean) => {
-    if (cost === null) return "-"
-    return complete ? `$${cost.toFixed(4)}` : `≈$${cost.toFixed(4)}`
-  }
 
   return (
     <div

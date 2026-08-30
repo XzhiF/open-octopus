@@ -35,6 +35,11 @@
 | **技能叠加** | 分身继承全局 skills + 自己专属 skills（built-in/{name}/skills/），按优先级排序。 | server |
 | **人格替换** | 分身用自己的 persona.md，完全替换主 Agent 的 persona。每个分身有独立人格。 | server |
 | **provider_session_id** | Claude Code SDK 的 resume 会话 ID。统一后所有分身都使用 resume 省 token。存储在 SessionRow 上。 | server, providers |
+| **TokenUsage（用量记录）** | 全站唯一的 token 用量规范形状 `{inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens}`，四字段**纯值**（input 不含 cache）。`total` 不是字段，需具名函数显式选口径。snake↔camel 只在 3 个 seam（SDK 入口 / DB 行 / wire 出口）转换。定义于 `shared/types/usage.ts`（Zod 派生）。见 ADR-0014。 | shared, providers, engine, server, web-app |
+| **UsageLedger（用量台账）** | 跨执行聚合的唯一真相：总 tokens=四字段和（`totalTokens()`）、费用=`LedgerCost{usd,complete}` 三态、命中率=`cacheRead/(input+cacheRead)`∈0–1。公式单源 `shared/ledger.ts`（JS + LEDGER_SQL 金表对验）；node_token_usages 为账本、llm_calls 为明细；写入口唯一 `TokenUsageDAO.recordNodeUsage`。见 ADR-0016。 | shared, server, web-app |
+| **Pricing（价表）** | 全站唯一计价模块 `shared/src/pricing.ts`，单位 **USD/MTok**，**无 default 兜底**。`priceFor()` 两阶段匹配（lowercase 精确 → 剥尾部 `[..]` 变体段）。补价通道 = models.yaml：`custom_providers.*.models[].cost` + 顶层 `model_presets` 预设层（id 可裸名或 `provider/model`；为 custom 条目供给缺省字段、为裸名定价终审；跨商异价裸键丢弃不选边）。`estimateCost()` 产出的一切都是**估算**——系统内不存在账单实测。见 ADR-0015。 | shared, providers, server |
+| **未定价（Unpriced）** | cost 的诚实第三态：`costUsd = NULL/undefined` = 查无价，≠ 免费（0 在三个 seam 一律归一为未定价），≠ 已计。UI 走 `costComplete`/未定价语义。0 价假象（SDK 未知模型 / pi 注册表 0 档）是它的前身伪装。 | shared, providers, server, web-app |
+| **PresentationFormatter（格式化器）** | web 展示层数字→文案的唯一出口 `lib/format.ts` 五函数：`formatCost`（消费 LedgerCost 三态：`—/≈$/$` + 自适应 2/4 位）、`formatTokenCount`（十进制）、`formatDuration`（**毫秒入参**四档）、`formatPercent`（入参 0–1）、`formatBytes`（1024）。豁免须 `// fmt-ok:`（轴刻度/协议文本），门禁测试防复活。见 ADR-0017。 | web-app |
 | **@@mention** | 用户在聊天中输入 `@@分身代号` 触发委托调用的语法。前端拦截解析，后端通过 `delegate_to` 字段直接调 CloneRuntime。 | server, web-app |
 | **委托 (Delegation)** | 当前聊天 Agent 将消息转发给指定分身处理。前端解析 @@mention → POST `{ delegate_to }` → 后端调 CloneRuntime → 分身回复内联显示。 | server, web-app |
 | **分身文件白名单** | 分身文件管理 API 允许读写的路径列表（persona.md / config.json / memory/*），防止目录穿越攻击。 | server |
@@ -142,3 +147,7 @@ core-pack ← (纯数据资源)
 - [0011-task-home-register-dont-relocate.md](docs/adr/0011-task-home-register-dont-relocate.md) — 任务家目录约定 + 登记不搬迁
 - [0012-skill-group-lock-at-creation.md](docs/adr/0012-skill-group-lock-at-creation.md) — Skill 组创建时锁定（两阶段编写流）
 - [0013-workflow-ref-authoring-provisioning.md](docs/adr/0013-workflow-ref-authoring-provisioning.md) — workflow_ref 归属 authoring agent；自建 flow 落 task home + 分发拷贝（amends ADR-0008）
+- [0014-token-usage-canonical-shape.md](docs/adr/0014-token-usage-canonical-shape.md) — 全站规范 TokenUsage 形状，snake↔camel 只在 3 个 seam 转换
+- [0015-pricing-single-table-no-default.md](docs/adr/0015-pricing-single-table-no-default.md) — 单一价表（USD/MTok）、无 default 兜底、未定价=NULL、models.yaml 补价通道
+- [0016-usage-ledger-single-truth.md](docs/adr/0016-usage-ledger-single-truth.md) — 总量唯一账本（ntu）、三态费用、公式单源（写 9→1 / 读 41→1 / web 14→0）
+- [0017-presentation-formatter-single-source.md](docs/adr/0017-presentation-formatter-single-source.md) — 展示层格式化器单源（五函数收 113 处 toFixed、拆秒/毫秒同名雷、fmt-ok 豁免）

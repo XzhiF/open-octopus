@@ -76,7 +76,7 @@ describe("generateSummary", () => {
       agent: makeResult({
         status: "completed",
         durationMs: 10000,
-        tokens: { input: 1500, output: 500 },
+        usage: { inputTokens: 1500, outputTokens: 500, cacheReadTokens: 0, cacheCreationTokens: 0 },
       }),
     }
     const summary = generateSummary("wf", "completed", nodeResults, 10000)

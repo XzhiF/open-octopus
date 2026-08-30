@@ -218,7 +218,7 @@ describe("HarnessController outcome tracking (AC-1, AC-2, AC-3)", () => {
       success: true,
       decision: "fix_and_retry",
       reasoning: "fix syntax",
-      tokenUsage: { input: 100, output: 50, model: "test" },
+      tokenUsage: { inputTokens: 100, outputTokens: 50, cacheReadTokens: 0, cacheCreationTokens: 0, model: "test" },
     })
 
     session.appendIntervention(report2, { varpoolSnapshot: {} })
@@ -226,7 +226,7 @@ describe("HarnessController outcome tracking (AC-1, AC-2, AC-3)", () => {
       success: true,
       decision: "guide_and_retry",
       reasoning: "inject hint",
-      tokenUsage: { input: 100, output: 50, model: "test" },
+      tokenUsage: { inputTokens: 100, outputTokens: 50, cacheReadTokens: 0, cacheCreationTokens: 0, model: "test" },
     })
 
     // End the execution — should record experiences + update outcomes
@@ -258,13 +258,13 @@ describe("HarnessController outcome tracking (AC-1, AC-2, AC-3)", () => {
     const reportC = makeDiagnosisReport({ nodeId: "node-c", id: "report-c" })
 
     session.appendIntervention(reportA, { varpoolSnapshot: {} })
-    session.recordDecision("node-a", { success: true, decision: "fix_and_retry", reasoning: "fix", tokenUsage: { input: 0, output: 0, model: "test" } })
+    session.recordDecision("node-a", { success: true, decision: "fix_and_retry", reasoning: "fix", tokenUsage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0, model: "test" } })
 
     session.appendIntervention(reportB, { varpoolSnapshot: {} })
-    session.recordDecision("node-b", { success: true, decision: "fix_and_retry", reasoning: "fix", tokenUsage: { input: 0, output: 0, model: "test" } })
+    session.recordDecision("node-b", { success: true, decision: "fix_and_retry", reasoning: "fix", tokenUsage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0, model: "test" } })
 
     session.appendIntervention(reportC, { varpoolSnapshot: {} })
-    session.recordDecision("node-c", { success: true, decision: "agent_takeover", reasoning: "takeover", tokenUsage: { input: 0, output: 0, model: "test" } })
+    session.recordDecision("node-c", { success: true, decision: "agent_takeover", reasoning: "takeover", tokenUsage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0, model: "test" } })
 
     // End execution with failed status, lastFailedNodeId = "node-c"
     controller.onExecutionEnd(EXECUTION_ID, { status: "failed", lastFailedNodeId: "node-c" })

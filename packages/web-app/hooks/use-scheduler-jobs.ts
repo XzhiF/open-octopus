@@ -13,6 +13,7 @@ interface Filters {
   search?: string
   status?: "enabled" | "disabled" | "failed"
   job_type?: "workflow" | "agent"
+  origin?: "cron" | "task" | "agent" | "manual" | "api"
   workspace_id?: string
   sort?: "next_trigger_at" | "name" | "created_at"
   order?: "asc" | "desc"
@@ -29,12 +30,14 @@ function filtersFromSearchParams(sp: URLSearchParams): Filters {
   const search = sp.get("search")
   const status = sp.get("status")
   const job_type = sp.get("job_type")
+  const origin = sp.get("origin")
   const workspace_id = sp.get("workspace_id")
   const sort = sp.get("sort")
   const order = sp.get("order")
   if (search) f.search = search
   if (status === "enabled" || status === "disabled" || status === "failed") f.status = status
   if (job_type === "workflow" || job_type === "agent") f.job_type = job_type
+  if (origin === "cron" || origin === "task" || origin === "agent" || origin === "manual" || origin === "api") f.origin = origin
   if (workspace_id) f.workspace_id = workspace_id
   if (sort === "next_trigger_at" || sort === "name" || sort === "created_at") f.sort = sort
   if (order === "asc" || order === "desc") f.order = order
@@ -46,6 +49,7 @@ function filtersToSearchParams(filters: Filters): URLSearchParams {
   if (filters.search) sp.set("search", filters.search)
   if (filters.status) sp.set("status", filters.status)
   if (filters.job_type) sp.set("job_type", filters.job_type)
+  if (filters.origin) sp.set("origin", filters.origin)
   if (filters.workspace_id) sp.set("workspace_id", filters.workspace_id)
   if (filters.sort) sp.set("sort", filters.sort)
   if (filters.order) sp.set("order", filters.order)

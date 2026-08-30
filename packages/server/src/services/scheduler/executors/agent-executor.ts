@@ -1,6 +1,7 @@
 import Database from 'better-sqlite3'
 import os from 'os'
-import type { SchedulerJob, AgentConfig, AgentRetryPolicy } from '@octopus/shared'
+import type { SchedulerJob, AgentConfig, AgentRetryPolicy, TokenUsage } from '@octopus/shared'
+import { emptyTokenUsage } from '@octopus/shared'
 import type { Executor, ExecutionResult } from './executor-interface'
 import type { IAgentProvider, MessageChunk } from '@octopus/providers'
 import { getProvider } from '@octopus/providers'
@@ -110,7 +111,7 @@ export class AgentExecutor implements Executor {
 
     let outputText = ''
     let modelUsed: string | undefined
-    let tokenUsage: { input: number; output: number } | undefined
+    let tokenUsage: TokenUsage | undefined
     let resultContent: string | undefined
 
     try {
@@ -133,8 +134,8 @@ export class AgentExecutor implements Executor {
             break
           case 'result':
             resultContent = chunk.content
-            if (chunk.tokens) {
-              tokenUsage = { input: chunk.tokens.input, output: chunk.tokens.output }
+            if (chunk.usage) {
+              tokenUsage = chunk.usage
             }
             if (chunk.modelUsages && chunk.modelUsages.length > 0) {
               modelUsed = chunk.modelUsages[0].model
@@ -163,7 +164,7 @@ export class AgentExecutor implements Executor {
     }
 
     const finalModel = modelUsed ?? config.model ?? 'default'
-    const finalTokens = tokenUsage ?? { input: 0, output: 0 }
+    const finalTokens = tokenUsage ?? emptyTokenUsage()
     const durationMs = Date.now() - startTime
 
     this.runDAO.setAgentResult(

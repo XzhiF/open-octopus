@@ -1,6 +1,7 @@
 "use client"
 
 import { useState } from "react"
+import { formatDuration } from "@/lib/format"
 import { cn } from "@/lib/utils"
 import { Badge } from "@/components/ui/badge"
 import { Wrench, ChevronDown, AlertCircle } from "lucide-react"
@@ -32,7 +33,7 @@ export function ToolCallRow({ toolName, durationMs, isError, inputPreview, resul
         </Badge>
         {durationMs > 0 && (
           <span className="ml-auto text-xs text-muted-foreground tabular-nums">
-            {durationMs < 1000 ? `${durationMs}ms` : `${(durationMs / 1000).toFixed(1)}s`}
+            {formatDuration(durationMs)}
           </span>
         )}
         {isError && <AlertCircle className="h-3.5 w-3.5 text-red-500" />}

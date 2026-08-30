@@ -1,6 +1,7 @@
 "use client"
 
 import { useState } from "react"
+import { formatDuration } from "@/lib/format"
 import { cn } from "@/lib/utils"
 import { format, parseISO } from "date-fns"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -55,13 +56,6 @@ function ExecutionStatusBadge({ status }: { status: ExecutionStatus }) {
       {EXEC_STATUS_LABELS[status] ?? status}
     </Badge>
   )
-}
-
-function formatDuration(ms: number | null): string {
-  if (ms == null) return "-"
-  if (ms < 1000) return `${ms}ms`
-  if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`
-  return `${Math.floor(ms / 60000)}m ${Math.round((ms % 60000) / 1000)}s`
 }
 
 function ExecutionRow({

@@ -1,6 +1,7 @@
 "use client"
 
 import { useState } from "react"
+import { formatDuration } from "@/lib/format"
 import { cn } from "@/lib/utils"
 import type { TurnGroup, AgentTraceEvent } from "@/lib/types"
 import { ChevronRight, Brain, Wrench, MessageSquare, AlertTriangle, Clock } from "lucide-react"
@@ -33,8 +34,9 @@ function getTurnSummary(turn: TurnGroup): string {
 
   if (thinkingEvents.length > 0) parts.push("thinking")
   if (toolEvents.length > 0) {
-    const toolNames = [...new Set(toolEvents.map(e => e.tool_name).filter(Boolean))]
-    parts.push(`${toolNames.length} tool${toolNames.length > 1 ? "s" : ""}`)
+    // 调用次数（非去重名）：raw 词汇一次调用=tool_start 一行；merged 压缩后=tool_call 一行。
+    const calls = toolEvents.filter(e => e.event_type === "tool_start" || e.event_type === "tool_call").length
+    parts.push(`${calls || toolEvents.length} tool${(calls || toolEvents.length) > 1 ? "s" : ""}`)
   }
   if (textEvents.length > 0) parts.push("output")
   return parts.join(" · ") || "no events"
@@ -97,7 +99,9 @@ export function TurnSection({ turn, isExpanded, isLive, onToggle }: TurnSectionP
             isExpanded && "rotate-90",
           )}
         />
-        <span className="font-medium tabular-nums">T{turn.turn_index + 1}</span>
+        {/* turn_index 持久化即 1-based（computeTurnIndex 首事件 0→1），直接取，勿 +1——
+            旧 +1 把第一轮标成 T2 且永不出现 T1。 */}
+        <span className="font-medium tabular-nums">T{turn.turn_index}</span>
         <span className="text-muted-foreground">·</span>
         <span className="text-muted-foreground">{summary}</span>
         <div className="ml-auto flex items-center gap-2">
@@ -108,7 +112,7 @@ export function TurnSection({ turn, isExpanded, isLive, onToggle }: TurnSectionP
             </span>
           )}
           <span className="text-xs text-muted-foreground tabular-nums">
-            {duration > 0 ? `${(duration / 1000).toFixed(1)}s` : ""}
+            {duration > 0 ? formatDuration(duration) : ""}
           </span>
         </div>
       </button>
@@ -128,20 +132,27 @@ export function TurnSection({ turn, isExpanded, isLive, onToggle }: TurnSectionP
               )
             }
             if (group.type === "tool") {
-              return group.events
-                .filter(e => e.event_type === "tool_start" || e.event_type === "tool_result")
-                .reduce<Array<{ name: string; input?: string; result?: string; duration?: number; isError: boolean }>>((acc, e) => {
-                  if (e.event_type === "tool_start") {
-                    acc.push({ name: e.tool_name ?? "unknown", input: e.tool_input, isError: !!e.tool_is_error })
-                  } else if (acc.length > 0) {
-                    const last = acc[acc.length - 1]
+              // 三代词汇统一：merged(服务端已按 tool_call_id 折叠为一行) → tool_call 自带
+              // input+result+duration；raw → tool_start(名) → tool_input(入参) → tool_result(结果)。
+              const rows = group.events.reduce<Array<{ name: string; input?: string; result?: string; duration?: number; isError: boolean }>>((acc, e) => {
+                if (e.event_type === "tool_call") {
+                  acc.push({ name: e.tool_name ?? "unknown", input: e.tool_input, result: e.tool_result, duration: e.tool_duration_ms, isError: !!e.tool_is_error })
+                } else if (e.event_type === "tool_start") {
+                  acc.push({ name: e.tool_name ?? "unknown", input: e.tool_input, isError: !!e.tool_is_error })
+                } else if (e.event_type === "tool_input") {
+                  const last = acc[acc.length - 1]
+                  if (last && last.input == null) last.input = e.tool_input
+                } else if (e.event_type === "tool_result") {
+                  const last = acc[acc.length - 1]
+                  if (last) {
                     last.result = e.tool_result
                     last.isError = !!e.tool_is_error
                     last.duration = e.tool_duration_ms
                   }
-                  return acc
-                }, [])
-                .map((tool, ti) => (
+                }
+                return acc
+              }, [])
+              return rows.map((tool, ti) => (
                   <ToolCallRow
                     key={ti}
                     toolName={tool.name}

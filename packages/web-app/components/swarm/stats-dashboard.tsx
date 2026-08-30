@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react"
 import { fetchSwarmStats } from "@/lib/api-client"
 import { MetricCard } from "./atoms/metric-card"
+import { formatPercent, formatTokenCount, formatDuration } from "@/lib/format"
 import {
   BarChart3,
   CheckCircle,
@@ -67,19 +68,6 @@ export function StatsDashboard({ workspaceId, from, to }: StatsDashboardProps) {
     )
   }
 
-  const formatMs = (ms: number) => {
-    if (ms < 1000) return `${ms}ms`
-    const s = ms / 1000
-    if (s < 60) return `${s.toFixed(1)}s`
-    return `${(s / 60).toFixed(1)}min`
-  }
-
-  const formatTokens = (n: number) => {
-    if (n < 1000) return String(Math.round(n))
-    if (n < 1_000_000) return `${(n / 1000).toFixed(1)}K`
-    return `${(n / 1_000_000).toFixed(1)}M`
-  }
-
   const modeEntries = Object.entries(stats.mode_distribution).filter(([, v]) => v > 0)
 
   return (
@@ -92,17 +80,17 @@ export function StatsDashboard({ workspaceId, from, to }: StatsDashboardProps) {
         />
         <MetricCard
           label="成功率"
-          value={`${(stats.success_rate * 100).toFixed(1)}%`}
+          value={formatPercent(stats.success_rate, 1)}
           icon={CheckCircle}
         />
         <MetricCard
           label="平均耗时"
-          value={formatMs(stats.avg_duration_ms)}
+          value={formatDuration(stats.avg_duration_ms)}
           icon={Clock}
         />
         <MetricCard
           label="平均 Token"
-          value={formatTokens(stats.avg_token_consumed)}
+          value={formatTokenCount(stats.avg_token_consumed)}
           icon={Coins}
         />
         <MetricCard
@@ -116,7 +104,7 @@ export function StatsDashboard({ workspaceId, from, to }: StatsDashboardProps) {
         <div className="flex items-center gap-2 text-xs text-muted-foreground">
           <span>平均共识分: {stats.avg_consensus_score.toFixed(3)}</span>
           {stats.router_accuracy != null && (
-            <span> · Router 准确率: {(stats.router_accuracy * 100).toFixed(1)}%</span>
+            <span> · Router 准确率: {formatPercent(stats.router_accuracy, 1)}</span>
           )}
         </div>
       )}

@@ -1,6 +1,7 @@
 "use client"
 
 import { cn } from "@/lib/utils"
+import { formatTokenCount } from "@/lib/format"
 
 export interface TokenBarProps {
   consumed: number
@@ -8,12 +9,6 @@ export interface TokenBarProps {
   outputTokens?: number
   max?: number
   showLabel?: boolean
-}
-
-const formatK = (n: number) => {
-  if (n < 1000) return String(n)
-  if (n < 1_000_000) return `${(n / 1000).toFixed(1)}K`
-  return `${(n / 1_000_000).toFixed(1)}M`
 }
 
 export function TokenBar({ consumed, inputTokens, outputTokens, max, showLabel = false }: TokenBarProps) {
@@ -45,11 +40,11 @@ export function TokenBar({ consumed, inputTokens, outputTokens, max, showLabel =
         )}>
           {hasBreakdown ? (
             <span className="inline-flex items-center gap-1">
-              <span>↑{formatK(inputTokens!)}</span>
-              <span>↓{formatK(outputTokens!)}</span>
+              <span>↑{formatTokenCount(inputTokens)}</span>
+              <span>↓{formatTokenCount(outputTokens)}</span>
             </span>
           ) : (
-            <span>{formatK(consumed)}{max ? `/${formatK(max)}` : ""}</span>
+            <span>{formatTokenCount(consumed)}{max ? `/${formatTokenCount(max)}` : ""}</span>
           )}
         </span>
       )}

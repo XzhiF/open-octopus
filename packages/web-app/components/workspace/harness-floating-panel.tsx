@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useRef, useCallback, useEffect, useMemo } from "react"
+import { emptyTokenUsage, addTokenUsage, totalTokens } from "@octopus/shared"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { Button } from "@/components/ui/button"
 import { Minus, GripHorizontal, Maximize2, Minimize2, MessageCircle, ChevronDown } from "lucide-react"
@@ -9,7 +10,7 @@ import { useHarnessEvents, type ParsedHarnessEvent } from "@/hooks/use-harness-e
 import { useExecutionMetrics, type ExecutionMetrics } from "@/hooks/use-execution-metrics"
 import { HarnessChatbot } from "./harness-chatbot"
 import { ObservabilityTab } from "./observability-panel"
-import { formatTokenCount } from "@/lib/analytics-format"
+import { formatTokenCount } from "@/lib/format"
 
 // ============ Types ============
 
@@ -186,21 +187,25 @@ function HarnessTab({
     ).length
     const diagnoses = events.filter((e) => e.type === "harness_diagnosis").length
     const blocks = events.filter((e) => e.type === "harness_blocked").length
-    let totalInput = 0
-    let totalOutput = 0
-    let totalCache = 0
-    let totalCacheCreation = 0
     const models = new Set<string>()
+    let usage = emptyTokenUsage()
     for (const e of events) {
       if (e.tokenUsage) {
-        totalInput += e.tokenUsage.inputTokens ?? 0
-        totalOutput += e.tokenUsage.outputTokens ?? 0
-        totalCache += e.tokenUsage.cacheTokens ?? 0
-        totalCacheCreation += e.tokenUsage.cacheCreationTokens ?? 0
+        usage = addTokenUsage(usage, {
+          inputTokens: e.tokenUsage.inputTokens ?? 0,
+          outputTokens: e.tokenUsage.outputTokens ?? 0,
+          cacheReadTokens: e.tokenUsage.cacheReadTokens ?? 0,
+          cacheCreationTokens: e.tokenUsage.cacheCreationTokens ?? 0,
+        })
         if (e.tokenUsage.model) models.add(e.tokenUsage.model)
       }
     }
-    const totalAll = totalInput + totalCache + totalCacheCreation + totalOutput
+    // C3: 公式单源（旧第三份手加随此删除）
+    const totalInput = usage.inputTokens
+    const totalOutput = usage.outputTokens
+    const totalCache = usage.cacheReadTokens
+    const totalCacheCreation = usage.cacheCreationTokens
+    const totalAll = totalTokens(usage)
     return { interventions, diagnoses, blocks, totalInput, totalOutput, totalCache, totalCacheCreation, totalAll, models: Array.from(models) }
   }, [events])
 
@@ -524,8 +529,8 @@ function EventAccordionItem({
                 <div>模型: {formatModelName(event.tokenUsage.model ?? "-")}</div>
                 <div>输入: {formatTokenCount(event.tokenUsage.inputTokens ?? 0)}</div>
                 <div>输出: {formatTokenCount(event.tokenUsage.outputTokens ?? 0)}</div>
-                {(event.tokenUsage.cacheTokens ?? 0) > 0 && (
-                  <div>缓存读取: {formatTokenCount(event.tokenUsage.cacheTokens!)}</div>
+                {(event.tokenUsage.cacheReadTokens ?? 0) > 0 && (
+                  <div>缓存读取: {formatTokenCount(event.tokenUsage.cacheReadTokens!)}</div>
                 )}
                 {(event.tokenUsage.cacheCreationTokens ?? 0) > 0 && (
                   <div>缓存创建: {formatTokenCount(event.tokenUsage.cacheCreationTokens!)}</div>
@@ -596,7 +601,7 @@ export function HarnessFloatingPanel({
     origHeight: number
   } | null>(null)
 
-  const { events, loading, interventionCount, totalExtraTokens, totalInputTokens, totalOutputTokens, totalCacheTokens, totalCacheCreationTokens } = useHarnessEvents(
+  const { events, loading, interventionCount, totalExtraTokens, totalInputTokens, totalOutputTokens, totalCacheReadTokens, totalCacheCreationTokens } = useHarnessEvents(
     workspaceId,
     executionId,
     executionStatus,
@@ -760,7 +765,7 @@ export function HarnessFloatingPanel({
           metrics={metrics}
           harnessInputTokens={totalInputTokens}
           harnessOutputTokens={totalOutputTokens}
-          harnessCacheTokens={totalCacheTokens}
+          harnessCacheTokens={totalCacheReadTokens}
           harnessCacheCreationTokens={totalCacheCreationTokens}
           onExpand={() => setExpanded(true)}
           onDragStart={handleDragStart}

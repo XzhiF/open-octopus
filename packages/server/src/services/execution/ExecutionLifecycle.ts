@@ -157,6 +157,7 @@ export class ExecutionLifecycle {
         dao: harnessDAO,
         sse,
         configService: harnessConfigService,
+        tokenUsageDao: this.tokenUsageDao ?? new TokenUsageDAO(realDb),
       })
     } catch (err) {
       console.warn("[ExecutionLifecycle] HarnessController initialization failed (non-fatal):", err)
@@ -1902,6 +1903,10 @@ export class ExecutionLifecycle {
 
   getTokenUsagesForExecution(executionId: string) {
     return this.queryService.getTokenUsagesForExecution(executionId)
+  }
+
+  llmCallCountsByNode(executionId: string): Record<string, number> {
+    return this.queryService.llmCallCountsByNode(executionId)
   }
 
   // ==================== Lifecycle hooks ====================

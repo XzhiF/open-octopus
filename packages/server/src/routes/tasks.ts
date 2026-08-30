@@ -354,6 +354,40 @@ export function createTasksRoutes(
     }
   })
 
+  // POST /:id/trigger — v39 manual/time trigger: arms the parked (draft) root
+  // envelope draft→queued with scheduled_at = at ?? now. Body: { at?: ISO8601 }
+  // (absent = 立即触发; future = 单次定时; past = 尽快). Same-task mutex is
+  // structural: only a ready task with a draft root can arm (409 otherwise).
+  router.post("/:id/trigger", async (c) => {
+    const body = await safeJson(c)
+    let at: string | undefined
+    if (body && body.at !== undefined && body.at !== null) {
+      const parsed = z.string().datetime({ offset: true }).safeParse(body.at)
+      if (!parsed.success) return c.json({ error: "at must be an ISO8601 datetime" }, 400)
+      at = parsed.data
+    }
+    try {
+      const task = service.triggerTask(c.req.param("id"), at)
+      return c.json(task)
+    } catch (err: unknown) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status)
+    }
+  })
+
+  // POST /:id/trigger/cancel — withdraw an armed-but-not-started one-shot
+  // (queued, unclaimed, future due) back to parked draft; task returns to
+  // ready. Already claimed/executing → 409.
+  router.post("/:id/trigger/cancel", (c) => {
+    try {
+      const task = service.cancelTaskTrigger(c.req.param("id"))
+      return c.json(task)
+    } catch (err: unknown) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status)
+    }
+  })
+
   // POST /:id/abort — running→aborted + ws cleanup (v1 G4)
   router.post("/:id/abort", async (c) => {
     try {

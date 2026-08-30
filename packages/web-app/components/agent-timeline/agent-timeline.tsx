@@ -49,6 +49,9 @@ function mergeTurns(base: TurnGroup[], live: TurnGroup[]): TurnGroup[] {
 function computeAggregates(turns: TurnGroup[]) {
   let totalDurationMs = 0
   const turnDurations: { turnIndex: number; durationMs: number }[] = []
+  // 工具调用数：不同 tool_call_id（raw 三行/merged 行同 id 去重）；无 id 的按调用起点计一次。
+  const toolCallIds = new Set<string>()
+  let toolCallCount = 0
 
   for (const turn of turns) {
     if (turn.events.length === 0) continue
@@ -59,9 +62,17 @@ function computeAggregates(turns: TurnGroup[]) {
     const dur = (last > 0 && first > 0) ? last - first : 0
     totalDurationMs += dur
     turnDurations.push({ turnIndex: turn.turn_index, durationMs: dur })
+    for (const e of turn.events) {
+      if (e.event_type !== "tool_start" && e.event_type !== "tool_call") continue
+      if (e.tool_call_id) {
+        if (!toolCallIds.has(e.tool_call_id)) { toolCallIds.add(e.tool_call_id); toolCallCount++ }
+      } else {
+        toolCallCount++
+      }
+    }
   }
 
-  return { totalDurationMs, turnDurations }
+  return { totalDurationMs, turnDurations, toolCallCount }
 }
 
 export function AgentTimeline({
@@ -82,12 +93,12 @@ export function AgentTimeline({
   const containerRef = useRef<HTMLDivElement>(null)
 
   const allTurns = mergeTurns(turns, liveTurns)
-  const { totalDurationMs, turnDurations } = computeAggregates(allTurns)
+  const { totalDurationMs, turnDurations, toolCallCount } = computeAggregates(allTurns)
 
   const turnCount = allTurns.length
-  const totalInputTokens = llmAggregates?.totalInputTokens ?? 0
-  const totalOutputTokens = llmAggregates?.totalOutputTokens ?? 0
-  const totalCostUsd = llmAggregates?.totalCost ?? 0
+  const totalInputTokens = llmAggregates?.usage.inputTokens ?? 0
+  const totalOutputTokens = llmAggregates?.usage.outputTokens ?? 0
+  const totalCostUsd = llmAggregates?.totals.cost.usd ?? null
 
   const scrollToBottom = useCallback(() => {
     if (scrollRef.current) {
@@ -163,6 +174,7 @@ export function AgentTimeline({
       <div className="p-3 border-b">
         <SummaryBar
           turnCount={turnCount}
+          toolCallCount={toolCallCount}
           totalDurationMs={totalDurationMs}
           totalInputTokens={totalInputTokens}
           totalOutputTokens={totalOutputTokens}

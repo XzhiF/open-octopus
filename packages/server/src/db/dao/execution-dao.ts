@@ -1,5 +1,6 @@
 import type Database from "better-sqlite3"
 import { BaseDAO } from "./base"
+import { buildTurnBoundaries, deriveTurnForTs, toEpochMs } from "../../turn-index"
 import type {
   ExecutionRow, NodeExecutionRow, NodeEdgeRow, BranchExecutionRow,
   AgentEventRow, ExecutionSummaryRow, PipelineStateRow, PaginatedResult,
@@ -249,6 +250,13 @@ export class ExecutionDAO extends BaseDAO {
       const neId = `${executionId}-${nodeId}`
       // Delete old fragmented events for this node, but preserve harness_* and intervention_result events
       this.stmt("DELETE FROM agent_events WHERE node_execution_id = ? AND event_type NOT LIKE 'harness_%' AND event_type != 'intervention_result'").run(neId)
+      // 权威轮次窗口：llm_calls 每回合一条、ts 与回合精确对齐，且在本方法（节点收尾
+      // 后触发）之前已由 onNodeEnd 落库。合并块不带 turnIndex → 按窗口派生回合，
+      // 否则旧逻辑 `e.turnIndex ?? 1` 会把任意多回合一律压成 turn_index=1。
+      const callRows = this.stmt(
+        "SELECT turn_index, timestamp FROM llm_calls WHERE node_execution_id = ? ORDER BY timestamp",
+      ).all(neId) as Array<{ turn_index: number; timestamp: number }>
+      const bounds = buildTurnBoundaries(callRows)
       // Insert merged events
       const insert = this.stmt(`
         INSERT INTO agent_events (
@@ -266,8 +274,11 @@ export class ExecutionDAO extends BaseDAO {
         const content = isMergedType
           ? JSON.stringify(e)
           : (e.content ?? e.line ?? (e.lines ? e.lines.join("\n") : null))
+        // 与读侧 assignTurnsToEvents 同一真相源(llm_calls 时间窗)，写读一致。
+        const evMs = toEpochMs(e.startedAt ?? e.timestamp)
+        const turn = (bounds.length > 0 && evMs > 0) ? deriveTurnForTs(bounds, evMs) : (e.turnIndex ?? 1)
         insert.run(
-          neId, i, e.turnIndex ?? 1, e.event, ts,
+          neId, i, turn, e.event, ts,
           content, content ? content.length : 0,
           e.toolCallId ?? null, e.toolName ?? null,
           e.input ? (typeof e.input === "string" ? e.input : JSON.stringify(e.input)) : null,
@@ -385,6 +396,15 @@ export class ExecutionDAO extends BaseDAO {
       "SELECT COUNT(*) as count FROM executions WHERE workspace_id = ? AND status = 'running'"
     ).get(workspaceId) as { count: number }
     return row.count
+  }
+
+  countRunningGroupedByWorkspace(): Record<string, number> {
+    const rows = this.stmt(
+      "SELECT workspace_id, COUNT(*) as count FROM executions WHERE status = 'running' GROUP BY workspace_id"
+    ).all() as Array<{ workspace_id: string; count: number }>
+    const result: Record<string, number> = {}
+    for (const r of rows) result[r.workspace_id] = r.count
+    return result
   }
 
   findNodeExecutionById(id: string): NodeExecutionRow | null {
@@ -537,14 +557,25 @@ export class ExecutionDAO extends BaseDAO {
       .get(executionId, nodeId) as { error: string | null; exit_code: number | null }) ?? null
   }
 
-  findNodeTokenUsages(executionId: string): Array<{ node_id: string; model: string; input_tokens: number; output_tokens: number; cache_read_tokens: number; cache_creation_tokens: number }> {
+  findNodeTokenUsages(executionId: string): Array<{ node_id: string; model: string; input_tokens: number; output_tokens: number; cache_read_tokens: number; cache_creation_tokens: number; cost_usd: number | null }> {
     return this.stmt(
       `SELECT ne.node_id, ntu.model, ntu.input_tokens, ntu.output_tokens,
-              ntu.cache_read_tokens, ntu.cache_creation_tokens
+              ntu.cache_read_tokens, ntu.cache_creation_tokens, ntu.cost_usd
        FROM node_token_usages ntu
        JOIN node_executions ne ON ntu.node_execution_id = ne.id
        WHERE ne.execution_id = ?`
-    ).all(executionId) as Array<{ node_id: string; model: string; input_tokens: number; output_tokens: number; cache_read_tokens: number; cache_creation_tokens: number }>
+    ).all(executionId) as Array<{ node_id: string; model: string; input_tokens: number; output_tokens: number; cache_read_tokens: number; cache_creation_tokens: number; cost_usd: number | null }>
+  }
+
+  /** 每节点 llm_calls 行数（= LLM 请求次数）。 */
+  llmCallCountsByNode(executionId: string): Array<{ node_id: string; count: number }> {
+    return this.stmt(
+      `SELECT ne.node_id, COUNT(*) as count
+       FROM llm_calls lc
+       JOIN node_executions ne ON lc.node_execution_id = ne.id
+       WHERE ne.execution_id = ?
+       GROUP BY ne.node_id`
+    ).all(executionId) as Array<{ node_id: string; count: number }>
   }
 
   findLatestNodeOutput(executionId: string, nodeId: string): Record<string, unknown> | null {
@@ -623,19 +654,7 @@ export class ExecutionDAO extends BaseDAO {
     `).all(workflowRef, workspaceId, limit) as Array<{ summary: string; status: string; duration_ms: number; created_at: string }>
   }
 
-  insertNodeTokenUsage(id: string, nodeExecutionId: string, model: string, inputTokens: number, outputTokens: number, costUsd: number | null, cacheReadTokens: number, cacheCreationTokens: number, createdAt: string): Database.RunResult {
-    return this.stmt(
-      `INSERT INTO node_token_usages (id, node_execution_id, model, input_tokens, output_tokens, cost_usd, cache_read_tokens, cache_creation_tokens, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT(id) DO UPDATE SET
-         input_tokens = input_tokens + excluded.input_tokens,
-         output_tokens = output_tokens + excluded.output_tokens,
-         cost_usd = COALESCE(cost_usd, 0) + COALESCE(excluded.cost_usd, 0),
-         cache_read_tokens = cache_read_tokens + excluded.cache_read_tokens,
-         cache_creation_tokens = cache_creation_tokens + excluded.cache_creation_tokens,
-         created_at = excluded.created_at`
-    ).run(id, nodeExecutionId, model, inputTokens, outputTokens, costUsd, cacheReadTokens, cacheCreationTokens, createdAt)
-  }
+  // insertNodeTokenUsage 已删除（C3）：node_token_usages 唯一写入口 = TokenUsageDAO.recordNodeUsage
 
   updateNodeExecutionsGlobalSession(executionId: string, globalSessionId: string): Database.RunResult {
     return this.stmt("UPDATE executions SET global_session_id = ? WHERE id = ?").run(globalSessionId, executionId)
@@ -814,6 +833,24 @@ export class ExecutionDAO extends BaseDAO {
     if (nodeId) { query += ` AND ne.node_id = ?`; params.push(nodeId) }
     query += ` ORDER BY ae.timestamp ASC`
     return this.stmt(query).all(...params) as Array<Record<string, unknown>>
+  }
+
+  /**
+   * 工具调用总数 = 不同 tool_call_id 数。两代词汇（raw 的 tool_start/tool_input/tool_result
+   * 三行、merged 的 tool_call 两行）共享同一 id，DISTINCT 天然去重。
+   */
+  countToolCalls(executionId: string, nodeId?: string): number {
+    let query = `
+      SELECT COUNT(DISTINCT ae.tool_call_id) AS count
+      FROM agent_events ae
+      JOIN node_executions ne ON ae.node_execution_id = ne.id
+      WHERE ne.execution_id = ? AND ae.tool_call_id IS NOT NULL
+        AND ae.event_type IN ('tool_start','tool_input','tool_result','tool_call')
+    `
+    const params: unknown[] = [executionId]
+    if (nodeId) { query += ` AND ne.node_id = ?`; params.push(nodeId) }
+    const row = this.stmt(query).get(...params) as { count: number } | undefined
+    return row?.count ?? 0
   }
 
   /**

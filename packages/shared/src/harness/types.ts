@@ -4,6 +4,8 @@
 // The per-node HarnessConfig (heartbeat/budget) is also in types/octopus-agent.ts.
 // This file defines the *system-level* harness configuration types.
 
+import type { ModelUsage } from '../types/usage'
+
 /**
  * DiagnosisReport — Layer 1 output: what happened (facts only)
  */
@@ -190,8 +192,8 @@ export interface DelegationResult {
   // --- Common ---
   /** The agent's analysis / reasoning behind the decision. */
   reasoning: string
-  /** Token consumption for the delegation call. */
-  tokenUsage?: { input: number; output: number; cacheRead?: number; cacheCreation?: number; model?: string }
+  /** Token consumption for the delegation call — 规范形状（C1）：纯值四字段 + model。 */
+  tokenUsage?: ModelUsage
   /** Captured message chunks (thinking, tool_call, tool_result) for detail display. */
   chunks?: Array<{ type: string; [key: string]: unknown }>
 }

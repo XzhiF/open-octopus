@@ -1,4 +1,5 @@
 import type { SchedulerExecutionStatus } from './scheduler-job'
+import type { TokenUsage } from './usage'
 
 export interface SchedulerExecution {
   id: string
@@ -14,7 +15,7 @@ export interface SchedulerExecution {
   triggered_by: string | null
   agent_output: string | null
   model_used: string | null
-  token_usage: { input: number; output: number } | null
+  token_usage: TokenUsage | null
   metadata: Record<string, unknown>
   created_at: string
 }

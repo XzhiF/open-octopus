@@ -175,13 +175,22 @@ export class ExecutionQueryService {
     })
   }
 
-  getTokenUsagesPerStep(executionId: string): Array<{ stepId?: string; model: string; inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheCreationTokens: number }> {
+  getTokenUsagesPerStep(executionId: string): Array<{ stepId?: string; model: string; inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheCreationTokens: number; costUsd: number | null }> {
     const dbRows = this.dao.findNodeTokenUsages(executionId)
     return dbRows.map(r => ({
       stepId: r.node_id, model: r.model,
       inputTokens: r.input_tokens, outputTokens: r.output_tokens,
       cacheReadTokens: r.cache_read_tokens ?? 0, cacheCreationTokens: r.cache_creation_tokens ?? 0,
+      costUsd: r.cost_usd ?? null,
     }))
+  }
+
+  /** 每节点 LLM 请求次数（llm_calls 行数）——供节点主行「总请求次数」。 */
+  llmCallCountsByNode(executionId: string): Record<string, number> {
+    const rows = this.dao.llmCallCountsByNode(executionId)
+    const out: Record<string, number> = {}
+    for (const r of rows) out[r.node_id] = r.count
+    return out
   }
 
   getTokenUsagesForExecution(executionId: string): Array<{ model: string; inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheCreationTokens: number }> {

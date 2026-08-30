@@ -6,6 +6,7 @@
 //
 
 import type { NodeDef } from "./workflow"
+import type { TokenUsage } from "./usage"
 
 // ===== Version Stage =====
 
@@ -87,7 +88,7 @@ export interface StructuredResult {
   artifacts: Artifact[]
   vars_update?: Record<string, unknown>
   summary: string
-  token_usage: { input: number; output: number; total: number }
+  token_usage: TokenUsage
   duration_ms: number
 }
 

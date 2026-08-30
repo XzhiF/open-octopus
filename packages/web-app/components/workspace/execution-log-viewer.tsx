@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react"
 import { ChevronDown, ChevronRight, ChevronUp, ChevronsDown, Terminal, Brain, Wrench, FileText, Play, Check, X, Clock, Users, MessageSquare, Award, RotateCcw, MessageCircle, HelpCircle, CheckCircle2, Activity, AlertTriangle, ShieldCheck } from "lucide-react"
 import { cn } from "@/lib/utils"
-import { formatDuration, formatTokenCount } from "@/lib/format"
+import { formatDuration, formatTokenCount, formatPercent } from "@/lib/format"
 import { isMergedEvent, OCTOPUS_EVENT_TYPES, type AgentEvent, type LoopIterationSummary } from "@/lib/types"
 import { useExecutionEvents } from "@/hooks/use-execution-events"
 // IterationGroup used in loop-overview panel
@@ -110,7 +110,7 @@ export function EventLabel({ entry }: { entry: LogEvent }) {
   switch (entry.event) {
     case "thinking_block": {
       const dur = entry.startedAt && entry.completedAt
-        ? formatDuration((new Date(entry.completedAt).getTime() - new Date(entry.startedAt).getTime()) / 1000)
+        ? formatDuration(new Date(entry.completedAt).getTime() - new Date(entry.startedAt).getTime())
         : undefined
       return <span className="text-purple-400">思考完成{dur ? ` (${dur})` : ""}</span>
     }
@@ -125,7 +125,7 @@ export function EventLabel({ entry }: { entry: LogEvent }) {
     case "tool_call": {
       const name = entry.toolName ?? "unknown"
       const dur = entry.startedAt && entry.completedAt
-        ? formatDuration((new Date(entry.completedAt).getTime() - new Date(entry.startedAt).getTime()) / 1000)
+        ? formatDuration(new Date(entry.completedAt).getTime() - new Date(entry.startedAt).getTime())
         : undefined
       return (
         <span className={entry.isError ? "text-red-400" : "text-amber-400"}>
@@ -279,7 +279,7 @@ export function EventLabel({ entry }: { entry: LogEvent }) {
     case "start": return <span className="text-emerald-400">开始执行</span>
     case "end": return (
       <span className={entry.status === "failed" || entry.exitCode ? "text-red-400" : "text-emerald-400"}>
-        完成 {entry.durationMs != null && `(${formatDuration(entry.durationMs / 1000)})`}
+        完成 {entry.durationMs != null && `(${formatDuration(entry.durationMs)})`}
         {entry.exitCode != null && entry.exitCode !== 0 && ` exit=${entry.exitCode}`}
         {entry.status === "failed" && " — 失败"}
       </span>
@@ -461,7 +461,7 @@ export function ExpandableRow({ entry }: { entry: LogEvent }) {
             <span className="text-muted-foreground">Token:</span>
             <span className="tabular-nums">{entry.heartbeatPayload.tokens_used.toLocaleString()}{entry.heartbeatPayload.tokens_budget ? ` / ${entry.heartbeatPayload.tokens_budget.toLocaleString()}` : ""}</span>
             <span className="text-muted-foreground">置信度:</span>
-            <span>{(entry.heartbeatPayload.confidence * 100).toFixed(0)}%</span>
+            <span>{formatPercent(entry.heartbeatPayload.confidence)}</span>
             {entry.heartbeatPayload.current_activity && (
               <>
                 <span className="text-muted-foreground">活动:</span>

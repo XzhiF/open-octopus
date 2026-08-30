@@ -36,6 +36,7 @@ import {
   SPEC_FIELD_UPDATE_EVENT,
   TASK_ARTIFACTS_UPDATE_EVENT,
   TASK_STATUS_EVENT,
+  TASK_TRIGGER_EVENT,
   taskSpecSchema,
   validateSpecFieldValue,
   TaskSpecFieldError,
@@ -43,9 +44,10 @@ import {
 import {
   TaskDAO,
   ScheduleConfigDAO,
+  ScheduleRunDAO,
   AgentSessionDAO,
 } from "../../db/dao"
-import type { TaskRow, ScheduleRow } from "../../db/types"
+import type { TaskRow, ScheduleRow, ScheduleExecutionRow } from "../../db/types"
 import type { SSEService } from "../sse"
 import { materializeTaskSpecToConfig } from "../scheduler/scheduler-service"
 import { TaskHomeService } from "./task-home-service"
@@ -151,6 +153,12 @@ export interface TaskDTO {
   created_at: string
   updated_at: string
   completed_at: string | null
+  /** v39 board enrichment (root schedule join): parked('draft')/armed('queued')
+   *  /'claimed'/'running' root status — lets the kanban render the
+   *  「已排队 · … 触发」 badge while the task is mirrored 'running'. */
+  schedule_status?: string | null
+  /** v39 — root schedule's one-shot due time (ISO). Null = parked/immediate. */
+  scheduled_at?: string | null
 }
 
 /** Task detail (GET /:id) — task + child schedules via S2 origin lookup. */
@@ -164,6 +172,30 @@ export interface TaskDetailDTO extends TaskDTO {
     status: string
     origin_role: string | null
     workflow_ref: string | null
+    /** v39 — one-shot due time for this schedule row (root rows carry the
+     *  trigger; children created at runtime keep it null until due-set). */
+    scheduled_at: string | null
+    /** Task board 弹窗优化 (2026-08-29): the schedule's workspace (schedules.
+     *  workspace_id FK) — null until the runner provisions one. Together with
+     *  execution_ref.execution_id this is the deep-link pair for
+     *  /workspaces/{ws}?tab=detail&execId={exec}. */
+    workspace_id: string | null
+    /** Compact summary of the LATEST schedule_executions row (triggered_at
+     *  DESC), or null before the first run. agent_output/token_usage are NOT
+     *  inlined (can be large) — the modal fetches them on demand via
+     *  GET /api/scheduler/jobs/{schedule_id}/executions/{id}. */
+    execution_ref: {
+      id: string
+      status: string
+      execution_id: string | null
+      /** Per-run workspace (schedule_executions.workspace_id) — the precise
+       *  deep-link target while/after a run. */
+      workspace_id: string | null
+      triggered_at: string
+      completed_at: string | null
+      duration_ms: number | null
+      error_summary: string | null
+    } | null
   }>
 }
 
@@ -288,6 +320,8 @@ function validateServerSpecField(field: ServerSpecField, value: unknown): unknow
 export class TasksService {
   private taskDAO: TaskDAO
   private scheduleDAO: ScheduleConfigDAO
+  /** 弹窗优化: latest-run summary per child schedule (schedule_executions). */
+  private runDAO: ScheduleRunDAO
   private agentSessionDAO: AgentSessionDAO | null
   private sse: SSEService
   /** 04 — home + plugin materialization (per-task plugin dir, ADR-0010). Injected
@@ -302,6 +336,17 @@ export class TasksService {
    *  Optional: when null, only the task-home branch of the resolution set is
    *  checked — backward-compatible with ad-hoc callers that don't wire it. */
   private builtInWorkflowService: BuiltInWorkflowService | null
+
+  /** v39: late-bound hook to SchedulerEngine.wake() (engine is constructed
+   *  AFTER this service in index.ts — setter injection, same precedent as
+   *  schedulerService.setCallbacks). Called by triggerTask for sub-second
+   *  claim pickup. Optional: tests/ad-hoc callers without wiring just fall
+   *  back to the 60s auxiliary tick. */
+  private wakeScheduler?: () => void
+
+  setWakeScheduler(fn: () => void): void {
+    this.wakeScheduler = fn
+  }
 
   constructor(
     db: Database.Database,
@@ -318,6 +363,7 @@ export class TasksService {
   ) {
     this.taskDAO = new TaskDAO(db)
     this.scheduleDAO = new ScheduleConfigDAO(db)
+    this.runDAO = new ScheduleRunDAO(db)
     this.agentSessionDAO = agentSessionDAO ?? null
     this.sse = sse
     this.taskHomeService = taskHomeService ?? new TaskHomeService()
@@ -478,8 +524,35 @@ export class TasksService {
         status: s.status,
         origin_role: s.origin_role,
         workflow_ref: extractWorkflowRef(s.config),
+        scheduled_at: s.scheduled_at ?? null,
+        workspace_id: s.workspace_id ?? null,
+        execution_ref: this.latestExecutionRef(s.id),
       }))
-    return { ...dto, children }
+    const [root] = this.scheduleDAO.findRootSchedulesByTaskIds([id])
+    const enrichedDto: TaskDTO = root
+      ? { ...dto, schedule_status: root.status, scheduled_at: root.scheduled_at }
+      : dto
+    return { ...enrichedDto, children }
+  }
+
+  /** Compact latest-run summary for a child schedule (listExecutions is
+   *  triggered_at DESC). Null when the schedule never ran (ready/parked).
+   *  Deliberately excludes agent_output/token_usage — fetch those via the
+   *  scheduler executions endpoint on demand (弹窗优化 2026-08-29). */
+  private latestExecutionRef(scheduleId: string): TaskDetailDTO["children"][number]["execution_ref"] {
+    const { data } = this.runDAO.listExecutions(scheduleId, { page: 1, limit: 1 })
+    const row: ScheduleExecutionRow | undefined = data[0]
+    if (!row) return null
+    return {
+      id: row.id,
+      status: row.status,
+      execution_id: row.execution_id ?? null,
+      workspace_id: row.workspace_id ?? null,
+      triggered_at: row.triggered_at,
+      completed_at: row.completed_at ?? null,
+      duration_ms: row.duration_ms ?? null,
+      error_summary: row.error_summary ?? null,
+    }
   }
 
   /** GET /api/tasks/:id/artifacts — the artifact index (ticket 06, US7).
@@ -552,7 +625,22 @@ export class TasksService {
         ["draft", "ready", "running", "done", "failed", "aborted"] as TaskStatus[]
       ).flatMap((st) => this.taskDAO.listByStatus(st))
     }
-    return { items: rows.map(toDTO) }
+    return { items: this.enrichRootSchedule(rows.map(toDTO)) }
+  }
+
+  /** v39 board enrichment: attach the root schedule's status + due time to
+   *  task DTOs with ONE batched query (a task has at most one live root —
+   *  readyTask is draft-only). Backward compatible: fields stay undefined when
+   *  no root row exists (draft tasks). */
+  private enrichRootSchedule(dtos: TaskDTO[]): TaskDTO[] {
+    if (dtos.length === 0) return dtos
+    const roots = this.scheduleDAO.findRootSchedulesByTaskIds(dtos.map((d) => d.id))
+    if (roots.length === 0) return dtos
+    const byId = new Map(roots.map((r) => [r.origin_id, r]))
+    return dtos.map((d) => {
+      const root = byId.get(d.id)
+      return root ? { ...d, schedule_status: root.status, scheduled_at: root.scheduled_at } : d
+    })
   }
 
   // ── Update ([save draft]) ─────────────────────────────────────────
@@ -994,7 +1082,8 @@ export class TasksService {
 
     // Materialize the WorkflowConfig for the schedule envelope. The exported
     // function includes task_spec in the output (06 drops it); 03's
-    // verification only checks origin_type='task' + status='queued'.
+    // verification checks origin_type='task' (v39: envelope is parked 'draft',
+    // not 'queued' — see insertSchedule below).
     // Ticket 08 (D14): inject $vars.task_artifacts_dir = homePath(id)/artifacts
     // for v3 tasks (task_type set — went through the two-phase flow → home
     // created at task creation). v2/legacy tasks (no task_type) skip injection
@@ -1019,6 +1108,11 @@ export class TasksService {
     const now = new Date().toISOString()
 
     const scheduleId = randomUUID()
+    // v39 MANUAL TRIGGER: the envelope is created PARKED ('draft'), not 'queued'
+    // — enqueue no longer auto-runs. checkQueuedTasks only claims 'queued' rows,
+    // and TaskScheduleStatusListener does not mirror 'draft', so the task
+    // correctly stays 'ready'. The explicit POST /:id/trigger flips it to
+    // 'queued' (+ scheduled_at due time) for immediate or one-shot timed runs.
     this.scheduleDAO.insertSchedule({
       id: scheduleId,
       org: existing.org,
@@ -1027,7 +1121,8 @@ export class TasksService {
       timezone: "UTC",
       job_type: "workflow",
       config: configJson,
-      status: "queued",
+      status: "draft",
+      scheduled_at: null,
       origin_type: "task",
       origin_id: id,
       origin_role: isComposite ? "coordinator" : "primary",
@@ -1035,10 +1130,126 @@ export class TasksService {
       updated_at: now,
     })
 
-    // Flip the task to 'ready' (dispatch seam created the envelope; the runner
-    // claims the schedule and the ScheduleStatusListener mirrors running).
+    // Flip the task to 'ready' (dispatch seam created the PARKED envelope; an
+    // explicit trigger arms it, then the runner claims + ScheduleStatusListener
+    // mirrors running).
     const result = this.taskDAO.updateWithVersion(id, { status: "ready" }, existing.version)
     if (result.changes === 0) throw new TaskVersionConflictError()
+
+    const row = this.taskDAO.getById(id)!
+    return toDTO(row)
+  }
+
+  // ── Trigger (v39 — manual / one-shot time trigger of a parked envelope) ────
+
+  /** POST /api/tasks/:id/trigger — arms the parked (draft) root envelope:
+   *  draft → queued with `scheduled_at = at ?? now`. `at` absent/past =
+   *  immediate (next wake/tick); future = one-shot timed run (the poller's
+   *  due-filter holds it until due).
+   *
+   *  SAME-TASK MUTEX (v39 final semantics): one task instance at a time.
+   *  Enforced structurally — a task has exactly one root envelope (readyTask
+   *  is draft-only), and trigger requires tasks.status='ready', so a queued
+   *  or running task cannot be re-armed; the guarded draft→queued flip closes
+   *  the race window. Different tasks may run concurrently (bounded by the
+   *  existing MAX_PARALLEL_WORKSPACES cap). */
+  triggerTask(id: string, at?: string): TaskDTO {
+    const existing = this.taskDAO.getById(id)
+    if (!existing) throw new TaskNotFoundError()
+    if (existing.status !== "ready") {
+      throw new TaskStatusConflictError(
+        `只有已入队(ready)的任务可以触发 (当前状态: '${existing.status}')`,
+      )
+    }
+
+    const roots = this.scheduleDAO
+      .findSchedulesByOrigin("task", id)
+      .filter((r) => r.origin_role === "primary" || r.origin_role === "coordinator")
+    const parked = roots.find((r) => r.status === "draft")
+    if (!parked) {
+      if (roots.some((r) => r.status === "queued")) {
+        throw new TaskStatusConflictError("任务已触发，处于排队状态")
+      }
+      if (roots.some((r) => r.status === "claimed" || r.status === "running")) {
+        throw new TaskStatusConflictError("任务正在执行中")
+      }
+      throw new TaskStatusConflictError("未找到已入队的执行计划，请重新入队")
+    }
+
+    const now = new Date()
+    const nowIso = now.toISOString()
+    const dueAt = at ?? nowIso
+
+    const flipped = this.scheduleDAO.claimParkedTaskSchedule(parked.id, dueAt)
+    if (flipped.changes === 0) {
+      throw new TaskStatusConflictError("触发状态已变化，请刷新重试")
+    }
+
+    // Mirror the queued→running transition the listener would emit (we flipped
+    // the schedule directly, bypassing the engine's emit path). Status write is
+    // a system event — no version bump (abortTask pattern).
+    this.taskDAO
+      .getDb()
+      .prepare("UPDATE tasks SET status = ?, updated_at = ?, completed_at = NULL WHERE id = ? AND deleted_at IS NULL")
+      .run("running", nowIso, id)
+
+    this.sse.emit("taskpool", {
+      event: TASK_STATUS_EVENT,
+      data: { task_id: id, status: "running", schedule_id: parked.id, origin_type: "task" },
+    })
+    this.sse.emit("taskpool", {
+      event: TASK_TRIGGER_EVENT,
+      data: { task_id: id, action: at ? "scheduled" : "triggered", scheduled_at: at ?? null },
+    })
+
+    // Sub-second pickup — don't wait for the 60s auxiliary tick.
+    this.wakeScheduler?.()
+
+    const row = this.taskDAO.getById(id)!
+    return toDTO(row)
+  }
+
+  /** POST /api/tasks/:id/trigger/cancel — withdraw an armed-but-not-started
+   *  one-shot (queued + unclaimed + scheduled_at in the future) back to parked
+   *  draft; the task returns to 'ready'. If the poller already claimed/due-ran
+   *  it (guarded UPDATE changes===0) → 409 conflict. */
+  cancelTaskTrigger(id: string): TaskDTO {
+    const existing = this.taskDAO.getById(id)
+    if (!existing) throw new TaskNotFoundError()
+    if (existing.status !== "running" && existing.status !== "ready") {
+      throw new TaskStatusConflictError(
+        `Cannot cancel trigger for a task in status '${existing.status}'`,
+      )
+    }
+    const root = this.scheduleDAO
+      .findSchedulesByOrigin("task", id)
+      .find(
+        (r) =>
+          (r.origin_role === "primary" || r.origin_role === "coordinator") &&
+          r.status === "queued",
+      )
+    if (!root) throw new TaskStatusConflictError("没有可取消的定时触发")
+
+    const nowIso = new Date().toISOString()
+    const flipped = this.scheduleDAO.cancelTriggeredTaskSchedule(root.id, nowIso)
+    if (flipped.changes === 0) {
+      throw new TaskStatusConflictError("定时触发已开始执行或不存在，无法取消")
+    }
+
+    // Back to parked semantics: the task is ready again (no run in flight).
+    this.taskDAO
+      .getDb()
+      .prepare("UPDATE tasks SET status = ?, updated_at = ?, completed_at = NULL WHERE id = ? AND deleted_at IS NULL")
+      .run("ready", nowIso, id)
+
+    this.sse.emit("taskpool", {
+      event: TASK_STATUS_EVENT,
+      data: { task_id: id, status: "ready", schedule_id: root.id, origin_type: "task" },
+    })
+    this.sse.emit("taskpool", {
+      event: TASK_TRIGGER_EVENT,
+      data: { task_id: id, action: "cancelled", scheduled_at: null },
+    })
 
     const row = this.taskDAO.getById(id)!
     return toDTO(row)

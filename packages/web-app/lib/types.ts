@@ -51,6 +51,8 @@ export interface Workspace {
   updatedAt: string
   lastActivityAt?: string
   path: string
+  /** 当前处于 running 状态的工作流执行数（列表接口返回） */
+  running_count?: number
 }
 
 // ============ Project ============
@@ -125,11 +127,13 @@ export interface HarnessSummary {
 
 export interface StatusOverlay {
   stepStatus: StepExecutionStatus
-  duration?: number
+  duration?: number // in seconds
   startedAt?: string
   error?: string
   tokenUsage?: TokenUsage
   tokenUsages?: TokenUsage[]
+  /** 节点 LLM 请求次数（= llm_calls 行数），供节点主行「N 次」。 */
+  requestCount?: number
   heartbeat?: AgentHeartbeat
   harnessStatus?: HarnessNodeStatus
 }
@@ -147,6 +151,13 @@ export interface StepExecution {
   model?: string
   tokensInput?: number
   tokensOutput?: number
+  /** 节点级费用（C3 ledger 三态：全未定价=null）+ 是否完整计价。 */
+  costUsd?: number | null
+  costComplete?: boolean
+  /** 节点 LLM 请求次数（llm_calls 行数）。 */
+  requestCount?: number
+  /** 运行中实时轮次（turn_usage SSE 事件驱动；轮询数据不含此字段） */
+  turns?: number
   tokenUsages?: TokenUsage[]
   nodeType?: string
   parentNodeId?: string
@@ -360,7 +371,8 @@ export interface ChatMessage {
   toolDuration?: string
   thinkingStartMs?: number
   thinkingDuration?: string
-  tokens?: { input: number; output: number }
+  /** 规范用量（C1）—— chat 消息 metadata 与 result SSE 统一 usage 键 */
+  usage?: { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheCreationTokens: number }
   costUsd?: number
 }
 
@@ -407,7 +419,7 @@ export function fromDBMessage(row: {
     toolDuration: meta.toolDuration as string | undefined,
     thinkingStartMs: meta.thinkingStartMs as number | undefined,
     thinkingDuration: meta.thinkingDuration as string | undefined,
-    tokens: meta.tokens as ChatMessage["tokens"],
+    usage: meta.usage as ChatMessage["usage"],
     costUsd: meta.costUsd as number | undefined,
   }
 }
@@ -584,15 +596,27 @@ export interface LLMCallData {
   cost_usd?: number
 }
 
+/** C3 wire：server ledger 的 totals 结构（跨端共享形状）。 */
+export interface LedgerTotalsWire {
+  tokens: number
+  cost: { usd: number | null; complete: boolean }
+  cacheHitRate: number | null
+}
+
+export interface UsageWire {
+  inputTokens: number
+  outputTokens: number
+  cacheReadTokens: number
+  cacheCreationTokens: number
+}
+
 export interface LLMCallAggregates {
   totalCalls: number
-  totalInputTokens: number
-  totalOutputTokens: number
-  totalCacheReadTokens: number
-  totalCacheCreationTokens: number
-  totalCost: number
-  cacheHitRate: number
-  modelBreakdown: Record<string, { calls: number; inputTokens: number; outputTokens: number; costUsd: number }>
+  /** 工具调用总数（agent_events 不同 tool_call_id 数）。 */
+  toolCalls: number
+  usage: UsageWire
+  totals: LedgerTotalsWire
+  modelBreakdown: Record<string, { calls: number; inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheCreationTokens: number; costUsd: number | null }>
 }
 
 // ============ Analytics ============

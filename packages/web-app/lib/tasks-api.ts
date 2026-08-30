@@ -43,6 +43,26 @@ export interface TaskChild {
   origin_role: string | null
   /** workflow_ref extracted from the schedule's config.workflow_chain[0]. */
   workflow_ref: string | null
+  /** v39 — one-shot due time (ISO). Root rows carry the trigger time; null = none. */
+  scheduled_at?: string | null
+  /** 弹窗优化 (2026-08-29): the schedule's workspace id — null until the runner
+   *  provisions one. Pairs with execution_ref.execution_id for the
+   *  /workspaces/{ws}?tab=detail&execId={exec} deep link. */
+  workspace_id?: string | null
+  /** Latest schedule_executions row (compact; null before first run).
+   *  agent_output / token_usage are fetched on demand via
+   *  getExecution(schedule_id, id) from scheduler-api. */
+  execution_ref?: {
+    id: string
+    status: string
+    execution_id: string | null
+    /** Per-run workspace (schedule_executions.workspace_id). */
+    workspace_id: string | null
+    triggered_at: string
+    completed_at: string | null
+    duration_ms: number | null
+    error_summary: string | null
+  } | null
 }
 
 /** TaskDetail = Task + optional children. Simple/draft tasks return children=[]
@@ -233,6 +253,28 @@ export async function abortTask(id: string): Promise<Task> {
   return handleResponse<Task>(res)
 }
 
+/** POST /api/tasks/:id/trigger — v39 人工触发. Arms the parked (draft) root
+ *  envelope: draft→queued with scheduled_at = at ?? now. `at` absent = 立即触发;
+ *  future ISO = 单次定时触发. Rejections (not ready / already armed / running /
+ *  envelope missing) → Error(body.error) — the server's conflict messages are
+ *  already user-facing Chinese. */
+export async function triggerTask(id: string, at?: string): Promise<Task> {
+  const res = await fetch(`${getServerUrl()}${BASE}/${id}/trigger`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(at ? { at } : {}),
+  })
+  return handleResponse<Task>(res)
+}
+
+/** POST /api/tasks/:id/trigger/cancel — withdraw an armed-but-not-started
+ *  timed trigger (queued, unclaimed, future due) back to parked; task returns
+ *  to ready. Already claimed/executing → 409 Error. */
+export async function cancelTaskTrigger(id: string): Promise<Task> {
+  const res = await fetch(`${getServerUrl()}${BASE}/${id}/trigger/cancel`, { method: "POST" })
+  return handleResponse<Task>(res)
+}
+
 /** POST /api/tasks/:id/spec-field — agent `update_task_spec_field` tool
  *  endpoint, AND the v3 user-direct-edit path. Merges a single field into the
  *  right column, bumps version, emits `spec_field_update` SSE so the SpecPanel
@@ -321,6 +363,45 @@ export async function getTaskContext(taskId: string): Promise<{
   if (!res.ok) {
     const body = await res.json().catch(() => ({}))
     throw new Error(body.error ?? `HTTP ${res.status}`)
+  }
+  return res.json()
+}
+
+// ============ Workflow-ref view (task board: click bound workflow → full YAML) ============
+
+/** Error thrown by {@link getWorkflowRefView} when the bound ref can no longer
+ *  be resolved (400 — was bound but is neither an installed builtin nor a task
+ *  home workflows/ file) or the task is gone (404). The viewer surfaces a
+ *  degraded state instead of white-screening (same discipline as
+ *  {@link ArtifactContentError}). */
+export class WorkflowRefViewError extends Error {
+  public readonly status: number
+  constructor(message: string, status: number) {
+    super(message)
+    this.name = "WorkflowRefViewError"
+    this.status = status
+  }
+}
+
+export interface WorkflowRefView {
+  /** The bound ref; null when nothing is bound. */
+  ref: string | null
+  /** Full raw YAML text; null when unbound. */
+  content: string | null
+  /** Where the ref resolved: installed builtin vs task home workflows/ dir. */
+  source: "builtin" | "task-home" | null
+}
+
+/** GET /api/tasks/:id/workflow-ref — full YAML content of the workflow this
+ *  task is bound to (ADR-0013 HOW entry). Server resolution order: installed
+ *  builtin → task home workflows/. Unbound → 200 with all-null payload.
+ *  Non-2xx → {@link WorkflowRefViewError} carrying the status (400 unresolvable
+ *  / 404 task missing) so the dialog can show the matching degraded hint. */
+export async function getWorkflowRefView(taskId: string): Promise<WorkflowRefView> {
+  const res = await fetch(buildUrl(`/${taskId}/workflow-ref`))
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}))
+    throw new WorkflowRefViewError(body.error ?? `HTTP ${res.status}`, res.status)
   }
   return res.json()
 }

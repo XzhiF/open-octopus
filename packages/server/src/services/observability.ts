@@ -2,7 +2,7 @@ import Database from "better-sqlite3"
 import type { AgentEvent } from "@octopus/engine"
 import type { LLMCallRecord } from "@octopus/providers"
 import { PrivacyFilter } from "./privacy-filter"
-import { computeCost } from "@octopus/providers"
+import { ledgerCostUsd } from "../db/dao/usage-ledger"
 import { ExecutionDAO, TokenUsageDAO } from "../db/dao"
 import type { AgentEventRow, LlmCallRow } from "../db/types"
 
@@ -90,12 +90,6 @@ export class SQLiteSink implements ObservabilitySink {
     }))
 
     this.execDao.insertAgentEventBatch(rows)
-  }
-
-  async writeLLMCalls(calls: LlmCallRow[]): Promise<void> {
-    if (calls.length === 0) return
-    // writeLLMCalls uses a separate TokenUsageDAO — caller should use the ObservabilityService method instead
-    // Kept for interface compatibility; batch LLM insert is done via ObservabilityService.persistLLMCalls
   }
 
   async flush(): Promise<void> {}
@@ -213,7 +207,8 @@ export class ObservabilityService {
         output_tokens: call.outputTokens,
         cache_read_tokens: call.cacheReadTokens,
         cache_creation_tokens: call.cacheCreationTokens,
-        cost_usd: call.costUsd ?? computeCost(call, call.model ?? 'default'),
+        // C2/C3：SDK/价表都没有 → 写 NULL（未定价）；ledger 唯一 cost 决策函数
+        cost_usd: ledgerCostUsd(call, call.model, call.costUsd),
         org: meta.org,
         workspace_id: meta.workspaceId,
         workflow_ref: meta.workflowRef,

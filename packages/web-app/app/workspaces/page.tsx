@@ -10,21 +10,29 @@ export default function WorkspacesPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
-  const fetchData = useCallback(async () => {
-    setLoading(true)
-    setError(null)
+  const fetchData = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true)
+    if (!silent) setError(null)
     try {
       const data = await listWorkspaces()
       setWorkspaces(Array.isArray(data) ? data : data.workspaces ?? [])
+      if (!silent) setError(null)
     } catch (err) {
-      setError(err instanceof Error ? err.message : "获取工作空间列表失败")
+      // 静默轮询失败时保留现有数据，不打断页面
+      if (!silent) setError(err instanceof Error ? err.message : "获取工作空间列表失败")
     } finally {
-      setLoading(false)
+      if (!silent) setLoading(false)
     }
   }, [])
 
   useEffect(() => {
     fetchData()
+  }, [fetchData])
+
+  // 轮询刷新运行状态（黄色蚂蚁边特效依赖）
+  useEffect(() => {
+    const timer = setInterval(() => fetchData(true), 5000)
+    return () => clearInterval(timer)
   }, [fetchData])
 
   return (
@@ -46,7 +54,7 @@ export default function WorkspacesPage() {
           <p className="text-destructive">{error}</p>
           <button
             className="mt-4 text-sm text-primary underline"
-            onClick={fetchData}
+            onClick={() => fetchData()}
             data-testid="workspace-list-retry"
           >
             重试

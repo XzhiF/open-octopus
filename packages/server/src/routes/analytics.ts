@@ -1,5 +1,9 @@
 import { Hono } from 'hono'
 import type { Context } from 'hono'
+import {
+  emptyTokenUsage, addTokenUsage, costSummary, cacheHitRateOf, ledgerTotals,
+  type TokenUsage, type LedgerRow,
+} from '@octopus/shared'
 import { existsSync, readdirSync, readFileSync } from 'fs'
 import { join } from 'path'
 import os from 'os'
@@ -7,10 +11,14 @@ import { getFlag, loadFeatureFlags } from '../config/feature-flags'
 import { SuggestionEngine } from '../services/suggestion-engine'
 import { getLogAnalysisService } from '../services/log-analysis'
 import { WorkspaceDAO, ExecutionDAO, TokenUsageDAO } from '../db/dao'
+import { buildTurnBoundaries, deriveTurnForTs, toEpochMs, type TurnBoundary } from '../turn-index'
 import type { LogAnalysisService } from '../services/log-analysis'
 
 // ─── Log Analysis Routes (default export) ──────────────────────────
 // Mounted at: /api/workspaces/:id/analytics
+
+/** 打分启发式：单次执行 $10 为成本效率满分线（产品参数，非 ledger 口径）。 */
+const COST_EFFICIENCY_BASELINE_USD = 10
 
 function getWorkspaceId(c: { req: { param: (name: string) => string | undefined } }): string {
   const id = c.req.param("id")
@@ -351,6 +359,129 @@ export default createAnalyticsLogRoutes
 // ─── Observability Routes (named export) ───────────────────────────
 // Mounted at: /api
 
+/**
+ * 按「所属回合」把 agent 事件分组（trace 时间线用）。轮次派生委托共享 util
+ * `turn-index`（与写侧 `replaceMergedEvents` 同一真相源 = llm_calls 时间窗）。
+ * 无 llm_calls 的节点（bash/子流程/…）回退用存储 turn_index，行为不变。
+ * 纯函数，接口即分组，便于直测。
+ */
+export function assignTurnsToEvents(
+  events: Array<Record<string, unknown>>,
+  calls: Array<{ node_execution_id: string; turn_index: number; timestamp: number }>,
+): Array<Record<string, unknown>> {
+  const boundsByNode = new Map<string, TurnBoundary[]>()
+  const callsByNode = new Map<string, Array<{ turn_index: number; timestamp: number }>>()
+  for (const c of calls) {
+    const arr = callsByNode.get(c.node_execution_id) ?? []
+    arr.push({ turn_index: c.turn_index, timestamp: c.timestamp })
+    callsByNode.set(c.node_execution_id, arr)
+  }
+  for (const [ne, cs] of callsByNode) boundsByNode.set(ne, buildTurnBoundaries(cs))
+
+  const eventsByNode = new Map<string, Array<Record<string, unknown>>>()
+  for (const e of events) {
+    const ne = e.node_execution_id as string
+    const arr = eventsByNode.get(ne) ?? []
+    arr.push(e)
+    eventsByNode.set(ne, arr)
+  }
+
+  const out: Array<Record<string, unknown>> = []
+  for (const [ne, nodeEvents] of eventsByNode) {
+    // 跨 int/ISO 混存的 timestamp 全局排序不可靠 → 按写入序 event_order 稳定排。
+    nodeEvents.sort((a, b) => ((a.event_order as number) ?? 0) - ((b.event_order as number) ?? 0))
+    const bounds = boundsByNode.get(ne) ?? []
+    const turnMap = new Map<number, Array<Record<string, unknown>>>()
+    for (const e of nodeEvents) {
+      const turn = bounds.length === 0
+        ? ((e.turn_index as number) ?? 1)
+        : deriveTurnForTs(bounds, toEpochMs(e.timestamp))
+      let bucket = turnMap.get(turn)
+      if (!bucket) { bucket = []; turnMap.set(turn, bucket) }
+      bucket.push(e)
+    }
+    out.push({
+      node_execution_id: ne,
+      node_id: nodeEvents[0]?.node_id,
+      turns: Array.from(turnMap.entries())
+        .sort((a, b) => a[0] - b[0])
+        .map(([turn_index, evs]) => ({ turn_index, events: evs, eventCount: evs.length })),
+    })
+  }
+  return out
+}
+
+/** JSON 信封解析：合并块 content 存的是整事件 JSON（round-trip 用），读侧统一解包。 */
+function parseEnvelope(content: unknown): Record<string, unknown> | null {
+  if (typeof content !== "string" || !content.startsWith("{")) return null
+  try {
+    const j = JSON.parse(content)
+    return j && typeof j === "object" && !Array.isArray(j) ? j as Record<string, unknown> : null
+  } catch { return null }
+}
+
+function asString(v: unknown): string {
+  if (typeof v === "string") return v
+  if (v == null) return ""
+  try { return JSON.stringify(v) } catch { return String(v) }
+}
+
+/**
+ * traces 读侧词汇归一（唯一 seam）：DB 里 agent 事件存在两代写法——
+ *  raw(observability):      tool_start / tool_input / tool_result 三行，列分离，thinking 纯文本
+ *  merged(节点收尾压缩):    tool_call 每次调用两行 + thinking_block/text_block，
+ *                           全量 JSON 塞 content 信封，列部分填充。
+ * 这里把 merged 词汇折叠成可渲染形状：tool_call 按 tool_call_id 合并为一行
+ * （input 取非空、result 取非空、duration 列缺则用信封 startedAt/completedAt 差），
+ * thinking_block/text_block 解包 content 为正文。前端只需再认 event_type="tool_call"。
+ */
+export function normalizeTraceEvents(events: Array<Record<string, unknown>>): Array<Record<string, unknown>> {
+  const out: Array<Record<string, unknown>> = []
+  const toolRowById = new Map<string, Record<string, unknown>>()
+
+  for (const e of events) {
+    const et = e.event_type as string
+    if (et === "thinking_block" || et === "text_block") {
+      const env = parseEnvelope(e.content)
+      const inner = env ? asString(env.content) : ""
+      out.push(inner ? { ...e, content: inner, content_length: inner.length } : e)
+      continue
+    }
+    if (et === "tool_call") {
+      const env = parseEnvelope(e.content)
+      const id = (e.tool_call_id ?? env?.toolCallId) as string | null
+      const input = asString(e.tool_input) || asString(env?.input)
+      const result = asString(e.tool_result) || asString(env?.result)
+      const isError = (e.tool_is_error || env?.isError) ? 1 : 0
+      const envDurRaw = env?.startedAt && env?.completedAt
+        ? Date.parse(String(env.completedAt)) - Date.parse(String(env.startedAt))
+        : null
+      const envDur = envDurRaw != null && Number.isFinite(envDurRaw) ? envDurRaw : null
+      const dur = e.tool_duration_ms != null ? (e.tool_duration_ms as number) : envDur
+      const prev = id ? toolRowById.get(id) : undefined
+      if (prev) {
+        if (!prev.tool_input) prev.tool_input = input || null
+        if (!prev.tool_result) prev.tool_result = result || null
+        if (isError) prev.tool_is_error = 1
+        if (prev.tool_duration_ms == null && dur != null) prev.tool_duration_ms = dur
+        continue
+      }
+      const row: Record<string, unknown> = {
+        ...e,
+        tool_input: input || null,
+        tool_result: result || null,
+        tool_is_error: isError,
+        tool_duration_ms: dur,
+      }
+      out.push(row)
+      if (id) toolRowById.set(id, row)
+      continue
+    }
+    out.push(e)
+  }
+  return out
+}
+
 export function createAnalyticsRoutes(
   execDAO: ExecutionDAO,
   tokenUsageDAO: TokenUsageDAO,
@@ -360,35 +491,14 @@ export function createAnalyticsRoutes(
   const router = new Hono()
 
   router.get('/executions/:id/traces', (c: Context) => {
-    const executionId = c.req.param('id')
+    const executionId = c.req.param('id') ?? ''
     const nodeId = c.req.query('nodeId')
 
     const events = execDAO.findAgentEventsWithNode(executionId, nodeId || undefined)
+    const calls = tokenUsageDAO.findLlmCallsByExecution(executionId, nodeId || undefined)
 
-    const turnsByNode: Record<string, Array<Record<string, unknown>>> = {}
-    for (const event of events) {
-      const nodeExecId = event.node_execution_id as string
-      if (!turnsByNode[nodeExecId]) turnsByNode[nodeExecId] = []
-      turnsByNode[nodeExecId].push(event)
-    }
-
-    const turns = Object.entries(turnsByNode).map(([nodeExecId, nodeEvents]) => {
-      const turnMap = new Map<number, Array<Record<string, unknown>>>()
-      for (const event of nodeEvents) {
-        const turnIndex = event.turn_index as number
-        if (!turnMap.has(turnIndex)) turnMap.set(turnIndex, [])
-        turnMap.get(turnIndex)!.push(event)
-      }
-      return {
-        node_execution_id: nodeExecId,
-        node_id: nodeEvents[0]?.node_id,
-        turns: Array.from(turnMap.entries()).map(([turnIndex, events]) => ({
-          turn_index: turnIndex,
-          events,
-          eventCount: events.length,
-        })),
-      }
-    })
+    // 词汇归一（merged → 可渲染形状）先于回合派生：tool_call 折叠后回合窗口取起始行。
+    const turns = assignTurnsToEvents(normalizeTraceEvents(events), calls)
 
     return c.json({
       data: turns,
@@ -403,37 +513,48 @@ export function createAnalyticsRoutes(
 
     const calls = tokenUsageDAO.findLlmCallsByExecution(executionId, nodeId || undefined)
 
-    const totalInputTokens = calls.reduce((sum, c) => sum + (c.input_tokens as number ?? 0), 0)
-    const totalOutputTokens = calls.reduce((sum, c) => sum + (c.output_tokens as number ?? 0), 0)
-    const totalCacheReadTokens = calls.reduce((sum, c) => sum + (c.cache_read_tokens as number ?? 0), 0)
-    const totalCacheCreationTokens = calls.reduce((sum, c) => sum + (c.cache_creation_tokens as number ?? 0), 0)
-    const totalCost = calls.reduce((sum, c) => sum + (c.cost_usd as number ?? 0), 0)
-    const totalCacheTokens = totalCacheReadTokens + totalCacheCreationTokens
-    const totalTokens = totalInputTokens + totalOutputTokens
-    const cacheHitRate = totalTokens > 0 ? totalCacheTokens / totalTokens : 0
+    // C3: aggregates 的总量走 ledger（execution 级 = ntu 单源；nodeId 过滤 = 该节点
+    // ntu 行经同一 JS 公式），旧 cacheHitRate V1（cache/total）与两字段 total 口径废除。
+    const ledgerAgg = nodeId
+      ? (() => {
+          const rows = tokenUsageDAO.findLedgerRowsByNodeId(executionId as string, nodeId)
+          return {
+            usage: rows.reduce<TokenUsage>((a, r) => addTokenUsage(a, r), emptyTokenUsage()),
+            totals: ledgerTotals(rows),
+          }
+        })()
+      : (() => {
+          const m = tokenUsageDAO.aggregateByExecution(executionId as string)
+          return { usage: m.usage, totals: m.totals }
+        })()
 
-    const modelBreakdown: Record<string, { calls: number; inputTokens: number; outputTokens: number; costUsd: number }> = {}
+    const modelBreakdown: Record<string, { calls: number; inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheCreationTokens: number; costUsd: number | null }> = {}
+    const modelCosts: Record<string, Array<number | null>> = {}
     for (const call of calls) {
       const model = (call.model as string) ?? 'unknown'
       if (!modelBreakdown[model]) {
-        modelBreakdown[model] = { calls: 0, inputTokens: 0, outputTokens: 0, costUsd: 0 }
+        modelBreakdown[model] = { calls: 0, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0, costUsd: null }
+        modelCosts[model] = []
       }
       modelBreakdown[model].calls++
       modelBreakdown[model].inputTokens += call.input_tokens as number ?? 0
       modelBreakdown[model].outputTokens += call.output_tokens as number ?? 0
-      modelBreakdown[model].costUsd += call.cost_usd as number ?? 0
+      modelBreakdown[model].cacheReadTokens += call.cache_read_tokens as number ?? 0
+      modelBreakdown[model].cacheCreationTokens += call.cache_creation_tokens as number ?? 0
+      modelCosts[model].push(call.cost_usd as number | null)
+    }
+    for (const [model, costs] of Object.entries(modelCosts)) {
+      modelBreakdown[model].costUsd = costSummary(costs).usd
     }
 
     return c.json({
       data: calls,
       aggregates: {
         totalCalls: calls.length,
-        totalInputTokens,
-        totalOutputTokens,
-        totalCacheReadTokens,
-        totalCacheCreationTokens,
-        totalCost,
-        cacheHitRate,
+        // 工具调用总数 = 不同 tool_call_id 数（raw 三行/merged 两行同 id 自动去重）。
+        toolCalls: execDAO.countToolCalls(executionId as string, nodeId || undefined),
+        usage: ledgerAgg.usage,
+        totals: ledgerAgg.totals,
         modelBreakdown,
       },
       _degraded: false,
@@ -458,7 +579,7 @@ export function createAnalyticsRoutes(
 
     const totalExecutions = execDAO.countByWorkspaceSince(workspaceId, cutoff)
     const successRate = execDAO.successRateByWorkspaceSince(workspaceId, cutoff)
-    const totalCost = tokenUsageDAO.totalCostByWorkspaceSince(workspaceId, tsCutoff)
+    const totalCost = tokenUsageDAO.costForWorkspaceSince(workspaceId, cutoff)
     const avgDurationMs = execDAO.avgDurationByWorkspaceSince(workspaceId, cutoff)
     const workflowStats = execDAO.workflowStatsByWorkspace(workspaceId, cutoff)
     const dailyTrend = execDAO.dailyTrendByWorkspace(workspaceId, cutoff)
@@ -500,23 +621,37 @@ export function createAnalyticsRoutes(
       : 0
     const speedStability = Math.max(0, 1 - (Math.sqrt(durationVariance) / (avgDuration || 1)))
 
-    const totalCost = llmCalls.reduce((sum: number, c) => sum + ((c.cost_usd as number) ?? 0), 0)
-    const avgCostPerRun = executions.length > 0 ? totalCost / executions.length : 0
-    const costEfficiency = Math.max(0, 1 - (avgCostPerRun / 10))
+    // C3: 打分输入走 ledger —— cost 源 = ntu（costForExecutions），命中率 = 规范公式
+    const ledgerCost = tokenUsageDAO.costForExecutions(executions.map(e => e.id as string))
+    const avgCostPerRun = ledgerCost.usd !== null && executions.length > 0
+      ? ledgerCost.usd / executions.length : null
+    // 启发式：单次执行 $10 为满分线（与 ledger 无关的产品参数，C2 移交项具名化）
+    const costEfficiency = avgCostPerRun === null
+      ? null
+      : Math.max(0, 1 - (avgCostPerRun / COST_EFFICIENCY_BASELINE_USD))
 
-    const totalTokens = llmCalls.reduce((sum: number, c) =>
-      sum + ((c.input_tokens as number) ?? 0) + ((c.output_tokens as number) ?? 0), 0)
-    const cacheTokens = llmCalls.reduce((sum: number, c) =>
-      sum + ((c.cache_read_tokens as number) ?? 0), 0)
-    const tokenEfficiency = totalTokens > 0 ? cacheTokens / totalTokens : 0
+    const callUsage = llmCalls.reduce<TokenUsage>((acc, c) => addTokenUsage(acc, {
+      inputTokens: (c.input_tokens as number) ?? 0,
+      outputTokens: (c.output_tokens as number) ?? 0,
+      cacheReadTokens: (c.cache_read_tokens as number) ?? 0,
+      cacheCreationTokens: (c.cache_creation_tokens as number) ?? 0,
+    }), emptyTokenUsage())
+    const tokenEfficiency = cacheHitRateOf(callUsage)
 
     const retryCount = executions.filter((e) => (e.retry_count as number ?? 0) > 0).length
     const retryRate = executions.length > 0 ? retryCount / executions.length : 0
     const reliability = Math.max(0, 1 - retryRate)
 
-    const healthScore = Math.round(
-      (successScore * 0.4 + speedStability * 0.2 + costEfficiency * 0.15 + tokenEfficiency * 0.15 + reliability * 0.1) * 100
-    )
+    // 未定价/无缓存维度不参与打分，权重重归一（C3/Q8-2：qwen 工作区不再白拿或白丢分）
+    const dims: Array<[number | null, number]> = [
+      [successScore, 0.4], [speedStability, 0.2], [costEfficiency, 0.15],
+      [tokenEfficiency, 0.15], [reliability, 0.1],
+    ]
+    const present = dims.filter((d): d is [number, number] => d[0] !== null)
+    const weightSum = present.reduce((a, [, w]) => a + w, 0)
+    const healthScore = weightSum > 0
+      ? Math.round(present.reduce((a, [v, w]) => a + v * w, 0) / weightSum * 100)
+      : 0
     const grade = healthScore >= 90 ? 'A' : healthScore >= 75 ? 'B' : healthScore >= 60 ? 'C' : healthScore >= 40 ? 'D' : 'F'
 
     return c.json({
@@ -527,13 +662,14 @@ export function createAnalyticsRoutes(
         totalExecutions: executions.length,
         successRate: successScore,
         avgDurationMs: avgDuration,
-        totalCost,
+        totalCost: ledgerCost.usd,
+        costComplete: ledgerCost.complete,
         avgCostPerRun,
         healthDimensions: {
           success: Math.round(successScore * 100),
           speedStability: Math.round(speedStability * 100),
-          costEfficiency: Math.round(costEfficiency * 100),
-          tokenEfficiency: Math.round(tokenEfficiency * 100),
+          costEfficiency: costEfficiency === null ? null : Math.round(costEfficiency * 100),
+          tokenEfficiency: tokenEfficiency === null ? null : Math.round(tokenEfficiency * 100),
           reliability: Math.round(reliability * 100),
         },
       },
@@ -556,7 +692,7 @@ export function createAnalyticsRoutes(
 
     return c.json({
       data: {
-        totalCost: (costByModel as Array<{ total_cost: number; calls: number }>).reduce((s, m) => s + m.total_cost, 0),
+        totalCost: costSummary((costByModel as Array<{ total_cost: number | null }>).map(m => m.total_cost)).usd,
         totalCalls: (costByModel as Array<{ total_cost: number; calls: number }>).reduce((s, m) => s + m.calls, 0),
         days,
       },

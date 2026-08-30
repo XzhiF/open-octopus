@@ -43,7 +43,7 @@ export const IterationTimeline = memo(function IterationTimeline({ nodes }: Iter
             </Badge>
             {node.durationMs != null && (
               <span className="text-muted-foreground/60 tabular-nums text-[10px] shrink-0">
-                {formatDuration(node.durationMs / 1000)}
+                {formatDuration(node.durationMs)}
               </span>
             )}
             {node.error && (

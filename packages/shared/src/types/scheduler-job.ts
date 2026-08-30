@@ -262,6 +262,14 @@ export interface SchedulerJob {
   updated_at: string
   status: ScheduleStatus
   trigger_source: TriggerSource
+  /** v38b polymorphic origin (S2). Authoritative source discriminator —
+   *  trigger_source is a lossy legacy mapping (task/manual/api/agent all
+   *  collapse to 'requirement'). Scheduler UI shows origin via this field:
+   *  'cron' = cron-driven recurring job; 'task' = dispatched by the task
+   *  board ready-gate (origin_id = parent task id, UI deep-links /tasks/:id);
+   *  'agent'/'manual'/'api' = other one-shot enqueues. Null for legacy rows. */
+  origin_type?: OriginType | null
+  origin_id?: string | null
   source_chat_session_id: string | null
   claimed_at: string | null
 }
@@ -301,5 +309,9 @@ export interface ListJobsParams {
   org?: string
   sort?: 'next_trigger_at' | 'name' | 'created_at'
   order?: 'asc' | 'desc'
+  /** Legacy route filter ('cron'→origin_type='cron'; 'requirement'→IN
+   *  ('task','manual','api')). Omit → no origin filter (list spans all origins). */
   trigger_source?: TriggerSource
+  /** Precise single-origin filter (takes precedence when both given). */
+  origin?: OriginType
 }

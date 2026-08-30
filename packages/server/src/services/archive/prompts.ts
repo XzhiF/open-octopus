@@ -41,7 +41,7 @@ export function buildRetrospectivePrompt(ctx: ArchiveContext): string {
       ? costProfile.modelBreakdown
           .map(
             (m) =>
-              `  - ${m.model}: Calls=${m.calls}, Tokens=${m.tokens}, Cost=$${m.cost.toFixed(4)}`,
+              `  - ${m.model}: Calls=${m.calls}, Tokens=${m.tokens}, Cost=${m.cost === null ? "unpriced" : "$" + m.cost.toFixed(4)}`,
           )
           .join("\n")
       : "  No model usage recorded."
@@ -64,7 +64,7 @@ EXECUTION OVERVIEW
 ═══════════════════════════════════════════════════════
 Total Executions: ${totalExecs}
 Successful: ${successCount} | Failed: ${failCount} | Success Rate: ${successRate}%
-Total Cost: $${totalCost.toFixed(4)}
+Total Cost: ${totalCost === null ? "unpriced (set model prices in models.yaml)" : "$" + totalCost.toFixed(4)}
 Total Compute Time: ${totalDuration.toFixed(1)}s
 
 ═══════════════════════════════════════════════════════
@@ -85,7 +85,7 @@ ${modelBreakdown}
 ═══════════════════════════════════════════════════════
 COST TREND
 ═══════════════════════════════════════════════════════
-Daily Average: $${costProfile.daily_avg.toFixed(4)}
+Daily Average: ${costProfile.daily_avg === null ? "unpriced" : "$" + costProfile.daily_avg.toFixed(4)}
 Direction: ${costProfile.trend_direction}
 Trend: ${costProfile.trend_pct.toFixed(1)}%
 

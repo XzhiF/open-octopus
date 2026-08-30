@@ -4,7 +4,8 @@ import type { SwarmNodeDef } from "@octopus/shared"
 
 // ponytail: NodeDef.mode union lags behind SwarmNodeDef; cast once here
 const asSwarm = (n: NodeDef): SwarmNodeDef => n as SwarmNodeDef
-import { VarPool, substituteVars, resolveModelAlias, resolveMoaModel } from "@octopus/shared"
+import { VarPool, substituteVars, resolveModelAlias, resolveMoaModel, emptyTokenUsage, mergeModelUsages } from "@octopus/shared"
+import type { TokenUsage } from "@octopus/shared"
 import type { IAgentProvider, MessageChunk } from "@octopus/providers"
 import type { ICheckpointStore, SwarmCheckpointData } from "../pipeline/checkpoint-types"
 import { existsSync } from "fs"
@@ -159,8 +160,8 @@ export class SwarmExecutor implements NodeExecutor {
           ? resolveModelAlias(rawModel, epk, this.modelAliasConfig) ?? rawModel
           : rawModel
         const result = await collectFromProvider(p, prompt, this.cwd, resolvedModel, skills, undefined, tools, disallowedTools)
-        budgetTracker.addUsage(result.model, result.inputTokens, result.outputTokens, result.cacheReadTokens, result.cacheCreationTokens, result.costUsd)
-        return { text: result.text, model: result.model, tokens: result.tokens, inputTokens: result.inputTokens, outputTokens: result.outputTokens, toolsUsed: result.toolsUsed, filesChanged: result.filesChanged }
+        budgetTracker.addUsage(result.model, result.usage, result.costUsd)
+        return { text: result.text, model: result.model, tokens: result.usage.inputTokens + result.usage.outputTokens, inputTokens: result.usage.inputTokens, outputTokens: result.usage.outputTokens, toolsUsed: result.toolsUsed, filesChanged: result.filesChanged }
       }
 
       // Setup HostAgent — host continues the workflow's global session chain
@@ -173,7 +174,7 @@ export class SwarmExecutor implements NodeExecutor {
           ? resolveModelAlias(rawModel, epk, this.modelAliasConfig) ?? rawModel
           : rawModel
         const result = await collectFromProvider(p, prompt, this.cwd, resolvedModel, undefined, hostSessionId ?? this.globalSessionId)
-        budgetTracker.addUsage(result.model, result.inputTokens, result.outputTokens, result.cacheReadTokens, result.cacheCreationTokens, result.costUsd)
+        budgetTracker.addUsage(result.model, result.usage, result.costUsd)
         if (result.sessionId) hostSessionId = result.sessionId
         return result.text
       })
@@ -417,7 +418,7 @@ export class SwarmExecutor implements NodeExecutor {
         durationMs,
         logLines,
         sessionId: hostSessionId,
-        tokens: budgetTracker.getTokenUsage(),
+        usage: budgetTracker.getTokenUsage(),
         modelUsages: budgetTracker.getModelUsages(),
       }
     } catch (e: unknown) {
@@ -660,11 +661,8 @@ async function collectFromProvider(
   disallowedTools?: string[],
 ): Promise<{
   text: string
-  tokens: number
-  inputTokens: number
-  outputTokens: number
-  cacheReadTokens: number
-  cacheCreationTokens: number
+  /** 规范用量（纯值口径，C1） */
+  usage: TokenUsage
   model: string
   costUsd?: number
   toolsUsed: string[]
@@ -672,10 +670,7 @@ async function collectFromProvider(
   sessionId?: string
 }> {
   let text = ""
-  let inputTokens = 0
-  let outputTokens = 0
-  let cacheReadTokens = 0
-  let cacheCreationTokens = 0
+  let usage = emptyTokenUsage()
   let resolvedModel = model ?? "unknown"
   let costUsd: number | undefined
   let sessionId: string | undefined
@@ -694,19 +689,19 @@ async function collectFromProvider(
     if (chunk.type === "text_delta") {
       text += chunk.content
     } else if (chunk.type === "result") {
-      inputTokens = chunk.tokens?.input ?? 0
-      outputTokens = chunk.tokens?.output ?? 0
-      cacheReadTokens = (chunk as any).tokens?.cache_read ?? 0
-      cacheCreationTokens = (chunk as any).tokens?.cache_creation ?? 0
-      costUsd = chunk.costUsd
       sessionId = chunk.sessionId
+      costUsd = chunk.costUsd
       if (chunk.modelUsages && chunk.modelUsages.length > 0) {
         resolvedModel = chunk.modelUsages[0].model
-        inputTokens = chunk.modelUsages[0].inputTokens || inputTokens
-        outputTokens = chunk.modelUsages[0].outputTokens || outputTokens
-        cacheReadTokens = chunk.modelUsages[0].cacheReadInputTokens ?? cacheReadTokens
-        cacheCreationTokens = chunk.modelUsages[0].cacheCreationInputTokens ?? cacheCreationTokens
-        costUsd = chunk.modelUsages[0].costUsd ?? costUsd
+        // C1/C5: 合并全部模型的规范用量 —— 修复旧实现只读 modelUsages[0] 的丢数；
+        // cache 死读（tokens.cache_read 在规范形状上不存在、恒 undefined）随之消失。
+        usage = mergeModelUsages(chunk.modelUsages)
+        if (costUsd == null) {
+          const sum = chunk.modelUsages.reduce((t, m) => t + (m.costUsd ?? 0), 0)
+          if (sum > 0) costUsd = sum
+        }
+      } else if (chunk.usage) {
+        usage = chunk.usage
       }
     } else if (chunk.type === "tool_call") {
       if (!toolsUsed.includes(chunk.toolName)) toolsUsed.push(chunk.toolName)
@@ -720,11 +715,7 @@ async function collectFromProvider(
 
   return {
     text,
-    tokens: inputTokens + outputTokens,
-    inputTokens,
-    outputTokens,
-    cacheReadTokens,
-    cacheCreationTokens,
+    usage,
     model: resolvedModel,
     costUsd,
     toolsUsed,

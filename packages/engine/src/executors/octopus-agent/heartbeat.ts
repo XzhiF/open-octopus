@@ -5,7 +5,8 @@
 //
 
 import type { AgentEvent } from "../agent-types"
-import type { HarnessConfig, BudgetConfig, AgentHeartbeat, HarnessDirective } from "@octopus/shared"
+import type { HarnessConfig, BudgetConfig, AgentHeartbeat, HarnessDirective, TokenUsage } from "@octopus/shared"
+import { emptyTokenUsage, totalTokens } from "@octopus/shared"
 
 /**
  * HeartbeatHandler tracks agent execution progress and emits heartbeats.
@@ -24,7 +25,7 @@ import type { HarnessConfig, BudgetConfig, AgentHeartbeat, HarnessDirective } fr
 export class HeartbeatHandler {
   private stepCounter = 0
   private lastActivityAt = Date.now()
-  private tokensUsed = { input: 0, output: 0, total: 0 }
+  private tokensUsed: TokenUsage = emptyTokenUsage()
   private artifacts: string[] = []
   private lastActivity = ""
   private hasAborted = false
@@ -58,7 +59,7 @@ export class HeartbeatHandler {
         this.config.auto_abort_on_budget &&
         this.budget?.max_tokens
       ) {
-        if (this.tokensUsed.total > this.budget.max_tokens) {
+        if (totalTokens(this.tokensUsed) > this.budget.max_tokens) {
           this.emitBudgetExceededDirective()
         }
       }
@@ -86,10 +87,11 @@ export class HeartbeatHandler {
   }
 
   /**
-   * Update token usage tracking.
+   * Update token usage tracking — 规范 TokenUsage（纯值口径）。
+   * tokens_used 心跳标量 = totalTokens(usage)，与旧「合并 total」数值等价。
    */
-  updateTokens(tokens: { input: number; output: number; total: number }): void {
-    this.tokensUsed = tokens
+  updateTokens(usage: TokenUsage): void {
+    this.tokensUsed = usage
   }
 
   /**
@@ -117,7 +119,7 @@ export class HeartbeatHandler {
   private emitHeartbeat(): void {
     const heartbeat: AgentHeartbeat = {
       step: this.stepCounter,
-      tokens_used: this.tokensUsed.total,
+      tokens_used: totalTokens(this.tokensUsed),
       tokens_budget: this.budget?.max_tokens,
       artifacts: [...this.artifacts],
       issues: [], // v1: placeholder, future: agent self-reporting
@@ -139,7 +141,7 @@ export class HeartbeatHandler {
 
     const directive: HarnessDirective = {
       type: "abort",
-      reason: `Token budget exceeded: ${this.tokensUsed.total}/${this.budget!.max_tokens}`,
+      reason: `Token budget exceeded: ${totalTokens(this.tokensUsed)}/${this.budget!.max_tokens}`,
       issued_by: "harness",
       timestamp: Date.now(),
     }

@@ -15,6 +15,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Loader2, TrendingUp, DollarSign, AlertCircle, Lightbulb, Package, FileText, Check, Badge as BadgeIcon } from "lucide-react"
 import { getServerUrl } from "@/lib/server-config"
+import { formatPercent, formatCost, formatTokenCount, formatDuration } from "@/lib/format"
 
 interface ArchiveViewDialogProps {
   workspaceId: string | null
@@ -62,19 +63,6 @@ interface ArchiveData {
   extracted_agents: number
   analysis_report: unknown
   metadata: string | null
-}
-
-function formatDuration(ms: number) {
-  const seconds = Math.floor(ms / 1000)
-  const minutes = Math.floor(seconds / 60)
-  const hours = Math.floor(minutes / 60)
-  if (hours > 0) return `${hours}h ${minutes % 60}m`
-  if (minutes > 0) return `${minutes}m ${seconds % 60}s`
-  return `${seconds}s`
-}
-
-function formatCost(cost: number) {
-  return `$${cost.toFixed(2)}`
 }
 
 export function ArchiveViewDialog({ workspaceId, workspaceName, open, onOpenChange }: ArchiveViewDialogProps) {
@@ -263,21 +251,20 @@ export function ArchiveViewDialog({ workspaceId, workspaceName, open, onOpenChan
                     if (!ts?.total || (ts.total.inputTokens === 0 && ts.total.outputTokens === 0)) {
                       return <div className="text-center py-8 text-muted-foreground">无 Token 使用数据</div>
                     }
-                    const fmt = (n: number) => n >= 1000000 ? `${(n / 1000000).toFixed(1)}M` : n >= 1000 ? `${(n / 1000).toFixed(1)}K` : String(n)
                     return (
                       <>
                         <div className="grid grid-cols-3 gap-4">
                           <Card><CardContent className="pt-4 text-center">
                             <div className="text-xs text-muted-foreground mb-1">Input Tokens</div>
-                            <div className="text-xl font-bold">{fmt(ts.total.inputTokens)}</div>
+                            <div className="text-xl font-bold">{formatTokenCount(ts.total.inputTokens)}</div>
                           </CardContent></Card>
                           <Card><CardContent className="pt-4 text-center">
                             <div className="text-xs text-muted-foreground mb-1">Output Tokens</div>
-                            <div className="text-xl font-bold">{fmt(ts.total.outputTokens)}</div>
+                            <div className="text-xl font-bold">{formatTokenCount(ts.total.outputTokens)}</div>
                           </CardContent></Card>
                           <Card><CardContent className="pt-4 text-center">
                             <div className="text-xs text-muted-foreground mb-1">Total Cost</div>
-                            <div className="text-xl font-bold">${ts.total.cost.toFixed(4)}</div>
+                            <div className="text-xl font-bold">{formatCost(ts.total.cost)}</div>
                           </CardContent></Card>
                         </div>
                         {ts.byModel.length > 0 && (
@@ -295,9 +282,9 @@ export function ArchiveViewDialog({ workspaceId, workspaceName, open, onOpenChan
                                   {ts.byModel.map((m) => (
                                     <tr key={m.model} className="border-b last:border-0">
                                       <td className="py-1 font-mono">{m.model}</td>
-                                      <td className="text-right py-1">{fmt(m.inputTokens)}</td>
-                                      <td className="text-right py-1">{fmt(m.outputTokens)}</td>
-                                      <td className="text-right py-1">${m.cost.toFixed(4)}</td>
+                                      <td className="text-right py-1">{formatTokenCount(m.inputTokens)}</td>
+                                      <td className="text-right py-1">{formatTokenCount(m.outputTokens)}</td>
+                                      <td className="text-right py-1">{formatCost(m.cost)}</td>
                                     </tr>
                                   ))}
                                 </tbody>
@@ -315,11 +302,11 @@ export function ArchiveViewDialog({ workspaceId, workspaceName, open, onOpenChan
                                   <div key={wf.workflowRef} className="border rounded-md p-3">
                                     <div className="flex justify-between items-center mb-2">
                                       <span className="text-sm font-medium">{wf.workflowRef}</span>
-                                      <span className="text-xs text-muted-foreground">{fmt(wf.inputTokens + wf.outputTokens)} tokens · ${wf.cost.toFixed(4)}</span>
+                                      <span className="text-xs text-muted-foreground">{formatTokenCount(wf.inputTokens + wf.outputTokens)} tokens · {formatCost(wf.cost)}</span>
                                     </div>
                                     {wf.byModel.length > 0 && (
                                       <div className="flex gap-3 text-xs text-muted-foreground mb-2">
-                                        {wf.byModel.map((m) => <span key={m.model}>{m.model}: {fmt(m.inputTokens + m.outputTokens)}</span>)}
+                                        {wf.byModel.map((m) => <span key={m.model}>{m.model}: {formatTokenCount(m.inputTokens + m.outputTokens)}</span>)}
                                       </div>
                                     )}
                                     {wfNodes.length > 0 && (
@@ -330,7 +317,7 @@ export function ArchiveViewDialog({ workspaceId, workspaceName, open, onOpenChan
                                               <Badge variant="outline" className="text-[10px] px-1">{node.nodeType}</Badge>
                                               <span className="font-mono">{node.nodeName}</span>
                                             </span>
-                                            <span className="text-muted-foreground">{fmt(node.inputTokens + node.outputTokens)} tokens · ${node.cost.toFixed(4)}</span>
+                                            <span className="text-muted-foreground">{formatTokenCount(node.inputTokens + node.outputTokens)} tokens · {formatCost(node.cost)}</span>
                                           </div>
                                         ))}
                                       </div>
@@ -459,7 +446,7 @@ export function ArchiveViewDialog({ workspaceId, workspaceName, open, onOpenChan
                                               <Badge variant="outline" className="text-xs">{exp.scope}: {exp.target ?? "all"}</Badge>
                                             )}
                                             {exp.confidence != null && (
-                                              <Badge variant="secondary" className="text-xs">置信度: {(exp.confidence * 100).toFixed(0)}%</Badge>
+                                              <Badge variant="secondary" className="text-xs">置信度: {formatPercent(exp.confidence)}</Badge>
                                             )}
                                             {adopted && <Badge className="text-xs bg-green-600">已采纳</Badge>}
                                           </div>

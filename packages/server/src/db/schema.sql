@@ -304,6 +304,9 @@ CREATE TABLE IF NOT EXISTS schedules (
   origin_role TEXT,
   assoc_meta TEXT,
   claimed_at TEXT,
+  -- schema v39: one-shot due time for task-origin triggers (manual/time trigger).
+  -- NULL = cron/legacy/claim-immediately. Distinct from next_trigger_at (cron cycle).
+  scheduled_at TEXT,
   FOREIGN KEY (workspace_id) REFERENCES workspaces(id)
 );
 
@@ -608,6 +611,8 @@ CREATE INDEX IF NOT EXISTS idx_schedules_status ON schedules(status) WHERE delet
 -- findSchedulesByOrigin + cascade-reap + orphan reaper use (origin_type, origin_id).
 CREATE INDEX IF NOT EXISTS idx_schedules_origin ON schedules(origin_type, origin_id) WHERE deleted_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_schedules_claimed ON schedules(claimed_at) WHERE claimed_at IS NOT NULL;
+-- v39: due-time FIFO for queued task triggers
+CREATE INDEX IF NOT EXISTS idx_schedules_due ON schedules(scheduled_at) WHERE deleted_at IS NULL AND status = 'queued';
 
 -- Schedule executions indexes
 CREATE INDEX IF NOT EXISTS idx_sched_execs_schedule ON schedule_executions(schedule_id, triggered_at DESC);

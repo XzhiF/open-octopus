@@ -138,8 +138,8 @@ export class ScheduleConfigDAO extends BaseDAO {
         notify_channel, notify_target, container_execution_id,
         next_trigger_at, created_at, updated_at,
         job_type, config, parallel_policy, description, version, consecutive_failures, max_retain,
-        status, origin_type, origin_id, origin_role, assoc_meta, claimed_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        status, origin_type, origin_id, origin_role, assoc_meta, claimed_at, scheduled_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       row.id, row.org, row.name, row.cron_expression, row.timezone,
       row.workspace_id ?? null, row.workflow_ref ?? null,
@@ -155,6 +155,7 @@ export class ScheduleConfigDAO extends BaseDAO {
       row.origin_type ?? "cron", row.origin_id ?? null,
       row.origin_role ?? null, row.assoc_meta ?? null,
       row.claimed_at ?? null,
+      row.scheduled_at ?? null,
     )
   }
 
@@ -197,10 +198,43 @@ export class ScheduleConfigDAO extends BaseDAO {
     ).all() as ScheduleRow[]
   }
 
-  findQueuedSchedules(): ScheduleRow[] {
+  /** v39: queued rows that are DUE (scheduled_at NULL = legacy/cron/immediate,
+   *  always claimable; future scheduled_at rows are returned only once due).
+   *  FIFO by due time (COALESCE keeps legacy created_at ordering). */
+  findQueuedSchedules(nowIso: string): ScheduleRow[] {
     return this.stmt(
-      "SELECT * FROM schedules WHERE status = 'queued' AND deleted_at IS NULL ORDER BY created_at ASC"
-    ).all() as ScheduleRow[]
+      "SELECT * FROM schedules WHERE status = 'queued' AND deleted_at IS NULL AND (scheduled_at IS NULL OR scheduled_at <= ?) ORDER BY COALESCE(scheduled_at, created_at) ASC"
+    ).all(nowIso) as ScheduleRow[]
+  }
+
+  /** v39 board enrichment: one batched query for the root schedule rows
+   *  (status + due time) of many task ids. Returns plain rows (not ScheduleRow). */
+  findRootSchedulesByTaskIds(taskIds: string[]): { origin_id: string; status: string; scheduled_at: string | null }[] {
+    if (taskIds.length === 0) return []
+    const placeholders = taskIds.map(() => "?").join(", ")
+    return this.stmt(
+      `SELECT origin_id, status, scheduled_at FROM schedules
+       WHERE origin_type = 'task' AND origin_role IN ('primary', 'coordinator')
+         AND deleted_at IS NULL AND origin_id IN (${placeholders})`
+    ).all(...taskIds) as { origin_id: string; status: string; scheduled_at: string | null }[]
+  }
+
+  /** v39 trigger: guarded parked→armed flip (draft → queued + due time).
+   *  changes===0 ⇒ lost a race (abort/re-trigger) — caller returns 409. */
+  claimParkedTaskSchedule(id: string, scheduledAtIso: string): Database.RunResult {
+    const now = new Date().toISOString()
+    return this.stmt(
+      "UPDATE schedules SET status = 'queued', scheduled_at = ?, updated_at = ? WHERE id = ? AND status = 'draft' AND deleted_at IS NULL"
+    ).run(scheduledAtIso, now, id)
+  }
+
+  /** v39 cancel trigger: armed-but-not-started → parked
+   *  (queued → draft, clears due time). Requires unclaimed AND still in the
+   *  future — the poller cannot have due-claimed it. changes===0 ⇒ race. */
+  cancelTriggeredTaskSchedule(id: string, nowIso: string): Database.RunResult {
+    return this.stmt(
+      "UPDATE schedules SET status = 'draft', scheduled_at = NULL, updated_at = ? WHERE id = ? AND status = 'queued' AND claimed_at IS NULL AND scheduled_at > ? AND deleted_at IS NULL"
+    ).run(nowIso, id, nowIso)
   }
 
   // T-5 AC11: stale claimed/running — claimed_at older than cutoff ISO string.

@@ -522,6 +522,9 @@ export function yamlToFlowData(
         command: node.command,
         script: node.script,
         prompt: node.prompt,
+        // goal-mode agent nodes (task-dev develop etc.) carry `goal` instead of
+        // `prompt` — without this the node's middle content renders blank.
+        goal: node.goal,
         risk_level: node.risk_level,
         iterations: node.iterations,
         loop_body: node.loop_body,
