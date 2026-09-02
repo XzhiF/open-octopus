@@ -8,8 +8,11 @@ import { SSEService } from '../../sse'
 import { NotificationService } from '../../notification'
 import { WorkspaceService } from '../../workspace'
 import type { SchedulerJob, WorkflowConfig, WorkflowChainItem, ScheduleStatusListener, OriginType, TaskSpec } from "@octopus/shared"
+import { TASK_ARTIFACTS_UPDATE_EVENT } from "@octopus/shared"
 import type { Executor, ExecutionResult } from './executor-interface'
 import { ScheduleConfigDAO, ScheduleRunDAO, ExecutionDAO, TaskDAO } from '../../../db/dao'
+import { TaskHomeService } from '../../tasks/task-home-service'
+import { seedPhaseToWorkspace, collectFromWorkspace, batchRelPath } from '../../tasks/task-artifact-sync'
 // Ticket 08 (ADR-0009): the orchestration-strategy seam owns the composition
 // workflow ref + the composite threshold as the single source of truth. The
 // executor's isCompositeTask below is the POST-materialization config-shape
@@ -248,7 +251,7 @@ export class WorkflowExecutor implements Executor {
     // below is inert for them (byte-identical pre-v4 behavior, regression floor).
     const v4Envelope = config as WorkflowConfig & {
       format?: string
-      phases?: Array<{ index: number; workflowRef: string }>
+      phases?: Array<{ index: number; workflowRef: string; specDir?: string }>
     }
     const isV4 = v4Envelope.format === 'v4' && !isComposite
     const boundWorkspaceId = isV4 && taskRow ? (taskRow.workspace_id ?? null) : null
@@ -382,6 +385,38 @@ export class WorkflowExecutor implements Executor {
       console.error(`[WorkflowExecutor] task_workflows copy failed (non-fatal): ${message}`)
     }
 
+    // task-phase-redesign (ticket 06, K9/K16): v4 seed 下行 — copy the phase's
+    // batch dir {home}/.scratch/<date>/<slug>/ into the execution workspace at
+    // the SAME relative position before the root execution starts (the
+    // copyTaskWorkflowsToWs precedent — same-ws reuse re-seeds every round, so
+    // home edits made between rounds take effect on the next seed, K16).
+    // home OVERWRITES ws same-names (spec 权威在 home). Non-fatal: a transient
+    // fs error must not burn the dispatch slot — the wf surfaces missing inputs
+    // itself. resolvePhaseRound is computed HERE (not at step 11b) so the seed
+    // knows which batch dir to mirror; the same values are reused for tagging.
+    const v4PhaseRound = isV4
+      ? this.resolvePhaseRound(v4Envelope, firstStep, workspace.id)
+      : null
+    if (v4PhaseRound?.phase?.specDir && taskRow) {
+      try {
+        const homeDir = new TaskHomeService().homePath(taskRow.id)
+        const rel = batchRelPath(homeDir, v4PhaseRound.phase.specDir)
+        if (rel) {
+          const seeded = seedPhaseToWorkspace(v4PhaseRound.phase.specDir, registry.wsPath, rel)
+          if (seeded > 0) {
+            console.log(
+              `[WorkflowExecutor] seeded ${seeded} artifact file(s) into ws ${registry.wsPath}/${rel} (phase ${v4PhaseRound.phaseIndex} round ${v4PhaseRound.roundIndex})`,
+            )
+          }
+        }
+      } catch (err: unknown) {
+        console.error(
+          `[WorkflowExecutor] v4 artifact seed failed (non-fatal):`,
+          err instanceof Error ? err.message : String(err),
+        )
+      }
+    }
+
     const now = new Date()
 
     const scheduleVars: Record<string, string> = {
@@ -432,11 +467,7 @@ export class WorkflowExecutor implements Executor {
     // var pool harmlessly and make crash recovery re-tag identically).
     if (isV4) {
       try {
-        const { phaseIndex, roundIndex } = this.resolvePhaseRound(
-          v4Envelope,
-          firstStep,
-          workspace.id,
-        )
+        const { phaseIndex, roundIndex } = v4PhaseRound!
         this.execDAO.updateExecution(execution.id, {
           phase_index: phaseIndex,
           round_index: roundIndex,
@@ -725,8 +756,58 @@ export class WorkflowExecutor implements Executor {
     // onComplete and resumes the parent without going through WorkflowExecutor.
     this.maybeResumeParentTaskDispatch(opts, lastExecutionId)
 
+    // task-phase-redesign (ticket 06, K9): v4 collect 上行 — BEFORE retention
+    // (which may reclaim the ws once the task hits 'done'), recover whatever the
+    // execution side changed in the batch dir back into the task home and emit
+    // task_artifacts_update. Gated on the phase/round TAG (④/K4), so v3,
+    // generic and composite chains (never tagged) byte-for-byte skip this.
+    this.maybeCollectV4Artifacts(opts.schedule, opts.executionId)
+
     // Enforce retention policy
     this.enforceRetention(opts.scheduleId, opts.maxRetain)
+  }
+
+  /**
+   * ticket 06 collect 上行 (execute-path terminal — the dispatchPhaseRound path
+   * has its own mirror in TasksService.finalizePhaseRoundExecution). Reads the
+   * phase/round tag off the terminal executions row (non-tagged ⇒ v3/generic/
+   * composite ⇒ no-op, the 底线), locates the phase's home batch dir via the
+   * envelope's materialized specDir (票04), mirrors it back from
+   * `{ws}/{relBatchPath}` and emits TASK_ARTIFACTS_UPDATE_EVENT(taskId) when
+   * anything actually flowed (the OutputViewer re-GETs home artifacts).
+   * Non-fatal by contract: an fs/registry hiccup must never break finalization
+   * — the next round's terminal transition retries (mtime rule is idempotent).
+   */
+  private maybeCollectV4Artifacts(schedule: ScheduleRow, executionId: string): void {
+    try {
+      if (schedule.origin_type !== 'task' || !schedule.origin_id) return
+      const exec = this.execDAO.findById(executionId)
+      if (!exec || exec.phase_index == null) return
+      const config = JSON.parse(schedule.config) as {
+        phases?: Array<{ index: number; specDir?: string }>
+      }
+      const specDir = config.phases?.find((p) => p.index === exec.phase_index)?.specDir
+      if (!specDir) return
+      const homeDir = new TaskHomeService().homePath(schedule.origin_id)
+      const rel = batchRelPath(homeDir, specDir)
+      if (!rel) return
+      const registry = getExecutionService(exec.workspace_id)
+      if (!registry) return
+      const collected = collectFromWorkspace(path.join(registry.wsPath, rel), specDir)
+      if (collected.length === 0) return
+      console.log(
+        `[WorkflowExecutor] collected ${collected.length} artifact file(s) from ws back to home (task ${schedule.origin_id}, phase ${exec.phase_index} round ${exec.round_index})`,
+      )
+      this.sse.emit('taskpool', {
+        event: TASK_ARTIFACTS_UPDATE_EVENT,
+        data: { task_id: schedule.origin_id },
+      })
+    } catch (err: unknown) {
+      console.error(
+        `[WorkflowExecutor] v4 artifact collect failed (non-fatal):`,
+        err instanceof Error ? err.message : String(err),
+      )
+    }
   }
 
   // ── Ticket 04: composite dispatch helpers ────────────────────────────
@@ -938,12 +1019,19 @@ export class WorkflowExecutor implements Executor {
    *   3. phase 1 (fresh envelope — ticket 04 pre-loads chain[0] = phase 1).
    * Round without a stamp = 1 + count of this ws's executions already tagged to
    * that phase (the freshly created row is still untagged → never self-counts).
+   *
+   * task-phase-redesign (ticket 06): also returns the matched phase object (its
+   * specDir feeds the seed hook — one lookup, seed + tagging can never drift).
    */
   private resolvePhaseRound(
-    envelope: { phases?: Array<{ index: number; workflowRef: string }> },
+    envelope: { phases?: Array<{ index: number; workflowRef: string; specDir?: string }> },
     firstStep: WorkflowChainItem,
     workspaceId: string,
-  ): { phaseIndex: number; roundIndex: number } {
+  ): {
+    phaseIndex: number
+    roundIndex: number
+    phase?: { index: number; workflowRef: string; specDir?: string }
+  } {
     const iv = (firstStep.input_values ?? {}) as Record<string, unknown>
     const toInt = (v: unknown): number => {
       const n = typeof v === 'string' || typeof v === 'number' ? Number(v) : NaN
@@ -954,7 +1042,7 @@ export class WorkflowExecutor implements Executor {
       || 1
     const roundIndex = toInt(iv._round_index)
       || (this.execDAO.listByWorkspace(workspaceId).filter((e) => e.phase_index === phaseIndex).length + 1)
-    return { phaseIndex, roundIndex }
+    return { phaseIndex, roundIndex, phase: envelope.phases?.find((p) => p.index === phaseIndex) }
   }
 
   /**

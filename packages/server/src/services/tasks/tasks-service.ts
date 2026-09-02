@@ -63,6 +63,8 @@ import type { TaskV4PhaseConfig } from "../scheduler/scheduler-service"
 import { getExecutionService } from "../execution-service-registry"
 import { TaskHomeService } from "./task-home-service"
 import type { ProjectRef } from "./task-home-service"
+// task-phase-redesign (ticket 06): the one-way artifact loop (K9/K10/K16).
+import { seedPhaseToWorkspace, collectFromWorkspace, batchRelPath } from "./task-artifact-sync"
 import { PluginMaterializer } from "./plugin-materializer"
 // 06: re-export so the route's classifyError instanceof check matches throws
 // from TaskHomeService.readArtifactContent without a second class declaration.
@@ -1500,6 +1502,28 @@ export class TasksService {
       throw new TaskStatusConflictError(`任务绑定的 workspace 不可用: ${workspaceId}`)
     }
 
+    // task-phase-redesign (ticket 06, K9/K16): v4 seed 下行 — 开跑前把本 phase
+    // 批次目录 {home}/.scratch/<date>/<slug>/ 物理拷贝进 ws 同构相对位（home 覆盖
+    // ws 同名；同 copyTaskWorkflowsToWs 先例，非致命 — 瞬时 fs 错误不该烧掉
+    // dispatch slot，执行侧缺输入由 wf 自己报错）。每个 round 都 seed ⇒ 运行期
+    // 对 home spec 的编辑在下一 round 生效（K16 冻结策略）。
+    try {
+      const rel = batchRelPath(this.taskHomeService.homePath(taskId), phase.specDir)
+      if (rel) {
+        const seeded = seedPhaseToWorkspace(phase.specDir, registry.wsPath, rel)
+        if (seeded > 0) {
+          console.log(
+            `[TasksService] seeded ${seeded} artifact file(s) into ws ${registry.wsPath}/${rel} (phase ${phaseIdx} round ${roundIdx})`,
+          )
+        }
+      }
+    } catch (err: unknown) {
+      console.error(
+        `[TasksService] phase-round seed failed (non-fatal):`,
+        err instanceof Error ? err.message : String(err),
+      )
+    }
+
     let execution: { id: string }
     try {
       execution = registry.service.create(workspaceId, {
@@ -1557,6 +1581,8 @@ export class TasksService {
           this.finalizePhaseRoundExecution({
             schedExecId, schedWsId, executionId: execution.id,
             scheduleId: envelope.id, workspaceId, triggeredAt, engineFinalStatus,
+            // ticket 06: collect 上行 needs the task + phase to locate the batch dir.
+            taskId, phaseIdx,
           })
         }) as unknown as (finalStatus?: string) => void,
       } as never,
@@ -1594,6 +1620,8 @@ export class TasksService {
     workspaceId: string
     triggeredAt: number
     engineFinalStatus?: string
+    taskId: string
+    phaseIdx: number
   }): void {
     try {
       const FINAL_STATUSES = new Set(["completed", "completed_with_failures", "failed", "cancelled", "rejected"])
@@ -1626,6 +1654,19 @@ export class TasksService {
         event: "schedule_status",
         data: { schedule_id: opts.scheduleId, status: ok ? "done" : "failed" },
       })
+      // task-phase-redesign (ticket 06, K9): v4 collect 上行 — 回收 ws 批次目录中
+      // 执行侧改过/新增的文件回 task home（spec*.md home 权威不回流覆盖；issues/
+      // 报告 ws 权威按 mtime 上行），有回收则 emit task_artifacts_update(taskId)。
+      // 独立 try：collect 失败只降级为「看板产物区晚一帧」，绝不吞掉上面的 slot
+      // 释放，也不能跳过下面的回调清理。
+      try {
+        this.collectPhaseRoundArtifacts(opts.taskId, opts.scheduleId, opts.phaseIdx, opts.workspaceId)
+      } catch (err: unknown) {
+        console.error(
+          `[TasksService] phase-round collect failed (non-fatal):`,
+          err instanceof Error ? err.message : String(err),
+        )
+      }
       // Callback cleanup — non-fatal (the ws registry may be gone; the engine
       // ignores stale callbacks after terminal anyway).
       try {
@@ -1637,6 +1678,39 @@ export class TasksService {
         err instanceof Error ? err.message : String(err),
       )
     }
+  }
+
+  /** ticket 06 collect 上行 (dispatchPhaseRound 路径的终态镜像；首触/claim 路径
+   *  的对应挂在 WorkflowExecutor.handleChainComplete — 两处都以 v4 打标为前提).
+   *  Reads the phase's materialized specDir (票04 信封) from the envelope, mirrors
+   *  `{ws}/{relBatchPath}` back into home and emits TASK_ARTIFACTS_UPDATE_EVENT
+   *  only when something actually flowed (unchanged round ⇒ no SSE noise; the
+   *  seed/collect mtime discipline makes re-collection idempotent). ws registry
+   *  gone (out-of-band deletion) ⇒ nothing to recover — home already holds the
+   *  last collected state (AC4 防丢兜底). */
+  private collectPhaseRoundArtifacts(
+    taskId: string,
+    scheduleId: string,
+    phaseIdx: number,
+    workspaceId: string,
+  ): void {
+    const envRow = this.scheduleDAO.findById(scheduleId)
+    const cfg = parseJSON<{ phases?: TaskV4PhaseConfig[] }>(envRow?.config ?? "", {})
+    const specDir = cfg.phases?.find((p) => p.index === phaseIdx)?.specDir
+    if (!specDir) return
+    const rel = batchRelPath(this.taskHomeService.homePath(taskId), specDir)
+    if (!rel) return
+    const wsPath = getExecutionService(workspaceId)?.wsPath
+    if (!wsPath) return
+    const collected = collectFromWorkspace(path.join(wsPath, rel), specDir)
+    if (collected.length === 0) return
+    console.log(
+      `[TasksService] collected ${collected.length} artifact file(s) from ws back to home (task ${taskId}, phase ${phaseIdx})`,
+    )
+    this.sse.emit("taskpool", {
+      event: TASK_ARTIFACTS_UPDATE_EVENT,
+      data: { task_id: taskId },
+    })
   }
 
   // ── Abort (running → aborted + ws cleanup, v1 G4) ─────────────────
