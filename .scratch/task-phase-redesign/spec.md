@@ -37,7 +37,7 @@
 | K13 | 退场方式 | skill_groups/preset catalog/task 级 goal/ac **停用不物理删**；`task_spec.format:"v4"` flag 三处分叉（gate/物化/UI）；generic/composite 走旧链 | 存量+两条共享链路（assist/composite 吃 goal）零破坏（票 09） |
 | K14 | 验收界面 | 三栏证据面=执行摘要(用时/token/cost)|产物核对(.scratch+issues done/skip)|动作区；预算 1 分钟决策成本 | 撑得过 5 个 phase 的仪式 |
 | K15 | 内置技能组 | matt 技能族拷入 `~/.octopus/agent/built-in/task-author/skills/`（plugin 扫描零代码）；TemplatePicker 去技能组勾选 | 票 06：读 project 领域模型四要素今天全就位 |
-| K16 | 冻结策略 | 不发明锁：编辑只在 home（对话+乐观锁），pending/awaiting_review 可改，running 编辑下一 round seed 生效 | 单向快照下行天然隔离 |
+| K16 | 冻结策略 | 不发明锁：编辑只在 home（对话+乐观锁），pending/awaiting_review 可改，running 编辑下一 round seed 生效。**信封冻结边界（cycle-2 调和）**：入队物化的信封是 dispatch/seed/collect 权威读源——running 中生效=home 批次目录文件内容（目录级 seed 自然带 spec-rN）+ autoAdvance/goal/ac（acceptance 活读）；不生效=phases[] 结构/绑定（改 pending phase 的 workflowRef/inputValues 不执行、新增 phase 到 advance 才 409）；format/phases 有创建锁（剥离→400/409 不可 brick）。信封 resync=v4.1 | 单向快照下行天然隔离 |
 | K17 | 安全补齐 | path guard 补 Bash 重定向拦截（草稿会话写锁覆盖所有写通道） | 票 06 发现的写锁缺口 |
 
 ## Execution Decisions

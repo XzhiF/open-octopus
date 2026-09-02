@@ -824,4 +824,26 @@ describe("review M2 — K16 v4 spec edit window (running editable, terminal froz
     })
     expect(res.status).toBe(409)
   })
+
+  it("cycle-2 belt: whole-spec PUT cannot strip or empty the v4 discriminant/ledger", async () => {
+    const { taskId } = seedAwaitingReview()
+    // Omitted format/phases → merge-preserved (the PUT's legit edit path).
+    const om = await app.request(`/api/tasks/${taskId}`, {
+      method: "PUT",
+      headers: { "content-type": "application/json", "If-Match": "1" },
+      body: JSON.stringify({ task_spec: { goal: "g2", ac: ["a"] } }),
+    })
+    expect(om.status, await om.clone().text()).toBe(200)
+    const row = db.prepare("SELECT task_spec FROM tasks WHERE id = ?").get(taskId) as { task_spec: string }
+    const specNow = JSON.parse(row.task_spec) as { format?: string; phases?: unknown[] }
+    expect(specNow.format).toBe("v4")
+    expect(specNow.phases).toHaveLength(2)
+    // Explicitly emptying phases → 400 (taskPhaseSchema min(1)).
+    const empty = await app.request(`/api/tasks/${taskId}`, {
+      method: "PUT",
+      headers: { "content-type": "application/json", "If-Match": "2" },
+      body: JSON.stringify({ task_spec: { format: "v4", phases: [] } }),
+    })
+    expect(empty.status).toBe(400)
+  })
 })

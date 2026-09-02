@@ -839,6 +839,27 @@ export class TasksService {
           parsed.skill_groups =
             ((existingSpec as Record<string, unknown>).skill_groups as string[] | undefined) ?? []
         }
+        // K16/M2 belt (cycle-2 review ①): for a v4 task, `format` and the
+        // phase ledger are LOCKED like task_type/skill_groups. The K16 edit
+        // window lets a whole-spec PUT land mid-life; stripping format would
+        // silently drop the task back into v3 mirror semantics, and emptying
+        // phases bricks the card forever (derive can never yield
+        // awaiting_review without a phase ledger). Absent → merge-preserve;
+        // present-but-different format → 409. (phases:[] already 400s via
+        // taskPhaseSchema min(1).)
+        if (isV4TaskSpec(existing.task_spec)) {
+          if ("format" in rawSpec && rawSpec.format !== "v4") {
+            throw new TaskLockViolationError(
+              "a v4 task cannot change task_spec.format (K13 fork discriminator is creation-locked)",
+            )
+          }
+          if (!("format" in rawSpec)) {
+            parsed.format = "v4"
+          }
+          if (!("phases" in rawSpec)) {
+            parsed.phases = (existingSpec as Record<string, unknown>).phases as TaskSpec["phases"]
+          }
+        }
         fields.task_spec = JSON.stringify(parsed)
       } else {
         // Non-object task_spec (null / wrong type) → let Zod reject it as 400.

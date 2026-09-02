@@ -127,7 +127,7 @@ curl -s "http://localhost:3001/api/tasks?status=draft" | jq '.items[-1] | {id, n
 \`\`\`bash
 curl -s -X POST "http://localhost:3001/api/tasks" \\
   -H "Content-Type: application/json" \\
-  -d '{ "name": "task-name", "source_chat_session_id": "<当前会话 id>", "task_type": "coding", "task_spec": { "format": "v4", "goal": "...", "ac": ["..."], "phases": [] } }' | jq .
+  -d '{ "name": "task-name", "source_chat_session_id": "<当前会话 id>", "task_type": "coding", "task_spec": { "format": "v4", "goal": "...", "ac": ["..."] } }' | jq .
 \`\`\`
 
 ### 第二步：逐字段绑定（对话中立即执行）

@@ -146,3 +146,30 @@ inputs:
     expect(defs).toEqual([{ name: "option", required: false }])
   })
 })
+
+// Cycle-2 review ⑦ regression pin: the widened [\w.]+ name regex admits
+// prototype-chain keys (${constructor}/${toString}/...). Lookup must use
+// Object.hasOwn — an inherited function is truthy and would otherwise be
+// substituted as "[function]" instead of surfacing via `unresolved`.
+describe("resolveInputValues — prototype-key safety", () => {
+  it("${constructor} is unresolved (never substituted via prototype chain)", () => {
+    const { values, unresolved } = resolveInputValues(
+      { a: "${constructor}", b: "x${toString}y", c: "${hasOwnProperty}" },
+      "goal",
+      ["ac"],
+    )
+    expect(unresolved.sort()).toEqual(["a", "b", "c"])
+    expect(values.a).toBe("")
+    expect(values.b).toBe("xy")
+    expect(values.c).toBe("")
+  })
+  it("real placeholders still resolve alongside a prototype key in the same value", () => {
+    const { values, unresolved } = resolveInputValues(
+      { mix: "${goal}|${constructor}" },
+      "G",
+      [],
+    )
+    expect(values.mix).toBe("G|")
+    expect(unresolved).toEqual(["mix"])
+  })
+})
