@@ -192,6 +192,29 @@ function isCompositeTaskSpec(task_spec: TaskSpec): boolean {
 // $vars.task_workflows_dir for simple tasks (mirroring task_artifacts_dir).
 // WorkflowExecutor reads this post-createFromSpec to copy agent-authored
 // workflow YAMLs from the task home into the execution ws workflows/.
+//
+// task-phase-redesign (ticket 04, K5/K13): v4Phases is the ready-gate's
+// per-phase resolution result (tasks-service.gateV4Phases — spec files exist,
+// workflow_refs resolvable, required inputs satisfied). When present the
+// envelope gains `format:'v4'` + `phases:[...]` (consumed by ticket 05's
+// dispatchPhaseRound) and workflow_chain[0] is PRE-LOADED with phase 1, so the
+// unchanged trigger→claim→execute path runs the first phase. One task, one
+// schedule envelope (K5) — later phases are new executions under it, not new
+// schedules. `phases`/`format` are intentional unknown keys for
+// workflowConfigSchema (stripped on a strict re-parse, NOT rejected — same
+// survival mechanism as the `skills` key below: the persisted JSON carries them).
+/** One v4 phase fully resolved at the ready gate (absolute specPath verified
+ *  against the task home; inputValues placeholder-resolved — management keys
+ *  appended here by materializeTaskSpecToConfig). */
+export interface TaskV4PhaseConfig {
+  index: number
+  name: string
+  slug: string
+  specPath: string
+  specDir: string
+  workflowRef: string
+  inputValues: Record<string, string>
+}
 export function materializeTaskSpecToConfig(
   task_spec: TaskSpec,
   project_ids: string[],
@@ -201,6 +224,7 @@ export function materializeTaskSpecToConfig(
   resources?: ResourceRef[],
   taskArtifactsDir?: string,
   taskWorkflowsDir?: string,
+  v4Phases?: TaskV4PhaseConfig[],
 ): WorkflowConfig {
   const isComposite = isCompositeTaskSpec(task_spec)
   const projects = project_ids.map((id) => ({ name: id, source_path: '', group: '' }))
@@ -288,6 +312,31 @@ export function materializeTaskSpecToConfig(
   const requires = buildConfigRequires(task_spec, resources)
   if (requires) {
     config.requires = requires
+  }
+  // task-phase-redesign (ticket 04): v4 envelope overlay. The gate resolved
+  // every phase (spec exists / ref resolvable / required inputs non-empty);
+  // here we append the management keys per-phase (same priority rule as the
+  // simple path: user keys first, management keys last) and mirror phase 1
+  // into workflow_chain[0] so the existing trigger path runs it unchanged.
+  if (v4Phases && v4Phases.length > 0) {
+    const envelopePhases = v4Phases.map((p) => ({
+      ...p,
+      inputValues: {
+        ...p.inputValues,
+        ...(taskArtifactsDir ? { task_artifacts_dir: taskArtifactsDir } : {}),
+        ...(taskWorkflowsDir ? { task_workflows_dir: taskWorkflowsDir } : {}),
+      },
+    }))
+    const ext = config as WorkflowConfig & {
+      format?: string
+      phases?: typeof envelopePhases
+    }
+    ext.format = 'v4'
+    ext.phases = envelopePhases
+    config.workflow_chain = [{
+      workflow_ref: envelopePhases[0].workflowRef,
+      input_values: envelopePhases[0].inputValues as unknown as Record<string, string>,
+    }]
   }
   return config
 }

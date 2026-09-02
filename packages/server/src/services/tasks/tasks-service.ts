@@ -23,6 +23,8 @@
 // SG8) — separate concern, not here.
 
 import { randomUUID } from "crypto"
+import fs from "fs"
+import path from "path"
 import type Database from "better-sqlite3"
 import {
   type TaskSpec,
@@ -50,6 +52,7 @@ import {
 import type { TaskRow, ScheduleRow, ScheduleExecutionRow } from "../../db/types"
 import type { SSEService } from "../sse"
 import { materializeTaskSpecToConfig } from "../scheduler/scheduler-service"
+import type { TaskV4PhaseConfig } from "../scheduler/scheduler-service"
 import { TaskHomeService } from "./task-home-service"
 import type { ProjectRef } from "./task-home-service"
 import { PluginMaterializer } from "./plugin-materializer"
@@ -976,6 +979,88 @@ export class TasksService {
 
   // ── Dispatch seam (ready → schedules envelope) ───────────────────
 
+  /** task-phase-redesign (ticket 04, K13): the v4 ready-gate over the phase
+   *  contract. For each phase (1-based index `i`, array order):
+   *    ① specPath file EXISTS — relative paths resolve under the task home
+   *       (ADR-0011: home is the spec authority), absolute paths verbatim
+   *       ⇒ miss: `phase:<i>:spec-missing`
+   *    ② workflow_ref resolves against the SAME resolution set as v3
+   *       (installed built-ins ∪ task-home workflows/, ADR-0013)
+   *       ⇒ miss: `phase:<i>:workflow-ref`
+   *    ③ the resolved workflow's required inputs are non-empty AFTER the v4
+   *       placeholder vocabulary resolves (${goal}/${ac}/${phase.slug}/
+   *       ${phase.spec_dir}/${task.home}/${task_artifacts_dir}); unknown or
+   *       empty-resolving placeholders surface as `phase:<i>:input:<key>`
+   *       too (never a 500 — v3 AC3 discipline inherited).
+   *  Checks ① and ② run independently so the UI sees every defect at once;
+   *  ③ only runs when ② hit (no workflow content to parse otherwise). A phase
+   *  that passes all checks yields a {@link TaskV4PhaseConfig} for the
+   *  materializer envelope. Empty/missing phases ⇒ single `phase:0:no-phases`.
+   *  Returns the deduped missing list + resolved phases (throws nothing —
+   *  readyTask turns a non-empty missing list into TaskReadyGateError). */
+  private gateV4Phases(
+    taskId: string,
+    taskSpec: TaskSpec,
+  ): { missing: string[]; phases: TaskV4PhaseConfig[] } {
+    const missing: string[] = []
+    const phases = taskSpec.phases ?? []
+    if (phases.length < 1) {
+      return { missing: ["phase:0:no-phases"], phases: [] }
+    }
+    const homeDir = this.taskHomeService.homePath(taskId)
+    const taskArtifactsDir = this.taskHomeService.artifactsDir(taskId)
+    const resolved: TaskV4PhaseConfig[] = []
+    phases.forEach((p, idx) => {
+      const i = idx + 1
+      // ① spec file exists (relative ⇒ under the task home)
+      const absSpec = path.isAbsolute(p.specPath) ? p.specPath : path.join(homeDir, p.specPath)
+      const specOk = fs.existsSync(absSpec) && fs.statSync(absSpec).isFile()
+      if (!specOk) missing.push(`phase:${i}:spec-missing`)
+      // ② workflow_ref resolvable (single resolve serves ③'s content too —
+      // same pattern as the v3 gate's review fix 2026-08-27)
+      const ref = (p.workflowRef ?? "").trim()
+      const resolution = ref ? resolveWorkflowRef(ref, this.resolverDeps(taskId)) : null
+      if (!resolution) {
+        missing.push(`phase:${i}:workflow-ref`)
+        return
+      }
+      // ③ required inputs non-empty after v4 placeholder resolution
+      const inputDefs = parseWorkflowInputDefs(resolution.content)
+      const { values, unresolved } = resolveInputValues(
+        p.inputValues,
+        taskSpec.goal,
+        taskSpec.ac,
+        {
+          phaseSlug: p.slug,
+          phaseSpecDir: path.dirname(absSpec),
+          taskHome: homeDir,
+          taskArtifactsDir,
+        },
+      )
+      for (const key of unresolved) missing.push(`phase:${i}:input:${key}`)
+      for (const def of inputDefs) {
+        if (def.required && !values[def.name]?.trim()) {
+          missing.push(`phase:${i}:input:${def.name}`)
+        }
+      }
+      if (specOk) {
+        resolved.push({
+          index: i,
+          name: p.name,
+          slug: p.slug,
+          specPath: absSpec,
+          specDir: path.dirname(absSpec),
+          workflowRef: ref,
+          inputValues: values,
+        })
+      }
+    })
+    // Dedupe — an unresolved placeholder on a required input can hit both the
+    // `input:<key>` (unresolved) and `input:<name>` (empty-required) paths
+    // (mirrors the v3 branch).
+    return { missing: Array.from(new Set(missing)), phases: resolved }
+  }
+
   /** POST /api/tasks/:id/ready — draft→ready + dispatch seam. Creates the
    *  schedules envelope (simple=1 primary; composite=1 coordinator). The
    *  task_spec is materialized into the schedule's config via the exported
@@ -995,15 +1080,33 @@ export class TasksService {
       ac: [],
     } as unknown as TaskSpec)
 
-    // 05 (D18, US6): confirmation gate. A v3 task (one that went through the
-    // two-phase flow → task_type set) may NOT be enqueued until its intent is
-    // fully confirmed: goal non-empty ∧ ac≥1 ∧ goal_confirmed===true ∧ every ac
-    // item listed in ac_confirmed. UI temp state is lost on modal close, so the
-    // gate must be server-side. Legacy/v2 tasks (no task_type) predate the
-    // confirmation flow and keep the existing no-gate behavior — this preserves
-    // the v2 ready cases in tasks-routes.test.ts. On failure, return the
-    // missing-items list so the UI shows exactly what to confirm (409 + JSON).
-    if (taskSpec.task_type !== undefined) {
+    // task-phase-redesign (ticket 04, K13): format-branched gate. A v4 spec
+    // (format === "v4") checks the PHASE contract instead of the v3
+    // goal/ac/confirmations flow: phases≥1 ∧ per-phase spec file exists (under
+    // the task home) ∧ per-phase workflow_ref resolves against the same
+    // resolution set as v3 (ADR-0013) ∧ required inputs non-empty after the v4
+    // placeholder vocabulary resolves. Missing keys carry the `phase:<i>:<why>`
+    // format so the UI can point at the offending phase. The v3/legacy branch
+    // below is untouched (AC2 — tasks-v3-gates.test.ts passes unmodified).
+    let v4Phases: TaskV4PhaseConfig[] | undefined
+    if (taskSpec.format === "v4") {
+      const { missing, phases } = this.gateV4Phases(id, taskSpec)
+      if (missing.length > 0) {
+        throw new TaskReadyGateError(
+          `Task not ready: missing ${missing.join(", ")}`,
+          missing,
+        )
+      }
+      v4Phases = phases
+    } else if (taskSpec.task_type !== undefined) {
+      // 05 (D18, US6): confirmation gate. A v3 task (one that went through the
+      // two-phase flow → task_type set) may NOT be enqueued until its intent is
+      // fully confirmed: goal non-empty ∧ ac≥1 ∧ goal_confirmed===true ∧ every ac
+      // item listed in ac_confirmed. UI temp state is lost on modal close, so the
+      // gate must be server-side. Legacy/v2 tasks (no task_type) predate the
+      // confirmation flow and keep the existing no-gate behavior — this preserves
+      // the v2 ready cases in tasks-routes.test.ts. On failure, return the
+      // missing-items list so the UI shows exactly what to confirm (409 + JSON).
       const missing: string[] = []
       if (!taskSpec.goal || !taskSpec.goal.trim()) missing.push("goal")
       if (!taskSpec.ac || taskSpec.ac.length < 1) missing.push("ac")
@@ -1091,7 +1194,9 @@ export class TasksService {
     // task-workflow-handoff (ADR-0013): same pattern for task_workflows_dir —
     // the WorkflowExecutor uses it post-createFromSpec to copy agent-authored
     // workflow YAMLs from {home}/workflows/ into the execution ws workflows/.
-    const isV3 = taskSpec.task_type !== undefined
+    // v4 tasks carry a home too (the gate resolves phase spec files against it),
+    // so the management-key injection applies to both branches.
+    const isV3 = taskSpec.task_type !== undefined || taskSpec.format === "v4"
     const taskArtifactsDir = isV3 ? this.taskHomeService.artifactsDir(id) : undefined
     const taskWorkflowsDir = isV3 ? this.taskHomeService.workflowsDir(id) : undefined
     const config = materializeTaskSpecToConfig(
@@ -1103,6 +1208,9 @@ export class TasksService {
       resources,
       taskArtifactsDir,
       taskWorkflowsDir,
+      // ticket 04: v4 only — per-phase gate resolution embedded into the
+      // envelope config (undefined ⇒ the v3/generic path is byte-identical).
+      v4Phases,
     )
     const configJson = JSON.stringify(config)
     const now = new Date().toISOString()
