@@ -31,6 +31,7 @@
 
 import fs from "fs"
 import path from "path"
+import { PHASE_STATUS_UPDATE_EVENT } from "@octopus/shared"
 
 /** Batch dir basename classes with a SINGLE upstream rule — spec*.md is the
  *  draft-side (home) authority; everything else in the batch dir is execution-
@@ -47,6 +48,57 @@ export function batchRelPath(homeDir: string, specDir: string): string | null {
   const rel = path.relative(homeDir, specDir)
   if (!rel || rel.startsWith("..") || path.isAbsolute(rel)) return null
   return rel
+}
+
+/** task_spec.format === "v4" — cheap hot-path discriminator (no schema import).
+ *  Shared by the SG2 status listener (K3 mirror skip) and the edit-window
+ *  guards (K16). Invalid/empty JSON → false (v3 semantics preserved). */
+export function isV4TaskSpec(taskSpecJson: string | null | undefined): boolean {
+  if (!taskSpecJson) return false
+  try {
+    return (JSON.parse(taskSpecJson) as { format?: string }).format === "v4"
+  } catch {
+    return false
+  }
+}
+
+/** Envelope (票 04 materialize) → the phase's absolute home specDir. One parse
+ *  shape shared by BOTH terminal mounts (WorkflowExecutor.handleChainComplete
+ *  + TasksService.finalizePhaseRoundExecution) — review ④: the inline
+ *  `JSON.parse(config).phases?.find(p => p.index === …)?.specDir` was duplicated
+ *  across the two files with independently re-declared envelope types.
+ *  Returns undefined on any shape mismatch (v3/generic/composite rows). */
+export function resolvePhaseSpecDir(configJson: string, phaseIndex: number): string | undefined {
+  if (!configJson) return undefined
+  try {
+    const cfg = JSON.parse(configJson) as { phases?: Array<{ index?: number; specDir?: string }> }
+    return cfg.phases?.find((p) => p.index === phaseIndex)?.specDir
+  } catch {
+    return undefined
+  }
+}
+
+/** P3 (review round-terminal SSE): a v4 tagged execution reaching terminal
+ *  means "a round awaits its human decision" — emit phase_status_update
+ *  {status:'awaiting_review'} so the board moves the card to 待验收 without
+ *  waiting for the 10s poll. Emitted INDEPENDENT of collect results (the
+ *  transition is about the execution, not file flow). Emitted at both terminal
+ *  mounts; acceptance/advance (票 07) owns every other transition. */
+export function emitPhaseAwaitingReview(
+  emit: (channel: "taskpool", payload: unknown) => void,
+  taskId: string,
+  phaseIndex: number,
+  roundIndex: number,
+): void {
+  emit("taskpool", {
+    event: PHASE_STATUS_UPDATE_EVENT,
+    data: {
+      task_id: taskId,
+      phase_index: phaseIndex,
+      status: "awaiting_review" as const,
+      round_index: roundIndex,
+    },
+  })
 }
 
 /** seed 下行: recursively copy `homeAbsSpecDir` into

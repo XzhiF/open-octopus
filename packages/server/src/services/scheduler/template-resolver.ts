@@ -106,7 +106,10 @@ export function resolveInputValues(
   for (const [key, value] of Object.entries(inputValues)) {
     let hadUnknown = false
     values[key] = value.replace(placeholderRegex, (match, name: string) => {
-      if (name in map) {
+      // Object.hasOwn, not `in`: the [\w.]+ regex admits `${constructor}` /
+      // `${toString}` etc.; a prototype-chain hit via `in` would substitute
+      // an inherited function (truthy) instead of marking it unresolved.
+      if (Object.hasOwn(map, name)) {
         const replaced = map[name]
         if (!replaced) hadUnknown = true // placeholder present but WHAT empty
         return replaced

@@ -25,7 +25,7 @@
 | K1 | Phase 本体 | 1 phase = 1 spec（范围+票+验收方式）+ 1 workflow_ref + ≥1 round；phase↔slug 恒 1:1 | 业务里程碑命名权给人，比 DAG 拓扑分层可解释 |
 | K2 | 拆分预算 | 每 phase 以「可交付产品状态」收尾，coding agent 1h（含 E2E ≤1.5h）；3~5 人天需求≈4~5 phase | 预算=拆分期约束；运行期超预算仅 advisory 徽标（D18） |
 | K3 | 状态模型 | task `draft→ready→running⇄awaiting_review→archiving→done`(+aborted)，**无 task 级 failed**；失败归 round 层；task 状态只镜像人的决定 | 成功/失败后人的动作同质（看→放行/重试/中止）；派生不存=无镜像竞态（#54 病根） |
-| K4 | 数据最小面 | Phase 定义进 `task_spec.phases[]`（JSON）；Round=executions 行+`phase_index/round_index` 列；唯一新表 `task_phase_acceptances`；tasks 加 `workspace_id` | 复用 spec-field/SSE/乐观锁/快照四套现成链路（票 06 证实 agent 按快照协议读） |
+| K4 | 数据最小面 | Phase 定义进 `task_spec.phases[]`（JSON；wire 字段 camelCase：specPath/workflowRef/inputValues——与 SDK 属性命名对齐，task_spec 遗留 snake 字段不改名、两代并存有界，review ③ 调和记录）；Round=executions 行+`phase_index/round_index` 列；唯一新表 `task_phase_acceptances`；tasks 加 `workspace_id` | 复用 spec-field/SSE/乐观锁/快照四套现成链路（票 06 证实 agent 按快照协议读） |
 | K5 | 调度 | 一 task 一 schedule 信封；每 round=信封下新 execution；现有 active 唯一索引天然强制串行 | 零额外并发代码 |
 | K6 | 流转驱动 | 首 phase 人工触发；验收通过→下一 phase 自动开跑（`auto_advance` 默认开）；重试永远人工发起；末验收→archiving→done | 验收即授权；人工点击=天然防无限循环（Round 无上限，D13④） |
 | K7 | 打回模型 | 人只写反馈→agent 判严重度推荐「通用修复流」或「round-2 spec」→人一键确认；反馈产物化为 `fix-feedback-rN.md` | 判断归 agent、开跑授权归人 |
@@ -154,7 +154,7 @@ admin 账号；task fixture 用 `E2E_TEST_` 前缀标题；fs 断言全部落 tm
 ### Prerequisites
 - [ ] pnpm build 全绿（vitest.workspace.ts 各 project 可跑）
 - [ ] 测试环境 git fixture 脚本（`e2e/helpers/` 新增 make-bare-repo）
-- [ ] `OCTOPUS_PHASE_BUDGET_MS` env 读取实现
+- [x] 预算阈值 env：落地名为 web 侧 `NEXT_PUBLIC_PHASE_BUDGET_MS`（编译期注入，票 11 e2e 已用 1s 验证 ⏳ 徽标；server 侧 `OCTOPUS_PHASE_BUDGET_MS` 不发明——判定是展示逻辑，归 web。review 后 spec 调和）
 
 ## Risks & Notes
 

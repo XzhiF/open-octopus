@@ -37,7 +37,9 @@ import { SSEService } from "../services/sse"
 import { TasksService } from "../services/tasks/tasks-service"
 import { TaskHomeService } from "../services/tasks/task-home-service"
 import { createTasksRoutes } from "../routes/tasks"
-import { PHASE_STATUS_UPDATE_EVENT } from "@octopus/shared"
+import { PHASE_STATUS_UPDATE_EVENT, TASK_STATUS_EVENT } from "@octopus/shared"
+import { TaskScheduleStatusListener } from "../services/scheduler/schedule-status-listener"
+import { TaskDAO, ScheduleConfigDAO } from "../db/dao"
 
 const ORG = "e2e-ac"
 const BATCH_DATE = "20260903"
@@ -704,5 +706,122 @@ describe("AC2 — autoAdvance=false parks at the human gate", () => {
     expect(taskRow(db, taskId).status).toBe("ready")
     // 只发 accepted 一帧（没有派发就不发 running）。
     expect(sseOf(PHASE_STATUS_UPDATE_EVENT)).toHaveLength(1)
+  })
+})
+
+// ── Phase 2 review fixes ─────────────────────────────────────────────
+// C1: the SG2 listener's done/failed mirror bypasses the phase-level gate —
+//     for v4 it must NOT fire (K3: task status mirrors human decisions only).
+// P3: a tagged round reaching terminal fires phase_status_update
+//     {status:'awaiting_review'} on BOTH finalize paths (dispatch + claim).
+// M2: K16 edit window — a v4 spec stays editable until done/archiving/aborted.
+
+describe("review C1 — listener skips done/failed mirror for v4", () => {
+  const mkListener = () =>
+    new TaskScheduleStatusListener(new TaskDAO(db), new ScheduleConfigDAO(db), sse)
+
+  it("v4: schedule done leaves persisted 'running' and acceptance stays reachable", async () => {
+    const { taskId, scheduleId } = seedAwaitingReview()
+    mkListener().onScheduleTransition({
+      schedule_id: scheduleId, origin_type: "task", origin_id: taskId, status: "done",
+    })
+    expect(taskRow(db, taskId).status).toBe("running")
+    expect(sseOf(TASK_STATUS_EVENT).filter((e) => e.data.status === "done")).toHaveLength(0)
+    // The card must still be acceptable (gate is derive-based, persistence
+    // never went terminal → board 待验收 column holds it).
+    const res = await postAcceptance(taskId, { phase_index: 1, round_index: 1, decision: "accepted" })
+    expect(res.status, await res.clone().text()).toBe(200)
+  })
+
+  it("v4: schedule failed likewise does not mirror (US8 — failure awaits a human, not a red state)", () => {
+    const { taskId, scheduleId } = seedAwaitingReview()
+    mkListener().onScheduleTransition({
+      schedule_id: scheduleId, origin_type: "task", origin_id: taskId, status: "failed", error_summary: "boom",
+    })
+    expect(taskRow(db, taskId).status).toBe("running")
+  })
+
+  it("v4: aborted IS mirrored (a human decision, K3)", () => {
+    const { taskId, scheduleId } = seedAwaitingReview()
+    mkListener().onScheduleTransition({
+      schedule_id: scheduleId, origin_type: "task", origin_id: taskId, status: "aborted",
+    })
+    expect(taskRow(db, taskId).status).toBe("aborted")
+  })
+
+  it("v3 regression: done mirror byte-identical (K13)", () => {
+    const now = new Date().toISOString()
+    db.prepare(`
+      INSERT INTO tasks (id, org, name, status, source_chat_session_id, task_spec,
+        authoring_resources, resources, skills, project_ids, workflow_ref, version,
+        deleted_at, created_at, updated_at, completed_at, workspace_id)
+      VALUES (?, ?, 'E2E_AC v3-mirror', 'running', NULL, ?, '[]', '[]', '[]', '[]', NULL, 1, NULL, ?, ?, NULL, NULL)
+    `).run("e2e-ac-v3-mirror", ORG, JSON.stringify({ goal: "g", ac: ["a"] }), now, now)
+    mkListener().onScheduleTransition({
+      schedule_id: "e2e-ac-v3-sched", origin_type: "task", origin_id: "e2e-ac-v3-mirror", status: "done",
+    })
+    expect(taskRow(db, "e2e-ac-v3-mirror").status).toBe("done")
+  })
+})
+
+describe("review P3 — dispatched round terminal fires awaiting_review", () => {
+  it("rejected → round 2 dispatches → round completes → awaiting_review frame (1,2)", async () => {
+    const { taskId } = seedAwaitingReview()
+    const res = await postAcceptance(taskId, { phase_index: 1, round_index: 1, decision: "rejected", feedback: "x" })
+    const dispatch = ((await res.json()) as { dispatch: { execution_id: string } }).dispatch
+    completeDispatchedRound(dispatch.execution_id, "completed")
+    const frames = sseOf(PHASE_STATUS_UPDATE_EVENT)
+    expect(frames.some((f) => (f.data as { status?: string }).status === "awaiting_review"
+      && (f.data as { phase_index?: number }).phase_index === 1
+      && (f.data as { round_index?: number }).round_index === 2)).toBe(true)
+  })
+
+  it("failed round also fires awaiting_review (terminal ≠ success)", async () => {
+    const { taskId } = seedAwaitingReview()
+    const res = await postAcceptance(taskId, { phase_index: 1, round_index: 1, decision: "rejected", feedback: "x" })
+    const dispatch = ((await res.json()) as { dispatch: { execution_id: string } }).dispatch
+    completeDispatchedRound(dispatch.execution_id, "failed")
+    const frames = sseOf(PHASE_STATUS_UPDATE_EVENT)
+    expect(frames.some((f) => (f.data as { status?: string }).status === "awaiting_review")).toBe(true)
+  })
+})
+
+describe("review M2 — K16 v4 spec edit window (running editable, terminal frozen)", () => {
+  const putPhases = (taskId: string) =>
+    app.request(`/api/tasks/${taskId}/spec-field`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ field: "phases", value: [
+        { index: 1, name: "P1", slug: "p1", specPath: `./.scratch/${BATCH_DATE}/p1/spec.md`, workflowRef: "built-in/flow-p1", inputValues: {} },
+        { index: 2, name: "P2", slug: "p2", specPath: `./.scratch/${BATCH_DATE}/p2/spec.md`, workflowRef: "built-in/flow-p2", inputValues: {} },
+      ] }),
+    })
+
+  it("v4 running (mid-review): phases PUT accepted, version bumps", async () => {
+    const { taskId } = seedAwaitingReview()
+    const res = await putPhases(taskId)
+    expect(res.status, await res.clone().text()).toBe(200)
+    expect(((await res.json()) as { version: number }).version).toBe(2)
+  })
+
+  it("v4 done: frozen (409)", async () => {
+    const { taskId } = seedAwaitingReview({ status: "done" })
+    expect((await putPhases(taskId)).status).toBe(409)
+  })
+
+  it("v3 running: still frozen (K13 byte-stable)", async () => {
+    const now = new Date().toISOString()
+    db.prepare(`
+      INSERT INTO tasks (id, org, name, status, source_chat_session_id, task_spec,
+        authoring_resources, resources, skills, project_ids, workflow_ref, version,
+        deleted_at, created_at, updated_at, completed_at, workspace_id)
+      VALUES (?, ?, 'E2E_AC v3-edit', 'running', NULL, ?, '[]', '[]', '[]', '[]', NULL, 1, NULL, ?, ?, NULL, NULL)
+    `).run("e2e-ac-v3-edit", ORG, JSON.stringify({ goal: "g", ac: ["a"] }), now, now)
+    const res = await app.request(`/api/tasks/e2e-ac-v3-edit/spec-field`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ field: "goal", value: "new" }),
+    })
+    expect(res.status).toBe(409)
   })
 })

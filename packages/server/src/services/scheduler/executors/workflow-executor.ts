@@ -12,7 +12,7 @@ import { TASK_ARTIFACTS_UPDATE_EVENT } from "@octopus/shared"
 import type { Executor, ExecutionResult } from './executor-interface'
 import { ScheduleConfigDAO, ScheduleRunDAO, ExecutionDAO, TaskDAO } from '../../../db/dao'
 import { TaskHomeService } from '../../tasks/task-home-service'
-import { seedPhaseToWorkspace, collectFromWorkspace, batchRelPath } from '../../tasks/task-artifact-sync'
+import { seedPhaseToWorkspace, collectFromWorkspace, batchRelPath, resolvePhaseSpecDir, emitPhaseAwaitingReview } from '../../tasks/task-artifact-sync'
 // Ticket 08 (ADR-0009): the orchestration-strategy seam owns the composition
 // workflow ref + the composite threshold as the single source of truth. The
 // executor's isCompositeTask below is the POST-materialization config-shape
@@ -783,10 +783,16 @@ export class WorkflowExecutor implements Executor {
       if (schedule.origin_type !== 'task' || !schedule.origin_id) return
       const exec = this.execDAO.findById(executionId)
       if (!exec || exec.phase_index == null) return
-      const config = JSON.parse(schedule.config) as {
-        phases?: Array<{ index: number; specDir?: string }>
-      }
-      const specDir = config.phases?.find((p) => p.index === exec.phase_index)?.specDir
+      // P3 (review): terminal = the round awaits its human decision — emit
+      // regardless of whether collect moves any file (K3: the board's 待验收
+      // column is driven by human-decision state, not file flow).
+      emitPhaseAwaitingReview(
+        (c, p) => this.sse.emit(c, p),
+        schedule.origin_id,
+        exec.phase_index,
+        exec.round_index ?? 1,
+      )
+      const specDir = resolvePhaseSpecDir(schedule.config, exec.phase_index)
       if (!specDir) return
       const homeDir = new TaskHomeService().homePath(schedule.origin_id)
       const rel = batchRelPath(homeDir, specDir)

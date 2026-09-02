@@ -54,18 +54,8 @@ import { getServerUrl } from "@/lib/server-config"
 import { ArtifactViewerDialog } from "./authoring/artifact-viewer-dialog"
 import { TaskAiUsageCard } from "./execution-summary"
 
-// ── 归档重试（票 08 端点的薄客户端）──────────────────────────────────
-// lib/tasks-api.ts 不在票 12 可改清单（票 11 交付面），archive/retry 无既成
-// 导出 → 就近实现，错误语义与 postAcceptance 同款（TaskApiError 带 status）。
-
-export async function postArchiveRetry(taskId: string): Promise<{ ok: boolean; task_id: string; status: string }> {
-  const res = await fetch(`${getServerUrl()}/api/tasks/${taskId}/archive/retry`, { method: "POST" })
-  if (!res.ok) {
-    const body = (await res.json().catch(() => ({}))) as { error?: string }
-    throw new TaskApiError(body.error ?? `HTTP ${res.status}`, res.status)
-  }
-  return res.json()
-}
+// 归档重试客户端 postArchiveRetry 位于 lib/tasks-api.ts（review ①: API 层惯例
+// — 全部 client endpoint 住 tasks-api 单源；page.tsx 的「重试归档」按钮直连）。
 
 // ── Props ────────────────────────────────────────────────────────────
 

@@ -32,6 +32,7 @@ import {
   type ScheduleStatus,
   type OriginType,
 } from "@octopus/shared"
+import { isV4TaskSpec } from "../tasks/task-artifact-sync"
 
 /** Schedule status → task status. `draft` is not mirrored (pre-dispatch). */
 const SCHEDULE_TO_TASK_STATUS: Partial<Record<ScheduleStatus, TaskStatus>> = {
@@ -77,6 +78,21 @@ export class TaskScheduleStatusListener implements ScheduleStatusListener {
     // throw — a stale schedule transition must not crash the engine tick.
     const task = this.taskDAO.getById(args.origin_id)
     if (!task) return
+
+    // K3 (task-phase-redesign): a v4 task's status mirrors ONLY human
+    // decisions. A round reaching terminal is NOT a human decision — it is
+    // the acceptance gate opening (phase=awaiting_review, derived via
+    // deriveTaskView). Mirroring done/failed here would persist a task-level
+    // terminal state, make derive's done-outrank win, and park the card in
+    // 完成 — the user could never reach acceptance (review C1). The persisted
+    // row stays 'running' until acceptance writes ready/archiving or a human
+    // aborts ('aborted' stays mirrored: it IS a human decision).
+    if (
+      (args.status === "done" || args.status === "failed") &&
+      isV4TaskSpec(task.task_spec)
+    ) {
+      return
+    }
 
     // Idempotent fast-path: if the task is already in the target status, skip
     // the UPDATE + SSE emit (avoids a spurious SSE flood on re-mirrors, e.g.

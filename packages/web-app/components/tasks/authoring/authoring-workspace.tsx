@@ -30,6 +30,9 @@ import { Spinner } from "@/components/ui/spinner"
 import { Send, Settings2, Lock, Brain } from "lucide-react"
 import { toast } from "sonner"
 import type { Task } from "@octopus/shared"
+import { SPEC_FIELD_UPDATE_EVENT } from "@octopus/shared"
+import { subscribeSSE } from "@/lib/sse-manager"
+import { getServerUrl } from "@/lib/server-config"
 import { listSkillGroups, type SkillGroup } from "@/lib/skill-groups-api"
 import { readyTask, updateTask, getTask, TaskReadyGateError, triggerAssistWorkflow } from "@/lib/tasks-api"
 import { listBuiltInWorkflows, type BuiltInWorkflowSummary } from "@/lib/workflow-presets-api"
@@ -55,6 +58,36 @@ export function AuthoringWorkspace({ task, onMutated, onClose }: AuthoringWorksp
   const spec = task.task_spec
   const taskType = spec.task_type ?? "generic"
   const skillGroups = spec.skill_groups ?? []
+
+  // ── P2 (review): live spec-field feedback for the v4 right panel ────
+  // V3 analogy: GoalAcCard subscribes spec_field_update to apply goal/ac in
+  // place. v4 hides GoalAcCard, so phases/autoAdvance/workflow_ref writes
+  // (agent-driven: 拆分确认、per-phase 绑定、传播改写) had NO subscriber —
+  // PhaseBindingList/入队清单 stayed stale until modal reopen (the exact
+  // "不推送" bug class this redesign set out to kill). Refetch via the
+  // parent's onMutated (single truth = fresh task DTO, no local patching).
+  useEffect(() => {
+    const unsub = subscribeSSE(
+      `${getServerUrl()}/api/tasks/events`,
+      SPEC_FIELD_UPDATE_EVENT,
+      (e: MessageEvent) => {
+        try {
+          const payload = JSON.parse(e.data) as { task_id?: string; field?: string }
+          if (payload.task_id !== task.id) return
+          if (
+            payload.field === "phases" ||
+            payload.field === "auto_advance" ||
+            payload.field === "workflow_ref"
+          ) {
+            onMutated()
+          }
+        } catch {
+          // Malformed event payload — ignore (defensive).
+        }
+      },
+    )
+    return () => unsub()
+  }, [task.id, onMutated])
 
   // ── Resizable panels: drag the divider to adjust chat ↔ output width ──
   // Default split: 60% chat (left) / 40% output (right).

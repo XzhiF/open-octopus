@@ -71,7 +71,7 @@ import { getExecutionService } from "../execution-service-registry"
 import { TaskHomeService } from "./task-home-service"
 import type { ProjectRef } from "./task-home-service"
 // task-phase-redesign (ticket 06): the one-way artifact loop (K9/K10/K16).
-import { seedPhaseToWorkspace, collectFromWorkspace, batchRelPath } from "./task-artifact-sync"
+import { seedPhaseToWorkspace, collectFromWorkspace, batchRelPath, resolvePhaseSpecDir, emitPhaseAwaitingReview, isV4TaskSpec } from "./task-artifact-sync"
 // task-phase-redesign (ticket 08): the archiving orchestrator (K11 归并面).
 import { createTaskArchiver, type TaskArchiver, type ArchiveReport } from "./archiving-service"
 import { PluginMaterializer } from "./plugin-materializer"
@@ -782,12 +782,9 @@ export class TasksService {
   updateTask(id: string, input: UpdateTaskInput, expectedVersion: number): TaskDTO {
     const existing = this.taskDAO.getById(id)
     if (!existing) throw new TaskNotFoundError()
-    if (
-      existing.status !== "draft" &&
-      existing.status !== "ready"
-    ) {
+    if (!this.isSpecEditable(existing)) {
       throw new TaskStatusConflictError(
-        `Cannot edit task in status '${existing.status}' (only draft/ready are editable)`,
+        `Cannot edit task in status '${existing.status}' (v3: only draft/ready are editable; v4: until done/archiving/aborted — K16)`,
       )
     }
     const fields: Record<string, unknown> = {}
@@ -948,10 +945,7 @@ export class TasksService {
   updateSpecField(id: string, input: UpdateSpecFieldInput): { version: number } {
     const existing = this.taskDAO.getById(id)
     if (!existing) throw new TaskNotFoundError()
-    if (
-      existing.status !== "draft" &&
-      existing.status !== "ready"
-    ) {
+    if (!this.isSpecEditable(existing)) {
       throw new TaskStatusConflictError(
         `Cannot edit spec of a task in status '${existing.status}'`,
       )
@@ -1749,8 +1743,8 @@ export class TasksService {
       const FINAL_STATUSES = new Set(["completed", "completed_with_failures", "failed", "cancelled", "rejected"])
       const dbRow = this.taskDAO
         .getDb()
-        .prepare("SELECT status FROM executions WHERE id = ?")
-        .get(opts.executionId) as { status: string } | undefined
+        .prepare("SELECT status, round_index FROM executions WHERE id = ?")
+        .get(opts.executionId) as { status: string; round_index: number | null } | undefined
       const status = dbRow && FINAL_STATUSES.has(dbRow.status)
         ? dbRow.status
         : (opts.engineFinalStatus ?? dbRow?.status ?? "completed")
@@ -1776,6 +1770,16 @@ export class TasksService {
         event: "schedule_status",
         data: { schedule_id: opts.scheduleId, status: ok ? "done" : "failed" },
       })
+      // P3 (review): terminal on a v4 tagged round = the round awaits its
+      // human decision — fire phase_status_update BEFORE collect (the
+      // transition is about the execution, not file flow). After slot release
+      // so a racing re-dispatch can't observe awaiting_review mid-slot.
+      emitPhaseAwaitingReview(
+        (c, p) => this.sse.emit(c, p),
+        opts.taskId,
+        opts.phaseIdx,
+        dbRow?.round_index ?? 1,
+      )
       // task-phase-redesign (ticket 06, K9): v4 collect 上行 — 回收 ws 批次目录中
       // 执行侧改过/新增的文件回 task home（spec*.md home 权威不回流覆盖；issues/
       // 报告 ws 权威按 mtime 上行），有回收则 emit task_artifacts_update(taskId)。
@@ -1816,9 +1820,7 @@ export class TasksService {
     phaseIdx: number,
     workspaceId: string,
   ): void {
-    const envRow = this.scheduleDAO.findById(scheduleId)
-    const cfg = parseJSON<{ phases?: TaskV4PhaseConfig[] }>(envRow?.config ?? "", {})
-    const specDir = cfg.phases?.find((p) => p.index === phaseIdx)?.specDir
+    const specDir = resolvePhaseSpecDir(this.scheduleDAO.findById(scheduleId)?.config ?? "", phaseIdx)
     if (!specDir) return
     const rel = batchRelPath(this.taskHomeService.homePath(taskId), specDir)
     if (!rel) return
@@ -2210,6 +2212,24 @@ export class TasksService {
       event: PHASE_STATUS_UPDATE_EVENT,
       data: { task_id: taskId, phase_index: phaseIndex, status, round_index: roundIndex },
     })
+  }
+
+  /** K16 (task-phase-redesign): the spec edit window. v3 keeps the original
+   *  discipline (draft/ready only — byte-stable, K13). A v4 task's spec stays
+   *  editable through its whole working life: the review-gate spec-field PUT
+   *  (round-2 spec, propagation writes per D14, autoAdvance toggle) is part of
+   *  the flow, and an edit during a running round takes effect at the NEXT
+   *  seed (K16: 隔离即冻结 — seed is a one-way snapshot, no lock needed).
+   *  Frozen only at human-decided terminal states: done / aborted / archiving
+   *  (归档中 spec 已定稿，改动应走 archive/retry 后的另案). */
+  private isSpecEditable(existing: TaskRow): boolean {
+    if (existing.status === "draft" || existing.status === "ready") return true
+    if (!isV4TaskSpec(existing.task_spec)) return false
+    return (
+      existing.status !== "done" &&
+      existing.status !== "aborted" &&
+      existing.status !== "archiving"
+    )
   }
 
   /** System-event status write (no version bump — the optimistic lock tracks

@@ -9,7 +9,7 @@ import {
   AlertDialogDescription, AlertDialogFooter, AlertDialogCancel, AlertDialogAction,
 } from "@/components/ui/alert-dialog"
 import type { Task } from "@octopus/shared"
-import { listTasks, deleteTask, getTask, postAdvance, TaskApiError, type TaskDerivedView } from "@/lib/tasks-api"
+import { listTasks, deleteTask, getTask, postAdvance, postArchiveRetry, TaskApiError, type TaskDerivedView } from "@/lib/tasks-api"
 import { toast } from "sonner"
 import {
   groupTasksByStatus, tasksForColumn, effectiveStatusOf,
@@ -19,7 +19,7 @@ import { subscribeSSE } from "@/lib/sse-manager"
 import { getServerUrl } from "@/lib/server-config"
 import { TaskModal } from "@/components/tasks/task-modal"
 import { TriggerDialog } from "@/components/tasks/trigger-dialog"
-import { AcceptanceModal, postArchiveRetry } from "@/components/tasks/acceptance-modal"
+import { AcceptanceModal } from "@/components/tasks/acceptance-modal"
 import {
   TASK_STATUS_EVENT, SPEC_FIELD_UPDATE_EVENT, TASK_TRIGGER_EVENT,
   PHASE_STATUS_UPDATE_EVENT,
@@ -179,12 +179,12 @@ export default function TasksPage() {
   // 票 12 (US11/K6): autoAdvance=false 时「启动下一 Phase」— POST /:id/advance
   // (票 08 契约). Busy-guard per click; 409 = 派生态已变 → 刷新盘面.
   const [advanceBusyId, setAdvanceBusyId] = useState<string | null>(null)
-  const handleAdvance = useCallback(async (task: Task, phaseIndex: number) => {
+  const handleAdvance = useCallback(async (task: Task) => {
     if (advanceBusyId) return
     setAdvanceBusyId(task.id)
     try {
-      const result = await postAdvance(task.id, { phase_index: phaseIndex })
-      toast.success(`Phase ${result.dispatch?.phase_index ?? phaseIndex} Round ${result.dispatch?.round_index ?? 1} 已开跑`)
+      const result = await postAdvance(task.id)
+      toast.success(`Phase ${result.dispatch?.phase_index ?? "?"} Round ${result.dispatch?.round_index ?? 1} 已开跑`)
       void fetchTasks()
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : "启动失败")
@@ -294,7 +294,7 @@ export default function TasksPage() {
                         onDeleteRequest={(t) => setDeletingTaskId(t.id)}
                         onTriggerRequest={(t) => setTriggerTaskId(t.id)}
                         onAcceptRequest={(t) => setAcceptTaskId(t.id)}
-                        onAdvanceRequest={(t, phaseIndex) => void handleAdvance(t, phaseIndex)}
+                        onAdvanceRequest={(t) => void handleAdvance(t)}
                         onArchiveRetryRequest={(t) => void handleArchiveRetry(t)}
                       />
                     ))}
@@ -380,7 +380,7 @@ interface TaskCardProps {
   /** 票 12: 待验收卡「验收」→ 三栏 modal。 */
   onAcceptRequest: (task: Task) => void
   /** 票 12 (US11): autoAdvance=false parked 卡「启动下一 Phase」→ postAdvance。 */
-  onAdvanceRequest: (task: Task, phaseIndex: number) => void
+  onAdvanceRequest: (task: Task) => void
   /** 票 12 (US15): archiving 卡「重试归档」→ archive/retry。 */
   onArchiveRetryRequest: (task: Task) => void
 }
@@ -502,7 +502,7 @@ function TaskCard({ task, derived, budgetMs, onClick, onDeleteRequest, onTrigger
           {advancePhaseOf(derived) !== null && (
             <button
               data-task-advance-btn={advancePhaseOf(derived) ?? ""}
-              onClick={(e) => { e.stopPropagation(); onAdvanceRequest(task, advancePhaseOf(derived)!) }}
+              onClick={(e) => { e.stopPropagation(); onAdvanceRequest(task) }}
               className="text-[10px] px-1.5 py-0.5 rounded bg-blue-600 text-white hover:bg-blue-700 transition-colors"
               title={`启动 Phase ${advancePhaseOf(derived)}（上一 Phase 已通过验收，autoAdvance 关闭）`}
             >

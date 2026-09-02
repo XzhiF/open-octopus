@@ -422,18 +422,26 @@ export async function postAcceptance(
  *  (autoAdvance=false 的 my-gate 放行入口, US11; 票 12 复用). Body
  *  `{phase_index}` (1-based). Response mirrors AcceptanceResult without
  *  acceptance_id. 非 v4 / 派生态不允许 → 409 (TaskApiError). */
-export async function postAdvance(
-  taskId: string,
-  body: { phase_index: number },
-): Promise<AdvanceResult> {
-  const res = await fetch(buildUrl(`/${taskId}/advance`), {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  })
+export async function postAdvance(taskId: string): Promise<AdvanceResult> {
+  // No body: the server picks the target phase itself (派生「前序 accepted ∧
+  // pending」唯一解, 票 08 advancePhase). A client-computed phase_index was a
+  // dead parameter + drift bait (review ②) — display gating stays client-side
+  // (advancePhaseOf), authority stays server-side.
+  const res = await fetch(buildUrl(`/${taskId}/advance`), { method: "POST" })
   if (!res.ok) {
     const err = await res.json().catch(() => ({}))
     throw new TaskApiError(err.error ?? `HTTP ${res.status}`, res.status)
+  }
+  return res.json()
+}
+
+/** POST /api/tasks/:id/archive/retry — 票 08 归档幂等续跑（仅 archiving 态，
+ *  202 异步；完成以 task_status SSE 'done' 为准）。 */
+export async function postArchiveRetry(taskId: string): Promise<{ ok: boolean; task_id: string; status: string }> {
+  const res = await fetch(buildUrl(`/${taskId}/archive/retry`), { method: "POST" })
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { error?: string }
+    throw new TaskApiError(body.error ?? `HTTP ${res.status}`, res.status)
   }
   return res.json()
 }

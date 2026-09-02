@@ -43,10 +43,12 @@ import type {
 
 // ── Output vocabulary ────────────────────────────────────────────────
 
-/** v4-derived task status enum (AC2 — no 'failed', no 'draft'). The shared
- *  TaskStatusSchema does not carry 'awaiting_review'/'archiving' yet (its
- *  extension belongs to the API-surface tickets); the DB CHECK (v40) does.
- *  Keeping the derived union local avoids touching shared from ticket 03. */
+/** v4-derived task status enum (AC2 — no 'failed', no 'draft'). Shared's
+ *  TaskStatusSchema now carries 'awaiting_review'/'archiving' (extended by
+ *  ticket 07); this LOCAL union stays deliberately narrower than TaskStatus —
+ *  it is the derive output vocabulary (draft/failed/aborted-persisted are
+ *  input-side passthrough states that derivation itself never produces for
+ *  v4), not a mirror of the wire enum. Review ⑧: comment corrected, type kept. */
 export type DerivedTaskStatus =
   | "ready"
   | "running"
