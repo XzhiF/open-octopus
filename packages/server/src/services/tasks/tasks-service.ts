@@ -1667,6 +1667,13 @@ export class TasksService {
         workflow_ref: phase.workflowRef,
         triggered_by: "scheduler",
         input_values: stepInputValues,
+        // K4/K5: a v4 round is an independent root execution on the REUSED
+        // bound ws (round 2+ / phase 2+ all share one ws). ExecutionLifecycle's
+        // v1 "one root per ws" invariant must be opted out here — the
+        // schedule_executions active-index is the v4 serialization gate, not
+        // root uniqueness. (Found by ticket 14 E2E: the ticket-05 stub create
+        // mirrored the DB write but not this guard.)
+        allow_existing_root: true,
         initial_var_pool: {
           "schedule.id": envelope.id,
           "schedule.name": envelope.name,

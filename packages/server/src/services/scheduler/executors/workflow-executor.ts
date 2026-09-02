@@ -433,6 +433,11 @@ export class WorkflowExecutor implements Executor {
       execution = registry.service.create(workspace.id, {
         workflow_ref: firstStep.workflow_ref,
         triggered_by: 'scheduler',
+        // task-phase-redesign (K4/K5): v4 crash-recovery re-claim runs on the
+        // BOUND ws which already holds the first round's root execution; a v4
+        // round is an independent root, so the v1 "one root per ws" invariant
+        // must be opted out. v3/composite (isV4 false) is byte-identical.
+        allow_existing_root: isV4,
         // Ticket 04: composite tasks feed subunits/subunit_count/goal/integration_prompt
         // to the composition wf as input_values (G9/G10). ExecutionService.create accepts
         // Record<string, unknown> (not string-only at runtime), so the subunits array is
