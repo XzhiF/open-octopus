@@ -50,7 +50,9 @@
 
 ### Phase 5: Ship (Git PR)
 
-_(PR 链接见下，创建后回填)_
+| Project | Branch | PR# | Action |
+|---------|--------|-----|--------|
+| octopus (monorepo) | feat/task-phase-redesign | [#56](https://github.com/XzhiF/open-octopus/pull/56) | Created (base main) |
 
 ### Changed Files
 
