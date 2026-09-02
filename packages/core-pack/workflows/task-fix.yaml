@@ -1,0 +1,166 @@
+apiVersion: octopus/v1
+kind: Workflow
+
+# ============================================================
+# task-fix — 通用修复流（task-phase-redesign K7 / D14）
+#
+# 验收打回 → 人写反馈 → 反馈产物化为 Batch 目录内 fix-feedback-rN.md
+# → agent 判严重度推荐「通用修复流」→ 人一键确认 → 本流在同 worktree 开新 round。
+#
+# 与具体开发流无关，只认三个输入：
+#   phase_spec_dir     — phase Batch 目录（workspace 侧，seed 下行后的
+#                        ${phase.spec_dir} 解析值，含 spec*.md + issues/）
+#   feedback_path      — fix-feedback-rN.md（打回反馈，round 号编在文件名里）
+#   task_artifacts_dir — 看板管理键，dispatch 时自动注入（绑定表单无需手填）
+#
+# Flow:
+#   precheck (bash — 确定性前置核对，不烧 agent token)
+#     ├─ ok=true  → fix       (agent — 定点修 + 产 fix-report-rN.md 入 Batch 目录)
+#     └─ ok=false → fail-fast (bash — 当场失败并说明原因)
+#
+# 设计依据：K3 失败归 round 层（本流 fail → 任务进「待验收/待处理」，不是红死态）；
+# K6 打回授权的落点在「人确认修复流」这一步，流本身无人工节点；
+# D14 修复流不传播决策 — 决策级变更走 round-2 spec 流（本流 prompt 明令不改 spec*）。
+# ============================================================
+
+name: task-fix
+description: |
+  通用修复流（验收打回后的 fix round）。读 phase Batch 目录内最新 spec-rN + fix-feedback-rN.md
+  + issues/ 未完成票，按反馈定点修复（不夹带范围外改动、不改 spec 文件），
+  产出 fix-report-rN.md（反馈逐条 → 修复动作 → 验证证据）写回同 Batch 目录。
+version: 1.0.0
+
+# --- 全局配置 ---
+engine: claude
+model: pro-max
+timeout: 7200 # 全局 2h — 修复轮应显著小于开发轮（超预算仅 advisory 徽标，D18）
+execution_mode: serial
+
+# --- 输入（phase input_values 绑定；${phase.spec_dir} 等 v4 词表 materialize 时解析）---
+inputs:
+  phase_spec_dir:
+    description: "Phase Batch 目录绝对路径（${phase.spec_dir} 解析值；含 spec*.md 与 issues/）"
+    required: true
+  feedback_path:
+    description: "打回反馈文件绝对路径（Batch 目录内 fix-feedback-rN.md，N=被打回的 round）"
+    required: true
+  task_artifacts_dir:
+    description: "任务产物目录 — 看板 dispatch 管理键自动注入，绑定表单无需手填"
+    required: false
+
+# --- 变量（precheck 写，fix/fail-fast 读；串行链上的路由真相）---
+variables:
+  precheck_ok: ""
+  precheck_reason: ""
+  fix_round: ""
+  spec_file: ""
+  report_file: ""
+  fix_status: ""
+
+nodes:
+  # ============================================================
+  # Stage 1: 前置核对（确定性 bash — 输入不全当场分流，不启动 agent）
+  # ============================================================
+
+  - id: precheck
+    type: bash
+    timeout: 120
+    bash: |
+      SPEC_DIR="$vars.phase_spec_dir"
+      FEEDBACK="$vars.feedback_path"
+      REASON=""
+
+      if [ ! -d "$SPEC_DIR" ]; then
+        REASON="phase spec dir not found: $SPEC_DIR"
+      elif [ ! -f "$FEEDBACK" ]; then
+        REASON="feedback file not found: $FEEDBACK"
+      fi
+
+      # 本轮 round N ← fix-feedback-rN.md 文件名；report 用同一 N（feedback/report 成对可追溯）
+      ROUND=""
+      REPORT=""
+      if [ -z "$REASON" ]; then
+        ROUND=$(basename "$FEEDBACK" | sed -E 's/.*-r([0-9]+)\.md$/\1/')
+        case "$ROUND" in ''|*[!0-9]*) ROUND="" ;; esac
+        if [ -n "$ROUND" ]; then REPORT="fix-report-r$ROUND.md"; else REPORT="fix-report.md"; fi
+      fi
+
+      # 本轮权威 spec ← 最大 r 号的 spec-rN.md；无 rN 则 spec.md；两者皆无 = 目录没被正确 seed
+      SPEC=""
+      if [ -z "$REASON" ]; then
+        LATEST=$(ls "$SPEC_DIR"/spec-r*.md 2>/dev/null | sed -E 's/.*-r([0-9]+)\.md$/\1/' | sort -n | tail -1)
+        if [ -n "$LATEST" ]; then
+          SPEC="$SPEC_DIR/spec-r$LATEST.md"
+        elif [ -f "$SPEC_DIR/spec.md" ]; then
+          SPEC="$SPEC_DIR/spec.md"
+        else
+          REASON="no spec.md / spec-rN.md under: $SPEC_DIR"
+        fi
+      fi
+
+      if [ -n "$REASON" ]; then
+        echo "PRECHECK FAILED: $REASON"
+        printf '{"vars_update": {"precheck_ok": "false", "precheck_reason": "%s"}}\n' "$REASON"
+        exit 0
+      fi
+
+      echo "PRECHECK OK: spec=$SPEC feedback=$FEEDBACK report=$REPORT round=${ROUND:-?}"
+      printf '{"vars_update": {"precheck_ok": "true", "fix_round": "%s", "spec_file": "%s", "report_file": "%s"}}\n' "$ROUND" "$SPEC" "$REPORT"
+
+  # ============================================================
+  # Stage 2a: 定点修复（precheck 通过才执行）
+  # ============================================================
+
+  - id: fix
+    type: agent
+    depends_on: [precheck]
+    execute_when: '$vars.precheck_ok == "true"'
+    timeout: 5400
+    prompt: |
+      你是本 phase 验收打回后的修复执行者。上一轮产出被人工验收拒绝，本轮任务 = 按反馈定点修复。
+
+      ═══ 输入锚点（先完整读完再动手）═══
+      - 本轮权威 spec（范围真相）：$vars.spec_file
+      - 打回反馈（本轮任务清单）：$vars.feedback_path
+      - 票目录：$vars.phase_spec_dir/issues/ —— 读 Status ≠ done/skip 的票，明确本 phase 剩余范围
+      - 修复报告写到：$vars.phase_spec_dir/$vars.report_file
+      - 过程性证据/临时产物：$vars.task_artifacts_dir（不存在先 mkdir -p）
+
+      ═══ 修复纪律 ═══
+      1. 先把反馈拆成条目清单，逐条定位到代码/测试位置，再开始修改。
+      2. 定点修复 —— 只改与反馈条目直接相关的代码；不夹带范围外重构，不顺手实现被否票。
+      3. 不修改 Batch 目录下任何 spec*.md —— spec 权威源在 task home，执行侧只读；
+         若反馈隐含范围/决策变更，不自行扩权，写入报告「遗留问题」并收束。
+      4. 每条反馈以实际执行验证（跑测试/命令，证据可定位：文件路径 + 命令输出摘要）；仅声称完成不算。
+      5. 反馈条目互相矛盾或环境跑不起来：停止猜测，把阻塞清单（现象/已尝试/需要谁决策）写入报告，fix_status=partial 收束。
+
+      ═══ 修复报告（必产，路径 = $vars.phase_spec_dir/$vars.report_file）═══
+      markdown，结构：
+      # Fix Report r{N}
+      - 反馈条目表：反馈 → 修复动作 → 验证证据（三列逐条，不许合并）
+      - 变更文件清单（git diff --stat 摘要）
+      - issues/ 状态回写：本轮覆盖哪些未完成票 → Status 改 done（附证据行）；未覆盖的注明原因
+      - 遗留问题 / 阻塞（若有）
+      - 收束建议：建议再验收 / 需人工决策（含建议的下一步）
+
+      ═══ 终态汇报 ═══
+      last_output 逐条列出：反馈条目 → 已修复 / 部分 / 阻塞 + 证据位置。
+
+      输出 vars_update:
+      {"vars_update": {"fix_status": "done|partial", "report_path": "$vars.phase_spec_dir/$vars.report_file"}}
+
+  # ============================================================
+  # Stage 2b: 前置缺失反例 —— 不静默、不启动 agent，当场失败（K3 落「待处理」）
+  # ============================================================
+
+  - id: fail-fast
+    type: bash
+    depends_on: [precheck]
+    execute_when: '$vars.precheck_ok == "false"'
+    timeout: 60
+    bash: |
+      echo "task-fix cannot run: $vars.precheck_reason"
+      echo "检查项：① phase 绑定 input_values 的 feedback_path 是否指向已生成的 fix-feedback-rN.md"
+      echo "　　　　② seed 下行是否把 Batch 目录拷入 workspace（home 侧文件在不在？）"
+      echo "　　　　③ 打回后是否误触发了 round-2 spec 之外的修复流（反馈文件名 round 号与 spec-rN 是否对齐）"
+      exit 1

@@ -53,6 +53,14 @@ import type { TaskRow, ScheduleRow, ScheduleExecutionRow } from "../../db/types"
 import type { SSEService } from "../sse"
 import { materializeTaskSpecToConfig } from "../scheduler/scheduler-service"
 import type { TaskV4PhaseConfig } from "../scheduler/scheduler-service"
+// task-phase-redesign (ticket 05): STATIC registry access for dispatchPhaseRound.
+// Cycle-free: execution-service-registry's closure (execution/workspace/workflow/
+// builtin-workflow/sse/observability/dao/resource-registry) never imports
+// tasks-service (verified 2026-09-03 — its importers are index/routes/clone/
+// scheduler-service/task-ws-name only). The dynamic form used by
+// cancelRunningExecution defeats vi.mock (ticket 05 harness finding), so the
+// dispatch path deliberately avoids it.
+import { getExecutionService } from "../execution-service-registry"
 import { TaskHomeService } from "./task-home-service"
 import type { ProjectRef } from "./task-home-service"
 import { PluginMaterializer } from "./plugin-materializer"
@@ -1363,6 +1371,274 @@ export class TasksService {
     return toDTO(row)
   }
 
+  // ── Dispatch phase/round (ticket 05 — v4 一 task 一 ws / 一 task 一信封) ──
+
+  /** task-phase-redesign (ticket 05, K4/K5/K6): start ONE round execution of a
+   *  v4 task under the EXISTING envelope, on the task's BOUND workspace. The
+   *  first phase/round goes through the unchanged trigger→claim→execute path
+   *  (ticket 04 pre-loads chain[0]=phase1; WorkflowExecutor first-builds +
+   *  writes the tasks.workspace_id binding). Everything later — phase advance
+   *  (auto_advance) and 打回 retry — calls THIS method (票 07 owns the
+   *  acceptance endpoint that drives it).
+   *
+   *  Shape (照 WorkflowExecutor.triggerChildStep 的同 ws 复用写法):
+   *    ① reuse the envelope (K5 — no new schedule row; it flips done/failed →
+   *       claimed with chain[0] rewritten to the target phase + `_phase_index`/
+   *       `_round_index` management-key stamps so a crash-recovery re-claim
+   *       re-tags identically); feedback (K7 打回文本) rides along as the
+   *       `feedback` input value — the fix-feedback-rN.md FILE is 票 08's seed
+   *       step, not this dispatch's;
+   *    ② insert a fresh schedule_executions slot: the partial unique index
+   *       idx_sched_execs_unique_active (schedule_id WHERE status IN
+   *       ('triggered','running')) is the structural serialization gate (K5 —
+   *       零额外并发代码). A collision ⇒ explainable TaskStatusConflictError
+   *       (AC2), never a silent queue-behind;
+   *    ③ service.create + start on the bound ws (zero git involvement ⇒ the
+   *       worktree/branch established at first build is inherited verbatim —
+   *       phase/round 不换支, 票03清单#4);
+   *    ④ tag the executions row phase_index/round_index (K4 — deriveTaskView
+   *       与验收账本按 (phase,round) 直读该打标行);
+   *    ⑤ register a terminal callback that RELEASES the active slot + flips
+   *       the envelope back to done/failed — without it no next round could
+   *       ever dispatch. Task-status derivation (awaiting_review 等) is 票 07's
+   *       deriveTaskView wiring, deliberately NOT mirrored here (K3: 派生不存).
+   *
+   *  Errors: unknown task → TaskNotFoundError; non-v4 spec / missing envelope /
+   *  unknown phase index / no bound ws / unavailable ws / active-slot conflict
+   *  → TaskStatusConflictError with a self-explanatory message. */
+  async dispatchPhaseRound(
+    taskId: string,
+    phaseIdx: number,
+    roundIdx: number,
+    feedback?: string,
+  ): Promise<{ scheduleId: string; schedExecId: string; executionId: string; workspaceId: string }> {
+    const task = this.taskDAO.getById(taskId)
+    if (!task) throw new TaskNotFoundError()
+    if (!Number.isInteger(phaseIdx) || phaseIdx < 1 || !Number.isInteger(roundIdx) || roundIdx < 1) {
+      throw new TaskStatusConflictError(
+        `非法 phase/round: phase=${phaseIdx}, round=${roundIdx}（均为 ≥1 整数）`,
+      )
+    }
+    const spec = parseJSON<{ format?: string }>(task.task_spec, {})
+    if (spec.format !== "v4") {
+      throw new TaskStatusConflictError("dispatchPhaseRound 仅适用于 v4 任务（task_spec.format==='v4'）")
+    }
+
+    const envelope = this.scheduleDAO
+      .findSchedulesByOrigin("task", taskId)
+      .find((r) => r.origin_role === "primary")
+    if (!envelope) {
+      throw new TaskStatusConflictError("未找到任务的执行信封（K5 一封套）— 请先入队并触发首 phase")
+    }
+    const config = parseJSON<Record<string, unknown>>(envelope.config, {})
+    const phases = (config.phases ?? []) as TaskV4PhaseConfig[]
+    const phase = phases.find((p) => p.index === phaseIdx)
+    if (!phase) {
+      throw new TaskStatusConflictError(`phase ${phaseIdx} 不在信封已解析的 phases[] 中（共 ${phases.length} 项）`)
+    }
+    const workspaceId = task.workspace_id
+    if (!workspaceId) {
+      throw new TaskStatusConflictError(
+        "任务 workspace 尚未创建 — 首执行请走 trigger（draft→claim→execute 负责首建 + 绑定 tasks.workspace_id）",
+      )
+    }
+
+    const now = new Date()
+    const nowIso = now.toISOString()
+
+    // ② active slot — the unique index serializes rounds structurally (K5/AC2).
+    const schedExecId = randomUUID()
+    try {
+      this.runDAO.insertTriggeredExecution(
+        schedExecId, envelope.id, "manual", nowIso, "+00:00", envelope.timezone, "task-dispatch",
+      )
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err)
+      throw new TaskStatusConflictError(
+        `同一信封已有进行中的执行 — active 唯一索引拒绝并发派发（同一 task 串行，终态后再试）: ${message}`,
+      )
+    }
+
+    // ① envelope rewrite: chain[0] := target phase (feedback + recovery stamps).
+    // All values are strings by construction (phase.inputValues is the gate's
+    // resolved Record<string,string>; feedback + stamps stringify to string) —
+    // ExecutionService.start is typed Record<string,string>.
+    const stepInputValues: Record<string, string> = {
+      ...phase.inputValues,
+      ...(feedback && feedback.trim() ? { feedback } : {}),
+      _phase_index: String(phaseIdx),
+      _round_index: String(roundIdx),
+    }
+    const nextConfig = {
+      ...config,
+      workflow_chain: [{ workflow_ref: phase.workflowRef, input_values: stepInputValues }],
+    }
+    this.scheduleDAO.updateSchedule(envelope.id, {
+      config: JSON.stringify(nextConfig),
+      status: "claimed",
+      claimed_at: nowIso,
+      scheduled_at: null,
+    })
+
+    // ③ start on the BOUND ws — static getExecutionService import (see header).
+    const releaseSlotFailed = (reason: string): void => {
+      this.runDAO.markExecutionFailed(schedExecId, reason, ["triggered", "running"])
+      this.scheduleDAO.updateSchedule(envelope.id, { status: "failed", claimed_at: null })
+    }
+    let registry: ReturnType<typeof getExecutionService>
+    try {
+      registry = getExecutionService(workspaceId)
+    } catch (err: unknown) {
+      // Registry not initialized (ad-hoc/embedded callers) — same shape as an
+      // unavailable ws.
+      const message = err instanceof Error ? err.message : String(err)
+      releaseSlotFailed(`ExecutionService 不可用: ${message}`)
+      throw new TaskStatusConflictError(`ExecutionService 不可用: ${message}`)
+    }
+    if (!registry) {
+      releaseSlotFailed(`workspace ${workspaceId} 不可用（行缺失或路径失效）`)
+      throw new TaskStatusConflictError(`任务绑定的 workspace 不可用: ${workspaceId}`)
+    }
+
+    let execution: { id: string }
+    try {
+      execution = registry.service.create(workspaceId, {
+        workflow_ref: phase.workflowRef,
+        triggered_by: "scheduler",
+        input_values: stepInputValues,
+        initial_var_pool: {
+          "schedule.id": envelope.id,
+          "schedule.name": envelope.name,
+          "schedule.triggered_at": nowIso,
+          "execution.trigger_type": "phase_round",
+        },
+      })
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err)
+      releaseSlotFailed(`execution create failed: ${message}`)
+      throw new TaskStatusConflictError(`round 执行创建失败: ${message}`)
+    }
+
+    this.runDAO.updateExecutionWorkspace(schedExecId, workspaceId)
+    this.runDAO.updateExecutionLinkId(schedExecId, execution.id)
+    this.runDAO.markExecutionRunning(schedExecId)
+
+    // ④ tag the executions row (K4). Raw UPDATE on the shared handle (same
+    // system-event pattern as the status writes above).
+    this.taskDAO
+      .getDb()
+      .prepare("UPDATE executions SET phase_index = ?, round_index = ?, updated_at = ? WHERE id = ?")
+      .run(phaseIdx, roundIdx, nowIso, execution.id)
+
+    // ⑤ ws association — record the ESTABLISHED branch suffix (per-task
+    // constant by K5; the dispatch never touches git, 票03清单#4).
+    const lastSuffix = this.scheduleDAO
+      .getDb()
+      .prepare(
+        "SELECT branch_suffix FROM schedule_workspaces WHERE schedule_id = ? AND branch_suffix IS NOT NULL AND branch_suffix != '' ORDER BY started_at DESC LIMIT 1",
+      )
+      .get(envelope.id) as { branch_suffix: string } | undefined
+    const schedWsId = randomUUID()
+    this.scheduleDAO.insertScheduleWorkspace({
+      id: schedWsId,
+      schedule_id: envelope.id,
+      workspace_id: workspaceId,
+      status: "running",
+      branch_suffix: lastSuffix?.branch_suffix ?? "",
+      started_at: nowIso,
+    })
+
+    // ⑥ terminal callback — releases the active slot so the NEXT round can
+    // dispatch (and the stale-claimed sweep can recover a crashed round).
+    const triggeredAt = now.getTime()
+    registry.service.registerExternalCallbacks(
+      {
+        onComplete: ((engineFinalStatus?: string) => {
+          this.finalizePhaseRoundExecution({
+            schedExecId, schedWsId, executionId: execution.id,
+            scheduleId: envelope.id, workspaceId, triggeredAt, engineFinalStatus,
+          })
+        }) as unknown as (finalStatus?: string) => void,
+      } as never,
+      execution.id,
+    )
+
+    registry.service.start(execution.id, stepInputValues).catch((err: unknown) => {
+      const message = err instanceof Error ? err.message : String(err)
+      console.error(`[TasksService] dispatchPhaseRound start failed`, {
+        executionId: execution.id, scheduleId: envelope.id, error: message,
+      })
+      this.runDAO.markExecutionFailed(schedExecId, message, ["triggered", "running"])
+      registry.service.clearExternalCallbacks(execution.id)
+    })
+
+    // Board badge: the envelope re-entered in-flight (it was done/failed).
+    this.sse.emit("taskpool", {
+      event: "schedule_status",
+      data: { schedule_id: envelope.id, status: "claimed", phase_index: phaseIdx, round_index: roundIdx },
+    })
+
+    return { scheduleId: envelope.id, schedExecId, executionId: execution.id, workspaceId }
+  }
+
+  /** Mirror of WorkflowExecutor.handleChainComplete's FINALIZE subset for a
+   *  dispatchPhaseRound-started execution (the chain/parent-resume machinery
+   *  does not apply — a phase/round run is a single root execution per phase).
+   *  Status resolution follows the goal-task-dev lesson verbatim: prefer the
+   *  persisted terminal status, fall back to the engine's in-flight report. */
+  private finalizePhaseRoundExecution(opts: {
+    schedExecId: string
+    schedWsId: string
+    executionId: string
+    scheduleId: string
+    workspaceId: string
+    triggeredAt: number
+    engineFinalStatus?: string
+  }): void {
+    try {
+      const FINAL_STATUSES = new Set(["completed", "completed_with_failures", "failed", "cancelled", "rejected"])
+      const dbRow = this.taskDAO
+        .getDb()
+        .prepare("SELECT status FROM executions WHERE id = ?")
+        .get(opts.executionId) as { status: string } | undefined
+      const status = dbRow && FINAL_STATUSES.has(dbRow.status)
+        ? dbRow.status
+        : (opts.engineFinalStatus ?? dbRow?.status ?? "completed")
+      const ok = status === "completed"
+      const durationMs = Date.now() - opts.triggeredAt
+      const nowIso = new Date().toISOString()
+
+      // Terminal slot → the active unique index releases for the next round.
+      this.runDAO.markExecutionCompleteWithDuration(
+        opts.schedExecId, ok ? "completed" : "failed", durationMs,
+        ok ? undefined : `phase-round execution ${status}`,
+      )
+      this.scheduleDAO.updateScheduleWorkspaceStatus(opts.schedWsId, {
+        status: ok ? "completed" : "failed",
+        execution_id: opts.executionId,
+        completed_at: nowIso,
+      })
+      this.scheduleDAO.updateSchedule(opts.scheduleId, {
+        status: ok ? "done" : "failed",
+        claimed_at: null,
+      })
+      this.sse.emit("taskpool", {
+        event: "schedule_status",
+        data: { schedule_id: opts.scheduleId, status: ok ? "done" : "failed" },
+      })
+      // Callback cleanup — non-fatal (the ws registry may be gone; the engine
+      // ignores stale callbacks after terminal anyway).
+      try {
+        getExecutionService(opts.workspaceId)?.service.clearExternalCallbacks(opts.executionId)
+      } catch { /* registry unavailable — non-fatal */ }
+    } catch (err: unknown) {
+      console.error(
+        `[TasksService] finalizePhaseRoundExecution failed for ${opts.schedExecId} (non-fatal — stale sweep backstops):`,
+        err instanceof Error ? err.message : String(err),
+      )
+    }
+  }
+
   // ── Abort (running → aborted + ws cleanup, v1 G4) ─────────────────
 
   /** POST /api/tasks/:id/abort — running→aborted. Finds all child schedules
@@ -1413,7 +1689,16 @@ export class TasksService {
   /** Abort a single child schedule. claimed/running → aborted + G4 ws cleanup
    *  (markStaleExecutionsFailed releases the unique active index;
    *  markScheduleWorkspacesCleanedBySchedule marks in-flight ws as cleaned).
-   *  queued → aborted (never started). Terminal → skip (idempotent). */
+   *  queued → aborted (never started). Terminal → skip (idempotent).
+   *
+   *  task-phase-redesign (ticket 05, 票03清单#6) — 'cleaned' semantics under ws
+   *  REUSE: the marker closes the schedule_workspaces ASSOCIATION (that run's
+   *  slot), NOT the workspace. The v4 task's ws is the round-打回 scene — it
+   *  stays bound (tasks.workspace_id is deliberately untouched here) and stays
+   *  on disk, so a later dispatchPhaseRound resumes on the same worktree/branch
+   *  with all evidence intact. Nothing may delete a bound ws while the task is
+   *  not 'done': enforceRetention exempts it (WorkflowExecutor, K12), and 'done'
+   *  never arrives via abort — the binding outlives every non-archived state. */
   private abortChildSchedule(child: ScheduleRow, now: string): void {
     const status = child.status as ScheduleStatus
     if (status === "done" || status === "failed" || status === "aborted") return

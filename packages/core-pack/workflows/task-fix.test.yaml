@@ -1,0 +1,70 @@
+# task-fix.test.yaml — 模拟器场景（验证入口：octopus workflow simulate task-fix.yaml）
+# 场景 = K7 打回后的两条真实路径：反馈齐全 → 定点修复；反馈缺失 → fail-fast 不静默。
+scenarios:
+  # =============================================================
+  # Scenario 1: 正常修复 — round 2 打回，读 spec-r1 + fix-feedback-r1 → 修 → fix-report-r1.md
+  #   （反馈文件名 rN 的 N = 被打回的 round；本轮为该 phase 的 round 2）
+  # =============================================================
+  - name: "fix round — feedback present, agent repairs"
+    inputs:
+      phase_spec_dir: "/Users/dev/.octopus/tasks/t-123/artifacts-ws/.scratch/20260903/token-metering-2"
+      feedback_path: "/Users/dev/.octopus/tasks/t-123/artifacts-ws/.scratch/20260903/token-metering-2/fix-feedback-r1.md"
+      task_artifacts_dir: "/Users/dev/.octopus/tasks/t-123/artifacts"
+    mocks:
+      precheck:
+        output: "PRECHECK OK: spec=…/spec-r1.md feedback=…/fix-feedback-r1.md report=fix-report-r1.md round=1"
+        update_vars:
+          precheck_ok: "true"
+          fix_round: "1"
+          spec_file: "/Users/dev/.octopus/tasks/t-123/artifacts-ws/.scratch/20260903/token-metering-2/spec-r1.md"
+          report_file: "fix-report-r1.md"
+      fix:
+        output: |
+          反馈 #1（未覆盖空 token 边界）→ 已修复：resolveCost 空值分支 + 单测 3 例（packages/engine/src/__tests__/cost.test.ts）。
+          反馈 #2（看板角标文案）→ 已修复：PhaseBadge 文案对齐 spec-r1 §验收。
+          反馈 #3（E2E 超时）→ 部分：预算阈值 env 缺失，已写入报告遗留问题。
+        update_vars:
+          fix_status: "partial"
+          report_path: "/Users/dev/.octopus/tasks/t-123/artifacts-ws/.scratch/20260903/token-metering-2/fix-report-r1.md"
+    assertions:
+      status: "completed"
+      vars:
+        precheck_ok: "true"
+        fix_round: "1"
+        report_file: "fix-report-r1.md"
+        fix_status: "partial"
+      node_trace:
+        executed:
+          - precheck
+          - fix
+        skipped:
+          - fail-fast
+
+  # =============================================================
+  # Scenario 2: 反例 — feedback 文件缺失（绑定/seed 断链）
+  #   precheck 分流 → fail-fast 触发 → 工作流 failed，fix 绝不执行（不烧 agent、不静默）
+  # =============================================================
+  - name: "precheck fail — feedback file missing"
+    inputs:
+      phase_spec_dir: "/Users/dev/.octopus/tasks/t-123/artifacts-ws/.scratch/20260903/token-metering-2"
+      feedback_path: "/Users/dev/.octopus/tasks/t-123/artifacts-ws/.scratch/20260903/token-metering-2/fix-feedback-r1.md"
+      task_artifacts_dir: "/Users/dev/.octopus/tasks/t-123/artifacts"
+    mocks:
+      precheck:
+        output: 'PRECHECK FAILED: feedback file not found: /Users/dev/.octopus/tasks/t-123/artifacts-ws/.scratch/20260903/token-metering-2/fix-feedback-r1.md'
+        update_vars:
+          precheck_ok: "false"
+          precheck_reason: "feedback file not found: /Users/dev/.octopus/tasks/t-123/artifacts-ws/.scratch/20260903/token-metering-2/fix-feedback-r1.md"
+      fail-fast:
+        status: "failed"
+        error: "task-fix cannot run: feedback file not found"
+    assertions:
+      status: "failed"
+      vars:
+        precheck_ok: "false"
+      node_trace:
+        executed:
+          - precheck
+          - fail-fast
+        skipped:
+          - fix

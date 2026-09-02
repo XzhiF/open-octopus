@@ -87,9 +87,12 @@ interface ScheduleRow {
 /**
  * Executes workflow-type scheduled jobs.
  *
- * Each trigger creates a new workspace from the schedule's workspace_spec,
- * triggers the first workflow in the chain, and monitors completion.
- * The chain (root → child → child) is managed by ExecutionService.
+ * v3: Each trigger created a new workspace from the schedule's workspace_spec.
+ * task-phase-redesign (ticket 05, K12): a v4 task (config.format==='v4') binds
+ * its workspace on the FIRST trigger (tasks.workspace_id) and every later
+ * phase/round execution REUSES that one workspace — no rebuild, no re-rename,
+ * no branch switch. The chain (root → child → child) is managed by
+ * ExecutionService.
  */
 export class WorkflowExecutor implements Executor {
   private notificationService = new NotificationService()
@@ -230,46 +233,104 @@ export class WorkflowExecutor implements Executor {
     const workspaceName = taskWsName
       ?? (isRequirement ? `${branchPrefix}-${branchSuffix}` : `${config.workspace_spec.branch_prefix}-${branchSuffix}`)
 
-    // 6. Create a new workspace from spec
+    // 6. Create a new workspace from spec — or REUSE the task's bound one.
+    //
+    // task-phase-redesign (ticket 05, K4/K5/K12, 票03清单#1): the v4 envelope
+    // (config.format === 'v4', written by ticket 04's materialize) runs ALL
+    // phases/rounds in the ONE workspace bound at tasks.workspace_id (schema
+    // v40). Binding exists + ws row alive → skip createFromSpec entirely (the
+    // worktrees, the taskpool-{scheduleId} branch and the round evidence on
+    // disk survive — ④ "phase/round 不换支" falls out for free). No binding
+    // (or the ws was deleted out of band) → first build, then write the binding
+    // back as a version-free system UPDATE (abortTask precedent — a dispatch
+    // event must not 409 the spec-field tool's optimistic concurrency).
+    // v3 / generic / composite envelopes never set workspace_id ⇒ every branch
+    // below is inert for them (byte-identical pre-v4 behavior, regression floor).
+    const v4Envelope = config as WorkflowConfig & {
+      format?: string
+      phases?: Array<{ index: number; workflowRef: string }>
+    }
+    const isV4 = v4Envelope.format === 'v4' && !isComposite
+    const boundWorkspaceId = isV4 && taskRow ? (taskRow.workspace_id ?? null) : null
+    const reusedWorkspace = boundWorkspaceId
+      ? this.workspaceService.getById(boundWorkspaceId)
+      : undefined
+
     let workspace
-    try {
-      workspace = this.workspaceService.createFromSpec({
-        org: config.workspace_spec.org,
-        name: workspaceName,
-        // Ticket 04: coordinator-ws has NO projects (orchestration only — spec D4).
-        // initWorktreesFromSpec iterates `for (const proj of projects)` so an empty
-        // array is a no-op (no worktrees, no throw) — the coordinator only runs the
-        // composition wf and never touches git. Simple tasks pass the real projects.
-        projects: isComposite ? [] : config.workspace_spec.projects,
-        branch_prefix: branchPrefix,
-        branch_suffix: branchSuffix,
-        source: 'scheduler',
-        source_schedule_id: schedule.id,
-        workflow_chain: config.workflow_chain,
-      })
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err)
-      console.error(`[WorkflowExecutor] workspace creation failed`, { scheduleId: schedule.id, error: message })
+    if (reusedWorkspace) {
+      workspace = reusedWorkspace
+    } else {
+      try {
+        workspace = this.workspaceService.createFromSpec({
+          org: config.workspace_spec.org,
+          name: workspaceName,
+          // Ticket 04: coordinator-ws has NO projects (orchestration only — spec D4).
+          // initWorktreesFromSpec iterates `for (const proj of projects)` so an empty
+          // array is a no-op (no worktrees, no throw) — the coordinator only runs the
+          // composition wf and never touches git. Simple tasks pass the real projects.
+          projects: isComposite ? [] : config.workspace_spec.projects,
+          branch_prefix: branchPrefix,
+          branch_suffix: branchSuffix,
+          source: 'scheduler',
+          source_schedule_id: schedule.id,
+          workflow_chain: config.workflow_chain,
+        })
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : String(err)
+        console.error(`[WorkflowExecutor] workspace creation failed`, { scheduleId: schedule.id, error: message })
 
-      this.runDAO.updateExecutionStatusSimple(executionId, 'failed', `Workspace creation failed: ${message}`)
+        this.runDAO.updateExecutionStatusSimple(executionId, 'failed', `Workspace creation failed: ${message}`)
 
-      return {
-        success: false,
-        exitCode: 1,
-        errorMessage: message,
-        durationMs: Date.now() - startTime,
-        status: 'failure',
+        return {
+          success: false,
+          exitCode: 1,
+          errorMessage: message,
+          durationMs: Date.now() - startTime,
+          status: 'failure',
+        }
+      }
+      // First-build write-back (v4 only). Re-binding over a stale/dangling
+      // workspace_id is intended: the old ws row is gone (getById missed it),
+      // the task must point at the live one.
+      if (isV4 && taskRow && taskRow.workspace_id !== workspace.id && this.taskDAO) {
+        try {
+          this.taskDAO
+            .getDb()
+            .prepare("UPDATE tasks SET workspace_id = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL")
+            .run(workspace.id, new Date().toISOString(), taskRow.id)
+        } catch (err: unknown) {
+          // Non-fatal: the run proceeds unbound (next dispatch first-builds
+          // again). Logged loudly — a silent binding failure would re-introduce
+          // the multi-ws-per-task drift this ticket exists to kill.
+          console.error(
+            `[WorkflowExecutor] task workspace binding write-back failed for task ${taskRow.id} (non-fatal):`,
+            err instanceof Error ? err.message : String(err),
+          )
+        }
       }
     }
 
     // 7. Record schedule_workspace association
+    // (reuse path records the ws's ESTABLISHED branch suffix — the last one
+    // written for this envelope, per-task constant by K5 — not the freshly
+    // generated one, which no git operation ever used).
+    let assocBranchSuffix = branchSuffix
+    if (reusedWorkspace) {
+      const last = this.configDAO
+        .getDb()
+        .prepare(
+          "SELECT branch_suffix FROM schedule_workspaces WHERE schedule_id = ? AND branch_suffix IS NOT NULL AND branch_suffix != '' ORDER BY started_at DESC LIMIT 1",
+        )
+        .get(schedule.id) as { branch_suffix: string } | undefined
+      if (last?.branch_suffix) assocBranchSuffix = last.branch_suffix
+    }
     const schedWsId = randomUUID()
     this.configDAO.insertScheduleWorkspace({
       id: schedWsId,
       schedule_id: schedule.id,
       workspace_id: workspace.id,
       status: 'running',
-      branch_suffix: branchSuffix,
+      branch_suffix: assocBranchSuffix,
       started_at: new Date().toISOString(),
     })
 
@@ -360,6 +421,33 @@ export class WorkflowExecutor implements Executor {
 
     // 11. Link schedule_execution to root execution
     this.runDAO.updateExecutionLinkId(executionId, execution.id)
+
+    // 11b. task-phase-redesign (ticket 05, K4): Round = this executions row +
+    // phase_index/round_index columns. deriveTaskView (票 03) and the acceptance
+    // ledger (票 07) consume the tagged rows verbatim. First execution of a fresh
+    // v4 envelope is (1,1) by construction; a re-claimed envelope whose chain[0]
+    // was rewritten by dispatchPhaseRound carries the authoritative
+    // `_phase_index`/`_round_index` management keys (same precedent as
+    // task_artifacts_dir — underscore-prefixed internal keys survive into the
+    // var pool harmlessly and make crash recovery re-tag identically).
+    if (isV4) {
+      try {
+        const { phaseIndex, roundIndex } = this.resolvePhaseRound(
+          v4Envelope,
+          firstStep,
+          workspace.id,
+        )
+        this.execDAO.updateExecution(execution.id, {
+          phase_index: phaseIndex,
+          round_index: roundIndex,
+        })
+      } catch (err: unknown) {
+        console.error(
+          `[WorkflowExecutor] phase/round tagging failed for execution ${execution.id} (non-fatal):`,
+          err instanceof Error ? err.message : String(err),
+        )
+      }
+    }
 
     // 12. Register chain completion callback
     const triggeredAt = now.getTime()
@@ -842,6 +930,34 @@ export class WorkflowExecutor implements Executor {
   // ── Chain continuation helpers (#4 story-walker) ──────────────────
 
   /**
+   * task-phase-redesign (ticket 05): resolve (phase_index, round_index) for a
+   * v4 root execution. Precedence:
+   *   1. `_phase_index`/`_round_index` management keys on chain[0].input_values
+   *      (stamped by dispatchPhaseRound — authoritative across crash recovery);
+   *   2. phase matched by workflow_ref against the envelope's resolved phases;
+   *   3. phase 1 (fresh envelope — ticket 04 pre-loads chain[0] = phase 1).
+   * Round without a stamp = 1 + count of this ws's executions already tagged to
+   * that phase (the freshly created row is still untagged → never self-counts).
+   */
+  private resolvePhaseRound(
+    envelope: { phases?: Array<{ index: number; workflowRef: string }> },
+    firstStep: WorkflowChainItem,
+    workspaceId: string,
+  ): { phaseIndex: number; roundIndex: number } {
+    const iv = (firstStep.input_values ?? {}) as Record<string, unknown>
+    const toInt = (v: unknown): number => {
+      const n = typeof v === 'string' || typeof v === 'number' ? Number(v) : NaN
+      return Number.isInteger(n) && n >= 1 ? n : 0
+    }
+    const phaseIndex = toInt(iv._phase_index)
+      || envelope.phases?.find((p) => p.workflowRef === firstStep.workflow_ref)?.index
+      || 1
+    const roundIndex = toInt(iv._round_index)
+      || (this.execDAO.listByWorkspace(workspaceId).filter((e) => e.phase_index === phaseIndex).length + 1)
+    return { phaseIndex, roundIndex }
+  }
+
+  /**
    * Resolve the next workflow_chain step (if any) for the completed execution.
    * config.json.workflow_chain holds the remaining chain (slice(1) of the full
    * chain; the root was triggered immediately). remaining[child_index] is the
@@ -943,6 +1059,13 @@ export class WorkflowExecutor implements Executor {
       const completed = this.configDAO.findRetainedWorkspaces(scheduleId, maxRetain)
 
       for (const row of completed) {
+        // task-phase-redesign (ticket 05, K12 / 票03清单#5): a workspace bound
+        // to a task that has not reached 'done' is EXEMPT — it is the task's
+        // single permanent home (live worktrees + un-collected round evidence),
+        // and max_retain eviction of it would be data destruction, not hygiene.
+        // Once the task is done (archived) the exemption lifts and normal
+        // retention reclaims the disk.
+        if (this.isTaskWorkspaceUnarchived(row.workspace_id)) continue
         try {
           this.workspaceService.delete(row.workspace_id)
         } catch (err: unknown) {
@@ -957,6 +1080,26 @@ export class WorkflowExecutor implements Executor {
         '[WorkflowExecutor] Retention enforcement failed:',
         err instanceof Error ? err.message : String(err),
       )
+    }
+  }
+
+  /** True when `workspaceId` is bound (tasks.workspace_id, schema v40) to a
+   *  live task that has NOT reached 'done'. Raw query on the shared handle
+   *  (same precedent as resolveTaskSpecFromOrigin — no TaskDAO injection
+   *  needed). A lookup failure returns true (treat as protected): silently
+   *  deleting live round evidence is the worse error, and the next retention
+   *  sweep retries. */
+  private isTaskWorkspaceUnarchived(workspaceId: string): boolean {
+    try {
+      const row = this.configDAO
+        .getDb()
+        .prepare(
+          "SELECT status FROM tasks WHERE workspace_id = ? AND deleted_at IS NULL LIMIT 1",
+        )
+        .get(workspaceId) as { status: string } | undefined
+      return !!row && row.status !== 'done'
+    } catch {
+      return true
     }
   }
 

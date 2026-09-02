@@ -6,9 +6,14 @@
 // slice(0,20)+去换行 口径）。
 //
 // ⚠ 唯一性 token：workspaces.name 直接用作目录名（workspace.ts createFromSpec:
-// `~/.octopus/{org}/workspaces/{name}`，同名目录会被 rmSync 覆盖重建）。同一任务
-// 重复触发必须各自落盘，故名字尾部固定拼 `-MMDD-HHmmss`。branch_prefix 仍保持
-// 确定性的 `taskpool-{scheduleId}`（git 分支名，不进展示）。
+// `~/.octopus/orgs/{org}/workspaces/{name}`）。task-phase-redesign（票 05，K12）：
+// v4 任务一 task 一 ws —— 本函数只在**首建**路径被调用（tasks.workspace_id 为空
+// 时 execute() 才取名建 ws），后续 phase/round 复用既有 ws、不再拼名；同名目录
+// 现为显式报错（旧 rmSync 覆写已移除）。`-MMDD-HHmmss` 尾缀保留 —— 其职责从
+// "同一任务重复触发各自落盘" 收窄为 "不同任务/不同首建时刻互不撞名"（v3/复合
+// 子任务等多 ws 路径仍逐次拼名）。branch_prefix 仍保持确定性的
+// `taskpool-{scheduleId}`（git 分支名，不进展示；K5 一 task 一信封 ⇒ 恒定，
+// phase/round 不换支）。
 
 import { DEFAULT_TASK_NAME } from "../tasks/tasks-service"
 
