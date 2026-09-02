@@ -21,6 +21,7 @@ import type {
   ResourceRef,
   ArtifactIndexEntry,
   AssistWorkflowRun,
+  TaskPhaseStatus,
 } from "@octopus/shared"
 
 // ============ TaskDetail (composite view) ============
@@ -65,10 +66,74 @@ export interface TaskChild {
   } | null
 }
 
-/** TaskDetail = Task + optional children. Simple/draft tasks return children=[]
- *  — backward compatible with the plain Task shape. */
+// ── Derived phase view (task-phase-redesign v4, ticket 07 契约) ──────
+//
+// GET /api/tasks/:id embeds `derived` = the server's deriveTaskView output
+// VERBATIM (票 03 唯一真相；票 07 「GET /:id 增 phases 视图」). The canonical
+// types live in @octopus/server (derive-task-view.ts) — web-app cannot import
+// cross-package, so this is the mirror (same discipline as TaskChild above).
+// 票 11 看板角标/时间线 与 票 12 验收弹窗都只读这个视图，MUST NOT re-implement
+// the derive matrix client-side.
+
+/** Normalized outcome of one round's execution row (mirror of server
+ *  TaskRoundState). Terminal = succeeded | failed | cancelled. */
+export type TaskRoundState = "pending" | "running" | "succeeded" | "failed" | "cancelled"
+
+/** Human decision overlay on a round (latest ledger row wins). */
+export type TaskRoundDecision = "accepted" | "rejected"
+
+/** The execution-row subset deriveTaskView passes through. Only created_at is
+ *  available for the ⏳ over-budget calc (no completed_at on the wire) — so the
+ *  advisory badge only ever applies to IN-FLIGHT rounds (pending/running). */
+export interface TaskRoundExec {
+  id: string
+  status: string
+  phase_index: number | null
+  round_index: number | null
+  created_at: string
+}
+
+export interface TaskRoundView {
+  roundIndex: number
+  exec: TaskRoundExec
+  state: TaskRoundState
+  /** Latest human decision on this exact round, or null (未验收). */
+  decision: TaskRoundDecision | null
+}
+
+export interface TaskPhaseView {
+  /** 1-based, mirrors TaskPhase.index. */
+  index: number
+  name: string
+  slug: string
+  workflowRef: string
+  /** Shared wire vocabulary (TaskPhaseStatusSchema) — same enum the
+   *  phase_status_update SSE payload carries. */
+  status: TaskPhaseStatus
+  /** Ascending by roundIndex. */
+  rounds: TaskRoundView[]
+  /** Max round_index seen (null = never started). */
+  currentRound: number | null
+  acceptedRound: number | null
+  /** Round that is terminal-and-unreviewed while status=awaiting_review. */
+  awaitingRound: number | null
+}
+
+/** deriveTaskView output. v4: `{taskStatus: <derived>, isV4: true, phaseViews:[...]}`;
+ *  v3/generic: `{taskStatus: <持久态 verbatim>, isV4: false, phaseViews: []}`
+ *  — the field is ALWAYS present on GET /:id responses from the v4 server
+ *  (票 07 契约), so 票 11/12 render one code path. Optional in the type only for
+ *  backward compat with pre-v4 servers / test fixtures. */
+export interface TaskDerivedView {
+  taskStatus: TaskStatus
+  isV4: boolean
+  phaseViews: TaskPhaseView[]
+}
+
+/** TaskDetail = Task + optional children + optional derived (v4 视图). */
 export type TaskDetail = Task & {
   children?: TaskChild[]
+  derived?: TaskDerivedView
 }
 
 // ============ Input types ============
@@ -275,6 +340,104 @@ export async function cancelTaskTrigger(id: string): Promise<Task> {
   return handleResponse<Task>(res)
 }
 
+// ============ v4 验收 Gate (task-phase-redesign ticket 07 契约) ────────
+
+/** Non-2xx from the acceptance/advance endpoints. Carries the HTTP status so
+ *  the caller (票 12 dialog) can distinguish 409 (派生态不匹配 / 重复提交 →
+ *  re-GET + 刷新) from 400 (body 非法) / 404 without string-matching. */
+export class TaskApiError extends Error {
+  public readonly status: number
+  constructor(message: string, status: number) {
+    super(message)
+    this.name = "TaskApiError"
+    this.status = status
+  }
+}
+
+/** Body of POST /api/tasks/:id/acceptance (票 07 契约). Indices are 1-based,
+ *  matching TaskPhase.index / executions.phase_index. rejected 必填 feedback
+ *  (缺 → 400). */
+export interface AcceptanceInput {
+  phase_index: number
+  round_index: number
+  decision: "accepted" | "rejected"
+  feedback?: string
+}
+
+/** What the caller must do next (票 07):
+ *  - "dispatched"               a new round is already running (advance or retry)
+ *  - "archiving"                last phase accepted — the task is in 归档 (票 08)
+ *  - "awaiting_manual_trigger"  accepted with autoAdvance=false — parked at the
+ *                               human gate (K6/US11), nothing was started. */
+export type AcceptanceNextAction = "dispatched" | "archiving" | "awaiting_manual_trigger"
+
+/** Round identity the server actually dispatched (present iff
+ *  next_action === "dispatched"). */
+export interface AcceptanceDispatch {
+  schedule_id: string
+  execution_id: string
+  workspace_id: string
+  phase_index: number
+  round_index: number
+}
+
+/** 200 body of POST /:id/acceptance — `task` is the SAME shape as GET /:id
+ *  (children + derived included), re-derived AFTER the decision was applied. */
+export interface AcceptanceResult {
+  task: TaskDetail
+  acceptance_id: string
+  next_action: AcceptanceNextAction
+  dispatch?: AcceptanceDispatch
+}
+
+/** 200 body of POST /:id/advance — same shape minus the ledger row (advance
+ *  不写验收账本；它是 autoAdvance=false 时「人工起下一 phase」的入口，
+ *  票 07 活体交互 #3 登记、server 落地归票 08/12 接线). */
+export interface AdvanceResult {
+  task: TaskDetail
+  next_action: AcceptanceNextAction
+  dispatch?: AcceptanceDispatch
+}
+
+/** POST /api/tasks/:id/acceptance — the v4 验收 Gate (K6/K7).
+ *  404 任务不存在；409 派生态非 awaiting_review / round 不匹配 / 该轮已验收
+ *  (重复提交) / 非 v4；400 body 非法 (rejected 缺 feedback 等)。 */
+export async function postAcceptance(
+  taskId: string,
+  body: AcceptanceInput,
+): Promise<AcceptanceResult> {
+  const res = await fetch(buildUrl(`/${taskId}/acceptance`), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new TaskApiError(err.error ?? `HTTP ${res.status}`, res.status)
+  }
+  return res.json()
+}
+
+/** POST /api/tasks/:id/advance — 手动开跑指定 phase 的下一 round
+ *  (autoAdvance=false 的 my-gate 放行入口, US11; 票 12 复用). Body
+ *  `{phase_index}` (1-based). Response mirrors AcceptanceResult without
+ *  acceptance_id. 非 v4 / 派生态不允许 → 409 (TaskApiError). */
+export async function postAdvance(
+  taskId: string,
+  body: { phase_index: number },
+): Promise<AdvanceResult> {
+  const res = await fetch(buildUrl(`/${taskId}/advance`), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new TaskApiError(err.error ?? `HTTP ${res.status}`, res.status)
+  }
+  return res.json()
+}
+
 /** POST /api/tasks/:id/spec-field — agent `update_task_spec_field` tool
  *  endpoint, AND the v3 user-direct-edit path. Merges a single field into the
  *  right column, bumps version, emits `spec_field_update` SSE so the SpecPanel
@@ -471,4 +634,4 @@ export async function getAssistWorkflowRun(taskId: string, runId: string): Promi
 }
 
 // Re-export shared types so callers can import everything from one place.
-export type { Task, TaskStatus, TaskSpecField, ArtifactIndexEntry, AssistWorkflowRun } from "@octopus/shared"
+export type { Task, TaskStatus, TaskSpecField, ArtifactIndexEntry, AssistWorkflowRun, TaskPhase, TaskPhaseStatus } from "@octopus/shared"

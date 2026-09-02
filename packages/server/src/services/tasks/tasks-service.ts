@@ -57,7 +57,7 @@ import type { SSEService } from "../sse"
 // task-phase-redesign (ticket 07): the acceptance API and the GET /:id view read
 // state THROUGH ticket 03's pure derivation — never a re-implementation of its
 // matrix (K3 派生不存, 唯一真相).
-import { deriveTaskView, type TaskView, type DeriveExecutionInput } from "./derive-task-view"
+import { deriveTaskView, type TaskView, type TaskPhaseView, type DeriveExecutionInput } from "./derive-task-view"
 import { materializeTaskSpecToConfig } from "../scheduler/scheduler-service"
 import type { TaskV4PhaseConfig } from "../scheduler/scheduler-service"
 // task-phase-redesign (ticket 05): STATIC registry access for dispatchPhaseRound.
@@ -72,6 +72,8 @@ import { TaskHomeService } from "./task-home-service"
 import type { ProjectRef } from "./task-home-service"
 // task-phase-redesign (ticket 06): the one-way artifact loop (K9/K10/K16).
 import { seedPhaseToWorkspace, collectFromWorkspace, batchRelPath } from "./task-artifact-sync"
+// task-phase-redesign (ticket 08): the archiving orchestrator (K11 归并面).
+import { createTaskArchiver, type TaskArchiver, type ArchiveReport } from "./archiving-service"
 import { PluginMaterializer } from "./plugin-materializer"
 // 06: re-export so the route's classifyError instanceof check matches throws
 // from TaskHomeService.readArtifactContent without a second class declaration.
@@ -383,6 +385,9 @@ function validateServerSpecField(field: ServerSpecField, value: unknown): unknow
 // ── Service ──────────────────────────────────────────────────────────
 
 export class TasksService {
+  /** ticket 08: the shared handle (the archiver is built lazily against it —
+   *  same DAO-per-handle pattern as the constructor below). */
+  private db: Database.Database
   private taskDAO: TaskDAO
   private scheduleDAO: ScheduleConfigDAO
   /** 弹窗优化: latest-run summary per child schedule (schedule_executions). */
@@ -442,6 +447,7 @@ export class TasksService {
     // task-home branch checked). index.ts passes the real BuiltInWorkflowService.
     builtInWorkflowService?: BuiltInWorkflowService | null,
   ) {
+    this.db = db
     this.taskDAO = new TaskDAO(db)
     this.scheduleDAO = new ScheduleConfigDAO(db)
     this.runDAO = new ScheduleRunDAO(db)
@@ -1961,25 +1967,179 @@ export class TasksService {
 
   /** Flip the persisted status into 'archiving' and hand off to 票 08.
    *  done is 票 08's exclusive writer (K3: 归档全绿才算 done) — this method only
-   *  states the task + fires the (optional, late-bound) orchestrator. */
+   *  states the task + starts the orchestration: an explicitly-set hook wins
+   *  (票 07 harness / embedders), otherwise the BUILT-IN archiver runs the K11
+   *  归并面 (ADR 顺延 / 术语 append / commit+push+PR → endArchiving=done).
+   *  Fire-and-forget: a failed archive leaves the task parked in 'archiving',
+   *  retryable via POST /:id/archive/retry (K3/US15). */
   private beginArchiving(taskId: string): void {
     this.setPersistedTaskStatus(taskId, "archiving")
-    if (!this.archivingHook) return
-    try {
-      const maybe = this.archivingHook(taskId)
-      if (maybe && typeof (maybe as Promise<void>).then === "function") {
-        void (maybe as Promise<void>).catch((err: unknown) => {
-          console.error(
-            `[TasksService] archiving hook failed for ${taskId} (task parked in 'archiving', retry=票 08):`,
-            err instanceof Error ? err.message : String(err),
-          )
-        })
+    if (this.archivingHook) {
+      try {
+        const maybe = this.archivingHook(taskId)
+        if (maybe && typeof (maybe as Promise<void>).then === "function") {
+          void (maybe as Promise<void>).catch((err: unknown) => {
+            console.error(
+              `[TasksService] archiving hook failed for ${taskId} (task parked in 'archiving', retry=POST /:id/archive/retry):`,
+              err instanceof Error ? err.message : String(err),
+            )
+          })
+        }
+      } catch (err: unknown) {
+        console.error(
+          `[TasksService] archiving hook threw for ${taskId} (non-fatal — status already 'archiving'):`,
+          err instanceof Error ? err.message : String(err),
+        )
       }
-    } catch (err: unknown) {
-      console.error(
-        `[TasksService] archiving hook threw for ${taskId} (non-fatal — status already 'archiving'):`,
-        err instanceof Error ? err.message : String(err),
+      return
+    }
+    void this.startArchiveRun(taskId)
+  }
+
+  // ── Archiving 编排 (ticket 08 — K11 归档面 / 幂等续跑) ──────────────
+
+  private archiver: TaskArchiver | null = null
+  /** taskId → the LATEST started run (observable seam for tests/UI — 202 is
+   *  fire-and-forget, the promise is the only join point). */
+  private archiveRuns = new Map<string, Promise<ArchiveReport>>()
+  /** Guards against two concurrent runs on the same task (a double retry POST
+   *  would otherwise race the same worktrees). Set while a run is in flight. */
+  private runningArchives = new Set<string>()
+
+  /** 票 08: the built-in archiver, lazily assembled against THIS service's
+   *  db handle + task-home dir (endArchiving is injected as the sole 'done'
+   *  writer — the archiver itself never touches tasks.status). */
+  private getArchiver(): TaskArchiver {
+    if (!this.archiver) {
+      this.archiver = createTaskArchiver({
+        db: this.db,
+        taskHomeService: this.taskHomeService,
+        onComplete: (taskId) => this.endArchiving(taskId),
+      })
+    }
+    return this.archiver
+  }
+
+  /** Start one orchestration run. archiveTask resolves with the report
+   *  (never rejects for per-project git failures — those land IN the report);
+   *  precondition throws (task gone / non-v4) are converted to a failed
+   *  report here so the fire-and-forget path can never produce an
+   *  unhandled rejection. */
+  private startArchiveRun(taskId: string): Promise<ArchiveReport> {
+    if (this.runningArchives.has(taskId)) {
+      const inFlight = this.archiveRuns.get(taskId)
+      if (inFlight) return inFlight
+    }
+    this.runningArchives.add(taskId)
+    const p = this.getArchiver()
+      .archiveTask(taskId)
+      .catch((err: unknown): ArchiveReport => {
+        const message = err instanceof Error ? err.message : String(err)
+        console.error(
+          `[TasksService] archiving run failed for ${taskId} (task parked in 'archiving', retry=POST /:id/archive/retry):`,
+          message,
+        )
+        return { taskId, date: "", ok: false, projects: [], unattributedAdrs: [], unattributedNotes: 0, error: message }
+      })
+      .finally(() => this.runningArchives.delete(taskId))
+    this.archiveRuns.set(taskId, p)
+    return p
+  }
+
+  /** The promise of the most recent archiving run for this task (null = none
+   *  started through this process). Await seam for 202 callers/tests. */
+  awaitArchiving(taskId: string): Promise<ArchiveReport> | null {
+    return this.archiveRuns.get(taskId) ?? null
+  }
+
+  /** POST /api/tasks/:id/archive/retry — project 粒度幂等续跑 (K11/US15).
+   *  ONLY the persisted 'archiving' state is retryable (409 otherwise; 404
+   *  unknown). Validates synchronously, then fires the run WITHOUT awaiting
+   *  (the route answers 202; completion flips the task to done asynchronously).
+   *  A retry while a run is still in flight reuses that run (idempotent). */
+  retryArchive(taskId: string): TaskDTO {
+    const row = this.taskDAO.getById(taskId)
+    if (!row) throw new TaskNotFoundError()
+    if (row.status !== "archiving") {
+      throw new TaskStatusConflictError(
+        `只有归档中(archiving)的任务可以重试归档 (当前状态: '${row.status}')`,
       )
+    }
+    const spec = parseJSON<{ format?: string }>(row.task_spec, {})
+    if (spec.format !== "v4") {
+      throw new TaskStatusConflictError("归档重试仅适用于 v4 任务（task_spec.format === 'v4'）")
+    }
+    void this.startArchiveRun(taskId)
+    const fresh = this.taskDAO.getById(taskId) ?? row
+    return toDTO(fresh)
+  }
+
+  /** 票 08: ALL projects green → 'done' (the task's only archive-completion
+   *  writer; K3 归档全绿才算 done). Sets completed_at and emits task_status
+   *  so the board card leaves 「归档中」. Belt: only fires from 'archiving' —
+   *  an out-of-band abort meanwhile is never resurrected. */
+  private endArchiving(taskId: string): void {
+    const row = this.taskDAO.getById(taskId)
+    if (!row || row.status !== "archiving") return
+    const nowIso = new Date().toISOString()
+    this.taskDAO
+      .getDb()
+      .prepare("UPDATE tasks SET status = ?, updated_at = ?, completed_at = ? WHERE id = ? AND deleted_at IS NULL")
+      .run("done", nowIso, nowIso, taskId)
+    this.sse.emit("taskpool", {
+      event: TASK_STATUS_EVENT,
+      data: { task_id: taskId, status: "done" },
+    })
+    console.log(`[TasksService] task ${taskId} archived → done (ws retention exemption lifted)`)
+  }
+
+  /** POST /api/tasks/:id/advance — 票 07 移交裁决 (US11/auto_advance=false 的
+   *  人工起下一 phase；also covers 「上 phase 已 accepted 但派发失败」 — both
+   *  observably = 前序 phase accepted ∧ 下一 phase pending in the derived view).
+   *  ONLY v4 tasks; ONLY when such a (predecessor-accepted ∧ pending) phase
+   *  pair exists — every other world (phase 1 未触发、running、awaiting_review、
+   *  archiving、全 accepted) → 409. Dispatches round 1 of the first such phase
+   *  on the bound ws; triggerTask is untouched (K6 首 phase 仍人工触发)。 */
+  async advancePhase(taskId: string): Promise<{
+    task: TaskDetailDTO
+    next_action: "dispatched"
+    dispatch: AcceptanceDispatch
+  }> {
+    const row = this.taskDAO.getById(taskId)
+    if (!row) throw new TaskNotFoundError()
+    const spec = parseJSON<TaskSpec>(row.task_spec, { goal: "", ac: [] } as unknown as TaskSpec)
+    if (spec.format !== "v4") {
+      throw new TaskStatusConflictError("advance 仅适用于 v4 任务（task_spec.format === 'v4'）")
+    }
+    const view = this.deriveView(row)
+    let target: TaskPhaseView | null = null
+    for (let pos = 1; pos < view.phaseViews.length; pos++) {
+      const prev = view.phaseViews[pos - 1]
+      const cur = view.phaseViews[pos]
+      if (prev.status === "accepted" && cur.status === "pending") {
+        target = cur
+        break
+      }
+    }
+    if (!target) {
+      throw new TaskStatusConflictError(
+        "无可推进的 phase — 需存在「前序 phase 已 accepted ∧ 该 phase 仍 pending」" +
+          `（当前: ${view.phaseViews.map((p) => `phase${p.index}=${p.status}`).join(", ") || "无 phases"}）`,
+      )
+    }
+    const d = await this.dispatchPhaseRound(taskId, target.index, 1)
+    this.setPersistedTaskStatus(taskId, "running")
+    this.emitPhaseStatus(taskId, target.index, "running", 1)
+    return {
+      task: this.getTask(taskId),
+      next_action: "dispatched",
+      dispatch: {
+        schedule_id: d.scheduleId,
+        execution_id: d.executionId,
+        workspace_id: d.workspaceId,
+        phase_index: target.index,
+        round_index: 1,
+      },
     }
   }
 

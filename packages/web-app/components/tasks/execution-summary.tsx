@@ -33,10 +33,11 @@ import type { LLMCallAggregates } from "@/lib/types"
 import { subscribeSSE } from "@/lib/sse-manager"
 import { getServerUrl } from "@/lib/server-config"
 import { formatDuration, formatTokenCount, formatCost, formatPercent } from "@/lib/format"
-import { TASK_STATUS_EVENT } from "@octopus/shared"
+import { TASK_STATUS_EVENT, PHASE_STATUS_UPDATE_EVENT } from "@octopus/shared"
 import type { ArtifactIndexEntry, Task } from "@octopus/shared"
 import { ArtifactViewerDialog } from "./authoring/artifact-viewer-dialog"
 import { WorkflowViewerDialog } from "./authoring/workflow-viewer-dialog"
+import { PhaseTimeline } from "./phase-timeline"
 
 export const RUN_STATUS_LABEL: Record<string, string> = {
   draft: "待触发", queued: "已排队", claimed: "领取中", running: "执行中",
@@ -473,11 +474,17 @@ export function ArtifactsCard({ taskId }: { taskId: string }) {
 
 // ── 组合视图（弹窗主体）─────────────────────────────────────────────
 
-/** 五态弹窗共用的信息主体：拉 TaskDetail（children + execution_ref），运行中
- *  5s 轮询 + task_status SSE 即时刷新；done/failed/aborted 各附产物区。 */
+/** 五态弹窗共用的信息主体：拉 TaskDetail（children + execution_ref + derived
+ *  v4 视图），运行中 5s 轮询 + task_status / phase_status_update SSE 即时刷新；
+ *  done/failed/aborted 各附产物区。票 11：顶部插 PhaseTimeline（v4 每 phase 一
+ *  行；v3 legacy 单行；旧 server 无 derived 字段 → 组件内静默）。 */
 export function TaskRunDetailView({ task }: { task: Task }) {
   const [detail, setDetail] = useState<TaskDetail | null>(null)
-  const isLive = task.status === "ready" || task.status === "running"
+  // v4 的 awaiting_review / archiving 同样是「盘面还会动」的窗口（round 在跑 /
+  // 归档编排中），保持轮询；纯终态才停。
+  const isLive =
+    task.status === "ready" || task.status === "running" ||
+    task.status === "awaiting_review" || task.status === "archiving"
 
   const refetch = useCallback(() => {
     getTask(task.id).then(setDetail).catch(() => { /* keep last snapshot */ })
@@ -509,6 +516,22 @@ export function TaskRunDetailView({ task }: { task: Task }) {
     return unsub
   }, [task.id, refetch])
 
+  // 票 11/⑦: phase_status_update SSE（票 07 验收链路的派生态变化）— re-derive
+  // and re-render nudge，权威态仍是 GET /:id 的 derived（K3 派生不存）。
+  useEffect(() => {
+    const unsub = subscribeSSE(
+      `${getServerUrl()}/api/tasks/events`,
+      PHASE_STATUS_UPDATE_EVENT,
+      (e: MessageEvent) => {
+        try {
+          const payload = JSON.parse(e.data) as { task_id?: string }
+          if (payload.task_id === task.id) refetch()
+        } catch { /* malformed — ignore */ }
+      },
+    )
+    return unsub
+  }, [task.id, refetch])
+
   const children = detail?.children ?? []
   const execIds = children.flatMap(c => c.execution_ref?.execution_id ? [c.execution_ref.execution_id] : [])
   const { aggMap, loaded } = useRunsAggregates(execIds, isLive)
@@ -516,6 +539,9 @@ export function TaskRunDetailView({ task }: { task: Task }) {
 
   return (
     <div className="h-full overflow-y-auto p-5" data-task-run-detail>
+      <div className="max-w-[1400px] mx-auto mb-4">
+        <PhaseTimeline derived={detail?.derived} />
+      </div>
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start max-w-[1400px] mx-auto">
         <div className="space-y-4 min-w-0">
           <TaskOverviewCard task={task} />

@@ -369,6 +369,36 @@ export function createTasksRoutes(
     }
   })
 
+  // POST /:id/archive/retry — 票 08 archiving 幂等续跑 (project 粒度, K11/US15).
+  // ONLY the persisted 'archiving' state is retryable (409 otherwise; 404
+  // unknown). 202: the orchestration (ADR 顺延 / 术语 append / commit / push /
+  // PR → done) continues ASYNC — the board reflects completion via the
+  // task_status SSE ('done'), not this response. A retry while a run is still
+  // in flight is idempotent (the in-flight run is reused).
+  router.post("/:id/archive/retry", (c) => {
+    try {
+      const task = service.retryArchive(c.req.param("id"))
+      return c.json({ ok: true, task_id: task.id, status: task.status }, 202)
+    } catch (err: unknown) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status)
+    }
+  })
+
+  // POST /:id/advance — 票 07 移交裁决：auto_advance=false 的人工「起下一
+  // phase」入口（也覆盖「上 phase 已 accepted 但派发失败」的续跑）。200 同
+  // acceptance 的 dispatched 形状；409 = 非 v4 / 不存在「前序 accepted ∧ 该
+  // phase pending」的派生窗口（首 phase 请走 /:id/trigger，K6 不变）。
+  router.post("/:id/advance", async (c) => {
+    try {
+      const result = await service.advancePhase(c.req.param("id"))
+      return c.json(result)
+    } catch (err: unknown) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status)
+    }
+  })
+
   // POST /:id/spec-field — agent update_task_spec_field tool endpoint OR user
   // direct edit (05, SW-BP4) → merge field + emit spec_field_update SSE. The
   // optional `source` flag (default "agent") routes user-direct edits through
