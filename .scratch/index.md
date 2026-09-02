@@ -50,3 +50,4 @@
 | 46 | task-workflow-handoff | 2026-08-23 | feat/task-domain-redesign | done (pipeline: build green, review 0 r0, no E2E per D7) |
 | 47 | task-workflow-presets | 2026-08-27 | feat/task-workflow-presets | done (pipeline PASS: 114 dev + review fix, 31/31 E2E; PR → based on bugfix-task-board) |
 | 48 | goal-task-dev | 2026-08-28 | feat/goal-task-dev | done (pipeline PASS: 83 units+30 API+18 browser+real-run probes; AC9 incl. multi-baseline migration fix; T6 found pre-existing status-mirror bug → 另案) |
+| 49 | task-phase-redesign | 2026-09-03 | main | in-progress (wayfinder: 11 tickets resolved + 3 research; spec + 14 issues DAG; E2E=run, mode=sub-agent) |
