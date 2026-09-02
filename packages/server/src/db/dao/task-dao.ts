@@ -28,8 +28,9 @@ export class TaskDAO extends BaseDAO {
       INSERT INTO tasks (
         id, org, name, status, source_chat_session_id,
         task_spec, authoring_resources, resources, skills, project_ids,
-        workflow_ref, version, deleted_at, created_at, updated_at, completed_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        workflow_ref, version, deleted_at, created_at, updated_at, completed_at,
+        workspace_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       row.id, row.org, row.name,
       row.status ?? "draft",
@@ -45,6 +46,7 @@ export class TaskDAO extends BaseDAO {
       row.created_at ?? now,
       row.updated_at ?? now,
       row.completed_at ?? null,
+      row.workspace_id ?? null,
     )
   }
 

@@ -10,7 +10,7 @@ const _dirname: string =
     ? __dirname
     : path.dirname(fileURLToPath(import.meta.url))
 
-export const SCHEMA_VERSION = 39
+export const SCHEMA_VERSION = 40
 
 /**
  * Apply the complete unified schema to the given database.
@@ -87,6 +87,13 @@ function handleSchemaMigrations(db: Database.Database): void {
   // so the build stays green through the removal. Safe on fresh DBs (table may
   // not exist yet / cols may not exist) and on existing dev DBs (cols dropped).
   migrateSchedulesV38DropTriggerCols(db)
+
+  // schema v40 (task-phase-redesign K3): tasks.status CHECK gains awaiting_review +
+  // archiving. Runs AFTER ensureColumnsForExistingTables so the v40 cols
+  // (workspace_id / phase_index / round_index) are already on the old table and get
+  // carried by the copy. Re-entrant: once the live table's DDL text contains the new
+  // statuses it no-ops.
+  migrateTasksStatusCheckV40(db)
 }
 
 /**
@@ -217,6 +224,13 @@ function ensureColumnsForExistingTables(db: Database.Database): void {
   // v39: one-shot due time for task-origin manual/time triggers. NULL =
   // cron/legacy/claim-immediately. Additive nullable column — no rebuild.
   ensureColumn(db, 'schedules', 'scheduled_at', "TEXT")
+
+  // schema v40 (task-phase-redesign K4): executions gains the round identity
+  // (phase_index/round_index, NULL = v3/generic); tasks gains its bound workspace
+  // (NULL = never triggered). Additive nullable cols — no rebuild.
+  ensureColumn(db, 'executions', 'phase_index', "INTEGER DEFAULT NULL")
+  ensureColumn(db, 'executions', 'round_index', "INTEGER DEFAULT NULL")
+  ensureColumn(db, 'tasks', 'workspace_id', "TEXT DEFAULT NULL")
 }
 
 function ensureColumn(db: Database.Database, table: string, column: string, definition: string): void {
@@ -465,4 +479,87 @@ function migrateSchedulesV38DropTriggerCols(db: Database.Database): void {
       )
     }
   }
+}
+
+/**
+ * schema v40 (task-phase-redesign K3): tasks.status CHECK gains 'awaiting_review'
+ * + 'archiving' (the v4 gate states). SQLite cannot alter a CHECK in place, so
+ * existing DBs need a rebuild: create the new-shape table, copy rows, swap names.
+ *
+ * Data-preserving by design — unlike the v37 rename-to-backup (dev-only empty
+ * recreate), `tasks` holds real user kanban data; dropping it silently would be
+ * destructive. The copy uses the explicit column list (v40 shape); every existing
+ * dev DB has at least the v38 set + workspace_id (added by
+ * ensureColumnsForExistingTables immediately before this migration runs).
+ *
+ * Safety notes:
+ *   - No table has `FOREIGN KEY … REFERENCES tasks` (verified via grep) — the
+ *     DROP+RENAME can't strand child FKs (the v37 pitfall). The new table's own
+ *     FK (source_chat_session_id→sessions) is created by DDL text regardless.
+ *   - foreign_keys is toggled OFF around the swap so orphaned
+ *     source_chat_session_id rows (sessions deleted without cascade) can't abort
+ *     the copy; it is restored in `finally`.
+ *   - Old idx_tasks_* indexes are dropped with the old table; schema.sql's
+ *     CREATE INDEX IF NOT EXISTS (which runs after handleSchemaMigrations)
+ *     recreates them on the rebuilt table.
+ *
+ * Re-entrancy: detection is a DDL-text check (`awaiting_review` present →
+ * already migrated), so 2nd+ applySchema runs no-op. Fresh DBs skip entirely
+ * (table doesn't exist yet; schema.sql creates it with the v40 CHECK).
+ */
+function migrateTasksStatusCheckV40(db: Database.Database): void {
+  const tbl = db.prepare(
+    "SELECT sql FROM sqlite_master WHERE type='table' AND name='tasks'",
+  ).get() as { sql: string } | undefined
+  if (!tbl) return // Will be created by schema.sql with the v40 CHECK
+  if (tbl.sql.includes("awaiting_review")) return // Already migrated
+
+  const count = (db.prepare("SELECT COUNT(*) as cnt FROM tasks").get() as { cnt: number }).cnt
+  // Keep this DDL in sync with the tasks CREATE TABLE in schema.sql (v40 shape).
+  const rebuild = db.transaction(() => {
+    db.exec(`
+      CREATE TABLE tasks_v40_rebuild (
+        id TEXT PRIMARY KEY,
+        org TEXT NOT NULL,
+        name TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','ready','running','awaiting_review','archiving','done','failed','aborted')),
+        source_chat_session_id TEXT,
+        task_spec TEXT NOT NULL DEFAULT '{}',
+        authoring_resources TEXT NOT NULL DEFAULT '[]',
+        resources TEXT NOT NULL DEFAULT '[]',
+        skills TEXT NOT NULL DEFAULT '[]',
+        project_ids TEXT NOT NULL DEFAULT '[]',
+        workflow_ref TEXT,
+        version INTEGER NOT NULL DEFAULT 1,
+        deleted_at TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        completed_at TEXT,
+        workspace_id TEXT DEFAULT NULL,
+        FOREIGN KEY (source_chat_session_id) REFERENCES sessions(id)
+      )
+    `)
+    const cols = [
+      "id", "org", "name", "status", "source_chat_session_id", "task_spec",
+      "authoring_resources", "resources", "skills", "project_ids",
+      "workflow_ref", "version", "deleted_at", "created_at", "updated_at",
+      "completed_at", "workspace_id",
+    ]
+    db.exec(`
+      INSERT INTO tasks_v40_rebuild (${cols.join(", ")})
+      SELECT ${cols.join(", ")} FROM tasks
+    `)
+    db.exec("DROP TABLE tasks")
+    db.exec("ALTER TABLE tasks_v40_rebuild RENAME TO tasks")
+  })
+
+  const fkWasOn = db.pragma("foreign_keys", { simple: true }) as number
+  db.pragma("foreign_keys = OFF")
+  try {
+    rebuild()
+  } finally {
+    if (fkWasOn) db.pragma("foreign_keys = ON")
+  }
+  // eslint-disable-next-line no-console
+  console.log(`[schema] Rebuilt tasks with v40 status CHECK (awaiting_review/archiving added, failed kept for v3; ${count} rows preserved)`)
 }

@@ -50,6 +50,40 @@ export interface ProjectRef {
   path?: string
 }
 
+/** Matt-convention files probed per selected project when context.md is
+ *  written (task-phase-redesign ticket 09, AC3; decisions/06 §2/§4). The
+ *  server does a cheap existence check so the agent's domain-reading step
+ *  starts from the probe RESULT, not a blind ls — reads are unrestricted in
+ *  draft sessions (decisions/06 §1). All four missing ⇒ the project is
+ *  annotated 「无领域文档 project」 and the skill degrades (US2). */
+const CONVENTION_PROBES: ReadonlyArray<{ label: string; rel: string }> = [
+  { label: "CONTEXT-MAP.md", rel: "CONTEXT-MAP.md" },
+  { label: "CONTEXT.md", rel: "CONTEXT.md" },
+  { label: "docs/adr/", rel: path.join("docs", "adr") },
+  { label: ".scratch/index.md", rel: path.join(".scratch", "index.md") },
+]
+
+/** One-line existence summary for a project dir. Any error (unreadable dir)
+ *  degrades to "all missing" — the probe is advisory, never fatal. */
+function probeProjectConventions(projectPath: string): { line: string; allMissing: boolean } {
+  const marks = CONVENTION_PROBES.map(({ label, rel }) => {
+    let found = false
+    try {
+      found = fs.existsSync(path.join(projectPath, rel))
+    } catch {
+      found = false
+    }
+    return `${label} ${found ? "✓" : "—"}`
+  })
+  const allMissing = marks.every((m) => m.endsWith("—"))
+  return {
+    line: allMissing
+      ? "领域文档 probe: 惯例文件全部缺失 — 按「无领域文档 project」降级（以 README/代码结构为准，并在 brief/spec 标注）"
+      : `领域文档 probe: ${marks.join(" · ")}`,
+    allMissing,
+  }
+}
+
 /** Thrown by {@link TaskHomeService.readArtifactContent} when a requested path
  *  fails the whitelist (`FORBIDDEN` → HTTP 403) or passes the whitelist but the
  *  file is missing on disk (`NOT_FOUND` → HTTP 404). Mirrors the
@@ -178,10 +212,27 @@ export class TaskHomeService {
         for (const p of projects) {
           if (p.path) {
             lines.push(`- project: ${p.name}  →  ${p.path}`)
+            // ticket 09 (AC3): probe RESULT rides under the path line — the
+            // agent's 领域阅读 step reads these instead of blind-ls'ing.
+            lines.push(`  - ${probeProjectConventions(p.path).line}`)
           } else {
             lines.push(`- project: ${p.name}  (路径未解析)`)
           }
         }
+        lines.push('')
+        // Probe guidance (US2 / decisions/06 §4): which conventions, how to
+        // read them, and the degradation rule. Lives in context.md (dynamic —
+        // refreshed with the paths) NOT in the static rules file.
+        lines.push('## 领域阅读指引（matt 惯例 — 起草前逐 project 执行）')
+        lines.push('')
+        lines.push('- 惯例四件套（绝对路径 = 上方各 project 路径 + 下列相对路径）：')
+        lines.push('  1. `CONTEXT-MAP.md` — 全局术语表 / 包索引')
+        lines.push('  2. `CONTEXT.md` — 包级领域语言（monorepo 亦见 `packages/*/CONTEXT.md`）')
+        lines.push('  3. `docs/adr/` — 决策记录（编号递增，新决策须顺延）')
+        lines.push('  4. `.scratch/index.md` — 历史需求批次（`.scratch/<date>/<slug>/`）')
+        lines.push('- 上方每个 project 已标注 server 写入时刻的 probe 结果（✓ 存在 / — 缺失）；agent 可直接按绝对路径 Read 全文。')
+        lines.push('- 四件套全缺 → 该 project 按「无领域文档 project」降级：以 README/代码结构为准，并在 brief/spec 中标注。')
+        lines.push('- 领域知识只读：术语进产物、ADR 号记入决策表；**不得写回 project 仓库**（草稿会话写锁强制，归并走归档）。')
       }
       if (skillGroups && skillGroups.length > 0) {
         lines.push(`- locked skill groups: ${skillGroups.join(', ')}`)

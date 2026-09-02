@@ -26,6 +26,8 @@ CREATE TABLE IF NOT EXISTS workspaces (
 );
 
 -- 2. Executions
+-- schema v40 (task-phase-redesign K4): + phase_index/round_index — v4 round
+-- identity (1 execution = 1 round). NULL = v3/generic (non-phase execution).
 CREATE TABLE IF NOT EXISTS executions (
   id TEXT PRIMARY KEY,
   workspace_id TEXT NOT NULL,
@@ -59,6 +61,8 @@ CREATE TABLE IF NOT EXISTS executions (
   harness_status TEXT DEFAULT NULL,
   harness_summary TEXT DEFAULT NULL,
   budget_snapshot TEXT DEFAULT NULL,
+  phase_index INTEGER DEFAULT NULL,
+  round_index INTEGER DEFAULT NULL,
   started_at TEXT,
   completed_at TEXT,
   duration INTEGER,
@@ -422,13 +426,18 @@ CREATE TABLE IF NOT EXISTS sessions (
 -- authoring_resources (draft-scope, prompt-injected into the task-author session,
 -- v2-D8/D13) live as their own JSON columns for query/provisioning convenience.
 -- Autosave (clone/index.ts) writes ONLY name+updated_at — never task_spec/resources
--- or version (SG8). status CHECK enforces the 6 lifecycle states (claimed folded into
+-- or version (SG8). status CHECK enforces the lifecycle states (claimed folded into
 -- running, v2-D14); soft-deleted drafts/ready carry deleted_at, not a status value.
+-- schema v40 (task-phase-redesign K3/K4): + awaiting_review / archiving (v4 gate
+-- states); 'failed' KEPT in the CHECK for v3 legacy rows (K13 停用不物理删 — v4
+-- derivation never writes it, existing rows must remain readable). + workspace_id
+-- (K4): the task's bound workspace — NULL = never triggered; first trigger creates
+-- + binds, later rounds reuse (票 05 dispatchPhaseRound).
 CREATE TABLE IF NOT EXISTS tasks (
   id TEXT PRIMARY KEY,
   org TEXT NOT NULL,
   name TEXT NOT NULL,
-  status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','ready','running','done','failed','aborted')),
+  status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','ready','running','awaiting_review','archiving','done','failed','aborted')),
   source_chat_session_id TEXT,
   task_spec TEXT NOT NULL DEFAULT '{}',
   authoring_resources TEXT NOT NULL DEFAULT '[]',
@@ -441,8 +450,37 @@ CREATE TABLE IF NOT EXISTS tasks (
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   completed_at TEXT,
+  workspace_id TEXT DEFAULT NULL,
   FOREIGN KEY (source_chat_session_id) REFERENCES sessions(id)
 );
+
+-- 21c. Task Phase Acceptances (schema v40 — task-phase-redesign K4)
+-- The 验收 Gate ledger: one row per human decision on a phase round
+-- (accepted | rejected + feedback). APPEND-ONLY — a round's decision is a
+-- historical fact; corrections append a new row, never mutate. No FK on
+-- task_id (S2 polymorphic-integrity convention: app-level cascade, same as
+-- schedules.origin_id) so future tasks rebuilds can't strand the ledger.
+-- UPDATE/DELETE blocked by triggers (mirrors the schedule_audit_logs precedent).
+CREATE TABLE IF NOT EXISTS task_phase_acceptances (
+  id TEXT PRIMARY KEY,
+  task_id TEXT NOT NULL,
+  phase_index INTEGER NOT NULL,
+  round_index INTEGER NOT NULL,
+  decision TEXT NOT NULL CHECK (decision IN ('accepted','rejected')),
+  feedback TEXT,
+  decided_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_task_phase_acceptances_task_phase
+  ON task_phase_acceptances(task_id, phase_index);
+
+CREATE TRIGGER IF NOT EXISTS prevent_task_phase_acceptance_update
+  BEFORE UPDATE ON task_phase_acceptances
+  BEGIN SELECT RAISE(ABORT, 'task_phase_acceptances is append-only'); END;
+
+CREATE TRIGGER IF NOT EXISTS prevent_task_phase_acceptance_delete
+  BEFORE DELETE ON task_phase_acceptances
+  BEGIN SELECT RAISE(ABORT, 'task_phase_acceptances is append-only'); END;
 
 -- 22. Messages
 CREATE TABLE IF NOT EXISTS messages (

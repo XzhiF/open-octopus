@@ -45,8 +45,9 @@ export class ExecutionDAO extends BaseDAO {
         status, gate_status, rollback, rollback_on_error, input_values, var_pool,
         progress, triggered_by, started_at, completed_at, duration, org,
         created_at, updated_at, node_type, branch, start_commit_id, end_commit_id,
-        name, global_session_id, approval_metadata, interaction_metadata, chain_retry_count, preset_inputs
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        name, global_session_id, approval_metadata, interaction_metadata, chain_retry_count, preset_inputs,
+        phase_index, round_index
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       row.id, row.workspace_id, row.parent_id ?? "0", row.child_index ?? 0,
       row.workflow_ref ?? "", row.workflow_name ?? "",
@@ -62,6 +63,7 @@ export class ExecutionDAO extends BaseDAO {
       row.approval_metadata ?? null, row.interaction_metadata ?? null,
       row.chain_retry_count ?? 0,
       row.preset_inputs ?? null,
+      row.phase_index ?? null, row.round_index ?? null,
     )
   }
 
@@ -72,6 +74,7 @@ export class ExecutionDAO extends BaseDAO {
       "preset_inputs", "name", "branch", "start_commit_id", "end_commit_id",
       "pipeline_config", "retry_count", "pending_hooks", "resume_attempts",
       "instance_id", "input_values", "budget_snapshot",
+      "phase_index", "round_index",
     ])
     const sets: string[] = []
     const vals: unknown[] = []

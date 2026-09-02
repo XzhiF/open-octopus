@@ -7,7 +7,7 @@
 None — can start immediately.
 
 ## Status
-ready-for-agent
+done
 
 ## Acceptance Criteria
 - [ ] AC1: v4 payload（无 goal/ac，phases≥1）parse 通过；v3 payload 行为不变（回归）

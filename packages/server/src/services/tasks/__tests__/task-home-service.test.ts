@@ -41,6 +41,87 @@ describe("TaskHomeService", () => {
     cleanupDir(base)
   })
 
+  // ── ticket 09 (task-phase-redesign, AC3): per-project probe in context.md ──
+  describe("ticket 09 AC3 — context.md project paths + convention probe", () => {
+    it("probes the matt conventions per resolved project and marks present/missing", () => {
+      const id = "t-probe-1"
+      // Fake project A: only CONTEXT-MAP.md + docs/adr/ exist.
+      const projA = path.join(base, "projA")
+      fs.mkdirSync(path.join(projA, "docs", "adr"), { recursive: true })
+      fs.writeFileSync(path.join(projA, "CONTEXT-MAP.md"), "# map\n")
+      // Fake project B: all four conventions present.
+      const projB = path.join(base, "projB")
+      fs.mkdirSync(path.join(projB, "docs", "adr"), { recursive: true })
+      fs.mkdirSync(path.join(projB, ".scratch"), { recursive: true })
+      fs.writeFileSync(path.join(projB, "CONTEXT-MAP.md"), "# map\n")
+      fs.writeFileSync(path.join(projB, "CONTEXT.md"), "# ctx\n")
+      fs.writeFileSync(path.join(projB, ".scratch", "index.md"), "# idx\n")
+
+      svc.createHome(id, {
+        org: "xzf",
+        projects: [
+          { name: "projA", path: projA },
+          { name: "projB", path: projB },
+        ],
+      })
+      const ctx = fs.readFileSync(path.join(svc.homePath(id), "context.md"), "utf-8")
+
+      // AC3: each selected project gets a path line…
+      expect(ctx).toContain(`- project: projA  →  ${projA}`)
+      expect(ctx).toContain(`- project: projB  →  ${projB}`)
+      // …plus probe RESULT lines (✓ present / — missing) for the four conventions.
+      const projABlock = ctx.slice(ctx.indexOf("project: projA"), ctx.indexOf("project: projB"))
+      expect(projABlock).toContain("CONTEXT-MAP.md ✓")
+      expect(projABlock).toContain("CONTEXT.md —")
+      expect(projABlock).toContain("docs/adr/ ✓")
+      expect(projABlock).toContain(".scratch/index.md —")
+      const projBBlock = ctx.slice(ctx.indexOf("project: projB"))
+      for (const c of ["CONTEXT-MAP.md ✓", "CONTEXT.md ✓", "docs/adr/ ✓", ".scratch/index.md ✓"]) {
+        expect(projBBlock).toContain(c)
+      }
+      // Guidance for the agent (US2): what to read, and the degradation rule.
+      expect(ctx).toContain("领域")
+      expect(ctx).toContain("无领域文档 project")
+      expect(ctx).toContain("降级")
+    })
+
+    it("marks a fully convention-less project as degraded and unresolved projects stay un-probed", () => {
+      const id = "t-probe-2"
+      const emptyProj = path.join(base, "empty-proj")
+      fs.mkdirSync(emptyProj, { recursive: true })
+
+      svc.createHome(id, {
+        projects: [
+          { name: "empty-proj", path: emptyProj },
+          { name: "no-path-proj" },
+        ],
+      })
+      const ctx = fs.readFileSync(path.join(svc.homePath(id), "context.md"), "utf-8")
+
+      expect(ctx).toContain("无领域文档 project")
+      // Unresolved project keeps the existing placeholder and no probe noise.
+      expect(ctx).toContain("no-path-proj  (路径未解析)")
+    })
+
+    it("writeContextFile refresh re-probes current disk state", () => {
+      const id = "t-probe-3"
+      const proj = path.join(base, "proj")
+      fs.mkdirSync(proj, { recursive: true })
+      svc.createHome(id)
+      svc.writeContextFile(id, "o", [{ name: "proj", path: proj }])
+      let ctx = fs.readFileSync(path.join(svc.homePath(id), "context.md"), "utf-8")
+      // All four missing → degrade annotation (not per-file marks).
+      expect(ctx).toContain("惯例文件全部缺失")
+
+      fs.writeFileSync(path.join(proj, "CONTEXT-MAP.md"), "# later\n")
+      svc.writeContextFile(id, "o", [{ name: "proj", path: proj }])
+      ctx = fs.readFileSync(path.join(svc.homePath(id), "context.md"), "utf-8")
+      // Re-probe flips to per-file marks once a convention exists.
+      expect(ctx).toContain("CONTEXT-MAP.md ✓")
+      expect(ctx).not.toContain("惯例文件全部缺失")
+    })
+  })
+
   // ── AC1: homePath pure derivation + createHome skeleton ────────────
   describe("AC1 — homePath + createHome", () => {
     it("homePath is a pure derivation with no FS side effect", () => {
