@@ -39,6 +39,8 @@ import {
   TASK_ARTIFACTS_UPDATE_EVENT,
   TASK_STATUS_EVENT,
   TASK_TRIGGER_EVENT,
+  PHASE_STATUS_UPDATE_EVENT,
+  type TaskPhaseStatus,
   taskSpecSchema,
   validateSpecFieldValue,
   TaskSpecFieldError,
@@ -48,9 +50,14 @@ import {
   ScheduleConfigDAO,
   ScheduleRunDAO,
   AgentSessionDAO,
+  AcceptanceDAO,
 } from "../../db/dao"
 import type { TaskRow, ScheduleRow, ScheduleExecutionRow } from "../../db/types"
 import type { SSEService } from "../sse"
+// task-phase-redesign (ticket 07): the acceptance API and the GET /:id view read
+// state THROUGH ticket 03's pure derivation — never a re-implementation of its
+// matrix (K3 派生不存, 唯一真相).
+import { deriveTaskView, type TaskView, type DeriveExecutionInput } from "./derive-task-view"
 import { materializeTaskSpecToConfig } from "../scheduler/scheduler-service"
 import type { TaskV4PhaseConfig } from "../scheduler/scheduler-service"
 // task-phase-redesign (ticket 05): STATIC registry access for dispatchPhaseRound.
@@ -210,6 +217,50 @@ export interface TaskDetailDTO extends TaskDTO {
       error_summary: string | null
     } | null
   }>
+  /** task-phase-redesign (ticket 07, spec API table 「GET /:id 增 phases 视图」):
+   *  deriveTaskView's output embedded VERBATIM (no field renaming, no re-derivation).
+   *  v4: `{ taskStatus: <derived>, isV4: true, phaseViews: [...] }`; non-v4:
+   *  `{ taskStatus: <persisted mirror>, isV4: false, phaseViews: [] }` — the
+   *  field is ALWAYS present so 票 11/12 can render one code path. */
+  derived: TaskView
+}
+
+// ── Acceptance (task-phase-redesign ticket 07 — 验收 Gate K6/K7) ─────
+
+/** Body of POST /api/tasks/:id/acceptance (spec API table). Indices are
+ *  1-based, matching TaskPhase.index / executions.phase_index. */
+export interface AcceptanceInput {
+  phase_index: number
+  round_index: number
+  decision: "accepted" | "rejected"
+  /** K7: 打回必填反馈文本（route 的 zod 拦空）；accepted 时忽略。 */
+  feedback?: string
+}
+
+/** What the caller (票 12 dialog) must do next:
+ *  - "dispatched"               a new round is already running (advance or retry)
+ *  - "archiving"                last phase accepted — the task is in 归档 (票 08)
+ *  - "awaiting_manual_trigger"  accepted with autoAdvance=false — parked at the
+ *                               human gate (K6/US11), nothing was started. */
+export type AcceptanceNextAction = "dispatched" | "archiving" | "awaiting_manual_trigger"
+
+/** Round identity that {@link TasksService.acceptance} actually dispatched
+ *  (present iff next_action === "dispatched"). */
+export interface AcceptanceDispatch {
+  schedule_id: string
+  execution_id: string
+  workspace_id: string
+  phase_index: number
+  round_index: number
+}
+
+export interface AcceptanceResult {
+  /** Fresh detail view (children + `derived`) AFTER the decision was applied. */
+  task: TaskDetailDTO
+  next_action: AcceptanceNextAction
+  dispatch?: AcceptanceDispatch
+  /** The ledger row this call appended (traceability handle for the UI). */
+  acceptance_id: string
 }
 
 export interface CreateTaskInput {
@@ -297,8 +348,9 @@ function toDTO(row: TaskRow): TaskDTO {
   }
 }
 
-/** Server-side spec-field set: the 9 shared bindable fields (via
- *  {@link validateSpecFieldValue}) PLUS the two v3 confirmation gates
+/** Server-side spec-field set: the shared bindable fields (9 as of v3, +11 with
+ *  ticket 07's `phases` — via {@link validateSpecFieldValue}) PLUS the two v3
+ *  confirmation gates
  *  `goal_confirmed` / `ac_confirmed` (D18). The latter live in taskSpecSchema
  *  (storage — ticket 01) but are intentionally NOT in the shared
  *  TaskSpecFieldSchema enum (spec line 94 only adds `decisions` there); their
@@ -306,8 +358,8 @@ function toDTO(row: TaskRow): TaskDTO {
 export type ServerSpecField = TaskSpecField | "goal_confirmed" | "ac_confirmed"
 
 /** Validate a spec-field value. Delegates to the shared canonical
- *  {@link validateSpecFieldValue} for the 9 shared fields (incl. `decisions`,
- *  SW-BP3) so the contract stays single-sourced, and validates the two
+ *  {@link validateSpecFieldValue} for the shared fields (incl. `decisions`,
+ *  SW-BP3, and ticket 07's `phases`) so the contract stays single-sourced, and validates the two
  *  confirmation gates server-side (boolean / string[]). Throws
  *  {@link TaskSpecFieldError} on invalid input so the route returns 400. */
 function validateServerSpecField(field: ServerSpecField, value: unknown): unknown {
@@ -349,6 +401,10 @@ export class TasksService {
    *  Optional: when null, only the task-home branch of the resolution set is
    *  checked — backward-compatible with ad-hoc callers that don't wire it. */
   private builtInWorkflowService: BuiltInWorkflowService | null
+  /** task-phase-redesign (ticket 07): the append-only 验收 ledger (schema v40).
+   *  Constructed from the same handle as the other DAOs — no new ctor param
+   *  (SW-BP15 discipline: tail-appended params only). */
+  private acceptanceDAO: AcceptanceDAO
 
   /** v39: late-bound hook to SchedulerEngine.wake() (engine is constructed
    *  AFTER this service in index.ts — setter injection, same precedent as
@@ -357,8 +413,20 @@ export class TasksService {
    *  back to the 60s auxiliary tick. */
   private wakeScheduler?: () => void
 
+  /** task-phase-redesign (ticket 07 → 票 08): late-bound archiving orchestrator.
+   *  `acceptance` on the LAST phase flips the persisted status to 'archiving'
+   *  and calls this hook; the orchestrator (ADR 顺延 / CONTEXT append / commit /
+   *  PR → done, 票 08) is wired from index.ts and owns its own failure semantics
+   *  (a failed archive leaves the task parked in 'archiving', retryable — K3/US15).
+   *  Unwired (tests, ad-hoc embedders) ⇒ the status flip alone stands. */
+  private archivingHook?: (taskId: string) => void | Promise<void>
+
   setWakeScheduler(fn: () => void): void {
     this.wakeScheduler = fn
+  }
+
+  setArchivingHook(fn: (taskId: string) => void | Promise<void>): void {
+    this.archivingHook = fn
   }
 
   constructor(
@@ -382,6 +450,7 @@ export class TasksService {
     this.taskHomeService = taskHomeService ?? new TaskHomeService()
     this.pluginMaterializer = pluginMaterializer ?? null
     this.builtInWorkflowService = builtInWorkflowService ?? null
+    this.acceptanceDAO = new AcceptanceDAO(db)
   }
 
   /** Build the resolver deps for a given taskId (ADR-0013). Shared by the
@@ -545,7 +614,43 @@ export class TasksService {
     const enrichedDto: TaskDTO = root
       ? { ...dto, schedule_status: root.status, scheduled_at: root.scheduled_at }
       : dto
-    return { ...enrichedDto, children }
+    return { ...enrichedDto, children, derived: this.deriveView(row) }
+  }
+
+  /** task-phase-redesign (ticket 07): gather the three facts deriveTaskView
+   *  needs and hand off — this service adds NO state logic of its own (K3).
+   *
+   *  Round executions are scoped through the task's SCHEDULES (S2 polymorphic
+   *  origin → schedule_executions.execution_id, written by BOTH round paths:
+   *  WorkflowExecutor.execute:458 for the first trigger and
+   *  dispatchPhaseRound for advances/retries). Why not `tasks.workspace_id`:
+   *  the ws is the execution's location, not its ownership — an out-of-band ws
+   *  deletion would then blind the derivation (rounds invisible ⇒ the human
+   *  could never accept/advance again), while the ledger says otherwise. The
+   *  phase_index IS NOT NULL filter keeps child loop/swarm executions (and all
+   *  v3/generic rows) out; derive ignores anything untagged anyway. */
+  private deriveView(row: TaskRow): TaskView {
+    const executions: DeriveExecutionInput[] = this.taskDAO
+      .getDb()
+      .prepare(
+        `SELECT e.id, e.status, e.phase_index, e.round_index, e.created_at
+           FROM executions e
+          WHERE e.phase_index IS NOT NULL
+            AND e.id IN (
+              SELECT se.execution_id
+                FROM schedule_executions se
+                JOIN schedules s ON s.id = se.schedule_id
+               WHERE s.origin_type = 'task' AND s.origin_id = ?
+                 AND se.execution_id IS NOT NULL
+            )
+          ORDER BY e.created_at ASC`,
+      )
+      .all(row.id) as DeriveExecutionInput[]
+    return deriveTaskView(
+      { id: row.id, status: row.status, task_spec: row.task_spec },
+      executions,
+      this.acceptanceDAO.listByTask(row.id),
+    )
   }
 
   /** Compact latest-run summary for a child schedule (listExecutions is
@@ -634,8 +739,15 @@ export class TasksService {
     } else {
       // No filter — union of all active. listByOrg requires an org, so scan
       // all statuses (the kanban shows draft/ready/running/done/failed/aborted).
+      // ticket 07: the two v4 states (awaiting_review / archiving) join the
+      // scan — v3 rows never carry them, so the union is a pure superset of the
+      // previous list (a v4 task would otherwise vanish from the unfiltered
+      // board between rounds).
       rows = (
-        ["draft", "ready", "running", "done", "failed", "aborted"] as TaskStatus[]
+        [
+          "draft", "ready", "running", "awaiting_review", "archiving",
+          "done", "failed", "aborted",
+        ] as TaskStatus[]
       ).flatMap((st) => this.taskDAO.listByStatus(st))
     }
     return { items: this.enrichRootSchedule(rows.map(toDTO)) }
@@ -868,8 +980,12 @@ export class TasksService {
       case "decisions":
       case "goal_confirmed":
       case "ac_confirmed":
+      case "phases":
         // Merge into task_spec JSON (all v3 confirmation/decision fields +
         // the original goal/ac/subunits/integration_goal live in task_spec).
+        // ticket 07: `phases` too — WHOLE-ARRAY PUT (the value validated by
+        // shared's taskPhaseSchema replaces the list; per-phase patching is
+        // deliberately not defined, K1).
         fields.task_spec = JSON.stringify({ ...currentSpec, [input.field]: validatedValue })
         break
       case "skills":
@@ -1710,6 +1826,249 @@ export class TasksService {
     this.sse.emit("taskpool", {
       event: TASK_ARTIFACTS_UPDATE_EVENT,
       data: { task_id: taskId },
+    })
+  }
+
+  // ── Acceptance gate (task-phase-redesign ticket 07 — K3/K6/K7) ─────
+
+  /** POST /api/tasks/:id/acceptance — the human 验收 decision on one phase round.
+   *
+   *  Validation reads the DERIVED state (票 03's deriveTaskView is the single
+   *  truth — this method re-implements none of the matrix): the target phase
+   *  must be in 'awaiting_review' and `round_index` must be exactly its
+   *  awaitingRound, else 409 (AC4). A (phase,round) that already carries a
+   *  ledger row is refused as well — the append-only table CAN hold duplicates
+   *  by design, but a round gets one human decision (idempotency belt for the
+   *  spec-R2 concurrent POST/PUT window).
+   *
+   *  Effects (K6/K7), all after the ledger append:
+   *    accepted ∧ i<n ∧ autoAdvance(默认开) → dispatchPhaseRound(i+1, 1)
+   *    accepted ∧ i=n                        → persisted 'archiving' + 票 08 hook
+   *    accepted ∧ autoAdvance=false          → nothing starts (awaiting_manual_trigger)
+   *    rejected                              → `fix-feedback-r{N}.md` written into
+   *                                            the phase's batch dir (home) +
+   *                                            dispatchPhaseRound(i, R+1) where
+   *                                            R+1 = 该 phase 账本 rejected 行数 + 1
+   *
+   *  Persisted-status normalization: the SG2 listener mirrors the FIRST round's
+   *  terminal transition onto tasks.status ('done'/'failed'), and dispatch
+   *  never touches it — so after acceptance we realign the row with what the
+   *  human just authorized ('running' when a round started, 'ready' when the
+   *  task parks at the manual gate). Without this a v4 task could not be
+   *  aborted after acceptance (abortTask only accepts ready/running). K3 is
+   *  NOT violated: these are the states the derivation itself reports for the
+   *  post-decision world, written at a *human decision* point — never a mirror
+   *  of a machine transition.
+   *
+   *  The ledger write is intentionally NOT rolled back when the dispatch then
+   *  fails (ws gone / slot busy → TaskStatusConflictError → 409): the decision
+   *  is historical fact; the phase derives to 'pending' and the retry is a
+   *  human action (K6 重试永远人工发起). */
+  async acceptance(taskId: string, input: AcceptanceInput): Promise<AcceptanceResult> {
+    const row = this.taskDAO.getById(taskId)
+    if (!row) throw new TaskNotFoundError()
+    const spec = parseJSON<TaskSpec>(row.task_spec, { goal: "", ac: [] } as unknown as TaskSpec)
+    if (spec.format !== "v4") {
+      throw new TaskStatusConflictError("验收仅适用于 v4 任务（task_spec.format === 'v4'）")
+    }
+
+    const view = this.deriveView(row)
+    const pos = view.phaseViews.findIndex((p) => p.index === input.phase_index)
+    const pv = pos >= 0 ? view.phaseViews[pos] : undefined
+    if (!pv) {
+      throw new TaskStatusConflictError(
+        `phase ${input.phase_index} 不在任务 phases[] 中（共 ${view.phaseViews.length} 个）`,
+      )
+    }
+    if (this.acceptanceDAO.listByRound(taskId, pv.index, input.round_index).length > 0) {
+      throw new TaskStatusConflictError(
+        `phase ${pv.index} round ${input.round_index} 已验收，不可重复提交（账本 append-only，一次决定）`,
+      )
+    }
+    if (pv.status !== "awaiting_review" || pv.awaitingRound !== input.round_index) {
+      throw new TaskStatusConflictError(
+        `phase ${pv.index} 当前派生态 '${pv.status}'` +
+          (pv.awaitingRound !== null ? `（待验收轮 ${pv.awaitingRound}）` : "（无待验收轮）") +
+          `，与请求 round ${input.round_index} 不匹配`,
+      )
+    }
+
+    // 位置而非 index+1 —— phases[] 的 index 由作者给（spec-r2 重写过编号也合法），
+    // 「下一个 phase」是数组意义上的下一项，末项 = i=n（K6）。
+    const isLast = pos === view.phaseViews.length - 1
+    const nextPhaseIndex = isLast ? null : view.phaseViews[pos + 1].index
+    const acceptanceId = randomUUID()
+    const feedback = (input.feedback ?? "").trim()
+    this.acceptanceDAO.insert({
+      id: acceptanceId,
+      task_id: taskId,
+      phase_index: pv.index,
+      round_index: input.round_index,
+      decision: input.decision,
+      feedback: input.decision === "rejected" ? feedback : null,
+    })
+
+    let dispatch: AcceptanceDispatch | undefined
+    let next_action: AcceptanceNextAction
+
+    if (input.decision === "rejected") {
+      // K7: 反馈产物化进 phase 批次目录（下一 round 的 seed 会把它带进 ws，
+      // 与 input_values.feedback 双通道；N = 被打回的那一轮）。
+      this.writeFixFeedbackArtifact(taskId, pv.index, pv.name, pv.slug, input.round_index, feedback)
+      // 轮号规则（票 07）: 同一 phase 的 rejected 行数 + 1 —— 打完一轮长一轮。
+      const rejectedCount = this.acceptanceDAO
+        .listByPhase(taskId, pv.index)
+        .filter((r) => r.decision === "rejected").length
+      const nextRound = rejectedCount + 1
+      const d = await this.dispatchPhaseRound(taskId, pv.index, nextRound, feedback)
+      dispatch = {
+        schedule_id: d.scheduleId,
+        execution_id: d.executionId,
+        workspace_id: d.workspaceId,
+        phase_index: pv.index,
+        round_index: nextRound,
+      }
+      next_action = "dispatched"
+      this.setPersistedTaskStatus(taskId, "running")
+      this.emitPhaseStatus(taskId, pv.index, "running", nextRound)
+    } else {
+      // accepted — 人的放行先落帧（UI 立刻把该 phase 变绿）。
+      this.emitPhaseStatus(taskId, pv.index, "accepted", input.round_index)
+      if (isLast) {
+        next_action = "archiving"
+        this.beginArchiving(taskId)
+      } else if (nextPhaseIndex !== null && spec.autoAdvance !== false) {
+        const d = await this.dispatchPhaseRound(taskId, nextPhaseIndex, 1)
+        dispatch = {
+          schedule_id: d.scheduleId,
+          execution_id: d.executionId,
+          workspace_id: d.workspaceId,
+          phase_index: nextPhaseIndex,
+          round_index: 1,
+        }
+        next_action = "dispatched"
+        this.setPersistedTaskStatus(taskId, "running")
+        this.emitPhaseStatus(taskId, nextPhaseIndex, "running", 1)
+      } else {
+        // K6/US11: 每个 phase 都停在人的 gate，下一 phase 等人工起。
+        next_action = "awaiting_manual_trigger"
+        this.setPersistedTaskStatus(taskId, "ready")
+      }
+    }
+
+    return { task: this.getTask(taskId), next_action, ...(dispatch ? { dispatch } : {}), acceptance_id: acceptanceId }
+  }
+
+  /** Flip the persisted status into 'archiving' and hand off to 票 08.
+   *  done is 票 08's exclusive writer (K3: 归档全绿才算 done) — this method only
+   *  states the task + fires the (optional, late-bound) orchestrator. */
+  private beginArchiving(taskId: string): void {
+    this.setPersistedTaskStatus(taskId, "archiving")
+    if (!this.archivingHook) return
+    try {
+      const maybe = this.archivingHook(taskId)
+      if (maybe && typeof (maybe as Promise<void>).then === "function") {
+        void (maybe as Promise<void>).catch((err: unknown) => {
+          console.error(
+            `[TasksService] archiving hook failed for ${taskId} (task parked in 'archiving', retry=票 08):`,
+            err instanceof Error ? err.message : String(err),
+          )
+        })
+      }
+    } catch (err: unknown) {
+      console.error(
+        `[TasksService] archiving hook threw for ${taskId} (non-fatal — status already 'archiving'):`,
+        err instanceof Error ? err.message : String(err),
+      )
+    }
+  }
+
+  /** 票 07: feedback 产物化 — `{home}/.scratch/<date>/<slug>/fix-feedback-r{N}.md`
+   *  (K7/K10). The batch dir comes from the envelope's materialized specDir
+   *  (票 04), falling back to the home-relative specPath dirname; if neither is
+   *  resolvable the write is skipped with a warning — the `feedback` input
+   *  value still reaches the round (dispatchPhaseRound), so the failure
+   *  degrades the traceability artifact, never the retry itself. */
+  private writeFixFeedbackArtifact(
+    taskId: string,
+    phaseIndex: number,
+    phaseName: string,
+    slug: string,
+    roundIndex: number,
+    feedback: string,
+  ): void {
+    const specDir = this.phaseSpecDir(taskId, phaseIndex)
+    if (!specDir) {
+      console.warn(
+        `[TasksService] acceptance: cannot resolve phase ${phaseIndex} spec dir for task ${taskId} — fix-feedback-r${roundIndex}.md skipped`,
+      )
+      return
+    }
+    const file = path.join(specDir, `fix-feedback-r${roundIndex}.md`)
+    const body =
+      `# 打回反馈 · Round ${roundIndex} — ${phaseName} (phase ${phaseIndex}, ${slug})\n\n` +
+      `- task: ${taskId}\n` +
+      `- decided_at: ${new Date().toISOString()}\n\n` +
+      `## 反馈\n\n${feedback}\n`
+    try {
+      fs.mkdirSync(specDir, { recursive: true })
+      fs.writeFileSync(file, body, "utf-8")
+    } catch (err: unknown) {
+      console.error(
+        `[TasksService] acceptance: writing ${file} failed (non-fatal — feedback still dispatched):`,
+        err instanceof Error ? err.message : String(err),
+      )
+    }
+  }
+
+  /** The phase's absolute batch dir (home mirror of the ws `.scratch/<date>/
+   *  <slug>/`, K10): envelope specDir first (it is what seed/collect use), then
+   *  the raw task_spec's home-relative specPath dirname. */
+  private phaseSpecDir(taskId: string, phaseIndex: number): string | null {
+    const env = this.scheduleDAO
+      .findSchedulesByOrigin("task", taskId)
+      .find((r) => r.origin_role === "primary")
+    const cfg = parseJSON<{ phases?: TaskV4PhaseConfig[] }>(env?.config ?? "", {})
+    const fromEnvelope = cfg.phases?.find((p) => p.index === phaseIndex)?.specDir
+    if (fromEnvelope) return fromEnvelope
+    const task = this.taskDAO.getById(taskId)
+    if (!task) return null
+    const spec = parseJSON<TaskSpec>(task.task_spec, { goal: "", ac: [] } as unknown as TaskSpec)
+    const p = (spec.phases ?? []).find((x) => x.index === phaseIndex)
+    if (!p) return null
+    const abs = path.isAbsolute(p.specPath) ? p.specPath : path.join(this.taskHomeService.homePath(taskId), p.specPath)
+    return path.dirname(abs)
+  }
+
+  private emitPhaseStatus(
+    taskId: string,
+    phaseIndex: number,
+    status: TaskPhaseStatus,
+    roundIndex: number,
+  ): void {
+    this.sse.emit("taskpool", {
+      event: PHASE_STATUS_UPDATE_EVENT,
+      data: { task_id: taskId, phase_index: phaseIndex, status, round_index: roundIndex },
+    })
+  }
+
+  /** System-event status write (no version bump — the optimistic lock tracks
+   *  spec edits, mirrors triggerTask/abortTask/TaskScheduleStatusListener).
+   *  Idempotent fast-path: same value → no UPDATE, no SSE (no board flicker on
+   *  re-derivation of an unchanged state). */
+  private setPersistedTaskStatus(taskId: string, status: TaskStatus): void {
+    const row = this.taskDAO.getById(taskId)
+    if (!row || row.status === status) return
+    const nowIso = new Date().toISOString()
+    this.taskDAO
+      .getDb()
+      .prepare(
+        "UPDATE tasks SET status = ?, updated_at = ?, completed_at = NULL WHERE id = ? AND deleted_at IS NULL",
+      )
+      .run(status, nowIso, taskId)
+    this.sse.emit("taskpool", {
+      event: TASK_STATUS_EVENT,
+      data: { task_id: taskId, status },
     })
   }
 

@@ -8,6 +8,7 @@ import {
   subunitSpecSchema,
   integrationGoalSchema,
   resourceRefSchema,
+  taskPhaseSchema,
 } from "./scheduler-job"
 
 // ── TaskStatus (v2-D2/D14 — first-class task lifecycle) ─────────────
@@ -15,11 +16,23 @@ import {
  *  'claimed' is folded into 'running' (claim is a schedule-level detail, not
  *  a task state). Terminal: done | failed | aborted (G2: failed does NOT roll
  *  back; G4: aborted cleans workspace). Soft-deleted drafts/ready carry
- *  deleted_at rather than a status value. */
+ *  deleted_at rather than a status value.
+ *
+ *  task-phase-redesign v4 (K3, ticket 07): adds 'awaiting_review' (round 到达
+ *  终态等人验收 — "失败不是红死状态而是待处理", US8) and 'archiving' (末 phase
+ *  验收通过 → 归档编排中, 票 08 是 done 的唯一写者). This is a WIDENING only:
+ *  no v3/generic task ever carries the new values (they are written exclusively
+ *  by the v4 acceptance path), the DB CHECK (schema v40) has listed them since
+ *  ticket 02, and ticket 03's deriveTaskView already produced them as its local
+ *  DerivedTaskStatus — widening the shared enum is what makes them legal on the
+ *  wire (task_status SSE payload + TaskDTO status typing). 'failed' stays legal
+ *  for v3 rows (K13 旧链零破坏); a v4 task never persists 'failed' (K3). */
 export const TaskStatusSchema = z.enum([
   "draft",
   "ready",
   "running",
+  "awaiting_review",
+  "archiving",
   "done",
   "failed",
   "aborted",
@@ -42,7 +55,13 @@ export type TaskStatus = z.infer<typeof TaskStatusSchema>
  *  Lives as a top-level tasks.workflow_ref column (same pattern as skills /
  *  projects); the server's updateSpecField routes it there. Included in the
  *  shared enum so the agent tool / SSE / ClientSpecField all agree on the
- *  field name, and the spec_field_update SSE reaches the SpecPanel. */
+ *  field name, and the spec_field_update SSE reaches the SpecPanel.
+ *
+ *  task-phase-redesign v4 (ticket 07): adds `"phases"` — the phase plan
+ *  (task_spec.phases[]). Whole-array PUT semantics (the 拆分确认卡 / SKILL 协议
+ *  rewrite the entire list; a per-phase patch would need identity rules the
+ *  spec explicitly leaves to the author, K1). Same optimistic-lock + SSE chain
+ *  as every other field. */
 export const TaskSpecFieldSchema = z.enum([
   "projects",
   "skills",
@@ -54,6 +73,7 @@ export const TaskSpecFieldSchema = z.enum([
   "authoring_resources",
   "decisions",
   "workflow_ref",
+  "phases",
 ])
 export type TaskSpecField = z.infer<typeof TaskSpecFieldSchema>
 
@@ -118,6 +138,43 @@ export const taskTriggerSsePayloadSchema = z.object({
 })
 export type TaskTriggerSsePayload = z.infer<typeof taskTriggerSsePayloadSchema>
 
+// ── phase_status_update SSE payload (task-phase-redesign v4, ticket 07) ──
+/** Per-phase display status vocabulary on the wire. Structurally identical to
+ *  ticket 03's server-local `DerivedPhaseStatus` (derive-task-view.ts) — the
+ *  derive function stays dependency-free, so the CONTRACT lives here and the
+ *  server's emit site is typed against this schema. */
+export const TaskPhaseStatusSchema = z.enum([
+  "pending",
+  "running",
+  "awaiting_review",
+  "accepted",
+])
+export type TaskPhaseStatus = z.infer<typeof TaskPhaseStatusSchema>
+
+/** Emitted on the "taskpool" channel when an acceptance decision changes a
+ *  phase's derived status (票 07 emits it at the transitions ITS endpoint causes:
+ *  accepted → phase 'accepted'; auto_advance dispatch → next phase 'running';
+ *  rejected retry → same phase, new round 'running'). A round reaching its
+ *  terminal state (→ 'awaiting_review') is NOT emitted here — that transition
+ *  belongs to the executor/finalize path (票 06), which folds the board via
+ *  `schedule_status` / `task_artifacts_update` instead.
+ *
+ *  Consumers (票 11 timeline / 票 12 acceptance dialog) treat this as a
+ *  "re-derive and re-render" nudge — the authoritative state stays GET /:id's
+ *  `derived` view (K3 派生不存, spec R2). */
+export const PHASE_STATUS_UPDATE_EVENT = "phase_status_update" as const
+
+export const phaseStatusUpdatePayloadSchema = z.object({
+  task_id: z.string().min(1),
+  /** 1-based, mirrors TaskPhase.index. */
+  phase_index: z.number().int().min(1),
+  status: TaskPhaseStatusSchema,
+  /** The round the status refers to (≥1; for status='pending' the round that
+   *  is about to start). */
+  round_index: z.number().int().min(1),
+})
+export type PhaseStatusUpdatePayload = z.infer<typeof phaseStatusUpdatePayloadSchema>
+
 // ── update_task_spec_field tool (v2-D7) ──────────────────────────────
 /** Agent tool name + input schema. The server's tool handler validates input,
  *  merges the field into tasks.task_spec / resources / authoring_resources /
@@ -173,6 +230,18 @@ export function validateSpecFieldValue(field: TaskSpecField, value: unknown): un
         throw new TaskSpecFieldError("field 'decisions' must be an array of non-empty strings")
       }
       return value
+    case "phases":
+      // task-phase-redesign v4 (ticket 07): the phase plan (task_spec.phases[]).
+      // WHOLE-ARRAY PUT semantics — the 拆分确认卡 / task-author SKILL rewrite
+      // the entire list (a per-phase patch would need identity rules the spec
+      // leaves to the author, K1). Each entry validated against the canonical
+      // taskPhaseSchema (index/name/slug path-safety/specPath/workflowRef/
+      // inputValues); ≥1 mirrors taskSpecSchema.phases.min(1) so an empty list
+      // fails here (400) instead of surfacing later as `phase:0:no-phases`.
+      if (!Array.isArray(value) || value.length < 1) {
+        throw new TaskSpecFieldError("field 'phases' must be a non-empty array of TaskPhase")
+      }
+      return value.map((v) => taskPhaseSchema.parse(v))
     case "subunits":
       if (!Array.isArray(value)) {
         throw new TaskSpecFieldError("field 'subunits' must be an array")
