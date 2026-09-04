@@ -52,15 +52,16 @@ function makeTaskRow(overrides: Partial<TaskRow> & { id: string; org: string; na
     created_at: overrides.created_at ?? now,
     updated_at: overrides.updated_at ?? now,
     completed_at: overrides.completed_at ?? null,
+    workspace_id: overrides.workspace_id ?? null,
   }
 }
 
 describe("02-db-schema: tasks table + schedules origin migration", () => {
   describe("schema", () => {
-    it("bumps schema version to 38", () => {
+    it("schema version is 40 (v40 = task-phase-redesign acceptances/columns)", () => {
       const v = (db.prepare("PRAGMA user_version").get() as { user_version: number }).user_version
-      expect(v).toBe(38)
-      expect(SCHEMA_VERSION).toBe(38)
+      expect(v).toBe(40)
+      expect(SCHEMA_VERSION).toBe(40)
     })
 
     it("creates the tasks table with all required columns and no schedule_id/execution_id/claimed_at", () => {
@@ -80,15 +81,15 @@ describe("02-db-schema: tasks table + schedules origin migration", () => {
       expect(cols).not.toContain("claimed_at")
     })
 
-    it("schedules ADDS origin_type/origin_id/origin_role/assoc_meta (trigger_source/source_chat_session_id KEPT — removal deferred to 06)", () => {
+    it("schedules ADDS origin_type/origin_id/origin_role/assoc_meta (trigger_source/source_chat_session_id DROPPED by v38b / ticket 06 SG1b)", () => {
       const cols = colNames("schedules")
       // v38 ADDITIVE origin cols present
       for (const c of ["origin_type", "origin_id", "origin_role", "assoc_meta"]) {
         expect(cols).toContain(c)
       }
-      // trigger cols coexist transiently (removal + 3 承重 sites migration = ticket 06)
-      expect(cols).toContain("trigger_source")
-      expect(cols).toContain("source_chat_session_id")
+      // v38b: task-pool hack cols removed — 承重 sites migrated to origin_type
+      expect(cols).not.toContain("trigger_source")
+      expect(cols).not.toContain("source_chat_session_id")
     })
 
     it("schedules.origin_type defaults to 'cron' for legacy cron rows", () => {
@@ -224,6 +225,25 @@ describe("02-db-schema: tasks table + schedules origin migration", () => {
       expect(raw.deleted_at).not.toBeNull()
       // re-soft-deleting a deleted row is a no-op (changes=0 — idempotent)
       expect(taskDao.softDelete("task-sd").changes).toBe(0)
+    })
+  })
+
+  describe("AC3: tasks.workspace_id round-trip (v40, K4 ws reuse)", () => {
+    it("insert writes workspace_id; NULL when not provided (never triggered)", () => {
+      taskDao.insert(makeTaskRow({ id: "ws-1", org: "xzf", name: "E2E_TD_ws1", workspace_id: "ws-abc" }))
+      taskDao.insert(makeTaskRow({ id: "ws-2", org: "xzf", name: "E2E_TD_ws2" }))
+      expect(taskDao.getById("ws-1")!.workspace_id).toBe("ws-abc")
+      expect(taskDao.getById("ws-2")!.workspace_id).toBeNull()
+    })
+
+    it("updateWithVersion binds workspace_id (first-trigger write-back, 票 05 pattern)", () => {
+      taskDao.insert(makeTaskRow({ id: "ws-3", org: "xzf", name: "E2E_TD_ws3", status: "ready" }))
+      const r = taskDao.updateWithVersion("ws-3", { status: "running", workspace_id: "ws-new" }, 1)
+      expect(r.changes).toBe(1)
+      const got = taskDao.getById("ws-3")!
+      expect(got.workspace_id).toBe("ws-new")
+      expect(got.status).toBe("running")
+      expect(got.version).toBe(2)
     })
   })
 

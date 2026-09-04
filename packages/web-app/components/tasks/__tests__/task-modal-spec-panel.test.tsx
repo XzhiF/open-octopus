@@ -300,6 +300,13 @@ function mockedToastError(toast: { error?: unknown }): (msg: string) => unknown 
 }
 
 // ── task-workflow-handoff (ADR-0013, S5): workflow_ref display ─────────
+//
+// 票 12 (E 项): WorkflowBox 重写后 v3 单卡仍呈现 workflow_ref badge（与
+// WorkflowRefDisplay 双呈现 — #52/#55 现状），全局 getByText 必多匹配。断言
+// 按新结构改为分区 scoped 查询：WorkflowRefDisplay 区一个面、WorkflowBox 面
+// 一个 data 属性，各自独立。
+
+import { within } from "@testing-library/react"
 
 describe("SpecPanel — workflow_ref display (ADR-0013)", () => {
   it("shows unbound hint when workflow_ref is empty", () => {
@@ -307,21 +314,25 @@ describe("SpecPanel — workflow_ref display (ADR-0013)", () => {
     render(<SpecPanel task={task} onMutated={() => {}} />)
     // Hint about agent binding
     expect(screen.getByTestId("workflow-ref-display")).toBeDefined()
-    expect(screen.getByText(/未绑定工作流/)).toBeDefined()
+    expect(within(screen.getByTestId("workflow-ref-display")).getByText(/未绑定工作流/)).toBeDefined()
   })
 
-  it("displays bound workflow_ref with 查看 button", () => {
+  it("displays bound workflow_ref with 查看 button (per-surface, no global getByText)", () => {
     const task = makeTask({ id: "t1", version: 1, workflow_ref: "octo/my-flow" })
     render(<SpecPanel task={task} onMutated={() => {}} />)
-    expect(screen.getByText("octo/my-flow")).toBeDefined()
-    expect(screen.getByRole("button", { name: /查看/ })).toBeDefined()
+    const display = screen.getByTestId("workflow-ref-display")
+    expect(within(display).getByText("octo/my-flow")).toBeDefined()
+    expect(within(display).getByRole("button", { name: /查看/ })).toBeDefined()
+    // WorkflowBox 面（票 12 重写后 data 属性不变）：同一 ref 的第二呈现位。
+    expect(document.querySelector("[data-workflow-ref-badge]")).toBeTruthy()
+    expect(document.querySelector('[data-workflow-ref-badge]')!.textContent).toBe("octo/my-flow")
   })
 
   it("SSE spec_field_update(workflow_ref) updates display live", () => {
     const task = makeTask({ id: "t1", version: 1 })
     render(<SpecPanel task={task} onMutated={() => {}} />)
     // Initially unbound
-    expect(screen.getByText(/未绑定工作流/)).toBeDefined()
+    expect(within(screen.getByTestId("workflow-ref-display")).getByText(/未绑定工作流/)).toBeDefined()
     // SSE delivers the bind
     act(() => {
       specFieldListener?.({
@@ -333,7 +344,7 @@ describe("SpecPanel — workflow_ref display (ADR-0013)", () => {
         }),
       })
     })
-    // Now shows the bound value
-    expect(screen.getByText("octo/new-flow")).toBeDefined()
+    // Now shows the bound value (WorkflowBox 面吃 task prop，不随 SSE 变 — 只断 Display 区)
+    expect(within(screen.getByTestId("workflow-ref-display")).getByText("octo/new-flow")).toBeDefined()
   })
 })

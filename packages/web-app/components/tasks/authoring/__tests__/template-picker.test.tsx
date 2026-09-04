@@ -61,89 +61,110 @@ afterEach(() => {
   vi.clearAllMocks()
 })
 
-// ── AC1: GET /api/skill-groups renders the group list (checkbox multi-select) ─
+// 票 11 (task-phase-redesign AC1): coding 型直通 task-author — Skill 组勾选与
+// preset(org+projects) 预选控件均不渲染；generic 型保留 v3 现状。原「默认 coding
+// 即渲染组列表」的断言随 AC1 迁移到 generic 分支，coding 分支改为断言控件不存在。
 
-describe("TemplatePicker — skill-group list (AC1)", () => {
-  it("fetches /api/skill-groups and renders one checkbox per group", async () => {
-    render(<TemplatePicker onCreate={() => {}} />)
+async function renderGenericWithGroups() {
+  render(<TemplatePicker onCreate={() => {}} />)
+  fireEvent.click(screen.getByRole("button", { name: /通用任务/ }))
+  await waitFor(() => expect(screen.getByText("open-spec")).toBeDefined())
+}
 
-    await waitFor(() => {
-      expect(screen.getByText("open-spec")).toBeDefined()
-      expect(screen.getByText("matt-pocock")).toBeDefined()
-    })
+// ── AC1 (v3 现状, generic 保留): GET /api/skill-groups renders the group list ─
+
+describe("TemplatePicker — skill-group list (generic 保留现状)", () => {
+  it("fetches /api/skill-groups and renders one checkbox per group (generic)", async () => {
+    await renderGenericWithGroups()
     expect(mockListSkillGroups).toHaveBeenCalledOnce()
+    expect(screen.getByLabelText("open-spec")).toBeTruthy()
+    expect(screen.getByLabelText("matt-pocock")).toBeTruthy()
   })
 
-  it("the built-in default group shows the 「不物化」 note (D17)", async () => {
-    render(<TemplatePicker onCreate={() => {}} />)
-    await waitFor(() => {
-      // default group label + the D17 marker note.
-      const defaultLabel = screen.getByText("default")
-      expect(defaultLabel).toBeDefined()
-      expect(screen.getByText(/不物化/)).toBeDefined()
-    })
+  it("the built-in default group shows the 「不物化」 note (D17, generic)", async () => {
+    await renderGenericWithGroups()
+    const defaultLabel = screen.getByText("default")
+    expect(defaultLabel).toBeTruthy()
+    expect(screen.getByText(/不物化/)).toBeTruthy()
   })
 
-  it("multi-select: selecting 2+ groups surfaces the integration-mode hint (D2/D3)", async () => {
-    render(<TemplatePicker onCreate={() => {}} />)
-    await waitFor(() => expect(screen.getByText("open-spec")).toBeDefined())
-
-    // Select two groups.
+  it("multi-select: selecting 2+ groups surfaces the integration-mode hint (D2/D3, generic)", async () => {
+    await renderGenericWithGroups()
     fireEvent.click(screen.getByLabelText("open-spec"))
     fireEvent.click(screen.getByLabelText("matt-pocock"))
-
-    expect(screen.getByText(/整合模式/)).toBeDefined()
+    expect(screen.getByText(/整合模式/)).toBeTruthy()
   })
 })
 
-// ── AC1: create button (v2 design: skill groups are OPTIONAL — the built-in
-// default group is always available, so 开始编写 is never gated) ─────────
+// ── 票 11 AC1: coding 直通 — 无技能组/preset 控件 ───────────────────
+
+describe("TemplatePicker — coding 直通 (票 11 AC1)", () => {
+  it("coding (默认类型) 不渲染任何 [data-skill-group] 勾选与 codebase/preset 段", async () => {
+    render(<TemplatePicker onCreate={() => {}} />)
+    await waitFor(() => expect(mockListSkillGroups).toHaveBeenCalledOnce())
+    // 组列表已拉取，但 coding 型不呈现勾选控件。
+    expect(screen.queryByTestId("project-selector")).toBeNull()
+    expect(document.querySelectorAll("[data-skill-group]")).toHaveLength(0)
+    expect(screen.queryByText("Skill 组")).toBeNull()
+    expect(screen.queryByText(/codebase/)).toBeNull()
+  })
+
+  it("从 generic 切回 coding 即时隐藏勾选控件（类型分流）", async () => {
+    await renderGenericWithGroups()
+    expect(document.querySelectorAll("[data-skill-group]").length).toBeGreaterThan(0)
+    fireEvent.click(screen.getByRole("button", { name: /开发任务/ }))
+    expect(document.querySelectorAll("[data-skill-group]")).toHaveLength(0)
+  })
+})
+
+// ── create button (v2 design: groups optional — 开始编写 never gated) ─
 
 describe("TemplatePicker — create button (AC1)", () => {
   it("开始编写 is enabled without an explicit group (D17: built-in default always available)", async () => {
-    render(<TemplatePicker onCreate={() => {}} />)
-    await waitFor(() => expect(screen.getByText("open-spec")).toBeDefined())
-
+    await renderGenericWithGroups()
     const btn = screen.getByRole("button", { name: /开始编写/ }) as HTMLButtonElement
     expect(btn.disabled).toBe(false)
   })
-})
 
-// ── AC2/D13: onCreate payload = task_type + skill_groups + preset{org,projects} ─
-
-describe("TemplatePicker — onCreate payload (AC2/D13)", () => {
-  it("coding template: emits task_type=coding + selected groups + preset{org,projects}", async () => {
+  it("coding 直通：无需任何勾选即可创建", async () => {
     const onCreate = vi.fn()
     render(<TemplatePicker onCreate={onCreate} />)
-    await waitFor(() => expect(screen.getByText("open-spec")).toBeDefined())
+    await waitFor(() => expect(mockListSkillGroups).toHaveBeenCalledOnce())
+    fireEvent.click(screen.getByRole("button", { name: /开始编写/ }))
+    expect(onCreate).toHaveBeenCalledOnce()
+  })
+})
 
-    // Pick coding task type (default) + 2 groups + 1 project.
-    fireEvent.click(screen.getByLabelText("default"))
-    fireEvent.click(screen.getByLabelText("open-spec"))
-    fireEvent.click(screen.getByTestId("project-selector").querySelector('[data-project-checkbox="octopus-server"]')!)
+// ── onCreate payloads ────────────────────────────────────────────────
+
+describe("TemplatePicker — onCreate payload", () => {
+  it("coding template (票 11): emits task_type=coding + 空组 + 空 projects (直通)", async () => {
+    const onCreate = vi.fn()
+    render(<TemplatePicker onCreate={onCreate} />)
+    await waitFor(() => expect(mockListSkillGroups).toHaveBeenCalledOnce())
 
     fireEvent.click(screen.getByRole("button", { name: /开始编写/ }))
 
     expect(onCreate).toHaveBeenCalledOnce()
     const payload = onCreate.mock.calls[0][0] as TemplatePickerValue
     expect(payload.task_type).toBe("coding")
-    expect(payload.skill_groups).toEqual(["default", "open-spec"])
-    expect(payload.preset.org).toBe("E2E_TD_org")
-    expect(payload.preset.projects).toEqual(["octopus-server"])
+    expect(payload.skill_groups).toEqual([])
+    expect(payload.preset.projects).toEqual([])
+    expect(payload.preset.org).toBe("E2E_TD_org") // 默认首个组织（仅 home 落位用）
   })
 
-  it("generic template: emits task_type=generic (preset optional)", async () => {
+  it("generic template: emits task_type=generic + selected groups (preset optional) — 现状保留", async () => {
     const onCreate = vi.fn()
     render(<TemplatePicker onCreate={onCreate} />)
+    fireEvent.click(screen.getByRole("button", { name: /通用任务/ }))
     await waitFor(() => expect(screen.getByText("open-spec")).toBeDefined())
 
-    // Switch to generic.
-    fireEvent.click(screen.getByRole("button", { name: /通用任务/ }))
     fireEvent.click(screen.getByLabelText("default"))
+    fireEvent.click(screen.getByLabelText("open-spec"))
     fireEvent.click(screen.getByRole("button", { name: /开始编写/ }))
 
     const payload = onCreate.mock.calls[0][0] as TemplatePickerValue
     expect(payload.task_type).toBe("generic")
-    expect(payload.skill_groups).toEqual(["default"])
+    expect(payload.skill_groups).toEqual(["default", "open-spec"])
   })
 })

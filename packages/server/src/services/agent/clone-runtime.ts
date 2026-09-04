@@ -694,21 +694,41 @@ export class CloneRuntime {
   }
 }
 
-/** Build an onBeforeToolCall callback that blocks Write/Edit tool calls to
- *  paths outside the task home directory. This is a HARD enforcement —
- *  unlike the rules file (advisory), the hook MANDATES compliance.
+/** Build an onBeforeToolCall callback that blocks file writes outside the
+ *  task home directory. This is a HARD enforcement — unlike the rules file
+ *  (advisory), the hook MANDATES compliance.
  *
  *  Allowed paths:
  *    - Inside task home (artifacts/, skills/, context.md, .claude/, etc.)
+ *    - /tmp (scratch space; ticket 09 whitelist = task home + /tmp)
  *
  *  Blocked paths:
  *    - Any path outside the task home (project codebase, system dirs, etc.)
  *
- *  Read-only tools (Read, Glob, Grep, LS, etc.) are always allowed. */
-function buildPathGuard(taskHomePath: string): (toolName: string, input: unknown) => Promise<{ allow: boolean; reason?: string } | undefined> {
+ *  Read-only tools (Read, Glob, Grep, LS, etc.) are always allowed.
+ *
+ *  09 (task-phase-redesign, K17/AC2): Bash joins the intercepted set. Before
+ *  this, `echo x > /anywhere` escaped the draft-session write lock entirely
+ *  (gap proven by decisions/06 §1 — the guard only saw Write/Edit/NotebookEdit).
+ *  The command string is statically scanned for write targets:
+ *    redirects (`>`/`>>`/`N>`/`&>`/`&>>`, incl. quoted targets), `tee`,
+ *    `sed -i`/`--in-place`, `dd of=`, `cp`/`mv` destinations,
+ *    `git --git-dir=`/`--work-tree=` (spec's "`git --git-dir` 类").
+ *  A target is ALLOWED iff it resolves inside task home (relative targets
+ *  resolve against the home — task-author sessions run with cwd = task home,
+ *  decisions/06 §1), /tmp (incl. macOS realpath /private/tmp), or a harmless
+ *  /dev discard. Targets that cannot be resolved statically (`$HOME`,
+ *  backticks, `$(…)`) are BLOCKED — conservative hard-guard posture.
+ *  Known residual holes (defense-in-depth, not a sandbox): `cd /elsewhere &&
+ *  echo x > rel`, and interpreter-internal writes (`python -c open(…)`). */
+export function buildPathGuard(taskHomePath: string): (toolName: string, input: unknown) => Promise<{ allow: boolean; reason?: string } | undefined> {
   const normalizedHome = path.resolve(taskHomePath)
 
   return async (toolName: string, input: unknown): Promise<{ allow: boolean; reason?: string } | undefined> => {
+    if (toolName === 'Bash') {
+      return checkBashWriteGuard(input, normalizedHome)
+    }
+
     // Only intercept file-write tools
     if (toolName !== 'Write' && toolName !== 'Edit' && toolName !== 'NotebookEdit') {
       return undefined // allow all other tools
@@ -742,5 +762,273 @@ function buildPathGuard(taskHomePath: string): (toolName: string, input: unknown
         `Please redirect this write to the appropriate location inside the task home.`,
       ].join('\n'),
     }
+  }
+}
+
+// ── Bash write-guard (ticket 09 / AC2) ──────────────────────────────
+
+/** /tmp on macOS is a symlink to /private/tmp — both prefixes whitelist. */
+const BASH_WRITE_TMP_DIRS = ['/tmp', '/private/tmp']
+
+/** Harmless /dev discard/sink targets. */
+const BASH_WRITE_DEV_ALLOW = new Set(['/dev/null', '/dev/stdout', '/dev/stderr', '/dev/zero', '/dev/urandom'])
+
+/** Redirect capture: optional fd/& prefix, one or two `>`, then the target —
+ *  double-quoted, single-quoted, or a bare token. The bare-token class
+ *  excludes shell metacharacters and quote chars, so `2>&1` captures nothing
+ *  (`&` can't start a token) and `> "/a b"` captures the quoted path.
+ *  Scanned against the RAW command so `sh -c 'echo x > /elsewhere'` is caught
+ *  too — nested quoted writes are exactly the bypass variants AC2 names. */
+const REDIRECT_RE = /(?:[0-9*]?&?>{1,2})\s*("[^"]*"|'[^']*'|[^\s;&|()<>"'`]+)/g
+
+/**
+ * Split a command line into simple segments on `;`, `&&`, `||`, `|`, `&` and
+ * newlines (quote-aware), then tokenize each segment on whitespace (quote
+ * aware; quotes stripped — `wasQuoted` marks literals so `$VAR` inside single
+ * quotes is still unresolvable-but-intentional… we block either way, keeping
+ * the check simple).
+ */
+function segmentize(cmd: string): string[][] {
+  const segments: string[][] = []
+  let current: string[] = []
+  let token = ''
+  let tokenQuoted = false
+  let quote: string | null = null
+  let i = 0
+
+  const pushToken = (): void => {
+    if (token !== '') {
+      current.push(token)
+      token = ''
+      tokenQuoted = false
+    }
+  }
+  const pushSegment = (): void => {
+    pushToken()
+    if (current.length > 0) segments.push(current)
+    current = []
+  }
+
+  while (i < cmd.length) {
+    const ch = cmd[i]
+    if (quote) {
+      if (ch === '\\') { // backslash inside quotes: keep literal next char
+        token += cmd[i + 1] ?? ''
+        i += 2
+        continue
+      }
+      if (ch === quote) {
+        quote = null
+      } else {
+        token += ch
+        tokenQuoted = true
+      }
+      i++
+      continue
+    }
+    if (ch === '"' || ch === "'") {
+      quote = ch
+      tokenQuoted = true
+      i++
+      continue
+    }
+    if (ch === '\\' && i + 1 < cmd.length) {
+      token += cmd[i + 1]
+      i += 2
+      continue
+    }
+    if (/\s/.test(ch)) {
+      pushToken()
+      i++
+      continue
+    }
+    if (ch === ';' || ch === '\n' || ch === '|') {
+      // `||` collapses via the loop (second | → empty segment)
+      pushSegment()
+      i++
+      continue
+    }
+    if (ch === '&') {
+      // `&&` and background `&` — segment breaks; `>&` fd duplication must
+      // NOT break: it only appears glued (`>&2`), handled before segmentizing
+      // by leaving `>`… actually `>&` starts at `>`, and `>` falls through to
+      // the default append below, so the `&` right after a captured target
+      // would break the segment — fine, the target token already ended.
+      pushSegment()
+      i++
+      continue
+    }
+    if (ch === '>' || ch === '<') {
+      // redirect/heredoc operators are not part of tokens; the redirect scan
+      // (REDIRECT_RE) handles targets. Per-segment arg scans look at command
+      // words only. Glue the operator as its own token so arg scanners can
+      // skip it safely.
+      pushToken()
+      let op = ch
+      i++
+      if (i < cmd.length && (cmd[i] === '>' || cmd[i] === '<')) { op += cmd[i]; i++ }
+      if (i < cmd.length && cmd[i] === '&') { op += '&'; i++ } // >& / >>&
+      current.push(op)
+      continue
+    }
+    token += ch
+    i++
+  }
+  pushSegment()
+  return segments
+}
+
+/** True if a resolved absolute path is on the write whitelist. */
+function isWhitelistedWritePath(absPath: string, normalizedHome: string): boolean {
+  const r = path.resolve(absPath)
+  if (r === normalizedHome || r.startsWith(normalizedHome + path.sep)) return true
+  for (const t of BASH_WRITE_TMP_DIRS) {
+    if (r === t || r.startsWith(t + '/')) return true
+  }
+  if (BASH_WRITE_DEV_ALLOW.has(r) || r.startsWith('/dev/fd/')) return true
+  return false
+}
+
+/** Classify one extracted target. Returns null when the target is fine, or a
+ *  human-readable problem string. */
+function classifyWriteTarget(raw: string, normalizedHome: string): string | null {
+  let t = raw.trim()
+  // The redirect capture keeps the quotes it matched (`> "/a b"` → `"/a b"`) —
+  // strip one layer so the path logic sees the real path.
+  if (t.length >= 2 && ((t.startsWith('"') && t.endsWith('"')) || (t.startsWith("'") && t.endsWith("'")))) {
+    t = t.slice(1, -1)
+  }
+  if (!t) return null
+  // fd duplication (`>&2`, `>&1`) — no path involved.
+  if (t.startsWith('&')) return null
+  // Unresolvable: variable / command substitution / glob-heavy targets. The
+  // agent can use an explicit path inside the task home or /tmp instead.
+  if (/[$`]/.test(t)) {
+    return `"${t}" 无法静态解析（含 $/反引号）— 不可证明它落在 task home 内`
+  }
+  // `~` expansion (home dir) — treat like an absolute: whitelisted only if it
+  // happens to resolve inside task home or /tmp (it won't for ~user forms).
+  const abs = t.startsWith('~') ? path.resolve(process.env.HOME ?? '', t.slice(1)) : t
+  if (path.isAbsolute(abs)) {
+    return isWhitelistedWritePath(abs, normalizedHome)
+      ? null
+      : `"${t}" 是 task home 之外的绝对路径`
+  }
+  // Relative → resolves against the session cwd, which IS the task home for
+  // task-author draft sessions (decisions/06 §1).
+  const resolvedRel = path.resolve(normalizedHome, t)
+  return isWhitelistedWritePath(resolvedRel, normalizedHome)
+    ? null
+    : `"${t}" 从 task home 解析后越界（${resolvedRel}）`
+}
+
+/** Non-flag tokens of a segment (after skipping the command word itself),
+ *  skipping env-assignment leading tokens (FOO=bar cmd …). */
+function plainArgs(tokens: string[], skipFirstNonFlag: boolean): string[] {
+  const args = tokens.slice(1)
+  // drop leading VAR=value env assignments, shift the command window
+  let start = 0
+  while (start < args.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(args[start])) start++
+  const rest = args.slice(start).filter((a) => !a.startsWith('-') && !/^[<>]/.test(a) && a !== '')
+  return skipFirstNonFlag ? rest.slice(1) : rest
+}
+
+/** Extract write targets from one already-tokenized segment (command words). */
+function segmentWriteTargets(tokens: string[]): string[] {
+  // skip leading env assignments to find the command word
+  let ci = 0
+  while (ci < tokens.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[ci])) ci++
+  const cmdWord = path.basename(tokens[ci] ?? '')
+  const targets: string[] = []
+  if (!cmdWord) return targets
+
+  switch (cmdWord) {
+    case 'tee':
+      // tee [-a] file… — every non-flag arg is a write target
+      targets.push(...plainArgs(tokens, false))
+      break
+    case 'sed': {
+      const inPlace = tokens.some(
+        (a) => /^-i($|[.=$])/.test(a) || a.startsWith('--in-place'),
+      )
+      if (!inPlace) break // plain `sed 's/x/y/' f` prints — not a write
+      const usesE = tokens.some((a) => a === '-e' || a === '--expression')
+      // without -e the first non-flag arg is the script; with -e, all are files
+      targets.push(...plainArgs(tokens, !usesE))
+      break
+    }
+    case 'cp':
+    case 'mv':
+    case 'install': {
+      const args = plainArgs(tokens, false)
+      if (args.length >= 1) targets.push(args[args.length - 1]) // destination
+      break
+    }
+    case 'dd':
+      for (const a of tokens.slice(1)) {
+        if (a.startsWith('of=')) targets.push(a.slice(3))
+      }
+      break
+    case 'git':
+      for (let k = 1; k < tokens.length; k++) {
+        const a = tokens[k]
+        if ((a === '--git-dir' || a === '--work-tree' || a === '--work-tree=')) {
+          if (tokens[k + 1]) targets.push(tokens[k + 1])
+        } else if (a.startsWith('--git-dir=') || a.startsWith('--work-tree=')) {
+          targets.push(a.slice(a.indexOf('=') + 1))
+        }
+      }
+      break
+    default:
+      break
+  }
+  return targets
+}
+
+/** The Bash branch of the path guard: collect every static write target of
+ *  the command (redirects + write commands) and block on the first one that
+ *  lands outside the whitelist. */
+function checkBashWriteGuard(
+  input: unknown,
+  normalizedHome: string,
+): { allow: boolean; reason?: string } | undefined {
+  const inp = input as Record<string, unknown> | null
+  const command = inp?.command
+  if (typeof command !== 'string' || command === '') return undefined
+
+  const offenders: string[] = []
+  const report = (raw: string): void => {
+    const problem = classifyWriteTarget(raw, normalizedHome)
+    if (problem && !offenders.includes(problem)) offenders.push(problem)
+  }
+
+  // 1. Redirects — scan the RAW text (catches writes nested in sh -c '…').
+  for (const m of command.matchAll(REDIRECT_RE)) {
+    report(m[1])
+  }
+
+  // 2. Write commands with argument targets (tee/sed -i/dd/cp/mv/git).
+  for (const tokens of segmentize(command)) {
+    for (const t of segmentWriteTargets(tokens)) {
+      report(t)
+    }
+  }
+
+  if (offenders.length === 0) return undefined
+
+  return {
+    allow: false,
+    reason: [
+      `BLOCKED: this Bash command writes outside the task home.`,
+      ``,
+      ...offenders.map((o) => `  - ${o}`),
+      ``,
+      `Task home: ${normalizedHome}`,
+      `Allowed write locations: task home (incl. artifacts/) and /tmp only.`,
+      ``,
+      `Rewrite the command to target a path inside the task home`,
+      `(relative paths resolve from the home), or /tmp for scratch files.`,
+      `Avoid $vars/backticks in write targets — use explicit paths.`,
+    ].join('\n'),
   }
 }

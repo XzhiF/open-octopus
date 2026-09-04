@@ -12,11 +12,22 @@ vi.mock("@/lib/skill-groups-api", () => ({
 vi.mock("@/lib/tasks-api", () => ({
   readyTask: vi.fn(),
   updateSpecField: vi.fn(),
+  updateTask: vi.fn(),
+  getTask: vi.fn(),
   getTaskContext: vi.fn().mockResolvedValue({ artifactsDir: "", path: "", content: null }),
   TaskReadyGateError: class TaskReadyGateError extends Error {
     missing: string[]
     constructor(m: string, missing: string[]) { super(m); this.name = "TaskReadyGateError"; this.missing = missing }
   },
+}))
+
+// 票 12: v4 预检/绑定卡数据源 = built-in 目录（缓存端点）
+vi.mock("@/lib/workflow-presets-api", () => ({
+  listBuiltInWorkflows: vi.fn().mockResolvedValue([
+    { ref: "built-in/task-dev", name: "Task Dev", group: "built-in",
+      inputs: { idea: { description: "想法", required: true } } },
+  ]),
+  getBuiltInWorkflowDetail: vi.fn().mockResolvedValue({ ref: "x", content: "", parsed: { name: "x" } }),
 }))
 
 vi.mock("@/lib/server-config", () => ({ getServerUrl: () => "http://localhost:3001" }))
@@ -342,5 +353,143 @@ describe("AuthoringWorkspace — single-expert consultation", () => {
     await waitFor(() => {
       expect(screen.queryByText("专家分析")).toBeNull()
     })
+  })
+})
+
+// ── 票 12: v4 入队清单四行 / canEnqueue 同源预检 / gate 反解 / autoAdvance ──
+
+import { updateTask, getTask } from "@/lib/tasks-api"
+import { listBuiltInWorkflows } from "@/lib/workflow-presets-api"
+
+const mockUpdateTask = vi.mocked(updateTask)
+const mockGetTask = vi.mocked(getTask)
+
+function makeV4Task(
+  id: string,
+  phases: Array<Record<string, unknown>>,
+  specOverrides: Record<string, unknown> = {},
+): Task {
+  return makeTask({
+    id,
+    task_spec: {
+      format: "v4",
+      task_type: "coding",
+      skill_groups: ["default", "open-spec"],
+      goal: "g", ac: [], goal_confirmed: false, ac_confirmed: [],
+      decisions: [], resources: [], authoring_resources: [],
+      phases,
+      ...specOverrides,
+    } as unknown as Task["task_spec"],
+  })
+}
+
+const COMPLETE_PHASE_1 = {
+  index: 1, name: "P1", slug: "p1-1",
+  specPath: "./.scratch/20260903/p1-1/spec.md",
+  workflowRef: "built-in/task-dev",
+  inputValues: { idea: "hello" },
+}
+const COMPLETE_PHASE_2 = {
+  index: 2, name: "P2", slug: "p2-2",
+  specPath: "./.scratch/20260903/p2-2/spec.md",
+  workflowRef: "built-in/task-dev",
+  inputValues: { idea: "world" },
+}
+
+describe("AuthoringWorkspace — v4 入队清单 (票 12 C)", () => {
+  it("v4: renders the four-row checklist; GoalAcCard is NOT rendered (K13)", async () => {
+    render(
+      <AuthoringWorkspace
+        task={makeV4Task("v4-1", [COMPLETE_PHASE_1, COMPLETE_PHASE_2])}
+        onMutated={() => {}}
+        onClose={() => {}}
+      />,
+    )
+    const list = await waitFor(() => screen.getByTestId("enqueue-checklist-v4"))
+    for (const row of ["phases", "spec", "bind", "inputs"]) {
+      expect(list.querySelector(`[data-checklist-v4="${row}"]`)).toBeTruthy()
+    }
+    // goal/ac 卡退役（v3 保留 — 见上组用例）
+    expect(screen.queryByTestId("goal-ac-card")).toBeNull()
+    // per-phase 绑定卡（WorkflowBox v4 分支）
+    expect(document.querySelector("[data-phase-binding-list]")).toBeTruthy()
+  })
+
+  it("canEnqueue v4: empty phases → disabled; four rows pass → enabled (server 同源预检)", async () => {
+    const { rerender } = render(
+      <AuthoringWorkspace task={makeV4Task("v4-empty", [])} onMutated={() => {}} onClose={() => {}} />,
+    )
+    await waitFor(() => expect(screen.getByTestId("enqueue-checklist-v4")).toBeTruthy())
+    expect((screen.getByTestId("task-enqueue") as HTMLButtonElement).disabled).toBe(true)
+
+    rerender(
+      <AuthoringWorkspace
+        task={makeV4Task("v4-full", [COMPLETE_PHASE_1, COMPLETE_PHASE_2])}
+        onMutated={() => {}}
+        onClose={() => {}}
+      />,
+    )
+    await waitFor(() => expect(screen.getByTestId("task-enqueue")).toBeTruthy())
+    // inputs 行吃 built-in 目录（required idea 已填）→ 四行齐
+    await waitFor(() => expect(listBuiltInWorkflows).toHaveBeenCalled())
+    expect((screen.getByTestId("task-enqueue") as HTMLButtonElement).disabled).toBe(false)
+  })
+
+  it("canEnqueue v4: required input missing → inputs 行 ⏳ → disabled", async () => {
+    render(
+      <AuthoringWorkspace
+        task={makeV4Task("v4-noinput", [{ ...COMPLETE_PHASE_1, inputValues: {} }, COMPLETE_PHASE_2])}
+        onMutated={() => {}}
+        onClose={() => {}}
+      />,
+    )
+    const list = await waitFor(() => screen.getByTestId("enqueue-checklist-v4"))
+    await waitFor(() => expect(listBuiltInWorkflows).toHaveBeenCalled())
+    expect(list.querySelector('[data-checklist-v4="inputs"]')!.textContent).toContain("⏳")
+    expect((screen.getByTestId("task-enqueue") as HTMLButtonElement).disabled).toBe(true)
+  })
+
+  it("gate 409 `phase:<i>:<why>` 反解 → 对应行标 ✗ + 人话（消灭点了才 409 的断链展示）", async () => {
+    // 本地四行全过（idea 用占位符 ${goal}，server 端 goal 为空 → 门禁打回），
+    // readyTask 抛 TaskReadyGateError → gateHits 反解回填逐行 ✗。
+    mockReadyTask.mockRejectedValueOnce(
+      new (await import("@/lib/tasks-api")).TaskReadyGateError(
+        "Task not ready: missing phase:2:spec-missing, phase:2:input:idea",
+        ["phase:2:spec-missing", "phase:2:input:idea"],
+      ),
+    )
+    render(
+      <AuthoringWorkspace
+        task={makeV4Task("v4-gate", [COMPLETE_PHASE_1, { ...COMPLETE_PHASE_2, inputValues: { idea: "${goal}" } }])}
+        onMutated={() => {}}
+        onClose={() => {}}
+      />,
+    )
+    await waitFor(() => expect(screen.getByTestId("enqueue-checklist-v4")).toBeTruthy())
+    const btn = screen.getByTestId("task-enqueue") as HTMLButtonElement
+    await waitFor(() => expect(btn.disabled).toBe(false))
+    fireEvent.click(btn)
+    await waitFor(() => {
+      const list = screen.getByTestId("enqueue-checklist-v4")
+      expect(list.querySelector('[data-checklist-v4="spec"]')!.textContent).toContain("✗")
+      expect(list.querySelector('[data-checklist-v4="spec"]')!.textContent).toContain("Phase 2：批次目录中 spec 文件缺失")
+      expect(list.querySelector('[data-checklist-v4="inputs"]')!.textContent).toContain("必填输入 idea")
+    })
+  })
+
+  it("AC5: autoAdvance 开关可见可切 — 切换走重取 version 的 PUT", async () => {
+    const task = makeV4Task("v4-auto", [COMPLETE_PHASE_1])
+    mockGetTask.mockResolvedValue({ ...task, version: 7 } as never)
+    mockUpdateTask.mockResolvedValue(task as never)
+    render(<AuthoringWorkspace task={task} onMutated={() => {}} onClose={() => {}} />)
+    const sw = (await waitFor(() => screen.getByTestId("autoadvance-switch"))) as HTMLInputElement
+    expect(sw.checked).toBe(true) // 默认开（K6）
+    fireEvent.click(sw)
+    await waitFor(() => expect(mockGetTask).toHaveBeenCalledWith("v4-auto"))
+    await waitFor(() => expect(mockUpdateTask).toHaveBeenCalledOnce())
+    const [id, input, version] = mockUpdateTask.mock.calls[0]
+    expect(id).toBe("v4-auto")
+    expect(version).toBe(7) // S5：重取的 version，非 prop 快照
+    expect(input.task_spec?.autoAdvance).toBe(false)
   })
 })

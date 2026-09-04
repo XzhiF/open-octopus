@@ -9,6 +9,19 @@
 //   ${goal} → task_spec.goal (string, direct substitution)
 //   ${ac}   → task_spec.ac.join('\n') (array → newline-joined)
 //
+// task-phase-redesign (ticket 04) v4 vocabulary — available ONLY when a
+// PlaceholderContext is passed (per-phase resolution in the v4 ready gate /
+// materialize). Absent ctx, these names stay UNKNOWN (→ "" + unresolved),
+// so v3 callers behave exactly as before:
+//   ${phase.slug}           → the phase's path-safe slug (batch dir name, K10)
+//   ${phase.spec_dir}       → dirname of the phase's resolved spec file (home-relative → absolute)
+//   ${task.home}            → the task home dir (TaskHomeService.homePath)
+//   ${task_artifacts_dir}   → the task artifacts dir (same value as the managed
+//                             input_values key of the same name)
+//
+// goal/ac are OPTIONAL since v4 specs may omit them (shared ticket 01); an
+// absent value behaves like the empty one: placeholder present → unresolved.
+//
 // Unknown placeholders (e.g. ${foo}) do NOT throw — they resolve to "" and the
 // key is reported in `unresolved` so the ready-gate can push it into the
 // missing list ("input:<name>") instead of 500-ing the request (review fix
@@ -18,15 +31,37 @@
 import yaml from "js-yaml"
 import type { InputValues } from "@octopus/shared"
 
-/** Known placeholder → replacement value map builder. */
+/** v4 per-phase resolution context (ticket 04). Every field optional — an
+ *  empty/missing value behaves like the WHAT-empty case (placeholder present
+ *  → unresolved), never a throw. */
+export interface PlaceholderContext {
+  phaseSlug?: string
+  phaseSpecDir?: string
+  taskHome?: string
+  taskArtifactsDir?: string
+}
+
+/** Known placeholder → replacement value map builder. v4 names are added only
+ *  when a ctx is passed — without ctx the map carries just goal/ac, so dotted
+ *  v4 names fall through the unknown branch (v3 behavior byte-identical).
+ *  With ctx, an absent field behaves like an empty WHAT value: the key is
+ *  marked unresolved, never a throw. */
 function buildPlaceholderMap(
-  goal: string,
-  ac: string[],
+  goal: string | undefined,
+  ac: string[] | undefined,
+  ctx?: PlaceholderContext,
 ): Record<string, string> {
-  return {
-    goal,
-    ac: ac.join("\n"),
+  const map: Record<string, string> = {
+    goal: goal ?? "",
+    ac: (ac ?? []).join("\n"),
   }
+  if (ctx) {
+    map["phase.slug"] = ctx.phaseSlug ?? ""
+    map["phase.spec_dir"] = ctx.phaseSpecDir ?? ""
+    map["task.home"] = ctx.taskHome ?? ""
+    map["task_artifacts_dir"] = ctx.taskArtifactsDir ?? ""
+  }
+  return map
 }
 
 export interface ResolvedInputValues {
@@ -38,32 +73,43 @@ export interface ResolvedInputValues {
   unresolved: string[]
 }
 
-/** Resolve ${goal} / ${ac} placeholders in input_values. Never throws — an
- *  unknown placeholder resolves to "" and its key lands in `unresolved`, so a
- *  bad template surfaces as data (missing list) rather than a hard error across
+/** Resolve placeholders in input_values. Never throws — an unknown
+ *  placeholder resolves to "" and its key lands in `unresolved`, so a bad
+ *  template surfaces as data (missing list) rather than a hard error across
  *  service boundaries.
  *
- *  @param inputValues - raw input_values from task_spec (may be undefined)
- *  @param goal - task_spec.goal
- *  @param ac - task_spec.ac (string[]) */
+ *  v3 vocabulary (${goal}/${ac}) always available; the v4 vocabulary
+ *  (${phase.slug}/${phase.spec_dir}/${task.home}/${task_artifacts_dir})
+ *  requires the optional ctx (ticket 04). The name charset is widened to
+ *  include `.` so dotted names are recognized-and-reported instead of left
+ *  as literal text in the value.
+ *
+ *  @param inputValues - raw input_values from task_spec / one phase (undefined ok)
+ *  @param goal - task_spec.goal (optional in v4 specs)
+ *  @param ac - task_spec.ac string[] (optional in v4 specs)
+ *  @param ctx - v4 placeholder context (omit ⇒ v3 behavior) */
 export function resolveInputValues(
   inputValues: InputValues | undefined,
-  goal: string,
-  ac: string[],
+  goal: string | undefined,
+  ac: string[] | undefined,
+  ctx?: PlaceholderContext,
 ): ResolvedInputValues {
   if (!inputValues || Object.keys(inputValues).length === 0) {
     return { values: {}, unresolved: [] }
   }
 
-  const map = buildPlaceholderMap(goal, ac)
-  const placeholderRegex = /\$\{(\w+)\}/g
+  const map = buildPlaceholderMap(goal, ac, ctx)
+  const placeholderRegex = /\$\{([\w.]+)\}/g
   const values: InputValues = {}
   const unresolved: string[] = []
 
   for (const [key, value] of Object.entries(inputValues)) {
     let hadUnknown = false
     values[key] = value.replace(placeholderRegex, (match, name: string) => {
-      if (name in map) {
+      // Object.hasOwn, not `in`: the [\w.]+ regex admits `${constructor}` /
+      // `${toString}` etc.; a prototype-chain hit via `in` would substitute
+      // an inherited function (truthy) instead of marking it unresolved.
+      if (Object.hasOwn(map, name)) {
         const replaced = map[name]
         if (!replaced) hadUnknown = true // placeholder present but WHAT empty
         return replaced

@@ -18,6 +18,10 @@ import {
   taskStatusSsePayloadSchema,
   specFieldUpdatePayloadSchema,
   updateTaskSpecFieldToolSchema,
+  validateSpecFieldValue,
+  TaskSpecFieldError,
+  PHASE_STATUS_UPDATE_EVENT,
+  phaseStatusUpdatePayloadSchema,
   type TaskStatus,
   type Task,
   type TaskSpecField,
@@ -32,12 +36,25 @@ import {
 import type { TaskDispatchPort, ScheduleHandle, OriginRole } from "../types/task-dispatch-port"
 
 // Independent sources of truth (spec literals — not derived from the code).
-const EXPECTED_TASK_STATUSES = ["draft", "ready", "running", "done", "failed", "aborted"] as const
+// task-phase-redesign v4 (ticket 07): 'awaiting_review' + 'archiving' join the
+// set (K3 — written only by the v4 acceptance path; v3 rows never carry them).
+// Order mirrors the schema-v40 DB CHECK list.
+const EXPECTED_TASK_STATUSES = [
+  "draft",
+  "ready",
+  "running",
+  "awaiting_review",
+  "archiving",
+  "done",
+  "failed",
+  "aborted",
+] as const
 const EXPECTED_ORIGIN_TYPES = ["cron", "task", "agent", "manual", "api"] as const
 const EXPECTED_RESOURCE_TYPES = ["skill", "agent", "command", "rule"] as const
 const EXPECTED_ORIGIN_ROLES = ["primary", "coordinator", "subunit"] as const
 // Spec-field names the tool/SSE may carry (spec v2-D12 + glossary).
 // task-workflow-handoff (ADR-0013): adds `workflow_ref` to the bindable set.
+// task-phase-redesign v4 (ticket 07): adds `phases`.
 const EXPECTED_SPEC_FIELDS = [
   "projects",
   "skills",
@@ -49,6 +66,7 @@ const EXPECTED_SPEC_FIELDS = [
   "authoring_resources",
   "decisions",
   "workflow_ref",
+  "phases",
 ] as const
 
 const baseWorkspaceSpec = {
@@ -83,6 +101,21 @@ describe("AC1 — TaskStatus + OriginType enums", () => {
     expectTypeOf<"done">().toMatchTypeOf<TaskStatus>()
     expectTypeOf<"failed">().toMatchTypeOf<TaskStatus>()
     expectTypeOf<"aborted">().toMatchTypeOf<TaskStatus>()
+    // task-phase-redesign v4 (ticket 07) — the two acceptance-lifecycle states.
+    expectTypeOf<"awaiting_review">().toMatchTypeOf<TaskStatus>()
+    expectTypeOf<"archiving">().toMatchTypeOf<TaskStatus>()
+  })
+
+  // Widening guarantee (ticket 07 底线): adding the v4 states must NOT remove
+  // or rename any v3 value — existing rows/clients keep parsing. Pinned against
+  // the independent literal above (which mirrors the schema-v40 DB CHECK list).
+  it("TaskStatusSchema is a pure WIDENING of the v3 set (no removals, no renames)", () => {
+    const V3_STATUSES = ["draft", "ready", "running", "done", "failed", "aborted"] as const
+    const options = TaskStatusSchema.options as readonly string[]
+    for (const s of V3_STATUSES) {
+      expect(options, `v3 status '${s}' must survive the widening`).toContain(s)
+    }
+    expect(options).toEqual([...EXPECTED_TASK_STATUSES])
   })
 
   it("OriginTypeSchema parses every expected origin", () => {
@@ -475,5 +508,92 @@ describe("AC5 — Task row type (S2 polymorphic-origin, no schedule pointers)", 
       },
     }
     expect(listener.onScheduleTransition).toBeTypeOf("function")
+  })
+})
+
+// ── task-phase-redesign v4 (ticket 07) — wire legality of the new states +
+//    the `phases` spec-field + the `phase_status_update` SSE contract ──────
+describe("ticket 07 — v4 acceptance wire contract", () => {
+  const phase = (over: Record<string, unknown> = {}) => ({
+    index: 1,
+    name: "Phase 1",
+    slug: "phase-1",
+    specPath: ".scratch/20260903/phase-1/spec.md",
+    workflowRef: "built-in/task-dev",
+    inputValues: {},
+    ...over,
+  })
+
+  it("taskStatusSsePayloadSchema accepts the v4 states (that is why the widening exists)", () => {
+    expect(
+      taskStatusSsePayloadSchema.safeParse({ task_id: "t", status: "awaiting_review" }).success,
+    ).toBe(true)
+    expect(
+      taskStatusSsePayloadSchema.safeParse({ task_id: "t", status: "archiving" }).success,
+    ).toBe(true)
+  })
+
+  it("'phases' is a bindable spec-field (enum + tool schema)", () => {
+    expect(EXPECTED_SPEC_FIELDS).toContain("phases")
+    const r = updateTaskSpecFieldToolSchema.safeParse({
+      task_id: "task-1",
+      field: "phases",
+      value: [phase()],
+    })
+    expect(r.success).toBe(true)
+  })
+
+  it("validateSpecFieldValue('phases') normalizes each entry through taskPhaseSchema", () => {
+    const out = validateSpecFieldValue("phases", [
+      phase(),
+      phase({ index: 2, name: "Phase 2", slug: "phase-2" }),
+    ]) as Array<Record<string, unknown>>
+    expect(out).toHaveLength(2)
+    expect(out[0].slug).toBe("phase-1")
+    expect(out[1].index).toBe(2)
+    // inputValues has a schema default ({}), so an omitted key is materialized.
+    expect(out[0].inputValues).toEqual({})
+  })
+
+  it("validateSpecFieldValue('phases') rejects a non-array / empty array", () => {
+    expect(() => validateSpecFieldValue("phases", "nope")).toThrow(TaskSpecFieldError)
+    expect(() => validateSpecFieldValue("phases", [])).toThrow(/non-empty/i)
+  })
+
+  it("validateSpecFieldValue('phases') rejects malformed entries (path-unsafe slug, 0 index)", () => {
+    // Per-entry shape errors surface as ZodError (the subunits/resources/
+    // integration_goal precedent) — the route's classifyError maps BOTH
+    // ZodError and TaskSpecFieldError to 400, so the HTTP contract holds.
+    expect(() => validateSpecFieldValue("phases", [phase({ slug: "../escape" })])).toThrow(/slug/i)
+    expect(() => validateSpecFieldValue("phases", [phase({ index: 0 })])).toThrow(/too small|min/i)
+  })
+
+  it("PHASE_STATUS_UPDATE_EVENT + payload schema pin the ticket-11/12 contract", () => {
+    expect(PHASE_STATUS_UPDATE_EVENT).toBe("phase_status_update")
+    const ok = phaseStatusUpdatePayloadSchema.safeParse({
+      task_id: "t-1",
+      phase_index: 2,
+      status: "running",
+      round_index: 1,
+    })
+    expect(ok.success).toBe(true)
+    // Unknown phase status vocabulary is rejected (the enum is the contract).
+    expect(
+      phaseStatusUpdatePayloadSchema.safeParse({
+        task_id: "t-1",
+        phase_index: 1,
+        status: "failed",
+        round_index: 1,
+      }).success,
+    ).toBe(false)
+    // 1-based indices only (deriveTaskView/TaskPhase.index convention).
+    expect(
+      phaseStatusUpdatePayloadSchema.safeParse({
+        task_id: "t-1",
+        phase_index: 0,
+        status: "pending",
+        round_index: 1,
+      }).success,
+    ).toBe(false)
   })
 })

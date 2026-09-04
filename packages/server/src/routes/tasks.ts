@@ -22,6 +22,7 @@ import {
   TaskReadyGateError,
   TaskLockViolationError,
   ArtifactAccessError,
+  type AcceptanceInput,
   type CreateTaskInput,
   type UpdateTaskInput,
   type UpdateSpecFieldInput,
@@ -78,6 +79,29 @@ async function safeJson(c: Context): Promise<Record<string, unknown> | null> {
     return null
   }
 }
+
+// task-phase-redesign (ticket 07): POST /:id/acceptance body. A ZodError here
+// maps to 400 through classifyError (body defect), while the service's own
+// rejections are TaskStatusConflictError → 409 (state defect) — the two are
+// deliberately different so 票 12 can tell "fix the form" from "someone else
+// decided first".
+const acceptanceBodySchema = z
+  .object({
+    phase_index: z.number().int().min(1),
+    round_index: z.number().int().min(1),
+    decision: z.enum(["accepted", "rejected"]),
+    feedback: z.string().max(20000).optional(),
+  })
+  .superRefine((b, ctx) => {
+    // K7/US10: 打回必填反馈文本（agent 判严重度 + 修复流推荐都吃它）。
+    if (b.decision === "rejected" && !(b.feedback ?? "").trim()) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["feedback"],
+        message: "decision='rejected' 必须携带非空 feedback",
+      })
+    }
+  })
 
 // ── Route Factory ───────────────────────────────────────────────────
 
@@ -314,6 +338,66 @@ export function createTasksRoutes(
   })
 
   // ── Actions ───────────────────────────────────────────────────
+
+  // POST /:id/acceptance — the v4 phase 验收 Gate (task-phase-redesign ticket
+  // 07, K3/K6/K7). Body {phase_index, round_index, decision, feedback?}:
+  //   accepted ∧ i<n ∧ autoAdvance → 下一 phase round 1 开跑 (next_action
+  //     'dispatched'); autoAdvance=false → 'awaiting_manual_trigger' (人工起)
+  //   accepted ∧ i=n               → 持久态 'archiving' (票 08 编排到 done)
+  //   rejected (feedback 必填)      → fix-feedback-r{N}.md 进批次目录 + 同 phase
+  //     新 round 开跑
+  // 409 = 派生态非待验收 / round 不匹配 / 该轮已验收 / 非 v4（state conflict,
+  // not a body defect — the client re-GETs /:id's `derived` view and re-opens the
+  // gate on whatever round is now awaiting）; 404 任务不存在; 400 body 非法
+  // （含 rejected 缺 feedback — K7「打回必填反馈文本」由 superRefine 拦）。
+  router.post("/:id/acceptance", async (c) => {
+    const body = await safeJson(c)
+    if (!body) return c.json({ error: "Invalid or missing JSON body" }, 400)
+    try {
+      const parsed = acceptanceBodySchema.parse(body)
+      const input: AcceptanceInput = {
+        phase_index: parsed.phase_index,
+        round_index: parsed.round_index,
+        decision: parsed.decision,
+        ...(parsed.feedback !== undefined ? { feedback: parsed.feedback } : {}),
+      }
+      const result = await service.acceptance(c.req.param("id"), input)
+      return c.json(result)
+    } catch (err: unknown) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status)
+    }
+  })
+
+  // POST /:id/archive/retry — 票 08 archiving 幂等续跑 (project 粒度, K11/US15).
+  // ONLY the persisted 'archiving' state is retryable (409 otherwise; 404
+  // unknown). 202: the orchestration (ADR 顺延 / 术语 append / commit / push /
+  // PR → done) continues ASYNC — the board reflects completion via the
+  // task_status SSE ('done'), not this response. A retry while a run is still
+  // in flight is idempotent (the in-flight run is reused).
+  router.post("/:id/archive/retry", (c) => {
+    try {
+      const task = service.retryArchive(c.req.param("id"))
+      return c.json({ ok: true, task_id: task.id, status: task.status }, 202)
+    } catch (err: unknown) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status)
+    }
+  })
+
+  // POST /:id/advance — 票 07 移交裁决：auto_advance=false 的人工「起下一
+  // phase」入口（也覆盖「上 phase 已 accepted 但派发失败」的续跑）。200 同
+  // acceptance 的 dispatched 形状；409 = 非 v4 / 不存在「前序 accepted ∧ 该
+  // phase pending」的派生窗口（首 phase 请走 /:id/trigger，K6 不变）。
+  router.post("/:id/advance", async (c) => {
+    try {
+      const result = await service.advancePhase(c.req.param("id"))
+      return c.json(result)
+    } catch (err: unknown) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status)
+    }
+  })
 
   // POST /:id/spec-field — agent update_task_spec_field tool endpoint OR user
   // direct edit (05, SW-BP4) → merge field + emit spec_field_update SSE. The

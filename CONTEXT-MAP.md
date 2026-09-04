@@ -105,6 +105,11 @@
 | **HOW-handoff** | task-author 对话收尾步骤 — 入队前枚举可复用工作流 → 推荐 + 用户确认 → 复用 or 自建（validate + 模拟器必过）→ 绑定 workflow_ref。ADR-0013。 | core-pack |
 | **workflow 解析集 (Resolution Set)** | 任务 workflow_ref 的有效来源集合 = 已安装内置工作流 ∨ task home `workflows/`。全局 `~/.octopus/workflows/` 明确排除。绑定预检 / ready-gate / 查看器三处共用。ADR-0013。 | server |
 | **Task Home workflows/** | `~/.octopus/tasks/{task-id}/workflows/` — 自建工作流落位目录；dispatch 时经 `input_values.task_workflows_dir` 注入、拷进执行 ws `workflows/`（S2a 拷贝，非引擎直查）。ADR-0013。 | server |
+| **Phase（阶段）** | coding task 的第一级推进单元，大于 ticket——一个 Phase = 一份独立 spec（本次范围 + 票 + 验收方式）+ 一个 workflow_ref 绑定（各 phase 可同可不同）+ 一次以上执行。时间预算 ≈1h/phase（含复杂 E2E ≤1.5h），phase 间以人工验收衔接直至完整需求完成。 | server, shared, web-app, core-pack |
+| **Round（轮次）** | Phase 内的一次执行尝试——round 1 = phase spec 的正式执行；验收打回 → 经 task chat 反馈产生新 round（跑通用修复工作流，或先产 round-2 spec 再执行）。每 round 一条独立执行记录，共享同一 workspace/分支。 | server, web-app |
+| **验收 Gate (Acceptance)** | phase round 执行完成后的人工卡点——通过 → 放行下一 phase（末 phase 通过触发归档合并）；打回 → 本 phase 新 round。任务的 done 由人按出，不由引擎跑出。 | server, web-app |
+| **Batch 目录** | 产物日期批次分组——`.scratch/<YYYYMMDD>/<phase-slug>/`，同一需求拆出的多个 phase 产物共享日期目录前缀，标识同批次。 | core-pack |
+| **归并回写 (Sync-back)** | 末 phase 验收通过后的归档动作——任务空间积累的 phase 产物（.scratch）、ADR、CONTEXT.md 变更合并回各 involved project 仓库。合并机制待定。 | core-pack, server |
 
 ## Anti-Patterns（禁止）
 

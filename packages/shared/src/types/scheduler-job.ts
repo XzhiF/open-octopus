@@ -97,6 +97,28 @@ export const subunitSpecSchema = z.object({
   resources: z.array(resourceRefSchema).default([]),
 })
 
+/** task-phase-redesign (K1/K4, ticket 01) — one Phase of a v4 task.
+ *  1 phase = 1 spec (scope + tickets + acceptance method, pointed to by
+ *  `specPath` at the task home) + 1 workflow binding (`workflowRef` +
+ *  `inputValues`) + ≥1 round. Phase↔slug is 1:1; `slug` names the batch dir
+ *  `.scratch/<YYYYMMDD>/<slug>/` (K10), so it is path-safe by regex.
+ *  `index` is 1-based (ticket 07 derivation: accepted ∧ i<n → next round is
+ *  i+1; accepted ∧ i=n → archiving). `inputValues` values may carry the v4
+ *  placeholder vocabulary (`${phase.slug}`, `${phase.spec_dir}`,
+ *  `${task.home}`, `${task_artifacts_dir}`) resolved at materialization
+ *  (ticket 04) — same length cap as the task-level `input_values`. */
+export const taskPhaseSchema = z.object({
+  index: z.number().int().min(1),
+  name: z.string().min(1).max(100),
+  slug: z.string().min(1).max(100).regex(/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/, {
+    message: "Invalid slug: path-safe only (letters/digits start, then letters/digits/dots/hyphens/underscores)",
+  }),
+  specPath: z.string().min(1),
+  workflowRef: WorkflowRef.zodSchema(),
+  inputValues: z.record(z.string().min(1), z.string().min(1).max(2048)).default({}),
+})
+export type TaskPhase = z.infer<typeof taskPhaseSchema>
+
 /** Structured task body produced by the task-author chatbot (D9). Stored as
  *  schedules.config.task_spec (v3.0). `subunits` present ⇒ composite task.
  *
@@ -106,10 +128,20 @@ export const subunitSpecSchema = z.object({
  *  MoA output, SW-BP3), and confirmation gates `goal_confirmed` /
  *  `ac_confirmed[]` (D18, persisted through spec-field so drafts survive modal
  *  close). All five are part of the schema so zod does not strip them on a PUT
- *  round-trip (SW-BP2 — unknown keys would be silently dropped). */
+ *  round-trip (SW-BP2 — unknown keys would be silently dropped).
+ *
+ *  task-phase-redesign v4 (ticket 01, K4/K13): adds `format` ("v4" flag — the
+ *  ONLY discriminator; absent = v3/legacy, read-time derived single phase),
+ *  `phases[]` ({@link taskPhaseSchema}) and `autoAdvance` (K6 — schema keeps it
+ *  `boolean?`, the default-on derivation `!== false` is the server gate's lane,
+ *  not a zod default so v3 JSON round-trips stay byte-identical).
+ *  `goal`/`ac` become OPTIONAL (`.optional()`, min constraints preserved when
+ *  present) so a v4 payload without them parses; v3/generic enforcement moves
+ *  to the format-branched ready gate (ticket 04), which still requires both
+ *  for non-v4 specs. */
 export const taskSpecSchema = z.object({
-  goal: z.string().min(1),
-  ac: z.array(z.string().min(1)).min(1),
+  goal: z.string().min(1).optional(),
+  ac: z.array(z.string().min(1)).min(1).optional(),
   // Permissive authoring artifacts — typed but not over-constrained here.
   data_model: z.record(z.string(), z.unknown()).optional(),
   contracts: z.record(z.string(), z.unknown()).optional(),
@@ -143,6 +175,20 @@ export const taskSpecSchema = z.object({
     z.string().min(1),
     z.string().min(1).max(2048),
   ).optional(),
+  // ── task-phase-redesign v4 (ticket 01, K4/K13) ──
+  // Sole v4 discriminator. Absent ⇒ v3/legacy (generic/composite keep the old
+  // chain: goal/ac double-confirm gate). Only "v4" is defined today.
+  format: z.literal("v4").optional(),
+  // Phase plan (K1). Optional: a v4 draft mid-authoring may omit it entirely;
+  // when present it must carry ≥1 phase (the ready gate, ticket 04, re-checks
+  // ≥1 plus per-phase specPath/workflowRef resolvability — schema only owns
+  // the shape).
+  phases: z.array(taskPhaseSchema).min(1).optional(),
+  // K6 flow driver: accepted ∧ autoAdvance ∧ i<n ⇒ next phase auto-dispatches.
+  // `undefined` means default-ON; only explicit `false` parks each phase at
+  // the human gate. Kept optional (no zod default) so v3 stored JSON never
+  // gains a spurious key on PUT round-trips.
+  autoAdvance: z.boolean().optional(),
 })
 
 // ── Zod schemas (single source of truth) ────────────────────────────

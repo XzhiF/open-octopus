@@ -138,9 +138,14 @@ describe("taskSpecSchema", () => {
     }
   })
 
-  it("rejects task spec missing goal", () => {
+  // task-phase-redesign ticket 01 (K13): goal/ac became OPTIONAL at the schema
+  // level so v4 payloads (phases-only) parse. v3 enforcement is NOT lost — it
+  // moved to the format-branched ready gate (server, ticket 04: missing goal/ac
+  // still blocks a non-v4 spec). The min(1) constraint still applies when the
+  // key is present.
+  it("accepts task spec missing goal (v4 relaxation — schema level only)", () => {
     const result = taskSpecSchema.safeParse({ ac: ["done"] })
-    expect(result.success).toBe(false)
+    expect(result.success).toBe(true)
   })
 
   it("rejects task spec with empty ac", () => {

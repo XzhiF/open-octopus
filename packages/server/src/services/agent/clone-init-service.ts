@@ -11,6 +11,44 @@ import { BUILTIN_CLONES } from './builtin-clones'
 import { getBuiltInClonesDir, getBuiltInCloneDir, getBuiltInCloneMemoryDir } from './paths'
 import { DEFAULT_WORKFLOW_PRESETS_YAML, PREV_DEFAULT_WORKFLOW_PRESETS_YAMLS, PRESETS_VERSION, hashPresetsContent } from './workflow-presets-seed'
 
+// ── Matt skill-family seed (task-phase-redesign ticket 09, K15/AC1) ─────
+//
+// The spec-drafting skill family the upgraded task-author flow (K15) runs on.
+// Seeded into built-in/task-author/skills/ so the Claude SDK plugin scan
+// (clone-runtime.getPlugins already includes the clone dir) discovers them
+// with zero per-session code. Names match the dirs under the repo's
+// .claude/skills/ — the same source-of-truth the matt-dev pipeline uses here.
+export const MATT_SKILL_FAMILY: readonly string[] = [
+  'matt-verified-requirement',
+  'matt-verified-spec',
+  'matt-verified-tickets',
+  'domain-modeling',
+  'grilling',
+  'wayfinder',
+]
+
+/** Locate the repo's .claude/skills/ dir (the matt family source). Mirrors
+ *  init-service.findCorePackSkillsDir: __dirname candidates for src (vitest)
+ *  and bundled-dist layouts + process.cwd() candidates (dev.mjs/prod.mjs run
+ *  with cwd = repo root; `pnpm -F @octopus/server test` runs with cwd =
+ *  packages/server). Returns null when unavailable (e.g. an install without
+ *  the repo tree) — seeding is then a silent no-op, same posture as
+ *  copyBuiltinSkills. */
+function findRepoClaudeSkillsDir(): string | null {
+  const candidates = [
+    path.resolve(__dirname, '../../../../../.claude/skills'),  // src/services/agent → repo root
+    path.resolve(__dirname, '../../../.claude/skills'),        // dist (packages/server/dist) → repo root
+    path.resolve(__dirname, '../../../../.claude/skills'),     // dist one-dir-deeper variants
+    path.resolve(process.cwd(), '.claude/skills'),             // cwd = repo root
+    path.resolve(process.cwd(), '../.claude/skills'),          // cwd = packages/server
+    path.resolve(process.cwd(), '../../.claude/skills'),       // cwd = packages/* subdirs
+  ]
+  for (const c of candidates) {
+    if (fs.existsSync(c)) return c
+  }
+  return null
+}
+
 // ── Types ──────────────────────────────────────────────────────────
 
 export interface CloneInitResult {
@@ -53,6 +91,41 @@ export class CloneInitService {
   }
 
   // ── Private Helpers ─────────────────────────────────────────────
+
+  /** Copy every {@link MATT_SKILL_FAMILY} dir from the repo .claude/skills/
+   *  into `{cloneDir}/skills/` — per-skill skip-if-exists. See call site
+   *  (initSingleClone step 3b) for the rationale. */
+  private seedMattSkills(cloneDir: string, result: CloneInitResult): void {
+    const srcRoot = findRepoClaudeSkillsDir()
+    if (!srcRoot) return
+
+    const targetRoot = path.join(cloneDir, 'skills')
+    for (const skill of MATT_SKILL_FAMILY) {
+      const key = `built-in/task-author/skills/${skill}`
+      const srcDir = path.join(srcRoot, skill)
+      const destDir = path.join(targetRoot, skill)
+
+      if (fs.existsSync(destDir)) {
+        result.filesSkipped.push(key)
+        continue
+      }
+      // Source missing for one skill (renamed upstream) → skip that entry,
+      // keep seeding the rest. A dir without SKILL.md is not a skill — skip.
+      if (!fs.existsSync(path.join(srcDir, 'SKILL.md'))) continue
+
+      try {
+        fs.mkdirSync(targetRoot, { recursive: true })
+        fs.cpSync(srcDir, destDir, { recursive: true })
+        result.filesCreated.push(key)
+      } catch (err: unknown) {
+        // Non-fatal: plugin scan simply finds one less skill.
+        console.warn(
+          `[CloneInitService] matt-skill seed failed for ${skill}:`,
+          err instanceof Error ? err.message : String(err),
+        )
+      }
+    }
+  }
 
   private initSingleClone(
     cloneDef: CloneDef,
@@ -155,6 +228,16 @@ export class CloneInitService {
           }
         }
       }
+    }
+
+    // 3b. Seed the matt skill-family into built-in/task-author/skills/
+    // (task-phase-redesign ticket 09, AC1/K15). Whole-directory copy-if-missing
+    // (skills ship auxiliary files — references/, *-FORMAT.md), skip-if-exists
+    // so user edits survive across restarts (persona.md precedent). Missing
+    // source (packaged install without the repo .claude/ tree) → silent no-op,
+    // same posture as init-service.copyBuiltinSkills.
+    if (name === 'task-author') {
+      this.seedMattSkills(cloneDir, result)
     }
 
     // 4. Register in DB (skip if exists)

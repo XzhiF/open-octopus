@@ -1,0 +1,187 @@
+{
+  "run": "lcmtkn3nr7",
+  "taskId": "efeadb50-d48b-4d73-b968-858c62bd6e31",
+  "wsId": "8ec65fe0-5565-412c-b6d1-86b50f391df1",
+  "scheduleId": "308997c5-4c5a-4612-9735-06fb6c5806da",
+  "executions": [
+    {
+      "id": "bd2f8438-1adb-41ef-b51c-dd03601bcf39",
+      "status": "completed",
+      "phase_index": 1,
+      "round_index": 1,
+      "workspace_id": "8ec65fe0-5565-412c-b6d1-86b50f391df1"
+    },
+    {
+      "id": "a669c395-ccc5-4ac7-ace8-7b300517befb",
+      "status": "completed",
+      "phase_index": 1,
+      "round_index": 2,
+      "workspace_id": "8ec65fe0-5565-412c-b6d1-86b50f391df1"
+    },
+    {
+      "id": "6f4ea7e1-a118-4e8c-ab9a-aba939530781",
+      "status": "completed",
+      "phase_index": 2,
+      "round_index": 1,
+      "workspace_id": "8ec65fe0-5565-412c-b6d1-86b50f391df1"
+    }
+  ],
+  "detail": {
+    "id": "efeadb50-d48b-4d73-b968-858c62bd6e31",
+    "org": "E2E_TD_org",
+    "name": "E2E_TD_主故事穿线_lcmtkn3nr7",
+    "status": "done",
+    "task_spec": {
+      "goal": "E2E_TD 主故事穿线 lcmtkn3nr7",
+      "resources": [],
+      "authoring_resources": [],
+      "skill_groups": [],
+      "decisions": [],
+      "ac_confirmed": [],
+      "format": "v4",
+      "phases": [
+        {
+          "index": 1,
+          "name": "阶段一·打回链",
+          "slug": "e2e-td-lc-lcmtkn3nr7-p1",
+          "specPath": ".scratch/20260903/e2e-td-lc-lcmtkn3nr7-p1/spec.md",
+          "workflowRef": "e2e-td-lc-stub",
+          "inputValues": {
+            "batch_dir": ".scratch/20260903/e2e-td-lc-lcmtkn3nr7-p1"
+          }
+        },
+        {
+          "index": 2,
+          "name": "阶段二·直通",
+          "slug": "e2e-td-lc-lcmtkn3nr7-p2",
+          "specPath": ".scratch/20260903/e2e-td-lc-lcmtkn3nr7-p2/spec.md",
+          "workflowRef": "e2e-td-lc-stub",
+          "inputValues": {
+            "batch_dir": ".scratch/20260903/e2e-td-lc-lcmtkn3nr7-p2"
+          }
+        }
+      ],
+      "autoAdvance": true,
+      "task_type": "coding"
+    },
+    "authoring_resources": [],
+    "resources": [],
+    "skills": [],
+    "project_ids": [
+      "e2e-td-lc-lcmtkn3nr7-pA",
+      "e2e-td-lc-lcmtkn3nr7-pB"
+    ],
+    "workflow_ref": null,
+    "version": 3,
+    "source_chat_session_id": null,
+    "deleted_at": null,
+    "created_at": "2026-09-02T22:00:24.280Z",
+    "updated_at": "2026-09-02T22:00:31.649Z",
+    "completed_at": "2026-09-02T22:00:31.649Z",
+    "schedule_status": "done",
+    "scheduled_at": null,
+    "children": [
+      {
+        "schedule_id": "308997c5-4c5a-4612-9735-06fb6c5806da",
+        "name": "task-efeadb50-d48b-4d73-b968-858c62bd6e31-primary",
+        "status": "done",
+        "origin_role": "primary",
+        "workflow_ref": "e2e-td-lc-stub",
+        "scheduled_at": null,
+        "workspace_id": null,
+        "execution_ref": {
+          "id": "30cdb2ed-1a6b-46bd-8f24-f8a70dc187ee",
+          "status": "completed",
+          "execution_id": "6f4ea7e1-a118-4e8c-ab9a-aba939530781",
+          "workspace_id": "8ec65fe0-5565-412c-b6d1-86b50f391df1",
+          "triggered_at": "2026-09-02T22:00:30.416Z",
+          "completed_at": "2026-09-02 22:00:30",
+          "duration_ms": 292,
+          "error_summary": null
+        }
+      }
+    ],
+    "derived": {
+      "taskStatus": "done",
+      "isV4": true,
+      "phaseViews": [
+        {
+          "index": 1,
+          "name": "阶段一·打回链",
+          "slug": "e2e-td-lc-lcmtkn3nr7-p1",
+          "workflowRef": "e2e-td-lc-stub",
+          "status": "accepted",
+          "rounds": [
+            {
+              "roundIndex": 1,
+              "exec": {
+                "id": "bd2f8438-1adb-41ef-b51c-dd03601bcf39",
+                "status": "completed",
+                "phase_index": 1,
+                "round_index": 1,
+                "created_at": "2026-09-02T22:00:26.114Z"
+              },
+              "state": "succeeded",
+              "decision": "rejected"
+            },
+            {
+              "roundIndex": 2,
+              "exec": {
+                "id": "a669c395-ccc5-4ac7-ace8-7b300517befb",
+                "status": "completed",
+                "phase_index": 1,
+                "round_index": 2,
+                "created_at": "2026-09-02T22:00:29.448Z"
+              },
+              "state": "succeeded",
+              "decision": "accepted"
+            }
+          ],
+          "currentRound": 2,
+          "acceptedRound": 2,
+          "awaitingRound": null
+        },
+        {
+          "index": 2,
+          "name": "阶段二·直通",
+          "slug": "e2e-td-lc-lcmtkn3nr7-p2",
+          "workflowRef": "e2e-td-lc-stub",
+          "status": "accepted",
+          "rounds": [
+            {
+              "roundIndex": 1,
+              "exec": {
+                "id": "6f4ea7e1-a118-4e8c-ab9a-aba939530781",
+                "status": "completed",
+                "phase_index": 2,
+                "round_index": 1,
+                "created_at": "2026-09-02T22:00:30.416Z"
+              },
+              "state": "succeeded",
+              "decision": "accepted"
+            }
+          ],
+          "currentRound": 1,
+          "acceptedRound": 1,
+          "awaitingRound": null
+        }
+      ]
+    }
+  },
+  "sseTaskEvents": [
+    "task_status",
+    "task_trigger",
+    "phase_status_update",
+    "task_artifacts_update",
+    "phase_status_update",
+    "phase_status_update",
+    "task_artifacts_update",
+    "phase_status_update",
+    "phase_status_update",
+    "phase_status_update",
+    "task_artifacts_update",
+    "phase_status_update",
+    "task_status",
+    "task_status"
+  ]
+}

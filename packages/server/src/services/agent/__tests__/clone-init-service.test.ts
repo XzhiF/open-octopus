@@ -39,7 +39,7 @@ vi.mock('../paths', async () => {
   }
 })
 
-import { CloneInitService } from '../clone-init-service'
+import { CloneInitService, MATT_SKILL_FAMILY } from '../clone-init-service'
 import {
   DEFAULT_WORKFLOW_PRESETS_YAML,
   PREV_DEFAULT_V1A_WORKFLOW_PRESETS_YAML,
@@ -163,5 +163,74 @@ describe('CloneInitService — workflow-presets.yaml seed migration (AC3)', () =
     } finally {
       logSpy.mockRestore()
     }
+  })
+})
+
+// ── ticket 09 (task-phase-redesign, K15/AC1): matt skill-family seed ────
+//
+// The matt spec-drafting family (matt-verified-*/domain-modeling/grilling/
+// wayfinder) is seeded into built-in/task-author/skills/ so the task-author
+// clone session's SDK plugin scan picks it up with ZERO per-session code
+// (getPlugins already returns the clone dir — clone-runtime.test.ts pins that;
+// what this suite pins is that skills/ actually lands there). Source = the
+// repo's own .claude/skills/ (same copy-if-missing + skip-if-exists mechanism
+// as init-service.copyBuiltinSkills — no new directory convention).
+
+const SKILLS_REL = path.join('agent', 'built-in', 'task-author', 'skills')
+const skillsDest = (skill: string) => path.join(MOCK_HOME, SKILLS_REL, skill)
+
+describe('CloneInitService — matt skill-family seed (ticket 09 / AC1)', () => {
+  afterEach(() => {
+    fs.rmSync(MOCK_HOME, { recursive: true, force: true })
+  })
+
+  it('seeds every matt-family skill dir with SKILL.md into task-author/skills/', () => {
+    const result = new CloneInitService().initBuiltInClones('test-org', fakeDAO)
+
+    expect(MATT_SKILL_FAMILY.length).toBeGreaterThanOrEqual(5)
+    for (const skill of MATT_SKILL_FAMILY) {
+      expect(
+        fs.existsSync(path.join(skillsDest(skill), 'SKILL.md')),
+        `expected seeded SKILL.md for ${skill}`,
+      ).toBe(true)
+      expect(result.filesCreated).toContain(`built-in/task-author/skills/${skill}`)
+    }
+    // auxiliary files ride along (not just SKILL.md)
+    expect(
+      fs.existsSync(
+        path.join(skillsDest('matt-verified-requirement'), 'references', 'story-walkthrough.md'),
+      ),
+    ).toBe(true)
+    expect(
+      fs.existsSync(path.join(skillsDest('domain-modeling'), 'ADR-FORMAT.md')),
+    ).toBe(true)
+  })
+
+  it('is idempotent — second init skips existing skills without rewriting', () => {
+    new CloneInitService().initBuiltInClones('test-org', fakeDAO)
+
+    // simulate a user edit after first seed
+    const edited = '# my customized grilling\n'
+    const editedFile = path.join(skillsDest('grilling'), 'SKILL.md')
+    fs.writeFileSync(editedFile, edited, 'utf-8')
+
+    const result = new CloneInitService().initBuiltInClones('test-org', fakeDAO)
+
+    expect(fs.readFileSync(editedFile, 'utf-8')).toBe(edited) // skip-if-exists preserves edits
+    for (const skill of MATT_SKILL_FAMILY) {
+      expect(result.filesCreated).not.toContain(`built-in/task-author/skills/${skill}`)
+      expect(result.filesSkipped).toContain(`built-in/task-author/skills/${skill}`)
+    }
+  })
+
+  it('does NOT seed matt skills for non task-author clones', () => {
+    new CloneInitService().initBuiltInClones('test-org', fakeDAO)
+
+    const schedulerSkills = path.join(MOCK_HOME, 'agent', 'built-in', 'scheduler', 'skills')
+    if (fs.existsSync(schedulerSkills)) {
+      for (const skill of MATT_SKILL_FAMILY) {
+        expect(fs.existsSync(path.join(schedulerSkills, skill))).toBe(false)
+      }
+    } // else: no skills dir created for scheduler — also correct
   })
 })

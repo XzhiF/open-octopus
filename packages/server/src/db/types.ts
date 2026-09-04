@@ -50,6 +50,10 @@ export interface ExecutionRow {
   harness_status: string | null
   harness_summary: string | null
   budget_snapshot: string | null
+  /** v40 (task-phase-redesign K4): round identity — 1 execution = 1 round.
+   *  NULL = v3/generic (non-phase execution). */
+  phase_index: number | null
+  round_index: number | null
   started_at: string | null
   completed_at: string | null
   duration: number | null
@@ -358,7 +362,8 @@ export interface TaskRow {
   id: string
   org: string
   name: string
-  /** 'draft' | 'ready' | 'running' | 'done' | 'failed' | 'aborted' (CHECK-enforced). */
+  /** v40 (K3): 'draft' | 'ready' | 'running' | 'awaiting_review' | 'archiving' |
+   *  'done' | 'aborted' (v4) + 'failed' (v3 legacy rows only — CHECK keeps it). */
   status: string
   /** FK→sessions.id; back-ref for sessions.scope_id (SG3 retarget). */
   source_chat_session_id: string | null
@@ -381,6 +386,28 @@ export interface TaskRow {
   updated_at: string
   /** Set when status reaches terminal done/failed/aborted. */
   completed_at: string | null
+  /** v40 (K4): bound workspace — NULL = never triggered; first trigger creates +
+   *  binds, later phase rounds reuse (dispatchPhaseRound, 票 05). */
+  workspace_id: string | null
+}
+
+// ── Task Phase Acceptances (schema v40 — task-phase-redesign K4) ────────
+
+/** One row per human 验收 decision on a phase round. APPEND-ONLY (DB triggers
+ *  reject UPDATE/DELETE, mirrors the audit-log immutability precedent): a round's
+ *  decision is historical fact — corrections append, never mutate. No FK on
+ *  task_id (S2 polymorphic convention — app-level integrity). */
+export interface TaskPhaseAcceptanceRow {
+  id: string
+  task_id: string
+  phase_index: number
+  round_index: number
+  /** 'accepted' | 'rejected' (CHECK-enforced). */
+  decision: string
+  /** 打回反馈文本; NULL for accepted rows. */
+  feedback: string | null
+  /** ISO timestamp of the decision. */
+  decided_at: string
 }
 
 // ── Agent Tables ────────────────────────────────────────────────────

@@ -327,8 +327,19 @@ export class WorkspaceService {
 
     // Resolve workspace path: ~/.octopus/{org}/workspaces/{name}
     const wsDir = path.join(os.homedir(), ".octopus", "orgs", input.org, "workspaces", input.name)
+    // task-phase-redesign (ticket 05, K12 / 票03暗雷#3): the old behavior was
+    // `rmSync(wsDir, recursive)` + rebuild. With the v4 model a workspace is no
+    // longer disposable — it is the ONE bound task home (tasks.workspace_id)
+    // carrying un-collected round evidence (fix-feedback-rN.md, in-flight
+    // worktrees). A same-name collision now means "someone is trying to rebuild
+    // a live workspace": refuse LOUDLY instead of destroying it. The caller
+    // (WorkflowExecutor.execute) already funnels throws into
+    // schedule_executions.error_summary — no silent data loss on any path.
     if (fs.existsSync(wsDir)) {
-      fs.rmSync(wsDir, { recursive: true, force: true })
+      throw new Error(
+        `Workspace directory already exists, refusing to overwrite: ${wsDir} ` +
+          `(a reused task workspace must BIND to the existing one, not rebuild it)`,
+      )
     }
     fs.mkdirSync(wsDir, { recursive: true })
 

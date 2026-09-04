@@ -4,7 +4,11 @@
 // Rendered inside TaskModal when task===null ([+新建]). The user picks:
 //   1. task type (coding | generic) — D13
 //   2. skill groups (multi-select, LOCKED at creation per ADR-0012) — D2/D3
+//      (task-phase-redesign 票 11 / K15: coding 型不再呈现 — 内置 matt 技能族
+//      随 task-author 自动就位, US1「不再勾选技能组，直通对话起草」)
 //   3. authoring context (org + projects; coding template only) — US14/D13
+//      (票 11: coding 型连 preset 预选一起下线 — project 语境由对话内
+//      spec-field(field=projects) 落定; generic 保留现状)
 // Then 开始编写 → onCreate({task_type, skill_groups, preset{org,projects}}).
 // The parent (TaskModal) runs the D15 create sequence (session-first, then
 // POST /api/tasks with these fields) and transitions to the AuthoringWorkspace.
@@ -17,9 +21,8 @@
 import { useEffect, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
-import { Check, Code2, FileText, Lock } from "lucide-react"
+import { Check, Lock } from "lucide-react"
 import { listSkillGroups, type SkillGroup } from "@/lib/skill-groups-api"
-import { ProjectSelector, type SelectedProject } from "@/components/scheduler/project-selector"
 import { useOrgs } from "@/hooks/useOrgs"
 
 /** The built-in empty-marker group name (D17 — selecting it = use only the
@@ -47,7 +50,6 @@ export function TemplatePicker({ onCreate, busy }: TemplatePickerProps) {
   const [groups, setGroups] = useState<SkillGroup[]>([])
   const [selectedGroups, setSelectedGroups] = useState<string[]>([])
   const [org, setOrg] = useState<string>(orgs[0]?.name ?? "")
-  const [projects, setProjects] = useState<SelectedProject[]>([])
 
   useEffect(() => {
     let cancelled = false
@@ -89,16 +91,18 @@ export function TemplatePicker({ onCreate, busy }: TemplatePickerProps) {
 
   const handleCreate = () => {
     if (!canCreate) return
+    const isCoding = taskType === "coding"
     onCreate({
       task_type: taskType,
-      skill_groups: selectedGroups,
+      // 票 11/K15/US1: coding 直通 task-author —— 不再上送勾选结果（内置 matt
+      // 技能族随 clone 自动就位, 票 09）；generic 保留现状（勾选透传）。
+      skill_groups: isCoding ? [] : selectedGroups,
       preset: {
-        // preset.org is only meaningful for the coding template, but the
-        // server reads it regardless; sending it is harmless + keeps the
-        // shape stable for the generic case (no projects).
-        org: taskType === "coding" ? org : undefined,
-        projects:
-          taskType === "coding" ? projects.map((p) => p.name) : [],
+        // 票 11: coding 不再渲染 preset(org+projects) 预选控件。org 仅取默认
+        // 首个组织给 task home 落位；project 语境由对话内 spec-field
+        // (field=projects) 落定。generic 与现状一致（无 preset）。
+        org: isCoding ? org : undefined,
+        projects: [],
       },
     })
   }
@@ -109,7 +113,9 @@ export function TemplatePicker({ onCreate, busy }: TemplatePickerProps) {
         <div>
           <h2 className="text-lg font-semibold">新建任务</h2>
           <p className="text-xs text-muted-foreground mt-1">
-            类型 + Skill 组在创建后锁定 <Lock className="inline size-3" />。想换组合 = 新建任务（旧草稿保留）。
+            {taskType === "coding"
+              ? "开发任务直通内置 spec agent（matt 技能族自动就位），对话起草 → 拆 Phase 交付。"
+              : <>通用任务：类型 + Skill 组在创建后锁定 <Lock className="inline size-3" />。想换组合 = 新建任务（旧草稿保留）。</>}
           </p>
         </div>
 
@@ -118,7 +124,7 @@ export function TemplatePicker({ onCreate, busy }: TemplatePickerProps) {
           <div className="text-xs font-medium mb-2">任务类型</div>
           <div className="grid grid-cols-2 gap-2">
             {([
-              ["coding", "🛠 开发任务", "org + 项目语境，spec 驱动"],
+              ["coding", "🛠 开发任务", "直通 spec agent，拆 Phase 交付"],
               ["generic", "📄 通用任务", "对话澄清，轻量"],
             ] as const).map(([id, label, desc]) => (
               <button
@@ -134,88 +140,69 @@ export function TemplatePicker({ onCreate, busy }: TemplatePickerProps) {
           </div>
         </section>
 
-        {/* ── skill groups (multi-select, locked at creation) ── */}
-        <section>
-          <div className="text-xs font-medium mb-2 flex items-center gap-1">
-            Skill 组 <Lock className="size-3" />
-            <span className="text-muted-foreground font-normal">可多选 · 创建后锁定</span>
-          </div>
-          {groups.length === 0 ? (
-            <p className="text-xs text-muted-foreground py-2">
-              未发现已安装 Skill 组（仅可选「默认通用」组）。
-            </p>
-          ) : null}
-          <div className="space-y-1.5">
-            {groups.map((g) => {
-              const on = selectedGroups.includes(g.group)
-              const isDefault = g.group === DEFAULT_SKILL_GROUP
-              return (
-                <button
-                  key={g.group}
-                  onClick={() => toggleGroup(g.group)}
-                  aria-label={g.group}
-                  data-skill-group={g.group}
-                  data-selected={on ? "true" : "false"}
-                  className={`w-full rounded-lg border px-3 py-2 text-left flex items-center gap-2 ${on ? "border-blue-400 bg-blue-500/5" : "border-border"}`}
-                >
-                  <span
-                    className={`size-4 rounded border flex items-center justify-center shrink-0 ${on ? "bg-blue-500 border-blue-500 text-white" : "border-muted-foreground/40"}`}
+        {/* ── skill groups — generic 保留现状；coding 直通不呈现 (票 11/AC1) ──
+            K15: 内置 matt 技能族随 task-author clone 自动就位（票 09），coding 型
+            勾选已无意义；e2e 以 [data-skill-group]/[data-preset-context] 断言不存在。 */}
+        {taskType === "generic" && (
+          <section data-skill-groups-section>
+            <div className="text-xs font-medium mb-2 flex items-center gap-1">
+              Skill 组 <Lock className="size-3" />
+              <span className="text-muted-foreground font-normal">可多选 · 创建后锁定</span>
+            </div>
+            {groups.length === 0 ? (
+              <p className="text-xs text-muted-foreground py-2">
+                未发现已安装 Skill 组（仅可选「默认通用」组）。
+              </p>
+            ) : null}
+            <div className="space-y-1.5">
+              {groups.map((g) => {
+                const on = selectedGroups.includes(g.group)
+                const isDefault = g.group === DEFAULT_SKILL_GROUP
+                return (
+                  <button
+                    key={g.group}
+                    onClick={() => toggleGroup(g.group)}
+                    aria-label={g.group}
+                    data-skill-group={g.group}
+                    data-selected={on ? "true" : "false"}
+                    className={`w-full rounded-lg border px-3 py-2 text-left flex items-center gap-2 ${on ? "border-blue-400 bg-blue-500/5" : "border-border"}`}
                   >
-                    {on && <Check className="size-3" />}
-                  </span>
-                  <div className="flex-1 min-w-0">
-                    <div className="text-xs font-medium flex items-center gap-1">
-                      {g.displayName}
-                      {isDefault && (
-                        <Badge variant="outline" className="text-[9px]">默认通用</Badge>
+                    <span
+                      className={`size-4 rounded border flex items-center justify-center shrink-0 ${on ? "bg-blue-500 border-blue-500 text-white" : "border-muted-foreground/40"}`}
+                    >
+                      {on && <Check className="size-3" />}
+                    </span>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-xs font-medium flex items-center gap-1">
+                        {g.displayName}
+                        {isDefault && (
+                          <Badge variant="outline" className="text-[9px]">默认通用</Badge>
+                        )}
+                      </div>
+                      <div className="text-[10px] text-muted-foreground">
+                        {isDefault ? "不物化：仅用内置 spec-field 流程 + 共享 skills" : `${g.skills.length} 个命令`}
+                      </div>
+                      {!isDefault && g.skills.length > 0 && (
+                        <div className="text-[10px] text-muted-foreground/70 mt-0.5 truncate">
+                          {g.skills.map((s) => `/${s.name}`).join("  ")}
+                        </div>
                       )}
                     </div>
-                    <div className="text-[10px] text-muted-foreground">
-                      {isDefault ? "不物化：仅用内置 spec-field 流程 + 共享 skills" : `${g.skills.length} 个命令`}
-                    </div>
-                    {!isDefault && g.skills.length > 0 && (
-                      <div className="text-[10px] text-muted-foreground/70 mt-0.5 truncate">
-                        {g.skills.map((s) => `/${s.name}`).join("  ")}
-                      </div>
-                    )}
-                  </div>
-                </button>
-              )
-            })}
-          </div>
-          {selectedGroups.length > 1 && (
-            <div className="mt-2 text-[10px] text-amber-600 bg-amber-500/10 rounded px-2 py-1.5">
-              ⚠ 整合模式：{selectedGroups.length} 个组的命令都可用，产物按「登记不搬迁」各自索引。
+                  </button>
+                )
+              })}
             </div>
-          )}
-        </section>
-
-        {/* ── authoring context (coding only; US14: skills NOT here) ── */}
-        {taskType === "coding" && (
-          <section>
-            <div className="text-xs font-medium mb-2">
-              codebase <span className="text-muted-foreground font-normal">（预设仅此两项；执行技能归 workflow.requires）</span>
-            </div>
-            {orgs.length > 1 ? (
-              <select
-                className="h-7 w-full rounded-md border border-border bg-background px-2 text-xs mb-2"
-                value={org}
-                onChange={(e) => { setOrg(e.target.value); setProjects([]) }}
-              >
-                {orgs.map((o) => (
-                  <option key={o.name} value={o.name}>{o.name}</option>
-                ))}
-              </select>
-            ) : (
-              <div className="text-xs text-muted-foreground mb-2">{org || "未配置组织"}</div>
-            )}
-            {org ? (
-              <ProjectSelector org={org} value={projects} onChange={setProjects} />
-            ) : (
-              <p className="text-xs text-muted-foreground">未配置组织 — 请先运行 octopus setup。</p>
+            {selectedGroups.length > 1 && (
+              <div className="mt-2 text-[10px] text-amber-600 bg-amber-500/10 rounded px-2 py-1.5">
+                ⚠ 整合模式：{selectedGroups.length} 个组的命令都可用，产物按「登记不搬迁」各自索引。
+              </div>
             )}
           </section>
         )}
+
+        {/* 票 11: coding 的 codebase/preset 预选段已下线（US1/US2 — project 语境
+            由对话内 spec-field field=projects 落定；generic 本就无此段）。e2e
+            AC1 断言：coding 下 [data-skill-group] 计数 0 且无「codebase」段。 */}
 
         <Button className="w-full" onClick={handleCreate} disabled={!canCreate || busy} data-template-create>
           {busy ? "创建中…" : "开始编写 →"}

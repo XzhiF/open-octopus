@@ -103,6 +103,13 @@ function resolveMode(task: Task | null): ModalMode {
   if (task.status === "ready" || task.status === "running") {
     return isComposite(task) ? "composite" : "simple-execution"
   }
+  // task-phase-redesign 票 11 双态分流：v4 的 awaiting_review / archiving 是
+  // 「执行期的人机窗口」（验收/归档中），不是终态 — 走执行视图（TaskRunDetail
+  // View 顶部 PhaseTimeline；票 12 在此挂验收三栏）。旧逻辑会把它们误入
+  // terminal（渲染成「任务已中止」横幅）。
+  if (task.status === "awaiting_review" || task.status === "archiving") {
+    return isComposite(task) ? "composite" : "simple-execution"
+  }
   // done / failed / aborted
   if (task.status === "done") return isComposite(task) ? "composite" : "done"
   return isComposite(task) ? "composite" : "terminal"
@@ -110,6 +117,7 @@ function resolveMode(task: Task | null): ModalMode {
 
 const STATUS_LABEL: Record<string, string> = {
   draft: "草稿", ready: "待执行", running: "执行中",
+  awaiting_review: "待验收", archiving: "归档中",
   done: "已完成", failed: "失败", aborted: "已中止",
 }
 
@@ -117,6 +125,9 @@ const STATUS_TONE: Record<string, string> = {
   draft: "bg-muted text-muted-foreground",
   ready: "bg-blue-500/15 text-blue-500",
   running: "bg-blue-500/15 text-blue-500",
+  // K3/US8: 待验收=琥珀（等人放行，非红死）；归档中=橙（票 08 编排中）。
+  awaiting_review: "bg-amber-500/15 text-amber-600 dark:text-amber-400",
+  archiving: "bg-orange-500/15 text-orange-600 dark:text-orange-400",
   done: "bg-emerald-500/15 text-emerald-600",
   failed: "bg-red-500/15 text-red-500",
   aborted: "bg-zinc-500/15 text-zinc-500",

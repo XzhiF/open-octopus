@@ -9,14 +9,21 @@ import {
   AlertDialogDescription, AlertDialogFooter, AlertDialogCancel, AlertDialogAction,
 } from "@/components/ui/alert-dialog"
 import type { Task } from "@octopus/shared"
-import { listTasks, deleteTask } from "@/lib/tasks-api"
+import { listTasks, deleteTask, getTask, postAdvance, postArchiveRetry, TaskApiError, type TaskDerivedView } from "@/lib/tasks-api"
 import { toast } from "sonner"
-import { groupTasksByStatus, TASK_COLUMNS } from "@/lib/task-board"
+import {
+  groupTasksByStatus, tasksForColumn, effectiveStatusOf,
+  computePhaseBadge, overBudgetRoundOf, phaseBudgetMs, TASK_COLUMNS,
+} from "@/lib/task-board"
 import { subscribeSSE } from "@/lib/sse-manager"
 import { getServerUrl } from "@/lib/server-config"
 import { TaskModal } from "@/components/tasks/task-modal"
 import { TriggerDialog } from "@/components/tasks/trigger-dialog"
-import { TASK_STATUS_EVENT, SPEC_FIELD_UPDATE_EVENT, TASK_TRIGGER_EVENT } from "@octopus/shared"
+import { AcceptanceModal } from "@/components/tasks/acceptance-modal"
+import {
+  TASK_STATUS_EVENT, SPEC_FIELD_UPDATE_EVENT, TASK_TRIGGER_EVENT,
+  PHASE_STATUS_UPDATE_EVENT,
+} from "@octopus/shared"
 
 const REFRESH_INTERVAL_MS = 10_000
 
@@ -28,6 +35,11 @@ export default function TasksPage() {
   const [modalTask, setModalTask] = useState<Task | null>(null)
   const [modalOpen, setModalOpen] = useState(false)
 
+  // task-phase-redesign 票 11: v4 卡片的列归属/角标/⏳ 都读 derived
+  // （deriveTaskView 唯一真相，票 07 嵌在 GET /:id 上 — list 端点不带）。
+  // 看板 v4 任务量小：每次列表刷新后对 format==="v4" 的行逐个补拉 detail。
+  const [derivedMap, setDerivedMap] = useState<Record<string, TaskDerivedView>>({})
+
   const fetchTasks = useCallback(async () => {
     try {
       // GET /api/tasks — first-class tasks domain (SG14: read Task, not
@@ -36,6 +48,28 @@ export default function TasksPage() {
       const data = await listTasks()
       setTasks(data.items)
       setError(null)
+
+      const v4Ids = data.items
+        .filter((t) => t.task_spec?.format === "v4")
+        .map((t) => t.id)
+      if (v4Ids.length === 0) {
+        setDerivedMap({})
+      } else {
+        const entries = await Promise.all(
+          v4Ids.map(async (id) => {
+            try {
+              const detail = await getTask(id)
+              return [id, detail.derived] as const
+            } catch {
+              return [id, undefined] as const
+            }
+          }),
+        )
+        // best-effort：detail 失败/旧 server 无 derived 字段 → 该卡退回持久态归列
+        setDerivedMap(Object.fromEntries(
+          entries.filter((e): e is [string, TaskDerivedView] => e[1] !== undefined),
+        ))
+      }
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Failed to load tasks")
     } finally {
@@ -89,6 +123,18 @@ export default function TasksPage() {
     return () => unsub()
   }, [fetchTasks])
 
+  // 票 11/⑦: phase_status_update (task-phase-redesign, 票 07 验收链路 emit) —
+  // re-derive nudge：列归属/角标以 GET /:id 的 derived 为准（K3 派生不存），
+  // 收到即整盘刷新（含 derivedMap 补拉）。常量从 shared 导入。
+  useEffect(() => {
+    const unsub = subscribeSSE(
+      `${getServerUrl()}/api/tasks/events`,
+      PHASE_STATUS_UPDATE_EVENT,
+      () => { void fetchTasks() },
+    )
+    return () => unsub()
+  }, [fetchTasks])
+
   // Keep the open modal's task in sync with the latest fetched row (version/
   // status) — same pattern as the v1 SchedulerJob sync, now against Task.
   const tasksRef = useRef<Task[]>(tasks)
@@ -127,6 +173,44 @@ export default function TasksPage() {
   // v39: which ready task has the trigger dialog open.
   const [triggerTaskId, setTriggerTaskId] = useState<string | null>(null)
 
+  // 票 12 (K14): which task has the 验收三栏 modal open (待验收列卡「验收」按钮).
+  const [acceptTaskId, setAcceptTaskId] = useState<string | null>(null)
+
+  // 票 12 (US11/K6): autoAdvance=false 时「启动下一 Phase」— POST /:id/advance
+  // (票 08 契约). Busy-guard per click; 409 = 派生态已变 → 刷新盘面.
+  const [advanceBusyId, setAdvanceBusyId] = useState<string | null>(null)
+  const handleAdvance = useCallback(async (task: Task) => {
+    if (advanceBusyId) return
+    setAdvanceBusyId(task.id)
+    try {
+      const result = await postAdvance(task.id)
+      toast.success(`Phase ${result.dispatch?.phase_index ?? "?"} Round ${result.dispatch?.round_index ?? 1} 已开跑`)
+      void fetchTasks()
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : "启动失败")
+      if (err instanceof TaskApiError && err.status === 409) void fetchTasks()
+    } finally {
+      setAdvanceBusyId(null)
+    }
+  }, [advanceBusyId, fetchTasks])
+
+  // 票 12 (US15): archiving 卡「重试归档」— POST /:id/archive/retry (票 08 幂等续跑).
+  const [retryBusyId, setRetryBusyId] = useState<string | null>(null)
+  const handleArchiveRetry = useCallback(async (task: Task) => {
+    if (retryBusyId) return
+    setRetryBusyId(task.id)
+    try {
+      await postArchiveRetry(task.id)
+      toast.success("归档续跑已触发 — 完成以 task_status(done) 为准")
+      void fetchTasks()
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : "重试归档失败")
+      if (err instanceof TaskApiError && err.status === 409) void fetchTasks()
+    } finally {
+      setRetryBusyId(null)
+    }
+  }, [retryBusyId, fetchTasks])
+
   const handleDeleteDraft = useCallback(async (taskId: string) => {
     setDeleteBusy(true)
     try {
@@ -151,7 +235,15 @@ export default function TasksPage() {
     void fetchTasks()
   }, [fetchTasks])
 
-  const grouped = groupTasksByStatus(tasks)
+  // 票 11 (K3): v4 列归属用 **derived.taskStatus 优先**（持久 done/failed 镜像
+  // 会把待验收任务错归「完成」列 — 票 07 活体交互 #1），再按八桶分组、五列
+  // 展平渲染（archiving→执行中, failed/aborted→完成(终态)）。
+  const displayTasks = tasks.map((t) => {
+    const eff = effectiveStatusOf(t, derivedMap[t.id])
+    return eff === t.status ? t : { ...t, status: eff }
+  })
+  const grouped = groupTasksByStatus(displayTasks)
+  const budgetMs = phaseBudgetMs()
 
   return (
     <div className="flex flex-1 min-h-0 flex-col">
@@ -178,28 +270,35 @@ export default function TasksPage() {
         ) : (
           <div className="flex-1 overflow-auto p-4">
             <div className="flex gap-3 min-h-full" style={{ minWidth: "max-content" }}>
-              {TASK_COLUMNS.map((col) => (
+              {TASK_COLUMNS.map((col) => {
+                const colTasks = tasksForColumn(grouped, col.id)
+                return (
                 <section
                   key={col.id}
                   data-task-column={col.id}
                   aria-label={col.label}
-                  className="flex flex-col gap-2 w-[220px] shrink-0 rounded-md bg-muted/30"
+                  className={`flex flex-col gap-2 w-[220px] shrink-0 rounded-md ${col.id === "awaiting_review" ? "bg-amber-500/5 ring-1 ring-inset ring-amber-500/30" : "bg-muted/30"}`}
                 >
                   <header className="flex items-center justify-between px-3 py-2 border-b border-border">
-                    <h2 className="text-sm font-semibold">{col.label}</h2>
-                    <span className="text-xs text-muted-foreground">{grouped[col.id].length}</span>
+                    <h2 className={`text-sm font-semibold ${col.id === "awaiting_review" ? "text-amber-600 dark:text-amber-400" : ""}`}>{col.label}</h2>
+                    <span className="text-xs text-muted-foreground">{colTasks.length}</span>
                   </header>
                   <div className="flex flex-col gap-2 flex-1 p-2 overflow-auto">
-                    {grouped[col.id].map((task) => (
+                    {colTasks.map((task) => (
                       <TaskCard
                         key={task.id}
                         task={task}
+                        derived={derivedMap[task.id]}
+                        budgetMs={budgetMs}
                         onClick={() => openCard(task)}
                         onDeleteRequest={(t) => setDeletingTaskId(t.id)}
                         onTriggerRequest={(t) => setTriggerTaskId(t.id)}
+                        onAcceptRequest={(t) => setAcceptTaskId(t.id)}
+                        onAdvanceRequest={(t) => void handleAdvance(t)}
+                        onArchiveRetryRequest={(t) => void handleArchiveRetry(t)}
                       />
                     ))}
-                    {grouped[col.id].length === 0 && (
+                    {colTasks.length === 0 && (
                       <div
                         data-empty-column={col.id}
                         className="text-xs text-muted-foreground text-center py-6 border border-dashed rounded-md"
@@ -209,7 +308,8 @@ export default function TasksPage() {
                     )}
                   </div>
                 </section>
-              ))}
+                )
+              })}
             </div>
           </div>
         )}
@@ -229,6 +329,15 @@ export default function TasksPage() {
         onOpenChange={(o) => { if (!o) setTriggerTaskId(null) }}
         task={tasks.find((t) => t.id === triggerTaskId) ?? null}
         onTriggered={fetchTasks}
+      />
+
+      {/* 票 12 (K14): 验收三栏 modal — 待验收列卡「验收」打开；task 引用随
+          fetchTasks 刷新（同 modalTask 的同步模式）。 */}
+      <AcceptanceModal
+        open={!!acceptTaskId}
+        onOpenChange={(o) => { if (!o) setAcceptTaskId(null) }}
+        task={tasks.find((t) => t.id === acceptTaskId) ?? null}
+        onMutated={fetchTasks}
       />
 
       {/* Confirm-delete dialog for draft tasks */}
@@ -261,16 +370,44 @@ export default function TasksPage() {
 
 interface TaskCardProps {
   task: Task
+  /** v4 派生视图（GET /:id.derived）；undefined = v3/旧 server/未补拉 → 不渲染角标。 */
+  derived?: TaskDerivedView
+  /** ⏳ 超预算阈值 ms（phaseBudgetMs()）。 */
+  budgetMs: number
   onClick: () => void
   onDeleteRequest: (task: Task) => void
   onTriggerRequest: (task: Task) => void
+  /** 票 12: 待验收卡「验收」→ 三栏 modal。 */
+  onAcceptRequest: (task: Task) => void
+  /** 票 12 (US11): autoAdvance=false parked 卡「启动下一 Phase」→ postAdvance。 */
+  onAdvanceRequest: (task: Task) => void
+  /** 票 12 (US15): archiving 卡「重试归档」→ archive/retry。 */
+  onArchiveRetryRequest: (task: Task) => void
 }
 
-function TaskCard({ task, onClick, onDeleteRequest, onTriggerRequest }: TaskCardProps) {
+/** 票 12: advance 窗口 = 「前序 phase accepted ∧ 该 phase pending」的第一个
+ *  pending 位置（与 server advancePhase 的派生判定同源）。 */
+function advancePhaseOf(derived: TaskDerivedView | undefined): number | null {
+  if (!derived?.isV4) return null
+  const views = derived.phaseViews
+  for (let pos = 1; pos < views.length; pos++) {
+    if (views[pos - 1].status === "accepted" && views[pos].status === "pending") return views[pos].index
+  }
+  return null
+}
+
+function TaskCard({ task, derived, budgetMs, onClick, onDeleteRequest, onTriggerRequest, onAcceptRequest, onAdvanceRequest, onArchiveRetryRequest }: TaskCardProps) {
   // SG9: composite requires subunits.length >= 2.
   const composite = !!task.task_spec.subunits && task.task_spec.subunits.length >= 2
   const isDraft = task.status === "draft"
   const isReady = task.status === "ready"
+  // 票 11: 待验收卡琥珀高亮 (K3/US8)。
+  const isAwaitingReview = task.status === "awaiting_review"
+  // v4 角标 `Phase i/n · Round m`（computePhaseBadge：current=第一个非 accepted
+  // 的 phase 位置；round=awaitingRound ?? currentRound）。
+  const badge = computePhaseBadge(derived)
+  // ⏳ 超预算（advisory, K2/US17）：仅在跑轮 now-created_at > budgetMs。
+  const overBudget = overBudgetRoundOf(derived, Date.now(), budgetMs)
   // v39: task mirrored 'running' but its root schedule is still 'queued' =
   // armed one-shot not yet due (v39 manual/time trigger; claimed/running are
   // NOT flagged here — the kanban badge only covers the waiting window).
@@ -281,16 +418,51 @@ function TaskCard({ task, onClick, onDeleteRequest, onTriggerRequest }: TaskCard
       data-task-card
       data-task-id={task.id}
       data-task-status={task.status}
+      {...(isAwaitingReview ? { "data-task-awaiting-review": "true" } : {})}
       onClick={onClick}
       role="button"
       tabIndex={0}
       onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onClick() } }}
-      className="group rounded-md border border-border bg-card p-3 text-sm shadow-sm cursor-pointer hover:border-primary/40 hover:shadow transition-all relative"
+      className={`group rounded-md border p-3 text-sm shadow-sm cursor-pointer hover:shadow transition-all relative ${
+        isAwaitingReview
+          ? "border-amber-400/60 bg-amber-500/5 hover:border-amber-400"
+          : "border-border bg-card hover:border-primary/40"
+      }`}
     >
       <div className="flex items-center justify-between gap-2">
         <h3 className="font-medium truncate">{task.name}</h3>
         <div className="flex items-center gap-1 shrink-0">
           {composite ? <span className="text-[10px] px-1 py-0.5 rounded bg-primary/10 text-primary">复合</span> : null}
+          {/* 票 11: v4 phase 角标（US7） */}
+          {badge && (
+            <span
+              data-task-phase-badge
+              className="text-[10px] px-1 py-0.5 rounded bg-blue-500/10 text-blue-600 dark:text-blue-400 tabular-nums"
+              title={`当前 Phase ${badge.phase}/${badge.total}（第一个未通过验收的 phase）`}
+            >
+              {`Phase ${badge.phase}/${badge.total}${badge.round != null ? ` · Round ${badge.round}` : ""}`}
+            </span>
+          )}
+          {/* 票 11: archiving 留在执行中列 + ⚠归档中徽标（票 08 编排中，失败可重试） */}
+          {task.status === "archiving" && (
+            <span
+              data-task-archiving-badge
+              className="text-[10px] px-1 py-0.5 rounded bg-orange-500/10 text-orange-600 dark:text-orange-400"
+              title="末 phase 已验收，归档编排中（git 失败会停在此态可重试）"
+            >
+              ⚠ 归档中
+            </span>
+          )}
+          {/* 票 11 AC4: ⏳ 超预算（advisory；阈值 NEXT_PUBLIC_PHASE_BUDGET_MS ?? 1.5h） */}
+          {overBudget && (
+            <span
+              data-task-overbudget-badge
+              className="text-[10px] px-1 py-0.5 rounded bg-amber-500/10 text-amber-600 dark:text-amber-400"
+              title={`Phase ${overBudget.phaseIndex} Round ${overBudget.roundIndex} 已跑超 ${Math.round(budgetMs / 60000)} 分钟（仅提示，不中断）`}
+            >
+              ⏳ 超预算
+            </span>
+          )}
           {isQueuedRun && (
             <span
               data-task-queued-badge
@@ -302,7 +474,20 @@ function TaskCard({ task, onClick, onDeleteRequest, onTriggerRequest }: TaskCard
                 : "排队等待执行"}
             </span>
           )}
-          {isReady && (
+          {/* 票 12 (K14/US9): 待验收卡「验收」→ 三栏证据面 modal */}
+          {isAwaitingReview && (
+            <button
+              data-task-accept-btn
+              onClick={(e) => { e.stopPropagation(); onAcceptRequest(task) }}
+              className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500 text-white hover:bg-amber-600 transition-colors"
+              title="打开验收三栏（执行摘要 | 产物核对 | 动作区）"
+            >
+              验收
+            </button>
+          )}
+          {/* v4 advance-window 卡改显「启动下一 Phase」（下方按钮）——触发只对
+              首 phase（信封 parked）成立，信封已消费的 parked 卡走 advance。 */}
+          {isReady && advancePhaseOf(derived) === null && (
             <button
               data-task-trigger-btn
               onClick={(e) => { e.stopPropagation(); onTriggerRequest(task) }}
@@ -310,6 +495,29 @@ function TaskCard({ task, onClick, onDeleteRequest, onTriggerRequest }: TaskCard
               title="人工触发（立即或定时）"
             >
               触发
+            </button>
+          )}
+          {/* 票 12 (K6/US11): autoAdvance=false parked — 前序 accepted ∧ 该 phase
+              pending 的窗口走 POST /:id/advance（票 08 契约；首 phase 仍走触发） */}
+          {advancePhaseOf(derived) !== null && (
+            <button
+              data-task-advance-btn={advancePhaseOf(derived) ?? ""}
+              onClick={(e) => { e.stopPropagation(); onAdvanceRequest(task) }}
+              className="text-[10px] px-1.5 py-0.5 rounded bg-blue-600 text-white hover:bg-blue-700 transition-colors"
+              title={`启动 Phase ${advancePhaseOf(derived)}（上一 Phase 已通过验收，autoAdvance 关闭）`}
+            >
+              启动下一 Phase
+            </button>
+          )}
+          {/* 票 12 (US15): archiving git 失败停态 → 幂等续跑 */}
+          {task.status === "archiving" && (
+            <button
+              data-task-archive-retry-btn
+              onClick={(e) => { e.stopPropagation(); onArchiveRetryRequest(task) }}
+              className="text-[10px] px-1.5 py-0.5 rounded bg-orange-500 text-white hover:bg-orange-600 transition-colors"
+              title="重试归档（project 粒度幂等续跑）"
+            >
+              重试归档
             </button>
           )}
           {isDraft && (
@@ -327,7 +535,7 @@ function TaskCard({ task, onClick, onDeleteRequest, onTriggerRequest }: TaskCard
       <dl className="mt-2 flex flex-col gap-1 text-xs text-muted-foreground">
         <div className="flex justify-between">
           <dt>状态</dt>
-          <dd data-task-card-status>{task.status}</dd>
+          <dd data-task-card-status className={isAwaitingReview ? "text-amber-600 dark:text-amber-400" : undefined}>{task.status}</dd>
         </div>
         <div className="flex justify-between">
           <dt>创建</dt>

@@ -1662,6 +1662,7 @@ export class ExecutionLifecycle {
       workflow_ref: string; name?: string; parent_id?: string | null;
       child_index?: number; node_type?: string; input_values?: Record<string, unknown>;
       triggered_by?: string; initial_var_pool?: Record<string, string>;
+      allow_existing_root?: boolean;
     },
     org: string,
   ): ExecutionRow {
@@ -1670,7 +1671,13 @@ export class ExecutionLifecycle {
     const isRootRequest = !input.parent_id || input.parent_id === "0"
     const nodeType = input.node_type ?? "normal"
 
-    if (isRootRequest) {
+    // task-phase-redesign (K4/K5): a v4 task binds ONE workspace for its whole
+    // life, and every round is an independent root execution under the same
+    // schedule envelope (1 round = 1 executions row + 1 schedule_executions
+    // row — NOT a chain child). The v1 "one root per ws" invariant does not
+    // hold for v4 task ws; the caller opts out explicitly. v3/generic/cron
+    // never pass the flag — their behavior is byte-identical (regression floor).
+    if (isRootRequest && !input.allow_existing_root) {
       const existingRoot = this.dao.findRootExecutionId(workspaceId)
       if (existingRoot) throw new Error(`Workspace already has a root execution (${existingRoot.id}).`)
     }

@@ -25,12 +25,15 @@ describe("Schema v35 — Experience Schema Migration", () => {
     db?.close()
   })
 
-  it("sets schema version to 35", () => {
+  it("sets schema version to the current SCHEMA_VERSION", () => {
     db = createTestDb()
     applySchema(db)
     const rows = db.pragma("user_version") as Array<{ user_version: number }>
-    expect(rows[0].user_version).toBe(35)
-    expect(SCHEMA_VERSION).toBe(35)
+    // v40 = task-phase-redesign (acceptances table + executions/tasks cols).
+    // Was stale at 35 since v36; assert the live constant instead of a pinned old
+    // number so future version bumps don't re-break this v35-focused suite.
+    expect(rows[0].user_version).toBe(SCHEMA_VERSION)
+    expect(SCHEMA_VERSION).toBeGreaterThanOrEqual(35)
   })
 
   // ── AC-1: 7 new columns with DEFAULT values ─────────────────────────
@@ -257,7 +260,7 @@ describe("Schema v35 — Experience Schema Migration", () => {
     applySchema(db) // Second application should not error
 
     const rows = db.pragma("user_version") as Array<{ user_version: number }>
-    expect(rows[0].user_version).toBe(35)
+    expect(rows[0].user_version).toBe(SCHEMA_VERSION)
 
     // experiences table should still have all columns
     const cols = db.prepare("PRAGMA table_info(experiences)").all() as { name: string }[]
