@@ -1,0 +1,19 @@
+{
+  "accept_status": 200,
+  "next_action": "dispatched",
+  "dispatch": {
+    "schedule_id": "8aec4251-0b50-4f85-bca5-6eff9db8554d",
+    "execution_id": "9343162f-c875-4ae7-b788-7eefaad8fa42",
+    "workspace_id": "f372c4f0-6c69-4e82-b5f2-3c1cf937abcf",
+    "phase_index": 2,
+    "round_index": 1
+  },
+  "chain_input_values": {
+    "batch_dir": ".scratch/20260906/e2e-td-ho-p2-ho-1788630617400",
+    "task_artifacts_dir": "C:\\Users\\EDY\\.octopus\\tasks\\b2ee598a-5b2c-4539-b071-2cd04c37f270\\artifacts",
+    "task_workflows_dir": "C:\\Users\\EDY\\.octopus\\tasks\\b2ee598a-5b2c-4539-b071-2cd04c37f270\\workflows",
+    "_phase_index": "2",
+    "_round_index": "1"
+  },
+  "prev_handoff_paths_present": false
+}

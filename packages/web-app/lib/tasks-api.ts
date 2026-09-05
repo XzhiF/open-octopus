@@ -88,6 +88,10 @@ export type TaskRoundDecision = "accepted" | "rejected"
 export interface TaskRoundExec {
   id: string
   status: string
+  /** ADR-0018: the workflow this round ACTUALLY ran (打回轻量修复轮 = task-fix
+   *  while the phase binding stays the dev flow). Older servers omit it →
+   *  consumers fall back to the phase's workflowRef. */
+  workflow_ref?: string
   phase_index: number | null
   round_index: number | null
   created_at: string
@@ -158,6 +162,19 @@ export interface CreateTaskInput {
    *  workflow.requires, not the preset). preset.org OVERRIDES the top-level
    *  org (the template page is the source of the authoring context). */
   preset?: { org?: string; projects?: string[] }
+  // ── task-phase-redesign 契约修复（POST 直建 v4）──
+  /** RAW initial task_spec — the server validates (taskSpecSchema, ZodError →
+   *  400). `{format:"v4"}` creates a v4 draft directly (home + manifest.json
+   *  snapshot carry the flag; no task_type → no v3 shell). This is the body
+   *  the [新建任务] sequence sends; mirrors server CreateTaskInput. Partial —
+   *  the output TaskSpec type requires defaulted keys; on input you only send
+   *  what you mean (the server parses + fills defaults). */
+  task_spec?: Partial<TaskSpec>
+  /** Top-level project ids (wins over preset.projects; both → project_ids col). */
+  project_ids?: string[]
+  skills?: string[]
+  resources?: ResourceRef[]
+  authoring_resources?: ResourceRef[]
 }
 
 export interface UpdateTaskInput {
@@ -362,6 +379,11 @@ export interface AcceptanceInput {
   round_index: number
   decision: "accepted" | "rejected"
   feedback?: string
+  /** ADR-0018 打回二分路由（rejected 生效）：
+   *  "rerun"（缺省）= 重跑绑定流（matt-spec-dev 绑定时即「修订重跑」——流内
+   *  spec 再审段在 ws 就地更新 spec）；"fix" = 轻量修复（server override
+   *  built-in/task-fix + 合成输入）。 */
+  next_flow?: "fix" | "rerun"
 }
 
 /** What the caller must do next (票 07):
@@ -519,16 +541,17 @@ export async function getArtifactContent(taskId: string, artifactPath: string): 
 }
 
 /** GET /api/tasks/:id/context — read the workspace context file (context.md)
- *  + the structured spec snapshot (spec.json) + filesystem paths. Returns
- *  { content, path, artifactsDir, homePath, specContent, specPath }.
- *  content/specContent may be null if the file hasn't been created yet. */
+ *  + the structured task_spec snapshot (manifest.json) + filesystem paths.
+ *  Returns { content, path, artifactsDir, homePath, manifestContent, manifestPath }.
+ *  content/manifestContent may be null if the file hasn't been created yet
+ *  (manifestContent also falls back to a pre-rename spec.json read server-side). */
 export async function getTaskContext(taskId: string): Promise<{
   content: string | null
   path: string
   artifactsDir: string
   homePath: string
-  specContent: string | null
-  specPath: string
+  manifestContent: string | null
+  manifestPath: string
 }> {
   const res = await fetch(buildUrl(`/${taskId}/context`))
   if (!res.ok) {
@@ -536,6 +559,66 @@ export async function getTaskContext(taskId: string): Promise<{
     throw new Error(body.error ?? `HTTP ${res.status}`)
   }
   return res.json()
+}
+
+// ============ Home batch-file read/write (契约修复: v4 phase spec.md) ============
+
+/** GET /api/tasks/:id/home-file?path= — read a `.scratch/**.md` under the task
+ *  home (per-phase spec). 404 (file missing) / 403 (path off-whitelist) throw
+ *  {@link TaskApiError} carrying the status: the PhaseSpecDialog maps 404 →
+ *  "create skeleton" empty state, 403 → read-only path display. */
+export async function getHomeFile(taskId: string, relPath: string): Promise<ArtifactContent> {
+  const res = await fetch(buildUrl(`/${taskId}/home-file`, { path: relPath }))
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}))
+    throw new TaskApiError(body.error ?? `HTTP ${res.status}`, res.status)
+  }
+  return res.json()
+}
+
+/** PUT /api/tasks/:id/home-file — write/overwrite a `.scratch/**.md` (parents
+ *  created; the UI's skeleton flow). No If-Match: the file is not the task row
+ *  (no version involved server-side either). 400 body / 403 guard / 404 unknown
+ *  task / 409 non-editable status → TaskApiError with the status. */
+export async function putHomeFile(
+  taskId: string,
+  relPath: string,
+  content: string,
+): Promise<{ path: string; bytes: number }> {
+  const res = await fetch(`${getServerUrl()}${BASE}/${taskId}/home-file`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ path: relPath, content }),
+  })
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}))
+    throw new TaskApiError(body.error ?? `HTTP ${res.status}`, res.status)
+  }
+  return res.json()
+}
+
+// ============ Home batch-dir LIST (ADR-0018: spec 家族/反馈/报告 可见性) ============
+
+/** One `.md` under a `.scratch/` batch dir (home-side mirror = last collected
+ *  final state; spec.md / spec-rN.md / fix-feedback-rN.md / fix-report-rN.md /
+ *  issues/*.md). */
+export interface HomeFileListingEntry {
+  path: string
+  mtime: string
+  bytes: number
+}
+
+/** GET /api/tasks/:id/home-file?path=<dir>&list=1 — list the batch dir's .md
+ *  files (depth ≤2, cap 200). 404 dir missing → TaskApiError(404); the dialog
+ *  renders its empty state from that. */
+export async function listHomeDir(taskId: string, relDir: string): Promise<HomeFileListingEntry[]> {
+  const res = await fetch(buildUrl(`/${taskId}/home-file`, { path: relDir, list: "1" }))
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}))
+    throw new TaskApiError(body.error ?? `HTTP ${res.status}`, res.status)
+  }
+  const data = (await res.json()) as { files: HomeFileListingEntry[] }
+  return data.files
 }
 
 // ============ Workflow-ref view (task board: click bound workflow → full YAML) ============

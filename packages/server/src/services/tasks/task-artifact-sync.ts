@@ -1,26 +1,27 @@
 // packages/server/src/services/tasks/task-artifact-sync.ts
 //
-// task-phase-redesign (ticket 06) — the ONE-WAY ARTIFACT LOOP (K9/K10/K16).
+// task-phase-redesign (ticket 06) + ws-authoritative-spec revision (ADR-0018)
+// — the ONE-WAY ARTIFACT LOOP (K9/K10/K16).
 //
 //   seed    (下行): {home}/.scratch/<date>/<slug>/  →  ws/.scratch/<date>/<slug>/
 //     Physical copy before a v4 phase/round execution starts (mount points:
 //     WorkflowExecutor.execute v4 branch + TasksService.dispatchPhaseRound —
 //     same precedent as copyTaskWorkflowsToWs, ADR-0013). home OVERWRITES ws
-//     same-name files: home is the spec authority and K16 makes "edits between
-//     rounds take effect on the next seed" fall out for free. Idempotent.
+//     same-name files: home carries the LAST COLLECTED STATE (or the draft
+//     baseline before round 1), so K16 makes "home-side edits between rounds
+//     take effect on the next seed" fall out for free. Idempotent.
 //
 //   collect (上行): ws/.scratch/<date>/<slug>/  →  {home}/.scratch/<date>/<slug>/
 //     Terminal-state recovery of what the EXECUTION side changed. Single-writer
-//     per file class (K9: 每类文件单写者单方向 ⇒ 无 merge):
-//       - spec*.md            → home 权威: an EXISTING home file is never
-//                                overwritten by the ws copy (AC3 — an agent
-//                                mangling spec.md in the ws loses; home keeps
-//                                its bytes). A brand-new spec file with no home
-//                                counterpart still flows back (no 覆盖 happens).
-//       - issues/报告/其它     → ws 权威: copied back when new in ws or when the
-//                                ws mtime is strictly newer than home's (the
-//                                agent edited it). Equal/older mtimes skip —
-//                                re-collecting an untouched round is a no-op.
+//     per file class (K9: 每类文件单写者单方向 ⇒ 无 merge). Since ADR-0018 the
+//     FINAL spec authority is the EXECUTION side (ws):
+//       - spec*.md / issues/ / 报告 / 其它  → ws 权威: copied back when new in
+//         ws or when the ws mtime is strictly newer than home's (the agent
+//         reviewed/updated the spec in the ws — 有问题在 ws 里重新审查更新
+//         spec.md, and home's copy follows). Equal/older mtimes skip —
+//         re-collecting an untouched round is a no-op (seed preserves mtimes).
+//     ABORT caveat (accepted): edits not yet collected die with the ws — the
+//     final state only exists at a round's terminal transition.
 //     AC4 (防丢兜底): collect runs at EVERY v4 terminal transition, so the home
 //     copy is complete before retention/eviction (or an out-of-band rm) can take
 //     the ws away; deleting the ws afterwards loses nothing.
@@ -32,11 +33,6 @@
 import fs from "fs"
 import path from "path"
 import { PHASE_STATUS_UPDATE_EVENT } from "@octopus/shared"
-
-/** Batch dir basename classes with a SINGLE upstream rule — spec*.md is the
- *  draft-side (home) authority; everything else in the batch dir is execution-
- *  side (ws) authority per K9. */
-const HOME_AUTHORITATIVE_RE = /^spec.*\.md$/i
 
 /** home-relative position of a phase batch dir — the ws mirror path (K10:
  *  ws 内落 `.scratch/<date>/<slug>/`，与 home 同构相对位，git-able 随 PR).
@@ -143,14 +139,14 @@ function copyTree(srcDir: string, dstDir: string): number {
 
 /** collect 上行: recursively scan `wsAbsSpecDir` and copy back into
  *  `homeAbsSpecDir` only what the execution side authored:
- *    - file new in ws (no home counterpart) → copy (EXCEPT this is still a
- *      "new file", so spec*.md new files flow back — nothing is overwritten);
- *    - existing home file + HOME_AUTHORITATIVE (spec*.md) → SKIP (home 权威,
- *      AC3 — never overwrite);
- *    - existing home file + ws mtime strictly newer → copy (ws 权威类, AC2);
+ *    - file new in ws (no home counterpart) → copy (spec*.md new files flow
+ *      back too);
+ *    - existing home file + ws mtime strictly newer → copy — INCLUDING
+ *      spec*.md: the execution side reviews/updates the spec in the ws
+ *      (ADR-0018 ws 权威), so home's copy follows to the final state;
  *    - otherwise (equal/older mtime) → skip (idempotent re-collect).
- *  Missing ws dir → [] (ws deleted out of band: nothing to recover, home is
- *  already authoritative — AC4 premise). Returns collected ws-relative paths. */
+ *  Missing ws dir → [] (ws deleted out of band: nothing to recover, home holds
+ *  the last collected state — AC4 premise). Returns collected ws-relative paths. */
 export function collectFromWorkspace(
   wsAbsSpecDir: string,
   homeAbsSpecDir: string,
@@ -180,8 +176,9 @@ function walkTree(
     const homeFile = path.join(homeAbsSpecDir, childRel)
     const homeExists = fs.existsSync(homeFile)
     if (homeExists) {
-      // Write-ownership discipline (K9/AC3): home 权威文件永不回流覆盖.
-      if (HOME_AUTHORITATIVE_RE.test(entry.name)) continue
+      // Execution-side (ws) authority across the whole batch dir (ADR-0018):
+      // flow back only what the round actually touched (strictly-newer mtime;
+      // seed preserves mtimes so an untouched round re-collects as a no-op).
       const wsMtime = fs.statSync(wsFile).mtimeMs
       const homeMtime = fs.statSync(homeFile).mtimeMs
       if (wsMtime <= homeMtime) continue

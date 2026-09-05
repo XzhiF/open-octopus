@@ -110,6 +110,9 @@
 | **验收 Gate (Acceptance)** | phase round 执行完成后的人工卡点——通过 → 放行下一 phase（末 phase 通过触发归档合并）；打回 → 本 phase 新 round。任务的 done 由人按出，不由引擎跑出。 | server, web-app |
 | **Batch 目录** | 产物日期批次分组——`.scratch/<YYYYMMDD>/<phase-slug>/`，同一需求拆出的多个 phase 产物共享日期目录前缀，标识同批次。 | core-pack |
 | **归并回写 (Sync-back)** | 末 phase 验收通过后的归档动作——任务空间积累的 phase 产物（.scratch）、ADR、CONTEXT.md 变更合并回各 involved project 仓库。合并机制待定。 | core-pack, server |
+| **阶段衔接信道 (Phase Handoff Channel)** | accepted→下一 phase 开轮时 `prev_handoff_paths` 自动注入 + matt-spec-dev 探测消费构成的跨 phase 上下文信道；与 spec 文本信道（起草期人工转述）相对。ADR-0019。 | server, core-pack, web-app |
+| **handoff.md** | 批次目录 spec 家族成员：ship 每轮末产/覆写的**面向下游执行会话**精选交接短页（头块 + Protected Decisions / Confirmed Interfaces / Gap Targets 三段，一屏内引用不复制）；与 round-report.md（面向验收人全量轮报）受众不同。ADR-0019。 | core-pack |
+| **prev_handoff_paths** | 内置注入键（非占位符）：全部已 accepted 前序 phase 的 handoff.md home 绝对路径（存在性过滤、换行连接），accepted→下 phase / 手动推进时 server 注入 materialized input_values；与 feedback/task_artifacts_dir 注入同族。ADR-0019。 | server |
 
 ## Anti-Patterns（禁止）
 
@@ -156,3 +159,5 @@ core-pack ← (纯数据资源)
 - [0015-pricing-single-table-no-default.md](docs/adr/0015-pricing-single-table-no-default.md) — 单一价表（USD/MTok）、无 default 兜底、未定价=NULL、models.yaml 补价通道
 - [0016-usage-ledger-single-truth.md](docs/adr/0016-usage-ledger-single-truth.md) — 总量唯一账本（ntu）、三态费用、公式单源（写 9→1 / 读 41→1 / web 14→0）
 - [0017-presentation-formatter-single-source.md](docs/adr/0017-presentation-formatter-single-source.md) — 展示层格式化器单源（五函数收 113 处 toFixed、拆秒/毫秒同名雷、fmt-ok 豁免）
+- [0018-ws-authoritative-spec-and-reject-routing.md](docs/adr/0018-ws-authoritative-spec-and-reject-routing.md) — ws 权威 spec 环 + spec 家族文件名约定 + 打回二分路由（K16 不破）
+- [0019-phase-handoff-channel.md](docs/adr/0019-phase-handoff-channel.md) — phase 衔接信道：ship 产 handoff.md + accepted 时自动注入 prev_handoff_paths

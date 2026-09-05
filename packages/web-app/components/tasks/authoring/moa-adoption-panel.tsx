@@ -1,20 +1,11 @@
 // packages/web-app/components/tasks/authoring/moa-adoption-panel.tsx
 //
-// The v3 MoA adoption panel (ticket 10, US11/AC5/AC6/D10/SW-BP3). Renders the
-// three-stage structured output from an assist-workflow run (ac candidates /
-// suggestions / risks) and lets the user checkbox-adopt ac candidates into
-// spec-field(ac) + suggestions into spec-field(decisions). Risks are read-only
-// (they inform, not bind). Interaction reference: prototype VariantL adoption
-// panel (app/tasks/prototype/page.tsx:3232) — code rewritten, not copied.
-//
-// AC5: [采纳勾选项] → merged spec-field(ac) + spec-field(decisions); the
-// right-side ac list then shows the adopted items (source mark handled by
-// GoalAcCard re-rendering from the SSE-applied ac). `decisions` is the adoption
-// target for MoA suggestions (SW-BP3 — the field had a schema home but no
-// settable route until the shared validator gained the branch).
-// AC6: when the run carries `output_parse_error`, the OutputViewer renders a
-// degraded card (output_raw) INSTEAD of this panel — so this panel only mounts
-// with a well-formed `output`.
+// MoA 采纳面板（原票 10 US11/AC5/AC6/D10/SW-BP3）。渲染辅助执行的三段结构化
+// 输出（ac candidates / suggestions / risks）。v4-only UI 改版后：
+//   • suggestions → spec-field(decisions) —— 保留（决策备忘录在 v4 活着）。
+//   • ac 候选采纳段 **v4 隐藏**（goal/ac 是 v3 面，v4 起草不写；`v4` prop 由
+//     OutputViewer 按 task_spec.format 传入）。v3/legacy 行为不变。
+// AC6: run 带 output_parse_error 时 OutputViewer 渲染降级卡替代本面板。
 
 "use client"
 
@@ -38,6 +29,8 @@ export interface MoaAdoptionPanelProps {
   existingAc: string[]
   /** Current decisions memos (to merge adopted suggestions into — dedup). */
   existingDecisions: string[]
+  /** v4 任务：ac 采纳段不渲染、adopt 不写 spec-field(ac)（goal/ac 已退役）。 */
+  v4?: boolean
   /** Fired after a successful adoption (parent re-fetches task / updates UI). */
   onAdopted: (adopted: { ac: string[]; decisions: string[] }) => void
 }
@@ -47,6 +40,7 @@ export function MoaAdoptionPanel({
   output,
   existingAc,
   existingDecisions,
+  v4,
   onAdopted,
 }: MoaAdoptionPanelProps) {
   const [acChecked, setAcChecked] = useState<boolean[]>(() => output.ac_candidates.map(() => true))
@@ -63,10 +57,9 @@ export function MoaAdoptionPanel({
     if (busy) return
     setBusy(true)
     try {
-      // AC5: merge selected candidates into the EXISTING ac list (dedup, keep
-      // order — adopted items appended after the current set so the agent's
-      // own ac isn't reordered).
-      const selectedAc = output.ac_candidates.filter((_, i) => acChecked[i])
+      // AC5 (v3 only): merge selected candidates into the EXISTING ac list
+      // (dedup, keep order). v4: goal/ac 不再是 UI 面 — 跳过 ac 写入。
+      const selectedAc = v4 ? [] : output.ac_candidates.filter((_, i) => acChecked[i])
       const nextAc = [...existingAc]
       for (const c of selectedAc) {
         if (!nextAc.includes(c)) nextAc.push(c)
@@ -87,7 +80,9 @@ export function MoaAdoptionPanel({
 
       setAdopted({ ac: selectedAc, decisions: selectedSug })
       onAdopted({ ac: selectedAc, decisions: selectedSug })
-      toast.success(`已采纳 ${selectedAc.length} 条 ac + ${selectedSug.length} 条方案建议`)
+      toast.success(v4
+        ? `已采纳 ${selectedSug.length} 条方案建议（决策备忘）`
+        : `已采纳 ${selectedAc.length} 条 ac + ${selectedSug.length} 条方案建议`)
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : "采纳失败")
     } finally {
@@ -107,12 +102,12 @@ export function MoaAdoptionPanel({
         <div className="text-emerald-600" data-moa-adopted>
           ✅ 已采纳 {adopted.ac.length} 条 ac + {adopted.decisions.length} 条方案建议
           <span className="block text-muted-foreground mt-0.5">
-            ac 已合并进右侧目标卡；方案建议进入决策备忘。
+            方案建议进入决策备忘{!v4 && "；ac 已合并进右侧目标卡"}。
           </span>
         </div>
       ) : (
         <>
-          {output.ac_candidates.length > 0 && (
+          {!v4 && output.ac_candidates.length > 0 && (
             <div>
               <div className="font-medium mb-1 flex items-center gap-1">
                 <Check className="size-3 text-emerald-600" /> ac 候选（勾选采纳）

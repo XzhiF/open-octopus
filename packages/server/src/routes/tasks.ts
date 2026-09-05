@@ -30,7 +30,7 @@ import {
 } from "../services/tasks/tasks-service"
 import { AssistWorkflowService, AssistWorkflowError } from "../services/tasks/assist-workflow-service"
 import { SSEService } from "../services/sse"
-import { TaskHomeService } from "../services/tasks/task-home-service"
+import { TaskHomeService, MANIFEST_FILENAME, LEGACY_SPEC_FILENAME } from "../services/tasks/task-home-service"
 import {
   resourceRefSchema,
   type TaskStatus,
@@ -91,6 +91,9 @@ const acceptanceBodySchema = z
     round_index: z.number().int().min(1),
     decision: z.enum(["accepted", "rejected"]),
     feedback: z.string().max(20000).optional(),
+    // ADR-0018 打回二分路由（rejected 生效）：rerun=重跑绑定流（缺省，流内再审
+    // spec）；fix=轻量修复轮（server override built-in/task-fix + 合成输入）。
+    next_flow: z.enum(["fix", "rerun"]).optional(),
   })
   .superRefine((b, ctx) => {
     // K7/US10: 打回必填反馈文本（agent 判严重度 + 修复流推荐都吃它）。
@@ -102,6 +105,15 @@ const acceptanceBodySchema = z
       })
     }
   })
+
+// 契约修复 (v4 batch spec 编辑面): PUT /:id/home-file body. `content` caps at
+// 512_000 chars (a spec.md/brief.md量级 — generous but bounded; the file guard in
+// the service additionally whitelists `.scratch/**.md`). ZodError → 400 via
+// classifyError.
+const homeFileBodySchema = z.object({
+  path: z.string().min(1),
+  content: z.string().max(512_000),
+})
 
 // ── Route Factory ───────────────────────────────────────────────────
 
@@ -157,6 +169,11 @@ export function createTasksRoutes(
   // POST / — create a draft task. 04 (D13/D15): the two-phase-flow template page
   // sends source_chat_session_id (created first, D15) + task_type + skill_groups[]
   // + preset{org,projects}. Legacy callers (no task_type) take the v2 path.
+  // 契约修复 (v4 直建): the body may also carry task_spec (RAW — service-owned
+  // validation, same SW-BP9 discipline as PUT) + top-level project_ids/skills/
+  // resources/authoring_resources. `{task_spec:{format:"v4"}, project_ids:[...]}`
+  // now creates a v4 draft (with home + snapshot) in one call — this is the
+  // POST recipe task-author's SKILL §1 / persona have been advertising.
   router.post("/", async (c) => {
     const body = await safeJson(c)
     if (!body) return c.json({ error: "Invalid or missing JSON body" }, 400)
@@ -193,6 +210,12 @@ export function createTasksRoutes(
           )
         }
       }
+      // 契约修复: v4 create-time fields (route idioms mirror PUT :313-317).
+      if (body.task_spec !== undefined) input.task_spec = body.task_spec
+      if (body.project_ids !== undefined) input.project_ids = z.array(z.string()).parse(body.project_ids)
+      if (body.skills !== undefined) input.skills = z.array(z.string()).parse(body.skills)
+      if (body.resources !== undefined) input.resources = z.array(resourceRefSchema).parse(body.resources)
+      if (body.authoring_resources !== undefined) input.authoring_resources = z.array(resourceRefSchema).parse(body.authoring_resources)
       const task = service.createTask(input)
       return c.json(task, 201)
     } catch (err: unknown) {
@@ -262,12 +285,14 @@ export function createTasksRoutes(
   })
 
   // ── Context file (workspace state visible to agent) ──────────────────
-  // GET /:id/context — read the task's context.md + spec.json + filesystem
+  // GET /:id/context — read the task's context.md + manifest.json + filesystem
   // paths. The dynamic workspace state file the agent reads when notified via
   // @@context_updated. Also returns absolute paths for the UI (artifactsDir,
   // homePath) so the frontend can display + copy real filesystem locations.
-  // Returns { content, path, artifactsDir, homePath, specContent, specPath }.
-  // content/specContent may be null if the file hasn't been created yet.
+  // Returns { content, path, artifactsDir, homePath, manifestContent, manifestPath }.
+  // content/manifestContent may be null if the file hasn't been created yet.
+  // Read fallback: pre-rename homes that never got a snapshot write still have
+  // only spec.json on disk — serve it as manifestContent (read-only, never writes).
   router.get("/:id/context", (c) => {
     try {
       const homeService = new TaskHomeService()
@@ -278,12 +303,56 @@ export function createTasksRoutes(
       if (fs.existsSync(ctxPath)) {
         content = fs.readFileSync(ctxPath, "utf-8")
       }
-      const specPath = path.join(homePath, "spec.json")
-      let specContent: string | null = null
-      if (fs.existsSync(specPath)) {
-        specContent = fs.readFileSync(specPath, "utf-8")
+      const manifestPath = path.join(homePath, MANIFEST_FILENAME)
+      let manifestContent: string | null = null
+      if (fs.existsSync(manifestPath)) {
+        manifestContent = fs.readFileSync(manifestPath, "utf-8")
+      } else {
+        const legacyPath = path.join(homePath, LEGACY_SPEC_FILENAME)
+        if (fs.existsSync(legacyPath)) {
+          manifestContent = fs.readFileSync(legacyPath, "utf-8")
+        }
       }
-      return c.json({ content, path: ctxPath, artifactsDir, homePath, specContent, specPath })
+      return c.json({ content, path: ctxPath, artifactsDir, homePath, manifestContent, manifestPath })
+    } catch (err: unknown) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status)
+    }
+  })
+
+  // ── Home batch-file read/write (契约修复: v4 phase spec.md 审阅/编辑面) ────
+  // GET /:id/home-file?path=<rel> — read a `.scratch/**.md` under the task home
+  // (the per-phase spec.md). ?path=<dir>&list=1 — list the dir's .md files
+  // (ADR-0018 spec-family visibility). PUT /:id/home-file {path, content} —
+  // write/overwrite (creates parents, so a UI-added phase row can seed a spec
+  // skeleton). Guards (`.scratch` prefix / `.md` suffix / no-escape / no absolute
+  // / task-exists→404 / edit-window→409) live in the service+home service; a body
+  // over 512_000 chars → 400 via homeFileBodySchema. Errors classify through the
+  // shared ArtifactAccessError (FORBIDDEN 403 / NOT_FOUND 404) path already wired below.
+  router.get("/:id/home-file", (c) => {
+    const requestedPath = c.req.query("path")
+    if (!requestedPath || !requestedPath.trim()) {
+      return c.json({ error: "Query param 'path' is required" }, 400)
+    }
+    try {
+      if (c.req.query("list")) {
+        return c.json({ files: service.listHomeDir(c.req.param("id"), requestedPath) })
+      }
+      const result = service.readHomeFile(c.req.param("id"), requestedPath)
+      return c.json(result)
+    } catch (err: unknown) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status)
+    }
+  })
+
+  router.put("/:id/home-file", async (c) => {
+    const body = await safeJson(c)
+    if (!body) return c.json({ error: "Invalid or missing JSON body" }, 400)
+    try {
+      const parsed = homeFileBodySchema.parse(body)
+      const result = service.writeHomeFile(c.req.param("id"), parsed.path, parsed.content)
+      return c.json(result)
     } catch (err: unknown) {
       const { status, message } = classifyError(err)
       return c.json({ error: message }, status)
@@ -340,12 +409,13 @@ export function createTasksRoutes(
   // ── Actions ───────────────────────────────────────────────────
 
   // POST /:id/acceptance — the v4 phase 验收 Gate (task-phase-redesign ticket
-  // 07, K3/K6/K7). Body {phase_index, round_index, decision, feedback?}:
+  // 07, K3/K6/K7). Body {phase_index, round_index, decision, feedback?, next_flow?}:
   //   accepted ∧ i<n ∧ autoAdvance → 下一 phase round 1 开跑 (next_action
   //     'dispatched'); autoAdvance=false → 'awaiting_manual_trigger' (人工起)
   //   accepted ∧ i=n               → 持久态 'archiving' (票 08 编排到 done)
   //   rejected (feedback 必填)      → fix-feedback-r{N}.md 进批次目录 + 同 phase
-  //     新 round 开跑
+  //     新 round 开跑；next_flow(ADR-0018)：缺省 'rerun'=重跑绑定流（流内再审
+  //     spec），'fix'=override built-in/task-fix + server 合成输入（轻量修复轮）
   // 409 = 派生态非待验收 / round 不匹配 / 该轮已验收 / 非 v4（state conflict,
   // not a body defect — the client re-GETs /:id's `derived` view and re-opens the
   // gate on whatever round is now awaiting）; 404 任务不存在; 400 body 非法
@@ -360,6 +430,7 @@ export function createTasksRoutes(
         round_index: parsed.round_index,
         decision: parsed.decision,
         ...(parsed.feedback !== undefined ? { feedback: parsed.feedback } : {}),
+        ...(parsed.next_flow !== undefined ? { next_flow: parsed.next_flow } : {}),
       }
       const result = await service.acceptance(c.req.param("id"), input)
       return c.json(result)

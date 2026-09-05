@@ -92,23 +92,49 @@ function fmtTime(iso: string | null | undefined): string {
 export function TaskOverviewCard({ task }: { task: Task }) {
   const spec = task.task_spec
   const [wfOpen, setWfOpen] = useState(false)
+  const isV4 = spec?.format === "v4"
+  const phases = spec?.phases ?? []
   const ac = spec?.ac ?? []
   return (
     <SectionCard icon={<Target className="size-4" />} title="任务概要">
-      <div>
-        <div className="text-xs text-muted-foreground mb-1">目标</div>
-        <p className="text-sm whitespace-pre-wrap break-words line-clamp-6">{spec?.goal || "（尚未填写）"}</p>
-      </div>
-      <div>
-        <div className="flex items-center gap-1.5 text-xs text-muted-foreground mb-1">
-          <ListChecks className="size-3.5" /> 验收标准 ({ac.length})
+      {isV4 ? (
+        // v4: goal/ac 降级为摘要；概览主体是 phase 计划（每 phase 一行）。
+        <div>
+          <div className="flex items-center gap-1.5 text-xs text-muted-foreground mb-1">
+            <ListChecks className="size-3.5" /> Phase 计划 ({phases.length})
+          </div>
+          {phases.length > 0 ? (
+            <ol className="list-decimal list-inside text-sm space-y-0.5 max-h-40 overflow-y-auto">
+              {phases.map((p) => (
+                <li key={p.index} className="break-words leading-snug">
+                  Phase {p.index} · {p.name}
+                  <span className="ml-1 font-mono text-[10px] text-muted-foreground">{p.slug}</span>
+                </li>
+              ))}
+            </ol>
+          ) : <p className="text-xs text-muted-foreground">（尚无 phase）</p>}
+          {spec?.goal && (
+            <p className="mt-2 text-xs text-muted-foreground whitespace-pre-wrap break-words line-clamp-4">{spec.goal}</p>
+          )}
         </div>
-        {ac.length > 0 ? (
-          <ol className="list-decimal list-inside text-sm space-y-0.5 max-h-40 overflow-y-auto">
-            {ac.map((a, i) => <li key={i} className="break-words leading-snug">{a}</li>)}
-          </ol>
-        ) : <p className="text-xs text-muted-foreground">（无）</p>}
-      </div>
+      ) : (
+        <>
+          <div>
+            <div className="text-xs text-muted-foreground mb-1">目标</div>
+            <p className="text-sm whitespace-pre-wrap break-words line-clamp-6">{spec?.goal || "（尚未填写）"}</p>
+          </div>
+          <div>
+            <div className="flex items-center gap-1.5 text-xs text-muted-foreground mb-1">
+              <ListChecks className="size-3.5" /> 验收标准 ({ac.length})
+            </div>
+            {ac.length > 0 ? (
+              <ol className="list-decimal list-inside text-sm space-y-0.5 max-h-40 overflow-y-auto">
+                {ac.map((a, i) => <li key={i} className="break-words leading-snug">{a}</li>)}
+              </ol>
+            ) : <p className="text-xs text-muted-foreground">（无）</p>}
+          </div>
+        </>
+      )}
       {(task.skills.length > 0 || task.project_ids.length > 0) && (
         <div className="flex flex-wrap gap-1.5">
           {task.project_ids.map(p => <Badge key={p} variant="secondary" className="text-[10px]">{p}</Badge>)}

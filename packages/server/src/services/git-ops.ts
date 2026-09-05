@@ -157,18 +157,23 @@ export class GitOps {
       await runGit(projectPath, ["checkout", "-b", branchName])
       return { created: true }
     }
-    // Branch exists — switch to it. In a worktree this can fail with
-    // "already checked out at <path>" when another working tree holds the branch
-    // (e.g. the source repo's main tree is on `main` while this scheduler
-    // worktree is on its own `taskpool-<id>` branch). Previously this threw, and
-    // the caller's try/catch misread it as "branch missing", falling back to
-    // `git checkout -b` which then fatals ("a branch named 'main' already exists"),
-    // killing the execution in ~124ms. Keep the current isolated branch instead.
+    // Branch exists — switch to it. In a worktree this can fail when another
+    // working tree holds the branch (e.g. the source repo's main tree is on
+    // `main` while this scheduler worktree is on its own `taskpool-<id>`
+    // branch). Previously this threw, and the caller's try/catch misread it as
+    // "branch missing", falling back to `git checkout -b` which then fatals
+    // ("a branch named 'main' already exists"), killing the execution in ~124ms.
+    // Keep the current isolated branch instead.
+    // Git wording varies by version: ≤~2.40 "fatal: 'main' is already checked
+    // out at '<path>'", newer (e.g. 2.43.windows) "fatal: 'main' is already
+    // used by worktree at '<path>'" — match both (open-octopus E2E 票05 fix:
+    // the first wording alone left every v4 dispatch fataling at
+    // switchToExecutionBranch("main") on machines with the newer git).
     try {
       await runGit(projectPath, ["checkout", branchName])
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err)
-      if (/already checked out/i.test(msg)) {
+      if (/already (?:checked out|used by worktree)/i.test(msg)) {
         process.stderr.write(
           `[git-ops] branch "${branchName}" is checked out by another worktree; keeping current branch in ${projectPath}\n`,
         )

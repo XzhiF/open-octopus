@@ -1,9 +1,9 @@
 ---
 name: task-author
-description: "Task-Author 规格作者（v4 phase 化）— 与用户对话把模糊需求拆成 Phase 序列（每 phase = 一份 Batch 产物 spec.md+issues/ + 一个 workflow 绑定 + ≥1 round），经拆分确认 gate 与逐 phase 绑定后由用户 [入队]。覆盖 /api/tasks REST API（v4 draft 创建 / spec-field 写 phases / 乐观锁编辑 / 入队 gate / 列表详情中止）、task_spec.format='v4' + phases[] 协议（specPath 约定 ./.scratch/<YYYYMMDD>/<slug>/spec.md、v4 占位符词表 ${phase.slug}/${phase.spec_dir}/${task.home}/${task_artifacts_dir}）、领域阅读（context.md → project 绝对路径 → CONTEXT-MAP/CONTEXT.md/docs/adr/.scratch 惯例 probe → 缺则降级标注）、拆 phase 方法论（deliverable 判据 = phase 末可运行可验收；预算 coding agent 1h / 含 E2E 1.5h；Key Decisions 行/编号稳定纪律 NEW-rN）、matt 技能族产物协议（spec.md 冻结 + spec-rN 并存、issues 原位增量、fix-feedback-rN → fix-report-rN）、工作流目录浏览绑定（GET /api/workflows/built-in 清单+详情 → 逐 phase 确认写回）。当用户需要把一个需求转成可按里程碑验收放行的多 phase 任务规格时加载。"
+description: "Task-Author 规格作者（v4 phase 化）— 与用户对话把模糊需求拆成 Phase 序列（每 phase = 一份 Batch 产物 spec.md+issues/ + 一个 workflow 绑定 + ≥1 round），经拆分确认 gate 与逐 phase 绑定后由用户 [入队]。覆盖 /api/tasks REST API（v4 draft 创建 / spec-field 写 phases / 乐观锁编辑 / 入队 gate / 列表详情中止）、task_spec.format='v4' + phases[] 协议（specPath 约定 ./.scratch/<YYYYMMDD>/<slug>/spec.md、v4 占位符词表 ${phase.slug}/${phase.spec_dir}/${phase.batch_rel}/${task.home}/${task_artifacts_dir}）、领域阅读（context.md → project 绝对路径 → CONTEXT-MAP/CONTEXT.md/docs/adr/.scratch 惯例 probe → 缺则降级标注）、拆 phase 方法论（deliverable 判据 = phase 末可运行可验收；预算 coding agent 1h / 含 E2E 1.5h；Key Decisions 行/编号稳定纪律 NEW-rN）、matt 技能族产物协议（入队前 spec.md 初版 + spec-rN 并存；入队后 ws 权威，执行侧就地修订 collect 回流 home）、打回二分路由（轻量修复=task-fix 自动派发 / 修订重跑=绑定流先再审 spec）、phase 衔接信道（ship 每轮产批次 handoff.md → accepted→下一 phase 开轮 server 自动注入内置键 prev_handoff_paths（非占位符），仅 matt-spec-dev 同族契约流消费——自定义流静默失效）、工作流目录浏览绑定（v4 默认 built-in/matt-spec-dev 直读批次 spec 执行）。当用户需要把一个需求转成可按里程碑验收放行的多 phase 任务规格时加载。"
 category: devops
-tags: [task-pool, task-author, phases, phase, batch-dir, task_spec, workflow-binding, gate, spec, task-fix]
-version: 3.0.0
+tags: [task-pool, task-author, phases, phase, batch-dir, task_spec, workflow-binding, gate, spec, matt-spec-dev, task-fix, handoff]
+version: 3.2.0
 ---
 
 # Task-Author 规格作者（v4 phase 化）
@@ -14,7 +14,7 @@ version: 3.0.0
 
 ## 契约：WHAT 固定、两端自由
 
-- **入口契约（你产出）**：task home = `manifest（spec.json）+ phases[]`。每个 **Phase = 1 份 spec 产物（Batch 目录：`spec.md` + `issues/`）+ 1 个 workflow 绑定（workflowRef + inputValues）+ ≥1 个 round**（K1）。phase↔slug 恒 1:1。
+- **入口契约（你产出）**：task home = `manifest（manifest.json）+ phases[]`。每个 **Phase = 1 份 spec 产物（Batch 目录：`spec.md` + `issues/`）+ 1 个 workflow 绑定（workflowRef + inputValues）+ ≥1 个 round**（K1）。phase↔slug 恒 1:1。
 - **生成端自由**：Batch 产物用内置 matt 技能族（grilling/wayfinder 等）对话产出，格式是 matt 惯例的 markdown——平台不解释 spec 内容，只核对文件存在。
 - **执行端自由**：每 phase 绑任意可解析工作流（built-in 目录浏览或你自建），执行侧 agent 以 seed 进 workspace 的 Batch 目录为唯一输入。
 - **出口契约**：round 终态 → 人工验收（通过/打回/中止）；打回产 `fix-feedback-rN.md`，修复走 task-fix 通用流或 round-2 spec；末 phase 通过 → 归档归并回各 project。
@@ -76,16 +76,19 @@ task home 根目录的 `context.md` 由 server 维护，含每个所选 project 
 
 ### 目录约定（K10）
 
-每个 phase 一个 Batch 目录，task home 与 workspace 同构（seed/collect 按同相对路径搬运）：
+每个 phase 一个 Batch 目录，task home 与 workspace 同构（seed/collect 按同相对路径搬运）。
+**spec.md 是唯一活文档**（ADR-0018）：入队前你维护初版；入队后执行侧在 ws 就地审查更新，server collect 回流 home 成终态镜像：
 
 ```
 {home}/.scratch/<YYYYMMDD>/<slug>/     ← slug = <kebab-name>-<phase序号>，如 token-metering-2
-├── spec.md        ← 本 phase 唯一权威 spec（matt-verified-requirement 产物格式）
+├── spec.md        ← 本 phase 唯一权威 spec（入队前草稿侧写初版；入队后执行侧 ws 就地改，回流覆盖）
 ├── brief.md       ← 一页纸（可选，给人快速核对）
-├── issues/        ← DAG 票：01-xxx.md … NN-e2e-verification.md
-├── spec-r2.md     ← round-2 spec（打回升级决策时并存新增，见 rN 协议）
+├── issues/        ← DAG 票：01-xxx.md … NN-e2e-verification.md（执行侧原位增量）
+├── spec-r2.md     ← 仅起草窗口的整版修订（ready 后不再新增——执行侧改 spec.md 本身）
 ├── fix-feedback-r1.md ← 人打回 round1 时由 server 产物化（你只读，不预造）
-└── fix-report-r1.md   ← task-fix 修复轮终态由执行侧产出（collect 上行回 home）
+├── fix-report-r1.md   ← task-fix 轻量修复轮由执行侧产出（ws → collect 上行）
+├── round-report.md    ← matt-spec-dev 每轮终报（含「Spec 修订」节：反馈→是否改 spec→改了什么）
+└── handoff.md         ← matt-spec-dev ship 每轮末产/覆写、面向下游 phase 的精选交接短页（见「phase 衔接信道」节）
 ```
 
 - `<YYYYMMDD>` = 起草日，同 date 前缀 = 同需求批次；slug **path-safe**（`[a-zA-Z0-9][a-zA-Z0-9._-]*`，Zod 强校验），kebab-case + 序号后缀。
@@ -106,40 +109,55 @@ task home 根目录的 `context.md` 由 server 维护，含每个所选 project 
 
 ### phases[] 写入（spec-field，整数组替换语义）
 
-`POST /api/tasks/$TASK_ID/spec-field` 的 `field=phases` **整体替换** phases 数组——改任何一个 phase 前先 `Read spec.json` 取当前全量，改后整数组回写，丢元素=丢 phase。乐观锁照旧：409 → 重取 version 重试。
+`POST /api/tasks/$TASK_ID/spec-field` 的 `field=phases` **整体替换** phases 数组——改任何一个 phase 前先 `Read manifest.json` 取当前全量，改后整数组回写，丢元素=丢 phase。乐观锁照旧：409 → 重取 version 重试。
 
-> 过渡说明：`field=phases` 的 spec-field 路由由票 07 AC5 落地。若 server 尚未支持该 field（400 `invalid field`），改用 §3 的整-spec `PUT`（携带完整 `task_spec`，含 format/phases/autoAdvance）——两通道写入后的 spec.json 快照与 SSE 联动完全等价。
+> 契约注记：向**无 `format` 旗标的壳**（autosave 先建的 draft）写 `phases` 时，server 会自动补 `format:"v4"` 并尽力补建 task home（含 context.md）——v3→v4 升级只能经 flag 缺失时的这一途或 §3 整-spec PUT；反方向（去旗标）被创建锁禁止。
 
-### spec.json 快照（首选本地读，协议不变）
+### manifest.json 快照（首选本地读，协议不变）
 
-每次 spec-field/PUT 保存后，server 重写 `{home}/spec.json`——当前 task_spec 的**权威本地快照**：
+每次 spec-field/PUT 保存后，server 重写 `{home}/manifest.json`——当前 task_spec 的**权威本地快照**（v4 任务的快照已剔除 goal/ac 等 v3-only 键；老 home 里的旧 `spec.json` 会在首次快照写回或首次对话轮自动更名迁移）：
 
 ```jsonc
 {
   "task_id": "…", "version": 7, "updated_at": "…",
   "spec": {
     "format": "v4",
-    "goal": "…（v4 可无）", "ac": ["…（v4 可无）"],
     "decisions": ["…"], "autoAdvance": true,
     "phases": [ { "index": 1, "name": "…", "slug": "…-1", "specPath": "./.scratch/…/spec.md", "workflowRef": "…", "inputValues": {} } ]
   }
 }
 ```
 
-**需要当前 phases/decisions/version 时直接 Read `spec.json`**，比 curl 可靠。例外：无 home 的 legacy 任务 → `GET /api/tasks/:id` 回退。
+**需要当前 phases/decisions/version 时直接 Read `manifest.json`**，比 curl 可靠。例外：无 home 的 legacy 任务 → `GET /api/tasks/:id` 回退。
 
 ### v4 占位符词表（inputValues 专用，materialize 时逐 phase 解析）
 
 | 占位符 | 解析为 | 典型用法 |
 |--------|--------|----------|
 | `${phase.slug}` | 本 phase 的 slug | 分支名/产物命名 |
-| `${phase.spec_dir}` | specPath 的 dirname（home 相对 → 绝对） | 工作流的 spec 目录输入 |
+| `${phase.spec_dir}` | specPath 的 dirname（home 相对 → 绝对） | home 侧读写的流（如 task-fix 直绑） |
+| `${phase.batch_rel}` | home **相对** posix 批次目录（`.scratch/<date>/<slug>` = ws 同构位） | ★ spec 消费型流（`matt-spec-dev` 的 `batch_dir`）用它——执行侧只碰 ws，终态由 server collect 回流 |
 | `${task.home}` | task home 绝对路径 | 读快照/登记产物 |
 | `${task_artifacts_dir}` | `{home}/artifacts` | 一般**不用填**——见下 |
 | `${goal}` / `${ac}` | v3 遗留；v4 spec 通常无值 → 空并计入 missing | v4 起草**禁用** |
 
 - **管理键自动注入**：`task_artifacts_dir`、`task_workflows_dir` 由 dispatch 在物化时强制写入每个 phase 的 input_values（用户键被覆盖）→ 工作流经 `$vars.task_artifacts_dir` 读到即可（task-dev 根本不声明为 input）。**绑定表单无需手填它们**。注意时序：gate 早于注入——若某工作流把它们声明成 `required: true` 输入，gate 阶段仍要求绑定给值（值可用 `${task_artifacts_dir}` 占位符自解析），task-fix 因此特意声明 `required: false` 绕开这道坎。
+- **衔接信道内置注入键 `prev_handoff_paths`（登记于此，非占位符，不在上表解析之列）**：accepted→下一 phase 首轮开轮时由 server 注入该轮物化 input_values——全部已 accepted 前序（含刚 accepted 的本 phase）批次目录 `handoff.md` 的 home 绝对路径，存在性过滤、index 升序、换行连接；全空则键不出现（机制见「phase 衔接信道」节）。作者**不需要也不应该**在绑定表单手填，更不要把它当占位符做值引用——任何 `${...}` 写法都不命中词表，会被解析为空并计入 missing。
 - 未知占位符（如 `${nope}`）→ 不 500：解析为空 + 该键进 missing（`phase:<i>:input:<key>`）。**发布前自查每个 value 里的 `${}` 都在上表内。**
+
+### phase 衔接信道（handoff.md + prev_handoff_paths）
+
+跨 phase 上下文不靠人工转述——v4 内置一条产物信道，三环全自动（零起草负担，但你要能向用户解释它，且知它的边界）：
+
+1. **产物（执行侧）**：`ship-pr`（matt-spec-dev）每轮末在批次目录产/覆写 `handoff.md`——面向下游执行会话的精选交接短页（与面向验收人的 round-report.md 受众不同；头块 = phase 名与 batch slug · 终态轮次 rN · PR 链接 · 批次路径）+ 三段：`## Protected Decisions`（本 phase 定死、下游不得回退）/ `## Confirmed Interfaces`（下游可直接复用的接口/表/组件/命令——给路径不给描述）/ `## Gap Targets`（如实遗留：skip 票、noted 风险、未竟事项）。流内纪律：每轮整页重写禁追加、一屏内、细节引用 round-report.md 不复制；只写 ws，collect 回流 home。
+2. **注入（server）**：phase accepted→下一 phase 首轮开轮（autoAdvance 与看板手动推进两处同行为），`prev_handoff_paths` 注入该轮物化 input_values = 全部已 accepted 前序（含刚 accepted 的本 phase）`handoff.md` 的 **home 绝对路径**（存在性过滤、index 升序、换行连接；全空则键不出现；只注路径不注内容），与 `feedback`/`task_artifacts_dir` 注入同族。**同 phase 打回 rerun/fix 不注入**——该轮已有 feedback/fix-feedback 信道。
+3. **消费（执行侧）**：`spec-resolve` 逐行探测路径存在性 → `$vars.prev_handoffs` / `prev_handoff_count` → spec-review / 票 DAG / ship 提示词要求「先读前序交接：不回退 Protected Decisions，Confirmed Interfaces 直接复用现物，Gap Targets 未闭环项承接或显式关闭」。
+
+**信道边界（推荐绑定流时必须向用户讲清）**：
+
+- 消费仅对 matt-spec-dev（或按同契约自建、显式读取 `prev_handoff_paths` 输入并产 handoff.md 的流）成立——**绑其他自定义流时注入键无人消费，信道静默失效、无任何报错**。拆分流推荐到非默认流，损失要说在前头。
+- ship 崩溃 ⇒ 该 phase 无 handoff.md ⇒ accepted 后下 phase 信道静默缺一角（存在性过滤吞掉，不烧派发）——验收人靠批次清单（home-file LIST）可见 handoff 缺失，打回人可对照批次里上轮 handoff.md（覆写非删除）。
+- 存量任务（本特性前已 accepted 的 phase）无 handoff.md = 现状，不迁移、不回归。
 
 ## 拆 Phase 方法论
 
@@ -147,7 +165,7 @@ task home 根目录的 `context.md` 由 server 维护，含每个所选 project 
 
 1. **deliverable 判据**：每个 phase 以「可交付产品状态」收尾——phase 末可运行、可被人一屏验收（e2e 票或明确验证命令）。写不出「验收时我看什么」的 phase 不成立。
 2. **预算**：单 phase = coding agent **≤1h**（含 E2E 时 **≤1.5h**）。经验换算：3~5 人天需求 ≈ 4~5 个 phase。超预算 → 继续拆；拆不动 → 说明范围本身要砍，问用户。运行期超 1.5h 仅出 ⏳ advisory 徽标（D18），不自动中断——所以预算是**拆分期**的硬纪律。
-3. **依赖排序 + 验收锚点**：phase i 的交付物是 phase i+1 的输入；在拆分表里显式写「phase i+1 依赖 i 的什么」。无相互依赖的 phase 也应保持**可独立验收**的顺序叙事。
+3. **依赖排序 + 验收锚点**：phase i 的交付物是 phase i+1 的输入；在拆分表里显式写「phase i+1 依赖 i 的什么」。无相互依赖的 phase 也应保持**可独立验收**的顺序叙事。**不抄前序（起草纪律）**：后继 phase 的 spec 正文不人工转述 phase i 已定的接口/决策细节——写「依赖 phase <i> 的 Confirmed Interfaces（运行时衔接信道读取）」，细节交给运行时前序 handoff.md 自动进本 phase 首轮（见「phase 衔接信道」节）；拆分表「依赖前序」列自此有真实信道支撑，抄写式转述是退役写法。
 4. **Key Decisions 纪律（K8，跨 phase 传播的机械锚点）**：每个 phase 的 spec.md 必含 `## Key Decisions` 表（`| # | Decision | Conclusion | Reason |`）。rN 修订（spec-rN.md）必须**保持表行与编号稳定**：改行内结论、不删行不改号；新增行标 `NEW-rN`。决策传播比对的是**表格行 diff**而非散文——编号一乱，影响清单就失效。
 5. **数量**：单 phase 完全合法（小需求别硬拆）；>7 个 phase 说明需求该再澄清一轮。
 
@@ -166,17 +184,20 @@ task-author 会话内置六个技能（clone 专属 plugin 层，按技能名直
 
 | 文件 | 权威写方 | 方向 |
 |------|----------|------|
-| `spec.md` / `spec-rN.md` | 草稿侧（你） | home → 覆盖 seed 进 ws |
+| `spec.md` | 入队前草稿侧（你）；入队后**执行侧（ws）** | 你写 home → seed 下行；执行侧改 ws → **collect 上行回 home（终态权威在 ws，server 维护回流）** |
+| `spec-rN.md` | 草稿侧（你，仅起草窗口） | home → seed 下行；流取「最大 rN 否则 spec.md」为底本 |
 | `issues/` Status 与票内容增量 | 执行侧 agent | ws → collect 上行 |
-| `fix-report-rN.md` / 执行报告 / e2e 产物 | 执行侧 agent | ws → collect 上行 |
+| `fix-report-rN.md` / `round-report.md` / `handoff.md` / e2e 产物 | 执行侧 agent | ws → collect 上行 |
 | `fix-feedback-rN.md` | server（人打回时产物化） | home → 随 seed 下行 |
 
-### rN 协议（spec 冻结与并存）
+- **你在对话里改已入队任务的 spec**：K16 隔离窗内你的 home 编辑会在**下一轮 seed** 覆盖 ws 同名（执行侧未回流前有效）；若执行侧本轮已改过同一文件，下一轮 seed 你的版本仍下行——**编辑前先 Read home spec.md 看是不是已被 collect 更新过**（终态可能已含执行侧修订），别拿旧草稿覆盖。
 
-- **冻结点 = 入队**。起草期你随便改 spec.md；ready 之后 spec.md 物理不动。
-- 打回后修复流不传播决策（D14）；**决策级变更**走 round-2 spec：agent 在后续对话里新增 `spec-r2.md`（与 spec.md **并存**，遵守 Key Decisions 行稳定纪律 + `NEW-rN` 标注），影响清单经人批准后改写 phases[]。
+### rN 协议（spec 修订与并存）
+
+- **起草期（入队前）**你随便改 spec.md；重大修订可新增 `spec-r2.md`（与 spec.md **并存**，遵守 Key Decisions 行稳定纪律 + `NEW-rN` 标注），流按「最大 rN 否则 spec.md」取底本。
+- **入队后** spec 终态由执行侧在 ws 就地维护（ADR-0018）：轻量修复流（task-fix）原则上不动 spec、反馈指向规格小错时可就地小改并记 fix-report；**修订重跑流（matt-spec-dev）的 spec 再审段会把修订点逐条记进 round-report.md 的「Spec 修订」节**——你向用户解释「task 空间的 spec 跟着变了」就指这份台账。决策级改判（K8 表行变化）必须让用户在验收面看到。
 - `issues/` 原位增量：新票直接加文件，已写票只改 Status（`ready-for-agent`/`in-progress`/`done`/`skip`）与补充 Verification Result，不重排编号。
-- 修复轮消费规则（执行侧视角，供你写 phase 验收方式时引用）：task-fix 流读「最大 rN 的 spec + `fix-feedback-rN.md`」→ 定点修 → 产 `fix-report-rN.md`（反馈逐条→动作→证据），round 号取自反馈文件名。
+- 打回二分路由（人裁决，ADR-0018）：**轻量修复** = server 即时派发 task-fix（合成 `fix-feedback-rN.md` 输入，产 `fix-report-rN.md`）；**修订重跑** = 重跑绑定流，流内先按反馈再审 spec 再执行。round 号取反馈文件名。
 
 ## API 端点清单（curl — update_task_spec_field 是 HTTP 端点，非 native SDK 工具）
 
@@ -192,7 +213,7 @@ curl -s -X POST "http://localhost:$PORT/api/tasks" \
         "task_spec": { "format": "v4" },
         "project_ids": ["<project 名>"], "skills": [], "resources": [], "authoring_resources": [] }' | jq .
 ```
-- 返回 tasks 行 `status: "draft"`；goal/ac **不再必填**（v4 无它们也能 parse）。autosave seam（首轮对话后）也会隐式建 draft——两路都要你后续显式写 phases。
+- 返回 tasks 行 `status: "draft"`，`task_spec` **原样落地**（`format:"v4"` 旗标不再被丢弃——server 现已兑现本配方）；goal/ac **不再必填**（v4 无它们也能 parse）。带 `format:"v4"` 即建 home + `manifest.json` 快照（`spec.format==="v4"` 本地可读）。autosave seam（首轮对话后）也会隐式建 draft——两路都要你后续显式写 phases。
 - 创建期的 projects 是领域阅读的路由键；后来加/减 project 由用户在看板改，你经 `@@context_updated` 重读 context.md。
 
 ### 2. 对话中绑字段（update_task_spec_field）★联动核心
@@ -208,7 +229,7 @@ curl -s -X POST "http://localhost:$PORT/api/tasks/$TASK_ID/spec-field" \
 
 | field | value 形态 | v4 备注 |
 |-------|-----------|---------|
-| `phases` | TaskPhase[]（**整数组替换**） | ★ 核心字段；写前读 spec.json 取全量 |
+| `phases` | TaskPhase[]（**整数组替换**） | ★ 核心字段；写前读 manifest.json 取全量 |
 | `projects` | string[]（project_ids） | 领域路由 |
 | `decisions` | string[] | 决策备忘录：领域降级标注、拆分理由、自建流副作用声明 |
 | `resources` | ResourceRef[] | workspace-scope → 执行期 requires |
@@ -226,7 +247,7 @@ curl -s -X PUT "http://localhost:$PORT/api/tasks/$TASK_ID" \
   -H "Content-Type: application/json" -H "If-Match: $VERSION" \
   -d '{ "task_spec": { "format": "v4", "decisions": ["…"], "autoAdvance": true, "phases": [ /* 全量 */ ] } }' | jq .
 ```
-> 增量绑字段优先 §2；PUT 用于过渡期写 `phases`（票 07 AC5 前）与写 `autoAdvance`（spec-field 无此键；缺省=默认开，仅显式 `false` 让每个 phase 停在人工 gate）。缺 If-Match → 428；冲突 → 409。
+> 增量绑字段优先 §2（`phases` 走 spec-field 整数组替换）；PUT 主要用于写 `autoAdvance`（spec-field 无此键；缺省=默认开，仅显式 `false` 让每个 phase 停在人工 gate）与多字段一次性整-spec 保存。缺 If-Match → 428；冲突 → 409。v4 创建锁：PUT 不得去 `format` 旗标、省略 `phases` 时 server 保留现值。
 
 ### 4. 入队（confirm gate）——**用户**点 [入队] 才触发
 
@@ -239,6 +260,8 @@ curl -s -X POST "http://localhost:$PORT/api/tasks/$TASK_ID/ready" | jq .
 
 missing key 词汇表（修给用户看，逐项补齐后重发）：`phase:0:no-phases` ｜ `phase:<i>:spec-missing` ｜ `phase:<i>:workflow-ref` ｜ `phase:<i>:input:<name>`。
 
+> **入队前自查（server gate 不含此项，K5 文本档纪律）**：拆分表「依赖前序」列引用的 batch slug 全部存在（`.scratch/<date>/` 下目录真实在场）——衔接信道按存在性过滤，引用不存在的 slug = 下游静默缺一角，要到 phase 跑起来才暴露。
+
 ### 5. 列表 / 详情 / 中止
 
 ```bash
@@ -247,6 +270,19 @@ curl -s "http://localhost:$PORT/api/tasks/$TASK_ID" | jq .    # 详情（v4 含 
 curl -s -X POST "http://localhost:$PORT/api/tasks/$TASK_ID/abort" | jq .   # → aborted + ws 清理（产物已 collect 的在 home）
 ```
 > 验收/打回（`POST /:id/acceptance`）、触发（`POST /:id/trigger`）、归档重试（`POST /:id/archive/retry`）是**人的看板动作**，不是你的——你只负责把任务推到可入队状态。
+
+### 6. 批次文件读写（home-file — 主要服务看板 UI 的 phase spec 审阅/编辑）
+
+```bash
+# 读某 phase 的 spec.md（`.scratch/**.md`，相对 task home）
+curl -s "http://localhost:$PORT/api/tasks/$TASK_ID/home-file?path=.scratch/20260903/scaffold-1/spec.md" | jq -r .content
+# 写/覆写（父目录自动建；用于看板「创建骨架」；agent 常态直接以 cwd=home 用 Write/Bash 落 .scratch/）
+curl -s -X PUT "http://localhost:$PORT/api/tasks/$TASK_ID/home-file" \
+  -H "Content-Type: application/json" \
+  -d '{ "path": ".scratch/20260903/scaffold-1/spec.md", "content": "# Phase 1\n" }' | jq .
+```
+- 守卫：路径必须 `.scratch/` 前缀 + `.md` 后缀、home 相对不逃逸（否则 403）；缺文件读 → 404；任务非可编辑窗口写 → 409；`content ≤ 512_000` 字符。**不写 tasks.version**（文件非行）。
+- **用户经看板 UI 手改 spec.md 会落 `@@spec_updated` 通知**，你下一轮感知——写该 phase spec 前先重读盘（勿拿旧草稿覆盖用户手改）。
 
 ## 拆分确认 gate 与 per-phase 工作流绑定
 
@@ -273,9 +309,9 @@ curl -s "http://localhost:$PORT/api/workflows/built-in/built-in%2Ftask-fix" | jq
 ```
 
 **绑定纪律**：
-1. 按 phase 交付物推荐 **1-3 候选 + 一句理由**（为什么适合这个里程碑）；`task-dev`/`superpowers-task-dev` 已失去看板入口（v3 遗留），优先 `matt-dev-pipeline`、`xzf-dev` 等与 spec+issues 产物兼容的流。
+1. 按 phase 交付物推荐 **1-3 候选 + 一句理由**（为什么适合这个里程碑）。**v4 默认推荐 `built-in/matt-spec-dev`**——它就是为你的 Batch 产物造的：直读 `spec.md + issues/` 票 DAG 执行 → CR → ship，零澄清；`task-dev`/`superpowers-task-dev` 是 goal/ac 时代的 v3 遗留，`matt-dev-pipeline`/`xzf-dev` 从 idea 起会**重新澄清再生成 spec**（与你已冻结的 spec 打架），仅当用户明确要「从 idea 现场澄清」才选。
 2. **每个 phase 单独绑**——不同里程碑可以用不同流（如 UI phase 绑带 vision 验证的流）。等用户逐个确认，不代拿决定。
-3. input_values 表单：对目录返回的每个 `required: true` 输入给值——能用 v4 占位符就用（`${phase.spec_dir}` 交付 spec 目录），字面量也行；逐 required 项核对非空，否则 gate 报 `phase:<i>:input:<name>`。
+3. input_values 表单：对目录返回的每个 `required: true` 输入给值——**绑 matt-spec-dev 时 `batch_dir` 恒填 `"${phase.batch_rel}"`**（ws 同构位）；其余占位符能用就用（`${phase.slug}` 交付命名），字面量也行；逐 required 项核对非空，否则 gate 报 `phase:<i>:input:<name>`。
 4. 写回 = §2 的 `field=phases`（整数组，含新 workflowRef/inputValues）。可多次往返，每次 SpecPanel 实时刷新。
 
 ### 自建工作流（目录无合适项时）
@@ -288,9 +324,9 @@ octopus workflow simulate   workflows/my-flow.yaml   # 自动发现 my-flow.test
 ```
 含真实外部副作用（删数据/改 git/调外部 API）的自建流：副作用声明 + 理由写进 `decisions`（§2）。
 
-### task-fix：修复轮专用，草稿侧不预绑
+### task-fix：修复轮专用，起草期永远不绑
 
-`built-in/task-fix` 是**通用修复流**（inputs：`phase_spec_dir` / `feedback_path` / `task_artifacts_dir`(自动注入)）。它由**打回确认弹窗**在 round≥2 时启用（server 注入本轮 `fix-feedback-rN.md` 路径），不是 phase 的首轮绑定——起草期你把 phase 绑到开发流上即可，修复轮的推荐权在打回流程。你可以（应该）在 phase spec 的验收方式里引用这条回路：「打回 → task-fix 自动产 fix-report-rN.md → 人再验收」。
+`built-in/task-fix` 是**轻量修复流**（inputs：`phase_spec_dir` / `feedback_path` / `task_artifacts_dir`(自动注入)）。它的 `feedback_path` 必填但反馈文件要到**打回后**才存在——所以 gate 阶段永远绑不了也不该绑：**人在验收弹窗选「轻量修复」时，server 自动 override 本流并合成两个输入**（ws 同构批次位 + 本轮 `fix-feedback-rN.md`）。你起草期把 phase 绑到 matt-spec-dev 上即可；向用户解释回路时说明：「打回二选一：轻量修复（task-fix 定点修 → fix-report-rN.md）/ 修订重跑（绑定流先再审 spec 再重跑）——路由只作用本轮，phase 绑定不变」。
 
 ## 资源加载（两 scope，一句话说清）
 
@@ -299,7 +335,7 @@ octopus workflow simulate   workflows/my-flow.yaml   # 自动发现 my-flow.test
 
 ## 物化与执行环（你要能向用户解释的下游）
 
-入队后：每 round 开跑 → **seed** 把 `{home}/.scratch/<date>/<slug>/` 物理拷进 ws 同路径（home 覆盖 ws 同名，随 worktree 分支进 PR）→ 执行 → **collect** 回收执行侧改动（issues Status、报告）回 home 并 SSE 推送产物区 → 人工三栏验收（摘要|产物核对|动作）→ 通过：`auto_advance` 开则下一 phase 自动开跑，关则停你 gate；打回：反馈落 `fix-feedback-rN.md`，人一键起修复轮（**同 ws 同分支**）→ 末 phase 通过 → archiving（ADR 顺延、术语 append、归档 commit，全绿才 done）。失败不是红死状态——任何 round 终态都进「待处理」，动作同质（看→放行/重试/中止）。
+入队后：每 round 开跑 → **seed** 把 `{home}/.scratch/<date>/<slug>/` 物理拷进 ws 同路径（home=上轮终态/草稿起点，覆盖 ws 同名，随 worktree 分支进 PR）→ 执行 → **collect** 回收执行侧改动（**含 spec.md 终态**——ADR-0018：批次目录全类以 ws 为权威回流 home）并 SSE 推送产物区 → 人工三栏验收（摘要|产物核对|动作）→ 通过：`auto_advance` 开则下一 phase 自动开跑，关则停你 gate（下一 phase 首轮自动注入前序 handoff 路径——「phase 衔接信道」节，手动推进同行为）；打回：反馈落 `fix-feedback-rN.md`，人**二选一路由即时开轮**（轻量修复=task-fix / 修订重跑=绑定流先再审 spec；同 ws 同分支）→ 末 phase 通过 → archiving（ADR 顺延、术语 append、归档 commit，全绿才 done）。失败不是红死状态——任何 round 终态都进「待处理」，动作同质（看→放行/重试/中止）。
 
 ## 交互风格
 
@@ -314,7 +350,8 @@ octopus workflow simulate   workflows/my-flow.yaml   # 自动发现 my-flow.test
 
 | HTTP | 含义 | 处理 |
 |------|------|------|
-| 400 | task_spec/TaskPhase 校验失败（slug 非法、index 非 1-based、workflowRef 空）| 对照 §TaskPhase 字段表修正；占位符拼写自查词表 |
-| 404 | task 不存在 | 检查 TASK_ID（autosave 可能还没建 draft——先 §1） |
-| 409 | 名称冲突 / spec-field 版本冲突 / **v4 ready-gate 不满足**（missing[] 给 `phase:<i>:<why>`） | 版本冲突→重取 version；gate→按 missing 逐项补（spec-missing=产 spec；workflow-ref=重绑可解析 ref；input:<name>=补表单值） |
+| 400 | task_spec/TaskPhase 校验失败（slug 非法、index 非 1-based、workflowRef 空）/ home-file content 超限 | 对照 §TaskPhase 字段表修正；占位符拼写自查词表 |
+| 403 | home-file 路径不合规（非 `.scratch/**.md`、绝对路径、逃逸）| 见 §6，路径改 home 相对且落 `.scratch/` |
+| 404 | task 不存在 / home-file 读缺文件 | 检查 TASK_ID（autosave 可能还没建 draft——先 §1）；spec.md 缺=还没产出 |
+| 409 | 名称冲突 / spec-field 版本冲突 / **v4 ready-gate 不满足**（missing[] 给 `phase:<i>:<why>`）/ home-file 非可编辑窗口写 | 版本冲突→重取 version；gate→按 missing 逐项补（spec-missing=产 spec；workflow-ref=重绑可解析 ref；input:<name>=补表单值） |
 | 428 | PUT 缺 If-Match | 补 `If-Match: <version>` |

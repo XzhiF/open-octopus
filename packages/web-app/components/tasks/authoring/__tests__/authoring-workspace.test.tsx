@@ -97,9 +97,12 @@ const GROUPS = [
 function makeTask(overrides: Partial<Task> & { id: string }): Task {
   return {
     org: "E2E_TD_org",
-    name: "v3 task",
+    name: "v4 task",
     status: "draft",
     task_spec: {
+      // v4-only UI：默认 fixture 带旗标（type badge「开发任务」）；skill_groups
+      // 仍走 command-bar 聚合断言（server 侧 v3 遗留字段，UI 只显徽标）。
+      format: "v4",
       goal: "g",
       ac: ["ac 1", "ac 2"],
       skill_groups: ["default", "open-spec"],
@@ -220,58 +223,41 @@ describe("AuthoringWorkspace — command bar (AC7)", () => {
   })
 })
 
-// ── AC6: enqueue gate (disabled until confirmed; 409 shows missing) ──
+// ── AC6: enqueue gate — v4 单路（goal/ac 双确认已随 v3 UI 退役） ─────
 
-describe("AuthoringWorkspace — enqueue gate (AC6)", () => {
-  it("enqueue is disabled when goal/ac not fully confirmed", async () => {
-    const task = makeTask({ id: "t1" }) // goal_confirmed=false, ac_confirmed=[]
-    render(<AuthoringWorkspace task={task} onMutated={() => {}} onClose={() => {}} />)
-    await waitFor(() => expect(screen.getByText("open-spec")).toBeDefined())
-
-    const btn = screen.getByRole("button", { name: /入队/ }) as HTMLButtonElement
-    expect(btn.disabled).toBe(true)
-    // Hint text explains what to confirm.
-    expect(screen.getByText(/确认 goal.*ac|请先确认/i)).toBeDefined()
-  })
-
-  it("enqueue is enabled when goal_confirmed + all ac confirmed", async () => {
+describe("AuthoringWorkspace — enqueue gate (v4-only UI)", () => {
+  it("v3/legacy draft（无 v4 旗标）：goal/ac 卡不再渲染；四行清单在、按钮 disabled、不崩", async () => {
     const task = makeTask({
-      id: "t1",
+      id: "legacy-1",
       task_spec: {
-        goal: "g", ac: ["ac 1", "ac 2"], skill_groups: ["default", "open-spec"],
-        task_type: "coding", goal_confirmed: true, ac_confirmed: ["ac 1", "ac 2"],
+        goal: "g", ac: ["ac 1"], skill_groups: [], task_type: "coding",
+        goal_confirmed: true, ac_confirmed: ["ac 1"],
         decisions: [], resources: [], authoring_resources: [],
       } as Task["task_spec"],
     })
     render(<AuthoringWorkspace task={task} onMutated={() => {}} onClose={() => {}} />)
-    await waitFor(() => expect(screen.getByText("open-spec")).toBeDefined())
-
-    const btn = screen.getByRole("button", { name: /入队/ }) as HTMLButtonElement
-    expect(btn.disabled).toBe(false)
+    await waitFor(() => expect(screen.getByTestId("enqueue-checklist-v4")).toBeTruthy())
+    // goal/ac 面全退役（即便双确认已齐也不绿 — v4-only 清单只吃 phases）
+    expect(screen.queryByTestId("goal-ac-card")).toBeNull()
+    expect((screen.getByTestId("task-enqueue") as HTMLButtonElement).disabled).toBe(true)
+    // type badge 降级文案
+    expect(screen.getByText(/草稿/)).toBeDefined()
   })
 
-  it("enqueue 409 surfaces the server-side missing-items list (gate backstop)", async () => {
-    const task = makeTask({
-      id: "t1",
-      task_spec: {
-        goal: "g", ac: ["ac 1", "ac 2"], skill_groups: ["default", "open-spec"],
-        task_type: "coding", goal_confirmed: true, ac_confirmed: ["ac 1", "ac 2"],
-        decisions: [], resources: [], authoring_resources: [],
-      } as Task["task_spec"],
-    })
-    // Server gate fails (e.g. a stale confirm slipped through) → 409 missing.
-    const gateErr = new (await import("@/lib/tasks-api")).TaskReadyGateError(
-      "Task not ready: missing goal_confirmed", ["goal_confirmed"],
+  it("v4 enqueue 409 走 TaskReadyGateError → gateMissing 反解（见票 12 C 组用例）", async () => {
+    // 占位：真正的反解断言在「v4 入队清单」组；这里只锁 handleEnqueue 的
+    // TaskReadyGateError 分支不把异常冒成 unhandled（409 → toast.error 路径）。
+    const task = makeV4Task("v4-gate-early", [COMPLETE_PHASE_1])
+    mockReadyTask.mockRejectedValueOnce(
+      new (await import("@/lib/tasks-api")).TaskReadyGateError("nope", ["phase:1:workflow-ref"]),
     )
-    mockReadyTask.mockRejectedValueOnce(gateErr)
-
     render(<AuthoringWorkspace task={task} onMutated={() => {}} onClose={() => {}} />)
-    await waitFor(() => expect(screen.getByText("open-spec")).toBeDefined())
-
-    fireEvent.click(screen.getByRole("button", { name: /入队/ }))
-
+    const btn = await waitFor(() => screen.getByTestId("task-enqueue")) as HTMLButtonElement
+    await waitFor(() => expect(btn.disabled).toBe(false))
+    fireEvent.click(btn)
     await waitFor(() => {
-      expect(screen.getByText(/goal_confirmed/)).toBeDefined()
+      const list = screen.getByTestId("enqueue-checklist-v4")
+      expect(list.querySelector('[data-checklist-v4="bind"]')!.textContent).toContain("工作流引用无法解析")
     })
   })
 })

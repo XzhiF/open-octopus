@@ -383,6 +383,7 @@ let app: Hono
 let taskHome: TaskHomeService
 let fakeHome: string
 let realHome: string | undefined
+let realUserProfile: string | undefined
 let seq = 0
 
 beforeEach(() => {
@@ -391,8 +392,10 @@ beforeEach(() => {
   seq = 0
   vi.clearAllMocks()
   realHome = process.env.HOME
+  realUserProfile = process.env.USERPROFILE
   fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-ar-home-"))
   process.env.HOME = fakeHome
+  process.env.USERPROFILE = fakeHome // os.homedir() on Windows reads USERPROFILE
   taskHome = new TaskHomeService(path.join(fakeHome, ".octopus"))
   sse = new SSEService()
   service = new TasksService(db, sse, undefined, taskHome)
@@ -403,6 +406,8 @@ beforeEach(() => {
 afterEach(() => {
   if (realHome === undefined) delete process.env.HOME
   else process.env.HOME = realHome
+  if (realUserProfile === undefined) delete process.env.USERPROFILE
+  else process.env.USERPROFILE = realUserProfile
   for (const d of tracked) fs.rmSync(d, { recursive: true, force: true })
   if (fakeHome) fs.rmSync(fakeHome, { recursive: true, force: true })
   db.close()

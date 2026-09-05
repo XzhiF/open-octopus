@@ -345,34 +345,38 @@ test("AC2 reject requires feedback; real POST writes the ledger; success chain s
   await expect(dlg2).toBeVisible()
   await dlg2.locator("[data-acceptance-reject]").click()
   await dlg2.locator("[data-reject-feedback]").fill("E2E_TD 成功路径反馈")
+  // ADR-0018 打回二分路由：二选一 radio 是活的，默认 = 修订重跑
+  await expect(dlg2.locator('[data-reject-flow="rerun"] input')).toBeChecked()
+  await expect(dlg2.locator('[data-reject-flow="fix"] input')).toBeEnabled()
   await dlg2.locator("[data-reject-confirm]").click()
-  // D13① agent 形态推荐占位卡（disabled 单选）+ D14 影响清单空态（AC3 的 e2e 面）
+  // 提交后路由回显卡（原 D13① disabled 假卡已兑现为真回显）+ D14 影响清单空态。
   await expect(dlg2.locator("[data-agent-recommend-card]")).toBeVisible({ timeout: 15_000 })
-  await expect(dlg2.locator('[data-recommend-option="fix-flow"] input')).toBeDisabled()
-  await expect(dlg2.locator('[data-recommend-option="spec-r2"] input')).toBeDisabled()
+  await expect(dlg2.locator("[data-agent-recommend-card]")).toContainText("修订重跑")
+  await expect(dlg2.locator('[data-recommend-option="fix-flow"]')).toHaveCount(0)
   await expect(dlg2.locator("[data-impact-list-empty]")).toBeVisible()
   const body = (page as unknown as { __t12: Record<string, unknown> }).__t12
   expect(body.decision).toBe("rejected")
   expect(body.phase_index).toBe(1)
   expect(body.round_index).toBe(1)
+  expect(body.next_flow).toBe("rerun")
   expect(String(body.feedback)).toContain("E2E_TD 成功路径反馈")
   await page.screenshot({ path: screenshotPath("T12-AC2-post-reject-seams.png") })
 })
 
 // ── AC3（拆分）: 影响清单批准写回链的服务端半程 — spec-field(phases) →
-//    home spec.json 内容变化 + version bump（API 回读断言）。
+//    home manifest.json 内容变化 + version bump（API 回读断言）。
 //    web 半程（勾选→updateSpecField(phases) 整数组）由组件测试
 //    acceptance-modal.test.tsx「ImpactApprovalList」断言；e2e 里弹窗无法
 //    注入 items（server 无 impact API — v4.1 接缝，票头已记）。 ──────────
 
-test("AC3 phases write-back roundtrip: spec-field(phases) changes home spec.json + bumps version", async () => {
+test("AC3 phases write-back roundtrip: spec-field(phases) changes home manifest.json + bumps version", async () => {
   test.skip(!serverAvailable || !dbAvailable, "server or rw-sqlite unavailable")
   const { request } = await import("@playwright/test")
-  const taskId = await makeV4Task("E2E_TD_影响写回链", { withHome: true }) // v3 create 建 home → spec.json 快照可回读
+  const taskId = await makeV4Task("E2E_TD_影响写回链", { withHome: true }) // v3 create 建 home → manifest.json 快照可回读
   const before = await getTask(taskId)
   const beforePhases = (before.task_spec as { phases: Array<Record<string, unknown>> }).phases
   const ctxBefore = await (await request.newContext()).get(`${SERVER_URL}/api/tasks/${taskId}/context`)
-  const specBefore = (await ctxBefore.json()) as { specContent: string }
+  const manifestBefore = (await ctxBefore.json()) as { manifestContent: string }
 
   // 模拟「批准影响清单」的写回：整数组替换 + workflowRef 改写（组件测试证明
   // ImpactApprovalList 发出的正是这个 body）。
@@ -391,10 +395,10 @@ test("AC3 phases write-back roundtrip: spec-field(phases) changes home spec.json
   expect(afterPhases[1].workflowRef).toBe("task-fix") // API 回读内容变化
 
   const ctxAfter = await (await request.newContext()).get(`${SERVER_URL}/api/tasks/${taskId}/context`)
-  const specAfter = (await ctxAfter.json()) as { specContent: string }
-  const snap = JSON.parse(specAfter.specContent) as { spec: { phases: Array<Record<string, unknown>> } }
-  expect(snap.spec.phases[1].workflowRef).toBe("task-fix") // home spec.json 快照随写变更
-  expect(specAfter.specContent).not.toBe(specBefore.specContent)
+  const manifestAfter = (await ctxAfter.json()) as { manifestContent: string }
+  const snap = JSON.parse(manifestAfter.manifestContent) as { spec: { phases: Array<Record<string, unknown>> } }
+  expect(snap.spec.phases[1].workflowRef).toBe("task-fix") // home manifest.json 快照随写变更
+  expect(manifestAfter.manifestContent).not.toBe(manifestBefore.manifestContent)
 })
 
 // ── AC4: 绑定弹窗 fetch=1 / 点选不闪 / 版本被 bump 后保存不 409 ───────
@@ -511,6 +515,70 @@ test("B: real accept on autoAdvance=false parks at the gate and surfaces 启动�
   await readyCard.locator("[data-task-advance-btn]").click()
   // 真实 POST /advance → server 409（fixture 信封无物化 phases）→ 人话 toast
   await expect(page.locator("[data-sonner-toast]", { hasText: "不在信封已解析" })).toBeVisible({ timeout: 15_000 })
+})
+
+// ── 票 04 (phase-handoff-chaining): 前序交接提示行可见性 ──────────────
+
+/** phase1 已 accepted（账本直插）+ phaseK 有 completed 链 → phaseK awaiting_review。 */
+async function phaseKAwaitingAfterP1Accepted(name: string, totalPhases: number, awaitingIndex: number): Promise<string> {
+  const taskId = await makeV4Task(name, { phases: totalPhases })
+  const uid = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+  await dbRun(
+    `INSERT INTO task_phase_acceptances (id, task_id, phase_index, round_index, decision, feedback, decided_at)
+     VALUES (?, ?, 1, 1, 'accepted', NULL, ?)`,
+    `E2E_TD_PHASEHANDOFF_acc_${uid}`, taskId, hoursAgo(2),
+  )
+  await insertPhaseRoundExec(taskId, { phaseIndex: awaitingIndex, roundIndex: 1, execStatus: "completed", createdAt: hoursAgo(1), durationMs: 600_000 })
+  await setTaskStatus(taskId, "running") // → 派生 awaiting_review（phaseK 待验收）
+  return taskId
+}
+
+test("票04: handoff hint shows N=1 for phase1 awaiting; hidden while reject panel open", async ({ page }) => {
+  test.skip(!serverAvailable || !dbAvailable, "server or rw-sqlite unavailable")
+  const taskId = await awaitingTaskFixture("E2E_TD_PHASEHANDOFF_提示行")
+  await page.goto("/tasks")
+  const card = page.locator(`[data-task-column="awaiting_review"] [data-task-id="${taskId}"]`)
+  await expect(card).toBeVisible({ timeout: 20_000 })
+  await card.locator("[data-task-accept-btn]").click()
+  const dialog = page.locator("[data-acceptance-modal]")
+  await expect(dialog).toBeVisible()
+
+  const hint = dialog.locator("[data-handoff-hint]")
+  await expect(hint).toBeVisible({ timeout: 15_000 })
+  await expect(hint).toHaveText("本 phase 的 handoff.md 连同已 accepted 共 1 个前序交接，将自动进入下一 phase 执行会话")
+  await page.screenshot({ path: screenshotPath("T04-handoff-hint-n1.png") })
+
+  // rejected 态（打回面板展开）→ 不显示
+  await dialog.locator("[data-acceptance-reject]").click()
+  await expect(hint).toHaveCount(0)
+  await page.screenshot({ path: screenshotPath("T04-handoff-hint-reject-hidden.png") })
+})
+
+test("票04: handoff hint N=2 with one accepted predecessor; hidden on last phase", async ({ page }) => {
+  test.skip(!serverAvailable || !dbAvailable, "server or rw-sqlite unavailable")
+  // 三 phase：p1 accepted、p2 待验收（有下一站）→ N=2
+  const t3 = await phaseKAwaitingAfterP1Accepted("E2E_TD_PHASEHANDOFF_次阶段", 3, 2)
+  await page.goto("/tasks")
+  const card3 = page.locator(`[data-task-column="awaiting_review"] [data-task-id="${t3}"]`)
+  await expect(card3).toBeVisible({ timeout: 20_000 })
+  await card3.locator("[data-task-accept-btn]").click()
+  const dialog3 = page.locator("[data-acceptance-modal]")
+  await expect(dialog3).toBeVisible()
+  await expect(dialog3.locator("[data-handoff-hint]")).toBeVisible({ timeout: 15_000 })
+  await expect(dialog3.locator("[data-handoff-hint]")).toContainText("共 2 个前序交接")
+  await page.keyboard.press("Escape")
+
+  // 两 phase：p1 accepted、p2（末）待验收 → 无下一站，不显示
+  const t2 = await phaseKAwaitingAfterP1Accepted("E2E_TD_PHASEHANDOFF_末阶段", 2, 2)
+  await page.goto("/tasks")
+  const card2 = page.locator(`[data-task-column="awaiting_review"] [data-task-id="${t2}"]`)
+  await expect(card2).toBeVisible({ timeout: 20_000 })
+  await card2.locator("[data-task-accept-btn]").click()
+  const dialog2 = page.locator("[data-acceptance-modal]")
+  await expect(dialog2).toBeVisible()
+  await expect(dialog2.locator("[data-acceptance-approve]")).toBeVisible({ timeout: 15_000 })
+  await expect(dialog2.locator("[data-handoff-hint]")).toHaveCount(0)
+  await page.screenshot({ path: screenshotPath("T04-handoff-hint-last-phase-hidden.png") })
 })
 
 // ── B 面: archiving 卡「重试归档」 ────────────────────────────────────

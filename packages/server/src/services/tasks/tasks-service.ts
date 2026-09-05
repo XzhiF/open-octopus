@@ -97,6 +97,13 @@ import {
   getSpecNotice,
 } from "./spec-notice-store"
 
+/** phase-handoff-chaining (ticket 01): 内置注入键名单源 — accepted→下一 phase 首轮
+ *  materialized input_values 里的键（K3）。值 = 已 accepted 前序 phase 的
+ *  handoff.md home 绝对路径，换行连接，空 ⇒ 键不出现。matt-spec-dev.yaml 的
+ *  inputs/哨兵/vars 与 task-author SKILL 均按此字面对齐——rename 从这改起，
+ *  测试侧保留字面量以钉住 wire 契约。 */
+export const PREV_HANDOFF_PATHS_KEY = "prev_handoff_paths"
+
 // ── Error Classes ────────────────────────────────────────────────────
 
 export class TaskNotFoundError extends Error {
@@ -237,6 +244,13 @@ export interface AcceptanceInput {
   decision: "accepted" | "rejected"
   /** K7: 打回必填反馈文本（route 的 zod 拦空）；accepted 时忽略。 */
   feedback?: string
+  /** ADR-0018 打回二分路由（rejected 时生效）：
+   *  - "rerun"（缺省）— 重跑 phase 绑定流 + feedback 注入（matt-spec-dev 绑定时
+   *    即「修订重跑」：流内 spec 再审段就地更新 ws spec.md，collect 回流终态）。
+   *  - "fix" — 轻量修复：chain override built-in/task-fix，输入由 server 合成
+   *    （phase_spec_dir/feedback_path/task_artifacts_dir），起草期无需绑定 task-fix。
+   *  override 只进 workflow_chain（K16 phases[] 冻结不破），仅作用本轮。 */
+  next_flow?: "fix" | "rerun"
 }
 
 /** What the caller (票 12 dialog) must do next:
@@ -284,6 +298,22 @@ export interface CreateTaskInput {
    *  workflow.requires, not the preset). preset.org overrides the top-level org
    *  when present (the template page is the source of the authoring context). */
   preset?: { org?: string; projects?: string[] }
+  // ── task-phase-redesign 契约修复 (POST 直建 v4) ──
+  /** RAW initial task_spec (same service-owned-validation discipline as PUT /
+   *  SW-BP9). Present → `taskSpecSchema.parse` (ZodError → 400); absent → the
+   *  v3/v2 baseline `{goal:"",ac:[]}` (NOT parsed — byte-compat with the legacy
+   *  tasks-routes tests). `{format:"v4"}` here creates a v4 draft directly:
+   *  home + manifest.json snapshot carry the flag from the start (SKILL §1's POST
+   *  recipe, previously silently dropped by the route). */
+  task_spec?: unknown
+  /** Top-level project ids (SKILL §1 recipe). When present wins over
+   *  preset.projects; both land in the tasks.project_ids column. */
+  project_ids?: string[]
+  /** Creation-time column bindings (SKILL §1 sends these explicitly; the route
+   *  parses with zod like the PUT path). Absent → DAO defaults ("[]"). */
+  skills?: string[]
+  resources?: ResourceRef[]
+  authoring_resources?: ResourceRef[]
 }
 
 export interface UpdateTaskInput {
@@ -513,7 +543,13 @@ export class TasksService {
    *  task_type persist into task_spec (D4: NOT authoring_resources, which would
    *  double-inject). preset.org/projects → tasks.org/project_ids (D13 coding
    *  template: only org+projects). When task_type is absent, the legacy/v2
-   *  create path is unchanged (no home, no gate — backward compat). */
+   *  create path is unchanged (no home, no gate — backward compat).
+   *
+   *  契约修复 (v4 直建): `task_spec` present → validated via taskSpecSchema and
+   *  used as the initial spec (ZodError → 400). `format:"v4"` now also triggers
+   *  home creation (v4's gate/seed/snapshot all resolve specPath relative to the
+   *  home — a homeless v4 draft is a dead end), even without task_type. Absent
+   *  task_spec → the old unparsed baseline, byte-identical to pre-v4 behavior. */
   createTask(input: CreateTaskInput): TaskDTO {
     const id = randomUUID()
     const now = new Date().toISOString()
@@ -521,20 +557,31 @@ export class TasksService {
     const isV3 = !!input.task_type
 
     // 04 (D13): preset.org overrides the top-level org (the template page is the
-    // source of the authoring context). preset.projects → project_ids.
+    // source of the authoring context). preset.projects → project_ids (the
+    // top-level project_ids field, SKILL §1, wins when present).
     const org = input.preset?.org ?? input.org
-    const projectIds = input.preset?.projects ?? []
+    const projectIds = input.project_ids ?? input.preset?.projects ?? []
 
     // 04 (D4): task_type + skill_groups live in task_spec, NOT authoring_resources.
-    // goal/ac start empty (the authoring chat fills them via spec-field). The raw
-    // JSON is stored without taskSpecSchema.parse here (goal="" / ac=[] would fail
-    // the schema's min(1) — validation happens on PUT [save draft], by which time
-    // the user has filled them in).
-    const taskSpecObj: Record<string, unknown> = { goal: "", ac: [] }
+    // Baseline goal/ac start empty (the authoring chat fills them via spec-field);
+    // the baseline is stored WITHOUT taskSpecSchema.parse (goal="" / ac=[] would
+    // fail the schema's min(1) — validation happens on PUT [save draft], by which
+    // time the user has filled them in). A body-provided task_spec IS parsed —
+    // same ZodError→400 discipline as updateTask (a v4 draft {format:"v4"} parses
+    // clean because goal/ac are optional since ticket 01).
+    let taskSpecObj: Record<string, unknown>
+    if (input.task_spec !== undefined) {
+      taskSpecObj = taskSpecSchema.parse(input.task_spec) as Record<string, unknown>
+    } else {
+      taskSpecObj = { goal: "", ac: [] }
+    }
     if (isV3) {
+      // task_type/skill_groups injection wins over the body (creation-locked
+      // fields are server-owned; SW-BP9 rejects any later tampering).
       taskSpecObj.task_type = input.task_type
       taskSpecObj.skill_groups = input.skill_groups ?? []
     }
+    const isV4 = taskSpecObj.format === "v4"
 
     this.taskDAO.insert({
       id,
@@ -544,6 +591,11 @@ export class TasksService {
       source_chat_session_id: input.source_chat_session_id ?? null,
       task_spec: JSON.stringify(taskSpecObj),
       project_ids: JSON.stringify(projectIds),
+      ...(input.skills !== undefined ? { skills: JSON.stringify(input.skills) } : {}),
+      ...(input.resources !== undefined ? { resources: JSON.stringify(input.resources) } : {}),
+      ...(input.authoring_resources !== undefined
+        ? { authoring_resources: JSON.stringify(input.authoring_resources) }
+        : {}),
       created_at: now,
       updated_at: now,
     })
@@ -565,7 +617,12 @@ export class TasksService {
     // {home}/skills/ as junctions/symlinks (or copy fallback). The "default"
     // group is an empty marker (D17) — the materializer skips it, so no skills
     // are linked (shared skills are already exposed via plugin #1).
-    if (isV3) {
+    // 契约修复: a v4 draft (format:"v4", with or without task_type) also gets a
+    // home — gateV4Phases resolves relative specPaths against it, context.md is
+    // the domain-reading routing table, and the manifest.json snapshot must exist.
+    // Without task_type there are no skill groups → materialize is skipped (the
+    // matt skill family arrives via the clone plugin layer, ticket 11/K15).
+    if (isV3 || isV4) {
       const groups = input.skill_groups ?? []
       // Pass org + resolved project paths + skill groups to createHome so
       // context.md is populated from the start (not empty until the first
@@ -591,9 +648,9 @@ export class TasksService {
     if (!row) {
       throw new Error(`TasksService.createTask: inserted task ${id} not found`)
     }
-    // 06: the POST body may carry goal/ac — overwrite the baseline spec.json
-    // (written empty by createHome) with the real task_spec.
-    this.writeSpecSnapshot(id)
+    // 06: the POST body may carry spec fields — overwrite the baseline
+    // manifest.json (written empty by createHome) with the real task_spec.
+    this.writeManifestSnapshot(id)
     return toDTO(row)
   }
 
@@ -639,7 +696,7 @@ export class TasksService {
     const executions: DeriveExecutionInput[] = this.taskDAO
       .getDb()
       .prepare(
-        `SELECT e.id, e.status, e.phase_index, e.round_index, e.created_at
+        `SELECT e.id, e.status, e.workflow_ref, e.phase_index, e.round_index, e.created_at
            FROM executions e
           WHERE e.phase_index IS NOT NULL
             AND e.id IN (
@@ -707,6 +764,62 @@ export class TasksService {
     const row = this.taskDAO.getById(taskId)
     if (!row) throw new TaskNotFoundError()
     return this.taskHomeService.readArtifactContent(taskId, requestedPath)
+  }
+
+  /** GET /api/tasks/:id/home-file?path= — 契约修复 (v4 batch spec 审阅面). Read a
+   *  `.scratch/**.md` file relative to the task home (the per-phase spec.md the
+   *  kanban opens). Task-exists check FIRST (→404 — also the guard against a
+   *  garbage id materializing a stray home on the write side). Path whitelist /
+   *  escape / suffix guards live in TaskHomeService (→403/404 via
+   *  ArtifactAccessError, same classification as artifacts/content). */
+  readHomeFile(
+    taskId: string,
+    requestedPath: string,
+  ): { path: string; content: string } {
+    const row = this.taskDAO.getById(taskId)
+    if (!row) throw new TaskNotFoundError()
+    return this.taskHomeService.readHomeFile(taskId, requestedPath)
+  }
+
+  /** GET /api/tasks/:id/home-file?path=<dir>&list=1 — ADR-0018 batch-file
+   *  listing (spec family + feedback/report + issues under a `.scratch/` dir).
+   *  Read side: same edit-window freedom as read (guard is the dir-mode home
+   *  whitelist — `.scratch/**`, `.md` only, depth ≤2). */
+  listHomeDir(taskId: string, requestedDir: string): Array<{ path: string; mtime: string; bytes: number }> {
+    const row = this.taskDAO.getById(taskId)
+    if (!row) throw new TaskNotFoundError()
+    return this.taskHomeService.listHomeDir(taskId, requestedDir)
+  }
+
+  /** PUT /api/tasks/:id/home-file — 契约修复 (v4 batch spec 编辑/骨架). Editable
+   *  window = the SAME predicate as spec editing (isSpecEditable: v3 draft/ready,
+   *  v4 until done/aborted/archiving — K16; editing a running round's spec lands
+   *  in the NEXT round's seed, the frozen envelope is untouched). After a successful
+   *  write: ① a transient @@spec_updated notice so the authoring agent re-reads
+   *  instead of overwriting the user's hand-edit next turn (SW-BP4 idiom);
+   *  ② task_artifacts_update SSE (D19 reuse — the OutputViewer refreshes;
+   *  `.scratch` files are not indexed, the event is a benign nudge). No version
+   *  bump: the file is not the task row (write-vs-write is last-writer-wins,
+   *  reconciled by the agent's re-read discipline). */
+  writeHomeFile(
+    taskId: string,
+    requestedPath: string,
+    content: string,
+  ): { path: string; bytes: number } {
+    const row = this.taskDAO.getById(taskId)
+    if (!row) throw new TaskNotFoundError()
+    if (!this.isSpecEditable(row)) {
+      throw new TaskStatusConflictError(
+        `Cannot edit batch files of a task in status '${row.status}'`,
+      )
+    }
+    const result = this.taskHomeService.writeHomeFile(taskId, requestedPath, content)
+    setSpecNotice(taskId, `@@spec_updated: spec.md ${requestedPath} — 用户经看板 UI 修改了该文件，写前请重新读取`)
+    this.sse.emit("taskpool", {
+      event: TASK_ARTIFACTS_UPDATE_EVENT,
+      data: { task_id: taskId },
+    })
+    return result
   }
 
   /** GET /api/tasks/:id/workflow-ref — view the bound workflow's content + source
@@ -948,9 +1061,9 @@ export class TasksService {
 
     const row = this.taskDAO.getById(id)
     if (!row) throw new TaskNotFoundError()
-    // 06: task_spec may have changed (or the name for the spec.json header) —
-    // keep the structured goal/ac snapshot current.
-    this.writeSpecSnapshot(id)
+    // 06: task_spec may have changed — keep the structured manifest.json
+    // snapshot current.
+    this.writeManifestSnapshot(id)
     return toDTO(row)
   }
 
@@ -992,6 +1105,11 @@ export class TasksService {
       goal: "",
       ac: [],
     } as unknown as TaskSpec)
+    // 契约修复: set when the phases write below stamps the v4 flag (an agent may
+    // write phases onto an autosave-created shell that carries neither format nor
+    // task_type — without the stamp such a row falls through BOTH gate branches
+    // in readyTask into the legacy no-gate path).
+    let v4FormatStamped = false
 
     switch (input.field) {
       case "goal":
@@ -1001,14 +1119,23 @@ export class TasksService {
       case "decisions":
       case "goal_confirmed":
       case "ac_confirmed":
-      case "phases":
         // Merge into task_spec JSON (all v3 confirmation/decision fields +
         // the original goal/ac/subunits/integration_goal live in task_spec).
-        // ticket 07: `phases` too — WHOLE-ARRAY PUT (the value validated by
-        // shared's taskPhaseSchema replaces the list; per-phase patching is
-        // deliberately not defined, K1).
         fields.task_spec = JSON.stringify({ ...currentSpec, [input.field]: validatedValue })
         break
+      case "phases": {
+        // ticket 07: `phases` too — WHOLE-ARRAY PUT (the value validated by
+        // shared's taskPhaseSchema replaces the list; per-phase patching is
+        // deliberately not defined, K1). The flag is only stamped upward (v3→v4),
+        // never removed — v4 创建锁 on the PUT path is the downgrade gate.
+        const merged: Record<string, unknown> = { ...currentSpec, phases: validatedValue }
+        if (currentSpec.format !== "v4") {
+          merged.format = "v4"
+          v4FormatStamped = true
+        }
+        fields.task_spec = JSON.stringify(merged)
+        break
+      }
       case "skills":
         fields.skills = JSON.stringify(validatedValue)
         break
@@ -1063,6 +1190,31 @@ export class TasksService {
       setSpecNotice(id, `@@spec_updated: ${input.field}`)
     }
 
+    // 契约修复: if the v4 flag was stamped by this phases write, the row may still
+    // be a homeless autosave shell — the v4 gate/seed resolve relative specPaths
+    // against the home, so backfill it best-effort (non-fatal, mirrors createTask's
+    // materialize-failure handling). The writeManifestSnapshot at the end of
+    // this function re-stamps the empty manifest.json baseline createHome just
+    // wrote.
+    if (v4FormatStamped) {
+      try {
+        if (!fs.existsSync(this.taskHomeService.homePath(id))) {
+          const backfillProjects = parseJSON<string[]>(updated.project_ids, [])
+          const backfillRefs = this.resolveProjectRefs(updated.org, backfillProjects)
+          this.taskHomeService.createHome(id, {
+            org: updated.org,
+            projects: backfillRefs,
+            skillGroups: [],
+          })
+        }
+      } catch (err: unknown) {
+        console.error(
+          `[TasksService] updateSpecField: v4 home backfill failed for ${id} (non-fatal):`,
+          err instanceof Error ? err.message : String(err),
+        )
+      }
+    }
+
     // Context-affecting field changed → refresh context.md (always, regardless
     // of source — the file is the source of truth for the agent's on-demand
     // read). For user-source, also append @@context_updated to the notice.
@@ -1094,31 +1246,34 @@ export class TasksService {
     }
 
     // 06: every spec-field write (any field, any source) refreshes the
-    // structured goal/ac snapshot (spec.json) the task-author agent reads.
-    this.writeSpecSnapshot(id)
+    // structured task_spec snapshot (manifest.json) the task-author agent reads.
+    this.writeManifestSnapshot(id)
 
     return { version: updated.version }
   }
 
-  /** 06 — refresh `{home}/spec.json` from the current tasks row. The
-   *  task-author agent reads this structured snapshot for goal/ac instead of
-   *  curling the API. Best-effort, non-fatal: legacy/v2 tasks have no home dir
-   *  (writeSpecFile is a silent no-op). Called on every spec write (create /
-   *  PUT / spec-field) so the file always reflects the current task_spec. */
-  private writeSpecSnapshot(id: string): void {
+  /** 06 — refresh `{home}/manifest.json` from the current tasks row. The
+   *  task-author agent reads this structured snapshot (format / phases 绑定 /
+   *  decisions / …) instead of curling the API. v4 specs get the v3-only
+   *  schema-default keys filtered on the write side. Best-effort, non-fatal:
+   *  legacy/v2 tasks have no home dir (writeManifestFile is a silent no-op).
+   *  Called on every spec write (create / PUT / spec-field) so the file always
+   *  reflects the current task_spec. */
+  private writeManifestSnapshot(id: string): void {
     try {
       const row = this.taskDAO.getById(id)
       if (!row) return
       const spec = parseJSON<Record<string, unknown>>(row.task_spec, {})
-      this.taskHomeService.writeSpecFile(id, {
+      this.taskHomeService.writeManifestFile(id, {
         version: row.version,
         spec,
         updated_at: row.updated_at,
+        format: typeof spec.format === "string" ? spec.format : undefined,
       })
     } catch (err: unknown) {
       // eslint-disable-next-line no-console
       console.error(
-        `[TasksService] writeSpecFile for ${id} failed (non-fatal):`,
+        `[TasksService] writeManifestFile for ${id} failed (non-fatal):`,
         err instanceof Error ? err.message : String(err),
       )
     }
@@ -1129,7 +1284,8 @@ export class TasksService {
   /** task-phase-redesign (ticket 04, K13): the v4 ready-gate over the phase
    *  contract. For each phase (1-based index `i`, array order):
    *    ① specPath file EXISTS — relative paths resolve under the task home
-   *       (ADR-0011: home is the spec authority), absolute paths verbatim
+   *       (ADR-0011 home register + ADR-0018: home holds the draft baseline /
+   *       last collected final state), absolute paths verbatim
    *       ⇒ miss: `phase:<i>:spec-missing`
    *    ② workflow_ref resolves against the SAME resolution set as v3
    *       (installed built-ins ∪ task-home workflows/, ADR-0013)
@@ -1173,6 +1329,13 @@ export class TasksService {
       }
       // ③ required inputs non-empty after v4 placeholder resolution
       const inputDefs = parseWorkflowInputDefs(resolution.content)
+      // ${phase.batch_rel}: home-relative posix batch dir — the ws-isomorphic
+      // position seed copies the batch into (ADR-0018 spec-consuming flows bind
+      // this). Out-of-home/absolute specPath ⇒ "" → key unresolved (gate misses).
+      const batchRel = (() => {
+        const rel = batchRelPath(homeDir, path.dirname(absSpec))
+        return rel ? rel.split(path.sep).join("/") : ""
+      })()
       const { values, unresolved } = resolveInputValues(
         p.inputValues,
         taskSpec.goal,
@@ -1180,6 +1343,7 @@ export class TasksService {
         {
           phaseSlug: p.slug,
           phaseSpecDir: path.dirname(absSpec),
+          phaseBatchRel: batchRel,
           taskHome: homeDir,
           taskArtifactsDir,
         },
@@ -1544,12 +1708,31 @@ export class TasksService {
    *
    *  Errors: unknown task → TaskNotFoundError; non-v4 spec / missing envelope /
    *  unknown phase index / no bound ws / unavailable ws / active-slot conflict
-   *  → TaskStatusConflictError with a self-explanatory message. */
+   *  → TaskStatusConflictError with a self-explanatory message.
+   *
+   *  Round-level routing override (ADR-0018 打回二分路由): `opts` swaps the
+   *  workflow THIS round executes (e.g. built-in/task-fix) and/or replaces the
+   *  input_values wholesale (synthesized fix-round inputs). The override lands
+   *  ONLY in the rewritten workflow_chain[0] (persisted ⇒ crash re-claim
+   *  reproduces it) — the envelope's frozen phases[] binding stays untouched
+   *  (K16): round 1 of any later re-run returns to the bound workflow.
+   *
+   *  phase-handoff-chaining (ticket 01): `opts.prevHandoffPaths` is the 阶段
+   *  衔接信道 injection — accepted→next-phase and manual-advance pass the home
+   *  absolute handoff.md paths collected by collectPrevHandoffPaths; they land
+   *  in workflow_chain[0].input_values.prev_handoff_paths (newline-joined,
+   *  persisted ⇒ re-claim reproduces). Same-phase rerun/fix never passes it ⇒
+   *  never injected (feedback/fix-feedback 信道 already covers that round). */
   async dispatchPhaseRound(
     taskId: string,
     phaseIdx: number,
     roundIdx: number,
     feedback?: string,
+    opts?: {
+      workflowRefOverride?: string
+      inputOverride?: Record<string, string>
+      prevHandoffPaths?: string[]
+    },
   ): Promise<{ scheduleId: string; schedExecId: string; executionId: string; workspaceId: string }> {
     const task = this.taskDAO.getById(taskId)
     if (!task) throw new TaskNotFoundError()
@@ -1602,15 +1785,21 @@ export class TasksService {
     // All values are strings by construction (phase.inputValues is the gate's
     // resolved Record<string,string>; feedback + stamps stringify to string) —
     // ExecutionService.start is typed Record<string,string>.
+    // ADR-0018: inputOverride REPLACES phase.inputValues wholesale (fix-round
+    // synthesis); stamps/feedback are always appended on top.
+    const effectiveWorkflowRef = opts?.workflowRefOverride?.trim() || phase.workflowRef
     const stepInputValues: Record<string, string> = {
-      ...phase.inputValues,
+      ...(opts?.inputOverride ?? phase.inputValues),
       ...(feedback && feedback.trim() ? { feedback } : {}),
+      // phase-handoff-chaining (ticket 01): 内置注入键 prev_handoff_paths —
+      // accepted 前序的 handoff.md home 绝对路径（换行连接；空 ⇒ 键不出现）。
+      ...(opts?.prevHandoffPaths?.length ? { [PREV_HANDOFF_PATHS_KEY]: opts.prevHandoffPaths.join("\n") } : {}),
       _phase_index: String(phaseIdx),
       _round_index: String(roundIdx),
     }
     const nextConfig = {
       ...config,
-      workflow_chain: [{ workflow_ref: phase.workflowRef, input_values: stepInputValues }],
+      workflow_chain: [{ workflow_ref: effectiveWorkflowRef, input_values: stepInputValues }],
     }
     this.scheduleDAO.updateSchedule(envelope.id, {
       config: JSON.stringify(nextConfig),
@@ -1664,7 +1853,7 @@ export class TasksService {
     let execution: { id: string }
     try {
       execution = registry.service.create(workspaceId, {
-        workflow_ref: phase.workflowRef,
+        workflow_ref: effectiveWorkflowRef,
         triggered_by: "scheduler",
         input_values: stepInputValues,
         // K4/K5: a v4 round is an independent root execution on the REUSED
@@ -1808,9 +1997,9 @@ export class TasksService {
         opts.phaseIdx,
         dbRow?.round_index ?? 1,
       )
-      // task-phase-redesign (ticket 06, K9): v4 collect 上行 — 回收 ws 批次目录中
-      // 执行侧改过/新增的文件回 task home（spec*.md home 权威不回流覆盖；issues/
-      // 报告 ws 权威按 mtime 上行），有回收则 emit task_artifacts_update(taskId)。
+      // task-phase-redesign (ticket 06, K9) + ADR-0018: v4 collect 上行 — 回收 ws
+      // 批次目录中执行侧改过/新增的文件回 task home（批次目录全类 ws 权威，含
+      // spec.md —— 执行侧就地审查更新，home 随回流成终态镜像），有回收则 emit task_artifacts_update(taskId)。
       // 独立 try：collect 失败只降级为「看板产物区晚一帧」，绝不吞掉上面的 slot
       // 释放，也不能跳过下面的回调清理。
       try {
@@ -1956,7 +2145,35 @@ export class TasksService {
         .listByPhase(taskId, pv.index)
         .filter((r) => r.decision === "rejected").length
       const nextRound = rejectedCount + 1
-      const d = await this.dispatchPhaseRound(taskId, pv.index, nextRound, feedback)
+      // ADR-0018 二分路由：缺省 rerun（现行为，绑定流自己再审 spec）；
+      // fix = override task-fix + 合成输入（feedback_path 指向上面刚产物化的
+      // fix-feedback-r{N}.md，home 绝对位 —— task-fix 直读直写 home）。
+      const flow = input.next_flow ?? "rerun"
+      // Synthesized fix inputs point at the WS-isomorphic batch dir (seed just
+      // copied home → {ws}/{rel}): the fix agent edits/reports IN the ws, and
+      // collect flows the final state (incl. an in-place revised spec.md) back
+      // to home — the server-maintained loop (ADR-0018), not direct home writes.
+      const fixHomeDir = this.taskHomeService.homePath(taskId)
+      const fixBatchRel =
+        flow === "fix"
+          ? (() => {
+              const d = this.phaseSpecDir(taskId, pv.index) ?? ""
+              const rel = d ? batchRelPath(fixHomeDir, d) : null
+              return rel ? rel.split(path.sep).join("/") : d
+            })()
+          : ""
+      const routing =
+        flow === "fix"
+          ? {
+              workflowRefOverride: "built-in/task-fix",
+              inputOverride: {
+                phase_spec_dir: fixBatchRel,
+                feedback_path: path.posix.join(fixBatchRel, `fix-feedback-r${input.round_index}.md`),
+                task_artifacts_dir: this.taskHomeService.artifactsDir(taskId),
+              },
+            }
+          : undefined
+      const d = await this.dispatchPhaseRound(taskId, pv.index, nextRound, feedback, routing)
       dispatch = {
         schedule_id: d.scheduleId,
         execution_id: d.executionId,
@@ -1974,7 +2191,10 @@ export class TasksService {
         next_action = "archiving"
         this.beginArchiving(taskId)
       } else if (nextPhaseIndex !== null && spec.autoAdvance !== false) {
-        const d = await this.dispatchPhaseRound(taskId, nextPhaseIndex, 1)
+        // 阶段衔接信道 (ticket 01): 刚 accepted 的本 phase 也在前序集内
+        // (deriveView 重读账本) — 下 phase 首轮开跑即带 handoff 路径。
+        const prevHandoffPaths = this.collectPrevHandoffPaths(row, nextPhaseIndex)
+        const d = await this.dispatchPhaseRound(taskId, nextPhaseIndex, 1, undefined, { prevHandoffPaths })
         dispatch = {
           schedule_id: d.scheduleId,
           execution_id: d.executionId,
@@ -2157,7 +2377,9 @@ export class TasksService {
           `（当前: ${view.phaseViews.map((p) => `phase${p.index}=${p.status}`).join(", ") || "无 phases"}）`,
       )
     }
-    const d = await this.dispatchPhaseRound(taskId, target.index, 1)
+    // 阶段衔接信道 (ticket 01): 手动推进与 autoAdvance 同注入 (AC4)。
+    const prevHandoffPaths = this.collectPrevHandoffPaths(row, target.index)
+    const d = await this.dispatchPhaseRound(taskId, target.index, 1, undefined, { prevHandoffPaths })
     this.setPersistedTaskStatus(taskId, "running")
     this.emitPhaseStatus(taskId, target.index, "running", 1)
     return {
@@ -2209,6 +2431,42 @@ export class TasksService {
         err instanceof Error ? err.message : String(err),
       )
     }
+  }
+
+  /** phase-handoff-chaining (ticket 01): 阶段衔接信道的 server 半 — every
+   *  accepted predecessor's batch-dir `handoff.md` as a home ABSOLUTE path
+   *  (K3: 只注路径不注内容). The accepted verdict comes from the single truth
+   *  (deriveTaskView via deriveView — re-derived fresh, so a caller that just
+   *  appended the acceptance row sees THIS decision too, AC1: 刚 accepted 的
+   *  phase i 也是 i+1 的前序). specDirs resolve through the envelope
+   *  (resolvePhaseSpecDir — the same materialized mount seed/collect use,
+   *  票 04/06); the frozen phases[] is only ever READ (K16). Non-files
+   *  (目录/断链) and duplicates (两 phase 同 specDir) are silently filtered
+   *  alongside missing files (R2: 失败轮缺一角不烧派发).
+   *  Result ascending by phase index; empty ⇒ caller omits the key. */
+  private collectPrevHandoffPaths(row: TaskRow, targetPhaseIndex: number): string[] {
+    const view = this.deriveView(row)
+    const envelope = this.scheduleDAO
+      .findSchedulesByOrigin("task", row.id)
+      .find((r) => r.origin_role === "primary")
+    const configJson = envelope?.config ?? ""
+    const seen = new Set<string>()
+    return view.phaseViews
+      .filter((p) => p.index < targetPhaseIndex && p.status === "accepted")
+      .sort((a, b) => a.index - b.index)
+      .map((p) => resolvePhaseSpecDir(configJson, p.index))
+      .filter((d): d is string => !!d)
+      .map((d) => path.join(d, "handoff.md"))
+      .filter((f) => {
+        if (seen.has(f)) return false
+        try {
+          if (!fs.statSync(f).isFile()) return false
+        } catch {
+          return false
+        }
+        seen.add(f)
+        return true
+      })
   }
 
   /** The phase's absolute batch dir (home mirror of the ws `.scratch/<date>/
