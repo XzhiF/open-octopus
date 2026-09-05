@@ -138,7 +138,7 @@ curl -s -X POST "http://localhost:3001/api/tasks" \\
 # phases（核心）：拆分确认后整数组 PUT；字段 camelCase
 curl -s -X POST "http://localhost:3001/api/tasks/$TASK_ID/spec-field" \\
   -H "Content-Type: application/json" \\
-  -d '{ "field": "phases", "value": [ { "index": 1, "name": "数据层", "slug": "db-layer", "specPath": "./.scratch/20260903/db-layer/spec.md", "workflowRef": "built-in/matt-dev-pipeline", "inputValues": { "idea": "\${phase.slug}", "spec_dir": "\${phase.spec_dir}" } } ] }'
+  -d '{ "field": "phases", "value": [ { "index": 1, "name": "数据层", "slug": "db-layer", "specPath": "./.scratch/20260903/db-layer/spec.md", "workflowRef": "built-in/matt-spec-dev", "inputValues": { "batch_dir": "\${phase.batch_rel}" } } ] }'
 
 # projects (项目列表)
 curl -s -X POST "http://localhost:3001/api/tasks/$TASK_ID/spec-field" \\
@@ -160,15 +160,15 @@ curl -s -X POST "http://localhost:3001/api/tasks/$TASK_ID/spec-field" \\
 
 ## task_spec v4 结构（详见 task-author SKILL.md v3）
 - format: "v4" — v4 判别旗标（必填）
-- phases[]: TaskPhase — { index(1-based), name, slug(kebab，= Batch 目录名), specPath(home 相对，指向 ./.scratch/<YYYYMMDD>/<slug>/spec.md), workflowRef, inputValues }；占位符词表 \`\${phase.slug} \${phase.spec_dir} \${task.home} \${task_artifacts_dir}\`
+- phases[]: TaskPhase — { index(1-based), name, slug(kebab，= Batch 目录名), specPath(home 相对，指向 ./.scratch/<YYYYMMDD>/<slug>/spec.md), workflowRef, inputValues }；占位符词表 \`\${phase.slug} \${phase.spec_dir} \${phase.batch_rel} \${task.home} \${task_artifacts_dir}\`（v4 默认绑 built-in/matt-spec-dev：直读批次 spec 执行，batch_dir 恒填 \${phase.batch_rel}）
 - autoAdvance?: boolean — 验收通过后自动开跑下一 phase（默认开）；关=每 phase 人工启动
 - goal / ac：v4 中降级为摘要与派生项（有 spec 时从中提取），不再是契约主体；看板 UI 已不提供 goal/ac 编辑——需要摘要时由你经 spec-field 单写
 - data_model? / contracts?: 任意结构化产物（schema 不强约束）
 - 看板右栏可直接增删改 phases 并编辑各 phase 的 spec.md（home-file 端点）；用户手改会落 @@spec_updated——写该 phase spec 前先重读盘，勿用旧草稿覆盖
 
 ## 打回与迭代（v4 生命周期内你可被再次唤起）
-- 打回反馈落在该 phase Batch 目录 \`fix-feedback-r{N}.md\`；轻量修走通用修复流（task-fix），范围/方案变则产 \`spec-r{N}.md\`（spec.md 冻结不动）
-- Key Decisions 表行/编号在 rN 修订中保持稳定（改行内、新增标 NEW-rN）——这是跨 phase 决策传播的机械 diff 锚点
+- 打回反馈落在该 phase Batch 目录 \`fix-feedback-r{N}.md\`；人在验收弹窗二选一路由（ADR-0018）：**轻量修复**=server 自动派发 task-fix（你不用绑）；**修订重跑**=重跑绑定流，matt-spec-dev 会先在 workspace 就地审查更新 spec.md 再执行——spec 终态权威在 ws，server collect 回流 home，round-report.md「Spec 修订」节是台账
+- Key Decisions 表行/编号在修订中保持稳定（改行内、新增标 NEW-rN）——这是跨 phase 决策传播的机械 diff 锚点
 - 重大决策变更会连带影响后续 pending phase：产影响清单呈用户批准后整数组 PUT phases
 
 ## 工作原则

@@ -798,9 +798,13 @@ export class TaskHomeService {
   // skeleton before enqueue; overwrite-style, idempotent (no version column
   // involved — file content is not the task row).
 
-  /** Guard shared by readHomeFile/writeHomeFile. Returns the resolved absolute
-   *  path, or throws ArtifactAccessError (FORBIDDEN) on any rule violation. */
-  private resolveHomeFile(taskId: string, requestedPath: string): string {
+  /** Guard shared by readHomeFile/writeHomeFile/listHomeDir. `mode:"file"`
+   *  additionally requires the `.md` suffix; `mode:"dir"` (batch file listing,
+   *  ADR-0018 spec-family visibility) drops the suffix rule but keeps every
+   *  other rule identical (`.scratch/` prefix / no-escape / no absolute /
+   *  no null bytes). Returns the resolved absolute path, or throws
+   *  ArtifactAccessError (FORBIDDEN) on any rule violation. */
+  private resolveHomePath(taskId: string, requestedPath: string, mode: "file" | "dir"): string {
     if (requestedPath.includes("\0")) {
       throw new ArtifactAccessError(
         "home-file path must not contain null bytes",
@@ -830,7 +834,7 @@ export class TaskHomeService {
         "FORBIDDEN",
       )
     }
-    if (!posixRel.toLowerCase().endsWith(".md")) {
+    if (mode === "file" && !posixRel.toLowerCase().endsWith(".md")) {
       throw new ArtifactAccessError(
         `path not whitelisted: ${requestedPath} (only .md files are editable here)`,
         "FORBIDDEN",
@@ -839,11 +843,56 @@ export class TaskHomeService {
     return resolved
   }
 
+  /** List the `.md` files under a `.scratch/` directory of the task home
+   *  (ADR-0018 batch-file visibility: spec.md / spec-rN.md / fix-feedback-rN /
+   *  fix-report-rN / issues/*.md). Depth ≤2 below the given dir, cap 200,
+   *  paths home-relative posix (directly usable as readHomeFile arguments).
+   *  NOT_FOUND when the dir is missing (UI renders the empty state). */
+  listHomeDir(taskId: string, requestedDir: string): Array<{ path: string; mtime: string; bytes: number }> {
+    const home = this.homePath(taskId)
+    const dirAbs = this.resolveHomePath(taskId, requestedDir, "dir")
+    if (!fs.existsSync(dirAbs) || !fs.statSync(dirAbs).isDirectory()) {
+      throw new ArtifactAccessError(`batch dir not found: ${requestedDir}`, "NOT_FOUND")
+    }
+    const out: Array<{ path: string; mtime: string; bytes: number }> = []
+    const walk = (dir: string, depth: number): void => {
+      if (out.length >= 200 || depth > 2) return
+      let entries: fs.Dirent[]
+      try {
+        entries = fs.readdirSync(dir, { withFileTypes: true })
+      } catch {
+        return
+      }
+      for (const ent of entries) {
+        if (out.length >= 200) return
+        const full = path.join(dir, ent.name)
+        if (ent.isDirectory()) {
+          walk(full, depth + 1)
+          continue
+        }
+        if (!ent.isFile() || !ent.name.toLowerCase().endsWith(".md")) continue
+        try {
+          const st = fs.statSync(full)
+          out.push({
+            path: path.relative(home, full).split(path.sep).join("/"),
+            mtime: st.mtime.toISOString(),
+            bytes: st.size,
+          })
+        } catch {
+          // raced away — skip
+        }
+      }
+    }
+    walk(dirAbs, 0)
+    out.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0))
+    return out
+  }
+
   /** Read a `.scratch/**.md` file relative to the task home. NOT_FOUND (404)
    *  when the whitelisted path is missing — the UI maps that to its "create
    *  skeleton" empty state. */
   readHomeFile(taskId: string, requestedPath: string): { path: string; content: string } {
-    const resolved = this.resolveHomeFile(taskId, requestedPath)
+    const resolved = this.resolveHomePath(taskId, requestedPath, "file")
     if (!fs.existsSync(resolved) || !fs.statSync(resolved).isFile()) {
       throw new ArtifactAccessError(
         `batch file not found: ${requestedPath}`,
@@ -857,7 +906,7 @@ export class TaskHomeService {
   /** Write (create or overwrite) a `.scratch/**.md` file under the task home,
    *  creating parent dirs on the way. Returns the byte count written. */
   writeHomeFile(taskId: string, requestedPath: string, content: string): { path: string; bytes: number } {
-    const resolved = this.resolveHomeFile(taskId, requestedPath)
+    const resolved = this.resolveHomePath(taskId, requestedPath, "file")
     fs.mkdirSync(path.dirname(resolved), { recursive: true })
     fs.writeFileSync(resolved, content, "utf-8")
     return { path: requestedPath, bytes: Buffer.byteLength(content, "utf-8") }

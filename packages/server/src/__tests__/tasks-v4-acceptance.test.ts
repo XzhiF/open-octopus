@@ -488,6 +488,68 @@ describe("AC3 — rejected: feedback artefact + next round on the same phase", (
   })
 })
 
+describe("AC3.5 — ADR-0018 打回二分路由 (next_flow)", () => {
+  const posix = (p: string): string => p.split(path.sep).join("/")
+
+  function envelopeConfig(taskId: string): {
+    workflow_chain: Array<{ workflow_ref: string; input_values: Record<string, string> }>
+    phases: Array<{ index: number; workflowRef: string }>
+  } {
+    const { config } = db
+      .prepare("SELECT config FROM schedules WHERE origin_type='task' AND origin_id=? AND origin_role='primary'")
+      .get(taskId) as { config: string }
+    return JSON.parse(config)
+  }
+
+  it("default (no next_flow) = rerun: chain[0] 重跑 phase 绑定流，行为与基线一致", async () => {
+    const { taskId } = seedAwaitingReview()
+    const res = await postAcceptance(taskId, {
+      phase_index: 1, round_index: 1, decision: "rejected", feedback: "范围没做全",
+    })
+    expect(res.status, await res.clone().text()).toBe(200)
+    const cfg = envelopeConfig(taskId)
+    expect(cfg.workflow_chain[0].workflow_ref).toBe("built-in/flow-p1")
+    expect(cfg.phases[0].workflowRef).toBe("built-in/flow-p1") // K16 信封 phases[] 冻结
+    // 派生轮次视图带上实际执行流（round 徽标数据源 — ADR-0018 审计线）。
+    const body = (await res.json()) as { task: { derived: never } }
+    const p1 = phaseOf(body.task.derived, 1)
+    expect(p1.rounds.at(-1)!.exec).toMatchObject({ workflow_ref: "built-in/flow-p1" })
+  })
+
+  it("next_flow=fix: chain override built-in/task-fix + server 合成输入（home 绑定不变）", async () => {
+    const { taskId } = seedAwaitingReview()
+    const res = await postAcceptance(taskId, {
+      phase_index: 1, round_index: 1, decision: "rejected", feedback: "小错直接修", next_flow: "fix",
+    })
+    expect(res.status, await res.clone().text()).toBe(200)
+    const cfg = envelopeConfig(taskId)
+    expect(cfg.workflow_chain[0].workflow_ref).toBe("built-in/task-fix")
+    expect(cfg.phases[0].workflowRef).toBe("built-in/flow-p1") // 只作用本轮的 round 级 override
+    const iv = cfg.workflow_chain[0].input_values
+    // ws 同构相对位（执行侧在 ws 操作，collect 回流 home — ADR-0018）
+    expect(iv.phase_spec_dir).toBe(posix(batchRel("p1")))
+    expect(iv.feedback_path).toBe(posix(path.join(batchRel("p1"), "fix-feedback-r1.md")))
+    expect(iv.task_artifacts_dir).toBe(taskHome.artifactsDir(taskId))
+    expect(iv.feedback).toBe("小错直接修")
+    expect(iv._phase_index).toBe("1")
+    expect(iv._round_index).toBe("2")
+    // executions 行带实际流名。
+    const execRow = db
+      .prepare("SELECT workflow_ref FROM executions WHERE phase_index = 1 AND round_index = 2")
+      .get() as { workflow_ref: string }
+    expect(execRow.workflow_ref).toBe("built-in/task-fix")
+  })
+
+  it("非法 next_flow → 400（zod enum 拦截，账本不脏）", async () => {
+    const { taskId } = seedAwaitingReview()
+    const res = await postAcceptance(taskId, {
+      phase_index: 1, round_index: 1, decision: "rejected", feedback: "x", next_flow: "yolo",
+    })
+    expect(res.status).toBe(400)
+    expect(ledgerRows(db, taskId)).toHaveLength(0)
+  })
+})
+
 describe("AC4 — guards (409/404/400)", () => {
   it("round_index that is not the awaiting round → 409, nothing written", async () => {
     const { taskId } = seedAwaitingReview()

@@ -237,6 +237,13 @@ export interface AcceptanceInput {
   decision: "accepted" | "rejected"
   /** K7: 打回必填反馈文本（route 的 zod 拦空）；accepted 时忽略。 */
   feedback?: string
+  /** ADR-0018 打回二分路由（rejected 时生效）：
+   *  - "rerun"（缺省）— 重跑 phase 绑定流 + feedback 注入（matt-spec-dev 绑定时
+   *    即「修订重跑」：流内 spec 再审段就地更新 ws spec.md，collect 回流终态）。
+   *  - "fix" — 轻量修复：chain override built-in/task-fix，输入由 server 合成
+   *    （phase_spec_dir/feedback_path/task_artifacts_dir），起草期无需绑定 task-fix。
+   *  override 只进 workflow_chain（K16 phases[] 冻结不破），仅作用本轮。 */
+  next_flow?: "fix" | "rerun"
 }
 
 /** What the caller (票 12 dialog) must do next:
@@ -682,7 +689,7 @@ export class TasksService {
     const executions: DeriveExecutionInput[] = this.taskDAO
       .getDb()
       .prepare(
-        `SELECT e.id, e.status, e.phase_index, e.round_index, e.created_at
+        `SELECT e.id, e.status, e.workflow_ref, e.phase_index, e.round_index, e.created_at
            FROM executions e
           WHERE e.phase_index IS NOT NULL
             AND e.id IN (
@@ -765,6 +772,16 @@ export class TasksService {
     const row = this.taskDAO.getById(taskId)
     if (!row) throw new TaskNotFoundError()
     return this.taskHomeService.readHomeFile(taskId, requestedPath)
+  }
+
+  /** GET /api/tasks/:id/home-file?path=<dir>&list=1 — ADR-0018 batch-file
+   *  listing (spec family + feedback/report + issues under a `.scratch/` dir).
+   *  Read side: same edit-window freedom as read (guard is the dir-mode home
+   *  whitelist — `.scratch/**`, `.md` only, depth ≤2). */
+  listHomeDir(taskId: string, requestedDir: string): Array<{ path: string; mtime: string; bytes: number }> {
+    const row = this.taskDAO.getById(taskId)
+    if (!row) throw new TaskNotFoundError()
+    return this.taskHomeService.listHomeDir(taskId, requestedDir)
   }
 
   /** PUT /api/tasks/:id/home-file — 契约修复 (v4 batch spec 编辑/骨架). Editable
@@ -1260,7 +1277,8 @@ export class TasksService {
   /** task-phase-redesign (ticket 04, K13): the v4 ready-gate over the phase
    *  contract. For each phase (1-based index `i`, array order):
    *    ① specPath file EXISTS — relative paths resolve under the task home
-   *       (ADR-0011: home is the spec authority), absolute paths verbatim
+   *       (ADR-0011 home register + ADR-0018: home holds the draft baseline /
+   *       last collected final state), absolute paths verbatim
    *       ⇒ miss: `phase:<i>:spec-missing`
    *    ② workflow_ref resolves against the SAME resolution set as v3
    *       (installed built-ins ∪ task-home workflows/, ADR-0013)
@@ -1304,6 +1322,13 @@ export class TasksService {
       }
       // ③ required inputs non-empty after v4 placeholder resolution
       const inputDefs = parseWorkflowInputDefs(resolution.content)
+      // ${phase.batch_rel}: home-relative posix batch dir — the ws-isomorphic
+      // position seed copies the batch into (ADR-0018 spec-consuming flows bind
+      // this). Out-of-home/absolute specPath ⇒ "" → key unresolved (gate misses).
+      const batchRel = (() => {
+        const rel = batchRelPath(homeDir, path.dirname(absSpec))
+        return rel ? rel.split(path.sep).join("/") : ""
+      })()
       const { values, unresolved } = resolveInputValues(
         p.inputValues,
         taskSpec.goal,
@@ -1311,6 +1336,7 @@ export class TasksService {
         {
           phaseSlug: p.slug,
           phaseSpecDir: path.dirname(absSpec),
+          phaseBatchRel: batchRel,
           taskHome: homeDir,
           taskArtifactsDir,
         },
@@ -1675,12 +1701,20 @@ export class TasksService {
    *
    *  Errors: unknown task → TaskNotFoundError; non-v4 spec / missing envelope /
    *  unknown phase index / no bound ws / unavailable ws / active-slot conflict
-   *  → TaskStatusConflictError with a self-explanatory message. */
+   *  → TaskStatusConflictError with a self-explanatory message.
+   *
+   *  Round-level routing override (ADR-0018 打回二分路由): `opts` swaps the
+   *  workflow THIS round executes (e.g. built-in/task-fix) and/or replaces the
+   *  input_values wholesale (synthesized fix-round inputs). The override lands
+   *  ONLY in the rewritten workflow_chain[0] (persisted ⇒ crash re-claim
+   *  reproduces it) — the envelope's frozen phases[] binding stays untouched
+   *  (K16): round 1 of any later re-run returns to the bound workflow. */
   async dispatchPhaseRound(
     taskId: string,
     phaseIdx: number,
     roundIdx: number,
     feedback?: string,
+    opts?: { workflowRefOverride?: string; inputOverride?: Record<string, string> },
   ): Promise<{ scheduleId: string; schedExecId: string; executionId: string; workspaceId: string }> {
     const task = this.taskDAO.getById(taskId)
     if (!task) throw new TaskNotFoundError()
@@ -1733,15 +1767,18 @@ export class TasksService {
     // All values are strings by construction (phase.inputValues is the gate's
     // resolved Record<string,string>; feedback + stamps stringify to string) —
     // ExecutionService.start is typed Record<string,string>.
+    // ADR-0018: inputOverride REPLACES phase.inputValues wholesale (fix-round
+    // synthesis); stamps/feedback are always appended on top.
+    const effectiveWorkflowRef = opts?.workflowRefOverride?.trim() || phase.workflowRef
     const stepInputValues: Record<string, string> = {
-      ...phase.inputValues,
+      ...(opts?.inputOverride ?? phase.inputValues),
       ...(feedback && feedback.trim() ? { feedback } : {}),
       _phase_index: String(phaseIdx),
       _round_index: String(roundIdx),
     }
     const nextConfig = {
       ...config,
-      workflow_chain: [{ workflow_ref: phase.workflowRef, input_values: stepInputValues }],
+      workflow_chain: [{ workflow_ref: effectiveWorkflowRef, input_values: stepInputValues }],
     }
     this.scheduleDAO.updateSchedule(envelope.id, {
       config: JSON.stringify(nextConfig),
@@ -1795,7 +1832,7 @@ export class TasksService {
     let execution: { id: string }
     try {
       execution = registry.service.create(workspaceId, {
-        workflow_ref: phase.workflowRef,
+        workflow_ref: effectiveWorkflowRef,
         triggered_by: "scheduler",
         input_values: stepInputValues,
         // K4/K5: a v4 round is an independent root execution on the REUSED
@@ -1939,9 +1976,9 @@ export class TasksService {
         opts.phaseIdx,
         dbRow?.round_index ?? 1,
       )
-      // task-phase-redesign (ticket 06, K9): v4 collect 上行 — 回收 ws 批次目录中
-      // 执行侧改过/新增的文件回 task home（spec*.md home 权威不回流覆盖；issues/
-      // 报告 ws 权威按 mtime 上行），有回收则 emit task_artifacts_update(taskId)。
+      // task-phase-redesign (ticket 06, K9) + ADR-0018: v4 collect 上行 — 回收 ws
+      // 批次目录中执行侧改过/新增的文件回 task home（批次目录全类 ws 权威，含
+      // spec.md —— 执行侧就地审查更新，home 随回流成终态镜像），有回收则 emit task_artifacts_update(taskId)。
       // 独立 try：collect 失败只降级为「看板产物区晚一帧」，绝不吞掉上面的 slot
       // 释放，也不能跳过下面的回调清理。
       try {
@@ -2087,7 +2124,35 @@ export class TasksService {
         .listByPhase(taskId, pv.index)
         .filter((r) => r.decision === "rejected").length
       const nextRound = rejectedCount + 1
-      const d = await this.dispatchPhaseRound(taskId, pv.index, nextRound, feedback)
+      // ADR-0018 二分路由：缺省 rerun（现行为，绑定流自己再审 spec）；
+      // fix = override task-fix + 合成输入（feedback_path 指向上面刚产物化的
+      // fix-feedback-r{N}.md，home 绝对位 —— task-fix 直读直写 home）。
+      const flow = input.next_flow ?? "rerun"
+      // Synthesized fix inputs point at the WS-isomorphic batch dir (seed just
+      // copied home → {ws}/{rel}): the fix agent edits/reports IN the ws, and
+      // collect flows the final state (incl. an in-place revised spec.md) back
+      // to home — the server-maintained loop (ADR-0018), not direct home writes.
+      const fixHomeDir = this.taskHomeService.homePath(taskId)
+      const fixBatchRel =
+        flow === "fix"
+          ? (() => {
+              const d = this.phaseSpecDir(taskId, pv.index) ?? ""
+              const rel = d ? batchRelPath(fixHomeDir, d) : null
+              return rel ? rel.split(path.sep).join("/") : d
+            })()
+          : ""
+      const routing =
+        flow === "fix"
+          ? {
+              workflowRefOverride: "built-in/task-fix",
+              inputOverride: {
+                phase_spec_dir: fixBatchRel,
+                feedback_path: path.posix.join(fixBatchRel, `fix-feedback-r${input.round_index}.md`),
+                task_artifacts_dir: this.taskHomeService.artifactsDir(taskId),
+              },
+            }
+          : undefined
+      const d = await this.dispatchPhaseRound(taskId, pv.index, nextRound, feedback, routing)
       dispatch = {
         schedule_id: d.scheduleId,
         execution_id: d.executionId,

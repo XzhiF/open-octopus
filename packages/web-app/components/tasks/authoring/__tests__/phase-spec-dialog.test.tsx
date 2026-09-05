@@ -16,6 +16,7 @@ vi.mock("@/lib/tasks-api", () => {
   return {
     getHomeFile: vi.fn(),
     putHomeFile: vi.fn(),
+    listHomeDir: vi.fn().mockResolvedValue([] as never),
     TaskApiError,
   }
 })
@@ -88,7 +89,7 @@ describe("PhaseSpecDialog — 三态", () => {
     await waitFor(() => expect(putHomeFile).toHaveBeenCalledOnce())
     const [taskId, path, content] = vi.mocked(putHomeFile).mock.calls[0]
     expect(taskId).toBe("t1")
-    expect(path).toBe("./.scratch/20260905/p1/spec.md")
+    expect(path).toBe(".scratch/20260905/p1/spec.md") // ADR-0018: home 相对 posix 位（去 ./ 前缀）
     expect(content).toContain("# Phase 1: P1")
     expect(content).toContain("| # | Decision | Conclusion | Reason |") // K8 行稳定锚点
     expect(content).toContain("## User Stories")

@@ -293,6 +293,50 @@ describe("ticket 04 AC3: unknown placeholder → missing entry, never 500", () =
   })
 })
 
+describe("ADR-0018: ${phase.batch_rel} — ws 同构批次位（spec 消费型流绑定用）", () => {
+  it("home-relative specPath → envelope 冻结 posix 相对批次目录", async () => {
+    const id = insertTask({ format: "v4", task_type: "coding", phases: [] })
+    insertV4Task(id, [
+      {
+        ...validPhase(id, 1),
+        workflowRef: "built-in/v4-no-required-flow",
+        inputValues: { batch_dir: "${phase.batch_rel}" },
+      },
+    ])
+    const res = await app.request(`/api/tasks/${id}/ready`, { method: "POST" })
+    expect(res.status, await res.clone().text()).toBe(200)
+    const sched = db
+      .prepare("SELECT config FROM schedules WHERE origin_type='task' AND origin_id=?")
+      .get(id) as { config: string }
+    const config = JSON.parse(sched.config) as {
+      phases: Array<{ inputValues: Record<string, string> }>
+      workflow_chain: Array<{ input_values: Record<string, string> }>
+    }
+    // posix home-relative —— 与 seed 下行到 ws 的落位一字不差。
+    expect(config.phases[0].inputValues.batch_dir).toBe(".scratch/v4d/p1")
+    expect(config.workflow_chain[0].input_values.batch_dir).toBe(".scratch/v4d/p1")
+  })
+
+  it("specPath 落在 home 外（agent 绝对路径直写）→ batch_rel 解析空 → 409 input，不 500", async () => {
+    const id = insertTask({ format: "v4", task_type: "coding", phases: [] })
+    const outside = path.join(tmpDir, "outside-batch", "spec.md")
+    fs.mkdirSync(path.dirname(outside), { recursive: true })
+    fs.writeFileSync(outside, "# outside\n")
+    insertV4Task(id, [
+      {
+        index: 1, name: "P1", slug: "p1",
+        specPath: outside, // gate ① 存在性 OK（绝对路径 verbatim）
+        workflowRef: "built-in/v4-no-required-flow",
+        inputValues: { batch_dir: "${phase.batch_rel}" },
+      },
+    ])
+    const res = await app.request(`/api/tasks/${id}/ready`, { method: "POST" })
+    expect(res.status).toBe(409)
+    const body = (await res.json()) as { missing: string[] }
+    expect(body.missing).toContain("phase:1:input:batch_dir")
+  })
+})
+
 describe("ticket 04 AC4: v4 materialize embeds per-phase results in the envelope", () => {
   it("AC4a: ready 200 → one draft task-origin envelope; config.format=v4 + phases[] resolved", async () => {
     const id = insertTask({ format: "v4", task_type: "coding", phases: [] })

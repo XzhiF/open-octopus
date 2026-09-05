@@ -1,9 +1,9 @@
 ---
 name: task-author
-description: "Task-Author 规格作者（v4 phase 化）— 与用户对话把模糊需求拆成 Phase 序列（每 phase = 一份 Batch 产物 spec.md+issues/ + 一个 workflow 绑定 + ≥1 round），经拆分确认 gate 与逐 phase 绑定后由用户 [入队]。覆盖 /api/tasks REST API（v4 draft 创建 / spec-field 写 phases / 乐观锁编辑 / 入队 gate / 列表详情中止）、task_spec.format='v4' + phases[] 协议（specPath 约定 ./.scratch/<YYYYMMDD>/<slug>/spec.md、v4 占位符词表 ${phase.slug}/${phase.spec_dir}/${task.home}/${task_artifacts_dir}）、领域阅读（context.md → project 绝对路径 → CONTEXT-MAP/CONTEXT.md/docs/adr/.scratch 惯例 probe → 缺则降级标注）、拆 phase 方法论（deliverable 判据 = phase 末可运行可验收；预算 coding agent 1h / 含 E2E 1.5h；Key Decisions 行/编号稳定纪律 NEW-rN）、matt 技能族产物协议（spec.md 冻结 + spec-rN 并存、issues 原位增量、fix-feedback-rN → fix-report-rN）、工作流目录浏览绑定（GET /api/workflows/built-in 清单+详情 → 逐 phase 确认写回）。当用户需要把一个需求转成可按里程碑验收放行的多 phase 任务规格时加载。"
+description: "Task-Author 规格作者（v4 phase 化）— 与用户对话把模糊需求拆成 Phase 序列（每 phase = 一份 Batch 产物 spec.md+issues/ + 一个 workflow 绑定 + ≥1 round），经拆分确认 gate 与逐 phase 绑定后由用户 [入队]。覆盖 /api/tasks REST API（v4 draft 创建 / spec-field 写 phases / 乐观锁编辑 / 入队 gate / 列表详情中止）、task_spec.format='v4' + phases[] 协议（specPath 约定 ./.scratch/<YYYYMMDD>/<slug>/spec.md、v4 占位符词表 ${phase.slug}/${phase.spec_dir}/${phase.batch_rel}/${task.home}/${task_artifacts_dir}）、领域阅读（context.md → project 绝对路径 → CONTEXT-MAP/CONTEXT.md/docs/adr/.scratch 惯例 probe → 缺则降级标注）、拆 phase 方法论（deliverable 判据 = phase 末可运行可验收；预算 coding agent 1h / 含 E2E 1.5h；Key Decisions 行/编号稳定纪律 NEW-rN）、matt 技能族产物协议（入队前 spec.md 初版 + spec-rN 并存；入队后 ws 权威，执行侧就地修订 collect 回流 home）、打回二分路由（轻量修复=task-fix 自动派发 / 修订重跑=绑定流先再审 spec）、工作流目录浏览绑定（v4 默认 built-in/matt-spec-dev 直读批次 spec 执行）。当用户需要把一个需求转成可按里程碑验收放行的多 phase 任务规格时加载。"
 category: devops
-tags: [task-pool, task-author, phases, phase, batch-dir, task_spec, workflow-binding, gate, spec, task-fix]
-version: 3.0.0
+tags: [task-pool, task-author, phases, phase, batch-dir, task_spec, workflow-binding, gate, spec, matt-spec-dev, task-fix]
+version: 3.1.0
 ---
 
 # Task-Author 规格作者（v4 phase 化）
@@ -76,16 +76,18 @@ task home 根目录的 `context.md` 由 server 维护，含每个所选 project 
 
 ### 目录约定（K10）
 
-每个 phase 一个 Batch 目录，task home 与 workspace 同构（seed/collect 按同相对路径搬运）：
+每个 phase 一个 Batch 目录，task home 与 workspace 同构（seed/collect 按同相对路径搬运）。
+**spec.md 是唯一活文档**（ADR-0018）：入队前你维护初版；入队后执行侧在 ws 就地审查更新，server collect 回流 home 成终态镜像：
 
 ```
 {home}/.scratch/<YYYYMMDD>/<slug>/     ← slug = <kebab-name>-<phase序号>，如 token-metering-2
-├── spec.md        ← 本 phase 唯一权威 spec（matt-verified-requirement 产物格式）
+├── spec.md        ← 本 phase 唯一权威 spec（入队前草稿侧写初版；入队后执行侧 ws 就地改，回流覆盖）
 ├── brief.md       ← 一页纸（可选，给人快速核对）
-├── issues/        ← DAG 票：01-xxx.md … NN-e2e-verification.md
-├── spec-r2.md     ← round-2 spec（打回升级决策时并存新增，见 rN 协议）
+├── issues/        ← DAG 票：01-xxx.md … NN-e2e-verification.md（执行侧原位增量）
+├── spec-r2.md     ← 仅起草窗口的整版修订（ready 后不再新增——执行侧改 spec.md 本身）
 ├── fix-feedback-r1.md ← 人打回 round1 时由 server 产物化（你只读，不预造）
-└── fix-report-r1.md   ← task-fix 修复轮终态由执行侧产出（collect 上行回 home）
+├── fix-report-r1.md   ← task-fix 轻量修复轮由执行侧产出（ws → collect 上行）
+└── round-report.md    ← matt-spec-dev 每轮终报（含「Spec 修订」节：反馈→是否改 spec→改了什么）
 ```
 
 - `<YYYYMMDD>` = 起草日，同 date 前缀 = 同需求批次；slug **path-safe**（`[a-zA-Z0-9][a-zA-Z0-9._-]*`，Zod 强校验），kebab-case + 序号后缀。
@@ -132,7 +134,8 @@ task home 根目录的 `context.md` 由 server 维护，含每个所选 project 
 | 占位符 | 解析为 | 典型用法 |
 |--------|--------|----------|
 | `${phase.slug}` | 本 phase 的 slug | 分支名/产物命名 |
-| `${phase.spec_dir}` | specPath 的 dirname（home 相对 → 绝对） | 工作流的 spec 目录输入 |
+| `${phase.spec_dir}` | specPath 的 dirname（home 相对 → 绝对） | home 侧读写的流（如 task-fix 直绑） |
+| `${phase.batch_rel}` | home **相对** posix 批次目录（`.scratch/<date>/<slug>` = ws 同构位） | ★ spec 消费型流（`matt-spec-dev` 的 `batch_dir`）用它——执行侧只碰 ws，终态由 server collect 回流 |
 | `${task.home}` | task home 绝对路径 | 读快照/登记产物 |
 | `${task_artifacts_dir}` | `{home}/artifacts` | 一般**不用填**——见下 |
 | `${goal}` / `${ac}` | v3 遗留；v4 spec 通常无值 → 空并计入 missing | v4 起草**禁用** |
@@ -165,17 +168,20 @@ task-author 会话内置六个技能（clone 专属 plugin 层，按技能名直
 
 | 文件 | 权威写方 | 方向 |
 |------|----------|------|
-| `spec.md` / `spec-rN.md` | 草稿侧（你） | home → 覆盖 seed 进 ws |
+| `spec.md` | 入队前草稿侧（你）；入队后**执行侧（ws）** | 你写 home → seed 下行；执行侧改 ws → **collect 上行回 home（终态权威在 ws，server 维护回流）** |
+| `spec-rN.md` | 草稿侧（你，仅起草窗口） | home → seed 下行；流取「最大 rN 否则 spec.md」为底本 |
 | `issues/` Status 与票内容增量 | 执行侧 agent | ws → collect 上行 |
-| `fix-report-rN.md` / 执行报告 / e2e 产物 | 执行侧 agent | ws → collect 上行 |
+| `fix-report-rN.md` / `round-report.md` / e2e 产物 | 执行侧 agent | ws → collect 上行 |
 | `fix-feedback-rN.md` | server（人打回时产物化） | home → 随 seed 下行 |
 
-### rN 协议（spec 冻结与并存）
+- **你在对话里改已入队任务的 spec**：K16 隔离窗内你的 home 编辑会在**下一轮 seed** 覆盖 ws 同名（执行侧未回流前有效）；若执行侧本轮已改过同一文件，下一轮 seed 你的版本仍下行——**编辑前先 Read home spec.md 看是不是已被 collect 更新过**（终态可能已含执行侧修订），别拿旧草稿覆盖。
 
-- **冻结点 = 入队**。起草期你随便改 spec.md；ready 之后 spec.md 物理不动。
-- 打回后修复流不传播决策（D14）；**决策级变更**走 round-2 spec：agent 在后续对话里新增 `spec-r2.md`（与 spec.md **并存**，遵守 Key Decisions 行稳定纪律 + `NEW-rN` 标注），影响清单经人批准后改写 phases[]。
+### rN 协议（spec 修订与并存）
+
+- **起草期（入队前）**你随便改 spec.md；重大修订可新增 `spec-r2.md`（与 spec.md **并存**，遵守 Key Decisions 行稳定纪律 + `NEW-rN` 标注），流按「最大 rN 否则 spec.md」取底本。
+- **入队后** spec 终态由执行侧在 ws 就地维护（ADR-0018）：轻量修复流（task-fix）原则上不动 spec、反馈指向规格小错时可就地小改并记 fix-report；**修订重跑流（matt-spec-dev）的 spec 再审段会把修订点逐条记进 round-report.md 的「Spec 修订」节**——你向用户解释「task 空间的 spec 跟着变了」就指这份台账。决策级改判（K8 表行变化）必须让用户在验收面看到。
 - `issues/` 原位增量：新票直接加文件，已写票只改 Status（`ready-for-agent`/`in-progress`/`done`/`skip`）与补充 Verification Result，不重排编号。
-- 修复轮消费规则（执行侧视角，供你写 phase 验收方式时引用）：task-fix 流读「最大 rN 的 spec + `fix-feedback-rN.md`」→ 定点修 → 产 `fix-report-rN.md`（反馈逐条→动作→证据），round 号取自反馈文件名。
+- 打回二分路由（人裁决，ADR-0018）：**轻量修复** = server 即时派发 task-fix（合成 `fix-feedback-rN.md` 输入，产 `fix-report-rN.md`）；**修订重跑** = 重跑绑定流，流内先按反馈再审 spec 再执行。round 号取反馈文件名。
 
 ## API 端点清单（curl — update_task_spec_field 是 HTTP 端点，非 native SDK 工具）
 
@@ -285,9 +291,9 @@ curl -s "http://localhost:$PORT/api/workflows/built-in/built-in%2Ftask-fix" | jq
 ```
 
 **绑定纪律**：
-1. 按 phase 交付物推荐 **1-3 候选 + 一句理由**（为什么适合这个里程碑）；`task-dev`/`superpowers-task-dev` 已失去看板入口（v3 遗留），优先 `matt-dev-pipeline`、`xzf-dev` 等与 spec+issues 产物兼容的流。
+1. 按 phase 交付物推荐 **1-3 候选 + 一句理由**（为什么适合这个里程碑）。**v4 默认推荐 `built-in/matt-spec-dev`**——它就是为你的 Batch 产物造的：直读 `spec.md + issues/` 票 DAG 执行 → CR → ship，零澄清；`task-dev`/`superpowers-task-dev` 是 goal/ac 时代的 v3 遗留，`matt-dev-pipeline`/`xzf-dev` 从 idea 起会**重新澄清再生成 spec**（与你已冻结的 spec 打架），仅当用户明确要「从 idea 现场澄清」才选。
 2. **每个 phase 单独绑**——不同里程碑可以用不同流（如 UI phase 绑带 vision 验证的流）。等用户逐个确认，不代拿决定。
-3. input_values 表单：对目录返回的每个 `required: true` 输入给值——能用 v4 占位符就用（`${phase.spec_dir}` 交付 spec 目录），字面量也行；逐 required 项核对非空，否则 gate 报 `phase:<i>:input:<name>`。
+3. input_values 表单：对目录返回的每个 `required: true` 输入给值——**绑 matt-spec-dev 时 `batch_dir` 恒填 `"${phase.batch_rel}"`**（ws 同构位）；其余占位符能用就用（`${phase.slug}` 交付命名），字面量也行；逐 required 项核对非空，否则 gate 报 `phase:<i>:input:<name>`。
 4. 写回 = §2 的 `field=phases`（整数组，含新 workflowRef/inputValues）。可多次往返，每次 SpecPanel 实时刷新。
 
 ### 自建工作流（目录无合适项时）
@@ -300,9 +306,9 @@ octopus workflow simulate   workflows/my-flow.yaml   # 自动发现 my-flow.test
 ```
 含真实外部副作用（删数据/改 git/调外部 API）的自建流：副作用声明 + 理由写进 `decisions`（§2）。
 
-### task-fix：修复轮专用，草稿侧不预绑
+### task-fix：修复轮专用，起草期永远不绑
 
-`built-in/task-fix` 是**通用修复流**（inputs：`phase_spec_dir` / `feedback_path` / `task_artifacts_dir`(自动注入)）。它由**打回确认弹窗**在 round≥2 时启用（server 注入本轮 `fix-feedback-rN.md` 路径），不是 phase 的首轮绑定——起草期你把 phase 绑到开发流上即可，修复轮的推荐权在打回流程。你可以（应该）在 phase spec 的验收方式里引用这条回路：「打回 → task-fix 自动产 fix-report-rN.md → 人再验收」。
+`built-in/task-fix` 是**轻量修复流**（inputs：`phase_spec_dir` / `feedback_path` / `task_artifacts_dir`(自动注入)）。它的 `feedback_path` 必填但反馈文件要到**打回后**才存在——所以 gate 阶段永远绑不了也不该绑：**人在验收弹窗选「轻量修复」时，server 自动 override 本流并合成两个输入**（ws 同构批次位 + 本轮 `fix-feedback-rN.md`）。你起草期把 phase 绑到 matt-spec-dev 上即可；向用户解释回路时说明：「打回二选一：轻量修复（task-fix 定点修 → fix-report-rN.md）/ 修订重跑（绑定流先再审 spec 再重跑）——路由只作用本轮，phase 绑定不变」。
 
 ## 资源加载（两 scope，一句话说清）
 
@@ -311,7 +317,7 @@ octopus workflow simulate   workflows/my-flow.yaml   # 自动发现 my-flow.test
 
 ## 物化与执行环（你要能向用户解释的下游）
 
-入队后：每 round 开跑 → **seed** 把 `{home}/.scratch/<date>/<slug>/` 物理拷进 ws 同路径（home 覆盖 ws 同名，随 worktree 分支进 PR）→ 执行 → **collect** 回收执行侧改动（issues Status、报告）回 home 并 SSE 推送产物区 → 人工三栏验收（摘要|产物核对|动作）→ 通过：`auto_advance` 开则下一 phase 自动开跑，关则停你 gate；打回：反馈落 `fix-feedback-rN.md`，人一键起修复轮（**同 ws 同分支**）→ 末 phase 通过 → archiving（ADR 顺延、术语 append、归档 commit，全绿才 done）。失败不是红死状态——任何 round 终态都进「待处理」，动作同质（看→放行/重试/中止）。
+入队后：每 round 开跑 → **seed** 把 `{home}/.scratch/<date>/<slug>/` 物理拷进 ws 同路径（home=上轮终态/草稿起点，覆盖 ws 同名，随 worktree 分支进 PR）→ 执行 → **collect** 回收执行侧改动（**含 spec.md 终态**——ADR-0018：批次目录全类以 ws 为权威回流 home）并 SSE 推送产物区 → 人工三栏验收（摘要|产物核对|动作）→ 通过：`auto_advance` 开则下一 phase 自动开跑，关则停你 gate；打回：反馈落 `fix-feedback-rN.md`，人**二选一路由即时开轮**（轻量修复=task-fix / 修订重跑=绑定流先再审 spec；同 ws 同分支）→ 末 phase 通过 → archiving（ADR 顺延、术语 append、归档 commit，全绿才 done）。失败不是红死状态——任何 round 终态都进「待处理」，动作同质（看→放行/重试/中止）。
 
 ## 交互风格
 

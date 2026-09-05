@@ -345,16 +345,20 @@ test("AC2 reject requires feedback; real POST writes the ledger; success chain s
   await expect(dlg2).toBeVisible()
   await dlg2.locator("[data-acceptance-reject]").click()
   await dlg2.locator("[data-reject-feedback]").fill("E2E_TD 成功路径反馈")
+  // ADR-0018 打回二分路由：二选一 radio 是活的，默认 = 修订重跑
+  await expect(dlg2.locator('[data-reject-flow="rerun"] input')).toBeChecked()
+  await expect(dlg2.locator('[data-reject-flow="fix"] input')).toBeEnabled()
   await dlg2.locator("[data-reject-confirm]").click()
-  // D13① agent 形态推荐占位卡（disabled 单选）+ D14 影响清单空态（AC3 的 e2e 面）
+  // 提交后路由回显卡（原 D13① disabled 假卡已兑现为真回显）+ D14 影响清单空态。
   await expect(dlg2.locator("[data-agent-recommend-card]")).toBeVisible({ timeout: 15_000 })
-  await expect(dlg2.locator('[data-recommend-option="fix-flow"] input')).toBeDisabled()
-  await expect(dlg2.locator('[data-recommend-option="spec-r2"] input')).toBeDisabled()
+  await expect(dlg2.locator("[data-agent-recommend-card]")).toContainText("修订重跑")
+  await expect(dlg2.locator('[data-recommend-option="fix-flow"]')).toHaveCount(0)
   await expect(dlg2.locator("[data-impact-list-empty]")).toBeVisible()
   const body = (page as unknown as { __t12: Record<string, unknown> }).__t12
   expect(body.decision).toBe("rejected")
   expect(body.phase_index).toBe(1)
   expect(body.round_index).toBe(1)
+  expect(body.next_flow).toBe("rerun")
   expect(String(body.feedback)).toContain("E2E_TD 成功路径反馈")
   await page.screenshot({ path: screenshotPath("T12-AC2-post-reject-seams.png") })
 })

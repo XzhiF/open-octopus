@@ -82,10 +82,13 @@ export type TaskRoundDecision = "accepted" | "rejected"
 
 /** Only these TaskRow columns feed the derivation. */
 export type DeriveTaskInput = Pick<TaskRow, "id" | "status" | "task_spec">
-/** Only these ExecutionRow columns feed the derivation. */
+/** Only these ExecutionRow columns feed the derivation. `workflow_ref` rides
+ *  along for the round view's ACTUALLY-RUN display (ADR-0018 打回路由: a fix
+ *  round executes task-fix while the phase stays bound to its dev flow — the
+ *  timeline must show what really ran, not the frozen binding). */
 export type DeriveExecutionInput = Pick<
   ExecutionRow,
-  "id" | "status" | "phase_index" | "round_index" | "created_at"
+  "id" | "status" | "workflow_ref" | "phase_index" | "round_index" | "created_at"
 >
 /** Only these ledger columns feed the derivation. */
 export type DeriveAcceptanceInput = Pick<

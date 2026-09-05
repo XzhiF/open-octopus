@@ -170,8 +170,8 @@ describe("AcceptanceModal — AC1 三栏证据面", () => {
   })
 })
 
-describe("AcceptanceModal — AC2 打回反馈必填 + 提交链", () => {
-  it("反馈为空时打回确认 disabled；提交走票 07 契约 body", async () => {
+describe("AcceptanceModal — AC2 打回反馈必填 + 提交链（ADR-0018 二分路由）", () => {
+  it("反馈为空时打回确认 disabled；缺省路由=修订重跑；选轻量修复后 body 带 next_flow=fix", async () => {
     renderModal()
     fireEvent.click(await screen.findByTestId("acceptance-reject"))
     const confirm = screen.getByTestId("reject-confirm") as HTMLButtonElement
@@ -180,6 +180,9 @@ describe("AcceptanceModal — AC2 打回反馈必填 + 提交链", () => {
     expect((screen.getByTestId("reject-confirm") as HTMLButtonElement).disabled).toBe(true)
     fireEvent.change(screen.getByTestId("reject-feedback"), { target: { value: "路由没接上" } })
     expect((screen.getByTestId("reject-confirm") as HTMLButtonElement).disabled).toBe(false)
+    // 路由二选一默认 = 修订重跑
+    expect((document.querySelector('[data-reject-flow="rerun"] input') as HTMLInputElement).checked).toBe(true)
+    expect((document.querySelector('[data-reject-flow="fix"] input') as HTMLInputElement).checked).toBe(false)
 
     mockPostAcceptance.mockResolvedValueOnce({
       task: makeDetail(PHASE1_AWAITING), acceptance_id: "a-1", next_action: "dispatched",
@@ -187,11 +190,25 @@ describe("AcceptanceModal — AC2 打回反馈必填 + 提交链", () => {
     })
     fireEvent.click(screen.getByTestId("reject-confirm"))
     await waitFor(() => expect(mockPostAcceptance).toHaveBeenCalledWith("t1", {
-      phase_index: 1, round_index: 1, decision: "rejected", feedback: "路由没接上",
+      phase_index: 1, round_index: 1, decision: "rejected", feedback: "路由没接上", next_flow: "rerun",
+    }))
+
+    // 切到轻量修复再打一枪 → body 换轨
+    mockPostAcceptance.mockClear()
+    fireEvent.click(screen.getByTestId("acceptance-reject"))
+    fireEvent.change(screen.getByTestId("reject-feedback"), { target: { value: "错别字" } })
+    fireEvent.click(document.querySelector('[data-reject-flow="fix"] input') as HTMLInputElement)
+    mockPostAcceptance.mockResolvedValueOnce({
+      task: makeDetail(PHASE1_AWAITING), acceptance_id: "a-2", next_action: "dispatched",
+      dispatch: { schedule_id: "sch-1", execution_id: "exec-3", workspace_id: "ws-1", phase_index: 1, round_index: 2 },
+    })
+    fireEvent.click(screen.getByTestId("reject-confirm"))
+    await waitFor(() => expect(mockPostAcceptance).toHaveBeenCalledWith("t1", {
+      phase_index: 1, round_index: 1, decision: "rejected", feedback: "错别字", next_flow: "fix",
     }))
   })
 
-  it("提交成功后显示 D13① agent 形态推荐占位卡（disabled）+ D14 影响清单空态", async () => {
+  it("提交成功后显示路由回显卡（活的，非 disabled 占位）+ D14 影响清单空态", async () => {
     renderModal()
     fireEvent.click(await screen.findByTestId("acceptance-reject"))
     fireEvent.change(screen.getByTestId("reject-feedback"), { target: { value: "重做" } })
@@ -200,9 +217,9 @@ describe("AcceptanceModal — AC2 打回反馈必填 + 提交链", () => {
       dispatch: { schedule_id: "sch-1", execution_id: "exec-2", workspace_id: "ws-1", phase_index: 1, round_index: 2 },
     })
     fireEvent.click(screen.getByTestId("reject-confirm"))
-    expect(await screen.findByTestId("agent-recommend-card")).toBeTruthy()
-    expect(document.querySelector('[data-recommend-option="fix-flow"] input')).toBeDisabled()
-    expect(document.querySelector('[data-recommend-option="spec-r2"] input')).toBeDisabled()
+    const card = await screen.findByTestId("agent-recommend-card")
+    expect(card.textContent).toContain("修订重跑")
+    expect(card.querySelector("input[disabled]")).toBeNull() // D13① disabled 假卡已兑现为回显
     expect(screen.getByTestId("impact-list-empty")).toBeTruthy()
   })
 

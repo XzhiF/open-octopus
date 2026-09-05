@@ -1,7 +1,7 @@
 # 任务家目录约定 + 登记不搬迁（产物收集策略）
 
 ## 状态
-Accepted
+Accepted（§3 执行期物化保留）；**spec 回流权威部分被 [ADR-0018](0018-ws-authoritative-spec-and-reject-routing.md) 修订**：v4 批次目录内 `spec*.md` 改为 ws 侧权威、collect 全类回流 home（home=终态镜像）；「登记不搬迁」框架与 artifacts 索引机制不变。
 
 ## 背景
 

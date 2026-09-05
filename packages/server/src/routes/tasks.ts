@@ -91,6 +91,9 @@ const acceptanceBodySchema = z
     round_index: z.number().int().min(1),
     decision: z.enum(["accepted", "rejected"]),
     feedback: z.string().max(20000).optional(),
+    // ADR-0018 打回二分路由（rejected 生效）：rerun=重跑绑定流（缺省，流内再审
+    // spec）；fix=轻量修复轮（server override built-in/task-fix + 合成输入）。
+    next_flow: z.enum(["fix", "rerun"]).optional(),
   })
   .superRefine((b, ctx) => {
     // K7/US10: 打回必填反馈文本（agent 判严重度 + 修复流推荐都吃它）。
@@ -319,18 +322,22 @@ export function createTasksRoutes(
 
   // ── Home batch-file read/write (契约修复: v4 phase spec.md 审阅/编辑面) ────
   // GET /:id/home-file?path=<rel> — read a `.scratch/**.md` under the task home
-  // (the per-phase spec.md). PUT /:id/home-file {path, content} — write/overwrite
-  // (creates parents, so a UI-added phase row can seed a spec skeleton). Guards
-  // (`.scratch` prefix / `.md` suffix / no-escape / no absolute / task-exists→404 /
-  // edit-window→409) live in the service+home service; a body over 512_000 chars
-  // → 400 via homeFileBodySchema. Errors classify through the shared
-  // ArtifactAccessError (FORBIDDEN 403 / NOT_FOUND 404) path already wired below.
+  // (the per-phase spec.md). ?path=<dir>&list=1 — list the dir's .md files
+  // (ADR-0018 spec-family visibility). PUT /:id/home-file {path, content} —
+  // write/overwrite (creates parents, so a UI-added phase row can seed a spec
+  // skeleton). Guards (`.scratch` prefix / `.md` suffix / no-escape / no absolute
+  // / task-exists→404 / edit-window→409) live in the service+home service; a body
+  // over 512_000 chars → 400 via homeFileBodySchema. Errors classify through the
+  // shared ArtifactAccessError (FORBIDDEN 403 / NOT_FOUND 404) path already wired below.
   router.get("/:id/home-file", (c) => {
     const requestedPath = c.req.query("path")
     if (!requestedPath || !requestedPath.trim()) {
       return c.json({ error: "Query param 'path' is required" }, 400)
     }
     try {
+      if (c.req.query("list")) {
+        return c.json({ files: service.listHomeDir(c.req.param("id"), requestedPath) })
+      }
       const result = service.readHomeFile(c.req.param("id"), requestedPath)
       return c.json(result)
     } catch (err: unknown) {
@@ -402,12 +409,13 @@ export function createTasksRoutes(
   // ── Actions ───────────────────────────────────────────────────
 
   // POST /:id/acceptance — the v4 phase 验收 Gate (task-phase-redesign ticket
-  // 07, K3/K6/K7). Body {phase_index, round_index, decision, feedback?}:
+  // 07, K3/K6/K7). Body {phase_index, round_index, decision, feedback?, next_flow?}:
   //   accepted ∧ i<n ∧ autoAdvance → 下一 phase round 1 开跑 (next_action
   //     'dispatched'); autoAdvance=false → 'awaiting_manual_trigger' (人工起)
   //   accepted ∧ i=n               → 持久态 'archiving' (票 08 编排到 done)
   //   rejected (feedback 必填)      → fix-feedback-r{N}.md 进批次目录 + 同 phase
-  //     新 round 开跑
+  //     新 round 开跑；next_flow(ADR-0018)：缺省 'rerun'=重跑绑定流（流内再审
+  //     spec），'fix'=override built-in/task-fix + server 合成输入（轻量修复轮）
   // 409 = 派生态非待验收 / round 不匹配 / 该轮已验收 / 非 v4（state conflict,
   // not a body defect — the client re-GETs /:id's `derived` view and re-opens the
   // gate on whatever round is now awaiting）; 404 任务不存在; 400 body 非法
@@ -422,6 +430,7 @@ export function createTasksRoutes(
         round_index: parsed.round_index,
         decision: parsed.decision,
         ...(parsed.feedback !== undefined ? { feedback: parsed.feedback } : {}),
+        ...(parsed.next_flow !== undefined ? { next_flow: parsed.next_flow } : {}),
       }
       const result = await service.acceptance(c.req.param("id"), input)
       return c.json(result)

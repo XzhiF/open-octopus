@@ -88,6 +88,10 @@ export type TaskRoundDecision = "accepted" | "rejected"
 export interface TaskRoundExec {
   id: string
   status: string
+  /** ADR-0018: the workflow this round ACTUALLY ran (打回轻量修复轮 = task-fix
+   *  while the phase binding stays the dev flow). Older servers omit it →
+   *  consumers fall back to the phase's workflowRef. */
+  workflow_ref?: string
   phase_index: number | null
   round_index: number | null
   created_at: string
@@ -375,6 +379,11 @@ export interface AcceptanceInput {
   round_index: number
   decision: "accepted" | "rejected"
   feedback?: string
+  /** ADR-0018 打回二分路由（rejected 生效）：
+   *  "rerun"（缺省）= 重跑绑定流（matt-spec-dev 绑定时即「修订重跑」——流内
+   *  spec 再审段在 ws 就地更新 spec）；"fix" = 轻量修复（server override
+   *  built-in/task-fix + 合成输入）。 */
+  next_flow?: "fix" | "rerun"
 }
 
 /** What the caller must do next (票 07):
@@ -586,6 +595,30 @@ export async function putHomeFile(
     throw new TaskApiError(body.error ?? `HTTP ${res.status}`, res.status)
   }
   return res.json()
+}
+
+// ============ Home batch-dir LIST (ADR-0018: spec 家族/反馈/报告 可见性) ============
+
+/** One `.md` under a `.scratch/` batch dir (home-side mirror = last collected
+ *  final state; spec.md / spec-rN.md / fix-feedback-rN.md / fix-report-rN.md /
+ *  issues/*.md). */
+export interface HomeFileListingEntry {
+  path: string
+  mtime: string
+  bytes: number
+}
+
+/** GET /api/tasks/:id/home-file?path=<dir>&list=1 — list the batch dir's .md
+ *  files (depth ≤2, cap 200). 404 dir missing → TaskApiError(404); the dialog
+ *  renders its empty state from that. */
+export async function listHomeDir(taskId: string, relDir: string): Promise<HomeFileListingEntry[]> {
+  const res = await fetch(buildUrl(`/${taskId}/home-file`, { path: relDir, list: "1" }))
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}))
+    throw new TaskApiError(body.error ?? `HTTP ${res.status}`, res.status)
+  }
+  const data = (await res.json()) as { files: HomeFileListingEntry[] }
+  return data.files
 }
 
 // ============ Workflow-ref view (task board: click bound workflow → full YAML) ============
