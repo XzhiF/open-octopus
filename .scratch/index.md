@@ -52,3 +52,4 @@
 | 48 | goal-task-dev | 2026-08-28 | feat/goal-task-dev | done (pipeline PASS: 83 units+30 API+18 browser+real-run probes; AC9 incl. multi-baseline migration fix; T6 found pre-existing status-mirror bug → 另案) |
 | 49 | task-phase-redesign | 2026-09-03 | feat/task-phase-redesign | done (pipeline PASS: 13 impl+1 E2E tickets, 8 gate rounds 回归∅, review 3-axis 15 findings 2 cycles, 主故事 e2e 真跑 4连绿; E2E 独立揪出 root-guard 掩盖洞; ws-delete FK 预存洞→另案) |
 | 50 | spec-driven-workflow | 2026-09-05 | octopus-feat-v4-direct-create-ui | in-progress (manifest 更名+ws 权威 collect+matt-spec-dev+打回二分路由, ADR-0018; 01-05 done, 06 回归收口中) |
+| 51 | phase-handoff-chaining | 2026-09-05 | octopus-feat-v4-direct-create-ui | in-progress (phase 衔接信道: handoff.md + prev_handoff_paths 自动注入, ADR-0019; spec + 5 票, walkthrough skip, E2E run 真LLM SKIP) |
