@@ -1,0 +1,15 @@
+{
+  "schedule_id": "40f2bc1b-ab0c-4b37-8253-7182dce09cdf",
+  "workflow_ref": "e2e-td-ho",
+  "input_values": {
+    "batch_dir": ".scratch/20260906/e2e-td-ho-p2-ho-1788630617400",
+    "task_artifacts_dir": "C:\\Users\\EDY\\.octopus\\tasks\\96182fc0-a41d-46c8-b220-a16c1984e028\\artifacts",
+    "task_workflows_dir": "C:\\Users\\EDY\\.octopus\\tasks\\96182fc0-a41d-46c8-b220-a16c1984e028\\workflows",
+    "prev_handoff_paths": "C:\\Users\\EDY\\.octopus\\tasks\\96182fc0-a41d-46c8-b220-a16c1984e028\\.scratch\\20260906\\e2e-td-ho-p1-ho-1788630617400\\handoff.md",
+    "_phase_index": "2",
+    "_round_index": "1"
+  },
+  "expected_prev_handoff_paths": "C:\\Users\\EDY\\.octopus\\tasks\\96182fc0-a41d-46c8-b220-a16c1984e028\\.scratch\\20260906\\e2e-td-ho-p1-ho-1788630617400\\handoff.md",
+  "actual_prev_handoff_paths": "C:\\Users\\EDY\\.octopus\\tasks\\96182fc0-a41d-46c8-b220-a16c1984e028\\.scratch\\20260906\\e2e-td-ho-p1-ho-1788630617400\\handoff.md",
+  "has_key": true
+}

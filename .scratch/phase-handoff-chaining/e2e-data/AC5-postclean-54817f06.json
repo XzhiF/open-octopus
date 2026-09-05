@@ -1,0 +1,12 @@
+{
+  "left": {
+    "tasks": 1,
+    "schedules": 1,
+    "executions": 0,
+    "homeExists": false,
+    "wsExists": false
+  },
+  "cleanupProblems": [
+    "db: FOREIGN KEY constraint failed"
+  ]
+}

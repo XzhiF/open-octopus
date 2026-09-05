@@ -1,0 +1,8 @@
+{
+  "phase2_exec": {
+    "id": "9343162f-c875-4ae7-b788-7eefaad8fa42",
+    "status": "completed"
+  },
+  "runtime_value": "$inputs.prev_handoff_paths",
+  "contains_phase1_path": false
+}

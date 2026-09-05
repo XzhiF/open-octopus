@@ -1,0 +1,145 @@
+{
+  "status": 200,
+  "body": {
+    "task": {
+      "id": "96182fc0-a41d-46c8-b220-a16c1984e028",
+      "org": "E2E_TD_org",
+      "name": "E2E_TD_PHASEHANDOFF_HAPPY_ho-1788630617400",
+      "status": "running",
+      "task_spec": {
+        "goal": "E2E_TD_PHASEHANDOFF_HAPPY_ho-1788630617400",
+        "resources": [],
+        "authoring_resources": [],
+        "skill_groups": [],
+        "decisions": [],
+        "ac_confirmed": [],
+        "format": "v4",
+        "phases": [
+          {
+            "index": 1,
+            "name": "阶段一",
+            "slug": "e2e-td-ho-p1-ho-1788630617400",
+            "specPath": ".scratch/20260906/e2e-td-ho-p1-ho-1788630617400/spec.md",
+            "workflowRef": "e2e-td-ho",
+            "inputValues": {
+              "batch_dir": "${phase.batch_rel}"
+            }
+          },
+          {
+            "index": 2,
+            "name": "阶段二",
+            "slug": "e2e-td-ho-p2-ho-1788630617400",
+            "specPath": ".scratch/20260906/e2e-td-ho-p2-ho-1788630617400/spec.md",
+            "workflowRef": "e2e-td-ho",
+            "inputValues": {
+              "batch_dir": "${phase.batch_rel}"
+            }
+          }
+        ],
+        "autoAdvance": true,
+        "task_type": "coding"
+      },
+      "authoring_resources": [],
+      "resources": [],
+      "skills": [],
+      "project_ids": [
+        "e2e-td-ho-ho-1788630617400"
+      ],
+      "workflow_ref": null,
+      "version": 3,
+      "source_chat_session_id": null,
+      "deleted_at": null,
+      "created_at": "2026-09-05T17:50:17.796Z",
+      "updated_at": "2026-09-05T17:50:17.920Z",
+      "completed_at": null,
+      "schedule_status": "claimed",
+      "scheduled_at": null,
+      "children": [
+        {
+          "schedule_id": "40f2bc1b-ab0c-4b37-8253-7182dce09cdf",
+          "name": "task-96182fc0-a41d-46c8-b220-a16c1984e028-primary",
+          "status": "claimed",
+          "origin_role": "primary",
+          "workflow_ref": "e2e-td-ho",
+          "scheduled_at": null,
+          "workspace_id": null,
+          "execution_ref": {
+            "id": "1f9c5e8e-8603-4d2c-afdc-bb84154af49e",
+            "status": "running",
+            "execution_id": "ce23435b-4b5a-47c4-b0b5-370d57699477",
+            "workspace_id": "6afce0c7-89b1-473f-b5e2-daff072f7338",
+            "triggered_at": "2026-09-05T17:50:21.018Z",
+            "completed_at": null,
+            "duration_ms": null,
+            "error_summary": null
+          }
+        }
+      ],
+      "derived": {
+        "taskStatus": "running",
+        "isV4": true,
+        "phaseViews": [
+          {
+            "index": 1,
+            "name": "阶段一",
+            "slug": "e2e-td-ho-p1-ho-1788630617400",
+            "workflowRef": "e2e-td-ho",
+            "status": "accepted",
+            "rounds": [
+              {
+                "roundIndex": 1,
+                "exec": {
+                  "id": "9c21ebc7-1c6d-47c8-9c88-0745f56c3fe9",
+                  "status": "completed",
+                  "workflow_ref": "e2e-td-ho",
+                  "phase_index": 1,
+                  "round_index": 1,
+                  "created_at": "2026-09-05T17:50:17.923Z"
+                },
+                "state": "succeeded",
+                "decision": "accepted"
+              }
+            ],
+            "currentRound": 1,
+            "acceptedRound": 1,
+            "awaitingRound": null
+          },
+          {
+            "index": 2,
+            "name": "阶段二",
+            "slug": "e2e-td-ho-p2-ho-1788630617400",
+            "workflowRef": "e2e-td-ho",
+            "status": "running",
+            "rounds": [
+              {
+                "roundIndex": 1,
+                "exec": {
+                  "id": "ce23435b-4b5a-47c4-b0b5-370d57699477",
+                  "status": "running",
+                  "workflow_ref": "e2e-td-ho",
+                  "phase_index": 2,
+                  "round_index": 1,
+                  "created_at": "2026-09-05T17:50:21.020Z"
+                },
+                "state": "running",
+                "decision": null
+              }
+            ],
+            "currentRound": 1,
+            "acceptedRound": null,
+            "awaitingRound": null
+          }
+        ]
+      }
+    },
+    "next_action": "dispatched",
+    "dispatch": {
+      "schedule_id": "40f2bc1b-ab0c-4b37-8253-7182dce09cdf",
+      "execution_id": "ce23435b-4b5a-47c4-b0b5-370d57699477",
+      "workspace_id": "6afce0c7-89b1-473f-b5e2-daff072f7338",
+      "phase_index": 2,
+      "round_index": 1
+    },
+    "acceptance_id": "6348f08c-65c7-45e8-a07f-5a6fdb2e89cb"
+  }
+}

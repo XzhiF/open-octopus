@@ -1,0 +1,10 @@
+{
+  "left": {
+    "tasks": 0,
+    "schedules": 0,
+    "executions": 0,
+    "homeExists": false,
+    "wsExists": false
+  },
+  "cleanupProblems": []
+}
