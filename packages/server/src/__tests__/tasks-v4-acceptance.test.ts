@@ -272,6 +272,7 @@ let app: Hono
 let taskHome: TaskHomeService
 let fakeHome: string
 let realHome: string | undefined
+let realUserProfile: string | undefined
 let sseEvents: Array<{ event: string; data: Record<string, unknown> }>
 
 function postAcceptance(taskId: string, body: Record<string, unknown>) {
@@ -294,8 +295,10 @@ beforeEach(() => {
   capturedCallbacks.clear()
   vi.clearAllMocks()
   realHome = process.env.HOME
+  realUserProfile = process.env.USERPROFILE
   fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-ac-home-"))
   process.env.HOME = fakeHome
+  process.env.USERPROFILE = fakeHome // os.homedir() on Windows reads USERPROFILE
   taskHome = new TaskHomeService(path.join(fakeHome, ".octopus"))
   sse = new SSEService()
   sseEvents = []
@@ -307,6 +310,8 @@ beforeEach(() => {
 afterEach(() => {
   if (realHome === undefined) delete process.env.HOME
   else process.env.HOME = realHome
+  if (realUserProfile === undefined) delete process.env.USERPROFILE
+  else process.env.USERPROFILE = realUserProfile
   fs.rmSync(fakeHome, { recursive: true, force: true })
   db.close()
 })

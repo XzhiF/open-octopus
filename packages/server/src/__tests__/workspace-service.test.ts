@@ -121,17 +121,23 @@ describe("WorkspaceService", () => {
   // instead of silently producing a broken workspace.
   describe("createFromSpec — source_path resolution (ticket 08)", () => {
     let realHome: string | undefined
+    let realUserProfile: string | undefined
     let fakeHome: string
 
     beforeEach(() => {
       realHome = process.env.HOME
+      realUserProfile = process.env.USERPROFILE
       fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), "ws-svc-home-"))
+      // Fake both: os.homedir() reads $HOME on POSIX, %USERPROFILE% on Windows.
       process.env.HOME = fakeHome
+      process.env.USERPROFILE = fakeHome
     })
 
     afterEach(() => {
       if (realHome === undefined) delete process.env.HOME
       else process.env.HOME = realHome
+      if (realUserProfile === undefined) delete process.env.USERPROFILE
+      else process.env.USERPROFILE = realUserProfile
       if (fs.existsSync(fakeHome)) fs.rmSync(fakeHome, { recursive: true, force: true })
     })
 
