@@ -30,11 +30,11 @@ done
 
 **需改文件**：仅 `packages/core-pack/workflows/matt-spec-dev.yaml` + `matt-spec-dev.test.yaml`（已存在，扩展 2 场景）+ 新 sim fixture `.scratch/phase-handoff-chaining/sim/`（repo 相对路径，simulate cwd=repo 根）。
 
-**机制选型**：simulate 断言层无文件断言（assertions.ts 仅 status/vars/node_trace/node_outputs/logs 5 种）→ AC3/AC4 用场景级 `real_execution: [spec-resolve]` 真跑 bash + 真 fixture 路径（存在+ghost+Windows 式虚构混合）断言 vars；**AC1/AC2 是 ship-pr agent 提示词驱动的产物，simulate mock 不落盘——降级为提示词契约静态核对（grep 三段标题/覆写措辞），真 LLM 文件行为按 spec Execution Decision 2（深验 SKIP）口径留给 ticket 03/事后 dogfood**。`octopus setup` 实际落位 = `~/.octopus/resources/installed/workflows/built-in/matt-spec-dev/matt-spec-dev.yaml`（目录/文件布局，票内 Verification 写的扁平路径有误）；全局 `octopus` shim 直链本仓 `packages/cli/dist`，setup 源=本仓 core-pack。
+**机制选型**：simulate 断言层无文件断言（assertions.ts 仅 status/vars/node_trace/node_outputs/logs 5 种）→ AC3/AC4 用场景级 `real_execution: [spec-resolve]` 真跑 bash + 真 fixture 路径（存在+ghost+Windows 式虚构混合）断言 vars；**AC1/AC2 是 ship-pr agent 提示词驱动的产物，simulate mock 不落盘——降级为提示词契约静态核对（grep 三段标题/覆写措辞），真 LLM 文件行为按 spec Execution Decision 2（深验 SKIP）口径留给 ticket 05/事后 dogfood**。`octopus setup` 实际落位 = `~/.octopus/resources/installed/workflows/built-in/matt-spec-dev/matt-spec-dev.yaml`（目录/文件布局，票内 Verification 写的扁平路径有误）；全局 `octopus` shim 直链本仓 `packages/cli/dist`，setup 源=本仓 core-pack。
 
 ## Acceptance Criteria
 
-- [x] AC1: ship-pr 提示词含产物步：头块（phase/slug · 终态轮次 rN · PR · 批次路径）+ `## Protected Decisions` / `## Confirmed Interfaces` / `## Gap Targets` 三段（yaml ship-pr 步 4，grep 静态核对）。注：simulate 断言层无文件断言（assertions.ts 仅 status/vars/node_trace/node_outputs/logs 5 种）、mock agent 不落盘 —— 真 LLM 文件行为按 spec Execution Decision 2 深验 SKIP 口径由 ticket 03 e2e API↔fs 交叉 / dogfood 承接
+- [x] AC1: ship-pr 提示词含产物步：头块（phase/slug · 终态轮次 rN · PR · 批次路径）+ `## Protected Decisions` / `## Confirmed Interfaces` / `## Gap Targets` 三段（yaml ship-pr 步 4，grep 静态核对）。注：simulate 断言层无文件断言（assertions.ts 仅 status/vars/node_trace/node_outputs/logs 5 种）、mock agent 不落盘 —— 真 LLM 文件行为按 spec Execution Decision 2 深验 SKIP 口径由 ticket 05 e2e API↔fs 交叉 / dogfood 承接
 - [x] AC2: 同 AC1 口径 —— 提示词明写「每轮整页重写、禁止追加 — 头块轮次 rN 即最新终态」
 - [x] AC3: simulate 场景 4 spec-resolve **真执行**（`real_execution`）：真实相对路径 ×2 + ghost + Windows 式反斜杠虚构混合 → `vars.prev_handoffs` 只含存在者（保序、换行 JSON 转义）、`prev_handoff_count: "2"`，缺失静默过滤不 fail
 - [x] AC4: simulate 场景 5 真执行无 `prev_handoff_paths` 输入：precheck 照常 OK、`prev_handoffs: ""` / `prev_handoff_count: "0"`（= variables 初始值），路由行为与改前一致
