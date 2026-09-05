@@ -1,5 +1,7 @@
 # matt-spec-dev.test.yaml — 模拟器场景（验证入口：octopus workflow simulate matt-spec-dev.yaml）
-# 场景 = ADR-0018 三条路径：首跑直执行 / 打回反馈轮先就地再审 spec / 批次目录断链 fail-fast。
+# 场景 1-3 = ADR-0018 三条路径：首跑直执行 / 打回反馈轮先就地再审 spec / 批次目录断链 fail-fast。
+# 场景 4-5 = phase-handoff-chaining（ADR-0019）：spec-resolve 真执行（real_execution）
+#   探测 prev_handoff_paths 存在子集 / 无输入回归。
 scenarios:
   # =============================================================
   # Scenario 1: 首跑（round 1，无反馈）— spec-resolve 定位底本 → 跳过
@@ -149,3 +151,106 @@ scenarios:
           - code-review
           - integration-verify
           - ship-pr
+
+  # =============================================================
+  # Scenario 4: 前序交接探测（AC3 — phase-handoff-chaining）— spec-resolve
+  #   **真执行**（real_execution），fixture 批次 = .scratch/phase-handoff-chaining/sim/batch
+  #   （spec.md + issues/ 在场）。prev_handoff_paths 混合：真实相对路径 + ghost +
+  #   Windows 式反斜杠虚构路径 → vars.prev_handoffs 只含存在者（换行 JSON-safe）、
+  #   count=1，缺失静默过滤不 fail。
+  # =============================================================
+  - name: "prev-handoff probe — real spec-resolve filters missing paths silently"
+    real_execution:
+      - spec-resolve
+    inputs:
+      batch_dir: ".scratch/phase-handoff-chaining/sim/batch"
+      prev_handoff_paths: |-
+        .scratch/phase-handoff-chaining/sim/prev-phase/ghost-handoff.md
+        .scratch/phase-handoff-chaining/sim/prev-phase/handoff.md
+        C:\Users\ghost\.octopus\tasks\t-ghost\specs\prev\handoff.md
+        .scratch/phase-handoff-chaining/sim/prev-phase2/handoff.md
+    mocks:
+      ticket-dag:
+        output: "1 ticket executed: 01 done"
+      integration-gate:
+        output: '{"vars_update": {"build_status": "passed"}}'
+        update_vars:
+          build_status: "passed"
+      code-review:
+        output: '{"vars_update": {"review_status": "passed"}}'
+        update_vars:
+          review_status: "passed"
+      integration-verify:
+        output: '{"vars_update": {"verify_status": "passed"}}'
+        update_vars:
+          verify_status: "passed"
+      ship-pr:
+        output: '{"vars_update": {"pr_url": "https://github.com/XzhiF/octopus/pull/58"}}'
+        update_vars:
+          pr_url: "https://github.com/XzhiF/octopus/pull/58"
+    assertions:
+      status: "completed"
+      vars:
+        batch_ok: "true"
+        spec_file: ".scratch/phase-handoff-chaining/sim/batch/spec.md"
+        has_feedback: "false"
+        # 存在子集保序（第 2/4 行），ghost 与 Windows 式反斜杠虚构路径静默过滤；
+        # 多条经 JSON \n 转义换行连接
+        prev_handoffs: |-
+          .scratch/phase-handoff-chaining/sim/prev-phase/handoff.md
+          .scratch/phase-handoff-chaining/sim/prev-phase2/handoff.md
+        prev_handoff_count: "2"
+      node_trace:
+        executed:
+          - spec-resolve
+          - ticket-dag
+          - ship-pr
+        skipped:
+          - fail-fast
+          - spec-review
+
+  # =============================================================
+  # Scenario 5: 回归（AC4）— 无 prev_handoff_paths 输入（首 phase/v3 式绑定）时
+  #   spec-resolve 真执行行为与改前一致：precheck 照常 OK，prev_* 停在初始值
+  #   （"" / "0"），不 fail、不引入路由变化。
+  # =============================================================
+  - name: "no prev input — spec-resolve behaves exactly as before (regression)"
+    real_execution:
+      - spec-resolve
+    inputs:
+      batch_dir: ".scratch/phase-handoff-chaining/sim/batch"
+    mocks:
+      ticket-dag:
+        output: "1 ticket executed: 01 done"
+      integration-gate:
+        output: '{"vars_update": {"build_status": "passed"}}'
+        update_vars:
+          build_status: "passed"
+      code-review:
+        output: '{"vars_update": {"review_status": "passed"}}'
+        update_vars:
+          review_status: "passed"
+      integration-verify:
+        output: '{"vars_update": {"verify_status": "passed"}}'
+        update_vars:
+          verify_status: "passed"
+      ship-pr:
+        output: '{"vars_update": {"pr_url": "https://github.com/XzhiF/octopus/pull/59"}}'
+        update_vars:
+          pr_url: "https://github.com/XzhiF/octopus/pull/59"
+    assertions:
+      status: "completed"
+      vars:
+        batch_ok: "true"
+        spec_file: ".scratch/phase-handoff-chaining/sim/batch/spec.md"
+        has_feedback: "false"
+        prev_handoffs: ""
+        prev_handoff_count: "0"
+      node_trace:
+        executed:
+          - spec-resolve
+          - ticket-dag
+          - ship-pr
+        skipped:
+          - fail-fast
+          - spec-review

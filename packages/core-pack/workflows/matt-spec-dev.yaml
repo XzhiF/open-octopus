@@ -7,7 +7,7 @@ kind: Workflow
 # 与 matt-dev-pipeline 的分工：那条流从 idea 出发（swarm 研究 + interaction
 # 澄清 + 现场生成 spec）；本流**只消费已冻结的 Batch 目录**（task-author 起草、
 # 用户拆分确认过），零澄清、零 spec 再生成：
-#   spec-resolve (bash — 确定性核对 + spec 定位 + 反馈探测，不烧 agent token)
+#   spec-resolve (bash — 确定性核对 + spec 定位 + 反馈/前序交接探测，不烧 agent token)
 #     ├─ ok=false → fail-fast (bash — 当场失败并说明原因)
 #     └─ ok=true  → spec-review (agent — 仅反馈轮：在 ws 就地审查更新 spec.md)
 #                  → ticket-dag  (dynamic_sub_workflow — issues/ DAG 并发实现)
@@ -44,6 +44,9 @@ inputs:
   task_artifacts_dir:
     description: "任务产物目录 — 看板 dispatch 管理键自动注入，绑定表单无需手填"
     required: false
+  prev_handoff_paths:
+    description: "已 accepted 前序 phase 的 handoff.md 绝对路径（换行连接，home 位）— 看板 accept→下一 phase 开轮时自动注入（内置键，非占位符），绑定表单无需手填；spec-resolve 探测存在性后写 vars.prev_handoffs / prev_handoff_count，缺失路径静默跳过"
+    required: false
 
 # --- 变量（spec-resolve 写，下游读；串行链上的路由真相）---
 variables:
@@ -57,6 +60,8 @@ variables:
   review_status: ""
   verify_status: ""
   pr_url: ""
+  prev_handoffs: ""
+  prev_handoff_count: "0"
 
 # --- 资源依赖（DAG 票节点 + review/ship 用到的 skill 子集）---
 requires:
@@ -175,6 +180,29 @@ nodes:
         if [ -n "$FB" ]; then HAS_FB="true"; FB="$BATCH/fix-feedback-r$FB.md"; fi
       fi
 
+      # 前序交接探测（phase-handoff-chaining K3）：prev_handoff_paths = 看板 accept→
+      # 下一 phase 开轮注入的内置键（home 绝对路径，换行连接）。未注入时
+      # substituteVars 原样留下字面量 → 单引号赋值 + 字面量比对判空（双引号会被
+      # bash 展开掉 "$inputs" 前缀，判空失真）。反斜杠→正斜杠归一：Windows 注入值
+      # 为 C:\ 形路径，归一后 [ -f ] 可测且 vars_update JSON 值无裸反斜杠（JSON-safe）。
+      # 缺失路径静默跳过不 fail（R2）。
+      PREV_JSON=""; PREV_COUNT=0
+      # substituteVars 对「未解析引用」**原样保留**整段字面量。哨兵用 '$inputs' 裸词
+      # 拼接构造（裸词 $inputs 不匹配 inputs.* 分支 → 不被替换），否则比较两侧会
+      # 同时被替换成实值、判空失真。
+      PH_RAW='$inputs.prev_handoff_paths'
+      PH_UNRESOLVED='$inputs'".prev_handoff_paths"
+      if [ "$PH_RAW" = "$PH_UNRESOLVED" ]; then PH_RAW=""; fi
+      while IFS= read -r PH_LINE; do
+        PH_LINE=$(printf '%s' "$PH_LINE" | tr -d '\r' | tr '\\' '/')
+        [ -z "$PH_LINE" ] && continue
+        if [ -f "$PH_LINE" ]; then
+          if [ "$PREV_COUNT" -gt 0 ]; then PREV_JSON="$PREV_JSON\\n"; fi
+          PREV_JSON="$PREV_JSON$PH_LINE"
+          PREV_COUNT=$((PREV_COUNT+1))
+        fi
+      done <<< "$PH_RAW"
+
       # 分支名：worktree 在 projects/ 下（ws 根不是 git repo）
       BR=""
       REPO=$(ls -d projects/*/ 2>/dev/null | head -1)
@@ -184,12 +212,13 @@ nodes:
 
       if [ -n "$REASON" ]; then
         echo "PRECHECK FAILED: $REASON"
-        printf '{"vars_update": {"batch_ok": "false", "batch_reason": "%s", "ticket_count": "%s"}}\n' "$REASON" "${TICKETS:-0}"
+        printf '{"vars_update": {"batch_ok": "false", "batch_reason": "%s", "ticket_count": "%s", "prev_handoffs": "%s", "prev_handoff_count": "%s"}}\n' "$REASON" "${TICKETS:-0}" "$PREV_JSON" "$PREV_COUNT"
         exit 0
       fi
 
+      if [ "$PREV_COUNT" -gt 0 ]; then echo "PREV HANDOFFS: count=$PREV_COUNT (前序交接在场 — 下游先读)"; fi
       echo "PRECHECK OK: spec=$SPEC tickets=$TICKETS feedback=$HAS_FB branch=$BR"
-      printf '{"vars_update": {"batch_ok": "true", "batch_reason": "", "spec_file": "%s", "has_feedback": "%s", "latest_feedback": "%s", "branch": "%s", "ticket_count": "%s"}}\n' "$SPEC" "$HAS_FB" "$FB" "$BR" "$TICKETS"
+      printf '{"vars_update": {"batch_ok": "true", "batch_reason": "", "spec_file": "%s", "has_feedback": "%s", "latest_feedback": "%s", "branch": "%s", "ticket_count": "%s", "prev_handoffs": "%s", "prev_handoff_count": "%s"}}\n' "$SPEC" "$HAS_FB" "$FB" "$BR" "$TICKETS" "$PREV_JSON" "$PREV_COUNT"
 
   - id: fail-fast
     type: bash
@@ -217,6 +246,9 @@ nodes:
       - 反馈（逐条）: $vars.latest_feedback
       - spec 底本: $vars.spec_file
       - 票: $inputs.batch_dir/issues/
+      - 前序交接（若列出的先读；空则本 phase 无前序）: $vars.prev_handoffs
+        —— 就地修订 spec 时不得回退其 Protected Decisions，接口引用优先复用其
+        Confirmed Interfaces 指向的现物。
 
       ═══ 执行纪律 ═══
       1. 逐条判断反馈性质：实现缺陷（spec 不变，票不变）/ 规格错误（spec 需改）/
@@ -266,7 +298,7 @@ nodes:
       {
         "id": "ticket-NN",
         "type": "agent",
-        "prompt": "你是实现者，执行 ticket NN。\n\nSpec: <spec 文件>\nTicket: $inputs.batch_dir/issues/NN-slug.md\n代码仓: projects/ 下（先探路找 monorepo 根）。\n\n使用 implement skill 和 tdd skill 方法论:\n1. Read spec + ticket 理解需求\n2. 探索类似代码（找 analog，grep 跨包）\n3. TDD 实现（DB → API → UI → test）\n4. 运行 ticket 的 Verification Method\n5. 更新 ticket Status: done 或 skip（原位回写票文件）\n\n你是多个并发实现者之一。只关注你的 ticket。\n不要修改其他 ticket 的文件。不要改 spec*.md。不要 commit。\n\n最后输出 vars_update: {\"vars_update\": {\"ticket_NN_status\": \"done|skip\"}}",
+        "prompt": "你是实现者，执行 ticket NN。\n\nSpec: <spec 文件>\nTicket: $inputs.batch_dir/issues/NN-slug.md\n代码仓: projects/ 下（先探路找 monorepo 根）。\n前序交接（有则先读；空则本 phase 无前序）: $vars.prev_handoffs — 不得回退其中 Protected Decisions；接口/表/组件/命令直接复用其中 Confirmed Interfaces 给的现物，不回炉重设计。\n\n使用 implement skill 和 tdd skill 方法论:\n1. Read spec + ticket 理解需求\n2. 探索类似代码（找 analog，grep 跨包）\n3. TDD 实现（DB → API → UI → test）\n4. 运行 ticket 的 Verification Method\n5. 更新 ticket Status: done 或 skip（原位回写票文件）\n\n你是多个并发实现者之一。只关注你的 ticket。\n不要修改其他 ticket 的文件。不要改 spec*.md。不要 commit。\n\n最后输出 vars_update: {\"vars_update\": {\"ticket_NN_status\": \"done|skip\"}}",
         "skills": ["implement", "tdd"],
         "depends_on": ["ticket-XX"]
       }
@@ -367,7 +399,7 @@ nodes:
       4. 输出 vars_update: {"vars_update": {"verify_status": "passed|failed"}}
 
   # ------------------------------------------------------------
-  # Stage 3: Ship（代码仓 Git PR + 批次目录 round-report.md）
+  # Stage 3: Ship（代码仓 Git PR + 批次目录 round-report.md + handoff.md 阶段交接）
   # ------------------------------------------------------------
 
   - id: ship-pr
@@ -382,6 +414,7 @@ nodes:
       ═══ 上下文 ═══
       Batch 目录（ws 根下，与 task home 同构）: $inputs.batch_dir
       代码仓: projects/ 下的 git repo（worktree，分支 $vars.branch）
+      前序交接（有则先读，其 Gap Targets 未闭环项须承接或显式关闭；空则本 phase 无前序）: $vars.prev_handoffs
 
       ═══ 执行 ═══
       1. 生成/补全 $inputs.batch_dir/round-report.md（spec-review 已写「Spec 修订」节的，
@@ -399,6 +432,16 @@ nodes:
          - gh pr list --head $vars.branch --state open
          - 已有 → gh pr edit（保留 MANUAL 区块）
          - 无 → gh pr create
+
+      4. 产/覆写 $inputs.batch_dir/handoff.md — 面向下游 phase 执行会话的精选交接短页
+         （每轮整页重写、禁止追加 — 头块轮次 rN 即最新终态）:
+         - 头块：phase 名与 batch slug · 终态轮次 rN（当前轮号 — 从批内
+           fix-feedback-rN.md / round-report.md 现态判定，首跑 = r1）· PR 链接 · 批次路径
+         - `## Protected Decisions` — 本 phase 定死、下游不得回退的决策（对照 spec.md
+           Key Decisions 表）
+         - `## Confirmed Interfaces` — 下游可直接复用的接口/表/组件/命令，给路径不给描述
+         - `## Gap Targets` — 如实遗留：skip 票、noted 风险、未竟事项（含承接的前序 Gap 去向）
+         纪律：一屏内精选短页；细节引用 round-report.md 不复制；只写 ws（collect 管回流 home）。
 
       ═══ 纪律 ═══
       - 只 commit 代码仓变更；批次目录（ws 根 .scratch/ 下）不进代码仓 git。

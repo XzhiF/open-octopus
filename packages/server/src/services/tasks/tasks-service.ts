@@ -1708,13 +1708,24 @@ export class TasksService {
    *  input_values wholesale (synthesized fix-round inputs). The override lands
    *  ONLY in the rewritten workflow_chain[0] (persisted ⇒ crash re-claim
    *  reproduces it) — the envelope's frozen phases[] binding stays untouched
-   *  (K16): round 1 of any later re-run returns to the bound workflow. */
+   *  (K16): round 1 of any later re-run returns to the bound workflow.
+   *
+   *  phase-handoff-chaining (ticket 01): `opts.prevHandoffPaths` is the 阶段
+   *  衔接信道 injection — accepted→next-phase and manual-advance pass the home
+   *  absolute handoff.md paths collected by collectPrevHandoffPaths; they land
+   *  in workflow_chain[0].input_values.prev_handoff_paths (newline-joined,
+   *  persisted ⇒ re-claim reproduces). Same-phase rerun/fix never passes it ⇒
+   *  never injected (feedback/fix-feedback 信道 already covers that round). */
   async dispatchPhaseRound(
     taskId: string,
     phaseIdx: number,
     roundIdx: number,
     feedback?: string,
-    opts?: { workflowRefOverride?: string; inputOverride?: Record<string, string> },
+    opts?: {
+      workflowRefOverride?: string
+      inputOverride?: Record<string, string>
+      prevHandoffPaths?: string[]
+    },
   ): Promise<{ scheduleId: string; schedExecId: string; executionId: string; workspaceId: string }> {
     const task = this.taskDAO.getById(taskId)
     if (!task) throw new TaskNotFoundError()
@@ -1773,6 +1784,9 @@ export class TasksService {
     const stepInputValues: Record<string, string> = {
       ...(opts?.inputOverride ?? phase.inputValues),
       ...(feedback && feedback.trim() ? { feedback } : {}),
+      // phase-handoff-chaining (ticket 01): 内置注入键 prev_handoff_paths —
+      // accepted 前序的 handoff.md home 绝对路径（换行连接；空 ⇒ 键不出现）。
+      ...(opts?.prevHandoffPaths?.length ? { prev_handoff_paths: opts.prevHandoffPaths.join("\n") } : {}),
       _phase_index: String(phaseIdx),
       _round_index: String(roundIdx),
     }
@@ -2170,7 +2184,10 @@ export class TasksService {
         next_action = "archiving"
         this.beginArchiving(taskId)
       } else if (nextPhaseIndex !== null && spec.autoAdvance !== false) {
-        const d = await this.dispatchPhaseRound(taskId, nextPhaseIndex, 1)
+        // 阶段衔接信道 (ticket 01): 刚 accepted 的本 phase 也在前序集内
+        // (deriveView 重读账本) — 下 phase 首轮开跑即带 handoff 路径。
+        const prevHandoffPaths = this.collectPrevHandoffPaths(row, nextPhaseIndex)
+        const d = await this.dispatchPhaseRound(taskId, nextPhaseIndex, 1, undefined, { prevHandoffPaths })
         dispatch = {
           schedule_id: d.scheduleId,
           execution_id: d.executionId,
@@ -2353,7 +2370,9 @@ export class TasksService {
           `（当前: ${view.phaseViews.map((p) => `phase${p.index}=${p.status}`).join(", ") || "无 phases"}）`,
       )
     }
-    const d = await this.dispatchPhaseRound(taskId, target.index, 1)
+    // 阶段衔接信道 (ticket 01): 手动推进与 autoAdvance 同注入 (AC4)。
+    const prevHandoffPaths = this.collectPrevHandoffPaths(row, target.index)
+    const d = await this.dispatchPhaseRound(taskId, target.index, 1, undefined, { prevHandoffPaths })
     this.setPersistedTaskStatus(taskId, "running")
     this.emitPhaseStatus(taskId, target.index, "running", 1)
     return {
@@ -2405,6 +2424,31 @@ export class TasksService {
         err instanceof Error ? err.message : String(err),
       )
     }
+  }
+
+  /** phase-handoff-chaining (ticket 01): 阶段衔接信道的 server 半 — every
+   *  accepted predecessor's batch-dir `handoff.md` as a home ABSOLUTE path
+   *  (K3: 只注路径不注内容). The accepted verdict comes from the single truth
+   *  (deriveTaskView via deriveView — re-derived fresh, so a caller that just
+   *  appended the acceptance row sees THIS decision too, AC1: 刚 accepted 的
+   *  phase i 也是 i+1 的前序). specDirs resolve through the envelope
+   *  (resolvePhaseSpecDir — the same materialized mount seed/collect use,
+   *  票 04/06); the frozen phases[] is only ever READ (K16). Missing
+   *  handoff.md files are silently filtered (R2: 失败轮缺一角不烧派发).
+   *  Result ascending by phase index; empty ⇒ caller omits the key. */
+  private collectPrevHandoffPaths(row: TaskRow, targetPhaseIndex: number): string[] {
+    const view = this.deriveView(row)
+    const envelope = this.scheduleDAO
+      .findSchedulesByOrigin("task", row.id)
+      .find((r) => r.origin_role === "primary")
+    const configJson = envelope?.config ?? ""
+    return view.phaseViews
+      .filter((p) => p.index < targetPhaseIndex && p.status === "accepted")
+      .sort((a, b) => a.index - b.index)
+      .map((p) => resolvePhaseSpecDir(configJson, p.index))
+      .filter((d): d is string => !!d)
+      .map((d) => path.join(d, "handoff.md"))
+      .filter((f) => fs.existsSync(f))
   }
 
   /** The phase's absolute batch dir (home mirror of the ws `.scratch/<date>/

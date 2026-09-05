@@ -183,6 +183,26 @@ export function AcceptanceModal({ task, open, onOpenChange, onMutated }: Accepta
     return hit.length > 0 ? hit : artifacts
   }, [artifacts, awaitingPhase, rejectedSeam])
 
+  // ── 前序交接提示行（phase-handoff-chaining 票 04 / spec K6） ──────────
+  // decision=accepted 语境（确认按钮上方）∧ 存在下一 phase → 一行提示：
+  // 本 phase handoff.md 连同已 accepted 前序，accepted 时由 server 作
+  // prev_handoff_paths 自动注入下一 phase 执行会话。数据源 = phaseViews
+  // 既有派生态（acceptedRound!==null ⇔ status="accepted"，无新 API）。
+  // N = 已 accepted 前序数 + 1（含本 phase）；末 phase（无下一站）不显示；
+  // 打回面板展开（rejected 态）不显示。
+  const hasNextPhase = useMemo(() => {
+    if (!awaitingPhase) return false
+    const pos = phaseViews.findIndex((p) => p.index === awaitingPhase.index)
+    return pos >= 0 && pos + 1 < phaseViews.length
+  }, [awaitingPhase, phaseViews])
+
+  const handoffCount = useMemo(() => {
+    if (!awaitingPhase) return 0
+    return phaseViews.filter(
+      (p) => p.index < awaitingPhase.index && p.acceptedRound !== null,
+    ).length + 1
+  }, [awaitingPhase, phaseViews])
+
   // ── 动作 ──────────────────────────────────────────────────────────
 
   const handleAccept = useCallback(async () => {
@@ -406,6 +426,11 @@ export function AcceptanceModal({ task, open, onOpenChange, onMutated }: Accepta
 
               {awaitingPhase ? (
                 <>
+                  {hasNextPhase && !rejectOpen && (
+                    <p className="text-[10px] text-muted-foreground" data-handoff-hint data-testid="handoff-hint">
+                      {`本 phase 的 handoff.md 连同已 accepted 共 ${handoffCount} 个前序交接，将自动进入下一 phase 执行会话`}
+                    </p>
+                  )}
                   <Button
                     className="w-full"
                     size="sm"

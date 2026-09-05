@@ -517,6 +517,70 @@ test("B: real accept on autoAdvance=false parks at the gate and surfaces 启动�
   await expect(page.locator("[data-sonner-toast]", { hasText: "不在信封已解析" })).toBeVisible({ timeout: 15_000 })
 })
 
+// ── 票 04 (phase-handoff-chaining): 前序交接提示行可见性 ──────────────
+
+/** phase1 已 accepted（账本直插）+ phaseK 有 completed 链 → phaseK awaiting_review。 */
+async function phaseKAwaitingAfterP1Accepted(name: string, totalPhases: number, awaitingIndex: number): Promise<string> {
+  const taskId = await makeV4Task(name, { phases: totalPhases })
+  const uid = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+  await dbRun(
+    `INSERT INTO task_phase_acceptances (id, task_id, phase_index, round_index, decision, feedback, decided_at)
+     VALUES (?, ?, 1, 1, 'accepted', NULL, ?)`,
+    `E2E_TD_PHASEHANDOFF_acc_${uid}`, taskId, hoursAgo(2),
+  )
+  await insertPhaseRoundExec(taskId, { phaseIndex: awaitingIndex, roundIndex: 1, execStatus: "completed", createdAt: hoursAgo(1), durationMs: 600_000 })
+  await setTaskStatus(taskId, "running") // → 派生 awaiting_review（phaseK 待验收）
+  return taskId
+}
+
+test("票04: handoff hint shows N=1 for phase1 awaiting; hidden while reject panel open", async ({ page }) => {
+  test.skip(!serverAvailable || !dbAvailable, "server or rw-sqlite unavailable")
+  const taskId = await awaitingTaskFixture("E2E_TD_PHASEHANDOFF_提示行")
+  await page.goto("/tasks")
+  const card = page.locator(`[data-task-column="awaiting_review"] [data-task-id="${taskId}"]`)
+  await expect(card).toBeVisible({ timeout: 20_000 })
+  await card.locator("[data-task-accept-btn]").click()
+  const dialog = page.locator("[data-acceptance-modal]")
+  await expect(dialog).toBeVisible()
+
+  const hint = dialog.locator("[data-handoff-hint]")
+  await expect(hint).toBeVisible({ timeout: 15_000 })
+  await expect(hint).toHaveText("本 phase 的 handoff.md 连同已 accepted 共 1 个前序交接，将自动进入下一 phase 执行会话")
+  await page.screenshot({ path: screenshotPath("T04-handoff-hint-n1.png") })
+
+  // rejected 态（打回面板展开）→ 不显示
+  await dialog.locator("[data-acceptance-reject]").click()
+  await expect(hint).toHaveCount(0)
+  await page.screenshot({ path: screenshotPath("T04-handoff-hint-reject-hidden.png") })
+})
+
+test("票04: handoff hint N=2 with one accepted predecessor; hidden on last phase", async ({ page }) => {
+  test.skip(!serverAvailable || !dbAvailable, "server or rw-sqlite unavailable")
+  // 三 phase：p1 accepted、p2 待验收（有下一站）→ N=2
+  const t3 = await phaseKAwaitingAfterP1Accepted("E2E_TD_PHASEHANDOFF_次阶段", 3, 2)
+  await page.goto("/tasks")
+  const card3 = page.locator(`[data-task-column="awaiting_review"] [data-task-id="${t3}"]`)
+  await expect(card3).toBeVisible({ timeout: 20_000 })
+  await card3.locator("[data-task-accept-btn]").click()
+  const dialog3 = page.locator("[data-acceptance-modal]")
+  await expect(dialog3).toBeVisible()
+  await expect(dialog3.locator("[data-handoff-hint]")).toBeVisible({ timeout: 15_000 })
+  await expect(dialog3.locator("[data-handoff-hint]")).toContainText("共 2 个前序交接")
+  await page.keyboard.press("Escape")
+
+  // 两 phase：p1 accepted、p2（末）待验收 → 无下一站，不显示
+  const t2 = await phaseKAwaitingAfterP1Accepted("E2E_TD_PHASEHANDOFF_末阶段", 2, 2)
+  await page.goto("/tasks")
+  const card2 = page.locator(`[data-task-column="awaiting_review"] [data-task-id="${t2}"]`)
+  await expect(card2).toBeVisible({ timeout: 20_000 })
+  await card2.locator("[data-task-accept-btn]").click()
+  const dialog2 = page.locator("[data-acceptance-modal]")
+  await expect(dialog2).toBeVisible()
+  await expect(dialog2.locator("[data-acceptance-approve]")).toBeVisible({ timeout: 15_000 })
+  await expect(dialog2.locator("[data-handoff-hint]")).toHaveCount(0)
+  await page.screenshot({ path: screenshotPath("T04-handoff-hint-last-phase-hidden.png") })
+})
+
 // ── B 面: archiving 卡「重试归档」 ────────────────────────────────────
 
 test("B: archiving card surfaces 重试归档 button wired to POST archive/retry", async ({ page }) => {
