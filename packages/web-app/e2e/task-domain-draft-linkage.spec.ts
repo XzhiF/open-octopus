@@ -160,7 +160,7 @@ test.describe("Story C: Draft autosave + spec↔agent linkage + resource loading
 
   // ── AC2: spec-field SSE → SpecPanel reflects (goal/ac/projects/skills) ──
 
-  test("agent spec-field tool → spec_field_update SSE + spec.json 快照反映所有字段", async ({ page }) => {
+  test("agent spec-field tool → spec_field_update SSE + manifest.json 快照反映所有字段", async ({ page }) => {
     test.skip(!serverAvailable, "Server not available")
     test.skip(createdTaskIds.length === 0, "No task from autosave")
     const taskId = createdTaskIds[0]!
@@ -190,7 +190,7 @@ test.describe("Story C: Draft autosave + spec↔agent linkage + resource loading
     )
 
     // UI-adjacent assert (R6): the goal write propagates to the home's
-    // spec.json snapshot (server rewrites it on every spec-field write — the
+    // manifest.json snapshot (server rewrites it on every spec-field write — the
     // surface the authoring agent reads). v4-only UI removed the GoalAcCard
     // reflection; the snapshot + SSE + DB trio preserves the same chain check.
     // (2026-08-19 bugfix context: ALL drafts open the AuthoringWorkspace — the
@@ -200,7 +200,7 @@ test.describe("Story C: Draft autosave + spec↔agent linkage + resource loading
       .poll(
         () => {
           if (!home) return null
-          const snapPath = path.join(home, "spec.json")
+          const snapPath = path.join(home, "manifest.json")
           if (!fs.existsSync(snapPath)) return null
           try {
             return (JSON.parse(fs.readFileSync(snapPath, "utf-8")).spec as { goal?: string } | undefined)?.goal ?? null
@@ -208,7 +208,7 @@ test.describe("Story C: Draft autosave + spec↔agent linkage + resource loading
             return null
           }
         },
-        { message: "spec.json snapshot did not reflect goal", timeout: 10_000 },
+        { message: "manifest.json snapshot did not reflect goal", timeout: 10_000 },
       )
       .toBe(goalText)
 
@@ -252,7 +252,7 @@ test.describe("Story C: Draft autosave + spec↔agent linkage + resource loading
     expect(JSON.parse(dbRow!.project_ids), "DB project_ids should match").toEqual(projects)
 
     await page.screenshot({ path: screenshotPath("C-02-spec-panel-linked.png"), fullPage: true })
-    log("spec.json snapshot + SSE reflected all 4 spec-field updates (goal/ac/skills/projects)")
+    log("manifest.json snapshot + SSE reflected all 4 spec-field updates (goal/ac/skills/projects)")
   })
 
   // ── AC3: authoring_resources prompt-inject (SKILL.md loaded) ──────

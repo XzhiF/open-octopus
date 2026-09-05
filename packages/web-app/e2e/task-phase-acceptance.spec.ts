@@ -360,19 +360,19 @@ test("AC2 reject requires feedback; real POST writes the ledger; success chain s
 })
 
 // ── AC3（拆分）: 影响清单批准写回链的服务端半程 — spec-field(phases) →
-//    home spec.json 内容变化 + version bump（API 回读断言）。
+//    home manifest.json 内容变化 + version bump（API 回读断言）。
 //    web 半程（勾选→updateSpecField(phases) 整数组）由组件测试
 //    acceptance-modal.test.tsx「ImpactApprovalList」断言；e2e 里弹窗无法
 //    注入 items（server 无 impact API — v4.1 接缝，票头已记）。 ──────────
 
-test("AC3 phases write-back roundtrip: spec-field(phases) changes home spec.json + bumps version", async () => {
+test("AC3 phases write-back roundtrip: spec-field(phases) changes home manifest.json + bumps version", async () => {
   test.skip(!serverAvailable || !dbAvailable, "server or rw-sqlite unavailable")
   const { request } = await import("@playwright/test")
-  const taskId = await makeV4Task("E2E_TD_影响写回链", { withHome: true }) // v3 create 建 home → spec.json 快照可回读
+  const taskId = await makeV4Task("E2E_TD_影响写回链", { withHome: true }) // v3 create 建 home → manifest.json 快照可回读
   const before = await getTask(taskId)
   const beforePhases = (before.task_spec as { phases: Array<Record<string, unknown>> }).phases
   const ctxBefore = await (await request.newContext()).get(`${SERVER_URL}/api/tasks/${taskId}/context`)
-  const specBefore = (await ctxBefore.json()) as { specContent: string }
+  const manifestBefore = (await ctxBefore.json()) as { manifestContent: string }
 
   // 模拟「批准影响清单」的写回：整数组替换 + workflowRef 改写（组件测试证明
   // ImpactApprovalList 发出的正是这个 body）。
@@ -391,10 +391,10 @@ test("AC3 phases write-back roundtrip: spec-field(phases) changes home spec.json
   expect(afterPhases[1].workflowRef).toBe("task-fix") // API 回读内容变化
 
   const ctxAfter = await (await request.newContext()).get(`${SERVER_URL}/api/tasks/${taskId}/context`)
-  const specAfter = (await ctxAfter.json()) as { specContent: string }
-  const snap = JSON.parse(specAfter.specContent) as { spec: { phases: Array<Record<string, unknown>> } }
-  expect(snap.spec.phases[1].workflowRef).toBe("task-fix") // home spec.json 快照随写变更
-  expect(specAfter.specContent).not.toBe(specBefore.specContent)
+  const manifestAfter = (await ctxAfter.json()) as { manifestContent: string }
+  const snap = JSON.parse(manifestAfter.manifestContent) as { spec: { phases: Array<Record<string, unknown>> } }
+  expect(snap.spec.phases[1].workflowRef).toBe("task-fix") // home manifest.json 快照随写变更
+  expect(manifestAfter.manifestContent).not.toBe(manifestBefore.manifestContent)
 })
 
 // ── AC4: 绑定弹窗 fetch=1 / 点选不闪 / 版本被 bump 后保存不 409 ───────

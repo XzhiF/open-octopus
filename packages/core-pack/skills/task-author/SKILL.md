@@ -14,7 +14,7 @@ version: 3.0.0
 
 ## 契约：WHAT 固定、两端自由
 
-- **入口契约（你产出）**：task home = `manifest（spec.json）+ phases[]`。每个 **Phase = 1 份 spec 产物（Batch 目录：`spec.md` + `issues/`）+ 1 个 workflow 绑定（workflowRef + inputValues）+ ≥1 个 round**（K1）。phase↔slug 恒 1:1。
+- **入口契约（你产出）**：task home = `manifest（manifest.json）+ phases[]`。每个 **Phase = 1 份 spec 产物（Batch 目录：`spec.md` + `issues/`）+ 1 个 workflow 绑定（workflowRef + inputValues）+ ≥1 个 round**（K1）。phase↔slug 恒 1:1。
 - **生成端自由**：Batch 产物用内置 matt 技能族（grilling/wayfinder 等）对话产出，格式是 matt 惯例的 markdown——平台不解释 spec 内容，只核对文件存在。
 - **执行端自由**：每 phase 绑任意可解析工作流（built-in 目录浏览或你自建），执行侧 agent 以 seed 进 workspace 的 Batch 目录为唯一输入。
 - **出口契约**：round 终态 → 人工验收（通过/打回/中止）；打回产 `fix-feedback-rN.md`，修复走 task-fix 通用流或 round-2 spec；末 phase 通过 → 归档归并回各 project。
@@ -106,27 +106,26 @@ task home 根目录的 `context.md` 由 server 维护，含每个所选 project 
 
 ### phases[] 写入（spec-field，整数组替换语义）
 
-`POST /api/tasks/$TASK_ID/spec-field` 的 `field=phases` **整体替换** phases 数组——改任何一个 phase 前先 `Read spec.json` 取当前全量，改后整数组回写，丢元素=丢 phase。乐观锁照旧：409 → 重取 version 重试。
+`POST /api/tasks/$TASK_ID/spec-field` 的 `field=phases` **整体替换** phases 数组——改任何一个 phase 前先 `Read manifest.json` 取当前全量，改后整数组回写，丢元素=丢 phase。乐观锁照旧：409 → 重取 version 重试。
 
 > 契约注记：向**无 `format` 旗标的壳**（autosave 先建的 draft）写 `phases` 时，server 会自动补 `format:"v4"` 并尽力补建 task home（含 context.md）——v3→v4 升级只能经 flag 缺失时的这一途或 §3 整-spec PUT；反方向（去旗标）被创建锁禁止。
 
-### spec.json 快照（首选本地读，协议不变）
+### manifest.json 快照（首选本地读，协议不变）
 
-每次 spec-field/PUT 保存后，server 重写 `{home}/spec.json`——当前 task_spec 的**权威本地快照**：
+每次 spec-field/PUT 保存后，server 重写 `{home}/manifest.json`——当前 task_spec 的**权威本地快照**（v4 任务的快照已剔除 goal/ac 等 v3-only 键；老 home 里的旧 `spec.json` 会在首次快照写回或首次对话轮自动更名迁移）：
 
 ```jsonc
 {
   "task_id": "…", "version": 7, "updated_at": "…",
   "spec": {
     "format": "v4",
-    "goal": "…（v4 可无）", "ac": ["…（v4 可无）"],
     "decisions": ["…"], "autoAdvance": true,
     "phases": [ { "index": 1, "name": "…", "slug": "…-1", "specPath": "./.scratch/…/spec.md", "workflowRef": "…", "inputValues": {} } ]
   }
 }
 ```
 
-**需要当前 phases/decisions/version 时直接 Read `spec.json`**，比 curl 可靠。例外：无 home 的 legacy 任务 → `GET /api/tasks/:id` 回退。
+**需要当前 phases/decisions/version 时直接 Read `manifest.json`**，比 curl 可靠。例外：无 home 的 legacy 任务 → `GET /api/tasks/:id` 回退。
 
 ### v4 占位符词表（inputValues 专用，materialize 时逐 phase 解析）
 
@@ -192,7 +191,7 @@ curl -s -X POST "http://localhost:$PORT/api/tasks" \
         "task_spec": { "format": "v4" },
         "project_ids": ["<project 名>"], "skills": [], "resources": [], "authoring_resources": [] }' | jq .
 ```
-- 返回 tasks 行 `status: "draft"`，`task_spec` **原样落地**（`format:"v4"` 旗标不再被丢弃——server 现已兑现本配方）；goal/ac **不再必填**（v4 无它们也能 parse）。带 `format:"v4"` 即建 home + `spec.json` 快照（`spec.format==="v4"` 本地可读）。autosave seam（首轮对话后）也会隐式建 draft——两路都要你后续显式写 phases。
+- 返回 tasks 行 `status: "draft"`，`task_spec` **原样落地**（`format:"v4"` 旗标不再被丢弃——server 现已兑现本配方）；goal/ac **不再必填**（v4 无它们也能 parse）。带 `format:"v4"` 即建 home + `manifest.json` 快照（`spec.format==="v4"` 本地可读）。autosave seam（首轮对话后）也会隐式建 draft——两路都要你后续显式写 phases。
 - 创建期的 projects 是领域阅读的路由键；后来加/减 project 由用户在看板改，你经 `@@context_updated` 重读 context.md。
 
 ### 2. 对话中绑字段（update_task_spec_field）★联动核心
@@ -208,7 +207,7 @@ curl -s -X POST "http://localhost:$PORT/api/tasks/$TASK_ID/spec-field" \
 
 | field | value 形态 | v4 备注 |
 |-------|-----------|---------|
-| `phases` | TaskPhase[]（**整数组替换**） | ★ 核心字段；写前读 spec.json 取全量 |
+| `phases` | TaskPhase[]（**整数组替换**） | ★ 核心字段；写前读 manifest.json 取全量 |
 | `projects` | string[]（project_ids） | 领域路由 |
 | `decisions` | string[] | 决策备忘录：领域降级标注、拆分理由、自建流副作用声明 |
 | `resources` | ResourceRef[] | workspace-scope → 执行期 requires |

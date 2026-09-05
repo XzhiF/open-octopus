@@ -2,8 +2,8 @@
 //
 // 契约修复 — GET/PUT /api/tasks/:id/home-file（v4 batch spec.md 审阅/编辑面）。
 // 守卫矩阵（与 readArtifactContent 同一 idiom，基目录换 home 根）:
-//   • 白名单: 仅 `.scratch/**` 前缀 + `.md` 后缀；context.md / spec.json /
-//     artifacts/… / skills/… 一律 403（它们各有自己的既有端点）。
+//   • 白名单: 仅 `.scratch/**` 前缀 + `.md` 后缀；context.md / manifest.json /
+//     旧名 spec.json / artifacts/… / skills/… 一律 403（它们各有自己的既有端点）。
 //   • 逃逸: `../`、盘符绝对路径、null byte → 403；未知任务 → 404。
 //   • GET 缺文件 → 404（UI 据此渲染「创建骨架」空态）；目录 → 404。
 //   • PUT: 建父目录（UI 增 phase 行后落骨架的硬需求）/ 覆写 / content>512KB →
@@ -99,10 +99,11 @@ describe("GET home-file — 读路径与守卫", () => {
     expect((await get(id, ".scratch")).status).toBe(403)
   })
 
-  it("G3: 白名单外 → 403（context.md / spec.json / artifacts/../ 兄弟 / skills junction）", async () => {
+  it("G3: 白名单外 → 403（context.md / manifest.json / 旧名 spec.json / artifacts/../ 兄弟 / skills junction）", async () => {
     const id = await newV4Task()
     expect((await get(id, "context.md")).status).toBe(403)
-    expect((await get(id, "spec.json")).status).toBe(403)
+    expect((await get(id, "manifest.json")).status).toBe(403)
+    expect((await get(id, "spec.json")).status).toBe(403) // 旧名同样不在白名单
     expect((await get(id, ".scratch/../context.md")).status).toBe(403) // 逃逸出 .scratch → FORBIDDEN
     expect((await get(id, ".scratch/notes.txt")).status).toBe(403)     // 非 .md
     expect((await get(id, "skills/foo/SKILL.md")).status).toBe(403)

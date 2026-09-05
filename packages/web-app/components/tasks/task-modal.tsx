@@ -284,7 +284,7 @@ function ModalHeader({ task, mode, isFullscreen, onToggleFullscreen, onDeleteDra
  *    1. POST /api/clones/task-author/sessions  (session FIRST — autosave/
  *       spec-field/SSE all resolve via source_chat_session_id)
  *    2. POST /api/tasks {source_chat_session_id, task_spec:{format:"v4"},
- *       project_ids} → 直建 v4 draft + home + spec.json 快照（flag 即刻生效，
+ *       project_ids} → 直建 v4 draft + home + manifest.json 快照（flag 即刻生效，
  *       不再产生 v3 壳、不再等对话中 PUT 翻面）。无 task_type/skill_groups —
  *       matt 技能族随 clone 自动就位（票 09/K15）。
  *  On success, `onDraftResolved(task)` adopts the draft so the parent

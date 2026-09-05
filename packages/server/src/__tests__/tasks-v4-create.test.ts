@@ -5,7 +5,7 @@
 // project_ids —— 而 task-author SKILL §1 与 persona 的 curl 配方都依赖它们。
 // 本套件锁死修复后的契约：
 //   A. POST 直建: format:"v4" → 201，行 spec 带旗标（无 task_type 键）、
-//      project_ids 列、home + context.md + spec.json 快照即带 format。
+//      project_ids 列、home + context.md + manifest.json 快照即带 format。
 //   B. POST 校验: 非法 task_spec → 400；非法 project_ids → 400。
 //   C. 向后兼容: 不带 task_spec 的 POST 行为与基线 byte 一致（v2/v3 路径零变化，
 //      task_type 注入顺序：task_type 赢过 body 伪造）。
@@ -114,10 +114,10 @@ describe("A. POST 直建 v4 draft（契约修复主案）", () => {
     expect(JSON.parse(row.task_spec).format).toBe("v4")
     expect(JSON.parse(row.project_ids)).toEqual(["p-alpha"])
 
-    // home 三件套：目录 / spec.json 快照带旗标 / context.md 含项目名
+    // home 三件套：目录 / manifest.json 快照带旗标 / context.md 含项目名
     const home = taskHome.homePath(dto.id)
     expect(fs.existsSync(home)).toBe(true)
-    const snapshot = JSON.parse(fs.readFileSync(path.join(home, "spec.json"), "utf-8")) as {
+    const snapshot = JSON.parse(fs.readFileSync(path.join(home, "manifest.json"), "utf-8")) as {
       version: number
       spec: Record<string, unknown>
     }

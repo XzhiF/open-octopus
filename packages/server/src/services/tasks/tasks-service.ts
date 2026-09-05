@@ -289,7 +289,7 @@ export interface CreateTaskInput {
    *  SW-BP9). Present → `taskSpecSchema.parse` (ZodError → 400); absent → the
    *  v3/v2 baseline `{goal:"",ac:[]}` (NOT parsed — byte-compat with the legacy
    *  tasks-routes tests). `{format:"v4"}` here creates a v4 draft directly:
-   *  home + spec.json snapshot carry the flag from the start (SKILL §1's POST
+   *  home + manifest.json snapshot carry the flag from the start (SKILL §1's POST
    *  recipe, previously silently dropped by the route). */
   task_spec?: unknown
   /** Top-level project ids (SKILL §1 recipe). When present wins over
@@ -605,7 +605,7 @@ export class TasksService {
     // are linked (shared skills are already exposed via plugin #1).
     // 契约修复: a v4 draft (format:"v4", with or without task_type) also gets a
     // home — gateV4Phases resolves relative specPaths against it, context.md is
-    // the domain-reading routing table, and the spec.json snapshot must exist.
+    // the domain-reading routing table, and the manifest.json snapshot must exist.
     // Without task_type there are no skill groups → materialize is skipped (the
     // matt skill family arrives via the clone plugin layer, ticket 11/K15).
     if (isV3 || isV4) {
@@ -634,9 +634,9 @@ export class TasksService {
     if (!row) {
       throw new Error(`TasksService.createTask: inserted task ${id} not found`)
     }
-    // 06: the POST body may carry goal/ac — overwrite the baseline spec.json
-    // (written empty by createHome) with the real task_spec.
-    this.writeSpecSnapshot(id)
+    // 06: the POST body may carry spec fields — overwrite the baseline
+    // manifest.json (written empty by createHome) with the real task_spec.
+    this.writeManifestSnapshot(id)
     return toDTO(row)
   }
 
@@ -1037,9 +1037,9 @@ export class TasksService {
 
     const row = this.taskDAO.getById(id)
     if (!row) throw new TaskNotFoundError()
-    // 06: task_spec may have changed (or the name for the spec.json header) —
-    // keep the structured goal/ac snapshot current.
-    this.writeSpecSnapshot(id)
+    // 06: task_spec may have changed — keep the structured manifest.json
+    // snapshot current.
+    this.writeManifestSnapshot(id)
     return toDTO(row)
   }
 
@@ -1169,8 +1169,9 @@ export class TasksService {
     // 契约修复: if the v4 flag was stamped by this phases write, the row may still
     // be a homeless autosave shell — the v4 gate/seed resolve relative specPaths
     // against the home, so backfill it best-effort (non-fatal, mirrors createTask's
-    // materialize-failure handling). The writeSpecSnapshot at the end of this
-    // function re-stamps the empty spec.json baseline createHome just wrote.
+    // materialize-failure handling). The writeManifestSnapshot at the end of
+    // this function re-stamps the empty manifest.json baseline createHome just
+    // wrote.
     if (v4FormatStamped) {
       try {
         if (!fs.existsSync(this.taskHomeService.homePath(id))) {
@@ -1221,31 +1222,34 @@ export class TasksService {
     }
 
     // 06: every spec-field write (any field, any source) refreshes the
-    // structured goal/ac snapshot (spec.json) the task-author agent reads.
-    this.writeSpecSnapshot(id)
+    // structured task_spec snapshot (manifest.json) the task-author agent reads.
+    this.writeManifestSnapshot(id)
 
     return { version: updated.version }
   }
 
-  /** 06 — refresh `{home}/spec.json` from the current tasks row. The
-   *  task-author agent reads this structured snapshot for goal/ac instead of
-   *  curling the API. Best-effort, non-fatal: legacy/v2 tasks have no home dir
-   *  (writeSpecFile is a silent no-op). Called on every spec write (create /
-   *  PUT / spec-field) so the file always reflects the current task_spec. */
-  private writeSpecSnapshot(id: string): void {
+  /** 06 — refresh `{home}/manifest.json` from the current tasks row. The
+   *  task-author agent reads this structured snapshot (format / phases 绑定 /
+   *  decisions / …) instead of curling the API. v4 specs get the v3-only
+   *  schema-default keys filtered on the write side. Best-effort, non-fatal:
+   *  legacy/v2 tasks have no home dir (writeManifestFile is a silent no-op).
+   *  Called on every spec write (create / PUT / spec-field) so the file always
+   *  reflects the current task_spec. */
+  private writeManifestSnapshot(id: string): void {
     try {
       const row = this.taskDAO.getById(id)
       if (!row) return
       const spec = parseJSON<Record<string, unknown>>(row.task_spec, {})
-      this.taskHomeService.writeSpecFile(id, {
+      this.taskHomeService.writeManifestFile(id, {
         version: row.version,
         spec,
         updated_at: row.updated_at,
+        format: typeof spec.format === "string" ? spec.format : undefined,
       })
     } catch (err: unknown) {
       // eslint-disable-next-line no-console
       console.error(
-        `[TasksService] writeSpecFile for ${id} failed (non-fatal):`,
+        `[TasksService] writeManifestFile for ${id} failed (non-fatal):`,
         err instanceof Error ? err.message : String(err),
       )
     }

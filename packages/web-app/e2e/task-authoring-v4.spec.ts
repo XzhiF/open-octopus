@@ -3,7 +3,7 @@
 // 契约修复（v4-only 创建链路）浏览器穿线 — 一次真实端到端：
 //   ① 看板 [+新建任务] → 模板页（v4-only：无类型卡、无 skill 组、有 codebase 段）
 //   ② 开始编写 → D15 序列（clone session + POST 直建 v4）→ 进 AuthoringWorkspace
-//   ③ DB 真相：task_spec.format==="v4" 且无 task_type 键；home + spec.json 快照带旗标
+//   ③ DB 真相：task_spec.format==="v4" 且无 task_type 键；home + manifest.json 快照带旗标
 //   ④ 右栏「添加 Phase」手动建行（workflow 走内置目录初选）→ 整数组 PUT 落库
 //   ⑤ 行上 spec.md → 404 空态 →「创建骨架」→ home-file 落盘（fs 真相）
 //   ⑥ 入队清单四行随写入实时变绿（phases/spec/bind 三行 ✅）
@@ -109,8 +109,8 @@ test.describe("契约修复 — v4-only 创建链路穿线", () => {
     expect(row).toBeTruthy()
     expect(JSON.parse(row!.task_spec).format).toBe("v4")
     const home = taskHomePath(mine!.id)
-    expect(home && fs.existsSync(path.join(home!, "spec.json"))).toBe(true)
-    const snap = JSON.parse(fs.readFileSync(path.join(home!, "spec.json"), "utf-8"))
+    expect(home && fs.existsSync(path.join(home!, "manifest.json"))).toBe(true)
+    const snap = JSON.parse(fs.readFileSync(path.join(home!, "manifest.json"), "utf-8"))
     expect(snap.spec.format).toBe("v4")
 
     // ④ UI 添加 Phase（name → 自动 slug → 目录初选 workflow → 整数组 PUT）

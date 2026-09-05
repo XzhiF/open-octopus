@@ -160,7 +160,7 @@ export interface CreateTaskInput {
   preset?: { org?: string; projects?: string[] }
   // ── task-phase-redesign 契约修复（POST 直建 v4）──
   /** RAW initial task_spec — the server validates (taskSpecSchema, ZodError →
-   *  400). `{format:"v4"}` creates a v4 draft directly (home + spec.json
+   *  400). `{format:"v4"}` creates a v4 draft directly (home + manifest.json
    *  snapshot carry the flag; no task_type → no v3 shell). This is the body
    *  the [新建任务] sequence sends; mirrors server CreateTaskInput. Partial —
    *  the output TaskSpec type requires defaulted keys; on input you only send
@@ -532,16 +532,17 @@ export async function getArtifactContent(taskId: string, artifactPath: string): 
 }
 
 /** GET /api/tasks/:id/context — read the workspace context file (context.md)
- *  + the structured spec snapshot (spec.json) + filesystem paths. Returns
- *  { content, path, artifactsDir, homePath, specContent, specPath }.
- *  content/specContent may be null if the file hasn't been created yet. */
+ *  + the structured task_spec snapshot (manifest.json) + filesystem paths.
+ *  Returns { content, path, artifactsDir, homePath, manifestContent, manifestPath }.
+ *  content/manifestContent may be null if the file hasn't been created yet
+ *  (manifestContent also falls back to a pre-rename spec.json read server-side). */
 export async function getTaskContext(taskId: string): Promise<{
   content: string | null
   path: string
   artifactsDir: string
   homePath: string
-  specContent: string | null
-  specPath: string
+  manifestContent: string | null
+  manifestPath: string
 }> {
   const res = await fetch(buildUrl(`/${taskId}/context`))
   if (!res.ok) {

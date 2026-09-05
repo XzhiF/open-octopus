@@ -30,7 +30,7 @@ import {
 } from "../services/tasks/tasks-service"
 import { AssistWorkflowService, AssistWorkflowError } from "../services/tasks/assist-workflow-service"
 import { SSEService } from "../services/sse"
-import { TaskHomeService } from "../services/tasks/task-home-service"
+import { TaskHomeService, MANIFEST_FILENAME, LEGACY_SPEC_FILENAME } from "../services/tasks/task-home-service"
 import {
   resourceRefSchema,
   type TaskStatus,
@@ -282,12 +282,14 @@ export function createTasksRoutes(
   })
 
   // ── Context file (workspace state visible to agent) ──────────────────
-  // GET /:id/context — read the task's context.md + spec.json + filesystem
+  // GET /:id/context — read the task's context.md + manifest.json + filesystem
   // paths. The dynamic workspace state file the agent reads when notified via
   // @@context_updated. Also returns absolute paths for the UI (artifactsDir,
   // homePath) so the frontend can display + copy real filesystem locations.
-  // Returns { content, path, artifactsDir, homePath, specContent, specPath }.
-  // content/specContent may be null if the file hasn't been created yet.
+  // Returns { content, path, artifactsDir, homePath, manifestContent, manifestPath }.
+  // content/manifestContent may be null if the file hasn't been created yet.
+  // Read fallback: pre-rename homes that never got a snapshot write still have
+  // only spec.json on disk — serve it as manifestContent (read-only, never writes).
   router.get("/:id/context", (c) => {
     try {
       const homeService = new TaskHomeService()
@@ -298,12 +300,17 @@ export function createTasksRoutes(
       if (fs.existsSync(ctxPath)) {
         content = fs.readFileSync(ctxPath, "utf-8")
       }
-      const specPath = path.join(homePath, "spec.json")
-      let specContent: string | null = null
-      if (fs.existsSync(specPath)) {
-        specContent = fs.readFileSync(specPath, "utf-8")
+      const manifestPath = path.join(homePath, MANIFEST_FILENAME)
+      let manifestContent: string | null = null
+      if (fs.existsSync(manifestPath)) {
+        manifestContent = fs.readFileSync(manifestPath, "utf-8")
+      } else {
+        const legacyPath = path.join(homePath, LEGACY_SPEC_FILENAME)
+        if (fs.existsSync(legacyPath)) {
+          manifestContent = fs.readFileSync(legacyPath, "utf-8")
+        }
       }
-      return c.json({ content, path: ctxPath, artifactsDir, homePath, specContent, specPath })
+      return c.json({ content, path: ctxPath, artifactsDir, homePath, manifestContent, manifestPath })
     } catch (err: unknown) {
       const { status, message } = classifyError(err)
       return c.json({ error: message }, status)
