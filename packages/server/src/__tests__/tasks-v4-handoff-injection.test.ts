@@ -389,6 +389,39 @@ describe("AC3 — rerun 不注入；多前序按 index 升序换行连接", () =
   })
 })
 
+// review-cycle-1（Completeness-C8）：存在性过滤的两个边界 —— 目录形态与同批次去重。
+describe("边界硬化 — handoff.md 非文件不算交接；同 specDir 去重", () => {
+  it("前序 handoff.md 位是目录（异常形态）→ isFile 过滤，键不出现", async () => {
+    const { taskId, specDirs } = seed()
+    // 不写文件，改在 handoff.md 期望位建目录（existsSync 会放行、isFile 必须挡下）。
+    fs.mkdirSync(handoffPathOf(specDirs, 1), { recursive: true })
+    const res = await postAcceptance(taskId, { phase_index: 1, round_index: 1, decision: "accepted" })
+    expect(res.status, await res.clone().text()).toBe(200)
+    expect("prev_handoff_paths" in chainIV(taskId)).toBe(false)
+  })
+
+  it("两个 accepted 前序共享同一批次目录（同 slug）→ 注入去重，只出现一行", async () => {
+    const shared: PhaseDef[] = [
+      { index: 1, name: "Phase 1", slug: "p1", workflowRef: "built-in/flow-p1" },
+      { index: 2, name: "Phase 2", slug: "p1", workflowRef: "built-in/flow-p2" },
+      { index: 3, name: "Phase 3", slug: "p3", workflowRef: "built-in/flow-p3" },
+    ]
+    const { taskId, specDirs } = seed({
+      phases: shared,
+      ledger: [
+        { phase_index: 1, round_index: 1, decision: "accepted" },
+        { phase_index: 2, round_index: 1, decision: "accepted" },
+      ],
+      roundsByPhase: { 1: [{ round: 1, status: "completed" }], 2: [{ round: 1, status: "completed" }] },
+      handoffs: { 1: "one" }, // 同目录 ⇒ phase2 的 handoff 位即同一文件
+    })
+    const res = await app.request(`/api/tasks/${taskId}/advance`, { method: "POST" })
+    expect(res.status, await res.clone().text()).toBe(200)
+    expect(chainIV(taskId).prev_handoff_paths.split("\n"))
+      .toEqual([handoffPathOf(specDirs, 1)])
+  })
+})
+
 describe("AC4 — 手动推进与 autoAdvance 行为一致", () => {
   it("autoAdvance=false 停闸 → /advance 起 phase2 首轮，注入值与 auto 路径同形", async () => {
     const { taskId, specDirs } = seed({ autoAdvance: false, handoffs: { 1: "h1" } })

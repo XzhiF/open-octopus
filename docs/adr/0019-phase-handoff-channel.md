@@ -2,7 +2,7 @@
 
 ## 状态
 
-Accepted（2026-09-05）· 扩展 ADR-0018 §2 spec 家族表（新增 `handoff.md` 行）；不改写其任何决策
+Accepted（2026-09-05）· 为 ADR-0018 §2 的 spec 家族**新增成员 `handoff.md`**（0018 原文不改——家族表随实现文档走：task-author SKILL 目录树/写权环表 + CONTEXT-MAP 术语）；不改写 0018 任何决策
 
 ## 背景
 

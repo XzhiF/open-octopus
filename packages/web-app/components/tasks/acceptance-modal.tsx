@@ -190,6 +190,10 @@ export function AcceptanceModal({ task, open, onOpenChange, onMutated }: Accepta
   // 既有派生态（acceptedRound!==null ⇔ status="accepted"，无新 API）。
   // N = 已 accepted 前序数 + 1（含本 phase）；末 phase（无下一站）不显示；
   // 打回面板展开（rejected 态）不显示。
+  // ⚠️ 口径注记（review S1）：N 是**账本数**（acceptedRound!==null），不过 fs
+  // 存在性；server 注入侧（tasks-service collectPrevHandoffPaths）另按
+  // handoff.md isFile 过滤——ship 崩溃轮（R2）实际注入数可能比 N 少 1。
+  // 两口径有意分工：账本=人的决策真相，fs=机器注入真相；漂移在 SKILL/ADR-0019 有注记。
   const hasNextPhase = useMemo(() => {
     if (!awaitingPhase) return false
     const pos = phaseViews.findIndex((p) => p.index === awaitingPhase.index)

@@ -97,6 +97,13 @@ import {
   getSpecNotice,
 } from "./spec-notice-store"
 
+/** phase-handoff-chaining (ticket 01): 内置注入键名单源 — accepted→下一 phase 首轮
+ *  materialized input_values 里的键（K3）。值 = 已 accepted 前序 phase 的
+ *  handoff.md home 绝对路径，换行连接，空 ⇒ 键不出现。matt-spec-dev.yaml 的
+ *  inputs/哨兵/vars 与 task-author SKILL 均按此字面对齐——rename 从这改起，
+ *  测试侧保留字面量以钉住 wire 契约。 */
+export const PREV_HANDOFF_PATHS_KEY = "prev_handoff_paths"
+
 // ── Error Classes ────────────────────────────────────────────────────
 
 export class TaskNotFoundError extends Error {
@@ -1786,7 +1793,7 @@ export class TasksService {
       ...(feedback && feedback.trim() ? { feedback } : {}),
       // phase-handoff-chaining (ticket 01): 内置注入键 prev_handoff_paths —
       // accepted 前序的 handoff.md home 绝对路径（换行连接；空 ⇒ 键不出现）。
-      ...(opts?.prevHandoffPaths?.length ? { prev_handoff_paths: opts.prevHandoffPaths.join("\n") } : {}),
+      ...(opts?.prevHandoffPaths?.length ? { [PREV_HANDOFF_PATHS_KEY]: opts.prevHandoffPaths.join("\n") } : {}),
       _phase_index: String(phaseIdx),
       _round_index: String(roundIdx),
     }
@@ -2433,8 +2440,9 @@ export class TasksService {
    *  appended the acceptance row sees THIS decision too, AC1: 刚 accepted 的
    *  phase i 也是 i+1 的前序). specDirs resolve through the envelope
    *  (resolvePhaseSpecDir — the same materialized mount seed/collect use,
-   *  票 04/06); the frozen phases[] is only ever READ (K16). Missing
-   *  handoff.md files are silently filtered (R2: 失败轮缺一角不烧派发).
+   *  票 04/06); the frozen phases[] is only ever READ (K16). Non-files
+   *  (目录/断链) and duplicates (两 phase 同 specDir) are silently filtered
+   *  alongside missing files (R2: 失败轮缺一角不烧派发).
    *  Result ascending by phase index; empty ⇒ caller omits the key. */
   private collectPrevHandoffPaths(row: TaskRow, targetPhaseIndex: number): string[] {
     const view = this.deriveView(row)
@@ -2442,13 +2450,23 @@ export class TasksService {
       .findSchedulesByOrigin("task", row.id)
       .find((r) => r.origin_role === "primary")
     const configJson = envelope?.config ?? ""
+    const seen = new Set<string>()
     return view.phaseViews
       .filter((p) => p.index < targetPhaseIndex && p.status === "accepted")
       .sort((a, b) => a.index - b.index)
       .map((p) => resolvePhaseSpecDir(configJson, p.index))
       .filter((d): d is string => !!d)
       .map((d) => path.join(d, "handoff.md"))
-      .filter((f) => fs.existsSync(f))
+      .filter((f) => {
+        if (seen.has(f)) return false
+        try {
+          if (!fs.statSync(f).isFile()) return false
+        } catch {
+          return false
+        }
+        seen.add(f)
+        return true
+      })
   }
 
   /** The phase's absolute batch dir (home mirror of the ws `.scratch/<date>/
